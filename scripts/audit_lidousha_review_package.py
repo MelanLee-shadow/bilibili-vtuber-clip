@@ -16,7 +16,10 @@ from src.autoslice.subtitle_rendering import (  # noqa: E402
     ASS_MAX_CHARS_PER_LINE,
     ASS_MAX_VISUAL_LINES,
 )
-from src.autoslice.cover_generation import COVER_MIN_TALK_FONT_SIZE  # noqa: E402
+from src.autoslice.cover_generation import (  # noqa: E402
+    COVER_MIN_TALK_FONT_SIZE,
+    validate_cover_punch_semantic_review,
+)
 from src.autoslice.cover_route_evidence import (  # noqa: E402
     validate_cover_route_decision,
     validate_rendered_text_pixel_evidence,
@@ -436,6 +439,29 @@ def _audit_story_bound_cover(
             path=record_path,
             detail=f"expected={expected_text!r}; rendered={rendered_text!r}",
         )
+    if generation.get("cover_text_mode") == "punch":
+        art_direction = generation.get("art_direction")
+        punch_review = (
+            art_direction.get("cover_punch_semantic_review")
+            if isinstance(art_direction, dict)
+            else None
+        )
+        if not validate_cover_punch_semantic_review(
+            punch_review,
+            rendered_lines=rendered_lines,
+            cover_text=expected_text,
+            story_hook=str(story_contract.get("selection_hook") or ""),
+        ):
+            _add_issue(
+                issues,
+                "COVER_PUNCH_SEMANTIC_REVIEW_INVALID",
+                stem=stem,
+                path=record_path,
+                detail=(
+                    "punch mode requires hash-bound CPA text proof that a "
+                    "stranger can infer the concrete event and click motive"
+                ),
+            )
 
     binding = generation.get("story_contract")
     expected_binding = {

@@ -621,6 +621,64 @@ def test_v2_exact_interval_replays_reviewed_missing_cues_when_authorized(
     assert audit["failures"] == []
 
 
+def test_v2_exact_interval_replays_with_bounded_video_only_tail(
+    tmp_path,
+):
+    baseline = tmp_path / "baseline.srt"
+    baseline.write_text(
+        _srt((0, 1_000, "第一句"), (1_000, 2_000, "审核收尾")),
+        encoding="utf-8",
+    )
+    config = _config_v2(baseline)
+    config["exact_interval_replay"] = True
+    current = _srt(
+        (0, 1_000, "随机第一句"),
+        (1_000, 2_400, "随机网格把收尾拉进尾垫"),
+    )
+
+    output, audit = _run_v2(
+        current,
+        baseline=baseline,
+        tmp_path=tmp_path,
+        config=config,
+        current_source_end_ms=102_400,
+    )
+
+    assert output == baseline.read_text(encoding="utf-8")
+    assert audit["status"] == "APPLIED"
+    assert audit["application_strategy"] == "exact_reviewed_interval_replay"
+    assert audit["video_tail_extension_ms"] == 400
+    assert audit["failures"] == []
+
+
+def test_v2_exact_interval_rejects_tail_beyond_renderer_pad(
+    tmp_path,
+):
+    baseline = tmp_path / "baseline.srt"
+    baseline.write_text(
+        _srt((0, 1_000, "第一句"), (1_000, 2_000, "审核收尾")),
+        encoding="utf-8",
+    )
+    config = _config_v2(baseline)
+    config["exact_interval_replay"] = True
+    current = _srt(
+        (0, 1_000, "随机第一句"),
+        (1_000, 2_401, "越界新内容"),
+    )
+
+    output, audit = _run_v2(
+        current,
+        baseline=baseline,
+        tmp_path=tmp_path,
+        config=config,
+        current_source_end_ms=102_401,
+    )
+
+    assert output == current
+    assert audit["status"] == "FAILED"
+    assert audit.get("application_strategy") is None
+
+
 def test_v2_exact_interval_flag_falls_back_when_current_interval_is_trimmed(
     tmp_path,
 ):

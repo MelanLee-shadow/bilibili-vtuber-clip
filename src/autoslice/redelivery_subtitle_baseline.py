@@ -42,6 +42,11 @@ MAX_ALIGNMENT_BOUNDARY_DRIFT_MS = 250
 # separate, narrow allowance: adjacency and exact joined-text equality remain
 # mandatory, and ordinary alignment still uses the stricter 250ms bound.
 MAX_RELEASE_GRADE_MERGE_BOUNDARY_DRIFT_MS = 400
+# A same-BV exact-source repair may deliberately move the video pin a single
+# renderer tail pad past the reviewed subtitle interval.  The reviewed SRT is
+# still the complete text authority: replay it byte-for-byte and leave the
+# bounded video-only tail without inventing a fresh ASR cue.
+MAX_EXACT_REPLAY_VIDEO_TAIL_MS = 400
 _SHA256_RX = re.compile(r"(?:sha256:)?([0-9a-f]{64})\Z")
 
 
@@ -946,9 +951,16 @@ def _replay_exact_v2_interval(
             audit,
             "REDELIVERY_BASELINE_EXACT_INTERVAL_REPLAY_INVALID",
         )
+    video_tail_extension_ms = (
+        timeline.current_end_ms - timeline.baseline_end_ms
+    )
     if not replay or (
         timeline.current_start_ms != timeline.baseline_start_ms
-        or timeline.current_end_ms != timeline.baseline_end_ms
+        or not (
+            0
+            <= video_tail_extension_ms
+            <= MAX_EXACT_REPLAY_VIDEO_TAIL_MS
+        )
     ):
         return None
     duration_ms = timeline.baseline_end_ms - timeline.baseline_start_ms
@@ -997,6 +1009,7 @@ def _replay_exact_v2_interval(
             "status": "APPLIED" if output != current_srt else "ALREADY_SATISFIED",
             "application_strategy": "exact_reviewed_interval_replay",
             "timing_authority": "hash_bound_reviewed_srt_exact_source_interval",
+            "video_tail_extension_ms": video_tail_extension_ms,
             "current_cue_count": len(current),
             "replayed_cue_count": len(baseline),
             "mapped_cue_count": len(baseline),

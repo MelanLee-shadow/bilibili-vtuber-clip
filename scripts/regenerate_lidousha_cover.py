@@ -74,6 +74,7 @@ def regenerate_cover(
     *,
     title: str,
     cover_text: str | None = None,
+    story_hook: str = "",
     out_path: Path,
     reference_path: Path | None = None,
     media_path: Path | None = None,
@@ -123,6 +124,7 @@ def regenerate_cover(
         emote_library=emote_library,
         diversity_slot=diversity_slot,
         allow_punch=allow_punch,
+        story_hook=story_hook,
     )
     import dataclasses
 
@@ -234,6 +236,10 @@ def regenerate_cover(
             "emote_mode": art_direction.emote_mode,
             "emote_reason": art_direction.emote_reason,
             "cover_punch": list(art_direction.cover_punch),
+            "cover_punch_semantic_review": (
+                art_direction.cover_punch_semantic_review
+            ),
+            "scene_props": list(art_direction.scene_props),
         },
         "cover_diversity_slot": diversity_slot,
         "cover_punch": list(art_direction.cover_punch),
@@ -271,6 +277,11 @@ def main(argv=None) -> int:
         "--cover-text",
         help="reviewed cover-only copy; defaults to the title with the channel prefix removed",
     )
+    p.add_argument(
+        "--story-hook",
+        default="",
+        help="full StoryContract selection_hook for the CPA punch semantic gate",
+    )
     p.add_argument("--out", required=True, type=Path, help="Output cover PNG path.")
     p.add_argument("--ref", type=Path, help="Per-clip reference frame (identity/skin).")
     p.add_argument("--media", type=Path, help="Clip media to extract a fresh reference frame from.")
@@ -291,6 +302,7 @@ def main(argv=None) -> int:
     meta = regenerate_cover(
         title=args.title,
         cover_text=args.cover_text,
+        story_hook=args.story_hook,
         out_path=args.out,
         reference_path=args.ref,
         media_path=args.media,

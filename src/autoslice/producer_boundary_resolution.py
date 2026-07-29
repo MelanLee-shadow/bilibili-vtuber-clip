@@ -141,6 +141,7 @@ class InitialBoundary:
     required_boundary_owners: list[dict[str, object]]
     required_owner_start_ms: int | None
     required_owner_end_ms: int | None
+    reviewed_baseline_head_ms: int | None
 
 
 @dataclass(frozen=True)
@@ -765,7 +766,29 @@ def _select_initial_boundary(
         required_boundary_owners=required_boundary_owners,
         required_owner_start_ms=required_owner_start_ms,
         required_owner_end_ms=required_owner_end_ms,
+        reviewed_baseline_head_ms=_redelivery_baseline_head_rel_ms(spec),
     )
+
+
+def _suppress_reviewed_baseline_opening_flag(
+    *,
+    audit: dict,
+    red_flags: list[str],
+    reviewed_baseline_head_ms: int | None,
+    final_start: int,
+) -> list[str]:
+    """Let a hash-bound same-BV baseline, not a fresh ASR straddler, own head."""
+
+    if (
+        reviewed_baseline_head_ms is None
+        or final_start != reviewed_baseline_head_ms
+        or "opens_mid_sentence" not in red_flags
+    ):
+        return red_flags
+    audit.setdefault("physical_continuity_nonsemantic_flags", []).append(
+        "fresh_grid_opening_overridden_by_reviewed_baseline_head"
+    )
+    return [flag for flag in red_flags if flag != "opens_mid_sentence"]
 
 
 def _repair_boundary(
@@ -792,6 +815,7 @@ def _repair_boundary(
     required_owner_start_ms: int | None,
     required_owner_end_ms: int | None,
     boundary_repair_extend_cap_ms: int,
+    reviewed_baseline_head_ms: int | None = None,
 ) -> BoundaryResolution:
     audit_path = out_root / f"{cid}.boundary_audit.json"
     boundary_repairs: list[dict] = []
@@ -945,6 +969,12 @@ def _repair_boundary(
             snapped_end_ms=snapped,
             closure_text=closure_cue.text,
         )
+        red_flags = _suppress_reviewed_baseline_opening_flag(
+            audit=audit,
+            red_flags=red_flags,
+            reviewed_baseline_head_ms=reviewed_baseline_head_ms,
+            final_start=final_start,
+        )
         if manual_end_authority or (
             semantic_review is not None and semantic_review.get("status") == "PASS"
         ):
@@ -1004,10 +1034,7 @@ def _repair_boundary(
                         }
                     ],
                 }
-                audit_path.write_text(
-                    json.dumps(audit, ensure_ascii=False, indent=2) + "\n",
-                    encoding="utf-8",
-                )
+                audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
                 raise SystemExit(
                     "BOUNDARY_REQUIRED_OWNER_EXCLUDED: "
                     "no clean closure in required-owner window "
@@ -1115,5 +1142,6 @@ def resolve_producer_boundary(
         required_boundary_owners=initial.required_boundary_owners,
         required_owner_start_ms=initial.required_owner_start_ms,
         required_owner_end_ms=initial.required_owner_end_ms,
+        reviewed_baseline_head_ms=initial.reviewed_baseline_head_ms,
         boundary_repair_extend_cap_ms=boundary_repair_extend_cap_ms,
     )

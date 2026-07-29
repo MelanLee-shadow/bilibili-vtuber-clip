@@ -1313,6 +1313,11 @@ def _stage_lidousha_ai_cover(
         emote_library=emote_library,
         allow_punch=punch_allowed,
         diversity_slot=diversity_slot,
+        story_hook=(
+            str(story_contract.get("selection_hook") or "")
+            if isinstance(story_contract, Mapping)
+            else ""
+        ),
     )
 
     # 路由：语义/人物证据先行，几何只决定已经验真人物的构图处理。

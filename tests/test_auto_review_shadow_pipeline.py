@@ -4523,11 +4523,14 @@ def test_cover_punch_deterministic_baseline_and_gates():
         candidate_id="cand-7", title=_PUNCH_TITLE, cover_text=_PUNCH_TEXT
     )
     assert off.cover_punch == ()
-    # 自动标题开启 → baseline 带确定性梗字。
+    # 自动标题开启但 CPA 文字裁决不可用 → 不放行确定性碎片，退回完整文案。
     on = shadow_pipeline._lidousha_cover_art_direction(
         candidate_id="cand-7", title=_PUNCH_TITLE, cover_text=_PUNCH_TEXT, allow_punch=True
     )
-    assert on.cover_punch == ("才不是熊猫呢！",)
+    assert on.cover_punch == ()
+    assert on.cover_punch_semantic_review["reason_code"] == (
+        "CPA_TEXT_REVIEW_UNAVAILABLE"
+    )
     # 歌切永远不用梗字（裸《歌名》banner 已是终态）。
     song = shadow_pipeline._lidousha_cover_art_direction(
         candidate_id="song-1", title=_COVER_SONG_TITLE, cover_text=_COVER_SONG_TEXT, allow_punch=True
@@ -4540,6 +4543,17 @@ def test_cover_punch_llm_pick_is_source_bound():
 
     # LLM 选中合法梗字（文案逐字片段）→ 采用（main+sub 两行）。
     def judge_ok(_prompt: str) -> str:
+        if "最终文字语义裁决者" in _prompt:
+            return (
+                '{"schema_version":"lidousha-cover-punch-semantic-review.v1",'
+                '"status":"PASS",'
+                '"final_punch":{"main":"才，才不是熊猫呢！","sub":"是奶P！"},'
+                '"stranger_can_infer_event":true,'
+                '"contains_concrete_subject":true,'
+                '"contains_action_or_conflict":true,'
+                '"story_summary":"她嘴硬否认自己是熊猫并自称奶P",'
+                '"click_motivation":"身份反差和嘴硬原话让人想看前因后果"}'
+            )
         return (
             '{"role":"stubborn_pout","expression_en":"pouty defiant frown",'
             '"hook_word":"熊猫","words":[],"lines":[],'
@@ -4557,6 +4571,17 @@ def test_cover_punch_llm_pick_is_source_bound():
 
     # 编造的字（不在文案里）→ 拒绝 → 回退确定性兜底。
     def judge_fabricated(_prompt: str) -> str:
+        if "最终文字语义裁决者" in _prompt:
+            return (
+                '{"schema_version":"lidousha-cover-punch-semantic-review.v1",'
+                '"status":"PASS",'
+                '"final_punch":{"main":"才不是熊猫呢！","sub":null},'
+                '"stranger_can_infer_event":true,'
+                '"contains_concrete_subject":true,'
+                '"contains_action_or_conflict":true,'
+                '"story_summary":"她用原话嘴硬否认自己是熊猫",'
+                '"click_motivation":"强烈否认形成身份反差并引出前因"}'
+            )
         return (
             '{"role":"stubborn_pout","expression_en":"pouty defiant frown",'
             '"hook_word":"熊猫","words":[],"lines":[],'
@@ -4584,6 +4609,73 @@ def test_cover_punch_llm_pick_is_source_bound():
         art_direction_llm_call=judge_ok,
     )
     assert ignored.cover_punch == ()
+
+
+def test_cover_punch_cpa_repairs_real_raw_beans_fragmentation():
+    from src.autoslice import cover_generation
+
+    title = (
+        "【李豆沙】听说安晚也吃了生豆角，熊猫头下播就去暗示礼墨，"
+        "三人组必须团结有默契！"
+    )
+    cover_text = title.removeprefix("【李豆沙】")
+    story_hook = (
+        "听说安晚也吃了生豆角，李豆沙震惊之余决定下播暗示礼墨也吃，"
+        "誓要用集体中招维护三人组的“团结默契”。"
+    )
+
+    def judge(prompt: str) -> str:
+        if "最终文字语义裁决者" in prompt:
+            return (
+                '{"schema_version":"lidousha-cover-punch-semantic-review.v1",'
+                '"status":"REVISE",'
+                '"final_punch":{"main":"安晚也吃了生豆角","sub":"三人组必须团结"},'
+                '"stranger_can_infer_event":true,'
+                '"contains_concrete_subject":true,'
+                '"contains_action_or_conflict":true,'
+                '"story_summary":"安晚吃了生豆角后她把集体中招说成三人组团结",'
+                '"click_motivation":"食物中毒和团结口号的荒诞反差让人想看她如何圆场"}'
+            )
+        return (
+            '{"role":"witty_smug","expression_en":"mischievous smile",'
+            '"hook_word":"生豆角","scene_props":["raw green beans"],'
+            '"words":[],"lines":[],'
+            '"cover_punch":{"main":"生豆角","sub":"熊猫头下播"}}'
+        )
+
+    direction = shadow_pipeline._lidousha_cover_art_direction(
+        candidate_id="auto_183122_1209_1410",
+        title=title,
+        cover_text=cover_text,
+        story_hook=story_hook,
+        art_direction_llm_call=judge,
+        allow_punch=True,
+    )
+
+    assert direction.cover_punch == (
+        "安晚也吃了生豆角",
+        "三人组必须团结",
+    )
+    review = direction.cover_punch_semantic_review
+    assert review["status"] == "REVISED"
+    assert cover_generation.validate_cover_punch_semantic_review(
+        review,
+        rendered_lines=list(direction.cover_punch),
+        cover_text=cover_text,
+        story_hook=story_hook,
+    )
+    assert not cover_generation.validate_cover_punch_semantic_review(
+        review,
+        rendered_lines=["生豆角", "熊猫头下播"],
+        cover_text=cover_text,
+        story_hook=story_hook,
+    )
+    assert not cover_generation.validate_cover_punch_semantic_review(
+        review,
+        rendered_lines=list(direction.cover_punch),
+        cover_text=cover_text,
+        story_hook=story_hook + "（伪造）",
+    )
 
 
 def test_overlay_renders_punch_instead_of_full_text(tmp_path):
@@ -4646,7 +4738,7 @@ def test_overlay_rejects_talk_title_that_repeats_the_known_91px_failure(tmp_path
 
 
 def test_screenshot_direct_cover_skips_cpa_and_needs_no_creds(tmp_path, monkeypatch):
-    """AUTOSLICE_COVER_MODE=screenshot：表现力帧+梗字直出，全程零 CPA 调用。"""
+    """screenshot 可零 CPA 出图，但无文字裁决时必须渲染完整文案。"""
 
     from PIL import Image
 
@@ -4677,7 +4769,10 @@ def test_screenshot_direct_cover_skips_cpa_and_needs_no_creds(tmp_path, monkeypa
     generation = result["cover_generation"]
     assert generation["cover_mode"] == "screenshot"
     assert generation["method"] == "screenshot_direct"
-    assert generation["cover_text_mode"] == "punch"
+    assert generation["cover_text_mode"] == "full"
+    assert generation["art_direction"][
+        "cover_punch_semantic_review"
+    ]["reason_code"] == "CPA_TEXT_REVIEW_UNAVAILABLE"
     assert generation["reference_selection"]["status"] == "SELECTED"
     assert generation["screenshot_graphic_poster"]["status"] == "COMPOSED"
     assert generation["screenshot_graphic_poster"]["background_style"] == generation["background_style"]

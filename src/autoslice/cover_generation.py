@@ -1,9 +1,4 @@
-"""Profile-driven AI cover generation, art direction, and title overlay.
-
-Extracted from the shadow pipeline as one cohesive subsystem.  The default
-profile keeps the historical Li Dousha prompts, fonts, layouts, and rendering
-contracts; a selected channel profile supplies identity and asset paths.
-"""
+"""Profile-driven AI cover generation, art direction, and title overlay."""
 
 from __future__ import annotations
 
@@ -14,7 +9,7 @@ import os
 import re
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, replace as dataclass_replace
+from dataclasses import dataclass, field, replace as dataclass_replace
 from pathlib import Path
 from typing import Callable, Mapping, NamedTuple, Sequence
 
@@ -24,6 +19,10 @@ from src.autoslice.cover_emote import (
     EmoteLibrary,
     emote_catalog_prompt_block,
     normalize_emote_choice,
+)
+from src.autoslice.cover_punch_semantics import (
+    review_cover_punch_semantics,
+    validate_cover_punch_semantic_review,
 )
 from src.autoslice.cover_font_paths import (
     cover_fallback_font_candidates,
@@ -40,11 +39,9 @@ from src.autoslice.cover_title_rendering import (
 )
 from src.autoslice.llm_client import LlmCall, extract_json_object
 
-
 ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(ROOT)
 PROFILE_ID = CHANNEL_PROFILE.profile_id
-
 
 def profile_asset_text(key: str) -> str:
     try:
@@ -65,9 +62,6 @@ def _sha256(path: Path) -> str:
 
 def _lidousha_fontsdir(media_path: Path | None = None) -> Path | None:
     return resolve_cover_fonts_dir(media_path, channel_profile=CHANNEL_PROFILE, root=ROOT)
-
-
-# --------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class LidoushaCoverArtDirection:
@@ -103,6 +97,10 @@ class LidoushaCoverArtDirection:
     # 只有自动标题允许（手定标题守"成分不许丢"旧铁律，见 2026-07-06 案）；
     # 歌切 song-clean 永远不用（裸《歌名》已是终态）。
     cover_punch: tuple[str, ...] = ()
+    # CPA 须证明短梗对陌生观众语义自足，否则退回完整 cover_text。
+    cover_punch_semantic_review: dict[str, object] = field(
+        default_factory=dict
+    )
 
 
 _COVER_TALK_LAYOUTS = ("left-split", "right-split", "banner")
@@ -336,6 +334,7 @@ def _lidousha_cover_art_direction(
     emote_library: EmoteLibrary | None = None,
     allow_punch: bool = False,
     diversity_slot: int | None = None,
+    story_hook: str = "",
 ) -> LidoushaCoverArtDirection:
     """Pick the cover's role/expression/background/layout/hook color.
 
@@ -346,7 +345,6 @@ def _lidousha_cover_art_direction(
     """
 
     is_song = _lidousha_is_song_title(title)
-    # 歌切封面永远裸《歌名》banner，梗字模式只属于自动谈话封面。
     allow_punch = allow_punch and not is_song
     digest = _cover_stable_hash(candidate_id or title)
     hook_keys = list(_COVER_HOOK_COLORS)
@@ -384,6 +382,20 @@ def _lidousha_cover_art_direction(
         cover_punch=_cover_default_punch(cover_text) if allow_punch else (),
     )
     if art_direction_llm_call is None:
+        if allow_punch and not baseline.is_song:
+            reviewed, proof = review_cover_punch_semantics(
+                title=title,
+                cover_text=cover_text,
+                story_hook=story_hook,
+                punch=baseline.cover_punch,
+                llm_call=None,
+                punch_validator=_validated_cover_punch,
+            )
+            baseline = dataclass_replace(
+                baseline,
+                cover_punch=reviewed,
+                cover_punch_semantic_review=proof,
+            )
         return _punch_layout_override(baseline)
     try:
         payload = extract_json_object(
@@ -391,19 +403,37 @@ def _lidousha_cover_art_direction(
                 _cover_art_direction_prompt(
                     title=title,
                     cover_text=cover_text,
+                    story_hook=story_hook,
                     baseline=baseline,
                     emote_library=emote_library,
                     allow_punch=allow_punch,
                 )
             )
         )
-        return _punch_layout_override(
-            _normalize_cover_art_direction(
-                payload, baseline, cover_text, emote_library=emote_library, allow_punch=allow_punch
-            )
+        direction = _normalize_cover_art_direction(
+            payload,
+            baseline,
+            cover_text,
+            emote_library=emote_library,
+            allow_punch=allow_punch,
         )
     except Exception:
-        return _punch_layout_override(baseline)
+        direction = baseline
+    if allow_punch and not direction.is_song:
+        reviewed, proof = review_cover_punch_semantics(
+            title=title,
+            cover_text=cover_text,
+            story_hook=story_hook,
+            punch=direction.cover_punch,
+            llm_call=art_direction_llm_call,
+            punch_validator=_validated_cover_punch,
+        )
+        direction = dataclass_replace(
+            direction,
+            cover_punch=reviewed,
+            cover_punch_semantic_review=proof,
+        )
+    return _punch_layout_override(direction)
 
 
 def _punch_layout_override(direction: LidoushaCoverArtDirection) -> LidoushaCoverArtDirection:
@@ -423,6 +453,7 @@ def _cover_art_direction_prompt(
     *,
     title: str,
     cover_text: str,
+    story_hook: str,
     baseline: LidoushaCoverArtDirection,
     emote_library: EmoteLibrary | None = None,
     allow_punch: bool = False,
@@ -458,6 +489,7 @@ def _cover_art_direction_prompt(
         "机灵鬼怪/得意只在角色需要时用(次要);**永远不要吐舌头**,不要油滑/挑衅/性感/媚。"
         "外观由参考帧决定,你不描述服装。\n"
         f"\n本切片标题: {title}\n封面文案(分行): {cover_text}\n"
+        f"完整 StoryContract selection_hook: {story_hook or '(未提供，按标题裁决)'}\n"
         "\n系统已经为本条锁定下列三个抗同质化轴，禁止改动；它们由跨切片稳定轮换决定，而不是语义裁判决定:\n"
         f"- layout: {baseline.layout}\n"
         f"- background_style: {baseline.background_style}\n"

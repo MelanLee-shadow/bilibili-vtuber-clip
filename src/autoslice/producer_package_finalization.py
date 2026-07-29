@@ -22,6 +22,9 @@ from src.autoslice.cover_reference_authority import (
     load_candidate_cover_reference,
 )
 from src.autoslice.cover_font_paths import resolve_trusted_cover_font
+from src.autoslice.cover_generation import (
+    validate_cover_punch_semantic_review,
+)
 from src.autoslice.cover_route_evidence import (
     validate_cover_route_decision,
     validate_rendered_text_pixel_evidence,
@@ -198,6 +201,20 @@ def _audit_story_bound_cover(
         reason_codes.add("COVER_ROUTE_DECISION_MISSING_OR_INVALID")
     if not validate_rendered_text_pixel_evidence(generation):
         reason_codes.add("COVER_RENDERED_TEXT_PIXELS_MISSING_OR_INVALID")
+    if generation.get("cover_text_mode") == "punch":
+        art_direction = generation.get("art_direction")
+        punch_review = (
+            art_direction.get("cover_punch_semantic_review")
+            if isinstance(art_direction, Mapping)
+            else None
+        )
+        if not validate_cover_punch_semantic_review(
+            punch_review,
+            rendered_lines=rendered_lines,
+            cover_text=cover_text,
+            story_hook=str(story_contract.get("selection_hook") or ""),
+        ):
+            reason_codes.add("COVER_PUNCH_SEMANTIC_REVIEW_INVALID")
     pixel_evidence = generation.get("rendered_text_pixels")
     if isinstance(pixel_evidence, Mapping):
         try:

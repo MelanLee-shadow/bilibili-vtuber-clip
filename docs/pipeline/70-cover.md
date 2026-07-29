@@ -12,6 +12,14 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
 - 同场批内创新硬门：selection 为 talk 入选项持久化 `cover_diversity_slot`；前 5 张不得碰撞背景家族。0–5 依次为蓝色漫画爆炸、暖色手账拼贴、紫色霓虹舞台、薄荷贴纸涂鸦、黑白漫画分镜、珊瑚棋盘杂志。返修必须继承该槽位，不能退回独立随机抽色。
 - 版式：talk 轮换 left-split/right-split/banner；歌切恒 song-clean 且标题字要大（banner 级）；art direction 由 `_lidousha_cover_art_direction` 决定（`cover_generation.py`）。短梗字会为可读性强制 banner，但背景家族仍必须批内不同。
 - 自动 talk 封面按 2026-07-20 生态调研采用 2–12 字的原话/质问/反差梗字，配真实表情帧和更大的脸；完整长标题不是默认封面文案。Ivan 定稿标题仍按人工权威保留其要求的全部成分；歌切恒为 `《歌名》`。
+- 短梗字不能只过“逐字来自标题、每行 2–12 字”的词面门。选择器必须把完整
+  StoryContract `selection_hook` 连同标题交给 **CPA 文字模型**做最终语义裁决，并落盘
+  hash-bound `lidousha-cover-punch-semantic-review.v1`：陌生观众只看最终 1–2 行也必须能
+  推断一个具体事件、动作/冲突/荒诞因果和点击动机。两个分别合法但合起来不成事件的碎片
+  （2026-07-24 “生豆角 / 熊猫头下播”案）必须改选；CPA 不能用“背景也许会画出道具”
+  补文字语义缺口。裁决不可用、证据缺失或无法从原文抽出自足梗字时，退回完整
+  `cover_text`，不得把碎片封面放行。CPA 在这里没有音频/图像输入，只裁决文字语义；
+  包审计须重新校验 final rendered lines、StoryContract/cover_text hashes 与该回执。
 - talk 封面强调字号必须 `>=120px`；渲染低于该线直接报 `COVER_TITLE_TOO_SMALL`，交付包审计也必须阻断。不得用“文件完整/没有裁字”代替缩略图可读性验收；应缩短封面梗字或换更宽版式，禁止继续缩字（2026-07-22 当面对质封面 91px 回归案）。
 - renderer 必须记录 `lidousha-cover-rendered-text-pixels.v3`，并内嵌
   `lidousha-cover-title-render-spec.v1`。render spec 逐字绑定分行/分段文本、位置、字号、颜色、
