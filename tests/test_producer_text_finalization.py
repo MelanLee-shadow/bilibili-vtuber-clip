@@ -285,6 +285,9 @@ def test_hash_bound_release_grade_merge_preserves_baseline_owner() -> None:
     )
     audit["final_release_grade_cue_merges"] = deepcopy(receipts)
     audit["final_output_srt_sha256"] = final_hash
+    audit["final_verification_failure"] = (
+        "REDELIVERY_BASELINE_FINAL_OWNER_NOT_VERIFIED"
+    )
 
     assert verify_chat_authority_final_surfaces(
         audit,
@@ -295,6 +298,7 @@ def test_hash_bound_release_grade_merge_preserves_baseline_owner() -> None:
     )
     receipt = audit["final_redelivery_baseline_owner_verification"]
     assert receipt["status"] == "PASS"
+    assert "final_verification_failure" not in audit
     assert receipt["release_grade_merge_group_count"] == 2
     assert all(
         row["final_owner_scope"]

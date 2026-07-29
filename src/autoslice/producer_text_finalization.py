@@ -1261,6 +1261,12 @@ def verify_chat_authority_final_surfaces(
 ) -> bool:
     """Verify every in-delivery authority decision at its original time span."""
 
+    # Recovery retries reuse the prior chat-authority audit.  A successful
+    # verification must not retain the previous attempt's terminal reason
+    # (2026-07-22 1863 otherwise returned True while still serializing
+    # REDELIVERY_BASELINE_FINAL_OWNER_NOT_VERIFIED).
+    audit.pop("final_verification_failure", None)
+
     hard_meme_failures = {}
     for surface_name, srt_text in (
         ("final_text_srt", final_text_srt),
