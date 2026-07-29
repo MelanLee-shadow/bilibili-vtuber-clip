@@ -3056,6 +3056,36 @@
    "source_start_ms": 1947130,
    "text": "这怎么怎么是 ttt15 的头像",
    "truth_id": "20260722-nancho-hotpot-ttt15-sc-id-r1"
+  },
+  {
+   "action": "replace_cue",
+   "assertion_state": "VERIFIED_ACTIVE",
+   "authority": "Ivan established CPA as the final text judge and directed this latest-pipeline same-BV redo to upload without another review on 2026-07-29. CPA closed-set text adjudication chose A4 with p=0.46 (prompt sha256=7afe1491c88334c28ca83f99e65315fc067a77bf7cfb1a2098194160727e77ec; result sha256=18f0271090b0e5a925653fb4212b9d31bafdef3589ee159115c74fa57fd93136). The candidate is bound only to the exact source interval.",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "CPA_FINAL_TEXT_ADJUDICATION",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260711-16-20-16.mp4",
+   "required": true,
+   "revision_id": "r1",
+   "source_end_ms": 154750,
+   "source_start_ms": 153430,
+   "text": "那个，我勉为其难",
+   "truth_id": "20260711-pink-self-nomination-nage-r1"
+  },
+  {
+   "action": "replace_cue",
+   "assertion_state": "VERIFIED_ACTIVE",
+   "authority": "Ivan established CPA as the final text judge and directed this latest-pipeline same-BV redo to upload without another review on 2026-07-29. CPA closed-set text adjudication chose B2 with p=0.89 (prompt sha256=7afe1491c88334c28ca83f99e65315fc067a77bf7cfb1a2098194160727e77ec; result sha256=18f0271090b0e5a925653fb4212b9d31bafdef3589ee159115c74fa57fd93136). This keeps registered person name 礼墨 distinct from the CP name 李墨 and is bound only to the exact source interval.",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "CPA_FINAL_TEXT_ADJUDICATION",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260711-16-20-16.mp4",
+   "required": true,
+   "revision_id": "r1",
+   "source_end_ms": 241240,
+   "source_start_ms": 237680,
+   "text": "嗯，我还是比较磕李墨，哈哈",
+   "truth_id": "20260711-pink-cp-name-limo-r1"
   }
  ],
  "governance": {

@@ -3465,6 +3465,48 @@ def test_committed_1493_truth_repairs_early_shadouli_team_reference():
     }
 
 
+def test_committed_pink_cpa_truths_pin_filler_and_cp_name():
+    ledger = (
+        REPO_ROOT / "assets" / "lidousha" / "subtitle_truth_ledger.v1.json"
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        """1
+00:02:22,530 --> 00:02:23,890
+黑哥，我勉为其难
+
+2
+00:03:46,790 --> 00:03:50,350
+嗯，我还是比较磕礼墨，哈哈
+""",
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recordings/22966160_20260711-16-20-16.mp4"
+                    ),
+                    "start_ms": 10_890,
+                    "end_ms": 241_240,
+                }
+            ]
+        },
+        durations=[230_350],
+        ledger_path=ledger,
+    )
+
+    assert audit["status"] == "APPLIED", audit["failures"]
+    assert not audit["failures"]
+    assert [cue.text for cue in parse_srt_cues(corrected)] == [
+        "那个，我勉为其难",
+        "嗯，我还是比较磕李墨，哈哈",
+    ]
+    assert {
+        row["truth_id"] for row in audit["applied"]
+    } == {
+        "20260711-pink-self-nomination-nage-r1",
+        "20260711-pink-cp-name-limo-r1",
+    }
+
+
 def test_committed_1209_adjacent_truths_split_a_straddling_fresh_cue():
     """相邻 operator truth 的公共边界落在 cue 内时不得后写覆盖前写。"""
 

@@ -1,0 +1,55 @@
+{
+  "candidate_id": "auto_162016_20_319",
+  "cpa_result": {
+    "items": [
+      {
+        "choice": "A4",
+        "item": "A",
+        "ranking": [
+          {"choice": "A4", "p": 0.46},
+          {"choice": "A5", "p": 0.18},
+          {"choice": "A6", "p": 0.13},
+          {"choice": "A1", "p": 0.11},
+          {"choice": "A2", "p": 0.05},
+          {"choice": "A7", "p": 0.04},
+          {"choice": "A3", "p": 0.03}
+        ],
+        "reason": "A4最符合说话者以迟疑语气开玩笑自荐的语境，且先前人工裁决的可信度高于相互矛盾的短窗听写。"
+      },
+      {
+        "choice": "B2",
+        "item": "B",
+        "ranking": [
+          {"choice": "B2", "p": 0.89},
+          {"choice": "B3", "p": 0.07},
+          {"choice": "B1", "p": 0.02},
+          {"choice": "B4", "p": 0.02}
+        ],
+        "reason": "后文明确以通常说礼豆沙而不是李墨来解释命名差异，直接反证此处说的是B2。"
+      }
+    ],
+    "schema_version": "pink-clip-cpa-text-adjudication.v1"
+  },
+  "cpa_result_sha256": "18f0271090b0e5a925653fb4212b9d31bafdef3589ee159115c74fa57fd93136",
+  "decision_authority": "CPA_JUDGE",
+  "deployed_commit": "7873de30c045f5e3f880f48815af9028f8a1b407",
+  "normalized_cpa_result_sha256": "e0df85c3a0d750b505121d62999a55c2aeaa7f883a23517a1996ed29319ddc38",
+  "prompt_sha256": "7afe1491c88334c28ca83f99e65315fc067a77bf7cfb1a2098194160727e77ec",
+  "source_intervals": [
+    {
+      "item": "A",
+      "recording_basename": "22966160_20260711-16-20-16.mp4",
+      "source_end_ms": 154750,
+      "source_start_ms": 153430,
+      "text": "那个，我勉为其难"
+    },
+    {
+      "item": "B",
+      "recording_basename": "22966160_20260711-16-20-16.mp4",
+      "source_end_ms": 241240,
+      "source_start_ms": 237680,
+      "text": "嗯，我还是比较磕李墨，哈哈"
+    }
+  ],
+  "status": "JUDGED"
+}
