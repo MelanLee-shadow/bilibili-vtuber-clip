@@ -1162,6 +1162,51 @@ def test_plain_insertion_without_source_provenance_still_rejected():
     )
 
 
+def test_spoken_unit_insertion_is_bounded_then_goes_through_cpa():
+    """A missing ordinary spoken word is not an entity-only insertion.
+
+    The full-cue diff owns an empty span, but the candidate still cannot
+    mutate bytes until AGY supplies candidate-blind pronunciation evidence
+    and CPA chooses PROPOSED from the closed set.
+    """
+
+    source = _srt("为什么是")
+    findings = audit_final_subtitles(
+        source,
+        llm_call=_fake_llm(
+            [
+                {
+                    "cue": 1,
+                    "kind": "context",
+                    "proposed_full_cue": "为什么是又",
+                    "repair_class": "spoken_unit",
+                    "why": "疑似漏了追问里的又",
+                }
+            ]
+        ),
+        extract_json=json.loads,
+    )
+
+    finding = findings[0]
+    assert finding["suspect"] == ""
+    assert finding["suggestion"] == "又"
+    assert finding["span_start_codepoint"] == finding["span_end_codepoint"]
+    routed, audit = route_findings(source, findings)
+    assert routed == source
+    assert audit["findings"][0]["routed"] == "disclosure"
+
+    repaired, adjudication = adjudicate_context_finding(
+        source,
+        finding,
+        entity_verifier=lambda request: _witness(
+            request, "wei shen me shi you"
+        ),
+        judge_llm_call=_judge("PROPOSED"),
+    )
+    assert "为什么是又" in repaired
+    assert adjudication["decision_authority"] == "CPA_JUDGE"
+
+
 def test_acoustic_partial_delete_removes_only_unspoken_prefix():
     source = _srt("我草，乱说的啊")
     findings = audit_final_subtitles(

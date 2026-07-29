@@ -789,7 +789,8 @@ def audit_final_subtitles(
             ) = _derive_single_span_edit(
                 base_text,
                 proposed,
-                allow_insertion=repair_class == "source_backed_entity",
+                allow_insertion=repair_class
+                in {"source_backed_entity", "spoken_unit"},
                 allow_deletion=repair_class
                 in {"acoustic_delete", "acoustic_drop_cue"},
             )
@@ -941,8 +942,9 @@ def audit_final_subtitles(
         suggestion = (
             derived_replacement if proposed_supplied and not contract_error else None
         )
-        # 空 suspect 只有一种合法形态：source_backed_entity 的插入建议
-        # （kmx 整词漏听案）；其余空 suspect 一律丢弃。
+        # 空 suspect 只有两种合法形态：source_backed_entity 的整词
+        # 漏听，或 spoken_unit 的小范围漏字。两者都只生成闭集
+        # 候选，必须继续走 AGY 拼音见证 + CPA 终审；无提案仍丢弃。
         if not suspect and suggestion is None:
             invalid_rows.append(
                 {
@@ -1197,10 +1199,11 @@ def _derive_single_span_edit(
 ) -> tuple[str, str, int, int, str | None]:
     """Derive the one minimal outer changed interval from two full cues.
 
-    ``allow_insertion``（2026-07-18 kmx 整词漏听案）：ASR 零召回的专名无法用
-    「替换」表达，必须允许插入——但只对 source_backed_entity（词面已被转写/
-    词表/结构化证据见证）放开，且插入候选仍要走声学仲裁两候选比较。删除
-    永远不放开（幻听删除有专门 pass，审片员不持删刀）。
+    ``allow_insertion``：ASR 零召回的专名或小范围漏字无法用
+    「替换」表达，必须允许插入。调用者只对 source_backed_entity
+    （词面已被转写/词表/结构化证据见证）或 spoken_unit 放开，
+    且插入候选仍要走声学见证 + CPA 闭集裁决。删除仍只在专门
+    acoustic 类别下放开。
     """
 
     if base_text == proposed_text:
