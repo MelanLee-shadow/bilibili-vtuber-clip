@@ -394,7 +394,7 @@ def test_single_published_projection_accepts_valid_exact_recovery_source():
         "pending_talk": [],
         "talk_selection_contract": selection_contract,
         "delivery_rerun_plan": {
-            "schema_version": "recovery-review-talk-rerun-plan.v7",
+            "schema_version": "recovery-review-talk-rerun-plan.v5",
             "talk_selection_contract": selection_contract,
         },
     }
@@ -445,6 +445,42 @@ def test_single_published_projection_rejects_mismatched_recovery_plan():
                 **selection_contract,
                 "candidate_ids": [],
             },
+        },
+    }
+
+    with pytest.raises(
+        SystemExit,
+        match="source recovery contract is invalid",
+    ):
+        planner._project_single_published_repair_state(
+            state,
+            candidate_id="auto_193450_1863_2056",
+            source_state_sha256="sha256:" + "a" * 64,
+            delivered_statuses=runner.DELIVERED_TALK_STATUSES,
+        )
+
+
+def test_single_published_projection_rejects_unknown_recovery_plan_schema():
+    selection_contract = {
+        "schema_version": "talk-selection-contract.v1",
+        "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+        "candidate_ids": ["auto_193450_1863_2056"],
+    }
+    state = {
+        "run_mode": "RECOVERY_REVIEW",
+        "upload_allowed": False,
+        "picks": [
+            _record(
+                "auto_193450_1863_2056",
+                start_ms=1_863_760,
+                end_ms=2_056_480,
+            )
+        ],
+        "pending_talk": [],
+        "talk_selection_contract": selection_contract,
+        "delivery_rerun_plan": {
+            "schema_version": "recovery-review-talk-rerun-plan.v4",
+            "talk_selection_contract": selection_contract,
         },
     }
 

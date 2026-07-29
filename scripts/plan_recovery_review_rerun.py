@@ -26,6 +26,13 @@ if str(ROOT) not in sys.path:
 
 
 FINGERPRINT_RX = re.compile(r"sha256:[0-9a-f]{64}")
+SUPPORTED_SOURCE_RERUN_PLAN_SCHEMAS = frozenset(
+    {
+        "recovery-review-talk-rerun-plan.v5",
+        "recovery-review-talk-rerun-plan.v6",
+        "recovery-review-talk-rerun-plan.v7",
+    }
+)
 
 
 def _regular_file_bytes(path: Path, *, label: str) -> bytes:
@@ -232,7 +239,7 @@ def _project_single_published_repair_state(
         == len(set(selection_contract["candidate_ids"]))
         and isinstance(rerun_plan, dict)
         and rerun_plan.get("schema_version")
-        == "recovery-review-talk-rerun-plan.v7"
+        in SUPPORTED_SOURCE_RERUN_PLAN_SCHEMAS
         and rerun_plan.get("talk_selection_contract")
         == selection_contract
     ):
