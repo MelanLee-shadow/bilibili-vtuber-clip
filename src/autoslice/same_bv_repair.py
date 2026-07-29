@@ -1038,8 +1038,12 @@ def create_plan(
             problems.append("section CID does not equal the sole Creator CID")
         if matches[0].get("bvid") not in (None, bvid):
             problems.append("section BVID mismatch")
-        if matches[0].get("title") != (creator.get("metadata") or {}).get("title"):
-            problems.append("section title disagrees with Creator title")
+        # A stale exact-section episode title is itself a repairable metadata
+        # defect.  Freeze it in ``before`` instead of deadlocking the only
+        # legal same-BV repair lane.  The runner's existing one-shot
+        # SECTION_TITLE_SYNC state will later accept only this exact frozen
+        # old value and only after Creator/public have converged on the new
+        # CID and target metadata.
     if problems:
         raise PlanInvalid("; ".join(problems))
 

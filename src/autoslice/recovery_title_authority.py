@@ -31,6 +31,14 @@ PUBLICATION_REGISTRY_SCHEMA = (
 )
 _SOURCE_SCHEMA = "authorized-upload-public-verify.v2"
 _SOURCE_STATUS = "VERIFIED_PUBLIC"
+_REPAIR_IDENTITY_SCHEMA = "recovery-publication-identity.v1"
+_REPAIR_IDENTITY_STATUS = "VERIFIED_TITLE_AND_TARGET_IDENTITY"
+_SOURCE_AUTHORITY_TYPES = frozenset(
+    {
+        (_SOURCE_SCHEMA, _SOURCE_STATUS),
+        (_REPAIR_IDENTITY_SCHEMA, _REPAIR_IDENTITY_STATUS),
+    }
+)
 _SHA256_RX = re.compile(r"sha256:[0-9a-f]{64}")
 _CANDIDATE_RX = re.compile(r"[A-Za-z0-9_-]{1,96}")
 _BVID_RX = re.compile(r"BV[0-9A-Za-z]{10}")
@@ -171,14 +179,26 @@ def _validated_source_identity_receipt(
         raise RecoveryTitleAuthorityError(
             "RECOVERY_PUBLIC_TITLE_EVIDENCE_JSON_INVALID"
         ) from exc
-    if (
-        not isinstance(receipt, Mapping)
-        or receipt.get("schema_version") != _SOURCE_SCHEMA
-        or receipt.get("status") != _SOURCE_STATUS
-    ):
+    if not isinstance(receipt, Mapping) or (
+        receipt.get("schema_version"), receipt.get("status")
+    ) not in _SOURCE_AUTHORITY_TYPES:
         raise RecoveryTitleAuthorityError(
             "RECOVERY_PUBLIC_TITLE_EVIDENCE_STATUS_INVALID"
         )
+    if receipt.get("schema_version") == _REPAIR_IDENTITY_SCHEMA:
+        section = receipt.get("section_api")
+        if (
+            receipt.get("problems")
+            != ["exact section episode title mismatch"]
+            or not isinstance(section, Mapping)
+            or section.get("code") != 0
+            or section.get("episode_match_count") != 1
+            or not isinstance(section.get("episode_titles"), list)
+            or len(section["episode_titles"]) != 1
+        ):
+            raise RecoveryTitleAuthorityError(
+                "RECOVERY_PUBLIC_TITLE_REPAIR_IDENTITY_INVALID"
+            )
     expected = receipt.get("expected")
     public = receipt.get("public_view")
     member = receipt.get("member_archive")
@@ -201,6 +221,14 @@ def _validated_source_identity_receipt(
     if len(titles) != 1 or not (title := next(iter(titles))):
         raise RecoveryTitleAuthorityError(
             "RECOVERY_PUBLIC_TITLE_SURFACE_MISMATCH"
+        )
+    if (
+        receipt.get("schema_version") == _REPAIR_IDENTITY_SCHEMA
+        and (receipt.get("section_api") or {}).get("episode_titles")
+        == [title]
+    ):
+        raise RecoveryTitleAuthorityError(
+            "RECOVERY_PUBLIC_TITLE_REPAIR_IDENTITY_INVALID"
         )
     if public.get("code") != 0 or public.get("state") != 0:
         raise RecoveryTitleAuthorityError(
@@ -262,8 +290,11 @@ def _validated_publication_entry(
         or entry.get("boundary_end_mode") not in _BOUNDARY_END_MODES
         or _BVID_RX.fullmatch(str(entry.get("bvid") or "")) is None
         or _SHA256_RX.fullmatch(source_sha) is None
-        or entry.get("source_public_verify_schema_version") != _SOURCE_SCHEMA
-        or entry.get("source_public_verify_status") != _SOURCE_STATUS
+        or (
+            entry.get("source_public_verify_schema_version"),
+            entry.get("source_public_verify_status"),
+        )
+        not in _SOURCE_AUTHORITY_TYPES
     ):
         raise RecoveryTitleAuthorityError(
             "RECOVERY_PUBLICATION_REGISTRY_ENTRY_INVALID"
@@ -303,6 +334,16 @@ def _validated_publication_entry(
         if "sha256:" + hashlib.sha256(raw).hexdigest() != source_sha:
             raise RecoveryTitleAuthorityError(
                 "RECOVERY_PUBLICATION_SOURCE_RECEIPT_SHA_MISMATCH"
+            )
+        receipt = json.loads(raw.decode("utf-8"))
+        if (
+            receipt.get("schema_version")
+            != entry.get("source_public_verify_schema_version")
+            or receipt.get("status")
+            != entry.get("source_public_verify_status")
+        ):
+            raise RecoveryTitleAuthorityError(
+                "RECOVERY_PUBLICATION_SOURCE_RECEIPT_TYPE_MISMATCH"
             )
         title, bvid, aid, cid = _validated_source_identity_receipt(raw)
         if (

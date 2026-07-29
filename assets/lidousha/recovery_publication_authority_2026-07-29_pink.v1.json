@@ -1,0 +1,20 @@
+{
+  "schema_version": "lidousha-recovery-publication-authority.v1",
+  "authority": "Ivan 2026-07-29: after completing the current repairs, remake the already-published pink-sister / 0.6 / 'I am a niece' clip with the latest pipeline and upload the result directly without waiting for another review; preserve the existing BV and current public title. Audio fingerprinting proved the public 303-second item is one continuous span of replay 4716.529-5019.740s, and the latest selector recalled the self-contained story as auto_162016_20_319. The published endpoint is a recall anchor: CPA may resolve the exact semantic endpoint inside the bounded source window but must keep the complete final 'I am a niece' payoff.",
+  "entries": [
+    {
+      "candidate_id": "auto_162016_20_319",
+      "title_mode": "verified_public_exact",
+      "observed_public_title": "【李豆沙】小李被粉色小姐姐布下迷魂阵仍然逞强自己相对礼墨是0.6，突然想起来绝望大喊「我是侄女啊」",
+      "required_given_end_ms": 319810,
+      "boundary_end_mode": "published_recall_anchor",
+      "bvid": "BV1RPNR6dET9",
+      "aid": 116916727323413,
+      "cid": 39933773974,
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-29-pink-source/auto_162016_20_319.publication_identity.json",
+      "source_public_verify_sha256": "sha256:474ad5530f5ea5f6522759d02061b2a4465fe40f69088b42771e55695b35010b",
+      "source_public_verify_schema_version": "recovery-publication-identity.v1",
+      "source_public_verify_status": "VERIFIED_TITLE_AND_TARGET_IDENTITY"
+    }
+  ]
+}

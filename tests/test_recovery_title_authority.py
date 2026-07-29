@@ -226,6 +226,88 @@ def test_publication_registry_accepts_typed_published_recall_anchor():
     ) == authority
 
 
+def test_publication_registry_accepts_explicit_section_drift_identity_receipt(
+    tmp_path: Path,
+):
+    repo = tmp_path / "repo"
+    evidence_dir = repo / "reports" / "captured"
+    asset_dir = repo / "assets" / "lidousha"
+    evidence_dir.mkdir(parents=True)
+    asset_dir.mkdir(parents=True)
+    candidate_id = "auto_162016_20_319"
+    title = "【李豆沙】已发稿件的粉色小姐姐故事"
+    receipt = {
+        "schema_version": "recovery-publication-identity.v1",
+        "status": "VERIFIED_TITLE_AND_TARGET_IDENTITY",
+        "bvid": "BV1RPNR6dET9",
+        "manifest_title": title,
+        "expected": {"title": title},
+        "public_view": {
+            "code": 0,
+            "state": 0,
+            "aid": 116916727323413,
+            "cid": 39933773974,
+            "title": title,
+        },
+        "member_archive": {
+            "aid": 116916727323413,
+            "bvid": "BV1RPNR6dET9",
+            "title": title,
+        },
+        "section_api": {
+            "code": 0,
+            "episode_match_count": 1,
+            "episode_titles": ["【李豆沙】历史旧标题"],
+        },
+        "problems": ["exact section episode title mismatch"],
+    }
+    receipt_path = evidence_dir / f"{candidate_id}.publication_identity.json"
+    receipt_path.write_text(
+        json.dumps(receipt, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    receipt_sha = "sha256:" + hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    registry = {
+        "schema_version": "lidousha-recovery-publication-authority.v1",
+        "authority": "Ivan directed an in-place latest-pipeline repair.",
+        "entries": [
+            {
+                "candidate_id": candidate_id,
+                "title_mode": "verified_public_exact",
+                "observed_public_title": title,
+                "required_given_end_ms": 319810,
+                "boundary_end_mode": "published_recall_anchor",
+                "bvid": "BV1RPNR6dET9",
+                "aid": 116916727323413,
+                "cid": 39933773974,
+                "source_public_verify_repo_path": receipt_path.relative_to(repo).as_posix(),
+                "source_public_verify_sha256": receipt_sha,
+                "source_public_verify_schema_version": "recovery-publication-identity.v1",
+                "source_public_verify_status": "VERIFIED_TITLE_AND_TARGET_IDENTITY",
+            }
+        ],
+    }
+    registry_path = asset_dir / "publication.json"
+    registry_path.write_text(
+        json.dumps(registry, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    authorities = build_recovery_publication_authorities(
+        candidate_ids={candidate_id},
+        registry_path=registry_path,
+        expected_registry_sha256=(
+            "sha256:" + hashlib.sha256(registry_path.read_bytes()).hexdigest()
+        ),
+        repo_root=repo,
+    )
+
+    assert authorities[candidate_id]["cid"] == 39933773974
+    assert authorities[candidate_id]["source_public_verify_status"] == (
+        "VERIFIED_TITLE_AND_TARGET_IDENTITY"
+    )
+
+
 def test_publication_registry_exact_mode_rejects_omitted_candidate():
     with pytest.raises(
         RecoveryTitleAuthorityError,

@@ -1737,31 +1737,35 @@ def test_plan_and_journal_files_are_create_only(tmp_path):
     assert len(read_journal(journal)) == 1
 
 
-@pytest.mark.parametrize(
-    "mutate,match",
-    [
-        (
-            lambda snapshot: snapshot["public"]["metadata"].__setitem__("title", "另一标题"),
-            "Creator and public metadata disagree",
-        ),
-        (
-            lambda snapshot: snapshot["section"]["matches"][0].__setitem__("title", "另一标题"),
-            "section title disagrees",
-        ),
-    ],
-)
-def test_planning_refuses_preexisting_cross_surface_metadata_drift(tmp_path, mutate, match):
+def test_planning_refuses_preexisting_creator_public_metadata_drift(tmp_path):
     manifest_path, manifest = _manifest(tmp_path)
     snapshot = _before_snapshot()
-    mutate(snapshot)
+    snapshot["public"]["metadata"]["title"] = "另一标题"
 
-    with pytest.raises(PlanInvalid, match=match):
+    with pytest.raises(PlanInvalid, match="Creator and public metadata disagree"):
         create_plan(
             manifest_path=manifest_path,
             manifest=manifest,
             bvid=BVID,
             snapshot=snapshot,
         )
+
+
+def test_planning_freezes_repairable_preexisting_section_title_drift(tmp_path):
+    manifest_path, manifest = _manifest(tmp_path)
+    snapshot = _before_snapshot()
+    snapshot["section"]["matches"][0]["title"] = "已发稿件的旧合集标题"
+
+    plan = create_plan(
+        manifest_path=manifest_path,
+        manifest=manifest,
+        bvid=BVID,
+        snapshot=snapshot,
+    )
+
+    assert plan["before"]["section"]["matches"][0]["title"] == (
+        "已发稿件的旧合集标题"
+    )
 
 
 def test_public_tags_failure_is_unavailable_not_an_empty_tag_observation():

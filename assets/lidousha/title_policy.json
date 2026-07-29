@@ -19,7 +19,7 @@
     "秒[一-鿿]"
   ],
   "min_length": 12,
-  "max_length": 48,
+  "max_length": 49,
   "max_attempts": 3,
   "generic_hook_words": [
     "主播",

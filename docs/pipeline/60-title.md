@@ -12,7 +12,7 @@
   不能靠 `title_llm_call=None` 或手工 JSON 绕过。
 - Ivan 手定标题拥有**正文 authority**：正文逐字保留，不送 LLM 改写，也不套自动标题的
   selection-hook/机器味重写；它不拥有绕过频道 archive envelope 的权限。talk 最终统一补
-  `【李豆沙】`，song 统一成精确目录式；两者都验 12–48 字、外层空白与括号/引号栈。
+  `【李豆沙】`，song 统一成精确目录式；两者都验 12–49 字、外层空白与括号/引号栈。
 - `assets/lidousha/manual_title_overrides.v1.json` 存正文，不存一条可免检的“最终发布标题”。
 - 已发布 same-BV 的媒体恢复不得裸抄旧 record 的 `title`，也不得靠操作员逐条补几个可选
   evidence 参数。唯一入口是 deployable
@@ -25,6 +25,12 @@
   正文完全相等，再统一补当前频道前缀。历史 `authorized-upload-public-verify.v2` receipt
   保留作 registry 的生成/本地复核证据；production 只依赖受管部署的 hash-bound asset，不
   依赖默认不部署的 `reports/`。任一 asset、身份、模式、标题或 surface 漂移都阻断。
+- 若 Creator/public 的 BVID/AID/CID/标题已一致，唯一问题是 exact section
+  episode title 仍为历史旧值，可以生成明示披露该唯一差异的
+  `recovery-publication-identity.v1 / VERIFIED_TITLE_AND_TARGET_IDENTITY`
+  作为已发稿修复的身份/标题证据；它不冒充完整发布验收，也不发生写操作。
+  `repair-plan` 仍须现场重验单 P 和 exact section 身份，并由 one-shot
+  `SECTION_TITLE_SYNC` 在换片成功后闭环这个已披露差异。
 
 ## 歌切标题（铁律，Ivan 2026-07-14 定、2026-07-19 重申）
 
