@@ -458,6 +458,41 @@ def _stage_publish_draft(
         if automatic.title_authority_status is not None:
             title_authority_status = automatic.title_authority_status
 
+        # Keep the shared publication choke point authoritative even if a
+        # recovery attempt reaches it with an older/blocked automatic-title
+        # result.  This is deliberately narrower than regenerating a title:
+        # only profile-declared disposable filler words may change, and the
+        # cleaned title must independently retain an exact phrase from the
+        # authoritative selection hook before the prior block is cleared.
+        choke_repaired_title = canonicalize_automatic_title_fillers(
+            staged_title
+        )
+        choke_hook_valid = (
+            not selection_hook
+            or _selection_hook_has_inferable_anchor(
+                selection_hook=selection_hook,
+                title=choke_repaired_title,
+            )
+        )
+        if (
+            choke_repaired_title != staged_title
+            and not _title_policy_violations(choke_repaired_title)
+            and choke_hook_valid
+            and _TITLE_MIN_LEN
+            <= len(_ensure_lidousha_prefix(choke_repaired_title))
+            <= _TITLE_MAX_LEN
+        ):
+            staged_title = choke_repaired_title
+            title_source = (
+                f"llm+{PROFILE_ID}_style_asset"
+                "+deterministic_filler_removal_at_publish_choke"
+            )
+            title_authority_status = (
+                "RESOLVED_DETERMINISTIC_FILLER_REMOVAL"
+            )
+            title_authority_error = None
+            title_policy_violations = []
+
     # Automatic titles receive deterministic surface canon. A human title body
     # is not silently rewritten; only the channel-owned publish envelope below
     # may be added.

@@ -3628,6 +3628,85 @@ def test_automatic_filler_removal_canonicalizes_selection_hook_anchor():
     assert result.title_policy_violations == []
 
 
+def test_publish_choke_repairs_blocked_legacy_automatic_filler_result(
+    tmp_path, monkeypatch
+):
+    from src.autoslice import publish_staging
+
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"placeholder video")
+    srt = tmp_path / "clip.srt"
+    srt.write_text(
+        "1\n00:00:00,000 --> 00:00:02,000\n拒绝花钱\n",
+        encoding="utf-8",
+    )
+    record = {
+        "status": "MATERIALIZED",
+        "media_path": str(media),
+        "subtitle_path": str(srt),
+        "artifact_hashes": {},
+    }
+    blocked_title = (
+        "【李豆沙】观众想让新3D永久保留“白色奶龙”表情，"
+        "小李当场拒绝花钱"
+    )
+    monkeypatch.setattr(
+        publish_staging,
+        "_resolve_automatic_title",
+        lambda **_kwargs: publish_staging._AutomaticTitleResult(
+            blocked_title,
+            "llm+lidousha_style_asset(title_policy_violation)",
+            None,
+            "title_policy_violation:banned_filler_word",
+            ["banned_filler_word"],
+        ),
+    )
+    cover_calls: list[str] = []
+
+    def stage_cover(_record, **kwargs):
+        cover_calls.append(str(kwargs["title"]))
+        cover_path = tmp_path / "cover.png"
+        cover_path.write_bytes(b"cover")
+        return {
+            "status": "AI_COVER_READY",
+            "cover_path": str(cover_path),
+            "cover_generation": {"status": "READY"},
+            "reason_codes": [],
+        }
+
+    monkeypatch.setattr(
+        shadow_pipeline, "_stage_lidousha_ai_cover", stage_cover
+    )
+    staged = shadow_pipeline._stage_publish_draft(
+        record,
+        candidate_id="talk-filler-publish-choke",
+        title="原始job标题",
+        cues=[],
+        run_ffmpeg=False,
+        title_llm_call=lambda _prompt: "{}",
+        selection_hook=(
+            "观众想让新3D永久保留“白色奶龙”表情，"
+            "李豆沙当场拒绝花钱，还坦白旧模型越看越恐怖。"
+        ),
+    )
+
+    staging = staged["publish_staging"]
+    assert staging["title"] == (
+        "【李豆沙】观众想让新3D永久保留“白色奶龙”表情，小李拒绝花钱"
+    )
+    assert staging["title_source"].endswith(
+        "deterministic_filler_removal_at_publish_choke"
+    )
+    assert (
+        staging["title_authority_status"]
+        == "RESOLVED_DETERMINISTIC_FILLER_REMOVAL"
+    )
+    assert staging["title_authority_error"] is None
+    assert staging["title_policy_violations"] == []
+    assert staging["status"] == "STAGED"
+    assert cover_calls == [staging["title"]]
+
+
 def test_publish_staging_retries_unbalanced_title_before_cover(
     tmp_path, monkeypatch
 ):
