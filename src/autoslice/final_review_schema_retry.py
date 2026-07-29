@@ -9,19 +9,25 @@ from typing import Any, Callable
 _SCHEMA_REPAIR_INSTRUCTION = """
 
 上一轮返回了非空 findings，但每一条都因合同字段无效而被机器拒绝。请重新
-独立审查同一份字幕，并严格遵守：
+审查同一份字幕，并逐条参考下方机器诊断：
+{diagnostics}
+
+严格遵守：
 - cue 必须是上方真实存在的编号；
 - suspect 若填写，必须逐字出现在该 cue；
 - 有修正方案时 proposed_full_cue 必须是该 cue 的完整修正版；
-- 没有合同合法且确有把握的疑点时，明确输出 {"findings": []}。
-不得复述或猜测上一轮内容，只输出一个新的 JSON 对象。
+- 不得只返回 cue/kind/why。认为该句确有错误，就必须给可验证的
+  proposed_full_cue；无法给出修正版，就删除该 finding；
+- 没有合同合法且确有把握的疑点时，明确输出 {{"findings": []}}。
+不要为了保留上一轮意见而猜测，只输出一个新的 JSON 对象。
 """
 
 
-def schema_repair_prompt(prompt: str) -> str:
+def schema_repair_prompt(prompt: str, diagnostics: str = "") -> str:
     """Append output-contract feedback without changing review evidence."""
 
-    return prompt + _SCHEMA_REPAIR_INSTRUCTION
+    detail = diagnostics.strip()[:4_000] or "（无可用诊断；重新严格检查合同）"
+    return prompt + _SCHEMA_REPAIR_INSTRUCTION.format(diagnostics=detail)
 
 
 def retry_invalid_finding_schema_once(
@@ -32,6 +38,7 @@ def retry_invalid_finding_schema_once(
     @wraps(call_once)
     def wrapped(*args: Any, **kwargs: Any) -> Any:
         kwargs.pop("_schema_repair_retry", None)
+        kwargs.pop("_schema_repair_detail", None)
         try:
             return call_once(*args, **kwargs, _schema_repair_retry=False)
         except Exception as exc:
@@ -40,6 +47,11 @@ def retry_invalid_finding_schema_once(
                 != "FINAL_REVIEW_RESPONSE_FINDINGS_ALL_INVALID"
             ):
                 raise
-            return call_once(*args, **kwargs, _schema_repair_retry=True)
+            return call_once(
+                *args,
+                **kwargs,
+                _schema_repair_retry=True,
+                _schema_repair_detail=str(getattr(exc, "detail", "")),
+            )
 
     return wrapped

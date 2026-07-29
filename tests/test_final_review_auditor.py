@@ -191,6 +191,44 @@ def test_auditor_reasks_cpa_once_after_all_findings_are_schema_invalid():
     assert len(prompts) == 2
     assert "上一轮返回了非空 findings" not in prompts[0]
     assert "上一轮返回了非空 findings" in prompts[1]
+    assert "CUE_OUT_OF_RANGE" in prompts[1]
+    assert '"cue": 99' in prompts[1]
+
+
+def test_auditor_schema_retry_turns_unbounded_doubt_into_bounded_proposal():
+    prompts = []
+    responses = iter(
+        [
+            '{"findings":[{"cue":1,"kind":"context","why":"量词语境可疑"}]}',
+            json.dumps(
+                {
+                    "findings": [
+                        {
+                            "cue": 1,
+                            "kind": "context",
+                            "proposed_full_cue": "他一副很无辜的样子",
+                            "repair_class": "phonetic",
+                            "why": "一副与样子构成固定搭配",
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+        ]
+    )
+
+    findings = audit_final_subtitles(
+        _srt("他欺负很无辜的样子"),
+        llm_call=lambda prompt: (
+            prompts.append(prompt) or next(responses)
+        ),
+        extract_json=_extract,
+    )
+
+    assert findings[0]["proposed_full_cue"] == "他一副很无辜的样子"
+    assert findings[0]["suspect"] == "欺负"
+    assert findings[0]["suggestion"] == "一副"
+    assert "NO_BOUNDED_SPAN_OR_PROPOSAL" in prompts[1]
 
 
 def test_auditor_schema_repair_retry_is_bounded_and_fail_closed():

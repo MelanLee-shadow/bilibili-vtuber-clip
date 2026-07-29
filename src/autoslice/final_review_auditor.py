@@ -656,7 +656,7 @@ def audit_final_subtitles(
     candidate_context_text: str = "",
     candidate_context: Mapping[str, object] | None = None,
     extra_raw_findings: Sequence[Mapping[str, Any]] = (),
-    _schema_repair_retry: bool = False,
+    _schema_repair_retry: bool = False, _schema_repair_detail: str = "",
 ) -> list[dict[str, Any]]:
     """One reviewer pass; ``extra_raw_findings`` carries prior raw rows."""
     cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
@@ -671,7 +671,7 @@ def audit_final_subtitles(
         candidate_context=(candidate_context_text.strip() or "（无）"),
     )
     if _schema_repair_retry:
-        prompt = schema_repair_prompt(prompt)
+        prompt = schema_repair_prompt(prompt, _schema_repair_detail)
     raw = _request_final_review_findings(
         prompt, llm_call=llm_call, extract_json=extract_json
     )
