@@ -76,6 +76,9 @@ def _replayed_search_scope(
             last_piece_start_ms=last_piece_start_ms,
             prior_piece_duration_ms=prior_piece_duration_ms,
         ),
+        semantic_tail_trim_cap_ms=int(
+            spec.get("semantic_tail_trim_cap_ms", 0)
+        ),
     )
     spec_search_scope = spec.get("boundary_search_scope")
     review_search_scope = semantic_review.get("boundary_search_scope")

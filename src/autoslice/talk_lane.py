@@ -18,6 +18,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from src.autoslice.boundary_semantic_review import (
+    SEMANTIC_TAIL_TRIM_MAX_MS,
     boundary_search_scope_is_valid,
     required_source_context_end_ms,
 )
@@ -1701,6 +1702,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         "semantic_end_ms": item["end_ms"],
         "minimum_effective_duration_ms": _runner.MIN_TALK_EFFECTIVE_DURATION_MS,
         "boundary_repair_extend_cap_ms": _runner.BOUNDARY_REPAIR_INITIAL_CAP_MS,
+        "semantic_tail_trim_cap_ms": SEMANTIC_TAIL_TRIM_MAX_MS,
         "pieces": pieces,
         "talk_filler_plan": filler_plan,
     }

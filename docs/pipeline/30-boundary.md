@@ -47,6 +47,14 @@ registry/candidate/mode/ms 任一不匹配、可选集合为空、reviewer 选�
 cue、required owner/structured payoff 越过 pin、grid/index 漂移或最终
 媒体不等于 pin，均 fail closed；不得把 exact pin 降级为普通下界，也不得用它绕过四命题。
 
+自动选片的 `semantic_end_ms` 只是召回尾锚，不等于人工下界。没有 `given_end_ms` 时，
+source-full-window CPA 可在最多 15 秒的 `semantic_tail_trim_cap_ms` 内向前回剪，但只能选
+**最晚一个**同时满足四命题的 cue，并须显式确认 `content_anchor_covered=true`；后续 cue
+必须能证明是新话题、未回答的新问题或不完整尾巴。manual lower bound、structured payoff、
+required owner 与 exact pin 均不得被这条窄门跨过。最终 scope 必须披露
+`recommendation_backward_ms`，resolver 复算同一 SHA 后才可采用；final-delivery 层仍只审
+实际成片最后 cue，不能在成片落地后凭文本结论偷偷再剪。
+
 因用户只报告 1–2 个抽样问题而触发 same-BV **整片重跑**时，旧公开成片的 endpoint
 不得被自动升级成 `exact_source_pin`。除非 Ivan 明确说已逐帧/逐句审过该候选的精确终点，
 默认只能登记为 `semantic_lower_bound`，由 source-full-window 语义评审继续寻找完整
@@ -60,7 +68,8 @@ source review、resolver 与有界 retry 必须共同消费并逐字段、逐 SH
 - `semantic_lower_bound`：
   `semantic_search_origin_ms = max(semantic_target_ms, manual_lower_bound_ms,
   structured_payoff_ms)`；人工下界与已确认 payoff 属于语义搜索起点，可以把搜索原点向后移；
-  `delivery_lower_bound_ms = max(semantic_search_origin_ms, required_owner_end_ms)`；
+  没有人工下界时，`delivery_lower_bound_ms` 可在不跨越 structured payoff / required owner
+  的前提下比 `semantic_search_origin_ms` 最多早 15 秒；存在人工下界时仍等于各权威下界最大值；
   required owner 只抬高交付/评审下界，不能移动搜索原点，也不能把 cap 滚动再加一次；
   `max_recommended_end_ms = semantic_search_origin_ms + repair_cap_ms`。reviewer 的推荐 end 必须
   同时不早于交付下界、不晚于该绝对 ceiling。唯一的有界例外是

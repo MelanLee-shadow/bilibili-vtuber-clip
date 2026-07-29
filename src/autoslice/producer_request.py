@@ -9,6 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from src.autoslice.boundary_semantic_review import (
+    SEMANTIC_TAIL_TRIM_MAX_MS,
+)
 from src.autoslice.branding_intro import BrandingIntroError, require_branding_intro
 from src.autoslice.producer_boundary import (
     BOUNDARY_REPAIR_EXTEND_CAP_MAX_MS,
@@ -114,6 +117,17 @@ def load_producer_request(
             f"{BOUNDARY_REPAIR_EXTEND_CAP_MS}..{BOUNDARY_REPAIR_EXTEND_CAP_MAX_MS}"
         )
     boundary_repair_extend_cap_ms = repair_cap_raw
+    tail_trim_cap_raw = spec.get("semantic_tail_trim_cap_ms", 0)
+    if (
+        isinstance(tail_trim_cap_raw, bool)
+        or not isinstance(tail_trim_cap_raw, int)
+        or not 0 <= tail_trim_cap_raw <= SEMANTIC_TAIL_TRIM_MAX_MS
+    ):
+        raise ValueError(
+            "semantic_tail_trim_cap_ms must stay within "
+            f"0..{SEMANTIC_TAIL_TRIM_MAX_MS}"
+        )
+    spec["semantic_tail_trim_cap_ms"] = tail_trim_cap_raw
     truth_mode = os.environ.get("AUTOSLICE_HUMAN_TRUTH_MODE", "delivery").strip().lower()
     if truth_mode not in {"delivery", "withheld"}:
         raise ValueError("AUTOSLICE_HUMAN_TRUTH_MODE must be delivery or withheld")

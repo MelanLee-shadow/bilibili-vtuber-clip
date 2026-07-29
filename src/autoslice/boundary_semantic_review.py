@@ -23,6 +23,7 @@ from src.autoslice.clip_context import MAX_PROMPT_CHARS
 SCHEMA_VERSION = "talk-boundary-semantic-review.v1"
 SEARCH_SCOPE_SCHEMA_VERSION = "talk-boundary-search-scope.v1"
 MAX_FORWARD_MS = 30_000
+SEMANTIC_TAIL_TRIM_MAX_MS = 15_000
 CONTEXT_CUES_EACH_SIDE = 8
 MAX_VISIBLE_CUES = 128
 MAX_VISIBLE_TEXT_CHARS = 16_000
@@ -103,6 +104,9 @@ def boundary_search_scope_is_valid(scope: object) -> bool:
                 "boundary_end_mode", "semantic_lower_bound"
             ),
             baseline_tail_cap_ms=scope.get("baseline_tail_cap_ms"),
+            semantic_tail_trim_cap_ms=scope.get(
+                "semantic_tail_trim_cap_ms", 0
+            ),
         )
     except BoundarySemanticReviewError:
         return False
@@ -112,6 +116,8 @@ def boundary_search_scope_is_valid(scope: object) -> bool:
         for key in (
             "baseline_tail_cap_ms",
             "structured_payoff_clamped_from_ms",
+            "semantic_tail_trim_cap_ms",
+            "recommendation_backward_ms",
         )
         if key not in observed
     ]
@@ -138,6 +144,7 @@ def build_boundary_search_scope(
     witness_reserve_ms: int = SOURCE_WITNESS_RESERVE_MS,
     boundary_end_mode: str = "semantic_lower_bound",
     baseline_tail_cap_ms: int | None = None,
+    semantic_tail_trim_cap_ms: int = 0,
 ) -> dict[str, object]:
     """Build the one scope shared by source review, resolver, and retry.
 
@@ -175,6 +182,13 @@ def build_boundary_search_scope(
     witness_reserve = _required_int_ms(
         "witness_reserve_ms", witness_reserve_ms
     )
+    semantic_tail_trim_cap = _required_int_ms(
+        "semantic_tail_trim_cap_ms", semantic_tail_trim_cap_ms
+    )
+    if semantic_tail_trim_cap > SEMANTIC_TAIL_TRIM_MAX_MS:
+        raise BoundarySemanticReviewError(
+            "BOUNDARY_SEARCH_SCOPE_SEMANTIC_TAIL_TRIM_CAP_MS_INVALID"
+        )
     if boundary_end_mode not in {
         "semantic_lower_bound",
         "exact_source_pin",
@@ -249,9 +263,25 @@ def build_boundary_search_scope(
                 ),
             ]
         )
+    # Automatic candidate end is a recall/search anchor, not a human-reviewed
+    # immutable endpoint.  A bounded CPA source review may trim a short tail
+    # that has already entered a new/open topic, but never below a manual end,
+    # structured payoff, or required owner.  Exact pins keep their dedicated
+    # pre-pin closure rule and do not use this lane.
+    tail_trim_floor_ms = search_origin_ms
+    if (
+        boundary_end_mode == "semantic_lower_bound"
+        and manual_lower_bound is None
+        and semantic_tail_trim_cap > 0
+    ):
+        tail_trim_floor_ms = max(
+            0, search_origin_ms - semantic_tail_trim_cap
+        )
     delivery_lower_bound_ms = max(
-        search_origin_ms,
-        required_owner_end or search_origin_ms,
+        tail_trim_floor_ms,
+        required_owner_end or 0,
+        structured_payoff_effective or 0,
+        manual_lower_bound or 0,
     )
     max_recommended_end_ms = (
         exact_source_pin
@@ -276,8 +306,10 @@ def build_boundary_search_scope(
     if delivery_lower_bound_ms > max_recommended_end_ms:
         reasons.append("BOUNDARY_REQUIRED_OWNER_EXCLUDED")
     recommendation_forward_ms = max(
-        0,
-        max_recommended_end_ms - delivery_lower_bound_ms,
+        0, max_recommended_end_ms - search_origin_ms
+    )
+    recommendation_backward_ms = max(
+        0, search_origin_ms - delivery_lower_bound_ms
     )
     required_local_source_context_end_ms = (
         max_recommended_end_ms + witness_reserve
@@ -302,17 +334,29 @@ def build_boundary_search_scope(
         "required_owner_end_ms": required_owner_end,
         "semantic_search_origin_ms": search_origin_ms,
         "delivery_lower_bound_ms": delivery_lower_bound_ms,
-        "review_target_ms": delivery_lower_bound_ms,
+        # Keep the review centered on the automatic recall tail when the
+        # bounded trim lane lowers only the delivery floor.  Required owners
+        # may still move the review target later, preserving the old behavior.
+        "review_target_ms": max(
+            search_origin_ms, delivery_lower_bound_ms
+        ),
         "repair_cap_ms": repair_cap,
+        "semantic_tail_trim_cap_ms": semantic_tail_trim_cap,
         # 尾锚参与 sha 与重建验证；旧产物无此键=旧行为，向后兼容。
         "baseline_tail_cap_ms": baseline_tail_cap_ms,
         # payoff 钳制披露：非 None 即「假设让位于已复核 baseline 终点」。
         "structured_payoff_clamped_from_ms": structured_payoff_clamped_from_ms,
         "max_recommended_end_ms": max_recommended_end_ms,
         "recommendation_forward_ms": recommendation_forward_ms,
-        "minimum_recommended_end_ms": max(
-            0 if exact_source_pin is not None else search_origin_ms,
-            delivery_lower_bound_ms - DELIVERY_TAIL_PAD_MS,
+        "recommendation_backward_ms": recommendation_backward_ms,
+        "minimum_recommended_end_ms": (
+            max(0, delivery_lower_bound_ms - DELIVERY_TAIL_PAD_MS)
+            if exact_source_pin is not None
+            else (
+                delivery_lower_bound_ms
+                if recommendation_backward_ms
+                else search_origin_ms
+            )
         ),
         "delivery_tail_pad_ms": DELIVERY_TAIL_PAD_MS,
         "witness_reserve_ms": witness_reserve,
@@ -638,7 +682,7 @@ def _build_prompt(request: Mapping[str, object]) -> str:
 
 约束：
 - 只可从给出的 cue_index 中选 recommended_end_cue_index；不得改写字幕。
-- 只能从 recommendation_cue_indexes 选择。普通 semantic_lower_bound 不得提前删掉已圈内容；若 boundary_end_mode=exact_source_pin，可选择 source pin 前最多 delivery_tail_pad_ms 的完整语义句尾，最终媒体仍由 source pin 精确截止，不可选择 pin 之后才开始的 cue。
+- 只能从 recommendation_cue_indexes 选择。若 boundary_search_scope.recommendation_backward_ms>0，目标 cue 只是自动召回尾锚；当它已拖入新话题、未回答问题或不完整尾巴时，可在该有界窗口内回剪到**最晚一个**已经覆盖 selection_hook 全部内容锚点、故事闭环且后续换题可证的 cue，并必须回 content_anchor_covered=true。普通 semantic_lower_bound 超出该窗口不得提前删内容；若 boundary_end_mode=exact_source_pin，可选择 source pin 前最多 delivery_tail_pad_ms 的完整语义句尾，最终媒体仍由 source pin 精确截止，不可选择 pin 之后才开始的 cue。
 - recommendation_relaxations 里列出的 cue 是经确定性证明后放行的有界例外：pin_crossing_closure_cue 是包含 pin 的收尾 cue（媒体仍精确截止在 pin）；silent_gap_closure_cue 是下限前最后一个收尾 cue，且它到下限之间没有任何语音。语义合适就正常选择它们。
 - 若 next_topic_separated=true，evidence_cue_indexes 必须包含推荐 cue 之后、证明已进入下一话题/SC/谢礼的 cue；缺了会被判 BOUNDARY_NEXT_TOPIC_WITNESS_MISSING。
 - 可以从目标 cue 向后寻找，最多 {request["max_forward_ms"]}ms；exact_source_pin 的该值为 0。
@@ -652,6 +696,7 @@ def _build_prompt(request: Mapping[str, object]) -> str:
 
 只输出 JSON：
 {{"syntax_complete":bool,"story_closed":bool,"next_topic_separated":bool,
+"content_anchor_covered":bool,
 "recommended_end_cue_index":整数或null,"evidence_cue_indexes":[整数],
 "same_topic_continues_after_target":bool,"needs_more_context":bool,
 "reason_codes":[字符串],"summary":"一句中文结论"}}
@@ -667,6 +712,41 @@ def _parse_recommended_cue_index(
     if isinstance(value, bool) or not isinstance(value, int):
         return None, "INVALID"
     return value, "PRESENT"
+
+
+def _content_anchor_coverage_is_proven(
+    *,
+    payload: Mapping[str, object],
+    recommendation_valid: bool,
+    recommended: Mapping[str, object] | None,
+    target_end_ms: int,
+) -> bool:
+    """Require an explicit CPA anchor vote only for a backward tail trim."""
+
+    if not recommendation_valid or recommended is None:
+        return False
+    if int(recommended["end_ms"]) >= target_end_ms:
+        return True
+    return payload.get("content_anchor_covered") is True
+
+
+def _semantic_review_passes(
+    *,
+    selector_pass: bool,
+    booleans: Mapping[str, bool],
+    recommendation_valid: bool,
+    content_anchor_covered: bool,
+    evidence_valid: bool,
+    next_topic_witness_valid: bool,
+) -> bool:
+    return bool(
+        selector_pass
+        and all(booleans.values())
+        and recommendation_valid
+        and content_anchor_covered
+        and evidence_valid
+        and next_topic_witness_valid
+    )
 
 
 def review_talk_boundary_semantics(
@@ -884,22 +964,20 @@ def review_talk_boundary_semantics(
     needs_more_context = bool(
         more_context_reported and same_topic_continues_after_target
     )
-    # This is the fourth boundary proposition: every selected content anchor
-    # must remain covered.  It is deterministic and must not be inferred from
-    # the reviewer's prose.
-    content_anchor_covered = recommendation_valid
-    dimensions_pass = all(booleans.values())
-    status = (
-        "PASS"
-        if (
-            selector_pass
-            and dimensions_pass
-            and recommendation_valid
-            and evidence_valid
-            and next_topic_witness_valid
-        )
-        else "BLOCK"
+    content_anchor_covered = _content_anchor_coverage_is_proven(
+        payload=payload,
+        recommendation_valid=recommendation_valid,
+        recommended=recommended,
+        target_end_ms=target_end,
     )
+    status = "PASS" if _semantic_review_passes(
+        selector_pass=selector_pass,
+        booleans=booleans,
+        recommendation_valid=recommendation_valid,
+        content_anchor_covered=content_anchor_covered,
+        evidence_valid=evidence_valid,
+        next_topic_witness_valid=next_topic_witness_valid,
+    ) else "BLOCK"
     reason_codes_raw = payload.get("reason_codes")
     reason_codes = [
         str(value)
@@ -921,6 +999,8 @@ def review_talk_boundary_semantics(
         reason_codes.append("BOUNDARY_EVIDENCE_CUES_INVALID")
     if not next_topic_witness_valid:
         reason_codes.append("BOUNDARY_NEXT_TOPIC_WITNESS_MISSING")
+    if not content_anchor_covered:
+        reason_codes.append("CONTENT_ANCHOR_COVERED_NOT_PROVEN")
     if needs_more_context:
         reason_codes.append("BOUNDARY_CONTEXT_EXHAUSTED")
     for field, passed in booleans.items():

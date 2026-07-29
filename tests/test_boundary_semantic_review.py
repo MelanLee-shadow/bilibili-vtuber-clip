@@ -267,6 +267,131 @@ def test_manual_lower_bound_moves_shared_scope_past_old_origin():
     assert review["boundary_search_scope"] == scope
 
 
+def test_automatic_semantic_tail_allows_bounded_backward_review():
+    scope = build_boundary_search_scope(
+        semantic_target_ms=107_000,
+        repair_cap_ms=30_000,
+        semantic_tail_trim_cap_ms=15_000,
+    )
+
+    assert boundary_search_scope_is_valid(scope)
+    assert scope["semantic_search_origin_ms"] == 107_000
+    assert scope["delivery_lower_bound_ms"] == 92_000
+    assert scope["review_target_ms"] == 107_000
+    assert scope["recommendation_backward_ms"] == 15_000
+    assert scope["recommendation_forward_ms"] == 30_000
+    assert scope["minimum_recommended_end_ms"] == 92_000
+    assert scope["max_recommended_end_ms"] == 137_000
+
+
+def test_manual_lower_bound_disables_automatic_tail_trim():
+    scope = build_boundary_search_scope(
+        semantic_target_ms=107_000,
+        manual_lower_bound_ms=107_000,
+        repair_cap_ms=30_000,
+        semantic_tail_trim_cap_ms=15_000,
+    )
+
+    assert boundary_search_scope_is_valid(scope)
+    assert scope["delivery_lower_bound_ms"] == 107_000
+    assert scope["review_target_ms"] == 107_000
+    assert scope["recommendation_backward_ms"] == 0
+    assert scope["minimum_recommended_end_ms"] == 107_000
+
+
+def test_boundary_review_can_trim_open_next_topic_after_payoff():
+    scope = build_boundary_search_scope(
+        semantic_target_ms=107_000,
+        repair_cap_ms=30_000,
+        semantic_tail_trim_cap_ms=15_000,
+    )
+    cues = [
+        _cue(1, 90_000, 100_000, "原故事的包袱已经完整落地"),
+        _cue(2, 100_100, 107_000, "为啥有点下头"),
+        _cue(3, 107_100, 109_000, "下一话题的开场"),
+    ]
+    response = json.dumps(
+        {
+            "syntax_complete": True,
+            "story_closed": True,
+            "next_topic_separated": True,
+            "content_anchor_covered": True,
+            "recommended_end_cue_index": 1,
+            "evidence_cue_indexes": [1, 2, 3],
+            "same_topic_continues_after_target": False,
+            "needs_more_context": False,
+            "reason_codes": ["OPEN_NEXT_TOPIC_TAIL_TRIMMED"],
+            "summary": "第一句已闭环，第二句是没有回答的新问题。",
+        },
+        ensure_ascii=False,
+    )
+
+    review = review_talk_boundary_semantics(
+        cues=cues,
+        target_ms=107_000,
+        candidate_id="open-tail",
+        selection_hook="原故事包袱",
+        selection_scorecard=_scorecard(),
+        structured_context="",
+        candidate_context="hash-bound context",
+        llm_call=lambda _prompt: response,
+        extract_json=_extract,
+        max_forward_ms=30_000,
+        boundary_search_scope=scope,
+    )
+
+    assert review["status"] == "PASS"
+    assert review["recommended_end_ms"] == 100_000
+    assert review["content_anchor_covered"] is True
+
+
+def test_backward_trim_requires_explicit_content_anchor_coverage():
+    scope = build_boundary_search_scope(
+        semantic_target_ms=107_000,
+        repair_cap_ms=30_000,
+        semantic_tail_trim_cap_ms=15_000,
+    )
+    response = json.dumps(
+        {
+            "syntax_complete": True,
+            "story_closed": True,
+            "next_topic_separated": True,
+            "content_anchor_covered": False,
+            "recommended_end_cue_index": 1,
+            "evidence_cue_indexes": [1, 2],
+            "same_topic_continues_after_target": False,
+            "needs_more_context": False,
+            "reason_codes": [],
+            "summary": "没有证明内容锚点已全部落在切点前。",
+        },
+        ensure_ascii=False,
+    )
+
+    review = review_talk_boundary_semantics(
+        cues=[
+            _cue(1, 90_000, 100_000, "可能的包袱结尾"),
+            _cue(2, 100_100, 107_000, "可能仍有关联的尾句"),
+        ],
+        target_ms=107_000,
+        candidate_id="unproven-anchor",
+        selection_hook="完整故事",
+        selection_scorecard=_scorecard(),
+        structured_context="",
+        candidate_context="hash-bound context",
+        llm_call=lambda _prompt: response,
+        extract_json=_extract,
+        max_forward_ms=30_000,
+        boundary_search_scope=scope,
+    )
+
+    assert review["status"] == "BLOCK"
+    assert review["content_anchor_covered"] is False
+    assert (
+        "CONTENT_ANCHOR_COVERED_NOT_PROVEN"
+        in review["reason_codes"]
+    )
+
+
 def test_exact_source_pin_reviews_fresh_closure_before_media_cut():
     pin_ms = 202_720
     scope = build_boundary_search_scope(

@@ -371,6 +371,9 @@ def freeze_required_boundary_owner_contract(
             last_piece_start_ms=last_piece_start_ms,
             prior_piece_duration_ms=prior_piece_duration_ms,
         ),
+        semantic_tail_trim_cap_ms=int(
+            spec.get("semantic_tail_trim_cap_ms", 0)
+        ),
     )
     spec["boundary_search_scope"] = boundary_search_scope
     boundary_target_ms = int(boundary_search_scope["review_target_ms"])
