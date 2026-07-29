@@ -92,6 +92,8 @@ def _record_entity_repair_window_survival(
     span_expected: str,
     text_window: str,
     speaker_window: str,
+    owner_text_window: str,
+    owner_speaker_window: str,
     text_check: str,
     speaker_check: str,
     dropped_ok: bool,
@@ -100,10 +102,14 @@ def _record_entity_repair_window_survival(
         # Empty is the owned result for a whole-cue deletion.  It is only
         # accepted with the typed CPA mutation receipt above, and the exact
         # adjudicated window must be subtitle-empty on both final surfaces.
-        row["final_drop_cue_empty_text_window"] = not bool(text_window)
-        row["final_drop_cue_empty_speaker_window"] = not bool(speaker_window)
-        row["survived_final_text_srt"] = not bool(text_window)
-        row["survived_final_speaker_srt"] = not bool(speaker_window)
+        row["final_drop_cue_empty_text_window"] = not bool(
+            owner_text_window
+        )
+        row["final_drop_cue_empty_speaker_window"] = not bool(
+            owner_speaker_window
+        )
+        row["survived_final_text_srt"] = not bool(owner_text_window)
+        row["survived_final_speaker_srt"] = not bool(owner_speaker_window)
         return
     row["survived_final_text_srt"] = bool(
         span_expected and span_expected in text_check
@@ -111,6 +117,39 @@ def _record_entity_repair_window_survival(
     row["survived_final_speaker_srt"] = bool(
         span_expected and span_expected in speaker_check
     ) and dropped_ok
+
+
+def _entity_repair_windows(
+    *,
+    final_text_srt: str,
+    final_speaker_srt: str,
+    start_ms: int,
+    end_ms: int,
+) -> tuple[str, str, str, str]:
+    return (
+        normalize_srt_payload_window(
+            final_text_srt, start_ms=start_ms, end_ms=end_ms
+        ),
+        normalize_srt_payload_window(
+            final_speaker_srt,
+            start_ms=start_ms,
+            end_ms=end_ms,
+            strip_speaker_labels=True,
+        ),
+        normalize_srt_owner_payload_window(
+            final_text_srt,
+            start_ms=start_ms,
+            end_ms=end_ms,
+            min_overlap_ms=1,
+        ),
+        normalize_srt_owner_payload_window(
+            final_speaker_srt,
+            start_ms=start_ms,
+            end_ms=end_ms,
+            min_overlap_ms=1,
+            strip_speaker_labels=True,
+        ),
+    )
 
 
 def _sc_sender_final_surface(row: dict) -> str:
@@ -1166,15 +1205,13 @@ def verify_chat_authority_final_surfaces(
             span_expected = span_expected[len(head_norm):]
         if tail_norm and span_expected.endswith(tail_norm):
             span_expected = span_expected[: len(span_expected) - len(tail_norm)]
-        text_window = normalize_srt_payload_window(
-            final_text_srt, start_ms=relative_start, end_ms=relative_end
-        )
-        speaker_window = normalize_srt_payload_window(
-            final_speaker_srt,
+        repair_windows = _entity_repair_windows(
+            final_text_srt=final_text_srt,
+            final_speaker_srt=final_speaker_srt,
             start_ms=relative_start,
             end_ms=relative_end,
-            strip_speaker_labels=True,
         )
+        text_window, speaker_window, owner_text_window, owner_speaker_window = repair_windows
         dropped_ok = True
         if any(dropped_parts):
             context_start = max(0, relative_start - 30_000)
@@ -1217,6 +1254,8 @@ def verify_chat_authority_final_surfaces(
             row, span_expected=span_expected,
             text_window=text_window,
             speaker_window=speaker_window,
+            owner_text_window=owner_text_window,
+            owner_speaker_window=owner_speaker_window,
             text_check=text_check,
             speaker_check=speaker_check,
             dropped_ok=dropped_ok,

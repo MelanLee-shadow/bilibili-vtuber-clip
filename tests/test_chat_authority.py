@@ -3351,7 +3351,10 @@ def _authorized_drop_cue_row() -> dict:
 
 
 def test_authorized_drop_cue_verifies_empty_final_window():
-    final_text = "1\n00:00:10,000 --> 00:00:14,000\n保留的下一句\n"
+    final_text = (
+        "1\n00:00:01,000 --> 00:00:05,000\n保留的上一句\n\n"
+        "2\n00:00:09,000 --> 00:00:14,000\n保留的下一句\n"
+    )
     row = _authorized_drop_cue_row()
 
     assert verify_chat_authority_final_surfaces(
