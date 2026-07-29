@@ -57,6 +57,23 @@ INFRASTRUCTURE_WAIT_FAILURE_KINDS = frozenset(
 )
 SANCTIONED_REVIVAL_RETRY_SCHEMA = "sanctioned-revival-retry.v1"
 FINAL_REVIEW_CARRYOVER_RETRY_CAP = 8
+CONTENT_BOUNDARY_RECOVERY_RELATIVES = (
+    "scripts/produce_slice_package.py",
+    "src/autoslice/jingting_chunker.py",
+    "src/autoslice/subtitle_timing_qa.py",
+    "src/autoslice/boundary_endpoint_binding.py",
+    "src/autoslice/boundary_resolver.py",
+    "src/autoslice/boundary_semantic_review.py",
+    "src/autoslice/boundary_source_context_coverage.py",
+    "src/autoslice/final_review_contract.py",
+    "src/autoslice/producer_boundary.py",
+    "src/autoslice/producer_boundary_owner_contract.py",
+    "src/autoslice/producer_boundary_resolution.py",
+    "src/autoslice/producer_boundary_review_stage.py",
+    "src/autoslice/producer_request.py",
+    "src/autoslice/producer_text_pipeline.py",
+    "src/autoslice/talk_lane.py",
+)
 
 
 class _TalkRetryDecision(NamedTuple):

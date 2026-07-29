@@ -700,8 +700,13 @@ def _build_final_review_llm_call() -> Callable[[str], str]:
     return build_llm_call(
         LlmConfig(
             transport="command",
-            command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' medium",
-            timeout_seconds=300.0,
+            # One full 180 s request per approved model fits inside the 600 s
+            # outer deadline.  The former 3x/model bridge could never exhaust
+            # its advertised failover chain before this caller killed it at
+            # 300 s, repeatedly turning valid long final-review prompts into
+            # CORRECTION_DISCOVERY_INCOMPLETE.
+            command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' medium 1",
+            timeout_seconds=600.0,
         )
     )
 

@@ -192,3 +192,19 @@ def test_argv_chain_and_effort_override_env(tmp_path):
     assert completion.read_text(encoding="utf-8") == "safe completion"
     assert [body["model"] for body in capture["bodies"]] == ["stage-model-a"]
     assert capture["bodies"][0]["reasoning"]["effort"] == "high"
+
+
+def test_stage_can_bound_one_attempt_per_model_to_fit_outer_deadline(tmp_path):
+    completed, capture, completion, _tmp = _run_bridge(
+        tmp_path,
+        curl_fails=True,
+        chat_models_env="gpt-env-model",
+        extra_args=("stage-model-a stage-model-b", "medium", "1"),
+    )
+
+    assert completed.returncode == 1
+    assert not completion.exists()
+    assert [body["model"] for body in capture["bodies"]] == [
+        "stage-model-a",
+        "stage-model-b",
+    ]

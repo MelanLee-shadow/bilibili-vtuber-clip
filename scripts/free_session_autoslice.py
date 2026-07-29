@@ -794,6 +794,7 @@ from src.autoslice.song_delivery import (  # noqa: E402
     _atomic_verified_song_delivery,
 )
 from src.autoslice.delivery_recovery import (  # noqa: E402
+    CONTENT_BOUNDARY_RECOVERY_RELATIVES,
     TALK_RECOVERY_FAILURE_STATUSES,
     _song_delivery_recovery_authority,
     apply_talk_backfill_rejection_policy,
@@ -948,25 +949,6 @@ def queue_collab_evidence_capture(
         routing_claim=routing_claim,
         ctx=_speaker_runner_context(),
     )
-
-
-CONTENT_BOUNDARY_RECOVERY_RELATIVES = (
-    "scripts/produce_slice_package.py",
-    "src/autoslice/jingting_chunker.py",
-    "src/autoslice/subtitle_timing_qa.py",
-    "src/autoslice/boundary_endpoint_binding.py",
-    "src/autoslice/boundary_resolver.py",
-    "src/autoslice/boundary_semantic_review.py",
-    "src/autoslice/boundary_source_context_coverage.py",
-    "src/autoslice/final_review_contract.py",
-    "src/autoslice/producer_boundary.py",
-    "src/autoslice/producer_boundary_owner_contract.py",
-    "src/autoslice/producer_boundary_resolution.py",
-    "src/autoslice/producer_boundary_review_stage.py",
-    "src/autoslice/producer_request.py",
-    "src/autoslice/producer_text_pipeline.py",
-    "src/autoslice/talk_lane.py",
-)
 
 
 def talk_failure_recovery_fingerprint(failure_kind: str | None, candidate_id: str) -> str:

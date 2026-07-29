@@ -31,6 +31,12 @@ COMPLETION_FILE="$2"
 # acceptable fallbacks (Ivan 2026-07-04).
 MODELS="${3:-${CPA_CHAT_MODELS:-${CPA_CHAT_MODEL:-gpt-5.6-sol gpt-5.5 gpt-5.4}}}"
 EFFORT="${4:-${CPA_REASONING_EFFORT:-medium}}"
+ATTEMPTS_PER_MODEL="${5:-3}"
+
+if ! [[ "$ATTEMPTS_PER_MODEL" =~ ^[1-9][0-9]*$ ]]; then
+  echo "attempts_per_model must be a positive integer" >&2
+  exit 2
+fi
 
 if [[ -z "${CPA_BASE_URL:-}" || -z "${CPA_API_KEY:-}" ]]; then
   echo "CPA_BASE_URL/CPA_API_KEY missing" >&2
@@ -110,7 +116,7 @@ PY
   then
     exit 0
   fi
-  if [[ "$attempt" -ge 3 ]]; then
+  if [[ "$attempt" -ge "$ATTEMPTS_PER_MODEL" ]]; then
     echo "CPA /responses failed ${attempt}x on ${MODEL}, trying next model" >&2
     break
   fi
