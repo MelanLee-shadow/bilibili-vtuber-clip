@@ -57,6 +57,12 @@ ENTITY_AUDIO_API_REQUEST_MAX_BYTES = 20_000_000
 # word-choice reasoning belongs to the CPA judge downstream.
 WITNESS_REQUEST_SCHEMA = "subtitle-span-acoustic-witness-request.v1"
 WITNESS_SCHEMA = "subtitle-span-acoustic-witness.v1"
+# The prompt contract is part of the acoustic-cache identity.  A 2026-07-29
+# production incident proved why: the old prompt embedded one valid pinyin
+# example and AGY copied it verbatim for unrelated audio.  Audio bytes alone
+# are not a sufficient cache key when the dictation instructions change.
+WITNESS_PROMPT_CONTRACT = "candidate-free-toneless-pinyin-no-example.v2"
+_LEGACY_PROMPT_COPY_PINYIN = "zhe ge shi he tian yi de lian dong o"
 
 
 def _sha256(path: Path) -> str:
@@ -145,7 +151,7 @@ never merge its syllables into the target report.
   "schema_version": "subtitle-span-acoustic-witness.v1",
   "status": "OBSERVED" or "UNCERTAIN",
   "target_audible": true or false,
-  "heard_pinyin": "space-separated toneless pinyin syllables, e.g. zhe ge shi he tian yi de lian dong o",
+  "heard_pinyin": "<lowercase toneless pinyin syllables separated by spaces>",
   "uncertain_positions": [0-based indexes of syllables you are unsure about],
   "syllable_count": <integer, length of heard_pinyin>,
   "confidence": 0.0,
@@ -442,7 +448,7 @@ class _EntityProviderOutcome:
     provider_failures: list[dict[str, Any]]
 
 
-_ACOUSTIC_CACHE_SCHEMA = "witness-acoustic-cache.v1"
+_ACOUSTIC_CACHE_SCHEMA = "witness-acoustic-cache.v2"
 
 
 def _witness_acoustic_cache_path(output_dir: Path, clip_sha256: str) -> Path:
@@ -451,8 +457,10 @@ def _witness_acoustic_cache_path(output_dir: Path, clip_sha256: str) -> Path:
     成本裁定（Ivan 2026-07-27，3 天 $40 案）：付费声学证人 88% 的消耗来自
     重产轮次对**同一段音频**的重复听写——witness 请求按设计不携带候选
     （纯听写），答案只由音频决定，request_sha 里的文本漂移不改变问题本身。
-    键=音频片 sha256；BASE 从候选包目录上溯（out/<date>/<cid> → BASE），
-    主树与 V15 恢复树各自命中自己的缓存。
+    键=音频片 sha256，但 entry schema 与 prompt contract 也必须精确匹配；
+    这样纯文本候选漂移仍然免调用，听写指令升级则自动淘汰旧结果。
+    BASE 从候选包目录上溯（out/<date>/<cid> → BASE），主树与 V15
+    恢复树各自命中自己的缓存。
     """
 
     base = output_dir.parents[2] if len(output_dir.parents) >= 3 else output_dir
@@ -485,6 +493,7 @@ def _serve_witness_acoustic_cache(
     observed = entry.get("observed")
     if (
         entry.get("schema_version") != _ACOUSTIC_CACHE_SCHEMA
+        or entry.get("prompt_contract") != WITNESS_PROMPT_CONTRACT
         or entry.get("audio_clip_sha256") != clip_sha256
         or not isinstance(observed, dict)
         or observed.get("status") != "OBSERVED"
@@ -535,6 +544,7 @@ def _store_witness_acoustic_cache(
             json.dumps(
                 {
                     "schema_version": _ACOUSTIC_CACHE_SCHEMA,
+                    "prompt_contract": WITNESS_PROMPT_CONTRACT,
                     "audio_clip_sha256": clip_sha256,
                     "observed": dict(observed),
                     "provider": outcome.provider,
@@ -867,6 +877,15 @@ def _subtitle_acoustic_witness_verdict(
     silence_observation = (
         not tokens and observed.get("target_audible") is False
     )
+    # Reject the exact demonstration phrase that contaminated the old prompt.
+    # This guard also makes copied v1 artifacts fail closed even if an operator
+    # accidentally moves one outside the versioned cache contract.
+    if heard == _LEGACY_PROMPT_COPY_PINYIN:
+        return _uncertain(
+            request,
+            "WITNESS_PROMPT_COPY_DETECTED",
+            "legacy demonstration phrase was copied instead of dictated",
+        )
     report_valid = (
         observed.get("schema_version") == WITNESS_SCHEMA
         and observed.get("status") == "OBSERVED"

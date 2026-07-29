@@ -162,7 +162,9 @@ _JUDGE_PROMPT = """# 字幕选字裁决（闭集）
 证人从未见过任何候选文本。你的任务：结合语篇推理，从闭集中选出最符合
 「拼音证据 + 语境」的候选。铁律：
 
-1. 只能从下方闭集选择，或输出 UNCERTAIN。绝不生成新文本。
+1. 只能选择 CURRENT、PROPOSED 或 NEITHER。NEITHER 表示听写拼音与
+   两个候选都明显不符；它会把问题退回提案层重建闭集，不会自动保留
+   CURRENT，也不授权任何文本修改。绝不生成新文本。
 2. 拼音证据优先：与听写音节明显冲突的候选不能当选，语义再通也不行。
 3. 语境（前后句、弹幕、平行句）在拼音无法区分候选、或听写证据被标记为
    受污染/不可用时，可以在闭集内定夺。
@@ -200,9 +202,10 @@ _JUDGE_PROMPT = """# 字幕选字裁决（闭集）
 
 {structured_chat_block}
 按概率排序并**必须选概率最高者**（Ivan 2026-07-27：不许拿不准就保持原样——
-原样可能是最差的；把你对每个闭集候选"是她实际说的话"的概率写出来，选最高）。
+原样可能是最差的；把 CURRENT、PROPOSED 和“两者均非原话”NEITHER 的概率
+全部写出来，选最高）。
 只回一个 JSON 对象（无 markdown 围栏、无其他文字）:
-{{"ranking": [{{"choice": "CURRENT"或"PROPOSED", "p": 0.0到1.0}}, ...全部候选],
+{{"ranking": [{{"choice": "CURRENT"或"PROPOSED"或"NEITHER", "p": 0.0到1.0}}, ...全部候选],
  "choice": "排序第一的那个", "reason": "引用拼音/语境证据的一句话理由"}}
 """
 
@@ -313,7 +316,7 @@ def judge_word_choice(
                 continue
             row_choice = str(row.get("choice") or "").strip().upper()
             probability = row.get("p")
-            if row_choice in {"CURRENT", "PROPOSED"} and isinstance(
+            if row_choice in {"CURRENT", "PROPOSED", "NEITHER"} and isinstance(
                 probability, (int, float)
             ) and not isinstance(probability, bool) and 0.0 <= float(
                 probability
@@ -323,11 +326,11 @@ def judge_word_choice(
     # UNCERTAIN 不再是合法终点（模型仍拒绝时以排序第一顶上）。
     if ranking:
         top = max(ranking, key=lambda row: row["p"])
-        if choice not in {"CURRENT", "PROPOSED"} or (
+        if choice not in {"CURRENT", "PROPOSED", "NEITHER"} or (
             choice != top["choice"]
         ):
             choice = str(top["choice"])
-    if choice not in {"CURRENT", "PROPOSED"}:
+    if choice not in {"CURRENT", "PROPOSED", "NEITHER"}:
         # No usable ranking and an out-of-set/uncertain answer: refusal.
         return {
             "schema_version": ADJUDICATION_SCHEMA,
@@ -410,6 +413,8 @@ def adjudicate_with_witness(
     )
     audit["judge"] = verdict
     if not witness["target_audible"]:
+        if verdict.get("choice") == "NEITHER":
+            return False, "JUDGE_REJECTS_CLOSED_SET", audit
         if verdict.get("choice") != "PROPOSED":
             branch = (
                 "JUDGE_KEEPS_CURRENT"
@@ -441,6 +446,8 @@ def adjudicate_with_witness(
         "proposed": compat_proposed,
         "current": compat_current,
     }
+    if verdict.get("choice") == "NEITHER":
+        return False, "JUDGE_REJECTS_CLOSED_SET", audit
     if verdict.get("choice") != "PROPOSED":
         branch = (
             "JUDGE_KEEPS_CURRENT"

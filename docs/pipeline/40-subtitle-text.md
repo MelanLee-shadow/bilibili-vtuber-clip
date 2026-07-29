@@ -235,11 +235,17 @@
   `provider_transient / final_review_correction_discovery` 重试；非法合同/状态仍是终态错误。
 - exact-final 中 AGY/声学层是证人，不是法官：它只给出目标是否可闻、疑似拼音及
   current/proposed 发音兼容度，CPA 结合文字 provenance 与整片语境作最终
-  CURRENT/PROPOSED 裁决。代码必须记录拼音/不可闻证据与 CPA 选择的冲突，但不得用 AGY
+  CURRENT/PROPOSED 裁决；若两个候选都与拼音明显冲突，CPA 可返回 `NEITHER`
+  拒绝这个坏闭集。`NEITHER` 不等于保留 CURRENT、不授权 mutation，必须退回提案层重建候选。
+  代码必须记录拼音/不可闻证据与 CPA 选择的冲突，但不得用 AGY
   或兼容度阈值推翻 CPA 明确的 `PROPOSED`；CPA 未明确选边或调用失败才是未决。声音不能
   单独选择两个同音正字法；同音或规范发音键相同（如 `大恩→大N`）须有绑定文字证据，或
   满足可重算的严格同音闭集并由 CPA 明确作语义 tie-break，否则记录
   `ORTHOGRAPHY_NOT_DECIDABLE_FROM_AUDIO` 并阻断。
+- AGY 纯听写 prompt 不得内嵌任何可被复制的合法拼音示例。声学缓存除音频
+  SHA 外还必须精确绑定当前 witness prompt contract；contract 升级后旧缓存自动失效。
+  已知 prompt 示例的原样回声必须报 `WITNESS_PROMPT_COPY_DETECTED`、不得入缓存，
+  也不得作为 CPA 裁决证据。
 - 上述 choke point 同样覆盖早期 chat-authority 的**近失念读**和**已注册专名冲突**：
   AGY 请求必须先物理剥离 `candidate_entities/current/proposed`，只回候选盲拼音；
   CPA 再看全部闭集、结构化弹幕/SC 与前后文，给全部候选概率排序并采用最高者。CPA

@@ -127,6 +127,29 @@ def test_judge_call_failure_fails_closed():
     assert branch == "JUDGE_UNCERTAIN_KEEP_CURRENT"
 
 
+def test_judge_can_reject_a_malformed_closed_set_without_mutating_text():
+    repaired, branch, audit = adjudicate_with_witness(
+        check_request=CHECK_REQUEST,
+        witness=_witness("wan quan bu shi zhe liang ju"),
+        llm_call=lambda _prompt: json.dumps(
+            {
+                "ranking": [
+                    {"choice": "NEITHER", "p": 0.98},
+                    {"choice": "CURRENT", "p": 0.01},
+                    {"choice": "PROPOSED", "p": 0.01},
+                ],
+                "choice": "NEITHER",
+                "reason": "both candidates conflict with the witness",
+            }
+        ),
+    )
+
+    assert repaired is False
+    assert branch == "JUDGE_REJECTS_CLOSED_SET"
+    assert audit["judge"]["status"] == "JUDGED"
+    assert audit["judge"]["choice"] == "NEITHER"
+
+
 def test_judged_proposed_owns_decision_when_pinyin_witness_disagrees():
     # CPA sees the dictation and still says PROPOSED; the witness cannot veto.
     repaired, branch, audit = adjudicate_with_witness(
@@ -416,7 +439,7 @@ def test_judge_prompt_carries_witness_and_closed_set():
     assert "hai mei you ge zhai ne" in prompt
     assert "还没有歌杂呢" in prompt and "还没有歌债呢" in prompt
     assert "歌债+1" in prompt
-    assert "UNCERTAIN" in prompt
+    assert "NEITHER" in prompt
 
 
 @pytest.mark.parametrize("bad_witness", [
@@ -664,6 +687,18 @@ def test_judge_ranking_top_choice_wins_and_uncertain_is_not_terminal():
         "reason": "自相矛盾时排序第一为准",
     })
     assert disagree["choice"] == "CURRENT"
+
+    neither = call_with({
+        "ranking": [
+            {"choice": "NEITHER", "p": 0.98},
+            {"choice": "CURRENT", "p": 0.01},
+            {"choice": "PROPOSED", "p": 0.01},
+        ],
+        "choice": "CURRENT",
+        "reason": "听写拼音与两个整句都不匹配",
+    })
+    assert neither["status"] == "JUDGED"
+    assert neither["choice"] == "NEITHER"
 
     refusal = call_with({"choice": "UNCERTAIN", "reason": "拒绝排序"})
     assert refusal["status"] == "JUDGE_OUT_OF_SET"

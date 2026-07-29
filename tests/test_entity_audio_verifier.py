@@ -670,6 +670,10 @@ def test_witness_acoustic_cache_replays_same_audio_without_provider(tmp_path, mo
     assert first["status"] == "OBSERVED"
     assert first["heard_pinyin"] == "hai mei you ge zhai ne"
     assert len(agy_calls) == 1
+    first_job = next((output_dir / "entity_verdicts").iterdir())
+    prompt = (first_job / "prompt.md").read_text(encoding="utf-8")
+    assert "zhe ge shi he tian yi de lian dong o" not in prompt
+    assert "e.g." not in prompt
 
     # 不同 evidence/几何 → 不同 request_sha，但音频字节相同 → 缓存命中
     second = verify(build_witness_request(check_request("f" * 64, 10_040)))
@@ -678,7 +682,117 @@ def test_witness_acoustic_cache_replays_same_audio_without_provider(tmp_path, mo
     assert len(agy_calls) == 1  # 零新 provider 调用
 
     cache_root = tmp_path / "base" / "cache" / "witness-acoustic"
-    assert any(cache_root.rglob("*.json"))
+    cache_entry = next(
+        path
+        for path in cache_root.rglob("*.json")
+        if not path.name.endswith((".prompt.json", ".response.json"))
+    )
+    cached = json.loads(cache_entry.read_text(encoding="utf-8"))
+    assert cached["schema_version"] == "witness-acoustic-cache.v2"
+    assert cached["prompt_contract"] == verifier_module.WITNESS_PROMPT_CONTRACT
+
+
+def test_witness_rejects_legacy_prompt_copy_and_does_not_cache_it(
+    tmp_path, monkeypatch
+):
+    """The exact example copied during the 2026-07-29 incident is poisoned
+    evidence, even if it arrives outside the ordinary cache path."""
+
+    from src.autoslice.acoustic_witness_adjudication import (
+        build_witness_request,
+    )
+
+    source = tmp_path / "base" / "recordings" / "source.mp4"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"source media bytes")
+
+    def fake_run(command, **kwargs):
+        if command[0] == "ffmpeg":
+            Path(command[-1]).write_bytes(b"poison-test witness clip")
+            return _Completed()
+        job_dir = Path(kwargs["cwd"])
+        (job_dir / "verdict.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": verifier_module.WITNESS_SCHEMA,
+                    "status": "OBSERVED",
+                    "target_audible": True,
+                    "heard_pinyin": "zhe ge shi he tian yi de lian dong o",
+                    "uncertain_positions": [],
+                    "syllable_count": 10,
+                    "confidence": 0.99,
+                    "reason": "copied prompt sample",
+                }
+            ),
+            encoding="utf-8",
+        )
+        return _Completed()
+
+    monkeypatch.setattr(verifier_module.subprocess, "run", fake_run)
+    output_dir = tmp_path / "base" / "out" / "2026-07-29" / "auto_z"
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=output_dir,
+        recording_date="2026-07-29",
+        source_duration_ms=60_000,
+        agy_bin="agy-test",
+    )
+    verdict = verify(
+        build_witness_request(
+            {
+                "evidence_id": "e" * 64,
+                "cue_indexes": [64],
+                "matched_start_ms": 10_000,
+                "matched_end_ms": 11_400,
+                "context_start_ms": 9_000,
+                "context_end_ms": 12_000,
+                "source_media_timeline_offset_ms": 0,
+            }
+        )
+    )
+
+    assert verdict["status"] == "UNCERTAIN"
+    assert verdict["reason_code"] == "WITNESS_PROMPT_COPY_DETECTED"
+    cache_root = tmp_path / "base" / "cache" / "witness-acoustic"
+    assert not cache_root.exists() or not any(cache_root.rglob("*.json"))
+
+
+def test_witness_acoustic_cache_rejects_pre_contract_v1_entry(tmp_path):
+    output_dir = tmp_path / "base" / "out" / "2026-07-29" / "auto_old"
+    output_dir.mkdir(parents=True)
+    job_dir = output_dir / "entity_verdicts" / "job"
+    job_dir.mkdir(parents=True)
+    clip_sha = "a" * 64
+    entry_path = verifier_module._witness_acoustic_cache_path(
+        output_dir, clip_sha
+    )
+    entry_path.parent.mkdir(parents=True)
+    entry_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "witness-acoustic-cache.v1",
+                "audio_clip_sha256": clip_sha,
+                "observed": {
+                    "schema_version": verifier_module.WITNESS_SCHEMA,
+                    "status": "OBSERVED",
+                    "target_audible": True,
+                    "heard_pinyin": "zhe ge shi he tian yi de lian dong o",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    entry_path.with_suffix(".prompt.json").write_text("old prompt")
+    entry_path.with_suffix(".response.json").write_text("old response")
+
+    assert (
+        verifier_module._serve_witness_acoustic_cache(
+            output_dir=output_dir,
+            clip_sha256=clip_sha,
+            job_dir=job_dir,
+        )
+        is None
+    )
 
 
 def test_witness_acoustic_cache_never_stores_failures(tmp_path, monkeypatch):
