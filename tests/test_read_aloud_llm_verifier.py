@@ -1,8 +1,6 @@
 import hashlib
 import json
 
-import pytest
-
 from src.autoslice import read_aloud_llm_verifier as verifier_module
 from src.autoslice.chat_authority import (
     ChatEvidence,
@@ -23,16 +21,32 @@ def _srt(*texts: str) -> str:
     return "\n\n".join(blocks) + "\n"
 
 
-def _audio_stub(canonical: str):
-    """Stand-in for the AGY audio fallback verifier."""
+def _audio_witness_stub(calls=None, *, heard="wai tao shi shen me yan se"):
+    """Stand-in for candidate-blind AGY pinyin evidence."""
 
     def verify(request):
+        if calls is not None:
+            calls.append(request)
+        assert (
+            request["schema_version"]
+            == "subtitle-span-acoustic-witness-request.v1"
+        )
+        assert "candidate_entities" not in request
+        assert "current_cue" not in request
+        assert "proposed_cue" not in request
         return {
-            "schema_version": verifier_module.VERDICT_SCHEMA,
+            "schema_version": "subtitle-span-acoustic-witness.v1",
             "request_sha256": request["request_sha256"],
-            "status": "RESOLVED",
-            "canonical_entity": canonical,
+            "status": "OBSERVED",
+            "target_audible": True,
+            "heard_pinyin": heard,
+            "uncertain_positions": [],
+            "syllable_count": len(heard.split()),
             "confidence": 0.97,
+            "source_media_sha256": "1" * 64,
+            "audio_clip_sha256": "2" * 64,
+            "prompt_sha256": "3" * 64,
+            "response_sha256": "4" * 64,
         }
 
     return verify
@@ -47,6 +61,12 @@ def _request(**overrides):
         "matched_audio_text": "歪了是什么颜色",
         "context_before": "刚才有人问",
         "context_after": "是黑色的",
+        "cue_indexes": [1],
+        "matched_start_ms": 5_000,
+        "matched_end_ms": 9_000,
+        "context_start_ms": 3_500,
+        "context_end_ms": 10_500,
+        "source_media_timeline_offset_ms": 0,
         "candidate_entities": [
             {"canonical": "外套是什么颜色"},
             {"canonical": "歪了是什么颜色"},
@@ -90,48 +110,126 @@ def test_confident_context_judgment_returns_hash_bound_exact_chat_verdict():
     assert request["context_after"] in prompts[0]
 
 
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {"is_read_aloud": False, "confidence": 0.99},
-        {"is_read_aloud": True, "confidence": 0.79},
-        {"is_read_aloud": "true", "confidence": 0.99},
-        {"is_read_aloud": True, "confidence": 1.01},
-        {"is_read_aloud": True, "confidence": True},
-    ],
-)
-def test_non_authoritative_llm_outputs_defer_to_audio(payload):
-    fallback = {"source": "audio"}
+def test_confident_context_rejection_is_a_cpa_current_decision_without_audio():
+    audio_calls = []
     verify = verifier_module.build_cpa_read_aloud_verifier(
-        lambda _prompt: json.dumps(payload),
-        next_verifier=lambda _request: fallback,
+        lambda _prompt: json.dumps(
+            {"is_read_aloud": False, "confidence": 0.99}
+        ),
+        next_verifier=_audio_witness_stub(audio_calls),
     )
 
-    assert verify(_request()) is fallback
+    verdict = verify(_request())
+
+    assert verdict["canonical_entity"] == "歪了是什么颜色"
+    assert verdict["authority_kind"] == "cpa_context_adjudication"
+    assert verdict["decision_authority"] == "CPA_JUDGE"
+    assert audio_calls == []
 
 
-@pytest.mark.parametrize(
-    "overrides",
-    [
-        {"schema_version": "chat-entity-verification-request.v1"},
-        {"kind": "gift"},
-        {"exact_text": ""},
-        {"candidate_entities": [{"canonical": "别的候选"}]},
-    ],
-)
-def test_out_of_scope_or_unbound_requests_never_call_the_llm(overrides):
+def test_weak_context_uses_candidate_blind_audio_then_cpa_highest_probability():
+    prompts = []
+    audio_calls = []
+
+    def llm_call(prompt):
+        prompts.append(prompt)
+        if len(prompts) == 1:
+            return json.dumps(
+                {"is_read_aloud": True, "confidence": 0.79}
+            )
+        return json.dumps(
+            {
+                "ranking": [
+                    {"canonical": "外套是什么颜色", "p": 0.61},
+                    {"canonical": "歪了是什么颜色", "p": 0.39},
+                ],
+                "choice": "外套是什么颜色",
+                "reason": "拼音与问答语境共同支持",
+            },
+            ensure_ascii=False,
+        )
+
+    verify = verifier_module.build_cpa_read_aloud_verifier(
+        llm_call,
+        next_verifier=_audio_witness_stub(audio_calls),
+    )
+
+    verdict = verify(_request())
+
+    assert verdict["canonical_entity"] == "外套是什么颜色"
+    assert verdict["confidence"] == 0.61
+    assert verdict["authority_kind"] == "cpa_witness_adjudication"
+    assert verdict["decision_authority"] == "CPA_JUDGE"
+    assert verdict["witness_authority"] == "EVIDENCE_ONLY"
+    assert verdict["witness_status"] == "OBSERVED"
+    assert len(audio_calls) == 1
+    assert "所有已注册专名平等" in prompts[1]
+
+
+def test_registered_entity_conflict_also_uses_blind_witness_then_cpa():
+    audio_calls = []
+    request = _request(
+        schema_version="chat-entity-verification-request.v1",
+        exact_text="礼墨",
+        matched_audio_text="林墨",
+        structured_chat_canonical="礼墨",
+        structured_chat_surface="礼墨",
+        candidate_entities=[
+            {"canonical": "礼墨", "surfaces": ["礼墨"]},
+            {"canonical": "林墨", "surfaces": ["林墨"]},
+        ],
+    )
+
+    verify = verifier_module.build_cpa_read_aloud_verifier(
+        lambda _prompt: json.dumps(
+            {
+                "ranking": [
+                    {"canonical": "礼墨", "p": 0.72},
+                    {"canonical": "林墨", "p": 0.28},
+                ],
+                "choice": "礼墨",
+                "reason": "结构化文字和话题语境支持",
+            },
+            ensure_ascii=False,
+        ),
+        next_verifier=_audio_witness_stub(
+            audio_calls, heard="li mo"
+        ),
+    )
+
+    verdict = verify(request)
+
+    assert verdict["canonical_entity"] == "礼墨"
+    assert verdict["reason_code"] == (
+        "REGISTERED_ENTITY_CPA_WITNESS_ADJUDICATED"
+    )
+    assert len(audio_calls) == 1
+
+
+def test_only_candidate_blind_witness_schema_can_reach_audio_provider():
     calls = []
-    fallback = {"source": "audio"}
+    audio_calls = []
+    fallback = {"source": "other-verifier"}
+
+    def audio_provider(request):
+        audio_calls.append(request)
+        return fallback
+
     verify = verifier_module.build_cpa_read_aloud_verifier(
         lambda prompt: calls.append(prompt),
-        next_verifier=lambda _request: fallback,
+        next_verifier=audio_provider,
     )
 
-    assert verify(_request(**overrides)) is fallback
+    assert verify(_request(schema_version="unrelated.v1")) is None
+    witness_request = {
+        "schema_version": "subtitle-span-acoustic-witness-request.v1",
+    }
+    assert verify(witness_request) is fallback
+    assert audio_calls == [witness_request]
     assert calls == []
 
 
-def test_transport_or_parse_failure_degrades_to_audio():
+def test_transport_failure_may_collect_blind_witness_but_never_lets_it_choose():
     fallback_calls = []
 
     def broken(_prompt):
@@ -139,10 +237,10 @@ def test_transport_or_parse_failure_degrades_to_audio():
 
     verify = verifier_module.build_cpa_read_aloud_verifier(
         broken,
-        next_verifier=lambda request: fallback_calls.append(request) or "audio",
+        next_verifier=_audio_witness_stub(fallback_calls),
     )
 
-    assert verify(_request()) == "audio"
+    assert verify(_request()) is None
     assert len(fallback_calls) == 1
 
 
@@ -150,6 +248,19 @@ def test_no_cpa_and_no_audio_preserves_the_preexisting_no_verdict_behavior():
     verify = verifier_module.build_cpa_read_aloud_verifier(None)
 
     assert verify(_request()) is None
+
+
+def test_no_cpa_never_delegates_registered_name_choice_to_audio():
+    audio_calls = []
+    verify = verifier_module.build_cpa_read_aloud_verifier(
+        None,
+        next_verifier=lambda request: audio_calls.append(request),
+    )
+
+    assert verify(
+        _request(schema_version="chat-entity-verification-request.v1")
+    ) is None
+    assert audio_calls == []
 
 
 # --------------------------------------------------------------------------- #
@@ -208,11 +319,31 @@ def test_cpa_context_cannot_own_near_complete_span_without_independent_support()
     assert audit["applied"] == []
 
 
-def test_cpa_uncertain_falls_back_to_audio_that_keeps_asr():
+def test_cpa_witness_judge_can_keep_current_without_audio_final_authority():
     source = _srt(_GARBLE)
+    calls = []
+
+    def llm_call(_prompt):
+        calls.append(1)
+        if len(calls) == 1:
+            return json.dumps(
+                {"is_read_aloud": False, "confidence": 0.3}
+            )
+        return json.dumps(
+            {
+                "ranking": [
+                    {"canonical": _DANMU, "p": 0.25},
+                    {"canonical": _GARBLE, "p": 0.75},
+                ],
+                "choice": _GARBLE,
+                "reason": "目标音节更接近当前跨度",
+            },
+            ensure_ascii=False,
+        )
+
     verify = verifier_module.build_cpa_read_aloud_verifier(
-        lambda _p: json.dumps({"is_read_aloud": False, "confidence": 0.3}),
-        next_verifier=_audio_stub(_GARBLE),  # audio insists she said the ASR span
+        llm_call,
+        next_verifier=_audio_witness_stub(),
     )
 
     output, audit = apply_authoritative_chat_evidence(
@@ -222,4 +353,6 @@ def test_cpa_uncertain_falls_back_to_audio_that_keeps_asr():
     )
 
     assert parse_srt_cues(output)[0].text == _GARBLE
-    assert audit["read_aloud_arbitrations"][0]["outcome"] == "acoustic_span_confirmed_by_audio"
+    assert audit["read_aloud_arbitrations"][0]["outcome"] == (
+        "current_confirmed_by_cpa_with_blind_audio_witness"
+    )

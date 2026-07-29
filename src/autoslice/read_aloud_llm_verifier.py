@@ -14,8 +14,10 @@ This keeps read-aloud correction alive when AGY/Gemini is quota-exhausted (the
 2026-07-14 regression: agy jingting AND the audio arbitration are both
 Gemini-family, so one quota wall reverted a slice to garble).  Placing CPA
 *before* the audio verifier also removes AGY from the hot path for the common
-read-aloud case; the audio verifier stays as the fallback for genuine acoustic
-ambiguity and for non-danmaku entity confusions (立希/Saki etc.).
+read-aloud case. When audio is useful, this module sends AGY a physically
+candidate-free pinyin request and then gives the full closed set back to CPA.
+The same witness→CPA route owns registered-name conflicts (立希/Saki etc.);
+the audio provider never emits the delivered canonical choice.
 
 Contract: this is an ``entity_verifier(request) -> verdict`` matching
 ``entity_audio_verifier``.  For a read-aloud request it returns a
@@ -23,17 +25,24 @@ Contract: this is an ``entity_verifier(request) -> verdict`` matching
 danmaku text ONLY when the LLM confidently judges she is reading it — which
 ``chat_authority`` then applies verbatim (``弹幕一致即可``, per Ivan
 2026-07-15; no de-duplication of repeats).  Anything short of a confident read
-is deferred to ``next_verifier`` (the audio fallback) so this layer can only
-*add* rescues, never fail-closed to garble on its own.
+uses ``next_verifier`` only for a candidate-blind pinyin witness, then returns
+to CPA for the closed choice. A provider failure can leave the case unresolved
+but can never transfer final authority to audio.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from src.autoslice.acoustic_witness_adjudication import (
+    WITNESS_REQUEST_SCHEMA,
+    build_witness_request,
+    pinyin_compatibility,
+)
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.llm_client import extract_json_object
 
@@ -49,6 +58,9 @@ VERIFIER_ID = f"{CHANNEL_PROFILE.profile_id}-cpa-read-aloud-context-v1"
 
 LlmCall = Callable[[str], str]
 Verifier = Callable[[Mapping[str, Any]], Any]
+
+_ENTITY_REQUEST_SCHEMA = "chat-entity-verification-request.v1"
+_WITNESS_VERDICT_SCHEMA = "subtitle-span-acoustic-witness.v1"
 
 
 def _prompt(danmu: str, asr: str, ctx_before: str, ctx_after: str) -> str:
@@ -81,6 +93,262 @@ def _coerce_confidence(value: Any) -> float:
     return confidence if math.isfinite(confidence) and 0.0 <= confidence <= 1.0 else 0.0
 
 
+def _witness_check_request(
+    request: Mapping[str, Any],
+    *,
+    current: str,
+    proposed: str,
+) -> dict[str, Any] | None:
+    """Build the candidate-bearing judge request; the audio request is derived
+    from this object by ``build_witness_request`` and strips every text field."""
+
+    try:
+        start_ms = int(request["matched_start_ms"])
+        end_ms = int(request["matched_end_ms"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if start_ms < 0 or end_ms <= start_ms:
+        return None
+    context_start_ms = request.get("context_start_ms", max(0, start_ms - 1_500))
+    context_end_ms = request.get("context_end_ms", end_ms + 1_500)
+    timeline_offset_ms = request.get("source_media_timeline_offset_ms", 0)
+    if any(
+        isinstance(value, bool) or not isinstance(value, int)
+        for value in (context_start_ms, context_end_ms, timeline_offset_ms)
+    ):
+        return None
+    if (
+        context_start_ms < 0
+        or context_end_ms < end_ms
+        or timeline_offset_ms < 0
+    ):
+        return None
+    return {
+        "schema_version": "subtitle-span-acoustic-check-request.v1",
+        "evidence_id": str(request.get("evidence_id") or ""),
+        "cue_indexes": list(request.get("cue_indexes") or []),
+        "matched_start_ms": start_ms,
+        "matched_end_ms": end_ms,
+        "context_start_ms": context_start_ms,
+        "context_end_ms": context_end_ms,
+        "source_media_timeline_offset_ms": timeline_offset_ms,
+        "current_cue": current,
+        "proposed_cue": proposed,
+        "suspect": current,
+        "replacement": proposed,
+        "context_before": str(request.get("context_before") or ""),
+        "context_after": str(request.get("context_after") or ""),
+        "repair_class": (
+            "read_aloud_near_match"
+            if request.get("schema_version") == READ_ALOUD_REQUEST_SCHEMA
+            else "registered_entity_conflict"
+        ),
+        "candidate_provenance": {
+            "kind": request.get("kind"),
+            "source": request.get("source"),
+            "source_sha256": request.get("source_sha256"),
+            "source_event_id": request.get("source_event_id"),
+            "structured_chat_canonical": request.get(
+                "structured_chat_canonical"
+            ),
+            "structured_chat_surface": request.get("structured_chat_surface"),
+        },
+        "orthography_authority": {
+            "status": "STRUCTURED_TEXT_EVIDENCE",
+            "canonical": request.get("structured_chat_canonical"),
+        },
+        "reason": str(request.get("reason") or "")[:300],
+    }
+
+
+_CLOSED_CHOICE_PROMPT = """# 字幕闭集裁决
+
+你是最终文字/语义法官。音频证人从未见过候选，只按目标时窗听写拼音；
+它是辅助证据，不能决定汉字。请结合拼音、前后语境和平台结构化文字，从
+闭集中选出最可能是主播实际说出的一个候选。
+
+铁律：
+1. 只能选择闭集中的 canonical；不能生成第三种文本。
+2. 所有已注册专名平等。词表只提高先验，不允许把一个已注册专名机械压过
+   另一个已注册专名。
+3. 平台弹幕/SC 是高价值文字证据，但不自动证明主播逐字念了它。
+4. AGY/ASR/拼音只是证人；即使与语境冲突，最终仍由你在看见全部证据后裁决。
+5. 必须给全部候选排序，并选择概率最高者；不得因为不确定而默认 CURRENT。
+
+## 音频证人（未见候选）
+{witness}
+
+## 闭集候选
+{candidates}
+
+## 语境与结构化证据
+{context}
+
+只输出一个 JSON 对象：
+{{"ranking":[{{"canonical":"闭集中的原文","p":0.0到1.0}}, ...覆盖全部候选],
+"choice":"概率最高的 canonical 原文","reason":"一句证据理由"}}
+"""
+
+
+def _closed_choice_with_witness(
+    *,
+    request: Mapping[str, Any],
+    llm_call: LlmCall,
+    next_verifier: Verifier | None,
+) -> dict[str, Any] | None:
+    candidates = [
+        dict(candidate)
+        for candidate in request.get("candidate_entities") or ()
+        if isinstance(candidate, Mapping)
+        and str(candidate.get("canonical") or "")
+    ]
+    canonicals = [str(candidate["canonical"]) for candidate in candidates]
+    if len(canonicals) < 2 or len(canonicals) != len(set(canonicals)):
+        return None
+    current = str(request.get("matched_audio_text") or canonicals[-1])
+    proposed = str(
+        request.get("exact_text")
+        or request.get("structured_chat_canonical")
+        or canonicals[0]
+    )
+    check_request = _witness_check_request(
+        request,
+        current=current,
+        proposed=proposed,
+    )
+    if check_request is None:
+        return None
+    witness_request = build_witness_request(check_request)
+    try:
+        observed = (
+            next_verifier(witness_request)
+            if next_verifier is not None
+            else None
+        )
+    except Exception as exc:
+        observed = {
+            "schema_version": _WITNESS_VERDICT_SCHEMA,
+            "request_sha256": witness_request["request_sha256"],
+            "status": "UNCERTAIN",
+            "reason_code": "WITNESS_PROVIDER_ERROR",
+            "error": f"{type(exc).__name__}: {exc}"[:300],
+        }
+    witness = dict(observed) if isinstance(observed, Mapping) else {}
+    witness_valid = bool(
+        witness.get("schema_version") == _WITNESS_VERDICT_SCHEMA
+        and witness.get("request_sha256") == witness_request["request_sha256"]
+        and witness.get("status") in {"OBSERVED", "UNCERTAIN"}
+        and not any(
+            key in witness
+            for key in (
+                "candidate_id",
+                "canonical_entity",
+                "proposed_cue",
+                "rewritten_text",
+                "current_fit",
+                "proposed_fit",
+            )
+        )
+    )
+    if not witness_valid:
+        witness = {
+            "schema_version": _WITNESS_VERDICT_SCHEMA,
+            "request_sha256": witness_request["request_sha256"],
+            "status": "UNCERTAIN",
+            "reason_code": "WITNESS_INVALID",
+        }
+    context = {
+        "current_transcript": current,
+        "context_before": request.get("context_before"),
+        "context_after": request.get("context_after"),
+        "kind": request.get("kind"),
+        "structured_chat_text": request.get("exact_text"),
+        "structured_chat_canonical": request.get(
+            "structured_chat_canonical"
+        ),
+        "structured_chat_surface": request.get("structured_chat_surface"),
+        "candidate_provenance": check_request["candidate_provenance"],
+    }
+    prompt = _CLOSED_CHOICE_PROMPT.format(
+        witness=json.dumps(witness, ensure_ascii=False, sort_keys=True),
+        candidates=json.dumps(
+            candidates, ensure_ascii=False, indent=2, sort_keys=True
+        ),
+        context=json.dumps(context, ensure_ascii=False, indent=2, sort_keys=True),
+    )
+    try:
+        completion = llm_call(prompt)
+        payload = extract_json_object(completion)
+    except Exception:
+        return None
+    ranking_raw = payload.get("ranking")
+    if not isinstance(ranking_raw, list):
+        return None
+    ranking: list[dict[str, object]] = []
+    for row in ranking_raw:
+        if not isinstance(row, Mapping):
+            continue
+        canonical = str(row.get("canonical") or "")
+        probability = row.get("p")
+        if (
+            canonical in canonicals
+            and not isinstance(probability, bool)
+            and isinstance(probability, (int, float))
+            and math.isfinite(float(probability))
+            and 0.0 <= float(probability) <= 1.0
+        ):
+            ranking.append({"canonical": canonical, "p": float(probability)})
+    if {str(row["canonical"]) for row in ranking} != set(canonicals):
+        return None
+    if len(ranking) != len(canonicals):
+        return None
+    top = max(ranking, key=lambda row: float(row["p"]))
+    choice = str(payload.get("choice") or "")
+    if choice != top["canonical"]:
+        choice = str(top["canonical"])
+    heard_pinyin = str(witness.get("heard_pinyin") or "")
+    uncertain_positions = list(witness.get("uncertain_positions") or [])
+    compatibility = {
+        canonical: pinyin_compatibility(
+            canonical,
+            heard_pinyin=heard_pinyin,
+            uncertain_positions=uncertain_positions,
+        )
+        for canonical in canonicals
+    }
+    return {
+        "schema_version": VERDICT_SCHEMA,
+        "request_sha256": request.get("request_sha256"),
+        "status": "RESOLVED",
+        "canonical_entity": choice,
+        "confidence": float(top["p"]),
+        "authority_kind": "cpa_witness_adjudication",
+        "decision_authority": "CPA_JUDGE",
+        "witness_authority": "EVIDENCE_ONLY",
+        "witness_status": witness.get("status"),
+        "witness_target_audible": witness.get("target_audible"),
+        "witness_request_sha256": witness_request["request_sha256"],
+        "witness_source_media_sha256": witness.get(
+            "source_media_sha256"
+        ),
+        "witness_audio_clip_sha256": witness.get("audio_clip_sha256"),
+        "witness_prompt_sha256": witness.get("prompt_sha256"),
+        "witness_response_sha256": witness.get("response_sha256"),
+        "judge_prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+        "judge_completion_sha256": hashlib.sha256(
+            completion.encode()
+        ).hexdigest(),
+        "ranking": ranking,
+        "pinyin_compatibility": compatibility,
+        "reason_code": (
+            "READ_ALOUD_CPA_WITNESS_ADJUDICATED"
+            if request.get("schema_version") == READ_ALOUD_REQUEST_SCHEMA
+            else "REGISTERED_ENTITY_CPA_WITNESS_ADJUDICATED"
+        ),
+        "reason": str(payload.get("reason") or "")[:300],
+    }
+
+
 def build_cpa_read_aloud_verifier(
     llm_call: LlmCall | None,
     *,
@@ -89,35 +357,52 @@ def build_cpa_read_aloud_verifier(
 ) -> Verifier:
     """Return an ``entity_verifier`` that adjudicates read-aloud from text.
 
-    ``llm_call(prompt) -> completion`` is the injected CPA transport (None when
-    CPA is not configured, in which case every request is deferred, making this
-    layer a no-op identical to the pre-existing human→audio chain).
-    ``next_verifier`` is the fallback (the audio verifier) used for non-read-aloud
-    requests and for read-aloud requests the LLM cannot confidently confirm.
+``llm_call(prompt) -> completion`` is the injected CPA transport. Without CPA,
+read-aloud and registered-name conflicts remain unresolved; they are never
+delegated to audio. ``next_verifier`` is only the candidate-blind audio witness
+used by the CPA judge.
     """
 
     def _defer(request: Mapping[str, Any]) -> Any:
-        return next_verifier(request) if next_verifier is not None else None
+        if (
+            request.get("schema_version") == WITNESS_REQUEST_SCHEMA
+            and next_verifier is not None
+        ):
+            return next_verifier(request)
+        return None
 
     def verify(request: Mapping[str, Any]) -> Any:
-        if (
-            llm_call is None
-            or request.get("schema_version") != READ_ALOUD_REQUEST_SCHEMA
-            or request.get("kind") not in _READ_ALOUD_KINDS
-        ):
+        schema = request.get("schema_version")
+        if schema == _ENTITY_REQUEST_SCHEMA:
+            if llm_call is None:
+                return None
+            return _closed_choice_with_witness(
+                request=request,
+                llm_call=llm_call,
+                next_verifier=next_verifier,
+            )
+        if schema != READ_ALOUD_REQUEST_SCHEMA:
             return _defer(request)
+        if llm_call is None:
+            return None
+        if request.get("kind") not in _READ_ALOUD_KINDS:
+            return _closed_choice_with_witness(
+                request=request,
+                llm_call=llm_call,
+                next_verifier=next_verifier,
+            )
 
         danmu = str(request.get("exact_text") or "")
         asr = str(request.get("matched_audio_text") or "")
         if not danmu:
-            return _defer(request)
+            return None
         candidates = {
             str(candidate.get("canonical") or "")
             for candidate in request.get("candidate_entities") or ()
             if isinstance(candidate, Mapping)
         }
         if danmu not in candidates:
-            return _defer(request)
+            return None
 
         try:
             prompt = _prompt(
@@ -129,9 +414,13 @@ def build_cpa_read_aloud_verifier(
             completion = llm_call(prompt)
             data = extract_json_object(completion)
         except Exception:  # transport/parser failure is never correction authority
-            # Transport / parse failure is not a judgment: fall back to audio so
-            # this layer never fail-closes a read to garble on its own.
-            return _defer(request)
+            # A provider failure may retry through the closed witness+judge
+            # route, but AGY still never receives candidates or final authority.
+            return _closed_choice_with_witness(
+                request=request,
+                llm_call=llm_call,
+                next_verifier=next_verifier,
+            )
 
         confidence = _coerce_confidence(data.get("confidence"))
         if data.get("is_read_aloud") is True and confidence >= min_confidence:
@@ -149,9 +438,29 @@ def build_cpa_read_aloud_verifier(
                 "completion_sha256": "sha256:"
                 + hashlib.sha256(completion.encode()).hexdigest(),
             }
-        # Not a confident read-aloud: let the audio verifier (if any) decide
-        # acoustically; the LLM only knows she isn't reading *this* danmaku, not
-        # that the ASR span itself is acoustically correct.
-        return _defer(request)
+        if data.get("is_read_aloud") is False and confidence >= min_confidence:
+            return {
+                "schema_version": VERDICT_SCHEMA,
+                "request_sha256": request.get("request_sha256"),
+                "status": "RESOLVED",
+                "canonical_entity": asr,
+                "confidence": confidence,
+                "authority_kind": "cpa_context_adjudication",
+                "decision_authority": "CPA_JUDGE",
+                "reason_code": "READ_ALOUD_REJECTED_BY_CONTEXT",
+                "verifier_id": VERIFIER_ID,
+                "prompt_sha256": "sha256:"
+                + hashlib.sha256(prompt.encode()).hexdigest(),
+                "completion_sha256": "sha256:"
+                + hashlib.sha256(completion.encode()).hexdigest(),
+            }
+        # A weak/failed context-only read is not permission for AGY to choose
+        # the delivered sentence. Give AGY a candidate-blind pinyin request,
+        # then ask CPA again with the full closed set and context.
+        return _closed_choice_with_witness(
+            request=request,
+            llm_call=llm_call,
+            next_verifier=next_verifier,
+        )
 
     return verify

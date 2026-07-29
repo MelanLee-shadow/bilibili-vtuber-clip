@@ -235,6 +235,12 @@
   单独选择两个同音正字法；同音或规范发音键相同（如 `大恩→大N`）须有绑定文字证据，或
   满足可重算的严格同音闭集并由 CPA 明确作语义 tie-break，否则记录
   `ORTHOGRAPHY_NOT_DECIDABLE_FROM_AUDIO` 并阻断。
+- 上述 choke point 同样覆盖早期 chat-authority 的**近失念读**和**已注册专名冲突**：
+  AGY 请求必须先物理剥离 `candidate_entities/current/proposed`，只回候选盲拼音；
+  CPA 再看全部闭集、结构化弹幕/SC 与前后文，给全部候选概率排序并采用最高者。CPA
+  可以只凭文字语境确认/否决念读；一旦需要音频辅助，AGY 仍只作 witness。不得再把
+  `entity-audio-observation` 的 `canonical_entity`、旧黑帧二选一或 CPA 失败后的 AGY
+  fallback 当最终 mutation authority；CPA 不可用时保持未决，不允许声学模型接管。
 - exact-final SRT 使用**交付局部时间轴**，而声学 verifier 绑定的通常是带前后 padding 的源
   media。每个 `subtitle-span-acoustic-check-request.v1` 必须显式携带非负
   `source_media_timeline_offset_ms`，并把它纳入 evidence/request hash；实际裁剪必须执行

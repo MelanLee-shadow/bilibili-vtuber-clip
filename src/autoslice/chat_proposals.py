@@ -103,6 +103,14 @@ def _resolve_chat_entity_proposal(
         "cue_indexes": cue_indexes,
         "matched_start_ms": cues[proposal["start"]].start_ms,
         "matched_end_ms": cues[proposal["start"] + proposal["count"] - 1].end_ms,
+        "context_start_ms": max(
+            0, cues[proposal["start"]].start_ms - 1_500
+        ),
+        "context_end_ms": (
+            cues[proposal["start"] + proposal["count"] - 1].end_ms
+            + 1_500
+        ),
+        "source_media_timeline_offset_ms": 0,
         "matched_audio_text": acoustic_span,
     }
     if (

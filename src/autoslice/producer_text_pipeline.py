@@ -349,9 +349,10 @@ def _build_entity_verification_context(
     # "she read this danmaku" corrections alive when AGY/Gemini is quota-exhausted
     # (2026-07-14 regression: agy jingting AND the audio arbitration are both
     # Gemini-family, so one quota wall reverted a slice to garble) and takes AGY
-    # off the hot path.  Audio stays the fallback for acoustic ambiguity and for
-    # non-danmaku entity confusions.  With no CPA configured the layer defers
-    # everything, identical to the prior human→audio chain.
+    # off the hot path. For acoustic ambiguity and registered-name conflicts,
+    # AGY receives only a candidate-free pinyin witness request and CPA still
+    # owns the closed-set choice. With no CPA configured these cases remain
+    # unresolved; audio can never inherit final authority.
     from src.autoslice.read_aloud_llm_verifier import build_cpa_read_aloud_verifier
 
     read_aloud_llm_call = None

@@ -1,9 +1,9 @@
-"""近失念读的原始音频强制二选一（从 chat_proposals 拆出的域模块）。
+"""近失念读的闭集裁决（从 chat_proposals 拆出的域模块）。
 
-candidate_entities 恒为两个纯文本候选（弹幕原文 vs 声学跨度），交
-entity_audio_verifier 黑帧强制选边；任何结局（确认/否决/UNCERTAIN）
-都写入 read_aloud_arbitrations 审计——静默出局是 2026-07-20 脑海案
-里最贵的病。"""
+candidate_entities 恒为两个纯文本候选（弹幕原文 vs 当前跨度）；AGY
+只能接收剥离候选后的拼音听写请求，CPA 才能从闭集选边。任何结局
+（确认/否决/UNCERTAIN）都写入 read_aloud_arbitrations 审计——静默
+出局是 2026-07-20 脑海案里最贵的病。"""
 
 from __future__ import annotations
 
@@ -46,9 +46,17 @@ def proposal_alignment_basis(proposal: Mapping[str, Any]) -> str:
         "authority_kind"
     ) == "audio_forced_choice":
         return "raw-audio-forced-choice.v1"
+    if isinstance(entity, Mapping) and entity.get(
+        "authority_kind"
+    ) == "cpa_witness_adjudication":
+        return "candidate-blind-audio-witness-plus-cpa-judge.v1"
     if isinstance(read_aloud, Mapping):
         if read_aloud.get("authority_kind") == "audio_forced_choice":
             return "raw-audio-forced-choice.v1"
+        if read_aloud.get(
+            "authority_kind"
+        ) == "cpa_witness_adjudication":
+            return "candidate-blind-audio-witness-plus-cpa-judge.v1"
         if read_aloud.get("reason_code") == "READ_ALOUD_CONFIRMED_BY_CONTEXT":
             return "structured-chat-context-plus-near-complete-transcript.v1"
         return "verified-read-aloud-plus-near-complete-transcript.v1"
@@ -241,9 +249,31 @@ def whole_line_exact_copy_gate(
             )
         )
     )
+    full_span_cpa_witness_verdict = bool(
+        verdict.get("authority_kind") == "cpa_witness_adjudication"
+        and verdict.get("decision_authority") == "CPA_JUDGE"
+        and verdict.get("witness_authority") == "EVIDENCE_ONLY"
+        and verdict.get("witness_status") == "OBSERVED"
+        and verdict.get("witness_target_audible") is True
+        and verdict.get("canonical_entity") == item.text
+        and all(
+            _valid_sha256(verdict.get(key))
+            for key in (
+                "witness_request_sha256",
+                "witness_source_media_sha256",
+                "witness_audio_clip_sha256",
+                "witness_prompt_sha256",
+                "witness_response_sha256",
+                "judge_prompt_sha256",
+                "judge_completion_sha256",
+            )
+        )
+    )
     thread_anchored = bool(proposal.get("thread_anchored"))
     if full_span_audio_verdict:
         proof_basis = "hash_bound_full_span_audio_verdict"
+    elif full_span_cpa_witness_verdict:
+        proof_basis = "hash_bound_candidate_blind_witness_plus_cpa_judge"
     elif thread_anchored:
         proof_basis = "strong_thread_anchor"
     elif independent_owner_supports:
@@ -252,6 +282,7 @@ def whole_line_exact_copy_gate(
         proof_basis = "partial_evidence"
     owner_eligible = bool(
         full_span_audio_verdict
+        or full_span_cpa_witness_verdict
         or independent_owner_supports
         or thread_anchored
     )
@@ -261,6 +292,9 @@ def whole_line_exact_copy_gate(
         "owner_eligible": owner_eligible,
         "proof_basis": proof_basis,
         "full_span_audio_verdict": full_span_audio_verdict,
+        "full_span_cpa_witness_verdict": (
+            full_span_cpa_witness_verdict
+        ),
         "thread_anchored": thread_anchored,
         "independent_owner_support_count": len(independent_owner_supports),
         "independent_supports": support_receipts,
@@ -325,7 +359,7 @@ def _arbitrate_read_aloud_near_match(
     entity_verifier: EntityVerifier,
     discovery: _ChatProposalDiscoveryLike,
 ) -> None:
-    """Run one raw-audio forced choice for a bounded near-match."""
+    """Run one CPA-owned closed choice for a bounded near-match."""
 
     near_span = "".join(texts[proposal["start"] : proposal["start"] + proposal["count"]])
     request = {
@@ -343,6 +377,14 @@ def _arbitrate_read_aloud_near_match(
         ],
         "matched_start_ms": cues[proposal["start"]].start_ms,
         "matched_end_ms": cues[proposal["start"] + proposal["count"] - 1].end_ms,
+        "context_start_ms": max(
+            0, cues[proposal["start"]].start_ms - 1_500
+        ),
+        "context_end_ms": (
+            cues[proposal["start"] + proposal["count"] - 1].end_ms
+            + 1_500
+        ),
+        "source_media_timeline_offset_ms": 0,
         "matched_audio_text": near_span,
         "candidate_entities": [
             {"canonical": item.text, "surfaces": [], "readings": []},
@@ -391,11 +433,20 @@ def _arbitrate_read_aloud_near_match(
         arbitration_row["whole_line_exact_copy_gate"] = whole_line_metrics
         arbitration_row["owner_eligible"] = whole_line_supported
         if whole_line_supported:
-            arbitration_row["outcome"] = (
-                "authority_confirmed_by_audio"
-                if whole_line_metrics["full_span_audio_verdict"]
-                else "authority_confirmed_by_independent_transcript"
-            )
+            if whole_line_metrics["full_span_audio_verdict"]:
+                arbitration_row["outcome"] = (
+                    "authority_confirmed_by_audio"
+                )
+            elif whole_line_metrics[
+                "full_span_cpa_witness_verdict"
+            ]:
+                arbitration_row["outcome"] = (
+                    "authority_confirmed_by_cpa_with_blind_audio_witness"
+                )
+            else:
+                arbitration_row["outcome"] = (
+                    "authority_confirmed_by_independent_transcript"
+                )
             proposal["mode"] = "exact_span"
             proposal["read_aloud_verdict"] = verdict
             proposal["owner_eligible"] = True
@@ -422,7 +473,15 @@ def _arbitrate_read_aloud_near_match(
                 }
             )
     elif verdict is not None:
-        arbitration_row["outcome"] = "acoustic_span_confirmed_by_audio"
+        cpa_witness = (
+            verdict.get("authority_kind")
+            == "cpa_witness_adjudication"
+        )
+        arbitration_row["outcome"] = (
+            "current_confirmed_by_cpa_with_blind_audio_witness"
+            if cpa_witness
+            else "acoustic_span_confirmed_by_audio"
+        )
         discovery.superseded_chat_proposals.append(
             {
                 "evidence_id": item.evidence_id,
@@ -431,7 +490,11 @@ def _arbitrate_read_aloud_near_match(
                 "cue_indexes": request["cue_indexes"],
                 "matched_start_ms": request["matched_start_ms"],
                 "matched_end_ms": request["matched_end_ms"],
-                "reason_code": "EXACT_CHAT_REJECTED_BY_READ_ALOUD_AUDIO",
+                "reason_code": (
+                    "EXACT_CHAT_REJECTED_BY_CPA_WITH_BLIND_AUDIO_WITNESS"
+                    if cpa_witness
+                    else "EXACT_CHAT_REJECTED_BY_READ_ALOUD_AUDIO"
+                ),
             }
         )
     else:

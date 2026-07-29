@@ -44,6 +44,34 @@ ADJUDICATION_SCHEMA = "acoustic-witness-adjudication.v1"
 MIN_CHOICE_COMPATIBILITY = 0.55
 
 
+def valid_cpa_witness_adjudication(verdict: Mapping[str, Any]) -> bool:
+    """Validate the typed evidence chain for a CPA-owned acoustic choice."""
+
+    confidence = verdict.get("confidence")
+    required_hashes = (
+        "witness_request_sha256",
+        "judge_prompt_sha256",
+        "judge_completion_sha256",
+    )
+    return bool(
+        not isinstance(confidence, bool)
+        and isinstance(confidence, (int, float))
+        and 0.0 <= float(confidence) <= 1.0
+        and verdict.get("decision_authority") == "CPA_JUDGE"
+        and verdict.get("witness_authority") == "EVIDENCE_ONLY"
+        and verdict.get("witness_status") in {"OBSERVED", "UNCERTAIN"}
+        and all(
+            isinstance(verdict.get(key), str)
+            and len(str(verdict[key]).removeprefix("sha256:")) == 64
+            and all(
+                char in "0123456789abcdef"
+                for char in str(verdict[key]).removeprefix("sha256:").lower()
+            )
+            for key in required_hashes
+        )
+    )
+
+
 def build_witness_request(check_request: Mapping[str, Any]) -> dict[str, Any]:
     """Derive a candidate-free dictation request from a check request.
 

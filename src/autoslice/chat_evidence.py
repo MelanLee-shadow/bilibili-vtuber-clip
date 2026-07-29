@@ -17,6 +17,9 @@ from pathlib import Path
 import re
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
+from src.autoslice.acoustic_witness_adjudication import (
+    valid_cpa_witness_adjudication,
+)
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.chat_event_timing import (
     danmaku_text as _danmaku_text,
@@ -1072,11 +1075,14 @@ def _validated_read_aloud_verdict(
     if row.get("canonical_entity") not in allowed:
         return None
     confidence = row.get("confidence")
-    if (
-        isinstance(confidence, bool)
-        or not isinstance(confidence, (int, float))
-        or confidence < 0.80
+    if isinstance(confidence, bool) or not isinstance(
+        confidence, (int, float)
     ):
+        return None
+    if row.get("authority_kind") == "cpa_witness_adjudication":
+        if not valid_cpa_witness_adjudication(row):
+            return None
+    elif confidence < 0.80:
         return None
     return row
 
@@ -1118,6 +1124,9 @@ def _validated_entity_verdict(
             or confidence < 0.80
         ):
             return {**row, "status": "UNCERTAIN", "reason_code": "ENTITY_AUDIO_CONFIDENCE_LOW"}
+    elif authority_kind == "cpa_witness_adjudication":
+        if not valid_cpa_witness_adjudication(row):
+            return None
     elif authority_kind == "ivan_text_override":
         if not row.get("defer_to_text_override"):
             return None
