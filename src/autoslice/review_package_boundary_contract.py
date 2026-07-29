@@ -15,6 +15,7 @@ from src.autoslice.review_package_boundary_validators import (
     expected_boundary_authority as _expected_boundary_authority,
     is_boundary_int as _is_int,
     semantic_boundary_review_is_valid as _semantic_review_is_valid,
+    semantic_recommendation_is_materialized,
 )
 
 
@@ -221,14 +222,12 @@ def audit_boundary_contract(
     )
     tail_bridge = audit.get("tail_pad_coverage_bridge")
     if (
-        not _is_int(source_recommended_end_ms)
-        or not _is_int(snapped_end_ms)
-        or snapped_end_ms != source_recommended_end_ms
-        or not _is_int(final_end_ms)
-        or final_end_ms < snapped_end_ms
+        not semantic_recommendation_is_materialized(
+            source_review,
+            snapped_sentence_end_ms=snapped_end_ms,
+            final_end_ms=final_end_ms,
+        )
         or not source_endpoint_valid
-        or source_endpoint.get("final_snapped_end_ms")
-        != snapped_end_ms
         or source_endpoint.get("final_end_ms") != final_end_ms
     ):
         issue_adder(

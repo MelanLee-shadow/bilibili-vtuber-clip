@@ -5,12 +5,91 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from src.autoslice.boundary_semantic_review import (
+    PIN_CROSSING_TOLERANCE_MS,
+)
+
 
 _SHA256_RX = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 def is_boundary_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def semantic_endpoint_snapped_is_valid(review: object) -> bool:
+    """Accept an exact pin or its typed bounded crossing-cue witness."""
+
+    if not isinstance(review, dict):
+        return False
+    endpoint = review.get("final_endpoint_binding")
+    if not isinstance(endpoint, dict):
+        return False
+    recommended_end_ms = review.get("recommended_end_ms")
+    snapped_end_ms = endpoint.get("final_snapped_end_ms")
+    if not is_boundary_int(recommended_end_ms) or not is_boundary_int(
+        snapped_end_ms
+    ):
+        return False
+    if snapped_end_ms == recommended_end_ms:
+        return True
+    scope = review.get("boundary_search_scope")
+    relaxations = review.get("recommendation_relaxations")
+    if (
+        not isinstance(scope, dict)
+        or scope.get("boundary_end_mode") != "exact_source_pin"
+        or not isinstance(relaxations, list)
+        or len(relaxations) != 1
+        or not isinstance(relaxations[0], dict)
+    ):
+        return False
+    relaxation = relaxations[0]
+    overrun_ms = snapped_end_ms - recommended_end_ms
+    return bool(
+        relaxation.get("kind") == "pin_crossing_closure_cue"
+        and relaxation.get("cue_index")
+        == review.get("recommended_end_cue_index")
+        and relaxation.get("cue_end_ms") == snapped_end_ms
+        and relaxation.get("pin_ms") == recommended_end_ms
+        and relaxation.get("overrun_ms") == overrun_ms
+        and relaxation.get("tolerance_ms")
+        == PIN_CROSSING_TOLERANCE_MS
+        and 0 < overrun_ms <= PIN_CROSSING_TOLERANCE_MS
+        and endpoint.get("final_end_ms") == recommended_end_ms
+    )
+
+
+def semantic_recommendation_is_materialized(
+    review: object,
+    *,
+    snapped_sentence_end_ms: object,
+    final_end_ms: object,
+) -> bool:
+    """Prove that source closure and delivered endpoint implement the vote."""
+
+    if (
+        not isinstance(review, dict)
+        or not is_boundary_int(snapped_sentence_end_ms)
+        or not is_boundary_int(final_end_ms)
+    ):
+        return False
+    endpoint = review.get("final_endpoint_binding")
+    if not isinstance(endpoint, dict):
+        return False
+    recommended_end_ms = review.get("recommended_end_ms")
+    if not is_boundary_int(recommended_end_ms):
+        return False
+    if (
+        endpoint.get("final_snapped_end_ms")
+        != snapped_sentence_end_ms
+    ):
+        return False
+    if snapped_sentence_end_ms == recommended_end_ms:
+        return final_end_ms >= snapped_sentence_end_ms
+    return bool(
+        semantic_endpoint_snapped_is_valid(review)
+        and final_end_ms == recommended_end_ms
+    )
 
 
 def semantic_boundary_review_is_valid(
@@ -76,8 +155,7 @@ def semantic_boundary_review_is_valid(
         == review.get("recommended_end_ms")
         and endpoint.get("final_closure_cue_index")
         == review.get("recommended_end_cue_index")
-        and endpoint.get("final_snapped_end_ms")
-        == review.get("recommended_end_ms")
+        and semantic_endpoint_snapped_is_valid(review)
         and endpoint.get("semantic_cue_grid_sha256")
         == reviewed_grid
         and endpoint.get("final_cue_grid_sha256") == reviewed_grid
