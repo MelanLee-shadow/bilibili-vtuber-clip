@@ -802,6 +802,200 @@ def test_exact_final_review_gate_persists_deterministic_block(
     assert persisted["findings"][0]["suspect"] == "错误"
 
 
+def test_exact_final_review_gate_self_heals_cpa_authorized_finding(
+    tmp_path: Path,
+) -> None:
+    subtitle = tmp_path / "candidate.recut.srt"
+    original_cue = "这怎么怎么是 TTT 的头像"
+    repaired_cue = "这怎么怎么是 ttt15 的头像"
+    subtitle.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n"
+        + original_cue
+        + "\n\n2\n00:00:01,100 --> 00:00:02,000\n完整收束\n",
+        encoding="utf-8",
+    )
+    chat_path = tmp_path / "candidate.chat-authority.json"
+    baseline_audit_path = tmp_path / "candidate.redelivery-baseline.json"
+    calls: list[str] = []
+
+    def boundary_receipt() -> dict:
+        return {
+            "schema_version": "talk-boundary-semantic-review.v1",
+            "status": "PASS",
+            "review_scope": "final_delivery",
+            "reason_codes": [],
+            "request_sha256": "sha256:" + "d" * 64,
+            "cue_grid_sha256": "sha256:" + "e" * 64,
+            "source_separation_witness": {
+                "schema_version": (
+                    "talk-boundary-source-separation-witness.v1"
+                ),
+                "status": "PASS",
+                "source_review_sha256": "sha256:" + "a" * 64,
+                "source_request_sha256": "sha256:" + "b" * 64,
+                "source_cue_grid_sha256": "sha256:" + "c" * 64,
+                "source_final_start_ms": 0,
+                "source_final_end_ms": 2_400,
+                "reason_codes": [],
+            },
+            "final_endpoint_binding": {
+                "schema_version": (
+                    "talk-boundary-final-endpoint-binding.v1"
+                ),
+                "status": "PASS",
+                "recommended_end_cue_index": 2,
+                "recommended_end_ms": 2_000,
+                "final_closure_cue_index": 2,
+                "final_snapped_end_ms": 2_000,
+                "final_end_ms": 2_400,
+                "semantic_cue_grid_sha256": "sha256:" + "e" * 64,
+                "final_cue_grid_sha256": "sha256:" + "e" * 64,
+                "reason_codes": [],
+            },
+        }
+
+    def mutation_audit() -> dict:
+        return {
+            "schema_version": "subtitle-correction-mutation-audit.v1",
+            "status": "PASS",
+            "applied_count": 0,
+            "validated_mutation_count": 0,
+            "failures": [],
+        }
+
+    def exact_review(
+        text,
+        _authority,
+        _timeline_offset_ms,
+        _source_final_end_ms,
+    ):
+        calls.append(text)
+        common = {
+            "schema_version": "final-review-audit.v2",
+            "reviewed_srt_sha256": (
+                "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+            ),
+            "boundary_semantic_review": boundary_receipt(),
+            "correction_mutation_authority": mutation_audit(),
+        }
+        if original_cue in text:
+            base_sha256 = hashlib.sha256(
+                original_cue.encode("utf-8")
+            ).hexdigest()
+            return {
+                **common,
+                "status": "FLAGGED",
+                "release_gate": "BLOCK",
+                "reason_codes": ["FINAL_REVIEW_UNRESOLVED_FINDINGS"],
+                "discovery": {
+                    "status": "COMPLETE",
+                    "explicit_empty_findings": False,
+                },
+                "findings": [
+                    {
+                        "cue_index": 1,
+                        "base_text_sha256": base_sha256,
+                        "proposed_full_cue": repaired_cue,
+                        "exact_release_adjudication": {
+                            "schema_version": (
+                                "subtitle-span-adjudication.v1"
+                            ),
+                            "status": "OBSERVED",
+                            "decision_authority": "CPA_JUDGE",
+                            "repaired": True,
+                            "timing_immutable": True,
+                            "mutation_authority": {
+                                "schema_version": (
+                                    "subtitle-correction-mutation-authority.v1"
+                                ),
+                                "status": "PASS",
+                                "basis": (
+                                    "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION"
+                                ),
+                            },
+                            "request": {
+                                "schema_version": (
+                                    "subtitle-span-acoustic-check-request.v1"
+                                ),
+                                "request_sha256": "f" * 64,
+                                "base_text_sha256": base_sha256,
+                                "current_cue": original_cue,
+                                "proposed_cue": repaired_cue,
+                            },
+                            "witness_judge": {
+                                "judge": {
+                                    "schema_version": (
+                                        "acoustic-witness-adjudication.v1"
+                                    ),
+                                    "status": "JUDGED",
+                                    "choice": "PROPOSED",
+                                }
+                            },
+                        },
+                    }
+                ],
+                "validated_finding_count": 1,
+            }
+        return {
+            **common,
+            "status": "CLEAN",
+            "release_gate": "PASS",
+            "reason_codes": [],
+            "discovery": {
+                "status": "COMPLETE",
+                "explicit_empty_findings": True,
+            },
+            "findings": [],
+            "validated_finding_count": 0,
+        }
+
+    def unused(*_args, **_kwargs):
+        raise AssertionError("unrelated adapter called")
+
+    adapters = finalization.ProducerFinalizationAdapters(
+        accurate_recut_command=unused,
+        run_command=unused,
+        write_source_range_srt=unused,
+        apply_text_override_document=unused,
+        run_speaker_finalization=unused,
+        burn_preview_subtitles=unused,
+        stage_publish_draft=unused,
+        generate_upload_tags=unused,
+        delivery_root=unused,
+        run_exact_final_review=exact_review,
+    )
+    baseline_audit: dict[str, object] = {"status": "APPLIED"}
+    result = finalization._run_exact_final_review_gate(
+        cid="candidate",
+        out_root=tmp_path,
+        final_start=0,
+        final_end=2_400,
+        recut=finalization.FinalRecutArtifacts(
+            recut_dir=tmp_path,
+            media_path=tmp_path / "candidate.recut.mp4",
+            subtitle_path=subtitle,
+            text_manifest_path=None,
+            text_manifest=None,
+            redelivery_baseline_audit_path=baseline_audit_path,
+            redelivery_baseline_audit=baseline_audit,
+        ),
+        chat_authority_audit={},
+        chat_authority_path=chat_path,
+        adapters=adapters,
+    )
+
+    assert result["status"] == "CLEAN"
+    assert len(calls) == 2
+    assert original_cue in calls[0]
+    assert repaired_cue in calls[1]
+    assert repaired_cue in subtitle.read_text(encoding="utf-8")
+    assert result["exact_final_cpa_self_heal"]["status"] == "PASS"
+    assert baseline_audit["exact_final_cpa_self_heal"]["status"] == "PASS"
+    assert json.loads(
+        baseline_audit_path.read_text(encoding="utf-8")
+    )["exact_final_cpa_self_heal"]["status"] == "PASS"
+
+
 def test_delivery_summary_uses_persisted_boundary_audit(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

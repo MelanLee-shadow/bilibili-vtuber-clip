@@ -103,7 +103,11 @@
   `final-review-audit.v2`。该回执绑定最终 SRT SHA-256；只有 discovery 完整、显式合法的空
   findings、零未决项、release gate PASS、`subtitle-correction-mutation-audit.v1` PASS，
   且 boundary semantic review 与 `talk-boundary-final-endpoint-binding.v1` 均 PASS 才能交付。
-  第二遍空 findings 不能洗白 correction pass 已经发生的无权 mutation。
+  第二遍空 findings 不能洗白 correction pass 已经发生的无权 mutation。exact-final 新发现若
+  已有完整 CPA `PROPOSED` mutation receipt，可在同一 producer run 按 cue/hash/request/timing
+  全绑定合同落字并再次 exact-final；这不是 AGY 或检测器旁路，最终决定仍是 CPA。无法完整
+  重算或两轮复审未净空才写 carryover 并阻断，禁止为消费一个已定案修复而无条件重跑 ASR、
+  封面和整片生产。
 - provider 异常、JSON 不可解析、根结构错误、`findings` 缺失/null/非列表、返回项全部无效，
   都是“没有完成发现”，不是“没有发现问题”；必须 fail closed。package auditor 还会用包内
   最终 SRT 重验 v2 回执，禁止复用 correction pass 或上一轮 SRT 的回执。

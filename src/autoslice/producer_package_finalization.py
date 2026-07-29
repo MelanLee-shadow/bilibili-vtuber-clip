@@ -48,7 +48,10 @@ from src.autoslice.producer_media import (
     _validated_burned_artifact,
     _write_json_atomic,
 )
-from src.autoslice.producer_text_finalization import verify_chat_authority_final_surfaces
+from src.autoslice.producer_text_finalization import (
+    _render_cues_to_srt,
+    verify_chat_authority_final_surfaces,
+)
 from src.autoslice.redelivery_subtitle_baseline import (
     apply_redelivery_subtitle_baseline,
 )
@@ -837,6 +840,123 @@ def _resolve_deferred_foreign_introductions_after_redelivery(
     return False
 
 
+def _apply_exact_final_cpa_repairs(
+    srt_text: str,
+    audit: Mapping[str, object],
+) -> tuple[str, list[dict[str, object]]]:
+    """Apply only exact-final findings already authorized by CPA.
+
+    The exact-final review runs after redelivery-baseline replay, so it is the
+    first stage that can see a defect resurrected by that late authority.  A
+    CPA decision with a typed mutation receipt should be able to repair the
+    exact bytes in the same producer run; forcing a complete ASR/cover rerun
+    merely to consume the persisted carryover wastes time and provider quota.
+
+    This remains fail closed: cue position, current-text hash, request payload,
+    immutable timing, decision authority, and mutation receipt must all agree.
+    Any finding that does not satisfy the complete contract is left untouched
+    for the normal release block/carryover path.
+    """
+
+    cues = parse_srt_cues(srt_text)
+    findings = audit.get("findings")
+    if not isinstance(findings, list):
+        return srt_text, []
+    repairs: list[dict[str, object]] = []
+    for finding in findings:
+        if not isinstance(finding, Mapping):
+            continue
+        cue_index = finding.get("cue_index")
+        proposed = finding.get("proposed_full_cue")
+        adjudication = finding.get("exact_release_adjudication")
+        if (
+            isinstance(cue_index, bool)
+            or not isinstance(cue_index, int)
+            or not 1 <= cue_index <= len(cues)
+            or not isinstance(proposed, str)
+            or not proposed.strip()
+            or not isinstance(adjudication, Mapping)
+            or adjudication.get("schema_version")
+            != "subtitle-span-adjudication.v1"
+            or adjudication.get("status") != "OBSERVED"
+            or adjudication.get("decision_authority") != "CPA_JUDGE"
+            or adjudication.get("repaired") is not True
+            or adjudication.get("timing_immutable") is not True
+        ):
+            continue
+        mutation = adjudication.get("mutation_authority")
+        request = adjudication.get("request")
+        witness_judge = adjudication.get("witness_judge")
+        judge = (
+            witness_judge.get("judge")
+            if isinstance(witness_judge, Mapping)
+            else None
+        )
+        current = cues[cue_index - 1]
+        current_sha256 = hashlib.sha256(
+            current.text.encode("utf-8")
+        ).hexdigest()
+        request_sha256 = (
+            str(request.get("request_sha256") or "")
+            if isinstance(request, Mapping)
+            else ""
+        )
+        if (
+            not isinstance(mutation, Mapping)
+            or mutation.get("schema_version")
+            != "subtitle-correction-mutation-authority.v1"
+            or mutation.get("status") != "PASS"
+            or not isinstance(request, Mapping)
+            or request.get("schema_version")
+            != "subtitle-span-acoustic-check-request.v1"
+            or request.get("base_text_sha256") != current_sha256
+            or finding.get("base_text_sha256") != current_sha256
+            or request.get("current_cue") != current.text
+            or request.get("proposed_cue") != proposed
+            or proposed == current.text
+            or len(request_sha256) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in request_sha256
+            )
+            or not isinstance(judge, Mapping)
+            or judge.get("status") != "JUDGED"
+            or judge.get("choice") != "PROPOSED"
+        ):
+            continue
+        cues[cue_index - 1] = type(current)(
+            index=current.index,
+            start_ms=current.start_ms,
+            end_ms=current.end_ms,
+            text=proposed,
+        )
+        repairs.append(
+            {
+                "schema_version": "exact-final-cpa-self-heal.v1",
+                "cue_index": cue_index,
+                "before_sha256": "sha256:" + current_sha256,
+                "after_sha256": "sha256:"
+                + hashlib.sha256(proposed.encode("utf-8")).hexdigest(),
+                "finding_sha256": "sha256:"
+                + hashlib.sha256(
+                    json.dumps(
+                        finding,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest(),
+                "request_sha256": "sha256:" + request_sha256,
+                "decision_authority": "CPA_JUDGE",
+                "mutation_authority": dict(mutation),
+                "timing_immutable": True,
+            }
+        )
+    if not repairs:
+        return srt_text, []
+    return _render_cues_to_srt(cues), repairs
+
+
 def _run_exact_final_review_gate(
     *,
     cid: str,
@@ -853,48 +973,170 @@ def _run_exact_final_review_gate(
     reviewer = adapters.run_exact_final_review
     if reviewer is None:
         raise SystemExit("FINAL_REVIEW_EXACT_FINALIZER_MISSING")
-    final_bytes = recut.subtitle_path.read_bytes()
-    final_text = final_bytes.decode("utf-8", errors="strict")
-    audit = reviewer(
-        final_text,
-        chat_authority_audit,
-        final_start,
-        final_end,
-    )
-    chat_authority_audit["final_review_audit"] = audit
-    persist_review_audit(out_root / f"{cid}.review-flags.json", audit)
-    # 终审结转（2026-07-25 六条死循环案）：B 声学确证却无权落盘的修复持久化，
-    # 下轮 correction pass 并入自己的 findings 流正式修字——确定性闭环替代
-    # 两次独立 LLM 扫描碰运气。
-    carryover_count = persist_final_review_carryover(
-        carryover_path(out_root, cid), audit
-    )
-    if carryover_count:
-        audit["carryover_persisted_count"] = carryover_count
-    chat_authority_path.write_text(
-        json.dumps(
+    self_heal_passes: list[dict[str, object]] = []
+    for pass_index in range(3):
+        final_bytes = recut.subtitle_path.read_bytes()
+        final_text = final_bytes.decode("utf-8", errors="strict")
+        audit = reviewer(
+            final_text,
             chat_authority_audit,
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=True,
+            final_start,
+            final_end,
         )
-        + "\n",
-        encoding="utf-8",
-    )
-    expected_srt_sha256 = "sha256:" + hashlib.sha256(
-        final_bytes
-    ).hexdigest()
-    try:
-        validate_final_review_release(
-            audit,
-            expected_srt_sha256=expected_srt_sha256,
+        chat_authority_audit["final_review_audit"] = audit
+        persist_review_audit(out_root / f"{cid}.review-flags.json", audit)
+        expected_srt_sha256 = "sha256:" + hashlib.sha256(
+            final_bytes
+        ).hexdigest()
+        try:
+            validate_final_review_release(
+                audit,
+                expected_srt_sha256=expected_srt_sha256,
+            )
+        except FinalReviewContractError as exc:
+            repaired_text, repairs = _apply_exact_final_cpa_repairs(
+                final_text, audit
+            )
+            if (
+                exc.reason_code == "FINAL_REVIEW_UNRESOLVED_FINDINGS"
+                and repairs
+                and pass_index < 2
+            ):
+                recut.subtitle_path.write_text(
+                    repaired_text,
+                    encoding="utf-8",
+                )
+                pass_receipt = {
+                    "schema_version": "exact-final-cpa-self-heal-pass.v1",
+                    "pass_index": pass_index + 1,
+                    "input_srt_sha256": expected_srt_sha256,
+                    "output_srt_sha256": "sha256:"
+                    + hashlib.sha256(
+                        repaired_text.encode("utf-8")
+                    ).hexdigest(),
+                    "repairs": repairs,
+                }
+                self_heal_passes.append(pass_receipt)
+                chat_authority_audit["exact_final_cpa_self_heal"] = {
+                    "schema_version": "exact-final-cpa-self-heal-audit.v1",
+                    "status": "REVIEW_PENDING",
+                    "passes": self_heal_passes,
+                }
+                chat_authority_audit["final_output_srt_sha256"] = (
+                    hashlib.sha256(
+                        repaired_text.encode("utf-8")
+                    ).hexdigest()
+                )
+                if recut.redelivery_baseline_audit is not None:
+                    recut.redelivery_baseline_audit[
+                        "post_exact_final_cpa_output_sha256"
+                    ] = hashlib.sha256(
+                        repaired_text.encode("utf-8")
+                    ).hexdigest()
+                    recut.redelivery_baseline_audit[
+                        "exact_final_cpa_self_heal"
+                    ] = {
+                        "schema_version": (
+                            "exact-final-cpa-self-heal-audit.v1"
+                        ),
+                        "status": "REVIEW_PENDING",
+                        "passes": self_heal_passes,
+                    }
+                    if recut.redelivery_baseline_audit_path is not None:
+                        recut.redelivery_baseline_audit_path.write_text(
+                            json.dumps(
+                                recut.redelivery_baseline_audit,
+                                ensure_ascii=False,
+                                indent=2,
+                                sort_keys=True,
+                            )
+                            + "\n",
+                            encoding="utf-8",
+                        )
+                chat_authority_path.write_text(
+                    json.dumps(
+                        chat_authority_audit,
+                        ensure_ascii=False,
+                        indent=2,
+                        sort_keys=True,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                continue
+            # 终审结转仍是无法在当前 exact-final pass 安全落盘时的后备。
+            carryover_count = persist_final_review_carryover(
+                carryover_path(out_root, cid), audit
+            )
+            if carryover_count:
+                audit["carryover_persisted_count"] = carryover_count
+            chat_authority_path.write_text(
+                json.dumps(
+                    chat_authority_audit,
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            raise SystemExit(
+                f"FINAL_REVIEW_RELEASE_BLOCKED: {exc.reason_code}: "
+                f"{chat_authority_path}"
+            ) from exc
+        # A clean pass clears any already-consumed carryover and binds the
+        # complete same-run self-heal history to the final authority receipt.
+        persist_final_review_carryover(
+            carryover_path(out_root, cid), audit
         )
-    except FinalReviewContractError as exc:
-        raise SystemExit(
-            f"FINAL_REVIEW_RELEASE_BLOCKED: {exc.reason_code}: "
-            f"{chat_authority_path}"
-        ) from exc
-    return audit
+        if self_heal_passes:
+            self_heal_audit = {
+                "schema_version": "exact-final-cpa-self-heal-audit.v1",
+                "status": "PASS",
+                "passes": self_heal_passes,
+                "final_srt_sha256": expected_srt_sha256,
+            }
+            chat_authority_audit["exact_final_cpa_self_heal"] = (
+                self_heal_audit
+            )
+            audit["exact_final_cpa_self_heal"] = self_heal_audit
+            validate_final_review_release(
+                audit,
+                expected_srt_sha256=expected_srt_sha256,
+            )
+            persist_review_audit(
+                out_root / f"{cid}.review-flags.json", audit
+            )
+            if recut.redelivery_baseline_audit is not None:
+                recut.redelivery_baseline_audit[
+                    "post_exact_final_cpa_output_sha256"
+                ] = expected_srt_sha256.removeprefix("sha256:")
+                recut.redelivery_baseline_audit[
+                    "exact_final_cpa_self_heal"
+                ] = self_heal_audit
+                if recut.redelivery_baseline_audit_path is not None:
+                    recut.redelivery_baseline_audit_path.write_text(
+                        json.dumps(
+                            recut.redelivery_baseline_audit,
+                            ensure_ascii=False,
+                            indent=2,
+                            sort_keys=True,
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+        chat_authority_path.write_text(
+            json.dumps(
+                chat_authority_audit,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return audit
+    raise AssertionError("exact-final self-heal loop exhausted")
 
 def _finalize_speaker(
     *,

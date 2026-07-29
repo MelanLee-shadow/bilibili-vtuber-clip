@@ -127,6 +127,11 @@
   source-media target/crop；request hash、verdict、manifest 与缓存身份都必须绑定同一 offset。
   把 recut-local 时间直接裁 padded media、只在日志口头说明偏移、或复用未绑定 offset 的旧
   verdict/cache，均视为错误音频证据并拒发。
+- 若 exact-final 通过 CPA 授权的同轮自愈修改 SRT，包只认自愈后的最后一次
+  `final-review-audit.v2` 与 raw-byte SHA；`exact-final-cpa-self-heal-audit.v1` 必须记录每轮
+  before/after SHA、cue ordinal、CPA decision authority、typed mutation receipt 和 timing
+  immutable，并在 redelivery baseline 存在时由 baseline audit 记录 post-exact-final SHA。
+  中间 FLAGGED 回执不能作为最终放行证据，自愈后未重新 exact-final 或审计链缺字段均阻断。
 - 封面审计按 `cover_generation.route_decision.actual_treatment` 分支验真：所有路线都验
   最终 cover SHA 与 `lidousha-cover-rendered-text-pixels.v3`。包内必须同时有 final cover、
   `.cover.pre-overlay.png`、`.cover.title-mask.png`、`.cover.route-background.png`；auditor

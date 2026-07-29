@@ -248,8 +248,14 @@
   applied mutation 逐条对齐，并验证每条 typed authority receipt。缺回执或计数漂移均报
   `FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID`；第二遍 exact discovery 即使返回空
   findings，也不能洗白第一遍已经发生的无权 mutation。
-- exact-final 扫描只审最终字节，不在同一轮直接改字；但 CPA 已明确 `PROPOSED` 的 finding
-  必须写入 `final-review-carryover.v1`，并由下一轮 correction pass 走同一套裁决/落字门。
+- exact-final 扫描先审最终字节。若 finding 已由 CPA 明确选择 `PROPOSED`，并且 cue ordinal、
+  当前 cue SHA、request 的 current/proposed 整句、不可变时间轴、CPA judge 回执和 typed
+  mutation receipt 全部可重算一致，`_run_exact_final_review_gate` 必须在同一 producer run
+  原地落字并重新跑 exact-final；最多两轮自愈，最终仍只接受零 finding 且 raw-byte hash
+  绑定的 v2 PASS。任何字段不一致、CPA 未选边、提案为空或复审仍有问题时不得猜测，才回退到
+  `final-review-carryover.v1`，由下一轮 correction pass 走同一套裁决/落字门。自愈历史须写
+  `exact-final-cpa-self-heal-audit.v1`，并在存在 redelivery baseline 时同时绑定到 baseline
+  audit 的 post-exact-final 输出 SHA。
   runner 只有在 chat audit 声明计数、sidecar schema/行数，以及每条
   `(cue, suspect, proposed_full_cue)` 与 exact 审计中的 `repaired=true` finding 全部一致时，
   才把该失败列为 recoverable；每个新的 failure fingerprint 自动获得恰好一次下一轮

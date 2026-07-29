@@ -16,6 +16,127 @@ class FinalReviewContractError(ValueError):
         super().__init__(reason_code)
 
 
+def _validate_exact_final_cpa_self_heal(
+    audit: Mapping[str, object],
+    *,
+    expected_srt_sha256: str | None,
+) -> None:
+    receipt = audit.get("exact_final_cpa_self_heal")
+    if receipt is None:
+        return
+    if (
+        not isinstance(receipt, Mapping)
+        or receipt.get("schema_version")
+        != "exact-final-cpa-self-heal-audit.v1"
+        or receipt.get("status") != "PASS"
+    ):
+        raise FinalReviewContractError(
+            "EXACT_FINAL_CPA_SELF_HEAL_AUDIT_INVALID"
+        )
+    final_sha256 = str(receipt.get("final_srt_sha256") or "")
+    if (
+        _SHA256_RX.fullmatch(final_sha256) is None
+        or (
+            expected_srt_sha256 is not None
+            and final_sha256 != expected_srt_sha256
+        )
+    ):
+        raise FinalReviewContractError(
+            "EXACT_FINAL_CPA_SELF_HEAL_FINAL_HASH_MISMATCH"
+        )
+    passes = receipt.get("passes")
+    if (
+        not isinstance(passes, list)
+        or not 1 <= len(passes) <= 2
+    ):
+        raise FinalReviewContractError(
+            "EXACT_FINAL_CPA_SELF_HEAL_AUDIT_INVALID"
+        )
+    previous_output: str | None = None
+    for expected_index, pass_receipt in enumerate(passes, start=1):
+        if (
+            not isinstance(pass_receipt, Mapping)
+            or pass_receipt.get("schema_version")
+            != "exact-final-cpa-self-heal-pass.v1"
+            or pass_receipt.get("pass_index") != expected_index
+        ):
+            raise FinalReviewContractError(
+                "EXACT_FINAL_CPA_SELF_HEAL_AUDIT_INVALID"
+            )
+        input_sha256 = str(
+            pass_receipt.get("input_srt_sha256") or ""
+        )
+        output_sha256 = str(
+            pass_receipt.get("output_srt_sha256") or ""
+        )
+        repairs = pass_receipt.get("repairs")
+        if (
+            _SHA256_RX.fullmatch(input_sha256) is None
+            or _SHA256_RX.fullmatch(output_sha256) is None
+            or input_sha256 == output_sha256
+            or (
+                previous_output is not None
+                and input_sha256 != previous_output
+            )
+            or not isinstance(repairs, list)
+            or not repairs
+        ):
+            raise FinalReviewContractError(
+                "EXACT_FINAL_CPA_SELF_HEAL_AUDIT_INVALID"
+            )
+        for repair in repairs:
+            mutation = (
+                repair.get("mutation_authority")
+                if isinstance(repair, Mapping)
+                else None
+            )
+            cue_index = (
+                repair.get("cue_index")
+                if isinstance(repair, Mapping)
+                else None
+            )
+            if (
+                not isinstance(repair, Mapping)
+                or repair.get("schema_version")
+                != "exact-final-cpa-self-heal.v1"
+                or isinstance(cue_index, bool)
+                or not isinstance(cue_index, int)
+                or cue_index < 1
+                or _SHA256_RX.fullmatch(
+                    str(repair.get("before_sha256") or "")
+                )
+                is None
+                or _SHA256_RX.fullmatch(
+                    str(repair.get("after_sha256") or "")
+                )
+                is None
+                or repair.get("before_sha256")
+                == repair.get("after_sha256")
+                or _SHA256_RX.fullmatch(
+                    str(repair.get("finding_sha256") or "")
+                )
+                is None
+                or _SHA256_RX.fullmatch(
+                    str(repair.get("request_sha256") or "")
+                )
+                is None
+                or repair.get("decision_authority") != "CPA_JUDGE"
+                or repair.get("timing_immutable") is not True
+                or not isinstance(mutation, Mapping)
+                or mutation.get("schema_version")
+                != "subtitle-correction-mutation-authority.v1"
+                or mutation.get("status") != "PASS"
+            ):
+                raise FinalReviewContractError(
+                    "EXACT_FINAL_CPA_SELF_HEAL_REPAIR_INVALID"
+                )
+        previous_output = output_sha256
+    if previous_output != final_sha256:
+        raise FinalReviewContractError(
+            "EXACT_FINAL_CPA_SELF_HEAL_FINAL_HASH_MISMATCH"
+        )
+
+
 def validate_final_review_release(
     audit: object,
     *,
@@ -165,6 +286,10 @@ def validate_final_review_release(
         )
     if audit.get("release_gate") != "PASS" or audit.get("status") != "CLEAN":
         raise FinalReviewContractError("FINAL_REVIEW_RELEASE_GATE_BLOCKED")
+    _validate_exact_final_cpa_self_heal(
+        audit,
+        expected_srt_sha256=expected_srt_sha256,
+    )
     return dict(audit)
 
 
