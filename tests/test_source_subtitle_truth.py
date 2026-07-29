@@ -3240,28 +3240,39 @@ def test_committed_909_ambiguous_thanks_uses_reasonable_operator_truth():
         REPO_ROOT / "assets" / "lidousha" / "subtitle_truth_ledger.v1.json"
     )
     corrected, audit = apply_source_subtitle_truth(
-        _srt_ms((0, 1_270, "谢谢你眼练的")),
+        _srt_ms(
+            (0, 2_540, "谢谢AC风的比心"),
+            (2_550, 3_810, "谢谢你眼练的"),
+        ),
         spec={
             "pieces": [
                 {
                     "remote_media": (
                         "/recordings/22966160_20260725-19-20-00.mp4"
                     ),
-                    "start_ms": 996_180,
+                    "start_ms": 993_640,
                     "end_ms": 997_450,
                 }
             ]
         },
-        durations=[1_270],
+        durations=[3_810],
         ledger_path=ledger,
     )
 
-    assert [cue.text for cue in parse_srt_cues(corrected)] == ["谢谢你"]
+    assert [cue.text for cue in parse_srt_cues(corrected)] == [
+        "谢谢AC风的比心",
+        "谢谢你",
+    ]
     assert audit["status"] == "APPLIED"
     assert not audit["failures"]
     assert {
-        row["truth_id"] for row in audit["applied"]
-    } == {"20260725-909-thanks-ambiguous-name-r1"}
+        row["truth_id"]
+        for bucket in ("applied", "satisfied")
+        for row in audit[bucket]
+    } == {
+        "20260725-ac-bixin-thanks-r1",
+        "20260725-909-thanks-ambiguous-name-r1",
+    }
 
 
 def test_committed_850_opening_noise_truth_drops_the_actual_cue():

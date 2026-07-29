@@ -2747,7 +2747,7 @@
    "required": true,
    "revision_id": "r1",
    "source_end_ms": 997450,
-   "source_start_ms": 996180,
+   "source_start_ms": 996190,
    "text": "谢谢你",
    "truth_id": "20260725-909-thanks-ambiguous-name-r1"
   },
