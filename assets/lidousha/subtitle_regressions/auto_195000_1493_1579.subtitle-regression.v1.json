@@ -2,6 +2,7 @@
   "schema_version": "lidousha-subtitle-regression.v1",
   "candidate_id": "auto_195000_1493_1579",
   "required_payload_substrings": [
+    "我以为我们先看了这个李豆沙的队伍",
     "然后看一下沙豆李的队伍",
     "感觉沙豆李的队伍",
     "看，沙豆李的队伍还在决胜负中",
@@ -15,6 +16,8 @@
   ],
   "required_any_substring_groups": [],
   "forbidden_payload_substrings": [
+    "我一会儿让我们先看了这个李豆沙的队伍",
+    "我一会让我们先看了这个李豆沙的队伍",
     "下斗里",
     "杀队友的队伍",
     "发一支持对面的队伍",
@@ -25,6 +28,8 @@
     "咳咳咳"
   ],
   "forbidden_exact_cues": [
+    "我一会儿让我们先看了这个李豆沙的队伍",
+    "我一会让我们先看了这个李豆沙的队伍",
     "下斗里",
     "杀队友的队伍",
     "发一支持对面的队伍",
