@@ -526,6 +526,87 @@ def test_exact_boundary_pad_overlap_is_sliver_exempt() -> None:
     )
 
 
+def test_scope_rejected_opening_straddler_edge_fragment_is_not_required() -> None:
+    """1863 current cut: a padded-context correction rejected as a boundary
+    owner leaves only 340/2840ms in the final opening.  That edge fragment
+    cannot be required to contain the whole corrected phrase."""
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    final = _srt((0, 2_000, "为什么要请大N老师吃火锅"))
+    audit = {
+        "entity_repairs": [
+            {
+                "mode": "final_review_context_adjudication",
+                "matched_start_ms": 7_290,
+                "matched_end_ms": 10_130,
+                "before": ["谢谢南京家星耀的素菜"],
+                "after": ["谢谢南町家的星耀的素菜"],
+                "structured_exact_text": "谢谢南町家的星耀的素菜",
+                "boundary_required": False,
+                "boundary_owner_rejection": (
+                    "STRADDLES_IMMUTABLE_STORY_SCOPE"
+                ),
+            }
+        ]
+    }
+
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=9_790,
+        delivery_end_ms=100_640,
+    )
+    row = audit["entity_repairs"][0]
+    assert row["final_delivery_overlap_ms"] == 340
+    assert row["final_delivery_overlap_ratio"] == 0.119718
+    assert row["final_verification_scope"] == "OUTSIDE_DELIVERY"
+    assert row["final_verification_scope_reason"] == (
+        "SCOPE_REJECTED_EDGE_FRAGMENT_OUTSIDE_OWNER"
+    )
+
+
+def test_scope_rejected_straddler_materially_retained_still_must_survive() -> None:
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    for matched_start_ms, matched_end_ms in (
+        (7_290, 13_130),  # 3.34s is materially retained.
+        (9_500, 12_000),  # 2.21/2.5s coverage is materially retained.
+    ):
+        final = _srt((0, 4_000, "成片没有修复文本"))
+        audit = {
+            "entity_repairs": [
+                {
+                    "mode": "final_review_context_adjudication",
+                    "matched_start_ms": matched_start_ms,
+                    "matched_end_ms": matched_end_ms,
+                    "before": ["错词"],
+                    "after": ["正确词"],
+                    "structured_exact_text": "正确词",
+                    "boundary_required": False,
+                    "boundary_owner_rejection": (
+                        "STRADDLES_IMMUTABLE_STORY_SCOPE"
+                    ),
+                }
+            ]
+        }
+
+        assert not verify_chat_authority_final_surfaces(
+            audit,
+            final_text_srt=final,
+            final_speaker_srt=final,
+            delivery_start_ms=9_790,
+            delivery_end_ms=100_640,
+        )
+        assert audit["entity_repairs"][0]["final_verification_scope"] == (
+            "DELIVERY"
+        )
+
+
 def test_adjudication_reverted_by_baseline_retires_instead_of_deadlock() -> None:
     """672 看/外案：correction pass 的声学修正被 Ivan 已审 baseline 收回
     （同窗 final_owner 逐字验证通过且文本≠修正文本）时，修正行声明性退位，

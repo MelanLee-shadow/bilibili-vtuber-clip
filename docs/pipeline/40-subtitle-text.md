@@ -165,6 +165,12 @@
   任意 truth（不只 `next_topic_witness`）必须显式记为 context-only；完全在成片内的 truth
   必须在 clean/speaker SRT 上逐窗验活；跨过任一终点或同一 truth 同时含 inside/outside
   windows 一律 fail closed。这里的最终可见性分类不反向授予成片外 truth 边界 ownership。
+- padded context 中的低权威修复若已由 boundary owner 合约以
+  `STRADDLES_IMMUTABLE_STORY_SCOPE` 明确拒绝，resolver 又只在成片边缘留下
+  `≤500ms` 且 `≤15%` 的小片段，则 final surface verifier 把该片段记为
+  `SCOPE_REJECTED_EDGE_FRAGMENT_OUTSIDE_OWNER`，不要求整句修复词面挤进残片。该窄门同时要求
+  `boundary_required=false` 与真实跨越最终边缘；实质保留的修复或任何 story owner 仍必须在
+  clean/speaker SRT 双面验活。
 - 已登记 source alias 的结构化聊天必须显式绑定：官方源 basename/SHA-256、canonical sidecar
   path/SHA-256、JSONL 自身 origin epoch、alias timeline offset 与 `source_alias_id` 缺一不可；
   JSONL 的事件时钟不得从另一份官方媒体 basename 猜。已知 alias 但 sidecar 缺失、哈希漂移、

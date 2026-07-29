@@ -21,6 +21,53 @@ from .source_subtitle_truth import (
 
 FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_MS = 250
 FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_RATIO = 0.1
+FINAL_AUTHORITY_SCOPE_REJECTED_STRADDLER_MAX_MS = 500
+FINAL_AUTHORITY_SCOPE_REJECTED_STRADDLER_MAX_RATIO = 0.15
+
+
+def _outside_delivery_edge_fragment_reason(
+    row: Mapping[str, object],
+    *,
+    matched_start_ms: int,
+    matched_end_ms: int,
+    delivery_start_ms: int,
+    delivery_end_ms: int,
+    overlap_ms: int,
+    overlap_ratio: float,
+) -> str | None:
+    """Classify a non-owner correction fragment at a delivery edge."""
+
+    crosses_delivery_edge = (
+        matched_start_ms < delivery_start_ms < matched_end_ms
+        or matched_start_ms < delivery_end_ms < matched_end_ms
+    )
+    boundary_sliver = (
+        overlap_ms <= FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_MS
+        and (
+            crosses_delivery_edge
+            or overlap_ratio <= FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_RATIO
+        )
+    )
+    if boundary_sliver:
+        return "BOUNDARY_SLIVER_BELOW_MEANINGFUL_AUDIO_THRESHOLD"
+
+    # A padded-context correction can be rejected as a boundary owner while
+    # still leaving a small geometric fragment in the final interval
+    # (2026-07-22 1863: 340/2840ms).  The typed rejection plus two caps keeps
+    # this narrower than the generic sliver rule; materially retained content
+    # and every story owner still need final-surface survival.
+    if (
+        crosses_delivery_edge
+        and row.get("boundary_required") is False
+        and row.get("boundary_owner_rejection")
+        == "STRADDLES_IMMUTABLE_STORY_SCOPE"
+        and overlap_ms
+        <= FINAL_AUTHORITY_SCOPE_REJECTED_STRADDLER_MAX_MS
+        and overlap_ratio
+        <= FINAL_AUTHORITY_SCOPE_REJECTED_STRADDLER_MAX_RATIO
+    ):
+        return "SCOPE_REJECTED_EDGE_FRAGMENT_OUTSIDE_OWNER"
+    return None
 
 
 def _minimal_changed_surface(before: str, after: str) -> str:
@@ -1172,24 +1219,16 @@ def verify_chat_authority_final_surfaces(
         overlap_ratio = overlap_ms / matched_duration_ms
         row["final_delivery_overlap_ms"] = overlap_ms
         row["final_delivery_overlap_ratio"] = round(overlap_ratio, 6)
-        # ≤ 而非 <：250ms 正是片头 pad 常数，行 matched_end 恰好落在首 cue
-        # 起点时 overlap 精确等于 250（1863 sender 案），刀刃值必须算 sliver。
-        # ratio 腿只约束「窗口整体在交付内」的短行（微小修复必须存活）；
-        # 窗口跨越交付边缘时 overlap 是几何工件，ratio 会把 1863 同款刀刃
-        # 在短 cue 上再杀一遍（2026-07-27 850_940 案：1640ms 窗 250ms 交叠
-        # ratio 0.152 > 0.1 永久假阴性）。
-        crosses_delivery_edge = (
-            matched_start < delivery_start_ms < matched_end
-            or matched_start < delivery_end_ms < matched_end
+        outside_fragment_reason = _outside_delivery_edge_fragment_reason(
+            row,
+            matched_start_ms=matched_start,
+            matched_end_ms=matched_end,
+            delivery_start_ms=delivery_start_ms,
+            delivery_end_ms=delivery_end_ms,
+            overlap_ms=overlap_ms,
+            overlap_ratio=overlap_ratio,
         )
-        boundary_sliver = (
-            overlap_ms <= FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_MS
-            and (
-                crosses_delivery_edge
-                or overlap_ratio <= FINAL_AUTHORITY_BOUNDARY_SLIVER_MAX_RATIO
-            )
-        )
-        if overlap_ms == 0 or boundary_sliver:
+        if overlap_ms == 0 or outside_fragment_reason:
             if row.get("boundary_required") is True:
                 row["final_verification_scope"] = (
                     "BOUNDARY_REQUIRED_OWNER_EXCLUDED"
@@ -1199,10 +1238,8 @@ def verify_chat_authority_final_surfaces(
                 required_rows.append(row)
             else:
                 row["final_verification_scope"] = "OUTSIDE_DELIVERY"
-                if boundary_sliver:
-                    row["final_verification_scope_reason"] = (
-                        "BOUNDARY_SLIVER_BELOW_MEANINGFUL_AUDIO_THRESHOLD"
-                    )
+                if outside_fragment_reason:
+                    row["final_verification_scope_reason"] = outside_fragment_reason
             continue
         row["final_verification_scope"] = "DELIVERY"
         relative_start = max(0, matched_start - delivery_start_ms)
