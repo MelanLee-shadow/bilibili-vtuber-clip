@@ -1859,12 +1859,30 @@ def repair_plan(args: argparse.Namespace) -> int:
             manifest=manifest,
             bvid=args.bvid,
             snapshot=snapshot,
+            predecessor_completed_path=(
+                Path(args.predecessor_completed).resolve()
+                if args.predecessor_completed
+                else None
+            ),
         )
         journal = Path(args.journal).resolve()
+        predecessor = plan.get("predecessor_completion") or {}
+        predecessor_plan = predecessor.get("plan") or {}
+        predecessor_row = predecessor.get("verified_journal_row") or {}
         assert_same_bv_unowned(
             journal,
             bvid=args.bvid,
             plan_id=str(plan["plan_id"]),
+            predecessor_plan_id=(
+                str(predecessor_plan.get("plan_id"))
+                if predecessor_plan.get("plan_id")
+                else None
+            ),
+            predecessor_verified_row_sha256=(
+                str(predecessor_row.get("row_sha256"))
+                if predecessor_row.get("row_sha256")
+                else None
+            ),
         )
         if args.dry_run:
             print(json.dumps(plan, ensure_ascii=False, indent=2))

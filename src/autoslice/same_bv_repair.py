@@ -648,12 +648,184 @@ def _basic_snapshot_problems(
     return problems
 
 
+def _predecessor_completion_attestation(
+    path: Path,
+    *,
+    authority: Mapping[str, Any],
+    bvid: str,
+    snapshot: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Replay one completed repair before admitting a later same-BV plan.
+
+    The publication registry deliberately keeps the immutable original CID.
+    A later repair may therefore plan from a different live CID only when an
+    explicit completed sidecar proves the entire original-CID -> current-CID
+    transition and the fresh planning snapshot still equals that terminal
+    state.  A bare CID override is never accepted.
+    """
+
+    if path.is_symlink():
+        raise PlanInvalid("predecessor completed sidecar missing or unsafe")
+    completed_path = path.resolve()
+    if (
+        not completed_path.is_absolute()
+        or completed_path.is_symlink()
+        or not completed_path.is_file()
+    ):
+        raise PlanInvalid("predecessor completed sidecar missing or unsafe")
+    completed = _json_object(
+        completed_path,
+        label="predecessor completed sidecar",
+    )
+    problems: list[str] = []
+    if completed.get("schema_version") != "same-bv-repair-completed.v1":
+        problems.append("predecessor completed sidecar schema mismatch")
+    if completed.get("status") != "VERIFIED_FRESH_LIVE":
+        problems.append("predecessor completed sidecar is not VERIFIED_FRESH_LIVE")
+    if completed.get("rc") != 0 or completed.get("remote_mutation") is not False:
+        problems.append("predecessor completed sidecar terminal flags invalid")
+    for key, expected in (
+        ("candidate_id", authority.get("candidate_id")),
+        ("bvid", bvid),
+        ("aid", authority.get("aid")),
+    ):
+        if completed.get(key) != expected:
+            problems.append(f"predecessor completed {key} mismatch")
+    new_cid = completed.get("new_cid")
+    if not isinstance(new_cid, int) or isinstance(new_cid, bool):
+        problems.append("predecessor completed new_cid invalid")
+
+    raw_plan_entry = completed.get("plan")
+    if not isinstance(raw_plan_entry, Mapping):
+        problems.append("predecessor completed plan binding invalid")
+        plan_entry: Mapping[str, Any] = {}
+    else:
+        plan_entry = raw_plan_entry
+    predecessor_plan_path = Path(str(plan_entry.get("path") or ""))
+    predecessor_plan: dict[str, Any] | None = None
+    if (
+        not predecessor_plan_path.is_absolute()
+        or predecessor_plan_path.is_symlink()
+        or not predecessor_plan_path.is_file()
+    ):
+        problems.append("predecessor plan missing or unsafe")
+    else:
+        if sha256_file(predecessor_plan_path) != plan_entry.get("sha256"):
+            problems.append("predecessor plan hash drift")
+        try:
+            predecessor_plan = load_plan(predecessor_plan_path)
+            validate_plan(predecessor_plan, plan_path=predecessor_plan_path)
+        except PlanInvalid as exc:
+            problems.append(f"predecessor plan invalid: {exc}")
+            predecessor_plan = None
+    if predecessor_plan is not None:
+        if predecessor_plan.get("plan_id") != plan_entry.get("plan_id"):
+            problems.append("predecessor plan_id mismatch")
+        if predecessor_plan.get("bvid") != bvid:
+            problems.append("predecessor plan BVID mismatch")
+        if predecessor_plan.get("recovery_publication_authority") != authority:
+            problems.append("predecessor publication authority mismatch")
+        if completed.get("manifest") != predecessor_plan.get("manifest"):
+            problems.append("predecessor completed manifest binding mismatch")
+        if completed.get("replacement") != predecessor_plan.get("replacement"):
+            problems.append("predecessor completed replacement binding mismatch")
+
+    raw_verified_entry = completed.get("verified_journal_row")
+    if not isinstance(raw_verified_entry, Mapping):
+        problems.append("predecessor completed journal binding invalid")
+        verified_entry: Mapping[str, Any] = {}
+    else:
+        verified_entry = raw_verified_entry
+    journal_path = Path(str(verified_entry.get("journal_path") or ""))
+    verified_row: dict[str, Any] | None = None
+    if (
+        not journal_path.is_absolute()
+        or journal_path.is_symlink()
+        or not journal_path.is_file()
+    ):
+        problems.append("predecessor verified journal missing or unsafe")
+    elif predecessor_plan is not None:
+        try:
+            rows = plan_entries(
+                journal_path,
+                predecessor_plan_path,
+                predecessor_plan,
+            )
+        except RepairError as exc:
+            problems.append(f"predecessor verified journal invalid: {exc}")
+            rows = []
+        if not rows:
+            problems.append("predecessor verified journal has no bound rows")
+        else:
+            verified_row = rows[-1]
+            if verified_row.get("state") != "VERIFIED":
+                problems.append("predecessor journal is not terminal VERIFIED")
+            for key, expected in (
+                ("seq", verified_entry.get("seq")),
+                ("at", verified_entry.get("at")),
+                ("row_sha256", verified_entry.get("row_sha256")),
+            ):
+                if verified_row.get(key) != expected:
+                    problems.append(f"predecessor verified journal {key} mismatch")
+
+    completed_snapshot = completed.get("live_snapshot")
+    if not isinstance(completed_snapshot, Mapping):
+        problems.append("predecessor completed live_snapshot missing")
+    else:
+        creator = completed_snapshot.get("creator") or {}
+        public = completed_snapshot.get("public") or {}
+        matches = (completed_snapshot.get("section") or {}).get("matches") or []
+        videos = creator.get("videos") or []
+        if (
+            len(videos) != 1
+            or videos[0].get("cid") != new_cid
+            or public.get("cid") != new_cid
+            or len(matches) != 1
+            or matches[0].get("cid") != new_cid
+        ):
+            problems.append("predecessor completed live CID topology invalid")
+        if not snapshots_equivalent(dict(snapshot), dict(completed_snapshot)):
+            problems.append("fresh planning snapshot differs from predecessor completion")
+    if verified_row is not None and isinstance(completed_snapshot, Mapping):
+        terminal_snapshot = (verified_row.get("details") or {}).get("live_snapshot")
+        if not isinstance(terminal_snapshot, Mapping) or not snapshots_equivalent(
+            dict(terminal_snapshot),
+            dict(completed_snapshot),
+        ):
+            problems.append("predecessor completed snapshot differs from VERIFIED journal")
+
+    if problems:
+        raise PlanInvalid("; ".join(dict.fromkeys(problems)))
+    assert predecessor_plan is not None
+    assert isinstance(new_cid, int)
+    return {
+        "schema_version": "same-bv-repair-predecessor.v1",
+        "completed": {
+            "path": str(completed_path),
+            "sha256": sha256_file(completed_path),
+        },
+        "plan": {
+            "path": str(predecessor_plan_path),
+            "sha256": plan_entry.get("sha256"),
+            "plan_id": plan_entry.get("plan_id"),
+        },
+        "verified_journal_row": {
+            "journal_path": str(journal_path),
+            "seq": verified_entry.get("seq"),
+            "at": verified_entry.get("at"),
+            "row_sha256": verified_entry.get("row_sha256"),
+        },
+        "new_cid": new_cid,
+    }
+
+
 def create_plan(
     *,
     manifest_path: Path,
     manifest: Mapping[str, Any],
     bvid: str,
     snapshot: Mapping[str, Any],
+    predecessor_completed_path: Path | None = None,
 ) -> dict[str, Any]:
     """Freeze a read-only, exact single-P repair plan from live state."""
 
@@ -677,10 +849,20 @@ def create_plan(
     public = snapshot.get("public") or {}
     section = snapshot.get("section") or {}
     videos = creator.get("videos") or []
+    predecessor_completion = None
+    expected_before_cid = authority.get("cid")
+    if predecessor_completed_path is not None:
+        predecessor_completion = _predecessor_completion_attestation(
+            predecessor_completed_path,
+            authority=authority,
+            bvid=bvid,
+            snapshot=snapshot,
+        )
+        expected_before_cid = predecessor_completion["new_cid"]
     if len(videos) != 1:
         problems.append(f"repair planning requires exactly 1 Creator P, got {len(videos)}")
-    elif videos[0].get("cid") != authority.get("cid"):
-        problems.append("sole Creator CID differs from recovery_publication_authority")
+    elif videos[0].get("cid") != expected_before_cid:
+        problems.append("sole Creator CID differs from proven planning predecessor")
     if creator.get("aid") != authority.get("aid"):
         problems.append("Creator AID differs from recovery_publication_authority")
     if creator.get("state") != 0:
@@ -690,8 +872,8 @@ def create_plan(
     elif len(videos) == 1:
         if public.get("aid") != authority.get("aid"):
             problems.append("public AID differs from recovery_publication_authority")
-        if public.get("cid") != authority.get("cid"):
-            problems.append("public CID differs from recovery_publication_authority")
+        if public.get("cid") != expected_before_cid:
+            problems.append("public CID differs from proven planning predecessor")
         if public.get("state") != 0:
             problems.append("public archive is not state=0 during planning")
         if public.get("cid") != videos[0].get("cid"):
@@ -711,8 +893,8 @@ def create_plan(
     elif len(videos) == 1:
         if matches[0].get("aid") != authority.get("aid"):
             problems.append("section AID differs from recovery_publication_authority")
-        if matches[0].get("cid") != authority.get("cid"):
-            problems.append("section CID differs from recovery_publication_authority")
+        if matches[0].get("cid") != expected_before_cid:
+            problems.append("section CID differs from proven planning predecessor")
         if matches[0].get("cid") != videos[0].get("cid"):
             problems.append("section CID does not equal the sole Creator CID")
         if matches[0].get("bvid") not in (None, bvid):
@@ -760,6 +942,8 @@ def create_plan(
         "target_metadata": _target_metadata(manifest),
         "before": snapshot,
     }
+    if predecessor_completion is not None:
+        plan["predecessor_completion"] = predecessor_completion
     validate_plan(plan, manifest=manifest)
     return plan
 
@@ -845,6 +1029,34 @@ def validate_plan(
     videos = creator.get("videos") or []
     if len(videos) != 1 or not isinstance(videos[0].get("cid"), int):
         problems.append("repair plan does not freeze exactly one old CID")
+    predecessor_completion = plan.get("predecessor_completion")
+    if predecessor_completion is None:
+        if (
+            validated_plan_authority is not None
+            and len(videos) == 1
+            and videos[0].get("cid") != validated_plan_authority.get("cid")
+        ):
+            problems.append(
+                "repair before CID differs from authority without predecessor completion"
+            )
+    elif not isinstance(predecessor_completion, Mapping):
+        problems.append("repair predecessor completion binding invalid")
+    elif validated_plan_authority is None:
+        problems.append("repair predecessor completion lacks valid publication authority")
+    else:
+        completed_entry = predecessor_completion.get("completed") or {}
+        try:
+            replayed_predecessor = _predecessor_completion_attestation(
+                Path(str(completed_entry.get("path") or "")),
+                authority=validated_plan_authority,
+                bvid=str(bvid),
+                snapshot=before,
+            )
+        except PlanInvalid as exc:
+            problems.append(f"repair predecessor completion invalid: {exc}")
+        else:
+            if predecessor_completion != replayed_predecessor:
+                problems.append("repair predecessor completion is not canonical")
     if manifest is not None:
         if bound_manifest is not None and manifest != bound_manifest:
             problems.append("runtime manifest differs from the hash-bound manifest file")
@@ -994,9 +1206,25 @@ def read_journal(path: Path) -> list[dict[str, Any]]:
             raise JournalCorrupt(f"repair journal row {line_no} state invalid")
         if not isinstance(bvid, str) or not _BVID_RE.fullmatch(bvid):
             raise JournalCorrupt(f"repair journal row {line_no} BVID invalid")
-        owner = bvid_owners.setdefault(bvid, plan_id)
-        if owner != plan_id:
-            raise JournalCorrupt(f"duplicate BVID {bvid} is owned by plans {owner} and {plan_id}")
+        owner = bvid_owners.get(bvid)
+        if owner is None:
+            bvid_owners[bvid] = plan_id
+        elif owner != plan_id:
+            prior_owner_row = last_rows_by_plan.get(owner) or {}
+            lineage = (row.get("details") or {}).get("lineage_predecessor")
+            if not (
+                state == "PLANNED"
+                and prior_owner_row.get("state") == "VERIFIED"
+                and lineage
+                == {
+                    "plan_id": owner,
+                    "verified_row_sha256": prior_owner_row.get("row_sha256"),
+                }
+            ):
+                raise JournalCorrupt(
+                    f"duplicate BVID {bvid} is owned by plans {owner} and {plan_id}"
+                )
+            bvid_owners[bvid] = plan_id
         if plan_id in bindings_by_plan and bindings_by_plan[plan_id] != binding:
             raise JournalCorrupt(f"repair journal plan {plan_id} changed immutable bindings")
         bindings_by_plan.setdefault(plan_id, binding)
@@ -1072,9 +1300,6 @@ def append_journal(
 def plan_entries(journal: Path, plan_path: Path, plan: Mapping[str, Any]) -> list[dict[str, Any]]:
     binding = _plan_binding(plan_path, plan)
     entries = read_journal(journal)
-    for row in entries:
-        if row["bvid"] == binding["bvid"] and row["plan_id"] != binding["plan_id"]:
-            raise DuplicateBvid(f"{binding['bvid']} already has repair plan {row['plan_id']}")
     selected = [row for row in entries if row["plan_id"] == binding["plan_id"]]
     for row in selected:
         for key in (
@@ -1089,24 +1314,65 @@ def plan_entries(journal: Path, plan_path: Path, plan: Mapping[str, Any]) -> lis
     return selected
 
 
-def assert_bvid_unowned(journal: Path, *, bvid: str, plan_id: str) -> None:
+def assert_bvid_unowned(
+    journal: Path,
+    *,
+    bvid: str,
+    plan_id: str,
+    predecessor_plan_id: str | None = None,
+    predecessor_verified_row_sha256: str | None = None,
+) -> None:
     """Fail before plan-file creation when another plan already owns a BVID."""
 
-    for row in read_journal(journal):
-        if row["bvid"] == bvid and row["plan_id"] != plan_id:
-            raise DuplicateBvid(f"{bvid} already has repair plan {row['plan_id']}")
+    matching = [row for row in read_journal(journal) if row["bvid"] == bvid]
+    if not matching:
+        return
+    owner_row = matching[-1]
+    if owner_row["plan_id"] == plan_id:
+        return
+    if (
+        owner_row.get("state") == "VERIFIED"
+        and predecessor_plan_id == owner_row.get("plan_id")
+        and predecessor_verified_row_sha256 == owner_row.get("row_sha256")
+    ):
+        return
+    raise DuplicateBvid(f"{bvid} already has repair plan {owner_row['plan_id']}")
 
 
 def initialise_journal(journal: Path, plan_path: Path, plan: Mapping[str, Any]) -> dict[str, Any]:
     selected = plan_entries(journal, plan_path, plan)
     if selected:
         return selected[-1]
+    predecessor = plan.get("predecessor_completion") or {}
+    predecessor_plan = predecessor.get("plan") or {}
+    predecessor_row = predecessor.get("verified_journal_row") or {}
+    assert_bvid_unowned(
+        journal,
+        bvid=str(plan["bvid"]),
+        plan_id=str(plan["plan_id"]),
+        predecessor_plan_id=(
+            str(predecessor_plan.get("plan_id"))
+            if predecessor_plan.get("plan_id")
+            else None
+        ),
+        predecessor_verified_row_sha256=(
+            str(predecessor_row.get("row_sha256"))
+            if predecessor_row.get("row_sha256")
+            else None
+        ),
+    )
+    details: dict[str, Any] = {"remote_mutation": False}
+    if predecessor_plan.get("plan_id") and predecessor_row.get("row_sha256"):
+        details["lineage_predecessor"] = {
+            "plan_id": predecessor_plan["plan_id"],
+            "verified_row_sha256": predecessor_row["row_sha256"],
+        }
     return append_journal(
         journal,
         plan_path=plan_path,
         plan=plan,
         state="PLANNED",
-        details={"remote_mutation": False},
+        details=details,
     )
 
 

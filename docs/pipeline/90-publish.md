@@ -146,6 +146,15 @@ BVID 相等。只读 live snapshot 随后还要证明 Creator/public/section 的
 等于 authority；`same-bv-repair-plan.v2` 冻结该 authority，repair-run/status 每次恢复都与 manifest
 重验。这样不能把 A 包靠错误 CLI 参数指向 B 稿件。
 
+若同一 BVID 已完成过一次同 BV 修复，publication registry 中的原始 CID 仍保持不可变；
+后续 `repair-plan` 不得靠裸 CID 覆盖绕过。必须显式传
+`--predecessor-completed <same-bv-repair-completed.v1>`：planner 会重放 predecessor plan
+及其 hash、manifest/replacement bindings、hash-chain journal 的终态 `VERIFIED` 行和 completed
+fresh snapshot，并要求本次 fresh Creator/public/exact-section 单 P snapshot 与该 completed
+snapshot 精确相等，才把 predecessor 新 CID 冻结为本次 `before`。completed/plan/journal 任一路径、
+hash、candidate/BVID/AID、CID 拓扑或 fresh live 面漂移都 fail closed。共享 journal 只允许前一
+owner 已 `VERIFIED` 且新 `PLANNED` 行显式绑定其终态 row hash 的单链移交，禁止分叉或并发抢占。
+
 same-BV 的 member/season 登录读取统一走 `bilibili_member_api.load_cookie_pairs`：
 `{cookie_info:{cookies:[…]}}` 与 `{data:{cookie_info:{cookies:[…]}}}` 两种真实形态都按
 唯一 schema 严格解析；根节点/字段/条目异常、两形态同时出现、空值、重复 cookie 名或缺

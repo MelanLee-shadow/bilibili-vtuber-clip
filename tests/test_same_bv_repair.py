@@ -453,6 +453,70 @@ def _plan_authority(tmp_path: Path, *, initialise: bool = True):
     return manifest, plan, plan_path, journal
 
 
+def _completed_predecessor(tmp_path: Path):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    manifest, plan, plan_path, journal = _plan_authority(tmp_path)
+    adapter = FakeAdapter(plan)
+    result = run_repair(
+        plan_path=plan_path,
+        journal=journal,
+        manifest=manifest,
+        adapter=adapter,
+        wait_seconds=0,
+    )
+    assert result.state == "VERIFIED"
+    rows = read_journal(journal)
+    rows[-1]["details"]["live_snapshot"]["creator"]["state"] = 0
+    rows[-1]["details"]["live_snapshot"]["creator"]["state_desc"] = "\u5f00\u653e\u6d4f\u89c8"
+    rows[-1]["row_sha256"] = same_bv._row_hash(
+        {
+            key: value
+            for key, value in rows[-1].items()
+            if key != "row_sha256"
+        }
+    )
+    journal.write_text(
+        "".join(
+            json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n"
+            for row in rows
+        ),
+        encoding="utf-8",
+    )
+    verified = read_journal(journal)[-1]
+    snapshot = copy.deepcopy(verified["details"]["live_snapshot"])
+    completed = {
+        "schema_version": "same-bv-repair-completed.v1",
+        "status": "VERIFIED_FRESH_LIVE",
+        "rc": 0,
+        "verified_at": "2026-07-29T00:00:00+00:00",
+        "remote_mutation": False,
+        "candidate_id": PUBLICATION_AUTHORITY["candidate_id"],
+        "bvid": BVID,
+        "aid": PUBLICATION_AUTHORITY["aid"],
+        "new_cid": NEW_CID,
+        "plan": {
+            "path": str(plan_path.resolve()),
+            "sha256": sha256_file(plan_path),
+            "plan_id": plan["plan_id"],
+        },
+        "manifest": copy.deepcopy(plan["manifest"]),
+        "replacement": copy.deepcopy(plan["replacement"]),
+        "verified_journal_row": {
+            "journal_path": str(journal.resolve()),
+            "seq": verified["seq"],
+            "at": verified["at"],
+            "row_sha256": verified["row_sha256"],
+        },
+        "live_snapshot": snapshot,
+    }
+    completed_path = tmp_path / "same-bv-repair-completed.json"
+    completed_path.write_text(
+        json.dumps(completed, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return completed_path, snapshot
+
+
 class FakeAdapter:
     def __init__(
         self,
@@ -1477,6 +1541,100 @@ def test_planning_requires_live_aid_cid_to_match_publication_authority(
             manifest=manifest,
             bvid=BVID,
             snapshot=snapshot,
+        )
+
+
+def test_later_repair_requires_and_replays_explicit_completed_predecessor(
+    tmp_path,
+):
+    completed_path, current_snapshot = _completed_predecessor(
+        tmp_path / "predecessor"
+    )
+    next_root = tmp_path / "next"
+    next_root.mkdir()
+    manifest_path, manifest = _manifest(next_root)
+
+    with pytest.raises(
+        PlanInvalid,
+        match="sole Creator CID differs from proven planning predecessor",
+    ):
+        create_plan(
+            manifest_path=manifest_path,
+            manifest=manifest,
+            bvid=BVID,
+            snapshot=current_snapshot,
+        )
+
+    plan = create_plan(
+        manifest_path=manifest_path,
+        manifest=manifest,
+        bvid=BVID,
+        snapshot=current_snapshot,
+        predecessor_completed_path=completed_path,
+    )
+
+    assert plan["before"]["creator"]["videos"][0]["cid"] == NEW_CID
+    assert plan["predecessor_completion"]["new_cid"] == NEW_CID
+    assert plan["predecessor_completion"]["completed"] == {
+        "path": str(completed_path.resolve()),
+        "sha256": sha256_file(completed_path),
+    }
+    validate_plan(plan, manifest=manifest)
+
+    completed = json.loads(completed_path.read_text(encoding="utf-8"))
+    shared_journal = Path(
+        completed["verified_journal_row"]["journal_path"]
+    )
+    next_plan_path = next_root / "repair.plan.json"
+    write_plan(next_plan_path, plan)
+    initialised = initialise_journal(shared_journal, next_plan_path, plan)
+    assert initialised["state"] == "PLANNED"
+    assert initialised["details"]["lineage_predecessor"] == {
+        "plan_id": completed["plan"]["plan_id"],
+        "verified_row_sha256": completed["verified_journal_row"][
+            "row_sha256"
+        ],
+    }
+    assert read_journal(shared_journal)[-1]["plan_id"] == plan["plan_id"]
+
+
+def test_later_repair_refuses_stale_or_tampered_predecessor_completion(
+    tmp_path,
+):
+    completed_path, current_snapshot = _completed_predecessor(
+        tmp_path / "predecessor"
+    )
+    next_root = tmp_path / "next"
+    next_root.mkdir()
+    manifest_path, manifest = _manifest(next_root)
+    drifted = copy.deepcopy(current_snapshot)
+    drifted["public"]["cid"] = 999
+
+    with pytest.raises(
+        PlanInvalid,
+        match="fresh planning snapshot differs from predecessor completion",
+    ):
+        create_plan(
+            manifest_path=manifest_path,
+            manifest=manifest,
+            bvid=BVID,
+            snapshot=drifted,
+            predecessor_completed_path=completed_path,
+        )
+
+    completed = json.loads(completed_path.read_text(encoding="utf-8"))
+    completed["verified_journal_row"]["row_sha256"] = "0" * 64
+    completed_path.write_text(
+        json.dumps(completed, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(PlanInvalid, match="journal row_sha256 mismatch"):
+        create_plan(
+            manifest_path=manifest_path,
+            manifest=manifest,
+            bvid=BVID,
+            snapshot=current_snapshot,
+            predecessor_completed_path=completed_path,
         )
 
 

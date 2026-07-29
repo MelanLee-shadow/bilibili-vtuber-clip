@@ -126,6 +126,14 @@ def parse_args(
         "--biliup-cookie-json",
         default=str(defaults["biliup_cookie_json"]),
     )
+    rp.add_argument(
+        "--predecessor-completed",
+        default=None,
+        help=(
+            "explicit same-bv-repair-completed.v1 proof for a later repair "
+            "whose current live CID no longer equals the original registry CID"
+        ),
+    )
     rp.add_argument("--dry-run", action="store_true")
     rp.set_defaults(func=handlers["repair_plan"])
 
