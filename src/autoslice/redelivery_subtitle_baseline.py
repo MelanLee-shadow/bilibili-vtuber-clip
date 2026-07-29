@@ -989,6 +989,22 @@ def _replay_exact_v2_interval(
     for index, cue in enumerate(baseline, start=1):
         absolute_start_ms = timeline.baseline_start_ms + cue.start_ms
         absolute_end_ms = timeline.baseline_start_ms + cue.end_ms
+        pre_replay_cues = [
+            {
+                "current_cue_index": current_index,
+                "start_ms": current_cue.start_ms,
+                "end_ms": current_cue.end_ms,
+                "text": current_cue.text,
+            }
+            for current_index, current_cue in enumerate(current, start=1)
+            if _absolute_overlap_ms(
+                cue.start_ms,
+                cue.end_ms,
+                current_cue.start_ms,
+                current_cue.end_ms,
+            )
+            > 0
+        ]
         audit["mappings"].append(
             {
                 "mapping_kind": "exact_reviewed_interval_replay",
@@ -999,6 +1015,12 @@ def _replay_exact_v2_interval(
                 "baseline_absolute_source_start_ms": absolute_start_ms,
                 "baseline_absolute_source_end_ms": absolute_end_ms,
                 "text": cue.text,
+                # Exact replay can replace a differently segmented cue grid.
+                # Retain the hash-bound input cue evidence so downstream
+                # authority reconciliation can prove that a reviewed baseline
+                # actually reverted a proposed surface instead of granting a
+                # geometry-only exemption.
+                "pre_replay_cues": pre_replay_cues,
             }
         )
         audit["owned_intervals"].append(

@@ -47,6 +47,12 @@ registry/candidate/mode/ms 任一不匹配、可选集合为空、reviewer 选�
 cue、required owner/structured payoff 越过 pin、grid/index 漂移或最终
 媒体不等于 pin，均 fail closed；不得把 exact pin 降级为普通下界，也不得用它绕过四命题。
 
+因用户只报告 1–2 个抽样问题而触发 same-BV **整片重跑**时，旧公开成片的 endpoint
+不得被自动升级成 `exact_source_pin`。除非 Ivan 明确说已逐帧/逐句审过该候选的精确终点，
+默认只能登记为 `semantic_lower_bound`，由 source-full-window 语义评审继续寻找完整
+payoff/闭环；只报告字幕、标题或封面问题不构成精确终点授权。若旧 endpoint 与更晚的
+structured payoff 冲突，必须保留 payoff 并重审，不能用旧公开时长反向截断故事。
+
 source review、resolver 与有界 retry 必须共同消费并逐字段、逐 SHA 绑定同一份
 `talk-boundary-search-scope.v1`，禁止各自从旧 candidate end 重新推导 cap。scope 按
 `boundary_end_mode` 分成两种，不能混用：

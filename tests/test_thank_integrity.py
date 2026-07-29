@@ -426,6 +426,72 @@ def test_baseline_replay_revert_receipt_retires_boundary_owner_row() -> None:
     assert audit["final_superseded_by_redelivery_baseline_count"] == 1
 
 
+def test_exact_replay_input_cues_retire_boundary_owner_once() -> None:
+    """Exact replay stores overlapping input cues on every output mapping.
+
+    A pre-replay cue may straddle multiple reviewed cues, so reconciliation
+    must deduplicate it by current cue index before proving the causal revert.
+    """
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    final = _srt(
+        (0, 1_000, "为什么要请大N老师吃火锅"),
+        (1_000, 2_000, "终于和大N见面"),
+    )
+    pre_replay = {
+        "current_cue_index": 1,
+        "start_ms": 0,
+        "end_ms": 2_000,
+        "text": "什么要请大N老师吃火锅，终于和大N见面了",
+    }
+    audit = {
+        "applied": [
+            {
+                "exact_text": "什么要请大N老师吃火锅，终于和大N见面了",
+                "matched_start_ms": 10_000,
+                "matched_end_ms": 12_000,
+                "boundary_required": True,
+            }
+        ],
+        "redelivery_subtitle_baseline_audit": {
+            "status": "APPLIED",
+            "mappings": [
+                {
+                    "baseline_cue_index": 1,
+                    "start_ms": 0,
+                    "end_ms": 1_000,
+                    "text": "为什么要请大N老师吃火锅",
+                    "pre_replay_cues": [pre_replay],
+                },
+                {
+                    "baseline_cue_index": 2,
+                    "start_ms": 1_000,
+                    "end_ms": 2_000,
+                    "text": "终于和大N见面",
+                    "pre_replay_cues": [pre_replay],
+                },
+            ],
+        },
+    }
+
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=10_000,
+        delivery_end_ms=12_000,
+    )
+    row = audit["applied"][0]
+    assert row["final_verification_scope"] == (
+        "SUPERSEDED_BY_REDELIVERY_BASELINE"
+    )
+    assert row["final_redelivery_baseline_revert"]["before_payload"] == (
+        "什么要请大n老师吃火锅终于和大n见面了"
+    )
+
+
 def test_exact_boundary_pad_overlap_is_sliver_exempt() -> None:
     """1863 sender 案：行 matched_end 恰落在首 cue 起点上，overlap 精确等于
     250ms（片头 pad 常数）且 ratio 0.09——刀刃值必须按 sliver 豁免，

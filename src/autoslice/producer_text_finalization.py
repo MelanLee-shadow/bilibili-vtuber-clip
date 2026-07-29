@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from .chat_authority import (
     _fragment_spoken_in,
     _strip_interjections_once,
@@ -388,8 +390,24 @@ def _baseline_replay_reverted_row(
     )
     if not touching:
         return None
+    pre_replay_cues: dict[int, str] = {}
+    for mapping in touching:
+        for cue in mapping.get("pre_replay_cues") or []:
+            if not isinstance(cue, Mapping):
+                continue
+            cue_index = cue.get("current_cue_index")
+            if (
+                isinstance(cue_index, int)
+                and not isinstance(cue_index, bool)
+                and isinstance(cue.get("text"), str)
+            ):
+                pre_replay_cues.setdefault(cue_index, str(cue["text"]))
     before_payload = normalize_chat_text(
-        "".join(str(row.get("before") or "") for row in touching)
+        (
+            "".join(pre_replay_cues[index] for index in sorted(pre_replay_cues))
+            if pre_replay_cues
+            else "".join(str(row.get("before") or "") for row in touching)
+        )
     )
     after_payload = normalize_chat_text(
         "".join(

@@ -22,6 +22,11 @@
   连同 `speaker_srt_sha256`、`ass_sha256` 放进 package。两条路径都只能指向 package-relative
   regular file；绝对路径、越界、缺文件以及路径任一层 symlink 都拒绝。song lane 不进入这条
   talk speaker gate。
+- reviewed baseline 执行 exact interval replay 时，必须在 mapping 中 hash-bound 保留每个
+  重叠输入 cue 的 replay 前文本、时间和 current cue index。最终权威若撤回较早的
+  correction/owner，只有从这些去重后的 pre-replay cue 能重建出旧文本、且 replay 后文本
+  精确等于 reviewed baseline 时，才可记为 causal revert/superseded；只看最终 cue 几何、
+  baseline 命中或空的 `before` 字段都不能注销既有 owner。
 - `review_package_ass_audit.py` 不能只看 ASS 存在或 hash：speaker SRT 还须匹配
   chat-authority 的 `final_speaker_srt_sha256`，ASS 须同时匹配 record
   `artifact_hashes.ass_sha256` 与 chat-authority `speaker_ass_sha256`。auditor 再从包内

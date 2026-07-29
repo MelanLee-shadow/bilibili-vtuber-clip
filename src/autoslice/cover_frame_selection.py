@@ -16,10 +16,8 @@ numpy（free 主机运行时只有 PIL+ffmpeg+标准库）：
 
 from __future__ import annotations
 
-import json
 import re
 import statistics
-import struct
 import subprocess
 from array import array
 from pathlib import Path
@@ -38,6 +36,11 @@ _MIN_PEAK_GAP_MS = 2_500
 # 同样无害（开头都是铺垫）。结尾 1s 常是淡出。
 DEFAULT_SKIP_HEAD_MS = 5_000
 DEFAULT_SKIP_TAIL_MS = 1_200
+# A single scene cut can be a 6-sigma full-screen motion outlier and swamp
+# speech, emotion, and sharpness (2026-07-25 1493 picked a foggy game
+# transition over the actual protest). Motion remains useful, but no one frame
+# may win solely because it is an edit/transition outlier.
+_MOTION_Z_CAP = 3.0
 
 _SRT_TS_RX = re.compile(
     r"(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})"
@@ -122,6 +125,17 @@ def _analysis_region(size: tuple[int, int]) -> tuple[int, int, int, int]:
     return (int(width * _MASK_LEFT_FRAC), 0, width, int(height * (1 - _MASK_BOTTOM_FRAC)))
 
 
+def _frame_score(
+    *,
+    motion_z: float,
+    audio_z: float,
+    sharp_z: float,
+    emotion: float,
+) -> float:
+    bounded_motion = max(-_MOTION_Z_CAP, min(_MOTION_Z_CAP, motion_z))
+    return bounded_motion + audio_z + 0.25 * sharp_z + 0.35 * emotion
+
+
 def select_expressive_cover_frame(
     media_path: Path,
     *,
@@ -189,7 +203,12 @@ def select_expressive_cover_frame(
     z_audio = _zscores(audio)
     z_sharp = _zscores(sharp)
     scores = [
-        z_motion[i] + z_audio[i] + 0.25 * z_sharp[i] + 0.35 * emotion[i]
+        _frame_score(
+            motion_z=z_motion[i],
+            audio_z=z_audio[i],
+            sharp_z=z_sharp[i],
+            emotion=emotion[i],
+        )
         for i in range(len(stamps_ms))
     ]
     window_lo = skip_head_ms

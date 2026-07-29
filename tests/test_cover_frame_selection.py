@@ -14,6 +14,7 @@ from PIL import Image
 
 from src.autoslice.cover_frame_selection import (
     DEFAULT_SKIP_HEAD_MS,
+    _frame_score,
     _parse_srt_emotion_spans,
     extract_zoomed_cover_frame,
     select_expressive_cover_frame,
@@ -68,6 +69,25 @@ def test_selects_performance_window_not_intro_decoy(tmp_path):
 def test_skip_head_default_covers_branding_intro():
     # talk 成片片头 ~4.3s，默认跳过窗必须盖过它。
     assert DEFAULT_SKIP_HEAD_MS >= 4_500
+
+
+def test_scene_cut_motion_outlier_does_not_beat_story_frame():
+    """1493 regression: a foggy 6-sigma transition must not beat the spoken,
+    sharper emotion frame solely on full-screen motion."""
+
+    transition = _frame_score(
+        motion_z=6.0889,
+        audio_z=-1.1025,
+        sharp_z=-1.2671,
+        emotion=0.0,
+    )
+    story_frame = _frame_score(
+        motion_z=0.4404,
+        audio_z=1.9411,
+        sharp_z=0.5357,
+        emotion=1.0,
+    )
+    assert story_frame > transition
 
 
 def test_extract_zoomed_cover_frame_outputs_hd_canvas(tmp_path):

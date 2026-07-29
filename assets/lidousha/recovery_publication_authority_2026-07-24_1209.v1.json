@@ -1,13 +1,13 @@
 {
   "schema_version": "lidousha-recovery-publication-authority.v1",
-  "authority": "Ivan 2026-07-28/29: the already-published 7/24 candidate auto_183122_1209_1410 has a semantically fragmented cover; rerun the whole clip once in an isolated no-upload recovery base, preserve its existing BV and verified public title, and pin the reviewed story end to the original selected source boundary.",
+  "authority": "Ivan 2026-07-28/29: the already-published 7/24 candidate auto_183122_1209_1410 has a semantically fragmented cover; rerun the whole clip once in an isolated no-upload recovery base and preserve its existing BV and verified public title. The published endpoint is a lower bound, not an operator-reviewed exact pin; the full rerun must retain any later structured payoff required to close the title story.",
   "entries": [
     {
       "candidate_id": "auto_183122_1209_1410",
       "title_mode": "verified_public_exact",
       "observed_public_title": "【李豆沙】听说安晚也吃了生豆角，熊猫头下播就去暗示礼墨，三人组必须团结有默契！",
       "required_given_end_ms": 1410240,
-      "boundary_end_mode": "exact_source_pin",
+      "boundary_end_mode": "semantic_lower_bound",
       "bvid": "BV1AD366DEd9",
       "aid": 116999590059503,
       "cid": 40388855586,

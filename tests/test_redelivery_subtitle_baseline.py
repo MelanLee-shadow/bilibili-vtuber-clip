@@ -619,6 +619,15 @@ def test_v2_exact_interval_replays_reviewed_missing_cues_when_authorized(
     assert audit["replayed_cue_count"] == 2
     assert audit["changed_cue_count"] == 2
     assert audit["failures"] == []
+    assert audit["mappings"][0]["pre_replay_cues"] == [
+        {
+            "current_cue_index": 1,
+            "start_ms": 0,
+            "end_ms": 1_000,
+            "text": "随机第一句",
+        }
+    ]
+    assert audit["mappings"][1]["pre_replay_cues"] == []
 
 
 def test_v2_exact_interval_replays_with_bounded_video_only_tail(

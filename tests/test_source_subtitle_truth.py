@@ -3275,6 +3275,81 @@ def test_committed_909_ambiguous_thanks_uses_reasonable_operator_truth():
     }
 
 
+def test_committed_909_three_part_sc_truth_splits_both_boundaries(
+    tmp_path,
+):
+    """A three-row operator SC may cross two fresh-ASR cue boundaries.
+
+    The first owner can span several cues and the middle owner can itself end
+    inside another cue; both boundaries must be split before text projection.
+    """
+
+    committed_ledger = (
+        REPO_ROOT / "assets" / "lidousha" / "subtitle_truth_ledger.v1.json"
+    )
+    document = json.loads(committed_ledger.read_text(encoding="utf-8"))
+    wanted = {
+        "20260725-909-sc-kmx-first-r1",
+        "20260725-909-sc-kmx-second-r1",
+        "20260725-909-sc-tail-r1",
+    }
+    document["entries"] = [
+        row for row in document["entries"] if row.get("truth_id") in wanted
+    ]
+    document.pop("governance", None)
+    ledger = tmp_path / "ledger.json"
+    ledger.write_text(
+        json.dumps(document, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    corrected, audit = apply_source_subtitle_truth(
+        _srt_ms(
+            (8_969, 9_449, "姐姐姐姐姐"),
+            (9_449, 10_610, "还是在直播间摸摸kmx吧"),
+            (10_610, 12_210, "kmx不咬人还喜欢被敲"),
+            (12_210, 12_890, "在公司说怪话好刺激"),
+            (12_890, 13_330, "在公司说怪话好刺激"),
+            (13_330, 14_610, "kmx不咬人还喜欢被敲"),
+            (14_610, 16_370, "在公司说怪话好刺激"),
+        ),
+        spec={
+            "pieces": [
+                {
+                    "remote_media": (
+                        "/recordings/22966160_20260725-19-20-00.mp4"
+                    ),
+                    "start_ms": 1_020_000,
+                    "end_ms": 1_036_370,
+                }
+            ]
+        },
+        durations=[16_370],
+        ledger_path=ledger,
+    )
+
+    assert audit["status"] == "APPLIED", audit["failures"]
+    assert not audit["failures"]
+    owners = {
+        row["truth_id"]: "".join(row["after"]).replace("，", "")
+        for bucket in ("applied", "satisfied")
+        for row in audit[bucket]
+    }
+    assert owners["20260725-909-sc-kmx-first-r1"] == (
+        "姐姐姐姐姐还是在直播间摸摸kmx吧"
+    )
+    assert owners["20260725-909-sc-kmx-second-r1"] == (
+        "kmx不咬人还喜欢被敲"
+    )
+    assert owners["20260725-909-sc-tail-r1"] == "在公司说怪话好刺激"
+    assert [
+        row["current_truth_id"]
+        for row in audit["cue_grid_partition"]["partitions"]
+    ] == [
+        "20260725-909-sc-kmx-second-r1",
+        "20260725-909-sc-tail-r1",
+    ]
+
+
 def test_committed_850_opening_noise_truth_drops_the_actual_cue():
     """850 public 0:13 经同 BV 片头映射到 recut 7010–9990ms。"""
 

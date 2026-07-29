@@ -12,6 +12,10 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
 - 同场批内创新硬门：selection 为 talk 入选项持久化 `cover_diversity_slot`；前 5 张不得碰撞背景家族。0–5 依次为蓝色漫画爆炸、暖色手账拼贴、紫色霓虹舞台、薄荷贴纸涂鸦、黑白漫画分镜、珊瑚棋盘杂志。返修必须继承该槽位，不能退回独立随机抽色。
 - 版式：talk 轮换 left-split/right-split/banner；歌切恒 song-clean 且标题字要大（banner 级）；art direction 由 `_lidousha_cover_art_direction` 决定（`cover_generation.py`）。短梗字会为可读性强制 banner，但背景家族仍必须批内不同。
 - 自动 talk 封面按 2026-07-20 生态调研采用 2–12 字的原话/质问/反差梗字，配真实表情帧和更大的脸；完整长标题不是默认封面文案。Ivan 定稿标题仍按人工权威保留其要求的全部成分；歌切恒为 `《歌名》`。
+- 真实帧候选的全屏 motion z-score 只用于发现动作，不能让切场、白雾、加载页等瞬时
+  运动离群值压过故事讲话帧。排序必须对 motion 贡献设上限，并继续综合语音能量、清晰度
+  与字幕情绪；最终选帧还须由 AGY 对实际像素确认主播脸完整/可用、画面不是空白过渡，
+  失败即换帧重做，不能因确定性 score 较高而放行。
 - 短梗字不能只过“逐字来自标题、每行 2–12 字”的词面门。选择器必须把完整
   StoryContract `selection_hook` 连同标题交给 **CPA 文字模型**做最终语义裁决，并落盘
   hash-bound `lidousha-cover-punch-semantic-review.v1`：陌生观众只看最终 1–2 行也必须能

@@ -1719,7 +1719,7 @@ def apply_source_subtitle_truth(
 
     if audit["failures"]:
         audit["status"] = "FAILED"
-    elif audit["applied"]:
+    elif audit["applied"] or cue_partition is not None:
         audit["status"] = "APPLIED"
     elif audit["satisfied"]:
         audit["status"] = "ALREADY_SATISFIED"
