@@ -2533,6 +2533,31 @@ def test_expected_value_canon_reasserts_limo_after_mutable_stages():
     }
 
 
+def test_expected_value_canon_restores_fixed_gift_name_after_mutable_stages():
+    from src.autoslice.chat_authority import normalize_expected_value_surfaces
+
+    source = _srt(
+        "如果世上没有早起的粉丝灯牌",
+        "谢谢二琳娜皮草的粉团灯牌",
+    )
+    output, audit = normalize_expected_value_surfaces(source)
+
+    assert [cue.text for cue in parse_srt_cues(output)] == [
+        "如果世上没有早起的粉丝团灯牌",
+        "谢谢二琳娜皮草的粉丝团灯牌",
+    ]
+    assert audit["status"] == "APPLIED"
+    assert audit["decision_authority"] == "EXPECTED_VALUE_CANON"
+    assert {
+        (row["surface"], row["canonical"])
+        for repair in audit["repairs"]
+        for row in repair["replacements"]
+    } == {
+        ("粉丝灯牌", "粉丝团灯牌"),
+        ("粉团灯牌", "粉丝团灯牌"),
+    }
+
+
 def test_expected_value_canon_repairs_all_listed_shadouli_mentions():
     from src.autoslice.chat_authority import normalize_expected_value_surfaces
 

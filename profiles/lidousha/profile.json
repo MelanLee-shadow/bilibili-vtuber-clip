@@ -123,6 +123,16 @@
         "authority": "lidousha-expected-value-canon.v1"
       },
       {
+        "surface": "粉丝灯牌",
+        "canonical": "粉丝团灯牌",
+        "authority": "lidousha-expected-value-canon.v1"
+      },
+      {
+        "surface": "粉团灯牌",
+        "canonical": "粉丝团灯牌",
+        "authority": "lidousha-expected-value-canon.v1"
+      },
+      {
         "surface": "难崩小视频",
         "canonical": "难绷小视频",
         "authority": "lidousha-hard-slang-canon.v1"

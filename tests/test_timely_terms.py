@@ -127,7 +127,7 @@ def test_default_profile_jingting_prompt_matches_authoritative_glossary_fingerpr
     # 2026-07-27：沙豆李新误听面 下斗里 + 粉丝队对抗语境先验（Ivan 裁定）。
     # 2026-07-28：林墨 -> 礼墨 expected-value 专名规范化。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "5e4925c05202a8962ec5ebc0ee60a41d54dbaf38a4ab74597f1b8afac8bb9147"
+        "4791486d19a339209678b4637ada5ae93b218883c54f3b5d2a96dd7179348d6a"
     )
 
 

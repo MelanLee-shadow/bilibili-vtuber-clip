@@ -30,6 +30,7 @@ def test_parse_real_glossary_extracts_multiple_canon_and_blacklist():
         "奶油苏打",
         "小李",
         "和成天下",
+        "粉丝团灯牌",
     ):
         assert canon in terms.canon, canon
     # ASR mishearing variants are harvested for the blacklist.
@@ -45,6 +46,8 @@ def test_parse_real_glossary_extracts_multiple_canon_and_blacklist():
         "合成天下",
         "何成天下",
         "下斗里",
+        "粉丝灯牌",
+        "粉团灯牌",
     ):
         assert variant in terms.mishear_blacklist, variant
     # A canonical spelling is never simultaneously flagged as a violation.
@@ -63,6 +66,16 @@ def test_parse_glossary_terms_pairs_canon_with_its_mishearings():
     assert "142" in terms.canon
     assert {"小寺", "小时", "小师"} <= set(terms.mishear_blacklist)
     assert {"一四二", "伊索尔"} <= set(terms.mishear_blacklist)
+
+
+def test_mishear_list_stops_before_semicolon_explanation():
+    terms = parse_glossary_terms(
+        "- 礼物名：粉丝团灯牌。不要写成 粉丝灯牌、粉团灯牌；"
+        "后面的解释不是误听面。\n"
+    )
+
+    assert {"粉丝灯牌", "粉团灯牌"} <= set(terms.mishear_blacklist)
+    assert all("解释" not in term for term in terms.mishear_blacklist)
 
 
 def test_parser_does_not_split_canonical_names_that_begin_with_he():

@@ -33,6 +33,10 @@
   词面。两字日常词（如“小时/留下”）无条件替换的误伤先验过高，除非 profile 单独显式提升，
   否则仍交 CPA。这样“下斗里→沙豆李”可机械覆盖整片所有出现，而“专名A→专名B”仍被
   registered-term guard 拦截。
+- B 站固定礼物名属于同一高先验车道：profile 明列的
+  `粉丝灯牌/粉团灯牌 → 粉丝团灯牌` 在最终 mutable 文本阶段之后机械复写并落
+  `EXPECTED_VALUE_CANON` 收据，不再依赖终审 LLM 恰好发现漏字。当前词面若也被登记为合法
+  专名，仍触发 registered-name equality guard，转交 CPA。
 - 实体上下文构建完成后必须生成同一份 hash-bound `.clip-context.json`：绑定 candidate/date、
   官方源 SHA、整片 draft、selection hook、relation/topic、结构化弹幕/SC 与 scoped speech
   memory。终审、声学请求、StoryContract、record 和交付包只能引用验证过的同一 digest；

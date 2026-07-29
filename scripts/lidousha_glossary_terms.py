@@ -72,7 +72,7 @@ _CANON_QUOTED_FIX_RE = re.compile(r"修正为\s*[“\"‘'『「]([A-Za-z0-9一-
 
 # Mishearing markers. "不要改成/写成 …" runs to the sentence end; the "听成 …
 # 等" forms stop at the first 等 so we never swallow the trailing prose.
-_MISHEAR_DONT_RE = re.compile(r"不要(?:改成|写成)\s*([^。\n]+)")
+_MISHEAR_DONT_RE = re.compile(r"不要(?:改成|写成)\s*([^。；;\n]+)")
 _MISHEAR_HEARD_RE = re.compile(
     r"(?:误听成|误听|听成|听岔成)\s*([^。\n]+?)\s*等"
 )
