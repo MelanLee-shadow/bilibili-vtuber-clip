@@ -260,6 +260,24 @@ def repair_covers(
             and diversity_slot >= 0
         ):
             style_args.extend(["--diversity-slot", str(diversity_slot)])
+        generation_story_contract = (
+            generation.get("story_contract")
+            if isinstance(generation, dict)
+            else None
+        )
+        story_hook = (
+            str(generation_story_contract.get("selection_hook") or "").strip()
+            if isinstance(generation_story_contract, dict)
+            else ""
+        )
+        if not story_hook:
+            story_hook = str(rec.get("hook") or "").strip()
+        if story_hook:
+            # Cover-only maintenance must carry the same full-story authority
+            # as normal production.  Without it, the punch semantic reviewer
+            # can only see the title and its proof will not bind to the
+            # package StoryContract audited at delivery time.
+            style_args.extend(["--story-hook", story_hook])
         if (
             str(cid) not in expected_cover_texts
             and rec.get("title_authority_status") != "RESOLVED_MANUAL"

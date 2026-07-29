@@ -33,6 +33,9 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   **逐像素完全相等**。文字 bbox 还必须落在 feed 安全区 `x∈[260,1660]`；只在 JSON 自报字号、
   bbox、文字或 hash 均不算通过。
 - 经审阅的封面返修可用 `regenerate_lidousha_cover.py --cover-text` 锁定短梗字；该文案必须由 hash-bound repair plan 提供并逐字验收，不得让返修入口擅自改写。
+  cover-only 维护分支必须从既有 `cover_generation.story_contract.selection_hook`
+  （仅在旧包缺失时退到同条 state 的 `hook`）向生成器传递完整故事，不能只给标题后产生
+  与交付包 StoryContract 哈希不一致的短梗字回执。
 - 字体：全链验字形；选中字体必须完整覆盖标题且 `glyph_risk=[]`，否则
   `COVER_FONT_GLYPH_COVERAGE_MISSING` 阻断。生产可在 committed profile fonts 内选择完整字体，
   但放行复验不接受系统字体或未提交路径；实际选择、render spec 和像素证据由

@@ -2627,6 +2627,7 @@ def test_reviewed_cover_text_gate_rejects_dropped_question_mark_before_binding(
         "status": "review_ready",
         "title": "【李豆沙】去彩排前连问三遍：你们还要来找我玩，好不好？",
         "cover_status": "BLOCKED_AI_COVER_REQUIRED",
+        "hook": "临时被叫去彩排，她连问观众三遍结束后还会不会来找她玩。",
     }
     monkeypatch.setattr(runner, "delivered_paths", lambda _date, _rec: (mp4, cover))
 
@@ -2677,6 +2678,59 @@ def test_reviewed_cover_text_gate_rejects_dropped_question_mark_before_binding(
     assert record.get("cover_binding_path") is None
     assert commands[0][commands[0].index("--cover-text") + 1] == (
         "去彩排前连问三遍\n你们还要来找我玩，好不好？"
+    )
+    assert commands[0][commands[0].index("--story-hook") + 1] == record["hook"]
+
+
+def test_cover_repair_prefers_bound_story_contract_hook_over_state_fallback(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+    monkeypatch.setattr(
+        runner, "pipeline_fingerprint", lambda: "sha256:" + "a" * 64
+    )
+    monkeypatch.setattr(runner, "cover_ref_for", lambda _date, _cid: None)
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(runner, "_cover_authority_preflight", lambda *_args: None)
+    monkeypatch.setattr(runner, "write_state", lambda _date, _state: None)
+    (runner.BASE / "logs").mkdir(parents=True)
+    mp4 = tmp_path / "clip.mp4"
+    mp4.write_bytes(b"video")
+    cover = tmp_path / "clip.cover.png"
+    record = {
+        "candidate_id": "auto_story_hook",
+        "status": "review_ready",
+        "title": "【李豆沙】听说安晚也吃了生豆角",
+        "hook": "stale selector fallback",
+        "cover_status": "BLOCKED_AI_COVER_REQUIRED",
+        "cover_generation": {
+            "story_contract": {
+                "selection_hook": "完整故事：李豆沙决定暗示礼墨也吃，维护三人组团结。"
+            }
+        },
+    }
+    monkeypatch.setattr(
+        runner, "delivered_paths", lambda _date, _rec: (mp4, cover)
+    )
+
+    class Failed:
+        returncode = 1
+
+    commands = []
+
+    def fail(command, **_kwargs):
+        commands.append(command)
+        return Failed()
+
+    monkeypatch.setattr(runner.subprocess, "run", fail)
+    runner.repair_covers(
+        "2026-07-24",
+        {"picks": [record], "songs": []},
+        candidate_ids={"auto_story_hook"},
+    )
+
+    assert commands[0][commands[0].index("--story-hook") + 1] == (
+        "完整故事：李豆沙决定暗示礼墨也吃，维护三人组团结。"
     )
 
 
