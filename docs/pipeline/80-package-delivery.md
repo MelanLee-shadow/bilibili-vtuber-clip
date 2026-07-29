@@ -188,6 +188,12 @@
   points、八项检查、封面 claims、evidence v2、create-only builder 与全部漂移/权限规则只读
   [90-publish.md](90-publish.md)；80 步只负责保证 review manifest、audit、record 和三类最终
   artifact 已冻结且可供该复核逐字节绑定。
+- final-human cover claim 必须来自当前 record 中与最终封面 SHA-256 互相绑定的
+  `cover_generation.rendered_lines + rendered_text_pixels`；多人物源帧的
+  `source_visible_claims` 只证明实际像素中的人物与表情。cover reference 的
+  `narrative_presentation` 是创作指导，允许封面在完整故事原子中择取清晰主副标题，绝不能
+  被收据直接升级为“最终 PNG 上实际显示了这些字”。缺当前 rendered-text 绑定必须拒发；
+  只有在该字段上线前已冻结的历史 receipt 才按原 narrative claim 只读兼容。
 - exact same-BV recovery 的包内必须额外携带 `.publish.json` regular file，并以 record
   `artifact_hashes.publish_draft_sha256` 绑定。state rerun plan 的
   `recovery_publication_authorities_by_candidate` 必须与 exact candidate 集合完全相等；
