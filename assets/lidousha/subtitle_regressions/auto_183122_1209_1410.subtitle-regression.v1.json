@@ -1,0 +1,27 @@
+{
+  "schema_version": "lidousha-subtitle-regression.v1",
+  "candidate_id": "auto_183122_1209_1410",
+  "required_payload_substrings": [
+    "安晚也吃生豆角了吗",
+    "神了，这对吗",
+    "那就差礼墨没吃了",
+    "那现在就差礼墨没吃了",
+    "这个这个下播我去暗示一下",
+    "我们三人组必须要团结",
+    "谢谢唐琳韵的钢镚",
+    "感觉豆沙用礼墨的麦更加吵闹"
+  ],
+  "required_any_substring_groups": [],
+  "forbidden_payload_substrings": [
+    "林墨",
+    "柠檬没吃",
+    "那就差你们没吃",
+    "盾山的麦"
+  ],
+  "forbidden_exact_cues": [
+    "那就差林墨没吃了",
+    "那就差柠檬没吃了",
+    "那就差你们没吃了",
+    "感觉豆沙用盾山的麦更加吵闹"
+  ]
+}
