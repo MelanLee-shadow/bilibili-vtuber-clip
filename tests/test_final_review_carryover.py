@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 from src.autoslice.final_review_carryover import (
@@ -24,6 +25,7 @@ def test_persist_keeps_only_acoustically_confirmed_repairs(tmp_path):
             [
                 {
                     "cue_index": 32,
+                    "base_text_sha256": "a" * 64,
                     "kind": "context",
                     "suspect": "悄悄",
                     "replacement": "敲敲",
@@ -47,6 +49,7 @@ def test_persist_keeps_only_acoustically_confirmed_repairs(tmp_path):
     assert len(rows) == 1
     row = rows[0]
     assert row["cue"] == 32
+    assert row["base_text_sha256"] == "a" * 64
     assert row["suspect"] == "悄悄"
     assert "终审结转" in row["why"]
 
@@ -237,6 +240,79 @@ def test_carryover_not_shadowed_by_different_empty_span_proposal(tmp_path):
     assert {
         row["proposed_full_cue"] for row in findings
     } == {"粉丝团灯牌", "粉丝牌灯牌"}
+
+
+def test_carryover_replays_by_text_hash_when_padded_cue_index_shifted():
+    base_text = "所以剩一点给我"
+    findings = audit_final_subtitles(
+        "1\n00:00:00,000 --> 00:00:01,000\n前置一\n\n"
+        "2\n00:00:01,000 --> 00:00:02,000\n前置二\n\n"
+        f"3\n00:00:02,000 --> 00:00:03,000\n{base_text}\n\n"
+        "4\n00:00:03,000 --> 00:00:04,000\n后文\n",
+        llm_call=lambda _prompt: '{"findings":[]}',
+        extract_json=json.loads,
+        extra_raw_findings=[
+            {
+                "cue": 1,
+                "base_text_sha256": hashlib.sha256(
+                    base_text.encode("utf-8")
+                ).hexdigest(),
+                "kind": "context",
+                "suspect": "剩一点给",
+                "replacement": "顺便带",
+                "proposed_full_cue": "所以顺便带我",
+                "repair_class": "phonetic",
+                "evidence_cue_ids": [2],
+            }
+        ],
+    )
+
+    assert findings[0]["cue_index"] == 3
+    assert findings[0]["evidence_cue_ids"] == [4]
+    assert findings[0]["carryover_replay_remap"] == {
+        "schema_version": "final-review-carryover-remap.v1",
+        "status": "PASS",
+        "basis": "base_text_sha256",
+        "from_cue": 1,
+        "to_cue": 3,
+        "evidence_delta": 2,
+    }
+
+
+def test_legacy_carryover_replays_only_when_suspect_owner_is_unique():
+    source = (
+        "1\n00:00:00,000 --> 00:00:01,000\n前置\n\n"
+        "2\n00:00:01,000 --> 00:00:02,000\n所以剩一点给我\n"
+    )
+    row = {
+        "cue": 1,
+        "kind": "context",
+        "suspect": "剩一点给",
+        "replacement": "顺便带",
+        "proposed_full_cue": "所以顺便带我",
+        "repair_class": "phonetic",
+    }
+    findings = audit_final_subtitles(
+        source,
+        llm_call=lambda _prompt: '{"findings":[]}',
+        extract_json=json.loads,
+        extra_raw_findings=[row],
+    )
+    assert findings[0]["cue_index"] == 2
+    assert (
+        findings[0]["carryover_replay_remap"]["basis"]
+        == "unique_legacy_suspect"
+    )
+
+    ambiguous = source + (
+        "\n3\n00:00:02,000 --> 00:00:03,000\n又说剩一点给我\n"
+    )
+    assert audit_final_subtitles(
+        ambiguous,
+        llm_call=lambda _prompt: '{"findings":[]}',
+        extract_json=json.loads,
+        extra_raw_findings=[row],
+    ) == []
 
 
 def test_load_rejects_malformed_payload(tmp_path):

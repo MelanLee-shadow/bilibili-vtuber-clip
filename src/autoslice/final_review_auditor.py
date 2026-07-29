@@ -541,6 +541,81 @@ def _merged_raw_findings(
 
     if not extra_raw_findings:
         return raw
+
+    def remap_carryover(
+        source: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        row = dict(source)
+        try:
+            old_index = int(row.get("cue"))
+        except (TypeError, ValueError):
+            old_index = 0
+        suspect = str(row.get("suspect") or "")
+        expected_hash = str(row.get("base_text_sha256") or "")
+        if expected_hash.startswith("sha256:"):
+            expected_hash = expected_hash.removeprefix("sha256:")
+        expected_hash_valid = bool(
+            re.fullmatch(r"[0-9a-f]{64}", expected_hash)
+        )
+
+        def text_matches(index: int) -> bool:
+            if not 1 <= index <= len(cues):
+                return False
+            text = cues[index - 1].text
+            if expected_hash_valid:
+                return (
+                    hashlib.sha256(text.encode("utf-8")).hexdigest()
+                    == expected_hash
+                )
+            return not suspect or suspect in text
+
+        if text_matches(old_index):
+            return row
+
+        if expected_hash_valid:
+            matches = [
+                index
+                for index, cue in enumerate(cues, start=1)
+                if hashlib.sha256(cue.text.encode("utf-8")).hexdigest()
+                == expected_hash
+            ]
+            basis = "base_text_sha256"
+        elif suspect:
+            # v1 sidecars written before base_text_sha256 was preserved can
+            # still close safely when the exact suspect span has one and only
+            # one owner in the current padded transcript.
+            matches = [
+                index
+                for index, cue in enumerate(cues, start=1)
+                if suspect in cue.text
+            ]
+            basis = "unique_legacy_suspect"
+        else:
+            return None
+        if len(matches) != 1:
+            return None
+        new_index = matches[0]
+        delta = new_index - old_index
+        row["cue"] = new_index
+        evidence = []
+        for value in row.get("evidence_cue_ids") or []:
+            try:
+                shifted = int(value) + delta
+            except (TypeError, ValueError):
+                continue
+            if 1 <= shifted <= len(cues) and shifted != new_index:
+                evidence.append(shifted)
+        row["evidence_cue_ids"] = evidence
+        row["_carryover_replay_remap"] = {
+            "schema_version": "final-review-carryover-remap.v1",
+            "status": "PASS",
+            "basis": basis,
+            "from_cue": old_index,
+            "to_cue": new_index,
+            "evidence_delta": delta,
+        }
+        return row
+
     def identity(row: Mapping[str, Any]) -> tuple[object, str, object]:
         return row.get("cue"), str(row.get("suspect") or ""), row.get("proposed_full_cue")
     seen = {
@@ -549,7 +624,10 @@ def _merged_raw_findings(
         if isinstance(row, Mapping)
     }
     merged = list(raw)
-    for row in extra_raw_findings:
+    for source_row in extra_raw_findings:
+        row = remap_carryover(source_row)
+        if row is None:
+            continue
         key = identity(row)
         if key in seen:
             continue
@@ -854,6 +932,11 @@ def audit_final_subtitles(
             "span_end_codepoint": span_end if proposed_supplied else None,
             "why": str(row.get("why") or "")[:120],
         }
+        carryover_replay_remap = row.get("_carryover_replay_remap")
+        if isinstance(carryover_replay_remap, Mapping):
+            finding["carryover_replay_remap"] = dict(
+                carryover_replay_remap
+            )
         if proposed_supplied and contract_error:
             finding["suggestion_rejected_reason"] = contract_error
         if scope_warnings:

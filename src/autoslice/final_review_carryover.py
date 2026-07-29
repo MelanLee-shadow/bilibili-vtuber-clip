@@ -21,6 +21,7 @@ from typing import Any, Mapping
 SCHEMA_VERSION = "final-review-carryover.v1"
 _ROW_KEYS = (
     "cue",
+    "base_text_sha256",
     "kind",
     "proposed_full_cue",
     "repair_class",
