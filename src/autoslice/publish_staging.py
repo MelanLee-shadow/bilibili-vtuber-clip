@@ -1617,7 +1617,7 @@ def _screenshot_base_and_crop(
     else:
         screenshot_base = ai_dir / f"{candidate_id}.screenshot-base.png"
     # 裁切策略（2026-07-21 辣妹案标定）：运动几何分不开"皮套大身位"和竖版
-    # 手游列（都窄而高），真正的脸部识别放大要等 CPA 视觉裁判。v1 保守：
+    # 手游列（都窄而高），真正的脸部识别放大要等 AGY 图像见证。v1 保守：
     # 默认 1.16x 顶部锚定——恰好裁掉底部烧录字幕带、微裁两侧，任何场景都
     # 安全；只有局部运动呈高置信单主体块时才 1.32x 锚定主体（宁欠勿错）。
     if not relationship_visual_required:

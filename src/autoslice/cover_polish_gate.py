@@ -2,7 +2,7 @@
 
 Extracted from publish_staging (2026-07-26 anti-屎山 guardrail): the polish
 call, the target-bound compose loop with the whole-face contain retry, the
-CPA face-integrity verdict and its hash binding all live together here.
+AGY face-integrity verdict and its hash binding all live together here.
 """
 
 from __future__ import annotations
@@ -37,19 +37,12 @@ def _verify_polish_face_integrity(
     The polish model may return a much larger face than the prompt asked for
     (2026-07-26 BV1E93L6rErV: mouth and chin cut by the fixed card crop went
     public). Polished pixels cannot inherit source-frame geometry, so the
-    final bytes get an independent CPA vision verdict (Ivan 2026-07-25:
-    看画面的任务交给 CPA). Failure here is fail-closed but repairable —
+    final bytes get an independent AGY visual verdict. CPA is text-only and
+    cannot be used as pixel evidence. Failure here is fail-closed but repairable —
     cover-only maintenance retries on the next tick.
     """
 
-    if not base_url or not api_key:
-        return {
-            "schema_version": "lidousha-cover-polish-face-verification.v1",
-            "status": "FAIL",
-            "reason_code": "VERIFIER_UNAVAILABLE",
-            "detail": "CPA credentials unavailable for face verification",
-        }
-    from src.autoslice.cpa_frame_witness import image_vision_probe
+    from src.autoslice.agy_frame_witness import image_vision_probe
 
     receipt = image_vision_probe(
         final_cover_path,

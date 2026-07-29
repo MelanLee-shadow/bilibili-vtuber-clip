@@ -165,7 +165,7 @@ def make_screen_read_probe(
 
     def probe(span_start_ms: int, span_end_ms: int) -> dict[str, Any]:
         if frame_probe is None:
-            from src.autoslice.cpa_frame_witness import frame_vision_probe
+            from src.autoslice.agy_frame_witness import frame_vision_probe
         else:
             frame_vision_probe = frame_probe  # type: ignore[assignment]
         duration = max(0, int(span_end_ms) - int(span_start_ms))
@@ -285,15 +285,23 @@ __all__ = [
 
 
 def build_env_screen_read_probe(media_path: Any):
-    """CPA 视觉读屏探针；无 creds/媒体时返回 None（裁决链零依赖）。"""
+    """AGY 视觉读屏探针；无 AGY/媒体时返回 None（裁决链零依赖）。"""
 
     import os
+    import shutil
     from pathlib import Path
 
-    api_base = (os.environ.get("CPA_BASE_URL") or "").rstrip("/")
-    api_key = os.environ.get("CPA_API_KEY") or ""
-    if not api_base or not api_key or not Path(media_path).is_file():
+    agy_bin = os.environ.get(
+        "AGY_BIN",
+        str(Path.home() / ".local" / "bin" / "agy"),
+    )
+    if (
+        not Path(media_path).is_file()
+        or not (Path(agy_bin).is_file() or shutil.which(agy_bin))
+    ):
         return None
     return make_screen_read_probe(
-        media_path=media_path, api_base=api_base, api_key=api_key
+        media_path=media_path,
+        api_base="",
+        api_key="",
     )

@@ -84,7 +84,7 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
 - `screenshot_polish` 即使单人也必须有最终像素验证：polish 模型可能返回比 prompt
   要求大得多的脸（2026-07-26 BV1E93L6rErV 案：固定 fit-crop 卡把嘴/下巴裁掉上了公开面），
   polished 像素不得继承源帧几何。生产端 `polish_face_verification`
-  （`lidousha-cover-polish-face-verification.v1`，CPA sol 视觉问答，含吐舌检查）必须
+  （`lidousha-cover-polish-face-verification.v1`，AGY 图像见证，含吐舌检查）必须
   PASS 且 witness image hash 逐字节等于 final cover SHA；`FACE_INCOMPLETE` 先以
   face-safe contain 卡（`card_fit=contain_face_safe`，整脸装入 1640×700 卡）重排一次
   再终判；仍失败、出现不合格表情或验证不可用时，必须拒收 AI 修图像素并自动退回
