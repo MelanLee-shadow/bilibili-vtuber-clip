@@ -93,7 +93,11 @@ _PUBLICATION_TITLE_MODES = frozenset(
     {"verified_public_exact", "ivan_manual_override"}
 )
 _BOUNDARY_END_MODES = frozenset(
-    {"semantic_lower_bound", "exact_source_pin"}
+    {
+        "semantic_lower_bound",
+        "published_recall_anchor",
+        "exact_source_pin",
+    }
 )
 
 

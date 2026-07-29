@@ -307,11 +307,24 @@ def freeze_required_boundary_owner_contract(
     semantic_target_ms = prior_piece_duration_ms + (
         int(spec["semantic_end_ms"]) - last_piece_start_ms
     )
-    manual_lower_bound_ms = (
+    given_end_rel_ms = (
         prior_piece_duration_ms
         + int(spec["given_end_ms"])
         - last_piece_start_ms
         if spec.get("given_end_ms") is not None
+        else None
+    )
+    boundary_end_mode = str(
+        spec.get("given_end_mode") or "semantic_lower_bound"
+    )
+    manual_lower_bound_ms = (
+        None
+        if boundary_end_mode == "published_recall_anchor"
+        else given_end_rel_ms
+    )
+    published_recall_anchor_ms = (
+        given_end_rel_ms
+        if boundary_end_mode == "published_recall_anchor"
         else None
     )
     structured_payoff_ms = max(
@@ -363,9 +376,8 @@ def freeze_required_boundary_owner_contract(
         ),
         last_piece_start_ms=last_piece_start_ms,
         prior_piece_duration_ms=prior_piece_duration_ms,
-        boundary_end_mode=str(
-            spec.get("given_end_mode") or "semantic_lower_bound"
-        ),
+        boundary_end_mode=boundary_end_mode,
+        published_recall_anchor_ms=published_recall_anchor_ms,
         baseline_tail_cap_ms=_redelivery_baseline_tail_rel_ms(
             spec,
             last_piece_start_ms=last_piece_start_ms,

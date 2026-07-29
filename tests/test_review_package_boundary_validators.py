@@ -1,4 +1,5 @@
 from src.autoslice.review_package_boundary_validators import (
+    expected_boundary_authority,
     semantic_boundary_review_is_valid,
     semantic_endpoint_snapped_is_valid,
     semantic_recommendation_is_materialized,
@@ -92,6 +93,24 @@ def test_exact_pin_crossing_rejects_unbound_or_excessive_relaxation():
         }
     )
     assert not semantic_endpoint_snapped_is_valid(excessive)
+
+
+def test_published_recall_anchor_has_distinct_package_authority():
+    record = {
+        "recovery_publication_authority": {
+            "boundary_end_mode": "published_recall_anchor"
+        }
+    }
+    audit = {"manual_end_mode": "published_recall_anchor"}
+
+    assert expected_boundary_authority(
+        record,
+        audit,
+        human_authority="Ivan full-rerun authority",
+    ) == (
+        "published_source_recall_anchor_plus_semantic_review",
+        True,
+    )
 
 
 def test_exact_pin_crossing_rejects_delivery_past_frozen_pin():

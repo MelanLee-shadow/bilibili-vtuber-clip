@@ -30,6 +30,11 @@ PUBLICATION_ASSET = (
 PUBLICATION_ASSET_SHA256 = (
     "sha256:0bbb26c63c30b1e30af13e33d5513c49aa10b98afa8730ee9761f59865317e30"
 )
+PUBLISHED_RECALL_ASSET = (
+    ROOT
+    / "assets/lidousha"
+    / "recovery_publication_authority_2026-07-24_1209.v1.json"
+)
 
 
 def _authority():
@@ -200,6 +205,25 @@ def test_publication_registry_requires_every_requested_candidate():
             registry_path=PUBLICATION_ASSET,
             expected_registry_sha256=PUBLICATION_ASSET_SHA256,
         )
+
+
+def test_publication_registry_accepts_typed_published_recall_anchor():
+    raw = PUBLISHED_RECALL_ASSET.read_bytes()
+    authorities = build_recovery_publication_authorities(
+        candidate_ids={"auto_183122_1209_1410"},
+        registry_path=PUBLISHED_RECALL_ASSET,
+        expected_registry_sha256=(
+            "sha256:" + hashlib.sha256(raw).hexdigest()
+        ),
+    )
+
+    authority = authorities["auto_183122_1209_1410"]
+    assert authority["boundary_end_mode"] == "published_recall_anchor"
+    assert authority["required_given_end_ms"] == 1_410_240
+    assert validate_recovery_publication_authority(
+        authority,
+        candidate_id="auto_183122_1209_1410",
+    ) == authority
 
 
 def test_publication_registry_exact_mode_rejects_omitted_candidate():

@@ -64,7 +64,16 @@ def _replayed_search_scope(
 
     expected_search_scope = build_boundary_search_scope(
         semantic_target_ms=semantic_target_rel,
-        manual_lower_bound_ms=manual_rel,
+        manual_lower_bound_ms=(
+            None
+            if manual_end_mode == "published_recall_anchor"
+            else manual_rel
+        ),
+        published_recall_anchor_ms=(
+            manual_rel
+            if manual_end_mode == "published_recall_anchor"
+            else None
+        ),
         structured_payoff_ms=structured_payoff_ms,
         required_owner_end_ms=required_owner_end_ms,
         repair_cap_ms=boundary_repair_extend_cap_ms,
@@ -115,7 +124,11 @@ from src.autoslice.subtitle_timing_qa import sanitize_cue_timing  # noqa: E402
 
 
 _MANUAL_END_MODES = frozenset(
-    {"semantic_lower_bound", "exact_source_pin"}
+    {
+        "semantic_lower_bound",
+        "published_recall_anchor",
+        "exact_source_pin",
+    }
 )
 
 
@@ -423,9 +436,12 @@ def _manual_end_contract(
         or not isinstance(manual_end_ms, int)
     ):
         raise SystemExit("MANUAL_END_AUTHORITY_INVALID")
-    if manual_end_ms < int(spec["semantic_end_ms"]):
+    if (
+        mode != "published_recall_anchor"
+        and manual_end_ms < int(spec["semantic_end_ms"])
+    ):
         raise SystemExit("MANUAL_END_CANNOT_TRUNCATE_SEMANTIC_TARGET")
-    if mode == "exact_source_pin":
+    if mode in {"published_recall_anchor", "exact_source_pin"}:
         candidate_id = str(spec.get("candidate_id") or "")
         try:
             publication = validate_recovery_publication_authority(
@@ -440,7 +456,7 @@ def _manual_end_contract(
             publication.get("boundary_end_mode") != mode
             or publication.get("required_given_end_ms") != manual_end_ms
         ):
-            raise SystemExit("MANUAL_EXACT_END_AUTHORITY_MISMATCH")
+            raise SystemExit("MANUAL_END_AUTHORITY_MISMATCH")
     manual_rel = prior_piece_duration_ms + (
         manual_end_ms - last_piece_start_ms
     )
@@ -552,7 +568,10 @@ def _select_initial_boundary(
             last_piece_start_ms=last_piece_start_ms,
         )
     )
-    if manual_rel is not None:
+    if (
+        manual_rel is not None
+        and manual_end_mode != "published_recall_anchor"
+    ):
         target_rel = max(target_rel, manual_rel)
     semantic_review = (
         dict(spec["boundary_semantic_review"])
@@ -920,10 +939,16 @@ def _repair_boundary(
             }
         )
         if manual_end_authority:
-            audit["boundary_authority"] = (
-                "human_source_exact_pin_plus_semantic_review"
-                if manual_end_mode == "exact_source_pin"
-                else "human_source_reviewed_lower_bound_plus_semantic_review"
+            audit["boundary_authority"] = {
+                "exact_source_pin": (
+                    "human_source_exact_pin_plus_semantic_review"
+                ),
+                "published_recall_anchor": (
+                    "published_source_recall_anchor_plus_semantic_review"
+                ),
+            }.get(
+                manual_end_mode,
+                "human_source_reviewed_lower_bound_plus_semantic_review",
             )
             audit["manual_end_authority"] = manual_end_authority
             audit["manual_end_mode"] = manual_end_mode

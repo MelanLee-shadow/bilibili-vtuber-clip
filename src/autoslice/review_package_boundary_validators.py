@@ -184,14 +184,25 @@ def expected_boundary_authority(
         else None
     )
     expected_mode = (
-        "exact_source_pin"
-        if publication_mode == "exact_source_pin"
+        publication_mode
+        if publication_mode
+        in {
+            "semantic_lower_bound",
+            "published_recall_anchor",
+            "exact_source_pin",
+        }
         else "semantic_lower_bound"
     )
-    expected_authority = (
-        "human_source_exact_pin_plus_semantic_review"
-        if expected_mode == "exact_source_pin"
-        else "human_source_reviewed_lower_bound_plus_semantic_review"
+    expected_authority = {
+        "exact_source_pin": (
+            "human_source_exact_pin_plus_semantic_review"
+        ),
+        "published_recall_anchor": (
+            "published_source_recall_anchor_plus_semantic_review"
+        ),
+    }.get(
+        expected_mode,
+        "human_source_reviewed_lower_bound_plus_semantic_review",
     )
     return (
         expected_authority,

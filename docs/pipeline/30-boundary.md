@@ -62,9 +62,11 @@ producer/chunker。上述任一实现变化都必须在下一次 runner tick 唤
 
 因用户只报告 1–2 个抽样问题而触发 same-BV **整片重跑**时，旧公开成片的 endpoint
 不得被自动升级成 `exact_source_pin`。除非 Ivan 明确说已逐帧/逐句审过该候选的精确终点，
-默认只能登记为 `semantic_lower_bound`，由 source-full-window 语义评审继续寻找完整
-payoff/闭环；只报告字幕、标题或封面问题不构成精确终点授权。若旧 endpoint 与更晚的
-structured payoff 冲突，必须保留 payoff 并重审，不能用旧公开时长反向截断故事。
+旧公开 endpoint 只能登记为 `published_recall_anchor`，由 source-full-window 语义评审在
+前 15 秒至后 repair cap 的范围内重新寻找完整 payoff/闭环；它不是人工下界，也不是精确
+终点。只报告字幕、标题或封面问题不构成精确终点授权。若旧 endpoint 已落入未完成尾句或
+下一话题，CPA 必须在有界窗口内回剪到当前故事最后一个四命题均成立的 cue；若它早于更晚的
+structured payoff，则必须保留 payoff 并重审，不能用旧公开时长反向截断故事。
 
 source review、resolver 与有界 retry 必须共同消费并逐字段、逐 SHA 绑定同一份
 `talk-boundary-search-scope.v1`，禁止各自从旧 candidate end 重新推导 cap。scope 按
@@ -82,6 +84,12 @@ source review、resolver 与有界 retry 必须共同消费并逐字段、逐 SH
   （=DELIVERY_TAIL_PAD_MS）并且该间隙内没有任何 cue 起点（纯静音，机器可证）；此时该
   收尾 cue 可被推荐为语义收束，交付下界本身不动，由 tail-pad 桥把媒体补到下界，因此不会
   丢任何已圈内容。间隙里有语音或超过 400ms 仍 fail closed；
+- `published_recall_anchor`：registry 中的旧公开 source endpoint 只移动
+  `semantic_search_origin_ms`，不进入 `delivery_lower_bound_ms`；
+  `recommendation_backward_ms` 最多 15 秒，向后仍受 repair cap 约束。回剪只能选择最晚一个
+  同时满足四命题、覆盖 content anchor 且以后 cue 已换题的闭环 cue；required owner 与
+  structured payoff 仍是硬下界。registry/candidate/mode/ms 必须逐项绑定，普通生产 spec
+  不得自行签发此模式；
 - `exact_source_pin`：`semantic_search_origin_ms=delivery_lower_bound_ms=pin`，
   `minimum_recommended_end_ms=pin-400ms`、`max_recommended_end_ms=pin`、
   `max_forward_ms=0`。reviewer 在该 400ms 窗内选择完整 closure；当 fresh-ASR 收尾 cue

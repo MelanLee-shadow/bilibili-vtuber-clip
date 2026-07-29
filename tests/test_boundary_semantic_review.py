@@ -299,6 +299,25 @@ def test_manual_lower_bound_disables_automatic_tail_trim():
     assert scope["minimum_recommended_end_ms"] == 107_000
 
 
+def test_published_recall_anchor_allows_bounded_tail_trim():
+    scope = build_boundary_search_scope(
+        semantic_target_ms=107_000,
+        published_recall_anchor_ms=107_000,
+        boundary_end_mode="published_recall_anchor",
+        repair_cap_ms=30_000,
+        semantic_tail_trim_cap_ms=15_000,
+    )
+
+    assert boundary_search_scope_is_valid(scope)
+    assert scope["published_recall_anchor_ms"] == 107_000
+    assert scope["manual_lower_bound_ms"] is None
+    assert scope["semantic_search_origin_ms"] == 107_000
+    assert scope["delivery_lower_bound_ms"] == 92_000
+    assert scope["recommendation_backward_ms"] == 15_000
+    assert scope["minimum_recommended_end_ms"] == 92_000
+    assert scope["max_recommended_end_ms"] == 137_000
+
+
 def test_boundary_review_can_trim_open_next_topic_after_payoff():
     scope = build_boundary_search_scope(
         semantic_target_ms=107_000,

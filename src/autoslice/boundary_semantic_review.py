@@ -103,6 +103,9 @@ def boundary_search_scope_is_valid(scope: object) -> bool:
             boundary_end_mode=scope.get(
                 "boundary_end_mode", "semantic_lower_bound"
             ),
+            published_recall_anchor_ms=scope.get(
+                "published_recall_anchor_ms"
+            ),
             baseline_tail_cap_ms=scope.get("baseline_tail_cap_ms"),
             semantic_tail_trim_cap_ms=scope.get(
                 "semantic_tail_trim_cap_ms", 0
@@ -118,6 +121,7 @@ def boundary_search_scope_is_valid(scope: object) -> bool:
             "structured_payoff_clamped_from_ms",
             "semantic_tail_trim_cap_ms",
             "recommendation_backward_ms",
+            "published_recall_anchor_ms",
         )
         if key not in observed
     ]
@@ -143,15 +147,19 @@ def build_boundary_search_scope(
     prior_piece_duration_ms: int = 0,
     witness_reserve_ms: int = SOURCE_WITNESS_RESERVE_MS,
     boundary_end_mode: str = "semantic_lower_bound",
+    published_recall_anchor_ms: int | None = None,
     baseline_tail_cap_ms: int | None = None,
     semantic_tail_trim_cap_ms: int = 0,
 ) -> dict[str, object]:
     """Build the one scope shared by source review, resolver, and retry.
 
     A hash-bound human lower bound and a structured payoff may move the normal
-    search origin. An exact source pin instead fixes the media ceiling while
-    exposing only the preceding tail-pad-sized semantic closure cue. A
-    required owner is only a delivery/review lower bound.
+    search origin. A published recall anchor recenters review on the old
+    endpoint without turning that endpoint into a delivery floor, so a bounded
+    full rerun can remove an incomplete or off-topic tail. An exact source pin
+    instead fixes the media ceiling while exposing only the preceding
+    tail-pad-sized semantic closure cue. A required owner is only a
+    delivery/review lower bound.
     """
 
     semantic_target = _required_int_ms(
@@ -173,6 +181,9 @@ def build_boundary_search_scope(
     required_owner_end = _optional_int_ms(
         "required_owner_end_ms", required_owner_end_ms
     )
+    published_recall_anchor = _optional_int_ms(
+        "published_recall_anchor_ms", published_recall_anchor_ms
+    )
     last_piece_start = _required_int_ms(
         "last_piece_start_ms", last_piece_start_ms
     )
@@ -191,6 +202,7 @@ def build_boundary_search_scope(
         )
     if boundary_end_mode not in {
         "semantic_lower_bound",
+        "published_recall_anchor",
         "exact_source_pin",
     }:
         raise BoundarySemanticReviewError(
@@ -257,6 +269,7 @@ def build_boundary_search_scope(
                     value
                     for value in (
                         manual_lower_bound,
+                        published_recall_anchor,
                         structured_payoff_effective,
                     )
                     if value is not None
@@ -270,7 +283,8 @@ def build_boundary_search_scope(
     # pre-pin closure rule and do not use this lane.
     tail_trim_floor_ms = search_origin_ms
     if (
-        boundary_end_mode == "semantic_lower_bound"
+        boundary_end_mode
+        in {"semantic_lower_bound", "published_recall_anchor"}
         and manual_lower_bound is None
         and semantic_tail_trim_cap > 0
     ):
@@ -330,6 +344,7 @@ def build_boundary_search_scope(
         "status": "BLOCK" if reasons else "PASS",
         "semantic_target_ms": semantic_target,
         "manual_lower_bound_ms": manual_lower_bound,
+        "published_recall_anchor_ms": published_recall_anchor,
         "structured_payoff_ms": structured_payoff,
         "required_owner_end_ms": required_owner_end,
         "semantic_search_origin_ms": search_origin_ms,
@@ -495,19 +510,20 @@ def recommendation_eligibility(
 ) -> dict[str, object]:
     """Return recommendable cue positions plus bounded grid-jitter absorption.
 
-    Frozen millisecond authorities (a published lower bound, an official
-    source pin) come from a different timing source than the fresh ASR grid,
-    so the closure cue may miss the base window ``[minimum, cap]`` by a
-    bounded, provably content-free margin.  Absorption never crosses speech:
+    Frozen millisecond authorities (a published lower bound, recall anchor,
+    or official source pin) come from a different timing source than the fresh
+    ASR grid, so the closure cue may miss the base window ``[minimum, cap]`` by
+    a bounded, provably content-free margin. Absorption never crosses speech:
 
     - ``exact_source_pin``: the single cue containing the pin may witness
       closure when it overruns the pin by at most
       ``PIN_CROSSING_TOLERANCE_MS``; its effective recommendation end is the
       pin itself and the delivered media end stays exactly the pin.
-    - ``semantic_lower_bound``: the latest cue ending before ``minimum`` may
-      witness closure when the gap up to ``minimum`` contains no cue start
-      and is at most ``SEMANTIC_FLOOR_SILENT_GAP_MS``; the delivery floor
-      still applies unchanged, so no published content is dropped.
+    - ``semantic_lower_bound`` / ``published_recall_anchor``: the latest cue
+      ending before ``minimum`` may witness closure when the gap up to
+      ``minimum`` contains no cue start and is at most
+      ``SEMANTIC_FLOOR_SILENT_GAP_MS``. The former keeps its delivery floor;
+      the latter already exposes a bounded backward review window.
     """
 
     minimum_end_ms = int(scope["minimum_recommended_end_ms"])
@@ -682,7 +698,7 @@ def _build_prompt(request: Mapping[str, object]) -> str:
 
 约束：
 - 只可从给出的 cue_index 中选 recommended_end_cue_index；不得改写字幕。
-- 只能从 recommendation_cue_indexes 选择。若 boundary_search_scope.recommendation_backward_ms>0，目标 cue 只是自动召回尾锚；当它已拖入新话题、未回答问题或不完整尾巴时，可在该有界窗口内回剪到**最晚一个**已经覆盖 selection_hook 全部内容锚点、故事闭环且后续换题可证的 cue，并必须回 content_anchor_covered=true。普通 semantic_lower_bound 超出该窗口不得提前删内容；若 boundary_end_mode=exact_source_pin，可选择 source pin 前最多 delivery_tail_pad_ms 的完整语义句尾，最终媒体仍由 source pin 精确截止，不可选择 pin 之后才开始的 cue。
+- 只能从 recommendation_cue_indexes 选择。若 boundary_search_scope.recommendation_backward_ms>0，目标 cue 只是自动/旧公开召回尾锚；当它已拖入新话题、未回答问题或不完整尾巴时，可在该有界窗口内回剪到**最晚一个**已经覆盖 selection_hook 全部内容锚点、故事闭环且后续换题可证的 cue，并必须回 content_anchor_covered=true。普通 semantic_lower_bound 超出该窗口不得提前删内容；published_recall_anchor 只允许这次有界回剪，不把旧公开终点伪装成已人工确认的下界；若 boundary_end_mode=exact_source_pin，可选择 source pin 前最多 delivery_tail_pad_ms 的完整语义句尾，最终媒体仍由 source pin 精确截止，不可选择 pin 之后才开始的 cue。
 - recommendation_relaxations 里列出的 cue 是经确定性证明后放行的有界例外：pin_crossing_closure_cue 是包含 pin 的收尾 cue（媒体仍精确截止在 pin）；silent_gap_closure_cue 是下限前最后一个收尾 cue，且它到下限之间没有任何语音。语义合适就正常选择它们。
 - 若 next_topic_separated=true，evidence_cue_indexes 必须包含推荐 cue 之后、证明已进入下一话题/SC/谢礼的 cue；缺了会被判 BOUNDARY_NEXT_TOPIC_WITNESS_MISSING。
 - 可以从目标 cue 向后寻找，最多 {request["max_forward_ms"]}ms；exact_source_pin 的该值为 0。

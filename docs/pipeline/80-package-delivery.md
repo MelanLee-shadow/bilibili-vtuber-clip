@@ -65,8 +65,10 @@
   超预算或 prompt 重渲染漂移都拒发。topic resolution/scoped graph context 也必须留在同一
   digest 内。
   边界同理：human source endpoint 必须携带 typed `boundary_end_mode` 并与 boundary audit
-  精确一致。`semantic_lower_bound` 只作为下界；`exact_source_pin` 则要求最终媒体 end
-  精确等于 pin，不能降级成下界。机器审计必须同时验证两份不同作用域的 PASS 回执。
+  精确一致。`semantic_lower_bound` 只作为下界；`published_recall_anchor` 只把旧公开
+  endpoint 作为有界重审中心，允许 CPA 在 15 秒内回剪掉未完成/换题尾巴；`exact_source_pin`
+  则要求最终媒体 end 精确等于 pin，不能降级成下界。机器审计必须同时验证两份不同作用域的
+  PASS 回执。
   `boundary_audit.boundary_semantic_review` 必须是
   `review_scope=source_full_window`，绑定 resolver 实际消费的完整 source grid、真实 post-end
   witness、source 推荐 end 和 snap 后 source final interval。
@@ -85,7 +87,9 @@
   semantic search origin，required owner 只抬 delivery floor，绝对 ceiling 固定为
   `search_origin + repair_cap`。`exact_source_pin` 中 origin/floor/max recommendation 均为
   pin、minimum recommendation 为 `pin-400ms`、forward 为 0；closure 必须在该窗内，最终媒体
-  end 必须等于 pin，pin 后 cue 只能作 context witness、不得取得 owner。两种模式的 retry
+  end 必须等于 pin，pin 后 cue 只能作 context witness、不得取得 owner。
+  `published_recall_anchor` 中 origin 绑定旧公开 endpoint，但 floor 可向前最多 15 秒；
+  required owner/structured payoff 仍可抬高 floor。三种模式的 retry
   source window 都须覆盖 ceiling 后的 witness reserve，但 reserve 不扩大 endpoint cap。
   任一 surface 缺 scope/mode、hash/重算漂移、从推荐 end 二次滚动加 cap、exact 最终 end 不等于
   pin，或 source witness 窗不足都拒发。
