@@ -38,7 +38,7 @@ def test_release_srt_validator_rejects_short_single_character_and_overlap():
 
 
 def test_release_srt_validator_accepts_single_character_interjections():
-    """哎/啊/呵 are a closed interjection class, not ASR shatter."""
+    """哎/啊/呵 are a closed interjection class, including terminal punctuation."""
 
     text = """1
 00:00:00,000 --> 00:00:01,000
@@ -46,7 +46,7 @@ def test_release_srt_validator_accepts_single_character_interjections():
 
 2
 00:00:01,000 --> 00:00:02,000
-啊
+啊！
 
 3
 00:00:02,000 --> 00:00:03,000
@@ -58,6 +58,26 @@ def test_release_srt_validator_accepts_single_character_interjections():
 
     assert "SRT_SINGLE_CJK_CHARACTER" not in codes
     assert result["status"] == "PASS"
+
+
+def test_terminal_punctuation_does_not_hide_single_content_character():
+    text = """1
+00:00:00,000 --> 00:00:01,000
+切，
+
+2
+00:00:01,000 --> 00:00:03,000
+那就差礼墨没吃了
+"""
+
+    result = validate_srt_text(text)
+    codes = [
+        (row["code"], row["block"])
+        for row in result["errors"]
+        if row["code"] == "SRT_SINGLE_CJK_CHARACTER"
+    ]
+
+    assert codes == [("SRT_SINGLE_CJK_CHARACTER", 1)]
 
 
 def test_release_srt_validator_accepts_standalone_you_answer_only():
@@ -131,14 +151,21 @@ def test_merge_release_grade_cues_absorbs_slivers_and_single_chars():
         "3\n00:00:27,370 --> 00:00:28,010\n这样吗\n\n"
         "4\n00:01:15,720 --> 00:01:17,200\n嘻，晓得吧\n\n"
         "5\n00:01:17,280 --> 00:01:18,280\n行\n\n"
-        "6\n00:01:18,590 --> 00:01:22,660\n谢谢刚刚panoja的舰长\n"
+        "6\n00:01:18,590 --> 00:01:22,660\n谢谢刚刚panoja的舰长\n\n"
+        "7\n00:01:22,660 --> 00:01:23,380\n切，\n\n"
+        "8\n00:01:23,380 --> 00:01:25,940\n那就差礼墨没吃了\n"
     )
     out, rows = merge_release_grade_cues(srt)
     assert "哦，这样吗" in out
     assert "嘻，晓得吧，行" in out
+    assert "切，那就差礼墨没吃了" in out
     assert validate_srt_text(out)["status"] == "PASS"
     actions = {row["text"]: row["action"] for row in rows}
-    assert actions == {"哦": "MERGED_INTO_NEXT", "行": "MERGED_INTO_PREV"}
+    assert actions == {
+        "哦": "MERGED_INTO_NEXT",
+        "行": "MERGED_INTO_PREV",
+        "切，": "MERGED_INTO_NEXT",
+    }
 
     # 名回声豁免（秦秦/秦）自动保留：校验不拒 → 合并器不动
     echo = (

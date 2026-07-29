@@ -16,7 +16,7 @@ _TIME_RE = re.compile(r"^(\d{2}):(\d{2}):(\d{2}),(\d{3})$")
 _TIMING_RE = re.compile(r"^(.+?)\s+-->\s+(.+?)$")
 _PUNCT_ONLY_RE = re.compile(r"^[，。！？、,.!?…]+$")
 _LEADING_PUNCT_RE = re.compile(r"^[，。！？、,.!?…]")
-_CJK_SINGLE_RE = re.compile(r"^[\u3400-\u9fff]$")
+_CJK_SINGLE_RE = re.compile(r"^([\u3400-\u9fff])[，。！？、,.!?…]*$")
 # Single-hanzi cues are usually ASR shatter (a content word cut in half), but
 # a narrow closed class legitimately stands alone as a complete utterance.
 # This includes interjections ("\u54ce\u2014\u2014", "\u554a?") plus "\u6709" as a self-contained
@@ -146,11 +146,18 @@ def validate_srt_text(
                 errors.append(
                     {"code": "SRT_TEXT_LEADING_PUNCTUATION", "block": block_number}
                 )
+            single_cjk_match = _CJK_SINGLE_RE.fullmatch(text_line)
             if (
-                _CJK_SINGLE_RE.fullmatch(text_line)
-                and text_line not in _CJK_SINGLE_STANDALONE_UTTERANCES
+                single_cjk_match
+                and single_cjk_match.group(1)
+                not in _CJK_SINGLE_STANDALONE_UTTERANCES
             ):
-                single_cjk_blocks.append((block_number, text_line))
+                # Terminal punctuation does not turn a shattered content
+                # character into a complete cue.  Keep the bare character for
+                # the adjacent name-echo exemption below.
+                single_cjk_blocks.append(
+                    (block_number, single_cjk_match.group(1))
+                )
         parsed.append(
             {
                 "index": cue_index,
