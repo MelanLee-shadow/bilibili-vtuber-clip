@@ -296,6 +296,41 @@
       ]
     },
     {
+      "candidate_id": "auto_162016_20_319",
+      "subtitle_review_points": [
+        {
+          "point_id": "kiss-room-question-setup",
+          "final_video_start_ms": 5000,
+          "final_video_end_ms": 67000,
+          "expectation": "必须完整交代被关进必须与一位同事接吻才能离开的房间、接吻方式和李豆沙宁愿不出来的起因，不得从半句起片或把问答双方写反。"
+        },
+        {
+          "point_id": "all-female-colleagues-wordplay",
+          "final_video_start_ms": 150000,
+          "final_video_end_ms": 207000,
+          "expectation": "必须保留李豆沙选择所有女同事以及随后把“女同事”拆成“女同的同事/女同”的完整双关升级，不得误写成无关人名或截掉解释。"
+        },
+        {
+          "point_id": "limo-ship-name-and-position",
+          "final_video_start_ms": 211000,
+          "final_video_end_ms": 271000,
+          "expectation": "人物名“礼墨”、CP名“礼豆沙”、反向CP简称“李墨”和站位“礼1”必须各按本句语境落字；不得把四个语义槽机械统一，且“李墨”的墨必须与礼墨同字。"
+        },
+        {
+          "point_id": "zero-point-six-and-niece-punchline",
+          "final_video_start_ms": 269000,
+          "final_video_end_ms": 292000,
+          "expectation": "必须完整保留李豆沙相对礼墨自称0.6以及突然大喊“我是侄女啊”的连续包袱；0.6不得丢小数点，“侄女”不得回退成“直女”。"
+        },
+        {
+          "point_id": "pink-girl-confession-close",
+          "final_video_start_ms": 287000,
+          "final_video_end_ms": 312000,
+          "expectation": "粉色小姐姐表示更希望与李豆沙同处房间、李豆沙被吓到又被调侃高兴的收尾必须完整，不得残留无意义怪词或带入随后抽黑帽子的新话题。"
+        }
+      ]
+    },
+    {
       "candidate_id": "auto_195000_1493_1579",
       "subtitle_review_points": [
         {

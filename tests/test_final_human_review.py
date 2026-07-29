@@ -69,6 +69,7 @@ def test_committed_review_contract_extends_exact_recovery_five_for_daily_repairs
         *recovery_expected,
         "auto_193129_850_940",
         "auto_183122_1209_1410",
+        "auto_162016_20_319",
         "auto_195000_1493_1579",
     ]
     review = json.loads(
