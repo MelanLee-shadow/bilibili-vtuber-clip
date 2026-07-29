@@ -60,6 +60,29 @@ def test_release_srt_validator_accepts_single_character_interjections():
     assert result["status"] == "PASS"
 
 
+def test_release_srt_validator_accepts_standalone_you_answer_only():
+    """\u300c\u6709\u300d\u53ef\u4ee5\u662f\u5b8c\u6574\u80af\u5b9a\u56de\u7b54\uff1b\u5176\u4ed6\u5b9e\u8bcd\u5355\u5b57\u4ecd\u4e0d\u673a\u68b0\u653e\u884c\u3002"""
+
+    text = """1
+00:00:00,000 --> 00:00:01,000
+\u6709
+
+2
+00:00:02,000 --> 00:00:03,000
+\u884c
+"""
+
+    result = validate_srt_text(text)
+    codes = [
+        (row["code"], row["block"])
+        for row in result["errors"]
+        if row["code"] == "SRT_SINGLE_CJK_CHARACTER"
+    ]
+
+    assert ("SRT_SINGLE_CJK_CHARACTER", 1) not in codes
+    assert ("SRT_SINGLE_CJK_CHARACTER", 2) in codes
+
+
 def test_release_srt_validator_accepts_consecutive_non_overlapping_cues(tmp_path: Path):
     path = tmp_path / "ok.srt"
     path.write_text(

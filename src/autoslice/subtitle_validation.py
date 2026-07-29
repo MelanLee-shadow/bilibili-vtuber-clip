@@ -18,12 +18,13 @@ _PUNCT_ONLY_RE = re.compile(r"^[，。！？、,.!?…]+$")
 _LEADING_PUNCT_RE = re.compile(r"^[，。！？、,.!?…]")
 _CJK_SINGLE_RE = re.compile(r"^[\u3400-\u9fff]$")
 # Single-hanzi cues are usually ASR shatter (a content word cut in half), but
-# interjections are a closed lexical class that legitimately stands alone as
-# one character of real speech ("\u54ce\u2014\u2014", "\u554a?"). Only that closed class is
-# exempt; stray content fragments ("\u7684", "\u4e86") still fail.
-_CJK_SINGLE_INTERJECTIONS = frozenset(
+# a narrow closed class legitimately stands alone as a complete utterance.
+# This includes interjections ("\u54ce\u2014\u2014", "\u554a?") plus "\u6709" as a self-contained
+# affirmative answer.  Do not broaden this to generic predicates such as
+# "\u884c"/"\u597d": those are still merged into a contiguous neighbour or rejected.
+_CJK_SINGLE_STANDALONE_UTTERANCES = frozenset(
     "\u554a\u54ce\u5509\u54e6\u5662\u5594\u55ef\u8bf6\u6b38\u54a6\u5440\u54c7\u563f\u54c8\u5475\u54fc\u5582\u54b3\u55ec\u56af\u54df\u55f7\u545c\u5443\u5466\u561e\u561b\u54af"
-)
+) | {"\u6709"}
 
 
 def _parse_time_ms(value: str) -> int:
@@ -147,7 +148,7 @@ def validate_srt_text(
                 )
             if (
                 _CJK_SINGLE_RE.fullmatch(text_line)
-                and text_line not in _CJK_SINGLE_INTERJECTIONS
+                and text_line not in _CJK_SINGLE_STANDALONE_UTTERANCES
             ):
                 single_cjk_blocks.append((block_number, text_line))
         parsed.append(
