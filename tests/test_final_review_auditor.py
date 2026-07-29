@@ -290,6 +290,62 @@ def test_auditor_keeps_bounded_full_cue_when_advisory_suspect_is_not_verbatim():
     ]
 
 
+def test_auditor_normalizes_machine_verifiable_cue_index_alias():
+    findings = audit_final_subtitles(
+        _srt("所以剩一点给我"),
+        llm_call=_fake_llm([
+            {
+                "cue_index": 1,
+                "kind": "context",
+                "proposed_full_cue": "所以顺便带我",
+                "repair_class": "phonetic",
+                "why": "语境和近音均支持",
+            }
+        ]),
+        extract_json=_extract,
+    )
+
+    assert findings[0]["cue_index"] == 1
+    assert findings[0]["suspect"] == "剩一点给"
+    assert findings[0]["suggestion"] == "顺便带"
+    assert findings[0]["input_contract_normalizations"] == [
+        "cue_index_to_cue"
+    ]
+
+
+def test_auditor_all_invalid_error_records_bounded_rejection_diagnostics():
+    with pytest.raises(FinalReviewAuditError) as raised:
+        audit_final_subtitles(
+            _srt("一句"),
+            llm_call=lambda _prompt: json.dumps(
+                {
+                    "findings": [
+                        {"cue_index": 99, "suspect": "不存在"},
+                        {"suspect": "一句"},
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            extract_json=_extract,
+        )
+
+    detail = json.loads(raised.value.detail)
+    assert detail == {
+        "raw_count": 2,
+        "invalid_rows": [
+            {
+                "reason": "CUE_OUT_OF_RANGE",
+                "cue": 99,
+                "cue_count": 1,
+            },
+            {
+                "reason": "CUE_MISSING_OR_INVALID",
+                "keys": ["suspect"],
+            },
+        ],
+    }
+
+
 def test_auditor_derives_title_span_only_when_source_surface_is_witnessed():
     source = _srt("书名叫地狱再爱我", "地狱在理解，觉得成人吗")
     findings = audit_final_subtitles(

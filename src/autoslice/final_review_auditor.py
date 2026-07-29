@@ -697,14 +697,34 @@ def audit_final_subtitles(
         if isinstance(entry, Mapping) and str(entry.get("memory_id") or "")
     }
     findings: list[dict[str, Any]] = []
+    invalid_rows: list[dict[str, Any]] = []
     for row in raw:
         if not isinstance(row, dict):
+            invalid_rows.append({"reason": "ROW_NOT_OBJECT"})
             continue
+        cue_contract_normalization = None
+        raw_cue = row.get("cue")
+        if raw_cue is None and row.get("cue_index") is not None:
+            raw_cue = row.get("cue_index")
+            cue_contract_normalization = "cue_index_to_cue"
         try:
-            cue_index = int(row.get("cue"))
+            cue_index = int(raw_cue)
         except (TypeError, ValueError):
+            invalid_rows.append(
+                {
+                    "reason": "CUE_MISSING_OR_INVALID",
+                    "keys": sorted(str(key) for key in row)[:24],
+                }
+            )
             continue
         if not 1 <= cue_index <= len(cues):
+            invalid_rows.append(
+                {
+                    "reason": "CUE_OUT_OF_RANGE",
+                    "cue": cue_index,
+                    "cue_count": len(cues),
+                }
+            )
             continue
         base_text = cues[cue_index - 1].text
         reported_suspect = str(row.get("suspect") or "").strip()
@@ -719,6 +739,12 @@ def audit_final_subtitles(
             and reported_suspect not in base_text
             and not isinstance(row.get("proposed_full_cue"), str)
         ):
+            invalid_rows.append(
+                {
+                    "reason": "SUSPECT_NOT_VERBATIM_WITHOUT_FULL_CUE",
+                    "cue": cue_index,
+                }
+            )
             continue
         kind = str(row.get("kind") or "")
         if kind not in {"nonword", "context", "self_ref", "entity"}:
@@ -904,6 +930,12 @@ def audit_final_subtitles(
         # 空 suspect 只有一种合法形态：source_backed_entity 的插入建议
         # （kmx 整词漏听案）；其余空 suspect 一律丢弃。
         if not suspect and suggestion is None:
+            invalid_rows.append(
+                {
+                    "reason": "NO_BOUNDED_SPAN_OR_PROPOSAL",
+                    "cue": cue_index,
+                }
+            )
             continue
         evidence_cue_ids: list[int] = []
         for value in row.get("evidence_cue_ids") or []:
@@ -937,6 +969,10 @@ def audit_final_subtitles(
             finding["carryover_replay_remap"] = dict(
                 carryover_replay_remap
             )
+        if cue_contract_normalization is not None:
+            finding["input_contract_normalizations"] = [
+                cue_contract_normalization
+            ]
         if proposed_supplied and contract_error:
             finding["suggestion_rejected_reason"] = contract_error
         if scope_warnings:
@@ -957,7 +993,14 @@ def audit_final_subtitles(
     if raw and not findings:
         raise FinalReviewAuditError(
             "FINAL_REVIEW_RESPONSE_FINDINGS_ALL_INVALID",
-            f"raw_count={len(raw)}",
+            json.dumps(
+                {
+                    "raw_count": len(raw),
+                    "invalid_rows": invalid_rows[:MAX_FINDINGS],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
         )
     return findings
 
