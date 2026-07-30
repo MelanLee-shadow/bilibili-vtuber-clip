@@ -10,12 +10,19 @@ from src.autoslice.llm_client import LlmCall, extract_json_object
 
 
 SCHEMA_VERSION = "lidousha-cover-punch-semantic-review.v1"
+PUNCH_LINE_MAX_EM = 9.0
 _CLOSING_PUNCT = tuple("，,、；;！!？?。）》】”’")
 _OPENING_PUNCT = tuple("（(《【“‘")
 
 
 def _canon(text: str) -> str:
     return re.sub(r"\s+", "", text)
+
+
+def punch_line_em_width(text: str) -> float:
+    """Approximate one rendered punch line in full-width em units."""
+
+    return sum(0.5 if " " <= char <= "~" else 1.0 for char in text)
 
 
 def _validated_extractive_punch(
@@ -38,6 +45,7 @@ def _validated_extractive_punch(
         canonical = _canon(fragment)
         if (
             not (2 <= len(canonical) <= 12)
+            or punch_line_em_width(fragment) > PUNCH_LINE_MAX_EM
             or "\n" in fragment
             or canonical not in haystack
             or fragment.startswith(_CLOSING_PUNCT)
@@ -73,7 +81,11 @@ def _review_prompt(
         " final_punch 必须与初选逐字相同；REVISE 时给更自足的 1-2 行；"
         "REJECT 表示标题里不存在合格的抽取式短梗字。final_punch.main 必填、"
         "sub 可为 null；每行必须是完整封面文案中的逐字连续片段、2-12 字，"
-        "不得增删改。stranger_can_infer_event、contains_concrete_subject、"
+        "并且必须能作为一条物理行直接渲染（最多 9 个全角字宽；ASCII 字符约半个"
+        "全角字），不得增删改，也不能依赖渲染器在词中间二次断行。例如不要返回"
+        "“被粉色小姐姐布下迷魂阵”，应从原文抽取较短但仍自足的"
+        "“小姐姐布下迷魂阵 / 我是侄女啊”。stranger_can_infer_event、"
+        "contains_concrete_subject、"
         "contains_action_or_conflict 三项只有确实成立才给 true。"
         "story_summary 用一句话说明梗字表达的具体事件，click_motivation 说明"
         "陌生观众为何会想点开；不要复述规则。\n"

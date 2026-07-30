@@ -4569,6 +4569,12 @@ def test_cover_punch_llm_pick_is_source_bound():
     )
     assert picked.cover_punch == ("才，才不是熊猫呢！", "是奶P！")
 
+    # 语义行也必须是可直接渲染的物理行；不得先通过 CPA，
+    # 再让 renderer 从词中间二次断行。
+    assert cover_generation._validated_cover_punch(
+        {"main": "精心设计MC环节想让k", "sub": None}, _PUNCH_TEXT
+    ) == ()
+
     # 编造的字（不在文案里）→ 拒绝 → 回退确定性兜底。
     def judge_fabricated(_prompt: str) -> str:
         if "最终文字语义裁决者" in _prompt:
@@ -4678,6 +4684,76 @@ def test_cover_punch_cpa_repairs_real_raw_beans_fragmentation():
     )
 
 
+def test_cover_punch_cpa_keeps_pink_sister_phrase_as_one_physical_line(tmp_path):
+    from PIL import Image
+
+    from src.autoslice import cover_generation
+
+    title = (
+        "【李豆沙】小李被粉色小姐姐布下迷魂阵仍然逞强自己相对礼墨是0.6，"
+        "突然想起来绝望大喊「我是侄女啊」"
+    )
+    cover_text = title.removeprefix("【李豆沙】")
+    story_hook = "她被粉色小姐姐迷住后还在算CP数值，想起辈分后绝望大喊。"
+
+    def judge(prompt: str) -> str:
+        if "最终文字语义裁决者" in prompt:
+            assert "不能依赖渲染器在词中间二次断行" in prompt
+            return (
+                '{"schema_version":"lidousha-cover-punch-semantic-review.v1",'
+                '"status":"REVISE",'
+                '"final_punch":{"main":"小姐姐布下迷魂阵","sub":"我是侄女啊"},'
+                '"stranger_can_infer_event":true,'
+                '"contains_concrete_subject":true,'
+                '"contains_action_or_conflict":true,'
+                '"story_summary":"小姐姐布下迷魂阵后她想起自己的侄女辈分",'
+                '"click_motivation":"迷魂阵和侄女辈分的突然反转值得点开"}'
+            )
+        return (
+            '{"role":"shocked_flustered","expression_en":"shocked face",'
+            '"hook_word":"侄女","words":[],"lines":[],'
+            '"cover_punch":{"main":"被粉色小姐姐布下迷魂阵","sub":"我是侄女啊"}}'
+        )
+
+    direction = shadow_pipeline._lidousha_cover_art_direction(
+        candidate_id="auto_162016_20_319",
+        title=title,
+        cover_text=cover_text,
+        story_hook=story_hook,
+        art_direction_llm_call=judge,
+        allow_punch=True,
+    )
+    assert direction.cover_punch == ("小姐姐布下迷魂阵", "我是侄女啊")
+
+    bg = tmp_path / "bg.png"
+    out = tmp_path / "cover.png"
+    Image.new("RGB", (1920, 1080), (40, 80, 160)).save(bg)
+    meta = shadow_pipeline._overlay_lidousha_cover_title(
+        bg,
+        out,
+        cover_text=cover_text,
+        art_direction=direction,
+    )
+    assert meta["rendered_lines"] == ["小姐姐布下迷魂阵", "我是侄女啊"]
+    assert meta["rendered_lines"] == direction.cover_punch_semantic_review[
+        "final_punch"
+    ]
+    assert cover_generation.validate_cover_punch_semantic_review(
+        direction.cover_punch_semantic_review,
+        rendered_lines=meta["rendered_lines"],
+        cover_text=cover_text,
+        story_hook=story_hook,
+    )
+
+
+def test_cover_punch_renderer_fails_closed_instead_of_midword_wrap():
+    from src.autoslice import cover_generation
+
+    assert cover_generation._punch_wrap("小姐姐布下迷魂阵") == ["小姐姐布下迷魂阵"]
+    with pytest.raises(ValueError, match="COVER_PUNCH_LINE_REQUIRES_CPA_REVISE"):
+        cover_generation._punch_wrap("被粉色小姐姐布下迷魂阵")
+
+
 def test_overlay_renders_punch_instead_of_full_text(tmp_path):
     from PIL import Image
 
@@ -4701,6 +4777,7 @@ def test_overlay_renders_punch_instead_of_full_text(tmp_path):
     assert meta["line_split"] == "punch"
     assert meta["cover_text_mode"] == "punch"
     assert meta["cover_punch"] == ["才，才不是熊猫呢！", "是奶P！"]
+    assert meta["rendered_lines"] == ["才，才不是熊猫呢！", "是奶P！"]
     rendered = "".join(meta["rendered_lines"])
     # 渲染的只有梗字，绝不是整条文案。
     assert "才不是熊猫呢！" in rendered and "是奶P！" in rendered

@@ -21,8 +21,10 @@ from src.autoslice.cover_emote import (
     normalize_emote_choice,
 )
 from src.autoslice.cover_punch_semantics import (
+    PUNCH_LINE_MAX_EM,
+    punch_line_em_width,
     review_cover_punch_semantics,
-    validate_cover_punch_semantic_review,
+    validate_cover_punch_semantic_review,  # noqa: F401 - compatibility re-export
 )
 from src.autoslice.cover_font_paths import (
     cover_fallback_font_candidates,
@@ -311,7 +313,11 @@ def _validated_cover_punch(value: object, cover_text: str) -> tuple[str, ...]:
             return ()
         fragment = raw.strip()
         canon = _cover_lines_canon(fragment)
-        if not (2 <= len(canon) <= 12) or "\n" in fragment:
+        if (
+            not (2 <= len(canon) <= 12)
+            or punch_line_em_width(fragment) > PUNCH_LINE_MAX_EM
+            or "\n" in fragment
+        ):
             return ()
         if canon not in haystack:
             return ()
@@ -1452,7 +1458,7 @@ def _cover_segment_line(line, hook_word, base_fill, hook_rgb):
 def _atom_em_width(atom: str) -> float:
     """Approximate rendered width in em units: ASCII ≈ half-width, everything
     else (CJK + full-width punctuation) ≈ one em in the cover fonts."""
-    return sum(0.5 if " " <= ch <= "~" else 1.0 for ch in atom)
+    return punch_line_em_width(atom)
 
 
 def _bind_punctuation_atoms(units):
@@ -1629,32 +1635,27 @@ def _regroup_lines(lines: Sequence[str], k: int) -> list[str]:
     return [g for g in groups if g]
 
 
-def _punch_wrap(fragment: str, *, max_em: float = 9.0, max_lines: int = 2) -> list[str]:
-    """Wrap one punch fragment into 1-2 short lines.
+def _punch_wrap(
+    fragment: str,
+    *,
+    max_em: float = PUNCH_LINE_MAX_EM,
+    max_lines: int = 2,
+) -> list[str]:
+    """Keep one CPA-approved punch fragment as one immutable physical line.
 
-    ≤9 em 整行不拆（banner 全宽下 9 字单行仍有 ~146px，干净最重要）；更长时
-    优先在内部标点断（两半各 ≥3 字才算干净断点），否则均分并避开行首闭标点/
-    行末开标点。
+    The semantic receipt is authority for the exact final lines.  Re-wrapping a
+    reviewed fragment here can split a proper name/word and makes rendered_lines
+    differ from that receipt, so oversized input fails closed and must go back
+    to CPA for a shorter extractive fragment.
     """
 
+    del max_lines  # retained only for call compatibility
     frag = fragment.strip()
-    if not frag or _atom_em_width(frag) <= max_em:
-        return [frag] if frag else []
-    breaks = [
-        i + 1
-        for i, ch in enumerate(frag[:-1])
-        if ch in "，,。！!？?；;…" and i + 1 >= 3 and len(frag) - (i + 1) >= 3
-    ]
-    if breaks:
-        cut = min(breaks, key=lambda i: abs(i - len(frag) / 2))
-    else:
-        cut = len(frag) // 2
-        while 0 < cut < len(frag) and (
-            frag[cut] in _COVER_CLOSING_PUNCT or frag[cut - 1] in _COVER_OPENING_PUNCT
-        ):
-            cut += 1
-    left, right = frag[:cut].strip(), frag[cut:].strip()
-    return [line for line in (left, right) if line][:max_lines]
+    if not frag:
+        return []
+    if _atom_em_width(frag) > max_em:
+        raise ValueError("COVER_PUNCH_LINE_REQUIRES_CPA_REVISE")
+    return [frag]
 
 
 def _fit_cover_punch_lines(punch_lines, *, zone, font_path, hook_rgb, base_fill, max_size):

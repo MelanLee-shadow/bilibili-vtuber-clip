@@ -23,7 +23,10 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   （2026-07-24 “生豆角 / 熊猫头下播”案）必须改选；CPA 不能用“背景也许会画出道具”
   补文字语义缺口。裁决不可用、证据缺失或无法从原文抽出自足梗字时，退回完整
   `cover_text`，不得把碎片封面放行。CPA 在这里没有音频/图像输入，只裁决文字语义；
-  包审计须重新校验 final rendered lines、StoryContract/cover_text hashes 与该回执。
+  每个 CPA 终审片段还必须本身就是一条可直接渲染的物理行（最多 9 个全角字宽）；
+  过长时由 CPA 改选较短的连续原文，renderer 禁止再从中拆开专名、词组或句子。
+  包审计须要求 final rendered lines 与 CPA `final_punch` 逐行完全一致，并重新校验
+  StoryContract/cover_text hashes 与该回执。
 - talk 封面强调字号必须 `>=120px`；渲染低于该线直接报 `COVER_TITLE_TOO_SMALL`，交付包审计也必须阻断。不得用“文件完整/没有裁字”代替缩略图可读性验收；应缩短封面梗字或换更宽版式，禁止继续缩字（2026-07-22 当面对质封面 91px 回归案）。
 - renderer 必须记录 `lidousha-cover-rendered-text-pixels.v3`，并内嵌
   `lidousha-cover-title-render-spec.v1`。render spec 逐字绑定分行/分段文本、位置、字号、颜色、
