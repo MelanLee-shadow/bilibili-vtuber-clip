@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -639,6 +640,16 @@ def _story_owner_set_valid(
             if not isinstance(row, Mapping) or row.get("reconciliation"):
                 continue
             if (
+                owner_kind == "entity_repair"
+                and row.get("mode") == "exact_final_cpa_self_heal"
+            ):
+                valid = valid and _post_boundary_freeze_surface_owner_valid(
+                    row=row,
+                    row_index=ordinal - 1,
+                    chat_authority=chat_authority,
+                )
+                continue
+            if (
                 owner_kind == "exact_read"
                 and row.get("owner_eligible") is not True
             ):
@@ -703,6 +714,86 @@ def _story_owner_set_valid(
         if owner_kind in story_kinds
     }
     return valid and set(expected) == frozen
+
+
+def _post_boundary_freeze_surface_owner_valid(
+    *,
+    row: Mapping[str, object],
+    row_index: int,
+    chat_authority: Mapping[str, object],
+) -> bool:
+    """Verify an exact-final surface owner without reopening boundary owners.
+
+    Exact-final CPA self-heal runs after the boundary owner set is frozen.  Its
+    repairs must own final text, but retroactively adding them to the frozen
+    boundary contract would invalidate the already-reviewed boundary geometry.
+    Accept the typed exclusion only when the registration ledger and immutable
+    self-heal receipt independently bind the exact repair hash.
+    """
+
+    repair_sha256 = row.get("exact_final_repair_sha256")
+    mutation = row.get("mutation_authority")
+    if not (
+        row.get("decision_authority") == "CPA_JUDGE"
+        and row.get("timing_immutable") is True
+        and row.get("boundary_required") is False
+        and row.get("boundary_owner_rejection")
+        == "POST_BOUNDARY_FREEZE_FINAL_SURFACE_OWNER"
+        and _is_sha256(repair_sha256)
+        and isinstance(mutation, Mapping)
+        and mutation.get("schema_version")
+        == "subtitle-correction-mutation-authority.v1"
+        and mutation.get("status") == "PASS"
+    ):
+        return False
+
+    registrations = chat_authority.get(
+        "exact_final_cpa_surface_registrations"
+    )
+    if not isinstance(registrations, list):
+        return False
+    matching_registrations = [
+        registration
+        for registration in registrations
+        if isinstance(registration, Mapping)
+        and registration.get("schema_version")
+        == "exact-final-cpa-surface-registration.v1"
+        and registration.get("status") == "REGISTERED"
+        and registration.get("owner_entity_repair_index") == row_index
+        and registration.get("exact_final_repair_sha256") == repair_sha256
+    ]
+    if len(matching_registrations) != 1:
+        return False
+
+    self_heal = chat_authority.get("exact_final_cpa_self_heal")
+    passes = self_heal.get("passes") if isinstance(self_heal, Mapping) else None
+    if not (
+        isinstance(self_heal, Mapping)
+        and self_heal.get("schema_version")
+        == "exact-final-cpa-self-heal-audit.v1"
+        and self_heal.get("status") == "PASS"
+        and isinstance(passes, list)
+    ):
+        return False
+    matching_receipts = []
+    for pass_row in passes:
+        repairs = pass_row.get("repairs") if isinstance(pass_row, Mapping) else None
+        if not isinstance(repairs, list):
+            return False
+        for repair in repairs:
+            if not isinstance(repair, Mapping):
+                return False
+            digest = "sha256:" + hashlib.sha256(
+                json.dumps(
+                    repair,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            if digest == repair_sha256:
+                matching_receipts.append(repair)
+    return len(matching_receipts) == 1
 
 
 def _retry_verification_valid(

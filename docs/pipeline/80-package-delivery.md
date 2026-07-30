@@ -145,7 +145,10 @@
   时间窗的早期 correction owner，只有旧文本 SHA 经有序 CPA receipt 链可达最终
   cue SHA，且整份最终 SRT SHA 与 self-heal audit 相等时，才能把旧 owner 记为
   `SUPERSEDED_BY_EXACT_FINAL_CPA`。只是窗口重叠、文本不同或缺任一 typed receipt
-  都不能注销旧 owner。中间 FLAGGED 回执不能作为最终放行证据，自愈后未重新
+  都不能注销旧 owner。exact-final 发生在 boundary owner set 冻结之后，因此新
+  final-surface owner 必须带 typed `POST_BOUNDARY_FREEZE_FINAL_SURFACE_OWNER` 排除理由，
+  并由 registration ledger 与 self-heal receipt 双重绑定；它不反向改写 frozen boundary
+  owner set。中间 FLAGGED 回执不能作为最终放行证据，自愈后未重新
   exact-final、审计链缺字段或 final-surface 冲突未和解均阻断。
 - 封面审计按 `cover_generation.route_decision.actual_treatment` 分支验真：所有路线都验
   最终 cover SHA 与 `lidousha-cover-rendered-text-pixels.v3`。包内必须同时有 final cover、

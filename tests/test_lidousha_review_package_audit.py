@@ -731,6 +731,78 @@ def test_narrow_story_owner_uses_its_typed_slot_without_exact_read_gate():
     assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" not in codes
 
 
+def test_exact_final_surface_owner_does_not_reopen_frozen_boundary_set():
+    repair = {
+        "schema_version": "exact-final-cpa-self-heal.v1",
+        "cue_index": 1,
+        "matched_start_ms": 1_000,
+        "matched_end_ms": 2_000,
+        "before": "旧字",
+        "after": "新字",
+        "decision_authority": "CPA_JUDGE",
+        "timing_immutable": True,
+        "mutation_authority": {
+            "schema_version": "subtitle-correction-mutation-authority.v1",
+            "status": "PASS",
+        },
+    }
+    repair_sha256 = "sha256:" + hashlib.sha256(
+        json.dumps(
+            repair,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    row = {
+        "mode": "exact_final_cpa_self_heal",
+        "decision_authority": "CPA_JUDGE",
+        "mutation_authority": repair["mutation_authority"],
+        "matched_start_ms": 1_000,
+        "matched_end_ms": 2_000,
+        "structured_exact_text": "新字",
+        "timing_immutable": True,
+        "boundary_required": False,
+        "boundary_owner_rejection": (
+            "POST_BOUNDARY_FREEZE_FINAL_SURFACE_OWNER"
+        ),
+        "exact_final_repair_sha256": repair_sha256,
+    }
+    registrations = [{
+        "schema_version": "exact-final-cpa-surface-registration.v1",
+        "status": "REGISTERED",
+        "exact_final_repair_sha256": repair_sha256,
+        "owner_entity_repair_index": 0,
+        "superseded_entity_repair_indexes": [],
+    }]
+    self_heal = {
+        "schema_version": "exact-final-cpa-self-heal-audit.v1",
+        "status": "PASS",
+        "passes": [{"pass_index": 1, "repairs": [repair]}],
+    }
+    chat_rows = {
+        "entity_repairs": [row],
+        "exact_final_cpa_surface_registrations": registrations,
+        "exact_final_cpa_self_heal": self_heal,
+    }
+
+    codes = _owner_attestation_codes(
+        truth_rows=[],
+        frozen=_frozen_owner_fixture(),
+        chat_rows_by_key=chat_rows,
+    )
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" not in codes
+
+    missing_registration = dict(chat_rows)
+    missing_registration["exact_final_cpa_surface_registrations"] = []
+    invalid_codes = _owner_attestation_codes(
+        truth_rows=[],
+        frozen=_frozen_owner_fixture(),
+        chat_rows_by_key=missing_registration,
+    )
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in invalid_codes
+
+
 @pytest.mark.parametrize(
     "row",
     [

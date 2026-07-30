@@ -1065,6 +1065,10 @@ def _register_exact_final_cpa_repairs(
             "structured_exact_text": after,
             "survived": True,
             "timing_immutable": True,
+            "boundary_required": False,
+            "boundary_owner_rejection": (
+                "POST_BOUNDARY_FREEZE_FINAL_SURFACE_OWNER"
+            ),
             "exact_final_repair_sha256": repair_sha256,
             "superseded_entity_repair_indexes": superseded_indexes,
         }

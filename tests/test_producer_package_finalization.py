@@ -1010,6 +1010,10 @@ def test_exact_final_review_gate_self_heals_cpa_authorized_finding(
     assert rows[1]["structured_exact_text"] == repaired_cue
     assert rows[1]["matched_start_ms"] == 0
     assert rows[1]["matched_end_ms"] == 1_000
+    assert rows[1]["boundary_required"] is False
+    assert rows[1]["boundary_owner_rejection"] == (
+        "POST_BOUNDARY_FREEZE_FINAL_SURFACE_OWNER"
+    )
     assert chat_authority_audit[
         "exact_final_cpa_surface_registrations"
     ][0]["superseded_entity_repair_indexes"] == [0]
