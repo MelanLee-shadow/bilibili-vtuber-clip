@@ -35,9 +35,6 @@ from src.autoslice.clip_context import (
     clip_context_prompt_text,
     write_clip_context,
 )
-from src.autoslice.final_review_auditor import (
-    _final_review_structured_context,
-)
 from src.autoslice.final_review_carryover import (
     carryover_path,
     load_final_review_carryover,
@@ -46,6 +43,7 @@ from src.autoslice.danmaku_evidence import DanmakuItem
 from src.autoslice.final_review_auditor import (
     FinalReviewAuditError,
     MAX_CONTEXT_ADJUDICATIONS,
+    _final_review_structured_context,
     adjudicate_context_finding,
     adjudicate_exact_release_findings,
     audit_correction_mutation_authority,
@@ -58,6 +56,9 @@ from src.autoslice.final_review_contract import (
     SCHEMA_VERSION as FINAL_REVIEW_SCHEMA_VERSION,
     is_keep_current_disclosed,
 )
+from src.autoslice.fidelity_review_candidates import (
+    fidelity_review_candidates as _fidelity_review_candidates,
+)
 from src.autoslice.final_source_language_owner import register_final_source_language_cpa_repairs
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import LlmConfig, build_llm_call, extract_json_object
@@ -68,6 +69,9 @@ from src.autoslice.producer_chat_input import (
     SC_PRE_CONTEXT_MS,
     _load_independent_chat_support_srts,
     _piece_chat_evidence,
+)
+from src.autoslice.producer_final_review_transport import (
+    build_final_review_llm_call as _build_final_review_llm_call,
 )
 from src.autoslice.producer_boundary_review_stage import (
     exact_delivery_correction_audit,
@@ -195,86 +199,6 @@ class TextEvidenceResult:
     srt_text: str
     cues: list[object]
     chat_authority_path: Path
-
-
-_FIDELITY_REVIEW_CANDIDATE_LIMIT = 8
-
-
-def _fidelity_review_candidates(
-    padded: Path,
-    current_srt: str,
-) -> list[dict[str, object]]:
-    """Recover bounded CPA candidates that the fidelity guard could not prove.
-
-    The guard is right to reject an unwitnessed rewrite, but its rejected text
-    is still useful as a candidate.  It receives no mutation authority here:
-    only a single exact replacement bound to the current cue is forwarded to
-    the final CPA closed-set judgment.
-    """
-
-    path = padded.with_suffix(".fidelity-audit.json")
-    try:
-        audit = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        return []
-    rows = audit.get("reverted") if isinstance(audit, Mapping) else None
-    if not isinstance(rows, list):
-        return []
-    cues = [cue for cue in parse_srt_cues(current_srt) if cue.text.strip()]
-    candidates: list[tuple[tuple[int, int, int], dict[str, object]]] = []
-    for row in rows:
-        if not isinstance(row, Mapping):
-            continue
-        try:
-            cue_index = int(row.get("cue_index") or 0)
-        except (TypeError, ValueError):
-            continue
-        if not 1 <= cue_index <= len(cues):
-            continue
-        current = cues[cue_index - 1].text
-        kept = str(row.get("kept") or "")
-        attempted = str(row.get("attempted") or "")
-        violations = row.get("violations")
-        if current != kept or not attempted or attempted == current:
-            continue
-        if not isinstance(violations, list) or len(violations) != 1:
-            continue
-        violation = violations[0]
-        if not isinstance(violation, Mapping) or violation.get("op") != "replace":
-            continue
-        suspect = str(violation.get("draft_span") or "")
-        replacement = str(violation.get("final_span") or "")
-        if (
-            not suspect
-            or not replacement
-            or current.count(suspect) != 1
-            or current.replace(suspect, replacement, 1) != attempted
-        ):
-            continue
-        candidate = {
-            "cue": cue_index,
-            "kind": "context",
-            "suspect": suspect,
-            "proposed_full_cue": attempted,
-            "repair_class": "phonetic",
-            "base_text_sha256": hashlib.sha256(
-                current.encode("utf-8")
-            ).hexdigest(),
-            "why": (
-                "CPA refinement candidate reverted by the fidelity guard; "
-                "candidate only, final choice belongs to CPA"
-            ),
-            "candidate_origin": "fidelity_guard_reverted_candidate",
-        }
-        ascii_penalty = int(bool(any(ch.isascii() and ch.isalpha() for ch in replacement)))
-        candidates.append(
-            ((ascii_penalty, len(suspect) + len(replacement), cue_index), candidate)
-        )
-    candidates.sort(key=lambda item: item[0])
-    return [
-        candidate
-        for _priority, candidate in candidates[:_FIDELITY_REVIEW_CANDIDATE_LIMIT]
-    ]
 
 
 def _collect_timeline_chat(
@@ -776,21 +700,6 @@ def _apply_entity_authority(
         chat_authority_audit=chat_authority_audit,
         transcript_entity_audit=transcript_entity_audit,
         handled_entity_cues=handled_entity_cues,
-    )
-
-
-def _build_final_review_llm_call() -> Callable[[str], str]:
-    return build_llm_call(
-        LlmConfig(
-            transport="command",
-            # One full 180 s request per approved model fits inside the 600 s
-            # outer deadline.  The former 3x/model bridge could never exhaust
-            # its advertised failover chain before this caller killed it at
-            # 300 s, repeatedly turning valid long final-review prompts into
-            # CORRECTION_DISCOVERY_INCOMPLETE.
-            command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' medium 1",
-            timeout_seconds=600.0,
-        )
     )
 
 
