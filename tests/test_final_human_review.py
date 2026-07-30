@@ -71,6 +71,7 @@ def test_committed_review_contract_extends_exact_recovery_five_for_daily_repairs
         "auto_183122_1209_1410",
         "auto_162016_20_319",
         "auto_183122_607_723",
+        "auto_192000_909_1014",
         "auto_195000_1493_1579",
     ]
     review = json.loads(
@@ -187,6 +188,23 @@ def test_committed_review_contract_extends_exact_recovery_five_for_daily_repairs
     )
     assert beans_points["bean-story-tail-separation"]["final_video_end_ms"] == (
         115_000
+    )
+
+    white_dragon = next(
+        row
+        for row in review["contracts"]
+        if row["candidate_id"] == "auto_192000_909_1014"
+    )
+    white_dragon_points = {
+        row["point_id"]: row
+        for row in white_dragon["subtitle_review_points"]
+    }
+    assert white_dragon_points["gift-canon-no-unique-acoustic-truth"]["expectation"] == (
+        "开场送礼感谢必须使用操作员裁定的高概率礼物真值“粉丝团灯牌”；"
+        "不得把 AGY 声学猜测伪装成人耳唯一真值，也不得回退成钢镚等其他礼物。"
+    )
+    assert white_dragon_points["white-dragon-horror-ending"]["final_video_end_ms"] == (
+        112_500
     )
 
     team = next(

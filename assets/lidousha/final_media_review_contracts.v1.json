@@ -1,6 +1,6 @@
 {
   "schema_version": "lidousha-final-media-review-contracts.v1",
-  "authority": "Ivan 2026-07-22/23, 2026-07-28, and 2026-07-29 explicit correction and review instructions, normalized into exact final-video review points; timestamps are deliberately broad windows around the reported point so the reviewer must inspect the surrounding audio, subtitle, callback, and boundary context.",
+  "authority": "Ivan 2026-07-22/23, 2026-07-28, 2026-07-29, and 2026-07-30 explicit correction and review instructions, normalized into exact final-video review points; timestamps are deliberately broad windows around the reported point so the reviewer must inspect the surrounding audio, subtitle, callback, and boundary context.",
   "contracts": [
     {
       "candidate_id": "auto_193450_3573_3665",
@@ -368,6 +368,41 @@
           "final_video_start_ms": 105000,
           "final_video_end_ms": 121700,
           "expectation": "结尾必须完整落到占用并调整同事电脑设置、很麻烦同事的闭环；不得截断最后一句或带入随后谢礼的新话题。"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_192000_909_1014",
+      "subtitle_review_points": [
+        {
+          "point_id": "gift-canon-no-unique-acoustic-truth",
+          "final_video_start_ms": 5500,
+          "final_video_end_ms": 11000,
+          "expectation": "开场送礼感谢必须使用操作员裁定的高概率礼物真值“粉丝团灯牌”；不得把 AGY 声学猜测伪装成人耳唯一真值，也不得回退成钢镚等其他礼物。"
+        },
+        {
+          "point_id": "model-production-sentence-repair",
+          "final_video_start_ms": 25000,
+          "final_video_end_ms": 44000,
+          "expectation": "模型制作经验的说明必须连贯为“说之前制作模型的时候”“就是制作这个机体”“面部的时候没有什么经验”，不得残留重复拼接或病句。"
+        },
+        {
+          "point_id": "gift-and-video-question-context",
+          "final_video_start_ms": 49000,
+          "final_video_end_ms": 67000,
+          "expectation": "送礼感谢与随后 SC 问句必须按真实顺序保留；“今天看视频吗？有个想推荐的”及“因为直播时间比较短”不得丢失问号、主语或因果。"
+        },
+        {
+          "point_id": "white-dragon-refusal-payoff",
+          "final_video_start_ms": 73000,
+          "final_video_end_ms": 88000,
+          "expectation": "必须完整保留观众建议给新3D做白色奶龙表情、李豆沙连续拒绝并说明不会花钱的核心包袱，不能把对象或拒绝理由截碎。"
+        },
+        {
+          "point_id": "white-dragon-horror-ending",
+          "final_video_start_ms": 96000,
+          "final_video_end_ms": 112500,
+          "expectation": "结尾必须完整收束在旧模型表情看久了很恐怖、表情怪怪的，不得断在半句中，也不得带入随后加载失败和下一条 SC 话题。"
         }
       ]
     },
