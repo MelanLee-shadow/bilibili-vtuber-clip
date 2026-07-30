@@ -92,6 +92,19 @@ def test_committed_review_contract_extends_exact_recovery_five_for_daily_repairs
     )
 
     assert [row["candidate_id"] for row in review["contracts"]] == review_expected
+    pink = next(
+        row
+        for row in review["contracts"]
+        if row["candidate_id"] == "auto_162016_20_319"
+    )
+    pink_close = next(
+        point
+        for point in pink["subtitle_review_points"]
+        if point["point_id"] == "pink-girl-confession-close"
+    )
+    # The final cue ends at 304.886s after the branded intro, while the
+    # verified media duration is 305.320s. Keep the review point in bounds.
+    assert pink_close["final_video_end_ms"] == 305_000
     assert [row["candidate_id"] for row in cover["overrides"]] == recovery_expected
     assert [row["candidate_id"] for row in publication["entries"]] == (
         recovery_expected
