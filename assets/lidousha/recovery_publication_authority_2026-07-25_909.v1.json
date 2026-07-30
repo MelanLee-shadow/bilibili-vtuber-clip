@@ -1,0 +1,20 @@
+{
+  "schema_version": "lidousha-recovery-publication-authority.v1",
+  "authority": "Ivan 2026-07-29/30: auto_192000_909_1014 was not rejected or acoustically blocked. Because human listening cannot establish a unique truth for the disputed fast-spoken gift phrase, use the high-probability Bilibili gift canon 粉丝团灯牌 as the reasonable deterministic truth, rerun the whole already-published clip with the latest pipeline, preserve its existing BV and verified public title, and repair the cover and any other defects. The published endpoint is a recall anchor: CPA may close the selected white-dragon story within the bounded semantic window but must not absorb the following unrelated topic.",
+  "entries": [
+    {
+      "candidate_id": "auto_192000_909_1014",
+      "title_mode": "verified_public_exact",
+      "observed_public_title": "【李豆沙】观众想让新3D永久保留“白色奶龙”表情，小李拒绝花钱",
+      "required_given_end_ms": 1014000,
+      "boundary_end_mode": "published_recall_anchor",
+      "bvid": "BV1s7326qEc9",
+      "aid": 117002458957829,
+      "cid": 40406289029,
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-29-909-source/auto_192000_909_1014.public_verify.json",
+      "source_public_verify_sha256": "sha256:74e67b1125628f7ce838976b5112e7d63b8f150faad4c2dd64ef6cb90bfb85f2",
+      "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+      "source_public_verify_status": "VERIFIED_PUBLIC"
+    }
+  ]
+}

@@ -86,7 +86,18 @@ def test_committed_registry_loads_and_lists_the_incident():
     registry = load_publication_registry()
     rows = {r["candidate_id"]: r for r in registry["entries"]}
     assert rows["auto_193129_850_940"]["bvid"] == "BV1ec3A6bEWF"
-    assert rows["auto_183122_1209_1410"]["status"] == "released_for_upload"
+    assert rows["auto_183122_1209_1410"] == {
+        "candidate_id": "auto_183122_1209_1410",
+        "recording_date": "2026-07-24",
+        "status": "published",
+        "bvid": "BV1AD366DEd9",
+        "note": (
+            "2026-07-28 新稿发布；后续修复只允许 authorized_upload.py "
+            "repair-* 的原 BV 修复链"
+        ),
+    }
+    assert rows["auto_192000_909_1014"]["bvid"] == "BV1s7326qEc9"
+    assert rows["auto_192000_909_1014"]["status"] == "published"
 
 
 def test_manifest_gate_reads_attested_record(tmp_path):
