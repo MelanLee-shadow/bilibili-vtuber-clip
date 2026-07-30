@@ -357,6 +357,77 @@ def test_context_only_truth_does_not_relax_baseline_final_surface() -> None:
     assert audit["final_verification_failure"] == ("REDELIVERY_BASELINE_FINAL_OWNER_NOT_VERIFIED")
 
 
+def test_native_script_canon_preserves_redelivery_baseline_owner() -> None:
+    audit = _audit(
+        baseline={
+            "status": "APPLIED",
+            "mappings": [
+                {
+                    "baseline_cue_index": 1,
+                    "start_ms": 0,
+                    "end_ms": 1_000,
+                    "text": "TA要是boku，不过不是ore",
+                }
+            ],
+        },
+    )
+    final_text = _srt((0, 1_000, "TA要是ぼく，不过不是おれ"))
+    final_speaker = _srt((0, 1_000, "[李豆沙] TA要是ぼく，不过不是おれ"))
+
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final_text,
+        final_speaker_srt=final_speaker,
+        delivery_start_ms=0,
+        delivery_end_ms=1_000,
+    )
+
+    row = audit["redelivery_subtitle_baseline_audit"]["mappings"][0]
+    assert row["final_owner_expected"] == "ta要是ぼく不过不是おれ"
+    assert row["final_owner_scope"] == (
+        "TRANSFORMED_BY_JAPANESE_NATIVE_SCRIPT_CANON"
+    )
+    assert {
+        replacement["surface"]
+        for replacement in row[
+            "final_owner_japanese_native_script_replacements"
+        ]
+    } == {"boku", "ore"}
+    assert audit["final_redelivery_baseline_owner_verification"]["status"] == (
+        "PASS"
+    )
+
+
+def test_native_script_canon_does_not_relax_unrelated_baseline_change() -> None:
+    audit = _audit(
+        baseline={
+            "status": "APPLIED",
+            "mappings": [
+                {
+                    "baseline_cue_index": 1,
+                    "start_ms": 0,
+                    "end_ms": 1_000,
+                    "text": "TA要是boku",
+                }
+            ],
+        },
+    )
+    wrong = _srt((0, 1_000, "TA要是おれ"))
+
+    assert not verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=wrong,
+        final_speaker_srt=wrong,
+        delivery_start_ms=0,
+        delivery_end_ms=1_000,
+    )
+    failure = audit["final_redelivery_baseline_owner_verification"][
+        "failures"
+    ][0]
+    assert failure["expected"] == "ta要是ぼく"
+    assert failure["text_payload"] == "ta要是おれ"
+
+
 def test_hash_bound_release_grade_merge_preserves_baseline_owner() -> None:
     final = _srt(
         (0, 880, "哦，这样吗"),

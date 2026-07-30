@@ -144,7 +144,10 @@
   “低权威项已被覆盖”制造 `final_required_decision_count=0` 的假绿。审计字段
   `final_source_truth_owner_verification` 与
   `final_redelivery_baseline_owner_verification` 在对应 owner 存在时必须为 PASS，且该类
-  required count 非零。
+  required count 非零。若最终稿已按 `JAPANESE_NATIVE_SCRIPT_CANON` 把普通日语罗马音
+  改写为假名，baseline owner 的期望文本必须经过同一确定性 canon 后再比较 clean 与
+  speaker SRT，并逐 mapping 记录改写 receipt；不得拿旧罗马音误判正确假名稿，也不得借此
+  放宽其他文字差异。
 - required source truth 仍在完整 padded context 上应用，但 boundary owner 资格只属于完整
   落在 candidate-relative immutable story scope 的 truth；该 scope 仅在开场容忍并冻结
   `semantic_start` 前最多 500ms 的 cue 时间抖动，使完整开场 cue 可把最终 start 拉回自身

@@ -1292,7 +1292,10 @@ def _verify_redelivery_baseline_owners(
                 timeline_offset_ms=delivery_start_ms,
             )
         )
-        expected = normalize_chat_text(expected_rebased)
+        expected_native_script, native_script_replacements = (
+            canonicalize_japanese_native_script_surfaces(expected_rebased)
+        )
+        expected = normalize_chat_text(expected_native_script)
         text_payload = _window_payload(
             final_text_srt,
             start_ms=start_ms,
@@ -1325,10 +1328,22 @@ def _verify_redelivery_baseline_owners(
         row.update(
             {
                 "final_owner_scope": (
-                    "TRANSFORMED_BY_SOURCE_TRUTH_OWNER"
-                    if full_projection is not None
-                    or substring_replacements
-                    else "DELIVERY"
+                    "TRANSFORMED_BY_SOURCE_TRUTH_AND_JAPANESE_NATIVE_SCRIPT_CANON"
+                    if (
+                        full_projection is not None
+                        or substring_replacements
+                    )
+                    and native_script_replacements
+                    else (
+                        "TRANSFORMED_BY_SOURCE_TRUTH_OWNER"
+                        if full_projection is not None
+                        or substring_replacements
+                        else (
+                            "TRANSFORMED_BY_JAPANESE_NATIVE_SCRIPT_CANON"
+                            if native_script_replacements
+                            else "DELIVERY"
+                        )
+                    )
                 ),
                 "final_owner_expected": expected,
                 "final_owner_text_payload": text_payload,
@@ -1339,6 +1354,10 @@ def _verify_redelivery_baseline_owners(
         if substring_replacements:
             row["final_owner_source_truth_substring_replacements"] = (
                 substring_replacements
+            )
+        if native_script_replacements:
+            row["final_owner_japanese_native_script_replacements"] = (
+                native_script_replacements
             )
         if full_projection is not None:
             row["final_owner_source_truth_projection"] = full_projection
