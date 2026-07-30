@@ -923,7 +923,7 @@ def _run_final_review(
             # 后者（provider 额度/异常，裁决根本没发生）不许当作终局——审片员
             # 已给出高置信修复提案、只是没有法官到场。这些行记入
             # infra_unresolved，由 run_text_pipeline 在全部 provenance 落盘后
-            # 拒绝带伤交付（转 runner 有界重试；付费兜底修复后通常一轮即过）。
+            # 拒绝带伤交付（先命中 AGY 成功缓存，否则转 runner 有界重试）。
             infra_unresolved = []
             for row in adjudicable:
                 adjudication = row.get("context_audio_adjudication") or {}

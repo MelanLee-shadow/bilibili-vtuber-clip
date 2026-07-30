@@ -63,7 +63,6 @@ def test_witness_request_strips_every_textual_channel():
 def test_witness_prompt_never_contains_candidates_or_hanzi_context():
     prompt = _witness_prompt(
         recording_date="2026-07-26",
-        delivery_mode="gemini_api",
         target_audio_start_ms=500,
         target_audio_end_ms=2_500,
     )

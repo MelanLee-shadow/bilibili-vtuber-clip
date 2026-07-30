@@ -17,7 +17,7 @@
    只提候选。允许绕过 CPA 的三类是：Ivan operator truth、纯机械规范化，以及显式
    `expected-value canon`。后者只允许“未登记近音误听面→glossary/roster 登记规范词”且须过
    拼音门；current/proposed 都是登记词面时触发专名平等守卫，自动退出旁路交 CPA。
-3. **裁决分层（Ivan 2026-07-19「不能绑死 Gemini 额度、也不能老用付费key」）**：
+3. **裁决分层**：
    - **T0 确定性旁路**：Ivan operator truth / 纯机械规范化 / expected-value canon——零模型。
      expected-value 每条保留 provenance、拼音门和 `registered_name_conflict=false` 收据。
    - **T0.5 同音候选**：glossary/roster 高先验且 current 未登记时可进 T0；两个登记词面冲突、
@@ -61,7 +61,10 @@
    `carryover_persisted_count`；该单一 additive receipt 不构成审计面矛盾，不能把原本
    `CORRECTION_DISCOVERY_INCOMPLETE` 的 provider transient 错分成 terminal contract。
    其他共享字段不一致或未知附加字段仍按 contract corruption fail closed。
-5. **付费兜底**：同项失败≥3轮即可触发（额度类失败可同 run 连续补轮，`quota_exhausted_round`），每笔入帐。**Ivan 2026-07-19 明确否决冷却期类附加门**——控制付费用量靠 T1 分层缩减声学仲裁需求本身，不靠拖延付费。
+5. **生产音频只交 AGY**：不得因 quota、timeout 或输出错误把音频转交 Gemini API、CPA
+   或其他文字模型。先复用身份完整匹配的 AGY 成功缓存；仍无证据时写
+   `provider_transient` 并由 runner 有界重试。CPA 只接收文字闭集、AGY 观察文字和片级文字
+   语境，保持最终选边权，但绝不直接收音频。
 6. **方言保真**：长沙话方言词（glossary「长沙话方言词保护」节）修复方向 = 方言原字 > 普通话意译 > 保留误听；通用中文纠错「归一到普通话」的默认方向在方言词上是反的。
 7. **漏听 recall**：选片钩子/弹幕/SC 里的词表专名在字幕零出现 → 审片员漏听检查（prompt 规则7）→ 插入提案 → 声学仲裁（插入永远走 T3，不进 T1）。**已知盲区（2026-07-19 合并条实证）**：专名在片内它处出现过时零出现触发器不响，单句漏听无人怀疑（kmx 0:49 案，最终走 Ivan 审定 ledger 钉子）。改成逐句怀疑会假阳性爆炸；候选方向是「称呼/接话/突击等强语境句位 + 专名句位模板」的窄触发，进欠账。
 8. **长程呼应属于片级语境**：检测器和审片员必须看到整片 cue 链，显式枚举
@@ -157,9 +160,8 @@
 | 见证人规则 | `subtitle_fidelity.py`（通用 mutation 的候选/fidelity 门；同音/近音正字法另须 `final_review_auditor.py` 的 typed textual authority receipt） |
 | 终审审片员 | `final_review_auditor.py`（发现器；同音/近音候选、typed mutation receipt、声学仲裁路由与插入契约） |
 | 最终字节放行 | `final_review_contract.py`（验 `final-review-audit.v2` 的精确 SRT hash、完整 discovery、零 finding、correction mutation audit 与 final boundary endpoint binding） |
-| 声学证人/裁决 | `entity_audio_verifier.py`（候选盲黑帧片段，只回可闻性/拼音；quota 轮次+付费兜底）+ `read_aloud_llm_verifier.py` / `acoustic_witness_adjudication.py`（CPA 看完整闭集并最终选边） |
+| 声学证人/裁决 | `entity_audio_verifier.py`（AGY-only 候选盲黑帧片段，只回可闻性/拼音；只复用 AGY 成功缓存）+ `read_aloud_llm_verifier.py` / `acoustic_witness_adjudication.py`（CPA 仅看文字闭集并最终选边） |
 | 源真值 ledger | `source_subtitle_truth.py` + `subtitle_truth_ledger.v1.json`（Ivan 审定钉子，唯一不受 provider 故障影响的通道；已审定完整口播必须用 `replace_cue`，不能假设 ASR 仍保留待替换误词；整 cue 静音幻听用严格包含语义的 `drop_cue`，跨界即冲突停用；官方回放等替代源只能用 ledger 内显式 alias，且候选 piece 必须同时精确绑定替代源 SHA-256 与审定时间轴偏移，文件名相似不继承真值） |
-| 付费兜底政策 | `gemini_backup_policy.py`（≥3轮 strikes + 日帽 + 入帐） |
 | 梗词铁律 | `surface_canon.py`（直女→侄女等 hard canon） |
 
 ## 确定性怀疑编译器（2026-07-19 审片第二轮落地，`phonetic_scan.py`）
@@ -191,7 +193,7 @@ Ivan 指正=该句整体替换的锚，不是插入片段：钉子文本必须�
 ## 已知结构性欠账（按性价比排序，做前先读调研）
 
 0. ~~短语级重复分歧检测~~（2026-07-19 已落地，见上节）
-1. ~~付费兜底不可达~~（2026-07-19 已修，`2da11e9`）
+1. ~~付费声学兜底不可达~~（旧架构；2026-07-30 已退役，生产声学改为 AGY-only）
 2. ~~infra-UNCERTAIN 带伤交付~~（同上已修）
 3. ~~方言零覆盖~~（同上已修，词表持续扩充）
 4. ~~专名零召回无修复通道~~（同上已修：source-backed 插入）

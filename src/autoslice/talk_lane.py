@@ -1049,7 +1049,7 @@ def classify_talk_failure(attempt_output: str) -> dict:
         )
     elif "FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED" in tail:
         # 审片员修复提案因 provider 失败未决——文本本身可修，等 provider
-        # 恢复（或付费兜底额度）后重试即可，不是内容缺陷。
+        # AGY 恢复或成功缓存可用后重试即可，不是内容缺陷。
         kind, stage, recoverable = "provider_transient", "final_review_adjudication", True
     elif any(
         marker in tail.upper()
