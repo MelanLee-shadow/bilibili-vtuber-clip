@@ -54,7 +54,11 @@ def _validate_repaired_cover_generation(
         raise ValueError("cover generation did not reach AI_COVER_READY")
     if document.get("workflow") != "regenerate_lidousha_cover":
         raise ValueError("unexpected cover generation workflow")
-    if document.get("method") != "images.edit" or document.get("fallback_used") is not False:
+    if (
+        document.get("method") != "images.edit"
+        or document.get("image_gen_model") != "cpa"
+        or document.get("fallback_used") is not False
+    ):
         raise ValueError("cover generation must be a real images.edit result without frame fallback")
     if document.get("candidate_id") != candidate_id or document.get("title") != title:
         raise ValueError("cover generation candidate/title binding mismatch")

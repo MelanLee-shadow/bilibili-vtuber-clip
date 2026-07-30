@@ -218,6 +218,7 @@ def regenerate_cover(
         "status": "AI_COVER_READY",
         "model": selected_model,
         "method": "images.edit",
+        "image_gen_model": "cpa",
         "fallback_used": False,
         "model_fallback_used": model_fallback_used,
         "attempted_models": attempted_models,

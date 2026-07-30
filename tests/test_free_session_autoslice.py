@@ -1211,6 +1211,7 @@ def _cover_binding_fixture(tmp_path, monkeypatch, *, song=False):
         "workflow": "regenerate_lidousha_cover",
         "status": "AI_COVER_READY",
         "method": "images.edit",
+        "image_gen_model": "cpa",
         "model": "gpt-image-1.5",
         "fallback_used": False,
         "model_fallback_used": True,
