@@ -3436,7 +3436,7 @@ def test_publish_staging_writes_upload_disabled_draft_and_blocks_unfinished_ai_c
     # outside the fake callback so an asset drift fails as a fingerprint
     # assertion instead of being swallowed by the production LLM error gate.
     assert hashlib.sha256(title_prompts[0].encode()).hexdigest() == (
-        "00efda8b6421f3b7ce1ec5e02552f582d94d9db09f0227fbb1f62a19c26685ed"  # title_style +百合作品关联即出 (Ivan 2026-07-25)
+        "aa84cddcce6e4ee9dd24d523d808a96f41bf5c1af546999be4deee4167b0ec7c"  # + Japanese native-script canon (Ivan 2026-07-29)
     )
     assert staging["status"] == "STAGED"
     assert staging["upload_enabled"] is False
