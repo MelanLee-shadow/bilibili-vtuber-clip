@@ -2204,3 +2204,81 @@ def test_redelivery_baseline_keeps_block_when_foreign_surface_survives() -> None
     assert source_language_audit["status"] == (
         "BLOCKED_REDELIVERY_BASELINE_DID_NOT_RESOLVE_FOREIGN_INTRODUCTION"
     )
+
+
+def test_redelivery_baseline_owns_native_script_canon_and_cut_context() -> None:
+    source_language_audit = {
+        "status": "DEFERRED_TO_REDELIVERY_BASELINE",
+        "unproven_foreign_introductions": [
+            {
+                "cue_index": 1,
+                "start_ms": 0,
+                "end_ms": 2_280,
+                "attempted": "女主像个傻子，她叫ぼく",
+            },
+            {
+                "cue_index": 7,
+                "start_ms": 18_010,
+                "end_ms": 19_410,
+                "attempted": "TA要是ぼく",
+            },
+            {
+                "cue_index": 10,
+                "start_ms": 23_720,
+                "end_ms": 26_200,
+                "attempted": "我想下ぼく怎么翻译",
+            },
+        ],
+    }
+    baseline_audit = {
+        "status": "APPLIED",
+        "failures": [],
+        "baseline_sha256": "a" * 64,
+        "mappings": [
+            {
+                "mapping_kind": "exact_reviewed_interval_replay",
+                "baseline_cue_index": 4,
+                "output_cue_index": 4,
+                "start_ms": 8_220,
+                "end_ms": 9_620,
+                "text": "TA要是boku",
+            },
+            {
+                "mapping_kind": "exact_reviewed_interval_replay",
+                "baseline_cue_index": 7,
+                "output_cue_index": 7,
+                "start_ms": 13_950,
+                "end_ms": 16_410,
+                "text": "我想下boku怎么翻译",
+            },
+        ],
+    }
+    final_text = (
+        "1\n00:00:08,220 --> 00:00:09,620\nTA要是ぼく\n\n"
+        "2\n00:00:13,950 --> 00:00:16,410\n我想下ぼく怎么翻译\n"
+    )
+
+    resolved = (
+        finalization._resolve_deferred_foreign_introductions_after_redelivery(
+            source_language_audit=source_language_audit,
+            final_text=final_text,
+            baseline_audit=baseline_audit,
+            final_start=9_790,
+        )
+    )
+
+    assert resolved
+    assert source_language_audit["status"] == (
+        "RESOLVED_BY_REDELIVERY_BASELINE"
+    )
+    findings = source_language_audit["deferred_resolution"]["findings"]
+    assert findings[0]["reason_code"] == "FINDING_OUTSIDE_FINAL_DELIVERY"
+    assert findings[1]["witnessed_surfaces"] == ["ぼく"]
+    assert findings[1]["reason_code"] == (
+        "INTRODUCED_FOREIGN_SURFACE_WITNESSED_BY_"
+        "REDELIVERY_NATIVE_SCRIPT_CANON"
+    )
+    assert findings[1]["positive_witness_authority_ids"] == [
+        "redelivery-baseline-cue-4"
+    ]
+    assert findings[2]["witnessed_surfaces"] == ["ぼく"]

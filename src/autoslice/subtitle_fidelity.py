@@ -1216,6 +1216,10 @@ def resolve_deferred_foreign_introductions(
             parsed_rows.append((row, windows))
 
     final_cues = parse_srt_cues(final_srt)
+    final_timeline_end_ms = max(
+        (cue.end_ms for cue in final_cues),
+        default=0,
+    )
     kana_run_rx = re.compile(r"[ぁ-ゖァ-ヺー]{2,}")
     for finding in findings:
         if not isinstance(finding, Mapping):
@@ -1247,7 +1251,11 @@ def resolve_deferred_foreign_introductions(
         owners = [
             (row, windows)
             for row, windows in parsed_rows
-            if _interval_fully_covered(start_ms, end_ms, windows)
+            if (
+                windows_fully_cover(start_ms, end_ms, windows)
+                if authority_kind == "hash_bound_redelivery_baseline"
+                else _interval_fully_covered(start_ms, end_ms, windows)
+            )
         ]
         row_result: dict[str, Any] = {
             "cue_index": finding.get("cue_index"),
@@ -1260,6 +1268,12 @@ def resolve_deferred_foreign_introductions(
             "resolved": False,
         }
         result["findings"].append(row_result)
+        if final_timeline_end_ms > 0 and (
+            end_ms <= 0 or start_ms >= final_timeline_end_ms
+        ):
+            row_result["reason_code"] = "FINDING_OUTSIDE_FINAL_DELIVERY"
+            row_result["resolved"] = True
+            continue
         if not owners:
             row_result["reason_code"] = "FINDING_NOT_FULLY_AUTHORITY_OWNED"
             result["failures"].append(dict(row_result))
@@ -1346,6 +1360,32 @@ def resolve_deferred_foreign_introductions(
                                     canonical = replacement.get("canonical")
                                     if isinstance(canonical, str) and canonical:
                                         declared_texts.append(canonical)
+                elif (
+                    authority_kind == "hash_bound_redelivery_baseline"
+                    and owner.get("authority_kind")
+                    == "hash_bound_redelivery_baseline"
+                    and re.fullmatch(
+                        r"(?:sha256:)?[0-9a-f]{64}",
+                        str(owner.get("baseline_sha256") or ""),
+                    )
+                    is not None
+                    and owner.get("mapping_kind")
+                    == "exact_reviewed_interval_replay"
+                    and isinstance(owner.get("baseline_cue_index"), int)
+                    and not isinstance(owner.get("baseline_cue_index"), bool)
+                    and owner["baseline_cue_index"] > 0
+                    and isinstance(owner.get("output_cue_index"), int)
+                    and not isinstance(owner.get("output_cue_index"), bool)
+                    and owner["output_cue_index"] > 0
+                ):
+                    canonicals = owner.get(
+                        "authorized_native_script_surfaces"
+                    )
+                    if isinstance(canonicals, list) and all(
+                        isinstance(text, str) and text
+                        for text in canonicals
+                    ):
+                        declared_texts.extend(canonicals)
                 declared_surfaces = {
                     run
                     for text in declared_texts
@@ -1387,6 +1427,11 @@ def resolve_deferred_foreign_introductions(
             )
             row_result["reason_code"] = (
                 "INTRODUCED_FOREIGN_SURFACE_WITNESSED_BY_SOURCE_TRUTH"
+                if authority_kind == "source_subtitle_truth"
+                else (
+                    "INTRODUCED_FOREIGN_SURFACE_WITNESSED_BY_"
+                    "REDELIVERY_NATIVE_SCRIPT_CANON"
+                )
             )
         row_result["resolved"] = True
 

@@ -70,6 +70,7 @@ from src.autoslice.source_subtitle_truth import (
     source_truth_owner_windows,
 )
 from src.autoslice.surface_canon import (
+    canonicalize_japanese_native_script_surfaces,
     normalize_japanese_native_script_surfaces,
 )
 from src.autoslice.subtitle_fidelity import (
@@ -830,22 +831,44 @@ def _resolve_deferred_foreign_introductions_after_redelivery(
         "DEFERRED_TO_REDELIVERY_BASELINE"
     ):
         return True
-    authority_rows = [
-        {
-            "authority_id": (
-                f"redelivery-baseline-cue-{row.get('current_cue_index')}"
-            ),
-            "current_cue_index": row.get("current_cue_index"),
-            "local_windows": [
-                {
-                    "start_ms": row.get("start_ms"),
-                    "end_ms": row.get("end_ms"),
-                }
-            ],
-        }
-        for row in (baseline_audit.get("mappings") or [])
-        if isinstance(row, Mapping)
-    ]
+    authority_rows: list[dict[str, object]] = []
+    baseline_sha256 = str(baseline_audit.get("baseline_sha256") or "")
+    for row in baseline_audit.get("mappings") or []:
+        if not isinstance(row, Mapping):
+            continue
+        _canonical_text, replacements = (
+            canonicalize_japanese_native_script_surfaces(
+                str(row.get("text") or "")
+            )
+        )
+        baseline_cue_index = row.get("baseline_cue_index")
+        output_cue_index = row.get("output_cue_index")
+        authority_rows.append(
+            {
+                "authority_kind": "hash_bound_redelivery_baseline",
+                "authority_id": (
+                    "redelivery-baseline-cue-"
+                    f"{baseline_cue_index or output_cue_index or 'unknown'}"
+                ),
+                "baseline_sha256": baseline_sha256,
+                "mapping_kind": row.get("mapping_kind"),
+                "baseline_cue_index": baseline_cue_index,
+                "output_cue_index": output_cue_index,
+                "authorized_native_script_surfaces": sorted(
+                    {
+                        str(replacement.get("canonical") or "")
+                        for replacement in replacements
+                        if str(replacement.get("canonical") or "")
+                    }
+                ),
+                "local_windows": [
+                    {
+                        "start_ms": row.get("start_ms"),
+                        "end_ms": row.get("end_ms"),
+                    }
+                ],
+            }
+        )
     resolution = resolve_deferred_foreign_introductions(
         source_language_audit,
         final_text,
