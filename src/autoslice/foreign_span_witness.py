@@ -25,6 +25,11 @@ from typing import Any, Callable
 
 from src.autoslice import gemini_backup_policy
 from src.autoslice.agy_lrc_alignment import _gemini_keys
+from src.autoslice.foreign_audio_witness_cache import (
+    load_successful_observation,
+    store_successful_observation,
+    witness_identity,
+)
 from src.autoslice.foreign_closed_set_rebuild import (
     rebuild_foreign_closed_set,
 )
@@ -50,6 +55,7 @@ _ALLOWED_LANGUAGES = frozenset({"zh", "ja", "en", "mixed", "none"})
 _KEEP_TEXT_RX = re.compile(r"[0-9A-Za-z㐀-鿿ぁ-ゖァ-ヺー]+")
 _AGY_MODEL = os.environ.get("FOREIGN_WITNESS_AGY_MODEL", "Gemini 3.6 Flash (High)")
 _AGY_TIMEOUT = os.environ.get("FOREIGN_WITNESS_AGY_TIMEOUT", "10m")
+_AGY_WITNESS_ALGORITHM_ID = "agy-foreign-span-candidate-blind-v1"
 
 _PROMPT_TEMPLATE = """The black-frame input.mp4 is an untrusted live-stream span of {duration_ms} ms.
 Transcribe EXACTLY what is audibly spoken, in the original spoken language
@@ -290,7 +296,7 @@ def _observe_audio(
     audio_path: Path,
     prompt: str,
     observe: Callable[..., str] | None,
-) -> tuple[dict[str, str], str, str | None]:
+) -> tuple[dict[str, str], str, str | None, dict[str, Any] | None]:
     """Use injected API doubles in tests; production is AGY-only."""
 
     if observe is not None:
@@ -299,8 +305,31 @@ def _observe_audio(
             prompt=prompt,
             observe=observe,
         )
-        return observation, "injected_test_observer", key_tier
-    return _observe_with_agy(audio_path=audio_path, prompt=prompt), "agy", None
+        return observation, "injected_test_observer", key_tier, None
+    identity = witness_identity(
+        audio_path=audio_path,
+        prompt=prompt,
+        model=_AGY_MODEL,
+        algorithm_id=_AGY_WITNESS_ALGORITHM_ID,
+    )
+    cached, cache_evidence = load_successful_observation(identity=identity)
+    if cached is not None:
+        try:
+            observation = _parse_observation(json.dumps(cached, ensure_ascii=False))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            observation = None
+        if observation is not None:
+            return observation, "agy_success_cache", None, cache_evidence
+    observation = _observe_with_agy(audio_path=audio_path, prompt=prompt)
+    cache_evidence = store_successful_observation(
+        identity=identity,
+        observation=observation,
+        source_provenance={
+            "kind": "live_accepted_agy_process",
+            "process_returncode": 0,
+        },
+    )
+    return observation, "agy", None, cache_evidence
 
 
 def _witness_rows(
@@ -339,7 +368,7 @@ def _witness_rows(
         try:
             _extract_span_audio(media_path, start_ms, end_ms, audio_path)
             duration_ms = end_ms - start_ms + 2 * _SPAN_PAD_MS
-            observation, provider, key_tier = _observe_audio(
+            observation, provider, key_tier, cache_evidence = _observe_audio(
                 audio_path=audio_path,
                 prompt=_PROMPT_TEMPLATE.format(duration_ms=duration_ms),
                 observe=observe,
@@ -352,6 +381,8 @@ def _witness_rows(
         result["exact_transcript"] = transcript[:500]
         result["speaker_impression"] = observation["speaker_impression"]
         result["provider"] = provider
+        if cache_evidence is not None:
+            result.update(cache_evidence)
         if key_tier is not None:
             result["key_tier"] = key_tier
         result["audio_sha256"] = hashlib.sha256(audio_path.read_bytes()).hexdigest()
@@ -718,7 +749,7 @@ def retranscribe_foreign_script_cluster(
         try:
             _extract_span_audio(media_path, cue.start_ms, cue.end_ms, audio_path)
             duration_ms = cue.end_ms - cue.start_ms + 2 * _SPAN_PAD_MS
-            observation, provider, key_tier = _observe_audio(
+            observation, provider, key_tier, cache_evidence = _observe_audio(
                 audio_path=audio_path,
                 prompt=_PROMPT_TEMPLATE.format(duration_ms=duration_ms),
                 observe=observe,
@@ -730,6 +761,8 @@ def retranscribe_foreign_script_cluster(
         row["audible_language"] = observation["audible_language"]
         row["speaker_impression"] = observation["speaker_impression"]
         row["provider"] = provider
+        if cache_evidence is not None:
+            row.update(cache_evidence)
         if key_tier is not None:
             row["key_tier"] = key_tier
         row["audio_sha256"] = hashlib.sha256(audio_path.read_bytes()).hexdigest()

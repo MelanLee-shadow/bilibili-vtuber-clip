@@ -92,6 +92,113 @@ def test_kana_introduction_witnessed_by_matching_audio(tmp_path, witness_env):
     assert persisted["language_preservation"][0]["witnessed"] is True
 
 
+def _agy_observation():
+    return {
+        "audible_language": "mixed",
+        "exact_transcript": "わたくし就是大小姐",
+        "speaker_impression": "single_live_voice",
+    }
+
+
+def test_production_agy_success_is_content_cached(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path))
+    audio = tmp_path / "span.mp3"
+    audio.write_bytes(b"exact-audio")
+    calls = []
+
+    def fake_agy(*, audio_path, prompt):
+        calls.append((audio_path.read_bytes(), prompt))
+        return _agy_observation()
+
+    monkeypatch.setattr(fsw, "_observe_with_agy", fake_agy)
+
+    first = fsw._observe_audio(audio_path=audio, prompt="exact prompt", observe=None)
+    second = fsw._observe_audio(audio_path=audio, prompt="exact prompt", observe=None)
+
+    assert len(calls) == 1
+    assert first[1] == "agy"
+    assert first[3]["witness_cache_persisted"] is True
+    assert first[3]["served_from_cache"] is False
+    assert second[0] == _agy_observation()
+    assert second[1] == "agy_success_cache"
+    assert second[3]["served_from_cache"] is True
+    assert second[3]["witness_cache_key_sha256"] == first[3][
+        "witness_cache_key_sha256"
+    ]
+
+
+def test_production_agy_cache_misses_on_every_bound_identity_change(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path))
+    audio = tmp_path / "span.mp3"
+    audio.write_bytes(b"audio-v1")
+    calls = []
+
+    def fake_agy(*, audio_path, prompt):
+        calls.append((audio_path.read_bytes(), prompt))
+        return _agy_observation()
+
+    monkeypatch.setattr(fsw, "_observe_with_agy", fake_agy)
+    fsw._observe_audio(audio_path=audio, prompt="prompt-v1", observe=None)
+    audio.write_bytes(b"audio-v2")
+    fsw._observe_audio(audio_path=audio, prompt="prompt-v1", observe=None)
+    fsw._observe_audio(audio_path=audio, prompt="prompt-v2", observe=None)
+    monkeypatch.setattr(fsw, "_AGY_MODEL", "different-model")
+    fsw._observe_audio(audio_path=audio, prompt="prompt-v2", observe=None)
+    monkeypatch.setattr(fsw, "_AGY_WITNESS_ALGORITHM_ID", "different-algorithm")
+    fsw._observe_audio(audio_path=audio, prompt="prompt-v2", observe=None)
+    fsw._observe_audio(audio_path=audio, prompt="prompt-v2", observe=None)
+
+    assert len(calls) == 5
+
+
+def test_production_agy_failure_is_never_cached(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path))
+    audio = tmp_path / "span.mp3"
+    audio.write_bytes(b"exact-audio")
+    calls = []
+
+    def failed_agy(*, audio_path, prompt):
+        calls.append((audio_path, prompt))
+        raise RuntimeError("AGY_FOREIGN_WITNESS_FAILED:rc=1")
+
+    monkeypatch.setattr(fsw, "_observe_with_agy", failed_agy)
+
+    with pytest.raises(RuntimeError, match="AGY_FOREIGN_WITNESS_FAILED"):
+        fsw._observe_audio(audio_path=audio, prompt="exact prompt", observe=None)
+    with pytest.raises(RuntimeError, match="AGY_FOREIGN_WITNESS_FAILED"):
+        fsw._observe_audio(audio_path=audio, prompt="exact prompt", observe=None)
+
+    assert len(calls) == 2
+    assert not list((tmp_path / "cache").rglob("*.json"))
+
+
+def test_corrupt_agy_success_cache_is_ignored_and_rebuilt(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path))
+    audio = tmp_path / "span.mp3"
+    audio.write_bytes(b"exact-audio")
+    calls = []
+
+    def fake_agy(*, audio_path, prompt):
+        calls.append((audio_path, prompt))
+        return _agy_observation()
+
+    monkeypatch.setattr(fsw, "_observe_with_agy", fake_agy)
+    fsw._observe_audio(audio_path=audio, prompt="exact prompt", observe=None)
+    cache_path = next((tmp_path / "cache").rglob("*.json"))
+    cache_path.write_text("{broken", encoding="utf-8")
+
+    rebuilt = fsw._observe_audio(
+        audio_path=audio, prompt="exact prompt", observe=None
+    )
+    cached = fsw._observe_audio(audio_path=audio, prompt="exact prompt", observe=None)
+
+    assert len(calls) == 2
+    assert rebuilt[1] == "agy"
+    assert cached[1] == "agy_success_cache"
+
+
 def test_kana_mismatch_keeps_block(tmp_path, witness_env):
     audit = _blocked_language_audit()
 

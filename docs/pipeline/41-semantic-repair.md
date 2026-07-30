@@ -43,6 +43,8 @@
      CURRENT 才能保留正常 code-switch，选择 PROPOSED 即由 mutation authority 继续校验后
      重写；拼音冲突只披露，不再构成第二票。CPA 不可用继续 BLOCK，禁止检测器或 AGY 自行选边。
      此处生产音频输入只交 AGY；CPA 只接收 CURRENT、AGY 候选盲文字转写与整片文字语境。
+     AGY 成功声学证据按音频字节、完整提示词、模型与适配算法身份做内容寻址缓存；只有
+     全部身份和成功结果哈希逐项一致才可在重试中复用，失败或损坏项永不缓存。
      AGY/音频抽取的 provider 故障必须分类为 `provider_transient / foreign_source_audio_witness`
      并由 runner 续跑，不能固化成 terminal `foreign_source_transcription`；只有 AGY 已返回有效
      文字证据而 CPA/文字权威仍无法闭合时才是内容门终局。
