@@ -2059,6 +2059,70 @@ def test_audit_accepts_hashed_screenshot_cover_without_ai_evidence(tmp_path: Pat
     assert result["issues"] == []
 
 
+def test_audit_accepts_cpa_redraw_safely_degraded_to_direct_screenshot(
+    tmp_path: Path,
+):
+    root = tmp_path / "pkg"
+    root.mkdir()
+    cover = _write(root / "covers" / "talk.cover.png", "screenshot-cover")
+    generation = {
+        "title": "【李豆沙】真实画面安全降级",
+        "cover_text": "真实画面安全降级",
+        "method": "screenshot_direct",
+        "cover_origin": "SOURCE_SCREENSHOT",
+        "reference_selection": {"best_ms": 1_000},
+        "screenshot_frame": {"frame_ms": 1_000},
+        "reference_image": "/remote/cover_refs/talk.cover-ref.png",
+        "reference_sha256": "sha256:" + "2" * 64,
+        "final_cover": str(cover),
+        "final_cover_sha256": "sha256:"
+        + hashlib.sha256(cover.read_bytes()).hexdigest(),
+        "rendered_lines": ["真实画面安全降级"],
+    }
+    generation["route_decision"] = build_cover_route_decision(
+        selected_treatment="cpa_redraw",
+        selected_rationale="fixture initially requires a redraw",
+        story_contract={},
+        reference_authority=None,
+        decision_inputs={"cover_mode": "auto"},
+        title=generation["title"],
+        cover_text=generation["cover_text"],
+    )
+    generation["cpa_redraw"] = {
+        "status": "DEGRADED_TO_DIRECT_IDENTITY_WITNESS_UNAVAILABLE",
+    }
+    record_cover_route_execution(
+        generation,
+        actual_treatment="screenshot_direct",
+        execution_status="READY_DEGRADED",
+        image_generation_attempted=True,
+        image_generation_used=False,
+        detail="unverified generated pixels were discarded",
+    )
+    (root / "review_manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "finished",
+                "items": [
+                    {
+                        "stem": "talk",
+                        "title": generation["title"],
+                        "cover": str(cover),
+                        "cover_generation": generation,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = audit_package(root)
+
+    assert result["passed"] is True
+    assert result["issues"] == []
+
+
 @pytest.mark.parametrize(
     ("method", "frame_ms", "best_ms"),
     [

@@ -701,10 +701,22 @@ def _audit_finished_cover_evidence(
         )
         return
     route_decision = generation.get("route_decision")
-    treatment = (
+    selected_treatment = (
         str(route_decision.get("selected_treatment") or "")
         if isinstance(route_decision, dict)
         else ""
+    )
+    # A v2 route preserves the originally selected treatment even when a
+    # verified execution failure safely degrades to a different finished
+    # lane.  Audit the materialized lane; validate_cover_route_decision below
+    # remains the authority that decides whether the selected -> actual
+    # transition itself is legitimate.
+    treatment = (
+        str(route_decision.get("actual_treatment") or selected_treatment)
+        if isinstance(route_decision, dict)
+        and route_decision.get("schema_version")
+        == "lidousha-cover-route-decision.v2"
+        else selected_treatment
     )
     final_path = _cover_artifact_path(
         root,
@@ -800,7 +812,7 @@ def _audit_finished_cover_evidence(
     if treatment in {"screenshot_direct", "screenshot_polish"}:
         method = str(generation.get("method") or "")
         degraded_polish = (
-            treatment == "screenshot_polish"
+            selected_treatment == "screenshot_polish"
             and method == "screenshot_direct"
             and isinstance(generation.get("screenshot_polish"), dict)
             and generation["screenshot_polish"].get("status")
