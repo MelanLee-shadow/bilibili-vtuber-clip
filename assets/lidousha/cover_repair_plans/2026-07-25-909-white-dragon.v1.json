@@ -1,0 +1,51 @@
+{
+  "schema_version": "reviewed-cover-repair-plan.v1",
+  "artifact_lifecycle": "HISTORICAL_EVIDENCE_ONLY",
+  "do_not_execute": true,
+  "historical_note": "Executed once in the isolated 909 recovery base with gpt-image-1.5; superseded because the same-BV final-human contract requires gpt-image-2 provenance.",
+  "date": "2026-07-25",
+  "authority": "Ivan 2026-07-30: 909 should continue through the pipeline; repair the fragmented cover text so the white-dragon expression remains the content hook, verify Li Dousha identity, then repair the existing BV",
+  "upload_enabled": false,
+  "upload_ledger": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/reports/upload_ledger.jsonl",
+    "sha256": "8eb9d0718e0613ee571a19bd2587a22f164b3f4a159c74e48998aac3c8da9f75"
+  },
+  "repair_candidates": [
+    {
+      "candidate_id": "auto_192000_909_1014",
+      "expected_state_record_sha256": "7ace030b300388d0dd069a6fb1a87e27f8d0e2a421dbb1b21ba208ec00403a94"
+    }
+  ],
+  "invalidations": [
+    {
+      "candidate_id": "auto_192000_909_1014",
+      "expected_title": "【李豆沙】观众想让新3D永久保留“白色奶龙”表情，小李拒绝花钱",
+      "title": "【李豆沙】观众想让新3D永久保留“白色奶龙”表情，小李拒绝花钱",
+      "expected_cover_text": "“白色奶龙”表情\n小李拒绝花钱",
+      "require_rendered_text_exact": true,
+      "cover_diversity_slot": 1,
+      "media": {
+        "path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/repo/lidousha/2026-07-25/观众想让新3D永久保留“白色奶龙”表.mp4",
+        "sha256": "76cfa5d4766e1b443e005299ff665233c88b291fc87e27fc3287de56435afe25"
+      },
+      "cover": {
+        "path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/repo/lidousha/2026-07-25/观众想让新3D永久保留“白色奶龙”表.cover.png",
+        "sha256": "6b30620f490cf6ae91272d1d06205451ff9a40974326444be7a271233cc04ed6"
+      },
+      "documents": [
+        {
+          "path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/repo/lidousha/2026-07-25/观众想让新3D永久保留“白色奶龙”表.record.json",
+          "sha256": "b22773be01844d85e0ac7c03a164a3e27cb48e08b3ce11954d8186c2d2379cdf"
+        },
+        {
+          "path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/replacement_recuts/auto_192000_909_1014.record.json",
+          "sha256": "b22773be01844d85e0ac7c03a164a3e27cb48e08b3ce11954d8186c2d2379cdf"
+        },
+        {
+          "path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/replacement_recuts/auto_192000_909_1014.recut.publish.json",
+          "sha256": "91497d57132c9e5ed9ea3ee4f9e5841f23334fcbd26b5442172b8cf778e6ba54"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,211 @@
+{
+  "counts": {
+    "items": 1,
+    "song": 0,
+    "talk": 1
+  },
+  "cover_route_attestations": [
+    {
+      "candidate_id": "auto_192000_909_1014",
+      "final_cover_sha256": "sha256:57c536b218674d9cc5c3b31866d8be7c01bf1cd6dd25d68774cb91b6928976ab",
+      "method": "images.edit",
+      "reference_authority": null,
+      "reference_sha256": "sha256:e165d1ce0527470717fb3d248e6429affbdcca6276f739481ee1ce0e00ed7f68",
+      "route_decision": {
+        "actual_treatment": "cpa_redraw",
+        "alternatives": [
+          {
+            "rationale": "the selected source frame is strong enough to preserve as the final visual without image generation",
+            "rejected_reason": "the source-frame evidence is not strong or verified enough to ship without image generation; selected evidence: cover-only repair replaced a missing or invalid cover under the active title and StoryContract authority",
+            "status": "REJECTED",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rationale": "the real source moment is usable but benefits from a bounded identity-preserving cleanup",
+            "rejected_reason": "bounded cleanup cannot repair the missing subject confidence, weak composition, or inability to express the hook; selected evidence: cover-only repair replaced a missing or invalid cover under the active title and StoryContract authority",
+            "status": "REJECTED",
+            "treatment": "screenshot_polish"
+          },
+          {
+            "rationale": "cover-only repair replaced a missing or invalid cover under the active title and StoryContract authority",
+            "rejected_reason": null,
+            "status": "SELECTED",
+            "treatment": "cpa_redraw"
+          }
+        ],
+        "alternatives_considered": [
+          "screenshot_direct",
+          "screenshot_polish",
+          "cpa_redraw"
+        ],
+        "cover_mode": "repair",
+        "execution_detail": "transactional cover-only repair completed",
+        "execution_status": "READY",
+        "final_visibility_authority": "NOT_REQUIRED",
+        "final_visible_participant_ids": [],
+        "frame_emotion": null,
+        "frame_score": null,
+        "image_generation_attempted": true,
+        "image_generation_planned": true,
+        "image_generation_used": true,
+        "is_song": false,
+        "manual_title_or_full_text_contract": false,
+        "motion_dispersion_frac": null,
+        "reason": "cover-only repair replaced a missing or invalid cover under the active title and StoryContract authority",
+        "reference_authority_id": null,
+        "rejected_alternatives": [
+          {
+            "rejected_reason": "the source-frame evidence is not strong or verified enough to ship without image generation; selected evidence: cover-only repair replaced a missing or invalid cover under the active title and StoryContract authority",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rejected_reason": "bounded cleanup cannot repair the missing subject confidence, weak composition, or inability to express the hook; selected evidence: cover-only repair replaced a missing or invalid cover under the active title and StoryContract authority",
+            "treatment": "screenshot_polish"
+          }
+        ],
+        "relationship_semantic_evidence": [],
+        "relationship_visual_required": false,
+        "relationship_visual_safety_evidence": {
+          "relation_state": "UNKNOWN",
+          "required_participant_ids": [],
+          "requirement_basis": [],
+          "schema_version": "lidousha-cover-relationship-visual-safety.v1",
+          "status": "NOT_REQUIRED"
+        },
+        "required_participant_ids": [],
+        "schema_version": "lidousha-cover-route-decision.v2",
+        "selected_rationale": "cover-only repair replaced a missing or invalid cover under the active title and StoryContract authority",
+        "selected_treatment": "cpa_redraw",
+        "selection_policy": "lidousha-cover-treatment-router.v2",
+        "source_visibility_authority": "NO_IDENTITY_AUTHORITY",
+        "source_visible_participant_ids": [],
+        "subject_confident": null,
+        "verified_stream_frame": false
+      },
+      "stem": "观众想让新3D永久保留“白色奶龙”表"
+    }
+  ],
+  "created_at": "2026-07-30T08:46:23.457841+00:00",
+  "date": "2026-07-25",
+  "deployed_commit": "c66b5fac32b21e73169ebebbfc5a83b566de1272",
+  "exact_candidate_ids": [
+    "auto_192000_909_1014"
+  ],
+  "generated_by": "build_lidousha_recovery_review_manifest.v1",
+  "items": [
+    {
+      "ass_path": "观众想让新3D永久保留“白色奶龙”表.final-sapphire72.ass",
+      "ass_sha256": "sha256:42b777634c8246c7749b755fa15c93578f675002ee4478dd8e9e7c274503140d",
+      "candidate_id": "auto_192000_909_1014",
+      "chat_authority": "观众想让新3D永久保留“白色奶龙”表.chat-authority.json",
+      "clip_context": "观众想让新3D永久保留“白色奶龙”表.clip-context.json",
+      "cover": "观众想让新3D永久保留“白色奶龙”表.cover.png",
+      "cover_pre_overlay": "观众想让新3D永久保留“白色奶龙”表.cover.pre-overlay.png",
+      "cover_route_background": "观众想让新3D永久保留“白色奶龙”表.cover.route-background.png",
+      "cover_route_summary": {
+        "actual_treatment": "cpa_redraw",
+        "execution_status": "READY",
+        "final_visible_participant_ids": [],
+        "image_generation_attempted": true,
+        "image_generation_planned": true,
+        "image_generation_used": true,
+        "rejected_alternatives": [
+          {
+            "rejected_reason": "the source-frame evidence is not strong or verified enough to ship without image generation; selected evidence: cover-only repair replaced a missing or invalid cover under the active title and StoryContract authority",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rejected_reason": "bounded cleanup cannot repair the missing subject confidence, weak composition, or inability to express the hook; selected evidence: cover-only repair replaced a missing or invalid cover under the active title and StoryContract authority",
+            "treatment": "screenshot_polish"
+          }
+        ],
+        "schema_version": "lidousha-cover-route-decision.v2",
+        "selected_rationale": "cover-only repair replaced a missing or invalid cover under the active title and StoryContract authority",
+        "selected_treatment": "cpa_redraw",
+        "source_visible_participant_ids": []
+      },
+      "cover_title_mask": "观众想让新3D永久保留“白色奶龙”表.cover.title-mask.png",
+      "mp4": "观众想让新3D永久保留“白色奶龙”表.mp4",
+      "publish_json": "观众想让新3D永久保留“白色奶龙”表.publish.json",
+      "record": "观众想让新3D永久保留“白色奶龙”表.record.json",
+      "recovery_publication_authority": {
+        "aid": 117002458957829,
+        "authority_sha256": "sha256:a78ece9c0bf78847ba1b20b58f6a46ace9d9743fdb738701449bc21b0347386d",
+        "boundary_end_mode": "published_recall_anchor",
+        "bvid": "BV1s7326qEc9",
+        "candidate_id": "auto_192000_909_1014",
+        "cid": 40406289029,
+        "observed_public_title": "【李豆沙】观众想让新3D永久保留“白色奶龙”表情，小李拒绝花钱",
+        "registry_authority": "Ivan 2026-07-29/30: auto_192000_909_1014 was not rejected or acoustically blocked. Because human listening cannot establish a unique truth for the disputed fast-spoken gift phrase, use the high-probability Bilibili gift canon 粉丝团灯牌 as the reasonable deterministic truth, rerun the whole already-published clip with the latest pipeline, preserve its existing BV and verified public title, and repair the cover and any other defects. The published endpoint is a recall anchor: CPA may close the selected white-dragon story within the bounded semantic window but must not absorb the following unrelated topic.",
+        "registry_repo_path": "assets/lidousha/recovery_publication_authority_2026-07-25_909.v1.json",
+        "registry_schema_version": "lidousha-recovery-publication-authority.v1",
+        "registry_sha256": "sha256:f3424ef01374d809b9522b0ec06ce7b65953240a682fbb933dd3b91e50daf8a9",
+        "required_given_end_ms": 1014000,
+        "schema_version": "recovery-same-bv-publication-authority.v1",
+        "source_kind": "committed_verified_publication_registry",
+        "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-29-909-source/auto_192000_909_1014.public_verify.json",
+        "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+        "source_public_verify_sha256": "sha256:74e67b1125628f7ce838976b5112e7d63b8f150faad4c2dd64ef6cb90bfb85f2",
+        "source_public_verify_status": "VERIFIED_PUBLIC",
+        "title_mode": "verified_public_exact"
+      },
+      "redelivery_baseline_status": "NOT_CONFIGURED",
+      "speaker_srt": "观众想让新3D永久保留“白色奶龙”表.srt",
+      "speaker_srt_sha256": "sha256:526d80a6d659342364bea563eebacb9b24253ebcf3b15650ba5816e0ddaec299",
+      "stem": "观众想让新3D永久保留“白色奶龙”表",
+      "subtitle_regression_status": "NOT_CONFIGURED",
+      "subtitle_srt": "观众想让新3D永久保留“白色奶龙”表.srt",
+      "title": "【李豆沙】观众想让新3D永久保留“白色奶龙”表情，小李拒绝花钱",
+      "video": "观众想让新3D永久保留“白色奶龙”表.mp4"
+    }
+  ],
+  "partial_release_scope": {
+    "authority": "Ivan 2026-07-26: 没有任何纪律要求必须5个全complete才能动BV，修复时哪个好了就可以改哪个",
+    "batch_status": "review_ready",
+    "candidates": [
+      "auto_192000_909_1014"
+    ]
+  },
+  "recovery_publication_authorities_by_candidate": {
+    "auto_192000_909_1014": {
+      "aid": 117002458957829,
+      "authority_sha256": "sha256:a78ece9c0bf78847ba1b20b58f6a46ace9d9743fdb738701449bc21b0347386d",
+      "boundary_end_mode": "published_recall_anchor",
+      "bvid": "BV1s7326qEc9",
+      "candidate_id": "auto_192000_909_1014",
+      "cid": 40406289029,
+      "observed_public_title": "【李豆沙】观众想让新3D永久保留“白色奶龙”表情，小李拒绝花钱",
+      "registry_authority": "Ivan 2026-07-29/30: auto_192000_909_1014 was not rejected or acoustically blocked. Because human listening cannot establish a unique truth for the disputed fast-spoken gift phrase, use the high-probability Bilibili gift canon 粉丝团灯牌 as the reasonable deterministic truth, rerun the whole already-published clip with the latest pipeline, preserve its existing BV and verified public title, and repair the cover and any other defects. The published endpoint is a recall anchor: CPA may close the selected white-dragon story within the bounded semantic window but must not absorb the following unrelated topic.",
+      "registry_repo_path": "assets/lidousha/recovery_publication_authority_2026-07-25_909.v1.json",
+      "registry_schema_version": "lidousha-recovery-publication-authority.v1",
+      "registry_sha256": "sha256:f3424ef01374d809b9522b0ec06ce7b65953240a682fbb933dd3b91e50daf8a9",
+      "required_given_end_ms": 1014000,
+      "schema_version": "recovery-same-bv-publication-authority.v1",
+      "source_kind": "committed_verified_publication_registry",
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-29-909-source/auto_192000_909_1014.public_verify.json",
+      "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+      "source_public_verify_sha256": "sha256:74e67b1125628f7ce838976b5112e7d63b8f150faad4c2dd64ef6cb90bfb85f2",
+      "source_public_verify_status": "VERIFIED_PUBLIC",
+      "title_mode": "verified_public_exact"
+    }
+  },
+  "run_mode": "RECOVERY_REVIEW",
+  "schema_version": "lidousha-review-package.v1",
+  "selection_contract": {
+    "authority": "Ivan 2026-07-29/30: auto_192000_909_1014 was not rejected or acoustically blocked. Because human listening cannot establish a unique truth for the disputed fast-spoken gift phrase, use the high-probability Bilibili gift canon 粉丝团灯牌 as the reasonable deterministic truth, rerun the whole already-published clip with the latest pipeline, preserve its existing BV and verified public title, and repair the cover and any other defects. The published endpoint is a recall anchor: CPA may close the selected white-dragon story within the bounded semantic window but must not absorb the following unrelated topic.",
+    "candidate_ids": [
+      "auto_192000_909_1014"
+    ],
+    "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+    "schema_version": "talk-selection-contract.v1",
+    "source_state_sha256": "sha256:e443898636d17d4a40c425b32a22e954c2dc221662b67772086ff441c1e94861"
+  },
+  "status": "finished_review_package_no_upload_pending_human_review",
+  "story_contract_required": true,
+  "subtitle_visual_contract": {
+    "max_chars_per_line": 28,
+    "max_visual_lines": 2,
+    "profile": "autoslice-sapphire72"
+  },
+  "upload_allowed": false
+}

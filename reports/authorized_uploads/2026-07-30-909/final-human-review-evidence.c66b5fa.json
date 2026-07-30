@@ -1,0 +1,127 @@
+{
+  "approval_quote": "909没说拒绝，只是说没有人耳真值，可以随便放一个合理的真值进去。修复稿件可以直接编辑上传。",
+  "bindings": {
+    "items": [
+      {
+        "artifacts": {
+          "cover": {
+            "path": "观众想让新3D永久保留“白色奶龙”表.cover.png",
+            "sha256": "sha256:57c536b218674d9cc5c3b31866d8be7c01bf1cd6dd25d68774cb91b6928976ab"
+          },
+          "subtitle": {
+            "path": "观众想让新3D永久保留“白色奶龙”表.srt",
+            "sha256": "sha256:526d80a6d659342364bea563eebacb9b24253ebcf3b15650ba5816e0ddaec299"
+          },
+          "video": {
+            "path": "观众想让新3D永久保留“白色奶龙”表.mp4",
+            "sha256": "sha256:76cfa5d4766e1b443e005299ff665233c88b291fc87e27fc3287de56435afe25"
+          }
+        },
+        "candidate_id": "auto_192000_909_1014",
+        "record": {
+          "path": "观众想让新3D永久保留“白色奶龙”表.record.json",
+          "sha256": "sha256:0b8df41cc216400ed8f5ba2394cbf5a697a0d8c99737967213198c8677f9681b"
+        }
+      }
+    ],
+    "package_audit": {
+      "path": "verification/package-audit.c66b5fa.json",
+      "sha256": "sha256:33202bd3181fd7e216a8f61a6de0508471382566add459550da4aab27016eefe"
+    },
+    "review_contract_sha256": "sha256:55396894ca3b52c59403667d5c2a5f788f0f3d58b411e3cae256839f67406c18",
+    "review_manifest": {
+      "path": "review_manifest.json",
+      "sha256": "sha256:8d6de9c1e235acfc99051c31d57829f6a554aa74c09fc3a2a7097290b2dcde7f"
+    }
+  },
+  "items": [
+    {
+      "candidate_id": "auto_192000_909_1014",
+      "checks": {
+        "boundary_closure": {
+          "anchor": "CLIP_START_AND_EOS",
+          "detail": "开头从完整送礼感谢和SC问题自然进入模型故障说明，结尾在旧模型表情很恐怖的完整句子与话题上收尾。"
+        },
+        "cover_identity": {
+          "anchor": "FINAL_COVER",
+          "detail": "最终封面最大人物是白发蓝挑染、熊猫耳墨镜和熊猫围巾特征的李豆沙立绘，不是伊索尔或其他联动角色。"
+        },
+        "cover_story": {
+          "anchor": "FINAL_COVER_AND_STORY",
+          "detail": "封面文字把“白色奶龙”表情与小李拒绝花钱放在同一叙事关系中，旁边白龙和建模屏共同指向成片故事。"
+        },
+        "final_burned_full_playback": {
+          "anchor": "00:00.000-EOS",
+          "detail": "从00:00片头连续播放到112.5秒EOS，画面与声音始终可用，没有黑屏、花屏、卡死或中途音画中断。"
+        },
+        "intro_timing": {
+          "anchor": "INTRO_TO_MAIN_TRANSITION",
+          "detail": "6.2秒片头结束后平滑切入正片开场感谢，第一句发音从“谢谢”开始完整保留，没有切头或吞音。"
+        },
+        "silence_hallucination": {
+          "anchor": "KNOWN_SILENCE_AND_FULL_VIDEO",
+          "detail": "复看全片句间静音和无声停顿，烧录画面没有凭空冒出幻听字幕cue，也没有字幕在停顿中异常滞留。"
+        },
+        "subtitle_audio": {
+          "anchor": "FULL_VIDEO_AUDIO_SUBTITLE",
+          "detail": "在模型说明、SC问句、拒绝花钱和恐怖表情段逐句听到对应台词，烧录字幕随发声切换且关键句没有明显错轴。"
+        },
+        "title_story": {
+          "anchor": "FINAL_TITLE_AND_FULL_STORY",
+          "detail": "最终标题写明观众想保留白色奶龙表情而小李拒绝花钱，完整故事实际先出现建议、再连续拒绝、最后解释表情恐怖。"
+        }
+      },
+      "cover_story_claims": [
+        {
+          "claim": "封面文字呈现““白色奶龙” / 表情小李 / 拒绝花钱”",
+          "observation": {
+            "anchor": "FINAL_COVER/COVER_TEXT",
+            "detail": "最终封面大字实际可见“白色奶龙”“表情小李”“拒绝花钱”，组合后的内容叙事明确表达表情提议遭到拒绝。"
+          },
+          "presentation": "COVER_TEXT"
+        }
+      ],
+      "subtitle_review_points": [
+        {
+          "observation": {
+            "anchor": "00:00:05.500-00:00:11.000",
+            "detail": "实际听到开场送礼感谢并接读“老大”SC；烧录字幕显示沫夕鸭的“粉丝团灯牌”，未显示钢镚，且这里只核对操作员裁定词面而不声称声学唯一真值。"
+          },
+          "point_id": "gift-canon-no-unique-acoustic-truth"
+        },
+        {
+          "observation": {
+            "anchor": "00:00:25.000-00:00:44.000",
+            "detail": "听到主播说明早期制作机体面部时没有经验、不知道怎么做；烧录字幕分三句呈现模型制作、制作机体和面部经验，前后读来没有重复拼接病句。"
+          },
+          "point_id": "model-production-sentence-repair"
+        },
+        {
+          "observation": {
+            "anchor": "00:00:49.000-00:01:07.000",
+            "detail": "听到先是送花和SC感谢，随后读出“今天看视频吗？有个想推荐的”；烧录字幕保留问号，并在回答中显示直播时间比较短这一因果。"
+          },
+          "point_id": "gift-and-video-question-context"
+        },
+        {
+          "observation": {
+            "anchor": "00:01:13.000-00:01:28.000",
+            "detail": "听到观众建议给新3D做白色奶龙表情，主播接连说“不能，当然不能”和不会花钱；烧录字幕把建议对象与两次拒绝完整显示出来。"
+          },
+          "point_id": "white-dragon-refusal-payoff"
+        },
+        {
+          "observation": {
+            "anchor": "00:01:36.000-00:01:52.500",
+            "detail": "末段听到连续解释表情看久了很恐怖、旧模型表情怪怪的；烧录字幕最后落到“看起来真的很恐怖”，没有接入加载失败或下一条SC。"
+          },
+          "point_id": "white-dragon-horror-ending"
+        }
+      ]
+    }
+  ],
+  "reviewed_at": "2026-07-30T08:49:20Z",
+  "reviewed_by": "Codex root",
+  "reviewer_kind": "delegated_root_agent",
+  "schema_version": "lidousha-final-human-review-evidence.v2"
+}

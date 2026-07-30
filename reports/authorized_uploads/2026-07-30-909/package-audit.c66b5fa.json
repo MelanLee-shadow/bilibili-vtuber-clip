@@ -1,0 +1,73 @@
+{
+  "audited_inputs": [
+    {
+      "bytes": 13179,
+      "path": "review_manifest.json",
+      "sha256": "8d6de9c1e235acfc99051c31d57829f6a554aa74c09fc3a2a7097290b2dcde7f"
+    },
+    {
+      "bytes": 139085,
+      "path": "观众想让新3D永久保留“白色奶龙”表.chat-authority.json",
+      "sha256": "671cbb807b4adb47a8e624860c96a1367ee374caf572b18eb7d941de1cc91729"
+    },
+    {
+      "bytes": 34170,
+      "path": "观众想让新3D永久保留“白色奶龙”表.clip-context.json",
+      "sha256": "f85a76b89f9e18498e15ddc66b334ceadbcaa173c70a23005efc0835500d0e0c"
+    },
+    {
+      "bytes": 2844942,
+      "path": "观众想让新3D永久保留“白色奶龙”表.cover.png",
+      "sha256": "57c536b218674d9cc5c3b31866d8be7c01bf1cd6dd25d68774cb91b6928976ab"
+    },
+    {
+      "bytes": 2875565,
+      "path": "观众想让新3D永久保留“白色奶龙”表.cover.pre-overlay.png",
+      "sha256": "03ca668f70da6d08dd924c1cada2064ba5a2d3e4146d8928224a220e133fe2d3"
+    },
+    {
+      "bytes": 2875565,
+      "path": "观众想让新3D永久保留“白色奶龙”表.cover.route-background.png",
+      "sha256": "03ca668f70da6d08dd924c1cada2064ba5a2d3e4146d8928224a220e133fe2d3"
+    },
+    {
+      "bytes": 29898,
+      "path": "观众想让新3D永久保留“白色奶龙”表.cover.title-mask.png",
+      "sha256": "d9b53d1c5fa66657a961b70fd4b3c83430c194bfb141e77828ce26db5b328640"
+    },
+    {
+      "bytes": 4394,
+      "path": "观众想让新3D永久保留“白色奶龙”表.final-sapphire72.ass",
+      "sha256": "42b777634c8246c7749b755fa15c93578f675002ee4478dd8e9e7c274503140d"
+    },
+    {
+      "bytes": 35330813,
+      "path": "观众想让新3D永久保留“白色奶龙”表.mp4",
+      "sha256": "76cfa5d4766e1b443e005299ff665233c88b291fc87e27fc3287de56435afe25"
+    },
+    {
+      "bytes": 27814,
+      "path": "观众想让新3D永久保留“白色奶龙”表.publish.json",
+      "sha256": "91497d57132c9e5ed9ea3ee4f9e5841f23334fcbd26b5442172b8cf778e6ba54"
+    },
+    {
+      "bytes": 85499,
+      "path": "观众想让新3D永久保留“白色奶龙”表.record.json",
+      "sha256": "0b8df41cc216400ed8f5ba2394cbf5a697a0d8c99737967213198c8677f9681b"
+    },
+    {
+      "bytes": 3059,
+      "path": "观众想让新3D永久保留“白色奶龙”表.srt",
+      "sha256": "526d80a6d659342364bea563eebacb9b24253ebcf3b15650ba5816e0ddaec299"
+    }
+  ],
+  "auditor_source_sha256": "sha256:ee36e5720e3f50aa694f974ee0babff19a6bb8d5b9a471622af72bb7cf616497",
+  "blocking_issue_count": 0,
+  "issue_count": 0,
+  "issues": [],
+  "passed": true,
+  "policy_epoch": "2026-07-23.final-artifact-gates.v3",
+  "policy_fingerprint": "sha256:09c31d02bbb878f1a827e9db7feaf90ab1e5beac58eaa4f63312f67d17878b99",
+  "root": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/repo/lidousha/2026-07-25",
+  "schema_version": "lidousha-review-package-audit.v2"
+}
