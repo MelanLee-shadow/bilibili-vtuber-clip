@@ -67,6 +67,10 @@
   StoryContract 逐字相等，并以完整字节送入 boundary/final review；任何 12,000 字兼容切片、
   超预算或 prompt 重渲染漂移都拒发。topic resolution/scoped graph context 也必须留在同一
   digest 内。
+- 字幕回归与 reviewed-baseline 是 candidate-scoped 可选权威：producer record 中对应 audit
+  与 path 都非空时，恢复 manifest 必须要求包内 sidecar 且逐对象核对；两者都为 null 时必须
+  显式投影为 `NOT_CONFIGURED`，不得为了满足打包器而伪造“已人工审阅”基线或空 PASS。
+  audit/path 只出现一项、配置过却缺 sidecar，或包内 JSON 与 record 漂移，均 fail-closed。
   边界同理：human source endpoint 必须携带 typed `boundary_end_mode` 并与 boundary audit
   精确一致。`semantic_lower_bound` 只作为下界；`published_recall_anchor` 只把旧公开
   endpoint 作为有界重审中心，允许 CPA 在 15 秒内回剪掉未完成/换题尾巴；`exact_source_pin`

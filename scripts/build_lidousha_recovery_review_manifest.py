@@ -71,6 +71,40 @@ def _required_file(root: Path, name: str) -> Path:
     return path
 
 
+def _project_optional_audit(
+    *,
+    package_root: Path,
+    stem: str,
+    record: dict[str, Any],
+    audit_key: str,
+    audit_path_key: str,
+    suffix: str,
+) -> tuple[str, Path | None]:
+    """Project an optional producer audit without inventing authority.
+
+    The producer deliberately leaves candidate-scoped subtitle regression and
+    reviewed-baseline fields null when no canonical asset was configured.  A
+    recovery package must preserve that typed state instead of requiring a
+    made-up sidecar.  Conversely, a configured audit must have both the record
+    payload and source path, and its packaged JSON must match the record.
+    """
+
+    audit = record.get(audit_key)
+    declared_path = record.get(audit_path_key)
+    if audit is None and declared_path is None:
+        return "NOT_CONFIGURED", None
+    if not isinstance(audit, dict) or not str(declared_path or "").strip():
+        raise ManifestBuildError(
+            f"optional audit record binding is incomplete: {audit_key}"
+        )
+    artifact = _required_file(package_root, f"{stem}.{suffix}")
+    if _load_json(artifact) != audit:
+        raise ManifestBuildError(
+            f"optional audit payload differs from record: {audit_key}"
+        )
+    return "CONFIGURED", artifact
+
+
 def _record_generation(record: dict[str, Any]) -> dict[str, Any]:
     generation = record.get("cover_generation")
     if not isinstance(generation, dict):
@@ -371,8 +405,13 @@ def build_manifest(
         )
         subtitle = _required_file(package_root, f"{stem}.srt")
         clip_context = _required_file(package_root, f"{stem}.clip-context.json")
-        regression = _required_file(
-            package_root, f"{stem}.subtitle-regression.json"
+        regression_status, regression = _project_optional_audit(
+            package_root=package_root,
+            stem=stem,
+            record=record,
+            audit_key="subtitle_regression",
+            audit_path_key="subtitle_regression_audit_path",
+            suffix="subtitle-regression.json",
         )
         chat_authority = _required_file(
             package_root, f"{stem}.chat-authority.json"
@@ -498,7 +537,7 @@ def build_manifest(
             "record": record_path.name,
             "publish_json": publish.name,
             "clip_context": clip_context.name,
-            "subtitle_regression_audit": regression.name,
+            "subtitle_regression_status": regression_status,
             "chat_authority": chat_authority.name,
             "speaker_srt": speaker_srt.name,
             "speaker_srt_sha256": _sha256(speaker_srt),
@@ -509,8 +548,18 @@ def build_manifest(
         item["recovery_publication_authority"] = (
             recovery_publication_authority
         )
-        baseline = package_root / f"{stem}.redelivery-baseline.json"
-        if baseline.is_file() and not baseline.is_symlink():
+        if regression is not None:
+            item["subtitle_regression_audit"] = regression.name
+        baseline_status, baseline = _project_optional_audit(
+            package_root=package_root,
+            stem=stem,
+            record=record,
+            audit_key="redelivery_baseline",
+            audit_path_key="redelivery_baseline_audit_path",
+            suffix="redelivery-baseline.json",
+        )
+        item["redelivery_baseline_status"] = baseline_status
+        if baseline is not None:
             item["redelivery_baseline"] = baseline.name
         items.append(item)
         attestations.append(

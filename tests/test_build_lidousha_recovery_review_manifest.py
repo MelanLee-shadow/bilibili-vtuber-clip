@@ -148,6 +148,14 @@ def test_builder_reprojects_record_title_and_exact_cover_evidence(
             "publish_draft_sha256": _sha(files["publish.json"]),
         },
         "burned_preview": {"ass_path": str(ass)},
+        "subtitle_regression": {},
+        "subtitle_regression_audit_path": str(
+            files["subtitle-regression.json"]
+        ),
+        "redelivery_baseline": {},
+        "redelivery_baseline_audit_path": str(
+            files["redelivery-baseline.json"]
+        ),
     }
     record_path = root / f"{stem}.record.json"
     record_path.write_text(json.dumps(record), encoding="utf-8")
@@ -200,6 +208,79 @@ def test_builder_reprojects_record_title_and_exact_cover_evidence(
         files["speaker.srt"]
     )
     assert first["items"][0]["publish_json"] == f"{stem}.publish.json"
+    assert first["items"][0]["subtitle_regression_status"] == "CONFIGURED"
+    assert first["items"][0]["subtitle_regression_audit"] == (
+        f"{stem}.subtitle-regression.json"
+    )
+    assert first["items"][0]["redelivery_baseline_status"] == "CONFIGURED"
+    assert first["items"][0]["redelivery_baseline"] == (
+        f"{stem}.redelivery-baseline.json"
+    )
+
+    regression_bytes = files["subtitle-regression.json"].read_bytes()
+    baseline_bytes = files["redelivery-baseline.json"].read_bytes()
+    files["subtitle-regression.json"].unlink()
+    files["redelivery-baseline.json"].unlink()
+    record["subtitle_regression"] = None
+    record["subtitle_regression_audit_path"] = None
+    record["redelivery_baseline"] = None
+    record["redelivery_baseline_audit_path"] = None
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+    unconfigured = build_manifest(
+        package_root=root,
+        state=state,
+        deployed_commit="a" * 40,
+        created_at="2026-07-23T00:05:00+00:00",
+    )
+    assert unconfigured["items"][0]["subtitle_regression_status"] == (
+        "NOT_CONFIGURED"
+    )
+    assert "subtitle_regression_audit" not in unconfigured["items"][0]
+    assert unconfigured["items"][0]["redelivery_baseline_status"] == (
+        "NOT_CONFIGURED"
+    )
+    assert "redelivery_baseline" not in unconfigured["items"][0]
+
+    record["subtitle_regression"] = {}
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(
+        ManifestBuildError,
+        match="optional audit record binding is incomplete",
+    ):
+        build_manifest(
+            package_root=root,
+            state=state,
+            deployed_commit="a" * 40,
+            created_at="2026-07-23T00:06:00+00:00",
+        )
+    record["subtitle_regression_audit_path"] = str(
+        files["subtitle-regression.json"]
+    )
+    files["subtitle-regression.json"].write_text(
+        json.dumps({"status": "DRIFT"}), encoding="utf-8"
+    )
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(
+        ManifestBuildError,
+        match="optional audit payload differs from record",
+    ):
+        build_manifest(
+            package_root=root,
+            state=state,
+            deployed_commit="a" * 40,
+            created_at="2026-07-23T00:07:00+00:00",
+        )
+    files["subtitle-regression.json"].write_bytes(regression_bytes)
+    files["redelivery-baseline.json"].write_bytes(baseline_bytes)
+    record["subtitle_regression"] = {}
+    record["subtitle_regression_audit_path"] = str(
+        files["subtitle-regression.json"]
+    )
+    record["redelivery_baseline"] = {}
+    record["redelivery_baseline_audit_path"] = str(
+        files["redelivery-baseline.json"]
+    )
+    record_path.write_text(json.dumps(record), encoding="utf-8")
 
     # Ivan 2026-07-26 per-BV ruling: an explicit release scope unlocks a
     # single delivered candidate while the batch is still incomplete.
