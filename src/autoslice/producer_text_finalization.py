@@ -9,6 +9,7 @@ from .chat_authority import (
     _fragment_spoken_in,
     _strip_interjections_once,
     canonicalize_hard_meme_surfaces,
+    canonicalize_japanese_native_script_surfaces,
     normalize_chat_text,
     normalize_srt_payload_window,
 )
@@ -1554,6 +1555,24 @@ def verify_chat_authority_final_surfaces(
         audit["final_verification_failure"] = (
             "UNBYPASSABLE_HARD_MEME_SURFACE_PRESENT"
         )
+        return False
+
+    japanese_script_failures = {}
+    for surface_name, srt_text in (
+        ("final_text_srt", final_text_srt),
+        ("final_speaker_srt", final_speaker_srt),
+    ):
+        _normalized, replacements = canonicalize_japanese_native_script_surfaces(
+            srt_text
+        )
+        if replacements:
+            japanese_script_failures[surface_name] = replacements
+    audit["final_japanese_native_script_verification"] = {
+        "status": "FAIL" if japanese_script_failures else "PASS",
+        "failures": japanese_script_failures,
+    }
+    if japanese_script_failures:
+        audit["final_verification_failure"] = "JAPANESE_ROMAJI_SURFACE_PRESENT"
         return False
 
     source_owner_ok, source_owner_count = _verify_source_truth_owners(

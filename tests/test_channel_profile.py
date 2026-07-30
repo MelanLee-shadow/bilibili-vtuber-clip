@@ -102,8 +102,12 @@ def test_default_lidousha_profile_freezes_the_pre_profile_runtime_contract():
     assert profile.song_title_prefix == "【李豆沙】豆沙歌，"
     assert profile.talk_title_prefix == "【李豆沙】"
     assert [(rule.surface, rule.canonical) for rule in profile.canonical_surface_rules] == [
-        ("哇哭哇哭", "wakuwaku"),
-        ("哇库哇库", "wakuwaku"),
+        ("哇哭哇哭", "ワクワク"),
+        ("哇库哇库", "ワクワク"),
+        ("wakuwaku", "ワクワク"),
+        ("boku", "ぼく"),
+        ("ore", "おれ"),
+        ("atashi", "あたし"),
             ("直女", "侄女"),
             ("林墨", "礼墨"),
             ("粉丝灯牌", "粉丝团灯牌"),

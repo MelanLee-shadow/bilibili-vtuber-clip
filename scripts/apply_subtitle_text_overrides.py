@@ -19,7 +19,10 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from src.autoslice.chat_authority import canonicalize_hard_meme_surfaces
+from src.autoslice.chat_authority import (
+    canonicalize_hard_meme_surfaces,
+    canonicalize_japanese_native_script_surfaces,
+)
 
 
 SRT_BLOCK_RE = re.compile(
@@ -614,6 +617,10 @@ def apply_overrides(
     canonical_output: list[TextCue] = []
     for cue in output:
         canonical_text, replacements = canonicalize_hard_meme_surfaces(cue.text)
+        canonical_text, japanese_replacements = (
+            canonicalize_japanese_native_script_surfaces(canonical_text)
+        )
+        replacements.extend(japanese_replacements)
         canonical_output.append(
             TextCue(
                 cue.source_index,
@@ -638,8 +645,8 @@ def apply_overrides(
                     str(row["authority"]) for row in replacements
                 ),
                 "reason": (
-                    "profile hard-meme canon is a final output invariant "
-                    "and cannot be bypassed by a text override"
+                    "profile final-surface canon is an output invariant and "
+                    "cannot be bypassed by a text override"
                 ),
                 "replacements": replacements,
             }
@@ -653,7 +660,7 @@ def apply_overrides(
                 decisions.append(
                     {
                         "source": asdict(cue),
-                        "action": "hard_meme_canonicalize",
+                        "action": "final_surface_canonicalize",
                         "output_text": canonical_text,
                         **policy,
                     }

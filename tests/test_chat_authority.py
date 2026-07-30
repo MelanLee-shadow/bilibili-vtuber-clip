@@ -141,14 +141,25 @@ def test_v2_entity_config_keeps_aliases_under_one_canonical():
     assert all(entity.canonical != "母鸡卡" for entity in dream_group.entities)
 
 
-def test_japanese_code_switch_surface_is_canonicalized_without_timing_change():
-    source = _srt("这种哇哭哇哭的感觉")
+def test_japanese_native_script_is_canonicalized_without_timing_change():
+    from src.autoslice.chat_authority import (
+        normalize_japanese_native_script_surfaces,
+    )
 
-    output, audit = normalize_code_switch_surfaces(source)
+    source = _srt(
+        "TA要是boku，不过不是ore，应该是atashi这种",
+        "这种哇哭哇哭和wakuwaku的感觉；identity、Hime/Hina不变",
+    )
 
-    assert "这种wakuwaku的感觉" in output
+    output, audit = normalize_japanese_native_script_surfaces(source)
+
+    assert [cue.text for cue in parse_srt_cues(output)] == [
+        "TA要是ぼく，不过不是おれ，应该是あたし这种",
+        "这种ワクワク和ワクワク的感觉；identity、Hime/Hina不变",
+    ]
     assert "00:00:05,000 --> 00:00:09,000" in output
-    assert audit["repairs"][0]["authority"] == "lidousha-code-switch-canon.v1"
+    assert audit["status"] == "APPLIED"
+    assert audit["decision_authority"] == "JAPANESE_NATIVE_SCRIPT_CANON"
 
 
 def test_ordinary_speech_audio_verifier_repairs_saki_to_lixi_entity_only():

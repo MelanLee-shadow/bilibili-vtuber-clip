@@ -10,7 +10,8 @@ def test_selected_profile_static_rules_and_confusables_reach_shared_authority():
     pairs = respell_pairs()
 
     assert ("直女", "侄女") in pairs
-    assert ("哇库哇库", "wakuwaku") in pairs
+    assert ("哇库哇库", "ワクワク") in pairs
+    assert ("boku", "ぼく") in pairs
     assert ("梦现代", "梦限大") in pairs
     assert ("林墨", "礼墨") in pairs
 

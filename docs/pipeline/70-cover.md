@@ -104,10 +104,12 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   （`lidousha-cover-polish-face-verification.v2`，CPA-primary 图像见证，含吐舌检查）必须
   PASS 且 witness image hash 逐字节等于 final cover SHA；`FACE_INCOMPLETE` 先以
   face-safe contain 卡（`card_fit=contain_face_safe`，整脸装入 1640×700 卡）重排一次
-  再终判；仍失败、出现不合格表情或验证不可用时，必须拒收 AI 修图像素并自动退回
-  hash-bound 原始截图的 `screenshot_direct / READY_DEGRADED`，保留失败 witness 与
-  attempted/used 收据，不得把坏修图留给 cover-only 维护永久阻断，也不得跨路线改成
-  AI 重绘。相机窗来源（crop 证据 `camera_window_crop=true`）
+  再终判；仍失败或出现不合格表情时，必须拒收 AI 修图像素。只有原截图另行通过
+  CPA-primary 的最终成图“李豆沙为明确主体”像素门，才可退回 hash-bound
+  `screenshot_direct / READY_DEGRADED`；验证不可用或原图里李豆沙只是角落小头像时阻断并
+  排入有界重跑。保留失败 witness 与 attempted/used 收据，不得把坏修图留给 cover-only
+  维护永久阻断，也不得跨路线改成 AI 重绘。相机窗来源（crop 证据
+  `camera_window_crop=true`）
   为近全幅大脸，确定性直接走 contain 卡。包审计端同因阻断
   （`SCREENSHOT_POLISH_FACE_UNVERIFIED`）。尚未交付且停在
   `media_ready_cover_pending` 的 screenshot 路线若 proof 无效，
@@ -122,13 +124,10 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   编辑不占投稿配额）。
 - CPA redraw 的李豆沙最终身份复核若得到明确 `FINAL_HOST_IDENTITY_MISMATCH`，只允许重绘一次，
   仍不匹配就阻断；若复核本身因 CPA vision 与 AGY 后备均 quota/timeout/不可解析而不可用，
-  则禁止继续消耗生图额度，
-  也禁止放过未经核验的 AI 像素。未发布包必须保留失败回执并自动降级为 hash-bound
-  `screenshot_direct / READY_DEGRADED`；cover-only maintenance 遇到同类失败必须排入一次正常
-  producer 重跑，让完整 route/proof 链生成该降级包，而不是耗尽三次 repair 后停住。重跑生成
-  降级包后，交付证明必须按 `actual_treatment=screenshot_direct` 验源帧、帧位、标题像素与 hash；
-  不得再按最初的 `selected_treatment=cpa_redraw` 强求 `images.edit`，否则会把有效降级包误判成
-  待维修并重复消耗生图调用。
+  则禁止继续消耗生图额度，也禁止放过未经核验的 AI 像素。不能再把同一见证不可用状态下的
+  原截图当作无条件 `screenshot_direct / READY_DEGRADED` 出口：所有实际最终成图（包括 direct）
+  都必须有 hash-bound 主体 PASS。未发布包保留失败回执并排入一次正常 producer 重跑；已发布
+  稿走显式 same-BV-safe 修复。
 - **所有关系型路线**都必须有最终人物 proof。`screenshot_polish` 与 CPA/AI 因像素已被修改，
   绝不能继承 source participant 声明，必须由独立 final-pixel verifier 逐个确认双方可见、
   身份正确，并绑定最终 cover SHA；故事动作/反转若只由文字表达，必须作为 `COVER_TEXT`

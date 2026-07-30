@@ -23,6 +23,7 @@ from src.autoslice.chat_authority import (
     normalize_code_switch_surfaces,
     normalize_expected_value_surfaces,
     normalize_hard_meme_surfaces,
+    normalize_japanese_native_script_surfaces,
     reconcile_contradictory_entity_repairs,
     registered_entity_names,
     repetition_divergence_groups,
@@ -1646,6 +1647,15 @@ def _finalize_text_evidence(
             )
         foreign_script_audit["status"] = "RESOLVED_BY_SOURCE_SUBTITLE_TRUTH"
     srt_text = _post_truth_release_hygiene(srt_text, chat_authority_audit)
+    # Source/operator truth may restore an older romanized spelling. Native
+    # Japanese script is a final presentation invariant, so re-assert it after
+    # the last mutable truth/hygiene stage.
+    srt_text, japanese_native_script_audit = (
+        normalize_japanese_native_script_surfaces(srt_text)
+    )
+    chat_authority_audit["final_japanese_native_script_audit"] = (
+        japanese_native_script_audit
+    )
     # Ivan source-interval truth (authority #1) supersedes read-aloud exact
     # surfaces (authority #2) on the same cue: the guest may rephrase a danmaku
     # rather than read it verbatim (2026-07-19 HimeHina case, audio support 0).

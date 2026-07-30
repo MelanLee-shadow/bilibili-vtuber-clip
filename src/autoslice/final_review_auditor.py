@@ -532,7 +532,9 @@ _AUDIT_PROMPT = """你是李豆沙切片的终审审片员。下面是一条成�
 - entity：疑似专名/人名/作品名被写错的地方。
 - mixed_language_anomaly：中文句子中突然出现无来源支撑、且让整句失去语义的音译或
   拉丁字母碎片（例如“侄女，kowa，kowai”）。真正的日语、英语对白和正常
-  code-switch 必须保留，不能翻译；只有前后语义明显崩坏的混杂才报为 nonword/context。
+  code-switch 必须保留，不能翻译；能确认是日语的普通词/自称必须用假名或惯用日文
+  字形（ぼく、おれ、あたし、ワクワク），禁止写 boku/ore/atashi/wakuwaku；真正英语
+  和登记的官方拉丁专名保持原样。只有前后语义明显崩坏的混杂才报为 nonword/context。
 
 已知梗词与专名表（钦定写法，一律不要报）：
 {glossary}

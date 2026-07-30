@@ -104,13 +104,33 @@
     "canonical_surfaces": [
       {
         "surface": "哇哭哇哭",
-        "canonical": "wakuwaku",
-        "authority": "lidousha-code-switch-canon.v1"
+        "canonical": "ワクワク",
+        "authority": "lidousha-japanese-native-script-canon.v1"
       },
       {
         "surface": "哇库哇库",
-        "canonical": "wakuwaku",
-        "authority": "lidousha-code-switch-canon.v1"
+        "canonical": "ワクワク",
+        "authority": "lidousha-japanese-native-script-canon.v1"
+      },
+      {
+        "surface": "wakuwaku",
+        "canonical": "ワクワク",
+        "authority": "lidousha-japanese-native-script-canon.v1"
+      },
+      {
+        "surface": "boku",
+        "canonical": "ぼく",
+        "authority": "lidousha-japanese-native-script-canon.v1"
+      },
+      {
+        "surface": "ore",
+        "canonical": "おれ",
+        "authority": "lidousha-japanese-native-script-canon.v1"
+      },
+      {
+        "surface": "atashi",
+        "canonical": "あたし",
+        "authority": "lidousha-japanese-native-script-canon.v1"
       },
       {
         "surface": "直女",

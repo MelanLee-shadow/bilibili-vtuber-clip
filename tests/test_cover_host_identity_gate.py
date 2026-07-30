@@ -204,7 +204,7 @@ def test_cpa_redraw_blocks_before_ready_when_host_identity_is_wrong(
     assert generation["route_decision"]["execution_status"] == "BLOCKED"
 
 
-def test_cpa_redraw_degrades_to_source_pixels_when_identity_witness_is_down(
+def test_cpa_redraw_does_not_ship_source_pixels_when_identity_witness_is_down(
     tmp_path, monkeypatch
 ):
     from src.autoslice import publish_staging
@@ -257,8 +257,9 @@ def test_cpa_redraw_degrades_to_source_pixels_when_identity_witness_is_down(
         enforce_final_host_identity=True,
     )
 
-    assert result["status"] == "AI_COVER_READY"
-    assert image_calls == identity_calls == 1
+    assert result["status"] == "BLOCKED_AI_COVER_REQUIRED"
+    assert image_calls == 1
+    assert identity_calls == 2
     generation = result["cover_generation"]
     route = generation["route_decision"]
     assert generation["method"] == "screenshot_direct"
@@ -267,10 +268,11 @@ def test_cpa_redraw_degrades_to_source_pixels_when_identity_witness_is_down(
         "DEGRADED_TO_DIRECT_IDENTITY_WITNESS_UNAVAILABLE"
     )
     assert route["selected_treatment"] == "cpa_redraw"
-    assert route["actual_treatment"] == "screenshot_direct"
-    assert route["execution_status"] == "READY_DEGRADED"
-    assert generation["status"] == "READY_DEGRADED"
-    assert validate_cover_route_decision(generation)
+    assert route["actual_treatment"] is None
+    assert route["execution_status"] == "BLOCKED"
+    assert generation["status"] == "BLOCKED"
+    assert result["reason_codes"] == ["COVER_FINAL_HOST_IDENTITY_UNVERIFIED"]
+    assert not validate_cover_route_decision(generation)
 
 
 def test_cpa_redraw_retries_once_and_recovers_host_identity(

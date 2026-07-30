@@ -21,6 +21,8 @@ from src.autoslice.chat_evidence import (
     normalize_code_switch_surfaces as normalize_code_switch_surfaces,
     normalize_expected_value_surfaces as normalize_expected_value_surfaces,
     normalize_hard_meme_surfaces as normalize_hard_meme_surfaces,
+    normalize_japanese_native_script_surfaces as normalize_japanese_native_script_surfaces,
+    canonicalize_japanese_native_script_surfaces as canonicalize_japanese_native_script_surfaces,
     sanitize_chat_display_text as sanitize_chat_display_text,
     load_referent_groups as load_referent_groups,
     _coerce_referent_groups as _coerce_referent_groups,

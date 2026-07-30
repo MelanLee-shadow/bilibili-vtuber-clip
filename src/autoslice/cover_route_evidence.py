@@ -935,7 +935,6 @@ def validate_cover_route_decision(
         return False
     if (
         route.get("host_identity_required") is True
-        and actual in {"cpa_redraw", "screenshot_polish"}
         and not validate_final_host_identity_verification(cover_generation)
     ):
         return False

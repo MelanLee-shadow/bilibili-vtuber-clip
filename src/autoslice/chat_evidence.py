@@ -31,8 +31,10 @@ from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.surface_canon import (
     canonicalize_expected_value_surfaces as canonicalize_expected_value_surfaces,
     canonicalize_hard_meme_surfaces as canonicalize_hard_meme_surfaces,
+    canonicalize_japanese_native_script_surfaces as canonicalize_japanese_native_script_surfaces,
     normalize_expected_value_surfaces as normalize_expected_value_surfaces,
     normalize_hard_meme_surfaces as normalize_hard_meme_surfaces,
+    normalize_japanese_native_script_surfaces as normalize_japanese_native_script_surfaces,
 )
 
 

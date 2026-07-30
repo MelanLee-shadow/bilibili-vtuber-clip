@@ -9,6 +9,7 @@ stage.
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,11 @@ _HARD_MEME_SURFACE_RULES = tuple(
     if rule.authority.endswith("-hard-meme-canon.v1")
 )
 _EXPECTED_VALUE_SURFACE_RULES = expected_value_surface_rules()
+_JAPANESE_NATIVE_SCRIPT_RULES = tuple(
+    rule
+    for rule in CHANNEL_PROFILE.canonical_surface_rules
+    if rule.authority.endswith("-japanese-native-script-canon.v1")
+)
 
 
 def _partition_expected_value_surface_rules():
@@ -97,6 +103,41 @@ def canonicalize_expected_value_surfaces(
 
     eligible, _conflicts = _partition_expected_value_surface_rules()
     return _canonicalize_expected_value_surfaces_with_rules(text, eligible)
+
+
+def canonicalize_japanese_native_script_surfaces(
+    text: str,
+) -> tuple[str, list[dict[str, str | int]]]:
+    """Write known ordinary Japanese lexemes in native script, never romaji.
+
+    ASCII spellings use case-insensitive token boundaries so ``ore`` cannot
+    corrupt an English word such as ``more``. Registered official Latin proper
+    names and genuine English speech are outside this narrow rule table.
+    """
+
+    normalized = text
+    replacements: list[dict[str, str | int]] = []
+    for rule in _JAPANESE_NATIVE_SCRIPT_RULES:
+        if rule.surface.isascii():
+            pattern = re.compile(
+                rf"(?<![A-Za-z0-9_]){re.escape(rule.surface)}(?![A-Za-z0-9_])",
+                flags=re.IGNORECASE,
+            )
+            normalized, count = pattern.subn(rule.canonical, normalized)
+        else:
+            count = normalized.count(rule.surface)
+            if count:
+                normalized = normalized.replace(rule.surface, rule.canonical)
+        if count:
+            replacements.append(
+                {
+                    "surface": rule.surface,
+                    "canonical": rule.canonical,
+                    "authority": rule.authority,
+                    "count": count,
+                }
+            )
+    return normalized, replacements
 
 
 def _srt_timestamp(ms: int) -> str:
@@ -208,6 +249,50 @@ def normalize_expected_value_surfaces(
         "rule_count": len(_EXPECTED_VALUE_SURFACE_RULES),
         "eligible_rule_count": len(eligible_rules),
         "registered_name_conflicts": registered_name_conflicts,
+        "repairs": repairs,
+        "input_srt_sha256": hashlib.sha256(srt_text.encode()).hexdigest(),
+        "output_srt_sha256": hashlib.sha256(output.encode()).hexdigest(),
+    }
+
+
+def normalize_japanese_native_script_surfaces(
+    srt_text: str,
+) -> tuple[str, dict[str, Any]]:
+    """Re-assert the native-script policy without changing SRT timing."""
+
+    cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
+    texts = [cue.text for cue in cues]
+    repairs: list[dict[str, Any]] = []
+    for offset, before in enumerate(list(texts)):
+        after, replacements = canonicalize_japanese_native_script_surfaces(before)
+        if after == before:
+            continue
+        texts[offset] = after
+        repairs.append(
+            {
+                "cue_index": offset + 1,
+                "matched_start_ms": cues[offset].start_ms,
+                "matched_end_ms": cues[offset].end_ms,
+                "before": before,
+                "after": after,
+                "replacements": replacements,
+                "decision_authority": "JAPANESE_NATIVE_SCRIPT_CANON",
+            }
+        )
+    output = srt_text
+    if repairs:
+        output = "\n\n".join(
+            (
+                f"{index}\n{_srt_timestamp(cue.start_ms)} --> "
+                f"{_srt_timestamp(cue.end_ms)}\n{text.strip()}"
+            )
+            for index, (cue, text) in enumerate(zip(cues, texts), start=1)
+        ) + "\n"
+    return output, {
+        "schema_version": "japanese-native-script-surface-audit.v1",
+        "status": "APPLIED" if repairs else "NO_CHANGE",
+        "decision_authority": "JAPANESE_NATIVE_SCRIPT_CANON",
+        "rule_count": len(_JAPANESE_NATIVE_SCRIPT_RULES),
         "repairs": repairs,
         "input_srt_sha256": hashlib.sha256(srt_text.encode()).hexdigest(),
         "output_srt_sha256": hashlib.sha256(output.encode()).hexdigest(),

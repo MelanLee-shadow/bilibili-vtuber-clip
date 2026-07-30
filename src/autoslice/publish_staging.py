@@ -1351,10 +1351,9 @@ def _build_lidousha_cover_route(
                 if reference_authority is not None
                 else None
             ),
-            "host_identity_required": bool(
-                enforce_final_host_identity
-                and treatment in ("screenshot_polish", "cpa_redraw")
-            ),
+            # Final pixels own the public cover. A direct screenshot with Li
+            # Dousha only as a tiny corner avatar is not a valid host cover.
+            "host_identity_required": bool(enforce_final_host_identity),
         },
     )
     cover_generation["route_decision"] = route
@@ -1567,7 +1566,7 @@ def _stage_lidousha_ai_cover(
         and final_host_identity_verifier is None
     ):
         detail = (
-            "AI-modified cover requires an AGY source/final Li Dousha "
+            "cover requires a CPA-primary source/final Li Dousha "
             "identity verifier bound to the final cover hash"
         )
         record_cover_route_execution(
@@ -1995,8 +1994,7 @@ def _stage_screenshot_direct_cover(
             }
         )
         if (
-            method == "screenshot_polish"
-            and isinstance(route, Mapping)
+            isinstance(route, Mapping)
             and route.get("host_identity_required") is True
         ):
             if final_host_identity_verifier is None:
@@ -2023,7 +2021,7 @@ def _stage_screenshot_direct_cover(
                 cover_generation
             ):
                 detail = (
-                    "AI-polished cover final pixels do not have a PASS "
+                    "final cover pixels do not have a PASS "
                     "Li Dousha host identity verdict: "
                     + str(
                         host_identity_verification.get("reason_code")
