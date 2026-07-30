@@ -873,6 +873,7 @@ def test_exact_final_review_gate_self_heals_cpa_authorized_finding(
     subtitle = tmp_path / "candidate.recut.srt"
     original_cue = "这怎么怎么是 TTT 的头像"
     repaired_cue = "这怎么怎么是 ttt15 的头像"
+    original_sha256 = hashlib.sha256(original_cue.encode("utf-8")).hexdigest()
     subtitle.write_text(
         "1\n00:00:00,000 --> 00:00:01,000\n"
         + original_cue
@@ -882,6 +883,54 @@ def test_exact_final_review_gate_self_heals_cpa_authorized_finding(
     chat_path = tmp_path / "candidate.chat-authority.json"
     baseline_audit_path = tmp_path / "candidate.redelivery-baseline.json"
     calls: list[str] = []
+    (tmp_path / "candidate.final-review-carryover.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "final-review-carryover.v1",
+                "findings": [
+                    {
+                        "cue": 1,
+                        "base_text_sha256": original_sha256,
+                        "kind": "context",
+                        "suspect": "TTT",
+                        "proposed_full_cue": repaired_cue,
+                        "exact_release_adjudication": {
+                            "schema_version": "subtitle-span-adjudication.v1",
+                            "status": "OBSERVED",
+                            "decision_authority": "CPA_JUDGE",
+                            "repaired": True,
+                            "timing_immutable": True,
+                            "mutation_authority": {
+                                "schema_version": (
+                                    "subtitle-correction-mutation-authority.v1"
+                                ),
+                                "status": "PASS",
+                            },
+                            "request": {
+                                "schema_version": (
+                                    "subtitle-span-acoustic-check-request.v1"
+                                ),
+                                "request_sha256": "f" * 64,
+                                "base_text_sha256": original_sha256,
+                                "current_cue": original_cue,
+                                "proposed_cue": repaired_cue,
+                                "matched_start_ms": 0,
+                                "matched_end_ms": 1_000,
+                            },
+                            "witness_judge": {
+                                "judge": {
+                                    "status": "JUDGED",
+                                    "choice": "PROPOSED",
+                                }
+                            },
+                        },
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
 
     def boundary_receipt() -> dict:
         return {
@@ -942,11 +991,26 @@ def test_exact_final_review_gate_self_heals_cpa_authorized_finding(
             ),
             "boundary_semantic_review": boundary_receipt(),
             "correction_mutation_authority": mutation_audit(),
+            "correction_pass": {
+                "findings": [
+                    {
+                        "cue_index": 1,
+                        "base_text_sha256": original_sha256,
+                        "suspect": "TTT",
+                        "routed": "disclosure",
+                        "carryover_replay_remap": {
+                            "schema_version": (
+                                "final-review-carryover-remap.v1"
+                            ),
+                            "status": "PASS",
+                            "basis": "base_text_sha256",
+                        },
+                    }
+                ]
+            },
         }
         if original_cue in text:
-            base_sha256 = hashlib.sha256(
-                original_cue.encode("utf-8")
-            ).hexdigest()
+            base_sha256 = original_sha256
             return {
                 **common,
                 "status": "FLAGGED",

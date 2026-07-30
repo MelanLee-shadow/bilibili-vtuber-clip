@@ -124,7 +124,10 @@
   已有完整 exact-final CPA `PROPOSED` 闭集收据的 carryover 必须连同该收据持久化；
   下轮 exact gate 只在当前 cue 文本 SHA-256 唯一命中、起止毫秒与原请求完全相同
   时重放这份 CPA 决定，再必须跑一次 clean exact-final。文本或时间任一漂移就禁止重放，
-  继续 fail closed；这不是 carryover 自己获得 mutation authority。
+  继续 fail closed；这不是 carryover 自己获得 mutation authority。若发布 validator 因同一
+  remap 尚未消费而优先报 `FINAL_REVIEW_CARRYOVER_UNCONSUMED`，只允许由覆盖全部未消费
+  base hash 的上述 exact replay 继续 self-heal；缺一个、hash/time 漂移或只修了无关 finding
+  都仍须阻断。
 - provider 异常、JSON 不可解析、根结构错误、`findings` 缺失/null/非列表、返回项全部无效，
   都是“没有完成发现”，不是“没有发现问题”；必须 fail closed。package auditor 还会用包内
   最终 SRT 重验 v2 回执，禁止复用 correction pass 或上一轮 SRT 的回执。

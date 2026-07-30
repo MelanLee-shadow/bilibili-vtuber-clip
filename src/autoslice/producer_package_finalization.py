@@ -40,6 +40,7 @@ from src.autoslice.final_review_auditor import persist_review_audit
 from src.autoslice.final_review_contract import (
     EXACT_FINAL_CPA_SELF_HEAL_MAX_REPAIR_PASSES,
     FinalReviewContractError,
+    correction_carryover_consumed,
     validate_final_review_release,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
@@ -1093,6 +1094,43 @@ def _annotate_consumed_correction_carryovers(
         }
 
 
+def _unconsumed_correction_carryover_base_sha256(
+    audit: object,
+) -> set[str]:
+    """Return the exact remapped rows that still need a terminal decision."""
+
+    if not isinstance(audit, Mapping):
+        return set()
+    correction_pass = audit.get("correction_pass")
+    findings = (
+        correction_pass.get("findings")
+        if isinstance(correction_pass, Mapping)
+        else None
+    )
+    if not isinstance(findings, list):
+        return set()
+    pending: set[str] = set()
+    for finding in findings:
+        if not isinstance(finding, Mapping):
+            continue
+        remap = finding.get("carryover_replay_remap")
+        base_sha256 = str(finding.get("base_text_sha256") or "")
+        if (
+            isinstance(remap, Mapping)
+            and remap.get("schema_version")
+            == "final-review-carryover-remap.v1"
+            and remap.get("status") == "PASS"
+            and len(base_sha256) == 64
+            and all(
+                character in "0123456789abcdef"
+                for character in base_sha256
+            )
+            and not correction_carryover_consumed(finding)
+        ):
+            pending.add(base_sha256)
+    return pending
+
+
 def _register_exact_final_cpa_repairs(
     chat_authority_audit: dict[str, object],
     repairs: list[dict[str, object]],
@@ -1281,8 +1319,27 @@ def _run_exact_final_review_gate(
             repaired_text, repairs = _apply_exact_final_cpa_repairs(
                 final_text, audit
             )
+            repaired_base_sha256 = {
+                str(repair.get("before_sha256") or "").removeprefix(
+                    "sha256:"
+                )
+                for repair in repairs
+            }
+            unconsumed_carryover_sha256 = (
+                _unconsumed_correction_carryover_base_sha256(audit)
+            )
+            exact_replay_closes_unconsumed_carryover = bool(
+                exc.reason_code == "FINAL_REVIEW_CARRYOVER_UNCONSUMED"
+                and unconsumed_carryover_sha256
+                and unconsumed_carryover_sha256.issubset(
+                    repaired_base_sha256
+                )
+            )
             if (
-                exc.reason_code == "FINAL_REVIEW_UNRESOLVED_FINDINGS"
+                (
+                    exc.reason_code == "FINAL_REVIEW_UNRESOLVED_FINDINGS"
+                    or exact_replay_closes_unconsumed_carryover
+                )
                 and repairs
                 and pass_index < max_review_passes - 1
             ):
