@@ -1,0 +1,52 @@
+{
+  "schema_version": "cleanup-manifest.v1",
+  "date": "2026-07-30",
+  "host": "free",
+  "reason": "An isolated recovery bootstrap for auto_195000_1493_1579 incorrectly used cp -a on the production repo, which still contains repo/lidousha media. The partial copy crossed the ext4 reserved-block threshold and left ordinary autoslice processes with zero writable bytes. The failed target was removed, then only old unreferenced/regenerable preview and song-selector retry media were deleted to restore production headroom.",
+  "disk_usage": {
+    "before": "394G/394G, 0 bytes available to ordinary processes, 100%",
+    "after": "360G/394G, 31G available, 93%"
+  },
+  "deleted": [
+    {
+      "target": "/opt/bilive/autoslice/recovery/2026-07-25/auto_195000_1493_1579-single-r1",
+      "scope": "failed partial bootstrap only",
+      "observed_size": "881M",
+      "verification_before_delete": {
+        "runner_pid": "absent",
+        "runner_log": "absent",
+        "planner_receipt": "absent",
+        "state": "absent"
+      },
+      "recoverability": "No runtime result existed. The target was recreated from the managed deployment components and exact source bindings."
+    },
+    {
+      "target": "/opt/bilive/autoslice/preview",
+      "scope": "235 files from 2026-07-09 through 2026-07-10",
+      "bytes": 2357161984,
+      "verification_before_delete": {
+        "internal_symlinks": 0,
+        "external_symlinks": 0,
+        "references_in_reports_repo_delivery_recovery_or_state": 0
+      },
+      "recoverability": "Old manual/diarization previews; regenerable from retained source recordings. The empty preview directory was recreated."
+    },
+    {
+      "target": [
+        "/opt/bilive/autoslice/out/2026-07-18/*/song_selector_full/**/*.mp4",
+        "/opt/bilive/autoslice/out/2026-07-19/*/song_selector_full/**/*.mp4"
+      ],
+      "scope": "124 MP4 files inside old full-song selector retry trees only",
+      "bytes": 33644532601,
+      "recoverability": "Repeated input/source-context/preview media; regenerable from retained source recordings."
+    }
+  ],
+  "preserved": [
+    "all source recordings",
+    "all JSON, SRT, ASS and adjudication records in the 2026-07-18 and 2026-07-19 selector trees",
+    "all song-root final media outside song_selector_full",
+    "all existing published/recovery evidence",
+    "the active 2026-07-22 through 2026-07-29 output set"
+  ],
+  "follow_up": "Generic isolated recovery bootstrap must copy only scripts, src, assets, profiles, .agent, docs, cleanup_manifests, AGENTS.md, README.md and DEPLOYED_COMMIT; bind exactly one recording date; copy the exact regular-file BCUT authority needed by the planner; never copy repo/lidousha, reports or generated media wholesale."
+}
