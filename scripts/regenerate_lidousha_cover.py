@@ -264,9 +264,35 @@ def regenerate_cover(
         "final_cover_sha256": "sha256:" + _sha256(out_path),
         **overlay,
     }
+    from src.autoslice.cover_host_identity_gate import (
+        validate_final_host_identity_verification,
+        verify_lidousha_final_host_identity,
+    )
+
+    if reference_path is None:
+        raise SystemExit("FINAL_HOST_IDENTITY_REFERENCE_MISSING")
+    meta["final_host_identity_verification"] = (
+        verify_lidousha_final_host_identity(
+            final_cover_path=out_path,
+            final_cover_sha256=meta["final_cover_sha256"],
+            reference_path=reference_path,
+            base_url=base_url,
+            api_key=api_key,
+        )
+    )
     out_path.with_suffix(".cover_generation.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+    if not validate_final_host_identity_verification(meta):
+        verification = meta["final_host_identity_verification"]
+        raise SystemExit(
+            "COVER_FINAL_HOST_IDENTITY_UNVERIFIED: "
+            + str(
+                verification.get("reason_code")
+                or verification.get("detail")
+                or "FAIL"
+            )
+        )
     return meta
 
 

@@ -114,6 +114,13 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   绝不能继承 source participant 声明，必须由独立 final-pixel verifier 逐个确认双方可见、
   身份正确，并绑定最终 cover SHA；故事动作/反转若只由文字表达，必须作为 `COVER_TEXT`
   单独验收，不能要求或声称画面里存在。没有 verifier 或声明表现面不明确就阻断。
+- 所有 `cpa_redraw` 与实际采用 AI 像素的 `screenshot_polish` 还必须通过独立的
+  `lidousha-cover-final-host-identity-verification.v1`：AGY 只看 hash-bound 的
+  SOURCE/FINAL 对照图，先在源图按名牌与当场造型定位李豆沙，再确认最终封面的最大叙事主体
+  仍是李豆沙。给伊索尔等其他参与者补熊猫耳、白发或熊猫元素不能算身份正确；主角与任一
+  其他源人物更匹配、无法定位源人物、AGY 不可用、回执不可解析或 hash 不一致都必须阻断。
+  CPA 是纯文字模型，不得伪装成这项图像证据。该门独立于 `relation_state`，因此会话关系
+  ledger 漏记也不能让多人物参考图绕过主播身份复核。
 - 任一路线在最终像素、文字、安全区、人物关系或 route evidence 上失败都 fail closed，不得跨路线
   静默降级。双人联动要求双方在 hash-bound source reference 中真实可见；没有 counterpart
   reference 时禁止凭描述画第二位。

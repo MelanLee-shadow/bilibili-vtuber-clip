@@ -16,6 +16,9 @@ from src.autoslice.cover_title_rendering import (
     FEED_SAFE_X1,
     render_spec_sha256,
 )
+from src.autoslice.cover_host_identity_gate import (
+    validate_final_host_identity_verification,
+)
 
 
 ROUTE_SCHEMA_V1 = "lidousha-cover-route-decision.v1"
@@ -812,6 +815,11 @@ def validate_cover_route_decision(
     ):
         if not isinstance(route.get(key), bool):
             return False
+    if (
+        "host_identity_required" in route
+        and not isinstance(route.get("host_identity_required"), bool)
+    ):
+        return False
     expected_planned = selected in {"screenshot_polish", "cpa_redraw"}
     if route.get("image_generation_planned") is not expected_planned:
         return False
@@ -924,6 +932,12 @@ def validate_cover_route_decision(
     used = route.get("image_generation_used") is True
     attempted = route.get("image_generation_attempted") is True
     if used and not attempted:
+        return False
+    if (
+        route.get("host_identity_required") is True
+        and actual in {"cpa_redraw", "screenshot_polish"}
+        and not validate_final_host_identity_verification(cover_generation)
+    ):
         return False
     if relationship_required and (
         not validate_final_participant_verification(cover_generation)

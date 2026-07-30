@@ -704,6 +704,10 @@ def _stage_lidousha_ai_cover(
 ) -> dict[str, object]:
     """Compatibility seam for patched CPA image-edit adapters."""
 
+    from src.autoslice.cover_host_identity_gate import (
+        verify_lidousha_final_host_identity,
+    )
+
     return _stage_lidousha_ai_cover_impl(
         materialized_recut,
         media_path=media_path,
@@ -713,6 +717,8 @@ def _stage_lidousha_ai_cover(
         run_ffmpeg=run_ffmpeg,
         art_direction_llm_call=art_direction_llm_call,
         image_edit=_call_cpa_image_edit,
+        final_host_identity_verifier=verify_lidousha_final_host_identity,
+        enforce_final_host_identity=run_ffmpeg,
         punch_allowed=punch_allowed,
         diversity_slot=diversity_slot,
     )

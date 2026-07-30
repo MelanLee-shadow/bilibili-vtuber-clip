@@ -48,6 +48,9 @@ from .cover_route_evidence import (
     story_participant_ids,
     validate_final_participant_verification,
 )
+from .cover_host_identity_gate import (
+    validate_final_host_identity_verification,
+)
 from .cover_polish_gate import (
     _compose_screenshot_cover_with_face_gate,
     _degrade_rejected_polish_to_direct,
@@ -819,6 +822,9 @@ def _stage_cpa_redraw_cover(
     final_participant_verifier: (
         Callable[..., Mapping[str, object]] | None
     ),
+    final_host_identity_verifier: (
+        Callable[..., Mapping[str, object]] | None
+    ),
     base_url: str,
     api_key: str,
 ) -> dict[str, object]:
@@ -1020,6 +1026,58 @@ def _stage_cpa_redraw_cover(
         }
     )
     route = cover_generation.get("route_decision")
+    if (
+        isinstance(route, Mapping)
+        and route.get("host_identity_required") is True
+    ):
+        assert final_host_identity_verifier is not None
+        try:
+            cover_generation["final_host_identity_verification"] = dict(
+                final_host_identity_verifier(
+                    final_cover_path=final_cover_path,
+                    final_cover_sha256=cover_generation[
+                        "final_cover_sha256"
+                    ],
+                    reference_path=reference_path,
+                    base_url=base_url,
+                    api_key=api_key,
+                )
+            )
+        except Exception as exc:
+            cover_generation["final_host_identity_verification"] = {
+                "status": "FAIL",
+                "reason_code": "HOST_IDENTITY_VERIFIER_EXCEPTION",
+                "detail": f"{type(exc).__name__}: {exc}",
+            }
+        if not validate_final_host_identity_verification(cover_generation):
+            verification = cover_generation.get(
+                "final_host_identity_verification"
+            )
+            detail = (
+                "AI cover final pixels do not have a PASS Li Dousha host "
+                "identity verdict: "
+                + str(
+                    (
+                        verification
+                        if isinstance(verification, Mapping)
+                        else {}
+                    ).get("reason_code")
+                    or "VERIFICATION_MISSING"
+                )
+            )
+            record_cover_route_execution(
+                cover_generation,
+                actual_treatment=None,
+                execution_status="BLOCKED",
+                image_generation_attempted=True,
+                image_generation_used=True,
+                detail=detail,
+            )
+            return _blocked_ai_cover_result(
+                cover_generation,
+                ["COVER_FINAL_HOST_IDENTITY_UNVERIFIED"],
+                detail,
+            )
     relationship_visual_required = relationship_visual_safety_required(
         story_contract,
         route_decision=route,
@@ -1113,6 +1171,7 @@ def _build_lidousha_cover_route(
     punch_allowed: bool,
     frame_selection: Mapping[str, object] | None,
     reference_authority: Mapping[str, object] | None,
+    enforce_final_host_identity: bool = False,
 ) -> tuple[str, dict[str, object]]:
     """Build the semantic-first route record before any cover materialization."""
 
@@ -1183,6 +1242,10 @@ def _build_lidousha_cover_route(
                 if reference_authority is not None
                 else None
             ),
+            "host_identity_required": bool(
+                enforce_final_host_identity
+                and treatment in ("screenshot_polish", "cpa_redraw")
+            ),
         },
     )
     cover_generation["route_decision"] = route
@@ -1209,6 +1272,10 @@ def _stage_lidousha_ai_cover(
     final_participant_verifier: (
         Callable[..., Mapping[str, object]] | None
     ) = None,
+    final_host_identity_verifier: (
+        Callable[..., Mapping[str, object]] | None
+    ) = None,
+    enforce_final_host_identity: bool = False,
     punch_allowed: bool = False,
     diversity_slot: int | None = None,
 ) -> dict[str, object]:
@@ -1331,6 +1398,7 @@ def _stage_lidousha_ai_cover(
         punch_allowed=punch_allowed,
         frame_selection=frame_selection,
         reference_authority=reference_authority,
+        enforce_final_host_identity=enforce_final_host_identity,
     )
     if reference_authority is not None and treatment != reference_authority.get(
         "required_treatment"
@@ -1403,8 +1471,30 @@ def _stage_lidousha_ai_cover(
             polish=(treatment == "screenshot_polish"),
             image_edit=image_edit,
             final_participant_verifier=final_participant_verifier,
+            final_host_identity_verifier=final_host_identity_verifier,
             base_url=base_url,
             api_key=api_key,
+        )
+    if (
+        route.get("host_identity_required") is True
+        and final_host_identity_verifier is None
+    ):
+        detail = (
+            "AI-modified cover requires an AGY source/final Li Dousha "
+            "identity verifier bound to the final cover hash"
+        )
+        record_cover_route_execution(
+            cover_generation,
+            actual_treatment=None,
+            execution_status="BLOCKED",
+            image_generation_attempted=False,
+            image_generation_used=False,
+            detail=detail,
+        )
+        return _blocked_ai_cover_result(
+            cover_generation,
+            ["COVER_FINAL_HOST_IDENTITY_VERIFIER_REQUIRED"],
+            detail,
         )
     if relationship_visual_required and final_participant_verifier is None:
         detail = (
@@ -1459,6 +1549,7 @@ def _stage_lidousha_ai_cover(
         cover_generation=cover_generation,
         image_edit=image_edit,
         final_participant_verifier=final_participant_verifier,
+        final_host_identity_verifier=final_host_identity_verifier,
         base_url=base_url,
         api_key=api_key,
     )
@@ -1666,6 +1757,9 @@ def _stage_screenshot_direct_cover(
     final_participant_verifier: (
         Callable[..., Mapping[str, object]] | None
     ) = None,
+    final_host_identity_verifier: (
+        Callable[..., Mapping[str, object]] | None
+    ) = None,
     base_url: str = "",
     api_key: str = "",
 ) -> dict[str, object]:
@@ -1796,6 +1890,55 @@ def _stage_screenshot_direct_cover(
                 **overlay,
             }
         )
+        if (
+            method == "screenshot_polish"
+            and isinstance(route, Mapping)
+            and route.get("host_identity_required") is True
+        ):
+            if final_host_identity_verifier is None:
+                host_identity_verification: Mapping[str, object] = {
+                    "status": "FAIL",
+                    "reason_code": "HOST_IDENTITY_VERIFIER_MISSING",
+                }
+            else:
+                host_identity_verification = dict(
+                    final_host_identity_verifier(
+                        final_cover_path=final_cover_path,
+                        final_cover_sha256=cover_generation[
+                            "final_cover_sha256"
+                        ],
+                        reference_path=reference_path,
+                        base_url=base_url,
+                        api_key=api_key,
+                    )
+                )
+            cover_generation["final_host_identity_verification"] = dict(
+                host_identity_verification
+            )
+            if not validate_final_host_identity_verification(
+                cover_generation
+            ):
+                detail = (
+                    "AI-polished cover final pixels do not have a PASS "
+                    "Li Dousha host identity verdict: "
+                    + str(
+                        host_identity_verification.get("reason_code")
+                        or "VERIFICATION_MISSING"
+                    )
+                )
+                record_cover_route_execution(
+                    cover_generation,
+                    actual_treatment=None,
+                    execution_status="BLOCKED",
+                    image_generation_attempted=polish_attempted,
+                    image_generation_used=True,
+                    detail=detail,
+                )
+                return _blocked_ai_cover_result(
+                    cover_generation,
+                    ["COVER_FINAL_HOST_IDENTITY_UNVERIFIED"],
+                    detail,
+                )
         polish_face_detail = _polish_face_binding_failure(
             cover_generation, face_verification, method
         )

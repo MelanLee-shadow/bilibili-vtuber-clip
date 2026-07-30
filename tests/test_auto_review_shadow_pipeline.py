@@ -2888,6 +2888,7 @@ def test_publish_staging_blocks_without_cpa_ai_cover_and_never_extracts_frame_co
 
 def test_publish_staging_records_cpa_ai_cover_chain_and_embedded_title(tmp_path, monkeypatch):
     from PIL import Image
+    from src.autoslice import cover_host_identity_gate
 
     media_path = _write_valid_source_video(tmp_path / "recuts" / "lidousha-song.mp4", duration_seconds=2.0)
     subtitle_path = _write(tmp_path / "recuts" / "lidousha-song.srt", "1\n00:00:00,000 --> 00:00:01,000\n唱歌\n")
@@ -2902,6 +2903,30 @@ def test_publish_staging_records_cpa_ai_cover_chain_and_embedded_title(tmp_path,
         return {"status": "AI_BACKGROUND_READY", "output_path": str(output_path)}
 
     monkeypatch.setattr(shadow_pipeline, "_call_cpa_image_edit", fake_cpa_image_edit)
+
+    def fake_host_identity_verifier(*, final_cover_sha256: str, **_kwargs):
+        comparison_hash = "a" * 64
+        return {
+            "schema_version": (
+                "lidousha-cover-final-host-identity-verification.v1"
+            ),
+            "authority": (
+                "AGY_HASH_BOUND_SOURCE_FINAL_IDENTITY_COMPARISON"
+            ),
+            "status": "PASS",
+            "final_cover_sha256": final_cover_sha256,
+            "comparison_sha256": "sha256:" + comparison_hash,
+            "witness": {
+                "status": "OBSERVED",
+                "image_sha256": comparison_hash,
+            },
+        }
+
+    monkeypatch.setattr(
+        cover_host_identity_gate,
+        "verify_lidousha_final_host_identity",
+        fake_host_identity_verifier,
+    )
 
     record = shadow_pipeline._stage_publish_draft(
         {
