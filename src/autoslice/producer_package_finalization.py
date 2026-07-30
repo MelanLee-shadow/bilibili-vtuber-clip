@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -836,7 +837,7 @@ def _resolve_deferred_foreign_introductions_after_redelivery(
     for row in baseline_audit.get("mappings") or []:
         if not isinstance(row, Mapping):
             continue
-        _canonical_text, replacements = (
+        canonical_text, _replacements = (
             canonicalize_japanese_native_script_surfaces(
                 str(row.get("text") or "")
             )
@@ -855,11 +856,7 @@ def _resolve_deferred_foreign_introductions_after_redelivery(
                 "baseline_cue_index": baseline_cue_index,
                 "output_cue_index": output_cue_index,
                 "authorized_native_script_surfaces": sorted(
-                    {
-                        str(replacement.get("canonical") or "")
-                        for replacement in replacements
-                        if str(replacement.get("canonical") or "")
-                    }
+                    set(re.findall(r"[ぁ-ゖァ-ヺー]{2,}", canonical_text))
                 ),
                 "local_windows": [
                     {

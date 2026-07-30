@@ -2228,6 +2228,12 @@ def test_redelivery_baseline_owns_native_script_canon_and_cut_context() -> None:
                 "end_ms": 26_200,
                 "attempted": "我想下ぼく怎么翻译",
             },
+            {
+                "cue_index": 39,
+                "start_ms": 130_130,
+                "end_ms": 131_890,
+                "attempted": "おら翻译成老子吗",
+            },
         ],
     }
     baseline_audit = {
@@ -2251,11 +2257,20 @@ def test_redelivery_baseline_owns_native_script_canon_and_cut_context() -> None:
                 "end_ms": 16_410,
                 "text": "我想下boku怎么翻译",
             },
+            {
+                "mapping_kind": "exact_reviewed_interval_replay",
+                "baseline_cue_index": 36,
+                "output_cue_index": 36,
+                "start_ms": 120_340,
+                "end_ms": 122_100,
+                "text": "おら翻译成老子吗",
+            },
         ],
     }
     final_text = (
         "1\n00:00:08,220 --> 00:00:09,620\nTA要是ぼく\n\n"
-        "2\n00:00:13,950 --> 00:00:16,410\n我想下ぼく怎么翻译\n"
+        "2\n00:00:13,950 --> 00:00:16,410\n我想下ぼく怎么翻译\n\n"
+        "3\n00:02:00,340 --> 00:02:02,100\nおら翻译成老子吗\n"
     )
 
     resolved = (
@@ -2282,3 +2297,7 @@ def test_redelivery_baseline_owns_native_script_canon_and_cut_context() -> None:
         "redelivery-baseline-cue-4"
     ]
     assert findings[2]["witnessed_surfaces"] == ["ぼく"]
+    assert findings[3]["witnessed_surfaces"] == ["おら"]
+    assert findings[3]["positive_witness_authority_ids"] == [
+        "redelivery-baseline-cue-36"
+    ]
