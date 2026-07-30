@@ -416,6 +416,23 @@
           "expectation": "整片前59秒所有指向该粉丝队的称呼都必须写成玩梗专名“沙豆李”，不得残留声学近音“下斗里”或把队名误写成普通短语“杀队友”；随后发0/2支持李豆沙的对照关系也必须完整。"
         }
       ]
+    },
+    {
+      "candidate_id": "auto_142942_496_618",
+      "subtitle_review_points": [
+        {
+          "point_id": "japanese-native-script-whole-clip",
+          "final_video_start_ms": 0,
+          "final_video_end_ms": 136000,
+          "expectation": "整片中能确认是李豆沙所说的日语普通词、自称和短句必须使用假名或惯用日文原形；ぼく、おれ、あたし、おら、わたくし等不得与 boku、ore、atashi、ora、watakushi 等罗马音混用，真正英语 identity 保持不变。"
+        },
+        {
+          "point_id": "ora-watakushi-complete-ending",
+          "final_video_start_ms": 122000,
+          "final_video_end_ms": 136000,
+          "expectation": "结尾必须依次保留“おら翻译成老子吗”“わたくし翻译的话就是大小姐”“大小姐说了”，不得把假名改回罗马音、漏掉末句或在话中截断。"
+        }
+      ]
     }
   ]
 }
