@@ -9,6 +9,7 @@ Every result is hash-bound; uncertainty fails closed in the caller.
 
 from __future__ import annotations
 
+import base64
 import datetime as dt
 import hashlib
 import json
@@ -16,6 +17,9 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
@@ -25,8 +29,22 @@ from scripts.gemini_slice_jingting import (
     strip_markdown_fence,
     timely_terms_context,
 )
+from src.autoslice import gemini_backup_policy
+from src.autoslice.llm_client import extract_json_object
+
 ENTITY_AUDIO_MODEL = "Gemini 3.6 Flash (High)"
 ENTITY_AUDIO_TIMEOUT = "10m"
+
+# AGY remains the preferred high-confidence audio witness.  Direct Gemini API
+# is a bounded availability fallback for candidate-blind witness requests only;
+# it never sees current/proposed text and can never authorize a mutation.
+GEMINI_API_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/models/"
+    "{model}:generateContent"
+)
+ENTITY_AUDIO_API_MODEL_ENV = "ENTITY_AUDIO_GEMINI_API_MODEL"
+ENTITY_AUDIO_API_MODEL_DEFAULT = "gemini-3.6-flash"
+ENTITY_AUDIO_API_REQUEST_MAX_BYTES = 20_000_000
 
 # Phase 1 acoustic-witness architecture (Ivan 2026-07-25 ruling): the audio
 # model is a WITNESS, not a judge. In witness mode it never sees any
@@ -85,6 +103,7 @@ def _uncertain(request: Mapping[str, Any], reason: str, detail: str = "") -> dic
 def _witness_prompt(
     *,
     recording_date: str,
+    delivery_mode: str = "agy",
     target_audio_start_ms: int | None,
     target_audio_end_ms: int | None,
 ) -> str:
@@ -92,14 +111,24 @@ def _witness_prompt(
     no adjacent transcript, and no glossary — anything textual would prime
     the dictation. The witness reports suspected pinyin only."""
 
-    source_line = (
-        "Use only `input.mp4` in this job directory. Its frames are deliberately black:\n"
-        "there is no viewer chat, subtitle, title card, or other visual text to copy."
-    )
-    output_head = "Write `verdict.json` as JSON only:"
-    output_tail = (
-        "No markdown fences, no other files, no shell, terminal, browser, web, or search."
-    )
+    if delivery_mode == "gemini_api":
+        source_line = (
+            "Use only the attached audio clip. There is no viewer chat, subtitle,\n"
+            "title card, or other visual text to consult."
+        )
+        output_head = (
+            "Reply with exactly one JSON object (no markdown fences, no other text):"
+        )
+        output_tail = ""
+    else:
+        source_line = (
+            "Use only `input.mp4` in this job directory. Its frames are deliberately black:\n"
+            "there is no viewer chat, subtitle, title card, or other visual text to copy."
+        )
+        output_head = "Write `verdict.json` as JSON only:"
+        output_tail = (
+            "No markdown fences, no other files, no shell, terminal, browser, web, or search."
+        )
     return f"""# Raw-audio dictation witness (Mandarin livestream)
 
 {source_line}
@@ -284,6 +313,124 @@ def _classify_agy_failure(returncode: int, stdout: str, stderr: str) -> str:
     return f"AGY_FAILED_RC_{returncode}"
 
 
+def _configured_free_keys() -> list[str]:
+    """Return distinct configured free keys without ever logging values."""
+
+    return list(
+        dict.fromkeys(
+            value
+            for name in (
+                "GEMINI_API_KEY",
+                "GEMINI_API_KEY_2",
+                "GEMINI_API_KEY_3",
+            )
+            if (value := os.environ.get(name))
+        )
+    )
+
+
+def _api_failure_category(exc: Exception) -> str:
+    status = getattr(exc, "code", None)
+    if status == 429:
+        return "GEMINI_API_QUOTA_EXHAUSTED"
+    if status in {401, 403}:
+        return "GEMINI_API_AUTH_FAILED"
+    if isinstance(exc, (TimeoutError, subprocess.TimeoutExpired)):
+        return "GEMINI_API_TIMEOUT"
+    if isinstance(exc, (json.JSONDecodeError, ValueError)):
+        return "GEMINI_API_INVALID_OUTPUT"
+    return "GEMINI_API_REQUEST_FAILED"
+
+
+def _entity_api_model() -> str:
+    return (
+        os.environ.get(ENTITY_AUDIO_API_MODEL_ENV)
+        or ENTITY_AUDIO_API_MODEL_DEFAULT
+    )
+
+
+def _gemini_api_observe_witness(
+    *, audio_path: Path, prompt: str, key: str, model: str
+) -> str:
+    """One inline-audio Gemini request; the key exists only in its header."""
+
+    audio_b64 = base64.b64encode(audio_path.read_bytes()).decode("ascii")
+    body = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt},
+                    {
+                        "inline_data": {
+                            "mime_type": "audio/mpeg",
+                            "data": audio_b64,
+                        }
+                    },
+                ]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 65_536,
+            "responseMimeType": "application/json",
+            "thinkingConfig": {
+                "thinkingLevel": os.environ.get(
+                    "ENTITY_GEMINI_THINKING_LEVEL", "low"
+                )
+            },
+        },
+    }
+
+    def post(request_body: dict[str, Any]) -> dict[str, Any]:
+        request_bytes = json.dumps(
+            request_body, ensure_ascii=False
+        ).encode("utf-8")
+        if len(request_bytes) > ENTITY_AUDIO_API_REQUEST_MAX_BYTES:
+            raise RuntimeError("GEMINI_API_REQUEST_TOO_LARGE")
+        request = urllib.request.Request(
+            GEMINI_API_URL.format(
+                model=urllib.parse.quote(model, safe="")
+            ),
+            data=request_bytes,
+            headers={
+                "content-type": "application/json",
+                "x-goog-api-key": key,
+            },
+        )
+        try:
+            timeout_seconds = int(
+                os.environ.get("ENTITY_GEMINI_API_TIMEOUT_SECONDS", "180")
+            )
+        except ValueError:
+            timeout_seconds = 180
+        with urllib.request.urlopen(
+            request, timeout=min(600, max(30, timeout_seconds))
+        ) as response:
+            return json.load(response)
+
+    try:
+        payload = post(body)
+    except urllib.error.HTTPError as exc:
+        if exc.code != 400:
+            raise
+        degraded = json.loads(json.dumps(body))
+        degraded["generationConfig"].pop("thinkingConfig", None)
+        payload = post(degraded)
+    candidates = payload.get("candidates") if isinstance(payload, dict) else None
+    candidate = candidates[0] if isinstance(candidates, list) and candidates else None
+    content = candidate.get("content") if isinstance(candidate, dict) else None
+    parts = content.get("parts") if isinstance(content, dict) else None
+    if not isinstance(parts, list):
+        return ""
+    return strip_markdown_fence(
+        "".join(
+            str(part.get("text") or "")
+            for part in parts
+            if isinstance(part, dict)
+        )
+    )
+
+
 @dataclass(frozen=True)
 class _EntityProviderOutcome:
     observed: Any
@@ -420,6 +567,7 @@ def _observe_entity_audio(
     *,
     request: Mapping[str, Any],
     candidates: list[Any],
+    audio_path: Path,
     job_dir: Path,
     recording_date: str,
     timely_context: str,
@@ -427,7 +575,7 @@ def _observe_entity_audio(
     model: str,
     timeout: str,
 ) -> _EntityProviderOutcome:
-    """Run the sole production audio provider: sandboxed AGY."""
+    """Run preferred AGY, then bounded direct API for blind witnesses."""
 
     candidate_rows = [dict(row) for row in candidates if isinstance(row, dict)]
     witness_mode = request.get("schema_version") == WITNESS_REQUEST_SCHEMA
@@ -441,6 +589,7 @@ def _observe_entity_audio(
     if witness_mode:
         prompt = _witness_prompt(
             recording_date=recording_date,
+            delivery_mode="agy",
             target_audio_start_ms=request.get("target_audio_start_ms"),
             target_audio_end_ms=request.get("target_audio_end_ms"),
         )
@@ -529,6 +678,144 @@ def _observe_entity_audio(
                         "error_type": type(exc).__name__,
                     }
                 )
+
+    if observed is None and witness_mode:
+        provider = "gemini_api"
+        model_used = _entity_api_model()
+        api_audio_path = job_dir / "input.gemini-api.mp3"
+        api_prompt_path = job_dir / "prompt.gemini-api.md"
+        api_response_path = job_dir / "verdict.gemini-api.raw.json"
+        extract = subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(audio_path),
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-b:a",
+                "64k",
+                str(api_audio_path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        if extract.returncode != 0 or not api_audio_path.is_file():
+            provider_failures.append(
+                {
+                    "provider": "gemini_api",
+                    "category": "GEMINI_API_AUDIO_EXTRACTION_FAILED",
+                }
+            )
+        else:
+            api_prompt = _witness_prompt(
+                recording_date=recording_date,
+                delivery_mode="gemini_api",
+                target_audio_start_ms=request.get("target_audio_start_ms"),
+                target_audio_end_ms=request.get("target_audio_end_ms"),
+            )
+            api_prompt_path.write_text(api_prompt, encoding="utf-8")
+
+            def attempt_api_key(
+                attempt_key: str, *, key_tier: str
+            ) -> bool:
+                nonlocal observed, accepted_key_tier
+                try:
+                    raw = _gemini_api_observe_witness(
+                        audio_path=api_audio_path,
+                        prompt=api_prompt,
+                        key=attempt_key,
+                        model=model_used,
+                    )
+                    api_response_path.write_text(
+                        (raw or "")
+                        if (raw or "").endswith("\n")
+                        else (raw or "") + "\n",
+                        encoding="utf-8",
+                    )
+                    if not raw or len(raw.encode("utf-8")) > 2_000_000:
+                        raise ValueError(
+                            "empty or oversized Gemini API output"
+                        )
+                    observed = extract_json_object(raw)
+                    accepted_key_tier = key_tier
+                    return True
+                except Exception as exc:
+                    provider_failures.append(
+                        {
+                            "provider": "gemini_api",
+                            "key_tier": key_tier,
+                            "model": model_used,
+                            "category": _api_failure_category(exc),
+                            "error_type": type(exc).__name__,
+                        }
+                    )
+                    return False
+
+            item_key = _sha256(api_audio_path)
+            round_start = len(provider_failures)
+            for key in _configured_free_keys():
+                if attempt_api_key(
+                    key, key_tier=gemini_backup_policy.FREE_KEY_TIER
+                ):
+                    break
+            quota_fastpath = False
+            if observed is None:
+                gemini_backup_policy.record_free_chain_failure(item_key)
+                round_categories = [
+                    row.get("category")
+                    for row in provider_failures[round_start:]
+                    if row.get("provider") == "gemini_api"
+                ]
+                quota_fastpath = gemini_backup_policy.quota_exhausted_round(
+                    round_categories
+                )
+            if observed is None:
+                if quota_fastpath:
+                    allowed, gate_reason = (
+                        gemini_backup_policy.paid_attempt_allowed(
+                            item_key,
+                            prior_strikes=(
+                                gemini_backup_policy.MIN_FREE_CHAIN_STRIKES
+                            ),
+                        )
+                    )
+                    gate_reason = f"QUOTA_FASTPATH:{gate_reason}"
+                else:
+                    allowed, gate_reason = (
+                        gemini_backup_policy.paid_attempt_allowed(item_key)
+                    )
+                if allowed and attempt_api_key(
+                    str(gemini_backup_policy.paid_backup_key()),
+                    key_tier=gemini_backup_policy.PAID_KEY_TIER,
+                ):
+                    paid_policy_stamp = gemini_backup_policy.record_paid_use(
+                        item_key, purpose="candidate_blind_audio_witness"
+                    )
+                elif (
+                    not allowed
+                    and gate_reason != "PAID_KEY_NOT_CONFIGURED"
+                ):
+                    provider_failures.append(
+                        {
+                            "provider": "gemini_api",
+                            "key_tier": gemini_backup_policy.PAID_KEY_TIER,
+                            "category": (
+                                f"PAID_BACKUP_SKIPPED:{gate_reason}"
+                            ),
+                        }
+                    )
+        if observed is not None:
+            response_path = api_response_path
+            prompt_path = api_prompt_path
 
     return _EntityProviderOutcome(
         observed=observed,
@@ -1011,6 +1298,7 @@ def _verify_local_audio_request(
         outcome = _observe_entity_audio(
             request=span.observed_request,
             candidates=candidates,
+            audio_path=audio_path,
             job_dir=job_dir,
             recording_date=verifier.recording_date,
             timely_context=verifier.timely_context,

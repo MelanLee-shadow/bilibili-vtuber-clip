@@ -182,7 +182,7 @@
 | 见证人规则 | `subtitle_fidelity.py`（通用 mutation 的候选/fidelity 门；同音/近音正字法另须 `final_review_auditor.py` 的 typed textual authority receipt） |
 | 终审审片员 | `final_review_auditor.py`（发现器；同音/近音候选、typed mutation receipt、声学仲裁路由与插入契约） |
 | 最终字节放行 | `final_review_contract.py`（验 `final-review-audit.v2` 的精确 SRT hash、完整 discovery、零 finding、correction mutation audit 与 final boundary endpoint binding） |
-| 声学证人/裁决 | `entity_audio_verifier.py`（AGY-only 候选盲黑帧片段，只回可闻性/拼音；只复用 AGY 成功缓存）+ `read_aloud_llm_verifier.py` / `acoustic_witness_adjudication.py`（CPA 仅看文字闭集并最终选边） |
+| 声学证人/裁决 | `entity_audio_verifier.py`（AGY 为首选高可信候选盲黑帧证人；AGY 明确失败时仅对候选盲拼音请求开放 hash-bound Gemini API 后备；只复用 AGY 成功缓存）+ `read_aloud_llm_verifier.py` / `acoustic_witness_adjudication.py`（CPA 仅看文字闭集并最终选边，任何音频 provider 都无落字权） |
 | 源真值 ledger | `source_subtitle_truth.py` + `subtitle_truth_ledger.v1.json`（Ivan 审定钉子，唯一不受 provider 故障影响的通道；已审定完整口播必须用 `replace_cue`，不能假设 ASR 仍保留待替换误词；整 cue 静音幻听用严格包含语义的 `drop_cue`，跨界即冲突停用；官方回放等替代源只能用 ledger 内显式 alias，且候选 piece 必须同时精确绑定替代源 SHA-256 与审定时间轴偏移，文件名相似不继承真值） |
 | 梗词铁律 | `surface_canon.py`（直女→侄女等 hard canon） |
 
@@ -215,8 +215,9 @@ Ivan 指正=该句整体替换的锚，不是插入片段：钉子文本必须�
 ## 已知结构性欠账（按性价比排序，做前先读调研）
 
 0. ~~短语级重复分歧检测~~（2026-07-19 已落地，见上节）
-1. ~~付费声学兜底不可达~~（旧架构；实体与歌切音频仍为 AGY-only；外语原声 span 在 AGY
-   失败时允许 hash-bound 直连 Gemini 证人后备，CPA 保留最终裁决权）
+1. ~~付费声学兜底不可达~~（旧架构；候选盲实体/短句拼音与外语原声 span 在 AGY
+   失败时允许 hash-bound 直连 Gemini 证人后备，CPA 保留最终裁决权；候选可见的旧式音频
+   二选一仍不得借 API 复活）
 2. ~~infra-UNCERTAIN 带伤交付~~（同上已修）
 3. ~~方言零覆盖~~（同上已修，词表持续扩充）
 4. ~~专名零召回无修复通道~~（同上已修：source-backed 插入）

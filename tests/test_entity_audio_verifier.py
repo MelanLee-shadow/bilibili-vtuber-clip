@@ -444,6 +444,73 @@ def test_agy_quota_never_falls_back_to_non_agy_audio_provider(tmp_path, monkeypa
     assert not list(job_dir.glob("*gemini-api*"))
 
 
+def test_candidate_blind_witness_uses_direct_api_after_agy_quota(
+    tmp_path, monkeypatch
+):
+    """The direct key is evidence-only and only reachable for blind pinyin."""
+
+    from src.autoslice.acoustic_witness_adjudication import (
+        build_witness_request,
+    )
+
+    for name in (
+        "GEMINI_API_KEY_2",
+        "GEMINI_API_KEY_3",
+        "GEMINI_KEY_BACKUP",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "free-key-1")
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path / "base"))
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+    monkeypatch.setattr(verifier_module.subprocess, "run", _agy_quota_run)
+    monkeypatch.setattr(
+        verifier_module,
+        "_gemini_api_observe_witness",
+        lambda **kwargs: json.dumps(
+            {
+                "schema_version": verifier_module.WITNESS_SCHEMA,
+                "status": "OBSERVED",
+                "target_audible": True,
+                "heard_pinyin": "hao piao liang o",
+                "uncertain_positions": [],
+                "syllable_count": 4,
+                "confidence": 0.94,
+                "reason": "clear blind dictation",
+            }
+        ),
+    )
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-07-26",
+        source_duration_ms=10_000,
+        agy_bin="agy-test",
+    )
+    request = build_witness_request(
+        {
+            "evidence_id": "c" * 64,
+            "cue_indexes": [21],
+            "matched_start_ms": 2_000,
+            "matched_end_ms": 3_121,
+            "context_start_ms": 500,
+            "context_end_ms": 4_621,
+            "source_media_timeline_offset_ms": 0,
+        }
+    )
+
+    verdict = verify(request)
+
+    assert verdict["status"] == "OBSERVED"
+    assert verdict["heard_pinyin"] == "hao piao liang o"
+    assert verdict["provider"] == "gemini_api"
+    assert verdict["key_tier"] == "free"
+    prompt = next((tmp_path / "out/entity_verdicts").glob("*/prompt.gemini-api.md"))
+    prompt_text = prompt.read_text(encoding="utf-8")
+    assert "attached audio clip" in prompt_text
+    assert "好爽哦" not in prompt_text
+
+
 def test_witness_acoustic_cache_replays_same_audio_without_provider(tmp_path, monkeypatch):
     """成本裁定（Ivan 2026-07-27，3 天 $40 案）：同一段音频的纯听写答案
     与请求文本/几何标识无关——第二次（哪怕 request_sha 不同）必须直接

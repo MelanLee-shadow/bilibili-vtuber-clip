@@ -62,6 +62,7 @@ from src.autoslice.fidelity_review_candidates import (
 from src.autoslice.final_source_language_owner import register_final_source_language_cpa_repairs
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import LlmConfig, build_llm_call, extract_json_object
+from src.autoslice.microcue_acoustic_discovery import discover_microcue_findings
 from src.autoslice.producer_chat_input import (
     DANMAKU_PRE_CONTEXT_MS,
     GIFT_PRE_CONTEXT_MS,
@@ -996,6 +997,8 @@ def _run_exact_final_release_review(
     verified_authority_audit: Mapping[str, object] | None = None,
     timeline_offset_ms: int = 0,
     screen_read_probe: Callable[[int, int], Mapping[str, object]] | None = None,
+    priority_raw_findings: Sequence[Mapping[str, Any]] = (),
+    acoustic_discovery_audit: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Review the exact post-authority bytes and issue a fail-closed receipt."""
 
@@ -1023,6 +1026,10 @@ def _run_exact_final_release_review(
         "correction_pass": dict(correction_audit),
         "correction_mutation_authority": correction_mutation_audit,
     }
+    if isinstance(acoustic_discovery_audit, Mapping):
+        base["candidate_blind_acoustic_discovery"] = dict(
+            acoustic_discovery_audit
+        )
     if os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") == "1":
         return {
             **base,
@@ -1045,6 +1052,8 @@ def _run_exact_final_release_review(
             ),
             candidate_context_text=clip_context_prompt_text(clip_context),
             candidate_context=clip_context,
+            extra_raw_findings=priority_raw_findings,
+            prioritize_extra_raw_findings=bool(priority_raw_findings),
         )
     except FinalReviewAuditError as exc:
         return {
@@ -1952,6 +1961,11 @@ def run_text_pipeline(
         timeline_offset_ms: int,
         source_final_end_ms: int,
     ) -> dict[str, object]:
+        microcue_findings, microcue_audit = discover_microcue_findings(
+            final_srt_text,
+            timeline_offset_ms=timeline_offset_ms,
+            entity_verifier=entity_context.verify_confusable_entity,
+        )
         exact_correction_audit = exact_delivery_correction_audit(
             final_srt_text=final_srt_text,
             correction_audit=final_review_audit,
@@ -1985,7 +1999,9 @@ def run_text_pipeline(
             verify_confusable_entity=entity_context.verify_confusable_entity,
             verified_authority_audit=verified_authority_audit,
             timeline_offset_ms=timeline_offset_ms,
-    )
+            priority_raw_findings=microcue_findings,
+            acoustic_discovery_audit=microcue_audit,
+        )
     return TextPipelineResult(
         srt_text=evidence.srt_text,
         cues=evidence.cues,

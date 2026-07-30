@@ -281,6 +281,11 @@
   `final-review-carryover.v1`，由下一轮 correction pass 走同一套裁决/落字门。自愈历史须写
   `exact-final-cpa-self-heal-audit.v1`，并在存在 redelivery baseline 时同时绑定到 baseline
   audit 的 post-exact-final 输出 SHA。
+- 纯文字终审无法发现“文字上通顺、声学上错误”的短促近音句。exact-final 因此对不超过
+  1.3 秒、2–12 个汉字且非纯语气词的 cue 追加候选盲声学巡检：证人只接收时间窗并输出
+  无调拼音，不得看到现稿或候选。代码只在拼音显著冲突时产生**无文字候选** finding；
+  CPA 随后只负责生成一个有界候选，再经一次候选盲声学见证与 CPA CURRENT/PROPOSED
+  闭集裁决。巡检层没有落字权，provider 暂态只在收据中披露，不冻结其他切片。
   runner 只有在 chat audit 声明计数、sidecar schema/行数，以及每条
   `(cue, suspect, proposed_full_cue)` 与 exact 审计中的 `repaired=true` finding 全部一致时，
   才把该失败列为 recoverable；每个新的 failure fingerprint 自动获得恰好一次下一轮
