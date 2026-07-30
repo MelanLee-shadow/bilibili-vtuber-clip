@@ -1051,6 +1051,49 @@ def test_exact_release_self_heals_a_bootstrapped_missing_candidate():
     assert repairs[0]["decision_authority"] == "CPA_JUDGE"
 
 
+def test_missing_candidate_allows_bounded_full_cue_garbage_replacement():
+    source = _srt(
+        "那咱算不算？咱",
+        "烦 嗯 烦死人了下 はい りっちゃん",
+        "我要吃午饭",
+    )
+
+    def cpa(prompt):
+        if "# 字幕缺失候选重建" in prompt:
+            return json.dumps(
+                {
+                    "status": "PROPOSED",
+                    "proposed_cue": "嗯，咱有点像あたし",
+                    "reason": "整条是混杂碎片，语境在讨论日语第一人称",
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps({"choice": "PROPOSED", "reason": "盲听与语境一致"})
+
+    output, audit = adjudicate_context_finding(
+        source,
+        {
+            "cue_index": 2,
+            "suspect": "烦 嗯 烦死人了下 はい りっちゃん",
+            "suggestion": None,
+            "proposed_full_cue": None,
+            "repair_class": "phonetic",
+            "why": "整条语义崩坏",
+        },
+        entity_verifier=lambda request: _witness(
+            request, "en zan you dian xiang a ta xi"
+        ),
+        judge_llm_call=cpa,
+    )
+
+    assert "嗯，咱有点像あたし" in output
+    assert audit["repaired"] is True
+    assert audit["proposal_bootstrap"]["bounded_full_cue_repair"] is True
+    assert audit["proposal_bootstrap"]["mutation_authorized"] is False
+    assert audit["rebuilt_finding"]["span_start_codepoint"] == 0
+    assert audit["rebuilt_finding"]["span_end_codepoint"] == 18
+
+
 def test_context_adjudication_keeps_current_when_semantics_conflict_with_audio():
     source = _srt("还没有歌杂呢")
 

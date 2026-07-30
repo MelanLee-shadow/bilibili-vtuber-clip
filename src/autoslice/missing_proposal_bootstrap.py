@@ -178,6 +178,18 @@ def bootstrap_missing_proposal(
         allow_insertion=True,
         allow_deletion=True,
     )
+    bounded_full_cue_repair = bool(
+        error == "EDIT_LENGTH_DELTA_TOO_LARGE"
+        and suspect == current
+        and len(current) <= 24
+        and len(proposed) <= 24
+    )
+    if bounded_full_cue_repair:
+        edit_suspect = current
+        replacement = proposed
+        start = 0
+        end = len(current)
+        error = None
     original_start = current.index(suspect)
     original_end = original_start + len(suspect)
     if error is not None or start > original_start or end < original_end:
@@ -216,6 +228,8 @@ def bootstrap_missing_proposal(
         span_end_codepoint=end,
         reason=reason,
     )
+    if bounded_full_cue_repair:
+        audit["bounded_full_cue_repair"] = True
     if cache_path is not None and not served_from_cache:
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
