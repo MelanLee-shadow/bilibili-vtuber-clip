@@ -17,6 +17,9 @@ from src.autoslice.final_review_contract import (
     FinalReviewContractError,
     validate_final_review_release,
 )
+from src.autoslice.final_source_language_owner import (
+    register_final_source_language_cpa_repairs,
+)
 from src.autoslice.producer_boundary_owner_contract import (
     freeze_story_chat_boundary_owners,
 )
@@ -86,7 +89,7 @@ def test_late_source_language_cpa_retires_same_window_cpa_surface():
         ],
     }
 
-    pipeline._register_final_source_language_cpa_repairs(
+    register_final_source_language_cpa_repairs(
         chat_audit,
         input_srt=input_srt,
         output_srt=output_srt,
