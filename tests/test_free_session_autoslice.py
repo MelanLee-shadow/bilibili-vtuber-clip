@@ -6411,6 +6411,64 @@ def test_date_lifetime_cap_does_not_discard_selected_infrastructure_retry(tmp_pa
     assert [item["cid"] for item in state["pending_song"]] == ["song_quota"]
 
 
+@pytest.mark.parametrize(
+    ("legacy_error", "expected_reason"),
+    [
+        (
+            "window cut failed: Error opening input file /recordings/missing.mp4",
+            "SONG_WINDOW_CUT_FAILED",
+        ),
+        ("empty window srt", "SONG_SOURCE_TRANSCRIPT_EMPTY"),
+    ],
+)
+def test_legacy_early_song_infra_failure_bypasses_exhausted_session_cap(
+    tmp_path,
+    monkeypatch,
+    legacy_error,
+    expected_reason,
+):
+    date = "2026-07-12"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "22966160_20260712-19-00-17.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "song_pipeline_fingerprint", lambda: "sha256:same")
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 500_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
+    record = {
+        "candidate_id": "song_legacy_infra",
+        "segment": segment.name,
+        "start_ms": 100_000,
+        "end_ms": 300_000,
+        "status": "failed",
+        "error": legacy_error,
+        "song_pipeline_fingerprint": "sha256:same",
+        "session_id": "live-saturated",
+    }
+    state = {
+        "pending_song": [],
+        "songs": [record],
+        "song_superseded_attempts": [
+            {
+                "candidate_id": f"old-{index}",
+                "session_id": "live-saturated",
+            }
+            for index in range(runner.SONG_LIFETIME_ATTEMPT_CAP)
+        ],
+    }
+
+    assert runner.requeue_recoverable_songs(date, state) == 1
+    assert state["songs"] == []
+    assert state["pending_song"][0]["cid"] == "song_legacy_infra"
+    assert state["pending_song"][0]["transient_retry_count"] == 1
+    assert state["song_superseded_attempts"][-1]["reason_codes"] == [
+        expected_reason
+    ]
+
+
 def test_scheduled_song_retry_keeps_date_nonterminal():
     future = 9_999_999_999
     state = {

@@ -218,6 +218,33 @@ def song_review_retry_after_seconds(summary_record: dict, selector_dir: Path) ->
     return max(values) if values else None
 
 
+def _early_song_infra_failure(
+    result: dict,
+    *,
+    reason_code: str,
+    error: str,
+) -> dict:
+    """Type and back off failures that happen before selector evidence exists."""
+
+    retry_count = int(result.get("transient_retry_count") or 0)
+    retry_delay = song_infra_retry_delay_seconds(retry_count)
+    next_retry_epoch = int(time.time()) + retry_delay
+    result.update(
+        {
+            "error": error,
+            "status": "failed",
+            "reason_codes": [reason_code],
+            "transient_failure_code": reason_code,
+            "retry_after_seconds": retry_delay,
+            "next_retry_at_epoch": next_retry_epoch,
+            "next_retry_at": time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(next_retry_epoch)
+            ),
+        }
+    )
+    return result
+
+
 def scheduled_song_retry_epoch(state: dict) -> int | None:
     """Earliest future infrastructure retry; its presence makes a date nonterminal."""
 
@@ -519,16 +546,20 @@ def produce_song(date: str, item: dict) -> dict:
                 check=False, capture_output=True, text=True, timeout=3600,
             )
             if cut.returncode != 0 or not window_mp4.is_file():
-                result["error"] = f"window cut failed: {cut.stderr[-200:]}"
-                result["status"] = "failed"
-                return result
+                return _early_song_infra_failure(
+                    result,
+                    reason_code="SONG_WINDOW_CUT_FAILED",
+                    error=f"window cut failed: {cut.stderr[-200:]}",
+                )
 
         src_srt = _runner.BASE / "cache" / date / f"{segment.stem}.bcut.srt"
         window_srt = out_dir / f"{cid}{tag}_source.srt"
         if _runner.slice_srt(src_srt, start, end, window_srt) == 0:
-            result["error"] = "empty window srt"
-            result["status"] = "failed"
-            return result
+            return _early_song_infra_failure(
+                result,
+                reason_code="SONG_SOURCE_TRANSCRIPT_EMPTY",
+                error="empty window srt",
+            )
 
         # NOTE: segment danmaku XML is segment-relative — do not pass it to the
         # selector (it would misalign against the window-relative video); LRC is

@@ -1163,6 +1163,18 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
             kept.append(record)
             continue
         reasons = {str(code) for code in record.get("reason_codes") or []}
+        # Pre-typed early song failures (before the selector ran) used to
+        # carry only a free-form error.  Migrate them in place so a source
+        # file or BCUT transcript that arrived after the first attempt can
+        # recover even when unrelated candidates exhausted the session's
+        # ordinary content-attempt cap.
+        error = str(record.get("error") or "")
+        if error.startswith("window cut failed:"):
+            reasons.add("SONG_WINDOW_CUT_FAILED")
+        elif error == "empty window srt":
+            reasons.add("SONG_SOURCE_TRANSCRIPT_EMPTY")
+        if reasons != {str(code) for code in record.get("reason_codes") or []}:
+            record["reason_codes"] = sorted(reasons)
         if reasons & _runner.SONG_TERMINAL_PERFORMER_REJECTION_CODES:
             kept.append(record)
             continue
