@@ -1840,6 +1840,121 @@ def test_pending_screenshot_cover_queues_one_route_preserving_producer_rerun(
     assert rec["cover_route_regeneration_attempts"] == 2
 
 
+def test_pending_redraw_with_unavailable_identity_receipt_requeues_without_spend(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+    monkeypatch.setattr(
+        runner, "pipeline_fingerprint", lambda: "sha256:" + "a" * 64
+    )
+    mp4 = tmp_path / "clip.mp4"
+    cover = tmp_path / "clip.cover.png"
+    mp4.write_bytes(b"video")
+    rec = {
+        "candidate_id": "auto_identity_witness_down",
+        "status": runner.TALK_COVER_PENDING_STATUS,
+        "title": "【李豆沙】日语人称翻译大会",
+        "cover_status": "BLOCKED_AI_COVER_REQUIRED",
+        "cover_generation": {
+            "route_decision": {
+                "schema_version": "lidousha-cover-route-decision.v2",
+                "selected_treatment": "cpa_redraw",
+            },
+            "final_host_identity_verification": {
+                "status": "FAIL",
+                "reason_code": "HOST_IDENTITY_WITNESS_UNAVAILABLE",
+            },
+        },
+    }
+    state = {"picks": [rec], "songs": []}
+    monkeypatch.setattr(
+        runner, "delivered_paths", lambda _date, _rec: (mp4, cover)
+    )
+    monkeypatch.setattr(runner, "write_state", lambda _date, _state: None)
+
+    def forbidden_run(*_args, **_kwargs):
+        raise AssertionError("an existing verifier outage must not spend another image call")
+
+    monkeypatch.setattr(runner.subprocess, "run", forbidden_run)
+    runner.repair_covers("2026-07-26", state)
+
+    assert rec["status"] == "failed"
+    assert rec["failure_kind"] == "cover_identity_witness"
+    assert rec["failure_stage"] == "cover_maintenance"
+    assert rec["failure_recoverable"] is True
+    assert rec["cover_status"] == (
+        "HOST_IDENTITY_WITNESS_UNAVAILABLE_ROUTE_DEGRADATION_QUEUED"
+    )
+    assert rec["cover_integrity_status"] == (
+        "INVALID_IDENTITY_WITNESS_ROUTE_REGENERATION_QUEUED"
+    )
+    assert rec.get("cover_repair_attempts", 0) == 0
+
+
+def test_cover_repair_receipt_with_unavailable_identity_requeues_producer(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+    monkeypatch.setattr(
+        runner, "pipeline_fingerprint", lambda: "sha256:" + "b" * 64
+    )
+    monkeypatch.setattr(runner, "cover_ref_for", lambda _date, _cid: None)
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(runner, "_cover_authority_preflight", lambda *_args: None)
+    monkeypatch.setattr(runner, "write_state", lambda _date, _state: None)
+    (runner.BASE / "logs").mkdir(parents=True)
+    mp4 = tmp_path / "clip.mp4"
+    cover = tmp_path / "clip.cover.png"
+    mp4.write_bytes(b"video")
+    rec = {
+        "candidate_id": "auto_new_identity_outage",
+        "status": runner.TALK_COVER_PENDING_STATUS,
+        "title": "【李豆沙】日语人称翻译大会",
+        "cover_status": "BLOCKED_AI_COVER_REQUIRED",
+        "cover_generation": {
+            "route_decision": {
+                "schema_version": "lidousha-cover-route-decision.v2",
+                "selected_treatment": "cpa_redraw",
+            }
+        },
+    }
+    monkeypatch.setattr(
+        runner, "delivered_paths", lambda _date, _rec: (mp4, cover)
+    )
+
+    class Failed:
+        returncode = 1
+
+    def unavailable_after_generation(command, **_kwargs):
+        output = Path(command[command.index("--out") + 1])
+        receipt = output.with_suffix(".cover_generation.json")
+        receipt.parent.mkdir(parents=True, exist_ok=True)
+        receipt.write_text(
+            json.dumps(
+                {
+                    "final_host_identity_verification": {
+                        "status": "FAIL",
+                        "reason_code": "HOST_IDENTITY_WITNESS_UNAVAILABLE",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        return Failed()
+
+    monkeypatch.setattr(runner.subprocess, "run", unavailable_after_generation)
+    runner.repair_covers(
+        "2026-07-26", {"picks": [rec], "songs": []}
+    )
+
+    assert rec["cover_repair_attempts"] == 1
+    assert rec["cover_repair_lifetime_attempts"] == 1
+    assert rec["status"] == "failed"
+    assert rec["failure_kind"] == "cover_identity_witness"
+    assert rec["failure_recoverable"] is True
+    assert rec["cover_repair_exhausted"] is False
+
+
 def test_list_dates_keeps_aged_out_source_incomplete_date(
     tmp_path, monkeypatch
 ):

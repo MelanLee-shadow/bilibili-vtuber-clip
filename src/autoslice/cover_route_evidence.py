@@ -978,12 +978,20 @@ def validate_cover_route_decision(
             return False
         if selected == "screenshot_direct":
             return execution_status == "READY" and not attempted
+        degraded_receipt = cover_generation.get(
+            "screenshot_polish" if selected == "screenshot_polish" else "cpa_redraw"
+        )
+        expected_status = (
+            "DEGRADED_TO_DIRECT"
+            if selected == "screenshot_polish"
+            else "DEGRADED_TO_DIRECT_IDENTITY_WITNESS_UNAVAILABLE"
+        )
         return bool(
-            selected == "screenshot_polish"
+            selected in {"screenshot_polish", "cpa_redraw"}
             and execution_status == "READY_DEGRADED"
+            and (selected != "cpa_redraw" or attempted)
             and str(route.get("execution_detail") or "").strip()
-            and isinstance(cover_generation.get("screenshot_polish"), Mapping)
-            and cover_generation["screenshot_polish"].get("status")
-            == "DEGRADED_TO_DIRECT"
+            and isinstance(degraded_receipt, Mapping)
+            and degraded_receipt.get("status") == expected_status
         )
     return False

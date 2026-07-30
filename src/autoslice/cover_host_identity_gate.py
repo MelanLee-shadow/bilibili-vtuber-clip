@@ -19,6 +19,14 @@ from PIL import Image, ImageDraw, ImageOps
 
 SCHEMA_VERSION = "lidousha-cover-final-host-identity-verification.v1"
 AUTHORITY = "AGY_HASH_BOUND_SOURCE_FINAL_IDENTITY_COMPARISON"
+UNAVAILABLE_REASON_CODES = frozenset(
+    {
+        "HOST_IDENTITY_WITNESS_UNAVAILABLE",
+        "HOST_IDENTITY_VERDICT_UNPARSEABLE",
+        "HOST_IDENTITY_VERIFIER_EXCEPTION",
+        "HOST_IDENTITY_VERIFIER_MISSING",
+    }
+)
 
 
 def _sha256(path: Path) -> str:
@@ -211,4 +219,17 @@ def validate_final_host_identity_verification(
         == cover_generation.get("final_cover_sha256")
         and comparison_sha.startswith("sha256:")
         and witness_sha == comparison_sha
+    )
+
+
+def final_host_identity_witness_unavailable(
+    cover_generation: Mapping[str, object],
+) -> bool:
+    """Distinguish missing identity evidence from an observed mismatch."""
+
+    verification = cover_generation.get("final_host_identity_verification")
+    return bool(
+        isinstance(verification, Mapping)
+        and verification.get("status") == "FAIL"
+        and verification.get("reason_code") in UNAVAILABLE_REASON_CODES
     )

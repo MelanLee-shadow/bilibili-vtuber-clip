@@ -17,6 +17,9 @@ import tempfile
 import time
 from pathlib import Path
 
+from src.autoslice.cover_host_identity_gate import (
+    final_host_identity_witness_unavailable,
+)
 from src.autoslice.runner_proxy import RunnerProxy
 
 
@@ -72,6 +75,115 @@ def _atomic_write_bytes_file(path: Path, payload: bytes) -> None:
 
 def _atomic_write_json_file(path: Path, payload: dict) -> None:
     _runner._atomic_write_bytes_file(path, _runner._json_file_bytes(payload))
+
+
+def _selected_cover_treatment(record: dict) -> str:
+    generation = record.get("cover_generation")
+    route_decision = (
+        generation.get("route_decision")
+        if isinstance(generation, dict)
+        else None
+    )
+    return (
+        str(route_decision.get("selected_treatment") or "")
+        if isinstance(route_decision, dict)
+        else ""
+    )
+
+
+def _queue_identity_witness_route_regeneration(record: dict) -> None:
+    record.update(
+        {
+            "status": "failed",
+            "failure_kind": "cover_identity_witness",
+            "failure_stage": "cover_maintenance",
+            "failure_recoverable": True,
+            "cover_status": (
+                "HOST_IDENTITY_WITNESS_UNAVAILABLE_"
+                "ROUTE_DEGRADATION_QUEUED"
+            ),
+            "cover_integrity_status": (
+                "INVALID_IDENTITY_WITNESS_ROUTE_REGENERATION_QUEUED"
+            ),
+        }
+    )
+    _runner.log(
+        f"cover repair {record.get('candidate_id', '?')}: identity witness "
+        "unavailable; queued a normal producer rerun for source-screenshot "
+        "degradation"
+    )
+
+
+def _generation_receipt_has_unavailable_identity_witness(
+    generated_cover: Path,
+) -> bool:
+    generation_receipt = generated_cover.with_suffix(".cover_generation.json")
+    if not generation_receipt.is_file():
+        return False
+    try:
+        receipt_payload = json.loads(generation_receipt.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return bool(
+        isinstance(receipt_payload, dict)
+        and final_host_identity_witness_unavailable(receipt_payload)
+    )
+
+
+def _handle_screenshot_route_repair(record: dict, fingerprint: str) -> bool:
+    if _selected_cover_treatment(record) not in {
+        "screenshot_direct",
+        "screenshot_polish",
+    }:
+        return False
+    # The generic repair tool is an image-generation workflow. A screenshot
+    # package must stay on its source-pixel route.
+    regeneration_fingerprint = record.get("cover_route_regeneration_fingerprint")
+    if (
+        record.get("status") == _runner.TALK_COVER_PENDING_STATUS
+        and regeneration_fingerprint != fingerprint
+    ):
+        record.update(
+            {
+                "status": "failed",
+                "failure_kind": "cover_route_regeneration",
+                "failure_recoverable": True,
+                "cover_route_regeneration_fingerprint": fingerprint,
+                "cover_route_regeneration_attempts": int(
+                    record.get("cover_route_regeneration_attempts") or 0
+                )
+                + 1,
+                "cover_integrity_status": (
+                    "INVALID_SCREENSHOT_ROUTE_REGENERATION_QUEUED"
+                ),
+                "cover_status": "SCREENSHOT_ROUTE_REGENERATION_QUEUED",
+                "cover_route_preservation_error": (
+                    "screenshot proof is invalid; queued one fingerprint-bound "
+                    "route-preserving producer rerun"
+                ),
+            }
+        )
+        _runner.log(
+            f"cover repair {record.get('candidate_id', '?')}: queued one "
+            "route-preserving producer rerun before image request"
+        )
+    else:
+        record.update(
+            {
+                "cover_integrity_status": (
+                    "INVALID_SCREENSHOT_ROUTE_REPAIR_REQUIRED"
+                ),
+                "cover_status": "BLOCKED_SCREENSHOT_COVER_REPAIR_REQUIRED",
+                "cover_route_preservation_error": (
+                    "screenshot proof is invalid; generic AI repair is forbidden"
+                ),
+            }
+        )
+        _runner.log(
+            f"cover repair {record.get('candidate_id', '?')}: blocked before "
+            "image request to preserve screenshot route"
+        )
+    return True
 
 
 def repair_covers(
@@ -169,64 +281,17 @@ def repair_covers(
     for rec in todo:
         mp4, cover = _runner.delivered_paths(date, rec)
         generation = rec.get("cover_generation")
-        route_decision = (
-            generation.get("route_decision")
-            if isinstance(generation, dict)
-            else None
-        )
-        selected_treatment = (
-            str(route_decision.get("selected_treatment") or "")
-            if isinstance(route_decision, dict)
-            else ""
-        )
-        if selected_treatment in {"screenshot_direct", "screenshot_polish"}:
-            # The generic repair tool is an image-generation workflow.  A
-            # screenshot package that fails its hash/document proof must stay
-            # on the screenshot route.  A not-yet-delivered talk gets one
-            # bounded normal-producer rerun: screenshot_direct rebuilds its
-            # deterministic proof, while screenshot_polish obtains fresh
-            # polished pixels and repeats the face gate.  Existing deliveries
-            # stay blocked for explicit same-BV-safe repair.
-            regeneration_fingerprint = rec.get(
-                "cover_route_regeneration_fingerprint"
-            )
-            if (
-                rec.get("status") == _runner.TALK_COVER_PENDING_STATUS
-                and regeneration_fingerprint != fingerprint
-            ):
-                rec["status"] = "failed"
-                rec["failure_kind"] = "cover_route_regeneration"
-                rec["failure_recoverable"] = True
-                rec["cover_route_regeneration_fingerprint"] = fingerprint
-                rec["cover_route_regeneration_attempts"] = (
-                    int(rec.get("cover_route_regeneration_attempts") or 0) + 1
-                )
-                rec["cover_integrity_status"] = (
-                    "INVALID_SCREENSHOT_ROUTE_REGENERATION_QUEUED"
-                )
-                rec["cover_status"] = "SCREENSHOT_ROUTE_REGENERATION_QUEUED"
-                rec["cover_route_preservation_error"] = (
-                    "screenshot proof is invalid; queued one fingerprint-bound "
-                    "route-preserving producer rerun"
-                )
-                _runner.log(
-                    f"cover repair {rec.get('candidate_id', '?')}: queued one "
-                    "route-preserving producer rerun before image request"
-                )
-            else:
-                rec["cover_integrity_status"] = (
-                    "INVALID_SCREENSHOT_ROUTE_REPAIR_REQUIRED"
-                )
-                rec["cover_status"] = (
-                    "BLOCKED_SCREENSHOT_COVER_REPAIR_REQUIRED"
-                )
-                rec["cover_route_preservation_error"] = (
-                    "screenshot proof is invalid; generic AI repair is forbidden"
-                )
-                _runner.log(
-                    f"cover repair {rec.get('candidate_id', '?')}: blocked before "
-                    "image request to preserve screenshot route"
-                )
+        if (
+            rec.get("status") == _runner.TALK_COVER_PENDING_STATUS
+            and isinstance(generation, dict)
+            and final_host_identity_witness_unavailable(generation)
+        ):
+            # Reuse the already-bound failure receipt. Do not spend another
+            # image request merely to rediscover that the verifier is down.
+            _queue_identity_witness_route_regeneration(rec)
+            _runner.write_state(date, state)
+            continue
+        if _handle_screenshot_route_repair(rec, fingerprint):
             _runner.write_state(date, state)
             continue
         try:
@@ -333,6 +398,9 @@ def repair_covers(
             rc = completed.returncode
         except subprocess.TimeoutExpired:
             rc = -1
+        identity_witness_unavailable = (
+            _generation_receipt_has_unavailable_identity_witness(generated_cover)
+        )
         bound = False
         if rc == 0 and generated_cover.is_file():
             try:
@@ -373,6 +441,11 @@ def repair_covers(
                 _runner.log(f"cover repaired and hash-bound → {cover.name}")
         if not bound:
             if (
+                identity_witness_unavailable
+                and rec.get("status") == _runner.TALK_COVER_PENDING_STATUS
+            ):
+                _queue_identity_witness_route_regeneration(rec)
+            elif (
                 rec["cover_repair_attempts"] >= _runner.COVER_REPAIR_MAX_ATTEMPTS
                 or rec["cover_repair_lifetime_attempts"] >= _runner.COVER_REPAIR_LIFETIME_ATTEMPT_CAP
             ):

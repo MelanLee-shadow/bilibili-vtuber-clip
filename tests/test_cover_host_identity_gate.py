@@ -163,6 +163,74 @@ def test_cpa_redraw_blocks_before_ready_when_host_identity_is_wrong(
     assert generation["route_decision"]["execution_status"] == "BLOCKED"
 
 
+def test_cpa_redraw_degrades_to_source_pixels_when_identity_witness_is_down(
+    tmp_path, monkeypatch
+):
+    from src.autoslice import publish_staging
+    from src.autoslice.cover_route_evidence import (
+        validate_cover_route_decision,
+    )
+    from tests.test_cover_frame_selection import (
+        _write_synthetic_performance_clip,
+    )
+
+    media = _write_synthetic_performance_clip(tmp_path)
+    monkeypatch.setenv("CPA_BASE_URL", "https://cpa.example.test/v1")
+    monkeypatch.setenv("CPA_API_KEY", "test-key")
+    monkeypatch.setenv("AUTOSLICE_COVER_MODE", "cpa")
+    image_calls = 0
+    identity_calls = 0
+
+    def fake_image_edit(**kwargs):
+        nonlocal image_calls
+        image_calls += 1
+        Image.new("RGB", (1920, 1080), (90, 30, 70)).save(
+            kwargs["output_path"]
+        )
+        return {
+            "status": "AI_BACKGROUND_READY",
+            "selected_model": "gpt-image-2",
+            "attempted_models": ["gpt-image-2"],
+        }
+
+    def unavailable_identity(**_kwargs):
+        nonlocal identity_calls
+        identity_calls += 1
+        return {
+            "schema_version": (
+                "lidousha-cover-final-host-identity-verification.v1"
+            ),
+            "status": "FAIL",
+            "reason_code": "HOST_IDENTITY_WITNESS_UNAVAILABLE",
+        }
+
+    result = publish_staging._stage_lidousha_ai_cover(
+        {"status": "MATERIALIZED", "media_path": str(media)},
+        media_path=media,
+        candidate_id="identity-witness-down",
+        title="【李豆沙】突然开起日语人称翻译大会",
+        cover_text="日语人称翻译大会",
+        run_ffmpeg=True,
+        image_edit=fake_image_edit,
+        final_host_identity_verifier=unavailable_identity,
+        enforce_final_host_identity=True,
+    )
+
+    assert result["status"] == "AI_COVER_READY"
+    assert image_calls == identity_calls == 1
+    generation = result["cover_generation"]
+    route = generation["route_decision"]
+    assert generation["method"] == "screenshot_direct"
+    assert generation["cover_origin"] == "SOURCE_SCREENSHOT"
+    assert generation["cpa_redraw"]["status"] == (
+        "DEGRADED_TO_DIRECT_IDENTITY_WITNESS_UNAVAILABLE"
+    )
+    assert route["selected_treatment"] == "cpa_redraw"
+    assert route["actual_treatment"] == "screenshot_direct"
+    assert route["execution_status"] == "READY_DEGRADED"
+    assert validate_cover_route_decision(generation)
+
+
 def test_cpa_redraw_retries_once_and_recovers_host_identity(
     tmp_path, monkeypatch
 ):

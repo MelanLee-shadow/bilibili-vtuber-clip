@@ -49,6 +49,7 @@ from .cover_route_evidence import (
     validate_final_participant_verification,
 )
 from .cover_host_identity_gate import (
+    final_host_identity_witness_unavailable,
     validate_final_host_identity_verification,
 )
 from .cover_polish_gate import (
@@ -1062,7 +1063,10 @@ def _stage_cpa_redraw_cover(
                 }
 
         verify_current_final()
-        if not validate_final_host_identity_verification(cover_generation):
+        if (
+            not validate_final_host_identity_verification(cover_generation)
+            and not final_host_identity_witness_unavailable(cover_generation)
+        ):
             first_verification = cover_generation.get(
                 "final_host_identity_verification"
             )
@@ -1615,7 +1619,7 @@ def _stage_lidousha_ai_cover(
             detail,
         )
 
-    return _stage_cpa_redraw_cover(
+    redraw_result = _stage_cpa_redraw_cover(
         candidate_id=candidate_id,
         title=title,
         cover_text=cover_text,
@@ -1630,6 +1634,23 @@ def _stage_lidousha_ai_cover(
         emote_library=emote_library,
         art_direction=art_direction,
         cover_generation=cover_generation,
+        image_edit=image_edit,
+        final_participant_verifier=final_participant_verifier,
+        final_host_identity_verifier=final_host_identity_verifier,
+        base_url=base_url,
+        api_key=api_key,
+    )
+    return _degrade_unavailable_redraw_identity_to_direct(
+        redraw_result=redraw_result,
+        media_path=media_path,
+        candidate_id=candidate_id,
+        cover_text=cover_text,
+        art_direction=art_direction,
+        frame_selection=frame_selection,
+        reference_path=reference_path,
+        ai_dir=ai_dir,
+        covers_dir=covers_dir,
+        evidence_dir=evidence_dir,
         image_edit=image_edit,
         final_participant_verifier=final_participant_verifier,
         final_host_identity_verifier=final_host_identity_verifier,
@@ -2167,6 +2188,93 @@ def _stage_screenshot_direct_cover(
             ],
             detail,
         )
+
+
+def _degrade_unavailable_redraw_identity_to_direct(
+    *,
+    redraw_result: dict[str, object],
+    media_path: Path,
+    candidate_id: str,
+    cover_text: str,
+    art_direction: LidoushaCoverArtDirection,
+    frame_selection: Mapping[str, object],
+    reference_path: Path,
+    ai_dir: Path,
+    covers_dir: Path,
+    evidence_dir: Path,
+    image_edit: Callable[..., dict[str, object]],
+    final_participant_verifier: Callable[..., Mapping[str, object]] | None,
+    final_host_identity_verifier: Callable[..., Mapping[str, object]] | None,
+    base_url: str,
+    api_key: str,
+) -> dict[str, object]:
+    """Keep source pixels when the independent redraw identity witness is down."""
+
+    generation = redraw_result.get("cover_generation")
+    if not isinstance(generation, dict) or not (
+        redraw_result.get("status") == "BLOCKED_AI_COVER_REQUIRED"
+        and final_host_identity_witness_unavailable(generation)
+    ):
+        return redraw_result
+    verification = generation.get("final_host_identity_verification")
+    generation["cpa_redraw"] = {
+        "schema_version": "lidousha-cpa-redraw-degradation.v1",
+        "status": "DEGRADED_TO_DIRECT_IDENTITY_WITNESS_UNAVAILABLE",
+        "reason_code": (
+            verification.get("reason_code")
+            if isinstance(verification, Mapping)
+            else "HOST_IDENTITY_WITNESS_UNAVAILABLE"
+        ),
+        "attempted_final_cover": generation.get("final_cover"),
+        "attempted_final_cover_sha256": generation.get("final_cover_sha256"),
+        "identity_verification": (
+            dict(verification) if isinstance(verification, Mapping) else {}
+        ),
+    }
+    generation.pop("final_host_identity_verification", None)
+    direct_result = _stage_screenshot_direct_cover(
+        media_path=media_path,
+        candidate_id=candidate_id,
+        cover_text=cover_text,
+        art_direction=art_direction,
+        frame_selection=frame_selection,
+        reference_path=reference_path,
+        ai_dir=ai_dir,
+        covers_dir=covers_dir,
+        evidence_dir=evidence_dir,
+        cover_generation=generation,
+        polish=False,
+        image_edit=image_edit,
+        final_participant_verifier=final_participant_verifier,
+        final_host_identity_verifier=final_host_identity_verifier,
+        base_url=base_url,
+        api_key=api_key,
+    )
+    if direct_result.get("status") != "AI_COVER_READY":
+        return direct_result
+    direct_generation = direct_result.get("cover_generation")
+    if not isinstance(direct_generation, dict):
+        return direct_result
+    record_cover_route_execution(
+        direct_generation,
+        actual_treatment="screenshot_direct",
+        execution_status="READY_DEGRADED",
+        image_generation_attempted=True,
+        image_generation_used=False,
+        detail=(
+            "CPA redraw identity witness was unavailable; retained a "
+            "hash-bound source screenshot instead of unverified AI pixels"
+        ),
+        final_participant_verification=(
+            direct_generation.get("final_participant_verification")
+            if isinstance(
+                direct_generation.get("final_participant_verification"),
+                Mapping,
+            )
+            else None
+        ),
+    )
+    return direct_result
 
 
 def _blocked_ai_cover_result(cover_generation: Mapping[str, object], reason_codes: Sequence[str], detail: str) -> dict[str, object]:

@@ -119,6 +119,11 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   `scripts/repair_screenshot_cover.py` 从既有 hash-bound polish 工件经同一生产函数重排
   并出回执；线上替换走 `scripts/bili_cover_edit.py`（cover-only 授权编辑+读回回执，
   编辑不占投稿配额）。
+- CPA redraw 的李豆沙最终身份复核若得到明确 `FINAL_HOST_IDENTITY_MISMATCH`，只允许重绘一次，
+  仍不匹配就阻断；若复核本身因 AGY quota/timeout/不可解析而不可用，则禁止继续消耗生图额度，
+  也禁止放过未经核验的 AI 像素。未发布包必须保留失败回执并自动降级为 hash-bound
+  `screenshot_direct / READY_DEGRADED`；cover-only maintenance 遇到同类失败必须排入一次正常
+  producer 重跑，让完整 route/proof 链生成该降级包，而不是耗尽三次 repair 后停住。
 - **所有关系型路线**都必须有最终人物 proof。`screenshot_polish` 与 CPA/AI 因像素已被修改，
   绝不能继承 source participant 声明，必须由独立 final-pixel verifier 逐个确认双方可见、
   身份正确，并绑定最终 cover SHA；故事动作/反转若只由文字表达，必须作为 `COVER_TEXT`
