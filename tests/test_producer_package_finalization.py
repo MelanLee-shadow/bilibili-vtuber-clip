@@ -1127,6 +1127,63 @@ def test_exact_final_review_gate_self_heals_cpa_authorized_finding(
     )["exact_final_cpa_self_heal"]["status"] == "PASS"
 
 
+def test_exact_final_self_heal_uses_cpa_request_target_after_span_rejection():
+    from src.autoslice import producer_package_finalization as finalization
+
+    current = "就是面部的时候没有什么制作这个机体"
+    proposed = "就是制作这个机体"
+    base_sha256 = hashlib.sha256(current.encode("utf-8")).hexdigest()
+    srt_text = f"1\n00:00:00,000 --> 00:00:02,000\n{current}\n"
+    audit = {
+        "findings": [
+            {
+                "cue_index": 1,
+                "base_text_sha256": base_sha256,
+                "proposed_full_cue": None,
+                "suggestion_rejected_reason": "EDIT_LENGTH_DELTA_TOO_LARGE",
+                "exact_release_adjudication": {
+                    "schema_version": "subtitle-span-adjudication.v1",
+                    "status": "OBSERVED",
+                    "decision_authority": "CPA_JUDGE",
+                    "repaired": True,
+                    "timing_immutable": True,
+                    "mutation_authority": {
+                        "schema_version": (
+                            "subtitle-correction-mutation-authority.v1"
+                        ),
+                        "status": "PASS",
+                    },
+                    "request": {
+                        "schema_version": (
+                            "subtitle-span-acoustic-check-request.v1"
+                        ),
+                        "request_sha256": "f" * 64,
+                        "base_text_sha256": base_sha256,
+                        "current_cue": current,
+                        "proposed_cue": proposed,
+                    },
+                    "witness_judge": {
+                        "judge": {
+                            "status": "JUDGED",
+                            "choice": "PROPOSED",
+                        }
+                    },
+                },
+            }
+        ]
+    }
+
+    repaired, receipts = finalization._apply_exact_final_cpa_repairs(
+        srt_text,
+        audit,
+    )
+
+    assert current not in repaired
+    assert proposed in repaired
+    assert receipts[0]["before"] == current
+    assert receipts[0]["after"] == proposed
+
+
 def test_exact_final_review_gate_allows_five_bounded_repair_rounds(
     tmp_path: Path,
 ) -> None:

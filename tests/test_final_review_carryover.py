@@ -193,6 +193,58 @@ def test_glossary_insertion_carryover_preserves_raw_provenance(tmp_path):
     }
 
 
+def test_carryover_recovers_cpa_target_hidden_by_large_delta_rejection(tmp_path):
+    path = carryover_path(tmp_path, "auto_909")
+    current = "就是面部的时候没有什么制作这个机体"
+    proposed = "就是制作这个机体"
+    count = persist_final_review_carryover(
+        path,
+        _audit(
+            [
+                {
+                    "cue_index": 11,
+                    "base_text_sha256": hashlib.sha256(
+                        current.encode("utf-8")
+                    ).hexdigest(),
+                    "kind": "context",
+                    "suspect": "面部的时候没有什么",
+                    "proposed_full_cue": None,
+                    "suggestion_rejected_reason": "EDIT_LENGTH_DELTA_TOO_LARGE",
+                    "exact_release_adjudication": {
+                        "schema_version": "subtitle-span-adjudication.v1",
+                        "status": "OBSERVED",
+                        "decision_authority": "CPA_JUDGE",
+                        "repaired": True,
+                        "timing_immutable": True,
+                        "mutation_authority": {
+                            "schema_version": (
+                                "subtitle-correction-mutation-authority.v1"
+                            ),
+                            "status": "PASS",
+                        },
+                        "request": {
+                            "schema_version": (
+                                "subtitle-span-acoustic-check-request.v1"
+                            ),
+                            "current_cue": current,
+                            "proposed_cue": proposed,
+                        },
+                        "witness_judge": {
+                            "judge": {
+                                "status": "JUDGED",
+                                "choice": "PROPOSED",
+                            }
+                        },
+                    },
+                }
+            ]
+        ),
+    )
+
+    assert count == 1
+    assert load_final_review_carryover(path)[0]["proposed_full_cue"] == proposed
+
+
 def test_carryover_not_shadowed_by_different_empty_span_proposal(tmp_path):
     path = carryover_path(tmp_path, "auto_909")
     path.write_text(

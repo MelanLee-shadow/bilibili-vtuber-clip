@@ -113,6 +113,10 @@
   `NEITHER` 先按上述第三候选闭环重建；最多五轮有 mutation 的同轮自愈加最后一次 clean scan，
   仍无法完整重算或净空才写 carryover 并阻断，禁止为消费一个已定案修复而无条件重跑 ASR、
   封面和整片生产。
+  如果 finding 的初始 span 因改动幅度过大而没有形成 `proposed_full_cue`，但后续
+  hash-bound 声学闭集请求已构造完整 `proposed_cue`、CPA 明确选中 `PROPOSED`
+  且 mutation/timing 收据全部合法，同轮自愈和 carryover 必须使用该请求内的完整目标句。
+  不得只保存 `suspect` 而丢失目标句，否则下轮只能重复披露、永远无法落字。
 - provider 异常、JSON 不可解析、根结构错误、`findings` 缺失/null/非列表、返回项全部无效，
   都是“没有完成发现”，不是“没有发现问题”；必须 fail closed。package auditor 还会用包内
   最终 SRT 重验 v2 回执，禁止复用 correction pass 或上一轮 SRT 的回执。

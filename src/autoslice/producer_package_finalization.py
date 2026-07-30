@@ -14,6 +14,7 @@ from src.autoslice.chat_authority import (
     reconcile_reviewed_text_override_conflicts,
 )
 from src.autoslice.final_review_carryover import (
+    adjudicated_proposed_full_cue,
     carryover_path,
     persist_final_review_carryover,
 )
@@ -868,7 +869,7 @@ def _apply_exact_final_cpa_repairs(
         if not isinstance(finding, Mapping):
             continue
         cue_index = finding.get("cue_index")
-        proposed = finding.get("proposed_full_cue")
+        proposed = adjudicated_proposed_full_cue(finding)
         adjudication = finding.get("exact_release_adjudication")
         if (
             isinstance(cue_index, bool)

@@ -38,6 +38,69 @@ def carryover_path(out_root: Path, cid: str) -> Path:
     return out_root / f"{cid}.final-review-carryover.json"
 
 
+def adjudicated_proposed_full_cue(
+    finding: Mapping[str, Any],
+) -> str | None:
+    """Return the exact CPA-authorized target cue, including normalized gaps.
+
+    The normalized finding may deliberately reject a large span edit and leave
+    ``proposed_full_cue`` empty even though the later acoustic closed-set
+    adjudication built a full candidate and CPA selected ``PROPOSED``.  That
+    nested request remains the hash-bound mutation candidate; dropping it from
+    exact-final self-heal/carryover turns a recoverable finding into an endless
+    disclosure loop.
+    """
+
+    direct = finding.get("proposed_full_cue")
+    if isinstance(direct, str) and direct.strip():
+        return direct
+    adjudication = finding.get("exact_release_adjudication")
+    if not isinstance(adjudication, Mapping):
+        return None
+    mutation = adjudication.get("mutation_authority")
+    request = adjudication.get("request")
+    witness_judge = adjudication.get("witness_judge")
+    judge = (
+        witness_judge.get("judge")
+        if isinstance(witness_judge, Mapping)
+        else None
+    )
+    proposed = (
+        request.get("proposed_cue")
+        if isinstance(request, Mapping)
+        else None
+    )
+    current = (
+        request.get("current_cue")
+        if isinstance(request, Mapping)
+        else None
+    )
+    if not (
+        adjudication.get("schema_version")
+        == "subtitle-span-adjudication.v1"
+        and adjudication.get("status") == "OBSERVED"
+        and adjudication.get("decision_authority") == "CPA_JUDGE"
+        and adjudication.get("repaired") is True
+        and adjudication.get("timing_immutable") is True
+        and isinstance(mutation, Mapping)
+        and mutation.get("schema_version")
+        == "subtitle-correction-mutation-authority.v1"
+        and mutation.get("status") == "PASS"
+        and isinstance(request, Mapping)
+        and request.get("schema_version")
+        == "subtitle-span-acoustic-check-request.v1"
+        and isinstance(judge, Mapping)
+        and judge.get("status") == "JUDGED"
+        and judge.get("choice") == "PROPOSED"
+        and isinstance(proposed, str)
+        and proposed.strip()
+        and isinstance(current, str)
+        and proposed != current
+    ):
+        return None
+    return proposed
+
+
 def persist_final_review_carryover(path: Path, audit: Mapping[str, Any]) -> int:
     """Persist B's confirmed findings without losing an unconsumed prior round."""
 
@@ -52,6 +115,9 @@ def persist_final_review_carryover(path: Path, audit: Mapping[str, Any]) -> int:
         ):
             continue
         row = {key: finding.get(key) for key in _ROW_KEYS if key in finding}
+        proposed_full_cue = adjudicated_proposed_full_cue(finding)
+        if proposed_full_cue is not None:
+            row["proposed_full_cue"] = proposed_full_cue
         # Normalized final-review findings expose the deterministic edit as
         # ``suggestion`` and the textual spelling witness as
         # ``candidate_provenance``.  The raw schema consumed by the next
