@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-07-30T05:24:20-04:00 by Codex root.
+Updated: 2026-07-30T05:43:20-04:00 by Codex root.
 
 本文件只记录会影响下一次操作的 live 状态。流水线规则只读
 [`docs/pipeline/`](pipeline/README.md)。`review_ready`、旧 PID、旧日志和旧 handoff 都不是发布
@@ -17,8 +17,8 @@ Updated: 2026-07-30T05:24:20-04:00 by Codex root.
 ## 已完成
 
 - 正式生产部署：`free:/opt/bilive/autoslice/repo/DEPLOYED_COMMIT` =
-  `c66b5fac32b21e73169ebebbfc5a83b566de1272`（2026-07-30T08:45:57Z）；`DISABLED`
-  不存在，cron 启用。2026-07-30T09:20:03Z 的正式 tick 已更新 07-25/26/29 state。
+  `926afbefeea2027db7e2c0ffa1d90e34d6b8e8f6`（2026-07-30T09:41:30Z）；`DISABLED`
+  不存在，cron 启用。
 - `auto_193450_1863_2056`（07-22）已同 BV 上线：`BV1xgg462Env`，CID `40420508094`。
 - `auto_183122_1209_1410`（07-24，礼墨/生豆角）已同 BV 上线：`BV1AD366DEd9`，
   CID `40432765911`。
@@ -43,15 +43,15 @@ Updated: 2026-07-30T05:24:20-04:00 by Codex root.
 
 ## 进行中
 
-- `auto_195000_1493_1579`（“沙豆李/发 1、发 0、改成 2”）正在隔离 base 整片重跑：
-  `/opt/bilive/autoslice/recovery/2026-07-25/auto_195000_1493_1579-single-r1`。
-- 2026-07-30T09:23:38Z 状态为 `processing`，唯一 pending talk 是该候选；runner PID
-  `934685`，PID file 为 `<base>/runner.pid`，日志为
-  `<base>/logs/runner-c66b5fa-20260730T092328Z.log`。
+- `auto_195000_1493_1579`（“沙豆李/发 1、发 0、改成 2”）正在第二个隔离 base 整片重跑：
+  `/opt/bilive/autoslice/recovery/2026-07-25/auto_195000_1493_1579-single-r2`。
+- 2026-07-30T09:43:08Z 状态为 `processing`，唯一 pending talk 是该候选；runner PID
+  `944337`，PID file 为 `<base>/runner.pid`，日志为
+  `<base>/logs/runner-926afbe-20260730T094300Z.log`。
 - v7 plan 已冻结：源 state SHA
-  `051472e8d0d4a47375a9025cbc86141fc3b187aedc4ddeaa892acd01f2409ad3`，旧指纹
+  `a811ffb79c4afa04b5764873a67c3add16e39d692e3600dc5760964e6682cdfe`，旧指纹
   `b4cdba0552aa00a40fec002496a159c1cccbe272047e89f08f3e2d1406c2e1f7`，新指纹
-  `80250c71349429b09d5fef4651acd81abe4976955041e054e025f52f79559525`，publication asset
+  `ea2b8d5a7a5b8b5f5737caeb605da5e1553ffdd8391c448f97cc522e85d6b836`，publication asset
   `recovery_publication_authority_2026-07-25_1493.v1.json`，`upload_allowed=false`。
 - 原公开身份为 `BV1zzgd6JEHe` / CID `40331906310`。生成完成后须整片验字幕、边界、标题与
   最终封面实图，再走 `authorized_upload.py repair-*` 同 BV 更新并 fresh-live 回读。
@@ -73,6 +73,10 @@ Updated: 2026-07-30T05:24:20-04:00 by Codex root.
 
 - 1493 首次建 base 时误复制生产 `repo/lidousha` 大媒体并触发 ENOSPC；失败目录已精确删除。
   之后改为仅复制部署组件、录像用单日期链接，并补入 hash-bound BCUT authority，v7 planner 已通过。
+- 1493 r1 已生成正确“沙豆李”整片字幕，但 exact-final CPA 又把旧 baseline 的
+  “这边我最期待了”裁成“这边我最期待的”（0.88）；最终 baseline owner 门拒绝静默漂移。
+  已把该 hash-bound CPA 结果晋升到持久 baseline/regression，388 个相关测试通过，部署
+  `926afbe` 后以新候选指纹建立 r2。r1 保留为失败证据，不原地洗绿。
 - 为恢复写入余量，已删除无引用且可重建的旧预览 235 个（2.36 GB），以及 07-18/19 旧
   `song_selector_full` 重试树中的 124 个 MP4（33.64 GB）；JSON、字幕、裁决记录、源录像和最终
   歌切物料均保留。当前磁盘约 31 GB 可用、93% 使用。
