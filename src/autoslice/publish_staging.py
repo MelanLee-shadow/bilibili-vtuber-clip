@@ -941,19 +941,19 @@ def _stage_cpa_redraw_cover(
         image_generation_attempted=True,
         image_generation_used=False,
     )
+    generation_prompt = _lidousha_cover_prompt(
+        title=title,
+        cover_text=cover_text,
+        art_direction=art_direction,
+        emote=emote_entry,
+    ) + cover_relation_prompt(story_contract)
     try:
         cpa_result = image_edit(
             base_url=base_url,
             api_key=api_key,
             reference_path=reference_path,
             output_path=ai_background_path,
-            prompt=_lidousha_cover_prompt(
-                title=title,
-                cover_text=cover_text,
-                art_direction=art_direction,
-                emote=emote_entry,
-            )
-            + cover_relation_prompt(story_contract),
+            prompt=generation_prompt,
             request_path=request_path,
             response_path=response_path,
         )
@@ -1031,24 +1031,125 @@ def _stage_cpa_redraw_cover(
         and route.get("host_identity_required") is True
     ):
         assert final_host_identity_verifier is not None
-        try:
-            cover_generation["final_host_identity_verification"] = dict(
-                final_host_identity_verifier(
-                    final_cover_path=final_cover_path,
-                    final_cover_sha256=cover_generation[
-                        "final_cover_sha256"
-                    ],
-                    reference_path=reference_path,
+        def verify_current_final() -> None:
+            try:
+                cover_generation[
+                    "final_host_identity_verification"
+                ] = dict(
+                    final_host_identity_verifier(
+                        final_cover_path=Path(
+                            str(cover_generation["final_cover"])
+                        ),
+                        final_cover_sha256=cover_generation[
+                            "final_cover_sha256"
+                        ],
+                        reference_path=reference_path,
+                        base_url=base_url,
+                        api_key=api_key,
+                    )
+                )
+            except Exception as exc:
+                cover_generation[
+                    "final_host_identity_verification"
+                ] = {
+                    "status": "FAIL",
+                    "reason_code": "HOST_IDENTITY_VERIFIER_EXCEPTION",
+                    "detail": f"{type(exc).__name__}: {exc}",
+                }
+
+        verify_current_final()
+        if not validate_final_host_identity_verification(cover_generation):
+            first_verification = cover_generation.get(
+                "final_host_identity_verification"
+            )
+            cover_generation[
+                "rejected_final_host_identity_verification"
+            ] = dict(
+                first_verification
+                if isinstance(first_verification, Mapping)
+                else {}
+            )
+            retry_background = (
+                ai_dir / f"{candidate_id}.ai-bg.host-identity-retry.png"
+            )
+            retry_final = (
+                covers_dir / f"{candidate_id}.ai-title.host-identity-retry.cover.png"
+            )
+            retry_request = (
+                evidence_dir
+                / f"{candidate_id}.cover-cpa-host-identity-retry.request.redacted.json"
+            )
+            retry_response = (
+                evidence_dir
+                / f"{candidate_id}.cover-cpa-host-identity-retry.response.redacted.json"
+            )
+            retry_result: Mapping[str, object]
+            try:
+                retry_result = image_edit(
                     base_url=base_url,
                     api_key=api_key,
+                    reference_path=reference_path,
+                    output_path=retry_background,
+                    prompt=(
+                        generation_prompt
+                        + " IDENTITY RETRY AFTER FAILED FINAL-PIXEL CHECK: "
+                        "the previous output copied a different source participant. "
+                        "Re-read visible source nameplates. The large protagonist "
+                        "must be the person labelled 李豆沙; do not hybridize her "
+                        "with any other participant, even if panda ears are added."
+                    ),
+                    request_path=retry_request,
+                    response_path=retry_response,
                 )
+            except Exception as exc:
+                retry_result = {
+                    "status": "FAILED",
+                    "reason_code": "HOST_IDENTITY_RETRY_EXCEPTION",
+                    "detail": f"{type(exc).__name__}: {exc}",
+                }
+            retry_ready = bool(
+                retry_result.get("status") == "AI_BACKGROUND_READY"
+                and retry_background.is_file()
             )
-        except Exception as exc:
-            cover_generation["final_host_identity_verification"] = {
-                "status": "FAIL",
-                "reason_code": "HOST_IDENTITY_VERIFIER_EXCEPTION",
-                "detail": f"{type(exc).__name__}: {exc}",
+            cover_generation["host_identity_retry"] = {
+                "schema_version": "lidousha-cover-host-identity-retry.v1",
+                "attempted": True,
+                "request_path": str(retry_request),
+                "response_path": str(retry_response),
+                "result_status": retry_result.get("status"),
+                "reason_code": retry_result.get("reason_code"),
+                "status": "GENERATED_PENDING_VERIFICATION" if retry_ready else "FAILED",
             }
+            if retry_ready:
+                retry_overlay = _overlay_lidousha_cover_title(
+                    retry_background,
+                    retry_final,
+                    cover_text=cover_text,
+                    art_direction=art_direction,
+                )
+                cover_generation.update(
+                    {
+                        "ai_background": str(retry_background),
+                        "ai_background_sha256": "sha256:"
+                        + _sha256(retry_background),
+                        "final_cover": str(retry_final),
+                        "final_cover_sha256": "sha256:"
+                        + _sha256(retry_final),
+                        "identity_retry_request_path": str(retry_request),
+                        "identity_retry_response_path": str(retry_response),
+                        **retry_overlay,
+                    }
+                )
+                verify_current_final()
+                cover_generation["host_identity_retry"]["status"] = (
+                    "PASS"
+                    if validate_final_host_identity_verification(
+                        cover_generation
+                    )
+                    else "FAILED_FINAL_IDENTITY"
+                )
+                final_cover_path = retry_final
+                ai_background_path = retry_background
         if not validate_final_host_identity_verification(cover_generation):
             verification = cover_generation.get(
                 "final_host_identity_verification"

@@ -161,3 +161,78 @@ def test_cpa_redraw_blocks_before_ready_when_host_identity_is_wrong(
     assert generation["route_decision"]["host_identity_required"] is True
     assert generation["route_decision"]["actual_treatment"] is None
     assert generation["route_decision"]["execution_status"] == "BLOCKED"
+
+
+def test_cpa_redraw_retries_once_and_recovers_host_identity(
+    tmp_path, monkeypatch
+):
+    from src.autoslice import publish_staging
+    from tests.test_cover_frame_selection import (
+        _write_synthetic_performance_clip,
+    )
+
+    media = _write_synthetic_performance_clip(tmp_path)
+    monkeypatch.setenv("CPA_BASE_URL", "https://cpa.example.test/v1")
+    monkeypatch.setenv("CPA_API_KEY", "test-key")
+    monkeypatch.setenv("AUTOSLICE_COVER_MODE", "cpa")
+    image_calls = 0
+    identity_calls = 0
+
+    def fake_image_edit(**kwargs):
+        nonlocal image_calls
+        image_calls += 1
+        Image.new("RGB", (1920, 1080), (30 * image_calls, 40, 80)).save(
+            kwargs["output_path"]
+        )
+        return {
+            "status": "AI_BACKGROUND_READY",
+            "selected_model": "gpt-image-2",
+            "attempted_models": ["gpt-image-2"],
+        }
+
+    def identity_verifier(*, final_cover_sha256: str, **_kwargs):
+        nonlocal identity_calls
+        identity_calls += 1
+        if identity_calls == 1:
+            return {
+                "schema_version": (
+                    "lidousha-cover-final-host-identity-verification.v1"
+                ),
+                "status": "FAIL",
+                "reason_code": "FINAL_HOST_IDENTITY_MISMATCH",
+            }
+        comparison_hash = "b" * 64
+        return {
+            "schema_version": (
+                "lidousha-cover-final-host-identity-verification.v1"
+            ),
+            "authority": (
+                "AGY_HASH_BOUND_SOURCE_FINAL_IDENTITY_COMPARISON"
+            ),
+            "status": "PASS",
+            "final_cover_sha256": final_cover_sha256,
+            "comparison_sha256": "sha256:" + comparison_hash,
+            "witness": {
+                "status": "OBSERVED",
+                "image_sha256": comparison_hash,
+            },
+        }
+
+    result = publish_staging._stage_lidousha_ai_cover(
+        {"status": "MATERIALIZED", "media_path": str(media)},
+        media_path=media,
+        candidate_id="pink-multi-person-auto-recovery",
+        title="【李豆沙】小姐姐布下迷魂阵，我是侄女啊",
+        cover_text="小姐姐布下迷魂阵\n我是侄女啊",
+        run_ffmpeg=True,
+        image_edit=fake_image_edit,
+        final_host_identity_verifier=identity_verifier,
+        enforce_final_host_identity=True,
+    )
+
+    assert result["status"] == "AI_COVER_READY"
+    assert image_calls == identity_calls == 2
+    generation = result["cover_generation"]
+    assert generation["host_identity_retry"]["status"] == "PASS"
+    assert generation["final_host_identity_verification"]["status"] == "PASS"
+    assert generation["route_decision"]["execution_status"] == "READY"

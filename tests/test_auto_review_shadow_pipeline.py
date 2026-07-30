@@ -4012,8 +4012,10 @@ def test_lidousha_cover_prompt_injects_persona_identity_descriptors():
     assert "熊猫" in prompt
     # Composition contract is preserved (16:9 protagonist-centered cover).
     assert "16:9" in prompt
+    assert "MULTI-PERSON REFERENCE RULE" in prompt
+    assert "labelled 李豆沙" in prompt
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "b9e1ea7ccb200545301698e6c15b8e04b4def7bdd8c2430da5ab18e752caf777"
+        "4426c60cf3745bad16e7bd5b24504942b28fcc22cf3494f9248b3e5358b5dc45"
     )
 
 
