@@ -141,3 +141,12 @@ def test_release_rejects_unconsumed_remapped_carryover():
         "mutation_authority": {"status": "NOT_APPLIED"},
     }
     assert unconsumed_correction_carryover_count(audit) == 0
+
+    replay.pop("context_audio_adjudication")
+    replay["carryover_consumption"] = {
+        "schema_version": "exact-final-carryover-consumption.v1",
+        "status": "CONSUMED_BY_EXACT_FINAL_CPA",
+        "before_sha256": "sha256:" + "a" * 64,
+        "after_sha256": "sha256:" + "c" * 64,
+    }
+    assert unconsumed_correction_carryover_count(audit) == 0

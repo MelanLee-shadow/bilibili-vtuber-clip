@@ -1184,6 +1184,82 @@ def test_exact_final_self_heal_uses_cpa_request_target_after_span_rejection():
     assert receipts[0]["after"] == proposed
 
 
+def test_exact_final_carryover_replays_only_on_same_hash_and_time(tmp_path):
+    from src.autoslice import producer_package_finalization as finalization
+
+    current = "就是面部的时候没有什么制作这个机体"
+    proposed = "就是制作这个机体"
+    base_sha256 = hashlib.sha256(current.encode("utf-8")).hexdigest()
+    srt_text = f"1\n00:00:22,920 --> 00:00:26,140\n{current}\n"
+    path = tmp_path / "candidate.final-review-carryover.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "final-review-carryover.v1",
+                "findings": [
+                    {
+                        "cue": 11,
+                        "base_text_sha256": base_sha256,
+                        "kind": "context",
+                        "suspect": "面部的时候没有什么",
+                        "proposed_full_cue": proposed,
+                        "exact_release_adjudication": {
+                            "schema_version": "subtitle-span-adjudication.v1",
+                            "status": "OBSERVED",
+                            "decision_authority": "CPA_JUDGE",
+                            "repaired": True,
+                            "timing_immutable": True,
+                            "mutation_authority": {
+                                "schema_version": (
+                                    "subtitle-correction-mutation-authority.v1"
+                                ),
+                                "status": "PASS",
+                            },
+                            "request": {
+                                "schema_version": (
+                                    "subtitle-span-acoustic-check-request.v1"
+                                ),
+                                "request_sha256": "f" * 64,
+                                "base_text_sha256": base_sha256,
+                                "current_cue": current,
+                                "proposed_cue": proposed,
+                                "matched_start_ms": 22_920,
+                                "matched_end_ms": 26_140,
+                            },
+                            "witness_judge": {
+                                "judge": {
+                                    "status": "JUDGED",
+                                    "choice": "PROPOSED",
+                                }
+                            },
+                        },
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    rows = finalization._replayable_exact_final_carryover_findings(
+        srt_text,
+        path,
+    )
+    assert len(rows) == 1
+    repaired, receipts = finalization._apply_exact_final_cpa_repairs(
+        srt_text,
+        {"findings": rows},
+    )
+    assert proposed in repaired
+    assert receipts[0]["before"] == current
+
+    drifted = srt_text.replace("00:00:22,920", "00:00:22,921")
+    assert finalization._replayable_exact_final_carryover_findings(
+        drifted,
+        path,
+    ) == []
+
+
 def test_exact_final_review_gate_allows_five_bounded_repair_rounds(
     tmp_path: Path,
 ) -> None:

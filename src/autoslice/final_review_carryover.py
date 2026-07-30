@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from src.autoslice.final_review_contract import (
-    is_keep_current_disclosed,
+    correction_carryover_consumed,
 )
 
 SCHEMA_VERSION = "final-review-carryover.v1"
@@ -35,6 +35,7 @@ _ROW_KEYS = (
     "suspect",
     "replacement",
     "why",
+    "exact_release_adjudication",
 )
 
 
@@ -122,11 +123,7 @@ def persist_final_review_carryover(path: Path, audit: Mapping[str, Any]) -> int:
         if not isinstance(finding, Mapping):
             continue
         remap = finding.get("carryover_replay_remap")
-        adjudication = finding.get("context_audio_adjudication")
-        consumed = bool(
-            isinstance(adjudication, Mapping)
-            and adjudication.get("repaired") is True
-        ) or is_keep_current_disclosed(finding)
+        consumed = correction_carryover_consumed(finding)
         if not (
             isinstance(remap, Mapping)
             and remap.get("schema_version")

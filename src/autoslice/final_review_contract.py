@@ -337,15 +337,7 @@ def unconsumed_correction_carryover_count(audit: object) -> int:
             if isinstance(finding, Mapping)
             else None
         )
-        adjudication = (
-            finding.get("context_audio_adjudication")
-            if isinstance(finding, Mapping)
-            else None
-        )
-        consumed = bool(
-            isinstance(adjudication, Mapping)
-            and adjudication.get("repaired") is True
-        ) or is_keep_current_disclosed(finding)
+        consumed = correction_carryover_consumed(finding)
         if (
             isinstance(remap, Mapping)
             and remap.get("schema_version")
@@ -355,6 +347,36 @@ def unconsumed_correction_carryover_count(audit: object) -> int:
         ):
             count += 1
     return count
+
+
+def correction_carryover_consumed(finding: object) -> bool:
+    """Whether a replayed correction row reached a new terminal decision."""
+
+    if not isinstance(finding, Mapping):
+        return False
+    adjudication = finding.get("context_audio_adjudication")
+    replay = finding.get("carryover_consumption")
+    return bool(
+        (
+            isinstance(adjudication, Mapping)
+            and adjudication.get("repaired") is True
+        )
+        or is_keep_current_disclosed(finding)
+        or (
+            isinstance(replay, Mapping)
+            and replay.get("schema_version")
+            == "exact-final-carryover-consumption.v1"
+            and replay.get("status") == "CONSUMED_BY_EXACT_FINAL_CPA"
+            and _SHA256_RX.fullmatch(
+                str(replay.get("before_sha256") or "")
+            )
+            is not None
+            and _SHA256_RX.fullmatch(
+                str(replay.get("after_sha256") or "")
+            )
+            is not None
+        )
+    )
 
 
 def is_keep_current_disclosed(finding: object) -> bool:

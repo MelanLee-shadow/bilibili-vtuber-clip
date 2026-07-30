@@ -228,6 +228,8 @@ def test_carryover_recovers_cpa_target_hidden_by_large_delta_rejection(tmp_path)
                             ),
                             "current_cue": current,
                             "proposed_cue": proposed,
+                            "matched_start_ms": 0,
+                            "matched_end_ms": 1_000,
                         },
                         "witness_judge": {
                             "judge": {
@@ -242,7 +244,11 @@ def test_carryover_recovers_cpa_target_hidden_by_large_delta_rejection(tmp_path)
     )
 
     assert count == 1
-    assert load_final_review_carryover(path)[0]["proposed_full_cue"] == proposed
+    row = load_final_review_carryover(path)[0]
+    assert row["proposed_full_cue"] == proposed
+    assert row["exact_release_adjudication"]["request"][
+        "proposed_cue"
+    ] == proposed
 
 
 def test_clean_exact_scan_preserves_unconsumed_remapped_carryover(tmp_path):

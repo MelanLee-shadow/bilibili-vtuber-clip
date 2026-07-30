@@ -16,6 +16,7 @@ from src.autoslice.chat_authority import (
 from src.autoslice.final_review_carryover import (
     adjudicated_proposed_full_cue,
     carryover_path,
+    load_final_review_carryover,
     persist_final_review_carryover,
 )
 from src.autoslice.channel_profile import load_channel_profile
@@ -963,6 +964,135 @@ def _apply_exact_final_cpa_repairs(
     return _render_cues_to_srt(cues), repairs
 
 
+def _replayable_exact_final_carryover_findings(
+    srt_text: str,
+    path: Path,
+) -> list[dict[str, object]]:
+    """Remap a prior exact CPA decision onto identical current cue bytes/time."""
+
+    cues = parse_srt_cues(srt_text)
+    by_sha256: dict[str, list[tuple[int, object]]] = {}
+    for cue_position, cue in enumerate(cues, start=1):
+        digest = hashlib.sha256(cue.text.encode("utf-8")).hexdigest()
+        by_sha256.setdefault(digest, []).append((cue_position, cue))
+    findings: list[dict[str, object]] = []
+    for row in load_final_review_carryover(path):
+        base_sha256 = str(row.get("base_text_sha256") or "")
+        matches = by_sha256.get(base_sha256, [])
+        adjudication = row.get("exact_release_adjudication")
+        request = (
+            adjudication.get("request")
+            if isinstance(adjudication, Mapping)
+            else None
+        )
+        proposed = adjudicated_proposed_full_cue(row)
+        if (
+            len(matches) != 1
+            or proposed is None
+            or not isinstance(request, Mapping)
+        ):
+            continue
+        cue_position, cue = matches[0]
+        if (
+            request.get("base_text_sha256") != base_sha256
+            or request.get("current_cue") != cue.text
+            or request.get("proposed_cue") != proposed
+            or request.get("matched_start_ms") != cue.start_ms
+            or request.get("matched_end_ms") != cue.end_ms
+        ):
+            continue
+        finding = dict(row)
+        finding["cue_index"] = cue_position
+        finding["proposed_full_cue"] = proposed
+        finding["carryover_exact_replay"] = {
+            "schema_version": "exact-final-carryover-replay.v1",
+            "status": "REPLAYABLE",
+            "basis": "UNIQUE_TEXT_HASH_AND_EXACT_TIME_WINDOW",
+            "before_sha256": "sha256:" + base_sha256,
+            "matched_start_ms": cue.start_ms,
+            "matched_end_ms": cue.end_ms,
+        }
+        findings.append(finding)
+    return findings
+
+
+def _overlay_exact_carryover_findings(
+    audit: object,
+    findings: list[dict[str, object]],
+) -> object:
+    """Add replayable CPA findings to an otherwise independent exact scan."""
+
+    if (
+        not findings
+        or not isinstance(audit, dict)
+        or audit.get("schema_version") != "final-review-audit.v2"
+        or not isinstance(audit.get("findings"), list)
+    ):
+        return audit
+    existing = {
+        (
+            row.get("base_text_sha256"),
+            row.get("proposed_full_cue"),
+        )
+        for row in audit["findings"]
+        if isinstance(row, Mapping)
+    }
+    additions = [
+        row
+        for row in findings
+        if (row.get("base_text_sha256"), row.get("proposed_full_cue"))
+        not in existing
+    ]
+    if not additions:
+        return audit
+    audit["findings"] = [*audit["findings"], *additions]
+    audit["validated_finding_count"] = len(audit["findings"])
+    audit["status"] = "FLAGGED"
+    audit["release_gate"] = "BLOCK"
+    reasons = [str(value) for value in audit.get("reason_codes") or []]
+    if "FINAL_REVIEW_UNRESOLVED_FINDINGS" not in reasons:
+        reasons.append("FINAL_REVIEW_UNRESOLVED_FINDINGS")
+    audit["reason_codes"] = reasons
+    discovery = audit.get("discovery")
+    if isinstance(discovery, dict):
+        discovery["explicit_empty_findings"] = False
+        raw_count = discovery.get("raw_validated_finding_count")
+        discovery["raw_validated_finding_count"] = (
+            int(raw_count) if isinstance(raw_count, int) else 0
+        ) + len(additions)
+    return audit
+
+
+def _annotate_consumed_correction_carryovers(
+    audit: object,
+    repairs: Mapping[str, Mapping[str, object]],
+) -> None:
+    if not isinstance(audit, dict) or not repairs:
+        return
+    correction_pass = audit.get("correction_pass")
+    findings = (
+        correction_pass.get("findings")
+        if isinstance(correction_pass, dict)
+        else None
+    )
+    if not isinstance(findings, list):
+        return
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        base_sha256 = str(finding.get("base_text_sha256") or "")
+        repair = repairs.get(base_sha256)
+        if repair is None:
+            continue
+        finding["carryover_consumption"] = {
+            "schema_version": "exact-final-carryover-consumption.v1",
+            "status": "CONSUMED_BY_EXACT_FINAL_CPA",
+            "before_sha256": repair["before_sha256"],
+            "after_sha256": repair["after_sha256"],
+            "request_sha256": repair["request_sha256"],
+        }
+
+
 def _register_exact_final_cpa_repairs(
     chat_authority_audit: dict[str, object],
     repairs: list[dict[str, object]],
@@ -1102,6 +1232,9 @@ def _run_exact_final_review_gate(
     if reviewer is None:
         raise SystemExit("FINAL_REVIEW_EXACT_FINALIZER_MISSING")
     self_heal_passes: list[dict[str, object]] = []
+    carryover_file = carryover_path(out_root, cid)
+    replayable_carryover_base_sha256: set[str] = set()
+    consumed_carryover_repairs: dict[str, Mapping[str, object]] = {}
     # A long clip can expose a second-order wording error only after an earlier
     # CPA-authorized repair makes the surrounding sentence coherent.  Two
     # repair rounds proved too small for the five-minute pink-room recovery:
@@ -1120,6 +1253,20 @@ def _run_exact_final_review_gate(
             final_start,
             final_end,
         )
+        _annotate_consumed_correction_carryovers(
+            audit,
+            consumed_carryover_repairs,
+        )
+        if pass_index == 0:
+            replayable = _replayable_exact_final_carryover_findings(
+                final_text,
+                carryover_file,
+            )
+            replayable_carryover_base_sha256.update(
+                str(row.get("base_text_sha256") or "")
+                for row in replayable
+            )
+            audit = _overlay_exact_carryover_findings(audit, replayable)
         chat_authority_audit["final_review_audit"] = audit
         persist_review_audit(out_root / f"{cid}.review-flags.json", audit)
         expected_srt_sha256 = "sha256:" + hashlib.sha256(
@@ -1159,6 +1306,12 @@ def _run_exact_final_review_gate(
                     repairs,
                     delivery_start_ms=final_start,
                 )
+                for repair in repairs:
+                    before_sha256 = str(
+                        repair.get("before_sha256") or ""
+                    ).removeprefix("sha256:")
+                    if before_sha256 in replayable_carryover_base_sha256:
+                        consumed_carryover_repairs[before_sha256] = repair
                 chat_authority_audit["exact_final_cpa_self_heal"] = {
                     "schema_version": "exact-final-cpa-self-heal-audit.v1",
                     "status": "REVIEW_PENDING",
@@ -1208,7 +1361,7 @@ def _run_exact_final_review_gate(
                 continue
             # 终审结转仍是无法在当前 exact-final pass 安全落盘时的后备。
             carryover_count = persist_final_review_carryover(
-                carryover_path(out_root, cid), audit
+                carryover_file, audit
             )
             if carryover_count:
                 audit["carryover_persisted_count"] = carryover_count
@@ -1229,7 +1382,7 @@ def _run_exact_final_review_gate(
         # A clean pass clears any already-consumed carryover and binds the
         # complete same-run self-heal history to the final authority receipt.
         persist_final_review_carryover(
-            carryover_path(out_root, cid), audit
+            carryover_file, audit
         )
         if self_heal_passes:
             self_heal_audit = {
