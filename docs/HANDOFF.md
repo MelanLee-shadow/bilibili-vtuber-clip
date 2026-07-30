@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-07-30T06:18:00-04:00 by Codex root.
+Updated: 2026-07-30T15:52:00-04:00 by Codex root.
 
 本文件只记录会影响下一次操作的 live 状态。流水线规则只读
 [`docs/pipeline/`](pipeline/README.md)。`review_ready`、旧 PID、旧日志和旧 handoff 都不是发布
@@ -9,8 +9,7 @@ Updated: 2026-07-30T06:18:00-04:00 by Codex root.
 ## 目标
 
 保持 `free:/opt/bilive/autoslice` 正式 cron 不停，继续收敛 2026-07-25、07-26 及后续日期；
-当前优先修复 07-26 唯一失败谈话 `auto_142942_496_618`，再处理 07-25/26 歌切 authority
-blockers。
+07-26 最后一条谈话已发布，当前优先处理 07-25/26 歌切 authority blockers。
 
 用户已授权：修复稿可直接同 BV 编辑上传；当天新稿可权宜直接上传；指定旧稿重做后可直接上传，
 无需再次等待审阅。
@@ -18,7 +17,7 @@ blockers。
 ## 已完成
 
 - 正式生产部署：`free:/opt/bilive/autoslice/repo/DEPLOYED_COMMIT` =
-  `926afbefeea2027db7e2c0ffa1d90e34d6b8e8f6`（2026-07-30T09:41:30Z）；`DISABLED`
+  `ef8e2de7c4a18f0e62d52b8d3bd59deefc4e9d0c`（2026-07-30T19:16:20Z）；`DISABLED`
   不存在，cron 启用。
 - `auto_193450_1863_2056`（07-22）已同 BV 上线：`BV1xgg462Env`，CID `40420508094`。
 - `auto_183122_1209_1410`（07-24，礼墨/生豆角）已同 BV 上线：`BV1AD366DEd9`，
@@ -51,20 +50,45 @@ blockers。
   `12ed8a5f6a898bb3ddaf328974ef7f088f330c28169cdb0933f46fb6c46758cf`。Creator/public/section
   fresh-live 三方一致，公开 CDN 封面回下载哈希与目标封面一致；五处均为“沙豆李”，投票顺序为
   “发一支持沙豆李 / 发零支持李豆沙 / 为什么要这样说 / 发二支持李豆沙”。
+- `auto_142942_496_618` 已以新稿发布：`BV1zk386LEjC`，CID `40453148097`；标题为
+  `【李豆沙】一声“偶”让小李开起日语人称翻译大会`。最终视频/SRT/封面 SHA-256 分别为
+  `f96f56c0801edefda282295ca1d59007a885ba366c2fc16413f46e0e88d4a66f`、
+  `180b48030002f15bdb0b58523d061089f9688d6c22b294d3ecd8bb69ec1dab21`、
+  `edf5e31fd4e2b80ec7d6c765dc7ad0f553913930fc146835873aa159b7912c55`；Creator/public/section
+  回读均 PASS。`好爽哦` 经两把独立 Gemini key 的候选盲长窗转写支持，保留不改。
+- 新增 exact-final 短句候选盲声学 discovery；声学证人只见音频与时间，不见当前/候选文字，
+  检出后仍由 CPA 生成候选并终裁。单音节窄窗幻听会被 syllable-count outlier 门拒绝。
+- package auditor 现按 v2 `actual_treatment` 审核真实落地封面；CPA 重绘身份见证不可用、且
+  unverified AI pixels 已丢弃时，合法的 hash-bound `screenshot_direct` 降级不再被误审成
+  缺少 CPA AI 产物。
+- 本地 commit `d772269` 已恢复歌切的有界音频 provider 降级：AGY 仍为首选，只有 typed AGY
+  failure 才会把完整、hash-bound 音轨和 canonical LRC 交直连 Gemini API；同一 v5/本人演唱/
+  完整编曲/paid-key 门继续强制。远端三把 free key 均存在且互异，真实 1 秒音频 canary 已成功；
+  等当前旧版 runner 释放 lock 后部署。
+- 封面权威和 AGY fallback 模块的旧表述已同步修正：任何最终像素见证都是 CPA vision 首选，
+  AGY 仅在 CPA 图像调用不可用或输出不合约时作披露式后备；“CPA 不听音频”不得再推成
+  “CPA 不能看图”。
 
 ## 进行中
 
-- 准备对 07-26 `auto_142942_496_618` 建立隔离 no-upload recovery，定位并修复
-  `subtitle_authority / foreign_source_transcription`，正式 cron 保持启用。
+- 已修复歌切永久冻结：源视频/切窗/BCUT 字幕暂缺及 Jingting 未取得 AGY/model provenance
+  现在是 typed infrastructure failure，按指数退避重试，可越过普通内容尝试上限，但不能越过
+  每场最多交付一首与剩余 delivery slot。
+- 2026-07-30T19:17Z 启动的旧版 live runner 已把 07-25 的 6 个歌切 BLOCK/failed 全部重新识别
+  为可恢复并串行推进。`song_192000_1321`（《海海海》）与 `song_195000_287`（《言不由衷》）
+  均完成 tight→原源扩大，但在 AGY audio-LRC 阶段被 `AGY_QUOTA_EXHAUSTED` 暂态阻断；
+  `song_215519_1` 已取得内容层 BLOCK，当前正在处理 `song_212013_882`。本 tick 使用旧部署，
+  因而不会看到 `d772269` 的 Gemini 音频后备。
 
 ## 当前正式队列
 
 - 07-25：状态 `review_ready_with_failures`；6/6 talk 均为
   `review_ready + CURRENT + COMPLIANT + AI_COVER_READY`，无 pending talk。歌切 2 个 failed
-  （`song_192000_1321`、`song_195000_287`），4 个 blocked，无 pending song。
-- 07-26：7 个 talk 中 6 个为 `review_ready + CURRENT + COMPLIANT + AI_COVER_READY`；
-  `auto_142942_496_618` 因 `subtitle_authority / foreign_source_transcription` 被拒。4 个歌切
-  blocked，无 pending。
+  （`song_192000_1321`、`song_195000_287`），4 个 blocked；当前 live recovery 已将六者
+  迁移为可恢复，并按每场一首配额串行推进。
+- 07-26：7/7 talk 均为 `review_ready + CURRENT + COMPLIANT + AI_COVER_READY`；
+  `auto_142942_496_618` 已发布。4 个歌切仍为 blocked，将在当前 07-25 runner 阶段结束后按
+  新 infrastructure retry 规则重判/入队。
 - 07-29：4 个 talk 为 `review_ready + CURRENT + COMPLIANT + AI_COVER_READY`；
   `auto_225056_814_887` 因 `subtitle_authority / chat_authority_finalization` 被拒。
 
@@ -83,13 +107,18 @@ blockers。
   歌切物料均保留。当前磁盘约 31 GB 可用、93% 使用。
 - provider 暂态、queued 未启动、subtitle/song authority 失败都属于流水线/操作层应自行修复的
   问题，不能停下来等用户。
+- 旧歌切 early failure 只有 free-form `window cut failed`，且同场普通 18 次尝试额度已被其他
+  候选耗尽，导致源文件后来到盘也永不重试；`ef8e2de` 已迁移旧错误为 typed reason，并让
+  infrastructure retry 越过内容尝试上限。内容不匹配/非本人演唱仍 fail-closed。
 
 ## 下一步
 
-1. 修复 07-26 的 `auto_142942_496_618`，确认 foreign-source authority 根因并在隔离 base 重跑、
-   终验；若已有公开 BV 则同 BV 修复，否则按当天新稿授权发布。
-2. 处理 07-25/26 歌切 authority blockers；
-   正式 cron 与已就绪新稿并行推进，不因单个 recovery 停摆。
+1. 让当前旧版 tick 跑完并释放 `runner.lock`；提交本文件与 CPA-primary 图像规则修正后，部署
+   当前 HEAD，核验 `DEPLOYED_COMMIT`、managed hashes、`DISABLED` 与 cron。
+2. 在新部署下重新唤醒 `song_192000_1321` 与 `song_195000_287`；要求真实回执显示 AGY typed
+   failure 后进入 Gemini API（或 AGY 自身恢复），不能继续停在 provider transient。
+3. 当前 tick/后续 tick 继续处理 07-25 剩余候选及 07-26 歌切 infrastructure blockers；正式 cron
+   与已就绪新稿并行推进，不因单个 recovery 停摆。
 
 ## 固化规则
 

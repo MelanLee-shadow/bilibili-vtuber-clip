@@ -80,10 +80,13 @@
    `carryover_persisted_count`；该单一 additive receipt 不构成审计面矛盾，不能把原本
    `CORRECTION_DISCOVERY_INCOMPLETE` 的 provider transient 错分成 terminal contract。
    其他共享字段不一致或未知附加字段仍按 contract corruption fail closed。
-5. **一般生产音频只交 AGY**：不得因 quota、timeout 或输出错误把实体/歌切音频转交 Gemini API、CPA
-   或其他文本模型。唯一例外是上文 hash-bound 外语原声 span：直连 Gemini API 已实测支持该
-   exact audio 输入时可作候选盲后备证人，仍无 mutation authority，CPA 保留最终裁决权。
-   或其他文字模型。先复用身份完整匹配的 AGY 成功缓存；仍无证据但文字闭集已完整时，
+5. **生产音频 AGY 优先，例外必须候选盲、hash-bound 且无裁决权**：CPA 与普通文字模型绝不
+   接收音频。candidate-aware 实体二选一仍只交 AGY；允许直连 Gemini API 的只有三条显式专线：
+   上文外语原声 span、`entity_audio_verifier.py` 的候选盲拼音 witness，以及
+   [50-song-lane.md](50-song-lane.md) 中 AGY typed failure 后的完整音轨 + canonical LRC 观察。
+   三者都必须保存 exact audio hash、模型/提示词和 provider failure provenance，并继续通过各自
+   的后续门；Gemini 只有 evidence authority，不能落字或决定交付，CPA 保留文字/语义终裁。
+   先复用身份完整匹配的 AGY 成功缓存；仍无证据但文字闭集已完整时，
    CPA 必须仅按文字语境继续选边；只有候选生成依赖尚未得到的声学事实时才写
    `provider_transient` 并由 runner 有界重试。CPA 只接收文字闭集、AGY 观察文字（若有）和片级文字
    语境，保持最终选边权，但绝不直接收音频。

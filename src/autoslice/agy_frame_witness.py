@@ -1,8 +1,10 @@
-"""Hash-bound AGY visual witness for still images and video frames.
+"""Hash-bound AGY fallback witness for still images and video frames.
 
-CPA is a text-only model lane. Image pixels are therefore shown only to AGY,
-which opens a sandboxed local JPEG with ``view_file`` and returns a textual
-observation. The receipt is evidence input, not an automatic semantic verdict.
+The production visual router shows pixels to CPA first.  This module is called
+only when that CPA visual witness is unavailable or violates the caller's
+answer contract; AGY then opens a sandboxed local JPEG with ``view_file`` and
+returns a disclosed fallback observation.  The receipt is evidence input, not
+an automatic semantic verdict.
 """
 
 from __future__ import annotations
