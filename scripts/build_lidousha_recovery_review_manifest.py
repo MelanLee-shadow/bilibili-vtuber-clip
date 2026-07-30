@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -121,6 +122,96 @@ def _record_generation(record: dict[str, Any]) -> dict[str, Any]:
             "record has no valid lidousha-cover-route-decision.v2"
         )
     return generation
+
+
+def _sync_cover_title_replay_artifacts(
+    *,
+    package_root: Path,
+    stem: str,
+    generation: dict[str, Any],
+) -> tuple[Path, Path, Path]:
+    """Refresh portable title-compositor evidence after a cover-only repair.
+
+    Recovery packages keep stable, stem-named copies at the package root, while
+    a reviewed cover repair writes immutable evidence under a new generation
+    directory.  Rebuilding the manifest must project the *current* generation
+    bytes, not reject the package merely because the old portable copies still
+    exist.  Every source remains hash-bound by the current record before it is
+    copied; undeclared, missing, symlinked, or drifted sources fail closed.
+    """
+
+    rendered = generation.get("rendered_text_pixels")
+    if not isinstance(rendered, dict):
+        raise ManifestBuildError("cover generation lacks rendered_text_pixels")
+    specs = (
+        (
+            package_root / f"{stem}.cover.title-mask.png",
+            rendered.get("mask_path"),
+            rendered.get("mask_sha256"),
+            "title mask",
+        ),
+        (
+            package_root / f"{stem}.cover.pre-overlay.png",
+            generation.get("pre_overlay_path"),
+            generation.get("pre_overlay_sha256"),
+            "pre-overlay",
+        ),
+        (
+            package_root / f"{stem}.cover.route-background.png",
+            generation.get("ai_background"),
+            generation.get("ai_background_sha256"),
+            "route background",
+        ),
+    )
+    projected: list[Path] = []
+    for target, declared_source, declared_sha, label in specs:
+        if target.is_file() and not target.is_symlink() and _matches_sha256(
+            target, declared_sha
+        ):
+            projected.append(target)
+            continue
+        if target.is_symlink():
+            raise ManifestBuildError(
+                f"cover {label} portable target may not be a symlink: {target}"
+            )
+        if not isinstance(declared_source, str) or not declared_source:
+            raise ManifestBuildError(
+                f"cover {label} portable copy drifted without a declared source"
+            )
+        source = Path(declared_source)
+        if (
+            source.is_symlink()
+            or not source.is_file()
+            or not _matches_sha256(source, declared_sha)
+        ):
+            raise ManifestBuildError(
+                f"cover {label} declared source is missing or hash-drifted: {source}"
+            )
+        payload = source.read_bytes()
+        temporary: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                dir=target.parent,
+                prefix=f".{target.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                temporary = Path(handle.name)
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, target)
+            temporary = None
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        if not _matches_sha256(target, declared_sha):
+            raise ManifestBuildError(
+                f"cover {label} portable projection verification failed: {target}"
+            )
+        projected.append(target)
+    return projected[0], projected[1], projected[2]
 
 
 def _record_title(record: dict[str, Any]) -> str:
@@ -394,15 +485,6 @@ def build_manifest(
         stem, record_path, record = records_by_id[candidate_id]
         video = _required_file(package_root, f"{stem}.mp4")
         cover = _required_file(package_root, f"{stem}.cover.png")
-        cover_title_mask = _required_file(
-            package_root, f"{stem}.cover.title-mask.png"
-        )
-        cover_pre_overlay = _required_file(
-            package_root, f"{stem}.cover.pre-overlay.png"
-        )
-        cover_route_background = _required_file(
-            package_root, f"{stem}.cover.route-background.png"
-        )
         subtitle = _required_file(package_root, f"{stem}.srt")
         clip_context = _required_file(package_root, f"{stem}.clip-context.json")
         regression_status, regression = _project_optional_audit(
@@ -453,6 +535,15 @@ def build_manifest(
             uniform_host=uniform_host,
         )
         generation = _record_generation(record)
+        (
+            cover_title_mask,
+            cover_pre_overlay,
+            cover_route_background,
+        ) = _sync_cover_title_replay_artifacts(
+            package_root=package_root,
+            stem=stem,
+            generation=generation,
+        )
         if generation.get("final_cover_sha256") != _sha256(cover):
             raise ManifestBuildError(
                 f"cover_generation final hash drift: {candidate_id}"

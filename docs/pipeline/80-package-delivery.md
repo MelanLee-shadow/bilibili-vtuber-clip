@@ -190,6 +190,11 @@
   部分 delivery 或报告层旧状态都不能盖过 incomplete exact closure。只有 closure COMPLETE
   才能投影 `review_ready` 并进入本地覆盖。
 - exact recovery 重跑结束后必须用 `scripts/build_lidousha_recovery_review_manifest.py` 从最终 state 与 record **整份重建** `review_manifest.json`，禁止复用/手补上一轮清单。审计器必须比较 manifest item 与 record 的 candidate/title。`cover_route_attestations` 必须存在，candidate 集合须与 exact candidate 集合完全相等，并逐项重验 reference/final hash、method、完整 route decision 与 reference authority；缺失、额外、重复、旧标题、旧封面 hash 或旧路由证据漂移都要阻断上传。
+- recovery 成品在 cover-only repair 后重建 manifest 时，builder 必须从当前 record 的
+  `cover_generation` 逐项验真并刷新包根的 `.cover.pre-overlay.png`、
+  `.cover.title-mask.png`、`.cover.route-background.png` 可移植副本。只允许使用当前 generation
+  明示且 hash 匹配的 regular source；缺 source、symlink、hash 漂移继续 fail-closed，不能让上一版
+  封面的回放附件阻断已绑定的新封面，也不能沿用旧附件假装通过。
 - 重建的 recovery `review_manifest.json` 固定保持
   `status=finished_review_package_no_upload_pending_human_review` 与
   `upload_allowed=false`。current package audit 只证明机器可确定的结构、hash、投影与政策闭包；

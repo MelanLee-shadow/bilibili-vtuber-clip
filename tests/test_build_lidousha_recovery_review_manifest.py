@@ -8,6 +8,7 @@ import pytest
 
 from scripts.build_lidousha_recovery_review_manifest import (
     ManifestBuildError,
+    _sync_cover_title_replay_artifacts,
     build_manifest,
 )
 from src.autoslice.cover_route_evidence import (
@@ -23,6 +24,52 @@ from src.autoslice.recovery_title_authority import (
 
 def _sha(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_recovery_builder_refreshes_current_cover_replay_artifacts(
+    tmp_path: Path,
+) -> None:
+    package_root = tmp_path / "package"
+    generation_root = tmp_path / "generation"
+    package_root.mkdir()
+    generation_root.mkdir()
+    stem = "reviewed-cover"
+    sources = {}
+    for name, payload in (
+        ("mask", b"current-mask"),
+        ("pre", b"current-pre-overlay"),
+        ("background", b"current-background"),
+    ):
+        source = generation_root / f"{name}.png"
+        source.write_bytes(payload)
+        sources[name] = source
+    for suffix in (
+        "cover.title-mask.png",
+        "cover.pre-overlay.png",
+        "cover.route-background.png",
+    ):
+        (package_root / f"{stem}.{suffix}").write_bytes(b"stale")
+
+    projected = _sync_cover_title_replay_artifacts(
+        package_root=package_root,
+        stem=stem,
+        generation={
+            "pre_overlay_path": str(sources["pre"]),
+            "pre_overlay_sha256": _sha(sources["pre"]),
+            "ai_background": str(sources["background"]),
+            "ai_background_sha256": _sha(sources["background"]),
+            "rendered_text_pixels": {
+                "mask_path": str(sources["mask"]),
+                "mask_sha256": _sha(sources["mask"]),
+            },
+        },
+    )
+
+    assert [path.read_bytes() for path in projected] == [
+        b"current-mask",
+        b"current-pre-overlay",
+        b"current-background",
+    ]
 
 
 def test_builder_reprojects_record_title_and_exact_cover_evidence(
