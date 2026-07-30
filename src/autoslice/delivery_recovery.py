@@ -1593,6 +1593,7 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             and record.get("failure_kind") == "subtitle_authority"
             and record.get("failure_stage") in {
                 "chat_authority_finalization",
+                "chat_authority_final_artifact",
                 "final_review_findings",
                 "foreign_source_transcription",
             }

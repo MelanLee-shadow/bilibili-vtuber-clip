@@ -1145,7 +1145,11 @@ def test_legacy_foreign_provider_rejection_is_reviveable():
 
 @pytest.mark.parametrize(
     "failure_stage",
-    ["foreign_source_transcription", "final_review_findings"],
+    [
+        "foreign_source_transcription",
+        "final_review_findings",
+        "chat_authority_final_artifact",
+    ],
 )
 def test_selected_authority_rejection_revives_after_pipeline_change(
     tmp_path, monkeypatch, failure_stage
