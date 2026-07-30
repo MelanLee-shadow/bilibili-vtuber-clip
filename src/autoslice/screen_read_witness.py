@@ -124,6 +124,15 @@ def parse_screen_text_pool(receipts: Sequence[Mapping[str, Any]]) -> list[str]:
     return pool
 
 
+def _screen_answer_valid(answer: str) -> bool:
+    try:
+        match = re.search(r"\{.*\}", answer, re.S)
+        payload = json.loads(match.group(0)) if match else None
+    except (ValueError, AttributeError, json.JSONDecodeError):
+        return False
+    return bool(isinstance(payload, dict) and isinstance(payload.get("texts"), list))
+
+
 def match_screen_read(
     *,
     heard_pinyin: str,
@@ -164,8 +173,14 @@ def make_screen_read_probe(
     """Build a bounded two-frame screen-text prober for one media file."""
 
     def probe(span_start_ms: int, span_end_ms: int) -> dict[str, Any]:
+        probe_kwargs: dict[str, Any] = {
+            "api_base": api_base,
+            "api_key": api_key,
+        }
         if frame_probe is None:
-            from src.autoslice.agy_frame_witness import frame_vision_probe
+            from src.autoslice.visual_witness import frame_vision_probe
+
+            probe_kwargs["answer_validator"] = _screen_answer_valid
         else:
             frame_vision_probe = frame_probe  # type: ignore[assignment]
         duration = max(0, int(span_end_ms) - int(span_start_ms))
@@ -180,8 +195,7 @@ def make_screen_read_probe(
                 media_path,
                 ms,
                 SCREEN_TEXT_QUESTION,
-                api_base=api_base,
-                api_key=api_key,
+                **probe_kwargs,
             )
             for ms in sample_ms
         ]
@@ -285,7 +299,7 @@ __all__ = [
 
 
 def build_env_screen_read_probe(media_path: Any):
-    """AGY 视觉读屏探针；无 AGY/媒体时返回 None（裁决链零依赖）。"""
+    """CPA-primary 视觉读屏探针；AGY 仅作后备。"""
 
     import os
     import shutil
@@ -295,13 +309,15 @@ def build_env_screen_read_probe(media_path: Any):
         "AGY_BIN",
         str(Path.home() / ".local" / "bin" / "agy"),
     )
-    if (
-        not Path(media_path).is_file()
-        or not (Path(agy_bin).is_file() or shutil.which(agy_bin))
+    api_base = os.environ.get("CPA_BASE_URL", "").strip()
+    api_key = os.environ.get("CPA_API_KEY", "").strip()
+    agy_available = bool(Path(agy_bin).is_file() or shutil.which(agy_bin))
+    if not Path(media_path).is_file() or not (
+        (api_base and api_key) or agy_available
     ):
         return None
     return make_screen_read_probe(
         media_path=media_path,
-        api_base="",
-        api_key="",
+        api_base=api_base,
+        api_key=api_key,
     )

@@ -39,7 +39,9 @@ blockers。
   授权的期望值真值，不冒充唯一人耳声学真值。
 - 已部署的系统修复包括：封面 hook 不得切断语义原子、AI 最终图 hash-bound 李豆沙主人公身份
   复核及一次重绘、CPA carryover 精确重放/消费、修复后 cover replay 证据刷新、AI 图像模型
-  provenance 强绑定。CPA 是文字/语义最终裁决者；AGY 是唯一可读 audio/image 的高可信 witness。
+  provenance 强绑定。音频输入由 AGY（以及 foreign-span 的直连 Gemini 有界后备）提供 witness，
+  CPA 保持最终文字/语义裁决权；图像 witness 首选 CPA vision，AGY 只作 CPA 不可用时的后备，
+  禁止再把“CPA 不接音频”外推成“CPA 不能看图”。
 - glossary 高收益机械归一仍有效，例如 `林墨 -> 礼墨`；两个已注册专名互相冲突时仍交 CPA。
 - `auto_195000_1493_1579` 已用最新版流水线完成整片重跑、CPA 终裁、AGY 0 到 EOS 见证、
   package audit 与最终封面实图验收，并在原 `BV1zzgd6JEHe` 同 BV 上线；当前 CID

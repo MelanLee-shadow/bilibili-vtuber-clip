@@ -1,10 +1,10 @@
 """Final-pixel Li Dousha identity gate for AI-modified covers.
 
 The image generator may copy the wrong person from a multi-person reference
-and then add one or two panda-like details.  A prompt is not evidence that the
-result still depicts Li Dousha.  This module builds a hash-bound SOURCE/FINAL
-comparison image and asks AGY (the image-capable lane) for a strict visual
-verdict.  CPA is text-only and is deliberately not used here.
+and then add one or two panda-like details. A prompt is not evidence that the
+result still depicts Li Dousha. This module builds a hash-bound SOURCE/FINAL
+comparison image and asks CPA for a distinct strict visual verdict. AGY is a
+fallback witness only when CPA vision is unavailable.
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ from typing import Mapping
 from PIL import Image, ImageDraw, ImageOps
 
 
-SCHEMA_VERSION = "lidousha-cover-final-host-identity-verification.v1"
-AUTHORITY = "AGY_HASH_BOUND_SOURCE_FINAL_IDENTITY_COMPARISON"
+SCHEMA_VERSION = "lidousha-cover-final-host-identity-verification.v2"
+AUTHORITY = "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_COMPARISON"
 UNAVAILABLE_REASON_CODES = frozenset(
     {
         "HOST_IDENTITY_WITNESS_UNAVAILABLE",
@@ -40,6 +40,22 @@ def _extract_json_object(answer: str) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise ValueError("verdict is not a JSON object")
     return value
+
+
+def _identity_answer_valid(answer: str) -> bool:
+    try:
+        verdict = _extract_json_object(answer)
+    except (ValueError, json.JSONDecodeError):
+        return False
+    return all(
+        key in verdict
+        for key in (
+            "source_lidousha_located",
+            "primary_subject_is_lidousha",
+            "primary_subject_matches_other_source_participant",
+            "identity_conflicts",
+        )
+    )
 
 
 def _comparison_path(final_cover_path: Path) -> Path:
@@ -93,7 +109,7 @@ def verify_lidousha_final_host_identity(
     base_url: str = "",
     api_key: str = "",
 ) -> dict[str, object]:
-    """Return a fail-closed AGY verdict bound to source and final bytes."""
+    """Return a fail-closed CPA-primary verdict bound to source/final bytes."""
 
     final_cover_path = Path(final_cover_path)
     reference_path = Path(reference_path)
@@ -140,7 +156,7 @@ def verify_lidousha_final_host_identity(
         )
         return verification
 
-    from src.autoslice.agy_frame_witness import image_vision_probe
+    from src.autoslice.visual_witness import image_vision_probe
 
     comparison_sha = _sha256(comparison_path)
     witness = image_vision_probe(
@@ -148,11 +164,14 @@ def verify_lidousha_final_host_identity(
         _QUESTION,
         api_base=base_url,
         api_key=api_key,
+        answer_validator=_identity_answer_valid,
     )
     verification.update(
         comparison_path=str(comparison_path),
         comparison_sha256=comparison_sha,
         witness=witness,
+        preferred_witness_provider="cpa",
+        selected_witness_provider=witness.get("provider"),
     )
     witness_sha = (
         "sha256:" + str(witness.get("image_sha256"))
@@ -211,6 +230,23 @@ def validate_final_host_identity_verification(
         if isinstance(witness, Mapping) and witness.get("image_sha256")
         else ""
     )
+    provider = str(witness.get("provider") or "") if isinstance(witness, Mapping) else ""
+    routing = witness.get("routing") if isinstance(witness, Mapping) else None
+    primary_receipt = (
+        routing.get("primary_receipt") if isinstance(routing, Mapping) else None
+    )
+    provider_route_valid = bool(
+        provider == "cpa"
+        or (
+            provider == "agy"
+            and isinstance(routing, Mapping)
+            and routing.get("preferred_provider") == "cpa"
+            and routing.get("fallback_used") is True
+            and routing.get("primary_status") != "OBSERVED"
+            and isinstance(primary_receipt, Mapping)
+            and primary_receipt.get("provider") == "cpa"
+        )
+    )
     return bool(
         verification.get("schema_version") == SCHEMA_VERSION
         and verification.get("authority") == AUTHORITY
@@ -219,6 +255,7 @@ def validate_final_host_identity_verification(
         == cover_generation.get("final_cover_sha256")
         and comparison_sha.startswith("sha256:")
         and witness_sha == comparison_sha
+        and provider_route_valid
     )
 
 

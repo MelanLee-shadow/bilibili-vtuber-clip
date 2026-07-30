@@ -100,7 +100,7 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
 - `screenshot_polish` 即使单人也必须有最终像素验证：polish 模型可能返回比 prompt
   要求大得多的脸（2026-07-26 BV1E93L6rErV 案：固定 fit-crop 卡把嘴/下巴裁掉上了公开面），
   polished 像素不得继承源帧几何。生产端 `polish_face_verification`
-  （`lidousha-cover-polish-face-verification.v1`，AGY 图像见证，含吐舌检查）必须
+  （`lidousha-cover-polish-face-verification.v2`，CPA-primary 图像见证，含吐舌检查）必须
   PASS 且 witness image hash 逐字节等于 final cover SHA；`FACE_INCOMPLETE` 先以
   face-safe contain 卡（`card_fit=contain_face_safe`，整脸装入 1640×700 卡）重排一次
   再终判；仍失败、出现不合格表情或验证不可用时，必须拒收 AI 修图像素并自动退回
@@ -120,7 +120,8 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   并出回执；线上替换走 `scripts/bili_cover_edit.py`（cover-only 授权编辑+读回回执，
   编辑不占投稿配额）。
 - CPA redraw 的李豆沙最终身份复核若得到明确 `FINAL_HOST_IDENTITY_MISMATCH`，只允许重绘一次，
-  仍不匹配就阻断；若复核本身因 AGY quota/timeout/不可解析而不可用，则禁止继续消耗生图额度，
+  仍不匹配就阻断；若复核本身因 CPA vision 与 AGY 后备均 quota/timeout/不可解析而不可用，
+  则禁止继续消耗生图额度，
   也禁止放过未经核验的 AI 像素。未发布包必须保留失败回执并自动降级为 hash-bound
   `screenshot_direct / READY_DEGRADED`；cover-only maintenance 遇到同类失败必须排入一次正常
   producer 重跑，让完整 route/proof 链生成该降级包，而不是耗尽三次 repair 后停住。重跑生成
@@ -132,11 +133,13 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   身份正确，并绑定最终 cover SHA；故事动作/反转若只由文字表达，必须作为 `COVER_TEXT`
   单独验收，不能要求或声称画面里存在。没有 verifier 或声明表现面不明确就阻断。
 - 所有 `cpa_redraw` 与实际采用 AI 像素的 `screenshot_polish` 还必须通过独立的
-  `lidousha-cover-final-host-identity-verification.v1`：AGY 只看 hash-bound 的
+  `lidousha-cover-final-host-identity-verification.v2`：首选 CPA vision 只看 hash-bound 的
   SOURCE/FINAL 对照图，先在源图按名牌与当场造型定位李豆沙，再确认最终封面的最大叙事主体
   仍是李豆沙。给伊索尔等其他参与者补熊猫耳、白发或熊猫元素不能算身份正确；主角与任一
-  其他源人物更匹配、无法定位源人物、AGY 不可用、回执不可解析或 hash 不一致都必须阻断。
-  CPA 是纯文字模型，不得伪装成这项图像证据。该门独立于 `relation_state`，因此会话关系
+  其他源人物更匹配、无法定位源人物、CPA 与 AGY 后备均不可用、回执不可解析或 hash 不一致
+  都必须阻断。这里的 CPA vision 是独立于 `gpt-image-2` 生图请求的第二次判断，不能让同一生图
+  响应自证；CPA 不可用时才允许 AGY 作故障后备，回执必须披露 `fallback_used=true` 与 CPA
+  失败原因。该门独立于 `relation_state`，因此会话关系
   ledger 漏记也不能让多人物参考图绕过主播身份复核。首次 `FINAL_HOST_IDENTITY_MISMATCH`
   必须保留被拒图与回执，用“源图名牌中的李豆沙才是主角、不得给其他参与者补熊猫耳冒充”
   的强化提示有界重画一次并再次复核；第二次仍失败才进入 cover-only 维护阻断。

@@ -31,6 +31,9 @@ from src.autoslice.cover_text_pixel_evidence import (  # noqa: E402
 from src.autoslice.cover_font_paths import (  # noqa: E402
     resolve_trusted_cover_font,
 )
+from src.autoslice.cover_polish_gate import (  # noqa: E402
+    _polish_face_binding_failure,
+)
 from src.autoslice.clip_context import (  # noqa: E402
     ClipContextError,
     clip_context_prompt_text,
@@ -857,22 +860,12 @@ def _audit_finished_cover_evidence(
             # bytes need an independent PASS face-integrity verdict bound to
             # the exact final cover hash (2026-07-26 BV1E93L6rErV face cut).
             face_verification = generation.get("polish_face_verification")
-            witness = (
-                face_verification.get("witness")
-                if isinstance(face_verification, Mapping)
-                else None
+            face_failure = _polish_face_binding_failure(
+                generation,
+                face_verification if isinstance(face_verification, Mapping) else None,
+                method,
             )
-            witness_sha = (
-                "sha256:" + str(witness.get("image_sha256"))
-                if isinstance(witness, Mapping) and witness.get("image_sha256")
-                else None
-            )
-            if not (
-                isinstance(face_verification, Mapping)
-                and face_verification.get("status") == "PASS"
-                and witness_sha
-                and witness_sha == str(final_hash or "")
-            ):
+            if face_failure is not None:
                 _add_issue(
                     issues,
                     "SCREENSHOT_POLISH_FACE_UNVERIFIED",
@@ -880,8 +873,9 @@ def _audit_finished_cover_evidence(
                     path=record_path,
                     detail=(
                         "screenshot_polish requires a PASS face-integrity "
-                        "verdict whose witness image hash equals the final "
-                        "cover sha256"
+                        "verdict from CPA primary (or a disclosed AGY "
+                        "fallback) whose witness image hash equals the final "
+                        f"cover sha256: {face_failure}"
                     ),
                 )
         return

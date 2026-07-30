@@ -2,7 +2,7 @@
 
 Extracted from publish_staging (2026-07-26 anti-屎山 guardrail): the polish
 call, the target-bound compose loop with the whole-face contain retry, the
-AGY face-integrity verdict and its hash binding all live together here.
+CPA-primary face-integrity verdict and its hash binding all live together here.
 """
 
 from __future__ import annotations
@@ -18,6 +18,9 @@ from .cover_generation import (
 from .cover_screenshot_poster import _compose_screenshot_poster_background
 
 
+POLISH_FACE_SCHEMA_VERSION = "lidousha-cover-polish-face-verification.v2"
+POLISH_FACE_AUTHORITY = "CPA_PRIMARY_HASH_BOUND_FINAL_FACE_CHECK"
+
 _POLISH_FACE_QUESTION = (
     "这是一张视频封面成品。请只判断画面中人物的脸部是否完整可见："
     "双眼、嘴巴、下巴都必须在画面内，且没有被画面边缘或卡片边框切断。"
@@ -25,6 +28,18 @@ _POLISH_FACE_QUESTION = (
     '{"face_complete": true|false, "missing": ["eyes"|"mouth"|"chin"], '
     '"tongue_out": true|false, "reason": "简短中文说明"}'
 )
+
+
+def _polish_answer_valid(answer: str) -> bool:
+    try:
+        verdict = json.loads(answer[answer.index("{") : answer.rindex("}") + 1])
+    except (ValueError, json.JSONDecodeError):
+        return False
+    return bool(
+        isinstance(verdict, dict)
+        and "face_complete" in verdict
+        and "tongue_out" in verdict
+    )
 
 def _verify_polish_face_integrity(
     final_cover_path: Path,
@@ -37,22 +52,26 @@ def _verify_polish_face_integrity(
     The polish model may return a much larger face than the prompt asked for
     (2026-07-26 BV1E93L6rErV: mouth and chin cut by the fixed card crop went
     public). Polished pixels cannot inherit source-frame geometry, so the
-    final bytes get an independent AGY visual verdict. CPA is text-only and
-    cannot be used as pixel evidence. Failure here is fail-closed but repairable —
-    cover-only maintenance retries on the next tick.
+    final bytes get an independent CPA visual verdict. AGY is retained only as
+    a fallback witness. Failure here is fail-closed but repairable; cover-only
+    maintenance retries on the next tick.
     """
 
-    from src.autoslice.agy_frame_witness import image_vision_probe
+    from src.autoslice.visual_witness import image_vision_probe
 
     receipt = image_vision_probe(
         final_cover_path,
         _POLISH_FACE_QUESTION,
         api_base=base_url,
         api_key=api_key,
+        answer_validator=_polish_answer_valid,
     )
     verification: dict[str, object] = {
-        "schema_version": "lidousha-cover-polish-face-verification.v1",
+        "schema_version": POLISH_FACE_SCHEMA_VERSION,
+        "authority": POLISH_FACE_AUTHORITY,
         "witness": receipt,
+        "preferred_witness_provider": "cpa",
+        "selected_witness_provider": receipt.get("provider"),
     }
     if receipt.get("status") != "OBSERVED":
         verification.update(
@@ -108,10 +127,35 @@ def _polish_face_binding_failure(
         if isinstance(witness, Mapping) and witness.get("image_sha256")
         else None
     )
+    provider = (
+        str(witness.get("provider") or "")
+        if isinstance(witness, Mapping)
+        else ""
+    )
+    routing = witness.get("routing") if isinstance(witness, Mapping) else None
+    primary_receipt = (
+        routing.get("primary_receipt") if isinstance(routing, Mapping) else None
+    )
+    provider_route_valid = bool(
+        provider == "cpa"
+        or (
+            provider == "agy"
+            and isinstance(routing, Mapping)
+            and routing.get("preferred_provider") == "cpa"
+            and routing.get("fallback_used") is True
+            and routing.get("primary_status") != "OBSERVED"
+            and isinstance(primary_receipt, Mapping)
+            and primary_receipt.get("provider") == "cpa"
+        )
+    )
     if (
         isinstance(face_verification, Mapping)
+        and face_verification.get("schema_version")
+        == POLISH_FACE_SCHEMA_VERSION
+        and face_verification.get("authority") == POLISH_FACE_AUTHORITY
         and face_verification.get("status") == "PASS"
         and witness_sha == bound_sha
+        and provider_route_valid
     ):
         return None
     return (

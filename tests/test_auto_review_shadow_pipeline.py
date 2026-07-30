@@ -2905,16 +2905,17 @@ def test_publish_staging_records_cpa_ai_cover_chain_and_embedded_title(tmp_path,
         comparison_hash = "a" * 64
         return {
             "schema_version": (
-                "lidousha-cover-final-host-identity-verification.v1"
+                "lidousha-cover-final-host-identity-verification.v2"
             ),
             "authority": (
-                "AGY_HASH_BOUND_SOURCE_FINAL_IDENTITY_COMPARISON"
+                "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_COMPARISON"
             ),
             "status": "PASS",
             "final_cover_sha256": final_cover_sha256,
             "comparison_sha256": "sha256:" + comparison_hash,
             "witness": {
                 "status": "OBSERVED",
+                "provider": "cpa",
                 "image_sha256": comparison_hash,
             },
         }
@@ -5466,9 +5467,14 @@ def test_screenshot_polish_retouches_cropped_frame(tmp_path, monkeypatch):
 
         sha = hashlib.sha256(Path(final_cover_path).read_bytes()).hexdigest()
         return {
-            "schema_version": "lidousha-cover-polish-face-verification.v1",
+            "schema_version": "lidousha-cover-polish-face-verification.v2",
+            "authority": "CPA_PRIMARY_HASH_BOUND_FINAL_FACE_CHECK",
             "status": "PASS",
-            "witness": {"status": "OBSERVED", "image_sha256": sha},
+            "witness": {
+                "status": "OBSERVED",
+                "provider": "cpa",
+                "image_sha256": sha,
+            },
         }
 
     monkeypatch.setattr(
@@ -5808,16 +5814,21 @@ def test_polish_cover_face_gate_retries_contain_then_passes(tmp_path, monkeypatc
         face_calls.append(str(final_cover_path))
         if len(face_calls) == 1:
             return {
-                "schema_version": "lidousha-cover-polish-face-verification.v1",
+                "schema_version": "lidousha-cover-polish-face-verification.v2",
                 "status": "FAIL",
                 "reason_code": "FACE_INCOMPLETE",
                 "witness": {"status": "OBSERVED", "image_sha256": "0" * 64},
             }
         sha = hashlib.sha256(Path(final_cover_path).read_bytes()).hexdigest()
         return {
-            "schema_version": "lidousha-cover-polish-face-verification.v1",
+            "schema_version": "lidousha-cover-polish-face-verification.v2",
+            "authority": "CPA_PRIMARY_HASH_BOUND_FINAL_FACE_CHECK",
             "status": "PASS",
-            "witness": {"status": "OBSERVED", "image_sha256": sha},
+            "witness": {
+                "status": "OBSERVED",
+                "provider": "cpa",
+                "image_sha256": sha,
+            },
         }
 
     monkeypatch.setattr(
@@ -5859,7 +5870,7 @@ def test_polish_cover_face_gate_degrades_to_direct_when_never_complete(
     def fake_face_verify(final_cover_path, *, base_url, api_key):
         face_calls.append(str(final_cover_path))
         return {
-            "schema_version": "lidousha-cover-polish-face-verification.v1",
+            "schema_version": "lidousha-cover-polish-face-verification.v2",
             "status": "FAIL",
             "reason_code": "FACE_INCOMPLETE",
             "witness": {"status": "OBSERVED", "image_sha256": "0" * 64},
@@ -5920,7 +5931,7 @@ def test_polish_cover_face_gate_unavailable_degrades_without_retry(
     def fake_face_verify(final_cover_path, *, base_url, api_key):
         face_calls.append(str(final_cover_path))
         return {
-            "schema_version": "lidousha-cover-polish-face-verification.v1",
+            "schema_version": "lidousha-cover-polish-face-verification.v2",
             "status": "FAIL",
             "reason_code": "VERIFIER_UNAVAILABLE",
             "witness": {"status": "UNAVAILABLE"},

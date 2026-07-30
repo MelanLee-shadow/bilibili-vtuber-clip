@@ -20,6 +20,7 @@ def _fake_witness(answer: dict[str, object]):
     def probe(image_path: Path, _question: str, **_kwargs):
         return {
             "status": "OBSERVED",
+            "provider": "cpa",
             "image_sha256": hashlib.sha256(
                 Path(image_path).read_bytes()
             ).hexdigest(),
@@ -32,14 +33,14 @@ def _fake_witness(answer: dict[str, object]):
 def test_wrong_source_participant_as_protagonist_fails_closed(
     tmp_path, monkeypatch
 ):
-    from src.autoslice import agy_frame_witness
+    from src.autoslice import cpa_frame_witness
 
     reference = tmp_path / "source.png"
     final = tmp_path / "final.png"
     Image.new("RGB", (1920, 1080), (20, 30, 40)).save(reference)
     Image.new("RGB", (1920, 1080), (50, 60, 70)).save(final)
     monkeypatch.setattr(
-        agy_frame_witness,
+        cpa_frame_witness,
         "image_vision_probe",
         _fake_witness(
             {
@@ -72,14 +73,14 @@ def test_wrong_source_participant_as_protagonist_fails_closed(
 def test_source_final_lidousha_identity_match_passes_and_binds_hash(
     tmp_path, monkeypatch
 ):
-    from src.autoslice import agy_frame_witness
+    from src.autoslice import cpa_frame_witness
 
     reference = tmp_path / "source.png"
     final = tmp_path / "final.png"
     Image.new("RGB", (1920, 1080), (20, 30, 40)).save(reference)
     Image.new("RGB", (1920, 1080), (80, 90, 100)).save(final)
     monkeypatch.setattr(
-        agy_frame_witness,
+        cpa_frame_witness,
         "image_vision_probe",
         _fake_witness(
             {
@@ -109,6 +110,46 @@ def test_source_final_lidousha_identity_match_passes_and_binds_hash(
     assert not validate_final_host_identity_verification(generation)
 
 
+def test_agy_identity_receipt_requires_disclosed_cpa_failure():
+    digest = "b" * 64
+    witness = {
+        "status": "OBSERVED",
+        "provider": "agy",
+        "image_sha256": digest,
+        "routing": {
+            "preferred_provider": "cpa",
+            "selected_provider": "agy",
+            "fallback_used": True,
+            "primary_status": "UNAVAILABLE",
+            "primary_reason_code": "VISION_CALL_FAILED",
+            "primary_receipt": {
+                "status": "UNAVAILABLE",
+                "provider": "cpa",
+                "reason_code": "VISION_CALL_FAILED",
+            },
+        },
+    }
+    generation = {
+        "final_cover_sha256": "sha256:" + "a" * 64,
+        "final_host_identity_verification": {
+            "schema_version": (
+                "lidousha-cover-final-host-identity-verification.v2"
+            ),
+            "authority": (
+                "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_COMPARISON"
+            ),
+            "status": "PASS",
+            "final_cover_sha256": "sha256:" + "a" * 64,
+            "comparison_sha256": "sha256:" + digest,
+            "witness": witness,
+        },
+    }
+
+    assert validate_final_host_identity_verification(generation)
+    witness["routing"].pop("primary_receipt")
+    assert not validate_final_host_identity_verification(generation)
+
+
 def test_cpa_redraw_blocks_before_ready_when_host_identity_is_wrong(
     tmp_path, monkeypatch
 ):
@@ -135,7 +176,7 @@ def test_cpa_redraw_blocks_before_ready_when_host_identity_is_wrong(
     def wrong_identity(**_kwargs):
         return {
             "schema_version": (
-                "lidousha-cover-final-host-identity-verification.v1"
+                "lidousha-cover-final-host-identity-verification.v2"
             ),
             "status": "FAIL",
             "reason_code": "FINAL_HOST_IDENTITY_MISMATCH",
@@ -198,7 +239,7 @@ def test_cpa_redraw_degrades_to_source_pixels_when_identity_witness_is_down(
         identity_calls += 1
         return {
             "schema_version": (
-                "lidousha-cover-final-host-identity-verification.v1"
+                "lidousha-cover-final-host-identity-verification.v2"
             ),
             "status": "FAIL",
             "reason_code": "HOST_IDENTITY_WITNESS_UNAVAILABLE",
@@ -265,7 +306,7 @@ def test_cpa_redraw_retries_once_and_recovers_host_identity(
         if identity_calls == 1:
             return {
                 "schema_version": (
-                    "lidousha-cover-final-host-identity-verification.v1"
+                    "lidousha-cover-final-host-identity-verification.v2"
                 ),
                 "status": "FAIL",
                 "reason_code": "FINAL_HOST_IDENTITY_MISMATCH",
@@ -273,16 +314,17 @@ def test_cpa_redraw_retries_once_and_recovers_host_identity(
         comparison_hash = "b" * 64
         return {
             "schema_version": (
-                "lidousha-cover-final-host-identity-verification.v1"
+                "lidousha-cover-final-host-identity-verification.v2"
             ),
             "authority": (
-                "AGY_HASH_BOUND_SOURCE_FINAL_IDENTITY_COMPARISON"
+                "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_COMPARISON"
             ),
             "status": "PASS",
             "final_cover_sha256": final_cover_sha256,
             "comparison_sha256": "sha256:" + comparison_hash,
             "witness": {
                 "status": "OBSERVED",
+                "provider": "cpa",
                 "image_sha256": comparison_hash,
             },
         }
