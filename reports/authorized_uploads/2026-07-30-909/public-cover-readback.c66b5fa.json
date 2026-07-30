@@ -1,0 +1,10 @@
+{
+  "schema_version": "lidousha-public-cover-readback.v1",
+  "observed_at": "2026-07-30T09:04:00Z",
+  "bvid": "BV1s7326qEc9",
+  "cid": 40438664771,
+  "cover_url": "https://archive.biliimg.com/bfs/archive/f4f262d1bbe8b4a40284db49f5a6a2d06fcf5909.png",
+  "downloaded_sha256": "57c536b218674d9cc5c3b31866d8be7c01bf1cd6dd25d68774cb91b6928976ab",
+  "expected_final_cover_sha256": "57c536b218674d9cc5c3b31866d8be7c01bf1cd6dd25d68774cb91b6928976ab",
+  "status": "EXACT_HASH_MATCH"
+}

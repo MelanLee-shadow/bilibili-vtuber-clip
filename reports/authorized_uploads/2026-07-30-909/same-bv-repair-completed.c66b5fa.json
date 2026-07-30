@@ -1,0 +1,110 @@
+{
+  "aid": 117002458957829,
+  "bvid": "BV1s7326qEc9",
+  "candidate_id": "auto_192000_909_1014",
+  "live_snapshot": {
+    "creator": {
+      "aid": 117002458957829,
+      "available": true,
+      "bvid": "BV1s7326qEc9",
+      "metadata": {
+        "copyright": 2,
+        "cover": "//bilibili-cover-asset/bfs/archive/f4f262d1bbe8b4a40284db49f5a6a2d06fcf5909.png",
+        "desc": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+        "source": "https://live.bilibili.com/",
+        "tags": [
+          "3D",
+          "吐槽",
+          "搞笑",
+          "李豆沙",
+          "直播事故",
+          "直播切片",
+          "虚拟UP主",
+          "虚拟主播",
+          "表情包"
+        ],
+        "tid": 21,
+        "title": "【李豆沙】观众想让新3D永久保留“白色奶龙”表情，小李拒绝花钱"
+      },
+      "state": 0,
+      "state_desc": "开放浏览",
+      "videos": [
+        {
+          "cid": 40438664771,
+          "filename": "n260730ad170qgiracbnog1y7sgt26vd",
+          "title": "【李豆沙】观众想让新3D永久保留“白色奶龙”表情，小李拒绝花钱"
+        }
+      ]
+    },
+    "public": {
+      "aid": 117002458957829,
+      "available": true,
+      "bvid": "BV1s7326qEc9",
+      "cid": 40438664771,
+      "metadata": {
+        "copyright": 2,
+        "cover": "//bilibili-cover-asset/bfs/archive/f4f262d1bbe8b4a40284db49f5a6a2d06fcf5909.png",
+        "desc": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+        "tags": [
+          "3D",
+          "吐槽",
+          "搞笑",
+          "李豆沙",
+          "直播事故",
+          "直播切片",
+          "虚拟UP主",
+          "虚拟主播",
+          "表情包"
+        ],
+        "tid": 21,
+        "title": "【李豆沙】观众想让新3D永久保留“白色奶龙”表情，小李拒绝花钱"
+      },
+      "state": 0
+    },
+    "section": {
+      "available": true,
+      "matches": [
+        {
+          "aid": 117002458957829,
+          "bvid": "BV1s7326qEc9",
+          "cid": 40438664771,
+          "title": "【李豆沙】观众想让新3D永久保留“白色奶龙”表情，小李拒绝花钱"
+        }
+      ],
+      "section_id": 9320779
+    }
+  },
+  "manifest": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/repo/lidousha/2026-07-25/verification/authorized-upload-manifest.c66b5fa.json",
+    "sha256": "3e2fbd62f5c202cca1cbe197d6ee23536a20b59672e621c490ba94d0e03b3b87"
+  },
+  "new_cid": 40438664771,
+  "plan": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/repo/lidousha/2026-07-25/verification/same-bv-repair-plan.c66b5fa.json",
+    "plan_id": "1669f41de8a8403ba33f252f8f87de8b",
+    "sha256": "e35aa09877bfc574cb65f7b3a50f345bf7f8b2e753208162cc4b8c06809500d0"
+  },
+  "rc": 0,
+  "remote_mutation": false,
+  "replacement": {
+    "cover": {
+      "bytes": 2844942,
+      "path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/repo/lidousha/2026-07-25/观众想让新3D永久保留“白色奶龙”表.cover.png",
+      "sha256": "57c536b218674d9cc5c3b31866d8be7c01bf1cd6dd25d68774cb91b6928976ab"
+    },
+    "video": {
+      "bytes": 35330813,
+      "path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/repo/lidousha/2026-07-25/观众想让新3D永久保留“白色奶龙”表.mp4",
+      "sha256": "76cfa5d4766e1b443e005299ff665233c88b291fc87e27fc3287de56435afe25"
+    }
+  },
+  "schema_version": "same-bv-repair-completed.v1",
+  "status": "VERIFIED_FRESH_LIVE",
+  "verified_at": "2026-07-30T09:04:26+0000",
+  "verified_journal_row": {
+    "at": "2026-07-30T09:03:42.472108+00:00",
+    "journal_path": "/opt/bilive/autoslice/reports/same_bv_repair_ledger.jsonl",
+    "row_sha256": "2e990c8614a79be758ffff937e482dea9c90931c62931ab35562f13746816b26",
+    "seq": 15
+  }
+}
