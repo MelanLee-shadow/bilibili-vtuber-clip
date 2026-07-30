@@ -1,13 +1,13 @@
 {
   "schema_version": "lidousha-recovery-publication-authority.v1",
-  "authority": "Ivan 2026-07-29: the published clip auto_142942_496_618 has two reported defects: the cover lacks Li Dousha as the clear subject, and known Japanese speech mixes kana with romaji. Repair the cover in place, rerun the whole clip once with the latest pipeline, write confirmed ordinary Japanese lexemes in native Japanese script instead of romaji, and upload the repaired result to the existing BV without creating a replacement BV. Preserve the verified public title. The published endpoint is a recall anchor so the latest semantic boundary resolver may retain the complete Japanese-pronoun discussion and payoff.",
+  "authority": "Ivan 2026-07-29: the published clip auto_142942_496_618 has two reported defects: the cover lacks Li Dousha as the clear subject, and known Japanese speech mixes kana with romaji. Repair the cover in place, rerun the whole clip once with the latest pipeline, write confirmed ordinary Japanese lexemes in native Japanese script instead of romaji, and upload the repaired result to the existing BV without creating a replacement BV. Preserve the verified public title and the complete previously published clip. The hash-bound reviewed subtitle baseline for the same source covers 496370-627010ms; 627010ms is therefore the exact recovery source endpoint, not the shorter 618420ms selection recall anchor.",
   "entries": [
     {
       "candidate_id": "auto_142942_496_618",
       "title_mode": "verified_public_exact",
       "observed_public_title": "【李豆沙】一声“偶”让小李开起日语人称翻译大会",
-      "required_given_end_ms": 618420,
-      "boundary_end_mode": "published_recall_anchor",
+      "required_given_end_ms": 627010,
+      "boundary_end_mode": "exact_source_pin",
       "bvid": "BV1zk386LEjC",
       "aid": 117010478405297,
       "cid": 40453148097,

@@ -27,6 +27,10 @@ DAILY_1493_ASSET = (
 DAILY_1493_ASSET_SHA256 = (
     "sha256:9f84633d9db12f37159030a104ff0d3b6876646e393da99f78684182f005dc5f"
 )
+JAPANESE_PRONOUN_ASSET = (
+    ROOT
+    / "assets/lidousha/recovery_publication_authority_2026-07-30_japanese_pronoun.v1.json"
+)
 CANDIDATE_IDS = {
     "auto_193450_3573_3665",
     "auto_193450_672_945",
@@ -278,6 +282,27 @@ def test_single_published_1493_contract_binds_existing_bv_and_exact_end():
     assert authority["boundary_end_mode"] == "exact_source_pin"
     assert authority["bvid"] == "BV1zzgd6JEHe"
     assert authority["cid"] == 40_331_906_310
+
+
+def test_japanese_pronoun_contract_pins_complete_reviewed_public_interval():
+    raw = JAPANESE_PRONOUN_ASSET.read_bytes()
+    authorities, ends, end_authority = (
+        planner._load_recovery_publication_contract(
+            queued_candidate_ids={"auto_142942_496_618"},
+            publication_asset=JAPANESE_PRONOUN_ASSET,
+            expected_publication_authority_sha256=(
+                "sha256:" + hashlib.sha256(raw).hexdigest()
+            ),
+            repo_root=ROOT,
+        )
+    )
+
+    authority = authorities["auto_142942_496_618"]
+    assert ends == {"auto_142942_496_618": 627_010}
+    assert end_authority == authority["registry_authority"]
+    assert authority["boundary_end_mode"] == "exact_source_pin"
+    assert authority["bvid"] == "BV1zk386LEjC"
+    assert authority["cid"] == 40_453_148_097
 
 
 def test_single_published_projection_isolates_target_without_suppressing_others():
