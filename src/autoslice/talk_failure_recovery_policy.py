@@ -12,9 +12,14 @@ def subtitle_authority_recovery_relatives(
 
     return (
         "scripts/produce_slice_package.py",
+        "src/autoslice/delivery_recovery.py",
+        "src/autoslice/talk_failure_recovery_policy.py",
         "src/autoslice/producer_text_pipeline.py",
         "src/autoslice/producer_text_finalization.py",
+        "src/autoslice/producer_package_finalization.py",
+        "src/autoslice/final_review_auditor.py",
         "src/autoslice/final_review_contract.py",
+        "src/autoslice/missing_proposal_bootstrap.py",
         "src/autoslice/producer_source_truth_authority.py",
         "src/autoslice/source_subtitle_truth.py",
         "src/autoslice/chat_proposals.py",

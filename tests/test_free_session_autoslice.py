@@ -9057,6 +9057,18 @@ def test_subtitle_authority_recovery_fingerprint_tracks_final_surface_verifier(
     )
     for relative, repair in (
         (
+            "src/autoslice/missing_proposal_bootstrap.py",
+            "CPA creates a bounded candidate before AGY and final judgment",
+        ),
+        (
+            "src/autoslice/final_review_auditor.py",
+            "exact-final routes the bounded candidate through AGY and CPA",
+        ),
+        (
+            "src/autoslice/delivery_recovery.py",
+            "selected exact-final authority failures may revive",
+        ),
+        (
             "src/autoslice/producer_text_finalization.py",
             "exact authorized deletion verifier fix",
         ),
