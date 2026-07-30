@@ -45,7 +45,8 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   与交付包 StoryContract 哈希不一致的短梗字回执。
   返修 preflight 以 active record 的完整 StoryContract 为权威；publish/cover evidence 只保存
   封面所需字段投影，因此必须逐字段验证“投影属于该完整权威”，不得错误要求精简投影与完整
-  对象整体相等。多个完整权威不一致、投影缺核心字段或任一已写字段漂移时仍须 fail-closed。
+  对象整体相等。多个完整权威不一致、投影缺核心字段或任一已写字段漂移时仍须 fail-closed；
+  后续 preflight 与最终绑定成功后必须清除旧失败字段，不能让已恢复的 state 继续携带伪 blocker。
 - 字体：全链验字形；选中字体必须完整覆盖标题且 `glyph_risk=[]`，否则
   `COVER_FONT_GLYPH_COVERAGE_MISSING` 阻断。生产可在 committed profile fonts 内选择完整字体，
   但放行复验不接受系统字体或未提交路径；实际选择、render spec 和像素证据由

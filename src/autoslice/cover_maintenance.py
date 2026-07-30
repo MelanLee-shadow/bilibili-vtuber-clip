@@ -142,6 +142,18 @@ def repair_covers(
         ) and record.get("title"):
             _runner._refresh_cover_repair_budget(record, fingerprint)
     needed = [r for r in records if _runner.cover_repair_needed(date, r)]
+    needed_ids = {id(record) for record in needed}
+    cleared_stale_preflight_error = False
+    for record in records:
+        if (
+            id(record) not in needed_ids
+            and record.get("cover_integrity_status")
+            in {"VALID_BOUND", "VALID_BOUND_RECOVERED"}
+            and record.pop("cover_authority_preflight_error", None) is not None
+        ):
+            cleared_stale_preflight_error = True
+    if cleared_stale_preflight_error:
+        _runner.write_state(date, state)
     exhausted = [r for r in needed if not _runner._cover_repair_eligible(r)]
     for record in exhausted:
         record["cover_integrity_status"] = "INVALID_REPAIR_BUDGET_EXHAUSTED"
@@ -245,6 +257,7 @@ def repair_covers(
             )
             _runner.write_state(date, state)
             continue
+        rec.pop("cover_authority_preflight_error", None)
         rec["cover_repair_attempts"] = rec.get("cover_repair_attempts", 0) + 1
         rec["cover_repair_lifetime_attempts"] = rec.get("cover_repair_lifetime_attempts", 0) + 1
         cid = rec.get("candidate_id", "?")

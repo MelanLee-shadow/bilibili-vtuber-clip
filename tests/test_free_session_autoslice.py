@@ -1395,6 +1395,34 @@ def test_bind_repaired_cover_carries_active_story_and_route_authority(
     assert validate_cover_route_decision(generation)
 
 
+def test_valid_repaired_cover_clears_stale_preflight_error(tmp_path, monkeypatch):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch)
+    runner._bind_repaired_cover(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
+    )
+    fx["rec"]["cover_integrity_status"] = "VALID_BOUND"
+    fx["rec"]["cover_authority_preflight_error"] = (
+        "ValueError: obsolete projection comparison"
+    )
+    writes = []
+    monkeypatch.setattr(
+        runner, "pipeline_fingerprint", lambda: "sha256:" + "c" * 64
+    )
+    monkeypatch.setattr(
+        runner,
+        "delivered_paths",
+        lambda _date, _rec: (fx["mp4"], fx["cover"]),
+    )
+    monkeypatch.setattr(
+        runner, "write_state", lambda _date, _state: writes.append(True)
+    )
+
+    runner.repair_covers(fx["date"], {"picks": [fx["rec"]], "songs": []})
+
+    assert "cover_authority_preflight_error" not in fx["rec"]
+    assert writes
+
+
 def test_active_story_contract_accepts_current_cover_projection():
     from src.autoslice.cover_repair import _active_story_contract
     from src.autoslice.story_contract import cover_story_contract_binding
