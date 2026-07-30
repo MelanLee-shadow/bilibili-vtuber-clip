@@ -128,7 +128,7 @@ def test_incomplete_attestation_counts_fail_closed(tmp_path):
     assert provenance["fidelity_witness_eligible"] is False
 
 
-def test_hash_bound_api_fallback_is_only_a_context_bound_audio_witness(tmp_path):
+def test_hash_bound_api_fallback_is_never_an_audio_witness(tmp_path):
     draft = "1\n00:00:00,000 --> 00:00:01,000\n请问熊\n"
     refined = "1\n00:00:00,000 --> 00:00:01,000\nkmx\n"
     media = tmp_path / "clip.mp4"
@@ -175,16 +175,16 @@ def test_hash_bound_api_fallback_is_only_a_context_bound_audio_witness(tmp_path)
         result,
         draft_srt=draft,
         media_path=media,
-    ) == refined
+    ) is None
     provenance = _agy_refinement_provenance(
         result,
         refined_srt=refined,
         draft_srt=draft,
         media_path=media,
     )
-    assert provenance["witness_tier"] == "context_bound_audio"
+    assert provenance["witness_tier"] == "none"
     assert provenance["fidelity_witness_eligible"] is False
-    assert provenance["corroborating_audio_eligible"] is True
+    assert provenance["corroborating_audio_eligible"] is False
 
     drifted = _agy_refinement_provenance(
         result,

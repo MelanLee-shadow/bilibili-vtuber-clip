@@ -1572,7 +1572,7 @@ def test_live_song_without_pre_refined_srt_does_not_call_talk_agy(tmp_path):
     )
 
 
-def test_default_source_context_runner_fails_over_from_agy_to_gemini_api(tmp_path, monkeypatch):
+def test_default_source_context_runner_does_not_fail_over_from_agy(tmp_path, monkeypatch):
     from scripts import gemini_slice_jingting as jingting
     from src.autoslice.source_context_executor import AgyRunnerError
 
@@ -1594,12 +1594,10 @@ def test_default_source_context_runner_fails_over_from_agy_to_gemini_api(tmp_pat
         return "gemini-job"
 
     monkeypatch.setattr(jingting, "run_gemini_api", fake_gemini)
-    result = shadow_pipeline._run_source_context_agy(media, draft, output)
+    with pytest.raises(AgyRunnerError, match="AGY source-context refinement failed"):
+        shadow_pipeline._run_source_context_agy(media, draft, output)
 
-    assert result.provider == "gemini_api"
-    assert result.provider_fallback_used is True
-    assert result.agy_rc is None
-    assert output.is_file()
+    assert not output.exists()
 
 
 @pytest.mark.parametrize(
@@ -1609,7 +1607,7 @@ def test_default_source_context_runner_fails_over_from_agy_to_gemini_api(tmp_pat
         ("4m", "30", {"print_timeout": "4m", "process_timeout_seconds": 270}),
     ],
 )
-def test_default_source_context_runner_bounds_hung_agy_before_gemini_fallback(
+def test_default_source_context_runner_bounds_hung_agy_without_audio_fallback(
     tmp_path, monkeypatch, print_timeout, grace_seconds, expected
 ):
     from scripts import gemini_slice_jingting as jingting
@@ -1643,13 +1641,12 @@ def test_default_source_context_runner_bounds_hung_agy_before_gemini_fallback(
 
     monkeypatch.setattr(jingting, "run_agy", fake_agy)
     monkeypatch.setattr(jingting, "run_gemini_api", fake_gemini)
-    result = shadow_pipeline._run_source_context_agy(media, draft, output)
+    with pytest.raises(AgyRunnerError, match="AGY source-context refinement failed"):
+        shadow_pipeline._run_source_context_agy(media, draft, output)
 
     assert captured == expected
-    assert len(gemini_calls) == 1
-    assert result.provider == "gemini_api"
-    assert result.provider_fallback_used is True
-    assert output.is_file()
+    assert gemini_calls == []
+    assert not output.exists()
 
 
 def test_live_source_backfills_duplicate_and_subtitle_alignment_machine_evidence(tmp_path, monkeypatch):
@@ -3159,7 +3156,7 @@ def test_shadow_pipeline_fails_closed_when_preexisting_marker_exists(tmp_path, m
 
 @pytest.mark.parametrize(
     ("audio_provider", "paid_backup"),
-    [("agy", False), ("gemini_api", False), ("gemini_api", True)],
+    [("agy", False)],
 )
 def test_live_source_song_repair_earns_proof_and_unblocks(tmp_path, audio_provider, paid_backup):
     from src.autoslice.song_repair import LrcLine, LrcResult

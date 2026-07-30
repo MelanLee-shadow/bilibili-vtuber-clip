@@ -225,7 +225,7 @@ def test_agy_retry_after_is_persisted_for_autonomous_resume(tmp_path):
     assert review_required["metadata"]["retry_after_seconds"] == 2458
 
 
-def test_strict_gemini_api_fallback_is_accepted_source_context_provider(tmp_path):
+def test_gemini_api_fallback_is_rejected_as_source_context_provider(tmp_path):
     source = tmp_path / "source.mp4"
     source.write_bytes(b"source bytes")
     srt = tmp_path / "full.srt"
@@ -250,7 +250,9 @@ def test_strict_gemini_api_fallback_is_accepted_source_context_provider(tmp_path
         run_ffmpeg=False,
     )
 
-    assert result.decision == "READY"
+    assert result.decision == "RETRY_INFRA"
+    assert "JINGTING_PROVIDER_NOT_AGY" in result.reason_codes
+    assert "JINGTING_PROVIDER_FALLBACK_USED" in result.reason_codes
     manifest = json.loads(Path(result.jingting_manifest_path).read_text(encoding="utf-8"))
     assert manifest["provider"] == "gemini_api"
     assert manifest["provider_fallback_used"] is True

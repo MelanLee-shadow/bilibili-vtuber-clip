@@ -1,6 +1,9 @@
 import hashlib
 
+import pytest
+
 from src.autoslice.jingting_remote_runner import build_ssh_agy_runner
+from src.autoslice.source_context_executor import AgyRunnerError
 
 
 def test_attested_runner_binds_direct_chunk_and_merged_output(
@@ -51,3 +54,36 @@ def test_attested_runner_binds_direct_chunk_and_merged_output(
     assert result.api_fallback_chunk_count == 0
     assert result.chunk_attestations[0].executed_provider == "agy"
     assert result.chunk_attestations[0].audio_input_attested is True
+
+
+def test_attested_runner_never_sends_audio_to_non_agy_fallback(
+    tmp_path,
+    monkeypatch,
+):
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"source media")
+    draft = tmp_path / "draft.srt"
+    draft.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n旧字\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "refined.srt"
+    runner = build_ssh_agy_runner("free")
+    runner.attempts_per_chunk = 1
+    monkeypatch.setattr(
+        runner,
+        "_encode_chunk_clip",
+        lambda _media, _chunk, out: out.write_bytes(b"encoded"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_run_chunk_agy",
+        lambda *_args: (_ for _ in ()).throw(
+            AgyRunnerError("AGY_QUOTA_EXHAUSTED", "quota")
+        ),
+    )
+
+    with pytest.raises(AgyRunnerError, match="quota"):
+        runner(media, draft, output)
+
+    assert not output.exists()

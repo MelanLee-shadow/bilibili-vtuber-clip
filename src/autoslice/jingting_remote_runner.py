@@ -345,40 +345,6 @@ class _RemoteJingtingRunner:
             audio_input_attested=True,
         )
 
-    def _fallback_chunk(
-        self,
-        chunk: JingtingChunk,
-        chunk_clip: Path,
-        chunk_srt_text: str,
-    ) -> tuple[str, AgyChunkAttestation]:
-        from scripts.gemini_slice_jingting import run_gemini_api
-
-        with tempfile.TemporaryDirectory(prefix="ssh_agy_api_fb_") as fb_tmp:
-            fb_draft = Path(fb_tmp) / "draft.srt"
-            fb_out = Path(fb_tmp) / "out.srt"
-            fb_draft.write_text(
-                chunk_srt_text
-                if chunk_srt_text.endswith("\n")
-                else chunk_srt_text + "\n",
-                encoding="utf-8",
-            )
-            run_gemini_api(
-                str(chunk_clip),
-                str(fb_draft),
-                str(fb_out),
-            )
-            corrected = fb_out.read_text(encoding="utf-8")
-        if not looks_like_srt(corrected):
-            raise RuntimeError("GEMINI_API_FALLBACK_EMPTY")
-        validate_same_timing(chunk_srt_text, corrected)
-        return corrected, self._attestation(
-            chunk,
-            chunk_clip,
-            chunk_srt_text,
-            corrected,
-            provider="gemini_api",
-        )
-
     def __call__(
         self,
         media_path: Path,
@@ -396,7 +362,6 @@ class _RemoteJingtingRunner:
 
         refined_pairs: list[tuple[JingtingChunk, str]] = []
         attestations: list[AgyChunkAttestation] = []
-        api_fallback_chunks = 0
         with tempfile.TemporaryDirectory(prefix="ssh_agy_clips_") as clips_tmp:
             for chunk in chunks:
                 chunk_clip = Path(clips_tmp) / (
@@ -422,27 +387,15 @@ class _RemoteJingtingRunner:
                         break
                     except (AgyRunnerError, RuntimeError) as exc:
                         last_error = exc
-                if last_error is None:
-                    attestation = self._attestation(
-                        chunk,
-                        chunk_clip,
-                        chunk_srt_text,
-                        corrected,
-                        provider="agy",
-                    )
-                else:
-                    try:
-                        corrected, attestation = self._fallback_chunk(
-                            chunk,
-                            chunk_clip,
-                            chunk_srt_text,
-                        )
-                        api_fallback_chunks += 1
-                        last_error = None
-                    except Exception:
-                        pass
                 if last_error is not None:
                     raise last_error
+                attestation = self._attestation(
+                    chunk,
+                    chunk_clip,
+                    chunk_srt_text,
+                    corrected,
+                    provider="agy",
+                )
                 refined_pairs.append((chunk, corrected))
                 attestations.append(attestation)
 
@@ -454,21 +407,12 @@ class _RemoteJingtingRunner:
             provider="agy",
             model=AGY_MODEL,
             agy_rc=0,
-            provider_fallback_used=bool(api_fallback_chunks),
+            provider_fallback_used=False,
             provider_request_id=(
                 f"{self.host}:jingting-chunked:{stamp}:{len(chunks)}chunks"
-                + (
-                    f":api_fb={api_fallback_chunks}"
-                    if api_fallback_chunks
-                    else ""
-                )
             ),
             requested_provider="agy",
-            executed_provider=(
-                "agy+gemini_api"
-                if api_fallback_chunks and api_fallback_chunks < len(chunks)
-                else ("gemini_api" if api_fallback_chunks else "agy")
-            ),
+            executed_provider="agy",
             source_media_sha256=_sha256_file(media_path),
             draft_srt_sha256=hashlib.sha256(
                 srt_text.encode("utf-8")
@@ -479,8 +423,8 @@ class _RemoteJingtingRunner:
             timing_validated=True,
             audio_input_attested=True,
             chunk_count=len(chunks),
-            agy_chunk_count=len(chunks) - api_fallback_chunks,
-            api_fallback_chunk_count=api_fallback_chunks,
+            agy_chunk_count=len(chunks),
+            api_fallback_chunk_count=0,
             chunk_attestations=tuple(attestations),
         )
 

@@ -934,6 +934,27 @@ def run_agy_audio_lrc_alignment(
             candidate_id=candidate_id,
         )
     except _AgyProviderFailure as agy_failure:
+        failure_path = job_dir / "provider-failures.json"
+        failure_path.write_text(
+            json.dumps(
+                {
+                    "reason_code": "AGY_AUDIO_LRC_UNAVAILABLE",
+                    "agy_failure_category": agy_failure.category,
+                    "agy_rc": agy_failure.agy_rc,
+                    "fallback_policy": "AGY_ONLY_NO_AUDIO_PROVIDER_FALLBACK",
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        os.chmod(failure_path, 0o600)
+        raise RuntimeError(
+            "AGY_AUDIO_LRC_UNAVAILABLE: "
+            f"agy={agy_failure.category}; see {job_dir}"
+        ) from agy_failure
         agy_failure_category = agy_failure.category
         agy_rc = agy_failure.agy_rc
         provider = GEMINI_API_AUDIO_LRC_PROVIDER

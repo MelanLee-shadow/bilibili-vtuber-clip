@@ -405,14 +405,9 @@ def evaluate_jingting_provenance(provenance: JingtingProvenance | None) -> tuple
     if provenance is None:
         provenance = JingtingProvenance(manifest_present=False)
 
-    accepted_gemini_fallback = (
-        provenance.provider == "gemini_api"
-        and provenance.agy_rc is None
-        and provenance.provider_fallback_used is True
-    )
-    provider_accepted = provenance.provider in {"agy", "gemini_api"}
-    execution_succeeded = provenance.agy_rc == 0 or accepted_gemini_fallback
-    fallback_accepted = provenance.provider_fallback_used is False or accepted_gemini_fallback
+    provider_accepted = provenance.provider == "agy"
+    execution_succeeded = provenance.agy_rc == 0
+    fallback_accepted = provenance.provider_fallback_used is False
     return (
         ProvenanceCheck(
             code="JINGTING_MANIFEST_PRESENT",

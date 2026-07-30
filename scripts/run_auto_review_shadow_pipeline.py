@@ -929,15 +929,13 @@ def _call_cpa_image_edit(
 def _run_source_context_agy(media_path: Path, draft_srt_path: Path, output_srt_path: Path) -> AgyExecutionResult:
     from scripts.gemini_slice_jingting import (
         AGY_MODEL,
-        GEMINI_MODEL,
         parse_timeout_seconds,
         run_agy,
-        run_gemini_api,
     )
 
     # The song selector intentionally gives long-form song proof a much larger
-    # AGY budget.  Source-context text refinement is only the preferred first
-    # lane before Gemini API and must not inherit that process-global budget.
+    # AGY budget.  Source-context text refinement must not inherit the
+    # process-global song-proof budget.
     # Pass this budget explicitly so concurrent callers cannot race through
     # environment mutation and audio/LRC proof remains unchanged.
     # Formal blind runs completed healthy source-context AGY work in
@@ -964,27 +962,13 @@ def _run_source_context_agy(media_path: Path, draft_srt_path: Path, output_srt_p
             process_timeout_seconds=process_timeout_seconds,
         )
     except Exception as agy_exc:
-        try:
-            job_dir = run_gemini_api(
-                str(media_path), str(draft_srt_path), str(output_srt_path)
-            )
-        except Exception as gemini_exc:
-            from src.autoslice.source_context_executor import AgyRunnerError
+        from src.autoslice.source_context_executor import AgyRunnerError
 
-            retry_after = getattr(agy_exc, "retry_after_seconds", None)
-            raise AgyRunnerError(
-                "AGY_AND_GEMINI_API_FAILED",
-                "AGY failed and Gemini API fallback also failed: "
-                f"agy={type(agy_exc).__name__}; gemini={type(gemini_exc).__name__}: {gemini_exc}",
-                retry_after_seconds=retry_after,
-            ) from gemini_exc
-        return AgyExecutionResult(
-            provider="gemini_api",
-            model=GEMINI_MODEL,
-            agy_rc=None,
-            provider_fallback_used=True,
-            provider_request_id=job_dir,
-        )
+        raise AgyRunnerError(
+            str(getattr(agy_exc, "reason_code", "") or "AGY_UNAVAILABLE"),
+            f"AGY source-context refinement failed: {type(agy_exc).__name__}",
+            retry_after_seconds=getattr(agy_exc, "retry_after_seconds", None),
+        ) from agy_exc
     return AgyExecutionResult(
         provider="agy",
         model=AGY_MODEL,

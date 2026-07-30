@@ -56,7 +56,7 @@ def agy_refinement_provenance(
             and len(row.media_sha256) == 64
             and len(row.draft_srt_sha256) == 64
             and len(row.refined_srt_sha256) == 64
-            and row.executed_provider in {"agy", "gemini_api"}
+            and row.executed_provider == "agy"
             for row in result.chunk_attestations
         )
         and {row.chunk_index for row in result.chunk_attestations}
@@ -66,11 +66,7 @@ def agy_refinement_provenance(
             for row in result.chunk_attestations
         )
         == result.agy_chunk_count
-        and sum(
-            row.executed_provider == "gemini_api"
-            for row in result.chunk_attestations
-        )
-        == result.api_fallback_chunk_count
+        and result.api_fallback_chunk_count == 0
     )
     independent_eligible = bool(
         attestation_bound
@@ -81,16 +77,6 @@ def agy_refinement_provenance(
         and result.executed_provider == "agy"
         and result.agy_chunk_count == result.chunk_count
         and result.api_fallback_chunk_count == 0
-    )
-    corroborating_eligible = bool(
-        attestation_bound
-        and result is not None
-        and result.provider == "agy"
-        and result.agy_rc == 0
-        and result.provider_fallback_used is True
-        and result.executed_provider in {"gemini_api", "agy+gemini_api"}
-        and isinstance(result.api_fallback_chunk_count, int)
-        and result.api_fallback_chunk_count > 0
     )
     return {
         "schema_version": "agy-refinement-provenance.v2",
@@ -156,10 +142,10 @@ def agy_refinement_provenance(
         "witness_tier": (
             "independent_audio"
             if independent_eligible
-            else ("context_bound_audio" if corroborating_eligible else "none")
+            else "none"
         ),
         "fidelity_witness_eligible": independent_eligible,
-        "corroborating_audio_eligible": corroborating_eligible,
+        "corroborating_audio_eligible": False,
     }
 
 
@@ -251,15 +237,8 @@ def agy_corroborating_witness(
     draft_srt: str,
     media_path: Path,
 ) -> str | None:
-    """Return a hash-bound fallback listen only as span-level corroboration."""
-
-    provenance = agy_refinement_provenance(
-        result,
-        refined_srt=refined_srt,
-        draft_srt=draft_srt,
-        media_path=media_path,
-    )
-    return refined_srt if provenance["corroborating_audio_eligible"] else None
+    """Reject legacy non-AGY audio fallback as corroborating evidence."""
+    return None
 
 
 def _sha256_file(path: Path) -> str:

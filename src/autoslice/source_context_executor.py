@@ -454,16 +454,11 @@ def _agy_reason_codes(
     if not refinement_required and result.provider == "source_draft_context":
         return ()
     reasons: list[str] = []
-    accepted_gemini_fallback = (
-        result.provider == "gemini_api"
-        and result.agy_rc is None
-        and result.provider_fallback_used is True
-    )
-    if result.provider not in {"agy", "gemini_api"}:
+    if result.provider != "agy":
         reasons.append("JINGTING_PROVIDER_NOT_AGY")
     if result.provider == "agy" and result.agy_rc != 0:
         reasons.append("AGY_FAILED")
-    if result.provider_fallback_used is True and not accepted_gemini_fallback:
+    if result.provider_fallback_used is True:
         reasons.append("JINGTING_PROVIDER_FALLBACK_USED")
     elif result.provider_fallback_used is None:
         reasons.append("JINGTING_PROVIDER_FALLBACK_UNKNOWN")

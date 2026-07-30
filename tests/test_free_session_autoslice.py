@@ -4515,7 +4515,7 @@ def test_full_song_authoritative_retry_timeout_always_promotes_block(tmp_path, m
 
 @pytest.mark.parametrize(
     ("audio_provider", "paid_backup"),
-    [("agy", False), ("gemini_api", False), ("gemini_api", True)],
+    [("agy", False)],
 )
 def test_song_completion_evidence_is_hash_bound_and_requires_lrc_materialization(
     tmp_path, monkeypatch, audio_provider, paid_backup
