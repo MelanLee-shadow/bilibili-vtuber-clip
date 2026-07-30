@@ -18,6 +18,9 @@ def subtitle_authority_recovery_relatives(
         "src/autoslice/producer_source_truth_authority.py",
         "src/autoslice/source_subtitle_truth.py",
         "src/autoslice/chat_proposals.py",
+        "src/autoslice/foreign_span_witness.py",
+        "src/autoslice/acoustic_witness_adjudication.py",
+        "src/autoslice/talk_lane.py",
         "src/autoslice/glossary_expected_value.py",
         subtitle_truth_ledger,
     )

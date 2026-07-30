@@ -176,6 +176,44 @@ def test_mixed_phrase_witnessed_verbatim(tmp_path, witness_env):
     assert audit["status"] == fsw.MIXED_PHRASE_WITNESSED_STATUS
 
 
+def test_production_audio_witness_uses_agy_without_api_keys(
+    tmp_path, witness_env, monkeypatch
+):
+    audit = {
+        "status": "BLOCKED_MIXED_CJK_LATIN_PHRASE",
+        "mixed_cjk_latin_cues": [
+            {
+                "cue_index": 2,
+                "start_ms": 5_000,
+                "end_ms": 9_000,
+                "text": "这句是sou ka na的空耳",
+                "latin_words": ["sou", "ka", "na"],
+            }
+        ],
+    }
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        fsw,
+        "_observe_with_agy",
+        lambda **_kwargs: {
+            "audible_language": "mixed",
+            "exact_transcript": "这句是sou ka na的空耳",
+            "speaker_impression": "single_live_voice",
+        },
+    )
+
+    fsw.witness_foreign_script_audit(
+        media_path=witness_env,
+        audit=audit,
+        out_root=tmp_path,
+        cid="auto_agy_only",
+    )
+
+    assert audit["status"] == fsw.MIXED_PHRASE_WITNESSED_STATUS
+    assert audit["audio_witness_rows"][0]["provider"] == "agy"
+    assert "key_tier" not in audit["audio_witness_rows"][0]
+
+
 def test_mixed_phrase_similarity_miss_is_resolved_only_by_cpa_current(
     tmp_path, witness_env
 ):

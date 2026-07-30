@@ -475,6 +475,43 @@ def _foreign_source_gate_violation(attempt_output: str) -> dict[str, object] | N
     }
 
 
+def _foreign_source_provider_transient(
+    violation: dict[str, object] | None,
+) -> bool:
+    """Distinguish an unavailable audio witness from a textual gate verdict."""
+
+    if not isinstance(violation, dict):
+        return False
+    unresolved = violation.get("unresolved_findings")
+    rows = violation.get("witness_rows")
+    if not isinstance(unresolved, list) or not unresolved or not isinstance(rows, list):
+        return False
+    unresolved_indexes = {
+        row.get("cue_index") for row in unresolved if isinstance(row, dict)
+    }
+    relevant = [
+        row
+        for row in rows
+        if isinstance(row, dict) and row.get("cue_index") in unresolved_indexes
+    ]
+    if not relevant:
+        return False
+    provider_markers = (
+        "AGY_FOREIGN_WITNESS_",
+        "WITNESS_PROVIDERS_FAILED",
+        "WITNESS_AUDIO_EXTRACTION_FAILED",
+        "HTTPERROR",
+        "QUOTA",
+        "TIMED OUT",
+        "TIMEOUT",
+        "SUBPROCESS",
+    )
+    return all(
+        any(marker in str(row.get("failure") or "").upper() for marker in provider_markers)
+        for row in relevant
+    )
+
+
 _FINAL_REVIEW_ARTIFACT_RX = re.compile(
     r"(/[^\r\n'\"<>]*?(?:\.chat-authority|\.review-flags)\.json)"
 )
@@ -1079,11 +1116,19 @@ def classify_talk_failure(attempt_output: str) -> dict:
     elif _runner._speaker_evidence_insufficient_failure(tail):
         kind, stage, recoverable = "speaker_evidence", "speaker_finalization", False
     elif "FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED" in tail:
-        kind, stage, recoverable = (
-            "subtitle_authority",
-            "foreign_source_transcription",
-            False,
-        )
+        failure_evidence = _foreign_source_gate_violation(tail)
+        if _foreign_source_provider_transient(failure_evidence):
+            kind, stage, recoverable = (
+                "provider_transient",
+                "foreign_source_audio_witness",
+                True,
+            )
+        else:
+            kind, stage, recoverable = (
+                "subtitle_authority",
+                "foreign_source_transcription",
+                False,
+            )
     elif "CHAT_AUTHORITY_FINALIZATION_FAILED" in tail:
         kind, stage, recoverable = (
             "subtitle_authority",
@@ -1165,7 +1210,7 @@ def classify_talk_failure(attempt_output: str) -> dict:
     }
     if failure_evidence is not None:
         result["failure_evidence"] = failure_evidence
-    if kind == "subtitle_authority":
+    if "FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED" in tail:
         violation = _foreign_source_gate_violation(tail)
         if violation is not None:
             result["gate_violation"] = violation

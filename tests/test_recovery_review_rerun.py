@@ -1117,3 +1117,27 @@ def test_non_infrastructure_queue_item_failure_still_fails_closed(
     ):
         delivery_recovery.requeue_stale_current_recovery_talks(date, state)
     assert state == before
+
+def test_legacy_foreign_provider_rejection_is_reviveable():
+    record = {
+        "status": "candidate_rejected",
+        "rejected_status": "failed",
+        "failure_kind": "subtitle_authority",
+        "failure_stage": "foreign_source_transcription",
+        "rejection_reason": "subtitle_authority_unresolved_backfilled",
+        "gate_violation": {
+            "unresolved_findings": [{"cue_index": 16}],
+            "witness_rows": [
+                {
+                    "cue_index": 16,
+                    "witnessed": False,
+                    "failure": (
+                        "RuntimeError: WITNESS_PROVIDERS_FAILED: "
+                        "HTTPError,HTTPError"
+                    ),
+                }
+            ],
+        },
+    }
+
+    assert delivery_recovery._is_provider_backfilled_foreign_rejection(record)

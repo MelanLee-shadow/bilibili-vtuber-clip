@@ -359,6 +359,49 @@ def _is_legacy_exact_backfill_rejection(record: dict) -> bool:
     }
 
 
+def _is_provider_backfilled_foreign_rejection(record: dict) -> bool:
+    """Revive legacy rows whose only missing authority was a dead provider."""
+
+    if not (
+        record.get("status") == "candidate_rejected"
+        and record.get("rejected_status") == "failed"
+        and record.get("failure_kind") == "subtitle_authority"
+        and record.get("failure_stage") == "foreign_source_transcription"
+        and record.get("rejection_reason")
+        == "subtitle_authority_unresolved_backfilled"
+    ):
+        return False
+    violation = record.get("gate_violation")
+    if not isinstance(violation, dict):
+        return False
+    unresolved = violation.get("unresolved_findings")
+    rows = violation.get("witness_rows")
+    if not isinstance(unresolved, list) or not unresolved or not isinstance(rows, list):
+        return False
+    unresolved_indexes = {
+        row.get("cue_index") for row in unresolved if isinstance(row, dict)
+    }
+    relevant = [
+        row
+        for row in rows
+        if isinstance(row, dict) and row.get("cue_index") in unresolved_indexes
+    ]
+    provider_markers = (
+        "AGY_FOREIGN_WITNESS_",
+        "WITNESS_PROVIDERS_FAILED",
+        "WITNESS_AUDIO_EXTRACTION_FAILED",
+        "HTTPERROR",
+        "QUOTA",
+        "TIMED OUT",
+        "TIMEOUT",
+        "SUBPROCESS",
+    )
+    return bool(relevant) and all(
+        any(marker in str(row.get("failure") or "").upper() for marker in provider_markers)
+        for row in relevant
+    )
+
+
 def _canonical_object_sha256(value: object) -> str:
     payload = json.dumps(
         value,
@@ -1553,10 +1596,14 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             and record.get("rejection_reason")
             == "subtitle_authority_unresolved_backfilled"
         )
+        provider_backfilled_foreign_rejection = (
+            _is_provider_backfilled_foreign_rejection(record)
+        )
         if not (
             recoverable_status
             or legacy_exact_rejection
             or selected_authority_rejection
+            or provider_backfilled_foreign_rejection
         ):
             kept.append(record)
             continue

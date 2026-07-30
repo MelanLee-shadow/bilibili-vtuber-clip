@@ -7106,6 +7106,47 @@ def test_talk_failure_persists_exact_foreign_source_gate_witness(tmp_path: Path)
     assert violation["artifact_hashes"]["audio_sha256"] == "sha256:audio"
 
 
+def test_foreign_audio_provider_failure_is_retryable(tmp_path: Path):
+    authority = tmp_path / "candidate.chat-authority.json"
+    authority.write_text(
+        json.dumps(
+            {
+                "foreign_script_consistency_audit": {
+                    "mixed_cjk_latin_cues": [
+                        {
+                            "cue_index": 16,
+                            "start_ms": 36_300,
+                            "end_ms": 41_690,
+                            "text": "boku little ore boku",
+                            "latin_words": ["boku", "little", "ore", "boku"],
+                        }
+                    ],
+                    "audio_witness_rows": [
+                        {
+                            "cue_index": 16,
+                            "witnessed": False,
+                            "failure": (
+                                "RuntimeError: AGY_FOREIGN_WITNESS_FAILED:rc=1"
+                            ),
+                        }
+                    ],
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    classified = runner.classify_talk_failure(
+        f"FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED: {authority}"
+    )
+
+    assert classified["failure_kind"] == "provider_transient"
+    assert classified["failure_stage"] == "foreign_source_audio_witness"
+    assert classified["failure_recoverable"] is True
+    assert classified["gate_violation"]["cue_index"] == 16
+
+
 def test_foreign_source_rejection_reports_unwitnessed_cue_not_first_valid_english(
     tmp_path: Path,
 ):

@@ -36,6 +36,10 @@
      未命中时，候选盲音频转写只作为 PROPOSED，与 CURRENT 组成闭集交 CPA。CPA 选择
      CURRENT 才能保留正常 code-switch，选择 PROPOSED 即由 mutation authority 继续校验后
      重写；拼音冲突只披露，不再构成第二票。CPA 不可用继续 BLOCK，禁止检测器或 AGY 自行选边。
+     此处生产音频输入只交 AGY；CPA 只接收 CURRENT、AGY 候选盲文字转写与整片文字语境。
+     AGY/音频抽取的 provider 故障必须分类为 `provider_transient / foreign_source_audio_witness`
+     并由 runner 续跑，不能固化成 terminal `foreign_source_transcription`；只有 AGY 已返回有效
+     文字证据而 CPA/文字权威仍无法闭合时才是内容门终局。
    - T2 备选未实施：免费 BCUT 对争议 span 重转写+拼音距离比对（「穷人声学见证」），T3 仍嫌贵时再上。
    - **删除专线**：`acoustic_delete` 仅提议删除一个有界疑似幻听 span，`acoustic_drop_cue`
      仅提议整条无声；AGY 的“不可闻”仍只是证据，只有 CPA `PROPOSED` 才能执行删除。严格

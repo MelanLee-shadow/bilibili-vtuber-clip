@@ -1,14 +1,13 @@
-"""Independent Gemini audio witness for foreign-script subtitle blocks.
+"""Independent AGY audio witness for foreign-script subtitle blocks.
 
 The language-preservation and script-consistency audits fail closed when the
 final subtitle carries foreign-language or Latin-phrase content the Chinese
 ASR draft never witnessed.  Ivan 2026-07-19: foreign (e.g. Japanese)
-transcription capability IS the same Gemini chain the pipeline already uses
-(AGY subscription → free keys → paid key, one model family), so an
-independent listen over the exact blocked cue interval is an acceptable
-machine witness.  The witness only confirms evidence — it never rewrites
-text.  A mismatch, an unparseable observation, or a provider failure keeps
-the block for the correction lane or a reviewed override.
+transcription capability belongs to AGY, while CPA remains a text-only judge.
+An independent AGY listen over the exact blocked cue interval is therefore an
+acceptable machine witness.  The witness only supplies a candidate-blind
+transcript; it never chooses between subtitle surfaces.  A mismatch is sent to
+CPA, while an unparseable observation or provider failure stays retryable.
 """
 
 from __future__ import annotations
@@ -16,16 +15,23 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
 import unicodedata
 from pathlib import Path
 from typing import Any, Callable
 
 from src.autoslice import gemini_backup_policy
-from src.autoslice.agy_lrc_alignment import _gemini_api_observe, _gemini_keys
+from src.autoslice.agy_lrc_alignment import _gemini_keys
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.subtitle_fidelity import _JAPANESE_KANA_RX
+from scripts.gemini_slice_jingting import (
+    agy_subprocess_env,
+    parse_timeout_seconds,
+    strip_markdown_fence,
+)
 
 FOREIGN_WITNESS_SCHEMA = "foreign-span-audio-witness.v1"
 CLUSTER_RETRANSCRIPTION_SCHEMA = "foreign-cluster-retranscription.v1"
@@ -38,12 +44,14 @@ _MIN_KANA_SIMILARITY = 0.55
 _SPAN_PAD_MS = 400
 _ALLOWED_LANGUAGES = frozenset({"zh", "ja", "en", "mixed", "none"})
 _KEEP_TEXT_RX = re.compile(r"[0-9A-Za-z㐀-鿿ぁ-ゖァ-ヺー]+")
+_AGY_MODEL = os.environ.get("FOREIGN_WITNESS_AGY_MODEL", "Gemini 3.6 Flash (High)")
+_AGY_TIMEOUT = os.environ.get("FOREIGN_WITNESS_AGY_TIMEOUT", "10m")
 
-_PROMPT_TEMPLATE = """The attached audio is an untrusted live-stream span of {duration_ms} ms.
+_PROMPT_TEMPLATE = """The black-frame input.mp4 is an untrusted live-stream span of {duration_ms} ms.
 Transcribe EXACTLY what is audibly spoken, in the original spoken language
 and native script (Japanese stays in kana/kanji, Chinese in hanzi, English
 in Latin letters).  Do not translate, do not guess unheard words, and do
-not describe non-speech sounds.  Respond ONLY with JSON:
+not describe non-speech sounds.  Write verdict.json as this JSON object only:
 {{"audible_language": "zh"|"ja"|"en"|"mixed"|"none",
  "exact_transcript": "<verbatim transcript, empty when no speech>",
  "speaker_impression": "single_live_voice"|"media_playback"|"both"|"uncertain"}}"""
@@ -161,6 +169,136 @@ def _observe_with_key_ladder(
     raise RuntimeError("WITNESS_PROVIDERS_FAILED: " + ",".join(failures[-4:]) or "none")
 
 
+def _observe_with_agy(
+    *,
+    audio_path: Path,
+    prompt: str,
+) -> dict[str, str]:
+    """Run the only production audio-capable witness without candidate text."""
+
+    job_dir = audio_path.parent / f"{audio_path.stem}.agy-job"
+    job_dir.mkdir(parents=True, exist_ok=True)
+    input_path = job_dir / "input.mp4"
+    prompt_path = job_dir / "prompt.md"
+    verdict_path = job_dir / "verdict.json"
+    verdict_path.unlink(missing_ok=True)
+    prompt_path.write_text(prompt, encoding="utf-8")
+    try:
+        duration = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1", str(audio_path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(
+            f"AGY_FOREIGN_WITNESS_MEDIA_PROBE_FAILED:{type(exc).__name__}"
+        ) from exc
+    try:
+        duration_s = max(0.1, float(duration.stdout.strip()))
+    except (TypeError, ValueError):
+        duration_s = 0.0
+    if duration.returncode != 0 or duration_s <= 0:
+        raise RuntimeError("AGY_FOREIGN_WITNESS_MEDIA_INVALID")
+    try:
+        rendered = subprocess.run(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-f", "lavfi", "-t", f"{duration_s:.3f}", "-i",
+                "color=c=black:s=320x240:r=10", "-i", str(audio_path),
+                "-map", "0:v:0", "-map", "1:a:0", "-c:v", "libx264",
+                "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                "-b:a", "128k", "-shortest", str(input_path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(
+            f"AGY_FOREIGN_WITNESS_MEDIA_RENDER_FAILED:{type(exc).__name__}"
+        ) from exc
+    if rendered.returncode != 0 or not input_path.is_file():
+        raise RuntimeError(
+            "AGY_FOREIGN_WITNESS_MEDIA_RENDER_FAILED: " + rendered.stderr[-160:]
+        )
+    binary = os.environ.get("AGY_BIN", str(Path.home() / ".local/bin/agy"))
+    resolved_binary = shutil.which(binary) or binary
+    try:
+        completed = subprocess.run(
+            [
+                resolved_binary,
+                "--sandbox",
+                "--dangerously-skip-permissions",
+                "--add-dir",
+                str(job_dir),
+                "--model",
+                _AGY_MODEL,
+                "-p",
+                (
+                    "Open prompt.md with view_file and follow it exactly. Use only "
+                    "prompt.md and input.mp4. Write verdict.json in this directory. "
+                    "Do not use shell, terminal, browser, web, or search."
+                ),
+                "--print-timeout",
+                _AGY_TIMEOUT,
+            ],
+            cwd=job_dir,
+            env=agy_subprocess_env(),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=parse_timeout_seconds(_AGY_TIMEOUT) + 120,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(
+            f"AGY_FOREIGN_WITNESS_SUBPROCESS_FAILED:{type(exc).__name__}"
+        ) from exc
+    (job_dir / "agy.stdout").write_text(completed.stdout, encoding="utf-8")
+    (job_dir / "agy.stderr").write_text(completed.stderr, encoding="utf-8")
+    (job_dir / "agy.rc").write_text(str(completed.returncode) + "\n", encoding="utf-8")
+    raw = (
+        verdict_path.read_text(encoding="utf-8", errors="replace")
+        if verdict_path.is_file()
+        else completed.stdout
+    )
+    (job_dir / "verdict.raw.json").write_text(raw, encoding="utf-8")
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"AGY_FOREIGN_WITNESS_FAILED:rc={completed.returncode}:"
+            + completed.stderr[-160:]
+        )
+    try:
+        return _parse_observation(strip_markdown_fence(raw))
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"AGY_FOREIGN_WITNESS_INVALID_OUTPUT:{type(exc).__name__}"
+        ) from exc
+
+
+def _observe_audio(
+    *,
+    audio_path: Path,
+    prompt: str,
+    observe: Callable[..., str] | None,
+) -> tuple[dict[str, str], str, str | None]:
+    """Use injected API doubles in tests; production is AGY-only."""
+
+    if observe is not None:
+        observation, key_tier = _observe_with_key_ladder(
+            audio_path=audio_path,
+            prompt=prompt,
+            observe=observe,
+        )
+        return observation, "injected_test_observer", key_tier
+    return _observe_with_agy(audio_path=audio_path, prompt=prompt), "agy", None
+
+
 def _witness_rows(
     *,
     media_path: Path,
@@ -170,7 +308,6 @@ def _witness_rows(
     cid: str,
     observe: Callable[..., str] | None,
 ) -> list[dict[str, Any]]:
-    observe_fn = observe if observe is not None else _gemini_api_observe
     audio_dir = out_root / f"{cid}.foreign-witness"
     audio_dir.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, Any]] = []
@@ -198,10 +335,10 @@ def _witness_rows(
         try:
             _extract_span_audio(media_path, start_ms, end_ms, audio_path)
             duration_ms = end_ms - start_ms + 2 * _SPAN_PAD_MS
-            observation, key_tier = _observe_with_key_ladder(
+            observation, provider, key_tier = _observe_audio(
                 audio_path=audio_path,
                 prompt=_PROMPT_TEMPLATE.format(duration_ms=duration_ms),
-                observe=observe_fn,
+                observe=observe,
             )
         except Exception as exc:
             result["failure"] = f"{type(exc).__name__}: {exc}"[:200]
@@ -210,7 +347,9 @@ def _witness_rows(
         result["audible_language"] = observation["audible_language"]
         result["exact_transcript"] = transcript[:500]
         result["speaker_impression"] = observation["speaker_impression"]
-        result["key_tier"] = key_tier
+        result["provider"] = provider
+        if key_tier is not None:
+            result["key_tier"] = key_tier
         result["audio_sha256"] = hashlib.sha256(audio_path.read_bytes()).hexdigest()
         if mode == "kana":
             similarity = _similarity(_kana_only(transcript), _kana_only(claim_text))
@@ -317,7 +456,6 @@ def retranscribe_foreign_script_cluster(
     }
     if not cluster_indexes:
         return srt_text, repair_audit
-    observe_fn = observe if observe is not None else _gemini_api_observe
     audio_dir = out_root / f"{cid}.foreign-witness"
     audio_dir.mkdir(parents=True, exist_ok=True)
     cues = parse_srt_cues(srt_text)
@@ -337,10 +475,10 @@ def retranscribe_foreign_script_cluster(
         try:
             _extract_span_audio(media_path, cue.start_ms, cue.end_ms, audio_path)
             duration_ms = cue.end_ms - cue.start_ms + 2 * _SPAN_PAD_MS
-            observation, key_tier = _observe_with_key_ladder(
+            observation, provider, key_tier = _observe_audio(
                 audio_path=audio_path,
                 prompt=_PROMPT_TEMPLATE.format(duration_ms=duration_ms),
-                observe=observe_fn,
+                observe=observe,
             )
         except Exception as exc:
             row["failure"] = f"{type(exc).__name__}: {exc}"[:200]
@@ -348,7 +486,9 @@ def retranscribe_foreign_script_cluster(
         transcript = " ".join(observation["exact_transcript"].split())
         row["audible_language"] = observation["audible_language"]
         row["speaker_impression"] = observation["speaker_impression"]
-        row["key_tier"] = key_tier
+        row["provider"] = provider
+        if key_tier is not None:
+            row["key_tier"] = key_tier
         row["audio_sha256"] = hashlib.sha256(audio_path.read_bytes()).hexdigest()
         row["transcript"] = transcript
         japanese_shaped = bool(_kana_only(transcript)) or (
