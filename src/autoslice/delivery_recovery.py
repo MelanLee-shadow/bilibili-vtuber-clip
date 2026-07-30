@@ -1591,8 +1591,10 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             record.get("status") == "candidate_rejected"
             and record.get("selected_repair") is True
             and record.get("failure_kind") == "subtitle_authority"
-            and record.get("failure_stage")
-            == "chat_authority_finalization"
+            and record.get("failure_stage") in {
+                "chat_authority_finalization",
+                "foreign_source_transcription",
+            }
             and record.get("rejection_reason")
             == "subtitle_authority_unresolved_backfilled"
         )

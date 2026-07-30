@@ -1141,3 +1141,45 @@ def test_legacy_foreign_provider_rejection_is_reviveable():
     }
 
     assert delivery_recovery._is_provider_backfilled_foreign_rejection(record)
+
+
+def test_selected_foreign_authority_rejection_revives_after_pipeline_change(
+    tmp_path, monkeypatch
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+    record = state["picks"][0]
+    record.update(
+        {
+            "status": "candidate_rejected",
+            "rejected_status": "failed",
+            "selected_repair": True,
+            "failure_kind": "subtitle_authority",
+            "failure_stage": "foreign_source_transcription",
+            "failure_recoverable": False,
+            "failure_recovery_fingerprint": OLD,
+            "rejection_reason": "subtitle_authority_unresolved_backfilled",
+            "given_title": "【李豆沙】恢复测试",
+            "recovery_publication_authority": _fake_publication_authority(
+                "auto_current", required_given_end_ms=120_000
+            ),
+        }
+    )
+    monkeypatch.setattr(
+        delivery_recovery._runner,
+        "talk_failure_recovery_fingerprint",
+        lambda _failure_kind, _candidate_id: NEW,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        delivery_recovery._runner,
+        "TALK_REPAIR_LIFETIME_RETRY_CAP",
+        3,
+        raising=False,
+    )
+
+    assert delivery_recovery.requeue_recoverable_talks(date, state) == 1
+    assert state["picks"] == []
+    assert state["pending_talk"][0]["cid"] == "auto_current"
+    assert state["pending_talk"][0]["retry_reason"] == (
+        "pipeline_fingerprint_changed"
+    )

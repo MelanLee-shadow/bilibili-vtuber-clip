@@ -7199,6 +7199,64 @@ def test_foreign_source_rejection_reports_unwitnessed_cue_not_first_valid_englis
     ]
 
 
+def test_foreign_source_failure_reports_actual_blocked_source_language_audit(
+    tmp_path: Path,
+):
+    authority = tmp_path / "candidate.chat-authority.json"
+    authority.write_text(
+        json.dumps(
+            {
+                "final_source_language_preservation_audit": {
+                    "status": "BLOCKED_UNPROVEN_FOREIGN_SPEAKER",
+                    "unproven_foreign_introductions": [
+                        {
+                            "cue_index": 19,
+                            "start_ms": 45_000,
+                            "end_ms": 48_000,
+                            "draft": "咱有点像阿塔西",
+                            "attempted": "嗯，咱有点像あたし",
+                        }
+                    ],
+                    "audio_witness_rows": [
+                        {
+                            "cue_index": 19,
+                            "witnessed": False,
+                            "provider": "agy",
+                            "exact_transcript": "じいちゃん",
+                        }
+                    ],
+                },
+                "foreign_script_consistency_audit": {
+                    "status": "CPA_ADJUDICATED_MIXED_PHRASE_AUDIO",
+                    "mixed_cjk_latin_cues": [
+                        {
+                            "cue_index": 16,
+                            "text": "ore才是俺",
+                            "latin_words": ["ore"],
+                        }
+                    ],
+                    "cpa_adjudication_rows": [
+                        {"cue_index": 16, "resolved": True, "choice": "CURRENT"}
+                    ],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    violation = runner.classify_talk_failure(
+        f"FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED: {authority}"
+    )["gate_violation"]
+
+    assert violation["audit_surface"] == (
+        "final_source_language_preservation_audit"
+    )
+    assert violation["cue_index"] == 19
+    assert violation["token"] == "嗯，咱有点像あたし"
+    assert violation["missing_witnesses"] == ["cpa_text_adjudication"]
+
+
 def test_terminal_subtitle_authority_failure_backfills_without_weakening_gate():
     result = {
         "candidate_id": "blocked-subtitle",

@@ -116,6 +116,129 @@ def test_kana_mismatch_keeps_block(tmp_path, witness_env):
     assert audit["audio_witness_rows"][0]["witnessed"] is False
 
 
+def test_kana_mismatch_is_resolved_only_by_cpa_current(tmp_path, witness_env):
+    srt_text = _srt("前文", "接着讨论", "嗯，咱有点像あたし")
+    audit = _blocked_language_audit()
+    audit["unproven_foreign_introductions"][0]["attempted"] = (
+        "嗯，咱有点像あたし"
+    )
+
+    def observe(*, audio_path, prompt, key):
+        return json.dumps(
+            {
+                "audible_language": "ja",
+                "exact_transcript": "じいちゃん",
+                "speaker_impression": "single_live_voice",
+            }
+        )
+
+    def judge(_prompt):
+        return json.dumps(
+            {
+                "ranking": [
+                    {"choice": "CURRENT", "p": 0.9},
+                    {"choice": "PROPOSED", "p": 0.1},
+                ],
+                "choice": "CURRENT",
+                "reason": "The witness is offset; the current cue fits the discussion.",
+            }
+        )
+
+    output, resolved = fsw.adjudicate_language_preservation_audit(
+        media_path=witness_env,
+        srt_text=srt_text,
+        audit=audit,
+        out_root=tmp_path,
+        cid="auto_kana_cpa_keep",
+        llm_call=judge,
+        observe=observe,
+    )
+
+    assert output == srt_text
+    assert resolved["status"] == fsw.LANGUAGE_PRESERVATION_CPA_STATUS
+    assert resolved["decision_authority"] == "CPA_JUDGE"
+    assert resolved["cpa_adjudication_rows"][0]["choice"] == "CURRENT"
+    assert resolved["cpa_adjudication_rows"][0]["resolved"] is True
+
+
+def test_kana_mismatch_requires_cpa_for_retranscription(tmp_path, witness_env):
+    srt_text = _srt("前文", "接着讨论", "嗯，咱有点像あたし")
+    audit = _blocked_language_audit()
+    audit["unproven_foreign_introductions"][0]["attempted"] = (
+        "嗯，咱有点像あたし"
+    )
+
+    def observe(*, audio_path, prompt, key):
+        return json.dumps(
+            {
+                "audible_language": "mixed",
+                "exact_transcript": "嗯，咱有点像俺",
+                "speaker_impression": "single_live_voice",
+            }
+        )
+
+    def judge(_prompt):
+        return json.dumps(
+            {
+                "ranking": [
+                    {"choice": "PROPOSED", "p": 0.95},
+                    {"choice": "CURRENT", "p": 0.05},
+                ],
+                "choice": "PROPOSED",
+                "reason": "The bounded transcript matches the pronoun discussion.",
+            }
+        )
+
+    output, resolved = fsw.adjudicate_language_preservation_audit(
+        media_path=witness_env,
+        srt_text=srt_text,
+        audit=audit,
+        out_root=tmp_path,
+        cid="auto_kana_cpa_replace",
+        llm_call=judge,
+        observe=observe,
+    )
+
+    assert "嗯，咱有点像俺" in output
+    assert "嗯，咱有点像あたし" not in output
+    assert resolved["status"] == fsw.LANGUAGE_PRESERVATION_CPA_STATUS
+    assert resolved["applied_count"] == 1
+    assert resolved["cpa_adjudication_rows"][0]["choice"] == "PROPOSED"
+
+
+def test_kana_mismatch_without_cpa_stays_blocked(tmp_path, witness_env):
+    srt_text = _srt("前文", "接着讨论", "嗯，咱有点像あたし")
+    audit = _blocked_language_audit()
+    audit["unproven_foreign_introductions"][0]["attempted"] = (
+        "嗯，咱有点像あたし"
+    )
+
+    def observe(*, audio_path, prompt, key):
+        return json.dumps(
+            {
+                "audible_language": "ja",
+                "exact_transcript": "じいちゃん",
+                "speaker_impression": "single_live_voice",
+            }
+        )
+
+    output, unresolved = fsw.adjudicate_language_preservation_audit(
+        media_path=witness_env,
+        srt_text=srt_text,
+        audit=audit,
+        out_root=tmp_path,
+        cid="auto_kana_no_cpa",
+        llm_call=None,
+        observe=observe,
+    )
+
+    assert output == srt_text
+    assert unresolved["status"] == "BLOCKED_UNPROVEN_FOREIGN_SPEAKER"
+    assert unresolved["cpa_adjudication_rows"][0]["reason_code"] == (
+        "CPA_JUDGE_UNAVAILABLE"
+    )
+
+
 def test_provider_failure_keeps_block_and_never_raises(tmp_path, witness_env, monkeypatch):
     monkeypatch.setattr(
         fsw.gemini_backup_policy, "record_free_chain_failure", lambda _key: 1

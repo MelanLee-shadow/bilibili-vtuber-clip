@@ -83,9 +83,9 @@ from src.autoslice.producer_source_truth_authority import (
 )
 from src.autoslice.song_name_pin import pin_song_names_in_srt
 from src.autoslice.foreign_span_witness import (
+    adjudicate_language_preservation_audit,
     adjudicate_foreign_script_audit,
     retranscribe_foreign_script_cluster,
-    witness_language_preservation_audit,
 )
 from src.autoslice.self_reference_absorption import absorb_host_self_references
 from src.autoslice.session_topic_authority import (
@@ -1368,6 +1368,23 @@ def _adjudicate_final_foreign_script(
     )
 
 
+def _adjudicate_final_source_language(
+    padded: Path,
+    srt_text: str,
+    audit: dict[str, Any],
+    out_root: Path,
+    cid: str,
+) -> tuple[str, dict[str, Any]]:
+    return adjudicate_language_preservation_audit(
+        media_path=padded,
+        srt_text=srt_text,
+        audit=audit,
+        out_root=out_root,
+        cid=cid,
+        llm_call=_build_final_review_llm_call(),
+    )
+
+
 def _finalize_text_evidence(
     *,
     spec: dict,
@@ -1420,14 +1437,12 @@ def _finalize_text_evidence(
             "reviewed repair"
         )
     if padded is not None:
-        # Machine witness (Ivan 2026-07-19): the same Gemini chain that does
-        # foreign transcription listens to the exact blocked spans; a match
-        # is evidence, a mismatch or provider failure keeps the block.
-        witness_language_preservation_audit(
-            media_path=padded,
-            audit=final_source_language_audit,
-            out_root=out_root,
-            cid=cid,
+        # AGY listens candidate-blind; mismatches go to the text-only CPA judge.
+        srt_text, final_source_language_audit = _adjudicate_final_source_language(
+            padded, srt_text, final_source_language_audit, out_root, cid
+        )
+        chat_authority_audit["final_source_language_preservation_audit"] = (
+            final_source_language_audit
         )
     source_truth_local_windows = ledger_local_windows(
         spec=spec, durations=durations, ledger_path=source_truth_ledger_path,

@@ -26,6 +26,10 @@ from src.autoslice.cross_segment_witness import (
     discover_cross_segment_witness_reserve as
     _discover_cross_segment_witness_reserve,
 )
+from src.autoslice.foreign_source_failure_evidence import (
+    foreign_source_gate_violation as _foreign_source_gate_violation,
+    foreign_source_provider_transient as _foreign_source_provider_transient,
+)
 from src.autoslice.producer_boundary_owner_contract import (
     validate_frozen_boundary_owner_contract,
 )
@@ -381,134 +385,6 @@ def _speaker_evidence_insufficient_failure(attempt_output: str) -> bool:
         "SPEAKER_FINALIZATION_BLOCKED" in attempt_output
         and "SpeakerFinalizationError: not enough Li Dousha clip anchors:"
         in attempt_output
-    )
-
-
-def _foreign_source_gate_violation(attempt_output: str) -> dict[str, object] | None:
-    """Recover the exact cue/token witness that caused a foreign-text gate.
-
-    Older state stored only the final ``FOREIGN_SOURCE...`` exception.  The
-    chat-authority artifact already contains the useful evidence, so bind it
-    into the terminal candidate record while that immutable attempt still
-    exists.  Reporting can then explain a rejection without log archaeology.
-    """
-
-    matches = re.findall(
-        r"FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED(?:_AFTER_REDELIVERY)?:\s*([^\s]+\.chat-authority\.json)",
-        attempt_output,
-    )
-    if not matches:
-        return None
-    path = Path(matches[-1])
-    try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    audit = document.get("foreign_script_consistency_audit")
-    if not isinstance(audit, dict):
-        return None
-    findings = audit.get("mixed_cjk_latin_cues")
-    if not isinstance(findings, list) or not findings:
-        return None
-    valid_findings = [row for row in findings if isinstance(row, dict)]
-    if not valid_findings:
-        return None
-    all_witness_rows = [
-        row for row in (audit.get("audio_witness_rows") or []) if isinstance(row, dict)
-    ]
-
-    def witnesses_for(finding: dict[str, object]) -> list[dict[str, object]]:
-        return [
-            row
-            for row in all_witness_rows
-            if row.get("cue_index") == finding.get("cue_index")
-        ]
-
-    unresolved = [
-        finding
-        for finding in valid_findings
-        if not any(row.get("witnessed") is True for row in witnesses_for(finding))
-    ]
-    finding = unresolved[0] if unresolved else valid_findings[0]
-    cue_index = finding.get("cue_index")
-    witness_rows = witnesses_for(finding)
-    witnessed = any(row.get("witnessed") is True for row in witness_rows)
-    hashes = {
-        "chat_authority_sha256": "sha256:"
-        + hashlib.sha256(path.read_bytes()).hexdigest(),
-        "input_srt_sha256": document.get("input_srt_sha256"),
-        "output_srt_sha256": document.get("output_srt_sha256"),
-        "audio_sha256": next(
-            (
-                "sha256:" + str(row["audio_sha256"]).removeprefix("sha256:")
-                for row in witness_rows
-                if row.get("audio_sha256")
-            ),
-            None,
-        ),
-    }
-    return {
-        "schema_version": "candidate-gate-violation.v1",
-        "gate": "FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED",
-        "token_class": "MIXED_CJK_MULTIWORD_LATIN",
-        "token": " ".join(str(word) for word in finding.get("latin_words") or []),
-        "cue_index": cue_index,
-        "start_ms": finding.get("start_ms"),
-        "end_ms": finding.get("end_ms"),
-        "text": finding.get("text"),
-        "available_witnesses": ["bounded_audio"] if witness_rows else [],
-        "missing_witnesses": [] if witnessed else ["positive_source_audio_transcription"],
-        "witness_rows": witness_rows,
-        "unresolved_findings": [
-            {
-                "token": " ".join(
-                    str(word) for word in unresolved_finding.get("latin_words") or []
-                ),
-                "cue_index": unresolved_finding.get("cue_index"),
-                "start_ms": unresolved_finding.get("start_ms"),
-                "end_ms": unresolved_finding.get("end_ms"),
-                "text": unresolved_finding.get("text"),
-            }
-            for unresolved_finding in unresolved
-        ],
-        "artifact_hashes": {key: value for key, value in hashes.items() if value},
-    }
-
-
-def _foreign_source_provider_transient(
-    violation: dict[str, object] | None,
-) -> bool:
-    """Distinguish an unavailable audio witness from a textual gate verdict."""
-
-    if not isinstance(violation, dict):
-        return False
-    unresolved = violation.get("unresolved_findings")
-    rows = violation.get("witness_rows")
-    if not isinstance(unresolved, list) or not unresolved or not isinstance(rows, list):
-        return False
-    unresolved_indexes = {
-        row.get("cue_index") for row in unresolved if isinstance(row, dict)
-    }
-    relevant = [
-        row
-        for row in rows
-        if isinstance(row, dict) and row.get("cue_index") in unresolved_indexes
-    ]
-    if not relevant:
-        return False
-    provider_markers = (
-        "AGY_FOREIGN_WITNESS_",
-        "WITNESS_PROVIDERS_FAILED",
-        "WITNESS_AUDIO_EXTRACTION_FAILED",
-        "HTTPERROR",
-        "QUOTA",
-        "TIMED OUT",
-        "TIMEOUT",
-        "SUBPROCESS",
-    )
-    return all(
-        any(marker in str(row.get("failure") or "").upper() for marker in provider_markers)
-        for row in relevant
     )
 
 
