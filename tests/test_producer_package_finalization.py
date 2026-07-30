@@ -18,6 +18,71 @@ def _deferred_exact_truth_audit() -> dict:
     }
 
 
+def test_final_authority_persists_verified_baseline_owner_receipts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subtitle = tmp_path / "candidate.srt"
+    subtitle.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n审定字幕\n",
+        encoding="utf-8",
+    )
+    baseline_path = tmp_path / "candidate.redelivery-baseline.json"
+    baseline_audit = {
+        "status": "APPLIED",
+        "mappings": [{"output_cue_index": 1}],
+    }
+    baseline_path.write_text(
+        json.dumps(baseline_audit, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    def verify_and_annotate(*_args, **_kwargs) -> bool:
+        baseline_audit["mappings"][0].update(
+            {
+                "final_owner_scope": "DELIVERY",
+                "final_owner_verified": True,
+            }
+        )
+        return True
+
+    monkeypatch.setattr(
+        finalization,
+        "verify_chat_authority_final_surfaces",
+        verify_and_annotate,
+    )
+    chat_path = tmp_path / "candidate.chat-authority.json"
+    result = finalization._verify_final_authority(
+        cid="candidate",
+        final_start=0,
+        final_end=1_000,
+        recut=finalization.FinalRecutArtifacts(
+            recut_dir=tmp_path,
+            media_path=tmp_path / "candidate.mp4",
+            subtitle_path=subtitle,
+            text_manifest_path=None,
+            text_manifest=None,
+            redelivery_baseline_audit_path=baseline_path,
+            redelivery_baseline_audit=baseline_audit,
+        ),
+        speaker=finalization.SpeakerArtifacts(
+            manifest=None,
+            review_srt=None,
+            ass=None,
+            manifest_path=None,
+        ),
+        chat_authority_audit={},
+        chat_authority_path=chat_path,
+        subtitle_regression_path=None,
+    )
+
+    assert result == finalization.AuthorityArtifacts(None, None)
+    assert json.loads(baseline_path.read_text(encoding="utf-8")) == (
+        baseline_audit
+    )
+    assert baseline_audit["mappings"][0]["final_owner_verified"] is True
+
+
 def test_deferred_exact_replay_requires_same_truth_id_reverification() -> None:
     audit = finalization._audit_deferred_exact_replay_reverification(
         pre_truth_audit=_deferred_exact_truth_audit(),

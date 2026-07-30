@@ -1420,6 +1420,24 @@ def _verify_final_authority(
         delivery_start_ms=final_start,
         delivery_end_ms=final_end,
     )
+    # Final-owner verification annotates every reviewed-baseline mapping in
+    # place.  Persist those post-verification bytes before the record hashes
+    # and embeds the same object; otherwise the package contains a stale
+    # sidecar while the record carries the newer owner receipts, and the exact
+    # recovery manifest correctly refuses the mismatch.
+    if recut.redelivery_baseline_audit is not None:
+        if recut.redelivery_baseline_audit_path is None:
+            raise SystemExit("REDELIVERY_BASELINE_AUDIT_PATH_MISSING")
+        recut.redelivery_baseline_audit_path.write_text(
+            json.dumps(
+                recut.redelivery_baseline_audit,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
     chat_authority_audit.update(
         {
             "final_status": "FINAL_ARTIFACTS_VERIFIED" if final_authority_ok else "FINAL_ARTIFACTS_FAILED",
