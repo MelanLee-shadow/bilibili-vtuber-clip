@@ -58,12 +58,15 @@
      若该晚期 CPA 修复覆盖同一精确时间窗的旧 CPA 文本，必须登记 hash-bound
      `final-source-language-cpa-supersession.v1`，让新文本成为唯一终稿 owner；禁止终验同时要求
      两个互斥版本存活。
-     此处生产音频输入只交 AGY；CPA 只接收 CURRENT、AGY 候选盲文字转写与整片文字语境。
-     AGY 成功声学证据按音频字节、完整提示词、模型与适配算法身份做内容寻址缓存；只有
-     全部身份和成功结果哈希逐项一致才可在重试中复用，失败或损坏项永不缓存。
+     此处生产音频默认先交 AGY；CPA 只接收 CURRENT、候选盲文字转写与整片文字语境。
+     AGY 失败且已配置的直连 Gemini API key 实测可用时，外语原声 span 可用同一候选盲
+     prompt 与 exact audio hash 取得后备证人文本。AGY 或 Gemini API 的成功声学证据都按
+     音频字节、完整提示词、模型与适配算法身份做内容寻址缓存；只有全部身份和成功结果哈希
+     逐项一致才可在重试中复用，失败或损坏项永不缓存。
      AGY/音频抽取的 provider 故障必须分类为 `provider_transient / foreign_source_audio_witness`
-     并由 runner 续跑，不能固化成 terminal `foreign_source_transcription`；只有 AGY 已返回有效
-     文字证据而 CPA/文字权威仍无法闭合时才是内容门终局。
+     并由 runner 续跑，不能固化成 terminal `foreign_source_transcription`；只有已返回有效
+     文字证据而 CPA/文字权威仍无法闭合时才是内容门终局。两个音频 provider 都只有 evidence
+     authority；任何后备听写都必须进 CPA 闭集，不能直接决定交付文字。
      source-language preservation 的假名引入门遵循同一闭环：字符/假名相似度只负责检测和
      verbatim 见证；不匹配时 AGY 候选盲听写与 CURRENT 一并交给 CPA，CPA 可保留语境修复或
      选择听写，检测器不得在 CPA 之后另投否决票。失败记录必须指向实际仍 BLOCKED 的审计，
@@ -77,7 +80,9 @@
    `carryover_persisted_count`；该单一 additive receipt 不构成审计面矛盾，不能把原本
    `CORRECTION_DISCOVERY_INCOMPLETE` 的 provider transient 错分成 terminal contract。
    其他共享字段不一致或未知附加字段仍按 contract corruption fail closed。
-5. **生产音频只交 AGY**：不得因 quota、timeout 或输出错误把音频转交 Gemini API、CPA
+5. **一般生产音频只交 AGY**：不得因 quota、timeout 或输出错误把实体/歌切音频转交 Gemini API、CPA
+   或其他文本模型。唯一例外是上文 hash-bound 外语原声 span：直连 Gemini API 已实测支持该
+   exact audio 输入时可作候选盲后备证人，仍无 mutation authority，CPA 保留最终裁决权。
    或其他文字模型。先复用身份完整匹配的 AGY 成功缓存；仍无证据但文字闭集已完整时，
    CPA 必须仅按文字语境继续选边；只有候选生成依赖尚未得到的声学事实时才写
    `provider_transient` 并由 runner 有界重试。CPA 只接收文字闭集、AGY 观察文字（若有）和片级文字
@@ -210,7 +215,8 @@ Ivan 指正=该句整体替换的锚，不是插入片段：钉子文本必须�
 ## 已知结构性欠账（按性价比排序，做前先读调研）
 
 0. ~~短语级重复分歧检测~~（2026-07-19 已落地，见上节）
-1. ~~付费声学兜底不可达~~（旧架构；2026-07-30 已退役，生产声学改为 AGY-only）
+1. ~~付费声学兜底不可达~~（旧架构；实体与歌切音频仍为 AGY-only；外语原声 span 在 AGY
+   失败时允许 hash-bound 直连 Gemini 证人后备，CPA 保留最终裁决权）
 2. ~~infra-UNCERTAIN 带伤交付~~（同上已修）
 3. ~~方言零覆盖~~（同上已修，词表持续扩充）
 4. ~~专名零召回无修复通道~~（同上已修：source-backed 插入）

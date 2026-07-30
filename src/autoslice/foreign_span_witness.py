@@ -24,7 +24,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from src.autoslice import gemini_backup_policy
-from src.autoslice.agy_lrc_alignment import _gemini_keys
+from src.autoslice.agy_lrc_alignment import (
+    GEMINI_API_AUDIO_LRC_MODEL,
+    _gemini_api_observe,
+    _gemini_keys,
+)
 from src.autoslice.foreign_audio_witness_cache import (
     load_successful_observation,
     store_successful_observation,
@@ -56,6 +60,9 @@ _KEEP_TEXT_RX = re.compile(r"[0-9A-Za-z㐀-鿿ぁ-ゖァ-ヺー]+")
 _AGY_MODEL = os.environ.get("FOREIGN_WITNESS_AGY_MODEL", "Gemini 3.6 Flash (High)")
 _AGY_TIMEOUT = os.environ.get("FOREIGN_WITNESS_AGY_TIMEOUT", "10m")
 _AGY_WITNESS_ALGORITHM_ID = "agy-foreign-span-candidate-blind-v1"
+_GEMINI_WITNESS_ALGORITHM_ID = (
+    "gemini-api-foreign-span-candidate-blind-v1"
+)
 
 _PROMPT_TEMPLATE = """The black-frame input.mp4 is an untrusted live-stream span of {duration_ms} ms.
 Transcribe EXACTLY what is audibly spoken, in the original spoken language
@@ -297,7 +304,7 @@ def _observe_audio(
     prompt: str,
     observe: Callable[..., str] | None,
 ) -> tuple[dict[str, str], str, str | None, dict[str, Any] | None]:
-    """Use injected API doubles in tests; production is AGY-only."""
+    """Prefer AGY, then use a hash-bound Gemini API audio witness."""
 
     if observe is not None:
         observation, key_tier = _observe_with_key_ladder(
@@ -320,7 +327,66 @@ def _observe_audio(
             observation = None
         if observation is not None:
             return observation, "agy_success_cache", None, cache_evidence
-    observation = _observe_with_agy(audio_path=audio_path, prompt=prompt)
+    try:
+        observation = _observe_with_agy(audio_path=audio_path, prompt=prompt)
+    except Exception as agy_exc:
+        if not _gemini_keys():
+            raise
+        fallback_identity = witness_identity(
+            audio_path=audio_path,
+            prompt=prompt,
+            model=GEMINI_API_AUDIO_LRC_MODEL,
+            algorithm_id=_GEMINI_WITNESS_ALGORITHM_ID,
+        )
+        cached, fallback_cache_evidence = load_successful_observation(
+            identity=fallback_identity
+        )
+        if cached is not None:
+            try:
+                fallback_observation = _parse_observation(
+                    json.dumps(cached, ensure_ascii=False)
+                )
+            except (TypeError, ValueError, json.JSONDecodeError):
+                fallback_observation = None
+            if fallback_observation is not None:
+                return (
+                    fallback_observation,
+                    "gemini_api_success_cache",
+                    None,
+                    {
+                        **fallback_cache_evidence,
+                        "provider_fallback_used": True,
+                        "requested_provider": "agy",
+                        "agy_failure_category": _agy_failure_category(agy_exc),
+                    },
+                )
+        fallback_observation, key_tier = _observe_with_key_ladder(
+            audio_path=audio_path,
+            prompt=prompt,
+            observe=_gemini_api_observe,
+        )
+        fallback_cache_evidence = store_successful_observation(
+            identity=fallback_identity,
+            observation=fallback_observation,
+            source_provenance={
+                "kind": "live_accepted_gemini_api_audio",
+                "provider_fallback_used": True,
+                "requested_provider": "agy",
+                "agy_failure_category": _agy_failure_category(agy_exc),
+                "key_tier": key_tier,
+            },
+        )
+        return (
+            fallback_observation,
+            "gemini_api",
+            key_tier,
+            {
+                **fallback_cache_evidence,
+                "provider_fallback_used": True,
+                "requested_provider": "agy",
+                "agy_failure_category": _agy_failure_category(agy_exc),
+            },
+        )
     cache_evidence = store_successful_observation(
         identity=identity,
         observation=observation,
@@ -330,6 +396,15 @@ def _observe_audio(
         },
     )
     return observation, "agy", None, cache_evidence
+
+
+def _agy_failure_category(exc: Exception) -> str:
+    diagnostic = f"{type(exc).__name__}: {exc}".casefold()
+    if any(token in diagnostic for token in ("quota", "429", "rate limit")):
+        return "AGY_QUOTA_EXHAUSTED"
+    if "timeout" in diagnostic or "timed out" in diagnostic:
+        return "AGY_TIMEOUT"
+    return "AGY_PROVIDER_FAILED"
 
 
 def _witness_rows(

@@ -155,6 +155,9 @@ def test_production_agy_cache_misses_on_every_bound_identity_change(
 
 def test_production_agy_failure_is_never_cached(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path))
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY_2", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY_3", raising=False)
     audio = tmp_path / "span.mp3"
     audio.write_bytes(b"exact-audio")
     calls = []
@@ -172,6 +175,48 @@ def test_production_agy_failure_is_never_cached(tmp_path, monkeypatch):
 
     assert len(calls) == 2
     assert not list((tmp_path / "cache").rglob("*.json"))
+
+
+def test_production_agy_quota_falls_back_to_hash_bound_gemini_audio(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path))
+    monkeypatch.setenv("GEMINI_API_KEY", "restored-key")
+    monkeypatch.delenv("GEMINI_API_KEY_2", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY_3", raising=False)
+    audio = tmp_path / "span.mp3"
+    audio.write_bytes(b"exact-audio")
+    gemini_calls = []
+
+    def failed_agy(*, audio_path, prompt):
+        raise RuntimeError("AGY quota exhausted")
+
+    def restored_gemini(*, audio_path, prompt, key):
+        gemini_calls.append((audio_path.read_bytes(), prompt, key))
+        return json.dumps(_agy_observation(), ensure_ascii=False)
+
+    monkeypatch.setattr(fsw, "_observe_with_agy", failed_agy)
+    monkeypatch.setattr(fsw, "_gemini_api_observe", restored_gemini)
+
+    first = fsw._observe_audio(
+        audio_path=audio,
+        prompt="exact prompt",
+        observe=None,
+    )
+    second = fsw._observe_audio(
+        audio_path=audio,
+        prompt="exact prompt",
+        observe=None,
+    )
+
+    assert first[0] == _agy_observation()
+    assert first[1] == "gemini_api"
+    assert first[2] == "free"
+    assert first[3]["provider_fallback_used"] is True
+    assert first[3]["agy_failure_category"] == "AGY_QUOTA_EXHAUSTED"
+    assert second[1] == "gemini_api_success_cache"
+    assert second[3]["served_from_cache"] is True
+    assert len(gemini_calls) == 1
 
 
 def test_corrupt_agy_success_cache_is_ignored_and_rebuilt(tmp_path, monkeypatch):
