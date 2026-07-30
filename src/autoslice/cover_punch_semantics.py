@@ -12,7 +12,34 @@ from src.autoslice.llm_client import LlmCall, extract_json_object
 SCHEMA_VERSION = "lidousha-cover-punch-semantic-review.v1"
 PUNCH_LINE_MAX_EM = 9.0
 _CLOSING_PUNCT = tuple("，,、；;！!？?。）》】”’")
-_OPENING_PUNCT = tuple("（(《【“‘")
+_OPENING_PUNCT = tuple("“‘《〈「『（(【[｛{")
+
+
+def extractive_punch_fragment_is_source_safe(
+    fragment: str,
+    cover_text: str,
+) -> bool:
+    """Reject extractive fragments cut immediately before a bracketed atom.
+
+    An ordinary substring check accepted ``让新3D永久保留`` from
+    ``让新3D永久保留“白色奶龙”表情``.  The text was source-bound but
+    had dropped the verb's concrete object.  A left bracket/quote immediately
+    after an extracted occurrence is a deterministic proof that the fragment
+    stopped before one source atom.  Accept repeated text when at least one
+    occurrence has a safe right boundary.
+    """
+
+    needle = _canon(fragment)
+    haystack = _canon(cover_text)
+    if not needle:
+        return False
+    start = haystack.find(needle)
+    while start >= 0:
+        end = start + len(needle)
+        if end >= len(haystack) or haystack[end] not in _OPENING_PUNCT:
+            return True
+        start = haystack.find(needle, start + 1)
+    return False
 
 
 def _canon(text: str) -> str:
@@ -48,6 +75,10 @@ def _validated_extractive_punch(
             or punch_line_em_width(fragment) > PUNCH_LINE_MAX_EM
             or "\n" in fragment
             or canonical not in haystack
+            or not extractive_punch_fragment_is_source_safe(
+                fragment,
+                cover_text,
+            )
             or fragment.startswith(_CLOSING_PUNCT)
             or fragment.endswith(_OPENING_PUNCT)
         ):
@@ -84,7 +115,10 @@ def _review_prompt(
         "并且必须能作为一条物理行直接渲染（最多 9 个全角字宽；ASCII 字符约半个"
         "全角字），不得增删改，也不能依赖渲染器在词中间二次断行。例如不要返回"
         "“被粉色小姐姐布下迷魂阵”，应从原文抽取较短但仍自足的"
-        "“小姐姐布下迷魂阵 / 我是侄女啊”。stranger_can_infer_event、"
+        "“小姐姐布下迷魂阵 / 我是侄女啊”。如果原文在候选片段后紧接"
+        "引号、书名号或括号成分，该成分就是未完的语义原子，不得在左括号前"
+        "截断；例如“让新3D永久保留”必须改为带有“白色奶龙”对象的片段。"
+        "stranger_can_infer_event、"
         "contains_concrete_subject、"
         "contains_action_or_conflict 三项只有确实成立才给 true。"
         "story_summary 用一句话说明梗字表达的具体事件，click_motivation 说明"

@@ -4773,6 +4773,51 @@ def test_cover_punch_cpa_keeps_pink_sister_phrase_as_one_physical_line(tmp_path)
     )
 
 
+def test_cover_punch_rejects_fragment_cut_before_quoted_object():
+    from src.autoslice import cover_generation
+
+    title = (
+        "【李豆沙】观众想让新3D永久保留“白色奶龙”表情，"
+        "小李拒绝花钱"
+    )
+    cover_text = title.removeprefix("【李豆沙】")
+    story_hook = "观众要求新3D永久保留白色奶龙表情，她因为要花钱而拒绝。"
+
+    assert cover_generation._validated_cover_punch(
+        {"main": "让新3D永久保留", "sub": "小李拒绝花钱"},
+        cover_text,
+    ) == ()
+    assert cover_generation._validated_cover_punch(
+        {"main": "“白色奶龙”表情", "sub": "小李拒绝花钱"},
+        cover_text,
+    ) == ("“白色奶龙”表情", "小李拒绝花钱")
+
+    def judge(prompt: str) -> str:
+        assert "不得在左括号前截断" in prompt
+        return (
+            '{"schema_version":"lidousha-cover-punch-semantic-review.v1",'
+            '"status":"REVISE",'
+            '"final_punch":{"main":"让新3D永久保留","sub":"小李拒绝花钱"},'
+            '"stranger_can_infer_event":true,'
+            '"contains_concrete_subject":true,'
+            '"contains_action_or_conflict":true,'
+            '"story_summary":"观众让新3D保留表情但小李拒绝花钱",'
+            '"click_motivation":"永久保留表情和花钱之间的冲突值得点开"}'
+        )
+
+    reviewed, proof = cover_generation.review_cover_punch_semantics(
+        title=title,
+        cover_text=cover_text,
+        story_hook=story_hook,
+        punch=("小李拒绝花钱",),
+        llm_call=judge,
+        punch_validator=cover_generation._validated_cover_punch,
+    )
+    assert reviewed == ()
+    assert proof["status"] == "FAILED"
+    assert proof["reason_code"] == "CPA_PUNCH_SEMANTIC_REVIEW_REJECTED"
+
+
 def test_cover_punch_renderer_fails_closed_instead_of_midword_wrap():
     from src.autoslice import cover_generation
 

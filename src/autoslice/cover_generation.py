@@ -22,6 +22,7 @@ from src.autoslice.cover_emote import (
 )
 from src.autoslice.cover_punch_semantics import (
     PUNCH_LINE_MAX_EM,
+    extractive_punch_fragment_is_source_safe,
     punch_line_em_width,
     review_cover_punch_semantics,
     validate_cover_punch_semantic_review,  # noqa: F401 - compatibility re-export
@@ -319,7 +320,10 @@ def _validated_cover_punch(value: object, cover_text: str) -> tuple[str, ...]:
             or "\n" in fragment
         ):
             return ()
-        if canon not in haystack:
+        if canon not in haystack or not extractive_punch_fragment_is_source_safe(
+            fragment,
+            cover_text,
+        ):
             return ()
         if fragment.startswith(tuple(_COVER_CLOSING_PUNCT)) or fragment.endswith(
             tuple(_COVER_OPENING_PUNCT)
