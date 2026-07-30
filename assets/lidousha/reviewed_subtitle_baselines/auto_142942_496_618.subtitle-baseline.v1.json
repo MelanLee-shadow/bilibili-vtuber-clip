@@ -1,0 +1,14 @@
+{
+  "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
+  "candidate_id": "auto_142942_496_618",
+  "schema_version": "subtitle-redelivery-baseline.v2",
+  "mode": "preserve_text_outside_source_truth",
+  "exact_interval_replay": true,
+  "path": "auto_142942_496_618.reviewed.srt",
+  "sha256": "180b48030002f15bdb0b58523d061089f9688d6c22b294d3ecd8bb69ec1dab21",
+  "authority": "The exact published and previously pipeline-reviewed subtitle bytes for BV1zk386LEjC are the lexical baseline for Ivan's 2026-07-30 whole-clip rerun. Ivan reported that known Japanese speech was incorrectly presented in romaji and requires native Japanese script throughout; post-baseline native-script normalization and the independent exact-final CPA review remain mandatory before same-BV repair.",
+  "source_recording_basename": "22966160_20260726-14-29-42.mp4",
+  "source_sha256": "d0a689e36a195b4a06ee4bffbc2cba267fc8fd3789abec227c7176f1cb90a56e",
+  "absolute_source_start_ms": 496370,
+  "absolute_source_end_ms": 627010
+}
