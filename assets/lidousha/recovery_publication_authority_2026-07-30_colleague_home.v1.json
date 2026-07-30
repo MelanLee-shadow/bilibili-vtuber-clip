@@ -1,0 +1,20 @@
+{
+  "schema_version": "lidousha-recovery-publication-authority.v1",
+  "authority": "Ivan 2026-07-29: after the current pink-sister repair, rerun the whole already-published colleague-home candidate auto_183122_607_723 with the latest pipeline, repair the remaining wrong rendering of the proper name 礼墨 and any other whole-clip defects, then upload the repaired result. Preserve the existing BV and verified public title. The published endpoint is a recall anchor: CPA may resolve the exact semantic endpoint inside the bounded source window while preserving the complete colleague-home and colleague-collection payoff.",
+  "entries": [
+    {
+      "candidate_id": "auto_183122_607_723",
+      "title_mode": "verified_public_exact",
+      "observed_public_title": "【李豆沙】被问为何总在同事家开播，熊猫头坦白豪华双屏用惯了，kmx盖章“同事收集梦想生活”",
+      "required_given_end_ms": 723090,
+      "boundary_end_mode": "published_recall_anchor",
+      "bvid": "BV1Eo3L6zECt",
+      "aid": 116983332870140,
+      "cid": 40300708830,
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-30-colleague-home-source/auto_183122_607_723.public_verify.json",
+      "source_public_verify_sha256": "sha256:de3e86089b096c9f4f926fd4ccf37f2cbbfcbd992ee1e0850323c2cf18134285",
+      "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+      "source_public_verify_status": "VERIFIED_PUBLIC"
+    }
+  ]
+}
