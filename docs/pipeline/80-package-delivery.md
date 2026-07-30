@@ -137,7 +137,12 @@
   `final-review-audit.v2` 与 raw-byte SHA；`exact-final-cpa-self-heal-audit.v1` 必须记录每轮
   before/after SHA、cue ordinal、CPA decision authority、typed mutation receipt 和 timing
   immutable，并在 redelivery baseline 存在时由 baseline audit 记录 post-exact-final SHA。
-  中间 FLAGGED 回执不能作为最终放行证据，自愈后未重新 exact-final 或审计链缺字段均阻断。
+  每个自愈修复还须登记成新的 final-surface owner；若它修改了同 cue、同精确
+  时间窗的早期 correction owner，只有旧文本 SHA 经有序 CPA receipt 链可达最终
+  cue SHA，且整份最终 SRT SHA 与 self-heal audit 相等时，才能把旧 owner 记为
+  `SUPERSEDED_BY_EXACT_FINAL_CPA`。只是窗口重叠、文本不同或缺任一 typed receipt
+  都不能注销旧 owner。中间 FLAGGED 回执不能作为最终放行证据，自愈后未重新
+  exact-final、审计链缺字段或 final-surface 冲突未和解均阻断。
 - 封面审计按 `cover_generation.route_decision.actual_treatment` 分支验真：所有路线都验
   最终 cover SHA 与 `lidousha-cover-rendered-text-pixels.v3`。包内必须同时有 final cover、
   `.cover.pre-overlay.png`、`.cover.title-mask.png`、`.cover.route-background.png`；auditor

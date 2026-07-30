@@ -935,6 +935,10 @@ def _apply_exact_final_cpa_repairs(
             {
                 "schema_version": "exact-final-cpa-self-heal.v1",
                 "cue_index": cue_index,
+                "matched_start_ms": current.start_ms,
+                "matched_end_ms": current.end_ms,
+                "before": current.text,
+                "after": proposed,
                 "before_sha256": "sha256:" + current_sha256,
                 "after_sha256": "sha256:"
                 + hashlib.sha256(proposed.encode("utf-8")).hexdigest(),
@@ -956,6 +960,124 @@ def _apply_exact_final_cpa_repairs(
     if not repairs:
         return srt_text, []
     return _render_cues_to_srt(cues), repairs
+
+
+def _register_exact_final_cpa_repairs(
+    chat_authority_audit: dict[str, object],
+    repairs: list[dict[str, object]],
+    *,
+    delivery_start_ms: int,
+) -> None:
+    """Make exact-final repairs own their final delivery surfaces.
+
+    Correction review runs before exact-final and may have already registered
+    a typed ``entity_repairs`` row. When exact-final later changes that exact
+    cue again, retaining the earlier expected surface creates an impossible
+    authority conflict (the pink-room ``好磕吧`` -> ``好可怕`` case).
+
+    Reconcile only an exact same-window, exact-text predecessor and append the
+    CPA repair as the new final-surface owner. Hashes, timing, judge authority,
+    and mutation receipt are revalidated here; an overlapping but non-identical
+    row is never retired.
+    """
+
+    rows = chat_authority_audit.setdefault("entity_repairs", [])
+    if not isinstance(rows, list):
+        raise ValueError("EXACT_FINAL_ENTITY_REPAIR_LEDGER_INVALID")
+    registrations = chat_authority_audit.setdefault(
+        "exact_final_cpa_surface_registrations", []
+    )
+    if not isinstance(registrations, list):
+        raise ValueError("EXACT_FINAL_SURFACE_REGISTRATION_LEDGER_INVALID")
+
+    for repair in repairs:
+        before = repair.get("before")
+        after = repair.get("after")
+        local_start = repair.get("matched_start_ms")
+        local_end = repair.get("matched_end_ms")
+        mutation = repair.get("mutation_authority")
+        if (
+            not isinstance(before, str)
+            or not before
+            or not isinstance(after, str)
+            or not after.strip()
+            or isinstance(local_start, bool)
+            or not isinstance(local_start, int)
+            or isinstance(local_end, bool)
+            or not isinstance(local_end, int)
+            or not 0 <= local_start < local_end
+            or repair.get("decision_authority") != "CPA_JUDGE"
+            or repair.get("timing_immutable") is not True
+            or not isinstance(mutation, Mapping)
+            or mutation.get("schema_version")
+            != "subtitle-correction-mutation-authority.v1"
+            or mutation.get("status") != "PASS"
+            or repair.get("before_sha256")
+            != "sha256:" + hashlib.sha256(before.encode("utf-8")).hexdigest()
+            or repair.get("after_sha256")
+            != "sha256:" + hashlib.sha256(after.encode("utf-8")).hexdigest()
+        ):
+            raise ValueError("EXACT_FINAL_SURFACE_REGISTRATION_INVALID")
+        matched_start = delivery_start_ms + local_start
+        matched_end = delivery_start_ms + local_end
+        repair_sha256 = "sha256:" + hashlib.sha256(
+            json.dumps(
+                repair,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        superseded_indexes: list[int] = []
+        for index, row in enumerate(rows):
+            if not isinstance(row, dict) or row.get("reconciliation"):
+                continue
+            expected = str(row.get("structured_exact_text") or "")
+            if not expected:
+                row_after = row.get("after")
+                if isinstance(row_after, list) and len(row_after) == 1:
+                    expected = str(row_after[0] or "")
+                elif isinstance(row_after, str):
+                    expected = row_after
+            if (
+                row.get("matched_start_ms") == matched_start
+                and row.get("matched_end_ms") == matched_end
+                and expected == before
+            ):
+                row["reconciliation"] = {
+                    "schema_version": "exact-final-cpa-supersession.v1",
+                    "status": "SUPERSEDED_BY_EXACT_FINAL_CPA",
+                    "exact_final_repair_sha256": repair_sha256,
+                    "before_sha256": repair["before_sha256"],
+                    "after_sha256": repair["after_sha256"],
+                    "timing_immutable": True,
+                }
+                superseded_indexes.append(index)
+        owner = {
+            "mode": "exact_final_cpa_self_heal",
+            "decision_authority": "CPA_JUDGE",
+            "mutation_authority": dict(mutation),
+            "cue_indexes": [repair["cue_index"]],
+            "matched_start_ms": matched_start,
+            "matched_end_ms": matched_end,
+            "before": [before],
+            "after": [after],
+            "structured_exact_text": after,
+            "survived": True,
+            "timing_immutable": True,
+            "exact_final_repair_sha256": repair_sha256,
+            "superseded_entity_repair_indexes": superseded_indexes,
+        }
+        rows.append(owner)
+        registrations.append(
+            {
+                "schema_version": "exact-final-cpa-surface-registration.v1",
+                "status": "REGISTERED",
+                "exact_final_repair_sha256": repair_sha256,
+                "owner_entity_repair_index": len(rows) - 1,
+                "superseded_entity_repair_indexes": superseded_indexes,
+            }
+        )
 
 
 def _run_exact_final_review_gate(
@@ -1027,6 +1149,11 @@ def _run_exact_final_review_gate(
                     "repairs": repairs,
                 }
                 self_heal_passes.append(pass_receipt)
+                _register_exact_final_cpa_repairs(
+                    chat_authority_audit,
+                    repairs,
+                    delivery_start_ms=final_start,
+                )
                 chat_authority_audit["exact_final_cpa_self_heal"] = {
                     "schema_version": "exact-final-cpa-self-heal-audit.v1",
                     "status": "REVIEW_PENDING",

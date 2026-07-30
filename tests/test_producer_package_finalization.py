@@ -965,6 +965,18 @@ def test_exact_final_review_gate_self_heals_cpa_authorized_finding(
         run_exact_final_review=exact_review,
     )
     baseline_audit: dict[str, object] = {"status": "APPLIED"}
+    chat_authority_audit = {
+        "entity_repairs": [
+            {
+                "mode": "final_review_context_adjudication",
+                "matched_start_ms": 0,
+                "matched_end_ms": 1_000,
+                "before": ["older ASR text"],
+                "after": [original_cue],
+                "structured_exact_text": original_cue,
+            }
+        ]
+    }
     result = finalization._run_exact_final_review_gate(
         cid="candidate",
         out_root=tmp_path,
@@ -979,7 +991,7 @@ def test_exact_final_review_gate_self_heals_cpa_authorized_finding(
             redelivery_baseline_audit_path=baseline_audit_path,
             redelivery_baseline_audit=baseline_audit,
         ),
-        chat_authority_audit={},
+        chat_authority_audit=chat_authority_audit,
         chat_authority_path=chat_path,
         adapters=adapters,
     )
@@ -989,6 +1001,56 @@ def test_exact_final_review_gate_self_heals_cpa_authorized_finding(
     assert original_cue in calls[0]
     assert repaired_cue in calls[1]
     assert repaired_cue in subtitle.read_text(encoding="utf-8")
+    rows = chat_authority_audit["entity_repairs"]
+    assert len(rows) == 2
+    assert rows[0]["reconciliation"]["status"] == (
+        "SUPERSEDED_BY_EXACT_FINAL_CPA"
+    )
+    assert rows[1]["mode"] == "exact_final_cpa_self_heal"
+    assert rows[1]["structured_exact_text"] == repaired_cue
+    assert rows[1]["matched_start_ms"] == 0
+    assert rows[1]["matched_end_ms"] == 1_000
+    assert chat_authority_audit[
+        "exact_final_cpa_surface_registrations"
+    ][0]["superseded_entity_repair_indexes"] == [0]
+    assert finalization.verify_chat_authority_final_surfaces(
+        chat_authority_audit,
+        final_text_srt=subtitle.read_text(encoding="utf-8"),
+        final_speaker_srt=subtitle.read_text(encoding="utf-8"),
+        delivery_start_ms=0,
+        delivery_end_ms=2_400,
+    )
+    # Packages produced before explicit surface registrations retain only the
+    # hash-bound self-heal chain. The same exact cue/time/hash proof must retire
+    # the older correction owner without trusting a generic overlap.
+    legacy_audit = {
+        "entity_repairs": [
+            {
+                "mode": "final_review_context_adjudication",
+                "matched_start_ms": 0,
+                "matched_end_ms": 1_000,
+                "before": ["older ASR text"],
+                "after": [original_cue],
+                "structured_exact_text": original_cue,
+            }
+        ],
+        "exact_final_cpa_self_heal": result[
+            "exact_final_cpa_self_heal"
+        ],
+    }
+    assert finalization.verify_chat_authority_final_surfaces(
+        legacy_audit,
+        final_text_srt=subtitle.read_text(encoding="utf-8"),
+        final_speaker_srt=subtitle.read_text(encoding="utf-8"),
+        delivery_start_ms=0,
+        delivery_end_ms=2_400,
+    )
+    assert legacy_audit["entity_repairs"][0]["reconciliation"][
+        "status"
+    ] == "SUPERSEDED_BY_EXACT_FINAL_CPA"
+    assert legacy_audit[
+        "final_superseded_by_exact_final_cpa_count"
+    ] == 1
     assert result["exact_final_cpa_self_heal"]["status"] == "PASS"
     assert baseline_audit["exact_final_cpa_self_heal"]["status"] == "PASS"
     assert json.loads(
