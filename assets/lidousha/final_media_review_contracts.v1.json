@@ -1,6 +1,6 @@
 {
   "schema_version": "lidousha-final-media-review-contracts.v1",
-  "authority": "Ivan 2026-07-22/23 and 2026-07-28 explicit correction and review instructions, normalized into exact final-video review points; timestamps are deliberately broad windows around the reported point so the reviewer must inspect the surrounding audio, subtitle, callback, and boundary context.",
+  "authority": "Ivan 2026-07-22/23, 2026-07-28, and 2026-07-29 explicit correction and review instructions, normalized into exact final-video review points; timestamps are deliberately broad windows around the reported point so the reviewer must inspect the surrounding audio, subtitle, callback, and boundary context.",
   "contracts": [
     {
       "candidate_id": "auto_193450_3573_3665",
@@ -327,6 +327,47 @@
           "final_video_start_ms": 287000,
           "final_video_end_ms": 305000,
           "expectation": "粉色小姐姐表示更希望与李豆沙同处房间、李豆沙被吓到又被调侃高兴的收尾必须完整，不得残留无意义怪词或带入随后抽黑帽子的新话题。"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_183122_607_723",
+      "subtitle_review_points": [
+        {
+          "point_id": "colleague-home-dual-screen-setup",
+          "final_video_start_ms": 6000,
+          "final_video_end_ms": 35000,
+          "expectation": "开头必须完整交代李豆沙用惯同事家的豪华双屏、难以回到破笔记本，并说明自己住处隔音差；不得从半句起片或把因果关系写反。"
+        },
+        {
+          "point_id": "limo-first-home-reference",
+          "final_video_start_ms": 44000,
+          "final_video_end_ms": 53000,
+          "expectation": "第一次说明来同事家开播时必须写成专名“礼墨家”，不得残留“林墨”“李墨”或其他近音字。"
+        },
+        {
+          "point_id": "gift-names-and-light-signs",
+          "final_video_start_ms": 53000,
+          "final_video_end_ms": 68000,
+          "expectation": "利普、暖白、卢西克里等送礼用户名必须与结构化弹幕一致，礼物统一写为“粉丝团灯牌”，不得被 glossary 误替换成普通词。"
+        },
+        {
+          "point_id": "limo-second-home-reference",
+          "final_video_start_ms": 73000,
+          "final_video_end_ms": 83000,
+          "expectation": "第二次说以后只去同事家时仍必须写成“礼墨家”，并保留后接怪叫和谢礼的真实顺序。"
+        },
+        {
+          "point_id": "colleague-collection-wordplay",
+          "final_video_start_ms": 87000,
+          "final_video_end_ms": 105000,
+          "expectation": "必须完整保留“朋友收集梦想生活online版”与“同事收集梦想生活线下版”的对照包袱，不得把 lds、online 或同事关系改成无关近音。"
+        },
+        {
+          "point_id": "complete-colleague-trouble-ending",
+          "final_video_start_ms": 105000,
+          "final_video_end_ms": 121700,
+          "expectation": "结尾必须完整落到占用并调整同事电脑设置、很麻烦同事的闭环；不得截断最后一句或带入随后谢礼的新话题。"
         }
       ]
     },
