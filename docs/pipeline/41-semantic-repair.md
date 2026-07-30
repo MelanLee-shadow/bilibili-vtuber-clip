@@ -29,7 +29,10 @@
      发音兼容度。代码记录证据冲突但不得否决看过该证据后仍明确选择 `PROPOSED` 的 CPA；
      最终 mutation 只认 CPA 闭集裁决。量级 ~1/10。
      AGY 拼音是高可信辅助而非最高法官：明显只覆盖邻句/半句/错位窗口时，CPA 可按完整语境
-     在闭集内定夺。CPA 若选 `NEITHER`，流水线用同一个候选盲音频几何让 CPA 提案层生成一个
+     在闭集内定夺。若文字层已构造 CURRENT/PROPOSED 完整闭集，AGY quota/timeout 只表示
+     本轮无声学辅助，不得剥夺 CPA 裁决权；仍必须把闭集、整片语境与绑定文字证据
+     交 CPA，以 `CPA_CONTEXT_ONLY_CLOSED_SET_DISAMBIGUATION` 收据定案。CPA 若选
+     `NEITHER`，流水线用同一个候选盲音频几何让 CPA 提案层生成一个
      有界第三候选，再由独立闭集裁决确认；提案层无 mutation authority，第二次仍非
      `PROPOSED` 就保持 fail closed。
      若独立 exact-final 审片员只标出有界 `suspect`、因不愿猜测而没有给
@@ -59,14 +62,15 @@
    - **删除专线**：`acoustic_delete` 仅提议删除一个有界疑似幻听 span，`acoustic_drop_cue`
      仅提议整条无声；AGY 的“不可闻”仍只是证据，只有 CPA `PROPOSED` 才能执行删除。严格
      postcondition 不成立、CPA 选 CURRENT 或 CPA 未完成就保留原文并阻断/披露。
-4. **infra 失败不是裁决**：provider 额度耗尽导致的 UNCERTAIN 不许当终局，producer 以 `FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED` 拒绝带伤交付，runner 按 provider_transient 有界重试。correction discovery/routing 本身异常时，对 SRT 与 chat audit 必须原子回滚，保存 typed `AUDITOR_UNAVAILABLE` 原因、空 findings 与零 applied；后续 exact-final 空扫描不能洗白，只允许 `final_review_correction_discovery` 有界重试。若 CPA 返回非空 findings 但全部违反 finding schema，同一 discovery 最多追加一次 CPA schema-repair 复审；第二次 prompt 必须携带机器的逐行拒绝原因，要求每个怀疑要么补成有界 `proposed_full_cue`、要么撤回，仍无效才继续 fail closed，禁止把坏响应折叠成 CLEAN。`spoken_unit` 的小范围插入或删除只会产生完整 cue 闭集候选：须通过有界单段 diff、候选无关 AGY 见证、CPA 明确选中 `PROPOSED` 和 typed mutation receipt 才能落盘；整 cue 删除仍只走 `acoustic_drop_cue`。终审 transport 的内部模型链必须能在 caller 的外层 deadline 内完整耗尽：当前终审给三个获批模型各一次最长 180 秒请求，外层预算 600 秒；不得再配置成内部最坏 27 分钟、外层 5 分钟而必然被中途杀死的假 failover。
+4. **infra 失败不是裁决**：AGY 额度耗尽导致的 UNCERTAIN 不许偷换成 keep-current；已有完整文字闭集时必须继续交 CPA 纯文字裁决，只有 CPA 本身不可用、或候选本身必须由新的声学事实生成时，才以 `FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED` 拒绝带伤交付，runner 按 provider_transient 有界重试。correction discovery/routing 本身异常时，对 SRT 与 chat audit 必须原子回滚，保存 typed `AUDITOR_UNAVAILABLE` 原因、空 findings 与零 applied；后续 exact-final 空扫描不能洗白，只允许 `final_review_correction_discovery` 有界重试。若 CPA 返回非空 findings 但全部违反 finding schema，同一 discovery 最多追加一次 CPA schema-repair 复审；第二次 prompt 必须携带机器的逐行拒绝原因，要求每个怀疑要么补成有界 `proposed_full_cue`、要么撤回，仍无效才继续 fail closed，禁止把坏响应折叠成 CLEAN。`spoken_unit` 的小范围插入或删除只会产生完整 cue 闭集候选：须通过有界单段 diff、候选无关 AGY 见证、CPA 明确选中 `PROPOSED` 和 typed mutation receipt 才能落盘；整 cue 删除仍只走 `acoustic_drop_cue`。终审 transport 的内部模型链必须能在 caller 的外层 deadline 内完整耗尽：当前终审给三个获批模型各一次最长 180 秒请求，外层预算 600 秒；不得再配置成内部最坏 27 分钟、外层 5 分钟而必然被中途杀死的假 failover。
    exact-final 结转 finding 后，chat authority 可比先写的 review-flags 多
    `carryover_persisted_count`；该单一 additive receipt 不构成审计面矛盾，不能把原本
    `CORRECTION_DISCOVERY_INCOMPLETE` 的 provider transient 错分成 terminal contract。
    其他共享字段不一致或未知附加字段仍按 contract corruption fail closed。
 5. **生产音频只交 AGY**：不得因 quota、timeout 或输出错误把音频转交 Gemini API、CPA
-   或其他文字模型。先复用身份完整匹配的 AGY 成功缓存；仍无证据时写
-   `provider_transient` 并由 runner 有界重试。CPA 只接收文字闭集、AGY 观察文字和片级文字
+   或其他文字模型。先复用身份完整匹配的 AGY 成功缓存；仍无证据但文字闭集已完整时，
+   CPA 必须仅按文字语境继续选边；只有候选生成依赖尚未得到的声学事实时才写
+   `provider_transient` 并由 runner 有界重试。CPA 只接收文字闭集、AGY 观察文字（若有）和片级文字
    语境，保持最终选边权，但绝不直接收音频。
 6. **方言保真**：长沙话方言词（glossary「长沙话方言词保护」节）修复方向 = 方言原字 > 普通话意译 > 保留误听；通用中文纠错「归一到普通话」的默认方向在方言词上是反的。
 7. **漏听 recall**：选片钩子/弹幕/SC 里的词表专名在字幕零出现 → 审片员漏听检查（prompt 规则7）→ 插入提案 → 声学仲裁（插入永远走 T3，不进 T1）。**已知盲区（2026-07-19 合并条实证）**：专名在片内它处出现过时零出现触发器不响，单句漏听无人怀疑（kmx 0:49 案，最终走 Ivan 审定 ledger 钉子）。改成逐句怀疑会假阳性爆炸；候选方向是「称呼/接话/突击等强语境句位 + 专名句位模板」的窄触发，进欠账。
