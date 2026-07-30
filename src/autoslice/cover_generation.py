@@ -427,6 +427,48 @@ def _lidousha_cover_art_direction(
             emote_library=emote_library,
             allow_punch=allow_punch,
         )
+        # A partially valid art-direction response used to keep role/hook but
+        # silently discard invalid or omitted ``words``/``lines``.  The title
+        # renderer then fell back to its character balancer and could split a
+        # semantic atom such as 「翻译」 into 「人称翻 / 译大会」.  Keep the
+        # useful first response, but spend one bounded text-only repair call on
+        # the missing layout authority before accepting the legacy fallback.
+        if (
+            not direction.words
+            and not direction.line_breaks
+            and "\n" not in cover_text
+            and len(_cover_lines_canon(cover_text)) > 4
+        ):
+            repair_payload = extract_json_object(
+                art_direction_llm_call(
+                    _cover_text_segmentation_repair_prompt(
+                        cover_text=cover_text,
+                        hook_word=direction.hook_word,
+                        layout=direction.layout,
+                    )
+                )
+            )
+            max_lines = _COVER_LAYOUT_RENDER.get(
+                direction.layout,
+                _COVER_LAYOUT_RENDER["left-split"],
+            )["max_lines"]
+            repaired_lines = _validated_cover_lines(
+                repair_payload.get("lines"),
+                cover_text,
+                hook_word=direction.hook_word,
+                max_lines=max_lines,
+            )
+            repaired_words = _validated_cover_words(
+                repair_payload.get("words"),
+                cover_text,
+                hook_word=direction.hook_word,
+            )
+            if repaired_lines or repaired_words:
+                direction = dataclass_replace(
+                    direction,
+                    line_breaks=repaired_lines,
+                    words=repaired_words,
+                )
     except Exception:
         direction = baseline
     if allow_punch and not direction.is_song:
@@ -526,6 +568,33 @@ def _cover_art_direction_prompt(
         + punch_output_field
         + emote_output_field
         + "}"
+    )
+
+
+def _cover_text_segmentation_repair_prompt(
+    *,
+    cover_text: str,
+    hook_word: str,
+    layout: str,
+) -> str:
+    """One bounded repair request for omitted/invalid cover word boundaries."""
+
+    max_lines = _COVER_LAYOUT_RENDER.get(
+        layout,
+        _COVER_LAYOUT_RENDER["left-split"],
+    )["max_lines"]
+    return (
+        "上一份封面艺术指导缺少可验证的 words/lines，现只修复文字切词与分行。"
+        "不得改写、删字、加字或换序。\n"
+        f"封面文案：{cover_text}\n"
+        f"布局：{layout}；最多 {max_lines} 行；必须完整同行的高亮词："
+        f"{hook_word or '(无)'}。\n"
+        "words：把全文按自然词语、专名、固定短语和标点切成数组；"
+        "数组顺序拼接必须与封面文案逐字相同。"
+        "例如“日语”“人称”“翻译大会”不得在词内换行，标点跟前词。\n"
+        f"lines：用 words 的边界分行；使用 1-{max_lines} 行并尽量均衡，"
+        "但绝不拆词、引号短句、专名或高亮词；拼接仍须逐字相同。\n"
+        '只输出 JSON：{"words":["..."],"lines":["..."]}'
     )
 
 

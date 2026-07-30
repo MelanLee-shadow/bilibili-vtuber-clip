@@ -4441,6 +4441,79 @@ def test_normalize_cover_art_direction_fills_word_aware_line_breaks():
     assert baseline.line_breaks == ()
 
 
+def test_cover_art_direction_repairs_missing_word_boundaries_once():
+    title = "【李豆沙】一声“偶”让小李开起日语人称翻译大会"
+    cover_text = "一声“偶”让小李开起日语人称翻译大会"
+    prompts = []
+
+    def llm(prompt: str) -> str:
+        prompts.append(prompt)
+        if len(prompts) == 1:
+            return json.dumps(
+                {
+                    "role": "witty_smug",
+                    "expression_en": "soft clever smile",
+                    "hook_word": "偶",
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {
+                "words": [
+                    "一声",
+                    "“偶”",
+                    "让",
+                    "小李",
+                    "开起",
+                    "日语",
+                    "人称",
+                    "翻译大会",
+                ],
+                "lines": [
+                    "一声“偶”",
+                    "让小李开起",
+                    "日语人称",
+                    "翻译大会",
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+    resolved = shadow_pipeline._lidousha_cover_art_direction(
+        candidate_id="cand-segmentation-repair",
+        title=title,
+        cover_text=cover_text,
+        art_direction_llm_call=llm,
+    )
+
+    assert len(prompts) == 2
+    assert "只修复文字切词与分行" in prompts[1]
+    assert resolved.words[-3:] == ("日语", "人称", "翻译大会")
+    assert resolved.line_breaks[-1] == "翻译大会"
+    render = shadow_pipeline._COVER_LAYOUT_RENDER[resolved.layout]
+    rendered_lines = shadow_pipeline._fit_cover_lines(
+        cover_text,
+        hook_word=resolved.hook_word,
+        base_fill=shadow_pipeline._COVER_BASE_FILL,
+        hook_rgb=(255, 82, 82),
+        zone=render["zone"],
+        font_path=shadow_pipeline._cover_font_for_text(cover_text),
+        max_lines=render["max_lines"],
+        max_size=render["max_size"],
+        forced_lines=resolved.line_breaks,
+        word_atoms=resolved.words,
+    )
+    rendered_text = [
+        "".join(segment[0] for segment in line["segs"])
+        for line in rendered_lines
+    ]
+    assert "".join(rendered_text) == cover_text
+    assert all(
+        not (line.endswith("翻") or line.startswith("译"))
+        for line in rendered_text
+    )
+
+
 def test_normalize_cover_art_direction_rejects_lossy_llm_lines():
     title = "【李豆沙】电脑要造反？小皇帝拒绝更新"
     cover_text = "电脑要造反？小皇帝拒绝更新"
