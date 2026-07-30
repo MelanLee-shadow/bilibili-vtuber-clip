@@ -1,0 +1,83 @@
+{
+  "audited_inputs": [
+    {
+      "bytes": 12268,
+      "path": "review_manifest.json",
+      "sha256": "bca20a4276a67bfee8051007a4036842caf6c2d6bc550623c08a58804bd482dc"
+    },
+    {
+      "bytes": 166895,
+      "path": "围观两支粉丝队交战时，李豆沙让大家“.chat-authority.json",
+      "sha256": "34a3bd710a0d34085ae092f92d56e5389dc7ffc9a62b5fe9472a96c3b2801fc1"
+    },
+    {
+      "bytes": 25677,
+      "path": "围观两支粉丝队交战时，李豆沙让大家“.clip-context.json",
+      "sha256": "12efa17470e2586fc51c06b64efa496746b84b34a37060123046b84a709f7a24"
+    },
+    {
+      "bytes": 1484698,
+      "path": "围观两支粉丝队交战时，李豆沙让大家“.cover.png",
+      "sha256": "12ed8a5f6a898bb3ddaf328974ef7f088f330c28169cdb0933f46fb6c46758cf"
+    },
+    {
+      "bytes": 1265812,
+      "path": "围观两支粉丝队交战时，李豆沙让大家“.cover.pre-overlay.png",
+      "sha256": "ee860340c0ba1568f02cd35425137f19c5553aa59c288f178fcc249e6c9e7306"
+    },
+    {
+      "bytes": 1265812,
+      "path": "围观两支粉丝队交战时，李豆沙让大家“.cover.route-background.png",
+      "sha256": "ee860340c0ba1568f02cd35425137f19c5553aa59c288f178fcc249e6c9e7306"
+    },
+    {
+      "bytes": 35418,
+      "path": "围观两支粉丝队交战时，李豆沙让大家“.cover.title-mask.png",
+      "sha256": "5da6365dde83389e98c09f6827fa8a4c9c0acf4025940fdf519cb08228361369"
+    },
+    {
+      "bytes": 2743,
+      "path": "围观两支粉丝队交战时，李豆沙让大家“.final-sapphire72.ass",
+      "sha256": "2314ccdf4dcb4ae98b3fd4be696cf0ff278b8f8c86ead692c8efd34a7dc50416"
+    },
+    {
+      "bytes": 22928271,
+      "path": "围观两支粉丝队交战时，李豆沙让大家“.mp4",
+      "sha256": "e27460b2dab36ca64b7c44b522d523894cec3d4308c9c670c7d2eb692bed166b"
+    },
+    {
+      "bytes": 30880,
+      "path": "围观两支粉丝队交战时，李豆沙让大家“.publish.json",
+      "sha256": "57a8d700a753dafcac922009b08ffaffb4b52d9cc7eff09fd386fa2d68a399e4"
+    },
+    {
+      "bytes": 105692,
+      "path": "围观两支粉丝队交战时，李豆沙让大家“.record.json",
+      "sha256": "53489ea7088c1556aa52434d3c01f40a0debb42d5cf16b14ebfa692c9b559a59"
+    },
+    {
+      "bytes": 31797,
+      "path": "围观两支粉丝队交战时，李豆沙让大家“.redelivery-baseline.json",
+      "sha256": "e486424fbb2b4c2c442bfe8a86c57cf581e85265705fde4449af76ca2b70a3f9"
+    },
+    {
+      "bytes": 1723,
+      "path": "围观两支粉丝队交战时，李豆沙让大家“.srt",
+      "sha256": "ae3ae23ebef87c555cad6ebd8805d23f6e1ac512e2e514f74ffbac5ba1a03e7d"
+    },
+    {
+      "bytes": 1514,
+      "path": "围观两支粉丝队交战时，李豆沙让大家“.subtitle-regression.json",
+      "sha256": "655966e1e7f54c2120ccefbf7c2767a66bc53479db63a86fcff1a11657aeb332"
+    }
+  ],
+  "auditor_source_sha256": "sha256:ee36e5720e3f50aa694f974ee0babff19a6bb8d5b9a471622af72bb7cf616497",
+  "blocking_issue_count": 0,
+  "issue_count": 0,
+  "issues": [],
+  "passed": true,
+  "policy_epoch": "2026-07-23.final-artifact-gates.v3",
+  "policy_fingerprint": "sha256:09c31d02bbb878f1a827e9db7feaf90ab1e5beac58eaa4f63312f67d17878b99",
+  "root": "/opt/bilive/autoslice/recovery/2026-07-25/auto_195000_1493_1579-single-r2/repo/lidousha/2026-07-25",
+  "schema_version": "lidousha-review-package-audit.v2"
+}

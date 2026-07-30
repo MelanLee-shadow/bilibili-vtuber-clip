@@ -1,0 +1,61 @@
+{
+  "full_playback_completed": true,
+  "eos_observed_seconds": 92.121,
+  "point": {
+    "id": "shadouli-team-name",
+    "status": "PASS",
+    "audio_observation": "Speech rapidly pronounces the team name '沙豆李' which is phonetically near-homophonous with homophones in fast speech; contextually and audibly refers to the reversed fan team.",
+    "subtitle_observation": "Burned subtitles in 00:00-00:59 strictly display '沙豆李' across all 5 occurrences ('然后看一下沙豆李的队伍', '看，沙豆李的队伍还在决胜负中', '感觉沙豆李的队伍', '蓝色是沙豆李的队伍', '那个发一支持沙豆李的队伍').",
+    "detail": "Every fan-team reference denoting the reversed-name team visibly reads 沙豆李, with no homophone errors like 下斗里, 杀队友, 沙特琳, or 沙豆林. Contrast flow '发一支持沙豆李' -> '发零支持李豆沙' -> '为什么要这样说' -> '发二支持李豆沙' is completely coherent."
+  },
+  "checks": [
+    {
+      "id": "1",
+      "status": "PASS",
+      "detail": "Full playback completed from 00:00.000 to EOS 92.121s with no black screen, frozen frames, audio dropouts, or premature cut-offs."
+    },
+    {
+      "id": "2",
+      "status": "PASS",
+      "detail": "Burned subtitles in final.mp4 align accurately with spoken audio throughout the video, including team names and voting dialogue."
+    },
+    {
+      "id": "3",
+      "status": "PASS",
+      "detail": "No hallucinated subtitle cues appear during non-speech/silent segments (e.g. loading screens)."
+    },
+    {
+      "id": "4",
+      "status": "PASS",
+      "detail": "Beginning and ending form a complete story boundary, concluding with match results for Shadow Panda and actual ending words '不愧是暗影大熊猫 太帅了'."
+    },
+    {
+      "id": "5",
+      "status": "PASS",
+      "detail": "Title accurately reflects the story of watching fan teams clash and the vote-switching joke."
+    },
+    {
+      "id": "6",
+      "status": "PASS",
+      "detail": "Primary subject of cover image is Li Dousha (white hair, blue streaks, black panda ears, sunglasses)."
+    },
+    {
+      "id": "7",
+      "status": "PASS",
+      "detail": "Cover visible text is exactly '发1支持沙豆李' and '赶紧改成2', clearly conveying the vote-switch joke."
+    },
+    {
+      "id": "8",
+      "status": "PASS",
+      "detail": "Intro-to-main transition at ~00:05.5 preserves the first audible main sentence '我以为我们先看了这个李豆沙的队伍' without cutting its start."
+    }
+  ],
+  "cover": {
+    "status": "PASS",
+    "primary_subject": "Li Dousha (white hair, blue streaks, black panda ears, sunglasses)",
+    "visible_text": "发1支持沙豆李 赶紧改成2",
+    "detail": "Li Dousha is the sole main character shown on the right of the cover with panda ears and sunglasses, alongside exact text overlays."
+  },
+  "overall": "PASS",
+  "uncertainties": []
+}

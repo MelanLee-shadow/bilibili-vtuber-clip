@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-07-30T05:43:20-04:00 by Codex root.
+Updated: 2026-07-30T06:18:00-04:00 by Codex root.
 
 本文件只记录会影响下一次操作的 live 状态。流水线规则只读
 [`docs/pipeline/`](pipeline/README.md)。`review_ready`、旧 PID、旧日志和旧 handoff 都不是发布
@@ -9,7 +9,8 @@ Updated: 2026-07-30T05:43:20-04:00 by Codex root.
 ## 目标
 
 保持 `free:/opt/bilive/autoslice` 正式 cron 不停，继续收敛 2026-07-25、07-26 及后续日期；
-当前优先完成 `auto_195000_1493_1579` 的最新版整片重做、终验和同 BV 修复。
+当前优先修复 07-26 唯一失败谈话 `auto_142942_496_618`，再处理 07-25/26 歌切 authority
+blockers。
 
 用户已授权：修复稿可直接同 BV 编辑上传；当天新稿可权宜直接上传；指定旧稿重做后可直接上传，
 无需再次等待审阅。
@@ -40,21 +41,19 @@ Updated: 2026-07-30T05:43:20-04:00 by Codex root.
   复核及一次重绘、CPA carryover 精确重放/消费、修复后 cover replay 证据刷新、AI 图像模型
   provenance 强绑定。CPA 是文字/语义最终裁决者；AGY 是唯一可读 audio/image 的高可信 witness。
 - glossary 高收益机械归一仍有效，例如 `林墨 -> 礼墨`；两个已注册专名互相冲突时仍交 CPA。
+- `auto_195000_1493_1579` 已用最新版流水线完成整片重跑、CPA 终裁、AGY 0 到 EOS 见证、
+  package audit 与最终封面实图验收，并在原 `BV1zzgd6JEHe` 同 BV 上线；当前 CID
+  `40440957459`。最终视频/SRT/封面 SHA-256 分别为
+  `e27460b2dab36ca64b7c44b522d523894cec3d4308c9c670c7d2eb692bed166b`、
+  `ae3ae23ebef87c555cad6ebd8805d23f6e1ac512e2e514f74ffbac5ba1a03e7d`、
+  `12ed8a5f6a898bb3ddaf328974ef7f088f330c28169cdb0933f46fb6c46758cf`。Creator/public/section
+  fresh-live 三方一致，公开 CDN 封面回下载哈希与目标封面一致；五处均为“沙豆李”，投票顺序为
+  “发一支持沙豆李 / 发零支持李豆沙 / 为什么要这样说 / 发二支持李豆沙”。
 
 ## 进行中
 
-- `auto_195000_1493_1579`（“沙豆李/发 1、发 0、改成 2”）正在第二个隔离 base 整片重跑：
-  `/opt/bilive/autoslice/recovery/2026-07-25/auto_195000_1493_1579-single-r2`。
-- 2026-07-30T09:43:08Z 状态为 `processing`，唯一 pending talk 是该候选；runner PID
-  `944337`，PID file 为 `<base>/runner.pid`，日志为
-  `<base>/logs/runner-926afbe-20260730T094300Z.log`。
-- v7 plan 已冻结：源 state SHA
-  `a811ffb79c4afa04b5764873a67c3add16e39d692e3600dc5760964e6682cdfe`，旧指纹
-  `b4cdba0552aa00a40fec002496a159c1cccbe272047e89f08f3e2d1406c2e1f7`，新指纹
-  `ea2b8d5a7a5b8b5f5737caeb605da5e1553ffdd8391c448f97cc522e85d6b836`，publication asset
-  `recovery_publication_authority_2026-07-25_1493.v1.json`，`upload_allowed=false`。
-- 原公开身份为 `BV1zzgd6JEHe` / CID `40331906310`。生成完成后须整片验字幕、边界、标题与
-  最终封面实图，再走 `authorized_upload.py repair-*` 同 BV 更新并 fresh-live 回读。
+- 准备对 07-26 `auto_142942_496_618` 建立隔离 no-upload recovery，定位并修复
+  `subtitle_authority / foreign_source_transcription`，正式 cron 保持启用。
 
 ## 当前正式队列
 
@@ -85,10 +84,9 @@ Updated: 2026-07-30T05:43:20-04:00 by Codex root.
 
 ## 下一步
 
-1. 跟踪 1493 到 terminal state；若 provider transient 则在同一隔离 base 自动续跑。
-2. 对 1493 做整片字幕/边界/标题、烧录字节、chat authority、package audit 和最终封面像素验收；
-   通过后直接同 BV 修复 `BV1zzgd6JEHe` 并做 Creator/public/section fresh-live 验证。
-3. 继续修复 07-26 的 `auto_142942_496_618`，再处理 07-25/26 歌切 authority blockers；
+1. 修复 07-26 的 `auto_142942_496_618`，确认 foreign-source authority 根因并在隔离 base 重跑、
+   终验；若已有公开 BV 则同 BV 修复，否则按当天新稿授权发布。
+2. 处理 07-25/26 歌切 authority blockers；
    正式 cron 与已就绪新稿并行推进，不因单个 recovery 停摆。
 
 ## 固化规则

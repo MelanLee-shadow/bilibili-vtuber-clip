@@ -1,0 +1,213 @@
+{
+  "counts": {
+    "items": 1,
+    "song": 0,
+    "talk": 1
+  },
+  "cover_route_attestations": [
+    {
+      "candidate_id": "auto_195000_1493_1579",
+      "final_cover_sha256": "sha256:12ed8a5f6a898bb3ddaf328974ef7f088f330c28169cdb0933f46fb6c46758cf",
+      "method": "screenshot_polish",
+      "reference_authority": null,
+      "reference_sha256": "sha256:ea162d07c34156a7dac83867ce56c405d0e58c2c37b6ba39a84f7326b095f57c",
+      "route_decision": {
+        "actual_treatment": "screenshot_polish",
+        "alternatives": [
+          {
+            "rationale": "the selected source frame is strong enough to preserve as the final visual without image generation",
+            "rejected_reason": "the source moment should be preserved, but the route evidence says bounded cleanup is needed before it is cover-ready; selected evidence: usable moment + CPA touch-up (score=2.87)",
+            "status": "REJECTED",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rationale": "usable moment + CPA touch-up (score=2.87)",
+            "rejected_reason": null,
+            "status": "SELECTED",
+            "treatment": "screenshot_polish"
+          },
+          {
+            "rationale": "the available source frame is not a sufficiently strong or verified cover composition",
+            "rejected_reason": "the usable real moment should be preserved; full redraw is broader than the demonstrated cleanup need; selected evidence: usable moment + CPA touch-up (score=2.87)",
+            "status": "REJECTED",
+            "treatment": "cpa_redraw"
+          }
+        ],
+        "alternatives_considered": [
+          "screenshot_direct",
+          "screenshot_polish",
+          "cpa_redraw"
+        ],
+        "cover_mode": "auto",
+        "execution_status": "READY",
+        "final_visibility_authority": "NOT_REQUIRED",
+        "final_visible_participant_ids": [],
+        "frame_emotion": 1.0,
+        "frame_score": 2.8655,
+        "host_identity_required": true,
+        "image_generation_attempted": true,
+        "image_generation_planned": true,
+        "image_generation_used": true,
+        "is_song": false,
+        "manual_title_or_full_text_contract": false,
+        "motion_dispersion_frac": 0.4643,
+        "reason": "usable moment + CPA touch-up (score=2.87)",
+        "reference_authority_id": null,
+        "rejected_alternatives": [
+          {
+            "rejected_reason": "the source moment should be preserved, but the route evidence says bounded cleanup is needed before it is cover-ready; selected evidence: usable moment + CPA touch-up (score=2.87)",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rejected_reason": "the usable real moment should be preserved; full redraw is broader than the demonstrated cleanup need; selected evidence: usable moment + CPA touch-up (score=2.87)",
+            "treatment": "cpa_redraw"
+          }
+        ],
+        "relationship_semantic_evidence": [],
+        "relationship_visual_required": false,
+        "relationship_visual_safety_evidence": {
+          "relation_state": "UNKNOWN",
+          "required_participant_ids": [],
+          "requirement_basis": [],
+          "schema_version": "lidousha-cover-relationship-visual-safety.v1",
+          "status": "NOT_REQUIRED"
+        },
+        "required_participant_ids": [],
+        "schema_version": "lidousha-cover-route-decision.v2",
+        "selected_rationale": "usable moment + CPA touch-up (score=2.87)",
+        "selected_treatment": "screenshot_polish",
+        "selection_policy": "lidousha-cover-treatment-router.v2",
+        "source_visibility_authority": "NO_IDENTITY_AUTHORITY",
+        "source_visible_participant_ids": [],
+        "subject_confident": true,
+        "verified_stream_frame": false
+      },
+      "stem": "围观两支粉丝队交战时，李豆沙让大家“"
+    }
+  ],
+  "created_at": "2026-07-30T09:58:49.473877+00:00",
+  "date": "2026-07-25",
+  "deployed_commit": "926afbefeea2027db7e2c0ffa1d90e34d6b8e8f6",
+  "exact_candidate_ids": [
+    "auto_195000_1493_1579"
+  ],
+  "generated_by": "build_lidousha_recovery_review_manifest.v1",
+  "items": [
+    {
+      "ass_path": "围观两支粉丝队交战时，李豆沙让大家“.final-sapphire72.ass",
+      "ass_sha256": "sha256:2314ccdf4dcb4ae98b3fd4be696cf0ff278b8f8c86ead692c8efd34a7dc50416",
+      "candidate_id": "auto_195000_1493_1579",
+      "chat_authority": "围观两支粉丝队交战时，李豆沙让大家“.chat-authority.json",
+      "clip_context": "围观两支粉丝队交战时，李豆沙让大家“.clip-context.json",
+      "cover": "围观两支粉丝队交战时，李豆沙让大家“.cover.png",
+      "cover_pre_overlay": "围观两支粉丝队交战时，李豆沙让大家“.cover.pre-overlay.png",
+      "cover_route_background": "围观两支粉丝队交战时，李豆沙让大家“.cover.route-background.png",
+      "cover_route_summary": {
+        "actual_treatment": "screenshot_polish",
+        "execution_status": "READY",
+        "final_visible_participant_ids": [],
+        "image_generation_attempted": true,
+        "image_generation_planned": true,
+        "image_generation_used": true,
+        "rejected_alternatives": [
+          {
+            "rejected_reason": "the source moment should be preserved, but the route evidence says bounded cleanup is needed before it is cover-ready; selected evidence: usable moment + CPA touch-up (score=2.87)",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rejected_reason": "the usable real moment should be preserved; full redraw is broader than the demonstrated cleanup need; selected evidence: usable moment + CPA touch-up (score=2.87)",
+            "treatment": "cpa_redraw"
+          }
+        ],
+        "schema_version": "lidousha-cover-route-decision.v2",
+        "selected_rationale": "usable moment + CPA touch-up (score=2.87)",
+        "selected_treatment": "screenshot_polish",
+        "source_visible_participant_ids": []
+      },
+      "cover_title_mask": "围观两支粉丝队交战时，李豆沙让大家“.cover.title-mask.png",
+      "mp4": "围观两支粉丝队交战时，李豆沙让大家“.mp4",
+      "publish_json": "围观两支粉丝队交战时，李豆沙让大家“.publish.json",
+      "record": "围观两支粉丝队交战时，李豆沙让大家“.record.json",
+      "recovery_publication_authority": {
+        "aid": 116989490110344,
+        "authority_sha256": "sha256:f566664ea577d36f51af4aa23f4d62802446cf2f872094b3350ba3df2b2c3a6d",
+        "boundary_end_mode": "exact_source_pin",
+        "bvid": "BV1zzgd6JEHe",
+        "candidate_id": "auto_195000_1493_1579",
+        "cid": 40331906310,
+        "observed_public_title": "【李豆沙】围观两支粉丝队交战时，发1支持沙豆李、发0支持李豆沙，“为什么要这样说！”赶紧改成2",
+        "registry_authority": "Ivan 2026-07-28: the already-published 7/25 candidate auto_195000_1493_1579 must be repaired in place after the fan-team proper noun was rendered as a near-homophone; rerun the whole clip once in an isolated no-upload recovery base, preserve its existing BV and verified public title, and pin the reviewed story end to the original selected source boundary.",
+        "registry_repo_path": "assets/lidousha/recovery_publication_authority_2026-07-25_1493.v1.json",
+        "registry_schema_version": "lidousha-recovery-publication-authority.v1",
+        "registry_sha256": "sha256:9f84633d9db12f37159030a104ff0d3b6876646e393da99f78684182f005dc5f",
+        "required_given_end_ms": 1579550,
+        "schema_version": "recovery-same-bv-publication-authority.v1",
+        "source_kind": "committed_verified_publication_registry",
+        "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-25-rescued-first/auto_195000_1493_1579.upload_manifest.json.public_verify.json",
+        "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+        "source_public_verify_sha256": "sha256:0bba1a05b183e4656917705b1ad94d6107d1f17538e355b481a9d9899afd94a5",
+        "source_public_verify_status": "VERIFIED_PUBLIC",
+        "title_mode": "verified_public_exact"
+      },
+      "redelivery_baseline": "围观两支粉丝队交战时，李豆沙让大家“.redelivery-baseline.json",
+      "redelivery_baseline_status": "CONFIGURED",
+      "speaker_srt": "围观两支粉丝队交战时，李豆沙让大家“.srt",
+      "speaker_srt_sha256": "sha256:ae3ae23ebef87c555cad6ebd8805d23f6e1ac512e2e514f74ffbac5ba1a03e7d",
+      "stem": "围观两支粉丝队交战时，李豆沙让大家“",
+      "subtitle_regression_audit": "围观两支粉丝队交战时，李豆沙让大家“.subtitle-regression.json",
+      "subtitle_regression_status": "CONFIGURED",
+      "subtitle_srt": "围观两支粉丝队交战时，李豆沙让大家“.srt",
+      "title": "【李豆沙】围观两支粉丝队交战时，发1支持沙豆李、发0支持李豆沙，“为什么要这样说！”赶紧改成2",
+      "video": "围观两支粉丝队交战时，李豆沙让大家“.mp4"
+    }
+  ],
+  "partial_release_scope": {
+    "authority": "Ivan 2026-07-26: 没有任何纪律要求必须5个全complete才能动BV，修复时哪个好了就可以改哪个",
+    "batch_status": "review_ready",
+    "candidates": [
+      "auto_195000_1493_1579"
+    ]
+  },
+  "recovery_publication_authorities_by_candidate": {
+    "auto_195000_1493_1579": {
+      "aid": 116989490110344,
+      "authority_sha256": "sha256:f566664ea577d36f51af4aa23f4d62802446cf2f872094b3350ba3df2b2c3a6d",
+      "boundary_end_mode": "exact_source_pin",
+      "bvid": "BV1zzgd6JEHe",
+      "candidate_id": "auto_195000_1493_1579",
+      "cid": 40331906310,
+      "observed_public_title": "【李豆沙】围观两支粉丝队交战时，发1支持沙豆李、发0支持李豆沙，“为什么要这样说！”赶紧改成2",
+      "registry_authority": "Ivan 2026-07-28: the already-published 7/25 candidate auto_195000_1493_1579 must be repaired in place after the fan-team proper noun was rendered as a near-homophone; rerun the whole clip once in an isolated no-upload recovery base, preserve its existing BV and verified public title, and pin the reviewed story end to the original selected source boundary.",
+      "registry_repo_path": "assets/lidousha/recovery_publication_authority_2026-07-25_1493.v1.json",
+      "registry_schema_version": "lidousha-recovery-publication-authority.v1",
+      "registry_sha256": "sha256:9f84633d9db12f37159030a104ff0d3b6876646e393da99f78684182f005dc5f",
+      "required_given_end_ms": 1579550,
+      "schema_version": "recovery-same-bv-publication-authority.v1",
+      "source_kind": "committed_verified_publication_registry",
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-25-rescued-first/auto_195000_1493_1579.upload_manifest.json.public_verify.json",
+      "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+      "source_public_verify_sha256": "sha256:0bba1a05b183e4656917705b1ad94d6107d1f17538e355b481a9d9899afd94a5",
+      "source_public_verify_status": "VERIFIED_PUBLIC",
+      "title_mode": "verified_public_exact"
+    }
+  },
+  "run_mode": "RECOVERY_REVIEW",
+  "schema_version": "lidousha-review-package.v1",
+  "selection_contract": {
+    "authority": "Ivan 2026-07-28: the already-published 7/25 candidate auto_195000_1493_1579 must be repaired in place after the fan-team proper noun was rendered as a near-homophone; rerun the whole clip once in an isolated no-upload recovery base, preserve its existing BV and verified public title, and pin the reviewed story end to the original selected source boundary.",
+    "candidate_ids": [
+      "auto_195000_1493_1579"
+    ],
+    "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+    "schema_version": "talk-selection-contract.v1",
+    "source_state_sha256": "sha256:a811ffb79c4afa04b5764873a67c3add16e39d692e3600dc5760964e6682cdfe"
+  },
+  "status": "finished_review_package_no_upload_pending_human_review",
+  "story_contract_required": true,
+  "subtitle_visual_contract": {
+    "max_chars_per_line": 28,
+    "max_visual_lines": 2,
+    "profile": "autoslice-sapphire72"
+  },
+  "upload_allowed": false
+}

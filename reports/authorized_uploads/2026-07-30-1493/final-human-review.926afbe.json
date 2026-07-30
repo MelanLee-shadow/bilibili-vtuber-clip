@@ -1,0 +1,109 @@
+{
+  "approval_quote": "修复稿件可以直接编辑上传。新稿件今天也可以权宜上传",
+  "items": [
+    {
+      "artifacts": {
+        "cover": {
+          "path": "围观两支粉丝队交战时，李豆沙让大家“.cover.png",
+          "sha256": "sha256:12ed8a5f6a898bb3ddaf328974ef7f088f330c28169cdb0933f46fb6c46758cf"
+        },
+        "subtitle": {
+          "path": "围观两支粉丝队交战时，李豆沙让大家“.srt",
+          "sha256": "sha256:ae3ae23ebef87c555cad6ebd8805d23f6e1ac512e2e514f74ffbac5ba1a03e7d"
+        },
+        "video": {
+          "path": "围观两支粉丝队交战时，李豆沙让大家“.mp4",
+          "sha256": "sha256:e27460b2dab36ca64b7c44b522d523894cec3d4308c9c670c7d2eb692bed166b"
+        }
+      },
+      "candidate_id": "auto_195000_1493_1579",
+      "checks": {
+        "boundary_closure": {
+          "evidence": "CLIP_START_AND_EOS — 开头从比较李豆沙与沙豆李两支队伍进入投票包袱，结尾完整说完“不愧是暗影大熊猫，太帅了”，没有把下一段内战话题带进来。",
+          "status": "PASS"
+        },
+        "cover_identity": {
+          "evidence": "FINAL_COVER — 最终封面右侧唯一真人形主体保留白发蓝挑染、黑色熊猫耳和墨镜的李豆沙直播形象；实看像素未出现伊索尔或其他联动人物冒充主角。",
+          "status": "PASS"
+        },
+        "cover_story": {
+          "evidence": "FINAL_COVER_AND_STORY — 封面文字上方用“发1支持沙豆李”交代对面队名，下方“赶紧改成2”呈现临时改票，中央战斗画面把两支粉丝队交战的叙事补全。",
+          "status": "PASS"
+        },
+        "final_burned_full_playback": {
+          "evidence": "00:00.000-EOS — AGY 对绑定的最终 MP4 从 00:00 连续播放到 92.121 秒 EOS，画面、声音和烧录字幕全程可用，未观察到黑屏、冻结、断音或提前结束。",
+          "status": "PASS"
+        },
+        "intro_timing": {
+          "evidence": "INTRO_TO_MAIN_TRANSITION — 约 5.5 秒片头结束后，正片首句“我以为我们先看了这个李豆沙的队伍”从句首完整进入，转场没有吞掉开头发音。",
+          "status": "PASS"
+        },
+        "silence_hallucination": {
+          "evidence": "KNOWN_SILENCE_AND_FULL_VIDEO — 复核加载画面及多处静音停顿时，烧录层没有凭空显示字幕；原先只承载咳声的独立 cue 也未残留。",
+          "status": "PASS"
+        },
+        "subtitle_audio": {
+          "evidence": "FULL_VIDEO_AUDIO_SUBTITLE — AGY 听到五次沙豆李队名及发一、发零、发二的改票链，烧录字幕跟随对应口播切换，未发现关键句错轴。",
+          "status": "PASS"
+        },
+        "title_story": {
+          "evidence": "FINAL_TITLE_AND_FULL_STORY — 标题概括的故事内容依次是围观两队、发1支持沙豆李、发0支持李豆沙并因自觉惨而改成2，成片没有借用片外情节。",
+          "status": "PASS"
+        }
+      },
+      "cover_story_claims": [
+        {
+          "claim": "封面文字呈现“发1支持沙豆李 / 赶紧改成2”",
+          "evidence": "FINAL_COVER/COVER_TEXT — 实际封面 PNG 顶部大字逐字显示“发1支持沙豆李”，其下小字逐字显示“赶紧改成2”；两行组合的故事关系是先给对面拉票又马上改码。",
+          "presentation": "COVER_TEXT",
+          "status": "PASS"
+        }
+      ],
+      "publication_target": {
+        "aid": 116989490110344,
+        "authority_sha256": "sha256:f566664ea577d36f51af4aa23f4d62802446cf2f872094b3350ba3df2b2c3a6d",
+        "bvid": "BV1zzgd6JEHe",
+        "candidate_id": "auto_195000_1493_1579",
+        "cid": 40331906310,
+        "final_title": "【李豆沙】围观两支粉丝队交战时，发1支持沙豆李、发0支持李豆沙，“为什么要这样说！”赶紧改成2"
+      },
+      "record": {
+        "path": "围观两支粉丝队交战时，李豆沙让大家“.record.json",
+        "sha256": "sha256:53489ea7088c1556aa52434d3c01f40a0debb42d5cf16b14ebfa692c9b559a59"
+      },
+      "reviewed_title": "【李豆沙】围观两支粉丝队交战时，发1支持沙豆李、发0支持李豆沙，“为什么要这样说！”赶紧改成2",
+      "subtitle_review_points": [
+        {
+          "evidence": "00:00:00.000-00:00:59.000 — AGY 听到前59秒的倒序粉丝队称呼，烧录字幕五处词面均为“沙豆李”，没有下斗里、杀队友、沙特琳或沙豆林；同窗依次显示“发一支持沙豆李”“发零支持李豆沙”“为什么要这样说”“发二支持李豆沙”，语义对照闭合。",
+          "expectation": "整片前59秒所有指向该粉丝队的称呼都必须写成玩梗专名“沙豆李”，不得残留声学近音“下斗里”或把队名误写成普通短语“杀队友”；随后发0/2支持李豆沙的对照关系也必须完整。",
+          "final_video_end_ms": 59000,
+          "final_video_start_ms": 0,
+          "point_id": "shadouli-team-name",
+          "status": "PASS"
+        }
+      ]
+    }
+  ],
+  "package_evidence": {
+    "package_audit": {
+      "path": "verification/package-audit.926afbe.json",
+      "sha256": "sha256:333f137a7938483424a5a943519458afae3e532b26d85b5b182bb08855a1bcb8"
+    },
+    "review_evidence": {
+      "bytes": 4952,
+      "path": "verification/final-human-review-evidence.926afbe.json",
+      "sha256": "sha256:6744c7ab5bf4ffaef14c448bff1993419ca44c7ee9f5825f3789a247e14c32c6"
+    },
+    "review_manifest": {
+      "path": "review_manifest.json",
+      "sha256": "sha256:bca20a4276a67bfee8051007a4036842caf6c2d6bc550623c08a58804bd482dc"
+    }
+  },
+  "review_contract_sha256": "sha256:55396894ca3b52c59403667d5c2a5f788f0f3d58b411e3cae256839f67406c18",
+  "reviewed_at": "2026-07-30T10:06:11Z",
+  "reviewed_by": "Codex root",
+  "reviewer_kind": "delegated_root_agent",
+  "schema_version": "lidousha-final-human-review.v2",
+  "scope": "same_bv_repair",
+  "status": "ACCEPTED_FOR_SAME_BV"
+}

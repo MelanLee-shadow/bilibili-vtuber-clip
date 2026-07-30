@@ -1,0 +1,177 @@
+{
+  "schema_version": "same-bv-repair-plan.v2",
+  "plan_id": "4a7493c4698c48deab4cdc091ee83f27",
+  "created_at": "2026-07-30T10:15:55.642961+00:00",
+  "bvid": "BV1zzgd6JEHe",
+  "manifest": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_195000_1493_1579-single-r2/repo/lidousha/2026-07-25/verification/authorized-upload-manifest.926afbe.json",
+    "sha256": "b8cc1bcae8c8f013049831b0b22ae65f429af5afe7dd55c04b24f0cf17e3c782"
+  },
+  "replacement": {
+    "video": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_195000_1493_1579-single-r2/repo/lidousha/2026-07-25/围观两支粉丝队交战时，李豆沙让大家“.mp4",
+      "sha256": "e27460b2dab36ca64b7c44b522d523894cec3d4308c9c670c7d2eb692bed166b",
+      "bytes": 22928271
+    },
+    "cover": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_195000_1493_1579-single-r2/repo/lidousha/2026-07-25/围观两支粉丝队交战时，李豆沙让大家“.cover.png",
+      "sha256": "12ed8a5f6a898bb3ddaf328974ef7f088f330c28169cdb0933f46fb6c46758cf",
+      "bytes": 1484698
+    }
+  },
+  "authorization": {
+    "by": "Ivan",
+    "quote": "修复稿件可以直接编辑上传。新稿件今天也可以权宜上传"
+  },
+  "recovery_publication_authority": {
+    "aid": 116989490110344,
+    "boundary_end_mode": "exact_source_pin",
+    "bvid": "BV1zzgd6JEHe",
+    "candidate_id": "auto_195000_1493_1579",
+    "cid": 40331906310,
+    "observed_public_title": "【李豆沙】围观两支粉丝队交战时，发1支持沙豆李、发0支持李豆沙，“为什么要这样说！”赶紧改成2",
+    "registry_authority": "Ivan 2026-07-28: the already-published 7/25 candidate auto_195000_1493_1579 must be repaired in place after the fan-team proper noun was rendered as a near-homophone; rerun the whole clip once in an isolated no-upload recovery base, preserve its existing BV and verified public title, and pin the reviewed story end to the original selected source boundary.",
+    "registry_repo_path": "assets/lidousha/recovery_publication_authority_2026-07-25_1493.v1.json",
+    "registry_schema_version": "lidousha-recovery-publication-authority.v1",
+    "registry_sha256": "sha256:9f84633d9db12f37159030a104ff0d3b6876646e393da99f78684182f005dc5f",
+    "required_given_end_ms": 1579550,
+    "schema_version": "recovery-same-bv-publication-authority.v1",
+    "source_kind": "committed_verified_publication_registry",
+    "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-25-rescued-first/auto_195000_1493_1579.upload_manifest.json.public_verify.json",
+    "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+    "source_public_verify_sha256": "sha256:0bba1a05b183e4656917705b1ad94d6107d1f17538e355b481a9d9899afd94a5",
+    "source_public_verify_status": "VERIFIED_PUBLIC",
+    "title_mode": "verified_public_exact",
+    "authority_sha256": "sha256:f566664ea577d36f51af4aa23f4d62802446cf2f872094b3350ba3df2b2c3a6d"
+  },
+  "package_attestation": {
+    "package_root": "/opt/bilive/autoslice/recovery/2026-07-25/auto_195000_1493_1579-single-r2/repo/lidousha/2026-07-25",
+    "review_manifest": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_195000_1493_1579-single-r2/repo/lidousha/2026-07-25/review_manifest.json",
+      "sha256": "bca20a4276a67bfee8051007a4036842caf6c2d6bc550623c08a58804bd482dc",
+      "bytes": 12268
+    },
+    "package_audit": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_195000_1493_1579-single-r2/repo/lidousha/2026-07-25/verification/package-audit.926afbe.json",
+      "sha256": "333f137a7938483424a5a943519458afae3e532b26d85b5b182bb08855a1bcb8",
+      "bytes": 3393
+    },
+    "final_human_review": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_195000_1493_1579-single-r2/repo/lidousha/2026-07-25/verification/final-human-review.926afbe.json",
+      "sha256": "2b3d93f9e6916699e67181d2953588d92fef9cfe2ef07ebb0a98a520fa7d84de",
+      "bytes": 6084
+    }
+  },
+  "season": {
+    "season_id": 8383206,
+    "section_id": 9320779,
+    "season_title": "小李切片"
+  },
+  "target_metadata": {
+    "title": "【李豆沙】围观两支粉丝队交战时，发1支持沙豆李、发0支持李豆沙，“为什么要这样说！”赶紧改成2",
+    "desc": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+    "tags": [
+      "一本正经犯傻",
+      "口误",
+      "名场面",
+      "搞笑",
+      "李豆沙",
+      "直播切片",
+      "虚拟UP主",
+      "虚拟主播"
+    ],
+    "tid": 21,
+    "copyright": 2,
+    "source": "https://live.bilibili.com/",
+    "cover": null
+  },
+  "before": {
+    "creator": {
+      "available": true,
+      "bvid": "BV1zzgd6JEHe",
+      "aid": 116989490110344,
+      "state": 0,
+      "state_desc": "开放浏览",
+      "metadata": {
+        "title": "【李豆沙】围观两支粉丝队交战时，发1支持沙豆李、发0支持李豆沙，“为什么要这样说！”赶紧改成2",
+        "desc": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+        "tags": [
+          "口误",
+          "搞笑",
+          "李豆沙",
+          "犯傻",
+          "直播切片",
+          "破防",
+          "虚拟UP主",
+          "虚拟主播"
+        ],
+        "tid": 21,
+        "copyright": 2,
+        "source": "https://live.bilibili.com/",
+        "cover": "//bilibili-cover-asset/bfs/archive/48607e8aa24ff5448ddb2d48820ca43287899ced.png"
+      },
+      "videos": [
+        {
+          "cid": 40400584972,
+          "filename": "n260729ad32da3ngwhn5cc2lawtpo8ri",
+          "title": "【李豆沙】围观两支粉丝队交战时，发1支持沙豆李、发0支持李豆沙，“为什么要这样说！”赶紧改成2"
+        }
+      ]
+    },
+    "public": {
+      "available": true,
+      "bvid": "BV1zzgd6JEHe",
+      "aid": 116989490110344,
+      "cid": 40400584972,
+      "state": 0,
+      "metadata": {
+        "title": "【李豆沙】围观两支粉丝队交战时，发1支持沙豆李、发0支持李豆沙，“为什么要这样说！”赶紧改成2",
+        "desc": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+        "tags": [
+          "口误",
+          "搞笑",
+          "李豆沙",
+          "犯傻",
+          "直播切片",
+          "破防",
+          "虚拟UP主",
+          "虚拟主播"
+        ],
+        "tid": 21,
+        "copyright": 2,
+        "cover": "//bilibili-cover-asset/bfs/archive/48607e8aa24ff5448ddb2d48820ca43287899ced.png"
+      }
+    },
+    "section": {
+      "available": true,
+      "section_id": 9320779,
+      "matches": [
+        {
+          "bvid": "BV1zzgd6JEHe",
+          "aid": 116989490110344,
+          "cid": 40400584972,
+          "title": "【李豆沙】围观两支粉丝队交战时，发1支持沙豆李、发0支持李豆沙，“为什么要这样说！”赶紧改成2"
+        }
+      ]
+    }
+  },
+  "predecessor_completion": {
+    "schema_version": "same-bv-repair-predecessor.v1",
+    "completed": {
+      "path": "/opt/bilive/autoslice/reports/authorized_uploads/2026-07-25-per-bv-repair/1493.same-bv-repair-completed.json",
+      "sha256": "c0a8d99e2cd35e0180025e7b754f51b2d9326708741244db086ceccf2cda2f9b"
+    },
+    "plan": {
+      "path": "/opt/bilive/autoslice/reports/authorized_uploads/2026-07-25-per-bv-repair/1493.same-bv-repair-plan.json",
+      "sha256": "595d71a7841bcbfa29d43f677cf0e2433d3e6458ba3ad2a86053d90efe45c344",
+      "plan_id": "46ec6660e71b44adb0d72987324438f3"
+    },
+    "verified_journal_row": {
+      "journal_path": "/opt/bilive/autoslice/reports/authorized_uploads/2026-07-25-per-bv-repair/1493.same-bv-repair-journal.jsonl",
+      "seq": 8,
+      "at": "2026-07-29T06:28:58.860396+00:00",
+      "row_sha256": "6cf4ed5e32172b6c6ce3ea51a19e4a62c4a7d9b5c03240f2a48c85fc68febbee"
+    },
+    "new_cid": 40400584972
+  }
+}

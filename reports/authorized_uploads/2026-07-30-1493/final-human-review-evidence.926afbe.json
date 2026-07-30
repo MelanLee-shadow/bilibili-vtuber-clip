@@ -1,0 +1,99 @@
+{
+  "approval_quote": "修复稿件可以直接编辑上传。新稿件今天也可以权宜上传",
+  "bindings": {
+    "items": [
+      {
+        "artifacts": {
+          "cover": {
+            "path": "围观两支粉丝队交战时，李豆沙让大家“.cover.png",
+            "sha256": "sha256:12ed8a5f6a898bb3ddaf328974ef7f088f330c28169cdb0933f46fb6c46758cf"
+          },
+          "subtitle": {
+            "path": "围观两支粉丝队交战时，李豆沙让大家“.srt",
+            "sha256": "sha256:ae3ae23ebef87c555cad6ebd8805d23f6e1ac512e2e514f74ffbac5ba1a03e7d"
+          },
+          "video": {
+            "path": "围观两支粉丝队交战时，李豆沙让大家“.mp4",
+            "sha256": "sha256:e27460b2dab36ca64b7c44b522d523894cec3d4308c9c670c7d2eb692bed166b"
+          }
+        },
+        "candidate_id": "auto_195000_1493_1579",
+        "record": {
+          "path": "围观两支粉丝队交战时，李豆沙让大家“.record.json",
+          "sha256": "sha256:53489ea7088c1556aa52434d3c01f40a0debb42d5cf16b14ebfa692c9b559a59"
+        }
+      }
+    ],
+    "package_audit": {
+      "path": "verification/package-audit.926afbe.json",
+      "sha256": "sha256:333f137a7938483424a5a943519458afae3e532b26d85b5b182bb08855a1bcb8"
+    },
+    "review_contract_sha256": "sha256:55396894ca3b52c59403667d5c2a5f788f0f3d58b411e3cae256839f67406c18",
+    "review_manifest": {
+      "path": "review_manifest.json",
+      "sha256": "sha256:bca20a4276a67bfee8051007a4036842caf6c2d6bc550623c08a58804bd482dc"
+    }
+  },
+  "items": [
+    {
+      "candidate_id": "auto_195000_1493_1579",
+      "checks": {
+        "boundary_closure": {
+          "anchor": "CLIP_START_AND_EOS",
+          "detail": "开头从比较李豆沙与沙豆李两支队伍进入投票包袱，结尾完整说完“不愧是暗影大熊猫，太帅了”，没有把下一段内战话题带进来。"
+        },
+        "cover_identity": {
+          "anchor": "FINAL_COVER",
+          "detail": "最终封面右侧唯一真人形主体保留白发蓝挑染、黑色熊猫耳和墨镜的李豆沙直播形象；实看像素未出现伊索尔或其他联动人物冒充主角。"
+        },
+        "cover_story": {
+          "anchor": "FINAL_COVER_AND_STORY",
+          "detail": "封面文字上方用“发1支持沙豆李”交代对面队名，下方“赶紧改成2”呈现临时改票，中央战斗画面把两支粉丝队交战的叙事补全。"
+        },
+        "final_burned_full_playback": {
+          "anchor": "00:00.000-EOS",
+          "detail": "AGY 对绑定的最终 MP4 从 00:00 连续播放到 92.121 秒 EOS，画面、声音和烧录字幕全程可用，未观察到黑屏、冻结、断音或提前结束。"
+        },
+        "intro_timing": {
+          "anchor": "INTRO_TO_MAIN_TRANSITION",
+          "detail": "约 5.5 秒片头结束后，正片首句“我以为我们先看了这个李豆沙的队伍”从句首完整进入，转场没有吞掉开头发音。"
+        },
+        "silence_hallucination": {
+          "anchor": "KNOWN_SILENCE_AND_FULL_VIDEO",
+          "detail": "复核加载画面及多处静音停顿时，烧录层没有凭空显示字幕；原先只承载咳声的独立 cue 也未残留。"
+        },
+        "subtitle_audio": {
+          "anchor": "FULL_VIDEO_AUDIO_SUBTITLE",
+          "detail": "AGY 听到五次沙豆李队名及发一、发零、发二的改票链，烧录字幕跟随对应口播切换，未发现关键句错轴。"
+        },
+        "title_story": {
+          "anchor": "FINAL_TITLE_AND_FULL_STORY",
+          "detail": "标题概括的故事内容依次是围观两队、发1支持沙豆李、发0支持李豆沙并因自觉惨而改成2，成片没有借用片外情节。"
+        }
+      },
+      "cover_story_claims": [
+        {
+          "claim": "封面文字呈现“发1支持沙豆李 / 赶紧改成2”",
+          "observation": {
+            "anchor": "FINAL_COVER/COVER_TEXT",
+            "detail": "实际封面 PNG 顶部大字逐字显示“发1支持沙豆李”，其下小字逐字显示“赶紧改成2”；两行组合的故事关系是先给对面拉票又马上改码。"
+          },
+          "presentation": "COVER_TEXT"
+        }
+      ],
+      "subtitle_review_points": [
+        {
+          "observation": {
+            "anchor": "00:00:00.000-00:00:59.000",
+            "detail": "AGY 听到前59秒的倒序粉丝队称呼，烧录字幕五处词面均为“沙豆李”，没有下斗里、杀队友、沙特琳或沙豆林；同窗依次显示“发一支持沙豆李”“发零支持李豆沙”“为什么要这样说”“发二支持李豆沙”，语义对照闭合。"
+          },
+          "point_id": "shadouli-team-name"
+        }
+      ]
+    }
+  ],
+  "reviewed_at": "2026-07-30T10:06:11Z",
+  "reviewed_by": "Codex root",
+  "reviewer_kind": "delegated_root_agent",
+  "schema_version": "lidousha-final-human-review-evidence.v2"
+}
