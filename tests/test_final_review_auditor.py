@@ -969,6 +969,8 @@ def test_neither_rebuilds_one_third_candidate_then_cpa_judges_it():
     def cpa(prompt):
         calls.append(prompt)
         if "# 字幕坏闭集重建" in prompt:
+            assert "普通日语词句必须写成假名/惯用日文" in prompt
+            assert "不得写罗马音或中文谐音" in prompt
             return json.dumps(
                 {
                     "status": "PROPOSED",

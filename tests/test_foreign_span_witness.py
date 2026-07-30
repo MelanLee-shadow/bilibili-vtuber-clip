@@ -387,6 +387,8 @@ def test_kana_neither_rebuilds_third_candidate_then_cpa_judges_it(
     def cpa(prompt):
         calls.append(prompt)
         if "# 字幕外语坏闭集重建" in prompt:
+            assert "普通日语词句必须写成" in prompt
+            assert "假名/惯用日文，不得写罗马音或中文谐音" in prompt
             return json.dumps(
                 {
                     "status": "PROPOSED",
