@@ -69,6 +69,9 @@ from src.autoslice.source_subtitle_truth import (
     apply_source_subtitle_truth,
     source_truth_owner_windows,
 )
+from src.autoslice.surface_canon import (
+    normalize_japanese_native_script_surfaces,
+)
 from src.autoslice.subtitle_fidelity import (
     apply_title_mark_balance_guard,
     resolve_deferred_foreign_introductions,
@@ -752,16 +755,32 @@ def _materialize_final_recut(
     final_text, final_release_grade_merge_rows = merge_release_grade_cues(
         final_text
     )
-    if final_release_grade_merge_rows:
+    # A hash-bound reviewed baseline is deliberately allowed to restore old
+    # wording late. Re-assert the Japanese native-script presentation policy
+    # after that replay so a legacy boku/ore/atashi/wakuwaku surface cannot
+    # reach burn or merely turn into a final-owner blocker.
+    final_text, final_japanese_native_script_audit = (
+        normalize_japanese_native_script_surfaces(final_text)
+    )
+    if (
+        final_release_grade_merge_rows
+        or final_japanese_native_script_audit["status"] == "APPLIED"
+    ):
         subtitle_path.write_text(final_text, encoding="utf-8")
         if chat_authority_audit is not None:
             chat_authority_audit["final_release_grade_cue_merges"] = (
                 final_release_grade_merge_rows
             )
+            chat_authority_audit[
+                "post_redelivery_japanese_native_script_audit"
+            ] = final_japanese_native_script_audit
         if redelivery_baseline_audit is not None:
             redelivery_baseline_audit["final_release_grade_cue_merges"] = (
                 final_release_grade_merge_rows
             )
+            redelivery_baseline_audit[
+                "post_redelivery_japanese_native_script_audit"
+            ] = final_japanese_native_script_audit
             redelivery_baseline_audit[
                 "post_release_grade_output_sha256"
             ] = hashlib.sha256(final_text.encode("utf-8")).hexdigest()
@@ -776,6 +795,10 @@ def _materialize_final_recut(
                 + "\n",
                 encoding="utf-8",
             )
+    elif chat_authority_audit is not None:
+        chat_authority_audit[
+            "post_redelivery_japanese_native_script_audit"
+        ] = final_japanese_native_script_audit
     if chat_authority_audit is not None:
         chat_authority_audit["final_output_srt_sha256"] = hashlib.sha256(
             final_text.encode("utf-8")

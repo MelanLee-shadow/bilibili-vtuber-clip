@@ -1716,7 +1716,7 @@ def test_final_recut_applies_hash_bound_redelivery_baseline_outside_truth(
     padded_provenance.write_text("{}\n", encoding="utf-8")
     baseline = tmp_path / "prior-delivery.srt"
     baseline.write_text(
-        "1\n00:00:00,000 --> 00:00:01,000\n旧审定第一句\n\n"
+        "1\n00:00:00,000 --> 00:00:01,000\n旧审定boku第一句\n\n"
         "2\n00:00:01,000 --> 00:00:02,000\n旧错误第二句\n\n"
         "3\n00:00:02,000 --> 00:00:03,000\n旧静音幻听\n",
         encoding="utf-8",
@@ -1843,12 +1843,16 @@ def test_final_recut_applies_hash_bound_redelivery_baseline_outside_truth(
     )
 
     output = recut.subtitle_path.read_text(encoding="utf-8")
-    assert "00:00:00,020 --> 00:00:01,020\n旧审定第一句" in output
+    assert "00:00:00,020 --> 00:00:01,020\n旧审定ぼく第一句" in output
+    assert "boku" not in output
     assert "00:00:01,020 --> 00:00:02,020\nIvan新源真值" in output
     assert "旧错误第二句" not in output
     assert "旧静音幻听" not in output
     assert recut.redelivery_baseline_audit is not None
     assert recut.redelivery_baseline_audit["status"] == "APPLIED"
+    assert recut.redelivery_baseline_audit[
+        "post_redelivery_japanese_native_script_audit"
+    ]["status"] == "APPLIED"
     assert recut.redelivery_baseline_audit["source_truth_reapplication"][
         "status"
     ] == "APPLIED"
