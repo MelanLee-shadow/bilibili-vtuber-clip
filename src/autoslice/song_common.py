@@ -301,7 +301,9 @@ def validate_audio_lrc_execution_metadata(
 ) -> str | None:
     """Validate the provider lane without weakening the shared v5 proof.
 
-    Production audio input is AGY-only.  This helper validates execution
+    ``gemini_api`` is accepted only as an explicit AGY failover.  It does not
+    inherit AGY's sandbox claim, and it must preserve a bounded, machine-known
+    AGY failure category.  This helper intentionally validates execution
     provenance only; audio/LRC hashes, v5 rows, live performance and live
     arrangement are all recomputed by the existing proof validators.
     """
@@ -315,6 +317,19 @@ def validate_audio_lrc_execution_metadata(
             or sandbox is not True
         ):
             return "audio aligner AGY execution metadata is invalid"
+        return None
+    if provider == GEMINI_API_AUDIO_LRC_PROVIDER:
+        if (
+            model != GEMINI_API_AUDIO_LRC_MODEL
+            or provider_fallback_used is not True
+            or agy_failure_category not in AGY_AUDIO_LRC_FALLBACK_FAILURE_CATEGORIES
+            or sandbox is not False
+            or (
+                agy_rc is not None
+                and (isinstance(agy_rc, bool) or not isinstance(agy_rc, int) or agy_rc < 0)
+            )
+        ):
+            return "audio aligner Gemini API failover metadata is invalid"
         return None
     return f"audio aligner provider/model is not approved: {provider} {model}"
 

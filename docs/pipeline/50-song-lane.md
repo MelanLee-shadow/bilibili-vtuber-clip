@@ -10,9 +10,11 @@
 - 边界：`live_source_review.py` song_boundary（首尾演唱、≥7 行且 ≥80% 演唱、戏剧对白块四重限制）。
 - 本人演唱证明：`agy-audio-lrc-observation.v5` 与 `host-vocal-proof.v3` 在同一
   source/LRC evidence 上做联合门；CAM++ 只从明确演唱行取样。memory/日期化 review
-  只作历史案例，不是 schema authority。生产音频输入只交 AGY；AGY quota、timeout 或
-  输出失败必须写 typed provider failure 并由 runner 重试，禁止转交 Gemini API、CPA 或
-  其他文字模型。旧 Gemini 音频回执不能通过现行 execution provenance 门。
+  只作历史案例，不是 schema authority。生产音频输入优先交 AGY；只有 AGY 出现机器可判定的
+  quota、timeout、不可用或无效输出时，才允许把完整、hash 绑定的音轨与 canonical LRC
+  交给直接 Gemini API 作有 provenance 的降级观察。降级结果仍须通过同一 v5 结构、时间证据、
+  本人演唱与完整编曲门；free key 轮换及 paid backup 受独立门控。CPA 不接收音频，只保留
+  文本/语义终审权；普通文字模型不得冒充音频证人。
 - 源视频尚未到盘、切窗失败、BCUT 窗口字幕暂空，以及 Jingting 未取得 AGY/model
   provenance，都属于带指数退避的 infrastructure failure：可以越过普通内容尝试上限自愈，
   但仍受每场最多交付一首和剩余 delivery slot 约束。历史只有 free-form error 的同类失败由

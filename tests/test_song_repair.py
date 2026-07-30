@@ -64,7 +64,7 @@ def test_live_performance_failure_reason_codes_are_specific(mode, expected):
     assert live_performance_failure_reason_codes({"mode": mode}) == expected
 
 
-def test_legacy_gemini_audio_lrc_manifest_is_not_an_approved_provider():
+def test_gemini_audio_lrc_failover_metadata_is_approved_only_after_typed_agy_failure():
     error = song_repair.validate_audio_lrc_execution_metadata(
         provider="gemini_api",
         model="gemini-3.6-flash",
@@ -74,9 +74,33 @@ def test_legacy_gemini_audio_lrc_manifest_is_not_an_approved_provider():
         sandbox=False,
     )
 
-    assert error == (
-        "audio aligner provider/model is not approved: "
-        "gemini_api gemini-3.6-flash"
+    assert error is None
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"model": "gemini-3.6-pro"},
+        {"provider_fallback_used": False},
+        {"agy_failure_category": "UNKNOWN"},
+        {"sandbox": True},
+        {"agy_rc": -1},
+        {"agy_rc": True},
+    ],
+)
+def test_gemini_audio_lrc_failover_rejects_invalid_provenance(overrides):
+    metadata = {
+        "provider": "gemini_api",
+        "model": "gemini-3.6-flash",
+        "agy_rc": None,
+        "provider_fallback_used": True,
+        "agy_failure_category": "AGY_QUOTA_EXHAUSTED",
+        "sandbox": False,
+    }
+    metadata.update(overrides)
+
+    assert song_repair.validate_audio_lrc_execution_metadata(**metadata) == (
+        "audio aligner Gemini API failover metadata is invalid"
     )
 
 
@@ -234,7 +258,7 @@ def _valid_audio_lrc_api_payload(prompt: str, lrc: LrcResult) -> dict[str, objec
     }
 
 
-def test_audio_lrc_adapter_never_calls_gemini_after_agy_failure(tmp_path, monkeypatch):
+def test_audio_lrc_adapter_rotates_gemini_keys_after_agy_failure_and_validator_accepts(tmp_path, monkeypatch):
     lrc = _japanese_lrc()
     media = tmp_path / "source.mp4"
     media.write_bytes(b"complete-current-media")
@@ -265,19 +289,41 @@ def test_audio_lrc_adapter_never_calls_gemini_after_agy_failure(tmp_path, monkey
 
     monkeypatch.setattr(agy_lrc_alignment, "_extract_complete_audio", fake_extract)
     monkeypatch.setattr(agy_lrc_alignment, "_gemini_api_observe", fake_observe)
-    with pytest.raises(RuntimeError, match="AGY_AUDIO_LRC_UNAVAILABLE"):
-        agy_lrc_alignment.run_agy_audio_lrc_alignment(
-            media, lrc, "api-fallback", tmp_path / "jobs"
+    run = agy_lrc_alignment.run_agy_audio_lrc_alignment(media, lrc, "api-fallback", tmp_path / "jobs")
+
+    assert [key for _path, key in calls] == ["secret-key-one", "secret-key-two"]
+    assert run.provider == "gemini_api"
+    assert run.provider_fallback_used is True
+    assert run.agy_failure_category == "AGY_QUOTA_EXHAUSTED"
+    assert run.accepted_key_ordinal == 2
+    manifest = json.loads(Path(run.manifest_path).read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == "agy-audio-lrc-run.v3"
+    assert manifest["provider"] == "gemini_api"
+    assert manifest["direct_audio_input"] is True
+    assert "secret-key" not in json.dumps(manifest)
+    selected = song_repair._validated_audio_lrc_selection(
+        run=run,
+        lrc=lrc,
+        candidate_id="api-fallback",
+        source_media_path=media,
+        source_duration_ms=100_000,
+        min_matched_ratio=0.55,
+    )
+    assert selected[0] == 1.0
+
+    Path(str(run.api_audio_path)).write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="complete current audio|sha256 mismatch"):
+        song_repair._validated_audio_lrc_selection(
+            run=run,
+            lrc=lrc,
+            candidate_id="api-fallback",
+            source_media_path=media,
+            source_duration_ms=100_000,
+            min_matched_ratio=0.55,
         )
 
-    assert calls == []
-    failure_path = next((tmp_path / "jobs").rglob("provider-failures.json"))
-    failure = json.loads(failure_path.read_text(encoding="utf-8"))
-    assert failure["agy_failure_category"] == "AGY_QUOTA_EXHAUSTED"
-    assert failure["fallback_policy"] == "AGY_ONLY_NO_AUDIO_PROVIDER_FALLBACK"
 
-
-def test_audio_lrc_adapter_does_not_try_gemini_evidence_after_agy_failure(
+def test_audio_lrc_adapter_rotates_gemini_key_when_ready_evidence_lands_in_gap(
     tmp_path,
     monkeypatch,
 ):
@@ -316,15 +362,24 @@ def test_audio_lrc_adapter_does_not_try_gemini_evidence_after_agy_failure(
         return json.dumps(payload, ensure_ascii=False)
 
     monkeypatch.setattr(agy_lrc_alignment, "_gemini_api_observe", fake_observe)
-    with pytest.raises(RuntimeError, match="AGY_AUDIO_LRC_UNAVAILABLE"):
-        agy_lrc_alignment.run_agy_audio_lrc_alignment(
-            media,
-            lrc,
-            "api-evidence-retry",
-            tmp_path / "jobs",
-        )
+    run = agy_lrc_alignment.run_agy_audio_lrc_alignment(
+        media,
+        lrc,
+        "api-evidence-retry",
+        tmp_path / "jobs",
+    )
 
-    assert calls == []
+    assert calls == ["bad-evidence-key", "valid-evidence-key"]
+    assert run.provider == "gemini_api"
+    assert run.accepted_key_ordinal == 2
+    assert song_repair._validated_audio_lrc_selection(
+        run=run,
+        lrc=lrc,
+        candidate_id="api-evidence-retry",
+        source_media_path=media,
+        source_duration_ms=100_000,
+        min_matched_ratio=0.55,
+    )[0] == 1.0
 
 
 def test_audio_lrc_adapter_exhausts_keys_when_every_ready_evidence_lands_in_gap(
@@ -365,7 +420,7 @@ def test_audio_lrc_adapter_exhausts_keys_when_every_ready_evidence_lands_in_gap(
         return json.dumps(payload, ensure_ascii=False)
 
     monkeypatch.setattr(agy_lrc_alignment, "_gemini_api_observe", fake_observe)
-    with pytest.raises(RuntimeError, match="AGY_AUDIO_LRC_UNAVAILABLE"):
+    with pytest.raises(RuntimeError, match="AGY_AND_GEMINI_API_FAILED"):
         agy_lrc_alignment.run_agy_audio_lrc_alignment(
             media,
             lrc,
@@ -373,10 +428,14 @@ def test_audio_lrc_adapter_exhausts_keys_when_every_ready_evidence_lands_in_gap(
             tmp_path / "jobs",
         )
 
-    assert calls == []
+    assert calls == list(secrets)
     failure_path = next((tmp_path / "jobs").rglob("provider-failures.json"))
     failure = json.loads(failure_path.read_text(encoding="utf-8"))
-    assert failure["reason_code"] == "AGY_AUDIO_LRC_UNAVAILABLE"
+    assert [row["category"] for row in failure["gemini_api_errors"]] == [
+        "GEMINI_API_INVALID_OUTPUT",
+        "GEMINI_API_INVALID_OUTPUT",
+        "GEMINI_API_INVALID_OUTPUT",
+    ]
     assert all(secret not in failure_path.read_text(encoding="utf-8") for secret in secrets)
 
 
@@ -427,15 +486,22 @@ def test_audio_lrc_adapter_keeps_valid_playback_negative_without_key_rotation(
         return json.dumps(payload, ensure_ascii=False)
 
     monkeypatch.setattr(agy_lrc_alignment, "_gemini_api_observe", fake_observe)
-    with pytest.raises(RuntimeError, match="AGY_AUDIO_LRC_UNAVAILABLE"):
-        agy_lrc_alignment.run_agy_audio_lrc_alignment(
-            media,
-            lrc,
-            "api-playback-negative",
-            tmp_path / "jobs",
-        )
+    run = agy_lrc_alignment.run_agy_audio_lrc_alignment(
+        media,
+        lrc,
+        "api-playback-negative",
+        tmp_path / "jobs",
+    )
 
-    assert calls == []
+    assert calls == ["negative-key-one"]
+    assert run.accepted_key_ordinal == 1
+    assert validate_live_performance_observation(
+        run.payload["live_performance"],
+        first_lyric_start_ms=run.payload["observations"][0]["live_start_ms"],
+        last_lyric_end_ms=run.payload["observations"][-1]["live_end_ms"],
+        observations=run.payload["observations"],
+        require_ready=False,
+    ) is None
 
 
 @pytest.mark.parametrize(
@@ -447,7 +513,7 @@ def test_audio_lrc_adapter_keeps_valid_playback_negative_without_key_rotation(
         ("bad_index", "AGY_LRC_INDEX_INVALID"),
     ],
 )
-def test_audio_lrc_recoverable_agy_failures_remain_agy_only(
+def test_audio_lrc_recoverable_agy_failures_enter_gemini_fallback(
     tmp_path,
     monkeypatch,
     agy_failure_mode,
@@ -497,20 +563,17 @@ def test_audio_lrc_recoverable_agy_failures_remain_agy_only(
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(agy_lrc_alignment.subprocess, "run", fake_run)
-    with pytest.raises(RuntimeError, match="AGY_AUDIO_LRC_UNAVAILABLE"):
-        agy_lrc_alignment.run_agy_audio_lrc_alignment(
-            media,
-            lrc,
-            f"recoverable-{agy_failure_mode}",
-            tmp_path / "jobs",
-        )
-    failure_path = next((tmp_path / "jobs").rglob("provider-failures.json"))
-    failure = json.loads(failure_path.read_text(encoding="utf-8"))
-    assert failure["agy_failure_category"] == expected_category
-    assert failure["fallback_policy"] == "AGY_ONLY_NO_AUDIO_PROVIDER_FALLBACK"
+    run = agy_lrc_alignment.run_agy_audio_lrc_alignment(
+        media,
+        lrc,
+        f"recoverable-{agy_failure_mode}",
+        tmp_path / "jobs",
+    )
+    assert run.provider == "gemini_api"
+    assert run.agy_failure_category == expected_category
 
 
-def test_audio_lrc_agy_failure_never_uses_or_persists_fallback_keys(tmp_path, monkeypatch):
+def test_audio_lrc_both_providers_fail_without_persisting_keys(tmp_path, monkeypatch):
     lrc = _japanese_lrc()
     media = tmp_path / "source.mp4"
     media.write_bytes(b"complete-current-media")
@@ -538,7 +601,7 @@ def test_audio_lrc_agy_failure_never_uses_or_persists_fallback_keys(tmp_path, mo
         lambda *, key, **_kwargs: (_ for _ in ()).throw(RuntimeError(f"request?key={key}")),
     )
 
-    with pytest.raises(RuntimeError, match="AGY_AUDIO_LRC_UNAVAILABLE"):
+    with pytest.raises(RuntimeError, match="AGY_AND_GEMINI_API_FAILED"):
         agy_lrc_alignment.run_agy_audio_lrc_alignment(media, lrc, "both-fail", tmp_path / "jobs")
     persisted = "\n".join(
         path.read_text(encoding="utf-8", errors="replace")
@@ -546,7 +609,7 @@ def test_audio_lrc_agy_failure_never_uses_or_persists_fallback_keys(tmp_path, mo
         if path.is_file()
     )
     assert all(secret not in persisted for secret in secrets)
-    assert "AGY_AUDIO_LRC_UNAVAILABLE" in persisted
+    assert "AGY_AND_GEMINI_API_FAILED" in persisted
 
 
 def test_audio_lrc_gemini_request_uses_header_and_enforces_20mb_cap(tmp_path, monkeypatch):
@@ -3987,7 +4050,7 @@ def test_llm_hint_failure_is_recorded_and_text_queries_still_tried(tmp_path):
     assert hint_attempts and hint_attempts[0].status == "FAILED"
 
 
-def test_audio_lrc_paid_backup_never_receives_audio_after_agy_failure(
+def test_audio_lrc_paid_backup_fires_only_after_three_free_chain_strikes(
     tmp_path,
     monkeypatch,
 ):
@@ -4034,22 +4097,33 @@ def test_audio_lrc_paid_backup_never_receives_audio_after_agy_failure(
         return json.dumps(_valid_audio_lrc_api_payload(prompt, lrc), ensure_ascii=False)
 
     monkeypatch.setattr(agy_lrc_alignment, "_gemini_api_observe", fake_observe)
-    with pytest.raises(RuntimeError, match="AGY_AUDIO_LRC_UNAVAILABLE"):
-        agy_lrc_alignment.run_agy_audio_lrc_alignment(
-            media,
-            lrc,
-            "paid-backup-accepted",
-            tmp_path / "jobs",
-        )
-    assert calls == []
-    assert not list(
-        (tmp_path / "base" / "state" / "gemini-paid-backup").glob(
-            "usage-*.jsonl"
-        )
+    run = agy_lrc_alignment.run_agy_audio_lrc_alignment(
+        media,
+        lrc,
+        "paid-backup-accepted",
+        tmp_path / "jobs",
     )
+    assert calls == [*secrets, paid_secret]
+    assert run.accepted_key_tier == "paid_backup"
+    assert run.accepted_key_ordinal == 4
+    assert run.configured_key_count == 3
+    assert isinstance(run.paid_backup_policy, dict)
+    assert run.paid_backup_policy["free_chain_strikes"] >= 3
+    manifest_text = Path(run.manifest_path).read_text(encoding="utf-8")
+    assert paid_secret not in manifest_text
+    manifest = json.loads(manifest_text)
+    assert manifest["accepted_key_tier"] == "paid_backup"
+    assert manifest["paid_backup_policy"] == dict(run.paid_backup_policy)
+    ledger_lines = [
+        line
+        for path in (tmp_path / "base" / "state" / "gemini-paid-backup").glob("usage-*.jsonl")
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(ledger_lines) == 1
 
 
-def test_audio_lrc_paid_backup_is_always_withheld_for_audio(
+def test_audio_lrc_paid_backup_withheld_below_three_strikes(
     tmp_path,
     monkeypatch,
 ):
@@ -4092,17 +4166,22 @@ def test_audio_lrc_paid_backup_is_always_withheld_for_audio(
         raise RuntimeError("simulated free-key outage")
 
     monkeypatch.setattr(agy_lrc_alignment, "_gemini_api_observe", fake_observe)
-    with pytest.raises(RuntimeError, match="AGY_AUDIO_LRC_UNAVAILABLE"):
+    with pytest.raises(RuntimeError, match="AGY_AND_GEMINI_API_FAILED"):
         agy_lrc_alignment.run_agy_audio_lrc_alignment(
             media,
             lrc,
             "paid-backup-withheld",
             tmp_path / "jobs",
         )
-    assert calls == []
+    assert paid_secret not in calls
     failure_path = next((tmp_path / "jobs").rglob("provider-failures.json"))
     failure = json.loads(failure_path.read_text(encoding="utf-8"))
-    assert failure["fallback_policy"] == "AGY_ONLY_NO_AUDIO_PROVIDER_FALLBACK"
+    skip_rows = [
+        row
+        for row in failure["gemini_api_errors"]
+        if str(row.get("category", "")).startswith("PAID_BACKUP_SKIPPED:")
+    ]
+    assert skip_rows and "FREE_CHAIN_STRIKES_2_BELOW_3" in skip_rows[0]["category"]
 
 
 # ---------------------------------------------------------------------------
@@ -4400,7 +4479,7 @@ def test_attempt_song_repair_sibling_srt_fallback_anchors_when_cues_not_threaded
     assert report["offset_ms"] == 17_140
 
 
-def test_audio_lrc_quota_failure_does_not_call_free_or_paid_gemini_keys(
+def test_audio_lrc_quota_rounds_complete_in_run_and_paid_fires(
     tmp_path,
     monkeypatch,
 ):
@@ -4446,15 +4525,19 @@ def test_audio_lrc_quota_failure_does_not_call_free_or_paid_gemini_keys(
         raise _QuotaError("quota exhausted")
 
     monkeypatch.setattr(agy_lrc_alignment, "_gemini_api_observe", fake_observe)
-    with pytest.raises(RuntimeError, match="AGY_AUDIO_LRC_UNAVAILABLE"):
+    with pytest.raises(RuntimeError, match="AGY_AND_GEMINI_API_FAILED"):
         agy_lrc_alignment.run_agy_audio_lrc_alignment(
             media,
             lrc,
             "paid-fires-after-quota-rounds",
             tmp_path / "jobs",
         )
-    assert calls == []
-    assert backup_policy.free_chain_strikes(item_key) == 0
+    # 免费链 3 keys × 3 轮 = 9 次失败尝试之后，付费 key 被合规尝试。
+    assert calls.count("gap-key-one") == 3
+    assert calls.count("gap-key-two") == 3
+    assert calls.count("gap-key-three") == 3
+    assert paid_secret in calls
+    assert backup_policy.free_chain_strikes(item_key) >= 3
 
 
 @pytest.mark.parametrize(
