@@ -18,6 +18,10 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from src.autoslice.final_review_contract import (
+    is_keep_current_disclosed,
+)
+
 SCHEMA_VERSION = "final-review-carryover.v1"
 _ROW_KEYS = (
     "cue",
@@ -104,7 +108,51 @@ def adjudicated_proposed_full_cue(
 def persist_final_review_carryover(path: Path, audit: Mapping[str, Any]) -> int:
     """Persist B's confirmed findings without losing an unconsumed prior round."""
 
+    prior_rows = load_final_review_carryover(path)
     rows: list[dict[str, Any]] = []
+    correction_pass = audit.get("correction_pass")
+    correction_findings = (
+        correction_pass.get("findings")
+        if isinstance(correction_pass, Mapping)
+        else None
+    )
+    for finding in (
+        correction_findings if isinstance(correction_findings, list) else []
+    ):
+        if not isinstance(finding, Mapping):
+            continue
+        remap = finding.get("carryover_replay_remap")
+        adjudication = finding.get("context_audio_adjudication")
+        consumed = bool(
+            isinstance(adjudication, Mapping)
+            and adjudication.get("repaired") is True
+        ) or is_keep_current_disclosed(finding)
+        if not (
+            isinstance(remap, Mapping)
+            and remap.get("schema_version")
+            == "final-review-carryover-remap.v1"
+            and remap.get("status") == "PASS"
+            and not consumed
+        ):
+            continue
+        base_sha256 = finding.get("base_text_sha256")
+        suspect = finding.get("suspect")
+        matched_prior = [
+            row
+            for row in prior_rows
+            if row.get("base_text_sha256") == base_sha256
+            and row.get("suspect") == suspect
+        ]
+        if matched_prior:
+            rows.extend(dict(row) for row in matched_prior)
+            continue
+        row = {
+            key: finding.get(key)
+            for key in _ROW_KEYS
+            if key in finding
+        }
+        if row:
+            rows.append(row)
     for finding in audit.get("findings") or []:
         if not isinstance(finding, Mapping):
             continue
@@ -174,18 +222,18 @@ def persist_final_review_carryover(path: Path, audit: Mapping[str, Any]) -> int:
         )
     )
     if discovery_incomplete:
-        prior_rows = load_final_review_carryover(path)
         if not rows:
             return len(prior_rows)
-        deduplicated: dict[tuple[object, object, object], dict[str, Any]] = {}
-        for row in (*prior_rows, *rows):
-            key = (
-                row.get("cue"),
-                row.get("suspect"),
-                row.get("proposed_full_cue"),
-            )
-            deduplicated[key] = row
-        rows = list(deduplicated.values())
+        rows = [*prior_rows, *rows]
+    deduplicated: dict[tuple[object, object, object], dict[str, Any]] = {}
+    for row in rows:
+        key = (
+            row.get("base_text_sha256") or row.get("cue"),
+            row.get("suspect"),
+            row.get("proposed_full_cue"),
+        )
+        deduplicated[key] = row
+    rows = list(deduplicated.values())
     if not rows:
         path.unlink(missing_ok=True)
         return 0

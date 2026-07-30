@@ -117,6 +117,10 @@
   hash-bound 声学闭集请求已构造完整 `proposed_cue`、CPA 明确选中 `PROPOSED`
   且 mutation/timing 收据全部合法，同轮自愈和 carryover 必须使用该请求内的完整目标句。
   不得只保存 `suspect` 而丢失目标句，否则下轮只能重复披露、永远无法落字。
+  correction pass 已按文本 hash 重放的 carryover 只有在新一轮 CPA 完整闭集已选
+  `PROPOSED` 并落字，或明确选 `CURRENT` 并形成可披露决定时才算消费。
+  若它仍只停在 `disclosure`，后续独立 exact-final 的随机空扫描不得洗白：发布合同
+  必须报 `FINAL_REVIEW_CARRYOVER_UNCONSUMED`，sidecar 也必须保留供下轮继续。
 - provider 异常、JSON 不可解析、根结构错误、`findings` 缺失/null/非列表、返回项全部无效，
   都是“没有完成发现”，不是“没有发现问题”；必须 fail closed。package auditor 还会用包内
   最终 SRT 重验 v2 回执，禁止复用 correction pass 或上一轮 SRT 的回执。

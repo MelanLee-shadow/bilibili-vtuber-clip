@@ -85,3 +85,59 @@ def test_decided_keep_current_branches_disclose_and_infra_branches_block():
         assert _is_keep_current_disclosed(
             row(policy_branch=infra_branch)
         ) is False
+
+
+def test_release_rejects_unconsumed_remapped_carryover():
+    import pytest
+
+    from src.autoslice.final_review_contract import (
+        FinalReviewContractError,
+        unconsumed_correction_carryover_count,
+        validate_final_review_release,
+    )
+
+    replay = {
+        "cue_index": 15,
+        "base_text_sha256": "a" * 64,
+        "suspect": "面部的时候没有什么",
+        "proposed_full_cue": "就是制作这个机体",
+        "carryover_replay_remap": {
+            "schema_version": "final-review-carryover-remap.v1",
+            "status": "PASS",
+            "basis": "base_text_sha256",
+        },
+        "routed": "disclosure",
+    }
+    audit = {
+        "schema_version": "final-review-audit.v2",
+        "reviewed_srt_sha256": "sha256:" + "b" * 64,
+        "status": "CLEAN",
+        "release_gate": "PASS",
+        "discovery": {"status": "COMPLETE"},
+        "correction_mutation_authority": {
+            "schema_version": "subtitle-correction-mutation-audit.v1",
+            "status": "PASS",
+        },
+        "correction_pass": {"findings": [replay]},
+        "findings": [],
+        "validated_finding_count": 0,
+    }
+
+    assert unconsumed_correction_carryover_count(audit) == 1
+    with pytest.raises(
+        FinalReviewContractError,
+        match="FINAL_REVIEW_CARRYOVER_UNCONSUMED",
+    ):
+        validate_final_review_release(
+            audit,
+            expected_srt_sha256="sha256:" + "b" * 64,
+        )
+
+    replay["context_audio_adjudication"] = {
+        "status": "OBSERVED",
+        "policy_branch": "JUDGE_KEEPS_CURRENT",
+        "repaired": False,
+        "timing_immutable": True,
+        "mutation_authority": {"status": "NOT_APPLIED"},
+    }
+    assert unconsumed_correction_carryover_count(audit) == 0

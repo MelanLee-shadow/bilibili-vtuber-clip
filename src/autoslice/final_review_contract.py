@@ -171,6 +171,10 @@ def validate_final_review_release(
         raise FinalReviewContractError(
             "FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID"
         )
+    if unconsumed_correction_carryover_count(audit):
+        raise FinalReviewContractError(
+            "FINAL_REVIEW_CARRYOVER_UNCONSUMED"
+        )
     findings = audit.get("findings")
     if not isinstance(findings, list):
         raise FinalReviewContractError("FINAL_REVIEW_FINDINGS_CONTRACT_INVALID")
@@ -306,6 +310,51 @@ _DECIDED_KEEP_CURRENT_BRANCHES = frozenset(
         "TARGET_INAUDIBLE_KEEP_CURRENT",
     }
 )
+
+
+def unconsumed_correction_carryover_count(audit: object) -> int:
+    """Count replayed carryover rows not closed by a fresh CPA decision.
+
+    Exact-final discovery is intentionally independent and non-deterministic.
+    Its clean scan cannot erase a prior hash-remapped carryover merely because
+    the correction pass disclosed the row without adjudicating it.
+    """
+
+    if not isinstance(audit, Mapping):
+        return 0
+    correction_pass = audit.get("correction_pass")
+    findings = (
+        correction_pass.get("findings")
+        if isinstance(correction_pass, Mapping)
+        else None
+    )
+    if not isinstance(findings, list):
+        return 0
+    count = 0
+    for finding in findings:
+        remap = (
+            finding.get("carryover_replay_remap")
+            if isinstance(finding, Mapping)
+            else None
+        )
+        adjudication = (
+            finding.get("context_audio_adjudication")
+            if isinstance(finding, Mapping)
+            else None
+        )
+        consumed = bool(
+            isinstance(adjudication, Mapping)
+            and adjudication.get("repaired") is True
+        ) or is_keep_current_disclosed(finding)
+        if (
+            isinstance(remap, Mapping)
+            and remap.get("schema_version")
+            == "final-review-carryover-remap.v1"
+            and remap.get("status") == "PASS"
+            and not consumed
+        ):
+            count += 1
+    return count
 
 
 def is_keep_current_disclosed(finding: object) -> bool:

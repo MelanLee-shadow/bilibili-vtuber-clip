@@ -245,6 +245,47 @@ def test_carryover_recovers_cpa_target_hidden_by_large_delta_rejection(tmp_path)
     assert load_final_review_carryover(path)[0]["proposed_full_cue"] == proposed
 
 
+def test_clean_exact_scan_preserves_unconsumed_remapped_carryover(tmp_path):
+    path = carryover_path(tmp_path, "auto_909")
+    prior = {
+        "schema_version": "final-review-carryover.v1",
+        "findings": [
+            {
+                "cue": 11,
+                "base_text_sha256": "a" * 64,
+                "kind": "context",
+                "suspect": "面部的时候没有什么",
+                "proposed_full_cue": "就是制作这个机体",
+            }
+        ],
+    }
+    path.write_text(json.dumps(prior, ensure_ascii=False), encoding="utf-8")
+    clean_exact = {
+        **_audit([]),
+        "status": "CLEAN",
+        "correction_pass": {
+            "findings": [
+                {
+                    "cue_index": 15,
+                    "base_text_sha256": "a" * 64,
+                    "kind": "context",
+                    "suspect": "面部的时候没有什么",
+                    "proposed_full_cue": "就是制作这个机体",
+                    "carryover_replay_remap": {
+                        "schema_version": "final-review-carryover-remap.v1",
+                        "status": "PASS",
+                        "basis": "base_text_sha256",
+                    },
+                    "routed": "disclosure",
+                }
+            ]
+        },
+    }
+
+    assert persist_final_review_carryover(path, clean_exact) == 1
+    assert load_final_review_carryover(path) == prior["findings"]
+
+
 def test_carryover_not_shadowed_by_different_empty_span_proposal(tmp_path):
     path = carryover_path(tmp_path, "auto_909")
     path.write_text(
