@@ -803,6 +803,106 @@ def test_exact_final_surface_owner_does_not_reopen_frozen_boundary_set():
     assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in invalid_codes
 
 
+def test_exact_final_supersession_preserves_prior_frozen_boundary_owner():
+    repair = {
+        "schema_version": "exact-final-cpa-self-heal.v1",
+        "cue_index": 1,
+        "matched_start_ms": 1_000,
+        "matched_end_ms": 2_000,
+        "before": "旧字",
+        "after": "新字",
+        "decision_authority": "CPA_JUDGE",
+        "timing_immutable": True,
+        "mutation_authority": {
+            "schema_version": "subtitle-correction-mutation-authority.v1",
+            "status": "PASS",
+        },
+    }
+    repair_sha256 = "sha256:" + hashlib.sha256(
+        json.dumps(
+            repair,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    predecessor = {
+        "mode": "final_review_context_adjudication",
+        "matched_start_ms": 1_000,
+        "matched_end_ms": 2_000,
+        "structured_exact_text": "旧字",
+        "boundary_required": True,
+        "boundary_owner_id": "entity_repair:1:1000:2000",
+        "reconciliation": {
+            "schema_version": "exact-final-cpa-supersession.v1",
+            "status": "SUPERSEDED_BY_EXACT_FINAL_CPA",
+            "exact_final_repair_sha256": repair_sha256,
+            "before_sha256": "sha256:" + hashlib.sha256(
+                b"\xe6\x97\xa7\xe5\xad\x97"
+            ).hexdigest(),
+            "after_sha256": "sha256:" + hashlib.sha256(
+                b"\xe6\x96\xb0\xe5\xad\x97"
+            ).hexdigest(),
+            "timing_immutable": True,
+        },
+    }
+    successor = {
+        "mode": "exact_final_cpa_self_heal",
+        "decision_authority": "CPA_JUDGE",
+        "mutation_authority": repair["mutation_authority"],
+        "matched_start_ms": 1_000,
+        "matched_end_ms": 2_000,
+        "structured_exact_text": "新字",
+        "timing_immutable": True,
+        "boundary_required": False,
+        "boundary_owner_rejection": (
+            "POST_BOUNDARY_FREEZE_FINAL_SURFACE_OWNER"
+        ),
+        "exact_final_repair_sha256": repair_sha256,
+    }
+    registration = {
+        "schema_version": "exact-final-cpa-surface-registration.v1",
+        "status": "REGISTERED",
+        "exact_final_repair_sha256": repair_sha256,
+        "owner_entity_repair_index": 1,
+        "superseded_entity_repair_indexes": [0],
+    }
+    chat_rows = {
+        "entity_repairs": [predecessor, successor],
+        "exact_final_cpa_surface_registrations": [registration],
+        "exact_final_cpa_self_heal": {
+            "schema_version": "exact-final-cpa-self-heal-audit.v1",
+            "status": "PASS",
+            "passes": [{"pass_index": 1, "repairs": [repair]}],
+        },
+    }
+    frozen = _frozen_owner_fixture(
+        owners=[
+            _story_owner(
+                "entity_repair",
+                "entity_repair:1:1000:2000",
+                start_ms=1_000,
+                end_ms=2_000,
+            )
+        ]
+    )
+
+    codes = _owner_attestation_codes(
+        truth_rows=[],
+        frozen=frozen,
+        chat_rows_by_key=chat_rows,
+    )
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" not in codes
+
+    registration["owner_entity_repair_index"] = 0
+    invalid_codes = _owner_attestation_codes(
+        truth_rows=[],
+        frozen=frozen,
+        chat_rows_by_key=chat_rows,
+    )
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in invalid_codes
+
+
 @pytest.mark.parametrize(
     "row",
     [

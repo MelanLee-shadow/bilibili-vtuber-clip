@@ -637,8 +637,31 @@ def _story_owner_set_valid(
             valid = False
             continue
         for ordinal, row in enumerate(rows, start=1):
-            if not isinstance(row, Mapping) or row.get("reconciliation"):
+            if not isinstance(row, Mapping):
                 continue
+            reconciliation = row.get("reconciliation")
+            if reconciliation:
+                # Exact-final CPA runs after the boundary owner set has been
+                # frozen.  Replacing one cue's text must retire the older
+                # final-surface claim, but it must not retroactively erase the
+                # already-reviewed same-window boundary owner.  Accept that
+                # narrow split only through the hash-bound successor ledger;
+                # every other reconciliation remains excluded as before.
+                if (
+                    owner_kind == "entity_repair"
+                    and isinstance(reconciliation, Mapping)
+                    and reconciliation.get("schema_version")
+                    == "exact-final-cpa-supersession.v1"
+                ):
+                    valid = valid and (
+                        _exact_final_superseded_boundary_owner_valid(
+                            row=row,
+                            row_index=ordinal - 1,
+                            chat_authority=chat_authority,
+                        )
+                    )
+                else:
+                    continue
             if (
                 owner_kind == "entity_repair"
                 and row.get("mode") == "exact_final_cpa_self_heal"
@@ -714,6 +737,94 @@ def _story_owner_set_valid(
         if owner_kind in story_kinds
     }
     return valid and set(expected) == frozen
+
+
+def _exact_final_superseded_boundary_owner_valid(
+    *,
+    row: Mapping[str, object],
+    row_index: int,
+    chat_authority: Mapping[str, object],
+) -> bool:
+    """Keep one frozen boundary owner after an exact same-window CPA edit."""
+
+    reconciliation = row.get("reconciliation")
+    if not isinstance(reconciliation, Mapping):
+        return False
+    repair_sha256 = reconciliation.get("exact_final_repair_sha256")
+    if not (
+        reconciliation.get("schema_version")
+        == "exact-final-cpa-supersession.v1"
+        and reconciliation.get("status") == "SUPERSEDED_BY_EXACT_FINAL_CPA"
+        and reconciliation.get("timing_immutable") is True
+        and _is_sha256(repair_sha256)
+        and reconciliation.get("before_sha256")
+        and reconciliation.get("after_sha256")
+    ):
+        return False
+
+    registrations = chat_authority.get(
+        "exact_final_cpa_surface_registrations"
+    )
+    entity_rows = chat_authority.get("entity_repairs")
+    if not isinstance(registrations, list) or not isinstance(entity_rows, list):
+        return False
+    matching = [
+        registration
+        for registration in registrations
+        if isinstance(registration, Mapping)
+        and registration.get("schema_version")
+        == "exact-final-cpa-surface-registration.v1"
+        and registration.get("status") == "REGISTERED"
+        and registration.get("exact_final_repair_sha256") == repair_sha256
+        and isinstance(registration.get("superseded_entity_repair_indexes"), list)
+        and row_index in registration["superseded_entity_repair_indexes"]
+    ]
+    if len(matching) != 1:
+        return False
+    successor_index = matching[0].get("owner_entity_repair_index")
+    if (
+        isinstance(successor_index, bool)
+        or not isinstance(successor_index, int)
+        or not 0 <= successor_index < len(entity_rows)
+    ):
+        return False
+    successor = entity_rows[successor_index]
+    predecessor_text = row.get("structured_exact_text")
+    if not isinstance(predecessor_text, str) or not predecessor_text:
+        predecessor_after = row.get("after")
+        predecessor_text = (
+            predecessor_after[0]
+            if isinstance(predecessor_after, list)
+            and len(predecessor_after) == 1
+            and isinstance(predecessor_after[0], str)
+            else predecessor_after
+        )
+    successor_text = (
+        successor.get("structured_exact_text")
+        if isinstance(successor, Mapping)
+        else None
+    )
+    return bool(
+        isinstance(successor, Mapping)
+        and isinstance(predecessor_text, str)
+        and predecessor_text
+        and isinstance(successor_text, str)
+        and successor_text
+        and reconciliation.get("before_sha256")
+        == "sha256:"
+        + hashlib.sha256(predecessor_text.encode("utf-8")).hexdigest()
+        and reconciliation.get("after_sha256")
+        == "sha256:"
+        + hashlib.sha256(successor_text.encode("utf-8")).hexdigest()
+        and successor.get("matched_start_ms") == row.get("matched_start_ms")
+        and successor.get("matched_end_ms") == row.get("matched_end_ms")
+        and successor.get("exact_final_repair_sha256") == repair_sha256
+        and _post_boundary_freeze_surface_owner_valid(
+            row=successor,
+            row_index=successor_index,
+            chat_authority=chat_authority,
+        )
+    )
 
 
 def _post_boundary_freeze_surface_owner_valid(
