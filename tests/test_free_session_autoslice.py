@@ -9061,6 +9061,10 @@ def test_subtitle_authority_recovery_fingerprint_tracks_final_surface_verifier(
             "CPA creates a bounded candidate before AGY and final judgment",
         ),
         (
+            "src/autoslice/foreign_closed_set_rebuild.py",
+            "CPA rebuilds a foreign-audio closed set rejected as neither",
+        ),
+        (
             "src/autoslice/final_review_auditor.py",
             "exact-final routes the bounded candidate through AGY and CPA",
         ),

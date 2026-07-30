@@ -23,6 +23,7 @@ def subtitle_authority_recovery_relatives(
         "src/autoslice/producer_source_truth_authority.py",
         "src/autoslice/source_subtitle_truth.py",
         "src/autoslice/chat_proposals.py",
+        "src/autoslice/foreign_closed_set_rebuild.py",
         "src/autoslice/foreign_span_witness.py",
         "src/autoslice/acoustic_witness_adjudication.py",
         "src/autoslice/talk_lane.py",

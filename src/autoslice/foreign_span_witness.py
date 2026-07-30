@@ -25,6 +25,9 @@ from typing import Any, Callable
 
 from src.autoslice import gemini_backup_policy
 from src.autoslice.agy_lrc_alignment import _gemini_keys
+from src.autoslice.foreign_closed_set_rebuild import (
+    rebuild_foreign_closed_set,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.subtitle_fidelity import _JAPANESE_KANA_RX
 from scripts.gemini_slice_jingting import (
@@ -571,13 +574,46 @@ def adjudicate_language_preservation_audit(
         )
         judge = adjudication.get("judge") or {}
         choice = judge.get("choice")
+        proposed_text = transcript
+        if policy_branch == "JUDGE_REJECTS_CLOSED_SET":
+            rebuilt, rebuild_audit = rebuild_foreign_closed_set(
+                current=cue.text,
+                rejected=transcript,
+                before=before,
+                after=after,
+                witness=witness,
+                judge_reason=str(judge.get("reason") or ""),
+                llm_call=llm_call,
+            )
+            receipt["proposal_rebuild"] = rebuild_audit
+            if rebuilt is not None:
+                proposed_text = rebuilt
+                rebuilt_request = {
+                    **check_request,
+                    "proposed_cue": rebuilt,
+                    "candidate_provenance": {
+                        "kind": "cpa_context_proposal",
+                        "mutation_authorized": False,
+                        "prompt_sha256": rebuild_audit.get("prompt_sha256"),
+                        "audio_sha256": result.get("audio_sha256"),
+                    },
+                }
+                cpa_hearing_count += 1
+                repaired, policy_branch, adjudication = adjudicate_with_witness(
+                    check_request=rebuilt_request,
+                    witness=witness,
+                    llm_call=llm_call,
+                )
+                judge = adjudication.get("judge") or {}
+                choice = judge.get("choice")
+                receipt["rejected_proposed"] = transcript
         receipt.update(
             {
                 "choice": choice,
                 "policy_branch": policy_branch,
                 "decision_authority": "CPA_JUDGE",
                 "current": cue.text,
-                "proposed": transcript,
+                "proposed": proposed_text,
                 "adjudication": adjudication,
             }
         )
@@ -588,7 +624,7 @@ def adjudicate_language_preservation_audit(
             and choice == "PROPOSED"
             and judge.get("status") == "JUDGED"
         ):
-            replacements[int(cue_index)] = transcript
+            replacements[int(cue_index)] = proposed_text
             receipt["resolved"] = True
         else:
             receipt["reason_code"] = "CPA_ADJUDICATION_DID_NOT_RESOLVE"
@@ -920,13 +956,46 @@ def adjudicate_foreign_script_audit(
         )
         judge = adjudication.get("judge") or {}
         choice = judge.get("choice")
+        proposed_text = transcript
+        if policy_branch == "JUDGE_REJECTS_CLOSED_SET":
+            rebuilt, rebuild_audit = rebuild_foreign_closed_set(
+                current=cue.text,
+                rejected=transcript,
+                before=before,
+                after=after,
+                witness=witness,
+                judge_reason=str(judge.get("reason") or ""),
+                llm_call=llm_call,
+            )
+            receipt["proposal_rebuild"] = rebuild_audit
+            if rebuilt is not None:
+                proposed_text = rebuilt
+                rebuilt_request = {
+                    **check_request,
+                    "proposed_cue": rebuilt,
+                    "candidate_provenance": {
+                        "kind": "cpa_context_proposal",
+                        "mutation_authorized": False,
+                        "prompt_sha256": rebuild_audit.get("prompt_sha256"),
+                        "audio_sha256": result.get("audio_sha256"),
+                    },
+                }
+                cpa_hearing_count += 1
+                repaired, policy_branch, adjudication = adjudicate_with_witness(
+                    check_request=rebuilt_request,
+                    witness=witness,
+                    llm_call=llm_call,
+                )
+                judge = adjudication.get("judge") or {}
+                choice = judge.get("choice")
+                receipt["rejected_proposed"] = transcript
         receipt.update(
             {
                 "choice": choice,
                 "policy_branch": policy_branch,
                 "decision_authority": "CPA_JUDGE",
                 "current": cue.text,
-                "proposed": transcript,
+                "proposed": proposed_text,
                 "adjudication": adjudication,
             }
         )
@@ -937,7 +1006,7 @@ def adjudicate_foreign_script_audit(
             and choice == "PROPOSED"
             and judge.get("status") == "JUDGED"
         ):
-            replacements[int(cue_index)] = transcript
+            replacements[int(cue_index)] = proposed_text
             receipt["resolved"] = True
         else:
             receipt["reason_code"] = "CPA_ADJUDICATION_DID_NOT_RESOLVE"

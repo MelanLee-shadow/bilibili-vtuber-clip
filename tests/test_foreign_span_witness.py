@@ -206,6 +206,122 @@ def test_kana_mismatch_requires_cpa_for_retranscription(tmp_path, witness_env):
     assert resolved["cpa_adjudication_rows"][0]["choice"] == "PROPOSED"
 
 
+def test_kana_neither_rebuilds_third_candidate_then_cpa_judges_it(
+    tmp_path, witness_env
+):
+    srt_text = _srt(
+        "前文讨论第一人称",
+        "あたし就是我的意思",
+        "我刚刚就想说像あたし这种",
+        "后面继续讨论翻译",
+    )
+    audit = _blocked_language_audit()
+    audit["unproven_foreign_introductions"][0]["attempted"] = (
+        "我刚刚就想说像あたし这种"
+    )
+
+    def observe(*, audio_path, prompt, key):
+        return json.dumps(
+            {
+                "audible_language": "zh",
+                "exact_transcript": "哦，我刚才就想说，像RTC这种",
+                "speaker_impression": "single_live_voice",
+            },
+            ensure_ascii=False,
+        )
+
+    calls: list[str] = []
+
+    def cpa(prompt):
+        calls.append(prompt)
+        if "# 字幕外语坏闭集重建" in prompt:
+            return json.dumps(
+                {
+                    "status": "PROPOSED",
+                    "proposed_cue": "哦，我刚才就想说，像あたし这种",
+                    "reason": "AGY句架与前文日语专名组合",
+                },
+                ensure_ascii=False,
+            )
+        judge_calls = [row for row in calls if "# 字幕选字裁决" in row]
+        return json.dumps(
+            {
+                "choice": "NEITHER" if len(judge_calls) == 1 else "PROPOSED",
+                "reason": "需要第三候选" if len(judge_calls) == 1 else "组合匹配",
+            },
+            ensure_ascii=False,
+        )
+
+    output, resolved = fsw.adjudicate_language_preservation_audit(
+        media_path=witness_env,
+        srt_text=srt_text,
+        audit=audit,
+        out_root=tmp_path,
+        cid="auto_kana_cpa_rebuild",
+        llm_call=cpa,
+        observe=observe,
+    )
+
+    assert "哦，我刚才就想说，像あたし这种" in output
+    row = resolved["cpa_adjudication_rows"][0]
+    assert row["choice"] == "PROPOSED"
+    assert row["rejected_proposed"] == "哦，我刚才就想说，像RTC这种"
+    assert row["proposal_rebuild"]["status"] == "PROPOSED"
+    assert row["proposal_rebuild"]["mutation_authorized"] is False
+    assert row["resolved"] is True
+    assert resolved["cpa_hearing_count"] == 2
+    assert len(calls) == 3
+
+
+def test_kana_neither_stays_blocked_when_proposal_rebuild_is_unresolved(
+    tmp_path, witness_env
+):
+    srt_text = _srt("前文", "接着讨论", "我刚刚就想说像あたし这种")
+    audit = _blocked_language_audit()
+    audit["unproven_foreign_introductions"][0]["attempted"] = (
+        "我刚刚就想说像あたし这种"
+    )
+
+    def observe(*, audio_path, prompt, key):
+        return json.dumps(
+            {
+                "audible_language": "zh",
+                "exact_transcript": "哦，我刚才就想说，像RTC这种",
+                "speaker_impression": "single_live_voice",
+            },
+            ensure_ascii=False,
+        )
+
+    calls: list[str] = []
+
+    def cpa(prompt):
+        calls.append(prompt)
+        if "# 字幕外语坏闭集重建" in prompt:
+            return json.dumps(
+                {"status": "UNRESOLVED", "proposed_cue": "", "reason": "不足"},
+                ensure_ascii=False,
+            )
+        return json.dumps({"choice": "NEITHER", "reason": "坏闭集"})
+
+    output, unresolved = fsw.adjudicate_language_preservation_audit(
+        media_path=witness_env,
+        srt_text=srt_text,
+        audit=audit,
+        out_root=tmp_path,
+        cid="auto_kana_cpa_rebuild_unresolved",
+        llm_call=cpa,
+        observe=observe,
+    )
+
+    assert output == srt_text
+    row = unresolved["cpa_adjudication_rows"][0]
+    assert row["resolved"] is False
+    assert row["choice"] == "NEITHER"
+    assert row["proposal_rebuild"]["status"] == "UNRESOLVED"
+    assert row["reason_code"] == "CPA_ADJUDICATION_DID_NOT_RESOLVE"
+    assert len(calls) == 2
+
+
 def test_kana_mismatch_without_cpa_stays_blocked(tmp_path, witness_env):
     srt_text = _srt("前文", "接着讨论", "嗯，咱有点像あたし")
     audit = _blocked_language_audit()
