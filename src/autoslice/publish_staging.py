@@ -65,7 +65,11 @@ from .recovery_title_authority import (
     validate_recovery_publication_authority,
 )
 from .shadow_review import _sha256, _write_json_file
-from .story_contract import audit_story_artifact, cover_relation_prompt
+from .story_contract import (
+    audit_story_artifact,
+    cover_relation_prompt,
+    cover_story_contract_binding,
+)
 from .title_policy import (
     _TITLE_MAX_ATTEMPTS,
     _TITLE_MAX_LEN,
@@ -1394,31 +1398,9 @@ def _stage_lidousha_ai_cover(
     }
     story_contract = materialized_recut.get("story_contract")
     if isinstance(story_contract, Mapping):
-        cover_generation["story_contract"] = {
-            "schema_version": story_contract.get("schema_version"),
-            "selection_hook": story_contract.get("selection_hook"),
-            "relation_state": story_contract.get("relation_state"),
-            "participants": story_contract.get("participants"),
-            "cover_counterpart_reference_available": story_contract.get(
-                "cover_counterpart_reference_available"
-            ),
-            "cover_reference_authority": story_contract.get(
-                "cover_reference_authority"
-            ),
-            "source_media_sha256s": story_contract.get(
-                "source_media_sha256s"
-            ),
-            "clip_context_binding": story_contract.get(
-                "clip_context_binding"
-            ),
-            "boundary_semantic_review": story_contract.get(
-                "boundary_semantic_review"
-            ),
-            "human_boundary_authority": story_contract.get(
-                "human_boundary_authority"
-            ),
-            "cover_fallback_mode": story_contract.get("cover_fallback_mode"),
-        }
+        cover_generation["story_contract"] = cover_story_contract_binding(
+            story_contract
+        )
     # 封面路线（2026-07-21 Ivan："加入判断，哪些适合全图 CPA 重做、哪些适合截图"）：
     # AUTOSLICE_COVER_MODE = auto（默认，按名场面强度路由）| screenshot（强制直出）
     # | polish（强制截图+CPA 轻微调）| cpa（强制全图重绘，旧行为）。

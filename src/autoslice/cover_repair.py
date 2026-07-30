@@ -29,6 +29,7 @@ from src.autoslice.cover_route_evidence import (
     relationship_visual_safety_required,
     validate_cover_route_decision,
 )
+from src.autoslice.story_contract import cover_story_contract_binding_matches
 from src.autoslice.verified_io import (
     _matches_sha256,
     _read_json_object,
@@ -94,9 +95,15 @@ def _active_story_contract(
 ) -> dict | None:
     """Resolve one frozen story contract from the active publication surface."""
 
-    contracts: list[dict] = []
+    authoritative_contracts: list[dict] = []
+    cover_bindings: list[dict] = []
     for _path, document in documents:
-        candidates: list[object] = [document.get("story_contract")]
+        authoritative = document.get("story_contract")
+        if (
+            isinstance(authoritative, dict)
+            and authoritative not in authoritative_contracts
+        ):
+            authoritative_contracts.append(authoritative)
         publish_view = (
             document
             if document.get("schema_version") == "shadow-publish-draft.v1"
@@ -105,15 +112,28 @@ def _active_story_contract(
         if isinstance(publish_view, dict):
             generation = publish_view.get("cover_generation")
             if isinstance(generation, dict):
-                candidates.append(generation.get("story_contract"))
-        for candidate in candidates:
-            if isinstance(candidate, dict) and candidate not in contracts:
-                contracts.append(candidate)
-    if not contracts:
+                binding = generation.get("story_contract")
+                if isinstance(binding, dict) and binding not in cover_bindings:
+                    cover_bindings.append(binding)
+    if not authoritative_contracts and not cover_bindings:
         return None
-    if len(contracts) != 1:
+    if len(authoritative_contracts) > 1:
         raise ValueError("active cover documents disagree on story contract")
-    return copy.deepcopy(contracts[0])
+    if authoritative_contracts:
+        authority = authoritative_contracts[0]
+        if any(
+            not cover_story_contract_binding_matches(authority, binding)
+            for binding in cover_bindings
+        ):
+            raise ValueError(
+                "active cover StoryContract projection disagrees with authority"
+            )
+        return copy.deepcopy(authority)
+    if len(cover_bindings) != 1:
+        raise ValueError("active cover documents disagree on story contract")
+    # Legacy packages may predate a complete top-level StoryContract.  Preserve
+    # their exact, mutually-agreed cover binding as the best active authority.
+    return copy.deepcopy(cover_bindings[0])
 
 
 def _enrich_repaired_cover_generation(

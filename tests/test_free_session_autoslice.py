@@ -1395,6 +1395,75 @@ def test_bind_repaired_cover_carries_active_story_and_route_authority(
     assert validate_cover_route_decision(generation)
 
 
+def test_active_story_contract_accepts_current_cover_projection():
+    from src.autoslice.cover_repair import _active_story_contract
+    from src.autoslice.story_contract import cover_story_contract_binding
+
+    authority = {
+        "schema_version": "lidousha-story-contract.v1",
+        "candidate_id": "auto_current",
+        "selection_hook": "观众想保留白色奶龙表情，李豆沙拒绝花钱。",
+        "relation_state": "UNKNOWN",
+        "participants": [],
+        "cover_counterpart_reference_available": False,
+        "cover_reference_authority": None,
+        "source_media_sha256s": ["sha256:" + "a" * 64],
+        "clip_context_binding": {"schema_version": "lidousha-clip-context.v1"},
+        "boundary_semantic_review": {"status": "PASS"},
+        "human_boundary_authority": "Ivan canonical truth",
+        "cover_fallback_mode": "HOST_ONLY_GENERIC",
+        "input_audits": [{"status": "PASS"}],
+    }
+    binding = cover_story_contract_binding(authority)
+    documents = [
+        (Path("delivery.record.json"), {"story_contract": authority}),
+        (
+            Path("active.publish.json"),
+            {
+                "schema_version": "shadow-publish-draft.v1",
+                "cover_generation": {"story_contract": binding},
+            },
+        ),
+    ]
+
+    assert _active_story_contract(documents) == authority
+
+
+def test_active_story_contract_rejects_real_projection_drift():
+    from src.autoslice.cover_repair import _active_story_contract
+    from src.autoslice.story_contract import cover_story_contract_binding
+
+    authority = {
+        "schema_version": "lidousha-story-contract.v1",
+        "selection_hook": "李豆沙拒绝花钱做白色奶龙表情。",
+        "relation_state": "UNKNOWN",
+        "participants": [],
+        "cover_counterpart_reference_available": False,
+        "cover_reference_authority": None,
+        "source_media_sha256s": ["sha256:" + "b" * 64],
+        "clip_context_binding": {"schema_version": "lidousha-clip-context.v1"},
+        "boundary_semantic_review": {"status": "PASS"},
+        "human_boundary_authority": None,
+        "cover_fallback_mode": "HOST_ONLY_GENERIC",
+    }
+    binding = cover_story_contract_binding(authority)
+    binding["selection_hook"] = "被篡改的故事"
+
+    with pytest.raises(ValueError, match="projection disagrees"):
+        _active_story_contract(
+            [
+                (Path("delivery.record.json"), {"story_contract": authority}),
+                (
+                    Path("active.publish.json"),
+                    {
+                        "schema_version": "shadow-publish-draft.v1",
+                        "cover_generation": {"story_contract": binding},
+                    },
+                ),
+            ]
+        )
+
+
 def test_repaired_cover_binding_detects_title_media_binding_and_hash_tampering(tmp_path, monkeypatch):
     fx = _cover_binding_fixture(tmp_path, monkeypatch)
     runner._bind_repaired_cover(

@@ -10,6 +10,29 @@ from src.autoslice.clip_context import clip_context_prompt_text, validate_clip_c
 
 
 SCHEMA_VERSION = "lidousha-story-contract.v1"
+COVER_BINDING_REQUIRED_KEYS = (
+    "schema_version",
+    "relation_state",
+    "participants",
+    "cover_counterpart_reference_available",
+    "cover_reference_authority",
+    "source_media_sha256s",
+    "clip_context_binding",
+    "cover_fallback_mode",
+)
+COVER_BINDING_KEYS = (
+    "schema_version",
+    "selection_hook",
+    "relation_state",
+    "participants",
+    "cover_counterpart_reference_available",
+    "cover_reference_authority",
+    "source_media_sha256s",
+    "clip_context_binding",
+    "boundary_semantic_review",
+    "human_boundary_authority",
+    "cover_fallback_mode",
+)
 _RELATION_CLAIM_RX = re.compile(r"联动|连麦|连线|当面对质|当面追问|搭档")
 _NANCHO_CANONICAL_RX = re.compile(r"南町nightin|南町|大N|小N", re.IGNORECASE)
 _NANCHO_SUSPECT_RX = re.compile(r"大恩(?:老师)?|大卫老师|大黄老师|邓老师")
@@ -19,6 +42,34 @@ _SOURCE_SHA256_RX = re.compile(r"sha256:[0-9a-f]{64}")
 
 def _sha256_text(value: str) -> str:
     return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def cover_story_contract_binding(
+    story_contract: Mapping[str, object],
+) -> dict[str, object]:
+    """Return the stable StoryContract projection embedded in cover evidence."""
+
+    return {key: story_contract.get(key) for key in COVER_BINDING_KEYS}
+
+
+def cover_story_contract_binding_matches(
+    story_contract: Mapping[str, object], binding: Mapping[str, object]
+) -> bool:
+    """Verify that a compact cover binding is an honest authority projection.
+
+    Active records retain the complete StoryContract while publish/cover
+    evidence intentionally stores only cover-relevant fields.  Comparing those
+    documents as whole dictionaries rejects every current package; compare the
+    projection instead, while still failing closed on missing core fields,
+    altered values, or fields not present in the complete authority.
+    """
+
+    if any(key not in binding for key in COVER_BINDING_REQUIRED_KEYS):
+        return False
+    return all(
+        key in story_contract and story_contract.get(key) == value
+        for key, value in binding.items()
+    )
 
 
 def canonicalize_relation_summary(
