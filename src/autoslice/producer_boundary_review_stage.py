@@ -5,9 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from src.autoslice.boundary_endpoint_binding import (
-    bind_final_semantic_endpoint,
-)
+from src.autoslice.boundary_endpoint_binding import bind_final_semantic_endpoint
+from src.autoslice.boundary_semantic_projection import project_correlated_source_boundary_pass
 from src.autoslice.boundary_semantic_review import (
     BoundarySemanticReviewError,
     boundary_search_scope_is_valid,
@@ -162,6 +161,14 @@ def review_exact_delivery_boundary_semantics(
         extract_json=extract_json,
         disabled=disabled,
         terminal_source_review=source_boundary_review,
+        source_final_start_ms=source_final_start_ms,
+        source_final_end_ms=source_final_end_ms,
+    )
+    review = project_correlated_source_boundary_pass(
+        review,
+        source_review=source_boundary_review,
+        closure_cue=final_cues[-1],
+        final_cue_count=len(final_cues),
         source_final_start_ms=source_final_start_ms,
         source_final_end_ms=source_final_end_ms,
     )

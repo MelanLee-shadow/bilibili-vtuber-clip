@@ -153,6 +153,13 @@ witness 必须绑定 source review 的规范 SHA、request SHA、source cue-grid
 post-end witness、source interval 漂移、最终 reviewer 未选择 delivery 最后一条 cue，或任一
 绑定不一致都拒发。
 
+source 与 final-delivery reviewer 属于同一 CPA 模型族，因此连续调用的 PASS/BLOCK 不是两张
+独立票。若 delivery-local reviewer 已完成重审却否定收束，而 source review 为 PASS，只有在
+`correlated-source-boundary-projection.v1` 证明 source/delivery 的最终 interval、closure 文本
+SHA、source review/request/grid SHA 全部一致，delivery 仍推荐唯一最后 cue、内容锚点已覆盖且
+没有同话题继续/需要更多上下文时，才按信息更完整的 source PASS 确定性收敛。任一字幕字节、
+终点或上下文状态变化都不能投影，仍按 delivery BLOCK 拒发。
+
 两层回执的 cue grid 与坐标系本来就不同，**不得要求两层 cue-grid SHA 相等**。应分别验证：
 `boundary_audit.boundary_semantic_review` 是 `source_full_window`，而
 `boundary_audit.final_delivery_boundary_semantic_review` 与 StoryContract 中的

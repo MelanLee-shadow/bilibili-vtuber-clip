@@ -509,6 +509,134 @@ def test_exact_delivery_boundary_review_rebinds_post_baseline_grid():
     assert "后来删除的幻听" not in seen_prompt
 
 
+def test_exact_delivery_projects_same_closure_source_pass_over_correlated_block():
+    final_srt = _srt("前文", "大小姐用的")
+    closure = pipeline.parse_srt_cues(final_srt)[-1]
+    closure_sha = "sha256:" + hashlib.sha256(closure.text.encode()).hexdigest()
+    source_review = {
+        "schema_version": "talk-boundary-semantic-review.v1",
+        "status": "PASS",
+        "review_scope": "source_full_window",
+        "request_sha256": "sha256:" + "a" * 64,
+        "cue_grid_sha256": "sha256:" + "b" * 64,
+        "recommended_end_cue_index": 9,
+        "recommended_end_ms": 24_000,
+        "syntax_complete": True,
+        "story_closed": True,
+        "next_topic_separated": True,
+        "next_topic_witness_valid": True,
+        "final_endpoint_binding": {
+            "schema_version": "talk-boundary-final-endpoint-binding.v1",
+            "status": "PASS",
+            "closure_text_sha256": closure_sha,
+            "final_start_ms": 10_000,
+            "final_end_ms": 24_400,
+        },
+    }
+    correction = _correction_pass()
+    correction["boundary_semantic_review"] = source_review
+
+    def correlated_block(_prompt):
+        return json.dumps(
+            {
+                "syntax_complete": False,
+                "story_closed": False,
+                "next_topic_separated": False,
+                "recommended_end_cue_index": 2,
+                "evidence_cue_indexes": [2],
+                "reason_codes": ["SYNTAX_INCOMPLETE", "STORY_NOT_CLOSED"],
+                "summary": "末句看起来像残句。",
+            },
+            ensure_ascii=False,
+        )
+
+    rebound = pipeline.exact_delivery_correction_audit(
+        final_srt_text=final_srt,
+        correction_audit=correction,
+        source_final_start_ms=10_000,
+        source_final_end_ms=24_400,
+        candidate_id="terminal-projection",
+        selection_hook="大小姐用的",
+        selection_scorecard={
+            "status": "VALID",
+            "dimensions": {"self_contained": 4, "comedic_payoff": 4},
+        },
+        structured_context="",
+        candidate_context="",
+        boundary_max_forward_ms=30_000,
+        llm_call=correlated_block,
+        extract_json=pipeline.extract_json_object,
+    )
+
+    review = rebound["boundary_semantic_review"]
+    assert review["status"] == "PASS"
+    assert review["final_endpoint_binding"]["status"] == "PASS"
+    projection = review["correlated_source_projection"]
+    assert projection["status"] == "PASS"
+    assert projection["closure_text_sha256"] == closure_sha
+
+
+def test_exact_delivery_does_not_project_source_pass_after_closure_text_drift():
+    source_text = "大小姐用的"
+    final_srt = _srt("前文", "大小姐说的")
+    source_review = {
+        "schema_version": "talk-boundary-semantic-review.v1",
+        "status": "PASS",
+        "review_scope": "source_full_window",
+        "request_sha256": "sha256:" + "a" * 64,
+        "cue_grid_sha256": "sha256:" + "b" * 64,
+        "recommended_end_cue_index": 9,
+        "recommended_end_ms": 24_000,
+        "syntax_complete": True,
+        "story_closed": True,
+        "next_topic_separated": True,
+        "next_topic_witness_valid": True,
+        "final_endpoint_binding": {
+            "schema_version": "talk-boundary-final-endpoint-binding.v1",
+            "status": "PASS",
+            "closure_text_sha256": "sha256:"
+            + hashlib.sha256(source_text.encode()).hexdigest(),
+            "final_start_ms": 10_000,
+            "final_end_ms": 24_400,
+        },
+    }
+    correction = _correction_pass()
+    correction["boundary_semantic_review"] = source_review
+
+    rebound = pipeline.exact_delivery_correction_audit(
+        final_srt_text=final_srt,
+        correction_audit=correction,
+        source_final_start_ms=10_000,
+        source_final_end_ms=24_400,
+        candidate_id="terminal-drift",
+        selection_hook="大小姐说的",
+        selection_scorecard={
+            "status": "VALID",
+            "dimensions": {"self_contained": 4, "comedic_payoff": 4},
+        },
+        structured_context="",
+        candidate_context="",
+        boundary_max_forward_ms=30_000,
+        llm_call=lambda _prompt: json.dumps(
+            {
+                "syntax_complete": False,
+                "story_closed": False,
+                "next_topic_separated": False,
+                "recommended_end_cue_index": 2,
+                "evidence_cue_indexes": [2],
+                "reason_codes": ["SYNTAX_INCOMPLETE"],
+                "summary": "漂移后的末句不完整。",
+            },
+            ensure_ascii=False,
+        ),
+        extract_json=pipeline.extract_json_object,
+    )
+
+    review = rebound["boundary_semantic_review"]
+    assert review["status"] == "BLOCK"
+    assert "correlated_source_projection" not in review
+
+
 def test_exact_final_release_review_binds_explicit_clean_response(
     monkeypatch,
 ):
