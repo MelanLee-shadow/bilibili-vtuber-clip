@@ -33,6 +33,81 @@ def _srt(*texts: str) -> str:
     ) + "\n"
 
 
+def test_late_source_language_cpa_retires_same_window_cpa_surface():
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    current = "わたくし的话就是大小姐"
+    proposed = "わたくしはいわゆるひとつの大小姐"
+    input_srt = _srt("前文", current)
+    output_srt = _srt("前文", proposed)
+    chat_audit = {
+        "entity_repairs": [
+            {
+                "mode": "final_review_context_adjudication",
+                "decision_authority": "CPA_JUDGE",
+                "matched_start_ms": 10_000,
+                "matched_end_ms": 14_000,
+                "before": ["我他喜欢的快就是大小姐"],
+                "after": [current],
+                "structured_exact_text": current,
+                "survived": True,
+                "boundary_required": False,
+            }
+        ]
+    }
+    source_audit = {
+        "status": "CPA_ADJUDICATED_FOREIGN_SPEAKER_AUDIO",
+        "decision_authority": "CPA_JUDGE",
+        "applied_count": 1,
+        "output_srt_sha256": hashlib.sha256(output_srt.encode()).hexdigest(),
+        "cpa_adjudication_rows": [
+            {
+                "cue_index": 2,
+                "resolved": True,
+                "choice": "PROPOSED",
+                "decision_authority": "CPA_JUDGE",
+                "current": current,
+                "proposed": proposed,
+                "adjudication": {
+                    "schema_version": "acoustic-witness-adjudication.v1",
+                    "decision_authority": "CPA_JUDGE",
+                    "witness_authority": "EVIDENCE_ONLY",
+                    "judge": {
+                        "schema_version": "acoustic-witness-adjudication.v1",
+                        "status": "JUDGED",
+                        "choice": "PROPOSED",
+                        "prompt_sha256": "a" * 64,
+                        "completion_sha256": "b" * 64,
+                    },
+                },
+            }
+        ],
+    }
+
+    pipeline._register_final_source_language_cpa_repairs(
+        chat_audit,
+        input_srt=input_srt,
+        output_srt=output_srt,
+        source_language_audit=source_audit,
+    )
+
+    assert chat_audit["entity_repairs"][0]["reconciliation"]["status"] == (
+        "SUPERSEDED_BY_FINAL_SOURCE_LANGUAGE_CPA"
+    )
+    owner = chat_audit["entity_repairs"][1]
+    assert owner["structured_exact_text"] == proposed
+    assert owner["superseded_entity_repair_indexes"] == [0]
+    assert verify_chat_authority_final_surfaces(
+        chat_audit,
+        final_text_srt=output_srt,
+        final_speaker_srt=output_srt,
+        delivery_start_ms=0,
+        delivery_end_ms=15_000,
+    )
+
+
 def _adapters() -> pipeline.TextPipelineAdapters:
     def unused(*args, **kwargs):
         return None

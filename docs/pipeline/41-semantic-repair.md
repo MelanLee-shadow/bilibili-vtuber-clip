@@ -42,6 +42,9 @@
      未命中时，候选盲音频转写只作为 PROPOSED，与 CURRENT 组成闭集交 CPA。CPA 选择
      CURRENT 才能保留正常 code-switch，选择 PROPOSED 即由 mutation authority 继续校验后
      重写；拼音冲突只披露，不再构成第二票。CPA 不可用继续 BLOCK，禁止检测器或 AGY 自行选边。
+     若该晚期 CPA 修复覆盖同一精确时间窗的旧 CPA 文本，必须登记 hash-bound
+     `final-source-language-cpa-supersession.v1`，让新文本成为唯一终稿 owner；禁止终验同时要求
+     两个互斥版本存活。
      此处生产音频输入只交 AGY；CPA 只接收 CURRENT、AGY 候选盲文字转写与整片文字语境。
      AGY 成功声学证据按音频字节、完整提示词、模型与适配算法身份做内容寻址缓存；只有
      全部身份和成功结果哈希逐项一致才可在重试中复用，失败或损坏项永不缓存。
