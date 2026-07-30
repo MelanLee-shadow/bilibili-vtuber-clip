@@ -1471,6 +1471,139 @@ def test_exact_final_release_review_forwards_recut_offset_to_audio_adjudication(
     assert captured["findings"] == [finding]
 
 
+def test_exact_release_context_only_cpa_cannot_reopen_bound_terminal_closure(
+    monkeypatch,
+):
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    monkeypatch.setattr(
+        pipeline, "_build_final_review_llm_call", lambda: (lambda _prompt: "{}")
+    )
+    current = "大小姐说了"
+    proposed = "大小姐说的"
+    finding = {
+        "cue_index": 3,
+        "kind": "context",
+        "suspect": "了",
+        "suggestion": "的",
+        "proposed_full_cue": proposed,
+        "base_text_sha256": hashlib.sha256(current.encode()).hexdigest(),
+    }
+    monkeypatch.setattr(
+        pipeline, "audit_final_subtitles", lambda *_args, **_kwargs: [finding]
+    )
+
+    def context_only_adjudication(_srt_text, findings, **_kwargs):
+        row = dict(list(findings)[0])
+        row["exact_release_adjudication"] = {
+            "schema_version": "subtitle-span-adjudication.v1",
+            "status": "OBSERVED",
+            "repaired": True,
+            "decision_authority": "CPA_JUDGE",
+            "policy_branch": "CPA_JUDGE_APPLY_PROPOSED_WITHOUT_AUDIO_WITNESS",
+            "mutation_authority": {
+                "schema_version": "subtitle-correction-mutation-authority.v1",
+                "status": "PASS",
+                "basis": "CPA_CONTEXT_ONLY_CLOSED_SET_DISAMBIGUATION",
+            },
+            "verdict": {
+                "schema_version": "subtitle-span-acoustic-witness.v1",
+                "status": "UNCERTAIN",
+                "reason_code": "ENTITY_AUDIO_PROVIDER_FAILED",
+            },
+            "request": {
+                "schema_version": "subtitle-span-acoustic-check-request.v1",
+                "current_cue": current,
+                "proposed_cue": proposed,
+            },
+        }
+        return [row], []
+
+    monkeypatch.setattr(
+        pipeline,
+        "adjudicate_exact_release_findings",
+        context_only_adjudication,
+    )
+    correction = _correction_pass()
+    correction["boundary_semantic_review"]["final_endpoint_binding"][
+        "closure_text_sha256"
+    ] = "sha256:" + hashlib.sha256(current.encode()).hexdigest()
+
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=_srt("前文", "わたくし的话就是大小姐", current),
+        correction_audit=correction,
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="日语人称翻译",
+        clip_context={},
+    )
+
+    assert receipt["status"] == "CLEAN"
+    assert receipt["release_gate"] == "PASS"
+    assert receipt["findings"] == []
+    resolved = receipt["resolved_findings"][0]
+    assert resolved["resolution"] == (
+        "BOUNDARY_SEMANTIC_PRESERVES_TERMINAL_CLOSURE_WITHOUT_AUDIO"
+    )
+    assert resolved["boundary_closure_authority"]["status"] == "KEEP_CURRENT"
+
+
+def test_exact_release_terminal_closure_guard_does_not_override_audio_cpa(
+    monkeypatch,
+):
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    monkeypatch.setattr(
+        pipeline, "_build_final_review_llm_call", lambda: (lambda _prompt: "{}")
+    )
+    current = "大小姐说了"
+    finding = {"cue_index": 3}
+    monkeypatch.setattr(
+        pipeline, "audit_final_subtitles", lambda *_args, **_kwargs: [finding]
+    )
+
+    def acoustic_adjudication(_srt_text, findings, **_kwargs):
+        row = dict(list(findings)[0])
+        row["exact_release_adjudication"] = {
+            "schema_version": "subtitle-span-adjudication.v1",
+            "status": "OBSERVED",
+            "repaired": True,
+            "decision_authority": "CPA_JUDGE",
+            "mutation_authority": {
+                "schema_version": "subtitle-correction-mutation-authority.v1",
+                "status": "PASS",
+                "basis": "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION",
+            },
+            "verdict": {"status": "OBSERVED", "target_audible": True},
+            "request": {"current_cue": current, "proposed_cue": "大小姐说的"},
+        }
+        return [row], []
+
+    monkeypatch.setattr(
+        pipeline,
+        "adjudicate_exact_release_findings",
+        acoustic_adjudication,
+    )
+    correction = _correction_pass()
+    correction["boundary_semantic_review"]["final_endpoint_binding"][
+        "closure_text_sha256"
+    ] = "sha256:" + hashlib.sha256(current.encode()).hexdigest()
+
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=_srt("前文", "中段", current),
+        correction_audit=correction,
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="",
+        clip_context={},
+    )
+
+    assert receipt["status"] == "FLAGGED"
+    assert len(receipt["findings"]) == 1
+    assert not any(
+        row.get("boundary_closure_authority")
+        for row in receipt["resolved_findings"]
+    )
+
+
 def test_post_semantic_entity_stage_never_reverts_name_to_draft_witness(tmp_path):
     """2026-07-16 实案抽象：LLM/词表已把 draft 怪词修成专名后，后置
     Gemini 不得再用“必须和初始听写一致”把它改回 draft 或竞争实体。"""

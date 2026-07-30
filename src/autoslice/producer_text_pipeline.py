@@ -83,6 +83,7 @@ from src.autoslice.producer_source_truth_authority import (
     verify_source_truth_preview_formal_binding,
 )
 from src.autoslice.song_name_pin import pin_song_names_in_srt
+from src.autoslice.terminal_closure_guard import preserve_context_only_terminal_closure
 from src.autoslice.foreign_span_witness import (
     adjudicate_language_preservation_audit,
     adjudicate_foreign_script_audit,
@@ -1098,6 +1099,13 @@ def _run_exact_final_release_review(
             screen_read_probe=screen_read_probe,
         )
     )
+    unresolved_findings, boundary_preserved = (
+        preserve_context_only_terminal_closure(
+            unresolved_findings,
+            boundary=base["boundary_semantic_review"],
+        )
+    )
+    acoustic_resolved.extend(boundary_preserved)
     resolved_findings = [*authority_resolved, *acoustic_resolved]
     # Ivan 2026-07-26（无人值守裁定）：judge 走完仍 UNCERTAIN 且策略分支为
     # KEEP_CURRENT 的 finding 是已完成的机器决定——按现文本交付并披露，

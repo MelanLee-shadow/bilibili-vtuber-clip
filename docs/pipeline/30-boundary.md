@@ -160,6 +160,13 @@ post-end witness、source interval 漂移、最终 reviewer 未选择 delivery �
 变化会使 source 回执及其下游 witness 失效；materialize 后 SRT 的任何字节/cue 变化会使
 final-delivery 回执与 exact-final 放行回执失效，均须从相应层重新评审，不能只重绑 hash。
 
+若 exact-final 的 CPA 在 AGY 无有效听音（`UNCERTAIN`）时仅靠文字闭集提出修改，普通 cue
+仍按 CPA 结果处理；但它不得把已由 PASS 的 final-delivery 回执及 source-separation witness
+共同绑定的最后 closure cue 改成新的文本。此时 `terminal-closure-mutation-guard.v1` 以
+`BOUNDARY_SEMANTIC_INVARIANT` 保留 CURRENT 并披露提案，避免文字推断把完整收束改成残句后
+形成确定性重试死循环。AGY 有效听音后由 CPA 作出的声学裁决不受这条保护影响，改字后仍须
+重新通过 final-delivery 语义闭环。
+
 两层 reviewer 的 `evidence_cue_indexes` 都必须是各自 hash-bound request 中实际展示的
 `cues` 的非空子集；引用未展示行报 `BOUNDARY_EVIDENCE_CUES_INVALID`。source reviewer 声明
 `next_topic_separated=true` 时，至少一条 evidence cue 必须在推荐 endpoint **之后**，否则报
