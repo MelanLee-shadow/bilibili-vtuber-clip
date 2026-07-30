@@ -1143,8 +1143,12 @@ def test_legacy_foreign_provider_rejection_is_reviveable():
     assert delivery_recovery._is_provider_backfilled_foreign_rejection(record)
 
 
-def test_selected_foreign_authority_rejection_revives_after_pipeline_change(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    "failure_stage",
+    ["foreign_source_transcription", "final_review_findings"],
+)
+def test_selected_authority_rejection_revives_after_pipeline_change(
+    tmp_path, monkeypatch, failure_stage
 ):
     date, state = _fixture(tmp_path, monkeypatch)
     record = state["picks"][0]
@@ -1154,7 +1158,7 @@ def test_selected_foreign_authority_rejection_revives_after_pipeline_change(
             "rejected_status": "failed",
             "selected_repair": True,
             "failure_kind": "subtitle_authority",
-            "failure_stage": "foreign_source_transcription",
+            "failure_stage": failure_stage,
             "failure_recoverable": False,
             "failure_recovery_fingerprint": OLD,
             "rejection_reason": "subtitle_authority_unresolved_backfilled",

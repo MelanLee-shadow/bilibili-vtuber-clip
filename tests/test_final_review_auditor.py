@@ -923,6 +923,134 @@ def test_exact_release_adopts_rebuilt_candidate_for_same_run_self_heal():
     assert repairs[0]["decision_authority"] == "CPA_JUDGE"
 
 
+def test_missing_disclosure_candidate_is_proposed_then_acoustically_judged():
+    source = _srt("那我不应该说咱", "嗯，咱有点像迪酱", "我要吃午饭")
+    witness_requests = []
+    calls: list[str] = []
+
+    def witness(request):
+        witness_requests.append(request)
+        return _witness(request, "en zan you dian xiang zi cheng")
+
+    def cpa(prompt):
+        calls.append(prompt)
+        if "# 字幕缺失候选重建" in prompt:
+            return json.dumps(
+                {
+                    "status": "PROPOSED",
+                    "proposed_cue": "嗯，咱有点像自称",
+                    "reason": "上下文在讨论第一人称自称",
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps({"choice": "PROPOSED", "reason": "盲听与语境一致"})
+
+    output, audit = adjudicate_context_finding(
+        source,
+        {
+            "cue_index": 2,
+            "suspect": "迪酱",
+            "suggestion": None,
+            "proposed_full_cue": None,
+            "repair_class": "disclosure_only",
+            "why": "无明确词义或专名依据",
+        },
+        entity_verifier=witness,
+        judge_llm_call=cpa,
+    )
+
+    assert "嗯，咱有点像自称" in output
+    assert audit["repaired"] is True
+    assert audit["decision_authority"] == "CPA_JUDGE"
+    assert audit["proposal_bootstrap"]["status"] == "PROPOSED"
+    assert audit["proposal_bootstrap"]["mutation_authorized"] is False
+    assert audit["rebuilt_finding"]["repair_class"] == "phonetic"
+    assert audit["rebuilt_finding"]["candidate_provenance"] == {
+        "kind": "cpa_context_proposal",
+        "mutation_authorized": False,
+        "prompt_sha256": audit["proposal_bootstrap"]["prompt_sha256"],
+    }
+    assert len(calls) == 2
+    assert len(witness_requests) == 1
+    assert "proposed_cue" not in witness_requests[0]
+
+
+def test_missing_disclosure_candidate_stays_blocked_when_cpa_cannot_propose():
+    source = _srt("那我不应该说咱", "嗯，咱有点像迪酱", "我要吃午饭")
+
+    output, audit = adjudicate_context_finding(
+        source,
+        {
+            "cue_index": 2,
+            "suspect": "迪酱",
+            "suggestion": None,
+            "proposed_full_cue": None,
+            "repair_class": "disclosure_only",
+        },
+        entity_verifier=lambda request: pytest.fail(
+            f"AGY must not run without a candidate: {request}"
+        ),
+        judge_llm_call=lambda _prompt: json.dumps(
+            {"status": "UNRESOLVED", "proposed_cue": "", "reason": "证据不足"},
+            ensure_ascii=False,
+        ),
+    )
+
+    assert output == source
+    assert audit["status"] == "MISSING_PROPOSAL_UNRESOLVED"
+    assert audit["repaired"] is False
+    assert audit["proposal_bootstrap"]["status"] == "UNRESOLVED"
+    assert audit["decision_authority"] == "CPA_JUDGE_NOT_REACHED"
+
+
+def test_exact_release_self_heals_a_bootstrapped_missing_candidate():
+    source = _srt("那我不应该说咱", "嗯，咱有点像迪酱", "我要吃午饭")
+
+    def cpa(prompt):
+        if "# 字幕缺失候选重建" in prompt:
+            return json.dumps(
+                {
+                    "status": "PROPOSED",
+                    "proposed_cue": "嗯，咱有点像自称",
+                    "reason": "上下文在讨论第一人称自称",
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps({"choice": "PROPOSED", "reason": "盲听支持"})
+
+    unresolved, resolved = adjudicate_exact_release_findings(
+        source,
+        [
+            {
+                "cue_index": 2,
+                "suspect": "迪酱",
+                "suggestion": None,
+                "proposed_full_cue": None,
+                "repair_class": "disclosure_only",
+            }
+        ],
+        entity_verifier=lambda request: _witness(
+            request, "en zan you dian xiang zi cheng"
+        ),
+        judge_llm_call=cpa,
+    )
+
+    assert resolved == []
+    assert unresolved[0]["proposed_full_cue"] == "嗯，咱有点像自称"
+    assert unresolved[0]["suggestion"] == "自称"
+    from src.autoslice.producer_package_finalization import (
+        _apply_exact_final_cpa_repairs,
+    )
+
+    healed, repairs = _apply_exact_final_cpa_repairs(
+        source,
+        {"findings": unresolved},
+    )
+    assert "嗯，咱有点像自称" in healed
+    assert len(repairs) == 1
+    assert repairs[0]["decision_authority"] == "CPA_JUDGE"
+
+
 def test_context_adjudication_keeps_current_when_semantics_conflict_with_audio():
     source = _srt("还没有歌杂呢")
 

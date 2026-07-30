@@ -49,6 +49,9 @@ from src.autoslice.final_review_schema_retry import (
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import extract_json_object
+from src.autoslice.missing_proposal_bootstrap import (
+    prepare_missing_proposal_candidate,
+)
 from src.autoslice.source_subtitle_truth import (
     MIN_CUE_OVERLAP_MS,
     source_truth_owner_windows,
@@ -1508,7 +1511,6 @@ _PROPOSAL_REBUILD_PROMPT = """# 字幕坏闭集重建（只提案，不裁决）
 {{"status":"PROPOSED"或"UNRESOLVED","proposed_cue":"单行完整第三候选；UNRESOLVED 时为空","reason":"一句话说明拼音覆盖与语境依据"}}
 """
 
-
 def _proposal_rebuild_cache_path(prompt_sha256: str) -> Path | None:
     base = os.environ.get("AUTOSLICE_BASE")
     if not base:
@@ -1720,6 +1722,19 @@ def adjudicate_context_finding(
     judged choice. The mutation-authority receipt contract is unchanged.
     """
 
+    finding, proposal_bootstrap_audit, bootstrap_failure = (
+        prepare_missing_proposal_candidate(
+            srt_text=srt_text,
+            finding=finding,
+            structured_chat=_structured_chat_lines(clip_context),
+            llm_call=judge_llm_call,
+            derive_single_span_edit=_derive_single_span_edit,
+        )
+    )
+    if bootstrap_failure is not None:
+        return srt_text, bootstrap_failure
+    assert finding is not None
+    bootstrap_finding = finding if proposal_bootstrap_audit is not None else None
     try:
         request = build_context_adjudication_request(
             srt_text,
@@ -1809,7 +1824,7 @@ def adjudicate_context_finding(
     policy_branch = "INVALID_OR_UNCERTAIN_KEEP_CURRENT"
     decision_finding: Mapping[str, Any] = finding
     proposal_rebuild_audit: dict[str, Any] | None = None
-    rebuilt_finding: dict[str, Any] | None = None
+    rebuilt_finding: dict[str, Any] | None = bootstrap_finding
     orthography_ambiguous = _orthography_ambiguous(
         current_cue=str(request.get("current_cue") or ""),
         proposed_cue=str(request.get("proposed_cue") or ""),
@@ -2030,6 +2045,11 @@ def adjudicate_context_finding(
         **(
             {"proposal_rebuild": proposal_rebuild_audit}
             if proposal_rebuild_audit is not None
+            else {}
+        ),
+        **(
+            {"proposal_bootstrap": proposal_bootstrap_audit}
+            if proposal_bootstrap_audit is not None
             else {}
         ),
         **(

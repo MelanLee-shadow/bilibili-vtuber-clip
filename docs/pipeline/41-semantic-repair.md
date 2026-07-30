@@ -32,6 +32,12 @@
      在闭集内定夺。CPA 若选 `NEITHER`，流水线用同一个候选盲音频几何让 CPA 提案层生成一个
      有界第三候选，再由独立闭集裁决确认；提案层无 mutation authority，第二次仍非
      `PROPOSED` 就保持 fail closed。
+     若独立 exact-final 审片员只标出有界 `suspect`、因不愿猜测而没有给
+     `proposed_full_cue`，不得在声学层前以 `SUGGESTION_EMPTY` 永久终止：先让 CPA 文字提案层
+     根据目标 cue 前后三条与绑定结构化聊天生成一个覆盖 suspect 的最小完整 cue；该层仍无
+     mutation authority。候选随后必须经过 AGY 无候选盲听，再由第二轮 CPA 在
+     CURRENT/PROPOSED 中最终选边；CPA 提案 `UNRESOLVED`、越界改写或第二轮未明确选择时均
+     fail closed。exact-final 的合法闭集收据可按下述同轮自愈合同落字并重扫。
    - mixed CJK/Latin fidelity 门同样没有终审权：严格整句相似度命中可作为 verbatim 见证；
      未命中时，候选盲音频转写只作为 PROPOSED，与 CURRENT 组成闭集交 CPA。CPA 选择
      CURRENT 才能保留正常 code-switch，选择 PROPOSED 即由 mutation authority 继续校验后
