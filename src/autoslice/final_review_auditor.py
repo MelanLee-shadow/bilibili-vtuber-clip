@@ -38,6 +38,7 @@ from src.autoslice.chat_evidence import (
 from src.autoslice.acoustic_witness_adjudication import (
     adjudicate_with_witness,
     build_witness_request,
+    valid_witness_evidence,
 )
 from src.autoslice.glossary_expected_value import glossary_expected_value_gate
 from src.autoslice.final_review_schema_retry import (
@@ -1802,24 +1803,7 @@ def adjudicate_context_finding(
         if upgraded is not None:
             finding, request, screen_read_audit = upgraded
             verdict, witness_request = _fetch_witness(request)
-    valid = (
-        verdict.get("schema_version") == "subtitle-span-acoustic-witness.v1"
-        and verdict.get("request_sha256") == witness_request["request_sha256"]
-        and verdict.get("status") == "OBSERVED"
-        and isinstance(verdict.get("target_audible"), bool)
-        # a witness must never carry judged/text channels, even wrapped
-        and not any(
-            key in verdict
-            for key in (
-                "candidate_id",
-                "canonical_entity",
-                "proposed_cue",
-                "rewritten_text",
-                "current_fit",
-                "proposed_fit",
-            )
-        )
-    )
+    valid = valid_witness_evidence(verdict, request_sha256=witness_request["request_sha256"])
     repaired = False
     policy_branch = "INVALID_OR_UNCERTAIN_KEEP_CURRENT"
     decision_finding: Mapping[str, Any] = finding
@@ -2007,6 +1991,7 @@ def adjudicate_context_finding(
         and strict_tie
         and policy_branch == "CPA_SEMANTIC_ORTHOGRAPHY_TIEBREAK_APPLY_PROPOSED"
     )
+    without_audio_witness = witness_judge_audit.get("witness_status") == "UNCERTAIN"
     mutation_authority = {
         "schema_version": "subtitle-correction-mutation-authority.v1",
         "status": (
@@ -2027,7 +2012,11 @@ def adjudicate_context_finding(
             )
             if repaired and orthography_ambiguous
             else (
-                "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION"
+                (
+                    "CPA_CONTEXT_ONLY_CLOSED_SET_DISAMBIGUATION"
+                    if without_audio_witness
+                    else "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION"
+                )
                 if repaired
                 else None
             )
@@ -2035,7 +2024,13 @@ def adjudicate_context_finding(
     }
     return output, {
         "schema_version": "subtitle-span-adjudication.v1",
-        "status": "OBSERVED" if valid else "UNCERTAIN",
+        "status": (
+            "OBSERVED"
+            if valid
+            and isinstance(witness_judge_audit.get("judge"), Mapping)
+            and witness_judge_audit["judge"].get("status") == "JUDGED"
+            else "UNCERTAIN"
+        ),
         "repaired": repaired,
         "policy_branch": policy_branch,
         "timing_immutable": True,
@@ -2382,7 +2377,12 @@ def audit_correction_mutation_authority(
                     else "CPA_JUDGED_WITH_TEXTUAL_ORTHOGRAPHY_EVIDENCE"
                 )
                 if orthography_ambiguous is True
-                else "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION"
+                else (
+                    "CPA_CONTEXT_ONLY_CLOSED_SET_DISAMBIGUATION"
+                    if isinstance(witness_judge, Mapping)
+                    and witness_judge.get("witness_status") == "UNCERTAIN"
+                    else "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION"
+                )
             )
             orthography_valid = True
             if orthography_ambiguous is True and not semantic_tiebreak:

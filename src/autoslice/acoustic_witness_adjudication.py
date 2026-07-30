@@ -101,6 +101,31 @@ def build_witness_request(check_request: Mapping[str, Any]) -> dict[str, Any]:
     return request
 
 
+def valid_witness_evidence(
+    witness: Mapping[str, Any], *, request_sha256: str
+) -> bool:
+    """Accept bound AGY evidence or a bound disclosure that AGY was unavailable."""
+
+    status = witness.get("status")
+    return bool(
+        witness.get("schema_version") == "subtitle-span-acoustic-witness.v1"
+        and witness.get("request_sha256") == request_sha256
+        and status in {"OBSERVED", "UNCERTAIN"}
+        and (status == "UNCERTAIN" or isinstance(witness.get("target_audible"), bool))
+        and not any(
+            key in witness
+            for key in (
+                "candidate_id",
+                "canonical_entity",
+                "proposed_cue",
+                "rewritten_text",
+                "current_fit",
+                "proposed_fit",
+            )
+        )
+    )
+
+
 def _pinyin_tokens(text: str) -> list[str] | None:
     if _lazy_pinyin is None:
         return None
@@ -180,8 +205,13 @@ _JUDGE_PROMPT = """# 字幕选字裁决（闭集）
 6. 「绑定文字证据」只证明候选的规范写法，不单独证明目标区间说了它。若
    拼音/语篇确认目标指向该实体或原文，必须采用其规范写法；AGY、ASR、
    glossary、roster、弹幕、OCR 都只是证据，最终闭集选择仍由你作出。
+7. 证人状态为 UNCERTAIN 时表示 AGY 本轮没有提供可用听音；这不剥夺你的
+   最终裁决权。必须忽略缺失的拼音、仅根据闭集、完整语境和绑定文字证据
+   排序 CURRENT / PROPOSED / NEITHER，不得因为 AGY 不可用而拒绝裁决。
 
 ## 听写证人报告（未见候选）
+- 证人状态: {witness_status}
+- 不可用原因: {witness_unavailable_reason}
 - 目标区间可闻人声: {target_audible}
 - 疑似拼音: {heard_pinyin}
 - 音节数: {syllable_count}
@@ -254,6 +284,15 @@ def judge_word_choice(
         else ""
     )
     prompt = _JUDGE_PROMPT.format(
+        witness_status=witness.get("status"),
+        witness_unavailable_reason=json.dumps(
+            {
+                "reason_code": witness.get("reason_code"),
+                "detail": witness.get("detail"),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
         target_audible=witness.get("target_audible"),
         heard_pinyin=str(witness.get("heard_pinyin") or ""),
         syllable_count=witness.get("syllable_count"),
@@ -382,12 +421,7 @@ def adjudicate_with_witness(
     llm_call: Callable[[str], str] | None,
     structured_chat_context: str = "",
 ) -> tuple[bool, str, dict[str, Any]]:
-    """Fuse witness dictation + CPA word choice + code-level pinyin gate.
-
-    Returns (repaired, policy_branch, audit). Every uncertainty keeps the
-    current text; only a judged PROPOSED that stays pinyin-compatible — and
-    not clearly worse than CURRENT — may repair.
-    """
+    """Fuse optional AGY evidence with CPA-owned closed-set word choice."""
 
     audit: dict[str, Any] = {
         "schema_version": ADJUDICATION_SCHEMA,
@@ -397,11 +431,15 @@ def adjudicate_with_witness(
         "witness_authority": "EVIDENCE_ONLY",
     }
     repair_class = str(check_request.get("repair_class") or "")
+    witness_status = witness.get("status") if isinstance(witness, Mapping) else None
     witness_valid = (
         isinstance(witness, Mapping)
         and witness.get("schema_version") == "subtitle-span-acoustic-witness.v1"
-        and witness.get("status") == "OBSERVED"
-        and isinstance(witness.get("target_audible"), bool)
+        and witness_status in {"OBSERVED", "UNCERTAIN"}
+        and (
+            witness_status == "UNCERTAIN"
+            or isinstance(witness.get("target_audible"), bool)
+        )
     )
     if not witness_valid:
         return False, "WITNESS_UNAVAILABLE_KEEP_CURRENT", audit
@@ -415,6 +453,20 @@ def adjudicate_with_witness(
         structured_chat_context=structured_chat_context,
     )
     audit["judge"] = verdict
+    if witness_status == "UNCERTAIN":
+        audit["witness_unavailable_reason"] = str(
+            witness.get("reason_code") or witness.get("detail") or "UNKNOWN"
+        )
+        if verdict.get("choice") == "NEITHER":
+            return False, "JUDGE_REJECTS_CLOSED_SET", audit
+        if verdict.get("choice") != "PROPOSED":
+            branch = (
+                "JUDGE_KEEPS_CURRENT"
+                if verdict.get("choice") == "CURRENT"
+                else "JUDGE_UNCERTAIN_KEEP_CURRENT"
+            )
+            return False, branch, audit
+        return True, "CPA_JUDGE_APPLY_PROPOSED_WITHOUT_AUDIO_WITNESS", audit
     if not witness["target_audible"]:
         if verdict.get("choice") == "NEITHER":
             return False, "JUDGE_REJECTS_CLOSED_SET", audit

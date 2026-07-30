@@ -2000,9 +2000,8 @@ def test_final_review_marks_findings_beyond_audio_budget(monkeypatch):
     assert audit["status"] == "PARTIAL"
 
 
-def test_final_review_marks_provider_failed_adjudications_infra_unresolved(monkeypatch):
-    """2026-07-18 交付事故类机制：provider 额度失败导致的 UNCERTAIN 不是证据
-    裁决，必须记入 infra_unresolved（而 OBSERVED 下的 keep-current 不记）。"""
+def test_final_review_lets_cpa_decide_when_agy_provider_fails(monkeypatch):
+    """AGY quota failure removes evidence, not CPA's final authority."""
     findings = [
         {
             "cue": 1,
@@ -2022,20 +2021,23 @@ def test_final_review_marks_provider_failed_adjudications_infra_unresolved(monke
     monkeypatch.setattr(
         pipeline,
         "build_llm_call",
-        lambda config: lambda prompt: json.dumps({"findings": findings}, ensure_ascii=False),
+        lambda config: _split_llm(
+            json.dumps({"findings": findings}, ensure_ascii=False),
+            "PROPOSED",
+        ),
     )
 
     def provider_failed_then_observed(request):
         if request["cue_indexes"] == [1]:
             return {
-                "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+                "schema_version": "subtitle-span-acoustic-witness.v1",
                 "request_sha256": request["request_sha256"],
                 "status": "UNCERTAIN",
                 "reason_code": "ENTITY_AUDIO_PROVIDER_FAILED",
                 "detail": "GEMINI_API_QUOTA_EXHAUSTED;GEMINI_API_QUOTA_EXHAUSTED",
             }
         return {
-            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+            "schema_version": "subtitle-span-acoustic-witness.v1",
             "request_sha256": request["request_sha256"],
             "status": "OBSERVED",
             "target_audible": True,
@@ -2051,10 +2053,16 @@ def test_final_review_marks_provider_failed_adjudications_infra_unresolved(monke
         adapters=_adapters(),
     )
 
-    assert "核酸天下" in output  # 未修（provider 失败），但必须被标记
-    assert audit["infra_unresolved_count"] == 1
-    assert audit["infra_unresolved"][0]["cue_index"] == 1
-    assert audit["infra_unresolved"][0]["reason_code"] == "ENTITY_AUDIO_PROVIDER_FAILED"
+    assert "和成天下" in output
+    first = audit["findings"][0]["context_audio_adjudication"]
+    assert first["status"] == "OBSERVED"
+    assert first["policy_branch"] == (
+        "CPA_JUDGE_APPLY_PROPOSED_WITHOUT_AUDIO_WITNESS"
+    )
+    assert first["mutation_authority"]["basis"] == (
+        "CPA_CONTEXT_ONLY_CLOSED_SET_DISAMBIGUATION"
+    )
+    assert audit["infra_unresolved_count"] == 0
 
 
 def test_ledger_owned_cue_skips_entity_arbitration(tmp_path):

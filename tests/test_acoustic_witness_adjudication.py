@@ -443,7 +443,6 @@ def test_judge_prompt_carries_witness_and_closed_set():
 
 @pytest.mark.parametrize("bad_witness", [
     {},
-    {"schema_version": "subtitle-span-acoustic-witness.v1", "status": "UNCERTAIN"},
     {
         "schema_version": "subtitle-span-acoustic-witness.v1",
         "status": "OBSERVED",
@@ -458,6 +457,29 @@ def test_invalid_witness_always_keeps_current(bad_witness):
     )
     assert repaired is False
     assert branch == "WITNESS_UNAVAILABLE_KEEP_CURRENT"
+
+
+def test_cpa_decides_closed_set_when_agy_witness_is_unavailable():
+    witness = {
+        "schema_version": "subtitle-span-acoustic-witness.v1",
+        "status": "UNCERTAIN",
+        "reason_code": "ENTITY_AUDIO_PROVIDER_FAILED",
+        "detail": "AGY_QUOTA_EXHAUSTED",
+    }
+    prompts = []
+    repaired, branch, audit = adjudicate_with_witness(
+        check_request=CHECK_REQUEST,
+        witness=witness,
+        llm_call=lambda prompt: (
+            prompts.append(prompt)
+            or json.dumps({"choice": "PROPOSED", "reason": "context wins"})
+        ),
+    )
+    assert repaired is True
+    assert branch == "CPA_JUDGE_APPLY_PROPOSED_WITHOUT_AUDIO_WITNESS"
+    assert audit["witness_status"] == "UNCERTAIN"
+    assert "AGY_QUOTA_EXHAUSTED" in prompts[0]
+    assert "这不剥夺你的" in prompts[0]
 
 
 def test_witness_self_count_mismatch_is_disclosed_not_fatal(tmp_path):
