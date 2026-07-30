@@ -123,7 +123,10 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   仍不匹配就阻断；若复核本身因 AGY quota/timeout/不可解析而不可用，则禁止继续消耗生图额度，
   也禁止放过未经核验的 AI 像素。未发布包必须保留失败回执并自动降级为 hash-bound
   `screenshot_direct / READY_DEGRADED`；cover-only maintenance 遇到同类失败必须排入一次正常
-  producer 重跑，让完整 route/proof 链生成该降级包，而不是耗尽三次 repair 后停住。
+  producer 重跑，让完整 route/proof 链生成该降级包，而不是耗尽三次 repair 后停住。重跑生成
+  降级包后，交付证明必须按 `actual_treatment=screenshot_direct` 验源帧、帧位、标题像素与 hash；
+  不得再按最初的 `selected_treatment=cpa_redraw` 强求 `images.edit`，否则会把有效降级包误判成
+  待维修并重复消耗生图调用。
 - **所有关系型路线**都必须有最终人物 proof。`screenshot_polish` 与 CPA/AI 因像素已被修改，
   绝不能继承 source participant 声明，必须由独立 final-pixel verifier 逐个确认双方可见、
   身份正确，并绑定最终 cover SHA；故事动作/反转若只由文字表达，必须作为 `COVER_TEXT`

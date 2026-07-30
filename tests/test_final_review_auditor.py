@@ -630,6 +630,150 @@ def test_auditor_cannot_bypass_entity_provenance_by_mislabeling_latin_name():
     )
 
 
+def test_bound_chat_latin_lexeme_reaches_cpa_when_audio_is_unavailable():
+    source = _srt("它要是博客")
+    clip_context = {
+        "structured_chat": [
+            {
+                "kind": "danmaku",
+                "text": "因为是boku",
+                "source_event_id": "event-1",
+                "source_sha256": "a" * 64,
+            }
+        ]
+    }
+    findings = audit_final_subtitles(
+        source,
+        llm_call=_fake_llm(
+            [
+                {
+                    "cue": 1,
+                    "kind": "context",
+                    "proposed_full_cue": "它要是boku",
+                    "repair_class": "phonetic",
+                    "why": "整段正在讨论日语第一人称",
+                }
+            ]
+        ),
+        extract_json=_extract,
+        structured_context_text="danmaku @19049ms: 因为是boku",
+        candidate_context=clip_context,
+    )
+
+    finding = findings[0]
+    assert finding["suggestion"] == "boku"
+    assert finding["candidate_provenance"] == {
+        "kind": "structured_chat_bound",
+        "surface": "boku",
+        "source_sha256": "a" * 64,
+        "source_event_id": "event-1",
+    }
+    assert finding["source_surface_inference"] == {
+        "surface": "boku",
+        "basis": "exact_latin_surface_in_bound_structured_chat",
+    }
+    assert finding["latin_candidate_support"]["basis"] == (
+        "BOUND_STRUCTURED_CHAT"
+    )
+
+    def unavailable_witness(request):
+        return {
+            "schema_version": "subtitle-span-acoustic-witness.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "UNCERTAIN",
+            "reason_code": "ENTITY_AUDIO_PROVIDER_FAILED",
+        }
+
+    output, adjudication = adjudicate_context_finding(
+        source,
+        finding,
+        entity_verifier=unavailable_witness,
+        clip_context=clip_context,
+        judge_llm_call=_judge("PROPOSED"),
+    )
+    assert "它要是boku" in output
+    assert adjudication["policy_branch"] == (
+        "CPA_JUDGE_APPLY_PROPOSED_WITHOUT_AUDIO_WITNESS"
+    )
+    assert adjudication["decision_authority"] == "CPA_JUDGE"
+    assert adjudication["mutation_authority"]["status"] == "PASS"
+
+
+def test_repeated_foreign_lexeme_proposals_reach_cpa_without_chat_or_audio():
+    source = _srt("应该是阿达西这种", "啊 DC 就像偶")
+    findings = audit_final_subtitles(
+        source,
+        llm_call=_fake_llm(
+            [
+                {
+                    "cue": 1,
+                    "kind": "context",
+                    "proposed_full_cue": "应该是atashi这种",
+                    "repair_class": "phonetic",
+                    "evidence_cue_ids": [2],
+                    "why": "同一日语第一人称反复漂移",
+                },
+                {
+                    "cue": 2,
+                    "kind": "context",
+                    "proposed_full_cue": "atashi就像偶",
+                    "repair_class": "phonetic",
+                    "evidence_cue_ids": [1],
+                    "why": "同一日语第一人称反复漂移",
+                },
+            ]
+        ),
+        extract_json=_extract,
+    )
+
+    assert [finding["suggestion"] for finding in findings] == [
+        "atashi",
+        "atashi",
+    ]
+    for finding in findings:
+        assert finding["candidate_provenance"] is None
+        assert finding["latin_candidate_support"] == {
+            "schema_version": "latin-lexical-candidate-support.v1",
+            "token": "atashi",
+            "basis": "CPA_CROSS_CUE_PROPOSAL_CONSENSUS",
+            "cue_indexes": [1, 2],
+        }
+        assert "suggestion_rejected_reason" not in finding
+
+
+def test_priority_candidates_are_not_crowded_out_by_reviewer_limit():
+    source = _srt("错字", "名多的孩子")
+    raw = [
+        {
+            "cue": 1,
+            "kind": "context",
+            "proposed_full_cue": "对字",
+            "repair_class": "phonetic",
+            "why": f"duplicate reviewer row {index}",
+        }
+        for index in range(24)
+    ]
+    findings = audit_final_subtitles(
+        source,
+        llm_call=_fake_llm(raw),
+        extract_json=_extract,
+        extra_raw_findings=[
+            {
+                "cue": 2,
+                "kind": "context",
+                "suspect": "名多",
+                "proposed_full_cue": "鸣人的孩子",
+                "repair_class": "phonetic",
+                "why": "fidelity candidate",
+            }
+        ],
+        prioritize_extra_raw_findings=True,
+    )
+
+    assert findings[0]["cue_index"] == 2
+    assert findings[0]["suggestion"] == "鸣人"
+
+
 def test_context_request_uses_full_cue_candidates_and_adjacent_lines():
     source = _srt("前一句", "还没有歌杂呢", "后一句", "再后一句")
     request = build_context_adjudication_request(

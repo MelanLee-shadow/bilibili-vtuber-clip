@@ -35,6 +35,16 @@
      `NEITHER`，流水线用同一个候选盲音频几何让 CPA 提案层生成一个
      有界第三候选，再由独立闭集裁决确认；提案层无 mutation authority，第二次仍非
      `PROPOSED` 就保持 fail closed。
+     外语词面候选不得在 CPA 之前被拉丁字符门一刀切掉：若同一个拉丁词面由终审在至少两个
+     不同 cue 中逐 cue 提议，或该词面逐字命中带 source SHA 的同窗结构化弹幕，则可作为
+     `latin-lexical-candidate-support.v1` 候选进入 CPA 闭集。前者只是跨 cue 召回，后者是
+     `structured_chat_bound` 拼写证据；二者都没有最终决定权。单个无来源拉丁专名猜测仍按
+     `LATIN_SCRIPT_REPAIR_REQUIRES_SOURCE_PROVENANCE` 拒绝，防止把作品/组织名常识猜测伪装成
+     普通近音修复。AGY 缺席时 CPA 仍须对合法闭集作最终选择。
+     CPA 整段润色曾提出、但因忠实性守卫缺少声学证人而回退的单一 replacement 不得就此丢失：
+     只把能逐字绑定当前 cue、且 `current.replace(suspect,replacement)==attempted` 的最多 8 个
+     高收益候选优先送入终审闭集。它们只保留 candidate authority；忠实性回退本身不证明提案
+     正确，最终仍由 CPA 结合当前 cue、前后文和结构化证据选择 CURRENT 或 PROPOSED。
      若独立 exact-final 审片员只标出有界 `suspect`、因不愿猜测而没有给
      `proposed_full_cue`，不得在声学层前以 `SUGGESTION_EMPTY` 永久终止：先让 CPA 文字提案层
      根据目标 cue 前后三条与绑定结构化聊天生成一个覆盖 suspect 的最小完整 cue；该层仍无

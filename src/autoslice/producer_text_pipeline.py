@@ -197,6 +197,86 @@ class TextEvidenceResult:
     chat_authority_path: Path
 
 
+_FIDELITY_REVIEW_CANDIDATE_LIMIT = 8
+
+
+def _fidelity_review_candidates(
+    padded: Path,
+    current_srt: str,
+) -> list[dict[str, object]]:
+    """Recover bounded CPA candidates that the fidelity guard could not prove.
+
+    The guard is right to reject an unwitnessed rewrite, but its rejected text
+    is still useful as a candidate.  It receives no mutation authority here:
+    only a single exact replacement bound to the current cue is forwarded to
+    the final CPA closed-set judgment.
+    """
+
+    path = padded.with_suffix(".fidelity-audit.json")
+    try:
+        audit = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return []
+    rows = audit.get("reverted") if isinstance(audit, Mapping) else None
+    if not isinstance(rows, list):
+        return []
+    cues = [cue for cue in parse_srt_cues(current_srt) if cue.text.strip()]
+    candidates: list[tuple[tuple[int, int, int], dict[str, object]]] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        try:
+            cue_index = int(row.get("cue_index") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not 1 <= cue_index <= len(cues):
+            continue
+        current = cues[cue_index - 1].text
+        kept = str(row.get("kept") or "")
+        attempted = str(row.get("attempted") or "")
+        violations = row.get("violations")
+        if current != kept or not attempted or attempted == current:
+            continue
+        if not isinstance(violations, list) or len(violations) != 1:
+            continue
+        violation = violations[0]
+        if not isinstance(violation, Mapping) or violation.get("op") != "replace":
+            continue
+        suspect = str(violation.get("draft_span") or "")
+        replacement = str(violation.get("final_span") or "")
+        if (
+            not suspect
+            or not replacement
+            or current.count(suspect) != 1
+            or current.replace(suspect, replacement, 1) != attempted
+        ):
+            continue
+        candidate = {
+            "cue": cue_index,
+            "kind": "context",
+            "suspect": suspect,
+            "proposed_full_cue": attempted,
+            "repair_class": "phonetic",
+            "base_text_sha256": hashlib.sha256(
+                current.encode("utf-8")
+            ).hexdigest(),
+            "why": (
+                "CPA refinement candidate reverted by the fidelity guard; "
+                "candidate only, final choice belongs to CPA"
+            ),
+            "candidate_origin": "fidelity_guard_reverted_candidate",
+        }
+        ascii_penalty = int(bool(any(ch.isascii() and ch.isalpha() for ch in replacement)))
+        candidates.append(
+            ((ascii_penalty, len(suspect) + len(replacement), cue_index), candidate)
+        )
+    candidates.sort(key=lambda item: item[0])
+    return [
+        candidate
+        for _priority, candidate in candidates[:_FIDELITY_REVIEW_CANDIDATE_LIMIT]
+    ]
+
+
 def _collect_timeline_chat(
     spec: dict, durations: list[int]
 ) -> tuple[list[DanmakuItem], list[ChatEvidence]]:
@@ -727,6 +807,7 @@ def _run_final_review(
     clip_context: Mapping[str, object] | None = None,
     source_truth_protected_cue_indexes: Sequence[int] = (),
     carryover_file: Path | None = None,
+    priority_raw_findings: Sequence[Mapping[str, Any]] = (),
     screen_read_probe: Callable[[int, int], Mapping[str, object]] | None = None,
 ) -> tuple[str, dict]:
     final_review_audit: dict[str, Any] = {"schema_version": "final-review-audit.v1", "status": "SKIPPED"}
@@ -752,6 +833,7 @@ def _run_final_review(
                 if carryover_file is not None
                 else []
             )
+            priority_rows = [*carryover_rows, *priority_raw_findings]
             review_findings = audit_final_subtitles(
                 srt_text,
                 llm_call=review_llm_call,
@@ -760,7 +842,8 @@ def _run_final_review(
                 structured_context_text=structured_context_text,
                 candidate_context_text=candidate_context_text,
                 candidate_context=clip_context,
-                extra_raw_findings=carryover_rows,
+                extra_raw_findings=priority_rows,
+                prioritize_extra_raw_findings=bool(priority_rows),
             )
             protected_review_cues = set(handled_entity_cues)
             cue_count = len(
@@ -918,6 +1001,10 @@ def _run_final_review(
                     )
             final_review_audit["context_adjudication_count"] = adjudication_count
             final_review_audit["context_adjudication_budget"] = MAX_CONTEXT_ADJUDICATIONS
+            final_review_audit["priority_raw_finding_count"] = len(priority_rows)
+            final_review_audit["fidelity_candidate_count"] = len(
+                priority_raw_findings
+            )
             if partial:
                 final_review_audit["status"] = "PARTIAL"
             # 2026-07-18 交付事故类机制：区分「证据裁决后的保留」与「基础设施
@@ -1864,6 +1951,10 @@ def run_text_pipeline(
             review_source_truth_preview["protected_cue_indexes"]
         ),
         carryover_file=carryover_path(out_root, cid),
+        priority_raw_findings=_fidelity_review_candidates(
+            padded,
+            authority.srt_text,
+        ),
         screen_read_probe=screen_read_probe,
     )
     evidence = _finalize_text_evidence(

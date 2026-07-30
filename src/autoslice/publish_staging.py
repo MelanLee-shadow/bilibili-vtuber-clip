@@ -2274,6 +2274,11 @@ def _degrade_unavailable_redraw_identity_to_direct(
             else None
         ),
     )
+    direct_generation["status"] = "READY_DEGRADED"
+    direct_generation["detail"] = (
+        "CPA redraw identity witness was unavailable; retained a hash-bound "
+        "source screenshot instead of unverified AI pixels"
+    )
     return direct_result
 
 

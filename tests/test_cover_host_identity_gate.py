@@ -228,6 +228,7 @@ def test_cpa_redraw_degrades_to_source_pixels_when_identity_witness_is_down(
     assert route["selected_treatment"] == "cpa_redraw"
     assert route["actual_treatment"] == "screenshot_direct"
     assert route["execution_status"] == "READY_DEGRADED"
+    assert generation["status"] == "READY_DEGRADED"
     assert validate_cover_route_decision(generation)
 
 

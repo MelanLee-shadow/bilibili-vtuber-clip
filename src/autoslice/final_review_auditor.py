@@ -192,6 +192,99 @@ def _glossary_surface_can_authorize(surface: str) -> bool:
     return len(normalized) >= 2
 
 
+_LATIN_CANDIDATE_TOKEN = re.compile(r"(?<![A-Za-z0-9_])[A-Za-z][A-Za-z0-9_-]+")
+
+
+def _latin_candidate_tokens(text: str) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(match.casefold() for match in _LATIN_CANDIDATE_TOKEN.findall(text)))
+
+
+def _latin_proposal_cue_support(
+    raw_findings: Iterable[Mapping[str, Any]],
+    cues: Sequence[Any],
+) -> dict[str, frozenset[int]]:
+    """Cross-cue CPA proposal support for recurring foreign lexical tokens."""
+
+    support: dict[str, set[int]] = {}
+    for row in raw_findings:
+        try:
+            cue_index = int(row.get("cue") or row.get("cue_index") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not 1 <= cue_index <= len(cues):
+            continue
+        proposed = row.get("proposed_full_cue")
+        if not isinstance(proposed, str):
+            continue
+        current_folded = str(cues[cue_index - 1].text).casefold()
+        for token in _latin_candidate_tokens(proposed):
+            if token not in current_folded:
+                support.setdefault(token, set()).add(cue_index)
+    return {token: frozenset(indexes) for token, indexes in support.items()}
+
+
+def _bound_structured_chat_surface(
+    candidate_context: Mapping[str, object] | None,
+    surface: str,
+) -> dict[str, object] | None:
+    """Return a source-bound chat witness for an exact ASCII lexical token."""
+
+    if not isinstance(candidate_context, Mapping) or not surface:
+        return None
+    rows = candidate_context.get("structured_chat")
+    if not isinstance(rows, list):
+        return None
+    pattern = re.compile(
+        rf"(?<![A-Za-z0-9_]){re.escape(surface)}(?![A-Za-z0-9_])",
+        re.IGNORECASE,
+    )
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        source_sha256 = str(row.get("source_sha256") or "")
+        text = str(row.get("text") or row.get("message") or "")
+        if re.fullmatch(r"[0-9a-f]{64}", source_sha256) and pattern.search(text):
+            return {
+                "kind": "structured_chat_bound",
+                "surface": surface,
+                "source_sha256": source_sha256,
+                "source_event_id": str(row.get("source_event_id") or "") or None,
+            }
+    return None
+
+
+def _latin_candidate_support_for_edit(
+    *,
+    replacement: str,
+    proposal_support: Mapping[str, frozenset[int]],
+    candidate_context: Mapping[str, object] | None,
+) -> tuple[dict[str, object] | None, str]:
+    for token in _latin_candidate_tokens(replacement):
+        bound_chat = _bound_structured_chat_surface(candidate_context, token)
+        cue_support = proposal_support.get(token, frozenset())
+        if bound_chat is None and len(cue_support) < 2:
+            continue
+        return (
+            {
+                "schema_version": "latin-lexical-candidate-support.v1",
+                "token": token,
+                "basis": (
+                    "BOUND_STRUCTURED_CHAT"
+                    if bound_chat is not None
+                    else "CPA_CROSS_CUE_PROPOSAL_CONSENSUS"
+                ),
+                "cue_indexes": sorted(cue_support),
+                **(
+                    {"structured_chat_witness": bound_chat}
+                    if bound_chat is not None
+                    else {}
+                ),
+            },
+            token if bound_chat is not None else "",
+        )
+    return None, ""
+
+
 def _orthography_text_authority(
     finding: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -551,6 +644,8 @@ def _merged_raw_findings(
     raw: list[object],
     extra_raw_findings: Sequence[Mapping[str, Any]],
     cues: Sequence[Any],
+    *,
+    prioritize_extra: bool = False,
 ) -> list[object]:
     """终审结转行并入本轮 raw（2026-07-25）。
 
@@ -637,12 +732,12 @@ def _merged_raw_findings(
 
     def identity(row: Mapping[str, Any]) -> tuple[object, str, object]:
         return row.get("cue"), str(row.get("suspect") or ""), row.get("proposed_full_cue")
-    seen = {
+    seen = set() if prioritize_extra else {
         identity(row)
         for row in raw
         if isinstance(row, Mapping)
     }
-    merged = list(raw)
+    merged = [] if prioritize_extra else list(raw)
     for source_row in extra_raw_findings:
         row = remap_carryover(source_row)
         if row is None:
@@ -661,6 +756,14 @@ def _merged_raw_findings(
             continue
         merged.append(dict(row))
         seen.add(key)
+    if prioritize_extra:
+        for row in raw:
+            if isinstance(row, Mapping):
+                key = identity(row)
+                if key in seen:
+                    continue
+                seen.add(key)
+            merged.append(row)
     return merged
 
 
@@ -675,6 +778,7 @@ def audit_final_subtitles(
     candidate_context_text: str = "",
     candidate_context: Mapping[str, object] | None = None,
     extra_raw_findings: Sequence[Mapping[str, Any]] = (),
+    prioritize_extra_raw_findings: bool = False,
     _schema_repair_retry: bool = False, _schema_repair_detail: str = "",
 ) -> list[dict[str, Any]]:
     """One reviewer pass; ``extra_raw_findings`` carries prior raw rows."""
@@ -694,7 +798,13 @@ def audit_final_subtitles(
     raw = _request_final_review_findings(
         prompt, llm_call=llm_call, extract_json=extract_json
     )
-    raw = _merged_raw_findings(raw, extra_raw_findings, cues)
+    raw = _merged_raw_findings(
+        raw,
+        extra_raw_findings,
+        cues,
+        prioritize_extra=prioritize_extra_raw_findings,
+    )
+    latin_proposal_support = _latin_proposal_cue_support(raw, cues)
     allowed_repair_cues = (
         schema_repair_allowed_cues(_schema_repair_detail)
         if _schema_repair_retry
@@ -793,6 +903,8 @@ def audit_final_subtitles(
         memory_entry = memory_entries.get(candidate_memory_id)
         memory_candidate_valid = False
         inferred_source_surface = False
+        inferred_source_surface_basis = ""
+        latin_candidate_support: dict[str, object] | None = None
         span_start = 0
         span_end = 0
         if proposed_supplied:
@@ -844,6 +956,23 @@ def audit_final_subtitles(
                     source_surface = derived_replacement
                     repair_class = "source_backed_entity"
                     inferred_source_surface = True
+                    inferred_source_surface_basis = (
+                        "exact_replacement_repeated_in_local_authority"
+                    )
+            if not contract_error and re.search(r"[A-Za-z]", derived_replacement):
+                latin_candidate_support, bound_latin_surface = (
+                    _latin_candidate_support_for_edit(
+                        replacement=derived_replacement,
+                        proposal_support=latin_proposal_support,
+                        candidate_context=candidate_context,
+                    )
+                )
+                if not source_surface and bound_latin_surface:
+                    source_surface = bound_latin_surface
+                    inferred_source_surface = True
+                    inferred_source_surface_basis = (
+                        "exact_latin_surface_in_bound_structured_chat"
+                    )
             if not contract_error and repair_class not in _AUTO_REPAIR_CLASSES:
                 contract_error = "REPAIR_CLASS_DISCLOSURE_ONLY"
             if (
@@ -875,6 +1004,7 @@ def audit_final_subtitles(
                 not contract_error
                 and repair_class != "source_backed_entity"
                 and re.search(r"[A-Za-z]", derived_replacement)
+                and latin_candidate_support is None
             ):
                 contract_error = "LATIN_SCRIPT_REPAIR_REQUIRES_SOURCE_PROVENANCE"
             if not contract_error and candidate_memory_id:
@@ -904,6 +1034,10 @@ def audit_final_subtitles(
                     contract_error = "ENTITY_SOURCE_SURFACE_INVALID"
                 else:
                     scope_warnings.append("SOURCE_SURFACE_NOT_IN_PROPOSED")
+            elif (bound_chat := _bound_structured_chat_surface(
+                candidate_context, source_surface
+            )) is not None:
+                provenance = bound_chat
             elif source_surface.casefold() in glossary_text.casefold():
                 provenance = {
                     "kind": (
@@ -1002,6 +1136,8 @@ def audit_final_subtitles(
             "span_end_codepoint": span_end if proposed_supplied else None,
             "why": str(row.get("why") or "")[:120],
         }
+        if latin_candidate_support is not None:
+            finding["latin_candidate_support"] = latin_candidate_support
         carryover_replay_remap = row.get("_carryover_replay_remap")
         if isinstance(carryover_replay_remap, Mapping):
             finding["carryover_replay_remap"] = dict(
@@ -1018,7 +1154,7 @@ def audit_final_subtitles(
         if inferred_source_surface:
             finding["source_surface_inference"] = {
                 "surface": source_surface,
-                "basis": "exact_replacement_repeated_in_local_authority",
+                "basis": inferred_source_surface_basis,
             }
         if candidate_memory_id_normalization:
             finding["candidate_memory_id_raw"] = candidate_memory_id_raw

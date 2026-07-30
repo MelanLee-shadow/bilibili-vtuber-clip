@@ -36,6 +36,70 @@ def _srt(*texts: str) -> str:
     ) + "\n"
 
 
+def test_fidelity_reverts_become_bounded_cpa_candidates(tmp_path):
+    media = tmp_path / "clip.mp4"
+    media.with_suffix(".fidelity-audit.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "subtitle-fidelity-audit.v2",
+                "reverted": [
+                    {
+                        "cue_index": 1,
+                        "draft": "名多的孩子",
+                        "attempted": "鸣人的孩子",
+                        "kept": "名多的孩子",
+                        "violations": [
+                            {
+                                "op": "replace",
+                                "draft_span": "名多",
+                                "final_span": "鸣人",
+                                "reason": "REPLACE_UNWITNESSED",
+                            }
+                        ],
+                    },
+                    {
+                        "cue_index": 2,
+                        "draft": "好爽哦",
+                        "attempted": "好吃哦",
+                        "kept": "好爽哦",
+                        "violations": [
+                            {
+                                "op": "replace",
+                                "draft_span": "爽",
+                                "final_span": "吃",
+                                "reason": "REPLACE_UNWITNESSED",
+                            }
+                        ],
+                    },
+                    {
+                        "cue_index": 3,
+                        "draft": "多处错误",
+                        "attempted": "多个修复",
+                        "kept": "多处错误",
+                        "violations": [
+                            {"op": "replace", "draft_span": "处", "final_span": "个"},
+                            {"op": "replace", "draft_span": "错误", "final_span": "修复"},
+                        ],
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    candidates = pipeline._fidelity_review_candidates(
+        media,
+        _srt("名多的孩子", "好爽哦", "多处错误"),
+    )
+
+    assert [(row["cue"], row["suspect"], row["proposed_full_cue"]) for row in candidates] == [
+        (2, "爽", "好吃哦"),
+        (1, "名多", "鸣人的孩子"),
+    ]
+    assert all(row["candidate_origin"] == "fidelity_guard_reverted_candidate" for row in candidates)
+
+
 def test_late_source_language_cpa_retires_same_window_cpa_surface():
     from src.autoslice.producer_text_finalization import (
         verify_chat_authority_final_surfaces,

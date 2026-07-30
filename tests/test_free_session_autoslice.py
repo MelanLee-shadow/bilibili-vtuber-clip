@@ -1598,6 +1598,7 @@ def _initial_screenshot_cover_proof_fixture(
     *,
     screenshot_frame,
     reference_selection,
+    degraded_cpa_redraw=False,
 ):
     fx = _cover_binding_fixture(tmp_path, monkeypatch)
     source_cover = fx["generated_cover"]
@@ -1624,7 +1625,9 @@ def _initial_screenshot_cover_proof_fixture(
     if reference_selection is not None:
         generation["reference_selection"] = reference_selection
     generation["route_decision"] = build_cover_route_decision(
-        selected_treatment="screenshot_direct",
+        selected_treatment=(
+            "cpa_redraw" if degraded_cpa_redraw else "screenshot_direct"
+        ),
         selected_rationale="hash-bound real stream frame has both participants",
         story_contract=None,
         reference_authority=None,
@@ -1633,10 +1636,22 @@ def _initial_screenshot_cover_proof_fixture(
     record_cover_route_execution(
         generation,
         actual_treatment="screenshot_direct",
-        execution_status="READY",
-        image_generation_attempted=False,
+        execution_status=("READY_DEGRADED" if degraded_cpa_redraw else "READY"),
+        image_generation_attempted=degraded_cpa_redraw,
         image_generation_used=False,
+        detail=(
+            "identity witness unavailable; source screenshot retained"
+            if degraded_cpa_redraw
+            else None
+        ),
     )
+    if degraded_cpa_redraw:
+        generation["status"] = "READY_DEGRADED"
+        generation["cpa_redraw"] = {
+            "schema_version": "lidousha-cpa-redraw-degradation.v1",
+            "status": "DEGRADED_TO_DIRECT_IDENTITY_WITNESS_UNAVAILABLE",
+            "reason_code": "HOST_IDENTITY_WITNESS_UNAVAILABLE",
+        }
     for record_path in (fx["delivery_record"], fx["source_record"]):
         record = json.loads(record_path.read_text(encoding="utf-8"))
         record["artifact_hashes"]["cover_sha256"] = expected_cover
@@ -1682,6 +1697,20 @@ def test_initial_screenshot_cover_is_valid_and_never_requeued_as_ai_repair(
     assert not cover_repair_needed(fx["date"], rec)
     reference.write_bytes(b"tampered")
     assert cover_repair_needed(fx["date"], rec)
+
+
+def test_initial_cpa_redraw_degraded_to_direct_uses_actual_route_proof(
+    tmp_path, monkeypatch
+):
+    fx, rec, _reference = _initial_screenshot_cover_proof_fixture(
+        tmp_path,
+        monkeypatch,
+        screenshot_frame={"frame_ms": 21_500},
+        reference_selection={"best_ms": 21_500},
+        degraded_cpa_redraw=True,
+    )
+
+    assert not cover_repair_needed(fx["date"], rec)
 
 
 @pytest.mark.parametrize(

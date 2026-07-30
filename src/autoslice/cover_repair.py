@@ -1333,7 +1333,12 @@ def _initial_cover_proof_valid(date: str, rec: dict, mp4: Path, cover: Path) -> 
         if isinstance(route_decision, dict)
         else ""
     )
-    if treatment in {"screenshot_direct", "screenshot_polish"}:
+    actual_treatment = (
+        str(route_decision.get("actual_treatment") or treatment)
+        if isinstance(route_decision, dict)
+        else treatment
+    )
+    if actual_treatment in {"screenshot_direct", "screenshot_polish"}:
         degraded_polish = (
             treatment == "screenshot_polish"
             and method == "screenshot_direct"
@@ -1341,7 +1346,7 @@ def _initial_cover_proof_valid(date: str, rec: dict, mp4: Path, cover: Path) -> 
             and generation["screenshot_polish"].get("status")
             == "DEGRADED_TO_DIRECT"
         )
-        valid_method = method == treatment or degraded_polish
+        valid_method = method == actual_treatment or degraded_polish
         rendered_lines = generation.get("rendered_lines")
         screenshot_frame = generation.get("screenshot_frame")
         reference_selection = generation.get("reference_selection")
