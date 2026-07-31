@@ -1046,6 +1046,55 @@ def test_structured_payoff_hypothesis_yields_to_baseline_tail_cap():
     assert hard_blocked["structured_payoff_clamped_from_ms"] is None
 
 
+def test_exact_pin_payoff_hypothesis_yields_to_the_published_endpoint():
+    """r13 钳制的 pin 模式对偶（2026-07-31 1013 jyl-r5 案）：pin 是已验证公开
+    媒体的字节终点，比 baseline 尾锚更强；同一个越界 payoff 检测假设在弱模式
+    下让位、在最强模式下反而硬拦是设计缺口。semantic/manual/owner 全部落在
+    pin 内、唯独 payoff 越界 → 钳制到 pin 并披露；语义目标或必需 owner 真越过
+    pin 才是真冲突，照旧硬拦。"""
+
+    from src.autoslice.boundary_semantic_review import (
+        boundary_search_scope_is_valid,
+        build_boundary_search_scope,
+    )
+
+    # jyl-r5 实测数字：pin 113570，payoff 检测到 124320（已发布终点之后的
+    # 下一段结构化朗读被误判为本事件收尾），owner 111000。
+    clamped = build_boundary_search_scope(
+        semantic_target_ms=113_010,
+        repair_cap_ms=30_000,
+        manual_lower_bound_ms=113_570,
+        structured_payoff_ms=124_320,
+        required_owner_end_ms=111_000,
+        baseline_tail_cap_ms=113_570,
+        boundary_end_mode="exact_source_pin",
+    )
+    assert clamped["status"] == "PASS"
+    assert clamped["reason_codes"] == []
+    assert clamped["structured_payoff_clamped_from_ms"] == 124_320
+    assert clamped["structured_payoff_ms"] == 124_320  # 原值留档
+    assert clamped["semantic_search_origin_ms"] == 113_570
+    assert clamped["delivery_lower_bound_ms"] == 113_570
+    assert clamped["max_recommended_end_ms"] == 113_570
+    assert boundary_search_scope_is_valid(clamped)
+
+    # 必需 owner 真越过 pin → 不是假设问题，仍硬拦
+    hard_blocked = build_boundary_search_scope(
+        semantic_target_ms=113_010,
+        repair_cap_ms=30_000,
+        manual_lower_bound_ms=113_570,
+        structured_payoff_ms=124_320,
+        required_owner_end_ms=118_000,
+        baseline_tail_cap_ms=113_570,
+        boundary_end_mode="exact_source_pin",
+    )
+    assert (
+        "BOUNDARY_EXACT_SOURCE_PIN_PAYOFF_CONFLICT"
+        in hard_blocked["reason_codes"]
+    )
+    assert hard_blocked["structured_payoff_clamped_from_ms"] is None
+
+
 def test_search_scope_identity_replay_requires_same_tail_cap():
     """V15 regression: the resolution-side replay must pass the same
     baseline_tail_cap_ms the freeze side stored, or the three-way dict

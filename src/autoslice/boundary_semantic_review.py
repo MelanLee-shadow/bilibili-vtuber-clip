@@ -257,9 +257,24 @@ def build_boundary_search_scope(
             structured_payoff is not None
             and structured_payoff > exact_source_pin
         ):
-            reasons.append(
-                "BOUNDARY_EXACT_SOURCE_PIN_PAYOFF_CONFLICT"
-            )
+            # r13 钳制的 pin 模式对偶（2026-07-31 1013 jyl-r5 案）：payoff 是
+            # 检测假设，不是复核权威。上方 r13 钳制只写给非 pin 模式，理由是
+            # 「pin 被更强权威定死、尾锚无增量约束」——但这漏了一层：pin 是
+            # 已验证公开媒体的字节终点，比 baseline 尾锚**更强**，却反而没有
+            # 压制假设的能力，同一个越界 payoff 在弱模式下让位、在最强模式下
+            # 硬拦（本案：semantic/manual/owner 全部 ≤ pin 113570，唯独 payoff
+            # 检测到 124320——已发布终点之后的下一段结构化朗读被误判为本事件
+            # 收尾）。语义目标或必需 owner 真越过 pin 才是真冲突，照旧硬拦。
+            if semantic_target <= exact_source_pin and (
+                required_owner_end is None
+                or required_owner_end <= exact_source_pin
+            ):
+                structured_payoff_clamped_from_ms = structured_payoff
+                structured_payoff_effective = exact_source_pin
+            else:
+                reasons.append(
+                    "BOUNDARY_EXACT_SOURCE_PIN_PAYOFF_CONFLICT"
+                )
         search_origin_ms = exact_source_pin
     else:
         search_origin_ms = max(
