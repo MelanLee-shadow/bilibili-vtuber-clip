@@ -35,10 +35,12 @@ from src.autoslice.cover_route_evidence import (  # noqa: E402
     validate_cover_route_decision,
     validate_rendered_text_pixel_evidence,
 )
+from src.autoslice.channel_profile import load_channel_profile  # noqa: E402
 from src.autoslice.song_completion import song_completion_evidence  # noqa: E402
 from src.autoslice.title_policy import publish_title_policy_violations  # noqa: E402
 
 
+CHANNEL_PROFILE = load_channel_profile(ROOT)
 DELIVERY_SCHEMA = "verified-song-delivery.v1"
 REVIEW_SCHEMA = "lidousha-song-review-manifest.v1"
 REQUIRED_ROLES: dict[str, str] = {
@@ -66,6 +68,15 @@ DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 
 class SongReviewManifestError(RuntimeError):
     """The state/delivery pair cannot prove a portable Song review package."""
+
+
+def _verify_song_completion(record: dict[str, Any]) -> dict[str, Any]:
+    """Replay the proof with the same profile authority as the runner wrapper."""
+
+    return song_completion_evidence(
+        record,
+        host_vocal_profile=CHANNEL_PROFILE.asset_file("voiceprint_profile"),
+    )
 
 
 def _load_json(path: Path, *, label: str) -> dict[str, Any]:
@@ -610,7 +621,7 @@ def build(
     deployed_commit_file: Path,
     completion_verifier: Callable[
         [dict[str, Any]], dict[str, Any]
-    ] = song_completion_evidence,
+    ] = _verify_song_completion,
 ) -> dict[str, Any]:
     if package_root.exists():
         raise SongReviewManifestError(
