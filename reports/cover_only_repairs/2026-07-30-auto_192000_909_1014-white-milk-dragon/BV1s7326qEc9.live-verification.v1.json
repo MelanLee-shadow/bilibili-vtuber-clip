@@ -1,0 +1,21 @@
+{
+  "schema_version": "lidousha-cover-only-live-verification.v1",
+  "status": "VERIFIED_PUBLIC_CDN_EXACT",
+  "verified_at": "2026-07-30T23:57:54Z",
+  "candidate_id": "auto_192000_909_1014",
+  "bvid": "BV1s7326qEc9",
+  "aid": 117002458957829,
+  "cid": 40438664771,
+  "title": "【李豆沙】观众想让新3D永久保留“白色奶龙”表情，小李拒绝花钱",
+  "state": 0,
+  "public_cover_url": "http://i0.hdslb.com/bfs/archive/9994c2c75f31d0b1706be4e7709efe226ebcbca0.png",
+  "creator_cover_url": "http://i0.hdslb.com/bfs/archive/9994c2c75f31d0b1706be4e7709efe226ebcbca0.png",
+  "old_cover_url": "http://i0.hdslb.com/bfs/archive/f4f262d1bbe8b4a40284db49f5a6a2d06fcf5909.png",
+  "local_cover_sha256": "sha256:8bd5fa4f47468f514dc32bc265896405a46289a31ea930ac748234a18c989c06",
+  "public_cdn_sha256": "sha256:8bd5fa4f47468f514dc32bc265896405a46289a31ea930ac748234a18c989c06",
+  "public_cdn_bytes_equal_local": true,
+  "reference_sha256": "sha256:c4396e2642d9a40fdca89ed54654e629f5bcdb567fa4a34a3f3437eaabec9b53",
+  "cover_edit_receipt_sha256": "sha256:6ba9b18adc307116c30c5aa2eb597a6e936c925622b25093d9fd035de8509fa9",
+  "cpa_host_identity_receipt_sha256": "sha256:0202c4749ce3615a5ea1a44e821a0fe8ddcf8e3bb33af480bdebc247b76e3140",
+  "cpa_white_milk_dragon_qa_receipt_sha256": "sha256:2ee7bf78700e8f2a90400a07e351c153cefd55a9b101b6bd484086966e936178"
+}

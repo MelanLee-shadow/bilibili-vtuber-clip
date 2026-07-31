@@ -1,0 +1,45 @@
+{
+  "schema_version": "lidousha-white-milk-dragon-cover-visual-qa.v1",
+  "preferred_provider": "cpa",
+  "reference_path": "/opt/bilive/autoslice/reports/cover-only-repairs/2026-07-30-auto_192000_909_1014-white-milk-dragon/60bae315bc53a44bede0582389460d20475948079.png",
+  "reference_sha256": "sha256:c4396e2642d9a40fdca89ed54654e629f5bcdb567fa4a34a3f3437eaabec9b53",
+  "final_cover_path": "/opt/bilive/autoslice/reports/cover-only-repairs/2026-07-30-auto_192000_909_1014-white-milk-dragon/final-cover-edited-v2.png",
+  "final_cover_sha256": "sha256:8bd5fa4f47468f514dc32bc265896405a46289a31ea930ac748234a18c989c06",
+  "comparison_path": "/opt/bilive/autoslice/reports/cover-only-repairs/2026-07-30-auto_192000_909_1014-white-milk-dragon/white-milk-dragon-reference-final-witness.png",
+  "comparison_sha256": "sha256:5335e133ead2c2bcf5357d535b644ace92fc6adc9fcb3cd1dfc194798373060b",
+  "witness": {
+    "schema_version": "cpa-frame-witness.v1",
+    "image_path": "/opt/bilive/autoslice/reports/cover-only-repairs/2026-07-30-auto_192000_909_1014-white-milk-dragon/white-milk-dragon-reference-final-witness.png",
+    "question": "左侧是 Ivan 指定的李豆沙“白色奶龙”形象唯一权威参考，右侧是待替换的最终封面。严格检查右图：1) 最大、最居中的主角仍是李豆沙；2) 右上小贴纸必须明显取自左侧参考，保留白发、黑色熊猫耳、头顶大墨镜、僵直简化的白色机体和略怪异的小笑脸；3) 右图不得再有普通白龙、兽类龙、龙角、龙头、龙鳞、翅膀、3D 龙头模型、建模界面或显示器；4) 封面文字必须完整清楚显示为三行：“白色奶龙”（含引号）、表情小李、拒绝花钱，没有乱码、伪字、额外文字或水印。任一不确定即 FAIL。只输出 JSON：{\"reference_form_matches\":true|false,\"reference_features\":[\"实际看到的对应特征\"],\"main_lidousha_dominant\":true|false,\"unrelated_dragon_absent\":true|false,\"incorrect_dragon_elements\":[\"若有则列出\"],\"title_text_exact_and_readable\":true|false,\"observed_title_lines\":[\"逐行抄录\"],\"extra_text_or_watermark_absent\":true|false,\"reason\":\"简短中文说明\"}",
+    "model": "gpt-5.6-sol",
+    "provider": "cpa",
+    "image_sha256": "5335e133ead2c2bcf5357d535b644ace92fc6adc9fcb3cd1dfc194798373060b",
+    "frame_sha256": "605fe93d89393d1e3930ac585b987b11d0d8d8cc10618ebda24f40c825024836",
+    "prompt_sha256": "31645ee6f6354bfef86ccd1a4933d20e03c8156dacd548af94755c80b8ad3a38",
+    "status": "OBSERVED",
+    "answer": "{\"reference_form_matches\":true,\"reference_features\":[\"右上贴纸具有白发\",\"黑色熊猫耳\",\"头顶大墨镜\",\"僵直简化的白色机体\",\"略怪异的小笑脸\"],\"main_lidousha_dominant\":true,\"unrelated_dragon_absent\":true,\"incorrect_dragon_elements\":[],\"title_text_exact_and_readable\":true,\"observed_title_lines\":[\"“白色奶龙”\",\"表情小李\",\"拒绝花钱\"],\"extra_text_or_watermark_absent\":true,\"reason\":\"右侧封面主角最大且居中，右上贴纸与参考形象特征一致；未见普通龙或相关错误元素，三行标题完整清晰且无封面内额外文字或水印。\"}",
+    "response_sha256": "c6863fa0923931be2cbadb4935f18d094a83fec1fdb30a789a1e63bbae69477b"
+  },
+  "verdict": {
+    "reference_form_matches": true,
+    "reference_features": [
+      "右上贴纸具有白发",
+      "黑色熊猫耳",
+      "头顶大墨镜",
+      "僵直简化的白色机体",
+      "略怪异的小笑脸"
+    ],
+    "main_lidousha_dominant": true,
+    "unrelated_dragon_absent": true,
+    "incorrect_dragon_elements": [],
+    "title_text_exact_and_readable": true,
+    "observed_title_lines": [
+      "“白色奶龙”",
+      "表情小李",
+      "拒绝花钱"
+    ],
+    "extra_text_or_watermark_absent": true,
+    "reason": "右侧封面主角最大且居中，右上贴纸与参考形象特征一致；未见普通龙或相关错误元素，三行标题完整清晰且无封面内额外文字或水印。"
+  },
+  "status": "PASS"
+}
