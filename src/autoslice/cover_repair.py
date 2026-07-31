@@ -527,6 +527,21 @@ def _updated_cover_document(
     return updated
 
 
+def _updated_record_publish_draft_hash(
+    document: dict, *, publish_draft_sha256: str
+) -> dict:
+    """Bind a record to the active publish bytes copied to delivery."""
+
+    if document.get("schema_version") == "shadow-publish-draft.v1":
+        return document
+    updated = copy.deepcopy(document)
+    artifacts = updated.get("artifact_hashes")
+    if not isinstance(artifacts, dict):
+        raise ValueError("artifact_hashes is not an object")
+    artifacts["publish_draft_sha256"] = publish_draft_sha256
+    return updated
+
+
 def _restore_transaction_files(originals: dict[Path, bytes | None]) -> bool:
     restored = True
     for path, content in reversed(list(originals.items())):
@@ -750,11 +765,13 @@ def _roll_forward_prepared_cover_transactions(
         }
         if generation_cover.resolve() != cover.resolve():
             expected_targets.add(cover.absolute())
-        if rec.get("delivered"):
+        authority_type = binding_payload.get("authority_type")
+        delivery_publish_target = mp4.with_suffix(".publish.json").absolute()
+        expected_targets.add(delivery_publish_target)
+        if authority_type == "verified_song_delivery":
             manifest_value = rec.get("delivery_manifest_path")
             if (
-                binding_payload.get("authority_type") != "verified_song_delivery"
-                or not isinstance(manifest_value, str)
+                not isinstance(manifest_value, str)
                 or binding_payload.get("delivery_manifest_path") != manifest_value
             ):
                 continue
@@ -771,9 +788,8 @@ def _roll_forward_prepared_cover_transactions(
                 destination.absolute()
                 for _source, destination, _sha256 in replay_specs.values()
             )
-            expected_targets.add(mp4.with_suffix(".publish.json").absolute())
         elif (
-            binding_payload.get("authority_type") != "talk_delivery_record"
+            authority_type != "talk_delivery_record"
             or binding_payload.get("delivery_manifest_path") is not None
         ):
             continue
@@ -847,7 +863,32 @@ def _roll_forward_prepared_cover_transactions(
             intended_documents[document_path.resolve()] = intended_document
         if not valid:
             continue
-        if rec.get("delivered"):
+        source_publish_paths = [
+            path
+            for path, document in intended_documents.items()
+            if document.get("schema_version") == "shadow-publish-draft.v1"
+        ]
+        if len(source_publish_paths) != 1:
+            continue
+        source_publish_path = source_publish_paths[0]
+        source_publish_payload = payloads.get(source_publish_path.absolute())
+        delivery_publish_payload = payloads.get(delivery_publish_target)
+        if (
+            source_publish_payload is None
+            or delivery_publish_payload != source_publish_payload
+        ):
+            continue
+        publish_sha256 = (
+            "sha256:" + hashlib.sha256(source_publish_payload).hexdigest()
+        )
+        if any(
+            document.get("artifact_hashes", {}).get("publish_draft_sha256")
+            != publish_sha256
+            for document in intended_documents.values()
+            if document.get("schema_version") != "shadow-publish-draft.v1"
+        ):
+            continue
+        if authority_type == "verified_song_delivery":
             manifest_target = Path(str(rec["delivery_manifest_path"])).absolute()
             try:
                 intended_manifest = json.loads(payloads[manifest_target].decode("utf-8"))
@@ -872,6 +913,11 @@ def _roll_forward_prepared_cover_transactions(
             )
             active_record = (
                 manifest_artifacts.get("active_record")
+                if isinstance(manifest_artifacts, dict)
+                else None
+            )
+            publish_artifact = (
+                manifest_artifacts.get("publish")
                 if isinstance(manifest_artifacts, dict)
                 else None
             )
@@ -914,6 +960,11 @@ def _roll_forward_prepared_cover_transactions(
                 or active_record.get("source_sha256")
                 != "sha256:"
                 + hashlib.sha256(payloads[source_record_path.absolute()]).hexdigest()
+                or not isinstance(publish_artifact, dict)
+                or publish_artifact.get("path") != str(delivery_publish_target)
+                or publish_artifact.get("sha256") != publish_sha256
+                or publish_artifact.get("source_path") != str(source_publish_path)
+                or publish_artifact.get("source_sha256") != publish_sha256
                 or not isinstance(manifest_pointer, dict)
                 or manifest_pointer.get("path") != str(binding_target)
                 or manifest_pointer.get("sha256") != binding_sha256
@@ -1010,9 +1061,33 @@ def _bind_repaired_cover(
         )
         for path, document in documents
     ]
+    updated_publish_rows = [
+        (path.resolve(), document)
+        for path, document in updated_documents
+        if document.get("schema_version") == "shadow-publish-draft.v1"
+    ]
+    if len(updated_publish_rows) != 1:
+        raise ValueError("cover binding requires one updated active publish draft")
+    source_publish_path, source_publish_document = updated_publish_rows[0]
+    source_publish_payload = _runner._json_file_bytes(source_publish_document)
+    publish_sha256 = (
+        "sha256:" + hashlib.sha256(source_publish_payload).hexdigest()
+    )
+    updated_documents = [
+        (
+            path,
+            _updated_record_publish_draft_hash(
+                document, publish_draft_sha256=publish_sha256
+            ),
+        )
+        for path, document in updated_documents
+    ]
+    delivery_publish_payload = (
+        mp4.with_suffix(".publish.json").resolve(),
+        source_publish_payload,
+    )
     updated_song_manifest: tuple[Path, dict] | None = None
     portable_cover_artifacts: dict[str, tuple[Path, Path, str]] = {}
-    delivery_publish_payload: tuple[Path, bytes] | None = None
     if song_manifest is not None:
         updated_by_path = {path.resolve(): (path, document) for path, document in updated_documents}
         delivery_record_path = mp4.with_suffix(".record.json").resolve(strict=True)
@@ -1024,28 +1099,12 @@ def _bind_repaired_cover(
         if len(source_record_paths) != 1:
             raise ValueError("song cover binding requires one updated active source record")
         source_record_path = source_record_paths[0]
-        source_publish_paths = [
-            path.resolve(strict=True)
-            for path, document in updated_documents
-            if document.get("schema_version") == "shadow-publish-draft.v1"
-        ]
-        if len(source_publish_paths) != 1:
-            raise ValueError("song cover binding requires one updated active publish draft")
-        source_publish_path = source_publish_paths[0]
-        source_publish_document = updated_by_path[source_publish_path][1]
         delivery_publish_path = mp4.with_suffix(".publish.json").resolve()
         portable_cover_artifacts = song_portable_cover_replay_specs(
             generation=generation,
             delivery=cover.parent.resolve(),
             basename=cover.name.removesuffix(".cover.png"),
         )
-        delivery_publish_payload = (
-            delivery_publish_path,
-            _runner._json_file_bytes(source_publish_document),
-        )
-        publish_sha256 = "sha256:" + hashlib.sha256(
-            delivery_publish_payload[1]
-        ).hexdigest()
         updated_song_manifest = (
             song_manifest[0],
             _updated_song_delivery_manifest(
@@ -1073,8 +1132,7 @@ def _bind_repaired_cover(
     if generated_cover.resolve() != cover.resolve():
         target_payloads.append((cover, generated_cover.read_bytes()))
     target_payloads.append((binding_path, binding_bytes))
-    if delivery_publish_payload is not None:
-        target_payloads.append(delivery_publish_payload)
+    target_payloads.append(delivery_publish_payload)
     target_payloads.extend(
         (destination, source.read_bytes())
         for source, destination, _sha256 in portable_cover_artifacts.values()
@@ -1284,6 +1342,34 @@ def _cover_binding_valid(date: str, rec: dict, mp4: Path, cover: Path) -> bool:
             )
         ):
             return False
+    source_publish_rows = [
+        path.resolve()
+        for path, document in documents
+        if document.get("schema_version") == "shadow-publish-draft.v1"
+    ]
+    if len(source_publish_rows) != 1:
+        return False
+    source_publish_path = source_publish_rows[0]
+    try:
+        delivery_publish_path = mp4.with_suffix(".publish.json").resolve(strict=True)
+        source_publish_bytes = source_publish_path.read_bytes()
+        delivery_publish_bytes = delivery_publish_path.read_bytes()
+    except OSError:
+        return False
+    publish_sha256 = (
+        "sha256:" + hashlib.sha256(source_publish_bytes).hexdigest()
+    )
+    if delivery_publish_bytes != source_publish_bytes:
+        return False
+    for _path, document in documents:
+        if document.get("schema_version") == "shadow-publish-draft.v1":
+            continue
+        hashes = document.get("artifact_hashes")
+        if (
+            not isinstance(hashes, dict)
+            or hashes.get("publish_draft_sha256") != publish_sha256
+        ):
+            return False
     try:
         song_manifest = _active_song_delivery_manifest(
             rec,
@@ -1294,7 +1380,10 @@ def _cover_binding_valid(date: str, rec: dict, mp4: Path, cover: Path) -> bool:
     except (OSError, ValueError):
         return False
     if song_manifest is None:
-        return binding.get("authority_type") == "talk_delivery_record" and binding.get("delivery_manifest_path") is None
+        return (
+            binding.get("authority_type") == "talk_delivery_record"
+            and binding.get("delivery_manifest_path") is None
+        )
     manifest_path, manifest = song_manifest
     artifacts = manifest.get("artifacts")
     cover_artifact = artifacts.get("cover") if isinstance(artifacts, dict) else None
@@ -1342,23 +1431,19 @@ def _cover_binding_valid(date: str, rec: dict, mp4: Path, cover: Path) -> bool:
         ):
             return False
     publish_artifact = artifacts.get("publish")
-    source_publish_paths = [
-        path.resolve()
-        for path, document in documents
-        if document.get("schema_version") == "shadow-publish-draft.v1"
-    ]
-    if len(source_publish_paths) != 1 or not isinstance(publish_artifact, dict):
+    if not isinstance(publish_artifact, dict):
         return False
     try:
         delivered_publish = mp4.with_suffix(".publish.json").resolve(strict=True)
     except OSError:
         return False
-    source_publish = source_publish_paths[0]
     return (
         publish_artifact.get("path") == str(delivered_publish)
-        and publish_artifact.get("source_path") == str(source_publish)
+        and publish_artifact.get("source_path") == str(source_publish_path)
         and _matches_sha256(delivered_publish, str(publish_artifact.get("sha256") or ""))
-        and _matches_sha256(source_publish, str(publish_artifact.get("source_sha256") or ""))
+        and _matches_sha256(
+            source_publish_path, str(publish_artifact.get("source_sha256") or "")
+        )
     )
 
 

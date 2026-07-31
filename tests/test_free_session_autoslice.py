@@ -1376,13 +1376,18 @@ def test_bind_repaired_cover_updates_only_active_state_publish_and_records(tmp_p
     record = json.loads(fx["delivery_record"].read_text(encoding="utf-8"))
     source = json.loads(fx["source_record"].read_text(encoding="utf-8"))
     publish = json.loads(fx["publish_path"].read_text(encoding="utf-8"))
+    delivery_publish = fx["mp4"].with_suffix(".publish.json")
+    publish_sha256 = fx["digest"](fx["publish_path"])
+    assert delivery_publish.read_bytes() == fx["publish_path"].read_bytes()
     assert record["artifact_hashes"]["cover_sha256"] == rec["cover_sha256"]
+    assert record["artifact_hashes"]["publish_draft_sha256"] == publish_sha256
     assert record["publish_staging"]["cover_status"] == "AI_COVER_READY"
     assert (
         record["publish_staging"]["cover_text"]
         == "修复后的封面文案"
     )
     assert source["artifact_hashes"]["cover_sha256"] == rec["cover_sha256"]
+    assert source["artifact_hashes"]["publish_draft_sha256"] == publish_sha256
     assert (
         source["publish_staging"]["cover_text"]
         == "修复后的封面文案"
@@ -1588,6 +1593,40 @@ def test_repaired_cover_binding_detects_active_publish_drift(tmp_path, monkeypat
     exhausted = {**base, "cover_repair_attempts": COVER_REPAIR_MAX_ATTEMPTS}
     assert cover_repair_needed(fx["date"], exhausted)
     assert not runner._cover_repair_eligible(exhausted)
+
+
+def test_repaired_talk_cover_binding_detects_delivery_publish_copy_drift(
+    tmp_path, monkeypatch
+):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch)
+    runner._bind_repaired_cover(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
+    )
+    base = {**fx["rec"], "delivered": str(fx["mp4"])}
+    assert not cover_repair_needed(fx["date"], base)
+
+    fx["mp4"].with_suffix(".publish.json").write_bytes(b'{"stale":true}\n')
+
+    assert cover_repair_needed(fx["date"], base)
+
+
+@pytest.mark.parametrize("record_role", ["delivery_record", "source_record"])
+def test_repaired_talk_cover_binding_detects_record_publish_hash_drift(
+    tmp_path, monkeypatch, record_role
+):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch)
+    runner._bind_repaired_cover(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
+    )
+    base = {**fx["rec"], "delivered": str(fx["mp4"])}
+    assert not cover_repair_needed(fx["date"], base)
+
+    record_path = fx[record_role]
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record["artifact_hashes"]["publish_draft_sha256"] = "sha256:" + "0" * 64
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+
+    assert cover_repair_needed(fx["date"], base)
 
 
 def test_repaired_cover_binding_detects_active_cover_text_drift(
@@ -2179,6 +2218,7 @@ def test_cover_binding_rolls_back_target_and_documents_on_mid_commit_failure(tmp
     assert {path: path.read_bytes() for path in watched} == before
     assert fx["rec"] == state_before
     assert not fx["generated_cover"].with_suffix(".cover-binding.json").exists()
+    assert not fx["mp4"].with_suffix(".publish.json").exists()
     journal = json.loads(
         (fx["generated_cover"].parent / "cover-transaction.json").read_text(
             encoding="utf-8"
@@ -2597,6 +2637,7 @@ def test_song_cover_binding_rolls_back_manifest_and_records_on_commit_failure(tm
     assert {path: path.read_bytes() for path in watched} == before
     assert fx["rec"] == state_before
     assert not fx["generated_cover"].with_suffix(".cover-binding.json").exists()
+    assert not fx["mp4"].with_suffix(".publish.json").exists()
 
 
 @pytest.mark.parametrize("song", [False, True])
@@ -2641,6 +2682,17 @@ def test_prepared_cover_transaction_rolls_forward_after_abrupt_partial_commit(
         fx["date"], persistent_old_state, fx["mp4"], fx["cover"]
     )
     assert not cover_repair_needed(fx["date"], persistent_old_state)
+    assert (
+        fx["mp4"].with_suffix(".publish.json").read_bytes()
+        == fx["publish_path"].read_bytes()
+    )
+    publish_sha256 = fx["digest"](fx["publish_path"])
+    for record_path in (fx["delivery_record"], fx["source_record"]):
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        assert (
+            record["artifact_hashes"]["publish_draft_sha256"]
+            == publish_sha256
+        )
     if song:
         manifest = json.loads(fx["delivery_manifest"].read_text(encoding="utf-8"))
         assert persistent_old_state["delivered_sidecar_hashes"][
