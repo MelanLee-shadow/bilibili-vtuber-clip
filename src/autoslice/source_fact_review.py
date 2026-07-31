@@ -114,47 +114,58 @@ def _evidence_row_is_bound(
 ) -> bool:
     """Accept exact evidence while tolerating CPA citation-label formatting."""
 
-    compact_value = _compact(value)
-    if compact_value in _compact(
-        final_transcript + "\n" + clip_context_prompt
-    ):
-        return True
-
     source_label = re.fullmatch(
-        r"\s*(final_transcript|structured_chat|same_clip_context)"
-        r"\s*:\s*(.+?)\s*",
+        r"\s*final_transcript\s*:\s*(.+?)\s*",
         value,
         flags=re.IGNORECASE | re.DOTALL,
     )
     if source_label:
-        source, quoted_text = source_label.groups()
-        corpus = (
-            final_transcript
-            if source.lower() == "final_transcript"
-            else clip_context_prompt
-        )
+        quoted_text = source_label.group(1)
         return bool(
             _compact(quoted_text)
-            and _compact(quoted_text) in _compact(corpus)
+            and _compact(quoted_text) in _compact(final_transcript)
         )
+    if re.match(
+        r"\s*(structured_chat|same_clip_context)\s*:",
+        value,
+        flags=re.IGNORECASE,
+    ):
+        return False
 
     structured_chat = re.fullmatch(
-        r"\s*(danmaku|superchat|sc)\s*@\s*(\d+)\s*ms"
-        r"(?:\s+event=[^:]*)?\s*:\s*(.+?)\s*",
+        r"\s*(danmaku|superchat)\s*@\s*(\d+)\s*ms"
+        r"(?:\s+event=([^:]*))?\s*:\s*(.+?)\s*",
         value,
         flags=re.IGNORECASE | re.DOTALL,
     )
-    if not structured_chat:
-        return False
-    kind, offset_ms, quoted_text = structured_chat.groups()
-    expected_prefix = _compact(f"- {kind.lower()} @{offset_ms}ms")
-    compact_quoted_text = _compact(quoted_text)
+    if structured_chat:
+        kind, offset_ms, event_id, quoted_text = structured_chat.groups()
+        rendered_chat_row = re.compile(
+            r"\s*-\s*(danmaku|superchat)\s*@\s*(\d+)\s*ms"
+            r"(?:\s+event=([^:]*))?\s*:\s*(.+?)\s*",
+            flags=re.IGNORECASE,
+        )
+        return bool(
+            _compact(quoted_text)
+            and any(
+                match
+                and match.group(1).casefold() == kind.casefold()
+                and match.group(2) == offset_ms
+                and (
+                    event_id is None
+                    or _compact(match.group(3)) == _compact(event_id)
+                )
+                and _compact(match.group(4)) == _compact(quoted_text)
+                for line in clip_context_prompt.splitlines()
+                if (match := rendered_chat_row.fullmatch(line))
+            )
+        )
+
+    compact_value = _compact(value)
     return bool(
-        compact_quoted_text
-        and any(
-            _compact(line.lower()).startswith(expected_prefix)
-            and compact_quoted_text in _compact(line)
-            for line in clip_context_prompt.splitlines()
+        compact_value
+        and compact_value in _compact(
+            final_transcript + "\n" + clip_context_prompt
         )
     )
 
