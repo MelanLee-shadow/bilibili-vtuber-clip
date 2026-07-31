@@ -105,9 +105,17 @@ def test_automatic_title_filler_canonicalizer_only_removes_profile_exact_words()
             "auto_193450_672_945r3",
             "被坏女人南町问到最最最最喜欢的原因，后来才发现自己才是被收集的那个",
         ),
+        (
+            "auto_145940_1533_1619r3",
+            "熊猫头先嘲笑爱音上不起“月之森贵族学校”，想起英国留子后连声道歉，又猜她不会做饭才回国",
+        ),
+        (
+            "auto_152944_964_1091",
+            "长沙人李豆沙亲自打假“长沙大香肠”，话还没说完，弹幕又提议把技能叫“李姐拉拉”",
+        ),
     ],
 )
-def test_july_22_ivan_titles_are_exact_and_survive_recut_suffix(
+def test_ivan_titles_are_exact_and_survive_recut_suffix(
     candidate_id, expected
 ):
     assert title_policy.manual_title_override(candidate_id) == expected
