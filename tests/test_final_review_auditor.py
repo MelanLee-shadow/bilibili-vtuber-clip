@@ -1346,6 +1346,45 @@ def test_exact_text_convergence_allows_shared_prefix_inside_wide_suspect():
     assert convergence["replacement_text"] == "我上次"
 
 
+def test_exact_text_convergence_handles_repeated_narrow_suspect():
+    source = _srt("前一句", "直女不是侄女", "后一句")
+
+    output, adjudication = adjudicate_context_finding(
+        source,
+        {
+            "cue_index": 2,
+            "suspect": "女",
+            "suggestion": None,
+            "proposed_full_cue": None,
+            "repair_class": "phonetic",
+            "why": "审片员只标出重复出现的单字",
+        },
+        entity_verifier=lambda request: pytest.fail(
+            f"AGY must not decide exact-text convergence: {request}"
+        ),
+        judge_llm_call=lambda _prompt: json.dumps(
+            {
+                "decision": "REPLACE_WITH_EXACT_TEXT",
+                "replacement_text": "直女不是子女",
+                "reason": "完整 cue 语境支持后一处是子女",
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    assert "直女不是子女" in output
+    assert adjudication["status"] == "OBSERVED"
+    assert adjudication["repaired"] is True
+    assert (
+        adjudication["proposal_bootstrap"]["reason_code"]
+        == "SUSPECT_NOT_UNIQUE"
+    )
+    convergence = adjudication["cpa_missing_proposal_convergence"]
+    assert convergence["status"] == "RESOLVED"
+    assert convergence["suspect_occurrence_count"] == 2
+    assert convergence["decision"] == "REPLACE_WITH_EXACT_TEXT"
+
+
 def test_missing_candidate_second_cpa_provider_failure_stays_blocked():
     source = _srt("我走了之后")
     calls = 0

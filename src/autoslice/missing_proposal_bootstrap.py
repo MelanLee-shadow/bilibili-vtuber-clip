@@ -165,8 +165,9 @@ def converge_missing_proposal(
         audit.update(status="INVALID", reason_code="STALE_BASE")
         return None, audit
     suspect = str(finding.get("suspect") or "")
-    if not suspect or current.count(suspect) != 1:
-        audit.update(status="INVALID", reason_code="SUSPECT_NOT_UNIQUE")
+    suspect_occurrence_count = current.count(suspect) if suspect else 0
+    if suspect_occurrence_count < 1:
+        audit.update(status="INVALID", reason_code="SUSPECT_NOT_FOUND")
         return None, audit
     before_rows = cues[max(0, cue_index - 4) : cue_index - 1]
     after_rows = cues[cue_index : min(len(cues), cue_index + 3)]
@@ -217,6 +218,7 @@ def converge_missing_proposal(
         current_cue_sha256="sha256:" + current_sha256,
         context_sha256="sha256:" + context_sha256,
         prompt_sha256="sha256:" + prompt_sha256,
+        suspect_occurrence_count=suspect_occurrence_count,
     )
     cache_path = _convergence_cache_path(prompt_sha256)
     payload: Mapping[str, Any] | None = None
@@ -290,37 +292,17 @@ def converge_missing_proposal(
             allow_insertion=True,
             allow_deletion=True,
         )
-        bounded_full_cue_repair = bool(
-            error == "EDIT_LENGTH_DELTA_TOO_LARGE"
-            and suspect == current
-            and len(current) <= 24
-            and len(replacement_text) <= 24
-        )
-        if bounded_full_cue_repair:
+        full_cue_audit_fallback = error is not None
+        if full_cue_audit_fallback:
             edit_suspect = current
             replacement = replacement_text
             start = 0
             end = len(current)
-            error = None
-        original_start = current.index(suspect)
-        original_end = original_start + len(suspect)
-        # This pass judges the *complete* replacement cue.  A minimal diff is
-        # allowed to preserve a shared prefix/suffix inside the reviewer's
-        # wider suspect (``我不知道`` -> ``我上次`` preserves ``我``).  The
-        # exact cue still covers the finding when the old suspect no longer
-        # survives and the actual edit intersects its original interval.
-        edit_intersects_suspect = start < original_end and end > original_start
-        if (
-            error is not None
-            or suspect in replacement_text
-            or not edit_intersects_suspect
-        ):
-            audit.update(
-                status="INVALID",
-                reason_code=error or "CPA_CONVERGENCE_DOES_NOT_COVER_SUSPECT",
-                reason=reason,
-            )
-            return None, audit
+        # Unlike the proposal layer, this is CPA's final, hash-bound decision
+        # over the complete target cue.  A local SequenceMatcher span is only
+        # audit metadata here: shared prefixes, repeated one-character
+        # suspects, or a broad exact rewrite must not let deterministic code
+        # overrule CPA and recreate a permanent suggestion=null blocker.
         audit.update(
             status="RESOLVED",
             decision=decision,
@@ -330,8 +312,9 @@ def converge_missing_proposal(
             reason=reason,
             mutation_authorized=True,
         )
-        if bounded_full_cue_repair:
-            audit["bounded_full_cue_repair"] = True
+        if full_cue_audit_fallback:
+            audit["full_cue_audit_fallback"] = True
+            audit["span_derivation_reason_code"] = error
         rebuilt = dict(finding)
         rebuilt.update(
             suspect=edit_suspect,
