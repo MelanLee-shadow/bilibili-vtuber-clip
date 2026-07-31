@@ -97,6 +97,35 @@ def song_delivery_artifacts(record: dict) -> dict:
     return out
 
 
+def song_portable_cover_replay_specs(
+    *, generation: dict, delivery: Path, basename: str
+) -> dict[str, tuple[Path, Path, str]]:
+    """Return the three hash-bound cover replay attachments for a song package.
+
+    The final PNG alone is not a portable cover authority: package-level
+    verification replays the title composite from the route background,
+    pre-overlay, and glyph mask.  Keep the destination convention identical
+    to the recovery package builder.
+    """
+    rendered = generation.get("rendered_text_pixels")
+    if not isinstance(rendered, dict):
+        raise SongDeliveryError("song cover generation lacks rendered text pixel evidence")
+    required = (
+        ("cover_title_mask", rendered.get("mask_path"), rendered.get("mask_sha256"), ".cover.title-mask.png"),
+        ("cover_pre_overlay", generation.get("pre_overlay_path"), generation.get("pre_overlay_sha256"), ".cover.pre-overlay.png"),
+        ("cover_route_background", generation.get("ai_background"), generation.get("ai_background_sha256"), ".cover.route-background.png"),
+    )
+    specs: dict[str, tuple[Path, Path, str]] = {}
+    for role, path_value, sha256, suffix in required:
+        if not isinstance(path_value, str) or not isinstance(sha256, str):
+            raise SongDeliveryError(f"song cover generation lacks {role} path/hash")
+        source = Path(path_value)
+        if not _matches_sha256(source, sha256):
+            raise SongDeliveryError(f"song cover generation {role} hash mismatch")
+        specs[role] = (source, delivery / f"{basename}{suffix}", sha256)
+    return specs
+
+
 def _write_song_active_record(
     summary_record: dict,
     *,
@@ -399,6 +428,24 @@ def _commit_verified_song_package(
         delivery / f"{name}.record.json",
         active_record_sha256,
     )
+    active_record = _read_json_object(active_record_path, label="song active record")
+    active_staging = active_record.get("publish_staging")
+    publish_value = (
+        active_staging.get("publish_json_path")
+        if isinstance(active_staging, dict)
+        else None
+    )
+    if not isinstance(publish_value, str) or not publish_value:
+        raise SongDeliveryError("song active record has no publish draft path")
+    publish_path = Path(publish_value)
+    publish_sha256 = "sha256:" + _sha256_regular_file(publish_path)
+    if not _matches_sha256(publish_path, publish_sha256):
+        raise SongDeliveryError("song active publish draft hash mismatch")
+    specs["publish"] = (
+        publish_path,
+        delivery / f"{name}.publish.json",
+        publish_sha256,
+    )
 
     cover_ok = False
     cover: Path | None = None
@@ -409,6 +456,16 @@ def _commit_verified_song_package(
         cover_ok = _matches_sha256(cover, cover_sha256)
         if cover_ok:
             specs["cover"] = (cover, delivery / f"{name}.cover.png", cover_sha256)
+            staging = summary_record.get("materialized_recut")
+            staging = staging.get("publish_staging") if isinstance(staging, dict) else None
+            generation = staging.get("cover_generation") if isinstance(staging, dict) else None
+            if not isinstance(generation, dict):
+                raise SongDeliveryError("song cover has no hash-bound generation evidence")
+            specs.update(
+                song_portable_cover_replay_specs(
+                    generation=generation, delivery=delivery, basename=name
+                )
+            )
 
     receipt = _atomic_verified_song_delivery(
         candidate_id=delivery_candidate_id,

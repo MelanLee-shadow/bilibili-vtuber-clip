@@ -1192,11 +1192,15 @@ def _cover_binding_fixture(tmp_path, monkeypatch, *, song=False):
     evidence = generation_root / "evidence"
     evidence.mkdir()
     ai_bg = evidence / "ai.png"
+    pre_overlay = evidence / "pre-overlay.png"
+    title_mask = evidence / "title-mask.png"
     reference = evidence / "ref.png"
     request = evidence / "request.json"
     response = evidence / "response.json"
     for path, value in (
         (ai_bg, b"ai"),
+        (pre_overlay, b"pre-overlay"),
+        (title_mask, b"title-mask"),
         (reference, b"ref"),
         (request, b"request"),
         (response, b"response"),
@@ -1223,6 +1227,12 @@ def _cover_binding_fixture(tmp_path, monkeypatch, *, song=False):
         "final_cover_sha256": digest(generated_cover),
         "ai_background": str(ai_bg),
         "ai_background_sha256": digest(ai_bg),
+        "pre_overlay_path": str(pre_overlay),
+        "pre_overlay_sha256": digest(pre_overlay),
+        "rendered_text_pixels": {
+            "mask_path": str(title_mask),
+            "mask_sha256": digest(title_mask),
+        },
         "reference_image": str(reference),
         "reference_sha256": digest(reference),
         "request_path": str(request),
@@ -2174,6 +2184,10 @@ def test_song_cover_binding_supports_distinct_outer_and_selector_candidate_ids(t
     assert manifest["candidate_id"] == fx["cid"]
     assert manifest["artifacts"]["cover"]["path"] == str(fx["cover"])
     assert manifest["artifacts"]["cover"]["sha256"] == fx["rec"]["cover_sha256"]
+    for role in ("publish", "cover_title_mask", "cover_pre_overlay", "cover_route_background"):
+        artifact = manifest["artifacts"][role]
+        assert Path(artifact["path"]).is_file()
+        assert runner._matches_sha256(Path(artifact["path"]), artifact["sha256"])
     assert fx["rec"]["delivered_sidecars"]["active_record"] == str(
         fx["delivery_record"]
     )
@@ -2456,6 +2470,7 @@ def test_commit_verified_song_package_delivers_without_cover(tmp_path, monkeypat
         "host_vocal_proof",
         "recut_manifest",
         "active_record",
+        "publish",
     }
     assert manifest["absent_artifacts"]["cover"]["status"] == "ABSENT"
     assert not Path(manifest["absent_artifacts"]["cover"]["path"]).exists()

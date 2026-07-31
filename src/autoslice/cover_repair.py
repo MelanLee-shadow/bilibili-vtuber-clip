@@ -35,6 +35,7 @@ from src.autoslice.verified_io import (
     _read_json_object,
     _document_video_hash,
 )
+from src.autoslice.song_delivery import SongDeliveryError, song_portable_cover_replay_specs
 
 
 _runner = RunnerProxy()
@@ -386,6 +387,10 @@ def _updated_song_delivery_manifest(
     cover_sha256: str,
     binding_path: Path,
     binding_sha256: str,
+    portable_cover_artifacts: dict[str, tuple[Path, Path, str]],
+    delivery_publish_path: Path,
+    source_publish_path: Path,
+    publish_sha256: str,
 ) -> dict:
     updated = copy.deepcopy(manifest)
     artifacts = updated.get("artifacts")
@@ -405,6 +410,19 @@ def _updated_song_delivery_manifest(
         "source_path": str(generated_cover),
         "source_sha256": cover_sha256,
     }
+    artifacts["publish"] = {
+        "path": str(delivery_publish_path),
+        "sha256": publish_sha256,
+        "source_path": str(source_publish_path),
+        "source_sha256": publish_sha256,
+    }
+    for role, (source, destination, sha256) in portable_cover_artifacts.items():
+        artifacts[role] = {
+            "path": str(destination),
+            "sha256": sha256,
+            "source_path": str(source.resolve(strict=True)),
+            "source_sha256": sha256,
+        }
     absent = updated.get("absent_artifacts")
     if isinstance(absent, dict):
         absent.pop("cover", None)
@@ -708,6 +726,19 @@ def _roll_forward_prepared_cover_transactions(
             ):
                 continue
             expected_targets.add(Path(manifest_value).absolute())
+            try:
+                replay_specs = song_portable_cover_replay_specs(
+                    generation=generation,
+                    delivery=cover.parent.resolve(),
+                    basename=cover.name.removesuffix(".cover.png"),
+                )
+            except (OSError, ValueError, SongDeliveryError):
+                continue
+            expected_targets.update(
+                destination.absolute()
+                for _source, destination, _sha256 in replay_specs.values()
+            )
+            expected_targets.add(mp4.with_suffix(".publish.json").absolute())
         elif (
             binding_payload.get("authority_type") != "talk_delivery_record"
             or binding_payload.get("delivery_manifest_path") is not None
@@ -947,6 +978,8 @@ def _bind_repaired_cover(
         for path, document in documents
     ]
     updated_song_manifest: tuple[Path, dict] | None = None
+    portable_cover_artifacts: dict[str, tuple[Path, Path, str]] = {}
+    delivery_publish_payload: tuple[Path, bytes] | None = None
     if song_manifest is not None:
         updated_by_path = {path.resolve(): (path, document) for path, document in updated_documents}
         delivery_record_path = mp4.with_suffix(".record.json").resolve(strict=True)
@@ -958,6 +991,28 @@ def _bind_repaired_cover(
         if len(source_record_paths) != 1:
             raise ValueError("song cover binding requires one updated active source record")
         source_record_path = source_record_paths[0]
+        source_publish_paths = [
+            path.resolve(strict=True)
+            for path, document in updated_documents
+            if document.get("schema_version") == "shadow-publish-draft.v1"
+        ]
+        if len(source_publish_paths) != 1:
+            raise ValueError("song cover binding requires one updated active publish draft")
+        source_publish_path = source_publish_paths[0]
+        source_publish_document = updated_by_path[source_publish_path][1]
+        delivery_publish_path = mp4.with_suffix(".publish.json").resolve()
+        portable_cover_artifacts = song_portable_cover_replay_specs(
+            generation=generation,
+            delivery=cover.parent.resolve(),
+            basename=cover.name.removesuffix(".cover.png"),
+        )
+        delivery_publish_payload = (
+            delivery_publish_path,
+            _runner._json_file_bytes(source_publish_document),
+        )
+        publish_sha256 = "sha256:" + hashlib.sha256(
+            delivery_publish_payload[1]
+        ).hexdigest()
         updated_song_manifest = (
             song_manifest[0],
             _updated_song_delivery_manifest(
@@ -971,6 +1026,10 @@ def _bind_repaired_cover(
                 cover_sha256=cover_sha256,
                 binding_path=binding_path,
                 binding_sha256=binding_sha256,
+                portable_cover_artifacts=portable_cover_artifacts,
+                delivery_publish_path=delivery_publish_path,
+                source_publish_path=source_publish_path,
+                publish_sha256=publish_sha256,
             ),
         )
         # The verified song delivery manifest remains the commit marker and is
@@ -981,6 +1040,12 @@ def _bind_repaired_cover(
     if generated_cover.resolve() != cover.resolve():
         target_payloads.append((cover, generated_cover.read_bytes()))
     target_payloads.append((binding_path, binding_bytes))
+    if delivery_publish_payload is not None:
+        target_payloads.append(delivery_publish_payload)
+    target_payloads.extend(
+        (destination, source.read_bytes())
+        for source, destination, _sha256 in portable_cover_artifacts.values()
+    )
     target_payloads.extend(
         (document_path, _runner._json_file_bytes(document))
         for document_path, document in updated_documents
@@ -1043,9 +1108,15 @@ def _bind_repaired_cover(
         if isinstance(delivered_sidecars, dict):
             delivered_sidecars["cover"] = str(cover)
             delivered_sidecars["active_record"] = str(active_record["path"])
+            for role, artifact in manifest_artifacts.items():
+                if role != "video" and isinstance(artifact, dict):
+                    delivered_sidecars[role] = str(artifact["path"])
         if isinstance(delivered_sidecar_hashes, dict):
             delivered_sidecar_hashes["cover"] = cover_sha256
             delivered_sidecar_hashes["active_record"] = str(active_record["sha256"])
+            for role, artifact in manifest_artifacts.items():
+                if role != "video" and isinstance(artifact, dict):
+                    delivered_sidecar_hashes[role] = str(artifact["sha256"])
     repaired_record["cover_transaction_path"] = str(journal_path)
     repaired_record["cover_transaction_status"] = "COMMITTED"
     if isinstance(repaired_record.get("summary"), dict):
@@ -1088,7 +1159,7 @@ def _cover_binding_valid(date: str, rec: dict, mp4: Path, cover: Path) -> bool:
         cover_path = Path(str(binding.get("cover_path") or "")).resolve(strict=True)
         generation_path = Path(str(binding.get("generation_manifest_path") or "")).resolve(strict=True)
         generation_cover = Path(str(binding.get("generation_cover_path") or "")).resolve(strict=True)
-    except (OSError, ValueError):
+    except (OSError, ValueError, SongDeliveryError):
         return False
     if (
         binding.get("schema_version") != "lidousha-cover-repair-binding.v1"
@@ -1112,7 +1183,7 @@ def _cover_binding_valid(date: str, rec: dict, mp4: Path, cover: Path) -> bool:
             title=str(rec.get("title") or ""),
             candidate_id=str(rec.get("candidate_id") or ""),
         )
-    except (OSError, ValueError):
+    except (OSError, ValueError, SongDeliveryError):
         return False
     if not (
         validated_path.resolve() == generation_path
@@ -1197,7 +1268,7 @@ def _cover_binding_valid(date: str, rec: dict, mp4: Path, cover: Path) -> bool:
         manifest_source = Path(str(cover_artifact.get("source_path") or "")).resolve(strict=True)
     except OSError:
         return False
-    return (
+    if not (
         binding.get("authority_type") == "verified_song_delivery"
         and binding.get("delivery_manifest_path") == str(manifest_path)
         and manifest_cover == cover.resolve()
@@ -1206,6 +1277,50 @@ def _cover_binding_valid(date: str, rec: dict, mp4: Path, cover: Path) -> bool:
         and _matches_sha256(generation_cover, str(cover_artifact.get("source_sha256") or ""))
         and pointer.get("path") == str(binding_path)
         and pointer.get("sha256") == binding_sha256
+    ):
+        return False
+    try:
+        expected_replay = song_portable_cover_replay_specs(
+            generation=generation,
+            delivery=cover.parent.resolve(),
+            basename=cover.name.removesuffix(".cover.png"),
+        )
+    except (OSError, ValueError, SongDeliveryError):
+        return False
+    for role, (source, destination, sha256) in expected_replay.items():
+        artifact = artifacts.get(role)
+        if not isinstance(artifact, dict):
+            return False
+        try:
+            artifact_path = Path(str(artifact.get("path") or "")).resolve(strict=True)
+            artifact_source = Path(str(artifact.get("source_path") or "")).resolve(strict=True)
+        except OSError:
+            return False
+        if (
+            artifact_path != destination.resolve()
+            or artifact_source != source.resolve()
+            or not _matches_sha256(destination, str(artifact.get("sha256") or ""))
+            or not _matches_sha256(source, str(artifact.get("source_sha256") or ""))
+        ):
+            return False
+    publish_artifact = artifacts.get("publish")
+    source_publish_paths = [
+        path.resolve()
+        for path, document in documents
+        if document.get("schema_version") == "shadow-publish-draft.v1"
+    ]
+    if len(source_publish_paths) != 1 or not isinstance(publish_artifact, dict):
+        return False
+    try:
+        delivered_publish = mp4.with_suffix(".publish.json").resolve(strict=True)
+    except OSError:
+        return False
+    source_publish = source_publish_paths[0]
+    return (
+        publish_artifact.get("path") == str(delivered_publish)
+        and publish_artifact.get("source_path") == str(source_publish)
+        and _matches_sha256(delivered_publish, str(publish_artifact.get("sha256") or ""))
+        and _matches_sha256(source_publish, str(publish_artifact.get("source_sha256") or ""))
     )
 
 
