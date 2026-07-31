@@ -3086,6 +3086,51 @@
    "source_start_ms": 237680,
    "text": "嗯，我还是比较磕李墨，哈哈",
    "truth_id": "20260711-pink-cp-name-limo-r1"
+  },
+  {
+   "action": "replace_cue",
+   "assertion_state": "VERIFIED_ACTIVE",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "HASH_BOUND_CONTEXTUAL_REFERENT_TRUTH",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260729-22-50-56.mp4",
+   "required": true,
+   "revision_id": "r1",
+   "source_start_ms": 1028700,
+   "source_end_ms": 1031500,
+   "text": "久远澪老师，你真的是侄女吗",
+   "truth_id": "20260729-jiuyuanling-teacher-q1-r1",
+   "authority": "Ivan 2026-07-31 指认她点名回应的弹幕用户为 久远澪；BCUT 独立转写同处听出「9月林老师」(jiǔ-yuè-lín-lǎoshī)≈久远澪老师(jiǔ-yuǎn-líng-lǎoshī)，句法为对人发问（后接「你真的是侄女吗」）。原管线把人名语义归一化为「就问你老实说」并补「说」凑语法。仅绑定本精确源区间。"
+  },
+  {
+   "action": "replace_cue",
+   "assertion_state": "VERIFIED_ACTIVE",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "HASH_BOUND_CONTEXTUAL_REFERENT_TRUTH",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260729-22-50-56.mp4",
+   "required": true,
+   "revision_id": "r1",
+   "source_start_ms": 1033550,
+   "source_end_ms": 1037670,
+   "text": "久远澪老师，侄女会看李豆沙",
+   "truth_id": "20260729-jiuyuanling-teacher-q2-r1",
+   "authority": "同 20260729-jiuyuanling-teacher-q1-r1：她二次点名 久远澪老师，BCUT 同处独立听出「9月林老师」。原文「就问你老实说，侄女会看李豆沙」为同一人名误听。仅绑定本精确源区间。"
+  },
+  {
+   "action": "replace_cue",
+   "assertion_state": "VERIFIED_ACTIVE",
+   "decision_authority": "IVAN_OPERATOR_TRUTH",
+   "evidence_class": "HASH_BOUND_CONTEXTUAL_REFERENT_TRUTH",
+   "knowledge_type": "SOURCE_INTERVAL_TRUTH",
+   "recording_basename": "22966160_20260729-22-50-56.mp4",
+   "required": true,
+   "revision_id": "r1",
+   "source_start_ms": 1074410,
+   "source_end_ms": 1077210,
+   "text": "谢谢这位柏拉图老板的上舰",
+   "truth_id": "20260729-platon-boarding-thanks-r1",
+   "authority": "Ivan 2026-07-31 确认本句上舰致谢正主为舰长 熊猫柏拉图（口播简称「柏拉图」三音节）；BCUT 独立听「薄糊涂」(bó-hú-tú) 与「柏拉图」(bó-lā-tú) 首尾同音，101 人舰长榜为唯一近音候选，当晚三位新舰长（缝合怪AC/Water不温/万事屋_Official）与近 10 天 61 名付费用户均已排除。原文「不糊涂」为误听。仅绑定本精确源区间。"
   }
  ],
  "governance": {
