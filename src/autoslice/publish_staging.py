@@ -59,6 +59,9 @@ from .cover_polish_gate import (
     _polish_face_binding_failure,
     _verify_polish_face_integrity,
 )
+from .cover_punch_semantics import (
+    cover_text_requires_punch_for_thumbnail,
+)
 from .llm_client import LlmCall, extract_json_object
 from .review_evidence import SourceCue
 from .recovery_title_authority import (
@@ -1289,6 +1292,13 @@ def _build_lidousha_cover_route(
         required_participant_ids and set(required_participant_ids) == set(visible_participant_ids)
     )
     verified_stream_frame = is_hash_bound_reference_authority(reference_authority)
+    punch_review = art_direction.cover_punch_semantic_review
+    punch_semantic_status = str(
+        punch_review.get("status") if isinstance(punch_review, Mapping) else ""
+    ).strip()
+    thumbnail_text_requires_punch = (
+        punch_allowed and cover_text_requires_punch_for_thumbnail(cover_text)
+    )
     treatment, treatment_reason = _decide_cover_treatment(
         cover_mode=cover_mode,
         is_song=art_direction.is_song,
@@ -1297,6 +1307,8 @@ def _build_lidousha_cover_route(
         verified_stream_frame=verified_stream_frame,
         relationship_visual_required=(relationship_visual_safety_required(story_contract)),
         relationship_source_verified=relationship_source_verified,
+        thumbnail_text_requires_punch=thumbnail_text_requires_punch,
+        punch_semantic_status=punch_semantic_status,
     )
     cover_generation["cover_treatment"] = {
         "treatment": treatment,
@@ -1332,6 +1344,8 @@ def _build_lidousha_cover_route(
                 else None
             ),
             "verified_stream_frame": verified_stream_frame,
+            "thumbnail_text_requires_punch": thumbnail_text_requires_punch,
+            "punch_semantic_status": punch_semantic_status,
             "reference_authority_id": (
                 reference_authority.get("candidate_id") if reference_authority is not None else None
             ),
@@ -1512,6 +1526,7 @@ def _stage_lidousha_ai_cover(
             and treatment in ("screenshot_direct", "screenshot_polish")
             else "VERIFIED_STREAM_FRAME"
             if treatment in ("screenshot_direct", "screenshot_polish")
+            and route.get("verified_stream_frame") is True
             else str(story_contract.get("cover_fallback_mode") or "HOST_ONLY_GENERIC")
         )
     if treatment in ("screenshot_direct", "screenshot_polish"):
@@ -1673,6 +1688,8 @@ def _decide_cover_treatment(
     verified_stream_frame: bool = False,
     relationship_visual_required: bool = False,
     relationship_source_verified: bool = False,
+    thumbnail_text_requires_punch: bool = False,
+    punch_semantic_status: str = "",
 ) -> tuple[str, str]:
     """每条切片选封面路线（2026-07-21 Ivan：哪些适合全图 CPA 重做、哪些适合截图）。
 
@@ -1709,10 +1726,6 @@ def _decide_cover_treatment(
         )
     if frame_selection is None:
         return "cpa_redraw", "frame selection unavailable"
-    if cover_mode == "screenshot":
-        return "screenshot_direct", "mode=screenshot (forced)"
-    if cover_mode == "polish":
-        return "screenshot_polish", "mode=polish (forced)"
     candidates = frame_selection.get("candidates") or []
     best = float(candidates[0]["score"]) if candidates else 0.0
     emotional = bool(candidates and candidates[0].get("emotion"))
@@ -1731,6 +1744,36 @@ def _decide_cover_treatment(
     subject_confident = frame_selection.get("subject_confident") is True and (
         motion_dispersion is None or motion_dispersion <= _COVER_SUBJECT_MAX_MOTION_DISPERSION
     )
+    thumbnail_punch_unavailable = (
+        thumbnail_text_requires_punch
+        and punch_semantic_status in {"FAILED", "NOT_APPLICABLE"}
+    )
+    forced_subject_unverified = (
+        cover_mode in {"screenshot", "polish"} and not subject_confident
+    )
+    if thumbnail_punch_unavailable and forced_subject_unverified:
+        return (
+            "cpa_redraw",
+            (
+                f"mode={cover_mode} preference cannot authorize an unverified "
+                "cover subject; thumbnail punch unavailable and full title is "
+                "not a readable 1-2 line hook"
+            ),
+        )
+    if thumbnail_punch_unavailable:
+        return (
+            "cpa_redraw",
+            "thumbnail punch unavailable; full title is not a readable 1-2 line hook",
+        )
+    if forced_subject_unverified:
+        return (
+            "cpa_redraw",
+            f"mode={cover_mode} preference cannot authorize an unverified cover subject",
+        )
+    if cover_mode == "screenshot":
+        return "screenshot_direct", "mode=screenshot (forced)"
+    if cover_mode == "polish":
+        return "screenshot_polish", "mode=polish (forced)"
     if subject_confident and (best >= _COVER_TREATMENT_SCORE_HI or (emotional and best >= 3.2)):
         return "screenshot_direct", f"strong real moment (score={best:.2f})"
     if subject_confident and best >= _COVER_TREATMENT_SCORE_LO:

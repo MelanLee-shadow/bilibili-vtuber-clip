@@ -820,6 +820,20 @@ def validate_cover_route_decision(
         and not isinstance(route.get("host_identity_required"), bool)
     ):
         return False
+    for key in (
+        "subject_confident",
+        "verified_stream_frame",
+        "thumbnail_text_requires_punch",
+    ):
+        if key in route and not isinstance(route.get(key), bool):
+            return False
+    if (
+        route.get("cover_mode") in {"screenshot", "polish"}
+        and selected in {"screenshot_direct", "screenshot_polish"}
+        and route.get("subject_confident") is not True
+        and route.get("verified_stream_frame") is not True
+    ):
+        return False
     expected_planned = selected in {"screenshot_polish", "cpa_redraw"}
     if route.get("image_generation_planned") is not expected_planned:
         return False

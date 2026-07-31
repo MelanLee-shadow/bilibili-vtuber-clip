@@ -38,6 +38,10 @@ from src.autoslice.cover_font_paths import resolve_trusted_cover_font
 from src.autoslice.cover_generation import (
     validate_cover_punch_semantic_review,
 )
+from src.autoslice.cover_punch_semantics import (
+    cover_text_requires_punch_for_thumbnail,
+    cover_thumbnail_lines_are_readable,
+)
 from src.autoslice.cover_route_evidence import (
     validate_cover_route_decision,
     validate_rendered_text_pixel_evidence,
@@ -229,6 +233,23 @@ def _audit_story_bound_cover(
             story_hook=str(story_contract.get("selection_hook") or ""),
         ):
             reason_codes.add("COVER_PUNCH_SEMANTIC_REVIEW_INVALID")
+    else:
+        art_direction = generation.get("art_direction")
+        punch_review = (
+            art_direction.get("cover_punch_semantic_review")
+            if isinstance(art_direction, Mapping)
+            else None
+        )
+        punch_status = (
+            str(punch_review.get("status") or "")
+            if isinstance(punch_review, Mapping)
+            else ""
+        )
+        punch_failed = punch_status in {"FAILED", "NOT_APPLICABLE"}
+        if punch_failed and cover_text_requires_punch_for_thumbnail(cover_text):
+            reason_codes.add("COVER_PUNCH_REQUIRED_FOR_THUMBNAIL")
+        if punch_failed and not cover_thumbnail_lines_are_readable(rendered_lines):
+            reason_codes.add("COVER_THUMBNAIL_TEXT_UNREADABLE")
     pixel_evidence = generation.get("rendered_text_pixels")
     if isinstance(pixel_evidence, Mapping):
         try:

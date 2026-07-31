@@ -5056,8 +5056,27 @@ def test_overlay_rejects_talk_title_that_repeats_the_known_91px_failure(tmp_path
     assert not out.exists()
 
 
+def _force_cover_subject_confident(monkeypatch, publish_staging) -> None:
+    """Keep forced-route tests explicit about their source-subject authority."""
+
+    select_frame = publish_staging.select_expressive_cover_frame
+
+    def confident_selection(*args, **kwargs):
+        selection = dict(select_frame(*args, **kwargs))
+        selection["subject_confident"] = True
+        selection["motion_dispersion_frac"] = 0.2
+        selection["camera_window_bbox_frac"] = None
+        return selection
+
+    monkeypatch.setattr(
+        publish_staging,
+        "select_expressive_cover_frame",
+        confident_selection,
+    )
+
+
 def test_screenshot_direct_cover_skips_cpa_and_needs_no_creds(tmp_path, monkeypatch):
-    """screenshot 可零 CPA 出图，但无文字裁决时必须渲染完整文案。"""
+    """可信主体+短文案的 screenshot 路线可零图像 CPA 出图。"""
 
     from PIL import Image
 
@@ -5069,6 +5088,7 @@ def test_screenshot_direct_cover_skips_cpa_and_needs_no_creds(tmp_path, monkeypa
     monkeypatch.delenv("AUTOSLICE_COVER_REF_MS", raising=False)
     monkeypatch.setenv("AUTOSLICE_COVER_MODE", "screenshot")
     media = _write_synthetic_performance_clip(tmp_path)
+    _force_cover_subject_confident(monkeypatch, publish_staging)
 
     def forbidden_image_edit(**_kwargs):
         raise AssertionError("screenshot mode must not call CPA image edit")
@@ -5077,8 +5097,8 @@ def test_screenshot_direct_cover_skips_cpa_and_needs_no_creds(tmp_path, monkeypa
         {"status": "MATERIALIZED", "media_path": str(media)},
         media_path=media,
         candidate_id="shot-1",
-        title="【李豆沙】才，才不是熊猫呢！小李被kmx用两个字点名",
-        cover_text="才，才不是熊猫呢！小李被kmx用两个字点名",
+        title="【李豆沙】才不是熊猫",
+        cover_text="才不是熊猫",
         run_ffmpeg=True,
         art_direction_llm_call=None,
         image_edit=forbidden_image_edit,
@@ -5136,6 +5156,7 @@ def test_screenshot_materialization_failure_blocks_without_calling_ai(
     monkeypatch.setenv("CPA_BASE_URL", "https://cpa.example.test/v1")
     monkeypatch.setenv("CPA_API_KEY", "test-key")
     media = _write_synthetic_performance_clip(tmp_path)
+    _force_cover_subject_confident(monkeypatch, publish_staging)
     calls = {"image_edit": 0}
 
     def fail_screenshot(*_args, **_kwargs):
@@ -5189,6 +5210,7 @@ def test_manual_title_can_finish_on_screenshot_without_hidden_cpa_fallback(
     monkeypatch.delenv("CPA_API_KEY", raising=False)
     monkeypatch.setenv("AUTOSLICE_COVER_MODE", "screenshot")
     media = _write_synthetic_performance_clip(tmp_path)
+    _force_cover_subject_confident(monkeypatch, publish_staging)
     manual_cover_text = "最包容异性恋的直播间，看到男角色只能说出一句不熟"
 
     result = publish_staging._stage_lidousha_ai_cover(
@@ -5292,6 +5314,12 @@ def test_cover_treatment_router_by_moment_strength():
     assert decide(cover_mode="auto", is_song=False, punch_allowed=False, frame_selection=sel(9.0))[0] == "screenshot_direct"
     assert decide(cover_mode="auto", is_song=False, punch_allowed=True, frame_selection=None)[0] == "cpa_redraw"
     assert decide(cover_mode="screenshot", is_song=False, punch_allowed=True, frame_selection=sel(0.5))[0] == "screenshot_direct"
+    assert decide(
+        cover_mode="screenshot",
+        is_song=False,
+        punch_allowed=True,
+        frame_selection=sel(9.0, subject=False),
+    )[0] == "cpa_redraw"
     assert decide(cover_mode="polish", is_song=False, punch_allowed=True, frame_selection=sel(9.0))[0] == "screenshot_polish"
     assert decide(cover_mode="cpa", is_song=False, punch_allowed=True, frame_selection=sel(9.0))[0] == "cpa_redraw"
     assert decide(
@@ -5304,6 +5332,150 @@ def test_cover_treatment_router_by_moment_strength():
         "screenshot_direct",
         "hash-bound source frame verifies all required participants",
     )
+
+
+def test_814_shaped_forced_screenshot_reroutes_from_unverified_subject():
+    """Forced screenshot is a preference, not authority for an unsafe frame."""
+
+    from src.autoslice import publish_staging
+
+    generation: dict[str, object] = {}
+    art_direction = shadow_pipeline.LidoushaCoverArtDirection(
+        role="shy_cute_default",
+        expression_en="puzzled",
+        background_style="warm-scrapbook-collage",
+        layout="right-split",
+        hook_color="pink",
+        is_song=False,
+        hook_word="原点组",
+        cover_punch=(),
+        cover_punch_semantic_review={
+            "schema_version": "lidousha-cover-punch-semantic-review.v1",
+            "status": "FAILED",
+            "reason_code": "CPA_PUNCH_SEMANTIC_REVIEW_REJECTED",
+            "original_punch": ["我也磕原点组", "怎么没有"],
+            "final_punch": [],
+        },
+    )
+    treatment, route = publish_staging._build_lidousha_cover_route(
+        cover_generation=generation,
+        story_contract=None,
+        title=(
+            "【李豆沙】SC称转发佐伯沙弥香生日信息能拿菲尔兹奖，"
+            "小李追问“我也磕原点组怎么没有”，难道磕错了？"
+        ),
+        cover_text=(
+            "SC称转发佐伯沙弥香生日信息能拿菲尔兹奖，"
+            "小李追问“我也磕原点组怎么没有”，难道磕错了？"
+        ),
+        cover_mode="screenshot",
+        art_direction=art_direction,
+        punch_allowed=True,
+        frame_selection={
+            "status": "SELECTED",
+            "best_ms": 60_000,
+            "candidates": [{"score": 5.0465, "emotion": 0.0}],
+            "subject_confident": False,
+            "motion_dispersion_frac": 0.5722,
+        },
+        reference_authority=None,
+        enforce_final_host_identity=True,
+    )
+
+    assert treatment == "cpa_redraw"
+    assert route["selected_treatment"] == "cpa_redraw"
+    assert route["subject_confident"] is False
+    assert route["verified_stream_frame"] is False
+    assert route["thumbnail_text_requires_punch"] is True
+    assert route["punch_semantic_status"] == "FAILED"
+    assert "unverified" in route["selected_rationale"]
+
+    # The old 814 receipt shape must not remain valid just because execution
+    # recorded a mechanically successful screenshot.
+    from src.autoslice.cover_route_evidence import (
+        build_cover_route_decision,
+        record_cover_route_execution,
+        validate_cover_route_decision,
+    )
+
+    unsafe_generation: dict[str, object] = {
+        "method": "screenshot_direct",
+        "cover_origin": "SOURCE_SCREENSHOT",
+    }
+    unsafe_generation["route_decision"] = build_cover_route_decision(
+        selected_treatment="screenshot_direct",
+        selected_rationale="mode=screenshot (forced)",
+        story_contract=None,
+        reference_authority=None,
+        title="【李豆沙】814 旧路线",
+        cover_text="八行完整标题",
+        decision_inputs={
+            "cover_mode": "screenshot",
+            "subject_confident": False,
+            "verified_stream_frame": False,
+        },
+    )
+    record_cover_route_execution(
+        unsafe_generation,
+        actual_treatment="screenshot_direct",
+        execution_status="READY",
+        image_generation_attempted=False,
+        image_generation_used=False,
+    )
+    assert not validate_cover_route_decision(unsafe_generation)
+
+
+def test_235_shaped_readable_punch_still_reroutes_unverified_subject():
+    """A good 2-line punch cannot make a cropped-off host screenshot safe."""
+
+    from src.autoslice import publish_staging
+
+    generation: dict[str, object] = {}
+    art_direction = shadow_pipeline.LidoushaCoverArtDirection(
+        role="shy_cute_default",
+        expression_en="annoyed",
+        background_style="mono-manga-panels",
+        layout="banner",
+        hook_color="orange",
+        is_song=False,
+        hook_word="抽烟",
+        cover_punch=("咖啡店遇人抽烟", "电脑都有烟味"),
+        cover_punch_semantic_review={
+            "schema_version": "lidousha-cover-punch-semantic-review.v1",
+            "status": "REVISED",
+            "final_punch": ["咖啡店遇人抽烟", "电脑都有烟味"],
+        },
+    )
+    treatment, route = publish_staging._build_lidousha_cover_route(
+        cover_generation=generation,
+        story_contract=None,
+        title=(
+            "【李豆沙】劝钓鱼时别抽烟，咖啡店遇人抽烟后电脑都有烟味，"
+            "小李再也不说每天一条"
+        ),
+        cover_text=(
+            "劝钓鱼时别抽烟，咖啡店遇人抽烟后电脑都有烟味，"
+            "小李再也不说每天一条"
+        ),
+        cover_mode="screenshot",
+        art_direction=art_direction,
+        punch_allowed=True,
+        frame_selection={
+            "status": "SELECTED",
+            "best_ms": 17_000,
+            "candidates": [{"score": 4.4646, "emotion": 0.0}],
+            "subject_confident": False,
+            "motion_dispersion_frac": 0.5722,
+        },
+        reference_authority=None,
+        enforce_final_host_identity=True,
+    )
+
+    assert treatment == "cpa_redraw"
+    assert route["selected_treatment"] == "cpa_redraw"
+    assert route["punch_semantic_status"] == "REVISED"
+    assert route["thumbnail_text_requires_punch"] is True
+    assert "unverified" in route["selected_rationale"]
 
 
 def test_relation_auto_route_blocks_before_host_only_ai_when_participants_unverified(
@@ -5575,6 +5747,7 @@ def test_screenshot_polish_retouches_cropped_frame(tmp_path, monkeypatch):
     monkeypatch.delenv("AUTOSLICE_COVER_REF_MS", raising=False)
     monkeypatch.setenv("AUTOSLICE_COVER_MODE", "polish")
     media = _write_synthetic_performance_clip(tmp_path)
+    _force_cover_subject_confident(monkeypatch, publish_staging)
     captured: dict = {}
 
     def fake_polish_edit(**kwargs):
@@ -5604,8 +5777,8 @@ def test_screenshot_polish_retouches_cropped_frame(tmp_path, monkeypatch):
         {"status": "MATERIALIZED", "media_path": str(media)},
         media_path=media,
         candidate_id="polish-1",
-        title="【李豆沙】才，才不是熊猫呢！小李被kmx用两个字点名",
-        cover_text="才，才不是熊猫呢！小李被kmx用两个字点名",
+        title="【李豆沙】才不是熊猫",
+        cover_text="才不是熊猫",
         run_ffmpeg=True,
         art_direction_llm_call=None,
         image_edit=fake_polish_edit,
@@ -5630,13 +5803,14 @@ def test_screenshot_polish_degrades_to_direct_on_cpa_failure(tmp_path, monkeypat
     monkeypatch.setenv("CPA_API_KEY", "test-key")
     monkeypatch.setenv("AUTOSLICE_COVER_MODE", "polish")
     media = _write_synthetic_performance_clip(tmp_path)
+    _force_cover_subject_confident(monkeypatch, publish_staging)
 
     result = publish_staging._stage_lidousha_ai_cover(
         {"status": "MATERIALIZED", "media_path": str(media)},
         media_path=media,
         candidate_id="polish-degrade",
-        title="【李豆沙】才，才不是熊猫呢！小李被kmx用两个字点名",
-        cover_text="才，才不是熊猫呢！小李被kmx用两个字点名",
+        title="【李豆沙】才不是熊猫",
+        cover_text="才不是熊猫",
         run_ffmpeg=True,
         art_direction_llm_call=None,
         image_edit=lambda **_kwargs: (_ for _ in ()).throw(
@@ -5927,6 +6101,7 @@ def test_polish_cover_face_gate_retries_contain_then_passes(tmp_path, monkeypatc
     monkeypatch.setenv("CPA_BASE_URL", "https://cpa.example.test/v1")
     monkeypatch.setenv("CPA_API_KEY", "test-key")
     media = _write_synthetic_performance_clip(tmp_path)
+    _force_cover_subject_confident(monkeypatch, publish_staging)
     face_calls: list[str] = []
 
     def fake_face_verify(final_cover_path, *, base_url, api_key):
@@ -5985,6 +6160,7 @@ def test_polish_cover_face_gate_degrades_to_direct_when_never_complete(
     monkeypatch.setenv("CPA_BASE_URL", "https://cpa.example.test/v1")
     monkeypatch.setenv("CPA_API_KEY", "test-key")
     media = _write_synthetic_performance_clip(tmp_path)
+    _force_cover_subject_confident(monkeypatch, publish_staging)
     face_calls: list[str] = []
 
     def fake_face_verify(final_cover_path, *, base_url, api_key):
@@ -6046,6 +6222,7 @@ def test_polish_cover_face_gate_unavailable_degrades_without_retry(
     monkeypatch.setenv("CPA_BASE_URL", "https://cpa.example.test/v1")
     monkeypatch.setenv("CPA_API_KEY", "test-key")
     media = _write_synthetic_performance_clip(tmp_path)
+    _force_cover_subject_confident(monkeypatch, publish_staging)
     face_calls: list[str] = []
 
     def fake_face_verify(final_cover_path, *, base_url, api_key):

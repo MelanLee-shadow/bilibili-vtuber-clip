@@ -11,6 +11,7 @@ from src.autoslice.llm_client import LlmCall, extract_json_object
 
 SCHEMA_VERSION = "lidousha-cover-punch-semantic-review.v1"
 PUNCH_LINE_MAX_EM = 9.0
+COVER_THUMBNAIL_MAX_LINES = 2
 _CLOSING_PUNCT = tuple("，,、；;！!？?。）》】”’")
 _OPENING_PUNCT = tuple("“‘《〈「『（(【[｛{")
 
@@ -50,6 +51,42 @@ def punch_line_em_width(text: str) -> float:
     """Approximate one rendered punch line in full-width em units."""
 
     return sum(0.5 if " " <= char <= "~" else 1.0 for char in text)
+
+
+def cover_thumbnail_lines_are_readable(rendered_lines: object) -> bool:
+    """Return whether the final hook is a literal 1-2 line thumbnail unit."""
+
+    return bool(
+        isinstance(rendered_lines, list)
+        and 1 <= len(rendered_lines) <= COVER_THUMBNAIL_MAX_LINES
+        and all(
+            isinstance(line, str)
+            and line.strip()
+            and punch_line_em_width(line.strip()) <= PUNCH_LINE_MAX_EM
+            for line in rendered_lines
+        )
+    )
+
+
+def cover_text_requires_punch_for_thumbnail(cover_text: str) -> bool:
+    """Detect full text that cannot fit the 1-2 line thumbnail contract."""
+
+    explicit_lines = [
+        line.strip() for line in str(cover_text or "").splitlines() if line.strip()
+    ]
+    if not explicit_lines:
+        return False
+    if len(explicit_lines) > COVER_THUMBNAIL_MAX_LINES:
+        return True
+    if len(explicit_lines) > 1:
+        return any(
+            punch_line_em_width(line) > PUNCH_LINE_MAX_EM
+            for line in explicit_lines
+        )
+    return (
+        punch_line_em_width(explicit_lines[0])
+        > COVER_THUMBNAIL_MAX_LINES * PUNCH_LINE_MAX_EM
+    )
 
 
 def _validated_extractive_punch(

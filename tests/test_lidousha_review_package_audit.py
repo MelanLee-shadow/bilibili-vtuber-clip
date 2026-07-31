@@ -10,6 +10,7 @@ import pytest
 from scripts.audit_lidousha_review_package import (
     _audit_policy_fingerprint,
     _audit_source_truth_owner_attestations,
+    _audit_story_bound_cover,
     audit_package,
 )
 from src.autoslice.boundary_semantic_review import (
@@ -54,6 +55,50 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 COVER_FONT = (
     REPO_ROOT / "assets/lidousha/fonts/ZCOOLKuaiLe-Regular.ttf"
 )
+
+
+def test_package_audit_rejects_814_shaped_full_title_thumbnail() -> None:
+    cover_text = (
+        "SC称转发佐伯沙弥香生日信息能拿菲尔兹奖，"
+        "小李追问“我也磕原点组怎么没有”，难道磕错了？"
+    )
+    issues: list[dict] = []
+    _audit_story_bound_cover(
+        issues=issues,
+        stem="auto_225056_814_887",
+        record_path=Path("auto_225056_814_887.record.json"),
+        record={
+            "publish_staging": {"cover_text": cover_text},
+            "cover_generation": {
+                "cover_text": cover_text,
+                "cover_text_mode": "full",
+                "rendered_lines": [
+                    "SC称转发",
+                    "佐伯沙弥香生",
+                    "日信息能拿",
+                    "菲尔兹奖，小",
+                    "李追问“我",
+                    "也磕原点组怎",
+                    "么没有”，",
+                    "难道磕错了？",
+                ],
+                "art_direction": {
+                    "cover_punch_semantic_review": {
+                        "status": "FAILED",
+                        "reason_code": "CPA_PUNCH_SEMANTIC_REVIEW_REJECTED",
+                    }
+                },
+            },
+        },
+        story_contract={
+            "selection_hook": "转发生日信息能拿菲尔兹奖，小李追问为何自己没有。"
+        },
+        required=False,
+    )
+
+    codes = {issue["code"] for issue in issues}
+    assert "COVER_PUNCH_REQUIRED_FOR_THUMBNAIL" in codes
+    assert "COVER_THUMBNAIL_TEXT_UNREADABLE" in codes
 
 
 def _source_fact_keep_receipt(

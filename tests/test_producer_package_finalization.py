@@ -989,6 +989,94 @@ def test_cover_audit_rejects_pre_repair_selection_hook_binding(
     assert reasons == ["COVER_STORY_CONTRACT_BINDING_MISSING_OR_STALE"]
 
 
+def test_cover_audit_rejects_814_shaped_full_title_thumbnail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = {
+        "schema_version": "lidousha-story-contract.v1",
+        "selection_hook": "转发生日信息能拿菲尔兹奖，小李追问为何自己没有。",
+        "relation_state": "NONE",
+        "participants": [],
+        "cover_counterpart_reference_available": False,
+        "cover_reference_authority": None,
+        "source_media_sha256s": [],
+        "clip_context_binding": None,
+        "boundary_semantic_review": None,
+        "human_boundary_authority": None,
+        "cover_fallback_mode": "HOST_ONLY_GENERIC",
+    }
+    cover_text = (
+        "SC称转发佐伯沙弥香生日信息能拿菲尔兹奖，"
+        "小李追问“我也磕原点组怎么没有”，难道磕错了？"
+    )
+    generation = {
+        "cover_text": cover_text,
+        "cover_text_mode": "full",
+        "rendered_lines": [
+            "SC称转发",
+            "佐伯沙弥香生",
+            "日信息能拿",
+            "菲尔兹奖，小",
+            "李追问“我",
+            "也磕原点组怎",
+            "么没有”，",
+            "难道磕错了？",
+        ],
+        "art_direction": {
+            "cover_punch_semantic_review": {
+                "status": "FAILED",
+                "reason_code": "CPA_PUNCH_SEMANTIC_REVIEW_REJECTED",
+            }
+        },
+        "story_contract": cover_story_contract_binding(contract),
+        "rendered_text_pixels": {
+            "font_file_name": "font.ttf",
+            "font_file_sha256": "sha256:" + "1" * 64,
+            "mask_path": str(tmp_path / "mask.png"),
+        },
+        "final_cover": str(tmp_path / "cover.png"),
+        "pre_overlay_path": str(tmp_path / "pre.png"),
+        "ai_background": str(tmp_path / "background.png"),
+    }
+    monkeypatch.setattr(
+        finalization,
+        "audit_story_artifact",
+        lambda *_a, **_k: {"status": "PASS", "violations": []},
+    )
+    monkeypatch.setattr(
+        finalization, "validate_cover_route_decision", lambda *_a, **_k: True
+    )
+    monkeypatch.setattr(
+        finalization,
+        "validate_rendered_text_pixel_evidence",
+        lambda *_a, **_k: True,
+    )
+    monkeypatch.setattr(
+        finalization,
+        "resolve_trusted_cover_font",
+        lambda *_a, **_k: tmp_path / "font.ttf",
+    )
+    monkeypatch.setattr(
+        finalization,
+        "verify_rendered_text_pixel_artifacts",
+        lambda *_a, **_k: True,
+    )
+    monkeypatch.setattr(
+        finalization,
+        "verify_pre_overlay_route_background",
+        lambda *_a, **_k: True,
+    )
+
+    reasons, _audits = finalization._audit_story_bound_cover(
+        {"cover_text": cover_text, "cover_generation": generation},
+        contract,
+    )
+
+    assert "COVER_PUNCH_REQUIRED_FOR_THUMBNAIL" in reasons
+    assert "COVER_THUMBNAIL_TEXT_UNREADABLE" in reasons
+
+
 def test_exact_final_review_gate_persists_deterministic_block(
     tmp_path: Path,
 ) -> None:
