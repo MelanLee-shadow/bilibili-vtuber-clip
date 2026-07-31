@@ -130,6 +130,20 @@ def manifest_upload_block_reason(manifest: Mapping) -> str | None:
     candidate_id = (
         str(story.get("candidate_id") or "") if isinstance(story, Mapping) else ""
     )
+    # Verified Song delivery records deliberately have no Talk StoryContract.
+    # Their outer delivery candidate is the publication identity; require the
+    # paired selector candidate as well so an unrelated legacy Talk record
+    # cannot accidentally opt into this lane.
+    if not candidate_id:
+        delivery_candidate = record.get("delivery_candidate_id")
+        source_candidate = record.get("source_candidate_id")
+        if (
+            isinstance(delivery_candidate, str)
+            and delivery_candidate.strip()
+            and isinstance(source_candidate, str)
+            and source_candidate.strip()
+        ):
+            candidate_id = delivery_candidate.strip()
     if not candidate_id:
         return None
     match = re.search(

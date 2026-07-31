@@ -98,6 +98,8 @@ def test_committed_registry_loads_and_lists_the_incident():
     }
     assert rows["auto_192000_909_1014"]["bvid"] == "BV1s7326qEc9"
     assert rows["auto_192000_909_1014"]["status"] == "published"
+    assert rows["auto_224211_80_141"]["bvid"] == "BV1ngGc6BEBS"
+    assert rows["song_192000_1321"]["bvid"] == "BV1BJGc6aEWf"
 
 
 def test_manifest_gate_reads_attested_record(tmp_path):
@@ -122,6 +124,32 @@ def test_manifest_gate_reads_attested_record(tmp_path):
     record.write_text("{broken", encoding="utf-8")
     assert "fail-closed" in (manifest_upload_block_reason(manifest) or "")
     assert manifest_upload_block_reason({}) is None
+
+
+def test_manifest_gate_reads_verified_song_delivery_candidate_without_talk_story(tmp_path):
+    record = tmp_path / "song_192000_1321.record.json"
+    record.write_text(
+        json.dumps(
+            {
+                "delivery_candidate_id": "song_192000_1321",
+                "source_candidate_id": "seededsong_120000_421470",
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest = {
+        "package_attestation": {
+            "package_root": "/opt/bilive/autoslice/out/2026-07-25/song_192000_1321/replacement_recuts",
+            "record": {"path": str(record)},
+        }
+    }
+    reason = manifest_upload_block_reason(manifest)
+    assert reason and "BV1BJGc6aEWf" in reason
+
+    # A legacy Talk-like record without a StoryContract does not acquire Song
+    # registry semantics merely from an arbitrary delivery-like field.
+    record.write_text(json.dumps({"delivery_candidate_id": "song_192000_1321"}), encoding="utf-8")
+    assert manifest_upload_block_reason(manifest) is None
 
 
 def test_malformed_committed_row_raises(tmp_path):
