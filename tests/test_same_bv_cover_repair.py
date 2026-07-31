@@ -15,6 +15,21 @@ OLD_COVER = "https://archive.biliimg.com/bfs/archive/aaaaaaaaaaaaaaaa.jpg"
 NEW_COVER = "https://i0.hdslb.com/bfs/archive/bbbbbbbbbbbbbbbb.png"
 
 
+def test_cover_scope_tag_binding_ignores_order_but_not_set_drift():
+    assert cover_repair._same_tag_set(
+        ["李豆沙", "虚拟主播", "切片"],
+        ["切片", "李豆沙", "虚拟主播"],
+    )
+    assert not cover_repair._same_tag_set(
+        ["李豆沙", "虚拟主播", "切片"],
+        ["李豆沙", "虚拟主播", "错误标签"],
+    )
+    assert not cover_repair._same_tag_set(
+        ["李豆沙", "李豆沙"],
+        ["李豆沙"],
+    )
+
+
 def _snapshot(
     *, cover: str = OLD_COVER, title: str = "白色奶龙", cid: int = 202
 ) -> dict:

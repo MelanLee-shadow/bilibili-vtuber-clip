@@ -201,6 +201,18 @@ def _manifest_noncover_metadata(
     return target
 
 
+def _same_tag_set(left: object, right: object) -> bool:
+    if not isinstance(left, list) or not isinstance(right, list):
+        return False
+    if any(not isinstance(tag, str) or not tag for tag in left + right):
+        return False
+    return (
+        len(left) == len(set(left))
+        and len(right) == len(set(right))
+        and set(left) == set(right)
+    )
+
+
 def _cover_only_scope_binding_problems(
     manifest: Mapping[str, Any],
     *,
@@ -280,7 +292,17 @@ def _cover_only_scope_binding_problems(
         if isinstance(frozen, Mapping)
         else None
     )
-    if scope_metadata != _manifest_noncover_metadata(manifest):
+    manifest_metadata = _manifest_noncover_metadata(manifest)
+    scope_tags = (
+        scope_metadata.pop("tags", None)
+        if isinstance(scope_metadata, dict)
+        else None
+    )
+    manifest_tags = manifest_metadata.pop("tags", None)
+    if (
+        scope_metadata != manifest_metadata
+        or not _same_tag_set(scope_tags, manifest_tags)
+    ):
         problems.append("cover-only audit scope frozen metadata drifted")
     scope_video = frozen.get("video") if isinstance(frozen, Mapping) else None
     manifest_video = manifest.get("video") or {}
