@@ -403,3 +403,41 @@ def test_full_text_cover_contract_reaches_every_renderer_call_site() -> None:
         "these call sites drop the full-text cover contract, silently killing "
         "the only legal whole-title lane:\n" + "\n".join(sorted(missing))
     )
+
+
+def test_cover_only_lane_reuses_the_proven_video_repair_io_surface() -> None:
+    """cover-only lane 必须复用 video same-BV lane 的真实 API 面。
+
+    `same_bv_cover_repair`（2026-07-31 `28b3576` 新建）**零生产执行**。它的风险
+    面之所以可控，唯一理由是最险的那层——Bilibili 四面观察与快照规范化——继承自
+    已在生产多次真实执行的 video same-BV lane：两个 CLI 工厂
+    `_same_bv_adapter` / `_same_bv_cover_adapter` 构造的是同一个
+    `BilibiliRepairAdapter`。
+
+    一旦有人给 cover lane 另起一套 observe/normalise，这个继承来的信誉立刻作废，
+    而且两套实现是漂移温床。此测试就是那道防线。
+    """
+
+    parser = ast.parse(
+        (ROOT / "scripts/authorized_upload.py").read_text(encoding="utf-8"),
+        filename="authorized_upload.py",
+    )
+    factories = {
+        node.name: node
+        for node in ast.walk(parser)
+        if isinstance(node, ast.FunctionDef)
+        and node.name in {"_same_bv_adapter", "_same_bv_cover_adapter"}
+    }
+    assert set(factories) == {"_same_bv_adapter", "_same_bv_cover_adapter"}, (
+        "两个 adapter 工厂必须都在；缺一说明 lane 拓扑变了"
+    )
+    for name, node in sorted(factories.items()):
+        constructed = {
+            call.func.id
+            for call in ast.walk(node)
+            if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+        }
+        assert "BilibiliRepairAdapter" in constructed, (
+            f"{name} 不再构造 BilibiliRepairAdapter —— cover lane 继承自 video "
+            "lane 的生产信誉已失效，未验证面重新扩大到整个远端 API 层"
+        )

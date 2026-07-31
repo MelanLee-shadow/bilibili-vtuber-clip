@@ -96,8 +96,19 @@ receipt。
   `same_bv_cover_repair_ledger.jsonl`、没有 plan、没有 receipt——**该 lane 从未真实执行过**。
   网络层复用已验证的 `BilibiliRepairAdapter`，未验证的是 plan/journal/transition 状态机。
   在它完成一次真实执行验收前，如遇封面事故：升级 Ivan 裁决，**不许临场解除
-  `bili_cover_edit.py` 的 fail-close**。`cover-repair-plan --dry-run` 是真实只读四面观察
-  （`docs/pipeline/90-publish.md:152`），可安全用于冒烟，但会占 `upload.lock`。
+  `bili_cover_edit.py` 的 fail-close**。
+  **`cover-repair-plan --dry-run` 不是零成本冒烟**（2026-07-31 实测执行序）：先拿
+  `upload.lock`，再硬要求 manifest 带 title-cover joint-QC 回执（`required=True`），
+  然后才 `adapter.observe` 四面观察、才判 dry-run。而 **07-31 之前的所有历史
+  manifest 都没有 `title_cover_qc` 字段**（该门 `061f8ed` 07-31 06:54 才落地），
+  拿老 manifest 跑必然 `return 2`——那是 fail-closed 的正常行为，不是 bug。
+  所以今后任何已发布稿的封面修复都必须**重出 manifest**：先跑 CPA 联合质检拿
+  receipt（receipt 绑定的是**新封面字节**的 sha，所以新封面得先产出来），再
+  `make-manifest --title-cover-qc` 冻结。首个真实执行待 Ivan 授权白色奶龙重做。
+  未验证面已收窄（07-31 核实）：`observe` / `normalise_snapshot` / `prepare_cover`
+  与生产已多次真实执行的 video same-BV lane 共用同一个 `BilibiliRepairAdapter`
+  （`same_bv_repair.py:333`）；真正没跑过的只有 `edit_cover_only`（`28b3576` 新加）
+  的组装与 cover 专属 plan/journal/transition 状态机。
 - **封面路由：标定分数路由已被整体退役（2026-07-31 调查确认）**。
   `publish_staging.py:1961-1970` 在 composition witness 存在且未建议重绘时**无条件返回截图**，
   `:1939` 建议重绘时直接重绘；witness 生成条件 `:1573` `enforce_final_host_identity` 在正常
