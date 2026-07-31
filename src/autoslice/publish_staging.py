@@ -51,6 +51,7 @@ from .cover_route_evidence import (
 from .cover_source_composition import (
     extract_authority_source_crop,
     source_composition_recommends_redraw,
+    source_composition_supports_subject,
     validate_source_composition_verification,
     verify_lidousha_source_composition,
 )
@@ -1944,11 +1945,6 @@ def _decide_cover_treatment(
         return "cpa_redraw", "mode=cpa (forced)"
     if is_song:
         return "cpa_redraw", "song keeps the clean CPA aesthetic"
-    if source_composition_recommends_redraw(source_composition_verification):
-        return (
-            "cpa_redraw",
-            "CPA source-composition witness requires redraw before generation",
-        )
     if relationship_visual_required:
         if cover_mode == "polish":
             return "screenshot_polish", "mode=polish (forced)"
@@ -1966,16 +1962,21 @@ def _decide_cover_treatment(
             "screenshot_direct",
             "hash-bound source frame verifies all required participants",
         )
-    if isinstance(source_composition_verification, Mapping):
-        if cover_mode == "polish":
-            return (
-                "screenshot_polish",
-                "CPA source-composition witness authorizes faithful identity crop + polish",
-            )
+    # 2026-07-31：**几何否决**排在关系分支之后（witness 的提问是单人框架——只定位
+    # 李豆沙、问"她能否裁成大主体"——双人同框里她天然不独占画面，
+    # faithful_crop_can_make_dominant 很容易 false，与 70-cover.md 的
+    # 「双人联动即使运动分数不高也可优先保留真实互动」直接冲突）。
+    if source_composition_recommends_redraw(source_composition_verification):
         return (
-            "screenshot_direct",
-            "CPA source-composition witness authorizes a faithful dominant reaction crop",
+            "cpa_redraw",
+            "CPA source-composition witness reports the face is cut or cannot "
+            "become the dominant subject",
         )
+    # witness 不再无条件替换路由。此前它是 Mapping 就直接 return，导致下方整套
+    # 标定阈值（4.5 / 2.6 / 0.50 弥散 / camera window）在有 witness 时**完全不可达**
+    # ——Ivan 2026-07-21 拍板的名场面分路由被整体退役，封面路线退化成一次 CPA 二值
+    # 判断。现在它降级为**置信输入**（见下方 subject_confident 的合成），
+    # 标定分数恢复决定权。
     if frame_selection is None:
         return "cpa_redraw", "frame selection unavailable"
     candidates = frame_selection.get("candidates") or []
@@ -1993,8 +1994,24 @@ def _decide_cover_treatment(
         motion_dispersion = float(raw_dispersion) if raw_dispersion is not None else None
     except (TypeError, ValueError):
         motion_dispersion = None
-    subject_confident = frame_selection.get("subject_confident") is True and (
+    # 置信 = 运动几何置信 **或** CPA witness 给出的合法主体证据（2026-07-31）。
+    #
+    # 几何置信在 Live2D 皮套画面上不可靠：7/24-7/29 实测 23 条有效样本里
+    # `subject_confident` 探测器自己给 False 的有 16 条（70%），弥散帽 0.50 又把
+    # 22 个实测值里的 9 个（41%）挡在外面——那个帽是 2026-07-22 一次游戏 UI 事故
+    # （实测 0.6033）往下取的 n=1 标定，落在生产分布正中间，不是在切病态尾巴。
+    # 结果 11 条切片在分数最高 9.0027 的情况下没进任何截图分支就被判重绘
+    # （auto_202004_553_831：flag True、disp 0.5271，超帽 0.027）。
+    #
+    # 弥散帽保留但**只约束运动几何这个来源**（它 7/22 的原始射程）；witness 在场时
+    # 合法点集由 CPA 视觉给定，不适用该帽。放宽路由不放宽验收——下游
+    # polish_face_verification v2 与 FINAL_COVER_SUBJECT_PROMINENCE_FAILED
+    # 仍会拒掉真正不合格的成品。
+    geometry_confident = frame_selection.get("subject_confident") is True and (
         motion_dispersion is None or motion_dispersion <= _COVER_SUBJECT_MAX_MOTION_DISPERSION
+    )
+    subject_confident = geometry_confident or source_composition_supports_subject(
+        source_composition_verification
     )
     thumbnail_punch_unavailable = (
         thumbnail_text_requires_punch

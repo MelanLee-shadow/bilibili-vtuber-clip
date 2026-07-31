@@ -76,7 +76,11 @@ MODULE_DEBT_LEDGER = {
     "src/autoslice/producer_package_finalization.py": 2_765,
     "src/autoslice/producer_text_pipeline.py": 2_098,
     # 2026-07-31 +12：contract 穿透接线（形参 + 4 个调用点）。
-    "src/autoslice/publish_staging.py": 2_659,
+    # 2026-07-31 再 +17：封面路由 P1——witness 从「路由法官」降回「置信输入」，
+    # 删掉无条件放行、几何否决移到关系分支之后、置信改为 几何 OR witness bbox。
+    # 净增主要是记录实测根因的注释（70% 几何假阴性、41% 超弥散帽、9.00 分被否）。
+    # Ivan 07-31 `/goal` 授权 + Fable 路由链裁定 P1。
+    "src/autoslice/publish_staging.py": 2_676,
     "src/autoslice/same_bv_repair.py": 2_422,
 }
 SCRIPT_EXCLUSIONS = {

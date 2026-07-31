@@ -281,12 +281,44 @@ def validate_source_composition_verification(
 
 
 def source_composition_recommends_redraw(verification: object) -> bool:
+    """witness 的否决权收窄到两个**几何**布尔（2026-07-31）。
+
+    此前只要 `cpa_redraw_recommended` 为真就整张重绘，而该字段是三个条件的或：
+    脸不完整 / 无法忠实裁成大主体 / **源图不承载故事反应**。第三条是故事判断不是
+    几何判断，而 70-cover.md 的分工是「源帧没拍到的故事由 narrative_presentation
+    → COVER_TEXT 承担，不是像素义务」——反应缺失的正确出路是降级 polish 或换帧
+    重选，不是单独触发整张重画。前两条则是真几何不可能（角落小豆沙 polish 完还是
+    角落小豆沙，下游显著性门必死），保留否决。
+    """
+
     if not isinstance(verification, Mapping):
         return False
     verdict = verification.get("verdict")
+    if not isinstance(verdict, Mapping):
+        return False
+    return (
+        verdict.get("source_face_complete") is False
+        or verdict.get("faithful_crop_can_make_dominant") is False
+    )
+
+
+def source_composition_supports_subject(verification: object) -> bool:
+    """witness 是否给出了可用作**置信来源**的主体证据。
+
+    这才是 2026-07-21 memory 里那条「真脸部识别放大要接 CPA 视觉裁判」的本意：
+    运动几何分不清竖版手游列和皮套（辣妹案）时，让 CPA 视觉找到真脸以便忠实放大。
+    字段清单本身就是铁证——纯否决器不需要返回 `lidousha_bbox_frac`，更不需要
+    `_bbox_crop_box` 那个带脸部余量的 16:9 裁切实现。
+    """
+
+    if not isinstance(verification, Mapping):
+        return False
+    verdict = verification.get("verdict")
+    if not isinstance(verdict, Mapping):
+        return False
     return bool(
-        isinstance(verdict, Mapping)
-        and verdict.get("cpa_redraw_recommended") is True
+        verdict.get("faithful_crop_can_make_dominant") is True
+        and _valid_bbox(verdict.get("lidousha_bbox_frac"))
     )
 
 
