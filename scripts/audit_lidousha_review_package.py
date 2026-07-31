@@ -72,6 +72,9 @@ from src.autoslice.story_contract import (  # noqa: E402
     SCHEMA_VERSION as STORY_CONTRACT_SCHEMA,
     audit_story_artifact,
 )
+from src.autoslice.source_fact_review import (  # noqa: E402
+    validate_source_fact_review,
+)
 
 
 DEFAULT_MAX_VISUAL_LINES = 2
@@ -241,6 +244,7 @@ def _audit_policy_fingerprint() -> str:
         ROOT / "src/autoslice/review_package_owner_audit.py",
         ROOT / "src/autoslice/title_policy.py",
         ROOT / "src/autoslice/selection_scorecard.py",
+        ROOT / "src/autoslice/source_fact_review.py",
         ROOT / "src/autoslice/cover_route_evidence.py",
         ROOT / "src/autoslice/cover_text_pixel_evidence.py",
         ROOT / "src/autoslice/cover_title_rendering.py",
@@ -1164,6 +1168,75 @@ def _audit_item_story_contract(
                 detail=json.dumps(violation, ensure_ascii=False, sort_keys=True),
             )
     artifact_title = publish_title or title_txt or str(item.get("title") or "")
+    if story_contract_required and not is_song:
+        publish_staging = (
+            record.get("publish_staging")
+            if isinstance(record.get("publish_staging"), dict)
+            else {}
+        )
+        publish_document = (
+            _load_json(publish_path)
+            if publish_path is not None and publish_path.is_file()
+            else {}
+        )
+        source_fact_receipts = [
+            story_contract.get("source_fact_review"),
+            publish_staging.get("source_fact_review"),
+            publish_document.get("source_fact_review"),
+        ]
+        if any(not isinstance(value, dict) for value in source_fact_receipts):
+            _add_issue(
+                issues,
+                "SOURCE_FACT_REVIEW_MISSING",
+                stem=stem,
+                path=publish_path or record_path,
+            )
+        elif not (
+            source_fact_receipts[0]
+            == source_fact_receipts[1]
+            == source_fact_receipts[2]
+        ):
+            _add_issue(
+                issues,
+                "SOURCE_FACT_REVIEW_BINDING_DRIFT",
+                stem=stem,
+                path=publish_path or record_path,
+            )
+        elif not validate_source_fact_review(
+            source_fact_receipts[0],
+            selection_hook=str(
+                story_contract.get("selection_hook") or ""
+            ),
+            title=artifact_title,
+            final_transcript=transcript,
+            clip_context_prompt=str(
+                story_contract.get("clip_context_prompt") or ""
+            ),
+            selection_scorecard=story_contract.get(
+                "selection_scorecard"
+            ),
+        ):
+            _add_issue(
+                issues,
+                "SOURCE_FACT_REVIEW_INVALID",
+                stem=stem,
+                path=publish_path or record_path,
+            )
+        else:
+            declared_receipt_sha256 = manifest.get(
+                "source_fact_review_sha256"
+            )
+            if (
+                declared_receipt_sha256 is not None
+                and declared_receipt_sha256
+                != source_fact_receipts[0].get("receipt_sha256")
+            ):
+                _add_issue(
+                    issues,
+                    "SOURCE_FACT_REVIEW_MANIFEST_BINDING_DRIFT",
+                    stem=stem,
+                    path=publish_path or record_path,
+                )
     title_story_audit = audit_story_artifact(
         artifact_title,
         story_contract=story_contract,
@@ -1797,7 +1870,12 @@ def audit_package(root: str | Path) -> dict[str, Any]:
             record_path=record_path,
             record=record,
             story_contract=story_contract,
-            story_contract_required=story_contract_required,
+            # Songs use lyric/alignment proof and do not manufacture a Talk
+            # StoryContract merely because the package date is in the strict
+            # epoch.
+            story_contract_required=(
+                story_contract_required and not is_song
+            ),
             is_song=is_song,
         )
         _audit_finished_item_cover(

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -6,9 +7,28 @@ from scripts.build_lidousha_daily_review_manifest import (
     DailyManifestError,
     _sha256,
     _resolve_final_cover,
+    _lane_manifest_contract_fields,
+    _source_fact_manifest_fields,
     _sync_record_bound_candidate_artifacts,
     _sync_declared_artifact,
+    _validate_source_fact_receipts,
 )
+from src.autoslice.source_fact_review import review_and_repair_source_facts
+
+
+def _keep_completion(hook: str, title: str) -> str:
+    return json.dumps(
+        {
+            "schema_version": "lidousha-source-fact-review.v1",
+            "status": "KEEP",
+            "final_selection_hook": hook,
+            "final_title": title,
+            "supported_by": ["final_transcript", "structured_chat"],
+            "changed_surfaces": [],
+            "summary": "字幕与结构化弹幕共同支持现有派生事实。",
+        },
+        ensure_ascii=False,
+    )
 
 
 def test_sync_declared_artifact_replaces_stale_package_copy(
@@ -192,3 +212,76 @@ def test_sync_record_bound_candidate_artifacts_makes_evidence_portable(
     }
     assert (package_root / chat.name).read_bytes() == chat.read_bytes()
     assert (package_root / context.name).read_bytes() == context.read_bytes()
+
+
+def test_source_fact_receipt_must_match_all_package_surfaces(
+    tmp_path: Path,
+) -> None:
+    hook = "弹幕提议把技能叫李姐拉拉，主播随即拒绝。"
+    title = "【李豆沙】弹幕提议把技能叫“李姐拉拉”，主播随即拒绝"
+    transcript = "技能可以叫李姐拉拉吗\n不行，我这个应该叫李姐网"
+    context = "- superchat: 技能可以叫李姐拉拉吗"
+    receipt = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript=transcript,
+        clip_context_prompt=context,
+        llm_call=lambda _prompt: _keep_completion(hook, title),
+    )
+    subtitle = tmp_path / "candidate.srt"
+    subtitle.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n"
+        "技能可以叫李姐拉拉吗\n\n"
+        "2\n00:00:01,000 --> 00:00:02,000\n"
+        "不行，我这个应该叫李姐网\n",
+        encoding="utf-8",
+    )
+    record = {
+        "story_contract": {
+            "selection_hook": hook,
+            "clip_context_prompt": context,
+            "source_fact_review": receipt,
+        },
+        "publish_staging": {
+            "title": title,
+            "source_fact_review": receipt,
+        },
+    }
+    publish = {"title": title, "source_fact_review": receipt}
+
+    assert _validate_source_fact_receipts(
+        record_doc=record,
+        publish_doc=publish,
+        subtitle_path=subtitle,
+    ) == receipt["receipt_sha256"]
+
+    publish["source_fact_review"] = None
+    with pytest.raises(DailyManifestError, match="receipt missing"):
+        _validate_source_fact_receipts(
+            record_doc=record,
+            publish_doc=publish,
+            subtitle_path=subtitle,
+        )
+
+
+def test_song_manifest_does_not_require_talk_source_fact_receipt(
+    tmp_path: Path,
+) -> None:
+    subtitle = tmp_path / "song.srt"
+    subtitle.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n歌词\n",
+        encoding="utf-8",
+    )
+
+    assert _source_fact_manifest_fields(
+        lane="song",
+        record_doc={"classification": "song"},
+        publish_doc={"title": "【李豆沙·歌】《测试歌曲》"},
+        subtitle_path=subtitle,
+    ) == {}
+    assert _lane_manifest_contract_fields(
+        lane="song",
+        record_doc={"classification": "song"},
+        publish_doc={"title": "【李豆沙·歌】《测试歌曲》"},
+        subtitle_path=subtitle,
+    ) == {}

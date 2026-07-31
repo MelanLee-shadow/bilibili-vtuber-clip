@@ -46,6 +46,7 @@ from src.autoslice.recovery_title_authority import (
 from src.autoslice.source_subtitle_truth import (
     candidate_boundary_owner_scope,
 )
+from src.autoslice.source_fact_review import review_and_repair_source_facts
 from src.autoslice.story_contract import build_story_contract
 
 
@@ -53,6 +54,42 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 COVER_FONT = (
     REPO_ROOT / "assets/lidousha/fonts/ZCOOLKuaiLe-Regular.ttf"
 )
+
+
+def _source_fact_keep_receipt(
+    *,
+    hook: str,
+    title: str,
+    transcript: str,
+    context: str,
+    scorecard: object,
+) -> dict:
+    return review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript=transcript,
+        clip_context_prompt=context,
+        selection_scorecard=scorecard,
+        llm_call=lambda _prompt: json.dumps(
+            {
+                "schema_version": "lidousha-source-fact-review.v1",
+                "status": "KEEP",
+                "final_selection_hook": hook,
+                "final_title": title,
+                "supported_by": [
+                    "final_transcript",
+                    "same_clip_context",
+                ],
+                "changed_surfaces": [],
+                "selection_scorecard_review": {
+                    "status": "NOT_NEEDED",
+                    "reason": "selection hook remains unchanged",
+                },
+                "summary": "最终字幕和同片上下文支持现有派生事实。",
+            },
+            ensure_ascii=False,
+        ),
+    )
 
 
 def _source_truth_audit_fixture(
@@ -2583,7 +2620,27 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         boundary_semantic_review=final_boundary_review,
         human_boundary_authority="fixture source-reviewed closure",
     )
+    publish_title = "【李豆沙】南町当面追问最最最最喜欢"
+    source_fact_review = _source_fact_keep_receipt(
+        hook=str(contract["selection_hook"]),
+        title=publish_title,
+        transcript=transcript,
+        context=str(contract["clip_context_prompt"]),
+        scorecard=scorecard,
+    )
+    contract["source_fact_review"] = source_fact_review
     record = root / f"{stem}.record.json"
+    publish = root / f"{stem}.publish.json"
+    publish.write_text(
+        json.dumps(
+            {
+                "title": publish_title,
+                "source_fact_review": source_fact_review,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     ai_bg = root / "covers_ai_original" / f"{stem}.ai-bg.png"
     ai_bg.parent.mkdir(parents=True)
     Image.new("RGB", (1920, 1080), (244, 238, 220)).save(ai_bg)
@@ -2769,7 +2826,8 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
                     "ass_sha256": speaker_ass_sha256,
                 },
                 "publish_staging": {
-                    "title": "【李豆沙】南町当面追问最最最最喜欢",
+                    "title": publish_title,
+                    "source_fact_review": source_fact_review,
                     "cover_text": cover_text,
                     "cover_generation": generation,
                 },
@@ -2811,8 +2869,9 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
                     {
                         "stem": stem,
                         "candidate_id": stem,
-                        "title": "【李豆沙】南町当面追问最最最最喜欢",
-                            "subtitle_srt": srt.name,
+                        "title": publish_title,
+                        "publish_json": publish.name,
+                        "subtitle_srt": srt.name,
                             "speaker_srt": speaker_srt.name,
                             "speaker_srt_sha256": speaker_srt_sha256,
                             "ass_path": speaker_ass.name,

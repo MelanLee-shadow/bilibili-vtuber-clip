@@ -11,9 +11,12 @@ daily 新 BV 上传车道自 7/14 后没有合法的 manifest 生成器。
 - 候选自身必须 state 里 rc=0 且 review_ready（批级 with_failures 可接受——
   Ivan 2026-07-25 行军令：能传的先传，不因批内其他候选失败扣押好片）；
 - items 路径指向包内真实文件并带 sha256；
-- 不声明 story_contract_required/upload_allowed（daily 新上传不是 recovery
-  same-BV 修复，也不承诺 upload_allowed=false——上传授权由 authorized_upload
-  的 make-manifest --quote 层绑定 Ivan 原话）。
+- Talk 显式声明 story_contract_required/source_fact_review_required，并在装配
+  前验证 StoryContract、record.publish_staging、publish.json 三面携带逐字
+  相同且 hash-bound 的 source-fact receipt；Song 保持既有歌词/标题/封面
+  证明车道，不冒充拥有 Talk StoryContract/source-fact receipt；
+- 不承诺 upload_allowed=true（daily 新上传不是 recovery same-BV 修复；
+  上传授权仍由 authorized_upload 的 make-manifest --quote 层绑定 Ivan 原话）。
 """
 
 from __future__ import annotations
@@ -21,8 +24,23 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 import time
 from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.autoslice.jingting_chunker import parse_srt_cues  # noqa: E402
+from src.autoslice.channel_profile import load_channel_profile  # noqa: E402
+from src.autoslice.source_fact_review import (  # noqa: E402
+    validate_source_fact_review,
+)
+
+
+CHANNEL_PROFILE = load_channel_profile(ROOT)
 
 
 class DailyManifestError(RuntimeError):
@@ -35,6 +53,120 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _story_transcript(path: Path) -> str:
+    try:
+        cues = parse_srt_cues(path.read_bytes().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        raise DailyManifestError(
+            f"source-fact subtitle unreadable: {path}"
+        ) from exc
+    transcript = "\n".join(
+        cue.text.strip() for cue in cues if cue.text.strip()
+    )
+    if not transcript:
+        raise DailyManifestError("source-fact subtitle transcript is empty")
+    return transcript
+
+
+def _validate_source_fact_receipts(
+    *,
+    record_doc: dict,
+    publish_doc: dict,
+    subtitle_path: Path,
+) -> str:
+    """Require one immutable source-fact receipt on all publish surfaces."""
+
+    story_contract = record_doc.get("story_contract")
+    publish_staging = record_doc.get("publish_staging")
+    if not isinstance(story_contract, dict):
+        raise DailyManifestError("story contract missing from record")
+    if not isinstance(publish_staging, dict):
+        raise DailyManifestError("publish staging missing from record")
+    receipts = [
+        story_contract.get("source_fact_review"),
+        publish_staging.get("source_fact_review"),
+        publish_doc.get("source_fact_review"),
+    ]
+    if any(not isinstance(receipt, dict) for receipt in receipts):
+        raise DailyManifestError(
+            "source-fact review receipt missing from final package surfaces"
+        )
+    if not (receipts[0] == receipts[1] == receipts[2]):
+        raise DailyManifestError(
+            "source-fact review receipt drift across final package surfaces"
+        )
+    title = str(publish_doc.get("title") or "")
+    if title != str(publish_staging.get("title") or ""):
+        raise DailyManifestError(
+            "source-fact reviewed title drift across publish surfaces"
+        )
+    if not validate_source_fact_review(
+        receipts[0],
+        selection_hook=str(story_contract.get("selection_hook") or ""),
+        title=title,
+        final_transcript=_story_transcript(subtitle_path),
+        clip_context_prompt=str(
+            story_contract.get("clip_context_prompt") or ""
+        ),
+        selection_scorecard=story_contract.get("selection_scorecard"),
+    ):
+        raise DailyManifestError(
+            "source-fact review receipt is invalid or stale"
+        )
+    return str(receipts[0]["receipt_sha256"])
+
+
+def _candidate_lane(record_doc: dict, publish_doc: dict) -> str:
+    if str(record_doc.get("classification") or "").lower() == "song":
+        return "song"
+    if str(publish_doc.get("title") or "").startswith(
+        CHANNEL_PROFILE.song_title_prefix
+    ):
+        return "song"
+    return "talk"
+
+
+def _source_fact_manifest_fields(
+    *,
+    lane: str,
+    record_doc: dict,
+    publish_doc: dict,
+    subtitle_path: Path,
+) -> dict[str, object]:
+    """Talk uses the CPA fact gate; Song keeps its lyric-proof lane."""
+
+    if lane == "song":
+        return {}
+    return {
+        "source_fact_review_required": True,
+        "source_fact_review_sha256": _validate_source_fact_receipts(
+            record_doc=record_doc,
+            publish_doc=publish_doc,
+            subtitle_path=subtitle_path,
+        ),
+    }
+
+
+def _lane_manifest_contract_fields(
+    *,
+    lane: str,
+    record_doc: dict,
+    publish_doc: dict,
+    subtitle_path: Path,
+) -> dict[str, object]:
+    if lane == "song":
+        return {}
+    return {
+        "story_contract_required": True,
+        **_source_fact_manifest_fields(
+            lane=lane,
+            record_doc=record_doc,
+            publish_doc=publish_doc,
+            subtitle_path=subtitle_path,
+        ),
+    }
 
 
 def _sync_declared_artifact(
@@ -201,6 +333,13 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
     record = need(f"{candidate_id}.record.json")
     record_doc = json.loads(record.read_text(encoding="utf-8"))
     subtitle = need(f"{stem}.srt")
+    lane = _candidate_lane(record_doc, publish_doc)
+    lane_manifest_contract_fields = _lane_manifest_contract_fields(
+        lane=lane,
+        record_doc=record_doc,
+        publish_doc=publish_doc,
+        subtitle_path=subtitle,
+    )
     burned = need(f"{stem}.burned-final-sapphire72.mp4")
     cover_rel = _resolve_final_cover(
         package_root=package_root,
@@ -308,7 +447,8 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
         "id": candidate_id,
         "candidate_id": candidate_id,
         "stem": stem,
-        "kind": "talk",
+        "kind": lane,
+        "classification": lane,
         "title": str(publish_doc.get("title") or ""),
         "subtitle_srt": f"{upload_stem}.srt",
         "publish_json": publish.name,
@@ -366,6 +506,7 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
         "cover_route_attestations": [attestation],
         "items": [item],
     }
+    manifest.update(lane_manifest_contract_fields)
     return manifest
 
 

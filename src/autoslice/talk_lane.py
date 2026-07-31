@@ -1047,6 +1047,18 @@ def classify_talk_failure(attempt_output: str) -> dict:
             "title_fact_consistency",
             False,
         )
+    elif "SOURCE_FACT_REPAIR_EXHAUSTED" in tail:
+        kind, stage, recoverable = (
+            "story_contract",
+            "source_fact_repair",
+            False,
+        )
+    elif "SOURCE_FACT_REVIEW_INFRA_UNRESOLVED" in tail:
+        kind, stage, recoverable = (
+            "provider_transient",
+            "source_fact_review",
+            True,
+        )
     elif "FINAL_REVIEW_RELEASE_BLOCKED" in tail:
         kind, stage, recoverable, failure_evidence = (
             _classify_final_review_release(tail)

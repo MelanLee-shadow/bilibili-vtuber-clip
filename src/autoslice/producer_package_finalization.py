@@ -70,6 +70,7 @@ from src.autoslice.source_subtitle_truth import (
     apply_source_subtitle_truth,
     source_truth_owner_windows,
 )
+from src.autoslice.source_fact_review import source_fact_review_passes
 from src.autoslice.surface_canon import (
     canonicalize_japanese_native_script_surfaces,
     normalize_japanese_native_script_surfaces,
@@ -1908,6 +1909,16 @@ def _stage_record(
     art_direction_llm = None if options.reuse_cover else build_llm_call(
         LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-luna gpt-5.5 gpt-5.4' medium", timeout_seconds=180.0)
     )
+    source_fact_llm = build_llm_call(
+        LlmConfig(
+            transport="command",
+            command_template=(
+                "bash scripts/llm_via_cpa.sh {prompt_file} "
+                "{completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' high"
+            ),
+            timeout_seconds=180.0,
+        )
+    )
     final_title_cues = [
         SourceCue(
             f"text_final_{index:04d}", cue.start_ms, cue.end_ms, cue.text.strip(),
@@ -1958,35 +1969,51 @@ def _stage_record(
         session_relation_authority=spec.get("session_relation_authority"),
         transcript_text=transcript_text,
     )
-    story_contract = build_story_contract(
-        candidate_id=cid,
-        selection_hook=story_selection_hook,
-        transcript_text=transcript_text,
-        selection_scorecard=story_selection_scorecard,
-        session_relation_authority=spec.get("session_relation_authority"),
-        cover_reference_authority=cover_reference_authority,
-        source_media_sha256s=[
-            str(piece.get("source_media_sha256"))
-            for piece in (spec.get("pieces") or [])
-            if isinstance(piece, Mapping) and piece.get("source_media_sha256")
-        ],
-        clip_context=spec.get("clip_context"),
-        recording_date=str(spec.get("date") or ""),
-        boundary_semantic_review=spec.get("boundary_semantic_review"),
-        human_boundary_authority=str(spec.get("given_end_authority") or ""),
+
+    def build_story_contract_for_hook(
+        reviewed_hook: str,
+    ) -> dict[str, object]:
+        contract = build_story_contract(
+            candidate_id=cid,
+            selection_hook=reviewed_hook,
+            transcript_text=transcript_text,
+            selection_scorecard=story_selection_scorecard,
+            session_relation_authority=spec.get(
+                "session_relation_authority"
+            ),
+            cover_reference_authority=cover_reference_authority,
+            source_media_sha256s=[
+                str(piece.get("source_media_sha256"))
+                for piece in (spec.get("pieces") or [])
+                if isinstance(piece, Mapping)
+                and piece.get("source_media_sha256")
+            ],
+            clip_context=spec.get("clip_context"),
+            recording_date=str(spec.get("date") or ""),
+            boundary_semantic_review=spec.get(
+                "boundary_semantic_review"
+            ),
+            human_boundary_authority=str(
+                spec.get("given_end_authority") or ""
+            ),
+        )
+        contract["input_audits"] = [
+            audit_story_artifact(
+                reviewed_hook,
+                story_contract=contract,
+                artifact_kind="selection_hook",
+            ),
+            audit_story_artifact(
+                transcript_text,
+                story_contract=contract,
+                artifact_kind="subtitle",
+            ),
+        ]
+        return contract
+
+    story_contract = build_story_contract_for_hook(
+        story_selection_hook
     )
-    story_contract["input_audits"] = [
-        audit_story_artifact(
-            story_selection_hook,
-            story_contract=story_contract,
-            artifact_kind="selection_hook",
-        ),
-        audit_story_artifact(
-            transcript_text,
-            story_contract=story_contract,
-            artifact_kind="subtitle",
-        ),
-    ]
     record["selection_scorecard"] = story_selection_scorecard
     record["session_relation_authority"] = spec.get("session_relation_authority")
     record["story_contract"] = story_contract
@@ -2002,19 +2029,6 @@ def _stage_record(
         record.setdefault("artifact_hashes", {})[
             "clip_context_file_sha256"
         ] = "sha256:" + _sha256(clip_context_path)
-    input_violations = [
-        violation
-        for audit in story_contract["input_audits"]
-        for violation in audit.get("violations", [])
-        if isinstance(violation, dict)
-    ]
-    if input_violations:
-        reason_codes = sorted(
-            {str(row.get("reason_code") or "STORY_CONTRACT_INPUT_INVALID") for row in input_violations}
-        )
-        raise SystemExit(
-            "STORY_CONTRACT_INPUT_INVALID: " + ",".join(reason_codes)
-        )
     record = adapters.stage_publish_draft(
         record,
         candidate_id=cid,
@@ -2023,6 +2037,8 @@ def _stage_record(
         run_ffmpeg=True,
         title_llm_call=title_llm,
         art_direction_llm_call=art_direction_llm,
+        source_fact_llm_call=source_fact_llm,
+        story_contract_rebuilder=build_story_contract_for_hook,
         skip_cover=options.reuse_cover,
         selection_hook=story_selection_hook,
         cover_diversity_slot=spec.get("cover_diversity_slot"),
@@ -2031,6 +2047,53 @@ def _stage_record(
         ),
     )
     staging = record.get("publish_staging") or {}
+    source_fact_review = staging.get("source_fact_review")
+    if (
+        staging.get("title_authority_status")
+        == "BLOCKED_SOURCE_FACT_REVIEW"
+        or (
+            isinstance(source_fact_review, Mapping)
+            and not source_fact_review_passes(source_fact_review)
+        )
+    ):
+        reason = (
+            str(source_fact_review.get("reason_code") or "unknown")
+            if isinstance(source_fact_review, Mapping)
+            else "missing_receipt"
+        )
+        marker = (
+            "SOURCE_FACT_REVIEW_INFRA_UNRESOLVED"
+            if reason
+            in {
+                "CPA_TEXT_REVIEW_UNAVAILABLE",
+                "CPA_TEXT_REVIEW_CALL_FAILED",
+            }
+            else "SOURCE_FACT_REPAIR_EXHAUSTED"
+        )
+        raise SystemExit(f"{marker}: {reason}")
+    final_story_contract = record.get("story_contract")
+    if not isinstance(final_story_contract, Mapping):
+        raise SystemExit("STORY_CONTRACT_FINAL_MISSING")
+    input_violations = [
+        violation
+        for audit in (final_story_contract.get("input_audits") or [])
+        if isinstance(audit, Mapping)
+        for violation in (audit.get("violations") or [])
+        if isinstance(violation, dict)
+    ]
+    if input_violations:
+        reason_codes = sorted(
+            {
+                str(
+                    row.get("reason_code")
+                    or "STORY_CONTRACT_INPUT_INVALID"
+                )
+                for row in input_violations
+            }
+        )
+        raise SystemExit(
+            "STORY_CONTRACT_INPUT_INVALID: " + ",".join(reason_codes)
+        )
     if (
         normalized_recovery_publication_authority is not None
         and (

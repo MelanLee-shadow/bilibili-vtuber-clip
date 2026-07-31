@@ -66,6 +66,10 @@ from .recovery_title_authority import (
     validate_recovery_publication_authority,
 )
 from .shadow_review import _sha256, _write_json_file
+from .source_fact_review import (
+    review_and_repair_source_facts,
+    source_fact_review_passes,
+)
 from .story_contract import (
     audit_story_artifact,
     cover_relation_prompt,
@@ -377,6 +381,10 @@ def _stage_publish_draft(
     cover_diversity_slot: int | None = None,
     recovery_publication_authority: Mapping[str, object] | None = None,
     stage_cover: Callable[..., dict[str, object]] | None = None,
+    source_fact_llm_call: LlmCall | None = None,
+    story_contract_rebuilder: (
+        Callable[[str], dict[str, object]] | None
+    ) = None,
 ) -> dict[str, object] | None:
     """Mirror production local_prepare: AI title + cover + publish.json draft.
 
@@ -521,6 +529,109 @@ def _stage_publish_draft(
         else "talk"
     )
     staged_title = canonicalize_publish_title(staged_title, lane=explicit_lane)
+    source_fact_review = None
+    if title_authority_error is None and source_fact_llm_call is not None:
+        final_transcript = "\n".join(
+            cue.text.strip() for cue in cues if cue.text.strip()
+        )
+        context_prompt = (
+            str(story_contract.get("clip_context_prompt") or "")
+            if isinstance(story_contract, Mapping)
+            else ""
+        )
+        source_fact_review = review_and_repair_source_facts(
+            selection_hook=str(selection_hook or ""),
+            title=staged_title,
+            final_transcript=final_transcript,
+            clip_context_prompt=context_prompt,
+            llm_call=source_fact_llm_call,
+            selection_scorecard=(
+                story_contract.get("selection_scorecard")
+                if isinstance(story_contract, Mapping)
+                else None
+            ),
+            # Recovery-public and Ivan/manual titles are exact authorities.
+            # CPA may KEEP them, but a proposed title rewrite needs a new
+            # authority instead of silently spending cover budget on it.
+            title_repair_allowed=not (
+                normalized_recovery_publication_authority is not None
+                or title_authority_status == "RESOLVED_MANUAL"
+                or title_source == "ivan_manual_override"
+            ),
+        )
+        if not source_fact_review_passes(source_fact_review):
+            reason = str(
+                source_fact_review.get("reason_code")
+                or source_fact_review.get("decision")
+                or "unknown"
+            )
+            title_policy_violations.append(
+                "source_fact_review_failed"
+            )
+            title_authority_error = "source_fact_review_failed:" + reason
+            title_authority_status = "BLOCKED_SOURCE_FACT_REVIEW"
+        else:
+            reviewed_hook = str(
+                source_fact_review["final_selection_hook"]
+            )
+            reviewed_title = str(source_fact_review["final_title"])
+            reviewed_lane = (
+                "song"
+                if (
+                    reviewed_title.startswith(
+                        CHANNEL_PROFILE.song_title_prefix
+                    )
+                    or str(record.get("classification") or "").lower()
+                    == "song"
+                )
+                else "talk"
+            )
+            if (
+                canonicalize_publish_title(
+                    reviewed_title, lane=reviewed_lane
+                )
+                != reviewed_title
+            ):
+                title_policy_violations.append(
+                    "source_fact_repair_title_not_canonical"
+                )
+                title_authority_error = (
+                    "source_fact_review_failed:"
+                    "SOURCE_FACT_REPAIR_TITLE_NOT_CANONICAL"
+                )
+                title_authority_status = "BLOCKED_SOURCE_FACT_REVIEW"
+            elif (
+                reviewed_hook != str(selection_hook or "")
+                and story_contract_rebuilder is None
+            ):
+                title_policy_violations.append(
+                    "source_fact_hook_rebuild_unavailable"
+                )
+                title_authority_error = (
+                    "source_fact_review_failed:"
+                    "SOURCE_FACT_HOOK_REBUILD_UNAVAILABLE"
+                )
+                title_authority_status = "BLOCKED_SOURCE_FACT_REVIEW"
+            else:
+                if story_contract_rebuilder is not None:
+                    story_contract = story_contract_rebuilder(
+                        reviewed_hook
+                    )
+                elif isinstance(story_contract, Mapping):
+                    story_contract = dict(story_contract)
+                if isinstance(story_contract, dict):
+                    story_contract["source_fact_review"] = (
+                        source_fact_review
+                    )
+                    record["story_contract"] = story_contract
+                selection_hook = reviewed_hook
+                staged_title = reviewed_title
+                explicit_lane = reviewed_lane
+                if source_fact_review.get("decision") == "REPAIRED":
+                    title_source += "+cpa_source_fact_repair"
+                    title_authority_status = (
+                        "RESOLVED_CPA_SOURCE_FACT_REPAIR"
+                    )
     common_title_violations = publish_title_policy_violations(
         staged_title,
         lane=explicit_lane,
@@ -531,7 +642,10 @@ def _stage_publish_draft(
         for code in common_title_violations
         if code not in title_policy_violations
     )
-    if common_title_violations:
+    source_fact_blocked = (
+        title_authority_status == "BLOCKED_SOURCE_FACT_REVIEW"
+    )
+    if common_title_violations and not source_fact_blocked:
         title_authority_error = "publish_title_policy_violation:" + ",".join(
             common_title_violations
         )
@@ -554,8 +668,11 @@ def _stage_publish_draft(
             title_policy_violations.extend(
                 code for code in story_codes if code not in title_policy_violations
             )
-            title_authority_error = "story_contract_violation:" + ",".join(story_codes)
-            title_authority_status = "BLOCKED_STORY_CONTRACT"
+            if not source_fact_blocked:
+                title_authority_error = (
+                    "story_contract_violation:" + ",".join(story_codes)
+                )
+                title_authority_status = "BLOCKED_STORY_CONTRACT"
     cover_text = _lidousha_cover_text(staged_title)
     if title_authority_error is not None:
         # A candidate id / job fallback is not publish-title authority.  Fail
@@ -622,6 +739,7 @@ def _stage_publish_draft(
         "title_authority_error": title_authority_error,
         "title_policy_violations": title_policy_violations,
         "title_story_audit": title_story_audit,
+        "source_fact_review": source_fact_review,
         "video_path": str(media_path),
         "cover_text": cover_text,
         "cover_path": cover_path_value,
@@ -641,6 +759,7 @@ def _stage_publish_draft(
         "title_authority_error": title_authority_error,
         "title_policy_violations": title_policy_violations,
         "title_story_audit": title_story_audit,
+        "source_fact_review": source_fact_review,
         "cover_status": cover_status,
         "cover_path": cover_path_value,
         "cover_text": cover_text,
