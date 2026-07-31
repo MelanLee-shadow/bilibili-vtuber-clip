@@ -101,6 +101,9 @@ def test_committed_registry_loads_and_lists_the_incident():
     assert rows["auto_224211_80_141"]["bvid"] == "BV1ngGc6BEBS"
     assert rows["song_192000_1321"]["bvid"] == "BV1BJGc6aEWf"
     assert rows["auto_145940_1533_1619"]["bvid"] == "BV1ELGc6NEC5"
+    assert rows["auto_224211_181_480"]["bvid"] == "BV1EpGA6MExh"
+    assert rows["auto_225056_1013_1116"]["bvid"] == "BV154GA6vEyD"
+    assert rows["auto_225056_235_339"]["bvid"] == "BV1UfGw69EMG"
 
 
 def test_manifest_gate_reads_attested_record(tmp_path):
