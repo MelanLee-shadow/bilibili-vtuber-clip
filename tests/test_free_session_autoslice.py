@@ -1901,7 +1901,11 @@ def test_1411_shaped_delivered_screenshot_queues_route_preserving_regeneration(
     mp4.write_bytes(b"video")
     cover.write_bytes(b"cover")
     rec = {
-        "candidate_id": "auto_152944_1411_1463",
+        # Keep this shaped like the historical 1411 failure without reusing
+        # its now-public candidate id.  Public registry entries are correctly
+        # suppressed before maintenance and would make this route-policy unit
+        # test depend on mutable production history.
+        "candidate_id": "auto_1411_shaped_unpublished",
         "status": delivered_status,
         "title": "【李豆沙】刚解释完为什么被电，话音刚落小李就暴毙",
         "cover_status": "BLOCKED_SCREENSHOT_COVER_REPAIR_REQUIRED",
