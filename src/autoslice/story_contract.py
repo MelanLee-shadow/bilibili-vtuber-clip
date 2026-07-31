@@ -7,7 +7,10 @@ import re
 from typing import Mapping
 
 from src.autoslice.clip_context import clip_context_prompt_text, validate_clip_context
-from src.autoslice.surface_canon import canonicalize_hard_meme_surfaces
+from src.autoslice.surface_canon import (
+    canonicalize_expected_value_surfaces,
+    canonicalize_hard_meme_surfaces,
+)
 
 
 SCHEMA_VERSION = "lidousha-story-contract.v1"
@@ -95,6 +98,9 @@ def canonicalize_relation_summary(
     # surface (for example 直女) cannot fossilize into StoryContract while the
     # delivered subtitle/title/cover correctly use 侄女.
     output, _hard_meme_repairs = canonicalize_hard_meme_surfaces(text)
+    output, _expected_value_repairs = canonicalize_expected_value_surfaces(
+        output
+    )
     relation_confirmed = (
         isinstance(session_relation_authority, Mapping)
         and session_relation_authority.get("state") == "CONFIRMED"
@@ -110,6 +116,27 @@ def canonicalize_relation_summary(
             continue
         output = output[: match.start()] + "南町" + output[match.end() :]
     return output
+
+
+def canonicalize_story_scorecard(
+    scorecard: object,
+    *,
+    session_relation_authority: object,
+    transcript_text: str = "",
+) -> object:
+    """Normalize generated scorecard prose through the StoryContract choke point."""
+
+    if not isinstance(scorecard, Mapping):
+        return scorecard
+    normalized = dict(scorecard)
+    tier_reason = str(normalized.get("tier_reason") or "").strip()
+    if tier_reason:
+        normalized["tier_reason"] = canonicalize_relation_summary(
+            tier_reason,
+            session_relation_authority=session_relation_authority,
+            transcript_text=transcript_text,
+        )
+    return normalized
 
 
 def cover_relation_prompt(story_contract: object) -> str:

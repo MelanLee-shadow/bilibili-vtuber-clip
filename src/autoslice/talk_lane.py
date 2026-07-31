@@ -43,6 +43,10 @@ from src.autoslice.speaker_finalizer import (
     SpeakerFinalizationError,
     validate_speaker_review_manifest_document,
 )
+from src.autoslice.story_contract import (
+    canonicalize_relation_summary,
+    canonicalize_story_scorecard,
+)
 from src.autoslice.talk_filler import (
     build_piece_specs,
     build_talk_filler_plan,
@@ -1575,6 +1579,15 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     retried on a later resume.  ``reuse_cover`` keeps the existing delivered
     cover (subtitle-only re-run) and skips the ~90s AI cover step.
     """
+    item = dict(item)
+    item["hook"] = canonicalize_relation_summary(
+        str(item.get("hook") or ""),
+        session_relation_authority=item.get("session_relation_authority"),
+    )
+    item["selection_scorecard"] = canonicalize_story_scorecard(
+        item.get("selection_scorecard"),
+        session_relation_authority=item.get("session_relation_authority"),
+    )
     cid = item["cid"]
     scorecard_rejection = _selection_scorecard_rejection(item)
     if scorecard_rejection is not None:

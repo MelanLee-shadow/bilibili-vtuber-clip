@@ -84,6 +84,7 @@ from src.autoslice.story_contract import (
     audit_story_artifact,
     build_story_contract,
     canonicalize_relation_summary,
+    canonicalize_story_scorecard,
 )
 from src.autoslice.clip_context import validate_clip_context
 
@@ -1952,11 +1953,16 @@ def _stage_record(
         session_relation_authority=spec.get("session_relation_authority"),
         transcript_text=transcript_text,
     )
+    story_selection_scorecard = canonicalize_story_scorecard(
+        spec.get("selection_scorecard"),
+        session_relation_authority=spec.get("session_relation_authority"),
+        transcript_text=transcript_text,
+    )
     story_contract = build_story_contract(
         candidate_id=cid,
         selection_hook=story_selection_hook,
         transcript_text=transcript_text,
-        selection_scorecard=spec.get("selection_scorecard"),
+        selection_scorecard=story_selection_scorecard,
         session_relation_authority=spec.get("session_relation_authority"),
         cover_reference_authority=cover_reference_authority,
         source_media_sha256s=[
@@ -1981,7 +1987,7 @@ def _stage_record(
             artifact_kind="subtitle",
         ),
     ]
-    record["selection_scorecard"] = spec.get("selection_scorecard")
+    record["selection_scorecard"] = story_selection_scorecard
     record["session_relation_authority"] = spec.get("session_relation_authority")
     record["story_contract"] = story_contract
     if normalized_recovery_publication_authority is not None:

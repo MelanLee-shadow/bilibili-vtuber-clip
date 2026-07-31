@@ -110,6 +110,7 @@ def test_default_lidousha_profile_freezes_the_pre_profile_runtime_contract():
         ("atashi", "あたし"),
             ("直女", "侄女"),
             ("林墨", "礼墨"),
+            ("小诗", "小室"),
             ("粉丝灯牌", "粉丝团灯牌"),
             ("粉团灯牌", "粉丝团灯牌"),
             ("难崩小视频", "难绷小视频"),

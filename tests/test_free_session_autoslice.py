@@ -4272,6 +4272,62 @@ def test_produce_talk_materializes_reviewed_july18_jump_pieces(
     assert spec["minimum_effective_duration_ms"] == 45_000
 
 
+def test_produce_talk_normalizes_story_prose_before_spec_and_state_result(
+    tmp_path,
+    monkeypatch,
+):
+    date = "2026-07-29"
+    base = tmp_path / "autoslice"
+    repo = tmp_path / "repo"
+    (base / "logs").mkdir(parents=True)
+    repo.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "child_env_for_date", lambda _date: {})
+    monkeypatch.setattr(
+        runner,
+        "talk_pipeline_fingerprint",
+        lambda _candidate_id: "sha256:test",
+    )
+
+    class Completed:
+        returncode = 0
+
+    def fake_run(_command, **kwargs):
+        kwargs["stdout"].write('{"red_flags": [], "boundary_repairs": []}\n')
+        kwargs["stdout"].flush()
+        return Completed()
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    result = runner.produce_talk(
+        date,
+        {
+            "cid": "auto_224211_80_141",
+            "segment_path": "/recordings/segment.mp4",
+            "seg_dur_ms": 529_832,
+            "start_ms": 80_840,
+            "end_ms": 141_460,
+            "hook": "爸爸催李豆沙和小诗合租，还安排两人轮流做饭",
+            "selection_scorecard": {
+                "tier_reason": "弹幕提到和小诗撒娇，形成共同生活关系链",
+                "tier": 1,
+            },
+        },
+    )
+
+    spec = json.loads(
+        (base / "out" / date / "spec_auto_224211_80_141.json").read_text()
+    )
+    assert spec["selection_hook"] == (
+        "爸爸催李豆沙和小室合租，还安排两人轮流做饭"
+    )
+    assert spec["selection_scorecard"]["tier_reason"] == (
+        "弹幕提到和小室撒娇，形成共同生活关系链"
+    )
+    assert result["hook"] == spec["selection_hook"]
+    assert result["selection_scorecard"] == spec["selection_scorecard"]
+
+
 def test_song_status_words():
     """7/9 audit P0: gate BLOCK was recorded as ok because the subprocess exited 0."""
     assert runner.song_status(1, False) == "failed"

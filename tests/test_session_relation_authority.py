@@ -5,6 +5,7 @@ from src.autoslice.story_contract import (
     audit_story_artifact,
     build_story_contract,
     canonicalize_relation_summary,
+    canonicalize_story_scorecard,
     cover_relation_prompt,
 )
 from src.autoslice.producer_package_finalization import _audit_story_bound_cover
@@ -54,6 +55,26 @@ def test_generated_hook_applies_final_hard_meme_canon_without_relation() -> None
         session_relation_authority=None,
         transcript_text="弹幕自称侄女却叫她老公\n我才是真的侄女",
     ) == "弹幕自称侄女却叫她老公，李豆沙反复强调自己才是真的侄女"
+
+
+def test_generated_story_prose_applies_expected_value_name_canon() -> None:
+    hook = "爸爸催李豆沙和小诗合租，还安排两人轮流做饭"
+    reason = "弹幕提到和小诗撒娇，随后形成共同生活关系链"
+
+    assert canonicalize_relation_summary(
+        hook,
+        session_relation_authority=None,
+        transcript_text="爸爸说你跟小室住一起\n小室会做饭吗",
+    ) == "爸爸催李豆沙和小室合租，还安排两人轮流做饭"
+    normalized = canonicalize_story_scorecard(
+        {"tier_reason": reason, "tier": 1},
+        session_relation_authority=None,
+        transcript_text="爸爸说你跟小室住一起\n小室会做饭吗",
+    )
+    assert normalized == {
+        "tier_reason": "弹幕提到和小室撒娇，随后形成共同生活关系链",
+        "tier": 1,
+    }
 
 
 def test_final_transcript_can_repair_recovered_hook_without_relation_hash() -> None:
