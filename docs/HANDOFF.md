@@ -107,7 +107,15 @@ receipt。
   拆分为几何 flag 自身 False 5 条、弥散超帽 5 条、flag True 但超帽 0.027 被否 1 条
   （`auto_202004_553_831`，score 9.0027 / disp 0.5271）。`subject_confident` 探测器在
   23 条有效样本里 70% 给 False。修法未落地。
-- **封面文案链有一道被绕过的强制门**：`auto_192000_909_1014` 的 7/30 cover-only 修复
+- ~~**封面文案链有一道被绕过的强制门**~~ **已修复（`f1c018e` + `c80bee1`）**：
+  分行权威等级已立法并机器化（切点只属作者显式 `\n` / CPA punch 段 / full-text
+  contract / 已验证 word_atoms；平衡器绝不发明切点）、`max_lines` 按缩略图合同封顶、
+  renderer 背带、lane 内容触发门、contract 四路径穿透、CLI typed rc≠0，以及
+  `70-cover.md` 内部那条「:44-45 禁回退 vs :60 要回退」的政策缝。整数行数门
+  `physical_text_line_count ∈ {1,2}` 的实质已被「渲染行 == CPA final_punch +
+  每行 ≤9em」取代（原始记录保留在下方）。**存量 6 条违例一条未修**，见
+  `docs/reviews/cover-text-violations-triage-20260731.md`，等 Ivan 逐条点名。
+  原始诊断留档：`auto_192000_909_1014` 的 7/30 cover-only 修复
   `cover_punch: []`，且证据目录内**没有任何 `lidousha-cover-punch-semantic-review.v1` 回执**
   ——选择器根本没被调用，然后 fail-open 回退整段 `cover_text` 并被 renderer 静默换行成
   3 行（`"白色奶龙"` / `表情小李` / `拒绝花钱`），把「观众想让新3D永久保留」整段丢失。
