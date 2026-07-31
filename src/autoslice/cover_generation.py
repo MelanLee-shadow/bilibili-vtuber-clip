@@ -552,9 +552,12 @@ def _cover_art_direction_prompt(
         "- role: 一个简短英文角色键(如 shy_cute_default/shocked_bites_back/witty_smug/tender_soft/gentle_song)\n"
         "- expression_en: 一句英文脸部表情(贴角色,不吐舌)\n"
         "- hook_word: 封面文案里最该高亮的一个词(必须是文案里出现的原词)\n"
-        "- scene_props: 0-2 个英文短语(每个≤40字符)，描述本条故事的**具象道具/场景物件**（如 'raw green beans'"
-        "'a big gaming chair'），画面里放她手边或背景，把封面锚到这条切片发生的事上。只允许标题里真实出现的具象"
-        "意象；没有就给 []。禁止服装/帽子/饰品类（不许改她的穿戴），禁止抽象概念。\n"
+        "- scene_props: 0-2 个英文短语(每个≤40字符)，描述本条故事的**独立、实物道具/场景物件**（如 'raw green beans'"
+        "'a big gaming chair'），画面里放她手边或背景，把封面锚到这条切片发生的事上。只允许标题里真实出现且在故事里确实是"
+        "物件的具象意象；没有就给 []。**不得把人物/虚拟形象的外号、脸或表情、3D/Live2D 模型或故障、"
+        "画面/显示器/UI，转译成字面的动物、龙、模型机或屏幕道具**。例如“白色奶龙表情/旧模型”是李豆沙自身形象的称呼，"
+        "scene_props 必须给 []，画面应由受信人物参考表达，绝不能另画龙或电脑建模。禁止服装/帽子/饰品类（不许改她的穿戴），"
+        "禁止抽象概念。\n"
         "- words: 封面文案的**完整词组切分**(字符串数组)。硬约束:按顺序拼接后与封面文案一字不差(不加/不减/不改字);"
         "每个自然词语(如\"传话员\"\"熊猫头\"\"不言而喻\")、专名(礼墨Sumi/kmx)、《歌名》和 hook_word 各自必须整体是一个元素(或完整包含在一个元素里);"
         "标点跟在前一个词的元素末尾。分行器用它保证**换行永远不拆词**——除词以外任何位置都允许换行。\n"
@@ -654,10 +657,23 @@ def _normalize_cover_art_direction(
             cover_punch = validated_punch
 
     # 场景道具（2026-07-25 生豆角案）：只收 ASCII 英文短语、非穿戴类；歌切禁用。
+    # 字面的“龙/模型屏幕”曾把李豆沙本人的“白色奶龙”表情故障误画成
+    # 外部奇幻龙和 3D 建模机。这些词没有受信画面证据时不是可机械添加的实物；
+    # 不可只依赖 prompt，normalizer 也必须 fail closed。
     raw_props = payload.get("scene_props")
     scene_props: tuple[str, ...] = ()
     if not baseline.is_song and isinstance(raw_props, (list, tuple)):
         wearable = ("hat", "cap", "outfit", "dress", "costume", "clothes", "accessor", "jewel", "glasses")
+        ungrounded_visualization = (
+            "dragon",
+            "avatar",
+            "3d model",
+            "live2d",
+            "model screen",
+            "model monitor",
+            "computer model",
+            "face",
+        )
         cleaned = [
             item.strip()
             for item in raw_props
@@ -665,6 +681,7 @@ def _normalize_cover_art_direction(
             and 0 < len(item.strip()) <= 40
             and item.strip().isascii()
             and not any(bad in item.lower() for bad in wearable)
+            and not any(bad in item.lower() for bad in ungrounded_visualization)
         ]
         scene_props = tuple(cleaned[:2])
 

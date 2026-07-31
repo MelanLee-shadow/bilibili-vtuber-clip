@@ -4852,6 +4852,34 @@ def test_cover_punch_cpa_repairs_real_raw_beans_fragmentation():
     )
 
 
+def test_cover_scene_props_reject_literal_white_milk_dragon_and_model_screen():
+    """“白色奶龙”是李豆沙本人的表情/模型故障外号，不是故事里真有一条龙。"""
+
+    title = "【李豆沙】观众想让新3D永久保留“白色奶龙”表情，小李拒绝花钱"
+    cover_text = "“白色奶龙”表情\n小李拒绝花钱"
+
+    def judge(_prompt: str) -> str:
+        return (
+            '{"role":"witty_smug","expression_en":"deadpan refusal",'
+            '"hook_word":"拒绝","scene_props":['
+            '"a white milky dragon face","an old 3D model screen"],'
+            '"words":[],"lines":[]}'
+        )
+
+    direction = shadow_pipeline._lidousha_cover_art_direction(
+        candidate_id="auto_192000_909_1014",
+        title=title,
+        cover_text=cover_text,
+        story_hook=(
+            "观众想保留李豆沙模型故障产生的白色奶龙表情，"
+            "她拒绝为这个表情花钱。"
+        ),
+        art_direction_llm_call=judge,
+    )
+
+    assert direction.scene_props == ()
+
+
 def test_cover_punch_cpa_keeps_pink_sister_phrase_as_one_physical_line(tmp_path):
     from PIL import Image
 
