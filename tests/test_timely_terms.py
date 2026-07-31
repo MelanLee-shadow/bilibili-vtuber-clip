@@ -142,8 +142,13 @@ def test_default_profile_jingting_prompt_matches_authoritative_glossary_fingerpr
     # 2026-07-31c：人名/ID 熊猫柏拉图（口播简称「柏拉图」，误听面 不糊涂/薄糊涂，
     #   方向性还原限礼物/上舰致谢语境）+ 1 条 [exact-cue] 真值（同片 cue25；
     #   Ivan 确认正主，101 人舰长榜唯一近音候选）。
+    # 2026-07-31d：撤下 1013 三条 [exact-cue] 钉子（人名条目保留）。jyl-r3 实证
+    #   双权威相撞：exact-final 钉子改写文本，但 redelivery baseline owner 门只认
+    #   source-truth 投影/假名 canon 两种所有者——正确分层是钉子管转录、truth
+    #   ledger 管所有权（三条 SOURCE_INTERVAL_TRUTH 已在 2ff018f 入账），
+    #   同一改写不能两层同时上，否则改写者归因不了。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "0b6974f8b300ee58fca6324b1d1c8e52aa93e8528a071d7ee2bbc087a7764420"
+        "ca80691e044c970164bc8ba086924f00a8bdda86f56a67bb1a6e89ea1c1747f5"
     )
 
 
