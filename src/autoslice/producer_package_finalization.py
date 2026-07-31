@@ -20,6 +20,10 @@ from src.autoslice.final_review_carryover import (
     load_final_review_carryover,
     persist_final_review_carryover,
 )
+from src.autoslice.exact_final_convergence import (
+    collect_exact_final_convergence_memos,
+    rebind_exact_final_convergence_memos,
+)
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.cover_reference_authority import (
     load_candidate_cover_reference,
@@ -1325,6 +1329,37 @@ def _run_exact_final_review_gate(
             final_start,
             final_end,
         )
+        convergence_memos = collect_exact_final_convergence_memos(audit)
+        if convergence_memos:
+            existing_memos = chat_authority_audit.get(
+                "exact_final_cpa_convergence_memos"
+            )
+            by_window = {
+                (
+                    int(row["matched_start_ms"]),
+                    int(row["matched_end_ms"]),
+                ): dict(row)
+                for row in (
+                    existing_memos
+                    if isinstance(existing_memos, list)
+                    else []
+                )
+                if isinstance(row, Mapping)
+                and isinstance(row.get("matched_start_ms"), int)
+                and not isinstance(row.get("matched_start_ms"), bool)
+                and isinstance(row.get("matched_end_ms"), int)
+                and not isinstance(row.get("matched_end_ms"), bool)
+            }
+            for row in convergence_memos:
+                by_window[
+                    (
+                        int(row["matched_start_ms"]),
+                        int(row["matched_end_ms"]),
+                    )
+                ] = row
+            chat_authority_audit[
+                "exact_final_cpa_convergence_memos"
+            ] = list(by_window.values())
         _annotate_consumed_correction_carryovers(
             audit,
             consumed_carryover_repairs,
@@ -1381,6 +1416,16 @@ def _run_exact_final_review_gate(
                     repaired_text,
                     encoding="utf-8",
                 )
+                existing_memos = chat_authority_audit.get(
+                    "exact_final_cpa_convergence_memos"
+                )
+                if isinstance(existing_memos, list):
+                    chat_authority_audit[
+                        "exact_final_cpa_convergence_memos"
+                    ] = rebind_exact_final_convergence_memos(
+                        repaired_text,
+                        existing_memos,
+                    )
                 pass_receipt = {
                     "schema_version": "exact-final-cpa-self-heal-pass.v1",
                     "pass_index": pass_index + 1,

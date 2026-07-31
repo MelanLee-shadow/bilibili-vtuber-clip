@@ -40,6 +40,10 @@ from src.autoslice.final_review_carryover import (
     carryover_path,
     load_final_review_carryover,
 )
+from src.autoslice.exact_final_convergence import (
+    converge_reconsidered_exact_final_findings,
+    resolve_findings_from_exact_final_convergence_memos,
+)
 from src.autoslice.danmaku_evidence import DanmakuItem
 from src.autoslice.final_review_auditor import (
     FinalReviewAuditError,
@@ -1094,15 +1098,31 @@ def _run_exact_final_release_review(
             timeline_offset_ms=timeline_offset_ms,
         )
     )
+    memo_pending, memo_resolved = (
+        resolve_findings_from_exact_final_convergence_memos(
+            srt_text,
+            authority_pending,
+            authority_audit=verified_authority_audit or {},
+        )
+    )
+    exact_judge_llm_call = _build_final_review_llm_call()
     unresolved_findings, acoustic_resolved = (
         adjudicate_exact_release_findings(
             srt_text,
-            authority_pending,
+            memo_pending,
             entity_verifier=verify_confusable_entity,
             clip_context=clip_context,
             source_media_timeline_offset_ms=timeline_offset_ms,
-            judge_llm_call=_build_final_review_llm_call(),
+            judge_llm_call=exact_judge_llm_call,
             screen_read_probe=screen_read_probe,
+        )
+    )
+    unresolved_findings, convergence_resolved = (
+        converge_reconsidered_exact_final_findings(
+            srt_text,
+            unresolved_findings,
+            authority_audit=verified_authority_audit or {},
+            judge_llm_call=exact_judge_llm_call,
         )
     )
     unresolved_findings, boundary_preserved = (
@@ -1112,7 +1132,12 @@ def _run_exact_final_release_review(
         )
     )
     acoustic_resolved.extend(boundary_preserved)
-    resolved_findings = [*authority_resolved, *acoustic_resolved]
+    resolved_findings = [
+        *authority_resolved,
+        *memo_resolved,
+        *acoustic_resolved,
+        *convergence_resolved,
+    ]
     # Ivan 2026-07-26（无人值守裁定）：judge 走完仍 UNCERTAIN 且策略分支为
     # KEEP_CURRENT 的 finding 是已完成的机器决定——按现文本交付并披露，
     # 发后可修；结构性失败照旧 fail-closed。
