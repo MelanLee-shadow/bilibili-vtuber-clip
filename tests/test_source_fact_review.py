@@ -137,6 +137,106 @@ def test_proposal_must_not_become_completed_naming() -> None:
     assert "review_pass: 2" in calls[1]
 
 
+def test_repair_accepts_source_labels_and_bound_chat_citation_format() -> None:
+    bad_hook = "熊猫头发明“李豆沙型侄女”。"
+    bad_title = "【李豆沙】熊猫头发明“李豆沙型侄女”"
+    fixed_hook = "李豆沙聊起“李豆沙型侄女”。"
+    fixed_title = "【李豆沙】李豆沙聊起“李豆沙型侄女”"
+    responses = iter(
+        [
+            _completion(
+                status="REPAIR",
+                final_hook=fixed_hook,
+                final_title=fixed_title,
+                supported_by=["final_transcript", "structured_chat"],
+                changed_surfaces=[
+                    {
+                        "artifact": "selection_hook",
+                        "before": "熊猫头发明",
+                        "after": "李豆沙聊起",
+                        "reason": "弹幕先提出该称谓，字幕只支持李豆沙聊起。",
+                        "evidence": [
+                            "danmaku @29810ms: 这是李豆沙型侄女",
+                            "final_transcript: 有点像那个李豆沙型侄女",
+                        ],
+                    },
+                    {
+                        "artifact": "title",
+                        "before": "熊猫头发明",
+                        "after": "李豆沙聊起",
+                        "reason": "标题删除没有来源支持的身份与发明归属。",
+                        "evidence": [
+                            "danmaku @29810ms: 这是李豆沙型侄女",
+                            "final_transcript: 有点像那个李豆沙型侄女",
+                        ],
+                    },
+                ],
+            ),
+            _completion(
+                status="KEEP",
+                final_hook=fixed_hook,
+                final_title=fixed_title,
+                supported_by=["final_transcript", "structured_chat"],
+            ),
+        ]
+    )
+
+    review = review_and_repair_source_facts(
+        selection_hook=bad_hook,
+        title=bad_title,
+        final_transcript="有点像那个李豆沙型侄女",
+        clip_context_prompt=(
+            "- danmaku @29810ms event=: 这是李豆沙型侄女"
+        ),
+        llm_call=lambda _prompt: next(responses),
+    )
+
+    assert source_fact_review_passes(review)
+    assert review["decision"] == "REPAIRED"
+    assert review["final_selection_hook"] == fixed_hook
+    assert review["final_title"] == fixed_title
+
+
+def test_repair_rejects_chat_citation_with_unbound_offset() -> None:
+    review = review_and_repair_source_facts(
+        selection_hook="熊猫头发明“李豆沙型侄女”。",
+        title="【李豆沙】熊猫头发明“李豆沙型侄女”",
+        final_transcript="有点像那个李豆沙型侄女",
+        clip_context_prompt=(
+            "- danmaku @29810ms event=: 这是李豆沙型侄女"
+        ),
+        llm_call=lambda _prompt: _completion(
+            status="REPAIR",
+            final_hook="李豆沙聊起“李豆沙型侄女”。",
+            final_title="【李豆沙】李豆沙聊起“李豆沙型侄女”",
+            supported_by=["final_transcript", "structured_chat"],
+            changed_surfaces=[
+                {
+                    "artifact": "selection_hook",
+                    "before": "熊猫头发明",
+                    "after": "李豆沙聊起",
+                    "reason": "弹幕先提出该称谓。",
+                    "evidence": [
+                        "danmaku @99999ms: 这是李豆沙型侄女",
+                    ],
+                },
+                {
+                    "artifact": "title",
+                    "before": "熊猫头发明",
+                    "after": "李豆沙聊起",
+                    "reason": "标题删除无来源支持的归属。",
+                    "evidence": [
+                        "danmaku @99999ms: 这是李豆沙型侄女",
+                    ],
+                },
+            ],
+        ),
+    )
+
+    assert not source_fact_review_passes(review)
+    assert review["passes"][0]["reason_code"] == "CPA_TEXT_REVIEW_INVALID"
+
+
 def test_provider_failure_fails_closed_without_repair_loop() -> None:
     calls = 0
 

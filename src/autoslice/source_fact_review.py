@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Mapping
 
 from src.autoslice.llm_client import LlmCall, extract_json_object
@@ -105,12 +106,66 @@ def _compact(value: object) -> str:
     return "".join(str(value or "").split())
 
 
+def _evidence_row_is_bound(
+    value: str,
+    *,
+    final_transcript: str,
+    clip_context_prompt: str,
+) -> bool:
+    """Accept exact evidence while tolerating CPA citation-label formatting."""
+
+    compact_value = _compact(value)
+    if compact_value in _compact(
+        final_transcript + "\n" + clip_context_prompt
+    ):
+        return True
+
+    source_label = re.fullmatch(
+        r"\s*(final_transcript|structured_chat|same_clip_context)"
+        r"\s*:\s*(.+?)\s*",
+        value,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if source_label:
+        source, quoted_text = source_label.groups()
+        corpus = (
+            final_transcript
+            if source.lower() == "final_transcript"
+            else clip_context_prompt
+        )
+        return bool(
+            _compact(quoted_text)
+            and _compact(quoted_text) in _compact(corpus)
+        )
+
+    structured_chat = re.fullmatch(
+        r"\s*(danmaku|superchat|sc)\s*@\s*(\d+)\s*ms"
+        r"(?:\s+event=[^:]*)?\s*:\s*(.+?)\s*",
+        value,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not structured_chat:
+        return False
+    kind, offset_ms, quoted_text = structured_chat.groups()
+    expected_prefix = _compact(f"- {kind.lower()} @{offset_ms}ms")
+    compact_quoted_text = _compact(quoted_text)
+    return bool(
+        compact_quoted_text
+        and any(
+            _compact(line.lower()).startswith(expected_prefix)
+            and compact_quoted_text in _compact(line)
+            for line in clip_context_prompt.splitlines()
+        )
+    )
+
+
 def _valid_changed_surface(
     value: object,
     *,
     before_surface: str,
     after_surface: str,
-    evidence_corpus: str,
+    final_transcript: str,
+    clip_context_prompt: str,
 ) -> bool:
     if not isinstance(value, Mapping):
         return False
@@ -132,7 +187,11 @@ def _valid_changed_surface(
         _compact(value.get("before")) in _compact(before_surface)
         and _compact(value.get("after")) in _compact(after_surface)
         and all(
-            _compact(row) in _compact(evidence_corpus)
+            _evidence_row_is_bound(
+                row,
+                final_transcript=final_transcript,
+                clip_context_prompt=clip_context_prompt,
+            )
             for row in evidence
         )
     )
@@ -207,7 +266,6 @@ def _single_review(
         for row in changes
         if isinstance(row, Mapping)
     } if isinstance(changes, list) else set()
-    evidence_corpus = final_transcript + "\n" + clip_context_prompt
     changed_surfaces_valid = bool(
         isinstance(changes, list)
         and len(changes) == len(expected_changed_artifacts)
@@ -225,7 +283,8 @@ def _single_review(
                     if row.get("artifact") == "selection_hook"
                     else str(final_title)
                 ),
-                evidence_corpus=evidence_corpus,
+                final_transcript=final_transcript,
+                clip_context_prompt=clip_context_prompt,
             )
             for row in changes
             if isinstance(row, Mapping)
