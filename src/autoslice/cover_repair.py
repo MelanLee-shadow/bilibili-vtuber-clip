@@ -435,6 +435,12 @@ def _updated_cover_document(
     binding_sha256: str,
 ) -> dict:
     updated = copy.deepcopy(document)
+    generation_cover_text = generation.get("cover_text")
+    if (
+        not isinstance(generation_cover_text, str)
+        or not generation_cover_text.strip()
+    ):
+        generation_cover_text = None
     artifacts = updated.setdefault("artifact_hashes", {})
     if not isinstance(artifacts, dict):
         raise ValueError("artifact_hashes is not an object")
@@ -455,6 +461,8 @@ def _updated_cover_document(
                 "upload_enabled": False,
             }
         )
+        if generation_cover_text is not None:
+            updated["cover_text"] = generation_cover_text
     staging = updated.get("publish_staging")
     if isinstance(staging, dict):
         staging.update(
@@ -468,6 +476,8 @@ def _updated_cover_document(
                 "upload_enabled": False,
             }
         )
+        if generation_cover_text is not None:
+            staging["cover_text"] = generation_cover_text
     return updated
 
 
@@ -1157,6 +1167,12 @@ def _cover_binding_valid(date: str, rec: dict, mp4: Path, cover: Path) -> bool:
             or publish_view.get("upload_enabled") is not False
             or published_cover != cover.resolve()
             or publish_view.get("cover_generation") != generation
+            or (
+                isinstance(generation.get("cover_text"), str)
+                and generation.get("cover_text")
+                and publish_view.get("cover_text")
+                != generation.get("cover_text")
+            )
         ):
             return False
     try:

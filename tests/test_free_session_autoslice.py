@@ -1218,6 +1218,7 @@ def _cover_binding_fixture(tmp_path, monkeypatch, *, song=False):
         "attempted_models": ["gpt-image-2", "gpt-image-1.5"],
         "candidate_id": cid,
         "title": title,
+        "cover_text": "修复后的封面文案",
         "final_cover": str(generated_cover),
         "final_cover_sha256": digest(generated_cover),
         "ai_background": str(ai_bg),
@@ -1246,6 +1247,7 @@ def _cover_binding_fixture(tmp_path, monkeypatch, *, song=False):
         "artifact_hashes": {"burned_video_sha256": video_sha},
         "publish_staging": {
             "title": title,
+            "cover_text": "修复前的旧封面文案",
             "cover_status": "BLOCKED_AI_COVER_REQUIRED",
             "reason_codes": ["CPA_AI_COVER_REQUIRED"],
             "publish_json_path": str(publish_path),
@@ -1262,6 +1264,7 @@ def _cover_binding_fixture(tmp_path, monkeypatch, *, song=False):
                 "schema_version": "shadow-publish-draft.v1",
                 "candidate_id": source_cid,
                 "title": title,
+                "cover_text": "修复前的旧封面文案",
                 "artifact_hashes": {"burned_video_sha256": video_sha},
                 "cover_status": "BLOCKED_AI_COVER_REQUIRED",
                 "reason_codes": ["CPA_IMAGE_EDIT_HTTP_ERROR"],
@@ -1353,9 +1356,18 @@ def test_bind_repaired_cover_updates_only_active_state_publish_and_records(tmp_p
     publish = json.loads(fx["publish_path"].read_text(encoding="utf-8"))
     assert record["artifact_hashes"]["cover_sha256"] == rec["cover_sha256"]
     assert record["publish_staging"]["cover_status"] == "AI_COVER_READY"
+    assert (
+        record["publish_staging"]["cover_text"]
+        == "修复后的封面文案"
+    )
     assert source["artifact_hashes"]["cover_sha256"] == rec["cover_sha256"]
+    assert (
+        source["publish_staging"]["cover_text"]
+        == "修复后的封面文案"
+    )
     assert publish["artifact_hashes"]["cover_sha256"] == rec["cover_sha256"]
     assert publish["cover_status"] == "AI_COVER_READY"
+    assert publish["cover_text"] == "修复后的封面文案"
     assert publish["reason_codes"] == []
     assert publish["upload_enabled"] is False
     assert historical.read_bytes() == historical_before
@@ -1546,6 +1558,23 @@ def test_repaired_cover_binding_detects_active_publish_drift(tmp_path, monkeypat
     exhausted = {**base, "cover_repair_attempts": COVER_REPAIR_MAX_ATTEMPTS}
     assert cover_repair_needed(fx["date"], exhausted)
     assert not runner._cover_repair_eligible(exhausted)
+
+
+def test_repaired_cover_binding_detects_active_cover_text_drift(
+    tmp_path, monkeypatch
+):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch)
+    runner._bind_repaired_cover(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
+    )
+    base = {**fx["rec"], "delivered": str(fx["mp4"])}
+    assert not cover_repair_needed(fx["date"], base)
+
+    publish = json.loads(fx["publish_path"].read_text(encoding="utf-8"))
+    publish["cover_text"] = "漂移的旧封面文案"
+    fx["publish_path"].write_text(json.dumps(publish), encoding="utf-8")
+
+    assert cover_repair_needed(fx["date"], base)
 
 
 def test_initial_producer_cover_accepts_hash_bound_source_to_delivery_copy(tmp_path, monkeypatch):
