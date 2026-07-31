@@ -3,7 +3,8 @@
 The upload ledger is intentionally not an authority here.  New-BV
 reconciliation accepts only the hash-bound manifest plus the complete
 ``VERIFIED_PUBLIC``/season/uploaded evidence closure.  Same-BV reconciliation
-accepts only a create-only ``same-bv-repair-completed.v1`` receipt.  Each
+accepts only a create-only ``same-bv-repair-completed.v1`` receipt, or the
+narrow unchanged-CID ``same-bv-cover-repair-completed.v1`` receipt.  Each
 successful reconciliation writes a durable runtime registry overlay before it
 projects the same truth into the deployed registry and every matching daily
 state file.
@@ -475,6 +476,185 @@ def _validate_same_bv_completed(
     return completed, bvid, aid, int(new_cid)
 
 
+def _validate_same_bv_cover_completed(
+    *,
+    completed_path: Path,
+    manifest: dict,
+    manifest_path: Path,
+) -> tuple[dict, str, int | None, int]:
+    """Replay the cover-only plan/journal/fresh-live completion closure."""
+
+    from src.autoslice.same_bv_cover_reconciliation import (
+        normalise_cover_url,
+        snapshots_equivalent,
+    )
+    from src.autoslice import same_bv_cover_repair as cover_transaction
+
+    completed = _load_object(
+        completed_path, "same-BV cover completed authority"
+    )
+    manifest_binding = _manifest_binding(manifest, manifest_path)
+    completed_manifest = completed.get("manifest")
+    new_cover = completed.get("new_cover")
+    manifest_cover = manifest.get("cover")
+    plan_entry = completed.get("plan")
+    journal_entry = completed.get("verified_journal_row")
+    snapshot = completed.get("live_snapshot")
+    creator = snapshot.get("creator") if isinstance(snapshot, Mapping) else None
+    public = snapshot.get("public") if isinstance(snapshot, Mapping) else None
+    section = snapshot.get("section") if isinstance(snapshot, Mapping) else None
+    videos = creator.get("videos") if isinstance(creator, Mapping) else None
+    matches = section.get("matches") if isinstance(section, Mapping) else None
+    cid = completed.get("unchanged_cid")
+    bvid = str(completed.get("bvid") or "")
+    aid = completed.get("aid")
+    uploaded_cover = completed.get("uploaded_cover_url")
+    if (
+        completed.get("schema_version")
+        != "same-bv-cover-repair-completed.v1"
+        or completed.get("status") != "VERIFIED_FRESH_LIVE"
+        or completed.get("rc") != 0
+        or not str(completed.get("candidate_id") or "")
+        or not bvid
+        or not isinstance(completed_manifest, Mapping)
+        or completed_manifest.get("path") != manifest_binding["path"]
+        or completed_manifest.get("sha256") != manifest_binding["sha256"]
+        or not isinstance(new_cover, Mapping)
+        or not isinstance(manifest_cover, Mapping)
+        or new_cover.get("path") != manifest_cover.get("path")
+        or new_cover.get("sha256") != manifest_cover.get("sha256")
+        or new_cover.get("bytes") != manifest_cover.get("bytes")
+        or not isinstance(cid, int)
+        or isinstance(cid, bool)
+        or not isinstance(uploaded_cover, str)
+        or not isinstance(videos, list)
+        or not isinstance(creator, Mapping)
+        or creator.get("available") is not True
+        or creator.get("bvid") not in (None, bvid)
+        or creator.get("aid") != aid
+        or len(videos) != 1
+        or not isinstance(videos[0], Mapping)
+        or videos[0].get("cid") != cid
+        or not isinstance(public, Mapping)
+        or public.get("available") is not True
+        or public.get("bvid") not in (None, bvid)
+        or public.get("aid") != aid
+        or public.get("state") != 0
+        or public.get("cid") != cid
+        or not isinstance(section, Mapping)
+        or section.get("available") is not True
+        or not isinstance(matches, list)
+        or len(matches) != 1
+        or not isinstance(matches[0], Mapping)
+        or matches[0].get("bvid") not in (None, bvid)
+        or matches[0].get("aid") != aid
+        or matches[0].get("cid") != cid
+        or matches[0].get("title") != manifest.get("title")
+        or not isinstance(creator.get("metadata"), Mapping)
+        or not isinstance(public.get("metadata"), Mapping)
+        or creator["metadata"].get("title") != manifest.get("title")
+        or public["metadata"].get("title") != manifest.get("title")
+        or normalise_cover_url(creator["metadata"].get("cover"))
+        != normalise_cover_url(uploaded_cover)
+        or normalise_cover_url(public["metadata"].get("cover"))
+        != normalise_cover_url(uploaded_cover)
+        or not isinstance(plan_entry, Mapping)
+        or not isinstance(journal_entry, Mapping)
+    ):
+        raise PublicationReconciliationError(
+            "same-BV cover completed authority is incomplete or inconsistent"
+        )
+    if aid is not None and (
+        not isinstance(aid, int) or isinstance(aid, bool)
+    ):
+        raise PublicationReconciliationError(
+            "same-BV cover completed aid is invalid"
+        )
+    creator_public_metadata = {
+        key: value
+        for key, value in creator["metadata"].items()
+        if key != "source"
+    }
+    if creator_public_metadata != public["metadata"]:
+        raise PublicationReconciliationError(
+            "same-BV cover completed Creator/public metadata disagree"
+        )
+
+    plan_path = Path(str(plan_entry.get("path") or ""))
+    if (
+        not plan_path.is_file()
+        or sha256_file(plan_path) != plan_entry.get("sha256")
+    ):
+        raise PublicationReconciliationError(
+            "same-BV cover completed plan binding drifted"
+        )
+    try:
+        plan = cover_transaction.load_plan(plan_path)
+        cover_transaction.validate_plan(
+            plan, manifest=manifest, plan_path=plan_path
+        )
+    except cover_transaction.CoverRepairError as exc:
+        raise PublicationReconciliationError(
+            f"same-BV cover completed plan is invalid: {exc}"
+        ) from exc
+    if (
+        plan.get("schema_version") != "same-bv-cover-repair-plan.v1"
+        or plan.get("plan_id") != plan_entry.get("plan_id")
+        or plan.get("bvid") != bvid
+        or plan.get("unchanged_cid") != cid
+        or plan.get("manifest") != completed_manifest
+        or plan.get("replacement_cover") != new_cover
+        or plan.get("old_cover_url") != completed.get("old_cover_url")
+    ):
+        raise PublicationReconciliationError(
+            "same-BV cover completed plan content conflicts"
+        )
+    journal_path = Path(str(journal_entry.get("journal_path") or ""))
+    if not journal_path.is_file():
+        raise PublicationReconciliationError(
+            "same-BV cover completed journal is missing"
+        )
+    try:
+        journal_rows = cover_transaction._plan_rows(
+            journal_path, plan_path, plan
+        )
+    except cover_transaction.CoverRepairError as exc:
+        raise PublicationReconciliationError(
+            f"same-BV cover completed journal is invalid: {exc}"
+        ) from exc
+    terminal_matches = [
+        row
+        for row in journal_rows
+        if isinstance(row, Mapping)
+        and row.get("seq") == journal_entry.get("seq")
+        and row.get("row_sha256") == journal_entry.get("row_sha256")
+        and row.get("plan_id") == plan.get("plan_id")
+    ]
+    if len(terminal_matches) != 1:
+        raise PublicationReconciliationError(
+            "same-BV cover completed terminal journal row is not unique"
+        )
+    terminal = terminal_matches[0]
+    terminal_details = terminal.get("details")
+    if (
+        terminal.get("schema_version")
+        != "same-bv-cover-repair-journal.v1"
+        or terminal.get("state") != "VERIFIED"
+        or terminal.get("at") != journal_entry.get("at")
+        or not isinstance(terminal_details, Mapping)
+        or terminal_details.get("uploaded_cover_url") != uploaded_cover
+        or terminal_details.get("unchanged_cid") != cid
+        or not isinstance(terminal_details.get("live_snapshot"), Mapping)
+        or not snapshots_equivalent(
+            terminal_details["live_snapshot"], snapshot
+        )
+    ):
+        raise PublicationReconciliationError(
+            "same-BV cover completed terminal journal evidence conflicts"
+        )
+    return completed, bvid, aid, int(cid)
+
+
 def authority_sidecar_path(manifest_path: Path) -> Path:
     name = manifest_path.name
     suffix = ".upload_manifest.json"
@@ -522,7 +702,11 @@ def publication_row_is_verified(row: object) -> bool:
         isinstance(publication, Mapping)
         and publication.get("schema_version") == RECONCILIATION_SCHEMA
         and publication.get("status")
-        in {"VERIFIED_PUBLIC", "VERIFIED_SAME_BV"}
+        in {
+            "VERIFIED_PUBLIC",
+            "VERIFIED_SAME_BV",
+            "VERIFIED_SAME_BV_COVER",
+        }
         and str(publication.get("candidate_id") or "")
         == str(row.get("candidate_id") or row.get("cid") or "")
         and str(publication.get("bvid") or "") == str(row.get("bvid") or "")
@@ -719,7 +903,11 @@ def validate_runtime_registry_entry(
         or not isinstance(publication, Mapping)
         or publication.get("schema_version") != RECONCILIATION_SCHEMA
         or publication.get("status")
-        not in {"VERIFIED_PUBLIC", "VERIFIED_SAME_BV"}
+        not in {
+            "VERIFIED_PUBLIC",
+            "VERIFIED_SAME_BV",
+            "VERIFIED_SAME_BV_COVER",
+        }
         or publication.get("candidate_id") != entry.get("candidate_id")
         or publication.get("recording_date") != entry.get("recording_date")
         or publication.get("bvid") != entry.get("bvid")
@@ -747,7 +935,7 @@ def validate_runtime_registry_entry(
                 and authority.get("aid") == publication.get("aid")
                 and authority.get("cid") == publication.get("cid")
             )
-        else:
+        elif publication.get("status") == "VERIFIED_SAME_BV":
             valid_authority = (
                 authority.get("schema_version")
                 == "same-bv-repair-completed.v1"
@@ -757,6 +945,17 @@ def validate_runtime_registry_entry(
                 and authority.get("bvid") == entry.get("bvid")
                 and authority.get("aid") == publication.get("aid")
                 and authority.get("new_cid") == publication.get("cid")
+            )
+        else:
+            valid_authority = (
+                authority.get("schema_version")
+                == "same-bv-cover-repair-completed.v1"
+                and authority.get("status") == "VERIFIED_FRESH_LIVE"
+                and authority.get("rc") == 0
+                and authority.get("candidate_id") == entry.get("candidate_id")
+                and authority.get("bvid") == entry.get("bvid")
+                and authority.get("aid") == publication.get("aid")
+                and authority.get("unchanged_cid") == publication.get("cid")
             )
         if not valid_authority:
             raise PublicationReconciliationError(
@@ -1089,6 +1288,45 @@ def reconcile_same_bv_publication(
     publication = {
         "schema_version": RECONCILIATION_SCHEMA,
         "status": "VERIFIED_SAME_BV",
+        "candidate_id": candidate_id,
+        "recording_date": recording_date,
+        "bvid": bvid,
+        "aid": aid,
+        "cid": cid,
+        "title": manifest.get("title"),
+        "authority": _sha_entry(completed_path),
+        "reconciled_at": reconciled_at,
+    }
+    return _commit_projection(
+        manifest=manifest,
+        publication=publication,
+        base=autoslice_base,
+        registry_path=registry_path,
+    )
+
+
+def reconcile_same_bv_cover_publication(
+    *,
+    completed_path: Path,
+    manifest: dict,
+    manifest_path: Path,
+    autoslice_base: Path,
+    registry_path: Path,
+    reconciled_at: str,
+) -> dict:
+    candidate_id, recording_date = _candidate_and_date(manifest)
+    completed, bvid, aid, cid = _validate_same_bv_cover_completed(
+        completed_path=completed_path,
+        manifest=manifest,
+        manifest_path=manifest_path,
+    )
+    if completed.get("candidate_id") != candidate_id:
+        raise PublicationReconciliationError(
+            "same-BV cover completed candidate differs from manifest record"
+        )
+    publication = {
+        "schema_version": RECONCILIATION_SCHEMA,
+        "status": "VERIFIED_SAME_BV_COVER",
         "candidate_id": candidate_id,
         "recording_date": recording_date,
         "bvid": bvid,

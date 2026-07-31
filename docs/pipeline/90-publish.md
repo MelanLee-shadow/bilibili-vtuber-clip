@@ -124,6 +124,60 @@
 核心状态机在 `src/autoslice/same_bv_repair.py`。legacy `swap_video_p.py`、
 `bili_archive_tool.py replace`、裸 API 和手工 append/edit 仍禁止。
 
+### 仅换封面的窄路线
+
+当且仅当视频字节、字幕、标题、简介、tags、分区、版权、source、唯一 P/CID 与 exact-section
+成员关系全部保持不变，允许使用
+`scripts/authorized_upload.py cover-repair-plan / cover-repair-run /
+cover-repair-status / cover-repair-verify-live`。它不 append、不换 P，也不创建新 BV；因此不能拿来
+修视频、字幕、标题、tags 或合集标题。`scripts/bili_cover_edit.py` 已 fail-closed，旧的
+`bili-cover-edit-receipt.v1`、Creator 单面“URL 变了”或一次 edit 返回码都不是发布证据。
+
+该窄路线仍必须使用当前 `authorized-upload-manifest.v3`，同时重放 same-BV
+`final_human_review` 与**精确绑定新封面和当前完整标题的 CPA**
+`lidousha-title-cover-joint-qc.v1`；后者在普通 same-BV 视频置换中可选，但在 cover-only
+路线中强制必需。plan 冻结 manifest/hash、Ivan 授权、publication authority、全部 package
+attestation、新封面路径/hash/bytes、旧 Bilibili cover asset identity、唯一旧 CID、完整非封面
+metadata，以及 Creator/public/public-tags/exact-section 四面快照。计划时任一面不可用、不一致、
+非单 P、CID/AID/BVID/section 不等于 publication authority，或 manifest 目标 metadata 除封面
+外与线上不同，都在远端写入前拒绝。
+
+若该 BVID 此前已走完整 same-BV 视频置换、当前 CID 已不等于原始 publication authority，
+必须给 `cover-repair-plan` 显式传
+`--predecessor-completed <same-bv-repair-completed.v1>`。planner 重放该 completed 的旧 plan、
+journal 与 CID 闭环；fresh snapshot 只允许 Creator/public cover asset 与 predecessor snapshot
+不同，其余字段和 topology 必须精确相等。这样可承认已完成的视频置换与待修封面，但不能用
+弱 cover receipt 或裸 CID 覆盖绕过前序证明。
+
+操作顺序固定：
+
+1. 运行 `cover-repair-plan --dry-run` 做真实只读四面观察；确认后再运行同命令（不带
+   `--dry-run`）create-only 写 `same-bv-cover-repair-plan.v1` 和 hash-chain journal 的
+   `PLANNED` 行。
+2. 先运行 `cover-repair-status`，再运行 `cover-repair-run --dry-run` 检查本地下一动作；真执行
+   时使用与所有投稿/修复共用的 `upload.lock`。
+3. runner 先 fsync `COVER_UPLOAD_INTENT`，再上传 manifest 冻结的同一封面字节。仅上传 cover
+   asset 不会改变稿件；若此步崩溃，只有线上 archive 仍精确等于 plan `before` 时才可重传
+   同一字节。
+4. asset URL 被验证为 Bilibili `/bfs/archive/<hash>` 后，runner 再次读取 Creator 原始稿件，
+   要求 BVID/AID、全部非封面 metadata 和完整 videos/CID 列表仍与计划一致。随后先 fsync
+   `EDIT_INTENT`，由 member API 从这次 fresh view 原样 clone payload，只替换 `cover`。
+5. `EDIT_INTENT` 后无论成功返回、timeout、连接中断或进程崩溃，恢复都只能 poll，绝不再次
+   edit。Creator/public 封面只能处于冻结的 old asset 或本次 uploaded new asset；其他字段、
+   CID、section 任何第三值进入终态 `BLOCKED_DRIFT`。
+6. Creator/public 都收敛到 new asset、其他字段与唯一 CID 完全不变、exact section 仍精确
+   后才记 journal `VERIFIED`。随后必须运行 `cover-repair-verify-live --out ...` 再次读取四面，
+   与终态 snapshot 精确一致后 create-only 写
+   `same-bv-cover-repair-completed.v1`。该 receipt 明示 `unchanged_cid`、old/new cover、manifest、
+   plan、终态 journal row 与 fresh snapshot；它不靠 upload ledger，也不伪装成视频置换的
+   `same-bv-repair-completed.v1`。成功后同一命令还须把该 receipt 作为
+   `VERIFIED_SAME_BV_COVER` authority 接入 publication reconciliation/runtime overlay；本地投影
+   失败返回 rc=6，只重跑同一 fresh-verify/reconciliation，不再 edit 线上稿件。
+
+默认 cover-only journal 为
+`/opt/bilive/autoslice/reports/same_bv_cover_repair_ledger.jsonl`。多稿仍在同一 upload lock 下
+逐稿顺序执行。旧脚本、手工 API、跳过 CPA 联合质检或只看 Creator 单面均禁止。
+
 执行前必须确认当前 source 已部署到 `free`，目标修复包通过本页发布准入，并先完成真实
 dry plan；本地存在代码/测试不等于 production 已可用，也不等于五条线上稿件已经修复。
 

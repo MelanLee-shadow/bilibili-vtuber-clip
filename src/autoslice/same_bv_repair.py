@@ -235,6 +235,28 @@ def _video_row(row: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def normalise_creator_snapshot(
+    *, bvid: str, creator_data: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Project one Creator archive response into the stable repair shape."""
+
+    archive = creator_data.get("archive") or {}
+    videos = creator_data.get("videos") or []
+    if not isinstance(archive, Mapping) or not isinstance(videos, list):
+        raise ObservationUnavailable("Creator archive response shape is invalid")
+    return {
+        "available": True,
+        "bvid": archive.get("bvid"),
+        "aid": archive.get("aid"),
+        "state": archive.get("state"),
+        "state_desc": archive.get("state_desc"),
+        "metadata": _metadata_from_archive(archive),
+        "videos": [
+            _video_row(row) for row in videos if isinstance(row, Mapping)
+        ],
+    }
+
+
 def normalise_snapshot(
     *,
     bvid: str,
@@ -246,19 +268,9 @@ def normalise_snapshot(
 ) -> dict[str, Any]:
     """Convert the three Bilibili read surfaces into a strict stable shape."""
 
-    archive = creator_data.get("archive") or {}
-    videos = creator_data.get("videos") or []
-    if not isinstance(archive, Mapping) or not isinstance(videos, list):
-        raise ObservationUnavailable("Creator archive response shape is invalid")
-    creator = {
-        "available": True,
-        "bvid": archive.get("bvid"),
-        "aid": archive.get("aid"),
-        "state": archive.get("state"),
-        "state_desc": archive.get("state_desc"),
-        "metadata": _metadata_from_archive(archive),
-        "videos": [_video_row(row) for row in videos if isinstance(row, Mapping)],
-    }
+    creator = normalise_creator_snapshot(
+        bvid=bvid, creator_data=creator_data
+    )
 
     public_data: Mapping[str, Any] = {}
     public_available = False
@@ -367,6 +379,38 @@ class BilibiliRepairAdapter:
 
     def prepare_cover(self, cover_path: Path) -> str:
         return self.session.cover_up(cover_path.read_bytes())
+
+    def edit_cover_only(
+        self,
+        bvid: str,
+        *,
+        expected_creator: Mapping[str, Any],
+        cover_url: str,
+    ) -> Mapping[str, Any]:
+        """Clone the exact current archive and change only its cover.
+
+        The extra Creator read closes the gap between the full four-surface
+        observation and the edit call.  Any archive/video drift aborts before
+        the mutation.  The caller owns the durable EDIT_INTENT and therefore
+        must never blindly retry this call after an ambiguous outcome.
+        """
+
+        current = self.session.archive_view(bvid)
+        current_creator = normalise_creator_snapshot(
+            bvid=bvid, creator_data=current
+        )
+        if not snapshots_equivalent(
+            {"creator": current_creator},
+            {"creator": dict(expected_creator)},
+        ):
+            raise RemoteMutationError(
+                "Creator archive drifted before cover-only edit"
+            )
+        payload = self.session.build_edit_payload(
+            current,
+            cover_url=cover_url,
+        )
+        return self.session.edit_archive(payload)
 
     def swap_keep_only(
         self,

@@ -205,4 +205,71 @@ def parse_args(
         default=str(defaults["biliup_cookie_json"]),
     )
     rv.set_defaults(func=handlers["repair_verify_live"])
+
+    cp = sub.add_parser(
+        "cover-repair-plan",
+        help=(
+            "freeze a manifest/QC-bound same-BV cover-only edit; no remote "
+            "mutation"
+        ),
+    )
+    cp.add_argument("--manifest", required=True)
+    cp.add_argument("--bvid", required=True)
+    cp.add_argument("--out", required=True)
+    cp.add_argument(
+        "--journal", default=str(defaults["cover_repair_ledger"])
+    )
+    cp.add_argument("--lock", default=None)
+    cp.add_argument("--cookie-json", default=str(defaults["cookie_json"]))
+    cp.add_argument(
+        "--predecessor-completed",
+        default=None,
+        help=(
+            "prior same-bv-repair-completed.v1 proving the current CID after "
+            "an earlier full replacement"
+        ),
+    )
+    cp.add_argument("--dry-run", action="store_true")
+    cp.set_defaults(func=handlers["cover_repair_plan"])
+
+    cr = sub.add_parser(
+        "cover-repair-run",
+        help="resume one cover-only edit; EDIT_INTENT is never blindly retried",
+    )
+    cr.add_argument("--plan", required=True)
+    cr.add_argument(
+        "--journal", default=str(defaults["cover_repair_ledger"])
+    )
+    cr.add_argument("--lock", default=None)
+    cr.add_argument("--cookie-json", default=str(defaults["cookie_json"]))
+    cr.add_argument("--wait", type=float, default=240.0)
+    cr.add_argument("--poll", type=float, default=10.0)
+    cr.add_argument("--dry-run", action="store_true")
+    cr.set_defaults(func=handlers["cover_repair_run"])
+
+    cs = sub.add_parser(
+        "cover-repair-status",
+        help="validate local cover-only plan/journal state; no remote access",
+    )
+    cs.add_argument("--plan", required=True)
+    cs.add_argument(
+        "--journal", default=str(defaults["cover_repair_ledger"])
+    )
+    cs.set_defaults(func=handlers["cover_repair_status"])
+
+    cv = sub.add_parser(
+        "cover-repair-verify-live",
+        help=(
+            "freshly re-observe unchanged CID/metadata plus the new cover and "
+            "create a completed receipt"
+        ),
+    )
+    cv.add_argument("--plan", required=True)
+    cv.add_argument(
+        "--journal", default=str(defaults["cover_repair_ledger"])
+    )
+    cv.add_argument("--out", required=True)
+    cv.add_argument("--lock", default=None)
+    cv.add_argument("--cookie-json", default=str(defaults["cookie_json"]))
+    cv.set_defaults(func=handlers["cover_repair_verify_live"])
     return parser.parse_args(argv)

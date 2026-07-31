@@ -60,6 +60,18 @@ def _api(url: str, cookie: str, body=None, *, as_json=True):
 
 
 def main() -> int:
+    print(
+        "REFUSE: legacy cover-only API editor is disabled; use "
+        "scripts/authorized_upload.py cover-repair-plan / "
+        "cover-repair-run / cover-repair-verify-live",
+        file=sys.stderr,
+    )
+    return 2
+
+    # Historical implementation retained below only as endpoint archaeology;
+    # the unconditional refusal above is the executable authority.  It lacked
+    # manifest/QC binding, a durable one-shot edit intent, exact four-surface
+    # readback, and a create-only fresh-verification receipt.
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bvid", required=True)
     parser.add_argument("--cover", required=True, help="new cover PNG path")
