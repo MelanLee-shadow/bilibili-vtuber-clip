@@ -273,6 +273,30 @@ completed sidecar：
 公开/创作中心任一面尚在转码、重审或传播中，状态就是 `posted_unverified`；后续只能复验/
 补合集，不得重复上传。
 
+## 公开真值回写
+
+公开验收闭环必须在同一次命令中幂等对账 publication registry 与逐日 runner state；只拿到
+BVID、只写 upload ledger 或只生成 completed sidecar 都不能把命令报成完成：
+
+- 新 BV 只接受当前 manifest、`VERIFIED_PUBLIC` public/Creator/exact-section 证据、
+  `IN_SEASON_PUBLIC`（或 manifest 明示 opt-out）证据和 `authorized-upload-result.v3` 的完整
+  hash 闭包。ledger 行不是出版真值，不能单独触发回写。
+- same-BV 只接受 create-only `same-bv-repair-completed.v1` 的
+  `VERIFIED_FRESH_LIVE` authority；journal `VERIFIED` 或历史 registry 行不能替代 fresh
+  completed sidecar。
+- 强证据先写 create-only reconciliation authority 和部署外 runtime registry overlay，再投影
+  committed registry 与所有匹配的逐日 state。candidate 原身份字段不得被线上 CID 覆盖；
+  state 行改为 `published`，保留 `prepublication_status`，线上 CID 单列 `published_cid`。
+- BVID 冲突、authority/hash 漂移、同 candidate/date 重复行、找不到唯一 state candidate 或
+  任一写入失败均返回 rc=6，保留已经完成的线上事实并提示只重跑 `season-add` 或原
+  `repair-verify-live`；绝不重传视频。若 same-BV completed sidecar 已由上次 create-only
+  成功写出，重跑只允许其内容与 fresh closure 除时间戳外完全相同，并仅续做本地对账，
+  不覆盖 sidecar、不调用远端变更。
+- runner 每次读 state 都重放 hash-valid runtime overlay，使“公开成功后进程在 state 写入前
+  崩溃”能够自动收敛；overlay 损坏或 authority 漂移时 fail closed 为
+  `publication_reconciliation_blocked`，不能把旧 `candidate_rejected`/`review_ready` 当成
+  当前发布结论。
+
 ## 安全边界
 
 - cookie、token、BVID、season/section ID 与当前登录态都从 live 环境读取或由工具验证，

@@ -13,6 +13,9 @@ from pathlib import Path
 
 from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.selection_scorecard import selection_rank_key
+from src.autoslice.publication_reconciliation import (
+    publication_row_is_verified,
+)
 
 
 _runner = RunnerProxy()
@@ -133,10 +136,14 @@ def exact_talk_contract_closure(state: dict) -> dict[str, object]:
         else:
             attempt = attempts[0]
             if (
-                attempt.get("status") in _runner.DELIVERED_TALK_STATUSES
-                and attempt.get("bundle_lifecycle") == "CURRENT"
-                and attempt.get("bundle_compliance") == "COMPLIANT"
-                and attempt.get("rc") == 0
+                publication_row_is_verified(attempt)
+                or (
+                    attempt.get("status")
+                    in _runner.DELIVERED_TALK_STATUSES
+                    and attempt.get("bundle_lifecycle") == "CURRENT"
+                    and attempt.get("bundle_compliance") == "COMPLIANT"
+                    and attempt.get("rc") == 0
+                )
             ):
                 disposition = "CURRENT_COMPLIANT_DELIVERY"
             else:
@@ -224,6 +231,7 @@ def song_delivery_budget(state: dict, session_id: str | None = None) -> int:
         and (session_id is None or _item_session_id(song) == session_id)
         and (
             bool(song.get("delivered"))
+            or publication_row_is_verified(song)
             or song.get("verified_delivery_pending_commit") is True
         )
     )
@@ -237,7 +245,10 @@ def _talk_slots_for_session(state: dict, session_id: str) -> int:
         if isinstance(item, dict) and _item_session_id(item) == session_id
     ]
     produced = sum(
-        1 for item in records if item.get("status") in _runner.DELIVERED_TALK_STATUSES
+        1
+        for item in records
+        if item.get("status") in _runner.DELIVERED_TALK_STATUSES
+        or publication_row_is_verified(item)
     )
     produced += sum(
         1
@@ -280,7 +291,10 @@ def _assign_cover_diversity_slots(state: dict) -> None:
             for record in state.get("picks", [])
             if isinstance(record, dict)
             and _item_session_id(record) == session_id
-            and record.get("status") in _runner.DELIVERED_TALK_STATUSES
+            and (
+                record.get("status") in _runner.DELIVERED_TALK_STATUSES
+                or publication_row_is_verified(record)
+            )
             and isinstance(record.get("cover_diversity_slot"), int)
             and not isinstance(record.get("cover_diversity_slot"), bool)
             and int(record["cover_diversity_slot"]) >= 0

@@ -77,4 +77,8 @@ def repair_verify_live(args) -> int:
         now=upload.now,
         observation_unavailable=repair.ObservationUnavailable,
         snapshots_equal=snapshots_equivalent,
+        reconcile_completed=upload._reconcile_same_bv_publication,
+        reconciliation_error=(
+            upload.publication_reconciliation.PublicationReconciliationError
+        ),
     )

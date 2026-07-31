@@ -41,8 +41,8 @@ from src.autoslice.package_audit_binding import (
     audit_content_binding as _audit_content_binding,
 )
 from src.autoslice import final_human_review as human_review  # noqa: E402
-from src.autoslice.publication_registry import (  # noqa: E402
-    manifest_upload_block_reason as _publication_block)
+from src.autoslice import publication_reconciliation  # noqa: E402
+from src.autoslice import publication_registry  # noqa: E402
 from src.autoslice import same_bv_repair as repair_binding  # noqa: E402
 from src.autoslice import same_bv_live_verification  # noqa: E402
 from src.autoslice.subtitle_validation import validate_srt_file  # noqa: E402
@@ -68,6 +68,7 @@ from src.autoslice.title_policy import (  # noqa: E402
 )
 
 CookieSchemaError = member_api.CookieSchemaError
+_publication_block = publication_registry.manifest_upload_block_reason
 DEFAULT_BASE = Path(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice"))
 DEFAULT_LEDGER = DEFAULT_BASE / "reports" / "upload_ledger.jsonl"
 DEFAULT_REPAIR_LEDGER = DEFAULT_BASE / "reports" / "same_bv_repair_ledger.jsonl"
@@ -75,6 +76,32 @@ DEFAULT_UPLOAD_LOCK = DEFAULT_BASE / "upload.lock"
 DEFAULT_UPLOADER = "/opt/bilive/app/tmp_manual_upload/do_upload.sh"
 DEFAULT_COOKIE_JSON = Path("/opt/bilive/app/cookie.json")
 DEFAULT_REPAIR_BILIUP_COOKIE_JSON = member_api.DEFAULT_BILIUP_COOKIES
+
+
+def _reconcile_new_bv_publication(**kwargs) -> dict:
+    try:
+        return publication_reconciliation.reconcile_new_bv_publication(
+            **kwargs,
+            autoslice_base=DEFAULT_BASE,
+            registry_path=publication_registry.DEFAULT_REGISTRY_PATH,
+        )
+    except OSError as exc:
+        raise publication_reconciliation.PublicationReconciliationError(
+            f"publication reconciliation filesystem failure: {exc}"
+        ) from exc
+
+
+def _reconcile_same_bv_publication(**kwargs) -> dict:
+    try:
+        return publication_reconciliation.reconcile_same_bv_publication(
+            **kwargs,
+            autoslice_base=DEFAULT_BASE,
+            registry_path=publication_registry.DEFAULT_REGISTRY_PATH,
+        )
+    except OSError as exc:
+        raise publication_reconciliation.PublicationReconciliationError(
+            f"publication reconciliation filesystem failure: {exc}"
+        ) from exc
 
 # Season (合集) policy — membership is part of the publish (Ivan 2026-07-20).
 # The LANE is a deterministic choke point on the frozen title: the song catalog
@@ -1589,7 +1616,32 @@ def _run_postpublish_verification(
         "authorized_by": (manifest.get("authorization") or {}).get("by"),
         "authorization_quote": (manifest.get("authorization") or {}).get("quote"),
     }
-    _write_json_sidecar(uploaded_sidecar_path(manifest_path), uploaded)
+    uploaded_path = uploaded_sidecar_path(manifest_path)
+    _write_json_sidecar(uploaded_path, uploaded)
+    try:
+        reconciliation = _reconcile_new_bv_publication(
+            manifest=manifest,
+            manifest_path=manifest_path.resolve(),
+            bvid=bvid,
+            public_verify_path=public_path.resolve(),
+            season_verify_path=season_verify_sidecar_path(
+                manifest_path
+            ).resolve(),
+            uploaded_path=uploaded_path.resolve(),
+            reconciled_at=str(uploaded["uploaded_at"]),
+        )
+    except publication_reconciliation.PublicationReconciliationError as exc:
+        print(
+            "PUBLIC VERIFIED BUT LOCAL RECONCILIATION PENDING: "
+            f"{exc}; re-run season-add for the same BVID (never re-upload)",
+            file=sys.stderr,
+        )
+        return 6, public_result
+    print(
+        "PUBLICATION RECONCILED: "
+        f"candidate={reconciliation['candidate_id']} "
+        f"bvid={reconciliation['bvid']}"
+    )
     return 0, public_result
 
 

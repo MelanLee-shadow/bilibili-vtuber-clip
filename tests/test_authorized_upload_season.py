@@ -15,6 +15,14 @@ TEST_TAGS = ["李豆沙", "虚拟主播", "直播切片"]
 @pytest.fixture(autouse=True)
 def _isolated_default_upload_lock(tmp_path, monkeypatch):
     monkeypatch.setattr(au, "DEFAULT_UPLOAD_LOCK", tmp_path / "default-upload.lock")
+    monkeypatch.setattr(
+        au,
+        "_reconcile_new_bv_publication",
+        lambda **kwargs: {
+            "candidate_id": "candidate-test",
+            "bvid": kwargs["bvid"],
+        },
+    )
 
 
 class FakeBili:

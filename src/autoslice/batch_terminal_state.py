@@ -6,6 +6,11 @@ import time
 from collections.abc import Collection
 from typing import Mapping
 
+from src.autoslice.publication_reconciliation import (
+    project_publication_closure,
+    publication_row_is_verified,
+)
+
 
 SONG_TERMINAL_DISPOSITION_SCHEMA_VERSION = "song-terminal-disposition.v1"
 SONG_DETERMINISTIC_PROOF_REJECTION_CODES = frozenset(
@@ -104,9 +109,16 @@ def project_terminal_batch_state(
             infra_transient_reason_codes=song_infra_transient_reason_codes,
         )
     delivered_talk = [
-        row for row in picks if row.get("status") in delivered_talk_statuses
+        row
+        for row in picks
+        if row.get("status") in delivered_talk_statuses
+        or publication_row_is_verified(row)
     ]
-    delivered_songs = [row for row in songs if row.get("delivered")]
+    delivered_songs = [
+        row
+        for row in songs
+        if row.get("delivered") or publication_row_is_verified(row)
+    ]
     repaired = [row for row in delivered_talk if row.get("boundary_repairs")]
     blocked_songs = [row for row in songs if row.get("status") == "blocked"]
     rejected_songs = [
@@ -147,6 +159,12 @@ def project_terminal_batch_state(
         status = "review_ready_with_failures" if failures else "review_ready"
     else:
         status = "no_delivery"
+    publication_closure = project_publication_closure(state)
+    if publication_closure["status"] == "NOT_APPLICABLE":
+        state.pop("publication_closure", None)
+    else:
+        state["publication_closure"] = publication_closure
+        status = str(publication_closure["status"])
     state["status"] = status
     return {
         "picks": picks,
@@ -159,4 +177,5 @@ def project_terminal_batch_state(
         "failures": failures,
         "exact_closure": dict(exact_closure),
         "retry_epoch": retry_epoch,
+        "publication_closure": publication_closure,
     }

@@ -12,6 +12,9 @@ from src.autoslice.candidate_selection import (
     exact_talk_contract_closure,
 )
 from src.autoslice.runner_proxy import RunnerProxy
+from src.autoslice.publication_reconciliation import (
+    publication_row_is_verified,
+)
 
 
 _runner = RunnerProxy()
@@ -22,7 +25,7 @@ def _candidate_id(row: dict) -> str:
 
 
 def _current_compliant_delivery(row: dict) -> bool:
-    return (
+    return publication_row_is_verified(row) or (
         row.get("status") in _runner.DELIVERED_TALK_STATUSES
         and row.get("bundle_lifecycle") == "CURRENT"
         and row.get("bundle_compliance") == "COMPLIANT"
@@ -211,7 +214,11 @@ def write_reports(date: str, state: dict) -> None:
     repaired = sum(1 for p in current_deliveries if p.get("boundary_repairs"))
     unrepairable = sum(1 for p in picks if p.get("status") == "boundary_unrepairable")
     quarantined = sum(1 for p in picks if p.get("status") == "quarantine")  # legacy states only
-    delivered_songs = sum(1 for s in songs if s.get("delivered"))
+    delivered_songs = sum(
+        1
+        for s in songs
+        if s.get("delivered") or publication_row_is_verified(s)
+    )
     blocked_songs = sum(1 for s in songs if s.get("status") == "blocked")
     capture = (
         state.get("collab_evidence_capture")
@@ -402,7 +409,7 @@ def write_reports(date: str, state: dict) -> None:
                 f"| `{song.get('candidate_id')}` | x{song.get('danmaku', 0)} "
                 f"| {song.get('decision') or '?'} | {','.join(song.get('reason_codes') or []) or '—'} "
                 f"| {song.get('title') or '—'} "
-                f"| {'✓ ' + Path(song['delivered']).name if song.get('delivered') else '未过门不交付'} |"
+                f"| {('✓ ' + Path(song['delivered']).name) if song.get('delivered') else ('✓ 已公开 ' + str(song.get('bvid'))) if publication_row_is_verified(song) else '未过门不交付'} |"
             )
     else:
         lines.append("(本场未检出/未产出歌切)")

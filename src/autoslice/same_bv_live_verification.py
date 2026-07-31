@@ -90,6 +90,8 @@ def run_repair_verify_live(
     now: Callable[[], str],
     observation_unavailable: type[Exception],
     snapshots_equal: Callable[[dict, dict], bool],
+    reconcile_completed: Callable[..., dict],
+    reconciliation_error: type[Exception],
 ) -> int:
     """Re-observe a VERIFIED repair and create one byte-bound receipt."""
 
@@ -188,7 +190,51 @@ def run_repair_verify_live(
             },
             "live_snapshot": fresh_snapshot,
         }
-        create_sidecar(out, completed)
+        if out.exists() or out.is_symlink():
+            if out.is_symlink() or not out.is_file():
+                print(
+                    f"REFUSE: completed sidecar path is unsafe: {out}",
+                    file=sys.stderr,
+                )
+                return 2
+            try:
+                existing = json.loads(out.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                print(
+                    f"REFUSE: existing completed sidecar unreadable: {exc}",
+                    file=sys.stderr,
+                )
+                return 2
+            stable_expected = dict(completed)
+            stable_existing = (
+                dict(existing) if isinstance(existing, dict) else {}
+            )
+            stable_expected.pop("verified_at", None)
+            stable_existing.pop("verified_at", None)
+            if stable_existing != stable_expected:
+                print(
+                    "REFUSE: existing completed sidecar differs from fresh "
+                    "verified closure",
+                    file=sys.stderr,
+                )
+                return 2
+            completed = existing
+        else:
+            create_sidecar(out, completed)
+        try:
+            reconciliation = reconcile_completed(
+                completed_path=out,
+                manifest=manifest,
+                manifest_path=Path(str((plan.get("manifest") or {})["path"])),
+                reconciled_at=str(completed["verified_at"]),
+            )
+        except reconciliation_error as exc:
+            print(
+                "LIVE VERIFIED BUT LOCAL RECONCILIATION PENDING: "
+                f"{exc}; re-run repair-verify-live with the same completed path",
+                file=sys.stderr,
+            )
+            return 6
     print(
         json.dumps(
             {
@@ -197,6 +243,7 @@ def run_repair_verify_live(
                 "new_cid": completed["new_cid"],
                 "completed_sidecar": str(out),
                 "completed_sidecar_sha256": sha256_file(out),
+                "publication_reconciliation": reconciliation,
                 "remote_mutation": False,
             },
             ensure_ascii=False,

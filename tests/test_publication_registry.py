@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 
 import pytest
 
@@ -202,3 +203,79 @@ def test_malformed_committed_row_raises(tmp_path):
     )
     with pytest.raises(ValueError):
         load_publication_registry(bad)
+
+
+def test_hash_bound_runtime_registry_overlay_blocks_duplicate_before_deploy(
+    tmp_path,
+):
+    static = tmp_path / "static.json"
+    static.write_text(
+        json.dumps(
+            {"schema_version": "publication-registry.v1", "entries": []}
+        ),
+        encoding="utf-8",
+    )
+    authority = tmp_path / "authority.json"
+    authority.write_text(
+        json.dumps(
+            {
+                "schema_version": (
+                    "new-bv-publication-reconciliation-authority.v1"
+                ),
+                "status": "VERIFIED_PUBLIC",
+                "candidate_id": "candidate-runtime",
+                "recording_date": "2026-07-29",
+                "bvid": "BV1RUNTIME",
+                "aid": 1,
+                "cid": 2,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    authority_sha = hashlib.sha256(authority.read_bytes()).hexdigest()
+    publication = {
+        "schema_version": "publication-reconciliation.v1",
+        "status": "VERIFIED_PUBLIC",
+        "candidate_id": "candidate-runtime",
+        "recording_date": "2026-07-29",
+        "bvid": "BV1RUNTIME",
+        "aid": 1,
+        "cid": 2,
+        "authority": {
+            "path": str(authority),
+            "sha256": authority_sha,
+            "bytes": authority.stat().st_size,
+        },
+    }
+    runtime = tmp_path / "runtime.json"
+    runtime.write_text(
+        json.dumps(
+            {
+                "schema_version": (
+                    "publication-reconciliation-registry.v1"
+                ),
+                "entries": [
+                    {
+                        "candidate_id": "candidate-runtime",
+                        "recording_date": "2026-07-29",
+                        "status": "published",
+                        "bvid": "BV1RUNTIME",
+                        "publication_reconciliation": publication,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    registry = load_publication_registry(static, runtime_path=runtime)
+    assert registry["entries"][0]["bvid"] == "BV1RUNTIME"
+    assert (
+        upload_block_reason("candidate-runtime", registry=registry)
+        is not None
+    )
+
+    authority.write_text("drift\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="RUNTIME_REGISTRY_INVALID"):
+        load_publication_registry(static, runtime_path=runtime)

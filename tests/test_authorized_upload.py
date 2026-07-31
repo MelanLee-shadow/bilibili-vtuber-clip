@@ -129,6 +129,22 @@ def _stub_season_http(monkeypatch):
             "problems": [],
         },
     )
+    monkeypatch.setattr(
+        au,
+        "_reconcile_new_bv_publication",
+        lambda **kwargs: {
+            "candidate_id": "candidate-test",
+            "bvid": kwargs["bvid"],
+        },
+    )
+    monkeypatch.setattr(
+        au,
+        "_reconcile_same_bv_publication",
+        lambda **_kwargs: {
+            "candidate_id": "candidate-test",
+            "bvid": RECOVERY_BVID,
+        },
+    )
 
 
 def _write_v3_package(
@@ -1140,6 +1156,20 @@ def test_repair_verify_live_creates_fresh_hash_bound_completed_sidecar(
         "_same_bv_adapter",
         lambda *_args: ReadOnlyAdapter(),
     )
+    reconciled = {}
+
+    def reconcile_same_bv(**kwargs):
+        reconciled.update(kwargs)
+        return {
+            "candidate_id": "candidate-test",
+            "bvid": RECOVERY_BVID,
+        }
+
+    monkeypatch.setattr(
+        au,
+        "_reconcile_same_bv_publication",
+        reconcile_same_bv,
+    )
 
     assert au.main(
         [
@@ -1171,6 +1201,9 @@ def test_repair_verify_live_creates_fresh_hash_bound_completed_sidecar(
     }
     assert completed["plan"]["path"] == str(plan_path.resolve())
     assert completed["plan"]["sha256"] == au.sha256_file(plan_path)
+    assert reconciled["completed_path"] == completed_path.resolve()
+    assert reconciled["manifest"] == manifest
+    assert reconciled["manifest_path"] == au.Path(plan["manifest"]["path"])
 
 
 def test_repair_verify_live_refuses_fresh_surface_drift_without_sidecar(
@@ -2292,6 +2325,40 @@ def test_upload_runs_uploader_with_manifest_args_and_ledgers(tmp_path, capsys):
     assert uploaded["title_cover_qc_sha256"] == (
         manifest_data["package_attestation"]["title_cover_qc"]["sha256"]
     )
+
+
+def test_public_success_without_local_reconciliation_stays_posted_unverified(
+    tmp_path, monkeypatch, capsys
+):
+    _, _, manifest = _mk(tmp_path)
+    ledger = tmp_path / "ledger.jsonl"
+
+    def fail_reconciliation(**_kwargs):
+        raise au.publication_reconciliation.PublicationReconciliationError(
+            "state projection unavailable"
+        )
+
+    monkeypatch.setattr(
+        au, "_reconcile_new_bv_publication", fail_reconciliation
+    )
+    rc = au.main(
+        [
+            "upload",
+            "--manifest",
+            str(manifest),
+            "--ledger",
+            str(ledger),
+            "--uploader",
+            str(_stub_uploader(tmp_path)),
+        ]
+    )
+    assert rc == 6
+    rows = _ledger_rows(ledger)
+    assert rows[-1]["uploader_rc"] == 0
+    assert rows[-1]["rc"] == 6
+    assert rows[-1]["public_verify_status"] == "VERIFIED_PUBLIC"
+    assert au.uploaded_sidecar_path(manifest).is_file()
+    assert "never re-upload" in capsys.readouterr().err
 
 
 def test_upload_is_idempotent_by_video_hash(tmp_path, capsys):

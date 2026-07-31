@@ -15,9 +15,15 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Mapping
 from pathlib import Path
+
+from src.autoslice.publication_reconciliation import (
+    RUNTIME_REGISTRY_SCHEMA,
+    validate_runtime_registry_entry,
+)
 
 REGISTRY_SCHEMA = "publication-registry.v1"
 DEFAULT_REGISTRY_PATH = (
@@ -35,7 +41,70 @@ _VALID_STATUSES = {
 _BLOCKING_STATUSES = {"published", "hold_pending_review"}
 
 
-def load_publication_registry(path: Path | None = None) -> dict:
+def _runtime_registry_path() -> Path:
+    return (
+        Path(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice"))
+        / "state"
+        / "publication_registry.runtime.v1.json"
+    )
+
+
+def _merge_runtime_registry(registry: dict, runtime_path: Path) -> dict:
+    runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+    if (
+        not isinstance(runtime, dict)
+        or runtime.get("schema_version") != RUNTIME_REGISTRY_SCHEMA
+        or not isinstance(runtime.get("entries"), list)
+    ):
+        raise ValueError("PUBLICATION_RUNTIME_REGISTRY_INVALID")
+    entries = registry["entries"]
+    by_key: dict[tuple[str, str], dict] = {}
+    for row in entries:
+        key = (
+            str(row.get("candidate_id") or ""),
+            str(row.get("recording_date") or ""),
+        )
+        if key in by_key:
+            raise ValueError("PUBLICATION_REGISTRY_DUPLICATE_CANDIDATE_DATE")
+        by_key[key] = row
+    for raw in runtime["entries"]:
+        try:
+            row = validate_runtime_registry_entry(raw)
+        except ValueError as exc:
+            raise ValueError("PUBLICATION_RUNTIME_REGISTRY_INVALID") from exc
+        key = (str(row["candidate_id"]), str(row["recording_date"]))
+        current = by_key.get(key)
+        if current is not None:
+            if (
+                current.get("status") == "published"
+                and current.get("bvid") != row.get("bvid")
+            ):
+                raise ValueError("PUBLICATION_RUNTIME_REGISTRY_BVID_CONFLICT")
+            current["status"] = "published"
+            current["bvid"] = row["bvid"]
+            current["publication_reconciliation"] = dict(
+                row["publication_reconciliation"]
+            )
+        else:
+            current = {
+                "candidate_id": row["candidate_id"],
+                "recording_date": row["recording_date"],
+                "status": "published",
+                "bvid": row["bvid"],
+                "publication_reconciliation": dict(
+                    row["publication_reconciliation"]
+                ),
+            }
+            entries.append(current)
+            by_key[key] = current
+    return registry
+
+
+def load_publication_registry(
+    path: Path | None = None,
+    *,
+    runtime_path: Path | None = None,
+) -> dict:
     """Load and structurally validate the registry; raise on malformation."""
 
     registry_path = path or DEFAULT_REGISTRY_PATH
@@ -55,6 +124,11 @@ def load_publication_registry(path: Path | None = None) -> dict:
             raise ValueError("PUBLICATION_REGISTRY_ROW_STATUS_INVALID")
         if status == "published" and not str(row.get("bvid") or "").strip():
             raise ValueError("PUBLICATION_REGISTRY_ROW_BVID_MISSING")
+    selected_runtime = runtime_path
+    if selected_runtime is None and path is None:
+        selected_runtime = _runtime_registry_path()
+    if selected_runtime is not None and selected_runtime.is_file():
+        data = _merge_runtime_registry(data, selected_runtime)
     return data
 
 

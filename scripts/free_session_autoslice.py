@@ -112,6 +112,7 @@ from src.autoslice.batch_terminal_state import (
     project_terminal_batch_state,
     project_terminal_song_disposition,
 )
+from src.autoslice import publication_reconciliation
 from src.autoslice.selection_scorecard import (
     SelectionCalibrationPolicyError,
     load_selected_selection_calibration_policy,
@@ -1270,6 +1271,34 @@ def state_path(date: str) -> Path:
     return BASE / "state" / f"{date}.json"
 
 
+def _apply_runtime_publication_projection(date: str, state: dict) -> dict:
+    try:
+        changed = publication_reconciliation.apply_runtime_publications_to_state(
+            date=date,
+            state=state,
+            autoslice_base=BASE,
+        )
+    except (
+        OSError,
+        publication_reconciliation.PublicationReconciliationError,
+    ) as exc:
+        if state.get("status") != "publication_reconciliation_blocked":
+            state["prepublication_reconciliation_status"] = state.get("status")
+        state["status"] = "publication_reconciliation_blocked"
+        state["publication_reconciliation_error"] = str(exc)
+        write_state(date, state)
+        return state
+    if state.get("status") == "publication_reconciliation_blocked":
+        state["status"] = state.pop(
+            "prepublication_reconciliation_status", "no_delivery"
+        )
+        state.pop("publication_reconciliation_error", None)
+        changed = True
+    if changed:
+        write_state(date, state)
+    return state
+
+
 def read_state(date: str) -> dict:
     """State loader that never mistakes damage for a fresh start.
 
@@ -1281,10 +1310,14 @@ def read_state(date: str) -> dict:
     path = state_path(date)
     bak = path.with_suffix(".json.bak")
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return _apply_runtime_publication_projection(
+            date, json.loads(path.read_text(encoding="utf-8"))
+        )
     except FileNotFoundError:
         try:  # crash window between the two os.replace()s in write_state
-            return json.loads(bak.read_text(encoding="utf-8"))
+            return _apply_runtime_publication_projection(
+                date, json.loads(bak.read_text(encoding="utf-8"))
+            )
         except (OSError, ValueError):
             return {}
     except OSError as exc:
@@ -1308,7 +1341,7 @@ def read_state(date: str) -> dict:
         log(f"state for {date} restored from .bak")
         restored["state_restored_from_bak"] = True
         write_state(date, restored)
-        return restored
+        return _apply_runtime_publication_projection(date, restored)
 
 
 def write_state(date: str, state: dict) -> None:
@@ -1604,6 +1637,13 @@ def process_date(date: str) -> None:
     if state.get("status") == "state_corrupt_blocked":
         write_alert("STATE_CORRUPT", f"{date}: {state.get('state_error', 'state file corrupt')} — date BLOCKED, needs human")
         log(f"{date}: state corrupt — blocked, not reprocessing (would re-deliver everything)")
+        return
+    if state.get("status") == "publication_reconciliation_blocked":
+        write_alert(
+            "PUBLICATION_RECONCILIATION_BLOCKED",
+            f"{date}: {state.get('publication_reconciliation_error', 'invalid publication authority')}",
+        )
+        log(f"{date}: publication reconciliation invalid — blocked fail-closed")
         return
     runtime_err = runtime_health_error()
     if runtime_err:
