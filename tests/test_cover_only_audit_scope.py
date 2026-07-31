@@ -159,6 +159,7 @@ def test_scope_replays_exact_noncover_bytes_and_new_cover(tmp_path, monkeypatch)
     assert scope_mod.validate_scope(scope, package_root=root, item=item) == scope
     assert scope["publication_target"]["current_cid"] == 303
     assert scope["reused_gate"] == "SOURCE_FACT_REVIEW_MISSING_ONLY"
+    assert scope["frozen_noncover"]["tags"] == ["李豆沙", "切片"]
 
 
 def test_scope_rejects_title_drift_and_present_receipt(tmp_path, monkeypatch):

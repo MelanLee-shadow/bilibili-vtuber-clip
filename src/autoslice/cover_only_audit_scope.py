@@ -456,7 +456,10 @@ def create_scope(
     frozen_noncover = {
         "title": title,
         "description": target.get("desc"),
-        "tags": target.get("tags"),
+        # Preserve the reviewed package order for the upload manifest.  The
+        # equality check above already proved this is the same semantic set as
+        # the predecessor/live target, whose API readback may reorder tags.
+        "tags": list(tags),
         "publish_policy": {
             "tid": target.get("tid"),
             "copyright": target.get("copyright"),
