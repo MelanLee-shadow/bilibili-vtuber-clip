@@ -144,9 +144,15 @@ def main() -> int:
         source_ai_modified=True,
         face_safe_contain=True,
     )
-    overlay = _overlay_lidousha_cover_title(
-        poster_path, out_path, cover_text=cover_text, art_direction=art_direction
-    )
+    # 2026-07-31：renderer 的分行权威门在这里是 typed 退出码，不是 traceback。
+    # CLI 没有状态机可转，正确表面就是 rc≠0 + 可读原因（Fable 裁定 3.3）。
+    try:
+        overlay = _overlay_lidousha_cover_title(
+            poster_path, out_path, cover_text=cover_text, art_direction=art_direction
+        )
+    except ValueError as exc:
+        print(f"REFUSE: {exc}", file=sys.stderr)
+        return 2
     verification = _verify_polish_face_integrity(
         out_path, base_url=args.cpa_base, api_key=args.cpa_key
     )
