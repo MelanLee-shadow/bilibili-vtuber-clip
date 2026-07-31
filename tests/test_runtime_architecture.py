@@ -344,3 +344,62 @@ def test_final_text_result_cues_and_receipt_reach_the_same_boundary_resolver() -
     assert before.value.id == "boundary_semantic_review"
     assert isinstance(after.value, ast.Name)
     assert after.value.id == "resolved_boundary_semantic"
+
+
+def test_full_text_cover_contract_reaches_every_renderer_call_site() -> None:
+    """全部四条渲染路径都必须穿透 full-text contract。
+
+    2026-07-31 废除 talk 的 mode=full 自动回退后，hash 绑定的 full-text contract
+    是整句上封面的**唯一**合法通道；哪条路径不穿透，就等于在那条路径上把它静默
+    杀死——刚消灭「静默回退」不能换来「静默不可能」。首轮修复只接了 CPA 重绘
+    一条，截图直出 / polish 门 / degrade 门三条都漏了，靠端到端测试才发现。
+    逐调用点钉死，别指望一条集成测试盖住四个面。
+    """
+
+    call_sites = {
+        "src/autoslice/publish_staging.py": "_overlay_lidousha_cover_title",
+        "src/autoslice/cover_polish_gate.py": "_overlay_lidousha_cover_title",
+    }
+    missing: list[str] = []
+    for relative, callee in call_sites.items():
+        path = ROOT / relative
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = (
+                node.func.id
+                if isinstance(node.func, ast.Name)
+                else getattr(node.func, "attr", "")
+            )
+            if name != callee:
+                continue
+            if "full_text_cover_contract" not in {
+                keyword.arg for keyword in node.keywords
+            }:
+                missing.append(f"{relative}:{node.lineno} {callee}")
+
+    # 两个中转函数也必须把它继续往下传，否则形参收到了却不用。
+    for relative, forwarder in (
+        ("src/autoslice/publish_staging.py", "_compose_screenshot_cover_with_face_gate"),
+        ("src/autoslice/publish_staging.py", "_degrade_rejected_polish_to_direct"),
+        ("src/autoslice/publish_staging.py", "_stage_cpa_redraw_cover"),
+        ("src/autoslice/publish_staging.py", "_stage_screenshot_direct_cover"),
+        ("src/autoslice/cover_polish_gate.py", "_compose_screenshot_cover_with_face_gate"),
+    ):
+        path = ROOT / relative
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == forwarder
+                and "full_text_cover_contract"
+                not in {keyword.arg for keyword in node.keywords}
+            ):
+                missing.append(f"{relative}:{node.lineno} {forwarder}")
+
+    assert missing == [], (
+        "these call sites drop the full-text cover contract, silently killing "
+        "the only legal whole-title lane:\n" + "\n".join(sorted(missing))
+    )
