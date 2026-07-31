@@ -1394,6 +1394,14 @@ def test_bind_repaired_cover_updates_only_active_state_publish_and_records(tmp_p
     assert historical.read_bytes() == historical_before
 
 
+def test_legacy_talk_cover_binding_remains_readable_without_song_route_v2(tmp_path, monkeypatch):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch, song=False)
+    runner._bind_repaired_cover(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
+    )
+    assert runner._cover_binding_valid(fx["date"], fx["rec"], fx["mp4"], fx["cover"])
+
+
 def test_bind_repaired_cover_carries_active_story_and_route_authority(
     tmp_path, monkeypatch
 ):

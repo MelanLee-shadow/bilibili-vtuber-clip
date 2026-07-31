@@ -1197,7 +1197,10 @@ def _cover_binding_valid(date: str, rec: dict, mp4: Path, cover: Path) -> bool:
         and rec.get("cover_generation") == generation
     ):
         return False
-    if not validate_cover_route_decision(generation, allow_legacy_v1=False):
+    if (
+        binding.get("authority_type") == "verified_song_delivery"
+        and not validate_cover_route_decision(generation, allow_legacy_v1=False)
+    ):
         return False
     summary = rec.get("summary")
     if isinstance(summary, dict) and summary and (
