@@ -19,7 +19,11 @@
   严格 SRT 与共享标题门，并要求结果与 manifest 绑定一致；自报 `passed:true` 不算。
 - talk 标题统一 `【李豆沙】` envelope，song 精确目录式；人工正文不能绕过外壳、长度或
   结构门。tags 必须逐项等于 audited record 的冻结结果。
-- 新 BV 没有当前 audit + `AUTO_UPLOAD` manifest + artifact hash gate 就不得发布。
+- 新 BV 没有当前 audit + CPA 标题/最终封面联合质检 receipt + `AUTO_UPLOAD` manifest +
+  artifact hash gate 就不得发布。联合质检不是操作者看完后可以旁路的口头步骤：必须通过
+  `make-manifest --title-cover-qc <receipt>` 冻结进
+  `package_attestation.title_cover_qc={path,sha256,bytes}`，随后 `verify` 与 `upload` 都现场重读
+  receipt 与最终封面字节。
 - exact same-BV repair 不消费 `AUTO_UPLOAD`；它只接受 exact closure COMPLETE、当前 audit、
   authorized manifest、最终感知 receipt、recovery publication authority 与 artifact hash
   全部绑定的既有稿修复 lane，并继续保持 `upload_allowed=false`。
@@ -90,11 +94,23 @@
 
 ## 新投稿流程
 
-1. 在审片字节冻结后运行 `make-manifest`，只引用 package 内最终文件与 Ivan 授权原话。
-2. 先运行 `verify`；它必须重算全部 hashes、current audit 与政策绑定。
-3. `upload` 只从 manifest 取路径/标题/元数据，禁止再手输一套参数。ledger 对同 artifact
+1. 在审片字节冻结后，以完整投稿标题和同 stem 最终 `.cover.png` 运行 CPA 联合图像质检。
+   receipt 必须是 `lidousha-title-cover-joint-qc.v1`，并精确绑定 record 的 `candidate_id`、完整
+   `title`/UTF-8 `title_sha256`、最终绝对 `cover_path`/`cover_sha256`；只能接受
+   `selected_provider=cpa` 且内嵌 `cpa-frame-witness.v1` 为 `provider=cpa`、
+   `status=OBSERVED`、图片路径/hash 等于最终封面、可解析的 witness answer 与 `verdict` 完全
+   相等。最终 `status=PASS`、顶层 `pass=true`，且 verdict 必须同时满足：
+   `lidousha_primary=true`、`thumbnail_readable=true`、`physical_text_line_count` 为 1 或 2、
+   `single_clear_hook=true`、`text_overcrowded=false`、`title_cover_aligned=true`、
+   `unrelated_or_misleading_elements=[]`、`pass=true`。任一不确定、AGY 代答、无关/误导元素、
+   主体不突出、破碎钩子或三行以上叠字都必须 BLOCK 并先重做封面/标题。
+2. 在上述 receipt 和审片字节冻结后运行 `make-manifest --title-cover-qc ...`，只引用 package 内
+   最终文件与 Ivan 授权原话。普通新 BV 缺 receipt 直接拒绝；exact same-BV repair 继续走下文
+   `--final-human-review` v2 lane，不借此削弱或替代既有最终感知复核。
+3. 先运行 `verify`；它必须重算全部 hashes、current audit、联合质检语义与政策绑定。
+4. `upload` 只从 manifest 取路径/标题/元数据，禁止再手输一套参数。ledger 对同 artifact
    重传硬拒；拿到 BVID 后不得为“再取一次结果”重跑上传。
-4. 合集 lane 由冻结标题确定：talk → `小李切片`，song → `小李歌唱`。发布未精确入集不算
+5. 合集 lane 由冻结标题确定：talk → `小李切片`，song → `小李歌唱`。发布未精确入集不算
    完成；已投稿但合集/公开验证未闭环时只运行幂等 `season-add`，绝不重传。
 
 滚动 24 小时配额由 ledger 与 Creator 近期稿件共同估算，取较大值；达到 10 条或 B 站返回

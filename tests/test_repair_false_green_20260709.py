@@ -36,6 +36,61 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _write_title_cover_qc(
+    cover: Path, title: str, candidate_id: str
+) -> Path:
+    verdict = {
+        "lidousha_primary": True,
+        "thumbnail_readable": True,
+        "physical_text_line_count": 2,
+        "single_clear_hook": True,
+        "text_overcrowded": False,
+        "title_cover_aligned": True,
+        "unrelated_or_misleading_elements": [],
+        "pass": True,
+        "reason": "李豆沙主体清楚，两行钩子与标题一致。",
+    }
+    cover_sha = authorized_upload.sha256_file(cover)
+    receipt = cover.parent / "title-cover-joint-qc.json"
+    receipt.write_text(
+        json.dumps(
+            {
+                "schema_version": (
+                    authorized_upload.TITLE_COVER_QC_SCHEMA_VERSION
+                ),
+                "candidate_id": candidate_id,
+                "title": title,
+                "title_sha256": (
+                    "sha256:" + authorized_upload._sha256_text(title)
+                ),
+                "cover_path": str(cover.resolve()),
+                "cover_sha256": "sha256:" + cover_sha,
+                "preferred_provider": "cpa",
+                "selected_provider": "cpa",
+                "witness": {
+                    "schema_version": (
+                        authorized_upload.TITLE_COVER_QC_WITNESS_SCHEMA_VERSION
+                    ),
+                    "image_path": str(cover.resolve()),
+                    "model": "gpt-test-cpa",
+                    "provider": "cpa",
+                    "image_sha256": cover_sha,
+                    "status": "OBSERVED",
+                    "answer": json.dumps(
+                        verdict, ensure_ascii=False, separators=(",", ":")
+                    ),
+                },
+                "verdict": verdict,
+                "status": "PASS",
+                "pass": True,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return receipt
+
+
 def _wait_for_path(path: Path, process: subprocess.Popen[str], timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -160,6 +215,9 @@ def _authorized_upload_args(tmp_path: Path, *, lock: Path, uploader: Path) -> li
         json.dumps(audit_result, ensure_ascii=False),
         encoding="utf-8",
     )
+    title_cover_qc = _write_title_cover_qc(
+        cover, title, "lock-integration"
+    )
     manifest = package_root / "lock.upload_manifest.json"
     assert authorized_upload.main(
         [
@@ -174,6 +232,8 @@ def _authorized_upload_args(tmp_path: Path, *, lock: Path, uploader: Path) -> li
             title,
             "--quote",
             "test authorization",
+            "--title-cover-qc",
+            str(title_cover_qc),
             "--out",
             str(manifest),
         ]

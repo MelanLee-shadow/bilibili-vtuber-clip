@@ -46,6 +46,14 @@ def parse_args(
         ),
     )
     mk.add_argument(
+        "--title-cover-qc",
+        default=None,
+        help=(
+            "hash-bound CPA title+final-cover joint-QC receipt; required for "
+            "every new-BV upload manifest"
+        ),
+    )
+    mk.add_argument(
         "--tags",
         default="",
         help=(

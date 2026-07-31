@@ -251,6 +251,60 @@ def _write_v3_package(
     return audit
 
 
+def _write_title_cover_qc(
+    cover,
+    title,
+    *,
+    candidate_id="candidate-test",
+):
+    verdict = {
+        "lidousha_primary": True,
+        "thumbnail_readable": True,
+        "physical_text_line_count": 2,
+        "single_clear_hook": True,
+        "text_overcrowded": False,
+        "title_cover_aligned": True,
+        "unrelated_or_misleading_elements": [],
+        "pass": True,
+        "reason": "李豆沙是清晰主体，两行单一钩子与标题一致。",
+    }
+    receipt = cover.parent / f"{cover.stem}.title-cover-joint-qc.json"
+    cover_sha = au.sha256_file(cover)
+    receipt.write_text(
+        json.dumps(
+            {
+                "schema_version": au.TITLE_COVER_QC_SCHEMA_VERSION,
+                "candidate_id": candidate_id,
+                "title": title,
+                "title_sha256": "sha256:" + au._sha256_text(title),
+                "cover_path": str(cover.resolve()),
+                "cover_sha256": "sha256:" + cover_sha,
+                "preferred_provider": "cpa",
+                "selected_provider": "cpa",
+                "witness": {
+                    "schema_version": (
+                        au.TITLE_COVER_QC_WITNESS_SCHEMA_VERSION
+                    ),
+                    "image_path": str(cover.resolve()),
+                    "model": "gpt-test-cpa",
+                    "provider": "cpa",
+                    "image_sha256": cover_sha,
+                    "status": "OBSERVED",
+                    "answer": json.dumps(
+                        verdict, ensure_ascii=False, separators=(",", ":")
+                    ),
+                },
+                "verdict": verdict,
+                "status": "PASS",
+                "pass": True,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return receipt
+
+
 def _write_verified_song_package_without_story_contract(
     root,
 ):
@@ -758,10 +812,12 @@ def _mk(tmp_path, title=VALID_TITLE, quote="可以上传了"):
     video.write_bytes(b"fake-video-bytes")
     cover.write_bytes(b"fake-cover-bytes")
     audit = _write_v3_package(video, cover, title)
+    title_cover_qc = _write_title_cover_qc(cover, title)
     manifest = tmp_path / "clip.upload_manifest.json"
     rc = au.main([
         "make-manifest", "--video", str(video), "--cover", str(cover),
         "--package-audit", str(audit), "--title", title, "--quote", quote,
+        "--title-cover-qc", str(title_cover_qc),
         "--out", str(manifest),
     ])
     assert rc == 0
@@ -776,6 +832,9 @@ def test_make_and_verify_accept_verified_song_without_story_contract(
     )
     monkeypatch.setattr(
         au, "audit_package", lambda _root: dict(audit_payload)
+    )
+    title_cover_qc = _write_title_cover_qc(
+        paths["cover"], VALID_SONG_TITLE, candidate_id="song_verified"
     )
     manifest_path = tmp_path / "verified-song.upload_manifest.json"
 
@@ -792,6 +851,8 @@ def test_make_and_verify_accept_verified_song_without_story_contract(
             VALID_SONG_TITLE,
             "--quote",
             "可以上传",
+            "--title-cover-qc",
+            str(title_cover_qc),
             "--out",
             str(manifest_path),
         ]
@@ -1301,11 +1362,153 @@ def test_make_manifest_then_verify_ok(tmp_path, capsys):
     assert data["artifact_id"] == data["video"]["sha256"][:12]
     assert data["authorization"]["quote"] == "可以上传了"
     assert "final_human_review" not in data["package_attestation"]
+    assert data["package_attestation"]["title_cover_qc"] == {
+        "path": str(
+            (
+                tmp_path
+                / "clip.cover.title-cover-joint-qc.json"
+            ).resolve()
+        ),
+        "sha256": au.sha256_file(
+            tmp_path / "clip.cover.title-cover-joint-qc.json"
+        ),
+        "bytes": (
+            tmp_path / "clip.cover.title-cover-joint-qc.json"
+        ).stat().st_size,
+    }
     assert data["description"] == (
         "https://live.bilibili.com/\n"
         "李豆沙个人主页：https://space.bilibili.com/1703797642\n"
         "李豆沙直播间：https://live.bilibili.com/22966160"
     )
+
+
+def test_make_manifest_requires_title_cover_qc_for_new_bv(
+    tmp_path, capsys
+):
+    video = tmp_path / "new.mp4"
+    cover = tmp_path / "new.cover.png"
+    video.write_bytes(b"video")
+    cover.write_bytes(b"cover")
+    audit = _write_v3_package(video, cover, VALID_TITLE)
+    manifest = tmp_path / "new.upload_manifest.json"
+
+    assert au.main(
+        [
+            "make-manifest",
+            "--video",
+            str(video),
+            "--cover",
+            str(cover),
+            "--package-audit",
+            str(audit),
+            "--title",
+            VALID_TITLE,
+            "--quote",
+            "可以上传",
+            "--out",
+            str(manifest),
+        ]
+    ) == 2
+    assert not manifest.exists()
+    assert "new-BV manifest requires package_attestation.title_cover_qc" in (
+        capsys.readouterr().err
+    )
+
+
+@pytest.mark.parametrize(
+    ("field_path", "bad_value", "expected_problem"),
+    [
+        (
+            "schema_version",
+            "lidousha-title-cover-joint-qc.v0",
+            "schema_version is invalid",
+        ),
+        ("candidate_id", "other", "candidate_id does not match record"),
+        ("title", "别的标题", "title does not match manifest title"),
+        ("title_sha256", "sha256:" + "0" * 64, "title_sha256 does not bind"),
+        ("cover_path", "/tmp/other.png", "cover_path does not bind"),
+        ("cover_sha256", "sha256:" + "0" * 64, "cover_sha256 does not bind"),
+        ("selected_provider", "agy", "selected_provider must be cpa"),
+        ("witness.provider", "agy", "witness provider must be cpa"),
+        ("witness.status", "FAILED", "CPA witness was not OBSERVED"),
+        ("verdict.lidousha_primary", False, "verdict.lidousha_primary must be true"),
+        ("verdict.thumbnail_readable", False, "verdict.thumbnail_readable must be true"),
+        ("verdict.physical_text_line_count", 3, "physical_text_line_count must be 1 or 2"),
+        ("verdict.single_clear_hook", False, "verdict.single_clear_hook must be true"),
+        ("verdict.text_overcrowded", True, "verdict.text_overcrowded must be false"),
+        ("verdict.title_cover_aligned", False, "verdict.title_cover_aligned must be true"),
+        (
+            "verdict.unrelated_or_misleading_elements",
+            ["无关物件"],
+            "unrelated_or_misleading_elements must be empty",
+        ),
+        ("verdict.pass", False, "verdict.pass must be true"),
+        ("status", "BLOCK", "status must be PASS"),
+        ("pass", False, "top-level pass must be true"),
+    ],
+)
+def test_verify_replays_strict_title_cover_qc_semantics_after_hash_rebind(
+    tmp_path,
+    capsys,
+    field_path,
+    bad_value,
+    expected_problem,
+):
+    _, _, manifest_path = _mk(tmp_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    binding = manifest["package_attestation"]["title_cover_qc"]
+    receipt_path = au.Path(binding["path"])
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    target = receipt
+    parts = field_path.split(".")
+    for part in parts[:-1]:
+        target = target[part]
+    target[parts[-1]] = bad_value
+    receipt_path.write_text(
+        json.dumps(receipt, ensure_ascii=False), encoding="utf-8"
+    )
+    binding["sha256"] = au.sha256_file(receipt_path)
+    binding["bytes"] = receipt_path.stat().st_size
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+
+    assert au.main(["verify", "--manifest", str(manifest_path)]) == 2
+    assert expected_problem in capsys.readouterr().err
+
+
+def test_upload_refuses_title_cover_qc_byte_drift_before_uploader(
+    tmp_path, capsys
+):
+    _, _, manifest_path = _mk(tmp_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    receipt_path = au.Path(
+        manifest["package_attestation"]["title_cover_qc"]["path"]
+    )
+    receipt_path.write_text(
+        receipt_path.read_text(encoding="utf-8") + "\n", encoding="utf-8"
+    )
+    marker = tmp_path / "uploader-called"
+    uploader = tmp_path / "uploader.sh"
+    uploader.write_text(
+        f"#!/bin/sh\ntouch {marker!s}\nexit 0\n", encoding="utf-8"
+    )
+    uploader.chmod(0o755)
+
+    assert au.main(
+        [
+            "upload",
+            "--manifest",
+            str(manifest_path),
+            "--ledger",
+            str(tmp_path / "ledger.jsonl"),
+            "--uploader",
+            str(uploader),
+        ]
+    ) == 2
+    assert not marker.exists()
+    assert "title_cover_qc HASH DRIFT" in capsys.readouterr().err
 
 
 def test_make_manifest_freezes_matching_package_publication_authority(
@@ -1865,10 +2068,12 @@ def _mk_with_tags(tmp_path, tags: str):
     cover.write_bytes(b"c")
     tag_list = [part.strip() for part in tags.split(",") if part.strip()]
     audit = _write_v3_package(video, cover, VALID_TITLE, tag_list)
+    title_cover_qc = _write_title_cover_qc(cover, VALID_TITLE)
     manifest = tmp_path / "v.upload_manifest.json"
     rc = au.main(["make-manifest", "--video", str(video), "--cover", str(cover),
                   "--package-audit", str(audit),
                   "--title", VALID_TITLE, "--quote", "可以上传了",
+                  "--title-cover-qc", str(title_cover_qc),
                   "--tags", tags, "--out", str(manifest)])
     return rc, manifest
 
@@ -1917,10 +2122,13 @@ def test_make_manifest_auto_picks_tags_from_record_sidecar(tmp_path):
     audit = _write_v3_package(
         video, cover, VALID_TITLE, ["李豆沙", "虚拟主播", "侄女", "百合"]
     )
+    title_cover_qc = _write_title_cover_qc(cover, VALID_TITLE)
     manifest = tmp_path / "m.json"
     assert au.main(["make-manifest", "--video", str(video), "--cover", str(cover),
                     "--package-audit", str(audit),
-                    "--title", VALID_TITLE, "--quote", "q", "--out", str(manifest)]) == 0
+                    "--title", VALID_TITLE, "--quote", "q",
+                    "--title-cover-qc", str(title_cover_qc),
+                    "--out", str(manifest)]) == 0
     data = json.loads(manifest.read_text(encoding="utf-8"))
     assert data["tags"] == ["李豆沙", "虚拟主播", "侄女", "百合"]
     assert data["tags_source"].startswith("record.json:")
@@ -2072,8 +2280,18 @@ def test_upload_runs_uploader_with_manifest_args_and_ledgers(tmp_path, capsys):
     assert rows[0]["attempt_id"] == rows[1]["attempt_id"]
     entry = rows[-1]
     assert entry["rc"] == 0 and entry["bvid"] == "BV1TEST"
-    assert entry["video_sha256"] == json.loads(manifest.read_text())["video"]["sha256"]
+    manifest_data = json.loads(manifest.read_text())
+    assert entry["video_sha256"] == manifest_data["video"]["sha256"]
+    assert entry["title_cover_qc_sha256"] == (
+        manifest_data["package_attestation"]["title_cover_qc"]["sha256"]
+    )
     assert entry["authorization_quote"] == "可以上传了"
+    uploaded = json.loads(
+        au.uploaded_sidecar_path(manifest).read_text(encoding="utf-8")
+    )
+    assert uploaded["title_cover_qc_sha256"] == (
+        manifest_data["package_attestation"]["title_cover_qc"]["sha256"]
+    )
 
 
 def test_upload_is_idempotent_by_video_hash(tmp_path, capsys):
@@ -2135,6 +2353,7 @@ def test_upload_holds_shared_lock_through_uploader_and_ledger_append(tmp_path, c
     cover = tmp_path / "probe_lock.cover.png"
     cover.write_bytes(b"cover")
     audit = _write_v3_package(probe, cover, VALID_TITLE)
+    title_cover_qc = _write_title_cover_qc(cover, VALID_TITLE)
     manifest = tmp_path / "lock-probe.upload_manifest.json"
     assert au.main(
         [
@@ -2149,6 +2368,8 @@ def test_upload_holds_shared_lock_through_uploader_and_ledger_append(tmp_path, c
             VALID_TITLE,
             "--quote",
             "test only",
+            "--title-cover-qc",
+            str(title_cover_qc),
             "--out",
             str(manifest),
         ]

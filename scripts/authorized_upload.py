@@ -109,6 +109,8 @@ SUBMISSION_DESCRIPTION = (
 EXPECTED_TID = 21
 EXPECTED_COPYRIGHT = 2
 EXPECTED_SOURCE = "https://live.bilibili.com/"
+TITLE_COVER_QC_SCHEMA_VERSION = "lidousha-title-cover-joint-qc.v1"
+TITLE_COVER_QC_WITNESS_SCHEMA_VERSION = "cpa-frame-witness.v1"
 # biliup's APP submission sends the two-line description above, while
 # Bilibili's public/member archive surfaces prepend the copyright source URL.
 # Freeze the observed public contract instead of treating that deterministic
@@ -677,7 +679,209 @@ def _validate_v3_package_attestation(
         record_tags = (record.get("upload_tags") or {}).get("final_tags")
         if record_tags != manifest.get("tags"):
             problems.append("manifest tags do not exactly match record.upload_tags.final_tags")
+    problems.extend(_title_cover_qc_attestation_problems(manifest))
     return problems
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _strict_bool(value: object, expected: bool) -> bool:
+    return isinstance(value, bool) and value is expected
+
+
+def _title_cover_qc_required(manifest: dict) -> bool:
+    """New-BV manifests need joint QC; exact same-BV uses its v2 review lane."""
+
+    attestation = manifest.get("package_attestation")
+    final_review = (
+        attestation.get("final_human_review")
+        if isinstance(attestation, dict)
+        else None
+    )
+    return not (
+        isinstance(manifest.get("recovery_publication_authority"), dict)
+        and isinstance(final_review, dict)
+    )
+
+
+def _title_cover_qc_attestation_problems(
+    manifest: dict,
+    *,
+    required: bool | None = None,
+) -> list[str]:
+    """Replay the CPA title+final-cover receipt against current manifest bytes."""
+
+    problems: list[str] = []
+    attestation = manifest.get("package_attestation")
+    if not isinstance(attestation, dict):
+        return ["manifest v3 has no package_attestation object"]
+    entry = attestation.get("title_cover_qc")
+    must_exist = _title_cover_qc_required(manifest) if required is None else required
+    if not isinstance(entry, dict):
+        if must_exist:
+            problems.append(
+                "new-BV manifest requires package_attestation.title_cover_qc "
+                "from --title-cover-qc"
+            )
+        return problems
+
+    receipt_path = Path(str(entry.get("path") or ""))
+    if not receipt_path.is_file():
+        return [f"package_attestation.title_cover_qc missing: {receipt_path}"]
+    actual_sha = sha256_file(receipt_path)
+    if entry.get("sha256") != actual_sha:
+        problems.append(
+            "package_attestation.title_cover_qc HASH DRIFT: "
+            f"manifest={str(entry.get('sha256'))[:12]} "
+            f"actual={actual_sha[:12]} ({receipt_path})"
+        )
+    actual_bytes = receipt_path.stat().st_size
+    if (
+        isinstance(entry.get("bytes"), bool)
+        or not isinstance(entry.get("bytes"), int)
+        or entry.get("bytes") != actual_bytes
+    ):
+        problems.append(
+            "package_attestation.title_cover_qc byte-size drift: "
+            f"manifest={entry.get('bytes')!r} actual={actual_bytes}"
+        )
+
+    receipt = _load_json_object(
+        receipt_path, "title+cover joint-QC receipt", problems
+    )
+    if not receipt:
+        return problems
+    if receipt.get("schema_version") != TITLE_COVER_QC_SCHEMA_VERSION:
+        problems.append("title+cover joint-QC schema_version is invalid")
+
+    title = str(manifest.get("title") or "")
+    expected_title_sha = "sha256:" + _sha256_text(title)
+    if receipt.get("title") != title:
+        problems.append("title+cover joint-QC title does not match manifest title")
+    if receipt.get("title_sha256") != expected_title_sha:
+        problems.append("title+cover joint-QC title_sha256 does not bind manifest title")
+
+    cover_entry = manifest.get("cover")
+    cover_entry = cover_entry if isinstance(cover_entry, dict) else {}
+    cover_path = Path(str(cover_entry.get("path") or ""))
+    if receipt.get("cover_path") != str(cover_path.resolve()):
+        problems.append("title+cover joint-QC cover_path does not bind final cover")
+    expected_cover_sha = str(cover_entry.get("sha256") or "")
+    if receipt.get("cover_sha256") != "sha256:" + expected_cover_sha:
+        problems.append("title+cover joint-QC cover_sha256 does not bind final cover")
+
+    record_entry = attestation.get("record")
+    record_entry = record_entry if isinstance(record_entry, dict) else {}
+    record_path = Path(str(record_entry.get("path") or ""))
+    record_problems: list[str] = []
+    record = (
+        _load_json_object(record_path, "record", record_problems)
+        if record_path.is_file()
+        else {}
+    )
+    problems.extend(record_problems)
+    story_contract = record.get("story_contract")
+    story_contract = story_contract if isinstance(story_contract, dict) else {}
+    expected_candidate = str(
+        story_contract.get("candidate_id")
+        or record.get("delivery_candidate_id")
+        or ""
+    )
+    if not expected_candidate:
+        problems.append("title+cover joint-QC cannot resolve candidate from record")
+    elif receipt.get("candidate_id") != expected_candidate:
+        problems.append("title+cover joint-QC candidate_id does not match record")
+
+    if receipt.get("selected_provider") != "cpa":
+        problems.append("title+cover joint-QC selected_provider must be cpa")
+    preferred_provider = receipt.get("preferred_provider")
+    if preferred_provider is not None and preferred_provider != "cpa":
+        problems.append("title+cover joint-QC preferred_provider must be cpa")
+
+    witness = receipt.get("witness")
+    if not isinstance(witness, dict):
+        problems.append("title+cover joint-QC has no CPA witness object")
+    else:
+        if witness.get("schema_version") != TITLE_COVER_QC_WITNESS_SCHEMA_VERSION:
+            problems.append("title+cover joint-QC witness schema_version is invalid")
+        if witness.get("provider") != "cpa":
+            problems.append("title+cover joint-QC witness provider must be cpa")
+        if witness.get("status") != "OBSERVED":
+            problems.append("title+cover joint-QC CPA witness was not OBSERVED")
+        if not str(witness.get("model") or "").strip():
+            problems.append("title+cover joint-QC CPA witness has no model")
+        if witness.get("image_path") != str(cover_path.resolve()):
+            problems.append("title+cover joint-QC witness image_path is not final cover")
+        if _strip_sha_prefix(witness.get("image_sha256")) != expected_cover_sha:
+            problems.append("title+cover joint-QC witness image_sha256 is not final cover")
+
+    verdict = receipt.get("verdict")
+    if not isinstance(verdict, dict):
+        problems.append("title+cover joint-QC has no verdict object")
+        verdict = {}
+    expected_bools = {
+        "lidousha_primary": True,
+        "thumbnail_readable": True,
+        "single_clear_hook": True,
+        "text_overcrowded": False,
+        "title_cover_aligned": True,
+        "pass": True,
+    }
+    for key, expected in expected_bools.items():
+        if not _strict_bool(verdict.get(key), expected):
+            problems.append(
+                f"title+cover joint-QC verdict.{key} must be "
+                f"{str(expected).lower()}"
+            )
+    line_count = verdict.get("physical_text_line_count")
+    if (
+        isinstance(line_count, bool)
+        or not isinstance(line_count, int)
+        or line_count not in (1, 2)
+    ):
+        problems.append(
+            "title+cover joint-QC verdict.physical_text_line_count must be 1 or 2"
+        )
+    if verdict.get("unrelated_or_misleading_elements") != []:
+        problems.append(
+            "title+cover joint-QC verdict.unrelated_or_misleading_elements must be empty"
+        )
+    if not str(verdict.get("reason") or "").strip():
+        problems.append("title+cover joint-QC verdict.reason must be non-empty")
+
+    if isinstance(witness, dict):
+        answer = witness.get("answer")
+        try:
+            answer_verdict = json.loads(answer) if isinstance(answer, str) else None
+        except ValueError:
+            answer_verdict = None
+        if answer_verdict != verdict:
+            problems.append(
+                "title+cover joint-QC verdict is not the exact parsed CPA witness answer"
+            )
+
+    if receipt.get("status") != "PASS":
+        problems.append("title+cover joint-QC status must be PASS")
+    if not _strict_bool(receipt.get("pass"), True):
+        problems.append("title+cover joint-QC top-level pass must be true")
+    return problems
+
+
+def _attach_title_cover_qc(
+    manifest: dict,
+    receipt_arg: str | None,
+) -> list[str]:
+    attestation = manifest.get("package_attestation")
+    if not isinstance(attestation, dict):
+        return ["manifest v3 has no package_attestation object"]
+    if receipt_arg:
+        receipt_path = Path(receipt_arg).resolve()
+        if not receipt_path.is_file():
+            return [f"title+cover joint-QC receipt missing: {receipt_path}"]
+        attestation["title_cover_qc"] = _sha_entry(receipt_path)
+    return []
 
 
 def validate_tags(tags: list[str]) -> list[str]:
@@ -1377,6 +1581,7 @@ def _run_postpublish_verification(
         "subtitle_sha256": (attestation.get("subtitle") or {}).get("sha256"),
         "package_audit_sha256": (attestation.get("package_audit") or {}).get("sha256"),
         "review_manifest_sha256": (attestation.get("review_manifest") or {}).get("sha256"),
+        "title_cover_qc_sha256": (attestation.get("title_cover_qc") or {}).get("sha256"),
         "manifest": str(manifest_path.resolve()),
         "manifest_sha256": sha256_file(manifest_path.resolve()),
         "public_verify": str(public_path.resolve()),
@@ -1498,6 +1703,9 @@ def make_manifest(args: argparse.Namespace) -> int:
     }
     package_problems = repair_binding.attach_package_recovery_publication_authority(manifest, record, review_manifest, video)
     package_problems.extend(human_review.attach_final_human_review(manifest, args.final_human_review, season_ids=EXPECTED_SEASON_IDS))
+    package_problems.extend(
+        _attach_title_cover_qc(manifest, args.title_cover_qc)
+    )
     package_problems.extend(_validate_v3_package_attestation(manifest, verify_hashes=True))
     # ``make-manifest`` is shared by new uploads and existing-BV repairs.  A
     # committed publication authority must block the ordinary ``upload`` lane,
@@ -1668,6 +1876,7 @@ def ledger_guard(ledger: Path, video_sha256: str) -> tuple[str | None, dict | No
                 "record_sha256",
                 "subtitle_sha256",
                 "review_manifest_sha256",
+                "title_cover_qc_sha256",
             )
             changed = [
                 key
@@ -1708,6 +1917,7 @@ def ledger_guard(ledger: Path, video_sha256: str) -> tuple[str | None, dict | No
                     "record_sha256",
                     "subtitle_sha256",
                     "review_manifest_sha256",
+                    "title_cover_qc_sha256",
                 )
                 if key in origin and entry.get(key) != origin.get(key)
             ]
@@ -1873,6 +2083,7 @@ def upload(args: argparse.Namespace) -> int:
             "record_sha256": manifest["package_attestation"]["record"]["sha256"],
             "subtitle_sha256": manifest["package_attestation"]["subtitle"]["sha256"],
             "review_manifest_sha256": manifest["package_attestation"]["review_manifest"]["sha256"],
+            "title_cover_qc_sha256": manifest["package_attestation"]["title_cover_qc"]["sha256"],
             "quota_evidence": quota_evidence,
         }
         common_ledger_fields["tags"] = ",".join(manifest_tags)
@@ -2027,6 +2238,7 @@ def season_add(args: argparse.Namespace) -> int:
                     "record_sha256",
                     "subtitle_sha256",
                     "review_manifest_sha256",
+                    "title_cover_qc_sha256",
                     "title",
                     "authorized_by",
                     "authorization_quote",
