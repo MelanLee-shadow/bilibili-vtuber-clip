@@ -86,6 +86,7 @@ from src.autoslice.story_contract import (
     build_story_contract,
     canonicalize_relation_summary,
     canonicalize_story_scorecard,
+    cover_story_contract_binding_matches,
 )
 from src.autoslice.clip_context import validate_clip_context
 
@@ -186,23 +187,11 @@ def _audit_story_bound_cover(
         for violation in audit.get("violations", [])
         if isinstance(violation, Mapping)
     }
-    expected_binding = {
-        "schema_version": story_contract.get("schema_version"),
-        "relation_state": story_contract.get("relation_state"),
-        "participants": story_contract.get("participants"),
-        "cover_counterpart_reference_available": story_contract.get(
-            "cover_counterpart_reference_available"
-        ),
-        "cover_reference_authority": story_contract.get(
-            "cover_reference_authority"
-        ),
-        "source_media_sha256s": story_contract.get("source_media_sha256s"),
-        "clip_context_binding": story_contract.get("clip_context_binding"),
-        "cover_fallback_mode": story_contract.get("cover_fallback_mode"),
-    }
     binding = generation.get("story_contract")
-    if not isinstance(binding, Mapping) or any(
-        binding.get(key) != value for key, value in expected_binding.items()
+    if (
+        not isinstance(binding, Mapping)
+        or "selection_hook" not in binding
+        or not cover_story_contract_binding_matches(story_contract, binding)
     ):
         reason_codes.add("COVER_STORY_CONTRACT_BINDING_MISSING_OR_STALE")
     if not cover_text:
@@ -2071,9 +2060,50 @@ def _stage_record(
             else "SOURCE_FACT_REPAIR_EXHAUSTED"
         )
         raise SystemExit(f"{marker}: {reason}")
-    final_story_contract = record.get("story_contract")
-    if not isinstance(final_story_contract, Mapping):
+    raw_final_story_contract = record.get("story_contract")
+    if not isinstance(raw_final_story_contract, Mapping):
         raise SystemExit("STORY_CONTRACT_FINAL_MISSING")
+    # Source-fact review may replace both the title and the selection hook.
+    # From this point onward there must be only one active StoryContract: the
+    # post-review contract returned by staging.  Copy it into the record so
+    # cover audits and persisted evidence cannot accidentally retain the
+    # pre-review local variable built above.
+    final_story_contract = dict(raw_final_story_contract)
+    record["story_contract"] = final_story_contract
+    if isinstance(source_fact_review, Mapping):
+        bound_source_fact_review = final_story_contract.get(
+            "source_fact_review"
+        )
+        if (
+            not isinstance(bound_source_fact_review, Mapping)
+            or dict(bound_source_fact_review) != dict(source_fact_review)
+        ):
+            raise SystemExit(
+                "STORY_CONTRACT_SOURCE_FACT_BINDING_MISSING_OR_STALE"
+            )
+        final_selection_hook = str(
+            source_fact_review.get("final_selection_hook") or ""
+        )
+        if (
+            final_story_contract.get("selection_hook")
+            != final_selection_hook
+        ):
+            raise SystemExit(
+                "STORY_CONTRACT_SOURCE_FACT_HOOK_MISMATCH"
+            )
+        expected_selection_hook_sha256 = (
+            "sha256:"
+            + hashlib.sha256(
+                final_selection_hook.encode("utf-8")
+            ).hexdigest()
+        )
+        if (
+            final_story_contract.get("selection_hook_sha256")
+            != expected_selection_hook_sha256
+        ):
+            raise SystemExit(
+                "STORY_CONTRACT_SOURCE_FACT_HASH_MISMATCH"
+            )
     input_violations = [
         violation
         for audit in (final_story_contract.get("input_audits") or [])
@@ -2113,9 +2143,9 @@ def _stage_record(
         )
     if staging.get("cover_status") == "AI_COVER_READY":
         cover_reason_codes, cover_story_audits = _audit_story_bound_cover(
-            staging, story_contract
+            staging, final_story_contract
         )
-        story_contract["cover_output_audits"] = cover_story_audits
+        final_story_contract["cover_output_audits"] = cover_story_audits
         if cover_reason_codes:
             raise SystemExit(
                 "STORY_CONTRACT_COVER_FAILED: " + ",".join(cover_reason_codes)

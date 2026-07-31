@@ -6,6 +6,7 @@ import pytest
 
 from scripts.apply_subtitle_text_overrides import apply_document
 from src.autoslice import producer_package_finalization as finalization
+from src.autoslice.story_contract import cover_story_contract_binding
 
 
 def _deferred_exact_truth_audit() -> dict:
@@ -749,6 +750,243 @@ def test_finalize_routes_exact_endpoint_receipt_into_story_contract(
     assert captured["record"]["story_contract"][
         "boundary_semantic_review"
     ] == delivery_review
+
+
+@pytest.mark.parametrize(
+    (
+        "decision",
+        "original_hook",
+        "final_hook",
+        "final_title",
+        "classification",
+    ),
+    [
+        (
+            "KEEP",
+            "弹幕自称侄女却叫李豆沙老公。",
+            "弹幕自称侄女却叫李豆沙老公。",
+            "【李豆沙】弹幕自称侄女却叫她老公，她强调自己才是真的侄女",
+            "talk",
+        ),
+        (
+            "REPAIRED",
+            "弹幕叫李豆沙老公。",
+            "弹幕自称侄女却叫李豆沙老公，李豆沙强调自己才是真的侄女。",
+            "【李豆沙】弹幕自称侄女却叫她老公，她强调自己才是真的侄女",
+            "talk",
+        ),
+        (
+            "KEEP",
+            "李豆沙演唱《暖暖》。",
+            "李豆沙演唱《暖暖》。",
+            "【李豆沙】豆沙歌，《暖暖》",
+            "song",
+        ),
+    ],
+)
+def test_stage_record_uses_post_source_fact_story_contract_everywhere(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    decision: str,
+    original_hook: str,
+    final_hook: str,
+    final_title: str,
+    classification: str,
+) -> None:
+    subtitle = tmp_path / "candidate.recut.srt"
+    subtitle.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n"
+        "我才是真的侄女\n",
+        encoding="utf-8",
+    )
+    media = tmp_path / "candidate.recut.mp4"
+    media.write_bytes(b"media")
+    recut = finalization.FinalRecutArtifacts(
+        recut_dir=tmp_path,
+        media_path=media,
+        subtitle_path=subtitle,
+        text_manifest_path=None,
+        text_manifest=None,
+    )
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        finalization, "load_candidate_cover_reference", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        finalization, "build_llm_call", lambda _config: lambda _prompt: ""
+    )
+
+    def stage(record: dict, **kwargs) -> dict:
+        captured["pre_review_contract"] = record["story_contract"]
+        rebuilt = kwargs["story_contract_rebuilder"](final_hook)
+        receipt = {
+            "schema_version": "lidousha-source-fact-review.v1",
+            "status": "PASS",
+            "decision": decision,
+            "final_selection_hook": final_hook,
+            "final_title": final_title,
+        }
+        rebuilt["source_fact_review"] = receipt
+        record["story_contract"] = rebuilt
+        record["publish_staging"] = {
+            "title": final_title,
+            "title_authority_status": (
+                "RESOLVED_CPA_SOURCE_FACT_REPAIR"
+                if decision == "REPAIRED"
+                else "READY"
+            ),
+            "source_fact_review": receipt,
+            "cover_status": "AI_COVER_READY",
+            "cover_text": "我才是真的侄女",
+            "cover_generation": {
+                "story_contract": cover_story_contract_binding(rebuilt),
+            },
+        }
+        captured["post_review_contract"] = rebuilt
+        return record
+
+    def audit_cover(
+        staging: dict, story_contract: dict
+    ) -> tuple[list[str], list[dict[str, object]]]:
+        captured["audited_contract"] = story_contract
+        assert (
+            staging["cover_generation"]["story_contract"]["selection_hook"]
+            == story_contract["selection_hook"]
+        )
+        return [], [{"status": "PASS", "artifact_kind": "cover_text"}]
+
+    monkeypatch.setattr(
+        finalization, "_audit_story_bound_cover", audit_cover
+    )
+
+    def unused(*_args, **_kwargs):
+        raise AssertionError("unrelated adapter called")
+
+    adapters = finalization.ProducerFinalizationAdapters(
+        accurate_recut_command=unused,
+        run_command=unused,
+        write_source_range_srt=unused,
+        apply_text_override_document=unused,
+        run_speaker_finalization=unused,
+        burn_preview_subtitles=unused,
+        stage_publish_draft=stage,
+        generate_upload_tags=lambda *_a, **_k: {"status": "READY"},
+        delivery_root=unused,
+        run_exact_final_review=unused,
+    )
+    staged = finalization._stage_record(
+        options=finalization.ProducerFinalizationOptions(
+            spec=tmp_path / "spec.json",
+            substrate="source",
+            correct="reviewed",
+            speaker_mode="off",
+            speaker_overrides=None,
+            speaker_source_session_anchors=None,
+            speaker_mixed_overlap_evidence=None,
+            speaker_python=tmp_path / "python",
+            reuse_cover=False,
+        ),
+        spec={
+            "date": "2026-07-29",
+            "pieces": [],
+            "selection_hook": original_hook,
+            "selection_scorecard": None,
+            "classification": classification,
+        },
+        cid="candidate",
+        recut=recut,
+        record={"artifact_hashes": {}},
+        adapters=adapters,
+    )
+
+    active = staged.record["story_contract"]
+    expected_hash = (
+        "sha256:" + hashlib.sha256(final_hook.encode("utf-8")).hexdigest()
+    )
+    assert active is captured["audited_contract"]
+    assert active is not captured["pre_review_contract"]
+    assert active["selection_hook"] == final_hook
+    assert active["selection_hook_sha256"] == expected_hash
+    assert active["source_fact_review"] == staged.staging[
+        "source_fact_review"
+    ]
+    assert active["cover_output_audits"][0]["status"] == "PASS"
+    assert "cover_output_audits" not in captured["pre_review_contract"]
+
+
+def test_cover_audit_rejects_pre_repair_selection_hook_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current_contract = {
+        "schema_version": "lidousha-story-contract.v1",
+        "selection_hook": "修复后的侄女主钩子",
+        "relation_state": "NONE",
+        "participants": [],
+        "cover_counterpart_reference_available": False,
+        "cover_reference_authority": None,
+        "source_media_sha256s": [],
+        "clip_context_binding": None,
+        "boundary_semantic_review": None,
+        "human_boundary_authority": None,
+        "cover_fallback_mode": "HOST_ONLY_GENERIC",
+    }
+    stale_contract = dict(current_contract)
+    stale_contract["selection_hook"] = "修复前的直女主钩子"
+    generation = {
+        "cover_text": "修复后的侄女主钩子",
+        "rendered_lines": ["修复后的侄女主钩子"],
+        "story_contract": cover_story_contract_binding(stale_contract),
+        "rendered_text_pixels": {
+            "font_file_name": "font.ttf",
+            "font_file_sha256": "sha256:" + "1" * 64,
+            "mask_path": str(tmp_path / "mask.png"),
+        },
+        "final_cover": str(tmp_path / "cover.png"),
+        "pre_overlay_path": str(tmp_path / "pre.png"),
+        "ai_background": str(tmp_path / "background.png"),
+    }
+    monkeypatch.setattr(
+        finalization,
+        "audit_story_artifact",
+        lambda *_a, **_k: {"status": "PASS", "violations": []},
+    )
+    monkeypatch.setattr(
+        finalization,
+        "validate_cover_route_decision",
+        lambda *_a, **_k: True,
+    )
+    monkeypatch.setattr(
+        finalization,
+        "validate_rendered_text_pixel_evidence",
+        lambda *_a, **_k: True,
+    )
+    monkeypatch.setattr(
+        finalization,
+        "resolve_trusted_cover_font",
+        lambda *_a, **_k: tmp_path / "font.ttf",
+    )
+    monkeypatch.setattr(
+        finalization,
+        "verify_rendered_text_pixel_artifacts",
+        lambda *_a, **_k: True,
+    )
+    monkeypatch.setattr(
+        finalization,
+        "verify_pre_overlay_route_background",
+        lambda *_a, **_k: True,
+    )
+
+    reasons, _audits = finalization._audit_story_bound_cover(
+        {
+            "cover_text": "修复后的侄女主钩子",
+            "cover_generation": generation,
+        },
+        current_contract,
+    )
+
+    assert reasons == ["COVER_STORY_CONTRACT_BINDING_MISSING_OR_STALE"]
 
 
 def test_exact_final_review_gate_persists_deterministic_block(
