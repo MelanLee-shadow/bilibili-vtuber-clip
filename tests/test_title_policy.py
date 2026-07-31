@@ -107,7 +107,7 @@ def test_automatic_title_filler_canonicalizer_only_removes_profile_exact_words()
         ),
         (
             "auto_145940_1533_1619r3",
-            "先嘲笑爱音上不起“月之森贵族学校”，连声道歉称忘了她是英国留子，又猜她回国可能因没办法自己做饭",
+            "嘲笑爱音上不起“月之森贵族学校”，道歉说忘了她是英国留子，又猜她回国可能因为不会做饭",
         ),
         (
             "auto_152944_964_1091",
