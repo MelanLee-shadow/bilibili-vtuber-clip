@@ -1197,6 +1197,8 @@ def _cover_binding_valid(date: str, rec: dict, mp4: Path, cover: Path) -> bool:
         and rec.get("cover_generation") == generation
     ):
         return False
+    if not validate_cover_route_decision(generation, allow_legacy_v1=False):
+        return False
     summary = rec.get("summary")
     if isinstance(summary, dict) and summary and (
         summary.get("cover_status") != "REPAIRED_AI_COVER"
@@ -1444,6 +1446,97 @@ def _migrate_song_portable_cover_attachments(
         return False
 
 
+def _migrate_song_legacy_route_v2(date: str, rec: dict, mp4: Path, cover: Path) -> bool:
+    """Derive a v2 route receipt from an already CPA-produced song cover.
+
+    This never edits the old generation or binding and never invokes images.edit:
+    it copies the final bytes into a deterministic sibling generation, carries
+    forward only hash-bound evidence, then relies on the usual binding
+    transaction to make that sibling current.
+    """
+    if not rec.get("delivered") or not cover.is_file():
+        return False
+    cid, title = str(rec.get("candidate_id") or ""), str(rec.get("title") or "")
+    try:
+        binding_path = Path(str(rec.get("cover_binding_path") or "")).resolve(strict=True)
+        binding = _read_json_object(binding_path, label="legacy song cover binding")
+        old_path = Path(str(binding.get("generation_manifest_path") or "")).resolve(strict=True)
+        old_cover = Path(str(binding.get("generation_cover_path") or "")).resolve(strict=True)
+        old, validated = _validate_repaired_cover_generation(
+            cover=old_cover, title=title, candidate_id=cid
+        )
+        if (
+            validated != old_path
+            or binding.get("authority_type") != "verified_song_delivery"
+            or binding.get("delivery_manifest_path") != rec.get("delivery_manifest_path")
+            or binding.get("media_path") != str(mp4.resolve())
+            or binding.get("cover_path") != str(cover.resolve())
+            or not _matches_sha256(binding_path, str(rec.get("cover_binding_sha256") or ""))
+            or not _matches_sha256(mp4, str(binding.get("media_sha256") or ""))
+            or not _matches_sha256(old_cover, str(binding.get("generation_cover_sha256") or ""))
+            or not _matches_sha256(cover, str(binding.get("cover_sha256") or ""))
+            or validate_cover_route_decision(old, allow_legacy_v1=False)
+        ):
+            return False
+        identity = old.get("final_host_identity_verification")
+        if not isinstance(identity, dict):
+            return False
+        stem = hashlib.sha256(old_path.read_bytes()).hexdigest()[:16]
+        sibling = old_cover.parent.parent / f"route-v2-migration-{stem}"
+        new_cover = sibling / "final.cover.png"
+        new_path = new_cover.with_suffix(".cover_generation.json")
+        new = copy.deepcopy(old)
+        new["final_cover"] = str(new_cover)
+        new["final_cover_sha256"] = str(old.get("final_cover_sha256") or "")
+        new["cover_origin"] = "AI_REDRAW"
+        new["legacy_route_v2_migration"] = {
+            "schema_version": "song-cover-route-v2-migration.v1",
+            "source_generation_path": str(old_path),
+            "source_generation_sha256": "sha256:" + hashlib.sha256(old_path.read_bytes()).hexdigest(),
+            "image_request_performed": False,
+        }
+        migrated_identity = copy.deepcopy(identity)
+        migrated_identity["final_cover_path"] = str(new_cover)
+        migrated_identity["final_cover_sha256"] = new["final_cover_sha256"]
+        new["final_host_identity_verification"] = migrated_identity
+        new["route_decision"] = build_cover_route_decision(
+            selected_treatment="cpa_redraw",
+            selected_rationale="legacy hash-bound CPA song cover is migrated to current route evidence without altering its pixels",
+            story_contract=None,
+            reference_authority=None,
+            title=title,
+            cover_text=str(new.get("cover_text") or title),
+            decision_inputs={
+                "cover_mode": "legacy_song_route_v2_migration", "is_song": True,
+                "manual_title_or_full_text_contract": False, "frame_score": None,
+                "frame_emotion": None, "subject_confident": None,
+                "motion_dispersion_frac": None, "verified_stream_frame": False,
+                "reference_authority_id": None,
+            },
+        )
+        new["route_decision"]["host_identity_required"] = True
+        record_cover_route_execution(
+            new, actual_treatment="cpa_redraw", execution_status="READY",
+            image_generation_attempted=True, image_generation_used=True,
+            detail="legacy images.edit receipt migrated without a new image request",
+        )
+        if not validate_cover_route_decision(new, allow_legacy_v1=False):
+            return False
+        sibling.mkdir(parents=True, exist_ok=True)
+        if new_cover.exists() and new_cover.read_bytes() != old_cover.read_bytes():
+            return False
+        if not new_cover.exists():
+            _runner._atomic_write_bytes_file(new_cover, old_cover.read_bytes())
+        if new_path.exists() and _read_json_object(new_path, label="route-v2 sibling") != new:
+            return False
+        if not new_path.exists():
+            _runner._atomic_write_json_file(new_path, new)
+        _bind_repaired_cover(date, rec, mp4, cover, new_cover)
+        return _cover_binding_valid(date, rec, mp4, cover)
+    except (OSError, ValueError, SongDeliveryError):
+        return False
+
+
 def _recover_committed_cover_binding(date: str, rec: dict, mp4: Path, cover: Path) -> bool:
     """Recover state after a crash between the filesystem binding commit and
     ``write_state``.  Immutable generations plus active-doc/manifest pointers
@@ -1457,6 +1550,8 @@ def _recover_committed_cover_binding(date: str, rec: dict, mp4: Path, cover: Pat
         date, rec, mp4, cover
     ):
         return False
+    if _migrate_song_legacy_route_v2(date, rec, mp4, cover):
+        return True
     if _migrate_song_portable_cover_attachments(date, rec, mp4, cover):
         return True
     cid = str(rec.get("candidate_id") or "")

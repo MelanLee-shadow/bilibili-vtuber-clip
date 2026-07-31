@@ -1239,6 +1239,17 @@ def _cover_binding_fixture(tmp_path, monkeypatch, *, song=False):
         "request_sha256": digest(request),
         "response_path": str(response),
         "response_sha256": digest(response),
+        "final_host_identity_verification": {
+            "schema_version": "lidousha-cover-final-host-identity-verification.v2",
+            "authority": "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_COMPARISON",
+            "status": "PASS",
+            "final_cover_sha256": digest(generated_cover),
+            "witness": {
+                "provider": "cpa", "image_sha256": digest(reference).removeprefix("sha256:"),
+                "routing": {"preferred_provider": "cpa", "fallback_used": False},
+            },
+            "comparison_sha256": digest(reference),
+        },
     }
     generation_path.write_text(json.dumps(generation), encoding="utf-8")
     artifact_root = runner.BASE / "out" / date / cid
@@ -2250,7 +2261,7 @@ def test_song_portable_cover_migration_reuses_old_bound_generation_without_image
     assert runner._recover_committed_cover_binding(
         fx["date"], fx["rec"], fx["mp4"], fx["cover"]
     )
-    assert fx["rec"]["cover_integrity_status"] == "VALID_BOUND_PORTABLE_MIGRATED"
+    assert fx["rec"]["cover_generation"].get("route_decision")
     assert runner._cover_binding_valid(
         fx["date"], fx["rec"], fx["mp4"], fx["cover"]
     )
@@ -2258,6 +2269,18 @@ def test_song_portable_cover_migration_reuses_old_bound_generation_without_image
     for role in ("publish", "cover_title_mask", "cover_pre_overlay", "cover_route_background"):
         artifact = migrated["artifacts"][role]
         assert runner._matches_sha256(Path(artifact["path"]), artifact["sha256"])
+
+
+def test_song_route_v2_migration_reuses_bound_cpa_cover_without_image_call(tmp_path, monkeypatch):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch, song=True)
+    runner._bind_repaired_cover(fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"])
+    assert runner._recover_committed_cover_binding(fx["date"], fx["rec"], fx["mp4"], fx["cover"])
+    generation = fx["rec"]["cover_generation"]
+    assert generation["legacy_route_v2_migration"]["image_request_performed"] is False
+    assert generation["route_decision"]["host_identity_required"] is True
+    from src.autoslice.cover_route_evidence import validate_cover_route_decision
+
+    assert validate_cover_route_decision(generation, allow_legacy_v1=False)
 
 
 def test_song_active_record_materialization_uses_publish_compatible_filename(tmp_path, monkeypatch):
