@@ -61,10 +61,12 @@ Verifier = Callable[[Mapping[str, Any]], Any]
 
 _CHAT_ENTITY_REQUEST_SCHEMA = "chat-entity-verification-request.v1"
 _TRANSCRIPT_ENTITY_REQUEST_SCHEMA = "transcript-entity-verification-request.v1"
+_CHAT_SENDER_REQUEST_SCHEMA = "chat-sender-verification-request.v1"
 _ENTITY_REQUEST_SCHEMAS = frozenset(
     {
         _CHAT_ENTITY_REQUEST_SCHEMA,
         _TRANSCRIPT_ENTITY_REQUEST_SCHEMA,
+        _CHAT_SENDER_REQUEST_SCHEMA,
     }
 )
 _WITNESS_VERDICT_SCHEMA = "subtitle-span-acoustic-witness.v1"
@@ -281,6 +283,11 @@ def _closed_choice_with_witness(
         "structured_chat_surface": request.get("structured_chat_surface"),
         "candidate_provenance": check_request["candidate_provenance"],
         "whole_clip_context": request.get("whole_clip_context"),
+        "adjacent_structured_event_chain": (
+            request.get("whole_clip_context") or {}
+        ).get("adjacent_structured_event_chain")
+        if isinstance(request.get("whole_clip_context"), Mapping)
+        else None,
     }
     prompt = _CLOSED_CHOICE_PROMPT.format(
         witness=json.dumps(witness, ensure_ascii=False, sort_keys=True),

@@ -999,11 +999,13 @@ def apply_authoritative_chat_evidence(
         evidence=evidence,
         cues=cues,
         texts=texts,
+        entity_verifier=entity_verifier,
     )
     guard_sender_repairs, guard_sender_verdict_required = _apply_guard_sender_repairs(
         evidence,
         cues,
         texts,
+        entity_verifier=entity_verifier,
     )
     sender_repairs.extend(guard_sender_repairs)
     sender_verdict_required.extend(guard_sender_verdict_required)

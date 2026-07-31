@@ -268,6 +268,67 @@ def test_transcript_entity_closed_set_uses_cpa_context_only_without_audio():
     assert "whole_clip_context" in prompts[0]
 
 
+def test_sender_closed_set_routes_to_cpa_with_adjacent_event_chain():
+    prompts = []
+    request = {
+        "schema_version": "chat-sender-verification-request.v1",
+        "request_sha256": "d" * 64,
+        "evidence_id": "guard-sender",
+        "kind": "structured_chat_sender_ambiguity",
+        "matched_audio_text": "问15",
+        "exact_text": '[{"sender":"water不温"},{"sender":"万事屋_official"}]',
+        "context_before": "谢谢前一位老板",
+        "context_after": "谢谢舰长",
+        "whole_clip_context": {
+            "adjacent_structured_event_chain": [
+                {
+                    "source_event_id": "guard-a",
+                    "sender": "water不温",
+                    "offset_ms": 0,
+                },
+                {
+                    "source_event_id": "guard-b",
+                    "sender": "万事屋_official",
+                    "offset_ms": 1_000,
+                },
+            ]
+        },
+        "cue_indexes": [1],
+        "matched_start_ms": 5_000,
+        "matched_end_ms": 9_000,
+        "candidate_entities": [
+            {"canonical": "water不温"},
+            {"canonical": "万事屋_official"},
+        ],
+    }
+
+    def llm_call(prompt):
+        prompts.append(prompt)
+        return json.dumps(
+            {
+                "ranking": [
+                    {"canonical": "water不温", "p": 0.8},
+                    {"canonical": "万事屋_official", "p": 0.2},
+                ],
+                "choice": "water不温",
+                "reason": "听到的称呼与事件顺序共同支持",
+            },
+            ensure_ascii=False,
+        )
+
+    verify = verifier_module.build_cpa_read_aloud_verifier(llm_call)
+    verdict = verify(request)
+
+    assert verdict["status"] == "RESOLVED"
+    assert verdict["canonical_entity"] == "water不温"
+    assert verdict["decision_authority"] == "CPA_JUDGE"
+    assert verdict["witness_authority"] == "EVIDENCE_ONLY"
+    assert verdict["acoustic_evidence_used"] is False
+    assert "adjacent_structured_event_chain" in prompts[0]
+    assert "guard-a" in prompts[0]
+    assert "guard-b" in prompts[0]
+
+
 def test_transcript_entity_context_only_cpa_closes_real_repair_gate():
     source = _srt(
         "谢谢老板的礼物",

@@ -1146,7 +1146,200 @@ def test_missing_disclosure_candidate_stays_blocked_when_cpa_cannot_propose():
     assert audit["status"] == "MISSING_PROPOSAL_UNRESOLVED"
     assert audit["repaired"] is False
     assert audit["proposal_bootstrap"]["status"] == "UNRESOLVED"
-    assert audit["decision_authority"] == "CPA_JUDGE_NOT_REACHED"
+    assert (
+        audit["cpa_missing_proposal_convergence"]["status"] == "INVALID"
+    )
+    assert audit["decision_authority"] == "CPA_JUDGE_FAILED"
+
+
+def test_missing_candidate_second_cpa_can_keep_existing_without_agy():
+    source = _srt("我昨天去上班", "上班好累", "下班了")
+    calls = []
+
+    def cpa(prompt):
+        calls.append(prompt)
+        if "# 字幕缺失候选重建" in prompt:
+            return json.dumps(
+                {
+                    "status": "UNRESOLVED",
+                    "proposed_cue": "",
+                    "reason": "首轮不猜",
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {
+                "decision": "KEEP_EXISTING",
+                "replacement_text": "",
+                "reason": "前后都在谈上下班，原句合理",
+            },
+            ensure_ascii=False,
+        )
+
+    unresolved, resolved = adjudicate_exact_release_findings(
+        source,
+        [
+            {
+                "cue_index": 2,
+                "suspect": "上班好累",
+                "suggestion": None,
+                "proposed_full_cue": None,
+                "repair_class": "disclosure_only",
+                "why": "审片员认为可能是口语残句",
+            }
+        ],
+        entity_verifier=lambda request: pytest.fail(
+            f"AGY must not decide a CPA context-only convergence: {request}"
+        ),
+        clip_context={
+            "structured_chat": [
+                {
+                    "offset_ms": 8_000,
+                    "kind": "danmaku",
+                    "sender": "A",
+                    "text": "上班辛苦了",
+                },
+                {
+                    "offset_ms": 12_000,
+                    "kind": "danmaku",
+                    "sender": "B",
+                    "text": "下班休息",
+                },
+            ]
+        },
+        judge_llm_call=cpa,
+    )
+
+    assert unresolved == []
+    assert resolved[0]["resolution"] == "CPA_CONTEXT_ONLY_KEEP_EXISTING"
+    adjudication = resolved[0]["exact_release_adjudication"]
+    convergence = adjudication["cpa_missing_proposal_convergence"]
+    assert convergence["decision"] == "KEEP_EXISTING"
+    assert convergence["final_srt_sha256"] == (
+        "sha256:" + hashlib.sha256(source.encode("utf-8")).hexdigest()
+    )
+    assert convergence["context_sha256"].startswith("sha256:")
+    assert adjudication["decision_authority"] == "CPA_JUDGE"
+    assert adjudication["mutation_authority"]["status"] == "NOT_APPLIED"
+    assert len(calls) == 2
+    assert "前 3 / 后 3" in calls[1]
+    assert "上班辛苦了" in calls[1]
+    assert "下班休息" in calls[1]
+
+
+def test_missing_candidate_second_cpa_exact_text_self_heals_without_agy():
+    source = _srt("今天可以吗", "今天能多啵啵嘛", "好不好")
+
+    def cpa(prompt):
+        if "# 字幕缺失候选重建" in prompt:
+            return json.dumps(
+                {
+                    "status": "PROPOSED",
+                    "proposed_cue": "明天能多啵啵嘛",
+                    "reason": "错误地只改了目标外文字",
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {
+                "decision": "REPLACE_WITH_EXACT_TEXT",
+                "replacement_text": "今天能多抱抱嘛",
+                "reason": "相邻语境是在请求抱抱",
+            },
+            ensure_ascii=False,
+        )
+
+    unresolved, resolved = adjudicate_exact_release_findings(
+        source,
+        [
+            {
+                "cue_index": 2,
+                "suspect": "啵啵",
+                "suggestion": None,
+                "proposed_full_cue": None,
+                "repair_class": "disclosure_only",
+                "why": "语境用词可疑",
+            }
+        ],
+        entity_verifier=lambda request: pytest.fail(
+            f"AGY must not decide exact-text convergence: {request}"
+        ),
+        judge_llm_call=cpa,
+    )
+
+    assert resolved == []
+    finding = unresolved[0]
+    assert finding["proposed_full_cue"] == "今天能多抱抱嘛"
+    adjudication = finding["exact_release_adjudication"]
+    assert adjudication["repaired"] is True
+    assert (
+        adjudication["policy_branch"]
+        == "CPA_CONTEXT_ONLY_REPLACE_WITH_EXACT_TEXT"
+    )
+    binding = adjudication["request"]["cpa_convergence_binding"]
+    assert binding["final_srt_sha256"] == (
+        "sha256:" + hashlib.sha256(source.encode("utf-8")).hexdigest()
+    )
+    assert binding["context_sha256"].startswith("sha256:")
+    assert adjudication["mutation_authority"] == {
+        "schema_version": "subtitle-correction-mutation-authority.v1",
+        "status": "PASS",
+        "basis": "CPA_CONTEXT_ONLY_EXACT_TEXT_FINAL_CONVERGENCE",
+    }
+    from src.autoslice.producer_package_finalization import (
+        _apply_exact_final_cpa_repairs,
+    )
+
+    healed, repairs = _apply_exact_final_cpa_repairs(
+        source,
+        {"findings": unresolved},
+    )
+    assert "今天能多抱抱嘛" in healed
+    assert len(repairs) == 1
+    assert repairs[0]["decision_authority"] == "CPA_JUDGE"
+
+
+def test_missing_candidate_second_cpa_provider_failure_stays_blocked():
+    source = _srt("我走了之后")
+    calls = 0
+
+    def cpa(_prompt):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return json.dumps(
+                {
+                    "status": "UNRESOLVED",
+                    "proposed_cue": "",
+                    "reason": "首轮不猜",
+                },
+                ensure_ascii=False,
+            )
+        raise RuntimeError("provider unavailable")
+
+    output, audit = adjudicate_context_finding(
+        source,
+        {
+            "cue_index": 1,
+            "suspect": "我走了之后",
+            "suggestion": None,
+            "proposed_full_cue": None,
+            "repair_class": "disclosure_only",
+        },
+        entity_verifier=lambda request: pytest.fail(
+            f"AGY must not run without a decided candidate: {request}"
+        ),
+        judge_llm_call=cpa,
+    )
+
+    assert output == source
+    assert audit["status"] == "MISSING_PROPOSAL_UNRESOLVED"
+    assert (
+        audit["reason_code"]
+        == "CPA_CONVERGENCE_PROVIDER_OR_JSON_UNAVAILABLE"
+    )
+    assert audit["decision_authority"] == "CPA_JUDGE_FAILED"
+    assert calls == 2
 
 
 def test_exact_release_self_heals_a_bootstrapped_missing_candidate():

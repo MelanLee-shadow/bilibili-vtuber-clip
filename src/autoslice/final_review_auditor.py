@@ -1597,7 +1597,12 @@ def build_context_adjudication_request(
     return request
 
 
-def _structured_chat_lines(clip_context: Mapping[str, object] | None) -> str:
+def _structured_chat_lines(
+    clip_context: Mapping[str, object] | None,
+    *,
+    target_start_ms: int | None = None,
+    target_end_ms: int | None = None,
+) -> str:
     """Platform-recorded chat/SC lines for the judge (context, not authority)."""
 
     if not isinstance(clip_context, Mapping):
@@ -1605,15 +1610,82 @@ def _structured_chat_lines(clip_context: Mapping[str, object] | None) -> str:
     rows = clip_context.get("structured_chat")
     if not isinstance(rows, list):
         return ""
+    selected_rows = rows
+    if (
+        isinstance(target_start_ms, int)
+        and isinstance(target_end_ms, int)
+        and target_end_ms >= target_start_ms
+    ):
+        timed_rows = [
+            row
+            for row in rows
+            if isinstance(row, Mapping)
+            and isinstance(row.get("offset_ms"), (int, float))
+            and not isinstance(row.get("offset_ms"), bool)
+        ]
+        timed_rows.sort(key=lambda row: float(row["offset_ms"]))
+        window_start = target_start_ms - 30_000
+        window_end = target_end_ms + 30_000
+        selected_rows = [
+            row
+            for row in timed_rows
+            if window_start <= float(row["offset_ms"]) <= window_end
+        ]
+        if not selected_rows and timed_rows:
+            target_mid = (target_start_ms + target_end_ms) / 2
+            nearest_index = min(
+                range(len(timed_rows)),
+                key=lambda index: abs(
+                    float(timed_rows[index]["offset_ms"]) - target_mid
+                ),
+            )
+            selected_rows = timed_rows[
+                max(0, nearest_index - 5) : nearest_index + 6
+            ]
+        elif len(selected_rows) > 20:
+            target_mid = (target_start_ms + target_end_ms) / 2
+            selected_rows = sorted(
+                selected_rows,
+                key=lambda row: abs(float(row["offset_ms"]) - target_mid),
+            )[:20]
+            selected_rows.sort(key=lambda row: float(row["offset_ms"]))
     lines: list[str] = []
-    for row in rows[:20]:
+    for row in selected_rows[:20]:
         if not isinstance(row, Mapping):
             continue
         sender = str(row.get("sender") or "").strip()
         text = str(row.get("text") or row.get("message") or "").strip()
         if text or sender:
-            lines.append(f"- {sender}: {text}"[:200])
+            offset = row.get("offset_ms")
+            kind = str(row.get("kind") or "chat")
+            prefix = (
+                f"[{float(offset) / 1000:+.3f}s][{kind}] "
+                if isinstance(offset, (int, float))
+                and not isinstance(offset, bool)
+                else f"[{kind}] "
+            )
+            lines.append(f"- {prefix}{sender}: {text}"[:240])
     return "\n".join(lines)
+
+
+def _structured_chat_lines_for_finding(
+    srt_text: str,
+    finding: Mapping[str, Any],
+    clip_context: Mapping[str, object] | None,
+) -> str:
+    try:
+        cue_index = int(finding.get("cue_index") or 0)
+    except (TypeError, ValueError):
+        cue_index = 0
+    cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
+    if not 1 <= cue_index <= len(cues):
+        return _structured_chat_lines(clip_context)
+    cue = cues[cue_index - 1]
+    return _structured_chat_lines(
+        clip_context,
+        target_start_ms=cue.start_ms,
+        target_end_ms=cue.end_ms,
+    )
 
 
 _PROPOSAL_REBUILD_PROMPT = """# 字幕坏闭集重建（只提案，不裁决）
@@ -1863,11 +1935,16 @@ def adjudicate_context_finding(
     judged choice. The mutation-authority receipt contract is unchanged.
     """
 
+    structured_chat_context = _structured_chat_lines_for_finding(
+        srt_text,
+        finding,
+        clip_context,
+    )
     finding, proposal_bootstrap_audit, bootstrap_failure = (
         prepare_missing_proposal_candidate(
             srt_text=srt_text,
             finding=finding,
-            structured_chat=_structured_chat_lines(clip_context),
+            structured_chat=structured_chat_context,
             llm_call=judge_llm_call,
             derive_single_span_edit=_derive_single_span_edit,
         )
@@ -1876,6 +1953,75 @@ def adjudicate_context_finding(
         return srt_text, bootstrap_failure
     assert finding is not None
     bootstrap_finding = finding if proposal_bootstrap_audit is not None else None
+    convergence = finding.get("_cpa_missing_proposal_convergence")
+    if (
+        isinstance(convergence, Mapping)
+        and convergence.get("status") == "RESOLVED"
+        and convergence.get("decision") == "KEEP_EXISTING"
+    ):
+        current_request = {
+            "schema_version": "subtitle-context-convergence-request.v1",
+            "kind": "missing_proposal_context_only_convergence",
+            "cue_index": convergence.get("cue_index"),
+            "current_cue_sha256": str(
+                convergence.get("current_cue_sha256") or ""
+            ).removeprefix("sha256:"),
+            "final_srt_sha256": str(
+                convergence.get("final_srt_sha256") or ""
+            ).removeprefix("sha256:"),
+            "context_sha256": str(
+                convergence.get("context_sha256") or ""
+            ).removeprefix("sha256:"),
+            "decision": "KEEP_EXISTING",
+            "timing_immutable": True,
+        }
+        current_request["request_sha256"] = hashlib.sha256(
+            json.dumps(
+                current_request,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        return srt_text, {
+            "schema_version": "subtitle-span-adjudication.v1",
+            "status": "OBSERVED",
+            "repaired": False,
+            "policy_branch": "JUDGE_KEEPS_CURRENT",
+            "timing_immutable": True,
+            "request": current_request,
+            "verdict": {
+                "schema_version": "subtitle-span-acoustic-witness.v1",
+                "status": "NOT_REQUIRED",
+                "target_audible": None,
+                "reason_code": "CPA_CONTEXT_ONLY_FINAL_CONVERGENCE",
+            },
+            "witness_judge": {
+                "witness_status": "NOT_REQUIRED",
+                "judge": {
+                    "schema_version": "subtitle-cpa-context-judge.v1",
+                    "status": "JUDGED",
+                    "choice": "CURRENT",
+                    "reason": convergence.get("reason"),
+                    "prompt_sha256": convergence.get("prompt_sha256"),
+                    "completion_sha256": convergence.get(
+                        "completion_sha256"
+                    ),
+                },
+            },
+            "proposal_bootstrap": proposal_bootstrap_audit,
+            "cpa_missing_proposal_convergence": dict(convergence),
+            "rebuilt_finding": dict(finding),
+            "decision_authority": "CPA_JUDGE",
+            "witness_authority": "EVIDENCE_ONLY",
+            "mutation_authority": {
+                "schema_version": (
+                    "subtitle-correction-mutation-authority.v1"
+                ),
+                "status": "NOT_APPLIED",
+                "basis": "CPA_CONTEXT_ONLY_KEEP_EXISTING",
+            },
+        }
     try:
         request = build_context_adjudication_request(
             srt_text,
@@ -1889,6 +2035,105 @@ def adjudicate_context_finding(
             "status": "INVALID_SUGGESTION",
             "repaired": False,
             "reason_code": str(exc),
+        }
+    if (
+        isinstance(convergence, Mapping)
+        and convergence.get("status") == "RESOLVED"
+        and convergence.get("decision") == "REPLACE_WITH_EXACT_TEXT"
+    ):
+        request["cpa_convergence_binding"] = {
+            "schema_version": convergence.get("schema_version"),
+            "final_srt_sha256": convergence.get("final_srt_sha256"),
+            "current_cue_sha256": convergence.get("current_cue_sha256"),
+            "context_sha256": convergence.get("context_sha256"),
+            "prompt_sha256": convergence.get("prompt_sha256"),
+            "completion_sha256": convergence.get("completion_sha256"),
+        }
+        request.pop("request_sha256", None)
+        request["request_sha256"] = hashlib.sha256(
+            json.dumps(
+                request,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
+        cue_index = int(finding["cue_index"])
+        live_cue = cues[cue_index - 1]
+        if hashlib.sha256(live_cue.text.encode("utf-8")).hexdigest() != request[
+            "base_text_sha256"
+        ]:
+            return srt_text, {
+                "schema_version": "subtitle-span-adjudication.v1",
+                "status": "UNCERTAIN",
+                "repaired": False,
+                "reason_code": "STALE_BASE",
+                "policy_branch": "STALE_BASE_KEEP_CURRENT",
+                "proposal_bootstrap": proposal_bootstrap_audit,
+                "cpa_missing_proposal_convergence": dict(convergence),
+                "decision_authority": "CPA_JUDGE",
+                "witness_authority": "EVIDENCE_ONLY",
+            }
+        texts = [cue.text for cue in cues]
+        texts[cue_index - 1] = str(request["proposed_cue"])
+        retained = [
+            (cue, text)
+            for cue, text in zip(cues, texts)
+            if text.strip()
+        ]
+        output = "\n".join(
+            f"{index}\n{_ms(cue.start_ms)} --> {_ms(cue.end_ms)}\n{text}\n"
+            for index, (cue, text) in enumerate(retained, start=1)
+        )
+        return output, {
+            "schema_version": "subtitle-span-adjudication.v1",
+            "status": "OBSERVED",
+            "repaired": True,
+            "policy_branch": (
+                "CPA_CONTEXT_ONLY_REPLACE_WITH_EXACT_TEXT"
+            ),
+            "timing_immutable": True,
+            "request": request,
+            "verdict": {
+                "schema_version": "subtitle-span-acoustic-witness.v1",
+                "status": "NOT_REQUIRED",
+                "target_audible": None,
+                "reason_code": "CPA_CONTEXT_ONLY_FINAL_CONVERGENCE",
+            },
+            "witness_judge": {
+                "witness_status": "NOT_REQUIRED",
+                "judge": {
+                    "schema_version": "subtitle-cpa-context-judge.v1",
+                    "status": "JUDGED",
+                    "choice": "PROPOSED",
+                    "reason": convergence.get("reason"),
+                    "prompt_sha256": convergence.get("prompt_sha256"),
+                    "completion_sha256": convergence.get(
+                        "completion_sha256"
+                    ),
+                },
+            },
+            "proposal_bootstrap": proposal_bootstrap_audit,
+            "cpa_missing_proposal_convergence": dict(convergence),
+            "rebuilt_finding": dict(finding),
+            "orthography_equivalence": {"matched": False},
+            "orthography_ambiguous": False,
+            "orthography_authority": {
+                "schema_version": "subtitle-orthography-authority.v1",
+                "status": "NOT_REQUIRED",
+            },
+            "decision_authority": "CPA_JUDGE",
+            "witness_authority": "EVIDENCE_ONLY",
+            "mutation_authority": {
+                "schema_version": (
+                    "subtitle-correction-mutation-authority.v1"
+                ),
+                "status": "PASS",
+                "basis": (
+                    "CPA_CONTEXT_ONLY_EXACT_TEXT_FINAL_CONVERGENCE"
+                ),
+            },
         }
     def _fetch_witness(
         check_request: Mapping[str, Any],
@@ -1966,7 +2211,7 @@ def adjudicate_context_finding(
             check_request=request,
             witness=verdict,
             llm_call=judge_llm_call,
-            structured_chat_context=_structured_chat_lines(clip_context),
+            structured_chat_context=structured_chat_context,
         )
         if policy_branch == "JUDGE_REJECTS_CLOSED_SET":
             rebuilt_finding, proposal_rebuild_audit = (
@@ -2078,9 +2323,7 @@ def adjudicate_context_finding(
                             check_request=request,
                             witness=verdict,
                             llm_call=judge_llm_call,
-                            structured_chat_context=(
-                                _structured_chat_lines(clip_context)
-                            ),
+                            structured_chat_context=structured_chat_context,
                         )
                         if policy_branch == "JUDGE_REJECTS_CLOSED_SET":
                             policy_branch = (
@@ -2317,9 +2560,24 @@ def adjudicate_exact_release_findings(
             and float(compat["current"]) >= 0.75
             and not orthography_ambiguous
         )
-        if decisively_disproven:
+        convergence = adjudication.get(
+            "cpa_missing_proposal_convergence"
+        )
+        context_only_keep = bool(
+            isinstance(convergence, Mapping)
+            and convergence.get("schema_version")
+            == "subtitle-missing-proposal-cpa-convergence.v1"
+            and convergence.get("status") == "RESOLVED"
+            and convergence.get("decision") == "KEEP_EXISTING"
+            and adjudication.get("status") == "OBSERVED"
+            and adjudication.get("repaired") is False
+            and adjudication.get("decision_authority") == "CPA_JUDGE"
+        )
+        if decisively_disproven or context_only_keep:
             row["resolution"] = (
-                "ACOUSTICALLY_DISPROVEN_FINAL_REVIEW_PROPOSAL"
+                "CPA_CONTEXT_ONLY_KEEP_EXISTING"
+                if context_only_keep
+                else "ACOUSTICALLY_DISPROVEN_FINAL_REVIEW_PROPOSAL"
             )
             resolved.append(row)
         else:

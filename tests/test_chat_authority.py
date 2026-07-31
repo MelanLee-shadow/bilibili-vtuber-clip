@@ -1662,6 +1662,108 @@ def test_guard_buy_ambiguous_sender_fails_closed():
     ]
 
 
+def test_guard_buy_ambiguous_sender_converges_via_cpa_closed_set():
+    source = (
+        "1\n"
+        "00:03:52,140 --> 00:03:55,000\n"
+        "谢谢刚刚问15的舰长\n"
+    )
+    requests = []
+
+    def cpa_sender(request):
+        requests.append(request)
+        assert request["schema_version"] == (
+            "chat-sender-verification-request.v1"
+        )
+        assert {
+            row["canonical"] for row in request["candidate_entities"]
+        } == {"water不温", "万事屋_official", "缝合怪ac"}
+        return {
+            "schema_version": "chat-entity-verdict.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "RESOLVED",
+            "canonical_entity": "water不温",
+            "confidence": 0.71,
+            "authority_kind": "cpa_context_only_closed_set_adjudication",
+            "decision_authority": "CPA_JUDGE",
+            "witness_authority": "EVIDENCE_ONLY",
+            "reason_code": "CPA_CONTEXT_ONLY_CLOSED_SET_DISAMBIGUATION",
+        }
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [
+            ChatEvidence(
+                "guard",
+                0,
+                "舰长",
+                "water不温",
+                source_event_id="guard-water",
+            ),
+            ChatEvidence(
+                "guard",
+                1_000,
+                "舰长",
+                "万事屋_official",
+                source_event_id="guard-wanshi",
+            ),
+            ChatEvidence(
+                "guard",
+                2_000,
+                "舰长",
+                "缝合怪ac",
+                source_event_id="guard-fenghe",
+            ),
+        ],
+        entity_verifier=cpa_sender,
+    )
+
+    assert "谢谢刚刚water不温的舰长" in output
+    assert audit["status"] == "APPLIED_AND_VERIFIED"
+    assert audit["sender_verdict_required"] == []
+    repair = audit["sender_repairs"][0]
+    assert (
+        repair["cpa_sender_adjudication"]["status"] == "RESOLVED"
+    )
+    request = requests[0]
+    chain = request["whole_clip_context"][
+        "adjacent_structured_event_chain"
+    ]
+    assert [row["source_event_id"] for row in chain] == [
+        "guard-water",
+        "guard-wanshi",
+        "guard-fenghe",
+    ]
+    assert len(request["request_sha256"]) == 64
+
+
+def test_guard_buy_ambiguous_sender_cpa_failure_remains_blocked():
+    source = (
+        "1\n"
+        "00:03:52,140 --> 00:03:55,000\n"
+        "谢谢刚刚听不清的舰长\n"
+    )
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [
+            ChatEvidence("guard", 0, "舰长", "甲", source_event_id="a"),
+            ChatEvidence("guard", 1_000, "舰长", "乙", source_event_id="b"),
+        ],
+        entity_verifier=lambda _request: (_ for _ in ()).throw(
+            RuntimeError("CPA unavailable")
+        ),
+    )
+
+    assert output == source
+    assert audit["status"] == "SC_SENDER_VERDICT_REQUIRED"
+    cpa = audit["sender_verdict_required"][0][
+        "cpa_sender_adjudication"
+    ]
+    assert cpa["status"] == "UNRESOLVED"
+    assert cpa["reason_code"] == "SENDER_CPA_PROVIDER_ERROR"
+
+
 def test_matched_sc_body_makes_platform_sender_authoritative_for_thank_name_slot():
     source = _srt(
         "谢谢甲送的",
@@ -1740,6 +1842,59 @@ def test_duplicate_real_sc_body_with_different_senders_fails_closed():
     assert audit["status"] == "SC_SENDER_VERDICT_REQUIRED"
     assert audit["sender_verdict_required"][0]["reason_code"] == (
         "DUPLICATE_SC_BODY_SENDER_AMBIGUOUS"
+    )
+
+
+def test_duplicate_real_sc_body_sender_converges_via_cpa_closed_set():
+    exact = "如果能唱的到想点首小城夏天，唱不到就算了"
+    source = _srt(
+        "谢谢错名送的",
+        "如果能唱的到想点首小城夏天唱不到就算了",
+    )
+
+    def choose_second_sender(request):
+        assert request["schema_version"] == (
+            "chat-sender-verification-request.v1"
+        )
+        return {
+            "schema_version": "chat-entity-verdict.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "RESOLVED",
+            "canonical_entity": "乙",
+            "decision_authority": "CPA_JUDGE",
+            "witness_authority": "EVIDENCE_ONLY",
+            "authority_kind": "cpa_context_only_closed_set_adjudication",
+            "reason_code": "CPA_CONTEXT_ONLY_CLOSED_SET_DISAMBIGUATION",
+        }
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [
+            ChatEvidence(
+                "superchat",
+                0,
+                exact,
+                "甲",
+                source_event_id="evt-a",
+            ),
+            ChatEvidence(
+                "superchat",
+                0,
+                exact,
+                "乙",
+                source_event_id="evt-b",
+            ),
+        ],
+        support_srt_texts=[source],
+        entity_verifier=choose_second_sender,
+    )
+
+    assert "谢谢乙送的" in output
+    assert audit["status"] == "APPLIED_AND_VERIFIED"
+    assert audit["sender_verdict_required"] == []
+    assert (
+        audit["sender_repairs"][0]["cpa_sender_adjudication"]["chosen_sender"]
+        == "乙"
     )
 
 

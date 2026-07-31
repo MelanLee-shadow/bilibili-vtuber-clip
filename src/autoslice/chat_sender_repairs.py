@@ -7,11 +7,17 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from src.autoslice.chat_evidence import ChatEvidence, normalize_chat_text
+from src.autoslice.chat_evidence import (
+    ChatEvidence,
+    EntityVerifier,
+    normalize_chat_text,
+)
 from difflib import SequenceMatcher
 
 from src.autoslice.chat_repair import (
@@ -30,6 +36,143 @@ _GUARD_THANK = re.compile(
 )
 GUARD_THANK_WINDOW_AFTER_MS = 300_000
 _GENERIC_GUARD_NAMES = frozenset({"你", "您", "你的", "您的", "大家", "刚刚"})
+
+
+def _cpa_resolve_ambiguous_sender(
+    *,
+    reason_code: str,
+    heard_sender: str,
+    candidate_events: Sequence[ChatEvidence],
+    cue_index: int,
+    cues: Sequence[Any],
+    texts: Sequence[str],
+    entity_verifier: EntityVerifier | None,
+) -> tuple[str | None, dict[str, Any]]:
+    """Let CPA choose one platform sender from a hash-bound closed set."""
+
+    aliases: dict[str, list[ChatEvidence]] = {}
+    for item in candidate_events:
+        alias = _spoken_sender_alias(item.sender)
+        if alias:
+            aliases.setdefault(alias, []).append(item)
+    event_chain = [
+        {
+            "kind": item.kind,
+            "offset_ms": item.offset_ms,
+            "source_event_id": item.source_event_id,
+            "evidence_id": item.evidence_id,
+            "sender": item.sender,
+            "spoken_sender": _spoken_sender_alias(item.sender),
+            "text": item.text,
+        }
+        for item in sorted(
+            candidate_events,
+            key=lambda row: (row.offset_ms, row.source_event_id, row.evidence_id),
+        )
+    ]
+    request: dict[str, Any] = {
+        "schema_version": "chat-sender-verification-request.v1",
+        "kind": "structured_chat_sender_ambiguity",
+        "reason": reason_code,
+        "cue_indexes": [cue_index + 1],
+        "matched_start_ms": cues[cue_index].start_ms,
+        "matched_end_ms": cues[cue_index].end_ms,
+        "context_start_ms": max(0, cues[max(0, cue_index - 3)].start_ms),
+        "context_end_ms": cues[
+            min(len(cues) - 1, cue_index + 3)
+        ].end_ms,
+        "matched_audio_text": heard_sender,
+        "context_before": "\n".join(
+            texts[max(0, cue_index - 3) : cue_index]
+        ),
+        "context_after": "\n".join(
+            texts[cue_index + 1 : min(len(texts), cue_index + 4)]
+        ),
+        "exact_text": json.dumps(
+            event_chain,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        "whole_clip_context": {
+            "adjacent_structured_event_chain": event_chain,
+            "current_cue": texts[cue_index],
+            "heard_sender": heard_sender,
+        },
+        "candidate_entities": [
+            {
+                "candidate_id": f"SENDER_{index}",
+                "canonical": alias,
+                "surfaces": sorted(
+                    {
+                        row.sender
+                        for row in rows
+                        if str(row.sender or "").strip()
+                    }
+                ),
+                "readings": [],
+                "source_event_ids": sorted(
+                    {
+                        str(row.source_event_id or row.evidence_id)
+                        for row in rows
+                    }
+                ),
+            }
+            for index, (alias, rows) in enumerate(
+                sorted(aliases.items()),
+                start=1,
+            )
+        ],
+        "candidate_provenance": {
+            "kind": "platform_sender_closed_set",
+            "mutation_authorized": False,
+            "reason_code": reason_code,
+        },
+    }
+    request["request_sha256"] = hashlib.sha256(
+        json.dumps(
+            request,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    audit: dict[str, Any] = {
+        "schema_version": "chat-sender-cpa-adjudication.v1",
+        "status": "UNRESOLVED",
+        "decision_authority": "CPA_JUDGE",
+        "witness_authority": "EVIDENCE_ONLY",
+        "request": request,
+    }
+    if entity_verifier is None or len(aliases) < 2:
+        audit["reason_code"] = "SENDER_CPA_VERIFIER_UNAVAILABLE"
+        return None, audit
+    try:
+        raw_verdict = entity_verifier(request)
+    except Exception as exc:
+        audit.update(
+            reason_code="SENDER_CPA_PROVIDER_ERROR",
+            error=f"{type(exc).__name__}: {exc}"[:300],
+        )
+        return None, audit
+    verdict = dict(raw_verdict) if isinstance(raw_verdict, Mapping) else {}
+    audit["verdict"] = verdict
+    chosen = str(verdict.get("canonical_entity") or "")
+    if not (
+        verdict.get("schema_version") == "chat-entity-verdict.v1"
+        and verdict.get("request_sha256") == request["request_sha256"]
+        and verdict.get("status") == "RESOLVED"
+        and verdict.get("decision_authority") == "CPA_JUDGE"
+        and chosen in aliases
+    ):
+        audit["reason_code"] = "SENDER_CPA_VERDICT_INVALID"
+        return None, audit
+    audit.update(
+        status="RESOLVED",
+        chosen_sender=chosen,
+        reason_code=str(verdict.get("reason_code") or ""),
+    )
+    return chosen, audit
 
 
 def _thanks_sender_pinyin_ratio(alias: str, heard: str) -> float:
@@ -161,7 +304,11 @@ def audit_named_thanks_record_coverage(
 
 
 def _apply_guard_sender_repairs(
-    evidence: Sequence[ChatEvidence], cues: Sequence[Any], texts: list[str]
+    evidence: Sequence[ChatEvidence],
+    cues: Sequence[Any],
+    texts: list[str],
+    *,
+    entity_verifier: EntityVerifier | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Match GUARD_BUY thanks in a causal 300s window; ambiguity changes nothing."""
     events = [item for item in evidence if item.kind == "guard" and item.sender and item.text]
@@ -189,24 +336,44 @@ def _apply_guard_sender_repairs(
         strong = [row for row in choices if row[2] >= 2]
         pool = strong or choices
         senders = {row[1].lower() for row in pool if row[1]}
+        cpa_sender_adjudication: dict[str, Any] | None = None
         if len(senders) > 1:
-            blocked.append(
-                {
-                    "kind": "guard",
-                    "thank_cue_index": index + 1,
-                    "matched_start_ms": cue.start_ms,
-                    "matched_end_ms": cue.end_ms,
-                    "before": texts[index],
-                    "heard_sender": match["name"],
-                    "guard_name": match["guard"],
-                    "reason_code": "GUARD_BUY_SENDER_AMBIGUOUS",
-                    "candidate_event_ids": sorted(
-                        str(row[0].source_event_id or row[0].evidence_id) for row in pool
-                    ),
-                    "candidate_spoken_senders": sorted(senders),
-                }
+            chosen, cpa_sender_adjudication = _cpa_resolve_ambiguous_sender(
+                reason_code="GUARD_BUY_SENDER_AMBIGUOUS",
+                heard_sender=match["name"],
+                candidate_events=[row[0] for row in pool],
+                cue_index=index,
+                cues=cues,
+                texts=texts,
+                entity_verifier=entity_verifier,
             )
-            continue
+            if chosen is None:
+                blocked.append(
+                    {
+                        "kind": "guard",
+                        "thank_cue_index": index + 1,
+                        "matched_start_ms": cue.start_ms,
+                        "matched_end_ms": cue.end_ms,
+                        "before": texts[index],
+                        "heard_sender": match["name"],
+                        "guard_name": match["guard"],
+                        "reason_code": "GUARD_BUY_SENDER_AMBIGUOUS",
+                        "candidate_event_ids": sorted(
+                            str(row[0].source_event_id or row[0].evidence_id)
+                            for row in pool
+                        ),
+                        "candidate_spoken_senders": sorted(senders),
+                        "cpa_sender_adjudication": (
+                            cpa_sender_adjudication
+                        ),
+                    }
+                )
+                continue
+            pool = [
+                row
+                for row in pool
+                if row[1].casefold() == chosen.casefold()
+            ]
         item, alias, strength, delay = min(pool, key=lambda row: row[3])
         used.add(item.evidence_id)
         if not alias or normalize_chat_text(alias) == normalize_chat_text(match["name"]):
@@ -231,6 +398,15 @@ def _apply_guard_sender_repairs(
                 "before": before,
                 "after": after,
                 "alignment_basis": "guard-buy-plus-thank-action-anchor.v1",
+                **(
+                    {
+                        "cpa_sender_adjudication": (
+                            cpa_sender_adjudication
+                        )
+                    }
+                    if cpa_sender_adjudication is not None
+                    else {}
+                ),
             }
         )
     return repairs, blocked
@@ -242,6 +418,7 @@ def _apply_sc_sender_repairs(
     evidence: Sequence[ChatEvidence],
     cues: Sequence[Any],
     texts: list[str],
+    entity_verifier: EntityVerifier | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Repair only the thank-name slot bound to an already matched SC body."""
 
@@ -287,27 +464,79 @@ def _apply_sc_sender_repairs(
             for other in same_body_events
             if _spoken_sender_alias(other.sender)
         }
+        cpa_sender_adjudication: dict[str, Any] | None = None
         if len(event_identities) > 1 and len(spoken_senders) > 1:
-            sender_verdict_required.append(
-                {
-                    "evidence_id": item.evidence_id,
-                    "source_event_id": item.source_event_id,
-                    "thank_cue_index": index + 1,
-                    "cue_indexes": [
-                        index + 1
-                        for index in range(
-                            proposal["start"],
-                            proposal["start"] + proposal["count"],
-                        )
-                    ],
-                    "matched_start_ms": cues[proposal["start"]].start_ms,
-                    "matched_end_ms": cues[proposal["start"] + proposal["count"] - 1].end_ms,
-                    "reason_code": "DUPLICATE_SC_BODY_SENDER_AMBIGUOUS",
-                    "candidate_event_ids": sorted(event_identities),
-                    "candidate_spoken_senders": sorted(spoken_senders),
-                }
+            chosen, cpa_sender_adjudication = _cpa_resolve_ambiguous_sender(
+                reason_code="DUPLICATE_SC_BODY_SENDER_AMBIGUOUS",
+                heard_sender=thanks_name_slot(texts[index])[0],
+                candidate_events=same_body_events,
+                cue_index=index,
+                cues=cues,
+                texts=texts,
+                entity_verifier=entity_verifier,
             )
-            continue
+            if chosen is None:
+                sender_verdict_required.append(
+                    {
+                        "evidence_id": item.evidence_id,
+                        "source_event_id": item.source_event_id,
+                        "thank_cue_index": index + 1,
+                        "cue_indexes": [
+                            index + 1
+                            for index in range(
+                                proposal["start"],
+                                proposal["start"] + proposal["count"],
+                            )
+                        ],
+                        "matched_start_ms": cues[proposal["start"]].start_ms,
+                        "matched_end_ms": cues[
+                            proposal["start"] + proposal["count"] - 1
+                        ].end_ms,
+                        "reason_code": (
+                            "DUPLICATE_SC_BODY_SENDER_AMBIGUOUS"
+                        ),
+                        "candidate_event_ids": sorted(event_identities),
+                        "candidate_spoken_senders": sorted(spoken_senders),
+                        "cpa_sender_adjudication": (
+                            cpa_sender_adjudication
+                        ),
+                    }
+                )
+                continue
+            chosen_items = [
+                other
+                for other in same_body_events
+                if _spoken_sender_alias(other.sender).casefold()
+                == chosen.casefold()
+            ]
+            item = min(
+                chosen_items,
+                key=lambda other: (
+                    abs(cues[proposal["start"]].start_ms - other.offset_ms),
+                    other.evidence_id,
+                ),
+            )
+            repaired = (
+                _repair_sc_action_sender(texts[index], item.sender)
+                if alignment_basis
+                == "matched-superchat-body-plus-action-anchor.v1"
+                else _repair_sc_sender(texts[index], item.sender)
+            )
+            if repaired is None:
+                sender_verdict_required.append(
+                    {
+                        "evidence_id": item.evidence_id,
+                        "source_event_id": item.source_event_id,
+                        "thank_cue_index": index + 1,
+                        "reason_code": (
+                            "CPA_CHOSEN_SENDER_SLOT_REPAIR_INVALID"
+                        ),
+                        "cpa_sender_adjudication": (
+                            cpa_sender_adjudication
+                        ),
+                    }
+                )
+                continue
         # The exact matched SC body identifies one concrete platform event;
         # its sender is direct authority for the narrow preceding name slot.
         before_text = texts[index]
@@ -324,6 +553,15 @@ def _apply_sc_sender_repairs(
                 "before": before_text,
                 "after": repaired,
                 "alignment_basis": alignment_basis,
+                **(
+                    {
+                        "cpa_sender_adjudication": (
+                            cpa_sender_adjudication
+                        )
+                    }
+                    if cpa_sender_adjudication is not None
+                    else {}
+                ),
             }
         )
     return sender_repairs, sender_verdict_required
@@ -423,5 +661,3 @@ def _apply_time_anchored_thanks_sender_repairs(
             }
         )
     return repairs, verdict_required
-
-
