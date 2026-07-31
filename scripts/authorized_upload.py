@@ -226,6 +226,250 @@ def _find_review_item(review_manifest: dict, root: Path, video: Path) -> dict | 
     return None
 
 
+VERIFIED_SONG_REVIEW_SCHEMA = "lidousha-song-review-manifest.v1"
+VERIFIED_SONG_DELIVERY_SCHEMA = "verified-song-delivery.v1"
+VERIFIED_SONG_REVIEW_PATH_KEYS = {
+    "video": ("video", "media"),
+    "subtitle": ("subtitle_srt", "subtitle"),
+    "record": ("record", "record_json"),
+    "publish": ("publish_json", "publish"),
+    "cover": ("cover",),
+    "cover_title_mask": ("cover_title_mask",),
+    "cover_pre_overlay": ("cover_pre_overlay",),
+    "cover_route_background": ("cover_route_background",),
+    "lyrics_alignment_report": ("lyrics_alignment_report",),
+    "host_vocal_proof": ("host_vocal_proof",),
+    "recut_manifest": ("recut_manifest",),
+    "delivery_manifest": ("delivery_manifest",),
+}
+
+
+def _first_item_value(item: dict, keys: tuple[str, ...]) -> object:
+    for key in keys:
+        value = item.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _strict_verified_song_package(
+    *,
+    root: Path,
+    review: dict,
+    review_item: dict,
+    record: dict,
+    audit: dict,
+) -> bool:
+    """Recognize only the canonical verified-Song authority envelope.
+
+    This is deliberately stronger than a title/classification check.  The
+    package must be the Song builder's no-upload schema, carry every portable
+    Song proof, bind those exact bytes in the current package audit, and retain
+    the manifest-last verified delivery authority.
+    """
+
+    candidate_id = str(review_item.get("candidate_id") or "")
+    delivery_authority = review.get("delivery_authority")
+    if (
+        review.get("schema_version") != VERIFIED_SONG_REVIEW_SCHEMA
+        or review.get("generated_by")
+        != "build_lidousha_song_review_manifest.v1"
+        or review.get("status")
+        != "finished_review_package_no_upload_pending_human_review"
+        or review.get("classification") != "Song"
+        or review.get("candidate_id") != candidate_id
+        or review.get("story_contract_required") is not False
+        or review.get("run_mode") != "PRODUCTION_REVIEW"
+        or review.get("upload_allowed") is not False
+        or review_item.get("classification") != "Song"
+        or review_item.get("kind") != "song"
+        or not candidate_id
+        or record.get("delivery_candidate_id") != candidate_id
+        or not isinstance(delivery_authority, dict)
+        or delivery_authority.get("schema_version")
+        != VERIFIED_SONG_DELIVERY_SCHEMA
+        or delivery_authority.get("upload_enabled") is not False
+        or audit.get("schema_version") != AUDIT_SCHEMA_VERSION
+        or audit.get("policy_epoch") != AUDIT_POLICY_EPOCH
+        or audit.get("passed") is not True
+        or not _zero_blocking_issues(audit)
+        or Path(str(audit.get("root") or "")).resolve() != root
+    ):
+        return False
+
+    audited_inputs = audit.get("audited_inputs")
+    if not isinstance(audited_inputs, list):
+        return False
+    audited_hashes = {
+        str(row.get("path")): str(row.get("sha256"))
+        for row in audited_inputs
+        if isinstance(row, dict)
+        and isinstance(row.get("path"), str)
+        and isinstance(row.get("sha256"), str)
+    }
+    review_path = root / "review_manifest.json"
+    if (
+        not review_path.is_file()
+        or audited_hashes.get("review_manifest.json")
+        != sha256_file(review_path)
+    ):
+        return False
+
+    resolved_paths: dict[str, Path] = {}
+    for role, keys in VERIFIED_SONG_REVIEW_PATH_KEYS.items():
+        path = _resolved_manifest_item_path(
+            root, _first_item_value(review_item, keys)
+        )
+        if (
+            path is None
+            or not path.is_file()
+            or not _is_within(path, root)
+        ):
+            return False
+        relative = path.relative_to(root).as_posix()
+        if audited_hashes.get(relative) != sha256_file(path):
+            return False
+        resolved_paths[role] = path
+
+    delivery_path = resolved_paths["delivery_manifest"]
+    completion = delivery_authority.get("song_completion_evidence")
+    if (
+        delivery_authority.get("manifest") != delivery_path.name
+        or _strip_sha_prefix(delivery_authority.get("manifest_sha256"))
+        != sha256_file(delivery_path)
+        or not isinstance(completion, dict)
+        or completion.get("ready") is not True
+        or completion.get("reason_codes") != []
+        or completion.get("song_boundary_status") != "FULL_SONG_READY"
+        or completion.get("lyrics_alignment_status") != "READY"
+        or completion.get("host_vocal_status") != "READY"
+        or completion.get("live_performance_status") != "READY"
+        or completion.get("live_performance_mode")
+        != "LIVE_STREAMER_SINGING"
+        or completion.get("joint_singing_decision")
+        != "VERIFIED_LIDOUSHA_SINGING"
+        or completion.get("subtitle_source")
+        != "external_lrc_global_shift"
+    ):
+        return False
+
+    completion_hashes = {
+        "video": completion.get("burned_preview_sha256"),
+        "lyrics_alignment_report": completion.get(
+            "alignment_report_sha256"
+        ),
+        "host_vocal_proof": completion.get("host_vocal_proof_sha256"),
+        "recut_manifest": completion.get("recut_manifest_sha256"),
+    }
+    if any(
+        _strip_sha_prefix(completion_hashes[role])
+        != sha256_file(resolved_paths[role])
+        for role in completion_hashes
+    ):
+        return False
+
+    song_problems: list[str] = []
+    alignment = _load_json_object(
+        resolved_paths["lyrics_alignment_report"],
+        "verified Song lyrics alignment report",
+        song_problems,
+    )
+    host_proof = _load_json_object(
+        resolved_paths["host_vocal_proof"],
+        "verified Song host-vocal proof",
+        song_problems,
+    )
+    recut = _load_json_object(
+        resolved_paths["recut_manifest"],
+        "verified Song recut manifest",
+        song_problems,
+    )
+    output_binding = recut.get("verified_output_binding")
+    output_artifacts = (
+        output_binding.get("artifacts")
+        if isinstance(output_binding, dict)
+        else None
+    )
+    output_proofs = (
+        output_binding.get("proofs")
+        if isinstance(output_binding, dict)
+        else None
+    )
+    if (
+        song_problems
+        or alignment.get("schema_version")
+        != "lyrics-alignment-report.v1"
+        or host_proof.get("schema_version") != "host-vocal-proof.v3"
+        or host_proof.get("status") != "READY"
+        or host_proof.get("decision")
+        != "LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS"
+        or recut.get("schema_version") != "materialized-recut.v2"
+        or recut.get("status") != "MATERIALIZED"
+        or recut.get("reason_codes") != []
+        or recut.get("subtitle_source")
+        != "external_lrc_global_shift"
+        or not isinstance(output_binding, dict)
+        or output_binding.get("schema_version")
+        != "verified-song-output-binding.v1"
+        or not isinstance(output_artifacts, dict)
+        or not isinstance(output_proofs, dict)
+        or _strip_sha_prefix(
+            output_artifacts.get("burned_media_sha256")
+        )
+        != sha256_file(resolved_paths["video"])
+        or _strip_sha_prefix(output_artifacts.get("subtitle_sha256"))
+        != sha256_file(resolved_paths["subtitle"])
+        or _strip_sha_prefix(
+            output_proofs.get("lyrics_alignment_report_sha256")
+        )
+        != sha256_file(resolved_paths["lyrics_alignment_report"])
+        or _strip_sha_prefix(
+            output_proofs.get("host_vocal_proof_sha256")
+        )
+        != sha256_file(resolved_paths["host_vocal_proof"])
+    ):
+        return False
+
+    delivery_problems: list[str] = []
+    delivery = _load_json_object(
+        delivery_path, "verified Song delivery manifest", delivery_problems
+    )
+    delivery_artifacts = delivery.get("artifacts")
+    if (
+        delivery_problems
+        or delivery.get("schema_version")
+        != VERIFIED_SONG_DELIVERY_SCHEMA
+        or delivery.get("status") != "DELIVERED_NO_UPLOAD"
+        or delivery.get("candidate_id") != candidate_id
+        or delivery.get("upload_enabled") is not False
+        or not isinstance(delivery_artifacts, dict)
+        or not set(VERIFIED_SONG_REVIEW_PATH_KEYS).issubset(
+            set(delivery_artifacts) | {"delivery_manifest", "record"}
+        )
+        or "active_record" not in delivery_artifacts
+    ):
+        return False
+    item_hashes = review_item.get("sha256")
+    if not isinstance(item_hashes, dict):
+        return False
+    for review_role, path in resolved_paths.items():
+        if review_role == "delivery_manifest":
+            continue
+        delivery_role = (
+            "active_record" if review_role == "record" else review_role
+        )
+        entry = delivery_artifacts.get(delivery_role)
+        actual = sha256_file(path)
+        if (
+            not isinstance(entry, dict)
+            or _strip_sha_prefix(entry.get("sha256")) != actual
+            or _strip_sha_prefix(entry.get("source_sha256")) != actual
+            or _strip_sha_prefix(item_hashes.get(delivery_role)) != actual
+        ):
+            return False
+    return True
+
+
 def _record_artifact_hash_problems(
     record: dict,
     *,
@@ -233,6 +477,7 @@ def _record_artifact_hash_problems(
     cover: Path,
     subtitle: Path,
     title: str,
+    story_contract_required: bool = True,
 ) -> list[str]:
     problems: list[str] = []
     artifact_hashes = record.get("artifact_hashes")
@@ -265,16 +510,17 @@ def _record_artifact_hash_problems(
         problems.append(
             f"record publish title mismatch: record={record_title!r} manifest={title!r}"
         )
-    story_contract = record.get("story_contract")
-    if not isinstance(story_contract, dict):
-        problems.append("record.json has no story_contract object")
-    else:
-        if not str(story_contract.get("schema_version") or "").strip():
-            problems.append("record story_contract has no schema_version")
-        if not str(story_contract.get("candidate_id") or "").strip():
-            problems.append("record story_contract has no candidate_id")
-        if not str(story_contract.get("transcript_sha256") or "").strip():
-            problems.append("record story_contract has no transcript_sha256")
+    if story_contract_required:
+        story_contract = record.get("story_contract")
+        if not isinstance(story_contract, dict):
+            problems.append("record.json has no story_contract object")
+        else:
+            if not str(story_contract.get("schema_version") or "").strip():
+                problems.append("record story_contract has no schema_version")
+            if not str(story_contract.get("candidate_id") or "").strip():
+                problems.append("record story_contract has no candidate_id")
+            if not str(story_contract.get("transcript_sha256") or "").strip():
+                problems.append("record story_contract has no transcript_sha256")
     return problems
 
 
@@ -408,6 +654,16 @@ def _validate_v3_package_attestation(
             )
         record = _load_json_object(record_path, "record", problems)
         problems.extend(repair_binding.recovery_publication_package_problems(manifest, record, review_item))
+        verified_song = bool(
+            isinstance(review_item, dict)
+            and _strict_verified_song_package(
+                root=root,
+                review=review,
+                review_item=review_item,
+                record=record,
+                audit=audit,
+            )
+        )
         problems.extend(
             _record_artifact_hash_problems(
                 record,
@@ -415,6 +671,7 @@ def _validate_v3_package_attestation(
                 cover=cover,
                 subtitle=subtitle_path,
                 title=str(manifest.get("title") or ""),
+                story_contract_required=not verified_song,
             )
         )
         record_tags = (record.get("upload_tags") or {}).get("final_tags")

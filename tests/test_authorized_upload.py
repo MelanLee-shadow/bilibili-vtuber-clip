@@ -16,6 +16,7 @@ from src.autoslice import final_human_review as fhr
 
 TEST_TAGS = ["李豆沙", "虚拟主播", "直播切片"]
 VALID_TITLE = "【李豆沙】这是一个足够长度的测试标题"
+VALID_SONG_TITLE = "【李豆沙】豆沙歌，《海海海》"
 RECOVERY_BVID = "BV1Mug46EEQz"
 TEST_PUBLICATION_AUTHORITY = {
     "schema_version": "test-recovery-publication-authority.v1",
@@ -248,6 +249,253 @@ def _write_v3_package(
         encoding="utf-8",
     )
     return audit
+
+
+def _write_verified_song_package_without_story_contract(
+    root,
+):
+    root.mkdir(parents=True, exist_ok=True)
+    stem = "verified-song"
+    paths = {
+        "video": root / f"{stem}.mp4",
+        "subtitle": root / f"{stem}.srt",
+        "record": root / f"{stem}.record.json",
+        "publish": root / f"{stem}.publish.json",
+        "cover": root / f"{stem}.cover.png",
+        "cover_title_mask": root / f"{stem}.cover.title-mask.png",
+        "cover_pre_overlay": root / f"{stem}.cover.pre-overlay.png",
+        "cover_route_background": (
+            root / f"{stem}.cover.route-background.png"
+        ),
+        "lyrics_alignment_report": (
+            root / f"{stem}.lyrics-alignment-report.json"
+        ),
+        "host_vocal_proof": root / f"{stem}.host-vocal-proof.json",
+        "recut_manifest": root / f"{stem}.recut.manifest.json",
+        "delivery_manifest": root / f"{stem}.delivery.manifest.json",
+    }
+    paths["video"].write_bytes(b"verified-song-video")
+    paths["subtitle"].write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n不能停止我对你的爱\n",
+        encoding="utf-8",
+    )
+    for role in (
+        "cover",
+        "cover_title_mask",
+        "cover_pre_overlay",
+        "cover_route_background",
+    ):
+        paths[role].write_bytes(role.encode("utf-8"))
+    paths["lyrics_alignment_report"].write_text(
+        json.dumps(
+            {"schema_version": "lyrics-alignment-report.v1"},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    paths["host_vocal_proof"].write_text(
+        json.dumps(
+            {
+                "schema_version": "host-vocal-proof.v3",
+                "status": "READY",
+                "decision": (
+                    "LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS"
+                ),
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    paths["recut_manifest"].write_text(
+        json.dumps(
+            {
+                "schema_version": "materialized-recut.v2",
+                "status": "MATERIALIZED",
+                "subtitle_source": "external_lrc_global_shift",
+                "reason_codes": [],
+                "verified_output_binding": {
+                    "schema_version": (
+                        "verified-song-output-binding.v1"
+                    ),
+                    "artifacts": {
+                        "burned_media_sha256": (
+                            "sha256:" + au.sha256_file(paths["video"])
+                        ),
+                        "subtitle_sha256": (
+                            "sha256:" + au.sha256_file(paths["subtitle"])
+                        ),
+                    },
+                    "proofs": {
+                        "lyrics_alignment_report_sha256": (
+                            "sha256:"
+                            + au.sha256_file(
+                                paths["lyrics_alignment_report"]
+                            )
+                        ),
+                        "host_vocal_proof_sha256": (
+                            "sha256:"
+                            + au.sha256_file(paths["host_vocal_proof"])
+                        ),
+                    },
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    artifact_hashes = {
+        "burned_video_sha256": "sha256:"
+        + au.sha256_file(paths["video"]),
+        "cover_sha256": "sha256:" + au.sha256_file(paths["cover"]),
+        "subtitle_sha256": "sha256:"
+        + au.sha256_file(paths["subtitle"]),
+    }
+    tags = ["李豆沙", "虚拟主播", "直播切片", "唱歌"]
+    record = {
+        "delivery_candidate_id": "song_verified",
+        "artifact_hashes": artifact_hashes,
+        "publish_staging": {"title": VALID_SONG_TITLE},
+        "upload_tags": {
+            "engine": "suggest-upload-tags.v1",
+            "status": "OK_NO_LLM",
+            "final_tags": tags,
+        },
+    }
+    paths["record"].write_text(
+        json.dumps(record, ensure_ascii=False), encoding="utf-8"
+    )
+    paths["publish"].write_text(
+        json.dumps(
+            {
+                "schema_version": "shadow-publish-draft.v1",
+                "title": VALID_SONG_TITLE,
+                "upload_enabled": False,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    delivery_roles = {
+        role: {
+            "path": str(path),
+            "sha256": "sha256:" + au.sha256_file(path),
+            "source_path": str(path),
+            "source_sha256": "sha256:" + au.sha256_file(path),
+        }
+        for role, path in paths.items()
+        if role != "delivery_manifest"
+    }
+    delivery_roles["active_record"] = delivery_roles.pop("record")
+    paths["delivery_manifest"].write_text(
+        json.dumps(
+            {
+                "schema_version": "verified-song-delivery.v1",
+                "status": "DELIVERED_NO_UPLOAD",
+                "candidate_id": "song_verified",
+                "upload_enabled": False,
+                "artifacts": delivery_roles,
+                "absent_artifacts": {},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    item = {
+        "candidate_id": "song_verified",
+        "stem": stem,
+        "kind": "song",
+        "classification": "Song",
+        "title": VALID_SONG_TITLE,
+        "video": paths["video"].name,
+        "subtitle_srt": paths["subtitle"].name,
+        "record": paths["record"].name,
+        "publish_json": paths["publish"].name,
+        "cover": paths["cover"].name,
+        "cover_title_mask": paths["cover_title_mask"].name,
+        "cover_pre_overlay": paths["cover_pre_overlay"].name,
+        "cover_route_background": paths[
+            "cover_route_background"
+        ].name,
+        "lyrics_alignment_report": paths[
+            "lyrics_alignment_report"
+        ].name,
+        "host_vocal_proof": paths["host_vocal_proof"].name,
+        "recut_manifest": paths["recut_manifest"].name,
+        "delivery_manifest": paths["delivery_manifest"].name,
+        "sha256": {
+            (
+                "active_record" if role == "record" else role
+            ): "sha256:" + au.sha256_file(path)
+            for role, path in paths.items()
+            if role != "delivery_manifest"
+        },
+    }
+    review = {
+        "schema_version": "lidousha-song-review-manifest.v1",
+        "generated_by": "build_lidousha_song_review_manifest.v1",
+        "status": (
+            "finished_review_package_no_upload_pending_human_review"
+        ),
+        "candidate_id": "song_verified",
+        "classification": "Song",
+        "story_contract_required": False,
+        "run_mode": "PRODUCTION_REVIEW",
+        "upload_allowed": False,
+        "delivery_authority": {
+            "schema_version": "verified-song-delivery.v1",
+            "manifest": paths["delivery_manifest"].name,
+            "manifest_sha256": "sha256:"
+            + au.sha256_file(paths["delivery_manifest"]),
+            "song_completion_evidence": {
+                "ready": True,
+                "reason_codes": [],
+                "song_boundary_status": "FULL_SONG_READY",
+                "lyrics_alignment_status": "READY",
+                "host_vocal_status": "READY",
+                "live_performance_status": "READY",
+                "live_performance_mode": "LIVE_STREAMER_SINGING",
+                "joint_singing_decision": (
+                    "VERIFIED_LIDOUSHA_SINGING"
+                ),
+                "subtitle_source": "external_lrc_global_shift",
+                "burned_preview_sha256": (
+                    "sha256:" + au.sha256_file(paths["video"])
+                ),
+                "alignment_report_sha256": (
+                    "sha256:"
+                    + au.sha256_file(paths["lyrics_alignment_report"])
+                ),
+                "host_vocal_proof_sha256": (
+                    "sha256:"
+                    + au.sha256_file(paths["host_vocal_proof"])
+                ),
+                "recut_manifest_sha256": (
+                    "sha256:"
+                    + au.sha256_file(paths["recut_manifest"])
+                ),
+            },
+            "upload_enabled": False,
+        },
+        "items": [item],
+    }
+    review_path = root / "review_manifest.json"
+    review_path.write_text(
+        json.dumps(review, ensure_ascii=False), encoding="utf-8"
+    )
+    audit_payload = _passing_package_audit(root)
+    audit_payload["audited_inputs"] = [
+        {
+            "path": path.relative_to(root).as_posix(),
+            "sha256": au.sha256_file(path),
+            "bytes": path.stat().st_size,
+        }
+        for path in [review_path, *paths.values()]
+    ]
+    audit_path = root / f"{stem}.package_audit.json"
+    audit_path.write_text(
+        json.dumps(audit_payload, ensure_ascii=False), encoding="utf-8"
+    )
+    return paths, audit_path, audit_payload, tags
 
 
 def _write_final_human_review(
@@ -518,6 +766,136 @@ def _mk(tmp_path, title=VALID_TITLE, quote="可以上传了"):
     ])
     assert rc == 0
     return video, cover, manifest
+
+
+def test_make_and_verify_accept_verified_song_without_story_contract(
+    tmp_path, monkeypatch
+):
+    paths, audit_path, audit_payload, tags = (
+        _write_verified_song_package_without_story_contract(tmp_path)
+    )
+    monkeypatch.setattr(
+        au, "audit_package", lambda _root: dict(audit_payload)
+    )
+    manifest_path = tmp_path / "verified-song.upload_manifest.json"
+
+    assert au.main(
+        [
+            "make-manifest",
+            "--video",
+            str(paths["video"]),
+            "--cover",
+            str(paths["cover"]),
+            "--package-audit",
+            str(audit_path),
+            "--title",
+            VALID_SONG_TITLE,
+            "--quote",
+            "可以上传",
+            "--out",
+            str(manifest_path),
+        ]
+    ) == 0
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["tags"] == tags
+    assert manifest["season"]["lane"] == "song"
+    assert "story_contract" not in json.loads(
+        paths["record"].read_text(encoding="utf-8")
+    )
+    assert au.main(
+        ["verify", "--manifest", str(manifest_path)]
+    ) == 0
+
+
+def test_talk_without_story_contract_remains_fail_closed(
+    tmp_path, monkeypatch, capsys
+):
+    video = tmp_path / "talk.mp4"
+    cover = tmp_path / "talk.cover.png"
+    video.write_bytes(b"talk-video")
+    cover.write_bytes(b"talk-cover")
+    audit_path = _write_v3_package(
+        video, cover, VALID_TITLE, TEST_TAGS
+    )
+    record_path = tmp_path / "talk.record.json"
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record.pop("story_contract")
+    record_path.write_text(
+        json.dumps(record, ensure_ascii=False), encoding="utf-8"
+    )
+    audit_payload = _passing_package_audit(tmp_path)
+    audit_path.write_text(
+        json.dumps(audit_payload, ensure_ascii=False), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        au, "audit_package", lambda _root: dict(audit_payload)
+    )
+
+    assert au.main(
+        [
+            "make-manifest",
+            "--video",
+            str(video),
+            "--cover",
+            str(cover),
+            "--package-audit",
+            str(audit_path),
+            "--title",
+            VALID_TITLE,
+            "--quote",
+            "可以上传",
+            "--out",
+            str(tmp_path / "talk.upload_manifest.json"),
+        ]
+    ) == 2
+    assert "record.json has no story_contract object" in (
+        capsys.readouterr().err
+    )
+
+
+def test_song_label_alone_cannot_bypass_story_contract(
+    tmp_path, monkeypatch, capsys
+):
+    paths, audit_path, audit_payload, _tags = (
+        _write_verified_song_package_without_story_contract(tmp_path)
+    )
+    review_path = tmp_path / "review_manifest.json"
+    review = json.loads(review_path.read_text(encoding="utf-8"))
+    review["generated_by"] = "self-declared-song"
+    review_path.write_text(
+        json.dumps(review, ensure_ascii=False), encoding="utf-8"
+    )
+    for row in audit_payload["audited_inputs"]:
+        if row["path"] == "review_manifest.json":
+            row["sha256"] = au.sha256_file(review_path)
+            row["bytes"] = review_path.stat().st_size
+    audit_path.write_text(
+        json.dumps(audit_payload, ensure_ascii=False), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        au, "audit_package", lambda _root: dict(audit_payload)
+    )
+
+    assert au.main(
+        [
+            "make-manifest",
+            "--video",
+            str(paths["video"]),
+            "--cover",
+            str(paths["cover"]),
+            "--package-audit",
+            str(audit_path),
+            "--title",
+            VALID_SONG_TITLE,
+            "--quote",
+            "可以上传",
+            "--out",
+            str(tmp_path / "spoofed-song.upload_manifest.json"),
+        ]
+    ) == 2
+    assert "record.json has no story_contract object" in (
+        capsys.readouterr().err
+    )
 
 
 def _ledger_rows(path):
