@@ -1,6 +1,7 @@
 # Current handoff
 
-Updated: 2026-07-30T20:15:00-04:00 by Codex root.
+Updated: 2026-07-31T14:45:00-04:00 by Claude（从 Codex root 接手；Ivan 于 07-31 14:0x
+停止该 Codex 任务并指示 Claude 接手）。
 
 本文件只记录会影响下一次操作的 live 状态。流水线规则只读
 [`docs/pipeline/`](pipeline/README.md)。`review_ready`、本地 commit、旧 PID 或旧 handoff
@@ -16,12 +17,20 @@ receipt。
 ## Runtime authority
 
 - 远端部署：`free:/opt/bilive/autoslice/repo/DEPLOYED_COMMIT` =
-  `bff2707a536c2808f3450c847aa363d0621d89a7`（2026-07-30T23:17:56Z）。
+  `a4e68048c548828707031b2b78671771ed373c82`（2026-07-31T18:03:48Z）。
   `DISABLED` 不存在；正式 runner cron 为每 10 分钟一次。
-- 本地 `main` 在 `bff2707` 之后只有封面/发布证据提交 `f2ea7eb`、`f38bbad`
-  及本 handoff 更新，没有未部署的生产代码差异。
-- 2026-07-31T00:10Z 正式 runner 正在处理 07-26 歌切；不能把某个候选 fail-closed
-  解释成整条流水线停止。
+- **本地 `main` 领先部署一个 commit：`f616bbf`（deploy 全量测试门 + 架构债务账本），
+  尚未部署。** 部署它之后，`scripts/deploy_free_autoslice.sh` 会在 dirty-tree 拒绝之后、
+  任何远端动作之前跑 `pytest -q` 全量，红了拒绝部署；**无 marker 排除、无 bypass 开关**。
+  当前全量为 `2910 passed / 0 failed / 0 skipped`（`f616bbf`，干净树复验）。
+- 架构债务账本冻结于 2026-07-31：20 个超预算函数 / 12 个超预算模块
+  （`tests/test_runtime_architecture.py`）。成员只减不增、逐项行数只降不升；
+  7/31 之后新增任何一行必须带 Ivan 的批准出处。部署时会打印当前数字。
+  最重的一项 `final_review_auditor.py:2030 adjudicate_context_finding` 764 行，
+  留作单独 bounded 拆解 task。
+- 2026-07-31T17:20Z 起 07-25 / 07-26 / 07-29 三天均已 `published` / 
+  `published_with_failures`，pending talk/song 全空；`live=False` 无新直播。
+  因此 `baaf250` 之后**没有任何新的 route decision 数据**，其对封面路线分布的影响未实测。
 
 ## 已完成
 
@@ -81,6 +90,34 @@ receipt。
 
 没有需要 Ivan 补充的外部 blocker。
 
+- **cover-only 新 lane 零生产执行（2026-07-31，最高优先）**：`28b3576` 新建
+  `src/autoslice/same_bv_cover_repair.py`（1063 行状态机）并同时把旧路
+  `scripts/bili_cover_edit.py` 改成无条件拒绝。全仓库没有
+  `same_bv_cover_repair_ledger.jsonl`、没有 plan、没有 receipt——**该 lane 从未真实执行过**。
+  网络层复用已验证的 `BilibiliRepairAdapter`，未验证的是 plan/journal/transition 状态机。
+  在它完成一次真实执行验收前，如遇封面事故：升级 Ivan 裁决，**不许临场解除
+  `bili_cover_edit.py` 的 fail-close**。`cover-repair-plan --dry-run` 是真实只读四面观察
+  （`docs/pipeline/90-publish.md:152`），可安全用于冒烟，但会占 `upload.lock`。
+- **封面路由：标定分数路由已被整体退役（2026-07-31 调查确认）**。
+  `publish_staging.py:1961-1970` 在 composition witness 存在且未建议重绘时**无条件返回截图**，
+  `:1939` 建议重绘时直接重绘；witness 生成条件 `:1573` `enforce_final_host_identity` 在正常
+  talk 恒真。因此 `:1971-2035` 的全套阈值（4.5 / 2.6 / 0.50 弥散帽 / camera window）
+  **在有 witness 时不可达**。7/24-7/29 实测（witness 上线前）：24 条里 cpa_redraw 14
+  （58%，标定基线为 29%），11 条走同一条 `motion without confident cover subject`；
+  拆分为几何 flag 自身 False 5 条、弥散超帽 5 条、flag True 但超帽 0.027 被否 1 条
+  （`auto_202004_553_831`，score 9.0027 / disp 0.5271）。`subject_confident` 探测器在
+  23 条有效样本里 70% 给 False。修法未落地。
+- **封面文案链有一道被绕过的强制门**：`auto_192000_909_1014` 的 7/30 cover-only 修复
+  `cover_punch: []`，且证据目录内**没有任何 `lidousha-cover-punch-semantic-review.v1` 回执**
+  ——选择器根本没被调用，然后 fail-open 回退整段 `cover_text` 并被 renderer 静默换行成
+  3 行（`"白色奶龙"` / `表情小李` / `拒绝花钱`），把「观众想让新3D永久保留」整段丢失。
+  `docs/pipeline/70-cover.md:44-45` 明令禁止"回执为空或回执失败即放行长 cover_text"。
+  该稿仍公开（`BV1s7326qEc9`，CID 未变）。修复以流水线为单位，不做单切片手写文案。
+- `physical_text_line_count ∈ {1,2}`（`scripts/authorized_upload.py:889`、
+  `docs/pipeline/90-publish.md:103`、`70-cover.md:55`）由 `9563266`/`061f8ed` 于 2026-07-31
+  引入，**无 Ivan 裁定**，且被证明是错度量（同一张图 Ivan 按阅读单元数 2、render spec 数 3；
+  好断法与烂断法在该门下同样通过）。待退役为"渲染行与 CPA `final_punch` 逐行相等"。
+
 - 歌切 active draft 缺失、positive LRC boundary proof 缺失、provider transient、
   subtitle/chat authority 失败都属于流水线/操作层 blocker；应保持 typed retry 或修复
   authority，不得停下来等待用户，也不得为了“变绿”绕过发布门。
@@ -92,13 +129,25 @@ receipt。
 
 ## 下一步
 
-1. 让当前 07-26 tick 与后续 cron 继续；每次只按 fresh state、runner log 和最终 artifact
-   回执判断进度。
-2. 修复 `song_192000_1321` 的 active publish draft authority；继续要求 07-26 歌切取得
-   positive LRC boundary proof，不能把“识别出歌曲”当成边界真值。
-3. 修复 `auto_152944_1411_1463` 的 screenshot-preserving cover route，以及
-   `auto_225056_814_887` 的 subtitle/chat authority。
-4. 后续封面继续执行最终实图检查：多人联动必须确认李豆沙主体；特殊梗必须绑定正确参考形象；
+上一版的第 1–3 项（07-26 tick、`song_192000_1321` draft authority、
+`auto_152944_1411_1463` cover route 与 `auto_225056_814_887` 的 subtitle/chat authority）
+均已闭环，三天全部 published，不要重复处理。当前队列：
+
+1. 部署 `f616bbf`，让部署测试门生效。这是后续所有改动的护航前提。
+2. **封面文案链流水线修复**（不做单切片手写文案，Ivan 07-31 明确否决该方向）：封堵空 punch
+   fail-open、renderer 静默换行改硬错误、引号左截断拒绝、上传闸与 cover-only lane 强制
+   `rendered lines == CPA final_punch` 逐行相等、退役整数行数门。
+3. **封面路由修复**：把 composition witness 的 bbox 从"路由法官"降回"置信输入"
+   （删 `publish_staging.py:1961-1970` 的无条件 return），让标定分数恢复决定权；
+   `subject_confident` 由前置条件改为降级信号；弥散帽收射程。验证走离线重放
+   （`_decide_cover_treatment` 对已持久化的 route_decision 输入是纯函数，24 条样本可回放）
+   加 3–5 条高分被否切片的像素级并排试点，**分布重放不能冒充质量验证**。
+4. `auto_192000_909_1014` / `BV1s7326qEc9` 的封面重做：作为第 2、3 项修好后
+   **cover-only lane 的首次真实执行验收**，由修好的流水线自动产出文案，不许抢跑。
+5. `scripts/audit_lidousha_review_package.py:_audit_policy_fingerprint()` 解耦：它把 26 个
+   源码模块的原始字节哈希进 `policy_fingerprint`，任何一行门代码修复都作废全部已冻结
+   audit 并触发全量重审。改为显式 policy 版本号 + 脚本化迁移。
+6. 后续封面继续执行最终实图检查：多人联动必须确认李豆沙主体；特殊梗必须绑定正确参考形象；
    CPA vision 为首选，公开 CDN 回下载需与目标图 hash 一致。
 
 ## 固化规则
@@ -107,5 +156,8 @@ receipt。
   背后通病，不因这条规则再次整片重跑。
 - 大部分 glossary 专名允许按期望收益机械替换；专名之间平等，两个已注册专名冲突时由 CPA
   结合文字上下文裁决。
-- 已发布稿只走 `scripts/authorized_upload.py repair-*`；封面单独修复只走
-  `scripts/bili_cover_edit.py`。禁止新建替代 BV、裸 API、legacy replace 或删除旧证据制造绿灯。
+- 已发布稿只走 `scripts/authorized_upload.py repair-*`。**封面单独修复的入口已于
+  2026-07-31 更换**：`scripts/bili_cover_edit.py` 被 `28b3576` 改成开头无条件
+  `return 2`（旧实现仅作 endpoint archaeology 保留），现行入口是
+  `scripts/authorized_upload.py cover-repair-plan / cover-repair-run /
+  cover-repair-verify-live`。禁止新建替代 BV、裸 API、legacy replace 或删除旧证据制造绿灯。
