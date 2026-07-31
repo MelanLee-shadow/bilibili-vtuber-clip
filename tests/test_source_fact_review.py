@@ -102,6 +102,64 @@ def test_source_fact_prompt_forbids_birthday_forwarding_role_drift() -> None:
     )
 
 
+def test_title_policy_violation_must_be_repaired_before_keep() -> None:
+    hook = (
+        "SC说今天是佐伯沙弥香的生日，转发这条信息能拿菲尔兹奖，李豆沙追问自己也磕原点组怎么没有。"
+    )
+    long_title = (
+        "【李豆沙】SC说今天是佐伯沙弥香的生日，转发这条信息能拿菲尔兹奖，"
+        "百合专家小李：我也磕了怎么没有，是不是磕错了？"
+    )
+    fixed_title = "【李豆沙】SC说转发生日信息能拿菲尔兹奖，小李追问：我也磕原点组怎么没有"
+    calls: list[str] = []
+
+    def cpa(prompt: str) -> str:
+        calls.append(prompt)
+        if len(calls) == 1:
+            assert "publish_title_length_out_of_bounds" in prompt
+            return _completion(
+                status="REPAIR",
+                final_hook=hook,
+                final_title=fixed_title,
+                supported_by=["final_transcript"],
+                changed_surfaces=[
+                    {
+                        "artifact": "title",
+                        "before": long_title.removeprefix("【李豆沙】"),
+                        "after": fixed_title.removeprefix("【李豆沙】"),
+                        "reason": "压缩标题但保留获奖条件和追问。",
+                        "evidence": [
+                            "转发这条信息你就会获得菲尔兹奖",
+                            "老师，我也磕了，我怎么没有",
+                        ],
+                    }
+                ],
+            )
+        assert "deterministic_title_policy_violations: []" in prompt
+        return _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=fixed_title,
+            supported_by=["final_transcript"],
+        )
+
+    review = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=long_title,
+        final_transcript=(
+            "今天是佐伯沙弥香的生日\n转发这条信息你就会获得菲尔兹奖\n老师，我也磕了，我怎么没有"
+        ),
+        clip_context_prompt="",
+        llm_call=cpa,
+        enforce_automatic_title_style=True,
+    )
+
+    assert source_fact_review_passes(review)
+    assert review["decision"] == "REPAIRED"
+    assert review["final_title"] == fixed_title
+    assert len(review["passes"]) == 2
+
+
 def test_proposal_must_not_become_completed_naming() -> None:
     bad_hook = "弹幕又把她的技能强行命名成“李姐拉拉”。"
     bad_title = "【李豆沙】话还没说完，技能又被命名成“李姐拉拉”"
@@ -208,9 +266,7 @@ def test_repair_accepts_source_labels_and_bound_chat_citation_format() -> None:
         selection_hook=bad_hook,
         title=bad_title,
         final_transcript="有点像那个李豆沙型侄女",
-        clip_context_prompt=(
-            "- danmaku @29810ms event=: 这是李豆沙型侄女"
-        ),
+        clip_context_prompt=("- danmaku @29810ms event=: 这是李豆沙型侄女"),
         llm_call=lambda _prompt: next(responses),
     )
 
@@ -225,9 +281,7 @@ def test_repair_rejects_chat_citation_with_unbound_offset() -> None:
         selection_hook="熊猫头发明“李豆沙型侄女”。",
         title="【李豆沙】熊猫头发明“李豆沙型侄女”",
         final_transcript="有点像那个李豆沙型侄女",
-        clip_context_prompt=(
-            "- danmaku @29810ms event=: 这是李豆沙型侄女"
-        ),
+        clip_context_prompt=("- danmaku @29810ms event=: 这是李豆沙型侄女"),
         llm_call=lambda _prompt: _completion(
             status="REPAIR",
             final_hook="李豆沙聊起“李豆沙型侄女”。",
@@ -296,10 +350,7 @@ def test_repair_rejects_chat_citation_with_wrong_event_or_text() -> None:
         )
 
         assert not source_fact_review_passes(review)
-        assert (
-            review["passes"][0]["reason_code"]
-            == "CPA_TEXT_REVIEW_INVALID"
-        )
+        assert review["passes"][0]["reason_code"] == "CPA_TEXT_REVIEW_INVALID"
 
 
 def test_repair_rejects_generic_context_label() -> None:
@@ -307,9 +358,7 @@ def test_repair_rejects_generic_context_label() -> None:
         selection_hook="熊猫头发明“李豆沙型侄女”。",
         title="【李豆沙】熊猫头发明“李豆沙型侄女”",
         final_transcript="有点像那个李豆沙型侄女",
-        clip_context_prompt=(
-            "structured_chat: 这是李豆沙型侄女"
-        ),
+        clip_context_prompt=("structured_chat: 这是李豆沙型侄女"),
         llm_call=lambda _prompt: _completion(
             status="REPAIR",
             final_hook="李豆沙聊起“李豆沙型侄女”。",
@@ -321,18 +370,14 @@ def test_repair_rejects_generic_context_label() -> None:
                     "before": "熊猫头发明",
                     "after": "李豆沙聊起",
                     "reason": "弹幕先提出该称谓。",
-                    "evidence": [
-                        "structured_chat: 这是李豆沙型侄女"
-                    ],
+                    "evidence": ["structured_chat: 这是李豆沙型侄女"],
                 },
                 {
                     "artifact": "title",
                     "before": "熊猫头发明",
                     "after": "李豆沙聊起",
                     "reason": "标题删除无来源支持的归属。",
-                    "evidence": [
-                        "structured_chat: 这是李豆沙型侄女"
-                    ],
+                    "evidence": ["structured_chat: 这是李豆沙型侄女"],
                 },
             ],
         ),
@@ -347,10 +392,7 @@ def test_repair_rejects_source_label_bound_only_in_other_corpus() -> None:
         selection_hook="熊猫头发明“李豆沙型侄女”。",
         title="【李豆沙】熊猫头发明“李豆沙型侄女”",
         final_transcript="李豆沙聊起这个称呼",
-        clip_context_prompt=(
-            "- danmaku @29810ms event=: "
-            "final_transcript: 这是李豆沙型侄女"
-        ),
+        clip_context_prompt=("- danmaku @29810ms event=: final_transcript: 这是李豆沙型侄女"),
         llm_call=lambda _prompt: _completion(
             status="REPAIR",
             final_hook="李豆沙聊起“李豆沙型侄女”。",
@@ -405,26 +447,26 @@ def test_provider_failure_fails_closed_without_repair_loop() -> None:
     assert calls == 1
 
 
-def test_second_repair_is_rejected_after_one_bounded_attempt() -> None:
+def test_multiple_repairs_converge_before_bounded_keep() -> None:
     responses = iter(
         [
             _completion(
                 status="REPAIR",
-                final_hook="小李被点名。",
-                final_title="【李豆沙】小李被点名",
+                final_hook="小李当场被点名了。",
+                final_title="【李豆沙】小李当场被点名了",
                 supported_by=["final_transcript"],
                 changed_surfaces=[
                     {
                         "artifact": "selection_hook",
-                        "before": "被电",
-                        "after": "被点名",
+                        "before": "当场被电了",
+                        "after": "当场被点名了",
                         "reason": "按最终字幕修复。",
                         "evidence": ["小李你怎么被点了"],
                     },
                     {
                         "artifact": "title",
-                        "before": "小李被电",
-                        "after": "小李被点名",
+                        "before": "小李当场被电了",
+                        "after": "小李当场被点名了",
                         "reason": "标题与修复后的钩子保持同一事实。",
                         "evidence": ["小李你怎么被点了"],
                     },
@@ -432,39 +474,100 @@ def test_second_repair_is_rejected_after_one_bounded_attempt() -> None:
             ),
             _completion(
                 status="REPAIR",
-                final_hook="小李被叫到。",
-                final_title="【李豆沙】小李被叫到",
+                final_hook="小李当场被叫到了。",
+                final_title="【李豆沙】小李当场被叫到了",
                 supported_by=["final_transcript"],
                 changed_surfaces=[
                     {
                         "artifact": "selection_hook",
-                        "before": "被点名",
-                        "after": "被叫到",
+                        "before": "被点名了",
+                        "after": "被叫到了",
                         "reason": "第二次仍要求改写。",
                         "evidence": ["小李你怎么被点了"],
                     },
                     {
                         "artifact": "title",
-                        "before": "小李被点名",
-                        "after": "小李被叫到",
+                        "before": "小李当场被点名了",
+                        "after": "小李当场被叫到了",
                         "reason": "标题与二次修复后的钩子保持一致。",
                         "evidence": ["小李你怎么被点了"],
                     },
                 ],
             ),
+            _completion(
+                status="KEEP",
+                final_hook="小李当场被叫到了。",
+                final_title="【李豆沙】小李当场被叫到了",
+                supported_by=["final_transcript"],
+            ),
         ]
     )
     review = review_and_repair_source_facts(
-        selection_hook="小李被电。",
-        title="【李豆沙】小李被电",
+        selection_hook="小李当场被电了。",
+        title="【李豆沙】小李当场被电了",
         final_transcript="小李你怎么被点了",
         clip_context_prompt="",
         llm_call=lambda _prompt: next(responses),
     )
 
+    assert source_fact_review_passes(review)
+    assert review["decision"] == "REPAIRED"
+    assert review["final_selection_hook"] == "小李当场被叫到了。"
+    assert review["final_title"] == "【李豆沙】小李当场被叫到了"
+    assert len(review["passes"]) == 3
+    assert validate_source_fact_review(
+        review,
+        selection_hook="小李当场被叫到了。",
+        title="【李豆沙】小李当场被叫到了",
+        final_transcript="小李你怎么被点了",
+        clip_context_prompt="",
+    )
+
+
+def test_source_fact_repair_stops_after_five_nonconverging_passes() -> None:
+    calls: list[str] = []
+
+    def cpa(prompt: str) -> str:
+        calls.append(prompt)
+        index = len(calls) - 1
+        before = f"版本{index}"
+        after = f"版本{index + 1}"
+        return _completion(
+            status="REPAIR",
+            final_hook=f"{after}。",
+            final_title=f"【李豆沙】{after}",
+            supported_by=["final_transcript"],
+            changed_surfaces=[
+                {
+                    "artifact": "selection_hook",
+                    "before": before,
+                    "after": after,
+                    "reason": "继续删除没有来源支持的事实。",
+                    "evidence": ["来源原文"],
+                },
+                {
+                    "artifact": "title",
+                    "before": before,
+                    "after": after,
+                    "reason": "标题同步删除没有来源支持的事实。",
+                    "evidence": ["来源原文"],
+                },
+            ],
+        )
+
+    review = review_and_repair_source_facts(
+        selection_hook="版本0。",
+        title="【李豆沙】版本0",
+        final_transcript="来源原文",
+        clip_context_prompt="",
+        llm_call=cpa,
+    )
+
     assert not source_fact_review_passes(review)
     assert review["decision"] == "REPAIR_EXHAUSTED"
-    assert len(review["passes"]) == 2
+    assert review["reason_code"] == "CPA_SOURCE_FACT_REPAIR_EXHAUSTED"
+    assert len(review["passes"]) == 5
+    assert "review_pass: 5" in calls[-1]
 
 
 def test_repaired_hook_refuses_stale_selection_scorecard() -> None:
@@ -516,9 +619,7 @@ def test_repaired_hook_refuses_stale_selection_scorecard() -> None:
     )
 
     assert not source_fact_review_passes(review)
-    assert review["reason_code"] == (
-        "SOURCE_FACT_REPAIRED_HOOK_SCORECARD_STALE"
-    )
+    assert review["reason_code"] == ("SOURCE_FACT_REPAIRED_HOOK_SCORECARD_STALE")
     assert calls == 1
 
 
@@ -667,11 +768,7 @@ def test_publish_choke_rebuilds_story_before_cover_after_joint_repair(
         },
         candidate_id="candidate-source-fact",
         title=bad_title,
-        cues=[
-            SourceCue(
-                "cue-1", 0, 1_000, transcript, "zh", "speech", 1.0
-            )
-        ],
+        cues=[SourceCue("cue-1", 0, 1_000, transcript, "zh", "speech", 1.0)],
         run_ffmpeg=False,
         title_llm_call=lambda _prompt: json.dumps(
             {
@@ -688,26 +785,16 @@ def test_publish_choke_rebuilds_story_before_cover_after_joint_repair(
 
     assert staged is not None
     assert staged["story_contract"]["selection_hook"] == fixed_hook
-    assert staged["story_contract"]["source_fact_review"]["decision"] == (
-        "REPAIRED"
-    )
+    assert staged["story_contract"]["source_fact_review"]["decision"] == ("REPAIRED")
     publish = staged["publish_staging"]
     assert publish["title"] == fixed_title
-    assert publish["title_authority_status"] == (
-        "RESOLVED_CPA_SOURCE_FACT_REPAIR"
-    )
+    assert publish["title_authority_status"] == ("RESOLVED_CPA_SOURCE_FACT_REPAIR")
     assert publish["cover_status"] == "AI_COVER_READY"
     assert len(cover_calls) == 1
     cover_record, cover_kwargs = cover_calls[0]
     assert cover_kwargs["title"] == fixed_title
-    assert (
-        cover_record["story_contract"]["selection_hook"]
-        == fixed_hook
-    )
-    assert (
-        cover_record["story_contract"]["source_fact_review"]["decision"]
-        == "REPAIRED"
-    )
+    assert cover_record["story_contract"]["selection_hook"] == fixed_hook
+    assert cover_record["story_contract"]["source_fact_review"]["decision"] == "REPAIRED"
     assert calls == 2
 
 
@@ -739,11 +826,7 @@ def test_publish_choke_blocks_cover_when_joint_review_provider_fails(
         },
         candidate_id="candidate-source-fact-fail",
         title=title,
-        cues=[
-            SourceCue(
-                "cue-1", 0, 1_000, transcript, "zh", "speech", 1.0
-            )
-        ],
+        cues=[SourceCue("cue-1", 0, 1_000, transcript, "zh", "speech", 1.0)],
         run_ffmpeg=False,
         title_llm_call=None,
         selection_hook=hook,
@@ -756,9 +839,7 @@ def test_publish_choke_blocks_cover_when_joint_review_provider_fails(
 
     assert staged is not None
     publish = staged["publish_staging"]
-    assert publish["title_authority_status"] == (
-        "BLOCKED_SOURCE_FACT_REVIEW"
-    )
+    assert publish["title_authority_status"] == ("BLOCKED_SOURCE_FACT_REVIEW")
     assert publish["cover_status"] == "BLOCKED_TITLE_AUTHORITY"
     assert publish["source_fact_review"]["status"] == "FAILED"
 
@@ -815,11 +896,7 @@ def test_manual_exact_title_repair_requires_new_authority_before_cover(
         },
         candidate_id="candidate-manual-authority",
         title=manual_title,
-        cues=[
-            SourceCue(
-                "cue-1", 0, 1_000, transcript, "zh", "speech", 1.0
-            )
-        ],
+        cues=[SourceCue("cue-1", 0, 1_000, transcript, "zh", "speech", 1.0)],
         run_ffmpeg=False,
         title_llm_call=None,
         selection_hook=hook,
@@ -831,11 +908,7 @@ def test_manual_exact_title_repair_requires_new_authority_before_cover(
     assert staged is not None
     publish = staged["publish_staging"]
     assert publish["title"] == manual_title
-    assert publish["title_authority_status"] == (
-        "BLOCKED_SOURCE_FACT_REVIEW"
-    )
-    assert publish["source_fact_review"]["reason_code"] == (
-        "SOURCE_FACT_TITLE_AUTHORITY_REQUIRED"
-    )
+    assert publish["title_authority_status"] == ("BLOCKED_SOURCE_FACT_REVIEW")
+    assert publish["source_fact_review"]["reason_code"] == ("SOURCE_FACT_TITLE_AUTHORITY_REQUIRED")
     assert publish["cover_status"] == "BLOCKED_TITLE_AUTHORITY"
     assert calls == 1

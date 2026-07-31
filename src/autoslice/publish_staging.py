@@ -114,9 +114,7 @@ class _AutomaticTitleResult(NamedTuple):
     title_policy_violations: list[str]
 
 
-def _selection_hook_has_inferable_anchor(
-    *, selection_hook: str, title: str
-) -> bool:
+def _selection_hook_has_inferable_anchor(*, selection_hook: str, title: str) -> bool:
     """Prove main-hook retention from exact shared text.
 
     The model-provided anchor is useful disclosure, but a bad anchor must not
@@ -187,9 +185,7 @@ def _resolve_automatic_title(
             repaired != candidate
             and not _title_policy_violations(repaired)
             and repaired_hook_valid
-            and _TITLE_MIN_LEN
-            <= len(_ensure_lidousha_prefix(repaired))
-            <= _TITLE_MAX_LEN
+            and _TITLE_MIN_LEN <= len(_ensure_lidousha_prefix(repaired)) <= _TITLE_MAX_LEN
         ):
             candidate = repaired
             deterministic_filler_repair = True
@@ -236,9 +232,7 @@ def _resolve_automatic_title(
             violations,
         )
     if deterministic_filler_repair:
-        title_source = (
-            f"llm+{PROFILE_ID}_style_asset+deterministic_filler_removal"
-        )
+        title_source = f"llm+{PROFILE_ID}_style_asset+deterministic_filler_removal"
     elif title_source == "job_title":
         title_source = f"llm+{PROFILE_ID}_style_asset"
     if violations:
@@ -258,9 +252,7 @@ def _resolve_automatic_title(
             else "RESOLVED_LLM"
         )
     )
-    return _AutomaticTitleResult(
-        prefixed, title_source, status, None, violations
-    )
+    return _AutomaticTitleResult(prefixed, title_source, status, None, violations)
 
 
 def _stage_publish_after_release_gate(
@@ -337,17 +329,11 @@ def _recovery_publication_staging_state(
     recovery_publication_authority: Mapping[str, object] | None,
 ) -> tuple[str, str, dict[str, object] | None]:
     source = "job_title"
-    status = (
-        "RESOLVED_MANUAL"
-        if title_llm_call is None
-        else "UNRESOLVED_AUTO"
-    )
+    status = "RESOLVED_MANUAL" if title_llm_call is None else "UNRESOLVED_AUTO"
     if recovery_publication_authority is None:
         return source, status, None
     if title_llm_call is not None:
-        raise ValueError(
-            "recovery publication authority requires a non-LLM title path"
-        )
+        raise ValueError("recovery publication authority requires a non-LLM title path")
     try:
         authority = validate_recovery_publication_authority(
             recovery_publication_authority,
@@ -355,9 +341,7 @@ def _recovery_publication_staging_state(
             expected_final_title=title,
         )
     except RecoveryTitleAuthorityError as exc:
-        raise ValueError(
-            f"recovery publication authority invalid: {exc}"
-        ) from exc
+        raise ValueError(f"recovery publication authority invalid: {exc}") from exc
     if authority["title_mode"] == "ivan_manual_override":
         return ("ivan_manual_override", "RESOLVED_MANUAL", authority)
     return (
@@ -382,9 +366,7 @@ def _stage_publish_draft(
     recovery_publication_authority: Mapping[str, object] | None = None,
     stage_cover: Callable[..., dict[str, object]] | None = None,
     source_fact_llm_call: LlmCall | None = None,
-    story_contract_rebuilder: (
-        Callable[[str], dict[str, object]] | None
-    ) = None,
+    story_contract_rebuilder: (Callable[[str], dict[str, object]] | None) = None,
 ) -> dict[str, object] | None:
     """Mirror production local_prepare: AI title + cover + publish.json draft.
 
@@ -480,15 +462,10 @@ def _stage_publish_draft(
         # only profile-declared disposable filler words may change, and the
         # cleaned title must independently retain an exact phrase from the
         # authoritative selection hook before the prior block is cleared.
-        choke_repaired_title = canonicalize_automatic_title_fillers(
-            staged_title
-        )
-        choke_hook_valid = (
-            not selection_hook
-            or _selection_hook_has_inferable_anchor(
-                selection_hook=selection_hook,
-                title=choke_repaired_title,
-            )
+        choke_repaired_title = canonicalize_automatic_title_fillers(staged_title)
+        choke_hook_valid = not selection_hook or _selection_hook_has_inferable_anchor(
+            selection_hook=selection_hook,
+            title=choke_repaired_title,
         )
         if (
             choke_repaired_title != staged_title
@@ -500,12 +477,9 @@ def _stage_publish_draft(
         ):
             staged_title = choke_repaired_title
             title_source = (
-                f"llm+{PROFILE_ID}_style_asset"
-                "+deterministic_filler_removal_at_publish_choke"
+                f"llm+{PROFILE_ID}_style_asset+deterministic_filler_removal_at_publish_choke"
             )
-            title_authority_status = (
-                "RESOLVED_DETERMINISTIC_FILLER_REMOVAL"
-            )
+            title_authority_status = "RESOLVED_DETERMINISTIC_FILLER_REMOVAL"
             title_authority_error = None
             title_policy_violations = []
 
@@ -531,9 +505,7 @@ def _stage_publish_draft(
     staged_title = canonicalize_publish_title(staged_title, lane=explicit_lane)
     source_fact_review = None
     if title_authority_error is None and source_fact_llm_call is not None:
-        final_transcript = "\n".join(
-            cue.text.strip() for cue in cues if cue.text.strip()
-        )
+        final_transcript = "\n".join(cue.text.strip() for cue in cues if cue.text.strip())
         context_prompt = (
             str(story_contract.get("clip_context_prompt") or "")
             if isinstance(story_contract, Mapping)
@@ -558,6 +530,7 @@ def _stage_publish_draft(
                 or title_authority_status == "RESOLVED_MANUAL"
                 or title_source == "ivan_manual_override"
             ),
+            enforce_automatic_title_style=title_llm_call is not None,
         )
         if not source_fact_review_passes(source_fact_review):
             reason = str(
@@ -565,86 +538,55 @@ def _stage_publish_draft(
                 or source_fact_review.get("decision")
                 or "unknown"
             )
-            title_policy_violations.append(
-                "source_fact_review_failed"
-            )
+            title_policy_violations.append("source_fact_review_failed")
             title_authority_error = "source_fact_review_failed:" + reason
             title_authority_status = "BLOCKED_SOURCE_FACT_REVIEW"
         else:
-            reviewed_hook = str(
-                source_fact_review["final_selection_hook"]
-            )
+            reviewed_hook = str(source_fact_review["final_selection_hook"])
             reviewed_title = str(source_fact_review["final_title"])
             reviewed_lane = (
                 "song"
                 if (
-                    reviewed_title.startswith(
-                        CHANNEL_PROFILE.song_title_prefix
-                    )
-                    or str(record.get("classification") or "").lower()
-                    == "song"
+                    reviewed_title.startswith(CHANNEL_PROFILE.song_title_prefix)
+                    or str(record.get("classification") or "").lower() == "song"
                 )
                 else "talk"
             )
-            if (
-                canonicalize_publish_title(
-                    reviewed_title, lane=reviewed_lane
-                )
-                != reviewed_title
-            ):
-                title_policy_violations.append(
-                    "source_fact_repair_title_not_canonical"
-                )
+            if canonicalize_publish_title(reviewed_title, lane=reviewed_lane) != reviewed_title:
+                title_policy_violations.append("source_fact_repair_title_not_canonical")
                 title_authority_error = (
-                    "source_fact_review_failed:"
-                    "SOURCE_FACT_REPAIR_TITLE_NOT_CANONICAL"
+                    "source_fact_review_failed:SOURCE_FACT_REPAIR_TITLE_NOT_CANONICAL"
                 )
                 title_authority_status = "BLOCKED_SOURCE_FACT_REVIEW"
-            elif (
-                reviewed_hook != str(selection_hook or "")
-                and story_contract_rebuilder is None
-            ):
-                title_policy_violations.append(
-                    "source_fact_hook_rebuild_unavailable"
-                )
+            elif reviewed_hook != str(selection_hook or "") and story_contract_rebuilder is None:
+                title_policy_violations.append("source_fact_hook_rebuild_unavailable")
                 title_authority_error = (
-                    "source_fact_review_failed:"
-                    "SOURCE_FACT_HOOK_REBUILD_UNAVAILABLE"
+                    "source_fact_review_failed:SOURCE_FACT_HOOK_REBUILD_UNAVAILABLE"
                 )
                 title_authority_status = "BLOCKED_SOURCE_FACT_REVIEW"
             else:
                 if story_contract_rebuilder is not None:
-                    story_contract = story_contract_rebuilder(
-                        reviewed_hook
-                    )
+                    story_contract = story_contract_rebuilder(reviewed_hook)
                 elif isinstance(story_contract, Mapping):
                     story_contract = dict(story_contract)
                 if isinstance(story_contract, dict):
-                    story_contract["source_fact_review"] = (
-                        source_fact_review
-                    )
+                    story_contract["source_fact_review"] = source_fact_review
                     record["story_contract"] = story_contract
                 selection_hook = reviewed_hook
                 staged_title = reviewed_title
                 explicit_lane = reviewed_lane
                 if source_fact_review.get("decision") == "REPAIRED":
                     title_source += "+cpa_source_fact_repair"
-                    title_authority_status = (
-                        "RESOLVED_CPA_SOURCE_FACT_REPAIR"
-                    )
+                    title_authority_status = "RESOLVED_CPA_SOURCE_FACT_REPAIR"
     common_title_violations = publish_title_policy_violations(
         staged_title,
         lane=explicit_lane,
         enforce_automatic_style=title_llm_call is not None,
     )
     title_policy_violations.extend(
-        code
-        for code in common_title_violations
-        if code not in title_policy_violations
+        code for code in common_title_violations if code not in title_policy_violations
     )
-    source_fact_blocked = (
-        title_authority_status == "BLOCKED_SOURCE_FACT_REVIEW"
-    )
+    source_fact_blocked = title_authority_status == "BLOCKED_SOURCE_FACT_REVIEW"
     if common_title_violations and not source_fact_blocked:
         title_authority_error = "publish_title_policy_violation:" + ",".join(
             common_title_violations
@@ -669,9 +611,7 @@ def _stage_publish_draft(
                 code for code in story_codes if code not in title_policy_violations
             )
             if not source_fact_blocked:
-                title_authority_error = (
-                    "story_contract_violation:" + ",".join(story_codes)
-                )
+                title_authority_error = "story_contract_violation:" + ",".join(story_codes)
                 title_authority_status = "BLOCKED_STORY_CONTRACT"
     cover_text = _lidousha_cover_text(staged_title)
     if title_authority_error is not None:
@@ -694,7 +634,10 @@ def _stage_publish_draft(
         cover_result = {
             "status": "REUSED_COVER",
             "cover_path": None,
-            "cover_generation": {"status": "REUSED", "note": "subtitle-only re-run: existing cover kept"},
+            "cover_generation": {
+                "status": "REUSED",
+                "note": "subtitle-only re-run: existing cover kept",
+            },
             "reason_codes": [],
         }
     else:
@@ -712,8 +655,7 @@ def _stage_publish_draft(
             # 逐字连续的短梗，但 staged_title 本身仍由 authority 一字不改。
             punch_allowed=(
                 title_llm_call is not None
-                or title_source
-                == "recovery_verified_same_bv_public_title"
+                or title_source == "recovery_verified_same_bv_public_title"
             ),
             diversity_slot=cover_diversity_slot,
         )
@@ -721,7 +663,9 @@ def _stage_publish_draft(
     cover_path_value = cover_result.get("cover_path") if cover_status == "AI_COVER_READY" else None
     cover_generation = cover_result["cover_generation"]
     raw_reason_codes = cover_result.get("reason_codes")
-    reason_codes = [str(value) for value in raw_reason_codes] if isinstance(raw_reason_codes, list) else []
+    reason_codes = (
+        [str(value) for value in raw_reason_codes] if isinstance(raw_reason_codes, list) else []
+    )
     artifact_hashes = {str(k): str(v) for k, v in dict(record.get("artifact_hashes") or {}).items()}
     for key in ("cover_sha256", "ai_background_sha256", "cover_reference_sha256"):
         value = cover_result.get(key)
@@ -748,7 +692,10 @@ def _stage_publish_draft(
         "reason_codes": reason_codes,
         "artifact_hashes": artifact_hashes,
     }
-    publish_json_path.write_text(json.dumps(publish_draft, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    publish_json_path.write_text(
+        json.dumps(publish_draft, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     record["artifact_hashes"] = artifact_hashes
     record["publish_staging"] = {
         "status": "STAGED" if title_authority_error is None else "BLOCKED_TITLE_AUTHORITY",
@@ -799,9 +746,7 @@ def _prepare_lidousha_cover_reference(
         else None
     )
     authority_ref_ms = (
-        int(reference_authority["content_time_ms"])
-        if reference_authority is not None
-        else None
+        int(reference_authority["content_time_ms"]) if reference_authority is not None else None
     )
     if (
         cover_ref_override.isdigit()
@@ -866,9 +811,7 @@ def _prepare_lidousha_cover_reference(
             "candidates": [{"ms": selected_override_ms, "score": None}],
             "subject_confident": False,
             "authority_override": (
-                dict(reference_authority)
-                if reference_authority is not None
-                else None
+                dict(reference_authority) if reference_authority is not None else None
             ),
         }
         cover_generation["reference_selection"] = frame_selection
@@ -876,9 +819,7 @@ def _prepare_lidousha_cover_reference(
         media_path=media_path,
         reference_path=reference_path,
         override_ms=selected_override_ms,
-        selected_ms=(
-            int(frame_selection["best_ms"]) if frame_selection is not None else None
-        ),
+        selected_ms=(int(frame_selection["best_ms"]) if frame_selection is not None else None),
     )
     completed = subprocess.run(ref_command, check=False, capture_output=True, text=True)
     if completed.returncode != 0 or not reference_path.is_file():
@@ -895,9 +836,7 @@ def _prepare_lidousha_cover_reference(
         )
     if reference_authority is not None:
         actual_reference_sha256 = "sha256:" + _sha256(reference_path)
-        expected_reference_sha256 = str(
-            reference_authority["reference_png_sha256"]
-        )
+        expected_reference_sha256 = str(reference_authority["reference_png_sha256"])
         if str(reference_authority["source_sha256"]) not in (
             story_contract.get("source_media_sha256s") or []
         ):
@@ -919,10 +858,7 @@ def _prepare_lidousha_cover_reference(
                 _blocked_ai_cover_result(
                     cover_generation,
                     ["COVER_REFERENCE_AUTHORITY_HASH_MISMATCH"],
-                    (
-                        f"expected {expected_reference_sha256}, got "
-                        f"{actual_reference_sha256}"
-                    ),
+                    (f"expected {expected_reference_sha256}, got {actual_reference_sha256}"),
                 ),
             )
     return reference_path, frame_selection, reference_authority, None
@@ -943,12 +879,8 @@ def _stage_cpa_redraw_cover(
     art_direction: LidoushaCoverArtDirection,
     cover_generation: dict[str, object],
     image_edit: Callable[..., dict[str, object]],
-    final_participant_verifier: (
-        Callable[..., Mapping[str, object]] | None
-    ),
-    final_host_identity_verifier: (
-        Callable[..., Mapping[str, object]] | None
-    ),
+    final_participant_verifier: (Callable[..., Mapping[str, object]] | None),
+    final_host_identity_verifier: (Callable[..., Mapping[str, object]] | None),
     base_url: str,
     api_key: str,
 ) -> dict[str, object]:
@@ -980,9 +912,7 @@ def _stage_cpa_redraw_cover(
             "reason": art_direction.emote_reason,
         }
         if resolved is None:
-            emote_evidence.update(
-                {"status": "BLOCKED_REFERENCE", "detail": resolve_detail}
-            )
+            emote_evidence.update({"status": "BLOCKED_REFERENCE", "detail": resolve_detail})
             cover_generation["emote"] = emote_evidence
             cover_generation["art_direction"] = asdict(art_direction)
             record_cover_route_execution(
@@ -1017,10 +947,7 @@ def _stage_cpa_redraw_cover(
                     }
                 )
             except Exception as exc:
-                detail = (
-                    "EMOTE_COMPANION_COMPOSE_FAILED: "
-                    f"{type(exc).__name__}: {exc}"
-                )
+                detail = f"EMOTE_COMPANION_COMPOSE_FAILED: {type(exc).__name__}: {exc}"
                 emote_evidence.update(
                     {
                         "status": "BLOCKED_REFERENCE",
@@ -1028,9 +955,7 @@ def _stage_cpa_redraw_cover(
                     }
                 )
                 cover_generation["emote"] = emote_evidence
-                cover_generation["art_direction"] = asdict(
-                    art_direction
-                )
+                cover_generation["art_direction"] = asdict(art_direction)
                 record_cover_route_execution(
                     cover_generation,
                     actual_treatment=None,
@@ -1110,9 +1035,7 @@ def _stage_cpa_redraw_cover(
         cover_generation["model"] = str(cpa_result["selected_model"])
     if cpa_result.get("status") != "AI_BACKGROUND_READY" or not ai_background_path.is_file():
         cover_generation["cpa_status"] = cpa_result.get("status")
-        detail = str(
-            cpa_result.get("detail") or "CPA image edit did not return an image"
-        )
+        detail = str(cpa_result.get("detail") or "CPA image edit did not return an image")
         record_cover_route_execution(
             cover_generation,
             actual_treatment=None,
@@ -1150,61 +1073,39 @@ def _stage_cpa_redraw_cover(
         }
     )
     route = cover_generation.get("route_decision")
-    if (
-        isinstance(route, Mapping)
-        and route.get("host_identity_required") is True
-    ):
+    if isinstance(route, Mapping) and route.get("host_identity_required") is True:
         assert final_host_identity_verifier is not None
+
         def verify_current_final() -> None:
             try:
-                cover_generation[
-                    "final_host_identity_verification"
-                ] = dict(
+                cover_generation["final_host_identity_verification"] = dict(
                     final_host_identity_verifier(
-                        final_cover_path=Path(
-                            str(cover_generation["final_cover"])
-                        ),
-                        final_cover_sha256=cover_generation[
-                            "final_cover_sha256"
-                        ],
+                        final_cover_path=Path(str(cover_generation["final_cover"])),
+                        final_cover_sha256=cover_generation["final_cover_sha256"],
                         reference_path=reference_path,
                         base_url=base_url,
                         api_key=api_key,
                     )
                 )
             except Exception as exc:
-                cover_generation[
-                    "final_host_identity_verification"
-                ] = {
+                cover_generation["final_host_identity_verification"] = {
                     "status": "FAIL",
                     "reason_code": "HOST_IDENTITY_VERIFIER_EXCEPTION",
                     "detail": f"{type(exc).__name__}: {exc}",
                 }
 
         verify_current_final()
-        if (
-            not validate_final_host_identity_verification(cover_generation)
-            and not final_host_identity_witness_unavailable(cover_generation)
-        ):
-            first_verification = cover_generation.get(
-                "final_host_identity_verification"
+        if not validate_final_host_identity_verification(
+            cover_generation
+        ) and not final_host_identity_witness_unavailable(cover_generation):
+            first_verification = cover_generation.get("final_host_identity_verification")
+            cover_generation["rejected_final_host_identity_verification"] = dict(
+                first_verification if isinstance(first_verification, Mapping) else {}
             )
-            cover_generation[
-                "rejected_final_host_identity_verification"
-            ] = dict(
-                first_verification
-                if isinstance(first_verification, Mapping)
-                else {}
-            )
-            retry_background = (
-                ai_dir / f"{candidate_id}.ai-bg.host-identity-retry.png"
-            )
-            retry_final = (
-                covers_dir / f"{candidate_id}.ai-title.host-identity-retry.cover.png"
-            )
+            retry_background = ai_dir / f"{candidate_id}.ai-bg.host-identity-retry.png"
+            retry_final = covers_dir / f"{candidate_id}.ai-title.host-identity-retry.cover.png"
             retry_request = (
-                evidence_dir
-                / f"{candidate_id}.cover-cpa-host-identity-retry.request.redacted.json"
+                evidence_dir / f"{candidate_id}.cover-cpa-host-identity-retry.request.redacted.json"
             )
             retry_response = (
                 evidence_dir
@@ -1218,8 +1119,7 @@ def _stage_cpa_redraw_cover(
                     reference_path=reference_path,
                     output_path=retry_background,
                     prompt=(
-                        generation_prompt
-                        + " IDENTITY RETRY AFTER FAILED FINAL-PIXEL CHECK: "
+                        generation_prompt + " IDENTITY RETRY AFTER FAILED FINAL-PIXEL CHECK: "
                         "the previous output copied a different source participant. "
                         "Re-read visible source nameplates. The large protagonist "
                         "must be the person labelled 李豆沙; do not hybridize her "
@@ -1235,8 +1135,7 @@ def _stage_cpa_redraw_cover(
                     "detail": f"{type(exc).__name__}: {exc}",
                 }
             retry_ready = bool(
-                retry_result.get("status") == "AI_BACKGROUND_READY"
-                and retry_background.is_file()
+                retry_result.get("status") == "AI_BACKGROUND_READY" and retry_background.is_file()
             )
             cover_generation["host_identity_retry"] = {
                 "schema_version": "lidousha-cover-host-identity-retry.v1",
@@ -1257,11 +1156,9 @@ def _stage_cpa_redraw_cover(
                 cover_generation.update(
                     {
                         "ai_background": str(retry_background),
-                        "ai_background_sha256": "sha256:"
-                        + _sha256(retry_background),
+                        "ai_background_sha256": "sha256:" + _sha256(retry_background),
                         "final_cover": str(retry_final),
-                        "final_cover_sha256": "sha256:"
-                        + _sha256(retry_final),
+                        "final_cover_sha256": "sha256:" + _sha256(retry_final),
                         "identity_retry_request_path": str(retry_request),
                         "identity_retry_response_path": str(retry_response),
                         **retry_overlay,
@@ -1270,26 +1167,18 @@ def _stage_cpa_redraw_cover(
                 verify_current_final()
                 cover_generation["host_identity_retry"]["status"] = (
                     "PASS"
-                    if validate_final_host_identity_verification(
-                        cover_generation
-                    )
+                    if validate_final_host_identity_verification(cover_generation)
                     else "FAILED_FINAL_IDENTITY"
                 )
                 final_cover_path = retry_final
                 ai_background_path = retry_background
         if not validate_final_host_identity_verification(cover_generation):
-            verification = cover_generation.get(
-                "final_host_identity_verification"
-            )
+            verification = cover_generation.get("final_host_identity_verification")
             detail = (
                 "AI cover final pixels do not have a PASS Li Dousha host "
                 "identity verdict: "
                 + str(
-                    (
-                        verification
-                        if isinstance(verification, Mapping)
-                        else {}
-                    ).get("reason_code")
+                    (verification if isinstance(verification, Mapping) else {}).get("reason_code")
                     or "VERIFICATION_MISSING"
                 )
             )
@@ -1317,12 +1206,8 @@ def _stage_cpa_redraw_cover(
             final_participant_verification = dict(
                 final_participant_verifier(
                     final_cover_path=final_cover_path,
-                    final_cover_sha256=cover_generation[
-                        "final_cover_sha256"
-                    ],
-                    required_participant_ids=list(
-                        route.get("required_participant_ids") or []
-                    ),
+                    final_cover_sha256=cover_generation["final_cover_sha256"],
+                    required_participant_ids=list(route.get("required_participant_ids") or []),
                     source_reference_authority=(
                         story_contract.get("cover_reference_authority")
                         if isinstance(story_contract, Mapping)
@@ -1331,10 +1216,7 @@ def _stage_cpa_redraw_cover(
                 )
             )
         except Exception as exc:
-            detail = (
-                "final participant verification failed: "
-                f"{type(exc).__name__}: {exc}"
-            )
+            detail = f"final participant verification failed: {type(exc).__name__}: {exc}"
             record_cover_route_execution(
                 cover_generation,
                 actual_treatment=None,
@@ -1348,9 +1230,7 @@ def _stage_cpa_redraw_cover(
                 ["RELATION_COVER_FINAL_PARTICIPANT_VERIFICATION_FAILED"],
                 detail,
             )
-        cover_generation["final_participant_verification"] = (
-            final_participant_verification
-        )
+        cover_generation["final_participant_verification"] = final_participant_verification
         if not validate_final_participant_verification(cover_generation):
             detail = (
                 "AI redraw lacks a PASS verdict bound to the final cover hash "
@@ -1404,41 +1284,28 @@ def _build_lidousha_cover_route(
     """Build the semantic-first route record before any cover materialization."""
 
     required_participant_ids = story_participant_ids(story_contract)
-    visible_participant_ids = source_visible_participant_ids(
-        reference_authority
-    )
+    visible_participant_ids = source_visible_participant_ids(reference_authority)
     relationship_source_verified = bool(
-        required_participant_ids
-        and set(required_participant_ids) == set(visible_participant_ids)
+        required_participant_ids and set(required_participant_ids) == set(visible_participant_ids)
     )
-    verified_stream_frame = is_hash_bound_reference_authority(
-        reference_authority
-    )
+    verified_stream_frame = is_hash_bound_reference_authority(reference_authority)
     treatment, treatment_reason = _decide_cover_treatment(
         cover_mode=cover_mode,
         is_song=art_direction.is_song,
         punch_allowed=punch_allowed,
         frame_selection=frame_selection,
         verified_stream_frame=verified_stream_frame,
-        relationship_visual_required=(
-            relationship_visual_safety_required(story_contract)
-        ),
+        relationship_visual_required=(relationship_visual_safety_required(story_contract)),
         relationship_source_verified=relationship_source_verified,
     )
     cover_generation["cover_treatment"] = {
         "treatment": treatment,
         "reason": treatment_reason,
     }
-    candidates = (
-        frame_selection.get("candidates")
-        if isinstance(frame_selection, Mapping)
-        else None
-    )
+    candidates = frame_selection.get("candidates") if isinstance(frame_selection, Mapping) else None
     first_candidate = (
         candidates[0]
-        if isinstance(candidates, list)
-        and candidates
-        and isinstance(candidates[0], Mapping)
+        if isinstance(candidates, list) and candidates and isinstance(candidates[0], Mapping)
         else {}
     )
     route = build_cover_route_decision(
@@ -1466,9 +1333,7 @@ def _build_lidousha_cover_route(
             ),
             "verified_stream_frame": verified_stream_frame,
             "reference_authority_id": (
-                reference_authority.get("candidate_id")
-                if reference_authority is not None
-                else None
+                reference_authority.get("candidate_id") if reference_authority is not None else None
             ),
             # Final pixels own the public cover. A direct screenshot with Li
             # Dousha only as a tiny corner avatar is not a valid host cover.
@@ -1496,12 +1361,8 @@ def _stage_lidousha_ai_cover(
     run_ffmpeg: bool,
     art_direction_llm_call: LlmCall | None = None,
     image_edit: Callable[..., dict[str, object]] = _cover_call_cpa_image_edit,
-    final_participant_verifier: (
-        Callable[..., Mapping[str, object]] | None
-    ) = None,
-    final_host_identity_verifier: (
-        Callable[..., Mapping[str, object]] | None
-    ) = None,
+    final_participant_verifier: (Callable[..., Mapping[str, object]] | None) = None,
+    final_host_identity_verifier: (Callable[..., Mapping[str, object]] | None) = None,
     enforce_final_host_identity: bool = False,
     punch_allowed: bool = False,
     diversity_slot: int | None = None,
@@ -1520,14 +1381,12 @@ def _stage_lidousha_ai_cover(
     }
     story_contract = materialized_recut.get("story_contract")
     if isinstance(story_contract, Mapping):
-        cover_generation["story_contract"] = cover_story_contract_binding(
-            story_contract
-        )
+        cover_generation["story_contract"] = cover_story_contract_binding(story_contract)
     # 封面路线（2026-07-21 Ivan："加入判断，哪些适合全图 CPA 重做、哪些适合截图"）：
     # AUTOSLICE_COVER_MODE = auto（默认，按名场面强度路由）| screenshot（强制直出）
     # | polish（强制截图+CPA 轻微调）| cpa（强制全图重绘，旧行为）。
     # 凭据门只对强制 cpa 模式前置；其余路线推迟到真正要调 CPA 时再卡。
-    cover_mode = (os.environ.get("AUTOSLICE_COVER_MODE", "").strip().lower() or "auto")
+    cover_mode = os.environ.get("AUTOSLICE_COVER_MODE", "").strip().lower() or "auto"
     if cover_mode not in ("auto", "screenshot", "polish", "cpa"):
         cover_mode = "auto"
     cover_generation["cover_mode"] = cover_mode
@@ -1563,9 +1422,7 @@ def _stage_lidousha_ai_cover(
         materialized_recut,
         media_path=media_path,
         candidate_id=candidate_id,
-        story_contract=(
-            story_contract if isinstance(story_contract, Mapping) else None
-        ),
+        story_contract=(story_contract if isinstance(story_contract, Mapping) else None),
         cover_refs_dir=cover_refs_dir,
         cover_generation=cover_generation,
     )
@@ -1629,9 +1486,7 @@ def _stage_lidousha_ai_cover(
         story_contract,
         route_decision=route,
     )
-    if relationship_visual_required and not (
-        relationship_source_participants_verified(route)
-    ):
+    if relationship_visual_required and not (relationship_source_participants_verified(route)):
         detail = (
             "relationship cover requires a hash-bound source reference that "
             "visibly verifies every required participant before composition "
@@ -1680,10 +1535,7 @@ def _stage_lidousha_ai_cover(
             base_url=base_url,
             api_key=api_key,
         )
-    if (
-        route.get("host_identity_required") is True
-        and final_host_identity_verifier is None
-    ):
+    if route.get("host_identity_required") is True and final_host_identity_verifier is None:
         detail = (
             "cover requires a CPA-primary source/final Li Dousha "
             "identity verifier bound to the final cover hash"
@@ -1720,9 +1572,7 @@ def _stage_lidousha_ai_cover(
             detail,
         )
     if not base_url or not api_key:
-        detail = (
-            "CPA_BASE_URL/CPA_API_KEY missing for the selected cpa_redraw route"
-        )
+        detail = "CPA_BASE_URL/CPA_API_KEY missing for the selected cpa_redraw route"
         record_cover_route_execution(
             cover_generation,
             actual_treatment=None,
@@ -1741,9 +1591,7 @@ def _stage_lidousha_ai_cover(
         candidate_id=candidate_id,
         title=title,
         cover_text=cover_text,
-        story_contract=(
-            story_contract if isinstance(story_contract, Mapping) else None
-        ),
+        story_contract=(story_contract if isinstance(story_contract, Mapping) else None),
         cover_refs_dir=cover_refs_dir,
         ai_dir=ai_dir,
         covers_dir=covers_dir,
@@ -1776,6 +1624,7 @@ def _stage_lidousha_ai_cover(
         api_key=api_key,
     )
 
+
 def _cover_reference_command(
     *,
     media_path: Path,
@@ -1789,12 +1638,24 @@ def _cover_reference_command(
     at_ms = override_ms if override_ms is not None else selected_ms
     if at_ms is not None:
         return base + [
-            "-ss", f"{at_ms / 1000:.3f}", "-i", str(media_path),
-            "-vf", "scale=1920:-2", "-frames:v", "1", str(reference_path),
+            "-ss",
+            f"{at_ms / 1000:.3f}",
+            "-i",
+            str(media_path),
+            "-vf",
+            "scale=1920:-2",
+            "-frames:v",
+            "1",
+            str(reference_path),
         ]
     return base + [
-        "-i", str(media_path),
-        "-vf", "thumbnail=120,scale=1920:-2", "-frames:v", "1", str(reference_path),
+        "-i",
+        str(media_path),
+        "-vf",
+        "thumbnail=120,scale=1920:-2",
+        "-frames:v",
+        "1",
+        str(reference_path),
     ]
 
 
@@ -1839,8 +1700,7 @@ def _decide_cover_treatment(
             )
         return (
             "screenshot_direct",
-            "relationship hook requires source-verified participants before "
-            "composition scoring",
+            "relationship hook requires source-verified participants before composition scoring",
         )
     if verified_stream_frame:
         return (
@@ -1865,18 +1725,13 @@ def _decide_cover_treatment(
     # evidence remains compatible with the earlier subject-confidence gate.
     raw_dispersion = frame_selection.get("motion_dispersion_frac")
     try:
-        motion_dispersion = (
-            float(raw_dispersion) if raw_dispersion is not None else None
-        )
+        motion_dispersion = float(raw_dispersion) if raw_dispersion is not None else None
     except (TypeError, ValueError):
         motion_dispersion = None
     subject_confident = frame_selection.get("subject_confident") is True and (
-        motion_dispersion is None
-        or motion_dispersion <= _COVER_SUBJECT_MAX_MOTION_DISPERSION
+        motion_dispersion is None or motion_dispersion <= _COVER_SUBJECT_MAX_MOTION_DISPERSION
     )
-    if subject_confident and (
-        best >= _COVER_TREATMENT_SCORE_HI or (emotional and best >= 3.2)
-    ):
+    if subject_confident and (best >= _COVER_TREATMENT_SCORE_HI or (emotional and best >= 3.2)):
         return "screenshot_direct", f"strong real moment (score={best:.2f})"
     if subject_confident and best >= _COVER_TREATMENT_SCORE_LO:
         return "screenshot_polish", f"usable moment + CPA touch-up (score={best:.2f})"
@@ -1935,11 +1790,7 @@ def _screenshot_base_and_crop(
     # 安全；只有局部运动呈高置信单主体块时才 1.32x 锚定主体（宁欠勿错）。
     if not relationship_visual_required:
         confident = bool(frame_selection.get("subject_confident"))
-        camera_window = (
-            frame_selection.get("camera_window_bbox_frac")
-            if not confident
-            else None
-        )
+        camera_window = frame_selection.get("camera_window_bbox_frac") if not confident else None
         crop_evidence = extract_zoomed_cover_frame(
             media_path,
             int(frame_selection["best_ms"]),
@@ -1976,12 +1827,8 @@ def _stage_screenshot_direct_cover(
     evidence_dir: Path | None = None,
     polish: bool = False,
     image_edit: Callable[..., dict[str, object]] | None = None,
-    final_participant_verifier: (
-        Callable[..., Mapping[str, object]] | None
-    ) = None,
-    final_host_identity_verifier: (
-        Callable[..., Mapping[str, object]] | None
-    ) = None,
+    final_participant_verifier: (Callable[..., Mapping[str, object]] | None) = None,
+    final_host_identity_verifier: (Callable[..., Mapping[str, object]] | None) = None,
     base_url: str = "",
     api_key: str = "",
 ) -> dict[str, object]:
@@ -2009,16 +1856,14 @@ def _stage_screenshot_direct_cover(
             cover_generation.get("story_contract"),
             route_decision=route,
         )
-        art_direction, screenshot_base, crop_evidence = (
-            _screenshot_base_and_crop(
-                media_path=media_path,
-                candidate_id=candidate_id,
-                ai_dir=ai_dir,
-                reference_path=reference_path,
-                frame_selection=frame_selection,
-                art_direction=art_direction,
-                relationship_visual_required=relationship_visual_required,
-            )
+        art_direction, screenshot_base, crop_evidence = _screenshot_base_and_crop(
+            media_path=media_path,
+            candidate_id=candidate_id,
+            ai_dir=ai_dir,
+            reference_path=reference_path,
+            frame_selection=frame_selection,
+            art_direction=art_direction,
+            relationship_visual_required=relationship_visual_required,
         )
         # polish：CPA 保真修图（清 UI 杂物+画质），任何失败降级为直出。
         (
@@ -2112,10 +1957,7 @@ def _stage_screenshot_direct_cover(
                 **overlay,
             }
         )
-        if (
-            isinstance(route, Mapping)
-            and route.get("host_identity_required") is True
-        ):
+        if isinstance(route, Mapping) and route.get("host_identity_required") is True:
             if final_host_identity_verifier is None:
                 host_identity_verification: Mapping[str, object] = {
                     "status": "FAIL",
@@ -2125,27 +1967,18 @@ def _stage_screenshot_direct_cover(
                 host_identity_verification = dict(
                     final_host_identity_verifier(
                         final_cover_path=final_cover_path,
-                        final_cover_sha256=cover_generation[
-                            "final_cover_sha256"
-                        ],
+                        final_cover_sha256=cover_generation["final_cover_sha256"],
                         reference_path=reference_path,
                         base_url=base_url,
                         api_key=api_key,
                     )
                 )
-            cover_generation["final_host_identity_verification"] = dict(
-                host_identity_verification
-            )
-            if not validate_final_host_identity_verification(
-                cover_generation
-            ):
+            cover_generation["final_host_identity_verification"] = dict(host_identity_verification)
+            if not validate_final_host_identity_verification(cover_generation):
                 detail = (
                     "final cover pixels do not have a PASS "
                     "Li Dousha host identity verdict: "
-                    + str(
-                        host_identity_verification.get("reason_code")
-                        or "VERIFICATION_MISSING"
-                    )
+                    + str(host_identity_verification.get("reason_code") or "VERIFICATION_MISSING")
                 )
                 record_cover_route_execution(
                     cover_generation,
@@ -2180,21 +2013,15 @@ def _stage_screenshot_direct_cover(
         final_participant_verification = None
         if relationship_visual_required:
             if method == "screenshot_direct":
-                final_participant_verification = (
-                    build_no_crop_participant_verification(
-                        cover_generation
-                    )
+                final_participant_verification = build_no_crop_participant_verification(
+                    cover_generation
                 )
             elif final_participant_verifier is not None:
                 final_participant_verification = dict(
                     final_participant_verifier(
                         final_cover_path=final_cover_path,
-                        final_cover_sha256=cover_generation[
-                            "final_cover_sha256"
-                        ],
-                        required_participant_ids=list(
-                            route.get("required_participant_ids") or []
-                        ),
+                        final_cover_sha256=cover_generation["final_cover_sha256"],
+                        required_participant_ids=list(route.get("required_participant_ids") or []),
                         source_reference_authority=(
                             cover_generation.get("story_contract", {}).get(
                                 "cover_reference_authority"
@@ -2208,12 +2035,8 @@ def _stage_screenshot_direct_cover(
                     )
                 )
             if final_participant_verification is not None:
-                cover_generation["final_participant_verification"] = (
-                    final_participant_verification
-                )
-            if not validate_final_participant_verification(
-                cover_generation
-            ):
+                cover_generation["final_participant_verification"] = final_participant_verification
+            if not validate_final_participant_verification(cover_generation):
                 detail = (
                     "relationship screenshot lacks a PASS final-pixel "
                     "participant verdict bound to the final cover hash"
@@ -2228,9 +2051,7 @@ def _stage_screenshot_direct_cover(
                 )
                 return _blocked_ai_cover_result(
                     cover_generation,
-                    [
-                        "RELATION_COVER_FINAL_PARTICIPANTS_UNVERIFIED"
-                    ],
+                    ["RELATION_COVER_FINAL_PARTICIPANTS_UNVERIFIED"],
                     detail,
                 )
         degraded = polish and method == "screenshot_direct"
@@ -2245,9 +2066,7 @@ def _stage_screenshot_direct_cover(
                 str(
                     (
                         cover_generation.get("screenshot_polish")
-                        if isinstance(
-                            cover_generation.get("screenshot_polish"), Mapping
-                        )
+                        if isinstance(cover_generation.get("screenshot_polish"), Mapping)
                         else {}
                     ).get("detail")
                     or "screenshot polish failed; direct source screenshot retained"
@@ -2273,22 +2092,14 @@ def _stage_screenshot_direct_cover(
             "detail": detail,
         }
         route = cover_generation.get("route_decision")
-        selected = (
-            str(route.get("selected_treatment") or "")
-            if isinstance(route, Mapping)
-            else ""
-        )
+        selected = str(route.get("selected_treatment") or "") if isinstance(route, Mapping) else ""
         record_cover_route_execution(
             cover_generation,
             actual_treatment=None,
             execution_status="BLOCKED",
             image_generation_attempted=bool(
-                isinstance(
-                    cover_generation.get("screenshot_polish"), Mapping
-                )
-                and cover_generation["screenshot_polish"].get(
-                    "image_generation_attempted"
-                )
+                isinstance(cover_generation.get("screenshot_polish"), Mapping)
+                and cover_generation["screenshot_polish"].get("image_generation_attempted")
             ),
             image_generation_used=False,
             detail=detail,
@@ -2344,9 +2155,7 @@ def _degrade_unavailable_redraw_identity_to_direct(
         ),
         "attempted_final_cover": generation.get("final_cover"),
         "attempted_final_cover_sha256": generation.get("final_cover_sha256"),
-        "identity_verification": (
-            dict(verification) if isinstance(verification, Mapping) else {}
-        ),
+        "identity_verification": (dict(verification) if isinstance(verification, Mapping) else {}),
     }
     generation.pop("final_host_identity_verification", None)
     direct_result = _stage_screenshot_direct_cover(
@@ -2399,7 +2208,9 @@ def _degrade_unavailable_redraw_identity_to_direct(
     return direct_result
 
 
-def _blocked_ai_cover_result(cover_generation: Mapping[str, object], reason_codes: Sequence[str], detail: str) -> dict[str, object]:
+def _blocked_ai_cover_result(
+    cover_generation: Mapping[str, object], reason_codes: Sequence[str], detail: str
+) -> dict[str, object]:
     generation = {**dict(cover_generation), "status": "BLOCKED", "detail": detail}
     return {
         "status": "BLOCKED_AI_COVER_REQUIRED",
@@ -2407,6 +2218,7 @@ def _blocked_ai_cover_result(cover_generation: Mapping[str, object], reason_code
         "cover_path": None,
         "cover_generation": generation,
     }
+
 
 def _materialized_artifact_root(materialized_recut: Mapping[str, object], media_path: Path) -> Path:
     manifest_value = materialized_recut.get("manifest_path")
@@ -2419,6 +2231,7 @@ def _materialized_artifact_root(materialized_recut: Mapping[str, object], media_
         return media_path.parent.parent
     return media_path.parent
 
+
 def _staged_transcript_sample(record: Mapping[str, object], cues: Sequence[SourceCue]) -> str:
     """Title/cover text sample: prefer the FINAL subtitle (fresh transcription
     with glossary corrections) over the context cues, so the title uses the
@@ -2430,7 +2243,9 @@ def _staged_transcript_sample(record: Mapping[str, object], cues: Sequence[Sourc
             from src.autoslice.jingting_chunker import parse_srt_cues
 
             parsed = parse_srt_cues(Path(subtitle_path).read_text(encoding="utf-8"))
-            sample = " ".join(" ".join(cue.text.split()) for cue in parsed if cue.text.strip())[:600]
+            sample = " ".join(" ".join(cue.text.split()) for cue in parsed if cue.text.strip())[
+                :600
+            ]
             if sample:
                 return sample
         except OSError:
