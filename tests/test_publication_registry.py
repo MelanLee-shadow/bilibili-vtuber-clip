@@ -100,6 +100,7 @@ def test_committed_registry_loads_and_lists_the_incident():
     assert rows["auto_192000_909_1014"]["status"] == "published"
     assert rows["auto_224211_80_141"]["bvid"] == "BV1ngGc6BEBS"
     assert rows["song_192000_1321"]["bvid"] == "BV1BJGc6aEWf"
+    assert rows["auto_145940_1533_1619"]["bvid"] == "BV1ELGc6NEC5"
 
 
 def test_manifest_gate_reads_attested_record(tmp_path):
