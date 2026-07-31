@@ -6290,6 +6290,79 @@ def test_transient_agy_failure_retries_across_ticks_with_backoff(tmp_path, monke
     assert state["pending_song"][0]["transient_retry_count"] == 2
 
 
+def test_song_lrc_identity_ambiguity_does_not_loop_on_stale_jingting_failure(
+    tmp_path, monkeypatch
+):
+    """A completed audio/LRC attempt is not an infrastructure outage merely
+    because its preliminary source-context subtitle provider also failed."""
+
+    date = "2026-07-10"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "22966160_20260710-19-30-09.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "song_pipeline_fingerprint", lambda: "sha256:same")
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 500_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
+    monkeypatch.setattr(runner.time, "time", lambda: 10_000)
+    record = {
+        "candidate_id": "song_ambiguous",
+        "segment": segment.name,
+        "start_ms": 100_000,
+        "end_ms": 300_000,
+        "status": "blocked",
+        "reason_codes": [
+            "JINGTING_PROVIDER_NOT_AGY",
+            "SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS",
+        ],
+        "song_pipeline_fingerprint": "sha256:same",
+        "next_retry_at_epoch": 9_999,
+    }
+    state = {"pending_song": [], "songs": [record]}
+
+    assert runner.requeue_recoverable_songs(date, state) == 0
+    assert state["pending_song"] == []
+    assert state["songs"] == [record]
+
+
+def test_explicit_song_provider_failure_retries_even_if_proof_is_unproven(
+    tmp_path, monkeypatch
+):
+    date = "2026-07-10"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "22966160_20260710-19-30-09.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "song_pipeline_fingerprint", lambda: "sha256:same")
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 500_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
+    monkeypatch.setattr(runner.time, "time", lambda: 10_000)
+    record = {
+        "candidate_id": "song_provider_wait",
+        "segment": segment.name,
+        "start_ms": 100_000,
+        "end_ms": 300_000,
+        "status": "blocked",
+        "reason_codes": [
+            "AGY_AND_GEMINI_API_FAILED",
+            "SONG_LIVE_PERFORMANCE_UNPROVEN",
+        ],
+        "transient_failure_code": "AGY_AND_GEMINI_API_FAILED",
+        "song_pipeline_fingerprint": "sha256:same",
+        "next_retry_at_epoch": 9_999,
+    }
+    state = {"pending_song": [], "songs": [record]}
+
+    assert runner.requeue_recoverable_songs(date, state) == 1
+    assert state["pending_song"][0]["retry_reason"] == "transient_infrastructure_failure"
+
+
 def test_song_selector_env_gives_song_context_a_bounded_long_timeout(monkeypatch):
     monkeypatch.delenv("SONG_AGY_PRINT_TIMEOUT", raising=False)
     monkeypatch.setattr(runner, "child_env_for_date", lambda _date: {})

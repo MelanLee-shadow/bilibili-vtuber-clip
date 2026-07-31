@@ -55,6 +55,19 @@ INFRASTRUCTURE_WAIT_FAILURE_KINDS = frozenset(
         "provider_transient",
     }
 )
+
+# A source-context subtitle provider can fail before song repair gets a chance
+# to identify the performance.  That is normally an infrastructure wait.  Once
+# the hash-bound audio/LRC lane has instead reached a determinate *negative*
+# proof result, however, a stale Jingting provenance warning must not turn that
+# result into an endless same-fingerprint provider retry.  The ordinary
+# fingerprint-change route remains available for a real repair change.
+SONG_PROOF_RESULT_REASON_CODES = frozenset(
+    {
+        "SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS",
+        "SONG_AUDIO_LRC_ALIGNMENT_INVALID",
+    }
+)
 SANCTIONED_REVIVAL_RETRY_SCHEMA = "sanctioned-revival-retry.v1"
 FINAL_REVIEW_CARRYOVER_RETRY_CAP = 8
 CONTENT_BOUNDARY_RECOVERY_RELATIVES = (
@@ -1188,7 +1201,18 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
             migrated_legacy_fingerprint = True
         changed = recorded_song_fingerprint != current
         retry_count = int(record.get("transient_retry_count") or 0)
-        infra_transient = bool(reasons & _runner.SONG_INFRA_TRANSIENT_REASON_CODES)
+        # Prefer the explicitly classified transient emitted by song_lane.
+        # Older records did not have that field, so retain the reason-code
+        # fallback unless the attempt reached an audio/LRC proof result.
+        explicit_transient = str(record.get("transient_failure_code") or "")
+        if explicit_transient:
+            infra_transient = (
+                explicit_transient in _runner.SONG_INFRA_TRANSIENT_REASON_CODES
+            )
+        else:
+            infra_transient = bool(
+                reasons & _runner.SONG_INFRA_TRANSIENT_REASON_CODES
+            ) and not bool(reasons & SONG_PROOF_RESULT_REASON_CODES)
         next_retry_at = record.get("next_retry_at_epoch")
         infra_retry_due = (
             infra_transient
