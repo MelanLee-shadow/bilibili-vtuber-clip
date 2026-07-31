@@ -875,6 +875,7 @@ def _run_final_review(
                         "candidate_provenance",
                         "candidate_memory_id",
                         "why",
+                        "repair_class",
                     ):
                         if key in rebuilt_finding:
                             row[key] = rebuilt_finding[key]

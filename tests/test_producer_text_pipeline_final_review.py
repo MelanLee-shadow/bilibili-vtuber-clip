@@ -1936,8 +1936,8 @@ def test_final_review_adjudicates_all_bounded_findings_and_skips_protected_cue(m
     ]
     monkeypatch.setattr(
         pipeline,
-        "build_llm_call",
-        lambda config: _split_llm(
+        "_build_final_review_llm_call",
+        lambda: _split_llm(
             json.dumps({"findings": findings}, ensure_ascii=False), "PROPOSED"
         ),
     )
@@ -2143,8 +2143,8 @@ def test_final_review_allows_only_one_contextual_mutation_per_cue(monkeypatch):
     ]
     monkeypatch.setattr(
         pipeline,
-        "build_llm_call",
-        lambda config: _split_llm(
+        "_build_final_review_llm_call",
+        lambda: _split_llm(
             json.dumps({"findings": findings}, ensure_ascii=False), "PROPOSED"
         ),
     )
@@ -2182,8 +2182,8 @@ def test_final_review_context_fixes_register_for_final_surface_verification(monk
     ]
     monkeypatch.setattr(
         pipeline,
-        "build_llm_call",
-        lambda config: _split_llm(
+        "_build_final_review_llm_call",
+        lambda: _split_llm(
             json.dumps({"findings": findings}, ensure_ascii=False), "PROPOSED"
         ),
     )
@@ -2246,8 +2246,8 @@ def test_final_review_drop_cue_registers_typed_final_surface_receipt(
     ]
     monkeypatch.setattr(
         pipeline,
-        "build_llm_call",
-        lambda config: _split_llm(
+        "_build_final_review_llm_call",
+        lambda: _split_llm(
             json.dumps({"findings": findings}, ensure_ascii=False),
             "PROPOSED",
         ),
@@ -2300,8 +2300,8 @@ def test_final_review_marks_findings_beyond_audio_budget(monkeypatch):
     ]
     monkeypatch.setattr(
         pipeline,
-        "build_llm_call",
-        lambda config: _split_llm(
+        "_build_final_review_llm_call",
+        lambda: _split_llm(
             json.dumps({"findings": findings}, ensure_ascii=False), "PROPOSED"
         ),
     )
@@ -2345,8 +2345,8 @@ def test_final_review_lets_cpa_decide_when_agy_provider_fails(monkeypatch):
     ]
     monkeypatch.setattr(
         pipeline,
-        "build_llm_call",
-        lambda config: _split_llm(
+        "_build_final_review_llm_call",
+        lambda: _split_llm(
             json.dumps({"findings": findings}, ensure_ascii=False),
             "PROPOSED",
         ),

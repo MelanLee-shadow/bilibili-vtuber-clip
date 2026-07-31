@@ -122,8 +122,29 @@ def _authorized_final_review_drop_cue(row: dict) -> bool:
     before = [str(value) for value in row.get("before") or []]
     after = [str(value) for value in row.get("after") or []]
     mutation_authority = row.get("mutation_authority") or {}
+    mode = row.get("mode")
+    exact_final_drop = bool(
+        mode == "exact_final_cpa_self_heal"
+        and row.get("action") == "DROP_CUE"
+        and isinstance(row.get("acoustic_witness"), dict)
+        and row["acoustic_witness"].get("schema_version")
+        == "subtitle-span-acoustic-witness.v1"
+        and row["acoustic_witness"].get("status") == "OBSERVED"
+        and row["acoustic_witness"].get("target_audible") is False
+        and isinstance(row.get("judge"), dict)
+        and row["judge"].get("status") == "JUDGED"
+        and row["judge"].get("choice") == "PROPOSED"
+    )
     return bool(
-        row.get("mode") == "final_review_context_adjudication"
+        mode
+        in {
+            "final_review_context_adjudication",
+            "exact_final_cpa_self_heal",
+        }
+        and (
+            mode == "final_review_context_adjudication"
+            or exact_final_drop
+        )
         and row.get("repair_class") == "acoustic_drop_cue"
         and row.get("decision_authority") == "CPA_JUDGE"
         and str(row.get("policy_branch") or "").startswith(

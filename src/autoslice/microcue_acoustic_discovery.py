@@ -175,6 +175,16 @@ def discover_microcue_findings(
             and float(confidence) >= MIN_WITNESS_CONFIDENCE
             and heard_tokens
         )
+        inaudible_observed = bool(
+            valid
+            and witness.get("status") == "OBSERVED"
+            and witness.get("target_audible") is False
+            and isinstance(confidence, (int, float))
+            and not isinstance(confidence, bool)
+            and float(confidence) >= MIN_WITNESS_CONFIDENCE
+            and not heard_tokens
+            and witness.get("syllable_count") == 0
+        )
         syllable_count_plausible = bool(
             observed
             and abs(len(current_tokens) - len(heard_tokens))
@@ -193,16 +203,40 @@ def discover_microcue_findings(
             "heard_pinyin": " ".join(heard_tokens),
             "pinyin_similarity": round(similarity, 4),
             "status": (
-                "OBSERVED"
-                if syllable_count_plausible
+                "INAUDIBLE_OBSERVED"
+                if inaudible_observed
                 else (
-                    "SYLLABLE_COUNT_OUTLIER"
-                    if observed
-                    else "UNCERTAIN"
+                    "OBSERVED"
+                    if syllable_count_plausible
+                    else (
+                        "SYLLABLE_COUNT_OUTLIER"
+                        if observed
+                        else "UNCERTAIN"
+                    )
                 )
             ),
         }
-        if not observed:
+        if inaudible_observed:
+            finding = {
+                "cue": ordinal,
+                "kind": "context",
+                "proposed_full_cue": "",
+                "repair_class": "acoustic_drop_cue",
+                "source_surface": None,
+                "candidate_memory_id": None,
+                "evidence_cue_ids": [],
+                "suspect": cue.text,
+                "replacement": "",
+                "why": (
+                    "候选无关短句声学巡检确认整条目标时窗无可闻语音且音节数为"
+                    " 0；空 cue 只作为删除候选，仍须 CPA 对 CURRENT/PROPOSED "
+                    "闭集明确选择 PROPOSED 才可落盘"
+                ),
+            }
+            findings.append(finding)
+            row["status"] = "INAUDIBLE_DROP_PROPOSED_TO_CPA"
+            row["finding_sha256"] = "sha256:" + _sha256_json(finding)
+        elif not observed:
             uncertain_count += 1
         elif not syllable_count_plausible:
             syllable_outlier_count += 1

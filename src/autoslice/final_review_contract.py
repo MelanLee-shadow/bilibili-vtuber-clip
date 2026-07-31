@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Mapping
 
@@ -97,6 +98,48 @@ def _validate_exact_final_cpa_self_heal(
                 if isinstance(repair, Mapping)
                 else None
             )
+            before = (
+                repair.get("before")
+                if isinstance(repair, Mapping)
+                else None
+            )
+            after = (
+                repair.get("after")
+                if isinstance(repair, Mapping)
+                else None
+            )
+            acoustic_witness = (
+                repair.get("acoustic_witness")
+                if isinstance(repair, Mapping)
+                else None
+            )
+            judge = (
+                repair.get("judge")
+                if isinstance(repair, Mapping)
+                else None
+            )
+            typed_drop = bool(
+                isinstance(repair, Mapping)
+                and repair.get("action") == "DROP_CUE"
+                and repair.get("repair_class") == "acoustic_drop_cue"
+                and repair.get("policy_branch")
+                == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
+                and isinstance(acoustic_witness, Mapping)
+                and acoustic_witness.get("schema_version")
+                == "subtitle-span-acoustic-witness.v1"
+                and acoustic_witness.get("status") == "OBSERVED"
+                and acoustic_witness.get("target_audible") is False
+                and _SHA256_RX.fullmatch(
+                    "sha256:"
+                    + str(
+                        acoustic_witness.get("request_sha256") or ""
+                    ).removeprefix("sha256:")
+                )
+                is not None
+                and isinstance(judge, Mapping)
+                and judge.get("status") == "JUDGED"
+                and judge.get("choice") == "PROPOSED"
+            )
             if (
                 not isinstance(repair, Mapping)
                 or repair.get("schema_version")
@@ -104,6 +147,10 @@ def _validate_exact_final_cpa_self_heal(
                 or isinstance(cue_index, bool)
                 or not isinstance(cue_index, int)
                 or cue_index < 1
+                or not isinstance(before, str)
+                or not before
+                or not isinstance(after, str)
+                or (not after and not typed_drop)
                 or _SHA256_RX.fullmatch(
                     str(repair.get("before_sha256") or "")
                 )
@@ -114,6 +161,12 @@ def _validate_exact_final_cpa_self_heal(
                 is None
                 or repair.get("before_sha256")
                 == repair.get("after_sha256")
+                or repair.get("before_sha256")
+                != "sha256:"
+                + hashlib.sha256(before.encode("utf-8")).hexdigest()
+                or repair.get("after_sha256")
+                != "sha256:"
+                + hashlib.sha256(after.encode("utf-8")).hexdigest()
                 or _SHA256_RX.fullmatch(
                     str(repair.get("finding_sha256") or "")
                 )

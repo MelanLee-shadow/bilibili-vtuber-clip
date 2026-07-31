@@ -68,6 +68,7 @@ MAX_EDIT_SPAN_CODEPOINTS = 24
 MAX_EDIT_LENGTH_DELTA = 8
 _PROPOSAL_REBUILD_SCHEMA = "subtitle-closed-set-proposal-rebuild.v1"
 _PROPOSAL_REBUILD_CACHE_SCHEMA = "proposal-rebuild-cache.v1"
+_INAUDIBLE_DROP_PROMOTION_SCHEMA = "subtitle-inaudible-drop-promotion.v1"
 _AUTO_REPAIR_CLASSES = frozenset(
     {
         "phonetic",
@@ -1917,6 +1918,66 @@ def _rebuild_candidate_after_neither(
     return rebuilt, audit
 
 
+def _promote_inaudible_target_to_drop_cue(
+    *,
+    finding: Mapping[str, Any],
+    request: Mapping[str, Any],
+    witness: Mapping[str, Any],
+    proposal_rebuild: Mapping[str, Any] | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Build an empty-cue candidate after the textual closed set is exhausted.
+
+    A candidate-free witness may establish that the whole target window has no
+    spoken syllables, but it never owns subtitle bytes.  This helper therefore
+    only creates a typed deletion *proposal*.  The caller must rebuild the
+    hash-bound request and ask CPA to choose CURRENT or the empty PROPOSED cue.
+    """
+
+    audit: dict[str, Any] = {
+        "schema_version": _INAUDIBLE_DROP_PROMOTION_SCHEMA,
+        "status": "NOT_APPLICABLE",
+        "decision_authority": "CPA_PROPOSAL_ONLY",
+        "mutation_authorized": False,
+    }
+    current = str(request.get("current_cue") or "")
+    if not (
+        current
+        and witness.get("schema_version")
+        == "subtitle-span-acoustic-witness.v1"
+        and witness.get("status") == "OBSERVED"
+        and witness.get("target_audible") is False
+        and isinstance(proposal_rebuild, Mapping)
+        and proposal_rebuild.get("schema_version")
+        == _PROPOSAL_REBUILD_SCHEMA
+        and proposal_rebuild.get("status") == "UNRESOLVED"
+    ):
+        return None, audit
+    rebuilt = dict(finding)
+    rebuilt.update(
+        suspect=current,
+        suggestion="",
+        span_start_codepoint=0,
+        span_end_codepoint=len(current),
+        proposed_full_cue="",
+        repair_class="acoustic_drop_cue",
+        candidate_provenance=None,
+        candidate_memory_id=None,
+        base_text_sha256=hashlib.sha256(current.encode("utf-8")).hexdigest(),
+        why=(
+            "[无语音整 cue 删除候选] 候选无关声学证人确认目标时窗无可闻"
+            "语音，原文字闭集被 CPA 判为 NEITHER，文字第三候选重建仍未决；"
+            "空 cue 仅作为新候选，最终删除权仍交 CPA。"
+        ),
+    )
+    audit.update(
+        status="PROPOSED",
+        proposed_cue="",
+        repair_class="acoustic_drop_cue",
+        basis="OBSERVED_INAUDIBLE_AND_TEXTUAL_CLOSED_SET_EXHAUSTED",
+    )
+    return rebuilt, audit
+
+
 def adjudicate_context_finding(
     srt_text: str,
     finding: Mapping[str, Any],
@@ -2036,6 +2097,9 @@ def adjudicate_context_finding(
             "repaired": False,
             "reason_code": str(exc),
         }
+    initial_request_repair_class = str(
+        request.get("repair_class") or ""
+    )
     if (
         isinstance(convergence, Mapping)
         and convergence.get("status") == "RESOLVED"
@@ -2193,6 +2257,7 @@ def adjudicate_context_finding(
     policy_branch = "INVALID_OR_UNCERTAIN_KEEP_CURRENT"
     decision_finding: Mapping[str, Any] = finding
     proposal_rebuild_audit: dict[str, Any] | None = None
+    inaudible_drop_promotion_audit: dict[str, Any] | None = None
     rebuilt_finding: dict[str, Any] | None = bootstrap_finding
     orthography_ambiguous = _orthography_ambiguous(
         current_cue=str(request.get("current_cue") or ""),
@@ -2213,7 +2278,10 @@ def adjudicate_context_finding(
             llm_call=judge_llm_call,
             structured_chat_context=structured_chat_context,
         )
-        if policy_branch == "JUDGE_REJECTS_CLOSED_SET":
+        if (
+            policy_branch == "JUDGE_REJECTS_CLOSED_SET"
+            and initial_request_repair_class != "acoustic_drop_cue"
+        ):
             rebuilt_finding, proposal_rebuild_audit = (
                 _rebuild_candidate_after_neither(
                     finding=decision_finding,
@@ -2329,6 +2397,121 @@ def adjudicate_context_finding(
                             policy_branch = (
                                 "PROPOSAL_REBUILD_EXHAUSTED"
                             )
+            if (
+                not repaired
+                and initial_request_repair_class != "acoustic_drop_cue"
+                and policy_branch
+                in {
+                    "JUDGE_REJECTS_CLOSED_SET",
+                    "PROPOSAL_REBUILD_EXHAUSTED",
+                }
+            ):
+                (
+                    drop_finding,
+                    inaudible_drop_promotion_audit,
+                ) = _promote_inaudible_target_to_drop_cue(
+                    finding=decision_finding,
+                    request=request,
+                    witness=verdict,
+                    proposal_rebuild=proposal_rebuild_audit,
+                )
+                if drop_finding is not None:
+                    try:
+                        drop_request = build_context_adjudication_request(
+                            srt_text,
+                            drop_finding,
+                            clip_context=clip_context,
+                            source_media_timeline_offset_ms=(
+                                source_media_timeline_offset_ms
+                            ),
+                        )
+                    except (TypeError, ValueError) as exc:
+                        inaudible_drop_promotion_audit.update(
+                            status="INVALID",
+                            reason_code=str(exc),
+                        )
+                    else:
+                        drop_witness_request = build_witness_request(
+                            drop_request
+                        )
+                        witness_geometry_keys = (
+                            "kind",
+                            "cue_indexes",
+                            "matched_start_ms",
+                            "matched_end_ms",
+                            "context_start_ms",
+                            "context_end_ms",
+                            "source_media_timeline_offset_ms",
+                        )
+                        witness_geometry_unchanged = all(
+                            drop_witness_request.get(key)
+                            == witness_request.get(key)
+                            for key in witness_geometry_keys
+                        )
+                        if not witness_geometry_unchanged:
+                            inaudible_drop_promotion_audit.update(
+                                status="INVALID",
+                                reason_code=(
+                                    "INAUDIBLE_DROP_CHANGED_WITNESS_WINDOW"
+                                ),
+                            )
+                        else:
+                            inaudible_drop_promotion_audit[
+                                "witness_reuse"
+                            ] = {
+                                "schema_version": (
+                                    "candidate-free-witness-reuse.v1"
+                                ),
+                                "status": "PASS",
+                                "basis": "IDENTICAL_AUDIO_GEOMETRY",
+                                "original_witness_request_sha256": (
+                                    "sha256:"
+                                    + str(
+                                        witness_request.get(
+                                            "request_sha256"
+                                        )
+                                        or ""
+                                    )
+                                ),
+                                "drop_witness_request_sha256": (
+                                    "sha256:"
+                                    + str(
+                                        drop_witness_request.get(
+                                            "request_sha256"
+                                        )
+                                        or ""
+                                    )
+                                ),
+                            }
+                            request = drop_request
+                            decision_finding = drop_finding
+                            rebuilt_finding = drop_finding
+                            orthography_ambiguous = False
+                            orthography_authority = (
+                                _orthography_text_authority(
+                                    decision_finding
+                                )
+                            )
+                            orthography_equivalent = False
+                            orthography_audit = {}
+                            strict_tie = False
+                            (
+                                repaired,
+                                policy_branch,
+                                witness_judge_audit,
+                            ) = adjudicate_with_witness(
+                                check_request=request,
+                                witness=verdict,
+                                llm_call=judge_llm_call,
+                                structured_chat_context=(
+                                    structured_chat_context
+                                ),
+                            )
+                            inaudible_drop_promotion_audit[
+                                "cpa_final_choice"
+                            ] = (
+                                witness_judge_audit.get("judge") or {}
+                            ).get("choice")
         if (
             repaired
             and orthography_ambiguous
@@ -2426,6 +2609,15 @@ def adjudicate_context_finding(
             else {}
         ),
         **(
+            {
+                "inaudible_drop_promotion": (
+                    inaudible_drop_promotion_audit
+                )
+            }
+            if inaudible_drop_promotion_audit is not None
+            else {}
+        ),
+        **(
             {"proposal_bootstrap": proposal_bootstrap_audit}
             if proposal_bootstrap_audit is not None
             else {}
@@ -2505,6 +2697,7 @@ def adjudicate_exact_release_findings(
                 "candidate_provenance",
                 "candidate_memory_id",
                 "why",
+                "repair_class",
             ):
                 if key in rebuilt_finding:
                     row[key] = rebuilt_finding[key]

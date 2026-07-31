@@ -91,3 +91,45 @@ def test_uncertain_microcue_is_disclosed_without_blocking():
     assert findings == []
     assert audit["status"] == "PARTIAL"
     assert audit["uncertain_count"] == 1
+
+
+def test_inaudible_microcue_nominates_empty_drop_but_does_not_mutate():
+    findings, audit = discover_microcue_findings(
+        "1\n00:00:00,000 --> 00:00:01,121\n咳咳\n",
+        timeline_offset_ms=9_660,
+        entity_verifier=lambda request: {
+            "schema_version": "subtitle-span-acoustic-witness.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "OBSERVED",
+            "target_audible": False,
+            "heard_pinyin": "",
+            "syllable_count": 0,
+            "uncertain_positions": [],
+            "confidence": 1.0,
+        },
+    )
+
+    assert findings == [
+        {
+            "cue": 1,
+            "kind": "context",
+            "proposed_full_cue": "",
+            "repair_class": "acoustic_drop_cue",
+            "source_surface": None,
+            "candidate_memory_id": None,
+            "evidence_cue_ids": [],
+            "suspect": "咳咳",
+            "replacement": "",
+            "why": (
+                "候选无关短句声学巡检确认整条目标时窗无可闻语音且音节数为 0；"
+                "空 cue 只作为删除候选，仍须 CPA 对 CURRENT/PROPOSED 闭集明确"
+                "选择 PROPOSED 才可落盘"
+            ),
+        }
+    ]
+    assert audit["status"] == "PASS"
+    assert audit["uncertain_count"] == 0
+    assert audit["eligible"][0]["status"] == (
+        "INAUDIBLE_DROP_PROPOSED_TO_CPA"
+    )
+    assert audit["mutation_authorized"] is False

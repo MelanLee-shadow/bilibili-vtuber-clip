@@ -98,10 +98,25 @@ def adjudicated_proposed_full_cue(
         and judge.get("status") == "JUDGED"
         and judge.get("choice") == "PROPOSED"
         and isinstance(proposed, str)
-        and proposed.strip()
         and isinstance(current, str)
         and proposed != current
     ):
+        return None
+    if proposed == "":
+        verdict = adjudication.get("verdict")
+        if not (
+            finding.get("repair_class") == "acoustic_drop_cue"
+            and request.get("repair_class") == "acoustic_drop_cue"
+            and adjudication.get("policy_branch")
+            == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
+            and isinstance(verdict, Mapping)
+            and verdict.get("schema_version")
+            == "subtitle-span-acoustic-witness.v1"
+            and verdict.get("status") == "OBSERVED"
+            and verdict.get("target_audible") is False
+        ):
+            return None
+    elif not proposed.strip():
         return None
     return proposed
 

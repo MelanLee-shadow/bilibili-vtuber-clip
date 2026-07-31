@@ -916,7 +916,6 @@ def _apply_exact_final_cpa_repairs(
             or not isinstance(cue_index, int)
             or not 1 <= cue_index <= len(cues)
             or not isinstance(proposed, str)
-            or not proposed.strip()
             or not isinstance(adjudication, Mapping)
             or adjudication.get("schema_version")
             != "subtitle-span-adjudication.v1"
@@ -935,6 +934,15 @@ def _apply_exact_final_cpa_repairs(
             else None
         )
         current = cues[cue_index - 1]
+        is_drop = bool(
+            proposed == ""
+            and finding.get("repair_class") == "acoustic_drop_cue"
+            and adjudication.get("policy_branch")
+            == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
+            and isinstance(adjudication.get("verdict"), Mapping)
+            and adjudication["verdict"].get("status") == "OBSERVED"
+            and adjudication["verdict"].get("target_audible") is False
+        )
         current_sha256 = hashlib.sha256(
             current.text.encode("utf-8")
         ).hexdigest()
@@ -956,6 +964,7 @@ def _apply_exact_final_cpa_repairs(
             or request.get("current_cue") != current.text
             or request.get("proposed_cue") != proposed
             or proposed == current.text
+            or (not proposed.strip() and not is_drop)
             or len(request_sha256) != 64
             or any(
                 character not in "0123456789abcdef"
@@ -994,12 +1003,42 @@ def _apply_exact_final_cpa_repairs(
                 ).hexdigest(),
                 "request_sha256": "sha256:" + request_sha256,
                 "decision_authority": "CPA_JUDGE",
+                "action": "DROP_CUE" if is_drop else "REPLACE_CUE_TEXT",
+                "repair_class": request.get("repair_class"),
+                "policy_branch": adjudication.get("policy_branch"),
+                "acoustic_witness": (
+                    {
+                        key: adjudication["verdict"].get(key)
+                        for key in (
+                            "schema_version",
+                            "status",
+                            "request_sha256",
+                            "target_audible",
+                        )
+                    }
+                    if isinstance(adjudication.get("verdict"), Mapping)
+                    else None
+                ),
+                "judge": dict(judge),
                 "mutation_authority": dict(mutation),
                 "timing_immutable": True,
             }
         )
     if not repairs:
         return srt_text, []
+    if any(repair.get("action") == "DROP_CUE" for repair in repairs):
+        cues = [
+            type(cue)(
+                index=index,
+                start_ms=cue.start_ms,
+                end_ms=cue.end_ms,
+                text=cue.text,
+            )
+            for index, cue in enumerate(
+                (cue for cue in cues if cue.text.strip()),
+                start=1,
+            )
+        ]
     return _render_cues_to_srt(cues), repairs
 
 
@@ -1203,11 +1242,26 @@ def _register_exact_final_cpa_repairs(
         local_start = repair.get("matched_start_ms")
         local_end = repair.get("matched_end_ms")
         mutation = repair.get("mutation_authority")
+        is_drop = bool(
+            after == ""
+            and repair.get("action") == "DROP_CUE"
+            and repair.get("repair_class") == "acoustic_drop_cue"
+            and repair.get("policy_branch")
+            == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
+            and isinstance(repair.get("acoustic_witness"), Mapping)
+            and repair["acoustic_witness"].get("schema_version")
+            == "subtitle-span-acoustic-witness.v1"
+            and repair["acoustic_witness"].get("status") == "OBSERVED"
+            and repair["acoustic_witness"].get("target_audible") is False
+            and isinstance(repair.get("judge"), Mapping)
+            and repair["judge"].get("status") == "JUDGED"
+            and repair["judge"].get("choice") == "PROPOSED"
+        )
         if (
             not isinstance(before, str)
             or not before
             or not isinstance(after, str)
-            or not after.strip()
+            or (not after.strip() and not is_drop)
             or isinstance(local_start, bool)
             or not isinstance(local_start, int)
             or isinstance(local_end, bool)
@@ -1263,6 +1317,11 @@ def _register_exact_final_cpa_repairs(
         owner = {
             "mode": "exact_final_cpa_self_heal",
             "decision_authority": "CPA_JUDGE",
+            "action": repair.get("action"),
+            "repair_class": repair.get("repair_class"),
+            "policy_branch": repair.get("policy_branch"),
+            "acoustic_witness": repair.get("acoustic_witness"),
+            "judge": repair.get("judge"),
             "mutation_authority": dict(mutation),
             "cue_indexes": [repair["cue_index"]],
             "matched_start_ms": matched_start,

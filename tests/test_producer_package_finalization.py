@@ -1486,6 +1486,108 @@ def test_exact_final_self_heal_uses_cpa_request_target_after_span_rejection():
     assert receipts[0]["after"] == proposed
 
 
+def test_exact_final_typed_drop_removes_cue_renumbers_and_registers_owner():
+    current = "咳咳"
+    base_sha256 = hashlib.sha256(current.encode("utf-8")).hexdigest()
+    srt_text = (
+        "1\n00:00:00,000 --> 00:00:01,000\n咳咳\n\n"
+        "2\n00:00:02,000 --> 00:00:03,000\n保留下一句\n"
+    )
+    witness_request_sha256 = "a" * 64
+    finding = {
+        "cue_index": 1,
+        "base_text_sha256": base_sha256,
+        "proposed_full_cue": "",
+        "repair_class": "acoustic_drop_cue",
+        "exact_release_adjudication": {
+            "schema_version": "subtitle-span-adjudication.v1",
+            "status": "OBSERVED",
+            "decision_authority": "CPA_JUDGE",
+            "repaired": True,
+            "timing_immutable": True,
+            "policy_branch": "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE",
+            "mutation_authority": {
+                "schema_version": (
+                    "subtitle-correction-mutation-authority.v1"
+                ),
+                "status": "PASS",
+            },
+            "request": {
+                "schema_version": (
+                    "subtitle-span-acoustic-check-request.v1"
+                ),
+                "request_sha256": "f" * 64,
+                "base_text_sha256": base_sha256,
+                "current_cue": current,
+                "proposed_cue": "",
+                "repair_class": "acoustic_drop_cue",
+            },
+            "verdict": {
+                "schema_version": "subtitle-span-acoustic-witness.v1",
+                "status": "OBSERVED",
+                "request_sha256": witness_request_sha256,
+                "target_audible": False,
+            },
+            "witness_judge": {
+                "judge": {
+                    "schema_version": "acoustic-witness-adjudication.v1",
+                    "status": "JUDGED",
+                    "choice": "PROPOSED",
+                    "prompt_sha256": "b" * 64,
+                    "completion_sha256": "c" * 64,
+                }
+            },
+        },
+    }
+
+    repaired, receipts = finalization._apply_exact_final_cpa_repairs(
+        srt_text,
+        {"findings": [finding]},
+    )
+
+    assert "咳咳" not in repaired
+    assert repaired.startswith(
+        "1\n00:00:02,000 --> 00:00:03,000\n保留下一句"
+    )
+    assert len(receipts) == 1
+    assert receipts[0]["action"] == "DROP_CUE"
+    assert receipts[0]["after"] == ""
+    assert receipts[0]["after_sha256"] == (
+        "sha256:" + hashlib.sha256(b"").hexdigest()
+    )
+
+    chat_authority: dict[str, object] = {"entity_repairs": []}
+    finalization._register_exact_final_cpa_repairs(
+        chat_authority,
+        receipts,
+        delivery_start_ms=0,
+    )
+    owner = chat_authority["entity_repairs"][0]
+    assert owner["mode"] == "exact_final_cpa_self_heal"
+    assert owner["repair_class"] == "acoustic_drop_cue"
+    assert owner["structured_exact_text"] == ""
+    assert finalization.verify_chat_authority_final_surfaces(
+        chat_authority,
+        final_text_srt=repaired,
+        final_speaker_srt=repaired,
+        delivery_start_ms=0,
+        delivery_end_ms=3_000,
+    )
+
+    forged = json.loads(json.dumps(finding))
+    forged["exact_release_adjudication"]["verdict"][
+        "target_audible"
+    ] = True
+    unchanged, forged_receipts = (
+        finalization._apply_exact_final_cpa_repairs(
+            srt_text,
+            {"findings": [forged]},
+        )
+    )
+    assert unchanged == srt_text
+    assert forged_receipts == []
+
+
 def test_exact_final_carryover_replays_only_on_same_hash_and_time(tmp_path):
     from src.autoslice import producer_package_finalization as finalization
 

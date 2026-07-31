@@ -804,12 +804,28 @@ def _exact_final_superseded_boundary_owner_valid(
         if isinstance(successor, Mapping)
         else None
     )
+    successor_is_typed_drop = bool(
+        isinstance(successor, Mapping)
+        and successor.get("mode") == "exact_final_cpa_self_heal"
+        and successor.get("action") == "DROP_CUE"
+        and successor.get("repair_class") == "acoustic_drop_cue"
+        and successor.get("policy_branch")
+        == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
+        and isinstance(successor.get("acoustic_witness"), Mapping)
+        and successor["acoustic_witness"].get("schema_version")
+        == "subtitle-span-acoustic-witness.v1"
+        and successor["acoustic_witness"].get("status") == "OBSERVED"
+        and successor["acoustic_witness"].get("target_audible") is False
+        and isinstance(successor.get("judge"), Mapping)
+        and successor["judge"].get("status") == "JUDGED"
+        and successor["judge"].get("choice") == "PROPOSED"
+    )
     return bool(
         isinstance(successor, Mapping)
         and isinstance(predecessor_text, str)
         and predecessor_text
         and isinstance(successor_text, str)
-        and successor_text
+        and (successor_text or successor_is_typed_drop)
         and reconciliation.get("before_sha256")
         == "sha256:"
         + hashlib.sha256(predecessor_text.encode("utf-8")).hexdigest()

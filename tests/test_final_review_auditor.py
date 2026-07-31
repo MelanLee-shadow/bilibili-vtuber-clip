@@ -2091,6 +2091,133 @@ def test_acoustic_drop_cue_requires_whole_target_inaudible():
     assert audit["policy_branch"] == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
 
 
+def test_inaudible_neither_then_unresolved_text_rebuild_promotes_drop_to_cpa():
+    source = _srt("给我换哪一个来着", "咳咳", "先这样好了")
+    calls: list[str] = []
+
+    def cpa(prompt):
+        calls.append(prompt)
+        if "# 字幕坏闭集重建" in prompt:
+            return json.dumps(
+                {
+                    "status": "UNRESOLVED",
+                    "proposed_cue": "",
+                    "reason": "无人声，不能再猜第三个文字候选",
+                },
+                ensure_ascii=False,
+            )
+        if len([row for row in calls if "# 字幕坏闭集重建" not in row]) == 1:
+            return json.dumps({"choice": "NEITHER", "reason": "两项都无声学对应"})
+        return json.dumps({"choice": "PROPOSED", "reason": "空字幕与无语音证据一致"})
+
+    repaired, audit = adjudicate_context_finding(
+        source,
+        {
+            "cue_index": 2,
+            "suspect": "咳咳",
+            "suggestion": "嗯嗯",
+            "proposed_full_cue": "嗯嗯",
+            "repair_class": "phonetic",
+            "why": "声学初筛怀疑是连续 m 音",
+        },
+        entity_verifier=lambda request: _witness(
+            request, "", audible=False
+        ),
+        judge_llm_call=cpa,
+    )
+
+    assert "咳咳" not in repaired
+    assert "先这样好了" in repaired
+    assert audit["repaired"] is True
+    assert audit["policy_branch"] == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
+    assert audit["request"]["repair_class"] == "acoustic_drop_cue"
+    assert audit["request"]["proposed_cue"] == ""
+    assert audit["rebuilt_finding"]["repair_class"] == "acoustic_drop_cue"
+    assert audit["inaudible_drop_promotion"]["status"] == "PROPOSED"
+    assert audit["inaudible_drop_promotion"]["cpa_final_choice"] == "PROPOSED"
+
+
+def test_inaudible_drop_promotion_stays_blocked_when_cpa_keeps_current():
+    source = _srt("给我换哪一个来着", "咳咳", "先这样好了")
+    judge_calls = 0
+
+    def cpa(prompt):
+        nonlocal judge_calls
+        if "# 字幕坏闭集重建" in prompt:
+            return json.dumps(
+                {
+                    "status": "UNRESOLVED",
+                    "proposed_cue": "",
+                    "reason": "没有第三个文字候选",
+                },
+                ensure_ascii=False,
+            )
+        judge_calls += 1
+        return json.dumps(
+            {"choice": "NEITHER" if judge_calls == 1 else "CURRENT"}
+        )
+
+    output, audit = adjudicate_context_finding(
+        source,
+        {
+            "cue_index": 2,
+            "suspect": "咳咳",
+            "suggestion": "嗯嗯",
+            "proposed_full_cue": "嗯嗯",
+            "repair_class": "phonetic",
+        },
+        entity_verifier=lambda request: _witness(
+            request, "", audible=False
+        ),
+        judge_llm_call=cpa,
+    )
+
+    assert output == source
+    assert audit["repaired"] is False
+    assert audit["policy_branch"] == "JUDGE_KEEPS_CURRENT"
+    assert audit["inaudible_drop_promotion"]["cpa_final_choice"] == "CURRENT"
+
+
+def test_direct_drop_neither_is_not_reasked_as_the_same_empty_candidate():
+    source = _srt("咳咳")
+    calls: list[str] = []
+
+    def cpa(prompt):
+        calls.append(prompt)
+        if "# 字幕坏闭集重建" in prompt:
+            return json.dumps(
+                {
+                    "status": "UNRESOLVED",
+                    "proposed_cue": "",
+                    "reason": "不生成第三候选",
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps({"choice": "NEITHER"})
+
+    output, audit = adjudicate_context_finding(
+        source,
+        {
+            "cue_index": 1,
+            "suspect": "咳咳",
+            "suggestion": "",
+            "span_start_codepoint": 0,
+            "span_end_codepoint": 2,
+            "proposed_full_cue": "",
+            "repair_class": "acoustic_drop_cue",
+        },
+        entity_verifier=lambda request: _witness(
+            request, "", audible=False
+        ),
+        judge_llm_call=cpa,
+    )
+
+    assert output == source
+    assert audit["repaired"] is False
+    assert "inaudible_drop_promotion" not in audit
+    assert len(calls) == 1
+
+
 def test_glossary_near_homophone_uses_expected_value_canon():
     """未登记误听面→glossary 规范词走高收益零 CPA 通道。"""
     srt = _srt("只剩下核酸天下了", "第二句正常文本")
