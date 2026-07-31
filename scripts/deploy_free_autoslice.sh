@@ -24,6 +24,35 @@ if [ -n "$(git status --porcelain)" ]; then
     git status --short >&2
     exit 2
 fi
+
+# 2026-07-31 audit: no more red-suite deploys.
+# 7/30-7/31 那轮 65 个 commit 全程只跑定向测试，架构护栏从 7/15 起红了两周没人
+# 发现，最后带着 5 条失败部署进了生产。门放在这里——dirty-tree 拒绝之后、任何
+# 远端动作之前，纯本地、纯只读。
+# 全量、无 marker、无排除：子集豁免豁免掉的不是存量欠账，是未来所有新违规。
+# 没有 bypass 开关是故意的——这个仓库里"紧急"应该去找 Ivan，不是去找环境变量。
+VENV_PYTHON="$ROOT/.venv/bin/python"
+if [ ! -x "$VENV_PYTHON" ]; then
+    echo "REFUSE: $VENV_PYTHON missing — deploys require the local test venv." >&2
+    exit 2
+fi
+echo "== pre-deploy full test suite =="
+if ! "$VENV_PYTHON" -m pytest -q; then
+    echo "REFUSE: test suite is red — production deploys require a green suite." >&2
+    exit 2
+fi
+# 让欠账数字每次部署都从眼前过一遍，账本才不会变成垃圾场。
+"$VENV_PYTHON" - <<'LEDGER_REPORT' || true
+import sys
+sys.path.insert(0, "tests")
+import test_runtime_architecture as arch
+print(
+    f"== architecture debt: {len(arch.FUNCTION_DEBT_LEDGER)} functions / "
+    f"{len(arch.MODULE_DEBT_LEDGER)} modules over budget "
+    "(2026-07-31 baseline 20 / 12) =="
+)
+LEDGER_REPORT
+
 COMMIT=$(git rev-parse HEAD)
 REMOTE_BASE=/opt/bilive/autoslice
 REMOTE_REPO=$REMOTE_BASE/repo
