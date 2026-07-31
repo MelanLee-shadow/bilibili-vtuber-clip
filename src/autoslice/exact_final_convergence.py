@@ -493,7 +493,7 @@ def _evidence_content_fingerprints(value: object) -> list[str]:
 
     fingerprints: set[str] = set()
 
-    def visit(node: object, path: tuple[str, ...]) -> None:
+    def visit(node: object) -> None:
         if isinstance(node, Mapping):
             schema = str(node.get("schema_version") or "").lower()
             anchored = bool(
@@ -508,20 +508,18 @@ def _evidence_content_fingerprints(value: object) -> list[str]:
                 }
                 if material:
                     fingerprints.add(
-                        "/".join(path or ("root",))
-                        + "=sha256:"
-                        + _json_sha256(material)
+                        "sha256:" + _json_sha256(material)
                     )
             for key, child in node.items():
                 key_text = str(key)
                 if key_text in {"judge", "witness_judge"}:
                     continue
-                visit(child, (*path, key_text))
+                visit(child)
         elif isinstance(node, list):
-            for index, child in enumerate(node):
-                visit(child, (*path, str(index)))
+            for child in node:
+                visit(child)
 
-    visit(value, ())
+    visit(value)
     return sorted(fingerprints)
 
 

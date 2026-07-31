@@ -4,6 +4,8 @@ import hashlib
 import json
 from copy import deepcopy
 
+import pytest
+
 from src.autoslice.exact_final_convergence import (
     collect_exact_final_convergence_memos,
     converge_reconsidered_exact_final_findings,
@@ -725,7 +727,16 @@ def test_same_pass_competing_proposals_are_one_order_invariant_closed_set() -> N
     assert forward_memo["history_receipts"] == []
 
 
-def test_cycle_memo_reopens_when_same_audio_has_changed_witness_content() -> None:
+_TYPED_WITNESS_CONTENT = {
+    "target_audible": True,
+    "heard_pinyin": "xie xie",
+    "confidence": 0.92,
+    "model": "agy-audio-v1",
+    "completion_sha256": "sha256:" + _sha("heard-xie-xie"),
+}
+
+
+def _cycle_memo_with_typed_witness() -> tuple[str, str, str, list[dict]]:
     current = "现在落到"
     selected = "谢谢"
     srt = _srt_814(current, "先不说你数学了好吧")
@@ -738,11 +749,7 @@ def test_cycle_memo_reopens_when_same_audio_has_changed_witness_content() -> Non
         salt="same-audio",
     )
     original["exact_release_adjudication"]["verdict"].update(
-        target_audible=True,
-        heard_pinyin="xie xie",
-        confidence=0.92,
-        model="agy-audio-v1",
-        completion_sha256="sha256:" + _sha("heard-xie-xie"),
+        _TYPED_WITNESS_CONTENT
     )
     unresolved, _resolved = converge_reconsidered_exact_final_findings(
         srt,
@@ -764,8 +771,16 @@ def test_cycle_memo_reopens_when_same_audio_has_changed_witness_content() -> Non
         repaired_srt,
         collect_exact_final_convergence_memos({"findings": unresolved}),
     )
+    return current, selected, repaired_srt, memos
 
-    changed = _finding(
+
+def _typed_witness_replay(
+    *,
+    current: str,
+    selected: str,
+    changes: dict[str, object] | None = None,
+) -> dict:
+    replay = _finding(
         cue_index=1,
         start_ms=250,
         end_ms=810,
@@ -773,12 +788,60 @@ def test_cycle_memo_reopens_when_same_audio_has_changed_witness_content() -> Non
         proposed=current,
         salt="same-audio",
     )
-    changed["exact_release_adjudication"]["verdict"].update(
-        target_audible=False,
-        heard_pinyin="luo luo da",
-        confidence=0.41,
-        model="agy-audio-v1",
-        completion_sha256="sha256:" + _sha("heard-luo-luo-da"),
+    replay["exact_release_adjudication"]["verdict"].update(
+        _TYPED_WITNESS_CONTENT
+    )
+    replay["exact_release_adjudication"]["verdict"].update(
+        changes or {}
+    )
+    return replay
+
+
+def test_cycle_memo_locks_identical_typed_witness_content() -> None:
+    current, selected, repaired_srt, memos = (
+        _cycle_memo_with_typed_witness()
+    )
+    identical = _typed_witness_replay(
+        current=current,
+        selected=selected,
+    )
+    pending, locked = resolve_findings_from_exact_final_convergence_memos(
+        repaired_srt,
+        [identical],
+        authority_audit={"exact_final_cpa_convergence_memos": memos},
+    )
+
+    assert pending == []
+    assert len(locked) == 1
+    assert locked[0]["resolution"] == (
+        "CPA_EXACT_FINAL_CYCLE_MEMO_LOCKED_FINAL_TEXT"
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "changed_value"),
+    [
+        ("heard_pinyin", "luo luo da"),
+        ("target_audible", False),
+        ("confidence", 0.41),
+        (
+            "completion_sha256",
+            "sha256:" + _sha("heard-luo-luo-da"),
+        ),
+    ],
+)
+def test_cycle_memo_reopens_when_witness_material_changes(
+    field: str,
+    changed_value: object,
+) -> None:
+    current, selected, repaired_srt, memos = (
+        _cycle_memo_with_typed_witness()
+    )
+
+    changed = _typed_witness_replay(
+        current=current,
+        selected=selected,
+        changes={field: changed_value},
     )
     pending, locked = resolve_findings_from_exact_final_convergence_memos(
         repaired_srt,
