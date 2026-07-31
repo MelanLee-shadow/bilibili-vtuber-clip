@@ -136,6 +136,7 @@ def test_committed_registry_loads_and_lists_the_incident():
     assert rows["auto_224211_181_480"]["bvid"] == "BV1EpGA6MExh"
     assert rows["auto_225056_1013_1116"]["bvid"] == "BV154GA6vEyD"
     assert rows["auto_225056_235_339"]["bvid"] == "BV1UfGw69EMG"
+    assert rows["auto_225056_814_887"]["bvid"] == "BV1FBGw6uE6i"
 
 
 def test_manifest_gate_reads_attested_record(tmp_path):
