@@ -542,11 +542,12 @@ def _prepare_cover_transaction(
     title: str,
     mp4: Path,
     target_payloads: list[tuple[Path, bytes]],
+    journal_name: str = "cover-transaction.json",
 ) -> tuple[Path, dict, dict[Path, bytes | None]]:
     transaction_root = generated_cover.parent / "transaction"
     originals_root = transaction_root / "originals"
     intended_root = transaction_root / "intended"
-    journal_path = generated_cover.parent / "cover-transaction.json"
+    journal_path = generated_cover.parent / journal_name
     if journal_path.exists():
         raise ValueError(f"immutable cover transaction already exists: {journal_path}")
     originals: dict[Path, bytes | None] = {}
@@ -604,7 +605,11 @@ def _roll_forward_prepared_cover_transactions(
     title = str(rec.get("title") or "")
     root = _runner.BASE / "out" / date / cid / "cover_repair" / "generations"
     recovered = False
-    for journal_path in sorted(root.glob("*/cover-transaction.json")):
+    journals = [
+        *root.glob("*/cover-transaction.json"),
+        *root.glob("*/portable-migration-transaction.json"),
+    ]
+    for journal_path in sorted(journals):
         try:
             journal = _read_json_object(journal_path, label="cover transaction journal")
         except ValueError:
@@ -1324,6 +1329,121 @@ def _cover_binding_valid(date: str, rec: dict, mp4: Path, cover: Path) -> bool:
     )
 
 
+def _migrate_song_portable_cover_attachments(
+    date: str, rec: dict, mp4: Path, cover: Path
+) -> bool:
+    """Upgrade a valid old song cover binding without another image request.
+
+    Old verified-song manifests predate portable publish/replay copies.  The
+    immutable binding and generation are the only authority permitted to fill
+    that gap; a missing/changed source simply leaves the record for normal
+    repair instead of manufacturing a package.
+    """
+    if not rec.get("delivered") or not cover.is_file():
+        return False
+    cid, title = str(rec.get("candidate_id") or ""), str(rec.get("title") or "")
+    try:
+        binding_path = Path(str(rec.get("cover_binding_path") or "")).resolve(strict=True)
+        binding = _read_json_object(binding_path, label="old song cover binding")
+        generation_path = Path(str(binding.get("generation_manifest_path") or "")).resolve(strict=True)
+        generation_cover = Path(str(binding.get("generation_cover_path") or "")).resolve(strict=True)
+        generation, validated_path = _validate_repaired_cover_generation(
+            cover=generation_cover, title=title, candidate_id=cid
+        )
+        if (
+            validated_path != generation_path
+            or binding.get("authority_type") != "verified_song_delivery"
+            or binding.get("delivery_manifest_path") != rec.get("delivery_manifest_path")
+            or binding.get("media_path") != str(mp4.resolve())
+            or binding.get("cover_path") != str(cover.resolve())
+            or not _matches_sha256(binding_path, str(rec.get("cover_binding_sha256") or ""))
+            or not _matches_sha256(mp4, str(binding.get("media_sha256") or ""))
+            or not _matches_sha256(cover, str(binding.get("cover_sha256") or ""))
+            or not _matches_sha256(generation_cover, str(binding.get("generation_cover_sha256") or ""))
+        ):
+            return False
+        documents = _active_cover_documents(
+            date=date, candidate_id=cid, title=title, mp4=mp4,
+            media_sha256=str(binding.get("media_sha256") or ""),
+        )
+        song_manifest = _active_song_delivery_manifest(
+            rec, candidate_id=cid, mp4=mp4, documents=documents
+        )
+        if song_manifest is None:
+            return False
+        manifest_path, manifest = song_manifest
+        source_publish_rows = [
+            (path.resolve(strict=True), document)
+            for path, document in documents
+            if document.get("schema_version") == "shadow-publish-draft.v1"
+        ]
+        if len(source_publish_rows) != 1:
+            return False
+        source_publish_path, source_publish = source_publish_rows[0]
+        if source_publish.get("cover_generation") != generation:
+            return False
+        replay_specs = song_portable_cover_replay_specs(
+            generation=generation, delivery=cover.parent.resolve(),
+            basename=cover.name.removesuffix(".cover.png"),
+        )
+        delivery_publish = mp4.with_suffix(".publish.json").resolve()
+        publish_payload = source_publish_path.read_bytes()
+        publish_sha256 = "sha256:" + hashlib.sha256(publish_payload).hexdigest()
+        if not _matches_sha256(source_publish_path, publish_sha256):
+            return False
+        updated_manifest = copy.deepcopy(manifest)
+        artifacts = updated_manifest.get("artifacts")
+        if not isinstance(artifacts, dict):
+            return False
+        artifacts["publish"] = {
+            "path": str(delivery_publish), "sha256": publish_sha256,
+            "source_path": str(source_publish_path), "source_sha256": publish_sha256,
+        }
+        for role, (source, destination, sha256) in replay_specs.items():
+            artifacts[role] = {
+                "path": str(destination), "sha256": sha256,
+                "source_path": str(source.resolve(strict=True)), "source_sha256": sha256,
+            }
+        target_payloads: list[tuple[Path, bytes]] = [(binding_path, binding_path.read_bytes())]
+        if generation_cover.resolve() != cover.resolve():
+            target_payloads.append((cover, cover.read_bytes()))
+        target_payloads.extend((path, path.read_bytes()) for path, _document in documents)
+        target_payloads.append((delivery_publish, publish_payload))
+        target_payloads.extend((destination, source.read_bytes()) for source, destination, _sha in replay_specs.values())
+        target_payloads.append((manifest_path, _runner._json_file_bytes(updated_manifest)))
+        journal_path, journal, originals = _prepare_cover_transaction(
+            generated_cover=generation_cover, candidate_id=cid, title=title, mp4=mp4,
+            target_payloads=target_payloads,
+            journal_name="portable-migration-transaction.json",
+        )
+        try:
+            for target, payload in target_payloads:
+                _runner._atomic_write_bytes_file(target, payload)
+            for target, payload in target_payloads:
+                if target.read_bytes() != payload:
+                    raise OSError(f"portable song cover migration verification failed: {target}")
+            _set_cover_transaction_status(journal_path, journal, "COMMITTED")
+        except BaseException:
+            _restore_transaction_files(originals)
+            raise
+        rec["delivery_manifest_sha256"] = "sha256:" + hashlib.sha256(
+            _runner._json_file_bytes(updated_manifest)
+        ).hexdigest()
+        sidecars = rec.setdefault("delivered_sidecars", {})
+        sidecar_hashes = rec.setdefault("delivered_sidecar_hashes", {})
+        if not isinstance(sidecars, dict) or not isinstance(sidecar_hashes, dict):
+            return False
+        for role, artifact in artifacts.items():
+            if role != "video" and isinstance(artifact, dict):
+                sidecars[role] = str(artifact["path"])
+                sidecar_hashes[role] = str(artifact["sha256"])
+        rec["cover_integrity_status"] = "VALID_BOUND_PORTABLE_MIGRATED"
+        rec["cover_portable_migrated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        return _cover_binding_valid(date, rec, mp4, cover)
+    except (OSError, ValueError, SongDeliveryError):
+        return False
+
+
 def _recover_committed_cover_binding(date: str, rec: dict, mp4: Path, cover: Path) -> bool:
     """Recover state after a crash between the filesystem binding commit and
     ``write_state``.  Immutable generations plus active-doc/manifest pointers
@@ -1337,6 +1457,8 @@ def _recover_committed_cover_binding(date: str, rec: dict, mp4: Path, cover: Pat
         date, rec, mp4, cover
     ):
         return False
+    if _migrate_song_portable_cover_attachments(date, rec, mp4, cover):
+        return True
     cid = str(rec.get("candidate_id") or "")
     title = str(rec.get("title") or "")
     root = _runner.BASE / "out" / date / cid / "cover_repair" / "generations"

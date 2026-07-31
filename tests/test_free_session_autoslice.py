@@ -2230,6 +2230,36 @@ def test_song_cover_binding_supports_distinct_outer_and_selector_candidate_ids(t
     assert cover_repair_needed(fx["date"], fx["rec"])
 
 
+def test_song_portable_cover_migration_reuses_old_bound_generation_without_image_call(
+    tmp_path, monkeypatch
+):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch, song=True)
+    runner._bind_repaired_cover(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
+    )
+    manifest = json.loads(fx["delivery_manifest"].read_text(encoding="utf-8"))
+    for role in ("publish", "cover_title_mask", "cover_pre_overlay", "cover_route_background"):
+        artifact = manifest["artifacts"].pop(role)
+        Path(artifact["path"]).unlink()
+    fx["delivery_manifest"].write_text(json.dumps(manifest), encoding="utf-8")
+    fx["rec"]["delivery_manifest_sha256"] = fx["digest"](fx["delivery_manifest"])
+
+    assert not runner._cover_binding_valid(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"]
+    )
+    assert runner._recover_committed_cover_binding(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"]
+    )
+    assert fx["rec"]["cover_integrity_status"] == "VALID_BOUND_PORTABLE_MIGRATED"
+    assert runner._cover_binding_valid(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"]
+    )
+    migrated = json.loads(fx["delivery_manifest"].read_text(encoding="utf-8"))
+    for role in ("publish", "cover_title_mask", "cover_pre_overlay", "cover_route_background"):
+        artifact = migrated["artifacts"][role]
+        assert runner._matches_sha256(Path(artifact["path"]), artifact["sha256"])
+
+
 def test_song_active_record_materialization_uses_publish_compatible_filename(tmp_path, monkeypatch):
     fx = _cover_binding_fixture(tmp_path, monkeypatch, song=True)
     fx["source_record"].unlink()
@@ -6705,6 +6735,38 @@ def test_talk_failure_classifies_real_clip_anchor_shortage_as_speaker_evidence()
     assert classified["failure_kind"] == "speaker_evidence"
     assert classified["failure_stage"] == "speaker_finalization"
     assert classified["failure_recoverable"] is False
+
+
+@pytest.mark.parametrize(
+    ("message", "kind", "stage", "recoverable"),
+    [
+        (
+            "SOURCE_FACT_REPAIR_EXHAUSTED: "
+            "SOURCE_FACT_TITLE_AUTHORITY_REQUIRED",
+            "story_contract",
+            "source_fact_repair",
+            False,
+        ),
+        (
+            "SOURCE_FACT_REVIEW_INFRA_UNRESOLVED: "
+            "CPA_TEXT_REVIEW_CALL_FAILED",
+            "provider_transient",
+            "source_fact_review",
+            True,
+        ),
+    ],
+)
+def test_talk_failure_classifies_source_fact_gate(
+    message: str,
+    kind: str,
+    stage: str,
+    recoverable: bool,
+) -> None:
+    classified = runner.classify_talk_failure(message)
+
+    assert classified["failure_kind"] == kind
+    assert classified["failure_stage"] == stage
+    assert classified["failure_recoverable"] is recoverable
 
 
 def test_talk_failure_classifies_vanished_source_media_as_terminal():
