@@ -404,6 +404,24 @@ def test_journal_tamper_is_rejected(tmp_path, monkeypatch):
         )
 
 
+def test_journal_append_completes_short_writes(tmp_path, monkeypatch):
+    manifest, plan, plan_path, old_journal = _materialize(
+        tmp_path, monkeypatch
+    )
+    old_journal.unlink()
+    real_write = cover_repair.os.write
+
+    def short_write(fd, data):
+        return real_write(fd, bytes(data[:5]))
+
+    monkeypatch.setattr(cover_repair.os, "write", short_write)
+    cover_repair.initialise_journal(old_journal, plan_path, plan)
+    result = cover_repair.status(
+        plan_path=plan_path, journal=old_journal, manifest=manifest
+    )
+    assert result.state == "PLANNED"
+
+
 class FakeSession:
     def __init__(self, view_data):
         self.view_data = view_data

@@ -673,7 +673,12 @@ def _append_journal(
     data = _canonical_json(row) + b"\n"
     fd = os.open(journal, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     try:
-        os.write(fd, data)
+        view = memoryview(data)
+        while view:
+            written = os.write(fd, view)
+            if written <= 0:
+                raise OSError("short write while appending cover repair journal")
+            view = view[written:]
         os.fsync(fd)
     finally:
         os.close(fd)
