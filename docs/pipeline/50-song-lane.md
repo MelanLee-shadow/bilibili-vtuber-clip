@@ -19,6 +19,12 @@
   provenance，都属于带指数退避的 infrastructure failure：可以越过普通内容尝试上限自愈，
   但仍受每场最多交付一首和剩余 delivery slot 约束。历史只有 free-form error 的同类失败由
   recovery 迁移成 typed reason；不得因为同场其他候选耗尽尝试额度而永久冻结。
+- 完成原始全源音频/LRC 证明后得到 `SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS` 或
+  `SONG_AUDIO_LRC_ALIGNMENT_INVALID`，属于有证据的确定性弃选，不是 provider outage。batch
+  必须写入 `song-terminal-disposition.v1`，把它与可恢复 `blocked` 分开；普通 song pipeline
+  fingerprint 变化不得重开。只有显式 operator revival（例如新增、边界绑定的歌名权威）才可
+  重新进入候选。若同一 attempt 有明确 typed AGY/Gemini/CPA transient，则 transient 优先，
+  保留指数退避；窄窗遗留的 Jingting/CPA advisory 不得覆盖后来完成的全源负面证明。
 - 歌词字幕：external LRC 全局位移（`song_alignment.py`），零点锚 BCUT ASR 中位（`offset_basis`）；精确重编码；ASS 取整。**歌词正文不过词表修复链**（结构性事实，见 41 重构议题）。
 - 歌切不带片头；最终结构由 [80-package-delivery.md](80-package-delivery.md) 强制。
 - 标题：铁律目录式，见 [60-title.md](60-title.md)。

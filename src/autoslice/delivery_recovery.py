@@ -19,6 +19,10 @@ from pathlib import Path
 from typing import NamedTuple
 
 from src.autoslice.candidate_selection import _exact_talk_contract_ids
+from src.autoslice.batch_terminal_state import (
+    SONG_DETERMINISTIC_PROOF_REJECTION_CODES,
+    project_terminal_song_disposition,
+)
 from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
@@ -56,18 +60,6 @@ INFRASTRUCTURE_WAIT_FAILURE_KINDS = frozenset(
     }
 )
 
-# A source-context subtitle provider can fail before song repair gets a chance
-# to identify the performance.  That is normally an infrastructure wait.  Once
-# the hash-bound audio/LRC lane has instead reached a determinate *negative*
-# proof result, however, a stale Jingting provenance warning must not turn that
-# result into an endless same-fingerprint provider retry.  The ordinary
-# fingerprint-change route remains available for a real repair change.
-SONG_PROOF_RESULT_REASON_CODES = frozenset(
-    {
-        "SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS",
-        "SONG_AUDIO_LRC_ALIGNMENT_INVALID",
-    }
-)
 SANCTIONED_REVIVAL_RETRY_SCHEMA = "sanctioned-revival-retry.v1"
 FINAL_REVIEW_CARRYOVER_RETRY_CAP = 8
 CONTENT_BOUNDARY_RECOVERY_RELATIVES = (
@@ -1153,8 +1145,9 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
     `UNPROVEN`, missing proof, provider ambiguity, and runner failure mean the
     proof path did not finish; they are not evidence that someone else sang.
     A content fingerprint change earns one new attempt budget.  A transient
-    AGY source-context failure additionally gets one same-fingerprint retry.
-    Confirmed background playback / non-Li-Dousha singing remains terminal.
+    provider failure additionally gets same-fingerprint retries with backoff.
+    Completed negative audio/LRC proof and confirmed background playback /
+    non-Li-Dousha singing remain terminal across routine fingerprint changes.
     """
 
     current = _runner.song_pipeline_fingerprint()
@@ -1167,6 +1160,16 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
     requeued: list[dict] = []
     migrated_legacy_fingerprint = False
     for record in state.get("songs", []):
+        if isinstance(record, dict):
+            project_terminal_song_disposition(
+                record,
+                terminal_performer_rejection_codes=(
+                    _runner.SONG_TERMINAL_PERFORMER_REJECTION_CODES
+                ),
+                infra_transient_reason_codes=(
+                    _runner.SONG_INFRA_TRANSIENT_REASON_CODES
+                ),
+            )
         if (
             not isinstance(record, dict)
             or record.get("delivered")
@@ -1188,9 +1191,6 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
             reasons.add("SONG_SOURCE_TRANSCRIPT_EMPTY")
         if reasons != {str(code) for code in record.get("reason_codes") or []}:
             record["reason_codes"] = sorted(reasons)
-        if reasons & _runner.SONG_TERMINAL_PERFORMER_REJECTION_CODES:
-            kept.append(record)
-            continue
         recorded_song_fingerprint = record.get("song_pipeline_fingerprint")
         if not isinstance(recorded_song_fingerprint, str) or not recorded_song_fingerprint:
             # One-time migration from the historical global fingerprint.  Its
@@ -1212,7 +1212,9 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
         else:
             infra_transient = bool(
                 reasons & _runner.SONG_INFRA_TRANSIENT_REASON_CODES
-            ) and not bool(reasons & SONG_PROOF_RESULT_REASON_CODES)
+            ) and not bool(
+                reasons & SONG_DETERMINISTIC_PROOF_REJECTION_CODES
+            )
         next_retry_at = record.get("next_retry_at_epoch")
         infra_retry_due = (
             infra_transient

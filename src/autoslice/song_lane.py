@@ -18,12 +18,24 @@ import tempfile
 import time
 from pathlib import Path
 
+from src.autoslice.batch_terminal_state import project_terminal_song_disposition
 from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.song_delivery import SongDeliveryError
 from src.autoslice.verified_io import _matches_sha256
 
 
 _runner = RunnerProxy()
+
+
+def _project_terminal_song_result(result: dict) -> dict:
+    project_terminal_song_disposition(
+        result,
+        terminal_performer_rejection_codes=(
+            _runner.SONG_TERMINAL_PERFORMER_REJECTION_CODES
+        ),
+        infra_transient_reason_codes=_runner.SONG_INFRA_TRANSIENT_REASON_CODES,
+    )
+    return result
 
 
 def _srt_cue_spans(srt_path: Path, lo_ms: int, hi_ms: int) -> list[tuple[int, int]]:
@@ -740,7 +752,7 @@ def produce_song(date: str, item: dict) -> dict:
         resumed = attempt(full_start, full_end, "_full")
         resumed["retried_full_source"] = True
         resumed["resumed_full_source_after_transient"] = True
-        return resumed
+        return _project_terminal_song_result(resumed)
 
     result = attempt(*window_for(anchor_start, anchor_end), "")
     if result.get("window_classified_song") and not result.get("song_complete"):
@@ -774,6 +786,14 @@ def produce_song(date: str, item: dict) -> dict:
                 }
                 for key in (
                     "transient_failure_code",
+                    "retry_after_seconds",
+                    "next_retry_at_epoch",
+                    "next_retry_at",
+                ):
+                    result.pop(key, None)
+                for key in (
+                    "transient_failure_code",
+                    "retry_after_seconds",
                     "next_retry_at_epoch",
                     "next_retry_at",
                 ):
@@ -809,7 +829,7 @@ def produce_song(date: str, item: dict) -> dict:
             retry = attempt(*window_for(d0, d1), "_core")
             if retry.get("window_classified_song") or retry.get("delivered"):
                 result = {**retry, "retried_core": True}
-    return result
+    return _project_terminal_song_result(result)
 
 
 def normalize_song_work_item(date: str, item: dict) -> dict:

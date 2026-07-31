@@ -4748,7 +4748,19 @@ def test_failed_song_selector_cannot_reuse_stale_summary_or_deliver(tmp_path, mo
     assert not list((repo / "lidousha" / date).glob("*.mp4"))
 
 
-def test_full_song_proof_retry_seeds_original_anchor_and_enables_audio_lrc(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("terminal_codes", "performer_rejection"),
+    [
+        (
+            ["SONG_BACKGROUND_PLAYBACK_ONLY", "SONG_NOT_LIDOUSHA_SINGING"],
+            True,
+        ),
+        (["SONG_AUDIO_LRC_ALIGNMENT_INVALID"], False),
+    ],
+)
+def test_full_song_proof_retry_seeds_original_anchor_and_enables_audio_lrc(
+    tmp_path, monkeypatch, terminal_codes, performer_rejection
+):
     date = "2026-07-09"
     cid = "song_seed_retry"
     base = tmp_path / "autoslice"
@@ -4794,7 +4806,7 @@ def test_full_song_proof_retry_seeds_original_anchor_and_enables_audio_lrc(tmp_p
                             "candidate_id": "seededsong_45000_95000" if seeded else "semanticsong_15000_65000",
                             "decision_action": "BLOCK",
                             "reason_codes": (
-                                ["SONG_BACKGROUND_PLAYBACK_ONLY", "SONG_NOT_LIDOUSHA_SINGING"]
+                                terminal_codes
                                 if full_source
                                 else [
                                     "TIGHT_ATTEMPT_DIAGNOSTIC",
@@ -4831,11 +4843,19 @@ def test_full_song_proof_retry_seeds_original_anchor_and_enables_audio_lrc(tmp_p
 
     assert result["window_classified_song"] is True
     assert "full_source_retry" in result
-    assert result["decision"] == "BLOCK"
+    assert result["decision"] == "REJECT"
+    assert result["status"] == "candidate_rejected"
     assert result["full_source_authoritative_block"] is True
-    assert result["full_source_performer_rejection"] is True
-    assert "SONG_BACKGROUND_PLAYBACK_ONLY" in result["reason_codes"]
-    assert "SONG_NOT_LIDOUSHA_SINGING" in result["reason_codes"]
+    assert bool(result.get("full_source_performer_rejection")) is performer_rejection
+    assert result["song_terminal_disposition"] == {
+        "schema_version": "song-terminal-disposition.v1",
+        "status": "TERMINAL",
+        "disposition": "DETERMINISTIC_CONTENT_REJECTION",
+        "reason_codes": sorted(terminal_codes),
+        "retryable": False,
+        "revival_authority": "EXPLICIT_OPERATOR_REVIVAL_REQUIRED",
+    }
+    assert set(terminal_codes).issubset(result["reason_codes"])
     assert "TIGHT_ATTEMPT_DIAGNOSTIC" not in result["reason_codes"]
     assert (
         "TIGHT_ATTEMPT_DIAGNOSTIC"
@@ -6617,6 +6637,7 @@ def test_song_lrc_identity_ambiguity_does_not_loop_on_stale_jingting_failure(
         "start_ms": 100_000,
         "end_ms": 300_000,
         "status": "blocked",
+        "rc": 0,
         "reason_codes": [
             "JINGTING_PROVIDER_NOT_AGY",
             "SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS",
@@ -6629,6 +6650,39 @@ def test_song_lrc_identity_ambiguity_does_not_loop_on_stale_jingting_failure(
     assert runner.requeue_recoverable_songs(date, state) == 0
     assert state["pending_song"] == []
     assert state["songs"] == [record]
+    assert record["status"] == "candidate_rejected"
+    assert record["song_terminal_disposition"]["retryable"] is False
+    assert "next_retry_at_epoch" not in record
+
+
+def test_completed_song_lrc_negative_is_terminal_across_pipeline_change(
+    tmp_path, monkeypatch
+):
+    date = "2026-07-10"
+    date_dir = tmp_path / "recordings" / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "22966160_20260710-19-30-09.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", tmp_path / "recordings")
+    monkeypatch.setattr(runner, "song_pipeline_fingerprint", lambda: "sha256:new")
+    record = {
+        "candidate_id": "song_alignment_invalid",
+        "segment": segment.name,
+        "start_ms": 100_000,
+        "end_ms": 300_000,
+        "status": "blocked",
+        "rc": 0,
+        "reason_codes": ["SONG_AUDIO_LRC_ALIGNMENT_INVALID"],
+        "song_pipeline_fingerprint": "sha256:old",
+        "next_retry_at_epoch": 9_999_999_999,
+    }
+    state = {"pending_song": [], "songs": [record]}
+
+    assert runner.requeue_recoverable_songs(date, state) == 0
+    assert state["pending_song"] == []
+    assert record["status"] == "candidate_rejected"
+    assert record["decision"] == "REJECT"
+    assert "next_retry_at_epoch" not in record
 
 
 def test_explicit_song_provider_failure_retries_even_if_proof_is_unproven(
@@ -6654,7 +6708,7 @@ def test_explicit_song_provider_failure_retries_even_if_proof_is_unproven(
         "status": "blocked",
         "reason_codes": [
             "AGY_AND_GEMINI_API_FAILED",
-            "SONG_LIVE_PERFORMANCE_UNPROVEN",
+            "SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS",
         ],
         "transient_failure_code": "AGY_AND_GEMINI_API_FAILED",
         "song_pipeline_fingerprint": "sha256:same",
@@ -9967,6 +10021,41 @@ def test_ordinary_terminal_projection_clears_stale_closure_and_retry_metadata():
     assert "exact_talk_contract_closure" not in state
     assert "next_retry_at_epoch" not in state
     assert "next_retry_at" not in state
+
+
+def test_terminal_projection_separates_song_rejections_from_provider_waits():
+    future = 9_999_999_999
+    rejected = {
+        "candidate_id": "song_rejected",
+        "status": "blocked",
+        "rc": 0,
+        "reason_codes": [
+            "JINGTING_PROVIDER_NOT_AGY",
+            "SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS",
+        ],
+        "next_retry_at_epoch": future,
+    }
+    provider_wait = {
+        "candidate_id": "song_wait",
+        "status": "blocked",
+        "rc": 0,
+        "reason_codes": [
+            "SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS",
+            "AGY_AND_GEMINI_API_FAILED",
+        ],
+        "transient_failure_code": "AGY_AND_GEMINI_API_FAILED",
+        "next_retry_at_epoch": future,
+    }
+    state = {"picks": [], "songs": [rejected, provider_wait], "pending_talk": []}
+
+    terminal = runner._project_terminal_batch_state(state)
+
+    assert terminal["rejected_songs"] == [rejected]
+    assert terminal["blocked_songs"] == [provider_wait]
+    assert rejected["status"] == "candidate_rejected"
+    assert "next_retry_at_epoch" not in rejected
+    assert provider_wait["status"] == "blocked"
+    assert terminal["retry_epoch"] == future
 
 
 def test_user_selection_override_keeps_its_slot_alongside_repairs(monkeypatch):

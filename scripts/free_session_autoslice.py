@@ -108,7 +108,10 @@ from src.autoslice.legacy_hls_recovery import (
     LegacyHlsRecoveryError,
     recover_finalized_legacy_hls,
 )
-from src.autoslice.batch_terminal_state import project_terminal_batch_state
+from src.autoslice.batch_terminal_state import (
+    project_terminal_batch_state,
+    project_terminal_song_disposition,
+)
 from src.autoslice.selection_scorecard import (
     SelectionCalibrationPolicyError,
     load_selected_selection_calibration_policy,
@@ -1568,6 +1571,15 @@ def _project_terminal_batch_state(state: dict) -> dict[str, object]:
     a future retry timestamp.
     """
 
+    for song in state.get("songs", []):
+        if isinstance(song, dict):
+            project_terminal_song_disposition(
+                song,
+                terminal_performer_rejection_codes=(
+                    SONG_TERMINAL_PERFORMER_REJECTION_CODES
+                ),
+                infra_transient_reason_codes=SONG_INFRA_TRANSIENT_REASON_CODES,
+            )
     exact_closure = exact_talk_contract_closure(state)
     retry_epoch = scheduled_retry_epoch(state)
     return project_terminal_batch_state(
@@ -1577,6 +1589,10 @@ def _project_terminal_batch_state(state: dict) -> dict[str, object]:
         cover_pending_status=TALK_COVER_PENDING_STATUS,
         exact_closure=exact_closure,
         retry_epoch=retry_epoch,
+        terminal_song_performer_rejection_codes=(
+            SONG_TERMINAL_PERFORMER_REJECTION_CODES
+        ),
+        song_infra_transient_reason_codes=SONG_INFRA_TRANSIENT_REASON_CODES,
     )
 
 
@@ -1842,13 +1858,15 @@ def process_date(date: str) -> None:
     repaired = terminal["repaired"]
     delivered_songs = terminal["delivered_songs"]
     blocked_songs = terminal["blocked_songs"]
+    rejected_songs = terminal["rejected_songs"]
     failures = terminal["failures"]
     write_state(date, state)
     write_reports(date, state)
     log(
         f"{date} batch finished [{state['status']}]: talk {len(delivered_talk)}/{len(picks)} delivered"
         f" ({len(repaired)} boundary-self-repaired), song {len(delivered_songs)} delivered"
-        f" / {len(blocked_songs)} gate-blocked / {len(songs)} attempted, {len(failures)} failure(s)"
+        f" / {len(blocked_songs)} retry-blocked / {len(rejected_songs)} rejected"
+        f" / {len(songs)} attempted, {len(failures)} failure(s)"
     )
     # Production is already committed to state/reports above.  Only now may a
     # rare collab trigger enqueue the separately bounded evidence worker.
