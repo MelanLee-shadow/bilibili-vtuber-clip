@@ -304,7 +304,17 @@ def converge_missing_proposal(
             error = None
         original_start = current.index(suspect)
         original_end = original_start + len(suspect)
-        if error is not None or start > original_start or end < original_end:
+        # This pass judges the *complete* replacement cue.  A minimal diff is
+        # allowed to preserve a shared prefix/suffix inside the reviewer's
+        # wider suspect (``我不知道`` -> ``我上次`` preserves ``我``).  The
+        # exact cue still covers the finding when the old suspect no longer
+        # survives and the actual edit intersects its original interval.
+        edit_intersects_suspect = start < original_end and end > original_start
+        if (
+            error is not None
+            or suspect in replacement_text
+            or not edit_intersects_suspect
+        ):
             audit.update(
                 status="INVALID",
                 reason_code=error or "CPA_CONVERGENCE_DOES_NOT_COVER_SUSPECT",

@@ -1299,6 +1299,53 @@ def test_missing_candidate_second_cpa_exact_text_self_heals_without_agy():
     assert repairs[0]["decision_authority"] == "CPA_JUDGE"
 
 
+def test_exact_text_convergence_allows_shared_prefix_inside_wide_suspect():
+    source = _srt("他说完了", "我不知道", "他就说下一件事")
+
+    def cpa(prompt):
+        if "# 字幕缺失候选重建" in prompt:
+            return json.dumps(
+                {
+                    "status": "PROPOSED",
+                    "proposed_cue": "我上次",
+                    "reason": "声学巡检与下文共同支持",
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {
+                "decision": "REPLACE_WITH_EXACT_TEXT",
+                "replacement_text": "我上次",
+                "reason": "保留共享主语我，替换其后的误听片段",
+            },
+            ensure_ascii=False,
+        )
+
+    output, adjudication = adjudicate_context_finding(
+        source,
+        {
+            "cue_index": 2,
+            "suspect": "我不知道",
+            "suggestion": None,
+            "proposed_full_cue": None,
+            "repair_class": "phonetic",
+        },
+        entity_verifier=lambda request: pytest.fail(
+            f"AGY must not decide exact-text convergence: {request}"
+        ),
+        judge_llm_call=cpa,
+    )
+
+    assert "我上次" in output
+    assert "我不知道" not in output
+    assert adjudication["status"] == "OBSERVED"
+    assert adjudication["repaired"] is True
+    convergence = adjudication["cpa_missing_proposal_convergence"]
+    assert convergence["status"] == "RESOLVED"
+    assert convergence["decision"] == "REPLACE_WITH_EXACT_TEXT"
+    assert convergence["replacement_text"] == "我上次"
+
+
 def test_missing_candidate_second_cpa_provider_failure_stays_blocked():
     source = _srt("我走了之后")
     calls = 0
