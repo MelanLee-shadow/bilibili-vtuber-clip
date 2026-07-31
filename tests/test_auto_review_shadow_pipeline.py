@@ -6422,7 +6422,7 @@ def test_polish_cover_face_gate_degrades_to_direct_when_never_complete(
         media_path=media,
         candidate_id="polish-face-blocked",
         title="【李豆沙】脸不完整必须拦下",
-        cover_text="脸不完整\n必须拦下",
+        cover_text="脸不完整必须拦下",
         run_ffmpeg=True,
         art_direction_llm_call=None,
         image_edit=_fake_polish_image_edit,
@@ -6551,3 +6551,40 @@ def test_screenshot_poster_face_safe_contain_keeps_whole_frame(tmp_path):
         "rotation_degrees": 0.0,
     }
     assert contain["source_frame_transform"]["center_4_3_safe"] is True
+
+
+def test_no_punch_wide_text_self_heals_to_banner_for_the_font_floor():
+    """120px 是硬性要求，版面家族无所谓（Ivan 2026-07-31 拍板，接受版面切换）。
+
+    8em 单段无原子的文案在窄分栏数学上只能到 ~86px；此前会 BLOCK 转梗字评审，
+    现在在艺术指导阶段自愈切 banner（必须在 CPA 出图前切——背景按 layout 构图，
+    叠字阶段换区会把文字压到人物上）。
+    """
+    direction = shadow_pipeline._lidousha_cover_art_direction(
+        candidate_id="t",
+        title="【李豆沙】突然开起日语人称翻译大会",
+        cover_text="日语人称翻译大会",
+    )
+    assert direction.layout == "banner"
+
+    # 反向：文案在原版面就能满足 120px 时绝不多余切换。
+    fitting = shadow_pipeline._lidousha_cover_art_direction(
+        candidate_id="t",
+        title="【李豆沙】才不是熊猫",
+        cover_text="才不是熊猫",
+    )
+    assert fitting.layout == "left-split"
+
+
+def test_multi_segment_and_atom_texts_keep_their_layout_rotation():
+    """下限自愈只管锁单行的情形；多段/有原子的封面保留版面轮换。
+
+    120px 下限只约束主强调行，其余行按比例缩小——用最长段预测会把生产里
+    长期合规的两行封面（7/24-7/29 有 22 条）全误切成 banner，压扁正当轮换。
+    """
+    two_seg = shadow_pipeline._lidousha_cover_art_direction(
+        candidate_id="cand-7",
+        title=_COVER_TALK_TITLE,
+        cover_text=_COVER_TALK_TEXT,
+    )
+    assert two_seg.layout in shadow_pipeline._COVER_TALK_LAYOUTS

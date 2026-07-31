@@ -358,7 +358,7 @@ def test_cpa_redraw_does_not_ship_source_pixels_when_identity_witness_is_down(
         media_path=media,
         candidate_id="identity-witness-down",
         title="【李豆沙】突然开起日语人称翻译大会",
-        cover_text="日语人称\n翻译大会",
+        cover_text="日语人称翻译大会",
         run_ffmpeg=True,
         image_edit=fake_image_edit,
         final_host_identity_verifier=unavailable_identity,

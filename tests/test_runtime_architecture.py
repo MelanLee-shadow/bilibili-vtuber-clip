@@ -68,7 +68,10 @@ MODULE_DEBT_LEDGER = {
     # + max_lines 按合同封顶）。新增逻辑已抽成 _talk_locked_split /
     # _assert_talk_thumbnail_contract 两个模块级函数，_overlay_lidousha_cover_title
     # 因此回到 300 行以内、未进函数账本。Ivan 07-31 `/goal` 授权 + Fable 裁定链。
-    "src/autoslice/cover_generation.py": 2_286,
+    # 2026-07-31 再 +52：_talk_font_floor_layout_override——无梗字单行文案的
+    # 120px 下限版面自愈（Ivan 07-31 原话拍板「120px 是硬性要求，无所谓是什么
+    # layout，接受版面切换」）。
+    "src/autoslice/cover_generation.py": 2_338,
     "src/autoslice/cover_repair.py": 2_049,
     "src/autoslice/delivery_recovery.py": 2_078,
     "src/autoslice/final_review_auditor.py": 3_390,

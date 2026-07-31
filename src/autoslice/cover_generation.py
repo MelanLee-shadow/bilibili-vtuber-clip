@@ -411,7 +411,9 @@ def _lidousha_cover_art_direction(
                 cover_punch=reviewed,
                 cover_punch_semantic_review=proof,
             )
-        return _punch_layout_override(baseline)
+        return _talk_font_floor_layout_override(
+            _punch_layout_override(baseline), cover_text
+        )
     try:
         payload = extract_json_object(
             art_direction_llm_call(
@@ -490,7 +492,9 @@ def _lidousha_cover_art_direction(
             cover_punch=reviewed,
             cover_punch_semantic_review=proof,
         )
-    return _punch_layout_override(direction)
+    return _talk_font_floor_layout_override(
+        _punch_layout_override(direction), cover_text
+    )
 
 
 def _punch_layout_override(direction: LidoushaCoverArtDirection) -> LidoushaCoverArtDirection:
@@ -504,6 +508,54 @@ def _punch_layout_override(direction: LidoushaCoverArtDirection) -> LidoushaCove
     if direction.cover_punch and direction.layout != "banner" and not direction.is_song:
         return dataclass_replace(direction, layout="banner")
     return direction
+
+
+def _talk_font_floor_layout_override(
+    direction: LidoushaCoverArtDirection, cover_text: str
+) -> LidoushaCoverArtDirection:
+    """无梗字单行 talk 文案的 120px 下限版面自愈（Ivan 2026-07-31 拍板）。
+
+    他的原话：「120px 是硬性要求，只要满足这个无所谓是什么 layout，接受版面
+    切换」。梗字封面早就为同一原因强制 banner（窄栏 9 字只有 ~82px，banner 下
+    165px）。
+
+    只处理**单段、无词原子、无 LLM 分行**的情形——那是数学上确定撞下限的一种：
+    锁定的单行就是主强调行，字号 = zone 宽 × 0.98 / 行宽 em，窄分栏 700px 下
+    >5.7em 必然 <120px（8em 实测 92px）。多段 / 有原子的情形**不预测**：120px
+    下限只约束主强调行，其余行按比例缩小，生产两行成品长期合规（7/24-7/29 有
+    22 条），按最长段预测会把它们全误切成 banner、压扁正当的版面轮换；真撞了
+    下限还有渲染期 COVER_TITLE_TOO_SMALL + 梗字评审回收路径兜底。
+
+    必须在艺术指导阶段切而不是叠字时切——CPA 背景按 layout 构图（分栏图人物在
+    另一侧让位），叠字阶段换区会把文字压到人物上。banner 也救不了的（>9em 单段
+    本就会被分行权威门拦下）原样返回，走既有回收路径。
+    """
+
+    if direction.is_song or direction.cover_punch or direction.layout == "banner":
+        return direction
+    if direction.words or direction.line_breaks:
+        return direction
+    segments = [
+        line.strip() for line in cover_text.splitlines() if line.strip()
+    ]
+    if len(segments) > 1:
+        return direction
+    flat = segments[0] if segments else cover_text.strip()
+    flat_em = punch_line_em_width(flat)
+    if flat_em <= 0:
+        return direction
+    render = _COVER_LAYOUT_RENDER.get(
+        direction.layout, _COVER_LAYOUT_RENDER["left-split"]
+    )
+    layout_zone = render["zone"]
+    zone_width = (layout_zone[2] - layout_zone[0]) * 0.98
+    if zone_width / flat_em >= COVER_MIN_TALK_FONT_SIZE:
+        return direction
+    banner_zone = _COVER_LAYOUT_RENDER["banner"]["zone"]
+    banner_width = (banner_zone[2] - banner_zone[0]) * 0.98
+    if banner_width / flat_em < COVER_MIN_TALK_FONT_SIZE:
+        return direction
+    return dataclass_replace(direction, layout="banner")
 
 
 def _cover_art_direction_prompt(
