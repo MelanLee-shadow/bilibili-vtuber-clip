@@ -926,11 +926,20 @@ def _apply_exact_final_cpa_repairs(
         cue_index = finding.get("cue_index")
         proposed = adjudicated_proposed_full_cue(finding)
         adjudication = finding.get("exact_release_adjudication")
+        cycle_adjudication = finding.get(
+            "exact_final_cpa_cycle_adjudication"
+        )
         if (
             isinstance(cue_index, bool)
             or not isinstance(cue_index, int)
             or not 1 <= cue_index <= len(cues)
             or not isinstance(proposed, str)
+            or (
+                isinstance(cycle_adjudication, Mapping)
+                and cycle_adjudication.get("schema_version")
+                == "exact-final-cpa-cycle-adjudication.v1"
+                and cycle_adjudication.get("status") == "BLOCK"
+            )
             or not isinstance(adjudication, Mapping)
             or adjudication.get("schema_version")
             != "subtitle-span-adjudication.v1"

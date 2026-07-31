@@ -1087,6 +1087,14 @@ def test_exact_final_review_gate_persists_deterministic_block(
         "2\n00:00:01,100 --> 00:00:02,000\n完整收束\n"
     )
     subtitle.write_text(final_text, encoding="utf-8")
+    # A temporary QC workspace can contain a cleaner-looking copy, but it is
+    # not the active recut authority and must never be accepted for delivery.
+    qc_clean = tmp_path / ".qc-upload-final" / "candidate.recut.srt"
+    qc_clean.parent.mkdir()
+    qc_clean.write_text(
+        final_text.replace("仍有错误", "临时副本看起来已修好"),
+        encoding="utf-8",
+    )
     chat_path = tmp_path / "candidate.chat-authority.json"
 
     def exact_review(
@@ -1192,6 +1200,14 @@ def test_exact_final_review_gate_persists_deterministic_block(
         )
     )
     assert persisted["findings"][0]["suspect"] == "错误"
+    assert subtitle.read_text(encoding="utf-8") == final_text
+    assert persisted["release_gate"] == "BLOCK"
+    assert persisted["reviewed_srt_sha256"] == (
+        "sha256:" + hashlib.sha256(final_text.encode("utf-8")).hexdigest()
+    )
+    assert "临时副本看起来已修好" in qc_clean.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_exact_final_review_gate_self_heals_cpa_authorized_finding(

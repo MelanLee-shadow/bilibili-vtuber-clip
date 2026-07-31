@@ -1179,6 +1179,29 @@ def _run_exact_final_release_review(
     reason_codes: list[str] = []
     if unresolved_findings:
         reason_codes.append("FINAL_REVIEW_UNRESOLVED_FINDINGS")
+        cycle_reason_codes = sorted(
+            {
+                str(receipt.get("reason_code"))
+                for finding in unresolved_findings
+                for receipt in [
+                    (
+                        finding.get(
+                            "exact_final_cpa_cycle_adjudication"
+                        )
+                        if isinstance(finding, Mapping)
+                        else None
+                    )
+                ]
+                if isinstance(receipt, Mapping)
+                and receipt.get("status") == "BLOCK"
+                and receipt.get("reason_code")
+                in {
+                    "CPA_CYCLE_ADJUDICATION_UNAVAILABLE",
+                    "CPA_CYCLE_ADJUDICATION_INVALID",
+                }
+            }
+        )
+        reason_codes.extend(cycle_reason_codes)
     if correction_mutation_audit.get("status") != "PASS":
         reason_codes.append(
             "FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID"

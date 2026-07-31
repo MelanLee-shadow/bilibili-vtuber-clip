@@ -168,6 +168,14 @@
   `PROPOSED` 并落字，或明确选 `CURRENT` 并形成可披露决定时才算消费。
   若它仍只停在 `disclosure`，后续独立 exact-final 的随机空扫描不得洗白：发布合同
   必须报 `FINAL_REVIEW_CARRYOVER_UNCONSUMED`，sidecar 也必须保留供下轮继续。
+  同一精确 cue/time window 在同轮自愈中出现 `A→B→A`、既往已被 CPA 替换的文本回流，
+  或同轮多个互斥提案时，禁止继续逐 finding 独立二选一。流水线必须把当前文本、全部历史
+  候选、完整已持久化修改收据及本轮全部 AGY/语义证据组成 hash-bound typed 闭集，一次交
+  CPA 选择明确候选；只有本轮存在合法 `acoustic_drop_cue` 收据时闭集才可含 `DROP`。
+  裁定 memo 绑定候选集、证据集、局部语境和精确时间窗；相同候选且没有新增 source/audio
+  evidence 时后续扫描必须锁定该文本，出现新候选或新证据才可重开。CPA 不可用、非闭集选择
+  或坏回执一律写 typed BLOCK 并禁止原普通 adjudication 继续落字；不得多数表决，也不得用
+  临时 QC/clean 副本替代 active recut SRT 的发布门。
   已有完整 exact-final CPA `PROPOSED` 闭集收据的 carryover 必须连同该收据持久化；
   下轮 exact gate 只在当前 cue 文本 SHA-256 唯一命中、起止毫秒与原请求完全相同
   时重放这份 CPA 决定，再必须跑一次 clean exact-final。文本或时间任一漂移就禁止重放，
