@@ -139,8 +139,11 @@ def test_default_profile_jingting_prompt_matches_authoritative_glossary_fingerpr
     # 2026-07-31b：人名/ID 久远澪（方向性还原规则）+ 2 条 [exact-cue] 真值
     #   （BV154GA6vEyD cue9/11「久远澪老师，…」；Ivan 裁定 + BCUT 独立转写
     #   jiǔ-yuè-lín-lǎoshī ≈ jiǔ-yuǎn-líng-lǎoshī，成品曾误作「就问你老实说」）。
+    # 2026-07-31c：人名/ID 熊猫柏拉图（口播简称「柏拉图」，误听面 不糊涂/薄糊涂，
+    #   方向性还原限礼物/上舰致谢语境）+ 1 条 [exact-cue] 真值（同片 cue25；
+    #   Ivan 确认正主，101 人舰长榜唯一近音候选）。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "f1498595827256188625f687843d60c6fee29a5f364fe63866cc8fcb4e1d263b"
+        "0b6974f8b300ee58fca6324b1d1c8e52aa93e8528a071d7ee2bbc087a7764420"
     )
 
 
