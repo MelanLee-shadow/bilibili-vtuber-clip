@@ -1221,6 +1221,7 @@ def _cover_binding_fixture(tmp_path, monkeypatch, *, song=False):
         "model_fallback_used": True,
         "attempted_models": ["gpt-image-2", "gpt-image-1.5"],
         "candidate_id": cid,
+        "is_song": song,
         "title": title,
         "cover_text": "修复后的封面文案",
         "final_cover": str(generated_cover),

@@ -158,6 +158,34 @@ def _enrich_repaired_cover_generation(
 
     story_contract = _active_story_contract(documents)
     if story_contract is None:
+        if bool(generation.get("is_song")):
+            enriched = copy.deepcopy(generation)
+            cover_text = str(enriched.get("cover_text") or title)
+            enriched["cover_origin"] = "AI_REDRAW"
+            enriched["route_decision"] = build_cover_route_decision(
+                selected_treatment="cpa_redraw",
+                selected_rationale="cover-only song repair binds the existing CPA images.edit result under current song route evidence",
+                story_contract=None, reference_authority=None, title=title,
+                cover_text=cover_text,
+                decision_inputs={
+                    "cover_mode": "song_repair", "is_song": True,
+                    "manual_title_or_full_text_contract": False, "frame_score": None,
+                    "frame_emotion": None, "subject_confident": None,
+                    "motion_dispersion_frac": None, "verified_stream_frame": False,
+                    "reference_authority_id": None,
+                },
+            )
+            enriched["route_decision"]["host_identity_required"] = True
+            record_cover_route_execution(
+                enriched, actual_treatment="cpa_redraw", execution_status="READY",
+                image_generation_attempted=True, image_generation_used=True,
+                detail="transactional song cover-only repair completed",
+            )
+            _runner._atomic_write_json_file(generation_path, enriched)
+            return _validate_repaired_cover_generation(
+                cover=Path(str(enriched["final_cover"])), title=title,
+                candidate_id=str(enriched["candidate_id"]),
+            )
         # Legacy packages predate StoryContract.  Keep their historical repair
         # behavior; current package audits will still refuse missing authority.
         return generation, generation_path
