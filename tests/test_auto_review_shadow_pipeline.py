@@ -26,6 +26,18 @@ from tests.host_vocal_test_support import (
 )
 
 
+def _explicit_full_text_cover_contract(cover_text: str) -> dict[str, object]:
+    return {
+        "schema_version": "lidousha-full-text-cover-contract.v1",
+        "status": "AUTHORIZED",
+        "authority": "IVAN_EXPLICIT",
+        "scope": "FULL_TEXT_COVER",
+        "cover_text_sha256": "sha256:"
+        + hashlib.sha256(cover_text.encode("utf-8")).hexdigest(),
+        "reason": "test isolates a non-text cover gate with explicit full text",
+    }
+
+
 def _ready_host_vocal_prover(source_media, candidate_id, boundary, alignment, output_dir):
     alignment_path = Path(str(alignment["alignment_report_path"]))
     alignment_payload = json.loads(alignment_path.read_text(encoding="utf-8"))
@@ -5201,7 +5213,7 @@ def test_screenshot_materialization_failure_blocks_without_calling_ai(
 def test_manual_title_can_finish_on_screenshot_without_hidden_cpa_fallback(
     tmp_path, monkeypatch
 ):
-    """手定标题锁的是完整文字，不得再通过 no-punch 间接强制 AI 重绘。"""
+    """Only an independent exact-text contract can authorize full cover text."""
 
     from src.autoslice import publish_staging
     from tests.test_cover_frame_selection import _write_synthetic_performance_clip
@@ -5212,6 +5224,35 @@ def test_manual_title_can_finish_on_screenshot_without_hidden_cpa_fallback(
     media = _write_synthetic_performance_clip(tmp_path)
     _force_cover_subject_confident(monkeypatch, publish_staging)
     manual_cover_text = "最包容异性恋的直播间，看到男角色只能说出一句不熟"
+    full_text_contract = {
+        "schema_version": "lidousha-full-text-cover-contract.v1",
+        "status": "AUTHORIZED",
+        "authority": "IVAN_EXPLICIT",
+        "scope": "FULL_TEXT_COVER",
+        "cover_text_sha256": "sha256:"
+        + hashlib.sha256(manual_cover_text.encode("utf-8")).hexdigest(),
+        "reason": "explicit regression contract for a full-text screenshot cover",
+    }
+
+    blocked = publish_staging._stage_lidousha_ai_cover(
+        {"status": "MATERIALIZED", "media_path": str(media)},
+        media_path=media,
+        candidate_id="manual-shot-without-full-contract",
+        title="【李豆沙】" + manual_cover_text,
+        cover_text=manual_cover_text,
+        run_ffmpeg=True,
+        art_direction_llm_call=None,
+        image_edit=lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("text gate must run before any image request")
+        ),
+        punch_allowed=False,
+    )
+    assert blocked["status"] == "BLOCKED_AI_COVER_REQUIRED"
+    assert "COVER_PUNCH_REQUIRED_FOR_THUMBNAIL" in blocked["reason_codes"]
+    assert "CPA_PUNCH_SEMANTIC_REVIEW_REQUIRED" in blocked["reason_codes"]
+    assert blocked["cover_generation"]["route_decision"][
+        "image_generation_attempted"
+    ] is False
 
     result = publish_staging._stage_lidousha_ai_cover(
         {"status": "MATERIALIZED", "media_path": str(media)},
@@ -5225,6 +5266,7 @@ def test_manual_title_can_finish_on_screenshot_without_hidden_cpa_fallback(
             AssertionError("manual screenshot must not call CPA redraw")
         ),
         punch_allowed=False,
+        full_text_cover_contract=full_text_contract,
     )
 
     assert result["status"] == "AI_COVER_READY", result
@@ -5232,6 +5274,10 @@ def test_manual_title_can_finish_on_screenshot_without_hidden_cpa_fallback(
     assert generation["method"] == "screenshot_direct"
     assert generation["cover_text"] == manual_cover_text
     assert generation["cover_text_mode"] == "full"
+    assert generation["full_text_cover_contract"] == full_text_contract
+    assert generation["thumbnail_text_gate"][
+        "full_text_cover_contract_exemption"
+    ] is True
     assert generation["route_decision"]["reason"] == "mode=screenshot (forced)"
 
 
@@ -5783,6 +5829,9 @@ def test_screenshot_polish_retouches_cropped_frame(tmp_path, monkeypatch):
         art_direction_llm_call=None,
         image_edit=fake_polish_edit,
         punch_allowed=True,
+        full_text_cover_contract=_explicit_full_text_cover_contract(
+            "才不是熊猫"
+        ),
     )
     assert result["status"] == "AI_COVER_READY", result
     generation = result["cover_generation"]
@@ -5858,7 +5907,9 @@ def test_screenshot_mode_song_falls_back_to_cpa_gate(tmp_path, monkeypatch):
     assert "CPA_CREDENTIALS_MISSING" in result["reason_codes"]
 
 
-def test_stage_publish_draft_gates_punch_by_title_authority(tmp_path):
+def test_stage_publish_draft_decouples_title_authority_from_cover_text_mode(
+    tmp_path,
+):
     captured: list[dict] = []
 
     def fake_stage_cover(record, **kwargs):
@@ -5882,7 +5933,7 @@ def test_stage_publish_draft_gates_punch_by_title_authority(tmp_path):
     }
     cues = [shadow_pipeline.SourceCue("c1", 0, 2_000, "x")]
 
-    # 自动标题（LLM 起题）→ punch_allowed=True。
+    # Automatic title requests a source-bound thumbnail punch.
     shadow_pipeline._stage_publish_draft_impl(
         dict(record),
         candidate_id="talk-auto",
@@ -5893,18 +5944,156 @@ def test_stage_publish_draft_gates_punch_by_title_authority(tmp_path):
         stage_cover=fake_stage_cover,
     )
     assert captured[-1]["punch_allowed"] is True
+    assert captured[-1]["full_text_cover_contract"] is None
 
-    # 手定标题（title_llm_call=None，一字不改直通）→ punch_allowed=False。
+    # Manual title freezes the publish field, but still requests a punch.
+    manual_title = "【李豆沙】反沙，不是反李豆沙！"
     shadow_pipeline._stage_publish_draft_impl(
         dict(record),
         candidate_id="talk-manual",
-        title="【李豆沙】反沙，不是反李豆沙！",
+        title=manual_title,
+        cues=cues,
+        run_ffmpeg=False,
+        title_llm_call=None,
+        stage_cover=fake_stage_cover,
+    )
+    assert captured[-1]["punch_allowed"] is True
+    assert captured[-1]["full_text_cover_contract"] is None
+
+    # A separate, exact cover-text contract is the only full-text switch.
+    manual_cover_text = "反沙，不是反李豆沙！"
+    full_text_contract = {
+        "schema_version": "lidousha-full-text-cover-contract.v1",
+        "status": "AUTHORIZED",
+        "authority": "IVAN_EXPLICIT",
+        "scope": "FULL_TEXT_COVER",
+        "cover_text_sha256": "sha256:"
+        + hashlib.sha256(manual_cover_text.encode("utf-8")).hexdigest(),
+        "reason": "Ivan explicitly requires this exact cover text",
+    }
+    contracted_record = dict(record)
+    contracted_record["full_text_cover_contract"] = full_text_contract
+    shadow_pipeline._stage_publish_draft_impl(
+        contracted_record,
+        candidate_id="talk-manual-full",
+        title=manual_title,
         cues=cues,
         run_ffmpeg=False,
         title_llm_call=None,
         stage_cover=fake_stage_cover,
     )
     assert captured[-1]["punch_allowed"] is False
+    assert captured[-1]["full_text_cover_contract"] == full_text_contract
+
+    stale_record = dict(record)
+    stale_record["full_text_cover_contract"] = {
+        **full_text_contract,
+        "cover_text_sha256": "sha256:" + "0" * 64,
+    }
+    shadow_pipeline._stage_publish_draft_impl(
+        stale_record,
+        candidate_id="talk-manual-stale-full-contract",
+        title=manual_title,
+        cues=cues,
+        run_ffmpeg=False,
+        title_llm_call=None,
+        stage_cover=fake_stage_cover,
+    )
+    assert captured[-1]["punch_allowed"] is True
+    assert captured[-1]["full_text_cover_contract"] is None
+
+
+def test_964_full_title_fails_then_cpa_punch_is_readable() -> None:
+    from src.autoslice import publish_staging
+    from src.autoslice.cover_generation import (
+        _lidousha_cover_art_direction,
+    )
+    from src.autoslice.cover_punch_semantics import (
+        cover_thumbnail_lines_are_readable,
+    )
+
+    title = (
+        "【李豆沙】长沙人李豆沙亲自打假“长沙大香肠”，话还没说完，"
+        "弹幕又提议把技能叫“李姐拉拉”"
+    )
+    cover_text = (
+        "长沙人李豆沙亲自打假“长沙大香肠”，话还没说完，"
+        "弹幕又提议把技能叫“李姐拉拉”"
+    )
+    old_result = publish_staging._enforce_final_talk_cover_thumbnail_gate(
+        {
+            "status": "AI_COVER_READY",
+            "cover_path": "unused.png",
+            "cover_generation": {
+                "cover_text": cover_text,
+                "cover_text_mode": "full",
+                "rendered_lines": [
+                    "长沙人李豆沙亲自打假",
+                    "“长沙大香肠”，话还没说完，弹幕",
+                    "又提议把技能叫“李姐拉拉”",
+                ],
+                "art_direction": {
+                    "is_song": False,
+                    "cover_punch_semantic_review": {},
+                },
+            },
+            "reason_codes": [],
+        }
+    )
+    assert old_result["status"] == "BLOCKED_AI_COVER_REQUIRED"
+    assert "COVER_THUMBNAIL_TEXT_UNREADABLE" in old_result["reason_codes"]
+    assert (
+        "COVER_FULL_TEXT_CONTRACT_MISSING_OR_INVALID"
+        in old_result["reason_codes"]
+    )
+
+    def cpa(prompt: str) -> str:
+        if "最终文字语义裁决者" in prompt:
+            return json.dumps(
+                {
+                    "schema_version": "lidousha-cover-punch-semantic-review.v1",
+                    "status": "PASS",
+                    "final_punch": {
+                        "main": "打假“长沙大香肠”",
+                        "sub": None,
+                    },
+                    "stranger_can_infer_event": True,
+                    "contains_concrete_subject": True,
+                    "contains_action_or_conflict": True,
+                    "story_summary": "长沙人亲自打假长沙大香肠。",
+                    "click_motivation": "想知道她如何识破并吐槽。",
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {
+                "role": "witty_smug",
+                "expression_en": "confident closed-mouth debunking smile",
+                "hook_word": "长沙大香肠",
+                "scene_props": ["oversized sausage"],
+                "words": [cover_text],
+                "lines": [cover_text],
+                "cover_punch": {
+                    "main": "打假“长沙大香肠”",
+                    "sub": None,
+                },
+            },
+            ensure_ascii=False,
+        )
+
+    direction = _lidousha_cover_art_direction(
+        candidate_id="auto_152944_964_1091",
+        title=title,
+        cover_text=cover_text,
+        art_direction_llm_call=cpa,
+        allow_punch=True,
+        story_hook="长沙人李豆沙打假长沙大香肠。",
+    )
+    assert direction.cover_punch == ("打假“长沙大香肠”",)
+    assert cover_thumbnail_lines_are_readable(
+        list(direction.cover_punch)
+    )
+    assert direction.cover_punch_semantic_review["status"] == "PASS"
 
 
 def test_cover_prompt_layout_and_overlay_hook_metadata(tmp_path):
@@ -6139,6 +6328,9 @@ def test_polish_cover_face_gate_retries_contain_then_passes(tmp_path, monkeypatc
         art_direction_llm_call=None,
         image_edit=_fake_polish_image_edit,
         punch_allowed=True,
+        full_text_cover_contract=_explicit_full_text_cover_contract(
+            "和别的女同一起挖人"
+        ),
     )
     assert result["status"] == "AI_COVER_READY", result
     generation = result["cover_generation"]
@@ -6185,6 +6377,9 @@ def test_polish_cover_face_gate_degrades_to_direct_when_never_complete(
         art_direction_llm_call=None,
         image_edit=_fake_polish_image_edit,
         punch_allowed=True,
+        full_text_cover_contract=_explicit_full_text_cover_contract(
+            "脸不完整必须拦下"
+        ),
     )
     assert result["status"] == "AI_COVER_READY", result
     assert len(face_calls) == 2
@@ -6247,6 +6442,9 @@ def test_polish_cover_face_gate_unavailable_degrades_without_retry(
         art_direction_llm_call=None,
         image_edit=_fake_polish_image_edit,
         punch_allowed=True,
+        full_text_cover_contract=_explicit_full_text_cover_contract(
+            "验证不可用也要拦"
+        ),
     )
     assert result["status"] == "AI_COVER_READY", result
     assert len(face_calls) == 1

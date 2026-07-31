@@ -169,7 +169,8 @@ def _enrich_repaired_cover_generation(
                 cover_text=cover_text,
                 decision_inputs={
                     "cover_mode": "song_repair", "is_song": True,
-                    "manual_title_or_full_text_contract": False, "frame_score": None,
+                    "cover_punch_allowed": False,
+                    "full_text_cover_contract": False, "frame_score": None,
                     "frame_emotion": None, "subject_confident": None,
                     "motion_dispersion_frac": None, "verified_stream_frame": False,
                     "reference_authority_id": None,
@@ -217,7 +218,8 @@ def _enrich_repaired_cover_generation(
         decision_inputs={
             "cover_mode": "repair",
             "is_song": bool(enriched.get("is_song")),
-            "manual_title_or_full_text_contract": False,
+            "cover_punch_allowed": not bool(enriched.get("is_song")),
+            "full_text_cover_contract": False,
             "frame_score": None,
             "frame_emotion": None,
             "subject_confident": None,
@@ -1624,7 +1626,8 @@ def _migrate_song_legacy_route_v2(date: str, rec: dict, mp4: Path, cover: Path) 
             cover_text=str(new.get("cover_text") or title),
             decision_inputs={
                 "cover_mode": "legacy_song_route_v2_migration", "is_song": True,
-                "manual_title_or_full_text_contract": False, "frame_score": None,
+                "cover_punch_allowed": False,
+                "full_text_cover_contract": False, "frame_score": None,
                 "frame_emotion": None, "subject_confident": None,
                 "motion_dispersion_frac": None, "verified_stream_frame": False,
                 "reference_authority_id": None,

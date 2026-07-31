@@ -10,6 +10,8 @@ from src.autoslice.llm_client import LlmCall, extract_json_object
 
 
 SCHEMA_VERSION = "lidousha-cover-punch-semantic-review.v1"
+FULL_TEXT_COVER_CONTRACT_SCHEMA = "lidousha-full-text-cover-contract.v1"
+FULL_TEXT_COVER_AUTHORITY = "IVAN_EXPLICIT"
 PUNCH_LINE_MAX_EM = 9.0
 COVER_THUMBNAIL_MAX_LINES = 2
 _CLOSING_PUNCT = tuple("，,、；;！!？?。）》】”’")
@@ -87,6 +89,79 @@ def cover_text_requires_punch_for_thumbnail(cover_text: str) -> bool:
         punch_line_em_width(explicit_lines[0])
         > COVER_THUMBNAIL_MAX_LINES * PUNCH_LINE_MAX_EM
     )
+
+
+def validate_full_text_cover_contract(
+    contract: object,
+    *,
+    cover_text: str,
+) -> bool:
+    """Validate a separate, explicit authority to render a full talk title.
+
+    A manual publish title is not this contract.  The exception must name its
+    own visual scope and bind the exact cover text, so title authority cannot
+    accidentally disable the universal thumbnail-text gate.
+    """
+
+    if not isinstance(contract, Mapping):
+        return False
+    expected_sha256 = "sha256:" + hashlib.sha256(
+        cover_text.encode("utf-8")
+    ).hexdigest()
+    return bool(
+        contract.get("schema_version") == FULL_TEXT_COVER_CONTRACT_SCHEMA
+        and contract.get("status") == "AUTHORIZED"
+        and contract.get("authority") == FULL_TEXT_COVER_AUTHORITY
+        and contract.get("scope") == "FULL_TEXT_COVER"
+        and contract.get("cover_text_sha256") == expected_sha256
+        and isinstance(contract.get("reason"), str)
+        and str(contract.get("reason")).strip()
+    )
+
+
+def talk_cover_thumbnail_gate_violations(
+    generation: object,
+    *,
+    cover_text: str,
+) -> tuple[str, ...]:
+    """Return universal final text-gate violations for one talk cover.
+
+    Every ordinary talk cover must render one or two literal lines, each no
+    wider than ``PUNCH_LINE_MAX_EM``.  Neither a manual title nor a missing/
+    failed punch review changes that contract.  Only a separately authorized,
+    exact-text-bound full-cover contract may exempt a full-text cover.
+    """
+
+    if not isinstance(generation, Mapping):
+        return ("COVER_THUMBNAIL_TEXT_UNREADABLE",)
+    art_direction = generation.get("art_direction")
+    if (
+        isinstance(art_direction, Mapping)
+        and art_direction.get("is_song") is True
+    ):
+        return ()
+    rendered_lines = generation.get("rendered_lines")
+    readable = cover_thumbnail_lines_are_readable(rendered_lines)
+    if readable:
+        return ()
+    if generation.get("cover_text_mode") == "full":
+        if validate_full_text_cover_contract(
+            generation.get("full_text_cover_contract"),
+            cover_text=cover_text,
+        ):
+            return ()
+        violations = [
+            "COVER_PUNCH_REQUIRED_FOR_THUMBNAIL",
+            "COVER_FULL_TEXT_CONTRACT_MISSING_OR_INVALID",
+            "COVER_THUMBNAIL_TEXT_UNREADABLE",
+        ]
+        return tuple(violations)
+    violations = ["COVER_THUMBNAIL_TEXT_UNREADABLE"]
+    if cover_text_requires_punch_for_thumbnail(cover_text):
+        violations.append(
+            "COVER_PUNCH_REQUIRED_FOR_THUMBNAIL"
+        )
+    return tuple(violations)
 
 
 def _validated_extractive_punch(

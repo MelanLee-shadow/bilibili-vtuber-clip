@@ -60,7 +60,11 @@ from .cover_polish_gate import (
     _verify_polish_face_integrity,
 )
 from .cover_punch_semantics import (
+    COVER_THUMBNAIL_MAX_LINES,
+    PUNCH_LINE_MAX_EM,
     cover_text_requires_punch_for_thumbnail,
+    talk_cover_thumbnail_gate_violations,
+    validate_full_text_cover_contract,
 )
 from .llm_client import LlmCall, extract_json_object
 from .review_evidence import SourceCue
@@ -644,6 +648,17 @@ def _stage_publish_draft(
             "reason_codes": [],
         }
     else:
+        requested_full_text_cover_contract = record.get(
+            "full_text_cover_contract"
+        )
+        full_text_cover_contract = (
+            dict(requested_full_text_cover_contract)
+            if validate_full_text_cover_contract(
+                requested_full_text_cover_contract,
+                cover_text=cover_text,
+            )
+            else None
+        )
         cover_result = (stage_cover or _stage_lidousha_ai_cover)(
             record,
             media_path=media_path,
@@ -652,14 +667,13 @@ def _stage_publish_draft(
             cover_text=cover_text,
             run_ffmpeg=run_ffmpeg,
             art_direction_llm_call=art_direction_llm_call,
-            # 普通 Ivan 手定标题仍走“每个成分都不许丢”的封面铁律。
-            # same-BV recovery 的 verified public title 则只约束公开标题字段：
-            # 它可能远长于封面 120px 可读性下限，允许封面从该冻结标题中选择
-            # 逐字连续的短梗，但 staged_title 本身仍由 authority 一字不改。
-            punch_allowed=(
-                title_llm_call is not None
-                or title_source == "recovery_verified_same_bv_public_title"
-            ),
+            # Publish-title authority only freezes ``staged_title``.  It does
+            # not authorize putting that entire string on a thumbnail.  Every
+            # talk title, including Ivan manual and same-BV recovery titles,
+            # therefore asks CPA for a source-bound 1-2 line punch unless an
+            # independently explicit full-text-cover contract says otherwise.
+            punch_allowed=full_text_cover_contract is None,
+            full_text_cover_contract=full_text_cover_contract,
             diversity_slot=cover_diversity_slot,
         )
     cover_status = str(cover_result["status"])
@@ -1282,6 +1296,7 @@ def _build_lidousha_cover_route(
     punch_allowed: bool,
     frame_selection: Mapping[str, object] | None,
     reference_authority: Mapping[str, object] | None,
+    full_text_cover_contract: Mapping[str, object] | None = None,
     enforce_final_host_identity: bool = False,
 ) -> tuple[str, dict[str, object]]:
     """Build the semantic-first route record before any cover materialization."""
@@ -1330,7 +1345,10 @@ def _build_lidousha_cover_route(
         decision_inputs={
             "cover_mode": cover_mode,
             "is_song": art_direction.is_song,
-            "manual_title_or_full_text_contract": not punch_allowed,
+            "cover_punch_allowed": punch_allowed,
+            "full_text_cover_contract": (
+                full_text_cover_contract is not None
+            ),
             "frame_score": first_candidate.get("score"),
             "frame_emotion": first_candidate.get("emotion"),
             "subject_confident": (
@@ -1379,6 +1397,7 @@ def _stage_lidousha_ai_cover(
     final_host_identity_verifier: (Callable[..., Mapping[str, object]] | None) = None,
     enforce_final_host_identity: bool = False,
     punch_allowed: bool = False,
+    full_text_cover_contract: Mapping[str, object] | None = None,
     diversity_slot: int | None = None,
 ) -> dict[str, object]:
     cover_generation: dict[str, object] = {
@@ -1393,6 +1412,13 @@ def _stage_lidousha_ai_cover(
         "cover_diversity_slot": diversity_slot,
         "title": title,
     }
+    if validate_full_text_cover_contract(
+        full_text_cover_contract,
+        cover_text=cover_text,
+    ):
+        cover_generation["full_text_cover_contract"] = dict(
+            full_text_cover_contract
+        )
     story_contract = materialized_recut.get("story_contract")
     if isinstance(story_contract, Mapping):
         cover_generation["story_contract"] = cover_story_contract_binding(story_contract)
@@ -1472,10 +1498,46 @@ def _stage_lidousha_ai_cover(
         cover_mode=cover_mode,
         art_direction=art_direction,
         punch_allowed=punch_allowed,
+        full_text_cover_contract=(
+            cover_generation.get("full_text_cover_contract")
+            if isinstance(
+                cover_generation.get("full_text_cover_contract"),
+                Mapping,
+            )
+            else None
+        ),
         frame_selection=frame_selection,
         reference_authority=reference_authority,
         enforce_final_host_identity=enforce_final_host_identity,
     )
+    if (
+        not art_direction.is_song
+        and not art_direction.cover_punch
+        and cover_text_requires_punch_for_thumbnail(cover_text)
+        and "full_text_cover_contract" not in cover_generation
+    ):
+        detail = (
+            "talk cover needs a CPA-reviewed 1-2 line punch before any image "
+            "route can materialize; title authority and an empty/failed punch "
+            "review do not authorize a long full-title cover"
+        )
+        cover_generation["art_direction"] = asdict(art_direction)
+        record_cover_route_execution(
+            cover_generation,
+            actual_treatment=None,
+            execution_status="BLOCKED",
+            image_generation_attempted=False,
+            image_generation_used=False,
+            detail=detail,
+        )
+        return _blocked_ai_cover_result(
+            cover_generation,
+            [
+                "COVER_PUNCH_REQUIRED_FOR_THUMBNAIL",
+                "CPA_PUNCH_SEMANTIC_REVIEW_REQUIRED",
+            ],
+            detail,
+        )
     if reference_authority is not None and treatment != reference_authority.get(
         "required_treatment"
     ):
@@ -1532,7 +1594,7 @@ def _stage_lidousha_ai_cover(
     if treatment in ("screenshot_direct", "screenshot_polish"):
         # The selected route is an authorization boundary.  A materialization
         # failure blocks this cover; it never authorizes a silent CPA redraw.
-        return _stage_screenshot_direct_cover(
+        result = _stage_screenshot_direct_cover(
             media_path=media_path,
             candidate_id=candidate_id,
             cover_text=cover_text,
@@ -1550,6 +1612,7 @@ def _stage_lidousha_ai_cover(
             base_url=base_url,
             api_key=api_key,
         )
+        return _enforce_final_talk_cover_thumbnail_gate(result)
     if route.get("host_identity_required") is True and final_host_identity_verifier is None:
         detail = (
             "cover requires a CPA-primary source/final Li Dousha "
@@ -1621,7 +1684,7 @@ def _stage_lidousha_ai_cover(
         base_url=base_url,
         api_key=api_key,
     )
-    return _degrade_unavailable_redraw_identity_to_direct(
+    result = _degrade_unavailable_redraw_identity_to_direct(
         redraw_result=redraw_result,
         media_path=media_path,
         candidate_id=candidate_id,
@@ -1638,6 +1701,7 @@ def _stage_lidousha_ai_cover(
         base_url=base_url,
         api_key=api_key,
     )
+    return _enforce_final_talk_cover_thumbnail_gate(result)
 
 
 def _cover_reference_command(
@@ -1882,9 +1946,9 @@ def _stage_screenshot_direct_cover(
     任一步失败都保留证据并 fail closed，绝不静默切换成全图 AI 重绘。
     """
 
-    # 手定标题只锁文字 authority，不再偷偷决定视觉路线。自动标题有短梗字时
-    # 仍用 punch 版式；手定标题没有 punch 时，复用成熟的完整 cover_text
-    # banner 叠字器，确保所有成分一字不丢，同时保留真实截图。
+    # 手定标题只锁投稿文字 authority，不决定视觉路线或封面全文。所有 talk
+    # 标题有 CPA 短梗时都用 punch 版式；只有独立显式的 full-text-cover
+    # contract 才能授权完整 cover_text，否则最终缩略图门会 fail closed。
     cover_generation.update(
         {
             "method": "screenshot_polish" if polish else "screenshot_direct",
@@ -2249,6 +2313,58 @@ def _degrade_unavailable_redraw_identity_to_direct(
         "source screenshot instead of unverified AI pixels"
     )
     return direct_result
+
+
+def _enforce_final_talk_cover_thumbnail_gate(
+    result: dict[str, object],
+) -> dict[str, object]:
+    """Fail a freshly materialized talk cover before it can become review-ready."""
+
+    if result.get("status") != "AI_COVER_READY":
+        return result
+    generation = result.get("cover_generation")
+    if not isinstance(generation, dict):
+        return result
+    cover_text = str(generation.get("cover_text") or "")
+    violations = talk_cover_thumbnail_gate_violations(
+        generation,
+        cover_text=cover_text,
+    )
+    generation["thumbnail_text_gate"] = {
+        "schema_version": "lidousha-cover-thumbnail-text-gate.v1",
+        "status": "FAIL" if violations else "PASS",
+        "max_physical_lines": COVER_THUMBNAIL_MAX_LINES,
+        "max_line_em_width": PUNCH_LINE_MAX_EM,
+        "rendered_lines": list(generation.get("rendered_lines") or []),
+        "reason_codes": list(violations),
+        "full_text_cover_contract_exemption": bool(
+            violations == ()
+            and generation.get("cover_text_mode") == "full"
+            and validate_full_text_cover_contract(
+                generation.get("full_text_cover_contract"),
+                cover_text=cover_text,
+            )
+        ),
+    }
+    if not violations:
+        return result
+    detail = (
+        "talk cover final text violates the universal 1-2 physical line / "
+        f"{PUNCH_LINE_MAX_EM:g}em-per-line thumbnail contract"
+    )
+    record_cover_route_execution(
+        generation,
+        actual_treatment=None,
+        execution_status="BLOCKED",
+        image_generation_attempted=(
+            generation.get("image_generation_attempted") is True
+        ),
+        image_generation_used=(
+            generation.get("image_generation_used") is True
+        ),
+        detail=detail,
+    )
+    return _blocked_ai_cover_result(generation, violations, detail)
 
 
 def _blocked_ai_cover_result(

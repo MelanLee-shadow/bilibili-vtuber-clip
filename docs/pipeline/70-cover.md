@@ -11,7 +11,12 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
 - 形象铁律：以当场直播形象为原型，只改动作/表情/Q版；禁加饰品服装；多人场景主体锁定李豆沙；表情永不吐舌头。
 - 同场批内创新硬门：selection 为 talk 入选项持久化 `cover_diversity_slot`；前 5 张不得碰撞背景家族。0–5 依次为蓝色漫画爆炸、暖色手账拼贴、紫色霓虹舞台、薄荷贴纸涂鸦、黑白漫画分镜、珊瑚棋盘杂志。返修必须继承该槽位，不能退回独立随机抽色。
 - 版式：talk 轮换 left-split/right-split/banner；歌切恒 song-clean 且标题字要大（banner 级）；art direction 由 `_lidousha_cover_art_direction` 决定（`cover_generation.py`）。短梗字会为可读性强制 banner，但背景家族仍必须批内不同。
-- 自动 talk 封面按 2026-07-20 生态调研采用 2–12 字的原话/质问/反差梗字，配真实表情帧和更大的脸；完整长标题不是默认封面文案。Ivan 定稿标题仍按人工权威保留其要求的全部成分；歌切恒为 `《歌名》`。
+- 所有 talk 封面（含自动标题、Ivan 手定标题与 same-BV 冻结投稿标题）按
+  2026-07-20 生态调研采用 2–12 字的原话/质问/反差梗字，配真实表情帧和更大的脸；
+  投稿标题 authority 只冻结投稿字段，不授权把完整长标题塞进封面。只有另立且绑定
+  exact `cover_text` 的 `lidousha-full-text-cover-contract.v1`
+  （`authority=IVAN_EXPLICIT`、`scope=FULL_TEXT_COVER`）才可要求封面全文；歌切恒为
+  `《歌名》`。
 - 真实帧候选的全屏 motion z-score 只用于发现动作，不能让切场、白雾、加载页等瞬时
   运动离群值压过故事讲话帧。排序必须对 motion 贡献设上限，并继续综合语音能量、清晰度
   与字幕情绪；最终选帧还须由 CPA vision 首选见证对实际像素确认主播脸完整/可用、画面不是
@@ -22,8 +27,9 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   hash-bound `lidousha-cover-punch-semantic-review.v1`：陌生观众只看最终 1–2 行也必须能
   推断一个具体事件、动作/冲突/荒诞因果和点击动机。两个分别合法但合起来不成事件的碎片
   （2026-07-24 “生豆角 / 熊猫头下播”案）必须改选；CPA 不能用“背景也许会画出道具”
-  补文字语义缺口。裁决不可用、证据缺失或无法从原文抽出自足梗字时，退回完整
-  `cover_text`，不得把碎片封面放行。CPA 在这里没有音频/图像输入，只裁决文字语义；
+  补文字语义缺口。裁决不可用、证据缺失或无法从原文抽出自足梗字时必须重试或阻断；
+  不得因标题是人工权威、`cover_punch_allowed=false`、回执为空或回执失败而把长
+  `cover_text` 当作封面放行。CPA 在这里没有音频/图像输入，只裁决文字语义；
   每个 CPA 终审片段还必须本身就是一条可直接渲染的物理行（最多 9 个全角字宽）；
   过长时由 CPA 改选较短的连续原文，renderer 禁止再从中拆开专名、词组或句子。
   “逐字来自原文”也不足以证明语义完整：若抽取片段在原文中正好结束于
@@ -33,6 +39,11 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   `cover_text`。
   包审计须要求 final rendered lines 与 CPA `final_punch` 逐行完全一致，并重新校验
   StoryContract/cover_text hashes 与该回执。
+- 所有 talk 最终封面都必须通过同一缩略图文字门：物理行数只能是 1–2 行，每行最多
+  9 个全角字宽。producer 成图出口、最终包收口和独立 package auditor 都执行该门；
+  `ivan_manual_override`、`cover_punch_allowed=false` 或空 punch review 均不是豁免。
+  只有上文独立显式的 exact-text full-text-cover contract 可豁免全文版式；该 contract
+  不能由“标题是手定的”机械推导。
 - talk 封面强调字号必须 `>=120px`；渲染低于该线直接报 `COVER_TITLE_TOO_SMALL`，交付包审计也必须阻断。不得用“文件完整/没有裁字”代替缩略图可读性验收；应缩短封面梗字或换更宽版式，禁止继续缩字（2026-07-22 当面对质封面 91px 回归案）。
 - renderer 必须记录 `lidousha-cover-rendered-text-pixels.v3`，并内嵌
   `lidousha-cover-title-render-spec.v1`。render spec 逐字绑定分行/分段文本、位置、字号、颜色、
@@ -60,8 +71,9 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
 
 ## 路由证据与审计
 
-- screenshot 与 AI 都是一等路线；人工标题不等于禁用截图，截图 route 也不得因没有短梗字
-  静默回退 AI。`auto` 必须落盘 `route + reason_codes + considered evidence`，从最终包可以回答
+- screenshot 与 AI 都是一等路线；人工标题不等于禁用截图，也不等于封面必须全文。
+  缺少合格短梗字时截图 route 必须阻断或显式重试，不能用长全文封面或静默跨线回退 AI。
+  `auto` 必须落盘 `route + reason_codes + considered evidence`，从最终包可以回答
   “为何选截图/为何选 AI”。
 - 路由证据必须先声明封面的叙事任务（单人表情、双人关系、物件/游戏画面等），再比较候选路线。
   `StoryContract relation_state=CONFIRMED` 且至少两个 `required_participant_ids` 时，typed

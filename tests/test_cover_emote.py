@@ -42,6 +42,18 @@ SONG_TEXT = "《旅行的意义》"
 STRONG_REASON = "全场大合唱应援气氛,打call表情包完全对上"
 
 
+def _full_text_contract() -> dict[str, object]:
+    return {
+        "schema_version": "lidousha-full-text-cover-contract.v1",
+        "status": "AUTHORIZED",
+        "authority": "IVAN_EXPLICIT",
+        "scope": "FULL_TEXT_COVER",
+        "cover_text_sha256": "sha256:"
+        + hashlib.sha256(TALK_TEXT.encode("utf-8")).hexdigest(),
+        "reason": "emote tests isolate subject routing from cover text",
+    }
+
+
 def _entry(**overrides) -> EmoteEntry:
     base = dict(
         id="09",
@@ -514,6 +526,7 @@ def test_stage_cover_uses_verified_sticker_as_reference(tmp_path, monkeypatch):
         run_ffmpeg=True,
         art_direction_llm_call=_judge_pick(),
         image_edit=_fake_image_edit(captured),
+        full_text_cover_contract=_full_text_contract(),
     )
 
     assert result["status"] == "AI_COVER_READY"
@@ -545,6 +558,7 @@ def test_stage_cover_companion_composites_frame_plus_sticker(tmp_path, monkeypat
         run_ffmpeg=True,
         art_direction_llm_call=_judge_pick("25", "companion"),
         image_edit=_fake_image_edit(captured),
+        full_text_cover_contract=_full_text_contract(),
     )
 
     assert result["status"] == "AI_COVER_READY"
@@ -572,6 +586,7 @@ def test_stage_cover_blocks_selected_emote_on_sha_mismatch(tmp_path, monkeypatch
         run_ffmpeg=True,
         art_direction_llm_call=_judge_pick(),
         image_edit=_fake_image_edit(captured),
+        full_text_cover_contract=_full_text_contract(),
     )
 
     assert result["status"] == "BLOCKED_AI_COVER_REQUIRED"

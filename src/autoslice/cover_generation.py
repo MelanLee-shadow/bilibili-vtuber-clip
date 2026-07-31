@@ -97,7 +97,8 @@ class LidoushaCoverArtDirection:
     # 2026-07-20 B站生态调研（20万+ 播放封面）：高播放封面的字是 2-12 字"梗字"
     # （原话/质问/反差点），从不是整条标题。非空时叠字层只渲染它：第 1 行=主梗字
     # （hook 色、巨大），可选第 2 行副字（奶油小一号）；cover_text 退为 fallback。
-    # 只有自动标题允许（手定标题守"成分不许丢"旧铁律，见 2026-07-06 案）；
+    # 所有 talk 标题都允许，包括 Ivan 手定标题；手工 authority 锁投稿标题，
+    # 不等于授权封面全文。只有独立显式 full-text-cover contract 才关闭该轴。
     # 歌切 song-clean 永远不用（裸《歌名》已是终态）。
     cover_punch: tuple[str, ...] = ()
     # CPA 须证明短梗对陌生观众语义自足，否则退回完整 cover_text。
@@ -518,7 +519,7 @@ def _cover_art_direction_prompt(
     if emote_library and not baseline.is_song:
         emote_block = emote_catalog_prompt_block(emote_library)
         emote_output_field = ',"emote":null|{"id":"...","mode":"replace"|"companion","reason":"..."}'
-    # 梗字轴只对自动标题开放（手定标题封面守"成分不许丢"铁律，prompt 保持字节稳定）。
+    # 梗字轴对所有 talk 标题开放；人工 authority 只锁投稿标题字段。
     punch_block = ""
     punch_output_field = ""
     if allow_punch:
@@ -559,7 +560,10 @@ def _cover_art_direction_prompt(
         "标点跟在前一个词的元素末尾。分行器用它保证**换行永远不拆词**——除词以外任何位置都允许换行。\n"
         "- lines: 封面文案的分行方案(字符串数组)。硬约束:按顺序拼接后与封面文案一字不差(不加/不减/不改字);"
         "**绝不把一个词拆到两行**(如\"拒绝\"\"熊猫\"\"礼墨\"这类词必须整词同行);《歌名》和 hook_word 必须完整待在同一行。\n"
-        "  **封面字要尽量大、填满文字区,且必须保留完整文案(这是硬要求,Ivan 反复强调:字不能小,也绝不许丢字——放大靠多换行)**:"
+        "  lines/words 是全文真值绑定的回退排版证据，必须保留完整封面文案；"
+        "若 cover_punch 通过 CPA 语义门，最终可见封面只渲染该 1-2 行短梗字。"
+        "全文回退也不得被误解为人工投稿标题天然授权封面全文。"
+        "回退排版仍要尽量大、填满文字区："
         "字号由最长一行的宽度决定,所以行要短。"
         "left-split/right-split/song-clean 这类竖窄文字区**必须多分几行、每行更短**(长文案 5-8 行,每行 2-4 字),"
         "让文字铺满整个竖直文字区;banner 是横宽区,行可以长一点(3-4 行)。宁可多一行也不要留一行太长把字压小。\n"

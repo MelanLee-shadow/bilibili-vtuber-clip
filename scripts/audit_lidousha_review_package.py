@@ -21,8 +21,7 @@ from src.autoslice.cover_generation import (  # noqa: E402
     validate_cover_punch_semantic_review,
 )
 from src.autoslice.cover_punch_semantics import (  # noqa: E402
-    cover_text_requires_punch_for_thumbnail,
-    cover_thumbnail_lines_are_readable,
+    talk_cover_thumbnail_gate_violations,
 )
 from src.autoslice.cover_route_evidence import (  # noqa: E402
     validate_cover_route_decision,
@@ -86,7 +85,7 @@ DEFAULT_MAX_VISUAL_LINE_CHARS = 18
 LONG_STATIC_CUE_SECONDS = 10.0
 STORY_CONTRACT_ENFORCED_FROM_DATE = "2026-07-22"
 AUDIT_SCHEMA_VERSION = "lidousha-review-package-audit.v2"
-AUDIT_POLICY_EPOCH = "2026-07-31.final-artifact-gates.v4"
+AUDIT_POLICY_EPOCH = "2026-07-31.final-artifact-gates.v5"
 _DYNAMIC_ATTESTATION_SUFFIXES = (
     ".upload_manifest.json",
     ".uploaded.json",
@@ -474,37 +473,21 @@ def _audit_story_bound_cover(
                     "stranger can infer the concrete event and click motive"
                 ),
             )
-    else:
-        art_direction = generation.get("art_direction")
-        punch_review = (
-            art_direction.get("cover_punch_semantic_review")
-            if isinstance(art_direction, dict)
-            else None
-        )
-        punch_status = (
-            str(punch_review.get("status") or "")
-            if isinstance(punch_review, dict)
-            else ""
-        )
-        punch_failed = punch_status in {"FAILED", "NOT_APPLICABLE"}
-        if punch_failed and cover_text_requires_punch_for_thumbnail(expected_text):
+    if required:
+        for code in talk_cover_thumbnail_gate_violations(
+            generation,
+            cover_text=expected_text,
+        ):
             _add_issue(
                 issues,
-                "COVER_PUNCH_REQUIRED_FOR_THUMBNAIL",
+                code,
                 stem=stem,
                 path=record_path,
                 detail=(
-                    "automatic full-title fallback exceeds the 1-2 line "
-                    "thumbnail contract after punch review failed"
+                    "talk cover final text must be a CPA-reviewed 1-2 line "
+                    "hook with each line at most 9em; publish-title authority "
+                    "does not authorize full-title cover text"
                 ),
-            )
-        if punch_failed and not cover_thumbnail_lines_are_readable(rendered_lines):
-            _add_issue(
-                issues,
-                "COVER_THUMBNAIL_TEXT_UNREADABLE",
-                stem=stem,
-                path=record_path,
-                detail="failed-punch fallback is not a readable 1-2 line hook",
             )
 
     binding = generation.get("story_contract")

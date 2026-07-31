@@ -93,12 +93,54 @@ def test_package_audit_rejects_814_shaped_full_title_thumbnail() -> None:
         story_contract={
             "selection_hook": "转发生日信息能拿菲尔兹奖，小李追问为何自己没有。"
         },
-        required=False,
+        required=True,
     )
 
     codes = {issue["code"] for issue in issues}
     assert "COVER_PUNCH_REQUIRED_FOR_THUMBNAIL" in codes
     assert "COVER_THUMBNAIL_TEXT_UNREADABLE" in codes
+
+
+def test_package_audit_rejects_exact_964_manual_three_line_double_hook() -> None:
+    cover_text = (
+        "长沙人李豆沙亲自打假“长沙大香肠”，话还没说完，"
+        "弹幕又提议把技能叫“李姐拉拉”"
+    )
+    issues: list[dict] = []
+    _audit_story_bound_cover(
+        issues=issues,
+        stem="auto_152944_964_1091",
+        record_path=Path("auto_152944_964_1091.record.json"),
+        record={
+            "publish_staging": {
+                "title_source": "ivan_manual_override",
+                "cover_text": cover_text,
+            },
+            "cover_generation": {
+                "cover_text": cover_text,
+                "cover_text_mode": "full",
+                "rendered_lines": [
+                    "长沙人李豆沙亲自打假",
+                    "“长沙大香肠”，话还没说完，弹幕",
+                    "又提议把技能叫“李姐拉拉”",
+                ],
+                "cover_punch_allowed": False,
+                "art_direction": {
+                    "is_song": False,
+                    "cover_punch_semantic_review": {},
+                },
+            },
+        },
+        story_contract={
+            "selection_hook": "长沙人李豆沙打假长沙大香肠。"
+        },
+        required=True,
+    )
+
+    codes = {issue["code"] for issue in issues}
+    assert "COVER_PUNCH_REQUIRED_FOR_THUMBNAIL" in codes
+    assert "COVER_THUMBNAIL_TEXT_UNREADABLE" in codes
+    assert "COVER_FULL_TEXT_CONTRACT_MISSING_OR_INVALID" in codes
 
 
 def _source_fact_keep_receipt(

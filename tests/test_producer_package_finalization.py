@@ -1075,6 +1075,7 @@ def test_cover_audit_rejects_814_shaped_full_title_thumbnail(
 
     assert "COVER_PUNCH_REQUIRED_FOR_THUMBNAIL" in reasons
     assert "COVER_THUMBNAIL_TEXT_UNREADABLE" in reasons
+    assert "COVER_FULL_TEXT_CONTRACT_MISSING_OR_INVALID" in reasons
 
 
 def test_exact_final_review_gate_persists_deterministic_block(
