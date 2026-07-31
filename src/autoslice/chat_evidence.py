@@ -1126,7 +1126,10 @@ def _validated_entity_verdict(
             or confidence < 0.80
         ):
             return {**row, "status": "UNCERTAIN", "reason_code": "ENTITY_AUDIO_CONFIDENCE_LOW"}
-    elif authority_kind == "cpa_witness_adjudication":
+    elif authority_kind in {
+        "cpa_witness_adjudication",
+        "cpa_context_only_closed_set_adjudication",
+    }:
         if not valid_cpa_witness_adjudication(row):
             return None
     elif authority_kind == "ivan_text_override":

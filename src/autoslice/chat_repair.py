@@ -908,6 +908,25 @@ def apply_audio_entity_verification(
                 "matched_audio_text": texts[cue_offset],
                 "transcript_canonical": occurrence["canonical"],
                 "transcript_surface": occurrence["surface"],
+                "context_before": "\n".join(
+                    texts[max(0, cue_offset - 3) : cue_offset]
+                ),
+                "context_after": "\n".join(
+                    texts[cue_offset + 1 : cue_offset + 4]
+                ),
+                "whole_clip_context": [
+                    {
+                        "cue_index": index + 1,
+                        "start_ms": context_cue.start_ms,
+                        "end_ms": context_cue.end_ms,
+                        "text": texts[index],
+                    }
+                    for index, context_cue in enumerate(cues)
+                ],
+                "candidate_provenance": {
+                    "kind": "registered_transcript_entity_group",
+                    "group_reason": group.reason,
+                },
                 "candidate_entities": [
                     {
                         "canonical": entity.canonical,
@@ -998,6 +1017,15 @@ def apply_audio_entity_verification(
                 surface_value = str(occurrence["surface"])
                 if surface_value.lower() != resolved.lower() and (
                     occurrence.get("recall_basis") == "context_association"
+                    # ``transcript_only`` static groups are the explicitly
+                    # registered ASR-mishear lane.  Once CPA selects the
+                    # occurrence's canonical, leaving the misheard surface in
+                    # place would turn a valid verdict into a no-op
+                    # (2026-07-29 阿里嘎多 -> ありがとう).
+                    or (
+                        "transcript_only" in group.positions
+                        and not group.alias_surfaces
+                    )
                     or any(
                         surface_value.lower() == keep.lower()
                         for keep in group.uncertain_keep_surfaces

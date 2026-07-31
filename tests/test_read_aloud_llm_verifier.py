@@ -4,6 +4,9 @@ import json
 from src.autoslice import read_aloud_llm_verifier as verifier_module
 from src.autoslice.chat_authority import (
     ChatEvidence,
+    ReferentEntity,
+    ReferentGroup,
+    apply_audio_entity_verification,
     apply_authoritative_chat_evidence,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
@@ -204,6 +207,127 @@ def test_registered_entity_conflict_also_uses_blind_witness_then_cpa():
         "REGISTERED_ENTITY_CPA_WITNESS_ADJUDICATED"
     )
     assert len(audio_calls) == 1
+
+
+def test_transcript_entity_closed_set_uses_cpa_context_only_without_audio():
+    prompts = []
+    request = {
+        "schema_version": "transcript-entity-verification-request.v1",
+        "request_sha256": "sha256:" + "c" * 64,
+        "evidence_id": "thanks-japanese",
+        "kind": "transcript_entity",
+        "matched_audio_text": "谢谢老板，阿里嘎多，怎么样",
+        "transcript_canonical": "ありがとう",
+        "transcript_surface": "阿里嘎多",
+        "context_before": "谢谢老板的礼物",
+        "context_after": "下一位老板",
+        "whole_clip_context": [
+            {"cue_index": 1, "text": "谢谢老板的礼物"},
+            {"cue_index": 2, "text": "谢谢老板，阿里嘎多，怎么样"},
+            {"cue_index": 3, "text": "下一位老板"},
+        ],
+        "cue_indexes": [2],
+        "matched_start_ms": 5_000,
+        "matched_end_ms": 9_000,
+        "candidate_entities": [
+            {"canonical": "ありがとう"},
+            {"canonical": "おめでとう"},
+        ],
+    }
+
+    def llm_call(prompt):
+        prompts.append(prompt)
+        return json.dumps(
+            {
+                "ranking": [
+                    {"canonical": "ありがとう", "p": 0.97},
+                    {"canonical": "おめでとう", "p": 0.03},
+                ],
+                "choice": "ありがとう",
+                "reason": "连续答谢语境明确支持ありがとう",
+            },
+            ensure_ascii=False,
+        )
+
+    verify = verifier_module.build_cpa_read_aloud_verifier(llm_call)
+    verdict = verify(request)
+
+    assert verdict["status"] == "RESOLVED"
+    assert verdict["canonical_entity"] == "ありがとう"
+    assert verdict["authority_kind"] == (
+        "cpa_context_only_closed_set_adjudication"
+    )
+    assert verdict["decision_authority"] == "CPA_JUDGE"
+    assert verdict["witness_authority"] == "EVIDENCE_ONLY"
+    assert verdict["witness_status"] == "UNCERTAIN"
+    assert verdict["acoustic_evidence_used"] is False
+    assert verdict["reason_code"] == (
+        "CPA_CONTEXT_ONLY_CLOSED_SET_DISAMBIGUATION"
+    )
+    assert "下一位老板" in prompts[0]
+    assert "whole_clip_context" in prompts[0]
+
+
+def test_transcript_entity_context_only_cpa_closes_real_repair_gate():
+    source = _srt(
+        "谢谢老板的礼物",
+        "谢谢老板，阿里嘎多，怎么样",
+        "下一位老板",
+    )
+    group = ReferentGroup(
+        (
+            ReferentEntity(
+                "ありがとう",
+                ("ありがとう", "阿里嘎多"),
+                ("a ri ga tou",),
+            ),
+            ReferentEntity(
+                "おめでとう",
+                ("おめでとう", "没得到"),
+                ("o me de tou",),
+            ),
+        ),
+        reason="礼物答谢语境中的日语插话闭集",
+        positions=("transcript_only",),
+    )
+    verify = verifier_module.build_cpa_read_aloud_verifier(
+        lambda _prompt: json.dumps(
+            {
+                "ranking": [
+                    {"canonical": "ありがとう", "p": 0.98},
+                    {"canonical": "おめでとう", "p": 0.02},
+                ],
+                "choice": "ありがとう",
+                "reason": "答谢礼物语境",
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    output, audit = apply_audio_entity_verification(
+        source,
+        referent_groups=[group],
+        entity_verifier=verify,
+    )
+
+    assert "谢谢老板，ありがとう，怎么样" in output
+    assert audit["status"] == "APPLIED_AND_VERIFIED"
+    assert audit["entity_verdict_required"] == []
+    repair = audit["repairs"][0]
+    assert repair["verdict"]["decision_authority"] == "CPA_JUDGE"
+    assert repair["verdict"]["reason_code"] == (
+        "CPA_CONTEXT_ONLY_CLOSED_SET_DISAMBIGUATION"
+    )
+
+
+def test_transcript_entity_without_cpa_remains_fail_closed():
+    request = {
+        "schema_version": "transcript-entity-verification-request.v1",
+        "request_sha256": "sha256:" + "d" * 64,
+    }
+    verify = verifier_module.build_cpa_read_aloud_verifier(None)
+
+    assert verify(request) is None
 
 
 def test_only_candidate_blind_witness_schema_can_reach_audio_provider():

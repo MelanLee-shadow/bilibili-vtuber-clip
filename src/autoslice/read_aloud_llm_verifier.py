@@ -59,7 +59,14 @@ VERIFIER_ID = f"{CHANNEL_PROFILE.profile_id}-cpa-read-aloud-context-v1"
 LlmCall = Callable[[str], str]
 Verifier = Callable[[Mapping[str, Any]], Any]
 
-_ENTITY_REQUEST_SCHEMA = "chat-entity-verification-request.v1"
+_CHAT_ENTITY_REQUEST_SCHEMA = "chat-entity-verification-request.v1"
+_TRANSCRIPT_ENTITY_REQUEST_SCHEMA = "transcript-entity-verification-request.v1"
+_ENTITY_REQUEST_SCHEMAS = frozenset(
+    {
+        _CHAT_ENTITY_REQUEST_SCHEMA,
+        _TRANSCRIPT_ENTITY_REQUEST_SCHEMA,
+    }
+)
 _WITNESS_VERDICT_SCHEMA = "subtitle-span-acoustic-witness.v1"
 
 
@@ -148,10 +155,15 @@ def _witness_check_request(
             "source": request.get("source"),
             "source_sha256": request.get("source_sha256"),
             "source_event_id": request.get("source_event_id"),
+            "transcript_canonical": request.get("transcript_canonical"),
+            "transcript_surface": request.get("transcript_surface"),
             "structured_chat_canonical": request.get(
                 "structured_chat_canonical"
             ),
             "structured_chat_surface": request.get("structured_chat_surface"),
+            "request_candidate_provenance": request.get(
+                "candidate_provenance"
+            ),
         },
         "orthography_authority": {
             "status": "STRUCTURED_TEXT_EVIDENCE",
@@ -268,6 +280,7 @@ def _closed_choice_with_witness(
         ),
         "structured_chat_surface": request.get("structured_chat_surface"),
         "candidate_provenance": check_request["candidate_provenance"],
+        "whole_clip_context": request.get("whole_clip_context"),
     }
     prompt = _CLOSED_CHOICE_PROMPT.format(
         witness=json.dumps(witness, ensure_ascii=False, sort_keys=True),
@@ -316,16 +329,22 @@ def _closed_choice_with_witness(
         )
         for canonical in canonicals
     }
+    context_only = witness.get("status") != "OBSERVED"
     return {
         "schema_version": VERDICT_SCHEMA,
         "request_sha256": request.get("request_sha256"),
         "status": "RESOLVED",
         "canonical_entity": choice,
         "confidence": float(top["p"]),
-        "authority_kind": "cpa_witness_adjudication",
+        "authority_kind": (
+            "cpa_context_only_closed_set_adjudication"
+            if context_only
+            else "cpa_witness_adjudication"
+        ),
         "decision_authority": "CPA_JUDGE",
         "witness_authority": "EVIDENCE_ONLY",
         "witness_status": witness.get("status"),
+        "acoustic_evidence_used": not context_only,
         "witness_target_audible": witness.get("target_audible"),
         "witness_request_sha256": witness_request["request_sha256"],
         "witness_source_media_sha256": witness.get(
@@ -341,9 +360,13 @@ def _closed_choice_with_witness(
         "ranking": ranking,
         "pinyin_compatibility": compatibility,
         "reason_code": (
-            "READ_ALOUD_CPA_WITNESS_ADJUDICATED"
-            if request.get("schema_version") == READ_ALOUD_REQUEST_SCHEMA
-            else "REGISTERED_ENTITY_CPA_WITNESS_ADJUDICATED"
+            "CPA_CONTEXT_ONLY_CLOSED_SET_DISAMBIGUATION"
+            if context_only
+            else (
+                "READ_ALOUD_CPA_WITNESS_ADJUDICATED"
+                if request.get("schema_version") == READ_ALOUD_REQUEST_SCHEMA
+                else "REGISTERED_ENTITY_CPA_WITNESS_ADJUDICATED"
+            )
         ),
         "reason": str(payload.get("reason") or "")[:300],
     }
@@ -373,7 +396,7 @@ used by the CPA judge.
 
     def verify(request: Mapping[str, Any]) -> Any:
         schema = request.get("schema_version")
-        if schema == _ENTITY_REQUEST_SCHEMA:
+        if schema in _ENTITY_REQUEST_SCHEMAS:
             if llm_call is None:
                 return None
             return _closed_choice_with_witness(
