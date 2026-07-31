@@ -33,7 +33,14 @@ fi
 # 没有 bypass 开关是故意的——这个仓库里"紧急"应该去找 Ivan，不是去找环境变量。
 VENV_PYTHON="$ROOT/.venv/bin/python"
 if [ ! -x "$VENV_PYTHON" ]; then
-    echo "REFUSE: $VENV_PYTHON missing — deploys require the local test venv." >&2
+    # 既有部署惯例是从干净的临时 worktree 部署（主检出常年带未跟踪的证据树，
+    # 过不了上面的 dirty 检查）。worktree 里没有 .venv——回落到主检出的 venv，
+    # 测试仍然跑 worktree（= 被部署的冻结 commit）的代码。
+    MAIN_CHECKOUT="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+    VENV_PYTHON="$MAIN_CHECKOUT/.venv/bin/python"
+fi
+if [ ! -x "$VENV_PYTHON" ]; then
+    echo "REFUSE: no test venv found ($ROOT/.venv or main checkout) — deploys require it." >&2
     exit 2
 fi
 echo "== pre-deploy full test suite =="
