@@ -48,6 +48,14 @@ def test_generated_hook_canonicalizes_name_slot_but_not_common_phrase() -> None:
     ) == "滴水之恩涌泉相报，这是大恩大德"
 
 
+def test_generated_hook_applies_final_hard_meme_canon_without_relation() -> None:
+    assert canonicalize_relation_summary(
+        "弹幕自称直女却叫她老公，李豆沙反复强调自己才是真的直女",
+        session_relation_authority=None,
+        transcript_text="弹幕自称侄女却叫她老公\n我才是真的侄女",
+    ) == "弹幕自称侄女却叫她老公，李豆沙反复强调自己才是真的侄女"
+
+
 def test_final_transcript_can_repair_recovered_hook_without_relation_hash() -> None:
     assert canonicalize_relation_summary(
         "李豆沙解释为什么请大恩吃火锅",

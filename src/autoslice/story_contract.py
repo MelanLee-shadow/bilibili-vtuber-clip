@@ -7,6 +7,7 @@ import re
 from typing import Mapping
 
 from src.autoslice.clip_context import clip_context_prompt_text, validate_clip_context
+from src.autoslice.surface_canon import canonicalize_hard_meme_surfaces
 
 
 SCHEMA_VERSION = "lidousha-story-contract.v1"
@@ -88,6 +89,12 @@ def canonicalize_relation_summary(
     name rewrite, and the ordinary-phrase false-positive guard still applies.
     """
 
+    # The selection hook is generated prose, but it becomes the shared fact
+    # authority for title and cover.  Apply the same unbypassable meme canon as
+    # the final subtitle before any relation-specific repair so a stale recall
+    # surface (for example 直女) cannot fossilize into StoryContract while the
+    # delivered subtitle/title/cover correctly use 侄女.
+    output, _hard_meme_repairs = canonicalize_hard_meme_surfaces(text)
     relation_confirmed = (
         isinstance(session_relation_authority, Mapping)
         and session_relation_authority.get("state") == "CONFIRMED"
@@ -96,8 +103,7 @@ def canonicalize_relation_summary(
         _NANCHO_CANONICAL_RX.search(transcript_text) is not None
     )
     if not relation_confirmed and not transcript_confirms_canonical:
-        return text
-    output = text
+        return output
     for match in reversed(list(_NANCHO_SUSPECT_RX.finditer(output))):
         context = output[max(0, match.start() - 6) : match.end() + 6]
         if _NANCHO_FALSE_POSITIVE_RX.search(context):
