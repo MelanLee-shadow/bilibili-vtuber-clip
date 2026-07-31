@@ -47,8 +47,15 @@ def test_wrong_source_participant_as_protagonist_fails_closed(
                 "source_lidousha_located": True,
                 "primary_subject_is_lidousha": False,
                 "primary_subject_matches_other_source_participant": True,
+                "primary_subject_is_visually_dominant": True,
+                "primary_subject_face_is_large_and_clear": True,
+                "primary_subject_carries_story_reaction": True,
+                "excessive_dead_space": False,
+                "meaningless_dominant_decoration": False,
+                "thumbnail_has_clear_click_hook": True,
                 "primary_subject_identity": "伊索尔Sol",
                 "identity_conflicts": ["红金角饰与伊索尔一致"],
+                "composition_conflicts": [],
                 "reason": "主角沿用了伊索尔而不是李豆沙",
             }
         ),
@@ -87,8 +94,15 @@ def test_source_final_lidousha_identity_match_passes_and_binds_hash(
                 "source_lidousha_located": True,
                 "primary_subject_is_lidousha": True,
                 "primary_subject_matches_other_source_participant": False,
+                "primary_subject_is_visually_dominant": True,
+                "primary_subject_face_is_large_and_clear": True,
+                "primary_subject_carries_story_reaction": True,
+                "excessive_dead_space": False,
+                "meaningless_dominant_decoration": False,
+                "thumbnail_has_clear_click_hook": True,
                 "primary_subject_identity": "李豆沙",
                 "identity_conflicts": [],
+                "composition_conflicts": [],
                 "reason": "主角与源图李豆沙一致",
             }
         ),
@@ -108,6 +122,59 @@ def test_source_final_lidousha_identity_match_passes_and_binds_hash(
     assert validate_final_host_identity_verification(generation)
     generation["final_cover_sha256"] = "sha256:" + "0" * 64
     assert not validate_final_host_identity_verification(generation)
+
+
+def test_1411_small_lower_corner_lidousha_and_dead_space_fails_closed(
+    tmp_path, monkeypatch
+):
+    """Identity alone cannot release the 7/26 1411-style bad thumbnail."""
+
+    from src.autoslice import cpa_frame_witness
+
+    reference = tmp_path / "source.png"
+    final = tmp_path / "final.png"
+    Image.new("RGB", (1920, 1080), (20, 30, 40)).save(reference)
+    Image.new("RGB", (1920, 1080), (120, 18, 28)).save(final)
+    monkeypatch.setattr(
+        cpa_frame_witness,
+        "image_vision_probe",
+        _fake_witness(
+            {
+                "source_lidousha_located": True,
+                "primary_subject_is_lidousha": True,
+                "primary_subject_matches_other_source_participant": False,
+                "primary_subject_is_visually_dominant": False,
+                "primary_subject_face_is_large_and_clear": False,
+                "primary_subject_carries_story_reaction": False,
+                "excessive_dead_space": True,
+                "meaningless_dominant_decoration": True,
+                "thumbnail_has_clear_click_hook": False,
+                "primary_subject_identity": "李豆沙",
+                "identity_conflicts": [],
+                "composition_conflicts": [
+                    "李豆沙缩在右下角且主体过小",
+                    "大片空白与无意义红条压过人物",
+                ],
+                "reason": "身份是李豆沙，但主体不显眼且构图不值得点击",
+            }
+        ),
+    )
+
+    receipt = verify_lidousha_final_host_identity(
+        final_cover_path=final,
+        final_cover_sha256=_sha(final),
+        reference_path=reference,
+    )
+
+    assert receipt["status"] == "FAIL"
+    assert receipt["reason_code"] == "FINAL_COVER_SUBJECT_PROMINENCE_FAILED"
+    assert receipt["final_cover_sha256"] == _sha(final)
+    assert not validate_final_host_identity_verification(
+        {
+            "final_cover_sha256": _sha(final),
+            "final_host_identity_verification": receipt,
+        }
+    )
 
 
 def test_agy_identity_receipt_requires_disclosed_cpa_failure():
@@ -133,10 +200,10 @@ def test_agy_identity_receipt_requires_disclosed_cpa_failure():
         "final_cover_sha256": "sha256:" + "a" * 64,
         "final_host_identity_verification": {
             "schema_version": (
-                "lidousha-cover-final-host-identity-verification.v2"
+                "lidousha-cover-final-host-identity-verification.v3"
             ),
             "authority": (
-                "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_COMPARISON"
+                "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_AND_PROMINENCE_COMPARISON"
             ),
             "status": "PASS",
             "final_cover_sha256": "sha256:" + "a" * 64,
@@ -176,7 +243,7 @@ def test_cpa_redraw_blocks_before_ready_when_host_identity_is_wrong(
     def wrong_identity(**_kwargs):
         return {
             "schema_version": (
-                "lidousha-cover-final-host-identity-verification.v2"
+                "lidousha-cover-final-host-identity-verification.v3"
             ),
             "status": "FAIL",
             "reason_code": "FINAL_HOST_IDENTITY_MISMATCH",
@@ -239,7 +306,7 @@ def test_cpa_redraw_does_not_ship_source_pixels_when_identity_witness_is_down(
         identity_calls += 1
         return {
             "schema_version": (
-                "lidousha-cover-final-host-identity-verification.v2"
+                "lidousha-cover-final-host-identity-verification.v3"
             ),
             "status": "FAIL",
             "reason_code": "HOST_IDENTITY_WITNESS_UNAVAILABLE",
@@ -308,7 +375,7 @@ def test_cpa_redraw_retries_once_and_recovers_host_identity(
         if identity_calls == 1:
             return {
                 "schema_version": (
-                    "lidousha-cover-final-host-identity-verification.v2"
+                    "lidousha-cover-final-host-identity-verification.v3"
                 ),
                 "status": "FAIL",
                 "reason_code": "FINAL_HOST_IDENTITY_MISMATCH",
@@ -316,10 +383,10 @@ def test_cpa_redraw_retries_once_and_recovers_host_identity(
         comparison_hash = "b" * 64
         return {
             "schema_version": (
-                "lidousha-cover-final-host-identity-verification.v2"
+                "lidousha-cover-final-host-identity-verification.v3"
             ),
             "authority": (
-                "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_COMPARISON"
+                "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_AND_PROMINENCE_COMPARISON"
             ),
             "status": "PASS",
             "final_cover_sha256": final_cover_sha256,
@@ -349,3 +416,70 @@ def test_cpa_redraw_retries_once_and_recovers_host_identity(
     assert generation["host_identity_retry"]["status"] == "PASS"
     assert generation["final_host_identity_verification"]["status"] == "PASS"
     assert generation["route_decision"]["execution_status"] == "READY"
+
+
+def test_1411_prominence_failure_retries_with_stronger_prompt_then_stays_pending(
+    tmp_path, monkeypatch
+):
+    from src.autoslice import publish_staging
+    from tests.test_cover_frame_selection import (
+        _write_synthetic_performance_clip,
+    )
+
+    media = _write_synthetic_performance_clip(tmp_path)
+    monkeypatch.setenv("CPA_BASE_URL", "https://cpa.example.test/v1")
+    monkeypatch.setenv("CPA_API_KEY", "test-key")
+    monkeypatch.setenv("AUTOSLICE_COVER_MODE", "cpa")
+    prompts: list[str] = []
+    verification_calls = 0
+
+    def fake_image_edit(**kwargs):
+        prompts.append(str(kwargs["prompt"]))
+        Image.new("RGB", (1920, 1080), (115, 20, 30)).save(
+            kwargs["output_path"]
+        )
+        return {
+            "status": "AI_BACKGROUND_READY",
+            "selected_model": "gpt-image-2",
+            "attempted_models": ["gpt-image-2"],
+        }
+
+    def small_corner_identity_match(**_kwargs):
+        nonlocal verification_calls
+        verification_calls += 1
+        return {
+            "schema_version": (
+                "lidousha-cover-final-host-identity-verification.v3"
+            ),
+            "status": "FAIL",
+            "reason_code": "FINAL_COVER_SUBJECT_PROMINENCE_FAILED",
+            "detail": "李豆沙缩在右下角，大片空白和无意义红条压过主体",
+        }
+
+    result = publish_staging._stage_lidousha_ai_cover(
+        {"status": "MATERIALIZED", "media_path": str(media)},
+        media_path=media,
+        candidate_id="auto_152944_1411_1463",
+        title="【李豆沙】刚解释完为什么被电，话音刚落小李就暴毙",
+        cover_text="话音刚落\n小李暴毙",
+        run_ffmpeg=True,
+        image_edit=fake_image_edit,
+        final_host_identity_verifier=small_corner_identity_match,
+        enforce_final_host_identity=True,
+    )
+
+    assert result["status"] == "BLOCKED_AI_COVER_REQUIRED"
+    assert result["reason_codes"] == [
+        "COVER_FINAL_HOST_IDENTITY_UNVERIFIED"
+    ]
+    assert len(prompts) == verification_calls == 2
+    assert "MANDATORY SUBJECT PROMINENCE" in prompts[0]
+    assert "Never shrink her into a corner" in prompts[0]
+    assert "Never place her as a small lower-corner figure" in prompts[1]
+    assert "meaningless solid-color/red bars" in prompts[1]
+    generation = result["cover_generation"]
+    assert generation["host_identity_retry"]["status"] == (
+        "FAILED_FINAL_IDENTITY"
+    )
+    assert generation["route_decision"]["actual_treatment"] is None
+    assert generation["route_decision"]["execution_status"] == "BLOCKED"

@@ -99,6 +99,49 @@ def upload_block_reason(
             )
     return None
 
+
+def cover_maintenance_block_reason(
+    candidate_id: str,
+    *,
+    recording_date: str | None = None,
+    registry: Mapping | None = None,
+    registry_path: Path | None = None,
+) -> str | None:
+    """Refuse generic cover maintenance for an already-published candidate.
+
+    Cover-policy fingerprints intentionally invalidate old evidence, but that
+    must never turn the unattended maintenance loop into an implicit same-BV
+    repair lane. Published pixels may change only through the explicit
+    authorized repair workflow. Registry read failures also stop maintenance:
+    spending image quota is not safe while publication identity is unknown.
+    """
+
+    cid = str(candidate_id or "").strip()
+    if not cid:
+        return None
+    if registry is None:
+        try:
+            registry = load_publication_registry(registry_path)
+        except (OSError, ValueError) as exc:
+            return (
+                f"publication registry unreadable ({exc}); refusing generic "
+                "cover maintenance fail-closed"
+            )
+    for row in registry.get("entries", []):
+        if str(row.get("candidate_id") or "") != cid:
+            continue
+        row_date = str(row.get("recording_date") or "")
+        if recording_date and row_date and row_date != recording_date:
+            continue
+        if row.get("status") == "published":
+            return (
+                f"candidate {cid} is already published as {row.get('bvid')}; "
+                "generic cover maintenance is forbidden and any pixel change "
+                "must use the authorized same-BV repair lane"
+            )
+    return None
+
+
 def manifest_upload_block_reason(manifest: Mapping) -> str | None:
     """New-upload gate keyed off a v3 manifest's own package attestation.
 

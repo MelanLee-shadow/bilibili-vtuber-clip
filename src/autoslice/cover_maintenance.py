@@ -20,6 +20,7 @@ from pathlib import Path
 from src.autoslice.cover_host_identity_gate import (
     final_host_identity_witness_unavailable,
 )
+from src.autoslice.publication_registry import cover_maintenance_block_reason
 from src.autoslice.runner_proxy import RunnerProxy
 
 
@@ -234,6 +235,27 @@ def repair_covers(
         # calls alike.  A selected repair must never mutate a neighboring
         # candidate merely because that record also happens to need a cover.
         records = [record for record in records if record.get("candidate_id") in requested]
+    # A shared cover-policy fingerprint may invalidate evidence on old records.
+    # That is useful for unpublished packages, but it must never make the
+    # unattended maintenance loop edit or spend image quota on a public BV.
+    # Filter before transaction recovery and budget refresh as well as before
+    # provider calls. Registry read failure also fails closed.
+    maintenance_records: list[dict] = []
+    for record in records:
+        block_reason = cover_maintenance_block_reason(
+            str(record.get("candidate_id") or ""),
+            recording_date=date,
+        )
+        if block_reason is not None:
+            _runner.log(
+                f"cover repair {record.get('candidate_id', '?')}: suppressed "
+                f"before maintenance ({block_reason})"
+            )
+            continue
+        maintenance_records.append(record)
+    records = maintenance_records
+    if not records:
+        return
     recovered = False
     for record in records:
         paths = _runner.delivered_paths(date, record)

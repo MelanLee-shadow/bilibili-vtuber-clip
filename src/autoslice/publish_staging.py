@@ -1136,11 +1136,18 @@ def _stage_cpa_redraw_cover(
                     reference_path=reference_path,
                     output_path=retry_background,
                     prompt=(
-                        generation_prompt + " IDENTITY RETRY AFTER FAILED FINAL-PIXEL CHECK: "
-                        "the previous output copied a different source participant. "
-                        "Re-read visible source nameplates. The large protagonist "
-                        "must be the person labelled 李豆沙; do not hybridize her "
-                        "with any other participant, even if panda ears are added."
+                        generation_prompt
+                        + " FINAL-PIXEL QUALITY RETRY: the previous output failed "
+                        "the independent identity or subject-prominence check. "
+                        "Re-read visible source nameplates. The protagonist must "
+                        "be the person labelled 李豆沙; do not hybridize her with "
+                        "any other participant, even if panda ears are added. "
+                        "Make Li Dousha a LARGE, clear, immediately dominant "
+                        "head-and-shoulders subject who visibly carries the story "
+                        "reaction. Never place her as a small lower-corner figure. "
+                        "Remove vast dead space, meaningless solid-color/red bars, "
+                        "decorative clutter, or unrelated elements; keep only the "
+                        "intentional title zone and story-supporting visuals."
                     ),
                     request_path=retry_request,
                     response_path=retry_response,

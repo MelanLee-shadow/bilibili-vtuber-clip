@@ -29,6 +29,7 @@ from src.autoslice.cover_route_evidence import (
     relationship_visual_safety_required,
     validate_cover_route_decision,
 )
+from src.autoslice.publication_registry import cover_maintenance_block_reason
 from src.autoslice.story_contract import cover_story_contract_binding_matches
 from src.autoslice.verified_io import (
     _matches_sha256,
@@ -171,7 +172,7 @@ def _enrich_repaired_cover_generation(
                     "cover_mode": "song_repair", "is_song": True,
                     "cover_punch_allowed": False,
                     "full_text_cover_contract": False, "frame_score": None,
-                    "frame_emotion": None, "subject_confident": None,
+                    "frame_emotion": None, "subject_confident": False,
                     "motion_dispersion_frac": None, "verified_stream_frame": False,
                     "reference_authority_id": None,
                 },
@@ -222,7 +223,7 @@ def _enrich_repaired_cover_generation(
             "full_text_cover_contract": False,
             "frame_score": None,
             "frame_emotion": None,
-            "subject_confident": None,
+            "subject_confident": False,
             "motion_dispersion_frac": None,
             "verified_stream_frame": False,
             "reference_authority_id": (
@@ -1628,7 +1629,7 @@ def _migrate_song_legacy_route_v2(date: str, rec: dict, mp4: Path, cover: Path) 
                 "cover_mode": "legacy_song_route_v2_migration", "is_song": True,
                 "cover_punch_allowed": False,
                 "full_text_cover_contract": False, "frame_score": None,
-                "frame_emotion": None, "subject_confident": None,
+                "frame_emotion": None, "subject_confident": False,
                 "motion_dispersion_frac": None, "verified_stream_frame": False,
                 "reference_authority_id": None,
             },
@@ -1937,6 +1938,12 @@ def cover_repair_needed(date: str, rec: dict) -> bool:
     # song_delivery_ok) — every delivered clip deserves a cover, regardless of
     # what the ADVISORY semantic judge said (Ivan 2026-07-10).  Blocked/failed
     # records have no delivery and never get covers.
+    candidate_id = str(rec.get("candidate_id") or "")
+    if cover_maintenance_block_reason(
+        candidate_id,
+        recording_date=date,
+    ) is not None:
+        return False
     delivered = (
         rec.get("status") in _runner.DELIVERED_TALK_STATUSES
         or rec.get("status") == _runner.TALK_COVER_PENDING_STATUS

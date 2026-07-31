@@ -145,15 +145,20 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   身份正确，并绑定最终 cover SHA；故事动作/反转若只由文字表达，必须作为 `COVER_TEXT`
   单独验收，不能要求或声称画面里存在。没有 verifier 或声明表现面不明确就阻断。
 - 所有 `cpa_redraw` 与实际采用 AI 像素的 `screenshot_polish` 还必须通过独立的
-  `lidousha-cover-final-host-identity-verification.v2`：首选 CPA vision 只看 hash-bound 的
+  `lidousha-cover-final-host-identity-verification.v3`：首选 CPA vision 只看 hash-bound 的
   SOURCE/FINAL 对照图，先在源图按名牌与当场造型定位李豆沙，再确认最终封面的最大叙事主体
-  仍是李豆沙。给伊索尔等其他参与者补熊猫耳、白发或熊猫元素不能算身份正确；主角与任一
-  其他源人物更匹配、无法定位源人物、CPA 与 AGY 后备均不可用、回执不可解析或 hash 不一致
-  都必须阻断。这里的 CPA vision 是独立于 `gpt-image-2` 生图请求的第二次判断，不能让同一生图
-  响应自证；CPA 不可用时才允许 AGY 作故障后备，回执必须披露 `fallback_used=true` 与 CPA
-  失败原因。该门独立于 `relation_state`，因此会话关系
+  仍是李豆沙，并同时裁决主体显著性：李豆沙必须足够大、脸部完整清楚、承担故事反应且形成
+  第一视觉焦点；不能只是右下角可辨认的小人，不能让大片死空白、无意义纯色条/色块、装饰噪声
+  或无关物件压过主体，缩略图必须有明确点击钩子。给伊索尔等其他参与者补熊猫耳、白发或熊猫
+  元素不能算身份正确；主角与任一其他源人物更匹配、主体过小/不承担反应、构图不值得点击、
+  无法定位源人物、CPA 与 AGY 后备均不可用、回执不可解析或 hash 不一致都必须阻断并进入一次
+  有界封面重画，不能晋级 `review_ready`。生成和重画 prompt 也必须明确大号显眼主体、禁止角落
+  小人/死空白/无意义装饰，避免重复同一失败模式。这里的 CPA vision 是独立于 `gpt-image-2`
+  生图请求的第二次判断，不能让同一生图响应自证；CPA 不可用时才允许 AGY 作故障后备，回执
+  必须披露 `fallback_used=true` 与 CPA 失败原因。该门独立于 `relation_state`，因此会话关系
   ledger 漏记也不能让多人物参考图绕过主播身份复核。首次 `FINAL_HOST_IDENTITY_MISMATCH`
-  必须保留被拒图与回执，用“源图名牌中的李豆沙才是主角、不得给其他参与者补熊猫耳冒充”
+  或 `FINAL_COVER_SUBJECT_PROMINENCE_FAILED` 必须保留被拒图与回执，用“源图名牌中的李豆沙
+  才是主角、不得给其他参与者补熊猫耳冒充、李豆沙必须是大号清晰并承担反应的第一视觉焦点”
   的强化提示有界重画一次并再次复核；第二次仍失败才进入 cover-only 维护阻断。
 - 任一路线在最终像素、文字、安全区、人物关系或 route evidence 上失败都 fail closed，不得跨路线
   静默降级。双人联动要求双方在 hash-bound source reference 中真实可见；没有 counterpart
@@ -162,3 +167,8 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   `media_ready_cover_pending + PENDING_COVER/COVER_REQUIRED`，不得标
   `review_ready + CURRENT/COMPLIANT`。cover-only 维护成功做完像素/哈希/route 绑定后才原子晋级；
   截图 repair 仍留在截图路线，不能用通用 AI 重绘把失败偷偷改道。
+- 新封面门或流水线 fingerprint 使旧证据过期时，generic cover maintenance 只处理未发布包。
+  `publication_registry.v1.json` 已登记 `status=published` 的候选必须在事务恢复、预算刷新和任何
+  provider 调用之前排除；不得因 schema 升级自动重修公开稿或消耗生图额度。公开稿若确需改封面，
+  只能走 90 步的显式授权 same-BV repair lane。registry 不可读时 generic maintenance 同样
+  fail-closed 停止，不能在出版身份未知时付费重画。

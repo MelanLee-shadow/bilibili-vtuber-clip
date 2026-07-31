@@ -7,6 +7,7 @@ import json
 import pytest
 
 from src.autoslice.publication_registry import (
+    cover_maintenance_block_reason,
     load_publication_registry,
     manifest_upload_block_reason,
     upload_block_reason,
@@ -47,6 +48,37 @@ def test_published_candidate_blocks_new_upload():
         and "BV1ec3A6bEWF" in reason
         and "authorized same-BV repair lane" in reason
     )
+
+
+def test_published_candidate_blocks_generic_cover_maintenance():
+    reason = cover_maintenance_block_reason(
+        "auto_193129_850_940",
+        recording_date="2026-07-24",
+        registry=REGISTRY,
+    )
+    assert (
+        reason
+        and "BV1ec3A6bEWF" in reason
+        and "authorized same-BV repair lane" in reason
+    )
+    assert (
+        cover_maintenance_block_reason(
+            "auto_183122_1209_1410_released",
+            recording_date="2026-07-24",
+            registry=REGISTRY,
+        )
+        is None
+    )
+
+
+def test_unreadable_registry_blocks_cover_maintenance_fail_closed(tmp_path):
+    broken = tmp_path / "registry.json"
+    broken.write_text("{not json", encoding="utf-8")
+    reason = cover_maintenance_block_reason(
+        "auto_1_2_3",
+        registry_path=broken,
+    )
+    assert reason and "fail-closed" in reason
 
 
 def test_held_candidate_blocks_until_cleared():

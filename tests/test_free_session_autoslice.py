@@ -1011,6 +1011,39 @@ def test_blocked_stale_cover_is_repaired_even_when_file_exists(tmp_path, monkeyp
     assert cover_repair_needed("2026-07-06", rec)
 
 
+def test_published_1533_is_suppressed_before_any_cover_maintenance(
+    monkeypatch,
+):
+    record = {
+        "candidate_id": "auto_145940_1533_1619",
+        "title": "【李豆沙】已公开稿",
+        "status": "review_ready",
+        "cover_status": "AI_COVER_READY",
+        "cover_generation": {
+            "final_host_identity_verification": {
+                "schema_version": (
+                    "lidousha-cover-final-host-identity-verification.v2"
+                )
+            }
+        },
+    }
+    state = {"picks": [record], "songs": []}
+    logs: list[str] = []
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("published candidate reached cover maintenance")
+
+    monkeypatch.setattr(runner, "delivered_paths", forbidden)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", forbidden)
+    monkeypatch.setattr(runner, "_refresh_cover_repair_budget", forbidden)
+    monkeypatch.setattr(runner, "log", logs.append)
+
+    runner.repair_covers("2026-07-26", state)
+
+    assert "cover_repair_attempts" not in record
+    assert logs and "already published" in logs[0]
+
+
 def test_cover_repair_bounded_and_skips_undelivered(tmp_path, monkeypatch):
     rec = _delivered_talk_pick(tmp_path, monkeypatch, with_cover=False)
     rec["cover_repair_attempts"] = COVER_REPAIR_MAX_ATTEMPTS
@@ -1241,8 +1274,8 @@ def _cover_binding_fixture(tmp_path, monkeypatch, *, song=False):
         "response_path": str(response),
         "response_sha256": digest(response),
         "final_host_identity_verification": {
-            "schema_version": "lidousha-cover-final-host-identity-verification.v2",
-            "authority": "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_COMPARISON",
+            "schema_version": "lidousha-cover-final-host-identity-verification.v3",
+            "authority": "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_AND_PROMINENCE_COMPARISON",
             "status": "PASS",
             "final_cover_sha256": digest(generated_cover),
             "witness": {

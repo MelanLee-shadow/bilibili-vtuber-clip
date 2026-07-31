@@ -1,9 +1,11 @@
-"""Final-pixel Li Dousha identity gate for AI-modified covers.
+"""Final-pixel Li Dousha identity and subject-prominence gate.
 
 The image generator may copy the wrong person from a multi-person reference
-and then add one or two panda-like details. A prompt is not evidence that the
-result still depicts Li Dousha. This module builds a hash-bound SOURCE/FINAL
-comparison image and asks CPA for a distinct strict visual verdict. AGY is a
+and then add one or two panda-like details. It may also preserve Li Dousha's
+identity while shrinking her into a corner, leaving dead space, or adding
+meaningless graphic bars. A prompt is not evidence that the result is a useful
+thumbnail. This module builds a hash-bound SOURCE/FINAL comparison image and
+asks CPA for a distinct strict identity plus composition verdict. AGY is a
 fallback witness only when CPA vision is unavailable.
 """
 
@@ -17,8 +19,10 @@ from typing import Mapping
 from PIL import Image, ImageDraw, ImageOps
 
 
-SCHEMA_VERSION = "lidousha-cover-final-host-identity-verification.v2"
-AUTHORITY = "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_COMPARISON"
+SCHEMA_VERSION = "lidousha-cover-final-host-identity-verification.v3"
+AUTHORITY = (
+    "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_AND_PROMINENCE_COMPARISON"
+)
 UNAVAILABLE_REASON_CODES = frozenset(
     {
         "HOST_IDENTITY_WITNESS_UNAVAILABLE",
@@ -42,19 +46,35 @@ def _extract_json_object(answer: str) -> Mapping[str, object]:
     return value
 
 
+_BOOLEAN_VERDICT_FIELDS = (
+    "source_lidousha_located",
+    "primary_subject_is_lidousha",
+    "primary_subject_matches_other_source_participant",
+    "primary_subject_is_visually_dominant",
+    "primary_subject_face_is_large_and_clear",
+    "primary_subject_carries_story_reaction",
+    "excessive_dead_space",
+    "meaningless_dominant_decoration",
+    "thumbnail_has_clear_click_hook",
+)
+
+
 def _identity_answer_valid(answer: str) -> bool:
     try:
         verdict = _extract_json_object(answer)
     except (ValueError, json.JSONDecodeError):
         return False
-    return all(
-        key in verdict
-        for key in (
-            "source_lidousha_located",
-            "primary_subject_is_lidousha",
-            "primary_subject_matches_other_source_participant",
-            "identity_conflicts",
+    return bool(
+        all(isinstance(verdict.get(key), bool) for key in _BOOLEAN_VERDICT_FIELDS)
+        and isinstance(verdict.get("identity_conflicts"), list)
+        and isinstance(verdict.get("composition_conflicts"), list)
+        and all(
+            isinstance(value, str) and value.strip()
+            for key in ("identity_conflicts", "composition_conflicts")
+            for value in verdict[key]
         )
+        and isinstance(verdict.get("reason"), str)
+        and str(verdict.get("reason") or "").strip()
     )
 
 
@@ -90,14 +110,27 @@ _QUESTION = (
     "请先在左图用可见名牌、服装和外形定位李豆沙；若名牌可见，必须以名牌为准。"
     "李豆沙是白发、蓝白熊猫帽/熊猫耳的小个子形象。特别注意：不要把左图其他人物"
     "（例如带红金角饰、白发长辫、红领结的伊索尔Sol）误认成李豆沙；给别的角色"
-    "加熊猫耳也不算身份正确。再判断右图最大、最居中、承担故事反应的主角是否确实"
+    "加熊猫耳也不算身份正确。再判断右图最大、最显眼、承担故事反应的主角是否确实"
     "延续左图李豆沙，而不是其他参与者。次要人物可以存在，但主角必须是李豆沙。"
+    "这是信息流缩略图终检，不只验身份：李豆沙不能缩在角落或小到需要寻找；脸部必须"
+    "足够大、完整、清楚，且她的表情/动作必须承担标题所讲事件的反应。通常脸或上半身"
+    "应形成第一视觉焦点；仅仅能认出她不算通过。专门留给已渲染标题的干净文字区是合理"
+    "留白，但标题以外不得有大片死空白、无意义纯色红条/色块、装饰噪声或与故事无关的"
+    "强元素压过人物。陌生观众只看右图时应立即知道看谁、看到一个明确点击钩子。"
     "不确定就 FAIL。只输出 JSON："
     '{"source_lidousha_located":true|false,'
     '"primary_subject_is_lidousha":true|false,'
     '"primary_subject_matches_other_source_participant":true|false,'
+    '"primary_subject_is_visually_dominant":true|false,'
+    '"primary_subject_face_is_large_and_clear":true|false,'
+    '"primary_subject_carries_story_reaction":true|false,'
+    '"excessive_dead_space":true|false,'
+    '"meaningless_dominant_decoration":true|false,'
+    '"thumbnail_has_clear_click_hook":true|false,'
     '"primary_subject_identity":"简短身份",'
-    '"identity_conflicts":["冲突特征"],"reason":"简短中文说明"}'
+    '"identity_conflicts":["冲突特征"],'
+    '"composition_conflicts":["主体过小/角落小人/死空白/无意义装饰等"],'
+    '"reason":"简短中文说明"}'
 )
 
 
@@ -195,22 +228,47 @@ def verify_lidousha_final_host_identity(
         )
         return verification
     verification["verdict"] = verdict
-    conflicts = verdict.get("identity_conflicts")
-    passed = bool(
+    identity_conflicts = verdict.get("identity_conflicts")
+    composition_conflicts = verdict.get("composition_conflicts")
+    identity_passed = bool(
         verdict.get("source_lidousha_located") is True
         and verdict.get("primary_subject_is_lidousha") is True
         and verdict.get("primary_subject_matches_other_source_participant")
         is False
-        and isinstance(conflicts, list)
-        and not conflicts
+        and isinstance(identity_conflicts, list)
+        and not identity_conflicts
     )
-    if passed:
+    composition_passed = bool(
+        verdict.get("primary_subject_is_visually_dominant") is True
+        and verdict.get("primary_subject_face_is_large_and_clear") is True
+        and verdict.get("primary_subject_carries_story_reaction") is True
+        and verdict.get("excessive_dead_space") is False
+        and verdict.get("meaningless_dominant_decoration") is False
+        and verdict.get("thumbnail_has_clear_click_hook") is True
+        and isinstance(composition_conflicts, list)
+        and not composition_conflicts
+    )
+    if identity_passed and composition_passed:
         verification["status"] = "PASS"
+    elif identity_passed:
+        verification.update(
+            status="FAIL",
+            reason_code="FINAL_COVER_SUBJECT_PROMINENCE_FAILED",
+            detail=str(
+                verdict.get("reason")
+                or composition_conflicts
+                or "Li Dousha is identifiable but not a dominant clickworthy subject"
+            ),
+        )
     else:
         verification.update(
             status="FAIL",
             reason_code="FINAL_HOST_IDENTITY_MISMATCH",
-            detail=str(verdict.get("reason") or conflicts or "identity mismatch"),
+            detail=str(
+                verdict.get("reason")
+                or identity_conflicts
+                or "identity mismatch"
+            ),
         )
     return verification
 

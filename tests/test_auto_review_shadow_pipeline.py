@@ -2917,10 +2917,10 @@ def test_publish_staging_records_cpa_ai_cover_chain_and_embedded_title(tmp_path,
         comparison_hash = "a" * 64
         return {
             "schema_version": (
-                "lidousha-cover-final-host-identity-verification.v2"
+                "lidousha-cover-final-host-identity-verification.v3"
             ),
             "authority": (
-                "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_COMPARISON"
+                "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_AND_PROMINENCE_COMPARISON"
             ),
             "status": "PASS",
             "final_cover_sha256": final_cover_sha256,
@@ -4024,8 +4024,11 @@ def test_lidousha_cover_prompt_injects_persona_identity_descriptors():
     assert "16:9" in prompt
     assert "MULTI-PERSON REFERENCE RULE" in prompt
     assert "labelled 李豆沙" in prompt
+    assert "MANDATORY SUBJECT PROMINENCE" in prompt
+    assert "Never shrink her into a corner" in prompt
+    assert "meaningless solid-color strip" in prompt
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "4426c60cf3745bad16e7bd5b24504942b28fcc22cf3494f9248b3e5358b5dc45"
+        "ceb91d9062c49220b4f33ed1f79d1cdaf014b1127953259c06b4af7dead65079"
     )
 
 
