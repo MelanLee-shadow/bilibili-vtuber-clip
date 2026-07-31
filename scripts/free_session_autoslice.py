@@ -96,6 +96,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts.suggest_upload_tags import generate_upload_tags
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.host_vocal_proof import verify_host_vocal_proof_claim
 from src.autoslice.reviewed_subtitle_baseline_registry import (

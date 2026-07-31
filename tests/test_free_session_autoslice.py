@@ -2507,6 +2507,23 @@ def test_commit_verified_song_package_delivers_without_cover(tmp_path, monkeypat
     }
     monkeypatch.setattr(runner, "song_completion_evidence", lambda _record: completion)
     monkeypatch.setattr(runner, "song_delivery_ok", lambda *_args, **_kwargs: True)
+    generated_tags = {
+        "engine": "suggest-upload-tags.v1",
+        "status": "OK_NO_LLM",
+        "final_tags": ["李豆沙", "虚拟主播", "翻唱"],
+        "final_tag_line": "李豆沙,虚拟主播,翻唱",
+        "proper_noun_tags": [],
+        "content_tags": [],
+        "warnings": ["fixture deterministic fallback"],
+    }
+    tag_calls = []
+    monkeypatch.setattr(
+        runner,
+        "generate_upload_tags",
+        lambda title, subtitle, *, timeout: (
+            tag_calls.append((title, subtitle, timeout)) or generated_tags
+        ),
+    )
     title = "【李豆沙】豆沙歌，《想和你迎着台风去看海》｜台风天唱甜甜的"
 
     result = runner._commit_verified_song_package(
@@ -2524,6 +2541,15 @@ def test_commit_verified_song_package_delivers_without_cover(tmp_path, monkeypat
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["status"] == "DELIVERED_NO_UPLOAD"
     assert manifest["upload_enabled"] is False
+    source_record = json.loads(
+        Path(
+            manifest["artifacts"]["active_record"]["source_path"]
+        ).read_text(encoding="utf-8")
+    )
+    assert source_record["upload_tags"] == generated_tags
+    assert tag_calls == [
+        (title, Path(fx["subtitle"]).resolve(), 180.0)
+    ]
     assert set(manifest["artifacts"]) == {
         "video",
         "subtitle",

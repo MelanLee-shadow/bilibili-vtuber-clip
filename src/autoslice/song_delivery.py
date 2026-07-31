@@ -23,6 +23,7 @@ import shutil
 import stat
 import tempfile
 from pathlib import Path
+from typing import Callable
 
 from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.verified_io import (
@@ -34,6 +35,38 @@ from src.autoslice.verified_io import (
 
 
 _runner = RunnerProxy()
+
+
+def _validated_song_upload_tags(value: object) -> dict:
+    """Return one uploader-compatible typed tag block or fail closed."""
+
+    if not isinstance(value, dict):
+        raise SongDeliveryError("song upload tag generator returned no object")
+    engine = value.get("engine")
+    status = value.get("status")
+    tags = value.get("final_tags")
+    if (
+        not isinstance(engine, str)
+        or not engine
+        or status not in {"OK", "OK_NO_LLM"}
+        or not isinstance(tags, list)
+        or not tags
+        or len(tags) > 12
+        or any(
+            not isinstance(tag, str)
+            or not tag
+            or tag != tag.strip()
+            or len(tag) > 20
+            or any(character in tag for character in ",，\n\t")
+            for tag in tags
+        )
+        or len({tag.casefold() for tag in tags}) != len(tags)
+        or value.get("final_tag_line") != ",".join(tags)
+    ):
+        raise SongDeliveryError(
+            "song upload tag generator returned invalid or empty tags"
+        )
+    return copy.deepcopy(value)
 
 
 def record_is_song(entry: dict) -> bool:
@@ -133,6 +166,7 @@ def _write_song_active_record(
     title: str,
     video_sha256: str,
     summary_authority_root: Path,
+    upload_tag_generator: Callable[..., dict] | None = None,
 ) -> tuple[Path, str]:
     """Persist the invocation-owned materialized song record next to its
     publish draft so later cover repair has the same exact active-document
@@ -321,6 +355,29 @@ def _write_song_active_record(
         raise SongDeliveryError("song active record escapes the bound summary attempt")
     record["delivery_candidate_id"] = delivery_candidate_id
     record["source_candidate_id"] = source_candidate_id
+    if upload_tag_generator is not None and record.get("upload_tags") is None:
+        subtitle_value = record.get("subtitle_path")
+        if not isinstance(subtitle_value, str) or not subtitle_value:
+            raise SongDeliveryError(
+                "song active record lacks the frozen final subtitle for tags"
+            )
+        try:
+            subtitle_path = Path(subtitle_value).resolve(strict=True)
+        except OSError as exc:
+            raise SongDeliveryError(
+                f"song final subtitle for tags is missing: {exc}"
+            ) from exc
+        if not subtitle_path.is_relative_to(authority_root):
+            raise SongDeliveryError(
+                "song final subtitle for tags escapes the summary attempt"
+            )
+        record["upload_tags"] = _validated_song_upload_tags(
+            upload_tag_generator(title, subtitle_path, timeout=180.0)
+        )
+    elif record.get("upload_tags") is not None:
+        record["upload_tags"] = _validated_song_upload_tags(
+            record.get("upload_tags")
+        )
     _runner._atomic_write_json_file(record_path, record)
     return record_path, "sha256:" + _sha256_regular_file(record_path)
 
@@ -422,6 +479,7 @@ def _commit_verified_song_package(
         title=title,
         video_sha256=video_sha256,
         summary_authority_root=authority_root,
+        upload_tag_generator=_runner.generate_upload_tags,
     )
     specs["active_record"] = (
         active_record_path,

@@ -13,6 +13,8 @@ required before any publication side effect.
 from __future__ import annotations
 
 import argparse
+import copy
+import fcntl
 import hashlib
 import json
 import os
@@ -22,6 +24,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -36,8 +39,13 @@ from src.autoslice.cover_route_evidence import (  # noqa: E402
     validate_rendered_text_pixel_evidence,
 )
 from src.autoslice.channel_profile import load_channel_profile  # noqa: E402
+from src.autoslice.song_delivery import (  # noqa: E402
+    SongDeliveryError,
+    _validated_song_upload_tags,
+)
 from src.autoslice.song_completion import song_completion_evidence  # noqa: E402
 from src.autoslice.title_policy import publish_title_policy_violations  # noqa: E402
+from scripts.suggest_upload_tags import generate_upload_tags  # noqa: E402
 
 
 CHANNEL_PROFILE = load_channel_profile(ROOT)
@@ -590,9 +598,16 @@ def _copy_verified(source: Path, destination: Path, expected_sha: str) -> None:
 
 
 def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
-    body = (
+    _atomic_bytes(path, _json_bytes(payload))
+
+
+def _json_bytes(payload: Mapping[str, Any]) -> bytes:
+    return (
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     ).encode("utf-8")
+
+
+def _atomic_bytes(path: Path, body: bytes) -> None:
     descriptor, name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
     )
@@ -604,12 +619,194 @@ def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
+        directory_flags = os.O_RDONLY | getattr(
+            os, "O_DIRECTORY", 0
+        )
+        directory_descriptor = os.open(path.parent, directory_flags)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
         temporary = None
     finally:
         if descriptor >= 0:
             os.close(descriptor)
         if temporary is not None and temporary.exists():
             temporary.unlink(missing_ok=True)
+
+
+@contextmanager
+def _runner_lock_for_state(state_path: Path):
+    lock_path = state_path.parent.parent / "runner.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+") as handle:
+        try:
+            fcntl.flock(
+                handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB
+            )
+        except OSError as exc:
+            raise SongReviewManifestError(
+                f"runner.lock is busy: {lock_path}"
+            ) from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _write_json_closure(
+    targets: list[tuple[Path, Mapping[str, Any]]],
+    *,
+    writer: Callable[[Path, bytes], None] = _atomic_bytes,
+) -> None:
+    """Commit a small ordered JSON closure, rolling back caught failures.
+
+    Source and delivery records are installed before the delivery manifest;
+    state is last.  This preserves the manifest-last contract at both the
+    forward and rollback boundary.  Every target must already be a verified
+    regular file, so this repair cannot manufacture a parallel authority.
+    """
+
+    originals: dict[Path, bytes] = {}
+    intended: list[tuple[Path, bytes]] = []
+    seen: set[Path] = set()
+    for path, payload in targets:
+        canonical = _canonical_file(path, label="upload-tags closure target")
+        if canonical in seen:
+            raise SongReviewManifestError(
+                f"duplicate upload-tags closure target: {canonical}"
+            )
+        seen.add(canonical)
+        originals[canonical] = canonical.read_bytes()
+        intended.append((canonical, _json_bytes(payload)))
+    try:
+        for path, body in intended:
+            writer(path, body)
+        for path, body in intended:
+            if path.read_bytes() != body:
+                raise OSError(
+                    f"upload-tags closure verification failed: {path}"
+                )
+    except BaseException as exc:
+        rollback_failures: list[str] = []
+        for path, _body in intended:
+            try:
+                writer(path, originals[path])
+            except BaseException as rollback_exc:
+                rollback_failures.append(
+                    f"{path}: {type(rollback_exc).__name__}: {rollback_exc}"
+                )
+        if rollback_failures:
+            raise SongReviewManifestError(
+                "upload-tags closure failed and rollback was incomplete: "
+                + "; ".join(rollback_failures)
+            ) from exc
+        raise SongReviewManifestError(
+            f"upload-tags closure commit failed and was rolled back: "
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
+
+
+def _refresh_upload_tags_closure(
+    *,
+    title: str,
+    state_path: Path,
+    state: dict[str, Any],
+    state_row: dict[str, Any],
+    delivery_manifest_path: Path,
+    delivery_manifest: dict[str, Any],
+    artifacts: Mapping[str, tuple[Path, str]],
+    tag_generator: Callable[..., dict],
+    closure_writer: Callable[[Path, bytes], None] = _atomic_bytes,
+) -> tuple[dict[str, Any], dict[str, Any], str]:
+    """Refresh source/delivery/state tag authority from frozen title + SRT."""
+
+    subtitle_path = artifacts["subtitle"][0]
+    manifest_artifacts = delivery_manifest.get("artifacts")
+    active_entry = (
+        manifest_artifacts.get("active_record")
+        if isinstance(manifest_artifacts, dict)
+        else None
+    )
+    if not isinstance(active_entry, dict):
+        raise SongReviewManifestError(
+            "delivery manifest lacks active_record tag authority"
+        )
+    delivery_record_path = _canonical_file(
+        Path(str(active_entry.get("path") or "")),
+        label="delivery active record",
+    )
+    source_record_path = _canonical_file(
+        Path(str(active_entry.get("source_path") or "")),
+        label="source active record",
+    )
+    source_record = _load_json(source_record_path, label="source active record")
+    delivery_record = _load_json(
+        delivery_record_path, label="delivery active record"
+    )
+    if source_record != delivery_record:
+        raise SongReviewManifestError(
+            "source/delivery active record bytes are not semantically identical"
+        )
+    current_tags = source_record.get("upload_tags")
+    if current_tags is not None:
+        try:
+            _validated_song_upload_tags(current_tags)
+        except SongDeliveryError as exc:
+            raise SongReviewManifestError(
+                "source record already has invalid upload_tags"
+            ) from exc
+        return (
+            state,
+            delivery_manifest,
+            _sha256_regular_file(
+                delivery_manifest_path,
+                label="verified Song delivery manifest",
+            ),
+        )
+    try:
+        upload_tags = _validated_song_upload_tags(
+            tag_generator(title, subtitle_path, timeout=180.0)
+        )
+    except SongDeliveryError as exc:
+        raise SongReviewManifestError(str(exc)) from exc
+
+    updated_record = copy.deepcopy(source_record)
+    updated_record["upload_tags"] = upload_tags
+    record_bytes = _json_bytes(updated_record)
+    record_sha = "sha256:" + hashlib.sha256(record_bytes).hexdigest()
+
+    updated_manifest = copy.deepcopy(delivery_manifest)
+    updated_active = updated_manifest["artifacts"]["active_record"]
+    updated_active["sha256"] = record_sha
+    updated_active["source_sha256"] = record_sha
+    manifest_bytes = _json_bytes(updated_manifest)
+    manifest_sha = "sha256:" + hashlib.sha256(manifest_bytes).hexdigest()
+
+    updated_state = copy.deepcopy(state)
+    updated_state_row = _candidate_row(
+        updated_state, str(state_row.get("candidate_id") or "")
+    )
+    state_sidecar_hashes = updated_state_row.get("delivered_sidecar_hashes")
+    if not isinstance(state_sidecar_hashes, dict):
+        raise SongReviewManifestError(
+            "state candidate lacks delivered sidecar hashes"
+        )
+    state_sidecar_hashes["active_record"] = record_sha
+    updated_state_row["delivery_manifest_sha256"] = manifest_sha
+
+    _write_json_closure(
+        [
+            (source_record_path, updated_record),
+            (delivery_record_path, updated_record),
+            (delivery_manifest_path, updated_manifest),
+            (state_path, updated_state),
+        ],
+        writer=closure_writer,
+    )
+    return updated_state, updated_manifest, manifest_sha.removeprefix(
+        "sha256:"
+    )
 
 
 def build(
@@ -622,6 +819,9 @@ def build(
     completion_verifier: Callable[
         [dict[str, Any]], dict[str, Any]
     ] = _verify_song_completion,
+    refresh_upload_tags: bool = False,
+    tag_generator: Callable[..., dict] = generate_upload_tags,
+    closure_writer: Callable[[Path, bytes], None] = _atomic_bytes,
 ) -> dict[str, Any]:
     if package_root.exists():
         raise SongReviewManifestError(
@@ -693,6 +893,36 @@ def build(
         state_row=state_row,
         artifacts=artifacts,
     )
+    if refresh_upload_tags:
+        state, delivery_manifest, delivery_sha = (
+            _refresh_upload_tags_closure(
+                title=title,
+                state_path=state_path,
+                state=state,
+                state_row=state_row,
+                delivery_manifest_path=delivery_manifest_path,
+                delivery_manifest=delivery_manifest,
+                artifacts=artifacts,
+                tag_generator=tag_generator,
+                closure_writer=closure_writer,
+            )
+        )
+        state_row = _candidate_row(state, candidate_id)
+        artifacts = _validate_delivery_artifacts(
+            manifest_path=delivery_manifest_path,
+            manifest=delivery_manifest,
+            state_row=state_row,
+        )
+        artifacts = dict(artifacts)
+        artifacts["delivery_manifest"] = (
+            delivery_manifest_path,
+            delivery_sha,
+        )
+        title, _record, generation = _validate_publish_cover_surfaces(
+            candidate_id=candidate_id,
+            state_row=state_row,
+            artifacts=artifacts,
+        )
 
     package_root.mkdir(parents=True)
     basename = _delivery_basename(delivery_manifest_path)
@@ -835,6 +1065,14 @@ def main() -> int:
     parser.add_argument("--candidate", required=True)
     parser.add_argument("--deployed-commit-file", required=True, type=Path)
     parser.add_argument(
+        "--refresh-upload-tags",
+        action="store_true",
+        help=(
+            "generate current tags from the frozen title/SRT and update the "
+            "source+delivery+state hash closure before creating the package"
+        ),
+    )
+    parser.add_argument(
         "--audit-out",
         type=Path,
         default=None,
@@ -842,13 +1080,20 @@ def main() -> int:
     )
     args = parser.parse_args()
     try:
-        build(
-            args.package_root,
-            delivery_manifest_path=args.delivery_manifest,
-            state_path=args.state,
-            candidate_id=args.candidate,
-            deployed_commit_file=args.deployed_commit_file,
+        lock = (
+            _runner_lock_for_state(args.state)
+            if args.refresh_upload_tags
+            else nullcontext()
         )
+        with lock:
+            build(
+                args.package_root,
+                delivery_manifest_path=args.delivery_manifest,
+                state_path=args.state,
+                candidate_id=args.candidate,
+                deployed_commit_file=args.deployed_commit_file,
+                refresh_upload_tags=args.refresh_upload_tags,
+            )
         audit = run_canonical_auditor(args.package_root)
         audit_out = args.audit_out or args.package_root / "package_audit.json"
         if audit_out.exists() or audit_out.is_symlink():
