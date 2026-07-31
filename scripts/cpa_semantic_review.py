@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shlex
 import subprocess
@@ -58,6 +59,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--song-complete", action="store_true")
     parser.add_argument("--lyrics-alignment-ready", action="store_true")
     parser.add_argument(
+        "--final-song-lyrics-scope",
+        action="store_true",
+        help="Bind this CPA request to the exact final external-LRC SRT bytes.",
+    )
+    parser.add_argument(
         "--danmaku-context-json",
         type=Path,
         help="Optional danmaku-context.v1 JSON: real viewer danmaku inside the candidate window.",
@@ -90,6 +96,15 @@ def main(argv: list[str] | None = None) -> int:
         metadata["lyrics_alignment_ready"] = True
     if args.song_complete and args.lyrics_alignment_ready:
         metadata["full_song_ready"] = True
+    if args.final_song_lyrics_scope:
+        final_srt = Path(args.source_srt)
+        if not final_srt.is_file():
+            raise SystemExit("FINAL_SONG_LYRICS_SRT_MISSING")
+        metadata["final_song_lyrics_scope"] = {
+            "schema_version": "hash-bound-final-song-lyrics-scope.v1",
+            "subtitle_path": str(final_srt.resolve()),
+            "subtitle_sha256": "sha256:" + hashlib.sha256(final_srt.read_bytes()).hexdigest(),
+        }
 
     # Load the full authoritative terminology from the glossary instead of the
     # historic single hard-coded ("kmx",).  ``load_glossary_terms`` is fail-safe:

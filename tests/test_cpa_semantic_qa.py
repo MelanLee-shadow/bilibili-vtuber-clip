@@ -1,4 +1,5 @@
 import json
+import hashlib
 import subprocess
 import sys
 from dataclasses import replace
@@ -18,6 +19,7 @@ from src.autoslice.cpa_semantic_qa import (
     write_cpa_semantic_response_artifact,
 )
 from src.autoslice.review_evidence import ReviewEvidence
+from src.autoslice.live_source_review import _apply_cpa_semantic_review_from_job
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -100,6 +102,79 @@ def test_missing_response_fails_closed_and_is_written_into_review_evidence(tmp_p
     assert enriched.checks[-1]["severity"] == "BLOCK"
     assert "CPA_SEMANTIC_QA_MISSING" in enriched.evidence_gaps
     assert enriched.metadata["cpa_semantic_qa"]["response_path"] == request.response_path
+
+
+def test_final_song_lyrics_scope_replaces_stale_preliminary_terminology_failure(tmp_path):
+    subtitle = tmp_path / "final-lyrics.srt"
+    subtitle.write_text("1\n00:00:00,000 --> 00:00:02,000\n海海海\n", encoding="utf-8")
+    response_path = tmp_path / "final.cpa.response.json"
+    request = write_cpa_semantic_request_artifact(
+        CpaSemanticQaRequest(
+            candidate_id="song-final",
+            room_id="22966160",
+            source=CpaSemanticSourceRef(
+                video_path=str(tmp_path / "source.mp4"), srt_path=str(subtitle), start_ms=0, end_ms=2_000
+            ),
+            candidate_text="海海海",
+            normalized_text="海海海",
+            response_path=str(response_path),
+            metadata={
+                "final_song_lyrics_scope": {
+                    "schema_version": "hash-bound-final-song-lyrics-scope.v1",
+                    "subtitle_path": str(subtitle.resolve()),
+                    "subtitle_sha256": "sha256:" + hashlib.sha256(subtitle.read_bytes()).hexdigest(),
+                }
+            },
+        ),
+        tmp_path / "final.cpa.request.json",
+    )
+    write_cpa_semantic_response_artifact(build_mock_cpa_response(request), response_path)
+
+    enriched = _apply_cpa_semantic_review_from_job(
+        complete_song_evidence("song-final"),
+        {
+            "final_song_lyrics_cpa": {"request_path": str(request.request_path), "response_path": str(response_path)},
+            "cpa_semantic_request_path": "stale.request.json",
+            "cpa_semantic_response_path": "stale.response.json",
+        },
+        output_dir=tmp_path,
+    )
+
+    assert enriched.checks[-1]["pass"] is True
+    assert enriched.metadata["cpa_semantic_qa"]["scope"] == "hash_bound_final_song_lyrics"
+    assert enriched.metadata["cpa_semantic_qa"]["preliminary_response_path"] == "stale.response.json"
+
+
+def test_final_song_lyrics_scope_rejects_subtitle_hash_drift(tmp_path):
+    subtitle = tmp_path / "final-lyrics.srt"
+    subtitle.write_text("1\n00:00:00,000 --> 00:00:02,000\n海海海\n", encoding="utf-8")
+    response_path = tmp_path / "final.cpa.response.json"
+    request = write_cpa_semantic_request_artifact(
+        CpaSemanticQaRequest(
+            candidate_id="song-final",
+            room_id="22966160",
+            source=CpaSemanticSourceRef(video_path="source.mp4", srt_path=str(subtitle), start_ms=0, end_ms=2_000),
+            candidate_text="海海海",
+            normalized_text="海海海",
+            response_path=str(response_path),
+            metadata={
+                "final_song_lyrics_scope": {
+                    "schema_version": "hash-bound-final-song-lyrics-scope.v1",
+                    "subtitle_path": str(subtitle.resolve()),
+                    "subtitle_sha256": "sha256:wrong",
+                }
+            },
+        ),
+        tmp_path / "final.cpa.request.json",
+    )
+    write_cpa_semantic_response_artifact(build_mock_cpa_response(request), response_path)
+
+    enriched = _apply_cpa_semantic_review_from_job(
+        complete_song_evidence("song-final"),
+        {"final_song_lyrics_cpa": {"request_path": str(request.request_path), "response_path": str(response_path)}},
+        output_dir=tmp_path,
+    )
+    assert enriched.checks[-1]["reason_codes"] == ["CPA_FINAL_SONG_LYRICS_SCOPE_INVALID"]
 
 
 def test_candidate_mismatch_response_fails_closed(tmp_path):

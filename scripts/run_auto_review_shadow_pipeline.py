@@ -143,6 +143,7 @@ def run_shadow_pipeline(
     art_direction_llm_call: LlmCall | None = None,
     speech_spans_provider: SpeechSpansProvider | None = None,
     fresh_talk_transcriber: Callable[[Path], str] | None = None,
+    final_song_lyrics_cpa_runner: Callable[[Mapping[str, object], Mapping[str, object]], Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "evidence").mkdir(exist_ok=True)
@@ -174,6 +175,7 @@ def run_shadow_pipeline(
             art_direction_llm_call=art_direction_llm_call,
             speech_spans_provider=speech_spans_provider,
             fresh_talk_transcriber=fresh_talk_transcriber,
+            final_song_lyrics_cpa_runner=final_song_lyrics_cpa_runner,
         )
     else:
         raise ValueError("review_package or source_video is required")
@@ -252,6 +254,7 @@ def _run_live_source(
     art_direction_llm_call: LlmCall | None = None,
     speech_spans_provider: SpeechSpansProvider | None = None,
     fresh_talk_transcriber: Callable[[Path], str] | None = None,
+    final_song_lyrics_cpa_runner: Callable[[Mapping[str, object], Mapping[str, object]], Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     candidate_id = str((source_context_job or {}).get("candidate_id") or source_video.stem)
     title = title or candidate_id
@@ -447,6 +450,21 @@ def _run_live_source(
             branding_intro=branding_intro,
         )
     evidence = _apply_materialized_recut_render_qa(evidence, materialized_recut)
+    if (
+        final_song_lyrics_cpa_runner is not None
+        and _preliminary_cpa_requires_final_song_scope_recheck(job_manifest, output_dir=output_dir)
+        and evidence.song_complete is True
+        and evidence.lyrics_alignment_ready is True
+        and isinstance(materialized_recut, Mapping)
+    ):
+        try:
+            final_scope = final_song_lyrics_cpa_runner(job_manifest, materialized_recut)
+        except Exception as exc:
+            final_scope = {
+                "error": f"{type(exc).__name__}: {exc}",
+                "reason_code": "CPA_FINAL_SONG_LYRICS_QA_FAILED",
+            }
+        job_manifest = {**dict(job_manifest), "final_song_lyrics_cpa": dict(final_scope)}
     evidence = _apply_cpa_semantic_review_from_job(evidence, job_manifest, output_dir=output_dir)
     evidence = _apply_semantic_authority_evidence(evidence, job_manifest)
     provenance = _read_jingting_provenance_path(Path(source_context.jingting_manifest_path) if source_context.jingting_manifest_path else None)
@@ -600,6 +618,7 @@ from src.autoslice.live_source_review import (
     _cpa_semantic_optional,
     _cpa_semantic_request_path,
     _cpa_semantic_response_path,
+    _preliminary_cpa_requires_final_song_scope_recheck,
     _default_source_context_job,
     _duplicate_similarity_from_job,
     _first_int,

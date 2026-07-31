@@ -551,6 +551,17 @@ def _review_selected_candidates(
             )
             if args.cover_art_direction_llm_command
             else None,
+            final_song_lyrics_cpa_runner=(
+                lambda current_job, recut: _run_final_song_lyrics_cpa_script(
+                    job=current_job,
+                    materialized_recut=recut,
+                    candidate_dir=candidate_dir,
+                    cpa_command=args.cpa_command,
+                    room_id=args.room_id,
+                    source_video=args.source_video,
+                    lexicon=lexicon,
+                )
+            ),
         )
         record = summary.get("records", [{}])[0]
         records.append(
@@ -752,6 +763,7 @@ def _run_cpa_script(
     end_ms: int,
     content_type_hint: str,
     danmaku_context_json: Path | None = None,
+    final_song_lyrics_scope: bool = False,
 ) -> None:
     argv = [
         sys.executable,
@@ -783,9 +795,60 @@ def _run_cpa_script(
     ]
     if danmaku_context_json is not None:
         argv.extend(["--danmaku-context-json", str(danmaku_context_json)])
+    if final_song_lyrics_scope:
+        argv.append("--final-song-lyrics-scope")
     completed = subprocess.run(argv, check=False, capture_output=True, text=True)
     if completed.returncode != 0:
         raise SystemExit(completed.stderr or f"CPA_SEMANTIC_REVIEW_FAILED rc={completed.returncode}")
+
+
+def _run_final_song_lyrics_cpa_script(
+    *,
+    job: dict,
+    materialized_recut: dict,
+    candidate_dir: Path,
+    cpa_command: str,
+    room_id: str,
+    source_video: Path,
+    lexicon,
+) -> dict[str, object]:
+    """Ask CPA again only over the exact subtitle bytes that will be delivered.
+
+    The preliminary request intentionally has source-chat context for normal
+    clips.  A complete song instead ships hash-bound external LRC, so a
+    terminology finding from that preliminary ASR text cannot adjudicate the
+    delivery text.
+    """
+
+    subtitle_value = materialized_recut.get("subtitle_path")
+    subtitle_path = Path(str(subtitle_value or ""))
+    if not subtitle_path.is_file():
+        raise RuntimeError("FINAL_SONG_LYRICS_SUBTITLE_MISSING")
+    cues = _parse_srt(subtitle_path)
+    final_text = "\n".join(cue.text.strip() for cue in cues if cue.text.strip())
+    if not final_text:
+        raise RuntimeError("FINAL_SONG_LYRICS_TEXT_EMPTY")
+    candidate_id = str(job.get("candidate_id") or "song")
+    cpa_dir = candidate_dir / "cpa"
+    request_json = cpa_dir / f"{candidate_id}.final-lyrics.cpa.request.json"
+    response_json = cpa_dir / f"{candidate_id}.final-lyrics.cpa.response.json"
+    end_ms = max((cue.source_end_ms for cue in cues), default=1)
+    _run_cpa_script(
+        candidate_id=candidate_id,
+        candidate_text=final_text,
+        normalized_text=normalize_text(final_text, lexicon=lexicon),
+        request_json=request_json,
+        response_json=response_json,
+        cpa_command=cpa_command,
+        room_id=room_id,
+        source_video=source_video,
+        source_srt=subtitle_path,
+        start_ms=0,
+        end_ms=max(1, end_ms),
+        content_type_hint="song",
+        final_song_lyrics_scope=True,
+    )
+    return {"request_path": str(request_json), "response_path": str(response_json)}
 
 
 def _viewer_context_expanded_candidate(

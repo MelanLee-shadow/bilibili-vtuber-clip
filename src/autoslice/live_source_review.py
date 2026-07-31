@@ -17,6 +17,7 @@ from .boundary_resolver import AnchorCandidate, BoundaryResolution, TalkCue, res
 from .channel_profile import load_channel_profile
 from .content_evidence import _editorial_score
 from .cpa_semantic_qa import (
+    _complete_song_ready,
     apply_cpa_semantic_qa_to_review_evidence,
     evaluate_cpa_semantic_response_artifact,
     load_request_artifact,
@@ -1374,6 +1375,51 @@ def _apply_cpa_semantic_review_from_job(
     *,
     output_dir: Path,
 ) -> ReviewEvidence:
+    final_scope = _mapping(job_manifest.get("final_song_lyrics_cpa"))
+    if final_scope:
+        if final_scope.get("error"):
+            return _apply_cpa_semantic_failure(
+                evidence,
+                reason_code=str(final_scope.get("reason_code") or "CPA_FINAL_SONG_LYRICS_QA_FAILED"),
+                response_path=None,
+                request_path=None,
+                error=str(final_scope.get("error")),
+            )
+        request_path = _path_from_value(final_scope.get("request_path"), output_dir=output_dir)
+        response_path = _path_from_value(final_scope.get("response_path"), output_dir=output_dir)
+        if request_path is None or response_path is None:
+            return _apply_cpa_semantic_failure(
+                evidence,
+                reason_code="CPA_FINAL_SONG_LYRICS_QA_REQUIRED",
+                response_path=response_path,
+                request_path=request_path,
+                error="final_song_lyrics_cpa requires hash-bound request_path and response_path",
+            )
+        try:
+            request = load_request_artifact(request_path)
+            scope_error = _verify_final_song_lyrics_cpa_scope(request, evidence)
+            if scope_error is not None:
+                return _apply_cpa_semantic_failure(
+                    evidence,
+                    reason_code="CPA_FINAL_SONG_LYRICS_SCOPE_INVALID",
+                    response_path=response_path,
+                    request_path=request_path,
+                    error=scope_error,
+                )
+            evaluation = evaluate_cpa_semantic_response_artifact(request, response_path)
+            metadata = dict(evaluation.metadata)
+            metadata["preliminary_request_path"] = job_manifest.get("cpa_semantic_request_path")
+            metadata["preliminary_response_path"] = job_manifest.get("cpa_semantic_response_path")
+            metadata["scope"] = "hash_bound_final_song_lyrics"
+            return apply_cpa_semantic_qa_to_review_evidence(evidence, replace(evaluation, metadata=metadata))
+        except Exception as exc:
+            return _apply_cpa_semantic_failure(
+                evidence,
+                reason_code="CPA_FINAL_SONG_LYRICS_QA_INVALID",
+                response_path=response_path,
+                request_path=request_path,
+                error=f"{type(exc).__name__}: {exc}",
+            )
     request_path = _cpa_semantic_request_path(job_manifest, output_dir=output_dir)
     response_path = _cpa_semantic_response_path(job_manifest, output_dir=output_dir)
     if response_path is None:
@@ -1449,6 +1495,53 @@ def _cpa_semantic_optional(job_manifest: Mapping[str, object]) -> bool:
     qa = _mapping(job_manifest.get("semantic_qa"))
     nested = qa.get("cpa_optional")
     return nested if isinstance(nested, bool) else False
+
+
+def _preliminary_cpa_requires_final_song_scope_recheck(
+    job_manifest: Mapping[str, object], *, output_dir: Path
+) -> bool:
+    """Rejudge only an initial terminology block once final lyrics exist."""
+
+    response_path = _cpa_semantic_response_path(job_manifest, output_dir=output_dir)
+    if response_path is None:
+        return False
+    try:
+        response = json.loads(response_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    reasons = _mapping(response).get("reason_codes")
+    if not isinstance(reasons, Sequence) or isinstance(reasons, (str, bytes)):
+        return False
+    return "TERMINOLOGY_QA_FAILED" in {str(reason) for reason in reasons}
+
+
+def _path_from_value(value: object, *, output_dir: Path) -> Path | None:
+    if not isinstance(value, str) or not value:
+        return None
+    path = Path(value)
+    return path if path.is_absolute() or path.is_file() else output_dir / path
+
+
+def _verify_final_song_lyrics_cpa_scope(request, evidence: ReviewEvidence) -> str | None:
+    if not _complete_song_ready(evidence):
+        return "final-song CPA scope supplied without verified complete-song evidence"
+    scope = _mapping(request.metadata.get("final_song_lyrics_scope"))
+    if scope.get("schema_version") != "hash-bound-final-song-lyrics-scope.v1":
+        return "final_song_lyrics_scope schema missing or invalid"
+    subtitle_path = Path(str(scope.get("subtitle_path") or ""))
+    if not subtitle_path.is_file() or str(subtitle_path) != str(Path(request.source.srt_path).resolve()):
+        return "final subtitle path is missing or does not match the CPA source SRT"
+    expected_hash = "sha256:" + _sha256(subtitle_path)
+    if scope.get("subtitle_sha256") != expected_hash:
+        return "final subtitle hash does not match the hash-bound CPA scope"
+    try:
+        cues = _parse_srt(subtitle_path)
+    except OSError as exc:
+        return f"cannot parse final subtitle: {exc}"
+    final_text = "\n".join(cue.text.strip() for cue in cues if cue.text.strip())
+    if not final_text or request.candidate_text != final_text:
+        return "CPA candidate_text is not the exact final external-LRC subtitle text"
+    return None
 
 def _cpa_semantic_request_path(job_manifest: Mapping[str, object], *, output_dir: Path) -> Path | None:
     value = job_manifest.get("cpa_semantic_request_path")
@@ -1583,6 +1676,7 @@ def _source_context_job_record(job_manifest: Mapping[str, object]) -> dict[str, 
         "provenance": dict(_mapping(job_manifest.get("provenance"))),
         "cpa_semantic_request_path": job_manifest.get("cpa_semantic_request_path"),
         "cpa_semantic_response_path": job_manifest.get("cpa_semantic_response_path"),
+        "final_song_lyrics_cpa": dict(_mapping(job_manifest.get("final_song_lyrics_cpa"))) or None,
         "semantic_qa": dict(_mapping(job_manifest.get("semantic_qa"))),
         "selector_stage": job_manifest.get("selector_stage"),
         "boundary_authority": job_manifest.get("boundary_authority"),
