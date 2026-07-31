@@ -181,6 +181,7 @@ def _compose_screenshot_cover_with_face_gate(
     base_url: str,
     api_key: str,
     verifier: Callable[..., dict[str, object]] | None = None,
+    full_text_cover_contract: object = None,
 ) -> tuple[dict[str, object], dict[str, object], dict[str, object] | None]:
     """Compose the poster card + title and face-gate polished finals.
 
@@ -208,11 +209,14 @@ def _compose_screenshot_cover_with_face_gate(
                 face_safe_contain and not relationship_visual_required
             ),
         )
+        # 2026-07-31：talk 无梗字时整句上封面的唯一合法通道是 hash 绑定的
+        # full-text contract；截图/polish 路径不穿透它，等于把该通道静默杀死。
         overlay = _overlay_lidousha_cover_title(
             poster_path,
             final_cover_path,
             cover_text=cover_text,
             art_direction=art_direction,
+            full_text_cover_contract=full_text_cover_contract,
         )
         if method != "screenshot_polish":
             break
@@ -254,6 +258,7 @@ def _degrade_rejected_polish_to_direct(
     api_key: str,
     cover_generation: dict[str, object],
     verifier: Callable[..., dict[str, object]] | None = None,
+    full_text_cover_contract: object = None,
 ) -> tuple[
     dict[str, object],
     dict[str, object],
@@ -289,6 +294,7 @@ def _degrade_rejected_polish_to_direct(
         base_url=base_url,
         api_key=api_key,
         verifier=verifier,
+        full_text_cover_contract=full_text_cover_contract,
     )
     cover_generation["rejected_polish_face_verification"] = (
         rejected_verification

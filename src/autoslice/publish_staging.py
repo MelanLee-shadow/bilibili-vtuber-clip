@@ -965,6 +965,7 @@ def _stage_cpa_redraw_cover(
     final_host_identity_verifier: (Callable[..., Mapping[str, object]] | None),
     base_url: str,
     api_key: str,
+    full_text_cover_contract: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Resolve optional emote direction and materialize the CPA redraw lane."""
 
@@ -1136,11 +1137,15 @@ def _stage_cpa_redraw_cover(
         )
 
     final_cover_path = covers_dir / f"{candidate_id}.ai-title.cover.png"
+    # 2026-07-31：talk 的 mode=full 自动回退废除后，hash 绑定的 full-text contract
+    # 是整句上封面的**唯一**合法通道；不把它穿透给 renderer 就等于把这条通道静默杀死
+    # ——刚消灭「静默回退」，不能换来一个「静默不可能」。
     overlay = _overlay_lidousha_cover_title(
         ai_background_path,
         final_cover_path,
         cover_text=cover_text,
         art_direction=art_direction,
+        full_text_cover_contract=full_text_cover_contract,
     )
     cover_generation.update(
         {
@@ -1241,6 +1246,7 @@ def _stage_cpa_redraw_cover(
                     retry_final,
                     cover_text=cover_text,
                     art_direction=art_direction,
+                    full_text_cover_contract=full_text_cover_contract,
                 )
                 cover_generation.update(
                     {
@@ -1775,6 +1781,7 @@ def _stage_lidousha_ai_cover(
             final_host_identity_verifier=final_host_identity_verifier,
             base_url=base_url,
             api_key=api_key,
+            full_text_cover_contract=full_text_cover_contract,
         )
         return _enforce_final_talk_cover_thumbnail_gate(result)
     if route.get("host_identity_required") is True and final_host_identity_verifier is None:
@@ -1847,6 +1854,7 @@ def _stage_lidousha_ai_cover(
         final_host_identity_verifier=final_host_identity_verifier,
         base_url=base_url,
         api_key=api_key,
+        full_text_cover_contract=full_text_cover_contract,
     )
     result = _degrade_unavailable_redraw_identity_to_direct(
         redraw_result=redraw_result,
@@ -2150,6 +2158,7 @@ def _stage_screenshot_direct_cover(
     final_participant_verifier: (Callable[..., Mapping[str, object]] | None) = None,
     final_host_identity_verifier: (Callable[..., Mapping[str, object]] | None) = None,
     base_url: str = "",
+    full_text_cover_contract: Mapping[str, object] | None = None,
     api_key: str = "",
 ) -> dict[str, object]:
     """截图路线封面：直出或 +CPA 轻微调；物化失败原路线内阻断。
@@ -2236,6 +2245,7 @@ def _stage_screenshot_direct_cover(
             base_url=base_url,
             api_key=api_key,
             verifier=_verify_polish_face_integrity,
+            full_text_cover_contract=full_text_cover_contract,
         )
         (
             poster_evidence,
@@ -2244,6 +2254,7 @@ def _stage_screenshot_direct_cover(
             method,
             selected_model,
         ) = _degrade_rejected_polish_to_direct(
+            full_text_cover_contract=full_text_cover_contract,
             poster_evidence=poster_evidence,
             overlay=overlay,
             face_verification=face_verification,
@@ -2517,6 +2528,7 @@ def _degrade_unavailable_redraw_identity_to_direct(
         final_host_identity_verifier=final_host_identity_verifier,
         base_url=base_url,
         api_key=api_key,
+        full_text_cover_contract=full_text_cover_contract,
     )
     if direct_result.get("status") != "AI_COVER_READY":
         return direct_result

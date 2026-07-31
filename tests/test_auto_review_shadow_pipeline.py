@@ -4561,7 +4561,16 @@ def test_normalize_cover_art_direction_rejects_lossy_llm_lines():
     assert resolved.line_breaks == ()  # lossy split refused; balancer still runs
 
 
-def test_overlay_honors_word_aware_lines_without_midword_break(tmp_path):
+_PUNCH_TITLE = "【李豆沙】精心设计MC环节想让kmx介绍自己，是奶P！才，才不是熊猫呢！"
+_PUNCH_TEXT = "精心设计MC环节想让kmx介绍自己，是奶P！才，才不是熊猫呢！"
+
+
+def test_overlay_renders_author_segments_one_to_one_without_rebalancing(tmp_path):
+    """作者显式 `\n` 是切分权威：逐段 1:1 渲染，平衡器不得再插手。
+
+    2026-07-31 前即使给了显式换行，宽度平衡器仍作为候选参与竞争，字号占优就能夺走
+    切点，于是会切出劈开词的分行（`“白色奶龙”表情小 / 李拒绝花钱` 形态）。
+    """
     from PIL import Image
 
     bg = tmp_path / "bg.png"
@@ -4575,23 +4584,27 @@ def test_overlay_honors_word_aware_lines_without_midword_break(tmp_path):
         hook_color="yellow",
         is_song=False,
         hook_word="",
-        line_breaks=("电脑要造反？", "小皇帝", "拒绝更新"),
+        line_breaks=(),
     )
     meta = shadow_pipeline._overlay_lidousha_cover_title(
-        bg, out, cover_text="电脑要造反？小皇帝拒绝更新", art_direction=art_direction
+        bg, out, cover_text="被弹幕拆台\n当场反杀", art_direction=art_direction
     )
     assert out.is_file()
-    assert meta["line_split"] == "llm_word_aware"
     rendered = meta["rendered_lines"]
-    # lossless: the rendered lines concatenate back to the cover text in order
-    assert "".join(rendered) == "电脑要造反？小皇帝拒绝更新"
-    # NO word is torn across lines — each stays whole within a single line (the
-    # fitter may regroup the LLM lines for a bigger font, but never splits a word).
-    for word in ("电脑", "造反", "小皇帝", "拒绝", "更新", "拒绝更新"):
-        assert any(word in line for line in rendered), f"{word} was split across lines: {rendered}"
+    # 逐字等于作者段，且恰好两行——平衡器没有重新切过
+    assert rendered == ["被弹幕拆台", "当场反杀"]
+    for word in ("被弹幕拆台", "当场反杀", "弹幕", "当场"):
+        assert any(word in line for line in rendered), f"{word} 被拆断: {rendered}"
 
 
-def test_overlay_falls_back_to_balancer_without_forced_lines(tmp_path):
+def test_overlay_blocks_wide_talk_text_with_no_author_break_or_receipt(tmp_path):
+    """负向 canary：10-14em、无 `\n`、无梗字回执、无 contract → typed BLOCK。
+
+    这是 2026-07-30 白色奶龙残洞的回归钉。旧法在这里走平衡器把整段铺开
+    （`meta["line_split"] == "balancer"`），正是 6/6 生产违例的来源；新法要求
+    切点必须来自权威，宽度平衡器永远不是切分权威。
+    """
+    import pytest
     from PIL import Image
 
     bg = tmp_path / "bg.png"
@@ -4607,20 +4620,11 @@ def test_overlay_falls_back_to_balancer_without_forced_lines(tmp_path):
         hook_word="",
         line_breaks=(),
     )
-    meta = shadow_pipeline._overlay_lidousha_cover_title(
-        bg, out, cover_text="电脑要造反？小皇帝拒绝更新", art_direction=art_direction
-    )
-    assert out.is_file()
-    assert meta["line_split"] == "balancer"  # no forced split, no colon → balancer path
-
-
-# ---------------------------------------------------------------------------
-# 封面梗字（2026-07-20 B站高播放封面调研）：自动标题封面渲染 2-12 字梗字，
-# 不再整条标题上封面；手定标题/歌切保持旧行为。
-# ---------------------------------------------------------------------------
-
-_PUNCH_TITLE = "【李豆沙】精心设计MC环节想让kmx介绍自己，是奶P！才，才不是熊猫呢！"
-_PUNCH_TEXT = "精心设计MC环节想让kmx介绍自己，是奶P！才，才不是熊猫呢！"
+    with pytest.raises(ValueError, match="COVER_PUNCH_REVIEW_REQUIRED"):
+        shadow_pipeline._overlay_lidousha_cover_title(
+            bg, out, cover_text="电脑要造反？小皇帝拒绝更新", art_direction=art_direction
+        )
+    assert not out.exists(), "阻断时不得落盘任何像素"
 
 
 def test_cover_punch_deterministic_baseline_and_gates():
@@ -5097,7 +5101,12 @@ def test_overlay_rejects_talk_title_that_repeats_the_known_91px_failure(tmp_path
         hook_word="最最最喜欢",
     )
 
-    with pytest.raises(ValueError, match="COVER_TITLE_TOO_SMALL"):
+    # 这条标题仍然必须被拒——2026-07-31 起拒绝理由从「字号 91px 太小」**前移**到
+    # 「作者段 `就要“最最最喜欢”？` 超过 9em 而没有任何切分权威」。更早、更准：
+    # 旧法要先把版排出来才发现字太小，新法在决定切分时就拒。历史铁律不变（Ivan
+    # 2026-07-22 的 91px 案：禁止继续缩字，见 70-cover.md:60），只是这条输入现在
+    # 撞的是更上游的门。
+    with pytest.raises(ValueError, match="COVER_PUNCH_REVIEW_REQUIRED"):
         shadow_pipeline._overlay_lidousha_cover_title(
             bg,
             out,
@@ -5694,7 +5703,9 @@ def test_3573_shaped_dual_route_blocks_without_proof_then_passes_no_crop(
         cover_reference_authority=reference_authority,
     )
     title = "【李豆沙】最包容异性恋的直播间，看到男角色只能说出一句不熟"
-    cover_text = "看到男角色只能说不熟"
+    # 10em 单段在新法下没有切分权威会被 renderer 拒（本测试的对象是关系型双人路线，
+    # 不是封面文字），给作者显式分行让它到达真正要断言的关系门。
+    cover_text = "看到男角色\n只能说不熟"
     frame_selection = {
         "schema": "cover-frame-selection.v1",
         "status": "SELECTED",
@@ -6411,7 +6422,7 @@ def test_polish_cover_face_gate_degrades_to_direct_when_never_complete(
         media_path=media,
         candidate_id="polish-face-blocked",
         title="【李豆沙】脸不完整必须拦下",
-        cover_text="脸不完整必须拦下",
+        cover_text="脸不完整\n必须拦下",
         run_ffmpeg=True,
         art_direction_llm_call=None,
         image_edit=_fake_polish_image_edit,

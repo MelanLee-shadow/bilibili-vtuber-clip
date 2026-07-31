@@ -42,6 +42,10 @@ from src.autoslice.cover_emote import (
     load_emote_library,
     resolve_emote_reference,
 )
+from src.autoslice.cover_punch_semantics import (
+    cover_text_requires_punch_for_thumbnail,
+    validate_cover_punch_semantic_review,
+)
 from src.autoslice.llm_client import LlmConfig, build_llm_call
 from scripts.run_auto_review_shadow_pipeline import (
     _call_cpa_image_edit,
@@ -116,6 +120,16 @@ def regenerate_cover(
             LlmConfig(transport="command", command_template=_CPA_ART_DIRECTION_LLM, timeout_seconds=180.0)
         )
     emote_library = load_emote_library(ROOT)
+    # 2026-07-31：梗字门由**内容属性**触发，不再由调用方 opt-in。
+    #
+    # docs/pipeline/70-cover.md:44-45 明令「不得因标题是人工权威、
+    # cover_punch_allowed=false、回执为空或回执失败而把长 cover_text 当作封面放行」，
+    # 但该门此前的唯一实现是默认关闭的 `--allow-punch`。2026-07-30
+    # auto_192000_909_1014（白色奶龙，BV1s7326qEc9）的 cover-only 修复没带该 flag，
+    # 于是选择器从未被调用，操作者改为手写文案与分行（丢掉「观众想让新3D永久保留」
+    # 这个事件主语），并写了一份把该手写结果硬编码为期望值的 QA——一个不可能失败的
+    # 自我认证检查。门必须由内容触发，调用方只能加严不能关闭。
+    punch_required = cover_text_requires_punch_for_thumbnail(cover_text)
     art_direction = _lidousha_cover_art_direction(
         candidate_id=candidate_id,
         title=title,
@@ -123,9 +137,27 @@ def regenerate_cover(
         art_direction_llm_call=art_direction_llm,
         emote_library=emote_library,
         diversity_slot=diversity_slot,
-        allow_punch=allow_punch,
+        allow_punch=allow_punch or punch_required,
         story_hook=story_hook,
     )
+    if punch_required and not art_direction.is_song:
+        if not art_direction.cover_punch:
+            raise SystemExit(
+                "COVER_PUNCH_REVIEW_REQUIRED: cover_text 超出 1-2 行缩略图合同但没有"
+                " 产出 cover_punch；不得以整段 cover_text 放行"
+                "（docs/pipeline/70-cover.md:44-45）"
+            )
+        if not validate_cover_punch_semantic_review(
+            art_direction.cover_punch_semantic_review,
+            rendered_lines=list(art_direction.cover_punch),
+            cover_text=cover_text,
+            story_hook=story_hook or "",
+        ):
+            raise SystemExit(
+                "COVER_PUNCH_REVIEW_INVALID: cover_punch 缺少通过校验的"
+                " lidousha-cover-punch-semantic-review.v1 回执；回执为空/失败时"
+                "必须重试或阻断，不得落盘任何像素"
+            )
     import dataclasses
 
     if layout:
@@ -323,7 +355,11 @@ def main(argv=None) -> int:
                    help="replace = the sticker IS the subject (no character redraw); companion = sticker inset beside the character (分身/代画粉丝kmx; needs --ref or --media).")
     p.add_argument("--emote-reason", default="", help="one-line strong reason recorded in the evidence manifest.")
     p.add_argument("--diversity-slot", type=int, help="stable same-session cover slot; slots 0-5 map to distinct background families.")
-    p.add_argument("--allow-punch", action="store_true", help="render the source-bound 2-12 character cover punch used by automatic talk titles.")
+    p.add_argument("--allow-punch", action="store_true",
+                   help="opt IN to the punch lane for short cover_text. NOT an off switch: "
+                        "cover_text that cannot fit the 1-2 line thumbnail contract turns the "
+                        "punch review on regardless, and a missing/invalid semantic receipt "
+                        "then fails closed before any pixel is written.")
     args = p.parse_args(argv)
 
     meta = regenerate_cover(

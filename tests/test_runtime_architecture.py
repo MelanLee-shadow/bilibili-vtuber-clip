@@ -47,10 +47,15 @@ FUNCTION_DEBT_LEDGER = {
     ("src/autoslice/producer_text_pipeline.py", "_finalize_text_evidence"): 305,
     ("src/autoslice/producer_text_pipeline.py", "_run_final_review"): 304,
     ("src/autoslice/producer_text_pipeline.py", "run_text_pipeline"): 307,
-    ("src/autoslice/publish_staging.py", "_stage_cpa_redraw_cover"): 409,
-    ("src/autoslice/publish_staging.py", "_stage_lidousha_ai_cover"): 387,
+    # 2026-07-31 +6：full-text contract 穿透形参与调用（Ivan 07-31 `/goal`
+    # 「直接按照 fable 的 advise 继续，直至修复所有问题」授权；Fable 裁定 4
+    # 点名「contract 不穿透 = 静默把唯一合法全文通道杀死」，必须补）。
+    ("src/autoslice/publish_staging.py", "_stage_cpa_redraw_cover"): 415,
+    # 2026-07-31 +2：同上，contract 穿透接线。
+    ("src/autoslice/publish_staging.py", "_stage_lidousha_ai_cover"): 389,
     ("src/autoslice/publish_staging.py", "_stage_publish_draft"): 428,
-    ("src/autoslice/publish_staging.py", "_stage_screenshot_direct_cover"): 319,
+    # 2026-07-31 +3：同上，截图/polish 路径的 contract 穿透。
+    ("src/autoslice/publish_staging.py", "_stage_screenshot_direct_cover"): 322,
     ("src/autoslice/song_lane.py", "produce_song"): 311,
 }
 
@@ -59,14 +64,19 @@ MODULE_DEBT_LEDGER = {
     "scripts/audit_lidousha_review_package.py": 2_003,
     "scripts/authorized_upload.py": 2_929,
     "scripts/free_session_autoslice.py": 2_063,
-    "src/autoslice/cover_generation.py": 2_164,
+    # 2026-07-31 +122：封面文案链修复（分行权威等级 + 锁定模式 + 缩略图合同背带
+    # + max_lines 按合同封顶）。新增逻辑已抽成 _talk_locked_split /
+    # _assert_talk_thumbnail_contract 两个模块级函数，_overlay_lidousha_cover_title
+    # 因此回到 300 行以内、未进函数账本。Ivan 07-31 `/goal` 授权 + Fable 裁定链。
+    "src/autoslice/cover_generation.py": 2_286,
     "src/autoslice/cover_repair.py": 2_049,
     "src/autoslice/delivery_recovery.py": 2_078,
     "src/autoslice/final_review_auditor.py": 3_390,
     "src/autoslice/live_source_review.py": 2_035,
     "src/autoslice/producer_package_finalization.py": 2_765,
     "src/autoslice/producer_text_pipeline.py": 2_098,
-    "src/autoslice/publish_staging.py": 2_647,
+    # 2026-07-31 +12：contract 穿透接线（形参 + 4 个调用点）。
+    "src/autoslice/publish_staging.py": 2_659,
     "src/autoslice/same_bv_repair.py": 2_422,
 }
 SCRIPT_EXCLUSIONS = {

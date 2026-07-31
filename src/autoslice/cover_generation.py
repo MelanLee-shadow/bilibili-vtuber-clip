@@ -21,8 +21,12 @@ from src.autoslice.cover_emote import (
     normalize_emote_choice,
 )
 from src.autoslice.cover_punch_semantics import (
+    COVER_THUMBNAIL_MAX_LINES,
     PUNCH_LINE_MAX_EM,
+    cover_text_requires_punch_for_thumbnail,
+    cover_thumbnail_lines_are_readable,
     extractive_punch_fragment_is_source_safe,
+    validate_full_text_cover_contract,
     punch_line_em_width,
     review_cover_punch_semantics,
     validate_cover_punch_semantic_review,  # noqa: F401 - compatibility re-export
@@ -1813,7 +1817,7 @@ def _fit_cover_punch_lines(punch_lines, *, zone, font_path, hook_rgb, base_fill,
     return build(lo)
 
 
-def _fit_cover_lines(cover_text, *, hook_word, base_fill, hook_rgb, zone, font_path, max_lines=3, max_size=300, forced_lines=(), word_atoms=()):
+def _fit_cover_lines(cover_text, *, hook_word, base_fill, hook_rgb, zone, font_path, max_lines=3, max_size=300, forced_lines=(), word_atoms=(), locked_lines=()):
     """Choose the line-wrap + font size that makes the title as BIG as possible
     while filling the zone: evaluate every line count (the LLM/colon word-safe
     wraps AND balancer wraps at 1..max_lines), binary-search the largest emph size
@@ -1884,7 +1888,14 @@ def _fit_cover_lines(cover_text, *, hook_word, base_fill, hook_rgb, zone, font_p
     # fitter takes the plain maximum — full title, many short lines, big font.
     balancer_wordsafe = bool(word_atoms)
     balancer = [_wrap_even(flat, n, keep=keep) for n in range(1, max_lines + 1)]
-    candidates = [(True, w) for w in wordsafe] + [(balancer_wordsafe, w) for w in balancer]
+    if locked_lines:
+        # 2026-07-31：切点权威在场时只评估这一种切分。此前即使给了显式 `\n`，
+        # 平衡器仍作为候选竞争，字号占优就能夺走切点，切出劈开词的分行
+        # （`“白色奶龙”表情小 / 李拒绝花钱` 形态）——行数和行宽都合规，
+        # 渲染后的背带查不出来（它只管行数和宽度，不管切点）。
+        candidates = [(True, [line for line in locked_lines if line])]
+    else:
+        candidates = [(True, w) for w in wordsafe] + [(balancer_wordsafe, w) for w in balancer]
 
     scored: list[tuple[int, bool, list, list, list]] = []
     for is_wordsafe, line_texts in candidates:
@@ -1916,12 +1927,91 @@ def _fit_cover_lines(cover_text, *, hook_word, base_fill, hook_rgb, zone, font_p
     return [{"segs": seg_lines[i], "size": sizes[i], "gap": gaps[i]} for i in range(len(seg_lines))]
 
 
+def _talk_locked_split(
+    cover_text: str, *, art_direction: LidoushaCoverArtDirection
+) -> tuple[str, ...]:
+    """no-punch talk 封面的分行权威解析（2026-07-31）。
+
+    切点合法性只由权威定义——作者显式 ``\\n`` / CPA punch 段 / full-text contract /
+    已验证 ``word_atoms`` 点集；**宽度平衡器绝不发明切点**。
+
+    返回值语义：
+      - 非空元组 → 锁定这几行，平衡器不参与竞争；
+      - 空元组   → 交平衡器在已验证 atoms 的边界内自选 1-2 行（atoms 由
+        ``_validated_cover_words`` 证明「逐原子为原文连续片段、按序拼接等于原文」，
+        所以它只能在原子之间断，不可能断在原子内部——`表情小李` 病的本质就是
+        断在了原子内部）。
+
+    2026-07-30 auto_192000_909_1014（白色奶龙）就是没有任何权威时由操作者手写文案、
+    平衡器铺版铺出 `“白色奶龙”/表情小李/拒绝花钱`；生产 30 条里 6 条被铺成 3-8 行，
+    全部走这条路径。
+    """
+
+    author_segments = [
+        line.strip() for line in cover_text.splitlines() if line.strip()
+    ]
+    if len(author_segments) <= 1:
+        flat = "".join(author_segments) or cover_text.strip()
+        if punch_line_em_width(flat) > PUNCH_LINE_MAX_EM:
+            raise ValueError(
+                "COVER_PUNCH_REVIEW_REQUIRED: talk cover_text is wider than "
+                f"{PUNCH_LINE_MAX_EM}em with no author line break, no reviewed "
+                "punch segments and no bound full-text cover contract. The "
+                "width balancer is never a split authority — rerun with the "
+                "punch semantic review enabled so CPA supplies the split "
+                "(docs/pipeline/70-cover.md:44-50)."
+            )
+        # 无 atoms 时合法切点集为空 → 锁单行；有 atoms 则放手给平衡器在原子边界选。
+        return () if art_direction.words else (flat,)
+    if len(author_segments) <= COVER_THUMBNAIL_MAX_LINES and all(
+        punch_line_em_width(seg) <= PUNCH_LINE_MAX_EM for seg in author_segments
+    ):
+        return tuple(author_segments)
+    raise ValueError(
+        "COVER_PUNCH_REVIEW_REQUIRED: talk cover_text has "
+        f"{len(author_segments)} author segments; the thumbnail contract "
+        f"allows at most {COVER_THUMBNAIL_MAX_LINES} of <= "
+        f"{PUNCH_LINE_MAX_EM}em. Get a CPA punch semantic split or bind an "
+        "explicit contract (docs/pipeline/70-cover.md:44-50)."
+    )
+
+
+def _assert_talk_thumbnail_contract(
+    lines: list, *, cover_text: str, full_text_cover_contract: object
+) -> None:
+    """renderer 是所有 lane 的必经点，缩略图合同在这里 fail closed（背带）。
+
+    上游任何单点门都可能被没预见的输入绕过：内容触发门拦不住 12 字手写文案，
+    lane 门拦不住正常 producer 的 full 路径。判据用 ``cover_thumbnail_lines_are_readable``
+    ——它同时管 ≤2 行**和**每行 ≤9em，只数行数拦不住 `auto_193515_672_909`
+    那种「3 行但单行 12 字」的第二违例形态。唯一豁免是 hash 绑定的显式 contract。
+    """
+
+    rendered = ["".join(seg[0] for seg in line["segs"]) for line in lines]
+    if cover_thumbnail_lines_are_readable(rendered):
+        return
+    if validate_full_text_cover_contract(
+        full_text_cover_contract, cover_text=cover_text
+    ):
+        return
+    raise ValueError(
+        "COVER_TEXT_SEGMENTS_UNAUTHORIZED: talk cover rendered "
+        f"{len(rendered)} physical lines ({rendered!r}); the thumbnail "
+        f"contract allows at most {COVER_THUMBNAIL_MAX_LINES} lines of <= "
+        f"{PUNCH_LINE_MAX_EM}em. Pick a shorter contiguous source fragment "
+        "via the punch semantic review, or bind an explicit full-text cover "
+        "contract; the renderer never decides the split itself "
+        "(docs/pipeline/70-cover.md:44-50)."
+    )
+
+
 def _overlay_lidousha_cover_title(
     ai_background_path: Path,
     final_cover_path: Path,
     *,
     cover_text: str,
     art_direction: LidoushaCoverArtDirection | None = None,
+    full_text_cover_contract: object = None,
 ) -> dict[str, object]:
     """Overlay the multi-color artistic title onto the text-free CPA background.
 
@@ -1962,6 +2052,24 @@ def _overlay_lidousha_cover_title(
             max_size=render["max_size"],
         )
     else:
+        # talk 的 mode=full 自动回退在 2026-07-31 收窄：只有当 cover_text 确实装不下
+        # 1-2 行合同时才由权威决定切点（`70-cover.md:44-45` 禁的是「长」文本放行），
+        # 合规短文案照常渲染。layout 的 max_lines（左右分栏 8、banner 4）是
+        # 「更多行 ⇒ 字更大」的排版预算，与 ≤2 行合同从未对账过，是 8 行违例
+        # `auto_193515_1406_1543` 的另一半根因——talk 无 contract 时按合同封顶。
+        talk_contract_ok = validate_full_text_cover_contract(
+            full_text_cover_contract, cover_text=cover_text
+        )
+        locked_lines: tuple[str, ...] = ()
+        if not art_direction.is_song and not talk_contract_ok:
+            locked_lines = _talk_locked_split(
+                cover_text, art_direction=art_direction
+            )
+        talk_line_budget = (
+            render["max_lines"]
+            if art_direction.is_song or talk_contract_ok
+            else min(render["max_lines"], COVER_THUMBNAIL_MAX_LINES)
+        )
         lines = _fit_cover_lines(
             cover_text,
             hook_word=art_direction.hook_word,
@@ -1969,10 +2077,11 @@ def _overlay_lidousha_cover_title(
             hook_rgb=hook_rgb,
             zone=zone,
             font_path=font_path,
-            max_lines=render["max_lines"],
+            max_lines=talk_line_budget,
             max_size=render["max_size"],
             forced_lines=art_direction.line_breaks,
             word_atoms=art_direction.words,
+            locked_lines=locked_lines,
         )
 
     pad = 90
@@ -2073,7 +2182,20 @@ def _overlay_lidousha_cover_title(
             "COVER_TITLE_TOO_SMALL: "
             f"talk cover emphasis is {font_size}px; minimum is "
             f"{COVER_MIN_TALK_FONT_SIZE}px. Shorten the cover hook or use a "
-            "wider layout instead of shrinking the title."
+            "wider layout instead of shrinking the title. "
+            # 回收路径（2026-07-31）：无 word_atoms 的短文案锁单行后撞下限时，三条
+            # 降级路都违法——缩字违反 Ivan 7/22 的 91px 铁律（70-cover.md:60）、
+            # 无 atoms 让平衡器重开会复活 `表情小李` 洞、overlay 阶段换 banner 会把
+            # 字压到已按分栏生成的人物上。唯一合法出路是打开梗字评审重跑。
+            "Bounded rerun must enable the punch semantic review: a CPA "
+            "segment split routes through the 1:1 punch lane and forces the "
+            "banner text zone, which fixes the split and the size together."
+        )
+    if not art_direction.is_song:
+        _assert_talk_thumbnail_contract(
+            lines,
+            cover_text=cover_text,
+            full_text_cover_contract=full_text_cover_contract,
         )
 
     # Text backing: default "outline" (none) — the thick navy+white outline alone
