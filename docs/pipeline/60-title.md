@@ -14,6 +14,11 @@
   selection-hook/机器味重写；它不拥有绕过频道 archive envelope 的权限。talk 最终统一补
   `【李豆沙】`，song 统一成精确目录式；两者都验 12–49 字、外层空白与括号/引号栈。
 - `assets/lidousha/manual_title_overrides.v1.json` 存正文，不存一条可免检的“最终发布标题”。
+- 手定标题的 source-fact 门发现事实错误时仍默认 fail closed。例外只能是
+  `assets/lidousha/manual_title_repair_authorities/` 中的单 candidate authority：它必须同时
+  绑定原 title/hook、阻断该次修复的 source-fact receipt SHA、精确修正后的 title/hook 与用户
+  授权原话/时间；任一不符即继续阻断。消费 receipt 必须随 publish staging 和 source-fact
+  receipt 落入产物，不能成为通配的 CPA 改标题权。
 - 已发布 same-BV 的媒体恢复不得裸抄旧 record 的 `title`，也不得靠操作员逐条补几个可选
   evidence 参数。唯一入口是 deployable
   `assets/lidousha/recovery_publication_authority.v1.json`：它把 exact recovery 集合中的每个

@@ -516,6 +516,57 @@ def source_fact_review_passes(review: object) -> bool:
     )
 
 
+def authorize_manual_title_repair(
+    review: Mapping[str, object],
+    *,
+    consumption: Mapping[str, object],
+) -> dict[str, object]:
+    """Promote one blocked repair only after an exact external authority match.
+
+    The blocked source-fact receipt remains hash-bound in ``consumption``; the
+    new receipt deliberately records both the original CPA proposal and the
+    one-off manual authorization instead of rerunning CPA or broadening the
+    manual-title policy.
+    """
+
+    if (
+        review.get("schema_version") != SCHEMA_VERSION
+        or review.get("status") != "FAILED"
+        or review.get("decision") != "REPAIR_REQUIRES_TITLE_AUTHORITY"
+        or review.get("reason_code") != "SOURCE_FACT_TITLE_AUTHORITY_REQUIRED"
+        or consumption.get("status") != "CONSUMED"
+    ):
+        raise ValueError("MANUAL_TITLE_REPAIR_AUTHORITY_RECEIPT_INVALID")
+    passes = review.get("passes")
+    if not isinstance(passes, list) or len(passes) != 1 or not isinstance(passes[0], Mapping):
+        raise ValueError("MANUAL_TITLE_REPAIR_AUTHORITY_RECEIPT_INVALID")
+    proposed_hook = str(passes[0].get("final_selection_hook") or "")
+    proposed_title = str(passes[0].get("final_title") or "")
+    if (
+        not proposed_hook
+        or not proposed_title
+        or consumption.get("final_selection_hook") != proposed_hook
+        or consumption.get("final_title") != proposed_title
+        or consumption.get("original_selection_hook") != review.get("original_selection_hook")
+        or consumption.get("original_title") != review.get("original_title")
+        or consumption.get("source_fact_receipt_sha256") != review.get("receipt_sha256")
+    ):
+        raise ValueError("MANUAL_TITLE_REPAIR_AUTHORITY_RECEIPT_INVALID")
+    return _finalize_receipt(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "status": "PASS",
+            "decision": "REPAIRED",
+            "original_selection_hook": review["original_selection_hook"],
+            "original_title": review["original_title"],
+            "final_selection_hook": proposed_hook,
+            "final_title": proposed_title,
+            "passes": list(passes),
+            "manual_title_repair_authority_consumption": dict(consumption),
+        }
+    )
+
+
 def validate_source_fact_review(
     review: object,
     *,

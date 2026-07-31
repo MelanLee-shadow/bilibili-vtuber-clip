@@ -67,6 +67,11 @@ from .cover_punch_semantics import (
     validate_full_text_cover_contract,
 )
 from .llm_client import LlmCall, extract_json_object
+from .manual_title_repair_authority import (
+    ManualTitleRepairAuthorityError,
+    load_manual_title_repair_authority,
+    validate_manual_title_repair_authority,
+)
 from .review_evidence import SourceCue
 from .recovery_title_authority import (
     RecoveryTitleAuthorityError,
@@ -74,6 +79,7 @@ from .recovery_title_authority import (
 )
 from .shadow_review import _sha256, _write_json_file
 from .source_fact_review import (
+    authorize_manual_title_repair,
     review_and_repair_source_facts,
     source_fact_review_passes,
 )
@@ -511,6 +517,7 @@ def _stage_publish_draft(
     )
     staged_title = canonicalize_publish_title(staged_title, lane=explicit_lane)
     source_fact_review = None
+    manual_title_repair_authority_consumption = None
     if title_authority_error is None and source_fact_llm_call is not None:
         final_transcript = "\n".join(cue.text.strip() for cue in cues if cue.text.strip())
         context_prompt = (
@@ -539,6 +546,52 @@ def _stage_publish_draft(
             ),
             enforce_automatic_title_style=title_llm_call is not None,
         )
+        # Manual text remains immutable by default.  A checked-in authority
+        # may unlock exactly one already-evidenced source-fact repair, bound
+        # to its candidate, blocked CPA receipt, original surfaces, and exact
+        # replacement surfaces.  It is not a general CPA override.
+        if (
+            not source_fact_review_passes(source_fact_review)
+            and isinstance(source_fact_review, Mapping)
+            and source_fact_review.get("decision")
+            == "REPAIR_REQUIRES_TITLE_AUTHORITY"
+            and title_source == "ivan_manual_override"
+        ):
+            try:
+                authority = load_manual_title_repair_authority(candidate_id)
+                if authority is not None:
+                    source_passes = source_fact_review.get("passes")
+                    proposal = (
+                        source_passes[0]
+                        if isinstance(source_passes, list)
+                        and len(source_passes) == 1
+                        and isinstance(source_passes[0], Mapping)
+                        else None
+                    )
+                    if isinstance(proposal, Mapping):
+                        manual_title_repair_authority_consumption = (
+                            validate_manual_title_repair_authority(
+                                authority,
+                                candidate_id=candidate_id,
+                                original_title=staged_title,
+                                original_selection_hook=str(selection_hook or ""),
+                                source_fact_receipt_sha256=str(
+                                    source_fact_review.get("receipt_sha256") or ""
+                                ),
+                                final_title=str(proposal.get("final_title") or ""),
+                                final_selection_hook=str(
+                                    proposal.get("final_selection_hook") or ""
+                                ),
+                            )
+                        )
+                        source_fact_review = authorize_manual_title_repair(
+                            source_fact_review,
+                            consumption=manual_title_repair_authority_consumption,
+                        )
+            except (ManualTitleRepairAuthorityError, ValueError):
+                # Keep the pre-existing fail-closed source-fact block.  The
+                # error is surfaced through its ordinary authority receipt.
+                manual_title_repair_authority_consumption = None
         if not source_fact_review_passes(source_fact_review):
             reason = str(
                 source_fact_review.get("reason_code")
@@ -584,7 +637,11 @@ def _stage_publish_draft(
                 explicit_lane = reviewed_lane
                 if source_fact_review.get("decision") == "REPAIRED":
                     title_source += "+cpa_source_fact_repair"
-                    title_authority_status = "RESOLVED_CPA_SOURCE_FACT_REPAIR"
+                    title_authority_status = (
+                        "RESOLVED_MANUAL_SOURCE_FACT_REPAIR"
+                        if manual_title_repair_authority_consumption is not None
+                        else "RESOLVED_CPA_SOURCE_FACT_REPAIR"
+                    )
     common_title_violations = publish_title_policy_violations(
         staged_title,
         lane=explicit_lane,
@@ -701,6 +758,7 @@ def _stage_publish_draft(
         "title_policy_violations": title_policy_violations,
         "title_story_audit": title_story_audit,
         "source_fact_review": source_fact_review,
+        "manual_title_repair_authority_consumption": manual_title_repair_authority_consumption,
         "video_path": str(media_path),
         "cover_text": cover_text,
         "cover_path": cover_path_value,
@@ -724,6 +782,7 @@ def _stage_publish_draft(
         "title_policy_violations": title_policy_violations,
         "title_story_audit": title_story_audit,
         "source_fact_review": source_fact_review,
+        "manual_title_repair_authority_consumption": manual_title_repair_authority_consumption,
         "cover_status": cover_status,
         "cover_path": cover_path_value,
         "cover_text": cover_text,

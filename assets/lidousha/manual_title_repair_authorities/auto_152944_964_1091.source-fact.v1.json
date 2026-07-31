@@ -1,0 +1,14 @@
+{
+  "schema_version": "lidousha-manual-title-repair-authority.v1",
+  "candidate_id": "auto_152944_964_1091",
+  "original_title": "【李豆沙】长沙人李豆沙亲自打假“长沙大香肠”，话还没说完，弹幕又提议把技能叫“李姐拉拉”",
+  "original_selection_hook": "长沙人李豆沙亲自打假“长沙大香肠”，话还没说完，弹幕又把她的技能强行命名成“李姐拉拉”。",
+  "source_fact_receipt_sha256": "sha256:0713e2aa7a68e86bd46c52f9c99a606f0b32871acedf9f02da139e039a0f60cd",
+  "final_title": "【李豆沙】长沙人李豆沙否认“长沙大香肠”是长沙特产，SC提议把技能叫“李姐拉拉”",
+  "final_selection_hook": "长沙人李豆沙否认“长沙大香肠”是长沙特产，期间一条SC提议把她的技能叫“李姐拉拉”。",
+  "user_authorization": {
+    "quote": "我授权你把7.30号之前该上传但没上传的所有都上传了，需要修复的就修复。你可以看着。",
+    "timestamp": "2026-07-30"
+  },
+  "authority_sha256": "sha256:0c1fdc6484d03ce8f12e80b160efaeaef34dfac977949779d4b7e148e59ff594"
+}
