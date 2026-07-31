@@ -1883,9 +1883,15 @@ def test_initial_screenshot_cover_frame_selection_binding_fails_closed(
     assert cover_repair_needed(fx["date"], rec)
 
 
-def test_invalid_screenshot_cover_fails_closed_before_generic_ai_repair(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    "delivered_status",
+    sorted(runner.DELIVERED_TALK_STATUSES),
+)
+def test_1411_shaped_delivered_screenshot_queues_route_preserving_regeneration(
+    tmp_path, monkeypatch, delivered_status
 ):
+    from src.autoslice import cover_maintenance
+
     monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
     monkeypatch.setattr(
         runner, "pipeline_fingerprint", lambda: "sha256:" + "a" * 64
@@ -1895,16 +1901,19 @@ def test_invalid_screenshot_cover_fails_closed_before_generic_ai_repair(
     mp4.write_bytes(b"video")
     cover.write_bytes(b"cover")
     rec = {
-        "candidate_id": "auto_screenshot",
-        "status": "review_ready",
-        "title": "【李豆沙】截图路线",
-        "cover_status": "AI_COVER_READY",
+        "candidate_id": "auto_152944_1411_1463",
+        "status": delivered_status,
+        "title": "【李豆沙】刚解释完为什么被电，话音刚落小李就暴毙",
+        "cover_status": "BLOCKED_SCREENSHOT_COVER_REPAIR_REQUIRED",
+        "bundle_lifecycle": "CURRENT",
+        "bundle_compliance": "COMPLIANT",
+        "cover_route_regeneration_fingerprint": "sha256:" + "b" * 64,
+        "cover_route_regeneration_attempts": 3,
         "cover_generation": {
-            "method": "screenshot_direct",
+            "method": "screenshot_polish",
             "route_decision": {
-                "schema_version": "lidousha-cover-route-decision.v1",
-                "selected_treatment": "screenshot_direct",
-                "reason": "real stream frame",
+                "schema_version": "lidousha-cover-route-decision.v2",
+                "selected_treatment": "screenshot_polish",
             },
         },
     }
@@ -1913,18 +1922,32 @@ def test_invalid_screenshot_cover_fails_closed_before_generic_ai_repair(
         runner, "delivered_paths", lambda _date, _rec: (mp4, cover)
     )
     monkeypatch.setattr(runner, "write_state", lambda _date, _state: None)
+    monkeypatch.setattr(
+        cover_maintenance,
+        "cover_maintenance_block_reason",
+        lambda *_args, **_kwargs: None,
+    )
 
     def forbidden_run(*_args, **_kwargs):
         raise AssertionError("screenshot drift must never call an AI repair tool")
 
     monkeypatch.setattr(runner.subprocess, "run", forbidden_run)
-    runner.repair_covers("2026-07-22", state)
+    runner.repair_covers("2026-07-26", state)
 
     assert rec.get("cover_repair_attempts", 0) == 0
-    assert rec["cover_status"] == "BLOCKED_SCREENSHOT_COVER_REPAIR_REQUIRED"
-    assert rec["cover_integrity_status"] == (
-        "INVALID_SCREENSHOT_ROUTE_REPAIR_REQUIRED"
+    assert rec["status"] == "failed"
+    assert rec["failure_kind"] == "cover_route_regeneration"
+    assert rec["failure_recoverable"] is True
+    assert rec["cover_route_regeneration_fingerprint"] == (
+        "sha256:" + "a" * 64
     )
+    assert rec["cover_route_regeneration_attempts"] == 4
+    assert rec["cover_status"] == "SCREENSHOT_ROUTE_REGENERATION_QUEUED"
+    assert rec["cover_integrity_status"] == (
+        "INVALID_SCREENSHOT_ROUTE_REGENERATION_QUEUED"
+    )
+    assert rec["bundle_lifecycle"] == "PENDING_COVER"
+    assert rec["bundle_compliance"] == "COVER_REQUIRED"
 
 
 def test_pending_screenshot_cover_queues_one_route_preserving_producer_rerun(
@@ -1973,6 +1996,8 @@ def test_pending_screenshot_cover_queues_one_route_preserving_producer_rerun(
     )
     assert rec["cover_route_regeneration_attempts"] == 1
     assert rec["cover_status"] == "SCREENSHOT_ROUTE_REGENERATION_QUEUED"
+    assert rec["bundle_lifecycle"] == "PENDING_COVER"
+    assert rec["bundle_compliance"] == "COVER_REQUIRED"
     assert (
         rec["cover_integrity_status"]
         == "INVALID_SCREENSHOT_ROUTE_REGENERATION_QUEUED"
@@ -1986,6 +2011,8 @@ def test_pending_screenshot_cover_queues_one_route_preserving_producer_rerun(
     assert rec["status"] == runner.TALK_COVER_PENDING_STATUS
     assert rec["cover_status"] == "BLOCKED_SCREENSHOT_COVER_REPAIR_REQUIRED"
     assert rec["cover_route_regeneration_attempts"] == 1
+    assert rec["bundle_lifecycle"] == "PENDING_COVER"
+    assert rec["bundle_compliance"] == "COVER_REQUIRED"
 
     # A later code deployment gets one new bounded attempt, regardless of the
     # lifetime talk transient counter.

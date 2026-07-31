@@ -166,7 +166,10 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
 - producer 只产出视频/字幕但封面缺失或 route proof 无效时，状态必须是
   `media_ready_cover_pending + PENDING_COVER/COVER_REQUIRED`，不得标
   `review_ready + CURRENT/COMPLIANT`。cover-only 维护成功做完像素/哈希/route 绑定后才原子晋级；
-  截图 repair 仍留在截图路线，不能用通用 AI 重绘把失败偷偷改道。
+  截图 repair 仍留在截图路线，不能用通用 AI 重绘把失败偷偷改道。新 fingerprint 使旧截图
+  proof 过期时，未发布的历史 `review_ready/ok/quarantine` 与已在 cover-pending 的包享有
+  同一次 fingerprint-bound route-preserving producer 重生；排队时必须同步降为
+  `PENDING_COVER/COVER_REQUIRED`，不得留下 `CURRENT/COMPLIANT` 的伪终态。
 - 新封面门或流水线 fingerprint 使旧证据过期时，generic cover maintenance 只处理未发布包。
   `publication_registry.v1.json` 已登记 `status=published` 的候选必须在事务恢复、预算刷新和任何
   provider 调用之前排除；不得因 schema 升级自动重修公开稿或消耗生图额度。公开稿若确需改封面，

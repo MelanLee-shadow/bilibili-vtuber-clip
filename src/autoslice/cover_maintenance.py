@@ -140,8 +140,13 @@ def _handle_screenshot_route_repair(record: dict, fingerprint: str) -> bool:
     # The generic repair tool is an image-generation workflow. A screenshot
     # package must stay on its source-pixel route.
     regeneration_fingerprint = record.get("cover_route_regeneration_fingerprint")
+    status = record.get("status")
+    route_regeneration_eligible = bool(
+        status == _runner.TALK_COVER_PENDING_STATUS
+        or status in _runner.DELIVERED_TALK_STATUSES
+    )
     if (
-        record.get("status") == _runner.TALK_COVER_PENDING_STATUS
+        route_regeneration_eligible
         and regeneration_fingerprint != fingerprint
     ):
         record.update(
@@ -158,6 +163,8 @@ def _handle_screenshot_route_repair(record: dict, fingerprint: str) -> bool:
                     "INVALID_SCREENSHOT_ROUTE_REGENERATION_QUEUED"
                 ),
                 "cover_status": "SCREENSHOT_ROUTE_REGENERATION_QUEUED",
+                "bundle_lifecycle": "PENDING_COVER",
+                "bundle_compliance": "COVER_REQUIRED",
                 "cover_route_preservation_error": (
                     "screenshot proof is invalid; queued one fingerprint-bound "
                     "route-preserving producer rerun"
@@ -169,12 +176,20 @@ def _handle_screenshot_route_repair(record: dict, fingerprint: str) -> bool:
             "route-preserving producer rerun before image request"
         )
     else:
+        # An invalid unpublished delivery is not CURRENT/COMPLIANT merely
+        # because this fingerprint already spent its bounded retry. Keep the
+        # media reviewable but make the cover blocker authoritative until a
+        # later fingerprint earns another route-preserving producer run.
+        if status in _runner.DELIVERED_TALK_STATUSES:
+            record["status"] = _runner.TALK_COVER_PENDING_STATUS
         record.update(
             {
                 "cover_integrity_status": (
                     "INVALID_SCREENSHOT_ROUTE_REPAIR_REQUIRED"
                 ),
                 "cover_status": "BLOCKED_SCREENSHOT_COVER_REPAIR_REQUIRED",
+                "bundle_lifecycle": "PENDING_COVER",
+                "bundle_compliance": "COVER_REQUIRED",
                 "cover_route_preservation_error": (
                     "screenshot proof is invalid; generic AI repair is forbidden"
                 ),
