@@ -617,6 +617,22 @@ def test_publish_choke_rebuilds_story_before_cover_after_joint_repair(
             supported_by=["final_transcript", "structured_chat"],
         )
 
+    cover_calls: list[tuple[dict[str, object], dict[str, object]]] = []
+
+    def stage_cover(
+        record: dict[str, object],
+        **kwargs: object,
+    ) -> dict[str, object]:
+        cover_calls.append((record, kwargs))
+        cover = tmp_path / "cover.png"
+        cover.write_bytes(b"cover")
+        return {
+            "status": "AI_COVER_READY",
+            "cover_path": str(cover),
+            "cover_generation": {"status": "READY"},
+            "reason_codes": [],
+        }
+
     media = tmp_path / "candidate.recut.mp4"
     media.write_bytes(b"video")
     staged = _stage_publish_draft(
@@ -641,10 +657,10 @@ def test_publish_choke_rebuilds_story_before_cover_after_joint_repair(
             },
             ensure_ascii=False,
         ),
-        skip_cover=True,
         selection_hook=bad_hook,
         source_fact_llm_call=cpa,
         story_contract_rebuilder=contract,
+        stage_cover=stage_cover,
     )
 
     assert staged is not None
@@ -657,7 +673,18 @@ def test_publish_choke_rebuilds_story_before_cover_after_joint_repair(
     assert publish["title_authority_status"] == (
         "RESOLVED_CPA_SOURCE_FACT_REPAIR"
     )
-    assert publish["cover_status"] == "REUSED_COVER"
+    assert publish["cover_status"] == "AI_COVER_READY"
+    assert len(cover_calls) == 1
+    cover_record, cover_kwargs = cover_calls[0]
+    assert cover_kwargs["title"] == fixed_title
+    assert (
+        cover_record["story_contract"]["selection_hook"]
+        == fixed_hook
+    )
+    assert (
+        cover_record["story_contract"]["source_fact_review"]["decision"]
+        == "REPAIRED"
+    )
     assert calls == 2
 
 
