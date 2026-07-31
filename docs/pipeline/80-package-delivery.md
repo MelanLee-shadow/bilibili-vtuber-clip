@@ -53,9 +53,9 @@
   合法。producer、package auditor 与 uploader 各自重跑，不能复用一次自报结果。
 - 审计闸是 `scripts/audit_lidousha_review_package.py`，当前输出必须为
   `lidousha-review-package-audit.v2`，policy epoch 必须精确等于
-  `2026-07-23.final-artifact-gates.v3`。**schema 仍是 v2，epoch 才是 v3**；不要把仍合法的
+  `2026-07-31.final-artifact-gates.v5`。**schema 仍是 v2，epoch 才是 v5**；不要把仍合法的
   audit schema、`lidousha-cover-route-decision.v2`、`subtitle-redelivery-baseline.v2` 或
-  `lidousha-branding-intro.v2` 机械改成 v3。audit 绑定 auditor/策略代码与关键资产的
+  `lidousha-branding-intro.v2` 机械改成 v5。audit 绑定 auditor/策略代码与关键资产的
   `policy_fingerprint`、auditor source hash 以及完整 portable `audited_inputs` 闭包；
   任一文件或政策漂移都使旧 audit 失效。单独一个 `passed: true` JSON 不是证据。
 - 视觉排版另由 `review_manifest.json.subtitle_visual_contract` 约束：历史/人工默认 18 字；

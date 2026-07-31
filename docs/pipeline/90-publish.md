@@ -13,7 +13,7 @@
 - 新投稿只接受 `authorized-upload-manifest.v3`。它必须绑定同 stem 的最终视频、封面、
   record、SRT、review manifest、冻结标题、最终 tags、StoryContract 与当前 package audit。
 - package audit 必须为 `lidousha-review-package-audit.v2`，policy epoch 精确等于
-  `2026-07-23.final-artifact-gates.v3`。audit schema 仍是 v2；policy fingerprint、
+  `2026-07-31.final-artifact-gates.v5`。audit schema 仍是 v2；policy fingerprint、
   auditor source hash 与完整
   portable `audited_inputs` 闭包有效。上传器在任何副作用前重跑当前 canonical auditor、
   严格 SRT 与共享标题门，并要求结果与 manifest 绑定一致；自报 `passed:true` 不算。
