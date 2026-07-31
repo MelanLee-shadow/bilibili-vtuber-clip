@@ -2341,6 +2341,48 @@ def test_audio_lrc_validator_failure_tries_next_deduped_variant_and_repairs(tmp_
     assert "repeated_section time is outside" in report["audio_lrc_variant_attempts"][0]["reason"]
 
 
+def test_hash_bound_prior_audio_receipt_survives_later_model_variance(tmp_path):
+    """A failed repeat cannot erase a current-validator PASS for identical bytes."""
+    lrc = _japanese_lrc()
+    prior_dir = tmp_path / "prior"
+    prior_dir.mkdir()
+    prior = _write_fake_audio_alignment_run(prior_dir, lrc)
+    current_dir = tmp_path / "current"
+    current_dir.mkdir()
+    current_seed = _write_fake_audio_alignment_run(current_dir, lrc)
+    failed_payload = json.loads(json.dumps(current_seed.payload))
+    failed_payload["spot_checks"][0]["live_time_ms"] = 1
+    current = _rebind_fake_audio_alignment_run(current_seed, failed_payload)
+    calls = 0
+
+    def aligner(*_args):
+        nonlocal calls
+        calls += 1
+        return current
+
+    result = attempt_song_repair(
+        candidate_id="jp-audio",
+        cues=[
+            SourceCue("jp-0", 10_000, 13_000, lrc.lines[0].text, kind="singing"),
+            SourceCue("jp-1", 17_000, 20_000, lrc.lines[1].text, kind="singing"),
+        ],
+        anchor_start_ms=10_000,
+        anchor_end_ms=20_000,
+        source_duration_ms=100_000,
+        output_dir=tmp_path / "repair",
+        lrc_provider=lambda _query: lrc,
+        source_media_path=Path(prior.source_path),
+        audio_lrc_aligner=aligner,
+        prior_audio_lrc_runs=(prior,),
+    )
+
+    assert result.repaired is True
+    assert calls == 0
+    report = json.loads(Path(result.lyrics_alignment["alignment_report_path"]).read_text(encoding="utf-8"))
+    assert any(item["status"] == "PRIOR_RECEIPT_ACCEPTED" for item in report["audio_lrc_variant_attempts"])
+    assert any(item.step == "agy_audio_lrc_prior_receipt" for item in result.attempts)
+
+
 def test_audio_lrc_all_variants_fail_closed_at_hard_cost_cap(tmp_path, monkeypatch):
     canonical = _japanese_lrc()
     variants = [

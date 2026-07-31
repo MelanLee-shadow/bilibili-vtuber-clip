@@ -53,6 +53,7 @@ from .source_integrity import (
     plan_bilibili_replay_compensation,
 )
 from .subtitle_rendering import _parse_srt
+from .agy_lrc_alignment import load_hash_bound_audio_lrc_run
 
 ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(ROOT)
@@ -1854,6 +1855,24 @@ def _attempt_song_repair_stage(
         or _int(timeline.get("context_end_ms"), 0)
         or max((cue.source_end_ms for cue in cues), default=0)
     )
+    # Only this candidate's selector attempts are eligible.  Receipt matching
+    # and full current-validator revalidation happen in ``attempt_song_repair``;
+    # this bounded scan merely makes those persisted receipts available.
+    prior_audio_lrc_runs = []
+    candidate_root = output_dir.parents[2] if len(output_dir.parents) >= 3 else None
+    if candidate_root is not None:
+        manifest_paths = sorted(
+            candidate_root.glob("song_selector*/attempt-*/**/agy_audio_lrc/**/run.manifest.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )[:16]
+        for manifest_path in manifest_paths:
+            if output_dir in manifest_path.parents:
+                continue
+            try:
+                prior_audio_lrc_runs.append(load_hash_bound_audio_lrc_run(manifest_path))
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
     result = attempt_song_repair(
         candidate_id=candidate_id,
         cues=cues,
@@ -1868,6 +1887,7 @@ def _attempt_song_repair_stage(
         source_media_path=source_media_path,
         audio_lrc_aligner=audio_lrc_aligner,
         asr_anchor_cues=asr_anchor_cues,
+        prior_audio_lrc_runs=tuple(prior_audio_lrc_runs),
     )
     if result.repaired and result.song_boundary and result.lyrics_alignment:
         repaired_job = {

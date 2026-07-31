@@ -248,6 +248,7 @@ def _select_audio_lrc(
     audio_lrc_aligner: AudioLrcAligner,
     asr_anchor_cues: Sequence[SourceCue],
     asr_anchor_srt_path: Path | None,
+    prior_audio_lrc_runs: Sequence[AudioLrcAlignmentRun],
     min_matched_ratio: float,
     attempts: list[SongRepairAttempt],
 ) -> AudioSelectionOutcome | SongRepairResult:
@@ -310,6 +311,56 @@ def _select_audio_lrc(
             f"({recall_ratio:.0%} row recall)"
         )
         attempts.append(SongRepairAttempt("agy_audio_lrc_variant", "SUCCESS", rank_detail))
+        # Revalidate a bounded historical receipt *before* spending another
+        # AGY/Gemini call.  The strict converter re-hashes every receipt
+        # artifact and proves its canonical LRC is exactly this selected LRC;
+        # a stale or mismatched receipt simply falls through to a fresh call.
+        current_source_sha = _sha256_file(Path(source_media_path)) if prior_audio_lrc_runs else None
+        for prior in prior_audio_lrc_runs:
+            if prior.source_sha256 != current_source_sha:
+                continue
+            try:
+                prior_selected = _validated_audio_lrc_selection(
+                    run=prior,
+                    lrc=lrc,
+                    candidate_id=candidate_id,
+                    source_media_path=Path(source_media_path),
+                    source_duration_ms=source_duration_ms,
+                    min_matched_ratio=min_matched_ratio,
+                    asr_anchor_cues=resolved_asr_anchor_cues,
+                )
+            except Exception as prior_exc:
+                audio_lrc_variant_attempts.append(
+                    {
+                        "ordinal": ordinal,
+                        "song_title": lrc.song_title,
+                        "source_ref": lrc.source_ref,
+                        "status": "PRIOR_RECEIPT_REJECTED",
+                        "reason": f"{type(prior_exc).__name__}: {prior_exc}",
+                    }
+                )
+                continue
+            selected = prior_selected
+            audio_alignment_run = prior
+            audio_lrc_variant_attempts.append(
+                {
+                    "ordinal": ordinal,
+                    "song_title": lrc.song_title,
+                    "source_ref": lrc.source_ref,
+                    "status": "PRIOR_RECEIPT_ACCEPTED",
+                    "reason": "current validator accepted an earlier hash-bound receipt for the current source and canonical LRC",
+                }
+            )
+            attempts.append(
+                SongRepairAttempt(
+                    "agy_audio_lrc_prior_receipt",
+                    "SUCCESS",
+                    f"reused current-validator PASS for source sha256:{prior.source_sha256[:12]} and LRC sha256:{prior.lrc_sha256[:12]}",
+                )
+            )
+            break
+        if selected is not None:
+            break
         try:
             current_run = audio_lrc_aligner(
                 Path(source_media_path),
@@ -952,6 +1003,7 @@ def attempt_song_repair(
     max_audio_lrc_attempts: int = MAX_AUDIO_LRC_VARIANT_ATTEMPTS,
     asr_anchor_cues: Sequence[SourceCue] = (),
     asr_anchor_srt_path: Path | None = None,
+    prior_audio_lrc_runs: Sequence[AudioLrcAlignmentRun] = (),
 ) -> SongRepairResult:
     """Try to repair a song candidate into a fully-proven full-song boundary.
 
@@ -1034,6 +1086,7 @@ def attempt_song_repair(
             audio_lrc_aligner=audio_lrc_aligner,
             asr_anchor_cues=asr_anchor_cues,
             asr_anchor_srt_path=asr_anchor_srt_path,
+            prior_audio_lrc_runs=prior_audio_lrc_runs,
             min_matched_ratio=min_matched_ratio,
             attempts=attempts,
         )

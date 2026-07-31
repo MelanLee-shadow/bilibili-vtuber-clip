@@ -796,6 +796,52 @@ def _persist_agy_lrc_run(
     )
 
 
+def load_hash_bound_audio_lrc_run(manifest_path: Path) -> AudioLrcAlignmentRun:
+    """Reload a prior receipt; semantic acceptance remains the strict converter's job."""
+    manifest_bytes = manifest_path.read_bytes()
+    manifest = json.loads(manifest_bytes)
+    if not isinstance(manifest, dict) or manifest.get("schema_version") != AGY_AUDIO_LRC_RUN_SCHEMA_VERSION:
+        raise ValueError("audio receipt manifest schema is invalid")
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, dict):
+        raise ValueError("audio receipt artifacts are invalid")
+
+    def required_path(key: str) -> str:
+        value = artifacts.get(key)
+        if not isinstance(value, str) or not Path(value).is_file():
+            raise ValueError(f"audio receipt {key} is unavailable")
+        return value
+
+    output_path = required_path("output_path")
+    payload = json.loads(Path(output_path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("audio receipt output is invalid")
+    optional_policy = manifest.get("paid_backup_policy")
+    return AudioLrcAlignmentRun(
+        payload=payload,
+        provider=str(manifest.get("provider") or ""), model=str(manifest.get("model") or ""),
+        rc=manifest.get("agy_rc") if isinstance(manifest.get("agy_rc"), int) else None,
+        provider_fallback_used=manifest.get("provider_fallback_used"),
+        source_origin_path=str(artifacts.get("source_origin_path") or ""),
+        source_path=required_path("source_path"), source_sha256=str(artifacts.get("source_sha256") or ""),
+        source_duration_ms=artifacts.get("source_duration_ms"), lrc_path=required_path("lrc_path"),
+        lrc_sha256=str(artifacts.get("lrc_sha256") or ""), prompt_path=required_path("prompt_path"),
+        prompt_sha256=str(artifacts.get("prompt_sha256") or ""), output_path=output_path,
+        output_sha256=str(artifacts.get("output_sha256") or ""), manifest_path=str(manifest_path),
+        manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
+        provider_raw_output_path=(str(artifacts["provider_raw_output_path"]) if artifacts.get("provider_raw_output_path") else None),
+        provider_raw_output_sha256=(str(artifacts["provider_raw_output_sha256"]) if artifacts.get("provider_raw_output_sha256") else None),
+        agy_failure_category=(str(manifest["agy_failure_category"]) if manifest.get("agy_failure_category") else None),
+        configured_key_count=manifest.get("configured_key_count") if isinstance(manifest.get("configured_key_count"), int) else None,
+        accepted_key_ordinal=manifest.get("accepted_key_ordinal") if isinstance(manifest.get("accepted_key_ordinal"), int) else None,
+        accepted_key_tier=(str(manifest["accepted_key_tier"]) if manifest.get("accepted_key_tier") else None),
+        paid_backup_policy=dict(optional_policy) if isinstance(optional_policy, dict) else None,
+        api_audio_path=(str(artifacts["api_audio_path"]) if artifacts.get("api_audio_path") else None),
+        api_audio_sha256=(str(artifacts["api_audio_sha256"]) if artifacts.get("api_audio_sha256") else None),
+        api_audio_duration_ms=artifacts.get("api_audio_duration_ms") if isinstance(artifacts.get("api_audio_duration_ms"), int) else None,
+    )
+
+
 def _run_primary_agy_alignment(
     *,
     job: _PreparedAgyLrcJob,
