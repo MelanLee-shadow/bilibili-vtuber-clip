@@ -10,6 +10,9 @@ from src.autoslice.cover_host_identity_gate import (
     validate_final_host_identity_verification,
     verify_lidousha_final_host_identity,
 )
+from src.autoslice.cover_source_composition import (
+    verify_lidousha_source_composition,
+)
 
 
 def _sha(path: Path) -> str:
@@ -28,6 +31,43 @@ def _fake_witness(answer: dict[str, object]):
         }
 
     return probe
+
+
+def _source_composition_redraw(**kwargs):
+    reference_path = Path(kwargs["reference_path"])
+
+    def probe(image_path: Path, _question: str, **_probe_kwargs):
+        return {
+            "status": "OBSERVED",
+            "provider": "cpa",
+            "image_sha256": hashlib.sha256(
+                Path(image_path).read_bytes()
+            ).hexdigest(),
+            "answer": json.dumps(
+                {
+                    "lidousha_bbox_frac": [0.79, 0.70, 0.96, 0.98],
+                    "source_face_complete": True,
+                    "faithful_crop_can_make_dominant": False,
+                    "source_carries_story_reaction": False,
+                    "cpa_redraw_recommended": True,
+                    "reason": "李豆沙只在角落，源图不承载标题反应",
+                },
+                ensure_ascii=False,
+            ),
+            "routing": {
+                "preferred_provider": "cpa",
+                "selected_provider": "cpa",
+                "fallback_used": False,
+            },
+        }
+
+    return verify_lidousha_source_composition(
+        reference_path=reference_path,
+        reference_sha256=str(kwargs["reference_sha256"]),
+        story_hook=str(kwargs.get("story_hook") or ""),
+        title=str(kwargs.get("title") or ""),
+        image_probe=probe,
+    )
 
 
 def test_wrong_source_participant_as_protagonist_fails_closed(
@@ -258,6 +298,7 @@ def test_cpa_redraw_blocks_before_ready_when_host_identity_is_wrong(
         run_ffmpeg=True,
         image_edit=fake_image_edit,
         final_host_identity_verifier=wrong_identity,
+        source_composition_verifier=_source_composition_redraw,
         enforce_final_host_identity=True,
     )
 
@@ -321,19 +362,21 @@ def test_cpa_redraw_does_not_ship_source_pixels_when_identity_witness_is_down(
         run_ffmpeg=True,
         image_edit=fake_image_edit,
         final_host_identity_verifier=unavailable_identity,
+        source_composition_verifier=_source_composition_redraw,
         enforce_final_host_identity=True,
     )
 
     assert result["status"] == "BLOCKED_AI_COVER_REQUIRED"
     assert image_calls == 1
-    assert identity_calls == 2
+    assert identity_calls == 1
     generation = result["cover_generation"]
     route = generation["route_decision"]
-    assert generation["method"] == "screenshot_direct"
-    assert generation["cover_origin"] == "SOURCE_SCREENSHOT"
-    assert generation["cpa_redraw"]["status"] == (
-        "DEGRADED_TO_DIRECT_IDENTITY_WITNESS_UNAVAILABLE"
-    )
+    assert generation["method"] == "images.edit"
+    assert generation["cover_origin"] == "AI_REDRAW"
+    assert "cpa_redraw" not in generation
+    assert generation["source_composition_verification"]["verdict"][
+        "cpa_redraw_recommended"
+    ] is True
     assert route["selected_treatment"] == "cpa_redraw"
     assert route["actual_treatment"] is None
     assert route["execution_status"] == "BLOCKED"
@@ -407,6 +450,7 @@ def test_cpa_redraw_retries_once_and_recovers_host_identity(
         run_ffmpeg=True,
         image_edit=fake_image_edit,
         final_host_identity_verifier=identity_verifier,
+        source_composition_verifier=_source_composition_redraw,
         enforce_final_host_identity=True,
     )
 
@@ -465,6 +509,7 @@ def test_1411_prominence_failure_retries_with_stronger_prompt_then_stays_pending
         run_ffmpeg=True,
         image_edit=fake_image_edit,
         final_host_identity_verifier=small_corner_identity_match,
+        source_composition_verifier=_source_composition_redraw,
         enforce_final_host_identity=True,
     )
 

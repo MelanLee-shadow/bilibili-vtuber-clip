@@ -190,7 +190,12 @@ def _compose_screenshot_poster_background(
         # the frame (2026-07-26 BV1E93L6rErV case — cover shipped with the
         # face cut at the eyes). Contain keeps the whole face; paper bands
         # absorb the aspect difference exactly like the relationship card.
-        card_inner_size = (1640, 700)
+        # The face-safe source is already the CPA-authorized 16:9 identity
+        # crop.  Keep it unrotated at exactly 1440×810 so the full image lands
+        # inside the central 4:3 feed-safe window (x=240..1680).  The previous
+        # 1640×700 tilted card pushed identity pixels outside that crop and
+        # created large decorative bands around a short image.
+        card_inner_size = (1440, 810)
         contained = ImageOps.contain(
             source_original,
             card_inner_size,
@@ -207,8 +212,8 @@ def _compose_screenshot_poster_background(
             ).enhance(1.05),
             contained_offset,
         )
-        angle = float(palette["rotation"])
-        card_y = 315
+        angle = 0.0
+        card_y = 117
     else:
         card_inner_size = (1640, 700)
         contained_offset = (0, 0)
@@ -248,11 +253,6 @@ def _compose_screenshot_poster_background(
         and content_box[2] <= center_4_3_box[2]
         and content_box[3] <= center_4_3_box[3]
     )
-
-    # One family-color rule under the card makes the batch palette readable even
-    # in a tiny feed thumbnail.
-    draw = ImageDraw.Draw(canvas, "RGBA")
-    draw.rounded_rectangle((120, 1020, 1800, 1062), radius=20, fill=accent + (245,))
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     canvas.convert("RGB").save(output_path)

@@ -22,6 +22,19 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   与字幕情绪；最终选帧还须由 CPA vision 首选见证对实际像素确认主播脸完整/可用、画面不是
   空白过渡；只有 CPA 图像调用不可用或输出不合约时才允许 AGY 作披露失败原因的后备。两者均
   失败即换帧重做，不能因确定性 score 较高而放行。
+- 正常 production 在 reference 抽取完成后、初始 route decision 之前，必须执行 hash-bound
+  `lidousha-cover-source-composition-verification.v1`。CPA-primary 图像见证逐项输出并严格验证
+  `lidousha_bbox_frac`、`source_face_complete`、
+  `faithful_crop_can_make_dominant`、`source_carries_story_reaction` 与
+  `cpa_redraw_recommended`；CPA 不可用/输出不合约时只允许按统一 `visual_witness` 路由披露
+  后备 AGY，reference hash、bbox、provider routing、回执或两端见证任一不可用/非法都须在任何
+  生图前 fail closed。只要脸不完整、无法忠实裁成大主体、或源图没有承担 StoryContract 的反应，
+  初始 v2 `selected_treatment` 就必须是 `cpa_redraw`（7/26 1411 角落小人案），最终 v3
+  不可再因 witness 不可用静默跨线为截图。反之，源反应明确且 CPA 判定可忠实裁切时，单人
+  screenshot route 必须以该 identity bbox 从 exact reference 重裁；crop evidence 同时绑定
+  reference SHA、bbox、source-composition witness/receipt SHA 与 crop output SHA。motion/
+  camera-window bbox 只能作候选，不能覆盖 CPA identity bbox；关系型 no-crop participant proof
+  仍按下文独立规则保留完整 hash-bound source frame。
 - 短梗字不能只过“逐字来自标题、每行 2–12 字”的词面门。选择器必须把完整
   StoryContract `selection_hook` 连同标题交给 **CPA 文字模型**做最终语义裁决，并落盘
   hash-bound `lidousha-cover-punch-semantic-review.v1`：陌生观众只看最终 1–2 行也必须能
@@ -134,6 +147,10 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   `scripts/repair_screenshot_cover.py` 从既有 hash-bound polish 工件经同一生产函数重排
   并出回执；线上替换走 `scripts/bili_cover_edit.py`（cover-only 授权编辑+读回回执，
   编辑不占投稿配额）。
+- source-composition 允许的单人 identity crop 与 `FACE_INCOMPLETE` 重排统一使用 face-safe
+  poster：exact 16:9 source 在中央 4:3 安全区内以 `1440×810`、`0°` contain 构图；禁止再用
+  旋转的矮卡制造上下大空带，也不得无条件绘制横贯画面的 accent bar。该重排只改善确定性
+  构图，不能代替下游 v3 身份、主体显著性和故事反应终检。
 - CPA redraw 的李豆沙最终身份复核若得到明确 `FINAL_HOST_IDENTITY_MISMATCH`，只允许重绘一次，
   仍不匹配就阻断；若复核本身因 CPA vision 与 AGY 后备均 quota/timeout/不可解析而不可用，
   则禁止继续消耗生图额度，也禁止放过未经核验的 AI 像素。不能再把同一见证不可用状态下的

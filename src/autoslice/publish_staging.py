@@ -48,6 +48,12 @@ from .cover_route_evidence import (
     story_participant_ids,
     validate_final_participant_verification,
 )
+from .cover_source_composition import (
+    extract_authority_source_crop,
+    source_composition_recommends_redraw,
+    validate_source_composition_verification,
+    verify_lidousha_source_composition,
+)
 from .cover_host_identity_gate import (
     final_host_identity_witness_unavailable,
     validate_final_host_identity_verification,
@@ -1362,6 +1368,7 @@ def _build_lidousha_cover_route(
     punch_allowed: bool,
     frame_selection: Mapping[str, object] | None,
     reference_authority: Mapping[str, object] | None,
+    source_composition_verification: Mapping[str, object] | None = None,
     full_text_cover_contract: Mapping[str, object] | None = None,
     enforce_final_host_identity: bool = False,
 ) -> tuple[str, dict[str, object]]:
@@ -1390,6 +1397,7 @@ def _build_lidousha_cover_route(
         relationship_source_verified=relationship_source_verified,
         thumbnail_text_requires_punch=thumbnail_text_requires_punch,
         punch_semantic_status=punch_semantic_status,
+        source_composition_verification=source_composition_verification,
     )
     cover_generation["cover_treatment"] = {
         "treatment": treatment,
@@ -1436,6 +1444,28 @@ def _build_lidousha_cover_route(
             # Final pixels own the public cover. A direct screenshot with Li
             # Dousha only as a tiny corner avatar is not a valid host cover.
             "host_identity_required": bool(enforce_final_host_identity),
+            "source_composition_status": (
+                source_composition_verification.get("status")
+                if isinstance(source_composition_verification, Mapping)
+                else "NOT_REQUIRED"
+            ),
+            "source_composition_schema_version": (
+                source_composition_verification.get("schema_version")
+                if isinstance(source_composition_verification, Mapping)
+                else None
+            ),
+            "source_composition_witness_sha256": (
+                source_composition_verification.get("witness_receipt_sha256")
+                if isinstance(source_composition_verification, Mapping)
+                else None
+            ),
+            "source_composition_redraw_recommended": (
+                source_composition_recommends_redraw(
+                    source_composition_verification
+                )
+                if isinstance(source_composition_verification, Mapping)
+                else None
+            ),
         },
     )
     cover_generation["route_decision"] = route
@@ -1461,6 +1491,9 @@ def _stage_lidousha_ai_cover(
     image_edit: Callable[..., dict[str, object]] = _cover_call_cpa_image_edit,
     final_participant_verifier: (Callable[..., Mapping[str, object]] | None) = None,
     final_host_identity_verifier: (Callable[..., Mapping[str, object]] | None) = None,
+    source_composition_verifier: (
+        Callable[..., Mapping[str, object]] | None
+    ) = None,
     enforce_final_host_identity: bool = False,
     punch_allowed: bool = False,
     full_text_cover_contract: Mapping[str, object] | None = None,
@@ -1536,6 +1569,70 @@ def _stage_lidousha_ai_cover(
         return reference_block
     assert reference_path is not None
 
+    source_composition_verification: Mapping[str, object] | None = None
+    if enforce_final_host_identity:
+        active_source_composition_verifier = (
+            source_composition_verifier
+            or verify_lidousha_source_composition
+        )
+        reference_sha256 = "sha256:" + _sha256(reference_path)
+        try:
+            source_composition_verification = dict(
+                active_source_composition_verifier(
+                    reference_path=reference_path,
+                    reference_sha256=reference_sha256,
+                    story_hook=(
+                        str(story_contract.get("selection_hook") or "")
+                        if isinstance(story_contract, Mapping)
+                        else ""
+                    ),
+                    title=title,
+                    base_url=base_url,
+                    api_key=api_key,
+                )
+            )
+        except Exception as exc:
+            source_composition_verification = {
+                "status": "FAIL",
+                "reason_code": "SOURCE_COMPOSITION_VERIFIER_EXCEPTION",
+                "detail": f"{type(exc).__name__}: {exc}",
+            }
+        cover_generation["source_composition_verification"] = dict(
+            source_composition_verification
+        )
+        if not validate_source_composition_verification(
+            source_composition_verification,
+            reference_sha256=reference_sha256,
+        ):
+            detail = str(
+                source_composition_verification.get("detail")
+                or source_composition_verification.get("reason_code")
+                or "source-composition witness is unavailable or invalid"
+            )
+            return _blocked_ai_cover_result(
+                cover_generation,
+                [
+                    "COVER_SOURCE_COMPOSITION_UNVERIFIED",
+                    str(
+                        source_composition_verification.get("reason_code")
+                        or "SOURCE_COMPOSITION_VERDICT_INVALID"
+                    ),
+                ],
+                detail,
+            )
+        source_composition_path = (
+            evidence_dir
+            / f"{candidate_id}.cover-source-composition-verification.json"
+        )
+        _write_json_file(
+            source_composition_path,
+            source_composition_verification,
+        )
+        cover_generation["source_composition_receipt"] = {
+            "path": str(source_composition_path),
+            "sha256": "sha256:" + _sha256(source_composition_path),
+        }
+
     # Art direction is picked AFTER the fail-closed gates (creds/ffmpeg/ref frame)
     # so a blocked cover never spends an LLM call. It is fail-OPEN (deterministic
     # baseline) while the cover IMAGE stays fail-closed.
@@ -1574,6 +1671,7 @@ def _stage_lidousha_ai_cover(
         ),
         frame_selection=frame_selection,
         reference_authority=reference_authority,
+        source_composition_verification=source_composition_verification,
         enforce_final_host_identity=enforce_final_host_identity,
     )
     if (
@@ -1820,6 +1918,7 @@ def _decide_cover_treatment(
     relationship_source_verified: bool = False,
     thumbnail_text_requires_punch: bool = False,
     punch_semantic_status: str = "",
+    source_composition_verification: Mapping[str, object] | None = None,
 ) -> tuple[str, str]:
     """每条切片选封面路线（2026-07-21 Ivan：哪些适合全图 CPA 重做、哪些适合截图）。
 
@@ -1837,6 +1936,11 @@ def _decide_cover_treatment(
         return "cpa_redraw", "mode=cpa (forced)"
     if is_song:
         return "cpa_redraw", "song keeps the clean CPA aesthetic"
+    if source_composition_recommends_redraw(source_composition_verification):
+        return (
+            "cpa_redraw",
+            "CPA source-composition witness requires redraw before generation",
+        )
     if relationship_visual_required:
         if cover_mode == "polish":
             return "screenshot_polish", "mode=polish (forced)"
@@ -1853,6 +1957,16 @@ def _decide_cover_treatment(
         return (
             "screenshot_direct",
             "hash-bound source frame verifies all required participants",
+        )
+    if isinstance(source_composition_verification, Mapping):
+        if cover_mode == "polish":
+            return (
+                "screenshot_polish",
+                "CPA source-composition witness authorizes faithful identity crop + polish",
+            )
+        return (
+            "screenshot_direct",
+            "CPA source-composition witness authorizes a faithful dominant reaction crop",
         )
     if frame_selection is None:
         return "cpa_redraw", "frame selection unavailable"
@@ -1930,6 +2044,8 @@ def _screenshot_base_and_crop(
     frame_selection: Mapping[str, object],
     art_direction,
     relationship_visual_required: bool,
+    source_composition_verification: Mapping[str, object] | None = None,
+    source_composition_receipt: Mapping[str, object] | None = None,
 ):
     """Materialize the screenshot base frame and its hash-bound crop proof."""
 
@@ -1962,27 +2078,58 @@ def _screenshot_base_and_crop(
     # 默认 1.16x 顶部锚定——恰好裁掉底部烧录字幕带、微裁两侧，任何场景都
     # 安全；只有局部运动呈高置信单主体块时才 1.32x 锚定主体（宁欠勿错）。
     if not relationship_visual_required:
-        confident = bool(frame_selection.get("subject_confident"))
-        camera_window = frame_selection.get("camera_window_bbox_frac") if not confident else None
-        crop_evidence = extract_zoomed_cover_frame(
-            media_path,
-            int(frame_selection["best_ms"]),
-            screenshot_base,
-            zoom=1.32 if confident else 1.16,
-            anchor_x_frac=(
-                float(frame_selection["subject_anchor_x_frac"])
-                if confident and frame_selection.get("subject_anchor_x_frac") is not None
-                # 本频道版式皮套居中偏右、弹幕栏在左：右倾锚点让 1.16x 裁切
-                # 优先吃掉左侧弹幕栏。
-                else 0.58
-            ),
-            head_top_frac=(
-                float(frame_selection["subject_head_top_frac"])
-                if confident and frame_selection.get("subject_head_top_frac") is not None
-                else 0.0
-            ),
-            window_bbox_frac=camera_window,
-        )
+        if isinstance(source_composition_verification, Mapping):
+            if not isinstance(source_composition_receipt, Mapping):
+                raise ValueError("SOURCE_COMPOSITION_RECEIPT_MISSING")
+            receipt_path = Path(
+                str(source_composition_receipt.get("path") or "")
+            )
+            receipt_sha256 = str(
+                source_composition_receipt.get("sha256") or ""
+            )
+            if (
+                not receipt_path.is_file()
+                or "sha256:" + _sha256(receipt_path) != receipt_sha256
+            ):
+                raise ValueError("SOURCE_COMPOSITION_RECEIPT_HASH_MISMATCH")
+            crop_evidence = extract_authority_source_crop(
+                reference_path=reference_path,
+                output_path=screenshot_base,
+                frame_ms=int(frame_selection["best_ms"]),
+                verification=source_composition_verification,
+                verification_receipt_path=receipt_path,
+                verification_receipt_sha256=receipt_sha256,
+            )
+        else:
+            confident = bool(frame_selection.get("subject_confident"))
+            camera_window = (
+                frame_selection.get("camera_window_bbox_frac")
+                if not confident
+                else None
+            )
+            crop_evidence = extract_zoomed_cover_frame(
+                media_path,
+                int(frame_selection["best_ms"]),
+                screenshot_base,
+                zoom=1.32 if confident else 1.16,
+                anchor_x_frac=(
+                    float(frame_selection["subject_anchor_x_frac"])
+                    if confident
+                    and frame_selection.get("subject_anchor_x_frac")
+                    is not None
+                    # 本频道版式皮套居中偏右、弹幕栏在左：右倾锚点让 1.16x 裁切
+                    # 优先吃掉左侧弹幕栏。
+                    else 0.58
+                ),
+                head_top_frac=(
+                    float(frame_selection["subject_head_top_frac"])
+                    if confident
+                    and frame_selection.get("subject_head_top_frac")
+                    is not None
+                    else 0.0
+                ),
+                window_bbox_frac=camera_window,
+            )
     return art_direction, screenshot_base, crop_evidence
 
 
@@ -2037,6 +2184,22 @@ def _stage_screenshot_direct_cover(
             frame_selection=frame_selection,
             art_direction=art_direction,
             relationship_visual_required=relationship_visual_required,
+            source_composition_verification=(
+                cover_generation.get("source_composition_verification")
+                if isinstance(
+                    cover_generation.get("source_composition_verification"),
+                    Mapping,
+                )
+                else None
+            ),
+            source_composition_receipt=(
+                cover_generation.get("source_composition_receipt")
+                if isinstance(
+                    cover_generation.get("source_composition_receipt"),
+                    Mapping,
+                )
+                else None
+            ),
         )
         # polish：CPA 保真修图（清 UI 杂物+画质），任何失败降级为直出。
         (
@@ -2316,6 +2479,12 @@ def _degrade_unavailable_redraw_identity_to_direct(
         redraw_result.get("status") == "BLOCKED_AI_COVER_REQUIRED"
         and final_host_identity_witness_unavailable(generation)
     ):
+        return redraw_result
+    source_composition = generation.get("source_composition_verification")
+    if source_composition_recommends_redraw(source_composition):
+        # The pre-generation v2 route is an authorization boundary.  A later
+        # v3 witness outage cannot silently turn a source-composition redraw
+        # mandate into screenshot pixels.
         return redraw_result
     verification = generation.get("final_host_identity_verification")
     generation["cpa_redraw"] = {

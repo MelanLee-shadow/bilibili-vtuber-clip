@@ -2897,7 +2897,10 @@ def test_publish_staging_blocks_without_cpa_ai_cover_and_never_extracts_frame_co
 
 def test_publish_staging_records_cpa_ai_cover_chain_and_embedded_title(tmp_path, monkeypatch):
     from PIL import Image
-    from src.autoslice import cover_host_identity_gate
+    from src.autoslice import cover_host_identity_gate, publish_staging
+    from tests.test_cover_host_identity_gate import (
+        _source_composition_redraw,
+    )
 
     media_path = _write_valid_source_video(tmp_path / "recuts" / "lidousha-song.mp4", duration_seconds=2.0)
     subtitle_path = _write(tmp_path / "recuts" / "lidousha-song.srt", "1\n00:00:00,000 --> 00:00:01,000\n唱歌\n")
@@ -2936,6 +2939,11 @@ def test_publish_staging_records_cpa_ai_cover_chain_and_embedded_title(tmp_path,
         cover_host_identity_gate,
         "verify_lidousha_final_host_identity",
         fake_host_identity_verifier,
+    )
+    monkeypatch.setattr(
+        publish_staging,
+        "verify_lidousha_source_composition",
+        _source_composition_redraw,
     )
 
     record = shadow_pipeline._stage_publish_draft(
@@ -6497,6 +6505,10 @@ def test_screenshot_poster_face_safe_contain_keeps_whole_frame(tmp_path):
     box = contain["source_frame_transform"]["rendered_content_box"]
     width = box[2] - box[0]
     height = box[3] - box[1]
-    # 16:9 preserved inside the 1640×700 card: no vertical decapitation.
+    # 16:9 preserved inside the central-safe 1440×810 card: no decapitation.
     assert abs((width / height) - (16 / 9)) < 0.02
+    assert contain["screenshot_card"] == {
+        "size": [1440, 810],
+        "rotation_degrees": 0.0,
+    }
     assert contain["source_frame_transform"]["center_4_3_safe"] is True
