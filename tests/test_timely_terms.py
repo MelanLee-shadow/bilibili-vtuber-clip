@@ -136,8 +136,11 @@ def test_default_profile_jingting_prompt_matches_authoritative_glossary_fingerpr
     # 6b4bdf5）当时都没有回来更新本指纹，本 tripwire 从 2026-07-29 16:04 起一直
     # 红着无人处理——因为那几轮只跑了定向测试。指纹的意义就是强制这次复核，
     # 改词表/prompt 后必须回到这里记录改了什么，不能只把 hash 换掉。
+    # 2026-07-31b：人名/ID 久远澪（方向性还原规则）+ 2 条 [exact-cue] 真值
+    #   （BV154GA6vEyD cue9/11「久远澪老师，…」；Ivan 裁定 + BCUT 独立转写
+    #   jiǔ-yuè-lín-lǎoshī ≈ jiǔ-yuǎn-líng-lǎoshī，成品曾误作「就问你老实说」）。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "2e595aff6bea83e9098697444d18333d19a27e84952db09ea0e7a9571cd8655b"
+        "f1498595827256188625f687843d60c6fee29a5f364fe63866cc8fcb4e1d263b"
     )
 
 
