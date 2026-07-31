@@ -1,0 +1,20 @@
+{
+ "schema_version": "lidousha-recovery-publication-authority.v1",
+ "authority": "Ivan 2026-07-31: the published clip auto_225056_1013_1116 (BV154GA6vEyD) misheard a danmaku user's name. Audio arbitration (BCUT independent transcription + Ivan's identification) fixed three cue texts: cues at 0:15/0:19 address the danmaku user 久远澪 as 久远澪老师 (the pipeline had normalized the name into 就问你老实说), and the 1:00 boarding thank-you names 柏拉图 (熊猫柏拉图, confirmed by Ivan; the pipeline wrote 不糊涂). Rerun the whole clip once with the deployed exact-cue pins, preserve the verified public title and the complete previously published clip byte range, and upload the repaired result to the existing BV without creating a replacement BV. The hash-bound reviewed subtitle baseline covers 1013630-1117320ms; 1117320ms is the exact recovery source endpoint.",
+ "entries": [
+  {
+   "candidate_id": "auto_225056_1013_1116",
+   "title_mode": "verified_public_exact",
+   "observed_public_title": "【李豆沙】弹幕自称侄女却叫她老公，小李拿“李豆沙型侄女”来形容，反复强调自己才是真的侄女",
+   "required_given_end_ms": 1117320,
+   "boundary_end_mode": "exact_source_pin",
+   "bvid": "BV154GA6vEyD",
+   "aid": 117013598964460,
+   "cid": 40468153258,
+   "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-31-1013-jiuyuanling-source/auto_225056_1013_1116.public_verify.json",
+   "source_public_verify_sha256": "sha256:5825557ce701006fccd2c251c4495541553d370d99004307f95720a780f4e6bb",
+   "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+   "source_public_verify_status": "VERIFIED_PUBLIC"
+  }
+ ]
+}
