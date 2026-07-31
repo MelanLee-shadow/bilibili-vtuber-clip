@@ -84,6 +84,10 @@
      `spoken_unit`，复用同一个 hash-bound witness 及完全相同的音频几何，再走普通 CPA
      CURRENT/PROPOSED 闭集裁决；proposal-only 本身无 mutation authority。真正
      `target_audible=false` 的 DROP 三选一保持原流程，禁止进入文字第三候选重建。
+     exact-final CPA 若随后在同一不可变 cue 时间窗内改写了聊天 exact-read 所拥有的
+     子串，注册器只在 before→after 哈希、CPA mutation receipt、相同几何及旧子串确实
+     被新文本移除全部成立时显式退役旧 owner；仅有时间重叠不得退役。这样 CPA 终裁
+     不会被较早的聊天文字 owner 反向阻断，同时仍保留逐 owner 的可审计继承链。
 4. **infra 失败不是裁决**：AGY 额度耗尽导致的 UNCERTAIN 不许偷换成 keep-current；已有完整文字闭集时必须继续交 CPA 纯文字裁决，只有 CPA 本身不可用、或候选本身必须由新的声学事实生成时，才以 `FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED` 拒绝带伤交付，runner 按 provider_transient 有界重试。correction discovery/routing 本身异常时，对 SRT 与 chat audit 必须原子回滚，保存 typed `AUDITOR_UNAVAILABLE` 原因、空 findings 与零 applied；后续 exact-final 空扫描不能洗白，只允许 `final_review_correction_discovery` 有界重试。若 CPA 返回非空 findings 但全部违反 finding schema，同一 discovery 最多追加一次 CPA schema-repair 复审；第二次 prompt 必须携带机器的逐行拒绝原因，要求每个怀疑要么补成有界 `proposed_full_cue`、要么撤回，仍无效才继续 fail closed，禁止把坏响应折叠成 CLEAN。`spoken_unit` 的小范围插入或删除只会产生完整 cue 闭集候选：须通过有界单段 diff、候选无关 AGY 见证、CPA 明确选中 `PROPOSED` 和 typed mutation receipt 才能落盘；整 cue 删除仍只走 `acoustic_drop_cue`。终审 transport 的内部模型链必须能在 caller 的外层 deadline 内完整耗尽：当前终审给三个获批模型各一次最长 180 秒请求，外层预算 600 秒；不得再配置成内部最坏 27 分钟、外层 5 分钟而必然被中途杀死的假 failover。
    exact-final 结转 finding 后，chat authority 可比先写的 review-flags 多
    `carryover_persisted_count`；该单一 additive receipt 不构成审计面矛盾，不能把原本

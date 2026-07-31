@@ -1907,6 +1907,87 @@ def test_exact_final_inaudible_nonempty_proposed_requires_override_receipt():
     assert forged_receipts == []
 
 
+def test_exact_final_cpa_retires_same_geometry_exact_read_substring():
+    """1411 regression: final CPA ``电`` must retire older chat ``点``."""
+
+    before = "小李你怎么被点了！，不知道"
+    after = "小李你怎么被电了！，不知道"
+    receipt = {
+        "schema_version": "exact-final-cpa-self-heal.v1",
+        "cue_index": 1,
+        "matched_start_ms": 250,
+        "matched_end_ms": 2_690,
+        "before": before,
+        "after": after,
+        "before_sha256": (
+            "sha256:" + hashlib.sha256(before.encode("utf-8")).hexdigest()
+        ),
+        "after_sha256": (
+            "sha256:" + hashlib.sha256(after.encode("utf-8")).hexdigest()
+        ),
+        "finding_sha256": "sha256:" + "a" * 64,
+        "request_sha256": "sha256:" + "b" * 64,
+        "decision_authority": "CPA_JUDGE",
+        "action": "REPLACE_CUE_TEXT",
+        "repair_class": "phonetic",
+        "policy_branch": "CPA_JUDGE_WITH_TEXT_AUTHORITY_APPLY_PROPOSED",
+        "acoustic_witness": {
+            "schema_version": "subtitle-span-acoustic-witness.v1",
+            "status": "OBSERVED",
+            "target_audible": True,
+        },
+        "mutation_authority": {
+            "schema_version": "subtitle-correction-mutation-authority.v1",
+            "status": "PASS",
+            "basis": "CPA_JUDGED_WITH_TEXTUAL_ORTHOGRAPHY_EVIDENCE",
+        },
+        "timing_immutable": True,
+    }
+    audit: dict[str, object] = {
+        "applied": [
+            {
+                "mode": "exact_span",
+                "matched_start_ms": 9_920,
+                "matched_end_ms": 12_360,
+                "exact_text": "小李你怎么被点了！",
+            },
+            {
+                "mode": "exact_span",
+                "matched_start_ms": 9_920,
+                "matched_end_ms": 12_360,
+                "exact_text": "不知道",
+            },
+        ],
+        "entity_repairs": [],
+    }
+
+    finalization._register_exact_final_cpa_repairs(
+        audit,
+        [receipt],
+        delivery_start_ms=9_670,
+    )
+
+    superseded = audit["applied"][0]["reconciliation"]
+    assert superseded["status"] == "SUPERSEDED_BY_EXACT_FINAL_CPA"
+    assert superseded["timing_immutable"] is True
+    assert "reconciliation" not in audit["applied"][1]
+    registration = audit["exact_final_cpa_surface_registrations"][0]
+    assert registration["superseded_applied_indexes"] == [0]
+    assert finalization.verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=(
+            "1\n00:00:00,250 --> 00:00:02,690\n"
+            f"{after}\n"
+        ),
+        final_speaker_srt=(
+            "1\n00:00:00,250 --> 00:00:02,690\n"
+            f"{after}\n"
+        ),
+        delivery_start_ms=9_670,
+        delivery_end_ms=12_360,
+    )
+
+
 def test_exact_final_carryover_replays_only_on_same_hash_and_time(tmp_path):
     from src.autoslice import producer_package_finalization as finalization
 

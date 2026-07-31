@@ -1351,6 +1351,9 @@ def _register_exact_final_cpa_repairs(
     rows = chat_authority_audit.setdefault("entity_repairs", [])
     if not isinstance(rows, list):
         raise ValueError("EXACT_FINAL_ENTITY_REPAIR_LEDGER_INVALID")
+    applied_rows = chat_authority_audit.setdefault("applied", [])
+    if not isinstance(applied_rows, list):
+        raise ValueError("EXACT_FINAL_APPLIED_LEDGER_INVALID")
     registrations = chat_authority_audit.setdefault(
         "exact_final_cpa_surface_registrations", []
     )
@@ -1432,6 +1435,36 @@ def _register_exact_final_cpa_repairs(
                     "timing_immutable": True,
                 }
                 superseded_indexes.append(index)
+        superseded_applied_indexes: list[int] = []
+        for index, row in enumerate(applied_rows):
+            if not isinstance(row, dict) or row.get("reconciliation"):
+                continue
+            expected = str(row.get("exact_text") or "")
+            if (
+                row.get("matched_start_ms") == matched_start
+                and row.get("matched_end_ms") == matched_end
+                and expected
+                and expected in before
+                and expected not in after
+            ):
+                # A chat exact-read may own only a substring of a cue (for
+                # example ``小李你怎么被点了！`` inside a cue that continues
+                # with ``，不知道``).  A later exact-final CPA repair owns the
+                # complete cue.  Retire the older substring only when the
+                # same immutable cue geometry and the hash-validated
+                # before→after receipt prove that the CPA repair removed it.
+                # Mere overlap is never sufficient.
+                row["reconciliation"] = {
+                    "schema_version": (
+                        "exact-final-cpa-exact-read-supersession.v1"
+                    ),
+                    "status": "SUPERSEDED_BY_EXACT_FINAL_CPA",
+                    "exact_final_repair_sha256": repair_sha256,
+                    "before_sha256": repair["before_sha256"],
+                    "after_sha256": repair["after_sha256"],
+                    "timing_immutable": True,
+                }
+                superseded_applied_indexes.append(index)
         owner = {
             "mode": "exact_final_cpa_self_heal",
             "decision_authority": "CPA_JUDGE",
@@ -1460,6 +1493,7 @@ def _register_exact_final_cpa_repairs(
             ),
             "exact_final_repair_sha256": repair_sha256,
             "superseded_entity_repair_indexes": superseded_indexes,
+            "superseded_applied_indexes": superseded_applied_indexes,
         }
         rows.append(owner)
         registrations.append(
@@ -1469,6 +1503,7 @@ def _register_exact_final_cpa_repairs(
                 "exact_final_repair_sha256": repair_sha256,
                 "owner_entity_repair_index": len(rows) - 1,
                 "superseded_entity_repair_indexes": superseded_indexes,
+                "superseded_applied_indexes": superseded_applied_indexes,
             }
         )
 
