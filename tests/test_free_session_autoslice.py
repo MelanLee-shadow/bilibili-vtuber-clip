@@ -2282,6 +2282,9 @@ def test_song_portable_cover_migration_reuses_old_bound_generation_without_image
 
 def test_song_route_v2_migration_reuses_bound_cpa_cover_without_image_call(tmp_path, monkeypatch):
     fx = _cover_binding_fixture(tmp_path, monkeypatch, song=True)
+    legacy = json.loads(fx["generation_path"].read_text(encoding="utf-8"))
+    legacy["is_song"] = False
+    fx["generation_path"].write_text(json.dumps(legacy), encoding="utf-8")
     runner._bind_repaired_cover(fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"])
     assert runner._recover_committed_cover_binding(fx["date"], fx["rec"], fx["mp4"], fx["cover"])
     generation = fx["rec"]["cover_generation"]
