@@ -14,6 +14,12 @@ from src.autoslice.chat_authority import (
     reconcile_pending_text_overrides,
     reconcile_reviewed_text_override_conflicts,
 )
+from src.autoslice.acoustic_witness_adjudication import (
+    valid_inaudible_drop_authority,
+    valid_inaudible_drop_repair,
+    valid_inaudible_override_repair,
+    valid_inaudible_witness_override,
+)
 from src.autoslice.final_review_carryover import (
     adjudicated_proposed_full_cue,
     carryover_path,
@@ -937,11 +943,7 @@ def _apply_exact_final_cpa_repairs(
         is_drop = bool(
             proposed == ""
             and finding.get("repair_class") == "acoustic_drop_cue"
-            and adjudication.get("policy_branch")
-            == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
-            and isinstance(adjudication.get("verdict"), Mapping)
-            and adjudication["verdict"].get("status") == "OBSERVED"
-            and adjudication["verdict"].get("target_audible") is False
+            and valid_inaudible_drop_authority(adjudication)
         )
         current_sha256 = hashlib.sha256(
             current.text.encode("utf-8")
@@ -950,6 +952,23 @@ def _apply_exact_final_cpa_repairs(
             str(request.get("request_sha256") or "")
             if isinstance(request, Mapping)
             else ""
+        )
+        witness = adjudication.get("verdict")
+        inaudible_nonempty = bool(
+            proposed
+            and isinstance(witness, Mapping)
+            and witness.get("status") == "OBSERVED"
+            and witness.get("target_audible") is False
+        )
+        inaudible_override_valid = bool(
+            inaudible_nonempty
+            and isinstance(request, Mapping)
+            and isinstance(witness_judge, Mapping)
+            and valid_inaudible_witness_override(
+                check_request=request,
+                witness=witness,
+                witness_judge=witness_judge,
+            )
         )
         if (
             not isinstance(mutation, Mapping)
@@ -972,7 +991,17 @@ def _apply_exact_final_cpa_repairs(
             )
             or not isinstance(judge, Mapping)
             or judge.get("status") != "JUDGED"
-            or judge.get("choice") != "PROPOSED"
+            or (
+                judge.get("choice") != "PROPOSED"
+                and not (
+                    is_drop
+                    and judge.get("choice") == "DROP"
+                )
+            )
+            or (
+                inaudible_nonempty
+                and not inaudible_override_valid
+            )
         ):
             continue
         cues[cue_index - 1] = type(current)(
@@ -1020,6 +1049,29 @@ def _apply_exact_final_cpa_repairs(
                     else None
                 ),
                 "judge": dict(judge),
+                "drop_authority": (
+                    dict(adjudication["drop_authority"])
+                    if is_drop
+                    and isinstance(
+                        adjudication.get("drop_authority"), Mapping
+                    )
+                    else None
+                ),
+                "inaudible_witness_override": (
+                    dict(
+                        witness_judge[
+                            "inaudible_witness_override"
+                        ]
+                    )
+                    if inaudible_override_valid
+                    and isinstance(
+                        witness_judge.get(
+                            "inaudible_witness_override"
+                        ),
+                        Mapping,
+                    )
+                    else None
+                ),
                 "mutation_authority": dict(mutation),
                 "timing_immutable": True,
             }
@@ -1242,26 +1294,23 @@ def _register_exact_final_cpa_repairs(
         local_start = repair.get("matched_start_ms")
         local_end = repair.get("matched_end_ms")
         mutation = repair.get("mutation_authority")
-        is_drop = bool(
-            after == ""
-            and repair.get("action") == "DROP_CUE"
-            and repair.get("repair_class") == "acoustic_drop_cue"
-            and repair.get("policy_branch")
-            == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
-            and isinstance(repair.get("acoustic_witness"), Mapping)
-            and repair["acoustic_witness"].get("schema_version")
-            == "subtitle-span-acoustic-witness.v1"
-            and repair["acoustic_witness"].get("status") == "OBSERVED"
-            and repair["acoustic_witness"].get("target_audible") is False
-            and isinstance(repair.get("judge"), Mapping)
-            and repair["judge"].get("status") == "JUDGED"
-            and repair["judge"].get("choice") == "PROPOSED"
+        is_drop = bool(after == "" and valid_inaudible_drop_repair(repair))
+        inaudible_override = bool(
+            after and valid_inaudible_override_repair(repair)
+        )
+        witness = repair.get("acoustic_witness")
+        inaudible_nonempty = bool(
+            after
+            and isinstance(witness, Mapping)
+            and witness.get("status") == "OBSERVED"
+            and witness.get("target_audible") is False
         )
         if (
             not isinstance(before, str)
             or not before
             or not isinstance(after, str)
             or (not after.strip() and not is_drop)
+            or (inaudible_nonempty and not inaudible_override)
             or isinstance(local_start, bool)
             or not isinstance(local_start, int)
             or isinstance(local_end, bool)
@@ -1322,6 +1371,11 @@ def _register_exact_final_cpa_repairs(
             "policy_branch": repair.get("policy_branch"),
             "acoustic_witness": repair.get("acoustic_witness"),
             "judge": repair.get("judge"),
+            "drop_authority": repair.get("drop_authority"),
+            "inaudible_witness_override": repair.get(
+                "inaudible_witness_override"
+            ),
+            "request_sha256": repair.get("request_sha256"),
             "mutation_authority": dict(mutation),
             "cue_indexes": [repair["cue_index"]],
             "matched_start_ms": matched_start,

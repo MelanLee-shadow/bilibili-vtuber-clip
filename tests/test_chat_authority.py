@@ -3521,17 +3521,59 @@ def test_entity_final_verification_owns_only_its_repaired_span():
 
 
 def _authorized_drop_cue_row() -> dict:
+    request_sha256 = "f" * 64
+    witness_request_sha256 = "a" * 64
+    prompt_sha256 = "b" * 64
+    completion_sha256 = "c" * 64
     return {
         "mode": "final_review_context_adjudication",
+        "action": "DROP_CUE",
         "repair_class": "acoustic_drop_cue",
         "decision_authority": "CPA_JUDGE",
         "policy_branch": "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE",
+        "request_sha256": request_sha256,
+        "timing_immutable": True,
+        "acoustic_witness": {
+            "schema_version": "subtitle-span-acoustic-witness.v1",
+            "status": "OBSERVED",
+            "request_sha256": witness_request_sha256,
+            "target_audible": False,
+        },
+        "judge": {
+            "schema_version": "acoustic-witness-adjudication.v1",
+            "status": "JUDGED",
+            "choice": "DROP",
+            "decision_contract": "inaudible-current-proposed-drop.v1",
+            "choice_set": ["CURRENT", "DROP", "PROPOSED"],
+            "check_request_sha256": request_sha256,
+            "prompt_sha256": prompt_sha256,
+            "completion_sha256": completion_sha256,
+        },
+        "drop_authority": {
+            "schema_version": "subtitle-cpa-inaudible-drop-authority.v1",
+            "status": "PASS",
+            "decision_authority": "CPA_JUDGE",
+            "choice": "DROP",
+            "decision_contract": "inaudible-current-proposed-drop.v1",
+            "original_request_sha256": "sha256:" + request_sha256,
+            "effective_drop_request_sha256": "sha256:" + request_sha256,
+            "original_witness_request_sha256": (
+                "sha256:" + witness_request_sha256
+            ),
+            "effective_witness_request_sha256": (
+                "sha256:" + witness_request_sha256
+            ),
+            "judge_prompt_sha256": "sha256:" + prompt_sha256,
+            "judge_completion_sha256": "sha256:" + completion_sha256,
+            "target_audible": False,
+            "timing_immutable": True,
+        },
         "mutation_authority": {
             "schema_version": (
                 "subtitle-correction-mutation-authority.v1"
             ),
             "status": "PASS",
-            "basis": "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION",
+            "basis": "CPA_EXPLICIT_INAUDIBLE_DROP",
         },
         "before": ["咳咳咳"],
         "after": [""],

@@ -18,6 +18,10 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from src.autoslice.acoustic_witness_adjudication import (
+    valid_inaudible_drop_authority,
+    valid_inaudible_witness_override,
+)
 from src.autoslice.final_review_contract import (
     correction_carryover_consumed,
 )
@@ -96,28 +100,33 @@ def adjudicated_proposed_full_cue(
         == "subtitle-span-acoustic-check-request.v1"
         and isinstance(judge, Mapping)
         and judge.get("status") == "JUDGED"
-        and judge.get("choice") == "PROPOSED"
         and isinstance(proposed, str)
         and isinstance(current, str)
         and proposed != current
     ):
         return None
     if proposed == "":
-        verdict = adjudication.get("verdict")
         if not (
             finding.get("repair_class") == "acoustic_drop_cue"
             and request.get("repair_class") == "acoustic_drop_cue"
-            and adjudication.get("policy_branch")
-            == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
-            and isinstance(verdict, Mapping)
-            and verdict.get("schema_version")
-            == "subtitle-span-acoustic-witness.v1"
-            and verdict.get("status") == "OBSERVED"
-            and verdict.get("target_audible") is False
+            and valid_inaudible_drop_authority(adjudication)
         ):
             return None
-    elif not proposed.strip():
-        return None
+    else:
+        if not proposed.strip() or judge.get("choice") != "PROPOSED":
+            return None
+        verdict = adjudication.get("verdict")
+        if (
+            isinstance(verdict, Mapping)
+            and verdict.get("status") == "OBSERVED"
+            and verdict.get("target_audible") is False
+            and not valid_inaudible_witness_override(
+                check_request=request,
+                witness=verdict,
+                witness_judge=witness_judge,
+            )
+        ):
+            return None
     return proposed
 
 

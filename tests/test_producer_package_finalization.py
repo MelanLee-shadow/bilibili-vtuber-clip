@@ -1503,6 +1503,7 @@ def test_exact_final_typed_drop_removes_cue_renumbers_and_registers_owner():
             "schema_version": "subtitle-span-adjudication.v1",
             "status": "OBSERVED",
             "decision_authority": "CPA_JUDGE",
+            "witness_authority": "EVIDENCE_ONLY",
             "repaired": True,
             "timing_immutable": True,
             "policy_branch": "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE",
@@ -1511,6 +1512,7 @@ def test_exact_final_typed_drop_removes_cue_renumbers_and_registers_owner():
                     "subtitle-correction-mutation-authority.v1"
                 ),
                 "status": "PASS",
+                "basis": "CPA_EXPLICIT_INAUDIBLE_DROP",
             },
             "request": {
                 "schema_version": (
@@ -1529,13 +1531,44 @@ def test_exact_final_typed_drop_removes_cue_renumbers_and_registers_owner():
                 "target_audible": False,
             },
             "witness_judge": {
+                "decision_authority": "CPA_JUDGE",
+                "witness_authority": "EVIDENCE_ONLY",
+                "selected_action": "DROP_CUE",
+                "selected_repair_class": "acoustic_drop_cue",
+                "selected_target_cue": "",
                 "judge": {
                     "schema_version": "acoustic-witness-adjudication.v1",
                     "status": "JUDGED",
-                    "choice": "PROPOSED",
+                    "choice": "DROP",
                     "prompt_sha256": "b" * 64,
                     "completion_sha256": "c" * 64,
+                    "check_request_sha256": "f" * 64,
+                    "decision_contract": (
+                        "inaudible-current-proposed-drop.v1"
+                    ),
+                    "choice_set": ["CURRENT", "DROP", "PROPOSED"],
                 }
+            },
+            "drop_authority": {
+                "schema_version": (
+                    "subtitle-cpa-inaudible-drop-authority.v1"
+                ),
+                "status": "PASS",
+                "decision_authority": "CPA_JUDGE",
+                "choice": "DROP",
+                "decision_contract": "inaudible-current-proposed-drop.v1",
+                "original_request_sha256": "sha256:" + "f" * 64,
+                "effective_drop_request_sha256": "sha256:" + "f" * 64,
+                "original_witness_request_sha256": (
+                    "sha256:" + witness_request_sha256
+                ),
+                "effective_witness_request_sha256": (
+                    "sha256:" + witness_request_sha256
+                ),
+                "judge_prompt_sha256": "sha256:" + "b" * 64,
+                "judge_completion_sha256": "sha256:" + "c" * 64,
+                "target_audible": False,
+                "timing_immutable": True,
             },
         },
     }
@@ -1585,6 +1618,79 @@ def test_exact_final_typed_drop_removes_cue_renumbers_and_registers_owner():
         )
     )
     assert unchanged == srt_text
+    assert forged_receipts == []
+
+
+def test_exact_final_inaudible_nonempty_proposed_requires_override_receipt():
+    from src.autoslice.final_review_auditor import adjudicate_context_finding
+
+    source = "1\n00:00:00,000 --> 00:00:01,000\n咳咳\n"
+    base_sha256 = hashlib.sha256("咳咳".encode("utf-8")).hexdigest()
+
+    def inaudible(request):
+        return {
+            "schema_version": "subtitle-span-acoustic-witness.v1",
+            "status": "OBSERVED",
+            "request_sha256": request["request_sha256"],
+            "target_audible": False,
+            "heard_pinyin": "",
+            "uncertain_positions": [],
+            "syllable_count": 0,
+            "confidence": 0.9,
+        }
+
+    _output, adjudication = adjudicate_context_finding(
+        source,
+        {
+            "cue_index": 1,
+            "suspect": "咳咳",
+            "suggestion": "嗯嗯",
+            "proposed_full_cue": "嗯嗯",
+            "repair_class": "phonetic",
+            "base_text_sha256": base_sha256,
+        },
+        entity_verifier=inaudible,
+        judge_llm_call=lambda _prompt: json.dumps(
+            {"choice": "PROPOSED"}
+        ),
+    )
+    finding = {
+        "cue_index": 1,
+        "base_text_sha256": base_sha256,
+        "proposed_full_cue": "嗯嗯",
+        "repair_class": "phonetic",
+        "exact_release_adjudication": adjudication,
+    }
+
+    repaired, receipts = finalization._apply_exact_final_cpa_repairs(
+        source,
+        {"findings": [finding]},
+    )
+
+    assert "嗯嗯" in repaired
+    assert receipts[0]["inaudible_witness_override"]["status"] == "PASS"
+    assert receipts[0]["mutation_authority"]["basis"] == (
+        "CPA_EXPLICIT_OVERRIDE_INAUDIBLE_WITNESS"
+    )
+    chat_authority: dict[str, object] = {"entity_repairs": []}
+    finalization._register_exact_final_cpa_repairs(
+        chat_authority,
+        receipts,
+        delivery_start_ms=0,
+    )
+    owner = chat_authority["entity_repairs"][0]
+    assert owner["inaudible_witness_override"]["status"] == "PASS"
+    assert owner["structured_exact_text"] == "嗯嗯"
+
+    forged = json.loads(json.dumps(finding))
+    forged["exact_release_adjudication"]["witness_judge"].pop(
+        "inaudible_witness_override"
+    )
+    unchanged, forged_receipts = finalization._apply_exact_final_cpa_repairs(
+        source,
+        {"findings": [forged]},
+    )
+    assert unchanged == source
     assert forged_receipts == []
 
 

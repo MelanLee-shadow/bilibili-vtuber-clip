@@ -119,12 +119,12 @@ def test_inaudible_microcue_nominates_empty_drop_but_does_not_mutate():
             "candidate_memory_id": None,
             "evidence_cue_ids": [],
             "suspect": "咳咳",
-            "replacement": "",
-            "why": (
-                "候选无关短句声学巡检确认整条目标时窗无可闻语音且音节数为 0；"
-                "空 cue 只作为删除候选，仍须 CPA 对 CURRENT/PROPOSED 闭集明确"
-                "选择 PROPOSED 才可落盘"
-            ),
+                "replacement": "",
+                "why": (
+                    "候选无关短句声学巡检确认整条目标时窗无可闻语音且音节数为 0；"
+                    "CPA 随后必须在 CURRENT/PROPOSED/DROP typed 三选一"
+                    "中明确选择 DROP 才可整 cue 删除"
+                ),
         }
     ]
     assert audit["status"] == "PASS"

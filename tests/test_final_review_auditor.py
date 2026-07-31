@@ -2084,31 +2084,25 @@ def test_acoustic_drop_cue_requires_whole_target_inaudible():
         source,
         findings[0],
         entity_verifier=inaudible,
-        judge_llm_call=_judge("PROPOSED"),
+        judge_llm_call=_judge("DROP"),
     )
     assert repaired == ""
     assert audit["repaired"] is True
     assert audit["policy_branch"] == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
+    assert audit["witness_judge"]["judge"]["choice"] == "DROP"
+    assert audit["drop_authority"]["status"] == "PASS"
 
 
-def test_inaudible_neither_then_unresolved_text_rebuild_promotes_drop_to_cpa():
+def test_inaudible_cpa_drop_bypasses_text_rebuild_and_drops_whole_cue():
     source = _srt("给我换哪一个来着", "咳咳", "先这样好了")
     calls: list[str] = []
 
     def cpa(prompt):
         calls.append(prompt)
         if "# 字幕坏闭集重建" in prompt:
-            return json.dumps(
-                {
-                    "status": "UNRESOLVED",
-                    "proposed_cue": "",
-                    "reason": "无人声，不能再猜第三个文字候选",
-                },
-                ensure_ascii=False,
-            )
-        if len([row for row in calls if "# 字幕坏闭集重建" not in row]) == 1:
-            return json.dumps({"choice": "NEITHER", "reason": "两项都无声学对应"})
-        return json.dumps({"choice": "PROPOSED", "reason": "空字幕与无语音证据一致"})
+            raise AssertionError("inaudible three-way choice must not rebuild text")
+        assert "<DROP_CUE: EMPTY SUBTITLE>" in prompt
+        return json.dumps({"choice": "DROP", "reason": "目标窗没有可闻语音"})
 
     repaired, audit = adjudicate_context_finding(
         source,
@@ -2133,29 +2127,55 @@ def test_inaudible_neither_then_unresolved_text_rebuild_promotes_drop_to_cpa():
     assert audit["request"]["repair_class"] == "acoustic_drop_cue"
     assert audit["request"]["proposed_cue"] == ""
     assert audit["rebuilt_finding"]["repair_class"] == "acoustic_drop_cue"
-    assert audit["inaudible_drop_promotion"]["status"] == "PROPOSED"
-    assert audit["inaudible_drop_promotion"]["cpa_final_choice"] == "PROPOSED"
+    assert audit["inaudible_drop_promotion"]["status"] == "PASS"
+    assert audit["inaudible_drop_promotion"]["cpa_final_choice"] == "DROP"
+    assert audit["drop_authority"]["choice"] == "DROP"
+    assert len(calls) == 1
 
 
-def test_inaudible_drop_promotion_stays_blocked_when_cpa_keeps_current():
+def test_inaudible_cpa_nonempty_proposed_is_typed_override_not_drop():
     source = _srt("给我换哪一个来着", "咳咳", "先这样好了")
-    judge_calls = 0
 
+    output, audit = adjudicate_context_finding(
+        source,
+        {
+            "cue_index": 2,
+            "suspect": "咳咳",
+            "suggestion": "嗯嗯",
+            "proposed_full_cue": "嗯嗯",
+            "repair_class": "phonetic",
+        },
+        entity_verifier=lambda request: _witness(
+            request, "", audible=False
+        ),
+        judge_llm_call=_judge("PROPOSED"),
+    )
+
+    assert "咳咳" not in output
+    assert "嗯嗯" in output
+    assert audit["repaired"] is True
+    assert audit["policy_branch"] == (
+        "CPA_EXPLICIT_OVERRIDE_INAUDIBLE_WITNESS"
+    )
+    assert audit["request"]["proposed_cue"] == "嗯嗯"
+    assert audit["mutation_authority"] == {
+        "schema_version": "subtitle-correction-mutation-authority.v1",
+        "status": "PASS",
+        "basis": "CPA_EXPLICIT_OVERRIDE_INAUDIBLE_WITNESS",
+    }
+    assert (
+        audit["witness_judge"]["inaudible_witness_override"]["status"]
+        == "PASS"
+    )
+    assert "drop_authority" not in audit
+
+
+def test_inaudible_three_way_stays_blocked_when_cpa_keeps_current():
+    source = _srt("给我换哪一个来着", "咳咳", "先这样好了")
     def cpa(prompt):
-        nonlocal judge_calls
         if "# 字幕坏闭集重建" in prompt:
-            return json.dumps(
-                {
-                    "status": "UNRESOLVED",
-                    "proposed_cue": "",
-                    "reason": "没有第三个文字候选",
-                },
-                ensure_ascii=False,
-            )
-        judge_calls += 1
-        return json.dumps(
-            {"choice": "NEITHER" if judge_calls == 1 else "CURRENT"}
-        )
+            raise AssertionError("CURRENT must terminate the three-way decision")
+        return json.dumps({"choice": "CURRENT"})
 
     output, audit = adjudicate_context_finding(
         source,
@@ -2175,7 +2195,7 @@ def test_inaudible_drop_promotion_stays_blocked_when_cpa_keeps_current():
     assert output == source
     assert audit["repaired"] is False
     assert audit["policy_branch"] == "JUDGE_KEEPS_CURRENT"
-    assert audit["inaudible_drop_promotion"]["cpa_final_choice"] == "CURRENT"
+    assert "inaudible_drop_promotion" not in audit
 
 
 def test_direct_drop_neither_is_not_reasked_as_the_same_empty_candidate():

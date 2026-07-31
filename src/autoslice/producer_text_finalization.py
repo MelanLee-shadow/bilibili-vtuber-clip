@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping
 
+from .acoustic_witness_adjudication import valid_inaudible_drop_repair
 from .chat_authority import (
     _fragment_spoken_in,
     _strip_interjections_once,
@@ -123,28 +124,14 @@ def _authorized_final_review_drop_cue(row: dict) -> bool:
     after = [str(value) for value in row.get("after") or []]
     mutation_authority = row.get("mutation_authority") or {}
     mode = row.get("mode")
-    exact_final_drop = bool(
-        mode == "exact_final_cpa_self_heal"
-        and row.get("action") == "DROP_CUE"
-        and isinstance(row.get("acoustic_witness"), dict)
-        and row["acoustic_witness"].get("schema_version")
-        == "subtitle-span-acoustic-witness.v1"
-        and row["acoustic_witness"].get("status") == "OBSERVED"
-        and row["acoustic_witness"].get("target_audible") is False
-        and isinstance(row.get("judge"), dict)
-        and row["judge"].get("status") == "JUDGED"
-        and row["judge"].get("choice") == "PROPOSED"
-    )
+    typed_drop = valid_inaudible_drop_repair(row)
     return bool(
         mode
         in {
             "final_review_context_adjudication",
             "exact_final_cpa_self_heal",
         }
-        and (
-            mode == "final_review_context_adjudication"
-            or exact_final_drop
-        )
+        and typed_drop
         and row.get("repair_class") == "acoustic_drop_cue"
         and row.get("decision_authority") == "CPA_JUDGE"
         and str(row.get("policy_branch") or "").startswith(

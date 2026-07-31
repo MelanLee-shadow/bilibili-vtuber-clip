@@ -26,8 +26,9 @@
 - 上传语义修复只允许三类非 CPA mutation：Ivan operator truth、纯机械规范化和有完整
   `glossary-expected-value-gate.v1` 的高先验 canon。expected-value 只接受未登记近音误听面
   到登记 glossary/roster 词面；两边都是登记词面时专名平等，必须交 CPA。其余词面、语义、
-  插入或删除变化都必须由 CPA 明确选择 `PROPOSED`；AGY/声学与拼音只作证据和冲突诊断，
-  不拥有对 CPA 明确裁决的第二张否决票。
+  插入或局部删除变化都必须由 CPA 明确选择 `PROPOSED`；整 cue 删除则须在
+  `target_audible=false` 时进入显式 `CURRENT / PROPOSED / DROP` 三选一，只有 CPA 明选
+  `DROP` 才可置空。AGY/声学与拼音只作证据和冲突诊断，不拥有对 CPA 明确裁决的第二张否决票。
 - glossary 中“一个明确 canonical + 明列误听面”的三字及以上变体自动进入零 CPA
   expected-value 表，并在所有 mutable 文本阶段之后重新规范化；括号中的事故日期/说明不是
   词面。两字日常词（如“小时/留下”）无条件替换的误伤先验过高，除非 profile 单独显式提升，
@@ -309,8 +310,12 @@
   CPA 定案的高先验规范词误判为无 provenance，形成永久重试。
 - 幻听删除是一等声学动作：局部无声前缀用 `acoustic_delete`，只有“保留后的完整 cue =
   SUPPORTED 且原 cue = INCOMPATIBLE”才应用；整 cue 只有 `target_audible=false` 才可
-  `acoustic_drop_cue`。局部静音绝不授权删除后半段真实口播；不确定时保留/留空并阻断，
-  不为语句顺滑补词。语义校正模型漏掉 cue 或返回空 cue **不构成**删除证据：fidelity 层必须
+  提名 `acoustic_drop_cue`。此时 CPA 必须显式裁决 `CURRENT / PROPOSED / DROP`：`DROP`
+  是唯一整 cue 删除权；空的 `PROPOSED` 不得冒充 `DROP`。CPA 看过不可听证据后仍明选非空
+  `PROPOSED` 时保留最终裁判权，但必须落
+  `CPA_EXPLICIT_OVERRIDE_INAUDIBLE_WITNESS` typed receipt。局部静音绝不授权删除后半段真实
+  口播；不确定时保留/留空并阻断，不为语句顺滑补词。语义校正模型漏掉 cue 或返回空 cue
+  **不构成**删除证据：fidelity 层必须
   恢复 draft 并记 `CUE_DELETION_REQUIRES_ACOUSTIC_AUTHORITY`；即使没有第二路 ASR 也不能
   静默删除，有同时间键 AGY/独立听写非空时还要把该反证写入审计。
 - source-language 门区分“模型凭空引入外语口播”与“高权威专名含外文字形”。只有

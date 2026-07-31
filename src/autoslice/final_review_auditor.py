@@ -38,6 +38,8 @@ from src.autoslice.chat_evidence import (
 from src.autoslice.acoustic_witness_adjudication import (
     adjudicate_with_witness,
     build_witness_request,
+    valid_inaudible_drop_authority,
+    valid_inaudible_witness_override,
     valid_witness_evidence,
 )
 from src.autoslice.glossary_expected_value import glossary_expected_value_gate
@@ -69,6 +71,7 @@ MAX_EDIT_LENGTH_DELTA = 8
 _PROPOSAL_REBUILD_SCHEMA = "subtitle-closed-set-proposal-rebuild.v1"
 _PROPOSAL_REBUILD_CACHE_SCHEMA = "proposal-rebuild-cache.v1"
 _INAUDIBLE_DROP_PROMOTION_SCHEMA = "subtitle-inaudible-drop-promotion.v1"
+_INAUDIBLE_DROP_AUTHORITY_SCHEMA = "subtitle-cpa-inaudible-drop-authority.v1"
 _AUTO_REPAIR_CLASSES = frozenset(
     {
         "phonetic",
@@ -1923,33 +1926,44 @@ def _promote_inaudible_target_to_drop_cue(
     finding: Mapping[str, Any],
     request: Mapping[str, Any],
     witness: Mapping[str, Any],
-    proposal_rebuild: Mapping[str, Any] | None,
+    witness_judge: Mapping[str, Any],
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    """Build an empty-cue candidate after the textual closed set is exhausted.
+    """Materialize CPA's explicit DROP choice as an empty-cue candidate.
 
-    A candidate-free witness may establish that the whole target window has no
-    spoken syllables, but it never owns subtitle bytes.  This helper therefore
-    only creates a typed deletion *proposal*.  The caller must rebuild the
-    hash-bound request and ask CPA to choose CURRENT or the empty PROPOSED cue.
+    The inaudible judge prompt already offered CURRENT / PROPOSED / DROP.
+    Neither the witness nor an ordinary PROPOSED answer may reach this helper;
+    the explicit CPA DROP decision is rebound to a whole-cue empty request
+    before any subtitle bytes move.
     """
 
     audit: dict[str, Any] = {
         "schema_version": _INAUDIBLE_DROP_PROMOTION_SCHEMA,
         "status": "NOT_APPLICABLE",
-        "decision_authority": "CPA_PROPOSAL_ONLY",
+        "decision_authority": "CPA_JUDGE",
         "mutation_authorized": False,
     }
     current = str(request.get("current_cue") or "")
+    judge = witness_judge.get("judge")
+    request_sha256 = str(request.get("request_sha256") or "").removeprefix(
+        "sha256:"
+    )
     if not (
         current
         and witness.get("schema_version")
         == "subtitle-span-acoustic-witness.v1"
         and witness.get("status") == "OBSERVED"
         and witness.get("target_audible") is False
-        and isinstance(proposal_rebuild, Mapping)
-        and proposal_rebuild.get("schema_version")
-        == _PROPOSAL_REBUILD_SCHEMA
-        and proposal_rebuild.get("status") == "UNRESOLVED"
+        and isinstance(judge, Mapping)
+        and judge.get("status") == "JUDGED"
+        and judge.get("choice") == "DROP"
+        and judge.get("decision_contract")
+        == "inaudible-current-proposed-drop.v1"
+        and set(judge.get("choice_set") or [])
+        == {"CURRENT", "PROPOSED", "DROP"}
+        and judge.get("check_request_sha256") == request_sha256
+        and witness_judge.get("selected_action") == "DROP_CUE"
+        and witness_judge.get("selected_repair_class") == "acoustic_drop_cue"
+        and witness_judge.get("selected_target_cue") == ""
     ):
         return None, audit
     rebuilt = dict(finding)
@@ -1964,16 +1978,21 @@ def _promote_inaudible_target_to_drop_cue(
         candidate_memory_id=None,
         base_text_sha256=hashlib.sha256(current.encode("utf-8")).hexdigest(),
         why=(
-            "[无语音整 cue 删除候选] 候选无关声学证人确认目标时窗无可闻"
-            "语音，原文字闭集被 CPA 判为 NEITHER，文字第三候选重建仍未决；"
-            "空 cue 仅作为新候选，最终删除权仍交 CPA。"
+            "[无语音整 cue 删除] 候选无关声学证人确认目标时窗无可闻"
+            "语音，CPA 在 CURRENT / PROPOSED / DROP typed 三选一中明确"
+            "选择 DROP；未把普通非空 PROPOSED 冒充删除授权。"
         ),
     )
     audit.update(
-        status="PROPOSED",
+        status="SELECTED_BY_CPA",
         proposed_cue="",
         repair_class="acoustic_drop_cue",
-        basis="OBSERVED_INAUDIBLE_AND_TEXTUAL_CLOSED_SET_EXHAUSTED",
+        basis="CPA_EXPLICIT_DROP_OVER_OBSERVED_INAUDIBLE_TARGET",
+        original_request_sha256="sha256:" + request_sha256,
+        judge_prompt_sha256="sha256:"
+        + str(judge.get("prompt_sha256") or "").removeprefix("sha256:"),
+        judge_completion_sha256="sha256:"
+        + str(judge.get("completion_sha256") or "").removeprefix("sha256:"),
     )
     return rebuilt, audit
 
@@ -2258,6 +2277,7 @@ def adjudicate_context_finding(
     decision_finding: Mapping[str, Any] = finding
     proposal_rebuild_audit: dict[str, Any] | None = None
     inaudible_drop_promotion_audit: dict[str, Any] | None = None
+    inaudible_drop_authority: dict[str, Any] | None = None
     rebuilt_finding: dict[str, Any] | None = bootstrap_finding
     orthography_ambiguous = _orthography_ambiguous(
         current_cue=str(request.get("current_cue") or ""),
@@ -2278,6 +2298,152 @@ def adjudicate_context_finding(
             llm_call=judge_llm_call,
             structured_chat_context=structured_chat_context,
         )
+        if repaired and policy_branch == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE":
+            original_request = request
+            (
+                drop_finding,
+                inaudible_drop_promotion_audit,
+            ) = _promote_inaudible_target_to_drop_cue(
+                finding=decision_finding,
+                request=original_request,
+                witness=verdict,
+                witness_judge=witness_judge_audit,
+            )
+            if drop_finding is None:
+                repaired = False
+                policy_branch = "INAUDIBLE_DROP_SELECTION_AUTHORITY_INVALID"
+            else:
+                try:
+                    drop_request = build_context_adjudication_request(
+                        srt_text,
+                        drop_finding,
+                        clip_context=clip_context,
+                        source_media_timeline_offset_ms=(
+                            source_media_timeline_offset_ms
+                        ),
+                    )
+                except (TypeError, ValueError) as exc:
+                    repaired = False
+                    policy_branch = "INAUDIBLE_DROP_REQUEST_INVALID"
+                    inaudible_drop_promotion_audit.update(
+                        status="INVALID",
+                        reason_code=str(exc),
+                    )
+                else:
+                    drop_witness_request = build_witness_request(drop_request)
+                    witness_geometry_keys = (
+                        "kind",
+                        "cue_indexes",
+                        "matched_start_ms",
+                        "matched_end_ms",
+                        "context_start_ms",
+                        "context_end_ms",
+                        "source_media_timeline_offset_ms",
+                    )
+                    witness_geometry_unchanged = all(
+                        drop_witness_request.get(key)
+                        == witness_request.get(key)
+                        for key in witness_geometry_keys
+                    )
+                    if not witness_geometry_unchanged:
+                        repaired = False
+                        policy_branch = (
+                            "INAUDIBLE_DROP_CHANGED_WITNESS_WINDOW"
+                        )
+                        inaudible_drop_promotion_audit.update(
+                            status="INVALID",
+                            reason_code=policy_branch,
+                        )
+                    else:
+                        original_request_sha256 = str(
+                            original_request.get("request_sha256") or ""
+                        ).removeprefix("sha256:")
+                        drop_request_sha256 = str(
+                            drop_request.get("request_sha256") or ""
+                        ).removeprefix("sha256:")
+                        judge = witness_judge_audit.get("judge") or {}
+                        inaudible_drop_authority = {
+                            "schema_version": (
+                                _INAUDIBLE_DROP_AUTHORITY_SCHEMA
+                            ),
+                            "status": "PASS",
+                            "decision_authority": "CPA_JUDGE",
+                            "choice": "DROP",
+                            "decision_contract": (
+                                "inaudible-current-proposed-drop.v1"
+                            ),
+                            "original_request_sha256": (
+                                "sha256:" + original_request_sha256
+                            ),
+                            "effective_drop_request_sha256": (
+                                "sha256:" + drop_request_sha256
+                            ),
+                            "original_witness_request_sha256": (
+                                "sha256:"
+                                + str(
+                                    witness_request.get("request_sha256")
+                                    or ""
+                                ).removeprefix("sha256:")
+                            ),
+                            "effective_witness_request_sha256": (
+                                "sha256:"
+                                + str(
+                                    drop_witness_request.get(
+                                        "request_sha256"
+                                    )
+                                    or ""
+                                ).removeprefix("sha256:")
+                            ),
+                            "judge_prompt_sha256": (
+                                "sha256:"
+                                + str(
+                                    judge.get("prompt_sha256") or ""
+                                ).removeprefix("sha256:")
+                            ),
+                            "judge_completion_sha256": (
+                                "sha256:"
+                                + str(
+                                    judge.get("completion_sha256") or ""
+                                ).removeprefix("sha256:")
+                            ),
+                            "target_audible": False,
+                            "timing_immutable": True,
+                        }
+                        inaudible_drop_promotion_audit.update(
+                            status="PASS",
+                            mutation_authorized=True,
+                            effective_drop_request_sha256=(
+                                "sha256:" + drop_request_sha256
+                            ),
+                            witness_reuse={
+                                "schema_version": (
+                                    "candidate-free-witness-reuse.v1"
+                                ),
+                                "status": "PASS",
+                                "basis": "IDENTICAL_AUDIO_GEOMETRY",
+                                "original_witness_request_sha256": (
+                                    inaudible_drop_authority[
+                                        "original_witness_request_sha256"
+                                    ]
+                                ),
+                                "drop_witness_request_sha256": (
+                                    inaudible_drop_authority[
+                                        "effective_witness_request_sha256"
+                                    ]
+                                ),
+                            },
+                            cpa_final_choice="DROP",
+                        )
+                        request = drop_request
+                        decision_finding = drop_finding
+                        rebuilt_finding = drop_finding
+                        orthography_ambiguous = False
+                        orthography_authority = (
+                            _orthography_text_authority(decision_finding)
+                        )
+                        orthography_equivalent = False
+                        orthography_audit = {}
+                        strict_tie = False
         if (
             policy_branch == "JUDGE_REJECTS_CLOSED_SET"
             and initial_request_repair_class != "acoustic_drop_cue"
@@ -2397,123 +2563,13 @@ def adjudicate_context_finding(
                             policy_branch = (
                                 "PROPOSAL_REBUILD_EXHAUSTED"
                             )
-            if (
-                not repaired
-                and initial_request_repair_class != "acoustic_drop_cue"
-                and policy_branch
-                in {
-                    "JUDGE_REJECTS_CLOSED_SET",
-                    "PROPOSAL_REBUILD_EXHAUSTED",
-                }
-            ):
-                (
-                    drop_finding,
-                    inaudible_drop_promotion_audit,
-                ) = _promote_inaudible_target_to_drop_cue(
-                    finding=decision_finding,
-                    request=request,
-                    witness=verdict,
-                    proposal_rebuild=proposal_rebuild_audit,
-                )
-                if drop_finding is not None:
-                    try:
-                        drop_request = build_context_adjudication_request(
-                            srt_text,
-                            drop_finding,
-                            clip_context=clip_context,
-                            source_media_timeline_offset_ms=(
-                                source_media_timeline_offset_ms
-                            ),
-                        )
-                    except (TypeError, ValueError) as exc:
-                        inaudible_drop_promotion_audit.update(
-                            status="INVALID",
-                            reason_code=str(exc),
-                        )
-                    else:
-                        drop_witness_request = build_witness_request(
-                            drop_request
-                        )
-                        witness_geometry_keys = (
-                            "kind",
-                            "cue_indexes",
-                            "matched_start_ms",
-                            "matched_end_ms",
-                            "context_start_ms",
-                            "context_end_ms",
-                            "source_media_timeline_offset_ms",
-                        )
-                        witness_geometry_unchanged = all(
-                            drop_witness_request.get(key)
-                            == witness_request.get(key)
-                            for key in witness_geometry_keys
-                        )
-                        if not witness_geometry_unchanged:
-                            inaudible_drop_promotion_audit.update(
-                                status="INVALID",
-                                reason_code=(
-                                    "INAUDIBLE_DROP_CHANGED_WITNESS_WINDOW"
-                                ),
-                            )
-                        else:
-                            inaudible_drop_promotion_audit[
-                                "witness_reuse"
-                            ] = {
-                                "schema_version": (
-                                    "candidate-free-witness-reuse.v1"
-                                ),
-                                "status": "PASS",
-                                "basis": "IDENTICAL_AUDIO_GEOMETRY",
-                                "original_witness_request_sha256": (
-                                    "sha256:"
-                                    + str(
-                                        witness_request.get(
-                                            "request_sha256"
-                                        )
-                                        or ""
-                                    )
-                                ),
-                                "drop_witness_request_sha256": (
-                                    "sha256:"
-                                    + str(
-                                        drop_witness_request.get(
-                                            "request_sha256"
-                                        )
-                                        or ""
-                                    )
-                                ),
-                            }
-                            request = drop_request
-                            decision_finding = drop_finding
-                            rebuilt_finding = drop_finding
-                            orthography_ambiguous = False
-                            orthography_authority = (
-                                _orthography_text_authority(
-                                    decision_finding
-                                )
-                            )
-                            orthography_equivalent = False
-                            orthography_audit = {}
-                            strict_tie = False
-                            (
-                                repaired,
-                                policy_branch,
-                                witness_judge_audit,
-                            ) = adjudicate_with_witness(
-                                check_request=request,
-                                witness=verdict,
-                                llm_call=judge_llm_call,
-                                structured_chat_context=(
-                                    structured_chat_context
-                                ),
-                            )
-                            inaudible_drop_promotion_audit[
-                                "cpa_final_choice"
-                            ] = (
-                                witness_judge_audit.get("judge") or {}
-                            ).get("choice")
         if (
             repaired
+            and policy_branch
+            not in {
+                "CPA_EXPLICIT_OVERRIDE_INAUDIBLE_WITNESS",
+                "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE",
+            }
             and orthography_ambiguous
             and orthography_authority["status"] == "PASS"
         ):
@@ -2522,6 +2578,11 @@ def adjudicate_context_finding(
             )
         elif (
             repaired
+            and policy_branch
+            not in {
+                "CPA_EXPLICIT_OVERRIDE_INAUDIBLE_WITNESS",
+                "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE",
+            }
             and orthography_ambiguous
             and orthography_authority["status"] != "PASS"
             and strict_tie
@@ -2558,6 +2619,18 @@ def adjudicate_context_finding(
         and policy_branch == "CPA_SEMANTIC_ORTHOGRAPHY_TIEBREAK_APPLY_PROPOSED"
     )
     without_audio_witness = witness_judge_audit.get("witness_status") == "UNCERTAIN"
+    inaudible_witness_override_required = bool(
+        repaired
+        and policy_branch == "CPA_EXPLICIT_OVERRIDE_INAUDIBLE_WITNESS"
+    )
+    inaudible_witness_override = bool(
+        inaudible_witness_override_required
+        and valid_inaudible_witness_override(
+            check_request=request,
+            witness=verdict,
+            witness_judge=witness_judge_audit,
+        )
+    )
     mutation_authority = {
         "schema_version": "subtitle-correction-mutation-authority.v1",
         "status": (
@@ -2567,6 +2640,10 @@ def adjudicate_context_finding(
                 not orthography_ambiguous
                 or orthography_authority["status"] == "PASS"
                 or semantic_tiebreak
+            )
+            and (
+                not inaudible_witness_override_required
+                or inaudible_witness_override
             )
             else ("BLOCK" if repaired else "NOT_APPLIED")
         ),
@@ -2579,9 +2656,17 @@ def adjudicate_context_finding(
             if repaired and orthography_ambiguous
             else (
                 (
-                    "CPA_CONTEXT_ONLY_CLOSED_SET_DISAMBIGUATION"
-                    if without_audio_witness
-                    else "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION"
+                    "CPA_EXPLICIT_INAUDIBLE_DROP"
+                    if inaudible_drop_authority is not None
+                    else (
+                        "CPA_EXPLICIT_OVERRIDE_INAUDIBLE_WITNESS"
+                        if inaudible_witness_override
+                        else (
+                            "CPA_CONTEXT_ONLY_CLOSED_SET_DISAMBIGUATION"
+                            if without_audio_witness
+                            else "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION"
+                        )
+                    )
                 )
                 if repaired
                 else None
@@ -2615,6 +2700,11 @@ def adjudicate_context_finding(
                 )
             }
             if inaudible_drop_promotion_audit is not None
+            else {}
+        ),
+        **(
+            {"drop_authority": inaudible_drop_authority}
+            if inaudible_drop_authority is not None
             else {}
         ),
         **(
@@ -2950,6 +3040,25 @@ def audit_correction_mutation_authority(
                 if isinstance(witness_judge, Mapping)
                 else None
             )
+            explicit_drop = bool(
+                isinstance(adjudication, Mapping)
+                and valid_inaudible_drop_authority(adjudication)
+                and row.get("repair_class") == "acoustic_drop_cue"
+                and row.get("proposed_full_cue") == ""
+            )
+            explicit_inaudible_override = bool(
+                isinstance(adjudication, Mapping)
+                and adjudication.get("policy_branch")
+                == "CPA_EXPLICIT_OVERRIDE_INAUDIBLE_WITNESS"
+                and isinstance(request, Mapping)
+                and isinstance(adjudication.get("verdict"), Mapping)
+                and isinstance(witness_judge, Mapping)
+                and valid_inaudible_witness_override(
+                    check_request=request,
+                    witness=adjudication["verdict"],
+                    witness_judge=witness_judge,
+                )
+            )
             semantic_tiebreak = bool(
                 orthography_ambiguous is True
                 and isinstance(adjudication, Mapping)
@@ -2962,17 +3071,26 @@ def audit_correction_mutation_authority(
                 and judge.get("choice") == "PROPOSED"
             )
             expected_basis = (
-                (
-                    "SEMANTIC_JUDGE_ORTHOGRAPHY_TIEBREAK"
-                    if semantic_tiebreak
-                    else "CPA_JUDGED_WITH_TEXTUAL_ORTHOGRAPHY_EVIDENCE"
-                )
-                if orthography_ambiguous is True
+                "CPA_EXPLICIT_INAUDIBLE_DROP"
+                if explicit_drop
                 else (
-                    "CPA_CONTEXT_ONLY_CLOSED_SET_DISAMBIGUATION"
-                    if isinstance(witness_judge, Mapping)
-                    and witness_judge.get("witness_status") == "UNCERTAIN"
-                    else "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION"
+                    "CPA_EXPLICIT_OVERRIDE_INAUDIBLE_WITNESS"
+                    if explicit_inaudible_override
+                    else (
+                        (
+                            "SEMANTIC_JUDGE_ORTHOGRAPHY_TIEBREAK"
+                            if semantic_tiebreak
+                            else "CPA_JUDGED_WITH_TEXTUAL_ORTHOGRAPHY_EVIDENCE"
+                        )
+                        if orthography_ambiguous is True
+                        else (
+                            "CPA_CONTEXT_ONLY_CLOSED_SET_DISAMBIGUATION"
+                            if isinstance(witness_judge, Mapping)
+                            and witness_judge.get("witness_status")
+                            == "UNCERTAIN"
+                            else "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION"
+                        )
+                    )
                 )
             )
             orthography_valid = True
@@ -3005,7 +3123,8 @@ def audit_correction_mutation_authority(
                 and witness_judge.get("decision_authority") == "CPA_JUDGE"
                 and witness_judge.get("witness_authority") == "EVIDENCE_ONLY"
                 and isinstance(judge, Mapping)
-                and judge.get("choice") == "PROPOSED"
+                and judge.get("choice")
+                == ("DROP" if explicit_drop else "PROPOSED")
             )
         if not receipt_valid:
             failures.append(

@@ -39,6 +39,7 @@ except Exception:  # pragma: no cover - environment-dependent
 
 WITNESS_REQUEST_SCHEMA = "subtitle-span-acoustic-witness-request.v1"
 ADJUDICATION_SCHEMA = "acoustic-witness-adjudication.v1"
+INAUDIBLE_DECISION_CONTRACT = "inaudible-current-proposed-drop.v1"
 
 # Retained as a diagnostic threshold; CPA, not the witness, owns the decision.
 MIN_CHOICE_COMPATIBILITY = 0.55
@@ -68,6 +69,324 @@ def valid_cpa_witness_adjudication(verdict: Mapping[str, Any]) -> bool:
                 for char in str(verdict[key]).removeprefix("sha256:").lower()
             )
             for key in required_hashes
+        )
+    )
+
+
+def valid_inaudible_drop_authority(
+    adjudication: Mapping[str, Any],
+) -> bool:
+    """Recompute the typed CPA DROP chain used by correction/exact-final."""
+
+    request = adjudication.get("request")
+    witness = adjudication.get("verdict")
+    witness_judge = adjudication.get("witness_judge")
+    judge = (
+        witness_judge.get("judge")
+        if isinstance(witness_judge, Mapping)
+        else None
+    )
+    authority = adjudication.get("drop_authority")
+    mutation = adjudication.get("mutation_authority")
+    if not all(
+        isinstance(value, Mapping)
+        for value in (
+            request,
+            witness,
+            witness_judge,
+            judge,
+            authority,
+            mutation,
+        )
+    ):
+        return False
+
+    def _digest(value: object) -> str:
+        return str(value or "").removeprefix("sha256:")
+
+    request_sha256 = _digest(request.get("request_sha256"))
+    judge_request_sha256 = _digest(judge.get("check_request_sha256"))
+    witness_request_sha256 = _digest(witness.get("request_sha256"))
+    judge_prompt_sha256 = _digest(judge.get("prompt_sha256"))
+    judge_completion_sha256 = _digest(judge.get("completion_sha256"))
+    digests = (
+        request_sha256,
+        judge_request_sha256,
+        witness_request_sha256,
+        judge_prompt_sha256,
+        judge_completion_sha256,
+    )
+    return bool(
+        adjudication.get("schema_version") == "subtitle-span-adjudication.v1"
+        and adjudication.get("status") == "OBSERVED"
+        and adjudication.get("repaired") is True
+        and adjudication.get("policy_branch")
+        == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
+        and adjudication.get("decision_authority") == "CPA_JUDGE"
+        and adjudication.get("witness_authority") == "EVIDENCE_ONLY"
+        and adjudication.get("timing_immutable") is True
+        and request.get("schema_version")
+        == "subtitle-span-acoustic-check-request.v1"
+        and request.get("repair_class") == "acoustic_drop_cue"
+        and request.get("proposed_cue") == ""
+        and isinstance(request.get("current_cue"), str)
+        and bool(request.get("current_cue"))
+        and witness.get("schema_version")
+        == "subtitle-span-acoustic-witness.v1"
+        and witness.get("status") == "OBSERVED"
+        and witness.get("target_audible") is False
+        and witness_judge.get("decision_authority") == "CPA_JUDGE"
+        and witness_judge.get("witness_authority") == "EVIDENCE_ONLY"
+        and witness_judge.get("selected_action") == "DROP_CUE"
+        and witness_judge.get("selected_repair_class")
+        == "acoustic_drop_cue"
+        and witness_judge.get("selected_target_cue") == ""
+        and judge.get("status") == "JUDGED"
+        and judge.get("choice") == "DROP"
+        and judge.get("decision_contract") == INAUDIBLE_DECISION_CONTRACT
+        and set(judge.get("choice_set") or [])
+        == {"CURRENT", "PROPOSED", "DROP"}
+        and authority.get("schema_version")
+        == "subtitle-cpa-inaudible-drop-authority.v1"
+        and authority.get("status") == "PASS"
+        and authority.get("decision_authority") == "CPA_JUDGE"
+        and authority.get("choice") == "DROP"
+        and authority.get("decision_contract") == INAUDIBLE_DECISION_CONTRACT
+        and authority.get("target_audible") is False
+        and authority.get("timing_immutable") is True
+        and _digest(authority.get("original_request_sha256"))
+        == judge_request_sha256
+        and _digest(authority.get("effective_drop_request_sha256"))
+        == request_sha256
+        and _digest(authority.get("original_witness_request_sha256"))
+        == witness_request_sha256
+        and _digest(authority.get("judge_prompt_sha256"))
+        == judge_prompt_sha256
+        and _digest(authority.get("judge_completion_sha256"))
+        == judge_completion_sha256
+        and mutation.get("schema_version")
+        == "subtitle-correction-mutation-authority.v1"
+        and mutation.get("status") == "PASS"
+        and mutation.get("basis") == "CPA_EXPLICIT_INAUDIBLE_DROP"
+        and all(
+            len(digest) == 64
+            and all(char in "0123456789abcdef" for char in digest.lower())
+            for digest in digests
+        )
+    )
+
+
+def valid_inaudible_drop_repair(repair: Mapping[str, Any]) -> bool:
+    """Validate the compact exact/correction owner receipt for a DROP."""
+
+    witness = repair.get("acoustic_witness")
+    judge = repair.get("judge")
+    authority = repair.get("drop_authority")
+    mutation = repair.get("mutation_authority")
+    if not all(
+        isinstance(value, Mapping)
+        for value in (witness, judge, authority, mutation)
+    ):
+        return False
+
+    def _digest(value: object) -> str:
+        return str(value or "").removeprefix("sha256:")
+
+    request_sha256 = _digest(repair.get("request_sha256"))
+    witness_request_sha256 = _digest(witness.get("request_sha256"))
+    judge_request_sha256 = _digest(judge.get("check_request_sha256"))
+    judge_prompt_sha256 = _digest(judge.get("prompt_sha256"))
+    judge_completion_sha256 = _digest(judge.get("completion_sha256"))
+    after = repair.get("after")
+    return bool(
+        repair.get("action") == "DROP_CUE"
+        and repair.get("repair_class") == "acoustic_drop_cue"
+        and repair.get("policy_branch")
+        == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
+        and repair.get("decision_authority") == "CPA_JUDGE"
+        and repair.get("timing_immutable") is True
+        and (after == "" or after == [""])
+        and witness.get("schema_version")
+        == "subtitle-span-acoustic-witness.v1"
+        and witness.get("status") == "OBSERVED"
+        and witness.get("target_audible") is False
+        and judge.get("status") == "JUDGED"
+        and judge.get("choice") == "DROP"
+        and judge.get("decision_contract") == INAUDIBLE_DECISION_CONTRACT
+        and set(judge.get("choice_set") or [])
+        == {"CURRENT", "PROPOSED", "DROP"}
+        and authority.get("schema_version")
+        == "subtitle-cpa-inaudible-drop-authority.v1"
+        and authority.get("status") == "PASS"
+        and authority.get("decision_authority") == "CPA_JUDGE"
+        and authority.get("choice") == "DROP"
+        and authority.get("decision_contract") == INAUDIBLE_DECISION_CONTRACT
+        and authority.get("target_audible") is False
+        and authority.get("timing_immutable") is True
+        and _digest(authority.get("original_request_sha256"))
+        == judge_request_sha256
+        and _digest(authority.get("effective_drop_request_sha256"))
+        == request_sha256
+        and _digest(authority.get("original_witness_request_sha256"))
+        == witness_request_sha256
+        and _digest(authority.get("judge_prompt_sha256"))
+        == judge_prompt_sha256
+        and _digest(authority.get("judge_completion_sha256"))
+        == judge_completion_sha256
+        and mutation.get("schema_version")
+        == "subtitle-correction-mutation-authority.v1"
+        and mutation.get("status") == "PASS"
+        and mutation.get("basis") == "CPA_EXPLICIT_INAUDIBLE_DROP"
+        and all(
+            len(digest) == 64
+            and all(char in "0123456789abcdef" for char in digest.lower())
+            for digest in (
+                request_sha256,
+                witness_request_sha256,
+                judge_request_sha256,
+                judge_prompt_sha256,
+                judge_completion_sha256,
+            )
+        )
+    )
+
+
+def valid_inaudible_witness_override(
+    *,
+    check_request: Mapping[str, Any],
+    witness: Mapping[str, Any],
+    witness_judge: Mapping[str, Any],
+) -> bool:
+    """Validate CPA's explicit non-empty override of an inaudible witness."""
+
+    judge = witness_judge.get("judge")
+    override = witness_judge.get("inaudible_witness_override")
+    if not isinstance(judge, Mapping) or not isinstance(override, Mapping):
+        return False
+
+    def _digest(value: object) -> str:
+        return str(value or "").removeprefix("sha256:")
+
+    request_sha256 = _digest(check_request.get("request_sha256"))
+    witness_request_sha256 = _digest(witness.get("request_sha256"))
+    judge_prompt_sha256 = _digest(judge.get("prompt_sha256"))
+    judge_completion_sha256 = _digest(judge.get("completion_sha256"))
+    return bool(
+        check_request.get("schema_version")
+        == "subtitle-span-acoustic-check-request.v1"
+        and isinstance(check_request.get("proposed_cue"), str)
+        and bool(str(check_request.get("proposed_cue") or "").strip())
+        and witness.get("schema_version")
+        == "subtitle-span-acoustic-witness.v1"
+        and witness.get("status") == "OBSERVED"
+        and witness.get("target_audible") is False
+        and judge.get("status") == "JUDGED"
+        and judge.get("choice") == "PROPOSED"
+        and judge.get("decision_contract") == INAUDIBLE_DECISION_CONTRACT
+        and set(judge.get("choice_set") or [])
+        == {"CURRENT", "PROPOSED", "DROP"}
+        and _digest(judge.get("check_request_sha256")) == request_sha256
+        and override.get("schema_version")
+        == "subtitle-cpa-inaudible-witness-override.v1"
+        and override.get("status") == "PASS"
+        and override.get("decision_authority") == "CPA_JUDGE"
+        and override.get("choice") == "PROPOSED"
+        and override.get("decision_contract") == INAUDIBLE_DECISION_CONTRACT
+        and override.get("target_audible") is False
+        and _digest(override.get("check_request_sha256"))
+        == request_sha256
+        and _digest(override.get("witness_request_sha256"))
+        == witness_request_sha256
+        and _digest(override.get("judge_prompt_sha256"))
+        == judge_prompt_sha256
+        and _digest(override.get("judge_completion_sha256"))
+        == judge_completion_sha256
+        and all(
+            len(digest) == 64
+            and all(char in "0123456789abcdef" for char in digest.lower())
+            for digest in (
+                request_sha256,
+                witness_request_sha256,
+                judge_prompt_sha256,
+                judge_completion_sha256,
+            )
+        )
+    )
+
+
+def valid_inaudible_override_repair(repair: Mapping[str, Any]) -> bool:
+    """Validate a compact exact/correction receipt for CPA's non-empty override."""
+
+    witness = repair.get("acoustic_witness")
+    judge = repair.get("judge")
+    override = repair.get("inaudible_witness_override")
+    mutation = repair.get("mutation_authority")
+    if not all(
+        isinstance(value, Mapping)
+        for value in (witness, judge, override, mutation)
+    ):
+        return False
+
+    def _digest(value: object) -> str:
+        return str(value or "").removeprefix("sha256:")
+
+    request_sha256 = _digest(repair.get("request_sha256"))
+    witness_request_sha256 = _digest(witness.get("request_sha256"))
+    judge_prompt_sha256 = _digest(judge.get("prompt_sha256"))
+    judge_completion_sha256 = _digest(judge.get("completion_sha256"))
+    after = repair.get("after")
+    after_text = (
+        after[0]
+        if isinstance(after, list) and len(after) == 1
+        else after
+    )
+    return bool(
+        repair.get("action") == "REPLACE_CUE_TEXT"
+        and isinstance(after_text, str)
+        and bool(after_text.strip())
+        and repair.get("policy_branch")
+        == "CPA_EXPLICIT_OVERRIDE_INAUDIBLE_WITNESS"
+        and repair.get("decision_authority") == "CPA_JUDGE"
+        and repair.get("timing_immutable") is True
+        and witness.get("schema_version")
+        == "subtitle-span-acoustic-witness.v1"
+        and witness.get("status") == "OBSERVED"
+        and witness.get("target_audible") is False
+        and judge.get("status") == "JUDGED"
+        and judge.get("choice") == "PROPOSED"
+        and judge.get("decision_contract") == INAUDIBLE_DECISION_CONTRACT
+        and set(judge.get("choice_set") or [])
+        == {"CURRENT", "PROPOSED", "DROP"}
+        and _digest(judge.get("check_request_sha256")) == request_sha256
+        and override.get("schema_version")
+        == "subtitle-cpa-inaudible-witness-override.v1"
+        and override.get("status") == "PASS"
+        and override.get("decision_authority") == "CPA_JUDGE"
+        and override.get("choice") == "PROPOSED"
+        and override.get("decision_contract") == INAUDIBLE_DECISION_CONTRACT
+        and override.get("target_audible") is False
+        and _digest(override.get("check_request_sha256"))
+        == request_sha256
+        and _digest(override.get("witness_request_sha256"))
+        == witness_request_sha256
+        and _digest(override.get("judge_prompt_sha256"))
+        == judge_prompt_sha256
+        and _digest(override.get("judge_completion_sha256"))
+        == judge_completion_sha256
+        and mutation.get("schema_version")
+        == "subtitle-correction-mutation-authority.v1"
+        and mutation.get("status") == "PASS"
+        and mutation.get("basis")
+        == "CPA_EXPLICIT_OVERRIDE_INAUDIBLE_WITNESS"
+        and all(
+            len(digest) == 64
+            and all(char in "0123456789abcdef" for char in digest.lower())
+            for digest in (
+                request_sha256,
+                witness_request_sha256,
+                judge_prompt_sha256,
+                judge_completion_sha256,
+            )
         )
     )
 
@@ -187,9 +506,7 @@ _JUDGE_PROMPT = """# 字幕选字裁决（闭集）
 证人从未见过任何候选文本。你的任务：结合语篇推理，从闭集中选出最符合
 「拼音证据 + 语境」的候选。铁律：
 
-1. 只能选择 CURRENT、PROPOSED 或 NEITHER。NEITHER 表示听写拼音与
-   两个候选都明显不符；它会把问题退回提案层重建闭集，不会自动保留
-   CURRENT，也不授权任何文本修改。绝不生成新文本。
+1. {choice_rule}
 2. 拼音证据是高可信辅助，不拥有最终裁决权。先判断这串拼音是否真的覆盖目标
    整句；若它明显只听到邻句、半句或错位片段，必须在理由中披露错位，并由你
    结合完整语境在闭集内定夺，不能因为 AGY 与两个候选都不齐就机械选 NEITHER。
@@ -221,6 +538,7 @@ _JUDGE_PROMPT = """# 字幕选字裁决（闭集）
 ## 闭集候选
 - CURRENT（现字幕整句）: {current_cue}
 - PROPOSED（提案整句）: {proposed_cue}
+{drop_candidate}
 （差异点：suspect={suspect!r} → replacement={replacement!r}；repair_class={repair_class}）
 
 ## 语境（转写自同一音频；是语境不是文本权威）
@@ -235,10 +553,10 @@ _JUDGE_PROMPT = """# 字幕选字裁决（闭集）
 
 {structured_chat_block}
 按概率排序并**必须选概率最高者**（Ivan 2026-07-27：不许拿不准就保持原样——
-原样可能是最差的；把 CURRENT、PROPOSED 和“两者均非原话”NEITHER 的概率
+原样可能是最差的；把 {ranking_description} 的概率
 全部写出来，选最高）。
 只回一个 JSON 对象（无 markdown 围栏、无其他文字）:
-{{"ranking": [{{"choice": "CURRENT"或"PROPOSED"或"NEITHER", "p": 0.0到1.0}}, ...全部候选],
+{{"ranking": [{{"choice": {choice_json}, "p": 0.0到1.0}}, ...全部候选],
  "choice": "排序第一的那个", "reason": "引用拼音/语境证据的一句话理由"}}
 """
 
@@ -278,12 +596,40 @@ def judge_word_choice(
 ) -> dict[str, Any]:
     """Ask the CPA judge to pick from the closed set; never trusts free text."""
 
+    inaudible_three_way = bool(
+        witness.get("status") == "OBSERVED"
+        and witness.get("target_audible") is False
+    )
+    allowed_choices = (
+        {"CURRENT", "PROPOSED", "DROP"}
+        if inaudible_three_way
+        else {"CURRENT", "PROPOSED", "NEITHER"}
+    )
+    decision_contract = (
+        INAUDIBLE_DECISION_CONTRACT
+        if inaudible_three_way
+        else "current-proposed-neither.v1"
+    )
     chat_block = (
         f"## 结构化弹幕/SC（平台记录）\n{structured_chat_context}\n\n"
         if structured_chat_context.strip()
         else ""
     )
     prompt = _JUDGE_PROMPT.format(
+        choice_rule=(
+            "证人明确报告目标区间无可闻人声；你必须在 CURRENT、PROPOSED、"
+            "DROP 三项中显式选择。DROP 表示删除整个 cue，只有选择 DROP 才"
+            "授权整 cue 置空。PROPOSED 仍表示非空文字提案；若你在已看到"
+            "不可听证据后仍选择它，这会作为你对 AGY 辅助证据的显式覆盖被"
+            "hash-bound 记录，但 CPA 仍保有最终裁决权。"
+            "此三选一中 NEITHER 不是合法答案，也绝不生成新文本。"
+            if inaudible_three_way
+            else (
+                "只能选择 CURRENT、PROPOSED 或 NEITHER。NEITHER 表示听写拼音"
+                "与两个候选都明显不符；它会把问题退回提案层重建闭集，不会"
+                "自动保留 CURRENT，也不授权任何文本修改。绝不生成新文本。"
+            )
+        ),
         witness_status=witness.get("status"),
         witness_unavailable_reason=json.dumps(
             {
@@ -299,7 +645,15 @@ def judge_word_choice(
         uncertain_positions=witness.get("uncertain_positions"),
         confidence=witness.get("confidence"),
         current_cue=str(check_request.get("current_cue") or ""),
-        proposed_cue=str(check_request.get("proposed_cue") or ""),
+        proposed_cue=(
+            str(check_request.get("proposed_cue") or "")
+            or "（无非空文字提案；不得把 PROPOSED 当作 DROP）"
+        ),
+        drop_candidate=(
+            "- DROP（整条 cue 不输出字幕）: <DROP_CUE: EMPTY SUBTITLE>"
+            if inaudible_three_way
+            else ""
+        ),
         suspect=str(check_request.get("suspect") or ""),
         replacement=str(check_request.get("replacement") or ""),
         repair_class=str(check_request.get("repair_class") or ""),
@@ -319,6 +673,16 @@ def judge_word_choice(
             sort_keys=True,
         ),
         structured_chat_block=chat_block,
+        ranking_description=(
+            "CURRENT、PROPOSED 和“整 cue 无字幕”DROP"
+            if inaudible_three_way
+            else "CURRENT、PROPOSED 和“两者均非原话”NEITHER"
+        ),
+        choice_json=(
+            '"CURRENT"或"PROPOSED"或"DROP"'
+            if inaudible_three_way
+            else '"CURRENT"或"PROPOSED"或"NEITHER"'
+        ),
     )
     prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     cache_path = _judge_cache_path(prompt_sha256)
@@ -348,6 +712,8 @@ def judge_word_choice(
             "reason_code": "JUDGE_CALL_FAILED",
             "error": f"{type(exc).__name__}: {exc}"[:300],
             "prompt_sha256": prompt_sha256,
+            "decision_contract": decision_contract,
+            "choice_set": sorted(allowed_choices),
         }
     choice = str(payload.get("choice") or "").strip().upper()
     ranking_raw = payload.get("ranking")
@@ -358,7 +724,7 @@ def judge_word_choice(
                 continue
             row_choice = str(row.get("choice") or "").strip().upper()
             probability = row.get("p")
-            if row_choice in {"CURRENT", "PROPOSED", "NEITHER"} and isinstance(
+            if row_choice in allowed_choices and isinstance(
                 probability, (int, float)
             ) and not isinstance(probability, bool) and 0.0 <= float(
                 probability
@@ -368,11 +734,11 @@ def judge_word_choice(
     # UNCERTAIN 不再是合法终点（模型仍拒绝时以排序第一顶上）。
     if ranking:
         top = max(ranking, key=lambda row: row["p"])
-        if choice not in {"CURRENT", "PROPOSED", "NEITHER"} or (
+        if choice not in allowed_choices or (
             choice != top["choice"]
         ):
             choice = str(top["choice"])
-    if choice not in {"CURRENT", "PROPOSED", "NEITHER"}:
+    if choice not in allowed_choices:
         # No usable ranking and an out-of-set/uncertain answer: refusal.
         return {
             "schema_version": ADJUDICATION_SCHEMA,
@@ -381,6 +747,8 @@ def judge_word_choice(
             "reason_code": "JUDGE_CHOICE_OUT_OF_SET",
             "raw_choice": choice[:80],
             "prompt_sha256": prompt_sha256,
+            "decision_contract": decision_contract,
+            "choice_set": sorted(allowed_choices),
         }
     verdict = {
         "schema_version": ADJUDICATION_SCHEMA,
@@ -392,6 +760,11 @@ def judge_word_choice(
         "completion_sha256": hashlib.sha256(
             completion.encode("utf-8")
         ).hexdigest(),
+        "decision_contract": decision_contract,
+        "choice_set": sorted(allowed_choices),
+        "check_request_sha256": str(
+            check_request.get("request_sha256") or ""
+        ).removeprefix("sha256:"),
     }
     if cache_path is not None:
         # 只缓存 JUDGED 终态；写失败绝不影响生产（与声学缓存同约定）。
@@ -430,7 +803,6 @@ def adjudicate_with_witness(
         "decision_authority": "CPA_JUDGE",
         "witness_authority": "EVIDENCE_ONLY",
     }
-    repair_class = str(check_request.get("repair_class") or "")
     witness_status = witness.get("status") if isinstance(witness, Mapping) else None
     witness_valid = (
         isinstance(witness, Mapping)
@@ -468,23 +840,55 @@ def adjudicate_with_witness(
             return False, branch, audit
         return True, "CPA_JUDGE_APPLY_PROPOSED_WITHOUT_AUDIO_WITNESS", audit
     if not witness["target_audible"]:
-        if verdict.get("choice") == "NEITHER":
-            return False, "JUDGE_REJECTS_CLOSED_SET", audit
-        if verdict.get("choice") != "PROPOSED":
-            branch = (
-                "JUDGE_KEEPS_CURRENT"
-                if verdict.get("choice") == "CURRENT"
-                else "JUDGE_UNCERTAIN_KEEP_CURRENT"
+        choice = verdict.get("choice")
+        if choice == "DROP":
+            audit.update(
+                selected_action="DROP_CUE",
+                selected_repair_class="acoustic_drop_cue",
+                selected_target_cue="",
             )
-            return False, branch, audit
-        # Silence is evidence for a deletion proposal, not a decision.  CPA
-        # must still choose PROPOSED from the closed set before any bytes move.
-        if repair_class == "acoustic_drop_cue":
             return True, "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE", audit
-        if repair_class == "acoustic_delete":
-            return True, "CPA_JUDGE_APPLY_INAUDIBLE_DELETE_SPAN", audit
-        # Audibility is evidence presented to CPA, not a second final vote.
-        return True, "CPA_JUDGE_APPLY_PROPOSED_INAUDIBLE_WITNESS", audit
+        if choice == "CURRENT":
+            return False, "JUDGE_KEEPS_CURRENT", audit
+        if choice == "PROPOSED":
+            proposed = str(check_request.get("proposed_cue") or "")
+            if not proposed:
+                return (
+                    False,
+                    "INAUDIBLE_EMPTY_PROPOSED_REQUIRES_EXPLICIT_DROP",
+                    audit,
+                )
+            audit["inaudible_witness_override"] = {
+                "schema_version": (
+                    "subtitle-cpa-inaudible-witness-override.v1"
+                ),
+                "status": "PASS",
+                "decision_authority": "CPA_JUDGE",
+                "choice": "PROPOSED",
+                "decision_contract": INAUDIBLE_DECISION_CONTRACT,
+                "target_audible": False,
+                "check_request_sha256": "sha256:"
+                + str(
+                    verdict.get("check_request_sha256") or ""
+                ).removeprefix("sha256:"),
+                "witness_request_sha256": "sha256:"
+                + str(
+                    witness.get("request_sha256") or ""
+                ).removeprefix("sha256:"),
+                "judge_prompt_sha256": "sha256:"
+                + str(
+                    verdict.get("prompt_sha256") or ""
+                ).removeprefix("sha256:"),
+                "judge_completion_sha256": "sha256:"
+                + str(
+                    verdict.get("completion_sha256") or ""
+                ).removeprefix("sha256:"),
+            }
+            return True, "CPA_EXPLICIT_OVERRIDE_INAUDIBLE_WITNESS", audit
+        # Under the inaudible three-way contract NEITHER and every other token
+        # are out of set.  They cannot trigger a text rebuild or an implicit
+        # keep-current decision.
+        return False, "JUDGE_UNCERTAIN_KEEP_CURRENT", audit
     heard = str(witness.get("heard_pinyin") or "")
     uncertain = list(witness.get("uncertain_positions") or [])
     compat_proposed = pinyin_compatibility(

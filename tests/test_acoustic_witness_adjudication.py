@@ -278,24 +278,35 @@ def test_judged_proposed_with_agreeing_pinyin_applies():
     assert branch == "WITNESS_JUDGE_APPLY_PROPOSED"
 
 
-def test_inaudible_target_is_evidence_not_a_veto():
+def test_inaudible_target_uses_explicit_current_proposed_drop_contract():
+    prompts: list[str] = []
+
+    def choose_drop(prompt: str) -> str:
+        prompts.append(prompt)
+        return json.dumps({"choice": "DROP"})
+
     dropped, branch, _ = adjudicate_with_witness(
         check_request={**CHECK_REQUEST, "repair_class": "acoustic_drop_cue"},
         witness=_witness("?", audible=False, uncertain=(0,)),
-        llm_call=lambda _prompt: json.dumps({"choice": "PROPOSED"}),
+        llm_call=choose_drop,
     )
     assert (
         dropped is True
         and branch == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
     )
+    assert "CURRENT、PROPOSED、DROP 三项" in prompts[0]
+    assert "<DROP_CUE: EMPTY SUBTITLE>" in prompts[0]
+    assert '"CURRENT"或"PROPOSED"或"DROP"' in prompts[0]
 
-    applied, branch, _ = adjudicate_with_witness(
+    applied, branch, audit = adjudicate_with_witness(
         check_request=CHECK_REQUEST,
         witness=_witness("?", audible=False, uncertain=(0,)),
         llm_call=lambda _prompt: json.dumps({"choice": "PROPOSED"}),
     )
     assert applied is True
-    assert branch == "CPA_JUDGE_APPLY_PROPOSED_INAUDIBLE_WITNESS"
+    assert branch == "CPA_EXPLICIT_OVERRIDE_INAUDIBLE_WITNESS"
+    assert audit["inaudible_witness_override"]["status"] == "PASS"
+    assert audit["inaudible_witness_override"]["target_audible"] is False
 
     rejected, branch, _ = adjudicate_with_witness(
         check_request={**CHECK_REQUEST, "repair_class": "acoustic_drop_cue"},
@@ -305,19 +316,46 @@ def test_inaudible_target_is_evidence_not_a_veto():
     assert rejected is False and branch == "JUDGE_KEEPS_CURRENT"
 
 
-def test_inaudible_target_supports_span_delete():
-    """1160 咳咳案（2026-07-27）：删除提案的时窗被见证为无语音——静音
-    正是提案主张的事实，施删而非保留；替换类照旧保守（上个测试锚死）。"""
+def test_inaudible_nonempty_proposed_is_an_explicit_cpa_override():
+    """CPA may override AGY evidence, but the override is typed and non-empty."""
 
     deleted, branch, _ = adjudicate_with_witness(
         check_request={**CHECK_REQUEST, "repair_class": "acoustic_delete"},
         witness=_witness("?", audible=False, uncertain=(0,)),
         llm_call=lambda _prompt: json.dumps({"choice": "PROPOSED"}),
     )
-    assert (
-        deleted is True
-        and branch == "CPA_JUDGE_APPLY_INAUDIBLE_DELETE_SPAN"
+    assert deleted is True
+    assert branch == "CPA_EXPLICIT_OVERRIDE_INAUDIBLE_WITNESS"
+
+
+def test_inaudible_empty_proposed_cannot_impersonate_drop():
+    request = {
+        **CHECK_REQUEST,
+        "repair_class": "acoustic_drop_cue",
+        "proposed_cue": "",
+        "replacement": "",
+    }
+
+    applied, branch, _audit = adjudicate_with_witness(
+        check_request=request,
+        witness=_witness("", audible=False),
+        llm_call=lambda _prompt: json.dumps({"choice": "PROPOSED"}),
     )
+
+    assert applied is False
+    assert branch == "INAUDIBLE_EMPTY_PROPOSED_REQUIRES_EXPLICIT_DROP"
+
+
+def test_inaudible_neither_is_out_of_set_and_fails_closed():
+    verdict = judge_word_choice(
+        llm_call=lambda _prompt: json.dumps({"choice": "NEITHER"}),
+        check_request=CHECK_REQUEST,
+        witness=_witness("", audible=False),
+    )
+
+    assert verdict["status"] == "JUDGE_OUT_OF_SET"
+    assert verdict["choice"] == "UNCERTAIN"
+    assert verdict["choice_set"] == ["CURRENT", "DROP", "PROPOSED"]
 
 
 def test_declared_proper_name_spelling_is_evidence_for_cpa_not_an_override():

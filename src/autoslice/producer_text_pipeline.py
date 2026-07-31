@@ -896,6 +896,12 @@ def _run_final_review(
                     staged_entity_repairs.append(
                         {
                             "mode": "final_review_context_adjudication",
+                            "action": (
+                                "DROP_CUE"
+                                if adj_audit.get("policy_branch")
+                                == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
+                                else "REPLACE_CUE_TEXT"
+                            ),
                             "repair_class": request.get("repair_class"),
                             "decision_authority": adj_audit.get(
                                 "decision_authority"
@@ -913,6 +919,24 @@ def _run_final_review(
                             "structured_exact_text": request.get("proposed_cue"),
                             "survived": True,
                             "verdict": adj_audit.get("verdict"),
+                            "acoustic_witness": adj_audit.get("verdict"),
+                            "judge": (
+                                (adj_audit.get("witness_judge") or {}).get(
+                                    "judge"
+                                )
+                            ),
+                            "drop_authority": adj_audit.get(
+                                "drop_authority"
+                            ),
+                            "inaudible_witness_override": (
+                                (
+                                    adj_audit.get("witness_judge") or {}
+                                ).get("inaudible_witness_override")
+                            ),
+                            "request_sha256": request.get("request_sha256"),
+                            "timing_immutable": adj_audit.get(
+                                "timing_immutable"
+                            ),
                         }
                     )
             final_review_audit["context_adjudication_count"] = adjudication_count

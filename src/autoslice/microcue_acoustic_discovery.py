@@ -229,8 +229,8 @@ def discover_microcue_findings(
                 "replacement": "",
                 "why": (
                     "候选无关短句声学巡检确认整条目标时窗无可闻语音且音节数为"
-                    " 0；空 cue 只作为删除候选，仍须 CPA 对 CURRENT/PROPOSED "
-                    "闭集明确选择 PROPOSED 才可落盘"
+                    " 0；CPA 随后必须在 CURRENT/PROPOSED/DROP typed 三选一"
+                    "中明确选择 DROP 才可整 cue 删除"
                 ),
             }
             findings.append(finding)

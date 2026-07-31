@@ -6,6 +6,10 @@ import hashlib
 import re
 from typing import Mapping
 
+from src.autoslice.acoustic_witness_adjudication import (
+    valid_inaudible_drop_repair,
+    valid_inaudible_override_repair,
+)
 
 SCHEMA_VERSION = "final-review-audit.v2"
 EXACT_FINAL_CPA_SELF_HEAL_MAX_REPAIR_PASSES = 5
@@ -108,37 +112,24 @@ def _validate_exact_final_cpa_self_heal(
                 if isinstance(repair, Mapping)
                 else None
             )
-            acoustic_witness = (
+            typed_drop = bool(
+                isinstance(repair, Mapping)
+                and valid_inaudible_drop_repair(repair)
+            )
+            witness = (
                 repair.get("acoustic_witness")
                 if isinstance(repair, Mapping)
                 else None
             )
-            judge = (
-                repair.get("judge")
-                if isinstance(repair, Mapping)
-                else None
+            inaudible_nonempty = bool(
+                after
+                and isinstance(witness, Mapping)
+                and witness.get("status") == "OBSERVED"
+                and witness.get("target_audible") is False
             )
-            typed_drop = bool(
+            typed_inaudible_override = bool(
                 isinstance(repair, Mapping)
-                and repair.get("action") == "DROP_CUE"
-                and repair.get("repair_class") == "acoustic_drop_cue"
-                and repair.get("policy_branch")
-                == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
-                and isinstance(acoustic_witness, Mapping)
-                and acoustic_witness.get("schema_version")
-                == "subtitle-span-acoustic-witness.v1"
-                and acoustic_witness.get("status") == "OBSERVED"
-                and acoustic_witness.get("target_audible") is False
-                and _SHA256_RX.fullmatch(
-                    "sha256:"
-                    + str(
-                        acoustic_witness.get("request_sha256") or ""
-                    ).removeprefix("sha256:")
-                )
-                is not None
-                and isinstance(judge, Mapping)
-                and judge.get("status") == "JUDGED"
-                and judge.get("choice") == "PROPOSED"
+                and valid_inaudible_override_repair(repair)
             )
             if (
                 not isinstance(repair, Mapping)
@@ -151,6 +142,10 @@ def _validate_exact_final_cpa_self_heal(
                 or not before
                 or not isinstance(after, str)
                 or (not after and not typed_drop)
+                or (
+                    inaudible_nonempty
+                    and not typed_inaudible_override
+                )
                 or _SHA256_RX.fullmatch(
                     str(repair.get("before_sha256") or "")
                 )

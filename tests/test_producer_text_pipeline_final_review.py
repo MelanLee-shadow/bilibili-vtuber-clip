@@ -2249,7 +2249,7 @@ def test_final_review_drop_cue_registers_typed_final_surface_receipt(
         "_build_final_review_llm_call",
         lambda: _split_llm(
             json.dumps({"findings": findings}, ensure_ascii=False),
-            "PROPOSED",
+            "DROP",
         ),
     )
 
@@ -2271,6 +2271,8 @@ def test_final_review_drop_cue_registers_typed_final_surface_receipt(
     row = chat_authority_audit["entity_repairs"][0]
     assert row["repair_class"] == "acoustic_drop_cue"
     assert row["decision_authority"] == "CPA_JUDGE"
+    assert row["judge"]["choice"] == "DROP"
+    assert row["drop_authority"]["status"] == "PASS"
     assert row["mutation_authority"]["status"] == "PASS"
 
     from src.autoslice.producer_text_finalization import (
@@ -2284,6 +2286,61 @@ def test_final_review_drop_cue_registers_typed_final_surface_receipt(
         delivery_start_ms=0,
         delivery_end_ms=60_000,
     )
+
+
+def test_final_review_inaudible_proposed_records_explicit_cpa_override(
+    monkeypatch,
+):
+    findings = [
+        {
+            "cue": 1,
+            "kind": "context",
+            "proposed_full_cue": "嗯嗯",
+            "repair_class": "phonetic",
+            "why": "CPA may overrule AGY after seeing inaudible evidence",
+        }
+    ]
+    monkeypatch.setattr(
+        pipeline,
+        "_build_final_review_llm_call",
+        lambda: _split_llm(
+            json.dumps({"findings": findings}, ensure_ascii=False),
+            "PROPOSED",
+        ),
+    )
+
+    output, audit = pipeline._run_final_review(
+        srt_text=_srt("咳咳", "保留的下一句"),
+        chat_authority_audit={"applied": []},
+        handled_entity_cues=set(),
+        verify_confusable_entity=lambda request: _witness_verdict(
+            request,
+            "",
+            audible=False,
+        ),
+        adapters=_adapters(),
+    )
+
+    assert "嗯嗯" in output
+    adjudication = audit["findings"][0]["context_audio_adjudication"]
+    assert adjudication["policy_branch"] == (
+        "CPA_EXPLICIT_OVERRIDE_INAUDIBLE_WITNESS"
+    )
+    assert adjudication["mutation_authority"]["basis"] == (
+        "CPA_EXPLICIT_OVERRIDE_INAUDIBLE_WITNESS"
+    )
+    assert (
+        adjudication["witness_judge"]["inaudible_witness_override"][
+            "status"
+        ]
+        == "PASS"
+    )
+
+    from src.autoslice.final_review_auditor import (
+        audit_correction_mutation_authority,
+    )
+
+    assert audit_correction_mutation_authority(audit)["status"] == "PASS"
 
 
 def test_final_review_marks_findings_beyond_audio_budget(monkeypatch):

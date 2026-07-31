@@ -9,6 +9,10 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from src.autoslice.acoustic_witness_adjudication import (
+    valid_inaudible_drop_repair,
+    valid_inaudible_override_repair,
+)
 from src.autoslice.producer_boundary_owner_contract import (
     validate_frozen_boundary_owner_contract,
 )
@@ -807,18 +811,7 @@ def _exact_final_superseded_boundary_owner_valid(
     successor_is_typed_drop = bool(
         isinstance(successor, Mapping)
         and successor.get("mode") == "exact_final_cpa_self_heal"
-        and successor.get("action") == "DROP_CUE"
-        and successor.get("repair_class") == "acoustic_drop_cue"
-        and successor.get("policy_branch")
-        == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
-        and isinstance(successor.get("acoustic_witness"), Mapping)
-        and successor["acoustic_witness"].get("schema_version")
-        == "subtitle-span-acoustic-witness.v1"
-        and successor["acoustic_witness"].get("status") == "OBSERVED"
-        and successor["acoustic_witness"].get("target_audible") is False
-        and isinstance(successor.get("judge"), Mapping)
-        and successor["judge"].get("status") == "JUDGED"
-        and successor["judge"].get("choice") == "PROPOSED"
+        and valid_inaudible_drop_repair(successor)
     )
     return bool(
         isinstance(successor, Mapping)
@@ -860,6 +853,13 @@ def _post_boundary_freeze_surface_owner_valid(
 
     repair_sha256 = row.get("exact_final_repair_sha256")
     mutation = row.get("mutation_authority")
+    witness = row.get("acoustic_witness")
+    inaudible_nonempty = bool(
+        row.get("structured_exact_text")
+        and isinstance(witness, Mapping)
+        and witness.get("status") == "OBSERVED"
+        and witness.get("target_audible") is False
+    )
     if not (
         row.get("decision_authority") == "CPA_JUDGE"
         and row.get("timing_immutable") is True
@@ -871,6 +871,10 @@ def _post_boundary_freeze_surface_owner_valid(
         and mutation.get("schema_version")
         == "subtitle-correction-mutation-authority.v1"
         and mutation.get("status") == "PASS"
+        and (
+            not inaudible_nonempty
+            or valid_inaudible_override_repair(row)
+        )
     ):
         return False
 
