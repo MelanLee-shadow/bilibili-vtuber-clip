@@ -75,7 +75,10 @@ _TRANSITIONS = {
         "BLOCKED_DRIFT",
     },
     "VERIFIED": set(),
-    "BLOCKED_DRIFT": set(),
+    # A narrowly proven historical false block caused by Bilibili's normal
+    # post-edit ``-6 修改内容待审核`` Creator state may resume polling.  ``run``
+    # guards this transition; genuine drift remains terminal.
+    "BLOCKED_DRIFT": {"PUBLIC_PENDING", "VERIFIED"},
 }
 _BVID_RE = re.compile(r"^BV[0-9A-Za-z]{10}$")
 
@@ -880,6 +883,28 @@ def _uploaded_cover_url(rows: list[Mapping[str, Any]]) -> str | None:
     return None
 
 
+def _creator_review_state_pending(
+    creator: Mapping[str, Any],
+    *,
+    current_cover: object,
+    new_cover: object,
+) -> bool:
+    return (
+        isinstance(current_cover, str)
+        and isinstance(new_cover, str)
+        and normalise_cover_url(current_cover) == normalise_cover_url(new_cover)
+        and creator.get("state") == -6
+        and "审核" in str(creator.get("state_desc") or "")
+    )
+
+
+def _creator_without_cover_or_state(value: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = _without_cover({"creator": value}).get("creator") or {}
+    normalized.pop("state", None)
+    normalized.pop("state_desc", None)
+    return normalized
+
+
 def _transition_projection(
     snapshot: Mapping[str, Any],
     plan: Mapping[str, Any],
@@ -905,9 +930,21 @@ def _transition_projection(
     problems: list[str] = []
     if creator.get("available") is not True:
         return "pending", ["Creator observation unavailable"]
-    if _without_cover({"creator": creator}).get("creator") != _without_cover(
-        {"creator": before_creator}
-    ).get("creator"):
+    creator_review_pending = _creator_review_state_pending(
+        creator,
+        current_cover=current_creator_cover,
+        new_cover=new_cover,
+    )
+    creator_noncover_matches = _creator_without_cover_or_state(
+        creator
+    ) == _creator_without_cover_or_state(before_creator)
+    creator_state_matches = (
+        creator.get("state") == before_creator.get("state")
+        and creator.get("state_desc") == before_creator.get("state_desc")
+    )
+    if not creator_noncover_matches or not (
+        creator_state_matches or creator_review_pending
+    ):
         problems.append("Creator changed outside cover")
     if current_creator_cover not in (old_creator_cover, new_cover):
         problems.append("Creator cover is neither frozen old nor uploaded new asset")
@@ -927,11 +964,44 @@ def _transition_projection(
     if (
         not public_pending
         and not section_pending
+        and not creator_review_pending
         and current_creator_cover == new_cover
         and current_public_cover == new_cover
     ):
         return "target", []
     return "pending", []
+
+
+def _recoverable_creator_review_block(
+    rows: list[Mapping[str, Any]],
+    plan: Mapping[str, Any],
+    uploaded_cover_url: str | None,
+) -> bool:
+    if len(rows) < 2 or not uploaded_cover_url:
+        return False
+    last = rows[-1]
+    previous = rows[-2]
+    details = last.get("details") or {}
+    snapshot = details.get("live_snapshot")
+    if (
+        last.get("state") != "BLOCKED_DRIFT"
+        or previous.get("state") not in {"EDIT_AMBIGUOUS", "PUBLIC_PENDING"}
+        or details.get("reason") != "Creator changed outside cover"
+        or not isinstance(snapshot, Mapping)
+    ):
+        return False
+    creator = snapshot.get("creator") or {}
+    creator_cover = ((creator.get("metadata") or {}).get("cover"))
+    if not isinstance(creator, Mapping) or not _creator_review_state_pending(
+        creator,
+        current_cover=creator_cover,
+        new_cover=normalise_cover_url(uploaded_cover_url),
+    ):
+        return False
+    projection, problems = _transition_projection(
+        snapshot, plan, uploaded_cover_url
+    )
+    return projection == "pending" and not problems
 
 
 def _result(row: Mapping[str, Any], message: str) -> CoverRepairResult:
@@ -979,7 +1049,12 @@ def run(
     if not rows:
         raise CoverJournalCorrupt("cover repair plan has no initial journal row")
     state = str(rows[-1]["state"])
-    if state in TERMINAL_STATES:
+    uploaded_url = _uploaded_cover_url(rows)
+    if state == "VERIFIED":
+        return status(plan_path=plan_path, journal=journal, manifest=manifest)
+    if state == "BLOCKED_DRIFT" and not _recoverable_creator_review_block(
+        rows, plan, uploaded_url
+    ):
         return status(plan_path=plan_path, journal=journal, manifest=manifest)
     bvid = str(plan["bvid"])
     section_id = int((plan.get("season") or {})["section_id"])

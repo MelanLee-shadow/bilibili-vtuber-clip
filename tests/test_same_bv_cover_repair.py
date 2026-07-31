@@ -30,6 +30,67 @@ def test_cover_scope_tag_binding_ignores_order_but_not_set_drift():
     )
 
 
+def test_creator_review_state_after_cover_edit_is_pending_not_drift():
+    before = _snapshot()
+    current = _snapshot()
+    current["creator"]["state"] = -6
+    current["creator"]["state_desc"] = "修改内容待审核…"
+    current["creator"]["metadata"]["cover"] = NEW_COVER
+    projection, problems = cover_repair._transition_projection(
+        current,
+        {"before": before},
+        NEW_COVER,
+    )
+    assert projection == "pending"
+    assert problems == []
+
+
+def test_unexpected_creator_state_after_cover_edit_is_drift():
+    before = _snapshot()
+    current = _snapshot()
+    current["creator"]["state"] = -5
+    current["creator"]["state_desc"] = "退回"
+    current["creator"]["metadata"]["cover"] = NEW_COVER
+    projection, problems = cover_repair._transition_projection(
+        current,
+        {"before": before},
+        NEW_COVER,
+    )
+    assert projection == "drift"
+    assert problems == ["Creator changed outside cover"]
+
+
+def test_exact_historical_review_state_false_block_can_resume_polling():
+    before = _snapshot()
+    pending = _snapshot()
+    pending["creator"]["state"] = -6
+    pending["creator"]["state_desc"] = "修改内容待审核…"
+    pending["creator"]["metadata"]["cover"] = NEW_COVER
+    rows = [
+        {"state": "EDIT_AMBIGUOUS", "details": {}},
+        {
+            "state": "BLOCKED_DRIFT",
+            "details": {
+                "reason": "Creator changed outside cover",
+                "live_snapshot": pending,
+            },
+        },
+    ]
+    assert cover_repair._recoverable_creator_review_block(
+        rows,
+        {"before": before},
+        NEW_COVER,
+    )
+    rows[-1]["details"]["reason"] = (
+        "Creator changed outside cover; exact section changed"
+    )
+    assert not cover_repair._recoverable_creator_review_block(
+        rows,
+        {"before": before},
+        NEW_COVER,
+    )
+
+
 def _snapshot(
     *, cover: str = OLD_COVER, title: str = "白色奶龙", cid: int = 202
 ) -> dict:
