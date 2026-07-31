@@ -79,6 +79,29 @@ def test_adjacent_structured_chat_supports_beidian_keep() -> None:
     assert len(review["passes"]) == 1
 
 
+def test_source_fact_prompt_forbids_birthday_forwarding_role_drift() -> None:
+    hook = "SC说转发佐伯沙弥香生日能拿菲尔兹奖。"
+    title = "【李豆沙】SC说转发佐伯沙弥香生日能拿菲尔兹奖"
+
+    def cpa(prompt: str) -> str:
+        assert "不得概括为“转发某人的生日能得奖”" in prompt
+        assert "必须保留“消息/信息”作为转发宾语" in prompt
+        return _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+        )
+
+    review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript="今天是她的生日\n转发这条信息能得奖",
+        clip_context_prompt="",
+        llm_call=cpa,
+    )
+
+
 def test_proposal_must_not_become_completed_naming() -> None:
     bad_hook = "弹幕又把她的技能强行命名成“李姐拉拉”。"
     bad_title = "【李豆沙】话还没说完，技能又被命名成“李姐拉拉”"

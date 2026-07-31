@@ -4715,6 +4715,53 @@ def test_cover_punch_llm_pick_is_source_bound():
     assert ignored.cover_punch == ()
 
 
+def test_cover_punch_prompt_preserves_forwarding_condition() -> None:
+    title = (
+        "【李豆沙】SC说转发这条生日消息能拿菲尔兹奖，"
+        "李姐追问原点组怎么没有"
+    )
+    cover_text = title.removeprefix("【李豆沙】")
+
+    def judge(prompt: str) -> str:
+        if "最终文字语义裁决者" in prompt:
+            assert "生日能拿菲尔兹奖" in prompt
+            assert "必须 REVISE" in prompt
+            return (
+                '{"schema_version":"lidousha-cover-punch-semantic-review.v1",'
+                '"status":"REVISE",'
+                '"final_punch":{"main":"转发这条生日消息","sub":"能拿菲尔兹奖"},'
+                '"stranger_can_infer_event":true,'
+                '"contains_concrete_subject":true,'
+                '"contains_action_or_conflict":true,'
+                '"story_summary":"转发生日消息是获得菲尔兹奖的条件",'
+                '"click_motivation":"荒诞转发条件和主播追问形成反差"}'
+            )
+        return (
+            '{"role":"confused","expression_en":"confused stare",'
+            '"hook_word":"菲尔兹奖","words":[],"lines":[],'
+            '"cover_punch":{"main":"生日能拿菲尔兹奖",'
+            '"sub":"原点组怎么没有"}}'
+        )
+
+    direction = shadow_pipeline._lidousha_cover_art_direction(
+        candidate_id="auto_225056_814_887",
+        title=title,
+        cover_text=cover_text,
+        story_hook=(
+            "SC说转发这条生日消息能拿菲尔兹奖，"
+            "李豆沙追问为什么自己没有"
+        ),
+        art_direction_llm_call=judge,
+        allow_punch=True,
+    )
+
+    assert direction.cover_punch == (
+        "转发这条生日消息",
+        "能拿菲尔兹奖",
+    )
+    assert direction.cover_punch_semantic_review["status"] == "REVISED"
+
+
 def test_cover_punch_cpa_repairs_real_raw_beans_fragmentation():
     from src.autoslice import cover_generation
 
