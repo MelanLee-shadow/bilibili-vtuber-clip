@@ -559,3 +559,41 @@ def test_production_adapter_rechecks_creator_and_changes_only_cover():
             BVID, expected_creator=drifted, cover_url=NEW_COVER
         )
     assert len(session.edit_calls) == 1
+
+
+def test_plan_survives_a_disk_round_trip_and_revalidates(tmp_path, monkeypatch):
+    """写盘 → 读回 → 重校验，是崩溃后 run/status/verify-live 的重入路径。
+
+    `create_plan` 末尾会自校验，所以 `validate_plan` 在正向上一直有间接覆盖；
+    真正没被直接测过的是**从磁盘读回**这一段——而它恰恰是 CLI 唯一的重入口
+    （`_load_cover_repair_manifest` = `load_plan` + `validate_plan`）。
+    cover-only lane 至今零生产执行，重入路径尤其不能只靠"应该没问题"。
+    """
+
+    manifest, plan, plan_path, _journal = _materialize(tmp_path, monkeypatch)
+
+    reloaded = cover_repair.load_plan(plan_path)
+    assert reloaded == plan, "读回的 plan 必须与写入的逐字段相同"
+    # 不抛即通过：重入时的再校验必须接受自己刚冻结的 plan
+    cover_repair.validate_plan(reloaded, manifest=manifest)
+
+
+def test_tampered_plan_on_disk_is_rejected_on_reentry(tmp_path, monkeypatch):
+    """磁盘上的 plan 被改过就必须在重入时拒绝，不能带着漂移继续执行。"""
+
+    manifest, _plan, plan_path, _journal = _materialize(tmp_path, monkeypatch)
+
+    for field, value in (
+        ("bvid", "BV1tampered000"),
+        ("unchanged_cid", 999999999),
+        ("old_cover_url", "http://i0.hdslb.com/bfs/archive/tampered.png"),
+    ):
+        payload = json.loads(plan_path.read_text(encoding="utf-8"))
+        payload[field] = value
+        plan_path.write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+        )
+        with pytest.raises(cover_repair.CoverRepairError):
+            cover_repair.validate_plan(
+                cover_repair.load_plan(plan_path), manifest=manifest
+            )
