@@ -20,7 +20,8 @@ import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import threading
 from typing import Any, Callable, Mapping
 
 from scripts.gemini_slice_jingting import (
@@ -304,13 +305,47 @@ be valid candidates. Report the syllables you actually hear before the choice.
 """
 
 
+_EXPLICIT_AGY_QUOTA_EXHAUSTED_RX = re.compile(
+    r"\b(?:individual\s+)?quota\s+(?:(?:has\s+been|is)\s+)?"
+    r"(?:reached|exhausted|exceeded)\b",
+    re.IGNORECASE,
+)
+
+
 def _classify_agy_failure(returncode: int, stdout: str, stderr: str) -> str:
     diagnostic = f"{stdout}\n{stderr}".casefold()
-    if any(marker in diagnostic for marker in ("quota", "429", "rate limit", "too many requests")):
+    if _EXPLICIT_AGY_QUOTA_EXHAUSTED_RX.search(diagnostic):
         return "AGY_QUOTA_EXHAUSTED"
     if any(marker in diagnostic for marker in ("timeout", "timed out")):
         return "AGY_TIMEOUT"
+    if any(marker in diagnostic for marker in ("429", "rate limit", "too many requests")):
+        return "AGY_RATE_LIMITED"
     return f"AGY_FAILED_RC_{returncode}"
+
+
+@dataclass
+class _AgyQuotaCircuitBreaker:
+    """Run-local breaker for an explicit, account-wide AGY quota response.
+
+    This state is deliberately attached to one local verifier instance.  A
+    producer builds that verifier once and reuses it for every cue in the run,
+    while a later producer process starts closed again and can observe quota
+    recovery.  Only the typed ``AGY_QUOTA_EXHAUSTED`` category may open it.
+    """
+
+    _quota_exhausted: bool = False
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def is_open(self) -> bool:
+        with self._lock:
+            return self._quota_exhausted
+
+    def observe_failure(self, category: str) -> bool:
+        if category != "AGY_QUOTA_EXHAUSTED":
+            return False
+        with self._lock:
+            self._quota_exhausted = True
+        return True
 
 
 def _configured_free_keys() -> list[str]:
@@ -574,6 +609,7 @@ def _observe_entity_audio(
     binary: str,
     model: str,
     timeout: str,
+    agy_quota_circuit: _AgyQuotaCircuitBreaker,
 ) -> _EntityProviderOutcome:
     """Run preferred AGY, then bounded direct API for blind witnesses."""
 
@@ -618,66 +654,101 @@ def _observe_entity_audio(
     paid_policy_stamp: Mapping[str, Any] | None = None
     provider_failures: list[dict[str, Any]] = []
     response_path = job_dir / "verdict.raw.json"
-    try:
-        completed = subprocess.run(
-            [
-                binary,
-                "--sandbox",
-        "--dangerously-skip-permissions",
-                "--add-dir",
-                str(job_dir),
-                "--model",
-                model,
-                "-p",
-                short_prompt,
-                "--print-timeout",
-                timeout,
-            ],
-            cwd=job_dir,
-            env=agy_subprocess_env(),
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=parse_timeout_seconds(timeout) + 120,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    if agy_quota_circuit.is_open():
         provider_failures.append(
             {
                 "provider": "agy",
-                "category": "AGY_SUBPROCESS_ERROR",
-                "error_type": type(exc).__name__,
+                "category": "AGY_QUOTA_EXHAUSTED",
+                "circuit_breaker": "OPEN",
+                "attempted": False,
             }
         )
     else:
-        (job_dir / "agy.stdout").write_text(completed.stdout, encoding="utf-8")
-        (job_dir / "agy.stderr").write_text(completed.stderr, encoding="utf-8")
-        verdict_path = job_dir / "verdict.json"
-        raw_response = (
-            verdict_path.read_text(encoding="utf-8", errors="replace")
-            if verdict_path.is_file()
-            else completed.stdout
-        )
-        response_path.write_text(raw_response, encoding="utf-8")
-        if completed.returncode != 0:
+        try:
+            completed = subprocess.run(
+                [
+                    binary,
+                    "--sandbox",
+                    "--dangerously-skip-permissions",
+                    "--add-dir",
+                    str(job_dir),
+                    "--model",
+                    model,
+                    "-p",
+                    short_prompt,
+                    "--print-timeout",
+                    timeout,
+                ],
+                cwd=job_dir,
+                env=agy_subprocess_env(),
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=parse_timeout_seconds(timeout) + 120,
+            )
+        except subprocess.TimeoutExpired as exc:
             provider_failures.append(
                 {
                     "provider": "agy",
-                    "category": _classify_agy_failure(
-                        completed.returncode, completed.stdout, completed.stderr
-                    ),
+                    "category": "AGY_TIMEOUT",
+                    "error_type": type(exc).__name__,
+                }
+            )
+        except OSError as exc:
+            provider_failures.append(
+                {
+                    "provider": "agy",
+                    "category": "AGY_SUBPROCESS_ERROR",
+                    "error_type": type(exc).__name__,
                 }
             )
         else:
-            try:
-                observed = json.loads(strip_markdown_fence(raw_response))
-            except (TypeError, ValueError) as exc:
+            (job_dir / "agy.stdout").write_text(completed.stdout, encoding="utf-8")
+            (job_dir / "agy.stderr").write_text(completed.stderr, encoding="utf-8")
+            verdict_path = job_dir / "verdict.json"
+            raw_response = (
+                verdict_path.read_text(encoding="utf-8", errors="replace")
+                if verdict_path.is_file()
+                else completed.stdout
+            )
+            response_path.write_text(raw_response, encoding="utf-8")
+            failure_category = _classify_agy_failure(
+                completed.returncode, completed.stdout, completed.stderr
+            )
+            # An explicit quota response is authoritative even if a buggy CLI
+            # wrapper exits zero.  Checking it before verdict.json also avoids
+            # accepting a stale file left in a retried job directory.
+            if failure_category == "AGY_QUOTA_EXHAUSTED":
+                failure: dict[str, Any] = {
+                    "provider": "agy",
+                    "category": failure_category,
+                }
+                agy_quota_circuit.observe_failure(failure_category)
+                failure.update(
+                    {
+                        "circuit_breaker": "TRIPPED",
+                        "attempted": True,
+                    }
+                )
+                provider_failures.append(failure)
+            elif completed.returncode != 0:
                 provider_failures.append(
                     {
                         "provider": "agy",
-                        "category": "AGY_INVALID_OUTPUT",
-                        "error_type": type(exc).__name__,
+                        "category": failure_category,
                     }
                 )
+            else:
+                try:
+                    observed = json.loads(strip_markdown_fence(raw_response))
+                except (TypeError, ValueError) as exc:
+                    provider_failures.append(
+                        {
+                            "provider": "agy",
+                            "category": "AGY_INVALID_OUTPUT",
+                            "error_type": type(exc).__name__,
+                        }
+                    )
 
     if observed is None and witness_mode:
         provider = "gemini_api"
@@ -1045,6 +1116,9 @@ class _LocalAudioVerifier:
     model: str
     timeout: str
     timely_context: str
+    agy_quota_circuit: _AgyQuotaCircuitBreaker = field(
+        default_factory=_AgyQuotaCircuitBreaker
+    )
 
     def __call__(self, request: Mapping[str, Any]) -> Mapping[str, Any]:
         return _verify_local_audio_request(verifier=self, request=request)
@@ -1305,6 +1379,7 @@ def _verify_local_audio_request(
             binary=verifier.binary,
             model=verifier.model,
             timeout=verifier.timeout,
+            agy_quota_circuit=verifier.agy_quota_circuit,
         )
     observed = outcome.observed
     provider_failures = outcome.provider_failures

@@ -89,6 +89,10 @@
    [50-song-lane.md](50-song-lane.md) 中 AGY typed failure 后的完整音轨 + canonical LRC 观察。
    三者都必须保存 exact audio hash、模型/提示词和 provider failure provenance，并继续通过各自
    的后续门；Gemini 只有 evidence authority，不能落字或决定交付，CPA 保留文字/语义终裁。
+   同一 producer run 内，AGY CLI 首次明确返回 `AGY_QUOTA_EXHAUSTED` 后必须打开 run-local
+   熔断：后续候选盲拼音 witness 不再逐 cue 重试 AGY，保留 `attempted=false` 的 typed provenance
+   并直接进入既有 Gemini API 后备；candidate-aware 请求仍按原合同 fail closed。普通非零退出、
+   timeout、无效回执、单次 429/rate-limit 都不得打开该熔断；下一 producer run 重新从 AGY 闭路开始。
    先复用身份完整匹配的 AGY 成功缓存；仍无证据但文字闭集已完整时，
    CPA 必须仅按文字语境继续选边；只有候选生成依赖尚未得到的声学事实时才写
    `provider_transient` 并由 runner 有界重试。CPA 只接收文字闭集、AGY 观察文字（若有）和片级文字

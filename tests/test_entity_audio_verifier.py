@@ -2,6 +2,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from src.autoslice import entity_audio_verifier as verifier_module
 
 
@@ -362,7 +364,7 @@ def test_provider_failed_verdict_is_never_served_from_cache(tmp_path, monkeypatc
         if not state["agy_available"]:
             return _Completed(
                 returncode=1,
-                stderr="Error: Individual quota reached. Resets in 1h.",
+                stderr="Error: temporary AGY backend failure.",
             )
         job_dir = Path(kwargs["cwd"])
         (job_dir / "verdict.json").write_text(
@@ -417,6 +419,173 @@ def test_provider_failed_verdict_is_never_served_from_cache(tmp_path, monkeypatc
     fourth = verify(_request())
     assert fourth["status"] == "RESOLVED"
     assert state["agy_calls"] == 3
+
+
+def _blind_witness_request(*, evidence_id: str, start_ms: int):
+    from src.autoslice.acoustic_witness_adjudication import (
+        build_witness_request,
+    )
+
+    return build_witness_request(
+        {
+            "evidence_id": evidence_id,
+            "cue_indexes": [start_ms // 1_000],
+            "matched_start_ms": start_ms,
+            "matched_end_ms": start_ms + 1_100,
+            "context_start_ms": max(0, start_ms - 500),
+            "context_end_ms": start_ms + 1_600,
+            "source_media_timeline_offset_ms": 0,
+        }
+    )
+
+
+def _observed_blind_witness():
+    return json.dumps(
+        {
+            "schema_version": verifier_module.WITNESS_SCHEMA,
+            "status": "OBSERVED",
+            "target_audible": True,
+            "heard_pinyin": "hao piao liang o",
+            "uncertain_positions": [],
+            "syllable_count": 4,
+            "confidence": 0.94,
+            "reason": "clear blind dictation",
+        }
+    )
+
+
+@pytest.mark.parametrize("quota_returncode", (0, 1))
+def test_agy_quota_opens_run_circuit_and_later_cues_go_directly_to_api(
+    tmp_path, monkeypatch, quota_returncode
+):
+    """One explicit per-run quota failure suppresses later per-cue AGY calls."""
+
+    for name in ("GEMINI_API_KEY_2", "GEMINI_API_KEY_3", "GEMINI_KEY_BACKUP"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "free-key-1")
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+    agy_calls = []
+    api_calls = []
+
+    def fake_run(command, **kwargs):
+        if command[0] == "ffmpeg":
+            Path(command[-1]).write_bytes(str(command[-1]).encode("utf-8"))
+            return _Completed()
+        agy_calls.append(command)
+        return _Completed(
+            returncode=quota_returncode,
+            stderr="Error: Individual quota reached. Resets in 1h.",
+        )
+
+    def fake_api(**kwargs):
+        api_calls.append(kwargs["audio_path"])
+        return _observed_blind_witness()
+
+    monkeypatch.setattr(verifier_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(verifier_module, "_gemini_api_observe_witness", fake_api)
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-07-30",
+        source_duration_ms=20_000,
+        agy_bin="agy-test",
+    )
+    first_request = _blind_witness_request(evidence_id="c" * 64, start_ms=2_000)
+    second_request = _blind_witness_request(evidence_id="d" * 64, start_ms=6_000)
+
+    first = verify(first_request)
+    second = verify(second_request)
+
+    assert first["provider"] == "gemini_api"
+    assert second["provider"] == "gemini_api"
+    assert len(agy_calls) == 1
+    assert len(api_calls) == 2
+    first_manifest = json.loads(
+        (
+            tmp_path
+            / "out/entity_verdicts"
+            / first_request["request_sha256"][:20]
+            / "verdict.manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    second_manifest = json.loads(
+        (
+            tmp_path
+            / "out/entity_verdicts"
+            / second_request["request_sha256"][:20]
+            / "verdict.manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert first_manifest["provider_failures"][0] == {
+        "provider": "agy",
+        "category": "AGY_QUOTA_EXHAUSTED",
+        "circuit_breaker": "TRIPPED",
+        "attempted": True,
+    }
+    assert second_manifest["provider_failures"][0] == {
+        "provider": "agy",
+        "category": "AGY_QUOTA_EXHAUSTED",
+        "circuit_breaker": "OPEN",
+        "attempted": False,
+    }
+
+
+@pytest.mark.parametrize(
+    "first_failure",
+    ("ordinary_error", "rate_limited", "timeout", "invalid_verdict"),
+)
+def test_agy_run_circuit_ignores_non_quota_failures(
+    tmp_path, monkeypatch, first_failure
+):
+    """Only explicit quota exhaustion may suppress a later AGY attempt."""
+
+    for name in ("GEMINI_API_KEY_2", "GEMINI_API_KEY_3", "GEMINI_KEY_BACKUP"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "free-key-1")
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+    state = {"agy_calls": 0, "api_calls": 0}
+
+    def fake_run(command, **kwargs):
+        if command[0] == "ffmpeg":
+            Path(command[-1]).write_bytes(str(command[-1]).encode("utf-8"))
+            return _Completed()
+        state["agy_calls"] += 1
+        if state["agy_calls"] == 1:
+            if first_failure == "ordinary_error":
+                return _Completed(returncode=1, stderr="temporary backend crash")
+            if first_failure == "rate_limited":
+                return _Completed(returncode=1, stderr="HTTP 429 rate limit; retry later")
+            if first_failure == "timeout":
+                raise verifier_module.subprocess.TimeoutExpired(command, timeout=1)
+            Path(kwargs["cwd"], "verdict.json").write_text("not-json", encoding="utf-8")
+            return _Completed()
+        Path(kwargs["cwd"], "verdict.json").write_text(
+            _observed_blind_witness(), encoding="utf-8"
+        )
+        return _Completed()
+
+    def fake_api(**kwargs):
+        state["api_calls"] += 1
+        return _observed_blind_witness()
+
+    monkeypatch.setattr(verifier_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(verifier_module, "_gemini_api_observe_witness", fake_api)
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-07-30",
+        source_duration_ms=20_000,
+        agy_bin="agy-test",
+    )
+
+    first = verify(_blind_witness_request(evidence_id="e" * 64, start_ms=2_000))
+    second = verify(_blind_witness_request(evidence_id="f" * 64, start_ms=6_000))
+
+    assert first["provider"] == "gemini_api"
+    assert second["provider"] == "agy"
+    assert state == {"agy_calls": 2, "api_calls": 1}
 
 
 def test_agy_quota_never_falls_back_to_non_agy_audio_provider(tmp_path, monkeypatch):
