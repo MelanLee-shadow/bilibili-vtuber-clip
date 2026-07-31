@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import tempfile
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -106,6 +108,55 @@ from src.autoslice.clip_context import validate_clip_context
 
 ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(ROOT)
+
+
+def _snapshot_file_bytes(
+    paths: list[Path],
+) -> dict[Path, bytes | None]:
+    return {
+        path: path.read_bytes() if path.exists() else None
+        for path in dict.fromkeys(paths)
+    }
+
+
+def _write_bytes_atomic(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.exact-final-",
+        suffix=".tmp",
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _restore_file_bytes(
+    snapshots: Mapping[Path, bytes | None],
+) -> None:
+    for path, payload in snapshots.items():
+        if payload is None:
+            path.unlink(missing_ok=True)
+        else:
+            _write_bytes_atomic(path, payload)
+
+
+def _json_bytes(document: Mapping[str, object]) -> bytes:
+    return (
+        json.dumps(
+            document,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
 
 
 @dataclass(frozen=True)
@@ -1451,7 +1502,26 @@ def _run_exact_final_review_gate(
     max_review_passes = (
         EXACT_FINAL_CPA_SELF_HEAL_MAX_REPAIR_PASSES + 1
     )
+    review_audit_path = out_root / f"{cid}.review-flags.json"
     for pass_index in range(max_review_passes):
+        chat_authority_before_pass = deepcopy(chat_authority_audit)
+        baseline_before_pass = (
+            deepcopy(recut.redelivery_baseline_audit)
+            if recut.redelivery_baseline_audit is not None
+            else None
+        )
+        transactional_paths = [
+            recut.subtitle_path,
+            chat_authority_path,
+            review_audit_path,
+        ]
+        if recut.redelivery_baseline_audit_path is not None:
+            transactional_paths.append(
+                recut.redelivery_baseline_audit_path
+            )
+        file_bytes_before_pass = _snapshot_file_bytes(
+            transactional_paths
+        )
         final_bytes = recut.subtitle_path.read_bytes()
         final_text = final_bytes.decode("utf-8", errors="strict")
         audit = reviewer(
@@ -1506,7 +1576,7 @@ def _run_exact_final_review_gate(
             )
             audit = _overlay_exact_carryover_findings(audit, replayable)
         chat_authority_audit["final_review_audit"] = audit
-        persist_review_audit(out_root / f"{cid}.review-flags.json", audit)
+        persist_review_audit(review_audit_path, audit)
         expected_srt_sha256 = "sha256:" + hashlib.sha256(
             final_bytes
         ).hexdigest()
@@ -1543,88 +1613,132 @@ def _run_exact_final_review_gate(
                 and repairs
                 and pass_index < max_review_passes - 1
             ):
-                recut.subtitle_path.write_text(
-                    repaired_text,
-                    encoding="utf-8",
+                staged_chat_authority = deepcopy(
+                    chat_authority_audit
                 )
-                existing_memos = chat_authority_audit.get(
-                    "exact_final_cpa_convergence_memos"
+                staged_baseline = (
+                    deepcopy(recut.redelivery_baseline_audit)
+                    if recut.redelivery_baseline_audit is not None
+                    else None
                 )
-                if isinstance(existing_memos, list):
-                    chat_authority_audit[
-                        "exact_final_cpa_convergence_memos"
-                    ] = rebind_exact_final_convergence_memos(
-                        repaired_text,
-                        existing_memos,
-                    )
+                staged_consumed = dict(consumed_carryover_repairs)
+                repaired_sha256 = hashlib.sha256(
+                    repaired_text.encode("utf-8")
+                ).hexdigest()
                 pass_receipt = {
                     "schema_version": "exact-final-cpa-self-heal-pass.v1",
                     "pass_index": pass_index + 1,
                     "input_srt_sha256": expected_srt_sha256,
-                    "output_srt_sha256": "sha256:"
-                    + hashlib.sha256(
-                        repaired_text.encode("utf-8")
-                    ).hexdigest(),
+                    "output_srt_sha256": "sha256:" + repaired_sha256,
                     "repairs": repairs,
                 }
-                self_heal_passes.append(pass_receipt)
-                _register_exact_final_cpa_repairs(
-                    chat_authority_audit,
-                    repairs,
-                    delivery_start_ms=final_start,
-                )
-                for repair in repairs:
-                    before_sha256 = str(
-                        repair.get("before_sha256") or ""
-                    ).removeprefix("sha256:")
-                    if before_sha256 in replayable_carryover_base_sha256:
-                        consumed_carryover_repairs[before_sha256] = repair
-                chat_authority_audit["exact_final_cpa_self_heal"] = {
+                next_self_heal_passes = [
+                    *self_heal_passes,
+                    pass_receipt,
+                ]
+                pending_self_heal_audit = {
                     "schema_version": "exact-final-cpa-self-heal-audit.v1",
                     "status": "REVIEW_PENDING",
-                    "passes": self_heal_passes,
+                    "passes": next_self_heal_passes,
                 }
-                chat_authority_audit["final_output_srt_sha256"] = (
-                    hashlib.sha256(
-                        repaired_text.encode("utf-8")
-                    ).hexdigest()
-                )
-                if recut.redelivery_baseline_audit is not None:
-                    recut.redelivery_baseline_audit[
-                        "post_exact_final_cpa_output_sha256"
-                    ] = hashlib.sha256(
-                        repaired_text.encode("utf-8")
-                    ).hexdigest()
-                    recut.redelivery_baseline_audit[
-                        "exact_final_cpa_self_heal"
-                    ] = {
-                        "schema_version": (
-                            "exact-final-cpa-self-heal-audit.v1"
-                        ),
-                        "status": "REVIEW_PENDING",
-                        "passes": self_heal_passes,
-                    }
-                    if recut.redelivery_baseline_audit_path is not None:
-                        recut.redelivery_baseline_audit_path.write_text(
-                            json.dumps(
-                                recut.redelivery_baseline_audit,
-                                ensure_ascii=False,
-                                indent=2,
-                                sort_keys=True,
-                            )
-                            + "\n",
-                            encoding="utf-8",
-                        )
-                chat_authority_path.write_text(
-                    json.dumps(
-                        chat_authority_audit,
-                        ensure_ascii=False,
-                        indent=2,
-                        sort_keys=True,
+                try:
+                    existing_memos = staged_chat_authority.get(
+                        "exact_final_cpa_convergence_memos"
                     )
-                    + "\n",
-                    encoding="utf-8",
-                )
+                    if isinstance(existing_memos, list):
+                        staged_chat_authority[
+                            "exact_final_cpa_convergence_memos"
+                        ] = rebind_exact_final_convergence_memos(
+                            repaired_text,
+                            existing_memos,
+                        )
+                    # Complete the authority ledger before exposing any new
+                    # active SRT bytes or sidecar state.
+                    _register_exact_final_cpa_repairs(
+                        staged_chat_authority,
+                        repairs,
+                        delivery_start_ms=final_start,
+                    )
+                    for repair in repairs:
+                        before_sha256 = str(
+                            repair.get("before_sha256") or ""
+                        ).removeprefix("sha256:")
+                        if (
+                            before_sha256
+                            in replayable_carryover_base_sha256
+                        ):
+                            staged_consumed[before_sha256] = repair
+                    staged_chat_authority[
+                        "exact_final_cpa_self_heal"
+                    ] = pending_self_heal_audit
+                    staged_chat_authority[
+                        "final_output_srt_sha256"
+                    ] = repaired_sha256
+                    if staged_baseline is not None:
+                        staged_baseline[
+                            "post_exact_final_cpa_output_sha256"
+                        ] = repaired_sha256
+                        staged_baseline[
+                            "exact_final_cpa_self_heal"
+                        ] = pending_self_heal_audit
+
+                    payloads: list[tuple[Path, bytes]] = [
+                        (review_audit_path, _json_bytes(audit)),
+                        (
+                            chat_authority_path,
+                            _json_bytes(staged_chat_authority),
+                        ),
+                    ]
+                    if (
+                        staged_baseline is not None
+                        and recut.redelivery_baseline_audit_path
+                        is not None
+                    ):
+                        payloads.append(
+                            (
+                                recut.redelivery_baseline_audit_path,
+                                _json_bytes(staged_baseline),
+                            )
+                        )
+                    # Install the active SRT last, after its complete ledger
+                    # and sidecars are ready. Any exception rolls all paths
+                    # back to the exact pre-pass bytes below.
+                    payloads.append(
+                        (
+                            recut.subtitle_path,
+                            repaired_text.encode("utf-8"),
+                        )
+                    )
+                    for path, payload in payloads:
+                        _write_bytes_atomic(path, payload)
+
+                    chat_authority_audit.clear()
+                    chat_authority_audit.update(staged_chat_authority)
+                    if (
+                        recut.redelivery_baseline_audit is not None
+                        and staged_baseline is not None
+                    ):
+                        recut.redelivery_baseline_audit.clear()
+                        recut.redelivery_baseline_audit.update(
+                            staged_baseline
+                        )
+                    self_heal_passes = next_self_heal_passes
+                    consumed_carryover_repairs = staged_consumed
+                except Exception:
+                    _restore_file_bytes(file_bytes_before_pass)
+                    chat_authority_audit.clear()
+                    chat_authority_audit.update(
+                        chat_authority_before_pass
+                    )
+                    if (
+                        recut.redelivery_baseline_audit is not None
+                        and baseline_before_pass is not None
+                    ):
+                        recut.redelivery_baseline_audit.clear()
+                        recut.redelivery_baseline_audit.update(
+                            baseline_before_pass
+                        )
+                    raise
                 continue
             # 终审结转仍是无法在当前 exact-final pass 安全落盘时的后备。
             carryover_count = persist_final_review_carryover(

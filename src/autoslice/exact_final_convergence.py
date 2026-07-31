@@ -403,6 +403,43 @@ _EVIDENCE_HASH_KEYS = frozenset(
     }
 )
 
+_EVIDENCE_CONTENT_ANCHOR_KEYS = frozenset(
+    {
+        "audio_clip_sha256",
+        "audio_sha256",
+        "target_audible",
+        "heard_pinyin",
+        "current_fit",
+        "proposed_fit",
+        "confidence",
+        "uncertain_positions",
+    }
+)
+
+_EVIDENCE_CONTENT_KEYS = frozenset(
+    {
+        "schema_version",
+        "status",
+        "reason_code",
+        "audio_clip_sha256",
+        "audio_sha256",
+        "target_audible",
+        "heard_pinyin",
+        "current_fit",
+        "proposed_fit",
+        "confidence",
+        "uncertain_positions",
+        "syllable_count",
+        "model",
+        "model_id",
+        "provider",
+        "completion_sha256",
+        "raw_completion_sha256",
+        "transcript",
+        "observed_text",
+    }
+)
+
 
 def _evidence_authority_fingerprints(
     value: object,
@@ -446,13 +483,64 @@ def _evidence_authority_fingerprints(
     return sorted(identities)
 
 
+def _evidence_content_fingerprints(value: object) -> list[str]:
+    """Bind material acoustic witness content, not only media identity.
+
+    CPA judge prompts/completions are deliberately excluded: they are the
+    decision surface, while these fingerprints describe newly produced
+    witness observations that must reopen an older closed-set memo.
+    """
+
+    fingerprints: set[str] = set()
+
+    def visit(node: object, path: tuple[str, ...]) -> None:
+        if isinstance(node, Mapping):
+            schema = str(node.get("schema_version") or "").lower()
+            anchored = bool(
+                _EVIDENCE_CONTENT_ANCHOR_KEYS.intersection(node)
+                or "acoustic-witness" in schema
+            )
+            if anchored:
+                material = {
+                    str(key): child
+                    for key, child in node.items()
+                    if str(key) in _EVIDENCE_CONTENT_KEYS
+                }
+                if material:
+                    fingerprints.add(
+                        "/".join(path or ("root",))
+                        + "=sha256:"
+                        + _json_sha256(material)
+                    )
+            for key, child in node.items():
+                key_text = str(key)
+                if key_text in {"judge", "witness_judge"}:
+                    continue
+                visit(child, (*path, key_text))
+        elif isinstance(node, list):
+            for index, child in enumerate(node):
+                visit(child, (*path, str(index)))
+
+    visit(value, ())
+    return sorted(fingerprints)
+
+
 def _complete_cycle_evidence(
     findings: Iterable[Mapping[str, Any]],
 ) -> list[dict[str, object]]:
     """Keep every persisted field used by the current exact-final decisions."""
 
     rows: list[dict[str, object]] = []
-    for finding in findings:
+    ordered = sorted(
+        findings,
+        key=lambda finding: (
+            _candidate_id(
+                _cycle_candidate_from_finding(finding) or ""
+            ),
+            _json_sha256(finding),
+        ),
+    )
+    for finding in ordered:
         adjudication = finding.get("exact_release_adjudication")
         rows.append(
             {
@@ -748,11 +836,8 @@ def _cycle_is_present(
         if candidate is not None
     ]
     return bool(
-        history
-        and (
-            any(candidate in historical_rejected for candidate in proposals)
-            or len(set(proposals)) > 1
-        )
+        any(candidate in historical_rejected for candidate in proposals)
+        or len(set(proposals)) > 1
     )
 
 
@@ -854,13 +939,13 @@ def _cycle_candidates(
             add(before, f"HISTORY_PASS_{index}_REJECTED")
         if isinstance(after, str) and after:
             add(after, f"HISTORY_PASS_{index}_SELECTED")
-    for index, finding in enumerate(findings, start=1):
+    for finding in findings:
         candidate = _cycle_candidate_from_finding(finding)
         if candidate is None:
             continue
         add(
             candidate,
-            f"CURRENT_FINDING_{index}",
+            "CURRENT_FINDING",
             legal_drop=candidate == "",
         )
     return sorted(
@@ -887,6 +972,7 @@ def _cycle_memo(
     history: list[dict[str, object]],
     evidence: list[dict[str, object]],
     evidence_fingerprints: list[str],
+    evidence_content_fingerprints: list[str],
     prompt_sha256: str,
     completion_sha256: str,
     served_from_cache: bool,
@@ -915,6 +1001,10 @@ def _cycle_memo(
         "evidence_authority_fingerprints": evidence_fingerprints,
         "evidence_authority_fingerprints_sha256": (
             "sha256:" + _json_sha256(evidence_fingerprints)
+        ),
+        "evidence_content_fingerprints": evidence_content_fingerprints,
+        "evidence_content_fingerprints_sha256": (
+            "sha256:" + _json_sha256(evidence_content_fingerprints)
         ),
         "prompt_sha256": "sha256:" + prompt_sha256,
         "completion_sha256": "sha256:" + completion_sha256,
@@ -1119,6 +1209,15 @@ def _converge_cycle_group(
     authority_audit: Mapping[str, object],
     judge_llm_call: Callable[[str], str] | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    findings = sorted(
+        findings,
+        key=lambda finding: (
+            _candidate_id(
+                _cycle_candidate_from_finding(finding) or ""
+            ),
+            _json_sha256(finding),
+        ),
+    )
     window = _cycle_group_key(findings[0])
     if window is None:
         return findings, []
@@ -1146,8 +1245,11 @@ def _converge_cycle_group(
             )
             for row in findings
         )
-        or history[-1].get("after_sha256")
-        != "sha256:" + current_sha256
+        or (
+            history
+            and history[-1].get("after_sha256")
+            != "sha256:" + current_sha256
+        )
     ):
         return findings, []
 
@@ -1163,6 +1265,9 @@ def _converge_cycle_group(
             "history": complete_history,
             "current": complete_evidence,
         }
+    )
+    evidence_content_fingerprints = _evidence_content_fingerprints(
+        complete_evidence
     )
     context_sha256, before, after = _local_context_binding(
         srt_text,
@@ -1291,6 +1396,9 @@ def _converge_cycle_group(
         history=complete_history,
         evidence=complete_evidence,
         evidence_fingerprints=evidence_fingerprints,
+        evidence_content_fingerprints=(
+            evidence_content_fingerprints
+        ),
         prompt_sha256=prompt_sha256,
         completion_sha256=completion_sha256,
         served_from_cache=served_from_cache,
@@ -1381,6 +1489,9 @@ def _valid_cycle_memo(memo: object) -> bool:
     history = memo.get("history_receipts")
     evidence = memo.get("current_evidence")
     fingerprints = memo.get("evidence_authority_fingerprints")
+    content_fingerprints = memo.get(
+        "evidence_content_fingerprints"
+    )
     final_text = memo.get("final_text")
     if not (
         memo.get("schema_version") == CYCLE_MEMO_SCHEMA
@@ -1406,16 +1517,23 @@ def _valid_cycle_memo(memo: object) -> bool:
         and _valid_sha256(
             memo.get("evidence_authority_fingerprints_sha256")
         )
+        and _valid_sha256(
+            memo.get("evidence_content_fingerprints_sha256")
+        )
         and _valid_sha256(memo.get("prompt_sha256"))
         and _valid_sha256(memo.get("completion_sha256"))
         and isinstance(candidates, list)
         and len(candidates) >= 2
         and isinstance(history, list)
-        and bool(history)
         and isinstance(evidence, list)
         and bool(evidence)
         and isinstance(fingerprints, list)
         and all(isinstance(value, str) for value in fingerprints)
+        and isinstance(content_fingerprints, list)
+        and all(
+            isinstance(value, str)
+            for value in content_fingerprints
+        )
         and memo.get("timing_immutable") is True
     ):
         return False
@@ -1452,6 +1570,8 @@ def _valid_cycle_memo(memo: object) -> bool:
         == "sha256:" + _json_sha256(evidence)
         and memo.get("evidence_authority_fingerprints_sha256")
         == "sha256:" + _json_sha256(fingerprints)
+        and memo.get("evidence_content_fingerprints_sha256")
+        == "sha256:" + _json_sha256(content_fingerprints)
     )
 
 
@@ -1655,7 +1775,14 @@ def resolve_findings_from_exact_final_convergence_memos(
             pending.append(dict(finding))
             continue
         if matched.get("schema_version") == CYCLE_MEMO_SCHEMA:
-            proposed = finding.get("proposed_full_cue")
+            proposed = _cycle_candidate_from_finding(finding)
+            if proposed is None and isinstance(
+                finding.get("proposed_full_cue"),
+                str,
+            ):
+                # Raw discovery rows remain replay-compatible; adjudicated
+                # rows use their effective CPA request target above.
+                proposed = str(finding["proposed_full_cue"])
             candidate_ids = {
                 str(candidate.get("candidate_id"))
                 for candidate in matched.get("candidate_set") or []
@@ -1671,14 +1798,26 @@ def resolve_findings_from_exact_final_convergence_memos(
                     or []
                 )
             )
+            new_content_fingerprints = set(
+                _evidence_content_fingerprints(finding)
+            )
+            known_content_fingerprints = set(
+                str(value)
+                for value in (
+                    matched.get("evidence_content_fingerprints")
+                    or []
+                )
+            )
             if (
                 not isinstance(proposed, str)
                 or _candidate_id(proposed) not in candidate_ids
                 or not new_fingerprints.issubset(known_fingerprints)
+                or not new_content_fingerprints.issubset(
+                    known_content_fingerprints
+                )
             ):
-                # A genuinely new candidate or a new source/audio identity
-                # reopens CPA adjudication. Rephrased discovery with the same
-                # closed-set candidates and no new evidence remains locked.
+                # A genuinely new candidate, source/audio identity, or
+                # materially changed witness observation reopens CPA.
                 pending.append(dict(finding))
                 continue
         row = dict(finding)

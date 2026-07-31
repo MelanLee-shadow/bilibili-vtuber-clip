@@ -656,3 +656,135 @@ def test_cycle_cpa_invalid_receipt_is_typed_fail_closed() -> None:
     )
     assert unchanged == _srt(current)
     assert repairs == []
+
+
+def test_same_pass_competing_proposals_are_one_order_invariant_closed_set() -> None:
+    current = "现在落到"
+    selected = "谢谢"
+    competitor = "谢谢萝萝的"
+    srt = _srt_814(current, "先不说你数学了好吧")
+
+    def run(rows: list[dict]) -> tuple[list[dict], list[dict], list[str]]:
+        prompts: list[str] = []
+
+        def judge(prompt: str) -> str:
+            prompts.append(prompt)
+            return json.dumps(
+                {
+                    "choice_id": "TEXT_" + _sha(selected),
+                    "reason": "同轮互斥候选中，完整语境支持答谢词。",
+                },
+                ensure_ascii=False,
+            )
+
+        unresolved, resolved = converge_reconsidered_exact_final_findings(
+            srt,
+            rows,
+            authority_audit={},
+            judge_llm_call=judge,
+        )
+        return unresolved, resolved, prompts
+
+    finding_a = _finding(
+        cue_index=1,
+        start_ms=250,
+        end_ms=810,
+        current=current,
+        proposed=selected,
+        salt="same-pass-a",
+    )
+    finding_b = _finding(
+        cue_index=1,
+        start_ms=250,
+        end_ms=810,
+        current=current,
+        proposed=competitor,
+        salt="same-pass-b",
+    )
+
+    forward, forward_resolved, forward_prompts = run(
+        [deepcopy(finding_a), deepcopy(finding_b)]
+    )
+    reverse, reverse_resolved, reverse_prompts = run(
+        [deepcopy(finding_b), deepcopy(finding_a)]
+    )
+
+    assert len(forward_prompts) == len(reverse_prompts) == 1
+    assert forward_prompts == reverse_prompts
+    assert len(forward) == len(reverse) == 1
+    assert len(forward_resolved) == len(reverse_resolved) == 1
+    assert forward[0]["proposed_full_cue"] == selected
+    assert reverse[0]["proposed_full_cue"] == selected
+    forward_memo = forward[0]["exact_release_adjudication"][
+        "exact_final_cpa_cycle_memo"
+    ]
+    reverse_memo = reverse[0]["exact_release_adjudication"][
+        "exact_final_cpa_cycle_memo"
+    ]
+    assert forward_memo == reverse_memo
+    assert forward_memo["history_receipts"] == []
+
+
+def test_cycle_memo_reopens_when_same_audio_has_changed_witness_content() -> None:
+    current = "现在落到"
+    selected = "谢谢"
+    srt = _srt_814(current, "先不说你数学了好吧")
+    original = _finding(
+        cue_index=1,
+        start_ms=250,
+        end_ms=810,
+        current=current,
+        proposed=selected,
+        salt="same-audio",
+    )
+    original["exact_release_adjudication"]["verdict"].update(
+        target_audible=True,
+        heard_pinyin="xie xie",
+        confidence=0.92,
+        model="agy-audio-v1",
+        completion_sha256="sha256:" + _sha("heard-xie-xie"),
+    )
+    unresolved, _resolved = converge_reconsidered_exact_final_findings(
+        srt,
+        [original],
+        authority_audit=_authority_814(),
+        judge_llm_call=lambda _prompt: json.dumps(
+            {
+                "choice_id": "TEXT_" + _sha(selected),
+                "reason": "当前声学内容支持答谢词。",
+            },
+            ensure_ascii=False,
+        ),
+    )
+    repaired_srt, _repairs = _apply_exact_final_cpa_repairs(
+        srt,
+        {"findings": unresolved},
+    )
+    memos = rebind_exact_final_convergence_memos(
+        repaired_srt,
+        collect_exact_final_convergence_memos({"findings": unresolved}),
+    )
+
+    changed = _finding(
+        cue_index=1,
+        start_ms=250,
+        end_ms=810,
+        current=selected,
+        proposed=current,
+        salt="same-audio",
+    )
+    changed["exact_release_adjudication"]["verdict"].update(
+        target_audible=False,
+        heard_pinyin="luo luo da",
+        confidence=0.41,
+        model="agy-audio-v1",
+        completion_sha256="sha256:" + _sha("heard-luo-luo-da"),
+    )
+    pending, locked = resolve_findings_from_exact_final_convergence_memos(
+        repaired_srt,
+        [changed],
+        authority_audit={"exact_final_cpa_convergence_memos": memos},
+    )
+
+    assert pending == [changed]
+    assert locked == []

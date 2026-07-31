@@ -1078,6 +1078,80 @@ def test_exact_final_release_review_closes_acoustically_disproven_proposal(
     validate_final_review_release(receipt)
 
 
+def test_exact_final_memo_replay_runs_after_fresh_acoustic_witness(
+    monkeypatch,
+):
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    monkeypatch.setattr(
+        pipeline,
+        "_build_final_review_llm_call",
+        lambda: (lambda _prompt: _judge_json("PROPOSED")),
+    )
+    current = "这个是和天依的联动哦"
+    proposed = "这个是洛天依的联动哦"
+    finding = {
+        "cue_index": 1,
+        "kind": "entity",
+        "suspect": "和",
+        "suggestion": "洛",
+        "proposed_full_cue": proposed,
+        "repair_class": "source_backed_entity",
+        "base_text_sha256": hashlib.sha256(
+            current.encode("utf-8")
+        ).hexdigest(),
+        "why": "需要刷新声学内容后才能决定 memo 是否仍有效",
+    }
+    monkeypatch.setattr(
+        pipeline,
+        "audit_final_subtitles",
+        lambda *_args, **_kwargs: [finding],
+    )
+    verifier_calls: list[dict] = []
+
+    def observe(request):
+        verifier_calls.append(request)
+        return _witness_verdict(
+            request,
+            "zhe ge shi luo tian yi de lian dong o",
+        )
+
+    def assert_fresh_witness_then_replay(
+        _srt_text,
+        rows,
+        *,
+        authority_audit,
+    ):
+        del authority_audit
+        materialized = list(rows)
+        assert len(verifier_calls) == 1
+        assert materialized[0]["exact_release_adjudication"]["verdict"][
+            "heard_pinyin"
+        ] == "zhe ge shi luo tian yi de lian dong o"
+        return materialized, []
+
+    monkeypatch.setattr(
+        pipeline,
+        "resolve_findings_from_exact_final_convergence_memos",
+        assert_fresh_witness_then_replay,
+    )
+
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=_srt(current, "洛天依，对哦", "第三句"),
+        correction_audit=_correction_pass(),
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="",
+        clip_context={},
+        verify_confusable_entity=observe,
+        verified_authority_audit={
+            "exact_final_cpa_convergence_memos": []
+        },
+    )
+
+    assert len(verifier_calls) == 1
+    assert receipt["status"] == "FLAGGED"
+
+
 @pytest.mark.parametrize(
     (
         "current",

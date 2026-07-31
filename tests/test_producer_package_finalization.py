@@ -1,5 +1,6 @@
 import hashlib
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -1532,6 +1533,113 @@ def test_exact_final_review_gate_self_heals_cpa_authorized_finding(
     assert json.loads(
         baseline_audit_path.read_text(encoding="utf-8")
     )["exact_final_cpa_self_heal"]["status"] == "PASS"
+
+
+def test_exact_final_self_heal_registration_failure_rolls_back_all_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subtitle = tmp_path / "candidate.recut.srt"
+    original_srt = (
+        b"1\n00:00:00,000 --> 00:00:01,000\n"
+        b"original exact-final bytes\n"
+    )
+    subtitle.write_bytes(original_srt)
+    chat_path = tmp_path / "candidate.chat-authority.json"
+    review_path = tmp_path / "candidate.review-flags.json"
+    baseline_path = tmp_path / "candidate.redelivery-baseline.json"
+    original_chat_bytes = b'{"persisted":"chat-before"}\n'
+    original_review_bytes = b'{"persisted":"review-before"}\n'
+    original_baseline_bytes = b'{"persisted":"baseline-before"}\n'
+    chat_path.write_bytes(original_chat_bytes)
+    review_path.write_bytes(original_review_bytes)
+    baseline_path.write_bytes(original_baseline_bytes)
+    chat_authority_audit = {"sentinel": {"value": "chat-before"}}
+    baseline_audit = {"sentinel": {"value": "baseline-before"}}
+    expected_chat = deepcopy(chat_authority_audit)
+    expected_baseline = deepcopy(baseline_audit)
+    repaired_srt = original_srt.decode("utf-8").replace(
+        "original exact-final bytes",
+        "CPA repaired bytes",
+    )
+    repair = {
+        "before_sha256": "sha256:"
+        + hashlib.sha256(b"original exact-final bytes").hexdigest(),
+        "after_sha256": "sha256:"
+        + hashlib.sha256(b"CPA repaired bytes").hexdigest(),
+    }
+
+    def exact_review(text, *_args):
+        return {
+            "schema_version": "final-review-audit.v2",
+            "reviewed_srt_sha256": "sha256:"
+            + hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            "findings": [{"cue_index": 1}],
+        }
+
+    def unused(*_args, **_kwargs):
+        raise AssertionError("unrelated adapter called")
+
+    adapters = finalization.ProducerFinalizationAdapters(
+        accurate_recut_command=unused,
+        run_command=unused,
+        write_source_range_srt=unused,
+        apply_text_override_document=unused,
+        run_speaker_finalization=unused,
+        burn_preview_subtitles=unused,
+        stage_publish_draft=unused,
+        generate_upload_tags=unused,
+        delivery_root=unused,
+        run_exact_final_review=exact_review,
+    )
+    monkeypatch.setattr(
+        finalization,
+        "validate_final_review_release",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            finalization.FinalReviewContractError(
+                "FINAL_REVIEW_UNRESOLVED_FINDINGS"
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        finalization,
+        "_apply_exact_final_cpa_repairs",
+        lambda *_args, **_kwargs: (repaired_srt, [repair]),
+    )
+    monkeypatch.setattr(
+        finalization,
+        "_register_exact_final_cpa_repairs",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("registration failed")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="registration failed"):
+        finalization._run_exact_final_review_gate(
+            cid="candidate",
+            out_root=tmp_path,
+            final_start=0,
+            final_end=1_000,
+            recut=finalization.FinalRecutArtifacts(
+                recut_dir=tmp_path,
+                media_path=tmp_path / "candidate.recut.mp4",
+                subtitle_path=subtitle,
+                text_manifest_path=None,
+                text_manifest=None,
+                redelivery_baseline_audit_path=baseline_path,
+                redelivery_baseline_audit=baseline_audit,
+            ),
+            chat_authority_audit=chat_authority_audit,
+            chat_authority_path=chat_path,
+            adapters=adapters,
+        )
+
+    assert subtitle.read_bytes() == original_srt
+    assert chat_authority_audit == expected_chat
+    assert baseline_audit == expected_baseline
+    assert chat_path.read_bytes() == original_chat_bytes
+    assert review_path.read_bytes() == original_review_bytes
+    assert baseline_path.read_bytes() == original_baseline_bytes
 
 
 def test_exact_final_self_heal_uses_cpa_request_target_after_span_rejection():

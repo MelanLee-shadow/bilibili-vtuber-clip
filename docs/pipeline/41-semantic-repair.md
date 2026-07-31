@@ -171,11 +171,16 @@
   同一精确 cue/time window 在同轮自愈中出现 `A→B→A`、既往已被 CPA 替换的文本回流，
   或同轮多个互斥提案时，禁止继续逐 finding 独立二选一。流水线必须把当前文本、全部历史
   候选、完整已持久化修改收据及本轮全部 AGY/语义证据组成 hash-bound typed 闭集，一次交
-  CPA 选择明确候选；只有本轮存在合法 `acoustic_drop_cue` 收据时闭集才可含 `DROP`。
-  裁定 memo 绑定候选集、证据集、局部语境和精确时间窗；相同候选且没有新增 source/audio
-  evidence 时后续扫描必须锁定该文本，出现新候选或新证据才可重开。CPA 不可用、非闭集选择
+  CPA 选择明确候选；同轮互斥提案不要求先有历史修改收据，且 finding 输入顺序不得改变候选
+  集、证据 hash 或 CPA prompt。只有本轮存在合法 `acoustic_drop_cue` 收据时闭集才可含
+  `DROP`。裁定 memo 绑定候选集、证据集、局部语境和精确时间窗；memo replay 必须排在本轮
+  声学证人产出之后，并同时绑定 source/audio 身份与 `target_audible`、`heard_pinyin`、
+  confidence、provider/model completion 等实质见证内容。相同候选且没有新增或变化的证据时
+  后续扫描才可锁定该文本；音频 hash 相同但见证内容变化也必须重开 CPA。CPA 不可用、非闭集选择
   或坏回执一律写 typed BLOCK 并禁止原普通 adjudication 继续落字；不得多数表决，也不得用
-  临时 QC/clean 副本替代 active recut SRT 的发布门。
+  临时 QC/clean 副本替代 active recut SRT 的发布门。自愈修复必须先在 staged authority 上
+  完成 ledger registration，再原子安装 sidecar 与 active SRT；任一异常须把 active SRT、
+  chat authority、review flags、redelivery baseline 和内存 audit 全部恢复到该 pass 前状态。
   已有完整 exact-final CPA `PROPOSED` 闭集收据的 carryover 必须连同该收据持久化；
   下轮 exact gate 只在当前 cue 文本 SHA-256 唯一命中、起止毫秒与原请求完全相同
   时重放这份 CPA 决定，再必须跑一次 clean exact-final。文本或时间任一漂移就禁止重放，

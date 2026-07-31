@@ -1123,23 +1123,23 @@ def _run_exact_final_release_review(
             timeline_offset_ms=timeline_offset_ms,
         )
     )
-    memo_pending, memo_resolved = (
-        resolve_findings_from_exact_final_convergence_memos(
-            srt_text,
-            authority_pending,
-            authority_audit=verified_authority_audit or {},
-        )
-    )
     exact_judge_llm_call = _build_final_review_llm_call()
-    unresolved_findings, acoustic_resolved = (
+    acoustic_pending, acoustic_resolved = (
         adjudicate_exact_release_findings(
             srt_text,
-            memo_pending,
+            authority_pending,
             entity_verifier=verify_confusable_entity,
             clip_context=clip_context,
             source_media_timeline_offset_ms=timeline_offset_ms,
             judge_llm_call=exact_judge_llm_call,
             screen_read_probe=screen_read_probe,
+        )
+    )
+    unresolved_findings, memo_resolved = (
+        resolve_findings_from_exact_final_convergence_memos(
+            srt_text,
+            acoustic_pending,
+            authority_audit=verified_authority_audit or {},
         )
     )
     unresolved_findings, convergence_resolved = (
