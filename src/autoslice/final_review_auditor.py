@@ -1765,6 +1765,27 @@ def _rebuild_candidate_after_neither(
         return None, audit
     current = str(request.get("current_cue") or "")
     rejected = str(request.get("proposed_cue") or "")
+    original_repair_class = str(finding.get("repair_class") or "")
+    audible_acoustic_drop_rebuild = bool(
+        original_repair_class == "acoustic_drop_cue"
+        and rejected == ""
+        and witness.get("schema_version")
+        == "subtitle-span-acoustic-witness.v1"
+        and witness.get("status") == "OBSERVED"
+        and witness.get("target_audible") is True
+    )
+    audit.update(
+        original_repair_class=original_repair_class,
+        rejected_candidates=[current, rejected],
+    )
+    if (
+        original_repair_class == "acoustic_drop_cue"
+        and not audible_acoustic_drop_rebuild
+    ):
+        audit["reason_code"] = (
+            "PROPOSAL_REBUILD_ACOUSTIC_DROP_REQUIRES_AUDIBLE_TARGET"
+        )
+        return None, audit
     prompt = _PROPOSAL_REBUILD_PROMPT.format(
         witness=json.dumps(
             {
@@ -1840,7 +1861,7 @@ def _rebuild_candidate_after_neither(
         not isinstance(proposed, str)
         or proposed != proposed.strip()
         or not proposed
-        or proposed in {current, rejected}
+        or proposed in {"", current, rejected}
         or "\n" in proposed
         or "\r" in proposed
         or "-->" in proposed
@@ -1878,6 +1899,14 @@ def _rebuild_candidate_after_neither(
             f"[CPA 坏闭集重建] {reason or finding.get('why') or ''}"
         )[:240],
     )
+    if audible_acoustic_drop_rebuild:
+        # The empty proposal has been acoustically disproven.  The rebuilt
+        # non-empty candidate is an ordinary bounded spoken-unit candidate;
+        # it must never retain acoustic_drop_cue authority or an implicit
+        # right to delete the cue.
+        rebuilt["repair_class"] = "spoken_unit"
+        rebuilt["candidate_provenance"] = None
+        rebuilt["candidate_memory_id"] = None
     provenance = rebuilt.get("candidate_provenance")
     surface = (
         str(provenance.get("surface") or "").strip()
@@ -1897,6 +1926,7 @@ def _rebuild_candidate_after_neither(
         span_start_codepoint=start,
         span_end_codepoint=end,
         reason=reason,
+        rebuilt_repair_class=str(rebuilt.get("repair_class") or ""),
     )
     if cache_path is not None and not served_from_cache:
         try:
@@ -2444,9 +2474,17 @@ def adjudicate_context_finding(
                         orthography_equivalent = False
                         orthography_audit = {}
                         strict_tie = False
-        if (
-            policy_branch == "JUDGE_REJECTS_CLOSED_SET"
-            and initial_request_repair_class != "acoustic_drop_cue"
+        audible_acoustic_drop_neither = bool(
+            initial_request_repair_class == "acoustic_drop_cue"
+            and request.get("proposed_cue") == ""
+            and verdict.get("schema_version")
+            == "subtitle-span-acoustic-witness.v1"
+            and verdict.get("status") == "OBSERVED"
+            and verdict.get("target_audible") is True
+        )
+        if policy_branch == "JUDGE_REJECTS_CLOSED_SET" and (
+            initial_request_repair_class != "acoustic_drop_cue"
+            or audible_acoustic_drop_neither
         ):
             rebuilt_finding, proposal_rebuild_audit = (
                 _rebuild_candidate_after_neither(
@@ -2499,18 +2537,39 @@ def adjudicate_context_finding(
                         )
                         rebuilt_finding = None
                     else:
+                        geometry_payload = {
+                            key: witness_request.get(key)
+                            for key in witness_geometry_keys
+                        }
+                        geometry_sha256 = hashlib.sha256(
+                            json.dumps(
+                                geometry_payload,
+                                ensure_ascii=False,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ).encode("utf-8")
+                        ).hexdigest()
                         proposal_rebuild_audit["witness_reuse"] = {
                             "schema_version": (
                                 "candidate-free-witness-reuse.v1"
                             ),
                             "status": "PASS",
                             "basis": "IDENTICAL_AUDIO_GEOMETRY",
+                            "geometry_sha256": (
+                                "sha256:" + geometry_sha256
+                            ),
                             "original_witness_request_sha256": (
                                 "sha256:"
                                 + str(
                                     witness_request.get("request_sha256")
                                     or ""
                                 )
+                            ),
+                            "reused_witness_request_sha256": (
+                                "sha256:"
+                                + str(
+                                    verdict.get("request_sha256") or ""
+                                ).removeprefix("sha256:")
                             ),
                             "rebuilt_witness_request_sha256": (
                                 "sha256:"

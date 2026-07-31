@@ -2238,6 +2238,176 @@ def test_direct_drop_neither_is_not_reasked_as_the_same_empty_candidate():
     assert len(calls) == 1
 
 
+def test_audible_acoustic_drop_neither_rebuilds_nonempty_third_candidate():
+    """1411 regression: an audible cue cannot stay trapped in CURRENT/empty."""
+
+    source = _srt("草原，到这来吧", "小林你怎么被点了", "不知道")
+    witness_requests: list[dict] = []
+    calls: list[str] = []
+
+    def witness(request):
+        witness_requests.append(request)
+        return _witness(request, "xiao li ni zen me bei dian le", audible=True)
+
+    def cpa(prompt):
+        calls.append(prompt)
+        if "# 字幕坏闭集重建" in prompt:
+            assert "- REJECTED_PROPOSED: " in prompt
+            return json.dumps(
+                {
+                    "status": "PROPOSED",
+                    "proposed_cue": "小李你怎么被电了",
+                    "reason": "听写与弹幕语境支持非空第三候选",
+                },
+                ensure_ascii=False,
+            )
+        judge_count = len(
+            [row for row in calls if "# 字幕选字裁决" in row]
+        )
+        if judge_count == 1:
+            assert "<DROP_CUE: EMPTY SUBTITLE>" not in prompt
+            return json.dumps({"choice": "NEITHER", "reason": "现字幕与空删除均不成立"})
+        assert "repair_class=spoken_unit" in prompt
+        assert "小李你怎么被电了" in prompt
+        return json.dumps({"choice": "PROPOSED", "reason": "第三候选匹配"})
+
+    output, audit = adjudicate_context_finding(
+        source,
+        {
+            "cue_index": 2,
+            "suspect": "小林你怎么被点了",
+            "suggestion": "",
+            "span_start_codepoint": 0,
+            "span_end_codepoint": 8,
+            "proposed_full_cue": "",
+            "repair_class": "acoustic_drop_cue",
+            "why": "初审误以为整条是幻听",
+        },
+        entity_verifier=witness,
+        judge_llm_call=cpa,
+    )
+
+    assert "小李你怎么被电了" in output
+    assert "小林你怎么被点了" not in output
+    assert audit["repaired"] is True
+    assert audit["request"]["repair_class"] == "spoken_unit"
+    assert audit["request"]["proposed_cue"] == "小李你怎么被电了"
+    assert audit["rebuilt_finding"]["repair_class"] == "spoken_unit"
+    rebuild = audit["proposal_rebuild"]
+    assert rebuild["status"] == "PROPOSED"
+    assert rebuild["mutation_authorized"] is False
+    assert rebuild["original_repair_class"] == "acoustic_drop_cue"
+    assert rebuild["rebuilt_repair_class"] == "spoken_unit"
+    assert rebuild["rejected_candidates"] == ["小林你怎么被点了", ""]
+    assert len(witness_requests) == 1
+    assert len(calls) == 3
+    assert audit["verdict"]["request_sha256"] == witness_requests[0][
+        "request_sha256"
+    ]
+    reuse = rebuild["witness_reuse"]
+    assert reuse["basis"] == "IDENTICAL_AUDIO_GEOMETRY"
+    assert reuse["original_witness_request_sha256"] == (
+        "sha256:" + witness_requests[0]["request_sha256"]
+    )
+    assert reuse["reused_witness_request_sha256"] == (
+        "sha256:" + witness_requests[0]["request_sha256"]
+    )
+    assert reuse["rebuilt_witness_request_sha256"] != (
+        "sha256:" + witness_requests[0]["request_sha256"]
+    )
+    for key in (
+        "cue_indexes",
+        "matched_start_ms",
+        "matched_end_ms",
+        "context_start_ms",
+        "context_end_ms",
+        "source_media_timeline_offset_ms",
+    ):
+        assert audit["request"][key] == witness_requests[0][key]
+
+
+def test_audible_acoustic_drop_current_choice_does_not_rebuild():
+    source = _srt("咳咳")
+    calls: list[str] = []
+
+    def cpa(prompt):
+        calls.append(prompt)
+        if "# 字幕坏闭集重建" in prompt:
+            raise AssertionError("CURRENT terminates the audible closed set")
+        return json.dumps({"choice": "CURRENT"})
+
+    output, audit = adjudicate_context_finding(
+        source,
+        {
+            "cue_index": 1,
+            "suspect": "咳咳",
+            "suggestion": "",
+            "span_start_codepoint": 0,
+            "span_end_codepoint": 2,
+            "proposed_full_cue": "",
+            "repair_class": "acoustic_drop_cue",
+        },
+        entity_verifier=lambda request: _witness(
+            request, "ke ke", audible=True
+        ),
+        judge_llm_call=cpa,
+    )
+
+    assert output == source
+    assert audit["policy_branch"] == "JUDGE_KEEPS_CURRENT"
+    assert "proposal_rebuild" not in audit
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("current", "rejected", "rebuilt"),
+    (("原句", "", ""), ("原句", "", "原句"), ("原句", "旧提案", "旧提案")),
+)
+def test_proposal_rebuild_rejects_empty_current_and_rejected_candidates(
+    current, rejected, rebuilt
+):
+    from src.autoslice.final_review_auditor import (
+        _rebuild_candidate_after_neither,
+    )
+
+    finding = {
+        "cue_index": 1,
+        "repair_class": (
+            "acoustic_drop_cue" if rejected == "" else "phonetic"
+        ),
+    }
+    candidate, audit = _rebuild_candidate_after_neither(
+        finding=finding,
+        request={
+            "current_cue": current,
+            "proposed_cue": rejected,
+            "context_before": "",
+            "context_after": "",
+        },
+        witness={
+            "schema_version": "subtitle-span-acoustic-witness.v1",
+            "status": "OBSERVED",
+            "target_audible": True,
+            "heard_pinyin": "yuan ju",
+            "syllable_count": 2,
+            "uncertain_positions": [],
+            "confidence": 0.9,
+        },
+        llm_call=lambda _prompt: json.dumps(
+            {
+                "status": "PROPOSED",
+                "proposed_cue": rebuilt,
+                "reason": "test invalid candidate",
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    assert candidate is None
+    assert audit["status"] == "INVALID"
+    assert audit["reason_code"] == "PROPOSAL_REBUILD_TEXT_CONTRACT_INVALID"
+
+
 def test_glossary_near_homophone_uses_expected_value_canon():
     """未登记误听面→glossary 规范词走高收益零 CPA 通道。"""
     srt = _srt("只剩下核酸天下了", "第二句正常文本")
