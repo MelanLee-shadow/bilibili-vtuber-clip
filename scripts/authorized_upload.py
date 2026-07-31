@@ -45,6 +45,7 @@ from src.autoslice import publication_reconciliation  # noqa: E402
 from src.autoslice import publication_registry  # noqa: E402
 from src.autoslice import same_bv_repair as repair_binding  # noqa: E402
 from src.autoslice import same_bv_cover_repair as cover_repair_binding  # noqa: E402
+from src.autoslice import cover_only_audit_scope  # noqa: E402
 from src.autoslice import same_bv_live_verification  # noqa: E402
 from src.autoslice.subtitle_validation import validate_srt_file  # noqa: E402
 from src.autoslice.same_bv_repair import (  # noqa: E402
@@ -684,6 +685,12 @@ def _validate_v3_package_attestation(
                 problems.append(f"review_manifest {key} does not match the reviewed same-stem artifact")
         if review_item.get("title") != manifest.get("title"):
             problems.append("review_manifest title does not match the upload title")
+    problems.extend(
+        _cover_only_audit_scope_attestation_problems(
+            manifest,
+            review_item=review_item,
+        )
+    )
 
     record_path = entries.get("record", (Path(), {}))[0]
     subtitle_path = entries.get("subtitle", (Path(), {}))[0]
@@ -926,6 +933,137 @@ def _attach_title_cover_qc(
             return [f"title+cover joint-QC receipt missing: {receipt_path}"]
         attestation["title_cover_qc"] = _sha_entry(receipt_path)
     return []
+
+
+def _attach_cover_only_audit_scope(
+    manifest: dict,
+    review_manifest: dict,
+    video: Path,
+) -> list[str]:
+    """Freeze an explicitly declared cover-only audit bridge, if present."""
+
+    attestation = manifest.get("package_attestation")
+    if not isinstance(attestation, dict):
+        return ["manifest v3 has no package_attestation object"]
+    root = Path(str(attestation.get("package_root") or "")).resolve()
+    item = _find_review_item(review_manifest, root, video)
+    if item is None or item.get("cover_only_audit_scope") is None:
+        return []
+    scope_path = _resolved_manifest_item_path(
+        root, item.get("cover_only_audit_scope")
+    )
+    if scope_path is None or scope_path.is_symlink() or not scope_path.is_file():
+        return [f"cover-only audit scope missing or unsafe: {scope_path}"]
+    try:
+        scope_path.relative_to(root)
+    except ValueError:
+        return ["cover-only audit scope escapes the reviewed package root"]
+    attestation["cover_only_audit_scope"] = _sha_entry(scope_path)
+    return []
+
+
+def _cover_only_audit_scope_attestation_problems(
+    manifest: dict,
+    *,
+    review_item: dict | None,
+) -> list[str]:
+    """Replay the narrow bridge and bind it to upload metadata/authorization."""
+
+    problems: list[str] = []
+    attestation = manifest.get("package_attestation")
+    if not isinstance(attestation, dict):
+        return ["manifest v3 has no package_attestation object"]
+    entry = attestation.get("cover_only_audit_scope")
+    item_declares = bool(
+        isinstance(review_item, dict)
+        and review_item.get("cover_only_audit_scope") is not None
+    )
+    if entry is None and not item_declares:
+        return []
+    if not isinstance(entry, dict) or not item_declares:
+        return [
+            "package_attestation.cover_only_audit_scope and review item must "
+            "be declared together"
+        ]
+    root = Path(str(attestation.get("package_root") or "")).resolve()
+    path = Path(str(entry.get("path") or ""))
+    if path.is_symlink() or not path.is_absolute() or not path.is_file():
+        return [f"package_attestation.cover_only_audit_scope missing: {path}"]
+    try:
+        path.resolve().relative_to(root)
+    except ValueError:
+        problems.append("cover-only audit scope escapes package root")
+    actual_sha = sha256_file(path)
+    if entry.get("sha256") != actual_sha:
+        problems.append(
+            "package_attestation.cover_only_audit_scope HASH DRIFT: "
+            f"manifest={str(entry.get('sha256'))[:12]} "
+            f"actual={actual_sha[:12]} ({path})"
+        )
+    if entry.get("bytes") != path.stat().st_size:
+        problems.append(
+            "package_attestation.cover_only_audit_scope byte-size drift"
+        )
+    expected_path = _resolved_manifest_item_path(
+        root, review_item.get("cover_only_audit_scope")
+    )
+    if expected_path != path.resolve():
+        problems.append(
+            "package_attestation.cover_only_audit_scope differs from review item"
+        )
+    scope_problems: list[str] = []
+    scope = _load_json_object(path, "cover-only audit scope", scope_problems)
+    problems.extend(scope_problems)
+    if scope:
+        try:
+            normalized = cover_only_audit_scope.validate_scope(
+                scope,
+                package_root=root,
+                item=review_item,
+            )
+        except cover_only_audit_scope.CoverOnlyAuditScopeError as exc:
+            problems.append(f"cover-only audit scope rejected: {exc}")
+        else:
+            scope_auth = normalized.get("authorization") or {}
+            manifest_auth = manifest.get("authorization") or {}
+            if scope_auth != {
+                "by": manifest_auth.get("by"),
+                "quote": manifest_auth.get("quote"),
+            }:
+                problems.append(
+                    "cover-only audit scope authorization differs from manifest"
+                )
+            frozen = normalized.get("frozen_noncover") or {}
+            if (
+                frozen.get("title") != manifest.get("title")
+                or frozen.get("description") != manifest.get("description")
+                or frozen.get("tags") != manifest.get("tags")
+                or frozen.get("publish_policy")
+                != manifest.get("publish_policy")
+            ):
+                problems.append(
+                    "cover-only audit scope frozen metadata differs from manifest"
+                )
+            scope_video = frozen.get("video") or {}
+            manifest_video = manifest.get("video") or {}
+            current_package = normalized.get("current_package") or {}
+            scope_cover = current_package.get("cover") or {}
+            manifest_cover = manifest.get("cover") or {}
+            if any(
+                scope_video.get(key) != manifest_video.get(key)
+                for key in ("sha256", "bytes")
+            ):
+                problems.append(
+                    "cover-only audit scope video differs from manifest"
+                )
+            if any(
+                scope_cover.get(key) != manifest_cover.get(key)
+                for key in ("sha256", "bytes")
+            ):
+                problems.append(
+                    "cover-only audit scope cover differs from manifest"
+                )
+    return problems
 
 
 def validate_tags(tags: list[str]) -> list[str]:
@@ -1771,6 +1909,17 @@ def make_manifest(args: argparse.Namespace) -> int:
         "tags_source": tags_source,
     }
     package_problems = repair_binding.attach_package_recovery_publication_authority(manifest, record, review_manifest, video)
+    review_payload = _load_json_object(
+        review_manifest, "review manifest", package_problems
+    )
+    if review_payload:
+        package_problems.extend(
+            _attach_cover_only_audit_scope(
+                manifest,
+                review_payload,
+                video,
+            )
+        )
     package_problems.extend(human_review.attach_final_human_review(manifest, args.final_human_review, season_ids=EXPECTED_SEASON_IDS))
     package_problems.extend(
         _attach_title_cover_qc(manifest, args.title_cover_qc)

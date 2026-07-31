@@ -201,6 +201,105 @@ def _manifest_noncover_metadata(
     return target
 
 
+def _cover_only_scope_binding_problems(
+    manifest: Mapping[str, Any],
+    *,
+    predecessor_completed_path: Path | None,
+) -> list[str]:
+    """Bind an optional audit bridge to this exact cover transaction."""
+
+    problems: list[str] = []
+    package_attestation = manifest.get("package_attestation")
+    entry = (
+        package_attestation.get("cover_only_audit_scope")
+        if isinstance(package_attestation, Mapping)
+        else None
+    )
+    if entry is None:
+        return problems
+    if not isinstance(entry, Mapping):
+        return ["cover-only audit scope package attestation is invalid"]
+    if predecessor_completed_path is None:
+        return [
+            "cover-only audit scope requires the same explicit predecessor "
+            "completed sidecar"
+        ]
+    scope_path = Path(str(entry.get("path") or ""))
+    if scope_path.is_symlink() or not scope_path.is_absolute() or not scope_path.is_file():
+        return ["cover-only audit scope file is missing or unsafe"]
+    if repair.sha256_file(scope_path) != entry.get("sha256"):
+        problems.append("cover-only audit scope hash drift")
+    if scope_path.stat().st_size != entry.get("bytes"):
+        problems.append("cover-only audit scope byte-size drift")
+    try:
+        scope = _load_json(scope_path, "cover-only audit scope")
+    except CoverPlanInvalid as exc:
+        return [str(exc)]
+    predecessor = scope.get("predecessor")
+    completed = (
+        predecessor.get("completed")
+        if isinstance(predecessor, Mapping)
+        else None
+    )
+    predecessor_path = predecessor_completed_path.resolve()
+    if (
+        not isinstance(completed, Mapping)
+        or completed.get("path") != str(predecessor_path)
+        or completed.get("sha256") != repair.sha256_file(predecessor_path)
+        or completed.get("bytes") != predecessor_path.stat().st_size
+    ):
+        problems.append(
+            "cover-only audit scope predecessor differs from repair predecessor"
+        )
+    scope_authorization = scope.get("authorization")
+    manifest_authorization = manifest.get("authorization") or {}
+    if scope_authorization != {
+        "by": manifest_authorization.get("by"),
+        "quote": manifest_authorization.get("quote"),
+    }:
+        problems.append("cover-only audit scope authorization drifted")
+    publication = scope.get("publication_target")
+    authority = manifest.get("recovery_publication_authority") or {}
+    if (
+        not isinstance(publication, Mapping)
+        or publication.get("bvid") != authority.get("bvid")
+        or publication.get("aid") != authority.get("aid")
+        or publication.get("original_cid") != authority.get("cid")
+        or publication.get("authority_sha256")
+        != authority.get("authority_sha256")
+    ):
+        problems.append("cover-only audit scope publication target drifted")
+    frozen = scope.get("frozen_noncover")
+    scope_metadata = (
+        {
+            "title": frozen.get("title"),
+            "desc": frozen.get("description"),
+            "tags": frozen.get("tags"),
+            **dict(frozen.get("publish_policy") or {}),
+        }
+        if isinstance(frozen, Mapping)
+        else None
+    )
+    if scope_metadata != _manifest_noncover_metadata(manifest):
+        problems.append("cover-only audit scope frozen metadata drifted")
+    scope_video = frozen.get("video") if isinstance(frozen, Mapping) else None
+    manifest_video = manifest.get("video") or {}
+    if not isinstance(scope_video, Mapping) or any(
+        scope_video.get(key) != manifest_video.get(key)
+        for key in ("sha256", "bytes")
+    ):
+        problems.append("cover-only audit scope video binding drifted")
+    current = scope.get("current_package")
+    scope_cover = current.get("cover") if isinstance(current, Mapping) else None
+    manifest_cover = manifest.get("cover") or {}
+    if not isinstance(scope_cover, Mapping) or any(
+        scope_cover.get(key) != manifest_cover.get(key)
+        for key in ("sha256", "bytes")
+    ):
+        problems.append("cover-only audit scope cover binding drifted")
+    return list(dict.fromkeys(problems))
+
+
 def _snapshot_plan_problems(
     snapshot: Mapping[str, Any],
     *,
@@ -381,15 +480,21 @@ def create_plan(
             snapshot=snapshot,
         )
         expected_cid = predecessor_completion.get("new_cid")
+    problems = _cover_only_scope_binding_problems(
+        manifest,
+        predecessor_completed_path=predecessor_completed_path,
+    )
     if not isinstance(expected_cid, int) or isinstance(expected_cid, bool):
         raise CoverPlanInvalid("cover-only repair predecessor CID is invalid")
-    problems = _snapshot_plan_problems(
-        snapshot,
-        bvid=bvid,
-        authority=authority,
-        target_metadata=target_metadata,
-        section_id=section_id,
-        expected_cid=expected_cid,
+    problems.extend(
+        _snapshot_plan_problems(
+            snapshot,
+            bvid=bvid,
+            authority=authority,
+            target_metadata=target_metadata,
+            section_id=section_id,
+            expected_cid=expected_cid,
+        )
     )
     cover = manifest.get("cover") or {}
     cover_path = Path(str(cover.get("path") or ""))
@@ -525,6 +630,19 @@ def validate_plan(
                 if predecessor != replayed_predecessor:
                     problems.append("cover repair predecessor binding drifted")
                 expected_cid = replayed_predecessor.get("new_cid")
+    scope_predecessor_path = None
+    if isinstance(predecessor, Mapping):
+        completed_entry = predecessor.get("completed")
+        if isinstance(completed_entry, Mapping):
+            scope_predecessor_path = Path(
+                str(completed_entry.get("path") or "")
+            )
+    problems.extend(
+        _cover_only_scope_binding_problems(
+            manifest,
+            predecessor_completed_path=scope_predecessor_path,
+        )
+    )
     if plan.get("unchanged_cid") != expected_cid:
         problems.append("cover repair unchanged CID differs from proven predecessor")
     if authority and isinstance(season.get("section_id"), int):

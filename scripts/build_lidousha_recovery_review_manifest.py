@@ -25,6 +25,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.autoslice.cover_route_evidence import validate_cover_route_decision
+from src.autoslice.cover_only_audit_scope import (
+    CoverOnlyAuditScopeError,
+    validate_scope as validate_cover_only_audit_scope,
+)
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
     validate_recovery_publication_authority,
@@ -399,6 +403,7 @@ def build_manifest(
     state: dict[str, Any],
     deployed_commit: str,
     release_scope: list[str] | None = None,
+    cover_only_audit_scopes: list[Path] | None = None,
     created_at: str | None = None,
 ) -> dict[str, Any]:
     package_root = package_root.resolve()
@@ -434,6 +439,34 @@ def build_manifest(
     normalized_publication_authorities = _normalized_release_authorities(
         state, candidate_ids, release_scope
     )
+    scope_payloads: dict[str, tuple[Path, dict[str, Any]]] = {}
+    for raw_scope_path in cover_only_audit_scopes or []:
+        if raw_scope_path.is_symlink():
+            raise ManifestBuildError(
+                f"cover-only audit scope may not be a symlink: {raw_scope_path}"
+            )
+        scope_path = raw_scope_path.resolve()
+        try:
+            scope_path.relative_to(package_root)
+        except ValueError as exc:
+            raise ManifestBuildError(
+                f"cover-only audit scope must be inside package root: {scope_path}"
+            ) from exc
+        if not scope_path.is_file() or scope_path.is_symlink():
+            raise ManifestBuildError(
+                f"cover-only audit scope missing or unsafe: {scope_path}"
+            )
+        payload = _load_json(scope_path)
+        scope_candidate = str(payload.get("candidate_id") or "")
+        if (
+            scope_candidate not in set(release_scope or candidate_ids)
+            or scope_candidate in scope_payloads
+        ):
+            raise ManifestBuildError(
+                "cover-only audit scope candidate is unknown or duplicated: "
+                f"{scope_candidate!r}"
+            )
+        scope_payloads[scope_candidate] = (scope_path, payload)
     picks = state.get("picks")
     if not isinstance(picks, list):
         raise ManifestBuildError("state picks missing")
@@ -652,6 +685,22 @@ def build_manifest(
         item["redelivery_baseline_status"] = baseline_status
         if baseline is not None:
             item["redelivery_baseline"] = baseline.name
+        scope_entry = scope_payloads.get(candidate_id)
+        if scope_entry is not None:
+            scope_path, scope_payload = scope_entry
+            item["cover_only_audit_scope"] = scope_path.relative_to(
+                package_root
+            ).as_posix()
+            try:
+                validate_cover_only_audit_scope(
+                    scope_payload,
+                    package_root=package_root,
+                    item=item,
+                )
+            except CoverOnlyAuditScopeError as exc:
+                raise ManifestBuildError(
+                    f"cover-only audit scope invalid: {candidate_id}: {exc}"
+                ) from exc
         items.append(item)
         attestations.append(
             {
@@ -702,6 +751,15 @@ def build_manifest(
         ),
         "counts": {"items": len(items), "talk": len(items), "song": 0},
         "cover_route_attestations": attestations,
+        **(
+            {
+                "cover_only_audit_scope_candidate_ids": sorted(
+                    scope_payloads
+                )
+            }
+            if scope_payloads
+            else {}
+        ),
         "items": items,
     }
 
@@ -730,6 +788,16 @@ def main() -> int:
         default=None,
         help="per-BV partial release scope (repeatable; Ivan 2026-07-26 ruling)",
     )
+    parser.add_argument(
+        "--cover-only-audit-scope",
+        action="append",
+        type=Path,
+        default=None,
+        help=(
+            "explicit predecessor-bound cover-only audit scope inside the "
+            "package (repeatable)"
+        ),
+    )
     args = parser.parse_args()
     try:
         state = _load_json(args.state)
@@ -739,6 +807,7 @@ def main() -> int:
             state=state,
             deployed_commit=commit,
             release_scope=args.release_candidate,
+            cover_only_audit_scopes=args.cover_only_audit_scope,
         )
         output = args.out or args.package_root / "review_manifest.json"
         write_manifest(output, manifest)

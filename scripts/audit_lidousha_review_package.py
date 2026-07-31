@@ -23,6 +23,10 @@ from src.autoslice.cover_generation import (  # noqa: E402
 from src.autoslice.cover_punch_semantics import (  # noqa: E402
     talk_cover_thumbnail_gate_violations,
 )
+from src.autoslice.cover_only_audit_scope import (  # noqa: E402
+    CoverOnlyAuditScopeError,
+    validate_scope as validate_cover_only_audit_scope,
+)
 from src.autoslice.cover_route_evidence import (  # noqa: E402
     validate_cover_route_decision,
     validate_rendered_text_pixel_evidence,
@@ -248,6 +252,7 @@ def _audit_policy_fingerprint() -> str:
         ROOT / "src/autoslice/title_policy.py",
         ROOT / "src/autoslice/selection_scorecard.py",
         ROOT / "src/autoslice/source_fact_review.py",
+        ROOT / "src/autoslice/cover_only_audit_scope.py",
         ROOT / "src/autoslice/cover_route_evidence.py",
         ROOT / "src/autoslice/cover_punch_semantics.py",
         ROOT / "src/autoslice/cover_text_pixel_evidence.py",
@@ -1204,14 +1209,50 @@ def _audit_item_story_contract(
             publish_staging.get("source_fact_review"),
             publish_document.get("source_fact_review"),
         ]
-        if any(not isinstance(value, dict) for value in source_fact_receipts):
+        scope_reused = False
+        if all(value is None for value in source_fact_receipts):
+            raw_scope = item.get("cover_only_audit_scope")
+            scope_path = _resolve(root, raw_scope)
+            scope_payload = (
+                _load_json(scope_path)
+                if scope_path is not None and scope_path.is_file()
+                else {}
+            )
+            if raw_scope is not None:
+                try:
+                    if not scope_payload:
+                        raise CoverOnlyAuditScopeError(
+                            "cover-only audit scope is missing or unreadable"
+                        )
+                    validate_cover_only_audit_scope(
+                        scope_payload,
+                        package_root=root,
+                        item=item,
+                    )
+                except CoverOnlyAuditScopeError as exc:
+                    _add_issue(
+                        issues,
+                        "COVER_ONLY_AUDIT_SCOPE_INVALID",
+                        stem=stem,
+                        path=scope_path or record_path,
+                        detail=str(exc),
+                    )
+                else:
+                    scope_reused = True
+        if (
+            not scope_reused
+            and any(
+                not isinstance(value, dict)
+                for value in source_fact_receipts
+            )
+        ):
             _add_issue(
                 issues,
                 "SOURCE_FACT_REVIEW_MISSING",
                 stem=stem,
                 path=publish_path or record_path,
             )
-        elif not (
+        elif not scope_reused and not (
             source_fact_receipts[0]
             == source_fact_receipts[1]
             == source_fact_receipts[2]
@@ -1222,7 +1263,7 @@ def _audit_item_story_contract(
                 stem=stem,
                 path=publish_path or record_path,
             )
-        elif not validate_source_fact_review(
+        elif not scope_reused and not validate_source_fact_review(
             source_fact_receipts[0],
             selection_hook=str(
                 story_contract.get("selection_hook") or ""
@@ -1242,7 +1283,7 @@ def _audit_item_story_contract(
                 stem=stem,
                 path=publish_path or record_path,
             )
-        else:
+        elif not scope_reused:
             declared_receipt_sha256 = manifest.get(
                 "source_fact_review_sha256"
             )
@@ -1656,6 +1697,30 @@ def audit_package(root: str | Path) -> dict[str, Any]:
     if not isinstance(items, list):
         _add_issue(issues, "MANIFEST_ITEMS_MISSING", path=manifest_path)
         items = []
+    item_scope_candidates = sorted(
+        str(item.get("candidate_id") or "")
+        for item in items
+        if isinstance(item, dict) and item.get("cover_only_audit_scope")
+    )
+    declared_scope_candidates = manifest.get(
+        "cover_only_audit_scope_candidate_ids"
+    )
+    if item_scope_candidates or declared_scope_candidates is not None:
+        if (
+            not isinstance(declared_scope_candidates, list)
+            or declared_scope_candidates != item_scope_candidates
+            or len(declared_scope_candidates)
+            != len(set(declared_scope_candidates))
+        ):
+            _add_issue(
+                issues,
+                "MANIFEST_COVER_ONLY_AUDIT_SCOPE_SET_MISMATCH",
+                path=manifest_path,
+                detail=(
+                    f"declared={declared_scope_candidates!r}; "
+                    f"items={item_scope_candidates!r}"
+                ),
+            )
     (
         recovery_publication_authorities,
         publication_contract_required,
