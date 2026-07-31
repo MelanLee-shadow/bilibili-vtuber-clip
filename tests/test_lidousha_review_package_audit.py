@@ -1539,6 +1539,66 @@ def test_audit_blocks_song_package_without_lyric_alignment_ai_cover_and_title_sy
     assert "SUBTITLE_LONG_STATIC_CUE" in codes
 
 
+def test_current_song_bypasses_talk_only_chat_authority_gate(
+    tmp_path: Path,
+):
+    root = tmp_path / "song"
+    root.mkdir()
+    (root / "review_manifest.json").write_text(
+        json.dumps(
+            {
+                "date": "2026-07-25",
+                "story_contract_required": True,
+                "run_mode": "PRODUCTION_REVIEW",
+                "upload_allowed": False,
+                "items": [
+                    {
+                        "stem": "song-without-chat-authority",
+                        "classification": "Song",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = audit_package(root)
+
+    assert "CHAT_AUTHORITY_AUDIT_MISSING_OR_INVALID" not in {
+        issue["code"] for issue in result["issues"]
+    }
+
+
+def test_current_talk_still_requires_chat_authority(
+    tmp_path: Path,
+):
+    root = tmp_path / "talk"
+    root.mkdir()
+    (root / "review_manifest.json").write_text(
+        json.dumps(
+            {
+                "date": "2026-07-25",
+                "story_contract_required": True,
+                "run_mode": "PRODUCTION_REVIEW",
+                "upload_allowed": False,
+                "items": [
+                    {
+                        "stem": "talk-without-chat-authority",
+                        "classification": "Talk",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = audit_package(root)
+
+    assert "CHAT_AUTHORITY_AUDIT_MISSING_OR_INVALID" in {
+        issue["code"] for issue in result["issues"]
+    }
+
+
 def test_audit_flags_ass_visual_line_count_and_length(tmp_path: Path):
     root = tmp_path / "pkg"
     stem = "138s_semantic_22966160_2026-06-29-22-35-01"

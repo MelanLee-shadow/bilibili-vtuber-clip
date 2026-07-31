@@ -1751,7 +1751,7 @@ def audit_package(root: str | Path) -> dict[str, Any]:
                 path=ass_issue.path,
                 detail=ass_issue.detail,
             )
-        if story_contract_required and (
+        if story_contract_required and not is_song and (
             chat_authority_path is None
             or not chat_authority_path.is_file()
             or not chat_authority
