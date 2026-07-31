@@ -1,0 +1,205 @@
+{
+  "counts": {
+    "items": 1,
+    "song": 0,
+    "talk": 1
+  },
+  "cover_route_attestations": [
+    {
+      "candidate_id": "auto_142942_496_618",
+      "final_cover_sha256": "sha256:2f34fbc1bc28e2503e10f48b488c04ad9afac670b2a4a1ec29277e69d862d9ff",
+      "method": "images.edit",
+      "reference_authority": null,
+      "reference_sha256": "sha256:3cc3fed55cf0a001a0fed536c57d7cbc2d1a66475c2e74fd24e287f3221218e0",
+      "route_decision": {
+        "actual_treatment": "cpa_redraw",
+        "alternatives": [
+          {
+            "rationale": "the selected source frame is strong enough to preserve as the final visual without image generation",
+            "rejected_reason": "the source-frame evidence is not strong or verified enough to ship without image generation; selected evidence: motion without confident cover subject (score=4.60)",
+            "status": "REJECTED",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rationale": "the real source moment is usable but benefits from a bounded identity-preserving cleanup",
+            "rejected_reason": "bounded cleanup cannot repair the missing subject confidence, weak composition, or inability to express the hook; selected evidence: motion without confident cover subject (score=4.60)",
+            "status": "REJECTED",
+            "treatment": "screenshot_polish"
+          },
+          {
+            "rationale": "motion without confident cover subject (score=4.60)",
+            "rejected_reason": null,
+            "status": "SELECTED",
+            "treatment": "cpa_redraw"
+          }
+        ],
+        "alternatives_considered": [
+          "screenshot_direct",
+          "screenshot_polish",
+          "cpa_redraw"
+        ],
+        "cover_mode": "auto",
+        "execution_status": "READY",
+        "final_visibility_authority": "NOT_REQUIRED",
+        "final_visible_participant_ids": [],
+        "frame_emotion": 0.0,
+        "frame_score": 4.5993,
+        "host_identity_required": true,
+        "image_generation_attempted": true,
+        "image_generation_planned": true,
+        "image_generation_used": true,
+        "is_song": false,
+        "manual_title_or_full_text_contract": false,
+        "motion_dispersion_frac": 0.5,
+        "reason": "motion without confident cover subject (score=4.60)",
+        "reference_authority_id": null,
+        "rejected_alternatives": [
+          {
+            "rejected_reason": "the source-frame evidence is not strong or verified enough to ship without image generation; selected evidence: motion without confident cover subject (score=4.60)",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rejected_reason": "bounded cleanup cannot repair the missing subject confidence, weak composition, or inability to express the hook; selected evidence: motion without confident cover subject (score=4.60)",
+            "treatment": "screenshot_polish"
+          }
+        ],
+        "relationship_semantic_evidence": [],
+        "relationship_visual_required": false,
+        "relationship_visual_safety_evidence": {
+          "relation_state": "UNKNOWN",
+          "required_participant_ids": [],
+          "requirement_basis": [],
+          "schema_version": "lidousha-cover-relationship-visual-safety.v1",
+          "status": "NOT_REQUIRED"
+        },
+        "required_participant_ids": [],
+        "schema_version": "lidousha-cover-route-decision.v2",
+        "selected_rationale": "motion without confident cover subject (score=4.60)",
+        "selected_treatment": "cpa_redraw",
+        "selection_policy": "lidousha-cover-treatment-router.v2",
+        "source_visibility_authority": "NO_IDENTITY_AUTHORITY",
+        "source_visible_participant_ids": [],
+        "subject_confident": false,
+        "verified_stream_frame": false
+      },
+      "stem": "一声“偶”让李豆沙当场开起日语人称翻"
+    }
+  ],
+  "created_at": "2026-07-30T23:44:10.603898+00:00",
+  "date": "2026-07-26",
+  "deployed_commit": "bff2707a536c2808f3450c847aa363d0621d89a7",
+  "exact_candidate_ids": [
+    "auto_142942_496_618"
+  ],
+  "generated_by": "build_lidousha_recovery_review_manifest.v1",
+  "items": [
+    {
+      "ass_path": "一声“偶”让李豆沙当场开起日语人称翻.final-sapphire72.ass",
+      "ass_sha256": "sha256:d6482404dde1d72fc655ebd08d11d76f99a7492ed4b0f1b5dd4df229c2ea1005",
+      "candidate_id": "auto_142942_496_618",
+      "chat_authority": "一声“偶”让李豆沙当场开起日语人称翻.chat-authority.json",
+      "clip_context": "一声“偶”让李豆沙当场开起日语人称翻.clip-context.json",
+      "cover": "一声“偶”让李豆沙当场开起日语人称翻.cover.png",
+      "cover_pre_overlay": "一声“偶”让李豆沙当场开起日语人称翻.cover.pre-overlay.png",
+      "cover_route_background": "一声“偶”让李豆沙当场开起日语人称翻.cover.route-background.png",
+      "cover_route_summary": {
+        "actual_treatment": "cpa_redraw",
+        "execution_status": "READY",
+        "final_visible_participant_ids": [],
+        "image_generation_attempted": true,
+        "image_generation_planned": true,
+        "image_generation_used": true,
+        "rejected_alternatives": [
+          {
+            "rejected_reason": "the source-frame evidence is not strong or verified enough to ship without image generation; selected evidence: motion without confident cover subject (score=4.60)",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rejected_reason": "bounded cleanup cannot repair the missing subject confidence, weak composition, or inability to express the hook; selected evidence: motion without confident cover subject (score=4.60)",
+            "treatment": "screenshot_polish"
+          }
+        ],
+        "schema_version": "lidousha-cover-route-decision.v2",
+        "selected_rationale": "motion without confident cover subject (score=4.60)",
+        "selected_treatment": "cpa_redraw",
+        "source_visible_participant_ids": []
+      },
+      "cover_title_mask": "一声“偶”让李豆沙当场开起日语人称翻.cover.title-mask.png",
+      "mp4": "一声“偶”让李豆沙当场开起日语人称翻.mp4",
+      "publish_json": "一声“偶”让李豆沙当场开起日语人称翻.publish.json",
+      "record": "一声“偶”让李豆沙当场开起日语人称翻.record.json",
+      "recovery_publication_authority": {
+        "aid": 117010478405297,
+        "authority_sha256": "sha256:d03f152880750dba61f75af5fbc9d37d929524f0165cebe7fc0223e91eed84ee",
+        "boundary_end_mode": "exact_source_pin",
+        "bvid": "BV1zk386LEjC",
+        "candidate_id": "auto_142942_496_618",
+        "cid": 40453148097,
+        "observed_public_title": "【李豆沙】一声“偶”让小李开起日语人称翻译大会",
+        "registry_authority": "Ivan 2026-07-29: the published clip auto_142942_496_618 has two reported defects: the cover lacks Li Dousha as the clear subject, and known Japanese speech mixes kana with romaji. Repair the cover in place, rerun the whole clip once with the latest pipeline, write confirmed ordinary Japanese lexemes in native Japanese script instead of romaji, and upload the repaired result to the existing BV without creating a replacement BV. Preserve the verified public title and the complete previously published clip. The hash-bound reviewed subtitle baseline for the same source covers 496370-627010ms; 627010ms is therefore the exact recovery source endpoint, not the shorter 618420ms selection recall anchor.",
+        "registry_repo_path": "assets/lidousha/recovery_publication_authority_2026-07-30_japanese_pronoun.v1.json",
+        "registry_schema_version": "lidousha-recovery-publication-authority.v1",
+        "registry_sha256": "sha256:9bdebfc3edbeae04bb06152355976c4588237aeb1de9afa6c4cc161d85634efe",
+        "required_given_end_ms": 627010,
+        "schema_version": "recovery-same-bv-publication-authority.v1",
+        "source_kind": "committed_verified_publication_registry",
+        "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-26-japanese-pronoun-source/auto_142942_496_618.public_verify.json",
+        "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+        "source_public_verify_sha256": "sha256:cc752ec6281bfbb564196eb605e44541eb61810453e747a17479a2121c361fac",
+        "source_public_verify_status": "VERIFIED_PUBLIC",
+        "title_mode": "verified_public_exact"
+      },
+      "redelivery_baseline": "一声“偶”让李豆沙当场开起日语人称翻.redelivery-baseline.json",
+      "redelivery_baseline_status": "CONFIGURED",
+      "speaker_srt": "一声“偶”让李豆沙当场开起日语人称翻.srt",
+      "speaker_srt_sha256": "sha256:34dbb888e1bff78d2832c57360418ec9c890575aaf0d78c93ac0d74882a8d4cc",
+      "stem": "一声“偶”让李豆沙当场开起日语人称翻",
+      "subtitle_regression_status": "NOT_CONFIGURED",
+      "subtitle_srt": "一声“偶”让李豆沙当场开起日语人称翻.srt",
+      "title": "【李豆沙】一声“偶”让小李开起日语人称翻译大会",
+      "video": "一声“偶”让李豆沙当场开起日语人称翻.mp4"
+    }
+  ],
+  "recovery_publication_authorities_by_candidate": {
+    "auto_142942_496_618": {
+      "aid": 117010478405297,
+      "authority_sha256": "sha256:d03f152880750dba61f75af5fbc9d37d929524f0165cebe7fc0223e91eed84ee",
+      "boundary_end_mode": "exact_source_pin",
+      "bvid": "BV1zk386LEjC",
+      "candidate_id": "auto_142942_496_618",
+      "cid": 40453148097,
+      "observed_public_title": "【李豆沙】一声“偶”让小李开起日语人称翻译大会",
+      "registry_authority": "Ivan 2026-07-29: the published clip auto_142942_496_618 has two reported defects: the cover lacks Li Dousha as the clear subject, and known Japanese speech mixes kana with romaji. Repair the cover in place, rerun the whole clip once with the latest pipeline, write confirmed ordinary Japanese lexemes in native Japanese script instead of romaji, and upload the repaired result to the existing BV without creating a replacement BV. Preserve the verified public title and the complete previously published clip. The hash-bound reviewed subtitle baseline for the same source covers 496370-627010ms; 627010ms is therefore the exact recovery source endpoint, not the shorter 618420ms selection recall anchor.",
+      "registry_repo_path": "assets/lidousha/recovery_publication_authority_2026-07-30_japanese_pronoun.v1.json",
+      "registry_schema_version": "lidousha-recovery-publication-authority.v1",
+      "registry_sha256": "sha256:9bdebfc3edbeae04bb06152355976c4588237aeb1de9afa6c4cc161d85634efe",
+      "required_given_end_ms": 627010,
+      "schema_version": "recovery-same-bv-publication-authority.v1",
+      "source_kind": "committed_verified_publication_registry",
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-26-japanese-pronoun-source/auto_142942_496_618.public_verify.json",
+      "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+      "source_public_verify_sha256": "sha256:cc752ec6281bfbb564196eb605e44541eb61810453e747a17479a2121c361fac",
+      "source_public_verify_status": "VERIFIED_PUBLIC",
+      "title_mode": "verified_public_exact"
+    }
+  },
+  "run_mode": "RECOVERY_REVIEW",
+  "schema_version": "lidousha-review-package.v1",
+  "selection_contract": {
+    "authority": "Ivan 2026-07-29: the published clip auto_142942_496_618 has two reported defects: the cover lacks Li Dousha as the clear subject, and known Japanese speech mixes kana with romaji. Repair the cover in place, rerun the whole clip once with the latest pipeline, write confirmed ordinary Japanese lexemes in native Japanese script instead of romaji, and upload the repaired result to the existing BV without creating a replacement BV. Preserve the verified public title and the complete previously published clip. The hash-bound reviewed subtitle baseline for the same source covers 496370-627010ms; 627010ms is therefore the exact recovery source endpoint, not the shorter 618420ms selection recall anchor.",
+    "candidate_ids": [
+      "auto_142942_496_618"
+    ],
+    "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+    "schema_version": "talk-selection-contract.v1",
+    "source_state_sha256": "sha256:11ebdd4e3b148d32344898c6a28f9f58bc6bde7b5841eb66bc8c9fce90a69057"
+  },
+  "status": "finished_review_package_no_upload_pending_human_review",
+  "story_contract_required": true,
+  "subtitle_visual_contract": {
+    "max_chars_per_line": 28,
+    "max_visual_lines": 2,
+    "profile": "autoslice-sapphire72"
+  },
+  "upload_allowed": false
+}

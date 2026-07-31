@@ -1,0 +1,10 @@
+{
+  "schema_version": "public-cover-readback.v1",
+  "expected_sha256": "2f34fbc1bc28e2503e10f48b488c04ad9afac670b2a4a1ec29277e69d862d9ff",
+  "public_sha256": "2f34fbc1bc28e2503e10f48b488c04ad9afac670b2a4a1ec29277e69d862d9ff",
+  "match": true,
+  "size_bytes": 3040862,
+  "width": 1920,
+  "height": 1080,
+  "url": "https://archive.biliimg.com/bfs/archive/7a0959b5d89c1bfa43b236cbd63cf00d2fd1c095.png"
+}

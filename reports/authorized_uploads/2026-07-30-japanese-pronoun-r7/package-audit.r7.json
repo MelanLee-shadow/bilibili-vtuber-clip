@@ -1,0 +1,78 @@
+{
+  "audited_inputs": [
+    {
+      "bytes": 12750,
+      "path": "review_manifest.json",
+      "sha256": "c67ef71e020f1c51c90f3ed4bcb67b7fcec7c7ca605e92744b51aa289f44bf1d"
+    },
+    {
+      "bytes": 235288,
+      "path": "一声“偶”让李豆沙当场开起日语人称翻.chat-authority.json",
+      "sha256": "40ee13b23c1e62b9b6d1df6be21310ec029922be0eef8fcdccb2f10ddd2be0aa"
+    },
+    {
+      "bytes": 27099,
+      "path": "一声“偶”让李豆沙当场开起日语人称翻.clip-context.json",
+      "sha256": "2391b609857b944e2405b3217b5717fb8026ad43edf6fbdab00db69b10eb7a9c"
+    },
+    {
+      "bytes": 3040862,
+      "path": "一声“偶”让李豆沙当场开起日语人称翻.cover.png",
+      "sha256": "2f34fbc1bc28e2503e10f48b488c04ad9afac670b2a4a1ec29277e69d862d9ff"
+    },
+    {
+      "bytes": 3046913,
+      "path": "一声“偶”让李豆沙当场开起日语人称翻.cover.pre-overlay.png",
+      "sha256": "44a110947e202f3e1bbfb7e96485849dd1b9defbb889311121fd6b76677830c0"
+    },
+    {
+      "bytes": 3046913,
+      "path": "一声“偶”让李豆沙当场开起日语人称翻.cover.route-background.png",
+      "sha256": "44a110947e202f3e1bbfb7e96485849dd1b9defbb889311121fd6b76677830c0"
+    },
+    {
+      "bytes": 32831,
+      "path": "一声“偶”让李豆沙当场开起日语人称翻.cover.title-mask.png",
+      "sha256": "8ef042a43e40b309e45ddb03fc6e521e50ddc464023c470433e738e45e5fe892"
+    },
+    {
+      "bytes": 3547,
+      "path": "一声“偶”让李豆沙当场开起日语人称翻.final-sapphire72.ass",
+      "sha256": "d6482404dde1d72fc655ebd08d11d76f99a7492ed4b0f1b5dd4df229c2ea1005"
+    },
+    {
+      "bytes": 54021266,
+      "path": "一声“偶”让李豆沙当场开起日语人称翻.mp4",
+      "sha256": "70818f97e595a4a29d50d0ab7aa40877e04e3286970c36d448e2150d964dbd37"
+    },
+    {
+      "bytes": 28440,
+      "path": "一声“偶”让李豆沙当场开起日语人称翻.publish.json",
+      "sha256": "c4696ced695e0fa00a6667cb6a12fc755c3cd0326dbd365741e34cd1ee5ff487"
+    },
+    {
+      "bytes": 118111,
+      "path": "一声“偶”让李豆沙当场开起日语人称翻.record.json",
+      "sha256": "4d64eb026c72133a0201fc232f91a4c1d8ded51b3442dc61feb9719a0dc416d4"
+    },
+    {
+      "bytes": 44951,
+      "path": "一声“偶”让李豆沙当场开起日语人称翻.redelivery-baseline.json",
+      "sha256": "85965a1d479882c2f67a600361c2691977b7b1fcbb88de01c3e5a53309a11733"
+    },
+    {
+      "bytes": 2351,
+      "path": "一声“偶”让李豆沙当场开起日语人称翻.srt",
+      "sha256": "34dbb888e1bff78d2832c57360418ec9c890575aaf0d78c93ac0d74882a8d4cc"
+    }
+  ],
+  "auditor_source_sha256": "sha256:2e0bcb8e2af670dc389218207e56e335f432727d444b675b3f58b9d791ddebec",
+  "blocking_issue_count": 0,
+  "issue_count": 0,
+  "issues": [],
+  "passed": true,
+  "policy_epoch": "2026-07-23.final-artifact-gates.v3",
+  "policy_fingerprint": "sha256:89942d44e248140215110331754691946c073df2d99fd352b9229a78126daeb1",
+  "root": "/opt/bilive/autoslice/recovery/2026-07-26/auto_142942_496_618-single-r7/repo/lidousha/2026-07-26",
+  "schema_version": "lidousha-review-package-audit.v2"
+}

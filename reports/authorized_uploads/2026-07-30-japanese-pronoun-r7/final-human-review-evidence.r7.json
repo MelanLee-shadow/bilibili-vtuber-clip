@@ -1,0 +1,106 @@
+{
+  "approval_quote": "修复稿件可以直接编辑上传。",
+  "bindings": {
+    "items": [
+      {
+        "artifacts": {
+          "cover": {
+            "path": "一声“偶”让李豆沙当场开起日语人称翻.cover.png",
+            "sha256": "sha256:2f34fbc1bc28e2503e10f48b488c04ad9afac670b2a4a1ec29277e69d862d9ff"
+          },
+          "subtitle": {
+            "path": "一声“偶”让李豆沙当场开起日语人称翻.srt",
+            "sha256": "sha256:34dbb888e1bff78d2832c57360418ec9c890575aaf0d78c93ac0d74882a8d4cc"
+          },
+          "video": {
+            "path": "一声“偶”让李豆沙当场开起日语人称翻.mp4",
+            "sha256": "sha256:70818f97e595a4a29d50d0ab7aa40877e04e3286970c36d448e2150d964dbd37"
+          }
+        },
+        "candidate_id": "auto_142942_496_618",
+        "record": {
+          "path": "一声“偶”让李豆沙当场开起日语人称翻.record.json",
+          "sha256": "sha256:4d64eb026c72133a0201fc232f91a4c1d8ded51b3442dc61feb9719a0dc416d4"
+        }
+      }
+    ],
+    "package_audit": {
+      "path": "package_audit.current.json",
+      "sha256": "sha256:0f9d55f0f91bff9ca8e63ee2a1d8ef468590eb3dc786d9bc7cf8805d8798187f"
+    },
+    "review_contract_sha256": "sha256:13db13f1cb38b788980936b54f028a88ec3cbe8b5ecdfe01fa9cb038f877efdc",
+    "review_manifest": {
+      "path": "review_manifest.json",
+      "sha256": "sha256:c67ef71e020f1c51c90f3ed4bcb67b7fcec7c7ca605e92744b51aa289f44bf1d"
+    }
+  },
+  "items": [
+    {
+      "candidate_id": "auto_142942_496_618",
+      "checks": {
+        "boundary_closure": {
+          "anchor": "CLIP_START_AND_EOS",
+          "detail": "开头先完整播放5.749秒Z1片头再进入原直播画面；结尾在135.989秒显示“大小姐说了”收束人称翻译话题，136.420秒EOS前没有截断下一句。"
+        },
+        "cover_identity": {
+          "anchor": "FINAL_COVER",
+          "detail": "最终封面中央最大人物是白发、黑色熊猫耳、额戴护目镜的李豆沙，人物身份特征与左侧源参考一致，画面没有把伊索尔或其他联动角色作为主角。"
+        },
+        "cover_story": {
+          "anchor": "FINAL_COVER_AND_STORY",
+          "detail": "封面文字分成“一声“偶”让小李”和“日语人称翻译大会”两行完整语义单元，直接呈现从一个“偶”引出日语自称讨论的故事，没有把“翻译大会”拆碎。"
+        },
+        "final_burned_full_playback": {
+          "anchor": "00:00.000-EOS",
+          "detail": "从00:00片头首帧到136.420秒EOS完成整段H.264/AAC全解码和逐段画面复核，开头、正片、字幕层与结束帧连续，无解码报错、黑场断裂或提前终止。"
+        },
+        "intro_timing": {
+          "anchor": "INTRO_TO_MAIN_TRANSITION",
+          "detail": "片头在0至约5.749秒连续展示李豆沙品牌画面，随后直接切入正片直播界面；首条正片字幕按同一5.749秒偏移出现，衔接处没有重复帧或缺帧。"
+        },
+        "silence_hallucination": {
+          "anchor": "KNOWN_SILENCE_AND_FULL_VIDEO",
+          "detail": "全片-42dB/0.7秒静音扫描只得到11.568–12.406、56.131–57.684、58.533–59.916秒三段；它们仅与相邻字幕各约0.28至0.45秒的正常前后余量接触，没有一条字幕整段落在无声区形成幻听。"
+        },
+        "subtitle_audio": {
+          "anchor": "FULL_VIDEO_AUDIO_SUBTITLE",
+          "detail": "正片双声道48kHz音频轨完整，39条烧录字幕与同一时间轴SRT/ASS逐项对应；hash绑定的已审基线最终owner为39/39 PASS，末段发声窗口依次对应おら、わたくし与“大小姐说了”。"
+        },
+        "title_story": {
+          "anchor": "FINAL_TITLE_AND_FULL_STORY",
+          "detail": "最终标题“【李豆沙】一声“偶”让小李开起日语人称翻译大会”准确概括正片从“偶”延伸到ぼく、おれ、あたし等自称翻法的内容，故事主角和讨论主题都一致。"
+        }
+      },
+      "cover_story_claims": [
+        {
+          "claim": "封面文字呈现“一声“偶”让小李 / 日语人称翻译大会”",
+          "observation": {
+            "anchor": "FINAL_COVER/COVER_TEXT",
+            "detail": "1920×1080最终PNG顶部清楚可见粉色大字“一声“偶”让小李”，其下深色小字完整显示“日语人称翻译大会”；两行叙事字形边缘完整且没有被人物或画布裁掉。"
+          },
+          "presentation": "COVER_TEXT"
+        }
+      ],
+      "subtitle_review_points": [
+        {
+          "observation": {
+            "anchor": "00:00:00.000-00:02:16.000",
+            "detail": "全片对应发声窗口的字幕画面逐一出现ぼく、おれ、あたし、おら、わたくし以及とりあえず早くいつも通りに、戻れて、じいちゃん；SRT与烧录帧均未出现boku/ore/atashi/ora/watakushi/wakuwaku，约01:26正片字幕保留英语identity。"
+          },
+          "point_id": "japanese-native-script-whole-clip"
+        },
+        {
+          "observation": {
+            "anchor": "00:02:02.000-00:02:16.000",
+            "detail": "最终视频发声与烧录字幕在126.089秒出现“おら翻译成老子吗”，130.609秒出现“わたくし翻译的话就是大小姐”，134.229秒出现“大小姐说了”并持续到135.989秒，三段次序完整且EOS在其后。"
+          },
+          "point_id": "ora-watakushi-complete-ending"
+        }
+      ]
+    }
+  ],
+  "reviewed_at": "2026-07-30T19:49:00-04:00",
+  "reviewed_by": "Codex root",
+  "reviewer_kind": "delegated_root_agent",
+  "schema_version": "lidousha-final-human-review-evidence.v2"
+}

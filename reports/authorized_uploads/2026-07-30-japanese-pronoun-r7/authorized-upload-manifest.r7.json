@@ -1,0 +1,97 @@
+{
+  "manifest_version": 3,
+  "schema_version": "authorized-upload-manifest.v3",
+  "artifact_id": "70818f97e595",
+  "video": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-26/auto_142942_496_618-single-r7/repo/lidousha/2026-07-26/一声“偶”让李豆沙当场开起日语人称翻.mp4",
+    "sha256": "70818f97e595a4a29d50d0ab7aa40877e04e3286970c36d448e2150d964dbd37",
+    "bytes": 54021266
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-26/auto_142942_496_618-single-r7/repo/lidousha/2026-07-26/一声“偶”让李豆沙当场开起日语人称翻.cover.png",
+    "sha256": "2f34fbc1bc28e2503e10f48b488c04ad9afac670b2a4a1ec29277e69d862d9ff",
+    "bytes": 3040862
+  },
+  "title": "【李豆沙】一声“偶”让小李开起日语人称翻译大会",
+  "description": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+  "publish_policy": {
+    "tid": 21,
+    "copyright": 2,
+    "source": "https://live.bilibili.com/"
+  },
+  "season": {
+    "lane": "talk",
+    "season_title": "小李切片",
+    "source": "talk:title-prefix",
+    "season_id": 8383206,
+    "section_id": 9320779
+  },
+  "package_attestation": {
+    "schema_version": "authorized-upload-package-attestation.v1",
+    "package_root": "/opt/bilive/autoslice/recovery/2026-07-26/auto_142942_496_618-single-r7/repo/lidousha/2026-07-26",
+    "package_audit": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-26/auto_142942_496_618-single-r7/repo/lidousha/2026-07-26/package_audit.current.json",
+      "sha256": "0f9d55f0f91bff9ca8e63ee2a1d8ef468590eb3dc786d9bc7cf8805d8798187f",
+      "bytes": 3177
+    },
+    "review_manifest": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-26/auto_142942_496_618-single-r7/repo/lidousha/2026-07-26/review_manifest.json",
+      "sha256": "c67ef71e020f1c51c90f3ed4bcb67b7fcec7c7ca605e92744b51aa289f44bf1d",
+      "bytes": 12750
+    },
+    "record": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-26/auto_142942_496_618-single-r7/repo/lidousha/2026-07-26/一声“偶”让李豆沙当场开起日语人称翻.record.json",
+      "sha256": "4d64eb026c72133a0201fc232f91a4c1d8ded51b3442dc61feb9719a0dc416d4",
+      "bytes": 118111
+    },
+    "subtitle": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-26/auto_142942_496_618-single-r7/repo/lidousha/2026-07-26/一声“偶”让李豆沙当场开起日语人称翻.srt",
+      "sha256": "34dbb888e1bff78d2832c57360418ec9c890575aaf0d78c93ac0d74882a8d4cc",
+      "bytes": 2351
+    },
+    "final_human_review": {
+      "path": "/opt/bilive/autoslice/recovery/2026-07-26/auto_142942_496_618-single-r7/repo/lidousha/2026-07-26/final-human-review.receipt.json",
+      "sha256": "148c647ba420decac3dd1f35df98b2156dd721dc02029e9eb362457706cb1ecb",
+      "bytes": 7033
+    }
+  },
+  "authorization": {
+    "by": "Ivan",
+    "quote": "修复稿件可以直接编辑上传。",
+    "at": "2026-07-30T23:52:47+0000"
+  },
+  "created_at": "2026-07-30T23:52:47+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "日语",
+    "翻译",
+    "吐槽",
+    "撒娇",
+    "搞笑"
+  ],
+  "tags_source": "cli",
+  "recovery_publication_authority": {
+    "aid": 117010478405297,
+    "boundary_end_mode": "exact_source_pin",
+    "bvid": "BV1zk386LEjC",
+    "candidate_id": "auto_142942_496_618",
+    "cid": 40453148097,
+    "observed_public_title": "【李豆沙】一声“偶”让小李开起日语人称翻译大会",
+    "registry_authority": "Ivan 2026-07-29: the published clip auto_142942_496_618 has two reported defects: the cover lacks Li Dousha as the clear subject, and known Japanese speech mixes kana with romaji. Repair the cover in place, rerun the whole clip once with the latest pipeline, write confirmed ordinary Japanese lexemes in native Japanese script instead of romaji, and upload the repaired result to the existing BV without creating a replacement BV. Preserve the verified public title and the complete previously published clip. The hash-bound reviewed subtitle baseline for the same source covers 496370-627010ms; 627010ms is therefore the exact recovery source endpoint, not the shorter 618420ms selection recall anchor.",
+    "registry_repo_path": "assets/lidousha/recovery_publication_authority_2026-07-30_japanese_pronoun.v1.json",
+    "registry_schema_version": "lidousha-recovery-publication-authority.v1",
+    "registry_sha256": "sha256:9bdebfc3edbeae04bb06152355976c4588237aeb1de9afa6c4cc161d85634efe",
+    "required_given_end_ms": 627010,
+    "schema_version": "recovery-same-bv-publication-authority.v1",
+    "source_kind": "committed_verified_publication_registry",
+    "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-26-japanese-pronoun-source/auto_142942_496_618.public_verify.json",
+    "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+    "source_public_verify_sha256": "sha256:cc752ec6281bfbb564196eb605e44541eb61810453e747a17479a2121c361fac",
+    "source_public_verify_status": "VERIFIED_PUBLIC",
+    "title_mode": "verified_public_exact",
+    "authority_sha256": "sha256:d03f152880750dba61f75af5fbc9d37d929524f0165cebe7fc0223e91eed84ee"
+  }
+}

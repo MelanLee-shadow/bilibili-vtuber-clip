@@ -1,0 +1,110 @@
+{
+  "aid": 117010478405297,
+  "bvid": "BV1zk386LEjC",
+  "candidate_id": "auto_142942_496_618",
+  "live_snapshot": {
+    "creator": {
+      "aid": 117010478405297,
+      "available": true,
+      "bvid": "BV1zk386LEjC",
+      "metadata": {
+        "copyright": 2,
+        "cover": "//bilibili-cover-asset/bfs/archive/7a0959b5d89c1bfa43b236cbd63cf00d2fd1c095.png",
+        "desc": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+        "source": "https://live.bilibili.com/",
+        "tags": [
+          "吐槽",
+          "搞笑",
+          "撒娇",
+          "日语",
+          "李豆沙",
+          "直播切片",
+          "翻译",
+          "虚拟UP主",
+          "虚拟主播"
+        ],
+        "tid": 21,
+        "title": "【李豆沙】一声“偶”让小李开起日语人称翻译大会"
+      },
+      "state": 0,
+      "state_desc": "开放浏览",
+      "videos": [
+        {
+          "cid": 40455570336,
+          "filename": "n260731adjxgpfxhffx1k3rrzbp90ari",
+          "title": "【李豆沙】一声“偶”让小李开起日语人称翻译大会"
+        }
+      ]
+    },
+    "public": {
+      "aid": 117010478405297,
+      "available": true,
+      "bvid": "BV1zk386LEjC",
+      "cid": 40455570336,
+      "metadata": {
+        "copyright": 2,
+        "cover": "//bilibili-cover-asset/bfs/archive/7a0959b5d89c1bfa43b236cbd63cf00d2fd1c095.png",
+        "desc": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+        "tags": [
+          "吐槽",
+          "搞笑",
+          "撒娇",
+          "日语",
+          "李豆沙",
+          "直播切片",
+          "翻译",
+          "虚拟UP主",
+          "虚拟主播"
+        ],
+        "tid": 21,
+        "title": "【李豆沙】一声“偶”让小李开起日语人称翻译大会"
+      },
+      "state": 0
+    },
+    "section": {
+      "available": true,
+      "matches": [
+        {
+          "aid": 117010478405297,
+          "bvid": "BV1zk386LEjC",
+          "cid": 40455570336,
+          "title": "【李豆沙】一声“偶”让小李开起日语人称翻译大会"
+        }
+      ],
+      "section_id": 9320779
+    }
+  },
+  "manifest": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-26/auto_142942_496_618-single-r7/repo/lidousha/2026-07-26/authorized-upload-manifest.json",
+    "sha256": "5ee55c286b31af73c15cddc9c67b0438d44103d6906f8bbb5cc8d8171d7e8057"
+  },
+  "new_cid": 40455570336,
+  "plan": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-26/auto_142942_496_618-single-r7/repo/lidousha/2026-07-26/same-bv-repair-plan.json",
+    "plan_id": "73be4c7036b542fea1bd9ac46bc22342",
+    "sha256": "7acd5d04d630b0f29826244cec17bce3b4d09773a601b4a0d82af757248a0d27"
+  },
+  "rc": 0,
+  "remote_mutation": false,
+  "replacement": {
+    "cover": {
+      "bytes": 3040862,
+      "path": "/opt/bilive/autoslice/recovery/2026-07-26/auto_142942_496_618-single-r7/repo/lidousha/2026-07-26/一声“偶”让李豆沙当场开起日语人称翻.cover.png",
+      "sha256": "2f34fbc1bc28e2503e10f48b488c04ad9afac670b2a4a1ec29277e69d862d9ff"
+    },
+    "video": {
+      "bytes": 54021266,
+      "path": "/opt/bilive/autoslice/recovery/2026-07-26/auto_142942_496_618-single-r7/repo/lidousha/2026-07-26/一声“偶”让李豆沙当场开起日语人称翻.mp4",
+      "sha256": "70818f97e595a4a29d50d0ab7aa40877e04e3286970c36d448e2150d964dbd37"
+    }
+  },
+  "schema_version": "same-bv-repair-completed.v1",
+  "status": "VERIFIED_FRESH_LIVE",
+  "verified_at": "2026-07-31T00:03:55+0000",
+  "verified_journal_row": {
+    "at": "2026-07-31T00:02:56.693867+00:00",
+    "journal_path": "/opt/bilive/autoslice/reports/same_bv_repair_ledger.jsonl",
+    "row_sha256": "24fc72ee494622c78ab8aff1c1c8a1ddd3fcb9872d0998eaebf75d514b6c0ebd",
+    "seq": 23
+  }
+}
