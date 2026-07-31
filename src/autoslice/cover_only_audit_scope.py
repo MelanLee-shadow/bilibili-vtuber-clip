@@ -113,6 +113,19 @@ def _unprefixed(value: object, *, label: str) -> str:
     return match.group(1)
 
 
+def _canonical_tags(value: object, *, label: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or not value:
+        raise CoverOnlyAuditScopeError(f"{label} must be a non-empty tag list")
+    tags = [str(tag).strip() for tag in value]
+    if any(not tag for tag in tags) or len(tags) != len(set(tags)):
+        raise CoverOnlyAuditScopeError(
+            f"{label} contains an empty or duplicate tag"
+        )
+    # Bilibili/live readback does not preserve submitted tag order.  Freeze the
+    # semantic set while still refusing additions, removals, or duplicates.
+    return tuple(sorted(tags))
+
+
 def _record_for_candidate(
     package_root: Path,
     candidate_id: str,
@@ -395,7 +408,11 @@ def create_scope(
             "current video/subtitle differs from the prior reviewed non-cover bytes"
         )
     tags = (record.get("upload_tags") or {}).get("final_tags")
-    if tags != target.get("tags"):
+    if _canonical_tags(
+        tags, label="current reviewed tags"
+    ) != _canonical_tags(
+        target.get("tags"), label="predecessor target tags"
+    ):
         raise CoverOnlyAuditScopeError(
             "current reviewed tags differ from predecessor target metadata"
         )

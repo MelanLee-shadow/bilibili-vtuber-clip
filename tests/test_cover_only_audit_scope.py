@@ -66,7 +66,8 @@ def _scope_fixture(tmp_path: Path, monkeypatch):
         "target_metadata": {
             "title": TITLE,
             "desc": "desc",
-            "tags": ["李豆沙", "切片"],
+            # Public API readback may reorder a semantically identical tag set.
+            "tags": ["切片", "李豆沙"],
             "tid": 21,
             "copyright": 2,
             "source": "https://live.bilibili.com/",
@@ -177,6 +178,25 @@ def test_scope_rejects_title_drift_and_present_receipt(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     with pytest.raises(scope_mod.CoverOnlyAuditScopeError, match="present receipt"):
+        scope_mod.create_scope(
+            package_root=root,
+            candidate_id=CANDIDATE,
+            predecessor_completed_path=completed_path,
+            authorized_by="Ivan",
+            authorization_quote="只换封面",
+        )
+
+
+def test_scope_rejects_tag_set_drift(tmp_path, monkeypatch):
+    root, _stem, completed_path = _scope_fixture(tmp_path, monkeypatch)
+    record_path = root / "white-dragon.record.json"
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record["upload_tags"]["final_tags"] = ["李豆沙", "错误标签"]
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(
+        scope_mod.CoverOnlyAuditScopeError,
+        match="tags differ",
+    ):
         scope_mod.create_scope(
             package_root=root,
             candidate_id=CANDIDATE,
