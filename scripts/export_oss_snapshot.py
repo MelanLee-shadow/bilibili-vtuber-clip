@@ -282,8 +282,17 @@ def main() -> int:
             text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
+        rel_str = str(path.relative_to(out_root))
         for line_number, line in enumerate(text.splitlines(), start=1):
-            if pattern.search(line):
+            hit = pattern.search(line)
+            if (
+                hit
+                and hit.group(0).lower() == "aierlma"
+                and "aierlma521" not in line
+                and rel_str in ("LICENSE", "README.md")
+            ):
+                continue  # 作者署名是有意公开的内容；邮箱仍禁
+            if hit:
                 violations.append(
                     f"{path.relative_to(out_root)}:{line_number}: "
                     f"{line.strip()[:110]}"
