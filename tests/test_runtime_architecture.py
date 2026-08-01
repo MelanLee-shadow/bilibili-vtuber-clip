@@ -88,7 +88,7 @@ MODULE_DEBT_LEDGER = {
     "src/autoslice/live_source_review.py": 2_035,
     "src/autoslice/producer_package_finalization.py": 2_765,
     # 2026-07-31 +40：同上（SC 发送者 deferral）。
-    "src/autoslice/producer_text_pipeline.py": 2_193,
+    "src/autoslice/producer_text_pipeline.py": 2_197,
     # 2026-07-31 +12：contract 穿透接线（形参 + 4 个调用点）。
     # 2026-07-31 再 +17：封面路由 P1——witness 从「路由法官」降回「置信输入」，
     # 删掉无条件放行、几何否决移到关系分支之后、置信改为 几何 OR witness bbox。

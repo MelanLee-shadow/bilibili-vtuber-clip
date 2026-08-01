@@ -369,12 +369,16 @@ def _build_entity_verification_context(
 
     read_aloud_llm_call = None
     if os.environ.get("CPA_BASE_URL") and os.environ.get("CPA_API_KEY"):
+        # 模型分工（Ivan 2026-08-02 拍板，A/B P1/P4 双口味一致）：闭集专名
+        # 裁决与念弹幕仲裁这类结构化判定换更省配额的 luna@max，sol 降为
+        # 回退。边界评审/终审等深语义判定保持 sol（A/B P2 分歧：sol 命中
+        # 线上验收锚点，luna 提前切）。
         read_aloud_llm_call = build_llm_call(
             LlmConfig(
                 transport="command",
                 command_template=(
                     "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} "
-                    "'gpt-5.6-sol gpt-5.5 gpt-5.4' medium"
+                    "'gpt-5.6-luna gpt-5.6-sol gpt-5.5' max"
                 ),
                 timeout_seconds=180.0,
             )

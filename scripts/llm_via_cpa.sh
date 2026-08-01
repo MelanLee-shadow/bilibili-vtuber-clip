@@ -8,10 +8,12 @@
 # effort at the call site (callers shlex-split the template, so a quoted chain
 # stays one argument).  Precedence: explicit arg > CPA_CHAT_MODELS env > default.
 # Stage assignment lives at the call sites: gpt-5.6-sol for deep/open-ended work
-# (semantic recall, correction adjudication, titles), gpt-5.6-terra for
-# structured picks (cover art direction).  gpt-5.6-luna would be the natural
-# fit for high-volume structured lanes but is auth_unavailable on CPA today
-# (providers=codex) — revisit when the provider enables it.
+# (semantic recall, correction adjudication, titles, boundary review),
+# gpt-5.6-terra for structured picks (cover art direction).  gpt-5.6-luna is
+# enabled on CPA since 2026-08-02 and owns high-volume structured judgment
+# (closed-set entity picks, read-aloud arbitration) at effort=max — A/B'd
+# consistent with sol on those shapes (P1/P4), while boundary-style deep
+# semantics stays sol (A/B P2: sol matched the live-approved anchor).
 #
 # IMPORTANT (2026-07-04): gpt-5.x are native Responses-API reasoning models.
 # Requesting gpt-5.5 on /chat/completions MISROUTES on the CPA proxy (503
