@@ -528,3 +528,61 @@ def test_1411_prominence_failure_retries_with_stronger_prompt_then_stays_pending
     )
     assert generation["route_decision"]["actual_treatment"] is None
     assert generation["route_decision"]["execution_status"] == "BLOCKED"
+
+
+def _published_carry_verification() -> dict[str, object]:
+    return {
+        "schema_version": (
+            "lidousha-cover-final-host-identity-verification.v2"
+        ),
+        "authority": (
+            "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_COMPARISON"
+        ),
+        "status": "PASS",
+        "final_cover_sha256": "sha256:" + "a" * 64,
+        "comparison_sha256": "sha256:" + "b" * 64,
+        "witness": {"provider": "cpa", "image_sha256": "b" * 64},
+    }
+
+
+def _published_carry_generation() -> dict[str, object]:
+    return {
+        "carried_forward_from_published_record": True,
+        "final_cover_sha256": "sha256:" + "a" * 64,
+        "final_host_identity_verification": _published_carry_verification(),
+    }
+
+
+def test_published_carry_v2_witness_accepted_for_byte_identical_reuse():
+    assert validate_final_host_identity_verification(
+        _published_carry_generation()
+    )
+
+
+def test_published_carry_clause_requires_carry_flag():
+    generation = _published_carry_generation()
+    generation.pop("carried_forward_from_published_record")
+    assert not validate_final_host_identity_verification(generation)
+
+
+def test_published_carry_clause_pins_exact_v2_generation_pair():
+    for key, value in (
+        ("schema_version", "lidousha-cover-final-host-identity-verification.v1"),
+        (
+            "authority",
+            "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_AND_PROMINENCE_COMPARISON",
+        ),
+    ):
+        generation = _published_carry_generation()
+        generation["final_host_identity_verification"][key] = value
+        assert not validate_final_host_identity_verification(generation)
+
+
+def test_published_carry_clause_keeps_hash_and_status_gates():
+    mismatched = _published_carry_generation()
+    mismatched["final_cover_sha256"] = "sha256:" + "c" * 64
+    assert not validate_final_host_identity_verification(mismatched)
+
+    failed = _published_carry_generation()
+    failed["final_host_identity_verification"]["status"] = "FAIL"
+    assert not validate_final_host_identity_verification(failed)

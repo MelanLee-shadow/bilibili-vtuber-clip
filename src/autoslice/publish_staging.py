@@ -732,6 +732,7 @@ def _stage_publish_draft(
         # final_cover_sha256 必须逐字节等于被复用的封面，否则不认（fail-closed，
         # 不新造回执、不放松审计门）。sidecar 由重跑装配从已发布 record 提取。
         carried_generation: dict[str, object] | None = None
+        carry_drop_reason: str | None = None
         if reused_cover_path is not None and reused_sha is not None:
             sidecar = reused_cover_path.with_name(
                 f"{candidate_id}.published-cover-generation.json"
@@ -754,6 +755,10 @@ def _stage_publish_draft(
                     == reused_sha
                 ):
                     carried_generation = dict(published_generation)
+                else:
+                    carry_drop_reason = "published_sidecar_sha_mismatch"
+            else:
+                carry_drop_reason = "published_sidecar_missing"
         if carried_generation is not None:
             carried_generation.update(
                 {
@@ -774,10 +779,10 @@ def _stage_publish_draft(
                 carried_generation["story_contract"] = (
                     cover_story_contract_binding(story_contract)
                 )
-            # 已发布 record 里的 host-identity 回执是摘要形态（无内嵌 witness），
-            # 过不了现行 validate_final_host_identity_verification。身份见证
-            # 不搞考古：对被复用的同一份字节现场重打一次 CPA 见证（新鲜证据，
-            # 绑 reused_sha）。失败即丢弃整个结转（回落纯 REUSED 标记），
+            # 身份见证优先结转出版世代（v2 冻结条款，见
+            # cover_host_identity_gate.PUBLISHED_CARRY_*）；仅当出版见证也
+            # 过不了（形态残缺/哈希不符）才对同一份字节现场重打 CPA 见证。
+            # 重打失败即丢弃整个结转（回落纯 REUSED 标记并披露丢弃原因），
             # 下游 manifest fail-closed——绝不带着假绿走。
             carried_route = carried_generation.get("route_decision")
             needs_identity = (
@@ -814,16 +819,24 @@ def _stage_publish_draft(
                                 api_key=fresh_api_key,
                             )
                         )
-                    except Exception:
+                    except Exception as exc:
+                        carry_drop_reason = (
+                            "identity_refresh_error:"
+                            f"{type(exc).__name__}"
+                        )
                         carried_generation = None
                 else:
+                    carry_drop_reason = (
+                        "identity_refresh_precondition_missing"
+                    )
                     carried_generation = None
-            # 终门：重打后的完整路由校验（含身份）决定结转去留。
+            # 终门：结转 bundle 的完整路由校验（含身份）决定去留。
             if carried_generation is not None and not (
                 validate_cover_route_decision(
                     carried_generation, allow_legacy_v1=False
                 )
             ):
+                carry_drop_reason = "carried_bundle_failed_route_validation"
                 carried_generation = None
         cover_result = {
             "status": "REUSED_COVER",
@@ -841,6 +854,11 @@ def _stage_publish_draft(
                         else None
                     ),
                     "reused_cover_candidates": len(reuse_matches),
+                    **(
+                        {"carry_drop_reason": carry_drop_reason}
+                        if carry_drop_reason is not None
+                        else {}
+                    ),
                 }
             ),
             "reason_codes": [],

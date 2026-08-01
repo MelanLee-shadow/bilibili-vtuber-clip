@@ -23,6 +23,18 @@ SCHEMA_VERSION = "lidousha-cover-final-host-identity-verification.v3"
 AUTHORITY = (
     "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_AND_PROMINENCE_COMPARISON"
 )
+# 冻结出版结转条款（2026-08-01，1013 r18 案）：字节等同复用一张**已发布**
+# 封面时，其发布时点的身份见证是该字节的既成证据；对同一字节按今日更严的
+# v3 门重考属于对冻结资产做 live 政策重算（7/27 裁定禁止），且视觉裁判对
+# 边界样本非确定（r17 PASS / r18 FAIL 同字节）。仅当 bundle 显式声明
+# carried_forward_from_published_record 且见证恰为下列历史世代对时才放行，
+# 其余（哈希绑定、PASS、provider 路由）与 v3 同标准。
+PUBLISHED_CARRY_SCHEMA_VERSION = (
+    "lidousha-cover-final-host-identity-verification.v2"
+)
+PUBLISHED_CARRY_AUTHORITY = (
+    "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_COMPARISON"
+)
 UNAVAILABLE_REASON_CODES = frozenset(
     {
         "HOST_IDENTITY_WITNESS_UNAVAILABLE",
@@ -305,9 +317,18 @@ def validate_final_host_identity_verification(
             and primary_receipt.get("provider") == "cpa"
         )
     )
-    return bool(
+    generation_pin_valid = (
         verification.get("schema_version") == SCHEMA_VERSION
         and verification.get("authority") == AUTHORITY
+    ) or (
+        # 冻结出版结转条款：仅字节等同结转 bundle + 恰为 v2 历史世代对。
+        cover_generation.get("carried_forward_from_published_record") is True
+        and verification.get("schema_version")
+        == PUBLISHED_CARRY_SCHEMA_VERSION
+        and verification.get("authority") == PUBLISHED_CARRY_AUTHORITY
+    )
+    return bool(
+        generation_pin_valid
         and verification.get("status") == "PASS"
         and verification.get("final_cover_sha256")
         == cover_generation.get("final_cover_sha256")
