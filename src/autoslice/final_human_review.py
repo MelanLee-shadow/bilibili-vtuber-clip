@@ -92,9 +92,11 @@ _PUBLICATION_TARGET_FIELDS = frozenset(
 _REVIEWER_KINDS = frozenset(
     {"human_owner", "human_delegate", "delegated_root_agent"}
 )
+# delegated_root_agent 的保留身份集：曾经只有 Codex root；2026-08-01 起
+# Claude root 同为受 Ivan 委托的根代理（1013 same-BV 修复首次由其执行）。
 _RESERVED_REVIEWER_IDENTITIES = {
-    "human_owner": "Ivan",
-    "delegated_root_agent": "Codex root",
+    "human_owner": ("Ivan",),
+    "delegated_root_agent": ("Codex root", "Claude root"),
 }
 _CHECK_FIELDS = (
     "final_burned_full_playback",
@@ -158,6 +160,8 @@ def _reserved_reviewer_kind(value: str) -> str | None:
     ):
         return "human_owner"
     if key == "codex root" or key.startswith("codex root "):
+        return "delegated_root_agent"
+    if key == "claude root" or key.startswith("claude root "):
         return "delegated_root_agent"
     return None
 
@@ -1606,7 +1610,7 @@ def validate_final_human_review(
     claimed_reserved_kind = _reserved_reviewer_kind(reviewed_by)
     if (
         reserved_identity is not None
-        and reviewed_by != reserved_identity
+        and reviewed_by not in reserved_identity
     ) or (
         reviewer_kind == "human_delegate"
         and claimed_reserved_kind is not None

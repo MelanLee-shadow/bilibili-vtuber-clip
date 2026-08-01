@@ -816,6 +816,9 @@ def test_rejects_top_level_authority_drift(
         ("human_delegate", "Codex Root"),
         ("human_delegate", "Codex   root"),
         ("human_delegate", "Codex root agent"),
+        ("human_delegate", "Claude root"),
+        ("human_delegate", "Claude Root (Fable)"),
+        ("human_owner", "Claude root"),
     ],
 )
 def test_reviewer_kind_cannot_mislabel_reserved_identity(
@@ -841,6 +844,8 @@ def test_reviewer_kind_cannot_mislabel_reserved_identity(
     [
         ("human_owner", "Ivan"),
         ("human_delegate", "Alice"),
+        ("delegated_root_agent", "Codex root"),
+        ("delegated_root_agent", "Claude root"),
     ],
 )
 def test_truthful_human_reviewer_identities_remain_valid(
