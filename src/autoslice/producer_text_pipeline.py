@@ -1227,6 +1227,47 @@ def _run_exact_final_release_review(
     }
 
 
+def _pinned_replay_reviewed_text_ownership(
+    spec: Mapping[str, object],
+) -> dict[str, object] | None:
+    """判定「审片员产出注定被覆盖」的钉死重放修复模式。
+
+    两个后置所有权同时成立才返回披露块：v2 exact_interval_replay 基线拥有
+    全部非真值文本（逐字节重放已发布 reviewed SRT），verified_public_exact
+    出版权威拥有标题。此时审片员（_run_final_review）对一次性 ASR 文本的
+    发现与修复不可能到达交付（r19 实证：交付 diff=恰真值台账句），其 1-2
+    分钟深推理 CPA 调用是纯等待。任何条件缺失/形状不符 → None 走原路径。
+    fail-closed 不变：重放自身校验基线 sha 且不符即中止；重放后的
+    exact-final 终审（discovery=COMPLETE 硬门、绑交付 SRT sha）与边界评审
+    照常运行。
+    """
+
+    baseline = spec.get("subtitle_redelivery_baseline")
+    if not (
+        _valid_redelivery_baseline_config(baseline)
+        and isinstance(baseline, Mapping)
+        and baseline.get("schema_version") == "subtitle-redelivery-baseline.v2"
+        and baseline.get("exact_interval_replay") is True
+    ):
+        return None
+    authority = spec.get("recovery_publication_authority")
+    if not (
+        isinstance(authority, Mapping)
+        and authority.get("title_mode") == "verified_public_exact"
+        and str(authority.get("authority_sha256") or "").strip()
+    ):
+        return None
+    return {
+        "baseline_schema_version": "subtitle-redelivery-baseline.v2",
+        "baseline_sha256": str(baseline.get("sha256") or ""),
+        "exact_interval_replay": True,
+        "title_mode": "verified_public_exact",
+        "publication_authority_sha256": str(
+            authority.get("authority_sha256") or ""
+        ),
+    }
+
+
 def _defer_source_truth_failure_for_redelivery(
     *,
     spec: Mapping[str, object],
@@ -1978,26 +2019,38 @@ def run_text_pipeline(
     authority.chat_authority_audit[
         "source_truth_preview_receipts"
     ]["pre_correction_review"] = review_source_truth_preview
-    reviewed_srt, final_review_audit = _run_final_review(
-        srt_text=authority.srt_text,
-        chat_authority_audit=authority.chat_authority_audit,
-        handled_entity_cues=authority.handled_entity_cues,
-        verify_confusable_entity=entity_context.verify_confusable_entity,
-        authoritative_chat=authoritative_chat,
-        adapters=adapters,
-        selection_hook=str(spec.get("selection_hook") or ""),
-        referent_groups=entity_context.referent_groups,
-        clip_context=clip_context,
-        source_truth_protected_cue_indexes=(
-            review_source_truth_preview["protected_cue_indexes"]
-        ),
-        carryover_file=carryover_path(out_root, cid),
-        priority_raw_findings=_fidelity_review_candidates(
-            padded,
-            authority.srt_text,
-        ),
-        screen_read_probe=screen_read_probe,
-    )
+    pinned_replay_ownership = _pinned_replay_reviewed_text_ownership(spec)
+    if pinned_replay_ownership is not None:
+        # 修复快路径（2026-08-02 提速②）：审片员阶段对一次性 ASR 文本的
+        # 全部产出注定被 v2 精确重放覆盖，跳过并披露；证据链的把关职责由
+        # 重放后的 exact-final 终审与边界评审原样承担。
+        reviewed_srt = authority.srt_text
+        final_review_audit = {
+            "schema_version": "final-review-audit.v1",
+            "status": "SKIPPED_PINNED_REPLAY",
+            "pinned_replay_ownership": pinned_replay_ownership,
+        }
+    else:
+        reviewed_srt, final_review_audit = _run_final_review(
+            srt_text=authority.srt_text,
+            chat_authority_audit=authority.chat_authority_audit,
+            handled_entity_cues=authority.handled_entity_cues,
+            verify_confusable_entity=entity_context.verify_confusable_entity,
+            authoritative_chat=authoritative_chat,
+            adapters=adapters,
+            selection_hook=str(spec.get("selection_hook") or ""),
+            referent_groups=entity_context.referent_groups,
+            clip_context=clip_context,
+            source_truth_protected_cue_indexes=(
+                review_source_truth_preview["protected_cue_indexes"]
+            ),
+            carryover_file=carryover_path(out_root, cid),
+            priority_raw_findings=_fidelity_review_candidates(
+                padded,
+                authority.srt_text,
+            ),
+            screen_read_probe=screen_read_probe,
+        )
     evidence = _finalize_text_evidence(
         spec=spec,
         durations=durations,

@@ -3076,3 +3076,78 @@ def test_partial_source_truth_can_defer_to_valid_v2_redelivery_baseline():
     )
 
     assert audit["status"] == "DEFERRED_TO_REDELIVERY_BASELINE"
+
+
+def _pinned_replay_spec() -> dict:
+    return {
+        "subtitle_redelivery_baseline": {
+            "schema_version": "subtitle-redelivery-baseline.v2",
+            "mode": "preserve_text_outside_source_truth",
+            "exact_interval_replay": True,
+            "path": "/tmp/reviewed.srt",
+            "sha256": "de" + "ad" * 31,
+            "authority": "published bytes are the lexical baseline",
+            "source_recording_basename": "22966160_20260729-22-50-56.mp4",
+            "source_sha256": "15" + "ed" * 31,
+            "absolute_source_start_ms": 1_013_630,
+            "absolute_source_end_ms": 1_117_320,
+        },
+        "recovery_publication_authority": {
+            "title_mode": "verified_public_exact",
+            "authority_sha256": "sha256:" + "ab" * 32,
+        },
+    }
+
+
+def test_pinned_replay_ownership_requires_both_pins():
+    spec = _pinned_replay_spec()
+    ownership = pipeline._pinned_replay_reviewed_text_ownership(spec)
+    assert ownership is not None
+    assert ownership["status"] if "status" in ownership else True
+    assert ownership["baseline_sha256"] == spec[
+        "subtitle_redelivery_baseline"
+    ]["sha256"]
+    assert ownership["publication_authority_sha256"] == "sha256:" + "ab" * 32
+
+    for mutate in (
+        lambda s: s.pop("subtitle_redelivery_baseline"),
+        lambda s: s.pop("recovery_publication_authority"),
+        lambda s: s["subtitle_redelivery_baseline"].pop("exact_interval_replay"),
+        lambda s: s["subtitle_redelivery_baseline"].update(
+            schema_version="subtitle-redelivery-baseline.v1"
+        ),
+        lambda s: s["subtitle_redelivery_baseline"].update(authority=""),
+        lambda s: s["recovery_publication_authority"].update(
+            title_mode="ivan_manual_override"
+        ),
+        lambda s: s["recovery_publication_authority"].update(
+            authority_sha256=""
+        ),
+    ):
+        broken = _pinned_replay_spec()
+        mutate(broken)
+        assert pipeline._pinned_replay_reviewed_text_ownership(broken) is None
+
+
+def test_pinned_replay_branch_skips_reviewer_without_touching_gates():
+    source = inspect.getsource(pipeline.run_text_pipeline)
+    tree = ast.parse(source)
+    branch = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If):
+            test_src = ast.unparse(node.test)
+            if "pinned_replay_ownership is not None" in test_src:
+                branch = node
+                break
+    assert branch is not None, "pinned-replay branch missing from run_text_pipeline"
+    then_src = "\n".join(ast.unparse(row) for row in branch.body)
+    else_src = "\n".join(ast.unparse(row) for row in branch.orelse)
+    assert "_run_final_review" not in then_src
+    assert "SKIPPED_PINNED_REPLAY" in then_src
+    assert "pinned_replay_ownership" in then_src
+    assert "_run_final_review" in else_src
+    assert "_fidelity_review_candidates" in else_src
+    # 快路径不得越权：重放后的 exact-final 终审与边界评审必须仍在
+    # 无条件路径上（不在这个 if 的任一分支里被吞掉）。
+    assert "_run_exact_final_release_review" not in then_src
+    assert "review_final_boundary_semantics" not in then_src

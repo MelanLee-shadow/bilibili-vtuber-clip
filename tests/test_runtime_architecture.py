@@ -49,7 +49,7 @@ FUNCTION_DEBT_LEDGER = {
     # source_truth 同款 DEFERRED 惯例）。连续吃增长，下次动它先拆。
     ("src/autoslice/producer_text_pipeline.py", "_finalize_text_evidence"): 345,
     ("src/autoslice/producer_text_pipeline.py", "_run_final_review"): 304,
-    ("src/autoslice/producer_text_pipeline.py", "run_text_pipeline"): 307,
+    ("src/autoslice/producer_text_pipeline.py", "run_text_pipeline"): 319,
     # 2026-07-31 +6：full-text contract 穿透形参与调用（Ivan 07-31 `/goal`
     # 「直接按照 fable 的 advise 继续，直至修复所有问题」授权；Fable 裁定 4
     # 点名「contract 不穿透 = 静默把唯一合法全文通道杀死」，必须补）。
@@ -88,7 +88,7 @@ MODULE_DEBT_LEDGER = {
     "src/autoslice/live_source_review.py": 2_035,
     "src/autoslice/producer_package_finalization.py": 2_765,
     # 2026-07-31 +40：同上（SC 发送者 deferral）。
-    "src/autoslice/producer_text_pipeline.py": 2_138,
+    "src/autoslice/producer_text_pipeline.py": 2_191,
     # 2026-07-31 +12：contract 穿透接线（形参 + 4 个调用点）。
     # 2026-07-31 再 +17：封面路由 P1——witness 从「路由法官」降回「置信输入」，
     # 删掉无条件放行、几何否决移到关系分支之后、置信改为 几何 OR witness bbox。
