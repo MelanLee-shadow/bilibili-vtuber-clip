@@ -1,0 +1,53 @@
+# Runtime/report output（发布证据必须入库：授权上传的 manifest/回执是快照）
+reports/**
+!reports/**/
+!reports/**/*.uploaded.json
+!reports/**/*.uploaded.*.json
+!reports/**/*.public_verify.json
+!reports/**/*.public_verify.*.json
+!reports/**/*.upload_manifest*.json
+!reports/**/upload_ledger.jsonl
+!reports/**/*.cover_edit*.json
+!reports/**/*.season_add*.json
+!reports/**/tag_plan*.json
+!reports/**/tag_update_results*.json
+cleanup_manifests/*.tmp
+
+# 各 profile 的本地交付/媒体拉取（媒体不入库）
+lidousha/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/**
+lidousha/covers_v2/**
+lidousha/smoke*/**
+lidousha/branding/**
+lidousha/eval-*/**
+lidousha/rerun-*/**
+*.mp4
+*.flv
+*.m4s
+*.part
+*.ts
+*.mov
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Python/tool caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS/editor noise
+.DS_Store
+.cache/timely-term-crawler/
+*.swp
+*.swo
+
+# Deployment/hotfix backups
+*.bak-*
+*.backup
+
+# 表情包等生成媒体（媒体不入库；路径可用 AUTOSLICE_EMOTE_DIR 覆盖）
+assets/emote/

@@ -1,0 +1,18 @@
+# 核心（管线 + 全套测试就靠这两个；其余是标准库）
+pillow>=10
+pypinyin>=0.50
+
+# 开发/测试
+pytest>=8
+
+# ---- 可选 lane（按需安装；不装时对应工具会明确报错，不会静默降级）----
+# silero VAD 跨度导出（scripts/silero_vad_spans.py）
+# numpy
+# onnxruntime
+# 弹幕/礼物/SC 备份监听（scripts/danmaku_backup_listener.py）
+# websocket-client
+# brotli
+# 声纹说话人栈（CAM++ 说话人确认；见 docs/pipeline/ 与 profiles/README.md）
+# torch
+# modelscope
+# soundfile
