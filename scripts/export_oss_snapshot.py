@@ -29,7 +29,6 @@ STRIP_PREFIXES = (
     "docs/workflows/",
     "docs/HANDOFF.md",
     "docs/handoff-",
-    ".agent/skills/official-replay-rescue/",  # 含密钥形状内容
     "AGENTS.md",   # 私库操作者规则；OSS 版由 docs/oss/AGENTS.md 提供
     "CLAUDE.md",
     "scripts/export_oss_snapshot.py",          # 私库导出工具，不随 OSS 分发
