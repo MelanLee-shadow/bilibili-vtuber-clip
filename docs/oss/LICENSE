@@ -1,8 +1,38 @@
-PLACEHOLDER — 非商业开源许可待作者定稿。
+bilibili-vtuber-clip License 1.0 (Source-Available, Attribution + Commercial Disclosure)
 
-候选：
-- PolyForm Noncommercial License 1.0.0（代码向非商业许可的事实标准）
-- CC BY-NC 4.0（更偏内容/数据，代码适配性弱）
+Copyright (c) 2026 aierlma
 
-在 LICENSE 定稿前，本仓库保留所有权利（All rights reserved），
-仅供阅读评估，不授予使用/分发/修改权。
+中文条款（与英文条款具同等效力；冲突时以中文为准）：
+
+1. 授权：任何人可免费使用、复制、修改本软件及其衍生作品，用于个人或
+   商业目的。修改内容**无需**公开源代码。
+2. 再分发署名：以任何形式再分发本软件或其衍生作品（源码或二进制），
+   必须保留本许可全文，并在显著位置注明原作者（aierlma）与来源仓库
+   链接。
+3. 商业使用公示：将本软件或其衍生作品用于商业目的（包括但不限于以其
+   提供收费服务、生产商业化内容）者，必须在至少一处公开可见的材料中
+   （如产品页、关于页、视频简介、公司技术博客）声明使用了本项目并附
+   来源链接。
+4. 终止：违反第 2 或第 3 条且在收到通知后 30 日内未纠正的，本授权自动
+   终止。
+5. 免责：本软件按"现状"提供，不含任何明示或默示担保；作者不对使用本
+   软件产生的任何损失负责。
+
+English terms (equal force; Chinese prevails on conflict):
+
+1. Grant: Anyone may use, copy, and modify this software and derivative
+   works, for personal or commercial purposes, free of charge.
+   Modifications need NOT be open-sourced.
+2. Redistribution attribution: Any redistribution (source or binary,
+   original or modified) must retain this license in full and credit the
+   original author (aierlma) with a link to the source repository in a
+   prominent place.
+3. Commercial-use disclosure: Any commercial use (including providing
+   paid services with, or producing commercial content using, this
+   software or derivatives) must publicly acknowledge the use of this
+   project with a source link in at least one publicly visible place
+   (e.g. product page, about page, video description, engineering blog).
+4. Termination: This grant terminates automatically if a violation of
+   clause 2 or 3 is not cured within 30 days of notice.
+5. No warranty: Provided "AS IS" without warranty of any kind; the
+   author is not liable for any damages arising from its use.

@@ -71,4 +71,6 @@ python3 scripts/produce_slice_package.py --spec <spec.json> --ssh-host localhost
 
 ## 许可
 
-**非商业开源**（具体条款见 `LICENSE`——待定稿；商业使用请联系作者）。
+自定义宽松许可（全文见 [`LICENSE`](LICENSE)）：个人与商业使用免费、
+闭源修改允许；**再分发须署名原作者与来源**；**商业使用须在公开材料中
+声明使用了本项目**。
