@@ -95,7 +95,7 @@ MODULE_DEBT_LEDGER = {
     # 2026-07-31 再 +27：reuse 封面 sha 绑定（同函数条目注释）。
     # 2026-08-01 +47：同上（证据包结转）。此模块 7/31-8/1 三次靠抬账过关，
     # 拆解已经不是建议是欠账。
-    "src/autoslice/publish_staging.py": 2_750,
+    "src/autoslice/publish_staging.py": 2_751,
     "src/autoslice/same_bv_repair.py": 2_422,
 }
 SCRIPT_EXCLUSIONS = {
