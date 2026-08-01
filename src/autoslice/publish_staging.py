@@ -702,12 +702,39 @@ def _stage_publish_draft(
     elif skip_cover:
         # Subtitle-only re-run: keep the existing delivered cover, skip the
         # expensive AI cover (art-direction LLM + gpt-image-2 ~90s/clip).
+        #
+        # 2026-07-31（1013 jyl-r9 案）：reuse 此前不绑定被沿用封面的 sha，
+        # record.artifact_hashes 里没有 cover_sha256，recovery review manifest
+        # 的「delivery 封面 == record 封面」检查必然 REFUSE（r7 先例是重绘封面
+        # 所以有绑定；reuse × recovery manifest 组合此前从未走通过）。既然语义
+        # 是「沿用既有最终封面」，就把它找出来并绑定：恰好一个候选才绑，
+        # 零个或多个都不猜——留空让下游 fail-closed。
+        reused_cover_path: Path | None = None
+        covers_dir = media_path.parent / "covers"
+        reuse_matches = (
+            sorted(covers_dir.glob(f"{candidate_id}.*.cover.png"))
+            if covers_dir.is_dir()
+            else []
+        )
+        if len(reuse_matches) == 1:
+            reused_cover_path = reuse_matches[0]
         cover_result = {
             "status": "REUSED_COVER",
             "cover_path": None,
+            **(
+                {"cover_sha256": "sha256:" + _sha256(reused_cover_path)}
+                if reused_cover_path is not None
+                else {}
+            ),
             "cover_generation": {
                 "status": "REUSED",
                 "note": "subtitle-only re-run: existing cover kept",
+                "reused_cover_path": (
+                    str(reused_cover_path)
+                    if reused_cover_path is not None
+                    else None
+                ),
+                "reused_cover_candidates": len(reuse_matches),
             },
             "reason_codes": [],
         }
