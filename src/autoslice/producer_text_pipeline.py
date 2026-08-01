@@ -1761,9 +1761,49 @@ def _finalize_text_evidence(
         in {"FAILED", "ENTITY_VERDICT_REQUIRED", "SC_SENDER_VERDICT_REQUIRED"}
         or transcript_entity_audit["status"] == "ENTITY_VERDICT_REQUIRED"
     ):
-        raise SystemExit(
-            f"CHAT_AUTHORITY_FINALIZATION_FAILED: {chat_authority_path}"
+        # 2026-07-31（1013 jyl-r10 案）：v2 精确重放的 redelivery 里，SC 发送者
+        # 裁决 UNRESOLVED 可让位于基线——本轮 ASR 把「万事屋_Official」听岔成
+        # 「问15」，CPA 闭集裁不动；但该 cue 的终局注定被 exact_interval_replay
+        # 盖回已发布基线文本（发送者表面在原次发布时已验证过），garble 根本
+        # 到不了最终产物，final owner 校验仍强制逐字节等于基线，fail-closed
+        # 链完整。这是 source_truth `DEFERRED_TO_REDELIVERY_BASELINE`
+        # （:1313）的同款惯例；FAILED / 实体裁决缺失照旧硬拦。
+        baseline_config = spec.get("subtitle_redelivery_baseline")
+        sender_only = (
+            chat_authority_audit["status"] == "SC_SENDER_VERDICT_REQUIRED"
+            and transcript_entity_audit["status"] != "ENTITY_VERDICT_REQUIRED"
         )
+        if (
+            sender_only
+            and _valid_redelivery_baseline_config(baseline_config)
+            and isinstance(baseline_config, Mapping)
+            and baseline_config.get("schema_version")
+            == "subtitle-redelivery-baseline.v2"
+            and baseline_config.get("exact_interval_replay") is True
+        ):
+            chat_authority_audit["sc_sender_verdict_deferral"] = {
+                "status": "DEFERRED_TO_REDELIVERY_BASELINE",
+                "reason": (
+                    "unresolved SC sender surface is overwritten by the "
+                    "exact reviewed interval replay; the published baseline "
+                    "sender surface was verified in the original run and the "
+                    "final owner verification still enforces byte equality"
+                ),
+            }
+            chat_authority_path.write_text(
+                json.dumps(
+                    chat_authority_audit,
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        else:
+            raise SystemExit(
+                f"CHAT_AUTHORITY_FINALIZATION_FAILED: {chat_authority_path}"
+            )
     # In a hash-bound subtitle redelivery only, a missing substring target can
     # be restored from the reviewed baseline and the higher source truth then
     # reapplied.  Every other mode still stops here.

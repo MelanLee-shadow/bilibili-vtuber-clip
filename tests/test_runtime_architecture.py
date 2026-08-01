@@ -44,7 +44,10 @@ FUNCTION_DEBT_LEDGER = {
     ("src/autoslice/producer_package_finalization.py", "_run_exact_final_review_gate"): 340,
     ("src/autoslice/producer_package_finalization.py", "_stage_record"): 330,
     ("src/autoslice/producer_text_finalization.py", "verify_chat_authority_final_surfaces"): 335,
-    ("src/autoslice/producer_text_pipeline.py", "_finalize_text_evidence"): 305,
+    # 2026-07-31 +40：SC 发送者裁决对 v2 精确重放 redelivery 的 deferral
+    # （jyl-r10 案：CPA 宕机/岔听下 UNRESOLVED，而该 cue 终局注定被基线盖回；
+    # source_truth 同款 DEFERRED 惯例）。连续吃增长，下次动它先拆。
+    ("src/autoslice/producer_text_pipeline.py", "_finalize_text_evidence"): 345,
     ("src/autoslice/producer_text_pipeline.py", "_run_final_review"): 304,
     ("src/autoslice/producer_text_pipeline.py", "run_text_pipeline"): 307,
     # 2026-07-31 +6：full-text contract 穿透形参与调用（Ivan 07-31 `/goal`
@@ -80,7 +83,8 @@ MODULE_DEBT_LEDGER = {
     "src/autoslice/final_review_auditor.py": 3_390,
     "src/autoslice/live_source_review.py": 2_035,
     "src/autoslice/producer_package_finalization.py": 2_765,
-    "src/autoslice/producer_text_pipeline.py": 2_098,
+    # 2026-07-31 +40：同上（SC 发送者 deferral）。
+    "src/autoslice/producer_text_pipeline.py": 2_138,
     # 2026-07-31 +12：contract 穿透接线（形参 + 4 个调用点）。
     # 2026-07-31 再 +17：封面路由 P1——witness 从「路由法官」降回「置信输入」，
     # 删掉无条件放行、几何否决移到关系分支之后、置信改为 几何 OR witness bbox。
