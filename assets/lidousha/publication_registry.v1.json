@@ -189,7 +189,17 @@
    "recording_date": "2026-07-29",
    "status": "published",
    "bvid": "BV154GA6vEyD",
-   "note": "2026-07-31 authorized upload；public/Creator/section verified"
+   "note": "2026-07-31 authorized upload；public/Creator/section verified；2026-08-01 same-BV 字幕修复置换(4 cue：久远澪老师×2/柏拉图/栽赃给)，CID 40468153258→40496401196，证据 reports/authorized_uploads/2026-07-31-1013-jiuyuanling-source/",
+   "publication_reconciliation": {
+    "authority": {
+     "bytes": 4357,
+     "path": "reports/authorized_uploads/2026-07-31-1013-jiuyuanling-source/same-bv-repair-completed.json",
+     "sha256": "1e684dec357bd1bdd52ab6f63dd19e2865c33670b2c50859f05d3389ab370fa3"
+    },
+    "reconciled_at": "2026-08-01T07:19:06+0000",
+    "schema_version": "publication-reconciliation.v1",
+    "status": "VERIFIED_SAME_BV"
+   }
   },
   {
    "candidate_id": "auto_225056_235_339",

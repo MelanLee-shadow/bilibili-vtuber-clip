@@ -146,17 +146,27 @@ receipt。
   retry cap；r6 仅保留为操作失败证据。不要原地洗绿或重用其 fingerprint；成功 authority 是
   fresh r7。
 
-## 进行中（2026-07-31 深夜，Claude/Fable 接手线）
+## 进行中（2026-07-31 深夜 → 08-01 已收官，Claude/Fable 线）
 
-- **1013 同 BV 修复（案 1）**：4 处字幕修正已定案并全部产权化——cue9/11
-  久远澪老师（Ivan 指认 + BCUT 独立转写）、cue25 柏拉图（Ivan 确认，101 人
-  舰长榜唯一近音）、cue39 伪装成→栽赃给（exact-final 声学回执 + BCUT 双听，
-  线上存量误听）。**黄金基准 r6：全片 diff 恰好 4 处、时间轴零变化、标题逐字
-  等于线上、封面 REUSED**。产权链：truth ledger 4 条区间真值（glossary 只留
-  人名条目，[exact-cue] 钉子与 ledger 相撞已撤）+ redelivery baseline v2 精确
-  重放 + verified_public_exact 标题 + exact_source_pin 1117320ms。
-  沙箱装配脚本与终审观察脚本固化在
-  `reports/authorized_uploads/2026-07-31-1013-jiuyuanling-source/`。
+- **1013 同 BV 修复（案 1）：已完成并公开验收（2026-08-01T07:19Z）**。
+  BV154GA6vEyD 置换新 CID 40496401196（原 40468153258），
+  `repair-verify-live` = VERIFIED_FRESH_LIVE，出版登记已记
+  publication_reconciliation。4 处修正：cue9/11 久远澪老师（Ivan 指认 +
+  BCUT 独立转写）、cue25 柏拉图（Ivan 确认，101 人舰长榜唯一近音）、
+  cue39 伪装成→栽赃给（exact-final 声学回执 + BCUT 双听）。r19 产物金样：
+  全片 diff 恰 4 处、时间轴零变化、标题逐字线上、封面字节复用 8dca…。
+  人审为实证型（全片解码/静音扫描/8 帧亲验/6 段烧录窗 BCUT 复听），
+  receipt 由 Claude root 以 delegated_root_agent 签出（ce5ae6f 扩展枚举）。
+  全部证据入库 `reports/authorized_uploads/2026-07-31-1013-jiuyuanling-source/`
+  （manifest/plan/completed/receipt/evidence/审计/评审 manifest）。
+- **随案发现两条（均为既有特征，不挡置换，已列 backlog）**：
+  (a) sidecar `.srt` 相对烧录字幕存在恒定 +6.2s（=intro_offset）位移，
+  发布版与置换版同位——疑为烧录 ASS 与 sidecar 写盘各自加了一次片头偏移；
+  修复属流水线项，勿在置换 lane 单独动。
+  (b) 发布包 sidecar 文本与线上烧录像素在 cue9 本就不一致（sidecar
+  「就问你老实说」vs 线上像素「9月林老师」）——delivery-divergence 家族
+  （xinyi 案同族）新样本；本轮修复以音频仲裁为准不受影响，但基线=reviewed
+  sidecar 的前提要意识到像素可能另有其文。
 - **CPA 风暴已解（2026-08-01）**：根因是 oracle 上 CLIProxyAPI 进程病态
   （2d20h 长跑后），`systemctl --user restart cliproxyapi` 治愈，4/4 健康。
   400「当前分组不支持」是上游透传不是配置错。遗留给 Ivan：oracle 上
