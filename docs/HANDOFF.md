@@ -224,6 +224,16 @@ receipt。
    final_review_audit 还作为 correction_audit 喂进终审做变更授权推导。
    剩余排序：新关键路径=转录/AGY 精听（~3-4min）→ 逐 cue 短调用串并发
    （小赢）→ 烧录∥封面。每项测试+金丝雀单独上，门链顺序不动。
+   **luna 换 sol 试验结论（2026-08-02，Ivan 要求穷尽级验证后叫停）**：
+   gpt-5.6-luna 已被上游启用；小样 A/B 闭集/念弹幕口味判决一致但边界
+   评审分歧（sol 命中线上验收锚点），首轮金丝雀还出过一笔 luna 2m5s 500。
+   曾短暂换链后按 Ivan 裁定回退（`ec414b4`），生产全线保持 sol。根本账：
+   CPA 法官 lane 三周只有 5 次调用（配额收益≈0），量大的 lane 全是
+   luna 已显分歧的深语义类。字节级重放工具已入库
+   （`scripts/ab_model_replay_closed_set.py`，标准=重渲染 prompt sha 等于
+   历史 judge_prompt_sha256），但现存语料 5/5 inputs_missing——若未来
+   配额压力要重启此题，先给法官行持久化完整 request/witness 输入，攒够
+   N≥30 真实案例再跑该工具。
 
 ## 固化规则
 
