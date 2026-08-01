@@ -157,7 +157,15 @@ receipt。
   重放 + verified_public_exact 标题 + exact_source_pin 1117320ms。
   沙箱装配脚本与终审观察脚本固化在
   `reports/authorized_uploads/2026-07-31-1013-jiuyuanling-source/`。
-- **当前阻塞：CPA 整体宕机**（2026-08-01T00:2xZ 起，`cpa_healthy()=False`）。
+- **当前阻塞升级（2026-08-01T02:25Z 诊断定性）：CPA 分组/渠道故障，需 Ivan 在
+  CPA 侧处理，重试无用**。直探签名：`gpt-5.6-sol` 打 `/responses` 稳定返回
+  `HTTP 400 当前分组不支持本次请求所需能力，请调整请求或切换分组后重试`
+  （夹杂超时；request id 样本 `202608010223578840239468268d9d60xkIvo8t`）。
+  `cpa_healthy()` 间歇 True 是回退模型/幸运渠道在应答——池子里有坏渠道，长跑
+  必撞。同 7/4「可用渠道不存在」先例：分组/渠道配置在 oracle 的 CLIProxyAPI，
+  改 config 必重启。r10-r13 四轮全部死于此风暴的不同落点（sender 裁决/边界
+  评审/终审修正 ×2），产物链本身 r6/r9 已两次证明全绿。
+- 原始记录（已被上行取代）：CPA 整体宕机（2026-08-01T00:2xZ 起，`cpa_healthy()=False`）。
   r10/r11 与 same-BV 置换链全部需要 CPA；恢复监听已挂。**连带发现：本地测试
   套件至少一条测试走真实 CPA（仓库政策），CPA 宕机时全量必红 → 部署门
   （f616bbf）连带锁死。这是政策耦合不是 bug，但下个操作者要知道：CPA 停机
