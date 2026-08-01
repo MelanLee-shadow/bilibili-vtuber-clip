@@ -88,6 +88,16 @@ receipt。
 
 ## 阻塞
 
+- **（已解，留防复发警示）2026-08-02 runner 三日期粘滞封锁事故**：verify-live
+  把 1013 修复凭证的 runtime 登记路径写在了**可回收沙箱**里
+  （recovery/2026-07-29/auto_225056_1013_1116-jyl-r2/repo/.../verification/
+  same-bv-repair-completed.json），后续金丝雀 rm -rf 沙箱→登记悬空→全册
+  校验失败→07-25/26/29 全 blocked。已按 sha 原字节恢复（1e684dec…），
+  runner 自愈解封。**该沙箱路径在 runtime 登记被重写前不得删除**；耐久
+  副本在 /opt/bilive/autoslice/reports/authorized_uploads/
+  2026-07-31-1013-jiuyuanling/。代码级修复（repair-verify-live 把凭证落
+  耐久目录再入登记）在 backlog。
+
 没有需要 Ivan 补充的外部 blocker。
 
 - **cover-only 新 lane 零生产执行（2026-07-31，最高优先）**：`28b3576` 新建
