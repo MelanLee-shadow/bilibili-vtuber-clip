@@ -767,6 +767,13 @@ def _stage_publish_draft(
                     "carried_forward_from_published_record": True,
                 }
             )
+            # 字节证据结转，运行绑定重绑：StoryContract 投影是**本轮**的链接
+            # （含 fresh 边界评审/clip-context sha），带旧的过来必然被审计判
+            # STALE（r17 案）。
+            if isinstance(story_contract, Mapping):
+                carried_generation["story_contract"] = (
+                    cover_story_contract_binding(story_contract)
+                )
             # 已发布 record 里的 host-identity 回执是摘要形态（无内嵌 witness），
             # 过不了现行 validate_final_host_identity_verification。身份见证
             # 不搞考古：对被复用的同一份字节现场重打一次 CPA 见证（新鲜证据，

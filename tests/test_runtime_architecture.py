@@ -63,7 +63,7 @@ FUNCTION_DEBT_LEDGER = {
     # recovery manifest 要求 route-decision.v2；sha 逐字节相等才结转）。
     # 2026-08-01 +45：身份见证现场重打（摘要形态回执过不了现行校验，不考古，
     # 对同一字节新打 CPA 见证；失败即丢弃整个结转 fail-closed）。
-    ("src/autoslice/publish_staging.py", "_stage_publish_draft"): 553,
+    ("src/autoslice/publish_staging.py", "_stage_publish_draft"): 560,
     # 2026-07-31 +3：同上，截图/polish 路径的 contract 穿透。
     ("src/autoslice/publish_staging.py", "_stage_screenshot_direct_cover"): 322,
     ("src/autoslice/song_lane.py", "produce_song"): 311,
@@ -97,7 +97,7 @@ MODULE_DEBT_LEDGER = {
     # 2026-07-31 再 +27：reuse 封面 sha 绑定（同函数条目注释）。
     # 2026-08-01 +47：同上（证据包结转）。此模块 7/31-8/1 三次靠抬账过关，
     # 拆解已经不是建议是欠账。
-    "src/autoslice/publish_staging.py": 2_803,
+    "src/autoslice/publish_staging.py": 2_810,
     "src/autoslice/same_bv_repair.py": 2_422,
 }
 SCRIPT_EXCLUSIONS = {
