@@ -743,15 +743,15 @@ def _stage_publish_draft(
                     )
                 except (OSError, ValueError):
                     published_generation = None
+                # 只按 sha 相等决定是否进入结转流程；完整校验放在身份重打
+                # **之后**——已发布回执的身份部分是摘要形态，先校验会让重打
+                # 代码永远不可达（r16 案：鸡生蛋）。
                 if (
                     isinstance(published_generation, dict)
                     and str(
                         published_generation.get("final_cover_sha256") or ""
                     )
                     == reused_sha
-                    and validate_cover_route_decision(
-                        published_generation, allow_legacy_v1=False
-                    )
                 ):
                     carried_generation = dict(published_generation)
         if carried_generation is not None:
@@ -811,12 +811,13 @@ def _stage_publish_draft(
                         carried_generation = None
                 else:
                     carried_generation = None
-                if carried_generation is not None and (
-                    not validate_final_host_identity_verification(
-                        carried_generation
-                    )
-                ):
-                    carried_generation = None
+            # 终门：重打后的完整路由校验（含身份）决定结转去留。
+            if carried_generation is not None and not (
+                validate_cover_route_decision(
+                    carried_generation, allow_legacy_v1=False
+                )
+            ):
+                carried_generation = None
         cover_result = {
             "status": "REUSED_COVER",
             "cover_path": None,
