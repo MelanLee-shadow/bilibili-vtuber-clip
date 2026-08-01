@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-DEFAULT_OUT = REPO.parent / "vtuber-slice-oss"
+DEFAULT_OUT = REPO.parent / "bilibili-vtuber-clip"
 
 STRIP_PREFIXES = (
     "reports/",
@@ -29,9 +29,13 @@ STRIP_PREFIXES = (
     "docs/workflows/",
     "docs/HANDOFF.md",
     "docs/handoff-",
-    ".agent/",
-    "AGENTS.md",
+    ".agent/skills/official-replay-rescue/",  # 含密钥形状内容
+    "AGENTS.md",   # 私库操作者规则；OSS 版由 docs/oss/AGENTS.md 提供
     "CLAUDE.md",
+    "scripts/export_oss_snapshot.py",          # 私库导出工具，不随 OSS 分发
+    "ops/blrec-patches/",                      # blrec 已退役
+    "ops/recording/blrec_live_watchdog.py",
+    "ops/recording/patch_autoslice_runner_recorder_status.py",  # blrec 迁移遗物
     "cleanup_manifests/",          # 运营清理台账
     "docs/audit-uploads-",          # 上传审计=运营记录
     "docs/pending-provisional-",    # 待办清单=运营记录
@@ -98,9 +102,11 @@ def classify(path: str) -> str:
         return "template" if TEMPLATE_FILES[path] != "keep" else "keep"
     if any(path.startswith(prefix) for prefix in TEMPLATE_DIRS):
         return "strip_templated_dir"
+    if path.startswith("docs/oss/"):
+        return "rootmap"
     known_roots = (
         "src/", "scripts/", "tests/", "docs/pipeline/", "ops/",
-        "assets/", "profiles/", "prompts/",
+        "assets/", "profiles/", "prompts/", ".agent/skills/",
         "docs/bilibili-ai-subtitle-via-bcut.md",
         "docs/lidousha-auto-review-architecture.md",
         ".gitignore", ".gitattributes", "pyproject.toml",
@@ -214,10 +220,23 @@ def main() -> int:
     for rel in tracked_files():
         kind = classify(rel)
         source = REPO / rel
-        if kind == "keep":
+        if kind == "rootmap":
+            target = out_root / rel.removeprefix("docs/oss/")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            kept.append(rel)
+        elif kind == "keep":
             target = out_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
+            if rel.startswith(".agent/skills/") and target.suffix in (
+                ".md", ".yaml", ".yml", ".py",
+            ):
+                # 技能脱敏：维护者个人名讳不进 OSS（Ivan 2026-08-02 指示）。
+                text = target.read_text(encoding="utf-8")
+                cleaned = re.sub(r"\bIvan\b", "维护者", text)
+                if cleaned != text:
+                    target.write_text(cleaned, encoding="utf-8")
             kept.append(rel)
         elif kind == "template":
             target = out_root / rel
