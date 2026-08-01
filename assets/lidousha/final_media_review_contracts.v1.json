@@ -433,6 +433,41 @@
           "expectation": "结尾必须依次保留“おら翻译成老子吗”“わたくし翻译的话就是大小姐”“大小姐说了”，不得把假名改回罗马音、漏掉末句或在话中截断。"
         }
       ]
+    },
+    {
+      "candidate_id": "auto_225056_1013_1116",
+      "subtitle_review_points": [
+        {
+          "point_id": "jiuyuanling-danmu-name-first",
+          "final_video_start_ms": 14000,
+          "final_video_end_ms": 19000,
+          "expectation": "弹幕点名必须写舰长专名“久远澪老师”，不得误听为“就问你老实说”。"
+        },
+        {
+          "point_id": "jiuyuanling-danmu-name-second",
+          "final_video_start_ms": 19000,
+          "final_video_end_ms": 25000,
+          "expectation": "第二次仍是“久远澪老师，侄女会看李豆沙”，与第一次同名同形。"
+        },
+        {
+          "point_id": "platon-boarding-thanks",
+          "final_video_start_ms": 59500,
+          "final_video_end_ms": 64500,
+          "expectation": "上舰感谢必须是“柏拉图老板”（101 人舰长榜唯一近音专名），不得写“不糊涂”。"
+        },
+        {
+          "point_id": "zaizang-not-weizhuang",
+          "final_video_start_ms": 94500,
+          "final_video_end_ms": 99500,
+          "expectation": "必须是“试图以此栽赃给李豆沙”，不得写“伪装成李豆沙”。"
+        },
+        {
+          "point_id": "ending-closure",
+          "final_video_start_ms": 104000,
+          "final_video_end_ms": 109920,
+          "expectation": "结尾按 exact_source_pin(1117320ms) 完整收束，不断在话中，不带入后续新话题。"
+        }
+      ]
     }
   ]
 }
