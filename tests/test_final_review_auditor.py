@@ -2818,3 +2818,47 @@ def test_semantic_trigger_prefers_danmaku_pool_before_frames():
         audit["request"]["candidate_provenance"]["kind"]
         == "structured_chat_bound"
     )
+
+
+def test_pinned_replay_skip_yields_zero_mutation_pass():
+    audit = audit_correction_mutation_authority(
+        {
+            "schema_version": "final-review-audit.v1",
+            "status": "SKIPPED_PINNED_REPLAY",
+            "findings": [],
+            "applied_count": 0,
+            "pinned_replay_ownership": {
+                "exact_interval_replay": True,
+                "baseline_sha256": "de" + "ad" * 31,
+                "publication_authority_sha256": "sha256:" + "ab" * 32,
+            },
+        }
+    )
+    assert audit["status"] == "PASS"
+    assert audit["validated_mutation_count"] == 0
+    assert audit["pinned_replay_skip"]["exact_interval_replay"] is True
+
+
+def test_pinned_replay_skip_without_disclosure_blocks():
+    for broken in (
+        {"status": "SKIPPED_PINNED_REPLAY", "findings": []},
+        {
+            "status": "SKIPPED_PINNED_REPLAY",
+            "findings": [],
+            "pinned_replay_ownership": {"exact_interval_replay": False},
+        },
+        {
+            "status": "SKIPPED_PINNED_REPLAY",
+            "findings": [{"routed": "expected_value_canon"}],
+            "pinned_replay_ownership": {
+                "exact_interval_replay": True,
+                "baseline_sha256": "de" + "ad" * 31,
+                "publication_authority_sha256": "sha256:" + "ab" * 32,
+            },
+        },
+    ):
+        audit = audit_correction_mutation_authority(broken)
+        assert audit["status"] == "BLOCK"
+        assert audit["failures"][0]["reason_code"] == (
+            "PINNED_REPLAY_SKIP_UNDISCLOSED"
+        )

@@ -2029,6 +2029,8 @@ def run_text_pipeline(
             "schema_version": "final-review-audit.v1",
             "status": "SKIPPED_PINNED_REPLAY",
             "pinned_replay_ownership": pinned_replay_ownership,
+            "findings": [],
+            "applied_count": 0,
         }
     else:
         reviewed_srt, final_review_audit = _run_final_review(

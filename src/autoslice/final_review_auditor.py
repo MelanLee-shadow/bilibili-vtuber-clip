@@ -2931,6 +2931,45 @@ def adjudicate_exact_release_findings(
     return unresolved, resolved
 
 
+def _pinned_replay_zero_mutation_receipt(
+    correction_audit: Mapping[str, object],
+    *,
+    findings: object,
+    applied_count: object,
+) -> dict[str, object]:
+    """修复快路径（2026-08-02 提速②）的零变更授权回执。
+
+    审片员在钉死重放模式下被披露性跳过——零变更即零待授权变更，但披露块
+    必须形状完整且确无发现，否则按未披露跳过 BLOCK（fail-closed）。
+    """
+
+    ownership = correction_audit.get("pinned_replay_ownership")
+    if (
+        isinstance(ownership, Mapping)
+        and ownership.get("exact_interval_replay") is True
+        and bool(str(ownership.get("baseline_sha256") or "").strip())
+        and bool(
+            str(ownership.get("publication_authority_sha256") or "").strip()
+        )
+        and (findings is None or findings == [])
+    ):
+        return {
+            "schema_version": "subtitle-correction-mutation-audit.v1",
+            "status": "PASS",
+            "applied_count": 0,
+            "validated_mutation_count": 0,
+            "failures": [],
+            "pinned_replay_skip": dict(ownership),
+        }
+    return {
+        "schema_version": "subtitle-correction-mutation-audit.v1",
+        "status": "BLOCK",
+        "applied_count": applied_count,
+        "validated_mutation_count": 0,
+        "failures": [{"reason_code": "PINNED_REPLAY_SKIP_UNDISCLOSED"}],
+    }
+
+
 def audit_correction_mutation_authority(
     correction_audit: Mapping[str, object],
 ) -> dict[str, object]:
@@ -2964,6 +3003,10 @@ def audit_correction_mutation_authority(
                 }
             ],
         }
+    if correction_status == "SKIPPED_PINNED_REPLAY":
+        return _pinned_replay_zero_mutation_receipt(
+            correction_audit, findings=findings, applied_count=applied_count
+        )
     if correction_status not in _COMPLETED_CORRECTION_STATUSES:
         return {
             "schema_version": "subtitle-correction-mutation-audit.v1",
