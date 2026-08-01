@@ -146,6 +146,29 @@ receipt。
   retry cap；r6 仅保留为操作失败证据。不要原地洗绿或重用其 fingerprint；成功 authority 是
   fresh r7。
 
+## 进行中（2026-07-31 深夜，Claude/Fable 接手线）
+
+- **1013 同 BV 修复（案 1）**：4 处字幕修正已定案并全部产权化——cue9/11
+  久远澪老师（Ivan 指认 + BCUT 独立转写）、cue25 柏拉图（Ivan 确认，101 人
+  舰长榜唯一近音）、cue39 伪装成→栽赃给（exact-final 声学回执 + BCUT 双听，
+  线上存量误听）。**黄金基准 r6：全片 diff 恰好 4 处、时间轴零变化、标题逐字
+  等于线上、封面 REUSED**。产权链：truth ledger 4 条区间真值（glossary 只留
+  人名条目，[exact-cue] 钉子与 ledger 相撞已撤）+ redelivery baseline v2 精确
+  重放 + verified_public_exact 标题 + exact_source_pin 1117320ms。
+  沙箱装配脚本与终审观察脚本固化在
+  `reports/authorized_uploads/2026-07-31-1013-jiuyuanling-source/`。
+- **当前阻塞：CPA 整体宕机**（2026-08-01T00:2xZ 起，`cpa_healthy()=False`）。
+  r10/r11 与 same-BV 置换链全部需要 CPA；恢复监听已挂。**连带发现：本地测试
+  套件至少一条测试走真实 CPA（仓库政策），CPA 宕机时全量必红 → 部署门
+  （f616bbf）连带锁死。这是政策耦合不是 bug，但下个操作者要知道：CPA 停机
+  期间 deploy 会被测试门正确拒绝。**
+- 修复链本轮沉淀的 lane 修复（全部已提交，CPA 恢复后随部署生效）：
+  `90cf252` 边界 payoff 假设让位 exact pin（r13 钳制的 pin 模式对偶）、
+  `702e2dc` reuse 封面 sha 绑定（reuse × recovery manifest 组合首次走通）、
+  `1638d62` SC 发送者裁决对 v2 精确重放的 deferral（CPA 宕机/岔听下不再假死）。
+- **案 2（怕猫 181_480 分句）排在案 1 置换完成之后**，一次有界重跑 + 硬门三条，
+  整套复用案 1 的装配（沙箱模式 + 各自的 baseline/truths）。
+
 ## 下一步
 
 上一版的第 1–3 项（07-26 tick、`song_192000_1321` draft authority、
