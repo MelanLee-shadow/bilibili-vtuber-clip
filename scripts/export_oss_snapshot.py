@@ -289,7 +289,7 @@ def main() -> int:
                 hit
                 and hit.group(0).lower() == "aierlma"
                 and "aierlma521" not in line
-                and rel_str in ("LICENSE", "README.md")
+                and rel_str in ("LICENSE", "README.md", "NOTICE")
             ):
                 continue  # 作者署名是有意公开的内容；邮箱仍禁
             if hit:

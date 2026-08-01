@@ -71,6 +71,9 @@ python3 scripts/produce_slice_package.py --spec <spec.json> --ssh-host localhost
 
 ## 许可
 
-自定义宽松许可（全文见 [`LICENSE`](LICENSE)）：个人与商业使用免费、
-闭源修改允许；**再分发须署名原作者与来源**；**商业使用须在公开材料中
-声明使用了本项目**。
+[Apache-2.0](LICENSE)。再分发（含衍生品）须保留 `LICENSE` 与 `NOTICE`
+（署名与来源随代码走）；闭源修改允许。
+
+**礼节性请求（非许可条款）**：若你把本项目用于商业服务或商业化内容，
+请在至少一处公开材料（产品页/关于页/视频简介）注明使用了
+bilibili-vtuber-clip 并附仓库链接——这是社区回馈的最低形式。
