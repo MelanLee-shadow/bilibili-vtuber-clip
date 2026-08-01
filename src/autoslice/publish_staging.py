@@ -59,6 +59,7 @@ from .cover_source_composition import (
 from .cover_host_identity_gate import (
     final_host_identity_witness_unavailable,
     validate_final_host_identity_verification,
+    verify_lidousha_final_host_identity,
 )
 from .cover_polish_gate import (
     _compose_screenshot_cover_with_face_gate,
@@ -766,6 +767,56 @@ def _stage_publish_draft(
                     "carried_forward_from_published_record": True,
                 }
             )
+            # 已发布 record 里的 host-identity 回执是摘要形态（无内嵌 witness），
+            # 过不了现行 validate_final_host_identity_verification。身份见证
+            # 不搞考古：对被复用的同一份字节现场重打一次 CPA 见证（新鲜证据，
+            # 绑 reused_sha）。失败即丢弃整个结转（回落纯 REUSED 标记），
+            # 下游 manifest fail-closed——绝不带着假绿走。
+            carried_route = carried_generation.get("route_decision")
+            needs_identity = (
+                isinstance(carried_route, Mapping)
+                and carried_route.get("host_identity_required") is True
+                and not validate_final_host_identity_verification(
+                    carried_generation
+                )
+            )
+            if needs_identity:
+                identity_reference = (
+                    media_path.parent
+                    / "cover_refs"
+                    / f"{candidate_id}.cover-ref.png"
+                )
+                fresh_base_url = (
+                    os.environ.get("CPA_BASE_URL", "").strip().rstrip("/")
+                )
+                fresh_api_key = os.environ.get("CPA_API_KEY", "").strip()
+                if (
+                    identity_reference.is_file()
+                    and fresh_base_url
+                    and fresh_api_key
+                ):
+                    try:
+                        carried_generation[
+                            "final_host_identity_verification"
+                        ] = dict(
+                            verify_lidousha_final_host_identity(
+                                final_cover_path=reused_cover_path,
+                                final_cover_sha256=reused_sha,
+                                reference_path=identity_reference,
+                                base_url=fresh_base_url,
+                                api_key=fresh_api_key,
+                            )
+                        )
+                    except Exception:
+                        carried_generation = None
+                else:
+                    carried_generation = None
+                if carried_generation is not None and (
+                    not validate_final_host_identity_verification(
+                        carried_generation
+                    )
+                ):
+                    carried_generation = None
         cover_result = {
             "status": "REUSED_COVER",
             "cover_path": None,
