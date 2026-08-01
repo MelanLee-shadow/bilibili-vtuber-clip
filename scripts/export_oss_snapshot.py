@@ -38,6 +38,41 @@ STRIP_PREFIXES = (
     "CLAUDE.md",
     "scripts/export_oss_snapshot.py",          # 私库导出工具，不随 OSS 分发
     "ops/blrec-patches/",                      # blrec 已退役
+    "tests/test_blrec_live_watchdog.py",       # 孤儿测试(模块已剔)
+    "tests/test_patch_autoslice_runner_recorder_status.py",
+    "tests/test_repair_false_green_20260709.py",
+    "tests/test_authorized_upload.py",  # 运营态耦合测试
+    "tests/test_auto_review_shadow_pipeline.py",  # 运营态耦合测试
+    "tests/test_batch_speaker_review.py",  # 运营态耦合测试
+    "tests/test_blrec_patches.py",  # 运营态耦合测试
+    "tests/test_branding_intro.py",  # 运营态耦合测试
+    "tests/test_build_lidousha_recovery_review_manifest.py",  # 运营态耦合测试
+    "tests/test_channel_profile.py",  # 运营态耦合测试
+    "tests/test_clip_context.py",  # 运营态耦合测试
+    "tests/test_cover_reference_authority.py",  # 运营态耦合测试
+    "tests/test_final_human_review.py",  # 运营态耦合测试
+    "tests/test_free_session_autoslice.py",  # 运营态耦合测试
+    "tests/test_lidousha_review_package_audit.py",  # 运营态耦合测试
+    "tests/test_manual_title_repair_authority.py",  # 运营态耦合测试
+    "tests/test_produce_slice_boundary.py",  # 运营态耦合测试
+    "tests/test_producer_package_finalization.py",  # 运营态耦合测试
+    "tests/test_publication_registry.py",  # 运营态耦合测试
+    "tests/test_publish_staging_recovery_title.py",  # 运营态耦合测试
+    "tests/test_recovery_planner_contract.py",  # 运营态耦合测试
+    "tests/test_recovery_review_rerun.py",  # 运营态耦合测试
+    "tests/test_recovery_title_authority.py",  # 运营态耦合测试
+    "tests/test_repair_reviewed_covers.py",  # 运营态耦合测试
+    "tests/test_review_package_title_audit.py",  # 运营态耦合测试
+    "tests/test_reviewed_subtitle_baseline_registry.py",  # 运营态耦合测试
+    "tests/test_semantic_candidate_selector.py",  # 运营态耦合测试
+    "tests/test_session_relation_authority.py",  # 运营态耦合测试
+    "tests/test_source_subtitle_truth.py",  # 运营态耦合测试
+    "tests/test_speaker_finalizer.py",  # 运营态耦合测试
+    "tests/test_subtitle_regression.py",  # 运营态耦合测试
+    "tests/test_subtitle_text_overrides.py",  # 运营态耦合测试
+    "tests/test_timely_terms.py",  # 运营态耦合测试
+    "tests/test_title_policy.py",  # 运营态耦合测试
+    "tests/test_upload_tag_policy.py",  # 运营态耦合测试
     "ops/recording/blrec_live_watchdog.py",
     "ops/recording/patch_autoslice_runner_recorder_status.py",  # blrec 迁移遗物
     "cleanup_manifests/",          # 运营清理台账
@@ -83,6 +118,8 @@ TEMPLATE_DIRS = (
 
 FORBIDDEN_PATTERNS = (
     r"aierlma",
+    r"\bIvan\b",
+    r"/Users/ivan\b",
     r"cpa\.[a-z0-9.-]+\.top",
     r"sk-[A-Za-z0-9]{16,}",
     r"\boracle\b.*ssh|ssh.*\boracle\b",
@@ -233,22 +270,29 @@ def main() -> int:
             target = out_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
-            if rel.startswith(".agent/skills/") and target.suffix in (
-                ".md", ".yaml", ".yml", ".py",
-            ):
-                # 技能脱敏：维护者个人名讳不进 OSS（Ivan 2026-08-02 指示）。
+            if target.suffix in (
+                ".md", ".yaml", ".yml", ".py", ".json", ".txt",
+                ".sh", ".srt", ".toml", ".cfg",
+            ) or target.name in (".gitignore", ".gitattributes", ".env.example"):
+                # 全树脱敏：维护者个人名讳/本机路径不进 OSS（2026-08-02
+                # 指示，扩展自技能脱敏）。代码与测试同规则重写，字符串断言
+                # 两侧一致替换故不破坏等式。
                 text = target.read_text(encoding="utf-8")
-                cleaned = re.sub(r"\bIvan\b", "维护者", text)
+                cleaned = text.replace("/Users/ivan", "/Users/op")
+                # 统一映射为同一词，保证代码常量、casefold 匹配器与测试
+                # 断言三方替换后仍自恰（保留身份枚举语义不破坏）。
+                cleaned = re.sub(
+                    r"\b[Ii][Vv][Aa][Nn]\b", "维护者", cleaned
+                )
                 if cleaned != text:
                     target.write_text(cleaned, encoding="utf-8")
             kept.append(rel)
         elif kind == "template":
             target = out_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(
-                _template_payload(TEMPLATE_FILES[rel], source),
-                encoding="utf-8",
-            )
+            payload = _template_payload(TEMPLATE_FILES[rel], source)
+            payload = re.sub(r"\b[Ii][Vv][Aa][Nn]\b", "维护者", payload)
+            target.write_text(payload, encoding="utf-8")
             templated.append(rel)
         elif kind == "strip_templated_dir":
             for prefix in TEMPLATE_DIRS:
