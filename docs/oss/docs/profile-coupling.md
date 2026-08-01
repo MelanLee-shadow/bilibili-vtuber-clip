@@ -32,9 +32,15 @@
 | `src/autoslice/self_reference_absorption.py` | `_CANONICAL_NAMES = ("李豆沙","小李","豆沙")` 与 `host_phonetic_ratio` 目标名 |
 | `src/autoslice/shadow_review.py` `_default_style_profile` | 内置风格兜底含「小皇帝」等频道口癖 |
 | `src/autoslice/term_authority.py` | 词表加载单源指向 `scripts.profile_glossary_terms`（按选中 profile 读 glossary，机制已通用，失败静默跳过需注意） |
+| `src/autoslice/title_policy.py` | `_TITLE_BANNED_REGEXES[0]` 位置性假设（槽位 0 = 「秒X」规则，import 时取用——`banned_regexes` 为空会直接 IndexError；模板骨架已带该槽位默认值） |
+| `src/autoslice/upload_tag_policy.py` | tag prompt 内容契约在 import 时强制（`base_tags` 非空、模板必须保留 `{existing_tags}`/`{title}`/`{srt_text}`）；模板骨架已满足 |
 | `scripts/evaluate_speaker_phase1.py` | `TRUTH_TO_AUTO = {"lidousha": "李豆沙", …}` 标签映射 |
 
 ## C. 资产路径旁路 profile 解析（对默认 profile 字节等价，最安全的第一批修复）
+
+**实际后果**：C 组未修复前，发布 lane（出版登记、终审契约）与声纹安装 lane
+是**默认 profile 专用**——非默认 profile 可以产包评审，但公开发布会读/写
+示例频道的资产文件。换频道要发布，先修这一组。
 
 | 位置 | 内容 |
 |---|---|
@@ -59,6 +65,7 @@
 | `scripts/transcribe_live_*_via_agy.sh`、`llm_via_free_groq.sh` | `ssh free` | 改脚本头部主机变量 |
 | `scripts/slice_monitor.py`、`scripts/auto_review_shadow_daemon.py`、`scripts/cpa_semantic_qa_llm.py` | 默认房间号/主机为示例频道 | CLI/env 覆盖 |
 | `scripts/silero_vad_spans.py` | `MODEL=/opt/bilive/vad/silero_vad.onnx` | 部署布局对齐 |
+| `scripts/sync_profile_assets.sh` | 同步目标固定为 `lidousha` profile；远端用扁平文件名（如 `lidousha_glossary.txt`，`profile_glossary_terms.py`/`gemini_slice_jingting.py` 在主机上按此名兜底读取） | 换 profile 需改脚本内 profile 变量与远端文件名 |
 | `ops/recording/*` | RoomId/路径为参考部署 | 见 `ops/recording/README.md` |
 | `scripts/deploy_autoslice.sh` | 校验清单含 `assets/lidousha/...` 与声纹/批计划存在性 | 按你的 profile 改写后用 |
 

@@ -38,6 +38,7 @@ AI 封面与标题 → 出版登记与上传**。为"发布错误不可接受"�
 | LLM 通道 | 需要能访问 **Gemini 系列**（转写精修/声学听写）与 **GPT 系列**（语义裁决/标题/封面）。推荐自建 [CLIProxyAPI](https://github.com/luispater/CLIProxyAPI) 作为统一入口（本仓所有调用走 `CPA_BASE_URL`/`CPA_API_KEY` 两个环境变量） |
 | 免费 ASR | 词级时间轴来自必剪开放转写接口，基于 [SocialSisterYi/bcut-asr](https://github.com/SocialSisterYi/bcut-asr) 的社区研究（见 `scripts/free_asr_client.py`，另含剪映备胎；此处 "free" = 免费） |
 | 上传 CLI | [biliup](https://github.com/biliup/biliup)（发布 lane 用；只跑评审/产包可不装） |
+| 本机 SSH | 产线以 `--ssh-host localhost` 经 SSH 取源媒体：macOS 打开「远程登录」，Linux 装 openssh-server，并给自己配好免密 key |
 | Python | 3.11+（参考部署 3.13），`ffmpeg` 7+ |
 
 凭据清单：CPA 端点 + key、Gemini key（可选备份位）、录播姬房间 cookie（可选，
@@ -62,7 +63,7 @@ cp .env.example .env        # 填 CPA / Gemini 凭据
 [profiles/README.md](profiles/README.md)，有 `assets/_template/` 骨架可复制）：
 
 ```bash
-python3 scripts/validate_channel_profile.py --profile lidousha --config-only
+.venv/bin/python scripts/validate_channel_profile.py --profile lidousha --config-only
 ```
 
 第一支切片（本机冒烟，不需要录播服务器）：
@@ -72,13 +73,13 @@ python3 scripts/validate_channel_profile.py --profile lidousha --config-only
 # 召回 + 产包一条 talk 候选，交付在 lidousha/smoke*/ 下。
 # AUTOSLICE_BASE 指向一个可写目录（默认 /opt/bilive/autoslice）。
 AUTOSLICE_BASE=$PWD/.autoslice \
-  python3 scripts/session_autoslice.py --smoke-segment /path/to/recording.flv
+  .venv/bin/python scripts/session_autoslice.py --smoke-segment /path/to/recording.flv
 ```
 
 要产指定片段而不是让选题器挑，用单候选产线（spec 字段见脚本 docstring）：
 
 ```bash
-python3 scripts/produce_slice_package.py --spec <spec.json> --ssh-host localhost
+.venv/bin/python scripts/produce_slice_package.py --spec <spec.json> --ssh-host localhost
 ```
 
 无人值守整线（录制 → 下播自动切片 → 评审 → 授权上传）按
@@ -110,8 +111,13 @@ manifest 闭环——这是唯一上传授权入口。
 - 出版登记/真值台账/评审契约等**运营状态**在本仓只有空模板——它们属于
   每个部署自己的数据。
 - 测试套件不需要任何凭据或网络（LLM/HTTP 边界全部 mock）；个别用例在缺
-  `ffmpeg` 或表情包媒体时会 skip。约 11 个用例耦合示例 profile 的资产内容，
-  换 profile 后按 `assets/_template/` 重建即可。
+  `ffmpeg` 或表情包媒体时会 skip。**套件以默认 profile 为基准**：跑 `pytest`
+  时不要设置 `AUTOSLICE_PROFILE`（约 11 个用例直接断言示例 profile 的资产
+  内容，非默认 profile 下套件不是有效信号）。
+- 发布与声纹安装 lane 目前默认 profile 专用（上传授权登记/终审契约/声纹
+  schema 门硬编码示例资产路径，见
+  [docs/profile-coupling.md](docs/profile-coupling.md) C 组）——换频道可以
+  产包评审，公开发布前需先完成该组修复。
 - 示例 profile 在全新 clone 里全量校验会因声纹文件缺失而 BLOCKED（生物特征
   不随仓分发，预期行为，见 profiles/README.md）。
 - Docker 化在路线图上（欢迎 PR）。

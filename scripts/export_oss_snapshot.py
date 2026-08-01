@@ -450,6 +450,48 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "9. Final title is exactly the profile's song-title format (default profile: "
         "`【李豆沙】豆沙歌，《canonical歌名》`); cover text is exactly `《歌名》`.",
     ),
+    # --- runner/producer 帮助文本：去示例频道/私有主机叙事（行数保持不变） ---
+    (
+        "scripts/session_autoslice.py",
+        '"""Unattended post-stream auto-slice runner (runs ON the free host).',
+        '"""Unattended post-stream auto-slice runner (runs ON the recording host).',
+    ),
+    (
+        "scripts/session_autoslice.py",
+        "维护者's goal (2026-07-05): when a 李豆沙 stream ends, free starts the FULL",
+        "Design goal: when a stream ends, the recording host starts the FULL",
+    ),
+    (
+        "scripts/session_autoslice.py",
+        "        burn, REAL CPA cover, 李豆沙-style title) / song LRC lane with the strict",
+        "        burn, REAL CPA cover, profile-style title) / song LRC lane with the strict",
+    ),
+    (
+        "scripts/session_autoslice.py",
+        "      → delivery under <repo>/lidousha/<date>/ + AUTOSLICE_SUMMARY.md with the",
+        "      → delivery under <repo>/<output_directory>/<date>/ + AUTOSLICE_SUMMARY.md with the",
+    ),
+    (
+        "scripts/session_autoslice.py",
+        "HARD LESSONS BAKED IN (first real run, 2026-07-06):",
+        "HARD LESSONS BAKED IN:",
+    ),
+    (
+        "scripts/produce_slice_package.py",
+        '  "selection_hook": "弹幕让李豆沙表演上下摇……", # selected main event; auto-title must retain it',
+        '  "selection_hook": "弹幕让主播表演上下摇……", # selected main event; auto-title must retain it',
+    ),
+    (
+        "scripts/produce_slice_package.py",
+        '    {"remote_media": "<abs path on free>", "start_ms": ..., "end_ms": ...,',
+        '    {"remote_media": "<abs path on recording host>", "start_ms": ..., "end_ms": ...,',
+    ),
+    (
+        ".agent/skills/title-style/SKILL.md",
+        "2. `../../../assets/lidousha/title_style.md`：自动标题 prompt 的风格/few-shot；",
+        "2. 选中 profile 的 `title_style` 资产（默认 profile："
+        "`../../../assets/lidousha/title_style.md`）：自动标题 prompt 的风格/few-shot；",
+    ),
     # --- profiles/README：接上骨架资产 + 示例 profile 校验预期 ---
     (
         "profiles/README.md",
@@ -694,18 +736,68 @@ _TEMPLATE_TEXT_PLACEHOLDERS = {
 
 
 _IDENTITY_TOKENS = ("李豆沙", "lidousha", "豆沙", "kmx", "小李")
+_PROFILE_SCHEMA_RE = re.compile(r"^lidousha([-.][A-Za-z0-9_.-]+)$")
+
+# 这三个资产的骨架必须"可加载"而不只是"形状对"：loader 在 import 时就执行内容
+# 契约（base_tags 非空、banned_regexes[0] 存在、prompt 三占位符），空壳会让新
+# profile 连 --help 都起不来。值都是中性模板默认，供采用者替换。
+_TEMPLATE_ASSET_JSON = {
+    "upload_tag_policy": {
+        "schema_version": "vtuber-slice.upload-tag-policy.v1",
+        "base_tags": ["虚拟主播", "直播切片", "直播回放", "切片"],
+        "max_tags_default": 12,
+        "max_tag_chars": 20,
+        "term_rules": [],
+        "known_proper_surfaces_extra": [],
+        "theme_allowed": [],
+        "banned_content_tags": [],
+        "content_prompt_template": (
+            "你在为B站虚拟主播的直播切片选投稿标签(tag)。\n"
+            "已有基础tag：{existing_tags}\n标题：{title}\n成品字幕全文：\n{srt_text}\n\n"
+            "从字幕与标题出发补充通用、可搜索的内容词tag（专名只用本频道词表允许的"
+            "写法；不要生僻梗）。每行一个tag。"
+        ),
+    },
+    "title_policy": {
+        "schema_version": "vtuber-slice.title-policy.v1",
+        "banned_hype_words": ["震惊"],
+        "suffix_only_hype_words": ["哭"],
+        "banned_filler_words": ["家人们"],
+        "banned_regexes": ["秒[一-鿿]"],
+        "min_length": 12,
+        "max_length": 49,
+        "max_attempts": 3,
+        "generic_hook_words": ["直播", "精彩"],
+        "meaningless_particles": ["的", "了"],
+    },
+    "branding_intro_manifest": {
+        "schema_version": "REPLACE_ME-branding-intro.v2",
+        "enabled": False,
+        "policy": {},
+        "rotation": {},
+        "intros": [],
+    },
+}
 
 
 def _scrub_identity_strings(payload: str) -> str:
-    """模板骨架里不允许残留示例频道身份：整值替换成占位符。"""
+    """模板骨架里不允许残留示例频道身份。
+
+    profile-scoped schema 串保形替换（``lidousha-x.v1`` → ``REPLACE_ME-x.v1``，
+    采用者改成 ``<自己的profile-id>-x.v1``）；其余含身份的字符串整值换占位符。
+    """
 
     def scrub(node):
         if isinstance(node, dict):
             return {key: scrub(value) for key, value in node.items()}
         if isinstance(node, list):
             return [scrub(item) for item in node]
-        if isinstance(node, str) and any(tok in node for tok in _IDENTITY_TOKENS):
-            return "REPLACE_ME（按你的频道改写；写法参考 assets/lidousha/ 的同名资产）"
+        if isinstance(node, str):
+            shaped = _PROFILE_SCHEMA_RE.match(node)
+            if shaped:
+                return "REPLACE_ME" + shaped.group(1)
+            if any(tok in node for tok in _IDENTITY_TOKENS):
+                return "REPLACE_ME（按你的频道改写；写法参考 assets/lidousha/ 的同名资产）"
         return node
 
     data = scrub(json.loads(payload))
@@ -727,7 +819,11 @@ def build_template_assets(out_root: Path) -> int:
     for key, rel_name in sorted(template_files.items()):
         target = target_root / rel_name
         target.parent.mkdir(parents=True, exist_ok=True)
-        if key == "voiceprint_profile":
+        if key in _TEMPLATE_ASSET_JSON:
+            payload = json.dumps(
+                _TEMPLATE_ASSET_JSON[key], ensure_ascii=False, indent=2
+            ) + "\n"
+        elif key == "voiceprint_profile":
             payload = json.dumps(
                 {
                     "schema_version": "<profile-id>-voiceprint-profile.v1",
@@ -777,7 +873,21 @@ def build_template_assets(out_root: Path) -> int:
         "- `fonts/` 需要你自备可再分发的 CJK 字体（默认 profile 用 ZCOOL 快乐体 +\n"
         "  得意黑，见其 fonts 目录与许可）。\n"
         "- `voiceprint_profile.v1.json` 是 UNCONFIGURED 占位：声纹属于生物特征，须\n"
-        "  自己 enroll 后用 `scripts/install_voiceprints.py` 安装。\n",
+        "  自己 enroll 后用 `scripts/install_voiceprints.py` 安装。\n"
+        "\n"
+        "## 首跑前最小清单\n"
+        "\n"
+        "- `upload_tag_policy.json` / `title_policy.json` 骨架带中性默认值，**开箱可\n"
+        "  加载**（loader 在 import 时执行内容契约：base_tags 非空、banned_regexes\n"
+        "  槽位 0 存在、tag prompt 必须保留 {existing_tags}/{title}/{srt_text} 三个\n"
+        "  占位符）。先跑通，再替换成你的口径。\n"
+        "- `intro/branding_intro.v1.json` 默认 `enabled: false`（关闭片头）。启用前把\n"
+        "  schema_version 的 `REPLACE_ME` 改成你的 profile-id，并按\n"
+        "  `src/autoslice/branding_intro.py` 的契约补 `intros`。\n"
+        "- 各 JSON 中 `REPLACE_ME-…` 形态的 schema_version 都指 profile-scoped\n"
+        "  schema：改成 `<你的profile-id>-…`。\n"
+        "- 测试套件以**默认 profile** 为基准：跑 `pytest` 时不要设置\n"
+        "  `AUTOSLICE_PROFILE`（约 11 个用例直接断言示例 profile 的资产内容）。\n",
         encoding="utf-8",
     )
     return written + 1

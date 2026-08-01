@@ -15,7 +15,8 @@
 
 1. **装依赖**：`python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`。
 2. **冒烟**：`.venv/bin/python -m pytest -q` —— 应全绿（无凭据/无网络也能跑，
-   LLM/HTTP 边界全部 mock；缺 `ffmpeg` 或表情包媒体时个别用例 skip）。
+   LLM/HTTP 边界全部 mock；缺 `ffmpeg` 或表情包媒体时个别用例 skip）。套件以
+   **默认 profile** 为基准：跑测试时不要设置 `AUTOSLICE_PROFILE`。
 3. **配环境**：`cp .env.example .env`，填 `CPA_BASE_URL`/`CPA_API_KEY` 与
    Gemini key。没有 CPA？先读 README 的 LLM 通道一节——没有 LLM 入口时
    选题/校对/封面 lane 会 fail-closed 拒绝，而不是降级。
