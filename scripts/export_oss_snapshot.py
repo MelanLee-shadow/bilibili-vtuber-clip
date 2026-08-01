@@ -7,6 +7,11 @@ HANDOFF、reviews、spark、.agent）整目录剔除。未分类的新路径直�
 再导出时新增文件必须显式归类，防止未来无意泄漏。
 
 导出后跑禁词扫描（私有域名/主机名/密钥形状），命中即失败。
+
+重建 OSS 仓的规范身份（勿用真实邮箱——提交元数据是明文公开的）：
+  git -c user.name=lavender \
+      -c user.email=55280375+LavenderYYPS@users.noreply.github.com \
+      commit ...
 """
 
 from __future__ import annotations
