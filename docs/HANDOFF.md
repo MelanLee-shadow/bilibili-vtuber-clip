@@ -157,25 +157,26 @@ receipt。
   重放 + verified_public_exact 标题 + exact_source_pin 1117320ms。
   沙箱装配脚本与终审观察脚本固化在
   `reports/authorized_uploads/2026-07-31-1013-jiuyuanling-source/`。
-- **当前阻塞升级（2026-08-01T02:25Z 诊断定性）：CPA 分组/渠道故障，需 Ivan 在
-  CPA 侧处理，重试无用**。直探签名：`gpt-5.6-sol` 打 `/responses` 稳定返回
-  `HTTP 400 当前分组不支持本次请求所需能力，请调整请求或切换分组后重试`
-  （夹杂超时；request id 样本 `202608010223578840239468268d9d60xkIvo8t`）。
-  `cpa_healthy()` 间歇 True 是回退模型/幸运渠道在应答——池子里有坏渠道，长跑
-  必撞。同 7/4「可用渠道不存在」先例：分组/渠道配置在 oracle 的 CLIProxyAPI，
-  改 config 必重启。r10-r13 四轮全部死于此风暴的不同落点（sender 裁决/边界
-  评审/终审修正 ×2），产物链本身 r6/r9 已两次证明全绿。
-- 原始记录（已被上行取代）：CPA 整体宕机（2026-08-01T00:2xZ 起，`cpa_healthy()=False`）。
-  r10/r11 与 same-BV 置换链全部需要 CPA；恢复监听已挂。**连带发现：本地测试
-  套件至少一条测试走真实 CPA（仓库政策），CPA 宕机时全量必红 → 部署门
-  （f616bbf）连带锁死。这是政策耦合不是 bug，但下个操作者要知道：CPA 停机
-  期间 deploy 会被测试门正确拒绝。**
-- 修复链本轮沉淀的 lane 修复（全部已提交，CPA 恢复后随部署生效）：
-  `90cf252` 边界 payoff 假设让位 exact pin（r13 钳制的 pin 模式对偶）、
-  `702e2dc` reuse 封面 sha 绑定（reuse × recovery manifest 组合首次走通）、
-  `1638d62` SC 发送者裁决对 v2 精确重放的 deferral（CPA 宕机/岔听下不再假死）。
-- **案 2（怕猫 181_480 分句）排在案 1 置换完成之后**，一次有界重跑 + 硬门三条，
-  整套复用案 1 的装配（沙箱模式 + 各自的 baseline/truths）。
+- **CPA 风暴已解（2026-08-01）**：根因是 oracle 上 CLIProxyAPI 进程病态
+  （2d20h 长跑后），`systemctl --user restart cliproxyapi` 治愈，4/4 健康。
+  400「当前分组不支持」是上游透传不是配置错。遗留给 Ivan：oracle 上
+  `cliproxyapi-codex-warmup.service` 处于 failed；建议加周期重启 timer。
+  （历史：r10-r13 四轮死于该风暴不同落点；停机期间全量测试必红→部署门
+  连带锁死是政策耦合，非 bug。）
+- **reuse-cover × recovery-manifest 证据结转 lane 本轮建成**（字幕-only 修复
+  的永久基础设施）：`1878ee1` sidecar 结转 → `ecbb7cd` 身份重打 → `cc856cf`
+  先结转后终验（拆鸡生蛋）→ `c192b97` StoryContract 投影重绑本轮 →
+  `90f927a` **出版世代 v2 身份见证冻结结转条款**（r18 根因：见证 schema 已
+  升 v3，对冻结字节重考 = live 政策重算，且视觉裁判同字节 r17 PASS/r18
+  FAIL 彩票；现按 7/27 裁定直接结转 v2 PASS 见证，carry 丢弃三点补
+  `carry_drop_reason` 披露）。离线已证明 r19 全链过门。
+- **案 2（怕猫 181_480 分句）已结案：判不修（2026-08-01 音频仲裁）**。
+  三层转写（BCUT fresh/asr_draft/agy_refined）一致：「猫」与「我也害怕」
+  之间有 120ms 真实停顿（padded 24.61→24.73s），"我也害怕"语音落在 cue6
+  窗口内。纯文本重切必造成 ~1s 音字错位（比"标点归属欠佳"更扎眼）；
+  台账只有 replace_cue/replace_substring 两种文本动作，无重定时；全新重产
+  被出版登记 fail-closed 挡死。现状=时间轴精确、断句语义欠佳，任何可行
+  改动都是净退化，按 Ivan「能修就修，不能修就别动」判不动。
 
 ## 下一步
 
@@ -187,11 +188,11 @@ receipt。
 2. **封面文案链流水线修复**（不做单切片手写文案，Ivan 07-31 明确否决该方向）：封堵空 punch
    fail-open、renderer 静默换行改硬错误、引号左截断拒绝、上传闸与 cover-only lane 强制
    `rendered lines == CPA final_punch` 逐行相等、退役整数行数门。
-3. **封面路由修复**：把 composition witness 的 bbox 从"路由法官"降回"置信输入"
-   （删 `publish_staging.py:1961-1970` 的无条件 return），让标定分数恢复决定权；
-   `subject_confident` 由前置条件改为降级信号；弥散帽收射程。验证走离线重放
-   （`_decide_cover_treatment` 对已持久化的 route_decision 输入是纯函数，24 条样本可回放）
-   加 3–5 条高分被否切片的像素级并排试点，**分布重放不能冒充质量验证**。
+3. ~~封面路由修复~~ **已落地 `9f51987`（2026-07-31）**：witness bbox 降为置信
+   输入、`subject_confident = geometry ∨ source_composition`、几何否决移到
+   relationship 分支之后；24 条历史样本离线重放通过。**剩余验收：接下来
+   3–5 条真实生产切片作为 live 样本，人工核对路由选择与封面质量**（分布
+   重放不能冒充质量验证）。
 4. `auto_192000_909_1014` / `BV1s7326qEc9` 的封面重做：作为第 2、3 项修好后
    **cover-only lane 的首次真实执行验收**，由修好的流水线自动产出文案，不许抢跑。
 5. `scripts/audit_lidousha_review_package.py:_audit_policy_fingerprint()` 解耦：它把 26 个
@@ -199,6 +200,18 @@ receipt。
    audit 并触发全量重审。改为显式 policy 版本号 + 脚本化迁移。
 6. 后续封面继续执行最终实图检查：多人联动必须确认李豆沙主体；特殊梗必须绑定正确参考形象；
    CPA vision 为首选，公开 CDN 回下载需与目标图 hash 一致。
+7. **切片生产提速计划（Ivan 2026-08-01 点名，逐项带测试+金丝雀单独上）**。
+   实测相位（103s 片全程 1013s）：转录 ~4min / CPA 逐项裁决全串行 ~8min /
+   烧录+封面+打包 ~3min。顺序：
+   a. 逐 cue CPA 裁决 4 路有界并发（8→2-4min，每条新片受益；风险=限流，
+      靠现有重试梯子）；
+   b. 修复轮快路径：redelivery-baseline 场景跳过全片精听，只听真值区间做
+      声学见证（修复轮 17→6-8min）；
+   c. 烧录 ∥ 封面路由并行（省 1-2min，低风险）；
+   d. AGY 精听分块 2 路并行（受配额约束，最后做）。
+   预期终态：新片 15-25→8-12min，修复轮 17→6-8min。门链顺序不动
+   （fail-closed 串行是设计）。已完成的第一项：`90f927a` 复用封面不再重考
+   身份见证（消灭整轮报废彩票）。
 
 ## 固化规则
 
