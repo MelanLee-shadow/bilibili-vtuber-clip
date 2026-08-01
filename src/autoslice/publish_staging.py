@@ -40,6 +40,7 @@ from .cover_generation import (
 from .cover_route_evidence import (
     build_no_crop_participant_verification,
     build_cover_route_decision,
+    validate_cover_route_decision,
     is_hash_bound_reference_authority,
     relationship_source_participants_verified,
     relationship_visual_safety_required,
@@ -718,24 +719,71 @@ def _stage_publish_draft(
         )
         if len(reuse_matches) == 1:
             reused_cover_path = reuse_matches[0]
+        reused_sha = (
+            "sha256:" + _sha256(reused_cover_path)
+            if reused_cover_path is not None
+            else None
+        )
+        # 已发布封面的完整证据包结转（2026-08-01，1013 r14 案）：recovery review
+        # manifest 要求 record 携带合法 cover-route-decision.v2 等封面回执，而这些
+        # 回执在**原次发布**的 record 里、逐一绑定同一份封面字节。字幕-only 重投
+        # 复用同一字节时，诚实的表示就是结转原证据包——sidecar 的
+        # final_cover_sha256 必须逐字节等于被复用的封面，否则不认（fail-closed，
+        # 不新造回执、不放松审计门）。sidecar 由重跑装配从已发布 record 提取。
+        carried_generation: dict[str, object] | None = None
+        if reused_cover_path is not None and reused_sha is not None:
+            sidecar = reused_cover_path.with_name(
+                f"{candidate_id}.published-cover-generation.json"
+            )
+            if sidecar.is_file():
+                try:
+                    published_generation = json.loads(
+                        sidecar.read_text(encoding="utf-8")
+                    )
+                except (OSError, ValueError):
+                    published_generation = None
+                if (
+                    isinstance(published_generation, dict)
+                    and str(
+                        published_generation.get("final_cover_sha256") or ""
+                    )
+                    == reused_sha
+                    and validate_cover_route_decision(
+                        published_generation, allow_legacy_v1=False
+                    )
+                ):
+                    carried_generation = dict(published_generation)
+        if carried_generation is not None:
+            carried_generation.update(
+                {
+                    "status": "REUSED",
+                    "note": (
+                        "subtitle-only re-run: published cover evidence "
+                        "carried forward byte-identically"
+                    ),
+                    "reused_cover_path": str(reused_cover_path),
+                    "reused_cover_candidates": len(reuse_matches),
+                    "carried_forward_from_published_record": True,
+                }
+            )
         cover_result = {
             "status": "REUSED_COVER",
             "cover_path": None,
-            **(
-                {"cover_sha256": "sha256:" + _sha256(reused_cover_path)}
-                if reused_cover_path is not None
-                else {}
+            **({"cover_sha256": reused_sha} if reused_sha else {}),
+            "cover_generation": (
+                carried_generation
+                if carried_generation is not None
+                else {
+                    "status": "REUSED",
+                    "note": "subtitle-only re-run: existing cover kept",
+                    "reused_cover_path": (
+                        str(reused_cover_path)
+                        if reused_cover_path is not None
+                        else None
+                    ),
+                    "reused_cover_candidates": len(reuse_matches),
+                }
             ),
-            "cover_generation": {
-                "status": "REUSED",
-                "note": "subtitle-only re-run: existing cover kept",
-                "reused_cover_path": (
-                    str(reused_cover_path)
-                    if reused_cover_path is not None
-                    else None
-                ),
-                "reused_cover_candidates": len(reuse_matches),
-            },
             "reason_codes": [],
         }
     else:

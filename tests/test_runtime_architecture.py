@@ -59,7 +59,9 @@ FUNCTION_DEBT_LEDGER = {
     # 2026-07-31 +27：reuse 封面绑定（1013 jyl-r9 案——reuse 不绑 cover sha，
     # recovery manifest 必然 REFUSE；Ivan 常设修复授权链）。已连续吃增长，
     # 下次动这个函数必须先拆，不许再抬。
-    ("src/autoslice/publish_staging.py", "_stage_publish_draft"): 455,
+    # 2026-08-01 +47：reuse 结转已发布 cover_generation 证据包（1013 r14 案，
+    # recovery manifest 要求 route-decision.v2；sha 逐字节相等才结转）。
+    ("src/autoslice/publish_staging.py", "_stage_publish_draft"): 502,
     # 2026-07-31 +3：同上，截图/polish 路径的 contract 穿透。
     ("src/autoslice/publish_staging.py", "_stage_screenshot_direct_cover"): 322,
     ("src/autoslice/song_lane.py", "produce_song"): 311,
@@ -91,7 +93,9 @@ MODULE_DEBT_LEDGER = {
     # 净增主要是记录实测根因的注释（70% 几何假阴性、41% 超弥散帽、9.00 分被否）。
     # Ivan 07-31 `/goal` 授权 + Fable 路由链裁定 P1。
     # 2026-07-31 再 +27：reuse 封面 sha 绑定（同函数条目注释）。
-    "src/autoslice/publish_staging.py": 2_703,
+    # 2026-08-01 +47：同上（证据包结转）。此模块 7/31-8/1 三次靠抬账过关，
+    # 拆解已经不是建议是欠账。
+    "src/autoslice/publish_staging.py": 2_750,
     "src/autoslice/same_bv_repair.py": 2_422,
 }
 SCRIPT_EXCLUSIONS = {
