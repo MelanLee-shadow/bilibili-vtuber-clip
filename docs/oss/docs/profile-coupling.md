@@ -12,8 +12,8 @@
 
 **多数已参数化**：〔已参数化〕的行改为从 profile 渲染（`display_name`/`prompt_name`/
 `short_name`），**默认 profile 下渲染字节与原文逐字相同**（全套测试背书），换
-profile 自动代入你的名字。仍硬编码的是没有 profile 字段可承载的内容（外貌
-描述、频道梗 lore）——改它们=改 prompt 字节，须走变更纪律。
+profile 自动代入你的名字。外貌与频道梗 lore 也已通过 `identity.cover_identity` schema 字段承载（九个键，
+validator 强制），默认 profile 渲染逐字节等于原文——A 组至此全部可随 profile 切换。
 
 | 位置 | 状态 | 内容 |
 |---|---|---|
@@ -21,12 +21,12 @@ profile 自动代入你的名字。仍硬编码的是没有 profile 字段可承
 | `src/autoslice/final_review_auditor.py` `_AUDIT_PROMPT` | 〔已参数化〕 | 审片员 persona 与自称专名经 `{host_name}`/`{host_short}` 占位注入 |
 | `src/autoslice/source_fact_review.py` | 〔已参数化〕 | 裁决 persona：「你是【主播名】切片派生文案的…裁决者」 |
 | `src/autoslice/publish_staging.py`（AI 封面重试 prompt） | 〔已参数化〕 | 「labelled 【主播名】 … Make 【prompt_name】 a LARGE …」 |
-| `src/autoslice/cover_generation.py`（多人消歧+主体优先句） | 〔部分参数化〕 | 名字已 profile 渲染；「panda-hood」外貌短语仍硬编码 |
-| `src/autoslice/cover_generation.py`（场景道具规则） | 硬编码 | 「白色奶龙」梗释义——频道 lore，未来应迁入 persona/glossary 资产 |
-| `src/autoslice/cover_source_composition.py` `_QUESTION_PREFIX` | 〔部分参数化〕 | 「定位【主播名】」已渲染；「白发/可见名牌」外貌仍硬编码 |
-| `src/autoslice/cover_host_identity_gate.py` `_QUESTION` | 硬编码 | 外貌描述与联动者名；verdict 字段名（`source_lidousha_located` 等）是持久 schema |
+| `src/autoslice/cover_generation.py`（多人消歧+主体优先句） | 〔已参数化〕 | 名字与外貌标签（`prompt_tag_en`/`feature_en`）均从 profile 渲染 |
+| `src/autoslice/cover_generation.py`（场景道具规则） | 〔已参数化〕 | 频道梗释义来自 `cover_identity.scene_prop_meme_note_zh` |
+| `src/autoslice/cover_source_composition.py` `_QUESTION_PREFIX` | 〔已参数化〕 | 定位特征/易混元素来自 `cover_identity.locator_zh`/`composition_decoys_zh` |
+| `src/autoslice/cover_host_identity_gate.py` `_QUESTION` | 〔已参数化〕 | 外貌/易混角色/仿冒特征来自 `cover_identity.*` 字段；verdict 字段名（`source_lidousha_located` 等）是持久 schema，保留 |
 | `src/autoslice/semantic_candidate_selector.py` + `selection_scorecard.py` | 〔部分参数化〕 | 维度释义已渲染主播名；维度 key `lidousha_centrality` 是持久 scorecard schema，保留 |
-| `src/autoslice/cover_emote.py` `emote_catalog_prompt_block` | 硬编码（与资产绑定） | companion 规则整段是示例频道 lore（kmx 贴纸代画粉丝、复数小李梗），与 lidousha 的 `emote_library` 资产绑死——换频道连资产一起换，或不启用表情包通道（歌切本就禁用） |
+| `src/autoslice/cover_emote.py` `emote_catalog_prompt_block` | 〔已参数化〕 | companion 强理由 lore 来自 `cover_identity.emote_companion_lore_zh`（与你的 `emote_library` 资产配套书写） |
 
 ## B. 控制流/默认值绑定默认 profile（可逐点改为 CHANNEL_PROFILE 字段）
 

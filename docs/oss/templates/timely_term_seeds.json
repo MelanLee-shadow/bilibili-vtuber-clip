@@ -1,0 +1,37 @@
+{
+  "schema_version": "REPLACE_ME-timely-terms.v1",
+  "generated_at": "REPLACE_ME-ISO8601 timestamp",
+  "expires_at": "REPLACE_ME-ISO8601 timestamp",
+  "status": "fresh",
+  "terms": [
+    {
+      "canonical": "REPLACE_ME-canonical 写法",
+      "display_name": "REPLACE_ME-展示名（含限定词的完整称呼）",
+      "readings": ["REPLACE_ME-reading1"],
+      "aliases": ["REPLACE_ME-alias1"],
+      "confusables": ["REPLACE_ME-容易混淆的近音/近形词"],
+      "topic_entities": ["REPLACE_ME-topic1"],
+      "active_from": "REPLACE_ME-YYYY-MM-DD",
+      "active_until": "REPLACE_ME-YYYY-MM-DD",
+      "reason": "REPLACE_ME-为什么这个词当期重要（如新番开播/联动公告等）",
+      "sources": [
+        {"url": "REPLACE_ME-来源URL", "published_at": "REPLACE_ME-YYYY-MM-DD", "publisher": "REPLACE_ME-来源方"}
+      ]
+    },
+    {
+      "canonical": "梦限大",
+      "display_name": "梦限大MewType",
+      "readings": ["meng xianda", "mengxianda", "夢限大みゅーたいぷ"],
+      "aliases": ["夢限大みゅーたいぷ", "梦限大MewType", "ゆめみた"],
+      "confusables": ["Mujica", "Ave Mujica", "梦现代"],
+      "topic_entities": ["BanG Dream!", "邦多利", "MyGO!!!!!", "Ave Mujica"],
+      "active_from": "2026-06-01",
+      "active_until": "2026-09-30",
+      "reason": "（示例，李豆沙）TV anime BanG Dream! ゆめ∞みた began broadcasting on 2026-07-02; current topic on this channel at the time.",
+      "sources": [
+        {"url": "https://anime.bang-dream.com/yumemita/news/post-5", "published_at": "2026-06-01", "publisher": "BanG Dream! official anime site"},
+        {"url": "https://bang-dream.com/news/2357/", "published_at": "2026-06-01", "publisher": "BanG Dream! official site"}
+      ]
+    }
+  ]
+}

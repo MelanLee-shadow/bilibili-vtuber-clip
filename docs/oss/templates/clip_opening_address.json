@@ -1,0 +1,20 @@
+{
+  "schema_version": "REPLACE_ME-clip-opening-address.v1",
+  "reason": "片首连词开场位置先验（由「大家→但是」彩排实例抽象通用化）：切片首句以转折/承接连词开头本身可疑——开场位置更可能是称呼语，ASR 没有切片边界概念只写声学最近的常见词。命中任一连词即触发音频强制多选一（该连词 vs 全部称呼语）；仅音频确证听到称呼语才改写，UNCERTAIN 一律保留原文绝不阻塞。",
+  "connectives": [
+    {"surface": "但是", "readings": ["dan shi"]},
+    {"surface": "所以", "readings": ["suo yi"]},
+    {"surface": "然后", "readings": ["ran hou"]},
+    {"surface": "就是", "readings": ["jiu shi"]},
+    {"surface": "不过", "readings": ["bu guo"]},
+    {"surface": "而且", "readings": ["er qie"]},
+    {"surface": "可是", "readings": ["ke shi"]},
+    {"surface": "反正", "readings": ["fan zheng"]}
+  ],
+  "addresses": [
+    {"canonical": "大家", "readings": ["da jia"]},
+    {"canonical": "各位", "readings": ["ge wei"]},
+    {"canonical": "宝宝们", "readings": ["bao bao men"]},
+    {"canonical": "家人们", "readings": ["jia ren men"]}
+  ]
+}

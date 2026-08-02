@@ -273,6 +273,14 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         '"scripts/authorized_upload.py": 2_929,',
         '"scripts/authorized_upload.py": 2_938,',
     ),
+    # --- 债务棘轮：导出器自身的账本行随文件剥离一并移除（私库保留该行） ---
+    (
+        "tests/test_runtime_architecture.py",
+        "    # 2026-08-01 新记：OSS 发布整备（维护者 授权）把导出器扩成改名/patch/模板引擎；\n"
+        "    # 私库专用构建工具，导出时自剥离，不进 OSS 面。\n"
+        '    "scripts/export_oss_snapshot.py": 2_088,\n',
+        "",
+    ),
     # --- 债务棘轮：被剥离脚本的例外条目同步移除 ---
     (
         "tests/test_runtime_architecture.py",
@@ -762,6 +770,14 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "可以直接白嫖；再聚合剪映作备源，就能整体替代中文管线里的 whisper 和 agy 精听",
         "可以直接白嫖；聚合剪映作备源后**已整体替代**中文管线里的 whisper 和 agy 精听",
     ),
+    # ---- v4.8：表情包媒体随仓发布，代码注释同步 ----
+    (
+        "src/autoslice/cover_emote.py",
+        "asset); the sticker media itself stays OUT of git (``assets/emote/`` locally,\n"
+        "``AUTOSLICE_EMOTE_DIR`` on the runner host).",
+        "asset); the sticker media ships with this repo as example-channel assets\n"
+        "(``assets/emote/``; override the root via ``AUTOSLICE_EMOTE_DIR``).",
+    ),
     # ---- v4.7：prompt/控制流身份占位化（Ivan 放行：默认 profile 渲染字节不变） ----
     # 每处 = 字面身份 → CHANNEL_PROFILE 字段；default profile 下输出逐字节等于原文，
     # 由全套 pytest 相等性背书。外貌描述/频道梗释义等无 profile 字段者仍留在耦合清单。
@@ -888,16 +904,6 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         '        if piece.get("speaker") != CHANNEL_PROFILE.profile_id:',
     ),
     (
-        "src/autoslice/cover_generation.py",
-        '        "the source person visibly labelled 李豆沙, or the one matching the Li Dousha panda-hood identity when "',
-        '        f"the source person visibly labelled {CHANNEL_PROFILE.display_name}, or the one matching the {CHANNEL_PROFILE.prompt_name} panda-hood identity when "',
-    ),
-    (
-        "src/autoslice/cover_generation.py",
-        '        "MANDATORY SUBJECT PROMINENCE: Li Dousha must be the immediate first visual focus and carry the story reaction. "',
-        '        f"MANDATORY SUBJECT PROMINENCE: {CHANNEL_PROFILE.prompt_name} must be the immediate first visual focus and carry the story reaction. "',
-    ),
-    (
         "src/autoslice/publish_staging.py",
         '                        "be the person labelled 李豆沙; do not hybridize her with "',
         '                        f"be the person labelled {CHANNEL_PROFILE.display_name}; do not hybridize her with "',
@@ -911,18 +917,6 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "src/autoslice/semantic_candidate_selector.py",
         "- dimensions 七项都打 0..4 整数：lidousha_centrality（李豆沙不可替代性）、stance_intensity、",
         "- dimensions 七项都打 0..4 整数：lidousha_centrality（{CHANNEL_PROFILE.display_name}不可替代性）、stance_intensity、",
-    ),
-    (
-        "src/autoslice/cover_source_composition.py",
-        "from PIL import Image",
-        "from PIL import Image\n"
-        "\n"
-        "from src.autoslice.surface_canon import CHANNEL_PROFILE",
-    ),
-    (
-        "src/autoslice/cover_source_composition.py",
-        '    "白发和可见名牌定位李豆沙；不要把其他白发角色或游戏 UI 当成她。"',
-        '    f"白发和可见名牌定位{CHANNEL_PROFILE.display_name}；不要把其他白发角色或游戏 UI 当成她。"',
     ),
     (
         "scripts/evaluate_speaker_phase1.py",
@@ -1090,6 +1084,8 @@ def classify(path: str) -> str:
         return "template" if TEMPLATE_FILES[path] != "keep" else "keep"
     if any(path.startswith(prefix) for prefix in TEMPLATE_DIRS):
         return "strip_templated_dir"
+    if path.startswith("docs/oss/templates/"):
+        return "template_source"  # 模板骨架源文，由 build_template_assets 消费
     if path.startswith("docs/oss/"):
         return "rootmap"
     known_roots = (
@@ -1389,7 +1385,7 @@ _TEMPLATE_TEXT_PLACEHOLDERS = {
         "- 地域/语言特色？性格气质里最常被标题抓住的是什么？\n\n"
         "## 真实示例（李豆沙，仅示范颗粒度——换成你的）\n\n"
         "- 身份：B站虚拟主播，温柔声线唱歌 + 高能杂谈双修。\n"
-        "- 形象：虚拟熊猫少女——白发+头顶自带小熊猫耳（不是头套）；封面里必须是视觉主角。\n"
+        "- （示例）形象：虚拟熊猫少女——白发+头顶自带小熊猫耳（不是头套）；封面里必须是视觉主角。\n"
         "- 地域：湖南长沙，直播里会飙长沙话。\n\n"
         "从几条起步随运营补充；封面/标题产出质量直接由这个文件决定。\n"
     ),
@@ -1401,7 +1397,7 @@ _TEMPLATE_TEXT_PLACEHOLDERS = {
         "- 贴 3–5 条你满意的历史标题（没有就先空着用默认风格跑，出稿后人工定几条再回填）。\n"
         "- 你讨厌什么味道的标题？（示例频道的答案：一切机器味词）\n\n"
         "## 真实示例（李豆沙，示范\"结构\"而非内容）\n\n"
-        "- 档案标题可用冒号\"引语：反应\"结构：`李豆沙第999次澄清：我不是奶皮！`\n"
+        "- （真例）档案标题可用冒号\"引语：反应\"结构：`李豆沙第999次澄清：我不是奶皮！`\n"
         "- 封面嵌字从不用冒号，分句用换行：`唱完《旅行的意义》\\n才发现伴奏像KTV录的`\n"
     ),
     "psplive_roster": (
@@ -1416,7 +1412,7 @@ _TEMPLATE_TEXT_PLACEHOLDERS = {
         "Q 版衍生形象？封面绝对不能出现什么？\n\n"
         "真实示例（李豆沙首句，示范颗粒度）：\n"
         "Li Dousha is a cute anime VTuber whose signature look is a white PANDA hood\n"
-        "with PANDA EARS over WHITE hair; her chibi/derivative form is '小李' (little Li).\n"
+        "（示例）with PANDA EARS over WHITE hair; her chibi/derivative form is '小李' (little Li).\n"
     ),
 }
 
@@ -1432,8 +1428,23 @@ _TEMPLATE_COPY_HEADER = (
 _TEMPLATE_IDENTITY_MAP = (("李豆沙", "主播"),)
 _TEMPLATE_EXAMPLE_MARKERS = ("示例", "判例", "真例", "锚点")
 _TEMPLATE_IDENTITY_CHECK = re.compile(
-    r"李豆沙|小李|(?<!红)豆沙|kmx|礼墨|露蒂丝|lycoris|shadowlee|萱萱|Kaya|掏兜|侄女|熊猫|钢镚|shadow"
+    r"李豆沙|小李|(?<!红)豆沙|kmx|礼墨|露蒂丝|lycoris|shadowlee|萱萱|Kaya|掏兜|侄女"
+    r"|和成天下|熊猫|钢镚|shadow|伊索尔|(?<![A-Za-z])Sol(?![A-Za-z])|(?<!\d)142(?!\d)"
+    r"|星汐|南町"
 )
+
+# 丰富模板的源文（docs/oss/templates/；起草规则：保留全部可参数化内容，
+# 身份词只出现在标注「示例」的行）。存在即优先于其他生成分支。
+_TEMPLATE_SOURCE_FILES = {
+    "clip_opening_address": "clip_opening_address.json",
+    "glossary": "glossary.txt",
+    "timely_term_seeds": "timely_term_seeds.json",
+    "timely_term_sources": "timely_term_sources.json",
+    "persona": "persona.md",
+    "title_style": "title_style.md",
+    "cover_identity_prompt": "cover_identity_prompt.txt",
+}
+_TEMPLATE_SOURCE_DIR = REPO / "docs/oss/templates"
 
 # 逐文件手工改写对（old 必须精确命中一次；作用于脱敏后的文本）。
 _TEMPLATE_DOC_REWRITES: dict[str, tuple[tuple[str, str], ...]] = {
@@ -1722,7 +1733,10 @@ def build_template_assets(out_root: Path) -> int:
     for key, rel_name in sorted(template_files.items()):
         target = target_root / rel_name
         target.parent.mkdir(parents=True, exist_ok=True)
-        if key in _TEMPLATE_ASSET_JSON:
+        source_name = _TEMPLATE_SOURCE_FILES.get(key)
+        if source_name and (_TEMPLATE_SOURCE_DIR / source_name).is_file():
+            payload = (_TEMPLATE_SOURCE_DIR / source_name).read_text(encoding="utf-8")
+        elif key in _TEMPLATE_ASSET_JSON:
             payload = json.dumps(
                 _TEMPLATE_ASSET_JSON[key], ensure_ascii=False, indent=2
             ) + "\n"
@@ -1771,6 +1785,27 @@ def build_template_assets(out_root: Path) -> int:
             for font in sorted((default_root / "fonts").glob("*.ttf")):
                 shutil.copy2(font, marker_dir / font.name)
                 written += 1
+    # 全模板身份硬校验：任何产出的文本文件里，未标注「示例/判例/真例/锚点」的行
+    # 不得残留身份词（含 WS2 扩充禁词表）。
+    violations: list[str] = []
+    for produced in target_root.rglob("*"):
+        if not produced.is_file() or produced.suffix in BINARY_SUFFIXES:
+            continue
+        for line_number, line in enumerate(
+            produced.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if any(marker in line for marker in _TEMPLATE_EXAMPLE_MARKERS):
+                continue
+            if _TEMPLATE_IDENTITY_CHECK.search(line):
+                violations.append(
+                    f"{produced.relative_to(target_root)}:{line_number}: {line.strip()[:80]}"
+                )
+    if violations:
+        raise RuntimeError(
+            "template assets still carry identity tokens on unmarked lines:\n  "
+            + "\n  ".join(violations[:20])
+        )
+
     (target_root / "README.md").write_text(
         "# assets/_template — 新频道最小资产骨架\n"
         "\n"
@@ -1862,6 +1897,8 @@ def main() -> int:
             payload = _sanitize_text(payload)
             target.write_text(payload, encoding="utf-8")
             templated.append(rel)
+        elif kind == "template_source":
+            kept.append(rel)  # 记账；内容由 build_template_assets 读取
         elif kind == "strip_templated_dir":
             for prefix in TEMPLATE_DIRS:
                 if rel.startswith(prefix):
@@ -1891,6 +1928,33 @@ def main() -> int:
         kept.append(rel)
 
     template_asset_count = build_template_assets(out_root)
+
+    # 表情包媒体随仓发布（Ivan 2026-08-01 拍板）：50 个 png 按库清单逐一核 sha 后
+    # 复制；缺失或漂移即导出失败。默认解析路径就是仓内 assets/emote。
+    emote_lib = json.loads(
+        (REPO / "assets/lidousha/emote_library.v1.json").read_text(encoding="utf-8")
+    )
+    emote_src = REPO / "assets/emote"
+    emote_files = 0
+    for entry in emote_lib.get("emotes") or emote_lib.get("entries") or []:
+        for file_key, sha_key in (("file", None), ("hd_file", "hd_sha256")):
+            rel_name = entry.get(file_key)
+            if not rel_name:
+                continue
+            source = emote_src / rel_name
+            if not source.is_file():
+                print(f"EMOTE MEDIA MISSING: {source}")
+                return 6
+            if sha_key and entry.get(sha_key):
+                import hashlib as _hashlib
+
+                if _hashlib.sha256(source.read_bytes()).hexdigest() != entry[sha_key]:
+                    print(f"EMOTE MEDIA SHA DRIFT: {source}")
+                    return 6
+            target = out_root / "assets/emote" / rel_name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            emote_files += 1
 
     patch_failures: list[str] = []
     for rel, old, new in PATCHES:
@@ -2007,6 +2071,7 @@ def main() -> int:
         "templated": len(templated),
         "stripped": len(stripped),
         "template_assets": template_asset_count,
+        "emote_files": emote_files,
         "patches": len(PATCHES),
         "comment_date_lines_rewritten": comment_date_lines,
         "comment_date_residual": len(residual_comment_dates),

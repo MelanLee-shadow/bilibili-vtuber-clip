@@ -1,0 +1,14 @@
+描述主播视觉身份的英文 prompt（AI 封面生成用）。要素：发色发型、标志性
+特征、衍生形象名、必须保真的细节、绝对禁止的改动。
+
+agent 首次配置时问频道主人：发色？标志性特征（耳朵/角/尾巴/饰品/服装等，
+是"长在身上"的设定还是外部配饰）？有没有 Q 版/chibi 衍生形象，叫什么
+名字？封面必须从参考图里保真复刻哪些细节？封面绝对不能出现什么？
+
+写法建议：整句用英文撰写（因为 prompt 直接喂给出图模型），格式类似
+"[主播英文名] is a cute anime VTuber whose signature look is [标志性特征];
+her chibi/derivative form is '[衍生形象名]'. Faithfully preserve her
+[关键特征] from the reference image."
+
+（真例，李豆沙）Li Dousha is a cute anime VTuber whose signature look is a white PANDA hood with PANDA EARS over WHITE hair; her chibi/derivative form is '小李' (little Li).
+（真例续）Faithfully preserve her panda-hood/panda-ear and white-hair face features from the reference image.

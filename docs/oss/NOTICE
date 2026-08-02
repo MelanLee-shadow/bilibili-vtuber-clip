@@ -6,3 +6,8 @@ This product includes software developed by MelanLee-shadow
 
 Free ASR aggregation is based on community research from
 SocialSisterYi/bcut-asr (https://github.com/SocialSisterYi/bcut-asr).
+
+The emote sticker images under assets/emote/ are example-channel artwork
+(official channel emotes of the sample profile). They are included as sample
+data only and are NOT licensed under Apache-2.0; replace them with your own
+channel's media for any redistribution beyond running this pipeline.

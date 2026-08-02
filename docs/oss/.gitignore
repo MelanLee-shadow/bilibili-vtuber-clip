@@ -46,5 +46,5 @@ __pycache__/
 *.bak-*
 *.backup
 
-# 表情包等生成媒体（路径可用 AUTOSLICE_EMOTE_DIR 覆盖）
-assets/emote/
+# 表情包媒体随仓发布（assets/emote/，示例频道官方表情包）；
+# 换频道时用 AUTOSLICE_EMOTE_DIR 指向你自己的媒体目录。

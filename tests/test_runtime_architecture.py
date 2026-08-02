@@ -73,6 +73,9 @@ FUNCTION_DEBT_LEDGER = {
 MODULE_DEBT_LEDGER = {
     "scripts/audit_lidousha_review_package.py": 2_003,
     "scripts/authorized_upload.py": 2_929,
+    # 2026-08-01 新记：OSS 发布整备（Ivan 授权）把导出器扩成改名/patch/模板引擎；
+    # 私库专用构建工具，导出时自剥离，不进 OSS 面。
+    "scripts/export_oss_snapshot.py": 2_088,
     "scripts/free_session_autoslice.py": 2_063,
     # 2026-07-31 +122：封面文案链修复（分行权威等级 + 锁定模式 + 缩略图合同背带
     # + max_lines 按合同封顶）。新增逻辑已抽成 _talk_locked_split /
