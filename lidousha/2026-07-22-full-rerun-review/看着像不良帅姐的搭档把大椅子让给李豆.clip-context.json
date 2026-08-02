@@ -1,0 +1,805 @@
+{
+  "candidate_id": "auto_193450_1573_1672",
+  "context_sha256": "sha256:58cba37880bc5419722d1c8950969aae3ed7140797caf3792bada845c0951c5c",
+  "mutation_authorized": false,
+  "pieces": [
+    {
+      "end_ms": 1704970,
+      "recording_basename": "22966160_20260722-19-34-50.mp4",
+      "source_media_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+      "start_ms": 1563150
+    }
+  ],
+  "recording_date": "2026-07-22",
+  "retrieval_budget": {
+    "structured_chat_row_cap": 240,
+    "structured_chat_total_rows": 67,
+    "structured_chat_truncated": false,
+    "whole_clip_transcript_char_cap": 60000,
+    "whole_clip_transcript_truncated": false
+  },
+  "schema_version": "lidousha-clip-context.v1",
+  "selection_hook": "看着像不良帅姐的搭档把大椅子让给李豆沙，自己缩在角落，最终被鉴定成外表凶狠、实际挨欺负还会假哭的类型。",
+  "session_relation_authority": {
+    "bound_date": "2026-07-22",
+    "bound_recording_basename": "22966160_20260722-19-34-50.mp4",
+    "bound_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+    "evidence": [
+      {
+        "authority": "Ivan-stated-20260722-conversation(这明显是南町和李豆沙的联动)",
+        "evidence_class": "ATOMIC_HUMAN_RELATION_TRUTH",
+        "independence_group": "ivan-session-review"
+      },
+      {
+        "evidence_class": "HASH_BOUND_OFFICIAL_REPLAY",
+        "independence_group": "official-replay-source",
+        "source_alias_id": "20260722-official-replay-bv1fjg16xex6",
+        "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+      }
+    ],
+    "ledger_sha256": "sha256:f96480319f8e4b74e64be81e7993517edf7cddb25e71715eeaef957e343365f4",
+    "participants": [
+      {
+        "canonical_id": "lidousha",
+        "display_name": "李豆沙",
+        "surfaces": [
+          "李豆沙",
+          "小李",
+          "豆沙"
+        ]
+      },
+      {
+        "canonical_id": "nancho",
+        "display_name": "南町",
+        "surfaces": [
+          "南町",
+          "大N",
+          "小N",
+          "南町nightin"
+        ]
+      }
+    ],
+    "presence_intervals": [
+      {
+        "end_ms": 7200000,
+        "kind": "SESSION_PRESENCE",
+        "start_ms": 0
+      }
+    ],
+    "relation_id": "20260722-lidousha-nancho-live-collaboration",
+    "relation_type": "LIVE_COLLABORATION",
+    "schema_version": "session-relation-authority.v1",
+    "state": "CONFIRMED"
+  },
+  "session_topic_authorities": [],
+  "speech_memory": {
+    "candidate_id": "auto_193450_1573_1672",
+    "channel_id": "lidousha",
+    "conflicts": [],
+    "entries": [
+      {
+        "action": "CANDIDATE_ONLY",
+        "candidate_canonicals": [
+          "晓得吧"
+        ],
+        "evidence": [
+          {
+            "authority": "Ivan-stated-20260722(李豆沙自己也说过晓得吧这种话)",
+            "evidence_class": "ATOMIC_HUMAN_SPEECH_MEMORY"
+          }
+        ],
+        "kind": "idiolect",
+        "memory_id": "lidousha.idiolect.xiaodeba.r1",
+        "scope": {
+          "channel_id": "lidousha",
+          "date_end": "2027-12-31",
+          "date_start": "2024-01-01",
+          "speaker_id": "lidousha"
+        },
+        "supersedes": [],
+        "surfaces": [
+          "晓得吧"
+        ]
+      },
+      {
+        "action": "CANDIDATE_ONLY",
+        "candidate_canonicals": [
+          "南町nightin"
+        ],
+        "evidence": [
+          {
+            "authority": "Ivan-stated-20260722(南町和nightin是相似音节而非复读)",
+            "evidence_class": "ATOMIC_HUMAN_PROPER_NAME_TRUTH"
+          }
+        ],
+        "kind": "alias",
+        "memory_id": "20260722.collab.nancho-nightin.r1",
+        "scope": {
+          "channel_id": "lidousha",
+          "date_end": "2026-07-22",
+          "date_start": "2026-07-22",
+          "relation_id": "20260722-lidousha-nancho-live-collaboration",
+          "speaker_id": "lidousha"
+        },
+        "supersedes": [],
+        "surfaces": [
+          "南町nightin"
+        ]
+      },
+      {
+        "action": "CANDIDATE_ONLY",
+        "candidate_canonicals": [
+          "大N"
+        ],
+        "evidence": [
+          {
+            "authority": "Ivan-stated-20260722(南町别名可以叫小N，也可以叫大N)",
+            "evidence_class": "ATOMIC_HUMAN_ALIAS_TRUTH"
+          }
+        ],
+        "kind": "nickname",
+        "memory_id": "20260722.collab.dan.r1",
+        "scope": {
+          "channel_id": "lidousha",
+          "date_end": "2026-07-22",
+          "date_start": "2026-07-22",
+          "relation_id": "20260722-lidousha-nancho-live-collaboration",
+          "speaker_id": "lidousha"
+        },
+        "supersedes": [],
+        "surfaces": [
+          "大N"
+        ]
+      },
+      {
+        "action": "CANDIDATE_ONLY",
+        "candidate_canonicals": [
+          "小N"
+        ],
+        "evidence": [
+          {
+            "authority": "Ivan-stated-20260722(南町别名可以叫小N，也可以叫大N)",
+            "evidence_class": "ATOMIC_HUMAN_ALIAS_TRUTH"
+          }
+        ],
+        "kind": "nickname",
+        "memory_id": "20260722.collab.xiaon.r1",
+        "scope": {
+          "channel_id": "lidousha",
+          "date_end": "2026-07-22",
+          "date_start": "2026-07-22",
+          "relation_id": "20260722-lidousha-nancho-live-collaboration",
+          "speaker_id": "lidousha"
+        },
+        "supersedes": [],
+        "surfaces": [
+          "小N"
+        ]
+      }
+    ],
+    "ledger_sha256": "sha256:d87532b5d56457496a868c6910091a545bd2c612a807182d742aa0ca26d30c95",
+    "mutation_authorized": false,
+    "recording_date": "2026-07-22",
+    "relation_id": "20260722-lidousha-nancho-live-collaboration",
+    "schema_version": "lidousha-scoped-speech-memory.v1",
+    "speaker_id": "lidousha",
+    "status": "PASS"
+  },
+  "structured_chat": [
+    {
+      "kind": "danmaku",
+      "offset_ms": -27233,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "妈妈"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": -24187,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "被玩弄于指掌之中"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": -19263,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "哈哈哈"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": -18056,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "多弹"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": -15810,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "已弹"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": -15374,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "椅弹？"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": -13665,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "我去，弹了"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": -13133,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "难说是用烟头弹的还是手指弹得"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": -13121,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "这个就是要先下手呀"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": -146,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "不响丸辣"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 9689,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "[李豆沙_疑问]"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 10262,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "好谈"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 17163,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "原来是谈了"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 22336,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "[李豆沙_大笑]"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 29859,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "[李豆沙_大笑]"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 31075,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "已谈"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 31563,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "坐地上方便用烟头烫屁股"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 32120,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "原来是坐地上不是站在旁边啊（"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 35323,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "[李豆沙_大笑]"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 45873,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "[李豆沙_大笑]"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 46768,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "好可怜的坐姿"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 47752,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "喜欢吃反差"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 56111,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "问号"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 56810,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "实际上方便烫主播屁股"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 57748,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "问号"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 66095,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "190粉毛以下略"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 73183,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "她和灵宝就是这样的"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 73272,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "问号"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 75684,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "有这么多谣言吗？"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 78377,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "问号"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 82017,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "[李豆沙_大笑]"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 82401,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "已畏惧"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 84935,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "粉毛洗几次就掉完了；；一点都不好；；"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 87193,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "你好"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 93288,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "李姐，NN老被人问你抽烟吗？"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 100860,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "带钉的"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 104899,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "[李豆沙_疑问]"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 105728,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "哈哈哈"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 111460,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "别拿烟头烫李姐好吗"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 113831,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "哈哈哈"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 113881,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "亚比服小N"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 115949,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "还在假哭"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 119007,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "[李豆沙_大笑]"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 120110,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "哈哈哈"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 122989,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "[李豆沙_大笑]"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 124592,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "主包下播了不会真要被烫了吧"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 131164,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "假装打一下巴掌试试80一下"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 132115,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "电脑白吃这一块也很搞笑（"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 136080,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "哈哈哈"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 138071,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "xs"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 140452,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "[李豆沙_大笑]"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 140511,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "修鼠标真好玩吧"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 141676,
+      "sender": "",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "主包还是豆角白痴"
+    },
+    {
+      "kind": "superchat",
+      "offset_ms": -890784,
+      "sender": "小猪状态",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "17718695",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "感觉皮套已经腌入味了，不管怎么看大n老师的皮套，都明显感觉到是右边的真豆沙在说话。好奇怪喔"
+    },
+    {
+      "kind": "superchat",
+      "offset_ms": -874498,
+      "sender": "竹风菌",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "17718688",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "psp两位最强搞笑女史诗级会晤有懂的吗，已经开始笑了（"
+    },
+    {
+      "kind": "superchat",
+      "offset_ms": -874443,
+      "sender": "黑王_",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "17718678",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "豆沙大n晚上好！现在直播间同时有妈妈和老公了！好耶！另外豆沙听过nn的矮人笑话吗"
+    },
+    {
+      "kind": "superchat",
+      "offset_ms": -856741,
+      "sender": "夜行行行行",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "17718721",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "两位是奶 t 姛。李姐给ntnt听那首短短了吗"
+    },
+    {
+      "kind": "superchat",
+      "offset_ms": -596679,
+      "sender": "鸭血の耙耙柑",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "17718903",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "大N老师能别躲在后面拿烟头偷偷烫我麻麻吗；；"
+    },
+    {
+      "kind": "superchat",
+      "offset_ms": -491190,
+      "sender": "刘备爱看沐霂",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "17719009",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "李姐nn晚上好，请坐在左边的弹右边的一个脑瓜崩"
+    },
+    {
+      "kind": "superchat",
+      "offset_ms": -394386,
+      "sender": "野橘未霜",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "17719061",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "双人直播的太突然了，感觉像是官宣了（不是），另外小n老师你别坐地上了"
+    },
+    {
+      "kind": "superchat",
+      "offset_ms": -372023,
+      "sender": "寒-歌",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "17719088",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "原来周年回修鼠标不算搞笑女吗，那很严苛了"
+    },
+    {
+      "kind": "superchat",
+      "offset_ms": -370632,
+      "sender": "梅杰克家的六更るり",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "17719091",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "我也是27级kimo熊啊！"
+    },
+    {
+      "kind": "superchat",
+      "offset_ms": -241888,
+      "sender": "Spectator沧月",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "17719165",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "ttt15：头上怎么有数字 n20：可能是真善美指数 lds170：你们在说什么"
+    },
+    {
+      "kind": "superchat",
+      "offset_ms": -158259,
+      "sender": "南町家的星耀",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "17719219",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "什么要请大N老师吃火锅，给你们加盘素菜，终于和大N见面了"
+    },
+    {
+      "kind": "guard",
+      "offset_ms": -25150,
+      "sender": "刘备爱看沐霂",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "309553490",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "舰长"
+    },
+    {
+      "kind": "superchat",
+      "offset_ms": -4508,
+      "sender": "-天蓝青-",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "17719355",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "好漂亮的大姐姐，心里没有李豆沙的位置了"
+    },
+    {
+      "kind": "superchat",
+      "offset_ms": 107098,
+      "sender": "小凑るう子",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "17719419",
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "text": "小李又被大N霸凌了；；为什么是又？"
+    }
+  ],
+  "topic_resolution": {
+    "evidence": [],
+    "graph_sha256": "f637e62bdf04c50ec9ea4fd2d8e88ab88c6489ed01178124cb06f259824c006f",
+    "recording_date": "2026-07-22",
+    "schema_version": "topic-resolution.v1",
+    "scoped_entity_ids": [],
+    "selected_topic_ids": [],
+    "selected_work_ids": [],
+    "status": "GRAPH_EXPIRED"
+  },
+  "whole_clip_draft_srt": "1\n00:00:00,000 --> 00:00:03,340\n谢谢野橘未霜的，双人直播的太突然\n\n2\n00:00:03,340 --> 00:00:04,620\n感觉像是官宣了\n\n3\n00:00:04,620 --> 00:00:06,220\n另外小N老师\n\n4\n00:00:06,310 --> 00:00:07,090\n不是\n\n5\n00:00:07,090 --> 00:00:10,010\n另外小N、小N老师\n\n6\n00:00:10,010 --> 00:00:11,330\n你别坐地上\n\n7\n00:00:11,330 --> 00:00:13,230\n可是我现在真的很像坐在地上\n\n8\n00:00:13,230 --> 00:00:14,810\n我这个椅子就是比它\n\n9\n00:00:14,810 --> 00:00:16,530\n就是我平常就一个电脑椅嘛\n\n10\n00:00:16,530 --> 00:00:17,150\n它高一些\n\n11\n00:00:17,150 --> 00:00:18,830\n然后我在坐这一个\n\n12\n00:00:18,830 --> 00:00:20,910\n我平常就是不怎么会用的一个椅子\n\n13\n00:00:20,910 --> 00:00:22,150\n就真的很像坐在地上\n\n14\n00:00:22,150 --> 00:00:23,370\n对，她把她的\n\n15\n00:00:23,370 --> 00:00:26,010\n她把她的那个大的椅子\n\n16\n00:00:26,010 --> 00:00:28,320\n那个电脑椅给我了\n\n17\n00:00:28,320 --> 00:00:30,230\n她就只能缩在一边\n\n18\n00:00:30,230 --> 00:00:32,930\n哈哈，非常可怜啊\n\n19\n00:00:32,930 --> 00:00:34,810\n哎呀，整个人都缩在椅子上\n\n20\n00:00:34,810 --> 00:00:36,290\n感觉像被李豆沙霸凌了\n\n21\n00:00:36,290 --> 00:00:37,290\n像霸凌\n\n22\n00:00:37,640 --> 00:00:40,040\n感觉就是这个人设反转了\n\n23\n00:00:40,040 --> 00:00:40,980\n你知道那种吗\n\n24\n00:00:40,980 --> 00:00:43,560\n就是看起来好像是，呃\n\n25\n00:00:43,560 --> 00:00:47,360\n就是外表比较不良的人\n\n26\n00:00:47,360 --> 00:00:50,440\n但其实背地里是被欺负的那种\n\n27\n00:00:50,440 --> 00:00:52,100\n那我不是一直都是这样的吗\n\n28\n00:00:52,100 --> 00:00:52,720\n是吗\n\n29\n00:00:52,720 --> 00:00:53,360\n对呀\n\n30\n00:00:53,440 --> 00:00:56,100\n那190粉毛是吧\n\n31\n00:00:56,100 --> 00:00:59,890\n哈哈，190是谣言啊\n\n32\n00:00:59,890 --> 00:01:02,230\n粉毛是我之前染过粉毛啊\n\n33\n00:01:02,230 --> 00:01:03,930\n然后其他的都是谣言\n\n34\n00:01:04,090 --> 00:01:04,849\n这样子\n\n35\n00:01:04,849 --> 00:01:05,720\n对对对\n\n36\n00:01:05,720 --> 00:01:06,960\n但是你看上\n\n37\n00:01:06,960 --> 00:01:09,460\n那你看上去确实很像那种\n\n38\n00:01:09,820 --> 00:01:12,580\n就是不良。我吗\n\n39\n00:01:12,660 --> 00:01:13,640\n你确定吗\n\n40\n00:01:13,640 --> 00:01:15,780\n你见过我之后你还会这么觉得\n\n41\n00:01:15,880 --> 00:01:17,700\n哈哈哈哈\n\n42\n00:01:17,700 --> 00:01:18,680\n啥意思\n\n43\n00:01:19,200 --> 00:01:21,770\n我真无语了\n\n44\n00:01:21,770 --> 00:01:24,710\n就是，就是形象上确实是\n\n45\n00:01:24,710 --> 00:01:29,210\n因为你的衣服都是那种很帅的感觉的\n\n46\n00:01:29,210 --> 00:01:30,760\n对，对吧\n\n47\n00:01:30,760 --> 00:01:31,620\n对\n\n48\n00:01:32,380 --> 00:01:34,940\n但其实就是会\n\n49\n00:01:35,540 --> 00:01:38,860\n其实是会受欺负的类型\n\n50\n00:01:38,860 --> 00:01:41,580\n是的，哈哈哈\n\n51\n00:01:41,700 --> 00:01:45,140\n呃，其实其实被豆沙霸凌\n\n52\n00:01:45,140 --> 00:01:47,860\n呜呜呜，哭了\n\n53\n00:01:47,860 --> 00:01:49,080\n哈哈哈哈哈\n\n54\n00:01:49,080 --> 00:01:49,820\n假哭\n\n55\n00:01:49,820 --> 00:01:52,350\n谢谢韩哥的钢镚\n\n56\n00:01:52,350 --> 00:01:55,010\n原来周年回修鼠标不算搞笑\n\n57\n00:01:55,010 --> 00:01:56,830\n那很严苛了\n\n58\n00:01:56,930 --> 00:02:00,530\n那可有没有可能只是单纯的电脑白痴啊\n\n59\n00:02:00,670 --> 00:02:04,050\n你不能把所有的电脑白痴都当作搞笑\n\n60\n00:02:04,050 --> 00:02:08,070\n这是，这是一个非常非常悲剧的事情\n\n61\n00:02:08,199 --> 00:02:13,460\n谁会想在自己的周年回修半个小时的鼠标\n\n62\n00:02:13,460 --> 00:02:15,320\n有300多人在看呢\n\n63\n00:02:15,320 --> 00:02:16,640\n那你的鼠标修好了没\n\n64\n00:02:16,640 --> 00:02:17,760\n你今天还问我借鼠标\n\n65\n00:02:17,760 --> 00:02:19,200\n说明你鼠标还没修好\n\n66\n00:02:19,200 --> 00:02:21,410\n我忘记带了哦\n",
+  "whole_clip_draft_srt_sha256": "sha256:e1666d855def073c13905976b65b1ae4ee4a83e59d00cbd0c3f37661439af084"
+}

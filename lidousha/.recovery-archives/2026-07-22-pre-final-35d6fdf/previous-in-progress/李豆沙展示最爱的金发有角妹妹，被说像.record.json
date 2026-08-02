@@ -1,0 +1,728 @@
+{
+  "artifact_hashes": {
+    "ai_background_sha256": "sha256:db4d8992a09db99b48db4b8fe022175888de43b91f8752e86d955b74086db4d2",
+    "ass_sha256": "sha256:51ee60a6ef124130d95467163810320653057410f32b1608c0dd05d79575e346",
+    "burned_video_sha256": "sha256:f9ff2a56f0950d9ee7e5adc9edc49347527098ca73e0a294c376068ba321f041",
+    "chat_authority_audit_sha256": "sha256:5b1cb6714a6b8c403c7345f2128df4d0f46df5d9a1c76ef4c8226f68b146788d",
+    "cover_reference_sha256": "sha256:f7b0703231e876279ef2b7a88ea850e5d74ceac1bdb843f1a81e6f994d988aba",
+    "cover_sha256": "sha256:7c4dde9ff438cd3df24822ec408236ce5b666808da97f17689b89e02735e44d6",
+    "subtitle_sha256": "sha256:2257bd3ed1675f706fe6beeb40e954a2292ff8cd26ab63e39ffd11a8057fbb92",
+    "video_sha256": "sha256:0912e45ef4f204bb109879a2cd29c69c7d810b5275bff9b3f7d9bbc350283e05"
+  },
+  "boundary_audit": {
+    "boundary_repair_extend_cap_ms": 30000,
+    "boundary_repair_max_end_ms": 132510,
+    "boundary_repair_search_origin_ms": 102510,
+    "boundary_repairs": [],
+    "closure_sentence": "其实是最包容异性恋的直播间",
+    "end_cut_inside_speech_island": false,
+    "end_island_continues_ms": 0,
+    "end_on_sentence_boundary": true,
+    "final_end_ms": 103010,
+    "final_start_ms": 9730,
+    "opening_sentence": "我们看一下",
+    "red_flags": [],
+    "schema_version": "boundary-audit.v1",
+    "semantic_start_target_rel_ms": 10000,
+    "semantic_target_rel_ms": 102510,
+    "snapped_sentence_end_ms": 102610,
+    "snapped_sentence_start_ms": 9980,
+    "start_on_sentence_boundary": true,
+    "tail_adjustment": {
+      "final_end_ms": 103010,
+      "next_speech_island_gap_ms": 662,
+      "next_speech_island_guard_ms": 100,
+      "next_speech_island_start_ms": 103272,
+      "next_subtitle_start_ms": 103120,
+      "nominal_end_ms": 103010,
+      "reason": null,
+      "tail_pad_ms": 400
+    },
+    "tail_refinement_used": false,
+    "verdict": "ok_sentence_boundary_cut"
+  },
+  "burned_preview": {
+    "ass_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_3573_3665/replacement_recuts/auto_193450_3573_3665.recut.final-sapphire72.ass",
+    "branding_intro": {
+      "fallback_attempts": [],
+      "intro_id": "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+      "intro_media_path": "/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.z1-budui-20260718.mp4",
+      "intro_media_sha256": "bbd0c7e3b34d3d5af543bb8444861ab1e18f835c9252629480b2ec2fd34e7dc5",
+      "intro_offset_ms": 5766,
+      "main_duration_ms_before": 93300,
+      "main_sha256_before": "9abbd8abb54086b82153d618ed13e5c95cf30de8fa9c4521ea773aff10c3b0e9",
+      "method": "matched-intro-concat-copy",
+      "policy_manifest_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/repo/assets/lidousha/intro/branding_intro.v1.json",
+      "policy_manifest_sha256": "bee66d164b683451602ae3601d79d19175bc72b0d13257b3026ae2dc47ee06ef",
+      "rotation": {
+        "candidate_intro_ids": [
+          "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+          "huozi-lidousha-kmx-baobao-guankou-z2-v1"
+        ],
+        "mode": "main-sha256",
+        "picked_intro_id": "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+        "selector": "main_sha256"
+      },
+      "status": "PREPENDED",
+      "verification": {
+        "duration_delta_ms": 23,
+        "duration_ms": 99089,
+        "full_decode": "clean",
+        "stream_contract": {
+          "audio_codec": "aac",
+          "channels": 2,
+          "fps": "30/1",
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "sample_rate": 44100,
+          "video_codec": "h264",
+          "width": 1920
+        }
+      }
+    },
+    "burned_sha256": "sha256:f9ff2a56f0950d9ee7e5adc9edc49347527098ca73e0a294c376068ba321f041",
+    "command": [
+      "ffmpeg",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-y",
+      "-i",
+      "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_3573_3665/replacement_recuts/auto_193450_3573_3665.recut.mp4",
+      "-vf",
+      "subtitles='/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_3573_3665/replacement_recuts/auto_193450_3573_3665.recut.final-sapphire72.ass':fontsdir='/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/repo/assets/lidousha/fonts'",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "20",
+      "-c:a",
+      "copy",
+      "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_3573_3665/replacement_recuts/auto_193450_3573_3665.recut.burned-final-sapphire72.mp4"
+    ],
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_3573_3665/replacement_recuts/auto_193450_3573_3665.recut.burned-final-sapphire72.mp4",
+    "pillarbox_16_9": false,
+    "status": "BURNED",
+    "stream_contract": null,
+    "subtitle_style": "lidousha-final-sapphire72"
+  },
+  "chat_authority_audit_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_3573_3665/auto_193450_3573_3665.chat-authority.json",
+  "duration_ms": 93280,
+  "end_ms": 93280,
+  "media_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_3573_3665/replacement_recuts/auto_193450_3573_3665.recut.mp4",
+  "publish_staging": {
+    "cover_generation": {
+      "ai_background": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_3573_3665/replacement_recuts/covers_ai_original/auto_193450_3573_3665.ai-bg.cpa-image-edit.png",
+      "ai_background_sha256": "sha256:db4d8992a09db99b48db4b8fe022175888de43b91f8752e86d955b74086db4d2",
+      "angle_degrees": -2.0,
+      "art_direction": {
+        "background_style": "cobalt-comic-burst",
+        "cover_punch": [
+          "不熟",
+          "连声否认"
+        ],
+        "emote_id": "",
+        "emote_mode": "",
+        "emote_reason": "",
+        "expression_en": "Closed-mouth smug smile with one raised eyebrow, playfully denying the resemblance while looking caught off guard by the male character.",
+        "hook_color": "yellow",
+        "hook_word": "不熟",
+        "is_song": false,
+        "layout": "banner",
+        "line_breaks": [],
+        "role": "witty_smug",
+        "words": []
+      },
+      "attempted_models": [
+        "gpt-image-2"
+      ],
+      "background_style": "cobalt-comic-burst",
+      "cover_diversity_slot": 0,
+      "cover_mode": "auto",
+      "cover_punch": [
+        "不熟",
+        "连声否认"
+      ],
+      "cover_punch_allowed": true,
+      "cover_text": "李豆沙展示最爱的金发有角妹妹，被说像礼墨Sumi连声否认，看到男角色却改口“不熟”",
+      "cover_text_mode": "punch",
+      "cover_treatment": {
+        "reason": "motion without confident cover subject (score=5.06)",
+        "treatment": "cpa_redraw"
+      },
+      "expression_en": "Closed-mouth smug smile with one raised eyebrow, playfully denying the resemblance while looking caught off guard by the male character.",
+      "fallback_used": false,
+      "final_cover": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_3573_3665/replacement_recuts/covers/auto_193450_3573_3665.ai-title.cover.png",
+      "final_cover_sha256": "sha256:7c4dde9ff438cd3df24822ec408236ce5b666808da97f17689b89e02735e44d6",
+      "font": "ZCOOLKuaiLe-Regular.ttf",
+      "font_selection": {
+        "font": "ZCOOLKuaiLe-Regular.ttf",
+        "glyph_risk": [],
+        "rejected": []
+      },
+      "font_size": 277,
+      "hook_color": "yellow",
+      "hook_word": "不熟",
+      "image_gen_model": "cpa",
+      "layout": "banner",
+      "line_split": "punch",
+      "method": "images.edit",
+      "min_talk_font_size": 120,
+      "model": "gpt-image-2",
+      "model_fallback_used": false,
+      "overlay_position": {
+        "x": 605,
+        "y": -31
+      },
+      "reference_image": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_3573_3665/replacement_recuts/cover_refs/auto_193450_3573_3665.cover-ref.png",
+      "reference_selection": {
+        "anchor_x_frac": 0.6199,
+        "best_ms": 10500,
+        "candidates": [
+          {
+            "audio_z": -0.4124,
+            "emotion": 0.0,
+            "motion_z": 5.54,
+            "ms": 10500,
+            "score": 5.0588,
+            "sharp_z": -0.2753
+          },
+          {
+            "audio_z": 3.0175,
+            "emotion": 0.0,
+            "motion_z": -0.4055,
+            "ms": 89000,
+            "score": 3.018,
+            "sharp_z": 1.624
+          },
+          {
+            "audio_z": 1.9094,
+            "emotion": 1.0,
+            "motion_z": 0.3906,
+            "ms": 18000,
+            "score": 2.7952,
+            "sharp_z": 0.5807
+          }
+        ],
+        "head_top_frac": 0.1,
+        "media_duration_ms": 93300,
+        "motion_bbox_frac": [
+          0.2188,
+          0.1,
+          1.0,
+          0.8556
+        ],
+        "motion_dispersion_frac": 0.5903,
+        "sample_fps": 2.0,
+        "schema": "cover-frame-selection.v1",
+        "signals": {
+          "audio_env_available": true,
+          "emotion_spans": 7
+        },
+        "skip_head_ms": 7266,
+        "skip_tail_ms": 1200,
+        "status": "SELECTED",
+        "subject_anchor_x_frac": 0.7016,
+        "subject_bbox_frac": [
+          0.4188,
+          0.1,
+          0.9844,
+          0.8556
+        ],
+        "subject_confident": false,
+        "subject_head_top_frac": 0.1
+      },
+      "reference_sha256": "sha256:f7b0703231e876279ef2b7a88ea850e5d74ceac1bdb843f1a81e6f994d988aba",
+      "relation_cover_mode": "HOST_ONLY_RELATION_EXPLICIT",
+      "rendered_lines": [
+        "不熟",
+        "连声否认"
+      ],
+      "request_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_3573_3665/replacement_recuts/evidence/auto_193450_3573_3665.cover-cpa-request.redacted.json",
+      "response_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_3573_3665/replacement_recuts/evidence/auto_193450_3573_3665.cover-cpa-response.redacted.json",
+      "role": "witty_smug",
+      "scrim": false,
+      "story_contract": {
+        "cover_fallback_mode": "HOST_ONLY_RELATION_EXPLICIT",
+        "participants": [
+          {
+            "canonical_id": "lidousha",
+            "display_name": "李豆沙",
+            "surfaces": [
+              "李豆沙",
+              "小李",
+              "豆沙"
+            ]
+          },
+          {
+            "canonical_id": "nancho",
+            "display_name": "南町",
+            "surfaces": [
+              "南町",
+              "大N",
+              "小N",
+              "南町nightin"
+            ]
+          }
+        ],
+        "relation_state": "CONFIRMED",
+        "schema_version": "lidousha-story-contract.v1"
+      },
+      "text_backing": "outline",
+      "title": "【李豆沙】李豆沙展示最爱的金发有角妹妹，被说像礼墨Sumi连声否认，看到男角色却改口“不熟”",
+      "title_band": "banner",
+      "workflow": "cpa-openai-compatible-image-edit-cover-plus-approved-local-title-overlay"
+    },
+    "cover_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_3573_3665/replacement_recuts/covers/auto_193450_3573_3665.ai-title.cover.png",
+    "cover_status": "AI_COVER_READY",
+    "cover_text": "李豆沙展示最爱的金发有角妹妹，被说像礼墨Sumi连声否认，看到男角色却改口“不熟”",
+    "publish_json_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_3573_3665/replacement_recuts/auto_193450_3573_3665.recut.publish.json",
+    "reason_codes": [],
+    "status": "STAGED",
+    "title": "【李豆沙】李豆沙展示最爱的金发有角妹妹，被说像礼墨Sumi连声否认，看到男角色却改口“不熟”",
+    "title_authority_error": null,
+    "title_authority_status": "RESOLVED_LLM",
+    "title_policy_violations": [],
+    "title_source": "llm+lidousha_style_asset",
+    "title_story_audit": {
+      "artifact_kind": "title",
+      "schema_version": "story-artifact-audit.v1",
+      "status": "PASS",
+      "text_sha256": "sha256:e4ffc9561681051624602fa8455a41a087c06293cef4826b6d28beff59c76ac1",
+      "violations": []
+    },
+    "upload_enabled": false
+  },
+  "redelivery_baseline": null,
+  "redelivery_baseline_audit_path": null,
+  "selection_scorecard": {
+    "dimensions": {
+      "audience_salience": 4,
+      "comedic_payoff": 4,
+      "lidousha_centrality": 4,
+      "persona_reversal": 4,
+      "relationship_interaction": 3,
+      "self_contained": 4,
+      "stance_intensity": 4
+    },
+    "effective_score": 95.25,
+    "fatigue_penalty": 0.0,
+    "raw_score": 96.25,
+    "reason_codes": [],
+    "requested_tier": 1,
+    "schema_version": "lidousha-selection-scorecard.v1",
+    "status": "VALID",
+    "tier": 1,
+    "tier_basis": "cp_positioning",
+    "tier_evidence_cues": [
+      910,
+      916,
+      917,
+      919,
+      924,
+      925,
+      926,
+      940,
+      941,
+      942,
+      948,
+      949
+    ],
+    "tier_reason": "她主动展示最喜欢的女性角色，面对角色像礼墨Sumi的关系人物联想立即否认，随后又在男性角色出现时产生连续态度反转，形成完整的人物关系、个人品味与喜剧落点链。",
+    "uncertainty_penalty": 1.0,
+    "weights": {
+      "audience_salience": 15,
+      "comedic_payoff": 10,
+      "lidousha_centrality": 25,
+      "persona_reversal": 10,
+      "relationship_interaction": 15,
+      "self_contained": 5,
+      "stance_intensity": 20
+    }
+  },
+  "session_relation_authority": {
+    "bound_date": "2026-07-22",
+    "bound_recording_basename": "22966160_20260722-19-34-50.mp4",
+    "bound_source_sha256": null,
+    "evidence": [
+      {
+        "authority": "Ivan-stated-20260722-conversation(这明显是南町和李豆沙的联动)",
+        "evidence_class": "ATOMIC_HUMAN_RELATION_TRUTH",
+        "independence_group": "ivan-session-review"
+      },
+      {
+        "evidence_class": "HASH_BOUND_OFFICIAL_REPLAY",
+        "independence_group": "official-replay-source",
+        "source_alias_id": "20260722-official-replay-bv1fjg16xex6",
+        "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+      }
+    ],
+    "ledger_sha256": "sha256:f96480319f8e4b74e64be81e7993517edf7cddb25e71715eeaef957e343365f4",
+    "participants": [
+      {
+        "canonical_id": "lidousha",
+        "display_name": "李豆沙",
+        "surfaces": [
+          "李豆沙",
+          "小李",
+          "豆沙"
+        ]
+      },
+      {
+        "canonical_id": "nancho",
+        "display_name": "南町",
+        "surfaces": [
+          "南町",
+          "大N",
+          "小N",
+          "南町nightin"
+        ]
+      }
+    ],
+    "presence_intervals": [
+      {
+        "end_ms": 7200000,
+        "kind": "SESSION_PRESENCE",
+        "start_ms": 0
+      }
+    ],
+    "relation_id": "20260722-lidousha-nancho-live-collaboration",
+    "relation_type": "LIVE_COLLABORATION",
+    "schema_version": "session-relation-authority.v1",
+    "state": "CONFIRMED"
+  },
+  "speaker_finalization": null,
+  "speaker_finalization_manifest_path": null,
+  "speaker_finalization_manifest_sha256": null,
+  "speaker_mode": "uniform_host",
+  "speaker_review_srt_path": null,
+  "start_ms": 0,
+  "status": "MATERIALIZED",
+  "story_contract": {
+    "candidate_id": "auto_193450_3573_3665",
+    "cover_counterpart_reference_available": false,
+    "cover_fallback_mode": "HOST_ONLY_RELATION_EXPLICIT",
+    "cover_output_audits": [
+      {
+        "artifact_kind": "cover_text",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:4131193ad196835940b2f7b1f8400b02c113dc8cb0700493fef94c417628cae6",
+        "violations": []
+      },
+      {
+        "artifact_kind": "cover_rendered_text",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:22e0e85bd293ecea2e63b3dbd8965acaa2c93cbd46b161c2871dbbdd683fe8a7",
+        "violations": []
+      }
+    ],
+    "input_audits": [
+      {
+        "artifact_kind": "selection_hook",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:f2924a52ae681d59cc80de686ac5ecbc4f076ffb397eb6bf9f2d847a3c2789c5",
+        "violations": []
+      },
+      {
+        "artifact_kind": "subtitle",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:cb98ff58b4d43ac061dfd9736d61faca696a8846bf3032175314f03c5a0056a3",
+        "violations": []
+      }
+    ],
+    "nancho_accepted_surfaces": [
+      "南町",
+      "大N",
+      "小N",
+      "南町nightin"
+    ],
+    "participants": [
+      {
+        "canonical_id": "lidousha",
+        "display_name": "李豆沙",
+        "surfaces": [
+          "李豆沙",
+          "小李",
+          "豆沙"
+        ]
+      },
+      {
+        "canonical_id": "nancho",
+        "display_name": "南町",
+        "surfaces": [
+          "南町",
+          "大N",
+          "小N",
+          "南町nightin"
+        ]
+      }
+    ],
+    "relation_claim_allowed": true,
+    "relation_state": "CONFIRMED",
+    "required_entity_ids": [],
+    "schema_version": "lidousha-story-contract.v1",
+    "selection_hook": "李豆沙展示最爱的金发有角妹妹，被说像礼墨Sumi立刻否认，介绍得满眼喜爱，看到男性角色却瞬间改口“不熟”。",
+    "selection_hook_sha256": "sha256:f2924a52ae681d59cc80de686ac5ecbc4f076ffb397eb6bf9f2d847a3c2789c5",
+    "selection_scorecard": {
+      "dimensions": {
+        "audience_salience": 4,
+        "comedic_payoff": 4,
+        "lidousha_centrality": 4,
+        "persona_reversal": 4,
+        "relationship_interaction": 3,
+        "self_contained": 4,
+        "stance_intensity": 4
+      },
+      "effective_score": 95.25,
+      "fatigue_penalty": 0.0,
+      "raw_score": 96.25,
+      "reason_codes": [],
+      "requested_tier": 1,
+      "schema_version": "lidousha-selection-scorecard.v1",
+      "status": "VALID",
+      "tier": 1,
+      "tier_basis": "cp_positioning",
+      "tier_evidence_cues": [
+        910,
+        916,
+        917,
+        919,
+        924,
+        925,
+        926,
+        940,
+        941,
+        942,
+        948,
+        949
+      ],
+      "tier_reason": "她主动展示最喜欢的女性角色，面对角色像礼墨Sumi的关系人物联想立即否认，随后又在男性角色出现时产生连续态度反转，形成完整的人物关系、个人品味与喜剧落点链。",
+      "uncertainty_penalty": 1.0,
+      "weights": {
+        "audience_salience": 15,
+        "comedic_payoff": 10,
+        "lidousha_centrality": 25,
+        "persona_reversal": 10,
+        "relationship_interaction": 15,
+        "self_contained": 5,
+        "stance_intensity": 20
+      }
+    },
+    "session_relation_authority": {
+      "bound_date": "2026-07-22",
+      "bound_recording_basename": "22966160_20260722-19-34-50.mp4",
+      "bound_source_sha256": null,
+      "evidence": [
+        {
+          "authority": "Ivan-stated-20260722-conversation(这明显是南町和李豆沙的联动)",
+          "evidence_class": "ATOMIC_HUMAN_RELATION_TRUTH",
+          "independence_group": "ivan-session-review"
+        },
+        {
+          "evidence_class": "HASH_BOUND_OFFICIAL_REPLAY",
+          "independence_group": "official-replay-source",
+          "source_alias_id": "20260722-official-replay-bv1fjg16xex6",
+          "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+        }
+      ],
+      "ledger_sha256": "sha256:f96480319f8e4b74e64be81e7993517edf7cddb25e71715eeaef957e343365f4",
+      "participants": [
+        {
+          "canonical_id": "lidousha",
+          "display_name": "李豆沙",
+          "surfaces": [
+            "李豆沙",
+            "小李",
+            "豆沙"
+          ]
+        },
+        {
+          "canonical_id": "nancho",
+          "display_name": "南町",
+          "surfaces": [
+            "南町",
+            "大N",
+            "小N",
+            "南町nightin"
+          ]
+        }
+      ],
+      "presence_intervals": [
+        {
+          "end_ms": 7200000,
+          "kind": "SESSION_PRESENCE",
+          "start_ms": 0
+        }
+      ],
+      "relation_id": "20260722-lidousha-nancho-live-collaboration",
+      "relation_type": "LIVE_COLLABORATION",
+      "schema_version": "session-relation-authority.v1",
+      "state": "CONFIRMED"
+    },
+    "transcript_sha256": "sha256:cb98ff58b4d43ac061dfd9736d61faca696a8846bf3032175314f03c5a0056a3"
+  },
+  "subtitle_ass_path": null,
+  "subtitle_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_3573_3665/replacement_recuts/auto_193450_3573_3665.recut.srt",
+  "subtitle_regression": null,
+  "subtitle_regression_audit_path": null,
+  "subtitle_source": "aggregate_asr+bcut_agy_cpa+pronoun+text_final",
+  "subtitle_style": "lidousha-final-sapphire72",
+  "subtitle_timing_qa": {
+    "actions": [
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 13460,
+          "start_ms": 12460
+        },
+        "before": {
+          "end_ms": 13300,
+          "start_ms": 12460
+        },
+        "cue_id": "fresh_0004",
+        "density_cps": 4.762,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "这是我家",
+        "vad_overlap_ratio": 0.814
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 19040,
+          "start_ms": 18040
+        },
+        "before": {
+          "end_ms": 19000,
+          "start_ms": 18040
+        },
+        "cue_id": "fresh_0008",
+        "density_cps": 4.167,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "对，好可爱",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 31540,
+          "start_ms": 30540
+        },
+        "before": {
+          "end_ms": 31120,
+          "start_ms": 30540
+        },
+        "cue_id": "fresh_0014",
+        "density_cps": 6.897,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "no no",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 70590,
+          "start_ms": 69590
+        },
+        "before": {
+          "end_ms": 70150,
+          "start_ms": 69590
+        },
+        "cue_id": "fresh_0032",
+        "density_cps": 1.786,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "哦",
+        "vad_overlap_ratio": 1.0
+      }
+    ],
+    "counts": {
+      "dropped": 0,
+      "retimed": 4
+    },
+    "policy": {
+      "hard_max_ms": 12000,
+      "min_density_cps": 0.8,
+      "min_readable_ms": 1000,
+      "soft_max_ms": 6000
+    },
+    "schema_version": "subtitle-timing-qa.v2",
+    "speech_span_count": 21,
+    "speech_total_ms": 114352,
+    "vad_evidence_contract": "positive_only_never_shrink_normal_asr_cues",
+    "window": {
+      "end_ms": 103010,
+      "start_ms": 9730
+    }
+  },
+  "talk_filler_audit_path": null,
+  "text_finalization_manifest_path": null,
+  "upload_tags": {
+    "content_tags": [
+      {
+        "tag": "双标",
+        "why": "介绍女性角色时滔滔不绝，看到男性角色却立刻改口“男的不熟”。"
+      },
+      {
+        "tag": "嘴硬",
+        "why": "被说喜欢的角色像熟人后连声否认“哪像了”“no no”。"
+      },
+      {
+        "tag": "坏女人",
+        "why": "一本正经地评价角色“外表萌萌，但其实有一些粉切黑的坏女人”。"
+      },
+      {
+        "tag": "可爱",
+        "why": "多次夸角色和画风“确实可爱”“好可爱”。"
+      },
+      {
+        "tag": "搞笑",
+        "why": "前后反差明显，还用“最包容异性恋的直播间”自我调侃。"
+      }
+    ],
+    "engine": "suggest-upload-tags.v1",
+    "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,礼墨Sumi,双标,嘴硬,坏女人,可爱,搞笑",
+    "final_tags": [
+      "李豆沙",
+      "虚拟主播",
+      "虚拟UP主",
+      "直播切片",
+      "礼墨Sumi",
+      "双标",
+      "嘴硬",
+      "坏女人",
+      "可爱",
+      "搞笑"
+    ],
+    "proper_noun_tags": [
+      {
+        "evidence": {
+          "Sumi": 2,
+          "礼墨": 2
+        },
+        "hits": 4,
+        "notes": [
+          "Ivan: lmsm→礼墨Sumi"
+        ],
+        "rules": [
+          "limo"
+        ],
+        "tag": "礼墨Sumi",
+        "title_hit": true
+      }
+    ],
+    "status": "OK",
+    "warnings": []
+  }
+}

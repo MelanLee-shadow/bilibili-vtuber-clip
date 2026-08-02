@@ -1,0 +1,741 @@
+{
+  "address_enumeration_audit": {
+    "repairs": [],
+    "schema_version": "address-enumeration-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "applied": [],
+  "burn_binding": {
+    "ass_path": null,
+    "ass_sha256": null,
+    "burned_media_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_6577_6795/replacement_recuts/auto_193450_6577_6795.recut.burned-final-sapphire72.mp4",
+    "burned_media_sha256": "4553a2d7b9fb5050034afeac3714a81e120398ae75a81951a1ace7abe6bba071"
+  },
+  "code_switch_surface_audit": {
+    "input_srt_sha256": "f5085a62489c9f873ff5004a1c088ee178355f647a51e8e284aadbadcd98d147",
+    "output_srt_sha256": "f5085a62489c9f873ff5004a1c088ee178355f647a51e8e284aadbadcd98d147",
+    "repairs": [],
+    "schema_version": "code-switch-surface-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "coreference_repairs": [],
+  "entity_repairs": [
+    {
+      "after": [
+        "难评难评"
+      ],
+      "before": [
+        "难听难听"
+      ],
+      "cue_indexes": [
+        35
+      ],
+      "evidence_id": "7f9998a7274f184da26efe0f74a422bebb4e2f7a3ab601bbe20b2299764e552e",
+      "final_delivery_overlap_ms": 1360,
+      "final_delivery_overlap_ratio": 1.0,
+      "final_relative_end_ms": 99650,
+      "final_relative_start_ms": 98290,
+      "final_verification_kind": "entity_repair",
+      "final_verification_scope": "DELIVERY",
+      "matched_end_ms": 109460,
+      "matched_start_ms": 108100,
+      "mode": "final_review_context_adjudication",
+      "structured_exact_text": "难评难评",
+      "survived": true,
+      "survived_final_speaker_srt": true,
+      "survived_final_text_srt": true,
+      "verdict": {
+        "audio_clip_sha256": "b8fc346f512767dacd48e7baef73254de1d5d02190581cdccf819e1165a9da77",
+        "audio_end_ms": 116300,
+        "audio_start_ms": 105960,
+        "confidence_current": 0.95,
+        "confidence_proposed": 0.95,
+        "current_fit": "INCOMPATIBLE",
+        "heard_syllables": "nán píng nán píng",
+        "model": "Gemini 3.6 Flash (High)",
+        "prompt_sha256": "09825d3de5bcb325d2d2d31dd41f6ecc8bb3e2ae1d4954c7ac45b7169b0790ad",
+        "proposed_fit": "SUPPORTED",
+        "provider": "agy",
+        "reason": "Target audio clearly features the bilabial initial /p/ in 'nán píng nán píng', contradicting the alveolar initial /t/ of '难听'.",
+        "request_sha256": "289a402f7ba1cf03785a9bbc97a6afb8014c986d9598cbf930f7a40844624afb",
+        "response_sha256": "bf093f58d088e5d8a56a4fa464c42537d9110e4e96e029f1e48eb13003c89d05",
+        "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+        "source_media_sha256": "a6aa83cf367f9d68790fa0f300f2ece811e76c8fac4f4bf93d16a6e0c246d208",
+        "status": "OBSERVED",
+        "target_audible": true
+      }
+    }
+  ],
+  "entity_verdict_required": [],
+  "entity_verdicts": [],
+  "evidence_considered": 0,
+  "final_hard_meme_surface_audit": {
+    "input_srt_sha256": "a1a7f5ba29b6b74a41a0bbc9e773180871cc402856e68255175732f900192313",
+    "output_srt_sha256": "a1a7f5ba29b6b74a41a0bbc9e773180871cc402856e68255175732f900192313",
+    "repairs": [],
+    "rule_count": 1,
+    "schema_version": "hard-meme-surface-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "final_hard_meme_surface_verification": {
+    "failures": {},
+    "status": "PASS"
+  },
+  "final_output_srt_sha256": "a1a7f5ba29b6b74a41a0bbc9e773180871cc402856e68255175732f900192313",
+  "final_outside_delivery_count": 0,
+  "final_required_decision_count": 1,
+  "final_review_audit": {
+    "applied_count": 3,
+    "context_adjudication_budget": 12,
+    "context_adjudication_count": 4,
+    "findings": [
+      {
+        "base_text_sha256": "04a0686e086e1b57f1dd2f5a9daa6557b4dbdd0c5f7b4727345057bb5b6530a8",
+        "candidate_provenance": {
+          "kind": "transcript_context",
+          "nearest_cue_distance": 1,
+          "surface": "点亮"
+        },
+        "cue_index": 4,
+        "evidence_cue_ids": [
+          3
+        ],
+        "kind": "nonword",
+        "near_homophone_gate": {
+          "pinyin_similarity": 0.667,
+          "tier": "core_span"
+        },
+        "pinyin_similarity": 0.667,
+        "proposed_full_cue": "点亮啊",
+        "repair_class": "phonetic",
+        "reported_scope_warnings": [
+          "REPORTED_SUSPECT_SCOPE_MISMATCH",
+          "REPORTED_REPLACEMENT_SCOPE_MISMATCH"
+        ],
+        "routed": "witnessed_near_homophone_fix",
+        "span_end_codepoint": 3,
+        "span_start_codepoint": 1,
+        "suggestion": "亮啊",
+        "suspect": "名要",
+        "why": "「点名要」在此无法成句，且紧接任务提示「点亮所有的节点与回路」，近音应为「点亮啊」。"
+      },
+      {
+        "base_text_sha256": "39fe09118804746383e95c2bfc8f829c5d76d5f4f89c57b7d6c3959b9492f3b0",
+        "candidate_provenance": null,
+        "context_audio_adjudication": {
+          "policy_branch": "PROPOSED_INCOMPATIBLE_KEEP_CURRENT",
+          "repaired": false,
+          "request": {
+            "base_text_sha256": "39fe09118804746383e95c2bfc8f829c5d76d5f4f89c57b7d6c3959b9492f3b0",
+            "candidate_entities": [
+              {
+                "candidate_id": "CURRENT",
+                "canonical": "怎么怎么挤",
+                "readings": [],
+                "surfaces": [],
+                "text_sha256": "39fe09118804746383e95c2bfc8f829c5d76d5f4f89c57b7d6c3959b9492f3b0"
+              },
+              {
+                "candidate_id": "PROPOSED",
+                "canonical": "怎么怎么接",
+                "readings": [],
+                "surfaces": [],
+                "text_sha256": "758df98e0e3aef9552e450cfb34135689c93a4fd2954afff2c05d45087f26862"
+              }
+            ],
+            "candidate_provenance": null,
+            "context_after": "字形好诡异啊\n我也我也想说",
+            "context_before": "这是\n哎",
+            "context_end_ms": 83560,
+            "context_start_ms": 77270,
+            "cue_indexes": [
+              23
+            ],
+            "current_cue": "怎么怎么挤",
+            "evidence_cue_ids": [
+              3,
+              6,
+              44
+            ],
+            "evidence_id": "42fb3054362d54153ec5d2923f149cc137f23f6a2cc0e8ba4decb941dc81918e",
+            "kind": "subtitle_span_acoustic_check",
+            "matched_audio_text": "怎么怎么挤",
+            "matched_end_ms": 81660,
+            "matched_start_ms": 80480,
+            "proposed_cue": "怎么怎么接",
+            "reason": "回路连接语境中应是在问怎么接线，「怎么挤」说不通。",
+            "repair_class": "phonetic",
+            "replacement": "接",
+            "request_sha256": "7c4b83afd73ceab4e7517fa0e294274f8d5557a3b147fb20e387a5fd42811906",
+            "schema_version": "subtitle-span-acoustic-check-request.v1",
+            "suspect": "挤"
+          },
+          "schema_version": "subtitle-span-adjudication.v1",
+          "status": "OBSERVED",
+          "timing_immutable": true,
+          "verdict": {
+            "audio_clip_sha256": "02e1130109888690952e23cb09025a442cd20e989a708ef5da5f38ef9e26c560",
+            "audio_end_ms": 83560,
+            "audio_start_ms": 77270,
+            "confidence_current": 0.95,
+            "confidence_proposed": 0.05,
+            "current_fit": "SUPPORTED",
+            "heard_syllables": "zen me zen me ji",
+            "model": "Gemini 3.6 Flash (High)",
+            "prompt_sha256": "e2c13ec408e65a105db49006df153af5aa29cda3ed709d3d60207e9784edf849",
+            "proposed_fit": "INCOMPATIBLE",
+            "provider": "agy",
+            "reason": "Audio clearly pronounces 'zen me zen me ji', supporting CURRENT ('怎么怎么挤') and contradicting PROPOSED ('怎么怎么接').",
+            "request_sha256": "7c4b83afd73ceab4e7517fa0e294274f8d5557a3b147fb20e387a5fd42811906",
+            "response_sha256": "b6f4e88b5bbbd5d1eb448e0064b29c8908ed136882b82c883e234fe3f1644fdc",
+            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+            "source_media_sha256": "a6aa83cf367f9d68790fa0f300f2ece811e76c8fac4f4bf93d16a6e0c246d208",
+            "status": "OBSERVED",
+            "target_audible": true
+          }
+        },
+        "cue_index": 23,
+        "evidence_cue_ids": [
+          3,
+          6,
+          44
+        ],
+        "kind": "context",
+        "proposed_full_cue": "怎么怎么接",
+        "repair_class": "phonetic",
+        "routed": "disclosure",
+        "span_end_codepoint": 5,
+        "span_start_codepoint": 4,
+        "suggestion": "接",
+        "suspect": "挤",
+        "why": "回路连接语境中应是在问怎么接线，「怎么挤」说不通。"
+      },
+      {
+        "base_text_sha256": "98a2494df76c5e8458de33d36c265a624c745ef455ac8a926b14c01a0ec2066c",
+        "candidate_provenance": null,
+        "context_audio_adjudication": {
+          "policy_branch": "PROPOSED_INCOMPATIBLE_KEEP_CURRENT",
+          "repaired": false,
+          "request": {
+            "base_text_sha256": "98a2494df76c5e8458de33d36c265a624c745ef455ac8a926b14c01a0ec2066c",
+            "candidate_entities": [
+              {
+                "candidate_id": "CURRENT",
+                "canonical": "中间为四",
+                "readings": [],
+                "surfaces": [],
+                "text_sha256": "98a2494df76c5e8458de33d36c265a624c745ef455ac8a926b14c01a0ec2066c"
+              },
+              {
+                "candidate_id": "PROPOSED",
+                "canonical": "中间位置",
+                "readings": [],
+                "surfaces": [],
+                "text_sha256": "4358865d3cd8b5db568d55d1aa2624278551d9121bdec2dcf70cb9a2fd1edcef"
+              }
+            ],
+            "candidate_provenance": null,
+            "context_after": "然后下面换一下\n啊",
+            "context_before": "它可以抓吗\n不能抓",
+            "context_end_ms": 92640,
+            "context_start_ms": 86440,
+            "cue_indexes": [
+              28
+            ],
+            "current_cue": "中间为四",
+            "evidence_cue_ids": [
+              29,
+              47,
+              48
+            ],
+            "evidence_id": "0210f629037ca26f145a0c658fcf09827c8a0d720f24e7b6a648eec41c01e2f1",
+            "kind": "subtitle_span_acoustic_check",
+            "matched_audio_text": "中间为四",
+            "matched_end_ms": 90380,
+            "matched_start_ms": 88980,
+            "proposed_cue": "中间位置",
+            "reason": "后接「然后下面换一下」是在描述操作方位，「中间位置」语法和语境均成立。",
+            "repair_class": "phonetic",
+            "replacement": "位置",
+            "request_sha256": "09115124c3f63fdf7afe00abd0d0b55a85fda8707cee0ccd7409ae4d932ac77d",
+            "schema_version": "subtitle-span-acoustic-check-request.v1",
+            "suspect": "为四"
+          },
+          "schema_version": "subtitle-span-adjudication.v1",
+          "status": "OBSERVED",
+          "timing_immutable": true,
+          "verdict": {
+            "audio_clip_sha256": "0ac1166b7b96c5d329b22e3f09fe358e5b31a16818320d6c5693293d23215ed7",
+            "audio_end_ms": 92640,
+            "audio_start_ms": 86440,
+            "confidence_current": 1.0,
+            "confidence_proposed": 1.0,
+            "current_fit": "SUPPORTED",
+            "heard_syllables": "zhōng jiān wéi sì",
+            "model": "Gemini 3.6 Flash (High)",
+            "prompt_sha256": "a5e459b576a698262d775839be9f195864796bf8f15db42cf7d3b4d881cbcab3",
+            "proposed_fit": "INCOMPATIBLE",
+            "provider": "agy",
+            "reason": "The target audio articulates 'zhōng jiān wéi sì' (中间为四), matching CURRENT and contradicting PROPOSED '位置'.",
+            "request_sha256": "09115124c3f63fdf7afe00abd0d0b55a85fda8707cee0ccd7409ae4d932ac77d",
+            "response_sha256": "b0dd7b8e461712e7caa1b78fb367af7bf1706925d36030caad0fb93a698d2fcc",
+            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+            "source_media_sha256": "a6aa83cf367f9d68790fa0f300f2ece811e76c8fac4f4bf93d16a6e0c246d208",
+            "status": "OBSERVED",
+            "target_audible": true
+          }
+        },
+        "cue_index": 28,
+        "evidence_cue_ids": [
+          29,
+          47,
+          48
+        ],
+        "kind": "context",
+        "proposed_full_cue": "中间位置",
+        "repair_class": "phonetic",
+        "routed": "disclosure",
+        "span_end_codepoint": 4,
+        "span_start_codepoint": 2,
+        "suggestion": "位置",
+        "suspect": "为四",
+        "why": "后接「然后下面换一下」是在描述操作方位，「中间位置」语法和语境均成立。"
+      },
+      {
+        "base_text_sha256": "0f837f802d708f224aea372d107a9369b8c4baf8ede7bcb30468bcd900a4c5f6",
+        "candidate_provenance": null,
+        "context_audio_adjudication": {
+          "policy_branch": "ACOUSTICALLY_ADMISSIBLE_CONTEXT_TIEBREAK_APPLY_PROPOSED",
+          "repaired": true,
+          "request": {
+            "base_text_sha256": "0f837f802d708f224aea372d107a9369b8c4baf8ede7bcb30468bcd900a4c5f6",
+            "candidate_entities": [
+              {
+                "candidate_id": "CURRENT",
+                "canonical": "难听难听",
+                "readings": [],
+                "surfaces": [],
+                "text_sha256": "0f837f802d708f224aea372d107a9369b8c4baf8ede7bcb30468bcd900a4c5f6"
+              },
+              {
+                "candidate_id": "PROPOSED",
+                "canonical": "难评难评",
+                "readings": [],
+                "surfaces": [],
+                "text_sha256": "50be64fa6a11bf1d08674b36c33dac1559f02c04fe7dea15fed051878aa0ab90"
+              }
+            ],
+            "candidate_provenance": null,
+            "context_after": "你的操作真随机\n嗯",
+            "context_before": "你在操作什么\n真的能操作吗",
+            "context_end_ms": 116300,
+            "context_start_ms": 105960,
+            "cue_indexes": [
+              35
+            ],
+            "current_cue": "难听难听",
+            "evidence_cue_ids": [
+              33,
+              34,
+              36
+            ],
+            "evidence_id": "7f9998a7274f184da26efe0f74a422bebb4e2f7a3ab601bbe20b2299764e552e",
+            "kind": "subtitle_span_acoustic_check",
+            "matched_audio_text": "难听难听",
+            "matched_end_ms": 109460,
+            "matched_start_ms": 108100,
+            "proposed_cue": "难评难评",
+            "reason": "前后都在吐槽随机操作，「难评难评」是合乎语境的网络口语，「难听」无对应对象。",
+            "repair_class": "phonetic",
+            "replacement": "评难评",
+            "request_sha256": "289a402f7ba1cf03785a9bbc97a6afb8014c986d9598cbf930f7a40844624afb",
+            "schema_version": "subtitle-span-acoustic-check-request.v1",
+            "suspect": "听难听"
+          },
+          "schema_version": "subtitle-span-adjudication.v1",
+          "status": "OBSERVED",
+          "timing_immutable": true,
+          "verdict": {
+            "audio_clip_sha256": "b8fc346f512767dacd48e7baef73254de1d5d02190581cdccf819e1165a9da77",
+            "audio_end_ms": 116300,
+            "audio_start_ms": 105960,
+            "confidence_current": 0.95,
+            "confidence_proposed": 0.95,
+            "current_fit": "INCOMPATIBLE",
+            "heard_syllables": "nán píng nán píng",
+            "model": "Gemini 3.6 Flash (High)",
+            "prompt_sha256": "09825d3de5bcb325d2d2d31dd41f6ecc8bb3e2ae1d4954c7ac45b7169b0790ad",
+            "proposed_fit": "SUPPORTED",
+            "provider": "agy",
+            "reason": "Target audio clearly features the bilabial initial /p/ in 'nán píng nán píng', contradicting the alveolar initial /t/ of '难听'.",
+            "request_sha256": "289a402f7ba1cf03785a9bbc97a6afb8014c986d9598cbf930f7a40844624afb",
+            "response_sha256": "bf093f58d088e5d8a56a4fa464c42537d9110e4e96e029f1e48eb13003c89d05",
+            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+            "source_media_sha256": "a6aa83cf367f9d68790fa0f300f2ece811e76c8fac4f4bf93d16a6e0c246d208",
+            "status": "OBSERVED",
+            "target_audible": true
+          }
+        },
+        "cue_index": 35,
+        "evidence_cue_ids": [
+          33,
+          34,
+          36
+        ],
+        "kind": "context",
+        "proposed_full_cue": "难评难评",
+        "repair_class": "phonetic",
+        "reported_scope_warnings": [
+          "REPORTED_SUSPECT_SCOPE_MISMATCH",
+          "REPORTED_REPLACEMENT_SCOPE_MISMATCH"
+        ],
+        "routed": "context_audio_adjudicated_fix",
+        "span_end_codepoint": 4,
+        "span_start_codepoint": 1,
+        "suggestion": "评难评",
+        "suspect": "听难听",
+        "why": "前后都在吐槽随机操作，「难评难评」是合乎语境的网络口语，「难听」无对应对象。"
+      },
+      {
+        "base_text_sha256": "98a2494df76c5e8458de33d36c265a624c745ef455ac8a926b14c01a0ec2066c",
+        "candidate_provenance": null,
+        "context_audio_adjudication": {
+          "policy_branch": "PROPOSED_INCOMPATIBLE_KEEP_CURRENT",
+          "repaired": false,
+          "request": {
+            "base_text_sha256": "98a2494df76c5e8458de33d36c265a624c745ef455ac8a926b14c01a0ec2066c",
+            "candidate_entities": [
+              {
+                "candidate_id": "CURRENT",
+                "canonical": "中间为四",
+                "readings": [],
+                "surfaces": [],
+                "text_sha256": "98a2494df76c5e8458de33d36c265a624c745ef455ac8a926b14c01a0ec2066c"
+              },
+              {
+                "candidate_id": "PROPOSED",
+                "canonical": "中间位置",
+                "readings": [],
+                "surfaces": [],
+                "text_sha256": "4358865d3cd8b5db568d55d1aa2624278551d9121bdec2dcf70cb9a2fd1edcef"
+              }
+            ],
+            "candidate_provenance": null,
+            "context_after": "这，啊哈哈哈\n你是穷举出来的吗",
+            "context_before": "这个就算，就能下播了，好吧\n这对吗",
+            "context_end_ms": 179820,
+            "context_start_ms": 168640,
+            "cue_indexes": [
+              56
+            ],
+            "current_cue": "中间为四",
+            "evidence_cue_ids": [
+              28,
+              47,
+              48
+            ],
+            "evidence_id": "5f3558165966c4ffa22374af0709785aa0b378bcc318abc8a3c9bc23f9e93d9f",
+            "kind": "subtitle_span_acoustic_check",
+            "matched_audio_text": "中间为四",
+            "matched_end_ms": 176520,
+            "matched_start_ms": 174980,
+            "proposed_cue": "中间位置",
+            "reason": "与第28条同一操作指令重复出现，「中间为四」不成句，疑为「中间位置」的近音误识。",
+            "repair_class": "phonetic",
+            "replacement": "位置",
+            "request_sha256": "9913f43a681f0bd2b74a4fd4bd6e7436ff4174cade5548149d0e053f1d998285",
+            "schema_version": "subtitle-span-acoustic-check-request.v1",
+            "suspect": "为四"
+          },
+          "schema_version": "subtitle-span-adjudication.v1",
+          "status": "OBSERVED",
+          "timing_immutable": true,
+          "verdict": {
+            "audio_clip_sha256": "84234f03b4a79c4a2c50b0ab7be64adc97ab2cdc97c111e0a2ba41455cc476f3",
+            "audio_end_ms": 179820,
+            "audio_start_ms": 168640,
+            "confidence_current": 0.95,
+            "confidence_proposed": 0.95,
+            "current_fit": "SUPPORTED",
+            "heard_syllables": "中间为四",
+            "model": "Gemini 3.6 Flash (High)",
+            "prompt_sha256": "b198578bcc659e0bc47923bd3cfc8b0e87a5e693b3e2ec3f7e53e5e6ac8ab7c1",
+            "proposed_fit": "INCOMPATIBLE",
+            "provider": "agy",
+            "reason": "The target audio clearly pronounces '中间为四' (zhong jian wei si), supporting CURRENT and contradicting PROPOSED ('中间位置').",
+            "request_sha256": "9913f43a681f0bd2b74a4fd4bd6e7436ff4174cade5548149d0e053f1d998285",
+            "response_sha256": "5f7f4acd31a3c362c08f12174a5e33974a467c29885acae50a0be4d7030eb543",
+            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+            "source_media_sha256": "a6aa83cf367f9d68790fa0f300f2ece811e76c8fac4f4bf93d16a6e0c246d208",
+            "status": "OBSERVED",
+            "target_audible": true
+          }
+        },
+        "cue_index": 56,
+        "evidence_cue_ids": [
+          28,
+          47,
+          48
+        ],
+        "kind": "context",
+        "proposed_full_cue": "中间位置",
+        "repair_class": "phonetic",
+        "routed": "disclosure",
+        "span_end_codepoint": 4,
+        "span_start_codepoint": 2,
+        "suggestion": "位置",
+        "suspect": "为四",
+        "why": "与第28条同一操作指令重复出现，「中间为四」不成句，疑为「中间位置」的近音误识。"
+      },
+      {
+        "base_text_sha256": "23c21f41dd6b54c60f0c89580f6d47ebc127ff3df1b725c811ede4ef9dc3bee4",
+        "candidate_provenance": {
+          "kind": "transcript_context",
+          "nearest_cue_distance": 5,
+          "surface": "穷举"
+        },
+        "cue_index": 58,
+        "evidence_cue_ids": [
+          63,
+          77
+        ],
+        "kind": "context",
+        "near_homophone_gate": {
+          "pinyin_similarity": 0.75,
+          "tier": "core_span"
+        },
+        "pinyin_similarity": 0.75,
+        "proposed_full_cue": "你是穷举出来的吗",
+        "repair_class": "phonetic",
+        "routed": "witnessed_near_homophone_fix",
+        "span_end_codepoint": 4,
+        "span_start_codepoint": 2,
+        "suggestion": "穷举",
+        "suspect": "重聚",
+        "why": "后文连续明确评价对方是「穷举出来的」，此处同一专名槽漂成了无关的「重聚」。"
+      }
+    ],
+    "infra_unresolved": [],
+    "infra_unresolved_count": 0,
+    "schema_version": "final-review-audit.v1",
+    "status": "APPLIED"
+  },
+  "final_source_language_preservation_audit": {
+    "draft_cue_count": 86,
+    "final_cue_count": 84,
+    "reverted": [],
+    "reverted_count": 0,
+    "schema_version": "source-language-preservation-audit.v1",
+    "status": "SKIPPED_CUE_COUNT_MISMATCH",
+    "unproven_foreign_introductions": []
+  },
+  "final_speaker_srt_path": null,
+  "final_speaker_srt_sha256": "bc53a3553d2650c30c15cbc619b1f380c1bcb604a1c2571d10b8421d56957873",
+  "final_status": "FINAL_ARTIFACTS_VERIFIED",
+  "final_superseded_by_redelivery_baseline_count": 0,
+  "final_superseded_by_source_truth_count": 0,
+  "final_text_srt_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_6577_6795/replacement_recuts/auto_193450_6577_6795.recut.srt",
+  "final_text_srt_sha256": "bc53a3553d2650c30c15cbc619b1f380c1bcb604a1c2571d10b8421d56957873",
+  "final_title_mark_balance_audit": {
+    "cross_cue_pairs": [],
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "title-mark-balance-audit.v1",
+    "status": "CLEAN",
+    "unresolved": []
+  },
+  "foreign_script_consistency_audit": {
+    "kana_cue_indexes": [],
+    "latin_heavy_cues": [],
+    "mixed_cjk_latin_cues": [],
+    "reason": null,
+    "schema_version": "foreign-script-consistency-audit.v1",
+    "status": "CLEAN"
+  },
+  "gift_repairs": [],
+  "impossible_punctuation_audit": {
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "impossible-punctuation-audit.v1",
+    "status": "CLEAN"
+  },
+  "input_srt_sha256": "f5085a62489c9f873ff5004a1c088ee178355f647a51e8e284aadbadcd98d147",
+  "introduced_term_audits": [],
+  "numeric_fact_provenance_audit": {
+    "reverted": [],
+    "reverted_count": 0,
+    "schema_version": "numeric-fact-provenance-audit.v1",
+    "status": "CLEAN",
+    "supported": []
+  },
+  "output_srt_sha256": "f5085a62489c9f873ff5004a1c088ee178355f647a51e8e284aadbadcd98d147",
+  "pending_text_overrides": [],
+  "post_semantic_entity_policy": {
+    "dynamic_audio_group_count": 0,
+    "explicit_audio_groups": [
+      [
+        "素惹",
+        "素人"
+      ],
+      [
+        "李豆沙",
+        "小李"
+      ],
+      [
+        "奶P",
+        "奶瓶"
+      ],
+      [
+        "ありがとう",
+        "おめでとう"
+      ]
+    ],
+    "phonetic_candidates_disclosure_only": [
+      [
+        "恋死",
+        "间为四"
+      ],
+      [
+        "Hime",
+        "是没"
+      ],
+      [
+        "Hina",
+        "西啊"
+      ],
+      [
+        "小李",
+        "下不来"
+      ]
+    ],
+    "phrase_divergence_candidates_disclosure_only": [
+      [
+        "口下面换一下",
+        "后下面换一下"
+      ],
+      [
+        "在两端的呀",
+        "最两端的呀"
+      ],
+      [
+        "能在两端呢",
+        "能在两端的"
+      ],
+      [
+        "举出来的",
+        "聚出来的"
+      ]
+    ],
+    "reason_code": "POST_SEMANTIC_ENTITY_AUDIO_OVERRIDE_DISABLED",
+    "schema_version": "post-semantic-entity-policy.v1",
+    "semantic_text_final_groups": [
+      [
+        "恋青",
+        "恋死"
+      ],
+      [
+        "梦限大",
+        "Ave Mujica"
+      ],
+      [
+        "立希",
+        "祥子"
+      ],
+      [
+        "kmx",
+        "乒乓球"
+      ],
+      [
+        "李豆沙",
+        "小李"
+      ],
+      [
+        "田中姬",
+        "铃木雏",
+        "田中雏",
+        "Hime",
+        "Hina"
+      ]
+    ],
+    "status": "SEMANTIC_TEXT_FINAL"
+  },
+  "post_transcript_entity_output_srt_sha256": "a1a7f5ba29b6b74a41a0bbc9e773180871cc402856e68255175732f900192313",
+  "read_aloud_arbitrations": [],
+  "schema_version": "chat-authority-audit.v2",
+  "self_reference_absorption_audit": {
+    "candidate_names": [
+      "小李",
+      "李豆沙",
+      "豆沙"
+    ],
+    "repairs": [],
+    "schema_version": "self-reference-absorption-audit.v3",
+    "source_witness_available": true,
+    "status": "NO_MATCH"
+  },
+  "sender_repairs": [],
+  "sender_verdict_required": [],
+  "session_topic_absorption_audits": [
+    {
+      "authorities": [],
+      "repair_count": 0,
+      "repairs": [],
+      "schema_version": "session-topic-authority-audit.v1",
+      "status": "CLEAN"
+    },
+    {
+      "authorities": [],
+      "repair_count": 0,
+      "repairs": [],
+      "schema_version": "session-topic-authority-audit.v1",
+      "status": "CLEAN"
+    }
+  ],
+  "source_subtitle_truth_audit": {
+    "applied": [],
+    "failures": [],
+    "ledger_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/repo/assets/lidousha/subtitle_truth_ledger.v1.json",
+    "ledger_sha256": "sha256:b92446d281fffa0ee84938509d13eaef94b3401b009674d777cabbce610aee9f",
+    "satisfied": [],
+    "schema_version": "source-subtitle-truth-audit.v1",
+    "status": "NO_RELEVANT_INTERVAL"
+  },
+  "speaker_ass_path": null,
+  "speaker_ass_sha256": null,
+  "speaker_manifest_sha256": null,
+  "status": "NO_MATCH",
+  "superseded_chat_proposals": [],
+  "term_boundary_audit": {
+    "moves": [],
+    "schema_version": "term-boundary-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "thank_prefix_restore_audit": {
+    "restorations": [],
+    "schema_version": "thank-prefix-restore-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "title_mark_balance_audit": {
+    "cross_cue_pairs": [],
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "title-mark-balance-audit.v1",
+    "status": "CLEAN",
+    "unresolved": []
+  },
+  "transcript_entity_audit": {
+    "confirmed": [],
+    "entity_verdict_required": [],
+    "input_srt_sha256": "f5085a62489c9f873ff5004a1c088ee178355f647a51e8e284aadbadcd98d147",
+    "output_srt_sha256": "f5085a62489c9f873ff5004a1c088ee178355f647a51e8e284aadbadcd98d147",
+    "repairs": [],
+    "schema_version": "transcript-entity-audit.v1",
+    "status": "NO_ENTITY"
+  },
+  "unthanked_donor_disclosure": {
+    "schema_version": "unthanked-donor-disclosure.v1",
+    "status": "ALL_THANKED",
+    "unthanked": []
+  },
+  "witness_disagreement_audits": []
+}

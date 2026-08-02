@@ -1,0 +1,210 @@
+{
+  "counts": {
+    "items": 1,
+    "song": 0,
+    "talk": 1
+  },
+  "cover_route_attestations": [
+    {
+      "candidate_id": "auto_193129_850_940",
+      "final_cover_sha256": "sha256:0ed61cc7e292403358a6cf27d0193315099826d6852da7679bc4c08245752b41",
+      "method": "images.edit",
+      "reference_authority": null,
+      "reference_sha256": "sha256:84cb41975e78674ba663c6568143c88f8c0abbc852eb168fe1e1ee7d7ee389e2",
+      "route_decision": {
+        "actual_treatment": "cpa_redraw",
+        "alternatives": [
+          {
+            "rationale": "the selected source frame is strong enough to preserve as the final visual without image generation",
+            "rejected_reason": "the source-frame evidence is not strong or verified enough to ship without image generation; selected evidence: motion without confident cover subject (score=4.37)",
+            "status": "REJECTED",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rationale": "the real source moment is usable but benefits from a bounded identity-preserving cleanup",
+            "rejected_reason": "bounded cleanup cannot repair the missing subject confidence, weak composition, or inability to express the hook; selected evidence: motion without confident cover subject (score=4.37)",
+            "status": "REJECTED",
+            "treatment": "screenshot_polish"
+          },
+          {
+            "rationale": "motion without confident cover subject (score=4.37)",
+            "rejected_reason": null,
+            "status": "SELECTED",
+            "treatment": "cpa_redraw"
+          }
+        ],
+        "alternatives_considered": [
+          "screenshot_direct",
+          "screenshot_polish",
+          "cpa_redraw"
+        ],
+        "cover_mode": "auto",
+        "execution_status": "READY",
+        "final_visibility_authority": "NOT_REQUIRED",
+        "final_visible_participant_ids": [],
+        "frame_emotion": 0.0,
+        "frame_score": 4.3665,
+        "image_generation_attempted": true,
+        "image_generation_planned": true,
+        "image_generation_used": true,
+        "is_song": false,
+        "manual_title_or_full_text_contract": false,
+        "motion_dispersion_frac": 0.4094,
+        "reason": "motion without confident cover subject (score=4.37)",
+        "reference_authority_id": null,
+        "rejected_alternatives": [
+          {
+            "rejected_reason": "the source-frame evidence is not strong or verified enough to ship without image generation; selected evidence: motion without confident cover subject (score=4.37)",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rejected_reason": "bounded cleanup cannot repair the missing subject confidence, weak composition, or inability to express the hook; selected evidence: motion without confident cover subject (score=4.37)",
+            "treatment": "screenshot_polish"
+          }
+        ],
+        "relationship_semantic_evidence": [],
+        "relationship_visual_required": false,
+        "relationship_visual_safety_evidence": {
+          "relation_state": "UNKNOWN",
+          "required_participant_ids": [],
+          "requirement_basis": [],
+          "schema_version": "lidousha-cover-relationship-visual-safety.v1",
+          "status": "NOT_REQUIRED"
+        },
+        "required_participant_ids": [],
+        "schema_version": "lidousha-cover-route-decision.v2",
+        "selected_rationale": "motion without confident cover subject (score=4.37)",
+        "selected_treatment": "cpa_redraw",
+        "selection_policy": "lidousha-cover-treatment-router.v2",
+        "source_visibility_authority": "NO_IDENTITY_AUTHORITY",
+        "source_visible_participant_ids": [],
+        "subject_confident": false,
+        "verified_stream_frame": false
+      },
+      "stem": "观众声称只带一个技能保证让她赢，李豆"
+    }
+  ],
+  "created_at": "2026-07-29T08:23:29.404658+00:00",
+  "date": "2026-07-24",
+  "deployed_commit": "26218ca3e72ff4637549f5c27f715b4912cde62c",
+  "exact_candidate_ids": [
+    "auto_193129_850_940"
+  ],
+  "generated_by": "build_lidousha_recovery_review_manifest.v1",
+  "items": [
+    {
+      "ass_path": "观众声称只带一个技能保证让她赢，李豆.final-sapphire72.ass",
+      "ass_sha256": "sha256:cd2f6bee894440d4638e0db29c4a4cb146655f125c61bca245fff77df5688054",
+      "candidate_id": "auto_193129_850_940",
+      "chat_authority": "观众声称只带一个技能保证让她赢，李豆.chat-authority.json",
+      "clip_context": "观众声称只带一个技能保证让她赢，李豆.clip-context.json",
+      "cover": "观众声称只带一个技能保证让她赢，李豆.cover.png",
+      "cover_pre_overlay": "观众声称只带一个技能保证让她赢，李豆.cover.pre-overlay.png",
+      "cover_route_background": "观众声称只带一个技能保证让她赢，李豆.cover.route-background.png",
+      "cover_route_summary": {
+        "actual_treatment": "cpa_redraw",
+        "execution_status": "READY",
+        "final_visible_participant_ids": [],
+        "image_generation_attempted": true,
+        "image_generation_planned": true,
+        "image_generation_used": true,
+        "rejected_alternatives": [
+          {
+            "rejected_reason": "the source-frame evidence is not strong or verified enough to ship without image generation; selected evidence: motion without confident cover subject (score=4.37)",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rejected_reason": "bounded cleanup cannot repair the missing subject confidence, weak composition, or inability to express the hook; selected evidence: motion without confident cover subject (score=4.37)",
+            "treatment": "screenshot_polish"
+          }
+        ],
+        "schema_version": "lidousha-cover-route-decision.v2",
+        "selected_rationale": "motion without confident cover subject (score=4.37)",
+        "selected_treatment": "cpa_redraw",
+        "source_visible_participant_ids": []
+      },
+      "cover_title_mask": "观众声称只带一个技能保证让她赢，李豆.cover.title-mask.png",
+      "mp4": "观众声称只带一个技能保证让她赢，李豆.mp4",
+      "publish_json": "观众声称只带一个技能保证让她赢，李豆.publish.json",
+      "record": "观众声称只带一个技能保证让她赢，李豆.record.json",
+      "recovery_publication_authority": {
+        "aid": 116993634082225,
+        "authority_sha256": "sha256:ab6e72cf15914628536da017f9676526a9745b0f5bf1624c858ef08137391c39",
+        "boundary_end_mode": "exact_source_pin",
+        "bvid": "BV1ec3A6bEWF",
+        "candidate_id": "auto_193129_850_940",
+        "cid": 40357990267,
+        "observed_public_title": "【李豆沙】kmx声称只带一个技能保证让她赢，小李刚准备下注就没了，有骗子，我也不信你了！",
+        "registry_authority": "Ivan 2026-07-28: the already-published 7/24 candidate auto_193129_850_940 has three reported subtitle defects; rerun the whole clip once in an isolated no-upload recovery base, preserve its existing BV and verified public title, and pin the reviewed story end to the original selected source boundary.",
+        "registry_repo_path": "assets/lidousha/recovery_publication_authority_2026-07-24_850.v1.json",
+        "registry_schema_version": "lidousha-recovery-publication-authority.v1",
+        "registry_sha256": "sha256:d22b34c3365a8daa71fb10bf54cf1207971d9c52e26142b840c02321f6baabcd",
+        "required_given_end_ms": 940490,
+        "schema_version": "recovery-same-bv-publication-authority.v1",
+        "source_kind": "committed_verified_publication_registry",
+        "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-24-incident-850940/auto_193129_850_940.public_verify.json",
+        "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+        "source_public_verify_sha256": "sha256:67fe59ef64652e95699ff5b43706847cfa01f17620547f217b25d1b88c81d831",
+        "source_public_verify_status": "VERIFIED_PUBLIC",
+        "title_mode": "verified_public_exact"
+      },
+      "redelivery_baseline": "观众声称只带一个技能保证让她赢，李豆.redelivery-baseline.json",
+      "speaker_srt": "观众声称只带一个技能保证让她赢，李豆.srt",
+      "speaker_srt_sha256": "sha256:40d8b5c025972e684c0c9e3733d9c496d57fc9ab29dce1450246c3495c91abb3",
+      "stem": "观众声称只带一个技能保证让她赢，李豆",
+      "subtitle_regression_audit": "观众声称只带一个技能保证让她赢，李豆.subtitle-regression.json",
+      "subtitle_srt": "观众声称只带一个技能保证让她赢，李豆.srt",
+      "title": "【李豆沙】kmx声称只带一个技能保证让她赢，小李刚准备下注就没了，有骗子，我也不信你了！",
+      "video": "观众声称只带一个技能保证让她赢，李豆.mp4"
+    }
+  ],
+  "partial_release_scope": {
+    "authority": "Ivan 2026-07-26: 没有任何纪律要求必须5个全complete才能动BV，修复时哪个好了就可以改哪个",
+    "batch_status": "review_ready",
+    "candidates": [
+      "auto_193129_850_940"
+    ]
+  },
+  "recovery_publication_authorities_by_candidate": {
+    "auto_193129_850_940": {
+      "aid": 116993634082225,
+      "authority_sha256": "sha256:ab6e72cf15914628536da017f9676526a9745b0f5bf1624c858ef08137391c39",
+      "boundary_end_mode": "exact_source_pin",
+      "bvid": "BV1ec3A6bEWF",
+      "candidate_id": "auto_193129_850_940",
+      "cid": 40357990267,
+      "observed_public_title": "【李豆沙】kmx声称只带一个技能保证让她赢，小李刚准备下注就没了，有骗子，我也不信你了！",
+      "registry_authority": "Ivan 2026-07-28: the already-published 7/24 candidate auto_193129_850_940 has three reported subtitle defects; rerun the whole clip once in an isolated no-upload recovery base, preserve its existing BV and verified public title, and pin the reviewed story end to the original selected source boundary.",
+      "registry_repo_path": "assets/lidousha/recovery_publication_authority_2026-07-24_850.v1.json",
+      "registry_schema_version": "lidousha-recovery-publication-authority.v1",
+      "registry_sha256": "sha256:d22b34c3365a8daa71fb10bf54cf1207971d9c52e26142b840c02321f6baabcd",
+      "required_given_end_ms": 940490,
+      "schema_version": "recovery-same-bv-publication-authority.v1",
+      "source_kind": "committed_verified_publication_registry",
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-24-incident-850940/auto_193129_850_940.public_verify.json",
+      "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+      "source_public_verify_sha256": "sha256:67fe59ef64652e95699ff5b43706847cfa01f17620547f217b25d1b88c81d831",
+      "source_public_verify_status": "VERIFIED_PUBLIC",
+      "title_mode": "verified_public_exact"
+    }
+  },
+  "run_mode": "RECOVERY_REVIEW",
+  "schema_version": "lidousha-review-package.v1",
+  "selection_contract": {
+    "authority": "Ivan 2026-07-28: the already-published 7/24 candidate auto_193129_850_940 has three reported subtitle defects; rerun the whole clip once in an isolated no-upload recovery base, preserve its existing BV and verified public title, and pin the reviewed story end to the original selected source boundary.",
+    "candidate_ids": [
+      "auto_193129_850_940"
+    ],
+    "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+    "schema_version": "talk-selection-contract.v1",
+    "source_state_sha256": "sha256:1ecc871723d89f8874f549926465ab4d3b393d227bbb492330a594e94bd75128"
+  },
+  "status": "finished_review_package_no_upload_pending_human_review",
+  "story_contract_required": true,
+  "subtitle_visual_contract": {
+    "max_chars_per_line": 28,
+    "max_visual_lines": 2,
+    "profile": "autoslice-sapphire72"
+  },
+  "upload_allowed": false
+}

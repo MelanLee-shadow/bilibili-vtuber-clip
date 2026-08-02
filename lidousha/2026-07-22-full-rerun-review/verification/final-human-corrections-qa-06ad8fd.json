@@ -1,0 +1,66 @@
+{
+  "passed": true,
+  "exact_candidate_ids": [
+    "auto_193450_3573_3665",
+    "auto_193450_672_945",
+    "auto_193450_1863_2056",
+    "auto_193450_1573_1672",
+    "auto_193450_1475_1543"
+  ],
+  "puzzle_excluded_from_delivery": true,
+  "confrontation_content_silence_gap_ms": [
+    101000,
+    107000
+  ],
+  "confrontation_burned_video_silence_gap_ms": [
+    106766,
+    112766
+  ],
+  "items": [
+    {
+      "candidate_id": "auto_193450_3573_3665",
+      "title": "最包容异性恋的直播间，看到男角色只能说出一句不熟",
+      "subtitle_cues": 43,
+      "cover_route": "screenshot_direct",
+      "ai_attempted": false,
+      "intro": "PREPENDED",
+      "pipeline_fingerprint_current": true
+    },
+    {
+      "candidate_id": "auto_193450_672_945",
+      "title": "被坏女人南町问到最最最最喜欢的原因，后来才发现自己才是被收集的那个",
+      "subtitle_cues": 125,
+      "cover_route": "screenshot_direct",
+      "ai_attempted": false,
+      "intro": "PREPENDED",
+      "pipeline_fingerprint_current": true
+    },
+    {
+      "candidate_id": "auto_193450_1863_2056",
+      "title": "【李豆沙】弹幕追问李豆沙为何请南町吃火锅，从“付出劳动”嘴硬到“最最喜欢”，刚认识就互相霸凌",
+      "subtitle_cues": 100,
+      "cover_route": "screenshot_direct",
+      "ai_attempted": false,
+      "intro": "PREPENDED",
+      "pipeline_fingerprint_current": true
+    },
+    {
+      "candidate_id": "auto_193450_1573_1672",
+      "title": "【李豆沙】看着像不良帅姐的搭档把大椅子让给李豆沙，缩在角落假哭，熊猫头怎么反成霸凌者了",
+      "subtitle_cues": 52,
+      "cover_route": "screenshot_direct",
+      "ai_attempted": false,
+      "intro": "PREPENDED",
+      "pipeline_fingerprint_current": true
+    },
+    {
+      "candidate_id": "auto_193450_1475_1543",
+      "title": "【李豆沙】弹幕让左边的人弹右边一个脑瓜崩，熊猫头争了半天镜像左右，还是被kmx算明白了",
+      "subtitle_cues": 35,
+      "cover_route": "screenshot_direct",
+      "ai_attempted": false,
+      "intro": "PREPENDED",
+      "pipeline_fingerprint_current": true
+    }
+  ]
+}

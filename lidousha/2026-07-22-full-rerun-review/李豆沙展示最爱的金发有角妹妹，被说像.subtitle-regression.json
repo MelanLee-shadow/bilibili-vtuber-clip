@@ -1,0 +1,35 @@
+{
+  "candidate_id": "auto_193450_3573_3665",
+  "final_speaker_srt_sha256": "ff0c19637922b572d2af95dcc01ae9525e0c3347722955daf88d2f472808f0cb",
+  "final_text_srt_sha256": "ff0c19637922b572d2af95dcc01ae9525e0c3347722955daf88d2f472808f0cb",
+  "schema_version": "lidousha-subtitle-regression-audit.v1",
+  "status": "PASS",
+  "surfaces": {
+    "final_speaker_srt": {
+      "found_forbidden": [],
+      "found_forbidden_exact_cues": [],
+      "missing_required": [],
+      "missing_required_any_groups": [],
+      "missing_required_min_occurrences": [],
+      "payload_sha256": "0b0a71bae2d5c157aa8abf9cfac8e04c95e5bdc89ca09c4768a5ad4ba9c50d5d",
+      "required_any_group_count": 0,
+      "required_count": 7,
+      "required_min_occurrence_rule_count": 1,
+      "status": "PASS"
+    },
+    "final_text_srt": {
+      "found_forbidden": [],
+      "found_forbidden_exact_cues": [],
+      "missing_required": [],
+      "missing_required_any_groups": [],
+      "missing_required_min_occurrences": [],
+      "payload_sha256": "0b0a71bae2d5c157aa8abf9cfac8e04c95e5bdc89ca09c4768a5ad4ba9c50d5d",
+      "required_any_group_count": 0,
+      "required_count": 7,
+      "required_min_occurrence_rule_count": 1,
+      "status": "PASS"
+    }
+  },
+  "truth_asset_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/subtitle_regressions/auto_193450_3573_3665.subtitle-regression.v1.json",
+  "truth_asset_sha256": "1848fa4a123ef644a26d49bc942f0502bcc92df1c7264422ff7c670f185b494d"
+}

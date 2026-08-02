@@ -1,0 +1,3261 @@
+{
+  "artifact_hashes": {
+    "ai_background_sha256": "sha256:af8adac7a790a4abb1c65f124ec715066bfbaf92163b326f76a7bcc9262754af",
+    "ass_sha256": "sha256:55976b9dd45c1ec7509bcd32bd94ac0b0d4e15f0ee19bf25c00142c957b58c6c",
+    "burned_video_sha256": "sha256:5895d08d5ce897bcfa97993b73d072a688a86706ea2403ec58fa7909f6762e83",
+    "chat_authority_audit_sha256": "sha256:618b8676226fe4efc9bb8b1e7ea229c83458240489571c32d650a2520ac5b6f8",
+    "clip_context_file_sha256": "sha256:a2808991d2d7ab45982156a04508cd41493753b3b1186c3836015a25a66f4ef5",
+    "cover_reference_sha256": "sha256:ee46c27e929d57244cf10d179e5e4127a46b89264b8ad10c15dde2be3ce5e217",
+    "cover_sha256": "sha256:54802a840b75cfdec7c1276bd63f0f52e8cc3091ed8f410719ac4202a12373e1",
+    "redelivery_baseline_audit_sha256": "sha256:09c2234f35fdeed94d77bdf2eb4a832c3c07d418998f48bd60d84a475ea34185",
+    "subtitle_regression_audit_sha256": "sha256:7f80f93d13cf7c2595c11fb59a8d0c9c44e580decdc110ac9bb8aa6772c780a5",
+    "subtitle_sha256": "sha256:ba1fb2c6619e43c16523d6f5e2566a819855e3fee9cf9b56fdc1e8a7c5046e69",
+    "video_sha256": "sha256:6b8bdd82ad1901ce54bb3573c58a1080e0528f8ad2392368543eb3066a4ab7d0"
+  },
+  "boundary_audit": {
+    "boundary_authority": "human_source_reviewed_end",
+    "boundary_repair_extend_cap_ms": 30000,
+    "boundary_repair_max_end_ms": 232720,
+    "boundary_repair_search_origin_ms": 202720,
+    "boundary_repairs": [
+      {
+        "final_end_ms": 202320,
+        "next_speech_island_guard_ms": 100,
+        "next_speech_island_start_ms": 214760,
+        "nominal_final_end_ms": 202720,
+        "reason": "tail_clamped_before_next_subtitle",
+        "snapped_end_ms": 202320
+      }
+    ],
+    "closure_sentence": "暂时不太熟",
+    "end_cut_inside_speech_island": true,
+    "end_island_continues_ms": 12168,
+    "end_on_sentence_boundary": true,
+    "final_end_ms": 202320,
+    "final_start_ms": 9790,
+    "manual_end_authority": "Ivan line corrections 2026-07-22 + Codex source-cue closure review; following cue begins next topic or SC where applicable",
+    "opening_sentence": "什么要请大N老师吃火锅，",
+    "physical_continuity_nonsemantic_flags": [
+      "speech_continues_12168ms_after_cut"
+    ],
+    "red_flags": [],
+    "schema_version": "boundary-audit.v1",
+    "semantic_start_target_rel_ms": 10000,
+    "semantic_target_rel_ms": 202720,
+    "snapped_sentence_end_ms": 202320,
+    "snapped_sentence_start_ms": 10040,
+    "start_on_sentence_boundary": true,
+    "syntactic_tail_audit": {
+      "reason": "punctuation_free_spoken_clause",
+      "status": "UNKNOWN"
+    },
+    "tail_adjustment": {
+      "final_end_ms": 202320,
+      "next_speech_island_gap_ms": 12440,
+      "next_speech_island_guard_ms": 100,
+      "next_speech_island_start_ms": 214760,
+      "next_subtitle_start_ms": 202320,
+      "nominal_end_ms": 202720,
+      "reason": "tail_clamped_before_next_subtitle",
+      "tail_pad_ms": 400
+    },
+    "tail_refinement_used": false,
+    "verdict": "ok_sentence_boundary_cut"
+  },
+  "burned_preview": {
+    "ass_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1863_2056/replacement_recuts/auto_193450_1863_2056.recut.final-sapphire72.ass",
+    "branding_intro": {
+      "fallback_attempts": [],
+      "intro_id": "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+      "intro_media_path": "/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.z1-budui-20260718.mp4",
+      "intro_media_sha256": "bbd0c7e3b34d3d5af543bb8444861ab1e18f835c9252629480b2ec2fd34e7dc5",
+      "intro_offset_ms": 5766,
+      "main_duration_ms_before": 192533,
+      "main_sha256_before": "b975e080e3ba14bc04fdf4e11c101f6a60558bd8689c5939230e3e5fd41811ff",
+      "method": "matched-intro-concat-copy",
+      "policy_manifest_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/intro/branding_intro.v1.json",
+      "policy_manifest_sha256": "bee66d164b683451602ae3601d79d19175bc72b0d13257b3026ae2dc47ee06ef",
+      "rotation": {
+        "candidate_intro_ids": [
+          "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+          "huozi-lidousha-kmx-baobao-guankou-z2-v1"
+        ],
+        "mode": "main-sha256",
+        "picked_intro_id": "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+        "selector": "main_sha256"
+      },
+      "status": "PREPENDED",
+      "verification": {
+        "duration_delta_ms": 24,
+        "duration_ms": 198323,
+        "full_decode": "clean",
+        "stream_contract": {
+          "audio_codec": "aac",
+          "channels": 2,
+          "fps": "30/1",
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "sample_rate": 44100,
+          "video_codec": "h264",
+          "width": 1920
+        }
+      }
+    },
+    "burned_sha256": "sha256:5895d08d5ce897bcfa97993b73d072a688a86706ea2403ec58fa7909f6762e83",
+    "command": [
+      "ffmpeg",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-y",
+      "-i",
+      "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1863_2056/replacement_recuts/auto_193450_1863_2056.recut.mp4",
+      "-vf",
+      "subtitles='/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1863_2056/replacement_recuts/auto_193450_1863_2056.recut.final-sapphire72.ass':fontsdir='/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/fonts'",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "20",
+      "-c:a",
+      "copy",
+      "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1863_2056/replacement_recuts/auto_193450_1863_2056.recut.burned-final-sapphire72.mp4"
+    ],
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1863_2056/replacement_recuts/auto_193450_1863_2056.recut.burned-final-sapphire72.mp4",
+    "pillarbox_16_9": false,
+    "status": "BURNED",
+    "stream_contract": null,
+    "subtitle_style": "lidousha-final-sapphire72"
+  },
+  "chat_authority_audit_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1863_2056/auto_193450_1863_2056.chat-authority.json",
+  "clip_context_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1863_2056/auto_193450_1863_2056.clip-context.json",
+  "clip_context_payload_sha256": "sha256:dc643b2f83eb942bf8ba360aec4e9a9ef4b8cca3b3e2c4e5fdd33f7ef963b77f",
+  "duration_ms": 192530,
+  "end_ms": 192530,
+  "media_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1863_2056/replacement_recuts/auto_193450_1863_2056.recut.mp4",
+  "publish_staging": {
+    "cover_generation": {
+      "ai_background": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1863_2056/replacement_recuts/covers_ai_original/auto_193450_1863_2056.screenshot-poster.png",
+      "ai_background_sha256": "sha256:af8adac7a790a4abb1c65f124ec715066bfbaf92163b326f76a7bcc9262754af",
+      "angle_degrees": -2.0,
+      "art_direction": {
+        "background_style": "violet-neon-stage",
+        "cover_punch": [
+          "最最喜欢",
+          "付出劳动"
+        ],
+        "emote_id": "",
+        "emote_mode": "",
+        "emote_reason": "",
+        "expression_en": "pouty defiant frown, puffed cheeks, cute-stubborn hmph, arms-crossed energy",
+        "hook_color": "purple",
+        "hook_word": "最最喜欢",
+        "is_song": false,
+        "layout": "banner",
+        "line_breaks": [],
+        "role": "witty_smug",
+        "words": []
+      },
+      "attempted_models": [],
+      "background_style": "violet-neon-stage",
+      "cover_diversity_slot": 2,
+      "cover_mode": "auto",
+      "cover_origin": "SOURCE_SCREENSHOT",
+      "cover_punch": [
+        "最最喜欢",
+        "付出劳动"
+      ],
+      "cover_punch_allowed": true,
+      "cover_text": "弹幕追问李豆沙为何请南町吃火锅，从“付出劳动”嘴硬到“最最喜欢”，刚认识就互相霸凌",
+      "cover_text_mode": "punch",
+      "cover_treatment": {
+        "reason": "hash-bound source frame verifies all required participants",
+        "treatment": "screenshot_direct"
+      },
+      "expression_en": "pouty defiant frown, puffed cheeks, cute-stubborn hmph, arms-crossed energy",
+      "fallback_used": false,
+      "final_cover": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1863_2056/replacement_recuts/covers/auto_193450_1863_2056.screenshot-title.cover.png",
+      "final_cover_sha256": "sha256:54802a840b75cfdec7c1276bd63f0f52e8cc3091ed8f410719ac4202a12373e1",
+      "font": "ZCOOLKuaiLe-Regular.ttf",
+      "font_selection": {
+        "font": "ZCOOLKuaiLe-Regular.ttf",
+        "glyph_risk": [],
+        "rejected": []
+      },
+      "font_size": 277,
+      "hook_color": "purple",
+      "hook_word": "最最喜欢",
+      "image_gen_model": "none",
+      "image_generation_attempted": false,
+      "image_generation_planned": false,
+      "image_generation_used": false,
+      "layout": "banner",
+      "line_split": "punch",
+      "method": "screenshot_direct",
+      "min_talk_font_size": 120,
+      "model": "none",
+      "model_fallback_used": false,
+      "overlay_position": {
+        "x": 350,
+        "y": -40
+      },
+      "reference_authority": {
+        "authority": "Ivan-stated-20260722(这是南町与李豆沙联动，火锅片须保留双方关系)+Codex-visual-review-20260722(同源142.5s帧清楚显示双人；本轮AI封面遗漏南町且偏离火锅提问，故选真实故事帧)",
+        "candidate_id": "auto_193450_1863_2056",
+        "content_time_ms": 142500,
+        "ledger_sha256": "sha256:7b5c94452ea270a2df3c2db1dfc2c5e829f2e09a955aea2594bf52ca68415b90",
+        "recording_basename": "22966160_20260722-19-35-15.mp4",
+        "reference_png_sha256": "sha256:ee46c27e929d57244cf10d179e5e4127a46b89264b8ad10c15dde2be3ce5e217",
+        "relation_action": "李豆沙与南町真实双人同框，承载请大N吃火锅后一路互相霸凌的联动钩子",
+        "required_treatment": "screenshot_direct",
+        "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+        "source_time_ms": 2006050,
+        "visible_participant_ids": [
+          "lidousha",
+          "nancho"
+        ]
+      },
+      "reference_image": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1863_2056/replacement_recuts/cover_refs/auto_193450_1863_2056.cover-ref.png",
+      "reference_selection": {
+        "authority_override": {
+          "authority": "Ivan-stated-20260722(这是南町与李豆沙联动，火锅片须保留双方关系)+Codex-visual-review-20260722(同源142.5s帧清楚显示双人；本轮AI封面遗漏南町且偏离火锅提问，故选真实故事帧)",
+          "candidate_id": "auto_193450_1863_2056",
+          "content_time_ms": 142500,
+          "ledger_sha256": "sha256:7b5c94452ea270a2df3c2db1dfc2c5e829f2e09a955aea2594bf52ca68415b90",
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "reference_png_sha256": "sha256:ee46c27e929d57244cf10d179e5e4127a46b89264b8ad10c15dde2be3ce5e217",
+          "relation_action": "李豆沙与南町真实双人同框，承载请大N吃火锅后一路互相霸凌的联动钩子",
+          "required_treatment": "screenshot_direct",
+          "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+          "source_time_ms": 2006050,
+          "visible_participant_ids": [
+            "lidousha",
+            "nancho"
+          ]
+        },
+        "best_ms": 142500,
+        "candidates": [
+          {
+            "ms": 142500,
+            "score": null
+          }
+        ],
+        "schema": "cover-frame-selection.v1",
+        "status": "HASH_BOUND_AUTHORITY_OVERRIDE",
+        "subject_confident": false
+      },
+      "reference_sha256": "sha256:ee46c27e929d57244cf10d179e5e4127a46b89264b8ad10c15dde2be3ce5e217",
+      "relation_cover_mode": "VERIFIED_DUAL_STREAM_FRAME",
+      "rendered_lines": [
+        "最最喜欢",
+        "付出劳动"
+      ],
+      "role": "witty_smug",
+      "route_decision": {
+        "actual_treatment": "screenshot_direct",
+        "alternatives": [
+          {
+            "rationale": "hash-bound source frame verifies all required participants",
+            "rejected_reason": null,
+            "status": "SELECTED",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rationale": "the real source moment is usable but benefits from a bounded identity-preserving cleanup",
+            "rejected_reason": "the verified source frame already carries the hook; image cleanup would add generation risk without a demonstrated need; selected evidence: hash-bound source frame verifies all required participants",
+            "status": "REJECTED",
+            "treatment": "screenshot_polish"
+          },
+          {
+            "rationale": "the available source frame is not a sufficiently strong or verified cover composition",
+            "rejected_reason": "the verified source frame already carries the hook and participant relationship; a redraw would discard grounded story evidence; selected evidence: hash-bound source frame verifies all required participants",
+            "status": "REJECTED",
+            "treatment": "cpa_redraw"
+          }
+        ],
+        "alternatives_considered": [
+          "screenshot_direct",
+          "screenshot_polish",
+          "cpa_redraw"
+        ],
+        "cover_mode": "auto",
+        "execution_status": "READY",
+        "final_visibility_authority": "SOURCE_PRESERVING_SCREENSHOT_PIPELINE",
+        "final_visible_participant_ids": [
+          "lidousha",
+          "nancho"
+        ],
+        "frame_emotion": null,
+        "frame_score": null,
+        "image_generation_attempted": false,
+        "image_generation_planned": false,
+        "image_generation_used": false,
+        "is_song": false,
+        "manual_title_or_full_text_contract": false,
+        "motion_dispersion_frac": null,
+        "reason": "hash-bound source frame verifies all required participants",
+        "reference_authority_id": "auto_193450_1863_2056",
+        "rejected_alternatives": [
+          {
+            "rejected_reason": "the verified source frame already carries the hook; image cleanup would add generation risk without a demonstrated need; selected evidence: hash-bound source frame verifies all required participants",
+            "treatment": "screenshot_polish"
+          },
+          {
+            "rejected_reason": "the verified source frame already carries the hook and participant relationship; a redraw would discard grounded story evidence; selected evidence: hash-bound source frame verifies all required participants",
+            "treatment": "cpa_redraw"
+          }
+        ],
+        "relationship_semantic_evidence": [
+          "selection_hook:EXPLICIT_RELATION_LANGUAGE",
+          "selection_hook:MULTI_PARTICIPANT_CO_MENTION",
+          "title:EXPLICIT_RELATION_LANGUAGE",
+          "title:MULTI_PARTICIPANT_CO_MENTION",
+          "cover_text:EXPLICIT_RELATION_LANGUAGE",
+          "cover_text:MULTI_PARTICIPANT_CO_MENTION"
+        ],
+        "relationship_visual_required": true,
+        "required_participant_ids": [
+          "lidousha",
+          "nancho"
+        ],
+        "schema_version": "lidousha-cover-route-decision.v2",
+        "selected_rationale": "hash-bound source frame verifies all required participants",
+        "selected_treatment": "screenshot_direct",
+        "selection_policy": "lidousha-cover-treatment-router.v2",
+        "source_visibility_authority": "HASH_BOUND_COVER_REFERENCE",
+        "source_visible_participant_ids": [
+          "lidousha",
+          "nancho"
+        ],
+        "subject_confident": false,
+        "verified_stream_frame": true
+      },
+      "screenshot_frame": {
+        "crop_box": [
+          266,
+          0,
+          1920,
+          930
+        ],
+        "frame_ms": 142500,
+        "source_size": [
+          1920,
+          1080
+        ],
+        "zoom": 1.16
+      },
+      "screenshot_graphic_poster": {
+        "background_style": "violet-neon-stage",
+        "output_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1863_2056/replacement_recuts/covers_ai_original/auto_193450_1863_2056.screenshot-poster.png",
+        "output_sha256": "sha256:af8adac7a790a4abb1c65f124ec715066bfbaf92163b326f76a7bcc9262754af",
+        "palette": {
+          "accent": "#2ae4e2",
+          "background": "#271144",
+          "paper": "#f5e2ff",
+          "secondary": "#7d23a0"
+        },
+        "schema_version": "screenshot-graphic-poster.v1",
+        "screenshot_card": {
+          "rotation_degrees": -1.0,
+          "size": [
+            1640,
+            700
+          ]
+        },
+        "status": "COMPOSED"
+      },
+      "scrim": false,
+      "story_contract": {
+        "boundary_semantic_review": {
+          "candidate_id": "auto_193450_1863_2056",
+          "reason_codes": [],
+          "schema_version": "talk-boundary-semantic-review.v1",
+          "status": "SUPERSEDED_BY_HUMAN_SOURCE_REVIEW"
+        },
+        "clip_context_binding": {
+          "context_sha256": "sha256:dc643b2f83eb942bf8ba360aec4e9a9ef4b8cca3b3e2c4e5fdd33f7ef963b77f",
+          "mutation_authorized": false,
+          "schema_version": "lidousha-clip-context.v1",
+          "speech_memory_ledger_sha256": "sha256:d87532b5d56457496a868c6910091a545bd2c612a807182d742aa0ca26d30c95",
+          "whole_clip_draft_srt_sha256": "sha256:8093b29e4e5dfeb27540c74d824c9c7e569f5a8b90d605d8454ba3962e73fb20"
+        },
+        "cover_counterpart_reference_available": true,
+        "cover_fallback_mode": "VERIFIED_DUAL_STREAM_FRAME",
+        "cover_reference_authority": {
+          "authority": "Ivan-stated-20260722(这是南町与李豆沙联动，火锅片须保留双方关系)+Codex-visual-review-20260722(同源142.5s帧清楚显示双人；本轮AI封面遗漏南町且偏离火锅提问，故选真实故事帧)",
+          "candidate_id": "auto_193450_1863_2056",
+          "content_time_ms": 142500,
+          "ledger_sha256": "sha256:7b5c94452ea270a2df3c2db1dfc2c5e829f2e09a955aea2594bf52ca68415b90",
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "reference_png_sha256": "sha256:ee46c27e929d57244cf10d179e5e4127a46b89264b8ad10c15dde2be3ce5e217",
+          "relation_action": "李豆沙与南町真实双人同框，承载请大N吃火锅后一路互相霸凌的联动钩子",
+          "required_treatment": "screenshot_direct",
+          "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+          "source_time_ms": 2006050,
+          "visible_participant_ids": [
+            "lidousha",
+            "nancho"
+          ]
+        },
+        "human_boundary_authority": "Ivan line corrections 2026-07-22 + Codex source-cue closure review; following cue begins next topic or SC where applicable",
+        "participants": [
+          {
+            "canonical_id": "lidousha",
+            "display_name": "李豆沙",
+            "surfaces": [
+              "李豆沙",
+              "小李",
+              "豆沙"
+            ]
+          },
+          {
+            "canonical_id": "nancho",
+            "display_name": "南町",
+            "surfaces": [
+              "南町",
+              "大N",
+              "小N",
+              "南町nightin"
+            ]
+          }
+        ],
+        "relation_state": "CONFIRMED",
+        "schema_version": "lidousha-story-contract.v1",
+        "selection_hook": "弹幕追问李豆沙为何请南町吃火锅，她从“对方付出了劳动”一路嘴硬到“最最喜欢”，最后把两人的关系定义成互相霸凌、刚认识但马上一起吃火锅。",
+        "source_media_sha256s": [
+          "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+        ]
+      },
+      "text_backing": "outline",
+      "title": "【李豆沙】弹幕追问李豆沙为何请南町吃火锅，从“付出劳动”嘴硬到“最最喜欢”，刚认识就互相霸凌",
+      "title_band": "banner",
+      "workflow": "cpa-openai-compatible-image-edit-cover-plus-approved-local-title-overlay"
+    },
+    "cover_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1863_2056/replacement_recuts/covers/auto_193450_1863_2056.screenshot-title.cover.png",
+    "cover_status": "AI_COVER_READY",
+    "cover_text": "弹幕追问李豆沙为何请南町吃火锅，从“付出劳动”嘴硬到“最最喜欢”，刚认识就互相霸凌",
+    "publish_json_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1863_2056/replacement_recuts/auto_193450_1863_2056.recut.publish.json",
+    "reason_codes": [],
+    "status": "STAGED",
+    "title": "【李豆沙】弹幕追问李豆沙为何请南町吃火锅，从“付出劳动”嘴硬到“最最喜欢”，刚认识就互相霸凌",
+    "title_authority_error": null,
+    "title_authority_status": "RESOLVED_LLM",
+    "title_policy_violations": [],
+    "title_source": "llm+lidousha_style_asset",
+    "title_story_audit": {
+      "artifact_kind": "title",
+      "schema_version": "story-artifact-audit.v1",
+      "status": "PASS",
+      "text_sha256": "sha256:4887f4a56ed413082feb9626fdf0aa18dda369eabd034dc367f0068d8acb7b70",
+      "violations": []
+    },
+    "upload_enabled": false
+  },
+  "redelivery_baseline": {
+    "application_strategy": "exact_reviewed_interval_replay",
+    "authority": "Ivan-reviewed 2026-07-22 rerun plus canonical structured-chat names",
+    "baseline_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/reviewed_subtitle_baselines/auto_193450_1863_2056.reviewed.srt",
+    "baseline_schema_version": "subtitle-redelivery-baseline.v2",
+    "baseline_sha256": "ba1fb2c6619e43c16523d6f5e2566a819855e3fee9cf9b56fdc1e8a7c5046e69",
+    "changed_cue_count": 19,
+    "current_cue_count": 100,
+    "current_input_sha256": "e80126d6a352f31f70b35d06440e2ec36a3bdb02bcfb162de074a808e5a85b1d",
+    "current_source_interval": {
+      "absolute_source_end_ms": 2056080,
+      "absolute_source_start_ms": 1863550
+    },
+    "deferred_exact_replay_reverification": {
+      "deferred_strategy": "reviewed_text_restore_then_reapply_source_truth",
+      "missing_truth_ids": [],
+      "required_truth_ids": [],
+      "reverified_truth_ids": [],
+      "schema_version": "deferred-exact-replay-reverification.v1",
+      "status": "NOT_REQUIRED"
+    },
+    "effective_reviewed_overlap": {
+      "absolute_source_end_ms": 2056080,
+      "absolute_source_start_ms": 1863550
+    },
+    "expected_baseline_sha256": "ba1fb2c6619e43c16523d6f5e2566a819855e3fee9cf9b56fdc1e8a7c5046e69",
+    "failures": [],
+    "mapped_cue_count": 100,
+    "mappings": [
+      {
+        "baseline_absolute_source_end_ms": 1866500,
+        "baseline_absolute_source_start_ms": 1863800,
+        "baseline_cue_index": 1,
+        "end_ms": 2950,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 1,
+        "start_ms": 250,
+        "text": "为什么要请大N老师吃火锅"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1867960,
+        "baseline_absolute_source_start_ms": 1866500,
+        "baseline_cue_index": 2,
+        "end_ms": 4410,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 2,
+        "start_ms": 2950,
+        "text": "给你们加盘素菜"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1869020,
+        "baseline_absolute_source_start_ms": 1867960,
+        "baseline_cue_index": 3,
+        "end_ms": 5470,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 3,
+        "start_ms": 4410,
+        "text": "终于和大N见面"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1869900,
+        "baseline_absolute_source_start_ms": 1869020,
+        "baseline_cue_index": 4,
+        "end_ms": 6350,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 4,
+        "start_ms": 5470,
+        "text": "哎，现在几点了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1871500,
+        "baseline_absolute_source_start_ms": 1869900,
+        "baseline_cue_index": 5,
+        "end_ms": 7950,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 5,
+        "start_ms": 6350,
+        "text": "现在还没到时间"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1873900,
+        "baseline_absolute_source_start_ms": 1871620,
+        "baseline_cue_index": 6,
+        "end_ms": 10350,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 6,
+        "start_ms": 8070,
+        "text": "为什么要请大N老师吃火锅呢"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1875540,
+        "baseline_absolute_source_start_ms": 1873900,
+        "baseline_cue_index": 7,
+        "end_ms": 11990,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 7,
+        "start_ms": 10350,
+        "text": "因为她说她要跟我一起播"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1877880,
+        "baseline_absolute_source_start_ms": 1875860,
+        "baseline_cue_index": 8,
+        "end_ms": 14330,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 8,
+        "start_ms": 12310,
+        "text": "然后那她跟我一起播的话"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1881990,
+        "baseline_absolute_source_start_ms": 1877880,
+        "baseline_cue_index": 9,
+        "end_ms": 18440,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 9,
+        "start_ms": 14330,
+        "text": "那就是我就说那既然她付出了劳动哦"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1882670,
+        "baseline_absolute_source_start_ms": 1881990,
+        "baseline_cue_index": 10,
+        "end_ms": 19120,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 10,
+        "start_ms": 18440,
+        "text": "是这样的吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1884700,
+        "baseline_absolute_source_start_ms": 1882670,
+        "baseline_cue_index": 11,
+        "end_ms": 21150,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 11,
+        "start_ms": 19120,
+        "text": "原来一起直播就可以请我吃火锅啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1886620,
+        "baseline_absolute_source_start_ms": 1884700,
+        "baseline_cue_index": 12,
+        "end_ms": 23070,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 12,
+        "start_ms": 21150,
+        "text": "嗯，对啊，啊哈哈"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1888740,
+        "baseline_absolute_source_start_ms": 1886620,
+        "baseline_cue_index": 13,
+        "end_ms": 25190,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 13,
+        "start_ms": 23070,
+        "text": "因因为我一会要玩游戏"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1890680,
+        "baseline_absolute_source_start_ms": 1888740,
+        "baseline_cue_index": 14,
+        "end_ms": 27130,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 14,
+        "start_ms": 25190,
+        "text": "是你在玩游戏我就走了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1890920,
+        "baseline_absolute_source_start_ms": 1890680,
+        "baseline_cue_index": 15,
+        "end_ms": 27370,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 15,
+        "start_ms": 27130,
+        "text": "哦"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1891560,
+        "baseline_absolute_source_start_ms": 1890920,
+        "baseline_cue_index": 16,
+        "end_ms": 28010,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 16,
+        "start_ms": 27370,
+        "text": "这样吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1892280,
+        "baseline_absolute_source_start_ms": 1891560,
+        "baseline_cue_index": 17,
+        "end_ms": 28730,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 17,
+        "start_ms": 28010,
+        "text": "啊，怎么了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1893720,
+        "baseline_absolute_source_start_ms": 1892280,
+        "baseline_cue_index": 18,
+        "end_ms": 30170,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 18,
+        "start_ms": 28730,
+        "text": "你不跟我一起玩吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1894680,
+        "baseline_absolute_source_start_ms": 1893720,
+        "baseline_cue_index": 19,
+        "end_ms": 31130,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 19,
+        "start_ms": 30170,
+        "text": "也可以一起玩"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1895700,
+        "baseline_absolute_source_start_ms": 1894680,
+        "baseline_cue_index": 20,
+        "end_ms": 32150,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 20,
+        "start_ms": 31130,
+        "text": "你跟我一起玩吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1898360,
+        "baseline_absolute_source_start_ms": 1895700,
+        "baseline_cue_index": 21,
+        "end_ms": 34810,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 21,
+        "start_ms": 32150,
+        "text": "行，好，那就是这样"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1900340,
+        "baseline_absolute_source_start_ms": 1898360,
+        "baseline_cue_index": 22,
+        "end_ms": 36790,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 22,
+        "start_ms": 34810,
+        "text": "为啥要请她吃火锅"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1902570,
+        "baseline_absolute_source_start_ms": 1900340,
+        "baseline_cue_index": 23,
+        "end_ms": 39020,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 23,
+        "start_ms": 36790,
+        "text": "主要是想吃了哦"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1904490,
+        "baseline_absolute_source_start_ms": 1902570,
+        "baseline_cue_index": 24,
+        "end_ms": 40940,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 24,
+        "start_ms": 39020,
+        "text": "不是，主要是火锅了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1906350,
+        "baseline_absolute_source_start_ms": 1904490,
+        "baseline_cue_index": 25,
+        "end_ms": 42800,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 25,
+        "start_ms": 40940,
+        "text": "是不是？不是重新说"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1908290,
+        "baseline_absolute_source_start_ms": 1906350,
+        "baseline_cue_index": 26,
+        "end_ms": 44740,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 26,
+        "start_ms": 42800,
+        "text": "主要是你想吃了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1909530,
+        "baseline_absolute_source_start_ms": 1908290,
+        "baseline_cue_index": 27,
+        "end_ms": 45980,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 27,
+        "start_ms": 44740,
+        "text": "所以剩一点给我"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1911610,
+        "baseline_absolute_source_start_ms": 1909530,
+        "baseline_cue_index": 28,
+        "end_ms": 48060,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 28,
+        "start_ms": 45980,
+        "text": "嗯，主要是为什"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1913880,
+        "baseline_absolute_source_start_ms": 1911690,
+        "baseline_cue_index": 29,
+        "end_ms": 50330,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 29,
+        "start_ms": 48140,
+        "text": "谢谢南町家的星耀的SC"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1916220,
+        "baseline_absolute_source_start_ms": 1913880,
+        "baseline_cue_index": 30,
+        "end_ms": 52670,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 30,
+        "start_ms": 50330,
+        "text": "为什么要请大N老师吃火锅"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1918120,
+        "baseline_absolute_source_start_ms": 1916220,
+        "baseline_cue_index": 31,
+        "end_ms": 54570,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 31,
+        "start_ms": 52670,
+        "text": "给你们加盘素菜"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1920260,
+        "baseline_absolute_source_start_ms": 1918639,
+        "baseline_cue_index": 32,
+        "end_ms": 56710,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 32,
+        "start_ms": 55089,
+        "text": "终于和大N见面了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1921100,
+        "baseline_absolute_source_start_ms": 1920260,
+        "baseline_cue_index": 33,
+        "end_ms": 57550,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 33,
+        "start_ms": 56710,
+        "text": "对对对"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1922620,
+        "baseline_absolute_source_start_ms": 1921100,
+        "baseline_cue_index": 34,
+        "end_ms": 59070,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 34,
+        "start_ms": 57550,
+        "text": "谢谢你的素菜"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1924870,
+        "baseline_absolute_source_start_ms": 1922620,
+        "baseline_cue_index": 35,
+        "end_ms": 61320,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 35,
+        "start_ms": 59070,
+        "text": "为什么要请大N老师吃火锅呢"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1927290,
+        "baseline_absolute_source_start_ms": 1924870,
+        "baseline_cue_index": 36,
+        "end_ms": 63740,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 36,
+        "start_ms": 61320,
+        "text": "因为想请大N老师吃火锅"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1929910,
+        "baseline_absolute_source_start_ms": 1927290,
+        "baseline_cue_index": 37,
+        "end_ms": 66360,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 37,
+        "start_ms": 63740,
+        "text": "因为人生不是 galgame"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1931510,
+        "baseline_absolute_source_start_ms": 1929910,
+        "baseline_cue_index": 38,
+        "end_ms": 67960,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 38,
+        "start_ms": 66360,
+        "text": "不可以重新再来的哟"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1932270,
+        "baseline_absolute_source_start_ms": 1931510,
+        "baseline_cue_index": 39,
+        "end_ms": 68720,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 39,
+        "start_ms": 67960,
+        "text": "哈哈哈"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1937030,
+        "baseline_absolute_source_start_ms": 1932270,
+        "baseline_cue_index": 40,
+        "end_ms": 73480,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 40,
+        "start_ms": 68720,
+        "text": "因为这是我最最最最最喜欢的南町nightin"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1939190,
+        "baseline_absolute_source_start_ms": 1937030,
+        "baseline_cue_index": 41,
+        "end_ms": 75640,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 41,
+        "start_ms": 73480,
+        "text": "所以就是要请她吃火锅"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1940750,
+        "baseline_absolute_source_start_ms": 1939270,
+        "baseline_cue_index": 42,
+        "end_ms": 77200,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 42,
+        "start_ms": 75720,
+        "text": "嘻，晓得吧"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1941830,
+        "baseline_absolute_source_start_ms": 1940830,
+        "baseline_cue_index": 43,
+        "end_ms": 78280,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 43,
+        "start_ms": 77280,
+        "text": "行"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1946210,
+        "baseline_absolute_source_start_ms": 1942140,
+        "baseline_cue_index": 44,
+        "end_ms": 82660,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 44,
+        "start_ms": 78590,
+        "text": "谢谢刚刚panoja的舰长"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1947130,
+        "baseline_absolute_source_start_ms": 1946210,
+        "baseline_cue_index": 45,
+        "end_ms": 83580,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 45,
+        "start_ms": 82660,
+        "text": "谢谢你"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1949710,
+        "baseline_absolute_source_start_ms": 1947130,
+        "baseline_cue_index": 46,
+        "end_ms": 86160,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 46,
+        "start_ms": 83580,
+        "text": "这怎么怎么是 TTT 的头像"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1951700,
+        "baseline_absolute_source_start_ms": 1949710,
+        "baseline_cue_index": 47,
+        "end_ms": 88150,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 47,
+        "start_ms": 86160,
+        "text": "对啊，我也没见过她"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1952340,
+        "baseline_absolute_source_start_ms": 1951700,
+        "baseline_cue_index": 48,
+        "end_ms": 88790,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 48,
+        "start_ms": 88150,
+        "text": "哈哈哈"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1953000,
+        "baseline_absolute_source_start_ms": 1952340,
+        "baseline_cue_index": 49,
+        "end_ms": 89450,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 49,
+        "start_ms": 88790,
+        "text": "谢谢你"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1955660,
+        "baseline_absolute_source_start_ms": 1953000,
+        "baseline_cue_index": 50,
+        "end_ms": 92110,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 50,
+        "start_ms": 89450,
+        "text": "你是因为矮人笑话来的吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1956660,
+        "baseline_absolute_source_start_ms": 1955660,
+        "baseline_cue_index": 51,
+        "end_ms": 93110,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 51,
+        "start_ms": 92110,
+        "text": "老师"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1958140,
+        "baseline_absolute_source_start_ms": 1956880,
+        "baseline_cue_index": 52,
+        "end_ms": 94590,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 52,
+        "start_ms": 93330,
+        "text": "呃，很意外"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1959540,
+        "baseline_absolute_source_start_ms": 1958140,
+        "baseline_cue_index": 53,
+        "end_ms": 95990,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 53,
+        "start_ms": 94590,
+        "text": "谢谢你的舰长"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1960120,
+        "baseline_absolute_source_start_ms": 1959540,
+        "baseline_cue_index": 54,
+        "end_ms": 96570,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 54,
+        "start_ms": 95990,
+        "text": "谢谢牛"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1961120,
+        "baseline_absolute_source_start_ms": 1960120,
+        "baseline_cue_index": 55,
+        "end_ms": 97570,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 55,
+        "start_ms": 96570,
+        "text": "欢迎上船"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1962320,
+        "baseline_absolute_source_start_ms": 1961200,
+        "baseline_cue_index": 56,
+        "end_ms": 98770,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 56,
+        "start_ms": 97650,
+        "text": "谢哥不互动"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1963240,
+        "baseline_absolute_source_start_ms": 1962320,
+        "baseline_cue_index": 57,
+        "end_ms": 99690,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 57,
+        "start_ms": 98770,
+        "text": "老板的上舰"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1964440,
+        "baseline_absolute_source_start_ms": 1963240,
+        "baseline_cue_index": 58,
+        "end_ms": 100890,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 58,
+        "start_ms": 99690,
+        "text": "谢谢你"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1967870,
+        "baseline_absolute_source_start_ms": 1964990,
+        "baseline_cue_index": 59,
+        "end_ms": 104320,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 59,
+        "start_ms": 101440,
+        "text": "谢谢天蓝青的钢镚，好漂亮"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1970230,
+        "baseline_absolute_source_start_ms": 1967870,
+        "baseline_cue_index": 60,
+        "end_ms": 106680,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 60,
+        "start_ms": 104320,
+        "text": "大姐姐心里没有李豆沙的位置了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1971230,
+        "baseline_absolute_source_start_ms": 1970230,
+        "baseline_cue_index": 61,
+        "end_ms": 107680,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 61,
+        "start_ms": 106680,
+        "text": "没关系"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1975350,
+        "baseline_absolute_source_start_ms": 1971230,
+        "baseline_cue_index": 62,
+        "end_ms": 111800,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 62,
+        "start_ms": 107680,
+        "text": "这个这个大姐姐她其实也没有很大姐姐"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1977310,
+        "baseline_absolute_source_start_ms": 1975350,
+        "baseline_cue_index": 63,
+        "end_ms": 113760,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 63,
+        "start_ms": 111800,
+        "text": "她只是长得比较大姐姐"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1979970,
+        "baseline_absolute_source_start_ms": 1978110,
+        "baseline_cue_index": 64,
+        "end_ms": 116420,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 64,
+        "start_ms": 114560,
+        "text": "她只是长得比较大姐姐"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1981550,
+        "baseline_absolute_source_start_ms": 1979970,
+        "baseline_cue_index": 65,
+        "end_ms": 118000,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 65,
+        "start_ms": 116420,
+        "text": "她其实，嗯"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1986550,
+        "baseline_absolute_source_start_ms": 1981550,
+        "baseline_cue_index": 66,
+        "end_ms": 123000,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 66,
+        "start_ms": 118000,
+        "text": "背地里是会被旁边这个白毛粉挑染"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1988970,
+        "baseline_absolute_source_start_ms": 1986550,
+        "baseline_cue_index": 67,
+        "end_ms": 125420,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 67,
+        "start_ms": 123000,
+        "text": "就是霸凌的那种，晓得吧"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1991850,
+        "baseline_absolute_source_start_ms": 1988970,
+        "baseline_cue_index": 68,
+        "end_ms": 128300,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 68,
+        "start_ms": 125420,
+        "text": "嗯哼，你不能听见没"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1992970,
+        "baseline_absolute_source_start_ms": 1991930,
+        "baseline_cue_index": 69,
+        "end_ms": 129420,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 69,
+        "start_ms": 128380,
+        "text": "听见没"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1995320,
+        "baseline_absolute_source_start_ms": 1993040,
+        "baseline_cue_index": 70,
+        "end_ms": 131770,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 70,
+        "start_ms": 129490,
+        "text": "我，你不能以貌取人啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1997160,
+        "baseline_absolute_source_start_ms": 1995320,
+        "baseline_cue_index": 71,
+        "end_ms": 133610,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 71,
+        "start_ms": 131770,
+        "text": "她只长得比较大姐姐"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1999080,
+        "baseline_absolute_source_start_ms": 1997160,
+        "baseline_cue_index": 72,
+        "end_ms": 135530,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 72,
+        "start_ms": 133610,
+        "text": "但其实并不是哦"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2001780,
+        "baseline_absolute_source_start_ms": 1999620,
+        "baseline_cue_index": 73,
+        "end_ms": 138230,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 73,
+        "start_ms": 136070,
+        "text": "谢谢小凑るう子的钢镚"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2003420,
+        "baseline_absolute_source_start_ms": 2001780,
+        "baseline_cue_index": 74,
+        "end_ms": 139870,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 74,
+        "start_ms": 138230,
+        "text": "小李又被大N霸凌了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2004500,
+        "baseline_absolute_source_start_ms": 2003420,
+        "baseline_cue_index": 75,
+        "end_ms": 140950,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 75,
+        "start_ms": 139870,
+        "text": "为什么是"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2008510,
+        "baseline_absolute_source_start_ms": 2004570,
+        "baseline_cue_index": 76,
+        "end_ms": 144960,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 76,
+        "start_ms": 141020,
+        "text": "哪里是这不是一直说的是小李在霸凌"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2009220,
+        "baseline_absolute_source_start_ms": 2008510,
+        "baseline_cue_index": 77,
+        "end_ms": 145670,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 77,
+        "start_ms": 144960,
+        "text": "大N吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2012680,
+        "baseline_absolute_source_start_ms": 2009220,
+        "baseline_cue_index": 78,
+        "end_ms": 149130,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 78,
+        "start_ms": 145670,
+        "text": "哪里又变成小李被大N霸凌了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2013620,
+        "baseline_absolute_source_start_ms": 2012680,
+        "baseline_cue_index": 79,
+        "end_ms": 150070,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 79,
+        "start_ms": 149130,
+        "text": "搞错了吧"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2016790,
+        "baseline_absolute_source_start_ms": 2013620,
+        "baseline_cue_index": 80,
+        "end_ms": 153240,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 80,
+        "start_ms": 150070,
+        "text": "还真是从未霸凌过任何人"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2020810,
+        "baseline_absolute_source_start_ms": 2016790,
+        "baseline_cue_index": 81,
+        "end_ms": 157260,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 81,
+        "start_ms": 153240,
+        "text": "对哇，你说这句话跟露医生好像啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2021330,
+        "baseline_absolute_source_start_ms": 2020810,
+        "baseline_cue_index": 82,
+        "end_ms": 157780,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 82,
+        "start_ms": 157260,
+        "text": "什么意思"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2022260,
+        "baseline_absolute_source_start_ms": 2021330,
+        "baseline_cue_index": 83,
+        "end_ms": 158710,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 83,
+        "start_ms": 157780,
+        "text": "哈哈哈"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2023780,
+        "baseline_absolute_source_start_ms": 2022260,
+        "baseline_cue_index": 84,
+        "end_ms": 160230,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 84,
+        "start_ms": 158710,
+        "text": "从未霸凌过任何人"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2027780,
+        "baseline_absolute_source_start_ms": 2023780,
+        "baseline_cue_index": 85,
+        "end_ms": 164230,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 85,
+        "start_ms": 160230,
+        "text": "我真的是，就是就是这个"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2030140,
+        "baseline_absolute_source_start_ms": 2028020,
+        "baseline_cue_index": 86,
+        "end_ms": 166590,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 86,
+        "start_ms": 164470,
+        "text": "我们是这种会互相霸凌的关系"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2030780,
+        "baseline_absolute_source_start_ms": 2030140,
+        "baseline_cue_index": 87,
+        "end_ms": 167230,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 87,
+        "start_ms": 166590,
+        "text": "好像不对"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2032020,
+        "baseline_absolute_source_start_ms": 2030780,
+        "baseline_cue_index": 88,
+        "end_ms": 168470,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 88,
+        "start_ms": 167230,
+        "text": "不应该这样说吧"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2034000,
+        "baseline_absolute_source_start_ms": 2032120,
+        "baseline_cue_index": 89,
+        "end_ms": 170450,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 89,
+        "start_ms": 168570,
+        "text": "不是那种互相霸凌的关系啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2035400,
+        "baseline_absolute_source_start_ms": 2034000,
+        "baseline_cue_index": 90,
+        "end_ms": 171850,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 90,
+        "start_ms": 170450,
+        "text": "我们不是今天第一次见面吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2037700,
+        "baseline_absolute_source_start_ms": 2035400,
+        "baseline_cue_index": 91,
+        "end_ms": 174150,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 91,
+        "start_ms": 171850,
+        "text": "对，我们就是这么这么一个"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2038660,
+        "baseline_absolute_source_start_ms": 2037700,
+        "baseline_cue_index": 92,
+        "end_ms": 175110,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 92,
+        "start_ms": 174150,
+        "text": "不是不是哦"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2040920,
+        "baseline_absolute_source_start_ms": 2038660,
+        "baseline_cue_index": 93,
+        "end_ms": 177370,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 93,
+        "start_ms": 175110,
+        "text": "我们是待会她要请我吃火锅的关系"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2042420,
+        "baseline_absolute_source_start_ms": 2040920,
+        "baseline_cue_index": 94,
+        "end_ms": 178870,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 94,
+        "start_ms": 177370,
+        "text": "嘿嘿嘿嘿嘿嘿"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2044550,
+        "baseline_absolute_source_start_ms": 2042510,
+        "baseline_cue_index": 95,
+        "end_ms": 181000,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 95,
+        "start_ms": 178960,
+        "text": "这切哈哈"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2045950,
+        "baseline_absolute_source_start_ms": 2044550,
+        "baseline_cue_index": 96,
+        "end_ms": 182400,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 96,
+        "start_ms": 181000,
+        "text": "感觉更无聊了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2047450,
+        "baseline_absolute_source_start_ms": 2045950,
+        "baseline_cue_index": 97,
+        "end_ms": 183900,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 97,
+        "start_ms": 182400,
+        "text": "哈哈哈哈"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2052420,
+        "baseline_absolute_source_start_ms": 2047450,
+        "baseline_cue_index": 98,
+        "end_ms": 188870,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 98,
+        "start_ms": 183900,
+        "text": "我们是这种就是不太熟的关系"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2055040,
+        "baseline_absolute_source_start_ms": 2053160,
+        "baseline_cue_index": 99,
+        "end_ms": 191490,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 99,
+        "start_ms": 189610,
+        "text": "就是刚认识"
+      },
+      {
+        "baseline_absolute_source_end_ms": 2056080,
+        "baseline_absolute_source_start_ms": 2055040,
+        "baseline_cue_index": 100,
+        "end_ms": 192530,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 100,
+        "start_ms": 191490,
+        "text": "暂时不太熟"
+      }
+    ],
+    "mode": "preserve_text_outside_source_truth",
+    "omitted_baseline_cue_count": 0,
+    "omitted_by_new_boundary": [],
+    "output_sha256": "ba1fb2c6619e43c16523d6f5e2566a819855e3fee9cf9b56fdc1e8a7c5046e69",
+    "owned_intervals": [
+      {
+        "end_ms": 2950,
+        "start_ms": 250
+      },
+      {
+        "end_ms": 4410,
+        "start_ms": 2950
+      },
+      {
+        "end_ms": 5470,
+        "start_ms": 4410
+      },
+      {
+        "end_ms": 6350,
+        "start_ms": 5470
+      },
+      {
+        "end_ms": 7950,
+        "start_ms": 6350
+      },
+      {
+        "end_ms": 10350,
+        "start_ms": 8070
+      },
+      {
+        "end_ms": 11990,
+        "start_ms": 10350
+      },
+      {
+        "end_ms": 14330,
+        "start_ms": 12310
+      },
+      {
+        "end_ms": 18440,
+        "start_ms": 14330
+      },
+      {
+        "end_ms": 19120,
+        "start_ms": 18440
+      },
+      {
+        "end_ms": 21150,
+        "start_ms": 19120
+      },
+      {
+        "end_ms": 23070,
+        "start_ms": 21150
+      },
+      {
+        "end_ms": 25190,
+        "start_ms": 23070
+      },
+      {
+        "end_ms": 27130,
+        "start_ms": 25190
+      },
+      {
+        "end_ms": 27370,
+        "start_ms": 27130
+      },
+      {
+        "end_ms": 28010,
+        "start_ms": 27370
+      },
+      {
+        "end_ms": 28730,
+        "start_ms": 28010
+      },
+      {
+        "end_ms": 30170,
+        "start_ms": 28730
+      },
+      {
+        "end_ms": 31130,
+        "start_ms": 30170
+      },
+      {
+        "end_ms": 32150,
+        "start_ms": 31130
+      },
+      {
+        "end_ms": 34810,
+        "start_ms": 32150
+      },
+      {
+        "end_ms": 36790,
+        "start_ms": 34810
+      },
+      {
+        "end_ms": 39020,
+        "start_ms": 36790
+      },
+      {
+        "end_ms": 40940,
+        "start_ms": 39020
+      },
+      {
+        "end_ms": 42800,
+        "start_ms": 40940
+      },
+      {
+        "end_ms": 44740,
+        "start_ms": 42800
+      },
+      {
+        "end_ms": 45980,
+        "start_ms": 44740
+      },
+      {
+        "end_ms": 48060,
+        "start_ms": 45980
+      },
+      {
+        "end_ms": 50330,
+        "start_ms": 48140
+      },
+      {
+        "end_ms": 52670,
+        "start_ms": 50330
+      },
+      {
+        "end_ms": 54570,
+        "start_ms": 52670
+      },
+      {
+        "end_ms": 56710,
+        "start_ms": 55089
+      },
+      {
+        "end_ms": 57550,
+        "start_ms": 56710
+      },
+      {
+        "end_ms": 59070,
+        "start_ms": 57550
+      },
+      {
+        "end_ms": 61320,
+        "start_ms": 59070
+      },
+      {
+        "end_ms": 63740,
+        "start_ms": 61320
+      },
+      {
+        "end_ms": 66360,
+        "start_ms": 63740
+      },
+      {
+        "end_ms": 67960,
+        "start_ms": 66360
+      },
+      {
+        "end_ms": 68720,
+        "start_ms": 67960
+      },
+      {
+        "end_ms": 73480,
+        "start_ms": 68720
+      },
+      {
+        "end_ms": 75640,
+        "start_ms": 73480
+      },
+      {
+        "end_ms": 77200,
+        "start_ms": 75720
+      },
+      {
+        "end_ms": 78280,
+        "start_ms": 77280
+      },
+      {
+        "end_ms": 82660,
+        "start_ms": 78590
+      },
+      {
+        "end_ms": 83580,
+        "start_ms": 82660
+      },
+      {
+        "end_ms": 86160,
+        "start_ms": 83580
+      },
+      {
+        "end_ms": 88150,
+        "start_ms": 86160
+      },
+      {
+        "end_ms": 88790,
+        "start_ms": 88150
+      },
+      {
+        "end_ms": 89450,
+        "start_ms": 88790
+      },
+      {
+        "end_ms": 92110,
+        "start_ms": 89450
+      },
+      {
+        "end_ms": 93110,
+        "start_ms": 92110
+      },
+      {
+        "end_ms": 94590,
+        "start_ms": 93330
+      },
+      {
+        "end_ms": 95990,
+        "start_ms": 94590
+      },
+      {
+        "end_ms": 96570,
+        "start_ms": 95990
+      },
+      {
+        "end_ms": 97570,
+        "start_ms": 96570
+      },
+      {
+        "end_ms": 98770,
+        "start_ms": 97650
+      },
+      {
+        "end_ms": 99690,
+        "start_ms": 98770
+      },
+      {
+        "end_ms": 100890,
+        "start_ms": 99690
+      },
+      {
+        "end_ms": 104320,
+        "start_ms": 101440
+      },
+      {
+        "end_ms": 106680,
+        "start_ms": 104320
+      },
+      {
+        "end_ms": 107680,
+        "start_ms": 106680
+      },
+      {
+        "end_ms": 111800,
+        "start_ms": 107680
+      },
+      {
+        "end_ms": 113760,
+        "start_ms": 111800
+      },
+      {
+        "end_ms": 116420,
+        "start_ms": 114560
+      },
+      {
+        "end_ms": 118000,
+        "start_ms": 116420
+      },
+      {
+        "end_ms": 123000,
+        "start_ms": 118000
+      },
+      {
+        "end_ms": 125420,
+        "start_ms": 123000
+      },
+      {
+        "end_ms": 128300,
+        "start_ms": 125420
+      },
+      {
+        "end_ms": 129420,
+        "start_ms": 128380
+      },
+      {
+        "end_ms": 131770,
+        "start_ms": 129490
+      },
+      {
+        "end_ms": 133610,
+        "start_ms": 131770
+      },
+      {
+        "end_ms": 135530,
+        "start_ms": 133610
+      },
+      {
+        "end_ms": 138230,
+        "start_ms": 136070
+      },
+      {
+        "end_ms": 139870,
+        "start_ms": 138230
+      },
+      {
+        "end_ms": 140950,
+        "start_ms": 139870
+      },
+      {
+        "end_ms": 144960,
+        "start_ms": 141020
+      },
+      {
+        "end_ms": 145670,
+        "start_ms": 144960
+      },
+      {
+        "end_ms": 149130,
+        "start_ms": 145670
+      },
+      {
+        "end_ms": 150070,
+        "start_ms": 149130
+      },
+      {
+        "end_ms": 153240,
+        "start_ms": 150070
+      },
+      {
+        "end_ms": 157260,
+        "start_ms": 153240
+      },
+      {
+        "end_ms": 157780,
+        "start_ms": 157260
+      },
+      {
+        "end_ms": 158710,
+        "start_ms": 157780
+      },
+      {
+        "end_ms": 160230,
+        "start_ms": 158710
+      },
+      {
+        "end_ms": 164230,
+        "start_ms": 160230
+      },
+      {
+        "end_ms": 166590,
+        "start_ms": 164470
+      },
+      {
+        "end_ms": 167230,
+        "start_ms": 166590
+      },
+      {
+        "end_ms": 168470,
+        "start_ms": 167230
+      },
+      {
+        "end_ms": 170450,
+        "start_ms": 168570
+      },
+      {
+        "end_ms": 171850,
+        "start_ms": 170450
+      },
+      {
+        "end_ms": 174150,
+        "start_ms": 171850
+      },
+      {
+        "end_ms": 175110,
+        "start_ms": 174150
+      },
+      {
+        "end_ms": 177370,
+        "start_ms": 175110
+      },
+      {
+        "end_ms": 178870,
+        "start_ms": 177370
+      },
+      {
+        "end_ms": 181000,
+        "start_ms": 178960
+      },
+      {
+        "end_ms": 182400,
+        "start_ms": 181000
+      },
+      {
+        "end_ms": 183900,
+        "start_ms": 182400
+      },
+      {
+        "end_ms": 188870,
+        "start_ms": 183900
+      },
+      {
+        "end_ms": 191490,
+        "start_ms": 189610
+      },
+      {
+        "end_ms": 192530,
+        "start_ms": 191490
+      }
+    ],
+    "post_source_truth_output_sha256": "ba1fb2c6619e43c16523d6f5e2566a819855e3fee9cf9b56fdc1e8a7c5046e69",
+    "protected_absolute_intervals": [],
+    "protected_cue_count": 0,
+    "protected_intervals": [],
+    "protected_windows_replayed_for_later_source_truth": false,
+    "replayed_cue_count": 100,
+    "reviewed_coverage": {
+      "absolute_source_end_ms": 2056080,
+      "absolute_source_start_ms": 1863550
+    },
+    "schema_version": "subtitle-redelivery-baseline-audit.v2",
+    "source_recording_identity": {
+      "current_basename": "22966160_20260722-19-34-50.mp4",
+      "current_sha256": "0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+      "expected_basename": "22966160_20260722-19-34-50.mp4",
+      "expected_sha256": "0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+    },
+    "source_truth_reapplication": {
+      "applied": [],
+      "failures": [],
+      "ledger_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/subtitle_truth_ledger.v1.json",
+      "ledger_sha256": "sha256:5f39a0e37ded249fa028ad4310ee0fc9780a0679faa7446f44fcede24258706d",
+      "reapplied_after_redelivery_baseline": true,
+      "satisfied": [
+        {
+          "action": "replace_cue",
+          "after": [
+            "小李又被大N霸凌了"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "BCUT同源草稿保留小李又被大…了句式但把槽位误成大哥骂赢；AGY同窗为小李又被大恩霸凌了；后文立即平行复述小李被大N霸凌；本场关系权威确认南町别名大N。r2按最终recut cue把起点校正到2001780，避免与上一条小凑るう子答谢重叠10ms",
+          "before": [
+            "小李又被大N霸凌了"
+          ],
+          "before_span": "小李又被大哥骂赢了",
+          "cue_indexes": [
+            74
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "小李又被大N霸凌了"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:b4642cec7099e529f1e70a0ab14c743dde49a069e20f57d63ee7e818fa13129b",
+          "evidence_class": "DUAL_ASR_PARTIAL_PLUS_IMMEDIATE_PARALLEL_REPEAT",
+          "local_windows": [
+            {
+              "end_ms": 139840,
+              "start_ms": 138230
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r2",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 1610,
+          "source_end_ms": 2003390,
+          "source_start_ms": 2001780,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-hotpot-dan-bullying-r1"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "哪里又变成小李被大N霸凌了"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "整段联动关系及前后平行复述均指向南町昵称大N；口播字母N按普通话发作恩，重复大是口语重启而非实体词面。只钉此完整source interval，不把所有恩音全局改成N",
+          "before": [
+            "哪里又变成小李被大N霸凌了"
+          ],
+          "before_span": "哪里又变成小李被大大恩霸凌了",
+          "cue_indexes": [
+            78
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "哪里又变成小李被大N霸凌了"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:cfcbcf3a76c4543099a38951099745be9c7a5c888bfdf8b040a0ad1fdc147593",
+          "evidence_class": "SOURCE_BACKED_ENTITY_ORTHOGRAPHY_PLUS_IMMEDIATE_CALLBACK",
+          "local_windows": [
+            {
+              "end_ms": 149130,
+              "start_ms": 145670
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r1",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 3460,
+          "source_end_ms": 2012680,
+          "source_start_ms": 2009220,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-hotpot-dan-orthography-callback-r1"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "现在还没到时间"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(火锅切片0:14；前句问几点，落实与上下文无关；不确定时禁止凭空实词)",
+          "before": [
+            "现在还没到时间"
+          ],
+          "before_span": "我还没落实呢",
+          "cue_indexes": [
+            5
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "现在还没到时间"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:a36c87aabf51d4262a7a14510e95225db0a16cbade753a3f41fac0f1a40a9357",
+          "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH_PLUS_LOCAL_CONTEXT",
+          "local_windows": [
+            {
+              "end_ms": 7950,
+              "start_ms": 6350
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r1",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 1600,
+          "source_end_ms": 1871500,
+          "source_start_ms": 1869900,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-hotpot-not-time-r1"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "谢谢你的素菜"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(火锅切片1:05；同一SC原文为给你们加盘素菜)",
+          "before": [
+            "谢谢你的素菜"
+          ],
+          "before_span": "谢谢你的素材",
+          "cue_indexes": [
+            34
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "谢谢你的素菜"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:40e6e67bc38df86f307879544fb48b90adf747615d84be3f44becf6e8c4dcd96",
+          "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH_PLUS_SAME_SC_TEXT",
+          "local_windows": [
+            {
+              "end_ms": 59070,
+              "start_ms": 57550
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r1",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 1520,
+          "source_end_ms": 1922620,
+          "source_start_ms": 1921100,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-hotpot-vegetable-r1"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "大姐姐心里没有李豆沙的位置了"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(火锅切片1:53；此mention为李豆沙，不泛化替换小李)",
+          "before": [
+            "大姐姐心里没有李豆沙的位置了"
+          ],
+          "before_span": "大姐姐心里没有小李的位置了",
+          "cue_indexes": [
+            60
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "大姐姐心里没有李豆沙的位置了"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:689970888a83d55d32d90ea6691faa7adf3152c2978341b84af68d5c546ef355",
+          "evidence_class": "ATOMIC_HUMAN_ENTITY_TRUTH",
+          "local_windows": [
+            {
+              "end_ms": 106680,
+              "start_ms": 104320
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r1",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 2360,
+          "source_end_ms": 1970230,
+          "source_start_ms": 1967870,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-hotpot-lidousha-position-r1"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "就是霸凌的那种，晓得吧"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(火锅切片2:11；晓得吧为李豆沙既有口癖，仅钉此source interval)",
+          "before": [
+            "就是霸凌的那种，晓得吧"
+          ],
+          "before_span": "就是霸凌的那种小的吧",
+          "cue_indexes": [
+            67
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "就是霸凌的那种，晓得吧"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:d5de77f00db83fced2d8b62f0e569388858a4a7f5b3a172b709b7e8911b7a6cd",
+          "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH_PLUS_SPEAKER_IDIOLECT",
+          "local_windows": [
+            {
+              "end_ms": 125420,
+              "start_ms": 123000
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r1",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 2420,
+          "source_end_ms": 1988970,
+          "source_start_ms": 1986550,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-hotpot-xiaodeba-r1"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "大N吗"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(火锅切片2:31；承接上句小李在霸凌，问的是大N吗)",
+          "before": [
+            "大N吗"
+          ],
+          "before_span": "饿了吗",
+          "cue_indexes": [
+            77
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "大N吗"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:c4e9ef7f8f8424cf66b72b77187a1a6622a5ad765c3ec09469756309ab787ade",
+          "evidence_class": "ATOMIC_HUMAN_ENTITY_TRUTH_PLUS_SENTENCE_COMPLETION",
+          "local_windows": [
+            {
+              "end_ms": 145670,
+              "start_ms": 144960
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r1",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 710,
+          "source_end_ms": 2009220,
+          "source_start_ms": 2008510,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-hotpot-bully-dan-question-r1"
+        },
+        {
+          "action": "replace_substring",
+          "after": [
+            "对哇，你说这句话跟露医生好像啊"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(火锅切片2:43；露医生为露蒂斯在咕咕诊所医生形象的昵称，只钉此mention)",
+          "before": [
+            "对哇，你说这句话跟露医生好像啊"
+          ],
+          "before_span": null,
+          "cue_indexes": [
+            81
+          ],
+          "declared_output_contract": {
+            "action": "replace_substring",
+            "canonical_texts": [],
+            "required_text": "露医生",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:55f444f7328b13f47c78c43792da4b363b23d7986d1ce6d982f81bb0637031e4",
+          "evidence_class": "ATOMIC_HUMAN_NICKNAME_TRUTH",
+          "local_windows": [
+            {
+              "end_ms": 157260,
+              "start_ms": 153240
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r1",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 4020,
+          "source_end_ms": 2020810,
+          "source_start_ms": 2016790,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-hotpot-lu-doctor-r1"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "谢谢南町家的星耀的SC"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "bound bilive JSONL sha256=656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef identifies the nearby SC sender as 南町家的星耀; output pins only the username-bearing thanks cue",
+          "before": [
+            "谢谢南町家的星耀的SC"
+          ],
+          "before_span": "谢谢南家星耀的SC",
+          "cue_indexes": [
+            29
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "谢谢南町家的星耀的SC"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:b5af420f1d4f860fffb7e7fe6053e2de872920c7996ee71a143f1cf7b571059d",
+          "evidence_class": "HASH_BOUND_STRUCTURED_SUPERCHAT_SENDER",
+          "local_windows": [
+            {
+              "end_ms": 50330,
+              "start_ms": 48140
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r1",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 2190,
+          "source_end_ms": 1913880,
+          "source_start_ms": 1911690,
+          "supersedes": null,
+          "truth_id": "20260722-hotpot-nancho-house-xingyao-r1"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "谢谢刚刚panoja的舰长"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "bound bilive JSONL sha256=656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef contains the earlier GUARD_BUY username panoja and 舰长 level; this cue is the unique later guard thanks",
+          "before": [
+            "谢谢刚刚panoja的舰长"
+          ],
+          "before_span": "谢谢刚刚 PANJA 的舰长",
+          "cue_indexes": [
+            44
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "谢谢刚刚panoja的舰长"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:94e22f8b376485c4350aa227c6899c37e597ff9c002cae221e56cd2eb9c05754",
+          "evidence_class": "HASH_BOUND_STRUCTURED_GUARD_EVENT",
+          "local_windows": [
+            {
+              "end_ms": 82660,
+              "start_ms": 78590
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r1",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 4070,
+          "source_end_ms": 1946210,
+          "source_start_ms": 1942140,
+          "supersedes": null,
+          "truth_id": "20260722-hotpot-panoja-guard-r1"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "谢谢小凑るう子的钢镚"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "bound bilive JSONL sha256=656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef identifies the nearby sender as 小凑るう子; kana must not be truncated by generic Han-prefix aliasing",
+          "before": [
+            "谢谢小凑るう子的钢镚"
+          ],
+          "before_span": "谢谢小路路口的钢镚",
+          "cue_indexes": [
+            73
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "谢谢小凑るう子的钢镚"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:010bd9d2a919cd648212e9045ed9ebeaa9efb52b1f7077b33a5e56b2c429caa9",
+          "evidence_class": "HASH_BOUND_STRUCTURED_SUPERCHAT_SENDER",
+          "local_windows": [
+            {
+              "end_ms": 138230,
+              "start_ms": 136070
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r1",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 2160,
+          "source_end_ms": 2001780,
+          "source_start_ms": 1999620,
+          "supersedes": null,
+          "truth_id": "20260722-hotpot-minato-ruuko-r1"
+        }
+      ],
+      "schema_version": "source-subtitle-truth-audit.v1",
+      "status": "ALREADY_SATISFIED",
+      "timeline_basis": "final_delivery"
+    },
+    "status": "APPLIED",
+    "timing_authority": "hash_bound_reviewed_srt_exact_source_interval",
+    "uncovered_current_cue_count": 0,
+    "uncovered_current_cues": [],
+    "uncovered_current_intervals": []
+  },
+  "redelivery_baseline_audit_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1863_2056/replacement_recuts/auto_193450_1863_2056.redelivery-baseline.json",
+  "selection_scorecard": {
+    "dimensions": {
+      "audience_salience": 3,
+      "comedic_payoff": 4,
+      "lidousha_centrality": 4,
+      "persona_reversal": 4,
+      "relationship_interaction": 4,
+      "self_contained": 4,
+      "stance_intensity": 3
+    },
+    "effective_score": 89.25,
+    "fatigue_penalty": 0.0,
+    "raw_score": 91.25,
+    "reason_codes": [],
+    "requested_tier": 1,
+    "schema_version": "lidousha-selection-scorecard.v1",
+    "status": "VALID",
+    "tier": 1,
+    "tier_basis": "relationship_chain",
+    "tier_evidence_cues": [
+      82,
+      83,
+      87,
+      94,
+      95,
+      99,
+      102,
+      110,
+      115,
+      116,
+      158,
+      161,
+      162,
+      165,
+      170,
+      171
+    ],
+    "tier_reason": "弹幕提出请客缘由后，两人围绕一起直播、一起玩游戏、最喜欢对方、互相霸凌以及到底算什么关系持续拉扯，包含多处相互承接的关系证据和清晰收尾。",
+    "uncertainty_penalty": 2.0,
+    "weights": {
+      "audience_salience": 15,
+      "comedic_payoff": 10,
+      "lidousha_centrality": 25,
+      "persona_reversal": 10,
+      "relationship_interaction": 15,
+      "self_contained": 5,
+      "stance_intensity": 20
+    }
+  },
+  "session_relation_authority": {
+    "bound_date": "2026-07-22",
+    "bound_recording_basename": "22966160_20260722-19-34-50.mp4",
+    "bound_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+    "evidence": [
+      {
+        "authority": "Ivan-stated-20260722-conversation(这明显是南町和李豆沙的联动)",
+        "evidence_class": "ATOMIC_HUMAN_RELATION_TRUTH",
+        "independence_group": "ivan-session-review"
+      },
+      {
+        "evidence_class": "HASH_BOUND_OFFICIAL_REPLAY",
+        "independence_group": "official-replay-source",
+        "source_alias_id": "20260722-official-replay-bv1fjg16xex6",
+        "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+      }
+    ],
+    "ledger_sha256": "sha256:f96480319f8e4b74e64be81e7993517edf7cddb25e71715eeaef957e343365f4",
+    "participants": [
+      {
+        "canonical_id": "lidousha",
+        "display_name": "李豆沙",
+        "surfaces": [
+          "李豆沙",
+          "小李",
+          "豆沙"
+        ]
+      },
+      {
+        "canonical_id": "nancho",
+        "display_name": "南町",
+        "surfaces": [
+          "南町",
+          "大N",
+          "小N",
+          "南町nightin"
+        ]
+      }
+    ],
+    "presence_intervals": [
+      {
+        "end_ms": 7200000,
+        "kind": "SESSION_PRESENCE",
+        "start_ms": 0
+      }
+    ],
+    "relation_id": "20260722-lidousha-nancho-live-collaboration",
+    "relation_type": "LIVE_COLLABORATION",
+    "schema_version": "session-relation-authority.v1",
+    "state": "CONFIRMED"
+  },
+  "speaker_finalization": null,
+  "speaker_finalization_manifest_path": null,
+  "speaker_finalization_manifest_sha256": null,
+  "speaker_mode": "uniform_host",
+  "speaker_review_srt_path": null,
+  "start_ms": 0,
+  "status": "MATERIALIZED",
+  "story_contract": {
+    "boundary_semantic_review": {
+      "candidate_id": "auto_193450_1863_2056",
+      "reason_codes": [],
+      "schema_version": "talk-boundary-semantic-review.v1",
+      "status": "SUPERSEDED_BY_HUMAN_SOURCE_REVIEW"
+    },
+    "candidate_id": "auto_193450_1863_2056",
+    "clip_context_binding": {
+      "context_sha256": "sha256:dc643b2f83eb942bf8ba360aec4e9a9ef4b8cca3b3e2c4e5fdd33f7ef963b77f",
+      "mutation_authorized": false,
+      "schema_version": "lidousha-clip-context.v1",
+      "speech_memory_ledger_sha256": "sha256:d87532b5d56457496a868c6910091a545bd2c612a807182d742aa0ca26d30c95",
+      "whole_clip_draft_srt_sha256": "sha256:8093b29e4e5dfeb27540c74d824c9c7e569f5a8b90d605d8454ba3962e73fb20"
+    },
+    "clip_context_prompt": "clip_context_sha256: sha256:dc643b2f83eb942bf8ba360aec4e9a9ef4b8cca3b3e2c4e5fdd33f7ef963b77f\nselection_hook: 弹幕追问李豆沙为何请南町吃火锅，她从“对方付出了劳动”一路嘴硬到“最最喜欢”，最后把两人的关系定义成互相霸凌、刚认识但马上一起吃火锅。\n以下长期记忆只提供候选，绝不直接授权改字；同音字仍须画面/弹幕/SC/同片复现/声学或人工 source truth：\n- id=lidousha.idiolect.xiaodeba.r1; idiolect: surfaces=晓得吧; candidates=晓得吧\n- id=20260722.collab.nancho-nightin.r1; alias: surfaces=南町nightin; candidates=南町nightin\n- id=20260722.collab.dan.r1; nickname: surfaces=大N; candidates=大N\n- id=20260722.collab.xiaon.r1; nickname: surfaces=小N; candidates=小N\n- id=20260722.hotpot.luyisheng.r1; nickname: surfaces=露医生; candidates=露医生\n- id=20260722.hotpot.xieeshougong.r1; nickname: surfaces=邪恶守宫; candidates=邪恶守宫\n整片初稿（用于回指、复现和后文调侃；不是文字 authority）：\n1\n00:00:00,000 --> 00:00:01,440\n这一派的追逐\n\n2\n00:00:01,440 --> 00:00:04,160\n而听不懂我们这种高的人\n\n3\n00:00:04,160 --> 00:00:05,640\n听不懂这种矮人笑话\n\n4\n00:00:05,640 --> 00:00:07,290\n我想问你\n\n5\n00:00:07,290 --> 00:00:10,040\n谢谢南町家的星耀的SC\n\n6\n00:00:10,040 --> 00:00:12,740\n为什么要请大老师吃火锅\n\n7\n00:00:12,740 --> 00:00:14,200\n给你们加盘素菜\n\n8\n00:00:14,200 --> 00:00:15,260\n终于和大N见面\n\n9\n00:00:15,260 --> 00:00:16,140\n哎，现在几点了\n\n10\n00:00:16,140 --> 00:00:17,740\n我还没落实呢\n\n11\n00:00:17,860 --> 00:00:20,140\n为什么要请大N老师吃火锅呢\n\n12\n00:00:20,140 --> 00:00:21,780\n因为她说她要跟我一起播\n\n13\n00:00:22,100 --> 00:00:24,120\n然后那她跟我一起播的话\n\n14\n00:00:24,120 --> 00:00:28,230\n那就是我就说，那既然她付出了劳动哦\n\n15\n00:00:28,230 --> 00:00:28,910\n是这样的吗\n\n16\n00:00:28,910 --> 00:00:30,940\n原来一起直播就可以请我吃火锅啊\n\n17\n00:00:30,940 --> 00:00:32,860\n嗯，对啊，啊哈哈\n\n18\n00:00:32,860 --> 00:00:34,980\n因因为我一会要玩游戏\n\n19\n00:00:34,980 --> 00:00:36,920\n是你在玩游戏我就走了\n\n20\n00:00:36,920 --> 00:00:37,160\n哦\n\n21\n00:00:37,160 --> 00:00:37,800\n这样吗\n\n22\n00:00:37,800 --> 00:00:38,520\n啊，怎么了\n\n23\n00:00:38,520 --> 00:00:39,960\n你不跟我一起玩吗\n\n24\n00:00:39,960 --> 00:00:40,920\n也可以一起玩\n\n25\n00:00:40,920 --> 00:00:41,940\n你跟我一起玩吗\n\n26\n00:00:41,940 --> 00:00:44,600\n行，好，那就是这样\n\n27\n00:00:44,600 --> 00:00:46,580\n为啥要请她吃火锅\n\n28\n00:00:46,580 --> 00:00:48,810\n主要是想吃了哦\n\n29\n00:00:48,810 --> 00:00:50,730\n不是，主要是想吃火锅了\n\n30\n00:00:50,730 --> 00:00:52,590\n是不是？不是，重新说\n\n31\n00:00:52,590 --> 00:00:54,530\n主要是你想吃了\n\n32\n00:00:54,530 --> 00:00:55,770\n所以分一点给我\n\n33\n00:00:55,770 --> 00:00:57,850\n嗯，主要是为什\n\n34\n00:00:57,930 --> 00:01:00,120\n谢谢南町家的星耀的SC\n\n35\n00:01:00,120 --> 00:01:02,460\n为什么要请丹丹老师吃播\n\n36\n00:01:02,460 --> 00:01:04,360\n给你们加盘素菜\n\n37\n00:01:04,879 --> 00:01:06,500\n终于和大N见面了\n\n38\n00:01:06,500 --> 00:01:07,340\n对对对\n\n39\n00:01:07,340 --> 00:01:08,860\n谢谢你的素菜\n\n40\n00:01:08,860 --> 00:01:11,110\n为什么要请大N老师吃火锅呢\n\n41\n00:01:11,110 --> 00:01:13,530\n因为想请大N老师吃火锅\n\n42\n00:01:13,530 --> 00:01:16,150\n因为人生不是galgame\n\n43\n00:01:16,150 --> 00:01:17,750\n不可以重新再来的哟\n\n44\n00:01:17,750 --> 00:01:18,510\n哈哈哈\n\n45\n00:01:18,510 --> 00:01:23,270\n因为这是我最最最最最喜欢的南町nightin\n\n46\n00:01:23,270 --> 00:01:25,430\n所以就是要请她吃火锅\n\n47\n00:01:25,510 --> 00:01:26,990\n嘻，晓得吧\n\n48\n00:01:27,070 --> 00:01:27,750\n行\n\n49\n00:01:28,380 --> 00:01:32,450\n谢谢刚刚panoja的舰长\n\n50\n00:01:32,450 --> 00:01:33,370\n谢谢你\n\n51\n00:01:33,370 --> 00:01:35,950\n这怎么怎么是TTT的头像\n\n52\n00:01:35,950 --> 00:01:37,940\n对啊，我也没见过TA\n\n53\n00:01:37,940 --> 00:01:38,580\n哈哈哈\n\n54\n00:01:38,580 --> 00:01:39,240\n谢谢你\n\n55\n00:01:39,240 --> 00:01:41,900\n你是因为矮人笑话来的吗\n\n56\n00:01:41,900 --> 00:01:42,620\n老师\n\n57\n00:01:43,120 --> 00:01:44,380\n呃，很意外\n\n58\n00:01:44,380 --> 00:01:45,780\n谢谢你的舰长\n\n59\n00:01:45,780 --> 00:01:46,360\n谢谢你\n\n60\n00:01:46,360 --> 00:01:47,360\n欢迎上船\n\n61\n00:01:47,440 --> 00:01:48,560\n谢哥不互动\n\n62\n00:01:48,560 --> 00:01:49,480\n老板的上舰\n\n63\n00:01:49,480 --> 00:01:50,680\n谢谢你\n\n64\n00:01:51,230 --> 00:01:54,110\n谢谢-天蓝青-的钢镚，好漂亮的\n\n65\n00:01:54,110 --> 00:01:56,470\n大姐姐，心里没有李豆沙的位置了\n\n66\n00:01:56,470 --> 00:01:57,470\n没关系\n\n67\n00:01:57,470 --> 00:02:01,590\n这个这个大姐姐，她其实也没有很大姐姐\n\n68\n00:02:01,590 --> 00:02:03,550\n她只是长得比较大姐姐\n\n69\n00:02:04,350 --> 00:02:06,210\n她只是长得比较大姐姐\n\n70\n00:02:06,210 --> 00:02:07,790\n她其实，嗯\n\n71\n00:02:07,790 --> 00:02:12,790\n背地里是会被旁边这个白毛粉挑染\n\n72\n00:02:12,790 --> 00:02:15,210\n就是霸凌的那种小的吧\n\n73\n00:02:15,210 --> 00:02:18,090\n嗯哼，你不能听见没\n\n74\n00:02:18,170 --> 00:02:19,210\n听见没\n\n75\n00:02:19,280 --> 00:02:21,560\n呃，你不能以貌取人啊\n\n76\n00:02:21,560 --> 00:02:23,400\n她只是长得比较大姐姐\n\n77\n00:02:23,400 --> 00:02:25,320\n但其实并不是哦\n\n78\n00:02:25,860 --> 00:02:28,020\n谢谢小凑るう子的钢镚\n\n79\n00:02:28,020 --> 00:02:29,660\n小李又被大N霸凌了\n\n80\n00:02:29,660 --> 00:02:30,740\n为什么是又\n\n81\n00:02:30,810 --> 00:02:34,750\n哪里是，这不是一直说的是小李在霸凌\n\n82\n00:02:34,750 --> 00:02:35,460\n大N吗\n\n83\n00:02:35,460 --> 00:02:38,920\n哪里又变成小李被大N霸凌了\n\n84\n00:02:38,920 --> 00:02:39,860\n搞错了吧\n\n85\n00:02:39,860 --> 00:02:43,030\n还真是从未霸凌过任何人\n\n86\n00:02:43,030 --> 00:02:47,050\n对哇，你说这句话跟陆医生好像啊\n\n87\n00:02:47,050 --> 00:02:47,570\n什么意思\n\n88\n00:02:47,570 --> 00:02:48,500\n哈哈哈\n\n89\n00:02:48,500 --> 00:02:50,020\n从未霸凌过任何人\n\n90\n00:02:50,020 --> 00:02:54,020\n我真的是，就是就是这个\n\n91\n00:02:54,260 --> 00:02:56,380\n我们是这种会互相霸凌的关系\n\n92\n00:02:56,380 --> 00:02:57,020\n好像不对\n\n93\n00:02:57,020 --> 00:02:58,260\n不应该这样说吧\n\n94\n00:02:58,360 --> 00:03:00,240\n不是那种互相霸凌的关系啊\n\n95\n00:03:00,240 --> 00:03:01,640\n我们不是今天第一次见面吗\n\n96\n00:03:01,640 --> 00:03:03,940\n对，我们就是这么这么一个\n\n97\n00:03:03,940 --> 00:03:04,900\n不是不是哦\n\n98\n00:03:04,900 --> 00:03:07,160\n我们是待会她要请我吃火锅的关系\n\n99\n00:03:07,160 --> 00:03:08,660\n嘿嘿嘿嘿嘿嘿\n\n100\n00:03:08,750 --> 00:03:10,790\n这么解释哈哈\n\n101\n00:03:10,790 --> 00:03:12,190\n感觉更无聊了\n\n102\n00:03:12,190 --> 00:03:13,690\n哈哈哈哈\n\n103\n00:03:13,690 --> 00:03:18,660\n我们是这种就是不太熟的关系\n\n104\n00:03:19,400 --> 00:03:21,280\n就是刚认识\n\n105\n00:03:21,280 --> 00:03:22,320\n暂时不太熟\n\n106\n00:03:22,320 --> 00:03:24,120\n对，行啊\n\n107\n00:03:24,180 --> 00:03:26,420\n谢谢鸭血の耙耙柑的SC\n\n108\n00:03:26,420 --> 00:03:28,540\n李姐当心下播被烫了\n\n109\n00:03:28,540 --> 00:03:31,230\n大N老师拿烟头烫的好\n\n110\n00:03:31,230 --> 00:03:34,000\n哎，这个我真想知道这个\n\n111\n00:03:34,660 --> 00:03:37,240\n这个谣言是因何而起啊\n\n112\n00:03:37,240 --> 00:03:38,400\n我问当事人\n\n113\n00:03:38,400 --> 00:03:41,800\n我拿烟头烫人的谣言吗\n\n114\n00:03:41,800 --> 00:03:44,550\n嗯，是因为我之前去了一次公司\n\n115\n00:03:44,630 --> 00:03:46,390\n嗯，去了公司之后\n\n116\n00:03:46,600 --> 00:03:50,760\n香香烧烤觉得我看上去很像拿烟头烫人的人\n\n117\n00:03:50,840 --> 00:03:52,960\n所以她就一直在直播间造谣我\n\n118\n00:03:52,960 --> 00:03:54,520\n说我拿烟头烫人的衣服\n\n结构化弹幕/SC（保留 source binding）：\n- superchat @-887289ms: 大N老师能别躲在后面拿烟头偷偷烫我麻麻吗；；\n- superchat @-781800ms: 李姐nn晚上好，请坐在左边的弹右边的一个脑瓜崩\n- superchat @-684996ms: 双人直播的太突然了，感觉像是官宣了（不是），另外小n老师你别坐地上了\n- superchat @-662633ms: 原来周年回修鼠标不算搞笑女吗，那很严苛了\n- superchat @-661242ms: 我也是27级kimo熊啊！\n- superchat @-532498ms: ttt15：头上怎么有数字 n20：可能是真善美指数 lds170：你们在说什么\n- superchat @-448869ms: 什么要请大N老师吃火锅，给你们加盘素菜，终于和大N见面了\n- superchat @-295118ms: 好漂亮的大姐姐，心里没有李豆沙的位置了\n- superchat @-183512ms: 小李又被大N霸凌了；；为什么是又？\n- guard @-143760ms: 舰长",
+    "cover_counterpart_reference_available": true,
+    "cover_fallback_mode": "VERIFIED_DUAL_STREAM_FRAME",
+    "cover_output_audits": [
+      {
+        "artifact_kind": "cover_text",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:d3ad722facc1270a223584990ce7a1785b32f481971d9199b7443f3b725aa420",
+        "violations": []
+      },
+      {
+        "artifact_kind": "cover_rendered_text",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:1506d7f315035d449400b1467aec360a421d85106246dd91f7a8eed059d0f505",
+        "violations": []
+      }
+    ],
+    "cover_reference_authority": {
+      "authority": "Ivan-stated-20260722(这是南町与李豆沙联动，火锅片须保留双方关系)+Codex-visual-review-20260722(同源142.5s帧清楚显示双人；本轮AI封面遗漏南町且偏离火锅提问，故选真实故事帧)",
+      "candidate_id": "auto_193450_1863_2056",
+      "content_time_ms": 142500,
+      "ledger_sha256": "sha256:7b5c94452ea270a2df3c2db1dfc2c5e829f2e09a955aea2594bf52ca68415b90",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "reference_png_sha256": "sha256:ee46c27e929d57244cf10d179e5e4127a46b89264b8ad10c15dde2be3ce5e217",
+      "relation_action": "李豆沙与南町真实双人同框，承载请大N吃火锅后一路互相霸凌的联动钩子",
+      "required_treatment": "screenshot_direct",
+      "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+      "source_time_ms": 2006050,
+      "visible_participant_ids": [
+        "lidousha",
+        "nancho"
+      ]
+    },
+    "human_boundary_authority": "Ivan line corrections 2026-07-22 + Codex source-cue closure review; following cue begins next topic or SC where applicable",
+    "input_audits": [
+      {
+        "artifact_kind": "selection_hook",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:57fa3d24eefd31d562dca879c92834e79b9d0ff65261e3763111d69f39776b3e",
+        "violations": []
+      },
+      {
+        "artifact_kind": "subtitle",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:3fc03a55479f21d48829ffe99979c3338ea124fc7cc71f6719bca5e429552346",
+        "violations": []
+      }
+    ],
+    "nancho_accepted_surfaces": [
+      "南町",
+      "大N",
+      "小N",
+      "南町nightin"
+    ],
+    "participants": [
+      {
+        "canonical_id": "lidousha",
+        "display_name": "李豆沙",
+        "surfaces": [
+          "李豆沙",
+          "小李",
+          "豆沙"
+        ]
+      },
+      {
+        "canonical_id": "nancho",
+        "display_name": "南町",
+        "surfaces": [
+          "南町",
+          "大N",
+          "小N",
+          "南町nightin"
+        ]
+      }
+    ],
+    "relation_claim_allowed": true,
+    "relation_state": "CONFIRMED",
+    "required_entity_ids": [
+      "nancho"
+    ],
+    "schema_version": "lidousha-story-contract.v1",
+    "selection_hook": "弹幕追问李豆沙为何请南町吃火锅，她从“对方付出了劳动”一路嘴硬到“最最喜欢”，最后把两人的关系定义成互相霸凌、刚认识但马上一起吃火锅。",
+    "selection_hook_sha256": "sha256:57fa3d24eefd31d562dca879c92834e79b9d0ff65261e3763111d69f39776b3e",
+    "selection_scorecard": {
+      "dimensions": {
+        "audience_salience": 3,
+        "comedic_payoff": 4,
+        "lidousha_centrality": 4,
+        "persona_reversal": 4,
+        "relationship_interaction": 4,
+        "self_contained": 4,
+        "stance_intensity": 3
+      },
+      "effective_score": 89.25,
+      "fatigue_penalty": 0.0,
+      "raw_score": 91.25,
+      "reason_codes": [],
+      "requested_tier": 1,
+      "schema_version": "lidousha-selection-scorecard.v1",
+      "status": "VALID",
+      "tier": 1,
+      "tier_basis": "relationship_chain",
+      "tier_evidence_cues": [
+        82,
+        83,
+        87,
+        94,
+        95,
+        99,
+        102,
+        110,
+        115,
+        116,
+        158,
+        161,
+        162,
+        165,
+        170,
+        171
+      ],
+      "tier_reason": "弹幕提出请客缘由后，两人围绕一起直播、一起玩游戏、最喜欢对方、互相霸凌以及到底算什么关系持续拉扯，包含多处相互承接的关系证据和清晰收尾。",
+      "uncertainty_penalty": 2.0,
+      "weights": {
+        "audience_salience": 15,
+        "comedic_payoff": 10,
+        "lidousha_centrality": 25,
+        "persona_reversal": 10,
+        "relationship_interaction": 15,
+        "self_contained": 5,
+        "stance_intensity": 20
+      }
+    },
+    "session_relation_authority": {
+      "bound_date": "2026-07-22",
+      "bound_recording_basename": "22966160_20260722-19-34-50.mp4",
+      "bound_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+      "evidence": [
+        {
+          "authority": "Ivan-stated-20260722-conversation(这明显是南町和李豆沙的联动)",
+          "evidence_class": "ATOMIC_HUMAN_RELATION_TRUTH",
+          "independence_group": "ivan-session-review"
+        },
+        {
+          "evidence_class": "HASH_BOUND_OFFICIAL_REPLAY",
+          "independence_group": "official-replay-source",
+          "source_alias_id": "20260722-official-replay-bv1fjg16xex6",
+          "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+        }
+      ],
+      "ledger_sha256": "sha256:f96480319f8e4b74e64be81e7993517edf7cddb25e71715eeaef957e343365f4",
+      "participants": [
+        {
+          "canonical_id": "lidousha",
+          "display_name": "李豆沙",
+          "surfaces": [
+            "李豆沙",
+            "小李",
+            "豆沙"
+          ]
+        },
+        {
+          "canonical_id": "nancho",
+          "display_name": "南町",
+          "surfaces": [
+            "南町",
+            "大N",
+            "小N",
+            "南町nightin"
+          ]
+        }
+      ],
+      "presence_intervals": [
+        {
+          "end_ms": 7200000,
+          "kind": "SESSION_PRESENCE",
+          "start_ms": 0
+        }
+      ],
+      "relation_id": "20260722-lidousha-nancho-live-collaboration",
+      "relation_type": "LIVE_COLLABORATION",
+      "schema_version": "session-relation-authority.v1",
+      "state": "CONFIRMED"
+    },
+    "source_media_sha256s": [
+      "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+    ],
+    "transcript_sha256": "sha256:3fc03a55479f21d48829ffe99979c3338ea124fc7cc71f6719bca5e429552346"
+  },
+  "subtitle_ass_path": null,
+  "subtitle_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1863_2056/replacement_recuts/auto_193450_1863_2056.recut.srt",
+  "subtitle_regression": {
+    "candidate_id": "auto_193450_1863_2056",
+    "final_speaker_srt_sha256": "ba1fb2c6619e43c16523d6f5e2566a819855e3fee9cf9b56fdc1e8a7c5046e69",
+    "final_text_srt_sha256": "ba1fb2c6619e43c16523d6f5e2566a819855e3fee9cf9b56fdc1e8a7c5046e69",
+    "schema_version": "lidousha-subtitle-regression-audit.v1",
+    "status": "PASS",
+    "surfaces": {
+      "final_speaker_srt": {
+        "found_forbidden": [],
+        "found_forbidden_exact_cues": [],
+        "missing_required": [],
+        "missing_required_any_groups": [],
+        "missing_required_min_occurrences": [],
+        "payload_sha256": "984c4976b4efb996ecb131067a2facf7ab5a8f8ad8e14889c677de7a000a1443",
+        "required_any_group_count": 0,
+        "required_count": 12,
+        "required_min_occurrence_rule_count": 0,
+        "status": "PASS"
+      },
+      "final_text_srt": {
+        "found_forbidden": [],
+        "found_forbidden_exact_cues": [],
+        "missing_required": [],
+        "missing_required_any_groups": [],
+        "missing_required_min_occurrences": [],
+        "payload_sha256": "984c4976b4efb996ecb131067a2facf7ab5a8f8ad8e14889c677de7a000a1443",
+        "required_any_group_count": 0,
+        "required_count": 12,
+        "required_min_occurrence_rule_count": 0,
+        "status": "PASS"
+      }
+    },
+    "truth_asset_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/subtitle_regressions/auto_193450_1863_2056.subtitle-regression.v1.json",
+    "truth_asset_sha256": "f7d8d32a8b3e4e6eb89f609ed55e8f75cbe7f2afe9484e87714cdb23355751c0"
+  },
+  "subtitle_regression_audit_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1863_2056/replacement_recuts/auto_193450_1863_2056.subtitle-regression.json",
+  "subtitle_source": "aggregate_asr+bcut_agy_cpa+pronoun+text_final+redelivery_baseline",
+  "subtitle_style": "lidousha-final-sapphire72",
+  "subtitle_timing_qa": {
+    "actions": [
+      {
+        "action": "drop_boundary_fragment",
+        "after": null,
+        "before": {
+          "end_ms": 10040,
+          "start_ms": 9790
+        },
+        "cue_id": "fresh_0005",
+        "density_cps": 44.0,
+        "reasons": [
+          "unreadable_leading_boundary_fragment"
+        ],
+        "text": "谢谢南町家的星耀的SC",
+        "vad_overlap_ratio": 0.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 16260,
+          "start_ms": 15260
+        },
+        "before": {
+          "end_ms": 16140,
+          "start_ms": 15260
+        },
+        "cue_id": "fresh_0009",
+        "density_cps": 6.818,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "哎，现在几点了",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 29230,
+          "start_ms": 28230
+        },
+        "before": {
+          "end_ms": 28910,
+          "start_ms": 28230
+        },
+        "cue_id": "fresh_0015",
+        "density_cps": 7.353,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "是这样的吗",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 37920,
+          "start_ms": 36920
+        },
+        "before": {
+          "end_ms": 37160,
+          "start_ms": 36920
+        },
+        "cue_id": "fresh_0020",
+        "density_cps": 4.167,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "哦",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 38160,
+          "start_ms": 37160
+        },
+        "before": {
+          "end_ms": 37800,
+          "start_ms": 37160
+        },
+        "cue_id": "fresh_0021",
+        "density_cps": 4.688,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "这样吗",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 38800,
+          "start_ms": 37800
+        },
+        "before": {
+          "end_ms": 38520,
+          "start_ms": 37800
+        },
+        "cue_id": "fresh_0022",
+        "density_cps": 5.556,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "啊，怎么了",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 40960,
+          "start_ms": 39960
+        },
+        "before": {
+          "end_ms": 40920,
+          "start_ms": 39960
+        },
+        "cue_id": "fresh_0024",
+        "density_cps": 6.25,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "也可以一起玩",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 67500,
+          "start_ms": 66500
+        },
+        "before": {
+          "end_ms": 67340,
+          "start_ms": 66500
+        },
+        "cue_id": "fresh_0038",
+        "density_cps": 3.571,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "对对对",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 78750,
+          "start_ms": 77750
+        },
+        "before": {
+          "end_ms": 78510,
+          "start_ms": 77750
+        },
+        "cue_id": "fresh_0044",
+        "density_cps": 3.947,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "哈哈哈",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 88070,
+          "start_ms": 87070
+        },
+        "before": {
+          "end_ms": 87750,
+          "start_ms": 87070
+        },
+        "cue_id": "fresh_0048",
+        "density_cps": 1.471,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "行",
+        "vad_overlap_ratio": 0.321
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 93450,
+          "start_ms": 92450
+        },
+        "before": {
+          "end_ms": 93370,
+          "start_ms": 92450
+        },
+        "cue_id": "fresh_0050",
+        "density_cps": 3.261,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "谢谢你",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 98940,
+          "start_ms": 97940
+        },
+        "before": {
+          "end_ms": 98580,
+          "start_ms": 97940
+        },
+        "cue_id": "fresh_0053",
+        "density_cps": 4.688,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "哈哈哈",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 99580,
+          "start_ms": 98580
+        },
+        "before": {
+          "end_ms": 99240,
+          "start_ms": 98580
+        },
+        "cue_id": "fresh_0054",
+        "density_cps": 4.545,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "谢谢你",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 102900,
+          "start_ms": 101900
+        },
+        "before": {
+          "end_ms": 102620,
+          "start_ms": 101900
+        },
+        "cue_id": "fresh_0056",
+        "density_cps": 2.778,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "老师",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 106780,
+          "start_ms": 105780
+        },
+        "before": {
+          "end_ms": 106360,
+          "start_ms": 105780
+        },
+        "cue_id": "fresh_0059",
+        "density_cps": 5.172,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "谢谢你",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 109560,
+          "start_ms": 108560
+        },
+        "before": {
+          "end_ms": 109480,
+          "start_ms": 108560
+        },
+        "cue_id": "fresh_0062",
+        "density_cps": 5.435,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "老板的上舰",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 155750,
+          "start_ms": 154750
+        },
+        "before": {
+          "end_ms": 155460,
+          "start_ms": 154750
+        },
+        "cue_id": "fresh_0082",
+        "density_cps": 4.225,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "大N吗",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 159920,
+          "start_ms": 158920
+        },
+        "before": {
+          "end_ms": 159860,
+          "start_ms": 158920
+        },
+        "cue_id": "fresh_0084",
+        "density_cps": 4.255,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "搞错了吧",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 168050,
+          "start_ms": 167050
+        },
+        "before": {
+          "end_ms": 167570,
+          "start_ms": 167050
+        },
+        "cue_id": "fresh_0087",
+        "density_cps": 7.692,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "什么意思",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 168570,
+          "start_ms": 167570
+        },
+        "before": {
+          "end_ms": 168500,
+          "start_ms": 167570
+        },
+        "cue_id": "fresh_0088",
+        "density_cps": 3.226,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "哈哈哈",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 177380,
+          "start_ms": 176380
+        },
+        "before": {
+          "end_ms": 177020,
+          "start_ms": 176380
+        },
+        "cue_id": "fresh_0092",
+        "density_cps": 6.25,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "好像不对",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 184940,
+          "start_ms": 183940
+        },
+        "before": {
+          "end_ms": 184900,
+          "start_ms": 183940
+        },
+        "cue_id": "fresh_0097",
+        "density_cps": 5.208,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "不是不是哦",
+        "vad_overlap_ratio": 1.0
+      }
+    ],
+    "counts": {
+      "dropped": 1,
+      "retimed": 21
+    },
+    "policy": {
+      "boundary_fragment_max_visible_ms": 300,
+      "hard_max_ms": 12000,
+      "min_density_cps": 0.8,
+      "min_readable_ms": 1000,
+      "soft_max_ms": 6000
+    },
+    "schema_version": "subtitle-timing-qa.v3",
+    "speech_span_count": 19,
+    "speech_total_ms": 227224,
+    "vad_evidence_contract": "positive_only_never_shrink_normal_asr_cues",
+    "window": {
+      "end_ms": 202320,
+      "start_ms": 9790
+    }
+  },
+  "talk_filler_audit_path": null,
+  "text_finalization_manifest_path": null,
+  "upload_tags": {
+    "content_tags": [
+      {
+        "tag": "嘴硬",
+        "why": "先用“她付出了劳动”解释请吃火锅，最后才承认“最最最最最喜欢”。"
+      },
+      {
+        "tag": "反差萌",
+        "why": "一本正经强调一起直播才请客，随后又直白表达喜欢，前后反差明显。"
+      },
+      {
+        "tag": "磕糖",
+        "why": "主动请吃火锅并说“最最最最最喜欢”，互动亲密有甜度。"
+      },
+      {
+        "tag": "欢喜冤家",
+        "why": "刚认识就互相调侃，还自称是“会互相霸凌的关系”。"
+      },
+      {
+        "tag": "搞笑",
+        "why": "两人围绕谁请吃火锅、谁霸凌谁来回改口，整段对话笑声不断。"
+      }
+    ],
+    "engine": "suggest-upload-tags.v1",
+    "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,南町,嘴硬,反差萌,磕糖,欢喜冤家,搞笑",
+    "final_tags": [
+      "李豆沙",
+      "虚拟主播",
+      "虚拟UP主",
+      "直播切片",
+      "南町",
+      "嘴硬",
+      "反差萌",
+      "磕糖",
+      "欢喜冤家",
+      "搞笑"
+    ],
+    "proper_noun_tags": [
+      {
+        "evidence": {
+          "南町": 3,
+          "大N": 10,
+          "大N老师": 5
+        },
+        "hits": 18,
+        "notes": [
+          "Ivan: 大N老师→南町, 只出正主名"
+        ],
+        "rules": [
+          "nanmachi"
+        ],
+        "tag": "南町",
+        "title_hit": true
+      }
+    ],
+    "status": "OK",
+    "warnings": []
+  }
+}

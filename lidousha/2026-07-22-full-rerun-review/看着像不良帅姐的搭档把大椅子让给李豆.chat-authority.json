@@ -1,0 +1,1842 @@
+{
+  "address_enumeration_audit": {
+    "repairs": [],
+    "schema_version": "address-enumeration-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "applied": [
+    {
+      "after": [
+        "原来周年回修鼠标不算搞笑女吗，",
+        "那很严苛了"
+      ],
+      "alignment_basis": "audio-derived-transcript-proxy.v1",
+      "audio_transcript_support_count": 1,
+      "audio_transcript_support_scores": [
+        0.8766
+      ],
+      "before": [
+        "原来周年回修鼠标不算搞笑",
+        "那很严苛了"
+      ],
+      "coverage": 0.8947,
+      "cue_indexes": [
+        56,
+        57
+      ],
+      "entity_verdict": null,
+      "evidence_id": "a3bc22a800609d600f715c322e121c1d0691f1bc4b2ebfa9b08cdcf12c7daa90",
+      "exact_text": "原来周年回修鼠标不算搞笑女吗，那很严苛了",
+      "final_verification_kind": "exact_read",
+      "final_verification_scope": "SUPERSEDED_BY_REDELIVERY_BASELINE",
+      "kind": "superchat",
+      "matched_end_ms": 116830,
+      "matched_start_ms": 112350,
+      "mode": "exact_span",
+      "read_aloud_verdict": null,
+      "score": 0.9354,
+      "sender": "寒-歌",
+      "source": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+      "source_event_id": "17719088",
+      "source_offset_ms": -372023,
+      "source_sha256": "656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+      "span_alignment": {},
+      "survived": true,
+      "thread_anchored": false
+    }
+  ],
+  "burn_binding": {
+    "ass_path": null,
+    "ass_sha256": null,
+    "burned_media_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1573_1672/replacement_recuts/auto_193450_1573_1672.recut.burned-final-sapphire72.mp4",
+    "burned_media_sha256": "16fa0471a3cc21b7faf146c5e22a94fde7ae024c14c044b9e0ff7cce8be480ed"
+  },
+  "code_switch_surface_audit": {
+    "input_srt_sha256": "e1666d855def073c13905976b65b1ae4ee4a83e59d00cbd0c3f37661439af084",
+    "output_srt_sha256": "e1666d855def073c13905976b65b1ae4ee4a83e59d00cbd0c3f37661439af084",
+    "repairs": [],
+    "schema_version": "code-switch-surface-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "coreference_repairs": [],
+  "entity_repairs": [],
+  "entity_verdict_required": [],
+  "entity_verdicts": [],
+  "evidence_considered": 67,
+  "final_hard_meme_surface_audit": {
+    "input_srt_sha256": "c7e600680f099e12025479df7e9de97f3e5546dd5ea58fac5475bd9ae10a7d3d",
+    "output_srt_sha256": "c7e600680f099e12025479df7e9de97f3e5546dd5ea58fac5475bd9ae10a7d3d",
+    "repairs": [],
+    "rule_count": 1,
+    "schema_version": "hard-meme-surface-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "final_hard_meme_surface_verification": {
+    "failures": {},
+    "status": "PASS"
+  },
+  "final_output_srt_sha256": "9014469c977c120819602ddcbe8a2489b922915929f62aef57748998f962183d",
+  "final_outside_delivery_count": 0,
+  "final_required_decision_count": 0,
+  "final_review_audit": {
+    "applied_count": 0,
+    "boundary_semantic_review": {
+      "candidate_id": "auto_193450_1573_1672",
+      "reason_codes": [],
+      "schema_version": "talk-boundary-semantic-review.v1",
+      "status": "SUPERSEDED_BY_HUMAN_SOURCE_REVIEW"
+    },
+    "context_adjudication_budget": 12,
+    "context_adjudication_count": 0,
+    "findings": [],
+    "infra_unresolved": [],
+    "infra_unresolved_count": 0,
+    "schema_version": "final-review-audit.v1",
+    "source_truth_protected_cue_indexes": [
+      20,
+      21,
+      31
+    ],
+    "status": "CLEAN"
+  },
+  "final_source_language_preservation_audit": {
+    "reverted": [],
+    "reverted_count": 0,
+    "schema_version": "source-language-preservation-audit.v1",
+    "status": "CLEAN",
+    "unproven_foreign_introductions": []
+  },
+  "final_speaker_srt_path": null,
+  "final_speaker_srt_sha256": "9014469c977c120819602ddcbe8a2489b922915929f62aef57748998f962183d",
+  "final_status": "FINAL_ARTIFACTS_VERIFIED",
+  "final_superseded_by_redelivery_baseline_count": 2,
+  "final_superseded_by_source_truth_count": 0,
+  "final_text_srt_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1573_1672/replacement_recuts/auto_193450_1573_1672.recut.srt",
+  "final_text_srt_sha256": "9014469c977c120819602ddcbe8a2489b922915929f62aef57748998f962183d",
+  "final_title_mark_balance_audit": {
+    "cross_cue_pairs": [],
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "title-mark-balance-audit.v1",
+    "status": "CLEAN",
+    "unresolved": []
+  },
+  "foreign_script_consistency_audit": {
+    "kana_cue_indexes": [],
+    "latin_heavy_cues": [],
+    "mixed_cjk_latin_cues": [],
+    "reason": null,
+    "schema_version": "foreign-script-consistency-audit.v1",
+    "status": "CLEAN"
+  },
+  "gift_repairs": [],
+  "impossible_punctuation_audit": {
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "impossible-punctuation-audit.v1",
+    "status": "CLEAN"
+  },
+  "input_srt_sha256": "e1666d855def073c13905976b65b1ae4ee4a83e59d00cbd0c3f37661439af084",
+  "introduced_term_audits": [
+    {
+      "introduced_term": {
+        "cue_index": 20,
+        "draft_span": "被留",
+        "term": "李豆沙"
+      },
+      "reason_code": "DRAFT_WITNESS_IS_NOT_POST_SEMANTIC_AUTHORITY",
+      "schema_version": "introduced-term-audit.v2",
+      "status": "SEMANTIC_AUTHORITY_PRESERVED"
+    }
+  ],
+  "numeric_fact_provenance_audit": {
+    "reverted": [],
+    "reverted_count": 0,
+    "schema_version": "numeric-fact-provenance-audit.v1",
+    "status": "CLEAN",
+    "supported": [
+      {
+        "cue_index": 31,
+        "evidence": [
+          {
+            "kind": "danmaku",
+            "offset_ms": 66095,
+            "text": "190粉毛以下略"
+          }
+        ],
+        "token": "190"
+      }
+    ]
+  },
+  "output_srt_sha256": "c7e600680f099e12025479df7e9de97f3e5546dd5ea58fac5475bd9ae10a7d3d",
+  "pending_text_overrides": [],
+  "post_semantic_entity_policy": {
+    "dynamic_audio_group_count": 0,
+    "explicit_audio_groups": [
+      [
+        "素惹",
+        "素人"
+      ],
+      [
+        "李豆沙",
+        "小李"
+      ],
+      [
+        "奶P",
+        "奶瓶"
+      ],
+      [
+        "ありがとう",
+        "おめでとう"
+      ]
+    ],
+    "phonetic_candidates_disclosure_only": [
+      [
+        "祥子",
+        "像坐在"
+      ],
+      [
+        "祥子",
+        "想在"
+      ],
+      [
+        "祥子",
+        "现在"
+      ],
+      [
+        "Hina",
+        "很像那"
+      ]
+    ],
+    "phrase_divergence_candidates_disclosure_only": [],
+    "reason_code": "POST_SEMANTIC_ENTITY_AUDIO_OVERRIDE_DISABLED",
+    "schema_version": "post-semantic-entity-policy.v1",
+    "semantic_text_final_groups": [
+      [
+        "恋青",
+        "恋死"
+      ],
+      [
+        "梦限大",
+        "Ave Mujica"
+      ],
+      [
+        "立希",
+        "祥子"
+      ],
+      [
+        "kmx",
+        "乒乓球"
+      ],
+      [
+        "李豆沙",
+        "小李"
+      ],
+      [
+        "田中姬",
+        "铃木雏",
+        "田中雏",
+        "Hime",
+        "Hina"
+      ]
+    ],
+    "status": "SEMANTIC_TEXT_FINAL"
+  },
+  "post_transcript_entity_output_srt_sha256": "c7e600680f099e12025479df7e9de97f3e5546dd5ea58fac5475bd9ae10a7d3d",
+  "read_aloud_arbitrations": [],
+  "redelivery_subtitle_baseline_audit": {
+    "application_strategy": "exact_reviewed_interval_replay",
+    "authority": "Ivan-approved 2026-07-22 delivery plus source-truth and structured-chat corrections, bound to the current reviewed cue segmentation",
+    "baseline_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/reviewed_subtitle_baselines/auto_193450_1573_1672.reviewed.srt",
+    "baseline_schema_version": "subtitle-redelivery-baseline.v2",
+    "baseline_sha256": "9014469c977c120819602ddcbe8a2489b922915929f62aef57748998f962183d",
+    "changed_cue_count": 6,
+    "current_cue_count": 52,
+    "current_input_sha256": "ee8021f65e690506a4324b587ccb9e759191b2331ebf5ed17871835836dffed7",
+    "current_source_interval": {
+      "absolute_source_end_ms": 1679980,
+      "absolute_source_start_ms": 1572910
+    },
+    "deferred_exact_replay_reverification": {
+      "deferred_strategy": null,
+      "missing_truth_ids": [],
+      "required_truth_ids": [],
+      "reverified_truth_ids": [],
+      "schema_version": "deferred-exact-replay-reverification.v1",
+      "status": "NOT_REQUIRED"
+    },
+    "effective_reviewed_overlap": {
+      "absolute_source_end_ms": 1679980,
+      "absolute_source_start_ms": 1572910
+    },
+    "expected_baseline_sha256": "9014469c977c120819602ddcbe8a2489b922915929f62aef57748998f962183d",
+    "failures": [],
+    "mapped_cue_count": 52,
+    "mappings": [
+      {
+        "baseline_absolute_source_end_ms": 1574480,
+        "baseline_absolute_source_start_ms": 1573160,
+        "baseline_cue_index": 1,
+        "end_ms": 1570,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 1,
+        "start_ms": 250,
+        "text": "你别坐地上"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1576380,
+        "baseline_absolute_source_start_ms": 1574480,
+        "baseline_cue_index": 2,
+        "end_ms": 3470,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 2,
+        "start_ms": 1570,
+        "text": "可是我现在真的很像坐在地上"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1577960,
+        "baseline_absolute_source_start_ms": 1576380,
+        "baseline_cue_index": 3,
+        "end_ms": 5050,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 3,
+        "start_ms": 3470,
+        "text": "我这个椅子就是比它"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1579680,
+        "baseline_absolute_source_start_ms": 1577960,
+        "baseline_cue_index": 4,
+        "end_ms": 6770,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 4,
+        "start_ms": 5050,
+        "text": "就是我平常就一个电脑椅嘛"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1580300,
+        "baseline_absolute_source_start_ms": 1579680,
+        "baseline_cue_index": 5,
+        "end_ms": 7390,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 5,
+        "start_ms": 6770,
+        "text": "它高一些"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1581980,
+        "baseline_absolute_source_start_ms": 1580300,
+        "baseline_cue_index": 6,
+        "end_ms": 9070,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 6,
+        "start_ms": 7390,
+        "text": "然后我在坐做一个"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1584060,
+        "baseline_absolute_source_start_ms": 1581980,
+        "baseline_cue_index": 7,
+        "end_ms": 11150,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 7,
+        "start_ms": 9070,
+        "text": "我平常就是不怎么会用的一个椅子"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1585300,
+        "baseline_absolute_source_start_ms": 1584060,
+        "baseline_cue_index": 8,
+        "end_ms": 12390,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 8,
+        "start_ms": 11150,
+        "text": "就真的很像坐在地上"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1586520,
+        "baseline_absolute_source_start_ms": 1585300,
+        "baseline_cue_index": 9,
+        "end_ms": 13610,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 9,
+        "start_ms": 12390,
+        "text": "对，她把她的"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1589160,
+        "baseline_absolute_source_start_ms": 1586520,
+        "baseline_cue_index": 10,
+        "end_ms": 16250,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 10,
+        "start_ms": 13610,
+        "text": "她把她的那个大的椅子"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1591470,
+        "baseline_absolute_source_start_ms": 1589160,
+        "baseline_cue_index": 11,
+        "end_ms": 18560,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 11,
+        "start_ms": 16250,
+        "text": "那个电脑椅给我了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1593380,
+        "baseline_absolute_source_start_ms": 1591470,
+        "baseline_cue_index": 12,
+        "end_ms": 20470,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 12,
+        "start_ms": 18560,
+        "text": "她就只能缩在一边"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1596080,
+        "baseline_absolute_source_start_ms": 1593380,
+        "baseline_cue_index": 13,
+        "end_ms": 23170,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 13,
+        "start_ms": 20470,
+        "text": "哈哈，非常可怜啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1597960,
+        "baseline_absolute_source_start_ms": 1596080,
+        "baseline_cue_index": 14,
+        "end_ms": 25050,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 14,
+        "start_ms": 23170,
+        "text": "哎呀，整个人都缩在椅子上"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1599440,
+        "baseline_absolute_source_start_ms": 1597960,
+        "baseline_cue_index": 15,
+        "end_ms": 26530,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 15,
+        "start_ms": 25050,
+        "text": "感觉像被豆沙"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1600440,
+        "baseline_absolute_source_start_ms": 1599440,
+        "baseline_cue_index": 16,
+        "end_ms": 27530,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 16,
+        "start_ms": 26530,
+        "text": "霸凌"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1603190,
+        "baseline_absolute_source_start_ms": 1600790,
+        "baseline_cue_index": 17,
+        "end_ms": 30280,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 17,
+        "start_ms": 27880,
+        "text": "感觉就是这个人设反转了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1604130,
+        "baseline_absolute_source_start_ms": 1603190,
+        "baseline_cue_index": 18,
+        "end_ms": 31220,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 18,
+        "start_ms": 30280,
+        "text": "你知道那种吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1606710,
+        "baseline_absolute_source_start_ms": 1604130,
+        "baseline_cue_index": 19,
+        "end_ms": 33800,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 19,
+        "start_ms": 31220,
+        "text": "就是看起来好像是，呃"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1610510,
+        "baseline_absolute_source_start_ms": 1606710,
+        "baseline_cue_index": 20,
+        "end_ms": 37600,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 20,
+        "start_ms": 33800,
+        "text": "就是外表比较不良的人"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1613590,
+        "baseline_absolute_source_start_ms": 1610510,
+        "baseline_cue_index": 21,
+        "end_ms": 40680,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 21,
+        "start_ms": 37600,
+        "text": "但背地里是被欺负的那种"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1615250,
+        "baseline_absolute_source_start_ms": 1613590,
+        "baseline_cue_index": 22,
+        "end_ms": 42340,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 22,
+        "start_ms": 40680,
+        "text": "那我不是一直都是这样的吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1615870,
+        "baseline_absolute_source_start_ms": 1615250,
+        "baseline_cue_index": 23,
+        "end_ms": 42960,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 23,
+        "start_ms": 42340,
+        "text": "是吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1616590,
+        "baseline_absolute_source_start_ms": 1615870,
+        "baseline_cue_index": 24,
+        "end_ms": 43680,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 24,
+        "start_ms": 42960,
+        "text": "对呀"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1619250,
+        "baseline_absolute_source_start_ms": 1616590,
+        "baseline_cue_index": 25,
+        "end_ms": 46340,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 25,
+        "start_ms": 43680,
+        "text": "那190粉毛是吧"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1623040,
+        "baseline_absolute_source_start_ms": 1619250,
+        "baseline_cue_index": 26,
+        "end_ms": 50130,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 26,
+        "start_ms": 46340,
+        "text": "哈哈哈哈，190，190是谣言啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1625380,
+        "baseline_absolute_source_start_ms": 1623040,
+        "baseline_cue_index": 27,
+        "end_ms": 52470,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 27,
+        "start_ms": 50130,
+        "text": "粉毛是我之前染过粉毛啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1627080,
+        "baseline_absolute_source_start_ms": 1625380,
+        "baseline_cue_index": 28,
+        "end_ms": 54170,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 28,
+        "start_ms": 52470,
+        "text": "然后其他的都是谣言"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1627999,
+        "baseline_absolute_source_start_ms": 1627240,
+        "baseline_cue_index": 29,
+        "end_ms": 55089,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 29,
+        "start_ms": 54330,
+        "text": "这样子"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1628870,
+        "baseline_absolute_source_start_ms": 1627999,
+        "baseline_cue_index": 30,
+        "end_ms": 55960,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 30,
+        "start_ms": 55089,
+        "text": "对对对"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1630110,
+        "baseline_absolute_source_start_ms": 1628870,
+        "baseline_cue_index": 31,
+        "end_ms": 57200,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 31,
+        "start_ms": 55960,
+        "text": "但是你看上"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1632610,
+        "baseline_absolute_source_start_ms": 1630110,
+        "baseline_cue_index": 32,
+        "end_ms": 59700,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 32,
+        "start_ms": 57200,
+        "text": "那你看上去确实很像那种"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1635730,
+        "baseline_absolute_source_start_ms": 1632970,
+        "baseline_cue_index": 33,
+        "end_ms": 62820,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 33,
+        "start_ms": 60060,
+        "text": "就是不良。我吗？"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1636790,
+        "baseline_absolute_source_start_ms": 1635810,
+        "baseline_cue_index": 34,
+        "end_ms": 63880,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 34,
+        "start_ms": 62900,
+        "text": "你确定吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1638930,
+        "baseline_absolute_source_start_ms": 1636790,
+        "baseline_cue_index": 35,
+        "end_ms": 66020,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 35,
+        "start_ms": 63880,
+        "text": "你见过我之后你还会这么觉得"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1640850,
+        "baseline_absolute_source_start_ms": 1639030,
+        "baseline_cue_index": 36,
+        "end_ms": 67940,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 36,
+        "start_ms": 66120,
+        "text": "哈哈哈哈"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1641850,
+        "baseline_absolute_source_start_ms": 1640850,
+        "baseline_cue_index": 37,
+        "end_ms": 68940,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 37,
+        "start_ms": 67940,
+        "text": "啥意思"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1644920,
+        "baseline_absolute_source_start_ms": 1642350,
+        "baseline_cue_index": 38,
+        "end_ms": 72010,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 38,
+        "start_ms": 69440,
+        "text": "我真违心啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1647860,
+        "baseline_absolute_source_start_ms": 1644920,
+        "baseline_cue_index": 39,
+        "end_ms": 74950,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 39,
+        "start_ms": 72010,
+        "text": "就是，就是形象上确实是"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1652360,
+        "baseline_absolute_source_start_ms": 1647860,
+        "baseline_cue_index": 40,
+        "end_ms": 79450,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 40,
+        "start_ms": 74950,
+        "text": "因为你的衣服都是那种很帅的感觉的"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1653910,
+        "baseline_absolute_source_start_ms": 1652360,
+        "baseline_cue_index": 41,
+        "end_ms": 81000,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 41,
+        "start_ms": 79450,
+        "text": "对，对吧"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1654910,
+        "baseline_absolute_source_start_ms": 1653910,
+        "baseline_cue_index": 42,
+        "end_ms": 82000,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 42,
+        "start_ms": 81000,
+        "text": "对"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1658090,
+        "baseline_absolute_source_start_ms": 1655530,
+        "baseline_cue_index": 43,
+        "end_ms": 85180,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 43,
+        "start_ms": 82620,
+        "text": "那但其实就是会"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1662010,
+        "baseline_absolute_source_start_ms": 1658690,
+        "baseline_cue_index": 44,
+        "end_ms": 89100,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 44,
+        "start_ms": 85780,
+        "text": "其实是会受欺负的类型"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1664730,
+        "baseline_absolute_source_start_ms": 1662010,
+        "baseline_cue_index": 45,
+        "end_ms": 91820,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 45,
+        "start_ms": 89100,
+        "text": "是的，哈哈哈"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1668290,
+        "baseline_absolute_source_start_ms": 1664850,
+        "baseline_cue_index": 46,
+        "end_ms": 95380,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 46,
+        "start_ms": 91940,
+        "text": "呃，其实其实被李豆沙霸凌"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1671010,
+        "baseline_absolute_source_start_ms": 1668290,
+        "baseline_cue_index": 47,
+        "end_ms": 98100,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 47,
+        "start_ms": 95380,
+        "text": "呜呜呜，哭了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1672230,
+        "baseline_absolute_source_start_ms": 1671010,
+        "baseline_cue_index": 48,
+        "end_ms": 99320,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 48,
+        "start_ms": 98100,
+        "text": "哈哈哈哈哈"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1672970,
+        "baseline_absolute_source_start_ms": 1672230,
+        "baseline_cue_index": 49,
+        "end_ms": 100060,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 49,
+        "start_ms": 99320,
+        "text": "假哭"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1675500,
+        "baseline_absolute_source_start_ms": 1672970,
+        "baseline_cue_index": 50,
+        "end_ms": 102590,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 50,
+        "start_ms": 100060,
+        "text": "谢谢寒-歌的钢镚"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1678160,
+        "baseline_absolute_source_start_ms": 1675500,
+        "baseline_cue_index": 51,
+        "end_ms": 105250,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 51,
+        "start_ms": 102590,
+        "text": "原来周年回修鼠标不算搞笑女吗，"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1679980,
+        "baseline_absolute_source_start_ms": 1678160,
+        "baseline_cue_index": 52,
+        "end_ms": 107070,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 52,
+        "start_ms": 105250,
+        "text": "那很严苛了"
+      }
+    ],
+    "mode": "preserve_text_outside_source_truth",
+    "omitted_baseline_cue_count": 0,
+    "omitted_by_new_boundary": [],
+    "output_sha256": "9014469c977c120819602ddcbe8a2489b922915929f62aef57748998f962183d",
+    "owned_intervals": [
+      {
+        "end_ms": 1570,
+        "start_ms": 250
+      },
+      {
+        "end_ms": 3470,
+        "start_ms": 1570
+      },
+      {
+        "end_ms": 5050,
+        "start_ms": 3470
+      },
+      {
+        "end_ms": 6770,
+        "start_ms": 5050
+      },
+      {
+        "end_ms": 7390,
+        "start_ms": 6770
+      },
+      {
+        "end_ms": 9070,
+        "start_ms": 7390
+      },
+      {
+        "end_ms": 11150,
+        "start_ms": 9070
+      },
+      {
+        "end_ms": 12390,
+        "start_ms": 11150
+      },
+      {
+        "end_ms": 13610,
+        "start_ms": 12390
+      },
+      {
+        "end_ms": 16250,
+        "start_ms": 13610
+      },
+      {
+        "end_ms": 18560,
+        "start_ms": 16250
+      },
+      {
+        "end_ms": 20470,
+        "start_ms": 18560
+      },
+      {
+        "end_ms": 23170,
+        "start_ms": 20470
+      },
+      {
+        "end_ms": 25050,
+        "start_ms": 23170
+      },
+      {
+        "end_ms": 26530,
+        "start_ms": 25050
+      },
+      {
+        "end_ms": 27530,
+        "start_ms": 26530
+      },
+      {
+        "end_ms": 30280,
+        "start_ms": 27880
+      },
+      {
+        "end_ms": 31220,
+        "start_ms": 30280
+      },
+      {
+        "end_ms": 33800,
+        "start_ms": 31220
+      },
+      {
+        "end_ms": 37600,
+        "start_ms": 33800
+      },
+      {
+        "end_ms": 40680,
+        "start_ms": 37600
+      },
+      {
+        "end_ms": 42340,
+        "start_ms": 40680
+      },
+      {
+        "end_ms": 42960,
+        "start_ms": 42340
+      },
+      {
+        "end_ms": 43680,
+        "start_ms": 42960
+      },
+      {
+        "end_ms": 46340,
+        "start_ms": 43680
+      },
+      {
+        "end_ms": 50130,
+        "start_ms": 46340
+      },
+      {
+        "end_ms": 52470,
+        "start_ms": 50130
+      },
+      {
+        "end_ms": 54170,
+        "start_ms": 52470
+      },
+      {
+        "end_ms": 55089,
+        "start_ms": 54330
+      },
+      {
+        "end_ms": 55960,
+        "start_ms": 55089
+      },
+      {
+        "end_ms": 57200,
+        "start_ms": 55960
+      },
+      {
+        "end_ms": 59700,
+        "start_ms": 57200
+      },
+      {
+        "end_ms": 62820,
+        "start_ms": 60060
+      },
+      {
+        "end_ms": 63880,
+        "start_ms": 62900
+      },
+      {
+        "end_ms": 66020,
+        "start_ms": 63880
+      },
+      {
+        "end_ms": 67940,
+        "start_ms": 66120
+      },
+      {
+        "end_ms": 68940,
+        "start_ms": 67940
+      },
+      {
+        "end_ms": 72010,
+        "start_ms": 69440
+      },
+      {
+        "end_ms": 74950,
+        "start_ms": 72010
+      },
+      {
+        "end_ms": 79450,
+        "start_ms": 74950
+      },
+      {
+        "end_ms": 81000,
+        "start_ms": 79450
+      },
+      {
+        "end_ms": 82000,
+        "start_ms": 81000
+      },
+      {
+        "end_ms": 85180,
+        "start_ms": 82620
+      },
+      {
+        "end_ms": 89100,
+        "start_ms": 85780
+      },
+      {
+        "end_ms": 91820,
+        "start_ms": 89100
+      },
+      {
+        "end_ms": 95380,
+        "start_ms": 91940
+      },
+      {
+        "end_ms": 98100,
+        "start_ms": 95380
+      },
+      {
+        "end_ms": 99320,
+        "start_ms": 98100
+      },
+      {
+        "end_ms": 100060,
+        "start_ms": 99320
+      },
+      {
+        "end_ms": 102590,
+        "start_ms": 100060
+      },
+      {
+        "end_ms": 105250,
+        "start_ms": 102590
+      },
+      {
+        "end_ms": 107070,
+        "start_ms": 105250
+      }
+    ],
+    "post_source_truth_output_sha256": "9014469c977c120819602ddcbe8a2489b922915929f62aef57748998f962183d",
+    "protected_absolute_intervals": [],
+    "protected_cue_count": 0,
+    "protected_intervals": [],
+    "protected_windows_replayed_for_later_source_truth": false,
+    "replayed_cue_count": 52,
+    "reviewed_coverage": {
+      "absolute_source_end_ms": 1679980,
+      "absolute_source_start_ms": 1572910
+    },
+    "schema_version": "subtitle-redelivery-baseline-audit.v2",
+    "source_recording_identity": {
+      "current_basename": "22966160_20260722-19-34-50.mp4",
+      "current_sha256": "0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+      "expected_basename": "22966160_20260722-19-34-50.mp4",
+      "expected_sha256": "0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+    },
+    "source_truth_reapplication": {
+      "applied": [],
+      "failures": [],
+      "ledger_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/subtitle_truth_ledger.v1.json",
+      "ledger_sha256": "sha256:5f39a0e37ded249fa028ad4310ee0fc9780a0679faa7446f44fcede24258706d",
+      "reapplied_after_redelivery_baseline": true,
+      "satisfied": [
+        {
+          "action": "replace_cue",
+          "after": [
+            "感觉像被豆沙",
+            "霸凌"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "r2 corrects the earlier shortened paraphrase: Ivan-approved delivery SRT sha256=1fbc4f32049e4c9623695a4605ec44790367ea7741c56ae5dce66645d8fc80b0 preserves 感觉像被豆沙霸凌, matching the chair-yield story and later 李豆沙霸凌 callback",
+          "before": [
+            "感觉像被豆沙",
+            "霸凌"
+          ],
+          "before_span": "感觉像被留了像霸凌",
+          "cue_indexes": [
+            15,
+            16
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "感觉像被豆沙霸凌"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:29417d5c8cf1092284cd86b84862bd31be3a7bc8c18c75f1d3035d58db88e1c6",
+          "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE_PLUS_LOCAL_STORY_SEMANTICS",
+          "local_windows": [
+            {
+              "end_ms": 27530,
+              "start_ms": 25050
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r2",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 2480,
+          "source_end_ms": 1600440,
+          "source_start_ms": 1597960,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-chair-bullying-phrase-r1"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "哈哈哈哈，190，190是谣言啊"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722(该切片可上传，唯一缺点是封面)+reviewed SRT sha256=1fbc4f32049e4c9623695a4605ec44790367ea7741c56ae5dce66645d8fc80b0 and BCUT cues 715-716; r2 corrects the source anchor from the following 粉毛 cue to the merged laughter-plus-190 cue that fresh ASR hallucinated as 1190",
+          "before": [
+            "哈哈哈哈，190，190是谣言啊"
+          ],
+          "before_span": "一瞅1190是谣言啊",
+          "cue_indexes": [
+            26
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "哈哈哈哈，190，190是谣言啊"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:0ab377cc07ad6528d2ae3c98771c6e8505034c54ac512b602fcaa055a1d8f8df",
+          "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE_PLUS_HUMAN_PACKAGE_ACCEPTANCE",
+          "local_windows": [
+            {
+              "end_ms": 50130,
+              "start_ms": 46340
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r2",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 3790,
+          "source_end_ms": 1623040,
+          "source_start_ms": 1619250,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-chair-190-rumor-r1"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "粉毛是我之前染过粉毛啊"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "reviewed SRT sha256=1fbc4f32049e4c9623695a4605ec44790367ea7741c56ae5dce66645d8fc80b0 and v8 ASR/AGY independently preserve 粉毛是我之前染过粉毛啊; the previous truth anchor accidentally overwrote this next cue",
+          "before": [
+            "粉毛是我之前染过粉毛啊"
+          ],
+          "before_span": "190，190是谣言啊",
+          "cue_indexes": [
+            27
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "粉毛是我之前染过粉毛啊"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:9c6fabe3b1850ffb22e4d30e4953a4cdf26cb07b11dfdc66f6633a8076f0406f",
+          "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE_PLUS_DUAL_ASR",
+          "local_windows": [
+            {
+              "end_ms": 52210,
+              "start_ms": 50130
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r1",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 2080,
+          "source_end_ms": 1625120,
+          "source_start_ms": 1623040,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-chair-pink-hair-history-r1"
+        }
+      ],
+      "schema_version": "source-subtitle-truth-audit.v1",
+      "status": "ALREADY_SATISFIED",
+      "timeline_basis": "final_delivery"
+    },
+    "status": "APPLIED",
+    "timing_authority": "hash_bound_reviewed_srt_exact_source_interval",
+    "uncovered_current_cue_count": 0,
+    "uncovered_current_cues": [],
+    "uncovered_current_intervals": []
+  },
+  "schema_version": "chat-authority-audit.v2",
+  "self_reference_absorption_audit": {
+    "candidate_names": [
+      "小李",
+      "李豆沙",
+      "豆沙"
+    ],
+    "repairs": [],
+    "schema_version": "self-reference-absorption-audit.v3",
+    "source_witness_available": true,
+    "status": "NO_MATCH"
+  },
+  "sender_repairs": [
+    {
+      "after": "谢谢寒-歌的钢镚",
+      "alignment_basis": "matched-superchat-body-plus-platform-sender.v1",
+      "before": "谢谢韩哥的钢镚",
+      "cue_index": 55,
+      "evidence_id": "a3bc22a800609d600f715c322e121c1d0691f1bc4b2ebfa9b08cdcf12c7daa90",
+      "final_verification_kind": "sc_sender",
+      "final_verification_scope": "SUPERSEDED_BY_REDELIVERY_BASELINE",
+      "matched_end_ms": 112350,
+      "matched_start_ms": 109820,
+      "sender": "寒-歌",
+      "source_event_id": "17719088",
+      "spoken_sender": "寒-歌"
+    }
+  ],
+  "sender_verdict_required": [],
+  "session_topic_absorption_audits": [
+    {
+      "authorities": [],
+      "repair_count": 0,
+      "repairs": [],
+      "schema_version": "session-topic-authority-audit.v1",
+      "status": "CLEAN"
+    },
+    {
+      "authorities": [],
+      "repair_count": 0,
+      "repairs": [],
+      "schema_version": "session-topic-authority-audit.v1",
+      "status": "CLEAN"
+    }
+  ],
+  "source_subtitle_truth_audit": {
+    "applied": [],
+    "failures": [],
+    "final_recut_offset_ms": 9760,
+    "ledger_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/subtitle_truth_ledger.v1.json",
+    "ledger_sha256": "sha256:5f39a0e37ded249fa028ad4310ee0fc9780a0679faa7446f44fcede24258706d",
+    "reapplied_after_redelivery_baseline": true,
+    "satisfied": [
+      {
+        "action": "replace_cue",
+        "after": [
+          "感觉像被豆沙",
+          "霸凌"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "r2 corrects the earlier shortened paraphrase: Ivan-approved delivery SRT sha256=1fbc4f32049e4c9623695a4605ec44790367ea7741c56ae5dce66645d8fc80b0 preserves 感觉像被豆沙霸凌, matching the chair-yield story and later 李豆沙霸凌 callback",
+        "before": [
+          "感觉像被豆沙",
+          "霸凌"
+        ],
+        "before_span": "感觉像被留了像霸凌",
+        "cue_indexes": [
+          15,
+          16
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "感觉像被豆沙霸凌"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:29417d5c8cf1092284cd86b84862bd31be3a7bc8c18c75f1d3035d58db88e1c6",
+        "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE_PLUS_LOCAL_STORY_SEMANTICS",
+        "local_windows": [
+          {
+            "end_ms": 37290,
+            "start_ms": 34810
+          }
+        ],
+        "recording_basename": "22966160_20260722-19-35-15.mp4",
+        "revision_id": "r2",
+        "source_aliases": [
+          {
+            "alias_id": "20260722-official-replay-bv1fjg16xex6",
+            "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+            "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+            "alias_timeline_offset_ms": 0
+          }
+        ],
+        "source_coverage_ms": 2480,
+        "source_end_ms": 1600440,
+        "source_start_ms": 1597960,
+        "supersedes": null,
+        "truth_id": "20260722-nancho-chair-bullying-phrase-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "哈哈哈哈，190，190是谣言啊"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-stated-20260722(该切片可上传，唯一缺点是封面)+reviewed SRT sha256=1fbc4f32049e4c9623695a4605ec44790367ea7741c56ae5dce66645d8fc80b0 and BCUT cues 715-716; r2 corrects the source anchor from the following 粉毛 cue to the merged laughter-plus-190 cue that fresh ASR hallucinated as 1190",
+        "before": [
+          "哈哈哈哈，190，190是谣言啊"
+        ],
+        "before_span": "一瞅1190是谣言啊",
+        "cue_indexes": [
+          26
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "哈哈哈哈，190，190是谣言啊"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:0ab377cc07ad6528d2ae3c98771c6e8505034c54ac512b602fcaa055a1d8f8df",
+        "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE_PLUS_HUMAN_PACKAGE_ACCEPTANCE",
+        "local_windows": [
+          {
+            "end_ms": 59890,
+            "start_ms": 56100
+          }
+        ],
+        "recording_basename": "22966160_20260722-19-35-15.mp4",
+        "revision_id": "r2",
+        "source_aliases": [
+          {
+            "alias_id": "20260722-official-replay-bv1fjg16xex6",
+            "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+            "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+            "alias_timeline_offset_ms": 0
+          }
+        ],
+        "source_coverage_ms": 3790,
+        "source_end_ms": 1623040,
+        "source_start_ms": 1619250,
+        "supersedes": null,
+        "truth_id": "20260722-nancho-chair-190-rumor-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "粉毛是我之前染过粉毛啊"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "reviewed SRT sha256=1fbc4f32049e4c9623695a4605ec44790367ea7741c56ae5dce66645d8fc80b0 and v8 ASR/AGY independently preserve 粉毛是我之前染过粉毛啊; the previous truth anchor accidentally overwrote this next cue",
+        "before": [
+          "粉毛是我之前染过粉毛啊"
+        ],
+        "before_span": "190，190是谣言啊",
+        "cue_indexes": [
+          27
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "粉毛是我之前染过粉毛啊"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:9c6fabe3b1850ffb22e4d30e4953a4cdf26cb07b11dfdc66f6633a8076f0406f",
+        "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE_PLUS_DUAL_ASR",
+        "local_windows": [
+          {
+            "end_ms": 61970,
+            "start_ms": 59890
+          }
+        ],
+        "recording_basename": "22966160_20260722-19-35-15.mp4",
+        "revision_id": "r1",
+        "source_aliases": [
+          {
+            "alias_id": "20260722-official-replay-bv1fjg16xex6",
+            "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+            "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+            "alias_timeline_offset_ms": 0
+          }
+        ],
+        "source_coverage_ms": 2080,
+        "source_end_ms": 1625120,
+        "source_start_ms": 1623040,
+        "supersedes": null,
+        "truth_id": "20260722-nancho-chair-pink-hair-history-r1"
+      }
+    ],
+    "schema_version": "source-subtitle-truth-audit.v1",
+    "status": "ALREADY_SATISFIED",
+    "timeline_basis": "padded_candidate"
+  },
+  "source_subtitle_truth_post_redelivery_audit": {
+    "applied": [],
+    "failures": [],
+    "ledger_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/subtitle_truth_ledger.v1.json",
+    "ledger_sha256": "sha256:5f39a0e37ded249fa028ad4310ee0fc9780a0679faa7446f44fcede24258706d",
+    "reapplied_after_redelivery_baseline": true,
+    "satisfied": [
+      {
+        "action": "replace_cue",
+        "after": [
+          "感觉像被豆沙",
+          "霸凌"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "r2 corrects the earlier shortened paraphrase: Ivan-approved delivery SRT sha256=1fbc4f32049e4c9623695a4605ec44790367ea7741c56ae5dce66645d8fc80b0 preserves 感觉像被豆沙霸凌, matching the chair-yield story and later 李豆沙霸凌 callback",
+        "before": [
+          "感觉像被豆沙",
+          "霸凌"
+        ],
+        "before_span": "感觉像被留了像霸凌",
+        "cue_indexes": [
+          15,
+          16
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "感觉像被豆沙霸凌"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:29417d5c8cf1092284cd86b84862bd31be3a7bc8c18c75f1d3035d58db88e1c6",
+        "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE_PLUS_LOCAL_STORY_SEMANTICS",
+        "local_windows": [
+          {
+            "end_ms": 27530,
+            "start_ms": 25050
+          }
+        ],
+        "recording_basename": "22966160_20260722-19-35-15.mp4",
+        "revision_id": "r2",
+        "source_aliases": [
+          {
+            "alias_id": "20260722-official-replay-bv1fjg16xex6",
+            "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+            "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+            "alias_timeline_offset_ms": 0
+          }
+        ],
+        "source_coverage_ms": 2480,
+        "source_end_ms": 1600440,
+        "source_start_ms": 1597960,
+        "supersedes": null,
+        "truth_id": "20260722-nancho-chair-bullying-phrase-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "哈哈哈哈，190，190是谣言啊"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-stated-20260722(该切片可上传，唯一缺点是封面)+reviewed SRT sha256=1fbc4f32049e4c9623695a4605ec44790367ea7741c56ae5dce66645d8fc80b0 and BCUT cues 715-716; r2 corrects the source anchor from the following 粉毛 cue to the merged laughter-plus-190 cue that fresh ASR hallucinated as 1190",
+        "before": [
+          "哈哈哈哈，190，190是谣言啊"
+        ],
+        "before_span": "一瞅1190是谣言啊",
+        "cue_indexes": [
+          26
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "哈哈哈哈，190，190是谣言啊"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:0ab377cc07ad6528d2ae3c98771c6e8505034c54ac512b602fcaa055a1d8f8df",
+        "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE_PLUS_HUMAN_PACKAGE_ACCEPTANCE",
+        "local_windows": [
+          {
+            "end_ms": 50130,
+            "start_ms": 46340
+          }
+        ],
+        "recording_basename": "22966160_20260722-19-35-15.mp4",
+        "revision_id": "r2",
+        "source_aliases": [
+          {
+            "alias_id": "20260722-official-replay-bv1fjg16xex6",
+            "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+            "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+            "alias_timeline_offset_ms": 0
+          }
+        ],
+        "source_coverage_ms": 3790,
+        "source_end_ms": 1623040,
+        "source_start_ms": 1619250,
+        "supersedes": null,
+        "truth_id": "20260722-nancho-chair-190-rumor-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "粉毛是我之前染过粉毛啊"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "reviewed SRT sha256=1fbc4f32049e4c9623695a4605ec44790367ea7741c56ae5dce66645d8fc80b0 and v8 ASR/AGY independently preserve 粉毛是我之前染过粉毛啊; the previous truth anchor accidentally overwrote this next cue",
+        "before": [
+          "粉毛是我之前染过粉毛啊"
+        ],
+        "before_span": "190，190是谣言啊",
+        "cue_indexes": [
+          27
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "粉毛是我之前染过粉毛啊"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:9c6fabe3b1850ffb22e4d30e4953a4cdf26cb07b11dfdc66f6633a8076f0406f",
+        "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE_PLUS_DUAL_ASR",
+        "local_windows": [
+          {
+            "end_ms": 52210,
+            "start_ms": 50130
+          }
+        ],
+        "recording_basename": "22966160_20260722-19-35-15.mp4",
+        "revision_id": "r1",
+        "source_aliases": [
+          {
+            "alias_id": "20260722-official-replay-bv1fjg16xex6",
+            "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+            "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+            "alias_timeline_offset_ms": 0
+          }
+        ],
+        "source_coverage_ms": 2080,
+        "source_end_ms": 1625120,
+        "source_start_ms": 1623040,
+        "supersedes": null,
+        "truth_id": "20260722-nancho-chair-pink-hair-history-r1"
+      }
+    ],
+    "schema_version": "source-subtitle-truth-audit.v1",
+    "status": "ALREADY_SATISFIED",
+    "timeline_basis": "final_delivery"
+  },
+  "source_subtitle_truth_pre_redelivery_audit": {
+    "applied": [
+      {
+        "action": "replace_cue",
+        "after": [
+          "感觉像被豆沙",
+          "霸凌"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "r2 corrects the earlier shortened paraphrase: Ivan-approved delivery SRT sha256=1fbc4f32049e4c9623695a4605ec44790367ea7741c56ae5dce66645d8fc80b0 preserves 感觉像被豆沙霸凌, matching the chair-yield story and later 李豆沙霸凌 callback",
+        "before": [
+          "感觉像被李豆沙霸凌了",
+          "像霸凌"
+        ],
+        "before_span": "感觉像被留了像霸凌",
+        "cue_indexes": [
+          20,
+          21
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "感觉像被豆沙霸凌"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:29417d5c8cf1092284cd86b84862bd31be3a7bc8c18c75f1d3035d58db88e1c6",
+        "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE_PLUS_LOCAL_STORY_SEMANTICS",
+        "local_windows": [
+          {
+            "end_ms": 37290,
+            "start_ms": 34810
+          }
+        ],
+        "multi_cue_redistribution": [
+          "感觉像被豆沙",
+          "霸凌"
+        ],
+        "recording_basename": "22966160_20260722-19-35-15.mp4",
+        "revision_id": "r2",
+        "source_aliases": [
+          {
+            "alias_id": "20260722-official-replay-bv1fjg16xex6",
+            "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+            "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+            "alias_timeline_offset_ms": 0
+          }
+        ],
+        "source_coverage_ms": 2480,
+        "source_end_ms": 1600440,
+        "source_start_ms": 1597960,
+        "supersedes": null,
+        "truth_id": "20260722-nancho-chair-bullying-phrase-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "哈哈哈哈，190，190是谣言啊"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-stated-20260722(该切片可上传，唯一缺点是封面)+reviewed SRT sha256=1fbc4f32049e4c9623695a4605ec44790367ea7741c56ae5dce66645d8fc80b0 and BCUT cues 715-716; r2 corrects the source anchor from the following 粉毛 cue to the merged laughter-plus-190 cue that fresh ASR hallucinated as 1190",
+        "before": [
+          "哈哈，190是谣言啊"
+        ],
+        "before_span": "一瞅1190是谣言啊",
+        "cue_indexes": [
+          31
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "哈哈哈哈，190，190是谣言啊"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:0ab377cc07ad6528d2ae3c98771c6e8505034c54ac512b602fcaa055a1d8f8df",
+        "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE_PLUS_HUMAN_PACKAGE_ACCEPTANCE",
+        "local_windows": [
+          {
+            "end_ms": 59890,
+            "start_ms": 56100
+          }
+        ],
+        "recording_basename": "22966160_20260722-19-35-15.mp4",
+        "revision_id": "r2",
+        "source_aliases": [
+          {
+            "alias_id": "20260722-official-replay-bv1fjg16xex6",
+            "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+            "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+            "alias_timeline_offset_ms": 0
+          }
+        ],
+        "source_coverage_ms": 3790,
+        "source_end_ms": 1623040,
+        "source_start_ms": 1619250,
+        "supersedes": null,
+        "truth_id": "20260722-nancho-chair-190-rumor-r1"
+      }
+    ],
+    "failures": [],
+    "ledger_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/subtitle_truth_ledger.v1.json",
+    "ledger_sha256": "sha256:5f39a0e37ded249fa028ad4310ee0fc9780a0679faa7446f44fcede24258706d",
+    "satisfied": [
+      {
+        "action": "replace_cue",
+        "after": [
+          "粉毛是我之前染过粉毛啊"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "reviewed SRT sha256=1fbc4f32049e4c9623695a4605ec44790367ea7741c56ae5dce66645d8fc80b0 and v8 ASR/AGY independently preserve 粉毛是我之前染过粉毛啊; the previous truth anchor accidentally overwrote this next cue",
+        "before": [
+          "粉毛是我之前染过粉毛啊"
+        ],
+        "before_span": "190，190是谣言啊",
+        "cue_indexes": [
+          32
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "粉毛是我之前染过粉毛啊"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:9c6fabe3b1850ffb22e4d30e4953a4cdf26cb07b11dfdc66f6633a8076f0406f",
+        "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE_PLUS_DUAL_ASR",
+        "local_windows": [
+          {
+            "end_ms": 61970,
+            "start_ms": 59890
+          }
+        ],
+        "recording_basename": "22966160_20260722-19-35-15.mp4",
+        "revision_id": "r1",
+        "source_aliases": [
+          {
+            "alias_id": "20260722-official-replay-bv1fjg16xex6",
+            "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+            "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+            "alias_timeline_offset_ms": 0
+          }
+        ],
+        "source_coverage_ms": 2080,
+        "source_end_ms": 1625120,
+        "source_start_ms": 1623040,
+        "supersedes": null,
+        "truth_id": "20260722-nancho-chair-pink-hair-history-r1"
+      }
+    ],
+    "schema_version": "source-subtitle-truth-audit.v1",
+    "status": "APPLIED"
+  },
+  "speaker_ass_path": null,
+  "speaker_ass_sha256": null,
+  "speaker_manifest_sha256": null,
+  "status": "APPLIED_AND_VERIFIED",
+  "structured_chat_binding_audit": {
+    "pieces": [
+      {
+        "canonical_recording_basename": "22966160_20260722-19-35-15.mp4",
+        "jsonl_path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-22/22966160_20260722-19-35-15.jsonl",
+        "jsonl_sha256": "sha256:656988c81b06bb45199bed7fb2d4833cc350552c8c422804cb7d47752e0d88ef",
+        "origin_epoch_ms": 1784720115000,
+        "required": true,
+        "source_alias_id": "20260722-official-replay-bv1fjg16xex6",
+        "status": "BOUND_SOURCE_ALIAS",
+        "timeline_offset_ms": 0
+      }
+    ],
+    "retained_clip_window_counts": {
+      "danmaku": 53,
+      "guard": 1,
+      "superchat": 13
+    },
+    "retained_clip_window_total": 67,
+    "schema_version": "structured-chat-binding-audit.v1",
+    "status": "PASS",
+    "zero_retained_meaning": "bound source parsed successfully but no event survived the clip window; binding failures raise before this audit"
+  },
+  "superseded_chat_proposals": [],
+  "term_boundary_audit": {
+    "moves": [],
+    "schema_version": "term-boundary-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "thank_prefix_restore_audit": {
+    "restorations": [],
+    "schema_version": "thank-prefix-restore-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "title_mark_balance_audit": {
+    "cross_cue_pairs": [],
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "title-mark-balance-audit.v1",
+    "status": "CLEAN",
+    "unresolved": []
+  },
+  "transcript_entity_audit": {
+    "confirmed": [],
+    "entity_verdict_required": [],
+    "input_srt_sha256": "c7e600680f099e12025479df7e9de97f3e5546dd5ea58fac5475bd9ae10a7d3d",
+    "ledger_excluded_cue_indexes": [
+      20,
+      21,
+      31,
+      32
+    ],
+    "output_srt_sha256": "c7e600680f099e12025479df7e9de97f3e5546dd5ea58fac5475bd9ae10a7d3d",
+    "repairs": [],
+    "schema_version": "transcript-entity-audit.v1",
+    "status": "NO_ENTITY"
+  },
+  "unthanked_donor_disclosure": {
+    "schema_version": "unthanked-donor-disclosure.v1",
+    "status": "DISCLOSED",
+    "unthanked": [
+      {
+        "kind": "superchat",
+        "offset_ms": -890784,
+        "sender": "小猪状态",
+        "text": "感觉皮套已经腌入味了，不管怎么看大n老师的皮套，都明显感觉到是右边的真豆沙在说话。好奇怪喔"
+      },
+      {
+        "kind": "superchat",
+        "offset_ms": -874498,
+        "sender": "竹风菌",
+        "text": "psp两位最强搞笑女史诗级会晤有懂的吗，已经开始笑了（"
+      },
+      {
+        "kind": "superchat",
+        "offset_ms": -874443,
+        "sender": "黑王_",
+        "text": "豆沙大n晚上好！现在直播间同时有妈妈和老公了！好耶！另外豆沙听过nn的矮人笑话吗"
+      },
+      {
+        "kind": "superchat",
+        "offset_ms": -856741,
+        "sender": "夜行行行行",
+        "text": "两位是奶 t 姛。李姐给ntnt听那首短短了吗"
+      },
+      {
+        "kind": "superchat",
+        "offset_ms": -596679,
+        "sender": "鸭血の耙耙柑",
+        "text": "大N老师能别躲在后面拿烟头偷偷烫我麻麻吗；；"
+      },
+      {
+        "kind": "superchat",
+        "offset_ms": -491190,
+        "sender": "刘备爱看沐霂",
+        "text": "李姐nn晚上好，请坐在左边的弹右边的一个脑瓜崩"
+      },
+      {
+        "kind": "superchat",
+        "offset_ms": -370632,
+        "sender": "梅杰克家的六更るり",
+        "text": "我也是27级kimo熊啊！"
+      },
+      {
+        "kind": "superchat",
+        "offset_ms": -241888,
+        "sender": "Spectator沧月",
+        "text": "ttt15：头上怎么有数字 n20：可能是真善美指数 lds170：你们在说什么"
+      },
+      {
+        "kind": "superchat",
+        "offset_ms": -158259,
+        "sender": "南町家的星耀",
+        "text": "什么要请大N老师吃火锅，给你们加盘素菜，终于和大N见面了"
+      },
+      {
+        "kind": "superchat",
+        "offset_ms": -4508,
+        "sender": "-天蓝青-",
+        "text": "好漂亮的大姐姐，心里没有李豆沙的位置了"
+      },
+      {
+        "kind": "superchat",
+        "offset_ms": 107098,
+        "sender": "小凑るう子",
+        "text": "小李又被大N霸凌了；；为什么是又？"
+      }
+    ]
+  },
+  "witness_disagreement_audits": [
+    {
+      "candidate_entities": [
+        "李豆沙",
+        "小李"
+      ],
+      "reason_code": "DRAFT_WITNESS_IS_NOT_POST_SEMANTIC_AUTHORITY",
+      "schema_version": "witness-disagreement-audit.v2",
+      "status": "SEMANTIC_AUTHORITY_PRESERVED",
+      "suspicious_cue_indexes": [
+        20
+      ]
+    }
+  ]
+}

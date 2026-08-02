@@ -1,0 +1,606 @@
+{
+  "artifact_hashes": {
+    "ai_background_sha256": "sha256:da481ba75ab89a48bc7c8c88e51850bf774cb7500395636f47d7edfb395deba6",
+    "ass_sha256": "sha256:80f0969e066a05945129c8c95572c160e5e78e25e456f7a917229181a388392c",
+    "burned_video_sha256": "sha256:54e9607dfce0999ee208544c73f88d82060f3f5a9c2a6cbcf7bb14eb02d01633",
+    "chat_authority_audit_sha256": "sha256:d724ed79dc112967d8886b0bef331364f81450eff1a4eedffba9bf18b01b89f5",
+    "cover_reference_sha256": "sha256:1f4f16d4a547643d4fb295495793b0b90d53527c2197906283f1612b93a64743",
+    "cover_sha256": "sha256:e7c1615f840753538eba373100ba8bcfd216c968a03d7654854482b1f7ddbe8b",
+    "subtitle_sha256": "sha256:3ec28c5a6722c0edcaa42dec09d3ea9c9cb781ce2bfb2b8a33f17e0fb8de3a0d",
+    "video_sha256": "sha256:5d0d8ab2208347b9d3d1a82408efa9cfb3a94505d7a142ff858a832c535db1b3"
+  },
+  "boundary_audit": {
+    "boundary_repair_extend_cap_ms": 30000,
+    "boundary_repair_max_end_ms": 258070,
+    "boundary_repair_search_origin_ms": 228070,
+    "boundary_repairs": [],
+    "closure_sentence": "穷举也是一种方法",
+    "end_cut_inside_speech_island": false,
+    "end_island_continues_ms": 0,
+    "end_on_sentence_boundary": true,
+    "final_end_ms": 228530,
+    "final_start_ms": 9810,
+    "opening_sentence": "这是什么地方",
+    "red_flags": [],
+    "schema_version": "boundary-audit.v1",
+    "semantic_start_target_rel_ms": 10000,
+    "semantic_target_rel_ms": 228070,
+    "snapped_sentence_end_ms": 228130,
+    "snapped_sentence_start_ms": 10060,
+    "start_on_sentence_boundary": true,
+    "tail_adjustment": {
+      "final_end_ms": 228530,
+      "next_speech_island_gap_ms": 2566,
+      "next_speech_island_guard_ms": 100,
+      "next_speech_island_start_ms": 230696,
+      "next_subtitle_start_ms": 230560,
+      "nominal_end_ms": 228530,
+      "reason": null,
+      "tail_pad_ms": 400
+    },
+    "tail_refinement_used": false,
+    "verdict": "ok_sentence_boundary_cut"
+  },
+  "burned_preview": {
+    "ass_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_6577_6795/replacement_recuts/auto_193450_6577_6795.recut.final-sapphire72.ass",
+    "branding_intro": {
+      "fallback_attempts": [],
+      "intro_id": "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+      "intro_media_path": "/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.z1-budui-20260718.mp4",
+      "intro_media_sha256": "bbd0c7e3b34d3d5af543bb8444861ab1e18f835c9252629480b2ec2fd34e7dc5",
+      "intro_offset_ms": 5766,
+      "main_duration_ms_before": 218733,
+      "main_sha256_before": "0b49717eb62285ca4d755ad785953f203817bef8e837c35b1a7f4760144a1b2a",
+      "method": "matched-intro-concat-copy",
+      "policy_manifest_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/repo/assets/lidousha/intro/branding_intro.v1.json",
+      "policy_manifest_sha256": "bee66d164b683451602ae3601d79d19175bc72b0d13257b3026ae2dc47ee06ef",
+      "rotation": {
+        "candidate_intro_ids": [
+          "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+          "huozi-lidousha-kmx-baobao-guankou-z2-v1"
+        ],
+        "mode": "main-sha256",
+        "picked_intro_id": "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+        "selector": "main_sha256"
+      },
+      "status": "PREPENDED",
+      "verification": {
+        "duration_delta_ms": 23,
+        "duration_ms": 224522,
+        "full_decode": "clean",
+        "stream_contract": {
+          "audio_codec": "aac",
+          "channels": 2,
+          "fps": "30/1",
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "sample_rate": 44100,
+          "video_codec": "h264",
+          "width": 1920
+        }
+      }
+    },
+    "burned_sha256": "sha256:54e9607dfce0999ee208544c73f88d82060f3f5a9c2a6cbcf7bb14eb02d01633",
+    "command": [
+      "ffmpeg",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-y",
+      "-i",
+      "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_6577_6795/replacement_recuts/auto_193450_6577_6795.recut.mp4",
+      "-vf",
+      "subtitles='/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_6577_6795/replacement_recuts/auto_193450_6577_6795.recut.final-sapphire72.ass':fontsdir='/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/repo/assets/lidousha/fonts'",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "20",
+      "-c:a",
+      "copy",
+      "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_6577_6795/replacement_recuts/auto_193450_6577_6795.recut.burned-final-sapphire72.mp4"
+    ],
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_6577_6795/replacement_recuts/auto_193450_6577_6795.recut.burned-final-sapphire72.mp4",
+    "pillarbox_16_9": false,
+    "status": "BURNED",
+    "stream_contract": null,
+    "subtitle_style": "lidousha-final-sapphire72"
+  },
+  "chat_authority_audit_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_6577_6795/auto_193450_6577_6795.chat-authority.json",
+  "duration_ms": 218720,
+  "end_ms": 218720,
+  "media_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_6577_6795/replacement_recuts/auto_193450_6577_6795.recut.mp4",
+  "publish_staging": {
+    "cover_generation": {
+      "ai_background": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_6577_6795/replacement_recuts/covers_ai_original/auto_193450_6577_6795.ai-bg.cpa-image-edit.png",
+      "ai_background_sha256": "sha256:da481ba75ab89a48bc7c8c88e51850bf774cb7500395636f47d7edfb395deba6",
+      "angle_degrees": -2.0,
+      "art_direction": {
+        "background_style": "warm-scrapbook-collage",
+        "cover_punch": [
+          "仍没人看懂",
+          "稀里糊涂"
+        ],
+        "emote_id": "",
+        "emote_mode": "",
+        "emote_reason": "",
+        "expression_en": "A baffled, blank stare with slightly parted lips, as if she somehow solved the puzzle but still cannot understand or explain it; no tongue.",
+        "hook_color": "pink",
+        "hook_word": "看懂",
+        "is_song": false,
+        "layout": "banner",
+        "line_breaks": [],
+        "role": "shy_cute_default",
+        "words": [
+          "两个人",
+          "研究",
+          "连线谜题",
+          "研究",
+          "到",
+          "互相质疑",
+          "操作，",
+          "稀里糊涂",
+          "穷举",
+          "成功后",
+          "仍没人看懂"
+        ]
+      },
+      "attempted_models": [
+        "gpt-image-2"
+      ],
+      "background_style": "warm-scrapbook-collage",
+      "cover_diversity_slot": 7,
+      "cover_mode": "auto",
+      "cover_punch": [
+        "仍没人看懂",
+        "稀里糊涂"
+      ],
+      "cover_punch_allowed": true,
+      "cover_text": "两个人研究连线谜题研究到互相质疑操作，稀里糊涂穷举成功后仍没人看懂",
+      "cover_text_mode": "punch",
+      "cover_treatment": {
+        "reason": "motion without confident cover subject (score=7.26)",
+        "treatment": "cpa_redraw"
+      },
+      "expression_en": "A baffled, blank stare with slightly parted lips, as if she somehow solved the puzzle but still cannot understand or explain it; no tongue.",
+      "fallback_used": false,
+      "final_cover": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_6577_6795/replacement_recuts/covers/auto_193450_6577_6795.ai-title.cover.png",
+      "final_cover_sha256": "sha256:e7c1615f840753538eba373100ba8bcfd216c968a03d7654854482b1f7ddbe8b",
+      "font": "ZCOOLKuaiLe-Regular.ttf",
+      "font_selection": {
+        "font": "ZCOOLKuaiLe-Regular.ttf",
+        "glyph_risk": [],
+        "rejected": []
+      },
+      "font_size": 277,
+      "hook_color": "pink",
+      "hook_word": "看懂",
+      "image_gen_model": "cpa",
+      "layout": "banner",
+      "line_split": "punch",
+      "method": "images.edit",
+      "model": "gpt-image-2",
+      "model_fallback_used": false,
+      "overlay_position": {
+        "x": 224,
+        "y": -45
+      },
+      "reference_image": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_6577_6795/replacement_recuts/cover_refs/auto_193450_6577_6795.cover-ref.png",
+      "reference_selection": {
+        "anchor_x_frac": 0.6178,
+        "best_ms": 169500,
+        "candidates": [
+          {
+            "audio_z": 1.1488,
+            "emotion": 1.0,
+            "motion_z": 6.2745,
+            "ms": 169500,
+            "score": 7.2628,
+            "sharp_z": -2.042
+          },
+          {
+            "audio_z": -0.7908,
+            "emotion": 0.0,
+            "motion_z": 6.4343,
+            "ms": 199500,
+            "score": 6.9586,
+            "sharp_z": 5.2605
+          },
+          {
+            "audio_z": 2.2289,
+            "emotion": 0.0,
+            "motion_z": 3.5909,
+            "ms": 202500,
+            "score": 5.4302,
+            "sharp_z": -1.5582
+          }
+        ],
+        "head_top_frac": 0.1,
+        "media_duration_ms": 218733,
+        "motion_bbox_frac": [
+          0.2188,
+          0.1,
+          1.0,
+          0.8556
+        ],
+        "motion_dispersion_frac": 0.5903,
+        "sample_fps": 2.0,
+        "schema": "cover-frame-selection.v1",
+        "signals": {
+          "audio_env_available": true,
+          "emotion_spans": 14
+        },
+        "skip_head_ms": 7266,
+        "skip_tail_ms": 1200,
+        "status": "SELECTED",
+        "subject_anchor_x_frac": 0.7078,
+        "subject_bbox_frac": [
+          0.4156,
+          0.0944,
+          1.0,
+          0.8556
+        ],
+        "subject_confident": false,
+        "subject_head_top_frac": 0.0944
+      },
+      "reference_sha256": "sha256:1f4f16d4a547643d4fb295495793b0b90d53527c2197906283f1612b93a64743",
+      "rendered_lines": [
+        "仍没人看懂",
+        "稀里糊涂"
+      ],
+      "request_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_6577_6795/replacement_recuts/evidence/auto_193450_6577_6795.cover-cpa-request.redacted.json",
+      "response_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_6577_6795/replacement_recuts/evidence/auto_193450_6577_6795.cover-cpa-response.redacted.json",
+      "role": "shy_cute_default",
+      "scrim": false,
+      "text_backing": "outline",
+      "title": "【李豆沙】两个人研究连线谜题研究到互相质疑操作，稀里糊涂穷举成功后仍没人看懂",
+      "title_band": "banner",
+      "workflow": "cpa-openai-compatible-image-edit-cover-plus-approved-local-title-overlay"
+    },
+    "cover_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_6577_6795/replacement_recuts/covers/auto_193450_6577_6795.ai-title.cover.png",
+    "cover_status": "AI_COVER_READY",
+    "cover_text": "两个人研究连线谜题研究到互相质疑操作，稀里糊涂穷举成功后仍没人看懂",
+    "publish_json_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_6577_6795/replacement_recuts/auto_193450_6577_6795.recut.publish.json",
+    "reason_codes": [],
+    "status": "STAGED",
+    "title": "【李豆沙】两个人研究连线谜题研究到互相质疑操作，稀里糊涂穷举成功后仍没人看懂",
+    "title_authority_error": null,
+    "title_authority_status": "RESOLVED_DETERMINISTIC_FALLBACK",
+    "title_policy_violations": [],
+    "title_source": "selection_hook_fallback_after_llm_mismatch",
+    "upload_enabled": false
+  },
+  "speaker_finalization": null,
+  "speaker_finalization_manifest_path": null,
+  "speaker_finalization_manifest_sha256": null,
+  "speaker_mode": "uniform_host",
+  "speaker_review_srt_path": null,
+  "start_ms": 0,
+  "status": "MATERIALIZED",
+  "subtitle_ass_path": null,
+  "subtitle_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_6577_6795/replacement_recuts/auto_193450_6577_6795.recut.srt",
+  "subtitle_regression": null,
+  "subtitle_regression_audit_path": null,
+  "subtitle_source": "aggregate_asr+bcut_agy_cpa+pronoun+text_final",
+  "subtitle_style": "lidousha-final-sapphire72",
+  "subtitle_timing_qa": {
+    "actions": [
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 27060,
+          "start_ms": 26060
+        },
+        "before": {
+          "end_ms": 26660,
+          "start_ms": 26060
+        },
+        "cue_id": "fresh_0005",
+        "density_cps": 1.667,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "啊",
+        "vad_overlap_ratio": 0.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 55580,
+          "start_ms": 54580
+        },
+        "before": {
+          "end_ms": 55180,
+          "start_ms": 54580
+        },
+        "cue_id": "fresh_0013",
+        "density_cps": 1.667,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "啊",
+        "vad_overlap_ratio": 0.753
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 75450,
+          "start_ms": 74450
+        },
+        "before": {
+          "end_ms": 75050,
+          "start_ms": 74450
+        },
+        "cue_id": "fresh_0020",
+        "density_cps": 1.667,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "哦",
+        "vad_overlap_ratio": 0.803
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 77130,
+          "start_ms": 76130
+        },
+        "before": {
+          "end_ms": 76970,
+          "start_ms": 76130
+        },
+        "cue_id": "fresh_0021",
+        "density_cps": 2.381,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "这是",
+        "vad_overlap_ratio": 0.802
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 78770,
+          "start_ms": 77770
+        },
+        "before": {
+          "end_ms": 78450,
+          "start_ms": 77770
+        },
+        "cue_id": "fresh_0022",
+        "density_cps": 1.471,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "哎",
+        "vad_overlap_ratio": 0.862
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 87940,
+          "start_ms": 86940
+        },
+        "before": {
+          "end_ms": 87900,
+          "start_ms": 86940
+        },
+        "cue_id": "fresh_0027",
+        "density_cps": 3.125,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "不能抓",
+        "vad_overlap_ratio": 0.854
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 95180,
+          "start_ms": 94180
+        },
+        "before": {
+          "end_ms": 94820,
+          "start_ms": 94180
+        },
+        "cue_id": "fresh_0030",
+        "density_cps": 1.562,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "啊",
+        "vad_overlap_ratio": 0.794
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 117660,
+          "start_ms": 116660
+        },
+        "before": {
+          "end_ms": 117420,
+          "start_ms": 116660
+        },
+        "cue_id": "fresh_0037",
+        "density_cps": 1.316,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "嗯",
+        "vad_overlap_ratio": 0.484
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 128910,
+          "start_ms": 127910
+        },
+        "before": {
+          "end_ms": 128870,
+          "start_ms": 127910
+        },
+        "cue_id": "fresh_0043",
+        "density_cps": 3.125,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "不是吗",
+        "vad_overlap_ratio": 0.831
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 137410,
+          "start_ms": 136410
+        },
+        "before": {
+          "end_ms": 137210,
+          "start_ms": 136410
+        },
+        "cue_id": "fresh_0046",
+        "density_cps": 2.5,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "对不",
+        "vad_overlap_ratio": 0.823
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 188790,
+          "start_ms": 187790
+        },
+        "before": {
+          "end_ms": 188390,
+          "start_ms": 187790
+        },
+        "cue_id": "fresh_0062",
+        "density_cps": 1.667,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "哼",
+        "vad_overlap_ratio": 0.743
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 201740,
+          "start_ms": 200740
+        },
+        "before": {
+          "end_ms": 201720,
+          "start_ms": 200740
+        },
+        "cue_id": "fresh_0067",
+        "density_cps": 4.082,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "虽然她赢",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 202720,
+          "start_ms": 201720
+        },
+        "before": {
+          "end_ms": 202600,
+          "start_ms": 201720
+        },
+        "cue_id": "fresh_0068",
+        "density_cps": 6.818,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "虽然她做出来",
+        "vad_overlap_ratio": 1.0
+      }
+    ],
+    "counts": {
+      "dropped": 0,
+      "retimed": 13
+    },
+    "policy": {
+      "hard_max_ms": 12000,
+      "min_density_cps": 0.8,
+      "min_readable_ms": 1000,
+      "soft_max_ms": 6000
+    },
+    "schema_version": "subtitle-timing-qa.v2",
+    "speech_span_count": 66,
+    "speech_total_ms": 146720,
+    "vad_evidence_contract": "positive_only_never_shrink_normal_asr_cues",
+    "window": {
+      "end_ms": 228530,
+      "start_ms": 9810
+    }
+  },
+  "talk_filler_audit_path": null,
+  "text_finalization_manifest_path": null,
+  "upload_tags": {
+    "content_tags": [
+      {
+        "tag": "解谜",
+        "why": "两人围绕“点亮所有的节点与回路”反复研究连接方法。"
+      },
+      {
+        "tag": "迷惑操作",
+        "why": "一边质疑“你在操作什么”“你的操作真随机”，一边稀里糊涂解开谜题。"
+      },
+      {
+        "tag": "智商下线",
+        "why": "开场就自嘲“智障了”，解开后两人仍反复表示“我还是没看懂”。"
+      },
+      {
+        "tag": "吐槽",
+        "why": "两人互相吐槽操作，还调侃“两个人加在一起能比得上边牧不”。"
+      },
+      {
+        "tag": "嘴硬",
+        "why": "被问“你是穷举出来的吗”后立刻否认，随后又强调“你就说解没解开吧”。"
+      },
+      {
+        "tag": "搞笑",
+        "why": "谜题虽然成功解开，但两人都没弄懂过程，形成强烈喜剧效果。"
+      }
+    ],
+    "engine": "suggest-upload-tags.v1",
+    "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,南町,解谜,迷惑操作,智商下线,吐槽,嘴硬,搞笑",
+    "final_tags": [
+      "李豆沙",
+      "虚拟主播",
+      "虚拟UP主",
+      "直播切片",
+      "南町",
+      "解谜",
+      "迷惑操作",
+      "智商下线",
+      "吐槽",
+      "嘴硬",
+      "搞笑"
+    ],
+    "proper_noun_tags": [
+      {
+        "evidence": {
+          "南町": 1
+        },
+        "hits": 1,
+        "notes": [
+          "Ivan: 大N老师→南町, 只出正主名"
+        ],
+        "rules": [
+          "nanmachi"
+        ],
+        "tag": "南町",
+        "title_hit": false
+      }
+    ],
+    "status": "OK",
+    "warnings": []
+  }
+}

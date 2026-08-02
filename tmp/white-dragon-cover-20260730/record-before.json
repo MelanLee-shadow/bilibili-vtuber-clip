@@ -1,0 +1,1496 @@
+{
+  "artifact_hashes": {
+    "ai_background_sha256": "sha256:6fc1853fda6cafd0113b58c62725c14ab8e30ff07958e6f00961662a9218cdee",
+    "ass_sha256": "sha256:42b777634c8246c7749b755fa15c93578f675002ee4478dd8e9e7c274503140d",
+    "burned_video_sha256": "sha256:76cfa5d4766e1b443e005299ff665233c88b291fc87e27fc3287de56435afe25",
+    "chat_authority_audit_sha256": "sha256:671cbb807b4adb47a8e624860c96a1367ee374caf572b18eb7d941de1cc91729",
+    "clip_context_file_sha256": "sha256:f85a76b89f9e18498e15ddc66b334ceadbcaa173c70a23005efc0835500d0e0c",
+    "cover_reference_sha256": "sha256:e165d1ce0527470717fb3d248e6429affbdcca6276f739481ee1ce0e00ed7f68",
+    "cover_sha256": "sha256:57c536b218674d9cc5c3b31866d8be7c01bf1cd6dd25d68774cb91b6928976ab",
+    "publish_draft_sha256": "sha256:91497d57132c9e5ed9ea3ee4f9e5841f23334fcbd26b5442172b8cf778e6ba54",
+    "subtitle_sha256": "sha256:526d80a6d659342364bea563eebacb9b24253ebcf3b15650ba5816e0ddaec299",
+    "video_sha256": "sha256:1822e3af4f8ec73109a84f41239ec93a8f7f13b5e685779cff8bfa29ee2180ac"
+  },
+  "boundary_audit": {
+    "boundary_authority": "published_source_recall_anchor_plus_semantic_review",
+    "boundary_repair_extend_cap_ms": 30000,
+    "boundary_repair_max_end_ms": 145000,
+    "boundary_repair_search_origin_ms": 115000,
+    "boundary_repairs": [],
+    "boundary_selection_lower_bound_ms": 115070,
+    "boundary_semantic_review": {
+      "boundary_search_scope": {
+        "baseline_tail_cap_ms": null,
+        "boundary_end_mode": "published_recall_anchor",
+        "delivery_lower_bound_ms": 100000,
+        "delivery_tail_pad_ms": 400,
+        "last_piece_start_ms": 899000,
+        "manual_lower_bound_ms": null,
+        "max_recommended_end_ms": 145000,
+        "minimum_recommended_end_ms": 100000,
+        "prior_piece_duration_ms": 0,
+        "published_recall_anchor_ms": 115000,
+        "reason_codes": [],
+        "recommendation_backward_ms": 15000,
+        "recommendation_forward_ms": 30000,
+        "repair_cap_ms": 30000,
+        "required_last_piece_source_end_ms": 1059000,
+        "required_local_source_context_end_ms": 160000,
+        "required_owner_end_ms": 98450,
+        "review_target_ms": 115000,
+        "schema_version": "talk-boundary-search-scope.v1",
+        "scope_sha256": "sha256:da10b8b413a7473ecb2f55441eee5f5baa90e8e54a013b5e08d5fae312de1b73",
+        "semantic_search_origin_ms": 115000,
+        "semantic_tail_trim_cap_ms": 15000,
+        "semantic_target_ms": 115000,
+        "status": "PASS",
+        "structured_payoff_clamped_from_ms": null,
+        "structured_payoff_ms": null,
+        "witness_reserve_ms": 15000
+      },
+      "candidate_id": "auto_192000_909_1014",
+      "content_anchor_covered": true,
+      "correlated_reviewer_disclosure": true,
+      "cue_grid_sha256": "sha256:5eacb53f2a3512d98e3f7271a77979a63740f0c3fabf23e48fe448baca626a02",
+      "evidence_cue_indexes": [
+        40,
+        41,
+        42,
+        43,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53
+      ],
+      "final_endpoint_binding": {
+        "closure_text_sha256": "sha256:ad675dfdd797d8f42579020a6c635522a4f3a370774cc2f0da48a310938ebf84",
+        "final_closure_cue_index": 52,
+        "final_cue_grid_sha256": "sha256:5eacb53f2a3512d98e3f7271a77979a63740f0c3fabf23e48fe448baca626a02",
+        "final_end_ms": 115470,
+        "final_snapped_end_ms": 115070,
+        "final_start_ms": 9110,
+        "reason_codes": [],
+        "recommended_end_cue_index": 52,
+        "recommended_end_ms": 115070,
+        "schema_version": "talk-boundary-final-endpoint-binding.v1",
+        "semantic_cue_grid_sha256": "sha256:5eacb53f2a3512d98e3f7271a77979a63740f0c3fabf23e48fe448baca626a02",
+        "semantic_request_sha256": "sha256:f95e3e4a3a1b8501926e158219b14c7077213d2311c1a522904b55948584e840",
+        "status": "PASS"
+      },
+      "independent_semantic_vote_count": 1,
+      "max_forward_ms": 30000,
+      "needs_more_context": false,
+      "next_topic_separated": true,
+      "next_topic_witness_valid": true,
+      "reason_codes": [],
+      "recommendation_relaxations": [],
+      "recommended_end_cue_index": 52,
+      "recommended_end_ms": 115070,
+      "request_sha256": "sha256:f95e3e4a3a1b8501926e158219b14c7077213d2311c1a522904b55948584e840",
+      "retry_scope": "none",
+      "review_scope": "source_full_window",
+      "reviewer_independence_group": "cpa-gpt-5.6-semantic-family",
+      "same_topic_continues_after_target": false,
+      "schema_version": "talk-boundary-semantic-review.v1",
+      "selector_story_witness": {
+        "comedic_payoff": 3,
+        "independence_group": "cpa-gpt-5.6-semantic-family",
+        "self_contained": 4,
+        "status": "PASS"
+      },
+      "semantic_independence_groups": [
+        "cpa-gpt-5.6-semantic-family"
+      ],
+      "source_separation_witness": null,
+      "status": "PASS",
+      "story_closed": true,
+      "summary": "建议在52结束，已完整覆盖拒绝做白色奶龙表情及旧模型恐怖的落点，随后53进入新的SC谢礼。",
+      "syntax_complete": true,
+      "target_cue_index": 52,
+      "target_ms": 115000
+    },
+    "closure_sentence": "看起来真的很恐怖",
+    "delivery_coverage_lower_bound_ms": 115070,
+    "delivery_coverage_verification": {
+      "failure": null,
+      "status": "PASS"
+    },
+    "end_cut_inside_speech_island": false,
+    "end_island_continues_ms": 0,
+    "end_on_sentence_boundary": true,
+    "final_delivery_boundary_semantic_review": {
+      "boundary_search_scope": {
+        "baseline_tail_cap_ms": null,
+        "boundary_end_mode": "semantic_lower_bound",
+        "delivery_lower_bound_ms": 105960,
+        "delivery_tail_pad_ms": 400,
+        "last_piece_start_ms": 0,
+        "manual_lower_bound_ms": null,
+        "max_recommended_end_ms": 135960,
+        "minimum_recommended_end_ms": 105960,
+        "prior_piece_duration_ms": 0,
+        "published_recall_anchor_ms": null,
+        "reason_codes": [],
+        "recommendation_backward_ms": 0,
+        "recommendation_forward_ms": 30000,
+        "repair_cap_ms": 30000,
+        "required_last_piece_source_end_ms": 150960,
+        "required_local_source_context_end_ms": 150960,
+        "required_owner_end_ms": null,
+        "review_target_ms": 105960,
+        "schema_version": "talk-boundary-search-scope.v1",
+        "scope_sha256": "sha256:61ac74ae33fa36f25825bd163547ac01ec912b799d0be57d76b903f7ed7c96db",
+        "semantic_search_origin_ms": 105960,
+        "semantic_tail_trim_cap_ms": 0,
+        "semantic_target_ms": 105960,
+        "status": "PASS",
+        "structured_payoff_clamped_from_ms": null,
+        "structured_payoff_ms": null,
+        "witness_reserve_ms": 15000
+      },
+      "candidate_id": "auto_192000_909_1014",
+      "content_anchor_covered": true,
+      "correlated_reviewer_disclosure": true,
+      "cue_grid_sha256": "sha256:dc50745558040d377d8ad540400ec5530ddadeaee0b412d46aad2a0c85a96caf",
+      "evidence_cue_indexes": [
+        48
+      ],
+      "final_endpoint_binding": {
+        "closure_text_sha256": "sha256:ad675dfdd797d8f42579020a6c635522a4f3a370774cc2f0da48a310938ebf84",
+        "final_closure_cue_index": 48,
+        "final_cue_grid_sha256": "sha256:dc50745558040d377d8ad540400ec5530ddadeaee0b412d46aad2a0c85a96caf",
+        "final_end_ms": 106360,
+        "final_snapped_end_ms": 105960,
+        "final_start_ms": 0,
+        "reason_codes": [],
+        "recommended_end_cue_index": 48,
+        "recommended_end_ms": 105960,
+        "schema_version": "talk-boundary-final-endpoint-binding.v1",
+        "semantic_cue_grid_sha256": "sha256:dc50745558040d377d8ad540400ec5530ddadeaee0b412d46aad2a0c85a96caf",
+        "semantic_request_sha256": "sha256:6b71463491da4be9c846e99ed4932aa57ce4b2cd31e48bc3c9174d37a3f7b9f9",
+        "status": "PASS"
+      },
+      "independent_semantic_vote_count": 1,
+      "max_forward_ms": 30000,
+      "needs_more_context": false,
+      "next_topic_separated": true,
+      "next_topic_witness_valid": true,
+      "reason_codes": [],
+      "recommendation_relaxations": [],
+      "recommended_end_cue_index": 48,
+      "recommended_end_ms": 105960,
+      "request_sha256": "sha256:6b71463491da4be9c846e99ed4932aa57ce4b2cd31e48bc3c9174d37a3f7b9f9",
+      "retry_scope": "none",
+      "review_scope": "final_delivery",
+      "reviewer_independence_group": "cpa-gpt-5.6-semantic-family",
+      "same_topic_continues_after_target": false,
+      "schema_version": "talk-boundary-semantic-review.v1",
+      "selector_story_witness": {
+        "comedic_payoff": 3,
+        "independence_group": "cpa-gpt-5.6-semantic-family",
+        "self_contained": 4,
+        "status": "PASS"
+      },
+      "semantic_independence_groups": [
+        "cpa-gpt-5.6-semantic-family"
+      ],
+      "source_separation_witness": {
+        "reason_codes": [],
+        "schema_version": "talk-boundary-source-separation-witness.v1",
+        "source_cue_grid_sha256": "sha256:5eacb53f2a3512d98e3f7271a77979a63740f0c3fabf23e48fe448baca626a02",
+        "source_final_end_ms": 115470,
+        "source_final_start_ms": 9110,
+        "source_recommended_end_ms": 115070,
+        "source_request_sha256": "sha256:f95e3e4a3a1b8501926e158219b14c7077213d2311c1a522904b55948584e840",
+        "source_review_sha256": "sha256:b57e771469ce426fc3fea6664e4db1f3ad149f5e5fa41167eda7047088a37f34",
+        "status": "PASS"
+      },
+      "status": "PASS",
+      "story_closed": true,
+      "summary": "推荐结尾句法完整，已完成拒绝保留白色奶龙及旧模型恐怖的故事闭环；终点后的新话题由 PASS 的 source separation witness 证明。",
+      "syntax_complete": true,
+      "target_cue_index": 48,
+      "target_ms": 105960
+    },
+    "final_end_ms": 115470,
+    "final_start_ms": 9110,
+    "frozen_required_boundary_owner_count": 7,
+    "frozen_required_boundary_owners": [
+      {
+        "local_windows": [
+          {
+            "end_ms": 97180,
+            "start_ms": 94640
+          }
+        ],
+        "owner_id": "20260725-ac-bixin-thanks-r1",
+        "owner_kind": "source_subtitle_truth",
+        "owner_scope_sha256": "sha256:b2a75baa2555f5a4bcf33888ea8df0a98b76ee036ecc60c00866ee97932064e4",
+        "required": true,
+        "source_end_ms": 996180,
+        "source_start_ms": 993640
+      },
+      {
+        "local_windows": [
+          {
+            "end_ms": 98450,
+            "start_ms": 97190
+          }
+        ],
+        "owner_id": "20260725-909-thanks-ambiguous-name-r1",
+        "owner_kind": "source_subtitle_truth",
+        "owner_scope_sha256": "sha256:b2a75baa2555f5a4bcf33888ea8df0a98b76ee036ecc60c00866ee97932064e4",
+        "required": true,
+        "source_end_ms": 997450,
+        "source_start_ms": 996190
+      },
+      {
+        "local_windows": [
+          {
+            "end_ms": 55710,
+            "start_ms": 54630
+          }
+        ],
+        "owner_id": "20260725-909-shishang-meiyou-zaoqi-r1",
+        "owner_kind": "source_subtitle_truth",
+        "owner_scope_sha256": "sha256:b2a75baa2555f5a4bcf33888ea8df0a98b76ee036ecc60c00866ee97932064e4",
+        "required": true,
+        "source_end_ms": 954710,
+        "source_start_ms": 953630
+      },
+      {
+        "local_windows": [
+          {
+            "end_ms": 80630,
+            "start_ms": 77730
+          }
+        ],
+        "owner_id": "exact_read:1:77730:80630",
+        "owner_kind": "exact_read",
+        "required": true
+      },
+      {
+        "local_windows": [
+          {
+            "end_ms": 14930,
+            "start_ms": 10740
+          }
+        ],
+        "owner_id": "exact_read:2:10740:14930",
+        "owner_kind": "exact_read",
+        "required": true
+      },
+      {
+        "local_windows": [
+          {
+            "end_ms": 45040,
+            "start_ms": 41640
+          }
+        ],
+        "owner_id": "entity_repair:1:41640:45040",
+        "owner_kind": "entity_repair",
+        "required": true
+      },
+      {
+        "local_windows": [
+          {
+            "end_ms": 63710,
+            "start_ms": 63110
+          }
+        ],
+        "owner_id": "entity_repair:2:63110:63710",
+        "owner_kind": "entity_repair",
+        "required": true
+      }
+    ],
+    "manual_end_authority": "Ivan 2026-07-29/30: auto_192000_909_1014 was not rejected or acoustically blocked. Because human listening cannot establish a unique truth for the disputed fast-spoken gift phrase, use the high-probability Bilibili gift canon 粉丝团灯牌 as the reasonable deterministic truth, rerun the whole already-published clip with the latest pipeline, preserve its existing BV and verified public title, and repair the cover and any other defects. The published endpoint is a recall anchor: CPA may close the selected white-dragon story within the bounded semantic window but must not absorb the following unrelated topic.",
+    "manual_end_mode": "published_recall_anchor",
+    "opening_sentence": "谢谢是你的沫夕鸭的钢镚。老大",
+    "red_flags": [],
+    "required_boundary_owner_end_ms": 98450,
+    "required_boundary_owner_start_ms": 10740,
+    "required_boundary_owner_verification": {
+      "failures": [],
+      "status": "PASS"
+    },
+    "schema_version": "boundary-audit.v1",
+    "semantic_start_target_rel_ms": 10000,
+    "semantic_target_rel_ms": 115000,
+    "snapped_sentence_end_ms": 115070,
+    "snapped_sentence_start_ms": 9360,
+    "start_on_sentence_boundary": true,
+    "syntactic_tail_audit": {
+      "reason": "punctuation_free_spoken_clause",
+      "status": "UNKNOWN"
+    },
+    "tail_adjustment": {
+      "final_end_ms": 115470,
+      "next_speech_island_gap_ms": 554,
+      "next_speech_island_guard_ms": 100,
+      "next_speech_island_start_ms": 115624,
+      "next_subtitle_start_ms": 115510,
+      "nominal_end_ms": 115470,
+      "reason": null,
+      "tail_pad_ms": 400
+    },
+    "tail_pad_coverage_bridge": {
+      "closure_lower_bound_ms": 115070,
+      "delivery_lower_bound_ms": 115070,
+      "maximum_tail_pad_ms": 400,
+      "status": "NOT_NEEDED"
+    },
+    "tail_refinement_used": false,
+    "verdict": "ok_sentence_boundary_cut"
+  },
+  "burned_preview": {
+    "ass_path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/replacement_recuts/auto_192000_909_1014.recut.final-sapphire72.ass",
+    "branding_intro": {
+      "fallback_attempts": [],
+      "intro_id": "huozi-lidousha-kmx-baobao-guankou-z2-v1",
+      "intro_media_path": "/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.z2-kmx-baobao-guankou-20260719.mp4",
+      "intro_media_sha256": "d37f4c358cc5d2515bca5a6fbc54bb5a10d7d2b8a36008777842def3d502ac29",
+      "intro_offset_ms": 6200,
+      "main_duration_ms_before": 106366,
+      "main_sha256_before": "a6935ed2b9ccc3fb2258d9a82a4a6461a4c96c11780aaa493583e1cd55ac6dff",
+      "method": "matched-intro-concat-copy",
+      "policy_manifest_path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/repo/assets/lidousha/intro/branding_intro.v1.json",
+      "policy_manifest_sha256": "bee66d164b683451602ae3601d79d19175bc72b0d13257b3026ae2dc47ee06ef",
+      "rotation": {
+        "candidate_intro_ids": [
+          "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+          "huozi-lidousha-kmx-baobao-guankou-z2-v1"
+        ],
+        "mode": "main-sha256",
+        "picked_intro_id": "huozi-lidousha-kmx-baobao-guankou-z2-v1",
+        "selector": "main_sha256"
+      },
+      "status": "PREPENDED",
+      "verification": {
+        "duration_delta_ms": 21,
+        "duration_ms": 112587,
+        "full_decode": "clean",
+        "stream_contract": {
+          "audio_codec": "aac",
+          "channels": 2,
+          "fps": "30/1",
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "sample_rate": 48000,
+          "video_codec": "h264",
+          "width": 1920
+        }
+      }
+    },
+    "burned_sha256": "sha256:76cfa5d4766e1b443e005299ff665233c88b291fc87e27fc3287de56435afe25",
+    "command": [
+      "ffmpeg",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-y",
+      "-i",
+      "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/replacement_recuts/auto_192000_909_1014.recut.mp4",
+      "-vf",
+      "subtitles='/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/replacement_recuts/auto_192000_909_1014.recut.final-sapphire72.ass':fontsdir='/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/repo/assets/lidousha/fonts'",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "20",
+      "-c:a",
+      "copy",
+      "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/replacement_recuts/auto_192000_909_1014.recut.burned-final-sapphire72.mp4"
+    ],
+    "path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/replacement_recuts/auto_192000_909_1014.recut.burned-final-sapphire72.mp4",
+    "pillarbox_16_9": false,
+    "status": "BURNED",
+    "stream_contract": null,
+    "subtitle_style": "lidousha-final-sapphire72"
+  },
+  "chat_authority_audit_path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/auto_192000_909_1014.chat-authority.json",
+  "clip_context_path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/auto_192000_909_1014.clip-context.json",
+  "clip_context_payload_sha256": "sha256:5b5bce55e73520ff7f5be33d7e6cc3cb58ef1b3727a39d23247f8ffb6bafa3b8",
+  "cover_repair_binding": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/cover_repair/generations/b78175e7ad9a-01-1785399582497256727/final.cover.cover-binding.json",
+    "sha256": "sha256:f9983fe8f5f23194542c699f73e595def3c75255d9b96bd7fae3749309ba4adb"
+  },
+  "duration_ms": 106360,
+  "end_ms": 106360,
+  "media_path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/replacement_recuts/auto_192000_909_1014.recut.mp4",
+  "publish_staging": {
+    "cover_generation": {
+      "ai_background": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/cover_repair/generations/b78175e7ad9a-01-1785399582497256727/ai-background.png",
+      "ai_background_sha256": "sha256:03ca668f70da6d08dd924c1cada2064ba5a2d3e4146d8928224a220e133fe2d3",
+      "angle_degrees": -3.0,
+      "art_direction": {
+        "background_style": "warm-scrapbook-collage",
+        "cover_punch": [],
+        "cover_punch_semantic_review": {},
+        "emote_id": "",
+        "emote_mode": "",
+        "emote_reason": "",
+        "expression_en": "Deadpan serious refusal with slightly puffed cheeks and a small closed mouth",
+        "hook_color": "pink",
+        "hook_word": "拒绝",
+        "is_song": false,
+        "layout": "right-split",
+        "role": "witty_smug",
+        "scene_props": [
+          "a white milky dragon face",
+          "an old 3D model screen"
+        ]
+      },
+      "attempted_models": [
+        "gpt-image-2"
+      ],
+      "background_style": "warm-scrapbook-collage",
+      "candidate_id": "auto_192000_909_1014",
+      "cover_diversity_slot": 1,
+      "cover_origin": "AI_REDRAW",
+      "cover_punch": [],
+      "cover_text": "“白色奶龙”表情\n小李拒绝花钱",
+      "cover_text_mode": "full",
+      "emote": null,
+      "expression_en": "Deadpan serious refusal with slightly puffed cheeks and a small closed mouth",
+      "fallback_used": false,
+      "final_cover": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/cover_repair/generations/b78175e7ad9a-01-1785399582497256727/final.cover.png",
+      "final_cover_sha256": "sha256:57c536b218674d9cc5c3b31866d8be7c01bf1cd6dd25d68774cb91b6928976ab",
+      "final_host_identity_verification": {
+        "authority": "AGY_HASH_BOUND_SOURCE_FINAL_IDENTITY_COMPARISON",
+        "comparison_path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/cover_repair/generations/b78175e7ad9a-01-1785399582497256727/final.cover.host-identity-witness.png",
+        "comparison_sha256": "sha256:6d99a81c6cd12a876bdeb8211bd9c8ad3bc58c689f9ba63dce7aea5b834589b1",
+        "final_cover_path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/cover_repair/generations/b78175e7ad9a-01-1785399582497256727/final.cover.png",
+        "final_cover_sha256": "sha256:57c536b218674d9cc5c3b31866d8be7c01bf1cd6dd25d68774cb91b6928976ab",
+        "reference_path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/replacement_recuts/cover_refs/auto_192000_909_1014.cover-ref.png",
+        "reference_sha256": "sha256:e165d1ce0527470717fb3d248e6429affbdcca6276f739481ee1ce0e00ed7f68",
+        "schema_version": "lidousha-cover-final-host-identity-verification.v1",
+        "status": "PASS",
+        "verdict": {
+          "identity_conflicts": [],
+          "primary_subject_identity": "李豆沙",
+          "primary_subject_is_lidousha": true,
+          "primary_subject_matches_other_source_participant": false,
+          "reason": "左图通过名牌'李豆沙★Channel'及白发、蓝白外衣、熊猫耳帽定位李豆沙；右图封面最居中的主角外观、发饰与服装均与左图李豆沙一致。",
+          "source_lidousha_located": true
+        },
+        "witness": {
+          "agy_rc": 0,
+          "answer": "```json\n{\n  \"source_lidousha_located\": true,\n  \"primary_subject_is_lidousha\": true,\n  \"primary_subject_matches_other_source_participant\": false,\n  \"primary_subject_identity\": \"李豆沙\",\n  \"identity_conflicts\": [],\n  \"reason\": \"左图通过名牌'李豆沙★Channel'及白发、蓝白外衣、熊猫耳帽定位李豆沙；右图封面最居中的主角外观、发饰与服装均与左图李豆沙一致。\"\n}\n```",
+          "frame_sha256": "108026189a14c72e98353e3c5d01f2dd1f5c544c6ee21be1dd73afee65b5fd1e",
+          "image_path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/cover_repair/generations/b78175e7ad9a-01-1785399582497256727/final.cover.host-identity-witness.png",
+          "image_sha256": "6d99a81c6cd12a876bdeb8211bd9c8ad3bc58c689f9ba63dce7aea5b834589b1",
+          "model": "Gemini 3.6 Flash (High)",
+          "prompt_sha256": "bc068b03d79a96286d87aca7eef43a27cbd712ebf859db0fcb8445c5438aed49",
+          "provider": "agy",
+          "question": "左侧是同一切片的 SOURCE REFERENCE，右侧是待发布 FINAL COVER。请先在左图用可见名牌、服装和外形定位李豆沙；若名牌可见，必须以名牌为准。李豆沙是白发、蓝白熊猫帽/熊猫耳的小个子形象。特别注意：不要把左图其他人物（例如带红金角饰、白发长辫、红领结的伊索尔Sol）误认成李豆沙；给别的角色加熊猫耳也不算身份正确。再判断右图最大、最居中、承担故事反应的主角是否确实延续左图李豆沙，而不是其他参与者。次要人物可以存在，但主角必须是李豆沙。不确定就 FAIL。只输出 JSON：{\"source_lidousha_located\":true|false,\"primary_subject_is_lidousha\":true|false,\"primary_subject_matches_other_source_participant\":true|false,\"primary_subject_identity\":\"简短身份\",\"identity_conflicts\":[\"冲突特征\"],\"reason\":\"简短中文说明\"}",
+          "response_sha256": "4b675e29709c330fced56c089b26226580593f75bde404c1b2d5aef2a36a42a8",
+          "schema_version": "agy-frame-witness.v1",
+          "status": "OBSERVED"
+        }
+      },
+      "font": "ZCOOLKuaiLe-Regular.ttf",
+      "font_selection": {
+        "font": "ZCOOLKuaiLe-Regular.ttf",
+        "glyph_risk": [],
+        "rejected": []
+      },
+      "font_size": 155,
+      "hook_color": "pink",
+      "hook_word": "拒绝",
+      "image_gen_model": "cpa",
+      "image_generation_attempted": true,
+      "image_generation_planned": true,
+      "image_generation_used": true,
+      "layout": "right-split",
+      "line_split": "explicit",
+      "method": "images.edit",
+      "min_talk_font_size": 120,
+      "model": "gpt-image-2",
+      "model_fallback_used": false,
+      "overlay_position": {
+        "x": 164,
+        "y": 254
+      },
+      "pre_overlay_path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/cover_repair/generations/b78175e7ad9a-01-1785399582497256727/final.cover.pre-overlay.png",
+      "pre_overlay_sha256": "sha256:03ca668f70da6d08dd924c1cada2064ba5a2d3e4146d8928224a220e133fe2d3",
+      "reference_authority": null,
+      "reference_image": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/replacement_recuts/cover_refs/auto_192000_909_1014.cover-ref.png",
+      "reference_sha256": "sha256:e165d1ce0527470717fb3d248e6429affbdcca6276f739481ee1ce0e00ed7f68",
+      "rendered_lines": [
+        "“白色奶龙”",
+        "表情小李",
+        "拒绝花钱"
+      ],
+      "rendered_text_pixels": {
+        "canvas_size": [
+          1920,
+          1080
+        ],
+        "changed_pixel_count": 179957,
+        "changed_pixel_ratio": 0.9942210902581725,
+        "final_cover_sha256": "sha256:57c536b218674d9cc5c3b31866d8be7c01bf1cd6dd25d68774cb91b6928976ab",
+        "font_file_name": "ZCOOLKuaiLe-Regular.ttf",
+        "font_file_sha256": "sha256:812a6fc1fe54b6d73a419245c32dfeba8aa33104d5be90d1cf6af082007cb71d",
+        "font_size": 155,
+        "mask_nonzero_pixels": 181003,
+        "mask_path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/cover_repair/generations/b78175e7ad9a-01-1785399582497256727/final.cover.title-mask.png",
+        "mask_sha256": "sha256:d9b53d1c5fa66657a961b70fd4b3c83430c194bfb141e77828ce26db5b328640",
+        "masked_final_pixels_sha256": "sha256:ae101ebb193f0559e1bf1ae85f0b8ea30469be9bb837cfd9f518de7244df71cf",
+        "overlay_position": {
+          "x": 164,
+          "y": 254
+        },
+        "pre_overlay_path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/cover_repair/generations/b78175e7ad9a-01-1785399582497256727/final.cover.pre-overlay.png",
+        "pre_overlay_sha256": "sha256:03ca668f70da6d08dd924c1cada2064ba5a2d3e4146d8928224a220e133fe2d3",
+        "render_spec": {
+          "angle_degrees": -3.0,
+          "font_face_index": 0,
+          "font_file_name": "ZCOOLKuaiLe-Regular.ttf",
+          "font_file_sha256": "sha256:812a6fc1fe54b6d73a419245c32dfeba8aa33104d5be90d1cf6af082007cb71d",
+          "layer_size": [
+            864,
+            526
+          ],
+          "lines": [
+            {
+              "font_size": 124,
+              "outlines": [
+                {
+                  "color": [
+                    18,
+                    36,
+                    79
+                  ],
+                  "width": 11
+                },
+                {
+                  "color": [
+                    255,
+                    255,
+                    255
+                  ],
+                  "width": 5
+                }
+              ],
+              "segment_pad": 11,
+              "segments": [
+                {
+                  "fill": [
+                    255,
+                    246,
+                    214
+                  ],
+                  "text": "“白色奶龙”"
+                }
+              ],
+              "x": 89.765625,
+              "y": 45
+            },
+            {
+              "font_size": 124,
+              "outlines": [
+                {
+                  "color": [
+                    18,
+                    36,
+                    79
+                  ],
+                  "width": 11
+                },
+                {
+                  "color": [
+                    255,
+                    255,
+                    255
+                  ],
+                  "width": 5
+                }
+              ],
+              "segment_pad": 11,
+              "segments": [
+                {
+                  "fill": [
+                    255,
+                    246,
+                    214
+                  ],
+                  "text": "表情小李"
+                }
+              ],
+              "x": 203.84375,
+              "y": 179
+            },
+            {
+              "font_size": 155,
+              "outlines": [
+                {
+                  "color": [
+                    18,
+                    36,
+                    79
+                  ],
+                  "width": 13
+                },
+                {
+                  "color": [
+                    255,
+                    255,
+                    255
+                  ],
+                  "width": 7
+                }
+              ],
+              "segment_pad": 13,
+              "segments": [
+                {
+                  "fill": [
+                    255,
+                    92,
+                    138
+                  ],
+                  "text": "拒绝"
+                },
+                {
+                  "fill": [
+                    255,
+                    246,
+                    214
+                  ],
+                  "text": "花钱"
+                }
+              ],
+              "x": 140.3125,
+              "y": 313
+            }
+          ],
+          "rendered_layer_size": [
+            892,
+            572
+          ],
+          "schema_version": "lidousha-cover-title-render-spec.v1"
+        },
+        "render_spec_sha256": "sha256:9938109b2a3bcfcec2e2245385a18d9186a8227dd9f8d2c06c9ec0ef2989da75",
+        "rendered_text": "“白色奶龙”表情小李拒绝花钱",
+        "schema_version": "lidousha-cover-rendered-text-pixels.v3",
+        "status": "PASS",
+        "text_pixel_bbox": [
+          303,
+          307,
+          914,
+          765
+        ],
+        "text_pixel_height": 458,
+        "text_pixel_width": 611
+      },
+      "request_path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/cover_repair/generations/b78175e7ad9a-01-1785399582497256727/final.cover.cpa-request.redacted.json",
+      "request_sha256": "sha256:eac73a6fd7cd592d79f63234041acb43cec8454debb32f882218a3874b002421",
+      "response_path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/cover_repair/generations/b78175e7ad9a-01-1785399582497256727/final.cover.cpa-response.redacted.json",
+      "response_sha256": "sha256:2ced8d5445a688977b005c9f4b089eed95f3653128da63bd3e104178839cd64e",
+      "role": "witty_smug",
+      "route_decision": {
+        "actual_treatment": "cpa_redraw",
+        "alternatives": [
+          {
+            "rationale": "the selected source frame is strong enough to preserve as the final visual without image generation",
+            "rejected_reason": "the source-frame evidence is not strong or verified enough to ship without image generation; selected evidence: cover-only repair replaced a missing or invalid cover under the active title and StoryContract authority",
+            "status": "REJECTED",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rationale": "the real source moment is usable but benefits from a bounded identity-preserving cleanup",
+            "rejected_reason": "bounded cleanup cannot repair the missing subject confidence, weak composition, or inability to express the hook; selected evidence: cover-only repair replaced a missing or invalid cover under the active title and StoryContract authority",
+            "status": "REJECTED",
+            "treatment": "screenshot_polish"
+          },
+          {
+            "rationale": "cover-only repair replaced a missing or invalid cover under the active title and StoryContract authority",
+            "rejected_reason": null,
+            "status": "SELECTED",
+            "treatment": "cpa_redraw"
+          }
+        ],
+        "alternatives_considered": [
+          "screenshot_direct",
+          "screenshot_polish",
+          "cpa_redraw"
+        ],
+        "cover_mode": "repair",
+        "execution_detail": "transactional cover-only repair completed",
+        "execution_status": "READY",
+        "final_visibility_authority": "NOT_REQUIRED",
+        "final_visible_participant_ids": [],
+        "frame_emotion": null,
+        "frame_score": null,
+        "image_generation_attempted": true,
+        "image_generation_planned": true,
+        "image_generation_used": true,
+        "is_song": false,
+        "manual_title_or_full_text_contract": false,
+        "motion_dispersion_frac": null,
+        "reason": "cover-only repair replaced a missing or invalid cover under the active title and StoryContract authority",
+        "reference_authority_id": null,
+        "rejected_alternatives": [
+          {
+            "rejected_reason": "the source-frame evidence is not strong or verified enough to ship without image generation; selected evidence: cover-only repair replaced a missing or invalid cover under the active title and StoryContract authority",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rejected_reason": "bounded cleanup cannot repair the missing subject confidence, weak composition, or inability to express the hook; selected evidence: cover-only repair replaced a missing or invalid cover under the active title and StoryContract authority",
+            "treatment": "screenshot_polish"
+          }
+        ],
+        "relationship_semantic_evidence": [],
+        "relationship_visual_required": false,
+        "relationship_visual_safety_evidence": {
+          "relation_state": "UNKNOWN",
+          "required_participant_ids": [],
+          "requirement_basis": [],
+          "schema_version": "lidousha-cover-relationship-visual-safety.v1",
+          "status": "NOT_REQUIRED"
+        },
+        "required_participant_ids": [],
+        "schema_version": "lidousha-cover-route-decision.v2",
+        "selected_rationale": "cover-only repair replaced a missing or invalid cover under the active title and StoryContract authority",
+        "selected_treatment": "cpa_redraw",
+        "selection_policy": "lidousha-cover-treatment-router.v2",
+        "source_visibility_authority": "NO_IDENTITY_AUTHORITY",
+        "source_visible_participant_ids": [],
+        "subject_confident": null,
+        "verified_stream_frame": false
+      },
+      "scrim": false,
+      "status": "AI_COVER_READY",
+      "story_contract": {
+        "boundary_semantic_review": {
+          "boundary_search_scope": {
+            "baseline_tail_cap_ms": null,
+            "boundary_end_mode": "semantic_lower_bound",
+            "delivery_lower_bound_ms": 105960,
+            "delivery_tail_pad_ms": 400,
+            "last_piece_start_ms": 0,
+            "manual_lower_bound_ms": null,
+            "max_recommended_end_ms": 135960,
+            "minimum_recommended_end_ms": 105960,
+            "prior_piece_duration_ms": 0,
+            "published_recall_anchor_ms": null,
+            "reason_codes": [],
+            "recommendation_backward_ms": 0,
+            "recommendation_forward_ms": 30000,
+            "repair_cap_ms": 30000,
+            "required_last_piece_source_end_ms": 150960,
+            "required_local_source_context_end_ms": 150960,
+            "required_owner_end_ms": null,
+            "review_target_ms": 105960,
+            "schema_version": "talk-boundary-search-scope.v1",
+            "scope_sha256": "sha256:61ac74ae33fa36f25825bd163547ac01ec912b799d0be57d76b903f7ed7c96db",
+            "semantic_search_origin_ms": 105960,
+            "semantic_tail_trim_cap_ms": 0,
+            "semantic_target_ms": 105960,
+            "status": "PASS",
+            "structured_payoff_clamped_from_ms": null,
+            "structured_payoff_ms": null,
+            "witness_reserve_ms": 15000
+          },
+          "candidate_id": "auto_192000_909_1014",
+          "content_anchor_covered": true,
+          "correlated_reviewer_disclosure": true,
+          "cue_grid_sha256": "sha256:dc50745558040d377d8ad540400ec5530ddadeaee0b412d46aad2a0c85a96caf",
+          "evidence_cue_indexes": [
+            48
+          ],
+          "final_endpoint_binding": {
+            "closure_text_sha256": "sha256:ad675dfdd797d8f42579020a6c635522a4f3a370774cc2f0da48a310938ebf84",
+            "final_closure_cue_index": 48,
+            "final_cue_grid_sha256": "sha256:dc50745558040d377d8ad540400ec5530ddadeaee0b412d46aad2a0c85a96caf",
+            "final_end_ms": 106360,
+            "final_snapped_end_ms": 105960,
+            "final_start_ms": 0,
+            "reason_codes": [],
+            "recommended_end_cue_index": 48,
+            "recommended_end_ms": 105960,
+            "schema_version": "talk-boundary-final-endpoint-binding.v1",
+            "semantic_cue_grid_sha256": "sha256:dc50745558040d377d8ad540400ec5530ddadeaee0b412d46aad2a0c85a96caf",
+            "semantic_request_sha256": "sha256:6b71463491da4be9c846e99ed4932aa57ce4b2cd31e48bc3c9174d37a3f7b9f9",
+            "status": "PASS"
+          },
+          "independent_semantic_vote_count": 1,
+          "max_forward_ms": 30000,
+          "needs_more_context": false,
+          "next_topic_separated": true,
+          "next_topic_witness_valid": true,
+          "reason_codes": [],
+          "recommendation_relaxations": [],
+          "recommended_end_cue_index": 48,
+          "recommended_end_ms": 105960,
+          "request_sha256": "sha256:6b71463491da4be9c846e99ed4932aa57ce4b2cd31e48bc3c9174d37a3f7b9f9",
+          "retry_scope": "none",
+          "review_scope": "final_delivery",
+          "reviewer_independence_group": "cpa-gpt-5.6-semantic-family",
+          "same_topic_continues_after_target": false,
+          "schema_version": "talk-boundary-semantic-review.v1",
+          "selector_story_witness": {
+            "comedic_payoff": 3,
+            "independence_group": "cpa-gpt-5.6-semantic-family",
+            "self_contained": 4,
+            "status": "PASS"
+          },
+          "semantic_independence_groups": [
+            "cpa-gpt-5.6-semantic-family"
+          ],
+          "source_separation_witness": {
+            "reason_codes": [],
+            "schema_version": "talk-boundary-source-separation-witness.v1",
+            "source_cue_grid_sha256": "sha256:5eacb53f2a3512d98e3f7271a77979a63740f0c3fabf23e48fe448baca626a02",
+            "source_final_end_ms": 115470,
+            "source_final_start_ms": 9110,
+            "source_recommended_end_ms": 115070,
+            "source_request_sha256": "sha256:f95e3e4a3a1b8501926e158219b14c7077213d2311c1a522904b55948584e840",
+            "source_review_sha256": "sha256:b57e771469ce426fc3fea6664e4db1f3ad149f5e5fa41167eda7047088a37f34",
+            "status": "PASS"
+          },
+          "status": "PASS",
+          "story_closed": true,
+          "summary": "推荐结尾句法完整，已完成拒绝保留白色奶龙及旧模型恐怖的故事闭环；终点后的新话题由 PASS 的 source separation witness 证明。",
+          "syntax_complete": true,
+          "target_cue_index": 48,
+          "target_ms": 105960
+        },
+        "candidate_id": "auto_192000_909_1014",
+        "clip_context_binding": {
+          "context_sha256": "sha256:5b5bce55e73520ff7f5be33d7e6cc3cb58ef1b3727a39d23247f8ffb6bafa3b8",
+          "mutation_authorized": false,
+          "schema_version": "lidousha-clip-context.v1",
+          "speech_memory_ledger_sha256": "sha256:d87532b5d56457496a868c6910091a545bd2c612a807182d742aa0ca26d30c95",
+          "whole_clip_draft_srt_sha256": "sha256:7da691536bd4f9e239de0bb5a63b107fc2528a43500619e5bafb9de2ab8f0101"
+        },
+        "clip_context_prompt": "clip_context_sha256: sha256:5b5bce55e73520ff7f5be33d7e6cc3cb58ef1b3727a39d23247f8ffb6bafa3b8\ncandidate_id: auto_192000_909_1014\nrecording_date: 2026-07-25\nselection_hook: 观众想让新3D永久保留“白色奶龙”表情，李豆沙当场拒绝花钱，还坦白旧模型越看越恐怖。\nsource_pieces: [{\"end_ms\":1062000,\"recording_basename\":\"22966160_20260725-19-20-00.mp4\",\"source_media_sha256\":\"sha256:982f2ad9313550abc7ece3d878284a7cbf2f9b99bf98fca2316a762589ea4a1c\",\"start_ms\":899000}]\nsession_relation_authority: null\ntopic_resolution: {\"evidence\":[],\"graph_sha256\":\"f637e62bdf04c50ec9ea4fd2d8e88ab88c6489ed01178124cb06f259824c006f\",\"recording_date\":\"2026-07-25\",\"schema_version\":\"topic-resolution.v1\",\"scoped_entity_ids\":[],\"scoped_graph_context\":{\"entities\":[],\"graph_sha256\":\"f637e62bdf04c50ec9ea4fd2d8e88ab88c6489ed01178124cb06f259824c006f\",\"recording_date\":\"2026-07-25\",\"schema_version\":\"topic-scoped-context.v1\",\"status\":\"GRAPH_EXPIRED\",\"topics\":[],\"works\":[]},\"selected_topic_ids\":[],\"selected_work_ids\":[],\"status\":\"GRAPH_EXPIRED\"}\nsession_topic_authorities: []\n以下长期记忆只提供候选，绝不直接授权改字；同音字仍须画面/弹幕/SC/同片复现/声学或人工 source truth：\n- id=lidousha.idiolect.xiaodeba.r1; idiolect: surfaces=晓得吧; candidates=晓得吧\n整片初稿（用于回指、复现和后文调侃；不是文字 authority）：\n1\n00:00:00,000 --> 00:00:03,320\n懂小猫小狗我又不经、不经常摸它们\n2\n00:00:03,320 --> 00:00:04,520\n如果经常摸的话\n3\n00:00:04,520 --> 00:00:05,920\n可能就不会害怕了\n4\n00:00:07,020 --> 00:00:09,360\n谢谢是你的沫夕鸭的粉丝团灯牌\n5\n00:00:09,360 --> 00:00:10,740\n谢谢你的钢镚。老大\n6\n00:00:10,740 --> 00:00:11,820\n我昨天加班结束\n7\n00:00:11,820 --> 00:00:13,580\n看到了你变成了白色奶龙\n8\n00:00:13,580 --> 00:00:14,930\n发生了什么事\n9\n00:00:14,930 --> 00:00:17,990\n就是那个机体出问题了\n10\n00:00:18,160 --> 00:00:21,040\n那个机体制作的时间比较早\n11\n00:00:21,040 --> 00:00:23,800\n就变成就是有一些 bug 会出现\n12\n00:00:23,840 --> 00:00:26,160\nstaff 说珍惜这种 bug\n13\n00:00:26,560 --> 00:00:29,920\nTA说珍惜这个 bug，之后就不会有了\n14\n00:00:30,010 --> 00:00:32,030\n说之前制作模型的\n15\n00:00:32,030 --> 00:00:35,250\n就是面部的时候没有什么制作这个机体\n16\n00:00:35,250 --> 00:00:36,810\n面部的时候没有什么经验\n17\n00:00:36,810 --> 00:00:37,920\n不知道该怎么做\n18\n00:00:37,920 --> 00:00:39,340\n所以就会出现这种问题\n19\n00:00:39,340 --> 00:00:41,240\n然后现在已经调整好了\n20\n00:00:41,640 --> 00:00:45,040\n对，就机体机体受故障了\n21\n00:00:45,480 --> 00:00:48,320\n哎呦，这个鼠标好难用\n22\n00:00:48,320 --> 00:00:50,680\n我用了一个非常大的、非常重的鼠标\n23\n00:00:50,870 --> 00:00:52,470\n谢谢M糖送的送花花\n24\n00:00:52,470 --> 00:00:53,270\n谢谢你呀\n25\n00:00:53,270 --> 00:00:54,070\n谢谢你的花\n26\n00:00:54,070 --> 00:00:54,630\n谢谢\n27\n00:00:54,630 --> 00:00:55,710\n如果早上没有早\n28\n00:00:55,710 --> 00:00:57,350\n如果世上没有早起的粉丝团灯牌\n29\n00:00:57,350 --> 00:00:58,150\n谢谢你\n30\n00:00:58,350 --> 00:01:00,430\n然后谢谢狼骸寄生\n31\n00:01:00,430 --> 00:01:03,110\n谢谢狼骸寄生的SC。刚来，李姐\n32\n00:01:03,110 --> 00:01:03,710\n今天看视频\n33\n00:01:03,710 --> 00:01:04,709\n有个想推荐的\n34\n00:01:04,709 --> 00:01:06,370\n我今天不打算看视频了\n35\n00:01:06,370 --> 00:01:08,680\n是因为直播时间比较短\n36\n00:01:08,680 --> 00:01:10,680\n我还是尽量想啊\n37\n00:01:10,680 --> 00:01:12,640\n想跟大家聊天唱歌来着\n38\n00:01:12,640 --> 00:01:16,080\n所以啊，这两次的直播应该都不会看视频\n39\n00:01:17,730 --> 00:01:20,630\n能不能给新3D专门做一个白色奶龙的表情\n40\n00:01:20,630 --> 00:01:21,930\n不能，当然不能\n41\n00:01:21,930 --> 00:01:24,490\n你知道做一个3D有多贵吗\n42\n00:01:24,490 --> 00:01:26,510\n我是不会花钱做这个的\n43\n00:01:26,510 --> 00:01:29,970\n我是不会花、花钱做奶龙表情的\n44\n00:01:30,920 --> 00:01:34,040\n李豆沙可不是白色奶龙\n45\n00:01:34,650 --> 00:01:37,190\n谢谢AC风了送的比心\n46\n00:01:37,190 --> 00:01:38,450\n谢谢你呀\n47\n00:01:38,450 --> 00:01:39,490\n谢谢你的比心\n48\n00:01:39,570 --> 00:01:42,650\n主要是那个表情看久了很恐怖\n49\n00:01:43,410 --> 00:01:46,690\n那个、那个表情看起来真的很恐怖\n50\n00:01:46,690 --> 00:01:49,810\n而且就是以前的那个模型\n51\n00:01:49,810 --> 00:01:53,450\n它就是表情都怪怪的，对吧\n52\n00:01:53,450 --> 00:01:55,070\n看起来真的很恐怖\n53\n00:01:55,510 --> 00:01:57,430\n谢谢我听说我听说的SC\n54\n00:01:57,630 --> 00:01:59,870\n嗯，等等等等\n55\n00:02:01,770 --> 00:02:03,610\n怎么没有加载出来啊\n56\n00:02:04,690 --> 00:02:06,370\n怎么没加载出来\n57\n00:02:08,680 --> 00:02:09,960\n哦，谢谢你的关注\n58\n00:02:09,960 --> 00:02:11,560\n姐姐姐姐姐还是在直播间\n59\n00:02:11,560 --> 00:02:14,760\n还是在直播间摸提问什么提问什么，不咬人\n60\n00:02:14,760 --> 00:02:17,370\n还喜欢被敲，在公司说怪话好刺激\n61\n00:02:17,370 --> 00:02:19,730\n之前都下班再、再说是吧\n62\n00:02:19,730 --> 00:02:20,690\n现在先敲你一下\n63\n00:02:20,690 --> 00:02:22,730\n诶诶，敲一下，哎\n64\n00:02:22,990 --> 00:02:24,270\n先敲一下\n65\n00:02:24,810 --> 00:02:26,090\n谢谢刚刚\n66\n00:02:26,690 --> 00:02:27,210\n嗯\n67\n00:02:27,210 --> 00:02:29,450\n谢谢刚刚日月明剑仙的粉丝团灯牌\n68\n00:02:29,450 --> 00:02:30,570\n谢谢你。待多久？\n69\n00:02:30,610 --> 00:02:31,630\n这次待多久？\n70\n00:02:31,630 --> 00:02:35,700\n这一次我我27号要先回去一趟\n71\n00:02:35,700 --> 00:02:38,320\n27号我要去回去陪伴妈妈\n72\n00:02:38,420 --> 00:02:41,100\n就是我要回自己家，回湖南\n73\n00:02:41,100 --> 00:02:42,900\n然后等到我要直\n结构化弹幕/SC（保留 source binding）：\n- superchat @-820086ms event=17790136: 单推\n- superchat @-553086ms event=17790269: 晚上好！kmx已经准备好跟大熊猫聊天了，放马过来吧！\n- superchat @-438086ms event=17790382: 可能是被礼小虎打的瘫痪了，以及豆沙后面没有瓜咪辅助能正常摸到礼小虎吗\n- superchat @-289086ms event=17790491: 老大，我昨天加班结束，看到了你变成了白色奶龙发生了什么事\n- superchat @-236086ms event=17790522: 在音乐节现场！报告今天金属舞台出现了哥特风美声帅姐和国风唢呐帅姐，李姐别太羡慕了\n- superchat @-65086ms event=17790608: 刚来，李姐今天看视频吗？有个想推荐的\n- danmaku @-24696ms event=: 怎么会有熊猫怕猫啊\n- danmaku @-24425ms event=: 那么大，摸起来会很舒服吧……猫咪……\n- danmaku @-22118ms event=: 这是李小虎第一次同时面对两只怪兽\n- danmaku @-16900ms event=: 听说礼小虎站起来比大n老师高是真的吗\n- danmaku @-16899ms event=: 贴贴\n- danmaku @-15619ms event=: 小k太丢人了\n- danmaku @-14296ms event=: 摸kmx也怕吗\n- danmaku @-11626ms event=: [李豆沙_没眼看]\n- danmaku @-9093ms event=: 要挠就挠我吧，我皮厚\n- danmaku @-2322ms event=: 大熊猫首先是熊后才是猫，退一万步说就算是黑白小猪都不该输啊\n- danmaku @1304ms event=: 有多大一只啊李小虎\n- danmaku @1304ms event=: 妈妈\n- danmaku @11976ms event=: 好窝囊一熊猫\n- danmaku @17179ms event=: [李豆沙_没眼看]\n- danmaku @18183ms event=: 直播间的小猪小狗还少吗\n- danmaku @19509ms event=: kmx不是李姐的小狗了吗\n- danmaku @20795ms event=: [李豆沙_大笑]\n- danmaku @29915ms event=: 哈？\n- danmaku @32510ms event=: 李豆沙绝版表情\n- danmaku @32802ms event=: 机体受损中\n- danmaku @33785ms event=: 笑死了\n- danmaku @40315ms event=: [李豆沙_大笑]\n- danmaku @43173ms event=: 特性\n- danmaku @52001ms event=: 哈？\n- danmaku @55902ms event=: 贴贴\n- danmaku @57224ms event=: 机体慢启动了\n- danmaku @68975ms event=: 能不能给新3d专门做一个白色奶龙的表情\n- danmaku @71494ms event=: 贴贴\n- danmaku @71495ms event=: 妈妈\n- superchat @71914ms event=17790700: 姐姐姐姐姐还是在直播间摸摸kmx吧，kmx不咬人还喜欢被敲（在公司说怪话好刺激）\n- danmaku @72806ms event=: 好的\n- danmaku @83224ms event=: ；；\n- danmaku @84509ms event=: 好好好~\n- danmaku @85796ms event=: 我现在每次看见那个奶龙我就绷不住一点\n- danmaku @87380ms event=: 小李明日方舟夏活直播开了\n- danmaku @89994ms event=: 难得调出那么唐的竟然不留着\n- danmaku @91270ms event=: [李豆沙_大笑]\n- danmaku @96200ms event=: 白色奶龙不可爱吗；；\n- danmaku @96200ms event=: [李豆沙_大笑]\n- danmaku @98879ms event=: [李豆沙_大笑]\n- danmaku @102766ms event=: 每次群里有人发我都吓一跳\n- danmaku @106598ms event=: kmx不能失去白色奶龙；；\n- danmaku @106873ms event=: [李豆沙_宕机]\n- danmaku @108174ms event=: 但是奶龙表情真的很适合做表情包\n- danmaku @113108ms event=: 太维和了放在这里\n- danmaku @113108ms event=: 白色奶龙，我们喜欢你\n- danmaku @117104ms event=: 哈哈哈\n- danmaku @117275ms event=: 李姐这次会待多久？\n- danmaku @118573ms event=: 可是我觉得很神圣啊\n- danmaku @119872ms event=: 伪熊感\n- danmaku @124837ms event=: 这下恐怖熊猫头了\n- danmaku @125080ms event=: 白奶P\n- danmaku @126374ms event=: 你笑几声就不恐怖了\n- danmaku @136589ms event=: 哈哈哈\n- danmaku @136777ms event=: 恐怖奶龙效应\n- danmaku @144291ms event=: 一拳\n- danmaku @148473ms event=: 来晚了\n- danmaku @158606ms event=: 好诶\n- danmaku @162507ms event=: 好好好\n- danmaku @162507ms event=: 好好好",
+        "cover_counterpart_reference_available": false,
+        "cover_fallback_mode": "HOST_ONLY_GENERIC",
+        "cover_output_audits": [
+          {
+            "artifact_kind": "cover_text",
+            "schema_version": "story-artifact-audit.v1",
+            "status": "PASS",
+            "text_sha256": "sha256:768f4a46cfea06f73c585e6ee22ebaffefc21ad49715d0a10f72897f88de7b6f",
+            "violations": []
+          },
+          {
+            "artifact_kind": "cover_rendered_text",
+            "schema_version": "story-artifact-audit.v1",
+            "status": "PASS",
+            "text_sha256": "sha256:6a6efddca5b675ec294f6b04eda45c788914173b1111dd8951e2337058568dd0",
+            "violations": []
+          }
+        ],
+        "cover_reference_authority": null,
+        "human_boundary_authority": "Ivan 2026-07-29/30: auto_192000_909_1014 was not rejected or acoustically blocked. Because human listening cannot establish a unique truth for the disputed fast-spoken gift phrase, use the high-probability Bilibili gift canon 粉丝团灯牌 as the reasonable deterministic truth, rerun the whole already-published clip with the latest pipeline, preserve its existing BV and verified public title, and repair the cover and any other defects. The published endpoint is a recall anchor: CPA may close the selected white-dragon story within the bounded semantic window but must not absorb the following unrelated topic.",
+        "input_audits": [
+          {
+            "artifact_kind": "selection_hook",
+            "schema_version": "story-artifact-audit.v1",
+            "status": "PASS",
+            "text_sha256": "sha256:c1dc3a6e4a203de9daa53326a0085cb769d2c941698b75eaa3af0de5613b66f7",
+            "violations": []
+          },
+          {
+            "artifact_kind": "subtitle",
+            "schema_version": "story-artifact-audit.v1",
+            "status": "PASS",
+            "text_sha256": "sha256:f03a09e4be9ad94b97a529d28ae88ce466074d4c1e3df3d728b7835dc99c00b8",
+            "violations": []
+          }
+        ],
+        "nancho_accepted_surfaces": [
+          "南町",
+          "大N",
+          "小N",
+          "南町nightin"
+        ],
+        "participants": [],
+        "relation_claim_allowed": false,
+        "relation_state": "UNKNOWN",
+        "required_entity_ids": [],
+        "schema_version": "lidousha-story-contract.v1",
+        "selection_hook": "观众想让新3D永久保留“白色奶龙”表情，李豆沙当场拒绝花钱，还坦白旧模型越看越恐怖。",
+        "selection_hook_sha256": "sha256:c1dc3a6e4a203de9daa53326a0085cb769d2c941698b75eaa3af0de5613b66f7",
+        "selection_scorecard": {
+          "dimensions": {
+            "audience_salience": 3,
+            "comedic_payoff": 3,
+            "lidousha_centrality": 3,
+            "persona_reversal": 3,
+            "relationship_interaction": 2,
+            "self_contained": 4,
+            "stance_intensity": 4
+          },
+          "effective_score": 77.5,
+          "fatigue_penalty": 0.0,
+          "raw_score": 77.5,
+          "reason_codes": [],
+          "requested_tier": 2,
+          "schema_version": "lidousha-selection-scorecard.v1",
+          "status": "VALID",
+          "tier": 2,
+          "tier_basis": "personal_stance",
+          "tier_evidence_cues": [
+            305,
+            308,
+            311,
+            319,
+            339,
+            341,
+            342,
+            343,
+            344,
+            349,
+            350,
+            351,
+            352,
+            353
+          ],
+          "tier_reason": "由观众追问白色奶龙触发，李豆沙解释模型故障，并对制作专属表情明确拒绝、连续吐槽旧模型恐怖；属于围绕本人模型事故的鲜明态度与玩梗。",
+          "uncertainty_penalty": 0.0,
+          "weights": {
+            "audience_salience": 15,
+            "comedic_payoff": 10,
+            "lidousha_centrality": 25,
+            "persona_reversal": 10,
+            "relationship_interaction": 15,
+            "self_contained": 5,
+            "stance_intensity": 20
+          }
+        },
+        "session_relation_authority": null,
+        "source_media_sha256s": [
+          "sha256:982f2ad9313550abc7ece3d878284a7cbf2f9b99bf98fca2316a762589ea4a1c"
+        ],
+        "transcript_sha256": "sha256:f03a09e4be9ad94b97a529d28ae88ce466074d4c1e3df3d728b7835dc99c00b8"
+      },
+      "text_backing": "outline",
+      "title": "【李豆沙】观众想让新3D永久保留“白色奶龙”表情，小李拒绝花钱",
+      "title_band": "right-split",
+      "workflow": "regenerate_lidousha_cover"
+    },
+    "cover_path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/repo/lidousha/2026-07-25/观众想让新3D永久保留“白色奶龙”表.cover.png",
+    "cover_status": "AI_COVER_READY",
+    "cover_text": "“白色奶龙”表情\n小李拒绝花钱",
+    "publish_json_path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/replacement_recuts/auto_192000_909_1014.recut.publish.json",
+    "reason_codes": [],
+    "recovery_publication_authority": {
+      "aid": 117002458957829,
+      "authority_sha256": "sha256:a78ece9c0bf78847ba1b20b58f6a46ace9d9743fdb738701449bc21b0347386d",
+      "boundary_end_mode": "published_recall_anchor",
+      "bvid": "BV1s7326qEc9",
+      "candidate_id": "auto_192000_909_1014",
+      "cid": 40406289029,
+      "observed_public_title": "【李豆沙】观众想让新3D永久保留“白色奶龙”表情，小李拒绝花钱",
+      "registry_authority": "Ivan 2026-07-29/30: auto_192000_909_1014 was not rejected or acoustically blocked. Because human listening cannot establish a unique truth for the disputed fast-spoken gift phrase, use the high-probability Bilibili gift canon 粉丝团灯牌 as the reasonable deterministic truth, rerun the whole already-published clip with the latest pipeline, preserve its existing BV and verified public title, and repair the cover and any other defects. The published endpoint is a recall anchor: CPA may close the selected white-dragon story within the bounded semantic window but must not absorb the following unrelated topic.",
+      "registry_repo_path": "assets/lidousha/recovery_publication_authority_2026-07-25_909.v1.json",
+      "registry_schema_version": "lidousha-recovery-publication-authority.v1",
+      "registry_sha256": "sha256:f3424ef01374d809b9522b0ec06ce7b65953240a682fbb933dd3b91e50daf8a9",
+      "required_given_end_ms": 1014000,
+      "schema_version": "recovery-same-bv-publication-authority.v1",
+      "source_kind": "committed_verified_publication_registry",
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-29-909-source/auto_192000_909_1014.public_verify.json",
+      "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+      "source_public_verify_sha256": "sha256:74e67b1125628f7ce838976b5112e7d63b8f150faad4c2dd64ef6cb90bfb85f2",
+      "source_public_verify_status": "VERIFIED_PUBLIC",
+      "title_mode": "verified_public_exact"
+    },
+    "status": "STAGED",
+    "title": "【李豆沙】观众想让新3D永久保留“白色奶龙”表情，小李拒绝花钱",
+    "title_authority_error": null,
+    "title_authority_status": "RESOLVED_MANUAL",
+    "title_policy_violations": [],
+    "title_source": "job_title",
+    "title_story_audit": {
+      "artifact_kind": "title",
+      "schema_version": "story-artifact-audit.v1",
+      "status": "PASS",
+      "text_sha256": "sha256:740334878003d384a6b3796e6103d7af1c4c74e5de9567200d1b245eb4e99712",
+      "violations": []
+    },
+    "upload_enabled": false
+  },
+  "recovery_publication_authority": {
+    "aid": 117002458957829,
+    "authority_sha256": "sha256:a78ece9c0bf78847ba1b20b58f6a46ace9d9743fdb738701449bc21b0347386d",
+    "boundary_end_mode": "published_recall_anchor",
+    "bvid": "BV1s7326qEc9",
+    "candidate_id": "auto_192000_909_1014",
+    "cid": 40406289029,
+    "observed_public_title": "【李豆沙】观众想让新3D永久保留“白色奶龙”表情，小李拒绝花钱",
+    "registry_authority": "Ivan 2026-07-29/30: auto_192000_909_1014 was not rejected or acoustically blocked. Because human listening cannot establish a unique truth for the disputed fast-spoken gift phrase, use the high-probability Bilibili gift canon 粉丝团灯牌 as the reasonable deterministic truth, rerun the whole already-published clip with the latest pipeline, preserve its existing BV and verified public title, and repair the cover and any other defects. The published endpoint is a recall anchor: CPA may close the selected white-dragon story within the bounded semantic window but must not absorb the following unrelated topic.",
+    "registry_repo_path": "assets/lidousha/recovery_publication_authority_2026-07-25_909.v1.json",
+    "registry_schema_version": "lidousha-recovery-publication-authority.v1",
+    "registry_sha256": "sha256:f3424ef01374d809b9522b0ec06ce7b65953240a682fbb933dd3b91e50daf8a9",
+    "required_given_end_ms": 1014000,
+    "schema_version": "recovery-same-bv-publication-authority.v1",
+    "source_kind": "committed_verified_publication_registry",
+    "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-29-909-source/auto_192000_909_1014.public_verify.json",
+    "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+    "source_public_verify_sha256": "sha256:74e67b1125628f7ce838976b5112e7d63b8f150faad4c2dd64ef6cb90bfb85f2",
+    "source_public_verify_status": "VERIFIED_PUBLIC",
+    "title_mode": "verified_public_exact"
+  },
+  "redelivery_baseline": null,
+  "redelivery_baseline_audit_path": null,
+  "selection_scorecard": {
+    "dimensions": {
+      "audience_salience": 3,
+      "comedic_payoff": 3,
+      "lidousha_centrality": 3,
+      "persona_reversal": 3,
+      "relationship_interaction": 2,
+      "self_contained": 4,
+      "stance_intensity": 4
+    },
+    "effective_score": 77.5,
+    "fatigue_penalty": 0.0,
+    "raw_score": 77.5,
+    "reason_codes": [],
+    "requested_tier": 2,
+    "schema_version": "lidousha-selection-scorecard.v1",
+    "status": "VALID",
+    "tier": 2,
+    "tier_basis": "personal_stance",
+    "tier_evidence_cues": [
+      305,
+      308,
+      311,
+      319,
+      339,
+      341,
+      342,
+      343,
+      344,
+      349,
+      350,
+      351,
+      352,
+      353
+    ],
+    "tier_reason": "由观众追问白色奶龙触发，李豆沙解释模型故障，并对制作专属表情明确拒绝、连续吐槽旧模型恐怖；属于围绕本人模型事故的鲜明态度与玩梗。",
+    "uncertainty_penalty": 0.0,
+    "weights": {
+      "audience_salience": 15,
+      "comedic_payoff": 10,
+      "lidousha_centrality": 25,
+      "persona_reversal": 10,
+      "relationship_interaction": 15,
+      "self_contained": 5,
+      "stance_intensity": 20
+    }
+  },
+  "session_relation_authority": null,
+  "speaker_finalization": null,
+  "speaker_finalization_manifest_path": null,
+  "speaker_finalization_manifest_sha256": null,
+  "speaker_mode": "uniform_host",
+  "speaker_review_srt_path": null,
+  "start_ms": 0,
+  "status": "MATERIALIZED",
+  "story_contract": {
+    "boundary_semantic_review": {
+      "boundary_search_scope": {
+        "baseline_tail_cap_ms": null,
+        "boundary_end_mode": "semantic_lower_bound",
+        "delivery_lower_bound_ms": 105960,
+        "delivery_tail_pad_ms": 400,
+        "last_piece_start_ms": 0,
+        "manual_lower_bound_ms": null,
+        "max_recommended_end_ms": 135960,
+        "minimum_recommended_end_ms": 105960,
+        "prior_piece_duration_ms": 0,
+        "published_recall_anchor_ms": null,
+        "reason_codes": [],
+        "recommendation_backward_ms": 0,
+        "recommendation_forward_ms": 30000,
+        "repair_cap_ms": 30000,
+        "required_last_piece_source_end_ms": 150960,
+        "required_local_source_context_end_ms": 150960,
+        "required_owner_end_ms": null,
+        "review_target_ms": 105960,
+        "schema_version": "talk-boundary-search-scope.v1",
+        "scope_sha256": "sha256:61ac74ae33fa36f25825bd163547ac01ec912b799d0be57d76b903f7ed7c96db",
+        "semantic_search_origin_ms": 105960,
+        "semantic_tail_trim_cap_ms": 0,
+        "semantic_target_ms": 105960,
+        "status": "PASS",
+        "structured_payoff_clamped_from_ms": null,
+        "structured_payoff_ms": null,
+        "witness_reserve_ms": 15000
+      },
+      "candidate_id": "auto_192000_909_1014",
+      "content_anchor_covered": true,
+      "correlated_reviewer_disclosure": true,
+      "cue_grid_sha256": "sha256:dc50745558040d377d8ad540400ec5530ddadeaee0b412d46aad2a0c85a96caf",
+      "evidence_cue_indexes": [
+        48
+      ],
+      "final_endpoint_binding": {
+        "closure_text_sha256": "sha256:ad675dfdd797d8f42579020a6c635522a4f3a370774cc2f0da48a310938ebf84",
+        "final_closure_cue_index": 48,
+        "final_cue_grid_sha256": "sha256:dc50745558040d377d8ad540400ec5530ddadeaee0b412d46aad2a0c85a96caf",
+        "final_end_ms": 106360,
+        "final_snapped_end_ms": 105960,
+        "final_start_ms": 0,
+        "reason_codes": [],
+        "recommended_end_cue_index": 48,
+        "recommended_end_ms": 105960,
+        "schema_version": "talk-boundary-final-endpoint-binding.v1",
+        "semantic_cue_grid_sha256": "sha256:dc50745558040d377d8ad540400ec5530ddadeaee0b412d46aad2a0c85a96caf",
+        "semantic_request_sha256": "sha256:6b71463491da4be9c846e99ed4932aa57ce4b2cd31e48bc3c9174d37a3f7b9f9",
+        "status": "PASS"
+      },
+      "independent_semantic_vote_count": 1,
+      "max_forward_ms": 30000,
+      "needs_more_context": false,
+      "next_topic_separated": true,
+      "next_topic_witness_valid": true,
+      "reason_codes": [],
+      "recommendation_relaxations": [],
+      "recommended_end_cue_index": 48,
+      "recommended_end_ms": 105960,
+      "request_sha256": "sha256:6b71463491da4be9c846e99ed4932aa57ce4b2cd31e48bc3c9174d37a3f7b9f9",
+      "retry_scope": "none",
+      "review_scope": "final_delivery",
+      "reviewer_independence_group": "cpa-gpt-5.6-semantic-family",
+      "same_topic_continues_after_target": false,
+      "schema_version": "talk-boundary-semantic-review.v1",
+      "selector_story_witness": {
+        "comedic_payoff": 3,
+        "independence_group": "cpa-gpt-5.6-semantic-family",
+        "self_contained": 4,
+        "status": "PASS"
+      },
+      "semantic_independence_groups": [
+        "cpa-gpt-5.6-semantic-family"
+      ],
+      "source_separation_witness": {
+        "reason_codes": [],
+        "schema_version": "talk-boundary-source-separation-witness.v1",
+        "source_cue_grid_sha256": "sha256:5eacb53f2a3512d98e3f7271a77979a63740f0c3fabf23e48fe448baca626a02",
+        "source_final_end_ms": 115470,
+        "source_final_start_ms": 9110,
+        "source_recommended_end_ms": 115070,
+        "source_request_sha256": "sha256:f95e3e4a3a1b8501926e158219b14c7077213d2311c1a522904b55948584e840",
+        "source_review_sha256": "sha256:b57e771469ce426fc3fea6664e4db1f3ad149f5e5fa41167eda7047088a37f34",
+        "status": "PASS"
+      },
+      "status": "PASS",
+      "story_closed": true,
+      "summary": "推荐结尾句法完整，已完成拒绝保留白色奶龙及旧模型恐怖的故事闭环；终点后的新话题由 PASS 的 source separation witness 证明。",
+      "syntax_complete": true,
+      "target_cue_index": 48,
+      "target_ms": 105960
+    },
+    "candidate_id": "auto_192000_909_1014",
+    "clip_context_binding": {
+      "context_sha256": "sha256:5b5bce55e73520ff7f5be33d7e6cc3cb58ef1b3727a39d23247f8ffb6bafa3b8",
+      "mutation_authorized": false,
+      "schema_version": "lidousha-clip-context.v1",
+      "speech_memory_ledger_sha256": "sha256:d87532b5d56457496a868c6910091a545bd2c612a807182d742aa0ca26d30c95",
+      "whole_clip_draft_srt_sha256": "sha256:7da691536bd4f9e239de0bb5a63b107fc2528a43500619e5bafb9de2ab8f0101"
+    },
+    "clip_context_prompt": "clip_context_sha256: sha256:5b5bce55e73520ff7f5be33d7e6cc3cb58ef1b3727a39d23247f8ffb6bafa3b8\ncandidate_id: auto_192000_909_1014\nrecording_date: 2026-07-25\nselection_hook: 观众想让新3D永久保留“白色奶龙”表情，李豆沙当场拒绝花钱，还坦白旧模型越看越恐怖。\nsource_pieces: [{\"end_ms\":1062000,\"recording_basename\":\"22966160_20260725-19-20-00.mp4\",\"source_media_sha256\":\"sha256:982f2ad9313550abc7ece3d878284a7cbf2f9b99bf98fca2316a762589ea4a1c\",\"start_ms\":899000}]\nsession_relation_authority: null\ntopic_resolution: {\"evidence\":[],\"graph_sha256\":\"f637e62bdf04c50ec9ea4fd2d8e88ab88c6489ed01178124cb06f259824c006f\",\"recording_date\":\"2026-07-25\",\"schema_version\":\"topic-resolution.v1\",\"scoped_entity_ids\":[],\"scoped_graph_context\":{\"entities\":[],\"graph_sha256\":\"f637e62bdf04c50ec9ea4fd2d8e88ab88c6489ed01178124cb06f259824c006f\",\"recording_date\":\"2026-07-25\",\"schema_version\":\"topic-scoped-context.v1\",\"status\":\"GRAPH_EXPIRED\",\"topics\":[],\"works\":[]},\"selected_topic_ids\":[],\"selected_work_ids\":[],\"status\":\"GRAPH_EXPIRED\"}\nsession_topic_authorities: []\n以下长期记忆只提供候选，绝不直接授权改字；同音字仍须画面/弹幕/SC/同片复现/声学或人工 source truth：\n- id=lidousha.idiolect.xiaodeba.r1; idiolect: surfaces=晓得吧; candidates=晓得吧\n整片初稿（用于回指、复现和后文调侃；不是文字 authority）：\n1\n00:00:00,000 --> 00:00:03,320\n懂小猫小狗我又不经、不经常摸它们\n2\n00:00:03,320 --> 00:00:04,520\n如果经常摸的话\n3\n00:00:04,520 --> 00:00:05,920\n可能就不会害怕了\n4\n00:00:07,020 --> 00:00:09,360\n谢谢是你的沫夕鸭的粉丝团灯牌\n5\n00:00:09,360 --> 00:00:10,740\n谢谢你的钢镚。老大\n6\n00:00:10,740 --> 00:00:11,820\n我昨天加班结束\n7\n00:00:11,820 --> 00:00:13,580\n看到了你变成了白色奶龙\n8\n00:00:13,580 --> 00:00:14,930\n发生了什么事\n9\n00:00:14,930 --> 00:00:17,990\n就是那个机体出问题了\n10\n00:00:18,160 --> 00:00:21,040\n那个机体制作的时间比较早\n11\n00:00:21,040 --> 00:00:23,800\n就变成就是有一些 bug 会出现\n12\n00:00:23,840 --> 00:00:26,160\nstaff 说珍惜这种 bug\n13\n00:00:26,560 --> 00:00:29,920\nTA说珍惜这个 bug，之后就不会有了\n14\n00:00:30,010 --> 00:00:32,030\n说之前制作模型的\n15\n00:00:32,030 --> 00:00:35,250\n就是面部的时候没有什么制作这个机体\n16\n00:00:35,250 --> 00:00:36,810\n面部的时候没有什么经验\n17\n00:00:36,810 --> 00:00:37,920\n不知道该怎么做\n18\n00:00:37,920 --> 00:00:39,340\n所以就会出现这种问题\n19\n00:00:39,340 --> 00:00:41,240\n然后现在已经调整好了\n20\n00:00:41,640 --> 00:00:45,040\n对，就机体机体受故障了\n21\n00:00:45,480 --> 00:00:48,320\n哎呦，这个鼠标好难用\n22\n00:00:48,320 --> 00:00:50,680\n我用了一个非常大的、非常重的鼠标\n23\n00:00:50,870 --> 00:00:52,470\n谢谢M糖送的送花花\n24\n00:00:52,470 --> 00:00:53,270\n谢谢你呀\n25\n00:00:53,270 --> 00:00:54,070\n谢谢你的花\n26\n00:00:54,070 --> 00:00:54,630\n谢谢\n27\n00:00:54,630 --> 00:00:55,710\n如果早上没有早\n28\n00:00:55,710 --> 00:00:57,350\n如果世上没有早起的粉丝团灯牌\n29\n00:00:57,350 --> 00:00:58,150\n谢谢你\n30\n00:00:58,350 --> 00:01:00,430\n然后谢谢狼骸寄生\n31\n00:01:00,430 --> 00:01:03,110\n谢谢狼骸寄生的SC。刚来，李姐\n32\n00:01:03,110 --> 00:01:03,710\n今天看视频\n33\n00:01:03,710 --> 00:01:04,709\n有个想推荐的\n34\n00:01:04,709 --> 00:01:06,370\n我今天不打算看视频了\n35\n00:01:06,370 --> 00:01:08,680\n是因为直播时间比较短\n36\n00:01:08,680 --> 00:01:10,680\n我还是尽量想啊\n37\n00:01:10,680 --> 00:01:12,640\n想跟大家聊天唱歌来着\n38\n00:01:12,640 --> 00:01:16,080\n所以啊，这两次的直播应该都不会看视频\n39\n00:01:17,730 --> 00:01:20,630\n能不能给新3D专门做一个白色奶龙的表情\n40\n00:01:20,630 --> 00:01:21,930\n不能，当然不能\n41\n00:01:21,930 --> 00:01:24,490\n你知道做一个3D有多贵吗\n42\n00:01:24,490 --> 00:01:26,510\n我是不会花钱做这个的\n43\n00:01:26,510 --> 00:01:29,970\n我是不会花、花钱做奶龙表情的\n44\n00:01:30,920 --> 00:01:34,040\n李豆沙可不是白色奶龙\n45\n00:01:34,650 --> 00:01:37,190\n谢谢AC风了送的比心\n46\n00:01:37,190 --> 00:01:38,450\n谢谢你呀\n47\n00:01:38,450 --> 00:01:39,490\n谢谢你的比心\n48\n00:01:39,570 --> 00:01:42,650\n主要是那个表情看久了很恐怖\n49\n00:01:43,410 --> 00:01:46,690\n那个、那个表情看起来真的很恐怖\n50\n00:01:46,690 --> 00:01:49,810\n而且就是以前的那个模型\n51\n00:01:49,810 --> 00:01:53,450\n它就是表情都怪怪的，对吧\n52\n00:01:53,450 --> 00:01:55,070\n看起来真的很恐怖\n53\n00:01:55,510 --> 00:01:57,430\n谢谢我听说我听说的SC\n54\n00:01:57,630 --> 00:01:59,870\n嗯，等等等等\n55\n00:02:01,770 --> 00:02:03,610\n怎么没有加载出来啊\n56\n00:02:04,690 --> 00:02:06,370\n怎么没加载出来\n57\n00:02:08,680 --> 00:02:09,960\n哦，谢谢你的关注\n58\n00:02:09,960 --> 00:02:11,560\n姐姐姐姐姐还是在直播间\n59\n00:02:11,560 --> 00:02:14,760\n还是在直播间摸提问什么提问什么，不咬人\n60\n00:02:14,760 --> 00:02:17,370\n还喜欢被敲，在公司说怪话好刺激\n61\n00:02:17,370 --> 00:02:19,730\n之前都下班再、再说是吧\n62\n00:02:19,730 --> 00:02:20,690\n现在先敲你一下\n63\n00:02:20,690 --> 00:02:22,730\n诶诶，敲一下，哎\n64\n00:02:22,990 --> 00:02:24,270\n先敲一下\n65\n00:02:24,810 --> 00:02:26,090\n谢谢刚刚\n66\n00:02:26,690 --> 00:02:27,210\n嗯\n67\n00:02:27,210 --> 00:02:29,450\n谢谢刚刚日月明剑仙的粉丝团灯牌\n68\n00:02:29,450 --> 00:02:30,570\n谢谢你。待多久？\n69\n00:02:30,610 --> 00:02:31,630\n这次待多久？\n70\n00:02:31,630 --> 00:02:35,700\n这一次我我27号要先回去一趟\n71\n00:02:35,700 --> 00:02:38,320\n27号我要去回去陪伴妈妈\n72\n00:02:38,420 --> 00:02:41,100\n就是我要回自己家，回湖南\n73\n00:02:41,100 --> 00:02:42,900\n然后等到我要直\n结构化弹幕/SC（保留 source binding）：\n- superchat @-820086ms event=17790136: 单推\n- superchat @-553086ms event=17790269: 晚上好！kmx已经准备好跟大熊猫聊天了，放马过来吧！\n- superchat @-438086ms event=17790382: 可能是被礼小虎打的瘫痪了，以及豆沙后面没有瓜咪辅助能正常摸到礼小虎吗\n- superchat @-289086ms event=17790491: 老大，我昨天加班结束，看到了你变成了白色奶龙发生了什么事\n- superchat @-236086ms event=17790522: 在音乐节现场！报告今天金属舞台出现了哥特风美声帅姐和国风唢呐帅姐，李姐别太羡慕了\n- superchat @-65086ms event=17790608: 刚来，李姐今天看视频吗？有个想推荐的\n- danmaku @-24696ms event=: 怎么会有熊猫怕猫啊\n- danmaku @-24425ms event=: 那么大，摸起来会很舒服吧……猫咪……\n- danmaku @-22118ms event=: 这是李小虎第一次同时面对两只怪兽\n- danmaku @-16900ms event=: 听说礼小虎站起来比大n老师高是真的吗\n- danmaku @-16899ms event=: 贴贴\n- danmaku @-15619ms event=: 小k太丢人了\n- danmaku @-14296ms event=: 摸kmx也怕吗\n- danmaku @-11626ms event=: [李豆沙_没眼看]\n- danmaku @-9093ms event=: 要挠就挠我吧，我皮厚\n- danmaku @-2322ms event=: 大熊猫首先是熊后才是猫，退一万步说就算是黑白小猪都不该输啊\n- danmaku @1304ms event=: 有多大一只啊李小虎\n- danmaku @1304ms event=: 妈妈\n- danmaku @11976ms event=: 好窝囊一熊猫\n- danmaku @17179ms event=: [李豆沙_没眼看]\n- danmaku @18183ms event=: 直播间的小猪小狗还少吗\n- danmaku @19509ms event=: kmx不是李姐的小狗了吗\n- danmaku @20795ms event=: [李豆沙_大笑]\n- danmaku @29915ms event=: 哈？\n- danmaku @32510ms event=: 李豆沙绝版表情\n- danmaku @32802ms event=: 机体受损中\n- danmaku @33785ms event=: 笑死了\n- danmaku @40315ms event=: [李豆沙_大笑]\n- danmaku @43173ms event=: 特性\n- danmaku @52001ms event=: 哈？\n- danmaku @55902ms event=: 贴贴\n- danmaku @57224ms event=: 机体慢启动了\n- danmaku @68975ms event=: 能不能给新3d专门做一个白色奶龙的表情\n- danmaku @71494ms event=: 贴贴\n- danmaku @71495ms event=: 妈妈\n- superchat @71914ms event=17790700: 姐姐姐姐姐还是在直播间摸摸kmx吧，kmx不咬人还喜欢被敲（在公司说怪话好刺激）\n- danmaku @72806ms event=: 好的\n- danmaku @83224ms event=: ；；\n- danmaku @84509ms event=: 好好好~\n- danmaku @85796ms event=: 我现在每次看见那个奶龙我就绷不住一点\n- danmaku @87380ms event=: 小李明日方舟夏活直播开了\n- danmaku @89994ms event=: 难得调出那么唐的竟然不留着\n- danmaku @91270ms event=: [李豆沙_大笑]\n- danmaku @96200ms event=: 白色奶龙不可爱吗；；\n- danmaku @96200ms event=: [李豆沙_大笑]\n- danmaku @98879ms event=: [李豆沙_大笑]\n- danmaku @102766ms event=: 每次群里有人发我都吓一跳\n- danmaku @106598ms event=: kmx不能失去白色奶龙；；\n- danmaku @106873ms event=: [李豆沙_宕机]\n- danmaku @108174ms event=: 但是奶龙表情真的很适合做表情包\n- danmaku @113108ms event=: 太维和了放在这里\n- danmaku @113108ms event=: 白色奶龙，我们喜欢你\n- danmaku @117104ms event=: 哈哈哈\n- danmaku @117275ms event=: 李姐这次会待多久？\n- danmaku @118573ms event=: 可是我觉得很神圣啊\n- danmaku @119872ms event=: 伪熊感\n- danmaku @124837ms event=: 这下恐怖熊猫头了\n- danmaku @125080ms event=: 白奶P\n- danmaku @126374ms event=: 你笑几声就不恐怖了\n- danmaku @136589ms event=: 哈哈哈\n- danmaku @136777ms event=: 恐怖奶龙效应\n- danmaku @144291ms event=: 一拳\n- danmaku @148473ms event=: 来晚了\n- danmaku @158606ms event=: 好诶\n- danmaku @162507ms event=: 好好好\n- danmaku @162507ms event=: 好好好",
+    "cover_counterpart_reference_available": false,
+    "cover_fallback_mode": "HOST_ONLY_GENERIC",
+    "cover_output_audits": [
+      {
+        "artifact_kind": "cover_text",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:768f4a46cfea06f73c585e6ee22ebaffefc21ad49715d0a10f72897f88de7b6f",
+        "violations": []
+      },
+      {
+        "artifact_kind": "cover_rendered_text",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:6a6efddca5b675ec294f6b04eda45c788914173b1111dd8951e2337058568dd0",
+        "violations": []
+      }
+    ],
+    "cover_reference_authority": null,
+    "human_boundary_authority": "Ivan 2026-07-29/30: auto_192000_909_1014 was not rejected or acoustically blocked. Because human listening cannot establish a unique truth for the disputed fast-spoken gift phrase, use the high-probability Bilibili gift canon 粉丝团灯牌 as the reasonable deterministic truth, rerun the whole already-published clip with the latest pipeline, preserve its existing BV and verified public title, and repair the cover and any other defects. The published endpoint is a recall anchor: CPA may close the selected white-dragon story within the bounded semantic window but must not absorb the following unrelated topic.",
+    "input_audits": [
+      {
+        "artifact_kind": "selection_hook",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:c1dc3a6e4a203de9daa53326a0085cb769d2c941698b75eaa3af0de5613b66f7",
+        "violations": []
+      },
+      {
+        "artifact_kind": "subtitle",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:f03a09e4be9ad94b97a529d28ae88ce466074d4c1e3df3d728b7835dc99c00b8",
+        "violations": []
+      }
+    ],
+    "nancho_accepted_surfaces": [
+      "南町",
+      "大N",
+      "小N",
+      "南町nightin"
+    ],
+    "participants": [],
+    "relation_claim_allowed": false,
+    "relation_state": "UNKNOWN",
+    "required_entity_ids": [],
+    "schema_version": "lidousha-story-contract.v1",
+    "selection_hook": "观众想让新3D永久保留“白色奶龙”表情，李豆沙当场拒绝花钱，还坦白旧模型越看越恐怖。",
+    "selection_hook_sha256": "sha256:c1dc3a6e4a203de9daa53326a0085cb769d2c941698b75eaa3af0de5613b66f7",
+    "selection_scorecard": {
+      "dimensions": {
+        "audience_salience": 3,
+        "comedic_payoff": 3,
+        "lidousha_centrality": 3,
+        "persona_reversal": 3,
+        "relationship_interaction": 2,
+        "self_contained": 4,
+        "stance_intensity": 4
+      },
+      "effective_score": 77.5,
+      "fatigue_penalty": 0.0,
+      "raw_score": 77.5,
+      "reason_codes": [],
+      "requested_tier": 2,
+      "schema_version": "lidousha-selection-scorecard.v1",
+      "status": "VALID",
+      "tier": 2,
+      "tier_basis": "personal_stance",
+      "tier_evidence_cues": [
+        305,
+        308,
+        311,
+        319,
+        339,
+        341,
+        342,
+        343,
+        344,
+        349,
+        350,
+        351,
+        352,
+        353
+      ],
+      "tier_reason": "由观众追问白色奶龙触发，李豆沙解释模型故障，并对制作专属表情明确拒绝、连续吐槽旧模型恐怖；属于围绕本人模型事故的鲜明态度与玩梗。",
+      "uncertainty_penalty": 0.0,
+      "weights": {
+        "audience_salience": 15,
+        "comedic_payoff": 10,
+        "lidousha_centrality": 25,
+        "persona_reversal": 10,
+        "relationship_interaction": 15,
+        "self_contained": 5,
+        "stance_intensity": 20
+      }
+    },
+    "session_relation_authority": null,
+    "source_media_sha256s": [
+      "sha256:982f2ad9313550abc7ece3d878284a7cbf2f9b99bf98fca2316a762589ea4a1c"
+    ],
+    "transcript_sha256": "sha256:f03a09e4be9ad94b97a529d28ae88ce466074d4c1e3df3d728b7835dc99c00b8"
+  },
+  "subtitle_ass_path": null,
+  "subtitle_path": "/opt/bilive/autoslice/recovery/2026-07-25/auto_192000_909_1014-single-r2/out/2026-07-25/auto_192000_909_1014/replacement_recuts/auto_192000_909_1014.recut.srt",
+  "subtitle_regression": null,
+  "subtitle_regression_audit_path": null,
+  "subtitle_source": "aggregate_asr+bcut_agy_cpa+pronoun+text_final",
+  "subtitle_style": "lidousha-final-sapphire72",
+  "subtitle_timing_qa": {
+    "actions": [
+      {
+        "action": "drop_boundary_fragment",
+        "after": null,
+        "before": {
+          "end_ms": 9360,
+          "start_ms": 9110
+        },
+        "cue_id": "fresh_0004",
+        "density_cps": 56.0,
+        "reasons": [
+          "unreadable_leading_boundary_fragment"
+        ],
+        "text": "谢谢是你的沫夕鸭的粉丝团灯牌",
+        "vad_overlap_ratio": 0.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 53470,
+          "start_ms": 52470
+        },
+        "before": {
+          "end_ms": 53270,
+          "start_ms": 52470
+        },
+        "cue_id": "fresh_0024",
+        "density_cps": 5.0,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "谢谢你呀",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 54270,
+          "start_ms": 53270
+        },
+        "before": {
+          "end_ms": 54070,
+          "start_ms": 53270
+        },
+        "cue_id": "fresh_0025",
+        "density_cps": 6.25,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "谢谢你的花",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 55070,
+          "start_ms": 54070
+        },
+        "before": {
+          "end_ms": 54630,
+          "start_ms": 54070
+        },
+        "cue_id": "fresh_0026",
+        "density_cps": 3.571,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "谢谢",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 58350,
+          "start_ms": 57350
+        },
+        "before": {
+          "end_ms": 58150,
+          "start_ms": 57350
+        },
+        "cue_id": "fresh_0029",
+        "density_cps": 3.75,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "谢谢你",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 64110,
+          "start_ms": 63110
+        },
+        "before": {
+          "end_ms": 63710,
+          "start_ms": 63110
+        },
+        "cue_id": "fresh_0032",
+        "density_cps": 10.0,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "今天看视频吗？",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 64710,
+          "start_ms": 63710
+        },
+        "before": {
+          "end_ms": 64709,
+          "start_ms": 63710
+        },
+        "cue_id": "fresh_0033",
+        "density_cps": 6.006,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "有个想推荐的",
+        "vad_overlap_ratio": 1.0
+      }
+    ],
+    "counts": {
+      "dropped": 1,
+      "retimed": 6
+    },
+    "policy": {
+      "boundary_fragment_max_visible_ms": 300,
+      "hard_max_ms": 12000,
+      "min_density_cps": 0.8,
+      "min_readable_ms": 1000,
+      "soft_max_ms": 6000
+    },
+    "schema_version": "subtitle-timing-qa.v3",
+    "speech_span_count": 24,
+    "speech_total_ms": 132480,
+    "vad_evidence_contract": "positive_only_never_shrink_normal_asr_cues",
+    "window": {
+      "end_ms": 115470,
+      "start_ms": 9110
+    }
+  },
+  "talk_filler_audit_path": null,
+  "text_finalization_manifest_path": null,
+  "upload_tags": {
+    "content_tags": [
+      {
+        "tag": "3D",
+        "why": "围绕新3D机体的面部制作、故障和后续调整展开讨论。"
+      },
+      {
+        "tag": "直播事故",
+        "why": "机体因早期制作问题出现BUG，意外变成奇怪表情。"
+      },
+      {
+        "tag": "搞笑",
+        "why": "观众想永久保留故障表情，却被一句“你知道做一个3D有多贵吗”直接拒绝。"
+      },
+      {
+        "tag": "吐槽",
+        "why": "反复吐槽旧模型“表情都怪怪的”“看起来真的很恐怖”。"
+      },
+      {
+        "tag": "表情包",
+        "why": "观众提议给新3D专门制作并保留这个极具喜感的特殊表情。"
+      }
+    ],
+    "engine": "suggest-upload-tags.v1",
+    "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,3D,直播事故,搞笑,吐槽,表情包",
+    "final_tags": [
+      "李豆沙",
+      "虚拟主播",
+      "虚拟UP主",
+      "直播切片",
+      "3D",
+      "直播事故",
+      "搞笑",
+      "吐槽",
+      "表情包"
+    ],
+    "proper_noun_tags": [],
+    "status": "OK",
+    "warnings": []
+  }
+}

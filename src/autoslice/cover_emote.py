@@ -1,8 +1,8 @@
 """Official emote stickers as an alternate cover subject (Ivan 2026-07-19).
 
 The library is a committed per-channel manifest (``emote_library`` profile
-asset); the sticker media itself stays OUT of git (``assets/emote/`` locally,
-``AUTOSLICE_EMOTE_DIR`` on the runner host).  Policy, enforced by the callers
+asset); the sticker media lives under the profile tree (``assets/<profile>/emote/``
+locally; ``AUTOSLICE_EMOTE_DIR`` overrides on the runner host).  Policy, enforced by the callers
 in ``cover_generation``/``publish_staging``:
 
 - The cover subject DEFAULTS to the live-frame character redraw.  An emote may
@@ -38,7 +38,7 @@ from src.autoslice.surface_canon import CHANNEL_PROFILE
 ROOT = Path(__file__).resolve().parents[2]
 
 EMOTE_MEDIA_ROOT_ENV = "AUTOSLICE_EMOTE_DIR"
-_EMOTE_MEDIA_REPO_DEFAULT = Path("assets") / "emote"
+_EMOTE_MEDIA_REPO_DEFAULT = Path("assets") / CHANNEL_PROFILE.profile_id / "emote"
 _EMOTE_SCHEMA_PREFIX = "lidousha-emote-library"
 _EMOTE_MODES = ("replace", "companion")
 # A strong reason must be articulated, not a bare "好看"; length is a cheap

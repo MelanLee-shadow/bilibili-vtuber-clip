@@ -1,0 +1,82 @@
+{
+  "ai_background": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_670_909/cover_repair/generations/a1e651e64348-01-1784755690803808345/ai-background.png",
+  "ai_background_sha256": "sha256:3a2cd039572d2f2b1de391078b749926a6c81e974fd7fef74873272ab3b803ba",
+  "angle_degrees": -2.0,
+  "art_direction": {
+    "background_style": "cobalt-comic-burst",
+    "cover_punch": [],
+    "emote_id": "",
+    "emote_mode": "",
+    "emote_reason": "",
+    "expression_en": "Closed-mouth mischievous smirk with one eyebrow raised, playfully interrogative and slightly biting back, never sticking out her tongue.",
+    "hook_color": "yellow",
+    "hook_word": "最最最喜欢",
+    "is_song": false,
+    "layout": "banner",
+    "role": "witty_smug"
+  },
+  "attempted_models": [
+    "gpt-image-2"
+  ],
+  "background_style": "cobalt-comic-burst",
+  "candidate_id": "auto_193450_670_909",
+  "cover_diversity_slot": 0,
+  "cover_punch": [],
+  "cover_text": "提到我就要\n最最最喜欢？",
+  "cover_text_mode": "full",
+  "emote": null,
+  "expression_en": "Closed-mouth mischievous smirk with one eyebrow raised, playfully interrogative and slightly biting back, never sticking out her tongue.",
+  "fallback_used": false,
+  "final_cover": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_670_909/cover_repair/generations/reviewed-title-scale-73f55546f5351eca/final.cover.png",
+  "final_cover_sha256": "sha256:389b68710dd923cbb3a336aca4934b1a6862c039e145fa708b9c529fdadde979",
+  "font": "ZCOOLKuaiLe-Regular.ttf",
+  "font_selection": {
+    "font": "ZCOOLKuaiLe-Regular.ttf",
+    "glyph_risk": [],
+    "rejected": []
+  },
+  "font_size": 241,
+  "hook_color": "yellow",
+  "hook_word": "最最最喜欢",
+  "layout": "banner",
+  "line_split": "explicit",
+  "method": "images.edit",
+  "min_talk_font_size": 120,
+  "model": "gpt-image-2",
+  "model_fallback_used": false,
+  "overlay_position": {
+    "x": 185,
+    "y": -56
+  },
+  "reference_image": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_670_909/replacement_recuts/cover_refs/auto_193450_670_909.cover-ref.png",
+  "reference_sha256": "sha256:2b7036611d4c53c55541d9328fcbd3d00a6960f72f01e16460c530022e5976c2",
+  "rendered_lines": [
+    "提到我就要",
+    "最最最喜欢？"
+  ],
+  "request_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_670_909/cover_repair/generations/a1e651e64348-01-1784755690803808345/final.cover.cpa-request.redacted.json",
+  "request_sha256": "sha256:e0aa1fe7cfbf0d24198c7b656f792990104932f0f248a324748f0bd985c1a33e",
+  "response_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_670_909/cover_repair/generations/a1e651e64348-01-1784755690803808345/final.cover.cpa-response.redacted.json",
+  "response_sha256": "sha256:7a566a274f14d75d3a79211d62e1147d0487c02154bf7d6b357ce5b4727c6bc6",
+  "reviewed_text_reoverlay": {
+    "ai_background_sha256": "sha256:3a2cd039572d2f2b1de391078b749926a6c81e974fd7fef74873272ab3b803ba",
+    "applied_at": "2026-07-23T02:29:21Z",
+    "new_image_request_made": false,
+    "plan_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/repo/assets/lidousha/cover_repair_plans/2026-07-22.full-replay-title-scale.v1.json",
+    "plan_sha256": "73f55546f5351eca2cd56a45581f8e2bf8b2169e5c46a025d7464502ba2b7b2d",
+    "schema_version": "reviewed-cover-text-reoverlay-plan.v1",
+    "source_binding_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_670_909/cover_repair/generations/reviewed-rebind-1cbc05943ef24ebb/final.cover.cover-binding.json",
+    "source_binding_sha256": "sha256:3f6c6208e7db17e11f264bb24f3cb4bfb7f79c5880d3ffabb82cb20492c43cc6",
+    "source_cover_sha256": "sha256:969b7efdf6cf244a25b0f6add1e2e041cb46c72e5a808264a7b9e7a2d0578e42",
+    "source_generation_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_670_909/cover_repair/generations/reviewed-rebind-1cbc05943ef24ebb/final.cover.cover_generation.json",
+    "source_generation_sha256": "sha256:ab603160098a06d04ca6ac4fc41da3fc2959ad7328644349ac9640003e2270fb",
+    "upload_enabled": false
+  },
+  "role": "witty_smug",
+  "scrim": false,
+  "status": "AI_COVER_READY",
+  "text_backing": "outline",
+  "title": "【李豆沙】南町当面追问：为什么提到我就要“最最最喜欢”？越解释越像海王",
+  "title_band": "banner",
+  "workflow": "regenerate_lidousha_cover"
+}

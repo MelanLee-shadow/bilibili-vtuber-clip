@@ -1,0 +1,447 @@
+{
+  "address_enumeration_audit": {
+    "repairs": [],
+    "schema_version": "address-enumeration-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "applied": [],
+  "burn_binding": {
+    "ass_path": null,
+    "ass_sha256": null,
+    "burned_media_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_5341_5459/replacement_recuts/auto_193450_5341_5459.recut.burned-final-sapphire72.mp4",
+    "burned_media_sha256": "3361ea6f986474afe64467138749e086b7e508f18c1ec9f9b25e076803677824"
+  },
+  "code_switch_surface_audit": {
+    "input_srt_sha256": "af9eda56c112ca97579e1257c6f995e4e36856f9b2a5ed79dc28442e062160a7",
+    "output_srt_sha256": "af9eda56c112ca97579e1257c6f995e4e36856f9b2a5ed79dc28442e062160a7",
+    "repairs": [],
+    "schema_version": "code-switch-surface-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "coreference_repairs": [],
+  "entity_repairs": [
+    {
+      "after": [
+        "TA说不要太恋家"
+      ],
+      "before": [
+        "TA说不要太黏卡"
+      ],
+      "cue_indexes": [
+        36
+      ],
+      "evidence_id": "885f7a4da71ccd8e5bd90b0b5eb86ad651a987af3e9d7e776484d57191951315",
+      "final_delivery_overlap_ms": 1520,
+      "final_delivery_overlap_ratio": 1.0,
+      "final_relative_end_ms": 96400,
+      "final_relative_start_ms": 94880,
+      "final_verification_kind": "entity_repair",
+      "final_verification_scope": "DELIVERY",
+      "matched_end_ms": 106180,
+      "matched_start_ms": 104660,
+      "mode": "final_review_context_adjudication",
+      "structured_exact_text": "TA说不要太恋家",
+      "survived": true,
+      "survived_final_speaker_srt": true,
+      "survived_final_text_srt": true,
+      "verdict": {
+        "audio_clip_sha256": "ff3cc6a403b38d32415dbb13850b9f901f52faea85f51b2840c6a70057906aa7",
+        "audio_end_ms": 109580,
+        "audio_start_ms": 94600,
+        "confidence_current": 1.0,
+        "confidence_proposed": 1.0,
+        "current_fit": "INCOMPATIBLE",
+        "heard_syllables": "ta shuo bu yao tai lian jia",
+        "model": "Gemini 3.6 Flash (High)",
+        "prompt_sha256": "82a485e88e1887cf88ced364d90a223c0e82ba06248446de87f523e37da0475d",
+        "proposed_fit": "SUPPORTED",
+        "provider": "agy",
+        "reason": "Audio clearly pronounces 'ta shuo bu yao tai lian jia', matching PROPOSED ('TA说不要太恋家') and contradicting CURRENT ('TA说不要太黏卡').",
+        "request_sha256": "dbebe554f9fabb9bd5cc94a96a072147e5f51052ba78447f396925b26080408b",
+        "response_sha256": "72a3152dca88f9b5f56686c5dd621b1c7a213f0540e322a7bb4f87d17a2be27a",
+        "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+        "source_media_sha256": "9be23538192d80234bca3ca395a32e0236e5ec37474ce6610a2515966ccd5b2d",
+        "status": "OBSERVED",
+        "target_audible": true
+      }
+    }
+  ],
+  "entity_verdict_required": [],
+  "entity_verdicts": [],
+  "evidence_considered": 0,
+  "final_hard_meme_surface_audit": {
+    "input_srt_sha256": "aa44655495775c3d2d49ccaeaf4bb771e8589ffa37b1913b86ce593478432a11",
+    "output_srt_sha256": "aa44655495775c3d2d49ccaeaf4bb771e8589ffa37b1913b86ce593478432a11",
+    "repairs": [],
+    "rule_count": 1,
+    "schema_version": "hard-meme-surface-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "final_hard_meme_surface_verification": {
+    "failures": {},
+    "status": "PASS"
+  },
+  "final_output_srt_sha256": "aa44655495775c3d2d49ccaeaf4bb771e8589ffa37b1913b86ce593478432a11",
+  "final_outside_delivery_count": 0,
+  "final_required_decision_count": 1,
+  "final_review_audit": {
+    "applied_count": 1,
+    "context_adjudication_budget": 12,
+    "context_adjudication_count": 1,
+    "findings": [
+      {
+        "base_text_sha256": "0e4a5614c830596ffe45f2a93404e1cf81004f9f3da9a8fb0b3648699bc705b7",
+        "candidate_provenance": null,
+        "cue_index": 4,
+        "evidence_cue_ids": [
+          5,
+          8,
+          10
+        ],
+        "kind": "entity",
+        "proposed_full_cue": null,
+        "repair_class": "phonetic",
+        "reported_scope_warnings": [
+          "REPORTED_SUSPECT_SCOPE_MISMATCH",
+          "REPORTED_REPLACEMENT_SCOPE_MISMATCH"
+        ],
+        "routed": "disclosure",
+        "span_end_codepoint": 5,
+        "span_start_codepoint": 4,
+        "suggestion": null,
+        "suggestion_rejected_reason": "ENTITY_REPAIR_REQUIRES_SOURCE_PROVENANCE",
+        "suspect": "波",
+        "why": "同一对象在后文连续三次稳定写作“卡布恰”，此处专名发生近音漂移。"
+      },
+      {
+        "base_text_sha256": "b5f9c0246ae75a5b1dae035d2b833dee9fe7281bc25038bc701cfb9bd470c08e",
+        "candidate_provenance": null,
+        "cue_index": 27,
+        "evidence_cue_ids": [
+          4,
+          5,
+          8,
+          10
+        ],
+        "kind": "entity",
+        "proposed_full_cue": null,
+        "repair_class": "phonetic",
+        "routed": "disclosure",
+        "span_end_codepoint": 6,
+        "span_start_codepoint": 0,
+        "suggestion": null,
+        "suggestion_rejected_reason": "ENTITY_REPAIR_REQUIRES_SOURCE_PROVENANCE",
+        "suspect": "因原来是大恩",
+        "why": "“大恩”位于称呼对象槽，疑为同团主播南町的高频昵称“大N”；句首“因”也疑为语气词“嗯”的近音误识。"
+      },
+      {
+        "base_text_sha256": "c0f47b55bcbfa101e993c22a704cd58fa24549e5bfa10d06158225ea2ed8420c",
+        "candidate_provenance": null,
+        "context_audio_adjudication": {
+          "policy_branch": "ACOUSTICALLY_ADMISSIBLE_CONTEXT_TIEBREAK_APPLY_PROPOSED",
+          "repaired": true,
+          "request": {
+            "base_text_sha256": "c0f47b55bcbfa101e993c22a704cd58fa24549e5bfa10d06158225ea2ed8420c",
+            "candidate_entities": [
+              {
+                "candidate_id": "CURRENT",
+                "canonical": "TA说不要太黏卡",
+                "readings": [],
+                "surfaces": [],
+                "text_sha256": "c0f47b55bcbfa101e993c22a704cd58fa24549e5bfa10d06158225ea2ed8420c"
+              },
+              {
+                "candidate_id": "PROPOSED",
+                "canonical": "TA说不要太恋家",
+                "readings": [],
+                "surfaces": [],
+                "text_sha256": "97b0ff97e97032feac629fe7e2d273692a2a9630078240ffc2b9aacc80080222"
+              }
+            ],
+            "candidate_provenance": null,
+            "context_after": "我刚下播准备和妹妹见面了\n我本来是我让她我我说你能不能再播一会",
+            "context_before": "就\n这边也可以扩宽",
+            "context_end_ms": 109580,
+            "context_start_ms": 94600,
+            "cue_indexes": [
+              36
+            ],
+            "current_cue": "TA说不要太黏卡",
+            "evidence_cue_ids": [
+              33,
+              35
+            ],
+            "evidence_id": "885f7a4da71ccd8e5bd90b0b5eb86ad651a987af3e9d7e776484d57191951315",
+            "kind": "subtitle_span_acoustic_check",
+            "matched_audio_text": "TA说不要太黏卡",
+            "matched_end_ms": 106180,
+            "matched_start_ms": 104660,
+            "proposed_cue": "TA说不要太恋家",
+            "reason": "“不要太黏卡”在当前游戏回家升级、扩展地图的语境中不成义，近音的“不要太恋家”能够自然承接。",
+            "repair_class": "phonetic",
+            "replacement": "恋家",
+            "request_sha256": "dbebe554f9fabb9bd5cc94a96a072147e5f51052ba78447f396925b26080408b",
+            "schema_version": "subtitle-span-acoustic-check-request.v1",
+            "suspect": "黏卡"
+          },
+          "schema_version": "subtitle-span-adjudication.v1",
+          "status": "OBSERVED",
+          "timing_immutable": true,
+          "verdict": {
+            "audio_clip_sha256": "ff3cc6a403b38d32415dbb13850b9f901f52faea85f51b2840c6a70057906aa7",
+            "audio_end_ms": 109580,
+            "audio_start_ms": 94600,
+            "confidence_current": 1.0,
+            "confidence_proposed": 1.0,
+            "current_fit": "INCOMPATIBLE",
+            "heard_syllables": "ta shuo bu yao tai lian jia",
+            "model": "Gemini 3.6 Flash (High)",
+            "prompt_sha256": "82a485e88e1887cf88ced364d90a223c0e82ba06248446de87f523e37da0475d",
+            "proposed_fit": "SUPPORTED",
+            "provider": "agy",
+            "reason": "Audio clearly pronounces 'ta shuo bu yao tai lian jia', matching PROPOSED ('TA说不要太恋家') and contradicting CURRENT ('TA说不要太黏卡').",
+            "request_sha256": "dbebe554f9fabb9bd5cc94a96a072147e5f51052ba78447f396925b26080408b",
+            "response_sha256": "72a3152dca88f9b5f56686c5dd621b1c7a213f0540e322a7bb4f87d17a2be27a",
+            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+            "source_media_sha256": "9be23538192d80234bca3ca395a32e0236e5ec37474ce6610a2515966ccd5b2d",
+            "status": "OBSERVED",
+            "target_audible": true
+          }
+        },
+        "cue_index": 36,
+        "evidence_cue_ids": [
+          33,
+          35
+        ],
+        "kind": "context",
+        "proposed_full_cue": "TA说不要太恋家",
+        "repair_class": "phonetic",
+        "routed": "context_audio_adjudicated_fix",
+        "span_end_codepoint": 8,
+        "span_start_codepoint": 6,
+        "suggestion": "恋家",
+        "suspect": "黏卡",
+        "why": "“不要太黏卡”在当前游戏回家升级、扩展地图的语境中不成义，近音的“不要太恋家”能够自然承接。"
+      }
+    ],
+    "infra_unresolved": [],
+    "infra_unresolved_count": 0,
+    "schema_version": "final-review-audit.v1",
+    "status": "APPLIED"
+  },
+  "final_source_language_preservation_audit": {
+    "reverted": [],
+    "reverted_count": 0,
+    "schema_version": "source-language-preservation-audit.v1",
+    "status": "CLEAN",
+    "unproven_foreign_introductions": []
+  },
+  "final_speaker_srt_path": null,
+  "final_speaker_srt_sha256": "83c040905436b4828bc45f77678b0c63adfec4cc557a817d2d295ea50c7c4f0b",
+  "final_status": "FINAL_ARTIFACTS_VERIFIED",
+  "final_superseded_by_source_truth_count": 0,
+  "final_text_srt_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_5341_5459/replacement_recuts/auto_193450_5341_5459.recut.srt",
+  "final_text_srt_sha256": "83c040905436b4828bc45f77678b0c63adfec4cc557a817d2d295ea50c7c4f0b",
+  "final_title_mark_balance_audit": {
+    "cross_cue_pairs": [],
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "title-mark-balance-audit.v1",
+    "status": "CLEAN",
+    "unresolved": []
+  },
+  "foreign_script_consistency_audit": {
+    "kana_cue_indexes": [],
+    "latin_heavy_cues": [],
+    "mixed_cjk_latin_cues": [],
+    "reason": null,
+    "schema_version": "foreign-script-consistency-audit.v1",
+    "status": "CLEAN"
+  },
+  "gift_repairs": [],
+  "impossible_punctuation_audit": {
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "impossible-punctuation-audit.v1",
+    "status": "CLEAN"
+  },
+  "input_srt_sha256": "af9eda56c112ca97579e1257c6f995e4e36856f9b2a5ed79dc28442e062160a7",
+  "introduced_term_audits": [],
+  "numeric_fact_provenance_audit": {
+    "reverted": [],
+    "reverted_count": 0,
+    "schema_version": "numeric-fact-provenance-audit.v1",
+    "status": "CLEAN",
+    "supported": []
+  },
+  "output_srt_sha256": "af9eda56c112ca97579e1257c6f995e4e36856f9b2a5ed79dc28442e062160a7",
+  "pending_text_overrides": [],
+  "post_semantic_entity_policy": {
+    "dynamic_audio_group_count": 0,
+    "explicit_audio_groups": [
+      [
+        "素惹",
+        "素人"
+      ],
+      [
+        "李豆沙",
+        "小李"
+      ],
+      [
+        "奶P",
+        "奶瓶"
+      ],
+      [
+        "ありがとう",
+        "おめでとう"
+      ]
+    ],
+    "phonetic_candidates_disclosure_only": [
+      [
+        "Hime",
+        "A没"
+      ],
+      [
+        "Hime",
+        "TA说"
+      ],
+      [
+        "Hime",
+        "和妹"
+      ],
+      [
+        "Hime",
+        "妹妹"
+      ]
+    ],
+    "phrase_divergence_candidates_disclosure_only": [
+      [
+        "卡布恰可怜",
+        "卡波恰可怜"
+      ],
+      [
+        "卡布恰可",
+        "卡布恰的"
+      ],
+      [
+        "因为我也",
+        "因为我的"
+      ],
+      [
+        "恰可怜啊",
+        "恰可怜在"
+      ]
+    ],
+    "reason_code": "POST_SEMANTIC_ENTITY_AUDIO_OVERRIDE_DISABLED",
+    "schema_version": "post-semantic-entity-policy.v1",
+    "semantic_text_final_groups": [
+      [
+        "恋青",
+        "恋死"
+      ],
+      [
+        "梦限大",
+        "Ave Mujica"
+      ],
+      [
+        "立希",
+        "祥子"
+      ],
+      [
+        "kmx",
+        "乒乓球"
+      ],
+      [
+        "李豆沙",
+        "小李"
+      ],
+      [
+        "田中姬",
+        "铃木雏",
+        "田中雏",
+        "Hime",
+        "Hina"
+      ]
+    ],
+    "status": "SEMANTIC_TEXT_FINAL"
+  },
+  "post_transcript_entity_output_srt_sha256": "aa44655495775c3d2d49ccaeaf4bb771e8589ffa37b1913b86ce593478432a11",
+  "read_aloud_arbitrations": [],
+  "schema_version": "chat-authority-audit.v2",
+  "self_reference_absorption_audit": {
+    "candidate_names": [
+      "小李",
+      "李豆沙",
+      "豆沙"
+    ],
+    "repairs": [],
+    "schema_version": "self-reference-absorption-audit.v3",
+    "source_witness_available": true,
+    "status": "NO_MATCH"
+  },
+  "sender_repairs": [],
+  "sender_verdict_required": [],
+  "session_topic_absorption_audits": [
+    {
+      "authorities": [],
+      "repair_count": 0,
+      "repairs": [],
+      "schema_version": "session-topic-authority-audit.v1",
+      "status": "CLEAN"
+    },
+    {
+      "authorities": [],
+      "repair_count": 0,
+      "repairs": [],
+      "schema_version": "session-topic-authority-audit.v1",
+      "status": "CLEAN"
+    }
+  ],
+  "source_subtitle_truth_audit": {
+    "applied": [],
+    "failures": [],
+    "ledger_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/repo/assets/lidousha/subtitle_truth_ledger.v1.json",
+    "ledger_sha256": "sha256:b971a4ec9201deb5a922d529361bb6f5d0d6ae38cc408dd020913b0157629c62",
+    "satisfied": [],
+    "schema_version": "source-subtitle-truth-audit.v1",
+    "status": "NO_RELEVANT_INTERVAL"
+  },
+  "speaker_ass_path": null,
+  "speaker_ass_sha256": null,
+  "speaker_manifest_sha256": null,
+  "status": "NO_MATCH",
+  "superseded_chat_proposals": [],
+  "term_boundary_audit": {
+    "moves": [],
+    "schema_version": "term-boundary-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "thank_prefix_restore_audit": {
+    "restorations": [],
+    "schema_version": "thank-prefix-restore-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "title_mark_balance_audit": {
+    "cross_cue_pairs": [],
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "title-mark-balance-audit.v1",
+    "status": "CLEAN",
+    "unresolved": []
+  },
+  "transcript_entity_audit": {
+    "confirmed": [],
+    "entity_verdict_required": [],
+    "input_srt_sha256": "af9eda56c112ca97579e1257c6f995e4e36856f9b2a5ed79dc28442e062160a7",
+    "output_srt_sha256": "af9eda56c112ca97579e1257c6f995e4e36856f9b2a5ed79dc28442e062160a7",
+    "repairs": [],
+    "schema_version": "transcript-entity-audit.v1",
+    "status": "NO_ENTITY"
+  },
+  "unthanked_donor_disclosure": {
+    "schema_version": "unthanked-donor-disclosure.v1",
+    "status": "ALL_THANKED",
+    "unthanked": []
+  },
+  "witness_disagreement_audits": []
+}

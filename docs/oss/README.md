@@ -104,10 +104,9 @@ AUTOSLICE_BASE=$PWD/.autoslice \
 - **说话人分离（多人自动分轨）：待做，欢迎 PR。** 目前成品统一按主播处理
   （uniform-host）+ CAM++ 声纹确认；完整的多人分轨是明确的下一步。
 - **Docker 化：待做，欢迎 PR。**
-- Alpha：参考部署已无人值守运行数周，但多频道支持还在完善——剩余的默认
-  profile 耦合点全部列在 [docs/profile-coupling.md](docs/profile-coupling.md)；
-  **发布/声纹 lane 目前默认 profile 专用**（C 组修复完成前，换频道可产包评审，
-  公开发布还差这一步）。
+- Alpha：参考部署已无人值守运行数周，但多频道支持还在完善——**发布/声纹
+  lane 目前默认 profile 专用**（少数发布路径仍指向示例频道资产，清单见
+  AGENTS.md「换频道剩余耦合」；换频道可产包评审，公开发布还差这一步）。
 - 测试套件以默认 profile 为基准：跑 `pytest` 时不要设置 `AUTOSLICE_PROFILE`。
 - 出版登记/真值台账等运营状态在本仓只有空模板——它们属于每个部署自己的数据。
 - 示例 profile 全量校验会因声纹文件缺失而 BLOCKED（生物特征不随仓分发，预期行为）。

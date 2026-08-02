@@ -1,0 +1,1263 @@
+{
+  "artifact_hashes": {
+    "ai_background_sha256": "sha256:a6c9f217315fed1dc03cc86f634b76d57ae573b2fecc5cd2fc6601333c5680f1",
+    "ass_sha256": "sha256:11914c868deef3201ec0d427f4905b9d2b2c9d09498924269a82f1b557f3a3c6",
+    "burned_video_sha256": "sha256:3eb97a04e70631c6a509d1b307ed2522b7255cdc7539fbb1f6ae0ff4714d0695",
+    "chat_authority_audit_sha256": "sha256:47c2e17eddc8f5feceb7614b6dabf10220dfb52db2c08ededf474bc319f14348",
+    "clip_context_file_sha256": "sha256:f1b6e15052271b75b634b0f1f7a48abc98103f82d1ed9891fc4e3f9081c9e381",
+    "cover_reference_sha256": "sha256:06daf47caf7ce85a0988515513836109c96b58dff9af2e0aa79c76ffa31fe748",
+    "cover_sha256": "sha256:41e8182976c47932d76fd8a87a34354f1671fb6d4cd3c74ca807ae8db403b496",
+    "publish_draft_sha256": "sha256:094ec2d3468af4f51c3cc46f2905c620fbe679bd627a44aebcfa1a4b19f39973",
+    "subtitle_sha256": "sha256:078cd6dd96548a042364d5ca468e142e1419a2a140ef354c9de518c1388bfd67",
+    "talk_filler_audit_sha256": "sha256:7e64b30754e85bfe5cf49f6670e17b9580fb4c4a31ee5a6837ac4c97cc9dbd80",
+    "video_sha256": "sha256:22283b7f18804694a3c25c68fd7f0e495de8c62840e700bc19a0ae634da473f8"
+  },
+  "boundary_audit": {
+    "boundary_authority": "correlated_semantic_review_plus_deterministic_guards",
+    "boundary_repair_extend_cap_ms": 60000,
+    "boundary_repair_max_end_ms": 191890,
+    "boundary_repair_search_origin_ms": 131890,
+    "boundary_repairs": [
+      {
+        "final_end_ms": 139390,
+        "next_speech_island_guard_ms": 100,
+        "next_speech_island_start_ms": 143368,
+        "nominal_final_end_ms": 139790,
+        "reason": "tail_clamped_before_next_subtitle",
+        "snapped_end_ms": 139390
+      }
+    ],
+    "boundary_selection_lower_bound_ms": 139390,
+    "boundary_semantic_review": {
+      "boundary_search_scope": {
+        "boundary_end_mode": "semantic_lower_bound",
+        "delivery_lower_bound_ms": 131890,
+        "delivery_tail_pad_ms": 400,
+        "last_piece_start_ms": 1336800,
+        "manual_lower_bound_ms": null,
+        "max_recommended_end_ms": 191890,
+        "minimum_recommended_end_ms": 131890,
+        "prior_piece_duration_ms": 58450,
+        "reason_codes": [],
+        "recommendation_forward_ms": 60000,
+        "repair_cap_ms": 60000,
+        "required_last_piece_source_end_ms": 1485240,
+        "required_local_source_context_end_ms": 206890,
+        "required_owner_end_ms": 100840,
+        "review_target_ms": 131890,
+        "schema_version": "talk-boundary-search-scope.v1",
+        "scope_sha256": "sha256:2d2a2f74b7c38d3c8f7143b2be549743ea836238974bdfcde4e7bc013f51f95d",
+        "semantic_search_origin_ms": 131890,
+        "semantic_target_ms": 131890,
+        "status": "PASS",
+        "structured_payoff_ms": null,
+        "witness_reserve_ms": 15000
+      },
+      "candidate_id": "auto_183122_1209_1410",
+      "content_anchor_covered": true,
+      "correlated_reviewer_disclosure": true,
+      "cue_grid_sha256": "sha256:43ec5d1aac45332cde09ad102962964c4606ef81060363faa215821e416e9c43",
+      "evidence_cue_indexes": [
+        52,
+        53,
+        54,
+        55,
+        56,
+        57
+      ],
+      "final_endpoint_binding": {
+        "closure_text_sha256": "sha256:7ac6b5457f97863d55c2390ce84a3275c18e1adbcdc8503ab09d156c5f3213c1",
+        "final_closure_cue_index": 56,
+        "final_cue_grid_sha256": "sha256:43ec5d1aac45332cde09ad102962964c4606ef81060363faa215821e416e9c43",
+        "final_end_ms": 139390,
+        "final_snapped_end_ms": 139390,
+        "final_start_ms": 9760,
+        "reason_codes": [],
+        "recommended_end_cue_index": 56,
+        "recommended_end_ms": 139390,
+        "schema_version": "talk-boundary-final-endpoint-binding.v1",
+        "semantic_cue_grid_sha256": "sha256:43ec5d1aac45332cde09ad102962964c4606ef81060363faa215821e416e9c43",
+        "semantic_request_sha256": "sha256:e11dcaf3015560274a9622b9fc7de31688969d699bcd3c30c914f46443736ac3",
+        "status": "PASS"
+      },
+      "independent_semantic_vote_count": 1,
+      "max_forward_ms": 60000,
+      "needs_more_context": false,
+      "next_topic_separated": true,
+      "next_topic_witness_valid": true,
+      "reason_codes": [
+        "INTERRUPTED_BY_SC_THANKS",
+        "NEXT_TOPIC_STARTS_AT_57",
+        "SC_EXCHANGE_CLOSED_AT_56",
+        "TARGET_CUE_SYNTACTICALLY_INCOMPLETE"
+      ],
+      "recommended_end_cue_index": 56,
+      "recommended_end_ms": 139390,
+      "request_sha256": "sha256:e11dcaf3015560274a9622b9fc7de31688969d699bcd3c30c914f46443736ac3",
+      "retry_scope": "none",
+      "review_scope": "source_full_window",
+      "reviewer_independence_group": "cpa-gpt-5.6-semantic-family",
+      "same_topic_continues_after_target": false,
+      "schema_version": "talk-boundary-semantic-review.v1",
+      "selector_story_witness": {
+        "comedic_payoff": 4,
+        "independence_group": "cpa-gpt-5.6-semantic-family",
+        "self_contained": 4,
+        "status": "PASS"
+      },
+      "semantic_independence_groups": [
+        "cpa-gpt-5.6-semantic-family"
+      ],
+      "source_separation_witness": null,
+      "status": "PASS",
+      "story_closed": true,
+      "summary": "目标 cue 52 的“其实”是未完句，随后转入谢礼；应保留完整谢礼互动至 cue 56，cue 57 已开始讲昨日工作的新话题。",
+      "syntax_complete": true,
+      "target_cue_index": 52,
+      "target_ms": 131890
+    },
+    "closure_sentence": "一天不见吧",
+    "delivery_coverage_lower_bound_ms": 139390,
+    "delivery_coverage_verification": {
+      "failure": null,
+      "status": "PASS"
+    },
+    "end_cut_inside_speech_island": true,
+    "end_island_continues_ms": 3802,
+    "end_on_sentence_boundary": true,
+    "final_delivery_boundary_semantic_review": {
+      "boundary_search_scope": {
+        "boundary_end_mode": "semantic_lower_bound",
+        "delivery_lower_bound_ms": 129630,
+        "delivery_tail_pad_ms": 400,
+        "last_piece_start_ms": 0,
+        "manual_lower_bound_ms": null,
+        "max_recommended_end_ms": 189630,
+        "minimum_recommended_end_ms": 129630,
+        "prior_piece_duration_ms": 0,
+        "reason_codes": [],
+        "recommendation_forward_ms": 60000,
+        "repair_cap_ms": 60000,
+        "required_last_piece_source_end_ms": 204630,
+        "required_local_source_context_end_ms": 204630,
+        "required_owner_end_ms": null,
+        "review_target_ms": 129630,
+        "schema_version": "talk-boundary-search-scope.v1",
+        "scope_sha256": "sha256:656a2a4108314beb0cfe21053364608a7dec54e78b8bfb435ddd95b9a1ec5ed3",
+        "semantic_search_origin_ms": 129630,
+        "semantic_target_ms": 129630,
+        "status": "PASS",
+        "structured_payoff_ms": null,
+        "witness_reserve_ms": 15000
+      },
+      "candidate_id": "auto_183122_1209_1410",
+      "content_anchor_covered": true,
+      "correlated_reviewer_disclosure": true,
+      "cue_grid_sha256": "sha256:c9aacf39a6db8fe336f637ccffbfc15d6e5a8103945be2ae215230883bcb4ffd",
+      "evidence_cue_indexes": [
+        48,
+        49,
+        50,
+        51
+      ],
+      "final_endpoint_binding": {
+        "closure_text_sha256": "sha256:7ac6b5457f97863d55c2390ce84a3275c18e1adbcdc8503ab09d156c5f3213c1",
+        "final_closure_cue_index": 51,
+        "final_cue_grid_sha256": "sha256:c9aacf39a6db8fe336f637ccffbfc15d6e5a8103945be2ae215230883bcb4ffd",
+        "final_end_ms": 129630,
+        "final_snapped_end_ms": 129630,
+        "final_start_ms": 0,
+        "reason_codes": [],
+        "recommended_end_cue_index": 51,
+        "recommended_end_ms": 129630,
+        "schema_version": "talk-boundary-final-endpoint-binding.v1",
+        "semantic_cue_grid_sha256": "sha256:c9aacf39a6db8fe336f637ccffbfc15d6e5a8103945be2ae215230883bcb4ffd",
+        "semantic_request_sha256": "sha256:6142cc087d33e1aed5d5174b282b6abdfc6992e08da03c8c852a853ffac2e1b9",
+        "status": "PASS"
+      },
+      "independent_semantic_vote_count": 1,
+      "max_forward_ms": 60000,
+      "needs_more_context": false,
+      "next_topic_separated": true,
+      "next_topic_witness_valid": true,
+      "reason_codes": [
+        "STORY_ALREADY_CLOSED",
+        "SUPERCCHAT_TOPIC_SEPARATION",
+        "TARGET_SYNTAX_COMPLETE",
+        "TERMINAL_SOURCE_SEPARATION_WITNESS_PASS"
+      ],
+      "recommended_end_cue_index": 51,
+      "recommended_end_ms": 129630,
+      "request_sha256": "sha256:6142cc087d33e1aed5d5174b282b6abdfc6992e08da03c8c852a853ffac2e1b9",
+      "retry_scope": "none",
+      "review_scope": "final_delivery",
+      "reviewer_independence_group": "cpa-gpt-5.6-semantic-family",
+      "same_topic_continues_after_target": false,
+      "schema_version": "talk-boundary-semantic-review.v1",
+      "selector_story_witness": {
+        "comedic_payoff": 4,
+        "independence_group": "cpa-gpt-5.6-semantic-family",
+        "self_contained": 4,
+        "status": "PASS"
+      },
+      "semantic_independence_groups": [
+        "cpa-gpt-5.6-semantic-family"
+      ],
+      "source_separation_witness": {
+        "reason_codes": [],
+        "schema_version": "talk-boundary-source-separation-witness.v1",
+        "source_cue_grid_sha256": "sha256:43ec5d1aac45332cde09ad102962964c4606ef81060363faa215821e416e9c43",
+        "source_final_end_ms": 139390,
+        "source_final_start_ms": 9760,
+        "source_recommended_end_ms": 139390,
+        "source_request_sha256": "sha256:e11dcaf3015560274a9622b9fc7de31688969d699bcd3c30c914f46443736ac3",
+        "source_review_sha256": "sha256:f715c68781a33935c3abb12e7d8587396a5434f9481b1a6dda7fc7120ba4ebe6",
+        "status": "PASS"
+      },
+      "status": "PASS",
+      "story_closed": true,
+      "summary": "第51条句意完整，原豆角包袱此前已落地，且谢礼互动已构成后续话题分隔。",
+      "syntax_complete": true,
+      "target_cue_index": 51,
+      "target_ms": 129630
+    },
+    "final_end_ms": 139390,
+    "final_start_ms": 9760,
+    "frozen_required_boundary_owner_count": 1,
+    "frozen_required_boundary_owners": [
+      {
+        "local_windows": [
+          {
+            "end_ms": 100840,
+            "start_ms": 99720
+          }
+        ],
+        "owner_id": "entity_repair:1:99720:100840",
+        "owner_kind": "entity_repair",
+        "required": true
+      }
+    ],
+    "opening_sentence": "我感觉你现在恢复得很好",
+    "physical_continuity_nonsemantic_flags": [
+      "speech_continues_3802ms_after_cut"
+    ],
+    "red_flags": [],
+    "required_boundary_owner_end_ms": 100840,
+    "required_boundary_owner_start_ms": 99720,
+    "required_boundary_owner_verification": {
+      "failures": [],
+      "status": "PASS"
+    },
+    "schema_version": "boundary-audit.v1",
+    "semantic_start_target_rel_ms": 10000,
+    "semantic_target_rel_ms": 131890,
+    "snapped_sentence_end_ms": 139390,
+    "snapped_sentence_start_ms": 10010,
+    "start_on_sentence_boundary": true,
+    "syntactic_tail_audit": {
+      "reason": "punctuation_free_spoken_clause",
+      "status": "UNKNOWN"
+    },
+    "tail_adjustment": {
+      "final_end_ms": 139390,
+      "next_speech_island_gap_ms": 3978,
+      "next_speech_island_guard_ms": 100,
+      "next_speech_island_start_ms": 143368,
+      "next_subtitle_start_ms": 139390,
+      "nominal_end_ms": 139790,
+      "reason": "tail_clamped_before_next_subtitle",
+      "tail_pad_ms": 400
+    },
+    "tail_pad_coverage_bridge": {
+      "closure_lower_bound_ms": 139390,
+      "delivery_lower_bound_ms": 139390,
+      "maximum_tail_pad_ms": 400,
+      "status": "NOT_NEEDED"
+    },
+    "tail_refinement_used": false,
+    "verdict": "ok_sentence_boundary_cut"
+  },
+  "burned_preview": {
+    "ass_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/auto_183122_1209_1410.recut.final-sapphire72.ass",
+    "branding_intro": {
+      "fallback_attempts": [],
+      "intro_id": "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+      "intro_media_path": "/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.z1-budui-20260718.mp4",
+      "intro_media_sha256": "bbd0c7e3b34d3d5af543bb8444861ab1e18f835c9252629480b2ec2fd34e7dc5",
+      "intro_offset_ms": 5749,
+      "main_duration_ms_before": 129633,
+      "main_sha256_before": "e7ee1b5ae6f863ec1832296f3ce81301243132cdeccb118300c4735bcc8da29d",
+      "method": "matched-intro-concat-copy",
+      "policy_manifest_path": "/opt/bilive/autoslice/repo/assets/lidousha/intro/branding_intro.v1.json",
+      "policy_manifest_sha256": "bee66d164b683451602ae3601d79d19175bc72b0d13257b3026ae2dc47ee06ef",
+      "rotation": {
+        "candidate_intro_ids": [
+          "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+          "huozi-lidousha-kmx-baobao-guankou-z2-v1"
+        ],
+        "mode": "main-sha256",
+        "picked_intro_id": "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+        "selector": "main_sha256"
+      },
+      "status": "PREPENDED",
+      "verification": {
+        "duration_delta_ms": 21,
+        "duration_ms": 135403,
+        "full_decode": "clean",
+        "stream_contract": {
+          "audio_codec": "aac",
+          "channels": 2,
+          "fps": "60/1",
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "sample_rate": 48000,
+          "video_codec": "h264",
+          "width": 1920
+        }
+      }
+    },
+    "burned_sha256": "sha256:3eb97a04e70631c6a509d1b307ed2522b7255cdc7539fbb1f6ae0ff4714d0695",
+    "command": [
+      "ffmpeg",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-y",
+      "-i",
+      "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/auto_183122_1209_1410.recut.mp4",
+      "-vf",
+      "subtitles='/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/auto_183122_1209_1410.recut.final-sapphire72.ass':fontsdir='/opt/bilive/autoslice/repo/assets/lidousha/fonts'",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "20",
+      "-c:a",
+      "copy",
+      "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/auto_183122_1209_1410.recut.burned-final-sapphire72.mp4"
+    ],
+    "path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/auto_183122_1209_1410.recut.burned-final-sapphire72.mp4",
+    "pillarbox_16_9": false,
+    "status": "BURNED",
+    "stream_contract": null,
+    "subtitle_style": "lidousha-final-sapphire72"
+  },
+  "chat_authority_audit_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/auto_183122_1209_1410.chat-authority.json",
+  "clip_context_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/auto_183122_1209_1410.clip-context.json",
+  "clip_context_payload_sha256": "sha256:7bfadbb198e2191976ba029c9955bc673111eafb0cc9f9c9fda574e65b664f8c",
+  "duration_ms": 129630,
+  "end_ms": 129630,
+  "media_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/auto_183122_1209_1410.recut.mp4",
+  "publish_staging": {
+    "cover_generation": {
+      "ai_background": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/covers_ai_original/auto_183122_1209_1410.ai-bg.cpa-image-edit.png",
+      "ai_background_sha256": "sha256:a6c9f217315fed1dc03cc86f634b76d57ae573b2fecc5cd2fc6601333c5680f1",
+      "angle_degrees": -2.0,
+      "art_direction": {
+        "background_style": "mono-manga-panels",
+        "cover_punch": [
+          "团结默契",
+          "下播暗示"
+        ],
+        "emote_id": "",
+        "emote_mode": "",
+        "emote_reason": "",
+        "expression_en": "A closed-mouth, playful scheming smirk with slightly raised eyebrows, as if proudly plotting a secret hint.",
+        "hook_color": "orange",
+        "hook_word": "暗示",
+        "is_song": false,
+        "layout": "banner",
+        "line_breaks": [],
+        "role": "witty_smug",
+        "words": []
+      },
+      "attempted_models": [
+        "gpt-image-2"
+      ],
+      "background_style": "mono-manga-panels",
+      "cover_diversity_slot": 4,
+      "cover_mode": "auto",
+      "cover_origin": "AI_REDRAW",
+      "cover_punch": [
+        "团结默契",
+        "下播暗示"
+      ],
+      "cover_punch_allowed": true,
+      "cover_text": "听说安晚也吃了生豆角，小李决定下播暗示礼墨也吃，三人组必须要有这个团结默契！",
+      "cover_text_mode": "punch",
+      "cover_treatment": {
+        "reason": "motion without confident cover subject (score=3.36)",
+        "treatment": "cpa_redraw"
+      },
+      "expression_en": "A closed-mouth, playful scheming smirk with slightly raised eyebrows, as if proudly plotting a secret hint.",
+      "fallback_used": false,
+      "final_cover": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/covers/auto_183122_1209_1410.ai-title.cover.png",
+      "final_cover_sha256": "sha256:41e8182976c47932d76fd8a87a34354f1671fb6d4cd3c74ca807ae8db403b496",
+      "font": "ZCOOLKuaiLe-Regular.ttf",
+      "font_selection": {
+        "font": "ZCOOLKuaiLe-Regular.ttf",
+        "glyph_risk": [],
+        "rejected": []
+      },
+      "font_size": 277,
+      "hook_color": "orange",
+      "hook_word": "暗示",
+      "image_gen_model": "cpa",
+      "image_generation_attempted": true,
+      "image_generation_planned": true,
+      "image_generation_used": true,
+      "layout": "banner",
+      "line_split": "punch",
+      "method": "images.edit",
+      "min_talk_font_size": 120,
+      "model": "gpt-image-2",
+      "model_fallback_used": false,
+      "overlay_position": {
+        "x": 350,
+        "y": -40
+      },
+      "pre_overlay_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/covers/auto_183122_1209_1410.ai-title.cover.pre-overlay.png",
+      "pre_overlay_sha256": "sha256:a6c9f217315fed1dc03cc86f634b76d57ae573b2fecc5cd2fc6601333c5680f1",
+      "reference_image": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/cover_refs/auto_183122_1209_1410.cover-ref.png",
+      "reference_selection": {
+        "anchor_x_frac": 0.5426,
+        "best_ms": 13500,
+        "candidates": [
+          {
+            "audio_z": 1.4128,
+            "emotion": 1.0,
+            "motion_z": 1.7301,
+            "ms": 13500,
+            "score": 3.3618,
+            "sharp_z": -0.5242
+          },
+          {
+            "audio_z": 1.1825,
+            "emotion": 1.0,
+            "motion_z": 1.6702,
+            "ms": 43500,
+            "score": 3.3564,
+            "sharp_z": 0.615
+          },
+          {
+            "audio_z": 1.3964,
+            "emotion": 0.0,
+            "motion_z": 1.5283,
+            "ms": 121000,
+            "score": 3.3147,
+            "sharp_z": 1.5603
+          }
+        ],
+        "head_top_frac": 0.0,
+        "media_duration_ms": 129632,
+        "motion_bbox_frac": [
+          0.2188,
+          0.0,
+          0.7812,
+          0.8556
+        ],
+        "motion_dispersion_frac": 0.4812,
+        "sample_fps": 2.0,
+        "schema": "cover-frame-selection.v1",
+        "signals": {
+          "audio_env_available": true,
+          "emotion_spans": 2
+        },
+        "skip_head_ms": 7249,
+        "skip_tail_ms": 1200,
+        "status": "SELECTED",
+        "subject_anchor_x_frac": 0.5735,
+        "subject_bbox_frac": [
+          0.2188,
+          0.0056,
+          0.9281,
+          0.8556
+        ],
+        "subject_confident": false,
+        "subject_head_top_frac": 0.0056
+      },
+      "reference_sha256": "sha256:06daf47caf7ce85a0988515513836109c96b58dff9af2e0aa79c76ffa31fe748",
+      "relation_cover_mode": "HOST_ONLY_GENERIC",
+      "rendered_lines": [
+        "团结默契",
+        "下播暗示"
+      ],
+      "rendered_text_pixels": {
+        "canvas_size": [
+          1920,
+          1080
+        ],
+        "changed_pixel_count": 325448,
+        "changed_pixel_ratio": 0.9959756765606878,
+        "final_cover_sha256": "sha256:41e8182976c47932d76fd8a87a34354f1671fb6d4cd3c74ca807ae8db403b496",
+        "font_file_name": "ZCOOLKuaiLe-Regular.ttf",
+        "font_file_sha256": "sha256:812a6fc1fe54b6d73a419245c32dfeba8aa33104d5be90d1cf6af082007cb71d",
+        "font_size": 277,
+        "mask_nonzero_pixels": 326763,
+        "mask_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/covers/auto_183122_1209_1410.ai-title.cover.title-mask.png",
+        "mask_sha256": "sha256:1114c221c0ffe966eeaa88d2dc1743f441aa5410e95ce93ad68ed92fc00855a8",
+        "masked_final_pixels_sha256": "sha256:d06cc2e905faa31ad9255c62df8a20dea1ce79be7bfd457420ac4bea7a0168f8",
+        "overlay_position": {
+          "x": 350,
+          "y": -40
+        },
+        "pre_overlay_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/covers/auto_183122_1209_1410.ai-title.cover.pre-overlay.png",
+        "pre_overlay_sha256": "sha256:a6c9f217315fed1dc03cc86f634b76d57ae573b2fecc5cd2fc6601333c5680f1",
+        "render_spec": {
+          "angle_degrees": -2.0,
+          "font_face_index": 0,
+          "font_file_name": "ZCOOLKuaiLe-Regular.ttf",
+          "font_file_sha256": "sha256:812a6fc1fe54b6d73a419245c32dfeba8aa33104d5be90d1cf6af082007cb71d",
+          "layer_size": [
+            1199,
+            540
+          ],
+          "lines": [
+            {
+              "font_size": 277,
+              "outlines": [
+                {
+                  "color": [
+                    18,
+                    36,
+                    79
+                  ],
+                  "width": 24
+                },
+                {
+                  "color": [
+                    255,
+                    255,
+                    255
+                  ],
+                  "width": 12
+                }
+              ],
+              "segment_pad": 24,
+              "segments": [
+                {
+                  "fill": [
+                    255,
+                    140,
+                    60
+                  ],
+                  "text": "团结默契"
+                }
+              ],
+              "x": 89.8125,
+              "y": 45
+            },
+            {
+              "font_size": 138,
+              "outlines": [
+                {
+                  "color": [
+                    18,
+                    36,
+                    79
+                  ],
+                  "width": 12
+                },
+                {
+                  "color": [
+                    255,
+                    255,
+                    255
+                  ],
+                  "width": 6
+                }
+              ],
+              "segment_pad": 12,
+              "segments": [
+                {
+                  "fill": [
+                    255,
+                    246,
+                    214
+                  ],
+                  "text": "下播暗示"
+                }
+              ],
+              "x": 345.59375,
+              "y": 345
+            }
+          ],
+          "rendered_layer_size": [
+            1219,
+            582
+          ],
+          "schema_version": "lidousha-cover-title-render-spec.v1"
+        },
+        "render_spec_sha256": "sha256:1e5f903c7e3a60b3bc6bb6f61a3c703a69a04256212e768e4219ec133d20730b",
+        "rendered_text": "团结默契下播暗示",
+        "schema_version": "lidousha-cover-rendered-text-pixels.v3",
+        "status": "PASS",
+        "text_pixel_bbox": [
+          448,
+          18,
+          1493,
+          475
+        ],
+        "text_pixel_height": 457,
+        "text_pixel_width": 1045
+      },
+      "request_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/evidence/auto_183122_1209_1410.cover-cpa-request.redacted.json",
+      "response_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/evidence/auto_183122_1209_1410.cover-cpa-response.redacted.json",
+      "role": "witty_smug",
+      "route_decision": {
+        "actual_treatment": "cpa_redraw",
+        "alternatives": [
+          {
+            "rationale": "the selected source frame is strong enough to preserve as the final visual without image generation",
+            "rejected_reason": "the source-frame evidence is not strong or verified enough to ship without image generation; selected evidence: motion without confident cover subject (score=3.36)",
+            "status": "REJECTED",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rationale": "the real source moment is usable but benefits from a bounded identity-preserving cleanup",
+            "rejected_reason": "bounded cleanup cannot repair the missing subject confidence, weak composition, or inability to express the hook; selected evidence: motion without confident cover subject (score=3.36)",
+            "status": "REJECTED",
+            "treatment": "screenshot_polish"
+          },
+          {
+            "rationale": "motion without confident cover subject (score=3.36)",
+            "rejected_reason": null,
+            "status": "SELECTED",
+            "treatment": "cpa_redraw"
+          }
+        ],
+        "alternatives_considered": [
+          "screenshot_direct",
+          "screenshot_polish",
+          "cpa_redraw"
+        ],
+        "cover_mode": "auto",
+        "execution_status": "READY",
+        "final_visibility_authority": "NOT_REQUIRED",
+        "final_visible_participant_ids": [],
+        "frame_emotion": 1.0,
+        "frame_score": 3.3618,
+        "image_generation_attempted": true,
+        "image_generation_planned": true,
+        "image_generation_used": true,
+        "is_song": false,
+        "manual_title_or_full_text_contract": false,
+        "motion_dispersion_frac": 0.4812,
+        "reason": "motion without confident cover subject (score=3.36)",
+        "reference_authority_id": null,
+        "rejected_alternatives": [
+          {
+            "rejected_reason": "the source-frame evidence is not strong or verified enough to ship without image generation; selected evidence: motion without confident cover subject (score=3.36)",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rejected_reason": "bounded cleanup cannot repair the missing subject confidence, weak composition, or inability to express the hook; selected evidence: motion without confident cover subject (score=3.36)",
+            "treatment": "screenshot_polish"
+          }
+        ],
+        "relationship_semantic_evidence": [],
+        "relationship_visual_required": false,
+        "relationship_visual_safety_evidence": {
+          "relation_state": "UNKNOWN",
+          "required_participant_ids": [],
+          "requirement_basis": [],
+          "schema_version": "lidousha-cover-relationship-visual-safety.v1",
+          "status": "NOT_REQUIRED"
+        },
+        "required_participant_ids": [],
+        "schema_version": "lidousha-cover-route-decision.v2",
+        "selected_rationale": "motion without confident cover subject (score=3.36)",
+        "selected_treatment": "cpa_redraw",
+        "selection_policy": "lidousha-cover-treatment-router.v2",
+        "source_visibility_authority": "NO_IDENTITY_AUTHORITY",
+        "source_visible_participant_ids": [],
+        "subject_confident": false,
+        "verified_stream_frame": false
+      },
+      "scrim": false,
+      "story_contract": {
+        "boundary_semantic_review": {
+          "boundary_search_scope": {
+            "boundary_end_mode": "semantic_lower_bound",
+            "delivery_lower_bound_ms": 129630,
+            "delivery_tail_pad_ms": 400,
+            "last_piece_start_ms": 0,
+            "manual_lower_bound_ms": null,
+            "max_recommended_end_ms": 189630,
+            "minimum_recommended_end_ms": 129630,
+            "prior_piece_duration_ms": 0,
+            "reason_codes": [],
+            "recommendation_forward_ms": 60000,
+            "repair_cap_ms": 60000,
+            "required_last_piece_source_end_ms": 204630,
+            "required_local_source_context_end_ms": 204630,
+            "required_owner_end_ms": null,
+            "review_target_ms": 129630,
+            "schema_version": "talk-boundary-search-scope.v1",
+            "scope_sha256": "sha256:656a2a4108314beb0cfe21053364608a7dec54e78b8bfb435ddd95b9a1ec5ed3",
+            "semantic_search_origin_ms": 129630,
+            "semantic_target_ms": 129630,
+            "status": "PASS",
+            "structured_payoff_ms": null,
+            "witness_reserve_ms": 15000
+          },
+          "candidate_id": "auto_183122_1209_1410",
+          "content_anchor_covered": true,
+          "correlated_reviewer_disclosure": true,
+          "cue_grid_sha256": "sha256:c9aacf39a6db8fe336f637ccffbfc15d6e5a8103945be2ae215230883bcb4ffd",
+          "evidence_cue_indexes": [
+            48,
+            49,
+            50,
+            51
+          ],
+          "final_endpoint_binding": {
+            "closure_text_sha256": "sha256:7ac6b5457f97863d55c2390ce84a3275c18e1adbcdc8503ab09d156c5f3213c1",
+            "final_closure_cue_index": 51,
+            "final_cue_grid_sha256": "sha256:c9aacf39a6db8fe336f637ccffbfc15d6e5a8103945be2ae215230883bcb4ffd",
+            "final_end_ms": 129630,
+            "final_snapped_end_ms": 129630,
+            "final_start_ms": 0,
+            "reason_codes": [],
+            "recommended_end_cue_index": 51,
+            "recommended_end_ms": 129630,
+            "schema_version": "talk-boundary-final-endpoint-binding.v1",
+            "semantic_cue_grid_sha256": "sha256:c9aacf39a6db8fe336f637ccffbfc15d6e5a8103945be2ae215230883bcb4ffd",
+            "semantic_request_sha256": "sha256:6142cc087d33e1aed5d5174b282b6abdfc6992e08da03c8c852a853ffac2e1b9",
+            "status": "PASS"
+          },
+          "independent_semantic_vote_count": 1,
+          "max_forward_ms": 60000,
+          "needs_more_context": false,
+          "next_topic_separated": true,
+          "next_topic_witness_valid": true,
+          "reason_codes": [
+            "STORY_ALREADY_CLOSED",
+            "SUPERCCHAT_TOPIC_SEPARATION",
+            "TARGET_SYNTAX_COMPLETE",
+            "TERMINAL_SOURCE_SEPARATION_WITNESS_PASS"
+          ],
+          "recommended_end_cue_index": 51,
+          "recommended_end_ms": 129630,
+          "request_sha256": "sha256:6142cc087d33e1aed5d5174b282b6abdfc6992e08da03c8c852a853ffac2e1b9",
+          "retry_scope": "none",
+          "review_scope": "final_delivery",
+          "reviewer_independence_group": "cpa-gpt-5.6-semantic-family",
+          "same_topic_continues_after_target": false,
+          "schema_version": "talk-boundary-semantic-review.v1",
+          "selector_story_witness": {
+            "comedic_payoff": 4,
+            "independence_group": "cpa-gpt-5.6-semantic-family",
+            "self_contained": 4,
+            "status": "PASS"
+          },
+          "semantic_independence_groups": [
+            "cpa-gpt-5.6-semantic-family"
+          ],
+          "source_separation_witness": {
+            "reason_codes": [],
+            "schema_version": "talk-boundary-source-separation-witness.v1",
+            "source_cue_grid_sha256": "sha256:43ec5d1aac45332cde09ad102962964c4606ef81060363faa215821e416e9c43",
+            "source_final_end_ms": 139390,
+            "source_final_start_ms": 9760,
+            "source_recommended_end_ms": 139390,
+            "source_request_sha256": "sha256:e11dcaf3015560274a9622b9fc7de31688969d699bcd3c30c914f46443736ac3",
+            "source_review_sha256": "sha256:f715c68781a33935c3abb12e7d8587396a5434f9481b1a6dda7fc7120ba4ebe6",
+            "status": "PASS"
+          },
+          "status": "PASS",
+          "story_closed": true,
+          "summary": "第51条句意完整，原豆角包袱此前已落地，且谢礼互动已构成后续话题分隔。",
+          "syntax_complete": true,
+          "target_cue_index": 51,
+          "target_ms": 129630
+        },
+        "clip_context_binding": {
+          "context_sha256": "sha256:7bfadbb198e2191976ba029c9955bc673111eafb0cc9f9c9fda574e65b664f8c",
+          "mutation_authorized": false,
+          "schema_version": "lidousha-clip-context.v1",
+          "speech_memory_ledger_sha256": "sha256:d87532b5d56457496a868c6910091a545bd2c612a807182d742aa0ca26d30c95",
+          "whole_clip_draft_srt_sha256": "sha256:39aa784755744da75677903574d76cdf7022fa56108af0b6b5cf1e1281a089a9"
+        },
+        "cover_counterpart_reference_available": false,
+        "cover_fallback_mode": "HOST_ONLY_GENERIC",
+        "cover_reference_authority": null,
+        "human_boundary_authority": null,
+        "participants": [],
+        "relation_state": "UNKNOWN",
+        "schema_version": "lidousha-story-contract.v1",
+        "selection_hook": "听说安晚也吃了生豆角，李豆沙震惊之余决定下播暗示礼墨也吃，誓要用集体中招维护三人组的“团结默契”。",
+        "source_media_sha256s": [
+          "sha256:26be9d5af3dd56de9b005c3cad0f065f32c69bd6801ebe1a46a7f614e8714889"
+        ]
+      },
+      "text_backing": "outline",
+      "title": "【李豆沙】听说安晚也吃了生豆角，小李决定下播暗示礼墨也吃，三人组必须要有这个团结默契！",
+      "title_band": "banner",
+      "workflow": "cpa-openai-compatible-image-edit-cover-plus-approved-local-title-overlay"
+    },
+    "cover_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/covers/auto_183122_1209_1410.ai-title.cover.png",
+    "cover_status": "AI_COVER_READY",
+    "cover_text": "听说安晚也吃了生豆角，小李决定下播暗示礼墨也吃，三人组必须要有这个团结默契！",
+    "publish_json_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/auto_183122_1209_1410.recut.publish.json",
+    "reason_codes": [],
+    "recovery_publication_authority": null,
+    "status": "STAGED",
+    "title": "【李豆沙】听说安晚也吃了生豆角，小李决定下播暗示礼墨也吃，三人组必须要有这个团结默契！",
+    "title_authority_error": null,
+    "title_authority_status": "RESOLVED_LLM",
+    "title_policy_violations": [],
+    "title_source": "llm+lidousha_style_asset",
+    "title_story_audit": {
+      "artifact_kind": "title",
+      "schema_version": "story-artifact-audit.v1",
+      "status": "PASS",
+      "text_sha256": "sha256:b74b525f6db54acc76015bbfbaef3b20cf07e0f6de3ba2c47650e83c9b9ccae2",
+      "violations": []
+    },
+    "upload_enabled": false
+  },
+  "redelivery_baseline": null,
+  "redelivery_baseline_audit_path": null,
+  "selection_scorecard": {
+    "dimensions": {
+      "audience_salience": 3,
+      "comedic_payoff": 4,
+      "lidousha_centrality": 4,
+      "persona_reversal": 3,
+      "relationship_interaction": 3,
+      "self_contained": 4,
+      "stance_intensity": 3
+    },
+    "effective_score": 82.0,
+    "fatigue_penalty": 0.0,
+    "raw_score": 85.0,
+    "reason_codes": [],
+    "requested_tier": 1,
+    "schema_version": "lidousha-selection-scorecard.v1",
+    "status": "VALID",
+    "tier": 1,
+    "tier_basis": "relationship_chain",
+    "tier_evidence_cues": [
+      441,
+      442,
+      443,
+      447,
+      448,
+      451,
+      453,
+      455,
+      457
+    ],
+    "tier_reason": "弹幕告知安晚也吃了生豆角后，她先确认同类遭遇，再点名礼墨是三人组唯一没吃的人，并表示下播要去暗示对方，以荒诞方式强调三人必须团结，形成具体人物间的完整关系链和明确笑点。",
+    "uncertainty_penalty": 3.0,
+    "weights": {
+      "audience_salience": 15,
+      "comedic_payoff": 10,
+      "lidousha_centrality": 25,
+      "persona_reversal": 10,
+      "relationship_interaction": 15,
+      "self_contained": 5,
+      "stance_intensity": 20
+    }
+  },
+  "session_relation_authority": null,
+  "speaker_finalization": null,
+  "speaker_finalization_manifest_path": null,
+  "speaker_finalization_manifest_sha256": null,
+  "speaker_mode": "uniform_host",
+  "speaker_review_srt_path": null,
+  "start_ms": 0,
+  "status": "MATERIALIZED",
+  "story_contract": {
+    "boundary_semantic_review": {
+      "boundary_search_scope": {
+        "boundary_end_mode": "semantic_lower_bound",
+        "delivery_lower_bound_ms": 129630,
+        "delivery_tail_pad_ms": 400,
+        "last_piece_start_ms": 0,
+        "manual_lower_bound_ms": null,
+        "max_recommended_end_ms": 189630,
+        "minimum_recommended_end_ms": 129630,
+        "prior_piece_duration_ms": 0,
+        "reason_codes": [],
+        "recommendation_forward_ms": 60000,
+        "repair_cap_ms": 60000,
+        "required_last_piece_source_end_ms": 204630,
+        "required_local_source_context_end_ms": 204630,
+        "required_owner_end_ms": null,
+        "review_target_ms": 129630,
+        "schema_version": "talk-boundary-search-scope.v1",
+        "scope_sha256": "sha256:656a2a4108314beb0cfe21053364608a7dec54e78b8bfb435ddd95b9a1ec5ed3",
+        "semantic_search_origin_ms": 129630,
+        "semantic_target_ms": 129630,
+        "status": "PASS",
+        "structured_payoff_ms": null,
+        "witness_reserve_ms": 15000
+      },
+      "candidate_id": "auto_183122_1209_1410",
+      "content_anchor_covered": true,
+      "correlated_reviewer_disclosure": true,
+      "cue_grid_sha256": "sha256:c9aacf39a6db8fe336f637ccffbfc15d6e5a8103945be2ae215230883bcb4ffd",
+      "evidence_cue_indexes": [
+        48,
+        49,
+        50,
+        51
+      ],
+      "final_endpoint_binding": {
+        "closure_text_sha256": "sha256:7ac6b5457f97863d55c2390ce84a3275c18e1adbcdc8503ab09d156c5f3213c1",
+        "final_closure_cue_index": 51,
+        "final_cue_grid_sha256": "sha256:c9aacf39a6db8fe336f637ccffbfc15d6e5a8103945be2ae215230883bcb4ffd",
+        "final_end_ms": 129630,
+        "final_snapped_end_ms": 129630,
+        "final_start_ms": 0,
+        "reason_codes": [],
+        "recommended_end_cue_index": 51,
+        "recommended_end_ms": 129630,
+        "schema_version": "talk-boundary-final-endpoint-binding.v1",
+        "semantic_cue_grid_sha256": "sha256:c9aacf39a6db8fe336f637ccffbfc15d6e5a8103945be2ae215230883bcb4ffd",
+        "semantic_request_sha256": "sha256:6142cc087d33e1aed5d5174b282b6abdfc6992e08da03c8c852a853ffac2e1b9",
+        "status": "PASS"
+      },
+      "independent_semantic_vote_count": 1,
+      "max_forward_ms": 60000,
+      "needs_more_context": false,
+      "next_topic_separated": true,
+      "next_topic_witness_valid": true,
+      "reason_codes": [
+        "STORY_ALREADY_CLOSED",
+        "SUPERCCHAT_TOPIC_SEPARATION",
+        "TARGET_SYNTAX_COMPLETE",
+        "TERMINAL_SOURCE_SEPARATION_WITNESS_PASS"
+      ],
+      "recommended_end_cue_index": 51,
+      "recommended_end_ms": 129630,
+      "request_sha256": "sha256:6142cc087d33e1aed5d5174b282b6abdfc6992e08da03c8c852a853ffac2e1b9",
+      "retry_scope": "none",
+      "review_scope": "final_delivery",
+      "reviewer_independence_group": "cpa-gpt-5.6-semantic-family",
+      "same_topic_continues_after_target": false,
+      "schema_version": "talk-boundary-semantic-review.v1",
+      "selector_story_witness": {
+        "comedic_payoff": 4,
+        "independence_group": "cpa-gpt-5.6-semantic-family",
+        "self_contained": 4,
+        "status": "PASS"
+      },
+      "semantic_independence_groups": [
+        "cpa-gpt-5.6-semantic-family"
+      ],
+      "source_separation_witness": {
+        "reason_codes": [],
+        "schema_version": "talk-boundary-source-separation-witness.v1",
+        "source_cue_grid_sha256": "sha256:43ec5d1aac45332cde09ad102962964c4606ef81060363faa215821e416e9c43",
+        "source_final_end_ms": 139390,
+        "source_final_start_ms": 9760,
+        "source_recommended_end_ms": 139390,
+        "source_request_sha256": "sha256:e11dcaf3015560274a9622b9fc7de31688969d699bcd3c30c914f46443736ac3",
+        "source_review_sha256": "sha256:f715c68781a33935c3abb12e7d8587396a5434f9481b1a6dda7fc7120ba4ebe6",
+        "status": "PASS"
+      },
+      "status": "PASS",
+      "story_closed": true,
+      "summary": "第51条句意完整，原豆角包袱此前已落地，且谢礼互动已构成后续话题分隔。",
+      "syntax_complete": true,
+      "target_cue_index": 51,
+      "target_ms": 129630
+    },
+    "candidate_id": "auto_183122_1209_1410",
+    "clip_context_binding": {
+      "context_sha256": "sha256:7bfadbb198e2191976ba029c9955bc673111eafb0cc9f9c9fda574e65b664f8c",
+      "mutation_authorized": false,
+      "schema_version": "lidousha-clip-context.v1",
+      "speech_memory_ledger_sha256": "sha256:d87532b5d56457496a868c6910091a545bd2c612a807182d742aa0ca26d30c95",
+      "whole_clip_draft_srt_sha256": "sha256:39aa784755744da75677903574d76cdf7022fa56108af0b6b5cf1e1281a089a9"
+    },
+    "clip_context_prompt": "clip_context_sha256: sha256:7bfadbb198e2191976ba029c9955bc673111eafb0cc9f9c9fda574e65b664f8c\ncandidate_id: auto_183122_1209_1410\nrecording_date: 2026-07-24\nselection_hook: 听说安晚也吃了生豆角，李豆沙震惊之余决定下播暗示礼墨也吃，誓要用集体中招维护三人组的“团结默契”。\nsource_pieces: [{\"end_ms\":1257520,\"recording_basename\":\"22966160_20260724-18-31-22.mp4\",\"source_media_sha256\":\"sha256:26be9d5af3dd56de9b005c3cad0f065f32c69bd6801ebe1a46a7f614e8714889\",\"start_ms\":1199070},{\"end_ms\":1489320,\"recording_basename\":\"22966160_20260724-18-31-22.mp4\",\"source_media_sha256\":\"sha256:26be9d5af3dd56de9b005c3cad0f065f32c69bd6801ebe1a46a7f614e8714889\",\"start_ms\":1336800}]\nsession_relation_authority: null\ntopic_resolution: {\"evidence\":[],\"graph_sha256\":\"19281b1076077c8c6d48aed4e256361688431c2f15a558757c003bb9964c7689\",\"recording_date\":\"2026-07-24\",\"schema_version\":\"topic-resolution.v1\",\"scoped_entity_ids\":[],\"scoped_graph_context\":{\"entities\":[],\"graph_sha256\":\"19281b1076077c8c6d48aed4e256361688431c2f15a558757c003bb9964c7689\",\"recording_date\":\"2026-07-24\",\"schema_version\":\"topic-scoped-context.v1\",\"status\":\"NO_SELECTED_NODES\",\"topics\":[],\"works\":[]},\"selected_topic_ids\":[],\"selected_work_ids\":[],\"status\":\"NO_MATCH\"}\nsession_topic_authorities: []\n以下长期记忆只提供候选，绝不直接授权改字；同音字仍须画面/弹幕/SC/同片复现/声学或人工 source truth：\n- id=lidousha.idiolect.xiaodeba.r1; idiolect: surfaces=晓得吧; candidates=晓得吧\n整片初稿（用于回指、复现和后文调侃；不是文字 authority）：\n1\n00:00:00,000 --> 00:00:01,640\n客房给别人住\n2\n00:00:01,640 --> 00:00:03,360\n所以就是，呃\n3\n00:00:03,400 --> 00:00:05,780\n这个、这个、这个就是小李\n4\n00:00:05,780 --> 00:00:07,640\n小李有自己住的地方\n5\n00:00:09,530 --> 00:00:10,010\n什么\n6\n00:00:10,010 --> 00:00:11,330\n我感觉你现在恢复得很好\n7\n00:00:11,330 --> 00:00:13,530\n这个豆角你和安晚到底怎，怎么\n8\n00:00:13,530 --> 00:00:17,290\n安晚也，安晚也吃生豆角了吗\n9\n00:00:18,380 --> 00:00:21,580\n安，安晚也吃生豆角了吗\n10\n00:00:23,140 --> 00:00:23,820\n啊\n11\n00:00:24,980 --> 00:00:26,860\n为什么怎么会这种事\n12\n00:00:26,860 --> 00:00:28,460\n这个是可以传染的吗\n13\n00:00:28,780 --> 00:00:31,480\n这个事情是会传染的吗\n14\n00:00:31,480 --> 00:00:32,500\n我请问\n15\n00:00:34,290 --> 00:00:37,450\n神了，这对吗\n16\n00:00:37,450 --> 00:00:40,010\n切，那就差礼墨没吃了\n17\n00:00:41,190 --> 00:00:43,270\n那现在就差礼墨没吃了\n18\n00:00:43,270 --> 00:00:46,670\n这个，这个下播我去暗示一下\n19\n00:00:47,070 --> 00:00:48,810\n我们必须要有这个\n20\n00:00:48,810 --> 00:00:50,830\n我们三人组必须要团结\n21\n00:00:52,920 --> 00:00:56,040\n必，必须要有这个啊\n22\n00:00:56,120 --> 00:00:58,400\n这个，这个默契\n23\n00:00:58,560 --> 00:00:59,840\n吃这个豆角是怎么吃的\n24\n00:00:59,840 --> 00:01:01,280\n我是炒着吃的\n25\n00:01:01,560 --> 00:01:04,200\n我是炒了豆角炒肉末\n26\n00:01:04,519 --> 00:01:06,360\n而且我也焯了水\n27\n00:01:06,680 --> 00:01:08,560\n就是我做豆角的时候\n28\n00:01:08,560 --> 00:01:10,120\n我是焯了水的\n29\n00:01:10,180 --> 00:01:11,740\n并且我还炒了\n30\n00:01:11,740 --> 00:01:12,780\n就是先焯了水\n31\n00:01:12,780 --> 00:01:15,380\n然后再把它炒进炒锅里面的\n32\n00:01:15,460 --> 00:01:17,100\n我也不知道为什么没熟\n33\n00:01:18,110 --> 00:01:20,950\n我，我也不知道为什么没熟，你知道吗\n34\n00:01:20,950 --> 00:01:21,790\n很神秘\n35\n00:01:21,830 --> 00:01:25,870\n可能是我当时焯水的时候想要\n36\n00:01:26,760 --> 00:01:30,280\n想要保持它的那个翠绿的颜色吧\n37\n00:01:30,800 --> 00:01:33,600\n然后有点失败\n38\n00:01:34,250 --> 00:01:36,490\n可，可能有点失败\n39\n00:01:37,040 --> 00:01:39,720\n对，也有可能是焯水时间太短了\n40\n00:01:39,720 --> 00:01:40,840\n谢谢桃林的钢镚\n41\n00:01:40,840 --> 00:01:43,460\n感觉豆沙用礼墨的麦更加吵闹\n42\n00:01:43,460 --> 00:01:44,380\n是我错觉吗\n43\n00:01:44,380 --> 00:01:46,290\n是吗，是吗\n44\n00:01:46,810 --> 00:01:48,570\n我跟她用的是同一款吧\n45\n00:01:49,010 --> 00:01:54,170\n我跟她，我跟她就是用的是同样的麦克风\n46\n00:01:54,170 --> 00:01:55,610\n我们用的那个\n47\n00:01:56,010 --> 00:01:58,010\n嗯，支架也是一样的\n48\n00:01:58,010 --> 00:01:59,010\n喝口水\n49\n00:02:05,740 --> 00:02:07,380\n以后做可以煮吗\n50\n00:02:07,380 --> 00:02:09,620\n我，我，我煮了\n51\n00:02:10,180 --> 00:02:11,240\n我煮了\n52\n00:02:11,240 --> 00:02:11,940\n其实\n53\n00:02:13,150 --> 00:02:15,970\n谢谢小猪状态的钢蹦妈妈，好久不见\n54\n00:02:15,970 --> 00:02:17,100\n不是你妈妈\n55\n00:02:17,100 --> 00:02:18,250\n一天不见吧\n56\n00:02:18,250 --> 00:02:19,390\n一天不见吧\n57\n00:02:19,390 --> 00:02:21,250\n昨天狠狠工作了\n58\n00:02:21,250 --> 00:02:22,490\n我昨天回到酒店之后\n59\n00:02:22,490 --> 00:02:25,470\n感觉，感觉腿已经不是自己的了\n60\n00:02:25,470 --> 00:02:26,870\n哈哈哈\n61\n00:02:27,750 --> 00:02:29,830\n我去，真的好想哭啊\n62\n00:02:29,830 --> 00:02:31,230\n就是不知道为什么\n63\n00:02:31,230 --> 00:02:32,450\n就是回去之后\n64\n00:02:32,450 --> 00:02:34,830\n我躺在床上之后就好想哭\n65\n00:02:34,830 --> 00:02:37,150\n我这怎么有这么多事情啊\n66\n00:02:37,310 --> 00:02:39,190\n怎么会这么多事情\n67\n00:02:39,190 --> 00:02:40,470\n我真的好想哭啊\n68\n00:02:40,470 --> 00:02:41,350\n我感觉我\n69\n00:02:41,350 --> 00:02:44,630\n我感觉我会，就是把这些事情都做完之后\n70\n00:02:44,630 --> 00:02:47,410\n我会，就是哭个两个小时\n71\n00:02:48,330 --> 00:02:51,290\n就是一个一个爆哭\n72\n00:02:52,540 --> 00:02:53,420\n但没关系\n73\n00:02:53,420 --> 00:02:54,820\n今天晚上可以休息一下\n74\n00:02:54,820 --> 00:02:57,580\n今天晚上可以跟礼墨去吃饭\n75\n00:02:58,040 --> 00:03:00,040\n谢谢夏雨清心做的摸摸头啊\n76\n00:03:00,040 --> 00:03:01,600\n谢谢你，ありがとう\n77\n00:03:01,600 --> 00:03:04,080\n谢谢你，谢谢你的摸摸头\n78\n00:03:04,320 --> 00:03:05,980\n看有什么好的百合\n79\n00:03:05,980 --> 00:03:10,720\n有什么，有什么优秀的百合同人文推荐吗\n80\n00:03:12,350 --> 00:03:15,590\n又，又怎么又有优秀的百合同人文推荐吗\n81\n00:03:15,590 --> 00:03:17,070\n大家\n82\n00:03:21,160 --> 00:03:23,100\n为什么这么多事情，我也想问\n83\n00:03:23,100 --> 00:03:24,520\n有跟舍友姐哭诉吗\n84\n00:03:24,520 --> 00:03:26,800\n我没有，没有精力说话了\n85\n00:03:27,130 --> 00:03:27,930\n哈哈\n86\n00:03:27,930 --> 00:03:29,130\n我真的没有精力说了\n87\n00:03:29,130 --> 00:03:30,730\n我不想，我不想看手机\n结构化弹幕/SC（保留 source binding）：\n- superchat @-891315ms event=17763961: 瓜咪瓜咪，你怎么穿着李姐的衣服\n- superchat @-854315ms event=17763971: lllljhb\n- superchat @-840595ms event=17764003: 主包这一声礼墨~要把李1民的心都喊碎了（\n- superchat @-825595ms event=17764002: 礼小虎都打不过的丢人熊猫，李1民还站得起来吗\n- superchat @-822595ms event=17764009: 李姐碰到力魔的宠物都要喊妈妈，礼豆沙谁是1一目了然了\n- superchat @-761315ms event=17764003: 主包这一声礼墨~要把李1民的心都喊碎了（\n- superchat @-746315ms event=17764002: 礼小虎都打不过的丢人熊猫，李1民还站得起来吗\n- superchat @-743315ms event=17764009: 李姐碰到力魔的宠物都要喊妈妈，礼豆沙谁是1一目了然了\n- superchat @-706595ms event=17764044: 主播主播，看了刚刚的反应，能看看这个吗 BV1u14y117pZ\n- superchat @-687595ms event=17764046: 摸动物不敢说是，那摸摸旁边的那条龙不会害怕吧（\n- superchat @-651595ms event=17764060: 老师老师您嗑的李墨开播了（）\n- superchat @-627315ms event=17764044: 主播主播，看了刚刚的反应，能看看这个吗 BV1u14y117pZ\n- superchat @-608315ms event=17764046: 摸动物不敢说是，那摸摸旁边的那条龙不会害怕吧（\n- superchat @-572315ms event=17764060: 老师老师您嗑的李墨开播了（）\n- superchat @-509595ms event=17764098: 杖剑传说官方也不来上个总督，感觉游戏不是很好玩啊\n- superchat @-470595ms event=17764107: 妈妈妈妈其实在前两天我以为你是晚上和大N老师一起睡问了大N老师才知道不是妈妈妈妈\n- superchat @-430315ms event=17764098: 杖剑传说官方也不来上个总督，感觉游戏不是很好玩啊\n- superchat @-423595ms event=17764128: 晚上好沙有收到邮箱的立绘嘛\n- superchat @-391315ms event=17764107: 妈妈妈妈其实在前两天我以为你是晚上和大N老师一起睡问了大N老师才知道不是妈妈妈妈\n- superchat @-344315ms event=17764128: 晚上好沙有收到邮箱的立绘嘛\n- superchat @-65595ms event=17764249: 喜欢李，睡惹\n- danmaku @-26677ms event=: [李豆沙_哇嗷]\n- danmaku @-26439ms event=: 唱歌\n- danmaku @-22748ms event=: 妈妈\n- danmaku @-17356ms event=: 妈妈\n- danmaku @-14754ms event=: 哈哈哈\n- danmaku @-8466ms event=: [李豆沙_大笑]\n- danmaku @-8466ms event=: 这下小礼也是室友姐了吗？\n- danmaku @-6950ms event=: 豆沙，现在，我感觉你现在恢复的很好，这个豆角你和安晚到底是怎么吃\n- danmaku @-5863ms event=: 唱歌\n- danmaku @-3260ms event=: 问号\n- danmaku @848ms event=: 现在最关键安晚说话好慢啊\n- danmaku @2151ms event=: 咦，火锅的repo呢\n- danmaku @5891ms event=: 睡一起\n- danmaku @7143ms event=: 今晚下播也要走吗\n- danmaku @11049ms event=: ttt 有啊（）\n- danmaku @11261ms event=: 那天来晚了一小时\n- danmaku @13635ms event=: 问号\n- superchat @13685ms event=17764249: 喜欢李，睡惹\n- danmaku @17591ms event=: 还真是\n- danmaku @17754ms event=: 没有……吧\n- danmaku @20346ms event=: 问号\n- danmaku @24028ms event=: 神了\n- danmaku @26624ms event=: [李豆沙_什么]\n- danmaku @27954ms event=: 女大组的默契\n- danmaku @28144ms event=: 哈？\n- danmaku @29520ms event=: 吃了\n- danmaku @29520ms event=: 问号\n- danmaku @31846ms event=: 该去和aww交流一下经验了\n- danmaku @31848ms event=: awa还在美国吗 在的话也能理解\n- danmaku @33440ms event=: 这个背景是lmsm给你准备的吗（\n- danmaku @33440ms event=: 最主要，当时你们吃这个豆角是怎么吃的？是生吃还是煮熟的才吃\n- danmaku @35758ms event=: 过期女大的羁绊\n- danmaku @35950ms event=: 去跟xxsk挤一张床，xxsk会给你暖jio\n- danmaku @37038ms event=: ？\n- danmaku @39672ms event=: 小李 别累\n- danmaku @39728ms event=: 问号\n- danmaku @39853ms event=: [李豆沙_疑问]\n- danmaku @40936ms event=: 别谋杀龙\n- danmaku @40937ms event=: ？\n- danmaku @41171ms event=: [礼墨sumi_哈哈哈]\n- danmaku @41226ms event=: 哈？\n- danmaku @41227ms event=: 这是什么日本留子必修课吗\n- danmaku @41227ms event=: 笑死\n- danmaku @42212ms event=: ？\n- danmaku @42272ms event=: 抱抱\n- danmaku @42446ms event=: 抓她吃\n- danmaku @43818ms event=: 让力魔小心点\n- danmaku @43818ms event=: [礼墨sumi_哈哈哈]\n- danmaku @44878ms event=: 有可能是通宵班吧？\n- danmaku @45043ms event=: 那你做给她吃\n- danmaku @46348ms event=: 问号\n- danmaku @47427ms event=: ？\n- danmaku @47647ms event=: 问号\n- danmaku @48749ms event=: 好辛苦\n- danmaku @48752ms event=: ？\n- danmaku @50249ms event=: 神了\n- danmaku @50342ms event=: 辛苦了；；\n- danmaku @50342ms event=: 小李如陀螺旋转了\n- danmaku @52644ms event=: [李豆沙_宕机]\n- danmaku @52846ms event=: ？\n- danmaku @55237ms event=: 礼墨；；\n- danmaku @55467ms event=: 辛苦李；；\n- danmaku @56542ms event=: 哈哈哈哈哈哈哈哈哈\n- danmaku @56542ms event=: 这李豆沙怎么这么坏啊\n- danmaku @56768ms event=: [礼墨sumi_哈哈哈]\n- danmaku @57844ms event=: 问号\n- danmaku @60665ms event=: 分号分号\n- danmaku @74828ms event=: 没焯够时间吧\n- danmaku @74830ms event=: 背景像信浓町，你的名字男女主最后重逢那里似的\n- danmaku @79954ms event=: [李豆沙_疑问]\n- superchat @83405ms event=17764282: 感觉豆沙用礼墨的麦更加吵闹了，是我的错觉吗\n- danmaku @86463ms event=: 焯水时间太短没断生\n- danmaku @89055ms event=: 电池炒石子吗\n- danmaku @95545ms event=: 保持翠绿可以放点油\n- danmaku @95547ms event=: [李豆沙_被吓到]\n- danmaku @96853ms event=: 不响丸辣\n- danmaku @97134ms event=: 李姐怎么刻意省略自己想要吃生一点的探索欲望了\n- danmaku @97134ms event=: 问号\n- danmaku @99666ms event=: 保持成功了\n- danmaku @106165ms event=: [李豆沙_大笑]\n- danmaku @107267ms event=: 不是\n- danmaku @109966ms event=: [李豆沙_真正的音乐]\n- danmaku @111449ms event=: [李豆沙_只是熊猫]\n- danmaku @111449ms event=: 耳朵！\n- danmaku @112740ms event=: 豆角以后再做可以煮嘛球球辣；；\n- danmaku @112741ms event=: 一直很吵\n- danmaku @115055ms event=: 确实声音大些\n- danmaku @117775ms event=: 用的机甲也是一样的\n- danmaku @117775ms event=: [李豆沙_真正的音乐]\n- superchat @118405ms event=17764296: 妈妈；；好久不见\n- danmaku @118979ms event=: 李这么吵礼还能休息吗\n- danmaku @120468ms event=: 磕到了\n- danmaku @124378ms event=: 情侣款\n- danmaku @130655ms event=: 哈哈哈\n- danmaku @130863ms event=: 我不信！\n- danmaku @134763ms event=: 哼\n- danmaku @136063ms event=: 我建议你还是看一些就是做豆角的视频，将来你就学习一下怎么做\n- danmaku @137156ms event=: 两天了\n- danmaku @143673ms event=: 还是吃炖的烂烂的豆角吧\n- danmaku @144982ms event=: 分号分号\n- danmaku @147764ms event=: 分号分号\n- danmaku @148892ms event=: 好辛苦；；\n- danmaku @154045ms event=: 我的手现在不属于我的头 一秒一个动作我不属于这地球\n- danmaku @154271ms event=: [李豆沙_抱抱]\n- danmaku @161855ms event=: [李豆沙_没眼看]\n- danmaku @163145ms event=: 分号分号\n- danmaku @163145ms event=: 分号分号\n- danmaku @163377ms event=: ；；\n- danmaku @168389ms event=: 小李 小李 压力太大了\n- danmaku @169867ms event=: 上班上的。\n- danmaku @170970ms event=: 看看有什么好的百合\n- danmaku @172476ms event=: 分号分号\n- danmaku @177670ms event=: 分号分号\n- danmaku @178847ms event=: 直接就是一个崩溃啊\n- danmaku @180270ms event=: 好好休息；；\n- danmaku @181356ms event=: [李豆沙_哇嗷]\n- danmaku @183977ms event=: [UPOWER_1703797642_写不完了]\n- danmaku @186542ms event=: 谁请客？\n- danmaku @187871ms event=: 为什么我妈咪这么多事情；；\n- danmaku @188066ms event=: 李姐有跟室友姐哭诉吗（\n- danmaku @189156ms event=: 问问dengyu\n- danmaku @190456ms event=: 笑死\n- danmaku @193069ms event=: 和我加班以后的状态好像\n- danmaku @197235ms event=: 关注过十万和同事告白\n- danmaku @197235ms event=: 有的老师有的\n- danmaku @201148ms event=: 有的有的，恋死官方同人漫画集（\n- danmaku @201148ms event=: 得问邓煜\n- danmaku @202176ms event=: 终于要达成和lmsm在外面吃饭的成就了\n- danmaku @202462ms event=: 熊猫和西瓜的故事\n- danmaku @202462ms event=: 你也是数学大手子\n- danmaku @203490ms event=: 嗑到了\n- danmaku @204967ms event=: 紧跟时事\n- danmaku @206270ms event=: 我只看到百  合同  文\n- danmaku @210242ms event=: 礼豆沙还可以\n- danmaku @210242ms event=: 太惨了；；\n- danmaku @211289ms event=: 李豆沙和她的姛事们",
+    "cover_counterpart_reference_available": false,
+    "cover_fallback_mode": "HOST_ONLY_GENERIC",
+    "cover_output_audits": [
+      {
+        "artifact_kind": "cover_text",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:6960766ba5e1bd93c4099e3937c1b8f54d5aa437dce48702b794a30adf548b06",
+        "violations": []
+      },
+      {
+        "artifact_kind": "cover_rendered_text",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:a1d81de3dd45c2a10ef1a19f8e234f07a2940527bbcadbb2babea29dfea18002",
+        "violations": []
+      }
+    ],
+    "cover_reference_authority": null,
+    "human_boundary_authority": null,
+    "input_audits": [
+      {
+        "artifact_kind": "selection_hook",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:4d69092c38e54fc2e8c4f4d6e292c592e0669e726b08c5e874610f0d39842fbc",
+        "violations": []
+      },
+      {
+        "artifact_kind": "subtitle",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:6046972e1f8ec739aa805c30abd7363795441bb068956c270b1b679c917061e5",
+        "violations": []
+      }
+    ],
+    "nancho_accepted_surfaces": [
+      "南町",
+      "大N",
+      "小N",
+      "南町nightin"
+    ],
+    "participants": [],
+    "relation_claim_allowed": false,
+    "relation_state": "UNKNOWN",
+    "required_entity_ids": [],
+    "schema_version": "lidousha-story-contract.v1",
+    "selection_hook": "听说安晚也吃了生豆角，李豆沙震惊之余决定下播暗示礼墨也吃，誓要用集体中招维护三人组的“团结默契”。",
+    "selection_hook_sha256": "sha256:4d69092c38e54fc2e8c4f4d6e292c592e0669e726b08c5e874610f0d39842fbc",
+    "selection_scorecard": {
+      "dimensions": {
+        "audience_salience": 3,
+        "comedic_payoff": 4,
+        "lidousha_centrality": 4,
+        "persona_reversal": 3,
+        "relationship_interaction": 3,
+        "self_contained": 4,
+        "stance_intensity": 3
+      },
+      "effective_score": 82.0,
+      "fatigue_penalty": 0.0,
+      "raw_score": 85.0,
+      "reason_codes": [],
+      "requested_tier": 1,
+      "schema_version": "lidousha-selection-scorecard.v1",
+      "status": "VALID",
+      "tier": 1,
+      "tier_basis": "relationship_chain",
+      "tier_evidence_cues": [
+        441,
+        442,
+        443,
+        447,
+        448,
+        451,
+        453,
+        455,
+        457
+      ],
+      "tier_reason": "弹幕告知安晚也吃了生豆角后，她先确认同类遭遇，再点名礼墨是三人组唯一没吃的人，并表示下播要去暗示对方，以荒诞方式强调三人必须团结，形成具体人物间的完整关系链和明确笑点。",
+      "uncertainty_penalty": 3.0,
+      "weights": {
+        "audience_salience": 15,
+        "comedic_payoff": 10,
+        "lidousha_centrality": 25,
+        "persona_reversal": 10,
+        "relationship_interaction": 15,
+        "self_contained": 5,
+        "stance_intensity": 20
+      }
+    },
+    "session_relation_authority": null,
+    "source_media_sha256s": [
+      "sha256:26be9d5af3dd56de9b005c3cad0f065f32c69bd6801ebe1a46a7f614e8714889"
+    ],
+    "transcript_sha256": "sha256:6046972e1f8ec739aa805c30abd7363795441bb068956c270b1b679c917061e5"
+  },
+  "subtitle_ass_path": null,
+  "subtitle_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/auto_183122_1209_1410.recut.srt",
+  "subtitle_regression": null,
+  "subtitle_regression_audit_path": null,
+  "subtitle_source": "aggregate_asr+bcut_agy_cpa+pronoun+text_final",
+  "subtitle_style": "lidousha-final-sapphire72",
+  "subtitle_timing_qa": {
+    "actions": [
+      {
+        "action": "drop_boundary_fragment",
+        "after": null,
+        "before": {
+          "end_ms": 10010,
+          "start_ms": 9760
+        },
+        "cue_id": "fresh_0005",
+        "density_cps": 8.0,
+        "reasons": [
+          "unreadable_leading_boundary_fragment"
+        ],
+        "text": "什么",
+        "vad_overlap_ratio": 0.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 24140,
+          "start_ms": 23140
+        },
+        "before": {
+          "end_ms": 23820,
+          "start_ms": 23140
+        },
+        "cue_id": "fresh_0010",
+        "density_cps": 1.471,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "啊",
+        "vad_overlap_ratio": 0.806
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 81950,
+          "start_ms": 80950
+        },
+        "before": {
+          "end_ms": 81790,
+          "start_ms": 80950
+        },
+        "cue_id": "fresh_0034",
+        "density_cps": 3.571,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "很神秘",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 104460,
+          "start_ms": 103460
+        },
+        "before": {
+          "end_ms": 104380,
+          "start_ms": 103460
+        },
+        "cue_id": "fresh_0042",
+        "density_cps": 5.435,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "是我错觉吗",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 132240,
+          "start_ms": 131240
+        },
+        "before": {
+          "end_ms": 131940,
+          "start_ms": 131240
+        },
+        "cue_id": "fresh_0052",
+        "density_cps": 2.857,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "其实",
+        "vad_overlap_ratio": 1.0
+      }
+    ],
+    "counts": {
+      "dropped": 1,
+      "retimed": 4
+    },
+    "policy": {
+      "boundary_fragment_max_visible_ms": 300,
+      "hard_max_ms": 12000,
+      "min_density_cps": 0.8,
+      "min_readable_ms": 1000,
+      "soft_max_ms": 6000
+    },
+    "schema_version": "subtitle-timing-qa.v3",
+    "speech_span_count": 44,
+    "speech_total_ms": 169728,
+    "vad_evidence_contract": "positive_only_never_shrink_normal_asr_cues",
+    "window": {
+      "end_ms": 139390,
+      "start_ms": 9760
+    }
+  },
+  "talk_filler_audit_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/auto_183122_1209_1410.filler-audit.json",
+  "text_finalization_manifest_path": null,
+  "upload_tags": {
+    "content_tags": [
+      {
+        "tag": "搞笑",
+        "why": "听说又有人吃了生豆角后，震惊追问“这个是可以传染的吗”。"
+      },
+      {
+        "tag": "损友",
+        "why": "一本正经表示下播后要暗示第三位也吃豆角，追求三人之间的“团结默契”。"
+      },
+      {
+        "tag": "厨艺翻车",
+        "why": "豆角明明焯过水又炒过，最后却仍然没熟。"
+      },
+      {
+        "tag": "吐槽",
+        "why": "面对接连吃生豆角的情况，连续反问“为什么会有这种事”“这对吗”。"
+      },
+      {
+        "tag": "迷惑行为",
+        "why": "为了保持豆角翠绿而缩短焯水时间，结果可能导致豆角没熟。"
+      }
+    ],
+    "engine": "suggest-upload-tags.v1",
+    "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,安晚awa,礼墨Sumi,搞笑,损友,厨艺翻车,吐槽,迷惑行为",
+    "final_tags": [
+      "李豆沙",
+      "虚拟主播",
+      "虚拟UP主",
+      "直播切片",
+      "安晚awa",
+      "礼墨Sumi",
+      "搞笑",
+      "损友",
+      "厨艺翻车",
+      "吐槽",
+      "迷惑行为"
+    ],
+    "proper_noun_tags": [
+      {
+        "evidence": {
+          "安晚": 5
+        },
+        "hits": 5,
+        "notes": [],
+        "rules": [
+          "anwan"
+        ],
+        "tag": "安晚awa",
+        "title_hit": true
+      },
+      {
+        "evidence": {
+          "礼墨": 4
+        },
+        "hits": 4,
+        "notes": [
+          "Ivan: lmsm→礼墨Sumi"
+        ],
+        "rules": [
+          "limo"
+        ],
+        "tag": "礼墨Sumi",
+        "title_hit": true
+      }
+    ],
+    "status": "OK",
+    "warnings": []
+  }
+}

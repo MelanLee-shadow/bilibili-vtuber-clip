@@ -1,0 +1,1628 @@
+{
+  "artifact_hashes": {
+    "ai_background_sha256": "sha256:380042c0ca25ecb99a635a0e1c49ace82dcb814167cbe9e21225f1cb6b56d2ba",
+    "ass_sha256": "sha256:150317a1750259a955e129413d3f7cf93495f7baa10ee1ac1107d23ce1cb5df4",
+    "burned_video_sha256": "sha256:aa4e68b52408f15b124ae5093315c9d14a30f0eb9019515ccd01b7ffd53d6de1",
+    "chat_authority_audit_sha256": "sha256:679c1fd12b40359a7ea8c2db7c87e6b9bfdf6c25509ae777cbbbc31b1434183a",
+    "clip_context_file_sha256": "sha256:da8d502044393d7c1ffd2341d63d7280b9ca6fd31f9b0450abc12735960e1b1e",
+    "cover_reference_sha256": "sha256:2d5bcd86f6bf12e9ed52202e4600c1bb09b10275fb22c56d72ef670a214bdff6",
+    "cover_sha256": "sha256:eb2ed88dd1ef5618c25b3d9b9c055abfc9511c94dce8224e9ed708f30c4a1eac",
+    "redelivery_baseline_audit_sha256": "sha256:115ac5525d4ceeac39c72f6bb27ca1222fa5c9acf2a06c2e83f41ff2af3025d1",
+    "subtitle_regression_audit_sha256": "sha256:4fc024125e9a458319b46dec55be8ca083c17a9f1fccf4c0f9070813e919ace2",
+    "subtitle_sha256": "sha256:e51f19a464ef32a586532ef9054b5d3f87b6e1f50f00b5bb6c8ef93ec5d55060",
+    "video_sha256": "sha256:4b8cc0b1343afe0dd8810c9f7f87723defb655d019e642ff9ac83a7dfe480869"
+  },
+  "boundary_audit": {
+    "boundary_authority": "human_source_reviewed_end",
+    "boundary_repair_extend_cap_ms": 30000,
+    "boundary_repair_max_end_ms": 107310,
+    "boundary_repair_search_origin_ms": 77310,
+    "boundary_repairs": [],
+    "closure_sentence": "再弹，再，再硬弹一弹",
+    "end_cut_inside_speech_island": false,
+    "end_island_continues_ms": 0,
+    "end_on_sentence_boundary": true,
+    "final_end_ms": 77780,
+    "final_start_ms": 9770,
+    "manual_end_authority": "Ivan line corrections 2026-07-22 + Codex source-cue closure review; following cue begins next topic or SC where applicable",
+    "opening_sentence": "请坐在左边的弹",
+    "red_flags": [],
+    "schema_version": "boundary-audit.v1",
+    "semantic_start_target_rel_ms": 10000,
+    "semantic_target_rel_ms": 77310,
+    "snapped_sentence_end_ms": 77380,
+    "snapped_sentence_start_ms": 10020,
+    "start_on_sentence_boundary": true,
+    "syntactic_tail_audit": {
+      "reason": "punctuation_free_spoken_clause",
+      "status": "UNKNOWN"
+    },
+    "tail_adjustment": {
+      "final_end_ms": 77780,
+      "next_speech_island_gap_ms": 1028,
+      "next_speech_island_guard_ms": 100,
+      "next_speech_island_start_ms": 78408,
+      "next_subtitle_start_ms": 78280,
+      "nominal_end_ms": 77780,
+      "reason": null,
+      "tail_pad_ms": 400
+    },
+    "tail_refinement_used": false,
+    "verdict": "ok_sentence_boundary_cut"
+  },
+  "burned_preview": {
+    "ass_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1475_1543/replacement_recuts/auto_193450_1475_1543.recut.final-sapphire72.ass",
+    "branding_intro": {
+      "fallback_attempts": [],
+      "intro_id": "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+      "intro_media_path": "/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.z1-budui-20260718.mp4",
+      "intro_media_sha256": "bbd0c7e3b34d3d5af543bb8444861ab1e18f835c9252629480b2ec2fd34e7dc5",
+      "intro_offset_ms": 5766,
+      "main_duration_ms_before": 68033,
+      "main_sha256_before": "a66a279a96490bceb5023565092e7d7ff9eec35f8dacac3653a86e6941b11c00",
+      "method": "matched-intro-concat-copy",
+      "policy_manifest_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/intro/branding_intro.v1.json",
+      "policy_manifest_sha256": "bee66d164b683451602ae3601d79d19175bc72b0d13257b3026ae2dc47ee06ef",
+      "rotation": {
+        "candidate_intro_ids": [
+          "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+          "huozi-lidousha-kmx-baobao-guankou-z2-v1"
+        ],
+        "mode": "main-sha256",
+        "picked_intro_id": "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+        "selector": "main_sha256"
+      },
+      "status": "PREPENDED",
+      "verification": {
+        "duration_delta_ms": 23,
+        "duration_ms": 73822,
+        "full_decode": "clean",
+        "stream_contract": {
+          "audio_codec": "aac",
+          "channels": 2,
+          "fps": "30/1",
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "sample_rate": 44100,
+          "video_codec": "h264",
+          "width": 1920
+        }
+      }
+    },
+    "burned_sha256": "sha256:aa4e68b52408f15b124ae5093315c9d14a30f0eb9019515ccd01b7ffd53d6de1",
+    "command": [
+      "ffmpeg",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-y",
+      "-i",
+      "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1475_1543/replacement_recuts/auto_193450_1475_1543.recut.mp4",
+      "-vf",
+      "subtitles='/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1475_1543/replacement_recuts/auto_193450_1475_1543.recut.final-sapphire72.ass':fontsdir='/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/fonts'",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "20",
+      "-c:a",
+      "copy",
+      "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1475_1543/replacement_recuts/auto_193450_1475_1543.recut.burned-final-sapphire72.mp4"
+    ],
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1475_1543/replacement_recuts/auto_193450_1475_1543.recut.burned-final-sapphire72.mp4",
+    "pillarbox_16_9": false,
+    "status": "BURNED",
+    "stream_contract": null,
+    "subtitle_style": "lidousha-final-sapphire72"
+  },
+  "chat_authority_audit_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1475_1543/auto_193450_1475_1543.chat-authority.json",
+  "clip_context_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1475_1543/auto_193450_1475_1543.clip-context.json",
+  "clip_context_payload_sha256": "sha256:5324c7b48301bc2a32333f1d521416ef5c9eefa0ea47e63e0ebe89acec702397",
+  "duration_ms": 68010,
+  "end_ms": 68010,
+  "media_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1475_1543/replacement_recuts/auto_193450_1475_1543.recut.mp4",
+  "publish_staging": {
+    "cover_generation": {
+      "ai_background": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1475_1543/replacement_recuts/covers_ai_original/auto_193450_1475_1543.screenshot-poster.png",
+      "ai_background_sha256": "sha256:380042c0ca25ecb99a635a0e1c49ace82dcb814167cbe9e21225f1cb6b56d2ba",
+      "angle_degrees": -2.0,
+      "art_direction": {
+        "background_style": "mono-manga-panels",
+        "cover_punch": [
+          "镜像左右",
+          "脑瓜崩"
+        ],
+        "emote_id": "",
+        "emote_mode": "",
+        "emote_reason": "",
+        "expression_en": "A dead-serious yet slightly puzzled face, brows knit and cheeks faintly puffed as she insists on her left-right logic; closed mouth, no tongue.",
+        "hook_color": "orange",
+        "hook_word": "镜像左右",
+        "is_song": false,
+        "layout": "banner",
+        "line_breaks": [],
+        "role": "shy_cute_default",
+        "words": [
+          "弹幕",
+          "让",
+          "左边的人",
+          "弹",
+          "右边",
+          "一个",
+          "脑瓜崩，",
+          "熊猫头",
+          "争了半天",
+          "镜像左右，",
+          "还是被",
+          "kmx",
+          "算明白了"
+        ]
+      },
+      "attempted_models": [],
+      "background_style": "mono-manga-panels",
+      "cover_diversity_slot": 4,
+      "cover_mode": "auto",
+      "cover_origin": "SOURCE_SCREENSHOT",
+      "cover_punch": [
+        "镜像左右",
+        "脑瓜崩"
+      ],
+      "cover_punch_allowed": true,
+      "cover_text": "弹幕让左边的人弹右边一个脑瓜崩，熊猫头争了半天镜像左右，还是被kmx算明白了",
+      "cover_text_mode": "punch",
+      "cover_treatment": {
+        "reason": "hash-bound source frame verifies all required participants",
+        "treatment": "screenshot_direct"
+      },
+      "expression_en": "A dead-serious yet slightly puzzled face, brows knit and cheeks faintly puffed as she insists on her left-right logic; closed mouth, no tongue.",
+      "fallback_used": false,
+      "final_cover": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1475_1543/replacement_recuts/covers/auto_193450_1475_1543.screenshot-title.cover.png",
+      "final_cover_sha256": "sha256:eb2ed88dd1ef5618c25b3d9b9c055abfc9511c94dce8224e9ed708f30c4a1eac",
+      "font": "ZCOOLKuaiLe-Regular.ttf",
+      "font_selection": {
+        "font": "ZCOOLKuaiLe-Regular.ttf",
+        "glyph_risk": [],
+        "rejected": []
+      },
+      "font_size": 277,
+      "hook_color": "orange",
+      "hook_word": "镜像左右",
+      "image_gen_model": "none",
+      "image_generation_attempted": false,
+      "image_generation_planned": false,
+      "image_generation_used": false,
+      "layout": "banner",
+      "line_split": "punch",
+      "method": "screenshot_direct",
+      "min_talk_font_size": 120,
+      "model": "none",
+      "model_fallback_used": false,
+      "overlay_position": {
+        "x": 350,
+        "y": -40
+      },
+      "reference_authority": {
+        "authority": "Ivan-stated-20260722(弹幕要求给左边的人一个脑瓜崩这条也要做)+Codex-visual-review-20260722(同源65.0s payoff帧中李豆沙与南町同时大笑；AI画手部动作会虚构直播画面且旧AI已丢掉南町，故选真实双人帧)",
+        "candidate_id": "auto_193450_1475_1543",
+        "content_time_ms": 65000,
+        "ledger_sha256": "sha256:7b5c94452ea270a2df3c2db1dfc2c5e829f2e09a955aea2594bf52ca68415b90",
+        "recording_basename": "22966160_20260722-19-35-15.mp4",
+        "reference_png_sha256": "sha256:2d5bcd86f6bf12e9ed52202e4600c1bb09b10275fb22c56d72ef670a214bdff6",
+        "relation_action": "两人同时大笑，诚实表现左右分不清后索性都弹脑瓜崩的互动结局",
+        "required_treatment": "screenshot_direct",
+        "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+        "source_time_ms": 1540750,
+        "visible_participant_ids": [
+          "lidousha",
+          "nancho"
+        ]
+      },
+      "reference_image": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1475_1543/replacement_recuts/cover_refs/auto_193450_1475_1543.cover-ref.png",
+      "reference_selection": {
+        "authority_override": {
+          "authority": "Ivan-stated-20260722(弹幕要求给左边的人一个脑瓜崩这条也要做)+Codex-visual-review-20260722(同源65.0s payoff帧中李豆沙与南町同时大笑；AI画手部动作会虚构直播画面且旧AI已丢掉南町，故选真实双人帧)",
+          "candidate_id": "auto_193450_1475_1543",
+          "content_time_ms": 65000,
+          "ledger_sha256": "sha256:7b5c94452ea270a2df3c2db1dfc2c5e829f2e09a955aea2594bf52ca68415b90",
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "reference_png_sha256": "sha256:2d5bcd86f6bf12e9ed52202e4600c1bb09b10275fb22c56d72ef670a214bdff6",
+          "relation_action": "两人同时大笑，诚实表现左右分不清后索性都弹脑瓜崩的互动结局",
+          "required_treatment": "screenshot_direct",
+          "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+          "source_time_ms": 1540750,
+          "visible_participant_ids": [
+            "lidousha",
+            "nancho"
+          ]
+        },
+        "best_ms": 65000,
+        "candidates": [
+          {
+            "ms": 65000,
+            "score": null
+          }
+        ],
+        "schema": "cover-frame-selection.v1",
+        "status": "HASH_BOUND_AUTHORITY_OVERRIDE",
+        "subject_confident": false
+      },
+      "reference_sha256": "sha256:2d5bcd86f6bf12e9ed52202e4600c1bb09b10275fb22c56d72ef670a214bdff6",
+      "relation_cover_mode": "VERIFIED_DUAL_STREAM_FRAME",
+      "rendered_lines": [
+        "镜像左右",
+        "脑瓜崩"
+      ],
+      "role": "shy_cute_default",
+      "route_decision": {
+        "actual_treatment": "screenshot_direct",
+        "alternatives": [
+          {
+            "rationale": "hash-bound source frame verifies all required participants",
+            "rejected_reason": null,
+            "status": "SELECTED",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rationale": "the real source moment is usable but benefits from a bounded identity-preserving cleanup",
+            "rejected_reason": "the verified source frame already carries the hook; image cleanup would add generation risk without a demonstrated need; selected evidence: hash-bound source frame verifies all required participants",
+            "status": "REJECTED",
+            "treatment": "screenshot_polish"
+          },
+          {
+            "rationale": "the available source frame is not a sufficiently strong or verified cover composition",
+            "rejected_reason": "the verified source frame already carries the hook and participant relationship; a redraw would discard grounded story evidence; selected evidence: hash-bound source frame verifies all required participants",
+            "status": "REJECTED",
+            "treatment": "cpa_redraw"
+          }
+        ],
+        "alternatives_considered": [
+          "screenshot_direct",
+          "screenshot_polish",
+          "cpa_redraw"
+        ],
+        "cover_mode": "auto",
+        "execution_status": "READY",
+        "final_visibility_authority": "SOURCE_PRESERVING_SCREENSHOT_PIPELINE",
+        "final_visible_participant_ids": [
+          "lidousha",
+          "nancho"
+        ],
+        "frame_emotion": null,
+        "frame_score": null,
+        "image_generation_attempted": false,
+        "image_generation_planned": false,
+        "image_generation_used": false,
+        "is_song": false,
+        "manual_title_or_full_text_contract": false,
+        "motion_dispersion_frac": null,
+        "reason": "hash-bound source frame verifies all required participants",
+        "reference_authority_id": "auto_193450_1475_1543",
+        "rejected_alternatives": [
+          {
+            "rejected_reason": "the verified source frame already carries the hook; image cleanup would add generation risk without a demonstrated need; selected evidence: hash-bound source frame verifies all required participants",
+            "treatment": "screenshot_polish"
+          },
+          {
+            "rejected_reason": "the verified source frame already carries the hook and participant relationship; a redraw would discard grounded story evidence; selected evidence: hash-bound source frame verifies all required participants",
+            "treatment": "cpa_redraw"
+          }
+        ],
+        "relationship_semantic_evidence": [
+          "selection_hook:EXPLICIT_RELATION_LANGUAGE",
+          "title:EXPLICIT_RELATION_LANGUAGE",
+          "cover_text:EXPLICIT_RELATION_LANGUAGE"
+        ],
+        "relationship_visual_required": true,
+        "required_participant_ids": [
+          "lidousha",
+          "nancho"
+        ],
+        "schema_version": "lidousha-cover-route-decision.v2",
+        "selected_rationale": "hash-bound source frame verifies all required participants",
+        "selected_treatment": "screenshot_direct",
+        "selection_policy": "lidousha-cover-treatment-router.v2",
+        "source_visibility_authority": "HASH_BOUND_COVER_REFERENCE",
+        "source_visible_participant_ids": [
+          "lidousha",
+          "nancho"
+        ],
+        "subject_confident": false,
+        "verified_stream_frame": true
+      },
+      "screenshot_frame": {
+        "crop_box": [
+          266,
+          0,
+          1920,
+          930
+        ],
+        "frame_ms": 65000,
+        "source_size": [
+          1920,
+          1080
+        ],
+        "zoom": 1.16
+      },
+      "screenshot_graphic_poster": {
+        "background_style": "mono-manga-panels",
+        "output_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1475_1543/replacement_recuts/covers_ai_original/auto_193450_1475_1543.screenshot-poster.png",
+        "output_sha256": "sha256:380042c0ca25ecb99a635a0e1c49ace82dcb814167cbe9e21225f1cb6b56d2ba",
+        "palette": {
+          "accent": "#d6352d",
+          "background": "#22201f",
+          "paper": "#fff7db",
+          "secondary": "#e8e0c6"
+        },
+        "schema_version": "screenshot-graphic-poster.v1",
+        "screenshot_card": {
+          "rotation_degrees": -1.4,
+          "size": [
+            1640,
+            700
+          ]
+        },
+        "status": "COMPOSED"
+      },
+      "scrim": false,
+      "story_contract": {
+        "boundary_semantic_review": {
+          "candidate_id": "auto_193450_1475_1543",
+          "reason_codes": [],
+          "schema_version": "talk-boundary-semantic-review.v1",
+          "status": "SUPERSEDED_BY_HUMAN_SOURCE_REVIEW"
+        },
+        "clip_context_binding": {
+          "context_sha256": "sha256:5324c7b48301bc2a32333f1d521416ef5c9eefa0ea47e63e0ebe89acec702397",
+          "mutation_authorized": false,
+          "schema_version": "lidousha-clip-context.v1",
+          "speech_memory_ledger_sha256": "sha256:d87532b5d56457496a868c6910091a545bd2c612a807182d742aa0ca26d30c95",
+          "whole_clip_draft_srt_sha256": "sha256:8d1076632396c4043b96cc3a8c867d87fe213ac19df0a7fdf19c74d7eff80c39"
+        },
+        "cover_counterpart_reference_available": true,
+        "cover_fallback_mode": "VERIFIED_DUAL_STREAM_FRAME",
+        "cover_reference_authority": {
+          "authority": "Ivan-stated-20260722(弹幕要求给左边的人一个脑瓜崩这条也要做)+Codex-visual-review-20260722(同源65.0s payoff帧中李豆沙与南町同时大笑；AI画手部动作会虚构直播画面且旧AI已丢掉南町，故选真实双人帧)",
+          "candidate_id": "auto_193450_1475_1543",
+          "content_time_ms": 65000,
+          "ledger_sha256": "sha256:7b5c94452ea270a2df3c2db1dfc2c5e829f2e09a955aea2594bf52ca68415b90",
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "reference_png_sha256": "sha256:2d5bcd86f6bf12e9ed52202e4600c1bb09b10275fb22c56d72ef670a214bdff6",
+          "relation_action": "两人同时大笑，诚实表现左右分不清后索性都弹脑瓜崩的互动结局",
+          "required_treatment": "screenshot_direct",
+          "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+          "source_time_ms": 1540750,
+          "visible_participant_ids": [
+            "lidousha",
+            "nancho"
+          ]
+        },
+        "human_boundary_authority": "Ivan line corrections 2026-07-22 + Codex source-cue closure review; following cue begins next topic or SC where applicable",
+        "participants": [
+          {
+            "canonical_id": "lidousha",
+            "display_name": "李豆沙",
+            "surfaces": [
+              "李豆沙",
+              "小李",
+              "豆沙"
+            ]
+          },
+          {
+            "canonical_id": "nancho",
+            "display_name": "南町",
+            "surfaces": [
+              "南町",
+              "大N",
+              "小N",
+              "南町nightin"
+            ]
+          }
+        ],
+        "relation_state": "CONFIRMED",
+        "schema_version": "lidousha-story-contract.v1",
+        "selection_hook": "弹幕让左边的人弹右边一个脑瓜崩，两人为了镜像左右争论半天，李豆沙还是中招，才发现观众早把她们算得明明白白。",
+        "source_media_sha256s": [
+          "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+        ]
+      },
+      "text_backing": "outline",
+      "title": "【李豆沙】弹幕让左边的人弹右边一个脑瓜崩，熊猫头争了半天镜像左右，还是被kmx算明白了",
+      "title_band": "banner",
+      "workflow": "cpa-openai-compatible-image-edit-cover-plus-approved-local-title-overlay"
+    },
+    "cover_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1475_1543/replacement_recuts/covers/auto_193450_1475_1543.screenshot-title.cover.png",
+    "cover_status": "AI_COVER_READY",
+    "cover_text": "弹幕让左边的人弹右边一个脑瓜崩，熊猫头争了半天镜像左右，还是被kmx算明白了",
+    "publish_json_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1475_1543/replacement_recuts/auto_193450_1475_1543.recut.publish.json",
+    "reason_codes": [],
+    "status": "STAGED",
+    "title": "【李豆沙】弹幕让左边的人弹右边一个脑瓜崩，熊猫头争了半天镜像左右，还是被kmx算明白了",
+    "title_authority_error": null,
+    "title_authority_status": "RESOLVED_LLM",
+    "title_policy_violations": [],
+    "title_source": "llm+lidousha_style_asset",
+    "title_story_audit": {
+      "artifact_kind": "title",
+      "schema_version": "story-artifact-audit.v1",
+      "status": "PASS",
+      "text_sha256": "sha256:215344f906b565cb6d71e6fce168480160e32c875a4e4682ecb182936634c514",
+      "violations": []
+    },
+    "upload_enabled": false
+  },
+  "redelivery_baseline": {
+    "application_strategy": "exact_reviewed_interval_replay",
+    "authority": "Ivan-requested 2026-07-22 clip with source-truth corrected give-up turn, bound to the current reviewed cue segmentation",
+    "baseline_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/reviewed_subtitle_baselines/auto_193450_1475_1543.reviewed.srt",
+    "baseline_schema_version": "subtitle-redelivery-baseline.v2",
+    "baseline_sha256": "e51f19a464ef32a586532ef9054b5d3f87b6e1f50f00b5bb6c8ef93ec5d55060",
+    "changed_cue_count": 3,
+    "current_cue_count": 35,
+    "current_input_sha256": "5942e74880b54fb0a7afacb8347991dbd5b7f52eb9e6817b4a2a7fd7f2e034bd",
+    "current_source_interval": {
+      "absolute_source_end_ms": 1543760,
+      "absolute_source_start_ms": 1475750
+    },
+    "deferred_exact_replay_reverification": {
+      "deferred_strategy": null,
+      "missing_truth_ids": [],
+      "required_truth_ids": [],
+      "reverified_truth_ids": [],
+      "schema_version": "deferred-exact-replay-reverification.v1",
+      "status": "NOT_REQUIRED"
+    },
+    "effective_reviewed_overlap": {
+      "absolute_source_end_ms": 1543760,
+      "absolute_source_start_ms": 1475750
+    },
+    "expected_baseline_sha256": "e51f19a464ef32a586532ef9054b5d3f87b6e1f50f00b5bb6c8ef93ec5d55060",
+    "failures": [],
+    "mapped_cue_count": 35,
+    "mappings": [
+      {
+        "baseline_absolute_source_end_ms": 1478560,
+        "baseline_absolute_source_start_ms": 1476000,
+        "baseline_cue_index": 1,
+        "end_ms": 2810,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 1,
+        "start_ms": 250,
+        "text": "就请坐在左边的弹"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1480330,
+        "baseline_absolute_source_start_ms": 1478560,
+        "baseline_cue_index": 2,
+        "end_ms": 4580,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 2,
+        "start_ms": 2810,
+        "text": "右边的一个脑瓜崩"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1483870,
+        "baseline_absolute_source_start_ms": 1480330,
+        "baseline_cue_index": 3,
+        "end_ms": 8120,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 3,
+        "start_ms": 4580,
+        "text": "左边的是左，左边的，你看我们现在是镜面的"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1485090,
+        "baseline_absolute_source_start_ms": 1483870,
+        "baseline_cue_index": 4,
+        "end_ms": 9340,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 4,
+        "start_ms": 8120,
+        "text": "左边的应该是我"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1486450,
+        "baseline_absolute_source_start_ms": 1485090,
+        "baseline_cue_index": 5,
+        "end_ms": 10700,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 5,
+        "start_ms": 9340,
+        "text": "右边的是你，对不对"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1488670,
+        "baseline_absolute_source_start_ms": 1487610,
+        "baseline_cue_index": 6,
+        "end_ms": 12920,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 6,
+        "start_ms": 11860,
+        "text": "左边是我"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1489590,
+        "baseline_absolute_source_start_ms": 1488670,
+        "baseline_cue_index": 7,
+        "end_ms": 13840,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 7,
+        "start_ms": 12920,
+        "text": "左边的是我"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1490770,
+        "baseline_absolute_source_start_ms": 1489590,
+        "baseline_cue_index": 8,
+        "end_ms": 15020,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 8,
+        "start_ms": 13840,
+        "text": "右边的是你"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1492280,
+        "baseline_absolute_source_start_ms": 1490920,
+        "baseline_cue_index": 9,
+        "end_ms": 16530,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 9,
+        "start_ms": 15170,
+        "text": "你看我们是镜面的"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1493880,
+        "baseline_absolute_source_start_ms": 1492280,
+        "baseline_cue_index": 10,
+        "end_ms": 18130,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 10,
+        "start_ms": 16530,
+        "text": "如果把我们整个翻转一下的话"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1495160,
+        "baseline_absolute_source_start_ms": 1493880,
+        "baseline_cue_index": 11,
+        "end_ms": 19410,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 11,
+        "start_ms": 18130,
+        "text": "你就会发现左边的是我"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1496600,
+        "baseline_absolute_source_start_ms": 1495160,
+        "baseline_cue_index": 12,
+        "end_ms": 20850,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 12,
+        "start_ms": 19410,
+        "text": "右边是你，是吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1497600,
+        "baseline_absolute_source_start_ms": 1496600,
+        "baseline_cue_index": 13,
+        "end_ms": 21850,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 13,
+        "start_ms": 20850,
+        "text": "对呀"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1500410,
+        "baseline_absolute_source_start_ms": 1497690,
+        "baseline_cue_index": 14,
+        "end_ms": 24660,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 14,
+        "start_ms": 21940,
+        "text": "可是，可是站在我的方向上"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1501530,
+        "baseline_absolute_source_start_ms": 1500410,
+        "baseline_cue_index": 15,
+        "end_ms": 25780,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 15,
+        "start_ms": 24660,
+        "text": "左边的是我呀"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1502650,
+        "baseline_absolute_source_start_ms": 1501530,
+        "baseline_cue_index": 16,
+        "end_ms": 26900,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 16,
+        "start_ms": 25780,
+        "text": "什么站在你的方向上"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1503570,
+        "baseline_absolute_source_start_ms": 1502650,
+        "baseline_cue_index": 17,
+        "end_ms": 27820,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 17,
+        "start_ms": 26900,
+        "text": "我们不要站在你的方向"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1506360,
+        "baseline_absolute_source_start_ms": 1503570,
+        "baseline_cue_index": 18,
+        "end_ms": 30610,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 18,
+        "start_ms": 27820,
+        "text": "我们要，就是因为我们现在是镜面的嘛"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1509000,
+        "baseline_absolute_source_start_ms": 1506360,
+        "baseline_cue_index": 19,
+        "end_ms": 33250,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 19,
+        "start_ms": 30610,
+        "text": "我们要根据我从我们的后面往前看的话"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1510520,
+        "baseline_absolute_source_start_ms": 1509000,
+        "baseline_cue_index": 20,
+        "end_ms": 34770,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 20,
+        "start_ms": 33250,
+        "text": "到底哪边是左边的"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1512620,
+        "baseline_absolute_source_start_ms": 1510740,
+        "baseline_cue_index": 21,
+        "end_ms": 36870,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 21,
+        "start_ms": 34990,
+        "text": "算了，好了，我弹了啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1515910,
+        "baseline_absolute_source_start_ms": 1512620,
+        "baseline_cue_index": 22,
+        "end_ms": 40160,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 22,
+        "start_ms": 36870,
+        "text": "哈哈哈哈哈"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1517210,
+        "baseline_absolute_source_start_ms": 1515910,
+        "baseline_cue_index": 23,
+        "end_ms": 41460,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 23,
+        "start_ms": 40160,
+        "text": "这这对吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1520750,
+        "baseline_absolute_source_start_ms": 1518370,
+        "baseline_cue_index": 24,
+        "end_ms": 45000,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 24,
+        "start_ms": 42620,
+        "text": "怎么这样啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1523420,
+        "baseline_absolute_source_start_ms": 1520750,
+        "baseline_cue_index": 25,
+        "end_ms": 47670,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 25,
+        "start_ms": 45000,
+        "text": "硬弹一弹啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1524880,
+        "baseline_absolute_source_start_ms": 1523420,
+        "baseline_cue_index": 26,
+        "end_ms": 49130,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 26,
+        "start_ms": 47670,
+        "text": "这这对吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1526940,
+        "baseline_absolute_source_start_ms": 1524880,
+        "baseline_cue_index": 27,
+        "end_ms": 51190,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 27,
+        "start_ms": 49130,
+        "text": "你太了解你的观众了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1529300,
+        "baseline_absolute_source_start_ms": 1527100,
+        "baseline_cue_index": 28,
+        "end_ms": 53550,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 28,
+        "start_ms": 51350,
+        "text": "你的观众太了解你了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1531249,
+        "baseline_absolute_source_start_ms": 1529730,
+        "baseline_cue_index": 29,
+        "end_ms": 55499,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 29,
+        "start_ms": 53980,
+        "text": "站在观众视角"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1532530,
+        "baseline_absolute_source_start_ms": 1531249,
+        "baseline_cue_index": 30,
+        "end_ms": 56780,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 30,
+        "start_ms": 55499,
+        "text": "谁是坐在左边的"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1533930,
+        "baseline_absolute_source_start_ms": 1532530,
+        "baseline_cue_index": 31,
+        "end_ms": 58180,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 31,
+        "start_ms": 56780,
+        "text": "我有点分不清左右"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1535850,
+        "baseline_absolute_source_start_ms": 1534330,
+        "baseline_cue_index": 32,
+        "end_ms": 60100,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 32,
+        "start_ms": 58580,
+        "text": "管他谁是左边的呢"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1537410,
+        "baseline_absolute_source_start_ms": 1535850,
+        "baseline_cue_index": 33,
+        "end_ms": 61660,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 33,
+        "start_ms": 60100,
+        "text": "就是反正都已经弹了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1538780,
+        "baseline_absolute_source_start_ms": 1537410,
+        "baseline_cue_index": 34,
+        "end_ms": 63030,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 34,
+        "start_ms": 61660,
+        "text": "哈哈哈哈"
+      },
+      {
+        "baseline_absolute_source_end_ms": 1543360,
+        "baseline_absolute_source_start_ms": 1538780,
+        "baseline_cue_index": 35,
+        "end_ms": 67610,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 35,
+        "start_ms": 63030,
+        "text": "再弹，再，再硬弹一弹"
+      }
+    ],
+    "mode": "preserve_text_outside_source_truth",
+    "omitted_baseline_cue_count": 0,
+    "omitted_by_new_boundary": [],
+    "output_sha256": "e51f19a464ef32a586532ef9054b5d3f87b6e1f50f00b5bb6c8ef93ec5d55060",
+    "owned_intervals": [
+      {
+        "end_ms": 2810,
+        "start_ms": 250
+      },
+      {
+        "end_ms": 4580,
+        "start_ms": 2810
+      },
+      {
+        "end_ms": 8120,
+        "start_ms": 4580
+      },
+      {
+        "end_ms": 9340,
+        "start_ms": 8120
+      },
+      {
+        "end_ms": 10700,
+        "start_ms": 9340
+      },
+      {
+        "end_ms": 12920,
+        "start_ms": 11860
+      },
+      {
+        "end_ms": 13840,
+        "start_ms": 12920
+      },
+      {
+        "end_ms": 15020,
+        "start_ms": 13840
+      },
+      {
+        "end_ms": 16530,
+        "start_ms": 15170
+      },
+      {
+        "end_ms": 18130,
+        "start_ms": 16530
+      },
+      {
+        "end_ms": 19410,
+        "start_ms": 18130
+      },
+      {
+        "end_ms": 20850,
+        "start_ms": 19410
+      },
+      {
+        "end_ms": 21850,
+        "start_ms": 20850
+      },
+      {
+        "end_ms": 24660,
+        "start_ms": 21940
+      },
+      {
+        "end_ms": 25780,
+        "start_ms": 24660
+      },
+      {
+        "end_ms": 26900,
+        "start_ms": 25780
+      },
+      {
+        "end_ms": 27820,
+        "start_ms": 26900
+      },
+      {
+        "end_ms": 30610,
+        "start_ms": 27820
+      },
+      {
+        "end_ms": 33250,
+        "start_ms": 30610
+      },
+      {
+        "end_ms": 34770,
+        "start_ms": 33250
+      },
+      {
+        "end_ms": 36870,
+        "start_ms": 34990
+      },
+      {
+        "end_ms": 40160,
+        "start_ms": 36870
+      },
+      {
+        "end_ms": 41460,
+        "start_ms": 40160
+      },
+      {
+        "end_ms": 45000,
+        "start_ms": 42620
+      },
+      {
+        "end_ms": 47670,
+        "start_ms": 45000
+      },
+      {
+        "end_ms": 49130,
+        "start_ms": 47670
+      },
+      {
+        "end_ms": 51190,
+        "start_ms": 49130
+      },
+      {
+        "end_ms": 53550,
+        "start_ms": 51350
+      },
+      {
+        "end_ms": 55499,
+        "start_ms": 53980
+      },
+      {
+        "end_ms": 56780,
+        "start_ms": 55499
+      },
+      {
+        "end_ms": 58180,
+        "start_ms": 56780
+      },
+      {
+        "end_ms": 60100,
+        "start_ms": 58580
+      },
+      {
+        "end_ms": 61660,
+        "start_ms": 60100
+      },
+      {
+        "end_ms": 63030,
+        "start_ms": 61660
+      },
+      {
+        "end_ms": 67610,
+        "start_ms": 63030
+      }
+    ],
+    "post_source_truth_output_sha256": "e51f19a464ef32a586532ef9054b5d3f87b6e1f50f00b5bb6c8ef93ec5d55060",
+    "protected_absolute_intervals": [],
+    "protected_cue_count": 0,
+    "protected_intervals": [],
+    "protected_windows_replayed_for_later_source_truth": false,
+    "replayed_cue_count": 35,
+    "reviewed_coverage": {
+      "absolute_source_end_ms": 1543760,
+      "absolute_source_start_ms": 1475750
+    },
+    "schema_version": "subtitle-redelivery-baseline-audit.v2",
+    "source_recording_identity": {
+      "current_basename": "22966160_20260722-19-34-50.mp4",
+      "current_sha256": "0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+      "expected_basename": "22966160_20260722-19-34-50.mp4",
+      "expected_sha256": "0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+    },
+    "source_truth_reapplication": {
+      "applied": [],
+      "failures": [],
+      "ledger_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/subtitle_truth_ledger.v1.json",
+      "ledger_sha256": "sha256:5f39a0e37ded249fa028ad4310ee0fc9780a0679faa7446f44fcede24258706d",
+      "reapplied_after_redelivery_baseline": true,
+      "satisfied": [
+        {
+          "action": "replace_cue",
+          "after": [
+            "算了，好了，我弹了啊"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "v7 final SRT sha256=61566dd4d1bd2596f79e98e52312615f7e3b3be64e0eaf4cce9179913427e245 preserves 算了好了我弹了啊; the two preceding speakers remain unable to resolve mirrored left/right, so 算了 is the discourse turn that abandons the argument, while fresh v8 collapsed it into 算好",
+          "before": [
+            "算了，好了，我弹了啊"
+          ],
+          "before_span": "算好了，我弹了啊",
+          "cue_indexes": [
+            21
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "算了，好了，我弹了啊"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:f411447b4929b5c009f984dcf5a14ef6c1cf3705e67806da7be7bc536d552f60",
+          "evidence_class": "HASH_BOUND_PRIOR_TRANSCRIPT_PLUS_LOCAL_DISCOURSE",
+          "local_windows": [
+            {
+              "end_ms": 36870,
+              "start_ms": 34990
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r1",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 1880,
+          "source_end_ms": 1512620,
+          "source_start_ms": 1510740,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-brainflick-give-up-r1"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "硬弹一弹啊"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-requested brainflick clip 2026-07-22 + prior reviewed subtitle retains 硬弹一弹; source closure review confirmed recurring phrase",
+          "before": [
+            "硬弹一弹啊"
+          ],
+          "before_span": "你弹一弹啊",
+          "cue_indexes": [
+            25
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "硬弹一弹啊"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:82e8df90b8de88794928a66a2babb5fd3ab3651d497911a00c2812d32242288f",
+          "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+          "local_windows": [
+            {
+              "end_ms": 47670,
+              "start_ms": 45000
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r1",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 2670,
+          "source_end_ms": 1523420,
+          "source_start_ms": 1520750,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-brainflick-hard-flick-r1"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "再弹，再，再硬弹一弹"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Codex source-cue closure review 2026-07-22; callback repeats the earlier hash-bound reviewed phrase 硬弹一弹",
+          "before": [
+            "再弹，再，再硬弹一弹"
+          ],
+          "before_span": "再弹，再，再一弹一弹",
+          "cue_indexes": [
+            35
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "再弹，再，再硬弹一弹"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:a664df914b018b8614ff276627b6a562ecc1fb9f29da8659dcaa58e8f577f835",
+          "evidence_class": "WHOLE_CLIP_CALLBACK_PLUS_SOURCE_CUE_REVIEW",
+          "local_windows": [
+            {
+              "end_ms": 67610,
+              "start_ms": 63030
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r1",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 4580,
+          "source_end_ms": 1543360,
+          "source_start_ms": 1538780,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-brainflick-hard-flick-callback-r1"
+        }
+      ],
+      "schema_version": "source-subtitle-truth-audit.v1",
+      "status": "ALREADY_SATISFIED",
+      "timeline_basis": "final_delivery"
+    },
+    "status": "APPLIED",
+    "timing_authority": "hash_bound_reviewed_srt_exact_source_interval",
+    "uncovered_current_cue_count": 0,
+    "uncovered_current_cues": [],
+    "uncovered_current_intervals": []
+  },
+  "redelivery_baseline_audit_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1475_1543/replacement_recuts/auto_193450_1475_1543.redelivery-baseline.json",
+  "selection_scorecard": {
+    "dimensions": {
+      "audience_salience": 2,
+      "comedic_payoff": 4,
+      "lidousha_centrality": 3,
+      "persona_reversal": 3,
+      "relationship_interaction": 4,
+      "self_contained": 4,
+      "stance_intensity": 1
+    },
+    "effective_score": 68.75,
+    "fatigue_penalty": 0.0,
+    "raw_score": 68.75,
+    "reason_codes": [],
+    "requested_tier": 1,
+    "schema_version": "lidousha-selection-scorecard.v1",
+    "status": "VALID",
+    "tier": 1,
+    "tier_basis": "audience_driven_performance",
+    "tier_evidence_cues": [
+      641,
+      642,
+      644,
+      656,
+      663,
+      664,
+      665,
+      668,
+      669,
+      675
+    ],
+    "tier_reason": "弹幕明确下达脑瓜崩指令，两人围绕镜像左右持续争辩后实际照做，随即出现中招、爆笑和“观众太了解你”的反差收尾。",
+    "uncertainty_penalty": 0.0,
+    "weights": {
+      "audience_salience": 15,
+      "comedic_payoff": 10,
+      "lidousha_centrality": 25,
+      "persona_reversal": 10,
+      "relationship_interaction": 15,
+      "self_contained": 5,
+      "stance_intensity": 20
+    }
+  },
+  "session_relation_authority": {
+    "bound_date": "2026-07-22",
+    "bound_recording_basename": "22966160_20260722-19-34-50.mp4",
+    "bound_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+    "evidence": [
+      {
+        "authority": "Ivan-stated-20260722-conversation(这明显是南町和李豆沙的联动)",
+        "evidence_class": "ATOMIC_HUMAN_RELATION_TRUTH",
+        "independence_group": "ivan-session-review"
+      },
+      {
+        "evidence_class": "HASH_BOUND_OFFICIAL_REPLAY",
+        "independence_group": "official-replay-source",
+        "source_alias_id": "20260722-official-replay-bv1fjg16xex6",
+        "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+      }
+    ],
+    "ledger_sha256": "sha256:f96480319f8e4b74e64be81e7993517edf7cddb25e71715eeaef957e343365f4",
+    "participants": [
+      {
+        "canonical_id": "lidousha",
+        "display_name": "李豆沙",
+        "surfaces": [
+          "李豆沙",
+          "小李",
+          "豆沙"
+        ]
+      },
+      {
+        "canonical_id": "nancho",
+        "display_name": "南町",
+        "surfaces": [
+          "南町",
+          "大N",
+          "小N",
+          "南町nightin"
+        ]
+      }
+    ],
+    "presence_intervals": [
+      {
+        "end_ms": 7200000,
+        "kind": "SESSION_PRESENCE",
+        "start_ms": 0
+      }
+    ],
+    "relation_id": "20260722-lidousha-nancho-live-collaboration",
+    "relation_type": "LIVE_COLLABORATION",
+    "schema_version": "session-relation-authority.v1",
+    "state": "CONFIRMED"
+  },
+  "speaker_finalization": null,
+  "speaker_finalization_manifest_path": null,
+  "speaker_finalization_manifest_sha256": null,
+  "speaker_mode": "uniform_host",
+  "speaker_review_srt_path": null,
+  "start_ms": 0,
+  "status": "MATERIALIZED",
+  "story_contract": {
+    "boundary_semantic_review": {
+      "candidate_id": "auto_193450_1475_1543",
+      "reason_codes": [],
+      "schema_version": "talk-boundary-semantic-review.v1",
+      "status": "SUPERSEDED_BY_HUMAN_SOURCE_REVIEW"
+    },
+    "candidate_id": "auto_193450_1475_1543",
+    "clip_context_binding": {
+      "context_sha256": "sha256:5324c7b48301bc2a32333f1d521416ef5c9eefa0ea47e63e0ebe89acec702397",
+      "mutation_authorized": false,
+      "schema_version": "lidousha-clip-context.v1",
+      "speech_memory_ledger_sha256": "sha256:d87532b5d56457496a868c6910091a545bd2c612a807182d742aa0ca26d30c95",
+      "whole_clip_draft_srt_sha256": "sha256:8d1076632396c4043b96cc3a8c867d87fe213ac19df0a7fdf19c74d7eff80c39"
+    },
+    "clip_context_prompt": "clip_context_sha256: sha256:5324c7b48301bc2a32333f1d521416ef5c9eefa0ea47e63e0ebe89acec702397\nselection_hook: 弹幕让左边的人弹右边一个脑瓜崩，两人为了镜像左右争论半天，李豆沙还是中招，才发现观众早把她们算得明明白白。\n以下长期记忆只提供候选，绝不直接授权改字；同音字仍须画面/弹幕/SC/同片复现/声学或人工 source truth：\n- id=lidousha.idiolect.xiaodeba.r1; idiolect: surfaces=晓得吧; candidates=晓得吧\n- id=20260722.collab.nancho-nightin.r1; alias: surfaces=南町nightin; candidates=南町nightin\n- id=20260722.collab.dan.r1; nickname: surfaces=大N; candidates=大N\n- id=20260722.collab.xiaon.r1; nickname: surfaces=小N; candidates=小N\n整片初稿（用于回指、复现和后文调侃；不是文字 authority）：\n1\n00:00:00,000 --> 00:00:01,440\n只是因为喜欢看黄书\n\n2\n00:00:03,240 --> 00:00:04,240\n这样啊\n\n3\n00:00:07,100 --> 00:00:09,140\n不要，别，没有那么深刻的意思\n\n4\n00:00:09,140 --> 00:00:10,020\n就直接叫他刘冰\n\n5\n00:00:10,020 --> 00:00:12,580\n请坐在左边的弹\n\n6\n00:00:12,580 --> 00:00:14,350\n右边的一个脑瓜崩\n\n7\n00:00:14,350 --> 00:00:17,890\n左边的是左，左边的，你看我们现在是镜面的\n\n8\n00:00:17,890 --> 00:00:19,110\n左边的应该是我\n\n9\n00:00:19,110 --> 00:00:20,470\n右边的是你，对不对\n\n10\n00:00:21,630 --> 00:00:22,690\n左边是我\n\n11\n00:00:22,690 --> 00:00:23,610\n左边的是我\n\n12\n00:00:23,610 --> 00:00:24,790\n右边的是你\n\n13\n00:00:24,940 --> 00:00:26,300\n你看我们是镜面的\n\n14\n00:00:26,300 --> 00:00:27,900\n如果把我们整个翻转一下的话\n\n15\n00:00:27,900 --> 00:00:29,180\n你就会发现左边的是我\n\n16\n00:00:29,180 --> 00:00:30,620\n右边是你，是吗\n\n17\n00:00:30,620 --> 00:00:31,340\n对呀\n\n18\n00:00:31,710 --> 00:00:34,430\n可是，可是站在我的方向上\n\n19\n00:00:34,430 --> 00:00:35,550\n左边的是我呀\n\n20\n00:00:35,550 --> 00:00:36,670\n什么站在你的方向上\n\n21\n00:00:36,670 --> 00:00:37,590\n我们不要站在你的方向\n\n22\n00:00:37,590 --> 00:00:40,380\n我们要，就是因为我们现在是镜面的嘛\n\n23\n00:00:40,380 --> 00:00:43,020\n我们要根据我从我们的后面往前看的话\n\n24\n00:00:43,020 --> 00:00:44,540\n到底哪边是左边的\n\n25\n00:00:44,760 --> 00:00:46,640\n算了，我弹了啊\n\n26\n00:00:46,640 --> 00:00:49,930\n哈哈哈哈哈\n\n27\n00:00:49,930 --> 00:00:51,230\n这，这对吗\n\n28\n00:00:52,390 --> 00:00:54,770\n怎么这样啊\n\n29\n00:00:54,770 --> 00:00:57,440\n互相弹一弹啊\n\n30\n00:00:57,440 --> 00:00:58,900\n这，这对吗\n\n31\n00:00:58,900 --> 00:01:00,960\n你太了解你的观众了\n\n32\n00:01:01,120 --> 00:01:03,320\n你的观众太了解你了\n\n33\n00:01:03,750 --> 00:01:05,269\n站在观众视角\n\n34\n00:01:05,269 --> 00:01:06,550\n谁是坐在左边的\n\n35\n00:01:06,550 --> 00:01:07,950\n我有点分不清左右\n\n36\n00:01:08,350 --> 00:01:09,870\n管他谁是左边的呢\n\n37\n00:01:09,870 --> 00:01:11,430\n就是反正都已经弹了\n\n38\n00:01:11,430 --> 00:01:12,800\n哈哈哈哈\n\n39\n00:01:12,800 --> 00:01:17,380\n再弹，再，再弹一弹\n\n40\n00:01:18,280 --> 00:01:19,720\n谢谢刚刚\n\n41\n00:01:20,280 --> 00:01:21,640\n谢谢刚刚\n\n42\n00:01:21,680 --> 00:01:23,680\n谢谢中野四叶单推人OwO的舰长啊\n\n43\n00:01:23,680 --> 00:01:24,390\n谢谢你\n\n44\n00:01:24,390 --> 00:01:25,270\n欢迎上船\n\n45\n00:01:25,270 --> 00:01:27,450\n谢谢中野四叶单推人OwO老板送舰\n\n46\n00:01:27,450 --> 00:01:28,910\n谢谢老板\n\n47\n00:01:28,910 --> 00:01:29,930\n谢谢你\n\n48\n00:01:29,930 --> 00:01:31,110\n欢迎上船\n\n49\n00:01:31,230 --> 00:01:33,470\n谢谢野橘未霜的SC\n\n50\n00:01:33,470 --> 00:01:36,430\n谢谢你的SC，谢谢你呀\n\n51\n00:01:37,170 --> 00:01:38,890\n谢谢野橘未霜\n\n52\n00:01:38,890 --> 00:01:40,490\n双人直播太突然\n\n53\n00:01:40,490 --> 00:01:41,810\n感觉像官宣了\n\n54\n00:01:41,810 --> 00:01:43,440\n不是\n\n55\n00:01:43,440 --> 00:01:44,960\n另外\n\n56\n00:01:44,960 --> 00:01:48,540\n小N老师，你别坐地上\n\n57\n00:01:48,540 --> 00:01:49,240\n可是我现在只\n\n结构化弹幕/SC（保留 source binding）：\n- danmaku @-27685ms: 李豆是妈妈吗[dog]\n- danmaku @-26025ms: 真烫啊\n- danmaku @-22714ms: 可能因为真烫过吧（拿出\n- danmaku @-20018ms: 单线程否认\n- danmaku @-18932ms: 老烟枪了\n- danmaku @-18818ms: 小n别烫李姐好吗；；\n- danmaku @-17579ms: 不是奶+姛，是奶T姛！\n- danmaku @-13426ms: 所以其实真的会烫\n- danmaku @-12306ms: 哈？\n- danmaku @-10957ms: 问号\n- danmaku @1800ms: 问号\n- danmaku @1870ms: ？\n- danmaku @3345ms: ？\n- danmaku @3679ms: 主包不就是最大史同女\n- danmaku @3850ms: [李豆沙_大笑]\n- danmaku @5174ms: ？\n- danmaku @5595ms: 难绷\n- danmaku @6058ms: [李豆沙_什么]\n- danmaku @6443ms: [李豆沙_大笑]\n- danmaku @6743ms: 不是\n- danmaku @6882ms: ？\n- danmaku @9047ms: [李豆沙_什么]\n- danmaku @9404ms: ？\n- danmaku @9672ms: [李豆沙_大笑]\n- danmaku @11889ms: ??\n- danmaku @12230ms: [李豆沙_大笑]\n- danmaku @12742ms: 不要造我的黄桃\n- danmaku @15795ms: [李豆沙_疑问]\n- danmaku @18599ms: 经典沐霖\n- danmaku @20298ms: 哈哈哈\n- danmaku @21203ms: [李豆沙_打call]\n- danmaku @22477ms: 请问李豆沙是史同女吗，那当然了\n- danmaku @27540ms: ？\n- danmaku @29776ms: 李豆沙左右不分的 你不要骗他\n- danmaku @33540ms: [李豆沙_疑问]\n- danmaku @35892ms: 快趁主包左右不分先弹了再说\n- danmaku @36347ms: 不响丸辣\n- danmaku @39806ms: [李豆沙_疑问]\n- danmaku @47820ms: 先弹了再说\n- danmaku @49080ms: 对的，刚才你们的倾倒动作是反过来的\n- danmaku @50275ms: [李豆沙_大笑]\n- danmaku @51622ms: 笑死\n- danmaku @52190ms: 互相弹就行\n- danmaku @52382ms: [李豆沙_大笑]\n- danmaku @53564ms: 观众的要求当然是观众视角\n- danmaku @54726ms: 妈妈\n- danmaku @56064ms: 先下手为强\n- danmaku @56454ms: 这小n真坏啊\n- danmaku @58181ms: [李豆沙_谁是猪]\n- danmaku @58545ms: 别管，先弹了再说\n- danmaku @58562ms: 是拿指头弹的还是拿烟头弹的\n- danmaku @60038ms: 对的对的\n- danmaku @60234ms: 对的对的\n- danmaku @61219ms: 耳朵！\n- danmaku @62013ms: 豆沙还是太纯良了，应该先弹再说\n- danmaku @62144ms: 不要烫我主任\n- danmaku @69937ms: 妈妈\n- danmaku @72983ms: 被玩弄于指掌之中\n- danmaku @77907ms: 哈哈哈\n- danmaku @79114ms: 多弹\n- danmaku @81360ms: 已弹\n- danmaku @81796ms: 椅弹？\n- danmaku @83505ms: 我去，弹了\n- danmaku @84037ms: 难说是用烟头弹的还是手指弹得\n- danmaku @84049ms: 这个就是要先下手呀\n- danmaku @97024ms: 不响丸辣\n- danmaku @106859ms: [李豆沙_疑问]\n- danmaku @107432ms: 好谈\n- superchat @-829659ms: 姐姐大人晚上好！没想到居然是nl联动，nnllhhb\n- superchat @-793614ms: 感觉皮套已经腌入味了，不管怎么看大n老师的皮套，都明显感觉到是右边的真豆沙在说话。好奇怪喔\n- superchat @-777328ms: psp两位最强搞笑女史诗级会晤有懂的吗，已经开始笑了（\n- superchat @-777273ms: 豆沙大n晚上好！现在直播间同时有妈妈和老公了！好耶！另外豆沙听过nn的矮人笑话吗\n- superchat @-759571ms: 两位是奶 t 姛。李姐给ntnt听那首短短了吗\n- superchat @-499509ms: 大N老师能别躲在后面拿烟头偷偷烫我麻麻吗；；\n- superchat @-394020ms: 李姐nn晚上好，请坐在左边的弹右边的一个脑瓜崩\n- superchat @-297216ms: 双人直播的太突然了，感觉像是官宣了（不是），另外小n老师你别坐地上了\n- superchat @-274853ms: 原来周年回修鼠标不算搞笑女吗，那很严苛了\n- superchat @-273462ms: 我也是27级kimo熊啊！\n- guard @-262980ms: 舰长\n- superchat @-144718ms: ttt15：头上怎么有数字 n20：可能是真善美指数 lds170：你们在说什么\n- superchat @-61089ms: 什么要请大N老师吃火锅，给你们加盘素菜，终于和大N见面了\n- guard @72020ms: 舰长\n- superchat @92662ms: 好漂亮的大姐姐，心里没有李豆沙的位置了",
+    "cover_counterpart_reference_available": true,
+    "cover_fallback_mode": "VERIFIED_DUAL_STREAM_FRAME",
+    "cover_output_audits": [
+      {
+        "artifact_kind": "cover_text",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:7868667beda1695b5e588b0e34e97fc858e1384c6f5915e8cf3158680d20cf98",
+        "violations": []
+      },
+      {
+        "artifact_kind": "cover_rendered_text",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:c6270109c7d8bb785807ac9bd7965ce91da138bbdd4b637766beb2dda80abc27",
+        "violations": []
+      }
+    ],
+    "cover_reference_authority": {
+      "authority": "Ivan-stated-20260722(弹幕要求给左边的人一个脑瓜崩这条也要做)+Codex-visual-review-20260722(同源65.0s payoff帧中李豆沙与南町同时大笑；AI画手部动作会虚构直播画面且旧AI已丢掉南町，故选真实双人帧)",
+      "candidate_id": "auto_193450_1475_1543",
+      "content_time_ms": 65000,
+      "ledger_sha256": "sha256:7b5c94452ea270a2df3c2db1dfc2c5e829f2e09a955aea2594bf52ca68415b90",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "reference_png_sha256": "sha256:2d5bcd86f6bf12e9ed52202e4600c1bb09b10275fb22c56d72ef670a214bdff6",
+      "relation_action": "两人同时大笑，诚实表现左右分不清后索性都弹脑瓜崩的互动结局",
+      "required_treatment": "screenshot_direct",
+      "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+      "source_time_ms": 1540750,
+      "visible_participant_ids": [
+        "lidousha",
+        "nancho"
+      ]
+    },
+    "human_boundary_authority": "Ivan line corrections 2026-07-22 + Codex source-cue closure review; following cue begins next topic or SC where applicable",
+    "input_audits": [
+      {
+        "artifact_kind": "selection_hook",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:f23f9fc2caf5007923b0a47804a84442a281d3c22d6aa2a2601f0f1875ec2f5a",
+        "violations": []
+      },
+      {
+        "artifact_kind": "subtitle",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:ef710e8faaec1ef9ae3c27b4202aa2da781e33b4e890d82895bd93eb81faa285",
+        "violations": []
+      }
+    ],
+    "nancho_accepted_surfaces": [
+      "南町",
+      "大N",
+      "小N",
+      "南町nightin"
+    ],
+    "participants": [
+      {
+        "canonical_id": "lidousha",
+        "display_name": "李豆沙",
+        "surfaces": [
+          "李豆沙",
+          "小李",
+          "豆沙"
+        ]
+      },
+      {
+        "canonical_id": "nancho",
+        "display_name": "南町",
+        "surfaces": [
+          "南町",
+          "大N",
+          "小N",
+          "南町nightin"
+        ]
+      }
+    ],
+    "relation_claim_allowed": true,
+    "relation_state": "CONFIRMED",
+    "required_entity_ids": [],
+    "schema_version": "lidousha-story-contract.v1",
+    "selection_hook": "弹幕让左边的人弹右边一个脑瓜崩，两人为了镜像左右争论半天，李豆沙还是中招，才发现观众早把她们算得明明白白。",
+    "selection_hook_sha256": "sha256:f23f9fc2caf5007923b0a47804a84442a281d3c22d6aa2a2601f0f1875ec2f5a",
+    "selection_scorecard": {
+      "dimensions": {
+        "audience_salience": 2,
+        "comedic_payoff": 4,
+        "lidousha_centrality": 3,
+        "persona_reversal": 3,
+        "relationship_interaction": 4,
+        "self_contained": 4,
+        "stance_intensity": 1
+      },
+      "effective_score": 68.75,
+      "fatigue_penalty": 0.0,
+      "raw_score": 68.75,
+      "reason_codes": [],
+      "requested_tier": 1,
+      "schema_version": "lidousha-selection-scorecard.v1",
+      "status": "VALID",
+      "tier": 1,
+      "tier_basis": "audience_driven_performance",
+      "tier_evidence_cues": [
+        641,
+        642,
+        644,
+        656,
+        663,
+        664,
+        665,
+        668,
+        669,
+        675
+      ],
+      "tier_reason": "弹幕明确下达脑瓜崩指令，两人围绕镜像左右持续争辩后实际照做，随即出现中招、爆笑和“观众太了解你”的反差收尾。",
+      "uncertainty_penalty": 0.0,
+      "weights": {
+        "audience_salience": 15,
+        "comedic_payoff": 10,
+        "lidousha_centrality": 25,
+        "persona_reversal": 10,
+        "relationship_interaction": 15,
+        "self_contained": 5,
+        "stance_intensity": 20
+      }
+    },
+    "session_relation_authority": {
+      "bound_date": "2026-07-22",
+      "bound_recording_basename": "22966160_20260722-19-34-50.mp4",
+      "bound_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+      "evidence": [
+        {
+          "authority": "Ivan-stated-20260722-conversation(这明显是南町和李豆沙的联动)",
+          "evidence_class": "ATOMIC_HUMAN_RELATION_TRUTH",
+          "independence_group": "ivan-session-review"
+        },
+        {
+          "evidence_class": "HASH_BOUND_OFFICIAL_REPLAY",
+          "independence_group": "official-replay-source",
+          "source_alias_id": "20260722-official-replay-bv1fjg16xex6",
+          "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+        }
+      ],
+      "ledger_sha256": "sha256:f96480319f8e4b74e64be81e7993517edf7cddb25e71715eeaef957e343365f4",
+      "participants": [
+        {
+          "canonical_id": "lidousha",
+          "display_name": "李豆沙",
+          "surfaces": [
+            "李豆沙",
+            "小李",
+            "豆沙"
+          ]
+        },
+        {
+          "canonical_id": "nancho",
+          "display_name": "南町",
+          "surfaces": [
+            "南町",
+            "大N",
+            "小N",
+            "南町nightin"
+          ]
+        }
+      ],
+      "presence_intervals": [
+        {
+          "end_ms": 7200000,
+          "kind": "SESSION_PRESENCE",
+          "start_ms": 0
+        }
+      ],
+      "relation_id": "20260722-lidousha-nancho-live-collaboration",
+      "relation_type": "LIVE_COLLABORATION",
+      "schema_version": "session-relation-authority.v1",
+      "state": "CONFIRMED"
+    },
+    "source_media_sha256s": [
+      "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+    ],
+    "transcript_sha256": "sha256:ef710e8faaec1ef9ae3c27b4202aa2da781e33b4e890d82895bd93eb81faa285"
+  },
+  "subtitle_ass_path": null,
+  "subtitle_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1475_1543/replacement_recuts/auto_193450_1475_1543.recut.srt",
+  "subtitle_regression": {
+    "candidate_id": "auto_193450_1475_1543",
+    "final_speaker_srt_sha256": "e51f19a464ef32a586532ef9054b5d3f87b6e1f50f00b5bb6c8ef93ec5d55060",
+    "final_text_srt_sha256": "e51f19a464ef32a586532ef9054b5d3f87b6e1f50f00b5bb6c8ef93ec5d55060",
+    "schema_version": "lidousha-subtitle-regression-audit.v1",
+    "status": "PASS",
+    "surfaces": {
+      "final_speaker_srt": {
+        "found_forbidden": [],
+        "found_forbidden_exact_cues": [],
+        "missing_required": [],
+        "missing_required_any_groups": [],
+        "missing_required_min_occurrences": [],
+        "payload_sha256": "8cb917c77098b4cc5c1d70015c081acd19fdca90a734005292497804ae5d757f",
+        "required_any_group_count": 0,
+        "required_count": 6,
+        "required_min_occurrence_rule_count": 0,
+        "status": "PASS"
+      },
+      "final_text_srt": {
+        "found_forbidden": [],
+        "found_forbidden_exact_cues": [],
+        "missing_required": [],
+        "missing_required_any_groups": [],
+        "missing_required_min_occurrences": [],
+        "payload_sha256": "8cb917c77098b4cc5c1d70015c081acd19fdca90a734005292497804ae5d757f",
+        "required_any_group_count": 0,
+        "required_count": 6,
+        "required_min_occurrence_rule_count": 0,
+        "status": "PASS"
+      }
+    },
+    "truth_asset_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/subtitle_regressions/auto_193450_1475_1543.subtitle-regression.v1.json",
+    "truth_asset_sha256": "4c1ca9dec63e88074fbb663f2fa814ebf18ba6cb89d002d2183d6b4a4169987a"
+  },
+  "subtitle_regression_audit_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_1475_1543/replacement_recuts/auto_193450_1475_1543.subtitle-regression.json",
+  "subtitle_source": "aggregate_asr+bcut_agy_cpa+pronoun+text_final+redelivery_baseline",
+  "subtitle_style": "lidousha-final-sapphire72",
+  "subtitle_timing_qa": {
+    "actions": [
+      {
+        "action": "drop_boundary_fragment",
+        "after": null,
+        "before": {
+          "end_ms": 10020,
+          "start_ms": 9770
+        },
+        "cue_id": "fresh_0004",
+        "density_cps": 28.0,
+        "reasons": [
+          "unreadable_leading_boundary_fragment"
+        ],
+        "text": "李姐nn晚上好，",
+        "vad_overlap_ratio": 0.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 23690,
+          "start_ms": 22690
+        },
+        "before": {
+          "end_ms": 23610,
+          "start_ms": 22690
+        },
+        "cue_id": "fresh_0011",
+        "density_cps": 5.435,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "左边的是我",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 31620,
+          "start_ms": 30620
+        },
+        "before": {
+          "end_ms": 31340,
+          "start_ms": 30620
+        },
+        "cue_id": "fresh_0017",
+        "density_cps": 2.778,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "对呀",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 37670,
+          "start_ms": 36670
+        },
+        "before": {
+          "end_ms": 37590,
+          "start_ms": 36670
+        },
+        "cue_id": "fresh_0021",
+        "density_cps": 10.87,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "我们不要站在你的方向",
+        "vad_overlap_ratio": 1.0
+      }
+    ],
+    "counts": {
+      "dropped": 1,
+      "retimed": 3
+    },
+    "policy": {
+      "boundary_fragment_max_visible_ms": 300,
+      "hard_max_ms": 12000,
+      "min_density_cps": 0.8,
+      "min_readable_ms": 1000,
+      "soft_max_ms": 6000
+    },
+    "schema_version": "subtitle-timing-qa.v3",
+    "speech_span_count": 19,
+    "speech_total_ms": 97656,
+    "vad_evidence_contract": "positive_only_never_shrink_normal_asr_cues",
+    "window": {
+      "end_ms": 77780,
+      "start_ms": 9770
+    }
+  },
+  "talk_filler_audit_path": null,
+  "text_finalization_manifest_path": null,
+  "upload_tags": {
+    "content_tags": [
+      {
+        "tag": "搞笑",
+        "why": "两人围绕镜像左右争论半天，最后以“管他谁是左边的呢”收场，全程笑点密集。"
+      },
+      {
+        "tag": "犯傻",
+        "why": "一本正经分析“左边的是我”“站在我的方向上”，却越算越分不清。"
+      },
+      {
+        "tag": "左右不分",
+        "why": "字幕中直接说“我有点分不清左右”，也是整段争论的核心。"
+      },
+      {
+        "tag": "脑瓜崩",
+        "why": "弹幕要求左边的人弹右边一个脑瓜崩，最后还出现“再硬弹一弹”。"
+      },
+      {
+        "tag": "名场面",
+        "why": "从争论镜像视角到不管左右直接开弹，形成完整又有记忆点的喜剧场面。"
+      }
+    ],
+    "engine": "suggest-upload-tags.v1",
+    "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,搞笑,犯傻,左右不分,脑瓜崩,名场面",
+    "final_tags": [
+      "李豆沙",
+      "虚拟主播",
+      "虚拟UP主",
+      "直播切片",
+      "搞笑",
+      "犯傻",
+      "左右不分",
+      "脑瓜崩",
+      "名场面"
+    ],
+    "proper_noun_tags": [],
+    "status": "OK",
+    "warnings": []
+  }
+}

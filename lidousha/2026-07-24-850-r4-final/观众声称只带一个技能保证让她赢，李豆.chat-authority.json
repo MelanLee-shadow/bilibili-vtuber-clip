@@ -1,0 +1,5068 @@
+{
+  "address_enumeration_audit": {
+    "repairs": [],
+    "schema_version": "address-enumeration-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "applied": [],
+  "burn_binding": {
+    "ass_path": null,
+    "ass_sha256": null,
+    "burned_media_path": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r4/out/2026-07-24/auto_193129_850_940/replacement_recuts/auto_193129_850_940.recut.burned-final-sapphire72.mp4",
+    "burned_media_sha256": "ede2f1e3d90f757218a8ad81ef0ad34d073545d92443885fa60a474c330765f5"
+  },
+  "code_switch_surface_audit": {
+    "input_srt_sha256": "722ff84ff1da9c938b1a868bd18ebf85fb6de174d7ccdf5fa0713d73f09a022f",
+    "output_srt_sha256": "722ff84ff1da9c938b1a868bd18ebf85fb6de174d7ccdf5fa0713d73f09a022f",
+    "repairs": [],
+    "schema_version": "code-switch-surface-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "coreference_repairs": [],
+  "entity_repairs": [
+    {
+      "after": [
+        "又可以和大家见面了耶"
+      ],
+      "before": [
+        "又可以和大家见面理解"
+      ],
+      "boundary_owner_rejection": "STRADDLES_IMMUTABLE_STORY_SCOPE",
+      "boundary_required": false,
+      "cue_indexes": [
+        4
+      ],
+      "decision_authority": "CPA_JUDGE",
+      "evidence_id": "2a79908227bb172b2d14758a9923a19bc4ee11e5b2ad2957de0692536dafd280",
+      "final_delivery_overlap_ms": 250,
+      "final_delivery_overlap_ratio": 0.152439,
+      "final_verification_kind": "entity_repair",
+      "final_verification_scope": "OUTSIDE_DELIVERY",
+      "final_verification_scope_reason": "BOUNDARY_SLIVER_BELOW_MEANINGFUL_AUDIO_THRESHOLD",
+      "matched_end_ms": 10000,
+      "matched_start_ms": 8360,
+      "mode": "final_review_context_adjudication",
+      "mutation_authority": {
+        "basis": "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION",
+        "schema_version": "subtitle-correction-mutation-authority.v1",
+        "status": "PASS"
+      },
+      "policy_branch": "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT",
+      "repair_class": "phonetic",
+      "structured_exact_text": "又可以和大家见面了耶",
+      "survived": true,
+      "verdict": {
+        "audio_clip_sha256": "47dbb6c3d32ab66a22ca69c74e2208eaf1c40b611586ee3d94dfbdad640e4707",
+        "audio_end_ms": 10400,
+        "audio_start_ms": 7900,
+        "confidence": 0.95,
+        "heard_pinyin": "jiu ke yi he da jia jin xing lian dong la",
+        "model": "Gemini 3.6 Flash (High)",
+        "prompt_sha256": "15fae8d5494e4b798b393e262b29fdc9da0648b58abdaeef9fadf7d15ba0b41b",
+        "provider": "agy",
+        "reason": "clear female speech audible in target interval",
+        "request_sha256": "f5f45b2a5d6ce6570214f47441dfb837632a7ef8a9b0931f181516857e6cb0b0",
+        "response_sha256": "9e871620cfe21e16945970536744785f7f42661cf3f55db16c12c64588cf2d34",
+        "schema_version": "subtitle-span-acoustic-witness.v1",
+        "self_count_mismatch": false,
+        "source_media_sha256": "ead2064fd12f17a4698a5ce9d8f6d813ae55c6312ca2202d5285fdba50d2e237",
+        "status": "OBSERVED",
+        "syllable_count": 11,
+        "target_audible": true,
+        "timeline_binding": {
+          "delivery_local": {
+            "context_end_ms": 11940,
+            "context_start_ms": 4480,
+            "target_end_ms": 10000,
+            "target_start_ms": 8360
+          },
+          "schema_version": "subtitle-audio-timeline-binding.v1",
+          "source_media": {
+            "crop_end_ms": 10400,
+            "crop_start_ms": 7900,
+            "target_end_ms": 10000,
+            "target_start_ms": 8360
+          },
+          "source_media_timeline_offset_ms": 0
+        },
+        "uncertain_positions": []
+      }
+    },
+    {
+      "after": [
+        "你一个技能都不带，就带宠物"
+      ],
+      "before": [
+        "你一个技能不带都带宠物"
+      ],
+      "boundary_owner_id": "entity_repair:2:95620:97740",
+      "boundary_required": true,
+      "cue_indexes": [
+        32
+      ],
+      "decision_authority": "CPA_JUDGE",
+      "evidence_id": "ef8fcae3a0014e8b2e433c96349070a77a751a069a15d9168163cec4e4b80312",
+      "final_redelivery_baseline_revert": {
+        "after_payload": "你一个技能不带就带宠物",
+        "baseline_cue_indexes": [
+          27
+        ],
+        "before_payload": "你一个技能都不带就带宠物"
+      },
+      "final_verification_kind": "entity_repair",
+      "final_verification_scope": "SUPERSEDED_BY_REDELIVERY_BASELINE",
+      "final_verification_scope_reason": "BOUNDARY_OWNER_REVERTED_BY_VERIFIED_BASELINE_REPLAY",
+      "matched_end_ms": 97740,
+      "matched_start_ms": 95620,
+      "mode": "final_review_context_adjudication",
+      "mutation_authority": {
+        "basis": "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION",
+        "schema_version": "subtitle-correction-mutation-authority.v1",
+        "status": "PASS"
+      },
+      "policy_branch": "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT",
+      "repair_class": "phonetic",
+      "structured_exact_text": "你一个技能都不带，就带宠物",
+      "survived": true,
+      "verdict": {
+        "audio_clip_sha256": "07aa4d0e7140105964d9e0b5336ac90eed6b10c0892655710b8906524364e992",
+        "audio_end_ms": 98200,
+        "audio_start_ms": 95200,
+        "confidence": 0.95,
+        "heard_pinyin": "yi ge ji neng zhua duo shao ge chong wu",
+        "model": "Gemini 3.6 Flash (High)",
+        "prompt_sha256": "96620cd8080783076b7cf4cad7673820fe73207dfbfaab0acf553c2f4ebb4063",
+        "provider": "agy",
+        "reason": "clear speech in target interval",
+        "request_sha256": "63c18bb67a5c313137264ff3872a2fc83252e61f2b852998ed45750095940018",
+        "response_sha256": "731b3c941204775d7737b52fe3e2da1b49204fb71a74dd6a3726d434f8562e7f",
+        "schema_version": "subtitle-span-acoustic-witness.v1",
+        "self_count_mismatch": false,
+        "source_media_sha256": "ead2064fd12f17a4698a5ce9d8f6d813ae55c6312ca2202d5285fdba50d2e237",
+        "status": "OBSERVED",
+        "syllable_count": 10,
+        "target_audible": true,
+        "timeline_binding": {
+          "delivery_local": {
+            "context_end_ms": 99440,
+            "context_start_ms": 91000,
+            "target_end_ms": 97740,
+            "target_start_ms": 95620
+          },
+          "schema_version": "subtitle-audio-timeline-binding.v1",
+          "source_media": {
+            "crop_end_ms": 98200,
+            "crop_start_ms": 95200,
+            "target_end_ms": 97740,
+            "target_start_ms": 95620
+          },
+          "source_media_timeline_offset_ms": 0
+        },
+        "uncertain_positions": []
+      }
+    }
+  ],
+  "entity_verdict_required": [],
+  "entity_verdicts": [],
+  "evidence_considered": 81,
+  "final_boundary_required_exclusion_count": 0,
+  "final_expected_value_surface_audit": {
+    "decision_authority": "EXPECTED_VALUE_CANON",
+    "eligible_rule_count": 41,
+    "input_srt_sha256": "c1958b61450e2cf19bdab7f9e5e3fcdc72df820d06e90acfe8948ca235889f82",
+    "output_srt_sha256": "c1958b61450e2cf19bdab7f9e5e3fcdc72df820d06e90acfe8948ca235889f82",
+    "registered_name_conflicts": [],
+    "repairs": [],
+    "rule_count": 41,
+    "schema_version": "expected-value-surface-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "final_hard_meme_surface_audit": {
+    "input_srt_sha256": "c1958b61450e2cf19bdab7f9e5e3fcdc72df820d06e90acfe8948ca235889f82",
+    "output_srt_sha256": "c1958b61450e2cf19bdab7f9e5e3fcdc72df820d06e90acfe8948ca235889f82",
+    "repairs": [],
+    "rule_count": 1,
+    "schema_version": "hard-meme-surface-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "final_hard_meme_surface_verification": {
+    "failures": {},
+    "status": "PASS"
+  },
+  "final_output_srt_sha256": "40d8b5c025972e684c0c9e3733d9c496d57fc9ab29dce1450246c3495c91abb3",
+  "final_outside_delivery_count": 1,
+  "final_redelivery_baseline_owner_verification": {
+    "failures": [],
+    "required_mapping_count": 29,
+    "status": "PASS"
+  },
+  "final_required_decision_count": 37,
+  "final_required_legacy_decision_count": 0,
+  "final_required_redelivery_baseline_owner_count": 29,
+  "final_required_source_truth_owner_count": 8,
+  "final_review_audit": {
+    "boundary_semantic_review": {
+      "boundary_search_scope": {
+        "baseline_tail_cap_ms": null,
+        "boundary_end_mode": "semantic_lower_bound",
+        "delivery_lower_bound_ms": 90710,
+        "delivery_tail_pad_ms": 400,
+        "last_piece_start_ms": 0,
+        "manual_lower_bound_ms": null,
+        "max_recommended_end_ms": 120710,
+        "minimum_recommended_end_ms": 90710,
+        "prior_piece_duration_ms": 0,
+        "reason_codes": [],
+        "recommendation_forward_ms": 30000,
+        "repair_cap_ms": 30000,
+        "required_last_piece_source_end_ms": 135710,
+        "required_local_source_context_end_ms": 135710,
+        "required_owner_end_ms": null,
+        "review_target_ms": 90710,
+        "schema_version": "talk-boundary-search-scope.v1",
+        "scope_sha256": "sha256:7ad4f0ddefab313e071f3df5832f473f4bebdcd95fc7471153eeee2eb06f0842",
+        "semantic_search_origin_ms": 90710,
+        "semantic_target_ms": 90710,
+        "status": "PASS",
+        "structured_payoff_clamped_from_ms": null,
+        "structured_payoff_ms": null,
+        "witness_reserve_ms": 15000
+      },
+      "candidate_id": "auto_193129_850_940",
+      "content_anchor_covered": true,
+      "correlated_reviewer_disclosure": true,
+      "cue_grid_sha256": "sha256:64b085ffe856d65c58655dd74ff2581d40181d8ef7f78fffecad2bf7ca49ab58",
+      "evidence_cue_indexes": [
+        29
+      ],
+      "final_endpoint_binding": {
+        "closure_text_sha256": "sha256:1430e638c29024e6732bfab12999fe0e87d9b18bd87d4b6f035e632b5e2bce62",
+        "final_closure_cue_index": 29,
+        "final_cue_grid_sha256": "sha256:64b085ffe856d65c58655dd74ff2581d40181d8ef7f78fffecad2bf7ca49ab58",
+        "final_end_ms": 90720,
+        "final_snapped_end_ms": 90710,
+        "final_start_ms": 0,
+        "reason_codes": [],
+        "recommended_end_cue_index": 29,
+        "recommended_end_ms": 90710,
+        "schema_version": "talk-boundary-final-endpoint-binding.v1",
+        "semantic_cue_grid_sha256": "sha256:64b085ffe856d65c58655dd74ff2581d40181d8ef7f78fffecad2bf7ca49ab58",
+        "semantic_request_sha256": "sha256:ebda897cc622e7ad7e4dd038f914134234b8ab3e4a82856a5495e846f043ead2",
+        "status": "PASS"
+      },
+      "independent_semantic_vote_count": 1,
+      "max_forward_ms": 30000,
+      "needs_more_context": false,
+      "next_topic_separated": true,
+      "next_topic_witness_valid": true,
+      "reason_codes": [
+        "STORY_PAYOFF_DELIVERED",
+        "TARGET_SENTENCE_COMPLETE",
+        "TERMINAL_SOURCE_SEPARATION_WITNESS_PASS"
+      ],
+      "recommendation_relaxations": [],
+      "recommended_end_cue_index": 29,
+      "recommended_end_ms": 90710,
+      "request_sha256": "sha256:ebda897cc622e7ad7e4dd038f914134234b8ab3e4a82856a5495e846f043ead2",
+      "retry_scope": "none",
+      "review_scope": "final_delivery",
+      "reviewer_independence_group": "cpa-gpt-5.6-semantic-family",
+      "same_topic_continues_after_target": false,
+      "schema_version": "talk-boundary-semantic-review.v1",
+      "selector_story_witness": {
+        "comedic_payoff": 4,
+        "independence_group": "cpa-gpt-5.6-semantic-family",
+        "self_contained": 4,
+        "status": "PASS"
+      },
+      "semantic_independence_groups": [
+        "cpa-gpt-5.6-semantic-family"
+      ],
+      "source_separation_witness": {
+        "reason_codes": [],
+        "schema_version": "talk-boundary-source-separation-witness.v1",
+        "source_cue_grid_sha256": "sha256:2bddf57d77411a3704f1b27a39db570dd56b449658a1c0a9cb0d7ef1ff8c44a3",
+        "source_final_end_ms": 100470,
+        "source_final_start_ms": 9750,
+        "source_recommended_end_ms": 100460,
+        "source_request_sha256": "sha256:db60c4352e02d6eb1a5c1564c589bcbb445ede6024d4b82926e9e8c9b845b085",
+        "source_review_sha256": "sha256:3c9a8ab79ecd93d8dd5b86d37930ba64ef0e32f6fac893a534302dc9845d73a4",
+        "status": "PASS"
+      },
+      "status": "PASS",
+      "story_closed": true,
+      "summary": "第29条完整落下“再也不信了”的包袱，且终端源分离证据已证明其后转入下一话题。",
+      "syntax_complete": true,
+      "target_cue_index": 29,
+      "target_ms": 90710
+    },
+    "correction_mutation_authority": {
+      "applied_count": 2,
+      "failures": [],
+      "schema_version": "subtitle-correction-mutation-audit.v1",
+      "status": "PASS",
+      "validated_mutation_count": 2
+    },
+    "correction_pass": {
+      "applied_count": 2,
+      "boundary_semantic_review": {
+        "boundary_search_scope": {
+          "baseline_tail_cap_ms": null,
+          "boundary_end_mode": "semantic_lower_bound",
+          "delivery_lower_bound_ms": 90710,
+          "delivery_tail_pad_ms": 400,
+          "last_piece_start_ms": 0,
+          "manual_lower_bound_ms": null,
+          "max_recommended_end_ms": 120710,
+          "minimum_recommended_end_ms": 90710,
+          "prior_piece_duration_ms": 0,
+          "reason_codes": [],
+          "recommendation_forward_ms": 30000,
+          "repair_cap_ms": 30000,
+          "required_last_piece_source_end_ms": 135710,
+          "required_local_source_context_end_ms": 135710,
+          "required_owner_end_ms": null,
+          "review_target_ms": 90710,
+          "schema_version": "talk-boundary-search-scope.v1",
+          "scope_sha256": "sha256:7ad4f0ddefab313e071f3df5832f473f4bebdcd95fc7471153eeee2eb06f0842",
+          "semantic_search_origin_ms": 90710,
+          "semantic_target_ms": 90710,
+          "status": "PASS",
+          "structured_payoff_clamped_from_ms": null,
+          "structured_payoff_ms": null,
+          "witness_reserve_ms": 15000
+        },
+        "candidate_id": "auto_193129_850_940",
+        "content_anchor_covered": true,
+        "correlated_reviewer_disclosure": true,
+        "cue_grid_sha256": "sha256:64b085ffe856d65c58655dd74ff2581d40181d8ef7f78fffecad2bf7ca49ab58",
+        "evidence_cue_indexes": [
+          29
+        ],
+        "final_endpoint_binding": {
+          "closure_text_sha256": "sha256:1430e638c29024e6732bfab12999fe0e87d9b18bd87d4b6f035e632b5e2bce62",
+          "final_closure_cue_index": 29,
+          "final_cue_grid_sha256": "sha256:64b085ffe856d65c58655dd74ff2581d40181d8ef7f78fffecad2bf7ca49ab58",
+          "final_end_ms": 90720,
+          "final_snapped_end_ms": 90710,
+          "final_start_ms": 0,
+          "reason_codes": [],
+          "recommended_end_cue_index": 29,
+          "recommended_end_ms": 90710,
+          "schema_version": "talk-boundary-final-endpoint-binding.v1",
+          "semantic_cue_grid_sha256": "sha256:64b085ffe856d65c58655dd74ff2581d40181d8ef7f78fffecad2bf7ca49ab58",
+          "semantic_request_sha256": "sha256:ebda897cc622e7ad7e4dd038f914134234b8ab3e4a82856a5495e846f043ead2",
+          "status": "PASS"
+        },
+        "independent_semantic_vote_count": 1,
+        "max_forward_ms": 30000,
+        "needs_more_context": false,
+        "next_topic_separated": true,
+        "next_topic_witness_valid": true,
+        "reason_codes": [
+          "STORY_PAYOFF_DELIVERED",
+          "TARGET_SENTENCE_COMPLETE",
+          "TERMINAL_SOURCE_SEPARATION_WITNESS_PASS"
+        ],
+        "recommendation_relaxations": [],
+        "recommended_end_cue_index": 29,
+        "recommended_end_ms": 90710,
+        "request_sha256": "sha256:ebda897cc622e7ad7e4dd038f914134234b8ab3e4a82856a5495e846f043ead2",
+        "retry_scope": "none",
+        "review_scope": "final_delivery",
+        "reviewer_independence_group": "cpa-gpt-5.6-semantic-family",
+        "same_topic_continues_after_target": false,
+        "schema_version": "talk-boundary-semantic-review.v1",
+        "selector_story_witness": {
+          "comedic_payoff": 4,
+          "independence_group": "cpa-gpt-5.6-semantic-family",
+          "self_contained": 4,
+          "status": "PASS"
+        },
+        "semantic_independence_groups": [
+          "cpa-gpt-5.6-semantic-family"
+        ],
+        "source_separation_witness": {
+          "reason_codes": [],
+          "schema_version": "talk-boundary-source-separation-witness.v1",
+          "source_cue_grid_sha256": "sha256:2bddf57d77411a3704f1b27a39db570dd56b449658a1c0a9cb0d7ef1ff8c44a3",
+          "source_final_end_ms": 100470,
+          "source_final_start_ms": 9750,
+          "source_recommended_end_ms": 100460,
+          "source_request_sha256": "sha256:db60c4352e02d6eb1a5c1564c589bcbb445ede6024d4b82926e9e8c9b845b085",
+          "source_review_sha256": "sha256:3c9a8ab79ecd93d8dd5b86d37930ba64ef0e32f6fac893a534302dc9845d73a4",
+          "status": "PASS"
+        },
+        "status": "PASS",
+        "story_closed": true,
+        "summary": "第29条完整落下“再也不信了”的包袱，且终端源分离证据已证明其后转入下一话题。",
+        "syntax_complete": true,
+        "target_cue_index": 29,
+        "target_ms": 90710
+      },
+      "context_adjudication_budget": 12,
+      "context_adjudication_count": 2,
+      "findings": [
+        {
+          "base_text_sha256": "e006cb94d9d70ec6cf111cafef49572e19c0d9f196bed75187d79ff1e44fc95d",
+          "candidate_memory_id": null,
+          "candidate_provenance": null,
+          "context_audio_adjudication": {
+            "decision_authority": "CPA_JUDGE",
+            "mutation_authority": {
+              "basis": "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION",
+              "schema_version": "subtitle-correction-mutation-authority.v1",
+              "status": "PASS"
+            },
+            "orthography_ambiguous": false,
+            "orthography_authority": {
+              "provenance_kind": null,
+              "reason_code": "ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED",
+              "schema_version": "subtitle-orthography-authority.v1",
+              "status": "BLOCK"
+            },
+            "orthography_equivalence": {
+              "matched": false
+            },
+            "policy_branch": "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT",
+            "repaired": true,
+            "request": {
+              "base_text_sha256": "e006cb94d9d70ec6cf111cafef49572e19c0d9f196bed75187d79ff1e44fc95d",
+              "candidate_entities": [
+                {
+                  "candidate_id": "CURRENT",
+                  "canonical": "又可以和大家见面理解",
+                  "readings": [],
+                  "surfaces": [],
+                  "text_sha256": "e006cb94d9d70ec6cf111cafef49572e19c0d9f196bed75187d79ff1e44fc95d"
+                },
+                {
+                  "candidate_id": "PROPOSED",
+                  "canonical": "又可以和大家见面了耶",
+                  "readings": [],
+                  "surfaces": [],
+                  "text_sha256": "a5295752cf528adba84d654892cffc5e0f7148186d50d50c9dfcd3cfe918e2e1"
+                }
+              ],
+              "candidate_provenance": null,
+              "clip_context_binding": {
+                "context_sha256": "sha256:1ca73a4dd1393e00a7032670e246c2581c6457349a883f39d24f3ca7c99d6d9f",
+                "mutation_authorized": false,
+                "schema_version": "lidousha-clip-context.v1",
+                "speech_memory_ledger_sha256": "sha256:d87532b5d56457496a868c6910091a545bd2c612a807182d742aa0ca26d30c95",
+                "whole_clip_draft_srt_sha256": "sha256:722ff84ff1da9c938b1a868bd18ebf85fb6de174d7ccdf5fa0713d73f09a022f"
+              },
+              "context_after": "拉拉，你是新来的\n你这个你还挺萌的",
+              "context_before": "来吧\n解锁耶",
+              "context_end_ms": 11940,
+              "context_start_ms": 4480,
+              "cue_indexes": [
+                4
+              ],
+              "current_cue": "又可以和大家见面理解",
+              "evidence_cue_ids": [],
+              "evidence_id": "2a79908227bb172b2d14758a9923a19bc4ee11e5b2ad2957de0692536dafd280",
+              "kind": "subtitle_span_acoustic_check",
+              "matched_audio_text": "又可以和大家见面理解",
+              "matched_end_ms": 10000,
+              "matched_start_ms": 8360,
+              "orthography_authority": {
+                "provenance_kind": null,
+                "reason_code": "ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED",
+                "schema_version": "subtitle-orthography-authority.v1",
+                "status": "BLOCK"
+              },
+              "proposed_cue": "又可以和大家见面了耶",
+              "reason": "“见面理解”语义不成立，li-jie 与 le-ye 音近，改为“见面了耶”后整句通顺。",
+              "repair_class": "phonetic",
+              "replacement": "了耶",
+              "request_sha256": "34352842681a03f4e4e197f73947a7bf21a8099eef6f29b7544e696830e7faf6",
+              "schema_version": "subtitle-span-acoustic-check-request.v1",
+              "source_media_timeline_offset_ms": 0,
+              "suspect": "理解"
+            },
+            "schema_version": "subtitle-span-adjudication.v1",
+            "status": "OBSERVED",
+            "timing_immutable": true,
+            "verdict": {
+              "audio_clip_sha256": "47dbb6c3d32ab66a22ca69c74e2208eaf1c40b611586ee3d94dfbdad640e4707",
+              "audio_end_ms": 10400,
+              "audio_start_ms": 7900,
+              "confidence": 0.95,
+              "heard_pinyin": "jiu ke yi he da jia jin xing lian dong la",
+              "model": "Gemini 3.6 Flash (High)",
+              "prompt_sha256": "15fae8d5494e4b798b393e262b29fdc9da0648b58abdaeef9fadf7d15ba0b41b",
+              "provider": "agy",
+              "reason": "clear female speech audible in target interval",
+              "request_sha256": "f5f45b2a5d6ce6570214f47441dfb837632a7ef8a9b0931f181516857e6cb0b0",
+              "response_sha256": "9e871620cfe21e16945970536744785f7f42661cf3f55db16c12c64588cf2d34",
+              "schema_version": "subtitle-span-acoustic-witness.v1",
+              "self_count_mismatch": false,
+              "source_media_sha256": "ead2064fd12f17a4698a5ce9d8f6d813ae55c6312ca2202d5285fdba50d2e237",
+              "status": "OBSERVED",
+              "syllable_count": 11,
+              "target_audible": true,
+              "timeline_binding": {
+                "delivery_local": {
+                  "context_end_ms": 11940,
+                  "context_start_ms": 4480,
+                  "target_end_ms": 10000,
+                  "target_start_ms": 8360
+                },
+                "schema_version": "subtitle-audio-timeline-binding.v1",
+                "source_media": {
+                  "crop_end_ms": 10400,
+                  "crop_start_ms": 7900,
+                  "target_end_ms": 10000,
+                  "target_start_ms": 8360
+                },
+                "source_media_timeline_offset_ms": 0
+              },
+              "uncertain_positions": []
+            },
+            "witness_authority": "EVIDENCE_ONLY",
+            "witness_judge": {
+              "decision_authority": "CPA_JUDGE",
+              "judge": {
+                "choice": "PROPOSED",
+                "completion_sha256": "bef672985c3bbc2eb87d7922a090f703319377956411c5faf28416ca87f5278f",
+                "prompt_sha256": "89e3a1d751dcfd5ff34ab1a000e7a869a308d9284c34314d6162b571c6ed5039",
+                "ranking": [
+                  {
+                    "choice": "PROPOSED",
+                    "p": 0.01
+                  },
+                  {
+                    "choice": "CURRENT",
+                    "p": 0.001
+                  }
+                ],
+                "reason": "高置信拼音明确为“jiu ke yi he da jia jin xing lian dong la”，其后半段“jin xing lian dong la”与两候选的“见面理解/见面了耶”均明显冲突，不能选任一候选。",
+                "schema_version": "acoustic-witness-adjudication.v1",
+                "status": "JUDGED"
+              },
+              "pinyin_compatibility": {
+                "current": 0.47619047619047616,
+                "proposed": 0.47619047619047616
+              },
+              "schema_version": "acoustic-witness-adjudication.v1",
+              "witness_authority": "EVIDENCE_ONLY",
+              "witness_diagnostic_conflict": true,
+              "witness_request_sha256": "f5f45b2a5d6ce6570214f47441dfb837632a7ef8a9b0931f181516857e6cb0b0",
+              "witness_status": "OBSERVED"
+            }
+          },
+          "correlated_text_witness": false,
+          "cue_index": 4,
+          "evidence_cue_ids": [],
+          "force_acoustic": false,
+          "kind": "nonword",
+          "proposed_full_cue": "又可以和大家见面了耶",
+          "repair_class": "phonetic",
+          "routed": "context_audio_adjudicated_fix",
+          "span_end_codepoint": 10,
+          "span_start_codepoint": 8,
+          "suggestion": "了耶",
+          "suspect": "理解",
+          "why": "“见面理解”语义不成立，li-jie 与 le-ye 音近，改为“见面了耶”后整句通顺。"
+        },
+        {
+          "base_text_sha256": "9d1ea4bf10335958157914eb5c42421de13169b0161d17509e7fae7e02c1c171",
+          "candidate_memory_id": null,
+          "candidate_provenance": null,
+          "correlated_text_witness": false,
+          "cue_index": 24,
+          "evidence_cue_ids": [
+            23,
+            25,
+            26
+          ],
+          "force_acoustic": false,
+          "kind": "nonword",
+          "proposed_full_cue": null,
+          "repair_class": "phonetic",
+          "reported_scope_warnings": [
+            "REPORTED_SUSPECT_SCOPE_MISMATCH",
+            "REPORTED_REPLACEMENT_SCOPE_MISMATCH"
+          ],
+          "routed": "disclosure_protected",
+          "span_end_codepoint": 9,
+          "span_start_codepoint": 6,
+          "suggestion": null,
+          "suggestion_rejected_reason": "LATIN_SCRIPT_REPAIR_REQUIRES_SOURCE_PROVENANCE",
+          "suspect": "副一副",
+          "why": "“打TA一副一副”不是成立的说法，结合约战语境应是音近的“一V一”。"
+        },
+        {
+          "base_text_sha256": "1a56fa7767023cff14e3c7e2db48b4e657b8889b42bbc008a9f48335fd268749",
+          "candidate_memory_id": null,
+          "candidate_provenance": null,
+          "correlated_text_witness": false,
+          "cue_index": 30,
+          "evidence_cue_ids": [
+            27,
+            28,
+            29
+          ],
+          "force_acoustic": false,
+          "kind": "nonword",
+          "proposed_full_cue": "委屈，为什么欺负我？呜呜，欺负人",
+          "repair_class": "phonetic",
+          "routed": "disclosure_protected",
+          "span_end_codepoint": 14,
+          "span_start_codepoint": 0,
+          "suggestion": "委屈，为什么欺负我？呜呜，",
+          "suspect": "我 Q 为什么欺负我 QQ ",
+          "why": "“我 Q”和“QQ”作为当前句成分语义崩坏，结合受骗后撒娇抱怨的语境，分别疑为“委屈”和哭声“呜呜”的拉丁化误识。"
+        },
+        {
+          "base_text_sha256": "e6170c2f3062d99fb3e1ca296c5ccd115d7d0eae32bf4d6b47b153d2a6386bed",
+          "candidate_memory_id": null,
+          "candidate_provenance": null,
+          "context_audio_adjudication": {
+            "decision_authority": "CPA_JUDGE",
+            "mutation_authority": {
+              "basis": "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION",
+              "schema_version": "subtitle-correction-mutation-authority.v1",
+              "status": "PASS"
+            },
+            "orthography_ambiguous": false,
+            "orthography_authority": {
+              "provenance_kind": null,
+              "reason_code": "ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED",
+              "schema_version": "subtitle-orthography-authority.v1",
+              "status": "BLOCK"
+            },
+            "orthography_equivalence": {
+              "matched": false
+            },
+            "policy_branch": "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT",
+            "repaired": true,
+            "request": {
+              "base_text_sha256": "e6170c2f3062d99fb3e1ca296c5ccd115d7d0eae32bf4d6b47b153d2a6386bed",
+              "candidate_entities": [
+                {
+                  "candidate_id": "CURRENT",
+                  "canonical": "你一个技能不带都带宠物",
+                  "readings": [],
+                  "surfaces": [],
+                  "text_sha256": "e6170c2f3062d99fb3e1ca296c5ccd115d7d0eae32bf4d6b47b153d2a6386bed"
+                },
+                {
+                  "candidate_id": "PROPOSED",
+                  "canonical": "你一个技能都不带，就带宠物",
+                  "readings": [],
+                  "surfaces": [],
+                  "text_sha256": "a9a04b7256d5e97a991fc47eec0e8e185d92a5b11654daf7867a792930687259"
+                }
+              ],
+              "candidate_provenance": null,
+              "clip_context_binding": {
+                "context_sha256": "sha256:1ca73a4dd1393e00a7032670e246c2581c6457349a883f39d24f3ca7c99d6d9f",
+                "mutation_authorized": false,
+                "schema_version": "lidousha-clip-context.v1",
+                "speech_memory_ledger_sha256": "sha256:d87532b5d56457496a868c6910091a545bd2c612a807182d742aa0ca26d30c95",
+                "whole_clip_draft_srt_sha256": "sha256:722ff84ff1da9c938b1a868bd18ebf85fb6de174d7ccdf5fa0713d73f09a022f"
+              },
+              "context_after": "我也不信你啊\n我也不信你了",
+              "context_before": "我 Q 为什么欺负我 QQ 欺负人\n我要去探索新地图了",
+              "context_end_ms": 99440,
+              "context_start_ms": 91000,
+              "cue_indexes": [
+                32
+              ],
+              "current_cue": "你一个技能不带都带宠物",
+              "evidence_cue_ids": [
+                23,
+                26,
+                33,
+                34
+              ],
+              "evidence_id": "ef8fcae3a0014e8b2e433c96349070a77a751a069a15d9168163cec4e4b80312",
+              "kind": "subtitle_span_acoustic_check",
+              "matched_audio_text": "你一个技能不带都带宠物",
+              "matched_end_ms": 97740,
+              "matched_start_ms": 95620,
+              "orthography_authority": {
+                "provenance_kind": null,
+                "reason_code": "ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED",
+                "schema_version": "subtitle-orthography-authority.v1",
+                "status": "BLOCK"
+              },
+              "proposed_cue": "你一个技能都不带，就带宠物",
+              "reason": "“一个技能不带都带宠物”把否定范围写乱，且结构化弹幕明确出现“一个技能都不带就带宠物”。",
+              "repair_class": "phonetic",
+              "replacement": "都不带，就",
+              "request_sha256": "d4dab1182ba9a5d3ab39f7f21a1b7278795f04116e221a2cf704c5337f1754f3",
+              "schema_version": "subtitle-span-acoustic-check-request.v1",
+              "source_media_timeline_offset_ms": 0,
+              "suspect": "不带都"
+            },
+            "schema_version": "subtitle-span-adjudication.v1",
+            "status": "OBSERVED",
+            "timing_immutable": true,
+            "verdict": {
+              "audio_clip_sha256": "07aa4d0e7140105964d9e0b5336ac90eed6b10c0892655710b8906524364e992",
+              "audio_end_ms": 98200,
+              "audio_start_ms": 95200,
+              "confidence": 0.95,
+              "heard_pinyin": "yi ge ji neng zhua duo shao ge chong wu",
+              "model": "Gemini 3.6 Flash (High)",
+              "prompt_sha256": "96620cd8080783076b7cf4cad7673820fe73207dfbfaab0acf553c2f4ebb4063",
+              "provider": "agy",
+              "reason": "clear speech in target interval",
+              "request_sha256": "63c18bb67a5c313137264ff3872a2fc83252e61f2b852998ed45750095940018",
+              "response_sha256": "731b3c941204775d7737b52fe3e2da1b49204fb71a74dd6a3726d434f8562e7f",
+              "schema_version": "subtitle-span-acoustic-witness.v1",
+              "self_count_mismatch": false,
+              "source_media_sha256": "ead2064fd12f17a4698a5ce9d8f6d813ae55c6312ca2202d5285fdba50d2e237",
+              "status": "OBSERVED",
+              "syllable_count": 10,
+              "target_audible": true,
+              "timeline_binding": {
+                "delivery_local": {
+                  "context_end_ms": 99440,
+                  "context_start_ms": 91000,
+                  "target_end_ms": 97740,
+                  "target_start_ms": 95620
+                },
+                "schema_version": "subtitle-audio-timeline-binding.v1",
+                "source_media": {
+                  "crop_end_ms": 98200,
+                  "crop_start_ms": 95200,
+                  "target_end_ms": 97740,
+                  "target_start_ms": 95620
+                },
+                "source_media_timeline_offset_ms": 0
+              },
+              "uncertain_positions": []
+            },
+            "witness_authority": "EVIDENCE_ONLY",
+            "witness_judge": {
+              "decision_authority": "CPA_JUDGE",
+              "judge": {
+                "choice": "PROPOSED",
+                "completion_sha256": "4b0526b2793174505ceb1e9b49e29d59e0197cc3b0fe43330e058ee061a5c360",
+                "prompt_sha256": "c10f116e5309fcb2e95863634ddaa163e2f6647e589d5387495544f0650e25fe",
+                "ranking": [
+                  {
+                    "choice": "PROPOSED",
+                    "p": 0.9
+                  },
+                  {
+                    "choice": "CURRENT",
+                    "p": 0.1
+                  }
+                ],
+                "reason": "听写拼音与两项候选均有明显冲突，但在必须闭集二选一时，PROPOSED“一个技能都不带，就带宠物”与结构化弹幕所述只留召唤宠物技能的语境吻合，且比CURRENT否定范围错乱的表达更可能是实际话语。",
+                "schema_version": "acoustic-witness-adjudication.v1",
+                "status": "JUDGED"
+              },
+              "pinyin_compatibility": {
+                "current": 0.5714285714285714,
+                "proposed": 0.5217391304347826
+              },
+              "schema_version": "acoustic-witness-adjudication.v1",
+              "witness_authority": "EVIDENCE_ONLY",
+              "witness_diagnostic_conflict": true,
+              "witness_request_sha256": "63c18bb67a5c313137264ff3872a2fc83252e61f2b852998ed45750095940018",
+              "witness_status": "OBSERVED"
+            }
+          },
+          "correlated_text_witness": false,
+          "cue_index": 32,
+          "evidence_cue_ids": [
+            23,
+            26,
+            33,
+            34
+          ],
+          "force_acoustic": false,
+          "kind": "context",
+          "proposed_full_cue": "你一个技能都不带，就带宠物",
+          "repair_class": "phonetic",
+          "reported_scope_warnings": [
+            "SOURCE_SURFACE_NOT_IN_PROPOSED"
+          ],
+          "routed": "context_audio_adjudicated_fix",
+          "span_end_codepoint": 8,
+          "span_start_codepoint": 5,
+          "suggestion": "都不带，就",
+          "suspect": "不带都",
+          "why": "“一个技能不带都带宠物”把否定范围写乱，且结构化弹幕明确出现“一个技能都不带就带宠物”。"
+        },
+        {
+          "base_text_sha256": "580f01b0fd13a1aacf545f72c93f5d48443d0eebe4d7b7672eea8775e519ef33",
+          "candidate_memory_id": null,
+          "candidate_provenance": null,
+          "correlated_text_witness": false,
+          "cue_index": 45,
+          "evidence_cue_ids": [
+            42,
+            43,
+            44,
+            46
+          ],
+          "force_acoustic": false,
+          "kind": "context",
+          "proposed_full_cue": null,
+          "repair_class": "segmentation",
+          "reported_scope_warnings": [
+            "REPORTED_SUSPECT_SCOPE_MISMATCH",
+            "REPORTED_REPLACEMENT_SCOPE_MISMATCH"
+          ],
+          "routed": "disclosure",
+          "span_end_codepoint": 12,
+          "span_start_codepoint": 2,
+          "suggestion": null,
+          "suggestion_rejected_reason": "LATIN_SCRIPT_REPAIR_REQUIRES_SOURCE_PROVENANCE",
+          "suspect": "什么打不过这 NPC",
+          "why": "当前断句会形成不通顺的“请问什么打不过”，结合下一句反问，应是听到质疑后分段反问。"
+        }
+      ],
+      "infra_unresolved": [],
+      "infra_unresolved_count": 0,
+      "schema_version": "final-review-audit.v1",
+      "source_truth_protected_cue_indexes": [
+        5,
+        9,
+        12,
+        19,
+        20,
+        24,
+        28,
+        30
+      ],
+      "status": "APPLIED"
+    },
+    "discovery": {
+      "explicit_empty_findings": true,
+      "raw_validated_finding_count": 2,
+      "resolved_finding_count": 2,
+      "status": "COMPLETE"
+    },
+    "findings": [],
+    "reason_codes": [],
+    "release_gate": "PASS",
+    "resolved_findings": [
+      {
+        "base_text_sha256": "d460fe066086829fce5c99544c17619f785452deed4c430df840295059772566",
+        "candidate_memory_id": null,
+        "candidate_provenance": null,
+        "correlated_text_witness": false,
+        "cue_index": 19,
+        "evidence_cue_ids": [
+          18,
+          20,
+          21
+        ],
+        "force_acoustic": false,
+        "kind": "context",
+        "proposed_full_cue": null,
+        "repair_class": "phonetic",
+        "resolution": "VERIFIED_SOURCE_TRUTH_SUPERSEDES_REVIEW_PROPOSAL",
+        "source_truth_resolution": {
+          "schema_version": "final-review-source-truth-resolution.v1",
+          "status": "RESOLVED",
+          "timeline_offset_ms": 9750,
+          "truth_ids": [
+            "20260724-skill-ta-yifu-yifu-r2"
+          ]
+        },
+        "span_end_codepoint": 11,
+        "span_start_codepoint": 3,
+        "suggestion": null,
+        "suggestion_rejected_reason": "LATIN_SCRIPT_REPAIR_REQUIRES_SOURCE_PROVENANCE",
+        "suspect": "他，他一副，一副",
+        "why": "承接上一句为同一玩家，代词不应由“她”突变为“他”；游戏对战语境中重复的“一副”也更像“1V1”的近音误识。"
+      },
+      {
+        "base_text_sha256": "a401a20a71eabaa1d1a6d83f3d65c6490c45213f981572e2c233e815eb4d5aaa",
+        "candidate_memory_id": null,
+        "candidate_provenance": {
+          "kind": "structured_context",
+          "surface": "叹十七"
+        },
+        "correlated_text_witness": false,
+        "cue_index": 23,
+        "evidence_cue_ids": [
+          22,
+          24
+        ],
+        "force_acoustic": false,
+        "kind": "entity",
+        "proposed_full_cue": "叹十七手里面的坏熊太多了",
+        "repair_class": "source_backed_entity",
+        "resolution": "VERIFIED_SOURCE_TRUTH_SUPERSEDES_REVIEW_PROPOSAL",
+        "source_truth_resolution": {
+          "schema_version": "final-review-source-truth-resolution.v1",
+          "status": "RESOLVED",
+          "timeline_offset_ms": 9750,
+          "truth_ids": [
+            "20260724-skill-kmx-huaixiong-r1"
+          ]
+        },
+        "span_end_codepoint": 3,
+        "span_start_codepoint": 0,
+        "suggestion": "叹十七手",
+        "suspect": "kmx",
+        "why": "“kmx里面有坏熊”语义不通，而近窗弹幕连续点名叹十七为本次使坏的玩家，初稿也保留了“叹十七手里面”的结构。"
+      }
+    ],
+    "reviewed_srt_sha256": "sha256:40d8b5c025972e684c0c9e3733d9c496d57fc9ab29dce1450246c3495c91abb3",
+    "schema_version": "final-review-audit.v2",
+    "status": "CLEAN",
+    "unresolved_findings_disclosed": [],
+    "validated_finding_count": 0
+  },
+  "final_source_language_preservation_audit": {
+    "reverted": [],
+    "reverted_count": 0,
+    "schema_version": "source-language-preservation-audit.v1",
+    "status": "CLEAN",
+    "unproven_foreign_introductions": []
+  },
+  "final_source_truth_owner_verification": {
+    "context_only_truth_evidence": [],
+    "context_only_truth_ids": [],
+    "context_only_truth_row_count": 0,
+    "failures": [],
+    "final_delivery_interval": {
+      "end_ms": 100470,
+      "interval_semantics": "half_open",
+      "start_ms": 9750,
+      "timeline": "padded_source_local_ms"
+    },
+    "optional_truth_row_count": 0,
+    "required_truth_ids": [
+      "20260724-skill-kmx-huaixiong-r1",
+      "20260724-skill-kezaocheng-r1",
+      "20260724-zhichi-lidou-truncated-r1",
+      "20260724-lidousha-quote-r1",
+      "20260724-lijie-laila-r1",
+      "20260724-skill-opening-noise-drop-r4",
+      "20260724-skill-ta-yifu-yifu-r2",
+      "20260724-skill-kmx-qifu-ren-r2"
+    ],
+    "required_truth_row_count": 8,
+    "required_window_count": 8,
+    "status": "PASS",
+    "straddling_truth_row_count": 0
+  },
+  "final_speaker_srt_path": null,
+  "final_speaker_srt_sha256": "40d8b5c025972e684c0c9e3733d9c496d57fc9ab29dce1450246c3495c91abb3",
+  "final_status": "FINAL_ARTIFACTS_VERIFIED",
+  "final_superseded_by_redelivery_baseline_count": 1,
+  "final_superseded_by_source_truth_count": 0,
+  "final_text_srt_path": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r4/out/2026-07-24/auto_193129_850_940/replacement_recuts/auto_193129_850_940.recut.srt",
+  "final_text_srt_sha256": "40d8b5c025972e684c0c9e3733d9c496d57fc9ab29dce1450246c3495c91abb3",
+  "final_title_mark_balance_audit": {
+    "cross_cue_pairs": [],
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "title-mark-balance-audit.v1",
+    "status": "CLEAN",
+    "unresolved": []
+  },
+  "foreign_script_consistency_audit": {
+    "kana_cue_indexes": [],
+    "latin_heavy_cues": [],
+    "mixed_cjk_latin_cues": [],
+    "reason": null,
+    "schema_version": "foreign-script-consistency-audit.v1",
+    "status": "CLEAN"
+  },
+  "frozen_boundary_owner_contract": {
+    "boundary_review_target_ms": 100470,
+    "boundary_search_scope": {
+      "baseline_tail_cap_ms": 100470,
+      "boundary_end_mode": "exact_source_pin",
+      "delivery_lower_bound_ms": 100470,
+      "delivery_tail_pad_ms": 400,
+      "last_piece_start_ms": 840020,
+      "manual_lower_bound_ms": 100470,
+      "max_recommended_end_ms": 100470,
+      "minimum_recommended_end_ms": 100070,
+      "prior_piece_duration_ms": 0,
+      "reason_codes": [],
+      "recommendation_forward_ms": 0,
+      "repair_cap_ms": 30000,
+      "required_last_piece_source_end_ms": 955490,
+      "required_local_source_context_end_ms": 115470,
+      "required_owner_end_ms": 97740,
+      "review_target_ms": 100470,
+      "schema_version": "talk-boundary-search-scope.v1",
+      "scope_sha256": "sha256:e3a2d5561890be431cc6a84d777288daee976b99da9e11a4f0f2b2b25e79a290",
+      "semantic_search_origin_ms": 100470,
+      "semantic_target_ms": 100470,
+      "status": "PASS",
+      "structured_payoff_clamped_from_ms": null,
+      "structured_payoff_ms": null,
+      "witness_reserve_ms": 15000
+    },
+    "contract_sha256": "sha256:8f78e963fb345aa0e17d60c4adc7d64389ab4f583457a01611c9922023bdb3f2",
+    "deterministic_owner_set_sha256": "sha256:fbd8131e589b6843840255b92feca742f6be3ab38e22ec7f9c6612f464bf4c59",
+    "owner_discovery_end_ms": 100470,
+    "owner_eligibility_scope": {
+      "candidate_id": "auto_193129_850_940",
+      "first_piece_source_start_ms": 840020,
+      "given_source_end_ms": 940490,
+      "last_piece_source_start_ms": 840020,
+      "lead_tolerance_ms": 500,
+      "prior_piece_duration_ms": 0,
+      "schema_version": "candidate-boundary-owner-scope.v1",
+      "scope_sha256": "sha256:e7030f76bafe6ed897cf27cd23bc9ea6a7761c5fe667cb2ed116195120857eac",
+      "semantic_source_end_ms": 940490,
+      "semantic_source_start_ms": 850020,
+      "semantic_story_start_ms": 10000,
+      "story_end_ms": 100470,
+      "story_start_ms": 9500
+    },
+    "owner_set_sha256": "sha256:e2bc41b25d87a1c2317c15f527ea8ba23b769e3fb19f4096c00a74ecc8699e51",
+    "owners": [
+      {
+        "local_windows": [
+          {
+            "end_ms": 77920,
+            "start_ms": 75200
+          }
+        ],
+        "owner_id": "20260724-skill-kmx-huaixiong-r1",
+        "owner_kind": "source_subtitle_truth",
+        "owner_scope_sha256": "sha256:e7030f76bafe6ed897cf27cd23bc9ea6a7761c5fe667cb2ed116195120857eac",
+        "required": true,
+        "source_end_ms": 917940,
+        "source_start_ms": 915220
+      },
+      {
+        "local_windows": [
+          {
+            "end_ms": 26580,
+            "start_ms": 23000
+          }
+        ],
+        "owner_id": "20260724-skill-kezaocheng-r1",
+        "owner_kind": "source_subtitle_truth",
+        "owner_scope_sha256": "sha256:e7030f76bafe6ed897cf27cd23bc9ea6a7761c5fe667cb2ed116195120857eac",
+        "required": true,
+        "source_end_ms": 866600,
+        "source_start_ms": 863020
+      },
+      {
+        "local_windows": [
+          {
+            "end_ms": 36490,
+            "start_ms": 35290
+          }
+        ],
+        "owner_id": "20260724-zhichi-lidou-truncated-r1",
+        "owner_kind": "source_subtitle_truth",
+        "owner_scope_sha256": "sha256:e7030f76bafe6ed897cf27cd23bc9ea6a7761c5fe667cb2ed116195120857eac",
+        "required": true,
+        "source_end_ms": 876510,
+        "source_start_ms": 875310
+      },
+      {
+        "local_windows": [
+          {
+            "end_ms": 50820,
+            "start_ms": 47660
+          }
+        ],
+        "owner_id": "20260724-lidousha-quote-r1",
+        "owner_kind": "source_subtitle_truth",
+        "owner_scope_sha256": "sha256:e7030f76bafe6ed897cf27cd23bc9ea6a7761c5fe667cb2ed116195120857eac",
+        "required": true,
+        "source_end_ms": 890840,
+        "source_start_ms": 887680
+      },
+      {
+        "local_windows": [
+          {
+            "end_ms": 11440,
+            "start_ms": 10000
+          }
+        ],
+        "owner_id": "20260724-lijie-laila-r1",
+        "owner_kind": "source_subtitle_truth",
+        "owner_scope_sha256": "sha256:e7030f76bafe6ed897cf27cd23bc9ea6a7761c5fe667cb2ed116195120857eac",
+        "required": true,
+        "source_end_ms": 851460,
+        "source_start_ms": 850020
+      },
+      {
+        "local_windows": [
+          {
+            "end_ms": 19740,
+            "start_ms": 16760
+          }
+        ],
+        "owner_id": "20260724-skill-opening-noise-drop-r4",
+        "owner_kind": "source_subtitle_truth",
+        "owner_scope_sha256": "sha256:e7030f76bafe6ed897cf27cd23bc9ea6a7761c5fe667cb2ed116195120857eac",
+        "required": true,
+        "source_end_ms": 859760,
+        "source_start_ms": 856780
+      },
+      {
+        "local_windows": [
+          {
+            "end_ms": 62530,
+            "start_ms": 59990
+          }
+        ],
+        "owner_id": "20260724-skill-ta-yifu-yifu-r2",
+        "owner_kind": "source_subtitle_truth",
+        "owner_scope_sha256": "sha256:e7030f76bafe6ed897cf27cd23bc9ea6a7761c5fe667cb2ed116195120857eac",
+        "required": true,
+        "source_end_ms": 902550,
+        "source_start_ms": 900010
+      },
+      {
+        "local_windows": [
+          {
+            "end_ms": 87720,
+            "start_ms": 82880
+          }
+        ],
+        "owner_id": "20260724-skill-kmx-qifu-ren-r2",
+        "owner_kind": "source_subtitle_truth",
+        "owner_scope_sha256": "sha256:e7030f76bafe6ed897cf27cd23bc9ea6a7761c5fe667cb2ed116195120857eac",
+        "required": true,
+        "source_end_ms": 927740,
+        "source_start_ms": 922900
+      },
+      {
+        "local_windows": [
+          {
+            "end_ms": 97740,
+            "start_ms": 95620
+          }
+        ],
+        "owner_id": "entity_repair:2:95620:97740",
+        "owner_kind": "entity_repair",
+        "required": true
+      }
+    ],
+    "required_owner_count": 9,
+    "schema_version": "frozen-boundary-owner-contract.v1",
+    "status": "FROZEN",
+    "story_end_ms": 100470,
+    "story_start_ms": 9500
+  },
+  "gift_repairs": [],
+  "impossible_punctuation_audit": {
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "impossible-punctuation-audit.v1",
+    "status": "CLEAN"
+  },
+  "input_srt_sha256": "722ff84ff1da9c938b1a868bd18ebf85fb6de174d7ccdf5fa0713d73f09a022f",
+  "introduced_term_audits": [
+    {
+      "introduced_term": {
+        "cue_index": 19,
+        "draft_span": "留守",
+        "term": "李豆沙"
+      },
+      "reason_code": "DRAFT_WITNESS_IS_NOT_POST_SEMANTIC_AUTHORITY",
+      "schema_version": "introduced-term-audit.v2",
+      "status": "SEMANTIC_AUTHORITY_PRESERVED"
+    },
+    {
+      "introduced_term": {
+        "cue_index": 20,
+        "draft_span": "刘若莎",
+        "term": "李豆沙"
+      },
+      "reason_code": "DRAFT_WITNESS_IS_NOT_POST_SEMANTIC_AUTHORITY",
+      "schema_version": "introduced-term-audit.v2",
+      "status": "SEMANTIC_AUTHORITY_PRESERVED"
+    }
+  ],
+  "numeric_fact_provenance_audit": {
+    "reverted": [],
+    "reverted_count": 0,
+    "schema_version": "numeric-fact-provenance-audit.v1",
+    "status": "CLEAN",
+    "supported": []
+  },
+  "output_srt_sha256": "722ff84ff1da9c938b1a868bd18ebf85fb6de174d7ccdf5fa0713d73f09a022f",
+  "pending_text_overrides": [],
+  "post_semantic_entity_policy": {
+    "dynamic_audio_group_count": 0,
+    "explicit_audio_groups": [
+      [
+        "素惹",
+        "素人"
+      ],
+      [
+        "李豆沙",
+        "小李"
+      ],
+      [
+        "奶P",
+        "奶瓶"
+      ],
+      [
+        "ありがとう",
+        "おめでとう"
+      ]
+    ],
+    "phonetic_candidates_disclosure_only": [
+      [
+        "Hime",
+        "TA一"
+      ],
+      [
+        "Hime",
+        "TA只"
+      ],
+      [
+        "Hime",
+        "TA说"
+      ],
+      [
+        "Hime",
+        "打TA"
+      ]
+    ],
+    "phrase_divergence_candidates_disclosure_only": [],
+    "reason_code": "POST_SEMANTIC_ENTITY_AUDIO_OVERRIDE_DISABLED",
+    "schema_version": "post-semantic-entity-policy.v1",
+    "semantic_text_final_groups": [
+      [
+        "恋青",
+        "恋死"
+      ],
+      [
+        "梦限大",
+        "Ave Mujica"
+      ],
+      [
+        "立希",
+        "祥子"
+      ],
+      [
+        "kmx",
+        "乒乓球"
+      ],
+      [
+        "李豆沙",
+        "小李"
+      ],
+      [
+        "田中姬",
+        "铃木雏",
+        "田中雏",
+        "Hime",
+        "Hina"
+      ]
+    ],
+    "status": "SEMANTIC_TEXT_FINAL"
+  },
+  "post_transcript_entity_output_srt_sha256": "c1958b61450e2cf19bdab7f9e5e3fcdc72df820d06e90acfe8948ca235889f82",
+  "read_aloud_arbitrations": [
+    {
+      "coverage": 0.5294,
+      "cue_indexes": [
+        32
+      ],
+      "evidence_id": "efcd299c28ac3ecbb7323e5912d54484ee19620e1e7c219722dad74594254d5c",
+      "exact_text": "李姐和我打，我一个技能都不带就带宠物",
+      "kind": "danmaku",
+      "matched_audio_text": "你一个技能不带都带宠物",
+      "matched_end_ms": 97740,
+      "matched_start_ms": 95620,
+      "outcome": "partial_evidence_no_whole_line_copy",
+      "owner_eligible": false,
+      "request_sha256": "6296b9a7cd267b374d949babe7a6e56580a549162b888f198d9f844f0689cd4a",
+      "score": 0.6294,
+      "sender_anchored": false,
+      "verdict": {
+        "canonical_entity": "李姐和我打，我一个技能都不带就带宠物",
+        "completion_sha256": "sha256:c89796dd9dea96c8660bf70a9701e75ffc4f48a5799a5f48653cc8fa25ba2871",
+        "confidence": 0.92,
+        "detail": "cpa-read-aloud;ASR与弹幕后半句高度重合，仅有人称和语序误识；后句“我也不信你啊”也自然承接弹幕中的挑战和自夸。",
+        "prompt_sha256": "sha256:b2504c6167ede1643a61c685c3561d73b1693504380e80650b41089eb819fb65",
+        "reason_code": "READ_ALOUD_CONFIRMED_BY_CONTEXT",
+        "request_sha256": "6296b9a7cd267b374d949babe7a6e56580a549162b888f198d9f844f0689cd4a",
+        "schema_version": "chat-entity-verdict.v1",
+        "status": "RESOLVED",
+        "verifier_id": "lidousha-cpa-read-aloud-context-v1"
+      },
+      "whole_line_exact_copy_gate": {
+        "common": 9,
+        "common_chars": 9,
+        "coverage": 0.5294,
+        "extent": 0.6471,
+        "full_span_audio_verdict": false,
+        "independent_owner_support_count": 0,
+        "independent_supports": [
+          {
+            "borrowed_boundary_blocks_stripped": [],
+            "boundary_complete": false,
+            "candidate_present": true,
+            "common": 7,
+            "common_chars": 7,
+            "coverage": 0.4118,
+            "cue_indexes": [
+              32
+            ],
+            "extent": 0.6471,
+            "interior_near_complete": true,
+            "matched_end_ms": 97740,
+            "matched_start_ms": 95620,
+            "max_unsupported_interior_chars": 3,
+            "max_unsupported_interior_run_chars": 2,
+            "min_coverage": 0.8,
+            "min_extent": 0.82,
+            "min_precision": 0.6,
+            "near_complete_transcript": false,
+            "numeric_near_complete": false,
+            "observed_text": "你一个技能不带都带抽我",
+            "owner_eligible": false,
+            "precision": 0.6364,
+            "preserved_reply_suffix": "",
+            "question_particle_patch_supported": false,
+            "required_common_chars": 6,
+            "schema_version": "chat-whole-line-support.v1",
+            "score": 0.4896,
+            "source_truth_anchor_eligible": false,
+            "support_index": 0,
+            "support_kind": "independent_transcript",
+            "support_sha256": "b15cf86e3f53037ad4ac18765cd7592f586560ce85c165a1fe0d765c9580f3bb",
+            "unsupported_authority_head": "李姐和我打我",
+            "unsupported_authority_interior": [
+              "都",
+              "就"
+            ],
+            "unsupported_authority_interior_chars": 2,
+            "unsupported_authority_tail": "宠物"
+          }
+        ],
+        "min_coverage": 0.8,
+        "min_extent": 0.82,
+        "min_precision": 0.6,
+        "owner_eligible": false,
+        "precision": 0.8182,
+        "primary_transcript": {
+          "borrowed_boundary_blocks_stripped": [],
+          "boundary_complete": false,
+          "candidate_present": true,
+          "common": 9,
+          "common_chars": 9,
+          "coverage": 0.5294,
+          "extent": 0.6471,
+          "interior_near_complete": true,
+          "max_unsupported_interior_chars": 3,
+          "max_unsupported_interior_run_chars": 2,
+          "min_coverage": 0.8,
+          "min_extent": 0.82,
+          "min_precision": 0.6,
+          "near_complete_transcript": false,
+          "numeric_near_complete": false,
+          "observed_text": "你一个技能不带都带宠物",
+          "owner_eligible": false,
+          "precision": 0.8182,
+          "required_common_chars": 6,
+          "schema_version": "chat-whole-line-support.v1",
+          "score": 0.6294,
+          "support_kind": "primary_transcript",
+          "unsupported_authority_head": "李姐和我打我",
+          "unsupported_authority_interior": [
+            "都",
+            "就"
+          ],
+          "unsupported_authority_interior_chars": 2,
+          "unsupported_authority_tail": ""
+        },
+        "proof_basis": "partial_evidence",
+        "required_common_chars": 6,
+        "schema_version": "chat-whole-line-support-gate.v1",
+        "score": 0.6294,
+        "status": "BLOCKED_PARTIAL_EVIDENCE",
+        "thread_anchored": false,
+        "transcript_span_supported": false,
+        "unsupported_authority_head": "李姐和我打我",
+        "unsupported_authority_interior": [
+          "都",
+          "就"
+        ],
+        "unsupported_authority_tail": ""
+      }
+    }
+  ],
+  "redelivery_subtitle_baseline_audit": {
+    "application_strategy": "exact_reviewed_interval_replay",
+    "authority": "Ivan-reviewed 2026-07-28 three-point correction for public 0:13 noise, 0:59 他一副一副, and 1:23 kmx欺负人; Ivan authorized direct repair upload. CPA whole-clip final review additionally removed the duplicated phrase in 试一试一下吧.",
+    "baseline_path": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r4/repo/assets/lidousha/reviewed_subtitle_baselines/auto_193129_850_940.reviewed.srt",
+    "baseline_schema_version": "subtitle-redelivery-baseline.v2",
+    "baseline_sha256": "40d8b5c025972e684c0c9e3733d9c496d57fc9ab29dce1450246c3495c91abb3",
+    "changed_cue_count": 4,
+    "current_cue_count": 29,
+    "current_input_sha256": "d43d544f43d9ea21c666a24f82a5b06343bd43e7d150d48659b65d8762ccf443",
+    "current_source_interval": {
+      "absolute_source_end_ms": 940490,
+      "absolute_source_start_ms": 849770
+    },
+    "deferred_exact_replay_reverification": {
+      "context_only_truth_ids": [],
+      "deferred_strategy": null,
+      "missing_truth_ids": [],
+      "required_truth_ids": [],
+      "reverified_truth_ids": [],
+      "schema_version": "deferred-exact-replay-reverification.v1",
+      "status": "NOT_REQUIRED",
+      "straddling_truth_ids": []
+    },
+    "effective_reviewed_overlap": {
+      "absolute_source_end_ms": 940490,
+      "absolute_source_start_ms": 849770
+    },
+    "expected_baseline_sha256": "40d8b5c025972e684c0c9e3733d9c496d57fc9ab29dce1450246c3495c91abb3",
+    "failures": [],
+    "mapped_cue_count": 29,
+    "mappings": [
+      {
+        "baseline_absolute_source_end_ms": 851460,
+        "baseline_absolute_source_start_ms": 850020,
+        "baseline_cue_index": 1,
+        "end_ms": 1690,
+        "final_owner_expected": "李姐拉拉你新来的",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "李姐拉拉你新来的",
+        "final_owner_text_payload": "李姐拉拉你新来的",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 1,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 1,
+            "end_ms": 1690,
+            "start_ms": 250,
+            "text": "李姐拉拉，你新来的"
+          }
+        ],
+        "start_ms": 250,
+        "text": "李姐拉拉，你新来的"
+      },
+      {
+        "baseline_absolute_source_end_ms": 853900,
+        "baseline_absolute_source_start_ms": 852100,
+        "baseline_cue_index": 2,
+        "end_ms": 4130,
+        "final_owner_expected": "你这个你还挺萌的",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "你这个你还挺萌的",
+        "final_owner_text_payload": "你这个你还挺萌的",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 2,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 2,
+            "end_ms": 4130,
+            "start_ms": 2330,
+            "text": "你这个你还挺萌的"
+          }
+        ],
+        "start_ms": 2330,
+        "text": "你这个你还挺萌的"
+      },
+      {
+        "baseline_absolute_source_end_ms": 855140,
+        "baseline_absolute_source_start_ms": 854140,
+        "baseline_cue_index": 3,
+        "end_ms": 5370,
+        "final_owner_expected": "看看",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "看看",
+        "final_owner_text_payload": "看看",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 3,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 3,
+            "end_ms": 5370,
+            "start_ms": 4370,
+            "text": "看看"
+          }
+        ],
+        "start_ms": 4370,
+        "text": "看看"
+      },
+      {
+        "baseline_absolute_source_end_ms": 856780,
+        "baseline_absolute_source_start_ms": 855500,
+        "baseline_cue_index": 4,
+        "end_ms": 7010,
+        "final_owner_expected": "等等等等",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "等等等等",
+        "final_owner_text_payload": "等等等等",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 4,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 4,
+            "end_ms": 7010,
+            "start_ms": 5730,
+            "text": "等等等等"
+          }
+        ],
+        "start_ms": 5730,
+        "text": "等等等等"
+      },
+      {
+        "baseline_absolute_source_end_ms": 861500,
+        "baseline_absolute_source_start_ms": 859760,
+        "baseline_cue_index": 5,
+        "end_ms": 11730,
+        "final_owner_expected": "你看哦它有一个技能",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "你看哦它有一个技能",
+        "final_owner_text_payload": "你看哦它有一个技能",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 5,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 5,
+            "end_ms": 11730,
+            "start_ms": 9990,
+            "text": "你我哦，它有一个技能"
+          }
+        ],
+        "start_ms": 9990,
+        "text": "你看哦，它有一个技能"
+      },
+      {
+        "baseline_absolute_source_end_ms": 862500,
+        "baseline_absolute_source_start_ms": 861500,
+        "baseline_cue_index": 6,
+        "end_ms": 12730,
+        "final_owner_expected": "这是什么",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "这是什么",
+        "final_owner_text_payload": "这是什么",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 6,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 6,
+            "end_ms": 12730,
+            "start_ms": 11730,
+            "text": "这是什么"
+          }
+        ],
+        "start_ms": 11730,
+        "text": "这是什么"
+      },
+      {
+        "baseline_absolute_source_end_ms": 866600,
+        "baseline_absolute_source_start_ms": 863020,
+        "baseline_cue_index": 7,
+        "end_ms": 16830,
+        "final_owner_expected": "可造成两次光元素破灭伤害",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "可造成两次光元素破灭伤害",
+        "final_owner_text_payload": "可造成两次光元素破灭伤害",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 7,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 7,
+            "end_ms": 16830,
+            "start_ms": 13250,
+            "text": "可造成两次光元素破灭伤害"
+          }
+        ],
+        "start_ms": 13250,
+        "text": "可造成两次光元素破灭伤害"
+      },
+      {
+        "baseline_absolute_source_end_ms": 867740,
+        "baseline_absolute_source_start_ms": 866600,
+        "baseline_cue_index": 8,
+        "end_ms": 17970,
+        "final_owner_expected": "试一下吧",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "试一下吧",
+        "final_owner_text_payload": "试一下吧",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 8,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 8,
+            "end_ms": 17970,
+            "start_ms": 16830,
+            "text": "试一试一下吧"
+          }
+        ],
+        "start_ms": 16830,
+        "text": "试一下吧"
+      },
+      {
+        "baseline_absolute_source_end_ms": 869260,
+        "baseline_absolute_source_start_ms": 868220,
+        "baseline_cue_index": 9,
+        "end_ms": 19490,
+        "final_owner_expected": "试一下吧",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "试一下吧",
+        "final_owner_text_payload": "试一下吧",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 9,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 9,
+            "end_ms": 19490,
+            "start_ms": 18450,
+            "text": "试一下吧"
+          }
+        ],
+        "start_ms": 18450,
+        "text": "试一下吧"
+      },
+      {
+        "baseline_absolute_source_end_ms": 870420,
+        "baseline_absolute_source_start_ms": 869260,
+        "baseline_cue_index": 10,
+        "end_ms": 20650,
+        "final_owner_expected": "有个木材没捡",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "有个木材没捡",
+        "final_owner_text_payload": "有个木材没捡",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 10,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 10,
+            "end_ms": 20650,
+            "start_ms": 19490,
+            "text": "有个木材没捡"
+          }
+        ],
+        "start_ms": 19490,
+        "text": "有个木材没捡"
+      },
+      {
+        "baseline_absolute_source_end_ms": 871420,
+        "baseline_absolute_source_start_ms": 870420,
+        "baseline_cue_index": 11,
+        "end_ms": 21650,
+        "final_owner_expected": "原来如此",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "原来如此",
+        "final_owner_text_payload": "原来如此",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 11,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 11,
+            "end_ms": 21650,
+            "start_ms": 20650,
+            "text": "原来如此"
+          }
+        ],
+        "start_ms": 20650,
+        "text": "原来如此"
+      },
+      {
+        "baseline_absolute_source_end_ms": 872830,
+        "baseline_absolute_source_start_ms": 871990,
+        "baseline_cue_index": 12,
+        "end_ms": 23060,
+        "final_owner_expected": "能赢吗",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "能赢吗",
+        "final_owner_text_payload": "能赢吗",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 12,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 12,
+            "end_ms": 23060,
+            "start_ms": 22220,
+            "text": "能赢吗"
+          }
+        ],
+        "start_ms": 22220,
+        "text": "能赢吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 874630,
+        "baseline_absolute_source_start_ms": 872830,
+        "baseline_cue_index": 13,
+        "end_ms": 24860,
+        "final_owner_expected": "大家觉得可以开始下注了",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "大家觉得可以开始下注了",
+        "final_owner_text_payload": "大家觉得可以开始下注了",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 13,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 13,
+            "end_ms": 24860,
+            "start_ms": 23060,
+            "text": "大家觉得可以开始下注了"
+          }
+        ],
+        "start_ms": 23060,
+        "text": "大家觉得可以开始下注了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 876510,
+        "baseline_absolute_source_start_ms": 875310,
+        "baseline_cue_index": 14,
+        "end_ms": 26740,
+        "final_owner_expected": "支持李豆",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "支持李豆",
+        "final_owner_text_payload": "支持李豆",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 14,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 14,
+            "end_ms": 26740,
+            "start_ms": 25540,
+            "text": "支持李豆……"
+          }
+        ],
+        "start_ms": 25540,
+        "text": "支持李豆……"
+      },
+      {
+        "baseline_absolute_source_end_ms": 890840,
+        "baseline_absolute_source_start_ms": 887680,
+        "baseline_cue_index": 15,
+        "end_ms": 41070,
+        "final_owner_expected": "我连支持李豆沙这句话都还没说完呢",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "我连支持李豆沙这句话都还没说完呢",
+        "final_owner_text_payload": "我连支持李豆沙这句话都还没说完呢",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 15,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 15,
+            "end_ms": 41070,
+            "start_ms": 37910,
+            "text": "我连“支持李豆沙”这句话都还没说完呢"
+          }
+        ],
+        "start_ms": 37910,
+        "text": "我连“支持李豆沙”这句话都还没说完呢"
+      },
+      {
+        "baseline_absolute_source_end_ms": 894320,
+        "baseline_absolute_source_start_ms": 891840,
+        "baseline_cue_index": 16,
+        "end_ms": 44550,
+        "final_owner_expected": "有骗子有骗子",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "有骗子有骗子",
+        "final_owner_text_payload": "有骗子有骗子",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 16,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 16,
+            "end_ms": 44550,
+            "start_ms": 42070,
+            "text": "有骗子有骗子"
+          }
+        ],
+        "start_ms": 42070,
+        "text": "有骗子有骗子"
+      },
+      {
+        "baseline_absolute_source_end_ms": 897750,
+        "baseline_absolute_source_start_ms": 895630,
+        "baseline_cue_index": 17,
+        "end_ms": 47980,
+        "final_owner_expected": "有骗子被骗了",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "有骗子被骗了",
+        "final_owner_text_payload": "有骗子被骗了",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 17,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 17,
+            "end_ms": 47980,
+            "start_ms": 45860,
+            "text": "有骗子被骗了"
+          }
+        ],
+        "start_ms": 45860,
+        "text": "有骗子被骗了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 900010,
+        "baseline_absolute_source_start_ms": 898130,
+        "baseline_cue_index": 18,
+        "end_ms": 50240,
+        "final_owner_expected": "她说她只留了一个技能",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "她说她只留了一个技能",
+        "final_owner_text_payload": "她说她只留了一个技能",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 18,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 18,
+            "end_ms": 50240,
+            "start_ms": 48360,
+            "text": "TA说TA只剩一个技能"
+          }
+        ],
+        "start_ms": 48360,
+        "text": "她说她只留了一个技能"
+      },
+      {
+        "baseline_absolute_source_end_ms": 902550,
+        "baseline_absolute_source_start_ms": 900010,
+        "baseline_cue_index": 19,
+        "end_ms": 52780,
+        "final_owner_expected": "让我打他他一副一副",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "让我打他他一副一副",
+        "final_owner_text_payload": "让我打他他一副一副",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 19,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 19,
+            "end_ms": 52780,
+            "start_ms": 50240,
+            "text": "让我打他，他一副，一副"
+          }
+        ],
+        "start_ms": 50240,
+        "text": "让我打他，他一副，一副"
+      },
+      {
+        "baseline_absolute_source_end_ms": 904890,
+        "baseline_absolute_source_start_ms": 902550,
+        "baseline_cue_index": 20,
+        "end_ms": 55120,
+        "final_owner_expected": "哎我我都已经帮你准备好了",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "哎我我都已经帮你准备好了",
+        "final_owner_text_payload": "哎我我都已经帮你准备好了",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 20,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 20,
+            "end_ms": 55120,
+            "start_ms": 52780,
+            "text": "哎，我，我都已经帮你准备好了"
+          }
+        ],
+        "start_ms": 52780,
+        "text": "哎，我，我都已经帮你准备好了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 906850,
+        "baseline_absolute_source_start_ms": 904890,
+        "baseline_cue_index": 21,
+        "end_ms": 57080,
+        "final_owner_expected": "你来就行保证让你赢",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "你来就行保证让你赢",
+        "final_owner_text_payload": "你来就行保证让你赢",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 21,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 21,
+            "end_ms": 57080,
+            "start_ms": 55120,
+            "text": "你来就行，保证让你赢"
+          }
+        ],
+        "start_ms": 55120,
+        "text": "你来就行，保证让你赢"
+      },
+      {
+        "baseline_absolute_source_end_ms": 910510,
+        "baseline_absolute_source_start_ms": 908470,
+        "baseline_cue_index": 22,
+        "end_ms": 60740,
+        "final_owner_expected": "咋那么坏呢",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "咋那么坏呢",
+        "final_owner_text_payload": "咋那么坏呢",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 22,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 22,
+            "end_ms": 60740,
+            "start_ms": 58700,
+            "text": "咋那么坏呢"
+          }
+        ],
+        "start_ms": 58700,
+        "text": "咋那么坏呢"
+      },
+      {
+        "baseline_absolute_source_end_ms": 917940,
+        "baseline_absolute_source_start_ms": 915220,
+        "baseline_cue_index": 23,
+        "end_ms": 68170,
+        "final_owner_expected": "kmx里面的坏熊太多了",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "kmx里面的坏熊太多了",
+        "final_owner_text_payload": "kmx里面的坏熊太多了",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 23,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 23,
+            "end_ms": 68170,
+            "start_ms": 65450,
+            "text": "kmx里面的坏熊太多了"
+          }
+        ],
+        "start_ms": 65450,
+        "text": "kmx里面的坏熊太多了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 922100,
+        "baseline_absolute_source_start_ms": 920340,
+        "baseline_cue_index": 24,
+        "end_ms": 72330,
+        "final_owner_expected": "坏熊太多了",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "坏熊太多了",
+        "final_owner_text_payload": "坏熊太多了",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 24,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 24,
+            "end_ms": 72330,
+            "start_ms": 70570,
+            "text": "坏熊太多了"
+          }
+        ],
+        "start_ms": 70570,
+        "text": "坏熊太多了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 927740,
+        "baseline_absolute_source_start_ms": 922900,
+        "baseline_cue_index": 25,
+        "end_ms": 77970,
+        "final_owner_expected": "kmx为什么欺负我kmx欺负人",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "kmx为什么欺负我kmx欺负人",
+        "final_owner_text_payload": "kmx为什么欺负我kmx欺负人",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 25,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 25,
+            "end_ms": 77970,
+            "start_ms": 73130,
+            "text": "kmx为什么欺负我？kmx欺负人"
+          }
+        ],
+        "start_ms": 73130,
+        "text": "kmx为什么欺负我？kmx欺负人"
+      },
+      {
+        "baseline_absolute_source_end_ms": 934080,
+        "baseline_absolute_source_start_ms": 931520,
+        "baseline_cue_index": 26,
+        "end_ms": 84310,
+        "final_owner_expected": "我要去探索新地图了",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "我要去探索新地图了",
+        "final_owner_text_payload": "我要去探索新地图了",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 26,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 26,
+            "end_ms": 84310,
+            "start_ms": 81750,
+            "text": "我要去探索新地图了"
+          }
+        ],
+        "start_ms": 81750,
+        "text": "我要去探索新地图了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 937760,
+        "baseline_absolute_source_start_ms": 935640,
+        "baseline_cue_index": 27,
+        "end_ms": 87990,
+        "final_owner_expected": "你一个技能不带就带宠物",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "你一个技能不带就带宠物",
+        "final_owner_text_payload": "你一个技能不带就带宠物",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 27,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 27,
+            "end_ms": 87990,
+            "start_ms": 85870,
+            "text": "你一个技能都不带，就带宠物"
+          }
+        ],
+        "start_ms": 85870,
+        "text": "你一个技能不带就带宠物"
+      },
+      {
+        "baseline_absolute_source_end_ms": 938960,
+        "baseline_absolute_source_start_ms": 937760,
+        "baseline_cue_index": 28,
+        "end_ms": 89190,
+        "final_owner_expected": "我也不信你啊",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "我也不信你啊",
+        "final_owner_text_payload": "我也不信你啊",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 28,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 28,
+            "end_ms": 89190,
+            "start_ms": 87990,
+            "text": "我也不信你啊"
+          }
+        ],
+        "start_ms": 87990,
+        "text": "我也不信你啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 940480,
+        "baseline_absolute_source_start_ms": 939080,
+        "baseline_cue_index": 29,
+        "end_ms": 90710,
+        "final_owner_expected": "我也不信你了",
+        "final_owner_scope": "DELIVERY",
+        "final_owner_speaker_payload": "我也不信你了",
+        "final_owner_text_payload": "我也不信你了",
+        "final_owner_verified": true,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 29,
+        "pre_replay_cues": [
+          {
+            "current_cue_index": 29,
+            "end_ms": 90710,
+            "start_ms": 89310,
+            "text": "我也不信你了"
+          }
+        ],
+        "start_ms": 89310,
+        "text": "我也不信你了"
+      }
+    ],
+    "mode": "preserve_text_outside_source_truth",
+    "omitted_baseline_cue_count": 0,
+    "omitted_by_new_boundary": [],
+    "output_sha256": "40d8b5c025972e684c0c9e3733d9c496d57fc9ab29dce1450246c3495c91abb3",
+    "owned_intervals": [
+      {
+        "end_ms": 1690,
+        "start_ms": 250
+      },
+      {
+        "end_ms": 4130,
+        "start_ms": 2330
+      },
+      {
+        "end_ms": 5370,
+        "start_ms": 4370
+      },
+      {
+        "end_ms": 7010,
+        "start_ms": 5730
+      },
+      {
+        "end_ms": 11730,
+        "start_ms": 9990
+      },
+      {
+        "end_ms": 12730,
+        "start_ms": 11730
+      },
+      {
+        "end_ms": 16830,
+        "start_ms": 13250
+      },
+      {
+        "end_ms": 17970,
+        "start_ms": 16830
+      },
+      {
+        "end_ms": 19490,
+        "start_ms": 18450
+      },
+      {
+        "end_ms": 20650,
+        "start_ms": 19490
+      },
+      {
+        "end_ms": 21650,
+        "start_ms": 20650
+      },
+      {
+        "end_ms": 23060,
+        "start_ms": 22220
+      },
+      {
+        "end_ms": 24860,
+        "start_ms": 23060
+      },
+      {
+        "end_ms": 26740,
+        "start_ms": 25540
+      },
+      {
+        "end_ms": 41070,
+        "start_ms": 37910
+      },
+      {
+        "end_ms": 44550,
+        "start_ms": 42070
+      },
+      {
+        "end_ms": 47980,
+        "start_ms": 45860
+      },
+      {
+        "end_ms": 50240,
+        "start_ms": 48360
+      },
+      {
+        "end_ms": 52780,
+        "start_ms": 50240
+      },
+      {
+        "end_ms": 55120,
+        "start_ms": 52780
+      },
+      {
+        "end_ms": 57080,
+        "start_ms": 55120
+      },
+      {
+        "end_ms": 60740,
+        "start_ms": 58700
+      },
+      {
+        "end_ms": 68170,
+        "start_ms": 65450
+      },
+      {
+        "end_ms": 72330,
+        "start_ms": 70570
+      },
+      {
+        "end_ms": 77970,
+        "start_ms": 73130
+      },
+      {
+        "end_ms": 84310,
+        "start_ms": 81750
+      },
+      {
+        "end_ms": 87990,
+        "start_ms": 85870
+      },
+      {
+        "end_ms": 89190,
+        "start_ms": 87990
+      },
+      {
+        "end_ms": 90710,
+        "start_ms": 89310
+      }
+    ],
+    "post_source_truth_output_sha256": "40d8b5c025972e684c0c9e3733d9c496d57fc9ab29dce1450246c3495c91abb3",
+    "protected_absolute_intervals": [
+      {
+        "absolute_source_end_ms": 859760,
+        "absolute_source_start_ms": 856780
+      }
+    ],
+    "protected_cue_count": 0,
+    "protected_intervals": [
+      {
+        "end_ms": 9990,
+        "start_ms": 7010
+      }
+    ],
+    "protected_windows_replayed_for_later_source_truth": true,
+    "replayed_cue_count": 29,
+    "reviewed_coverage": {
+      "absolute_source_end_ms": 940490,
+      "absolute_source_start_ms": 849770
+    },
+    "schema_version": "subtitle-redelivery-baseline-audit.v2",
+    "source_recording_identity": {
+      "current_basename": "22966160_20260724-19-31-29.mp4",
+      "current_sha256": "4980bdeba15f0f3cce0c3f20737afcb33732cbd64c457bc11c4e3266d5fcf201",
+      "expected_basename": "22966160_20260724-19-31-29.mp4",
+      "expected_sha256": "4980bdeba15f0f3cce0c3f20737afcb33732cbd64c457bc11c4e3266d5fcf201"
+    },
+    "source_truth_reapplication": {
+      "applied": [],
+      "failures": [],
+      "inactive": [
+        {
+          "assertion_state": "SUPERSEDED",
+          "superseded_by": "20260724-skill-kmx-qifu-ren-r2",
+          "truth_id": "20260724-skill-kmx-qifu-wo-r1"
+        },
+        {
+          "assertion_state": "SUPERSEDED",
+          "superseded_by": "20260724-skill-ta-yifu-yifu-r2",
+          "truth_id": "20260724-skill-qifuqifu-r1"
+        },
+        {
+          "assertion_state": "SUPERSEDED",
+          "superseded_by": "20260724-skill-opening-noise-drop-r2",
+          "truth_id": "20260724-skill-jianmian-leye-r1"
+        },
+        {
+          "assertion_state": "SUPERSEDED",
+          "superseded_by": "20260724-skill-opening-noise-drop-r3",
+          "truth_id": "20260724-skill-opening-noise-drop-r2"
+        },
+        {
+          "assertion_state": "SUPERSEDED",
+          "superseded_by": "20260724-skill-opening-noise-drop-r4",
+          "truth_id": "20260724-skill-opening-noise-drop-r3"
+        }
+      ],
+      "ledger_path": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r4/repo/assets/lidousha/subtitle_truth_ledger.v1.json",
+      "ledger_sha256": "sha256:8973be0064ab8907f3655e5a52d4ec4697d91724bd9936d2eca7d64001d0cb10",
+      "reapplied_after_redelivery_baseline": true,
+      "satisfied": [
+        {
+          "action": "replace_cue",
+          "after": [
+            "kmx里面的坏熊太多了"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260725-conversation：该句为kmx里面的坏熊太多了（叹十七手里面为ASR把专名kmx=读kimo熊打散成常见词的误听）；语境铁证=紧邻后句重复坏熊太多了+随后kmx欺负我，kmx即kimo熊粉丝专名可直接关联。",
+          "before": [
+            "kmx里面的坏熊太多了"
+          ],
+          "before_span": null,
+          "boundary_role": "story_content",
+          "cue_indexes": [
+            23
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "kmx里面的坏熊太多了"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:b4daffb428bf1937ae31c9df2fa3ac03e14a304a7aecadca420037affa756213",
+          "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
+          "local_windows": [
+            {
+              "end_ms": 68170,
+              "start_ms": 65450
+            }
+          ],
+          "recording_basename": "22966160_20260724-19-31-29.mp4",
+          "required": true,
+          "resolved_target_projection": {
+            "action": "replace_cue",
+            "cues": [
+              {
+                "after_text": "kmx里面的坏熊太多了",
+                "before_text": "kmx里面的坏熊太多了",
+                "cue_index": 23,
+                "end_ms": 68170,
+                "start_ms": 65450
+              }
+            ],
+            "min_overlap_ms": 80,
+            "schema_version": "source-truth-resolved-target-projection.v1",
+            "selector": "half-open-overlap-gte-min-then-action-resolution",
+            "status": "RESOLVED"
+          },
+          "revision_id": "r1",
+          "source_coverage_ms": 2720,
+          "source_end_ms": 917940,
+          "source_event_id": null,
+          "source_event_sha256": null,
+          "source_start_ms": 915220,
+          "supersedes": null,
+          "truth_id": "20260724-skill-kmx-huaixiong-r1"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "可造成两次光元素破灭伤害"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "机器证据裁定2026-07-25：技能说明语境+声学INCOMPATIBLE/SUPPORTED；给造成缺受事语法不通。",
+          "before": [
+            "可造成两次光元素破灭伤害"
+          ],
+          "before_span": null,
+          "boundary_role": "story_content",
+          "cue_indexes": [
+            7
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "可造成两次光元素破灭伤害"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:f02f92f02f2ac45c2edac6eebeb199874c4c8497c6d061f742c7faef61535bd9",
+          "evidence_class": "ENGINE_PLUS_ACOUSTIC_MAJORITY",
+          "local_windows": [
+            {
+              "end_ms": 16830,
+              "start_ms": 13250
+            }
+          ],
+          "recording_basename": "22966160_20260724-19-31-29.mp4",
+          "required": true,
+          "resolved_target_projection": {
+            "action": "replace_cue",
+            "cues": [
+              {
+                "after_text": "可造成两次光元素破灭伤害",
+                "before_text": "可造成两次光元素破灭伤害",
+                "cue_index": 7,
+                "end_ms": 16830,
+                "start_ms": 13250
+              }
+            ],
+            "min_overlap_ms": 80,
+            "schema_version": "source-truth-resolved-target-projection.v1",
+            "selector": "half-open-overlap-gte-min-then-action-resolution",
+            "status": "RESOLVED"
+          },
+          "revision_id": "r1",
+          "source_coverage_ms": 3580,
+          "source_end_ms": 866600,
+          "source_event_id": null,
+          "source_event_sha256": null,
+          "source_start_ms": 863020,
+          "supersedes": null,
+          "truth_id": "20260724-skill-kezaocheng-r1"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "支持李豆……"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-flagged-20260727-conversation(BV1ec3A6bEWF 专名事故：下注口号被截断——witness 自一致听写 4 音节 zhe-si-liu-er≈支持李豆，且她下一句自述「这句话都还没说完」；忠实呈现截断而非补全)",
+          "before": [
+            "支持李豆……"
+          ],
+          "before_span": null,
+          "boundary_role": "story_content",
+          "cue_indexes": [
+            14
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "支持李豆……"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:b8a2d1e7e2b492d52f822b767527b5dcc1936d4ab24477a67f84695f20ab0988",
+          "evidence_class": "IVAN_OPERATOR_TRANSCRIPT_TRUTH",
+          "local_windows": [
+            {
+              "end_ms": 26740,
+              "start_ms": 25540
+            }
+          ],
+          "recording_basename": "22966160_20260724-19-31-29.mp4",
+          "required": true,
+          "resolved_target_projection": {
+            "action": "replace_cue",
+            "cues": [
+              {
+                "after_text": "支持李豆……",
+                "before_text": "支持李豆……",
+                "cue_index": 14,
+                "end_ms": 26740,
+                "start_ms": 25540
+              }
+            ],
+            "min_overlap_ms": 80,
+            "schema_version": "source-truth-resolved-target-projection.v1",
+            "selector": "half-open-overlap-gte-min-then-action-resolution",
+            "status": "RESOLVED"
+          },
+          "revision_id": "r1",
+          "source_coverage_ms": 1200,
+          "source_end_ms": 876510,
+          "source_event_id": null,
+          "source_event_sha256": null,
+          "source_start_ms": 875310,
+          "supersedes": null,
+          "truth_id": "20260724-zhichi-lidou-truncated-r1"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "我连“支持李豆沙”这句话都还没说完呢"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-flagged-20260727-conversation(BV1ec3A6bEWF 专名事故：「刘若莎」为主播名误听——judge 排序已选「李豆沙」(语境=下注口号+弹幕[李豆沙_大笑])却被自不一致听写经拼音门否决；门已修，此处钉死真值)",
+          "before": [
+            "我连“支持李豆沙”这句话都还没说完呢"
+          ],
+          "before_span": null,
+          "boundary_role": "story_content",
+          "cue_indexes": [
+            15
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "我连“支持李豆沙”这句话都还没说完呢"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:fb5bc073e616aac636e80a97c7004bb4e88d69579899922504053800095644f9",
+          "evidence_class": "IVAN_OPERATOR_TRANSCRIPT_TRUTH",
+          "local_windows": [
+            {
+              "end_ms": 41070,
+              "start_ms": 37910
+            }
+          ],
+          "recording_basename": "22966160_20260724-19-31-29.mp4",
+          "required": true,
+          "resolved_target_projection": {
+            "action": "replace_cue",
+            "cues": [
+              {
+                "after_text": "我连“支持李豆沙”这句话都还没说完呢",
+                "before_text": "我连“支持李豆沙”这句话都还没说完呢",
+                "cue_index": 15,
+                "end_ms": 41070,
+                "start_ms": 37910
+              }
+            ],
+            "min_overlap_ms": 80,
+            "schema_version": "source-truth-resolved-target-projection.v1",
+            "selector": "half-open-overlap-gte-min-then-action-resolution",
+            "status": "RESOLVED"
+          },
+          "revision_id": "r1",
+          "source_coverage_ms": 3160,
+          "source_end_ms": 890840,
+          "source_event_id": null,
+          "source_event_sha256": null,
+          "source_start_ms": 887680,
+          "supersedes": null,
+          "truth_id": "20260724-lidousha-quote-r1"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "李姐拉拉，你新来的"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-flagged-20260727-conversation(BV1ec3A6bEWF 专名事故 cue1：画面探针实锤被查看角色 角色ID=李豆沙(粉丝同名号入会)；Ivan 人耳定版 2026-07-27：「cue1真值其实是李姐拉拉，你新来的」——接拉拉梗称呼同名分身；机器听写 lai-la 系「拉拉」误辨)",
+          "before": [
+            "李姐拉拉，你新来的"
+          ],
+          "before_span": null,
+          "boundary_role": "story_content",
+          "cue_indexes": [
+            1
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "李姐拉拉，你新来的"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:8950c941c24ab65d74187dbf6bc7d493897be97542083914036e192fdb2320af",
+          "evidence_class": "IVAN_OPERATOR_TRANSCRIPT_TRUTH",
+          "local_windows": [
+            {
+              "end_ms": 1690,
+              "start_ms": 250
+            }
+          ],
+          "recording_basename": "22966160_20260724-19-31-29.mp4",
+          "required": true,
+          "resolved_target_projection": {
+            "action": "replace_cue",
+            "cues": [
+              {
+                "after_text": "李姐拉拉，你新来的",
+                "before_text": "李姐拉拉，你新来的",
+                "cue_index": 1,
+                "end_ms": 1690,
+                "start_ms": 250
+              }
+            ],
+            "min_overlap_ms": 80,
+            "schema_version": "source-truth-resolved-target-projection.v1",
+            "selector": "half-open-overlap-gte-min-then-action-resolution",
+            "status": "RESOLVED"
+          },
+          "revision_id": "r1",
+          "source_coverage_ms": 1440,
+          "source_end_ms": 851460,
+          "source_event_id": null,
+          "source_event_sha256": null,
+          "source_start_ms": 850020,
+          "supersedes": null,
+          "truth_id": "20260724-lijie-laila-r1"
+        },
+        {
+          "action": "drop_cue",
+          "after": [],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260728原裁定不变；r4以公开成片0:13和同BV成片固定5.75秒片头重新绑定：hash-bound recut中的目标是7010–9990ms乱码“你把你的你你我你你的技能”，绝对源区间856780–859760ms。r3误删了紧邻的5730–7010ms“等等等等”。",
+          "before": [],
+          "before_span": null,
+          "boundary_role": "story_content",
+          "cue_indexes": [],
+          "declared_output_contract": {
+            "action": "drop_cue",
+            "canonical_texts": [],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "drop_status": "ALREADY_ABSENT",
+          "entry_sha256": "sha256:7e2d313f091c9ffa48243ee204dd3e16ee6fe0ea8fac95b055c83323568c650e",
+          "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+          "local_windows": [
+            {
+              "end_ms": 9990,
+              "start_ms": 7010
+            }
+          ],
+          "recording_basename": "22966160_20260724-19-31-29.mp4",
+          "required": true,
+          "resolved_target_projection": {
+            "action": "drop_cue",
+            "cues": [],
+            "min_overlap_ms": 80,
+            "schema_version": "source-truth-resolved-target-projection.v1",
+            "selector": "half-open-overlap-gte-min-then-action-resolution",
+            "status": "ALREADY_ABSENT"
+          },
+          "revision_id": "r4",
+          "source_coverage_ms": 2980,
+          "source_end_ms": 859760,
+          "source_event_id": null,
+          "source_event_sha256": null,
+          "source_start_ms": 856780,
+          "supersedes": "20260724-skill-opening-noise-drop-r3",
+          "truth_id": "20260724-skill-opening-noise-drop-r4"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "让我打他，他一副，一副"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260728：7/24 850切片公开0:59说的是「他，一副，一副」，语境为「他一副xxx的样子」，不是「欺负欺负」。",
+          "before": [
+            "让我打他，他一副，一副"
+          ],
+          "before_span": null,
+          "boundary_role": "story_content",
+          "cue_indexes": [
+            19
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "让我打他，他一副，一副"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:09b17b30248c7f61e82afd54a452d7326031fac8070d8957a1f444d8bbab9e1c",
+          "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+          "local_windows": [
+            {
+              "end_ms": 52780,
+              "start_ms": 50240
+            }
+          ],
+          "recording_basename": "22966160_20260724-19-31-29.mp4",
+          "required": true,
+          "resolved_target_projection": {
+            "action": "replace_cue",
+            "cues": [
+              {
+                "after_text": "让我打他，他一副，一副",
+                "before_text": "让我打他，他一副，一副",
+                "cue_index": 19,
+                "end_ms": 52780,
+                "start_ms": 50240
+              }
+            ],
+            "min_overlap_ms": 80,
+            "schema_version": "source-truth-resolved-target-projection.v1",
+            "selector": "half-open-overlap-gte-min-then-action-resolution",
+            "status": "RESOLVED"
+          },
+          "revision_id": "r2",
+          "source_coverage_ms": 2540,
+          "source_end_ms": 902550,
+          "source_event_id": null,
+          "source_event_sha256": null,
+          "source_start_ms": 900010,
+          "supersedes": "20260724-skill-qifuqifu-r1",
+          "truth_id": "20260724-skill-ta-yifu-yifu-r2"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "kmx为什么欺负我？kmx欺负人"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260728：7/24 850切片公开1:23末句说的是「kmx欺负人」，不是把该槽收敛成「我」；多轮AGY同时支持完整两句。",
+          "before": [
+            "kmx为什么欺负我？kmx欺负人"
+          ],
+          "before_span": null,
+          "boundary_role": "story_content",
+          "cue_indexes": [
+            25
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "kmx为什么欺负我？kmx欺负人"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:8765210e45b5c7e11d3d766fb9c1820eb57e5b1a5c9c8f644e91c8807a50b984",
+          "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+          "local_windows": [
+            {
+              "end_ms": 77970,
+              "start_ms": 73130
+            }
+          ],
+          "recording_basename": "22966160_20260724-19-31-29.mp4",
+          "required": true,
+          "resolved_target_projection": {
+            "action": "replace_cue",
+            "cues": [
+              {
+                "after_text": "kmx为什么欺负我？kmx欺负人",
+                "before_text": "kmx为什么欺负我？kmx欺负人",
+                "cue_index": 25,
+                "end_ms": 77970,
+                "start_ms": 73130
+              }
+            ],
+            "min_overlap_ms": 80,
+            "schema_version": "source-truth-resolved-target-projection.v1",
+            "selector": "half-open-overlap-gte-min-then-action-resolution",
+            "status": "RESOLVED"
+          },
+          "revision_id": "r2",
+          "source_coverage_ms": 4840,
+          "source_end_ms": 927740,
+          "source_event_id": null,
+          "source_event_sha256": null,
+          "source_start_ms": 922900,
+          "supersedes": "20260724-skill-kmx-qifu-wo-r1",
+          "truth_id": "20260724-skill-kmx-qifu-ren-r2"
+        }
+      ],
+      "schema_version": "source-subtitle-truth-audit.v1",
+      "status": "ALREADY_SATISFIED",
+      "timeline_basis": "final_delivery"
+    },
+    "status": "APPLIED",
+    "timing_authority": "hash_bound_reviewed_srt_exact_source_interval",
+    "uncovered_current_cue_count": 0,
+    "uncovered_current_cues": [],
+    "uncovered_current_intervals": [],
+    "video_tail_extension_ms": 0
+  },
+  "schema_version": "chat-authority-audit.v2",
+  "self_reference_absorption_audit": {
+    "candidate_names": [
+      "小李",
+      "李豆沙",
+      "豆沙"
+    ],
+    "repairs": [],
+    "schema_version": "self-reference-absorption-audit.v3",
+    "source_witness_available": true,
+    "status": "NO_MATCH"
+  },
+  "sender_repairs": [],
+  "sender_verdict_required": [],
+  "session_topic_absorption_audits": [
+    {
+      "authorities": [],
+      "repair_count": 0,
+      "repairs": [],
+      "schema_version": "session-topic-authority-audit.v1",
+      "status": "CLEAN"
+    },
+    {
+      "authorities": [],
+      "repair_count": 0,
+      "repairs": [],
+      "schema_version": "session-topic-authority-audit.v1",
+      "status": "CLEAN"
+    }
+  ],
+  "source_subtitle_truth_audit": {
+    "applied": [],
+    "failures": [],
+    "final_recut_offset_ms": 9750,
+    "inactive": [
+      {
+        "assertion_state": "SUPERSEDED",
+        "superseded_by": "20260724-skill-kmx-qifu-ren-r2",
+        "truth_id": "20260724-skill-kmx-qifu-wo-r1"
+      },
+      {
+        "assertion_state": "SUPERSEDED",
+        "superseded_by": "20260724-skill-ta-yifu-yifu-r2",
+        "truth_id": "20260724-skill-qifuqifu-r1"
+      },
+      {
+        "assertion_state": "SUPERSEDED",
+        "superseded_by": "20260724-skill-opening-noise-drop-r2",
+        "truth_id": "20260724-skill-jianmian-leye-r1"
+      },
+      {
+        "assertion_state": "SUPERSEDED",
+        "superseded_by": "20260724-skill-opening-noise-drop-r3",
+        "truth_id": "20260724-skill-opening-noise-drop-r2"
+      },
+      {
+        "assertion_state": "SUPERSEDED",
+        "superseded_by": "20260724-skill-opening-noise-drop-r4",
+        "truth_id": "20260724-skill-opening-noise-drop-r3"
+      }
+    ],
+    "ledger_path": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r4/repo/assets/lidousha/subtitle_truth_ledger.v1.json",
+    "ledger_sha256": "sha256:8973be0064ab8907f3655e5a52d4ec4697d91724bd9936d2eca7d64001d0cb10",
+    "reapplied_after_redelivery_baseline": true,
+    "satisfied": [
+      {
+        "action": "replace_cue",
+        "after": [
+          "kmx里面的坏熊太多了"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-stated-20260725-conversation：该句为kmx里面的坏熊太多了（叹十七手里面为ASR把专名kmx=读kimo熊打散成常见词的误听）；语境铁证=紧邻后句重复坏熊太多了+随后kmx欺负我，kmx即kimo熊粉丝专名可直接关联。",
+        "before": [
+          "kmx里面的坏熊太多了"
+        ],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [
+          23
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "kmx里面的坏熊太多了"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:b4daffb428bf1937ae31c9df2fa3ac03e14a304a7aecadca420037affa756213",
+        "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
+        "final_owner_contract": {
+          "action": "replace_cue",
+          "expected_exact": "kmx里面的坏熊太多了",
+          "required_text": "",
+          "speaker_ok": true,
+          "speaker_payload": "kmx里面的坏熊太多了",
+          "text_ok": true,
+          "text_payload": "kmx里面的坏熊太多了"
+        },
+        "final_owner_scope": "FINAL_DELIVERY",
+        "final_owner_verified": true,
+        "final_owner_windows": [
+          {
+            "action": "replace_cue",
+            "cue_index": 23,
+            "end_ms": 68170,
+            "expected_after": "kmx里面的坏熊太多了",
+            "expected_exact": "kmx里面的坏熊太多了",
+            "required_text": "",
+            "speaker_ok": true,
+            "speaker_payload": "kmx里面的坏熊太多了",
+            "start_ms": 65450,
+            "text_ok": true,
+            "text_payload": "kmx里面的坏熊太多了"
+          }
+        ],
+        "local_windows": [
+          {
+            "end_ms": 77920,
+            "start_ms": 75200
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "replace_cue",
+          "cues": [
+            {
+              "after_text": "kmx里面的坏熊太多了",
+              "before_text": "kmx里面的坏熊太多了",
+              "cue_index": 23,
+              "end_ms": 77920,
+              "start_ms": 75200
+            }
+          ],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "RESOLVED"
+        },
+        "revision_id": "r1",
+        "source_coverage_ms": 2720,
+        "source_end_ms": 917940,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 915220,
+        "supersedes": null,
+        "truth_id": "20260724-skill-kmx-huaixiong-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "可造成两次光元素破灭伤害"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "机器证据裁定2026-07-25：技能说明语境+声学INCOMPATIBLE/SUPPORTED；给造成缺受事语法不通。",
+        "before": [
+          "可造成两次光元素破灭伤害"
+        ],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [
+          7
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "可造成两次光元素破灭伤害"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:f02f92f02f2ac45c2edac6eebeb199874c4c8497c6d061f742c7faef61535bd9",
+        "evidence_class": "ENGINE_PLUS_ACOUSTIC_MAJORITY",
+        "final_owner_contract": {
+          "action": "replace_cue",
+          "expected_exact": "可造成两次光元素破灭伤害",
+          "required_text": "",
+          "speaker_ok": true,
+          "speaker_payload": "可造成两次光元素破灭伤害",
+          "text_ok": true,
+          "text_payload": "可造成两次光元素破灭伤害"
+        },
+        "final_owner_scope": "FINAL_DELIVERY",
+        "final_owner_verified": true,
+        "final_owner_windows": [
+          {
+            "action": "replace_cue",
+            "cue_index": 7,
+            "end_ms": 16830,
+            "expected_after": "可造成两次光元素破灭伤害",
+            "expected_exact": "可造成两次光元素破灭伤害",
+            "required_text": "",
+            "speaker_ok": true,
+            "speaker_payload": "可造成两次光元素破灭伤害",
+            "start_ms": 13250,
+            "text_ok": true,
+            "text_payload": "可造成两次光元素破灭伤害"
+          }
+        ],
+        "local_windows": [
+          {
+            "end_ms": 26580,
+            "start_ms": 23000
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "replace_cue",
+          "cues": [
+            {
+              "after_text": "可造成两次光元素破灭伤害",
+              "before_text": "可造成两次光元素破灭伤害",
+              "cue_index": 7,
+              "end_ms": 26580,
+              "start_ms": 23000
+            }
+          ],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "RESOLVED"
+        },
+        "revision_id": "r1",
+        "source_coverage_ms": 3580,
+        "source_end_ms": 866600,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 863020,
+        "supersedes": null,
+        "truth_id": "20260724-skill-kezaocheng-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "支持李豆……"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-flagged-20260727-conversation(BV1ec3A6bEWF 专名事故：下注口号被截断——witness 自一致听写 4 音节 zhe-si-liu-er≈支持李豆，且她下一句自述「这句话都还没说完」；忠实呈现截断而非补全)",
+        "before": [
+          "支持李豆……"
+        ],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [
+          14
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "支持李豆……"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:b8a2d1e7e2b492d52f822b767527b5dcc1936d4ab24477a67f84695f20ab0988",
+        "evidence_class": "IVAN_OPERATOR_TRANSCRIPT_TRUTH",
+        "final_owner_contract": {
+          "action": "replace_cue",
+          "expected_exact": "支持李豆",
+          "required_text": "",
+          "speaker_ok": true,
+          "speaker_payload": "支持李豆",
+          "text_ok": true,
+          "text_payload": "支持李豆"
+        },
+        "final_owner_scope": "FINAL_DELIVERY",
+        "final_owner_verified": true,
+        "final_owner_windows": [
+          {
+            "action": "replace_cue",
+            "cue_index": 14,
+            "end_ms": 26740,
+            "expected_after": "支持李豆……",
+            "expected_exact": "支持李豆",
+            "required_text": "",
+            "speaker_ok": true,
+            "speaker_payload": "支持李豆",
+            "start_ms": 25540,
+            "text_ok": true,
+            "text_payload": "支持李豆"
+          }
+        ],
+        "local_windows": [
+          {
+            "end_ms": 36490,
+            "start_ms": 35290
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "replace_cue",
+          "cues": [
+            {
+              "after_text": "支持李豆……",
+              "before_text": "支持李豆……",
+              "cue_index": 14,
+              "end_ms": 36490,
+              "start_ms": 35290
+            }
+          ],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "RESOLVED"
+        },
+        "revision_id": "r1",
+        "source_coverage_ms": 1200,
+        "source_end_ms": 876510,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 875310,
+        "supersedes": null,
+        "truth_id": "20260724-zhichi-lidou-truncated-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "我连“支持李豆沙”这句话都还没说完呢"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-flagged-20260727-conversation(BV1ec3A6bEWF 专名事故：「刘若莎」为主播名误听——judge 排序已选「李豆沙」(语境=下注口号+弹幕[李豆沙_大笑])却被自不一致听写经拼音门否决；门已修，此处钉死真值)",
+        "before": [
+          "我连“支持李豆沙”这句话都还没说完呢"
+        ],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [
+          15
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "我连“支持李豆沙”这句话都还没说完呢"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:fb5bc073e616aac636e80a97c7004bb4e88d69579899922504053800095644f9",
+        "evidence_class": "IVAN_OPERATOR_TRANSCRIPT_TRUTH",
+        "final_owner_contract": {
+          "action": "replace_cue",
+          "expected_exact": "我连支持李豆沙这句话都还没说完呢",
+          "required_text": "",
+          "speaker_ok": true,
+          "speaker_payload": "我连支持李豆沙这句话都还没说完呢",
+          "text_ok": true,
+          "text_payload": "我连支持李豆沙这句话都还没说完呢"
+        },
+        "final_owner_scope": "FINAL_DELIVERY",
+        "final_owner_verified": true,
+        "final_owner_windows": [
+          {
+            "action": "replace_cue",
+            "cue_index": 15,
+            "end_ms": 41070,
+            "expected_after": "我连“支持李豆沙”这句话都还没说完呢",
+            "expected_exact": "我连支持李豆沙这句话都还没说完呢",
+            "required_text": "",
+            "speaker_ok": true,
+            "speaker_payload": "我连支持李豆沙这句话都还没说完呢",
+            "start_ms": 37910,
+            "text_ok": true,
+            "text_payload": "我连支持李豆沙这句话都还没说完呢"
+          }
+        ],
+        "local_windows": [
+          {
+            "end_ms": 50820,
+            "start_ms": 47660
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "replace_cue",
+          "cues": [
+            {
+              "after_text": "我连“支持李豆沙”这句话都还没说完呢",
+              "before_text": "我连“支持李豆沙”这句话都还没说完呢",
+              "cue_index": 15,
+              "end_ms": 50820,
+              "start_ms": 47660
+            }
+          ],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "RESOLVED"
+        },
+        "revision_id": "r1",
+        "source_coverage_ms": 3160,
+        "source_end_ms": 890840,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 887680,
+        "supersedes": null,
+        "truth_id": "20260724-lidousha-quote-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "李姐拉拉，你新来的"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-flagged-20260727-conversation(BV1ec3A6bEWF 专名事故 cue1：画面探针实锤被查看角色 角色ID=李豆沙(粉丝同名号入会)；Ivan 人耳定版 2026-07-27：「cue1真值其实是李姐拉拉，你新来的」——接拉拉梗称呼同名分身；机器听写 lai-la 系「拉拉」误辨)",
+        "before": [
+          "李姐拉拉，你新来的"
+        ],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [
+          1
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "李姐拉拉，你新来的"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:8950c941c24ab65d74187dbf6bc7d493897be97542083914036e192fdb2320af",
+        "evidence_class": "IVAN_OPERATOR_TRANSCRIPT_TRUTH",
+        "final_owner_contract": {
+          "action": "replace_cue",
+          "expected_exact": "李姐拉拉你新来的",
+          "required_text": "",
+          "speaker_ok": true,
+          "speaker_payload": "李姐拉拉你新来的",
+          "text_ok": true,
+          "text_payload": "李姐拉拉你新来的"
+        },
+        "final_owner_scope": "FINAL_DELIVERY",
+        "final_owner_verified": true,
+        "final_owner_windows": [
+          {
+            "action": "replace_cue",
+            "cue_index": 1,
+            "end_ms": 1690,
+            "expected_after": "李姐拉拉，你新来的",
+            "expected_exact": "李姐拉拉你新来的",
+            "required_text": "",
+            "speaker_ok": true,
+            "speaker_payload": "李姐拉拉你新来的",
+            "start_ms": 250,
+            "text_ok": true,
+            "text_payload": "李姐拉拉你新来的"
+          }
+        ],
+        "local_windows": [
+          {
+            "end_ms": 11440,
+            "start_ms": 10000
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "replace_cue",
+          "cues": [
+            {
+              "after_text": "李姐拉拉，你新来的",
+              "before_text": "李姐拉拉，你新来的",
+              "cue_index": 1,
+              "end_ms": 11440,
+              "start_ms": 10000
+            }
+          ],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "RESOLVED"
+        },
+        "revision_id": "r1",
+        "source_coverage_ms": 1440,
+        "source_end_ms": 851460,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 850020,
+        "supersedes": null,
+        "truth_id": "20260724-lijie-laila-r1"
+      },
+      {
+        "action": "drop_cue",
+        "after": [],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-stated-20260728原裁定不变；r4以公开成片0:13和同BV成片固定5.75秒片头重新绑定：hash-bound recut中的目标是7010–9990ms乱码“你把你的你你我你你的技能”，绝对源区间856780–859760ms。r3误删了紧邻的5730–7010ms“等等等等”。",
+        "before": [],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [],
+        "declared_output_contract": {
+          "action": "drop_cue",
+          "canonical_texts": [],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "drop_status": "ALREADY_ABSENT",
+        "entry_sha256": "sha256:7e2d313f091c9ffa48243ee204dd3e16ee6fe0ea8fac95b055c83323568c650e",
+        "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+        "final_owner_contract": {
+          "action": "drop_cue",
+          "expected_exact": "",
+          "required_text": "",
+          "speaker_ok": true,
+          "speaker_payload": "",
+          "text_ok": true,
+          "text_payload": ""
+        },
+        "final_owner_scope": "FINAL_DELIVERY",
+        "final_owner_verified": true,
+        "final_owner_windows": [
+          {
+            "action": "drop_cue",
+            "cue_index": null,
+            "end_ms": 9990,
+            "expected_after": null,
+            "expected_exact": "",
+            "required_text": "",
+            "speaker_ok": true,
+            "speaker_payload": "",
+            "start_ms": 7010,
+            "text_ok": true,
+            "text_payload": ""
+          }
+        ],
+        "local_windows": [
+          {
+            "end_ms": 19740,
+            "start_ms": 16760
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "drop_cue",
+          "cues": [],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "ALREADY_ABSENT"
+        },
+        "revision_id": "r4",
+        "source_coverage_ms": 2980,
+        "source_end_ms": 859760,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 856780,
+        "supersedes": "20260724-skill-opening-noise-drop-r3",
+        "truth_id": "20260724-skill-opening-noise-drop-r4"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "让我打他，他一副，一副"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-stated-20260728：7/24 850切片公开0:59说的是「他，一副，一副」，语境为「他一副xxx的样子」，不是「欺负欺负」。",
+        "before": [
+          "让我打他，他一副，一副"
+        ],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [
+          19
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "让我打他，他一副，一副"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:09b17b30248c7f61e82afd54a452d7326031fac8070d8957a1f444d8bbab9e1c",
+        "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+        "final_owner_contract": {
+          "action": "replace_cue",
+          "expected_exact": "让我打他他一副一副",
+          "required_text": "",
+          "speaker_ok": true,
+          "speaker_payload": "让我打他他一副一副",
+          "text_ok": true,
+          "text_payload": "让我打他他一副一副"
+        },
+        "final_owner_scope": "FINAL_DELIVERY",
+        "final_owner_verified": true,
+        "final_owner_windows": [
+          {
+            "action": "replace_cue",
+            "cue_index": 19,
+            "end_ms": 52780,
+            "expected_after": "让我打他，他一副，一副",
+            "expected_exact": "让我打他他一副一副",
+            "required_text": "",
+            "speaker_ok": true,
+            "speaker_payload": "让我打他他一副一副",
+            "start_ms": 50240,
+            "text_ok": true,
+            "text_payload": "让我打他他一副一副"
+          }
+        ],
+        "local_windows": [
+          {
+            "end_ms": 62530,
+            "start_ms": 59990
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "replace_cue",
+          "cues": [
+            {
+              "after_text": "让我打他，他一副，一副",
+              "before_text": "让我打他，他一副，一副",
+              "cue_index": 19,
+              "end_ms": 62530,
+              "start_ms": 59990
+            }
+          ],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "RESOLVED"
+        },
+        "revision_id": "r2",
+        "source_coverage_ms": 2540,
+        "source_end_ms": 902550,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 900010,
+        "supersedes": "20260724-skill-qifuqifu-r1",
+        "truth_id": "20260724-skill-ta-yifu-yifu-r2"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "kmx为什么欺负我？kmx欺负人"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-stated-20260728：7/24 850切片公开1:23末句说的是「kmx欺负人」，不是把该槽收敛成「我」；多轮AGY同时支持完整两句。",
+        "before": [
+          "kmx为什么欺负我？kmx欺负人"
+        ],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [
+          25
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "kmx为什么欺负我？kmx欺负人"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:8765210e45b5c7e11d3d766fb9c1820eb57e5b1a5c9c8f644e91c8807a50b984",
+        "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+        "final_owner_contract": {
+          "action": "replace_cue",
+          "expected_exact": "kmx为什么欺负我kmx欺负人",
+          "required_text": "",
+          "speaker_ok": true,
+          "speaker_payload": "kmx为什么欺负我kmx欺负人",
+          "text_ok": true,
+          "text_payload": "kmx为什么欺负我kmx欺负人"
+        },
+        "final_owner_scope": "FINAL_DELIVERY",
+        "final_owner_verified": true,
+        "final_owner_windows": [
+          {
+            "action": "replace_cue",
+            "cue_index": 25,
+            "end_ms": 77970,
+            "expected_after": "kmx为什么欺负我？kmx欺负人",
+            "expected_exact": "kmx为什么欺负我kmx欺负人",
+            "required_text": "",
+            "speaker_ok": true,
+            "speaker_payload": "kmx为什么欺负我kmx欺负人",
+            "start_ms": 73130,
+            "text_ok": true,
+            "text_payload": "kmx为什么欺负我kmx欺负人"
+          }
+        ],
+        "local_windows": [
+          {
+            "end_ms": 87720,
+            "start_ms": 82880
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "replace_cue",
+          "cues": [
+            {
+              "after_text": "kmx为什么欺负我？kmx欺负人",
+              "before_text": "kmx为什么欺负我？kmx欺负人",
+              "cue_index": 25,
+              "end_ms": 87720,
+              "start_ms": 82880
+            }
+          ],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "RESOLVED"
+        },
+        "revision_id": "r2",
+        "source_coverage_ms": 4840,
+        "source_end_ms": 927740,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 922900,
+        "supersedes": "20260724-skill-kmx-qifu-wo-r1",
+        "truth_id": "20260724-skill-kmx-qifu-ren-r2"
+      }
+    ],
+    "schema_version": "source-subtitle-truth-audit.v1",
+    "status": "ALREADY_SATISFIED",
+    "timeline_basis": "padded_candidate"
+  },
+  "source_subtitle_truth_post_redelivery_audit": {
+    "applied": [],
+    "failures": [],
+    "inactive": [
+      {
+        "assertion_state": "SUPERSEDED",
+        "superseded_by": "20260724-skill-kmx-qifu-ren-r2",
+        "truth_id": "20260724-skill-kmx-qifu-wo-r1"
+      },
+      {
+        "assertion_state": "SUPERSEDED",
+        "superseded_by": "20260724-skill-ta-yifu-yifu-r2",
+        "truth_id": "20260724-skill-qifuqifu-r1"
+      },
+      {
+        "assertion_state": "SUPERSEDED",
+        "superseded_by": "20260724-skill-opening-noise-drop-r2",
+        "truth_id": "20260724-skill-jianmian-leye-r1"
+      },
+      {
+        "assertion_state": "SUPERSEDED",
+        "superseded_by": "20260724-skill-opening-noise-drop-r3",
+        "truth_id": "20260724-skill-opening-noise-drop-r2"
+      },
+      {
+        "assertion_state": "SUPERSEDED",
+        "superseded_by": "20260724-skill-opening-noise-drop-r4",
+        "truth_id": "20260724-skill-opening-noise-drop-r3"
+      }
+    ],
+    "ledger_path": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r4/repo/assets/lidousha/subtitle_truth_ledger.v1.json",
+    "ledger_sha256": "sha256:8973be0064ab8907f3655e5a52d4ec4697d91724bd9936d2eca7d64001d0cb10",
+    "reapplied_after_redelivery_baseline": true,
+    "satisfied": [
+      {
+        "action": "replace_cue",
+        "after": [
+          "kmx里面的坏熊太多了"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-stated-20260725-conversation：该句为kmx里面的坏熊太多了（叹十七手里面为ASR把专名kmx=读kimo熊打散成常见词的误听）；语境铁证=紧邻后句重复坏熊太多了+随后kmx欺负我，kmx即kimo熊粉丝专名可直接关联。",
+        "before": [
+          "kmx里面的坏熊太多了"
+        ],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [
+          23
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "kmx里面的坏熊太多了"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:b4daffb428bf1937ae31c9df2fa3ac03e14a304a7aecadca420037affa756213",
+        "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
+        "local_windows": [
+          {
+            "end_ms": 68170,
+            "start_ms": 65450
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "replace_cue",
+          "cues": [
+            {
+              "after_text": "kmx里面的坏熊太多了",
+              "before_text": "kmx里面的坏熊太多了",
+              "cue_index": 23,
+              "end_ms": 68170,
+              "start_ms": 65450
+            }
+          ],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "RESOLVED"
+        },
+        "revision_id": "r1",
+        "source_coverage_ms": 2720,
+        "source_end_ms": 917940,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 915220,
+        "supersedes": null,
+        "truth_id": "20260724-skill-kmx-huaixiong-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "可造成两次光元素破灭伤害"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "机器证据裁定2026-07-25：技能说明语境+声学INCOMPATIBLE/SUPPORTED；给造成缺受事语法不通。",
+        "before": [
+          "可造成两次光元素破灭伤害"
+        ],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [
+          7
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "可造成两次光元素破灭伤害"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:f02f92f02f2ac45c2edac6eebeb199874c4c8497c6d061f742c7faef61535bd9",
+        "evidence_class": "ENGINE_PLUS_ACOUSTIC_MAJORITY",
+        "local_windows": [
+          {
+            "end_ms": 16830,
+            "start_ms": 13250
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "replace_cue",
+          "cues": [
+            {
+              "after_text": "可造成两次光元素破灭伤害",
+              "before_text": "可造成两次光元素破灭伤害",
+              "cue_index": 7,
+              "end_ms": 16830,
+              "start_ms": 13250
+            }
+          ],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "RESOLVED"
+        },
+        "revision_id": "r1",
+        "source_coverage_ms": 3580,
+        "source_end_ms": 866600,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 863020,
+        "supersedes": null,
+        "truth_id": "20260724-skill-kezaocheng-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "支持李豆……"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-flagged-20260727-conversation(BV1ec3A6bEWF 专名事故：下注口号被截断——witness 自一致听写 4 音节 zhe-si-liu-er≈支持李豆，且她下一句自述「这句话都还没说完」；忠实呈现截断而非补全)",
+        "before": [
+          "支持李豆……"
+        ],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [
+          14
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "支持李豆……"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:b8a2d1e7e2b492d52f822b767527b5dcc1936d4ab24477a67f84695f20ab0988",
+        "evidence_class": "IVAN_OPERATOR_TRANSCRIPT_TRUTH",
+        "local_windows": [
+          {
+            "end_ms": 26740,
+            "start_ms": 25540
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "replace_cue",
+          "cues": [
+            {
+              "after_text": "支持李豆……",
+              "before_text": "支持李豆……",
+              "cue_index": 14,
+              "end_ms": 26740,
+              "start_ms": 25540
+            }
+          ],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "RESOLVED"
+        },
+        "revision_id": "r1",
+        "source_coverage_ms": 1200,
+        "source_end_ms": 876510,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 875310,
+        "supersedes": null,
+        "truth_id": "20260724-zhichi-lidou-truncated-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "我连“支持李豆沙”这句话都还没说完呢"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-flagged-20260727-conversation(BV1ec3A6bEWF 专名事故：「刘若莎」为主播名误听——judge 排序已选「李豆沙」(语境=下注口号+弹幕[李豆沙_大笑])却被自不一致听写经拼音门否决；门已修，此处钉死真值)",
+        "before": [
+          "我连“支持李豆沙”这句话都还没说完呢"
+        ],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [
+          15
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "我连“支持李豆沙”这句话都还没说完呢"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:fb5bc073e616aac636e80a97c7004bb4e88d69579899922504053800095644f9",
+        "evidence_class": "IVAN_OPERATOR_TRANSCRIPT_TRUTH",
+        "local_windows": [
+          {
+            "end_ms": 41070,
+            "start_ms": 37910
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "replace_cue",
+          "cues": [
+            {
+              "after_text": "我连“支持李豆沙”这句话都还没说完呢",
+              "before_text": "我连“支持李豆沙”这句话都还没说完呢",
+              "cue_index": 15,
+              "end_ms": 41070,
+              "start_ms": 37910
+            }
+          ],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "RESOLVED"
+        },
+        "revision_id": "r1",
+        "source_coverage_ms": 3160,
+        "source_end_ms": 890840,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 887680,
+        "supersedes": null,
+        "truth_id": "20260724-lidousha-quote-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "李姐拉拉，你新来的"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-flagged-20260727-conversation(BV1ec3A6bEWF 专名事故 cue1：画面探针实锤被查看角色 角色ID=李豆沙(粉丝同名号入会)；Ivan 人耳定版 2026-07-27：「cue1真值其实是李姐拉拉，你新来的」——接拉拉梗称呼同名分身；机器听写 lai-la 系「拉拉」误辨)",
+        "before": [
+          "李姐拉拉，你新来的"
+        ],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [
+          1
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "李姐拉拉，你新来的"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:8950c941c24ab65d74187dbf6bc7d493897be97542083914036e192fdb2320af",
+        "evidence_class": "IVAN_OPERATOR_TRANSCRIPT_TRUTH",
+        "local_windows": [
+          {
+            "end_ms": 1690,
+            "start_ms": 250
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "replace_cue",
+          "cues": [
+            {
+              "after_text": "李姐拉拉，你新来的",
+              "before_text": "李姐拉拉，你新来的",
+              "cue_index": 1,
+              "end_ms": 1690,
+              "start_ms": 250
+            }
+          ],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "RESOLVED"
+        },
+        "revision_id": "r1",
+        "source_coverage_ms": 1440,
+        "source_end_ms": 851460,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 850020,
+        "supersedes": null,
+        "truth_id": "20260724-lijie-laila-r1"
+      },
+      {
+        "action": "drop_cue",
+        "after": [],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-stated-20260728原裁定不变；r4以公开成片0:13和同BV成片固定5.75秒片头重新绑定：hash-bound recut中的目标是7010–9990ms乱码“你把你的你你我你你的技能”，绝对源区间856780–859760ms。r3误删了紧邻的5730–7010ms“等等等等”。",
+        "before": [],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [],
+        "declared_output_contract": {
+          "action": "drop_cue",
+          "canonical_texts": [],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "drop_status": "ALREADY_ABSENT",
+        "entry_sha256": "sha256:7e2d313f091c9ffa48243ee204dd3e16ee6fe0ea8fac95b055c83323568c650e",
+        "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+        "local_windows": [
+          {
+            "end_ms": 9990,
+            "start_ms": 7010
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "drop_cue",
+          "cues": [],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "ALREADY_ABSENT"
+        },
+        "revision_id": "r4",
+        "source_coverage_ms": 2980,
+        "source_end_ms": 859760,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 856780,
+        "supersedes": "20260724-skill-opening-noise-drop-r3",
+        "truth_id": "20260724-skill-opening-noise-drop-r4"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "让我打他，他一副，一副"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-stated-20260728：7/24 850切片公开0:59说的是「他，一副，一副」，语境为「他一副xxx的样子」，不是「欺负欺负」。",
+        "before": [
+          "让我打他，他一副，一副"
+        ],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [
+          19
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "让我打他，他一副，一副"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:09b17b30248c7f61e82afd54a452d7326031fac8070d8957a1f444d8bbab9e1c",
+        "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+        "local_windows": [
+          {
+            "end_ms": 52780,
+            "start_ms": 50240
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "replace_cue",
+          "cues": [
+            {
+              "after_text": "让我打他，他一副，一副",
+              "before_text": "让我打他，他一副，一副",
+              "cue_index": 19,
+              "end_ms": 52780,
+              "start_ms": 50240
+            }
+          ],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "RESOLVED"
+        },
+        "revision_id": "r2",
+        "source_coverage_ms": 2540,
+        "source_end_ms": 902550,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 900010,
+        "supersedes": "20260724-skill-qifuqifu-r1",
+        "truth_id": "20260724-skill-ta-yifu-yifu-r2"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "kmx为什么欺负我？kmx欺负人"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-stated-20260728：7/24 850切片公开1:23末句说的是「kmx欺负人」，不是把该槽收敛成「我」；多轮AGY同时支持完整两句。",
+        "before": [
+          "kmx为什么欺负我？kmx欺负人"
+        ],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [
+          25
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "kmx为什么欺负我？kmx欺负人"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:8765210e45b5c7e11d3d766fb9c1820eb57e5b1a5c9c8f644e91c8807a50b984",
+        "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+        "local_windows": [
+          {
+            "end_ms": 77970,
+            "start_ms": 73130
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "replace_cue",
+          "cues": [
+            {
+              "after_text": "kmx为什么欺负我？kmx欺负人",
+              "before_text": "kmx为什么欺负我？kmx欺负人",
+              "cue_index": 25,
+              "end_ms": 77970,
+              "start_ms": 73130
+            }
+          ],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "RESOLVED"
+        },
+        "revision_id": "r2",
+        "source_coverage_ms": 4840,
+        "source_end_ms": 927740,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 922900,
+        "supersedes": "20260724-skill-kmx-qifu-wo-r1",
+        "truth_id": "20260724-skill-kmx-qifu-ren-r2"
+      }
+    ],
+    "schema_version": "source-subtitle-truth-audit.v1",
+    "status": "ALREADY_SATISFIED",
+    "timeline_basis": "final_delivery"
+  },
+  "source_subtitle_truth_pre_redelivery_audit": {
+    "applied": [
+      {
+        "action": "replace_cue",
+        "after": [
+          "kmx里面的坏熊太多了"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-stated-20260725-conversation：该句为kmx里面的坏熊太多了（叹十七手里面为ASR把专名kmx=读kimo熊打散成常见词的误听）；语境铁证=紧邻后句重复坏熊太多了+随后kmx欺负我，kmx即kimo熊粉丝专名可直接关联。",
+        "before": [
+          "叹十七：手里面的坏熊太多了"
+        ],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [
+          28
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "kmx里面的坏熊太多了"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:b4daffb428bf1937ae31c9df2fa3ac03e14a304a7aecadca420037affa756213",
+        "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
+        "local_windows": [
+          {
+            "end_ms": 77920,
+            "start_ms": 75200
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "replace_cue",
+          "cues": [
+            {
+              "after_text": "kmx里面的坏熊太多了",
+              "before_text": "叹十七：手里面的坏熊太多了",
+              "cue_index": 28,
+              "end_ms": 77920,
+              "start_ms": 75200
+            }
+          ],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "RESOLVED"
+        },
+        "revision_id": "r1",
+        "source_coverage_ms": 2720,
+        "source_end_ms": 917940,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 915220,
+        "supersedes": null,
+        "truth_id": "20260724-skill-kmx-huaixiong-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "可造成两次光元素破灭伤害"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "机器证据裁定2026-07-25：技能说明语境+声学INCOMPATIBLE/SUPPORTED；给造成缺受事语法不通。",
+        "before": [
+          "给造成两次光元素破灭伤害"
+        ],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [
+          12
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "可造成两次光元素破灭伤害"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:f02f92f02f2ac45c2edac6eebeb199874c4c8497c6d061f742c7faef61535bd9",
+        "evidence_class": "ENGINE_PLUS_ACOUSTIC_MAJORITY",
+        "local_windows": [
+          {
+            "end_ms": 26580,
+            "start_ms": 23000
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "replace_cue",
+          "cues": [
+            {
+              "after_text": "可造成两次光元素破灭伤害",
+              "before_text": "给造成两次光元素破灭伤害",
+              "cue_index": 12,
+              "end_ms": 26580,
+              "start_ms": 23000
+            }
+          ],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "RESOLVED"
+        },
+        "revision_id": "r1",
+        "source_coverage_ms": 3580,
+        "source_end_ms": 866600,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 863020,
+        "supersedes": null,
+        "truth_id": "20260724-skill-kezaocheng-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "支持李豆……"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-flagged-20260727-conversation(BV1ec3A6bEWF 专名事故：下注口号被截断——witness 自一致听写 4 音节 zhe-si-liu-er≈支持李豆，且她下一句自述「这句话都还没说完」；忠实呈现截断而非补全)",
+        "before": [
+          "支持李豆沙"
+        ],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [
+          19
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "支持李豆……"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:b8a2d1e7e2b492d52f822b767527b5dcc1936d4ab24477a67f84695f20ab0988",
+        "evidence_class": "IVAN_OPERATOR_TRANSCRIPT_TRUTH",
+        "local_windows": [
+          {
+            "end_ms": 36490,
+            "start_ms": 35290
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "replace_cue",
+          "cues": [
+            {
+              "after_text": "支持李豆……",
+              "before_text": "支持李豆沙",
+              "cue_index": 19,
+              "end_ms": 36490,
+              "start_ms": 35290
+            }
+          ],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "RESOLVED"
+        },
+        "revision_id": "r1",
+        "source_coverage_ms": 1200,
+        "source_end_ms": 876510,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 875310,
+        "supersedes": null,
+        "truth_id": "20260724-zhichi-lidou-truncated-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "我连“支持李豆沙”这句话都还没说完呢"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-flagged-20260727-conversation(BV1ec3A6bEWF 专名事故：「刘若莎」为主播名误听——judge 排序已选「李豆沙」(语境=下注口号+弹幕[李豆沙_大笑])却被自不一致听写经拼音门否决；门已修，此处钉死真值)",
+        "before": [
+          "我连支持李豆沙这句话都还没说完呢"
+        ],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [
+          20
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "我连“支持李豆沙”这句话都还没说完呢"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:fb5bc073e616aac636e80a97c7004bb4e88d69579899922504053800095644f9",
+        "evidence_class": "IVAN_OPERATOR_TRANSCRIPT_TRUTH",
+        "local_windows": [
+          {
+            "end_ms": 50820,
+            "start_ms": 47660
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "replace_cue",
+          "cues": [
+            {
+              "after_text": "我连“支持李豆沙”这句话都还没说完呢",
+              "before_text": "我连支持李豆沙这句话都还没说完呢",
+              "cue_index": 20,
+              "end_ms": 50820,
+              "start_ms": 47660
+            }
+          ],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "RESOLVED"
+        },
+        "revision_id": "r1",
+        "source_coverage_ms": 3160,
+        "source_end_ms": 890840,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 887680,
+        "supersedes": null,
+        "truth_id": "20260724-lidousha-quote-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "李姐拉拉，你新来的"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-flagged-20260727-conversation(BV1ec3A6bEWF 专名事故 cue1：画面探针实锤被查看角色 角色ID=李豆沙(粉丝同名号入会)；Ivan 人耳定版 2026-07-27：「cue1真值其实是李姐拉拉，你新来的」——接拉拉梗称呼同名分身；机器听写 lai-la 系「拉拉」误辨)",
+        "before": [
+          "拉拉，你是新来的"
+        ],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [
+          5
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "李姐拉拉，你新来的"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:8950c941c24ab65d74187dbf6bc7d493897be97542083914036e192fdb2320af",
+        "evidence_class": "IVAN_OPERATOR_TRANSCRIPT_TRUTH",
+        "local_windows": [
+          {
+            "end_ms": 11440,
+            "start_ms": 10000
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "replace_cue",
+          "cues": [
+            {
+              "after_text": "李姐拉拉，你新来的",
+              "before_text": "拉拉，你是新来的",
+              "cue_index": 5,
+              "end_ms": 11440,
+              "start_ms": 10000
+            }
+          ],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "RESOLVED"
+        },
+        "revision_id": "r1",
+        "source_coverage_ms": 1440,
+        "source_end_ms": 851460,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 850020,
+        "supersedes": null,
+        "truth_id": "20260724-lijie-laila-r1"
+      },
+      {
+        "action": "drop_cue",
+        "after": [
+          ""
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-stated-20260728原裁定不变；r4以公开成片0:13和同BV成片固定5.75秒片头重新绑定：hash-bound recut中的目标是7010–9990ms乱码“你把你的你你我你你的技能”，绝对源区间856780–859760ms。r3误删了紧邻的5730–7010ms“等等等等”。",
+        "before": [
+          "你把你的你你我你你的技能"
+        ],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [
+          9
+        ],
+        "declared_output_contract": {
+          "action": "drop_cue",
+          "canonical_texts": [],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "drop_status": "APPLIED",
+        "entry_sha256": "sha256:7e2d313f091c9ffa48243ee204dd3e16ee6fe0ea8fac95b055c83323568c650e",
+        "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+        "local_windows": [
+          {
+            "end_ms": 19740,
+            "start_ms": 16760
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "drop_cue",
+          "cues": [
+            {
+              "after_text": "",
+              "before_text": "你把你的你你我你你的技能",
+              "cue_index": 9,
+              "end_ms": 19740,
+              "start_ms": 16760
+            }
+          ],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "RESOLVED"
+        },
+        "revision_id": "r4",
+        "source_coverage_ms": 2980,
+        "source_end_ms": 859760,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 856780,
+        "supersedes": "20260724-skill-opening-noise-drop-r3",
+        "truth_id": "20260724-skill-opening-noise-drop-r4"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "让我打他，他一副，一副"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-stated-20260728：7/24 850切片公开0:59说的是「他，一副，一副」，语境为「他一副xxx的样子」，不是「欺负欺负」。",
+        "before": [
+          "让我打TA一副一副"
+        ],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [
+          24
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "让我打他，他一副，一副"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:09b17b30248c7f61e82afd54a452d7326031fac8070d8957a1f444d8bbab9e1c",
+        "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+        "local_windows": [
+          {
+            "end_ms": 62530,
+            "start_ms": 59990
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "replace_cue",
+          "cues": [
+            {
+              "after_text": "让我打他，他一副，一副",
+              "before_text": "让我打TA一副一副",
+              "cue_index": 24,
+              "end_ms": 62530,
+              "start_ms": 59990
+            }
+          ],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "RESOLVED"
+        },
+        "revision_id": "r2",
+        "source_coverage_ms": 2540,
+        "source_end_ms": 902550,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 900010,
+        "supersedes": "20260724-skill-qifuqifu-r1",
+        "truth_id": "20260724-skill-ta-yifu-yifu-r2"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "kmx为什么欺负我？kmx欺负人"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-stated-20260728：7/24 850切片公开1:23末句说的是「kmx欺负人」，不是把该槽收敛成「我」；多轮AGY同时支持完整两句。",
+        "before": [
+          "我 Q 为什么欺负我 QQ 欺负人"
+        ],
+        "before_span": null,
+        "boundary_role": "story_content",
+        "cue_indexes": [
+          30
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "kmx为什么欺负我？kmx欺负人"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:8765210e45b5c7e11d3d766fb9c1820eb57e5b1a5c9c8f644e91c8807a50b984",
+        "evidence_class": "HASH_BOUND_REVIEWED_SUBTITLE",
+        "local_windows": [
+          {
+            "end_ms": 87720,
+            "start_ms": 82880
+          }
+        ],
+        "recording_basename": "22966160_20260724-19-31-29.mp4",
+        "required": true,
+        "resolved_target_projection": {
+          "action": "replace_cue",
+          "cues": [
+            {
+              "after_text": "kmx为什么欺负我？kmx欺负人",
+              "before_text": "我 Q 为什么欺负我 QQ 欺负人",
+              "cue_index": 30,
+              "end_ms": 87720,
+              "start_ms": 82880
+            }
+          ],
+          "min_overlap_ms": 80,
+          "schema_version": "source-truth-resolved-target-projection.v1",
+          "selector": "half-open-overlap-gte-min-then-action-resolution",
+          "status": "RESOLVED"
+        },
+        "revision_id": "r2",
+        "source_coverage_ms": 4840,
+        "source_end_ms": 927740,
+        "source_event_id": null,
+        "source_event_sha256": null,
+        "source_start_ms": 922900,
+        "supersedes": "20260724-skill-kmx-qifu-wo-r1",
+        "truth_id": "20260724-skill-kmx-qifu-ren-r2"
+      }
+    ],
+    "failures": [],
+    "inactive": [
+      {
+        "assertion_state": "SUPERSEDED",
+        "superseded_by": "20260724-skill-kmx-qifu-ren-r2",
+        "truth_id": "20260724-skill-kmx-qifu-wo-r1"
+      },
+      {
+        "assertion_state": "SUPERSEDED",
+        "superseded_by": "20260724-skill-ta-yifu-yifu-r2",
+        "truth_id": "20260724-skill-qifuqifu-r1"
+      },
+      {
+        "assertion_state": "SUPERSEDED",
+        "superseded_by": "20260724-skill-opening-noise-drop-r2",
+        "truth_id": "20260724-skill-jianmian-leye-r1"
+      },
+      {
+        "assertion_state": "SUPERSEDED",
+        "superseded_by": "20260724-skill-opening-noise-drop-r3",
+        "truth_id": "20260724-skill-opening-noise-drop-r2"
+      },
+      {
+        "assertion_state": "SUPERSEDED",
+        "superseded_by": "20260724-skill-opening-noise-drop-r4",
+        "truth_id": "20260724-skill-opening-noise-drop-r3"
+      }
+    ],
+    "ledger_path": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r4/repo/assets/lidousha/subtitle_truth_ledger.v1.json",
+    "ledger_sha256": "sha256:8973be0064ab8907f3655e5a52d4ec4697d91724bd9936d2eca7d64001d0cb10",
+    "satisfied": [],
+    "schema_version": "source-subtitle-truth-audit.v1",
+    "status": "APPLIED"
+  },
+  "source_truth_preview_receipts": {
+    "pre_correction_review": {
+      "exact_projection_owners": [
+        {
+          "cue_indexes": [
+            28
+          ],
+          "entry_sha256": "sha256:b4daffb428bf1937ae31c9df2fa3ac03e14a304a7aecadca420037affa756213",
+          "projected_cue_indexes": [
+            28
+          ],
+          "projection_sha256": "sha256:b01c50bd4d07ff3dbabaf475d088d3f47d709198e3af3c09963bb93526014340",
+          "projection_status": "RESOLVED",
+          "source_bucket": "applied",
+          "truth_id": "20260724-skill-kmx-huaixiong-r1"
+        },
+        {
+          "cue_indexes": [
+            12
+          ],
+          "entry_sha256": "sha256:f02f92f02f2ac45c2edac6eebeb199874c4c8497c6d061f742c7faef61535bd9",
+          "projected_cue_indexes": [
+            12
+          ],
+          "projection_sha256": "sha256:56e98e4be45c58408264d46e9c04bba7e9394dc97227ab42bfb05c3c2c80773f",
+          "projection_status": "RESOLVED",
+          "source_bucket": "applied",
+          "truth_id": "20260724-skill-kezaocheng-r1"
+        },
+        {
+          "cue_indexes": [
+            19
+          ],
+          "entry_sha256": "sha256:b8a2d1e7e2b492d52f822b767527b5dcc1936d4ab24477a67f84695f20ab0988",
+          "projected_cue_indexes": [
+            19
+          ],
+          "projection_sha256": "sha256:37c1185887808caafaea70ac489bdead330d8d010996e85492a3f3febba3d5f8",
+          "projection_status": "RESOLVED",
+          "source_bucket": "applied",
+          "truth_id": "20260724-zhichi-lidou-truncated-r1"
+        },
+        {
+          "cue_indexes": [
+            20
+          ],
+          "entry_sha256": "sha256:fb5bc073e616aac636e80a97c7004bb4e88d69579899922504053800095644f9",
+          "projected_cue_indexes": [
+            20
+          ],
+          "projection_sha256": "sha256:c5b7307c33fd00fb807287dc274aaed6d05457759e0e3779aa3fa1903d0c8d9f",
+          "projection_status": "RESOLVED",
+          "source_bucket": "applied",
+          "truth_id": "20260724-lidousha-quote-r1"
+        },
+        {
+          "cue_indexes": [
+            5
+          ],
+          "entry_sha256": "sha256:8950c941c24ab65d74187dbf6bc7d493897be97542083914036e192fdb2320af",
+          "projected_cue_indexes": [
+            5
+          ],
+          "projection_sha256": "sha256:e0af855cfe5c17ab91c0d5fefe7c7fd7384d2469fc0b63d0d4ca5bd6d0bc5dfd",
+          "projection_status": "RESOLVED",
+          "source_bucket": "applied",
+          "truth_id": "20260724-lijie-laila-r1"
+        },
+        {
+          "cue_indexes": [
+            9
+          ],
+          "entry_sha256": "sha256:7e2d313f091c9ffa48243ee204dd3e16ee6fe0ea8fac95b055c83323568c650e",
+          "projected_cue_indexes": [
+            9
+          ],
+          "projection_sha256": "sha256:607dc5e9e8c27a5de6a7b62434bd7daf2b57e08b9dc6bbdc9c5abd0350501c77",
+          "projection_status": "RESOLVED",
+          "source_bucket": "applied",
+          "truth_id": "20260724-skill-opening-noise-drop-r4"
+        },
+        {
+          "cue_indexes": [
+            24
+          ],
+          "entry_sha256": "sha256:09b17b30248c7f61e82afd54a452d7326031fac8070d8957a1f444d8bbab9e1c",
+          "projected_cue_indexes": [
+            24
+          ],
+          "projection_sha256": "sha256:acc5b4454d526db5d17b064cbe372018fa1dc24852ffed14407420f86fd20791",
+          "projection_status": "RESOLVED",
+          "source_bucket": "applied",
+          "truth_id": "20260724-skill-ta-yifu-yifu-r2"
+        },
+        {
+          "cue_indexes": [
+            30
+          ],
+          "entry_sha256": "sha256:8765210e45b5c7e11d3d766fb9c1820eb57e5b1a5c9c8f644e91c8807a50b984",
+          "projected_cue_indexes": [
+            30
+          ],
+          "projection_sha256": "sha256:6d18e65ee4043711b08b89495c94b79ef56fe22be16cc156790b6d27be67d23d",
+          "projection_status": "RESOLVED",
+          "source_bucket": "applied",
+          "truth_id": "20260724-skill-kmx-qifu-ren-r2"
+        }
+      ],
+      "exact_protected_cue_indexes": [
+        5,
+        9,
+        12,
+        19,
+        20,
+        24,
+        28,
+        30
+      ],
+      "fallback_local_windows": [],
+      "fallback_protected_cue_indexes": [],
+      "ignored_optional_truth_ids": [],
+      "input_cue_grid_sha256": "sha256:0f12dac1b30a07c48b8f1a9c741ea05c7d123dd4aa6344e621ee5c000cce7ce7",
+      "input_srt_sha256": "sha256:722ff84ff1da9c938b1a868bd18ebf85fb6de174d7ccdf5fa0713d73f09a022f",
+      "ledger_sha256": "sha256:8973be0064ab8907f3655e5a52d4ec4697d91724bd9936d2eca7d64001d0cb10",
+      "min_overlap_ms": 80,
+      "protected_cue_indexes": [
+        5,
+        9,
+        12,
+        19,
+        20,
+        24,
+        28,
+        30
+      ],
+      "receipt_sha256": "sha256:da4edda25180c5768a5c0896ad4f31a442a130586178df0cf1791464e73c8a8a",
+      "schema_version": "source-truth-deterministic-preview.v1",
+      "source_truth_audit_sha256": "sha256:70955092c3b9176b503f6aac2c92cc4bbc19508cb94bbf61fe40e6836aaaf103",
+      "source_truth_audit_status": "APPLIED",
+      "stage": "pre_correction_review",
+      "status": "PASS",
+      "unresolved_fallbacks": []
+    },
+    "pre_entity_arbitration": {
+      "exact_projection_owners": [
+        {
+          "cue_indexes": [
+            28
+          ],
+          "entry_sha256": "sha256:b4daffb428bf1937ae31c9df2fa3ac03e14a304a7aecadca420037affa756213",
+          "projected_cue_indexes": [
+            28
+          ],
+          "projection_sha256": "sha256:b01c50bd4d07ff3dbabaf475d088d3f47d709198e3af3c09963bb93526014340",
+          "projection_status": "RESOLVED",
+          "source_bucket": "applied",
+          "truth_id": "20260724-skill-kmx-huaixiong-r1"
+        },
+        {
+          "cue_indexes": [
+            12
+          ],
+          "entry_sha256": "sha256:f02f92f02f2ac45c2edac6eebeb199874c4c8497c6d061f742c7faef61535bd9",
+          "projected_cue_indexes": [
+            12
+          ],
+          "projection_sha256": "sha256:56e98e4be45c58408264d46e9c04bba7e9394dc97227ab42bfb05c3c2c80773f",
+          "projection_status": "RESOLVED",
+          "source_bucket": "applied",
+          "truth_id": "20260724-skill-kezaocheng-r1"
+        },
+        {
+          "cue_indexes": [
+            19
+          ],
+          "entry_sha256": "sha256:b8a2d1e7e2b492d52f822b767527b5dcc1936d4ab24477a67f84695f20ab0988",
+          "projected_cue_indexes": [
+            19
+          ],
+          "projection_sha256": "sha256:37c1185887808caafaea70ac489bdead330d8d010996e85492a3f3febba3d5f8",
+          "projection_status": "RESOLVED",
+          "source_bucket": "applied",
+          "truth_id": "20260724-zhichi-lidou-truncated-r1"
+        },
+        {
+          "cue_indexes": [
+            20
+          ],
+          "entry_sha256": "sha256:fb5bc073e616aac636e80a97c7004bb4e88d69579899922504053800095644f9",
+          "projected_cue_indexes": [
+            20
+          ],
+          "projection_sha256": "sha256:c5b7307c33fd00fb807287dc274aaed6d05457759e0e3779aa3fa1903d0c8d9f",
+          "projection_status": "RESOLVED",
+          "source_bucket": "applied",
+          "truth_id": "20260724-lidousha-quote-r1"
+        },
+        {
+          "cue_indexes": [
+            5
+          ],
+          "entry_sha256": "sha256:8950c941c24ab65d74187dbf6bc7d493897be97542083914036e192fdb2320af",
+          "projected_cue_indexes": [
+            5
+          ],
+          "projection_sha256": "sha256:e0af855cfe5c17ab91c0d5fefe7c7fd7384d2469fc0b63d0d4ca5bd6d0bc5dfd",
+          "projection_status": "RESOLVED",
+          "source_bucket": "applied",
+          "truth_id": "20260724-lijie-laila-r1"
+        },
+        {
+          "cue_indexes": [
+            9
+          ],
+          "entry_sha256": "sha256:7e2d313f091c9ffa48243ee204dd3e16ee6fe0ea8fac95b055c83323568c650e",
+          "projected_cue_indexes": [
+            9
+          ],
+          "projection_sha256": "sha256:607dc5e9e8c27a5de6a7b62434bd7daf2b57e08b9dc6bbdc9c5abd0350501c77",
+          "projection_status": "RESOLVED",
+          "source_bucket": "applied",
+          "truth_id": "20260724-skill-opening-noise-drop-r4"
+        },
+        {
+          "cue_indexes": [
+            24
+          ],
+          "entry_sha256": "sha256:09b17b30248c7f61e82afd54a452d7326031fac8070d8957a1f444d8bbab9e1c",
+          "projected_cue_indexes": [
+            24
+          ],
+          "projection_sha256": "sha256:acc5b4454d526db5d17b064cbe372018fa1dc24852ffed14407420f86fd20791",
+          "projection_status": "RESOLVED",
+          "source_bucket": "applied",
+          "truth_id": "20260724-skill-ta-yifu-yifu-r2"
+        },
+        {
+          "cue_indexes": [
+            30
+          ],
+          "entry_sha256": "sha256:8765210e45b5c7e11d3d766fb9c1820eb57e5b1a5c9c8f644e91c8807a50b984",
+          "projected_cue_indexes": [
+            30
+          ],
+          "projection_sha256": "sha256:6d18e65ee4043711b08b89495c94b79ef56fe22be16cc156790b6d27be67d23d",
+          "projection_status": "RESOLVED",
+          "source_bucket": "applied",
+          "truth_id": "20260724-skill-kmx-qifu-ren-r2"
+        }
+      ],
+      "exact_protected_cue_indexes": [
+        5,
+        9,
+        12,
+        19,
+        20,
+        24,
+        28,
+        30
+      ],
+      "fallback_local_windows": [],
+      "fallback_protected_cue_indexes": [],
+      "ignored_optional_truth_ids": [],
+      "input_cue_grid_sha256": "sha256:0f12dac1b30a07c48b8f1a9c741ea05c7d123dd4aa6344e621ee5c000cce7ce7",
+      "input_srt_sha256": "sha256:722ff84ff1da9c938b1a868bd18ebf85fb6de174d7ccdf5fa0713d73f09a022f",
+      "ledger_sha256": "sha256:8973be0064ab8907f3655e5a52d4ec4697d91724bd9936d2eca7d64001d0cb10",
+      "min_overlap_ms": 80,
+      "protected_cue_indexes": [
+        5,
+        9,
+        12,
+        19,
+        20,
+        24,
+        28,
+        30
+      ],
+      "receipt_sha256": "sha256:02986238e0fd310662b8fb91c046d1ae2d51c17b2e47d048bc1ea53449080ecd",
+      "schema_version": "source-truth-deterministic-preview.v1",
+      "source_truth_audit_sha256": "sha256:70955092c3b9176b503f6aac2c92cc4bbc19508cb94bbf61fe40e6836aaaf103",
+      "source_truth_audit_status": "APPLIED",
+      "stage": "pre_entity_arbitration",
+      "status": "PASS",
+      "unresolved_fallbacks": []
+    }
+  },
+  "speaker_ass_path": null,
+  "speaker_ass_sha256": null,
+  "speaker_manifest_sha256": null,
+  "status": "NO_MATCH",
+  "structured_chat_binding_audit": {
+    "pieces": [
+      {
+        "canonical_recording_basename": "22966160_20260724-19-31-29.mp4",
+        "jsonl_path": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.jsonl",
+        "jsonl_sha256": "sha256:9000c5ae7d700018b116e5f202e1d0bd89d2119195ea08ae40b016bc45c17bde",
+        "origin_epoch_ms": 1784892689242,
+        "required": true,
+        "source_alias_id": null,
+        "status": "BOUND_DIRECT",
+        "timeline_offset_ms": 0
+      }
+    ],
+    "retained_clip_window_counts": {
+      "danmaku": 79,
+      "superchat": 2
+    },
+    "retained_clip_window_total": 81,
+    "schema_version": "structured-chat-binding-audit.v1",
+    "status": "PASS",
+    "zero_retained_meaning": "bound source parsed successfully but no event survived the clip window; binding failures raise before this audit"
+  },
+  "superseded_chat_proposals": [
+    {
+      "allowed_followup": "entity_or_source_truth_slot_only",
+      "cue_indexes": [
+        14,
+        15,
+        16
+      ],
+      "evidence_id": "4d9703bffd0eb1ed701e6f52632a2805dc90fcdd970f8f5923c053acf3e74358",
+      "exact_text": "刚刚有个木材没捡",
+      "kind": "danmaku",
+      "matched_audio_text": "试一下吧有个木材没捡原来如此",
+      "matched_end_ms": 31400,
+      "matched_start_ms": 28200,
+      "reason_code": "PARTIAL_CHAT_EVIDENCE_CANNOT_AUTHORIZE_WHOLE_LINE_COPY",
+      "whole_line_exact_copy_gate": {
+        "common": 6,
+        "common_chars": 6,
+        "coverage": 0.75,
+        "extent": 1.75,
+        "full_span_audio_verdict": false,
+        "independent_owner_support_count": 0,
+        "independent_supports": [
+          {
+            "borrowed_boundary_blocks_stripped": [],
+            "boundary_complete": false,
+            "candidate_present": true,
+            "common": 5,
+            "common_chars": 5,
+            "coverage": 0.625,
+            "cue_indexes": [
+              15
+            ],
+            "extent": 0.75,
+            "interior_near_complete": true,
+            "matched_end_ms": 30400,
+            "matched_start_ms": 29240,
+            "max_unsupported_interior_chars": 1,
+            "max_unsupported_interior_run_chars": 2,
+            "min_coverage": 0.8,
+            "min_extent": 0.82,
+            "min_precision": 0.6,
+            "near_complete_transcript": false,
+            "numeric_near_complete": false,
+            "observed_text": "有个木材没见",
+            "owner_eligible": false,
+            "precision": 0.8333,
+            "preserved_reply_suffix": "",
+            "question_particle_patch_supported": false,
+            "required_common_chars": 6,
+            "schema_version": "chat-whole-line-support.v1",
+            "score": 0.7009,
+            "source_truth_anchor_eligible": false,
+            "support_index": 0,
+            "support_kind": "independent_transcript",
+            "support_sha256": "b15cf86e3f53037ad4ac18765cd7592f586560ce85c165a1fe0d765c9580f3bb",
+            "unsupported_authority_head": "刚刚",
+            "unsupported_authority_interior": [],
+            "unsupported_authority_interior_chars": 0,
+            "unsupported_authority_tail": "捡"
+          }
+        ],
+        "min_coverage": 0.8,
+        "min_extent": 0.82,
+        "min_precision": 0.6,
+        "owner_eligible": false,
+        "precision": 0.6,
+        "primary_transcript": {
+          "borrowed_boundary_blocks_stripped": [],
+          "boundary_complete": false,
+          "candidate_present": true,
+          "common": 6,
+          "common_chars": 6,
+          "coverage": 0.75,
+          "extent": 1.75,
+          "interior_near_complete": true,
+          "max_unsupported_interior_chars": 1,
+          "max_unsupported_interior_run_chars": 2,
+          "min_coverage": 0.8,
+          "min_extent": 0.82,
+          "min_precision": 0.6,
+          "near_complete_transcript": false,
+          "numeric_near_complete": false,
+          "observed_text": "试一下吧有个木材没捡原来如此",
+          "owner_eligible": false,
+          "precision": 0.6,
+          "required_common_chars": 6,
+          "schema_version": "chat-whole-line-support.v1",
+          "score": 0.6858,
+          "support_kind": "primary_transcript",
+          "unsupported_authority_head": "刚刚",
+          "unsupported_authority_interior": [],
+          "unsupported_authority_interior_chars": 0,
+          "unsupported_authority_tail": ""
+        },
+        "proof_basis": "partial_evidence",
+        "required_common_chars": 6,
+        "schema_version": "chat-whole-line-support-gate.v1",
+        "score": 0.6858,
+        "status": "BLOCKED_PARTIAL_EVIDENCE",
+        "thread_anchored": false,
+        "transcript_span_supported": false,
+        "unsupported_authority_head": "刚刚",
+        "unsupported_authority_interior": [],
+        "unsupported_authority_tail": ""
+      }
+    },
+    {
+      "allowed_followup": "entity_or_source_truth_slot_only",
+      "cue_indexes": [
+        32
+      ],
+      "evidence_id": "efcd299c28ac3ecbb7323e5912d54484ee19620e1e7c219722dad74594254d5c",
+      "exact_text": "李姐和我打，我一个技能都不带就带宠物",
+      "kind": "danmaku",
+      "matched_audio_text": "你一个技能不带都带宠物",
+      "matched_end_ms": 97740,
+      "matched_start_ms": 95620,
+      "reason_code": "PARTIAL_CHAT_EVIDENCE_CANNOT_AUTHORIZE_WHOLE_LINE_COPY",
+      "whole_line_exact_copy_gate": {
+        "common": 9,
+        "common_chars": 9,
+        "coverage": 0.5294,
+        "extent": 0.6471,
+        "full_span_audio_verdict": false,
+        "independent_owner_support_count": 0,
+        "independent_supports": [
+          {
+            "borrowed_boundary_blocks_stripped": [],
+            "boundary_complete": false,
+            "candidate_present": true,
+            "common": 7,
+            "common_chars": 7,
+            "coverage": 0.4118,
+            "cue_indexes": [
+              32
+            ],
+            "extent": 0.6471,
+            "interior_near_complete": true,
+            "matched_end_ms": 97740,
+            "matched_start_ms": 95620,
+            "max_unsupported_interior_chars": 3,
+            "max_unsupported_interior_run_chars": 2,
+            "min_coverage": 0.8,
+            "min_extent": 0.82,
+            "min_precision": 0.6,
+            "near_complete_transcript": false,
+            "numeric_near_complete": false,
+            "observed_text": "你一个技能不带都带抽我",
+            "owner_eligible": false,
+            "precision": 0.6364,
+            "preserved_reply_suffix": "",
+            "question_particle_patch_supported": false,
+            "required_common_chars": 6,
+            "schema_version": "chat-whole-line-support.v1",
+            "score": 0.4896,
+            "source_truth_anchor_eligible": false,
+            "support_index": 0,
+            "support_kind": "independent_transcript",
+            "support_sha256": "b15cf86e3f53037ad4ac18765cd7592f586560ce85c165a1fe0d765c9580f3bb",
+            "unsupported_authority_head": "李姐和我打我",
+            "unsupported_authority_interior": [
+              "都",
+              "就"
+            ],
+            "unsupported_authority_interior_chars": 2,
+            "unsupported_authority_tail": "宠物"
+          }
+        ],
+        "min_coverage": 0.8,
+        "min_extent": 0.82,
+        "min_precision": 0.6,
+        "owner_eligible": false,
+        "precision": 0.8182,
+        "primary_transcript": {
+          "borrowed_boundary_blocks_stripped": [],
+          "boundary_complete": false,
+          "candidate_present": true,
+          "common": 9,
+          "common_chars": 9,
+          "coverage": 0.5294,
+          "extent": 0.6471,
+          "interior_near_complete": true,
+          "max_unsupported_interior_chars": 3,
+          "max_unsupported_interior_run_chars": 2,
+          "min_coverage": 0.8,
+          "min_extent": 0.82,
+          "min_precision": 0.6,
+          "near_complete_transcript": false,
+          "numeric_near_complete": false,
+          "observed_text": "你一个技能不带都带宠物",
+          "owner_eligible": false,
+          "precision": 0.8182,
+          "required_common_chars": 6,
+          "schema_version": "chat-whole-line-support.v1",
+          "score": 0.6294,
+          "support_kind": "primary_transcript",
+          "unsupported_authority_head": "李姐和我打我",
+          "unsupported_authority_interior": [
+            "都",
+            "就"
+          ],
+          "unsupported_authority_interior_chars": 2,
+          "unsupported_authority_tail": ""
+        },
+        "proof_basis": "partial_evidence",
+        "required_common_chars": 6,
+        "schema_version": "chat-whole-line-support-gate.v1",
+        "score": 0.6294,
+        "status": "BLOCKED_PARTIAL_EVIDENCE",
+        "thread_anchored": false,
+        "transcript_span_supported": false,
+        "unsupported_authority_head": "李姐和我打我",
+        "unsupported_authority_interior": [
+          "都",
+          "就"
+        ],
+        "unsupported_authority_tail": ""
+      }
+    }
+  ],
+  "term_boundary_audit": {
+    "moves": [],
+    "schema_version": "term-boundary-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "thank_prefix_restore_audit": {
+    "restorations": [],
+    "schema_version": "thank-prefix-restore-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "thanks_record_coverage": [],
+  "title_mark_balance_audit": {
+    "cross_cue_pairs": [],
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "title-mark-balance-audit.v1",
+    "status": "CLEAN",
+    "unresolved": []
+  },
+  "transcript_entity_audit": {
+    "confirmed": [],
+    "entity_verdict_required": [],
+    "input_srt_sha256": "722ff84ff1da9c938b1a868bd18ebf85fb6de174d7ccdf5fa0713d73f09a022f",
+    "ledger_excluded_cue_indexes": [
+      5,
+      9,
+      12,
+      19,
+      20,
+      24,
+      28,
+      30
+    ],
+    "output_srt_sha256": "722ff84ff1da9c938b1a868bd18ebf85fb6de174d7ccdf5fa0713d73f09a022f",
+    "repairs": [],
+    "schema_version": "transcript-entity-audit.v1",
+    "source_truth_preview_excluded_cue_indexes": [
+      5,
+      9,
+      12,
+      19,
+      20,
+      24,
+      28,
+      30
+    ],
+    "status": "NO_ENTITY"
+  },
+  "unthanked_donor_disclosure": {
+    "schema_version": "unthanked-donor-disclosure.v1",
+    "status": "DISCLOSED",
+    "unthanked": [
+      {
+        "kind": "superchat",
+        "offset_ms": -841262,
+        "sender": "袖手花",
+        "text": "小李把各种红点都点一点吧，大家在公会里看急眼了"
+      },
+      {
+        "kind": "superchat",
+        "offset_ms": -521262,
+        "sender": "夜行行行行",
+        "text": "并不会拉娘主播别造谣，我说拉娘同人女另有其人"
+      }
+    ]
+  },
+  "witness_disagreement_audits": [
+    {
+      "candidate_entities": [
+        "李豆沙",
+        "小李"
+      ],
+      "reason_code": "DRAFT_WITNESS_IS_NOT_POST_SEMANTIC_AUTHORITY",
+      "schema_version": "witness-disagreement-audit.v2",
+      "status": "SEMANTIC_AUTHORITY_PRESERVED",
+      "suspicious_cue_indexes": [
+        19,
+        20
+      ]
+    }
+  ]
+}

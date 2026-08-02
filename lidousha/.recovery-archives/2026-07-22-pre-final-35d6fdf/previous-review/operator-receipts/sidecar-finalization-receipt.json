@@ -1,0 +1,19 @@
+{
+  "schema_version": "review-sidecar-finalization-receipt.v1",
+  "status": "COMPLETED",
+  "commit": "6e458c292f63f14da3e96a273930d713b9e66ac1",
+  "candidate_id": "auto_193450_670_909",
+  "canonical_subtitle_sha256": "sha256:86aa64f90559dc213f088b95df7325bb94947a481601a31b1b890a04454f9f6e",
+  "delivery_subtitle_sha256_before": "sha256:86aa64f90559dc213f088b95df7325bb94947a481601a31b1b890a04454f9f6e",
+  "delivery_subtitle_sha256_after": "sha256:9c187292a0b90ea81bbb6c19f8fcc19e0c9df63747c0d92c3ad4be9370a5f58e",
+  "record_sha256_after": "sha256:5d66f63427ccad26279d1de5935eb025b85fe74ce0b76715ec3a44d4933f1808",
+  "review_manifest_sha256": "sha256:bd2fb6ae6dc65c641212381ace0734cbccfe13acc95916e13ce6aaac34f24a9f",
+  "payload_unchanged": true,
+  "line_lengths_after": [
+    23,
+    7
+  ],
+  "upload_enabled": false,
+  "upload_ledger_sha256": "sha256:f3775e2e56cf78707fc249a159a0e97ad394c15854076e7f9315f445535ab225",
+  "completed_at": "2026-07-22T23:43:31.785507+00:00"
+}

@@ -1,0 +1,2302 @@
+{
+  "address_enumeration_audit": {
+    "repairs": [],
+    "schema_version": "address-enumeration-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "applied": [],
+  "burn_binding": {
+    "ass_path": null,
+    "ass_sha256": null,
+    "burned_media_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/auto_183122_1209_1410.recut.burned-final-sapphire72.mp4",
+    "burned_media_sha256": "3eb97a04e70631c6a509d1b307ed2522b7255cdc7539fbb1f6ae0ff4714d0695"
+  },
+  "code_switch_surface_audit": {
+    "input_srt_sha256": "39aa784755744da75677903574d76cdf7022fa56108af0b6b5cf1e1281a089a9",
+    "output_srt_sha256": "39aa784755744da75677903574d76cdf7022fa56108af0b6b5cf1e1281a089a9",
+    "repairs": [],
+    "schema_version": "code-switch-surface-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "coreference_repairs": [],
+  "entity_repairs": [
+    {
+      "after": [
+        "谢谢唐琳韵的钢镚"
+      ],
+      "before": [
+        "谢谢桃林的钢镚"
+      ],
+      "boundary_owner_id": "entity_repair:1:99720:100840",
+      "boundary_required": true,
+      "cue_indexes": [
+        40
+      ],
+      "evidence_id": "a1c821c65651768875329384853ea846d973cd79e7f364d5c4a1e7db5deaa981",
+      "final_delivery_overlap_ms": 1120,
+      "final_delivery_overlap_ratio": 1.0,
+      "final_relative_end_ms": 91080,
+      "final_relative_start_ms": 89960,
+      "final_verification_kind": "entity_repair",
+      "final_verification_scope": "DELIVERY",
+      "matched_end_ms": 100840,
+      "matched_start_ms": 99720,
+      "mode": "final_review_context_adjudication",
+      "structured_exact_text": "谢谢唐琳韵的钢镚",
+      "survived": true,
+      "survived_final_speaker_srt": true,
+      "survived_final_text_srt": true,
+      "verdict": {
+        "audio_clip_sha256": "71450a3f7239d916ad79008978122df49d4dd0966c814dd23f306f2c37076619",
+        "audio_end_ms": 103960,
+        "audio_start_ms": 96540,
+        "confidence_current": 0.95,
+        "confidence_proposed": 0.95,
+        "current_fit": "INCOMPATIBLE",
+        "heard_syllables": "谢谢唐琳韵的钢镚",
+        "model": "Gemini 3.6 Flash (High)",
+        "prompt_sha256": "d93819baa07846f85bb720b51e3cae7578b352027b9aa0a9412fb932fdd0a46a",
+        "proposed_fit": "SUPPORTED",
+        "provider": "agy",
+        "reason": "The audio clearly contains three syllables táng lín yùn (唐琳韵) between 谢谢 and 的, matching the proposed candidate, whereas current candidate 桃林 is missing the third syllable.",
+        "request_sha256": "2c25bb06fec870616504f9b14fcdcaddb786f18f21c494f33dff86af8a5ba61c",
+        "response_sha256": "7ba5bc92161e00739ec9e3bf41d6345a1f13446353edd796baf711b47e404577",
+        "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+        "source_media_sha256": "92b41ef8d7ecdcceed932998cbaa5d5c8cf48d660c059f407eea722ff3a47a2b",
+        "status": "OBSERVED",
+        "target_audible": true,
+        "timeline_binding": {
+          "delivery_local": {
+            "context_end_ms": 103960,
+            "context_start_ms": 96540,
+            "target_end_ms": 100840,
+            "target_start_ms": 99720
+          },
+          "schema_version": "subtitle-audio-timeline-binding.v1",
+          "source_media": {
+            "crop_end_ms": 103960,
+            "crop_start_ms": 96540,
+            "target_end_ms": 100840,
+            "target_start_ms": 99720
+          },
+          "source_media_timeline_offset_ms": 0
+        }
+      }
+    },
+    {
+      "after": [
+        "谢谢夏雨清心送的摸摸头啊"
+      ],
+      "before": [
+        "谢谢夏雨清心做的摸摸头啊"
+      ],
+      "boundary_owner_rejection": "OUTSIDE_IMMUTABLE_STORY_SCOPE",
+      "boundary_required": false,
+      "cue_indexes": [
+        75
+      ],
+      "evidence_id": "aa9e5183c8c21c7d8e89422d3188f86076bd7f2c198ccf13e5af8a35ca886fe8",
+      "final_delivery_overlap_ms": 0,
+      "final_delivery_overlap_ratio": 0.0,
+      "final_verification_kind": "entity_repair",
+      "final_verification_scope": "OUTSIDE_DELIVERY",
+      "final_verification_scope_reason": "BOUNDARY_SLIVER_BELOW_MEANINGFUL_AUDIO_THRESHOLD",
+      "matched_end_ms": 180040,
+      "matched_start_ms": 178040,
+      "mode": "final_review_context_adjudication",
+      "structured_exact_text": "谢谢夏雨清心送的摸摸头啊",
+      "survived": true,
+      "verdict": {
+        "audio_clip_sha256": "271560c0fe33d3c4856dc9adf3fa3ad4d5afa167f8a6909515e7232ee6973c6c",
+        "audio_end_ms": 182100,
+        "audio_start_ms": 174320,
+        "confidence_current": 0.0,
+        "confidence_proposed": 1.0,
+        "current_fit": "INCOMPATIBLE",
+        "heard_syllables": "谢谢夏雨清心送的摸摸头啊",
+        "model": "Gemini 3.6 Flash (High)",
+        "prompt_sha256": "b3ae3c84a6ed377a39a1a8c3837408bbd121d92948958a1ace0d30baa81b5ea7",
+        "proposed_fit": "SUPPORTED",
+        "provider": "agy",
+        "reason": "Target audio clearly features the syllable 'sòng' ('送的'), contradicting 'zuò' ('做的').",
+        "request_sha256": "a85aca7fbc8d5f77508b953d2b465dc1fb63f0fbbbec791c5d9631ad1ee92847",
+        "response_sha256": "3589d60489dcd2d853d4f19c5db610fe4a0fbdceee19922f1f0bb42ce4fac111",
+        "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+        "source_media_sha256": "92b41ef8d7ecdcceed932998cbaa5d5c8cf48d660c059f407eea722ff3a47a2b",
+        "status": "OBSERVED",
+        "target_audible": true,
+        "timeline_binding": {
+          "delivery_local": {
+            "context_end_ms": 182100,
+            "context_start_ms": 174320,
+            "target_end_ms": 180040,
+            "target_start_ms": 178040
+          },
+          "schema_version": "subtitle-audio-timeline-binding.v1",
+          "source_media": {
+            "crop_end_ms": 182100,
+            "crop_start_ms": 174320,
+            "target_end_ms": 180040,
+            "target_start_ms": 178040
+          },
+          "source_media_timeline_offset_ms": 0
+        }
+      }
+    }
+  ],
+  "entity_verdict_required": [],
+  "entity_verdicts": [],
+  "evidence_considered": 157,
+  "final_boundary_required_exclusion_count": 0,
+  "final_hard_meme_surface_audit": {
+    "input_srt_sha256": "21be2ac8cd9cf8ed1b8e7bb45af67a4bb25bb75fbf8d0879d014f87e795e68d7",
+    "output_srt_sha256": "21be2ac8cd9cf8ed1b8e7bb45af67a4bb25bb75fbf8d0879d014f87e795e68d7",
+    "repairs": [],
+    "rule_count": 1,
+    "schema_version": "hard-meme-surface-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "final_hard_meme_surface_verification": {
+    "failures": {},
+    "status": "PASS"
+  },
+  "final_output_srt_sha256": "21be2ac8cd9cf8ed1b8e7bb45af67a4bb25bb75fbf8d0879d014f87e795e68d7",
+  "final_outside_delivery_count": 1,
+  "final_redelivery_baseline_owner_verification": {
+    "failures": [],
+    "required_mapping_count": 0,
+    "status": "NOT_APPLICABLE"
+  },
+  "final_required_decision_count": 1,
+  "final_required_legacy_decision_count": 1,
+  "final_required_redelivery_baseline_owner_count": 0,
+  "final_required_source_truth_owner_count": 0,
+  "final_review_audit": {
+    "boundary_semantic_review": {
+      "boundary_search_scope": {
+        "boundary_end_mode": "semantic_lower_bound",
+        "delivery_lower_bound_ms": 129630,
+        "delivery_tail_pad_ms": 400,
+        "last_piece_start_ms": 0,
+        "manual_lower_bound_ms": null,
+        "max_recommended_end_ms": 189630,
+        "minimum_recommended_end_ms": 129630,
+        "prior_piece_duration_ms": 0,
+        "reason_codes": [],
+        "recommendation_forward_ms": 60000,
+        "repair_cap_ms": 60000,
+        "required_last_piece_source_end_ms": 204630,
+        "required_local_source_context_end_ms": 204630,
+        "required_owner_end_ms": null,
+        "review_target_ms": 129630,
+        "schema_version": "talk-boundary-search-scope.v1",
+        "scope_sha256": "sha256:656a2a4108314beb0cfe21053364608a7dec54e78b8bfb435ddd95b9a1ec5ed3",
+        "semantic_search_origin_ms": 129630,
+        "semantic_target_ms": 129630,
+        "status": "PASS",
+        "structured_payoff_ms": null,
+        "witness_reserve_ms": 15000
+      },
+      "candidate_id": "auto_183122_1209_1410",
+      "content_anchor_covered": true,
+      "correlated_reviewer_disclosure": true,
+      "cue_grid_sha256": "sha256:c9aacf39a6db8fe336f637ccffbfc15d6e5a8103945be2ae215230883bcb4ffd",
+      "evidence_cue_indexes": [
+        48,
+        49,
+        50,
+        51
+      ],
+      "final_endpoint_binding": {
+        "closure_text_sha256": "sha256:7ac6b5457f97863d55c2390ce84a3275c18e1adbcdc8503ab09d156c5f3213c1",
+        "final_closure_cue_index": 51,
+        "final_cue_grid_sha256": "sha256:c9aacf39a6db8fe336f637ccffbfc15d6e5a8103945be2ae215230883bcb4ffd",
+        "final_end_ms": 129630,
+        "final_snapped_end_ms": 129630,
+        "final_start_ms": 0,
+        "reason_codes": [],
+        "recommended_end_cue_index": 51,
+        "recommended_end_ms": 129630,
+        "schema_version": "talk-boundary-final-endpoint-binding.v1",
+        "semantic_cue_grid_sha256": "sha256:c9aacf39a6db8fe336f637ccffbfc15d6e5a8103945be2ae215230883bcb4ffd",
+        "semantic_request_sha256": "sha256:6142cc087d33e1aed5d5174b282b6abdfc6992e08da03c8c852a853ffac2e1b9",
+        "status": "PASS"
+      },
+      "independent_semantic_vote_count": 1,
+      "max_forward_ms": 60000,
+      "needs_more_context": false,
+      "next_topic_separated": true,
+      "next_topic_witness_valid": true,
+      "reason_codes": [
+        "STORY_ALREADY_CLOSED",
+        "SUPERCCHAT_TOPIC_SEPARATION",
+        "TARGET_SYNTAX_COMPLETE",
+        "TERMINAL_SOURCE_SEPARATION_WITNESS_PASS"
+      ],
+      "recommended_end_cue_index": 51,
+      "recommended_end_ms": 129630,
+      "request_sha256": "sha256:6142cc087d33e1aed5d5174b282b6abdfc6992e08da03c8c852a853ffac2e1b9",
+      "retry_scope": "none",
+      "review_scope": "final_delivery",
+      "reviewer_independence_group": "cpa-gpt-5.6-semantic-family",
+      "same_topic_continues_after_target": false,
+      "schema_version": "talk-boundary-semantic-review.v1",
+      "selector_story_witness": {
+        "comedic_payoff": 4,
+        "independence_group": "cpa-gpt-5.6-semantic-family",
+        "self_contained": 4,
+        "status": "PASS"
+      },
+      "semantic_independence_groups": [
+        "cpa-gpt-5.6-semantic-family"
+      ],
+      "source_separation_witness": {
+        "reason_codes": [],
+        "schema_version": "talk-boundary-source-separation-witness.v1",
+        "source_cue_grid_sha256": "sha256:43ec5d1aac45332cde09ad102962964c4606ef81060363faa215821e416e9c43",
+        "source_final_end_ms": 139390,
+        "source_final_start_ms": 9760,
+        "source_recommended_end_ms": 139390,
+        "source_request_sha256": "sha256:e11dcaf3015560274a9622b9fc7de31688969d699bcd3c30c914f46443736ac3",
+        "source_review_sha256": "sha256:f715c68781a33935c3abb12e7d8587396a5434f9481b1a6dda7fc7120ba4ebe6",
+        "status": "PASS"
+      },
+      "status": "PASS",
+      "story_closed": true,
+      "summary": "第51条句意完整，原豆角包袱此前已落地，且谢礼互动已构成后续话题分隔。",
+      "syntax_complete": true,
+      "target_cue_index": 51,
+      "target_ms": 129630
+    },
+    "correction_mutation_authority": {
+      "applied_count": 3,
+      "failures": [],
+      "schema_version": "subtitle-correction-mutation-audit.v1",
+      "status": "PASS",
+      "validated_mutation_count": 3
+    },
+    "correction_pass": {
+      "applied_count": 3,
+      "boundary_semantic_review": {
+        "boundary_search_scope": {
+          "boundary_end_mode": "semantic_lower_bound",
+          "delivery_lower_bound_ms": 129630,
+          "delivery_tail_pad_ms": 400,
+          "last_piece_start_ms": 0,
+          "manual_lower_bound_ms": null,
+          "max_recommended_end_ms": 189630,
+          "minimum_recommended_end_ms": 129630,
+          "prior_piece_duration_ms": 0,
+          "reason_codes": [],
+          "recommendation_forward_ms": 60000,
+          "repair_cap_ms": 60000,
+          "required_last_piece_source_end_ms": 204630,
+          "required_local_source_context_end_ms": 204630,
+          "required_owner_end_ms": null,
+          "review_target_ms": 129630,
+          "schema_version": "talk-boundary-search-scope.v1",
+          "scope_sha256": "sha256:656a2a4108314beb0cfe21053364608a7dec54e78b8bfb435ddd95b9a1ec5ed3",
+          "semantic_search_origin_ms": 129630,
+          "semantic_target_ms": 129630,
+          "status": "PASS",
+          "structured_payoff_ms": null,
+          "witness_reserve_ms": 15000
+        },
+        "candidate_id": "auto_183122_1209_1410",
+        "content_anchor_covered": true,
+        "correlated_reviewer_disclosure": true,
+        "cue_grid_sha256": "sha256:c9aacf39a6db8fe336f637ccffbfc15d6e5a8103945be2ae215230883bcb4ffd",
+        "evidence_cue_indexes": [
+          48,
+          49,
+          50,
+          51
+        ],
+        "final_endpoint_binding": {
+          "closure_text_sha256": "sha256:7ac6b5457f97863d55c2390ce84a3275c18e1adbcdc8503ab09d156c5f3213c1",
+          "final_closure_cue_index": 51,
+          "final_cue_grid_sha256": "sha256:c9aacf39a6db8fe336f637ccffbfc15d6e5a8103945be2ae215230883bcb4ffd",
+          "final_end_ms": 129630,
+          "final_snapped_end_ms": 129630,
+          "final_start_ms": 0,
+          "reason_codes": [],
+          "recommended_end_cue_index": 51,
+          "recommended_end_ms": 129630,
+          "schema_version": "talk-boundary-final-endpoint-binding.v1",
+          "semantic_cue_grid_sha256": "sha256:c9aacf39a6db8fe336f637ccffbfc15d6e5a8103945be2ae215230883bcb4ffd",
+          "semantic_request_sha256": "sha256:6142cc087d33e1aed5d5174b282b6abdfc6992e08da03c8c852a853ffac2e1b9",
+          "status": "PASS"
+        },
+        "independent_semantic_vote_count": 1,
+        "max_forward_ms": 60000,
+        "needs_more_context": false,
+        "next_topic_separated": true,
+        "next_topic_witness_valid": true,
+        "reason_codes": [
+          "STORY_ALREADY_CLOSED",
+          "SUPERCCHAT_TOPIC_SEPARATION",
+          "TARGET_SYNTAX_COMPLETE",
+          "TERMINAL_SOURCE_SEPARATION_WITNESS_PASS"
+        ],
+        "recommended_end_cue_index": 51,
+        "recommended_end_ms": 129630,
+        "request_sha256": "sha256:6142cc087d33e1aed5d5174b282b6abdfc6992e08da03c8c852a853ffac2e1b9",
+        "retry_scope": "none",
+        "review_scope": "final_delivery",
+        "reviewer_independence_group": "cpa-gpt-5.6-semantic-family",
+        "same_topic_continues_after_target": false,
+        "schema_version": "talk-boundary-semantic-review.v1",
+        "selector_story_witness": {
+          "comedic_payoff": 4,
+          "independence_group": "cpa-gpt-5.6-semantic-family",
+          "self_contained": 4,
+          "status": "PASS"
+        },
+        "semantic_independence_groups": [
+          "cpa-gpt-5.6-semantic-family"
+        ],
+        "source_separation_witness": {
+          "reason_codes": [],
+          "schema_version": "talk-boundary-source-separation-witness.v1",
+          "source_cue_grid_sha256": "sha256:43ec5d1aac45332cde09ad102962964c4606ef81060363faa215821e416e9c43",
+          "source_final_end_ms": 139390,
+          "source_final_start_ms": 9760,
+          "source_recommended_end_ms": 139390,
+          "source_request_sha256": "sha256:e11dcaf3015560274a9622b9fc7de31688969d699bcd3c30c914f46443736ac3",
+          "source_review_sha256": "sha256:f715c68781a33935c3abb12e7d8587396a5434f9481b1a6dda7fc7120ba4ebe6",
+          "status": "PASS"
+        },
+        "status": "PASS",
+        "story_closed": true,
+        "summary": "第51条句意完整，原豆角包袱此前已落地，且谢礼互动已构成后续话题分隔。",
+        "syntax_complete": true,
+        "target_cue_index": 51,
+        "target_ms": 129630
+      },
+      "context_adjudication_budget": 12,
+      "context_adjudication_count": 3,
+      "findings": [
+        {
+          "base_text_sha256": "e4b94b7616451df1198e916e02cf56e5ad76125fd3803ce285f3a0b7db9be0bc",
+          "candidate_memory_id": null,
+          "candidate_provenance": {
+            "kind": "structured_context",
+            "surface": "唐琳韵"
+          },
+          "context_audio_adjudication": {
+            "mutation_authority": {
+              "basis": "ACOUSTIC_PRONUNCIATION_DISAMBIGUATION",
+              "schema_version": "subtitle-correction-mutation-authority.v1",
+              "status": "PASS"
+            },
+            "orthography_ambiguous": false,
+            "orthography_authority": {
+              "provenance_kind": "structured_context",
+              "reason_code": "ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED",
+              "schema_version": "subtitle-orthography-authority.v1",
+              "status": "BLOCK"
+            },
+            "orthography_equivalence": {
+              "matched": false
+            },
+            "policy_branch": "ACOUSTICALLY_ADMISSIBLE_CONTEXT_TIEBREAK_APPLY_PROPOSED",
+            "repaired": true,
+            "request": {
+              "base_text_sha256": "e4b94b7616451df1198e916e02cf56e5ad76125fd3803ce285f3a0b7db9be0bc",
+              "candidate_entities": [
+                {
+                  "candidate_id": "CURRENT",
+                  "canonical": "谢谢桃林的钢镚",
+                  "readings": [],
+                  "surfaces": [],
+                  "text_sha256": "e4b94b7616451df1198e916e02cf56e5ad76125fd3803ce285f3a0b7db9be0bc"
+                },
+                {
+                  "candidate_id": "PROPOSED",
+                  "canonical": "谢谢唐琳韵的钢镚",
+                  "readings": [],
+                  "surfaces": [],
+                  "text_sha256": "c5e5eaabede6973b071532e2c6b322a98c8868369bb7fb37928eed7810d8d480"
+                }
+              ],
+              "candidate_provenance": {
+                "kind": "structured_context",
+                "surface": "唐琳韵"
+              },
+              "clip_context_binding": {
+                "context_sha256": "sha256:7bfadbb198e2191976ba029c9955bc673111eafb0cc9f9c9fda574e65b664f8c",
+                "mutation_authorized": false,
+                "schema_version": "lidousha-clip-context.v1",
+                "speech_memory_ledger_sha256": "sha256:d87532b5d56457496a868c6910091a545bd2c612a807182d742aa0ca26d30c95",
+                "whole_clip_draft_srt_sha256": "sha256:39aa784755744da75677903574d76cdf7022fa56108af0b6b5cf1e1281a089a9"
+              },
+              "context_after": "感觉豆沙用礼墨的麦更加吵闹\n是我错觉吗",
+              "context_before": "可，可能有点失败\n对，也有可能是焯水时间太短了",
+              "context_end_ms": 103960,
+              "context_start_ms": 96540,
+              "cue_indexes": [
+                40
+              ],
+              "current_cue": "谢谢桃林的钢镚",
+              "evidence_cue_ids": [
+                41,
+                42
+              ],
+              "evidence_id": "a1c821c65651768875329384853ea846d973cd79e7f364d5c4a1e7db5deaa981",
+              "kind": "subtitle_span_acoustic_check",
+              "matched_audio_text": "谢谢桃林的钢镚",
+              "matched_end_ms": 100840,
+              "matched_start_ms": 99720,
+              "proposed_cue": "谢谢唐琳韵的钢镚",
+              "reason": "紧邻的结构化SC发送者为“唐琳韵”，随后两条正是该SC正文，当前姓名疑似近音漏字。",
+              "repair_class": "source_backed_entity",
+              "replacement": "唐琳韵",
+              "request_sha256": "2c25bb06fec870616504f9b14fcdcaddb786f18f21c494f33dff86af8a5ba61c",
+              "schema_version": "subtitle-span-acoustic-check-request.v1",
+              "source_media_timeline_offset_ms": 0,
+              "suspect": "桃林"
+            },
+            "schema_version": "subtitle-span-adjudication.v1",
+            "status": "OBSERVED",
+            "timing_immutable": true,
+            "verdict": {
+              "audio_clip_sha256": "71450a3f7239d916ad79008978122df49d4dd0966c814dd23f306f2c37076619",
+              "audio_end_ms": 103960,
+              "audio_start_ms": 96540,
+              "confidence_current": 0.95,
+              "confidence_proposed": 0.95,
+              "current_fit": "INCOMPATIBLE",
+              "heard_syllables": "谢谢唐琳韵的钢镚",
+              "model": "Gemini 3.6 Flash (High)",
+              "prompt_sha256": "d93819baa07846f85bb720b51e3cae7578b352027b9aa0a9412fb932fdd0a46a",
+              "proposed_fit": "SUPPORTED",
+              "provider": "agy",
+              "reason": "The audio clearly contains three syllables táng lín yùn (唐琳韵) between 谢谢 and 的, matching the proposed candidate, whereas current candidate 桃林 is missing the third syllable.",
+              "request_sha256": "2c25bb06fec870616504f9b14fcdcaddb786f18f21c494f33dff86af8a5ba61c",
+              "response_sha256": "7ba5bc92161e00739ec9e3bf41d6345a1f13446353edd796baf711b47e404577",
+              "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+              "source_media_sha256": "92b41ef8d7ecdcceed932998cbaa5d5c8cf48d660c059f407eea722ff3a47a2b",
+              "status": "OBSERVED",
+              "target_audible": true,
+              "timeline_binding": {
+                "delivery_local": {
+                  "context_end_ms": 103960,
+                  "context_start_ms": 96540,
+                  "target_end_ms": 100840,
+                  "target_start_ms": 99720
+                },
+                "schema_version": "subtitle-audio-timeline-binding.v1",
+                "source_media": {
+                  "crop_end_ms": 103960,
+                  "crop_start_ms": 96540,
+                  "target_end_ms": 100840,
+                  "target_start_ms": 99720
+                },
+                "source_media_timeline_offset_ms": 0
+              }
+            }
+          },
+          "correlated_text_witness": false,
+          "cue_index": 40,
+          "evidence_cue_ids": [
+            41,
+            42
+          ],
+          "force_acoustic": false,
+          "kind": "entity",
+          "proposed_full_cue": "谢谢唐琳韵的钢镚",
+          "repair_class": "source_backed_entity",
+          "routed": "context_audio_adjudicated_fix",
+          "span_end_codepoint": 4,
+          "span_start_codepoint": 2,
+          "suggestion": "唐琳韵",
+          "suspect": "桃林",
+          "why": "紧邻的结构化SC发送者为“唐琳韵”，随后两条正是该SC正文，当前姓名疑似近音漏字。"
+        },
+        {
+          "base_text_sha256": "f04085289e1fabfd5d44b6af9c47d3c3e19e0df090d776bed2237396f16e680a",
+          "candidate_memory_id": null,
+          "candidate_provenance": {
+            "kind": "glossary",
+            "surface": "钢镚"
+          },
+          "correlated_text_witness": false,
+          "cue_index": 53,
+          "evidence_cue_ids": [
+            40,
+            54,
+            55,
+            56
+          ],
+          "force_acoustic": false,
+          "kind": "nonword",
+          "orthography_authority": {
+            "provenance_kind": "glossary",
+            "reason_code": null,
+            "schema_version": "subtitle-orthography-authority.v1",
+            "status": "PASS"
+          },
+          "proposed_full_cue": "谢谢小猪状态的钢镚妈妈，好久不见",
+          "repair_class": "phonetic",
+          "reported_scope_warnings": [
+            "REPORTED_SUSPECT_SCOPE_MISMATCH",
+            "REPORTED_REPLACEMENT_SCOPE_MISMATCH"
+          ],
+          "routed": "homophone_fix",
+          "span_end_codepoint": 9,
+          "span_start_codepoint": 8,
+          "suggestion": "镚",
+          "suspect": "蹦",
+          "why": "低额SC的钦定梗词是“钢镚”，本条也在明确答谢SC。"
+        },
+        {
+          "base_text_sha256": "6aee1c5df71e373d50da4195c272e91d4e550fa98f3d71f26bbb3ad643d56315",
+          "candidate_memory_id": null,
+          "candidate_provenance": null,
+          "context_audio_adjudication": {
+            "mutation_authority": {
+              "basis": "ACOUSTIC_PRONUNCIATION_DISAMBIGUATION",
+              "schema_version": "subtitle-correction-mutation-authority.v1",
+              "status": "PASS"
+            },
+            "orthography_ambiguous": false,
+            "orthography_authority": {
+              "provenance_kind": null,
+              "reason_code": "ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED",
+              "schema_version": "subtitle-orthography-authority.v1",
+              "status": "BLOCK"
+            },
+            "orthography_equivalence": {
+              "matched": false
+            },
+            "policy_branch": "ACOUSTICALLY_ADMISSIBLE_CONTEXT_TIEBREAK_APPLY_PROPOSED",
+            "repaired": true,
+            "request": {
+              "base_text_sha256": "6aee1c5df71e373d50da4195c272e91d4e550fa98f3d71f26bbb3ad643d56315",
+              "candidate_entities": [
+                {
+                  "candidate_id": "CURRENT",
+                  "canonical": "谢谢夏雨清心做的摸摸头啊",
+                  "readings": [],
+                  "surfaces": [],
+                  "text_sha256": "6aee1c5df71e373d50da4195c272e91d4e550fa98f3d71f26bbb3ad643d56315"
+                },
+                {
+                  "candidate_id": "PROPOSED",
+                  "canonical": "谢谢夏雨清心送的摸摸头啊",
+                  "readings": [],
+                  "surfaces": [],
+                  "text_sha256": "53fd501a5efa4beb40b0ba03e77187cfef59bf82a861e25ba06d129d49cf9054"
+                }
+              ],
+              "candidate_provenance": null,
+              "clip_context_binding": {
+                "context_sha256": "sha256:7bfadbb198e2191976ba029c9955bc673111eafb0cc9f9c9fda574e65b664f8c",
+                "mutation_authorized": false,
+                "schema_version": "lidousha-clip-context.v1",
+                "speech_memory_ledger_sha256": "sha256:d87532b5d56457496a868c6910091a545bd2c612a807182d742aa0ca26d30c95",
+                "whole_clip_draft_srt_sha256": "sha256:39aa784755744da75677903574d76cdf7022fa56108af0b6b5cf1e1281a089a9"
+              },
+              "context_after": "谢谢你，ありがとう\n谢谢你，谢谢你的摸摸头",
+              "context_before": "今天晚上可以休息一下\n今天晚上可以跟礼墨去吃饭",
+              "context_end_ms": 182100,
+              "context_start_ms": 174320,
+              "cue_indexes": [
+                75
+              ],
+              "current_cue": "谢谢夏雨清心做的摸摸头啊",
+              "evidence_cue_ids": [
+                76,
+                77
+              ],
+              "evidence_id": "aa9e5183c8c21c7d8e89422d3188f86076bd7f2c198ccf13e5af8a35ca886fe8",
+              "kind": "subtitle_span_acoustic_check",
+              "matched_audio_text": "谢谢夏雨清心做的摸摸头啊",
+              "matched_end_ms": 180040,
+              "matched_start_ms": 178040,
+              "proposed_cue": "谢谢夏雨清心送的摸摸头啊",
+              "reason": "礼物答谢语境中“做的摸摸头”明显不通，结合后续连续致谢，疑为“送的”近音误识。",
+              "repair_class": "phonetic",
+              "replacement": "送",
+              "request_sha256": "a85aca7fbc8d5f77508b953d2b465dc1fb63f0fbbbec791c5d9631ad1ee92847",
+              "schema_version": "subtitle-span-acoustic-check-request.v1",
+              "source_media_timeline_offset_ms": 0,
+              "suspect": "做"
+            },
+            "schema_version": "subtitle-span-adjudication.v1",
+            "status": "OBSERVED",
+            "timing_immutable": true,
+            "verdict": {
+              "audio_clip_sha256": "271560c0fe33d3c4856dc9adf3fa3ad4d5afa167f8a6909515e7232ee6973c6c",
+              "audio_end_ms": 182100,
+              "audio_start_ms": 174320,
+              "confidence_current": 0.0,
+              "confidence_proposed": 1.0,
+              "current_fit": "INCOMPATIBLE",
+              "heard_syllables": "谢谢夏雨清心送的摸摸头啊",
+              "model": "Gemini 3.6 Flash (High)",
+              "prompt_sha256": "b3ae3c84a6ed377a39a1a8c3837408bbd121d92948958a1ace0d30baa81b5ea7",
+              "proposed_fit": "SUPPORTED",
+              "provider": "agy",
+              "reason": "Target audio clearly features the syllable 'sòng' ('送的'), contradicting 'zuò' ('做的').",
+              "request_sha256": "a85aca7fbc8d5f77508b953d2b465dc1fb63f0fbbbec791c5d9631ad1ee92847",
+              "response_sha256": "3589d60489dcd2d853d4f19c5db610fe4a0fbdceee19922f1f0bb42ce4fac111",
+              "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+              "source_media_sha256": "92b41ef8d7ecdcceed932998cbaa5d5c8cf48d660c059f407eea722ff3a47a2b",
+              "status": "OBSERVED",
+              "target_audible": true,
+              "timeline_binding": {
+                "delivery_local": {
+                  "context_end_ms": 182100,
+                  "context_start_ms": 174320,
+                  "target_end_ms": 180040,
+                  "target_start_ms": 178040
+                },
+                "schema_version": "subtitle-audio-timeline-binding.v1",
+                "source_media": {
+                  "crop_end_ms": 182100,
+                  "crop_start_ms": 174320,
+                  "target_end_ms": 180040,
+                  "target_start_ms": 178040
+                },
+                "source_media_timeline_offset_ms": 0
+              }
+            }
+          },
+          "correlated_text_witness": false,
+          "cue_index": 75,
+          "evidence_cue_ids": [
+            76,
+            77
+          ],
+          "force_acoustic": false,
+          "kind": "context",
+          "proposed_full_cue": "谢谢夏雨清心送的摸摸头啊",
+          "repair_class": "phonetic",
+          "reported_scope_warnings": [
+            "REPORTED_SUSPECT_SCOPE_MISMATCH",
+            "REPORTED_REPLACEMENT_SCOPE_MISMATCH"
+          ],
+          "routed": "context_audio_adjudicated_fix",
+          "span_end_codepoint": 7,
+          "span_start_codepoint": 6,
+          "suggestion": "送",
+          "suspect": "做",
+          "why": "礼物答谢语境中“做的摸摸头”明显不通，结合后续连续致谢，疑为“送的”近音误识。"
+        },
+        {
+          "base_text_sha256": "b992b36ac15d4ad890e1c80ec8ce3a7bbd02c62ff36ccc23825dd1b988ae492f",
+          "candidate_memory_id": null,
+          "candidate_provenance": {
+            "kind": "structured_context",
+            "surface": "室友姐"
+          },
+          "context_audio_adjudication": {
+            "mutation_authority": {
+              "basis": null,
+              "schema_version": "subtitle-correction-mutation-authority.v1",
+              "status": "NOT_APPLIED"
+            },
+            "orthography_ambiguous": false,
+            "orthography_authority": {
+              "provenance_kind": "structured_context",
+              "reason_code": "ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED",
+              "schema_version": "subtitle-orthography-authority.v1",
+              "status": "BLOCK"
+            },
+            "orthography_equivalence": {
+              "matched": false
+            },
+            "policy_branch": "PROPOSED_INCOMPATIBLE_KEEP_CURRENT",
+            "repaired": false,
+            "request": {
+              "base_text_sha256": "b992b36ac15d4ad890e1c80ec8ce3a7bbd02c62ff36ccc23825dd1b988ae492f",
+              "candidate_entities": [
+                {
+                  "candidate_id": "CURRENT",
+                  "canonical": "有跟舍友姐哭诉吗",
+                  "readings": [],
+                  "surfaces": [],
+                  "text_sha256": "b992b36ac15d4ad890e1c80ec8ce3a7bbd02c62ff36ccc23825dd1b988ae492f"
+                },
+                {
+                  "candidate_id": "PROPOSED",
+                  "canonical": "有跟室友姐哭诉吗",
+                  "readings": [],
+                  "surfaces": [],
+                  "text_sha256": "936a8278f6814fceed022c2146c25a1060beab4d3ee415db241321f85137a98d"
+                }
+              ],
+              "candidate_provenance": {
+                "kind": "structured_context",
+                "surface": "室友姐"
+              },
+              "clip_context_binding": {
+                "context_sha256": "sha256:7bfadbb198e2191976ba029c9955bc673111eafb0cc9f9c9fda574e65b664f8c",
+                "mutation_authorized": false,
+                "schema_version": "lidousha-clip-context.v1",
+                "speech_memory_ledger_sha256": "sha256:d87532b5d56457496a868c6910091a545bd2c612a807182d742aa0ca26d30c95",
+                "whole_clip_draft_srt_sha256": "sha256:39aa784755744da75677903574d76cdf7022fa56108af0b6b5cf1e1281a089a9"
+              },
+              "context_after": "我没有，没有精力说话了\n哈哈",
+              "context_before": "大家\n为什么这么多事情，我也想问",
+              "context_end_ms": 207300,
+              "context_start_ms": 200660,
+              "cue_indexes": [
+                83
+              ],
+              "current_cue": "有跟舍友姐哭诉吗",
+              "evidence_cue_ids": [
+                82,
+                84
+              ],
+              "evidence_id": "3fd06e8ae2ff4f8cc183be6525e90e96932006d7d0e2ac7b89bea77555f6f28e",
+              "kind": "subtitle_span_acoustic_check",
+              "matched_audio_text": "有跟舍友姐哭诉吗",
+              "matched_end_ms": 204520,
+              "matched_start_ms": 203100,
+              "proposed_cue": "有跟室友姐哭诉吗",
+              "reason": "近窗结构化弹幕原文为“李姐有跟室友姐哭诉吗”，本条明显是在延迟念读该弹幕。",
+              "repair_class": "source_backed_entity",
+              "replacement": "室",
+              "request_sha256": "f44b81426e95f070483e82c0bd2807fba058282f2b960fafeb4a79e7028514c1",
+              "schema_version": "subtitle-span-acoustic-check-request.v1",
+              "source_media_timeline_offset_ms": 0,
+              "suspect": "舍"
+            },
+            "schema_version": "subtitle-span-adjudication.v1",
+            "status": "OBSERVED",
+            "timing_immutable": true,
+            "verdict": {
+              "audio_clip_sha256": "9d7281dd79f4d9c85e7adb6b0f0e2cdf184230811515bb54bc13ca096a220fb7",
+              "audio_end_ms": 207300,
+              "audio_start_ms": 200660,
+              "confidence_current": 0.95,
+              "confidence_proposed": 0.95,
+              "current_fit": "SUPPORTED",
+              "heard_syllables": "yǒu gēn shè yǒu jiě kū sù ma",
+              "model": "Gemini 3.6 Flash (High)",
+              "prompt_sha256": "f64f7668d1a0de71e1414f50d62f6b6f8247051ddf6fca3440c131c61ec6dffa",
+              "proposed_fit": "INCOMPATIBLE",
+              "provider": "agy",
+              "reason": "The speaker clearly pronounces 'shè' (舍) with an 'e' vowel sound in '舍友姐', which matches CURRENT and contradicts 'shì' (室) in PROPOSED.",
+              "request_sha256": "f44b81426e95f070483e82c0bd2807fba058282f2b960fafeb4a79e7028514c1",
+              "response_sha256": "7729daac828822d90245eccfb4e240f469bc241807d9aaa9e340bf7c60001ea5",
+              "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+              "source_media_sha256": "92b41ef8d7ecdcceed932998cbaa5d5c8cf48d660c059f407eea722ff3a47a2b",
+              "status": "OBSERVED",
+              "target_audible": true,
+              "timeline_binding": {
+                "delivery_local": {
+                  "context_end_ms": 207300,
+                  "context_start_ms": 200660,
+                  "target_end_ms": 204520,
+                  "target_start_ms": 203100
+                },
+                "schema_version": "subtitle-audio-timeline-binding.v1",
+                "source_media": {
+                  "crop_end_ms": 207300,
+                  "crop_start_ms": 200660,
+                  "target_end_ms": 204520,
+                  "target_start_ms": 203100
+                },
+                "source_media_timeline_offset_ms": 0
+              }
+            }
+          },
+          "correlated_text_witness": false,
+          "cue_index": 83,
+          "evidence_cue_ids": [
+            82,
+            84
+          ],
+          "force_acoustic": false,
+          "kind": "entity",
+          "proposed_full_cue": "有跟室友姐哭诉吗",
+          "repair_class": "source_backed_entity",
+          "reported_scope_warnings": [
+            "REPORTED_SUSPECT_SCOPE_MISMATCH",
+            "REPORTED_REPLACEMENT_SCOPE_MISMATCH"
+          ],
+          "routed": "disclosure",
+          "span_end_codepoint": 3,
+          "span_start_codepoint": 2,
+          "suggestion": "室",
+          "suspect": "舍",
+          "why": "近窗结构化弹幕原文为“李姐有跟室友姐哭诉吗”，本条明显是在延迟念读该弹幕。"
+        }
+      ],
+      "infra_unresolved": [],
+      "infra_unresolved_count": 0,
+      "schema_version": "final-review-audit.v1",
+      "source_truth_protected_cue_indexes": [],
+      "status": "APPLIED"
+    },
+    "discovery": {
+      "explicit_empty_findings": true,
+      "raw_validated_finding_count": 0,
+      "resolved_finding_count": 0,
+      "status": "COMPLETE"
+    },
+    "findings": [],
+    "reason_codes": [],
+    "release_gate": "PASS",
+    "resolved_findings": [],
+    "reviewed_srt_sha256": "sha256:078cd6dd96548a042364d5ca468e142e1419a2a140ef354c9de518c1388bfd67",
+    "schema_version": "final-review-audit.v2",
+    "status": "CLEAN",
+    "validated_finding_count": 0
+  },
+  "final_source_language_preservation_audit": {
+    "reverted": [],
+    "reverted_count": 0,
+    "schema_version": "source-language-preservation-audit.v1",
+    "status": "CLEAN",
+    "unproven_foreign_introductions": []
+  },
+  "final_source_truth_owner_verification": {
+    "context_only_truth_evidence": [],
+    "context_only_truth_ids": [],
+    "context_only_truth_row_count": 0,
+    "failures": [],
+    "final_delivery_interval": {
+      "end_ms": 139390,
+      "interval_semantics": "half_open",
+      "start_ms": 9760,
+      "timeline": "padded_source_local_ms"
+    },
+    "optional_truth_row_count": 0,
+    "required_truth_ids": [],
+    "required_truth_row_count": 0,
+    "required_window_count": 0,
+    "status": "PASS",
+    "straddling_truth_row_count": 0
+  },
+  "final_speaker_srt_path": null,
+  "final_speaker_srt_sha256": "078cd6dd96548a042364d5ca468e142e1419a2a140ef354c9de518c1388bfd67",
+  "final_status": "FINAL_ARTIFACTS_VERIFIED",
+  "final_superseded_by_redelivery_baseline_count": 0,
+  "final_superseded_by_source_truth_count": 0,
+  "final_text_srt_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/auto_183122_1209_1410.recut.srt",
+  "final_text_srt_sha256": "078cd6dd96548a042364d5ca468e142e1419a2a140ef354c9de518c1388bfd67",
+  "final_title_mark_balance_audit": {
+    "cross_cue_pairs": [],
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "title-mark-balance-audit.v1",
+    "status": "CLEAN",
+    "unresolved": []
+  },
+  "foreign_script_consistency_audit": {
+    "kana_cue_indexes": [
+      76
+    ],
+    "latin_heavy_cues": [],
+    "mixed_cjk_latin_cues": [],
+    "reason": null,
+    "schema_version": "foreign-script-consistency-audit.v1",
+    "status": "CLEAN"
+  },
+  "frozen_boundary_owner_contract": {
+    "boundary_retry_owner_contract_verification": {
+      "expected_contract_sha256": "sha256:c6a70524fe3fc02e1a390657bb1e4403bddb7fafd842f2ea8c8f3cac46685b5f",
+      "owner_eligibility_scope_sha256": "sha256:70a05c781275fcb55a03ed980003035f5bc736b22eec2acc2d8f4fb808d4c9b7",
+      "owner_set_sha256": "sha256:9bf4bdf63c80ce616a2bcd63d6ea01c3a41ee5d76bff5fb6e275782de5fe8768",
+      "status": "PASS"
+    },
+    "boundary_review_target_ms": 131890,
+    "boundary_search_scope": {
+      "boundary_end_mode": "semantic_lower_bound",
+      "delivery_lower_bound_ms": 131890,
+      "delivery_tail_pad_ms": 400,
+      "last_piece_start_ms": 1336800,
+      "manual_lower_bound_ms": null,
+      "max_recommended_end_ms": 191890,
+      "minimum_recommended_end_ms": 131890,
+      "prior_piece_duration_ms": 58450,
+      "reason_codes": [],
+      "recommendation_forward_ms": 60000,
+      "repair_cap_ms": 60000,
+      "required_last_piece_source_end_ms": 1485240,
+      "required_local_source_context_end_ms": 206890,
+      "required_owner_end_ms": 100840,
+      "review_target_ms": 131890,
+      "schema_version": "talk-boundary-search-scope.v1",
+      "scope_sha256": "sha256:2d2a2f74b7c38d3c8f7143b2be549743ea836238974bdfcde4e7bc013f51f95d",
+      "semantic_search_origin_ms": 131890,
+      "semantic_target_ms": 131890,
+      "status": "PASS",
+      "structured_payoff_ms": null,
+      "witness_reserve_ms": 15000
+    },
+    "contract_sha256": "sha256:83a96fdc0a4f54a8531c597839916effca3020a86835cc94af445730c6a86b30",
+    "owner_discovery_end_ms": 131890,
+    "owner_eligibility_scope": {
+      "candidate_id": "auto_183122_1209_1410",
+      "first_piece_source_start_ms": 1199070,
+      "given_source_end_ms": null,
+      "last_piece_source_start_ms": 1336800,
+      "prior_piece_duration_ms": 58450,
+      "schema_version": "candidate-boundary-owner-scope.v1",
+      "scope_sha256": "sha256:70a05c781275fcb55a03ed980003035f5bc736b22eec2acc2d8f4fb808d4c9b7",
+      "semantic_source_end_ms": 1410240,
+      "semantic_source_start_ms": 1209070,
+      "story_end_ms": 131890,
+      "story_start_ms": 10000
+    },
+    "owner_set_sha256": "sha256:9bf4bdf63c80ce616a2bcd63d6ea01c3a41ee5d76bff5fb6e275782de5fe8768",
+    "owners": [
+      {
+        "local_windows": [
+          {
+            "end_ms": 100840,
+            "start_ms": 99720
+          }
+        ],
+        "owner_id": "entity_repair:1:99720:100840",
+        "owner_kind": "entity_repair",
+        "required": true
+      }
+    ],
+    "required_owner_count": 1,
+    "schema_version": "frozen-boundary-owner-contract.v1",
+    "status": "FROZEN",
+    "story_end_ms": 131890,
+    "story_start_ms": 10000
+  },
+  "gift_repairs": [],
+  "impossible_punctuation_audit": {
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "impossible-punctuation-audit.v1",
+    "status": "CLEAN"
+  },
+  "input_srt_sha256": "39aa784755744da75677903574d76cdf7022fa56108af0b6b5cf1e1281a089a9",
+  "introduced_term_audits": [
+    {
+      "introduced_term": {
+        "cue_index": 16,
+        "draft_span": "差林",
+        "term": "礼墨"
+      },
+      "reason_code": "DRAFT_WITNESS_IS_NOT_POST_SEMANTIC_AUTHORITY",
+      "schema_version": "introduced-term-audit.v2",
+      "status": "SEMANTIC_AUTHORITY_PRESERVED"
+    },
+    {
+      "introduced_term": {
+        "cue_index": 17,
+        "draft_span": "你们",
+        "term": "礼墨"
+      },
+      "reason_code": "DRAFT_WITNESS_IS_NOT_POST_SEMANTIC_AUTHORITY",
+      "schema_version": "introduced-term-audit.v2",
+      "status": "SEMANTIC_AUTHORITY_PRESERVED"
+    },
+    {
+      "introduced_term": {
+        "cue_index": 41,
+        "draft_span": "李默了",
+        "term": "礼墨"
+      },
+      "reason_code": "DRAFT_WITNESS_IS_NOT_POST_SEMANTIC_AUTHORITY",
+      "schema_version": "introduced-term-audit.v2",
+      "status": "SEMANTIC_AUTHORITY_PRESERVED"
+    },
+    {
+      "introduced_term": {
+        "cue_index": 74,
+        "draft_span": "跟林",
+        "term": "礼墨"
+      },
+      "reason_code": "DRAFT_WITNESS_IS_NOT_POST_SEMANTIC_AUTHORITY",
+      "schema_version": "introduced-term-audit.v2",
+      "status": "SEMANTIC_AUTHORITY_PRESERVED"
+    }
+  ],
+  "numeric_fact_provenance_audit": {
+    "reverted": [],
+    "reverted_count": 0,
+    "schema_version": "numeric-fact-provenance-audit.v1",
+    "status": "CLEAN",
+    "supported": []
+  },
+  "output_srt_sha256": "39aa784755744da75677903574d76cdf7022fa56108af0b6b5cf1e1281a089a9",
+  "pending_text_overrides": [],
+  "post_semantic_entity_policy": {
+    "dynamic_audio_group_count": 0,
+    "explicit_audio_groups": [
+      [
+        "素惹",
+        "素人"
+      ],
+      [
+        "李豆沙",
+        "小李"
+      ],
+      [
+        "奶P",
+        "奶瓶"
+      ],
+      [
+        "ありがとう",
+        "おめでとう"
+      ]
+    ],
+    "phonetic_candidates_disclosure_only": [
+      [
+        "祥子",
+        "现在"
+      ],
+      [
+        "おめでとう",
+        "么好的百"
+      ],
+      [
+        "田中姬",
+        "想看手机"
+      ],
+      [
+        "おめでとう",
+        "们用的那"
+      ]
+    ],
+    "phrase_divergence_candidates_disclosure_only": [
+      [
+        "为什么怎么",
+        "为什么这么"
+      ],
+      [
+        "我是炒了",
+        "我还炒了"
+      ],
+      [
+        "我是炒了",
+        "我是焯了"
+      ]
+    ],
+    "reason_code": "POST_SEMANTIC_ENTITY_AUDIO_OVERRIDE_DISABLED",
+    "schema_version": "post-semantic-entity-policy.v1",
+    "semantic_text_final_groups": [
+      [
+        "恋青",
+        "恋死"
+      ],
+      [
+        "梦限大",
+        "Ave Mujica"
+      ],
+      [
+        "立希",
+        "祥子"
+      ],
+      [
+        "kmx",
+        "乒乓球"
+      ],
+      [
+        "李豆沙",
+        "小李"
+      ],
+      [
+        "田中姬",
+        "铃木雏",
+        "田中雏",
+        "Hime",
+        "Hina"
+      ]
+    ],
+    "status": "SEMANTIC_TEXT_FINAL"
+  },
+  "post_transcript_entity_output_srt_sha256": "21be2ac8cd9cf8ed1b8e7bb45af67a4bb25bb75fbf8d0879d014f87e795e68d7",
+  "read_aloud_arbitrations": [
+    {
+      "coverage": 0.8889,
+      "cue_indexes": [
+        78
+      ],
+      "evidence_id": "be6e03328ded6b89a7b9628e60cf5dcd26b853caa29e95123cc669db2f66c984",
+      "exact_text": "看看有什么好的百合",
+      "kind": "danmaku",
+      "matched_audio_text": "看有什么好的百合",
+      "matched_end_ms": 185980,
+      "matched_start_ms": 184320,
+      "outcome": "partial_evidence_no_whole_line_copy",
+      "owner_eligible": false,
+      "request_sha256": "6a48be9b123362a12c614877585cfe362d90312cab959903d931c5adfc79afdc",
+      "score": 0.9317,
+      "sender_anchored": false,
+      "verdict": {
+        "canonical_entity": "看看有什么好的百合",
+        "completion_sha256": "sha256:26752b23fba2835126cc2472e2a70d1d5e3574cd887c30f4ef81538d105810bb",
+        "confidence": 0.98,
+        "detail": "cpa-read-aloud;ASR 与弹幕几乎完全一致，仅将“看看”识别为“看”；后句顺势追问百合同人文推荐，上下文自然。",
+        "prompt_sha256": "sha256:28f4d5f8561a98f3ffb238c02bba406e5a277f0850405116d64beae0e85b5f9b",
+        "reason_code": "READ_ALOUD_CONFIRMED_BY_CONTEXT",
+        "request_sha256": "6a48be9b123362a12c614877585cfe362d90312cab959903d931c5adfc79afdc",
+        "schema_version": "chat-entity-verdict.v1",
+        "status": "RESOLVED",
+        "verifier_id": "lidousha-cpa-read-aloud-context-v1"
+      },
+      "whole_line_exact_copy_gate": {
+        "common": 8,
+        "common_chars": 8,
+        "coverage": 0.8889,
+        "extent": 0.8889,
+        "full_span_audio_verdict": false,
+        "independent_owner_support_count": 0,
+        "independent_supports": [
+          {
+            "boundary_complete": false,
+            "candidate_present": true,
+            "common": 8,
+            "common_chars": 8,
+            "coverage": 0.8889,
+            "cue_indexes": [
+              78
+            ],
+            "extent": 0.8889,
+            "interior_near_complete": true,
+            "matched_end_ms": 185980,
+            "matched_start_ms": 184320,
+            "max_unsupported_interior_chars": 1,
+            "max_unsupported_interior_run_chars": 2,
+            "min_coverage": 0.8,
+            "min_extent": 0.82,
+            "min_precision": 0.6,
+            "near_complete_transcript": false,
+            "numeric_near_complete": true,
+            "observed_text": "看有什么好的百合",
+            "owner_eligible": false,
+            "precision": 1.0,
+            "preserved_reply_suffix": "",
+            "question_particle_patch_supported": false,
+            "required_common_chars": 6,
+            "schema_version": "chat-whole-line-support.v1",
+            "score": 0.9317,
+            "source_truth_anchor_eligible": true,
+            "support_index": 0,
+            "support_kind": "independent_transcript",
+            "support_sha256": "4330a82b9bd5dff6bdf53a03d77115d0915edb4cfa5f76cd0fbd750a651578c0",
+            "unsupported_authority_head": "看",
+            "unsupported_authority_interior": [],
+            "unsupported_authority_interior_chars": 0,
+            "unsupported_authority_tail": ""
+          }
+        ],
+        "min_coverage": 0.8,
+        "min_extent": 0.82,
+        "min_precision": 0.6,
+        "owner_eligible": false,
+        "precision": 1.0,
+        "primary_transcript": {
+          "boundary_complete": false,
+          "candidate_present": true,
+          "common": 8,
+          "common_chars": 8,
+          "coverage": 0.8889,
+          "extent": 0.8889,
+          "interior_near_complete": true,
+          "max_unsupported_interior_chars": 1,
+          "max_unsupported_interior_run_chars": 2,
+          "min_coverage": 0.8,
+          "min_extent": 0.82,
+          "min_precision": 0.6,
+          "near_complete_transcript": false,
+          "numeric_near_complete": true,
+          "observed_text": "看有什么好的百合",
+          "owner_eligible": false,
+          "precision": 1.0,
+          "required_common_chars": 6,
+          "schema_version": "chat-whole-line-support.v1",
+          "score": 0.9317,
+          "support_kind": "primary_transcript",
+          "unsupported_authority_head": "看",
+          "unsupported_authority_interior": [],
+          "unsupported_authority_interior_chars": 0,
+          "unsupported_authority_tail": ""
+        },
+        "proof_basis": "partial_evidence",
+        "required_common_chars": 6,
+        "schema_version": "chat-whole-line-support-gate.v1",
+        "score": 0.9317,
+        "status": "BLOCKED_PARTIAL_EVIDENCE",
+        "thread_anchored": false,
+        "transcript_span_supported": false,
+        "unsupported_authority_head": "看",
+        "unsupported_authority_interior": [],
+        "unsupported_authority_tail": ""
+      }
+    },
+    {
+      "coverage": 0.9,
+      "cue_indexes": [
+        41,
+        42
+      ],
+      "evidence_id": "21947d40d63da8f6faf4576408934c6e952013d95e8d745e7775cd0820a27a00",
+      "exact_text": "感觉豆沙用礼墨的麦更加吵闹了，是我的错觉吗",
+      "kind": "superchat",
+      "matched_audio_text": "感觉豆沙用礼墨的麦更加吵闹是我错觉吗",
+      "matched_end_ms": 104380,
+      "matched_start_ms": 100840,
+      "outcome": "partial_evidence_no_whole_line_copy",
+      "owner_eligible": false,
+      "request_sha256": "93ef094819d027072c43c5dcb587a4d2253395c8930865d138211757dabc1646",
+      "score": 0.9387,
+      "sender_anchored": false,
+      "verdict": {
+        "canonical_entity": "感觉豆沙用礼墨的麦更加吵闹了，是我的错觉吗",
+        "completion_sha256": "sha256:ee552d7ca8af8dea4f9fac954e265e39679fb08165a6dd05f699f51783bc4b1f",
+        "confidence": 0.99,
+        "detail": "cpa-read-aloud;ASR与弹幕原文几乎完全一致，仅省略了“的”和句末语气停顿；后句“是吗，是吗”也自然承接该问句。",
+        "prompt_sha256": "sha256:99687a9483b33ea144d8197334442f9f250872f6d1c503b3c5e109dd504c5e44",
+        "reason_code": "READ_ALOUD_CONFIRMED_BY_CONTEXT",
+        "request_sha256": "93ef094819d027072c43c5dcb587a4d2253395c8930865d138211757dabc1646",
+        "schema_version": "chat-entity-verdict.v1",
+        "status": "RESOLVED",
+        "verifier_id": "lidousha-cpa-read-aloud-context-v1"
+      },
+      "whole_line_exact_copy_gate": {
+        "common": 18,
+        "common_chars": 18,
+        "coverage": 0.9,
+        "extent": 0.9,
+        "full_span_audio_verdict": false,
+        "independent_owner_support_count": 0,
+        "independent_supports": [
+          {
+            "boundary_complete": true,
+            "candidate_present": true,
+            "common": 13,
+            "common_chars": 13,
+            "coverage": 0.65,
+            "cue_indexes": [
+              41,
+              42
+            ],
+            "extent": 0.9,
+            "interior_near_complete": false,
+            "matched_end_ms": 104380,
+            "matched_start_ms": 100840,
+            "max_unsupported_interior_chars": 4,
+            "max_unsupported_interior_run_chars": 2,
+            "min_coverage": 0.8,
+            "min_extent": 0.82,
+            "min_precision": 0.6,
+            "near_complete_transcript": false,
+            "numeric_near_complete": false,
+            "observed_text": "感觉盾山用李默了麦更加吵闹是我错觉吗",
+            "owner_eligible": false,
+            "precision": 0.7222,
+            "preserved_reply_suffix": "",
+            "question_particle_patch_supported": false,
+            "required_common_chars": 6,
+            "schema_version": "chat-whole-line-support.v1",
+            "score": 0.6779,
+            "source_truth_anchor_eligible": true,
+            "support_index": 0,
+            "support_kind": "independent_transcript",
+            "support_sha256": "4330a82b9bd5dff6bdf53a03d77115d0915edb4cfa5f76cd0fbd750a651578c0",
+            "unsupported_authority_head": "",
+            "unsupported_authority_interior": [
+              "豆沙",
+              "礼墨的",
+              "了",
+              "的"
+            ],
+            "unsupported_authority_interior_chars": 7,
+            "unsupported_authority_tail": ""
+          }
+        ],
+        "min_coverage": 0.8,
+        "min_extent": 0.82,
+        "min_precision": 0.6,
+        "owner_eligible": false,
+        "precision": 1.0,
+        "primary_transcript": {
+          "boundary_complete": true,
+          "candidate_present": true,
+          "common": 18,
+          "common_chars": 18,
+          "coverage": 0.9,
+          "extent": 0.9,
+          "interior_near_complete": true,
+          "max_unsupported_interior_chars": 4,
+          "max_unsupported_interior_run_chars": 2,
+          "min_coverage": 0.8,
+          "min_extent": 0.82,
+          "min_precision": 0.6,
+          "near_complete_transcript": true,
+          "numeric_near_complete": true,
+          "observed_text": "感觉豆沙用礼墨的麦更加吵闹是我错觉吗",
+          "owner_eligible": false,
+          "precision": 1.0,
+          "required_common_chars": 6,
+          "schema_version": "chat-whole-line-support.v1",
+          "score": 0.9387,
+          "support_kind": "primary_transcript",
+          "unsupported_authority_head": "",
+          "unsupported_authority_interior": [
+            "了",
+            "的"
+          ],
+          "unsupported_authority_interior_chars": 2,
+          "unsupported_authority_tail": ""
+        },
+        "proof_basis": "partial_evidence",
+        "required_common_chars": 6,
+        "schema_version": "chat-whole-line-support-gate.v1",
+        "score": 0.9387,
+        "status": "BLOCKED_PARTIAL_EVIDENCE",
+        "thread_anchored": false,
+        "transcript_span_supported": true,
+        "unsupported_authority_head": "",
+        "unsupported_authority_interior": [
+          "了",
+          "的"
+        ],
+        "unsupported_authority_tail": ""
+      }
+    },
+    {
+      "coverage": 0.7,
+      "cue_indexes": [
+        83
+      ],
+      "evidence_id": "034e0c429abf380b88044a591bc64384a1526568feb1d76a0ea9f1befd26dca2",
+      "exact_text": "李姐有跟室友姐哭诉吗（",
+      "kind": "danmaku",
+      "matched_audio_text": "有跟舍友姐哭诉吗",
+      "matched_end_ms": 204520,
+      "matched_start_ms": 203100,
+      "outcome": "partial_evidence_no_whole_line_copy",
+      "owner_eligible": false,
+      "request_sha256": "dad4697ab9026511556f5dcae1042aa396a087eefc3265f4bdc7f345bcf0ca9d",
+      "score": 0.7651,
+      "sender_anchored": false,
+      "verdict": {
+        "canonical_entity": "李姐有跟室友姐哭诉吗（",
+        "completion_sha256": "sha256:54106b689789f5fc43d1f5952a98996f67c6338081eb43e5371bfa117422b8bc",
+        "confidence": 0.98,
+        "detail": "cpa-read-aloud;ASR 与弹幕问句几乎逐字对应，仅将“室友姐”识别为近义的“舍友姐”；后句“我没有”也自然是在回答该问题。",
+        "prompt_sha256": "sha256:7d99bc2073f9c333ae0de5a1ef6d09c93c1ca3af95fe0a16fec105e99757e191",
+        "reason_code": "READ_ALOUD_CONFIRMED_BY_CONTEXT",
+        "request_sha256": "dad4697ab9026511556f5dcae1042aa396a087eefc3265f4bdc7f345bcf0ca9d",
+        "schema_version": "chat-entity-verdict.v1",
+        "status": "RESOLVED",
+        "verifier_id": "lidousha-cpa-read-aloud-context-v1"
+      },
+      "whole_line_exact_copy_gate": {
+        "common": 7,
+        "common_chars": 7,
+        "coverage": 0.7,
+        "extent": 0.8,
+        "full_span_audio_verdict": false,
+        "independent_owner_support_count": 0,
+        "independent_supports": [
+          {
+            "boundary_complete": false,
+            "candidate_present": true,
+            "common": 7,
+            "common_chars": 7,
+            "coverage": 0.7,
+            "cue_indexes": [
+              83
+            ],
+            "extent": 0.8,
+            "interior_near_complete": true,
+            "matched_end_ms": 204520,
+            "matched_start_ms": 203100,
+            "max_unsupported_interior_chars": 2,
+            "max_unsupported_interior_run_chars": 2,
+            "min_coverage": 0.8,
+            "min_extent": 0.82,
+            "min_precision": 0.6,
+            "near_complete_transcript": false,
+            "numeric_near_complete": false,
+            "observed_text": "有跟舍友姐哭诉吗",
+            "owner_eligible": false,
+            "precision": 0.875,
+            "preserved_reply_suffix": "",
+            "question_particle_patch_supported": false,
+            "required_common_chars": 6,
+            "schema_version": "chat-whole-line-support.v1",
+            "score": 0.7651,
+            "source_truth_anchor_eligible": false,
+            "support_index": 0,
+            "support_kind": "independent_transcript",
+            "support_sha256": "4330a82b9bd5dff6bdf53a03d77115d0915edb4cfa5f76cd0fbd750a651578c0",
+            "unsupported_authority_head": "李姐",
+            "unsupported_authority_interior": [
+              "室"
+            ],
+            "unsupported_authority_interior_chars": 1,
+            "unsupported_authority_tail": ""
+          }
+        ],
+        "min_coverage": 0.8,
+        "min_extent": 0.82,
+        "min_precision": 0.6,
+        "owner_eligible": false,
+        "precision": 0.875,
+        "primary_transcript": {
+          "boundary_complete": false,
+          "candidate_present": true,
+          "common": 7,
+          "common_chars": 7,
+          "coverage": 0.7,
+          "extent": 0.8,
+          "interior_near_complete": true,
+          "max_unsupported_interior_chars": 2,
+          "max_unsupported_interior_run_chars": 2,
+          "min_coverage": 0.8,
+          "min_extent": 0.82,
+          "min_precision": 0.6,
+          "near_complete_transcript": false,
+          "numeric_near_complete": false,
+          "observed_text": "有跟舍友姐哭诉吗",
+          "owner_eligible": false,
+          "precision": 0.875,
+          "required_common_chars": 6,
+          "schema_version": "chat-whole-line-support.v1",
+          "score": 0.7651,
+          "support_kind": "primary_transcript",
+          "unsupported_authority_head": "李姐",
+          "unsupported_authority_interior": [
+            "室"
+          ],
+          "unsupported_authority_interior_chars": 1,
+          "unsupported_authority_tail": ""
+        },
+        "proof_basis": "partial_evidence",
+        "required_common_chars": 6,
+        "schema_version": "chat-whole-line-support-gate.v1",
+        "score": 0.7651,
+        "status": "BLOCKED_PARTIAL_EVIDENCE",
+        "thread_anchored": false,
+        "transcript_span_supported": false,
+        "unsupported_authority_head": "李姐",
+        "unsupported_authority_interior": [
+          "室"
+        ],
+        "unsupported_authority_tail": ""
+      }
+    },
+    {
+      "coverage": 0.6667,
+      "cue_indexes": [
+        39
+      ],
+      "evidence_id": "36fb63d86654a219230482eee8ebf88ab73fda3eadd145b124418e574e638546",
+      "exact_text": "焯水时间太短没断生",
+      "kind": "danmaku",
+      "matched_audio_text": "对，也有可能是焯水时间太短了",
+      "matched_end_ms": 99720,
+      "matched_start_ms": 97040,
+      "outcome": "acoustic_span_confirmed_by_audio",
+      "owner_eligible": false,
+      "request_sha256": "8f984c6ddeb0d9a2697c6103ebce8a02749d057880cb41b60d7ecf4e2c3420c7",
+      "score": 0.5753,
+      "sender_anchored": false,
+      "verdict": {
+        "audio_clip_sha256": "e90d5f2a1605f775ea1a8ce0d89358f1b0255f14ca90b7d91e2ee463de6f018a",
+        "audio_end_ms": 101220,
+        "audio_start_ms": 95540,
+        "authority_kind": "audio_forced_choice",
+        "canonical_entity": "对，也有可能是焯水时间太短了",
+        "confidence": 0.95,
+        "heard_syllables": "dui ye you ke neng shi chao shui shi jian tai duan le",
+        "model": "Gemini 3.6 Flash (High)",
+        "prompt_sha256": "923544e78074e5d99de1cb44314aa88a3cd5d6c3ebdb6f48f9bc9ffda1849de1",
+        "provider": "agy",
+        "reason": "The speaker clearly says '对 也有可能是 焯水时间太短', which matches Candidate 1.",
+        "request_sha256": "8f984c6ddeb0d9a2697c6103ebce8a02749d057880cb41b60d7ecf4e2c3420c7",
+        "response_sha256": "6ca56ade557a300c0524eef99f88582654d4e0eb91e5a6d26ce8cacdb06ac478",
+        "schema_version": "chat-entity-verdict.v1",
+        "source_media_sha256": "92b41ef8d7ecdcceed932998cbaa5d5c8cf48d660c059f407eea722ff3a47a2b",
+        "status": "RESOLVED"
+      }
+    }
+  ],
+  "schema_version": "chat-authority-audit.v2",
+  "self_reference_absorption_audit": {
+    "candidate_names": [
+      "小李",
+      "李豆沙",
+      "豆沙"
+    ],
+    "repairs": [],
+    "schema_version": "self-reference-absorption-audit.v3",
+    "source_witness_available": true,
+    "status": "NO_MATCH"
+  },
+  "sender_repairs": [],
+  "sender_verdict_required": [],
+  "session_topic_absorption_audits": [
+    {
+      "authorities": [],
+      "repair_count": 0,
+      "repairs": [],
+      "schema_version": "session-topic-authority-audit.v1",
+      "status": "CLEAN"
+    },
+    {
+      "authorities": [],
+      "repair_count": 0,
+      "repairs": [],
+      "schema_version": "session-topic-authority-audit.v1",
+      "status": "CLEAN"
+    }
+  ],
+  "source_subtitle_truth_audit": {
+    "applied": [],
+    "failures": [],
+    "ledger_path": "/opt/bilive/autoslice/repo/assets/lidousha/subtitle_truth_ledger.v1.json",
+    "ledger_sha256": "sha256:9f9126060a3217267a16d2d15c0aa776bdcf2ff120ecdbd39adc95e3128a4e1b",
+    "satisfied": [],
+    "schema_version": "source-subtitle-truth-audit.v1",
+    "status": "NO_RELEVANT_INTERVAL"
+  },
+  "source_truth_preview_receipts": {
+    "pre_correction_review": {
+      "exact_projection_owners": [],
+      "exact_protected_cue_indexes": [],
+      "fallback_local_windows": [],
+      "fallback_protected_cue_indexes": [],
+      "ignored_optional_truth_ids": [],
+      "input_cue_grid_sha256": "sha256:7a94bd46d0d291bf996a62c406b03199ac92691546fdfb3d9ae636216aa09d16",
+      "input_srt_sha256": "sha256:39aa784755744da75677903574d76cdf7022fa56108af0b6b5cf1e1281a089a9",
+      "ledger_sha256": "sha256:9f9126060a3217267a16d2d15c0aa776bdcf2ff120ecdbd39adc95e3128a4e1b",
+      "min_overlap_ms": 80,
+      "protected_cue_indexes": [],
+      "receipt_sha256": "sha256:5214237be1db32233616143a00e43403e055f0a6a931ea6f082852797f70588f",
+      "schema_version": "source-truth-deterministic-preview.v1",
+      "source_truth_audit_sha256": "sha256:6035b9bc9d45fd691a0ba9051b6ba108496e771a92251e248027cc8c9b42ac20",
+      "source_truth_audit_status": "NO_RELEVANT_INTERVAL",
+      "stage": "pre_correction_review",
+      "status": "PASS",
+      "unresolved_fallbacks": []
+    },
+    "pre_entity_arbitration": {
+      "exact_projection_owners": [],
+      "exact_protected_cue_indexes": [],
+      "fallback_local_windows": [],
+      "fallback_protected_cue_indexes": [],
+      "ignored_optional_truth_ids": [],
+      "input_cue_grid_sha256": "sha256:7a94bd46d0d291bf996a62c406b03199ac92691546fdfb3d9ae636216aa09d16",
+      "input_srt_sha256": "sha256:39aa784755744da75677903574d76cdf7022fa56108af0b6b5cf1e1281a089a9",
+      "ledger_sha256": "sha256:9f9126060a3217267a16d2d15c0aa776bdcf2ff120ecdbd39adc95e3128a4e1b",
+      "min_overlap_ms": 80,
+      "protected_cue_indexes": [],
+      "receipt_sha256": "sha256:80e54b93312ddf2f1b509b1dd36ccc6f933fdc68f3ce197bd9540c21ff13d3d0",
+      "schema_version": "source-truth-deterministic-preview.v1",
+      "source_truth_audit_sha256": "sha256:6035b9bc9d45fd691a0ba9051b6ba108496e771a92251e248027cc8c9b42ac20",
+      "source_truth_audit_status": "NO_RELEVANT_INTERVAL",
+      "stage": "pre_entity_arbitration",
+      "status": "PASS",
+      "unresolved_fallbacks": []
+    }
+  },
+  "speaker_ass_path": null,
+  "speaker_ass_sha256": null,
+  "speaker_manifest_sha256": null,
+  "status": "NO_MATCH",
+  "structured_chat_binding_audit": {
+    "pieces": [
+      {
+        "canonical_recording_basename": "22966160_20260724-18-31-22.mp4",
+        "jsonl_path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-24/22966160_20260724-18-31-22.jsonl",
+        "jsonl_sha256": "sha256:08f2bf7a8b463cc8d61e32f89adc479facb7fba7b4bd08978a595fd872dcde05",
+        "origin_epoch_ms": 1784889085245,
+        "required": true,
+        "source_alias_id": null,
+        "status": "BOUND_DIRECT",
+        "timeline_offset_ms": 0
+      },
+      {
+        "canonical_recording_basename": "22966160_20260724-18-31-22.mp4",
+        "jsonl_path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-24/22966160_20260724-18-31-22.jsonl",
+        "jsonl_sha256": "sha256:08f2bf7a8b463cc8d61e32f89adc479facb7fba7b4bd08978a595fd872dcde05",
+        "origin_epoch_ms": 1784889085245,
+        "required": true,
+        "source_alias_id": null,
+        "status": "BOUND_DIRECT",
+        "timeline_offset_ms": 0
+      }
+    ],
+    "retained_clip_window_counts": {
+      "danmaku": 133,
+      "superchat": 24
+    },
+    "retained_clip_window_total": 157,
+    "schema_version": "structured-chat-binding-audit.v1",
+    "status": "PASS",
+    "zero_retained_meaning": "bound source parsed successfully but no event survived the clip window; binding failures raise before this audit"
+  },
+  "superseded_chat_proposals": [
+    {
+      "allowed_followup": "entity_or_source_truth_slot_only",
+      "cue_indexes": [
+        6,
+        7
+      ],
+      "evidence_id": "110fe01ccfbd543a5e96151050acdd995ef9294a8ae295cf7c329834f0b6ffb9",
+      "exact_text": "豆沙，现在，我感觉你现在恢复的很好，这个豆角你和安晚到底是怎么吃",
+      "kind": "danmaku",
+      "matched_audio_text": "我感觉你现在恢复得很好这个豆角你和安晚到底怎，怎么",
+      "matched_end_ms": 13530,
+      "matched_start_ms": 10010,
+      "reason_code": "PARTIAL_CHAT_EVIDENCE_CANNOT_AUTHORIZE_WHOLE_LINE_COPY",
+      "whole_line_exact_copy_gate": {
+        "common": 22,
+        "common_chars": 22,
+        "coverage": 0.7586,
+        "extent": 0.8276,
+        "full_span_audio_verdict": false,
+        "independent_owner_support_count": 0,
+        "independent_supports": [
+          {
+            "boundary_complete": false,
+            "candidate_present": true,
+            "common": 23,
+            "common_chars": 23,
+            "coverage": 0.7931,
+            "cue_indexes": [
+              6,
+              7
+            ],
+            "extent": 0.8276,
+            "interior_near_complete": true,
+            "matched_end_ms": 13530,
+            "matched_start_ms": 10010,
+            "max_unsupported_interior_chars": 5,
+            "max_unsupported_interior_run_chars": 2,
+            "min_coverage": 0.8,
+            "min_extent": 0.82,
+            "min_precision": 0.6,
+            "near_complete_transcript": false,
+            "numeric_near_complete": false,
+            "observed_text": "我感觉你现在恢复的很好这个豆角你和安晚到底怎怎么",
+            "owner_eligible": false,
+            "precision": 0.9583,
+            "preserved_reply_suffix": "",
+            "question_particle_patch_supported": false,
+            "required_common_chars": 6,
+            "schema_version": "chat-whole-line-support.v1",
+            "score": 0.8553,
+            "source_truth_anchor_eligible": true,
+            "support_index": 0,
+            "support_kind": "independent_transcript",
+            "support_sha256": "4330a82b9bd5dff6bdf53a03d77115d0915edb4cfa5f76cd0fbd750a651578c0",
+            "unsupported_authority_head": "豆沙现在",
+            "unsupported_authority_interior": [
+              "是"
+            ],
+            "unsupported_authority_interior_chars": 1,
+            "unsupported_authority_tail": "吃"
+          }
+        ],
+        "min_coverage": 0.8,
+        "min_extent": 0.82,
+        "min_precision": 0.6,
+        "owner_eligible": false,
+        "precision": 0.9167,
+        "primary_transcript": {
+          "boundary_complete": false,
+          "candidate_present": true,
+          "common": 22,
+          "common_chars": 22,
+          "coverage": 0.7586,
+          "extent": 0.8276,
+          "interior_near_complete": true,
+          "max_unsupported_interior_chars": 5,
+          "max_unsupported_interior_run_chars": 2,
+          "min_coverage": 0.8,
+          "min_extent": 0.82,
+          "min_precision": 0.6,
+          "near_complete_transcript": false,
+          "numeric_near_complete": false,
+          "observed_text": "我感觉你现在恢复得很好这个豆角你和安晚到底怎，怎么",
+          "owner_eligible": false,
+          "precision": 0.9167,
+          "required_common_chars": 6,
+          "schema_version": "chat-whole-line-support.v1",
+          "score": 0.8181,
+          "support_kind": "primary_transcript",
+          "unsupported_authority_head": "豆沙现在",
+          "unsupported_authority_interior": [
+            "的",
+            "是"
+          ],
+          "unsupported_authority_interior_chars": 2,
+          "unsupported_authority_tail": "吃"
+        },
+        "proof_basis": "partial_evidence",
+        "required_common_chars": 6,
+        "schema_version": "chat-whole-line-support-gate.v1",
+        "score": 0.8181,
+        "status": "BLOCKED_PARTIAL_EVIDENCE",
+        "thread_anchored": false,
+        "transcript_span_supported": false,
+        "unsupported_authority_head": "豆沙现在",
+        "unsupported_authority_interior": [
+          "的",
+          "是"
+        ],
+        "unsupported_authority_tail": "吃"
+      }
+    },
+    {
+      "allowed_followup": "entity_or_source_truth_slot_only",
+      "cue_indexes": [
+        78
+      ],
+      "evidence_id": "be6e03328ded6b89a7b9628e60cf5dcd26b853caa29e95123cc669db2f66c984",
+      "exact_text": "看看有什么好的百合",
+      "kind": "danmaku",
+      "matched_audio_text": "看有什么好的百合",
+      "matched_end_ms": 185980,
+      "matched_start_ms": 184320,
+      "reason_code": "PARTIAL_CHAT_EVIDENCE_CANNOT_AUTHORIZE_WHOLE_LINE_COPY",
+      "whole_line_exact_copy_gate": {
+        "common": 8,
+        "common_chars": 8,
+        "coverage": 0.8889,
+        "extent": 0.8889,
+        "full_span_audio_verdict": false,
+        "independent_owner_support_count": 0,
+        "independent_supports": [
+          {
+            "boundary_complete": false,
+            "candidate_present": true,
+            "common": 8,
+            "common_chars": 8,
+            "coverage": 0.8889,
+            "cue_indexes": [
+              78
+            ],
+            "extent": 0.8889,
+            "interior_near_complete": true,
+            "matched_end_ms": 185980,
+            "matched_start_ms": 184320,
+            "max_unsupported_interior_chars": 1,
+            "max_unsupported_interior_run_chars": 2,
+            "min_coverage": 0.8,
+            "min_extent": 0.82,
+            "min_precision": 0.6,
+            "near_complete_transcript": false,
+            "numeric_near_complete": true,
+            "observed_text": "看有什么好的百合",
+            "owner_eligible": false,
+            "precision": 1.0,
+            "preserved_reply_suffix": "",
+            "question_particle_patch_supported": false,
+            "required_common_chars": 6,
+            "schema_version": "chat-whole-line-support.v1",
+            "score": 0.9317,
+            "source_truth_anchor_eligible": true,
+            "support_index": 0,
+            "support_kind": "independent_transcript",
+            "support_sha256": "4330a82b9bd5dff6bdf53a03d77115d0915edb4cfa5f76cd0fbd750a651578c0",
+            "unsupported_authority_head": "看",
+            "unsupported_authority_interior": [],
+            "unsupported_authority_interior_chars": 0,
+            "unsupported_authority_tail": ""
+          }
+        ],
+        "min_coverage": 0.8,
+        "min_extent": 0.82,
+        "min_precision": 0.6,
+        "owner_eligible": false,
+        "precision": 1.0,
+        "primary_transcript": {
+          "boundary_complete": false,
+          "candidate_present": true,
+          "common": 8,
+          "common_chars": 8,
+          "coverage": 0.8889,
+          "extent": 0.8889,
+          "interior_near_complete": true,
+          "max_unsupported_interior_chars": 1,
+          "max_unsupported_interior_run_chars": 2,
+          "min_coverage": 0.8,
+          "min_extent": 0.82,
+          "min_precision": 0.6,
+          "near_complete_transcript": false,
+          "numeric_near_complete": true,
+          "observed_text": "看有什么好的百合",
+          "owner_eligible": false,
+          "precision": 1.0,
+          "required_common_chars": 6,
+          "schema_version": "chat-whole-line-support.v1",
+          "score": 0.9317,
+          "support_kind": "primary_transcript",
+          "unsupported_authority_head": "看",
+          "unsupported_authority_interior": [],
+          "unsupported_authority_interior_chars": 0,
+          "unsupported_authority_tail": ""
+        },
+        "proof_basis": "partial_evidence",
+        "required_common_chars": 6,
+        "schema_version": "chat-whole-line-support-gate.v1",
+        "score": 0.9317,
+        "status": "BLOCKED_PARTIAL_EVIDENCE",
+        "thread_anchored": false,
+        "transcript_span_supported": false,
+        "unsupported_authority_head": "看",
+        "unsupported_authority_interior": [],
+        "unsupported_authority_tail": ""
+      }
+    },
+    {
+      "allowed_followup": "entity_or_source_truth_slot_only",
+      "cue_indexes": [
+        82
+      ],
+      "evidence_id": "b3c73ddb0cf998b2ca64a3dcedf9da127b359457c9f753fb703948038e88b771",
+      "exact_text": "为什么我妈咪这么多事情；；",
+      "kind": "danmaku",
+      "matched_audio_text": "为什么这么多事情，我也想问",
+      "matched_end_ms": 203100,
+      "matched_start_ms": 201160,
+      "reason_code": "PARTIAL_CHAT_EVIDENCE_CANNOT_AUTHORIZE_WHOLE_LINE_COPY",
+      "whole_line_exact_copy_gate": {
+        "common": 8,
+        "common_chars": 8,
+        "coverage": 0.7273,
+        "extent": 1.0909,
+        "full_span_audio_verdict": false,
+        "independent_owner_support_count": 0,
+        "independent_supports": [
+          {
+            "boundary_complete": true,
+            "candidate_present": true,
+            "common": 8,
+            "common_chars": 8,
+            "coverage": 0.7273,
+            "cue_indexes": [
+              82,
+              83
+            ],
+            "extent": 0.9091,
+            "interior_near_complete": false,
+            "matched_end_ms": 204520,
+            "matched_start_ms": 201160,
+            "max_unsupported_interior_chars": 2,
+            "max_unsupported_interior_run_chars": 2,
+            "min_coverage": 0.8,
+            "min_extent": 0.82,
+            "min_precision": 0.6,
+            "near_complete_transcript": false,
+            "numeric_near_complete": false,
+            "observed_text": "为什么这么多事情我也",
+            "owner_eligible": false,
+            "precision": 0.8,
+            "preserved_reply_suffix": "想问有跟舍友姐哭诉吗",
+            "question_particle_patch_supported": false,
+            "required_common_chars": 6,
+            "schema_version": "chat-whole-line-support.v1",
+            "score": 0.7555,
+            "source_truth_anchor_eligible": true,
+            "support_index": 0,
+            "support_kind": "independent_transcript",
+            "support_sha256": "4330a82b9bd5dff6bdf53a03d77115d0915edb4cfa5f76cd0fbd750a651578c0",
+            "unsupported_authority_head": "",
+            "unsupported_authority_interior": [
+              "我妈咪"
+            ],
+            "unsupported_authority_interior_chars": 3,
+            "unsupported_authority_tail": ""
+          }
+        ],
+        "min_coverage": 0.8,
+        "min_extent": 0.82,
+        "min_precision": 0.6,
+        "owner_eligible": false,
+        "precision": 0.6667,
+        "primary_transcript": {
+          "boundary_complete": true,
+          "candidate_present": true,
+          "common": 8,
+          "common_chars": 8,
+          "coverage": 0.7273,
+          "extent": 1.0909,
+          "interior_near_complete": false,
+          "max_unsupported_interior_chars": 2,
+          "max_unsupported_interior_run_chars": 2,
+          "min_coverage": 0.8,
+          "min_extent": 0.82,
+          "min_precision": 0.6,
+          "near_complete_transcript": false,
+          "numeric_near_complete": false,
+          "observed_text": "为什么这么多事情，我也想问",
+          "owner_eligible": false,
+          "precision": 0.6667,
+          "required_common_chars": 6,
+          "schema_version": "chat-whole-line-support.v1",
+          "score": 0.7024,
+          "support_kind": "primary_transcript",
+          "unsupported_authority_head": "",
+          "unsupported_authority_interior": [
+            "我妈咪"
+          ],
+          "unsupported_authority_interior_chars": 3,
+          "unsupported_authority_tail": ""
+        },
+        "proof_basis": "partial_evidence",
+        "required_common_chars": 6,
+        "schema_version": "chat-whole-line-support-gate.v1",
+        "score": 0.7024,
+        "status": "BLOCKED_PARTIAL_EVIDENCE",
+        "thread_anchored": false,
+        "transcript_span_supported": false,
+        "unsupported_authority_head": "",
+        "unsupported_authority_interior": [
+          "我妈咪"
+        ],
+        "unsupported_authority_tail": ""
+      }
+    },
+    {
+      "allowed_followup": "entity_or_source_truth_slot_only",
+      "cue_indexes": [
+        41,
+        42
+      ],
+      "evidence_id": "21947d40d63da8f6faf4576408934c6e952013d95e8d745e7775cd0820a27a00",
+      "exact_text": "感觉豆沙用礼墨的麦更加吵闹了，是我的错觉吗",
+      "kind": "superchat",
+      "matched_audio_text": "感觉豆沙用礼墨的麦更加吵闹是我错觉吗",
+      "matched_end_ms": 104380,
+      "matched_start_ms": 100840,
+      "reason_code": "PARTIAL_CHAT_EVIDENCE_CANNOT_AUTHORIZE_WHOLE_LINE_COPY",
+      "whole_line_exact_copy_gate": {
+        "common": 18,
+        "common_chars": 18,
+        "coverage": 0.9,
+        "extent": 0.9,
+        "full_span_audio_verdict": false,
+        "independent_owner_support_count": 0,
+        "independent_supports": [
+          {
+            "boundary_complete": true,
+            "candidate_present": true,
+            "common": 13,
+            "common_chars": 13,
+            "coverage": 0.65,
+            "cue_indexes": [
+              41,
+              42
+            ],
+            "extent": 0.9,
+            "interior_near_complete": false,
+            "matched_end_ms": 104380,
+            "matched_start_ms": 100840,
+            "max_unsupported_interior_chars": 4,
+            "max_unsupported_interior_run_chars": 2,
+            "min_coverage": 0.8,
+            "min_extent": 0.82,
+            "min_precision": 0.6,
+            "near_complete_transcript": false,
+            "numeric_near_complete": false,
+            "observed_text": "感觉盾山用李默了麦更加吵闹是我错觉吗",
+            "owner_eligible": false,
+            "precision": 0.7222,
+            "preserved_reply_suffix": "",
+            "question_particle_patch_supported": false,
+            "required_common_chars": 6,
+            "schema_version": "chat-whole-line-support.v1",
+            "score": 0.6779,
+            "source_truth_anchor_eligible": true,
+            "support_index": 0,
+            "support_kind": "independent_transcript",
+            "support_sha256": "4330a82b9bd5dff6bdf53a03d77115d0915edb4cfa5f76cd0fbd750a651578c0",
+            "unsupported_authority_head": "",
+            "unsupported_authority_interior": [
+              "豆沙",
+              "礼墨的",
+              "了",
+              "的"
+            ],
+            "unsupported_authority_interior_chars": 7,
+            "unsupported_authority_tail": ""
+          }
+        ],
+        "min_coverage": 0.8,
+        "min_extent": 0.82,
+        "min_precision": 0.6,
+        "owner_eligible": false,
+        "precision": 1.0,
+        "primary_transcript": {
+          "boundary_complete": true,
+          "candidate_present": true,
+          "common": 18,
+          "common_chars": 18,
+          "coverage": 0.9,
+          "extent": 0.9,
+          "interior_near_complete": true,
+          "max_unsupported_interior_chars": 4,
+          "max_unsupported_interior_run_chars": 2,
+          "min_coverage": 0.8,
+          "min_extent": 0.82,
+          "min_precision": 0.6,
+          "near_complete_transcript": true,
+          "numeric_near_complete": true,
+          "observed_text": "感觉豆沙用礼墨的麦更加吵闹是我错觉吗",
+          "owner_eligible": false,
+          "precision": 1.0,
+          "required_common_chars": 6,
+          "schema_version": "chat-whole-line-support.v1",
+          "score": 0.9387,
+          "support_kind": "primary_transcript",
+          "unsupported_authority_head": "",
+          "unsupported_authority_interior": [
+            "了",
+            "的"
+          ],
+          "unsupported_authority_interior_chars": 2,
+          "unsupported_authority_tail": ""
+        },
+        "proof_basis": "partial_evidence",
+        "required_common_chars": 6,
+        "schema_version": "chat-whole-line-support-gate.v1",
+        "score": 0.9387,
+        "status": "BLOCKED_PARTIAL_EVIDENCE",
+        "thread_anchored": false,
+        "transcript_span_supported": true,
+        "unsupported_authority_head": "",
+        "unsupported_authority_interior": [
+          "了",
+          "的"
+        ],
+        "unsupported_authority_tail": ""
+      }
+    },
+    {
+      "allowed_followup": "entity_or_source_truth_slot_only",
+      "cue_indexes": [
+        83
+      ],
+      "evidence_id": "034e0c429abf380b88044a591bc64384a1526568feb1d76a0ea9f1befd26dca2",
+      "exact_text": "李姐有跟室友姐哭诉吗（",
+      "kind": "danmaku",
+      "matched_audio_text": "有跟舍友姐哭诉吗",
+      "matched_end_ms": 204520,
+      "matched_start_ms": 203100,
+      "reason_code": "PARTIAL_CHAT_EVIDENCE_CANNOT_AUTHORIZE_WHOLE_LINE_COPY",
+      "whole_line_exact_copy_gate": {
+        "common": 7,
+        "common_chars": 7,
+        "coverage": 0.7,
+        "extent": 0.8,
+        "full_span_audio_verdict": false,
+        "independent_owner_support_count": 0,
+        "independent_supports": [
+          {
+            "boundary_complete": false,
+            "candidate_present": true,
+            "common": 7,
+            "common_chars": 7,
+            "coverage": 0.7,
+            "cue_indexes": [
+              83
+            ],
+            "extent": 0.8,
+            "interior_near_complete": true,
+            "matched_end_ms": 204520,
+            "matched_start_ms": 203100,
+            "max_unsupported_interior_chars": 2,
+            "max_unsupported_interior_run_chars": 2,
+            "min_coverage": 0.8,
+            "min_extent": 0.82,
+            "min_precision": 0.6,
+            "near_complete_transcript": false,
+            "numeric_near_complete": false,
+            "observed_text": "有跟舍友姐哭诉吗",
+            "owner_eligible": false,
+            "precision": 0.875,
+            "preserved_reply_suffix": "",
+            "question_particle_patch_supported": false,
+            "required_common_chars": 6,
+            "schema_version": "chat-whole-line-support.v1",
+            "score": 0.7651,
+            "source_truth_anchor_eligible": false,
+            "support_index": 0,
+            "support_kind": "independent_transcript",
+            "support_sha256": "4330a82b9bd5dff6bdf53a03d77115d0915edb4cfa5f76cd0fbd750a651578c0",
+            "unsupported_authority_head": "李姐",
+            "unsupported_authority_interior": [
+              "室"
+            ],
+            "unsupported_authority_interior_chars": 1,
+            "unsupported_authority_tail": ""
+          }
+        ],
+        "min_coverage": 0.8,
+        "min_extent": 0.82,
+        "min_precision": 0.6,
+        "owner_eligible": false,
+        "precision": 0.875,
+        "primary_transcript": {
+          "boundary_complete": false,
+          "candidate_present": true,
+          "common": 7,
+          "common_chars": 7,
+          "coverage": 0.7,
+          "extent": 0.8,
+          "interior_near_complete": true,
+          "max_unsupported_interior_chars": 2,
+          "max_unsupported_interior_run_chars": 2,
+          "min_coverage": 0.8,
+          "min_extent": 0.82,
+          "min_precision": 0.6,
+          "near_complete_transcript": false,
+          "numeric_near_complete": false,
+          "observed_text": "有跟舍友姐哭诉吗",
+          "owner_eligible": false,
+          "precision": 0.875,
+          "required_common_chars": 6,
+          "schema_version": "chat-whole-line-support.v1",
+          "score": 0.7651,
+          "support_kind": "primary_transcript",
+          "unsupported_authority_head": "李姐",
+          "unsupported_authority_interior": [
+            "室"
+          ],
+          "unsupported_authority_interior_chars": 1,
+          "unsupported_authority_tail": ""
+        },
+        "proof_basis": "partial_evidence",
+        "required_common_chars": 6,
+        "schema_version": "chat-whole-line-support-gate.v1",
+        "score": 0.7651,
+        "status": "BLOCKED_PARTIAL_EVIDENCE",
+        "thread_anchored": false,
+        "transcript_span_supported": false,
+        "unsupported_authority_head": "李姐",
+        "unsupported_authority_interior": [
+          "室"
+        ],
+        "unsupported_authority_tail": ""
+      }
+    },
+    {
+      "cue_indexes": [
+        39
+      ],
+      "evidence_id": "36fb63d86654a219230482eee8ebf88ab73fda3eadd145b124418e574e638546",
+      "exact_text": "焯水时间太短没断生",
+      "kind": "danmaku",
+      "matched_end_ms": 99720,
+      "matched_start_ms": 97040,
+      "reason_code": "EXACT_CHAT_REJECTED_BY_READ_ALOUD_AUDIO"
+    }
+  ],
+  "term_boundary_audit": {
+    "moves": [],
+    "schema_version": "term-boundary-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "thank_prefix_restore_audit": {
+    "restorations": [],
+    "schema_version": "thank-prefix-restore-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "title_mark_balance_audit": {
+    "cross_cue_pairs": [],
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "title-mark-balance-audit.v1",
+    "status": "CLEAN",
+    "unresolved": []
+  },
+  "transcript_entity_audit": {
+    "confirmed": [],
+    "entity_verdict_required": [],
+    "input_srt_sha256": "39aa784755744da75677903574d76cdf7022fa56108af0b6b5cf1e1281a089a9",
+    "output_srt_sha256": "39aa784755744da75677903574d76cdf7022fa56108af0b6b5cf1e1281a089a9",
+    "repairs": [],
+    "schema_version": "transcript-entity-audit.v1",
+    "status": "NO_ENTITY"
+  },
+  "unthanked_donor_disclosure": {
+    "schema_version": "unthanked-donor-disclosure.v1",
+    "status": "DISCLOSED",
+    "unthanked": [
+      {
+        "kind": "superchat",
+        "offset_ms": -891315,
+        "sender": "祈谕丶",
+        "text": "瓜咪瓜咪，你怎么穿着李姐的衣服"
+      },
+      {
+        "kind": "superchat",
+        "offset_ms": -854315,
+        "sender": "绯玉露",
+        "text": "lllljhb"
+      },
+      {
+        "kind": "superchat",
+        "offset_ms": -761315,
+        "sender": "竹风菌",
+        "text": "主包这一声礼墨~要把李1民的心都喊碎了（"
+      },
+      {
+        "kind": "superchat",
+        "offset_ms": -746315,
+        "sender": "隐羽-",
+        "text": "礼小虎都打不过的丢人熊猫，李1民还站得起来吗"
+      },
+      {
+        "kind": "superchat",
+        "offset_ms": -743315,
+        "sender": "肆镹啊",
+        "text": "李姐碰到力魔的宠物都要喊妈妈，礼豆沙谁是1一目了然了"
+      },
+      {
+        "kind": "superchat",
+        "offset_ms": -627315,
+        "sender": "BlueArxiv",
+        "text": "主播主播，看了刚刚的反应，能看看这个吗 BV1u14y117pZ"
+      },
+      {
+        "kind": "superchat",
+        "offset_ms": -608315,
+        "sender": "峻岸上的喀秋莎_Channel",
+        "text": "摸动物不敢说是，那摸摸旁边的那条龙不会害怕吧（"
+      },
+      {
+        "kind": "superchat",
+        "offset_ms": -572315,
+        "sender": "月光Munratio",
+        "text": "老师老师您嗑的李墨开播了（）"
+      },
+      {
+        "kind": "superchat",
+        "offset_ms": -430315,
+        "sender": "小未娜-骂人要加钱",
+        "text": "杖剑传说官方也不来上个总督，感觉游戏不是很好玩啊"
+      },
+      {
+        "kind": "superchat",
+        "offset_ms": -391315,
+        "sender": "今天也闲得慌",
+        "text": "妈妈妈妈其实在前两天我以为你是晚上和大N老师一起睡问了大N老师才知道不是妈妈妈妈"
+      },
+      {
+        "kind": "superchat",
+        "offset_ms": -344315,
+        "sender": "安雪铭",
+        "text": "晚上好沙有收到邮箱的立绘嘛"
+      },
+      {
+        "kind": "superchat",
+        "offset_ms": 83405,
+        "sender": "唐琳韵",
+        "text": "感觉豆沙用礼墨的麦更加吵闹了，是我的错觉吗"
+      }
+    ]
+  },
+  "witness_disagreement_audits": []
+}

@@ -1,0 +1,970 @@
+{
+  "artifact_hashes": {
+    "ai_background_sha256": "sha256:9b07c5a63c76dd0c0cb076224f622aa153dadbec736a1119c13e615bfafd06a0",
+    "ass_sha256": "sha256:7d70b9cac9649d9bab185bace6218a02ee4ad8a95082602dfbf95885180ae0b2",
+    "burned_video_sha256": "sha256:bfaf108a08f00d7899497284051d96808dd9dd171a3b6320f5a197a55fbe8014",
+    "chat_authority_audit_sha256": "sha256:6b635e27ad26c08727b21d2e42f9b02293cb18b1cf9fa508a7db5a3371a18b7e",
+    "cover_reference_sha256": "sha256:b585133e9c0742ca68330080ce8f516e8148619ba18a08639d89ef9a3b254f35",
+    "cover_sha256": "sha256:94cbaa62a016dbb6617ac26eed34ace33916a2ee2ea549d59e878207b7d0320a",
+    "subtitle_sha256": "sha256:44ccf2d200ee7ee59a0340bffe7de60ffe466ce40b8cc375454aff27ddccfb64",
+    "video_sha256": "sha256:e55888828bc6a42f67a9deac7aa4cc16beb0571c3269f9c95174e7b0f010a97b"
+  },
+  "boundary_audit": {
+    "boundary_repair_extend_cap_ms": 30000,
+    "boundary_repair_max_end_ms": 312810,
+    "boundary_repair_search_origin_ms": 282810,
+    "boundary_repairs": [
+      {
+        "final_end_ms": 280690,
+        "next_speech_island_guard_ms": 100,
+        "next_speech_island_start_ms": 311368,
+        "nominal_final_end_ms": 281090,
+        "reason": "tail_clamped_before_next_subtitle",
+        "snapped_end_ms": 280690
+      },
+      {
+        "flags": [
+          "speech_continues_30374ms_after_cut"
+        ],
+        "snapped_end_ms": 310110
+      },
+      {
+        "final_end_ms": 310110,
+        "next_speech_island_guard_ms": 100,
+        "next_speech_island_start_ms": 311368,
+        "nominal_final_end_ms": 310510,
+        "reason": "tail_clamped_before_next_subtitle",
+        "snapped_end_ms": 310110
+      }
+    ],
+    "closure_sentence": "她在房间能听到你直播的声音",
+    "end_cut_inside_speech_island": true,
+    "end_island_continues_ms": 954,
+    "end_on_sentence_boundary": true,
+    "final_end_ms": 310110,
+    "final_start_ms": 9710,
+    "opening_sentence": "这不是主播最最最最喜欢",
+    "red_flags": [],
+    "schema_version": "boundary-audit.v1",
+    "semantic_start_target_rel_ms": 10000,
+    "semantic_target_rel_ms": 282810,
+    "snapped_sentence_end_ms": 310110,
+    "snapped_sentence_start_ms": 9960,
+    "start_on_sentence_boundary": true,
+    "tail_adjustment": {
+      "final_end_ms": 310110,
+      "next_speech_island_gap_ms": 1258,
+      "next_speech_island_guard_ms": 100,
+      "next_speech_island_start_ms": 311368,
+      "next_subtitle_start_ms": 310110,
+      "nominal_end_ms": 310510,
+      "reason": "tail_clamped_before_next_subtitle",
+      "tail_pad_ms": 400
+    },
+    "tail_refinement_used": false,
+    "verdict": "ok_sentence_boundary_cut"
+  },
+  "burned_preview": {
+    "ass_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_672_945/replacement_recuts/auto_193450_672_945.recut.final-sapphire72.ass",
+    "branding_intro": {
+      "fallback_attempts": [],
+      "intro_id": "huozi-lidousha-kmx-baobao-guankou-z2-v1",
+      "intro_media_path": "/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.z2-kmx-baobao-guankou-20260719.mp4",
+      "intro_media_sha256": "d37f4c358cc5d2515bca5a6fbc54bb5a10d7d2b8a36008777842def3d502ac29",
+      "intro_offset_ms": 6200,
+      "main_duration_ms_before": 300400,
+      "main_sha256_before": "8fb86f8a9b4dfa379c3fd41e78115a7979edc8dd586cc1d815570dae6554bd1a",
+      "method": "matched-intro-concat-copy",
+      "policy_manifest_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/repo/assets/lidousha/intro/branding_intro.v1.json",
+      "policy_manifest_sha256": "bee66d164b683451602ae3601d79d19175bc72b0d13257b3026ae2dc47ee06ef",
+      "rotation": {
+        "candidate_intro_ids": [
+          "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+          "huozi-lidousha-kmx-baobao-guankou-z2-v1"
+        ],
+        "mode": "main-sha256",
+        "picked_intro_id": "huozi-lidousha-kmx-baobao-guankou-z2-v1",
+        "selector": "main_sha256"
+      },
+      "status": "PREPENDED",
+      "verification": {
+        "duration_delta_ms": 23,
+        "duration_ms": 306623,
+        "full_decode": "clean",
+        "stream_contract": {
+          "audio_codec": "aac",
+          "channels": 2,
+          "fps": "30/1",
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "sample_rate": 44100,
+          "video_codec": "h264",
+          "width": 1920
+        }
+      }
+    },
+    "burned_sha256": "sha256:bfaf108a08f00d7899497284051d96808dd9dd171a3b6320f5a197a55fbe8014",
+    "command": [
+      "ffmpeg",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-y",
+      "-i",
+      "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_672_945/replacement_recuts/auto_193450_672_945.recut.mp4",
+      "-vf",
+      "subtitles='/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_672_945/replacement_recuts/auto_193450_672_945.recut.final-sapphire72.ass':fontsdir='/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/repo/assets/lidousha/fonts'",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "20",
+      "-c:a",
+      "copy",
+      "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_672_945/replacement_recuts/auto_193450_672_945.recut.burned-final-sapphire72.mp4"
+    ],
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_672_945/replacement_recuts/auto_193450_672_945.recut.burned-final-sapphire72.mp4",
+    "pillarbox_16_9": false,
+    "status": "BURNED",
+    "stream_contract": null,
+    "subtitle_style": "lidousha-final-sapphire72"
+  },
+  "chat_authority_audit_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_672_945/auto_193450_672_945.chat-authority.json",
+  "duration_ms": 300400,
+  "end_ms": 300400,
+  "media_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_672_945/replacement_recuts/auto_193450_672_945.recut.mp4",
+  "publish_staging": {
+    "cover_generation": {
+      "ai_background": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_672_945/replacement_recuts/covers_ai_original/auto_193450_672_945.ai-bg.cpa-image-edit.png",
+      "ai_background_sha256": "sha256:9b07c5a63c76dd0c0cb076224f622aa153dadbec736a1119c13e615bfafd06a0",
+      "angle_degrees": -2.0,
+      "art_direction": {
+        "background_style": "warm-scrapbook-collage",
+        "cover_punch": [
+          "最最最喜欢",
+          "集邮海王"
+        ],
+        "emote_id": "",
+        "emote_mode": "",
+        "emote_reason": "",
+        "expression_en": "A closed-mouth, slightly guilty smug smile with one raised eyebrow, as if caught making an excuse, never sticking out her tongue.",
+        "hook_color": "pink",
+        "hook_word": "集邮海王",
+        "is_song": false,
+        "layout": "banner",
+        "line_breaks": [],
+        "role": "witty_smug",
+        "words": [
+          "被当面",
+          "追问",
+          "为什么",
+          "说“最最最喜欢”，",
+          "李姐",
+          "拿报恩",
+          "当借口，",
+          "一串",
+          "L系CP名",
+          "却",
+          "拆穿",
+          "集邮海王"
+        ]
+      },
+      "attempted_models": [
+        "gpt-image-2"
+      ],
+      "background_style": "warm-scrapbook-collage",
+      "cover_diversity_slot": 1,
+      "cover_mode": "auto",
+      "cover_punch": [
+        "最最最喜欢",
+        "集邮海王"
+      ],
+      "cover_punch_allowed": true,
+      "cover_text": "被当面追问为什么说“最最最喜欢”，李姐拿报恩当借口，一串L系CP名却拆穿集邮海王",
+      "cover_text_mode": "punch",
+      "cover_treatment": {
+        "reason": "motion without confident cover subject (score=4.57)",
+        "treatment": "cpa_redraw"
+      },
+      "expression_en": "A closed-mouth, slightly guilty smug smile with one raised eyebrow, as if caught making an excuse, never sticking out her tongue.",
+      "fallback_used": false,
+      "final_cover": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_672_945/replacement_recuts/covers/auto_193450_672_945.ai-title.cover.png",
+      "final_cover_sha256": "sha256:94cbaa62a016dbb6617ac26eed34ace33916a2ee2ea549d59e878207b7d0320a",
+      "font": "ZCOOLKuaiLe-Regular.ttf",
+      "font_selection": {
+        "font": "ZCOOLKuaiLe-Regular.ttf",
+        "glyph_risk": [],
+        "rejected": []
+      },
+      "font_size": 277,
+      "hook_color": "pink",
+      "hook_word": "集邮海王",
+      "image_gen_model": "cpa",
+      "layout": "banner",
+      "line_split": "punch",
+      "method": "images.edit",
+      "min_talk_font_size": 120,
+      "model": "gpt-image-2",
+      "model_fallback_used": false,
+      "overlay_position": {
+        "x": 224,
+        "y": -45
+      },
+      "reference_image": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_672_945/replacement_recuts/cover_refs/auto_193450_672_945.cover-ref.png",
+      "reference_selection": {
+        "anchor_x_frac": 0.5822,
+        "best_ms": 136000,
+        "candidates": [
+          {
+            "audio_z": 2.9301,
+            "emotion": 0.0,
+            "motion_z": 1.7119,
+            "ms": 136000,
+            "score": 4.5654,
+            "sharp_z": -0.3065
+          },
+          {
+            "audio_z": 3.3572,
+            "emotion": 0.0,
+            "motion_z": 0.8377,
+            "ms": 117500,
+            "score": 3.937,
+            "sharp_z": -1.0314
+          },
+          {
+            "audio_z": 2.5847,
+            "emotion": 0.0,
+            "motion_z": 0.8293,
+            "ms": 241500,
+            "score": 3.6474,
+            "sharp_z": 0.9334
+          }
+        ],
+        "head_top_frac": 0.1556,
+        "media_duration_ms": 300400,
+        "motion_bbox_frac": [
+          0.2188,
+          0.1556,
+          0.9094,
+          0.8556
+        ],
+        "motion_dispersion_frac": 0.4834,
+        "sample_fps": 2.0,
+        "schema": "cover-frame-selection.v1",
+        "signals": {
+          "audio_env_available": true,
+          "emotion_spans": 24
+        },
+        "skip_head_ms": 7700,
+        "skip_tail_ms": 1200,
+        "status": "SELECTED",
+        "subject_anchor_x_frac": 0.5407,
+        "subject_bbox_frac": [
+          0.2188,
+          0.0944,
+          0.8625,
+          0.8556
+        ],
+        "subject_confident": false,
+        "subject_head_top_frac": 0.0944
+      },
+      "reference_sha256": "sha256:b585133e9c0742ca68330080ce8f516e8148619ba18a08639d89ef9a3b254f35",
+      "relation_cover_mode": "HOST_ONLY_RELATION_EXPLICIT",
+      "rendered_lines": [
+        "最最最喜欢",
+        "集邮海王"
+      ],
+      "request_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_672_945/replacement_recuts/evidence/auto_193450_672_945.cover-cpa-request.redacted.json",
+      "response_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_672_945/replacement_recuts/evidence/auto_193450_672_945.cover-cpa-response.redacted.json",
+      "role": "witty_smug",
+      "scrim": false,
+      "story_contract": {
+        "cover_fallback_mode": "HOST_ONLY_RELATION_EXPLICIT",
+        "participants": [
+          {
+            "canonical_id": "lidousha",
+            "display_name": "李豆沙",
+            "surfaces": [
+              "李豆沙",
+              "小李",
+              "豆沙"
+            ]
+          },
+          {
+            "canonical_id": "nancho",
+            "display_name": "南町",
+            "surfaces": [
+              "南町",
+              "大N",
+              "小N",
+              "南町nightin"
+            ]
+          }
+        ],
+        "relation_state": "CONFIRMED",
+        "schema_version": "lidousha-story-contract.v1"
+      },
+      "text_backing": "outline",
+      "title": "【李豆沙】被当面追问为什么说“最最最喜欢”，李姐拿报恩当借口，一串L系CP名却拆穿集邮海王",
+      "title_band": "banner",
+      "workflow": "cpa-openai-compatible-image-edit-cover-plus-approved-local-title-overlay"
+    },
+    "cover_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_672_945/replacement_recuts/covers/auto_193450_672_945.ai-title.cover.png",
+    "cover_status": "AI_COVER_READY",
+    "cover_text": "被当面追问为什么说“最最最喜欢”，李姐拿报恩当借口，一串L系CP名却拆穿集邮海王",
+    "publish_json_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_672_945/replacement_recuts/auto_193450_672_945.recut.publish.json",
+    "reason_codes": [],
+    "status": "STAGED",
+    "title": "【李豆沙】被当面追问为什么说“最最最喜欢”，李姐拿报恩当借口，一串L系CP名却拆穿集邮海王",
+    "title_authority_error": null,
+    "title_authority_status": "RESOLVED_LLM",
+    "title_policy_violations": [],
+    "title_source": "llm+lidousha_style_asset",
+    "title_story_audit": {
+      "artifact_kind": "title",
+      "schema_version": "story-artifact-audit.v1",
+      "status": "PASS",
+      "text_sha256": "sha256:c2d9577754488c35ab5532766c7afa7b4f4dc4537b0428f1dac3992fc14128e8",
+      "violations": []
+    },
+    "upload_enabled": false
+  },
+  "redelivery_baseline": null,
+  "redelivery_baseline_audit_path": null,
+  "selection_scorecard": {
+    "dimensions": {
+      "audience_salience": 4,
+      "comedic_payoff": 4,
+      "lidousha_centrality": 4,
+      "persona_reversal": 3,
+      "relationship_interaction": 4,
+      "self_contained": 4,
+      "stance_intensity": 3
+    },
+    "effective_score": 89.5,
+    "fatigue_penalty": 0.0,
+    "raw_score": 92.5,
+    "reason_codes": [],
+    "requested_tier": 1,
+    "schema_version": "lidousha-selection-scorecard.v1",
+    "status": "VALID",
+    "tier": 1,
+    "tier_basis": "cp_positioning",
+    "tier_evidence_cues": [
+      273,
+      276,
+      291,
+      293,
+      327,
+      330,
+      338,
+      344,
+      347,
+      349
+    ],
+    "tier_reason": "从“最最最喜欢”的当面对质，到解释两人的旧事，再延伸至L系人物集邮、专属CP名及站位争论，构成连续且可核验的关系拉扯链。",
+    "uncertainty_penalty": 3.0,
+    "weights": {
+      "audience_salience": 15,
+      "comedic_payoff": 10,
+      "lidousha_centrality": 25,
+      "persona_reversal": 10,
+      "relationship_interaction": 15,
+      "self_contained": 5,
+      "stance_intensity": 20
+    }
+  },
+  "session_relation_authority": {
+    "bound_date": "2026-07-22",
+    "bound_recording_basename": "22966160_20260722-19-34-50.mp4",
+    "bound_source_sha256": null,
+    "evidence": [
+      {
+        "authority": "Ivan-stated-20260722-conversation(这明显是南町和李豆沙的联动)",
+        "evidence_class": "ATOMIC_HUMAN_RELATION_TRUTH",
+        "independence_group": "ivan-session-review"
+      },
+      {
+        "evidence_class": "HASH_BOUND_OFFICIAL_REPLAY",
+        "independence_group": "official-replay-source",
+        "source_alias_id": "20260722-official-replay-bv1fjg16xex6",
+        "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+      }
+    ],
+    "ledger_sha256": "sha256:f96480319f8e4b74e64be81e7993517edf7cddb25e71715eeaef957e343365f4",
+    "participants": [
+      {
+        "canonical_id": "lidousha",
+        "display_name": "李豆沙",
+        "surfaces": [
+          "李豆沙",
+          "小李",
+          "豆沙"
+        ]
+      },
+      {
+        "canonical_id": "nancho",
+        "display_name": "南町",
+        "surfaces": [
+          "南町",
+          "大N",
+          "小N",
+          "南町nightin"
+        ]
+      }
+    ],
+    "presence_intervals": [
+      {
+        "end_ms": 7200000,
+        "kind": "SESSION_PRESENCE",
+        "start_ms": 0
+      }
+    ],
+    "relation_id": "20260722-lidousha-nancho-live-collaboration",
+    "relation_type": "LIVE_COLLABORATION",
+    "schema_version": "session-relation-authority.v1",
+    "state": "CONFIRMED"
+  },
+  "speaker_finalization": null,
+  "speaker_finalization_manifest_path": null,
+  "speaker_finalization_manifest_sha256": null,
+  "speaker_mode": "uniform_host",
+  "speaker_review_srt_path": null,
+  "start_ms": 0,
+  "status": "MATERIALIZED",
+  "story_contract": {
+    "candidate_id": "auto_193450_672_945",
+    "cover_counterpart_reference_available": false,
+    "cover_fallback_mode": "HOST_ONLY_RELATION_EXPLICIT",
+    "cover_output_audits": [
+      {
+        "artifact_kind": "cover_text",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:35f104ed64fef8901f53c508d1bf8f4cffc6c951d2ae9d4d2a8eb60d924d1836",
+        "violations": []
+      },
+      {
+        "artifact_kind": "cover_rendered_text",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:8acf02322dfe8821f8aa5b63e92e2dd622e694d1557ecffb497d894ad026f859",
+        "violations": []
+      }
+    ],
+    "input_audits": [
+      {
+        "artifact_kind": "selection_hook",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:a833b3ec6960188a84b64a5e3c62cd1985aa8510c365e09496540613f2c6573e",
+        "violations": []
+      },
+      {
+        "artifact_kind": "subtitle",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:cf5842b7c400a5f4346bd49227693f2399b5f9b8481e8ccd0b11d64dda70313f",
+        "violations": []
+      }
+    ],
+    "nancho_accepted_surfaces": [
+      "南町",
+      "大N",
+      "小N",
+      "南町nightin"
+    ],
+    "participants": [
+      {
+        "canonical_id": "lidousha",
+        "display_name": "李豆沙",
+        "surfaces": [
+          "李豆沙",
+          "小李",
+          "豆沙"
+        ]
+      },
+      {
+        "canonical_id": "nancho",
+        "display_name": "南町",
+        "surfaces": [
+          "南町",
+          "大N",
+          "小N",
+          "南町nightin"
+        ]
+      }
+    ],
+    "relation_claim_allowed": true,
+    "relation_state": "CONFIRMED",
+    "required_entity_ids": [],
+    "schema_version": "lidousha-story-contract.v1",
+    "selection_hook": "被当面追问为什么说“最最最喜欢”，李豆沙先拿报恩当借口，又被一串L系CP名拆穿成集邮海王。",
+    "selection_hook_sha256": "sha256:a833b3ec6960188a84b64a5e3c62cd1985aa8510c365e09496540613f2c6573e",
+    "selection_scorecard": {
+      "dimensions": {
+        "audience_salience": 4,
+        "comedic_payoff": 4,
+        "lidousha_centrality": 4,
+        "persona_reversal": 3,
+        "relationship_interaction": 4,
+        "self_contained": 4,
+        "stance_intensity": 3
+      },
+      "effective_score": 89.5,
+      "fatigue_penalty": 0.0,
+      "raw_score": 92.5,
+      "reason_codes": [],
+      "requested_tier": 1,
+      "schema_version": "lidousha-selection-scorecard.v1",
+      "status": "VALID",
+      "tier": 1,
+      "tier_basis": "cp_positioning",
+      "tier_evidence_cues": [
+        273,
+        276,
+        291,
+        293,
+        327,
+        330,
+        338,
+        344,
+        347,
+        349
+      ],
+      "tier_reason": "从“最最最喜欢”的当面对质，到解释两人的旧事，再延伸至L系人物集邮、专属CP名及站位争论，构成连续且可核验的关系拉扯链。",
+      "uncertainty_penalty": 3.0,
+      "weights": {
+        "audience_salience": 15,
+        "comedic_payoff": 10,
+        "lidousha_centrality": 25,
+        "persona_reversal": 10,
+        "relationship_interaction": 15,
+        "self_contained": 5,
+        "stance_intensity": 20
+      }
+    },
+    "session_relation_authority": {
+      "bound_date": "2026-07-22",
+      "bound_recording_basename": "22966160_20260722-19-34-50.mp4",
+      "bound_source_sha256": null,
+      "evidence": [
+        {
+          "authority": "Ivan-stated-20260722-conversation(这明显是南町和李豆沙的联动)",
+          "evidence_class": "ATOMIC_HUMAN_RELATION_TRUTH",
+          "independence_group": "ivan-session-review"
+        },
+        {
+          "evidence_class": "HASH_BOUND_OFFICIAL_REPLAY",
+          "independence_group": "official-replay-source",
+          "source_alias_id": "20260722-official-replay-bv1fjg16xex6",
+          "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+        }
+      ],
+      "ledger_sha256": "sha256:f96480319f8e4b74e64be81e7993517edf7cddb25e71715eeaef957e343365f4",
+      "participants": [
+        {
+          "canonical_id": "lidousha",
+          "display_name": "李豆沙",
+          "surfaces": [
+            "李豆沙",
+            "小李",
+            "豆沙"
+          ]
+        },
+        {
+          "canonical_id": "nancho",
+          "display_name": "南町",
+          "surfaces": [
+            "南町",
+            "大N",
+            "小N",
+            "南町nightin"
+          ]
+        }
+      ],
+      "presence_intervals": [
+        {
+          "end_ms": 7200000,
+          "kind": "SESSION_PRESENCE",
+          "start_ms": 0
+        }
+      ],
+      "relation_id": "20260722-lidousha-nancho-live-collaboration",
+      "relation_type": "LIVE_COLLABORATION",
+      "schema_version": "session-relation-authority.v1",
+      "state": "CONFIRMED"
+    },
+    "transcript_sha256": "sha256:cf5842b7c400a5f4346bd49227693f2399b5f9b8481e8ccd0b11d64dda70313f"
+  },
+  "subtitle_ass_path": null,
+  "subtitle_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_672_945/replacement_recuts/auto_193450_672_945.recut.srt",
+  "subtitle_regression": null,
+  "subtitle_regression_audit_path": null,
+  "subtitle_source": "aggregate_asr+bcut_agy_cpa+pronoun+text_final",
+  "subtitle_style": "lidousha-final-sapphire72",
+  "subtitle_timing_qa": {
+    "actions": [
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 10710,
+          "start_ms": 9710
+        },
+        "before": {
+          "end_ms": 9840,
+          "start_ms": 9710
+        },
+        "cue_id": "fresh_0004",
+        "density_cps": 53.846,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "谢谢梦月的钢镚",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 53600,
+          "start_ms": 52600
+        },
+        "before": {
+          "end_ms": 53320,
+          "start_ms": 52600
+        },
+        "cue_id": "fresh_0023",
+        "density_cps": 9.722,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "为什么要这样说",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 63420,
+          "start_ms": 62420
+        },
+        "before": {
+          "end_ms": 63380,
+          "start_ms": 62420
+        },
+        "cue_id": "fresh_0027",
+        "density_cps": 2.083,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "哎呀",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 125530,
+          "start_ms": 124530
+        },
+        "before": {
+          "end_ms": 125410,
+          "start_ms": 124530
+        },
+        "cue_id": "fresh_0054",
+        "density_cps": 4.545,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "可以是礼",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 131860,
+          "start_ms": 130860
+        },
+        "before": {
+          "end_ms": 131380,
+          "start_ms": 130860
+        },
+        "cue_id": "fresh_0058",
+        "density_cps": 3.846,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "是的",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 173990,
+          "start_ms": 172990
+        },
+        "before": {
+          "end_ms": 173470,
+          "start_ms": 172990
+        },
+        "cue_id": "fresh_0075",
+        "density_cps": 2.083,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "行",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 229900,
+          "start_ms": 228900
+        },
+        "before": {
+          "end_ms": 229860,
+          "start_ms": 228900
+        },
+        "cue_id": "fresh_0097",
+        "density_cps": 7.292,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "你这并不是首发",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 232280,
+          "start_ms": 231280
+        },
+        "before": {
+          "end_ms": 231940,
+          "start_ms": 231280
+        },
+        "cue_id": "fresh_0099",
+        "density_cps": 6.061,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "哈哈哈哈",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 232940,
+          "start_ms": 231940
+        },
+        "before": {
+          "end_ms": 232880,
+          "start_ms": 231940
+        },
+        "cue_id": "fresh_0100",
+        "density_cps": 3.191,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "对啊，对",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 238120,
+          "start_ms": 237120
+        },
+        "before": {
+          "end_ms": 237880,
+          "start_ms": 237120
+        },
+        "cue_id": "fresh_0103",
+        "density_cps": 3.947,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "这样吗",
+        "vad_overlap_ratio": 0.863
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 238880,
+          "start_ms": 237880
+        },
+        "before": {
+          "end_ms": 238280,
+          "start_ms": 237880
+        },
+        "cue_id": "fresh_0104",
+        "density_cps": 5.0,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "对呀",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 239280,
+          "start_ms": 238280
+        },
+        "before": {
+          "end_ms": 239080,
+          "start_ms": 238280
+        },
+        "cue_id": "fresh_0105",
+        "density_cps": 5.0,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "n n l l",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 243280,
+          "start_ms": 242280
+        },
+        "before": {
+          "end_ms": 242890,
+          "start_ms": 242280
+        },
+        "cue_id": "fresh_0107",
+        "density_cps": 4.918,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "对对对",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 267540,
+          "start_ms": 266540
+        },
+        "before": {
+          "end_ms": 266880,
+          "start_ms": 266540
+        },
+        "cue_id": "fresh_0121",
+        "density_cps": 5.882,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "对啊",
+        "vad_overlap_ratio": 1.0
+      }
+    ],
+    "counts": {
+      "dropped": 0,
+      "retimed": 14
+    },
+    "policy": {
+      "hard_max_ms": 12000,
+      "min_density_cps": 0.8,
+      "min_readable_ms": 1000,
+      "soft_max_ms": 6000
+    },
+    "schema_version": "subtitle-timing-qa.v2",
+    "speech_span_count": 32,
+    "speech_total_ms": 294624,
+    "vad_evidence_contract": "positive_only_never_shrink_normal_asr_cues",
+    "window": {
+      "end_ms": 310110,
+      "start_ms": 9710
+    }
+  },
+  "talk_filler_audit_path": null,
+  "text_finalization_manifest_path": null,
+  "upload_tags": {
+    "content_tags": [
+      {
+        "tag": "海王",
+        "why": "被调侃“你这个LLNN显得非常海王”，本人还承认“在一直收集L中”。"
+      },
+      {
+        "tag": "嘴硬",
+        "why": "面对“最最最最喜欢”的追问，先说“乱说的啊”，又用“滴水之恩，涌泉相报”解释。"
+      },
+      {
+        "tag": "磕CP",
+        "why": "全程讨论“你俩CP叫啥”、CP名称和字母排列顺序。"
+      },
+      {
+        "tag": "吐槽",
+        "why": "互相吐槽“邀功小子”“原来我也是收集的一环”以及CP名太长。"
+      },
+      {
+        "tag": "搞笑",
+        "why": "从口误“泉水之恩”到“别的CP都喊完口号了，我们的CP你还在打嗝”，笑声不断。"
+      }
+    ],
+    "engine": "suggest-upload-tags.v1",
+    "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,南町,礼墨Sumi,病院坂Rei,海王,嘴硬,磕CP,吐槽,搞笑",
+    "final_tags": [
+      "李豆沙",
+      "虚拟主播",
+      "虚拟UP主",
+      "直播切片",
+      "南町",
+      "礼墨Sumi",
+      "病院坂Rei",
+      "海王",
+      "嘴硬",
+      "磕CP",
+      "吐槽",
+      "搞笑"
+    ],
+    "proper_noun_tags": [
+      {
+        "evidence": {
+          "南町": 2,
+          "大N": 4,
+          "大N老师": 4
+        },
+        "hits": 10,
+        "notes": [
+          "Ivan: 大N老师→南町, 只出正主名"
+        ],
+        "rules": [
+          "nanmachi"
+        ],
+        "tag": "南町",
+        "title_hit": false
+      },
+      {
+        "evidence": {
+          "Sumi": 1,
+          "礼墨": 1
+        },
+        "hits": 2,
+        "notes": [
+          "Ivan: lmsm→礼墨Sumi"
+        ],
+        "rules": [
+          "limo"
+        ],
+        "tag": "礼墨Sumi",
+        "title_hit": false
+      },
+      {
+        "evidence": {
+          "病院坂": 1
+        },
+        "hits": 1,
+        "notes": [],
+        "rules": [
+          "byz_rei"
+        ],
+        "tag": "病院坂Rei",
+        "title_hit": false
+      }
+    ],
+    "status": "OK",
+    "warnings": []
+  }
+}

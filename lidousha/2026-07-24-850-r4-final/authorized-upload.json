@@ -1,0 +1,97 @@
+{
+  "manifest_version": 3,
+  "schema_version": "authorized-upload-manifest.v3",
+  "artifact_id": "ede2f1e3d90f",
+  "video": {
+    "path": "/Users/ivan/Project/vtuber-slice/lidousha/2026-07-24-850-r4-final/观众声称只带一个技能保证让她赢，李豆.mp4",
+    "sha256": "ede2f1e3d90f757218a8ad81ef0ad34d073545d92443885fa60a474c330765f5",
+    "bytes": 33159102
+  },
+  "cover": {
+    "path": "/Users/ivan/Project/vtuber-slice/lidousha/2026-07-24-850-r4-final/观众声称只带一个技能保证让她赢，李豆.cover.png",
+    "sha256": "0ed61cc7e292403358a6cf27d0193315099826d6852da7679bc4c08245752b41",
+    "bytes": 2984101
+  },
+  "title": "【李豆沙】kmx声称只带一个技能保证让她赢，小李刚准备下注就没了，有骗子，我也不信你了！",
+  "description": "https://live.bilibili.com/\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+  "publish_policy": {
+    "tid": 21,
+    "copyright": 2,
+    "source": "https://live.bilibili.com/"
+  },
+  "season": {
+    "lane": "talk",
+    "season_title": "小李切片",
+    "source": "auto:title-prefix",
+    "season_id": 8383206,
+    "section_id": 9320779
+  },
+  "package_attestation": {
+    "schema_version": "authorized-upload-package-attestation.v1",
+    "package_root": "/Users/ivan/Project/vtuber-slice/lidousha/2026-07-24-850-r4-final",
+    "package_audit": {
+      "path": "/Users/ivan/Project/vtuber-slice/lidousha/2026-07-24-850-r4-final/review_package_audit.json",
+      "sha256": "b594a626b20a8553dc1829d01aa1e6ec7b1c58c4ff38a0c14ef720c0c3f03741",
+      "bytes": 3360
+    },
+    "review_manifest": {
+      "path": "/Users/ivan/Project/vtuber-slice/lidousha/2026-07-24-850-r4-final/review_manifest.json",
+      "sha256": "cdba25585fd6e516d7a7b48c6927601e1f683f14f884a0df73fa69b68d3b8dba",
+      "bytes": 11910
+    },
+    "record": {
+      "path": "/Users/ivan/Project/vtuber-slice/lidousha/2026-07-24-850-r4-final/观众声称只带一个技能保证让她赢，李豆.record.json",
+      "sha256": "f54050bc092c5eae4f8f5fcbd73ba5a5aedf932a61d6ec8daa55d6af7179485c",
+      "bytes": 115761
+    },
+    "subtitle": {
+      "path": "/Users/ivan/Project/vtuber-slice/lidousha/2026-07-24-850-r4-final/观众声称只带一个技能保证让她赢，李豆.srt",
+      "sha256": "40d8b5c025972e684c0c9e3733d9c496d57fc9ab29dce1450246c3495c91abb3",
+      "bytes": 1680
+    },
+    "final_human_review": {
+      "path": "/Users/ivan/Project/vtuber-slice/lidousha/2026-07-24-850-r4-final/final-human-review.json",
+      "sha256": "e23914b852b0cd96547cbf6e6170c6cee6c85918734af6f0d31304f98b43aae0",
+      "bytes": 7727
+    }
+  },
+  "authorization": {
+    "by": "Ivan",
+    "quote": "修复稿件可以直接编辑上传。其他没什么问题可以修复后上传。",
+    "at": "2026-07-29T04:28:39-0400"
+  },
+  "created_at": "2026-07-29T04:28:39-0400",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "被骗",
+    "破防",
+    "吐槽",
+    "委屈",
+    "搞笑"
+  ],
+  "tags_source": "cli",
+  "recovery_publication_authority": {
+    "aid": 116993634082225,
+    "boundary_end_mode": "exact_source_pin",
+    "bvid": "BV1ec3A6bEWF",
+    "candidate_id": "auto_193129_850_940",
+    "cid": 40357990267,
+    "observed_public_title": "【李豆沙】kmx声称只带一个技能保证让她赢，小李刚准备下注就没了，有骗子，我也不信你了！",
+    "registry_authority": "Ivan 2026-07-28: the already-published 7/24 candidate auto_193129_850_940 has three reported subtitle defects; rerun the whole clip once in an isolated no-upload recovery base, preserve its existing BV and verified public title, and pin the reviewed story end to the original selected source boundary.",
+    "registry_repo_path": "assets/lidousha/recovery_publication_authority_2026-07-24_850.v1.json",
+    "registry_schema_version": "lidousha-recovery-publication-authority.v1",
+    "registry_sha256": "sha256:d22b34c3365a8daa71fb10bf54cf1207971d9c52e26142b840c02321f6baabcd",
+    "required_given_end_ms": 940490,
+    "schema_version": "recovery-same-bv-publication-authority.v1",
+    "source_kind": "committed_verified_publication_registry",
+    "source_public_verify_repo_path": "reports/authorized_uploads/2026-07-24-incident-850940/auto_193129_850_940.public_verify.json",
+    "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+    "source_public_verify_sha256": "sha256:67fe59ef64652e95699ff5b43706847cfa01f17620547f217b25d1b88c81d831",
+    "source_public_verify_status": "VERIFIED_PUBLIC",
+    "title_mode": "verified_public_exact",
+    "authority_sha256": "sha256:ab6e72cf15914628536da017f9676526a9745b0f5bf1624c858ef08137391c39"
+  }
+}

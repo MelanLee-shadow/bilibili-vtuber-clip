@@ -140,7 +140,7 @@ TEMPLATE_DIRS = (
 # v4：流程面去频道名/去私有主机名。精确 token 全树重写（文件名 + 文本内容），
 # 长 token 优先避免子串误伤。assets/** 不重写（资产字节权威）；profiles/**
 # 参与内容重写（跟随 tools.cover_regenerator 等指针）。
-# 保留不动（功能词汇，见 docs/profile-coupling.md）：lidousha_centrality、
+# 保留不动（功能词汇，见 OSS AGENTS.md「换频道剩余耦合」）：lidousha_centrality、
 # lidousha_role、human_reviewed_lidousha、verified_lidousha_voiceprint、
 # `lidousha-*.v1` schema 串、assets/lidousha、profiles/lidousha、
 # free_asr_client（此 free=免费）、llm_via_free_groq（同）。
@@ -278,7 +278,7 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "tests/test_runtime_architecture.py",
         "    # 2026-08-01 新记：OSS 发布整备（维护者 授权）把导出器扩成改名/patch/模板引擎；\n"
         "    # 私库专用构建工具，导出时自剥离，不进 OSS 面。\n"
-        '    "scripts/export_oss_snapshot.py": 2_088,\n',
+        '    "scripts/export_oss_snapshot.py": 2_096,\n',
         "",
     ),
     # --- 债务棘轮：被剥离脚本的例外条目同步移除 ---
@@ -773,10 +773,10 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
     # ---- v4.8：表情包媒体随仓发布，代码注释同步 ----
     (
         "src/autoslice/cover_emote.py",
-        "asset); the sticker media itself stays OUT of git (``assets/emote/`` locally,\n"
-        "``AUTOSLICE_EMOTE_DIR`` on the runner host).",
-        "asset); the sticker media ships with this repo as example-channel assets\n"
-        "(``assets/emote/``; override the root via ``AUTOSLICE_EMOTE_DIR``).",
+        "asset); the sticker media lives under the profile tree (``assets/<profile>/emote/``\n"
+        "locally; ``AUTOSLICE_EMOTE_DIR`` overrides on the runner host).",
+        "asset); the sticker media ships with this repo under the profile tree\n"
+        "(``assets/<profile>/emote/``; override the root via ``AUTOSLICE_EMOTE_DIR``).",
     ),
     # ---- v4.7：prompt/控制流身份占位化（Ivan 放行：默认 profile 渲染字节不变） ----
     # 每处 = 字面身份 → CHANNEL_PROFILE 字段；default profile 下输出逐字节等于原文，
@@ -1930,11 +1930,11 @@ def main() -> int:
     template_asset_count = build_template_assets(out_root)
 
     # 表情包媒体随仓发布（Ivan 2026-08-01 拍板）：50 个 png 按库清单逐一核 sha 后
-    # 复制；缺失或漂移即导出失败。默认解析路径就是仓内 assets/emote。
+    # 复制；缺失或漂移即导出失败。默认解析路径=仓内 assets/<profile>/emote。
     emote_lib = json.loads(
         (REPO / "assets/lidousha/emote_library.v1.json").read_text(encoding="utf-8")
     )
-    emote_src = REPO / "assets/emote"
+    emote_src = REPO / "assets/lidousha/emote"
     emote_files = 0
     for entry in emote_lib.get("emotes") or emote_lib.get("entries") or []:
         for file_key, sha_key in (("file", None), ("hd_file", "hd_sha256")):
@@ -1951,7 +1951,7 @@ def main() -> int:
                 if _hashlib.sha256(source.read_bytes()).hexdigest() != entry[sha_key]:
                     print(f"EMOTE MEDIA SHA DRIFT: {source}")
                     return 6
-            target = out_root / "assets/emote" / rel_name
+            target = out_root / "assets/lidousha/emote" / rel_name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
             emote_files += 1

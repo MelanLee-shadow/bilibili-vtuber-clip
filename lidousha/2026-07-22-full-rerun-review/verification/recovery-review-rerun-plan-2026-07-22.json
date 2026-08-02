@@ -1,0 +1,68 @@
+{
+  "candidate_ids": [
+    "auto_193450_3573_3665",
+    "auto_193450_672_945",
+    "auto_193450_1863_2056",
+    "auto_193450_1573_1672"
+  ],
+  "created_at": "2026-07-23T09:43:32Z",
+  "date": "2026-07-22",
+  "given_end_authority": "Ivan line corrections 2026-07-22 + Codex source-cue closure review; following cue begins next topic or SC where applicable",
+  "given_end_ms_by_candidate": {
+    "auto_193450_1475_1543": 1543290,
+    "auto_193450_1573_1672": 1679990,
+    "auto_193450_1863_2056": 2056480,
+    "auto_193450_3573_3665": 3665850,
+    "auto_193450_672_945": 951830
+  },
+  "new_pipeline_fingerprint": null,
+  "new_pipeline_fingerprints_by_candidate": {
+    "auto_193450_1475_1543": "sha256:24138e9259f9b3d665df609e70eaaf305cad02c31e2d54a0ac1e0cb061a99da2",
+    "auto_193450_1573_1672": "sha256:ad91994e990c5714c18fca3302060e63b188ce0f69a5caffb8fcd2dd9f29fcc4",
+    "auto_193450_1863_2056": "sha256:8514f787cece0ac15630627284618a5eaa670385fc66ca4dd0e5c9fcfa721d08",
+    "auto_193450_3573_3665": "sha256:31517e4b2d21ba6090675b22c590f0648da08d6119b1a8fc2006bb82a8c40040",
+    "auto_193450_672_945": "sha256:6331ebb3079d9b0c3aebde146ef0c02bcdf12a97a3b547b840e983fc1ceb6c35"
+  },
+  "old_pipeline_fingerprint": "sha256:1d7cc4acd9d56c9210d694b5d0dc3cba3db1d3978221b3192dd98fda93e4de35",
+  "queued_count": 5,
+  "replacement_candidate_ids": [
+    "auto_193450_1475_1543"
+  ],
+  "replacement_selection_authority": "Ivan-stated-20260722: 明确要求制作弹幕要求给左边的人一个脑瓜崩切片",
+  "schema_version": "recovery-review-talk-rerun-plan.v5",
+  "selection_override_events": [
+    {
+      "authority": "Ivan-stated-20260722: 明确要求制作弹幕要求给左边的人一个脑瓜崩切片",
+      "baseline_rank": 2,
+      "candidate_id": "auto_193450_1475_1543",
+      "displaced_baseline_candidate": "auto_193450_1304_1368",
+      "event_type": "USER_SELECTION_OVERRIDE",
+      "schema_version": "talk-selection-override.v1",
+      "scorecard_sha256": "sha256:92ccdaace1a6664727c0a946371ab3b9d0b90fc6939307e782a51181b3571451",
+      "selected_slot": 5
+    }
+  ],
+  "source_base": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2",
+  "source_state_sha256": "sha256:fc26e2d68f4d78f4420b3e49d79f791bd24e4c3bcf2740862e380e7af7108f54",
+  "suppressed_candidate_ids": [
+    "auto_193450_6577_6795"
+  ],
+  "talk_selection_contract": {
+    "authority": "Ivan-stated-20260722: 明确要求制作弹幕要求给左边的人一个脑瓜崩切片",
+    "candidate_ids": [
+      "auto_193450_3573_3665",
+      "auto_193450_672_945",
+      "auto_193450_1863_2056",
+      "auto_193450_1573_1672",
+      "auto_193450_1475_1543"
+    ],
+    "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+    "schema_version": "talk-selection-contract.v1",
+    "source_state_sha256": "sha256:fc26e2d68f4d78f4420b3e49d79f791bd24e4c3bcf2740862e380e7af7108f54"
+  },
+  "target_base": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4",
+  "target_state_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/state/2026-07-22.json",
+  "target_state_sha256": "sha256:aec7d92a842854d8d5d1fe65cc2c2d83e85eb4689c830da02f2b4d8c9a7086dc",
+  "upload_allowed": false,
+  "user_suppression_authority": "Ivan-stated-20260722: B站已有同题材连线谜题，明确不再制作上传；USER_ASSERTED_UNVERIFIED"
+}

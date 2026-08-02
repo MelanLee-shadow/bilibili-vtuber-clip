@@ -1,0 +1,576 @@
+{
+  "address_enumeration_audit": {
+    "repairs": [],
+    "schema_version": "address-enumeration-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "applied": [],
+  "burn_binding": {
+    "ass_path": null,
+    "ass_sha256": null,
+    "burned_media_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_1863_2056/replacement_recuts/auto_193450_1863_2056.recut.burned-final-sapphire72.mp4",
+    "burned_media_sha256": "05da405c27df1bc90daf83073ab5d1998af8114963c57c0dcb291e8f5c093629"
+  },
+  "code_switch_surface_audit": {
+    "input_srt_sha256": "68268c0c4f501f976abe8dcde7a5693ebb169ee61a939b09c5e577df276dadaa",
+    "output_srt_sha256": "68268c0c4f501f976abe8dcde7a5693ebb169ee61a939b09c5e577df276dadaa",
+    "repairs": [],
+    "schema_version": "code-switch-surface-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "coreference_repairs": [],
+  "entity_repairs": [
+    {
+      "after": [
+        "这一派的侏儒儿"
+      ],
+      "before": [
+        "这一派的追逐"
+      ],
+      "cue_indexes": [
+        1
+      ],
+      "evidence_id": "a04cb44b28f6e64c22ac4853a96ae8a6d9d94d1b8aa4ee38811822c30b8d8c76",
+      "final_delivery_overlap_ms": 0,
+      "final_delivery_overlap_ratio": 0.0,
+      "final_verification_kind": "entity_repair",
+      "final_verification_scope": "OUTSIDE_DELIVERY",
+      "final_verification_scope_reason": "BOUNDARY_SLIVER_BELOW_MEANINGFUL_AUDIO_THRESHOLD",
+      "matched_end_ms": 1480,
+      "matched_start_ms": 0,
+      "mode": "final_review_context_adjudication",
+      "structured_exact_text": "这一派的侏儒儿",
+      "survived": true,
+      "verdict": {
+        "audio_clip_sha256": "05a1d1cfbf1230ad1bb476d61ee2909e4fa0955dc391164aecf793cf1eba15c7",
+        "audio_end_ms": 4740,
+        "audio_start_ms": 0,
+        "confidence_current": 0.95,
+        "confidence_proposed": 0.95,
+        "current_fit": "INCOMPATIBLE",
+        "heard_syllables": "这一派的侏儒儿 (zhè yī pài de zhū rú er)",
+        "model": "Gemini 3.6 Flash (High)",
+        "prompt_sha256": "e70232200e098e529d2840e4ea5d30297a027ed63c418e4df5f7bad00fff99c4",
+        "proposed_fit": "SUPPORTED",
+        "provider": "agy",
+        "reason": "The target audio segment (0-1480 ms) clearly contains the spoken syllables 'zhè yī pài de zhū rú er' (这一派的侏儒儿), matching the PROPOSED candidate. The CURRENT candidate '这一派的追逐' (zhuī zhú) is acoustically incompatible.",
+        "request_sha256": "e07232547f835b21afaa015d424a9349ba23697eb09f05f0ab757edde8b3e492",
+        "response_sha256": "f22a65f2adafda6287f504a41e20039f05d2148607efeaaab9cb8cfcc582eace",
+        "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+        "source_media_sha256": "9c3008f76a27d024d9be06aff3f17337ea1609808eac7826f166082aa8657edd",
+        "status": "OBSERVED",
+        "target_audible": true
+      }
+    }
+  ],
+  "entity_verdict_required": [],
+  "entity_verdicts": [],
+  "evidence_considered": 0,
+  "final_hard_meme_surface_audit": {
+    "input_srt_sha256": "47ed42b02375623b8e81513bbfe71f1ea744cca3c292b8a4d59b0e75958ffaaf",
+    "output_srt_sha256": "47ed42b02375623b8e81513bbfe71f1ea744cca3c292b8a4d59b0e75958ffaaf",
+    "repairs": [],
+    "rule_count": 1,
+    "schema_version": "hard-meme-surface-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "final_hard_meme_surface_verification": {
+    "failures": {},
+    "status": "PASS"
+  },
+  "final_output_srt_sha256": "47ed42b02375623b8e81513bbfe71f1ea744cca3c292b8a4d59b0e75958ffaaf",
+  "final_outside_delivery_count": 1,
+  "final_required_decision_count": 0,
+  "final_review_audit": {
+    "applied_count": 1,
+    "context_adjudication_budget": 12,
+    "context_adjudication_count": 2,
+    "findings": [
+      {
+        "base_text_sha256": "96dff59da014b811403593cfc81cdd7c3dcd75e977ec5071dbf12048cc144f32",
+        "candidate_provenance": null,
+        "context_audio_adjudication": {
+          "policy_branch": "ACOUSTICALLY_ADMISSIBLE_CONTEXT_TIEBREAK_APPLY_PROPOSED",
+          "repaired": true,
+          "request": {
+            "base_text_sha256": "96dff59da014b811403593cfc81cdd7c3dcd75e977ec5071dbf12048cc144f32",
+            "candidate_entities": [
+              {
+                "candidate_id": "CURRENT",
+                "canonical": "这一派的追逐",
+                "readings": [],
+                "surfaces": [],
+                "text_sha256": "96dff59da014b811403593cfc81cdd7c3dcd75e977ec5071dbf12048cc144f32"
+              },
+              {
+                "candidate_id": "PROPOSED",
+                "canonical": "这一派的侏儒儿",
+                "readings": [],
+                "surfaces": [],
+                "text_sha256": "9947d9a3213a37ac0faa57ca50cc1a3a13458fa467bd094838370734e6dbb093"
+              }
+            ],
+            "candidate_provenance": null,
+            "context_after": "而听不懂我们这种高的人\n听不懂这种矮人笑话",
+            "context_before": "",
+            "context_end_ms": 4740,
+            "context_start_ms": 0,
+            "cue_indexes": [
+              1
+            ],
+            "current_cue": "这一派的追逐",
+            "evidence_cue_ids": [
+              2,
+              3,
+              4
+            ],
+            "evidence_id": "a04cb44b28f6e64c22ac4853a96ae8a6d9d94d1b8aa4ee38811822c30b8d8c76",
+            "kind": "subtitle_span_acoustic_check",
+            "matched_audio_text": "这一派的追逐",
+            "matched_end_ms": 1480,
+            "matched_start_ms": 0,
+            "proposed_cue": "这一派的侏儒儿",
+            "reason": "后文连续谈“高的人”“矮人笑话”和“矮过你”，“追逐”明显不合语境，疑为“侏儒儿”被跨行误切。",
+            "repair_class": "segmentation",
+            "replacement": "侏儒儿",
+            "request_sha256": "e07232547f835b21afaa015d424a9349ba23697eb09f05f0ab757edde8b3e492",
+            "schema_version": "subtitle-span-acoustic-check-request.v1",
+            "suspect": "追逐"
+          },
+          "schema_version": "subtitle-span-adjudication.v1",
+          "status": "OBSERVED",
+          "timing_immutable": true,
+          "verdict": {
+            "audio_clip_sha256": "05a1d1cfbf1230ad1bb476d61ee2909e4fa0955dc391164aecf793cf1eba15c7",
+            "audio_end_ms": 4740,
+            "audio_start_ms": 0,
+            "confidence_current": 0.95,
+            "confidence_proposed": 0.95,
+            "current_fit": "INCOMPATIBLE",
+            "heard_syllables": "这一派的侏儒儿 (zhè yī pài de zhū rú er)",
+            "model": "Gemini 3.6 Flash (High)",
+            "prompt_sha256": "e70232200e098e529d2840e4ea5d30297a027ed63c418e4df5f7bad00fff99c4",
+            "proposed_fit": "SUPPORTED",
+            "provider": "agy",
+            "reason": "The target audio segment (0-1480 ms) clearly contains the spoken syllables 'zhè yī pài de zhū rú er' (这一派的侏儒儿), matching the PROPOSED candidate. The CURRENT candidate '这一派的追逐' (zhuī zhú) is acoustically incompatible.",
+            "request_sha256": "e07232547f835b21afaa015d424a9349ba23697eb09f05f0ab757edde8b3e492",
+            "response_sha256": "f22a65f2adafda6287f504a41e20039f05d2148607efeaaab9cb8cfcc582eace",
+            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+            "source_media_sha256": "9c3008f76a27d024d9be06aff3f17337ea1609808eac7826f166082aa8657edd",
+            "status": "OBSERVED",
+            "target_audible": true
+          }
+        },
+        "cue_index": 1,
+        "evidence_cue_ids": [
+          2,
+          3,
+          4
+        ],
+        "kind": "context",
+        "proposed_full_cue": "这一派的侏儒儿",
+        "repair_class": "segmentation",
+        "routed": "context_audio_adjudicated_fix",
+        "span_end_codepoint": 6,
+        "span_start_codepoint": 4,
+        "suggestion": "侏儒儿",
+        "suspect": "追逐",
+        "why": "后文连续谈“高的人”“矮人笑话”和“矮过你”，“追逐”明显不合语境，疑为“侏儒儿”被跨行误切。"
+      },
+      {
+        "base_text_sha256": "2a97524946768f1a8674c4266bd7de68a2603ae0cabce6563195dc4ee0fb1839",
+        "candidate_provenance": null,
+        "cue_index": 2,
+        "evidence_cue_ids": [
+          1,
+          3,
+          4
+        ],
+        "kind": "context",
+        "proposed_full_cue": null,
+        "repair_class": "segmentation",
+        "routed": "disclosure",
+        "span_end_codepoint": 1,
+        "span_start_codepoint": 0,
+        "suggestion": null,
+        "suggestion_rejected_reason": "INSERT_DELETE_NOT_ALLOWED_V1",
+        "suspect": "而",
+        "why": "句首“而”疑为上一行“侏儒儿”的儿化音被错误切分到本行。"
+      },
+      {
+        "base_text_sha256": "5913b4135d524ec181dd6a3df744a927f73e3adb28786281d666824807918838",
+        "candidate_provenance": null,
+        "context_audio_adjudication": {
+          "policy_branch": "PROPOSED_INCOMPATIBLE_KEEP_CURRENT",
+          "repaired": false,
+          "request": {
+            "base_text_sha256": "5913b4135d524ec181dd6a3df744a927f73e3adb28786281d666824807918838",
+            "candidate_entities": [
+              {
+                "candidate_id": "CURRENT",
+                "canonical": "香香烧烤觉得我看上去很会像拿烟头烫人的人",
+                "readings": [],
+                "surfaces": [],
+                "text_sha256": "5913b4135d524ec181dd6a3df744a927f73e3adb28786281d666824807918838"
+              },
+              {
+                "candidate_id": "PROPOSED",
+                "canonical": "香香烧烤觉得我看上去很像会拿烟头烫人的人",
+                "readings": [],
+                "surfaces": [],
+                "text_sha256": "aa0359f28016fbb56e12612d49daa65425525a165c8dbabec51842dac1c8f9a2"
+              }
+            ],
+            "candidate_provenance": null,
+            "context_after": "所以TA就一直在直播间造谣我\n说我拿烟头烫人的黑历史",
+            "context_before": "嗯，是因为我之前去了一次公司\n嗯，去了公司之后",
+            "context_end_ms": 207140,
+            "context_start_ms": 197780,
+            "cue_indexes": [
+              98
+            ],
+            "current_cue": "香香烧烤觉得我看上去很会像拿烟头烫人的人",
+            "evidence_cue_ids": [
+              91,
+              92,
+              93,
+              95,
+              96,
+              97,
+              99,
+              100
+            ],
+            "evidence_id": "0f116ccfa0419a092892e0dd62e0406d203b63b76c2dc50dfa1dc0472d7b3ed2",
+            "kind": "subtitle_span_acoustic_check",
+            "matched_audio_text": "香香烧烤觉得我看上去很会像拿烟头烫人的人",
+            "matched_end_ms": 204440,
+            "matched_start_ms": 200280,
+            "proposed_cue": "香香烧烤觉得我看上去很像会拿烟头烫人的人",
+            "reason": "“看上去很会像拿烟头烫人的人”语序不成立，结合整段流言语境应为“很像会拿烟头烫人的人”。",
+            "repair_class": "spoken_unit",
+            "replacement": "像会",
+            "request_sha256": "014ffeb9b7762276cc59b2ce5c1f3fce1ad0ff9efee6fa0a7deb30a1ff3e7acb",
+            "schema_version": "subtitle-span-acoustic-check-request.v1",
+            "suspect": "会像"
+          },
+          "schema_version": "subtitle-span-adjudication.v1",
+          "status": "OBSERVED",
+          "timing_immutable": true,
+          "verdict": {
+            "audio_clip_sha256": "1e74a8451aa6484899a6fabfa003f53e12b20c22ea423cd6f1f6674dd3a325e0",
+            "audio_end_ms": 207140,
+            "audio_start_ms": 197780,
+            "confidence_current": 1.0,
+            "confidence_proposed": 1.0,
+            "current_fit": "SUPPORTED",
+            "heard_syllables": "香香烧烤觉得我看上去很会像拿烟头烫人的人",
+            "model": "Gemini 3.6 Flash (High)",
+            "prompt_sha256": "1cbd6baf1d9bd9d625fc3ddaf48c69f0c46e468acdc5d91bb6ed8ff2236d86a1",
+            "proposed_fit": "INCOMPATIBLE",
+            "provider": "agy",
+            "reason": "The speaker explicitly pronounces '很会像' (hěn huì xiàng), matching the CURRENT candidate. The PROPOSED candidate's word order '很像会' is acoustically incompatible with the target audio.",
+            "request_sha256": "014ffeb9b7762276cc59b2ce5c1f3fce1ad0ff9efee6fa0a7deb30a1ff3e7acb",
+            "response_sha256": "2de8f0015f76853e6c7419a2635352a97aadbbb4c04b53197c4556402bb796ed",
+            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
+            "source_media_sha256": "9c3008f76a27d024d9be06aff3f17337ea1609808eac7826f166082aa8657edd",
+            "status": "OBSERVED",
+            "target_audible": true
+          }
+        },
+        "cue_index": 98,
+        "evidence_cue_ids": [
+          91,
+          92,
+          93,
+          95,
+          96,
+          97,
+          99,
+          100
+        ],
+        "kind": "context",
+        "proposed_full_cue": "香香烧烤觉得我看上去很像会拿烟头烫人的人",
+        "repair_class": "spoken_unit",
+        "reported_scope_warnings": [
+          "REPORTED_SUSPECT_SCOPE_MISMATCH",
+          "REPORTED_REPLACEMENT_SCOPE_MISMATCH"
+        ],
+        "routed": "disclosure",
+        "span_end_codepoint": 13,
+        "span_start_codepoint": 11,
+        "suggestion": "像会",
+        "suspect": "会像",
+        "why": "“看上去很会像拿烟头烫人的人”语序不成立，结合整段流言语境应为“很像会拿烟头烫人的人”。"
+      }
+    ],
+    "infra_unresolved": [],
+    "infra_unresolved_count": 0,
+    "schema_version": "final-review-audit.v1",
+    "status": "APPLIED"
+  },
+  "final_source_language_preservation_audit": {
+    "reverted": [],
+    "reverted_count": 0,
+    "schema_version": "source-language-preservation-audit.v1",
+    "status": "CLEAN",
+    "unproven_foreign_introductions": []
+  },
+  "final_speaker_srt_path": null,
+  "final_speaker_srt_sha256": "4524dcd088eba14983ba4193068527ff9f0e8bb1e1f343d2de370f4174c850c6",
+  "final_status": "FINAL_ARTIFACTS_VERIFIED",
+  "final_superseded_by_source_truth_count": 0,
+  "final_text_srt_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_1863_2056/replacement_recuts/auto_193450_1863_2056.recut.srt",
+  "final_text_srt_sha256": "4524dcd088eba14983ba4193068527ff9f0e8bb1e1f343d2de370f4174c850c6",
+  "final_title_mark_balance_audit": {
+    "cross_cue_pairs": [],
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "title-mark-balance-audit.v1",
+    "status": "CLEAN",
+    "unresolved": []
+  },
+  "foreign_script_consistency_audit": {
+    "kana_cue_indexes": [],
+    "latin_heavy_cues": [],
+    "mixed_cjk_latin_cues": [],
+    "reason": null,
+    "schema_version": "foreign-script-consistency-audit.v1",
+    "status": "CLEAN"
+  },
+  "gift_repairs": [],
+  "impossible_punctuation_audit": {
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "impossible-punctuation-audit.v1",
+    "status": "CLEAN"
+  },
+  "input_srt_sha256": "68268c0c4f501f976abe8dcde7a5693ebb169ee61a939b09c5e577df276dadaa",
+  "introduced_term_audits": [
+    {
+      "introduced_term": {
+        "cue_index": 5,
+        "draft_span": "苏卡",
+        "term": "SC"
+      },
+      "reason_code": "DRAFT_WITNESS_IS_NOT_POST_SEMANTIC_AUTHORITY",
+      "schema_version": "introduced-term-audit.v2",
+      "status": "SEMANTIC_AUTHORITY_PRESERVED"
+    },
+    {
+      "introduced_term": {
+        "cue_index": 34,
+        "draft_span": "尔斯加",
+        "term": "SC"
+      },
+      "reason_code": "DRAFT_WITNESS_IS_NOT_POST_SEMANTIC_AUTHORITY",
+      "schema_version": "introduced-term-audit.v2",
+      "status": "SEMANTIC_AUTHORITY_PRESERVED"
+    },
+    {
+      "introduced_term": {
+        "cue_index": 45,
+        "draft_span": "难听难听",
+        "term": "南町nightin"
+      },
+      "reason_code": "DRAFT_WITNESS_IS_NOT_POST_SEMANTIC_AUTHORITY",
+      "schema_version": "introduced-term-audit.v2",
+      "status": "SEMANTIC_AUTHORITY_PRESERVED"
+    },
+    {
+      "introduced_term": {
+        "cue_index": 48,
+        "draft_span": "留下",
+        "term": "小李"
+      },
+      "reason_code": "DRAFT_WITNESS_IS_NOT_POST_SEMANTIC_AUTHORITY",
+      "schema_version": "introduced-term-audit.v2",
+      "status": "SEMANTIC_AUTHORITY_PRESERVED"
+    }
+  ],
+  "numeric_fact_provenance_audit": {
+    "reverted": [],
+    "reverted_count": 0,
+    "schema_version": "numeric-fact-provenance-audit.v1",
+    "status": "CLEAN",
+    "supported": []
+  },
+  "output_srt_sha256": "68268c0c4f501f976abe8dcde7a5693ebb169ee61a939b09c5e577df276dadaa",
+  "pending_text_overrides": [],
+  "post_semantic_entity_policy": {
+    "dynamic_audio_group_count": 0,
+    "explicit_audio_groups": [
+      [
+        "素惹",
+        "素人"
+      ],
+      [
+        "李豆沙",
+        "小李"
+      ],
+      [
+        "奶P",
+        "奶瓶"
+      ],
+      [
+        "ありがとう",
+        "おめでとう"
+      ]
+    ],
+    "phonetic_candidates_disclosure_only": [
+      [
+        "Hime",
+        "TA就"
+      ],
+      [
+        "Hime",
+        "以TA"
+      ],
+      [
+        "祥子",
+        "想知"
+      ],
+      [
+        "祥子",
+        "现在"
+      ]
+    ],
+    "phrase_divergence_candidates_disclosure_only": [
+      [
+        "啥要请她吃火",
+        "是要请她吃火"
+      ],
+      [
+        "时不太熟",
+        "是不太熟"
+      ],
+      [
+        "吃火锅呢",
+        "吃火锅的"
+      ]
+    ],
+    "reason_code": "POST_SEMANTIC_ENTITY_AUDIO_OVERRIDE_DISABLED",
+    "schema_version": "post-semantic-entity-policy.v1",
+    "semantic_text_final_groups": [
+      [
+        "恋青",
+        "恋死"
+      ],
+      [
+        "梦限大",
+        "Ave Mujica"
+      ],
+      [
+        "立希",
+        "祥子"
+      ],
+      [
+        "kmx",
+        "乒乓球"
+      ],
+      [
+        "李豆沙",
+        "小李"
+      ],
+      [
+        "田中姬",
+        "铃木雏",
+        "田中雏",
+        "Hime",
+        "Hina"
+      ]
+    ],
+    "status": "SEMANTIC_TEXT_FINAL"
+  },
+  "post_transcript_entity_output_srt_sha256": "47ed42b02375623b8e81513bbfe71f1ea744cca3c292b8a4d59b0e75958ffaaf",
+  "read_aloud_arbitrations": [],
+  "schema_version": "chat-authority-audit.v2",
+  "self_reference_absorption_audit": {
+    "candidate_names": [
+      "小李",
+      "李豆沙",
+      "豆沙"
+    ],
+    "repairs": [],
+    "schema_version": "self-reference-absorption-audit.v3",
+    "source_witness_available": true,
+    "status": "NO_MATCH"
+  },
+  "sender_repairs": [],
+  "sender_verdict_required": [],
+  "session_topic_absorption_audits": [
+    {
+      "authorities": [],
+      "repair_count": 0,
+      "repairs": [],
+      "schema_version": "session-topic-authority-audit.v1",
+      "status": "CLEAN"
+    },
+    {
+      "authorities": [],
+      "repair_count": 0,
+      "repairs": [],
+      "schema_version": "session-topic-authority-audit.v1",
+      "status": "CLEAN"
+    }
+  ],
+  "source_subtitle_truth_audit": {
+    "applied": [],
+    "failures": [],
+    "ledger_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/repo/assets/lidousha/subtitle_truth_ledger.v1.json",
+    "ledger_sha256": "sha256:b971a4ec9201deb5a922d529361bb6f5d0d6ae38cc408dd020913b0157629c62",
+    "satisfied": [],
+    "schema_version": "source-subtitle-truth-audit.v1",
+    "status": "NO_RELEVANT_INTERVAL"
+  },
+  "speaker_ass_path": null,
+  "speaker_ass_sha256": null,
+  "speaker_manifest_sha256": null,
+  "status": "NO_MATCH",
+  "superseded_chat_proposals": [],
+  "term_boundary_audit": {
+    "moves": [],
+    "schema_version": "term-boundary-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "thank_prefix_restore_audit": {
+    "restorations": [],
+    "schema_version": "thank-prefix-restore-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "title_mark_balance_audit": {
+    "cross_cue_pairs": [],
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "title-mark-balance-audit.v1",
+    "status": "CLEAN",
+    "unresolved": []
+  },
+  "transcript_entity_audit": {
+    "confirmed": [],
+    "entity_verdict_required": [],
+    "input_srt_sha256": "68268c0c4f501f976abe8dcde7a5693ebb169ee61a939b09c5e577df276dadaa",
+    "output_srt_sha256": "68268c0c4f501f976abe8dcde7a5693ebb169ee61a939b09c5e577df276dadaa",
+    "repairs": [],
+    "schema_version": "transcript-entity-audit.v1",
+    "status": "NO_ENTITY"
+  },
+  "unthanked_donor_disclosure": {
+    "schema_version": "unthanked-donor-disclosure.v1",
+    "status": "ALL_THANKED",
+    "unthanked": []
+  },
+  "witness_disagreement_audits": [
+    {
+      "candidate_entities": [
+        "李豆沙",
+        "小李"
+      ],
+      "reason_code": "DRAFT_WITNESS_IS_NOT_POST_SEMANTIC_AUTHORITY",
+      "schema_version": "witness-disagreement-audit.v2",
+      "status": "SEMANTIC_AUTHORITY_PRESERVED",
+      "suspicious_cue_indexes": [
+        48
+      ]
+    }
+  ]
+}

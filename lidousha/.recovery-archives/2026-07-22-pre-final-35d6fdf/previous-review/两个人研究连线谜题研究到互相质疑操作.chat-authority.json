@@ -1,0 +1,302 @@
+{
+  "address_enumeration_audit": {
+    "repairs": [],
+    "schema_version": "address-enumeration-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "applied": [],
+  "burn_binding": {
+    "ass_path": null,
+    "ass_sha256": null,
+    "burned_media_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_6577_6795/replacement_recuts/auto_193450_6577_6795.recut.burned-final-sapphire72.mp4",
+    "burned_media_sha256": "54e9607dfce0999ee208544c73f88d82060f3f5a9c2a6cbcf7bb14eb02d01633"
+  },
+  "code_switch_surface_audit": {
+    "input_srt_sha256": "61355163d04d8567fb12069c8e8f5cbefe77d6002f6d33f72cf72cdefd8fce7d",
+    "output_srt_sha256": "61355163d04d8567fb12069c8e8f5cbefe77d6002f6d33f72cf72cdefd8fce7d",
+    "repairs": [],
+    "schema_version": "code-switch-surface-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "coreference_repairs": [],
+  "entity_repairs": [],
+  "entity_verdict_required": [],
+  "entity_verdicts": [],
+  "evidence_considered": 0,
+  "final_hard_meme_surface_audit": {
+    "input_srt_sha256": "150866c06e9c43955de1e75688df4c30e084f9f53ca5176d5d7ab6e03d8820e3",
+    "output_srt_sha256": "150866c06e9c43955de1e75688df4c30e084f9f53ca5176d5d7ab6e03d8820e3",
+    "repairs": [],
+    "rule_count": 1,
+    "schema_version": "hard-meme-surface-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "final_hard_meme_surface_verification": {
+    "failures": {},
+    "status": "PASS"
+  },
+  "final_output_srt_sha256": "150866c06e9c43955de1e75688df4c30e084f9f53ca5176d5d7ab6e03d8820e3",
+  "final_outside_delivery_count": 0,
+  "final_required_decision_count": 0,
+  "final_review_audit": {
+    "applied_count": 1,
+    "context_adjudication_budget": 12,
+    "context_adjudication_count": 0,
+    "findings": [
+      {
+        "base_text_sha256": "2375df2dcf1e50ac0ddd9ab58881063f436a58405a6f172edaefbcb7d1292454",
+        "candidate_provenance": {
+          "kind": "transcript_context",
+          "nearest_cue_distance": 1,
+          "surface": "研究生"
+        },
+        "cue_index": 70,
+        "evidence_cue_ids": [
+          71,
+          72
+        ],
+        "kind": "nonword",
+        "proposed_full_cue": "她说天哪，研究生",
+        "repair_class": "phonetic",
+        "reported_scope_warnings": [
+          "REPORTED_SUSPECT_SCOPE_MISMATCH",
+          "REPORTED_REPLACEMENT_SCOPE_MISMATCH"
+        ],
+        "routed": "homophone_fix",
+        "span_end_codepoint": 7,
+        "span_start_codepoint": 5,
+        "suggestion": "研究",
+        "suspect": "烟酒",
+        "why": "「烟酒生」在此处不是有效称谓，且后两句连续重复「研究生」，明显是近音误识。"
+      }
+    ],
+    "infra_unresolved": [],
+    "infra_unresolved_count": 0,
+    "schema_version": "final-review-audit.v1",
+    "status": "APPLIED"
+  },
+  "final_source_language_preservation_audit": {
+    "draft_cue_count": 86,
+    "final_cue_count": 84,
+    "reverted": [],
+    "reverted_count": 0,
+    "schema_version": "source-language-preservation-audit.v1",
+    "status": "SKIPPED_CUE_COUNT_MISMATCH",
+    "unproven_foreign_introductions": []
+  },
+  "final_speaker_srt_path": null,
+  "final_speaker_srt_sha256": "3ec28c5a6722c0edcaa42dec09d3ea9c9cb781ce2bfb2b8a33f17e0fb8de3a0d",
+  "final_status": "FINAL_ARTIFACTS_VERIFIED",
+  "final_superseded_by_source_truth_count": 0,
+  "final_text_srt_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_6577_6795/replacement_recuts/auto_193450_6577_6795.recut.srt",
+  "final_text_srt_sha256": "3ec28c5a6722c0edcaa42dec09d3ea9c9cb781ce2bfb2b8a33f17e0fb8de3a0d",
+  "final_title_mark_balance_audit": {
+    "cross_cue_pairs": [],
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "title-mark-balance-audit.v1",
+    "status": "CLEAN",
+    "unresolved": []
+  },
+  "foreign_script_consistency_audit": {
+    "kana_cue_indexes": [],
+    "latin_heavy_cues": [],
+    "mixed_cjk_latin_cues": [],
+    "reason": null,
+    "schema_version": "foreign-script-consistency-audit.v1",
+    "status": "CLEAN"
+  },
+  "gift_repairs": [],
+  "impossible_punctuation_audit": {
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "impossible-punctuation-audit.v1",
+    "status": "CLEAN"
+  },
+  "input_srt_sha256": "61355163d04d8567fb12069c8e8f5cbefe77d6002f6d33f72cf72cdefd8fce7d",
+  "introduced_term_audits": [
+    {
+      "introduced_term": {
+        "cue_index": 35,
+        "draft_span": "难听难听",
+        "term": "南町nightin"
+      },
+      "reason_code": "DRAFT_WITNESS_IS_NOT_POST_SEMANTIC_AUTHORITY",
+      "schema_version": "introduced-term-audit.v2",
+      "status": "SEMANTIC_AUTHORITY_PRESERVED"
+    }
+  ],
+  "numeric_fact_provenance_audit": {
+    "reverted": [],
+    "reverted_count": 0,
+    "schema_version": "numeric-fact-provenance-audit.v1",
+    "status": "CLEAN",
+    "supported": []
+  },
+  "output_srt_sha256": "61355163d04d8567fb12069c8e8f5cbefe77d6002f6d33f72cf72cdefd8fce7d",
+  "pending_text_overrides": [],
+  "post_semantic_entity_policy": {
+    "dynamic_audio_group_count": 0,
+    "explicit_audio_groups": [
+      [
+        "素惹",
+        "素人"
+      ],
+      [
+        "李豆沙",
+        "小李"
+      ],
+      [
+        "奶P",
+        "奶瓶"
+      ],
+      [
+        "ありがとう",
+        "おめでとう"
+      ]
+    ],
+    "phonetic_candidates_disclosure_only": [
+      [
+        "恋死",
+        "间围死"
+      ],
+      [
+        "Hime",
+        "是没"
+      ],
+      [
+        "Hina",
+        "西啊"
+      ],
+      [
+        "小李",
+        "下不来"
+      ]
+    ],
+    "phrase_divergence_candidates_disclosure_only": [
+      [
+        "口下面换一下",
+        "后下面换一下"
+      ],
+      [
+        "在两端的呀",
+        "最两端的呀"
+      ],
+      [
+        "能在两端呢",
+        "能在两端的"
+      ]
+    ],
+    "reason_code": "POST_SEMANTIC_ENTITY_AUDIO_OVERRIDE_DISABLED",
+    "schema_version": "post-semantic-entity-policy.v1",
+    "semantic_text_final_groups": [
+      [
+        "恋青",
+        "恋死"
+      ],
+      [
+        "梦限大",
+        "Ave Mujica"
+      ],
+      [
+        "立希",
+        "祥子"
+      ],
+      [
+        "kmx",
+        "乒乓球"
+      ],
+      [
+        "李豆沙",
+        "小李"
+      ],
+      [
+        "田中姬",
+        "铃木雏",
+        "田中雏",
+        "Hime",
+        "Hina"
+      ]
+    ],
+    "status": "SEMANTIC_TEXT_FINAL"
+  },
+  "post_transcript_entity_output_srt_sha256": "150866c06e9c43955de1e75688df4c30e084f9f53ca5176d5d7ab6e03d8820e3",
+  "read_aloud_arbitrations": [],
+  "schema_version": "chat-authority-audit.v2",
+  "self_reference_absorption_audit": {
+    "candidate_names": [
+      "小李",
+      "李豆沙",
+      "豆沙"
+    ],
+    "repairs": [],
+    "schema_version": "self-reference-absorption-audit.v3",
+    "source_witness_available": true,
+    "status": "NO_MATCH"
+  },
+  "sender_repairs": [],
+  "sender_verdict_required": [],
+  "session_topic_absorption_audits": [
+    {
+      "authorities": [],
+      "repair_count": 0,
+      "repairs": [],
+      "schema_version": "session-topic-authority-audit.v1",
+      "status": "CLEAN"
+    },
+    {
+      "authorities": [],
+      "repair_count": 0,
+      "repairs": [],
+      "schema_version": "session-topic-authority-audit.v1",
+      "status": "CLEAN"
+    }
+  ],
+  "source_subtitle_truth_audit": {
+    "applied": [],
+    "failures": [],
+    "ledger_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/repo/assets/lidousha/subtitle_truth_ledger.v1.json",
+    "ledger_sha256": "sha256:b971a4ec9201deb5a922d529361bb6f5d0d6ae38cc408dd020913b0157629c62",
+    "satisfied": [],
+    "schema_version": "source-subtitle-truth-audit.v1",
+    "status": "NO_RELEVANT_INTERVAL"
+  },
+  "speaker_ass_path": null,
+  "speaker_ass_sha256": null,
+  "speaker_manifest_sha256": null,
+  "status": "NO_MATCH",
+  "superseded_chat_proposals": [],
+  "term_boundary_audit": {
+    "moves": [],
+    "schema_version": "term-boundary-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "thank_prefix_restore_audit": {
+    "restorations": [],
+    "schema_version": "thank-prefix-restore-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "title_mark_balance_audit": {
+    "cross_cue_pairs": [],
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "title-mark-balance-audit.v1",
+    "status": "CLEAN",
+    "unresolved": []
+  },
+  "transcript_entity_audit": {
+    "confirmed": [],
+    "entity_verdict_required": [],
+    "input_srt_sha256": "61355163d04d8567fb12069c8e8f5cbefe77d6002f6d33f72cf72cdefd8fce7d",
+    "output_srt_sha256": "61355163d04d8567fb12069c8e8f5cbefe77d6002f6d33f72cf72cdefd8fce7d",
+    "repairs": [],
+    "schema_version": "transcript-entity-audit.v1",
+    "status": "NO_ENTITY"
+  },
+  "unthanked_donor_disclosure": {
+    "schema_version": "unthanked-donor-disclosure.v1",
+    "status": "ALL_THANKED",
+    "unthanked": []
+  },
+  "witness_disagreement_audits": []
+}

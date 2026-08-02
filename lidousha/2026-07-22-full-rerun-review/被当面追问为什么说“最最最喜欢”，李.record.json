@@ -1,0 +1,4200 @@
+{
+  "artifact_hashes": {
+    "ai_background_sha256": "sha256:d21bdb92a0ec136d60544168c29e9762c3634728412701e18c280e4c9a99c043",
+    "ass_sha256": "sha256:fd5ca07ee3c5cfe5ddc503f7d041d88318b769a1e56385a7a25cb1a7876e121b",
+    "burned_video_sha256": "sha256:7da1949283d87b5d4d6cf7b7c0eeafedcf103d2465feef1efd160d6c859983dc",
+    "chat_authority_audit_sha256": "sha256:e1ae1c9dafece9eed2e2440107fd4725b6bfa2eb35d9ab60171d203bad81ae51",
+    "clip_context_file_sha256": "sha256:fe923fb1d8d0222bc91c46f271949d924aecc6b9e0246bc7b12966e5bf809126",
+    "cover_reference_sha256": "sha256:b585133e9c0742ca68330080ce8f516e8148619ba18a08639d89ef9a3b254f35",
+    "cover_sha256": "sha256:7876c1d65dfc799da8035c44f1453f55b67d36d383c984985f34d9c12034b360",
+    "redelivery_baseline_audit_sha256": "sha256:1734ae4f424900ea37bb7eb7a2864f43b25dd8ad6c9e1e4bcc95878e34249efe",
+    "subtitle_regression_audit_sha256": "sha256:759d4bf09c0d808857c7bd9e64515b725c7f957b9e7bb150d5da54145b9a1bbc",
+    "subtitle_sha256": "sha256:ca6b521302958755a9e98d0c95a2108a296239120de3a07cca35bae081e229f8",
+    "video_sha256": "sha256:e20b39b5b3ed04ced4d2a0754ff93e8c2c7f7d430ad03957f1fe895624f5933d"
+  },
+  "boundary_audit": {
+    "boundary_authority": "human_source_reviewed_end",
+    "boundary_repair_extend_cap_ms": 30000,
+    "boundary_repair_max_end_ms": 314833,
+    "boundary_repair_search_origin_ms": 288870,
+    "boundary_repairs": [
+      {
+        "final_end_ms": 288940,
+        "next_speech_island_guard_ms": 100,
+        "next_speech_island_start_ms": 311368,
+        "nominal_final_end_ms": 289340,
+        "reason": "tail_clamped_before_next_subtitle",
+        "snapped_end_ms": 288940
+      }
+    ],
+    "closure_sentence": "哈哈哈",
+    "end_cut_inside_speech_island": true,
+    "end_island_continues_ms": 22124,
+    "end_on_sentence_boundary": true,
+    "final_end_ms": 288940,
+    "final_start_ms": 9710,
+    "manual_end_authority": "Ivan line corrections 2026-07-22 + Codex source-cue closure review; following cue begins next topic or SC where applicable",
+    "opening_sentence": "这不是主播最最最最喜欢",
+    "physical_continuity_nonsemantic_flags": [
+      "speech_continues_22124ms_after_cut"
+    ],
+    "red_flags": [],
+    "schema_version": "boundary-audit.v1",
+    "semantic_start_target_rel_ms": 10000,
+    "semantic_target_rel_ms": 288870,
+    "snapped_sentence_end_ms": 288940,
+    "snapped_sentence_start_ms": 9960,
+    "start_on_sentence_boundary": true,
+    "syntactic_tail_audit": {
+      "reason": "punctuation_free_spoken_clause",
+      "status": "UNKNOWN"
+    },
+    "tail_adjustment": {
+      "final_end_ms": 288940,
+      "next_speech_island_gap_ms": 22428,
+      "next_speech_island_guard_ms": 100,
+      "next_speech_island_start_ms": 311368,
+      "next_subtitle_start_ms": 288940,
+      "nominal_end_ms": 289340,
+      "reason": "tail_clamped_before_next_subtitle",
+      "tail_pad_ms": 400
+    },
+    "tail_refinement_used": false,
+    "verdict": "ok_sentence_boundary_cut"
+  },
+  "burned_preview": {
+    "ass_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_672_945/replacement_recuts/auto_193450_672_945.recut.final-sapphire72.ass",
+    "branding_intro": {
+      "fallback_attempts": [],
+      "intro_id": "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+      "intro_media_path": "/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.z1-budui-20260718.mp4",
+      "intro_media_sha256": "bbd0c7e3b34d3d5af543bb8444861ab1e18f835c9252629480b2ec2fd34e7dc5",
+      "intro_offset_ms": 5766,
+      "main_duration_ms_before": 279233,
+      "main_sha256_before": "2874164e7b9275888497c88388163a26126127c03a89b7b3ab5448a3830af1fa",
+      "method": "matched-intro-concat-copy",
+      "policy_manifest_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/intro/branding_intro.v1.json",
+      "policy_manifest_sha256": "bee66d164b683451602ae3601d79d19175bc72b0d13257b3026ae2dc47ee06ef",
+      "rotation": {
+        "candidate_intro_ids": [
+          "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+          "huozi-lidousha-kmx-baobao-guankou-z2-v1"
+        ],
+        "mode": "main-sha256",
+        "picked_intro_id": "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+        "selector": "main_sha256"
+      },
+      "status": "PREPENDED",
+      "verification": {
+        "duration_delta_ms": 23,
+        "duration_ms": 285022,
+        "full_decode": "clean",
+        "stream_contract": {
+          "audio_codec": "aac",
+          "channels": 2,
+          "fps": "30/1",
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "sample_rate": 44100,
+          "video_codec": "h264",
+          "width": 1920
+        }
+      }
+    },
+    "burned_sha256": "sha256:7da1949283d87b5d4d6cf7b7c0eeafedcf103d2465feef1efd160d6c859983dc",
+    "command": [
+      "ffmpeg",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-y",
+      "-i",
+      "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_672_945/replacement_recuts/auto_193450_672_945.recut.mp4",
+      "-vf",
+      "subtitles='/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_672_945/replacement_recuts/auto_193450_672_945.recut.final-sapphire72.ass':fontsdir='/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/fonts'",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "20",
+      "-c:a",
+      "copy",
+      "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_672_945/replacement_recuts/auto_193450_672_945.recut.burned-final-sapphire72.mp4"
+    ],
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_672_945/replacement_recuts/auto_193450_672_945.recut.burned-final-sapphire72.mp4",
+    "pillarbox_16_9": false,
+    "status": "BURNED",
+    "stream_contract": null,
+    "subtitle_style": "lidousha-final-sapphire72"
+  },
+  "chat_authority_audit_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_672_945/auto_193450_672_945.chat-authority.json",
+  "clip_context_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_672_945/auto_193450_672_945.clip-context.json",
+  "clip_context_payload_sha256": "sha256:91cf22dbddd0f12c952d71605cf1e1c2ad310cb248ec63650b0fb6414c7fc330",
+  "duration_ms": 279230,
+  "end_ms": 279230,
+  "media_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_672_945/replacement_recuts/auto_193450_672_945.recut.mp4",
+  "publish_staging": {
+    "cover_generation": {
+      "ai_background": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_672_945/replacement_recuts/covers_ai_original/auto_193450_672_945.screenshot-poster.png",
+      "ai_background_sha256": "sha256:d21bdb92a0ec136d60544168c29e9762c3634728412701e18c280e4c9a99c043",
+      "angle_degrees": -3.0,
+      "art_direction": {
+        "background_style": "warm-scrapbook-collage",
+        "cover_punch": [],
+        "emote_id": "",
+        "emote_mode": "",
+        "emote_reason": "",
+        "expression_en": "Wide-eyed and slightly open-mouthed in startled disbelief, with a betrayed, flustered look and hands raised near her face.",
+        "hook_color": "pink",
+        "hook_word": "被收集",
+        "is_song": false,
+        "layout": "right-split",
+        "line_breaks": [
+          "被坏女人",
+          "南町问到",
+          "最最最最喜欢的原因，",
+          "后来才发现",
+          "自己才是",
+          "被收集的那个"
+        ],
+        "role": "shocked_bites_back",
+        "words": [
+          "被",
+          "坏女人",
+          "南町",
+          "问到",
+          "最最最最喜欢的原因，",
+          "后来",
+          "才发现",
+          "自己",
+          "才是",
+          "被收集",
+          "的",
+          "那个"
+        ]
+      },
+      "attempted_models": [],
+      "background_style": "warm-scrapbook-collage",
+      "cover_diversity_slot": 1,
+      "cover_mode": "auto",
+      "cover_origin": "SOURCE_SCREENSHOT",
+      "cover_punch": [],
+      "cover_punch_allowed": false,
+      "cover_text": "被坏女人南町问到最最最最喜欢的原因，后来才发现自己才是被收集的那个",
+      "cover_text_mode": "full",
+      "cover_treatment": {
+        "reason": "hash-bound source frame verifies all required participants",
+        "treatment": "screenshot_direct"
+      },
+      "expression_en": "Wide-eyed and slightly open-mouthed in startled disbelief, with a betrayed, flustered look and hands raised near her face.",
+      "fallback_used": false,
+      "final_cover": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_672_945/replacement_recuts/covers/auto_193450_672_945.screenshot-title.cover.png",
+      "final_cover_sha256": "sha256:7876c1d65dfc799da8035c44f1453f55b67d36d383c984985f34d9c12034b360",
+      "font": "SmileySans-Oblique.ttf",
+      "font_selection": {
+        "font": "SmileySans-Oblique.ttf",
+        "glyph_risk": [],
+        "rejected": [
+          {
+            "font": "ZCOOLKuaiLe-Regular.ttf",
+            "missing": [],
+            "wrong_shape": [
+              "自"
+            ]
+          }
+        ]
+      },
+      "font_size": 140,
+      "hook_color": "pink",
+      "hook_word": "被收集",
+      "image_gen_model": "none",
+      "image_generation_attempted": false,
+      "image_generation_planned": false,
+      "image_generation_used": false,
+      "layout": "right-split",
+      "line_split": "llm_word_aware",
+      "method": "screenshot_direct",
+      "min_talk_font_size": 120,
+      "model": "none",
+      "model_fallback_used": false,
+      "overlay_position": {
+        "x": 156,
+        "y": 96
+      },
+      "reference_authority": {
+        "authority": "Ivan-stated-20260722(标题点名坏女人南町与自己被收集)+Codex-visual-review-20260722(同源136.0s帧清楚显示李豆沙和南町；本轮AI封面仅剩李豆沙，已实证丢失关系主体，故拒绝AI重绘)",
+        "candidate_id": "auto_193450_672_945",
+        "content_time_ms": 136000,
+        "ledger_sha256": "sha256:7b5c94452ea270a2df3c2db1dfc2c5e829f2e09a955aea2594bf52ca68415b90",
+        "recording_basename": "22966160_20260722-19-35-15.mp4",
+        "reference_png_sha256": "sha256:b585133e9c0742ca68330080ce8f516e8148619ba18a08639d89ef9a3b254f35",
+        "relation_action": "李豆沙与南町并排大头像，承载南町当面对质及李豆沙发现自己也是收藏品的双人关系",
+        "required_treatment": "screenshot_direct",
+        "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+        "source_time_ms": 808670,
+        "visible_participant_ids": [
+          "lidousha",
+          "nancho"
+        ]
+      },
+      "reference_image": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_672_945/replacement_recuts/cover_refs/auto_193450_672_945.cover-ref.png",
+      "reference_selection": {
+        "authority_override": {
+          "authority": "Ivan-stated-20260722(标题点名坏女人南町与自己被收集)+Codex-visual-review-20260722(同源136.0s帧清楚显示李豆沙和南町；本轮AI封面仅剩李豆沙，已实证丢失关系主体，故拒绝AI重绘)",
+          "candidate_id": "auto_193450_672_945",
+          "content_time_ms": 136000,
+          "ledger_sha256": "sha256:7b5c94452ea270a2df3c2db1dfc2c5e829f2e09a955aea2594bf52ca68415b90",
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "reference_png_sha256": "sha256:b585133e9c0742ca68330080ce8f516e8148619ba18a08639d89ef9a3b254f35",
+          "relation_action": "李豆沙与南町并排大头像，承载南町当面对质及李豆沙发现自己也是收藏品的双人关系",
+          "required_treatment": "screenshot_direct",
+          "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+          "source_time_ms": 808670,
+          "visible_participant_ids": [
+            "lidousha",
+            "nancho"
+          ]
+        },
+        "best_ms": 136000,
+        "candidates": [
+          {
+            "ms": 136000,
+            "score": null
+          }
+        ],
+        "schema": "cover-frame-selection.v1",
+        "status": "HASH_BOUND_AUTHORITY_OVERRIDE",
+        "subject_confident": false
+      },
+      "reference_sha256": "sha256:b585133e9c0742ca68330080ce8f516e8148619ba18a08639d89ef9a3b254f35",
+      "relation_cover_mode": "VERIFIED_DUAL_STREAM_FRAME",
+      "rendered_lines": [
+        "被坏女人南町",
+        "问到最最最最喜",
+        "欢的原因，后来",
+        "才发现自己才是",
+        "被收集的那个"
+      ],
+      "role": "shocked_bites_back",
+      "route_decision": {
+        "actual_treatment": "screenshot_direct",
+        "alternatives": [
+          {
+            "rationale": "hash-bound source frame verifies all required participants",
+            "rejected_reason": null,
+            "status": "SELECTED",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rationale": "the real source moment is usable but benefits from a bounded identity-preserving cleanup",
+            "rejected_reason": "the verified source frame already carries the hook; image cleanup would add generation risk without a demonstrated need; selected evidence: hash-bound source frame verifies all required participants",
+            "status": "REJECTED",
+            "treatment": "screenshot_polish"
+          },
+          {
+            "rationale": "the available source frame is not a sufficiently strong or verified cover composition",
+            "rejected_reason": "the verified source frame already carries the hook and participant relationship; a redraw would discard grounded story evidence; selected evidence: hash-bound source frame verifies all required participants",
+            "status": "REJECTED",
+            "treatment": "cpa_redraw"
+          }
+        ],
+        "alternatives_considered": [
+          "screenshot_direct",
+          "screenshot_polish",
+          "cpa_redraw"
+        ],
+        "cover_mode": "auto",
+        "execution_status": "READY",
+        "final_visibility_authority": "SOURCE_PRESERVING_SCREENSHOT_PIPELINE",
+        "final_visible_participant_ids": [
+          "lidousha",
+          "nancho"
+        ],
+        "frame_emotion": null,
+        "frame_score": null,
+        "image_generation_attempted": false,
+        "image_generation_planned": false,
+        "image_generation_used": false,
+        "is_song": false,
+        "manual_title_or_full_text_contract": true,
+        "motion_dispersion_frac": null,
+        "reason": "hash-bound source frame verifies all required participants",
+        "reference_authority_id": "auto_193450_672_945",
+        "rejected_alternatives": [
+          {
+            "rejected_reason": "the verified source frame already carries the hook; image cleanup would add generation risk without a demonstrated need; selected evidence: hash-bound source frame verifies all required participants",
+            "treatment": "screenshot_polish"
+          },
+          {
+            "rejected_reason": "the verified source frame already carries the hook and participant relationship; a redraw would discard grounded story evidence; selected evidence: hash-bound source frame verifies all required participants",
+            "treatment": "cpa_redraw"
+          }
+        ],
+        "relationship_semantic_evidence": [
+          "selection_hook:EXPLICIT_RELATION_LANGUAGE",
+          "title:EXPLICIT_RELATION_LANGUAGE",
+          "cover_text:EXPLICIT_RELATION_LANGUAGE"
+        ],
+        "relationship_visual_required": true,
+        "required_participant_ids": [
+          "lidousha",
+          "nancho"
+        ],
+        "schema_version": "lidousha-cover-route-decision.v2",
+        "selected_rationale": "hash-bound source frame verifies all required participants",
+        "selected_treatment": "screenshot_direct",
+        "selection_policy": "lidousha-cover-treatment-router.v2",
+        "source_visibility_authority": "HASH_BOUND_COVER_REFERENCE",
+        "source_visible_participant_ids": [
+          "lidousha",
+          "nancho"
+        ],
+        "subject_confident": false,
+        "verified_stream_frame": true
+      },
+      "screenshot_frame": {
+        "crop_box": [
+          266,
+          0,
+          1920,
+          930
+        ],
+        "frame_ms": 136000,
+        "source_size": [
+          1920,
+          1080
+        ],
+        "zoom": 1.16
+      },
+      "screenshot_graphic_poster": {
+        "background_style": "warm-scrapbook-collage",
+        "output_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_672_945/replacement_recuts/covers_ai_original/auto_193450_672_945.screenshot-poster.png",
+        "output_sha256": "sha256:d21bdb92a0ec136d60544168c29e9762c3634728412701e18c280e4c9a99c043",
+        "palette": {
+          "accent": "#1f5849",
+          "background": "#e05c4f",
+          "paper": "#fff0cf",
+          "secondary": "#f8b289"
+        },
+        "schema_version": "screenshot-graphic-poster.v1",
+        "screenshot_card": {
+          "rotation_degrees": 1.5,
+          "size": [
+            1640,
+            700
+          ]
+        },
+        "status": "COMPOSED"
+      },
+      "scrim": false,
+      "story_contract": {
+        "boundary_semantic_review": {
+          "candidate_id": "auto_193450_672_945",
+          "reason_codes": [],
+          "schema_version": "talk-boundary-semantic-review.v1",
+          "status": "SUPERSEDED_BY_HUMAN_SOURCE_REVIEW"
+        },
+        "clip_context_binding": {
+          "context_sha256": "sha256:91cf22dbddd0f12c952d71605cf1e1c2ad310cb248ec63650b0fb6414c7fc330",
+          "mutation_authorized": false,
+          "schema_version": "lidousha-clip-context.v1",
+          "speech_memory_ledger_sha256": "sha256:d87532b5d56457496a868c6910091a545bd2c612a807182d742aa0ca26d30c95",
+          "whole_clip_draft_srt_sha256": "sha256:d426a10c8633eb1ed9e84ed92cccc505bfadafe655ecdd6cb82c6347896b3719"
+        },
+        "cover_counterpart_reference_available": true,
+        "cover_fallback_mode": "VERIFIED_DUAL_STREAM_FRAME",
+        "cover_reference_authority": {
+          "authority": "Ivan-stated-20260722(标题点名坏女人南町与自己被收集)+Codex-visual-review-20260722(同源136.0s帧清楚显示李豆沙和南町；本轮AI封面仅剩李豆沙，已实证丢失关系主体，故拒绝AI重绘)",
+          "candidate_id": "auto_193450_672_945",
+          "content_time_ms": 136000,
+          "ledger_sha256": "sha256:7b5c94452ea270a2df3c2db1dfc2c5e829f2e09a955aea2594bf52ca68415b90",
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "reference_png_sha256": "sha256:b585133e9c0742ca68330080ce8f516e8148619ba18a08639d89ef9a3b254f35",
+          "relation_action": "李豆沙与南町并排大头像，承载南町当面对质及李豆沙发现自己也是收藏品的双人关系",
+          "required_treatment": "screenshot_direct",
+          "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+          "source_time_ms": 808670,
+          "visible_participant_ids": [
+            "lidousha",
+            "nancho"
+          ]
+        },
+        "human_boundary_authority": "Ivan line corrections 2026-07-22 + Codex source-cue closure review; following cue begins next topic or SC where applicable",
+        "participants": [
+          {
+            "canonical_id": "lidousha",
+            "display_name": "李豆沙",
+            "surfaces": [
+              "李豆沙",
+              "小李",
+              "豆沙"
+            ]
+          },
+          {
+            "canonical_id": "nancho",
+            "display_name": "南町",
+            "surfaces": [
+              "南町",
+              "大N",
+              "小N",
+              "南町nightin"
+            ]
+          }
+        ],
+        "relation_state": "CONFIRMED",
+        "schema_version": "lidousha-story-contract.v1",
+        "selection_hook": "被当面追问为什么说“最最最喜欢”，李豆沙先拿报恩当借口，又被一串L系CP名拆穿成集邮海王。",
+        "source_media_sha256s": [
+          "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+        ]
+      },
+      "text_backing": "outline",
+      "title": "被坏女人南町问到最最最最喜欢的原因，后来才发现自己才是被收集的那个",
+      "title_band": "right-split",
+      "workflow": "cpa-openai-compatible-image-edit-cover-plus-approved-local-title-overlay"
+    },
+    "cover_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_672_945/replacement_recuts/covers/auto_193450_672_945.screenshot-title.cover.png",
+    "cover_status": "AI_COVER_READY",
+    "cover_text": "被坏女人南町问到最最最最喜欢的原因，后来才发现自己才是被收集的那个",
+    "publish_json_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_672_945/replacement_recuts/auto_193450_672_945.recut.publish.json",
+    "reason_codes": [],
+    "status": "STAGED",
+    "title": "被坏女人南町问到最最最最喜欢的原因，后来才发现自己才是被收集的那个",
+    "title_authority_error": null,
+    "title_authority_status": "RESOLVED_MANUAL",
+    "title_policy_violations": [],
+    "title_source": "ivan_manual_override",
+    "title_story_audit": {
+      "artifact_kind": "title",
+      "schema_version": "story-artifact-audit.v1",
+      "status": "PASS",
+      "text_sha256": "sha256:20c0c8e1bd38bfa4c71444f89a045d5ea8d48a2cf86fabcfb25bd46125549f0f",
+      "violations": []
+    },
+    "upload_enabled": false
+  },
+  "redelivery_baseline": {
+    "application_strategy": "exact_reviewed_interval_replay",
+    "authority": "Ivan-reviewed 2026-07-22 corrections plus prior reviewed lexical and structured-chat repairs, bound to the current reviewed cue segmentation",
+    "baseline_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/reviewed_subtitle_baselines/auto_193450_672_945.reviewed.srt",
+    "baseline_schema_version": "subtitle-redelivery-baseline.v2",
+    "baseline_sha256": "ca6b521302958755a9e98d0c95a2108a296239120de3a07cca35bae081e229f8",
+    "changed_cue_count": 15,
+    "current_cue_count": 125,
+    "current_input_sha256": "4ace54c4b3ea3f9990f535926a9e09bdd45f7f745f87700640ed454367da0ec2",
+    "current_source_interval": {
+      "absolute_source_end_ms": 951900,
+      "absolute_source_start_ms": 672670
+    },
+    "deferred_exact_replay_reverification": {
+      "deferred_strategy": null,
+      "missing_truth_ids": [],
+      "required_truth_ids": [],
+      "reverified_truth_ids": [],
+      "schema_version": "deferred-exact-replay-reverification.v1",
+      "status": "NOT_REQUIRED"
+    },
+    "effective_reviewed_overlap": {
+      "absolute_source_end_ms": 951900,
+      "absolute_source_start_ms": 672670
+    },
+    "expected_baseline_sha256": "ca6b521302958755a9e98d0c95a2108a296239120de3a07cca35bae081e229f8",
+    "failures": [],
+    "mapped_cue_count": 125,
+    "mappings": [
+      {
+        "baseline_absolute_source_end_ms": 675480,
+        "baseline_absolute_source_start_ms": 672920,
+        "baseline_cue_index": 1,
+        "end_ms": 2810,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 1,
+        "start_ms": 250,
+        "text": "这不是主播最最最最喜欢"
+      },
+      {
+        "baseline_absolute_source_end_ms": 676720,
+        "baseline_absolute_source_start_ms": 675480,
+        "baseline_cue_index": 2,
+        "end_ms": 4050,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 2,
+        "start_ms": 2810,
+        "text": "你为什么在说我的时候"
+      },
+      {
+        "baseline_absolute_source_end_ms": 678760,
+        "baseline_absolute_source_start_ms": 676720,
+        "baseline_cue_index": 3,
+        "end_ms": 6090,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 3,
+        "start_ms": 4050,
+        "text": "要最最最最喜欢"
+      },
+      {
+        "baseline_absolute_source_end_ms": 681460,
+        "baseline_absolute_source_start_ms": 678970,
+        "baseline_cue_index": 4,
+        "end_ms": 8790,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 4,
+        "start_ms": 6300,
+        "text": "乱说的啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 684380,
+        "baseline_absolute_source_start_ms": 681500,
+        "baseline_cue_index": 5,
+        "end_ms": 11710,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 5,
+        "start_ms": 8830,
+        "text": "怎么到现在就是乱说的哈"
+      },
+      {
+        "baseline_absolute_source_end_ms": 686300,
+        "baseline_absolute_source_start_ms": 684380,
+        "baseline_cue_index": 6,
+        "end_ms": 13630,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 6,
+        "start_ms": 11710,
+        "text": "因为我当时就是"
+      },
+      {
+        "baseline_absolute_source_end_ms": 688540,
+        "baseline_absolute_source_start_ms": 686800,
+        "baseline_cue_index": 7,
+        "end_ms": 15870,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 7,
+        "start_ms": 14130,
+        "text": "你知道我在哪说的吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 692220,
+        "baseline_absolute_source_start_ms": 688540,
+        "baseline_cue_index": 8,
+        "end_ms": 19550,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 8,
+        "start_ms": 15870,
+        "text": "我知道在那什么主舞台互动的时候说的，对"
+      },
+      {
+        "baseline_absolute_source_end_ms": 694680,
+        "baseline_absolute_source_start_ms": 692220,
+        "baseline_cue_index": 9,
+        "end_ms": 22010,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 9,
+        "start_ms": 19550,
+        "text": "但是因为他们问问题问得太快了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 696920,
+        "baseline_absolute_source_start_ms": 694680,
+        "baseline_cue_index": 10,
+        "end_ms": 24250,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 10,
+        "start_ms": 22010,
+        "text": "我脑子有点反应不过来"
+      },
+      {
+        "baseline_absolute_source_end_ms": 700100,
+        "baseline_absolute_source_start_ms": 697140,
+        "baseline_cue_index": 11,
+        "end_ms": 27430,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 11,
+        "start_ms": 24470,
+        "text": "我，我脑子，我可是看过切片的哟"
+      },
+      {
+        "baseline_absolute_source_end_ms": 701860,
+        "baseline_absolute_source_start_ms": 700100,
+        "baseline_cue_index": 12,
+        "end_ms": 29190,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 12,
+        "start_ms": 27430,
+        "text": "我脑子有点反应不过来"
+      },
+      {
+        "baseline_absolute_source_end_ms": 704900,
+        "baseline_absolute_source_start_ms": 701860,
+        "baseline_cue_index": 13,
+        "end_ms": 32230,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 13,
+        "start_ms": 29190,
+        "text": "然后我就在搜寻第一个是谁"
+      },
+      {
+        "baseline_absolute_source_end_ms": 707140,
+        "baseline_absolute_source_start_ms": 705100,
+        "baseline_cue_index": 14,
+        "end_ms": 34470,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 14,
+        "start_ms": 32430,
+        "text": "就除了在场的几位，看"
+      },
+      {
+        "baseline_absolute_source_end_ms": 709180,
+        "baseline_absolute_source_start_ms": 707140,
+        "baseline_cue_index": 15,
+        "end_ms": 36510,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 15,
+        "start_ms": 34470,
+        "text": "还能在脑子里搜寻到谁"
+      },
+      {
+        "baseline_absolute_source_end_ms": 711080,
+        "baseline_absolute_source_start_ms": 709300,
+        "baseline_cue_index": 16,
+        "end_ms": 38410,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 16,
+        "start_ms": 36630,
+        "text": "然后呢，呃"
+      },
+      {
+        "baseline_absolute_source_end_ms": 712520,
+        "baseline_absolute_source_start_ms": 711080,
+        "baseline_cue_index": 17,
+        "end_ms": 39850,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 17,
+        "start_ms": 38410,
+        "text": "就搜寻到了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 715560,
+        "baseline_absolute_source_start_ms": 712520,
+        "baseline_cue_index": 18,
+        "end_ms": 42890,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 18,
+        "start_ms": 39850,
+        "text": "最最最最喜欢的南町nightin"
+      },
+      {
+        "baseline_absolute_source_end_ms": 716280,
+        "baseline_absolute_source_start_ms": 715560,
+        "baseline_cue_index": 19,
+        "end_ms": 43610,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 19,
+        "start_ms": 42890,
+        "text": "为什么要这样说"
+      },
+      {
+        "baseline_absolute_source_end_ms": 719860,
+        "baseline_absolute_source_start_ms": 716280,
+        "baseline_cue_index": 20,
+        "end_ms": 47190,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 20,
+        "start_ms": 43610,
+        "text": "是因为你之前帮我弄了那个，那个，呃"
+      },
+      {
+        "baseline_absolute_source_end_ms": 721840,
+        "baseline_absolute_source_start_ms": 720220,
+        "baseline_cue_index": 21,
+        "end_ms": 49170,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 21,
+        "start_ms": 47550,
+        "text": "就是1V1的时候"
+      },
+      {
+        "baseline_absolute_source_end_ms": 724380,
+        "baseline_absolute_source_start_ms": 721840,
+        "baseline_cue_index": 22,
+        "end_ms": 51710,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 22,
+        "start_ms": 49170,
+        "text": "哦哦哦哦"
+      },
+      {
+        "baseline_absolute_source_end_ms": 726380,
+        "baseline_absolute_source_start_ms": 725380,
+        "baseline_cue_index": 23,
+        "end_ms": 53710,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 23,
+        "start_ms": 52710,
+        "text": "哎呀"
+      },
+      {
+        "baseline_absolute_source_end_ms": 728419,
+        "baseline_absolute_source_start_ms": 726420,
+        "baseline_cue_index": 24,
+        "end_ms": 55749,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 24,
+        "start_ms": 53750,
+        "text": "泉水之恩啊，不对"
+      },
+      {
+        "baseline_absolute_source_end_ms": 730930,
+        "baseline_absolute_source_start_ms": 728419,
+        "baseline_cue_index": 25,
+        "end_ms": 58260,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 25,
+        "start_ms": 55749,
+        "text": "滴水之恩，涌泉相报啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 732210,
+        "baseline_absolute_source_start_ms": 730930,
+        "baseline_cue_index": 26,
+        "end_ms": 59540,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 26,
+        "start_ms": 58260,
+        "text": "呃，泉水之恩"
+      },
+      {
+        "baseline_absolute_source_end_ms": 735610,
+        "baseline_absolute_source_start_ms": 732210,
+        "baseline_cue_index": 27,
+        "end_ms": 62940,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 27,
+        "start_ms": 59540,
+        "text": "泉水之，就是之前1V1的时候"
+      },
+      {
+        "baseline_absolute_source_end_ms": 736880,
+        "baseline_absolute_source_start_ms": 735720,
+        "baseline_cue_index": 28,
+        "end_ms": 64210,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 28,
+        "start_ms": 63050,
+        "text": "1V1的时候"
+      },
+      {
+        "baseline_absolute_source_end_ms": 739300,
+        "baseline_absolute_source_start_ms": 736880,
+        "baseline_cue_index": 29,
+        "end_ms": 66630,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 29,
+        "start_ms": 64210,
+        "text": "李豆沙不知道怎么操作那个电脑"
+      },
+      {
+        "baseline_absolute_source_end_ms": 741450,
+        "baseline_absolute_source_start_ms": 739300,
+        "baseline_cue_index": 30,
+        "end_ms": 68780,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 30,
+        "start_ms": 66630,
+        "text": "不知道怎么操作那个投屏"
+      },
+      {
+        "baseline_absolute_source_end_ms": 744030,
+        "baseline_absolute_source_start_ms": 741690,
+        "baseline_cue_index": 31,
+        "end_ms": 71360,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 31,
+        "start_ms": 69020,
+        "text": "然后大N老师就过来帮忙了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 745810,
+        "baseline_absolute_source_start_ms": 744030,
+        "baseline_cue_index": 32,
+        "end_ms": 73140,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 32,
+        "start_ms": 71360,
+        "text": "非常亚撒西，亚撒西"
+      },
+      {
+        "baseline_absolute_source_end_ms": 748620,
+        "baseline_absolute_source_start_ms": 745940,
+        "baseline_cue_index": 33,
+        "end_ms": 75950,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 33,
+        "start_ms": 73270,
+        "text": "非常亚撒西"
+      },
+      {
+        "baseline_absolute_source_end_ms": 749980,
+        "baseline_absolute_source_start_ms": 748660,
+        "baseline_cue_index": 34,
+        "end_ms": 77310,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 34,
+        "start_ms": 75990,
+        "text": "好像是毁神吧"
+      },
+      {
+        "baseline_absolute_source_end_ms": 752140,
+        "baseline_absolute_source_start_ms": 749980,
+        "baseline_cue_index": 35,
+        "end_ms": 79470,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 35,
+        "start_ms": 77310,
+        "text": "毁神说救救李姐"
+      },
+      {
+        "baseline_absolute_source_end_ms": 754520,
+        "baseline_absolute_source_start_ms": 752140,
+        "baseline_cue_index": 36,
+        "end_ms": 81850,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 36,
+        "start_ms": 79470,
+        "text": "然后大N老师就来了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 757210,
+        "baseline_absolute_source_start_ms": 754960,
+        "baseline_cue_index": 37,
+        "end_ms": 84540,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 37,
+        "start_ms": 82290,
+        "text": "然后毁神什么都没有做"
+      },
+      {
+        "baseline_absolute_source_end_ms": 760190,
+        "baseline_absolute_source_start_ms": 757210,
+        "baseline_cue_index": 38,
+        "end_ms": 87520,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 38,
+        "start_ms": 84540,
+        "text": "但是在大N老师拯救完李姐之后"
+      },
+      {
+        "baseline_absolute_source_end_ms": 761410,
+        "baseline_absolute_source_start_ms": 760190,
+        "baseline_cue_index": 39,
+        "end_ms": 88740,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 39,
+        "start_ms": 87520,
+        "text": "毁神发了一句"
+      },
+      {
+        "baseline_absolute_source_end_ms": 762740,
+        "baseline_absolute_source_start_ms": 761410,
+        "baseline_cue_index": 40,
+        "end_ms": 90070,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 40,
+        "start_ms": 88740,
+        "text": "拯救李姐成功"
+      },
+      {
+        "baseline_absolute_source_end_ms": 765380,
+        "baseline_absolute_source_start_ms": 762740,
+        "baseline_cue_index": 41,
+        "end_ms": 92710,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 41,
+        "start_ms": 90070,
+        "text": "哈哈哈哈哈哈哈哈"
+      },
+      {
+        "baseline_absolute_source_end_ms": 768400,
+        "baseline_absolute_source_start_ms": 765380,
+        "baseline_cue_index": 42,
+        "end_ms": 95730,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 42,
+        "start_ms": 92710,
+        "text": "邀功小子，哈哈"
+      },
+      {
+        "baseline_absolute_source_end_ms": 769790,
+        "baseline_absolute_source_start_ms": 768400,
+        "baseline_cue_index": 43,
+        "end_ms": 97120,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 43,
+        "start_ms": 95730,
+        "text": "嗯，对"
+      },
+      {
+        "baseline_absolute_source_end_ms": 773570,
+        "baseline_absolute_source_start_ms": 769790,
+        "baseline_cue_index": 44,
+        "end_ms": 100900,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 44,
+        "start_ms": 97120,
+        "text": "所以就是，就是最最最最喜欢的南町nightin"
+      },
+      {
+        "baseline_absolute_source_end_ms": 783240,
+        "baseline_absolute_source_start_ms": 780610,
+        "baseline_cue_index": 45,
+        "end_ms": 110570,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 45,
+        "start_ms": 107940,
+        "text": "这个L是李乐莎的L吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 785280,
+        "baseline_absolute_source_start_ms": 783240,
+        "baseline_cue_index": 46,
+        "end_ms": 112610,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 46,
+        "start_ms": 110570,
+        "text": "这L可是很多人，可以是灵"
+      },
+      {
+        "baseline_absolute_source_end_ms": 786420,
+        "baseline_absolute_source_start_ms": 785280,
+        "baseline_cue_index": 47,
+        "end_ms": 113750,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 47,
+        "start_ms": 112610,
+        "text": "可以是礼"
+      },
+      {
+        "baseline_absolute_source_end_ms": 787490,
+        "baseline_absolute_source_start_ms": 786420,
+        "baseline_cue_index": 48,
+        "end_ms": 114820,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 48,
+        "start_ms": 113750,
+        "text": "可以是李"
+      },
+      {
+        "baseline_absolute_source_end_ms": 788370,
+        "baseline_absolute_source_start_ms": 787490,
+        "baseline_cue_index": 49,
+        "end_ms": 115700,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 49,
+        "start_ms": 114820,
+        "text": "可以是礼"
+      },
+      {
+        "baseline_absolute_source_end_ms": 789510,
+        "baseline_absolute_source_start_ms": 788370,
+        "baseline_cue_index": 50,
+        "end_ms": 116840,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 50,
+        "start_ms": 115700,
+        "text": "哈哈哈哈"
+      },
+      {
+        "baseline_absolute_source_end_ms": 791550,
+        "baseline_absolute_source_start_ms": 789510,
+        "baseline_cue_index": 51,
+        "end_ms": 118880,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 51,
+        "start_ms": 116840,
+        "text": "李太多了哈"
+      },
+      {
+        "baseline_absolute_source_end_ms": 793820,
+        "baseline_absolute_source_start_ms": 791700,
+        "baseline_cue_index": 52,
+        "end_ms": 121150,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 52,
+        "start_ms": 119030,
+        "text": "这个李有点太多了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 794340,
+        "baseline_absolute_source_start_ms": 793820,
+        "baseline_cue_index": 53,
+        "end_ms": 121670,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 53,
+        "start_ms": 121150,
+        "text": "是的"
+      },
+      {
+        "baseline_absolute_source_end_ms": 797600,
+        "baseline_absolute_source_start_ms": 794340,
+        "baseline_cue_index": 54,
+        "end_ms": 124930,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 54,
+        "start_ms": 121670,
+        "text": "你这个LLNN显得非常海王"
+      },
+      {
+        "baseline_absolute_source_end_ms": 800540,
+        "baseline_absolute_source_start_ms": 797600,
+        "baseline_cue_index": 55,
+        "end_ms": 127870,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 55,
+        "start_ms": 124930,
+        "text": "公公又式式啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 803930,
+        "baseline_absolute_source_start_ms": 801310,
+        "baseline_cue_index": 56,
+        "end_ms": 131260,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 56,
+        "start_ms": 128640,
+        "text": "确实我在一直一直收集"
+      },
+      {
+        "baseline_absolute_source_end_ms": 806550,
+        "baseline_absolute_source_start_ms": 803930,
+        "baseline_cue_index": 57,
+        "end_ms": 133880,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 57,
+        "start_ms": 131260,
+        "text": "在一直收集L中哦"
+      },
+      {
+        "baseline_absolute_source_end_ms": 807990,
+        "baseline_absolute_source_start_ms": 806550,
+        "baseline_cue_index": 58,
+        "end_ms": 135320,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 58,
+        "start_ms": 133880,
+        "text": "狠狠收集L中"
+      },
+      {
+        "baseline_absolute_source_end_ms": 810620,
+        "baseline_absolute_source_start_ms": 808300,
+        "baseline_cue_index": 59,
+        "end_ms": 137950,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 59,
+        "start_ms": 135630,
+        "text": "原来我也是收集的一环"
+      },
+      {
+        "baseline_absolute_source_end_ms": 813460,
+        "baseline_absolute_source_start_ms": 811380,
+        "baseline_cue_index": 60,
+        "end_ms": 140790,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 60,
+        "start_ms": 138710,
+        "text": "我是图鉴的一环"
+      },
+      {
+        "baseline_absolute_source_end_ms": 817190,
+        "baseline_absolute_source_start_ms": 814370,
+        "baseline_cue_index": 61,
+        "end_ms": 144520,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 61,
+        "start_ms": 141700,
+        "text": "谢谢野橘未霜的钢镚"
+      },
+      {
+        "baseline_absolute_source_end_ms": 819210,
+        "baseline_absolute_source_start_ms": 817190,
+        "baseline_cue_index": 62,
+        "end_ms": 146540,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 62,
+        "start_ms": 144520,
+        "text": "那你今晚不是要住她家了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 820410,
+        "baseline_absolute_source_start_ms": 819210,
+        "baseline_cue_index": 63,
+        "end_ms": 147740,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 63,
+        "start_ms": 146540,
+        "text": "当然不是啦"
+      },
+      {
+        "baseline_absolute_source_end_ms": 824090,
+        "baseline_absolute_source_start_ms": 820590,
+        "baseline_cue_index": 64,
+        "end_ms": 151420,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 64,
+        "start_ms": 147920,
+        "text": "确实要住她家了，要小心小n老师啊，"
+      },
+      {
+        "baseline_absolute_source_end_ms": 826050,
+        "baseline_absolute_source_start_ms": 824090,
+        "baseline_cue_index": 65,
+        "end_ms": 153380,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 65,
+        "start_ms": 151420,
+        "text": "另外你俩CP叫啥"
+      },
+      {
+        "baseline_absolute_source_end_ms": 827580,
+        "baseline_absolute_source_start_ms": 826050,
+        "baseline_cue_index": 66,
+        "end_ms": 154910,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 66,
+        "start_ms": 153380,
+        "text": "你没看到前面的吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 829520,
+        "baseline_absolute_source_start_ms": 827580,
+        "baseline_cue_index": 67,
+        "end_ms": 156850,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 67,
+        "start_ms": 154910,
+        "text": "躲在屏幕后面的，哈哈"
+      },
+      {
+        "baseline_absolute_source_end_ms": 832700,
+        "baseline_absolute_source_start_ms": 829520,
+        "baseline_cue_index": 68,
+        "end_ms": 160030,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 68,
+        "start_ms": 156850,
+        "text": "《躲在屏幕后面抽烟的二人》这个名字需要这么长吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 835950,
+        "baseline_absolute_source_start_ms": 832740,
+        "baseline_cue_index": 69,
+        "end_ms": 163280,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 69,
+        "start_ms": 160070,
+        "text": "对啊，就是要特别一点哦"
+      },
+      {
+        "baseline_absolute_source_end_ms": 836510,
+        "baseline_absolute_source_start_ms": 835950,
+        "baseline_cue_index": 70,
+        "end_ms": 163840,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 70,
+        "start_ms": 163280,
+        "text": "行"
+      },
+      {
+        "baseline_absolute_source_end_ms": 839750,
+        "baseline_absolute_source_start_ms": 836510,
+        "baseline_cue_index": 71,
+        "end_ms": 167080,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 71,
+        "start_ms": 163840,
+        "text": "到时候他们就是别的CP都已经把口号喊完了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 840990,
+        "baseline_absolute_source_start_ms": 839750,
+        "baseline_cue_index": 72,
+        "end_ms": 168320,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 72,
+        "start_ms": 167080,
+        "text": "我们的CP名你还在打字"
+      },
+      {
+        "baseline_absolute_source_end_ms": 842150,
+        "baseline_absolute_source_start_ms": 840990,
+        "baseline_cue_index": 73,
+        "end_ms": 169480,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 73,
+        "start_ms": 168320,
+        "text": "哈哈哈"
+      },
+      {
+        "baseline_absolute_source_end_ms": 846980,
+        "baseline_absolute_source_start_ms": 842410,
+        "baseline_cue_index": 74,
+        "end_ms": 174310,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 74,
+        "start_ms": 169740,
+        "text": "不就是因为你有很多LLNN啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 849700,
+        "baseline_absolute_source_start_ms": 847020,
+        "baseline_cue_index": 75,
+        "end_ms": 177030,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 75,
+        "start_ms": 174350,
+        "text": "所以你在众多LLNN里面"
+      },
+      {
+        "baseline_absolute_source_end_ms": 852980,
+        "baseline_absolute_source_start_ms": 849700,
+        "baseline_cue_index": 76,
+        "end_ms": 180310,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 76,
+        "start_ms": 177030,
+        "text": "你总得有一个特别突出一点的吧"
+      },
+      {
+        "baseline_absolute_source_end_ms": 856920,
+        "baseline_absolute_source_start_ms": 853000,
+        "baseline_cue_index": 77,
+        "end_ms": 184250,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 77,
+        "start_ms": 180330,
+        "text": "就是这个名字突出，也是特别长的"
+      },
+      {
+        "baseline_absolute_source_end_ms": 858650,
+        "baseline_absolute_source_start_ms": 856920,
+        "baseline_cue_index": 78,
+        "end_ms": 185980,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 78,
+        "start_ms": 184250,
+        "text": "对，凸显自己"
+      },
+      {
+        "baseline_absolute_source_end_ms": 862290,
+        "baseline_absolute_source_start_ms": 858650,
+        "baseline_cue_index": 79,
+        "end_ms": 189620,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 79,
+        "start_ms": 185980,
+        "text": "谢谢步汪汪的钢镚，姐姐大人"
+      },
+      {
+        "baseline_absolute_source_end_ms": 864770,
+        "baseline_absolute_source_start_ms": 862410,
+        "baseline_cue_index": 80,
+        "end_ms": 192100,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 80,
+        "start_ms": 189740,
+        "text": "没想到居然是NL联动"
+      },
+      {
+        "baseline_absolute_source_end_ms": 867020,
+        "baseline_absolute_source_start_ms": 864770,
+        "baseline_cue_index": 81,
+        "end_ms": 194350,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 81,
+        "start_ms": 192100,
+        "text": "nnllhhb，哈哈"
+      },
+      {
+        "baseline_absolute_source_end_ms": 871900,
+        "baseline_absolute_source_start_ms": 867020,
+        "baseline_cue_index": 82,
+        "end_ms": 199230,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 82,
+        "start_ms": 194350,
+        "text": "这个 NN 和 L 的排列是怎么排的"
+      },
+      {
+        "baseline_absolute_source_end_ms": 874980,
+        "baseline_absolute_source_start_ms": 871920,
+        "baseline_cue_index": 83,
+        "end_ms": 202310,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 83,
+        "start_ms": 199250,
+        "text": "NNL一般都是NNLL，是吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 876460,
+        "baseline_absolute_source_start_ms": 874980,
+        "baseline_cue_index": 84,
+        "end_ms": 203790,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 84,
+        "start_ms": 202310,
+        "text": "对，一般都是NNLL"
+      },
+      {
+        "baseline_absolute_source_end_ms": 879760,
+        "baseline_absolute_source_start_ms": 876460,
+        "baseline_cue_index": 85,
+        "end_ms": 207090,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 85,
+        "start_ms": 203790,
+        "text": "我一般都是在前面的是吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 881730,
+        "baseline_absolute_source_start_ms": 880110,
+        "baseline_cue_index": 86,
+        "end_ms": 209060,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 86,
+        "start_ms": 207440,
+        "text": "听到是吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 882770,
+        "baseline_absolute_source_start_ms": 881730,
+        "baseline_cue_index": 87,
+        "end_ms": 210100,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 87,
+        "start_ms": 209060,
+        "text": "干什么啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 884070,
+        "baseline_absolute_source_start_ms": 882770,
+        "baseline_cue_index": 88,
+        "end_ms": 211400,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 88,
+        "start_ms": 210100,
+        "text": "怀疑的眼神"
+      },
+      {
+        "baseline_absolute_source_end_ms": 887640,
+        "baseline_absolute_source_start_ms": 884400,
+        "baseline_cue_index": 89,
+        "end_ms": 214970,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 89,
+        "start_ms": 211730,
+        "text": "因为第一个出现的是LLNN"
+      },
+      {
+        "baseline_absolute_source_end_ms": 890340,
+        "baseline_absolute_source_start_ms": 887640,
+        "baseline_cue_index": 90,
+        "end_ms": 217670,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 90,
+        "start_ms": 214970,
+        "text": "但是你这又不是首发，是吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 891860,
+        "baseline_absolute_source_start_ms": 890340,
+        "baseline_cue_index": 91,
+        "end_ms": 219190,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 91,
+        "start_ms": 217670,
+        "text": "这并不是首发，孩子"
+      },
+      {
+        "baseline_absolute_source_end_ms": 892820,
+        "baseline_absolute_source_start_ms": 891860,
+        "baseline_cue_index": 92,
+        "end_ms": 220150,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 92,
+        "start_ms": 219190,
+        "text": "你这并不是首发"
+      },
+      {
+        "baseline_absolute_source_end_ms": 894240,
+        "baseline_absolute_source_start_ms": 892820,
+        "baseline_cue_index": 93,
+        "end_ms": 221570,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 93,
+        "start_ms": 220150,
+        "text": "首发是病院坂灵"
+      },
+      {
+        "baseline_absolute_source_end_ms": 894900,
+        "baseline_absolute_source_start_ms": 894240,
+        "baseline_cue_index": 94,
+        "end_ms": 222230,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 94,
+        "start_ms": 221570,
+        "text": "哈哈哈哈"
+      },
+      {
+        "baseline_absolute_source_end_ms": 895840,
+        "baseline_absolute_source_start_ms": 894900,
+        "baseline_cue_index": 95,
+        "end_ms": 223170,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 95,
+        "start_ms": 222230,
+        "text": "对啊，对"
+      },
+      {
+        "baseline_absolute_source_end_ms": 897620,
+        "baseline_absolute_source_start_ms": 895840,
+        "baseline_cue_index": 96,
+        "end_ms": 224950,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 96,
+        "start_ms": 223170,
+        "text": "那个时候你是什么"
+      },
+      {
+        "baseline_absolute_source_end_ms": 899500,
+        "baseline_absolute_source_start_ms": 897620,
+        "baseline_cue_index": 97,
+        "end_ms": 226830,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 97,
+        "start_ms": 224950,
+        "text": "那个时候也是在前面啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 900840,
+        "baseline_absolute_source_start_ms": 900080,
+        "baseline_cue_index": 98,
+        "end_ms": 228170,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 98,
+        "start_ms": 227410,
+        "text": "这样吗"
+      },
+      {
+        "baseline_absolute_source_end_ms": 901240,
+        "baseline_absolute_source_start_ms": 900840,
+        "baseline_cue_index": 99,
+        "end_ms": 228570,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 99,
+        "start_ms": 228170,
+        "text": "对呀"
+      },
+      {
+        "baseline_absolute_source_end_ms": 902040,
+        "baseline_absolute_source_start_ms": 901240,
+        "baseline_cue_index": 100,
+        "end_ms": 229370,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 100,
+        "start_ms": 228570,
+        "text": "NNLL"
+      },
+      {
+        "baseline_absolute_source_end_ms": 905240,
+        "baseline_absolute_source_start_ms": 902040,
+        "baseline_cue_index": 101,
+        "end_ms": 232570,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 101,
+        "start_ms": 229370,
+        "text": "一般公式就是nnllhhb或者nnl"
+      },
+      {
+        "baseline_absolute_source_end_ms": 905850,
+        "baseline_absolute_source_start_ms": 905240,
+        "baseline_cue_index": 102,
+        "end_ms": 233180,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 102,
+        "start_ms": 232570,
+        "text": "对对对"
+      },
+      {
+        "baseline_absolute_source_end_ms": 906970,
+        "baseline_absolute_source_start_ms": 905850,
+        "baseline_cue_index": 103,
+        "end_ms": 234300,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 103,
+        "start_ms": 233180,
+        "text": "是是是，嗯嗯"
+      },
+      {
+        "baseline_absolute_source_end_ms": 908050,
+        "baseline_absolute_source_start_ms": 906970,
+        "baseline_cue_index": 104,
+        "end_ms": 235380,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 104,
+        "start_ms": 234300,
+        "text": "大概就是这样"
+      },
+      {
+        "baseline_absolute_source_end_ms": 909610,
+        "baseline_absolute_source_start_ms": 908050,
+        "baseline_cue_index": 105,
+        "end_ms": 236940,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 105,
+        "start_ms": 235380,
+        "text": "好，信了信了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 911070,
+        "baseline_absolute_source_start_ms": 909810,
+        "baseline_cue_index": 106,
+        "end_ms": 238400,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 106,
+        "start_ms": 237140,
+        "text": "我也没有想到"
+      },
+      {
+        "baseline_absolute_source_end_ms": 913170,
+        "baseline_absolute_source_start_ms": 911070,
+        "baseline_cue_index": 107,
+        "end_ms": 240500,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 107,
+        "start_ms": 238400,
+        "text": "嗯，其实我也没有想到"
+      },
+      {
+        "baseline_absolute_source_end_ms": 914670,
+        "baseline_absolute_source_start_ms": 913330,
+        "baseline_cue_index": 108,
+        "end_ms": 242000,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 108,
+        "start_ms": 240660,
+        "text": "我也没有想到"
+      },
+      {
+        "baseline_absolute_source_end_ms": 919450,
+        "baseline_absolute_source_start_ms": 914670,
+        "baseline_cue_index": 109,
+        "end_ms": 246780,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 109,
+        "start_ms": 242000,
+        "text": "竟然就是第一次跟大N老师见面是在她家"
+      },
+      {
+        "baseline_absolute_source_end_ms": 920970,
+        "baseline_absolute_source_start_ms": 919530,
+        "baseline_cue_index": 110,
+        "end_ms": 248300,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 110,
+        "start_ms": 246860,
+        "text": "呵呵，是啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 922850,
+        "baseline_absolute_source_start_ms": 920970,
+        "baseline_cue_index": 111,
+        "end_ms": 250180,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 111,
+        "start_ms": 248300,
+        "text": "我说今天晚上跟"
+      },
+      {
+        "baseline_absolute_source_end_ms": 925580,
+        "baseline_absolute_source_start_ms": 922940,
+        "baseline_cue_index": 112,
+        "end_ms": 252910,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 112,
+        "start_ms": 250270,
+        "text": "要跟第一次见面的妹妹去吃饭"
+      },
+      {
+        "baseline_absolute_source_end_ms": 926660,
+        "baseline_absolute_source_start_ms": 925580,
+        "baseline_cue_index": 113,
+        "end_ms": 253990,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 113,
+        "start_ms": 252910,
+        "text": "他们都猜是谁的"
+      },
+      {
+        "baseline_absolute_source_end_ms": 928420,
+        "baseline_absolute_source_start_ms": 926660,
+        "baseline_cue_index": 114,
+        "end_ms": 255750,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 114,
+        "start_ms": 253990,
+        "text": "没想到居然是李豆沙啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 929500,
+        "baseline_absolute_source_start_ms": 928420,
+        "baseline_cue_index": 115,
+        "end_ms": 256830,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 115,
+        "start_ms": 255750,
+        "text": "你跟他们说了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 929840,
+        "baseline_absolute_source_start_ms": 929500,
+        "baseline_cue_index": 116,
+        "end_ms": 257170,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 116,
+        "start_ms": 256830,
+        "text": "对啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 930940,
+        "baseline_absolute_source_start_ms": 929840,
+        "baseline_cue_index": 117,
+        "end_ms": 258270,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 117,
+        "start_ms": 257170,
+        "text": "跟他们说要跟第"
+      },
+      {
+        "baseline_absolute_source_end_ms": 932960,
+        "baseline_absolute_source_start_ms": 930940,
+        "baseline_cue_index": 118,
+        "end_ms": 260290,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 118,
+        "start_ms": 258270,
+        "text": "要跟没有见过的妹妹去吃饭"
+      },
+      {
+        "baseline_absolute_source_end_ms": 935630,
+        "baseline_absolute_source_start_ms": 932960,
+        "baseline_cue_index": 119,
+        "end_ms": 262960,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 119,
+        "start_ms": 260290,
+        "text": "但是我们没有说是谁啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 938510,
+        "baseline_absolute_source_start_ms": 935670,
+        "baseline_cue_index": 120,
+        "end_ms": 265840,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 120,
+        "start_ms": 263000,
+        "text": "然后他们，他们都没有想到是你啊"
+      },
+      {
+        "baseline_absolute_source_end_ms": 940270,
+        "baseline_absolute_source_start_ms": 938510,
+        "baseline_cue_index": 121,
+        "end_ms": 267600,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 121,
+        "start_ms": 265840,
+        "text": "嘿嘿哈哈哈哈"
+      },
+      {
+        "baseline_absolute_source_end_ms": 943650,
+        "baseline_absolute_source_start_ms": 940310,
+        "baseline_cue_index": 122,
+        "end_ms": 270980,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 122,
+        "start_ms": 267640,
+        "text": "我，我的观众肯定也没有想到是你呀"
+      },
+      {
+        "baseline_absolute_source_end_ms": 948630,
+        "baseline_absolute_source_start_ms": 943650,
+        "baseline_cue_index": 123,
+        "end_ms": 275960,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 123,
+        "start_ms": 270980,
+        "text": "确实很难想象到，我的观众只会猜礼墨Sumi"
+      },
+      {
+        "baseline_absolute_source_end_ms": 950530,
+        "baseline_absolute_source_start_ms": 948630,
+        "baseline_cue_index": 124,
+        "end_ms": 277860,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 124,
+        "start_ms": 275960,
+        "text": "礼墨太出名了"
+      },
+      {
+        "baseline_absolute_source_end_ms": 951900,
+        "baseline_absolute_source_start_ms": 950530,
+        "baseline_cue_index": 125,
+        "end_ms": 279230,
+        "mapping_kind": "exact_reviewed_interval_replay",
+        "output_cue_index": 125,
+        "start_ms": 277860,
+        "text": "哈哈哈"
+      }
+    ],
+    "mode": "preserve_text_outside_source_truth",
+    "omitted_baseline_cue_count": 0,
+    "omitted_by_new_boundary": [],
+    "output_sha256": "ca6b521302958755a9e98d0c95a2108a296239120de3a07cca35bae081e229f8",
+    "owned_intervals": [
+      {
+        "end_ms": 2810,
+        "start_ms": 250
+      },
+      {
+        "end_ms": 4050,
+        "start_ms": 2810
+      },
+      {
+        "end_ms": 6090,
+        "start_ms": 4050
+      },
+      {
+        "end_ms": 8790,
+        "start_ms": 6300
+      },
+      {
+        "end_ms": 11710,
+        "start_ms": 8830
+      },
+      {
+        "end_ms": 13630,
+        "start_ms": 11710
+      },
+      {
+        "end_ms": 15870,
+        "start_ms": 14130
+      },
+      {
+        "end_ms": 19550,
+        "start_ms": 15870
+      },
+      {
+        "end_ms": 22010,
+        "start_ms": 19550
+      },
+      {
+        "end_ms": 24250,
+        "start_ms": 22010
+      },
+      {
+        "end_ms": 27430,
+        "start_ms": 24470
+      },
+      {
+        "end_ms": 29190,
+        "start_ms": 27430
+      },
+      {
+        "end_ms": 32230,
+        "start_ms": 29190
+      },
+      {
+        "end_ms": 34470,
+        "start_ms": 32430
+      },
+      {
+        "end_ms": 36510,
+        "start_ms": 34470
+      },
+      {
+        "end_ms": 38410,
+        "start_ms": 36630
+      },
+      {
+        "end_ms": 39850,
+        "start_ms": 38410
+      },
+      {
+        "end_ms": 42890,
+        "start_ms": 39850
+      },
+      {
+        "end_ms": 43610,
+        "start_ms": 42890
+      },
+      {
+        "end_ms": 47190,
+        "start_ms": 43610
+      },
+      {
+        "end_ms": 49170,
+        "start_ms": 47550
+      },
+      {
+        "end_ms": 51710,
+        "start_ms": 49170
+      },
+      {
+        "end_ms": 53710,
+        "start_ms": 52710
+      },
+      {
+        "end_ms": 55749,
+        "start_ms": 53750
+      },
+      {
+        "end_ms": 58260,
+        "start_ms": 55749
+      },
+      {
+        "end_ms": 59540,
+        "start_ms": 58260
+      },
+      {
+        "end_ms": 62940,
+        "start_ms": 59540
+      },
+      {
+        "end_ms": 64210,
+        "start_ms": 63050
+      },
+      {
+        "end_ms": 66630,
+        "start_ms": 64210
+      },
+      {
+        "end_ms": 68780,
+        "start_ms": 66630
+      },
+      {
+        "end_ms": 71360,
+        "start_ms": 69020
+      },
+      {
+        "end_ms": 73140,
+        "start_ms": 71360
+      },
+      {
+        "end_ms": 75950,
+        "start_ms": 73270
+      },
+      {
+        "end_ms": 77310,
+        "start_ms": 75990
+      },
+      {
+        "end_ms": 79470,
+        "start_ms": 77310
+      },
+      {
+        "end_ms": 81850,
+        "start_ms": 79470
+      },
+      {
+        "end_ms": 84540,
+        "start_ms": 82290
+      },
+      {
+        "end_ms": 87520,
+        "start_ms": 84540
+      },
+      {
+        "end_ms": 88740,
+        "start_ms": 87520
+      },
+      {
+        "end_ms": 90070,
+        "start_ms": 88740
+      },
+      {
+        "end_ms": 92710,
+        "start_ms": 90070
+      },
+      {
+        "end_ms": 95730,
+        "start_ms": 92710
+      },
+      {
+        "end_ms": 97120,
+        "start_ms": 95730
+      },
+      {
+        "end_ms": 100900,
+        "start_ms": 97120
+      },
+      {
+        "end_ms": 110570,
+        "start_ms": 107940
+      },
+      {
+        "end_ms": 112610,
+        "start_ms": 110570
+      },
+      {
+        "end_ms": 113750,
+        "start_ms": 112610
+      },
+      {
+        "end_ms": 114820,
+        "start_ms": 113750
+      },
+      {
+        "end_ms": 115700,
+        "start_ms": 114820
+      },
+      {
+        "end_ms": 116840,
+        "start_ms": 115700
+      },
+      {
+        "end_ms": 118880,
+        "start_ms": 116840
+      },
+      {
+        "end_ms": 121150,
+        "start_ms": 119030
+      },
+      {
+        "end_ms": 121670,
+        "start_ms": 121150
+      },
+      {
+        "end_ms": 124930,
+        "start_ms": 121670
+      },
+      {
+        "end_ms": 127870,
+        "start_ms": 124930
+      },
+      {
+        "end_ms": 131260,
+        "start_ms": 128640
+      },
+      {
+        "end_ms": 133880,
+        "start_ms": 131260
+      },
+      {
+        "end_ms": 135320,
+        "start_ms": 133880
+      },
+      {
+        "end_ms": 137950,
+        "start_ms": 135630
+      },
+      {
+        "end_ms": 140790,
+        "start_ms": 138710
+      },
+      {
+        "end_ms": 144520,
+        "start_ms": 141700
+      },
+      {
+        "end_ms": 146540,
+        "start_ms": 144520
+      },
+      {
+        "end_ms": 147740,
+        "start_ms": 146540
+      },
+      {
+        "end_ms": 151420,
+        "start_ms": 147920
+      },
+      {
+        "end_ms": 153380,
+        "start_ms": 151420
+      },
+      {
+        "end_ms": 154910,
+        "start_ms": 153380
+      },
+      {
+        "end_ms": 156850,
+        "start_ms": 154910
+      },
+      {
+        "end_ms": 160030,
+        "start_ms": 156850
+      },
+      {
+        "end_ms": 163280,
+        "start_ms": 160070
+      },
+      {
+        "end_ms": 163840,
+        "start_ms": 163280
+      },
+      {
+        "end_ms": 167080,
+        "start_ms": 163840
+      },
+      {
+        "end_ms": 168320,
+        "start_ms": 167080
+      },
+      {
+        "end_ms": 169480,
+        "start_ms": 168320
+      },
+      {
+        "end_ms": 174310,
+        "start_ms": 169740
+      },
+      {
+        "end_ms": 177030,
+        "start_ms": 174350
+      },
+      {
+        "end_ms": 180310,
+        "start_ms": 177030
+      },
+      {
+        "end_ms": 184250,
+        "start_ms": 180330
+      },
+      {
+        "end_ms": 185980,
+        "start_ms": 184250
+      },
+      {
+        "end_ms": 189620,
+        "start_ms": 185980
+      },
+      {
+        "end_ms": 192100,
+        "start_ms": 189740
+      },
+      {
+        "end_ms": 194350,
+        "start_ms": 192100
+      },
+      {
+        "end_ms": 199230,
+        "start_ms": 194350
+      },
+      {
+        "end_ms": 202310,
+        "start_ms": 199250
+      },
+      {
+        "end_ms": 203790,
+        "start_ms": 202310
+      },
+      {
+        "end_ms": 207090,
+        "start_ms": 203790
+      },
+      {
+        "end_ms": 209060,
+        "start_ms": 207440
+      },
+      {
+        "end_ms": 210100,
+        "start_ms": 209060
+      },
+      {
+        "end_ms": 211400,
+        "start_ms": 210100
+      },
+      {
+        "end_ms": 214970,
+        "start_ms": 211730
+      },
+      {
+        "end_ms": 217670,
+        "start_ms": 214970
+      },
+      {
+        "end_ms": 219190,
+        "start_ms": 217670
+      },
+      {
+        "end_ms": 220150,
+        "start_ms": 219190
+      },
+      {
+        "end_ms": 221570,
+        "start_ms": 220150
+      },
+      {
+        "end_ms": 222230,
+        "start_ms": 221570
+      },
+      {
+        "end_ms": 223170,
+        "start_ms": 222230
+      },
+      {
+        "end_ms": 224950,
+        "start_ms": 223170
+      },
+      {
+        "end_ms": 226830,
+        "start_ms": 224950
+      },
+      {
+        "end_ms": 228170,
+        "start_ms": 227410
+      },
+      {
+        "end_ms": 228570,
+        "start_ms": 228170
+      },
+      {
+        "end_ms": 229370,
+        "start_ms": 228570
+      },
+      {
+        "end_ms": 232570,
+        "start_ms": 229370
+      },
+      {
+        "end_ms": 233180,
+        "start_ms": 232570
+      },
+      {
+        "end_ms": 234300,
+        "start_ms": 233180
+      },
+      {
+        "end_ms": 235380,
+        "start_ms": 234300
+      },
+      {
+        "end_ms": 236940,
+        "start_ms": 235380
+      },
+      {
+        "end_ms": 238400,
+        "start_ms": 237140
+      },
+      {
+        "end_ms": 240500,
+        "start_ms": 238400
+      },
+      {
+        "end_ms": 242000,
+        "start_ms": 240660
+      },
+      {
+        "end_ms": 246780,
+        "start_ms": 242000
+      },
+      {
+        "end_ms": 248300,
+        "start_ms": 246860
+      },
+      {
+        "end_ms": 250180,
+        "start_ms": 248300
+      },
+      {
+        "end_ms": 252910,
+        "start_ms": 250270
+      },
+      {
+        "end_ms": 253990,
+        "start_ms": 252910
+      },
+      {
+        "end_ms": 255750,
+        "start_ms": 253990
+      },
+      {
+        "end_ms": 256830,
+        "start_ms": 255750
+      },
+      {
+        "end_ms": 257170,
+        "start_ms": 256830
+      },
+      {
+        "end_ms": 258270,
+        "start_ms": 257170
+      },
+      {
+        "end_ms": 260290,
+        "start_ms": 258270
+      },
+      {
+        "end_ms": 262960,
+        "start_ms": 260290
+      },
+      {
+        "end_ms": 265840,
+        "start_ms": 263000
+      },
+      {
+        "end_ms": 267600,
+        "start_ms": 265840
+      },
+      {
+        "end_ms": 270980,
+        "start_ms": 267640
+      },
+      {
+        "end_ms": 275960,
+        "start_ms": 270980
+      },
+      {
+        "end_ms": 277860,
+        "start_ms": 275960
+      },
+      {
+        "end_ms": 279230,
+        "start_ms": 277860
+      }
+    ],
+    "post_source_truth_output_sha256": "ca6b521302958755a9e98d0c95a2108a296239120de3a07cca35bae081e229f8",
+    "protected_absolute_intervals": [
+      {
+        "absolute_source_end_ms": 776410,
+        "absolute_source_start_ms": 773570
+      },
+      {
+        "absolute_source_end_ms": 780610,
+        "absolute_source_start_ms": 776470
+      }
+    ],
+    "protected_cue_count": 0,
+    "protected_intervals": [
+      {
+        "end_ms": 103740,
+        "start_ms": 100900
+      },
+      {
+        "end_ms": 107940,
+        "start_ms": 103800
+      }
+    ],
+    "protected_windows_replayed_for_later_source_truth": true,
+    "replayed_cue_count": 125,
+    "reviewed_coverage": {
+      "absolute_source_end_ms": 951900,
+      "absolute_source_start_ms": 672670
+    },
+    "schema_version": "subtitle-redelivery-baseline-audit.v2",
+    "source_recording_identity": {
+      "current_basename": "22966160_20260722-19-34-50.mp4",
+      "current_sha256": "0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+      "expected_basename": "22966160_20260722-19-34-50.mp4",
+      "expected_sha256": "0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+    },
+    "source_truth_reapplication": {
+      "applied": [],
+      "failures": [],
+      "inactive": [
+        {
+          "assertion_state": "SUPERSEDED",
+          "superseded_by": "20260722-nancho-confrontation-opening-human-r2",
+          "truth_id": "20260722-nancho-confrontation-opening-mixed-name"
+        },
+        {
+          "assertion_state": "SUPERSEDED",
+          "superseded_by": "20260722-nancho-confrontation-drop-hallucinated-formula-r3",
+          "truth_id": "20260722-nancho-confrontation-latin-formula-positive-r1"
+        },
+        {
+          "assertion_state": "SUPERSEDED",
+          "superseded_by": "20260722-nancho-confrontation-drop-hallucinated-formula-r3",
+          "truth_id": "20260722-nancho-confrontation-drop-hallucinated-formula-r2"
+        }
+      ],
+      "ledger_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/subtitle_truth_ledger.v1.json",
+      "ledger_sha256": "sha256:5f39a0e37ded249fa028ad4310ee0fc9780a0679faa7446f44fcede24258706d",
+      "reapplied_after_redelivery_baseline": true,
+      "satisfied": [
+        {
+          "action": "replace_cue",
+          "after": [
+            "这不是主播最最最最喜欢"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(0:12只说到最最最最喜欢；后续南町nightin与LLNNHHB均未说)+BCUT/Jianying同时间窗均不支持新增后缀",
+          "before": [
+            "这不是主播最最最最喜欢"
+          ],
+          "before_span": "这不是主播最最最最喜欢的南町nightin吗，llnnhhb",
+          "cue_indexes": [
+            1
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "这不是主播最最最最喜欢"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:358ad42f567a2553d50b995ddc06dfe539ccbb0eb491e91ebc74a31c1ab00b95",
+          "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
+          "local_windows": [
+            {
+              "end_ms": 2810,
+              "start_ms": 250
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r2",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 2560,
+          "source_end_ms": 675480,
+          "source_start_ms": 672920,
+          "supersedes": [
+            "20260722-nancho-confrontation-opening-mixed-name"
+          ],
+          "truth_id": "20260722-nancho-confrontation-opening-human-r2"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "你为什么在说我的时候",
+            "要最最最最喜欢"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(0:13没有说我草；后半段有声，禁止因前半段静音删掉真实话)+BCUT/Jianying均无草",
+          "before": [
+            "你为什么在说我的时候",
+            "要最最最最喜欢"
+          ],
+          "before_span": "你为什么在说我的时候要最最最最最最喜欢，草",
+          "cue_indexes": [
+            2,
+            3
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "你为什么在说我的时候要最最最最喜欢"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:d3925e1d4ee960e1355ac3c3a84b236b468624e28937608bf533f149a8dbb7fd",
+          "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
+          "local_windows": [
+            {
+              "end_ms": 5370,
+              "start_ms": 2810
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r1",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 2560,
+          "source_end_ms": 678040,
+          "source_start_ms": 675480,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-confrontation-no-cao-response-r1"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "乱说的啊"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审；前半段无声，后半段有声)+black-frame-raw-audio-onset-check(20260722; onset 678970ms +/-100ms)",
+          "before": [
+            "乱说的啊"
+          ],
+          "before_span": null,
+          "cue_indexes": [
+            4
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "乱说的啊"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:6c08e574d27b618ab20ad4198af94e07fa1d7b7698a24397f209fb1c78895ac3",
+          "evidence_class": null,
+          "local_windows": [
+            {
+              "end_ms": 8400,
+              "start_ms": 5370
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": null,
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 3030,
+          "source_end_ms": 681070,
+          "source_start_ms": 678040,
+          "supersedes": null,
+          "timing_pin": {
+            "after_start_ms": 6300,
+            "before_start_ms": 6300,
+            "source_spoken_start_ms": 678970
+          },
+          "truth_id": "20260722-nancho-confrontation-silent-prefix"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "最最最最喜欢的南町nightin"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(当面对质切片复审：此处不是只报名字，而是完整说最最最最喜欢的南町nightin；r2取代旧窄窗)",
+          "before": [
+            "最最最最喜欢的南町nightin"
+          ],
+          "before_span": null,
+          "cue_indexes": [
+            18
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "最最最最喜欢的南町nightin"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:bb6336549cdd334ed36ffa9c6ad3e5265cddcddb9ee8071561cf2a8b6a98621e",
+          "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
+          "local_windows": [
+            {
+              "end_ms": 42890,
+              "start_ms": 39850
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r2",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 3040,
+          "source_end_ms": 715560,
+          "source_start_ms": 712520,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-confrontation-favorite-mixed-name-r2"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "然后大N老师就过来帮忙了"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(1:18为南町别名大N；同片后续大N老师重复槽位)",
+          "before": [
+            "然后大N老师就过来帮忙了"
+          ],
+          "before_span": "然后大卫老师就过来帮忙了",
+          "cue_indexes": [
+            31
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "然后大N老师就过来帮忙了"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:f42c2b4953de1c072b98cfd93e0568e748b5e9bfe6e7e14231f0613d31f2b543",
+          "evidence_class": "ATOMIC_HUMAN_ENTITY_TRUTH",
+          "local_windows": [
+            {
+              "end_ms": 71310,
+              "start_ms": 68990
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r1",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 2320,
+          "source_end_ms": 743980,
+          "source_start_ms": 741660,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-confrontation-dan-teacher-r1"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "非常亚撒西，亚撒西"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(1:20逐字为非常亚撒西，亚撒西；只修本局部，不做全局替换)",
+          "before": [
+            "非常亚撒西，亚撒西"
+          ],
+          "before_span": "非常亚撒西亚",
+          "cue_indexes": [
+            32
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "非常亚撒西，亚撒西"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:c094c81e5b4b92424065c4e61d2bd6ced7ca4454f489793c8562e89099b37c6b",
+          "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
+          "local_windows": [
+            {
+              "end_ms": 73110,
+              "start_ms": 71310
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r1",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 1800,
+          "source_end_ms": 745780,
+          "source_start_ms": 743980,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-confrontation-yasashii-r1"
+        },
+        {
+          "action": "replace_substring",
+          "after": [
+            "好像是毁神吧",
+            "毁神说救救李姐",
+            "然后大N老师就来了",
+            "然后毁神什么都没有做",
+            "但是在大N老师拯救完李姐之后",
+            "毁神发了一句",
+            "拯救李姐成功"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审；按读音最小落字，不主张身份)+BCUT同源草稿逐字为毁神(防AGY把shen鼻音漂成sheng后改写为绘声)",
+          "before": [
+            "好像是毁神吧",
+            "毁神说救救李姐",
+            "然后大N老师就来了",
+            "然后毁神什么都没有做",
+            "但是在大N老师拯救完李姐之后",
+            "毁神发了一句",
+            "拯救李姐成功"
+          ],
+          "before_span": null,
+          "cue_indexes": [
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40
+          ],
+          "declared_output_contract": {
+            "action": "replace_substring",
+            "canonical_texts": [],
+            "required_text": "毁神",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:f661a09bb9b148bdf422565d89486388f7c81bf96611fc54404ec8f398a90049",
+          "evidence_class": null,
+          "local_windows": [
+            {
+              "end_ms": 90070,
+              "start_ms": 75950
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": null,
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 14120,
+          "source_end_ms": 762740,
+          "source_start_ms": 748620,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-confrontation-huishen-surface"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "所以就是，就是最最最最喜欢的南町nightin"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审)",
+          "before": [
+            "所以就是，就是最最最最喜欢的南町nightin"
+          ],
+          "before_span": null,
+          "cue_indexes": [
+            44
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "所以就是，就是最最最最喜欢的南町nightin"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:3bbeffec3155c9378c2bc624eebd8b724d2fb2fa63bd65913e45ac55a3d38751",
+          "evidence_class": null,
+          "local_windows": [
+            {
+              "end_ms": 100900,
+              "start_ms": 97120
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": null,
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 3780,
+          "source_end_ms": 773570,
+          "source_start_ms": 769790,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-confrontation-favorite-name"
+        },
+        {
+          "action": "drop_cue",
+          "after": [],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审；该区间无说话)",
+          "before": [],
+          "before_span": null,
+          "cue_indexes": [],
+          "declared_output_contract": {
+            "action": "drop_cue",
+            "canonical_texts": [],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "drop_status": "ALREADY_ABSENT",
+          "entry_sha256": "sha256:9600ffb50a1604cb05dfbe84cf1b6525336c994c4646e86e7e79b9d9a0209219",
+          "evidence_class": null,
+          "local_windows": [
+            {
+              "end_ms": 103740,
+              "start_ms": 100900
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": null,
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 2840,
+          "source_end_ms": 776410,
+          "source_start_ms": 773570,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-confrontation-drop-hallucinated-echo"
+        },
+        {
+          "action": "drop_cue",
+          "after": [],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(最最最最喜欢的南町nightin之后该完整cue没有说话；用户特别澄清前一处我草仅前半段无声但本区间是南町nightin听不清造成的整cue幻听)",
+          "before": [],
+          "before_span": null,
+          "cue_indexes": [],
+          "declared_output_contract": {
+            "action": "drop_cue",
+            "canonical_texts": [],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "drop_status": "ALREADY_ABSENT",
+          "entry_sha256": "sha256:8b12988be2be2bb810908ae985d1fde415b9ccc0339838749919b7d269da41b5",
+          "evidence_class": "ATOMIC_HUMAN_ACOUSTIC_ABSENCE_TRUTH_FULL_CUE",
+          "local_windows": [
+            {
+              "end_ms": 107940,
+              "start_ms": 103800
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r3",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 4140,
+          "source_end_ms": 780610,
+          "source_start_ms": 776470,
+          "supersedes": [
+            "20260722-nancho-confrontation-latin-formula-positive-r1",
+            "20260722-nancho-confrontation-drop-hallucinated-formula-r2"
+          ],
+          "truth_id": "20260722-nancho-confrontation-drop-hallucinated-formula-r3"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "这L可是很多人，可以是灵"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(病院坂灵的灵)",
+          "before": [
+            "这L可是很多人，可以是灵"
+          ],
+          "before_span": null,
+          "cue_indexes": [
+            46
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "这L可是很多人，可以是灵"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:459a332193da75f6970d108d16db6c35646044d8dad5ebc7ca5e0eee7b220768",
+          "evidence_class": null,
+          "local_windows": [
+            {
+              "end_ms": 112610,
+              "start_ms": 110590
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": null,
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 2020,
+          "source_end_ms": 785280,
+          "source_start_ms": 783260,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-confrontation-l-name-ling"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "可以是礼"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(礼墨的礼)",
+          "before": [
+            "可以是礼"
+          ],
+          "before_span": null,
+          "cue_indexes": [
+            47
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "可以是礼"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:7da44ad16ad8e5aff209f0e82fc6d3ebec02268e8204ad81b4ea75ac44bbcdc8",
+          "evidence_class": null,
+          "local_windows": [
+            {
+              "end_ms": 113750,
+              "start_ms": 112610
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": null,
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 1140,
+          "source_end_ms": 786420,
+          "source_start_ms": 785280,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-confrontation-l-name-li-sumi"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "可以是李"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(李豆沙的李)",
+          "before": [
+            "可以是李"
+          ],
+          "before_span": null,
+          "cue_indexes": [
+            48
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "可以是李"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:793311d9dc0a2509864e64951530ea438946df8146c60b35bea195d4f010c493",
+          "evidence_class": null,
+          "local_windows": [
+            {
+              "end_ms": 114820,
+              "start_ms": 113750
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": null,
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 1070,
+          "source_end_ms": 787490,
+          "source_start_ms": 786420,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-confrontation-l-name-li-dousha"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "可以是礼"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(花礼的礼)",
+          "before": [
+            "可以是礼"
+          ],
+          "before_span": null,
+          "cue_indexes": [
+            49
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "可以是礼"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:49909181afbf5d8b198a0fb66b1f86fe56a6eaedb7419bcaee24497ecd7d30eb",
+          "evidence_class": null,
+          "local_windows": [
+            {
+              "end_ms": 115700,
+              "start_ms": 114820
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": null,
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 880,
+          "source_end_ms": 788370,
+          "source_start_ms": 787490,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-confrontation-l-name-li-huali"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "李太多了哈"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审)",
+          "before": [
+            "李太多了哈"
+          ],
+          "before_span": null,
+          "cue_indexes": [
+            51
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "李太多了哈"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:4294641d07f36e0f72e3ca569dca171ffbfb6f504ff4aa5d1620cbccfd5c4ce9",
+          "evidence_class": null,
+          "local_windows": [
+            {
+              "end_ms": 118880,
+              "start_ms": 116800
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": null,
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 2080,
+          "source_end_ms": 791550,
+          "source_start_ms": 789470,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-confrontation-too-many-li"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "这个李有点太多了"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审)",
+          "before": [
+            "这个李有点太多了"
+          ],
+          "before_span": null,
+          "cue_indexes": [
+            52
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "这个李有点太多了"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:dda3777bcd916bc6886c15cc3026252c331b4de12e4244b9859a86122ae1aba2",
+          "evidence_class": null,
+          "local_windows": [
+            {
+              "end_ms": 121150,
+              "start_ms": 119030
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": null,
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 2120,
+          "source_end_ms": 793820,
+          "source_start_ms": 791700,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-confrontation-this-li-too-many"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "公公又式式啊"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(固定表面专名式梗词)",
+          "before": [
+            "公公又式式啊"
+          ],
+          "before_span": null,
+          "cue_indexes": [
+            55
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "公公又式式啊"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:5126a351396f2f9540f5bdf386707f8ea8687ac94088519f41f5eff22bdc792a",
+          "evidence_class": null,
+          "local_windows": [
+            {
+              "end_ms": 128190,
+              "start_ms": 124910
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": null,
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 3280,
+          "source_end_ms": 800860,
+          "source_start_ms": 797580,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-confrontation-opaque-meme"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "当然不是啦"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审)",
+          "before": [
+            "当然不是啦"
+          ],
+          "before_span": null,
+          "cue_indexes": [
+            63
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "当然不是啦"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:0a6fb056919763783775824b0f591dd828cd0759c2ae4ecdfc0ca2177e520e28",
+          "evidence_class": null,
+          "local_windows": [
+            {
+              "end_ms": 147740,
+              "start_ms": 146540
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": null,
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 1200,
+          "source_end_ms": 820410,
+          "source_start_ms": 819210,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-confrontation-reply-prefix"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "《躲在屏幕后面抽烟的二人》这个名字需要这么长吗"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审)",
+          "before": [
+            "《躲在屏幕后面抽烟的二人》这个名字需要这么长吗"
+          ],
+          "before_span": null,
+          "cue_indexes": [
+            68
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "《躲在屏幕后面抽烟的二人》这个名字需要这么长吗"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:9286e323d0a7e8aa000646c487a34ca0fea33075e1a43533c5b3bf23a3b73f22",
+          "evidence_class": null,
+          "local_windows": [
+            {
+              "end_ms": 160030,
+              "start_ms": 156850
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": null,
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 3180,
+          "source_end_ms": 832700,
+          "source_start_ms": 829520,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-confrontation-title-close"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "这个 NN 和 L 的排列是怎么排的"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(h tb 属上一句 hhb 回声，不是本句口播)",
+          "before": [
+            "这个 NN 和 L 的排列是怎么排的"
+          ],
+          "before_span": null,
+          "cue_indexes": [
+            82
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "这个 NN 和 L 的排列是怎么排的"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:fa1ceb9a4c16a9ba8b229430958c03d1c9d0e3cadd490bac0d3c53557e9943b5",
+          "evidence_class": null,
+          "local_windows": [
+            {
+              "end_ms": 199190,
+              "start_ms": 194350
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": null,
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 4840,
+          "source_end_ms": 871860,
+          "source_start_ms": 867020,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-confrontation-drop-latin-echo"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "首发是病院坂灵"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(一句最最最喜欢切片复审)",
+          "before": [
+            "首发是病院坂灵"
+          ],
+          "before_span": null,
+          "cue_indexes": [
+            93
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "首发是病院坂灵"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:76a0ed8c0e3f50588001dea47ccf1b39ea766fffed48f13fae42928a69d26ab0",
+          "evidence_class": null,
+          "local_windows": [
+            {
+              "end_ms": 221570,
+              "start_ms": 220150
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": null,
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 1420,
+          "source_end_ms": 894240,
+          "source_start_ms": 892820,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-confrontation-first-ship"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "那个时候你是什么"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(逐字口播；语义为CP前后位，不作解释性改写)",
+          "before": [
+            "那个时候你是什么"
+          ],
+          "before_span": null,
+          "cue_indexes": [
+            96
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "那个时候你是什么"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:543a4fce819813d026fed07cff6b725e24e943403d8a5c88885a595f202aa629",
+          "evidence_class": null,
+          "local_windows": [
+            {
+              "end_ms": 224950,
+              "start_ms": 223210
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": null,
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 1740,
+          "source_end_ms": 897620,
+          "source_start_ms": 895880,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-confrontation-cp-order-question"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "非常亚撒西"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(当面对质切片1:21；前句与本句为亚撒西重复，不得从噪声造词)",
+          "before": [
+            "非常亚撒西"
+          ],
+          "before_span": "分牙三四关就毁神",
+          "cue_indexes": [
+            33
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "非常亚撒西"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:54c4aa5bc86e2ebfcaaa9ceb33de5687faa1a6365a0c72d5c056557f591650f8",
+          "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH_PLUS_IMMEDIATE_REPEAT",
+          "local_windows": [
+            {
+              "end_ms": 75950,
+              "start_ms": 73270
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r1",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 2680,
+          "source_end_ms": 748620,
+          "source_start_ms": 745940,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-confrontation-yasashii-continuation-r1"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "跟他们说要跟第"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(当面对质切片4:24；第为后文第一次的未完成开头，不补写未说完部分)",
+          "before": [
+            "跟他们说要跟第"
+          ],
+          "before_span": "跟他们说要跟弟",
+          "cue_indexes": [
+            117
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "跟他们说要跟第"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:3989d70d8b8334a0e71daa54d0a9772040fcd017a6cbbe16792148321b58e374",
+          "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH_PLUS_SENTENCE_COMPLETION",
+          "local_windows": [
+            {
+              "end_ms": 258270,
+              "start_ms": 257170
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r1",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 1100,
+          "source_end_ms": 930940,
+          "source_start_ms": 929840,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-confrontation-first-incomplete-r1"
+        },
+        {
+          "action": "replace_cue",
+          "after": [
+            "确实很难想象到，我的观众只会猜礼墨Sumi"
+          ],
+          "assertion_state": "VERIFIED_ACTIVE",
+          "authority": "Ivan-stated-20260722-conversation(当面对质切片4:32/4:42；只会猜礼墨Sumi，未说指纹；后文立即再次说礼墨Sumi家)",
+          "before": [
+            "确实很难想象到，我的观众只会猜礼墨Sumi"
+          ],
+          "before_span": "确实很难想象到，我的观众只会猜指纹",
+          "cue_indexes": [
+            123
+          ],
+          "declared_output_contract": {
+            "action": "replace_cue",
+            "canonical_texts": [
+              "确实很难想象到，我的观众只会猜礼墨Sumi"
+            ],
+            "required_text": "",
+            "schema_version": "source-truth-declared-output.v1"
+          },
+          "entry_sha256": "sha256:7bcb98a188e6b76faca2cfea2a4cfd78649de13cc015f9e11475964757f5ce8b",
+          "evidence_class": "ATOMIC_HUMAN_ENTITY_TRUTH_PLUS_NEARBY_REPEAT",
+          "local_windows": [
+            {
+              "end_ms": 275960,
+              "start_ms": 270980
+            }
+          ],
+          "recording_basename": "22966160_20260722-19-35-15.mp4",
+          "revision_id": "r1",
+          "source_aliases": [
+            {
+              "alias_id": "20260722-official-replay-bv1fjg16xex6",
+              "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+              "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+              "alias_timeline_offset_ms": 0
+            }
+          ],
+          "source_coverage_ms": 4980,
+          "source_end_ms": 948630,
+          "source_start_ms": 943650,
+          "supersedes": null,
+          "truth_id": "20260722-nancho-confrontation-sumi-guess-r1"
+        }
+      ],
+      "schema_version": "source-subtitle-truth-audit.v1",
+      "status": "ALREADY_SATISFIED",
+      "timeline_basis": "final_delivery"
+    },
+    "status": "APPLIED",
+    "timing_authority": "hash_bound_reviewed_srt_exact_source_interval",
+    "uncovered_current_cue_count": 0,
+    "uncovered_current_cues": [],
+    "uncovered_current_intervals": []
+  },
+  "redelivery_baseline_audit_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_672_945/replacement_recuts/auto_193450_672_945.redelivery-baseline.json",
+  "selection_scorecard": {
+    "dimensions": {
+      "audience_salience": 4,
+      "comedic_payoff": 4,
+      "lidousha_centrality": 4,
+      "persona_reversal": 3,
+      "relationship_interaction": 4,
+      "self_contained": 4,
+      "stance_intensity": 3
+    },
+    "effective_score": 89.5,
+    "fatigue_penalty": 0.0,
+    "raw_score": 92.5,
+    "reason_codes": [],
+    "requested_tier": 1,
+    "schema_version": "lidousha-selection-scorecard.v1",
+    "status": "VALID",
+    "tier": 1,
+    "tier_basis": "cp_positioning",
+    "tier_evidence_cues": [
+      273,
+      276,
+      291,
+      293,
+      327,
+      330,
+      338,
+      344,
+      347,
+      349
+    ],
+    "tier_reason": "从“最最最喜欢”的当面对质，到解释两人的旧事，再延伸至L系人物集邮、专属CP名及站位争论，构成连续且可核验的关系拉扯链。",
+    "uncertainty_penalty": 3.0,
+    "weights": {
+      "audience_salience": 15,
+      "comedic_payoff": 10,
+      "lidousha_centrality": 25,
+      "persona_reversal": 10,
+      "relationship_interaction": 15,
+      "self_contained": 5,
+      "stance_intensity": 20
+    }
+  },
+  "session_relation_authority": {
+    "bound_date": "2026-07-22",
+    "bound_recording_basename": "22966160_20260722-19-34-50.mp4",
+    "bound_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+    "evidence": [
+      {
+        "authority": "Ivan-stated-20260722-conversation(这明显是南町和李豆沙的联动)",
+        "evidence_class": "ATOMIC_HUMAN_RELATION_TRUTH",
+        "independence_group": "ivan-session-review"
+      },
+      {
+        "evidence_class": "HASH_BOUND_OFFICIAL_REPLAY",
+        "independence_group": "official-replay-source",
+        "source_alias_id": "20260722-official-replay-bv1fjg16xex6",
+        "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+      }
+    ],
+    "ledger_sha256": "sha256:f96480319f8e4b74e64be81e7993517edf7cddb25e71715eeaef957e343365f4",
+    "participants": [
+      {
+        "canonical_id": "lidousha",
+        "display_name": "李豆沙",
+        "surfaces": [
+          "李豆沙",
+          "小李",
+          "豆沙"
+        ]
+      },
+      {
+        "canonical_id": "nancho",
+        "display_name": "南町",
+        "surfaces": [
+          "南町",
+          "大N",
+          "小N",
+          "南町nightin"
+        ]
+      }
+    ],
+    "presence_intervals": [
+      {
+        "end_ms": 7200000,
+        "kind": "SESSION_PRESENCE",
+        "start_ms": 0
+      }
+    ],
+    "relation_id": "20260722-lidousha-nancho-live-collaboration",
+    "relation_type": "LIVE_COLLABORATION",
+    "schema_version": "session-relation-authority.v1",
+    "state": "CONFIRMED"
+  },
+  "speaker_finalization": null,
+  "speaker_finalization_manifest_path": null,
+  "speaker_finalization_manifest_sha256": null,
+  "speaker_mode": "uniform_host",
+  "speaker_review_srt_path": null,
+  "start_ms": 0,
+  "status": "MATERIALIZED",
+  "story_contract": {
+    "boundary_semantic_review": {
+      "candidate_id": "auto_193450_672_945",
+      "reason_codes": [],
+      "schema_version": "talk-boundary-semantic-review.v1",
+      "status": "SUPERSEDED_BY_HUMAN_SOURCE_REVIEW"
+    },
+    "candidate_id": "auto_193450_672_945",
+    "clip_context_binding": {
+      "context_sha256": "sha256:91cf22dbddd0f12c952d71605cf1e1c2ad310cb248ec63650b0fb6414c7fc330",
+      "mutation_authorized": false,
+      "schema_version": "lidousha-clip-context.v1",
+      "speech_memory_ledger_sha256": "sha256:d87532b5d56457496a868c6910091a545bd2c612a807182d742aa0ca26d30c95",
+      "whole_clip_draft_srt_sha256": "sha256:d426a10c8633eb1ed9e84ed92cccc505bfadafe655ecdd6cb82c6347896b3719"
+    },
+    "clip_context_prompt": "clip_context_sha256: sha256:91cf22dbddd0f12c952d71605cf1e1c2ad310cb248ec63650b0fb6414c7fc330\nselection_hook: 被当面追问为什么说“最最最喜欢”，李豆沙先拿报恩当借口，又被一串L系CP名拆穿成集邮海王。\n以下长期记忆只提供候选，绝不直接授权改字；同音字仍须画面/弹幕/SC/同片复现/声学或人工 source truth：\n- id=lidousha.idiolect.xiaodeba.r1; idiolect: surfaces=晓得吧; candidates=晓得吧\n- id=20260722.collab.nancho-nightin.r1; alias: surfaces=南町nightin; candidates=南町nightin\n- id=20260722.collab.dan.r1; nickname: surfaces=大N; candidates=大N\n- id=20260722.collab.xiaon.r1; nickname: surfaces=小N; candidates=小N\n- id=20260722.confrontation.huishen.r1; nickname: surfaces=毁神; candidates=毁神\n- id=20260722.confrontation.sumi.r1; alias: surfaces=礼墨Sumi; candidates=礼墨Sumi\n整片初稿（用于回指、复现和后文调侃；不是文字 authority）：\n1\n00:00:00,000 --> 00:00:02,600\n去到枫林渡口那一\n\n2\n00:00:02,600 --> 00:00:05,000\nOK，诶，这样可以自然差不多高\n\n3\n00:00:05,000 --> 00:00:07,760\n可以谁都不要拥挤的空\n\n4\n00:00:07,760 --> 00:00:09,840\n谢谢儚月的钢镚\n\n5\n00:00:09,960 --> 00:00:12,520\n这不是主播最最最最喜欢\n\n6\n00:00:12,520 --> 00:00:13,760\n你为什么在说我的时候\n\n7\n00:00:13,760 --> 00:00:15,800\n要最最最最最最喜欢，草\n\n8\n00:00:16,219 --> 00:00:18,500\n乱说的，哈哈\n\n9\n00:00:18,540 --> 00:00:21,420\n怎么到现在就是乱说的哈\n\n10\n00:00:21,420 --> 00:00:23,340\n因为我当时就是\n\n11\n00:00:23,840 --> 00:00:25,580\n你知道我在哪说的吗\n\n12\n00:00:25,580 --> 00:00:29,260\n我知道，在那什么主舞台互动的时候说的，对\n\n13\n00:00:29,260 --> 00:00:31,720\n但是因为他们问问题问得太快了\n\n14\n00:00:31,720 --> 00:00:33,960\n我脑子有点反应不过来\n\n15\n00:00:34,180 --> 00:00:37,140\n我，我脑子，我可是看过切片的哟\n\n16\n00:00:37,140 --> 00:00:38,900\n我脑子有点反应不过来\n\n17\n00:00:38,900 --> 00:00:41,940\n然后我就在搜寻第一个是谁\n\n18\n00:00:42,140 --> 00:00:44,180\n就除了在场的几位，看\n\n19\n00:00:44,180 --> 00:00:46,220\n还能在脑子里搜寻到谁\n\n20\n00:00:46,340 --> 00:00:48,120\n然后呢，呃\n\n21\n00:00:48,120 --> 00:00:49,560\n就搜寻到了\n\n22\n00:00:49,560 --> 00:00:52,600\n但最最最最喜欢南町nightin哦\n\n23\n00:00:52,600 --> 00:00:53,320\n为什么要这样说\n\n24\n00:00:53,320 --> 00:00:56,900\n是因为你之前帮我弄了那个，那个，呃\n\n25\n00:00:57,260 --> 00:00:58,880\n就是1V1的时候\n\n26\n00:00:58,880 --> 00:01:01,420\n哦哦哦哦\n\n27\n00:01:02,420 --> 00:01:03,380\n哎呀\n\n28\n00:01:03,460 --> 00:01:05,459\n泉水之恩啊，不对\n\n29\n00:01:05,459 --> 00:01:07,970\n滴水之恩，涌泉相报啊\n\n30\n00:01:07,970 --> 00:01:09,250\n呃，泉水之恩\n\n31\n00:01:09,250 --> 00:01:12,650\n泉水直就是之前1V1的时候\n\n32\n00:01:12,760 --> 00:01:13,920\n1V1的时候\n\n33\n00:01:13,920 --> 00:01:16,340\n李豆沙不知道怎么操作那个电脑\n\n34\n00:01:16,340 --> 00:01:18,490\n不知道怎么操作那个投屏\n\n35\n00:01:18,730 --> 00:01:21,070\n然后大N老师就过来帮忙了\n\n36\n00:01:21,070 --> 00:01:22,850\n非常亚撒西呀\n\n37\n00:01:22,980 --> 00:01:25,660\n分牙三四关就毁神\n\n38\n00:01:25,700 --> 00:01:27,020\n好像是毁神吧\n\n39\n00:01:27,020 --> 00:01:29,180\n毁声说救救李姐\n\n40\n00:01:29,180 --> 00:01:31,560\n然后大N老师就来了\n\n41\n00:01:32,000 --> 00:01:34,250\n然后绘声什么都没有做\n\n42\n00:01:34,250 --> 00:01:37,230\n但是在大N老师拯救完李姐之后\n\n43\n00:01:37,230 --> 00:01:38,450\n毁神发了一句\n\n44\n00:01:38,450 --> 00:01:39,780\n拯救李姐成功\n\n45\n00:01:39,780 --> 00:01:42,420\n哈哈哈哈哈哈哈哈\n\n46\n00:01:42,420 --> 00:01:45,440\n邀功小子，哈哈\n\n47\n00:01:45,440 --> 00:01:46,830\n嗯，对\n\n48\n00:01:46,830 --> 00:01:50,610\n所以就是，就是最最最最喜欢的那一天\n\n49\n00:01:50,610 --> 00:01:53,450\n那一天总是看不到\n\n50\n00:01:53,550 --> 00:01:57,650\nNLLNNHHB是这个\n\n51\n00:01:57,650 --> 00:02:00,280\n这个L是李豆沙的L吗\n\n52\n00:02:00,280 --> 00:02:02,320\n这L可是很多人，可以是灵\n\n53\n00:02:02,320 --> 00:02:03,460\n可以是礼\n\n54\n00:02:03,460 --> 00:02:04,530\n可以是李\n\n55\n00:02:04,530 --> 00:02:05,410\n可以是礼\n\n56\n00:02:05,410 --> 00:02:06,550\n哈哈哈哈\n\n57\n00:02:06,550 --> 00:02:08,590\n礼太多了，哈哈\n\n58\n00:02:08,740 --> 00:02:10,860\n这里有点太多了\n\n59\n00:02:10,860 --> 00:02:11,380\n是的\n\n60\n00:02:11,380 --> 00:02:14,640\n你这个LLNN显得非常海王\n\n61\n00:02:14,640 --> 00:02:17,580\n是公公又式式\n\n62\n00:02:18,350 --> 00:02:20,970\n确实我在一直一直收集\n\n63\n00:02:20,970 --> 00:02:23,590\n在一直收集L中哦\n\n64\n00:02:23,590 --> 00:02:25,030\n狠狠收集L中\n\n65\n00:02:25,340 --> 00:02:27,660\n原来我也是收集了一环\n\n66\n00:02:28,420 --> 00:02:30,500\n我是图鉴的一环\n\n67\n00:02:31,410 --> 00:02:34,230\n谢谢野橘未霜的钢镚\n\n68\n00:02:34,230 --> 00:02:36,250\n那你今晚不是要住她家了\n\n69\n00:02:36,250 --> 00:02:37,450\n当然不是啦\n\n70\n00:02:37,630 --> 00:02:41,130\n确实要，要小心小N老师啊\n\n71\n00:02:41,130 --> 00:02:43,090\n另外你俩CP叫啥\n\n72\n00:02:43,090 --> 00:02:44,620\n你没看到前面的吗\n\n73\n00:02:44,620 --> 00:02:46,560\n躲在屏幕后面的，哈哈\n\n74\n00:02:46,560 --> 00:02:49,740\n重云的二人私域名需要这么长吗\n\n75\n00:02:49,780 --> 00:02:52,990\n对啊，就是要特别一点哦\n\n76\n00:02:52,990 --> 00:02:53,470\n行\n\n77\n00:02:53,550 --> 00:02:56,790\n到时候他们就是别的CP都已经把口号喊完了\n\n78\n00:02:56,790 --> 00:02:58,030\n我们的CP你还在打嗝\n\n79\n00:02:58,030 --> 00:02:59,190\n哈哈哈\n\n80\n00:02:59,450 --> 00:03:04,020\n不就是因为你有很多LLNN啊\n\n81\n00:03:04,060 --> 00:03:06,740\n所以你在众多LLNN里面\n\n82\n00:03:06,740 --> 00:03:10,020\n你总得有一个特别突出一点的吧\n\n83\n00:03:10,040 --> 00:03:13,960\n就是这个名字突出，也是特别长的\n\n84\n00:03:13,960 --> 00:03:15,690\n对，讨厌自己\n\n85\n00:03:15,690 --> 00:03:19,330\n谢谢步汪汪的钢镚！姐姐大人晚上好！晚上好！\n\n86\n00:03:19,450 --> 00:03:21,810\n没想到居然是NL联动\n\n87\n00:03:21,810 --> 00:03:24,060\nNNLL，哈哈\n\n88\n00:03:24,060 --> 00:03:28,940\n但是这个NN和L的排列是怎么排的呀\n\n89\n00:03:28,960 --> 00:03:32,020\nNNL一般都是NNLL，是吗\n\n90\n00:03:32,020 --> 00:03:33,500\n对，一般都是NNLL\n\n91\n00:03:33,500 --> 00:03:36,800\n我一般都是在前面的是吗\n\n92\n00:03:37,150 --> 00:03:38,770\n听到是吗\n\n93\n00:03:38,770 --> 00:03:39,810\n干什么啊\n\n94\n00:03:39,810 --> 00:03:41,110\n怀疑的眼神\n\n95\n00:03:41,440 --> 00:03:44,680\n因为第一个出现的是LLNN\n\n96\n00:03:44,680 --> 00:03:47,380\n但是你这又不是首发，是吗\n\n97\n00:03:47,380 --> 00:03:48,900\n这并不是首发，孩子\n\n98\n00:03:48,900 --> 00:03:49,860\n你这并不是首发\n\n99\n00:03:49,860 --> 00:03:51,280\n首发是我跟贝儿百灵\n\n100\n00:03:51,280 --> 00:03:51,940\n哈哈哈哈\n\n101\n00:03:51,940 --> 00:03:52,900\n对啊，对\n\n102\n00:03:52,900 --> 00:03:54,660\n那那个时候你是什么呢\n\n103\n00:03:54,660 --> 00:03:56,540\n那个时候也是在前面啊\n\n104\n00:03:57,120 --> 00:03:57,880\n这样吗\n\n105\n00:03:57,880 --> 00:03:58,280\n对呀\n\n106\n00:03:58,280 --> 00:03:59,080\nNNLL\n\n107\n00:03:59,080 --> 00:04:02,280\n一般公式就是NNLLLHHB或者NNL\n\n108\n00:04:02,280 --> 00:04:02,890\n对对对\n\n109\n00:04:02,890 --> 00:04:04,010\n是是是，嗯嗯\n\n110\n00:04:04,010 --> 00:04:05,090\n大概就是这样\n\n111\n00:04:05,090 --> 00:04:06,650\n好，信了信了\n\n112\n00:04:06,850 --> 00:04:08,110\n我也没有想到\n\n113\n00:04:08,110 --> 00:04:10,210\n嗯，其实我也没有想到\n\n114\n00:04:10,370 --> 00:04:11,710\n我也没有想到\n\n115\n00:04:11,710 --> 00:04:16,490\n竟然就是第一次和大N老师见面是在她家\n\n116\n00:04:16,570 --> 00:04:18,010\n呵呵，是啊\n\n117\n00:04:18,010 --> 00:04:19,890\n我说今天晚上跟\n\n118\n00:04:19,980 --> 00:04:22,620\n要跟第一次见面的妹妹去吃饭\n\n119\n00:04:22,620 --> 00:04:23,700\n他们都猜是谁的\n\n120\n00:04:23,700 --> 00:04:25,460\n没想到居然是李豆沙啊\n\n121\n00:04:25,460 --> 00:04:26,540\n你跟他们说了\n\n122\n00:04:26,540 --> 00:04:26,880\n对啊\n\n123\n00:04:26,880 --> 00:04:27,980\n跟他们说要跟弟\n\n124\n00:04:27,980 --> 00:04:30,000\n要跟没有见过的妹妹去吃饭\n\n125\n00:04:30,000 --> 00:04:32,670\n但是我们没有说是谁啊\n\n126\n00:04:32,710 --> 00:04:35,550\n然后他们，他们都没有想到是你啊\n\n127\n00:04:35,550 --> 00:04:37,310\n嘿嘿哈哈哈哈\n\n128\n00:04:37,350 --> 00:04:40,690\n我，我的观众肯定也没有想到是你呀\n\n129\n00:04:40,690 --> 00:04:45,670\n确实很难想象到，我的观众只会猜礼墨\n\n130\n00:04:45,670 --> 00:04:47,570\n太礼貌出名了\n\n131\n00:04:47,570 --> 00:04:48,940\n哈哈哈\n\n132\n00:04:48,940 --> 00:04:52,800\n我本来本来是想去礼墨Sumi家播的\n\n133\n00:04:52,800 --> 00:04:54,460\n但她今天晚上有事\n\n134\n00:04:54,460 --> 00:04:56,010\n她今天晚上有直播\n\n135\n00:04:56,010 --> 00:04:58,310\n然后两个人在的话就会很吵\n\n136\n00:04:58,310 --> 00:05:00,290\n我说两个人\n\n137\n00:05:00,290 --> 00:05:01,450\n你们两个人声音都很大\n\n138\n00:05:01,450 --> 00:05:02,730\n加倍的吵闹\n\n139\n00:05:03,150 --> 00:05:06,970\n感觉房子，房子都要就是被震，震破的。对\n\n140\n00:05:06,970 --> 00:05:08,710\n但你的房间可能能听到她直播的声音\n\n141\n00:05:08,710 --> 00:05:10,110\n她在房间能听到你直播的声音\n\n142\n00:05:10,110 --> 00:05:11,660\n对\n\n143\n00:05:11,660 --> 00:05:14,730\n嗯，然后，然后正好我早上起\n\n结构化弹幕/SC（保留 source binding）：\n- danmaku @-29197ms: [李豆沙_大笑]\n- danmaku @-23418ms: 大n老师也嚼大果吗\n- danmaku @-22253ms: 大果和烟都齐了；；\n- danmaku @-22180ms: 几乎就躲在后面吸两根是吧\n- danmaku @-21890ms: 尼古丁熊猫\n- danmaku @-21530ms: 陪一根\n- danmaku @-20657ms: 你啥意思\n- danmaku @-16614ms: 我还以为是互相烫的二人呢\n- danmaku @-13149ms: hhhh\n- danmaku @-12306ms: [李豆沙_大笑]\n- danmaku @-9649ms: [李豆沙_大笑]\n- danmaku @-9129ms: 大N怎么感觉整个人都好大\n- danmaku @-925ms: 你让让她吧\n- danmaku @1452ms: 问号\n- danmaku @7608ms: 仇恨之书启动\n- danmaku @11039ms: 妈妈\n- danmaku @12052ms: [李豆沙_被吓到]\n- danmaku @13434ms: 叫沙町鱼还是拉町舞呢\n- danmaku @13956ms: ntnt能够到lds的肩膀吗\n- danmaku @14259ms: 哈？\n- danmaku @21442ms: 问号\n- danmaku @22080ms: [李豆沙_大笑]\n- danmaku @22458ms: nn这就是你说的新妹妹吗\n- danmaku @24011ms: 应该把小 n 缩小点\n- danmaku @24791ms: 再黑p大n老师小心大n老师跳起来打你膝盖\n- danmaku @27523ms: 你们两个可不可以把全身给展示出来，看看是谁\n- danmaku @27632ms: [李豆沙_抱抱]\n- danmaku @32936ms: 不响丸辣\n- danmaku @39561ms: 你们两个可不可以把全身给展示出来，看看是谁高\n- danmaku @42916ms: 抽烟熊猫头[dog]\n- danmaku @46140ms: 小n老师能到豆沙的胸口吗？\n- danmaku @58581ms: [李豆沙_贡丸]\n- danmaku @61887ms: 因为之前你帮我带的烟\n- danmaku @68448ms: 不响丸辣\n- danmaku @68877ms: ？\n- danmaku @75235ms: 1v1还是小n帮忙的吗\n- danmaku @81798ms: 那现在给一拳吧\n- danmaku @95883ms: 问号\n- danmaku @96555ms: [李豆沙_大笑]\n- danmaku @103137ms: 笑死\n- danmaku @103848ms: 太伟大了\n- danmaku @104593ms: 笑死\n- danmaku @109058ms: [李豆沙_大笑]\n- danmaku @109907ms: 大召唤术来了\n- danmaku @112781ms: 笑死\n- danmaku @113908ms: [李豆沙_爱心]\n- danmaku @113972ms: 大n非常亚撒西啊 小李非常hema呀\n- danmaku @115347ms: 大N牛逼\n- danmaku @115626ms: 笑死\n- danmaku @119817ms: 问号\n- danmaku @122447ms: llnnjbb\n- danmaku @124286ms: 哈？\n- danmaku @126362ms: llnnhhb\n- danmaku @127117ms: [李豆沙_被吓到]\n- danmaku @128088ms: [李豆沙_大笑]\n- danmaku @128422ms: 问号\n- danmaku @129407ms: 问号\n- danmaku @131727ms: 好多璃\n- danmaku @131773ms: li太多了\n- danmaku @132563ms: llnnhhb\n- danmaku @132962ms: 好多li啊\n- danmaku @135490ms: 问号\n- danmaku @137485ms: 礼\n- danmaku @138087ms: 今晚突然的双人直播，像是忽然官宣一样\n- danmaku @139785ms: 问号\n- danmaku @141057ms: 大N老师是L性恋\n- danmaku @141249ms: 南南李李和好吧\n- danmaku @142322ms: 李\n- danmaku @145911ms: nnllzyq[dog]\n- danmaku @150994ms: 朋友太多L了\n- danmaku @152172ms: 跟很多l结冰了\n- danmaku @154166ms: DDNNHHB\n- danmaku @154451ms: 好多L\n- danmaku @158652ms: 问号\n- danmaku @159973ms: llnnttt\n- danmaku @161547ms: 居然不是吗\n- danmaku @162781ms: 你也是play的一环\n- danmaku @163236ms: 不是吗？\n- danmaku @164332ms: LL是李零\n- danmaku @164726ms: 有ting姓恋，也有li姓恋\n- danmaku @165121ms: 啊，不住吗\n- danmaku @166912ms: 这都八点了 你播完还要走吗\n- danmaku @167812ms: 那晚上要住哪（\n- danmaku @171079ms: 抽烟组\n- danmaku @172369ms: 陪一根\n- danmaku @172955ms: 叫拉町舞吧\n- danmaku @173256ms: nnllhhb\n- danmaku @174344ms: 还是住staff家吗（\n- danmaku @176137ms: 哈哈哈\n- danmaku @181044ms: 哈哈哈\n- danmaku @183148ms: 她给你递烟，你给她冰狼\n- danmaku @184634ms: 要分享一下和成天下吗\n- danmaku @186115ms: 哈哈哈\n- danmaku @189091ms: 豆沙\n- danmaku @193265ms: 好南沙\n- danmaku @194198ms: 来一根组\n- danmaku @196065ms: 南南乐乐哈哈吧\n- danmaku @201401ms: 大果组\n- danmaku @207972ms: 南熊（\n- danmaku @212264ms: NN发烟李姐发大果\n- danmaku @213253ms: nnllhhb\n- danmaku @219841ms: ttt15：头上怎么有数字 n20：可能是真善美指数 lds170:你们在说什么\n- danmaku @220250ms: 都是NNLL\n- danmaku @220769ms: 南南拉拉好好吧\n- danmaku @221712ms: 一般不是llnn吗\n- danmaku @222632ms: LLNN\n- danmaku @223517ms: [UPOWER_1703797642_神金]\n- danmaku @224589ms: 李0别挣扎了\n- danmaku @224893ms: 反正跟主包一起肯定是nnll\n- danmaku @226022ms: 耳朵！\n- danmaku @229720ms: 哈？\n- danmaku @231488ms: 哈哈哈\n- danmaku @233718ms: 旁边是南町嘛\n- danmaku @238719ms: 我永远支持李豆沙0位右位受位奶p位\n- danmaku @239038ms: LNNL\n- danmaku @241571ms: byd0是0啊\n- danmaku @241847ms: nnllhhb[dog]\n- danmaku @245977ms: 小N老师的声音好像是从下面传来的\n- danmaku @247015ms: [李豆沙_大笑]\n- danmaku @248393ms: 假的！那叫灵町！\n- danmaku @248744ms: 这确实是真的\n- danmaku @248838ms: 不是灵町吗\n- danmaku @251337ms: 跟李姐那包是NNLL\n- danmaku @254271ms: [李豆沙_大笑]\n- danmaku @255833ms: 南南拉拉豪华版\n- danmaku @260146ms: 大N不要用豆沙耳朵灭烟好吗，猪耳朵都烫黑了\n- danmaku @265026ms: 哈哈哈\n- danmaku @276512ms: 什么妹妹，明明是李姐\n- danmaku @276556ms: 哈哈哈\n- danmaku @277495ms: 哈哈哈\n- danmaku @278442ms: 问号\n- danmaku @281376ms: 那不是李豆沙自爆的吗，自己来的直播间（\n- danmaku @281454ms: 神秘同事\n- danmaku @284643ms: 妹妹\n- danmaku @287350ms: 确实\n- danmaku @287354ms: 真的完全没想到\n- danmaku @289434ms: 怎么感觉有点甜\n- danmaku @289633ms: 神经同事啊\n- danmaku @289894ms: 完全没想到\n- danmaku @291572ms: 确实猜不出是李姐，但化淡妆我就猜应该是比较熟的\n- danmaku @292153ms: zie你都没说啊\n- danmaku @292752ms: 你的观众还会猜……好吧没别人了\n- danmaku @292869ms: 所以之前漏的联动是这个吗（\n- danmaku @294090ms: 权威cp这一块\n- danmaku @296830ms: 神秘同事\n- danmaku @303888ms: 礼豆沙民怎么你了\n- danmaku @304378ms: 不响丸辣\n- danmaku @306878ms: 原来只是代餐罢了\n- danmaku @309303ms: 两个吵闹肖海\n- danmaku @310086ms: 俩小孩\n- danmaku @312389ms: 所以ntnt只是代餐罢了\n- danmaku @313003ms: 李豆沙一个人也很吵\n- danmaku @313436ms: xs\n- danmaku @314839ms: 我以为会是和awawa（）\n- superchat @-448050ms: 好久不见；；你是谁？我妈妈呢；；\n- superchat @-323277ms: 单推（注意饮食版）\n- superchat @-297605ms: 妈咪下次别烧豆角；；现在没事了就太好了（爱来自偷吃姐姐大人生病第二天也窜的熊）\n- superchat @-294982ms: 现在可以发现大n老师比lds的眼睛大，另外驻波让大n老师变得肖嗨了，可以尝试睡衣\n- superchat @-239908ms: 李姐我再也不黑烟灰缸炒电池了，不要再表演失忆豆角吃一口yue失忆豆角吃一口yue\n- superchat @-232731ms: 《躲在屏幕后面抽烟的二人》\n- superchat @-211481ms: 这不是主播最最最最喜欢的南町nighting吗，llnnhhb\n- superchat @-129275ms: 那你今晚不是要住她家了，要小心小n老师啊，另外你俩的cp叫啥\n- superchat @-26639ms: 姐姐大人晚上好！没想到居然是nl联动，nnllhhb\n- superchat @9406ms: 感觉皮套已经腌入味了，不管怎么看大n老师的皮套，都明显感觉到是右边的真豆沙在说话。好奇怪喔\n- superchat @25692ms: psp两位最强搞笑女史诗级会晤有懂的吗，已经开始笑了（\n- superchat @25747ms: 豆沙大n晚上好！现在直播间同时有妈妈和老公了！好耶！另外豆沙听过nn的矮人笑话吗\n- superchat @43449ms: 两位是奶 t 姛。李姐给ntnt听那首短短了吗\n- superchat @303511ms: 大N老师能别躲在后面拿烟头偷偷烫我麻麻吗；；\n- guard @313040ms: 舰长",
+    "cover_counterpart_reference_available": true,
+    "cover_fallback_mode": "VERIFIED_DUAL_STREAM_FRAME",
+    "cover_output_audits": [
+      {
+        "artifact_kind": "cover_text",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:20c0c8e1bd38bfa4c71444f89a045d5ea8d48a2cf86fabcfb25bd46125549f0f",
+        "violations": []
+      },
+      {
+        "artifact_kind": "cover_rendered_text",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:20c0c8e1bd38bfa4c71444f89a045d5ea8d48a2cf86fabcfb25bd46125549f0f",
+        "violations": []
+      }
+    ],
+    "cover_reference_authority": {
+      "authority": "Ivan-stated-20260722(标题点名坏女人南町与自己被收集)+Codex-visual-review-20260722(同源136.0s帧清楚显示李豆沙和南町；本轮AI封面仅剩李豆沙，已实证丢失关系主体，故拒绝AI重绘)",
+      "candidate_id": "auto_193450_672_945",
+      "content_time_ms": 136000,
+      "ledger_sha256": "sha256:7b5c94452ea270a2df3c2db1dfc2c5e829f2e09a955aea2594bf52ca68415b90",
+      "recording_basename": "22966160_20260722-19-35-15.mp4",
+      "reference_png_sha256": "sha256:b585133e9c0742ca68330080ce8f516e8148619ba18a08639d89ef9a3b254f35",
+      "relation_action": "李豆沙与南町并排大头像，承载南町当面对质及李豆沙发现自己也是收藏品的双人关系",
+      "required_treatment": "screenshot_direct",
+      "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+      "source_time_ms": 808670,
+      "visible_participant_ids": [
+        "lidousha",
+        "nancho"
+      ]
+    },
+    "human_boundary_authority": "Ivan line corrections 2026-07-22 + Codex source-cue closure review; following cue begins next topic or SC where applicable",
+    "input_audits": [
+      {
+        "artifact_kind": "selection_hook",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:a833b3ec6960188a84b64a5e3c62cd1985aa8510c365e09496540613f2c6573e",
+        "violations": []
+      },
+      {
+        "artifact_kind": "subtitle",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:9dc5985d25b92e054c11678bba331b6ae9a4c68d27f471867cffa857dd1d777d",
+        "violations": []
+      }
+    ],
+    "nancho_accepted_surfaces": [
+      "南町",
+      "大N",
+      "小N",
+      "南町nightin"
+    ],
+    "participants": [
+      {
+        "canonical_id": "lidousha",
+        "display_name": "李豆沙",
+        "surfaces": [
+          "李豆沙",
+          "小李",
+          "豆沙"
+        ]
+      },
+      {
+        "canonical_id": "nancho",
+        "display_name": "南町",
+        "surfaces": [
+          "南町",
+          "大N",
+          "小N",
+          "南町nightin"
+        ]
+      }
+    ],
+    "relation_claim_allowed": true,
+    "relation_state": "CONFIRMED",
+    "required_entity_ids": [],
+    "schema_version": "lidousha-story-contract.v1",
+    "selection_hook": "被当面追问为什么说“最最最喜欢”，李豆沙先拿报恩当借口，又被一串L系CP名拆穿成集邮海王。",
+    "selection_hook_sha256": "sha256:a833b3ec6960188a84b64a5e3c62cd1985aa8510c365e09496540613f2c6573e",
+    "selection_scorecard": {
+      "dimensions": {
+        "audience_salience": 4,
+        "comedic_payoff": 4,
+        "lidousha_centrality": 4,
+        "persona_reversal": 3,
+        "relationship_interaction": 4,
+        "self_contained": 4,
+        "stance_intensity": 3
+      },
+      "effective_score": 89.5,
+      "fatigue_penalty": 0.0,
+      "raw_score": 92.5,
+      "reason_codes": [],
+      "requested_tier": 1,
+      "schema_version": "lidousha-selection-scorecard.v1",
+      "status": "VALID",
+      "tier": 1,
+      "tier_basis": "cp_positioning",
+      "tier_evidence_cues": [
+        273,
+        276,
+        291,
+        293,
+        327,
+        330,
+        338,
+        344,
+        347,
+        349
+      ],
+      "tier_reason": "从“最最最喜欢”的当面对质，到解释两人的旧事，再延伸至L系人物集邮、专属CP名及站位争论，构成连续且可核验的关系拉扯链。",
+      "uncertainty_penalty": 3.0,
+      "weights": {
+        "audience_salience": 15,
+        "comedic_payoff": 10,
+        "lidousha_centrality": 25,
+        "persona_reversal": 10,
+        "relationship_interaction": 15,
+        "self_contained": 5,
+        "stance_intensity": 20
+      }
+    },
+    "session_relation_authority": {
+      "bound_date": "2026-07-22",
+      "bound_recording_basename": "22966160_20260722-19-34-50.mp4",
+      "bound_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+      "evidence": [
+        {
+          "authority": "Ivan-stated-20260722-conversation(这明显是南町和李豆沙的联动)",
+          "evidence_class": "ATOMIC_HUMAN_RELATION_TRUTH",
+          "independence_group": "ivan-session-review"
+        },
+        {
+          "evidence_class": "HASH_BOUND_OFFICIAL_REPLAY",
+          "independence_group": "official-replay-source",
+          "source_alias_id": "20260722-official-replay-bv1fjg16xex6",
+          "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+        }
+      ],
+      "ledger_sha256": "sha256:f96480319f8e4b74e64be81e7993517edf7cddb25e71715eeaef957e343365f4",
+      "participants": [
+        {
+          "canonical_id": "lidousha",
+          "display_name": "李豆沙",
+          "surfaces": [
+            "李豆沙",
+            "小李",
+            "豆沙"
+          ]
+        },
+        {
+          "canonical_id": "nancho",
+          "display_name": "南町",
+          "surfaces": [
+            "南町",
+            "大N",
+            "小N",
+            "南町nightin"
+          ]
+        }
+      ],
+      "presence_intervals": [
+        {
+          "end_ms": 7200000,
+          "kind": "SESSION_PRESENCE",
+          "start_ms": 0
+        }
+      ],
+      "relation_id": "20260722-lidousha-nancho-live-collaboration",
+      "relation_type": "LIVE_COLLABORATION",
+      "schema_version": "session-relation-authority.v1",
+      "state": "CONFIRMED"
+    },
+    "source_media_sha256s": [
+      "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+    ],
+    "transcript_sha256": "sha256:9dc5985d25b92e054c11678bba331b6ae9a4c68d27f471867cffa857dd1d777d"
+  },
+  "subtitle_ass_path": null,
+  "subtitle_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_672_945/replacement_recuts/auto_193450_672_945.recut.srt",
+  "subtitle_regression": {
+    "candidate_id": "auto_193450_672_945",
+    "final_speaker_srt_sha256": "ca6b521302958755a9e98d0c95a2108a296239120de3a07cca35bae081e229f8",
+    "final_text_srt_sha256": "ca6b521302958755a9e98d0c95a2108a296239120de3a07cca35bae081e229f8",
+    "schema_version": "lidousha-subtitle-regression-audit.v1",
+    "status": "PASS",
+    "surfaces": {
+      "final_speaker_srt": {
+        "found_forbidden": [],
+        "found_forbidden_exact_cues": [],
+        "missing_required": [],
+        "missing_required_any_groups": [],
+        "missing_required_min_occurrences": [],
+        "payload_sha256": "55881352c235aa7958f5803d6eb4f0192708fa4f6a4fcf28cab5b45fc5f94909",
+        "required_any_group_count": 0,
+        "required_count": 25,
+        "required_min_occurrence_rule_count": 0,
+        "status": "PASS"
+      },
+      "final_text_srt": {
+        "found_forbidden": [],
+        "found_forbidden_exact_cues": [],
+        "missing_required": [],
+        "missing_required_any_groups": [],
+        "missing_required_min_occurrences": [],
+        "payload_sha256": "55881352c235aa7958f5803d6eb4f0192708fa4f6a4fcf28cab5b45fc5f94909",
+        "required_any_group_count": 0,
+        "required_count": 25,
+        "required_min_occurrence_rule_count": 0,
+        "status": "PASS"
+      }
+    },
+    "truth_asset_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/subtitle_regressions/auto_193450_672_945.subtitle-regression.v1.json",
+    "truth_asset_sha256": "7bc98c7576c041c12544e76fc6636eb53b247babfce0b7a24e804da888d385bf"
+  },
+  "subtitle_regression_audit_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/out/2026-07-22/auto_193450_672_945/replacement_recuts/auto_193450_672_945.subtitle-regression.json",
+  "subtitle_source": "aggregate_asr+bcut_agy_cpa+pronoun+text_final+redelivery_baseline",
+  "subtitle_style": "lidousha-final-sapphire72",
+  "subtitle_timing_qa": {
+    "actions": [
+      {
+        "action": "drop_boundary_fragment",
+        "after": null,
+        "before": {
+          "end_ms": 9840,
+          "start_ms": 9710
+        },
+        "cue_id": "fresh_0004",
+        "density_cps": 53.846,
+        "reasons": [
+          "unreadable_leading_boundary_fragment"
+        ],
+        "text": "谢谢儚月的钢镚",
+        "vad_overlap_ratio": 0.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 53600,
+          "start_ms": 52600
+        },
+        "before": {
+          "end_ms": 53320,
+          "start_ms": 52600
+        },
+        "cue_id": "fresh_0023",
+        "density_cps": 9.722,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "为什么要这样说",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 63420,
+          "start_ms": 62420
+        },
+        "before": {
+          "end_ms": 63380,
+          "start_ms": 62420
+        },
+        "cue_id": "fresh_0027",
+        "density_cps": 2.083,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "哎呀",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 125530,
+          "start_ms": 124530
+        },
+        "before": {
+          "end_ms": 125410,
+          "start_ms": 124530
+        },
+        "cue_id": "fresh_0053",
+        "density_cps": 4.545,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "可以是礼",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 131860,
+          "start_ms": 130860
+        },
+        "before": {
+          "end_ms": 131380,
+          "start_ms": 130860
+        },
+        "cue_id": "fresh_0057",
+        "density_cps": 3.846,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "是的",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 173990,
+          "start_ms": 172990
+        },
+        "before": {
+          "end_ms": 173470,
+          "start_ms": 172990
+        },
+        "cue_id": "fresh_0074",
+        "density_cps": 2.083,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "行",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 229900,
+          "start_ms": 228900
+        },
+        "before": {
+          "end_ms": 229860,
+          "start_ms": 228900
+        },
+        "cue_id": "fresh_0096",
+        "density_cps": 7.292,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "你这并不是首发",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 232280,
+          "start_ms": 231280
+        },
+        "before": {
+          "end_ms": 231940,
+          "start_ms": 231280
+        },
+        "cue_id": "fresh_0098",
+        "density_cps": 6.061,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "哈哈哈哈",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 232940,
+          "start_ms": 231940
+        },
+        "before": {
+          "end_ms": 232900,
+          "start_ms": 231940
+        },
+        "cue_id": "fresh_0099",
+        "density_cps": 3.125,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "对啊，对",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 238120,
+          "start_ms": 237120
+        },
+        "before": {
+          "end_ms": 237880,
+          "start_ms": 237120
+        },
+        "cue_id": "fresh_0102",
+        "density_cps": 3.947,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "这样吗",
+        "vad_overlap_ratio": 0.863
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 238880,
+          "start_ms": 237880
+        },
+        "before": {
+          "end_ms": 238280,
+          "start_ms": 237880
+        },
+        "cue_id": "fresh_0103",
+        "density_cps": 5.0,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "对呀",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 239280,
+          "start_ms": 238280
+        },
+        "before": {
+          "end_ms": 239080,
+          "start_ms": 238280
+        },
+        "cue_id": "fresh_0104",
+        "density_cps": 7.5,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "都是NNLL",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 243280,
+          "start_ms": 242280
+        },
+        "before": {
+          "end_ms": 242890,
+          "start_ms": 242280
+        },
+        "cue_id": "fresh_0106",
+        "density_cps": 4.918,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "对对对",
+        "vad_overlap_ratio": 1.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 267540,
+          "start_ms": 266540
+        },
+        "before": {
+          "end_ms": 266880,
+          "start_ms": 266540
+        },
+        "cue_id": "fresh_0120",
+        "density_cps": 5.882,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "对啊",
+        "vad_overlap_ratio": 1.0
+      }
+    ],
+    "counts": {
+      "dropped": 1,
+      "retimed": 13
+    },
+    "policy": {
+      "boundary_fragment_max_visible_ms": 300,
+      "hard_max_ms": 12000,
+      "min_density_cps": 0.8,
+      "min_readable_ms": 1000,
+      "soft_max_ms": 6000
+    },
+    "schema_version": "subtitle-timing-qa.v3",
+    "speech_span_count": 32,
+    "speech_total_ms": 294624,
+    "vad_evidence_contract": "positive_only_never_shrink_normal_asr_cues",
+    "window": {
+      "end_ms": 288940,
+      "start_ms": 9710
+    }
+  },
+  "talk_filler_audit_path": null,
+  "text_finalization_manifest_path": null,
+  "upload_tags": {
+    "content_tags": [
+      {
+        "tag": "磕CP",
+        "why": "两人现场讨论CP名、排列公式和专属口号，互动充满磕糖氛围。"
+      },
+      {
+        "tag": "海王",
+        "why": "对方被吐槽“一直收集L中”，主播发现自己也只是“图鉴的一环”。"
+      },
+      {
+        "tag": "修罗场",
+        "why": "两人围绕谁是“首发”、众多组合中谁更特别展开连续追问。"
+      },
+      {
+        "tag": "吐槽",
+        "why": "主播接连吐槽“邀功小子”和CP名太长，嘴快又犀利。"
+      },
+      {
+        "tag": "搞笑",
+        "why": "从说错“泉水之恩”到调侃CP口号还没喊完名字仍在打字，全程笑声不断。"
+      }
+    ],
+    "engine": "suggest-upload-tags.v1",
+    "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,南町,礼墨Sumi,病院坂Rei,磕CP,海王,修罗场,吐槽,搞笑",
+    "final_tags": [
+      "李豆沙",
+      "虚拟主播",
+      "虚拟UP主",
+      "直播切片",
+      "南町",
+      "礼墨Sumi",
+      "病院坂Rei",
+      "磕CP",
+      "海王",
+      "修罗场",
+      "吐槽",
+      "搞笑"
+    ],
+    "proper_noun_tags": [
+      {
+        "evidence": {
+          "南町": 3,
+          "大N": 4,
+          "大N老师": 4
+        },
+        "hits": 11,
+        "notes": [
+          "Ivan: 大N老师→南町, 只出正主名"
+        ],
+        "rules": [
+          "nanmachi"
+        ],
+        "tag": "南町",
+        "title_hit": true
+      },
+      {
+        "evidence": {
+          "Sumi": 1,
+          "礼墨": 2
+        },
+        "hits": 3,
+        "notes": [
+          "Ivan: lmsm→礼墨Sumi"
+        ],
+        "rules": [
+          "limo"
+        ],
+        "tag": "礼墨Sumi",
+        "title_hit": false
+      },
+      {
+        "evidence": {
+          "病院坂": 1
+        },
+        "hits": 1,
+        "notes": [],
+        "rules": [
+          "byz_rei"
+        ],
+        "tag": "病院坂Rei",
+        "title_hit": false
+      }
+    ],
+    "status": "OK",
+    "warnings": []
+  }
+}

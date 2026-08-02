@@ -111,8 +111,8 @@ def test_committed_emote_library_loads_with_25_valid_entries():
 
 
 @pytest.mark.skipif(
-    not (ROOT / "assets" / "emote" / "hd").is_dir(),
-    reason="gitignored emote media not present on this machine",
+    not (ROOT / cover_emote._EMOTE_MEDIA_REPO_DEFAULT / "hd").is_dir(),
+    reason="emote media not present on this machine",
 )
 def test_committed_manifest_shas_match_local_media(monkeypatch):
     monkeypatch.delenv(cover_emote.EMOTE_MEDIA_ROOT_ENV, raising=False)

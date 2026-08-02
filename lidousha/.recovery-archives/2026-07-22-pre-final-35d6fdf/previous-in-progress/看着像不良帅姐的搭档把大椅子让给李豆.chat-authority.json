@@ -1,0 +1,332 @@
+{
+  "address_enumeration_audit": {
+    "repairs": [],
+    "schema_version": "address-enumeration-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "applied": [],
+  "burn_binding": {
+    "ass_path": null,
+    "ass_sha256": null,
+    "burned_media_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_1573_1672/replacement_recuts/auto_193450_1573_1672.recut.burned-final-sapphire72.mp4",
+    "burned_media_sha256": "31134c4a71bba33bd6ad8b0bd473c3c4da72693e879349732d24e7a20166b5b7"
+  },
+  "code_switch_surface_audit": {
+    "input_srt_sha256": "a04d512e3fc7f67b70107b785547521353d95ce5ac384d49c40c57eefd3608a5",
+    "output_srt_sha256": "a04d512e3fc7f67b70107b785547521353d95ce5ac384d49c40c57eefd3608a5",
+    "repairs": [],
+    "schema_version": "code-switch-surface-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "coreference_repairs": [],
+  "entity_repairs": [],
+  "entity_verdict_required": [],
+  "entity_verdicts": [],
+  "evidence_considered": 0,
+  "final_hard_meme_surface_audit": {
+    "input_srt_sha256": "59f3ac0ebe6d95a7928a19edb5c0a73a08051e9a16059a5c70dce2eaedd9b4e7",
+    "output_srt_sha256": "59f3ac0ebe6d95a7928a19edb5c0a73a08051e9a16059a5c70dce2eaedd9b4e7",
+    "repairs": [],
+    "rule_count": 1,
+    "schema_version": "hard-meme-surface-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "final_hard_meme_surface_verification": {
+    "failures": {},
+    "status": "PASS"
+  },
+  "final_output_srt_sha256": "59f3ac0ebe6d95a7928a19edb5c0a73a08051e9a16059a5c70dce2eaedd9b4e7",
+  "final_outside_delivery_count": 0,
+  "final_required_decision_count": 0,
+  "final_review_audit": {
+    "applied_count": 1,
+    "context_adjudication_budget": 12,
+    "context_adjudication_count": 0,
+    "findings": [
+      {
+        "base_text_sha256": "3ce42bdefb9bc87c1a88fd3ec07cc4869bfb3f59db291253195cf053ea4762b7",
+        "candidate_provenance": {
+          "kind": "transcript_context",
+          "nearest_cue_distance": 1,
+          "surface": "190"
+        },
+        "cue_index": 31,
+        "evidence_cue_ids": [
+          30,
+          32,
+          33
+        ],
+        "kind": "context",
+        "near_homophone_gate": {
+          "pinyin_similarity": 0.533,
+          "tier": "core_span"
+        },
+        "pinyin_similarity": 0.533,
+        "proposed_full_cue": "哈哈，除了190是谣言啊",
+        "repair_class": "phonetic",
+        "reported_scope_warnings": [
+          "REPORTED_SUSPECT_SCOPE_MISMATCH",
+          "REPORTED_REPLACEMENT_SCOPE_MISMATCH"
+        ],
+        "routed": "witnessed_near_homophone_fix",
+        "span_end_codepoint": 6,
+        "span_start_codepoint": 3,
+        "suggestion": "除了",
+        "suspect": "一瞅1",
+        "why": "结合前句列举「190、粉毛」及后句确认染过粉毛，此处应是在说明只有190是谣言，「一瞅1190」是近音误识。"
+      }
+    ],
+    "infra_unresolved": [],
+    "infra_unresolved_count": 0,
+    "schema_version": "final-review-audit.v1",
+    "status": "APPLIED"
+  },
+  "final_source_language_preservation_audit": {
+    "reverted": [],
+    "reverted_count": 0,
+    "schema_version": "source-language-preservation-audit.v1",
+    "status": "CLEAN",
+    "unproven_foreign_introductions": []
+  },
+  "final_speaker_srt_path": null,
+  "final_speaker_srt_sha256": "871b23742fcbf984ab9dd78e0f11155bf708b6e92cc6f9335b716014e92f6356",
+  "final_status": "FINAL_ARTIFACTS_VERIFIED",
+  "final_superseded_by_redelivery_baseline_count": 0,
+  "final_superseded_by_source_truth_count": 0,
+  "final_text_srt_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/out/2026-07-22/auto_193450_1573_1672/replacement_recuts/auto_193450_1573_1672.recut.srt",
+  "final_text_srt_sha256": "871b23742fcbf984ab9dd78e0f11155bf708b6e92cc6f9335b716014e92f6356",
+  "final_title_mark_balance_audit": {
+    "cross_cue_pairs": [],
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "title-mark-balance-audit.v1",
+    "status": "CLEAN",
+    "unresolved": []
+  },
+  "foreign_script_consistency_audit": {
+    "kana_cue_indexes": [],
+    "latin_heavy_cues": [],
+    "mixed_cjk_latin_cues": [],
+    "reason": null,
+    "schema_version": "foreign-script-consistency-audit.v1",
+    "status": "CLEAN"
+  },
+  "gift_repairs": [],
+  "impossible_punctuation_audit": {
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "impossible-punctuation-audit.v1",
+    "status": "CLEAN"
+  },
+  "input_srt_sha256": "a04d512e3fc7f67b70107b785547521353d95ce5ac384d49c40c57eefd3608a5",
+  "introduced_term_audits": [
+    {
+      "introduced_term": {
+        "cue_index": 20,
+        "draft_span": "留了",
+        "term": "李豆沙"
+      },
+      "reason_code": "DRAFT_WITNESS_IS_NOT_POST_SEMANTIC_AUTHORITY",
+      "schema_version": "introduced-term-audit.v2",
+      "status": "SEMANTIC_AUTHORITY_PRESERVED"
+    },
+    {
+      "introduced_term": {
+        "cue_index": 51,
+        "draft_span": "被流",
+        "term": "李豆沙"
+      },
+      "reason_code": "DRAFT_WITNESS_IS_NOT_POST_SEMANTIC_AUTHORITY",
+      "schema_version": "introduced-term-audit.v2",
+      "status": "SEMANTIC_AUTHORITY_PRESERVED"
+    }
+  ],
+  "numeric_fact_provenance_audit": {
+    "reverted": [
+      {
+        "attempted": "哈哈，190是谣言啊",
+        "cue_index": 31,
+        "draft": "哈哈，一瞅1190是谣言啊",
+        "end_ms": 59890,
+        "start_ms": 56100,
+        "unsupported": [
+          {
+            "reason_code": "NUMERIC_TOKEN_ABSENT_FROM_INITIAL_ASR_AND_STRUCTURED_EVIDENCE",
+            "token": "190"
+          }
+        ]
+      }
+    ],
+    "reverted_count": 1,
+    "schema_version": "numeric-fact-provenance-audit.v1",
+    "status": "REVERTED_UNPROVEN_NUMERIC_FACT",
+    "supported": []
+  },
+  "output_srt_sha256": "a04d512e3fc7f67b70107b785547521353d95ce5ac384d49c40c57eefd3608a5",
+  "pending_text_overrides": [],
+  "post_semantic_entity_policy": {
+    "dynamic_audio_group_count": 0,
+    "explicit_audio_groups": [
+      [
+        "素惹",
+        "素人"
+      ],
+      [
+        "李豆沙",
+        "小李"
+      ],
+      [
+        "奶P",
+        "奶瓶"
+      ],
+      [
+        "ありがとう",
+        "おめでとう"
+      ]
+    ],
+    "phonetic_candidates_disclosure_only": [
+      [
+        "祥子",
+        "像坐在"
+      ],
+      [
+        "祥子",
+        "想在"
+      ],
+      [
+        "祥子",
+        "现在"
+      ],
+      [
+        "Hina",
+        "很像那"
+      ]
+    ],
+    "phrase_divergence_candidates_disclosure_only": [],
+    "reason_code": "POST_SEMANTIC_ENTITY_AUDIO_OVERRIDE_DISABLED",
+    "schema_version": "post-semantic-entity-policy.v1",
+    "semantic_text_final_groups": [
+      [
+        "恋青",
+        "恋死"
+      ],
+      [
+        "梦限大",
+        "Ave Mujica"
+      ],
+      [
+        "立希",
+        "祥子"
+      ],
+      [
+        "kmx",
+        "乒乓球"
+      ],
+      [
+        "李豆沙",
+        "小李"
+      ],
+      [
+        "田中姬",
+        "铃木雏",
+        "田中雏",
+        "Hime",
+        "Hina"
+      ]
+    ],
+    "status": "SEMANTIC_TEXT_FINAL"
+  },
+  "post_transcript_entity_output_srt_sha256": "59f3ac0ebe6d95a7928a19edb5c0a73a08051e9a16059a5c70dce2eaedd9b4e7",
+  "read_aloud_arbitrations": [],
+  "schema_version": "chat-authority-audit.v2",
+  "self_reference_absorption_audit": {
+    "candidate_names": [
+      "小李",
+      "李豆沙",
+      "豆沙"
+    ],
+    "repairs": [],
+    "schema_version": "self-reference-absorption-audit.v3",
+    "source_witness_available": true,
+    "status": "NO_MATCH"
+  },
+  "sender_repairs": [],
+  "sender_verdict_required": [],
+  "session_topic_absorption_audits": [
+    {
+      "authorities": [],
+      "repair_count": 0,
+      "repairs": [],
+      "schema_version": "session-topic-authority-audit.v1",
+      "status": "CLEAN"
+    },
+    {
+      "authorities": [],
+      "repair_count": 0,
+      "repairs": [],
+      "schema_version": "session-topic-authority-audit.v1",
+      "status": "CLEAN"
+    }
+  ],
+  "source_subtitle_truth_audit": {
+    "applied": [],
+    "failures": [],
+    "ledger_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v2/repo/assets/lidousha/subtitle_truth_ledger.v1.json",
+    "ledger_sha256": "sha256:b92446d281fffa0ee84938509d13eaef94b3401b009674d777cabbce610aee9f",
+    "satisfied": [],
+    "schema_version": "source-subtitle-truth-audit.v1",
+    "status": "NO_RELEVANT_INTERVAL"
+  },
+  "speaker_ass_path": null,
+  "speaker_ass_sha256": null,
+  "speaker_manifest_sha256": null,
+  "status": "NO_MATCH",
+  "superseded_chat_proposals": [],
+  "term_boundary_audit": {
+    "moves": [],
+    "schema_version": "term-boundary-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "thank_prefix_restore_audit": {
+    "restorations": [],
+    "schema_version": "thank-prefix-restore-audit.v1",
+    "status": "NO_CHANGE"
+  },
+  "title_mark_balance_audit": {
+    "cross_cue_pairs": [],
+    "repair_count": 0,
+    "repairs": [],
+    "schema_version": "title-mark-balance-audit.v1",
+    "status": "CLEAN",
+    "unresolved": []
+  },
+  "transcript_entity_audit": {
+    "confirmed": [],
+    "entity_verdict_required": [],
+    "input_srt_sha256": "d53a9c5a9ab632d43b64f280967d33656adf9a9e0c73b8c8797ff16557d0511a",
+    "output_srt_sha256": "d53a9c5a9ab632d43b64f280967d33656adf9a9e0c73b8c8797ff16557d0511a",
+    "repairs": [],
+    "schema_version": "transcript-entity-audit.v1",
+    "status": "NO_ENTITY"
+  },
+  "unthanked_donor_disclosure": {
+    "schema_version": "unthanked-donor-disclosure.v1",
+    "status": "ALL_THANKED",
+    "unthanked": []
+  },
+  "witness_disagreement_audits": [
+    {
+      "candidate_entities": [
+        "李豆沙",
+        "小李"
+      ],
+      "reason_code": "DRAFT_WITNESS_IS_NOT_POST_SEMANTIC_AUTHORITY",
+      "schema_version": "witness-disagreement-audit.v2",
+      "status": "SEMANTIC_AUTHORITY_PRESERVED",
+      "suspicious_cue_indexes": [
+        20,
+        51
+      ]
+    }
+  ]
+}

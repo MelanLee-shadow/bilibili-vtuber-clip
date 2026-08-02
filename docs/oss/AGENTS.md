@@ -35,9 +35,8 @@
    与入口 `--help` 验证。**发布 lane 另需 `AUTOSLICE_SEASON_IDS`（部署方
    自己账号的合集/小节 ID，账号专属、无默认值、必填；获取方式见
    `.env.example`）。**
-   哪些代码点仍绑定默认 profile：见
-   [docs/profile-coupling.md](docs/profile-coupling.md)——改这些点之前先读
-   对应 step 文档。凭据逐项按 [docs/credentials.md](docs/credentials.md)
+   哪些代码点仍绑定默认 profile：见下方「换频道剩余耦合」一节——改这些点
+   之前先读对应 step 文档。凭据逐项按 [docs/credentials.md](docs/credentials.md)
    配置并跑其校验命令。
 6. **跑第一支切片**：README「快速开始」的 `--smoke-segment` 冒烟路径。
 7. **整线部署**：`ops/recording/README.md`（录制层）→
@@ -54,7 +53,6 @@
 | `scripts/produce_slice_package.py` | 单候选产线入口（spec 字段见 docstring） |
 | `scripts/authorized_upload.py` | 发布/同稿修复的唯一副作用入口 |
 | `profiles/`、`assets/_template/`、`assets/lidousha/` | 频道 profile 模板、最小骨架与完整实战示例 |
-| `docs/profile-coupling.md` | 换 profile 时剩余的默认 profile 耦合点清单 |
 | `.agent/skills/` | 可复用的代理技能（发布闭环、标题风格、歌词对轴等） |
 
 ## 常用命令
@@ -86,3 +84,30 @@ python3 scripts/produce_slice_package.py --spec <spec.json> --ssh-host localhost
   行数，只许降不许升；新增行数=显式改账本并在提交里说明。
 - **凭据**：每个 cookie/key 的模板与校验命令见
   [docs/credentials.md](docs/credentials.md)；全部凭据不入库。
+
+## 换频道剩余耦合（发布前必读）
+
+身份/prompt/控制流已全部 profile 化（默认 profile 渲染字节与原实现一致）。
+剩余耦合集中在**发布与声纹 lane 的资产路径**——它们仍指向示例频道的资产文件，
+修复前非默认 profile 可产包评审、不可公开发布：
+
+| 位置 | 内容 |
+|---|---|
+| `src/autoslice/publication_registry.py` | `DEFAULT_REGISTRY_PATH` 指向 `assets/lidousha/publication_registry.v1.json`（上传授权唯一门） |
+| `src/autoslice/final_human_review.py` | 终审契约路径指向 `assets/lidousha/final_media_review_contracts.v1.json` |
+| `src/autoslice/review_package_owner_audit.py` | 真值台账路径指向 lidousha 资产 |
+| `src/autoslice/manual_title_repair_authority.py` | `AUTHORITY_ROOT` 与字面 schema 前缀 |
+| `scripts/audit_review_package.py` | 指纹源列表中的真值台账为字面路径（同文件其余已走 `CHANNEL_PROFILE.asset_file`） |
+| `src/autoslice/term_lexicon.py`、`scripts/score_blind_subtitle.py` | lidousha 兜底路径 |
+| `scripts/install_voiceprints.py` | 接受门为字面 `lidousha-voiceprint-profile.v1`（应为 `<profile-id>-…`） |
+
+修法模式：改为 `CHANNEL_PROFILE.asset_file(...)`/按 `profile_id` 派生（对默认
+profile 字节等价）；个别键需先在 profile manifest 增设资产键。
+
+**词汇级兼容，绝对不要改**：持久证据/schema 词汇保留 `lidousha-` 拼写以不打碎
+旧包哈希——`lidousha-*.v1` schema 串、`lidousha_role`、`human_reviewed_lidousha`、
+`verified_lidousha_voiceprint`、`LIDOUSHA_*` 兼容 env 别名、scorecard 维度键
+`lidousha_centrality`。
+
+参考部署默认值（`--ssh-host` 默认 `free`、`/opt/bilive` 布局、示例房间号等）
+不算耦合：全部可用 CLI 参数/环境变量覆盖，见各脚本 `--help` 与 `.env.example`。

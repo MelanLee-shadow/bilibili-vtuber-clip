@@ -1,0 +1,319 @@
+{
+  "candidate_id": "auto_193450_3573_3665",
+  "context_sha256": "sha256:94573e4a51c64db204886ea3a4e237d18c74d87790ae1a61da55d70e31cd7ad4",
+  "mutation_authorized": false,
+  "pieces": [
+    {
+      "end_ms": 3697850,
+      "recording_basename": "22966160_20260722-19-34-50.mp4",
+      "source_media_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+      "start_ms": 3563340
+    }
+  ],
+  "recording_date": "2026-07-22",
+  "retrieval_budget": {
+    "structured_chat_row_cap": 240,
+    "structured_chat_total_rows": 0,
+    "structured_chat_truncated": false,
+    "whole_clip_transcript_char_cap": 60000,
+    "whole_clip_transcript_truncated": false
+  },
+  "schema_version": "lidousha-clip-context.v1",
+  "selection_hook": "李豆沙展示最爱的金发有角妹妹，被说像礼墨Sumi立刻否认，介绍得满眼喜爱，看到男性角色却瞬间改口“不熟”。",
+  "session_relation_authority": {
+    "bound_date": "2026-07-22",
+    "bound_recording_basename": "22966160_20260722-19-34-50.mp4",
+    "bound_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+    "evidence": [
+      {
+        "authority": "Ivan-stated-20260722-conversation(这明显是南町和李豆沙的联动)",
+        "evidence_class": "ATOMIC_HUMAN_RELATION_TRUTH",
+        "independence_group": "ivan-session-review"
+      },
+      {
+        "evidence_class": "HASH_BOUND_OFFICIAL_REPLAY",
+        "independence_group": "official-replay-source",
+        "source_alias_id": "20260722-official-replay-bv1fjg16xex6",
+        "source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+      }
+    ],
+    "ledger_sha256": "sha256:f96480319f8e4b74e64be81e7993517edf7cddb25e71715eeaef957e343365f4",
+    "participants": [
+      {
+        "canonical_id": "lidousha",
+        "display_name": "李豆沙",
+        "surfaces": [
+          "李豆沙",
+          "小李",
+          "豆沙"
+        ]
+      },
+      {
+        "canonical_id": "nancho",
+        "display_name": "南町",
+        "surfaces": [
+          "南町",
+          "大N",
+          "小N",
+          "南町nightin"
+        ]
+      }
+    ],
+    "presence_intervals": [
+      {
+        "end_ms": 7200000,
+        "kind": "SESSION_PRESENCE",
+        "start_ms": 0
+      }
+    ],
+    "relation_id": "20260722-lidousha-nancho-live-collaboration",
+    "relation_type": "LIVE_COLLABORATION",
+    "schema_version": "session-relation-authority.v1",
+    "state": "CONFIRMED"
+  },
+  "session_topic_authorities": [],
+  "speech_memory": {
+    "candidate_id": "auto_193450_3573_3665",
+    "channel_id": "lidousha",
+    "conflicts": [],
+    "entries": [
+      {
+        "action": "CANDIDATE_ONLY",
+        "candidate_canonicals": [
+          "晓得吧"
+        ],
+        "evidence": [
+          {
+            "authority": "Ivan-stated-20260722(李豆沙自己也说过晓得吧这种话)",
+            "evidence_class": "ATOMIC_HUMAN_SPEECH_MEMORY"
+          }
+        ],
+        "kind": "idiolect",
+        "memory_id": "lidousha.idiolect.xiaodeba.r1",
+        "scope": {
+          "channel_id": "lidousha",
+          "date_end": "2027-12-31",
+          "date_start": "2024-01-01",
+          "speaker_id": "lidousha"
+        },
+        "supersedes": [],
+        "surfaces": [
+          "晓得吧"
+        ]
+      },
+      {
+        "action": "CANDIDATE_ONLY",
+        "candidate_canonicals": [
+          "姐感妹"
+        ],
+        "evidence": [
+          {
+            "authority": "BCUT秸秆妹/AGY桔梗妹同音分歧由后文姐姐感觉但其实是妹妹及整片回指消歧",
+            "evidence_class": "DUAL_ASR_PHONETIC_PLUS_WHOLE_CLIP_CALLBACK_EXPLANATION",
+            "source_end_ms": 3597080,
+            "source_start_ms": 3594460
+          },
+          {
+            "authority": "Ivan-stated-20260722(display 0:30 姐感妹)",
+            "evidence_class": "ATOMIC_HUMAN_SOURCE_TRUTH",
+            "source_end_ms": 3599860,
+            "source_start_ms": 3597980
+          }
+        ],
+        "kind": "recurring_callback",
+        "memory_id": "20260722.sumi.jieganmei.r1",
+        "scope": {
+          "candidate_id": "auto_193450_3573_3665",
+          "channel_id": "lidousha",
+          "date_end": "2026-07-22",
+          "date_start": "2026-07-22",
+          "relation_id": "20260722-lidousha-nancho-live-collaboration",
+          "speaker_id": "lidousha"
+        },
+        "supersedes": [],
+        "surfaces": [
+          "姐感妹"
+        ]
+      },
+      {
+        "action": "CANDIDATE_ONLY",
+        "candidate_canonicals": [
+          "姐感的妹妹"
+        ],
+        "evidence": [
+          {
+            "authority": "Ivan-stated-20260722(display 1:19 这是姐感的妹妹)",
+            "evidence_class": "ATOMIC_HUMAN_SOURCE_TRUTH",
+            "source_end_ms": 3646900,
+            "source_start_ms": 3644420
+          }
+        ],
+        "kind": "recurring_callback",
+        "memory_id": "20260722.sumi.jiegan-de-meimei.r1",
+        "scope": {
+          "candidate_id": "auto_193450_3573_3665",
+          "channel_id": "lidousha",
+          "date_end": "2026-07-22",
+          "date_start": "2026-07-22",
+          "relation_id": "20260722-lidousha-nancho-live-collaboration",
+          "speaker_id": "lidousha"
+        },
+        "supersedes": [],
+        "surfaces": [
+          "姐感的妹妹"
+        ]
+      },
+      {
+        "action": "CANDIDATE_ONLY",
+        "candidate_canonicals": [
+          "秦"
+        ],
+        "evidence": [
+          {
+            "authority": "Ivan-stated-20260722(画面角色名为秦)",
+            "evidence_class": "ATOMIC_HUMAN_SCREEN_TRUTH",
+            "source_end_ms": 3602690,
+            "source_start_ms": 3601250
+          }
+        ],
+        "kind": "alias",
+        "memory_id": "20260722.sumi.qin.r1",
+        "scope": {
+          "candidate_id": "auto_193450_3573_3665",
+          "channel_id": "lidousha",
+          "date_end": "2026-07-22",
+          "date_start": "2026-07-22",
+          "relation_id": "20260722-lidousha-nancho-live-collaboration",
+          "speaker_id": "lidousha"
+        },
+        "supersedes": [],
+        "surfaces": [
+          "秦"
+        ]
+      },
+      {
+        "action": "CANDIDATE_ONLY",
+        "candidate_canonicals": [
+          "秦秦"
+        ],
+        "evidence": [
+          {
+            "authority": "Ivan-stated-20260722(画面角色名为秦，display 0:32 秦秦)",
+            "evidence_class": "ATOMIC_HUMAN_SCREEN_TRUTH",
+            "source_end_ms": 3601100,
+            "source_start_ms": 3599860
+          }
+        ],
+        "kind": "alias",
+        "memory_id": "20260722.sumi.qinqin.r1",
+        "scope": {
+          "candidate_id": "auto_193450_3573_3665",
+          "channel_id": "lidousha",
+          "date_end": "2026-07-22",
+          "date_start": "2026-07-22",
+          "relation_id": "20260722-lidousha-nancho-live-collaboration",
+          "speaker_id": "lidousha"
+        },
+        "supersedes": [],
+        "surfaces": [
+          "秦秦"
+        ]
+      },
+      {
+        "action": "CANDIDATE_ONLY",
+        "candidate_canonicals": [
+          "南町nightin"
+        ],
+        "evidence": [
+          {
+            "authority": "Ivan-stated-20260722(南町和nightin是相似音节而非复读)",
+            "evidence_class": "ATOMIC_HUMAN_PROPER_NAME_TRUTH"
+          }
+        ],
+        "kind": "alias",
+        "memory_id": "20260722.collab.nancho-nightin.r1",
+        "scope": {
+          "channel_id": "lidousha",
+          "date_end": "2026-07-22",
+          "date_start": "2026-07-22",
+          "relation_id": "20260722-lidousha-nancho-live-collaboration",
+          "speaker_id": "lidousha"
+        },
+        "supersedes": [],
+        "surfaces": [
+          "南町nightin"
+        ]
+      },
+      {
+        "action": "CANDIDATE_ONLY",
+        "candidate_canonicals": [
+          "大N"
+        ],
+        "evidence": [
+          {
+            "authority": "Ivan-stated-20260722(南町别名可以叫小N，也可以叫大N)",
+            "evidence_class": "ATOMIC_HUMAN_ALIAS_TRUTH"
+          }
+        ],
+        "kind": "nickname",
+        "memory_id": "20260722.collab.dan.r1",
+        "scope": {
+          "channel_id": "lidousha",
+          "date_end": "2026-07-22",
+          "date_start": "2026-07-22",
+          "relation_id": "20260722-lidousha-nancho-live-collaboration",
+          "speaker_id": "lidousha"
+        },
+        "supersedes": [],
+        "surfaces": [
+          "大N"
+        ]
+      },
+      {
+        "action": "CANDIDATE_ONLY",
+        "candidate_canonicals": [
+          "小N"
+        ],
+        "evidence": [
+          {
+            "authority": "Ivan-stated-20260722(南町别名可以叫小N，也可以叫大N)",
+            "evidence_class": "ATOMIC_HUMAN_ALIAS_TRUTH"
+          }
+        ],
+        "kind": "nickname",
+        "memory_id": "20260722.collab.xiaon.r1",
+        "scope": {
+          "channel_id": "lidousha",
+          "date_end": "2026-07-22",
+          "date_start": "2026-07-22",
+          "relation_id": "20260722-lidousha-nancho-live-collaboration",
+          "speaker_id": "lidousha"
+        },
+        "supersedes": [],
+        "surfaces": [
+          "小N"
+        ]
+      }
+    ],
+    "ledger_sha256": "sha256:d87532b5d56457496a868c6910091a545bd2c612a807182d742aa0ca26d30c95",
+    "mutation_authorized": false,
+    "recording_date": "2026-07-22",
+    "relation_id": "20260722-lidousha-nancho-live-collaboration",
+    "schema_version": "lidousha-scoped-speech-memory.v1",
+    "speaker_id": "lidousha",
+    "status": "PASS"
+  },
+  "structured_chat": [],
+  "topic_resolution": {
+    "evidence": [],
+    "graph_sha256": "f637e62bdf04c50ec9ea4fd2d8e88ab88c6489ed01178124cb06f259824c006f",
+    "recording_date": "2026-07-22",
+    "schema_version": "topic-resolution.v1",
+    "scoped_entity_ids": [],
+    "selected_topic_ids": [],
+    "selected_work_ids": [],
+    "status": "GRAPH_EXPIRED"
+  },
+  "whole_clip_draft_srt": "1\n00:00:00,279 --> 00:00:01,720\n买点东西先\n\n2\n00:00:04,080 --> 00:00:06,320\n全部买打折的\n\n3\n00:00:09,980 --> 00:00:12,100\n我们看一下\n\n4\n00:00:12,460 --> 00:00:13,300\n这是我家\n\n5\n00:00:13,300 --> 00:00:15,320\n我给你看我很喜欢的角色\n\n6\n00:00:15,320 --> 00:00:16,420\n确实可爱\n\n7\n00:00:16,480 --> 00:00:18,040\n这是可爱的画风啊\n\n8\n00:00:18,040 --> 00:00:19,000\n对，好可爱\n\n9\n00:00:19,000 --> 00:00:20,960\n这个是和天依的联动哦\n\n10\n00:00:20,960 --> 00:00:22,720\n洛天依，对哦\n\n11\n00:00:22,720 --> 00:00:24,680\n这是我最喜欢的角色\n\n12\n00:00:24,680 --> 00:00:29,300\n诶，怎么有点像礼墨Sumi？哪像了，黑色的，有角\n\n13\n00:00:29,300 --> 00:00:30,540\n然后还是金色的头\n\n14\n00:00:30,540 --> 00:00:31,120\nno no\n\n15\n00:00:31,120 --> 00:00:33,740\n她是一个桔梗妹\n\n16\n00:00:34,640 --> 00:00:36,520\n桔梗妹？\n\n17\n00:00:36,520 --> 00:00:37,760\n她就叫秦\n\n18\n00:00:37,910 --> 00:00:39,350\n她是一个桔梗吗\n\n19\n00:00:39,350 --> 00:00:41,590\n她是一个非常闹腾的小朋友\n\n20\n00:00:41,590 --> 00:00:44,110\n但是她有一种给人种姐的感觉\n\n21\n00:00:44,110 --> 00:00:45,770\n但她其实是妹妹，小朋友\n\n22\n00:00:45,770 --> 00:00:48,310\n但是她有一种给人一种姐的感觉\n\n23\n00:00:48,310 --> 00:00:49,550\n那她其实是妹妹\n\n24\n00:00:49,550 --> 00:00:52,240\n哦，真的是这游戏的看板娘\n\n25\n00:00:52,240 --> 00:00:55,120\n我是她的帕鲁哦\n\n26\n00:00:55,120 --> 00:00:56,580\n虽然我没有\n\n27\n00:00:56,820 --> 00:01:00,120\n就是我没有，嗯，玩帕鲁\n\n28\n00:01:00,120 --> 00:01:02,520\n但是我基本也算是\n\n29\n00:01:02,520 --> 00:01:04,080\n就是她喜欢打工人\n\n30\n00:01:04,080 --> 00:01:06,620\n而我就干什么活都是我去干\n\n31\n00:01:06,620 --> 00:01:09,590\n然后说话就全是她说这样子\n\n32\n00:01:09,590 --> 00:01:10,150\n哦\n\n33\n00:01:10,330 --> 00:01:11,830\n对，原来是这样\n\n34\n00:01:11,830 --> 00:01:13,390\n就是外表萌萌\n\n35\n00:01:13,390 --> 00:01:17,360\n但其实有一些粉切黑的坏女人，好女人\n\n36\n00:01:17,360 --> 00:01:18,840\n这是男的\n\n37\n00:01:18,840 --> 00:01:20,720\n哈哈哈哈哈\n\n38\n00:01:21,080 --> 00:01:23,560\n这个，这个是桔梗的妹妹\n\n39\n00:01:23,560 --> 00:01:24,920\n这个是看板娘\n\n40\n00:01:24,920 --> 00:01:27,520\n这个怎么怎么这个这个什么？哈哈哈\n\n41\n00:01:28,420 --> 00:01:29,660\n男的啊\n\n42\n00:01:29,660 --> 00:01:31,620\n男的不熟啊\n\n43\n00:01:31,620 --> 00:01:36,460\n这直播间就是直播间不熟啊，哈哈\n\n44\n00:01:36,570 --> 00:01:39,490\n这直播间这很非常包容\n\n45\n00:01:39,490 --> 00:01:42,610\n其实是最包容异性恋的直播间\n\n46\n00:01:43,120 --> 00:01:45,280\n总之先送妹妹礼物吧\n\n47\n00:01:45,920 --> 00:01:48,380\n我们我没有别的角色了吗\n\n48\n00:01:48,380 --> 00:01:50,200\n我暂时只有这些角色\n\n49\n00:01:50,200 --> 00:01:52,340\n因为目前还没有遇到别的角色\n\n50\n00:01:52,340 --> 00:01:58,040\n但TA们说其实还会有那种很御姐的角色出现哦\n\n51\n00:01:58,040 --> 00:01:58,760\n嗯\n\n52\n00:01:59,950 --> 00:02:02,870\n然后我们今天去玩点啥呢\n\n53\n00:02:02,870 --> 00:02:03,870\n我看看\n\n54\n00:02:06,040 --> 00:02:09,340\n去打，去跟大家开个副本吧\n\n55\n00:02:09,340 --> 00:02:13,680\n行，要匹配，前往副本\n",
+  "whole_clip_draft_srt_sha256": "sha256:dec3460b49ffe2a564fb05df9ab72043b5effdcaaaec7a6fd4f051263a209646"
+}

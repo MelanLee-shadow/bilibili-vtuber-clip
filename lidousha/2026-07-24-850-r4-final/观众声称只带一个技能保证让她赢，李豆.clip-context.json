@@ -1,0 +1,817 @@
+{
+  "candidate_id": "auto_193129_850_940",
+  "context_sha256": "sha256:1ca73a4dd1393e00a7032670e246c2581c6457349a883f39d24f3ca7c99d6d9f",
+  "mutation_authorized": false,
+  "pieces": [
+    {
+      "end_ms": 988490,
+      "recording_basename": "22966160_20260724-19-31-29.mp4",
+      "source_media_sha256": "sha256:4980bdeba15f0f3cce0c3f20737afcb33732cbd64c457bc11c4e3266d5fcf201",
+      "start_ms": 840020
+    }
+  ],
+  "recording_date": "2026-07-24",
+  "retrieval_budget": {
+    "structured_chat_row_cap": 240,
+    "structured_chat_selected_rows": 81,
+    "structured_chat_selection_policy": "all_sc_gift_guard_then_temporal_danmaku_sampling",
+    "structured_chat_total_rows": 81,
+    "structured_chat_truncated": false,
+    "whole_clip_transcript_char_cap": 60000,
+    "whole_clip_transcript_truncated": false
+  },
+  "schema_version": "lidousha-clip-context.v1",
+  "selection_hook": "观众声称只带一个技能保证让她赢，李豆沙刚准备下注就遭秒杀，当场怒斥骗子并宣布再也不信了。",
+  "session_relation_authority": null,
+  "session_topic_authorities": [],
+  "speech_memory": {
+    "candidate_id": "auto_193129_850_940",
+    "channel_id": "lidousha",
+    "conflicts": [],
+    "entries": [
+      {
+        "action": "CANDIDATE_ONLY",
+        "candidate_canonicals": [
+          "晓得吧"
+        ],
+        "evidence": [
+          {
+            "authority": "Ivan-stated-20260722(李豆沙自己也说过晓得吧这种话)",
+            "evidence_class": "ATOMIC_HUMAN_SPEECH_MEMORY"
+          }
+        ],
+        "kind": "idiolect",
+        "memory_id": "lidousha.idiolect.xiaodeba.r1",
+        "scope": {
+          "channel_id": "lidousha",
+          "date_end": "2027-12-31",
+          "date_start": "2024-01-01",
+          "speaker_id": "lidousha"
+        },
+        "supersedes": [],
+        "surfaces": [
+          "晓得吧"
+        ]
+      }
+    ],
+    "ledger_sha256": "sha256:d87532b5d56457496a868c6910091a545bd2c612a807182d742aa0ca26d30c95",
+    "mutation_authorized": false,
+    "recording_date": "2026-07-24",
+    "relation_id": null,
+    "schema_version": "lidousha-scoped-speech-memory.v1",
+    "speaker_id": "lidousha",
+    "status": "PASS"
+  },
+  "structured_chat": [
+    {
+      "kind": "superchat",
+      "offset_ms": -841262,
+      "sender": "袖手花",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.jsonl",
+      "source_event_id": "17765494",
+      "source_sha256": "9000c5ae7d700018b116e5f202e1d0bd89d2119195ea08ae40b016bc45c17bde",
+      "text": "小李把各种红点都点一点吧，大家在公会里看急眼了"
+    },
+    {
+      "kind": "superchat",
+      "offset_ms": -521262,
+      "sender": "夜行行行行",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.jsonl",
+      "source_event_id": "17765689",
+      "source_sha256": "9000c5ae7d700018b116e5f202e1d0bd89d2119195ea08ae40b016bc45c17bde",
+      "text": "并不会拉娘主播别造谣，我说拉娘同人女另有其人"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": -15141,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "左上角"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": -14903,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "小李待会可以和我打，我只留了一个召唤宠物的技能，宠物伤害比较低"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 8244,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "哈哈哈"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 15007,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "刚刚有个木材没捡"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 29066,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "哈哈哈"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 30446,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "笑死"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 33209,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "打不过的"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 35547,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "哈哈哈"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 35799,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "唉唉"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 36843,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "感觉你会被秒"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 38157,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "打不过的"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 40744,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "笑死"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 41075,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "别信，这技能伤害最高了"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 41076,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "[李豆沙_大笑]"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 41076,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "[李豆沙_大笑]"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 42300,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "铁打不过"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 44905,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "哈哈哈哈哈哈"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 46000,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "谢谢你 爽了"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 46198,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "xsl"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 48584,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "好下"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 50172,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "哈哈哈哈哈哈哈"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 52464,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "哈哈哈哈哈哈哈哈哈哈哈哈哈"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 53768,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "太坏了"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 53770,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "笑死了"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 55064,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "[李豆沙_大笑]"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 55309,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "有点坏的来了"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 57648,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "哈哈哈"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 59203,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "哈哈哈"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 60511,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "叹十七你看你坏的"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 61567,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "[李豆沙_大笑]"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 61811,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "不响丸辣"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 64162,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "[李豆沙_大笑]"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 64162,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "哈哈哈"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 66771,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "哈哈哈哈"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 69688,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "笑死"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 69688,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "太坏了叹十七！"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 71976,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "爽了爽了"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 71976,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "还有坏kmx"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 72202,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "哎，怎么办啊李豆沙"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 73497,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "谭诗琪你看你坏的！"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 75965,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "[李豆沙_大笑]"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 76099,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "这个技能是单体伤害最高的技能之一"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 78699,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "太坏了！"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 81120,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "17太坏了！"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 85199,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "李姐和我打，我一个技能都不带就带宠物"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 90399,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "狡猾的kmx"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 91581,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "熊猫冒险团出发坎斯汀"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 91581,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "熊猫冒险团出发坎斯汀"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 91581,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "对不起宝宝"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 91581,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "熊猫冒险团出发坎斯汀"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 91581,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "熊猫冒险团出发坎斯汀"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 92761,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "熊猫冒险团出发坎斯汀"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 92761,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "熊猫冒险团出发坎斯汀"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 94056,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "熊猫冒险团出发坎斯汀"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 94056,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "熊猫冒险团出发坎斯汀"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 95393,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "哈哈哈"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 95393,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "熊猫冒险团出发坎斯汀"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 95393,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "熊猫冒险团出发坎斯汀"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 95393,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "[李豆沙_阴险]"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 95393,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "熊猫冒险团出发坎斯汀"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 96663,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "熊猫冒险团出发坎斯汀"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 96663,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "；；"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 96663,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "熊猫冒险团出发坎斯汀"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 97961,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "熊猫冒险团出发坎斯汀"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 97961,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "熊猫冒险团出发坎斯汀"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 97962,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "熊猫冒险团出发坎斯汀"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 98201,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "太坏了"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 100576,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "熊猫冒险团出发坎斯汀"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 100576,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "熊猫冒险团出发坎斯汀"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 101844,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "哈哈哈"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 110958,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "哈哈哈"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 113565,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "熊猫冒险团出发坎斯汀"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 115100,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "李豆沙心之壁加厚中"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 116400,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "我只带一个召唤技能"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 127879,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "来点小唱"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 130504,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "唱歌"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 134366,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "熊猫冒险团出发坎斯汀"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 136975,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "熊猫冒险团出发坎斯汀"
+    },
+    {
+      "kind": "danmaku",
+      "offset_ms": 140867,
+      "sender": "",
+      "source": "/opt/bilive/autoslice/recovery/2026-07-24/auto_193129_850_940-single-r2/recordings/2026-07-24/22966160_20260724-19-31-29.xml",
+      "source_event_id": "",
+      "source_sha256": "4896abc0ec5bbb1038ac71b126a6696d5048fa6e83b1d25edd279f3877a3fb24",
+      "text": "猛兽，指小李"
+    }
+  ],
+  "topic_resolution": {
+    "evidence": [],
+    "graph_sha256": "f637e62bdf04c50ec9ea4fd2d8e88ab88c6489ed01178124cb06f259824c006f",
+    "recording_date": "2026-07-24",
+    "schema_version": "topic-resolution.v1",
+    "scoped_entity_ids": [],
+    "scoped_graph_context": {
+      "entities": [],
+      "graph_sha256": "f637e62bdf04c50ec9ea4fd2d8e88ab88c6489ed01178124cb06f259824c006f",
+      "recording_date": "2026-07-24",
+      "schema_version": "topic-scoped-context.v1",
+      "status": "GRAPH_EXPIRED",
+      "topics": [],
+      "works": []
+    },
+    "selected_topic_ids": [],
+    "selected_work_ids": [],
+    "status": "GRAPH_EXPIRED"
+  },
+  "whole_clip_draft_srt": "1\n00:00:00,000 --> 00:00:01,360\n嗯\n\n2\n00:00:02,960 --> 00:00:03,840\n来吧\n\n3\n00:00:04,980 --> 00:00:06,380\n解锁耶\n\n4\n00:00:08,360 --> 00:00:10,000\n又可以和大家见面理解\n\n5\n00:00:10,000 --> 00:00:11,440\n拉拉，你是新来的\n\n6\n00:00:12,080 --> 00:00:13,880\n你这个你还挺萌的\n\n7\n00:00:14,120 --> 00:00:14,960\n看看\n\n8\n00:00:15,480 --> 00:00:16,760\n等等等等\n\n9\n00:00:16,760 --> 00:00:19,740\n你把你的你你我你你的技能\n\n10\n00:00:19,740 --> 00:00:21,480\n你我哦，它有一个技能\n\n11\n00:00:21,480 --> 00:00:22,320\n这是什么\n\n12\n00:00:23,000 --> 00:00:26,580\n给造成两次光元素破灭伤害\n\n13\n00:00:26,580 --> 00:00:27,720\n试一试一下吧\n\n14\n00:00:28,200 --> 00:00:29,240\n试一下吧\n\n15\n00:00:29,240 --> 00:00:30,400\n有个木材没捡\n\n16\n00:00:30,400 --> 00:00:31,400\n原来如此\n\n17\n00:00:31,970 --> 00:00:32,810\n能赢吗\n\n18\n00:00:32,810 --> 00:00:34,610\n大家觉得可以开始下注了\n\n19\n00:00:35,290 --> 00:00:36,490\n支持李豆沙\n\n20\n00:00:47,660 --> 00:00:50,820\n我连支持李豆沙这句话都还没说完呢\n\n21\n00:00:51,820 --> 00:00:54,300\n有骗子有骗子\n\n22\n00:00:55,610 --> 00:00:57,730\n有骗子被骗了\n\n23\n00:00:58,110 --> 00:00:59,990\nTA说TA只剩一个技能\n\n24\n00:00:59,990 --> 00:01:02,530\n让我打TA一副一副\n\n25\n00:01:02,530 --> 00:01:04,870\n哎，我，我都已经帮你准备好了\n\n26\n00:01:04,870 --> 00:01:06,830\n你来就行，保证让你赢\n\n27\n00:01:08,450 --> 00:01:10,490\n咋那么坏呢\n\n28\n00:01:15,200 --> 00:01:17,920\n叹十七：手里面的坏熊太多了\n\n29\n00:01:20,320 --> 00:01:22,080\n坏熊太多了\n\n30\n00:01:22,880 --> 00:01:27,720\n我 Q 为什么欺负我 QQ 欺负人\n\n31\n00:01:31,500 --> 00:01:34,060\n我要去探索新地图了\n\n32\n00:01:35,620 --> 00:01:37,740\n你一个技能不带都带宠物\n\n33\n00:01:37,740 --> 00:01:38,940\n我也不信你啊\n\n34\n00:01:39,060 --> 00:01:40,460\n我也不信你了\n\n35\n00:01:40,700 --> 00:01:42,900\n我要再去开一个新的\n\n36\n00:01:43,470 --> 00:01:45,350\n从哪走？从这走\n\n37\n00:01:46,880 --> 00:01:49,240\n我们再玩一会就去唱歌了\n\n38\n00:01:49,240 --> 00:01:50,600\n好久没唱了\n\n39\n00:01:51,320 --> 00:01:52,120\n解锁\n\n40\n00:01:52,680 --> 00:01:54,680\n这有一个，这是个啥\n\n41\n00:01:58,550 --> 00:02:00,710\n这个我有点过吗\n\n42\n00:02:02,110 --> 00:02:04,150\n挑战森林猛兽\n\n43\n00:02:07,120 --> 00:02:08,280\n就用这个吧\n\n44\n00:02:08,759 --> 00:02:10,800\n这个对我来说洒洒水\n\n45\n00:02:10,800 --> 00:02:12,960\n请问什么打不过这 NPC\n\n46\n00:02:12,960 --> 00:02:14,080\n我还打不过吗\n\n47\n00:02:25,540 --> 00:02:27,820\n在坎斯汀那里丢失了尊严\n\n48\n00:02:27,820 --> 00:02:28,380\n豆沙就\n",
+  "whole_clip_draft_srt_sha256": "sha256:722ff84ff1da9c938b1a868bd18ebf85fb6de174d7ccdf5fa0713d73f09a022f"
+}

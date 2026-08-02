@@ -1,0 +1,336 @@
+{
+  "artifact_hashes": {
+    "ai_background_sha256": "sha256:2b2ac5bf7a1f13529fd3656fc413250466e3dd30b06089304f4b1e036998a6ea",
+    "ass_sha256": "sha256:7412d0194a26daa2fa884921c2e076709b0b66854b541e93df2f1adca428a114",
+    "burned_video_sha256": "sha256:65472889ecfb760efb3f126b3e1c5f6eecaea84518561000f840ec9b2cd589f3",
+    "chat_authority_audit_sha256": "sha256:54530ce1781ab8bab987f53ab16029714cb43d9142bfac7d0d57cb5ba4abf34f",
+    "cover_reference_sha256": "sha256:f0e174705490d5029e1bff47363a00eaa40a136fb90d0994faa99a8ce28dbbef",
+    "cover_sha256": "sha256:44e2bc14ee175d2f3f0c0cf2c4cdd96ca7cab91419cf616066ebff05353db008",
+    "subtitle_sha256": "sha256:ca11b831693c2ed153c44d46994b121a88201922f118e665d860a31f27d975e8",
+    "video_sha256": "sha256:0a2e8ef98416e7a272ac2f89d5de0660894cbab606832819cc61890e7fb935b3"
+  },
+  "boundary_audit": {
+    "boundary_repair_extend_cap_ms": 30000,
+    "boundary_repair_max_end_ms": 124960,
+    "boundary_repair_search_origin_ms": 94960,
+    "boundary_repairs": [],
+    "closure_sentence": "好可爱哟",
+    "end_cut_inside_speech_island": false,
+    "end_island_continues_ms": 0,
+    "end_on_sentence_boundary": true,
+    "final_end_ms": 95400,
+    "final_start_ms": 9810,
+    "opening_sentence": "听说你们接下来要去的山之国",
+    "red_flags": [],
+    "schema_version": "boundary-audit.v1",
+    "semantic_start_target_rel_ms": 10000,
+    "semantic_target_rel_ms": 94960,
+    "snapped_sentence_end_ms": 95000,
+    "snapped_sentence_start_ms": 10060,
+    "start_on_sentence_boundary": true,
+    "tail_adjustment": {
+      "final_end_ms": 95400,
+      "next_speech_island_gap_ms": 3824,
+      "next_speech_island_guard_ms": 100,
+      "next_speech_island_start_ms": 98824,
+      "next_subtitle_start_ms": 98660,
+      "nominal_end_ms": 95400,
+      "reason": null,
+      "tail_pad_ms": 400
+    },
+    "tail_refinement_used": false,
+    "verdict": "ok_sentence_boundary_cut"
+  },
+  "burned_preview": {
+    "ass_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_5759_5844/replacement_recuts/auto_193450_5759_5844.recut.final-sapphire72.ass",
+    "branding_intro": {
+      "fallback_attempts": [],
+      "intro_id": "huozi-lidousha-kmx-baobao-guankou-z2-v1",
+      "intro_media_path": "/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.z2-kmx-baobao-guankou-20260719.mp4",
+      "intro_media_sha256": "d37f4c358cc5d2515bca5a6fbc54bb5a10d7d2b8a36008777842def3d502ac29",
+      "intro_offset_ms": 6200,
+      "main_duration_ms_before": 85600,
+      "main_sha256_before": "16cc8c32a0baeb8f4ddd681b4ebda7194bf4d52ca1b37bbeaeb68c3c24acd50e",
+      "method": "matched-intro-concat-copy",
+      "policy_manifest_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/repo/assets/lidousha/intro/branding_intro.v1.json",
+      "policy_manifest_sha256": "bee66d164b683451602ae3601d79d19175bc72b0d13257b3026ae2dc47ee06ef",
+      "rotation": {
+        "candidate_intro_ids": [
+          "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+          "huozi-lidousha-kmx-baobao-guankou-z2-v1"
+        ],
+        "mode": "main-sha256",
+        "picked_intro_id": "huozi-lidousha-kmx-baobao-guankou-z2-v1",
+        "selector": "main_sha256"
+      },
+      "status": "PREPENDED",
+      "verification": {
+        "duration_delta_ms": 22,
+        "duration_ms": 91822,
+        "full_decode": "clean",
+        "stream_contract": {
+          "audio_codec": "aac",
+          "channels": 2,
+          "fps": "30/1",
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "sample_rate": 44100,
+          "video_codec": "h264",
+          "width": 1920
+        }
+      }
+    },
+    "burned_sha256": "sha256:65472889ecfb760efb3f126b3e1c5f6eecaea84518561000f840ec9b2cd589f3",
+    "command": [
+      "ffmpeg",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-y",
+      "-i",
+      "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_5759_5844/replacement_recuts/auto_193450_5759_5844.recut.mp4",
+      "-vf",
+      "subtitles='/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_5759_5844/replacement_recuts/auto_193450_5759_5844.recut.final-sapphire72.ass':fontsdir='/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/repo/assets/lidousha/fonts'",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "20",
+      "-c:a",
+      "copy",
+      "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_5759_5844/replacement_recuts/auto_193450_5759_5844.recut.burned-final-sapphire72.mp4"
+    ],
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_5759_5844/replacement_recuts/auto_193450_5759_5844.recut.burned-final-sapphire72.mp4",
+    "pillarbox_16_9": false,
+    "status": "BURNED",
+    "stream_contract": null,
+    "subtitle_style": "lidousha-final-sapphire72"
+  },
+  "chat_authority_audit_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_5759_5844/auto_193450_5759_5844.chat-authority.json",
+  "cover_repair_binding": {
+    "path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_5759_5844/cover_repair/generations/2d21759c4223-01-1784752706563550272/final.cover.cover-binding.json",
+    "sha256": "sha256:779efb911e12c59059f5efe7e6849be0a2aae46c6f11bdad3e4247112f9c289a"
+  },
+  "duration_ms": 85590,
+  "end_ms": 85590,
+  "media_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_5759_5844/replacement_recuts/auto_193450_5759_5844.recut.mp4",
+  "publish_staging": {
+    "cover_generation": {
+      "ai_background": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_5759_5844/cover_repair/generations/2d21759c4223-01-1784752706563550272/ai-background.png",
+      "ai_background_sha256": "sha256:6464faa3602a38f0d82457c8b1bcd2aab246acaad568bd4fbdc4b70e1acdbab4",
+      "angle_degrees": -2.0,
+      "art_direction": {
+        "background_style": "mono-manga-panels",
+        "cover_punch": [
+          "有这么爽吗？",
+          "萌到上头"
+        ],
+        "emote_id": "",
+        "emote_mode": "",
+        "emote_reason": "",
+        "expression_en": "soft cute girl-next-door, shy but spirited, small closed-mouth smile, gentle blush",
+        "hook_color": "orange",
+        "hook_word": "嗯",
+        "is_song": false,
+        "layout": "banner",
+        "role": "shy_cute_default"
+      },
+      "attempted_models": [
+        "gpt-image-2"
+      ],
+      "background_style": "mono-manga-panels",
+      "candidate_id": "auto_193450_5759_5844",
+      "cover_diversity_slot": 4,
+      "cover_punch": [
+        "有这么爽吗？",
+        "萌到上头"
+      ],
+      "cover_text": "游戏女角色一句带波浪号的撒娇“嗯”把小李萌到上头，反复回味还急着找重播\n有这么爽吗？",
+      "cover_text_mode": "punch",
+      "emote": null,
+      "expression_en": "soft cute girl-next-door, shy but spirited, small closed-mouth smile, gentle blush",
+      "fallback_used": false,
+      "final_cover": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_5759_5844/cover_repair/generations/2d21759c4223-01-1784752706563550272/final.cover.png",
+      "final_cover_sha256": "sha256:44e2bc14ee175d2f3f0c0cf2c4cdd96ca7cab91419cf616066ebff05353db008",
+      "font": "ZCOOLKuaiLe-Regular.ttf",
+      "font_selection": {
+        "font": "ZCOOLKuaiLe-Regular.ttf",
+        "glyph_risk": [],
+        "rejected": []
+      },
+      "font_size": 248,
+      "hook_color": "orange",
+      "hook_word": "嗯",
+      "layout": "banner",
+      "line_split": "punch",
+      "method": "images.edit",
+      "model": "gpt-image-2",
+      "model_fallback_used": false,
+      "overlay_position": {
+        "x": 177,
+        "y": -22
+      },
+      "reference_image": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_5759_5844/replacement_recuts/cover_refs/auto_193450_5759_5844.cover-ref.png",
+      "reference_sha256": "sha256:f0e174705490d5029e1bff47363a00eaa40a136fb90d0994faa99a8ce28dbbef",
+      "rendered_lines": [
+        "有这么爽吗？",
+        "萌到上头"
+      ],
+      "request_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_5759_5844/cover_repair/generations/2d21759c4223-01-1784752706563550272/final.cover.cpa-request.redacted.json",
+      "request_sha256": "sha256:18997a94ea0b00798cd972f62fdf16dff3e8c43eb0e54607951daf7eb9fd3eaf",
+      "response_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_5759_5844/cover_repair/generations/2d21759c4223-01-1784752706563550272/final.cover.cpa-response.redacted.json",
+      "response_sha256": "sha256:c2e04c7dfd05da591a419b7dd9a22f1c2891390dfc8233b920cadc0c045aae15",
+      "role": "shy_cute_default",
+      "scrim": false,
+      "status": "AI_COVER_READY",
+      "text_backing": "outline",
+      "title": "【李豆沙】游戏女角色一句带波浪号的撒娇“嗯”把小李萌到上头，反复回味还急着找重播：有这么爽吗？",
+      "title_band": "banner",
+      "workflow": "regenerate_lidousha_cover"
+    },
+    "cover_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/repo/lidousha/2026-07-22/游戏女角色一句带波浪号的撒娇“嗯”把.cover.png",
+    "cover_status": "AI_COVER_READY",
+    "cover_text": "游戏女角色一句带波浪号的撒娇“嗯”把小李萌到上头，反复回味还急着找重播\n有这么爽吗？",
+    "publish_json_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_5759_5844/replacement_recuts/auto_193450_5759_5844.recut.publish.json",
+    "reason_codes": [],
+    "status": "STAGED",
+    "title": "【李豆沙】游戏女角色一句带波浪号的撒娇“嗯”把小李萌到上头，反复回味还急着找重播：有这么爽吗？",
+    "title_authority_error": null,
+    "title_authority_status": "RESOLVED_LLM",
+    "title_policy_violations": [],
+    "title_source": "llm+lidousha_style_asset",
+    "upload_enabled": false
+  },
+  "speaker_finalization": null,
+  "speaker_finalization_manifest_path": null,
+  "speaker_finalization_manifest_sha256": null,
+  "speaker_mode": "uniform_host",
+  "speaker_review_srt_path": null,
+  "start_ms": 0,
+  "status": "MATERIALIZED",
+  "subtitle_ass_path": null,
+  "subtitle_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_5759_5844/replacement_recuts/auto_193450_5759_5844.recut.srt",
+  "subtitle_regression": null,
+  "subtitle_regression_audit_path": null,
+  "subtitle_source": "aggregate_asr+bcut_agy_cpa+pronoun+text_final",
+  "subtitle_style": "lidousha-final-sapphire72",
+  "subtitle_timing_qa": {
+    "actions": [
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 33350,
+          "start_ms": 32350
+        },
+        "before": {
+          "end_ms": 33190,
+          "start_ms": 32350
+        },
+        "cue_id": "fresh_0014",
+        "density_cps": 4.762,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "不许抵赖",
+        "vad_overlap_ratio": 0.983
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 68900,
+          "start_ms": 67900
+        },
+        "before": {
+          "end_ms": 68860,
+          "start_ms": 67900
+        },
+        "cue_id": "fresh_0029",
+        "density_cps": 3.125,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "真的吗",
+        "vad_overlap_ratio": 0.854
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 84820,
+          "start_ms": 83820
+        },
+        "before": {
+          "end_ms": 84520,
+          "start_ms": 83820
+        },
+        "cue_id": "fresh_0036",
+        "density_cps": 5.714,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "听不到了",
+        "vad_overlap_ratio": 1.0
+      }
+    ],
+    "counts": {
+      "dropped": 0,
+      "retimed": 3
+    },
+    "policy": {
+      "hard_max_ms": 12000,
+      "min_density_cps": 0.8,
+      "min_readable_ms": 1000,
+      "soft_max_ms": 6000
+    },
+    "schema_version": "subtitle-timing-qa.v2",
+    "speech_span_count": 32,
+    "speech_total_ms": 102784,
+    "vad_evidence_contract": "positive_only_never_shrink_normal_asr_cues",
+    "window": {
+      "end_ms": 95400,
+      "start_ms": 9810
+    }
+  },
+  "talk_filler_audit_path": null,
+  "text_finalization_manifest_path": null,
+  "upload_tags": {
+    "content_tags": [
+      {
+        "tag": "撒娇",
+        "why": "听到角色带波浪号的“嗯”后，她立刻感叹“她还会撒娇”。"
+      },
+      {
+        "tag": "可爱",
+        "why": "她多次直呼“好可爱啊”“好可爱哟”，还笑出了声。"
+      },
+      {
+        "tag": "上头",
+        "why": "语音结束后仍反复回味，急着追问“怎么才能重放啊”。"
+      },
+      {
+        "tag": "声控",
+        "why": "仅被一句带撒娇语气的“嗯”萌到，反复强调这段语音的感染力。"
+      },
+      {
+        "tag": "姨母笑",
+        "why": "听完撒娇语音后忍不住笑着说“好可爱啊哈哈”。"
+      }
+    ],
+    "engine": "suggest-upload-tags.v1",
+    "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,撒娇,可爱,上头,声控,姨母笑",
+    "final_tags": [
+      "李豆沙",
+      "虚拟主播",
+      "虚拟UP主",
+      "直播切片",
+      "撒娇",
+      "可爱",
+      "上头",
+      "声控",
+      "姨母笑"
+    ],
+    "proper_noun_tags": [],
+    "status": "OK",
+    "warnings": []
+  }
+}

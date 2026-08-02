@@ -1,0 +1,1220 @@
+{
+  "artifact_hashes": {
+    "ai_background_sha256": "sha256:2aad6f8363ecc758f79efc2361fe29bc7c65b7f0fe2168697524163ef765609f",
+    "ass_sha256": "sha256:d4900fb3b4850860c48d62c3f66a737a4516181649fdc09cb4b401c4cae7d500",
+    "burned_video_sha256": "sha256:597243ff72c0670ec2aa8e9288e5fee1f59b7095534693905f3193e55ea11d1a",
+    "chat_authority_audit_sha256": "sha256:b30fc0ea4c87125372dd73b354b0407470b3e3722a947d90ab423dfabff70e75",
+    "clip_context_file_sha256": "sha256:94c0f036197d9f688074583bd9ad8fdb80ed277e73b6473d11c4d7de1b1a170c",
+    "cover_reference_sha256": "sha256:367dc583aeea2d5a2d82e85bc99f48ace1098f2144134e30b49113ebfe0e4502",
+    "cover_sha256": "sha256:3aa7e525034b812a8e5036954f00627dead33fab505071e1421f7f09c868376d",
+    "publish_draft_sha256": "sha256:ae76c3c7053fb177f4ad1c66576efc8798fa8faaefea80276db7b8d968f048d8",
+    "subtitle_sha256": "sha256:51645cbe351d690ac0c7ab870c5d8873525a6d98f228d316964f6a02f7232b8c",
+    "video_sha256": "sha256:bf16c1ec358e37f4014f2401263d0e75b81926936f436a2c5dd9b6f1ff7cef4a"
+  },
+  "boundary_audit": {
+    "boundary_authority": "correlated_semantic_review_plus_deterministic_guards",
+    "boundary_repair_extend_cap_ms": 30000,
+    "boundary_repair_max_end_ms": 130470,
+    "boundary_repair_search_origin_ms": 100470,
+    "boundary_repairs": [
+      {
+        "final_end_ms": 100600,
+        "next_speech_island_guard_ms": 100,
+        "next_speech_island_start_ms": 100872,
+        "nominal_final_end_ms": 100860,
+        "reason": "tail_clamped_before_next_subtitle",
+        "snapped_end_ms": 100460
+      }
+    ],
+    "boundary_selection_lower_bound_ms": 100460,
+    "boundary_semantic_review": {
+      "boundary_search_scope": {
+        "boundary_end_mode": "semantic_lower_bound",
+        "delivery_lower_bound_ms": 100470,
+        "delivery_tail_pad_ms": 400,
+        "last_piece_start_ms": 840020,
+        "manual_lower_bound_ms": null,
+        "max_recommended_end_ms": 130470,
+        "minimum_recommended_end_ms": 100470,
+        "prior_piece_duration_ms": 0,
+        "reason_codes": [],
+        "recommendation_forward_ms": 30000,
+        "repair_cap_ms": 30000,
+        "required_last_piece_source_end_ms": 985490,
+        "required_local_source_context_end_ms": 145470,
+        "required_owner_end_ms": 87720,
+        "review_target_ms": 100470,
+        "schema_version": "talk-boundary-search-scope.v1",
+        "scope_sha256": "sha256:1223c096fe8076d134ec5e9613f59bb07396d4b0e6dd8dfede663801798d7e7d",
+        "semantic_search_origin_ms": 100470,
+        "semantic_target_ms": 100470,
+        "status": "PASS",
+        "structured_payoff_ms": null,
+        "witness_reserve_ms": 15000
+      },
+      "candidate_id": "auto_193129_850_940",
+      "content_anchor_covered": true,
+      "correlated_reviewer_disclosure": true,
+      "cue_grid_sha256": "sha256:640b709b19ba0620bb6a000584580f928a15c26cc16e47c77af4872778c33a2f",
+      "evidence_cue_indexes": [
+        34,
+        35,
+        36
+      ],
+      "final_endpoint_binding": {
+        "closure_text_sha256": "sha256:1430e638c29024e6732bfab12999fe0e87d9b18bd87d4b6f035e632b5e2bce62",
+        "final_closure_cue_index": 34,
+        "final_cue_grid_sha256": "sha256:640b709b19ba0620bb6a000584580f928a15c26cc16e47c77af4872778c33a2f",
+        "final_end_ms": 100600,
+        "final_snapped_end_ms": 100460,
+        "final_start_ms": 9750,
+        "reason_codes": [],
+        "recommended_end_cue_index": 34,
+        "recommended_end_ms": 100460,
+        "schema_version": "talk-boundary-final-endpoint-binding.v1",
+        "semantic_cue_grid_sha256": "sha256:640b709b19ba0620bb6a000584580f928a15c26cc16e47c77af4872778c33a2f",
+        "semantic_request_sha256": "sha256:b850b951c4eadfbf407c2cec8e0ba860e043a441c5dc323e63053156a779a1fc",
+        "status": "PASS"
+      },
+      "independent_semantic_vote_count": 1,
+      "max_forward_ms": 30000,
+      "needs_more_context": false,
+      "next_topic_separated": true,
+      "next_topic_witness_valid": true,
+      "reason_codes": [
+        "NEXT_TOPIC_WITNESSED",
+        "SILENT_GAP_CLOSURE_CUE",
+        "STORY_PAYOFF_COMPLETE"
+      ],
+      "recommendation_relaxations": [
+        {
+          "cue_end_ms": 100460,
+          "cue_index": 34,
+          "floor_ms": 100470,
+          "gap_ms": 10,
+          "kind": "silent_gap_closure_cue",
+          "tolerance_ms": 400
+        }
+      ],
+      "recommended_end_cue_index": 34,
+      "recommended_end_ms": 100460,
+      "request_sha256": "sha256:b850b951c4eadfbf407c2cec8e0ba860e043a441c5dc323e63053156a779a1fc",
+      "retry_scope": "none",
+      "review_scope": "source_full_window",
+      "reviewer_independence_group": "cpa-gpt-5.6-semantic-family",
+      "same_topic_continues_after_target": false,
+      "schema_version": "talk-boundary-semantic-review.v1",
+      "selector_story_witness": {
+        "comedic_payoff": 4,
+        "independence_group": "cpa-gpt-5.6-semantic-family",
+        "self_contained": 4,
+        "status": "PASS"
+      },
+      "semantic_independence_groups": [
+        "cpa-gpt-5.6-semantic-family"
+      ],
+      "source_separation_witness": null,
+      "status": "PASS",
+      "story_closed": true,
+      "summary": "第34条“我也不信你了”完整落下被骗后不再相信的包袱，随后第35至36条已转入探索新内容。",
+      "syntax_complete": true,
+      "target_cue_index": 34,
+      "target_ms": 100470
+    },
+    "closure_sentence": "我也不信你了",
+    "delivery_coverage_lower_bound_ms": 100470,
+    "delivery_coverage_verification": {
+      "failure": null,
+      "status": "PASS"
+    },
+    "end_cut_inside_speech_island": false,
+    "end_island_continues_ms": 0,
+    "end_on_sentence_boundary": true,
+    "final_delivery_boundary_semantic_review": {
+      "boundary_search_scope": {
+        "boundary_end_mode": "semantic_lower_bound",
+        "delivery_lower_bound_ms": 90710,
+        "delivery_tail_pad_ms": 400,
+        "last_piece_start_ms": 0,
+        "manual_lower_bound_ms": null,
+        "max_recommended_end_ms": 120710,
+        "minimum_recommended_end_ms": 90710,
+        "prior_piece_duration_ms": 0,
+        "reason_codes": [],
+        "recommendation_forward_ms": 30000,
+        "repair_cap_ms": 30000,
+        "required_last_piece_source_end_ms": 135710,
+        "required_local_source_context_end_ms": 135710,
+        "required_owner_end_ms": null,
+        "review_target_ms": 90710,
+        "schema_version": "talk-boundary-search-scope.v1",
+        "scope_sha256": "sha256:39846cbc23eb3f7069efab603e099c82aa558c10ac0a20283001758d69cf51a9",
+        "semantic_search_origin_ms": 90710,
+        "semantic_target_ms": 90710,
+        "status": "PASS",
+        "structured_payoff_ms": null,
+        "witness_reserve_ms": 15000
+      },
+      "candidate_id": "auto_193129_850_940",
+      "content_anchor_covered": true,
+      "correlated_reviewer_disclosure": true,
+      "cue_grid_sha256": "sha256:fe047d3c10b25bf81337fbf45d2e314a67b97621bbaefc6ce09c436d82beb3cc",
+      "evidence_cue_indexes": [
+        30
+      ],
+      "final_endpoint_binding": {
+        "closure_text_sha256": "sha256:1430e638c29024e6732bfab12999fe0e87d9b18bd87d4b6f035e632b5e2bce62",
+        "final_closure_cue_index": 30,
+        "final_cue_grid_sha256": "sha256:fe047d3c10b25bf81337fbf45d2e314a67b97621bbaefc6ce09c436d82beb3cc",
+        "final_end_ms": 90850,
+        "final_snapped_end_ms": 90710,
+        "final_start_ms": 0,
+        "reason_codes": [],
+        "recommended_end_cue_index": 30,
+        "recommended_end_ms": 90710,
+        "schema_version": "talk-boundary-final-endpoint-binding.v1",
+        "semantic_cue_grid_sha256": "sha256:fe047d3c10b25bf81337fbf45d2e314a67b97621bbaefc6ce09c436d82beb3cc",
+        "semantic_request_sha256": "sha256:fdd777c97afc9a1866e166e9ae5b287979a5572064b0989ee88b4e8e59d8dc9f",
+        "status": "PASS"
+      },
+      "independent_semantic_vote_count": 1,
+      "max_forward_ms": 30000,
+      "needs_more_context": false,
+      "next_topic_separated": true,
+      "next_topic_witness_valid": true,
+      "reason_codes": [
+        "STORY_PAYOFF_CLOSED",
+        "TARGET_SENTENCE_COMPLETE",
+        "TERMINAL_SOURCE_SEPARATION_WITNESS_PASS"
+      ],
+      "recommendation_relaxations": [],
+      "recommended_end_cue_index": 30,
+      "recommended_end_ms": 90710,
+      "request_sha256": "sha256:fdd777c97afc9a1866e166e9ae5b287979a5572064b0989ee88b4e8e59d8dc9f",
+      "retry_scope": "none",
+      "review_scope": "final_delivery",
+      "reviewer_independence_group": "cpa-gpt-5.6-semantic-family",
+      "same_topic_continues_after_target": false,
+      "schema_version": "talk-boundary-semantic-review.v1",
+      "selector_story_witness": {
+        "comedic_payoff": 4,
+        "independence_group": "cpa-gpt-5.6-semantic-family",
+        "self_contained": 4,
+        "status": "PASS"
+      },
+      "semantic_independence_groups": [
+        "cpa-gpt-5.6-semantic-family"
+      ],
+      "source_separation_witness": {
+        "reason_codes": [],
+        "schema_version": "talk-boundary-source-separation-witness.v1",
+        "source_cue_grid_sha256": "sha256:640b709b19ba0620bb6a000584580f928a15c26cc16e47c77af4872778c33a2f",
+        "source_final_end_ms": 100600,
+        "source_final_start_ms": 9750,
+        "source_recommended_end_ms": 100460,
+        "source_request_sha256": "sha256:b850b951c4eadfbf407c2cec8e0ba860e043a441c5dc323e63053156a779a1fc",
+        "source_review_sha256": "sha256:4f6a9a7179054256d5d9080a02b9e4add696a78d0bae67ffcb197d8e9bc74f52",
+        "status": "PASS"
+      },
+      "status": "PASS",
+      "story_closed": true,
+      "summary": "第30条“我也不信你了”句法完整并落实现承诺的收尾，且终端 source separation witness 已证明切后进入下一话题。",
+      "syntax_complete": true,
+      "target_cue_index": 30,
+      "target_ms": 90710
+    },
+    "final_end_ms": 100600,
+    "final_start_ms": 9750,
+    "frozen_required_boundary_owner_count": 1,
+    "frozen_required_boundary_owners": [
+      {
+        "local_windows": [
+          {
+            "end_ms": 87720,
+            "start_ms": 82880
+          }
+        ],
+        "owner_id": "entity_repair:1:82880:87720",
+        "owner_kind": "entity_repair",
+        "required": true
+      }
+    ],
+    "opening_sentence": "拉拉，你是新来的",
+    "red_flags": [],
+    "required_boundary_owner_end_ms": 87720,
+    "required_boundary_owner_start_ms": 82880,
+    "required_boundary_owner_verification": {
+      "failures": [],
+      "status": "PASS"
+    },
+    "schema_version": "boundary-audit.v1",
+    "semantic_start_target_rel_ms": 10000,
+    "semantic_target_rel_ms": 100470,
+    "snapped_sentence_end_ms": 100460,
+    "snapped_sentence_start_ms": 10000,
+    "start_on_sentence_boundary": true,
+    "syntactic_tail_audit": {
+      "reason": "punctuation_free_spoken_clause",
+      "status": "UNKNOWN"
+    },
+    "tail_adjustment": {
+      "final_end_ms": 100600,
+      "next_speech_island_gap_ms": 412,
+      "next_speech_island_guard_ms": 100,
+      "next_speech_island_start_ms": 100872,
+      "next_subtitle_start_ms": 100700,
+      "nominal_end_ms": 100860,
+      "reason": "tail_clamped_before_next_subtitle",
+      "tail_pad_ms": 400
+    },
+    "tail_pad_coverage_bridge": {
+      "closure_lower_bound_ms": 100460,
+      "delivery_lower_bound_ms": 100470,
+      "maximum_tail_pad_ms": 400,
+      "status": "USED"
+    },
+    "tail_refinement_used": false,
+    "verdict": "ok_sentence_boundary_cut"
+  },
+  "burned_preview": {
+    "ass_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/auto_193129_850_940.recut.final-sapphire72.ass",
+    "branding_intro": {
+      "fallback_attempts": [],
+      "intro_id": "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+      "intro_media_path": "/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.z1-budui-20260718.mp4",
+      "intro_media_sha256": "bbd0c7e3b34d3d5af543bb8444861ab1e18f835c9252629480b2ec2fd34e7dc5",
+      "intro_offset_ms": 5749,
+      "main_duration_ms_before": 90850,
+      "main_sha256_before": "033160db7c9a1fdc0fc1744c752fe1ef99ad176e108da64ba8a7492953074744",
+      "method": "matched-intro-concat-copy",
+      "policy_manifest_path": "/opt/bilive/autoslice/repo/assets/lidousha/intro/branding_intro.v1.json",
+      "policy_manifest_sha256": "bee66d164b683451602ae3601d79d19175bc72b0d13257b3026ae2dc47ee06ef",
+      "rotation": {
+        "candidate_intro_ids": [
+          "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+          "huozi-lidousha-kmx-baobao-guankou-z2-v1"
+        ],
+        "mode": "main-sha256",
+        "picked_intro_id": "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+        "selector": "main_sha256"
+      },
+      "status": "PREPENDED",
+      "verification": {
+        "duration_delta_ms": 22,
+        "duration_ms": 96621,
+        "full_decode": "clean",
+        "stream_contract": {
+          "audio_codec": "aac",
+          "channels": 2,
+          "fps": "60/1",
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "sample_rate": 48000,
+          "video_codec": "h264",
+          "width": 1920
+        }
+      }
+    },
+    "burned_sha256": "sha256:597243ff72c0670ec2aa8e9288e5fee1f59b7095534693905f3193e55ea11d1a",
+    "command": [
+      "ffmpeg",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-y",
+      "-i",
+      "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/auto_193129_850_940.recut.mp4",
+      "-vf",
+      "subtitles='/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/auto_193129_850_940.recut.final-sapphire72.ass':fontsdir='/opt/bilive/autoslice/repo/assets/lidousha/fonts'",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "20",
+      "-c:a",
+      "copy",
+      "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/auto_193129_850_940.recut.burned-final-sapphire72.mp4"
+    ],
+    "path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/auto_193129_850_940.recut.burned-final-sapphire72.mp4",
+    "pillarbox_16_9": false,
+    "status": "BURNED",
+    "stream_contract": null,
+    "subtitle_style": "lidousha-final-sapphire72"
+  },
+  "chat_authority_audit_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/auto_193129_850_940.chat-authority.json",
+  "clip_context_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/auto_193129_850_940.clip-context.json",
+  "clip_context_payload_sha256": "sha256:19325c6e066d042b10a6c55d2759488141cc73c70d7c25084e620d52dc7b4c9f",
+  "duration_ms": 90850,
+  "end_ms": 90850,
+  "media_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/auto_193129_850_940.recut.mp4",
+  "publish_staging": {
+    "cover_generation": {
+      "ai_background": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/covers_ai_original/auto_193129_850_940.ai-bg.cpa-image-edit.png",
+      "ai_background_sha256": "sha256:2aad6f8363ecc758f79efc2361fe29bc7c65b7f0fe2168697524163ef765609f",
+      "angle_degrees": -2.0,
+      "art_direction": {
+        "background_style": "mint-doodle-stickers",
+        "cover_punch": [
+          "有骗子！",
+          "支持李豆沙"
+        ],
+        "emote_id": "",
+        "emote_mode": "",
+        "emote_reason": "",
+        "expression_en": "Wide startled eyes and an open O-shaped mouth, one hand raised beside her face in shocked disbelief; no tongue visible.",
+        "hook_color": "blue",
+        "hook_word": "骗子",
+        "is_song": false,
+        "layout": "banner",
+        "line_breaks": [],
+        "role": "shocked_bites_back",
+        "words": [
+          "观众",
+          "声称",
+          "只带",
+          "一个",
+          "技能",
+          "保证",
+          "让她赢，",
+          "熊猫头",
+          "连",
+          "“支持李豆沙”",
+          "都没",
+          "说完",
+          "就输了",
+          "有骗子！"
+        ]
+      },
+      "attempted_models": [
+        "gpt-image-2"
+      ],
+      "background_style": "mint-doodle-stickers",
+      "cover_diversity_slot": 3,
+      "cover_mode": "auto",
+      "cover_origin": "AI_REDRAW",
+      "cover_punch": [
+        "有骗子！",
+        "支持李豆沙"
+      ],
+      "cover_punch_allowed": true,
+      "cover_text": "观众声称只带一个技能保证让她赢，熊猫头连“支持李豆沙”都没说完就输了\n有骗子！",
+      "cover_text_mode": "punch",
+      "cover_treatment": {
+        "reason": "motion without confident cover subject (score=5.12)",
+        "treatment": "cpa_redraw"
+      },
+      "expression_en": "Wide startled eyes and an open O-shaped mouth, one hand raised beside her face in shocked disbelief; no tongue visible.",
+      "fallback_used": false,
+      "final_cover": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/covers/auto_193129_850_940.ai-title.cover.png",
+      "final_cover_sha256": "sha256:3aa7e525034b812a8e5036954f00627dead33fab505071e1421f7f09c868376d",
+      "font": "ZCOOLKuaiLe-Regular.ttf",
+      "font_selection": {
+        "font": "ZCOOLKuaiLe-Regular.ttf",
+        "glyph_risk": [],
+        "rejected": []
+      },
+      "font_size": 277,
+      "hook_color": "blue",
+      "hook_word": "骗子",
+      "image_gen_model": "cpa",
+      "image_generation_attempted": true,
+      "image_generation_planned": true,
+      "image_generation_used": true,
+      "layout": "banner",
+      "line_split": "punch",
+      "method": "images.edit",
+      "min_talk_font_size": 120,
+      "model": "gpt-image-2",
+      "model_fallback_used": false,
+      "overlay_position": {
+        "x": 350,
+        "y": -40
+      },
+      "pre_overlay_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/covers/auto_193129_850_940.ai-title.cover.pre-overlay.png",
+      "pre_overlay_sha256": "sha256:2aad6f8363ecc758f79efc2361fe29bc7c65b7f0fe2168697524163ef765609f",
+      "reference_image": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/cover_refs/auto_193129_850_940.cover-ref.png",
+      "reference_selection": {
+        "anchor_x_frac": 0.5934,
+        "best_ms": 59500,
+        "candidates": [
+          {
+            "audio_z": 1.1514,
+            "emotion": 0.0,
+            "motion_z": 4.1323,
+            "ms": 59500,
+            "score": 5.1221,
+            "sharp_z": -0.646
+          },
+          {
+            "audio_z": 1.1077,
+            "emotion": 0.0,
+            "motion_z": 3.6055,
+            "ms": 55000,
+            "score": 4.9767,
+            "sharp_z": 1.0541
+          },
+          {
+            "audio_z": -1.0023,
+            "emotion": 0.0,
+            "motion_z": 4.7607,
+            "ms": 84000,
+            "score": 3.4367,
+            "sharp_z": -1.2867
+          }
+        ],
+        "head_top_frac": 0.1,
+        "media_duration_ms": 90850,
+        "motion_bbox_frac": [
+          0.425,
+          0.1,
+          0.975,
+          0.8444
+        ],
+        "motion_dispersion_frac": 0.4094,
+        "sample_fps": 2.0,
+        "schema": "cover-frame-selection.v1",
+        "signals": {
+          "audio_env_available": true,
+          "emotion_spans": 2
+        },
+        "skip_head_ms": 7249,
+        "skip_tail_ms": 1200,
+        "status": "SELECTED",
+        "subject_anchor_x_frac": 0.6625,
+        "subject_bbox_frac": [
+          0.4219,
+          0.1444,
+          0.9031,
+          0.8278
+        ],
+        "subject_confident": false,
+        "subject_head_top_frac": 0.1444
+      },
+      "reference_sha256": "sha256:367dc583aeea2d5a2d82e85bc99f48ace1098f2144134e30b49113ebfe0e4502",
+      "relation_cover_mode": "HOST_ONLY_GENERIC",
+      "rendered_lines": [
+        "有骗子！",
+        "支持李豆沙"
+      ],
+      "rendered_text_pixels": {
+        "canvas_size": [
+          1920,
+          1080
+        ],
+        "changed_pixel_count": 270917,
+        "changed_pixel_ratio": 0.9953560314643565,
+        "final_cover_sha256": "sha256:3aa7e525034b812a8e5036954f00627dead33fab505071e1421f7f09c868376d",
+        "font_file_name": "ZCOOLKuaiLe-Regular.ttf",
+        "font_file_sha256": "sha256:812a6fc1fe54b6d73a419245c32dfeba8aa33104d5be90d1cf6af082007cb71d",
+        "font_size": 277,
+        "mask_nonzero_pixels": 272181,
+        "mask_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/covers/auto_193129_850_940.ai-title.cover.title-mask.png",
+        "mask_sha256": "sha256:d94aa27ed27c43f0dfac38f8a2720b98a460450f3d3d9ed3f81e9495c4fa8042",
+        "masked_final_pixels_sha256": "sha256:4eeb351754c72d463256624456d7b9e75da9cb27386a07ce2a6de9f025194f94",
+        "overlay_position": {
+          "x": 350,
+          "y": -40
+        },
+        "pre_overlay_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/covers/auto_193129_850_940.ai-title.cover.pre-overlay.png",
+        "pre_overlay_sha256": "sha256:2aad6f8363ecc758f79efc2361fe29bc7c65b7f0fe2168697524163ef765609f",
+        "render_spec": {
+          "angle_degrees": -2.0,
+          "font_face_index": 0,
+          "font_file_name": "ZCOOLKuaiLe-Regular.ttf",
+          "font_file_sha256": "sha256:812a6fc1fe54b6d73a419245c32dfeba8aa33104d5be90d1cf6af082007cb71d",
+          "layer_size": [
+            1199,
+            540
+          ],
+          "lines": [
+            {
+              "font_size": 277,
+              "outlines": [
+                {
+                  "color": [
+                    18,
+                    36,
+                    79
+                  ],
+                  "width": 24
+                },
+                {
+                  "color": [
+                    255,
+                    255,
+                    255
+                  ],
+                  "width": 12
+                }
+              ],
+              "segment_pad": 24,
+              "segments": [
+                {
+                  "fill": [
+                    58,
+                    141,
+                    237
+                  ],
+                  "text": "有骗子！"
+                }
+              ],
+              "x": 89.8125,
+              "y": 45
+            },
+            {
+              "font_size": 138,
+              "outlines": [
+                {
+                  "color": [
+                    18,
+                    36,
+                    79
+                  ],
+                  "width": 12
+                },
+                {
+                  "color": [
+                    255,
+                    255,
+                    255
+                  ],
+                  "width": 6
+                }
+              ],
+              "segment_pad": 12,
+              "segments": [
+                {
+                  "fill": [
+                    255,
+                    246,
+                    214
+                  ],
+                  "text": "支持李豆沙"
+                }
+              ],
+              "x": 282.1171875,
+              "y": 345
+            }
+          ],
+          "rendered_layer_size": [
+            1219,
+            582
+          ],
+          "schema_version": "lidousha-cover-title-render-spec.v1"
+        },
+        "render_spec_sha256": "sha256:fb1befc1b0409b29dd1526a1ee7394e12e975424c17fcf133968c450835f955a",
+        "rendered_text": "有骗子！支持李豆沙",
+        "schema_version": "lidousha-cover-rendered-text-pixels.v3",
+        "status": "PASS",
+        "text_pixel_bbox": [
+          450,
+          12,
+          1340,
+          474
+        ],
+        "text_pixel_height": 462,
+        "text_pixel_width": 890
+      },
+      "request_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/evidence/auto_193129_850_940.cover-cpa-request.redacted.json",
+      "response_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/evidence/auto_193129_850_940.cover-cpa-response.redacted.json",
+      "role": "shocked_bites_back",
+      "route_decision": {
+        "actual_treatment": "cpa_redraw",
+        "alternatives": [
+          {
+            "rationale": "the selected source frame is strong enough to preserve as the final visual without image generation",
+            "rejected_reason": "the source-frame evidence is not strong or verified enough to ship without image generation; selected evidence: motion without confident cover subject (score=5.12)",
+            "status": "REJECTED",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rationale": "the real source moment is usable but benefits from a bounded identity-preserving cleanup",
+            "rejected_reason": "bounded cleanup cannot repair the missing subject confidence, weak composition, or inability to express the hook; selected evidence: motion without confident cover subject (score=5.12)",
+            "status": "REJECTED",
+            "treatment": "screenshot_polish"
+          },
+          {
+            "rationale": "motion without confident cover subject (score=5.12)",
+            "rejected_reason": null,
+            "status": "SELECTED",
+            "treatment": "cpa_redraw"
+          }
+        ],
+        "alternatives_considered": [
+          "screenshot_direct",
+          "screenshot_polish",
+          "cpa_redraw"
+        ],
+        "cover_mode": "auto",
+        "execution_status": "READY",
+        "final_visibility_authority": "NOT_REQUIRED",
+        "final_visible_participant_ids": [],
+        "frame_emotion": 0.0,
+        "frame_score": 5.1221,
+        "image_generation_attempted": true,
+        "image_generation_planned": true,
+        "image_generation_used": true,
+        "is_song": false,
+        "manual_title_or_full_text_contract": false,
+        "motion_dispersion_frac": 0.4094,
+        "reason": "motion without confident cover subject (score=5.12)",
+        "reference_authority_id": null,
+        "rejected_alternatives": [
+          {
+            "rejected_reason": "the source-frame evidence is not strong or verified enough to ship without image generation; selected evidence: motion without confident cover subject (score=5.12)",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rejected_reason": "bounded cleanup cannot repair the missing subject confidence, weak composition, or inability to express the hook; selected evidence: motion without confident cover subject (score=5.12)",
+            "treatment": "screenshot_polish"
+          }
+        ],
+        "relationship_semantic_evidence": [],
+        "relationship_visual_required": false,
+        "relationship_visual_safety_evidence": {
+          "relation_state": "UNKNOWN",
+          "required_participant_ids": [],
+          "requirement_basis": [],
+          "schema_version": "lidousha-cover-relationship-visual-safety.v1",
+          "status": "NOT_REQUIRED"
+        },
+        "required_participant_ids": [],
+        "schema_version": "lidousha-cover-route-decision.v2",
+        "selected_rationale": "motion without confident cover subject (score=5.12)",
+        "selected_treatment": "cpa_redraw",
+        "selection_policy": "lidousha-cover-treatment-router.v2",
+        "source_visibility_authority": "NO_IDENTITY_AUTHORITY",
+        "source_visible_participant_ids": [],
+        "subject_confident": false,
+        "verified_stream_frame": false
+      },
+      "scrim": false,
+      "story_contract": {
+        "boundary_semantic_review": {
+          "boundary_search_scope": {
+            "boundary_end_mode": "semantic_lower_bound",
+            "delivery_lower_bound_ms": 90710,
+            "delivery_tail_pad_ms": 400,
+            "last_piece_start_ms": 0,
+            "manual_lower_bound_ms": null,
+            "max_recommended_end_ms": 120710,
+            "minimum_recommended_end_ms": 90710,
+            "prior_piece_duration_ms": 0,
+            "reason_codes": [],
+            "recommendation_forward_ms": 30000,
+            "repair_cap_ms": 30000,
+            "required_last_piece_source_end_ms": 135710,
+            "required_local_source_context_end_ms": 135710,
+            "required_owner_end_ms": null,
+            "review_target_ms": 90710,
+            "schema_version": "talk-boundary-search-scope.v1",
+            "scope_sha256": "sha256:39846cbc23eb3f7069efab603e099c82aa558c10ac0a20283001758d69cf51a9",
+            "semantic_search_origin_ms": 90710,
+            "semantic_target_ms": 90710,
+            "status": "PASS",
+            "structured_payoff_ms": null,
+            "witness_reserve_ms": 15000
+          },
+          "candidate_id": "auto_193129_850_940",
+          "content_anchor_covered": true,
+          "correlated_reviewer_disclosure": true,
+          "cue_grid_sha256": "sha256:fe047d3c10b25bf81337fbf45d2e314a67b97621bbaefc6ce09c436d82beb3cc",
+          "evidence_cue_indexes": [
+            30
+          ],
+          "final_endpoint_binding": {
+            "closure_text_sha256": "sha256:1430e638c29024e6732bfab12999fe0e87d9b18bd87d4b6f035e632b5e2bce62",
+            "final_closure_cue_index": 30,
+            "final_cue_grid_sha256": "sha256:fe047d3c10b25bf81337fbf45d2e314a67b97621bbaefc6ce09c436d82beb3cc",
+            "final_end_ms": 90850,
+            "final_snapped_end_ms": 90710,
+            "final_start_ms": 0,
+            "reason_codes": [],
+            "recommended_end_cue_index": 30,
+            "recommended_end_ms": 90710,
+            "schema_version": "talk-boundary-final-endpoint-binding.v1",
+            "semantic_cue_grid_sha256": "sha256:fe047d3c10b25bf81337fbf45d2e314a67b97621bbaefc6ce09c436d82beb3cc",
+            "semantic_request_sha256": "sha256:fdd777c97afc9a1866e166e9ae5b287979a5572064b0989ee88b4e8e59d8dc9f",
+            "status": "PASS"
+          },
+          "independent_semantic_vote_count": 1,
+          "max_forward_ms": 30000,
+          "needs_more_context": false,
+          "next_topic_separated": true,
+          "next_topic_witness_valid": true,
+          "reason_codes": [
+            "STORY_PAYOFF_CLOSED",
+            "TARGET_SENTENCE_COMPLETE",
+            "TERMINAL_SOURCE_SEPARATION_WITNESS_PASS"
+          ],
+          "recommendation_relaxations": [],
+          "recommended_end_cue_index": 30,
+          "recommended_end_ms": 90710,
+          "request_sha256": "sha256:fdd777c97afc9a1866e166e9ae5b287979a5572064b0989ee88b4e8e59d8dc9f",
+          "retry_scope": "none",
+          "review_scope": "final_delivery",
+          "reviewer_independence_group": "cpa-gpt-5.6-semantic-family",
+          "same_topic_continues_after_target": false,
+          "schema_version": "talk-boundary-semantic-review.v1",
+          "selector_story_witness": {
+            "comedic_payoff": 4,
+            "independence_group": "cpa-gpt-5.6-semantic-family",
+            "self_contained": 4,
+            "status": "PASS"
+          },
+          "semantic_independence_groups": [
+            "cpa-gpt-5.6-semantic-family"
+          ],
+          "source_separation_witness": {
+            "reason_codes": [],
+            "schema_version": "talk-boundary-source-separation-witness.v1",
+            "source_cue_grid_sha256": "sha256:640b709b19ba0620bb6a000584580f928a15c26cc16e47c77af4872778c33a2f",
+            "source_final_end_ms": 100600,
+            "source_final_start_ms": 9750,
+            "source_recommended_end_ms": 100460,
+            "source_request_sha256": "sha256:b850b951c4eadfbf407c2cec8e0ba860e043a441c5dc323e63053156a779a1fc",
+            "source_review_sha256": "sha256:4f6a9a7179054256d5d9080a02b9e4add696a78d0bae67ffcb197d8e9bc74f52",
+            "status": "PASS"
+          },
+          "status": "PASS",
+          "story_closed": true,
+          "summary": "第30条“我也不信你了”句法完整并落实现承诺的收尾，且终端 source separation witness 已证明切后进入下一话题。",
+          "syntax_complete": true,
+          "target_cue_index": 30,
+          "target_ms": 90710
+        },
+        "clip_context_binding": {
+          "context_sha256": "sha256:19325c6e066d042b10a6c55d2759488141cc73c70d7c25084e620d52dc7b4c9f",
+          "mutation_authorized": false,
+          "schema_version": "lidousha-clip-context.v1",
+          "speech_memory_ledger_sha256": "sha256:d87532b5d56457496a868c6910091a545bd2c612a807182d742aa0ca26d30c95",
+          "whole_clip_draft_srt_sha256": "sha256:563062c12159822fe0e8e32197177a1e22a5d1e9355509364680ba5232c325f9"
+        },
+        "cover_counterpart_reference_available": false,
+        "cover_fallback_mode": "HOST_ONLY_GENERIC",
+        "cover_reference_authority": null,
+        "human_boundary_authority": null,
+        "participants": [],
+        "relation_state": "UNKNOWN",
+        "schema_version": "lidousha-story-contract.v1",
+        "selection_hook": "观众声称只带一个技能保证让她赢，李豆沙刚准备下注就遭秒杀，当场怒斥骗子并宣布再也不信了。",
+        "source_media_sha256s": [
+          "sha256:4980bdeba15f0f3cce0c3f20737afcb33732cbd64c457bc11c4e3266d5fcf201"
+        ]
+      },
+      "text_backing": "outline",
+      "title": "【李豆沙】观众声称只带一个技能保证让她赢，熊猫头连“支持李豆沙”都没说完就输了：有骗子！",
+      "title_band": "banner",
+      "workflow": "cpa-openai-compatible-image-edit-cover-plus-approved-local-title-overlay"
+    },
+    "cover_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/covers/auto_193129_850_940.ai-title.cover.png",
+    "cover_status": "AI_COVER_READY",
+    "cover_text": "观众声称只带一个技能保证让她赢，熊猫头连“支持李豆沙”都没说完就输了\n有骗子！",
+    "publish_json_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/auto_193129_850_940.recut.publish.json",
+    "reason_codes": [],
+    "recovery_publication_authority": null,
+    "status": "STAGED",
+    "title": "【李豆沙】观众声称只带一个技能保证让她赢，熊猫头连“支持李豆沙”都没说完就输了：有骗子！",
+    "title_authority_error": null,
+    "title_authority_status": "RESOLVED_LLM",
+    "title_policy_violations": [],
+    "title_source": "llm+lidousha_style_asset",
+    "title_story_audit": {
+      "artifact_kind": "title",
+      "schema_version": "story-artifact-audit.v1",
+      "status": "PASS",
+      "text_sha256": "sha256:15cc2a3184be01aa6d63b8c6df4235c7ba5023f2097cb197ef78d89a3ced4a23",
+      "violations": []
+    },
+    "upload_enabled": false
+  },
+  "redelivery_baseline": null,
+  "redelivery_baseline_audit_path": null,
+  "selection_scorecard": {
+    "dimensions": {
+      "audience_salience": 3,
+      "comedic_payoff": 4,
+      "lidousha_centrality": 4,
+      "persona_reversal": 4,
+      "relationship_interaction": 4,
+      "self_contained": 4,
+      "stance_intensity": 4
+    },
+    "effective_score": 92.25,
+    "fatigue_penalty": 3.0,
+    "raw_score": 96.25,
+    "reason_codes": [],
+    "requested_tier": 1,
+    "schema_version": "lidousha-selection-scorecard.v1",
+    "status": "VALID",
+    "tier": 1,
+    "tier_basis": "relationship_chain",
+    "tier_evidence_cues": [
+      322,
+      331,
+      333,
+      336,
+      339,
+      347,
+      349
+    ],
+    "tier_reason": "从发现观众只带一个技能、准备开打，到被瞬间击败并识破骗局，具备观众设局、主播上当和破防收尾的完整互动链。",
+    "uncertainty_penalty": 1.0,
+    "weights": {
+      "audience_salience": 15,
+      "comedic_payoff": 10,
+      "lidousha_centrality": 25,
+      "persona_reversal": 10,
+      "relationship_interaction": 15,
+      "self_contained": 5,
+      "stance_intensity": 20
+    }
+  },
+  "session_relation_authority": null,
+  "speaker_finalization": null,
+  "speaker_finalization_manifest_path": null,
+  "speaker_finalization_manifest_sha256": null,
+  "speaker_mode": "uniform_host",
+  "speaker_review_srt_path": null,
+  "start_ms": 0,
+  "status": "MATERIALIZED",
+  "story_contract": {
+    "boundary_semantic_review": {
+      "boundary_search_scope": {
+        "boundary_end_mode": "semantic_lower_bound",
+        "delivery_lower_bound_ms": 90710,
+        "delivery_tail_pad_ms": 400,
+        "last_piece_start_ms": 0,
+        "manual_lower_bound_ms": null,
+        "max_recommended_end_ms": 120710,
+        "minimum_recommended_end_ms": 90710,
+        "prior_piece_duration_ms": 0,
+        "reason_codes": [],
+        "recommendation_forward_ms": 30000,
+        "repair_cap_ms": 30000,
+        "required_last_piece_source_end_ms": 135710,
+        "required_local_source_context_end_ms": 135710,
+        "required_owner_end_ms": null,
+        "review_target_ms": 90710,
+        "schema_version": "talk-boundary-search-scope.v1",
+        "scope_sha256": "sha256:39846cbc23eb3f7069efab603e099c82aa558c10ac0a20283001758d69cf51a9",
+        "semantic_search_origin_ms": 90710,
+        "semantic_target_ms": 90710,
+        "status": "PASS",
+        "structured_payoff_ms": null,
+        "witness_reserve_ms": 15000
+      },
+      "candidate_id": "auto_193129_850_940",
+      "content_anchor_covered": true,
+      "correlated_reviewer_disclosure": true,
+      "cue_grid_sha256": "sha256:fe047d3c10b25bf81337fbf45d2e314a67b97621bbaefc6ce09c436d82beb3cc",
+      "evidence_cue_indexes": [
+        30
+      ],
+      "final_endpoint_binding": {
+        "closure_text_sha256": "sha256:1430e638c29024e6732bfab12999fe0e87d9b18bd87d4b6f035e632b5e2bce62",
+        "final_closure_cue_index": 30,
+        "final_cue_grid_sha256": "sha256:fe047d3c10b25bf81337fbf45d2e314a67b97621bbaefc6ce09c436d82beb3cc",
+        "final_end_ms": 90850,
+        "final_snapped_end_ms": 90710,
+        "final_start_ms": 0,
+        "reason_codes": [],
+        "recommended_end_cue_index": 30,
+        "recommended_end_ms": 90710,
+        "schema_version": "talk-boundary-final-endpoint-binding.v1",
+        "semantic_cue_grid_sha256": "sha256:fe047d3c10b25bf81337fbf45d2e314a67b97621bbaefc6ce09c436d82beb3cc",
+        "semantic_request_sha256": "sha256:fdd777c97afc9a1866e166e9ae5b287979a5572064b0989ee88b4e8e59d8dc9f",
+        "status": "PASS"
+      },
+      "independent_semantic_vote_count": 1,
+      "max_forward_ms": 30000,
+      "needs_more_context": false,
+      "next_topic_separated": true,
+      "next_topic_witness_valid": true,
+      "reason_codes": [
+        "STORY_PAYOFF_CLOSED",
+        "TARGET_SENTENCE_COMPLETE",
+        "TERMINAL_SOURCE_SEPARATION_WITNESS_PASS"
+      ],
+      "recommendation_relaxations": [],
+      "recommended_end_cue_index": 30,
+      "recommended_end_ms": 90710,
+      "request_sha256": "sha256:fdd777c97afc9a1866e166e9ae5b287979a5572064b0989ee88b4e8e59d8dc9f",
+      "retry_scope": "none",
+      "review_scope": "final_delivery",
+      "reviewer_independence_group": "cpa-gpt-5.6-semantic-family",
+      "same_topic_continues_after_target": false,
+      "schema_version": "talk-boundary-semantic-review.v1",
+      "selector_story_witness": {
+        "comedic_payoff": 4,
+        "independence_group": "cpa-gpt-5.6-semantic-family",
+        "self_contained": 4,
+        "status": "PASS"
+      },
+      "semantic_independence_groups": [
+        "cpa-gpt-5.6-semantic-family"
+      ],
+      "source_separation_witness": {
+        "reason_codes": [],
+        "schema_version": "talk-boundary-source-separation-witness.v1",
+        "source_cue_grid_sha256": "sha256:640b709b19ba0620bb6a000584580f928a15c26cc16e47c77af4872778c33a2f",
+        "source_final_end_ms": 100600,
+        "source_final_start_ms": 9750,
+        "source_recommended_end_ms": 100460,
+        "source_request_sha256": "sha256:b850b951c4eadfbf407c2cec8e0ba860e043a441c5dc323e63053156a779a1fc",
+        "source_review_sha256": "sha256:4f6a9a7179054256d5d9080a02b9e4add696a78d0bae67ffcb197d8e9bc74f52",
+        "status": "PASS"
+      },
+      "status": "PASS",
+      "story_closed": true,
+      "summary": "第30条“我也不信你了”句法完整并落实现承诺的收尾，且终端 source separation witness 已证明切后进入下一话题。",
+      "syntax_complete": true,
+      "target_cue_index": 30,
+      "target_ms": 90710
+    },
+    "candidate_id": "auto_193129_850_940",
+    "clip_context_binding": {
+      "context_sha256": "sha256:19325c6e066d042b10a6c55d2759488141cc73c70d7c25084e620d52dc7b4c9f",
+      "mutation_authorized": false,
+      "schema_version": "lidousha-clip-context.v1",
+      "speech_memory_ledger_sha256": "sha256:d87532b5d56457496a868c6910091a545bd2c612a807182d742aa0ca26d30c95",
+      "whole_clip_draft_srt_sha256": "sha256:563062c12159822fe0e8e32197177a1e22a5d1e9355509364680ba5232c325f9"
+    },
+    "clip_context_prompt": "clip_context_sha256: sha256:19325c6e066d042b10a6c55d2759488141cc73c70d7c25084e620d52dc7b4c9f\ncandidate_id: auto_193129_850_940\nrecording_date: 2026-07-24\nselection_hook: 观众声称只带一个技能保证让她赢，李豆沙刚准备下注就遭秒杀，当场怒斥骗子并宣布再也不信了。\nsource_pieces: [{\"end_ms\":988490,\"recording_basename\":\"22966160_20260724-19-31-29.mp4\",\"source_media_sha256\":\"sha256:4980bdeba15f0f3cce0c3f20737afcb33732cbd64c457bc11c4e3266d5fcf201\",\"start_ms\":840020}]\nsession_relation_authority: null\ntopic_resolution: {\"evidence\":[],\"graph_sha256\":\"19281b1076077c8c6d48aed4e256361688431c2f15a558757c003bb9964c7689\",\"recording_date\":\"2026-07-24\",\"schema_version\":\"topic-resolution.v1\",\"scoped_entity_ids\":[],\"scoped_graph_context\":{\"entities\":[],\"graph_sha256\":\"19281b1076077c8c6d48aed4e256361688431c2f15a558757c003bb9964c7689\",\"recording_date\":\"2026-07-24\",\"schema_version\":\"topic-scoped-context.v1\",\"status\":\"NO_SELECTED_NODES\",\"topics\":[],\"works\":[]},\"selected_topic_ids\":[],\"selected_work_ids\":[],\"status\":\"NO_MATCH\"}\nsession_topic_authorities: []\n以下长期记忆只提供候选，绝不直接授权改字；同音字仍须画面/弹幕/SC/同片复现/声学或人工 source truth：\n- id=lidousha.idiolect.xiaodeba.r1; idiolect: surfaces=晓得吧; candidates=晓得吧\n整片初稿（用于回指、复现和后文调侃；不是文字 authority）：\n1\n00:00:00,000 --> 00:00:01,360\n嗯\n2\n00:00:02,960 --> 00:00:03,840\n来吧\n3\n00:00:04,980 --> 00:00:06,380\n解锁耶\n4\n00:00:08,360 --> 00:00:10,000\n又可以和大家见面了\n5\n00:00:10,000 --> 00:00:11,440\n拉拉，你是新来的\n6\n00:00:12,080 --> 00:00:13,880\n你这个你还挺萌的\n7\n00:00:14,120 --> 00:00:14,960\n看看\n8\n00:00:15,480 --> 00:00:16,760\n等等等等\n9\n00:00:16,760 --> 00:00:19,740\n你把你的你你我你你的技能\n10\n00:00:19,740 --> 00:00:21,480\n你我哦，它有一个技能\n11\n00:00:21,480 --> 00:00:22,320\n这是什么\n12\n00:00:23,000 --> 00:00:26,580\n给造成两次光元素破灭伤害\n13\n00:00:26,580 --> 00:00:27,720\n试一试一下吧\n14\n00:00:28,200 --> 00:00:29,240\n试一下吧\n15\n00:00:29,240 --> 00:00:30,400\n有个木材没捡\n16\n00:00:30,400 --> 00:00:31,400\n原来如此\n17\n00:00:31,970 --> 00:00:32,810\n能赢吗\n18\n00:00:32,810 --> 00:00:34,610\n大家觉得可以开始下注了\n19\n00:00:35,290 --> 00:00:36,490\n支持李豆沙\n20\n00:00:47,660 --> 00:00:50,820\n我连支持李豆沙这句话都还没说完呢\n21\n00:00:51,820 --> 00:00:54,300\n有骗子有骗子\n22\n00:00:55,610 --> 00:00:57,730\n有骗子被骗了\n23\n00:00:58,110 --> 00:00:59,990\n他说他只剩一个技能\n24\n00:00:59,990 --> 00:01:02,530\n让我打他一副一副\n25\n00:01:02,530 --> 00:01:04,870\n哎，我，我都已经帮你准备好了\n26\n00:01:04,870 --> 00:01:06,830\n你来就行，保证让你赢\n27\n00:01:08,450 --> 00:01:10,490\n咋那么坏呢\n28\n00:01:15,200 --> 00:01:17,920\n叹十七手里面的坏熊太多了\n29\n00:01:20,320 --> 00:01:22,080\n坏熊太多了\n30\n00:01:22,880 --> 00:01:27,720\n我kmx为什么欺负我？kmx欺负人\n31\n00:01:31,500 --> 00:01:34,060\n我要去探索新地图了\n32\n00:01:35,620 --> 00:01:37,740\n你一个技能不带就带宠物\n33\n00:01:37,740 --> 00:01:38,940\n我也不信你啊\n34\n00:01:39,060 --> 00:01:40,460\n我也不信你了\n35\n00:01:40,700 --> 00:01:42,900\n我要再去开一个新的\n36\n00:01:43,470 --> 00:01:45,350\n从哪走？从这走\n37\n00:01:46,880 --> 00:01:49,240\n我们再玩一会就去唱歌了\n38\n00:01:49,240 --> 00:01:50,600\n好久没唱了\n39\n00:01:51,320 --> 00:01:52,120\n解锁\n40\n00:01:52,680 --> 00:01:54,680\n这有一个，这是个啥\n41\n00:01:58,550 --> 00:02:00,710\n这个我有点过吗\n42\n00:02:02,110 --> 00:02:04,150\n挑战森林猛兽\n43\n00:02:07,120 --> 00:02:08,280\n就用这个吧\n44\n00:02:08,759 --> 00:02:10,800\n这个对我来说洒洒水\n45\n00:02:10,800 --> 00:02:12,960\n请问什么打不过这 NPC\n46\n00:02:12,960 --> 00:02:14,080\n我还打不过吗\n47\n00:02:25,540 --> 00:02:27,820\n在kmx那里丢失了尊严\n48\n00:02:27,820 --> 00:02:28,380\n豆沙就\n结构化弹幕/SC（保留 source binding）：\n- superchat @-841262ms event=17765494: 小李把各种红点都点一点吧，大家在公会里看急眼了\n- superchat @-521262ms event=17765689: 并不会拉娘主播别造谣，我说拉娘同人女另有其人\n- danmaku @-15141ms event=: 左上角\n- danmaku @-14903ms event=: 小李待会可以和我打，我只留了一个召唤宠物的技能，宠物伤害比较低\n- danmaku @8244ms event=: 哈哈哈\n- danmaku @15007ms event=: 刚刚有个木材没捡\n- danmaku @29066ms event=: 哈哈哈\n- danmaku @30446ms event=: 笑死\n- danmaku @33209ms event=: 打不过的\n- danmaku @35547ms event=: 哈哈哈\n- danmaku @35799ms event=: 唉唉\n- danmaku @36843ms event=: 感觉你会被秒\n- danmaku @38157ms event=: 打不过的\n- danmaku @40744ms event=: 笑死\n- danmaku @41075ms event=: 别信，这技能伤害最高了\n- danmaku @41076ms event=: [李豆沙_大笑]\n- danmaku @41076ms event=: [李豆沙_大笑]\n- danmaku @42300ms event=: 铁打不过\n- danmaku @44905ms event=: 哈哈哈哈哈哈\n- danmaku @46000ms event=: 谢谢你 爽了\n- danmaku @46198ms event=: xsl\n- danmaku @48584ms event=: 好下\n- danmaku @50172ms event=: 哈哈哈哈哈哈哈\n- danmaku @52464ms event=: 哈哈哈哈哈哈哈哈哈哈哈哈哈\n- danmaku @53768ms event=: 太坏了\n- danmaku @53770ms event=: 笑死了\n- danmaku @55064ms event=: [李豆沙_大笑]\n- danmaku @55309ms event=: 有点坏的来了\n- danmaku @57648ms event=: 哈哈哈\n- danmaku @59203ms event=: 哈哈哈\n- danmaku @60511ms event=: 叹十七你看你坏的\n- danmaku @61567ms event=: [李豆沙_大笑]\n- danmaku @61811ms event=: 不响丸辣\n- danmaku @64162ms event=: [李豆沙_大笑]\n- danmaku @64162ms event=: 哈哈哈\n- danmaku @66771ms event=: 哈哈哈哈\n- danmaku @69688ms event=: 笑死\n- danmaku @69688ms event=: 太坏了叹十七！\n- danmaku @71976ms event=: 爽了爽了\n- danmaku @71976ms event=: 还有坏kmx\n- danmaku @72202ms event=: 哎，怎么办啊李豆沙\n- danmaku @73497ms event=: 谭诗琪你看你坏的！\n- danmaku @75965ms event=: [李豆沙_大笑]\n- danmaku @76099ms event=: 这个技能是单体伤害最高的技能之一\n- danmaku @78699ms event=: 太坏了！\n- danmaku @81120ms event=: 17太坏了！\n- danmaku @85199ms event=: 李姐和我打，我一个技能都不带就带宠物\n- danmaku @90399ms event=: 狡猾的kmx\n- danmaku @91581ms event=: 熊猫冒险团出发坎斯汀\n- danmaku @91581ms event=: 熊猫冒险团出发坎斯汀\n- danmaku @91581ms event=: 对不起宝宝\n- danmaku @91581ms event=: 熊猫冒险团出发坎斯汀\n- danmaku @91581ms event=: 熊猫冒险团出发坎斯汀\n- danmaku @92761ms event=: 熊猫冒险团出发坎斯汀\n- danmaku @92761ms event=: 熊猫冒险团出发坎斯汀\n- danmaku @94056ms event=: 熊猫冒险团出发坎斯汀\n- danmaku @94056ms event=: 熊猫冒险团出发坎斯汀\n- danmaku @95393ms event=: 哈哈哈\n- danmaku @95393ms event=: 熊猫冒险团出发坎斯汀\n- danmaku @95393ms event=: 熊猫冒险团出发坎斯汀\n- danmaku @95393ms event=: [李豆沙_阴险]\n- danmaku @95393ms event=: 熊猫冒险团出发坎斯汀\n- danmaku @96663ms event=: 熊猫冒险团出发坎斯汀\n- danmaku @96663ms event=: ；；\n- danmaku @96663ms event=: 熊猫冒险团出发坎斯汀\n- danmaku @97961ms event=: 熊猫冒险团出发坎斯汀\n- danmaku @97961ms event=: 熊猫冒险团出发坎斯汀\n- danmaku @97962ms event=: 熊猫冒险团出发坎斯汀\n- danmaku @98201ms event=: 太坏了\n- danmaku @100576ms event=: 熊猫冒险团出发坎斯汀\n- danmaku @100576ms event=: 熊猫冒险团出发坎斯汀\n- danmaku @101844ms event=: 哈哈哈\n- danmaku @110958ms event=: 哈哈哈\n- danmaku @113565ms event=: 熊猫冒险团出发坎斯汀\n- danmaku @115100ms event=: 李豆沙心之壁加厚中\n- danmaku @116400ms event=: 我只带一个召唤技能\n- danmaku @127879ms event=: 来点小唱\n- danmaku @130504ms event=: 唱歌\n- danmaku @134366ms event=: 熊猫冒险团出发坎斯汀\n- danmaku @136975ms event=: 熊猫冒险团出发坎斯汀\n- danmaku @140867ms event=: 猛兽，指小李",
+    "cover_counterpart_reference_available": false,
+    "cover_fallback_mode": "HOST_ONLY_GENERIC",
+    "cover_output_audits": [
+      {
+        "artifact_kind": "cover_text",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:81b33b770ab0f2972e0c685226eb887a767fc7595154f352292697937885833b",
+        "violations": []
+      },
+      {
+        "artifact_kind": "cover_rendered_text",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:65050a75b5817cf8ad78adf06c5020fafb12eca279d3e2c17051ed257ccb1586",
+        "violations": []
+      }
+    ],
+    "cover_reference_authority": null,
+    "human_boundary_authority": null,
+    "input_audits": [
+      {
+        "artifact_kind": "selection_hook",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:ef1257af1af8b4c903f71f24b753659c4c746865bbd17b62954fb9e79a7ecad7",
+        "violations": []
+      },
+      {
+        "artifact_kind": "subtitle",
+        "schema_version": "story-artifact-audit.v1",
+        "status": "PASS",
+        "text_sha256": "sha256:3deb1f502108ecf295471b335617b1d857fca31ab70babb031e882c7c11ee797",
+        "violations": []
+      }
+    ],
+    "nancho_accepted_surfaces": [
+      "南町",
+      "大N",
+      "小N",
+      "南町nightin"
+    ],
+    "participants": [],
+    "relation_claim_allowed": false,
+    "relation_state": "UNKNOWN",
+    "required_entity_ids": [],
+    "schema_version": "lidousha-story-contract.v1",
+    "selection_hook": "观众声称只带一个技能保证让她赢，李豆沙刚准备下注就遭秒杀，当场怒斥骗子并宣布再也不信了。",
+    "selection_hook_sha256": "sha256:ef1257af1af8b4c903f71f24b753659c4c746865bbd17b62954fb9e79a7ecad7",
+    "selection_scorecard": {
+      "dimensions": {
+        "audience_salience": 3,
+        "comedic_payoff": 4,
+        "lidousha_centrality": 4,
+        "persona_reversal": 4,
+        "relationship_interaction": 4,
+        "self_contained": 4,
+        "stance_intensity": 4
+      },
+      "effective_score": 92.25,
+      "fatigue_penalty": 3.0,
+      "raw_score": 96.25,
+      "reason_codes": [],
+      "requested_tier": 1,
+      "schema_version": "lidousha-selection-scorecard.v1",
+      "status": "VALID",
+      "tier": 1,
+      "tier_basis": "relationship_chain",
+      "tier_evidence_cues": [
+        322,
+        331,
+        333,
+        336,
+        339,
+        347,
+        349
+      ],
+      "tier_reason": "从发现观众只带一个技能、准备开打，到被瞬间击败并识破骗局，具备观众设局、主播上当和破防收尾的完整互动链。",
+      "uncertainty_penalty": 1.0,
+      "weights": {
+        "audience_salience": 15,
+        "comedic_payoff": 10,
+        "lidousha_centrality": 25,
+        "persona_reversal": 10,
+        "relationship_interaction": 15,
+        "self_contained": 5,
+        "stance_intensity": 20
+      }
+    },
+    "session_relation_authority": null,
+    "source_media_sha256s": [
+      "sha256:4980bdeba15f0f3cce0c3f20737afcb33732cbd64c457bc11c4e3266d5fcf201"
+    ],
+    "transcript_sha256": "sha256:3deb1f502108ecf295471b335617b1d857fca31ab70babb031e882c7c11ee797"
+  },
+  "subtitle_ass_path": null,
+  "subtitle_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/auto_193129_850_940.recut.srt",
+  "subtitle_regression": null,
+  "subtitle_regression_audit_path": null,
+  "subtitle_source": "aggregate_asr+bcut_agy_cpa+pronoun+text_final",
+  "subtitle_style": "lidousha-final-sapphire72",
+  "subtitle_timing_qa": {
+    "actions": [
+      {
+        "action": "drop_boundary_fragment",
+        "after": null,
+        "before": {
+          "end_ms": 10000,
+          "start_ms": 9750
+        },
+        "cue_id": "fresh_0004",
+        "density_cps": 36.0,
+        "reasons": [
+          "unreadable_leading_boundary_fragment"
+        ],
+        "text": "又可以和大家见面了",
+        "vad_overlap_ratio": 0.0
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 15120,
+          "start_ms": 14120
+        },
+        "before": {
+          "end_ms": 14960,
+          "start_ms": 14120
+        },
+        "cue_id": "fresh_0007",
+        "density_cps": 2.381,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "看看",
+        "vad_overlap_ratio": 0.886
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 22480,
+          "start_ms": 21480
+        },
+        "before": {
+          "end_ms": 22320,
+          "start_ms": 21480
+        },
+        "cue_id": "fresh_0011",
+        "density_cps": 4.762,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "这是什么",
+        "vad_overlap_ratio": 0.857
+      },
+      {
+        "action": "retime",
+        "after": {
+          "end_ms": 32970,
+          "start_ms": 31970
+        },
+        "before": {
+          "end_ms": 32810,
+          "start_ms": 31970
+        },
+        "cue_id": "fresh_0017",
+        "density_cps": 3.571,
+        "reasons": [
+          "flash_extended"
+        ],
+        "text": "能赢吗",
+        "vad_overlap_ratio": 0.917
+      }
+    ],
+    "counts": {
+      "dropped": 1,
+      "retimed": 3
+    },
+    "policy": {
+      "boundary_fragment_max_visible_ms": 300,
+      "hard_max_ms": 12000,
+      "min_density_cps": 0.8,
+      "min_readable_ms": 1000,
+      "soft_max_ms": 6000
+    },
+    "schema_version": "subtitle-timing-qa.v3",
+    "speech_span_count": 37,
+    "speech_total_ms": 82832,
+    "vad_evidence_contract": "positive_only_never_shrink_normal_asr_cues",
+    "window": {
+      "end_ms": 100600,
+      "start_ms": 9750
+    }
+  },
+  "talk_filler_audit_path": null,
+  "text_finalization_manifest_path": null,
+  "upload_tags": {
+    "content_tags": [
+      {
+        "tag": "被骗",
+        "why": "观众声称“只剩一个技能”“保证让你赢”，她却瞬间落败并大喊“有骗子被骗了”。"
+      },
+      {
+        "tag": "破防",
+        "why": "输掉后连续控诉“欺负人”“咋那么坏呢”，情绪明显绷不住。"
+      },
+      {
+        "tag": "搞笑",
+        "why": "她连一句支持自己的话都没说完就输了，形成强烈喜剧效果。"
+      },
+      {
+        "tag": "吐槽",
+        "why": "她反复吐槽“坏熊太多了”，并表示以后再也不信对方。"
+      },
+      {
+        "tag": "节目效果",
+        "why": "刚让大家“开始下注”，战斗便出乎意料地迅速结束，场面极具节目效果。"
+      }
+    ],
+    "engine": "suggest-upload-tags.v1",
+    "final_tag_line": "李豆沙,虚拟主播,虚拟UP主,直播切片,被骗,破防,搞笑,吐槽,节目效果",
+    "final_tags": [
+      "李豆沙",
+      "虚拟主播",
+      "虚拟UP主",
+      "直播切片",
+      "被骗",
+      "破防",
+      "搞笑",
+      "吐槽",
+      "节目效果"
+    ],
+    "proper_noun_tags": [],
+    "status": "OK",
+    "warnings": []
+  }
+}

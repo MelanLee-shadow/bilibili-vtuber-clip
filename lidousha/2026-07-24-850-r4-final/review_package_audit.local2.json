@@ -1,0 +1,83 @@
+{
+  "audited_inputs": [
+    {
+      "bytes": 11910,
+      "path": "review_manifest.json",
+      "sha256": "449934dc1cdfa5b89b47c0a4c2a354711111df9f7b40e3dc7175661872c71282"
+    },
+    {
+      "bytes": 187549,
+      "path": "观众声称只带一个技能保证让她赢，李豆.chat-authority.json",
+      "sha256": "7bcabca33bc8191f6350df7cdb8a514143df76d8dd709bfc3eaf660363214445"
+    },
+    {
+      "bytes": 37308,
+      "path": "观众声称只带一个技能保证让她赢，李豆.clip-context.json",
+      "sha256": "ade98bd67ccc72a9c2c34af387d24f2493b2c62d460cb8a37699a7af58f3ced2"
+    },
+    {
+      "bytes": 2984101,
+      "path": "观众声称只带一个技能保证让她赢，李豆.cover.png",
+      "sha256": "0ed61cc7e292403358a6cf27d0193315099826d6852da7679bc4c08245752b41"
+    },
+    {
+      "bytes": 3084653,
+      "path": "观众声称只带一个技能保证让她赢，李豆.cover.pre-overlay.png",
+      "sha256": "6a2e8dd3a6f81f6c874ce65a0f19268e57fcd16a2e27f099b53c40ec662fd942"
+    },
+    {
+      "bytes": 3084653,
+      "path": "观众声称只带一个技能保证让她赢，李豆.cover.route-background.png",
+      "sha256": "6a2e8dd3a6f81f6c874ce65a0f19268e57fcd16a2e27f099b53c40ec662fd942"
+    },
+    {
+      "bytes": 30380,
+      "path": "观众声称只带一个技能保证让她赢，李豆.cover.title-mask.png",
+      "sha256": "78b149b12e184f9f032b19fa66f8d862c4348f9d9dcbd370b471658789db552f"
+    },
+    {
+      "bytes": 2716,
+      "path": "观众声称只带一个技能保证让她赢，李豆.final-sapphire72.ass",
+      "sha256": "cd2f6bee894440d4638e0db29c4a4cb146655f125c61bca245fff77df5688054"
+    },
+    {
+      "bytes": 33159102,
+      "path": "观众声称只带一个技能保证让她赢，李豆.mp4",
+      "sha256": "ede2f1e3d90f757218a8ad81ef0ad34d073545d92443885fa60a474c330765f5"
+    },
+    {
+      "bytes": 23314,
+      "path": "观众声称只带一个技能保证让她赢，李豆.publish.json",
+      "sha256": "aeb16e3653aebf5ce9e2fff4e989fc49f12d705b71eaa37c38ae8cf8fca8caf5"
+    },
+    {
+      "bytes": 115761,
+      "path": "观众声称只带一个技能保证让她赢，李豆.record.json",
+      "sha256": "f54050bc092c5eae4f8f5fcbd73ba5a5aedf932a61d6ec8daa55d6af7179485c"
+    },
+    {
+      "bytes": 37485,
+      "path": "观众声称只带一个技能保证让她赢，李豆.redelivery-baseline.json",
+      "sha256": "9f6da451ca7afce6694d6538c024b945aa247f3a6f0f76817e984afa1dad812d"
+    },
+    {
+      "bytes": 1680,
+      "path": "观众声称只带一个技能保证让她赢，李豆.srt",
+      "sha256": "40d8b5c025972e684c0c9e3733d9c496d57fc9ab29dce1450246c3495c91abb3"
+    },
+    {
+      "bytes": 1506,
+      "path": "观众声称只带一个技能保证让她赢，李豆.subtitle-regression.json",
+      "sha256": "4135d4504fc9c665a45a2e3d2f0d1ac918418825c776d47b555e7875ad860c94"
+    }
+  ],
+  "auditor_source_sha256": "sha256:ee36e5720e3f50aa694f974ee0babff19a6bb8d5b9a471622af72bb7cf616497",
+  "blocking_issue_count": 0,
+  "issue_count": 0,
+  "issues": [],
+  "passed": true,
+  "policy_epoch": "2026-07-23.final-artifact-gates.v3",
+  "policy_fingerprint": "sha256:67574acd0237ce22548dd1a2aab4adc6685b3d083f2ced608b788edf275ce9ec",
+  "root": "/Users/ivan/Project/vtuber-slice/lidousha/2026-07-24-850-r4-final",
+  "schema_version": "lidousha-review-package-audit.v2"
+}

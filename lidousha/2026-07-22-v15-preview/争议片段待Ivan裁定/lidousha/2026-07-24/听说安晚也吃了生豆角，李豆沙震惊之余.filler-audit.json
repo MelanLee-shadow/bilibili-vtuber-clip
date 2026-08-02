@@ -1,0 +1,84 @@
+{
+  "branding_intro_offset_ms": 5749,
+  "candidate_id": "auto_183122_1209_1410",
+  "effective_content_duration_ms": 129630,
+  "final_end_ms_on_concat": 139390,
+  "final_start_ms_on_concat": 9760,
+  "piece_provenance": [
+    {
+      "end_ms": 1257520,
+      "output_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/piece_0_1199070_1257520.mp4",
+      "output_sha256": "a6b90e430b45bed8ca717bdf9a4b0dbc19ce7519ef290217f055f11897f96277",
+      "source_media_binding": "sha256:26be9d5af3dd56de9b005c3cad0f065f32c69bd6801ebe1a46a7f614e8714889",
+      "source_path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-24/22966160_20260724-18-31-22.mp4",
+      "source_sha256": "26be9d5af3dd56de9b005c3cad0f065f32c69bd6801ebe1a46a7f614e8714889",
+      "start_ms": 1199070
+    },
+    {
+      "end_ms": 1489320,
+      "output_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/piece_1_1336800_1489320.mp4",
+      "output_sha256": "930eb31d39f4e55147bfc97485f21047742db330736ae929475d9d555be37f7b",
+      "source_media_binding": "sha256:26be9d5af3dd56de9b005c3cad0f065f32c69bd6801ebe1a46a7f614e8714889",
+      "source_path": "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-07-24/22966160_20260724-18-31-22.mp4",
+      "source_sha256": "26be9d5af3dd56de9b005c3cad0f065f32c69bd6801ebe1a46a7f614e8714889",
+      "start_ms": 1336800
+    }
+  ],
+  "policy": {
+    "automatic_edge_guard_ms": 5000,
+    "maximum_automatic_removals": 2,
+    "maximum_automatic_removed_ms": 20000,
+    "maximum_automatic_removed_ratio": 0.15,
+    "maximum_reviewed_removals": 3,
+    "maximum_single_removal_ms": 15000,
+    "minimum_automatic_effective_duration_ms_exclusive": 45500,
+    "minimum_effective_duration_ms_exclusive": 45000,
+    "minimum_model_confidence": 0.94,
+    "minimum_retained_piece_ms": 6000
+  },
+  "rejected_proposals": [
+    {
+      "proposal_index": 0,
+      "reason_code": "single_removal_too_long"
+    }
+  ],
+  "removals": [
+    {
+      "actual_concat_jump_ms": 58450,
+      "authority": "selector_event_key_merge_v1",
+      "authorization_kind": "merge_gap",
+      "bridge_coherent": true,
+      "bridge_reason": "同一 event_key 的两段同主题窗口合并，中间为无关插曲",
+      "content_output_jump_ms": 48450,
+      "delivered_output_jump_ms": 54439,
+      "event_key": "生豆角三人组",
+      "final_content_output_jump_ms": 48690,
+      "left_piece_output_sha256": "a6b90e430b45bed8ca717bdf9a4b0dbc19ce7519ef290217f055f11897f96277",
+      "left_retained_context": null,
+      "mode": "merge_gap",
+      "model_confidence": null,
+      "proposal_id": "merge_gap_1",
+      "reason": "same_topic_merge_gap",
+      "removed_cues": [],
+      "removed_duration_ms": 79280,
+      "right_piece_output_sha256": "930eb31d39f4e55147bfc97485f21047742db330736ae929475d9d555be37f7b",
+      "right_retained_context": null,
+      "source_end_ms": 1336800,
+      "source_start_ms": 1257520,
+      "survives_final_boundary": true
+    }
+  ],
+  "retained_intervals": [
+    {
+      "end_ms": 1257520,
+      "start_ms": 1209070
+    },
+    {
+      "end_ms": 1410240,
+      "start_ms": 1336800
+    }
+  ],
+  "schema_version": "talk-filler-audit.v1",
+  "source_srt_sha256": "sha256:b18a8c6d24157de8150bd594d14a054004e55b769ff6a9c7fc187553feebe198",
+  "status": "FINALIZED"
+}

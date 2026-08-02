@@ -1,0 +1,1133 @@
+{
+  "application_strategy": "exact_reviewed_interval_replay",
+  "authority": "Ivan-reviewed 2026-07-22 rerun plus hash-bound acoustic forced-choice adjudication",
+  "baseline_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/reviewed_subtitle_baselines/auto_193450_3573_3665.reviewed.srt",
+  "baseline_schema_version": "subtitle-redelivery-baseline.v2",
+  "baseline_sha256": "ff0c19637922b572d2af95dcc01ae9525e0c3347722955daf88d2f472808f0cb",
+  "changed_cue_count": 2,
+  "current_cue_count": 43,
+  "current_input_sha256": "406669ccd9c713a178af397fcfecd0bc4f67a4755d5f71e4a9abf69e21ce53c9",
+  "current_source_interval": {
+    "absolute_source_end_ms": 3666350,
+    "absolute_source_start_ms": 3573070
+  },
+  "deferred_exact_replay_reverification": {
+    "deferred_strategy": null,
+    "missing_truth_ids": [],
+    "required_truth_ids": [],
+    "reverified_truth_ids": [],
+    "schema_version": "deferred-exact-replay-reverification.v1",
+    "status": "NOT_REQUIRED"
+  },
+  "effective_reviewed_overlap": {
+    "absolute_source_end_ms": 3666350,
+    "absolute_source_start_ms": 3573070
+  },
+  "expected_baseline_sha256": "ff0c19637922b572d2af95dcc01ae9525e0c3347722955daf88d2f472808f0cb",
+  "failures": [],
+  "mapped_cue_count": 43,
+  "mappings": [
+    {
+      "baseline_absolute_source_end_ms": 3575440,
+      "baseline_absolute_source_start_ms": 3573320,
+      "baseline_cue_index": 1,
+      "end_ms": 2370,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 1,
+      "start_ms": 250,
+      "text": "我们看一下"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3576640,
+      "baseline_absolute_source_start_ms": 3575800,
+      "baseline_cue_index": 2,
+      "end_ms": 3570,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 2,
+      "start_ms": 2730,
+      "text": "这是我家"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3578660,
+      "baseline_absolute_source_start_ms": 3576640,
+      "baseline_cue_index": 3,
+      "end_ms": 5590,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 3,
+      "start_ms": 3570,
+      "text": "我给你看我很喜欢的角色"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3579760,
+      "baseline_absolute_source_start_ms": 3578660,
+      "baseline_cue_index": 4,
+      "end_ms": 6690,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 4,
+      "start_ms": 5590,
+      "text": "确实可爱"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3581380,
+      "baseline_absolute_source_start_ms": 3579820,
+      "baseline_cue_index": 5,
+      "end_ms": 8310,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 5,
+      "start_ms": 6750,
+      "text": "这是可爱的画风啊"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3582340,
+      "baseline_absolute_source_start_ms": 3581380,
+      "baseline_cue_index": 6,
+      "end_ms": 9270,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 6,
+      "start_ms": 8310,
+      "text": "对，好可爱"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3584300,
+      "baseline_absolute_source_start_ms": 3582340,
+      "baseline_cue_index": 7,
+      "end_ms": 11230,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 7,
+      "start_ms": 9270,
+      "text": "这个是和天依的联动哦"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3586060,
+      "baseline_absolute_source_start_ms": 3584300,
+      "baseline_cue_index": 8,
+      "end_ms": 12990,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 8,
+      "start_ms": 11230,
+      "text": "洛天依，对哦"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3588020,
+      "baseline_absolute_source_start_ms": 3586060,
+      "baseline_cue_index": 9,
+      "end_ms": 14950,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 9,
+      "start_ms": 12990,
+      "text": "这是我最喜欢的角色"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3592640,
+      "baseline_absolute_source_start_ms": 3588020,
+      "baseline_cue_index": 10,
+      "end_ms": 19570,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 10,
+      "start_ms": 14950,
+      "text": "诶，怎么有点像礼墨Sumi？哪像了，黑色的，有角"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3593880,
+      "baseline_absolute_source_start_ms": 3592640,
+      "baseline_cue_index": 11,
+      "end_ms": 20810,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 11,
+      "start_ms": 19570,
+      "text": "然后还是金色的头"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3594460,
+      "baseline_absolute_source_start_ms": 3593880,
+      "baseline_cue_index": 12,
+      "end_ms": 21390,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 12,
+      "start_ms": 20810,
+      "text": "no no"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3597080,
+      "baseline_absolute_source_start_ms": 3594460,
+      "baseline_cue_index": 13,
+      "end_ms": 24010,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 13,
+      "start_ms": 21390,
+      "text": "她是一个姐感妹"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3599860,
+      "baseline_absolute_source_start_ms": 3597980,
+      "baseline_cue_index": 14,
+      "end_ms": 26790,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 14,
+      "start_ms": 24910,
+      "text": "姐感妹"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3601100,
+      "baseline_absolute_source_start_ms": 3599860,
+      "baseline_cue_index": 15,
+      "end_ms": 28030,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 15,
+      "start_ms": 26790,
+      "text": "秦秦"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3602690,
+      "baseline_absolute_source_start_ms": 3601250,
+      "baseline_cue_index": 16,
+      "end_ms": 29620,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 16,
+      "start_ms": 28180,
+      "text": "秦"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3604930,
+      "baseline_absolute_source_start_ms": 3602690,
+      "baseline_cue_index": 17,
+      "end_ms": 31860,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 17,
+      "start_ms": 29620,
+      "text": "她是一个非常闹腾的小朋友"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3607450,
+      "baseline_absolute_source_start_ms": 3604930,
+      "baseline_cue_index": 18,
+      "end_ms": 34380,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 18,
+      "start_ms": 31860,
+      "text": "但是她有一种给人一种姐的感觉"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3609110,
+      "baseline_absolute_source_start_ms": 3607450,
+      "baseline_cue_index": 19,
+      "end_ms": 36040,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 19,
+      "start_ms": 34380,
+      "text": "但她其实是妹妹，小朋友"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3611650,
+      "baseline_absolute_source_start_ms": 3609110,
+      "baseline_cue_index": 20,
+      "end_ms": 38580,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 20,
+      "start_ms": 36040,
+      "text": "但是她有一种给人一种姐的感觉"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3612890,
+      "baseline_absolute_source_start_ms": 3611650,
+      "baseline_cue_index": 21,
+      "end_ms": 39820,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 21,
+      "start_ms": 38580,
+      "text": "那她其实是妹妹"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3615580,
+      "baseline_absolute_source_start_ms": 3612890,
+      "baseline_cue_index": 22,
+      "end_ms": 42510,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 22,
+      "start_ms": 39820,
+      "text": "哦，真的是这游戏的看板娘"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3618460,
+      "baseline_absolute_source_start_ms": 3615580,
+      "baseline_cue_index": 23,
+      "end_ms": 45390,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 23,
+      "start_ms": 42510,
+      "text": "我是她的帕鲁哦"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3619920,
+      "baseline_absolute_source_start_ms": 3618460,
+      "baseline_cue_index": 24,
+      "end_ms": 46850,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 24,
+      "start_ms": 45390,
+      "text": "虽然我没有"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3623460,
+      "baseline_absolute_source_start_ms": 3620160,
+      "baseline_cue_index": 25,
+      "end_ms": 50390,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 25,
+      "start_ms": 47090,
+      "text": "就是我没有，嗯，玩帕鲁"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3625860,
+      "baseline_absolute_source_start_ms": 3623460,
+      "baseline_cue_index": 26,
+      "end_ms": 52790,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 26,
+      "start_ms": 50390,
+      "text": "但是我基本也算是"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3627420,
+      "baseline_absolute_source_start_ms": 3625860,
+      "baseline_cue_index": 27,
+      "end_ms": 54350,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 27,
+      "start_ms": 52790,
+      "text": "就是她使唤的打工人"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3629960,
+      "baseline_absolute_source_start_ms": 3627420,
+      "baseline_cue_index": 28,
+      "end_ms": 56890,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 28,
+      "start_ms": 54350,
+      "text": "而我就干什么活都是我去干"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3632930,
+      "baseline_absolute_source_start_ms": 3629960,
+      "baseline_cue_index": 29,
+      "end_ms": 59860,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 29,
+      "start_ms": 56890,
+      "text": "然后说话就全是她说这样子"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3633670,
+      "baseline_absolute_source_start_ms": 3632930,
+      "baseline_cue_index": 30,
+      "end_ms": 60600,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 30,
+      "start_ms": 59860,
+      "text": "哦"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3635170,
+      "baseline_absolute_source_start_ms": 3633670,
+      "baseline_cue_index": 31,
+      "end_ms": 62100,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 31,
+      "start_ms": 60600,
+      "text": "对，原来是这样"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3636730,
+      "baseline_absolute_source_start_ms": 3635170,
+      "baseline_cue_index": 32,
+      "end_ms": 63660,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 32,
+      "start_ms": 62100,
+      "text": "就是外表萌萌"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3640700,
+      "baseline_absolute_source_start_ms": 3636730,
+      "baseline_cue_index": 33,
+      "end_ms": 67630,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 33,
+      "start_ms": 63660,
+      "text": "但其实有一些粉切黑的坏女人，好女人"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3642180,
+      "baseline_absolute_source_start_ms": 3640700,
+      "baseline_cue_index": 34,
+      "end_ms": 69110,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 34,
+      "start_ms": 67630,
+      "text": "这是男的"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3644060,
+      "baseline_absolute_source_start_ms": 3642180,
+      "baseline_cue_index": 35,
+      "end_ms": 70990,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 35,
+      "start_ms": 69110,
+      "text": "哈哈哈哈哈"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3646900,
+      "baseline_absolute_source_start_ms": 3644420,
+      "baseline_cue_index": 36,
+      "end_ms": 73830,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 36,
+      "start_ms": 71350,
+      "text": "这是姐感的妹妹"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3648260,
+      "baseline_absolute_source_start_ms": 3646900,
+      "baseline_cue_index": 37,
+      "end_ms": 75190,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 37,
+      "start_ms": 73830,
+      "text": "这个是看板娘"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3650860,
+      "baseline_absolute_source_start_ms": 3648260,
+      "baseline_cue_index": 38,
+      "end_ms": 77790,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 38,
+      "start_ms": 75190,
+      "text": "这个怎么怎么这个这个什么？哈哈哈"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3653000,
+      "baseline_absolute_source_start_ms": 3651760,
+      "baseline_cue_index": 39,
+      "end_ms": 79930,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 39,
+      "start_ms": 78690,
+      "text": "男的咋了？"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3654960,
+      "baseline_absolute_source_start_ms": 3653000,
+      "baseline_cue_index": 40,
+      "end_ms": 81890,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 40,
+      "start_ms": 79930,
+      "text": "男的不熟啊"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3659800,
+      "baseline_absolute_source_start_ms": 3654960,
+      "baseline_cue_index": 41,
+      "end_ms": 86730,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 41,
+      "start_ms": 81890,
+      "text": "这个直播间就是不熟啊"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3662830,
+      "baseline_absolute_source_start_ms": 3659910,
+      "baseline_cue_index": 42,
+      "end_ms": 89760,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 42,
+      "start_ms": 86840,
+      "text": "这直播间这很非常包容"
+    },
+    {
+      "baseline_absolute_source_end_ms": 3665950,
+      "baseline_absolute_source_start_ms": 3662830,
+      "baseline_cue_index": 43,
+      "end_ms": 92880,
+      "mapping_kind": "exact_reviewed_interval_replay",
+      "output_cue_index": 43,
+      "start_ms": 89760,
+      "text": "其实是最包容异性恋的直播间"
+    }
+  ],
+  "mode": "preserve_text_outside_source_truth",
+  "omitted_baseline_cue_count": 0,
+  "omitted_by_new_boundary": [],
+  "output_sha256": "ff0c19637922b572d2af95dcc01ae9525e0c3347722955daf88d2f472808f0cb",
+  "owned_intervals": [
+    {
+      "end_ms": 2370,
+      "start_ms": 250
+    },
+    {
+      "end_ms": 3570,
+      "start_ms": 2730
+    },
+    {
+      "end_ms": 5590,
+      "start_ms": 3570
+    },
+    {
+      "end_ms": 6690,
+      "start_ms": 5590
+    },
+    {
+      "end_ms": 8310,
+      "start_ms": 6750
+    },
+    {
+      "end_ms": 9270,
+      "start_ms": 8310
+    },
+    {
+      "end_ms": 11230,
+      "start_ms": 9270
+    },
+    {
+      "end_ms": 12990,
+      "start_ms": 11230
+    },
+    {
+      "end_ms": 14950,
+      "start_ms": 12990
+    },
+    {
+      "end_ms": 19570,
+      "start_ms": 14950
+    },
+    {
+      "end_ms": 20810,
+      "start_ms": 19570
+    },
+    {
+      "end_ms": 21390,
+      "start_ms": 20810
+    },
+    {
+      "end_ms": 24010,
+      "start_ms": 21390
+    },
+    {
+      "end_ms": 26790,
+      "start_ms": 24910
+    },
+    {
+      "end_ms": 28030,
+      "start_ms": 26790
+    },
+    {
+      "end_ms": 29620,
+      "start_ms": 28180
+    },
+    {
+      "end_ms": 31860,
+      "start_ms": 29620
+    },
+    {
+      "end_ms": 34380,
+      "start_ms": 31860
+    },
+    {
+      "end_ms": 36040,
+      "start_ms": 34380
+    },
+    {
+      "end_ms": 38580,
+      "start_ms": 36040
+    },
+    {
+      "end_ms": 39820,
+      "start_ms": 38580
+    },
+    {
+      "end_ms": 42510,
+      "start_ms": 39820
+    },
+    {
+      "end_ms": 45390,
+      "start_ms": 42510
+    },
+    {
+      "end_ms": 46850,
+      "start_ms": 45390
+    },
+    {
+      "end_ms": 50390,
+      "start_ms": 47090
+    },
+    {
+      "end_ms": 52790,
+      "start_ms": 50390
+    },
+    {
+      "end_ms": 54350,
+      "start_ms": 52790
+    },
+    {
+      "end_ms": 56890,
+      "start_ms": 54350
+    },
+    {
+      "end_ms": 59860,
+      "start_ms": 56890
+    },
+    {
+      "end_ms": 60600,
+      "start_ms": 59860
+    },
+    {
+      "end_ms": 62100,
+      "start_ms": 60600
+    },
+    {
+      "end_ms": 63660,
+      "start_ms": 62100
+    },
+    {
+      "end_ms": 67630,
+      "start_ms": 63660
+    },
+    {
+      "end_ms": 69110,
+      "start_ms": 67630
+    },
+    {
+      "end_ms": 70990,
+      "start_ms": 69110
+    },
+    {
+      "end_ms": 73830,
+      "start_ms": 71350
+    },
+    {
+      "end_ms": 75190,
+      "start_ms": 73830
+    },
+    {
+      "end_ms": 77790,
+      "start_ms": 75190
+    },
+    {
+      "end_ms": 79930,
+      "start_ms": 78690
+    },
+    {
+      "end_ms": 81890,
+      "start_ms": 79930
+    },
+    {
+      "end_ms": 86730,
+      "start_ms": 81890
+    },
+    {
+      "end_ms": 89760,
+      "start_ms": 86840
+    },
+    {
+      "end_ms": 92880,
+      "start_ms": 89760
+    }
+  ],
+  "post_source_truth_output_sha256": "ff0c19637922b572d2af95dcc01ae9525e0c3347722955daf88d2f472808f0cb",
+  "protected_absolute_intervals": [],
+  "protected_cue_count": 0,
+  "protected_intervals": [],
+  "protected_windows_replayed_for_later_source_truth": false,
+  "replayed_cue_count": 43,
+  "reviewed_coverage": {
+    "absolute_source_end_ms": 3666350,
+    "absolute_source_start_ms": 3573070
+  },
+  "schema_version": "subtitle-redelivery-baseline-audit.v2",
+  "source_recording_identity": {
+    "current_basename": "22966160_20260722-19-34-50.mp4",
+    "current_sha256": "0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+    "expected_basename": "22966160_20260722-19-34-50.mp4",
+    "expected_sha256": "0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
+  },
+  "source_truth_reapplication": {
+    "applied": [],
+    "failures": [],
+    "ledger_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun-v8-context-v4/repo/assets/lidousha/subtitle_truth_ledger.v1.json",
+    "ledger_sha256": "sha256:5f39a0e37ded249fa028ad4310ee0fc9780a0679faa7446f44fcede24258706d",
+    "reapplied_after_redelivery_baseline": true,
+    "satisfied": [
+      {
+        "action": "replace_cue",
+        "after": [
+          "她是一个姐感妹"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "BCUT同源草稿为同音近似秸秆妹、AGY误作桔梗妹；紧邻后文明确解释她给人姐姐感觉但其实是妹妹，并在本片后段回指这是姐感的妹妹；只钉此source interval，不把姐感妹扩成全局替换",
+        "before": [
+          "她是一个姐感妹"
+        ],
+        "before_span": "她是一个桔梗妹",
+        "cue_indexes": [
+          13
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "她是一个姐感妹"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:d01bfd0a6c6404213a5242ddeadd65fad7836782596512d5de01e1b9d9520fd9",
+        "evidence_class": "DUAL_ASR_PHONETIC_PLUS_WHOLE_CLIP_CALLBACK_EXPLANATION",
+        "local_windows": [
+          {
+            "end_ms": 24010,
+            "start_ms": 21390
+          }
+        ],
+        "recording_basename": "22966160_20260722-19-35-15.mp4",
+        "revision_id": "r1",
+        "source_aliases": [
+          {
+            "alias_id": "20260722-official-replay-bv1fjg16xex6",
+            "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+            "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+            "alias_timeline_offset_ms": 0
+          }
+        ],
+        "source_coverage_ms": 2620,
+        "source_end_ms": 3597080,
+        "source_start_ms": 3594460,
+        "supersedes": null,
+        "truth_id": "20260722-qin-jieganmei-full-clause-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "姐感妹"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-stated-20260722-conversation(金发有角妹妹切片0:30；后文再次调侃姐感的妹妹，整片回指见证)",
+        "before": [
+          "姐感妹"
+        ],
+        "before_span": "晴，其实",
+        "cue_indexes": [
+          14
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "姐感妹"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:c1dcd75a048e4bb885600235c7703a96013f292207aced5d0fcb9e50b4d6164f",
+        "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH_PLUS_WHOLE_CLIP_CALLBACK",
+        "local_windows": [
+          {
+            "end_ms": 26790,
+            "start_ms": 24910
+          }
+        ],
+        "recording_basename": "22966160_20260722-19-35-15.mp4",
+        "revision_id": "r1",
+        "source_aliases": [
+          {
+            "alias_id": "20260722-official-replay-bv1fjg16xex6",
+            "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+            "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+            "alias_timeline_offset_ms": 0
+          }
+        ],
+        "source_coverage_ms": 1880,
+        "source_end_ms": 3599860,
+        "source_start_ms": 3597980,
+        "supersedes": null,
+        "truth_id": "20260722-qin-jieganmei-term-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "秦秦"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-stated-20260722-conversation(金发有角妹妹切片0:32；同窗画面角色名为秦)",
+        "before": [
+          "秦秦"
+        ],
+        "before_span": "她就叫晴",
+        "cue_indexes": [
+          15
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "秦秦"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:8e86d99803c2c103f26eb18d401f2956a1c7a94b2fe5eae191da4f3908949ed2",
+        "evidence_class": "ATOMIC_HUMAN_ENTITY_TRUTH_PLUS_SOURCE_FRAME",
+        "local_windows": [
+          {
+            "end_ms": 28030,
+            "start_ms": 26790
+          }
+        ],
+        "recording_basename": "22966160_20260722-19-35-15.mp4",
+        "revision_id": "r1",
+        "source_aliases": [
+          {
+            "alias_id": "20260722-official-replay-bv1fjg16xex6",
+            "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+            "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+            "alias_timeline_offset_ms": 0
+          }
+        ],
+        "source_coverage_ms": 1240,
+        "source_end_ms": 3601100,
+        "source_start_ms": 3599860,
+        "supersedes": null,
+        "truth_id": "20260722-qin-name-repeat-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "秦"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-stated-20260722-conversation(金发有角妹妹切片0:34；同窗画面角色名为秦)",
+        "before": [
+          "秦"
+        ],
+        "before_span": "她是一个犄角妹",
+        "cue_indexes": [
+          16
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "秦"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:ad808b6e2f06baacf5a3c73985252a2a405aa5c806e288c3c8e0f2e70ff482df",
+        "evidence_class": "ATOMIC_HUMAN_ENTITY_TRUTH_PLUS_SOURCE_FRAME",
+        "local_windows": [
+          {
+            "end_ms": 29620,
+            "start_ms": 28180
+          }
+        ],
+        "recording_basename": "22966160_20260722-19-35-15.mp4",
+        "revision_id": "r1",
+        "source_aliases": [
+          {
+            "alias_id": "20260722-official-replay-bv1fjg16xex6",
+            "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+            "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+            "alias_timeline_offset_ms": 0
+          }
+        ],
+        "source_coverage_ms": 1440,
+        "source_end_ms": 3602690,
+        "source_start_ms": 3601250,
+        "supersedes": null,
+        "truth_id": "20260722-qin-name-single-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "这是姐感的妹妹"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-stated-20260722-conversation(金发有角妹妹切片1:19；回指前文姐感妹)",
+        "before": [
+          "这是姐感的妹妹"
+        ],
+        "before_span": "这个，这个是桔梗的妹妹",
+        "cue_indexes": [
+          36
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "这是姐感的妹妹"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:e24bc1c02cd942675f1e0384a5056992f540793ba277c0574a663c0d5eba054b",
+        "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH_PLUS_WHOLE_CLIP_CALLBACK",
+        "local_windows": [
+          {
+            "end_ms": 73830,
+            "start_ms": 71350
+          }
+        ],
+        "recording_basename": "22966160_20260722-19-35-15.mp4",
+        "revision_id": "r1",
+        "source_aliases": [
+          {
+            "alias_id": "20260722-official-replay-bv1fjg16xex6",
+            "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+            "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+            "alias_timeline_offset_ms": 0
+          }
+        ],
+        "source_coverage_ms": 2480,
+        "source_end_ms": 3646900,
+        "source_start_ms": 3644420,
+        "supersedes": null,
+        "truth_id": "20260722-qin-jiegan-callback-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "男的咋了？"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-stated-20260722-conversation(金发有角妹妹切片1:25)",
+        "before": [
+          "男的咋了？"
+        ],
+        "before_span": "真是傻啊",
+        "cue_indexes": [
+          39
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "男的咋了？"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:1a979e51abac93aa81d0695d3bb0b8d647d99d38d0955b5e1c6a9d8300798248",
+        "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
+        "local_windows": [
+          {
+            "end_ms": 79930,
+            "start_ms": 78690
+          }
+        ],
+        "recording_basename": "22966160_20260722-19-35-15.mp4",
+        "revision_id": "r1",
+        "source_aliases": [
+          {
+            "alias_id": "20260722-official-replay-bv1fjg16xex6",
+            "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+            "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+            "alias_timeline_offset_ms": 0
+          }
+        ],
+        "source_coverage_ms": 1240,
+        "source_end_ms": 3653000,
+        "source_start_ms": 3651760,
+        "supersedes": null,
+        "truth_id": "20260722-qin-male-what-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "这个直播间就是不熟啊"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-stated-20260722-conversation(金发有角妹妹切片1:31)",
+        "before": [
+          "这个直播间就是不熟啊"
+        ],
+        "before_span": "这直播间就是男的不熟啊，哈哈",
+        "cue_indexes": [
+          41
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "这个直播间就是不熟啊"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:da15801fda699e024f11d055589592bc0f32f78f4ec8d17dfd8ecd7d3c1c3d0e",
+        "evidence_class": "ATOMIC_HUMAN_TRANSCRIPT_TRUTH",
+        "local_windows": [
+          {
+            "end_ms": 86730,
+            "start_ms": 81890
+          }
+        ],
+        "recording_basename": "22966160_20260722-19-35-15.mp4",
+        "revision_id": "r1",
+        "source_aliases": [
+          {
+            "alias_id": "20260722-official-replay-bv1fjg16xex6",
+            "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+            "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+            "alias_timeline_offset_ms": 0
+          }
+        ],
+        "source_coverage_ms": 4840,
+        "source_end_ms": 3659800,
+        "source_start_ms": 3654960,
+        "supersedes": null,
+        "truth_id": "20260722-qin-room-unfamiliar-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "其实是最包容异性恋的直播间"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Ivan-stated-20260722 exact title(最包容异性恋的直播间)+whole-clip callback(男的咋了/男的不熟/非常包容) resolves the homophone as 异性恋, not semantically unrelated 一系列",
+        "before": [
+          "其实是最包容异性恋的直播间"
+        ],
+        "before_span": "其实是最包容一系列的直播间",
+        "cue_indexes": [
+          43
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "其实是最包容异性恋的直播间"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:8639417614070c7ef6815dee4036c8d5e6bbef3e664cdca6477ed29635215d4a",
+        "evidence_class": "CONTEXTUAL_PUN_RESOLUTION_PLUS_HUMAN_TITLE_ANCHOR",
+        "local_windows": [
+          {
+            "end_ms": 92780,
+            "start_ms": 89740
+          }
+        ],
+        "recording_basename": "22966160_20260722-19-35-15.mp4",
+        "revision_id": "r1",
+        "source_aliases": [
+          {
+            "alias_id": "20260722-official-replay-bv1fjg16xex6",
+            "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+            "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+            "alias_timeline_offset_ms": 0
+          }
+        ],
+        "source_coverage_ms": 3040,
+        "source_end_ms": 3665850,
+        "source_start_ms": 3662810,
+        "supersedes": null,
+        "truth_id": "20260722-qin-heterosexual-pun-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "诶，怎么有点像礼墨Sumi？哪像了，黑色的，有角"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Gemini-3.6-Flash-High acoustic verdict request=0ac2e71af595286aa51f399e5e41968c7c1fca511cdecfa6a40a2beb788fde55 response=2c97d5ee6c24834946c4afaba23bd3485c40a2ccb4843494d403ed7c2f7e3d1c source_media_sha256=6e39c0b1d889b09d76eecda6e00c2f88345a71ade9be8bb3bd7861a08e2e5589 heard_syllables exact 哪像了; Codex independent evidence review 2026-07-23",
+        "before": [
+          "诶，怎么有点像礼墨Sumi？哪像了，黑色的，有角"
+        ],
+        "before_span": "诶，怎么有点像礼墨Sumi拿下了黑色的有角",
+        "cue_indexes": [
+          10
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "诶，怎么有点像礼墨Sumi？哪像了，黑色的，有角"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:49650de14b4550491da4b980743d3e4ef952ab7e6e650bee0ed64960b8019131",
+        "evidence_class": "HASH_BOUND_ACOUSTIC_VERDICT",
+        "local_windows": [
+          {
+            "end_ms": 19570,
+            "start_ms": 14950
+          }
+        ],
+        "recording_basename": "22966160_20260722-19-35-15.mp4",
+        "revision_id": "r1",
+        "source_aliases": [
+          {
+            "alias_id": "20260722-official-replay-bv1fjg16xex6",
+            "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+            "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+            "alias_timeline_offset_ms": 0
+          }
+        ],
+        "source_coverage_ms": 4620,
+        "source_end_ms": 3592640,
+        "source_start_ms": 3588020,
+        "supersedes": null,
+        "truth_id": "20260722-qin-sumi-na-xiang-le-r1"
+      },
+      {
+        "action": "replace_cue",
+        "after": [
+          "就是她使唤的打工人"
+        ],
+        "assertion_state": "VERIFIED_ACTIVE",
+        "authority": "Gemini 3.6 Flash High forced-choice on exact recut audio: proposed 就是她使唤的打工人 supported confidence=1.0, current incompatible=0; request sha256=ad9a56667031864a1f69f4bd8dadac27081a442abf8e059e744feb68dd598ff1, audio sha256=ed94e1cfb03a07103d758462b4be988e308a0a0c24b244af432329bd5d4b50a1, response sha256=7ca6eb379b45f1950b08e31b126b5c6c39dbc34cf801847ace88ebea18bdfe2a",
+        "before": [
+          "就是她使唤的打工人"
+        ],
+        "before_span": "就是她喜欢打工人",
+        "cue_indexes": [
+          27
+        ],
+        "declared_output_contract": {
+          "action": "replace_cue",
+          "canonical_texts": [
+            "就是她使唤的打工人"
+          ],
+          "required_text": "",
+          "schema_version": "source-truth-declared-output.v1"
+        },
+        "entry_sha256": "sha256:10f456d826358d3e8b67152769793ee3cc8d10446325de39fcabdf7e12706672",
+        "evidence_class": "HASH_BOUND_ACOUSTIC_FORCED_CHOICE",
+        "local_windows": [
+          {
+            "end_ms": 54350,
+            "start_ms": 52790
+          }
+        ],
+        "recording_basename": "22966160_20260722-19-35-15.mp4",
+        "revision_id": "r1",
+        "source_aliases": [
+          {
+            "alias_id": "20260722-official-replay-bv1fjg16xex6",
+            "alias_recording_basename": "22966160_20260722-19-34-50.mp4",
+            "alias_source_sha256": "sha256:0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a",
+            "alias_timeline_offset_ms": 0
+          }
+        ],
+        "source_coverage_ms": 1560,
+        "source_end_ms": 3627420,
+        "source_start_ms": 3625860,
+        "supersedes": null,
+        "truth_id": "20260722-qin-commanded-worker-r1"
+      }
+    ],
+    "schema_version": "source-subtitle-truth-audit.v1",
+    "status": "ALREADY_SATISFIED",
+    "timeline_basis": "final_delivery"
+  },
+  "status": "APPLIED",
+  "timing_authority": "hash_bound_reviewed_srt_exact_source_interval",
+  "uncovered_current_cue_count": 0,
+  "uncovered_current_cues": [],
+  "uncovered_current_intervals": []
+}

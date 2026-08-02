@@ -1,0 +1,50 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Microsoft YaHei,72,&H00FFFFFF,&H000000FF,&H00BA520F,&H70000000,0,0,0,0,100,100,0,0,1,3,2,2,60,60,40,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.25,0:00:02.73,Default,,0,0,0,,听说你们接下来要去的山之国
+Dialogue: 0,0:00:02.73,0:00:05.33,Default,,0,0,0,,是个很火爆的地方哦
+Dialogue: 0,0:00:06.17,0:00:08.69,Default,,0,0,0,,说不定会有很多架可以打
+Dialogue: 0,0:00:08.73,0:00:10.37,Default,,0,0,0,,到时候记得叫上我
+Dialogue: 0,0:00:10.97,0:00:14.88,Default,,0,0,0,,暗示我想加我微信哦
+Dialogue: 0,0:00:14.88,0:00:16.18,Default,,0,0,0,,已经加了
+Dialogue: 0,0:00:17.82,0:00:18.90,Default,,0,0,0,,一言为定
+Dialogue: 0,0:00:19.10,0:00:20.82,Default,,0,0,0,,嘿嘿，说好了
+Dialogue: 0,0:00:20.82,0:00:22.54,Default,,0,0,0,,我们好可爱哟
+Dialogue: 0,0:00:22.54,0:00:23.46,Default,,0,0,0,,不许抵赖
+Dialogue: 0,0:00:23.46,0:00:25.92,Default,,0,0,0,,好，除了打架的事情
+Dialogue: 0,0:00:26.00,0:00:28.94,Default,,0,0,0,,我还有一件事想要拜托你啊
+Dialogue: 0,0:00:28.94,0:00:30.92,Default,,0,0,0,,你看到我头上的龙角了吗
+Dialogue: 0,0:00:31.16,0:00:32.88,Default,,0,0,0,,和森林人都不一样
+Dialogue: 0,0:00:33.05,0:00:35.45,Default,,0,0,0,,我的故乡来自遥远的龙之国
+Dialogue: 0,0:00:35.45,0:00:37.41,Default,,0,0,0,,嗯，如果有那儿的消息的话
+Dialogue: 0,0:00:37.41,0:00:38.63,Default,,0,0,0,,千万要告诉我
+Dialogue: 0,0:00:38.63,0:00:41.73,Default,,0,0,0,,下一，下一站就去龙之国
+Dialogue: 0,0:00:41.88,0:00:44.20,Default,,0,0,0,,嗯，明明是来跟你道别
+Dialogue: 0,0:00:44.36,0:00:46.18,Default,,0,0,0,,自顾自地说了好多呢
+Dialogue: 0,0:00:46.18,0:00:47.48,Default,,0,0,0,,她还会撒娇
+Dialogue: 0,0:00:47.48,0:00:51.74,Default,,0,0,0,,我去，她，她这个啊
+Dialogue: 0,0:00:52.13,0:00:54.69,Default,,0,0,0,,她这个语音，那个，这个这个波浪号
+Dialogue: 0,0:00:54.69,0:00:56.57,Default,,0,0,0,,她嗯了一下
+Dialogue: 0,0:00:58.09,0:00:59.09,Default,,0,0,0,,真的吗
+Dialogue: 0,0:00:59.17,0:01:00.73,Default,,0,0,0,,真的，再听一遍吗
+Dialogue: 0,0:01:01.44,0:01:02.68,Default,,0,0,0,,有这么爽吗
+Dialogue: 0,0:01:03.04,0:01:05.94,Default,,0,0,0,,好可爱啊哈哈
+Dialogue: 0,0:01:05.94,0:01:09.95,Default,,0,0,0,,啊，这真的，这怎么能
+Dialogue: 0,0:01:09.95,0:01:11.87,Default,,0,0,0,,怎么才能够听到她的语音啊
+Dialogue: 0,0:01:12.27,0:01:14.01,Default,,0,0,0,,怎么才能重放啊
+Dialogue: 0,0:01:14.01,0:01:14.71,Default,,0,0,0,,听不到了
+Dialogue: 0,0:01:14.71,0:01:16.03,Default,,0,0,0,,只能自己去搜了
+Dialogue: 0,0:01:16.75,0:01:17.95,Default,,0,0,0,,送君千里
+Dialogue: 0,0:01:18.03,0:01:22.27,Default,,0,0,0,,她真的，那个波浪号，她就嗯了一下
+Dialogue: 0,0:01:22.67,0:01:23.69,Default,,0,0,0,,这么爽吗
+Dialogue: 0,0:01:23.69,0:01:25.19,Default,,0,0,0,,好可爱哟

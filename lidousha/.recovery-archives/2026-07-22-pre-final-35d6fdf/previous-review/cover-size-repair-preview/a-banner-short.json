@@ -1,0 +1,31 @@
+{
+  "cover_text": "提到我就要\n最最最喜欢？",
+  "font": "ZCOOLKuaiLe-Regular.ttf",
+  "font_selection": {
+    "font": "ZCOOLKuaiLe-Regular.ttf",
+    "rejected": [],
+    "glyph_risk": []
+  },
+  "font_size": 241,
+  "angle_degrees": -2.0,
+  "overlay_position": {
+    "x": 185,
+    "y": -56
+  },
+  "title_band": "banner",
+  "layout": "banner",
+  "background_style": "cobalt-comic-burst",
+  "hook_color": "yellow",
+  "hook_word": "最最最喜欢",
+  "role": "witty_smug",
+  "expression_en": "Closed-mouth mischievous smirk with one eyebrow raised, playfully interrogative and slightly biting back, never sticking out her tongue.",
+  "line_split": "explicit",
+  "cover_text_mode": "full",
+  "cover_punch": [],
+  "rendered_lines": [
+    "提到我就要",
+    "最最最喜欢？"
+  ],
+  "text_backing": "outline",
+  "scrim": false
+}

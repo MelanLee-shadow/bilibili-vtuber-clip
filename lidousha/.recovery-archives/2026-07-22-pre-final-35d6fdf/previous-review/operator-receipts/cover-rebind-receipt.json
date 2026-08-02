@@ -1,0 +1,19 @@
+{
+  "binding_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_670_909/cover_repair/generations/reviewed-rebind-1cbc05943ef24ebb/final.cover.cover-binding.json",
+  "binding_sha256": "sha256:3f6c6208e7db17e11f264bb24f3cb4bfb7f79c5880d3ffabb82cb20492c43cc6",
+  "candidate_id": "auto_193450_670_909",
+  "commit": "6e458c292f63f14da3e96a273930d713b9e66ac1",
+  "cover_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/repo/lidousha/2026-07-22/联动对象当面追问“最最最最喜欢”是真.cover.png",
+  "cover_sha256": "sha256:969b7efdf6cf244a25b0f6add1e2e041cb46c72e5a808264a7b9e7a2d0578e42",
+  "date": "2026-07-22",
+  "generation_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/out/2026-07-22/auto_193450_670_909/cover_repair/generations/reviewed-rebind-1cbc05943ef24ebb/final.cover.cover_generation.json",
+  "generation_sha256": "sha256:ab603160098a06d04ca6ac4fc41da3fc2959ad7328644349ac9640003e2270fb",
+  "media_path": "/opt/bilive/autoslice/recovery/2026-07-22/full-rerun/repo/lidousha/2026-07-22/联动对象当面追问“最最最最喜欢”是真.mp4",
+  "media_sha256": "sha256:1cbc05943ef24ebb248810028cb25b03ae668bb09fbfb17e9659d9d898f1007d",
+  "schema_version": "reviewed-cover-byte-rebind-receipt.v1",
+  "source_plan_sha256": "1462acd7ac294e54a8d5a45808da40686a57d1c2e1ffd8b9c5a125002d25cfd2",
+  "status": "FINALIZED",
+  "title": "【李豆沙】南町当面追问：为什么提到我就要“最最最喜欢”？越解释越像海王",
+  "upload_enabled": false,
+  "upload_ledger_sha256": "sha256:f3775e2e56cf78707fc249a159a0e97ad394c15854076e7f9315f445535ab225"
+}
