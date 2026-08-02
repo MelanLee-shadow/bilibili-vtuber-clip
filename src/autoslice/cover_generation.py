@@ -915,7 +915,7 @@ def _lidousha_cover_prompt(
         "MULTI-PERSON REFERENCE RULE: if the supplied image contains several people, the ONLY protagonist is "
         f"the source person visibly labelled {CHANNEL_PROFILE.display_name}, or the one matching the {CHANNEL_PROFILE.prompt_name} {CHANNEL_PROFILE.cover_identity.prompt_tag_en} identity when "
         "no label is visible. Never copy another participant's face, hair, outfit, horns or accessories into the "
-        "protagonist, and never treat adding panda ears to another participant as identity preservation. Other "
+        f"protagonist, and never treat adding {CHANNEL_PROFILE.cover_identity.feature_en} to another participant as identity preservation. Other "
         "participants may appear only as clearly secondary figures when the reference supports them. "
         "PRESERVE THE EXACT OUTFIT, skin tone, hairstyle and accessories shown in the reference frame — she wears "
         "DIFFERENT costumes on different streams, so do NOT invent or lock a fixed costume; copy what the reference shows. "

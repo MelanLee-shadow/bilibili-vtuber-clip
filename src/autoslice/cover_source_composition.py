@@ -125,8 +125,9 @@ def _routing_valid(witness: Mapping[str, object]) -> bool:
 
 _QUESTION_PREFIX = (
     f"这是待制作{CHANNEL_PROFILE.display_name}切片封面的、已经 hash-bound 的 SOURCE REFERENCE。"
-    "只判断这张源图本身，不假设后续生成器会修正构图。先按当场服装、熊猫帽/熊猫耳、"
-    f"{CHANNEL_PROFILE.cover_identity.locator_zh}定位{CHANNEL_PROFILE.display_name}；不要把其他白发角色或游戏 UI 当成她。"
+    "只判断这张源图本身，不假设后续生成器会修正构图。先按当场服装、"
+    f"{CHANNEL_PROFILE.cover_identity.locator_zh}定位{CHANNEL_PROFILE.display_name}；"
+    f"不要把{CHANNEL_PROFILE.cover_identity.composition_decoys_zh} 当成她。"
     f"给出{CHANNEL_PROFILE.display_name}完整可见区域的归一化 bbox=[x0,y0,x1,y1]，坐标必须在 0..1 且紧包住"
     "她的脸和承担反应的上半身。判断脸是否完整；在不生成、不补画、不扭曲身份且不裁掉"
     "关键反应的前提下，能否只靠 16:9 裁切让她成为大号第一主体；源图中的表情/动作是否"

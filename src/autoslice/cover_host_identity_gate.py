@@ -124,7 +124,7 @@ _QUESTION = (
     f"请先在左图用可见名牌、服装和外形定位{CHANNEL_PROFILE.display_name}；若名牌可见，必须以名牌为准。"
     f"{CHANNEL_PROFILE.display_name}是{CHANNEL_PROFILE.cover_identity.gate_appearance_zh}。特别注意：不要把左图其他人物"
     f"{CHANNEL_PROFILE.cover_identity.gate_rival_note_zh}误认成{CHANNEL_PROFILE.display_name}；给别的角色"
-    "加熊猫耳也不算身份正确。再判断右图最大、最显眼、承担故事反应的主角是否确实"
+    f"{CHANNEL_PROFILE.cover_identity.gate_imitation_zh}也不算身份正确。再判断右图最大、最显眼、承担故事反应的主角是否确实"
     f"延续左图{CHANNEL_PROFILE.display_name}，而不是其他参与者。次要人物可以存在，但主角必须是{CHANNEL_PROFILE.display_name}。"
     f"这是信息流缩略图终检，不只验身份：{CHANNEL_PROFILE.display_name}不能缩在角落或小到需要寻找；脸部必须"
     "足够大、完整、清楚，且她的表情/动作必须承担标题所讲事件的反应。通常脸或上半身"

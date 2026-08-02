@@ -88,8 +88,11 @@ class CoverIdentityProfile:
 
     gate_appearance_zh: str
     gate_rival_note_zh: str
+    gate_imitation_zh: str
     locator_zh: str
+    composition_decoys_zh: str
     prompt_tag_en: str
+    feature_en: str
     scene_prop_meme_note_zh: str
     emote_companion_lore_zh: str
 
@@ -306,8 +309,11 @@ def _parse_cover_identity(identity: Mapping[str, object]) -> CoverIdentityProfil
         required={
             "gate_appearance_zh",
             "gate_rival_note_zh",
+            "gate_imitation_zh",
             "locator_zh",
+            "composition_decoys_zh",
             "prompt_tag_en",
+            "feature_en",
             "scene_prop_meme_note_zh",
             "emote_companion_lore_zh",
         },
@@ -321,13 +327,25 @@ def _parse_cover_identity(identity: Mapping[str, object]) -> CoverIdentityProfil
             cover_identity_raw.get("gate_rival_note_zh"),
             label="identity.cover_identity.gate_rival_note_zh",
         ),
+        gate_imitation_zh=_string(
+            cover_identity_raw.get("gate_imitation_zh"),
+            label="identity.cover_identity.gate_imitation_zh",
+        ),
         locator_zh=_string(
             cover_identity_raw.get("locator_zh"),
             label="identity.cover_identity.locator_zh",
         ),
+        composition_decoys_zh=_string(
+            cover_identity_raw.get("composition_decoys_zh"),
+            label="identity.cover_identity.composition_decoys_zh",
+        ),
         prompt_tag_en=_string(
             cover_identity_raw.get("prompt_tag_en"),
             label="identity.cover_identity.prompt_tag_en",
+        ),
+        feature_en=_string(
+            cover_identity_raw.get("feature_en"),
+            label="identity.cover_identity.feature_en",
         ),
         scene_prop_meme_note_zh=_string(
             cover_identity_raw.get("scene_prop_meme_note_zh"),
