@@ -54,7 +54,7 @@ def test_no_term_no_op():
         _cue(1, 0, 1000, "今天天气真好"),
         _cue(2, 1000, 2000, "我们去公园玩吧"),
     ]
-    out, moves = unify_terms_across_cues(cues, ["梦限大", "邦多利"])
+    out, moves = unify_terms_across_cues(cues, ["示范例", "邦多利"])
     assert moves == []
     assert [(c.index, c.text) for c in out] == [(c.index, c.text) for c in cues]
 
@@ -64,69 +64,69 @@ def test_donor_would_empty_is_skipped():
     # leave cue A with nothing (or only punctuation), so the move must be
     # refused and both cues left untouched.
     cues = [
-        _cue(1, 0, 1000, "梦"),
-        _cue(2, 1000, 2000, "限大来了"),
+        _cue(1, 0, 1000, "示"),
+        _cue(2, 1000, 2000, "范例来了"),
     ]
-    out, moves = unify_terms_across_cues(cues, ["梦限大"])
+    out, moves = unify_terms_across_cues(cues, ["示范例"])
     assert moves == []
-    assert out[0].text == "梦"
-    assert out[1].text == "限大来了"
+    assert out[0].text == "示"
+    assert out[1].text == "范例来了"
 
 
 def test_donor_would_become_punctuation_only_is_skipped():
     cues = [
-        _cue(1, 0, 1000, "，梦"),
-        _cue(2, 1000, 2000, "限大来了"),
+        _cue(1, 0, 1000, "，示"),
+        _cue(2, 1000, 2000, "范例来了"),
     ]
-    out, moves = unify_terms_across_cues(cues, ["梦限大"])
+    out, moves = unify_terms_across_cues(cues, ["示范例"])
     assert moves == []
-    assert out[0].text == "，梦"
-    assert out[1].text == "限大来了"
+    assert out[0].text == "，示"
+    assert out[1].text == "范例来了"
 
 
 def test_idempotent():
     cues = [
-        _cue(5, 0, 1000, "我们要看，我们要看那个梦"),
-        _cue(6, 1000, 2000, "限大，梦——"),
+        _cue(5, 0, 1000, "我们要看，我们要看那个示"),
+        _cue(6, 1000, 2000, "范例，示——"),
     ]
-    once, moves_once = unify_terms_across_cues(cues, ["梦限大"])
+    once, moves_once = unify_terms_across_cues(cues, ["示范例"])
     assert len(moves_once) == 1
-    twice, moves_twice = unify_terms_across_cues(once, ["梦限大"])
+    twice, moves_twice = unify_terms_across_cues(once, ["示范例"])
     assert moves_twice == []
     assert [(c.index, c.text) for c in twice] == [(c.index, c.text) for c in once]
 
 
 def test_multi_term_longest_first_prefers_longer_surface():
-    # "限大" alone is a substring of "梦限大"; if the shorter surface were
+    # "范例" alone is a substring of "示范例"; if the shorter surface were
     # tried first it could "fix" a boundary that the longer, correct term
-    # should own instead.  Longest-first must try 梦限大 before 限大.
+    # should own instead.  Longest-first must try 示范例 before 范例.
     cues = [
-        _cue(1, 0, 1000, "这是梦"),
-        _cue(2, 1000, 2000, "限大的故事"),
+        _cue(1, 0, 1000, "这是示"),
+        _cue(2, 1000, 2000, "范例的故事"),
     ]
-    out, moves = unify_terms_across_cues(cues, ["限大", "梦限大"])
+    out, moves = unify_terms_across_cues(cues, ["范例", "示范例"])
     assert len(moves) == 1
-    assert moves[0]["term"] == "梦限大"
+    assert moves[0]["term"] == "示范例"
     assert out[0].text == "这是"
-    assert out[1].text == "梦限大的故事"
+    assert out[1].text == "示范例的故事"
 
 
 def test_majority_rule_moves_backward_when_a_holds_more():
     # A holds the majority (2 chars) of the term, B holds the minority
     # (1 char): the fragment should move backward into A instead.
     cues = [
-        _cue(1, 0, 1000, "这是梦限"),
-        _cue(2, 1000, 2000, "大的故事"),
+        _cue(1, 0, 1000, "这是示范"),
+        _cue(2, 1000, 2000, "例的故事"),
     ]
-    out, moves = unify_terms_across_cues(cues, ["梦限大"])
+    out, moves = unify_terms_across_cues(cues, ["示范例"])
     assert len(moves) == 1
     assert moves[0]["direction"] == "backward"
-    assert out[0].text == "这是梦限大"
+    assert out[0].text == "这是示范例"
     assert out[1].text == "的故事"
 
 
 def test_tie_goes_to_later_cue():
-    # A holds "梦" only, hypothetical 2-char term split 1/1 -> tie -> later
+    # A holds "示" only, hypothetical 2-char term split 1/1 -> tie -> later
     # cue (B) is treated as the majority holder, so text moves forward.
     cues = [
         _cue(1, 0, 1000, "这是邦"),
@@ -141,11 +141,11 @@ def test_tie_goes_to_later_cue():
 
 def test_timestamps_and_count_never_change():
     cues = [
-        _cue(1, 0, 1234, "这是梦"),
-        _cue(2, 1234, 5000, "限大的故事"),
+        _cue(1, 0, 1234, "这是示"),
+        _cue(2, 1234, 5000, "范例的故事"),
         _cue(3, 5000, 8000, "还有更多内容在这里"),
     ]
     before = [(c.index, c.start_ms, c.end_ms) for c in cues]
-    out, _moves = unify_terms_across_cues(cues, ["梦限大"])
+    out, _moves = unify_terms_across_cues(cues, ["示范例"])
     assert len(out) == len(cues)
     assert [(c.index, c.start_ms, c.end_ms) for c in out] == before

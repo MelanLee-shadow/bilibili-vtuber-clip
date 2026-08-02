@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from src.autoslice.speaker_common import HOST_SPEAKER
 from src.autoslice.subtitle_regression import (
     SubtitleRegressionError,
     load_subtitle_regression_document,
@@ -13,7 +14,7 @@ from src.autoslice.subtitle_regression import (
 def _srt(*texts: str, speaker: bool = False) -> str:
     blocks = []
     for index, text in enumerate(texts, start=1):
-        label = "[李豆沙] " if speaker else ""
+        label = f"[{HOST_SPEAKER}] " if speaker else ""
         blocks.append(
             f"{index}\n00:00:{index:02d},000 --> 00:00:{index + 1:02d},000\n{label}{text}"
         )
@@ -24,7 +25,7 @@ def _asset(tmp_path, **updates):
     document = {
         "schema_version": "lidousha-subtitle-regression.v1",
         "candidate_id": "auto_truth",
-        "required_payload_substrings": ["但是我确实很想跟大家看梦限大", "恋死看吗"],
+        "required_payload_substrings": ["但是我确实很想跟大家看示例番", "恋死看吗"],
         "forbidden_payload_substrings": ["母鸡卡", "哇哭哇哭"],
         "forbidden_exact_cues": ["恋死看"],
     }
@@ -36,8 +37,8 @@ def _asset(tmp_path, **updates):
 
 def test_candidate_truth_gate_passes_both_final_surfaces_and_strips_speaker_labels(tmp_path):
     path = _asset(tmp_path)
-    text = _srt("但是我确实很想跟大家看梦限大", "恋死看吗")
-    speaker = _srt("但是我确实很想跟大家看梦限大", "恋死看吗", speaker=True)
+    text = _srt("但是我确实很想跟大家看示例番", "恋死看吗")
+    speaker = _srt("但是我确实很想跟大家看示例番", "恋死看吗", speaker=True)
 
     audit = verify_subtitle_regression_surfaces(
         path,
@@ -53,7 +54,7 @@ def test_candidate_truth_gate_passes_both_final_surfaces_and_strips_speaker_labe
 
 def test_candidate_truth_gate_fails_when_required_truth_disappears(tmp_path):
     path = _asset(tmp_path)
-    wrong = _srt("但是我确实很想跟大家看梦限大")
+    wrong = _srt("但是我确实很想跟大家看示例番")
 
     audit = verify_subtitle_regression_surfaces(
         path,
@@ -74,7 +75,7 @@ def test_candidate_truth_gate_accepts_reviewed_required_alternatives(tmp_path):
         ],
     )
     short_name = _srt(
-        "但是我确实很想跟大家看梦限大",
+        "但是我确实很想跟大家看示例番",
         "恋死看吗",
         "萱卡一点都不妈",
     )
@@ -107,7 +108,7 @@ def test_candidate_truth_gate_requires_every_reviewed_occurrence(tmp_path):
         required_payload_min_occurrences={"姐感妹": 2},
     )
     complete = _srt(
-        "但是我确实很想跟大家看梦限大",
+        "但是我确实很想跟大家看示例番",
         "恋死看吗",
         "她是一个姐感妹",
         "姐感妹",
@@ -135,9 +136,9 @@ def test_candidate_truth_gate_requires_every_reviewed_occurrence(tmp_path):
 
 def test_candidate_truth_gate_rejects_forbidden_substring_on_either_surface(tmp_path):
     path = _asset(tmp_path)
-    text = _srt("但是我确实很想跟大家看梦限大", "恋死看吗")
+    text = _srt("但是我确实很想跟大家看示例番", "恋死看吗")
     wrong_speaker = _srt(
-        "但是我确实很想跟大家看梦限大，可是弹幕写母鸡卡",
+        "但是我确实很想跟大家看示例番，可是弹幕写母鸡卡",
         "恋死看吗",
         speaker=True,
     )
@@ -155,8 +156,8 @@ def test_candidate_truth_gate_rejects_forbidden_substring_on_either_surface(tmp_
 
 def test_forbidden_exact_cue_does_not_reject_longer_correct_question(tmp_path):
     path = _asset(tmp_path)
-    correct = _srt("但是我确实很想跟大家看梦限大", "恋死看吗")
-    wrong = _srt("但是我确实很想跟大家看梦限大", "恋死看")
+    correct = _srt("但是我确实很想跟大家看示例番", "恋死看吗")
+    wrong = _srt("但是我确实很想跟大家看示例番", "恋死看")
 
     passing = verify_subtitle_regression_surfaces(
         path,

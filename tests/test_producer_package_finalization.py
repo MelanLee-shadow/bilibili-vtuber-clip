@@ -8,6 +8,7 @@ import pytest
 from scripts.apply_subtitle_text_overrides import apply_document
 from src.autoslice import producer_package_finalization as finalization
 from src.autoslice.story_contract import cover_story_contract_binding
+from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
 def _deferred_exact_truth_audit() -> dict:
@@ -764,23 +765,23 @@ def test_finalize_routes_exact_endpoint_receipt_into_story_contract(
     [
         (
             "KEEP",
-            "弹幕自称侄女却叫李豆沙老公。",
-            "弹幕自称侄女却叫李豆沙老公。",
-            "【李豆沙】弹幕自称侄女却叫她老公，她强调自己才是真的侄女",
+            f"弹幕自称表妹却叫{CHANNEL_PROFILE.display_name}老公。",
+            f"弹幕自称表妹却叫{CHANNEL_PROFILE.display_name}老公。",
+            f"{CHANNEL_PROFILE.talk_title_prefix}弹幕自称表妹却叫她老公，她强调自己才是真的表妹",
             "talk",
         ),
         (
             "REPAIRED",
-            "弹幕叫李豆沙老公。",
-            "弹幕自称侄女却叫李豆沙老公，李豆沙强调自己才是真的侄女。",
-            "【李豆沙】弹幕自称侄女却叫她老公，她强调自己才是真的侄女",
+            f"弹幕叫{CHANNEL_PROFILE.display_name}老公。",
+            f"弹幕自称表妹却叫{CHANNEL_PROFILE.display_name}老公，{CHANNEL_PROFILE.display_name}强调自己才是真的表妹。",
+            f"{CHANNEL_PROFILE.talk_title_prefix}弹幕自称表妹却叫她老公，她强调自己才是真的表妹",
             "talk",
         ),
         (
             "KEEP",
-            "李豆沙演唱《暖暖》。",
-            "李豆沙演唱《暖暖》。",
-            "【李豆沙】豆沙歌，《暖暖》",
+            f"{CHANNEL_PROFILE.display_name}演唱《暖暖》。",
+            f"{CHANNEL_PROFILE.display_name}演唱《暖暖》。",
+            f"{CHANNEL_PROFILE.song_title_prefix}《暖暖》",
             "song",
         ),
     ],
@@ -797,7 +798,7 @@ def test_stage_record_uses_post_source_fact_story_contract_everywhere(
     subtitle = tmp_path / "candidate.recut.srt"
     subtitle.write_text(
         "1\n00:00:00,000 --> 00:00:01,000\n"
-        "我才是真的侄女\n",
+        f"我才是真的表妹\n",
         encoding="utf-8",
     )
     media = tmp_path / "candidate.recut.mp4"
@@ -839,7 +840,7 @@ def test_stage_record_uses_post_source_fact_story_contract_everywhere(
             ),
             "source_fact_review": receipt,
             "cover_status": "AI_COVER_READY",
-            "cover_text": "我才是真的侄女",
+            "cover_text": "我才是真的表妹",
             "cover_generation": {
                 "story_contract": cover_story_contract_binding(rebuilt),
             },
@@ -922,7 +923,7 @@ def test_cover_audit_rejects_pre_repair_selection_hook_binding(
 ) -> None:
     current_contract = {
         "schema_version": "lidousha-story-contract.v1",
-        "selection_hook": "修复后的侄女主钩子",
+        "selection_hook": "修复后的表妹主钩子",
         "relation_state": "NONE",
         "participants": [],
         "cover_counterpart_reference_available": False,
@@ -934,10 +935,10 @@ def test_cover_audit_rejects_pre_repair_selection_hook_binding(
         "cover_fallback_mode": "HOST_ONLY_GENERIC",
     }
     stale_contract = dict(current_contract)
-    stale_contract["selection_hook"] = "修复前的直女主钩子"
+    stale_contract["selection_hook"] = "修复前的值妹主钩子"
     generation = {
-        "cover_text": "修复后的侄女主钩子",
-        "rendered_lines": ["修复后的侄女主钩子"],
+        "cover_text": "修复后的表妹主钩子",
+        "rendered_lines": ["修复后的表妹主钩子"],
         "story_contract": cover_story_contract_binding(stale_contract),
         "rendered_text_pixels": {
             "font_file_name": "font.ttf",
@@ -981,7 +982,7 @@ def test_cover_audit_rejects_pre_repair_selection_hook_binding(
 
     reasons, _audits = finalization._audit_story_bound_cover(
         {
-            "cover_text": "修复后的侄女主钩子",
+            "cover_text": "修复后的表妹主钩子",
             "cover_generation": generation,
         },
         current_contract,

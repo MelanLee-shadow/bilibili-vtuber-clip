@@ -8,6 +8,7 @@ import pytest
 from src.autoslice.producer_text_finalization import (
     verify_chat_authority_final_surfaces,
 )
+from src.autoslice.speaker_common import HOST_SPEAKER
 
 
 def _srt(*cues: tuple[int, int, str]) -> str:
@@ -137,7 +138,7 @@ def test_contiguous_projected_truth_accepts_exact_final_recue_merge() -> None:
         truth_id="contiguous-recue-merge",
         start_ms=1_000,
         end_ms=4_280,
-        canonical="切，那就差礼墨没吃了",
+        canonical="切，那就差乙乙没吃了",
     )
     row.update(
         {
@@ -164,14 +165,14 @@ def test_contiguous_projected_truth_accepts_exact_final_recue_merge() -> None:
                         "cue_index": 17,
                         "start_ms": 1_720,
                         "end_ms": 4_280,
-                        "before_text": "那就差礼墨没吃了",
-                        "after_text": "那就差礼墨没吃了",
+                        "before_text": "那就差乙乙没吃了",
+                        "after_text": "那就差乙乙没吃了",
                     },
                 ],
             },
         }
     )
-    merged = _srt((1_000, 4_280, "切，那就差礼墨没吃了"))
+    merged = _srt((1_000, 4_280, "切，那就差乙乙没吃了"))
     audit = _audit(row)
 
     assert verify_chat_authority_final_surfaces(
@@ -193,7 +194,7 @@ def test_contiguous_projected_truth_recue_merge_rejects_extra_speech() -> None:
         truth_id="contiguous-recue-extra",
         start_ms=1_000,
         end_ms=4_280,
-        canonical="切，那就差礼墨没吃了",
+        canonical="切，那就差乙乙没吃了",
     )
     row.update(
         {
@@ -220,15 +221,15 @@ def test_contiguous_projected_truth_recue_merge_rejects_extra_speech() -> None:
                         "cue_index": 17,
                         "start_ms": 1_720,
                         "end_ms": 4_280,
-                        "before_text": "那就差礼墨没吃了",
-                        "after_text": "那就差礼墨没吃了",
+                        "before_text": "那就差乙乙没吃了",
+                        "after_text": "那就差乙乙没吃了",
                     },
                 ],
             },
         }
     )
     merged = _srt(
-        (900, 4_400, "前句切，那就差礼墨没吃了后句")
+        (900, 4_400, "前句切，那就差乙乙没吃了后句")
     )
     audit = _audit(row)
 
@@ -243,7 +244,7 @@ def test_contiguous_projected_truth_recue_merge_rejects_extra_speech() -> None:
     receipt = verified["final_owner_contract"]["recue_coalescence"]
     assert receipt["status"] == "FAIL"
     assert receipt["text_payload"] == (
-        "前句切那就差礼墨没吃了后句"
+        "前句切那就差乙乙没吃了后句"
     )
 
 
@@ -372,7 +373,7 @@ def test_native_script_canon_preserves_redelivery_baseline_owner() -> None:
         },
     )
     final_text = _srt((0, 1_000, "TA要是ぼく，不过不是おれ"))
-    final_speaker = _srt((0, 1_000, "[李豆沙] TA要是ぼく，不过不是おれ"))
+    final_speaker = _srt((0, 1_000, f"[{HOST_SPEAKER}] TA要是ぼく，不过不是おれ"))
 
     assert verify_chat_authority_final_surfaces(
         audit,

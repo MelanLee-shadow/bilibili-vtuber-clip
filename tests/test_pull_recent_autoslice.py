@@ -71,14 +71,14 @@ def test_archived_dates_support_comments(tmp_path: Path) -> None:
 
 def test_list_remote_dates_uses_printed_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     class Result:
-        stdout = "/remote/lidousha/2026-07-17\n/remote/lidousha/2026-07-18\n"
+        stdout = "/remote/channel/2026-07-17\n/remote/channel/2026-07-18\n"
 
     monkeypatch.setattr(
         "scripts.pull_recent_autoslice.run_checked",
         lambda command: Result(),
     )
 
-    assert list_remote_dates("free", "/remote/lidousha") == [
+    assert list_remote_dates("free", "/remote/channel") == [
         "2026-07-17",
         "2026-07-18",
     ]

@@ -8,6 +8,7 @@ import pytest
 from src.autoslice import same_bv_cover_repair as cover_repair
 from src.autoslice import same_bv_repair as repair
 from src.autoslice import publication_reconciliation as reconciliation
+from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
 BVID = "BV1s7326qEc9"
@@ -17,16 +18,16 @@ NEW_COVER = "https://i0.hdslb.com/bfs/archive/bbbbbbbbbbbbbbbb.png"
 
 def test_cover_scope_tag_binding_ignores_order_but_not_set_drift():
     assert cover_repair._same_tag_set(
-        ["李豆沙", "虚拟主播", "切片"],
-        ["切片", "李豆沙", "虚拟主播"],
+        [CHANNEL_PROFILE.display_name, "虚拟主播", "切片"],
+        ["切片", CHANNEL_PROFILE.display_name, "虚拟主播"],
     )
     assert not cover_repair._same_tag_set(
-        ["李豆沙", "虚拟主播", "切片"],
-        ["李豆沙", "虚拟主播", "错误标签"],
+        [CHANNEL_PROFILE.display_name, "虚拟主播", "切片"],
+        [CHANNEL_PROFILE.display_name, "虚拟主播", "错误标签"],
     )
     assert not cover_repair._same_tag_set(
-        ["李豆沙", "李豆沙"],
-        ["李豆沙"],
+        [CHANNEL_PROFILE.display_name, CHANNEL_PROFILE.display_name],
+        [CHANNEL_PROFILE.display_name],
     )
 
 
@@ -92,12 +93,12 @@ def test_exact_historical_review_state_false_block_can_resume_polling():
 
 
 def _snapshot(
-    *, cover: str = OLD_COVER, title: str = "白色奶龙", cid: int = 202
+    *, cover: str = OLD_COVER, title: str = "示例封面", cid: int = 202
 ) -> dict:
     metadata = {
         "title": title,
         "desc": "desc",
-        "tags": sorted(["李豆沙", "切片"]),
+        "tags": sorted([CHANNEL_PROFILE.display_name, "切片"]),
         "tid": 21,
         "copyright": 2,
         "source": "https://live.bilibili.com/",
@@ -132,13 +133,13 @@ def _snapshot(
 
 
 def _materialize(tmp_path: Path, monkeypatch):
-    cover = tmp_path / "white-dragon.cover.png"
+    cover = tmp_path / "sample-cover.cover.png"
     cover.write_bytes(b"reviewed white dragon cover")
     manifest = {
         "manifest_version": 3,
-        "title": "白色奶龙",
+        "title": "示例封面",
         "description": "desc",
-        "tags": ["李豆沙", "切片"],
+        "tags": [CHANNEL_PROFILE.display_name, "切片"],
         "publish_policy": {
             "tid": 21,
             "copyright": 2,
@@ -147,7 +148,7 @@ def _materialize(tmp_path: Path, monkeypatch):
         "season": {
             "season_id": 8383206,
             "section_id": 9320779,
-            "season_title": "小李切片",
+            "season_title": "小主切片",
         },
         "cover": {
             "path": str(cover.resolve()),
@@ -167,7 +168,7 @@ def _materialize(tmp_path: Path, monkeypatch):
         encoding="utf-8",
     )
     authority = {
-        "candidate_id": "white-dragon",
+        "candidate_id": "sample-cover",
         "bvid": BVID,
         "aid": 101,
         "cid": 202,
@@ -206,7 +207,7 @@ class FakeAdapter:
         return self.last_observation
 
     def prepare_cover(self, cover_path: Path) -> str:
-        assert cover_path.name == "white-dragon.cover.png"
+        assert cover_path.name == "sample-cover.cover.png"
         self.prepare_calls += 1
         return NEW_COVER
 
@@ -361,7 +362,7 @@ def test_completed_receipt_reconciles_as_unchanged_cid_publication(
     monkeypatch.setattr(
         reconciliation,
         "_candidate_and_date",
-        lambda _manifest: ("white-dragon", "2026-07-29"),
+        lambda _manifest: ("sample-cover", "2026-07-29"),
     )
     monkeypatch.setattr(
         reconciliation,
@@ -387,7 +388,7 @@ def test_completed_receipt_reconciles_as_unchanged_cid_publication(
     )
 
     runtime_entry = {
-        "candidate_id": "white-dragon",
+        "candidate_id": "sample-cover",
         "recording_date": "2026-07-29",
         "status": "published",
         "bvid": BVID,
@@ -524,15 +525,15 @@ def test_production_adapter_rechecks_creator_and_changes_only_cover():
             "aid": 101,
             "state": 0,
             "state_desc": "开放浏览",
-            "title": "白色奶龙",
+            "title": "示例封面",
             "desc": "desc",
-            "tag": "李豆沙,切片",
+            "tag": f"{CHANNEL_PROFILE.display_name},切片",
             "tid": 21,
             "copyright": 2,
             "source": "https://live.bilibili.com/",
             "cover": OLD_COVER,
         },
-        "videos": [{"cid": 202, "filename": "old", "title": "白色奶龙"}],
+        "videos": [{"cid": 202, "filename": "old", "title": "示例封面"}],
     }
     session = FakeSession(raw)
     adapter = repair.BilibiliRepairAdapter(

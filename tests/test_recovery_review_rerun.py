@@ -9,6 +9,7 @@ from src.autoslice.recovery_title_authority import (
     build_recovery_publication_authorities,
     expected_recovery_publish_title,
 )
+from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
 OLD = "sha256:" + "1" * 64
@@ -61,7 +62,7 @@ def _allow_synthetic_publication_authorities(monkeypatch):
                 ),
             )
         assert recovery_publication_authority["candidate_id"] == candidate_id
-        return "【李豆沙】恢复测试", recovery_publication_authority
+        return f"{CHANNEL_PROFILE.talk_title_prefix}恢复测试", recovery_publication_authority
 
     monkeypatch.setattr(
         delivery_recovery,
@@ -118,7 +119,7 @@ def _fixture(tmp_path: Path, monkeypatch):
     bcut.parent.mkdir(parents=True)
     bcut.write_text("1\n00:00:00,000 --> 00:00:01,000\n字幕\n")
     scorecard = {"status": "VALID", "tier": 1, "effective_score": 90}
-    relation = {"state": "CONFIRMED", "participants": ["李豆沙", "南町"]}
+    relation = {"state": "CONFIRMED", "participants": ["主播", "嘉宾"]}
     record = {
         "candidate_id": "auto_current",
         "status": "review_ready",
@@ -136,7 +137,7 @@ def _fixture(tmp_path: Path, monkeypatch):
         "filler_proposals": [{"start_ms": 30_000, "end_ms": 31_000}],
         "merge_gap_removals": [{"start_ms": 40_000, "end_ms": 41_000}],
         "cover_diversity_slot": 3,
-        "title": "【李豆沙】旧标题",
+        "title": f"{CHANNEL_PROFILE.talk_title_prefix}旧标题",
     }
     state = {
         "status": "review_ready",
@@ -242,7 +243,7 @@ def test_natural_recovery_tick_requeues_stale_current_success(
     assert item["filler_proposals"] and item["merge_gap_removals"]
     assert item["cover_diversity_slot"] == 3
     archived = state["talk_superseded_attempts"][0]
-    assert archived["title"] == "【李豆沙】旧标题"
+    assert archived["title"] == f"{CHANNEL_PROFILE.talk_title_prefix}旧标题"
     assert archived["bundle_lifecycle"] == "SUPERSEDED"
     assert archived["bundle_compliance"] == "STALE_PIPELINE"
     assert archived["pipeline_fingerprint"] == OLD
@@ -754,7 +755,7 @@ def test_current_delivery_moves_to_hash_bound_recovery_queue(
     assert item["chat_binding_status"] == "OPTIONAL_ABSENT"
     assert item.get("reuse_cover") is None
     archived = state["talk_superseded_attempts"][0]
-    assert archived["title"] == "【李豆沙】旧标题"
+    assert archived["title"] == f"{CHANNEL_PROFILE.talk_title_prefix}旧标题"
     assert archived["bundle_lifecycle"] == "SUPERSEDED"
     assert archived["bundle_compliance"] == "STALE_PIPELINE"
     assert archived["source_state_sha256"] == STATE_SHA
@@ -1166,7 +1167,7 @@ def test_selected_authority_rejection_revives_after_pipeline_change(
             "failure_recoverable": False,
             "failure_recovery_fingerprint": OLD,
             "rejection_reason": "subtitle_authority_unresolved_backfilled",
-            "given_title": "【李豆沙】恢复测试",
+            "given_title": f"{CHANNEL_PROFILE.talk_title_prefix}恢复测试",
             "recovery_publication_authority": _fake_publication_authority(
                 "auto_current", required_given_end_ms=120_000
             ),

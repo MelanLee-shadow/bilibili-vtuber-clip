@@ -13,6 +13,7 @@ from src.autoslice.boundary_semantic_review import (
     semantic_review_sha256,
 )
 from src.autoslice.chat_authority import ReferentEntity, ReferentGroup
+from src.autoslice.surface_canon import CHANNEL_PROFILE
 from src.autoslice.final_review_contract import (
     FinalReviewContractError,
     validate_final_review_release,
@@ -1293,8 +1294,8 @@ def test_exact_final_release_review_discloses_cpa_keep_current_real_shape(
         "_build_final_review_llm_call",
         lambda: (lambda _prompt: _judge_json("CURRENT")),
     )
-    current = "我一会儿让我们先看了这个李豆沙的队伍"
-    proposed = "我一会儿让我们先看这个李豆沙的队伍"
+    current = f"我一会儿让我们先看了这个{CHANNEL_PROFILE.display_name}的队伍"
+    proposed = f"我一会儿让我们先看这个{CHANNEL_PROFILE.display_name}的队伍"
     finding = {
         "cue_index": 1,
         "kind": "context",
@@ -1875,10 +1876,13 @@ def test_post_semantic_entity_stage_never_reverts_name_to_draft_witness(tmp_path
     Gemini 不得再用“必须和初始听写一致”把它改回 draft 或竞争实体。"""
     padded = tmp_path / "padded.mp4"
     padded.with_suffix(".asr_draft.srt").write_text(
-        _srt("给温柔已经成为了李豆沙的帕鲁", "第二句", "第三句"),
+        _srt(f"给温柔已经成为了{CHANNEL_PROFILE.display_name}的帕鲁", "第二句", "第三句"),
         encoding="utf-8",
     )
-    semantic_final = _srt("kmx已经成为了李豆沙的帕鲁", "第二句", "第三句")
+    # "kmx" must stay literal: this exercises a real registered protected
+    # term (src.autoslice.term_authority.protected_terms()), not a synthetic
+    # fixture name — introduced_term_cues() only flags protected terms.
+    semantic_final = _srt(f"kmx已经成为了{CHANNEL_PROFILE.display_name}的帕鲁", "第二句", "第三句")
     group = ReferentGroup(
         (
             ReferentEntity("kmx", ("kmx",), ("k m x",)),
@@ -1922,11 +1926,11 @@ def test_witness_disagreement_is_disclosure_not_post_semantic_rewrite(tmp_path):
         _srt("所以你是想看留下跟别人亲亲", "第二句", "第三句"),
         encoding="utf-8",
     )
-    semantic_final = _srt("所以你是想看小李跟别人亲亲", "第二句", "第三句")
+    semantic_final = _srt(f"所以你是想看{CHANNEL_PROFILE.short_name}跟别人亲亲", "第二句", "第三句")
     group = ReferentGroup(
         (
-            ReferentEntity("李豆沙", ("李豆沙",), ("li dou sha",)),
-            ReferentEntity("小李", ("小李",), ("xiao li",)),
+            ReferentEntity(CHANNEL_PROFILE.display_name, (CHANNEL_PROFILE.display_name,), ("li dou sha",)),
+            ReferentEntity(CHANNEL_PROFILE.short_name, (CHANNEL_PROFILE.short_name,), ("xiao li",)),
         ),
         audio_verify_all_surfaces=True,
         positions=("witness_disagreement",),
@@ -1935,7 +1939,7 @@ def test_witness_disagreement_is_disclosure_not_post_semantic_rewrite(tmp_path):
 
     def conflicting_audio(request):
         calls.append(request)
-        return _resolved_entity_verdict(request, "李豆沙")
+        return _resolved_entity_verdict(request, CHANNEL_PROFILE.display_name)
 
     result = pipeline._apply_entity_authority(
         srt_text=semantic_final,
@@ -1965,8 +1969,8 @@ def test_explicit_transcript_only_rescue_still_uses_audio_after_semantic_stage(t
     source = _srt("所以理论上要直播", "第二句", "第三句")
     group = ReferentGroup(
         (
-            ReferentEntity("李豆沙", ("李豆沙", "理论上"), ("li dou sha",)),
-            ReferentEntity("小李", ("小李",), ("xiao li",)),
+            ReferentEntity(CHANNEL_PROFILE.display_name, (CHANNEL_PROFILE.display_name, "理论上"), ("li dou sha",)),
+            ReferentEntity(CHANNEL_PROFILE.short_name, (CHANNEL_PROFILE.short_name,), ("xiao li",)),
         ),
         positions=("transcript_only",),
         uncertain_keep_surfaces=("理论上",),
@@ -1975,7 +1979,7 @@ def test_explicit_transcript_only_rescue_still_uses_audio_after_semantic_stage(t
 
     def resolve_name(request):
         calls.append(request)
-        return _resolved_entity_verdict(request, "李豆沙")
+        return _resolved_entity_verdict(request, CHANNEL_PROFILE.display_name)
 
     result = pipeline._apply_entity_authority(
         srt_text=source,
@@ -1989,11 +1993,11 @@ def test_explicit_transcript_only_rescue_still_uses_audio_after_semantic_stage(t
         adapters=_adapters(),
     )
 
-    assert "所以李豆沙要直播" in result.srt_text
+    assert f"所以{CHANNEL_PROFILE.display_name}要直播" in result.srt_text
     assert len(calls) == 1
     assert result.chat_authority_audit["post_semantic_entity_policy"][
         "explicit_audio_groups"
-    ] == [["李豆沙", "小李"]]
+    ] == [[CHANNEL_PROFILE.display_name, CHANNEL_PROFILE.short_name]]
 
 
 def test_final_review_adjudicates_all_bounded_findings_and_skips_protected_cue(monkeypatch):
@@ -2177,7 +2181,7 @@ def test_single_character_glossary_prose_cannot_authorize_li_to_li():
         ),
         extract_json=json.loads,
         glossary_text=(
-            "可以是礼（礼墨的礼），也可以是礼（花礼的礼）"
+            "可以是礼（乙乙的礼），也可以是礼（花礼的礼）"
         ),
     )
 
@@ -2531,8 +2535,8 @@ def test_ledger_owned_cue_skips_entity_arbitration(tmp_path):
     source = _srt("我的我也不零三", "第二句", "第三句")
     group = ReferentGroup(
         (
-            ReferentEntity("李豆沙", ("李豆沙", "零三"), ("li dou sha",)),
-            ReferentEntity("小李", ("小李",), ("xiao li",)),
+            ReferentEntity(CHANNEL_PROFILE.display_name, (CHANNEL_PROFILE.display_name, "零三"), ("li dou sha",)),
+            ReferentEntity(CHANNEL_PROFILE.short_name, (CHANNEL_PROFILE.short_name,), ("xiao li",)),
         ),
         positions=("transcript_only",),
         uncertain_keep_surfaces=(),
@@ -2541,7 +2545,7 @@ def test_ledger_owned_cue_skips_entity_arbitration(tmp_path):
 
     def resolve_name(request):
         calls.append(request)
-        return _resolved_entity_verdict(request, "李豆沙")
+        return _resolved_entity_verdict(request, CHANNEL_PROFILE.display_name)
 
     result = pipeline._apply_entity_authority(
         srt_text=source,
@@ -2577,8 +2581,8 @@ def test_exact_source_truth_projection_does_not_exclude_grazed_neighbour(
     )
     group = ReferentGroup(
         (
-            ReferentEntity("李豆沙", ("李豆沙", "零三"), ("li dou sha",)),
-            ReferentEntity("小李", ("小李",), ("xiao li",)),
+            ReferentEntity(CHANNEL_PROFILE.display_name, (CHANNEL_PROFILE.display_name, "零三"), ("li dou sha",)),
+            ReferentEntity(CHANNEL_PROFILE.short_name, (CHANNEL_PROFILE.short_name,), ("xiao li",)),
         ),
         positions=("transcript_only",),
         uncertain_keep_surfaces=(),
@@ -2587,7 +2591,7 @@ def test_exact_source_truth_projection_does_not_exclude_grazed_neighbour(
 
     def resolve_name(request):
         calls.append(request)
-        return _resolved_entity_verdict(request, "李豆沙")
+        return _resolved_entity_verdict(request, CHANNEL_PROFILE.display_name)
 
     result = pipeline._apply_entity_authority(
         srt_text=source,
@@ -3087,7 +3091,7 @@ def _pinned_replay_spec() -> dict:
             "path": "/tmp/reviewed.srt",
             "sha256": "de" + "ad" * 31,
             "authority": "published bytes are the lexical baseline",
-            "source_recording_basename": "22966160_20260729-22-50-56.mp4",
+            "source_recording_basename": "123456_20260729-22-50-56.mp4",
             "source_sha256": "15" + "ed" * 31,
             "absolute_source_start_ms": 1_013_630,
             "absolute_source_end_ms": 1_117_320,

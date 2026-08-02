@@ -16,7 +16,7 @@ from src.autoslice.source_subtitle_truth import (
 from src.autoslice.subtitle_fidelity import resolve_deferred_foreign_introductions
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _srt(*rows: tuple[int, int, str]) -> str:
@@ -1924,7 +1924,7 @@ def test_committed_ledger_supersedes_hallucinated_opening_suffix():
     """旧错误钉子留审计历史，但不得再回放南町/LLNNHHB后缀。"""
 
     ledger = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets"
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"
@@ -1963,7 +1963,7 @@ def test_committed_ledger_omits_disputed_brainflick_opening_prefix():
     """冲突前缀留空，只保留多路声学证据共同支持的核心。"""
 
     ledger = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets"
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"
@@ -2027,7 +2027,7 @@ def test_committed_ledger_projects_nancho_truth_to_hash_bound_official_replay():
     """7/22 官方回放只在精确哈希绑定时继承原录制时间轴的审定钉子。"""
 
     ledger = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets"
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"
@@ -2095,7 +2095,7 @@ def test_committed_ledger_repairs_new_nancho_acoustic_truths_on_official_replay(
     """新声学钉子必须按 hash-bound 官方回放的绝对时间轴稳定重放。"""
 
     ledger = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets"
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"
@@ -2132,7 +2132,7 @@ def test_committed_ledger_repairs_new_nancho_acoustic_truths_on_official_replay(
 
 def test_committed_ledger_repairs_huishen_nasal_final_spelling_drift():
     ledger = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets"
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"
@@ -2175,7 +2175,7 @@ def test_committed_ledger_repairs_huishen_nasal_final_spelling_drift():
 
 def test_committed_ledger_repairs_sumi_na_xiang_le_acoustic_verdict():
     ledger = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets"
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"
@@ -2204,7 +2204,7 @@ def test_committed_ledger_repairs_sumi_na_xiang_le_acoustic_verdict():
 
 def test_committed_ledger_preserves_reviewed_chair_190_surface():
     ledger = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets"
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"
@@ -2237,7 +2237,7 @@ def test_committed_ledger_preserves_reviewed_chair_190_surface():
 
 def test_committed_ledger_preserves_brainflick_give_up_turn():
     ledger = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets"
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"
@@ -2266,7 +2266,7 @@ def test_committed_ledger_preserves_brainflick_give_up_turn():
 
 def test_committed_ledger_keeps_independently_adjudicated_brainflick_phrases():
     ledger = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets"
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"
@@ -2573,7 +2573,7 @@ def test_mention_postconditions_reject_one_cue_owning_two_mentions(tmp_path):
 
 def test_committed_huishen_mentions_are_independent_exact_owners():
     ledger = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets"
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"
@@ -2620,7 +2620,7 @@ def test_committed_huishen_mentions_are_independent_exact_owners():
 
 def test_committed_ledger_repairs_hotpot_parallel_repeat_entity_phrase():
     ledger = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets"
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"
@@ -2652,7 +2652,7 @@ def test_committed_ledger_repairs_hotpot_parallel_repeat_entity_phrase():
 
 def test_committed_ledger_repairs_hotpot_spoken_letter_name_to_canonical_entity():
     ledger = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets"
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"
@@ -2682,7 +2682,7 @@ def test_committed_ledger_repairs_hotpot_spoken_letter_name_to_canonical_entity(
 
 def test_committed_ledger_repairs_hotpot_ttt15_structured_sc_id():
     ledger = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets"
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"
@@ -2715,7 +2715,7 @@ def test_committed_ledger_repairs_hotpot_ttt15_structured_sc_id():
 
 def test_committed_ledger_repairs_chair_bullying_phrase_across_bad_split():
     ledger = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets"
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"
@@ -2769,7 +2769,7 @@ def test_committed_ledger_repairs_v13_hash_bound_chair_acoustic_findings(
     start_ms, end_ms, draft, expected, truth_id
 ):
     ledger = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets"
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"
@@ -2800,7 +2800,7 @@ def test_real_1475_retry_witness_widening_does_not_absorb_1573_owners():
     """Widened witness context keeps four brainflick owners, but repairs chair."""
 
     ledger = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets"
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"
@@ -2905,7 +2905,7 @@ def test_committed_ledger_preserves_new_acoustic_and_entity_truths(
     start_ms, end_ms, draft, expected
 ):
     ledger = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets"
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"
@@ -2932,7 +2932,7 @@ def test_committed_ledger_preserves_new_acoustic_and_entity_truths(
 
 def test_committed_ledger_drops_full_post_nightin_silence_hallucination():
     ledger = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets"
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"
@@ -2973,7 +2973,7 @@ def test_committed_ledger_drops_full_post_nightin_silence_hallucination():
 
 def test_committed_ledger_preserves_real_opening_speech_after_silent_prefix():
     ledger = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets"
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"
@@ -3019,7 +3019,7 @@ def test_committed_ledger_preserves_real_opening_speech_after_silent_prefix():
 
 def test_committed_ledger_repairs_qin_heterosexual_pun():
     ledger = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets"
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"
@@ -3053,7 +3053,7 @@ def test_committed_ledger_repairs_qin_heterosexual_pun():
 
 def test_committed_ledger_repairs_first_jieganmei_occurrence():
     ledger = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets"
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"
@@ -3086,7 +3086,7 @@ def test_committed_ledger_repairs_first_jieganmei_occurrence():
 @pytest.mark.parametrize("asr_surface", ["陆医生", "露蒂丝", "露蒂斯"])
 def test_committed_ledger_repairs_hotpot_lu_doctor_surface_family(asr_surface):
     ledger = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets"
         / "lidousha"
         / "subtitle_truth_ledger.v1.json"

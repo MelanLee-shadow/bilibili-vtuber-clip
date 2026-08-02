@@ -3,6 +3,7 @@ import json
 import pytest
 
 from src.autoslice import title_policy
+from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
 class _ProfileWithPolicy:
@@ -43,35 +44,35 @@ def test_title_policy_asset_rejects_unknown_fields(tmp_path, monkeypatch):
 # 「前缀《歌名》」，「｜副标题」/hook 尾巴/衬词一律清除。
 def test_canonicalize_song_catalog_title_strips_hook_suffix():
     assert title_policy.canonicalize_song_catalog_title(
-        "【李豆沙】豆沙歌，《暖暖》｜自弹自唱温柔哄睡"
-    ) == "【李豆沙】豆沙歌，《暖暖》"
+        f"{CHANNEL_PROFILE.song_title_prefix}《暖暖》｜自弹自唱温柔哄睡"
+    ) == f"{CHANNEL_PROFILE.song_title_prefix}《暖暖》"
     assert title_policy.canonicalize_song_catalog_title(
-        "【李豆沙】豆沙歌，直播间唱《芽吹くとき》"
-    ) == "【李豆沙】豆沙歌，《芽吹くとき》"
+        f"{CHANNEL_PROFILE.song_title_prefix}直播间唱《芽吹くとき》"
+    ) == f"{CHANNEL_PROFILE.song_title_prefix}《芽吹くとき》"
     assert title_policy.canonicalize_song_catalog_title(
-        "【李豆沙】豆沙歌，吵闹熊猫头的《嘉宾》"
-    ) == "【李豆沙】豆沙歌，《嘉宾》"
+        f"{CHANNEL_PROFILE.song_title_prefix}吵闹路人甲的《嘉宾》"
+    ) == f"{CHANNEL_PROFILE.song_title_prefix}《嘉宾》"
 
 
 def test_canonicalize_song_catalog_title_passes_talk_titles_through():
-    talk = "【李豆沙】被说开组会来晚了，主播反怼：因为我们还没开始唱"
+    talk = f"{CHANNEL_PROFILE.talk_title_prefix}被说开组会来晚了，主播反怼：因为我们还没开始唱"
     assert title_policy.canonicalize_song_catalog_title(talk) == talk
-    quoted_talk = "【李豆沙】《虫儿飞》翻车成《冲而飞》？主播唱到满屏幻听笑点"
+    quoted_talk = f"{CHANNEL_PROFILE.talk_title_prefix}《虫儿飞》翻车成《冲而飞》？主播唱到满屏幻听笑点"
     assert title_policy.canonicalize_song_catalog_title(quoted_talk) == quoted_talk
 
 
 def test_canonicalize_song_catalog_title_no_song_name_untouched():
-    weird = "【李豆沙】豆沙歌，没有书名号的标题"
+    weird = f"{CHANNEL_PROFILE.song_title_prefix}没有书名号的标题"
     assert title_policy.canonicalize_song_catalog_title(weird) == weird
 
 
 @pytest.mark.parametrize(
     "title",
     [
-        "【李豆沙】搭档把大椅子让给小李（误",
-        "【李豆沙】搭档说《这也太像了》》",
-        "【李豆沙】搭档说“最喜欢’",
-        "【李豆沙】搭档说[最喜欢）",
+        f"{CHANNEL_PROFILE.talk_title_prefix}搭档把大椅子让给{CHANNEL_PROFILE.short_name}（误",
+        f"{CHANNEL_PROFILE.talk_title_prefix}搭档说《这也太像了》》",
+        f"{CHANNEL_PROFILE.talk_title_prefix}搭档说“最喜欢’",
+        f"{CHANNEL_PROFILE.talk_title_prefix}搭档说[最喜欢）",
     ],
 )
 def test_title_policy_rejects_unbalanced_or_mismatched_marks(title):
@@ -81,17 +82,17 @@ def test_title_policy_rejects_unbalanced_or_mismatched_marks(title):
 
 
 def test_title_policy_accepts_nested_balanced_marks():
-    title = "【李豆沙】搭档问“你最喜欢《哪一个》？（认真）”"
+    title = f"{CHANNEL_PROFILE.talk_title_prefix}搭档问“你最喜欢《哪一个》？（认真）”"
     assert title_policy._title_policy_violations(title) == []
 
 
 def test_automatic_title_filler_canonicalizer_only_removes_profile_exact_words():
     assert title_policy.canonicalize_automatic_title_fillers(
-        "【李豆沙】小李当场拒绝花钱，直接让观众自己开"
-    ) == "【李豆沙】小李拒绝花钱，让观众自己开"
+        f"{CHANNEL_PROFILE.talk_title_prefix}{CHANNEL_PROFILE.short_name}当场拒绝花钱，直接让观众自己开"
+    ) == f"{CHANNEL_PROFILE.talk_title_prefix}{CHANNEL_PROFILE.short_name}拒绝花钱，让观众自己开"
     assert title_policy.canonicalize_automatic_title_fillers(
-        "【李豆沙】小李秒拒绝花钱，场面太顶"
-    ) == "【李豆沙】小李秒拒绝花钱，场面太顶"
+        f"{CHANNEL_PROFILE.talk_title_prefix}{CHANNEL_PROFILE.short_name}秒拒绝花钱，场面太顶"
+    ) == f"{CHANNEL_PROFILE.talk_title_prefix}{CHANNEL_PROFILE.short_name}秒拒绝花钱，场面太顶"
 
 
 @pytest.mark.parametrize(
@@ -125,7 +126,7 @@ def test_publish_title_policy_applies_one_envelope_to_manual_and_auto_titles():
     body = "最包容异性恋的直播间，看到男角色只能说出一句不熟"
     canonical = title_policy.canonicalize_publish_title(body, lane="talk")
 
-    assert canonical == "【李豆沙】" + body
+    assert canonical == CHANNEL_PROFILE.talk_title_prefix + body
     assert title_policy.publish_title_policy_violations(
         canonical, lane="talk"
     ) == []
@@ -135,7 +136,7 @@ def test_publish_title_policy_applies_one_envelope_to_manual_and_auto_titles():
 
 
 def test_publish_title_policy_requires_exact_song_catalog_form():
-    canonical = "【李豆沙】豆沙歌，《暖暖》"
+    canonical = f"{CHANNEL_PROFILE.song_title_prefix}《暖暖》"
 
     assert title_policy.publish_title_policy_violations(
         canonical, lane="song"

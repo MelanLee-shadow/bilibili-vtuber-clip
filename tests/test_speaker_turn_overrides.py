@@ -15,15 +15,16 @@ from scripts.apply_speaker_turn_overrides import (
     write_ass,
     write_srt,
 )
+from src.autoslice.speaker_common import HOST_SPEAKER
 
 
-SOURCE_TEXT = """1
+SOURCE_TEXT = f"""1
 00:00:00,000 --> 00:00:01,000
 [连线 -0.08] 第一条
 
 2
 00:00:01,000 --> 00:00:04,000
-[连线 +0.06] 因为李豆沙会一直说，啊？啥意思？啊？
+[连线 +0.06] 因为{HOST_SPEAKER}会一直说，啊？啥意思？啊？
 """
 
 
@@ -36,7 +37,7 @@ def _document() -> dict:
                 "expect": {
                     "start": "00:00:01,000",
                     "end": "00:00:04,000",
-                    "text": "因为李豆沙会一直说，啊？啥意思？啊？",
+                    "text": f"因为{HOST_SPEAKER}会一直说，啊？啥意思？啊？",
                 },
                 "authority": "Ivan direct correction",
                 "segments": [
@@ -44,12 +45,12 @@ def _document() -> dict:
                         "start": "00:00:01,000",
                         "end": "00:00:03,000",
                         "speaker": "连线",
-                        "text": "因为李豆沙会一直说话",
+                        "text": f"因为{HOST_SPEAKER}会一直说话",
                     },
                     {
                         "start": "00:00:03,000",
                         "end": "00:00:04,000",
-                        "speaker": "李豆沙",
+                        "speaker": HOST_SPEAKER,
                         "text": "啥意思啊",
                     },
                 ],
@@ -65,8 +66,8 @@ def test_override_can_split_one_asr_cue_into_two_speaker_turns(tmp_path: Path) -
 
     assert [(cue.speaker, cue.text) for cue in cues] == [
         ("连线", "第一条"),
-        ("连线", "因为李豆沙会一直说话"),
-        ("李豆沙", "啥意思啊"),
+        ("连线", f"因为{HOST_SPEAKER}会一直说话"),
+        (HOST_SPEAKER, "啥意思啊"),
     ]
     assert cues[1].end == cues[2].start == "00:00:03,000"
     assert cues[1].decision_source == cues[2].decision_source == "reviewed_override"
@@ -75,7 +76,7 @@ def test_override_can_split_one_asr_cue_into_two_speaker_turns(tmp_path: Path) -
     output_ass = tmp_path / "output.ass"
     write_srt(cues, output_srt)
     write_ass(cues, output_ass)
-    assert "3\n00:00:03,000 --> 00:00:04,000\n[李豆沙] 啥意思啊" in output_srt.read_text(
+    assert f"3\n00:00:03,000 --> 00:00:04,000\n[{HOST_SPEAKER}] 啥意思啊" in output_srt.read_text(
         encoding="utf-8"
     )
     assert "Style: LDS" in output_ass.read_text(encoding="utf-8")
@@ -117,7 +118,7 @@ def test_speaker_decision_asset_binds_candidate_media_and_final_text(tmp_path: P
             )
 
 
-def test_ass_uses_exact_sapphire_for_lidousha_and_v11_white_for_all_guests(
+def test_ass_uses_exact_sapphire_for_host_and_v11_white_for_all_guests(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "source.srt"
@@ -155,8 +156,8 @@ def test_override_can_drop_non_content_source_cue(tmp_path: Path) -> None:
 
     cues = apply_overrides(parse_labelled_srt(source), document)
     assert [(cue.speaker, cue.text) for cue in cues] == [
-        ("连线", "因为李豆沙会一直说话"),
-        ("李豆沙", "啥意思啊"),
+        ("连线", f"因为{HOST_SPEAKER}会一直说话"),
+        (HOST_SPEAKER, "啥意思啊"),
     ]
 
 
@@ -195,7 +196,7 @@ def test_ass_layout_preserves_libass_line_break_marker(tmp_path: Path) -> None:
     source = tmp_path / "source.srt"
     source.write_text(
         "1\n00:00:00,000 --> 00:00:01,000\n"
-        "[李豆沙] 这是一个需要在标点附近换行，才能保持两行以内的很长字幕文本\n",
+        f"[{HOST_SPEAKER}] 这是一个需要在标点附近换行，才能保持两行以内的很长字幕文本\n",
         encoding="utf-8",
     )
     output_ass = tmp_path / "output.ass"
@@ -386,14 +387,14 @@ def test_cli_manifest_records_drop_and_reliable_overlap(
                 "expect": {
                     "start": "00:00:01,000",
                     "end": "00:00:04,000",
-                    "text": "因为李豆沙会一直说，啊？啥意思？啊？",
+                    "text": f"因为{HOST_SPEAKER}会一直说，啊？啥意思？啊？",
                 },
                 "authority": "Ivan direct correction",
                 "segments": [
                     {
                         "start": "00:00:01,000",
                         "end": "00:00:04,000",
-                        "speaker": "李豆沙",
+                        "speaker": HOST_SPEAKER,
                         "text": "但是对我来说",
                     }
                 ],

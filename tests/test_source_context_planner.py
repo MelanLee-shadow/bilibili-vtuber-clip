@@ -7,7 +7,7 @@ from src.autoslice.source_context_planner import (
 
 def provenance(**overrides):
     data = {
-        "recording_id": "room22966160-20260625",
+        "recording_id": "room123456-20260625",
         "source_sha256": "sha256:source",
         "source_uri": "file:///recordings/source.mp4",
         "planner_version": "test-planner",
@@ -33,7 +33,7 @@ def test_context_window_clips_at_source_beginning_with_default_pre_post():
     assert manifest["source_offset_ms"] == 0
     assert manifest["timeline"]["anchor_start_ms"] == 20_000
     assert manifest["timeline"]["context_anchor_start_ms"] == 20_000
-    assert manifest["provenance"]["recording_id"] == "room22966160-20260625"
+    assert manifest["provenance"]["recording_id"] == "room123456-20260625"
     assert manifest["provenance"]["source_sha256"] == "sha256:source"
 
 
@@ -65,7 +65,7 @@ def test_source_context_jingting_job_ids_are_stable_for_same_anchor_and_provenan
         planner_version="test-planner",
         source_uri="file:///recordings/source.mp4",
         source_sha256="sha256:source",
-        recording_id="room22966160-20260625",
+        recording_id="room123456-20260625",
     )
     third = plan_source_context_jingting_jobs([anchor], source_duration_ms=900_000, provenance=reordered_provenance)[0]
 

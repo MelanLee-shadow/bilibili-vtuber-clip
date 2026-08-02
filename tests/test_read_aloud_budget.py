@@ -1,4 +1,4 @@
-"""近失仲裁预算分配（2026-07-20「脑海里根本没有冒出熊猫二字啊」案）。
+"""近失仲裁预算分配（2026-07-20「脑海里根本没有冒出示例词二字啊」案）。
 
 病：仲裁帽 3 按证据到达序先到先得——晚段真念读（score 0.624/precision
 0.875）被早段低分近失占光名额，静默出局零审计。类解：先全量收集、按
@@ -86,7 +86,7 @@ def test_strongest_late_near_miss_wins_budget() -> None:
 
 
 def test_same_span_deduped_to_best_candidate() -> None:
-    """同一 cue 跨度多条弹幕抢仲裁时只送最高分那条（真没想到熊猫案形态）。"""
+    """同一 cue 跨度多条弹幕抢仲裁时只送最高分那条（真没想到示例词案形态）。"""
 
     srt = _srt((10_000, 12_000, "甲乙丙丁戊己庚"))
     cues = [c for c in parse_srt_cues(srt) if c.text.strip()]

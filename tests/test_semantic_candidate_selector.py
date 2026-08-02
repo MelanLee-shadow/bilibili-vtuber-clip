@@ -368,7 +368,7 @@ def test_repo_metric_asset_reaches_prompt_by_default():
 
 
 def test_same_topic_merge_with_8min_gap_produces_merge_gap_jumpcut():
-    """2026-07-18 kmx 称呼两条切片案（源间距 8min25s）：同一 event_key 的
+    """2026-07-18 甲甲 称呼两条切片案（源间距 8min25s）：同一 event_key 的
     分离窗口按有效时长过门、缝隙成为 merge_gap，而不是被 5 分钟窗口上限
     整条毙掉或分成两条切片。"""
     cues = _cues(count=200, cue_ms=5_000, gap_ms=1_000)
@@ -378,9 +378,9 @@ def test_same_topic_merge_with_8min_gap_produces_merge_gap_jumpcut():
             [
                 # 两段各 ~1min，中间隔 ~8.4min（85 个 cue × 6s）。
                 {"start_cue": 5, "end_cue": 15, "kind": "talk",
-                 "event_key": "kmx称呼串", "hook": "SC称呼串起头", "confidence": 0.9},
+                 "event_key": "甲甲称呼串", "hook": "SC称呼串起头", "confidence": 0.9},
                 {"start_cue": 100, "end_cue": 112, "kind": "talk",
-                 "event_key": "kmx称呼串", "hook": "回访同一个梗", "confidence": 0.85},
+                 "event_key": "甲甲称呼串", "hook": "回访同一个梗", "confidence": 0.85},
             ]
         )
 

@@ -111,7 +111,7 @@ def test_review_evidence_manifest_is_json_serializable():
                 text="我是小皇帝",
                 language="zh",
                 kind="speech",
-                speaker="lidousha",
+                speaker="host",
                 confidence=0.91,
             ),
         ),

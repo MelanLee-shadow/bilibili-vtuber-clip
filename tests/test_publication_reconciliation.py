@@ -13,14 +13,15 @@ from src.autoslice.batch_terminal_state import project_terminal_batch_state
 from src.autoslice.candidate_selection import exact_talk_contract_closure
 from src.autoslice.reporting import _current_compliant_delivery
 from src.autoslice import same_bv_live_verification
+from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
 DATE = "2026-07-29"
 CANDIDATE = "auto_225056_814_887"
 BVID = "BV1FBGw6uE6i"
-TITLE = "【李豆沙】公开后状态必须收敛"
+TITLE = f"{CHANNEL_PROFILE.talk_title_prefix}公开后状态必须收敛"
 DESCRIPTION = "https://live.bilibili.com/\n测试简介"
-TAGS = ["李豆沙", "虚拟主播", "直播切片"]
+TAGS = [CHANNEL_PROFILE.display_name, "虚拟主播", "直播切片"]
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -72,7 +73,7 @@ def _new_bv_fixture(tmp_path: Path) -> dict:
         "tags": TAGS,
         "video": {"path": str(video), "sha256": _sha(video)},
         "cover": {"path": str(cover), "sha256": _sha(cover)},
-        "season": {"lane": "talk", "season_title": "小李切片"},
+        "season": {"lane": "talk", "season_title": "小主切片"},
         "package_attestation": {
             "package_root": str(package.resolve()),
             "record": _entry(record),

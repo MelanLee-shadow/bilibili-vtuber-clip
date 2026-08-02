@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from src.autoslice.speaker_common import HOST_SPEAKER
 from src.autoslice.speaker_finalizer import (
     SpeakerFinalizationError,
     finalize_fast_solo_subtitles,
@@ -414,7 +415,7 @@ def test_fast_renderer_requires_verified_authority_and_uses_sapphire_style(
     ]
     assert manifest["fresh_fast_derivation"]["output_sha256"] == _sha(media)
     assert manifest["fresh_fast_derivation"]["cache_reused"] is False
-    assert output_srt.read_text(encoding="utf-8").count("[李豆沙]") == 2
+    assert output_srt.read_text(encoding="utf-8").count(f"[{HOST_SPEAKER}]") == 2
     ass = output_ass.read_text(encoding="utf-8")
     assert "Style: LDS,Microsoft YaHei,72" in ass
     assert "Dialogue: 0,0:00:00.00,0:00:02.00,LDS" in ass

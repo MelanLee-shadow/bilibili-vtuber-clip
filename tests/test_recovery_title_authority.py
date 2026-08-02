@@ -13,6 +13,7 @@ from src.autoslice.recovery_title_authority import (
     validate_recovery_publication_authority,
     validate_recovery_title_authority,
 )
+from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
 CANDIDATE_ID = "auto_193450_1475_1543"
@@ -231,11 +232,11 @@ def test_publication_registry_accepts_explicit_section_drift_identity_receipt(
 ):
     repo = tmp_path / "repo"
     evidence_dir = repo / "reports" / "captured"
-    asset_dir = repo / "assets" / "lidousha"
+    asset_dir = repo / "assets" / "channel"
     evidence_dir.mkdir(parents=True)
     asset_dir.mkdir(parents=True)
     candidate_id = "auto_162016_20_319"
-    title = "【李豆沙】已发稿件的粉色小姐姐故事"
+    title = f"{CHANNEL_PROFILE.talk_title_prefix}已发稿件的粉色小姐姐故事"
     receipt = {
         "schema_version": "recovery-publication-identity.v1",
         "status": "VERIFIED_TITLE_AND_TARGET_IDENTITY",
@@ -257,7 +258,7 @@ def test_publication_registry_accepts_explicit_section_drift_identity_receipt(
         "section_api": {
             "code": 0,
             "episode_match_count": 1,
-            "episode_titles": ["【李豆沙】历史旧标题"],
+            "episode_titles": [f"{CHANNEL_PROFILE.talk_title_prefix}历史旧标题"],
         },
         "problems": ["exact section episode title mismatch"],
     }

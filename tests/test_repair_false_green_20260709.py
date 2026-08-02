@@ -11,6 +11,7 @@ import pytest
 from scripts import authorized_upload
 from scripts import repair_false_green_20260709 as repair
 from src.autoslice.song_repair import AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION
+from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
 INCIDENT_SOURCE_PAYLOAD = b"background-song-source"
@@ -48,7 +49,7 @@ def _write_title_cover_qc(
         "title_cover_aligned": True,
         "unrelated_or_misleading_elements": [],
         "pass": True,
-        "reason": "李豆沙主体清楚，两行钩子与标题一致。",
+        "reason": f"{CHANNEL_PROFILE.display_name}主体清楚，两行钩子与标题一致。",
     }
     cover_sha = authorized_upload.sha256_file(cover)
     receipt = cover.parent / "title-cover-joint-qc.json"
@@ -144,8 +145,8 @@ def _authorized_upload_args(tmp_path: Path, *, lock: Path, uploader: Path) -> li
         "1\n00:00:00,000 --> 00:00:01,000\n锁测试\n",
         encoding="utf-8",
     )
-    title = "【李豆沙】锁竞争集成测试标题"
-    tags = ["李豆沙", "虚拟主播", "直播切片"]
+    title = f"{CHANNEL_PROFILE.talk_title_prefix}锁竞争集成测试标题"
+    tags = [CHANNEL_PROFILE.display_name, "虚拟主播", "直播切片"]
     record = package_root / "lock-video.record.json"
     record.write_text(
         json.dumps(
@@ -312,7 +313,7 @@ def _incident_fixture(
             "retried_full_source": True,
             "song_complete": True,
             "delivered": str(delivery / "old-false-green.mp4"),
-            "title": "【李豆沙】豆沙歌，《芽吹くとき》",
+            "title": f"{CHANNEL_PROFILE.song_title_prefix}《芽吹くとき》",
         },
         "final_acceptance": {
             "status": "ACCEPTED_NO_UPLOAD",
@@ -332,7 +333,7 @@ def _incident_fixture(
             "candidate_id": f"talk_{index}",
             "status": "review_ready",
             "hook": f"talk hook {index}",
-            "title": f"【李豆沙】talk {index}",
+            "title": f"{CHANNEL_PROFILE.talk_title_prefix}talk {index}",
             "start_ms": 0,
             "end_ms": 60_000,
             "summary": {},
@@ -363,7 +364,7 @@ def _incident_fixture(
                 "lyrics_alignment_ready": True,
                 "delivered": str(delivery / "old-false-green.mp4"),
                 "delivered_sidecars": {"subtitle": str(delivery / "old.srt")},
-                "title": "【李豆沙】豆沙歌，《芽吹くとき》",
+                "title": f"{CHANNEL_PROFILE.song_title_prefix}《芽吹くとき》",
                 "preview": "下播前演唱 yonige《芽吹くとき》",
                 "cover_status": "AI_COVER_READY",
                 "song_completion_evidence": {"ready": True},
@@ -958,7 +959,7 @@ def test_streamer_talking_over_recorded_vocal_is_valid_incident_rejection(tmp_pa
     assert repaired_song["song_repair_gate"]["live_performance"]["mode"] == mode
 
 
-def test_one_recorded_row_cannot_authorize_mostly_lidousha_singing_incident_repair(tmp_path, capsys):
+def test_one_recorded_row_cannot_authorize_mostly_host_singing_incident_repair(tmp_path, capsys):
     fixture = _incident_fixture(tmp_path)
     raw = json.loads(fixture["agy_output"].read_text(encoding="utf-8"))
     raw["live_performance"]["mode"] = "STREAMER_TALKING_OVER_MUSIC"

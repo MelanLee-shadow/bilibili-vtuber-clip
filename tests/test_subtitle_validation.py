@@ -67,7 +67,7 @@ def test_terminal_punctuation_does_not_hide_single_content_character():
 
 2
 00:00:01,000 --> 00:00:03,000
-那就差礼墨没吃了
+那就差乙乙没吃了
 """
 
     result = validate_srt_text(text)
@@ -153,12 +153,12 @@ def test_merge_release_grade_cues_absorbs_slivers_and_single_chars():
         "5\n00:01:17,280 --> 00:01:18,280\n行\n\n"
         "6\n00:01:18,590 --> 00:01:22,660\n谢谢刚刚panoja的舰长\n\n"
         "7\n00:01:22,660 --> 00:01:23,380\n切，\n\n"
-        "8\n00:01:23,380 --> 00:01:25,940\n那就差礼墨没吃了\n"
+        "8\n00:01:23,380 --> 00:01:25,940\n那就差乙乙没吃了\n"
     )
     out, rows = merge_release_grade_cues(srt)
     assert "哦，这样吗" in out
     assert "嘻，晓得吧，行" in out
-    assert "切，那就差礼墨没吃了" in out
+    assert "切，那就差乙乙没吃了" in out
     assert validate_srt_text(out)["status"] == "PASS"
     actions = {row["text"]: row["action"] for row in rows}
     assert actions == {

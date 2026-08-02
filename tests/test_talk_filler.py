@@ -444,7 +444,7 @@ def test_merge_gap_removal_produces_two_piece_plan():
         end_ms=660_000,
         cues=[],
         merge_gap_removals=[
-            {"start_ms": 60_000, "end_ms": 565_000, "event_key": "kmx称呼串"}
+            {"start_ms": 60_000, "end_ms": 565_000, "event_key": "甲甲称呼串"}
         ],
     )
 

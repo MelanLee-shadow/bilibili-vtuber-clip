@@ -10,14 +10,14 @@ from src.autoslice.source_integrity import (
 def test_recording_inventory_blocks_finalized_playlist_without_mp4(tmp_path):
     date_dir = tmp_path / "2026-07-22"
     date_dir.mkdir()
-    stem = "22966160_20260722-20-05-11"
+    stem = "123456_20260722-20-05-11"
     (date_dir / f"{stem}.m4s").write_bytes(b"raw-media")
     (date_dir / f"{stem}.m3u8").write_text(
         "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-ENDLIST\n",
         encoding="utf-8",
     )
 
-    audit = audit_finalized_recording_inventory(date_dir, room_id="22966160")
+    audit = audit_finalized_recording_inventory(date_dir, room_id="123456")
 
     assert audit["status"] == "BLOCKED"
     assert audit["can_select"] is False
@@ -30,7 +30,7 @@ def test_recording_inventory_blocks_finalized_playlist_without_mp4(tmp_path):
 def test_recording_inventory_accepts_raw_sidecars_with_consumable_mp4(tmp_path):
     date_dir = tmp_path / "2026-07-22"
     date_dir.mkdir()
-    stem = "22966160_20260722-19-35-15"
+    stem = "123456_20260722-19-35-15"
     for suffix in (".m4s", ".mp4"):
         (date_dir / f"{stem}{suffix}").write_bytes(b"media")
     (date_dir / f"{stem}.m3u8").write_text(
@@ -38,7 +38,7 @@ def test_recording_inventory_accepts_raw_sidecars_with_consumable_mp4(tmp_path):
         encoding="utf-8",
     )
 
-    audit = audit_finalized_recording_inventory(date_dir, room_id="22966160")
+    audit = audit_finalized_recording_inventory(date_dir, room_id="123456")
 
     assert audit["status"] == "PASS"
     assert audit["can_select"] is True
@@ -51,14 +51,14 @@ def test_recording_inventory_blocks_closed_bililive_recorder_flv_without_mp4(
 ):
     date_dir = tmp_path / "2026-07-23"
     date_dir.mkdir()
-    stem = "22966160_20260723-19-35-15"
+    stem = "123456_20260723-19-35-15"
     (date_dir / f"{stem}.flv").write_bytes(b"closed-official-recorder-source")
     (date_dir / f"{stem}.xml").write_text(
         '<i><BililiveRecorder version="2.18.0"/></i>',
         encoding="utf-8",
     )
 
-    audit = audit_finalized_recording_inventory(date_dir, room_id="22966160")
+    audit = audit_finalized_recording_inventory(date_dir, room_id="123456")
 
     assert audit["status"] == "BLOCKED"
     assert audit["can_select"] is False
@@ -70,11 +70,11 @@ def test_recording_inventory_blocks_closed_bililive_recorder_flv_without_mp4(
 def test_recording_inventory_accepts_flv_with_atomic_adapter_mp4(tmp_path):
     date_dir = tmp_path / "2026-07-23"
     date_dir.mkdir()
-    stem = "22966160_20260723-19-35-15"
+    stem = "123456_20260723-19-35-15"
     (date_dir / f"{stem}.flv").write_bytes(b"source")
     (date_dir / f"{stem}.mp4").write_bytes(b"consumer")
 
-    audit = audit_finalized_recording_inventory(date_dir, room_id="22966160")
+    audit = audit_finalized_recording_inventory(date_dir, room_id="123456")
 
     assert audit["status"] == "PASS"
     assert audit["consumer_segments"] == [str(date_dir / f"{stem}.mp4")]
@@ -82,11 +82,11 @@ def test_recording_inventory_accepts_flv_with_atomic_adapter_mp4(tmp_path):
 
 def test_danmaku_outruns_tiny_media_requires_replay_compensation():
     ledger = build_source_range_ledger(
-        room_id="22966160",
+        room_id="123456",
         session_date="2026-06-29",
         segments=[
             MediaSegmentObservation(
-                path="/app/Videos/22966160/2026-06-29/tiny.m4s",
+                path="/app/Videos/123456/2026-06-29/tiny.m4s",
                 start_ms=0,
                 end_ms=4_040,
                 duration_ms=4_040,
@@ -112,7 +112,7 @@ def test_danmaku_outruns_tiny_media_requires_replay_compensation():
 
 def test_contiguous_valid_segments_do_not_need_replay_probe():
     ledger = build_source_range_ledger(
-        room_id="22966160",
+        room_id="123456",
         session_date="2026-06-29",
         segments=[
             MediaSegmentObservation(path="a.m4s", start_ms=0, end_ms=60_000, duration_ms=60_000, size_bytes=5_000_000),
@@ -133,7 +133,7 @@ def test_contiguous_valid_segments_do_not_need_replay_probe():
 
 def test_unprobeable_redundant_sidecar_warns_without_replay_probe():
     ledger = build_source_range_ledger(
-        room_id="22966160",
+        room_id="123456",
         session_date="2026-07-01",
         segments=[
             MediaSegmentObservation(
@@ -168,7 +168,7 @@ def test_unprobeable_redundant_sidecar_warns_without_replay_probe():
 
 def test_unprobeable_segment_not_covered_by_sibling_still_blocks():
     ledger = build_source_range_ledger(
-        room_id="22966160",
+        room_id="123456",
         session_date="2026-07-01",
         segments=[
             MediaSegmentObservation(
@@ -201,7 +201,7 @@ def test_unprobeable_segment_not_covered_by_sibling_still_blocks():
 
 def test_tiny_restart_stub_warns_when_verified_coverage_is_complete():
     ledger = build_source_range_ledger(
-        room_id="22966160",
+        room_id="123456",
         session_date="2026-07-01",
         segments=[
             MediaSegmentObservation(path="a.flv", start_ms=0, end_ms=60_000, duration_ms=60_000, size_bytes=5_000_000),
@@ -224,7 +224,7 @@ def test_tiny_restart_stub_warns_when_verified_coverage_is_complete():
 
 def test_gap_between_segments_records_missing_source_range():
     ledger = build_source_range_ledger(
-        room_id="22966160",
+        room_id="123456",
         session_date="2026-06-29",
         segments=[
             MediaSegmentObservation(path="a.m4s", start_ms=0, end_ms=60_000, duration_ms=60_000, size_bytes=5_000_000),
@@ -242,7 +242,7 @@ def test_gap_between_segments_records_missing_source_range():
 
 def test_replay_compensation_plan_fails_closed_without_auth_or_availability():
     ledger = build_source_range_ledger(
-        room_id="22966160",
+        room_id="123456",
         session_date="2026-06-29",
         segments=[],
         expected_start_ms=0,
@@ -262,7 +262,7 @@ def test_replay_compensation_plan_fails_closed_without_auth_or_availability():
 
 def test_replay_compensation_plan_is_download_ready_only_when_auth_and_replay_available():
     ledger = build_source_range_ledger(
-        room_id="22966160",
+        room_id="123456",
         session_date="2026-06-29",
         segments=[],
         expected_start_ms=0,
@@ -276,12 +276,12 @@ def test_replay_compensation_plan_is_download_ready_only_when_auth_and_replay_av
     assert [(r.start_ms, r.end_ms) for r in plan.download_ranges] == [(0, 60_000)]
     manifest = plan.to_manifest()
     assert "cookie" not in str(manifest).lower()
-    assert manifest["room_id"] == "22966160"
+    assert manifest["room_id"] == "123456"
 
 
 def test_replay_download_command_plan_fails_closed_without_url_tool_or_auth(tmp_path):
     ledger = build_source_range_ledger(
-        room_id="22966160",
+        room_id="123456",
         session_date="2026-06-29",
         segments=[],
         expected_start_ms=60_000,
@@ -325,7 +325,7 @@ def test_replay_download_command_plan_fails_closed_without_url_tool_or_auth(tmp_
 
 def test_replay_download_command_plan_builds_redacted_yt_dlp_sections(tmp_path):
     ledger = build_source_range_ledger(
-        room_id="22966160",
+        room_id="123456",
         session_date="2026-06-29",
         segments=[],
         expected_start_ms=60_000,
