@@ -14,6 +14,7 @@ from scripts.build_lidousha_daily_review_manifest import (
     _validate_source_fact_receipts,
 )
 from src.autoslice.source_fact_review import review_and_repair_source_facts
+from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
 def _keep_completion(hook: str, title: str) -> str:
@@ -217,10 +218,10 @@ def test_sync_record_bound_candidate_artifacts_makes_evidence_portable(
 def test_source_fact_receipt_must_match_all_package_surfaces(
     tmp_path: Path,
 ) -> None:
-    hook = "弹幕提议把技能叫李姐拉拉，主播随即拒绝。"
-    title = "【李豆沙】弹幕提议把技能叫“李姐拉拉”，主播随即拒绝"
-    transcript = "技能可以叫李姐拉拉吗\n不行，我这个应该叫李姐网"
-    context = "- superchat: 技能可以叫李姐拉拉吗"
+    hook = "弹幕提议把技能叫甲甲拉拉，主播随即拒绝。"
+    title = CHANNEL_PROFILE.talk_title_prefix + "弹幕提议把技能叫“甲甲拉拉”，主播随即拒绝"
+    transcript = "技能可以叫甲甲拉拉吗\n不行，我这个应该叫甲甲网"
+    context = "- superchat: 技能可以叫甲甲拉拉吗"
     receipt = review_and_repair_source_facts(
         selection_hook=hook,
         title=title,
@@ -231,9 +232,9 @@ def test_source_fact_receipt_must_match_all_package_surfaces(
     subtitle = tmp_path / "candidate.srt"
     subtitle.write_text(
         "1\n00:00:00,000 --> 00:00:01,000\n"
-        "技能可以叫李姐拉拉吗\n\n"
+        "技能可以叫甲甲拉拉吗\n\n"
         "2\n00:00:01,000 --> 00:00:02,000\n"
-        "不行，我这个应该叫李姐网\n",
+        "不行，我这个应该叫甲甲网\n",
         encoding="utf-8",
     )
     record = {
@@ -276,12 +277,12 @@ def test_song_manifest_does_not_require_talk_source_fact_receipt(
     assert _source_fact_manifest_fields(
         lane="song",
         record_doc={"classification": "song"},
-        publish_doc={"title": "【李豆沙·歌】《测试歌曲》"},
+        publish_doc={"title": "【主播·歌】《测试歌曲》"},
         subtitle_path=subtitle,
     ) == {}
     assert _lane_manifest_contract_fields(
         lane="song",
         record_doc={"classification": "song"},
-        publish_doc={"title": "【李豆沙·歌】《测试歌曲》"},
+        publish_doc={"title": "【主播·歌】《测试歌曲》"},
         subtitle_path=subtitle,
     ) == {}

@@ -7,10 +7,11 @@ import pytest
 
 from scripts import audit_lidousha_review_package as package_audit
 from src.autoslice import cover_only_audit_scope as scope_mod
+from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
 CANDIDATE = "auto_192000_909_1014"
-TITLE = "【李豆沙】观众想让新3D永久保留“白色奶龙”表情，小李拒绝花钱"
+TITLE = CHANNEL_PROFILE.talk_title_prefix + "观众想让新3D永久保留“白色浣熊”表情，小主拒绝花钱"
 
 
 def _sha(path: Path) -> str:
@@ -28,7 +29,7 @@ def _scope_fixture(tmp_path: Path, monkeypatch):
     publish_path = root / f"{stem}.publish.json"
     video.write_bytes(b"reviewed-video")
     subtitle.write_text(
-        "1\n00:00:00,000 --> 00:00:01,000\n白色奶龙\n",
+        "1\n00:00:00,000 --> 00:00:01,000\n白色浣熊\n",
         encoding="utf-8",
     )
     cover.write_bytes(b"new-reviewed-cover")
@@ -43,7 +44,7 @@ def _scope_fixture(tmp_path: Path, monkeypatch):
         "story_contract": {"candidate_id": CANDIDATE},
         "publish_staging": {"title": TITLE},
         "recovery_publication_authority": authority,
-        "upload_tags": {"final_tags": ["李豆沙", "切片"]},
+        "upload_tags": {"final_tags": ["主播", "切片"]},
         "artifact_hashes": {
             "video_sha256": _sha(video),
             "subtitle_sha256": _sha(subtitle),
@@ -67,7 +68,7 @@ def _scope_fixture(tmp_path: Path, monkeypatch):
             "title": TITLE,
             "desc": "desc",
             # Public API readback may reorder a semantically identical tag set.
-            "tags": ["切片", "李豆沙"],
+            "tags": ["切片", "主播"],
             "tid": 21,
             "copyright": 2,
             "source": "https://live.bilibili.com/",
@@ -159,7 +160,7 @@ def test_scope_replays_exact_noncover_bytes_and_new_cover(tmp_path, monkeypatch)
     assert scope_mod.validate_scope(scope, package_root=root, item=item) == scope
     assert scope["publication_target"]["current_cid"] == 303
     assert scope["reused_gate"] == "SOURCE_FACT_REVIEW_MISSING_ONLY"
-    assert scope["frozen_noncover"]["tags"] == ["李豆沙", "切片"]
+    assert scope["frozen_noncover"]["tags"] == ["主播", "切片"]
 
 
 def test_scope_rejects_title_drift_and_present_receipt(tmp_path, monkeypatch):
@@ -192,7 +193,7 @@ def test_scope_rejects_tag_set_drift(tmp_path, monkeypatch):
     root, _stem, completed_path = _scope_fixture(tmp_path, monkeypatch)
     record_path = root / "white-dragon.record.json"
     record = json.loads(record_path.read_text(encoding="utf-8"))
-    record["upload_tags"]["final_tags"] = ["李豆沙", "错误标签"]
+    record["upload_tags"]["final_tags"] = ["主播", "错误标签"]
     record_path.write_text(json.dumps(record), encoding="utf-8")
     with pytest.raises(
         scope_mod.CoverOnlyAuditScopeError,

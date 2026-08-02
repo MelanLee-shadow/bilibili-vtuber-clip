@@ -187,7 +187,7 @@ def test_722_reviewed_score_anchor_replaces_95_point_overrating() -> None:
 
 def _calibration_payload() -> dict:
     path = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets/lidousha/selection_score_calibration.v1.json"
     )
     return json.loads(path.read_text(encoding="utf-8"))

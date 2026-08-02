@@ -63,7 +63,7 @@ def test_router_does_not_apply_ungrounded_homophone_spelling():
     source = _srt("欢迎季下", "今天小雨来了没")
     findings = [
         {"cue_index": 1, "suspect": "季下", "kind": "nonword", "suggestion": "记下", "why": "非词"},
-        {"cue_index": 2, "suspect": "小雨", "kind": "self_ref", "suggestion": "小李", "why": "自称可疑"},
+        {"cue_index": 2, "suspect": "小雨", "kind": "self_ref", "suggestion": "小主", "why": "自称可疑"},
     ]
 
     output, audit = route_findings(source, findings, protected_term_set=frozenset())
@@ -360,7 +360,7 @@ def test_auditor_prompt_distinguishes_gibberish_code_switch_from_real_foreign_di
         return '{"findings":[]}'
 
     audit_final_subtitles(
-        _srt("因为李豆沙是侄女，kowa，kowai", "本物の気持ちです"),
+        _srt("因为主播是侄女，kowa，kowai", "本物の気持ちです"),
         llm_call=review,
         extract_json=_extract,
     )
@@ -519,20 +519,20 @@ def test_auditor_can_cite_structured_chat_as_name_spelling_evidence():
             {
                 "cue": 1,
                 "kind": "entity",
-                "proposed_full_cue": "但是因为kmx",
+                "proposed_full_cue": "但是因为xyz",
                 "repair_class": "source_backed_entity",
-                "source_surface": "kmx",
+                "source_surface": "xyz",
                 "why": "同一时间窗弹幕重复使用该专名",
             }
         ]),
         extract_json=_extract,
-        structured_context_text="danmaku @1000ms: 大家：kmx是这样的",
+        structured_context_text="danmaku @1000ms: 大家：xyz是这样的",
     )
 
-    assert findings[0]["suggestion"] == "kmx"
+    assert findings[0]["suggestion"] == "xyz"
     assert findings[0]["candidate_provenance"] == {
         "kind": "structured_context",
-        "surface": "kmx",
+        "surface": "xyz",
     }
 
 
@@ -563,8 +563,8 @@ def test_parallel_repeat_recovers_misclassified_entity_provenance_but_keeps_audi
     重复时可恢复 provenance，但引入注册实体仍不得走纯文本自动改写。"""
 
     source = _srt(
-        "小李又被大哥骂赢了",
-        "哪里又变成小李被大N霸凌了",
+        "小主又被大哥骂赢了",
+        "哪里又变成小主被大N霸凌了",
     )
     findings = audit_final_subtitles(
         source,
@@ -573,7 +573,7 @@ def test_parallel_repeat_recovers_misclassified_entity_provenance_but_keeps_audi
                 {
                     "cue": 1,
                     "kind": "entity",
-                    "proposed_full_cue": "小李又被大N霸凌了",
+                    "proposed_full_cue": "小主又被大N霸凌了",
                     "repair_class": "phonetic",
                     "evidence_cue_ids": [2],
                     "why": "后文立即平行复述同一句式",
@@ -602,7 +602,7 @@ def test_parallel_repeat_recovers_misclassified_entity_provenance_but_keeps_audi
         protected_term_set=frozenset(),
         entity_surface_set=frozenset({"大N"}),
     )
-    assert "小李又被大哥骂赢了" in output
+    assert "小主又被大哥骂赢了" in output
     assert audit["findings"][0]["routed"] == "disclosure"
     assert audit["findings"][0]["entity_surface_conflict"] is True
 
@@ -1546,12 +1546,12 @@ def test_context_adjudication_keeps_current_when_semantics_conflict_with_audio()
 
 
 def test_source_backed_letter_name_spelling_survives_acoustic_grapheme_veto():
-    source = _srt("哪里又变成小李被大大恩霸凌了")
+    source = _srt("哪里又变成小主被大大恩霸凌了")
     finding = {
         "cue_index": 1,
         "suspect": "大大恩",
         "suggestion": "大N",
-        "proposed_full_cue": "哪里又变成小李被大N霸凌了",
+        "proposed_full_cue": "哪里又变成小主被大N霸凌了",
         "repair_class": "source_backed_entity",
         "candidate_provenance": {
             "kind": "glossary",
@@ -1562,7 +1562,7 @@ def test_source_backed_letter_name_spelling_survives_acoustic_grapheme_veto():
 
     def acoustics_reports_spoken_en(request):
         return _witness(
-            request, "na li you bian cheng xiao li bei da da en ba ling le"
+            request, "na li you bian cheng xiao zhu bei da da en ba ling le"
         )
 
     output, audit = adjudicate_context_finding(
@@ -1829,10 +1829,10 @@ def test_context_adjudication_rejects_any_model_returned_text_channel():
 
 
 def test_source_backed_entity_insertion_survives_contract(monkeypatch):
-    """2026-07-18 kmx 整词漏听案：ASR 零召回的专名只能靠插入修复。
+    """2026-07-18 xyz 整词漏听案：ASR 零召回的专名只能靠插入修复。
     source_backed_entity + 词表见证 + 声学仲裁三重门下允许空 suspect 插入。"""
     srt = (
-        "1\n00:00:00,000 --> 00:00:04,000\n只有怎么，你为什么会这样称呼李豆沙\n\n"
+        "1\n00:00:00,000 --> 00:00:04,000\n只有怎么，你为什么会这样称呼主播\n\n"
         "2\n00:00:05,000 --> 00:00:09,000\n第二句正常文本\n"
     )
     findings = audit_final_subtitles(
@@ -1843,30 +1843,30 @@ def test_source_backed_entity_insertion_survives_contract(monkeypatch):
                     {
                         "cue": 1,
                         "kind": "entity",
-                        "proposed_full_cue": "只有kmx怎么，你为什么会这样称呼李豆沙",
+                        "proposed_full_cue": "只有xyz怎么，你为什么会这样称呼主播",
                         "repair_class": "source_backed_entity",
-                        "source_surface": "kmx",
+                        "source_surface": "xyz",
                         "evidence_cue_ids": [],
-                        "why": "SC称呼串只有kmx会说，ASR整词漏听",
+                        "why": "SC称呼串只有xyz会说，ASR整词漏听",
                     }
                 ]
             },
             ensure_ascii=False,
         ),
         extract_json=json.loads,
-        glossary_text="- 人名/ID：kmx（李豆沙常提的人）",
-        structured_context_text="selection_hook: 只有kmx会这样称呼李豆沙",
+        glossary_text="- 人名/ID：xyz（主播常提的人）",
+        structured_context_text="selection_hook: 只有xyz会这样称呼主播",
     )
     assert len(findings) == 1
     finding = findings[0]
     assert finding["suspect"] == ""
-    assert finding["suggestion"] == "kmx"
+    assert finding["suggestion"] == "xyz"
     assert finding.get("suggestion_rejected_reason") is None
-    assert finding["candidate_provenance"] == {"kind": "glossary", "surface": "kmx"}
+    assert finding["candidate_provenance"] == {"kind": "glossary", "surface": "xyz"}
 
-    # 插入建议不走同音自动应用（空 suspect 与 kmx 不同音），必须进声学仲裁。
+    # 插入建议不走同音自动应用（空 suspect 与 xyz 不同音），必须进声学仲裁。
     output, audit = route_findings(srt, findings)
-    assert "只有kmx怎么" not in output
+    assert "只有xyz怎么" not in output
     row = audit["findings"][0]
     assert row["routed"] == "disclosure"
 
@@ -1874,7 +1874,7 @@ def test_source_backed_entity_insertion_survives_contract(monkeypatch):
     def prefer_proposed(request):
         return _witness(
             request,
-            "zhi you kmx zen me ni wei shen me hui zhe yang cheng hu li dou sha",
+            "zhi you xyz zen me ni wei shen me hui zhe yang cheng hu zhu bo",
         )
 
     repaired_srt, adj = adjudicate_context_finding(
@@ -1882,7 +1882,7 @@ def test_source_backed_entity_insertion_survives_contract(monkeypatch):
         judge_llm_call=_judge("PROPOSED"),
     )
     assert adj["repaired"] is True
-    assert "只有kmx怎么" in repaired_srt
+    assert "只有xyz怎么" in repaired_srt
 
 
 def test_plain_insertion_without_source_provenance_still_rejected():
@@ -2247,7 +2247,7 @@ def test_audible_acoustic_drop_neither_rebuilds_nonempty_third_candidate():
 
     def witness(request):
         witness_requests.append(request)
-        return _witness(request, "xiao li ni zen me bei dian le", audible=True)
+        return _witness(request, "xiao zhu ni zen me bei dian le", audible=True)
 
     def cpa(prompt):
         calls.append(prompt)
@@ -2256,7 +2256,7 @@ def test_audible_acoustic_drop_neither_rebuilds_nonempty_third_candidate():
             return json.dumps(
                 {
                     "status": "PROPOSED",
-                    "proposed_cue": "小李你怎么被电了",
+                    "proposed_cue": "小主你怎么被电了",
                     "reason": "听写与弹幕语境支持非空第三候选",
                 },
                 ensure_ascii=False,
@@ -2268,7 +2268,7 @@ def test_audible_acoustic_drop_neither_rebuilds_nonempty_third_candidate():
             assert "<DROP_CUE: EMPTY SUBTITLE>" not in prompt
             return json.dumps({"choice": "NEITHER", "reason": "现字幕与空删除均不成立"})
         assert "repair_class=spoken_unit" in prompt
-        assert "小李你怎么被电了" in prompt
+        assert "小主你怎么被电了" in prompt
         return json.dumps({"choice": "PROPOSED", "reason": "第三候选匹配"})
 
     output, audit = adjudicate_context_finding(
@@ -2287,11 +2287,11 @@ def test_audible_acoustic_drop_neither_rebuilds_nonempty_third_candidate():
         judge_llm_call=cpa,
     )
 
-    assert "小李你怎么被电了" in output
+    assert "小主你怎么被电了" in output
     assert "小林你怎么被点了" not in output
     assert audit["repaired"] is True
     assert audit["request"]["repair_class"] == "spoken_unit"
-    assert audit["request"]["proposed_cue"] == "小李你怎么被电了"
+    assert audit["request"]["proposed_cue"] == "小主你怎么被电了"
     assert audit["rebuilt_finding"]["repair_class"] == "spoken_unit"
     rebuild = audit["proposal_rebuild"]
     assert rebuild["status"] == "PROPOSED"
@@ -2485,8 +2485,8 @@ def test_registered_proper_names_are_equal_and_exit_expected_value_lane():
 
 
 def test_entity_surface_suspect_never_text_applied():
-    """kmx/乒乓球 保向铁律：suspect 是注册实体词面时 T1 让位声学仲裁。"""
-    srt = _srt("我的乒乓球又来直播间了", "第二句")
+    """xyz/示例球 保向铁律：suspect 是注册实体词面时 T1 让位声学仲裁。"""
+    srt = _srt("我的示例球又来直播间了", "第二句")
     findings = audit_final_subtitles(
         srt,
         llm_call=_fake_llm(
@@ -2494,27 +2494,27 @@ def test_entity_surface_suspect_never_text_applied():
                 {
                     "cue": 1,
                     "kind": "entity",
-                    "proposed_full_cue": "我的kmx又来直播间了",
+                    "proposed_full_cue": "我的xyz又来直播间了",
                     "repair_class": "source_backed_entity",
-                    "source_surface": "kmx",
-                    "why": "帕鲁语境乒乓球是kmx误听",
+                    "source_surface": "xyz",
+                    "why": "帕鲁语境示例球是xyz误听",
                 }
             ]
         ),
         extract_json=json.loads,
-        glossary_text="- 人名/ID：kmx",
+        glossary_text="- 人名/ID：xyz",
     )
-    assert findings and findings[0]["suggestion"] == "kmx"
+    assert findings and findings[0]["suggestion"] == "xyz"
 
     # protected_term_set 置空以隔离测试实体选边车道本身（真实运行里
-    # 乒乓球还会先被词表保护车道拦下——两道防线殊途同归都不许纯文本改写）。
+    # 示例球还会先被词表保护车道拦下——两道防线殊途同归都不许纯文本改写）。
     output, audit = route_findings(
         srt,
         findings,
         protected_term_set=frozenset(),
-        entity_surface_set=frozenset({"kmx", "乒乓球"}),
+        entity_surface_set=frozenset({"xyz", "示例球"}),
     )
-    assert "乒乓球" in output  # 未被纯文本改写
+    assert "示例球" in output  # 未被纯文本改写
     row = audit["findings"][0]
     assert row["routed"] == "disclosure"
     assert row.get("entity_surface_conflict") is True
@@ -2546,7 +2546,7 @@ def test_witnessed_but_phonetically_distant_stays_disclosure():
 
 def test_same_derived_transcript_witness_requires_acoustic_confirmation():
     """醉堆→这一堆可以由前文召回，但同一 ASR 派生文本不能自证落字。"""
-    srt = _srt("旁边这一堆都是新来的", "醉堆小李好可爱哦")
+    srt = _srt("旁边这一堆都是新来的", "醉堆小主好可爱哦")
     findings = audit_final_subtitles(
         srt,
         llm_call=_fake_llm(
@@ -2554,7 +2554,7 @@ def test_same_derived_transcript_witness_requires_acoustic_confirmation():
                 {
                     "cue": 2,
                     "kind": "context",
-                    "proposed_full_cue": "这一堆小李好可爱哦",
+                    "proposed_full_cue": "这一堆小主好可爱哦",
                     "repair_class": "phonetic",
                     "source_surface": "这一堆",
                     "why": "醉堆不成词，前文刚说旁边这一堆",
@@ -2569,7 +2569,7 @@ def test_same_derived_transcript_witness_requires_acoustic_confirmation():
     assert findings[0]["correlated_text_witness"] is True
 
     output, audit = route_findings(srt, findings)
-    assert "醉堆小李好可爱哦" in output
+    assert "醉堆小主好可爱哦" in output
     row = audit["findings"][0]
     assert row["routed"] == "disclosure"
 
@@ -2630,7 +2630,7 @@ def test_candidate_only_memory_cannot_be_promoted_to_source_witness():
 
 def test_candidate_only_memory_forces_acoustic_even_when_homophone():
     source = _srt("就是霸凌的那种小的吧")
-    memory_id = "lidousha.idiolect.xiaodeba.r1"
+    memory_id = "channel.idiolect.xiaodeba.r1"
     candidate_context = {
         "speech_memory": {
             "ledger_sha256": "sha256:" + "a" * 64,
@@ -2670,7 +2670,7 @@ def test_candidate_only_memory_forces_acoustic_even_when_homophone():
 
 def test_candidate_memory_display_prefix_is_normalized_only_to_verified_id():
     source = _srt("她是一个桔梗妹")
-    memory_id = "lidousha.idiolect.jieganmei.r1"
+    memory_id = "channel.idiolect.jieganmei.r1"
     candidate_context = {
         "speech_memory": {
             "ledger_sha256": "sha256:" + "b" * 64,

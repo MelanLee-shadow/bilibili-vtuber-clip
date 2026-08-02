@@ -22,11 +22,11 @@ def _request():
         "matched_start_ms": 2_000,
         "matched_end_ms": 4_000,
         # These locate/audit the outer decision but must never enter AGY's prompt.
-        "exact_text": "还没看，怎么有人说有母鸡卡的风险",
-        "matched_audio_text": "还没看怎么有人说有母鸡卡的风险",
+        "exact_text": "还没看，怎么有人说有示例乙的风险",
+        "matched_audio_text": "还没看怎么有人说有示例乙的风险",
         "candidate_entities": [
-            {"canonical": "梦限大", "surfaces": ["梦限大", "梦现代"], "readings": ["meng xian da"]},
-            {"canonical": "Ave Mujica", "surfaces": ["Mujica", "母鸡卡"], "readings": ["mujica"]},
+            {"canonical": "示例甲", "surfaces": ["示例甲", "示例甲代"], "readings": ["meng xian da"]},
+            {"canonical": "示例乙全名", "surfaces": ["示例乙", "示例乙全名"], "readings": ["mujica"]},
         ],
     }
 
@@ -90,7 +90,7 @@ def test_audio_verifier_uses_black_frame_clip_and_neutral_prompt(tmp_path, monke
                 {
                     "schema_version": "entity-audio-observation.v1",
                     "status": "RESOLVED",
-                    "canonical_entity": "梦限大",
+                    "canonical_entity": "示例甲",
                     "heard_syllables": "meng xian da",
                     "confidence": 0.98,
                     "reason": "three distinct syllables",
@@ -113,7 +113,7 @@ def test_audio_verifier_uses_black_frame_clip_and_neutral_prompt(tmp_path, monke
     verdict = verify(_request())
 
     assert verdict["status"] == "RESOLVED"
-    assert verdict["canonical_entity"] == "梦限大"
+    assert verdict["canonical_entity"] == "示例甲"
     ffmpeg = commands[0]
     assert "color=c=black:s=320x240:r=10" in ffmpeg
     assert ffmpeg[ffmpeg.index("-map") + 1] == "1:v:0"
@@ -138,7 +138,7 @@ def test_audio_verifier_low_confidence_is_uncertain(tmp_path, monkeypatch):
                 {
                     "schema_version": "entity-audio-observation.v1",
                     "status": "RESOLVED",
-                    "canonical_entity": "梦限大",
+                    "canonical_entity": "示例甲",
                     "heard_syllables": "unclear",
                     "confidence": 0.79,
                     "reason": "unclear",
@@ -372,7 +372,7 @@ def test_provider_failed_verdict_is_never_served_from_cache(tmp_path, monkeypatc
                 {
                     "schema_version": "entity-audio-observation.v1",
                     "status": "RESOLVED",
-                    "canonical_entity": "梦限大",
+                    "canonical_entity": "示例甲",
                     "heard_syllables": "meng xian da",
                     "confidence": 0.97,
                     "reason": "three clear syllables",
@@ -398,7 +398,7 @@ def test_provider_failed_verdict_is_never_served_from_cache(tmp_path, monkeypatc
     state["agy_available"] = True
     second = verify(_request())
     assert second["status"] == "RESOLVED", second
-    assert second["canonical_entity"] == "梦限大"
+    assert second["canonical_entity"] == "示例甲"
     assert second["provider"] == "agy"
     assert state["agy_calls"] == 2
 

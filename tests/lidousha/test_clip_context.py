@@ -14,7 +14,7 @@ from src.autoslice.speech_memory_ledger import load_scoped_speech_memory
 from src.autoslice.story_contract import build_story_contract
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 MEMORY_LEDGER = REPO_ROOT / "assets/lidousha/speech_memory_ledger.v1.json"
 
 

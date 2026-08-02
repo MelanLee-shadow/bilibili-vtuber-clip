@@ -130,7 +130,7 @@ CHARACTER_GROUP = ReferentGroup(
 
 def test_v2_entity_config_keeps_aliases_under_one_canonical():
     groups = load_referent_groups(
-        Path(__file__).resolve().parents[1] / "assets/lidousha/entity_confusables.json"
+        Path(__file__).resolve().parents[2] / "assets/lidousha/entity_confusables.json"
     )
     dream_group = next(
         group for group in groups if {entity.canonical for entity in group.entities} == {"梦限大", "Ave Mujica"}
@@ -585,7 +585,7 @@ def test_mishear_surface_rescue_uncertain_keeps_resolved_rewrites():
 
 def test_loader_parses_uncertain_keep_surfaces_from_asset():
     groups = load_referent_groups(
-        Path(__file__).resolve().parents[1] / "assets/lidousha/entity_confusables.json"
+        Path(__file__).resolve().parents[2] / "assets/lidousha/entity_confusables.json"
     )
     rescue = next(
         g for g in groups
@@ -630,7 +630,7 @@ def test_static_group_canonicals_keep_on_uncertain_after_kmx_generalization():
     """kmx 先例推广回归：文本已是「梦限大」「恋死」等规范形时，供应商断供
     (UNCERTAIN) 不得阻塞；误听面（梦现代）UNCERTAIN 照旧阻塞。"""
     groups = load_referent_groups(
-        Path(__file__).resolve().parents[1] / "assets/lidousha/entity_confusables.json"
+        Path(__file__).resolve().parents[2] / "assets/lidousha/entity_confusables.json"
     )
     dream = next(
         g for g in groups if {e.canonical for e in g.entities} == {"梦限大", "Ave Mujica"}
@@ -867,7 +867,7 @@ def test_witness_disagreement_arbitration_rewrites_only_suspicious_cues():
 
 def test_self_reference_wd_group_loads_from_asset():
     groups = load_referent_groups(
-        Path(__file__).resolve().parents[1] / "assets/lidousha/entity_confusables.json"
+        Path(__file__).resolve().parents[2] / "assets/lidousha/entity_confusables.json"
     )
     group = next(
         g for g in groups if {e.canonical for e in g.entities} == {"李豆沙", "小李"}

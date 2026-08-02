@@ -15,7 +15,7 @@ def test_attested_runner_binds_direct_chunk_and_merged_output(
     draft = tmp_path / "draft.srt"
     draft_text = (
         "1\n00:00:00,000 --> 00:00:01,000\n"
-        "李豆莎\n"
+        "甲乙丙\n"
     )
     draft.write_text(draft_text, encoding="utf-8")
     output = tmp_path / "refined.srt"
@@ -26,7 +26,7 @@ def test_attested_runner_binds_direct_chunk_and_merged_output(
 
     refined = (
         "1\n00:00:00,000 --> 00:00:01,000\n"
-        "李豆沙\n"
+        "甲乙丁\n"
     )
     monkeypatch.setattr(runner, "_encode_chunk_clip", fake_encode)
     monkeypatch.setattr(

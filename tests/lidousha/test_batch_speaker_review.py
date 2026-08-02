@@ -232,7 +232,7 @@ def test_resume_requires_every_artifact_hash_to_match(tmp_path: Path) -> None:
                 "host_identity_aliases": ["李豆沙", "shadow"],
                 "profile_sha256": hashlib.sha256(
                     (
-                        Path(__file__).resolve().parents[1]
+                        Path(__file__).resolve().parents[2]
                         / "assets/lidousha/voiceprint_profile.v1.json"
                     ).read_bytes()
                 ).hexdigest(),
@@ -498,7 +498,7 @@ def test_build_applies_bound_text_finalization_before_speaker_inference(
 
 
 def test_july9_plan_is_exactly_the_ten_published_talk_clips() -> None:
-    plan_path = Path(__file__).resolve().parents[1] / "assets/lidousha/speaker_batch_plans/2026-07-09.json"
+    plan_path = Path(__file__).resolve().parents[2] / "assets/lidousha/speaker_batch_plans/2026-07-09.json"
     plan = validate_plan(json.loads(plan_path.read_text(encoding="utf-8")))
     assert {entry["candidate_id"] for entry in plan["entries"]} == {
         "auto_193036_487_758",
@@ -525,7 +525,7 @@ def test_july9_plan_is_exactly_the_ten_published_talk_clips() -> None:
     )
     assert reviewed["speaker_override_sha256"] == "281ea62a4928739b6bcc68df1c44507d884dcf7e2c09dbb38b4a1160c7eede89"
     reviewed_override = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets/lidousha/speaker_overrides/promo_210025_643_801.speaker.v1.json"
     )
     assert hashlib.sha256(reviewed_override.read_bytes()).hexdigest() == reviewed[
@@ -549,13 +549,13 @@ def test_july9_plan_is_exactly_the_ten_published_talk_clips() -> None:
     # lost to an ENOSPC cleanup; targets now bind the manifest-witnessed
     # delivered burned finals (audio bit-identical via -c:a copy).
     assert kitchen["source_session_anchor_sha256"] == "12de048247fcda7c3f6f0006c1296282b6222ada120b1750929cf88a7719f812"
-    anchor_path = Path(__file__).resolve().parents[1] / "assets/lidousha/speaker_session_anchors/2026-07-09-220021.v1.json"
+    anchor_path = Path(__file__).resolve().parents[2] / "assets/lidousha/speaker_session_anchors/2026-07-09-220021.v1.json"
     assert hashlib.sha256(anchor_path.read_bytes()).hexdigest() == kitchen["source_session_anchor_sha256"]
     monologue = next(
         entry for entry in plan["entries"] if entry["candidate_id"] == "promo_223019_374_480"
     )
     monologue_anchor = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets/lidousha/speaker_session_anchors/2026-07-09-223019.v1.json"
     )
     assert hashlib.sha256(monologue_anchor.read_bytes()).hexdigest() == monologue[
@@ -565,7 +565,7 @@ def test_july9_plan_is_exactly_the_ten_published_talk_clips() -> None:
         entry for entry in plan["entries"] if entry["candidate_id"] == "auto_203027_549_697"
     )
     relay_anchor = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets/lidousha/speaker_session_anchors/2026-07-09-203027.v1.json"
     )
     assert hashlib.sha256(relay_anchor.read_bytes()).hexdigest() == relay[
@@ -573,7 +573,7 @@ def test_july9_plan_is_exactly_the_ten_published_talk_clips() -> None:
     ]
     relay_anchor_document = json.loads(relay_anchor.read_text(encoding="utf-8"))
     profile_path = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets/lidousha/voiceprint_profile.v1.json"
     )
     profile_sha256 = hashlib.sha256(profile_path.read_bytes()).hexdigest()
@@ -624,14 +624,14 @@ def test_july9_plan_is_exactly_the_ten_published_talk_clips() -> None:
     }
     assert all(entry["text_revalidation"] is False for entry in plan["entries"])
     text_override = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets/lidousha/subtitle_text_overrides/promo_193036_367_476.text.v1.json"
     )
     assert hashlib.sha256(text_override.read_bytes()).hexdigest() == pronoun_fix[
         "subtitle_text_override_sha256"
     ]
     pronoun_speaker_override = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / "assets/lidousha/speaker_overrides/promo_193036_367_476.speaker.v1.json"
     )
     assert hashlib.sha256(pronoun_speaker_override.read_bytes()).hexdigest() == pronoun_fix[

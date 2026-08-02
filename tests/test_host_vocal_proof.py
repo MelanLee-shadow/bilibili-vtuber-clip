@@ -58,17 +58,17 @@ def _fixture(tmp_path: Path, *, passes: tuple[bool, ...] = (True, False, True, T
     reference_dir.mkdir()
     reference_specs = []
     for index in range(3):
-        reference = reference_dir / f"enroll_lds_{index + 1}.wav"
-        reference.write_bytes(f"lidousha-reference-{index + 1}".encode())
+        reference = reference_dir / f"enroll_ref_{index + 1}.wav"
+        reference.write_bytes(f"channel-reference-{index + 1}".encode())
         reference_specs.append(
-            {"id": f"lidousha-{index + 1}", "filename": reference.name, "sha256": _sha(reference)}
+            {"id": f"ref-{index + 1}", "filename": reference.name, "sha256": _sha(reference)}
         )
 
     profile = tmp_path / "voiceprint_profile.v1.json"
     profile_payload = {
         "schema_version": host_vocal.PROFILE_SCHEMA_VERSION,
-        "profile_id": "lidousha-test-v1",
-        "subject": "李豆沙",
+        "profile_id": "channel-test-v1",
+        "subject": host_vocal.CHANNEL_PROFILE.display_name,
         "model": {
             "model_id": "damo/speech_campplus_sv_zh-cn_16k-common",
             "tree_sha256": host_vocal._sha256_directory(model_dir),

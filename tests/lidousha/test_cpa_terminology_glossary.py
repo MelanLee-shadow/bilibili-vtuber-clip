@@ -10,7 +10,7 @@ from scripts.lidousha_glossary_terms import (
     parse_glossary_terms,
 )
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 GLOSSARY = ROOT / "assets" / "lidousha" / "glossary.txt"
 
 
