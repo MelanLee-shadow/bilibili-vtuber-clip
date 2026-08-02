@@ -192,6 +192,13 @@ REWRITE_SKIP_PREFIXES = ("assets/",)
 # 类别：PII / 私有拓扑 / 死引用 / 运营叙事进规则文档。
 PATCHES: tuple[tuple[str, str, str], ...] = (
     (
+        # 监控宿主：私库默认保持参考部署（launchd 既有调用不带 env）；OSS 默认
+        # 本机——录制与切片同机是 quickstart 布局，远端宿主用 env 覆盖。
+        "scripts/lidousha_slice_monitor.py",
+        'SSH_HOST = os.environ.get("AUTOSLICE_MONITOR_SSH_HOST", "free")',
+        'SSH_HOST = os.environ.get("AUTOSLICE_MONITOR_SSH_HOST", "localhost")',
+    ),
+    (
         # VAD 脚本默认路径：私库默认保持参考部署（/opt/bilive/vad，生产不动）；
         # OSS 默认指仓内脚本——媒体在本机（quickstart 路径）时零配置可用，
         # 远端媒体宿主用 AUTOSLICE_VAD_SCRIPT 指向部署路径。
@@ -292,7 +299,7 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "tests/test_runtime_architecture.py",
         "    # 2026-08-01 新记：OSS 发布整备（维护者 授权）把导出器扩成改名/patch/模板引擎；\n"
         "    # 私库专用构建工具，导出时自剥离，不进 OSS 面。\n"
-        '    "scripts/export_oss_snapshot.py": 2_142,\n',
+        '    "scripts/export_oss_snapshot.py": 2_149,\n',
         "",
     ),
     # --- 债务棘轮：被剥离脚本的例外条目同步移除 ---

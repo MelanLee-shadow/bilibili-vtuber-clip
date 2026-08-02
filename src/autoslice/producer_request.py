@@ -41,7 +41,8 @@ def parse_producer_args(
 ) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--spec", type=Path, required=True)
-    parser.add_argument("--ssh-host", default="free")
+    # 媒体宿主由用户自己决定；默认本机（媒体在别的机器时显式传 --ssh-host）。
+    parser.add_argument("--ssh-host", default="localhost")
     parser.add_argument(
         "--substrate",
         choices=("aggregate_asr", "agy_fresh"),

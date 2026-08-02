@@ -39,9 +39,9 @@ from datetime import datetime, timezone, timedelta
 # ----------------------------------------------------------------------------
 # Config
 # ----------------------------------------------------------------------------
-SSH_HOST = "free"
-CONTAINER = "bilive_record"
-PRIMARY_ROOM = "22966160"      # 李豆沙  (the production target)
+SSH_HOST = os.environ.get("AUTOSLICE_MONITOR_SSH_HOST", "free")
+CONTAINER = os.environ.get("AUTOSLICE_MONITOR_CONTAINER", "bilive_record")
+PRIMARY_ROOM = os.environ.get("AUTOSLICE_MONITOR_ROOM", "22966160")  # 参考部署房间号
 ROOMS = [PRIMARY_ROOM]
 
 REPORT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",

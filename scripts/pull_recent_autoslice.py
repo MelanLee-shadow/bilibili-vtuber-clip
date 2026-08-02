@@ -288,7 +288,8 @@ def build_parser() -> argparse.ArgumentParser:
     pull_parser = subparsers.add_parser("pull", help="pull recent non-archived dates")
     pull_parser.add_argument("--days", type=int, default=3)
     pull_parser.add_argument("--today", help=argparse.SUPPRESS)
-    pull_parser.add_argument("--host", default="free")
+    # 远端 runner 宿主是部署专属信息，用户自己决定——必填，不给任何人的主机名当默认。
+    pull_parser.add_argument("--host", required=True, help="runner 宿主 ssh 别名/地址")
     pull_parser.add_argument("--remote-root", default=DEFAULT_REMOTE_ROOT)
     pull_parser.add_argument("--local-root", default=str(DEFAULT_LOCAL_ROOT))
     pull_parser.add_argument("--state-dir", default=str(DEFAULT_STATE_DIR))

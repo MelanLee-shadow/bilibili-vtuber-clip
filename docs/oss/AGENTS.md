@@ -114,5 +114,7 @@ profile 字节等价）；个别键需先在 profile manifest 增设资产键。
 `verified_lidousha_voiceprint`、`LIDOUSHA_*` 兼容 env 别名、scorecard 维度键
 `lidousha_centrality`。
 
-参考部署默认值（`--ssh-host` 默认 `free`、`/opt/bilive` 布局、示例房间号等）
-不算耦合：全部可用 CLI 参数/环境变量覆盖，见各脚本 `--help` 与 `.env.example`。
+部署位默认值全部指向本机或由用户显式决定：`--ssh-host` 默认 `localhost`
+（媒体在别的机器时显式传）、监控脚本的宿主/房间号走
+`AUTOSLICE_MONITOR_SSH_HOST`/`AUTOSLICE_MONITOR_ROOM` 环境变量、
+`pull` 工具的 `--host` 必填。`/opt/bilive` 布局是参考部署约定，可整体换路径。
