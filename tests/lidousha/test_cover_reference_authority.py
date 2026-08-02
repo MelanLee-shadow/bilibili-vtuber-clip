@@ -30,7 +30,7 @@ from src.autoslice.cover_title_rendering import (
 from src.autoslice.producer_package_finalization import _audit_story_bound_cover
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 COVER_FONT = (
     REPO_ROOT / "assets/lidousha/fonts/ZCOOLKuaiLe-Regular.ttf"
 )

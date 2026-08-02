@@ -9,7 +9,7 @@ from src.autoslice import legacy_hls_recovery as recovery
 
 
 def _playlist(tmp_path: Path) -> tuple[Path, Path]:
-    raw = tmp_path / "22966160_20260722-20-05-11.m4s"
+    raw = tmp_path / "123456_20260722-20-05-11.m4s"
     raw.write_bytes(b"raw-media")
     playlist = raw.with_suffix(".m3u8")
     playlist.write_text(
@@ -61,7 +61,7 @@ def test_recover_finalized_legacy_hls_publishes_verified_mp4(
     monkeypatch.setattr(recovery, "_run", fake_run)
     receipts = recovery.recover_finalized_legacy_hls(
         tmp_path,
-        room_id="22966160",
+        room_id="123456",
     )
 
     target = playlist.with_suffix(".mp4")
@@ -88,5 +88,5 @@ def test_recover_finalized_legacy_hls_rejects_external_uri(tmp_path):
     ):
         recovery.recover_finalized_legacy_hls(
             tmp_path,
-            room_id="22966160",
+            room_id="123456",
         )

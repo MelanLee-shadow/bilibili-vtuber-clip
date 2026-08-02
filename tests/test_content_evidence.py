@@ -1,6 +1,7 @@
 from src.autoslice.auto_review import DecisionAction, JingtingProvenance, review_candidate
 from src.autoslice.content_evidence import analyze_content_evidence
 from src.autoslice.review_evidence import SourceCue, to_candidate_review
+from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
 def good_provenance():
@@ -105,7 +106,7 @@ def test_hooky_title_alone_cannot_satisfy_payoff():
     evidence = analyze_content_evidence(
         candidate_id="title-only-payoff",
         cues=[cue("setup", 0, 3, "我跟你们说一个事"), cue("body", 4, 8, "这个东西就是这样")],
-        title="【李豆沙】结果最后直接笑疯了哈哈哈",
+        title=CHANNEL_PROFILE.talk_title_prefix + "结果最后直接笑疯了哈哈哈",
     )
 
     assert evidence.payoff_score < 0.90

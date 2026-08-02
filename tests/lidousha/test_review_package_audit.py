@@ -51,7 +51,7 @@ from src.autoslice.source_fact_review import review_and_repair_source_facts
 from src.autoslice.story_contract import build_story_contract
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 COVER_FONT = (
     REPO_ROOT / "assets/lidousha/fonts/ZCOOLKuaiLe-Regular.ttf"
 )
@@ -2729,7 +2729,7 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         topic_resolution={"status": "NO_GRAPH"},
         session_topic_authorities=(),
         speech_memory_ledger_path=(
-            Path(__file__).resolve().parents[1]
+            Path(__file__).resolve().parents[2]
             / "assets/lidousha/speech_memory_ledger.v1.json"
         ),
     )

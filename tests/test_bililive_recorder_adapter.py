@@ -46,7 +46,7 @@ def _xml(*, start_time: str = "2026-07-23T13:57:26.3170443+08:00") -> str:
         '<?xml version="1.0" encoding="utf-8"?>\n'
         "<i>"
         '<BililiveRecorder version="2.18.0"/>'
-        f'<BililiveRecorderRecordInfo roomid="22966160" name="李豆沙" '
+        f'<BililiveRecorderRecordInfo roomid="123456" name="主播" '
         f'title="测试" start_time="{start_time}"/>'
         f'<d p="1.000,1,25,16777215,0,0,123,0" user="弹幕用户" '
         f"raw={quoteattr(json.dumps(danmaku_info, ensure_ascii=False))}>普通弹幕</d>"
@@ -62,7 +62,7 @@ def _xml(*, start_time: str = "2026-07-23T13:57:26.3170443+08:00") -> str:
 
 def _args(tmp_path: Path) -> argparse.Namespace:
     return argparse.Namespace(
-        room=22966160,
+        room=123456,
         endpoint="http://127.0.0.1:1/graphql",
         record_root=tmp_path / "recordings",
         status_path=tmp_path / "runtime/status.json",
@@ -109,7 +109,7 @@ def test_committed_config_prioritizes_1080p_avc_and_forces_ipv4() -> None:
 
 
 def test_xml_to_jsonl_restores_bilibili_command_envelopes(tmp_path: Path) -> None:
-    xml_path = tmp_path / "22966160_20260723-13-57-26.xml"
+    xml_path = tmp_path / "123456_20260723-13-57-26.xml"
     xml_path.write_text(_xml(), encoding="utf-8")
 
     payload, info, event_count = adapter.xml_to_jsonl(xml_path)
@@ -129,10 +129,10 @@ def test_xml_to_jsonl_restores_bilibili_command_envelopes(tmp_path: Path) -> Non
 
 
 def test_xml_without_raw_evidence_is_rejected(tmp_path: Path) -> None:
-    xml_path = tmp_path / "22966160_20260723-13-57-26.xml"
+    xml_path = tmp_path / "123456_20260723-13-57-26.xml"
     xml_path.write_text(
         '<?xml version="1.0"?><i><BililiveRecorder version="2.18.0"/>'
-        '<BililiveRecorderRecordInfo roomid="22966160" name="李豆沙" '
+        '<BililiveRecorderRecordInfo roomid="123456" name="主播" '
         'title="测试" start_time="2026-07-23T13:57:26+08:00"/>'
         '<d p="1,1,25,1,0,0,1,0">没有 raw</d></i>',
         encoding="utf-8",
@@ -146,13 +146,13 @@ def test_webhook_journal_dedupes_and_preserves_closed_state_when_out_of_order(
     tmp_path: Path,
 ) -> None:
     journal = tmp_path / "webhook-events.jsonl"
-    relative = "Videos/22966160/2026-07-23/22966160_20260723-13-57-26.flv"
+    relative = "Videos/123456/2026-07-23/123456_20260723-13-57-26.flv"
     closed = {
         "EventType": "FileClosed",
         "EventTimestamp": "2026-07-23T14:27:26.1234567+08:00",
         "EventId": "11111111-1111-4111-8111-111111111111",
         "EventData": {
-            "RoomId": 22966160,
+            "RoomId": 123456,
             "SessionId": "session-a",
             "RelativePath": relative,
             "FileSize": 123456,
@@ -166,20 +166,20 @@ def test_webhook_journal_dedupes_and_preserves_closed_state_when_out_of_order(
         "EventTimestamp": "2026-07-23T13:57:26+08:00",
         "EventId": "22222222-2222-4222-8222-222222222222",
         "EventData": {
-            "RoomId": 22966160,
+            "RoomId": 123456,
             "SessionId": "session-a",
             "RelativePath": relative,
             "FileOpenTime": "2026-07-23T13:57:26+08:00",
         },
     }
-    adapter.append_webhook_event(journal, closed, room_id=22966160)
-    adapter.append_webhook_event(journal, closed, room_id=22966160)
-    adapter.append_webhook_event(journal, opening, room_id=22966160)
+    adapter.append_webhook_event(journal, closed, room_id=123456)
+    adapter.append_webhook_event(journal, closed, room_id=123456)
+    adapter.append_webhook_event(journal, opening, room_id=123456)
     state = {}
 
-    assert adapter.reconcile_webhook_journal(journal, state, room_id=22966160)
-    assert not adapter.reconcile_webhook_journal(journal, state, room_id=22966160)
-    row = state["webhook_files"]["2026-07-23/22966160_20260723-13-57-26.flv"]
+    assert adapter.reconcile_webhook_journal(journal, state, room_id=123456)
+    assert not adapter.reconcile_webhook_journal(journal, state, room_id=123456)
+    row = state["webhook_files"]["2026-07-23/123456_20260723-13-57-26.flv"]
     assert row["status"] == "CLOSED"
     assert row["file_size"] == 123456
     assert len(state["webhook_event_ids"]) == 2
@@ -252,15 +252,15 @@ def test_discovery_does_not_read_old_xml_without_webhook_ownership(
 ) -> None:
     date_dir = tmp_path / "2026-07-23"
     date_dir.mkdir()
-    legacy = date_dir / "22966160_20260723-10-00-00.flv"
-    official = date_dir / "22966160_20260723-11-00-00.flv"
+    legacy = date_dir / "123456_20260723-10-00-00.flv"
+    official = date_dir / "123456_20260723-11-00-00.flv"
     legacy.write_bytes(b"legacy")
     official.write_bytes(b"official")
     official.with_suffix(".xml").write_text(_xml(), encoding="utf-8")
 
     found = adapter.discover_managed_flvs(
         tmp_path,
-        room_id=22966160,
+        room_id=123456,
         managed_since_epoch=max(legacy.stat().st_mtime, official.stat().st_mtime) + 60,
     )
 
@@ -272,15 +272,15 @@ def test_discovery_accepts_old_file_from_validated_webhook_ledger(
 ) -> None:
     date_dir = tmp_path / "2026-07-23"
     date_dir.mkdir()
-    official = date_dir / "22966160_20260723-11-00-00.flv"
+    official = date_dir / "123456_20260723-11-00-00.flv"
     official.write_bytes(b"official")
 
     found = adapter.discover_managed_flvs(
         tmp_path,
-        room_id=22966160,
+        room_id=123456,
         managed_since_epoch=official.stat().st_mtime + 60,
         explicit_relative_paths=[
-            "2026-07-23/22966160_20260723-11-00-00.flv"
+            "2026-07-23/123456_20260723-11-00-00.flv"
         ],
     )
 
@@ -293,7 +293,7 @@ def test_idle_status_does_not_probe_historical_flv_bytes(
 ) -> None:
     date_dir = tmp_path / "2026-07-23"
     date_dir.mkdir()
-    (date_dir / "22966160_20260723-11-00-00.flv").write_bytes(b"x" * 300_000)
+    (date_dir / "123456_20260723-11-00-00.flv").write_bytes(b"x" * 300_000)
     monkeypatch.setattr(
         adapter,
         "probe_stream_shape",
@@ -303,7 +303,7 @@ def test_idle_status_does_not_probe_historical_flv_bytes(
     )
 
     status = adapter.build_status(
-        room_id=22966160,
+        room_id=123456,
         room={
             "streaming": False,
             "recording": False,
@@ -323,7 +323,7 @@ def test_closed_source_finalization_error_keeps_downstream_fail_closed(
     args = _args(tmp_path)
     date_dir = args.record_root / "2026-07-23"
     date_dir.mkdir(parents=True)
-    (date_dir / "22966160_20260723-13-57-26.flv").write_bytes(b"closed-without-xml")
+    (date_dir / "123456_20260723-13-57-26.flv").write_bytes(b"closed-without-xml")
     monkeypatch.setattr(
         adapter,
         "query_room_status",
@@ -342,7 +342,7 @@ def test_closed_source_finalization_error_keeps_downstream_fail_closed(
     assert status["live_status"] == 0
     assert status["error"] == "1 closed recording(s) failed finalization"
     assert status["finalize_errors"]
-    assert not (date_dir / "22966160_20260723-13-57-26.mp4").exists()
+    assert not (date_dir / "123456_20260723-13-57-26.mp4").exists()
 
 
 def test_run_once_finalizes_only_with_matching_fileclosed_evidence(
@@ -351,7 +351,7 @@ def test_run_once_finalizes_only_with_matching_fileclosed_evidence(
     args = _args(tmp_path)
     date_dir = args.record_root / "2026-07-23"
     date_dir.mkdir(parents=True)
-    source = date_dir / "22966160_20260723-13-57-26.flv"
+    source = date_dir / "123456_20260723-13-57-26.flv"
     source.write_bytes(b"closed-source")
     source.with_suffix(".xml").write_text(_xml(), encoding="utf-8")
     event = {
@@ -359,11 +359,11 @@ def test_run_once_finalizes_only_with_matching_fileclosed_evidence(
         "EventTimestamp": "2026-07-23T14:27:26+08:00",
         "EventId": "33333333-3333-4333-8333-333333333333",
         "EventData": {
-            "RoomId": 22966160,
+            "RoomId": 123456,
             "SessionId": "session-b",
             "RelativePath": (
-                "Videos/22966160/2026-07-23/"
-                "22966160_20260723-13-57-26.flv"
+                "Videos/123456/2026-07-23/"
+                "123456_20260723-13-57-26.flv"
             ),
             "FileSize": source.stat().st_size,
             "Duration": 1800.0,
@@ -371,7 +371,7 @@ def test_run_once_finalizes_only_with_matching_fileclosed_evidence(
             "FileCloseTime": "2026-07-23T14:27:26+08:00",
         },
     }
-    adapter.append_webhook_event(args.webhook_journal, event, room_id=22966160)
+    adapter.append_webhook_event(args.webhook_journal, event, room_id=123456)
     monkeypatch.setattr(
         adapter,
         "query_room_status",
@@ -400,7 +400,7 @@ def test_run_once_finalizes_only_with_matching_fileclosed_evidence(
 
     assert adapter.run_once(args) == 0
     state = json.loads(args.state_path.read_text(encoding="utf-8"))
-    relative = "2026-07-23/22966160_20260723-13-57-26.flv"
+    relative = "2026-07-23/123456_20260723-13-57-26.flv"
     assert state["webhook_files"][relative]["status"] == "CLOSED"
     assert state["finalized"][relative]["target_sha256"]
 
@@ -410,7 +410,7 @@ def test_run_once_finalizes_only_with_matching_fileclosed_evidence(
     reason="ffmpeg/ffprobe required",
 )
 def test_finalize_real_flv_is_atomic_idempotent_and_preserves_source(tmp_path: Path) -> None:
-    source = tmp_path / "22966160_20260723-13-57-26.flv"
+    source = tmp_path / "123456_20260723-13-57-26.flv"
     subprocess.run(
         [
             "ffmpeg",

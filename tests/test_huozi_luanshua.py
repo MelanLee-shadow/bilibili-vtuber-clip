@@ -163,7 +163,7 @@ def test_collab_source_only_promotes_fully_contained_trusted_ranges(tmp_path):
     manifest = _source_manifest(
         tmp_path,
         [
-            _utterance("礼墨说的", 0),
+            _utterance("甲甲说的", 0),
             _utterance("我要为爱做零", 3_000),
             _utterance("边界外", 6_000),
         ],
@@ -204,7 +204,7 @@ def test_phrase_confirmation_cannot_promote_context_beyond_confirmed_fragment(tm
     )
     manifest = _source_manifest(
         tmp_path,
-        [_utterance("小李是零", 3_000)],
+        [_utterance("小主是零", 3_000)],
         source_id="collab-human-review",
         speaker="mixed",
         speaker_confidence=0.0,
@@ -236,7 +236,7 @@ def test_phrase_confirmation_accepts_exactly_confirmed_fragment(tmp_path):
     )
     manifest = _source_manifest(
         tmp_path,
-        [_utterance("小李是", 3_000)],
+        [_utterance("小主是", 3_000)],
         source_id="collab-human-review",
         speaker="mixed",
         speaker_confidence=0.0,
@@ -256,7 +256,7 @@ def test_phrase_confirmation_accepts_exactly_confirmed_fragment(tmp_path):
 
     corpus = build_corpus(manifest, manifest_dir=tmp_path)
 
-    assert [row["text"] for row in corpus["utterances"]] == ["小李是"]
+    assert [row["text"] for row in corpus["utterances"]] == ["小主是"]
     assert corpus["utterances"][0]["speaker_evidence"][0]["coverage_ranges_ms"] == [
         [3_000, 3_360]
     ]
@@ -366,10 +366,10 @@ def test_corpus_ignores_zero_duration_punctuation_tokens(tmp_path):
     utterance = {
         "start_time": 1_000,
         "end_time": 1_720,
-        "transcript": "小李。可是",
+        "transcript": "小主。可是",
         "words": [
             {"label": "小", "start_time": 1_000, "end_time": 1_160},
-            {"label": "李", "start_time": 1_160, "end_time": 1_320},
+            {"label": "主", "start_time": 1_160, "end_time": 1_320},
             {"label": "。", "start_time": 1_320, "end_time": 1_320},
             {"label": "可", "start_time": 1_400, "end_time": 1_560},
             {"label": "是", "start_time": 1_560, "end_time": 1_720},
@@ -381,8 +381,8 @@ def test_corpus_ignores_zero_duration_punctuation_tokens(tmp_path):
         manifest_dir=tmp_path,
     )
 
-    assert [row["text"] for row in corpus["utterances"]] == ["小李。可是"]
-    assert [piece["text"] for piece in plan_text("小李", corpus)["pieces"]] == ["小李"]
+    assert [row["text"] for row in corpus["utterances"]] == ["小主。可是"]
+    assert [piece["text"] for piece in plan_text("小主", corpus)["pieces"]] == ["小主"]
 
 
 def test_suggestion_ranking_only_keeps_small_edits_that_reduce_fragmentation(tmp_path):
@@ -450,7 +450,7 @@ def test_build_verification_binds_two_timed_asr_files_and_zero_orthography(tmp_p
 
 
 def test_proper_name_homophone_needs_separate_timed_human_review(tmp_path):
-    manifest = _source_manifest(tmp_path, [_utterance("豆沙是零", 1_000)])
+    manifest = _source_manifest(tmp_path, [_utterance("主播是零", 1_000)])
     source = manifest["sources"][0]
     jianying = tmp_path / "jianying-homophone.json"
     jianying.write_text(
@@ -459,7 +459,7 @@ def test_proper_name_homophone_needs_separate_timed_human_review(tmp_path):
     )
     human_review = tmp_path / "proper-name-review.json"
     human_review.write_text(
-        json.dumps({"utterances": [_utterance("豆沙是零", 1_000)]}, ensure_ascii=False),
+        json.dumps({"utterances": [_utterance("主播是零", 1_000)]}, ensure_ascii=False),
         encoding="utf-8",
     )
     source["transcript_authorities"] = [
@@ -477,7 +477,7 @@ def test_proper_name_homophone_needs_separate_timed_human_review(tmp_path):
         },
     ]
 
-    plan = plan_text("豆沙是零", build_corpus(manifest, manifest_dir=tmp_path))
+    plan = plan_text("主播是零", build_corpus(manifest, manifest_dir=tmp_path))
     verification = build_verification(plan, timing_tolerance_ms=200)
 
     assert verification["pieces"]["p001"]["transcript_authorities"] == [

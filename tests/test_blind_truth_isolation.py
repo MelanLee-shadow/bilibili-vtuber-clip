@@ -9,11 +9,12 @@ from scripts import score_blind_subtitle as scorer
 
 
 def test_withheld_mode_hides_candidate_truth_and_changes_provenance(tmp_path, monkeypatch):
+    profile_asset_segment = runner.CHANNEL_PROFILE.asset_root.name
     monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:" + "a" * 64)
-    override = tmp_path / "assets/lidousha/subtitle_text_overrides/auto_blind.text.v1.json"
-    regression = tmp_path / "assets/lidousha/subtitle_regressions/auto_blind.subtitle-regression.v1.json"
-    baseline_root = tmp_path / "assets/lidousha/reviewed_subtitle_baselines"
+    override = tmp_path / f"assets/{profile_asset_segment}/subtitle_text_overrides/auto_blind.text.v1.json"
+    regression = tmp_path / f"assets/{profile_asset_segment}/subtitle_regressions/auto_blind.subtitle-regression.v1.json"
+    baseline_root = tmp_path / f"assets/{profile_asset_segment}/reviewed_subtitle_baselines"
     baseline = baseline_root / "auto_blind.reviewed.srt"
     baseline_manifest = baseline_root / "auto_blind.subtitle-baseline.v1.json"
     override.parent.mkdir(parents=True)
@@ -62,9 +63,9 @@ def test_withheld_mode_disables_reviewed_timely_terms_without_machine_snapshot(t
     monkeypatch.setattr(runner, "REPO_ROOT", tmp_path / "repo")
     monkeypatch.setattr(runner, "BASE", tmp_path / "runtime")
     monkeypatch.setattr(runner, "CPA_ENV", tmp_path / "missing.env")
-    reviewed = tmp_path / "repo/assets/lidousha/timely_terms.json"
+    reviewed = tmp_path / f"repo/assets/{runner.CHANNEL_PROFILE.asset_root.name}/timely_terms.json"
     reviewed.parent.mkdir(parents=True)
-    reviewed.write_text('{"reviewed":"梦限大"}\n', encoding="utf-8")
+    reviewed.write_text('{"reviewed":"示例主题"}\n', encoding="utf-8")
     monkeypatch.setenv("AUTOSLICE_HUMAN_TRUTH_MODE", "withheld")
     monkeypatch.delenv("AUTOSLICE_BLIND_TIMELY_TERMS", raising=False)
 
@@ -92,7 +93,7 @@ def test_withheld_mode_disables_reviewed_topic_graph_without_machine_graph(tmp_p
     monkeypatch.setattr(runner, "REPO_ROOT", repo)
     monkeypatch.setattr(runner, "BASE", tmp_path / "runtime")
     monkeypatch.setattr(runner, "CPA_ENV", tmp_path / "missing.env")
-    reviewed = repo / "assets/lidousha/topic_entity_graph.json"
+    reviewed = repo / f"assets/{runner.CHANNEL_PROFILE.asset_root.name}/topic_entity_graph.json"
     reviewed.parent.mkdir(parents=True)
     reviewed.write_text('{"reviewed":"character answer"}\n', encoding="utf-8")
     monkeypatch.setenv("AUTOSLICE_HUMAN_TRUTH_MODE", "withheld")
@@ -178,14 +179,17 @@ def test_post_hoc_scorer_reads_truth_only_after_blind_outputs_exist(tmp_path):
     speaker_srt = tmp_path / "final-speaker.srt"
     truth = tmp_path / "truth.json"
     output = tmp_path / "audit.json"
-    text_srt.write_text("1\n00:00:00,000 --> 00:00:01,000\n梦限大\n", encoding="utf-8")
-    speaker_srt.write_text("1\n00:00:00,000 --> 00:00:01,000\n[李豆沙] 梦限大\n", encoding="utf-8")
+    text_srt.write_text("1\n00:00:00,000 --> 00:00:01,000\n示例主题\n", encoding="utf-8")
+    speaker_srt.write_text(
+        f"1\n00:00:00,000 --> 00:00:01,000\n[{runner.CHANNEL_PROFILE.display_name}] 示例主题\n",
+        encoding="utf-8",
+    )
     truth.write_text(
         json.dumps(
             {
                 "schema_version": "lidousha-subtitle-regression.v1",
                 "candidate_id": candidate_id,
-                "required_payload_substrings": ["梦限大"],
+                "required_payload_substrings": ["示例主题"],
                 "forbidden_payload_substrings": ["mujica"],
                 "forbidden_exact_cues": [],
             },

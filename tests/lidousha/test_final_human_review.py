@@ -17,7 +17,7 @@ from src.autoslice.final_human_review import (
     validate_final_human_review,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 CHECK_NAMES = (
     "final_burned_full_playback",

@@ -279,7 +279,7 @@ def test_season_episode_edit_preserves_episode_and_page_order(cookie_file):
 
     response = session.season_episode_edit(
         episode_id=210909973,
-        title="【李豆沙】新标题",
+        title="【主播】新标题",
         aid=116969558771366,
         cid=40389051822,
         season_id=8383206,
@@ -293,7 +293,7 @@ def test_season_episode_edit_preserves_episode_and_page_order(cookie_file):
     assert request.full_url.endswith("/x2/creative/web/season/section/episode/edit?csrf=csrf-token")
     assert json.loads(request.data) == {
         "id": 210909973,
-        "title": "【李豆沙】新标题",
+        "title": "【主播】新标题",
         "aid": 116969558771366,
         "cid": 40389051822,
         "seasonId": 8383206,

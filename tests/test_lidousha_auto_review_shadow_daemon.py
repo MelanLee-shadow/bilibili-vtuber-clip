@@ -16,7 +16,7 @@ def _write(path: Path, content: str | bytes) -> Path:
 def _write_date_dir(
     root: Path,
     *,
-    room_id: str = "22966160",
+    room_id: str = "123456",
     date: str = "2026-06-25",
     stem: str = "1s_test-",
     publish_extra: dict | None = None,
@@ -47,7 +47,7 @@ def _write_date_dir(
 
 
 def test_daemon_directory_lock_is_exclusive_and_released(tmp_path):
-    lock_path = tmp_path / "reports" / ".lidousha_auto_review_shadow_22966160.lock"
+    lock_path = tmp_path / "reports" / ".lidousha_auto_review_shadow_123456.lock"
 
     assert daemon.acquire_directory_lock(lock_path) is True
     assert daemon.acquire_directory_lock(lock_path) is False
@@ -61,7 +61,7 @@ def test_daemon_directory_lock_is_exclusive_and_released(tmp_path):
 
 
 def test_daemon_directory_lock_reclaims_zombie_pid_lock(tmp_path, monkeypatch):
-    lock_path = tmp_path / "reports" / ".lidousha_auto_review_shadow_22966160.lock"
+    lock_path = tmp_path / "reports" / ".lidousha_auto_review_shadow_123456.lock"
     lock_path.mkdir(parents=True)
     lock_path.joinpath("pid").write_text("12345\n", encoding="utf-8")
     lock_path.joinpath("created_at").write_text("2026-07-01T00:00:00+00:00\n", encoding="utf-8")
@@ -78,13 +78,13 @@ def test_daemon_directory_lock_reclaims_zombie_pid_lock(tmp_path, monkeypatch):
 
 def test_shadow_output_dir_adds_suffix_when_timestamp_collides(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon, "_shadow_timestamp", lambda: "20260630T012602Z")
-    existing = tmp_path / "shadow" / "22966160-2026-06-29-20260630T012602Z"
+    existing = tmp_path / "shadow" / "123456-2026-06-29-20260630T012602Z"
     existing.mkdir(parents=True)
     (existing / "sentinel.auto_review.done").write_text("sentinel\n", encoding="utf-8")
 
-    output_dir = daemon._shadow_output_dir(tmp_path, room_id="22966160", date_name="2026-06-29")
+    output_dir = daemon._shadow_output_dir(tmp_path, room_id="123456", date_name="2026-06-29")
 
-    assert output_dir.name == "22966160-2026-06-29-20260630T012602Z-01"
+    assert output_dir.name == "123456-2026-06-29-20260630T012602Z-01"
     assert not output_dir.exists()
     assert (existing / "sentinel.auto_review.done").exists()
 
@@ -93,7 +93,7 @@ def test_run_once_skips_unchanged_inputs_without_rerunning_pipeline(tmp_path, mo
     videos_root = tmp_path / "Videos"
     report_root = tmp_path / "reports"
     _write_date_dir(videos_root)
-    source_media = _write(videos_root / "22966160" / "2026-06-25" / "22966160_20260625-19-00-00.m4s", b"source media")
+    source_media = _write(videos_root / "123456" / "2026-06-25" / "123456_20260625-19-00-00.m4s", b"source media")
     monkeypatch.setattr(daemon, "_probe_duration", lambda path: 60.0 if path == source_media else 1.0)
     calls: list[str] = []
 
@@ -113,7 +113,7 @@ def test_run_once_skips_unchanged_inputs_without_rerunning_pipeline(tmp_path, mo
     first = daemon.run_once(
         videos_root=videos_root,
         report_root=report_root,
-        room_id="22966160",
+        room_id="123456",
         date="2026-06-25",
         require_jingting_complete=True,
         force=False,
@@ -121,7 +121,7 @@ def test_run_once_skips_unchanged_inputs_without_rerunning_pipeline(tmp_path, mo
     second = daemon.run_once(
         videos_root=videos_root,
         report_root=report_root,
-        room_id="22966160",
+        room_id="123456",
         date="2026-06-25",
         require_jingting_complete=True,
         force=False,
@@ -143,8 +143,8 @@ def test_run_once_reports_source_integrity_before_jingting_gate(tmp_path, monkey
     report_root = tmp_path / "reports"
     date_dir = _write_date_dir(videos_root, date="2026-06-29", stem="1s_missing_jingting-")
     (date_dir / "1s_missing_jingting-.jingting.done").unlink()
-    source_media = _write(date_dir / "22966160_20260629-19-00-11.m4s", b"tiny")
-    _write(date_dir / "22966160_20260629.danmaku.jsonl", '{"timeline_ms":7100000,"text":"still live"}\n')
+    source_media = _write(date_dir / "123456_20260629-19-00-11.m4s", b"tiny")
+    _write(date_dir / "123456_20260629.danmaku.jsonl", '{"timeline_ms":7100000,"text":"still live"}\n')
 
     def fake_probe_duration(path: Path):
         if path == source_media:
@@ -156,7 +156,7 @@ def test_run_once_reports_source_integrity_before_jingting_gate(tmp_path, monkey
     result = daemon.run_once(
         videos_root=videos_root,
         report_root=report_root,
-        room_id="22966160",
+        room_id="123456",
         date="2026-06-29",
         require_jingting_complete=True,
         force=False,
@@ -179,10 +179,10 @@ def test_run_once_reports_source_integrity_before_jingting_gate(tmp_path, monkey
 def test_run_once_uses_full_session_selector_when_no_prepared_slices_exist(tmp_path, monkeypatch):
     videos_root = tmp_path / "Videos"
     report_root = tmp_path / "reports"
-    date_dir = videos_root / "22966160" / "2026-06-30"
-    source_video = _write(date_dir / "sources" / "22966160_20260630-20-00-00.mp4", b"full source bytes\n")
+    date_dir = videos_root / "123456" / "2026-06-30"
+    source_video = _write(date_dir / "sources" / "123456_20260630-20-00-00.mp4", b"full source bytes\n")
     source_srt = _write(
-        date_dir / "sources" / "22966160_20260630-20-00-00.srt",
+        date_dir / "sources" / "123456_20260630-20-00-00.srt",
         (
             "1\n00:00:00,000 --> 00:00:02,000\n晚上好我先调一下麦\n\n"
             "2\n00:00:10,000 --> 00:00:12,000\n我跟你们说一个事\n\n"
@@ -216,7 +216,7 @@ def test_run_once_uses_full_session_selector_when_no_prepared_slices_exist(tmp_p
     result = daemon.run_once(
         videos_root=videos_root,
         report_root=report_root,
-        room_id="22966160",
+        room_id="123456",
         date="2026-06-30",
         require_jingting_complete=True,
         force=False,
@@ -249,8 +249,8 @@ def test_run_once_uses_full_session_selector_when_no_prepared_slices_exist(tmp_p
 def test_date_source_integrity_uses_replacement_source_when_it_covers_expected_range(tmp_path, monkeypatch):
     videos_root = tmp_path / "Videos"
     date_dir = _write_date_dir(videos_root, date="2026-06-30", stem="1s_replacement_fixture-")
-    first = _write(date_dir / "22966160_20260630-20-00-00.m4s", b"tiny")
-    second = _write(date_dir / "22966160_20260630-20-10-00.m4s", b"recovered")
+    first = _write(date_dir / "123456_20260630-20-00-00.m4s", b"tiny")
+    second = _write(date_dir / "123456_20260630-20-10-00.m4s", b"recovered")
     replacement_a = _write(date_dir / "replacement_source" / "BVfull" / "01-BVfull_p1.remux.mp4", b"a" * (128 * 1024))
     replacement_b = _write(date_dir / "replacement_source" / "BVfull" / "02-BVfull_p2.remux.mp4", b"b" * (128 * 1024))
 
@@ -267,7 +267,7 @@ def test_date_source_integrity_uses_replacement_source_when_it_covers_expected_r
 
     monkeypatch.setattr(daemon, "_probe_duration", fake_probe_duration)
 
-    integrity = daemon.build_date_source_integrity(date_dir, room_id="22966160", slices=daemon.discover_slices(date_dir))
+    integrity = daemon.build_date_source_integrity(date_dir, room_id="123456", slices=daemon.discover_slices(date_dir))
 
     assert integrity["ledger"]["can_use_local_source"] is True
     assert integrity["ledger"]["compensation_required"] is False
@@ -281,8 +281,8 @@ def test_date_source_integrity_uses_replacement_source_when_it_covers_expected_r
 def test_date_source_integrity_uses_recording_filenames_to_find_wall_clock_gap(tmp_path, monkeypatch):
     videos_root = tmp_path / "Videos"
     date_dir = _write_date_dir(videos_root, date="2026-06-29", stem="1s_gap_fixture-")
-    first = _write(date_dir / "22966160_20260629-19-00-11.m4s", b"tiny")
-    second = _write(date_dir / "22966160_20260629-21-35-13.m4s", b"recovered")
+    first = _write(date_dir / "123456_20260629-19-00-11.m4s", b"tiny")
+    second = _write(date_dir / "123456_20260629-21-35-13.m4s", b"recovered")
 
     def fake_probe_duration(path: Path):
         if path == first:
@@ -294,7 +294,7 @@ def test_date_source_integrity_uses_recording_filenames_to_find_wall_clock_gap(t
     monkeypatch.setattr(daemon, "_probe_duration", fake_probe_duration)
     slices = daemon.discover_slices(date_dir)
 
-    integrity = daemon.build_date_source_integrity(date_dir, room_id="22966160", slices=slices)
+    integrity = daemon.build_date_source_integrity(date_dir, room_id="123456", slices=slices)
 
     ledger = integrity["ledger"]
     issue_codes = {issue["code"] for issue in ledger["issues"]}
@@ -345,7 +345,7 @@ def test_run_once_routes_missing_jingting_done_via_live_source_when_metadata_is_
     result = daemon.run_once(
         videos_root=videos_root,
         report_root=report_root,
-        room_id="22966160",
+        room_id="123456",
         date="2026-06-30",
         require_jingting_complete=True,
         force=False,
@@ -391,7 +391,7 @@ def test_run_once_reports_exact_live_source_fields_when_jingting_done_is_missing
     result = daemon.run_once(
         videos_root=videos_root,
         report_root=report_root,
-        room_id="22966160",
+        room_id="123456",
         date="2026-06-30",
         require_jingting_complete=True,
         force=False,
@@ -456,7 +456,7 @@ def test_evaluate_recording_completion_lifecycle():
 def test_run_once_skips_while_recording_is_still_growing(tmp_path, monkeypatch):
     videos_root = tmp_path / "Videos"
     report_root = tmp_path / "reports"
-    date_dir = videos_root / "22966160" / "2026-06-30"
+    date_dir = videos_root / "123456" / "2026-06-30"
     _write(date_dir / "sources" / "s.mp4", b"still growing bytes\n")
     _write(
         date_dir / "sources" / "s.srt",
@@ -467,7 +467,7 @@ def test_run_once_skips_while_recording_is_still_growing(tmp_path, monkeypatch):
     result = daemon.run_once(
         videos_root=videos_root,
         report_root=report_root,
-        room_id="22966160",
+        room_id="123456",
         date="2026-06-30",
         require_jingting_complete=True,
         force=False,
@@ -479,9 +479,9 @@ def test_run_once_skips_while_recording_is_still_growing(tmp_path, monkeypatch):
 
 
 def test_full_session_routes_fall_back_to_recall_and_stamp_glossary(tmp_path, monkeypatch):
-    date_dir = tmp_path / "Videos" / "26730839" / "2026-07-02"
+    date_dir = tmp_path / "Videos" / "654321" / "2026-07-02"
     _write(date_dir / "sources" / "s.mp4", b"src\n")
-    # No lidousha setup markers; one dense singing run => primary selector empty.
+    # No channel setup markers; one dense singing run => primary selector empty.
     blocks = []
     cursor = 50_000
     for index in range(18):
@@ -499,12 +499,12 @@ def test_full_session_routes_fall_back_to_recall_and_stamp_glossary(tmp_path, mo
     source_srt = _write(date_dir / "sources" / "s.srt", "\n".join(blocks))
     lexicon_path = _write(
         tmp_path / "term_lexicon.json",
-        json.dumps({"schema_version": "lidousha-term-lexicon.v1", "overrides": [{"canonical": "kmx", "aliases": ["天不熊"]}]}),
+        json.dumps({"schema_version": "lidousha-term-lexicon.v1", "overrides": [{"canonical": "甲甲", "aliases": ["阿呆熊"]}]}),
     )
     monkeypatch.setenv("VTUBER_SLICE_TERM_LEXICON", str(lexicon_path))
     monkeypatch.setattr(daemon, "_probe_duration", lambda path: 200.0)
 
-    routes, summary = daemon._full_session_live_source_routes(date_dir, room_id="26730839")
+    routes, summary = daemon._full_session_live_source_routes(date_dir, room_id="654321")
 
     assert summary["status"] == "SELECTED"
     assert summary["selector_stage"] == "fallback_recall"

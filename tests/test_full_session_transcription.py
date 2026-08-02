@@ -14,7 +14,7 @@ from src.autoslice.source_context_executor import AgyChunkAttestation
 
 
 def test_unbound_direct_agy_refinement_is_not_a_fidelity_witness():
-    refined = "1\n00:00:00,000 --> 00:00:01,000\n李豆沙\n"
+    refined = "1\n00:00:00,000 --> 00:00:01,000\n主播\n"
     result = AgyExecutionResult(
         provider="agy",
         model="Gemini 3.6 Flash (High)",
@@ -31,8 +31,8 @@ def test_unbound_direct_agy_refinement_is_not_a_fidelity_witness():
 
 
 def test_hash_bound_direct_agy_is_an_independent_fidelity_witness(tmp_path):
-    draft = "1\n00:00:00,000 --> 00:00:01,000\n李豆莎\n"
-    refined = "1\n00:00:00,000 --> 00:00:01,000\n李豆沙\n"
+    draft = "1\n00:00:00,000 --> 00:00:01,000\n主薄\n"
+    refined = "1\n00:00:00,000 --> 00:00:01,000\n主播\n"
     media = tmp_path / "clip.mp4"
     media.write_bytes(b"bound media")
     result = AgyExecutionResult(
@@ -83,7 +83,7 @@ def test_hash_bound_direct_agy_is_an_independent_fidelity_witness(tmp_path):
 
 
 def test_api_fallback_refinement_cannot_witness_its_own_rewrite():
-    refined = "1\n00:00:00,000 --> 00:00:01,000\n让礼墨线下叫kmx\n"
+    refined = "1\n00:00:00,000 --> 00:00:01,000\n让甲甲线下叫xyz\n"
     result = AgyExecutionResult(
         provider="agy",
         model="Gemini 3.6 Flash (High)",
@@ -101,7 +101,7 @@ def test_api_fallback_refinement_cannot_witness_its_own_rewrite():
 
 def test_incomplete_attestation_counts_fail_closed(tmp_path):
     draft = "1\n00:00:00,000 --> 00:00:01,000\n请问熊\n"
-    refined = "1\n00:00:00,000 --> 00:00:01,000\nkmx\n"
+    refined = "1\n00:00:00,000 --> 00:00:01,000\nxyz\n"
     media = tmp_path / "clip.mp4"
     media.write_bytes(b"bound media")
     result = AgyExecutionResult(
@@ -130,7 +130,7 @@ def test_incomplete_attestation_counts_fail_closed(tmp_path):
 
 def test_hash_bound_api_fallback_is_never_an_audio_witness(tmp_path):
     draft = "1\n00:00:00,000 --> 00:00:01,000\n请问熊\n"
-    refined = "1\n00:00:00,000 --> 00:00:01,000\nkmx\n"
+    refined = "1\n00:00:00,000 --> 00:00:01,000\nxyz\n"
     media = tmp_path / "clip.mp4"
     media.write_bytes(b"bound media")
     result = AgyExecutionResult(
@@ -188,7 +188,7 @@ def test_hash_bound_api_fallback_is_never_an_audio_witness(tmp_path):
 
     drifted = _agy_refinement_provenance(
         result,
-        refined_srt=refined.replace("kmx", "礼墨"),
+        refined_srt=refined.replace("xyz", "甲甲"),
         draft_srt=draft,
         media_path=media,
     )
@@ -201,11 +201,11 @@ def test_api_fallback_rewrite_is_rejected_by_aggregate_transcriber(
 ):
     draft = (
         "1\n00:00:14,540 --> 00:00:17,740\n"
-        "让刘莎线下叫停了时\n"
+        "让刘薄线下叫停了时\n"
     )
     fallback_refined = (
         "1\n00:00:14,540 --> 00:00:17,740\n"
-        "让礼墨线下叫kmx\n"
+        "让甲甲线下叫xyz\n"
     )
 
     def fallback_runner(_media_path, _draft_path, output_path):
@@ -259,8 +259,8 @@ def test_api_fallback_rewrite_is_rejected_by_aggregate_transcriber(
 
     corrected = transcriber(media)
 
-    assert "让礼墨线下叫kmx" not in corrected
-    assert "让刘莎线下叫停了时" in corrected
+    assert "让甲甲线下叫xyz" not in corrected
+    assert "让刘薄线下叫停了时" in corrected
     provenance = json.loads(
         media.with_suffix(".agy_refined.manifest.json").read_text(
             encoding="utf-8"

@@ -18,7 +18,7 @@ def _xml(entries: list[tuple[float, str]]) -> str:
     )
     return f"""<?xml version='1.0' encoding='utf-8'?>
 <i>
-    <metadata><room_id>22966160</room_id></metadata>
+    <metadata><room_id>123456</room_id></metadata>
     {body}
 </i>"""
 

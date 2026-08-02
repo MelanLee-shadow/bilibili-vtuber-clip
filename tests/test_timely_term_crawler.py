@@ -8,6 +8,7 @@ import sys
 
 import pytest
 import scripts.gemini_slice_jingting as jingting
+from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 from src.autoslice.timely_term_crawler import (
     AniListSeasonAdapter,
@@ -118,20 +119,20 @@ def test_bilibili_community_derives_repeated_chinese_alias_family_without_seed(
                 _bilibili_row(
                     aid=1,
                     mid=11,
-                    title='【动画<em class="keyword">YUME MITA</em>】梦限大',
-                    tags="梦限大MewType,梦限大,BanG Dream!,动画,藤都子",
+                    title='【动画<em class="keyword">YUME MITA</em>】示例典',
+                    tags="示例典MewType,示例典,BanG Dream!,动画,藤都子",
                 ),
                 _bilibili_row(
                     aid=2,
                     mid=22,
-                    title="梦限大 ED 翻唱 - YUME MITA",
-                    tags="梦限大,梦限大MewType,BanG Dream!,翻唱,藤都子",
+                    title="示例典 ED 翻唱 - YUME MITA",
+                    tags="示例典,示例典MewType,BanG Dream!,翻唱,藤都子",
                 ),
                 _bilibili_row(
                     aid=3,
                     mid=33,
                     title="BanG Dream! YUME∞MITA reaction",
-                    tags="梦限大MewType,梦限大,BanG Dream!,reaction,仲町阿拉蕾",
+                    tags="示例典MewType,示例典,BanG Dream!,reaction,仲町阿拉蕾",
                 ),
             ]
         },
@@ -143,7 +144,7 @@ def test_bilibili_community_derives_repeated_chinese_alias_family_without_seed(
             CommunityEntityWatch(
                 "BanG Dream! YUME∞MITA",
                 ("YUME MITA",),
-                ("YUME∞MITA", "夢限大みゅーたいぷ"),
+                ("YUME∞MITA", "示例典みゅーたいぷ"),
                 ("BanG Dream!", "Anime"),
             ),
         ),
@@ -154,8 +155,8 @@ def test_bilibili_community_derives_repeated_chinese_alias_family_without_seed(
 
     assert len(terms) == 1
     assert terms[0].canonical == "BanG Dream! YUME∞MITA"
-    assert terms[0].display_name == "梦限大"
-    assert terms[0].aliases == ["梦限大", "梦限大MewType"]
+    assert terms[0].display_name == "示例典"
+    assert terms[0].aliases == ["示例典", "示例典MewType"]
     assert "藤都子" not in terms[0].aliases
     assert len(terms[0].sources) == 3
     assert all(source.url.startswith("https://www.bilibili.com/video/") for source in terms[0].sources)
@@ -178,8 +179,8 @@ def test_bilibili_community_derives_repeated_chinese_alias_family_without_seed(
     july_context = jingting.timely_terms_context(
         as_of=dt.datetime(2026, 7, 12, 12, tzinfo=dt.timezone.utc)
     )
-    assert "梦限大" not in june_context
-    assert "梦限大" in july_context
+    assert "示例典" not in june_context
+    assert "示例典" in july_context
 
 
 def test_bilibili_community_rejects_single_uploader_alias_campaign():
@@ -187,8 +188,8 @@ def test_bilibili_community_rejects_single_uploader_alias_campaign():
         _bilibili_row(
             aid=index,
             mid=11,
-            title="YUME MITA 梦限大",
-            tags="梦限大,梦限大MewType,BanG Dream!",
+            title="YUME MITA 示例典",
+            tags="示例典,示例典MewType,BanG Dream!",
         )
         for index in range(1, 4)
     ]
@@ -264,7 +265,7 @@ def test_bilibili_community_does_not_treat_brackets_as_alias_proof(title):
             CommunityEntityWatch(
                 "BanG Dream! YUME∞MITA",
                 ("YUME MITA",),
-                ("YUME∞MITA", "夢限大みゅーたいぷ"),
+                ("YUME∞MITA", "示例典みゅーたいぷ"),
                 ("BanG Dream!",),
             ),
         ),
@@ -317,15 +318,15 @@ def test_bilibili_community_missing_mid_does_not_create_second_uploader():
             aid=1,
             mid=11,
             author="same display name",
-            title="BanG Dream! YUME∞MITA（梦限大）",
-            tags="梦限大,梦限大MewType,BanG Dream!",
+            title="BanG Dream! YUME∞MITA（示例典）",
+            tags="示例典,示例典MewType,BanG Dream!",
         ),
         _bilibili_row(
             aid=2,
             mid=None,
             author="same display name",
-            title="BanG Dream! YUME∞MITA（梦限大）",
-            tags="梦限大,梦限大MewType,BanG Dream!",
+            title="BanG Dream! YUME∞MITA（示例典）",
+            tags="示例典,示例典MewType,BanG Dream!",
         ),
     ]
     adapter = BilibiliCommunityAdapter(
@@ -354,26 +355,26 @@ def test_bilibili_community_family_requires_overlapping_video_support():
         _bilibili_row(
             aid=1,
             mid=11,
-            title="BanG Dream! YUME∞MITA（梦限大）",
-            tags="梦限大,BanG Dream!",
+            title="BanG Dream! YUME∞MITA（示例典）",
+            tags="示例典,BanG Dream!",
         ),
         _bilibili_row(
             aid=2,
             mid=22,
-            title="BanG Dream! YUME∞MITA（梦限大）",
-            tags="梦限大,BanG Dream!",
+            title="BanG Dream! YUME∞MITA（示例典）",
+            tags="示例典,BanG Dream!",
         ),
         _bilibili_row(
             aid=3,
             mid=33,
             title="BanG Dream! YUME∞MITA PV",
-            tags="梦限大MewType,BanG Dream!",
+            tags="示例典MewType,BanG Dream!",
         ),
         _bilibili_row(
             aid=4,
             mid=44,
             title="BanG Dream! YUME∞MITA ED",
-            tags="梦限大MewType,BanG Dream!",
+            tags="示例典MewType,BanG Dream!",
         ),
     ]
     adapter = BilibiliCommunityAdapter(
@@ -402,20 +403,20 @@ def test_bilibili_community_family_rejects_only_one_shared_video():
         _bilibili_row(
             aid=1,
             mid=11,
-            title="BanG Dream! YUME∞MITA（梦限大）",
-            tags="梦限大,梦限大MewType,BanG Dream!",
+            title="BanG Dream! YUME∞MITA（示例典）",
+            tags="示例典,示例典MewType,BanG Dream!",
         ),
         _bilibili_row(
             aid=2,
             mid=22,
-            title="BanG Dream! YUME∞MITA 梦限大",
-            tags="梦限大,BanG Dream!",
+            title="BanG Dream! YUME∞MITA 示例典",
+            tags="示例典,BanG Dream!",
         ),
         _bilibili_row(
             aid=3,
             mid=33,
-            title="BanG Dream! YUME∞MITA 梦限大MewType",
-            tags="梦限大MewType,BanG Dream!",
+            title="BanG Dream! YUME∞MITA 示例典MewType",
+            tags="示例典MewType,BanG Dream!",
         ),
     ]
     adapter = BilibiliCommunityAdapter(
@@ -425,7 +426,7 @@ def test_bilibili_community_family_rejects_only_one_shared_video():
             CommunityEntityWatch(
                 "BanG Dream! YUME∞MITA",
                 ("YUME MITA",),
-                ("YUME∞MITA", "夢限大みゅーたいぷ"),
+                ("YUME∞MITA", "示例典みゅーたいぷ"),
                 ("BanG Dream!",),
             ),
         ),
@@ -444,26 +445,26 @@ def test_bilibili_community_family_rejects_shared_videos_from_one_uploader():
         _bilibili_row(
             aid=1,
             mid=11,
-            title="BanG Dream! YUME∞MITA 梦限大",
-            tags="梦限大,梦限大MewType,BanG Dream!",
+            title="BanG Dream! YUME∞MITA 示例典",
+            tags="示例典,示例典MewType,BanG Dream!",
         ),
         _bilibili_row(
             aid=2,
             mid=11,
-            title="BanG Dream! YUME∞MITA 梦限大",
-            tags="梦限大,梦限大MewType,BanG Dream!",
+            title="BanG Dream! YUME∞MITA 示例典",
+            tags="示例典,示例典MewType,BanG Dream!",
         ),
         _bilibili_row(
             aid=3,
             mid=22,
-            title="BanG Dream! YUME∞MITA 梦限大",
-            tags="梦限大,BanG Dream!",
+            title="BanG Dream! YUME∞MITA 示例典",
+            tags="示例典,BanG Dream!",
         ),
         _bilibili_row(
             aid=4,
             mid=33,
-            title="BanG Dream! YUME∞MITA 梦限大MewType",
-            tags="梦限大MewType,BanG Dream!",
+            title="BanG Dream! YUME∞MITA 示例典MewType",
+            tags="示例典MewType,BanG Dream!",
         ),
     ]
     adapter = BilibiliCommunityAdapter(
@@ -473,7 +474,7 @@ def test_bilibili_community_family_rejects_shared_videos_from_one_uploader():
             CommunityEntityWatch(
                 "BanG Dream! YUME∞MITA",
                 ("YUME MITA",),
-                ("YUME∞MITA", "夢限大みゅーたいぷ"),
+                ("YUME∞MITA", "示例典みゅーたいぷ"),
                 ("BanG Dream!",),
             ),
         ),
@@ -492,8 +493,8 @@ def test_bilibili_community_uses_equivalent_query_when_one_search_is_rate_limite
         _bilibili_row(
             aid=index,
             mid=10 + index,
-            title="BanG Dream YUME MITA（梦限大）",
-            tags="梦限大,梦限大MewType,BanG Dream!",
+            title="BanG Dream YUME MITA（示例典）",
+            tags="示例典,示例典MewType,BanG Dream!",
         )
         for index in range(1, 4)
     ]
@@ -504,7 +505,7 @@ def test_bilibili_community_uses_equivalent_query_when_one_search_is_rate_limite
             CommunityEntityWatch(
                 "BanG Dream! YUME∞MITA",
                 ("YUME MITA", "BanG Dream YUME MITA"),
-                ("YUME∞MITA", "夢限大みゅーたいぷ"),
+                ("YUME∞MITA", "示例典みゅーたいぷ"),
                 ("BanG Dream!",),
             ),
         ),
@@ -517,7 +518,7 @@ def test_bilibili_community_uses_equivalent_query_when_one_search_is_rate_limite
         {},
     )
 
-    assert terms[0].aliases == ["梦限大", "梦限大MewType"]
+    assert terms[0].aliases == ["示例典", "示例典MewType"]
     assert "partial query failure" in adapter.diagnostics[0]
 
 
@@ -542,8 +543,8 @@ def stats(prefix):
 surfaces = {
     "藤都子": stats("f"),
     "藤都子角色歌": stats("f"),
-    "梦限大": stats("y"),
-    "梦限大MewType": stats("y"),
+    "示例典": stats("y"),
+    "示例典MewType": stats("y"),
 }
 print(json.dumps(BilibiliCommunityAdapter._related_family(surfaces), ensure_ascii=False))
 """
@@ -568,7 +569,7 @@ def test_bilibili_budget_leaves_one_request_for_retry_on_full_default_plan():
             CommunityEntityWatch(
                 "BanG Dream! YUME∞MITA",
                 ("YUME MITA", "BanG Dream YUME MITA"),
-                ("YUME∞MITA", "夢限大みゅーたいぷ"),
+                ("YUME∞MITA", "示例典みゅーたいぷ"),
                 ("BanG Dream!",),
             ),
         ),
@@ -594,7 +595,7 @@ def test_bilibili_budget_leaves_one_request_for_retry_on_full_default_plan():
 
 
 def test_repo_source_config_leaves_one_request_in_default_budget_for_retry():
-    config = Path(__file__).resolve().parents[1] / "assets/lidousha/timely_term_sources.json"
+    config = CHANNEL_PROFILE.asset_file("timely_term_sources")
     anilist, manga, _bangumi, rss, bilibili = load_source_config(config)
     planned = (
         anilist.max_pages
@@ -613,8 +614,8 @@ def test_partial_bilibili_failure_is_retried_and_exposed_by_crawl_result():
         _bilibili_row(
             aid=index,
             mid=10 + index,
-            title="BanG Dream! YUME∞MITA（梦限大）",
-            tags="梦限大,梦限大MewType,BanG Dream!",
+            title="BanG Dream! YUME∞MITA（示例典）",
+            tags="示例典,示例典MewType,BanG Dream!",
         )
         for index in range(1, 4)
     ]
@@ -625,7 +626,7 @@ def test_partial_bilibili_failure_is_retried_and_exposed_by_crawl_result():
             CommunityEntityWatch(
                 "BanG Dream! YUME∞MITA",
                 ("YUME MITA", "BanG Dream YUME MITA"),
-                ("YUME∞MITA", "夢限大みゅーたいぷ"),
+                ("YUME∞MITA", "示例典みゅーたいぷ"),
                 ("BanG Dream!",),
             ),
         ),
@@ -887,9 +888,9 @@ def test_crawl_merges_seed_canonical_with_community_alias_before_rank_cap(
         for index in range(1, 9)
     ]
     seed = TermCandidate(
-        canonical="梦限大",
-        readings=["meng xianda", "夢限大みゅーたいぷ"],
-        aliases=["梦限大MewType"],
+        canonical="示例典",
+        readings=["shili dian", "示例典みゅーたいぷ"],
+        aliases=["示例典MewType"],
         confusables=["Mujica"],
         topic_entities=["BanG Dream!"],
         active_from=dt.date(2026, 6, 1),
@@ -900,7 +901,7 @@ def test_crawl_merges_seed_canonical_with_community_alias_before_rank_cap(
     community = TermCandidate(
         canonical="BanG Dream! YUME∞MITA",
         readings=["YUME∞MITA"],
-        aliases=["梦限大", "梦限大MewType"],
+        aliases=["示例典", "示例典MewType"],
         confusables=[],
         topic_entities=["Bilibili community"],
         active_from=dt.date(2026, 7, 1),
@@ -938,7 +939,7 @@ def test_crawl_merges_seed_canonical_with_community_alias_before_rank_cap(
 
     assert len(result.snapshot["terms"]) == 1
     term = result.snapshot["terms"][0]
-    assert term["canonical"] == "梦限大"
+    assert term["canonical"] == "示例典"
     assert "BanG Dream! YUME∞MITA" in term["aliases"]
     assert term["active_from"] == "2026-07-01"
     assert term["active_until"] == "2026-09-30"

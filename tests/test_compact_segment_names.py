@@ -1,7 +1,7 @@
 """blrec-native (compact) segment naming compatibility (2026-07-10).
 
 The old bilive control plane (src.burn.scan) used to re-encode blrec's remuxed
-`22966160_20260709-20-00-28.mp4` into a dashed `22966160_2026-07-09-20-00-28-.mp4`
+`123456_20260709-20-00-28.mp4` into a dashed `123456_2026-07-09-20-00-28-.mp4`
 and the runner only ever saw the dashed form.  With the old plane retired the
 runner consumes blrec's compact output directly — these tests pin that the
 name-sensitive helpers work for BOTH forms (old dates keep dashed deliveries).

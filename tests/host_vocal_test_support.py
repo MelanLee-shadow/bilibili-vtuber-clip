@@ -17,7 +17,7 @@ from src.autoslice.song_repair import (
 
 
 READY_LYRIC_VOCAL_ASSERTIONS = {
-    "lyric_vocal_subject": "LIDOUSHA",
+    "lyric_vocal_subject": hv.CHANNEL_PROFILE.decision("lyric_vocal_subject"),
     "lidousha_role": "SINGING_THIS_LYRIC",
     "same_live_vocal_source_as_lidousha": True,
     "other_singer_or_harmony_audible": False,
@@ -522,16 +522,16 @@ def make_ready_host_vocal_claim(
     reference_dir.mkdir(exist_ok=True)
     references = []
     for index in range(3):
-        path = reference_dir / f"enroll_lds_{index + 1}.wav"
+        path = reference_dir / f"enroll_ref_{index + 1}.wav"
         path.write_bytes(f"test-reference-{index + 1}".encode())
         references.append(
-            {"id": f"lidousha-{index + 1}", "filename": path.name, "sha256": _sha(path), "path": str(path.resolve())}
+            {"id": f"ref-{index + 1}", "filename": path.name, "sha256": _sha(path), "path": str(path.resolve())}
         )
     profile_path = output_dir / "profile.json"
     profile = {
         "schema_version": hv.PROFILE_SCHEMA_VERSION,
-        "profile_id": "test-lidousha-profile",
-        "subject": "李豆沙",
+        "profile_id": "test-channel-profile",
+        "subject": hv.CHANNEL_PROFILE.display_name,
         "model": {
             "model_id": "test-campp",
             "tree_sha256": hv._sha256_directory(model_dir),

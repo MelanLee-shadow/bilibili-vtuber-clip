@@ -57,9 +57,9 @@ def test_agy_subprocess_env_sets_home_when_daemon_environment_omits_it(monkeypat
 
 
 def test_pending_slices_skip_retry_marker_by_default(tmp_path):
-    room = "22966160"
+    room = "123456"
     date_dir = tmp_path / room / "2026-06-29"
-    stem = "1s_test_22966160_2026-06-29-22-05-02-"
+    stem = "1s_test_123456_2026-06-29-22-05-02-"
     video = _write(date_dir / f"{stem}.flv", b"fake video")
     _write(date_dir / "subtitles" / f"{stem}.srt", "1\n00:00:00,000 --> 00:00:01,000\n你好\n")
     _write(date_dir / f"{stem}.jingting.retry.json", json.dumps({"error": "agy failed"}) + "\n")

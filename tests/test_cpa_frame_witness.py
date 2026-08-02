@@ -202,7 +202,7 @@ def test_agy_observed_receipt_still_binds_frame_prompt_response(
 
     class Completed:
         returncode = 0
-        stdout = '{"texts":["温柔型李豆沙"]}\n'
+        stdout = '{"texts":["温柔型甲甲"]}\n'
         stderr = ""
 
     monkeypatch.setattr(

@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 CLOUD_PATH = (
-    "/123云盘/live-streaming/22966160/2026-07-25/22966160_20260725-19-20-00.flv"
+    "/123云盘/live-streaming/123456/2026-07-25/123456_20260725-19-20-00.flv"
 )
 FATAL_LOG = (
     "\x1b[2m2026-07-25 14:48:36.308\x1b[0m \x1b[31mERROR\x1b[0m "
@@ -16,7 +16,7 @@ FATAL_LOG = (
 )
 HEALTHY_LOG = (
     "2026-07-25 14:00:00.000 INFO cloudapi::transfers: upload finished for "
-    "/123云盘/live-streaming/22966160/2026-07-25/other.mp4"
+    "/123云盘/live-streaming/123456/2026-07-25/other.mp4"
 )
 
 

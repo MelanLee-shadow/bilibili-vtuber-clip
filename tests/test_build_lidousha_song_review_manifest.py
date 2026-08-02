@@ -8,11 +8,12 @@ from pathlib import Path
 import pytest
 
 import scripts.build_lidousha_song_review_manifest as builder
+from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
 CANDIDATE_ID = "song_192000_1321"
 SOURCE_CANDIDATE_ID = "seededsong_120000_421470"
-TITLE = "【李豆沙】豆沙歌，《海海海》"
+TITLE = CHANNEL_PROFILE.song_plain_template.format(song_title="海海海")
 BASENAME = f"歌切_{TITLE}__{CANDIDATE_ID}"
 
 
@@ -29,7 +30,7 @@ def _write_json(path: Path, payload: dict) -> None:
 
 
 def _fixture(tmp_path: Path) -> dict:
-    delivery_root = tmp_path / "lidousha" / "2026-07-25"
+    delivery_root = tmp_path / "channel" / "2026-07-25"
     source_root = tmp_path / "source"
     delivery_root.mkdir(parents=True)
     source_root.mkdir()
@@ -270,10 +271,7 @@ def test_builds_portable_no_upload_song_review_package(
     assert manifest["story_contract_required"] is False
     assert manifest["upload_allowed"] is False
     assert manifest["items"][0]["classification"] == "Song"
-    assert (
-        manifest["items"][0]["title"]
-        == "【李豆沙】豆沙歌，《海海海》"
-    )
+    assert manifest["items"][0]["title"] == TITLE
     assert set(manifest["items"][0]["sha256"]) == set(
         builder.REQUIRED_ROLES
     )
@@ -350,8 +348,8 @@ def test_refreshes_upload_tags_across_source_delivery_state_and_package(
     generated = {
         "engine": "suggest-upload-tags.v1",
         "status": "OK",
-        "final_tags": ["李豆沙", "虚拟主播", "翻唱"],
-        "final_tag_line": "李豆沙,虚拟主播,翻唱",
+        "final_tags": ["主播", "虚拟主播", "翻唱"],
+        "final_tag_line": "主播,虚拟主播,翻唱",
         "proper_noun_tags": [],
         "content_tags": [{"tag": "翻唱", "why": "歌切"}],
         "warnings": [],
@@ -475,8 +473,8 @@ def test_refresh_rolls_back_all_authorities_on_commit_failure(
             tag_generator=lambda *_args, **_kwargs: {
                 "engine": "suggest-upload-tags.v1",
                 "status": "OK_NO_LLM",
-                "final_tags": ["李豆沙"],
-                "final_tag_line": "李豆沙",
+                "final_tags": ["主播"],
+                "final_tag_line": "主播",
                 "proper_noun_tags": [],
                 "content_tags": [],
                 "warnings": ["degraded"],

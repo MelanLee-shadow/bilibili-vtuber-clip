@@ -9,13 +9,13 @@ def test_align_prediction_uses_time_overlap_not_matching_cue_number() -> None:
         "analysis": {
             "decisions": [
                 {"source_index": 1, "speaker": "连线", "decision_source": "campp_audio"},
-                {"source_index": 2, "speaker": "李豆沙", "decision_source": "whole_clip_context"},
+                {"source_index": 2, "speaker": "主播", "decision_source": "whole_clip_context"},
                 {"source_index": 3, "speaker": "连线", "decision_source": "campp_audio"},
             ]
         }
     }
     result = align_prediction(item, manifest, cues)
-    assert result["predicted"] == "李豆沙"
+    assert result["predicted"] == "主播"
     assert result["decision_source"] == "whole_clip_context"
-    assert result["label_overlap_ms"] == {"连线": 200, "李豆沙": 2000}
+    assert result["label_overlap_ms"] == {"连线": 200, "主播": 2000}
     assert result["coverage"] == 1.0

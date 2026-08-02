@@ -18,7 +18,7 @@ from src.autoslice import final_human_review as human_review
 
 CANDIDATE_ID = "auto_193450_1000_1020"
 STEM = "reviewed-clip"
-TITLE = "【李豆沙】测试片完整标题"
+TITLE = "【主播】测试片完整标题"
 CHECK_NAMES = (
     "final_burned_full_playback",
     "subtitle_audio",
@@ -59,8 +59,8 @@ def receipt_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str
         paths[kind].write_bytes(f"final {kind} bytes".encode())
 
     source_claims = [
-        "最终源帧左侧清楚可见李豆沙",
-        "最终源帧右侧清楚可见南町",
+        "最终源帧左侧清楚可见主播",
+        "最终源帧右侧清楚可见乙乙",
     ]
     narrative = "封面文字表达两人围绕测试问题争论的故事"
     authority = {
@@ -162,7 +162,7 @@ def receipt_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str
             "最终标题写明测试争论，完整故事确实先提问再给出回答。"
         ),
         "cover_identity": (
-            "最终封面左侧人物是李豆沙，右侧立绘是南町，两人身份均可辨认。"
+            "最终封面左侧人物是主播，右侧立绘是乙乙，两人身份均可辨认。"
         ),
         "cover_story": (
             "最终封面大字写测试争论，文字叙事与双人画面关系一致。"
@@ -190,8 +190,8 @@ def receipt_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str
         "在该时间段实际听到“测试台词”，烧录字幕出现和收尾均与音频发声同步。"
     )
     claim_details = (
-        "最终封面源帧左侧人物面部和李豆沙身份特征清楚可见，没有被标题层遮挡。",
-        "最终封面画面右侧南町人物立绘完整可辨，与左侧人物保持同框关系。",
+        "最终封面源帧左侧人物面部和主播身份特征清楚可见，没有被标题层遮挡。",
+        "最终封面画面右侧乙乙人物立绘完整可辨，与左侧人物保持同框关系。",
         "最终封面大字明确呈现测试问题争论，文字叙事与双人关系相符。",
     )
     for claim, detail in zip(
@@ -296,7 +296,7 @@ def test_multi_person_template_uses_hash_closed_rendered_text_not_art_direction(
     record_path = receipt_package["paths"]["record"]
     record = json.loads(record_path.read_text(encoding="utf-8"))
     cover_sha256 = _sha256(receipt_package["paths"]["cover"])
-    rendered_lines = ["请南町吃火锅", "刚认识就互相霸凌"]
+    rendered_lines = ["请乙乙吃火锅", "刚认识就互相霸凌"]
     record["artifact_hashes"] = {"cover_sha256": cover_sha256}
     record["publish_staging"]["cover_generation"] = {
         "final_cover_sha256": cover_sha256,
@@ -321,7 +321,7 @@ def test_multi_person_template_uses_hash_closed_rendered_text_not_art_direction(
     assert claims == [
         (receipt_package["source_claims"][0], "SOURCE_FRAME"),
         (receipt_package["source_claims"][1], "SOURCE_FRAME"),
-        ("封面文字呈现“请南町吃火锅 / 刚认识就互相霸凌”", "COVER_TEXT"),
+        ("封面文字呈现“请乙乙吃火锅 / 刚认识就互相霸凌”", "COVER_TEXT"),
     ]
 
 
@@ -388,7 +388,7 @@ def test_template_accepts_hash_closed_host_only_screenshot_polish_cover(
     record_path = receipt_package["paths"]["record"]
     record = json.loads(record_path.read_text(encoding="utf-8"))
     cover_sha256 = _sha256(receipt_package["paths"]["cover"])
-    rendered_lines = ["发1支持沙豆李", "赶紧改成2"]
+    rendered_lines = ["发1支持播主", "赶紧改成2"]
     record["story_contract"].update(
         {
             "cover_reference_authority": None,
@@ -429,7 +429,7 @@ def test_template_accepts_hash_closed_host_only_screenshot_polish_cover(
 
     assert evidence["items"][0]["cover_story_claims"] == [
         {
-            "claim": "封面文字呈现“发1支持沙豆李 / 赶紧改成2”",
+            "claim": "封面文字呈现“发1支持播主 / 赶紧改成2”",
             "presentation": "COVER_TEXT",
             "observation": {
                 "anchor": "FINAL_COVER/COVER_TEXT",
@@ -445,7 +445,7 @@ def test_template_accepts_hash_closed_host_only_cpa_redraw_cover(
     record_path = receipt_package["paths"]["record"]
     record = json.loads(record_path.read_text(encoding="utf-8"))
     cover_sha256 = _sha256(receipt_package["paths"]["cover"])
-    rendered_lines = ["小李刚准备下注", "就没了"]
+    rendered_lines = ["小主刚准备下注", "就没了"]
     record["story_contract"].update(
         {
             "cover_reference_authority": None,
@@ -489,7 +489,7 @@ def test_template_accepts_hash_closed_host_only_cpa_redraw_cover(
 
     assert evidence["items"][0]["cover_story_claims"] == [
         {
-            "claim": "封面文字呈现“小李刚准备下注 / 就没了”",
+            "claim": "封面文字呈现“小主刚准备下注 / 就没了”",
             "presentation": "COVER_TEXT",
             "observation": {
                 "anchor": "FINAL_COVER/COVER_TEXT",
@@ -534,10 +534,10 @@ def test_template_refuses_incoherent_host_only_cpa_redraw_provenance(
         "method": method,
         "model": model,
         "final_cover_sha256": cover_sha256,
-        "rendered_lines": ["小李刚准备下注", "就没了"],
+        "rendered_lines": ["小主刚准备下注", "就没了"],
         "rendered_text_pixels": {
             "status": "PASS",
-            "rendered_text": "小李刚准备下注就没了",
+            "rendered_text": "小主刚准备下注就没了",
             "final_cover_sha256": cover_sha256,
         },
         "route_decision": {

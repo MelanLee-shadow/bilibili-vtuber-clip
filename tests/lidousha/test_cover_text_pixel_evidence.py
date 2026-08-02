@@ -22,7 +22,7 @@ from src.autoslice.cover_title_rendering import (
 )
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 FONT = ROOT / "assets/lidousha/fonts/ZCOOLKuaiLe-Regular.ttf"
 
 

@@ -39,8 +39,8 @@ def _safe_verification(reference: Path) -> dict[str, object]:
     return verify_lidousha_source_composition(
         reference_path=reference,
         reference_sha256=_sha(reference),
-        story_hook="李豆沙刚解释完为什么被电，话音刚落就暴毙",
-        title="【李豆沙】话音刚落小李暴毙",
+        story_hook="主播刚解释完为什么被电，话音刚落就暴毙",
+        title="【主播】话音刚落小主暴毙",
         image_probe=_probe(
             {
                 "lidousha_bbox_frac": [0.42, 0.12, 0.78, 0.89],
@@ -68,15 +68,15 @@ def test_1411_source_composition_selects_initial_v2_redraw():
             "faithful_crop_can_make_dominant": False,
             "source_carries_story_reaction": False,
             "cpa_redraw_recommended": True,
-            "reason": "李豆沙只在右下角且源图没有承担暴毙反应",
+            "reason": "主播只在右下角且源图没有承担暴毙反应",
         },
     }
     generation: dict[str, object] = {}
     treatment, route = publish_staging._build_lidousha_cover_route(
         cover_generation=generation,
         story_contract=None,
-        title="【李豆沙】刚解释完为什么被电，话音刚落小李就暴毙",
-        cover_text="话音刚落\n小李暴毙",
+        title="【主播】刚解释完为什么被电，话音刚落小主就暴毙",
+        cover_text="话音刚落\n小主暴毙",
         cover_mode="auto",
         art_direction=LidoushaCoverArtDirection(
             role="shy_cute_default",
@@ -85,7 +85,7 @@ def test_1411_source_composition_selects_initial_v2_redraw():
             layout="banner",
             hook_color="yellow",
             is_song=False,
-            cover_punch=("话音刚落", "小李暴毙"),
+            cover_punch=("话音刚落", "小主暴毙"),
         ),
         punch_allowed=True,
         frame_selection={
@@ -140,7 +140,7 @@ def test_cpa_identity_bbox_is_the_screenshot_crop_authority(tmp_path):
             layout="banner",
             hook_color="yellow",
             is_song=False,
-            cover_punch=("小李暴毙",),
+            cover_punch=("小主暴毙",),
         ),
         relationship_visual_required=False,
         source_composition_verification=verification,
@@ -209,8 +209,8 @@ def test_invalid_bbox_or_unavailable_witness_fails_before_image_generation(
         {"status": "MATERIALIZED", "media_path": str(media)},
         media_path=media,
         candidate_id="source-composition-unavailable",
-        title="【李豆沙】话音刚落小李暴毙",
-        cover_text="小李暴毙",
+        title="【主播】话音刚落小主暴毙",
+        cover_text="小主暴毙",
         run_ffmpeg=True,
         image_edit=forbidden_image_edit,
         final_host_identity_verifier=lambda **_kwargs: {},
@@ -247,7 +247,7 @@ def test_face_safe_poster_is_1440x810_zero_degree_without_full_width_bar(
             layout="banner",
             hook_color="yellow",
             is_song=False,
-            cover_punch=("小李暴毙",),
+            cover_punch=("小主暴毙",),
         ),
         face_safe_contain=True,
     )

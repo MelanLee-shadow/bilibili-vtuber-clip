@@ -57,7 +57,7 @@ def complete_song_evidence(candidate_id: str = "clip-cpa") -> ReviewEvidence:
 def base_request(tmp_path: Path, **overrides) -> CpaSemanticQaRequest:
     data = {
         "candidate_id": "clip-cpa",
-        "room_id": "22966160",
+        "room_id": "123456",
         "source": CpaSemanticSourceRef(
             video_path=str(tmp_path / "source.mp4"),
             srt_path=str(tmp_path / "source.srt"),
@@ -66,12 +66,12 @@ def base_request(tmp_path: Path, **overrides) -> CpaSemanticQaRequest:
             source_cues_path=str(tmp_path / "source-cues.json"),
             review_evidence_path=str(tmp_path / "review-evidence.json"),
         ),
-        "candidate_text": "天不熊被骗到了，大家都笑了。",
-        "normalized_text": "kmx被骗到了，大家都笑了。",
+        "candidate_text": "阿呆被骗到了，大家都笑了。",
+        "normalized_text": "甲甲被骗到了，大家都笑了。",
         "response_path": str(tmp_path / "cpa.response.json"),
         "terminology": CpaTerminologyContext(
-            applied_terms=("kmx",),
-            evidence_paths=("lidousha/2026-06-19/example.manual-edited.zh.srt",),
+            applied_terms=("甲甲",),
+            evidence_paths=("channel/2026-06-19/example.manual-edited.zh.srt",),
         ),
     }
     data.update(overrides)
@@ -111,7 +111,7 @@ def test_final_song_lyrics_scope_replaces_stale_preliminary_terminology_failure(
     request = write_cpa_semantic_request_artifact(
         CpaSemanticQaRequest(
             candidate_id="song-final",
-            room_id="22966160",
+            room_id="123456",
             source=CpaSemanticSourceRef(
                 video_path=str(tmp_path / "source.mp4"), srt_path=str(subtitle), start_ms=0, end_ms=2_000
             ),
@@ -152,7 +152,7 @@ def test_final_song_lyrics_scope_rejects_subtitle_hash_drift(tmp_path):
     request = write_cpa_semantic_request_artifact(
         CpaSemanticQaRequest(
             candidate_id="song-final",
-            room_id="22966160",
+            room_id="123456",
             source=CpaSemanticSourceRef(video_path="source.mp4", srt_path=str(subtitle), start_ms=0, end_ms=2_000),
             candidate_text="海海海",
             normalized_text="海海海",

@@ -127,8 +127,8 @@ def test_fallback_recall_surfaces_singing_run_when_primary_finds_nothing():
         select_full_session_candidates,
     )
 
-    # Shaped like the real 2026-07-02 live capture of room 26730839: chat with
-    # no lidousha setup markers, then a dense ~110s singing run.
+    # Shaped like a real live capture: chat with no channel setup markers,
+    # then a dense ~110s singing run.
     cues = []
     chat = [(0, 1200, "你却开篇"), (27020, 28300, "本体的神乃上大"), (32060, 33660, "什么时候玩摄氏天下"), (44560, 45760, "喜欢就好")]
     for index, (start, end, text) in enumerate(chat):

@@ -335,7 +335,7 @@ def test_last_profile_never_wraps_to_primary_mid_live() -> None:
 
 def test_profile_config_rewrites_only_format_and_quality() -> None:
     base = """[[tasks]]
-room_id = 22966160
+room_id = 123456
 
 [header]
 cookie = "secret-value"
@@ -364,7 +364,7 @@ def test_event_log_survives_unavailable_video_event_store(
     monkeypatch.setattr(watchdog, "EVENT_DIR", blocked)
     monkeypatch.setattr(watchdog, "LOG_DIR", local_logs)
 
-    watchdog.append_event({"room_id": "22966160", "action": "none"})
+    watchdog.append_event({"room_id": "123456", "action": "none"})
 
     event = json.loads(
         (local_logs / "blrec-live-watchdog.log").read_text().splitlines()[-1]
