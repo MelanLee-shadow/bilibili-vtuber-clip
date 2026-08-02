@@ -74,3 +74,8 @@ __pycache__/
 
 # ChatGPT/Gemini generated emote images (Ivan local assets, media stays out of git)
 assets/emote/
+
+# 本地锁与临时工件不入库
+uv.lock
+tmp/
+lidousha/

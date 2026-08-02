@@ -1863,6 +1863,13 @@ def build_template_assets(out_root: Path) -> int:
 
 def main() -> int:
     out_root = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_OUT
+    tracked = tracked_files()
+    unknown_pre = [rel for rel in tracked if classify(rel) == "unknown"]
+    if unknown_pre:
+        print("UNCLASSIFIED paths — refusing BEFORE touching the output dir:")
+        for rel in unknown_pre:
+            print("  ", rel)
+        return 2
     if out_root.exists():
         shutil.rmtree(out_root)
     out_root.mkdir(parents=True)
@@ -1870,7 +1877,7 @@ def main() -> int:
     kept, templated, stripped, unknown = [], [], [], []
     rootmap_entries: list[str] = []
     templated_dirs_seen = set()
-    for rel in tracked_files():
+    for rel in tracked:
         kind = classify(rel)
         source = REPO / rel
         if kind == "rootmap":
