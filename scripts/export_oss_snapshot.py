@@ -55,19 +55,19 @@ STRIP_PREFIXES = (
     "tests/test_blrec_live_watchdog.py",       # 孤儿测试(模块已剔)
     "tests/test_patch_autoslice_runner_recorder_status.py",
     "tests/test_repair_false_green_20260709.py",
-    "tests/test_authorized_upload.py",  # 运营态耦合测试
-    "tests/test_auto_review_shadow_pipeline.py",  # 运营态耦合测试
-    "tests/test_batch_speaker_review.py",  # 运营态耦合测试
+    "tests/lidousha/test_authorized_upload.py",  # 运营态耦合测试
+    "tests/lidousha/test_auto_review_shadow_pipeline.py",  # 运营态耦合测试
+    "tests/lidousha/test_batch_speaker_review.py",  # 运营态耦合测试
     "tests/test_blrec_patches.py",  # 运营态耦合测试
-    "tests/test_branding_intro.py",  # 运营态耦合测试
+    "tests/lidousha/test_branding_intro.py",  # 运营态耦合测试
     "tests/test_build_lidousha_recovery_review_manifest.py",  # 运营态耦合测试
     "tests/test_channel_profile.py",  # 运营态耦合测试
-    "tests/test_clip_context.py",  # 运营态耦合测试
-    "tests/test_cover_reference_authority.py",  # 运营态耦合测试
-    "tests/test_final_human_review.py",  # 运营态耦合测试
-    "tests/test_free_session_autoslice.py",  # 运营态耦合测试
-    "tests/test_lidousha_review_package_audit.py",  # 运营态耦合测试
-    "tests/test_manual_title_repair_authority.py",  # 运营态耦合测试
+    "tests/lidousha/test_clip_context.py",  # 运营态耦合测试
+    "tests/lidousha/test_cover_reference_authority.py",  # 运营态耦合测试
+    "tests/lidousha/test_final_human_review.py",  # 运营态耦合测试
+    "tests/lidousha/test_free_session_autoslice.py",  # 运营态耦合测试
+    "tests/lidousha/test_review_package_audit.py",  # 运营态耦合测试
+    "tests/lidousha/test_manual_title_repair_authority.py",  # 运营态耦合测试
     "tests/test_produce_slice_boundary.py",  # 运营态耦合测试
     "tests/test_producer_package_finalization.py",  # 运营态耦合测试
     "tests/test_publication_registry.py",  # 运营态耦合测试
@@ -80,7 +80,7 @@ STRIP_PREFIXES = (
     "tests/test_reviewed_subtitle_baseline_registry.py",  # 运营态耦合测试
     "tests/test_semantic_candidate_selector.py",  # 运营态耦合测试
     "tests/test_session_relation_authority.py",  # 运营态耦合测试
-    "tests/test_source_subtitle_truth.py",  # 运营态耦合测试
+    "tests/lidousha/test_source_subtitle_truth.py",  # 运营态耦合测试
     "tests/test_speaker_finalizer.py",  # 运营态耦合测试
     "tests/test_subtitle_regression.py",  # 运营态耦合测试
     "tests/test_subtitle_text_overrides.py",  # 运营态耦合测试
