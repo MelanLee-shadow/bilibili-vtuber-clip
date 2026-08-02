@@ -1282,24 +1282,15 @@ def _template_payload(kind: str, original: Path) -> str:
         }
     elif kind == "truth_ledger":
         data = {
-            "schema_version": "subtitle-truth-ledger.v1",
+            "schema_version": "source-subtitle-truth-ledger.v1",
             "notes": (
                 "SOURCE_INTERVAL_TRUTH：已发布切片文本修复的唯一合法所有者。"
                 "每条绑定源录像 sha + 毫秒区间 + replace_cue/replace_substring。"
-                "本模板为空——真值属于你自己的录播。"
+                "本模板为空——真值属于你自己的录播。条目形状："
+                "truth_id/source_recording_basename/source_sha256/interval_ms/"
+                "action(replace_cue|replace_substring)/text/authority。"
             ),
-            "entries": [
-                {
-                    "_example": True,
-                    "truth_id": "example-0001",
-                    "source_recording_basename": "your-recording.mp4",
-                    "source_sha256": "0" * 64,
-                    "interval_ms": [0, 1000],
-                    "action": "replace_cue",
-                    "text": "示例真值文本",
-                    "authority": "operator adjudication note",
-                }
-            ],
+            "entries": [],
         }
     elif kind == "review_contracts":
         data = {
