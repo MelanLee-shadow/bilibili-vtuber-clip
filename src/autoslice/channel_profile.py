@@ -76,6 +76,25 @@ class CanonicalSurfaceRule:
 
 
 @dataclass(frozen=True)
+class CoverIdentityProfile:
+    """Per-channel appearance/lore fragments consumed by the cover pipeline.
+
+    These were previously hardcoded Li-Dousha-specific sentences inside
+    ``cover_host_identity_gate``/``cover_source_composition``/
+    ``cover_generation``/``cover_emote``; the schema now carries them so a
+    different channel profile can supply its own appearance and lore without
+    touching pipeline code.
+    """
+
+    gate_appearance_zh: str
+    gate_rival_note_zh: str
+    locator_zh: str
+    prompt_tag_en: str
+    scene_prop_meme_note_zh: str
+    emote_companion_lore_zh: str
+
+
+@dataclass(frozen=True)
 class ChannelProfile:
     profile_id: str
     display_name: str
@@ -87,6 +106,7 @@ class ChannelProfile:
     output_directory: str
     host_speaker_label: str
     guest_speaker_label: str
+    cover_identity: CoverIdentityProfile
     asset_root: Path
     asset_files: Mapping[str, Path]
     asset_directories: Mapping[str, Path]
@@ -276,6 +296,50 @@ def resolve_channel_profile_manifest(
     return (repo_root / "profiles" / selected / "profile.json").resolve()
 
 
+def _parse_cover_identity(identity: Mapping[str, object]) -> CoverIdentityProfile:
+    cover_identity_raw = _mapping(
+        identity.get("cover_identity"), label="identity.cover_identity"
+    )
+    _strict_keys(
+        cover_identity_raw,
+        label="identity.cover_identity",
+        required={
+            "gate_appearance_zh",
+            "gate_rival_note_zh",
+            "locator_zh",
+            "prompt_tag_en",
+            "scene_prop_meme_note_zh",
+            "emote_companion_lore_zh",
+        },
+    )
+    return CoverIdentityProfile(
+        gate_appearance_zh=_string(
+            cover_identity_raw.get("gate_appearance_zh"),
+            label="identity.cover_identity.gate_appearance_zh",
+        ),
+        gate_rival_note_zh=_string(
+            cover_identity_raw.get("gate_rival_note_zh"),
+            label="identity.cover_identity.gate_rival_note_zh",
+        ),
+        locator_zh=_string(
+            cover_identity_raw.get("locator_zh"),
+            label="identity.cover_identity.locator_zh",
+        ),
+        prompt_tag_en=_string(
+            cover_identity_raw.get("prompt_tag_en"),
+            label="identity.cover_identity.prompt_tag_en",
+        ),
+        scene_prop_meme_note_zh=_string(
+            cover_identity_raw.get("scene_prop_meme_note_zh"),
+            label="identity.cover_identity.scene_prop_meme_note_zh",
+        ),
+        emote_companion_lore_zh=_string(
+            cover_identity_raw.get("emote_companion_lore_zh"),
+            label="identity.cover_identity.emote_companion_lore_zh",
+        ),
+    )
+
+
 def load_channel_profile(
     repo_root: Path,
     *,
@@ -338,11 +402,14 @@ def load_channel_profile(
             "output_directory",
             "host_speaker_label",
             "guest_speaker_label",
+            "cover_identity",
         },
     )
     room_id = _string(identity.get("room_id"), label="identity.room_id")
     if not _ROOM_ID_RE.fullmatch(room_id):
         raise ChannelProfileError("identity.room_id must contain only decimal digits")
+
+    cover_identity = _parse_cover_identity(identity)
 
     assets = _mapping(root.get("assets"), label="assets")
     _strict_keys(
@@ -541,6 +608,7 @@ def load_channel_profile(
         guest_speaker_label=_string(
             identity.get("guest_speaker_label"), label="identity.guest_speaker_label"
         ),
+        cover_identity=cover_identity,
         asset_root=asset_root,
         asset_files=MappingProxyType(asset_files),
         asset_directories=MappingProxyType(asset_directories),

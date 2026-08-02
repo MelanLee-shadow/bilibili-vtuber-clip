@@ -16,7 +16,15 @@
     "room_id": "000000",
     "output_directory": "replace_me",
     "host_speaker_label": "主播",
-    "guest_speaker_label": "嘉宾"
+    "guest_speaker_label": "嘉宾",
+    "cover_identity": {
+      "gate_appearance_zh": "描述主播外貌供封面终检定位（示例频道：白发、蓝白熊猫帽/熊猫耳）",
+      "gate_rival_note_zh": "（列出容易和主播混淆的相似角色及其可区分特征，供终检排除误认；无则填“（暂无需排除的相似角色）”）",
+      "locator_zh": "描述终检/构图判断用来先定位主播的可见特征（如发色、可见名牌）",
+      "prompt_tag_en": "replace-with-identity-tag",
+      "scene_prop_meme_note_zh": "描述本频道容易被误画成实物道具的自身形象梗（如虚拟形象故障/外号），说明它应保持人物参考表达而非另画实物",
+      "emote_companion_lore_zh": "描述表情包与人物同框（companion 模式）允许的强理由梗（如分身梗、代画粉丝昵称等）"
+    }
   },
   "assets": {
     "root": "assets/replace_me",
