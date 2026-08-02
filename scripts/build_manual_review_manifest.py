@@ -116,6 +116,12 @@ def build_manual(
     ass = _need(package_root, f"{stem}.final-sapphire72.ass")
     chat_authority = _need(package_root, f"{stem}.chat-authority.json")
     clip_context = _need(package_root, f"{stem}.clip-context.json")
+    # manifest.date 是 auditor 对 clip-context 日期绑定的比对面：从包内
+    # hash-bound 的 clip-context 原样取（不发明值），缺失即拒。
+    clip_context_doc = json.loads(clip_context.read_text(encoding="utf-8"))
+    recording_date = str(clip_context_doc.get("recording_date") or "")
+    if not recording_date:
+        raise DailyManifestError("package clip context lacks recording_date")
     cover = _need(package_root, f"{stem}.cover.png")
     declared_cover_sha = str(
         cover_generation.get("final_cover_sha256") or ""
@@ -201,6 +207,7 @@ def build_manual(
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "status": "review_ready",
         "candidate_id": candidate_id,
+        "date": recording_date,
         "run_mode": "MANUAL_PRODUCE_REVIEW",
         # 手动车道没有 runner state 见证：由显式操作者署名替代，谁裁定、为何。
         "manual_attestation": {

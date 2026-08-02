@@ -38,8 +38,8 @@ set -a; source .env; set +a # .env 不会被自动加载，跑脚本前手动 so
 .venv/bin/python scripts/validate_channel_profile.py --profile lidousha --config-only
 ```
 
-第一支切片（在录播文件所在的机器上直接跑，`--ssh-host localhost`）。媒体
-读取、切割与 VAD 时轴证据全部走本地路径，纯中文谈话切片**不需要任何 SSH**；
+第一支切片（在录播文件所在的机器上直接跑）。媒体读取、切割与 VAD 时轴
+证据全部走本地路径，纯中文谈话切片**不需要任何 SSH**；
 只有用到 AGY 听音复核的场景（字幕混外文 token、歌切）会 `ssh localhost`，
 届时机器要能免密 ssh 自己（`ssh-keygen -t ed25519` 后把公钥追加进
 `~/.ssh/authorized_keys`；`scripts/preflight.py` 会检查这一项）：
@@ -49,10 +49,14 @@ AUTOSLICE_BASE=$PWD/.autoslice AUTOSLICE_BRANDING_INTRO=off \
   .venv/bin/python scripts/session_autoslice.py --smoke-segment /path/to/recording.flv
 ```
 
-两个要点：`AUTOSLICE_BRANDING_INTRO=off` 是必须的——示例 profile 的片头政策是
+三个要点：`AUTOSLICE_BRANDING_INTRO=off` 是必须的——示例 profile 的片头政策是
 强制的，但片头媒体文件不随仓分发，不关掉 talk 交付会被 fail-closed 拦下（配自己
-频道时模板默认关闭片头，不需要这个变量）。冒烟期间终端可能安静一两分钟（转写与
-选题在跑）——产线细节日志在 `$AUTOSLICE_BASE/logs/<日期>_<候选id>.log`。
+频道时模板默认关闭片头，不需要这个变量）。冒烟**全程约 15–20 分钟且终端安静**
+（转写约半分钟、选题约两分钟，剩下都在单候选的校对/烧录/封面）——进度看两处：
+`$AUTOSLICE_BASE/logs/smoke_<候选id>.log`（产线细节日志，实时追加）与
+`$AUTOSLICE_BASE/out/smoke/<候选id>/` 里按阶段冒出的产物文件。`--ssh-host`
+是单候选产线 `produce_slice_package.py` 的参数，冒烟入口没有也不需要它
+（媒体就在本机）。
 
 整线无人值守（录制 → 下播自动切 → 评审 → 上传）：照
 `ops/recording/README.md` 配录制层，`scripts/deploy_autoslice.sh` 是参考部署。

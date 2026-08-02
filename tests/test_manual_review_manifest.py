@@ -66,7 +66,7 @@ def _package(tmp_path: Path) -> Path:
     )
     w(f"{stem}.final-sapphire72.ass", b"ass-bytes")
     w(f"{stem}.chat-authority.json", b"{}")
-    w(f"{stem}.clip-context.json", b"{}")
+    w(f"{stem}.clip-context.json", json.dumps({"recording_date": "2026-08-02"}).encode())
     cover = w(f"{stem}.cover.png", b"cover-bytes")
     pre_overlay = w(f"{stem}.cover.pre-overlay.png", b"pre-overlay-bytes")
     ai_bg = w(f"{stem}.cover.ai-bg.png", b"ai-bg-bytes")
@@ -131,6 +131,7 @@ def test_manual_manifest_is_hash_bound_with_attestation(tmp_path: Path) -> None:
     assert manifest["schema_version"] == "lidousha-manual-review-manifest.v1"
     assert manifest["upload_allowed"] is False
     assert manifest["manual_attestation"]["operator"] == "operator-a"
+    assert manifest["date"] == "2026-08-02"
     assert manifest["story_contract_required"] is True
     assert manifest["source_fact_review_required"] is True
     item = manifest["items"][0]

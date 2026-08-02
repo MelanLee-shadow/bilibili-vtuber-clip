@@ -1072,6 +1072,9 @@ def child_env() -> dict[str, str]:
     env.setdefault("AUTOSLICE_PROFILE", PROFILE_ID)
     # judge/声学缓存根：主树固定 BASE；V15 恢复树由其 launcher 覆写。
     env.setdefault("AUTOSLICE_BASE", str(BASE))
+    # 产线子进程的 stdout 进日志 sink（非 TTY）：不关缓冲的话 libc 全缓冲，
+    # 每候选日志十几分钟 0 字节、退出才 dump——观察者只能猜死没死。
+    env.setdefault("PYTHONUNBUFFERED", "1")
     env.update(load_env_file(CPA_ENV))
     # Gemini API is the automatic source-context failover when the AGY account
     # is quota-limited.  Import only these named secrets from the recorder env;

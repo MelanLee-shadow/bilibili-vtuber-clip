@@ -32,7 +32,10 @@ MAX_ACTIVE_MODULE_LINES = 2_000
 # 2026-07-31 冻结基线：20 项。全部是欠账，不是许可。
 FUNCTION_DEBT_LEDGER = {
     ("scripts/audit_lidousha_review_package.py", "_audit_item_story_contract"): 316,
-    ("scripts/audit_lidousha_review_package.py", "audit_package"): 329,
+    # 2026-08-02 +20：run_mode 白名单纳入 MANUAL_PRODUCE_REVIEW 且强制
+    # manual_attestation 署名（手动产线包进审计闭环；Ivan 8/2 /goal 授权，
+    # 测试 test_manual_review_manifest.py + 二轮真实测试实锤此缺口）。
+    ("scripts/audit_lidousha_review_package.py", "audit_package"): 349,
     ("scripts/build_lidousha_recovery_review_manifest.py", "build_manifest"): 365,
     ("scripts/run_auto_review_shadow_pipeline.py", "_run_live_source"): 316,
     ("src/autoslice/cover_repair.py", "_roll_forward_prepared_cover_transactions"): 346,
@@ -75,14 +78,17 @@ FUNCTION_DEBT_LEDGER = {
 
 # 2026-07-31 冻结基线：12 项。同上，全部是欠账。
 MODULE_DEBT_LEDGER = {
-    "scripts/audit_lidousha_review_package.py": 2_003,
+    # 2026-08-02 +20：同上（manual run_mode 准入+署名门）。
+    "scripts/audit_lidousha_review_package.py": 2_023,
     "scripts/authorized_upload.py": 2_929,
     # 2026-08-01 新记：OSS 发布整备（Ivan 授权）把导出器扩成改名/patch/模板引擎；
     # 私库专用构建工具，导出时自剥离，不进 OSS 面。
     "scripts/export_oss_snapshot.py": 2_149,
     # 2026-08-02 +15：--smoke-segment 有界 backfill（帽 3）——Ivan 8/2 /goal
     # 「全都按你的想法进行修复，当然都要配测试」授权；测试 test_smoke_backfill.py。
-    "scripts/free_session_autoslice.py": 2_078,
+    # 2026-08-02 再 +3：child_env 加 PYTHONUNBUFFERED（二轮实测：候选日志因子
+    # 进程全缓冲十几分钟 0 字节，观察者只能猜死没死）。同一 /goal 授权。
+    "scripts/free_session_autoslice.py": 2_081,
     # 2026-07-31 +122：封面文案链修复（分行权威等级 + 锁定模式 + 缩略图合同背带
     # + max_lines 按合同封顶）。新增逻辑已抽成 _talk_locked_split /
     # _assert_talk_thumbnail_contract 两个模块级函数，_overlay_lidousha_cover_title

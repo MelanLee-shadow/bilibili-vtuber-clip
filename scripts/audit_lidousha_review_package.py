@@ -1741,9 +1741,11 @@ def audit_package(root: str | Path) -> dict[str, Any]:
                 path=manifest_path,
                 detail="story-contract review packages must bind upload_allowed=false",
             )
-        if str(manifest.get("run_mode") or "") not in {
+        run_mode = str(manifest.get("run_mode") or "")
+        if run_mode not in {
             "RECOVERY_REVIEW",
             "PRODUCTION_REVIEW",
+            "MANUAL_PRODUCE_REVIEW",
         }:
             _add_issue(
                 issues,
@@ -1751,6 +1753,24 @@ def audit_package(root: str | Path) -> dict[str, Any]:
                 path=manifest_path,
                 detail=f"run_mode={manifest.get('run_mode')!r}",
             )
+        elif run_mode == "MANUAL_PRODUCE_REVIEW":
+            # 手动车道没有 runner state 见证：准入条件是显式操作者署名
+            # （谁裁定、为什么），缺署名的 manual manifest 不是软门而是拒绝。
+            attestation = manifest.get("manual_attestation")
+            if not (
+                isinstance(attestation, dict)
+                and str(attestation.get("operator") or "").strip()
+                and str(attestation.get("note") or "").strip()
+            ):
+                _add_issue(
+                    issues,
+                    "MANUAL_REVIEW_ATTESTATION_MISSING",
+                    path=manifest_path,
+                    detail=(
+                        "MANUAL_PRODUCE_REVIEW requires "
+                        "manual_attestation.operator/note"
+                    ),
+                )
 
     attestations_by_candidate = _cover_attestations_by_candidate(
         manifest=manifest,

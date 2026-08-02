@@ -13,12 +13,35 @@ seam 上的测试会静默走真网络"变绿"——每次全量套件都在真�
 （direct transport 无生产调用点，其单测在 urlopen 层 mock，不在此拦。）
 """
 
+import os
 import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+# 套件以默认 profile 为基准（README/AGENTS 的跑测前提）：机械兜底，防 shell
+# 里带着 AUTOSLICE_PROFILE 时整套件换 profile。profile 在 import 时读取，
+# 必须在任何测试模块导入前清掉。
+os.environ.pop("AUTOSLICE_PROFILE", None)
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_autoslice_base(monkeypatch):
+    """磁盘密闭：默认清掉 ambient AUTOSLICE_BASE。
+
+    内容寻址裁决缓存按 env 根在调用时落盘：shell 带着可写 AUTOSLICE_BASE
+    跑套件时用例互吃缓存（实测 11 红），带着不可写 /opt 默认时全绿只是
+    巧合。套件的作者基线是"未设置 base=缓存关"——这里把它变成保证：逐
+    测试删除 ambient 值，与 shell 环境彻底解耦；需要缓存行为的测试自己
+    setenv 一个 tmp 根即可。
+    """
+
+    monkeypatch.delenv("AUTOSLICE_BASE", raising=False)
+
 
 from src.autoslice import llm_client as _llm_client
 
