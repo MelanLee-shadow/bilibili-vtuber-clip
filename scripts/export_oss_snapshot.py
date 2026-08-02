@@ -60,7 +60,7 @@ STRIP_PREFIXES = (
     "tests/lidousha/test_batch_speaker_review.py",  # 运营态耦合测试
     "tests/test_blrec_patches.py",  # 运营态耦合测试
     "tests/lidousha/test_branding_intro.py",  # 运营态耦合测试
-    "tests/test_build_lidousha_recovery_review_manifest.py",  # 运营态耦合测试
+    "tests/lidousha/test_build_recovery_review_manifest.py",  # 运营态耦合测试
     "tests/test_channel_profile.py",  # 运营态耦合测试
     "tests/lidousha/test_clip_context.py",  # 运营态耦合测试
     "tests/lidousha/test_cover_reference_authority.py",  # 运营态耦合测试
@@ -981,7 +981,7 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "manifest, args.final_human_review, season_ids=expected_season_ids()))",
     ),
     (
-        "tests/test_authorized_upload_season.py",
+        "tests/lidousha/test_authorized_upload_season.py",
         'def _isolated_default_upload_lock(tmp_path, monkeypatch):\n'
         '    monkeypatch.setattr(au, "DEFAULT_UPLOAD_LOCK", tmp_path / "default-upload.lock")',
         'def _isolated_default_upload_lock(tmp_path, monkeypatch):\n'
@@ -1870,6 +1870,8 @@ def main() -> int:
         for rel in unknown_pre:
             print("  ", rel)
         return 2
+    final_root = out_root
+    out_root = final_root.with_name(final_root.name + ".building")
     if out_root.exists():
         shutil.rmtree(out_root)
     out_root.mkdir(parents=True)
@@ -2024,7 +2026,7 @@ def main() -> int:
     name_violations = [
         str(p.relative_to(out_root))
         for p in out_root.rglob("*lidousha*")
-        if not str(p.relative_to(out_root)).startswith(("assets/", "profiles/"))
+        if not str(p.relative_to(out_root)).startswith(("assets/", "profiles/", "tests/lidousha"))
     ]
     if name_violations:
         print("FILENAME VIOLATIONS — channel name outside profile dirs:")
@@ -2095,7 +2097,11 @@ def main() -> int:
         for row in violations[:60]:
             print("  ", row)
         return 3
-    print(f"clean snapshot at {out_root}")
+    # 全部检查通过后才原子替换正式目录；任何失败都不会破坏既有快照。
+    if final_root.exists():
+        shutil.rmtree(final_root)
+    out_root.rename(final_root)
+    print(f"clean snapshot at {final_root}")
     return 0
 
 
