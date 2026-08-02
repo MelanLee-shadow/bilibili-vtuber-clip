@@ -194,7 +194,7 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
     (
         # 监控宿主：私库默认保持参考部署（launchd 既有调用不带 env）；OSS 默认
         # 本机——录制与切片同机是 quickstart 布局，远端宿主用 env 覆盖。
-        "scripts/lidousha_slice_monitor.py",
+        "scripts/slice_monitor.py",
         'SSH_HOST = os.environ.get("AUTOSLICE_MONITOR_SSH_HOST", "free")',
         'SSH_HOST = os.environ.get("AUTOSLICE_MONITOR_SSH_HOST", "localhost")',
     ),
