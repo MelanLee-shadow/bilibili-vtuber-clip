@@ -1071,8 +1071,8 @@ _SANITIZE_NAME = re.compile(r"(?<![A-Za-z0-9_])[Ii][Vv][Aa][Nn](?![A-Za-z0-9_])"
 
 def tracked_files() -> list[str]:
     out = subprocess.run(
-        ["git", "ls-files"], cwd=REPO, capture_output=True, text=True,
-        check=True,
+        ["git", "-c", "core.quotepath=false", "ls-files"],
+        cwd=REPO, capture_output=True, text=True, check=True,
     )
     return [line for line in out.stdout.splitlines() if line]
 
