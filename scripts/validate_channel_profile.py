@@ -42,21 +42,33 @@ def main(argv: list[str] | None = None) -> int:
 
     missing = [str(path) for path in profile.missing_runtime_paths()]
     status = "READY" if args.config_only or not missing else "BLOCKED"
-    print(
-        json.dumps(
-            {
-                "status": status,
-                "profile_id": profile.profile_id,
-                "manifest": str(profile.manifest_path),
-                "manifest_sha256": profile.manifest_sha256,
-                "room_id": profile.room_id,
-                "output_directory": profile.output_directory,
-                "missing_runtime_paths": missing,
-            },
-            ensure_ascii=False,
-            sort_keys=True,
+    # 声纹占位可从模板整份复制而来：文件存在≠已 enroll。READY 不撒谎，但要
+    # 把「层 4 声纹还没配」明说，别让新用户把 READY 读成全层齐活。
+    voiceprint_status = "ABSENT"
+    try:
+        voiceprint_doc = json.loads(
+            profile.asset_file("voiceprint_profile").read_text(encoding="utf-8")
         )
-    )
+        voiceprint_status = str(
+            voiceprint_doc.get("configuration_status") or "UNKNOWN"
+        )
+    except (ChannelProfileError, OSError, ValueError):
+        pass
+    payload = {
+        "status": status,
+        "profile_id": profile.profile_id,
+        "manifest": str(profile.manifest_path),
+        "manifest_sha256": profile.manifest_sha256,
+        "room_id": profile.room_id,
+        "output_directory": profile.output_directory,
+        "missing_runtime_paths": missing,
+        "voiceprint_status": voiceprint_status,
+    }
+    if status == "READY" and voiceprint_status != "READY":
+        payload["notes"] = [
+            "voiceprint 未 enroll（声纹栈/歌切人声证明用；不影响 talk 产包）"
+        ]
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
     return 0 if status == "READY" else 2
 
 

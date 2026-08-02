@@ -244,6 +244,26 @@ def check_upload_tools() -> None:
             _record("warn", tool, f"未安装——{hint}")
 
 
+def check_gemini_live() -> None:
+    import json
+    import urllib.request
+
+    key = os.environ.get("GEMINI_API_KEY")
+    if not key:
+        _record("warn", "Gemini live", "GEMINI_API_KEY 未设置，跳过实探")
+        return
+    try:
+        with urllib.request.urlopen(
+            "https://generativelanguage.googleapis.com/v1beta/models?key=" + key,
+            timeout=20,
+        ) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        count = len(payload.get("models") or [])
+        _record("ok", "Gemini live", f"key 有效（可见 {count} 个模型；额度另算）")
+    except Exception as exc:  # 体检工具：人话呈现
+        _record("FAIL", "Gemini live", f"key 探活失败：{type(exc).__name__}: {exc}")
+
+
 def check_cpa_live() -> None:
     import tempfile
 
@@ -282,6 +302,7 @@ def main() -> int:
     check_upload_tools()
     if args.live:
         check_cpa_live()
+        check_gemini_live()
 
     fails = [row for row in RESULTS if row[0] == "FAIL"]
     warns = [row for row in RESULTS if row[0] == "warn"]

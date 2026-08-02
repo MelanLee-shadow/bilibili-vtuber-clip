@@ -63,10 +63,23 @@ bash scripts/llm_via_cpa.sh /tmp/cpa_probe.txt /tmp/cpa_reply.txt && cat /tmp/cp
 - 安装：BBDown 是独立工具——`dotnet tool install --global BBDown`，或从
   [BBDown releases](https://github.com/nilaoda/BBDown/releases) 下载单文件二进制。
 - 模板：**单行 Cookie 串**文件，至少含 `SESSDATA=…`；部署约定放
-  `$AUTOSLICE_BASE/vod_ingest_cookies.txt`。注意浏览器插件导出的 Netscape
-  `cookies.txt`（多行制表符格式）**不能直接用**，要自己拼成
-  `SESSDATA=…; bili_jct=…` 这样的一行。
-- 校验：`BBDown info <任一公开BV> -c "$(cat 文件)"` 能取到清晰度列表即通。
+  `$AUTOSLICE_BASE/vod_ingest_cookies.txt`。浏览器插件导出的 Netscape
+  `cookies.txt`（多行制表符格式）**不能直接用**，转成一行：
+
+```bash
+python3 - cookies.txt <<'PY' > vod_ingest_cookies.txt
+import sys
+rows = [line.split("\t") for line in open(sys.argv[1])
+        if line.strip() and not line.startswith("#")]
+print("; ".join(f"{r[5]}={r[6].strip()}" for r in rows if len(r) >= 7))
+PY
+```
+
+- 校验（注意 `-info` 是选项不是子命令，`BBDown info` 会报错）：
+  `BBDown <任一公开BV> -info -c "$(cat vod_ingest_cookies.txt)"`
+  能列出清晰度即通。
+- 安全提示：`-c "$(cat …)"` 会把 SESSDATA 放进进程 argv（本机 `ps` 可见）。
+  单用户机器可接受；共享机器建议用 `BBDown login` 的官方登录态代替。
 
 ## 7. AGY（Google Antigravity CLI）— talk 声学仲裁与歌切 lane
 

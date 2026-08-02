@@ -79,7 +79,7 @@ AUTOSLICE_BASE=$PWD/.autoslice AUTOSLICE_BRANDING_INTRO=off \
 
 1. 本 README；
 2. [profiles/README.md](profiles/README.md) —— 怎么配你的频道；
-3. [scripts/README.md](scripts/README.md) —— 63 个脚本按用途分组，先看"你会真正用到的七个"；
+3. [scripts/README.md](scripts/README.md) —— 65 个脚本按用途分组，先看"你会真正用到的七个"；
 4. 要深挖规则再看 [docs/pipeline/README.md](docs/pipeline/README.md)（给 agent/维护者的分步权威，技术密度高）；
 5. [AGENTS.md](AGENTS.md) —— 给 AI 代理的完整操作约定与架构细节。
 
@@ -132,7 +132,9 @@ AUTOSLICE_BASE=$PWD/.autoslice AUTOSLICE_BRANDING_INTRO=off \
   宿主时 VAD 经 ssh 在宿主上跑，宿主同理。
 - 测试套件以默认 profile 为基准：跑 `pytest` 时不要设置 `AUTOSLICE_PROFILE`。
 - 出版登记/真值台账等运营状态在本仓只有空模板——它们属于每个部署自己的数据。
-- 示例 profile 全量校验会因声纹文件缺失而 BLOCKED（生物特征不随仓分发，预期行为）。
+- 声纹不随仓分发（生物特征）：validator 会在输出里给 `voiceprint_status`
+  （模板/示例都是 UNCONFIGURED 占位）——**READY 不等于声纹已 enroll**，
+  声纹栈/歌切人声证明要用时按 `install_voiceprints.py` 先 enroll。
 
 ## 致谢
 

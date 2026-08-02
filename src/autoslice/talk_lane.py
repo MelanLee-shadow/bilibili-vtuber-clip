@@ -158,7 +158,11 @@ def slice_srt(src_srt: Path, start_ms: int, end_ms: int, dest: Path) -> int:
 def safe_name(text: str, fallback: str) -> str:
     """Human-readable delivery filename from the recall hook."""
     cleaned = re.sub(r"[\\/:*?\"<>|\s]+", "", (text or "").strip())
-    return cleaned[:18] if cleaned else fallback
+    truncated = cleaned[:18]
+    # 硬截会把孤立的开引号/连接标点挂在文件名尾（shell 里全角引号极难处理）；
+    # 截断点回退到内容字符为止。
+    truncated = truncated.rstrip("“”「」『』《》〈〉（）(),，、。：:;；—-·…‘’'\"")
+    return truncated if truncated else (cleaned[:18] or fallback)
 
 
 def last_json_block(text: str) -> dict:

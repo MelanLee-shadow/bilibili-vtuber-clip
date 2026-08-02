@@ -1,6 +1,6 @@
 # scripts/ 地图
 
-63 个脚本按 lane 分组。刚上手真正会用到的只有七个：
+65 个脚本按 lane 分组。刚上手真正会用到的只有七个：
 `preflight.py`（部署体检：字体/ffmpeg/目录/凭据/VAD 一次查清）、
 `validate_channel_profile.py`（配 profile）、`session_autoslice.py`（runner/冒烟）、
 `produce_slice_package.py`（单候选产线）、`audit_review_package.py`（包审计）、
@@ -15,6 +15,7 @@
 | `danmaku_backup_listener.py` | 独立弹幕/礼物/SC 备份监听（录播姬挂掉时的证据兜底） |
 | `free_asr_client.py` | 免费 ASR 聚合（必剪主源 + 剪映备源；词级毫秒时间轴） |
 | `silero_vad_spans.py` | silero VAD 语音跨度导出（供时间轴 QA） |
+| `build_session_from_replay.py` | 官方回放→session 源三件套（弹幕忠实切片+结构化 sidecar+meta+provenance；配 official-replay-rescue skill） |
 | `transcribe_live_talk_via_agy.sh` / `transcribe_live_song_via_agy.sh` | 远端 AGY 听写作业投递（需 AGY，见 README 术语表） |
 | `gemini_slice_jingting.py` | 分块精听转写 runner（profile-aware） |
 
@@ -76,7 +77,8 @@
 
 | 脚本 | 用途 |
 |---|---|
-| `preflight.py` | 部署体检：python/ffmpeg/字体/profile 资产/凭据 env/VAD/self-ssh 一次查清（`--live` 才真调 CPA） |
+| `preflight.py` | 部署体检：python/ffmpeg/字体/profile 资产/凭据 env/VAD/self-ssh 一次查清（`--live` 才真调 CPA 与 Gemini） |
+| `init_channel_profile.py` | 新频道脚手架：骨架复制+全部 REPLACE_ME 替换+可选身份字段一条命令做完（层 1 身份四件套仍要按问题清单填） |
 | `deploy_autoslice.sh` | 参考部署（校验→同步→回滚账本；按你的主机改写） |
 | `sync_profile_assets.sh` | 同步 profile 资产到部署主机 |
 | `validate_channel_profile.py` | profile 校验器（`--config-only` 起步，READY 才可跑） |

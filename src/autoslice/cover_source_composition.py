@@ -1,4 +1,4 @@
-"""Hash-bound source-composition authority for Li Dousha covers.
+"""Hash-bound source-composition authority for channel covers.
 
 The final-host gate protects the generated pixels, but it is too late to decide
 whether the selected livestream frame should have been redrawn in the first

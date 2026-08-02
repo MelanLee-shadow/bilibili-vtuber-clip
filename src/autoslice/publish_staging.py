@@ -1371,7 +1371,7 @@ def _stage_cpa_redraw_cover(
                         "Re-read visible source nameplates. The protagonist must "
                         "be the person labelled 李豆沙; do not hybridize her with "
                         "any other participant, even if panda ears are added. "
-                        "Make Li Dousha a LARGE, clear, immediately dominant "
+                        f"Make {CHANNEL_PROFILE.prompt_name} a LARGE, clear, immediately dominant "
                         "head-and-shoulders subject who visibly carries the story "
                         "reaction. Never place her as a small lower-corner figure. "
                         "Remove vast dead space, meaningless solid-color/red bars, "
@@ -1429,7 +1429,7 @@ def _stage_cpa_redraw_cover(
         if not validate_final_host_identity_verification(cover_generation):
             verification = cover_generation.get("final_host_identity_verification")
             detail = (
-                "AI cover final pixels do not have a PASS Li Dousha host "
+                "AI cover final pixels do not have a PASS host "
                 "identity verdict: "
                 + str(
                     (verification if isinstance(verification, Mapping) else {}).get("reason_code")
@@ -1976,7 +1976,7 @@ def _stage_lidousha_ai_cover(
         }
     if route.get("host_identity_required") is True and final_host_identity_verifier is None:
         detail = (
-            "cover requires a CPA-primary source/final Li Dousha "
+            "cover requires a CPA-primary source/final host "
             "identity verifier bound to the final cover hash"
         )
         record_cover_route_execution(
@@ -2531,7 +2531,7 @@ def _stage_screenshot_direct_cover(
             if not validate_final_host_identity_verification(cover_generation):
                 detail = (
                     "final cover pixels do not have a PASS "
-                    "Li Dousha host identity verdict: "
+                    "host identity verdict: "
                     + str(host_identity_verification.get("reason_code") or "VERIFICATION_MISSING")
                 )
                 record_cover_route_execution(

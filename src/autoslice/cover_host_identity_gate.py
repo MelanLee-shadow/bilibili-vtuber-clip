@@ -1,7 +1,7 @@
-"""Final-pixel Li Dousha identity and subject-prominence gate.
+"""Final-pixel host identity and subject-prominence gate.
 
 The image generator may copy the wrong person from a multi-person reference
-and then add one or two panda-like details. It may also preserve Li Dousha's
+and then add one or two panda-like details. It may also preserve the host's
 identity while shrinking her into a corner, leaving dead space, or adding
 meaningless graphic bars. A prompt is not evidence that the result is a useful
 thumbnail. This module builds a hash-bound SOURCE/FINAL comparison image and
@@ -271,7 +271,7 @@ def verify_lidousha_final_host_identity(
             detail=str(
                 verdict.get("reason")
                 or composition_conflicts
-                or "Li Dousha is identifiable but not a dominant clickworthy subject"
+                or "host is identifiable but not a dominant clickworthy subject"
             ),
         )
     else:

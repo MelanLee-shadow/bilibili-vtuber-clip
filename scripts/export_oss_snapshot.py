@@ -51,6 +51,7 @@ STRIP_PREFIXES = (
     "AGENTS.md",   # 私库操作者规则；OSS 版由 docs/oss/AGENTS.md 提供
     "CLAUDE.md",
     "scripts/export_oss_snapshot.py",          # 私库导出工具，不随 OSS 分发
+    "tests/test_template_skeletons.py",        # import 导出器（随其剥离）
     "ops/blrec-patches/",                      # blrec 已退役
     "tests/test_blrec_live_watchdog.py",       # 孤儿测试(模块已剔)
     "tests/test_patch_autoslice_runner_recorder_status.py",
@@ -299,7 +300,10 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "tests/test_runtime_architecture.py",
         "    # 2026-08-01 新记：OSS 发布整备（维护者 授权）把导出器扩成改名/patch/模板引擎；\n"
         "    # 私库专用构建工具，导出时自剥离，不进 OSS 面。\n"
-        '    "scripts/export_oss_snapshot.py": 2_149,\n',
+        "    # 2026-08-02 +55：二轮测试修复（骨架逐键摘除治 governance:{} 必炸类、\n"
+        "    # prompt 注入类模板全占位化、tag prompt JSON 契约）——维护者 8/2 /goal 授权；\n"
+        "    # 测试 test_template_skeletons.py。\n"
+        '    "scripts/export_oss_snapshot.py": 2_208,\n',
         "",
     ),
     # --- 债务棘轮：被剥离脚本的例外条目同步移除 ---
@@ -936,11 +940,6 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         '                        f"be the person labelled {CHANNEL_PROFILE.display_name}; do not hybridize her with "',
     ),
     (
-        "src/autoslice/publish_staging.py",
-        '                        "Make Li Dousha a LARGE, clear, immediately dominant "',
-        '                        f"Make {CHANNEL_PROFILE.prompt_name} a LARGE, clear, immediately dominant "',
-    ),
-    (
         "src/autoslice/semantic_candidate_selector.py",
         "- dimensions 七项都打 0..4 整数：lidousha_centrality（李豆沙不可替代性）、stance_intensity、",
         "- dimensions 七项都打 0..4 整数：lidousha_centrality（{CHANNEL_PROFILE.display_name}不可替代性）、stance_intensity、",
@@ -1443,12 +1442,42 @@ _TEMPLATE_TEXT_PLACEHOLDERS = {
 _TEMPLATE_COPY_DEFAULT = ("slice_selection_metric", "subtitle_correction_principles")
 # 平台级 JSON 数据（非频道身份）：模板整份给全（Ivan：礼物名是平台固定专名）。
 _TEMPLATE_COPY_VERBATIM_JSON = ("gift_names",)
+
+# 骨架逐键摘除：empty_entries 会把 dict 值清成 {}，但有的门把「键不存在」与
+# 「空对象」区别对待——真值台账治理门只放行 None，空 {} 让**每个新频道的第一
+# 支切片必炸**（二轮真实测试 F31 实锤）。示例资产没有该键的形态才是可用形态。
+_TEMPLATE_SKELETON_DROP_KEYS: dict[str, tuple[str, ...]] = {
+    "subtitle_truth_ledger": ("governance",),
+}
 _TEMPLATE_COPY_HEADER = (
     "> 模板默认值：源自示例频道的完整方法论，身份已占位（标注「示例」的行保留\n"
     "> 真实条目作示范）。可直接使用；要改就按你频道的判断改。\n\n"
 )
 
 _TEMPLATE_IDENTITY_MAP = (("李豆沙", "主播"),)
+# prompt 注入类模板的扩展占位映射（长 token 在前，防子串半替换）。
+_TEMPLATE_IDENTITY_MAP_EXTENDED = (
+    ("豆沙歌", "歌切栏目"),
+    ("礼墨Sumi", "圈内人物A"),
+    ("露蒂丝", "圈内人物B"),
+    ("lycoris", "圈内人物C"),
+    ("shadowlee", "圈内人物D"),
+    ("李墨素", "圈内人物B"),
+    ("kmx", "粉丝团"),
+    ("小李", "主播"),
+    ("熊猫头", "身份符号"),
+    ("熊猫", "身份符号"),
+    ("侄女", "频道梗词"),
+    ("百合(GL)", "本频道核心题材"),
+    ("百合/GL", "本频道核心题材"),
+    ("百合", "核心题材"),
+    ("GL", "核心题材"),
+    ("南町", "某生态频道"),
+    ("豆沙", "主播"),
+)
+# 内容会注入 prompt 的模板键：连「示例/真例」标注行也必须占位化——别人频道
+# 的人名与真实标题留在里面会真的影响新频道的选题与标题声音。
+_TEMPLATE_PROMPT_INJECTED_KEYS = ("slice_selection_metric", "title_style")
 _TEMPLATE_EXAMPLE_MARKERS = ("示例", "判例", "真例", "锚点")
 _TEMPLATE_IDENTITY_CHECK = re.compile(
     r"李豆沙|小李|(?<!红)豆沙|kmx|礼墨|露蒂丝|lycoris|shadowlee|萱萱|Kaya|掏兜|侄女"
@@ -1547,9 +1576,9 @@ _TEMPLATE_DOC_REWRITES: dict[str, tuple[tuple[str, str], ...]] = {
             "# 切片选题 metric（通用 rubric 权威）\n"
             "\n"
             "> **必改项**：分层框架与七维算术直接可用，但**第一层「频道命脉题材」的\n"
-            "> 定义必须换成你频道自己的**。文内全部判例只示范打分思路；判例里的人名\n"
-            "> 是示例频道的圈内人物，对你的频道没有任何约束力，照抄会把别人频道的\n"
-            "> 命脉当成你的选题标准。",
+            "> 定义必须换成你频道自己的**。本文件内容会注入语义召回 prompt，因此\n"
+            "> 示例频道判例中的人名/题材已全部占位化（「圈内人物A」「粉丝团」等）\n"
+            "> ——判例只示范打分思路，把占位角色换成你频道的真实对应者。",
         ),
         (
             "> v5，2026-07-22 维护者 校准 + Pro 独立复核：本文件继续定义偏好；",
@@ -1647,12 +1676,23 @@ def _genericize_template_doc(key: str, text: str) -> str:
                 f"template rewrite drifted ({key}): {hits} hits for {old[:50]!r}…"
             )
         text = text.replace(old, new)
+    # 「标注示例行保留真名」只适用于纯教学文档。会**注入 prompt 的功能资产**
+    # （选题 metric 进语义召回、标题风格进标题 prompt）里，别人频道的人名会真
+    # 影响选题/标题（二轮真实测试 F12 实锤）——这类文件连标注行也占位化。
+    no_exemption = key in _TEMPLATE_PROMPT_INJECTED_KEYS
+    identity_map = (
+        _TEMPLATE_IDENTITY_MAP + _TEMPLATE_IDENTITY_MAP_EXTENDED
+        if no_exemption
+        else _TEMPLATE_IDENTITY_MAP
+    )
     out_lines: list[str] = []
     violations: list[str] = []
     for line in text.splitlines(keepends=True):
-        marked = any(marker in line for marker in _TEMPLATE_EXAMPLE_MARKERS)
+        marked = (not no_exemption) and any(
+            marker in line for marker in _TEMPLATE_EXAMPLE_MARKERS
+        )
         if not marked:
-            for token, generic in _TEMPLATE_IDENTITY_MAP:
+            for token, generic in identity_map:
                 line = line.replace(token, generic)
             line = _apply_comment_date_rules(line)
             if _TEMPLATE_IDENTITY_CHECK.search(line):
@@ -1695,9 +1735,14 @@ _TEMPLATE_ASSET_JSON = {
         "banned_content_tags": [],
         "content_prompt_template": (
             "你在为B站虚拟主播的直播切片选投稿标签(tag)。\n"
-            "已有基础tag：{existing_tags}\n标题：{title}\n成品字幕全文：\n{srt_text}\n\n"
-            "从字幕与标题出发补充通用、可搜索的内容词tag（专名只用本频道词表允许的"
-            "写法；不要生僻梗）。每行一个tag。"
+            "只出**通用、可搜索**的内容词——观众真的会在搜索框里搜的现成入口词"
+            "（如：可爱 撒娇 破防 吐槽 社死 名场面 搞笑 反差萌 治愈 唱歌）；"
+            "太专一于本条内容的描述词没人搜，一律不要。\n"
+            "硬性规则：禁止输出任何人名/角色名/作品名/团体名（专名由另一套确定性"
+            "规则处理）；每个标签2~6个字、不带标点；不与已定标签重复：{existing_tags}；"
+            "每个标签配一句依据；宁缺毋滥。\n"
+            '只输出严格 JSON：{{"tags": [{{"tag": "...", "why": "..."}}]}}\n\n'
+            "标题: {title}\n\n字幕全文:\n{srt_text}"
         ),
     },
     "title_policy": {
@@ -1764,6 +1809,8 @@ def build_template_assets(out_root: Path) -> int:
         source_name = _TEMPLATE_SOURCE_FILES.get(key)
         if source_name and (_TEMPLATE_SOURCE_DIR / source_name).is_file():
             payload = (_TEMPLATE_SOURCE_DIR / source_name).read_text(encoding="utf-8")
+            if key in _TEMPLATE_PROMPT_INJECTED_KEYS:
+                payload = _genericize_template_doc(key, _sanitize_text(payload))
         elif key in _TEMPLATE_ASSET_JSON:
             payload = json.dumps(
                 _TEMPLATE_ASSET_JSON[key], ensure_ascii=False, indent=2
@@ -1800,6 +1847,12 @@ def build_template_assets(out_root: Path) -> int:
             source_rel = default_files.get(key)
             source = default_root / source_rel if source_rel else None
             payload = _template_payload("empty_entries", source or Path("/nonexistent"))
+            drop_keys = _TEMPLATE_SKELETON_DROP_KEYS.get(key)
+            if drop_keys:
+                skeleton = json.loads(payload)
+                for drop in drop_keys:
+                    skeleton.pop(drop, None)
+                payload = json.dumps(skeleton, ensure_ascii=False, indent=2) + "\n"
             payload = _scrub_identity_strings(_sanitize_text(payload))
         target.write_text(payload, encoding="utf-8")
         written += 1
@@ -1867,12 +1920,18 @@ def build_template_assets(out_root: Path) -> int:
         "  （积累类，空起步）。\n"
         "- **层 0.5 · 框架直用、定义必改**：`slice_selection_metric.md`——分层框架与\n"
         "  七维算术通用，但**第一层「频道命脉题材」的定义必须换成你频道自己的**；\n"
-        "  文内判例只是示范打分思路，里面的人名是示例频道的圈内人物，对你的频道\n"
-        "  没有任何约束力。\n"
+        "  该文件会注入选题 prompt，判例人名已全部占位化——把占位角色换成你\n"
+        "  频道的真实对应者即可。\n"
         "- **层 1 · 先问后写（agent 拿问题清单问频道主人，答完代写）**：\n"
         "  `glossary.txt`、`persona.md`、`title_style.md`、`cover_identity_prompt.txt`\n"
-        "  ——每个文件内已写好该问的问题与真实示例；先写 3–5 条就能开跑，之后边用\n"
-        "  边攒，**不要求一次写完**。\n"
+        "  ——每个文件内已写好该问的问题与示例；先写 3–5 条就能开跑，之后边用\n"
+        "  边攒，**不要求一次写完**。频道主人不在旁边时的代查证据源：\n"
+        "  B 站 `live_user/v1/Master/info?uid=` 免签给 room_id/粉丝勋章名（粉丝团\n"
+        "  称呼）；萌娘百科条目；**抽真实直播帧取证**（外貌/装饰以帧为准，文字\n"
+        "  资料常错）。代填的条目标注待频道主人拍板。\n"
+        "  **封面外貌事实三处必须同步改**：`profile.json` 的 `identity.cover_identity`\n"
+        "  九键、`persona.md`、`cover_identity_prompt.txt`——只改其一，封面身份\n"
+        "  终检会按不一致的那份把成品拦下（先抽帧、后写、三处一起写）。\n"
         "- **层 2 · 你给种子，crawler 代填**：`timely_term_seeds/sources` → \n"
         "  `timely_terms`、`psplive_roster_sources` → `psplive_roster`、\n"
         "  `topic_entity_graph`（参考部署默认装 cron；不走 deploy 就手动跑或自配）。\n"

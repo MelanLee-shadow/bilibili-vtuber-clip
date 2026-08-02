@@ -10967,3 +10967,16 @@ def test_produce_batch_yields_to_deploy_guard(tmp_path, monkeypatch):
 
     assert calls == ["a"]  # b/c 顺延
     assert [row["cid"] for row in results] == ["a"]
+
+
+def test_safe_name_never_ends_on_dangling_punctuation():
+    from src.autoslice.talk_lane import safe_name
+
+    # 18 字硬截正好落在全角开引号上（二轮真实测试 F38 实锤形态）：
+    # 前 18 字 = "弹幕问猫为什么跟她姓，礼墨反手追问“" → 回退到"问"
+    hook = "弹幕问猫为什么跟她姓，礼墨反手追问“你爹为何跟你姓”"
+    assert safe_name(hook, "cid") == "弹幕问猫为什么跟她姓，礼墨反手追问"
+    # 常规钩子不受影响
+    assert safe_name("买弹幕梗当场拆台", "cid") == "买弹幕梗当场拆台"
+    # 空钩子回退 cid
+    assert safe_name("", "cid_y") == "cid_y"
