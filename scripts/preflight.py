@@ -80,9 +80,54 @@ def check_profile() -> None:
         else []
     )
     if fonts:
-        _record("ok", "fonts", f"{len(fonts)} 个字体（烧录/封面用）")
+        _record("ok", "fonts", f"{len(fonts)} 个 profile 字体（封面标题字用）")
     else:
-        _record("FAIL", "fonts", "profile fonts 目录里没有 ttf/otf——字幕烧录会失败")
+        _record("FAIL", "fonts", "profile fonts 目录里没有 ttf/otf——封面渲染会失败")
+    if shutil.which("fc-list"):
+        cjk = subprocess.run(
+            ["fc-list", ":lang=zh", "family"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if cjk.stdout.strip():
+            _record("ok", "system-cjk-fonts", "fontconfig 有中文字体（libass 烧录用）")
+        else:
+            _record(
+                "FAIL",
+                "system-cjk-fonts",
+                "系统没有中文字体——字幕会整片烧成豆腐块（apt install fonts-noto-cjk）",
+            )
+    else:
+        _record("warn", "system-cjk-fonts", "没有 fc-list，无法探测（Linux 上装 fontconfig）")
+    intro_path = profile.asset_files.get("branding_intro_manifest")
+    try:
+        import json as _json
+
+        intro = _json.loads(Path(intro_path).read_text(encoding="utf-8"))
+        policy = intro.get("policy") or {}
+        media = [
+            entry.get("runtime_media_path") or ""
+            for entry in (intro.get("intros") or [])
+        ] + [
+            path
+            for entry in (intro.get("intros") or [])
+            for path in (entry.get("runtime_media_paths") or [])
+        ]
+        missing_media = [p for p in media if p and not Path(p).is_file()]
+        if intro.get("enabled") is False or not policy.get("mandatory"):
+            _record("ok", "branding-intro", "片头未强制（新 profile 默认关闭）")
+        elif missing_media:
+            _record(
+                "warn",
+                "branding-intro",
+                "片头政策强制但媒体缺失（不随仓分发）——talk 交付会被拦；"
+                "冒烟用 AUTOSLICE_BRANDING_INTRO=off，或按 manifest 自备媒体",
+            )
+        else:
+            _record("ok", "branding-intro", "片头媒体齐全")
+    except (OSError, ValueError, TypeError):
+        _record("warn", "branding-intro", "片头 manifest 无法解析（先按关闭处理）")
 
 
 def check_env() -> None:
@@ -162,6 +207,28 @@ def check_self_ssh() -> None:
     )
     if probe.returncode == 0:
         _record("ok", "self-ssh", "ssh localhost 免密可用（听音复核/VAD 阶段需要）")
+        deps = subprocess.run(
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "localhost",
+                "python3 -c 'import numpy, onnxruntime'",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        if deps.returncode == 0:
+            _record("ok", "ssh-python-vad", "ssh 侧系统 python3 有 numpy/onnxruntime")
+        else:
+            _record(
+                "warn",
+                "ssh-python-vad",
+                "ssh 走的是系统 python3（不是 .venv），它缺 numpy/onnxruntime——"
+                "VAD 阶段会失败；pip install --user numpy onnxruntime",
+            )
     else:
         _record(
             "warn",

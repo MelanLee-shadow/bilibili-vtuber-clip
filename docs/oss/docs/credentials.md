@@ -20,7 +20,11 @@ bash scripts/llm_via_cpa.sh /tmp/cpa_probe.txt /tmp/cpa_reply.txt && cat /tmp/cp
 
 ## 2. Gemini key（转写精修/声学听写）— 必需
 
+- 用途：**直连 Gemini 官方 API，不经 CPA**（CPA 上不需要配 Gemini 模型）。
 - 放哪：`.env` 的 `GEMINI_API_KEY`（可留空 `GEMINI_KEY_BACKUP` 兜底位）。
+  注意 runner 的读取路径：参考部署从 `/opt/bilive/.env` 读 GEMINI 系列 key、
+  从 `$AUTOSLICE_BASE/cpa.env` 读 CPA 对——**都不读仓库根 `.env`**；非 /opt
+  布局把 GEMINI key export 进 runner 的进程环境即可（子进程会继承）。
 - 校验：跑一次 README 的 `--smoke-segment` 冒烟，观察转写阶段不报 key 错。
 
 ## 3. 录播姬的 B 站登录 — 录制层需要

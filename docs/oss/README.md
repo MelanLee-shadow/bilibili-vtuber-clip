@@ -44,9 +44,14 @@ set -a; source .env; set +a # .env 不会被自动加载，跑脚本前手动 so
 `~/.ssh/authorized_keys`；`scripts/preflight.py` 会检查这一项）：
 
 ```bash
-AUTOSLICE_BASE=$PWD/.autoslice \
+AUTOSLICE_BASE=$PWD/.autoslice AUTOSLICE_BRANDING_INTRO=off \
   .venv/bin/python scripts/session_autoslice.py --smoke-segment /path/to/recording.flv
 ```
+
+两个要点：`AUTOSLICE_BRANDING_INTRO=off` 是必须的——示例 profile 的片头政策是
+强制的，但片头媒体文件不随仓分发，不关掉 talk 交付会被 fail-closed 拦下（配自己
+频道时模板默认关闭片头，不需要这个变量）。冒烟期间终端可能安静一两分钟（转写与
+选题在跑）——产线细节日志在 `$AUTOSLICE_BASE/logs/<日期>_<候选id>.log`。
 
 整线无人值守（录制 → 下播自动切 → 评审 → 上传）：照
 `ops/recording/README.md` 配录制层，`scripts/deploy_autoslice.sh` 是参考部署。
@@ -57,7 +62,8 @@ AUTOSLICE_BASE=$PWD/.autoslice \
 |---|---|
 | 一台服务器 | 推荐 8 核 / 32 GB / 500 GB+ 磁盘（4 核 16 GB 可用但并行烧录吃紧） |
 | [BililiveRecorder](https://github.com/BililiveRecorder/BililiveRecorder) | 录播姬。`ops/recording/` 是参考配置 |
-| LLM 通道 | 能访问 Gemini 系列与 GPT 系列。推荐自建 [CLIProxyAPI](https://github.com/luispater/CLIProxyAPI) 统一入口（两个环境变量搞定） |
+| LLM 通道 | 两条独立的腿：**GPT 系列经自建 [CLIProxyAPI](https://github.com/luispater/CLIProxyAPI)**（`CPA_BASE_URL`/`CPA_API_KEY` 两个变量），**Gemini 系列走 `GEMINI_API_KEY` 直连官方 API**（转写精修/声学听写），不经 CPA——CPA 上不需要配任何 Gemini 模型 |
+| 系统 CJK 字体 | Linux 上 `apt install fonts-noto-cjk`（字幕烧录经 libass 用系统字体，缺了整片烧成豆腐块；profile 自带字体只管封面标题字。preflight 会检查） |
 | [Google Antigravity](https://antigravity.google/) | 谷歌官方工具，直接下载。本项目用它的命令行做"听音复核"：纯中文谈话切片的字幕通常**用不到它**；字幕专名的听音仲裁、字幕混入外文/拉丁词面时的独立听写、歌词对轴会用到——缺它时这些环节明确拒绝，不会瞎猜 |
 | [biliup](https://github.com/biliup/biliup) | 投稿 CLI。只产包评审不上传可不装 |
 | Python 3.11+，`ffmpeg` 6.1+ | 6.1 与 7.x 都在真实产线跑通过；转写用的免费必剪接口不需要 key |
@@ -111,6 +117,12 @@ AUTOSLICE_BASE=$PWD/.autoslice \
 - Alpha：参考部署已无人值守运行数周，但多频道支持还在完善——**发布/声纹
   lane 目前默认 profile 专用**（少数发布路径仍指向示例频道资产，清单见
   AGENTS.md「换频道剩余耦合」；换频道可产包评审，公开发布还差这一步）。
+- 示例 profile 的**片头媒体不随仓分发**：默认 profile 跑 talk 交付要
+  `AUTOSLICE_BRANDING_INTRO=off`（见快速上手），或按
+  `assets/lidousha/intro/` 的 manifest 自备媒体。配自己频道时片头默认关闭。
+- 听音复核/VAD 阶段经 `ssh <host>` 调 **系统 python3**（不是 `.venv`）：那台
+  机器的系统 python3 要装 `numpy`/`onnxruntime`
+  （`pip install --user numpy onnxruntime`；preflight 会经 ssh 探测）。
 - 测试套件以默认 profile 为基准：跑 `pytest` 时不要设置 `AUTOSLICE_PROFILE`。
 - 出版登记/真值台账等运营状态在本仓只有空模板——它们属于每个部署自己的数据。
 - 示例 profile 全量校验会因声纹文件缺失而 BLOCKED（生物特征不随仓分发，预期行为）。
