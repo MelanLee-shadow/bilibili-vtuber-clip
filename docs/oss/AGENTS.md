@@ -64,10 +64,15 @@ python3 scripts/produce_slice_package.py --spec <spec.json> --ssh-host localhost
 - **不要靠删测试/放宽断言过门**；债务棘轮（`tests/test_runtime_architecture.py`
   的行数账本）只许降不许升，改了要在提交里说明。
 
-## 架构约定
+## 架构约定与核心不变量
 
+- **证据链而非黑箱**：每处字幕修正都要有出处（平台弹幕/礼物记录、独立声学
+  听写、闭集裁决回执），并以哈希绑定进交付包。
+- **出版登记是唯一上传授权**：已发布内容只能走同 BV 修复链（换源不换稿）。
+- **精确重放**：同稿修复用 `subtitle-redelivery-baseline.v2` 逐字节恢复已审
+  文本，只有真值台账拥有的区间允许偏离——修复不会引入新的回归。
+- **内容寻址缓存**：声学/裁决调用按输入哈希缓存，重试轮零重复请求。
 - **债务棘轮**：`tests/test_runtime_architecture.py` 冻结每个超限函数/模块的
   行数，只许降不许升；新增行数=显式改账本并在提交里说明。
-- **内容寻址缓存**：声学/裁决调用按输入哈希缓存，重试轮零重复请求。
-- **精确重放**：同稿修复用 `subtitle-redelivery-baseline.v2` 逐字节恢复已审
-  文本，只有真值台账拥有的区间允许偏离。
+- **凭据**：每个 cookie/key 的模板与校验命令见
+  [docs/credentials.md](docs/credentials.md)；全部凭据不入库。

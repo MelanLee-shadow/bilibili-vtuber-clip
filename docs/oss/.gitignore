@@ -1,4 +1,4 @@
-# Runtime/report output（发布证据必须入库：授权上传的 manifest/回执是快照）
+# 运行时/报告输出。例外：授权上传的证据快照（manifest/回执/台账）是出版记录，必须入库。
 reports/**
 !reports/**/
 !reports/**/*.uploaded.json
@@ -13,13 +13,10 @@ reports/**
 !reports/**/tag_update_results*.json
 cleanup_manifests/*.tmp
 
-# 各 profile 的本地交付/媒体拉取（媒体不入库）
-lidousha/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/**
-lidousha/covers_v2/**
-lidousha/smoke*/**
-lidousha/branding/**
-lidousha/eval-*/**
-lidousha/rerun-*/**
+# profile 输出目录（本地交付/媒体拉取，不入库；目录名 = 各 profile 的 output_directory）
+lidousha/**
+
+# 媒体永不入库
 *.mp4
 *.flv
 *.m4s
@@ -27,27 +24,27 @@ lidousha/rerun-*/**
 *.ts
 *.mov
 
-# Secrets — never commit
+# Secrets
 .env
 .env.*
 !.env.example
 
-# Python/tool caches
+# 缓存与工具产物
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.cache/
 
-# OS/editor noise
+# OS/编辑器噪音
 .DS_Store
-.cache/timely-term-crawler/
 *.swp
 *.swo
 
-# Deployment/hotfix backups
+# 部署备份
 *.bak-*
 *.backup
 
-# 表情包等生成媒体（媒体不入库；路径可用 AUTOSLICE_EMOTE_DIR 覆盖）
+# 表情包等生成媒体（路径可用 AUTOSLICE_EMOTE_DIR 覆盖）
 assets/emote/

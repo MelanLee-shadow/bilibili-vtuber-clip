@@ -1,126 +1,98 @@
 # bilibili-vtuber-clip — 无人值守的直播录播切片流水线
 
-从直播录播到成品切片的全自动流水线：**选题 → 转写 → 证据链校对 → 字幕烧录 →
-AI 封面与标题 → 出版登记与上传**。为"发布错误不可接受"的场景设计——每一道
-门都是 fail-closed：证据不齐就拒绝交付，而不是硬着头皮发出去。
+主播下播后，这套系统自己完成从录播到成品的全部工作：挑出值得切的片段、
+生成并校对字幕、烧录、配 AI 封面和标题，最后把等待人工过目的成品包放到
+交付目录。它为"发布错误不可接受"的场景设计：任何一步证据不齐就**拒绝交付**，
+而不是硬着头皮发出去。
 
-> An unattended VTuber-stream clipping pipeline (Chinese-first; docs are in
-> Chinese). Every stage is an evidence-chained, fail-closed gate: selection →
-> ASR → adjudicated subtitle correction → burn → AI cover/title → publication
-> registry → upload/repair lanes for Bilibili.
+> An unattended VTuber-stream clipping pipeline for Bilibili (Chinese-first;
+> docs are in Chinese). Fail-closed at every stage.
 
-## 它与"随便切切"的区别
+## 功能一览
 
-- **证据链而非黑箱**：每处字幕修正都要有出处（平台弹幕/礼物记录、独立
-  声学听写、闭集裁决回执），并以哈希绑定进交付包。
-- **出版登记是唯一上传授权**：已发布内容只能走同 BV 修复链（换源不换稿），
-  防止重复投稿与误传。
-- **精确重放基线**：修复重跑逐字节恢复已审文本，只有真值台账拥有的区间
-  允许变化——修复不会引入新的回归。
-- **调试期成本自控**：内容寻址缓存让重试轮零重复模型调用。
+| 功能 | 输入 | 输出 | 它做了什么 |
+|---|---|---|---|
+| 自动切片主线（`session_autoslice.py`） | 录播姬录出的 `.flv/.mp4` + 弹幕 `.xml` | 交付目录里的成品包：视频、烧好字幕、封面、标题、审片材料 | 下播后自动挑选题（用 LLM 从观众视角找"值得切"的片段）→ 免费 ASR 出字幕 → 用弹幕/礼物记录和声学证据校对专名与误听 → 烧录 → AI 封面标题 → 等人工评审 |
+| 单候选产线（`produce_slice_package.py`） | 一个 spec（指定录播文件和起止时间） | 同上的单个成品包 | 跳过自动选题，把你指定的片段走完整条产线 |
+| 人工评审与授权上传（`audit_review_package.py` → `build_final_human_review.py` → `authorized_upload.py`） | 成品包 | B 站稿件（含合集、tag）+ 入库的上传凭证 | 机器先全面审计包的一致性，人确认后由唯一入口投稿；已发布的稿件只允许"同 BV 修复"（换源不换稿），杜绝重复投稿 |
+| 词表 crawler（`crawl_timely_terms.py` 等三个） | 直播圈公开信息 | 更新后的 profile 词表资产 | 定时把时效热词、关联主播名册、话题实体图刷进你频道的词表，让字幕专名校对跟得上直播圈动态 |
+| 活字乱刷（`huozi_luanshua.py`） | 历史直播语料 + 你想拼的句子 | 可追溯的试听音频候选 | 从主播说过的话里高置信拼出新句子，三段式（计划→验证→渲染）证据绑定，绝不自动上传 |
+| 修复/救援（`scripts/README.md` 修复组） | 出问题的包或丢失的录制段 | 修好的包 / 重建的源文件 | 换源、修封面、从官方回放重建丢失录制、复活被误拒的候选——全部计划驱动、哈希绑定 |
+| 录制监控（`slice_monitor.py` 等） | 录制主机状态 | 报告文件（唯一告警通道） | 盯挂载、盯录制健康、备份弹幕，出事宁可停下也不吃坏字节 |
 
-## 地图：先读哪些
-
-| 你想做什么 | 入口 |
-|---|---|
-| 理解流水线规则 | [docs/pipeline/README.md](docs/pipeline/README.md)（分步权威索引） |
-| 配一个新频道 | [profiles/README.md](profiles/README.md) + `assets/_template/` 骨架 |
-| 知道每个脚本是干嘛的 | [scripts/README.md](scripts/README.md)（按 lane 分组，含"你会真正用到的"） |
-| 换 profile 还有哪些坑 | [docs/profile-coupling.md](docs/profile-coupling.md)（剩余耦合点清单） |
-| 给 AI 代理的操作约定 | [AGENTS.md](AGENTS.md) |
-
-## 你需要准备什么
-
-| 组件 | 说明 |
-|---|---|
-| 录播服务器 | 推荐 8 vCPU / 32 GB RAM / 500 GB+ 磁盘（4c/16G 可用但并行烧录吃紧）。参考实机：AMD EPYC 8c/32G，103 秒切片全流程 6–17 分钟 |
-| 录制器 | [BililiveRecorder](https://github.com/BililiveRecorder/BililiveRecorder)（`ops/recording/` 有适配器、健康巡检与 webhook 对账，见其 README） |
-| LLM 通道 | 需要能访问 **Gemini 系列**（转写精修/声学听写）与 **GPT 系列**（语义裁决/标题/封面）。推荐自建 [CLIProxyAPI](https://github.com/luispater/CLIProxyAPI) 作为统一入口（本仓所有调用走 `CPA_BASE_URL`/`CPA_API_KEY` 两个环境变量） |
-| 免费 ASR | 词级时间轴来自必剪开放转写接口，基于 [SocialSisterYi/bcut-asr](https://github.com/SocialSisterYi/bcut-asr) 的社区研究（见 `scripts/free_asr_client.py`，另含剪映备胎；此处 "free" = 免费） |
-| 上传 CLI | [biliup](https://github.com/biliup/biliup)（发布 lane 用；只跑评审/产包可不装） |
-| 本机 SSH | 产线以 `--ssh-host localhost` 经 SSH 取源媒体：macOS 打开「远程登录」，Linux 装 openssh-server，并给自己配好免密 key |
-| Python | 3.11+（参考部署 3.13），`ffmpeg` 7+ |
-
-凭据清单：CPA 端点 + key、Gemini key（可选备份位）、录播姬房间 cookie（可选，
-见 `docs/pipeline/10-source-recording.md`）、biliup cookie 与创作中心
-`cookie.json`（只在发布 lane 需要）。环境变量见 `.env.example`；常用变量都
-在里面，lane 级变量在对应脚本/模块的 `--help` 与源码顶部。
-
-**关于 AGY**：歌切 lane 与部分声学听写证据引用一个叫 `agy` 的命令行听写器
-（把 Gemini 订阅封装成 CLI 的内部工具，未随本仓发布）。谈话切片不需要它
-（BCUT 聚合 ASR 足够）；歌切 lane 缺它时会按 fail-closed 拒绝交付而不是降级
-瞎猜。接入自己的听写器 = 实现相同的命令行契约（`AGY_BIN` 环境变量指向）。
-
-## 快速开始
+## 快速上手
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-cp .env.example .env        # 填 CPA / Gemini 凭据
-.venv/bin/python -m pytest -q   # 冒烟：全套件应通过（无凭据也能跑，网络层全部 mock）
+cp .env.example .env        # 填 CPA / Gemini（凭据清单见 docs/credentials.md）
+.venv/bin/python -m pytest -q    # 冒烟：应全绿（不需要任何凭据和网络）
 ```
 
-配频道（示例频道 `lidousha` 开箱即用；配自己的频道见
-[profiles/README.md](profiles/README.md)，有 `assets/_template/` 骨架可复制）：
+配频道（示例频道 `lidousha` 开箱即用；配自己的频道照
+[profiles/README.md](profiles/README.md) 做，有 `assets/_template/` 骨架可整套复制）：
 
 ```bash
 .venv/bin/python scripts/validate_channel_profile.py --profile lidousha --config-only
 ```
 
-第一支切片（本机冒烟，不需要录播服务器）：
+第一支切片（在录播文件所在的机器上直接跑，**不需要 SSH**——
+`--ssh-host localhost` 走本地直读，SSH 只在媒体在另一台机器时才用）：
 
 ```bash
-# 对一段本地录播（.flv/.mp4 + 同名弹幕 .xml 可选）跑端到端单候选冒烟：
-# 召回 + 产包一条 talk 候选，交付在 lidousha/smoke*/ 下。
-# AUTOSLICE_BASE 指向一个可写目录（默认 /opt/bilive/autoslice）。
 AUTOSLICE_BASE=$PWD/.autoslice \
   .venv/bin/python scripts/session_autoslice.py --smoke-segment /path/to/recording.flv
 ```
 
-要产指定片段而不是让选题器挑，用单候选产线（spec 字段见脚本 docstring）：
+整线无人值守（录制 → 下播自动切 → 评审 → 上传）：照
+`ops/recording/README.md` 配录制层，`scripts/deploy_autoslice.sh` 是参考部署。
 
-```bash
-.venv/bin/python scripts/produce_slice_package.py --spec <spec.json> --ssh-host localhost
-```
+## 你需要准备什么
 
-无人值守整线（录制 → 下播自动切片 → 评审 → 授权上传）按
-`ops/recording/README.md` 配录制器与 webhook，再用 `scripts/deploy_autoslice.sh`
-作参考部署（按你的主机改写）。发布永远走 `scripts/authorized_upload.py` 的
-manifest 闭环——这是唯一上传授权入口。
+| 组件 | 说明 |
+|---|---|
+| 一台服务器 | 推荐 8 核 / 32 GB / 500 GB+ 磁盘（4 核 16 GB 可用但并行烧录吃紧） |
+| [BililiveRecorder](https://github.com/BililiveRecorder/BililiveRecorder) | 录播姬。`ops/recording/` 是参考配置 |
+| LLM 通道 | 能访问 Gemini 系列与 GPT 系列。推荐自建 [CLIProxyAPI](https://github.com/luispater/CLIProxyAPI) 统一入口（两个环境变量搞定） |
+| [Google Antigravity](https://antigravity.google/) | 官方公开工具，直接下载。本仓用它的 CLI 做声学听写：talk 基线转写不用它，talk 的专名声学仲裁和歌切 lane 用（缺它时相关证据路径拒绝而不是瞎猜） |
+| [biliup](https://github.com/biliup/biliup) | 投稿 CLI。只产包评审不上传可不装 |
+| Python 3.11+，`ffmpeg` 7+ | 转写用的免费必剪接口不需要 key |
 
-`assets/lidousha/` 是一个**完整的实战 profile 示例**（词表、标题风格语料、
-选题度量、字幕校对原则），来自真实频道的长期运营沉淀，作者选择公开以供
-参考。换频道 = 换 profile + 换词表，管线代码不动；剩余的默认 profile 耦合点
-全部列在 [docs/profile-coupling.md](docs/profile-coupling.md)。
+全部凭据（cookie 放哪、长什么样、怎么验证）见 **[docs/credentials.md](docs/credentials.md)**。
+
+## 第一次逛仓库，只需要看这几个文件
+
+1. 本 README；
+2. [profiles/README.md](profiles/README.md) —— 怎么配你的频道；
+3. [scripts/README.md](scripts/README.md) —— 62 个脚本按用途分组，先看"你会真正用到的六个"；
+4. 要深挖规则再看 [docs/pipeline/README.md](docs/pipeline/README.md)（给 agent/维护者的分步权威，技术密度高）；
+5. [AGENTS.md](AGENTS.md) —— 给 AI 代理的完整操作约定与架构细节。
+
+`assets/` 下的一大堆 JSON 是**频道数据**（词表、策略、台账模板），不是代码，
+不需要读——配新频道时复制 `assets/_template/` 骨架再逐个填就行。
 
 ## 术语表
 
 | 词 | 含义 |
 |---|---|
 | CPA | 自建 [CLIProxyAPI](https://github.com/luispater/CLIProxyAPI) 统一 LLM 入口 |
-| BCUT | 必剪开放转写接口（免费词级时间轴 ASR） |
-| AGY | Gemini 订阅封装的命令行听写器（内部工具，未随仓发布，见上文） |
-| bilive | 本项目录制/切片部署层的约定名（`/opt/bilive` 布局、`ops/recording/` 服务名） |
-| 出版登记 | `publication_registry`：候选 ↔ BV 的唯一上传授权台账 |
-| 真值台账 | `subtitle_truth_ledger`：已发布字幕修复的唯一合法所有者 |
+| BCUT | 必剪开放转写接口（免费、词级毫秒时间轴的 ASR） |
+| AGY | [Google Antigravity](https://antigravity.google/) 的 CLI，本仓用作声学听写引擎 |
+| bilive | 本项目部署层的约定名（`/opt/bilive` 目录、`ops/recording/` 服务名） |
+| 出版登记 | 候选 ↔ B 站稿件的对应台账，是唯一上传授权 |
+| 真值台账 | 已发布字幕修复的唯一合法记录（防止修复引入新错误） |
 
-## 状态与已知限制
+## 路线图与已知限制
 
-- Alpha。参考部署已无人值守运行数周（含同 BV 字幕修复的公开验收闭环），
-  但多频道抽象仍在收敛中：剩余耦合点见
-  [docs/profile-coupling.md](docs/profile-coupling.md)。
-- 出版登记/真值台账/评审契约等**运营状态**在本仓只有空模板——它们属于
-  每个部署自己的数据。
-- 测试套件不需要任何凭据或网络（LLM/HTTP 边界全部 mock）；个别用例在缺
-  `ffmpeg` 或表情包媒体时会 skip。**套件以默认 profile 为基准**：跑 `pytest`
-  时不要设置 `AUTOSLICE_PROFILE`（约 11 个用例直接断言示例 profile 的资产
-  内容，非默认 profile 下套件不是有效信号）。
-- 发布与声纹安装 lane 目前默认 profile 专用（上传授权登记/终审契约/声纹
-  schema 门硬编码示例资产路径，见
-  [docs/profile-coupling.md](docs/profile-coupling.md) C 组）——换频道可以
-  产包评审，公开发布前需先完成该组修复。
-- 示例 profile 在全新 clone 里全量校验会因声纹文件缺失而 BLOCKED（生物特征
-  不随仓分发，预期行为，见 profiles/README.md）。
-- Docker 化在路线图上（欢迎 PR）。
+- **说话人分离（多人自动分轨）：待做，欢迎 PR。** 当前默认 uniform-host
+  （成品统一按主播处理）+ CAM++ 声纹确认；完整 diarization 是明确的下一步。
+- **Docker 化：待做，欢迎 PR。**
+- Alpha：参考部署已无人值守运行数周，但多频道抽象仍在收敛——剩余的默认
+  profile 耦合点全部列在 [docs/profile-coupling.md](docs/profile-coupling.md)；
+  **发布/声纹 lane 目前默认 profile 专用**（C 组修复完成前，换频道可产包评审，
+  公开发布还差这一步）。
+- 测试套件以默认 profile 为基准：跑 `pytest` 时不要设置 `AUTOSLICE_PROFILE`。
+- 出版登记/真值台账等运营状态在本仓只有空模板——它们属于每个部署自己的数据。
+- 示例 profile 全量校验会因声纹文件缺失而 BLOCKED（生物特征不随仓分发，预期行为）。
 
 ## 致谢
 

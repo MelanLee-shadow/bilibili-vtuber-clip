@@ -1,18 +1,22 @@
-# 核心（管线 + 全套测试就靠这两个；其余是标准库）
+# 默认全装：装完即可跑全部 lane（声纹栈含 torch，体积较大）。
+# 哲学：发布版默认把需要的都装上；确定不用某条 lane 的人自己删对应段——
+# 删掉任何一段都不影响其他 lane，测试全绿只需要「核心」三个包。
+
+# —— 核心（转写/校对/标题/封面渲染/测试）——
 pillow>=10
 pypinyin>=0.50
-
-# 开发/测试
 pytest>=8
 
-# ---- 可选 lane（按需安装；不装时对应工具会明确报错，不会静默降级）----
-# silero VAD 跨度导出（scripts/silero_vad_spans.py）
-# numpy
-# onnxruntime
-# 弹幕/礼物/SC 备份监听（scripts/danmaku_backup_listener.py）
-# websocket-client
-# brotli
-# 声纹说话人栈（CAM++ 说话人确认；见 docs/pipeline/ 与 profiles/README.md）
-# torch
-# modelscope
-# soundfile
+# —— 弹幕/礼物/SC 备份监听（scripts/danmaku_backup_listener.py）——
+websocket-client>=1.6
+brotli>=1.1
+
+# —— VAD 语音跨度导出（scripts/silero_vad_spans.py，字幕时间轴 QA）——
+numpy>=1.26
+onnxruntime>=1.17
+
+# —— 声纹说话人确认（CAM++；src/autoslice/speaker_finalizer.py /
+#     host_vocal_proof.py。首次运行由 modelscope 自动下载模型）——
+torch>=2.1
+soundfile>=0.12
+modelscope>=1.20

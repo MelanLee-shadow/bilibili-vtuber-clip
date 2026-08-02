@@ -1,6 +1,6 @@
 # scripts/ 地图
 
-62 个脚本按 lane 分组。刚上手真正会用到的只有六个：
+61 个脚本按 lane 分组。刚上手真正会用到的只有六个：
 `validate_channel_profile.py`（配 profile）、`session_autoslice.py`（runner/冒烟）、
 `produce_slice_package.py`（单候选产线）、`audit_review_package.py`（包审计）、
 `build_final_human_review.py`（终审回执）、`authorized_upload.py`（唯一上传入口）。
@@ -88,4 +88,3 @@
 |---|---|
 | `build_autoslice_eval_snapshot.py` | 从 git tree 构建不可变 eval 运行时 |
 | `run_eval_base_once.sh` | 在 eval 沙箱里安全跑一轮 runner |
-| `ab_model_replay_closed_set.py` | 闭集裁决历史案例的模型 A/B 重放（字节级保真门） |
