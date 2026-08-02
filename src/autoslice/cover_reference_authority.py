@@ -8,7 +8,9 @@ import re
 from pathlib import Path
 
 
-SCHEMA_VERSION = "lidousha-cover-reference-overrides.v1"
+from src.autoslice.surface_canon import CHANNEL_PROFILE as _PROFILE
+
+SCHEMA_VERSION = f"{_PROFILE.profile_id}-cover-reference-overrides.v1"
 SOURCE_VISUAL_VERIFICATION_SCHEMA = "lidousha-cover-source-visual-verification.v1"
 _SHA256_RX = re.compile(r"sha256:[0-9a-f]{64}")
 _CANDIDATE_RX = re.compile(r"[A-Za-z0-9_-]{1,96}")

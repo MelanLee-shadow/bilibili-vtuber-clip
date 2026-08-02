@@ -278,7 +278,7 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "tests/test_runtime_architecture.py",
         "    # 2026-08-01 新记：OSS 发布整备（维护者 授权）把导出器扩成改名/patch/模板引擎；\n"
         "    # 私库专用构建工具，导出时自剥离，不进 OSS 面。\n"
-        '    "scripts/export_oss_snapshot.py": 2_096,\n',
+        '    "scripts/export_oss_snapshot.py": 2_100,\n',
         "",
     ),
     # --- 债务棘轮：被剥离脚本的例外条目同步移除 ---

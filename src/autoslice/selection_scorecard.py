@@ -18,8 +18,7 @@ from typing import Mapping
 from src.autoslice.channel_profile import ChannelProfile, load_channel_profile
 
 
-SCHEMA_VERSION = "lidousha-selection-scorecard.v1"
-CALIBRATION_SCHEMA_VERSION = "lidousha-selection-score-calibration.v1"
+# schema 按 profile 派生（默认 profile 渲染与历史字面量逐字相同）；定义见 _CHANNEL_PROFILE 加载后。
 
 # Score levels are 0..4.  The weights intentionally sum to 100 so a scorecard
 # remains legible to an operator without another normalization convention.
@@ -44,6 +43,10 @@ TIER_ONE_BASES = frozenset(
 TIER_BASES = TIER_ONE_BASES | {"personal_stance", "generic_event"}
 _CHANNEL_PROFILE = load_channel_profile(
     Path(__file__).resolve().parents[2]
+)
+SCHEMA_VERSION = f"{_CHANNEL_PROFILE.profile_id}-selection-scorecard.v1"
+CALIBRATION_SCHEMA_VERSION = (
+    f"{_CHANNEL_PROFILE.profile_id}-selection-score-calibration.v1"
 )
 
 

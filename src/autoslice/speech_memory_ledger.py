@@ -16,7 +16,9 @@ from pathlib import Path
 from typing import Mapping
 
 
-SCHEMA_VERSION = "lidousha-speech-memory-ledger.v1"
+from src.autoslice.surface_canon import CHANNEL_PROFILE as _PROFILE
+
+SCHEMA_VERSION = f"{_PROFILE.profile_id}-speech-memory-ledger.v1"
 ALLOWED_KINDS = frozenset({"idiolect", "alias", "nickname", "recurring_callback"})
 ALLOWED_ACTIONS = frozenset({"CANDIDATE_ONLY"})
 _ID_RX = re.compile(r"[a-z0-9][a-z0-9._-]{2,95}")

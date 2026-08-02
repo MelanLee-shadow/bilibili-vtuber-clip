@@ -1416,6 +1416,7 @@ def _run_talk_producer_with_boundary_context_retry(
         speaker_review_state = _runner._speaker_review_manifest_state(
             out_root / candidate_id
         )
+        log_path.parent.mkdir(parents=True, exist_ok=True)
         attempt_offset = log_path.stat().st_size if log_path.is_file() else 0
         with open(log_path, "a", encoding="utf-8") as sink:
             completed = subprocess.run(
