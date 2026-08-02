@@ -33,6 +33,17 @@ def _other_profile_document() -> dict:
         "output_directory": "other_host",
         "host_speaker_label": "主播",
         "guest_speaker_label": "嘉宾",
+        "cover_identity": {
+            "gate_appearance_zh": "红发的小个子形象",
+            "gate_rival_note_zh": "（示例相似角色说明）",
+            "gate_imitation_zh": "加红发",
+            "locator_zh": "红发和可见名牌",
+            "composition_decoys_zh": "其他红发角色",
+            "prompt_tag_en": "example-tag",
+            "feature_en": "example ears",
+            "scene_prop_meme_note_zh": "示例梗说明，",
+            "emote_companion_lore_zh": "示例分身梗",
+        },
     }
     document["runtime"]["voiceprint_reference_subdirectory"] = "other_host"
     document["titles"] = {

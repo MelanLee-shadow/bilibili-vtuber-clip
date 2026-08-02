@@ -17,7 +17,18 @@
     "room_id": "22966160",
     "output_directory": "lidousha",
     "host_speaker_label": "李豆沙",
-    "guest_speaker_label": "连线"
+    "guest_speaker_label": "连线",
+    "cover_identity": {
+      "gate_appearance_zh": "白发、蓝白熊猫帽/熊猫耳的小个子形象",
+      "gate_rival_note_zh": "（例如带红金角饰、白发长辫、红领结的伊索尔Sol）",
+      "gate_imitation_zh": "加熊猫耳",
+      "locator_zh": "熊猫帽/熊猫耳、白发和可见名牌",
+      "composition_decoys_zh": "其他白发角色或游戏 UI",
+      "prompt_tag_en": "panda-hood",
+      "feature_en": "panda ears",
+      "scene_prop_meme_note_zh": "例如“白色奶龙表情/旧模型”是李豆沙自身形象的称呼，",
+      "emote_companion_lore_zh": "分身/复数小李梗,或用熊猫类表情包代画粉丝 kmx(kmx 读 kimo熊,是李豆沙粉丝们的名字,不是吉祥物——切片明显在互动/回应 kmx 时,用贴纸代画观众而不画路人群像)"
+    }
   },
   "assets": {
     "root": "assets/lidousha",

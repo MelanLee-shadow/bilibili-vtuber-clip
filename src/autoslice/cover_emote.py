@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from src.autoslice.channel_profile import ChannelProfileError, load_channel_profile
+from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -243,8 +244,7 @@ def emote_catalog_prompt_block(library: EmoteLibrary) -> str:
         "\n表情包(可选,默认不用):下面是官方表情包清单。**默认必须用人物重绘**(以参考帧当场形象为原型);"
         "只有当这条切片里她的反应与某个表情包高度贴合、用它明显比常规人物重绘更传神时,才允许选表情包;拿不准一律 null。"
         "选了表情包(mode=\"replace\")封面主体就是该表情包,与人物重绘互斥。"
-        "mode=\"companion\"(表情包与人物同框)只允许两类强理由:分身/复数小李梗,或用熊猫类表情包代画粉丝 kmx"
-        "(kmx 读 kimo熊,是李豆沙粉丝们的名字,不是吉祥物——切片明显在互动/回应 kmx 时,用贴纸代画观众而不画路人群像);其余一律 \"replace\"。"
+        f"mode=\"companion\"(表情包与人物同框)只允许两类强理由:{CHANNEL_PROFILE.cover_identity.emote_companion_lore_zh};其余一律 \"replace\"。"
         "歌切封面永不使用表情包。"
     ]
     for entry in library.entries:
