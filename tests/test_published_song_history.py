@@ -8,6 +8,7 @@ from src.autoslice.published_song_history import (
     published_song_match,
 )
 from src.autoslice.song_lane import _published_song_delivery_allowed
+from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
 def _snapshot(tmp_path):
@@ -38,16 +39,16 @@ def test_snapshot_matches_exact_normalized_title_and_explicit_alias(tmp_path):
     ledger = tmp_path / "missing-ledger.jsonl"
 
     exact = published_song_match(
-        "【李豆沙】豆沙歌，直播间唱《小 幸 运》",
+        f"{CHANNEL_PROFILE.talk_title_prefix}示例歌，直播间唱《小 幸 运》",
         snapshot_path=snapshot,
         ledger_path=ledger,
-        song_title_prefix="【李豆沙】豆沙歌，",
+        song_title_prefix=f"{CHANNEL_PROFILE.talk_title_prefix}示例歌，",
     )
     alias = published_song_match(
         "A Little Happiness",
         snapshot_path=snapshot,
         ledger_path=ledger,
-        song_title_prefix="【李豆沙】豆沙歌，",
+        song_title_prefix=f"{CHANNEL_PROFILE.talk_title_prefix}示例歌，",
     )
 
     assert exact["canonical_title"] == "小幸运"
@@ -57,7 +58,7 @@ def test_snapshot_matches_exact_normalized_title_and_explicit_alias(tmp_path):
         "小幸運",
         snapshot_path=snapshot,
         ledger_path=ledger,
-        song_title_prefix="【李豆沙】豆沙歌，",
+        song_title_prefix=f"{CHANNEL_PROFILE.talk_title_prefix}示例歌，",
     ) is None, "unlisted semantic/fuzzy variants must not be guessed"
 
 
@@ -72,13 +73,13 @@ def test_successful_ledger_upload_is_merged_but_failed_attempt_is_not(tmp_path):
                     "event": "UPLOAD_ATTEMPT_FINISHED",
                     "rc": 1,
                     "bvid": None,
-                    "title": "【李豆沙】豆沙歌，《失败的歌》",
+                    "title": f"{CHANNEL_PROFILE.talk_title_prefix}示例歌，《失败的歌》",
                 },
                 {
                     "event": "UPLOAD_ATTEMPT_FINISHED",
                     "rc": 0,
                     "bvid": "BV1TeN967EUp",
-                    "title": "【李豆沙】豆沙歌，《新发布歌》｜现场版",
+                    "title": f"{CHANNEL_PROFILE.talk_title_prefix}示例歌，《新发布歌》｜现场版",
                     "at": "2026-07-17T01:00:00Z",
                 },
             )
@@ -91,13 +92,13 @@ def test_successful_ledger_upload_is_merged_but_failed_attempt_is_not(tmp_path):
         "新发布歌",
         snapshot_path=snapshot,
         ledger_path=ledger,
-        song_title_prefix="【李豆沙】豆沙歌，",
+        song_title_prefix=f"{CHANNEL_PROFILE.talk_title_prefix}示例歌，",
     )["source"] == "production_upload_ledger"
     assert published_song_match(
         "失败的歌",
         snapshot_path=snapshot,
         ledger_path=ledger,
-        song_title_prefix="【李豆沙】豆沙歌，",
+        song_title_prefix=f"{CHANNEL_PROFILE.talk_title_prefix}示例歌，",
     ) is None
 
 
@@ -118,7 +119,7 @@ def test_alias_collision_fails_closed(tmp_path):
             "小幸运",
             snapshot_path=snapshot,
             ledger_path=tmp_path / "missing.jsonl",
-            song_title_prefix="【李豆沙】豆沙歌，",
+            song_title_prefix=f"{CHANNEL_PROFILE.talk_title_prefix}示例歌，",
         )
 
 

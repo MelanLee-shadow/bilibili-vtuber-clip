@@ -12,8 +12,8 @@ from src.autoslice.chat_authority import (
 from src.autoslice.jingting_chunker import parse_srt_cues
 
 # Real 2026-07-11 case: ASR is structurally deaf (外套→歪了), only the danmaku recovers it.
-_DANMU = "小豆的外套是可以脱的吗？"
-_GARBLE = "小豆歪了可以脱吗"
+_DANMU = "小主的外套是可以脱的吗？"
+_GARBLE = "小主歪了可以脱吗"
 
 
 def _srt(*texts: str) -> str:
@@ -173,13 +173,13 @@ def test_registered_entity_conflict_also_uses_blind_witness_then_cpa():
     audio_calls = []
     request = _request(
         schema_version="chat-entity-verification-request.v1",
-        exact_text="礼墨",
-        matched_audio_text="林墨",
-        structured_chat_canonical="礼墨",
-        structured_chat_surface="礼墨",
+        exact_text="俪墨",
+        matched_audio_text="琳墨",
+        structured_chat_canonical="俪墨",
+        structured_chat_surface="俪墨",
         candidate_entities=[
-            {"canonical": "礼墨", "surfaces": ["礼墨"]},
-            {"canonical": "林墨", "surfaces": ["林墨"]},
+            {"canonical": "俪墨", "surfaces": ["俪墨"]},
+            {"canonical": "琳墨", "surfaces": ["琳墨"]},
         ],
     )
 
@@ -187,10 +187,10 @@ def test_registered_entity_conflict_also_uses_blind_witness_then_cpa():
         lambda _prompt: json.dumps(
             {
                 "ranking": [
-                    {"canonical": "礼墨", "p": 0.72},
-                    {"canonical": "林墨", "p": 0.28},
+                    {"canonical": "俪墨", "p": 0.72},
+                    {"canonical": "琳墨", "p": 0.28},
                 ],
-                "choice": "礼墨",
+                "choice": "俪墨",
                 "reason": "结构化文字和话题语境支持",
             },
             ensure_ascii=False,
@@ -202,7 +202,7 @@ def test_registered_entity_conflict_also_uses_blind_witness_then_cpa():
 
     verdict = verify(request)
 
-    assert verdict["canonical_entity"] == "礼墨"
+    assert verdict["canonical_entity"] == "俪墨"
     assert verdict["reason_code"] == (
         "REGISTERED_ENTITY_CPA_WITNESS_ADJUDICATED"
     )

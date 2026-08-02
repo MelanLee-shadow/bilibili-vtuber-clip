@@ -1,6 +1,6 @@
 """Ivan 2026-07-13 policy: no speaker separation in any deliverable.
 
-Every cue keeps the single host (李豆沙) subtitle style and speaker
+Every cue keeps the single host (主播) subtitle style and speaker
 uncertainty must never reject a delivery. The binary finalizer stays in the
 tree for the future re-enable decision, but uniform_host is the default and
 must be unreachable from the finalizer dispatch.

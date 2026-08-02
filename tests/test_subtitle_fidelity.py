@@ -297,31 +297,31 @@ def test_digit_reading_rewrite_passes():
 
 def test_unwitnessed_name_guess_reverts_but_agy_witness_passes():
     """2026-07-11 生日结婚实案：BCUT 误听「留下」，AGY 缺席时 CPA 猜成
-    「小李」= 无证改写必须回退；AGY 在场且听到「李豆沙」则采信。"""
+    「小主」= 无证改写必须回退；AGY 在场且听到「主播」则采信。"""
     draft = _srt("所以你是想看留下跟别人亲亲")
-    guessed = _srt("所以你是想看小李跟别人亲亲")
+    guessed = _srt("所以你是想看小主跟别人亲亲")
 
     guarded, audit = apply_subtitle_fidelity_guard(draft, guessed, agy_srt=None, sanctioned=())
     assert "留下" in guarded
-    assert "小李" not in guarded
+    assert "小主" not in guarded
     assert audit["reverted_count"] == 1
 
-    agy = _srt("所以你是想看李豆沙跟别人亲亲")
-    adopted = _srt("所以你是想看李豆沙跟别人亲亲")
+    agy = _srt("所以你是想看主播跟别人亲亲")
+    adopted = _srt("所以你是想看主播跟别人亲亲")
     guarded2, audit2 = apply_subtitle_fidelity_guard(draft, adopted, agy_srt=agy, sanctioned=())
-    assert "李豆沙" in guarded2
+    assert "主播" in guarded2
     assert audit2["status"] == "CLEAN"
 
 
 def test_sanctioned_table_and_homophone_sets_pass():
-    draft = _srt("我是直女啊", "他今天来了吗")
-    final = _srt("我是侄女啊", "她今天来了嘛")
+    draft = _srt("我是值妹啊", "他今天来了吗")
+    final = _srt("我是表妹啊", "她今天来了嘛")
 
     guarded, audit = apply_subtitle_fidelity_guard(
-        draft, final, agy_srt=None, sanctioned=(("直女", "侄女"),)
+        draft, final, agy_srt=None, sanctioned=(("值妹", "表妹"),)
     )
 
-    assert "侄女" in guarded
+    assert "表妹" in guarded
     assert "她今天来了嘛" in guarded
     assert audit["status"] == "CLEAN"
 
@@ -374,17 +374,17 @@ def test_missing_final_cue_with_agy_audio_witness_is_restored():
 
 
 def test_pinyin_homophone_respell_passes_without_witness():
-    """2026-07-14 五年之约冤杀案回归：季下→记下(jì同音)、小丽→小李(lǐ同音)
+    """2026-07-14 五年之约冤杀案回归：季下→记下(jì同音)、小丽→小主(lǐ同音)
     都保留读音，但「小+姓」是人名写法槽，音频不能自证李/丽；普通词法重拼
     仍可放行，姓名写法与转述都回退。"""
     draft = _srt("欢迎季下", "小丽只是恰好处在一个", "就是她被那个190粉毛抢了手机")
-    final = _srt("欢迎记下", "小李只是恰好处在一个", "就是她被那个一米九粉毛抢了手机")
+    final = _srt("欢迎记下", "小主只是恰好处在一个", "就是她被那个一米九粉毛抢了手机")
 
     guarded, audit = apply_subtitle_fidelity_guard(draft, final, agy_srt=None, sanctioned=())
 
     assert "欢迎记下" in guarded
     assert "小丽只是恰好处在一个" in guarded
-    assert "小李只是恰好处在一个" not in guarded
+    assert "小主只是恰好处在一个" not in guarded
     assert "一米九" not in guarded  # 转述仍被回退
     assert audit["reverted_count"] == 2
 
@@ -482,50 +482,50 @@ def test_cue_count_mismatch_is_aligned_to_draft_timing_instead_of_skipped():
 
 
 def test_guard_reverts_only_bad_span_and_keeps_sanctioned_name_span():
-    draft = _srt("让刘莎线下叫提莫怂")
-    final = _srt("让礼墨线下叫kmx")
+    draft = _srt("让陈莎线下叫踢摩松")
+    final = _srt("让乙乙线下叫meow")
 
     guarded, audit = apply_subtitle_fidelity_guard(
         draft,
         final,
-        sanctioned=(("提莫怂", "kmx"),),
+        sanctioned=(("踢摩松", "meow"),),
     )
 
-    assert "让刘莎线下叫kmx" in guarded
-    assert "让礼墨" not in guarded
+    assert "让陈莎线下叫meow" in guarded
+    assert "让乙乙" not in guarded
     assert audit["status"] == "APPLIED"
-    assert audit["reverted"][0]["kept"] == "让刘莎线下叫kmx"
+    assert audit["reverted"][0]["kept"] == "让陈莎线下叫meow"
 
 
 def test_hash_bound_fallback_can_only_support_a_repeated_name_slot():
-    draft = _srt("请问熊在线下说", "但是因为提")
-    corrected = _srt("kmx在线下说", "但是因为kmx")
+    draft = _srt("请问松在线下说", "但是因为提")
+    corrected = _srt("meow在线下说", "但是因为meow")
     fallback = corrected
 
     guarded, audit = apply_subtitle_fidelity_guard(
         draft,
         corrected,
         corroborating_srt=fallback,
-        sanctioned=(("请问熊", "kmx"),),
+        sanctioned=(("请问松", "meow"),),
     )
 
-    assert "kmx在线下说" in guarded
-    assert "但是因为kmx" in guarded
+    assert "meow在线下说" in guarded
+    assert "但是因为meow" in guarded
     assert audit["status"] == "CLEAN"
 
     single_guarded, _single_audit = apply_subtitle_fidelity_guard(
         _srt("但是因为提"),
-        _srt("但是因为kmx"),
-        corroborating_srt=_srt("但是因为kmx"),
+        _srt("但是因为meow"),
+        corroborating_srt=_srt("但是因为meow"),
         sanctioned=(),
     )
     assert "但是因为提" in single_guarded
-    assert "但是因为kmx" not in single_guarded
+    assert "但是因为meow" not in single_guarded
 
 
 def test_numeric_fact_introduced_by_semantic_lane_without_source_is_reverted():
     draft = _srt("所以在这里喂，哈哈")
-    final = _srt("所以在这里为李豆沙做0.4")
+    final = _srt("所以在这里为主播做0.4")
 
     guarded, audit = apply_numeric_fact_provenance_guard(draft, final)
 
@@ -537,11 +537,11 @@ def test_numeric_fact_introduced_by_semantic_lane_without_source_is_reverted():
 
 def test_numeric_fact_survives_when_same_time_structured_chat_contains_it():
     draft = _srt("抽卡惩罚就做这个")
-    final = _srt("抽卡惩罚就为礼墨做0.6")
+    final = _srt("抽卡惩罚就为乙乙做0.6")
     evidence = [
         SimpleNamespace(
             offset_ms=5_500,
-            text="为礼墨做0.6",
+            text="为乙乙做0.6",
             kind="danmaku",
         )
     ]
@@ -550,17 +550,17 @@ def test_numeric_fact_survives_when_same_time_structured_chat_contains_it():
         draft, final, structured_evidence=evidence
     )
 
-    assert "为礼墨做0.6" in guarded
+    assert "为乙乙做0.6" in guarded
     assert audit["status"] == "CLEAN"
 
 
 def test_numeric_fact_survives_confirmed_delayed_chat_read_span():
-    draft = _srt("大熊猫三个字能说熊猫")
-    final = _srt("大熊猫是3个字能说熊猫")
+    draft = _srt("大蝴蝶三个字能说蝴蝶")
+    final = _srt("大蝴蝶是3个字能说蝴蝶")
     raw_evidence = [
         SimpleNamespace(
             offset_ms=-10_000,
-            text="大熊猫是3个字",
+            text="大蝴蝶是3个字",
             kind="danmaku",
         )
     ]
@@ -568,7 +568,7 @@ def test_numeric_fact_survives_confirmed_delayed_chat_read_span():
         {
             "evidence_id": "confirmed-read",
             "kind": "danmaku",
-            "exact_text": "大熊猫是3个字",
+            "exact_text": "大蝴蝶是3个字",
             "matched_start_ms": 5_000,
             "matched_end_ms": 9_000,
             "survived": True,
@@ -582,7 +582,7 @@ def test_numeric_fact_survives_confirmed_delayed_chat_read_span():
         matched_structured_evidence=matched_evidence,
     )
 
-    assert "大熊猫是3个字能说熊猫" in guarded
+    assert "大蝴蝶是3个字能说蝴蝶" in guarded
     assert audit["status"] == "CLEAN"
     assert audit["supported"][0]["evidence"][0]["basis"] == (
         "chat_authority_matched_spoken_span"
@@ -590,13 +590,13 @@ def test_numeric_fact_survives_confirmed_delayed_chat_read_span():
 
 
 def test_numeric_fact_ignores_unverified_chat_match_span():
-    draft = _srt("大熊猫三个字能说熊猫")
-    final = _srt("大熊猫是3个字能说熊猫")
+    draft = _srt("大蝴蝶三个字能说蝴蝶")
+    final = _srt("大蝴蝶是3个字能说蝴蝶")
     matched_evidence = [
         {
             "evidence_id": "unverified-read",
             "kind": "danmaku",
-            "exact_text": "大熊猫是3个字",
+            "exact_text": "大蝴蝶是3个字",
             "matched_start_ms": 5_000,
             "matched_end_ms": 9_000,
             "survived": False,
@@ -609,7 +609,7 @@ def test_numeric_fact_ignores_unverified_chat_match_span():
         matched_structured_evidence=matched_evidence,
     )
 
-    assert "大熊猫三个字能说熊猫" in guarded
+    assert "大蝴蝶三个字能说蝴蝶" in guarded
     assert audit["status"] == "REVERTED_UNPROVEN_NUMERIC_FACT"
 
 
@@ -954,10 +954,10 @@ def test_title_mark_guard_removes_one_surplus_close_but_keeps_legal_nesting():
 
 def test_impossible_punctuation_guard_collapses_comma_before_terminal_mark():
     guarded, audit = apply_impossible_punctuation_guard(
-        _srt("豆沙绯闻女友ID已被注册，。", "真的吗？！", "正常，停顿")
+        _srt("主播绯闻女友ID已被注册，。", "真的吗？！", "正常，停顿")
     )
 
-    assert "豆沙绯闻女友ID已被注册。" in guarded
+    assert "主播绯闻女友ID已被注册。" in guarded
     assert "真的吗？！" in guarded
     assert "正常，停顿" in guarded
     assert audit["status"] == "APPLIED"

@@ -10,6 +10,7 @@ from scripts.authorized_upload import UploadLockBusy, exclusive_upload_lock
 import src.autoslice.final_human_review as final_human_review
 import src.autoslice.same_bv_repair as same_bv
 import src.autoslice.same_bv_cover_reconciliation as cover_reconciliation
+from src.autoslice.surface_canon import CHANNEL_PROFILE
 from src.autoslice.same_bv_repair import (
     DuplicateBvid,
     JournalCorrupt,
@@ -34,7 +35,7 @@ BVID = "BV1Mug46EEQz"
 OLD_CID = 101
 NEW_CID = 202
 COVER_URL = "https://img.example/new-cover.png"
-FINAL_TITLE = "【李豆沙】新标题"
+FINAL_TITLE = f"{CHANNEL_PROFILE.talk_title_prefix}新标题"
 PUBLICATION_AUTHORITY = {
     "schema_version": "test-recovery-publication-authority.v1",
     "candidate_id": "candidate-test",
@@ -101,7 +102,7 @@ def _before_snapshot() -> dict:
     creator_metadata = {
         "title": "旧标题",
         "desc": "https://live.bilibili.com/\n简介",
-        "tags": ["李豆沙", "直播切片"],
+        "tags": [CHANNEL_PROFILE.display_name, "直播切片"],
         "tid": 21,
         "copyright": 2,
         "source": "https://live.bilibili.com/",
@@ -151,7 +152,7 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
         "1\n00:00:00,000 --> 00:00:01,000\n测试\n",
         encoding="utf-8",
     )
-    source_claim = "李豆沙与联动对象均可见"
+    source_claim = "主播与联动对象均可见"
     narrative = "封面文字准确表达两人互动"
     record = {
         "duration_ms": 180_000,
@@ -399,7 +400,7 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
         },
         "title": FINAL_TITLE,
         "description": "https://live.bilibili.com/\n简介",
-        "tags": ["李豆沙", "直播切片"],
+        "tags": [CHANNEL_PROFILE.display_name, "直播切片"],
         "publish_policy": {
             "tid": 21,
             "copyright": 2,
@@ -408,7 +409,7 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
         "season": {
             "season_id": 8383206,
             "section_id": 9320779,
-            "season_title": "小李切片",
+            "season_title": "小主切片",
         },
         "authorization": {"by": "Ivan", "quote": "尽量上传"},
         "recovery_publication_authority": copy.deepcopy(PUBLICATION_AUTHORITY),
@@ -1776,7 +1777,7 @@ def test_public_tags_failure_is_unavailable_not_an_empty_tag_observation():
             "state": 0,
             "title": "旧标题",
             "desc": "简介",
-            "tag": "李豆沙,直播切片",
+            "tag": f"{CHANNEL_PROFILE.display_name},直播切片",
             "tid": 21,
             "copyright": 2,
             "source": "https://live.bilibili.com/",

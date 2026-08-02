@@ -32,6 +32,8 @@ from src.autoslice.speaker_finalizer import (
     validate_speaker_review_manifest_document,
 )
 from src.autoslice.host_vocal_proof import _sha256_directory
+from src.autoslice.speaker_common import HOST_SPEAKER
+from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
 def _source_session_document() -> dict:
@@ -42,7 +44,7 @@ def _source_session_document() -> dict:
                 "source_cue": cue_index,
                 "start": "00:00:01,000",
                 "end": "00:00:03,000",
-                "text": "李豆沙 donor",
+                "text": f"{HOST_SPEAKER} donor",
                 "sample_sha256": str(cue_index)[0] * 64,
                 "reference_scores": {"r1": 0.72, "r2": 0.74, "r3": 0.76},
                 "enroll_median_score": 0.74,
@@ -51,7 +53,7 @@ def _source_session_document() -> dict:
     return {
         "schema_version": SOURCE_SESSION_ANCHOR_SCHEMA,
         "status": "READY",
-        "subject": "李豆沙",
+        "subject": HOST_SPEAKER,
         "source_session_id": "session-1",
         "source_recording": "/remote/session.mp4",
         "profile_sha256": "a" * 64,
@@ -369,7 +371,7 @@ def test_runtime_model_and_reference_assets_are_rehashed_before_ready(tmp_path: 
     reference.write_bytes(b"reference-a")
     rows = [
         {
-            "id": "lidousha-1",
+            "id": "ref-1",
             "path": reference,
             "sha256": hashlib.sha256(reference.read_bytes()).hexdigest(),
         }
@@ -591,7 +593,7 @@ def test_source_session_loader_reextracts_hash_bound_source_recording_segments(
     document = {
         "schema_version": SOURCE_SESSION_ANCHOR_SCHEMA,
         "status": "READY",
-        "subject": "李豆沙",
+        "subject": HOST_SPEAKER,
         "source_session_id": "session-1",
         "source_recording": str(source_recording),
         "profile_sha256": hashlib.sha256(profile.read_bytes()).hexdigest(),
@@ -775,12 +777,15 @@ def test_runner_rejects_malformed_speaker_review_manifest(tmp_path: Path, monkey
         )
     assert "SPEAKER_REVIEW_REQUIRED" not in str(raised.value)
 
-def test_context_prompt_treats_exact_shadow_name_as_lidousha_not_fourth_speaker() -> None:
+def test_context_prompt_treats_exact_shadow_name_as_host_not_fourth_speaker() -> None:
     prompt = _context_prompt([], [], [])
     assert hashlib.sha256(prompt.encode("utf-8")).hexdigest() == (
         "505e5aef8a21689a4ca3e3d065a9e9ba5b61ab5a7e4fdc8fadecc169a53b0d4a"
     )
-    assert "精确词 shadow 是李豆沙的自称之一" in prompt
+    assert (
+        f"精确词 {CHANNEL_PROFILE.speaker_identity_aliases[-1]} 是{HOST_SPEAKER}的自称之一"
+        in prompt
+    )
     assert "不是第四位说话人" in prompt
 
 
@@ -801,12 +806,12 @@ def test_speaker_context_loads_private_runtime_cpa_env(tmp_path: Path, monkeypat
 
 def test_ambiguous_speaker_resolution_records_context_and_fallback_sources() -> None:
     labels, sources = resolve_ambiguous_labels(
-        ["连线", None, "李豆沙", None, "李豆沙"],
+        ["连线", None, HOST_SPEAKER, None, HOST_SPEAKER],
         [-0.3, -0.02, 0.3, 0.01, 0.4],
         0.0,
-        {1: "李豆沙"},
+        {1: HOST_SPEAKER},
     )
-    assert labels == ["连线", "李豆沙", "李豆沙", "李豆沙", "李豆沙"]
+    assert labels == ["连线", HOST_SPEAKER, HOST_SPEAKER, HOST_SPEAKER, HOST_SPEAKER]
     assert sources[1] == "whole_clip_context"
     assert sources[3] == "neighbour_context_fallback"
 
@@ -857,13 +862,13 @@ def test_finalizer_binds_text_before_speaker_and_renders_colour_without_prefixes
     assert "[连线] 她想问是三个位置哦" in output_srt.read_text(encoding="utf-8")
     ass = output_ass.read_text(encoding="utf-8")
     assert "Style: LDS" in ass and "Style: GUEST" in ass
-    assert "[连线]" not in ass and "[李豆沙]" not in ass
+    assert "[连线]" not in ass and f"[{HOST_SPEAKER}]" not in ass
     assert "Dialogue: 0,0:00:02.00,0:00:04.00,GUEST" in ass
     assert manifest["stage_order"] == "text_final_then_speaker_then_ass_then_burn"
     assert manifest["visible_speaker_prefixes"] is False
-    assert manifest["subtitle_style"] == "lidousha-speaker-sapphire-host-white-guest-v2"
+    assert manifest["subtitle_style"] == f"{CHANNEL_PROFILE.profile_id}-speaker-sapphire-host-white-guest-v2"
     assert manifest["speaker_taxonomy"] == "binary_visual_host_vs_guest"
-    assert manifest["host_identity_aliases"] == ["李豆沙", "shadow"]
+    assert manifest["host_identity_aliases"] == list(CHANNEL_PROFILE.speaker_identity_aliases)
     assert json.loads(output_manifest.read_text(encoding="utf-8"))["production_ready"] is True
 
 
@@ -911,7 +916,7 @@ def test_reviewed_speaker_overrides_reject_automatic_label_drift_even_when_text_
                                 "start": "00:00:00,000",
                                 "end": "00:00:02,000",
                                 "speaker": "连线",
-                                "speaker_detail": "礼墨/Sumi",
+                                "speaker_detail": "乙乙/Sumi",
                                 "text": "结果还是聋人啊",
                             }
                         ],
@@ -925,7 +930,7 @@ def test_reviewed_speaker_overrides_reject_automatic_label_drift_even_when_text_
 
     def wrong_auto(**_kwargs):
         return {
-            "decisions": [{"speaker": "李豆沙", "decision_source": "acoustic_threshold_fallback", "margin": 0.5}],
+            "decisions": [{"speaker": HOST_SPEAKER, "decision_source": "acoustic_threshold_fallback", "margin": 0.5}],
             "context_unresolved_cues": [1],
         }
 
@@ -1117,7 +1122,7 @@ def test_production_candidate_rejects_cross_candidate_speaker_override(tmp_path:
                             {
                                 "start": "00:00:00,000",
                                 "end": "00:00:02,000",
-                                "speaker": "李豆沙",
+                                "speaker": HOST_SPEAKER,
                                 "text": "hello",
                             }
                         ],
@@ -1188,7 +1193,7 @@ def test_unanswered_ambiguous_context_blocks_production(tmp_path: Path) -> None:
 
     def incomplete_analyzer(**_kwargs):
         return {
-            "decisions": [{"speaker": "李豆沙", "decision_source": "acoustic_threshold_fallback"}],
+            "decisions": [{"speaker": HOST_SPEAKER, "decision_source": "acoustic_threshold_fallback"}],
             "context_unresolved_cues": [1],
         }
 
@@ -1242,7 +1247,7 @@ def test_singleton_laughter_incident_uses_whole_clip_context_as_host() -> None:
                 "labels": [
                     {
                         "n": 75,
-                        "speaker": "李豆沙",
+                        "speaker": HOST_SPEAKER,
                         "confidence": 0.98,
                         "reason": "相邻两句延续主播自嘲，当前句是笑声回应",
                     }
@@ -1268,7 +1273,7 @@ def test_singleton_laughter_incident_uses_whole_clip_context_as_host() -> None:
 
     assert result["review_required"] is False
     assert result["context_unresolved_cues"] == []
-    assert result["decisions"][74]["speaker"] == "李豆沙"
+    assert result["decisions"][74]["speaker"] == HOST_SPEAKER
     assert result["decisions"][74]["decision_source"] == "whole_clip_context_singleton"
     evidence = result["singleton_evidence"][0]
     assert evidence["source_cue"] == 75
@@ -1286,7 +1291,7 @@ def test_singleton_laughter_incident_uses_whole_clip_context_as_host() -> None:
     [
         ("连线", 0.99, "CONTEXT_GUEST"),
         ("REVIEW", 0.99, "CONTEXT_REVIEW"),
-        ("李豆沙", 0.80, "CONTEXT_HOST_CONFIDENCE_LOW"),
+        (HOST_SPEAKER, 0.80, "CONTEXT_HOST_CONFIDENCE_LOW"),
     ],
 )
 def test_singleton_non_host_or_low_confidence_context_stays_review_required(
@@ -1374,7 +1379,7 @@ def test_singleton_boolean_confidence_cannot_auto_ready() -> None:
                 "labels": [
                     {
                         "n": 75,
-                        "speaker": "李豆沙",
+                        "speaker": HOST_SPEAKER,
                         "confidence": True,
                         "reason": "JSON bool is not a confidence score",
                     }
@@ -1406,7 +1411,7 @@ def test_single_real_guest_is_not_swallowed_by_host_majority() -> None:
         },
         cue_audio_sha256=audio_hashes,
         context_call=lambda _prompt: json.dumps(
-            {"labels": [{"n": 75, "speaker": "李豆沙", "confidence": 0.99, "reason": "host-majority trap"}]},
+            {"labels": [{"n": 75, "speaker": HOST_SPEAKER, "confidence": 0.99, "reason": "host-majority trap"}]},
             ensure_ascii=False,
         ),
     )
@@ -1839,10 +1844,10 @@ def test_two_guest_anchors_keep_existing_cluster_path(tmp_path: Path, monkeypatc
     assert result["mode"] == "multi_speaker"
     assert result["guest_anchor_groups"] == [[5, 6]]
     assert [row["speaker"] for row in result["decisions"]] == [
-        "李豆沙",
-        "李豆沙",
-        "李豆沙",
-        "李豆沙",
+        HOST_SPEAKER,
+        HOST_SPEAKER,
+        HOST_SPEAKER,
+        HOST_SPEAKER,
         "连线",
         "连线",
     ]

@@ -5,12 +5,13 @@ from src.autoslice.cover_route_evidence import (
     build_cover_route_decision,
     record_cover_route_execution,
 )
+from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
 class _Runner:
     DELIVERED_TALK_STATUSES = {"ok", "review_ready"}
     MAX_SONGS_PER_SESSION = 1
-    PROFILE_DISPLAY_NAME = "李豆沙"
+    PROFILE_DISPLAY_NAME = CHANNEL_PROFILE.display_name
 
     def __init__(self, root: Path) -> None:
         self.BASE = root
@@ -33,7 +34,7 @@ def _screenshot_direct_generation() -> dict[str, object]:
     }
     generation: dict[str, object] = {
         "story_contract": story_contract,
-        "title": "【李豆沙】当面对质",
+        "title": f"{CHANNEL_PROFILE.talk_title_prefix}当面对质",
         "cover_text": "当面对质",
         "method": "screenshot_direct",
         "cover_origin": "SOURCE_SCREENSHOT",
@@ -66,7 +67,7 @@ def _screenshot_polish_degraded_generation() -> dict[str, object]:
     }
     generation: dict[str, object] = {
         "story_contract": story_contract,
-        "title": "【李豆沙】截图轻调降级",
+        "title": f"{CHANNEL_PROFILE.talk_title_prefix}截图轻调降级",
         "cover_text": "轻调降级",
         "method": "screenshot_direct",
         "cover_origin": "SOURCE_SCREENSHOT",
@@ -101,7 +102,7 @@ def _ai_redraw_generation() -> dict[str, object]:
     }
     generation: dict[str, object] = {
         "story_contract": story_contract,
-        "title": "【李豆沙】AI 重绘",
+        "title": f"{CHANNEL_PROFILE.talk_title_prefix}AI 重绘",
         "cover_text": "重绘",
         "method": "images.edit",
         "cover_origin": "AI_REDRAW",
@@ -146,7 +147,7 @@ def test_report_projects_products_rejects_and_reserves_exclusively(
                 "effective_duration_ms": 272_000,
                 "summary": {"duration_ms": 300_400},
                 "hook": "已交付",
-                "title": "【李豆沙】已交付",
+                "title": f"{CHANNEL_PROFILE.talk_title_prefix}已交付",
                 "cover_status": "AI_COVER_READY",
                 "cover_generation": _screenshot_direct_generation(),
             },

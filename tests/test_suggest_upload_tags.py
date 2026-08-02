@@ -6,6 +6,7 @@ import pytest
 
 import scripts.suggest_upload_tags as st
 from src.autoslice.llm_client import LlmCallError
+from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
 def _srt(tmp_path, text_lines):
@@ -59,7 +60,7 @@ def test_merge_caps_and_dedupes():
 def test_generate_upload_tags_ok_with_stub_llm(tmp_path):
     srt = _srt(tmp_path, ["我是直女", "好可爱"])
     stub = lambda prompt: json.dumps({"tags": [{"tag": "可爱", "why": "字幕说好可爱"}, {"tag": "彩排", "why": "硬毙词必须被过滤"}]})
-    out = st.generate_upload_tags("【李豆沙】标题", srt, llm_call=stub)
+    out = st.generate_upload_tags(f"{CHANNEL_PROFILE.talk_title_prefix}标题", srt, llm_call=stub)
     assert out["status"] == "OK" and out["engine"] == st.ENGINE_VERSION
     assert "侄女" in out["final_tags"] and "可爱" in out["final_tags"]
     assert "彩排" not in out["final_tags"]  # Ivan 硬毙词
@@ -72,7 +73,7 @@ def test_generate_upload_tags_degrades_without_llm(tmp_path):
     def broken(prompt):
         raise LlmCallError("cpa down")
 
-    out = st.generate_upload_tags("【李豆沙】标题", srt, llm_call=broken)
+    out = st.generate_upload_tags(f"{CHANNEL_PROFILE.talk_title_prefix}标题", srt, llm_call=broken)
     assert out["status"] == "OK_NO_LLM"
     assert "侄女" in out["final_tags"]  # 专名层照常
 
@@ -84,6 +85,6 @@ def test_generate_upload_tags_never_raises(tmp_path):
 
 
 def test_title_only_mode_scans_title(tmp_path):
-    out = st.generate_upload_tags("【李豆沙】侄女卖姬太舒适了", None, use_llm=False)
+    out = st.generate_upload_tags(f"{CHANNEL_PROFILE.talk_title_prefix}侄女卖姬太舒适了", None, use_llm=False)
     assert out["status"] == "OK"
     assert "侄女" in out["final_tags"]

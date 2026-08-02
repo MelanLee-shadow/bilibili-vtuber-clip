@@ -779,15 +779,15 @@ def test_empty_cast_subject_does_not_occupy_slot_and_later_term_backfills():
 
 def test_community_current_work_precedes_sibling_expansion_and_parent_franchise():
     dream = _term(
-        "梦限大",
+        "示例条目",
         topic_entities=["BanG Dream!", "邦多利", "MyGO!!!!!", "Ave Mujica", "Bilibili community"],
         community=True,
     )
-    dream["readings"] = ["meng xianda", "BanG Dream YUME MITA"]
+    dream["readings"] = ["shili tiaomu", "BanG Dream YUME MITA"]
     dream["aliases"] = ["BanG Dream! YUME∞MITA"]
     client = _BreadthFakeClient(
         {
-            "梦限大": None,
+            "示例条目": None,
             "BanG Dream YUME MITA": 583729,
             "MyGO!!!!!": 428735,
             "Ave Mujica": 454684,
@@ -804,7 +804,7 @@ def test_community_current_work_precedes_sibling_expansion_and_parent_franchise(
         max_works_per_topic=3,
     )
 
-    assert client.search_queries[:4] == ["梦限大", "BanG Dream YUME MITA", "MyGO!!!!!", "Ave Mujica"]
+    assert client.search_queries[:4] == ["示例条目", "BanG Dream YUME MITA", "MyGO!!!!!", "Ave Mujica"]
     assert "BanG Dream!" not in client.search_queries
     assert set(result.graph["topics"][0]["work_ids"]) == {
         "bgm:subject:583729",
@@ -814,7 +814,7 @@ def test_community_current_work_precedes_sibling_expansion_and_parent_franchise(
 
 
 def test_reviewed_tv_anime_seed_without_generic_anime_marker_remains_eligible():
-    dream = _term("梦限大", topic_entities=["BanG Dream!", "MyGO!!!!!"])
+    dream = _term("示例条目", topic_entities=["BanG Dream!", "MyGO!!!!!"])
     dream["topic_entities"].remove("Anime")
     dream["reason"] = "TV anime BanG Dream! YUME MITA began broadcasting."
     dream["sources"] = [
@@ -825,7 +825,7 @@ def test_reviewed_tv_anime_seed_without_generic_anime_marker_remains_eligible():
         }
     ]
     result = crawl_topic_entity_graph(
-        client=_BreadthFakeClient({"梦限大": 10}),
+        client=_BreadthFakeClient({"示例条目": 10}),
         timely_snapshot=_snapshot(dream),
         input_timely_terms_sha256="9" * 64,
         generated_at=dt.datetime(2026, 7, 12, 12, tzinfo=dt.timezone.utc),
@@ -833,7 +833,7 @@ def test_reviewed_tv_anime_seed_without_generic_anime_marker_remains_eligible():
         max_queries=1,
     )
 
-    assert result.graph["topics"][0]["canonical"] == "梦限大"
+    assert result.graph["topics"][0]["canonical"] == "示例条目"
 
 
 def test_cli_defaults_match_daily_breadth_budget():

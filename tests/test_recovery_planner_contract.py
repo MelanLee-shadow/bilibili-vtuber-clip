@@ -85,7 +85,7 @@ def _record(
         },
         "session_relation_authority": {
             "state": "CONFIRMED",
-            "participants": ["李豆沙", "南町"],
+            "participants": ["主播", "嘉宾"],
         },
         "session_id": "fixture-20260722",
     }

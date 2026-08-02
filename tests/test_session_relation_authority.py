@@ -9,6 +9,7 @@ from src.autoslice.story_contract import (
     cover_relation_prompt,
 )
 from src.autoslice.producer_package_finalization import _audit_story_bound_cover
+from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -51,21 +52,21 @@ def test_generated_hook_canonicalizes_name_slot_but_not_common_phrase() -> None:
 
 def test_generated_hook_applies_final_hard_meme_canon_without_relation() -> None:
     assert canonicalize_relation_summary(
-        "弹幕自称直女却叫她老公，李豆沙反复强调自己才是真的直女",
+        f"弹幕自称直女却叫她老公，{CHANNEL_PROFILE.display_name}反复强调自己才是真的直女",
         session_relation_authority=None,
         transcript_text="弹幕自称侄女却叫她老公\n我才是真的侄女",
-    ) == "弹幕自称侄女却叫她老公，李豆沙反复强调自己才是真的侄女"
+    ) == f"弹幕自称侄女却叫她老公，{CHANNEL_PROFILE.display_name}反复强调自己才是真的侄女"
 
 
 def test_generated_story_prose_applies_expected_value_name_canon() -> None:
-    hook = "爸爸催李豆沙和小诗合租，还安排两人轮流做饭"
+    hook = f"爸爸催{CHANNEL_PROFILE.display_name}和小诗合租，还安排两人轮流做饭"
     reason = "弹幕提到和小诗撒娇，随后形成共同生活关系链"
 
     assert canonicalize_relation_summary(
         hook,
         session_relation_authority=None,
         transcript_text="爸爸说你跟小室住一起\n小室会做饭吗",
-    ) == "爸爸催李豆沙和小室合租，还安排两人轮流做饭"
+    ) == f"爸爸催{CHANNEL_PROFILE.display_name}和小室合租，还安排两人轮流做饭"
     normalized = canonicalize_story_scorecard(
         {"tier_reason": reason, "tier": 1},
         session_relation_authority=None,
@@ -79,33 +80,33 @@ def test_generated_story_prose_applies_expected_value_name_canon() -> None:
 
 def test_final_transcript_can_repair_recovered_hook_without_relation_hash() -> None:
     assert canonicalize_relation_summary(
-        "李豆沙解释为什么请大恩吃火锅",
+        f"{CHANNEL_PROFILE.display_name}解释为什么请大恩吃火锅",
         session_relation_authority=None,
         transcript_text="为什么要请大N老师吃火锅\n最喜欢的南町nightin",
-    ) == "李豆沙解释为什么请南町吃火锅"
+    ) == f"{CHANNEL_PROFILE.display_name}解释为什么请南町吃火锅"
     assert canonicalize_relation_summary(
         "滴水之恩涌泉相报，这是大恩大德",
         session_relation_authority=None,
         transcript_text="最喜欢的南町nightin",
     ) == "滴水之恩涌泉相报，这是大恩大德"
     assert canonicalize_relation_summary(
-        "李豆沙解释为什么请大恩吃火锅",
+        f"{CHANNEL_PROFILE.display_name}解释为什么请大恩吃火锅",
         session_relation_authority=None,
         transcript_text="为什么请她吃火锅",
-    ) == "李豆沙解释为什么请大恩吃火锅"
+    ) == f"{CHANNEL_PROFILE.display_name}解释为什么请大恩吃火锅"
 
 
 def test_story_contract_rejects_cross_artifact_nancho_outlier() -> None:
     authority = _authority()
     contract = build_story_contract(
         candidate_id="c1",
-        selection_hook="南町当面追问李豆沙",
+        selection_hook=f"南町当面追问{CHANNEL_PROFILE.display_name}",
         transcript_text="大N老师问她为什么",
         selection_scorecard=None,
         session_relation_authority=authority,
     )
     bad = audit_story_artifact(
-        "【李豆沙】大卫老师当面追问",
+        f"{CHANNEL_PROFILE.talk_title_prefix}大卫老师当面追问",
         story_contract=contract,
         artifact_kind="title",
     )
@@ -115,7 +116,7 @@ def test_story_contract_rejects_cross_artifact_nancho_outlier() -> None:
         "REQUIRED_NANCHO_ENTITY_MISSING_FROM_TITLE",
     }
     good = audit_story_artifact(
-        "【李豆沙】南町当面追问最喜欢",
+        f"{CHANNEL_PROFILE.talk_title_prefix}南町当面追问最喜欢",
         story_contract=contract,
         artifact_kind="title",
     )
@@ -131,7 +132,7 @@ def test_relation_claim_fails_when_authority_is_unknown() -> None:
         session_relation_authority=None,
     )
     audit = audit_story_artifact(
-        "【李豆沙】和南町联动",
+        f"{CHANNEL_PROFILE.talk_title_prefix}和南町联动",
         story_contract=contract,
         artifact_kind="title",
     )
@@ -163,7 +164,7 @@ def test_subtitle_verbatim_relation_words_are_not_claims() -> None:
 def test_confirmed_relation_cover_prompt_discloses_host_only_fallback() -> None:
     contract = build_story_contract(
         candidate_id="c3",
-        selection_hook="南町与李豆沙联动",
+        selection_hook=f"南町与{CHANNEL_PROFILE.display_name}联动",
         transcript_text="大N老师问她为什么",
         selection_scorecard=None,
         session_relation_authority=_authority(),
@@ -178,7 +179,7 @@ def test_confirmed_relation_cover_prompt_discloses_host_only_fallback() -> None:
 def test_runtime_cover_story_gate_catches_rendered_alias_drift() -> None:
     contract = build_story_contract(
         candidate_id="c4",
-        selection_hook="南町当面追问李豆沙",
+        selection_hook=f"南町当面追问{CHANNEL_PROFILE.display_name}",
         transcript_text="大N老师问她为什么",
         selection_scorecard=None,
         session_relation_authority=_authority(),

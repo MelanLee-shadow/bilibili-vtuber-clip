@@ -13,6 +13,7 @@ from src.autoslice.chat_evidence import (
 )
 from src.autoslice.chat_repair import _repair_sc_sender
 from src.autoslice.cue_split_hygiene import _shift_boundary_punct, _snap_split_to_punct
+from src.autoslice.speaker_common import HOST_SPEAKER
 from src.autoslice.thank_integrity import (
     restore_thank_prefixes,
     unthanked_donor_disclosure,
@@ -1046,7 +1047,7 @@ def test_replace_cue_owner_checks_speaker_subtitle_exactly_too() -> None:
     )
 
     text_srt = _srt((1_000, 2_000, "姐感妹"))
-    speaker_srt = _srt((1_000, 2_000, "[李豆沙] 姐感妹秦秦"))
+    speaker_srt = _srt((1_000, 2_000, f"[{HOST_SPEAKER}] 姐感妹秦秦"))
     audit = {
         "source_subtitle_truth_audit": {
             "applied": [

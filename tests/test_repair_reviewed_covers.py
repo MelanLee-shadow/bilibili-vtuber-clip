@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 import scripts.repair_reviewed_covers as reviewed
+from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
 def _sha(payload: bytes) -> str:
@@ -15,11 +16,11 @@ def test_invalidate_document_preserves_media_authority_and_resolves_manual_title
     source = {
         "schema_version": "shadow-publish-draft.v1",
         "candidate_id": "auto_test",
-        "title": "【李豆沙】错误标题",
-        "title_source": "llm+lidousha_style_asset",
+        "title": f"{CHANNEL_PROFILE.talk_title_prefix}错误标题",
+        "title_source": "llm+style_asset",
         "cover_status": "AI_COVER_READY",
         "cover_path": "/delivery/old.cover.png",
-        "cover_generation": {"title": "【李豆沙】错误标题"},
+        "cover_generation": {"title": f"{CHANNEL_PROFILE.talk_title_prefix}错误标题"},
         "cover_repair_binding": {"path": "/old.binding.json"},
         "artifact_hashes": {
             "burned_video_sha256": "sha256:" + "1" * 64,
@@ -33,11 +34,11 @@ def test_invalidate_document_preserves_media_authority_and_resolves_manual_title
 
     updated = reviewed._invalidate_document(
         source,
-        title="【李豆沙】去彩排前连问三遍：你们还要来找我玩，好不好？",
+        title=f"{CHANNEL_PROFILE.talk_title_prefix}去彩排前连问三遍：你们还要来找我玩，好不好？",
     )
 
     assert source == original
-    assert updated["title"] == "【李豆沙】去彩排前连问三遍：你们还要来找我玩，好不好？"
+    assert updated["title"] == f"{CHANNEL_PROFILE.talk_title_prefix}去彩排前连问三遍：你们还要来找我玩，好不好？"
     assert updated["title_source"] == "job_title"
     assert updated["title_authority_status"] == "RESOLVED_MANUAL"
     assert updated["cover_text"] == "去彩排前连问三遍\n你们还要来找我玩，好不好？"
@@ -60,31 +61,31 @@ def test_invalidate_document_accepts_hash_bound_short_cover_copy():
 
     updated = reviewed._invalidate_document(
         source,
-        title="【李豆沙】完整归档标题保留上下文",
+        title=f"{CHANNEL_PROFILE.talk_title_prefix}完整归档标题保留上下文",
         cover_text="短梗字\n保留问号？",
     )
 
-    assert updated["title"] == "【李豆沙】完整归档标题保留上下文"
+    assert updated["title"] == f"{CHANNEL_PROFILE.talk_title_prefix}完整归档标题保留上下文"
     assert updated["cover_text"] == "短梗字\n保留问号？"
 
 
 def test_invalidate_state_record_persists_reviewed_cover_diversity_slot():
     record = {
         "candidate_id": "auto_test",
-        "title": "【李豆沙】旧标题",
+        "title": f"{CHANNEL_PROFILE.talk_title_prefix}旧标题",
         "cover_status": "AI_COVER_READY",
     }
 
     reviewed._invalidate_state_record(
         record,
         row={
-            "title": "【李豆沙】新标题",
+            "title": f"{CHANNEL_PROFILE.talk_title_prefix}新标题",
             "cover_diversity_slot": 4,
         },
         plan_sha256="a" * 64,
     )
 
-    assert record["title"] == "【李豆沙】新标题"
+    assert record["title"] == f"{CHANNEL_PROFILE.talk_title_prefix}新标题"
     assert record["cover_diversity_slot"] == 4
     assert record["cover_status"] == "BLOCKED_AI_COVER_REQUIRED"
 
