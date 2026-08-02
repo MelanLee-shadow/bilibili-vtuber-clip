@@ -20,6 +20,7 @@
 | `src/autoslice/final_review_auditor.py` `_AUDIT_PROMPT` | 「你是李豆沙切片的终审审片员…自称专名…」 |
 | `src/autoslice/source_fact_review.py` | 「你是李豆沙切片派生文案的 source-fact 最终裁决者」 |
 | `src/autoslice/semantic_candidate_selector.py` + `selection_scorecard.py` | 选题 rubric 维度 `lidousha_centrality`（李豆沙不可替代性）；维度 key 同时是持久 scorecard schema |
+| `src/autoslice/cover_emote.py` `emote_catalog_prompt_block` | 表情包目录 prompt 块内嵌「李豆沙 / kmx（粉丝团名）」释义，经 `cover_generation.py` 拼入封面生成 prompt |
 
 ## B. 控制流/默认值绑定默认 profile（可逐点改为 CHANNEL_PROFILE 字段）
 
@@ -64,7 +65,7 @@
 | `src/autoslice/speaker_context.py`、`subtitle_timing_qa.py`、`semantic_candidate_selector.py` | `/opt/bilive/...` env 兜底 | 对应环境变量 |
 | `scripts/gemini_slice_jingting.py` | `HOST_VIDEOS` 指向参考部署网盘挂载 | 环境变量/参数 |
 | `scripts/transcribe_live_*_via_agy.sh`、`llm_via_free_groq.sh` | `ssh free` | 改脚本头部主机变量 |
-| `scripts/slice_monitor.py`、`scripts/auto_review_shadow_daemon.py`、`scripts/cpa_semantic_qa_llm.py` | 默认房间号/主机为示例频道 | CLI/env 覆盖 |
+| `scripts/slice_monitor.py`、`scripts/auto_review_shadow_daemon.py` | 默认房间号/主机为示例频道 | CLI/env 覆盖 |
 | `scripts/silero_vad_spans.py` | `MODEL=/opt/bilive/vad/silero_vad.onnx` | 部署布局对齐 |
 | `scripts/sync_profile_assets.sh` | 同步目标固定为 `lidousha` profile；远端用扁平文件名（如 `lidousha_glossary.txt`，`profile_glossary_terms.py`/`gemini_slice_jingting.py` 在主机上按此名兜底读取） | 换 profile 需改脚本内 profile 变量与远端文件名 |
 | `ops/recording/*` | RoomId/路径为参考部署 | 见 `ops/recording/README.md` |

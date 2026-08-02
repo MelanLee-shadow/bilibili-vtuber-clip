@@ -16,8 +16,8 @@
 | 单候选产线（`produce_slice_package.py`） | 一个 spec（指定录播文件和起止时间） | 同上的单个成品包 | 跳过自动选题，把你指定的片段走完整条产线 |
 | 人工评审与授权上传（`audit_review_package.py` → `build_final_human_review.py` → `authorized_upload.py`） | 成品包 | B 站稿件（含合集、tag）+ 入库的上传凭证 | 机器先全面审计包的一致性，人确认后由唯一入口投稿；已发布的稿件只允许"同 BV 修复"（换源不换稿），杜绝重复投稿 |
 | 词表 crawler（`crawl_timely_terms.py` 等三个） | 直播圈公开信息 | 更新后的 profile 词表资产 | 定时把时效热词、关联主播名册、话题实体图刷进你频道的词表，让字幕专名校对跟得上直播圈动态 |
-| 活字乱刷（`huozi_luanshua.py`） | 历史直播语料 + 你想拼的句子 | 可追溯的试听音频候选 | 从主播说过的话里高置信拼出新句子，三段式（计划→验证→渲染）证据绑定，绝不自动上传 |
-| 修复/救援（`scripts/README.md` 修复组） | 出问题的包或丢失的录制段 | 修好的包 / 重建的源文件 | 换源、修封面、从官方回放重建丢失录制、复活被误拒的候选——全部计划驱动、哈希绑定 |
+| 活字乱刷（`huozi_luanshua.py`） | 历史直播语料 + 你想拼的句子 | 可追溯的试听音频候选 | 从主播说过的话里拼出新句子，分三步（先选料、再核对出处、最后渲染），每步留痕可查，绝不自动上传 |
+| 修复/救援（`scripts/README.md` 修复组） | 出问题的包或丢失的录制段 | 修好的包 / 重建的源文件 | 换源、修封面、从官方回放重建丢失录制、复活被误拒的候选——都要先出计划、过文件校验才动手 |
 | 录制监控（`slice_monitor.py` 等） | 录制主机状态 | 报告文件（唯一告警通道） | 盯挂载、盯录制健康、备份弹幕，出事宁可停下也不吃坏字节 |
 
 ## 快速上手
@@ -25,12 +25,12 @@
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 cp .env.example .env        # 填 CPA / Gemini（凭据清单见 docs/credentials.md）
-.venv/bin/python -m pytest -q    # 冒烟：应全绿（不需要任何凭据和网络）
+.venv/bin/python -m pytest -q    # 自检：全部测试应通过（不需要任何凭据和网络）
 ```
 
-配自己的频道：**把这件事交给你的 AI agent**——本仓的预期配置者就是 agent，
-[AGENTS.md](AGENTS.md) 是为它准备的完整 runbook（人类照
-[profiles/README.md](profiles/README.md) 手配也行）。先验证示例频道：
+配自己的频道：**把这件事交给你的 AI agent**——本项目预期就由 agent 来配置，
+[AGENTS.md](AGENTS.md) 是为它准备的完整操作手册（想自己动手就照
+[profiles/README.md](profiles/README.md) 做）。先验证示例频道：
 
 ```bash
 .venv/bin/python scripts/validate_channel_profile.py --profile lidousha --config-only
@@ -54,7 +54,7 @@ AUTOSLICE_BASE=$PWD/.autoslice \
 | 一台服务器 | 推荐 8 核 / 32 GB / 500 GB+ 磁盘（4 核 16 GB 可用但并行烧录吃紧） |
 | [BililiveRecorder](https://github.com/BililiveRecorder/BililiveRecorder) | 录播姬。`ops/recording/` 是参考配置 |
 | LLM 通道 | 能访问 Gemini 系列与 GPT 系列。推荐自建 [CLIProxyAPI](https://github.com/luispater/CLIProxyAPI) 统一入口（两个环境变量搞定） |
-| [Google Antigravity](https://antigravity.google/) | 官方公开工具，直接下载。本仓用它的 CLI 做声学听写：talk 基线转写不用它，talk 的专名声学仲裁和歌切 lane 用（缺它时相关证据路径拒绝而不是瞎猜） |
+| [Google Antigravity](https://antigravity.google/) | 谷歌官方工具，直接下载。本项目用它的命令行做"听音复核"：日常谈话切片的字幕**不需要它**；只有字幕专名的听音仲裁和歌词对轴会用到——缺它时这些环节明确拒绝，不会瞎猜 |
 | [biliup](https://github.com/biliup/biliup) | 投稿 CLI。只产包评审不上传可不装 |
 | Python 3.11+，`ffmpeg` 7+ | 转写用的免费必剪接口不需要 key |
 
@@ -64,25 +64,26 @@ AUTOSLICE_BASE=$PWD/.autoslice \
 
 1. 本 README；
 2. [profiles/README.md](profiles/README.md) —— 怎么配你的频道；
-3. [scripts/README.md](scripts/README.md) —— 62 个脚本按用途分组，先看"你会真正用到的六个"；
+3. [scripts/README.md](scripts/README.md) —— 61 个脚本按用途分组，先看"你会真正用到的六个"；
 4. 要深挖规则再看 [docs/pipeline/README.md](docs/pipeline/README.md)（给 agent/维护者的分步权威，技术密度高）；
 5. [AGENTS.md](AGENTS.md) —— 给 AI 代理的完整操作约定与架构细节。
 
 `assets/` 下的一大堆 JSON 是**频道数据**（词表、策略、台账模板），不是代码，
 不需要读。配新频道 = 整套复制 `assets/_template/` 骨架，但**不是 22 个都要
-填**：字体、标题/tag 政策、选题度量、校对原则等工艺件**默认给全**（开箱即
-用，想改再改）；真正因频道而异的只有身份四件套（词表/人设/标题风格/封面
-身份），由 agent **采访播种**——模板里写好了该问频道主人的问题和真实示例，
-3–5 条起步随运营积累；其余 crawler 自动代填、台账运行时自己长。
+填**：字体、标题和 tag 规则、选题标准、校对原则这些**通用配置默认全都给好**
+（开箱即用，想改再改）；真正因频道而异的只有四样——词表、人设、标题风格、
+封面形象描述——agent 会拿着模板里写好的问题清单**问你，答完替你写好**；先
+写 3–5 条就能开跑，之后边用边攒；其余的 crawler 自动维护、台账随运行自己
+长出来。
 
 ## 为什么文件这么多（以及为什么你不用怕）
 
 - **src ~190 个模块**：反屎山架构的直接结果。同样的功能量要么是几个几千行的
   god-file，要么是 190 个单一职责、平均一两百行、可独立测试的小模块——本仓
   选后者，并用"债务棘轮"测试锁死模块行数只许降不许升。孤儿扫描证明零死件。
-- **tests 1700+ 用例**：这是"发布错误不可接受"的实现方式——每道 fail-closed
-  门至少一枚回归钉子。摊到每个模块不到 10 个用例，并不密；它们也是任何人
-  改代码时的安全网。
+- **tests 1700+ 用例**：这是"发布错误不可接受"的实现方式——每道质量门至少
+  配一个回归测试。摊到每个模块不到 10 个，并不密；它们也是任何人改代码时
+  的安全网。
 - **assets 22 个骨架**：管线消费 22 种频道知识，validator 逐一强制存在——
   但如上所述，绝大多数不需要你手填。
 - 结论：**你需要读的只有上面那几个 README**；其余交给 agent 和测试。
@@ -100,10 +101,10 @@ AUTOSLICE_BASE=$PWD/.autoslice \
 
 ## 路线图与已知限制
 
-- **说话人分离（多人自动分轨）：待做，欢迎 PR。** 当前默认 uniform-host
-  （成品统一按主播处理）+ CAM++ 声纹确认；完整 diarization 是明确的下一步。
+- **说话人分离（多人自动分轨）：待做，欢迎 PR。** 目前成品统一按主播处理
+  （uniform-host）+ CAM++ 声纹确认；完整的多人分轨是明确的下一步。
 - **Docker 化：待做，欢迎 PR。**
-- Alpha：参考部署已无人值守运行数周，但多频道抽象仍在收敛——剩余的默认
+- Alpha：参考部署已无人值守运行数周，但多频道支持还在完善——剩余的默认
   profile 耦合点全部列在 [docs/profile-coupling.md](docs/profile-coupling.md)；
   **发布/声纹 lane 目前默认 profile 专用**（C 组修复完成前，换频道可产包评审，
   公开发布还差这一步）。

@@ -528,8 +528,8 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "profiles/README.md",
         "Validate a committed profile and all of its runtime paths before use:",
         "`assets/_template/` 是自动派生的骨架；复制后按其 README 的**分层**填充——\n"
-        "身份四件套（词表/人设/标题风格/封面身份）由 agent 采访播种（模板内含提问\n"
-        "清单与真实示例），字体与工艺口径默认给全，其余 crawler 代填/运行时自长。\n"
+        "身份四件套（词表/人设/标题风格/封面形象）由 agent 先问后写（模板内含问题\n"
+        "清单与真实示例），字体与通用配置默认全给，其余 crawler 代填/运行时自长。\n"
         "注意：示例 profile `lidousha` 在全新 clone 里全量校验会因\n"
         "`voiceprint_profile.v1.json` 缺失而 BLOCKED——声纹属生物特征，不随开源仓分发，\n"
         "这是预期行为（先用 `--config-only`，或补齐你自己的声纹再全量校验）。\n"
@@ -740,6 +740,27 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "3b. 逐案放行（维护者 2026-07-26：「没有任何纪律要求必须5个全complete才能动BV，\n"
         "   修复时哪个好了就可以改哪个」）：批仍 `recovery_incomplete` 时，可用",
         "3b. 逐案放行：批仍 `recovery_incomplete` 时，可用",
+    ),
+    # ---- v4.6：调研文档的陈旧断言改为现役事实（方案早已集成为默认转写层） ----
+    (
+        "docs/bilibili-ai-subtitle-via-bcut.md",
+        "# B站 AI 字幕原理 + 大厂免费 ASR 聚合方案（替代 whisper / agy 精听）",
+        "# B站 AI 字幕原理 + 大厂免费 ASR 聚合方案（本仓现役中文转写层的调研底稿）",
+    ),
+    (
+        "docs/bilibili-ai-subtitle-via-bcut.md",
+        "> **日期化技术调研，不是当前操作手册。** 接口、模型、可用性、速度与下方“下一步”只代表\n"
+        "> 2026-07-04/10 的观察；当前字幕链以\n"
+        "> [pipeline/40-subtitle-text.md](pipeline/40-subtitle-text.md) 和 live adapter readback 为准。",
+        "> **调研底稿，非当前操作手册。此方案后来已集成为本仓的默认中文转写层**：\n"
+        "> `scripts/free_asr_client.py` 聚合必剪主源+剪映备源，whisper/agy 精听已退出\n"
+        "> 中文链。接口可用性、速度与下方“下一步”只代表调研当时的观察；当前字幕链\n"
+        "> 规则以 [pipeline/40-subtitle-text.md](pipeline/40-subtitle-text.md) 为准。",
+    ),
+    (
+        "docs/bilibili-ai-subtitle-via-bcut.md",
+        "可以直接白嫖；再聚合剪映作备源，就能整体替代中文管线里的 whisper 和 agy 精听",
+        "可以直接白嫖；聚合剪映作备源后**已整体替代**中文管线里的 whisper 和 agy 精听",
     ),
     # ---- v4.5：合集 ID 账号专属，强制部署方自填（Ivan：绝不默认给我的合集） ----
     (
@@ -1385,10 +1406,10 @@ def build_template_assets(out_root: Path) -> int:
         "  `slice_selection_metric.md` 与 `subtitle_correction_principles.md`\n"
         "  （示例频道完整口径，可改）、`intro/`（默认关）、`entity_confusables.json`/\n"
         "  `known_songs.json`/`clip_opening_address.json`（积累类，空起步）。\n"
-        "- **层 1 · 采访播种（agent 提问、频道主人回答、agent 代写）**：\n"
+        "- **层 1 · 先问后写（agent 拿问题清单问频道主人，答完代写）**：\n"
         "  `glossary.txt`、`persona.md`、`title_style.md`、`cover_identity_prompt.txt`\n"
-        "  ——每个文件内已写好该问的问题与真实示例；3–5 条播种即可开跑，随运营积累，\n"
-        "  **不要求一次写完**。\n"
+        "  ——每个文件内已写好该问的问题与真实示例；先写 3–5 条就能开跑，之后边用\n"
+        "  边攒，**不要求一次写完**。\n"
         "- **层 2 · 你给种子，crawler 代填**：`timely_term_seeds/sources` → \n"
         "  `timely_terms`、`psplive_roster_sources` → `psplive_roster`、\n"
         "  `topic_entity_graph`（参考部署默认装 cron；不走 deploy 就手动跑或自配）。\n"
