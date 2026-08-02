@@ -8,34 +8,40 @@
 
 行号随版本漂移，索引以模块+符号为准。
 
-## A. LLM prompt 内嵌默认频道身份（改动=改行为，须走变更纪律）
+## A. LLM prompt 内嵌默认频道身份
 
-| 位置 | 内容 |
-|---|---|
-| `src/autoslice/cover_host_identity_gate.py` `_QUESTION` | 封面终检 prompt 描述李豆沙外貌（白发/熊猫帽）并点名嘉宾；verdict 字段名（`source_lidousha_located` 等）是持久 schema |
-| `src/autoslice/cover_source_composition.py` `_QUESTION_PREFIX` | 源构图检查 prompt 同上 |
-| `src/autoslice/cover_generation.py`（多人消歧/场景道具规则） | prompt 内嵌「labelled 李豆沙 / panda-hood」与「白色奶龙」梗解释 |
-| `src/autoslice/publish_staging.py`（AI 封面重试 prompt） | 「the person labelled 李豆沙 … Make Li Dousha a LARGE …」 |
-| `src/autoslice/cover_punch_semantics.py` | 裁决 persona：「你是李豆沙切片封面的最终文字语义裁决者」 |
-| `src/autoslice/final_review_auditor.py` `_AUDIT_PROMPT` | 「你是李豆沙切片的终审审片员…自称专名…」 |
-| `src/autoslice/source_fact_review.py` | 「你是李豆沙切片派生文案的 source-fact 最终裁决者」 |
-| `src/autoslice/semantic_candidate_selector.py` + `selection_scorecard.py` | 选题 rubric 维度 `lidousha_centrality`（李豆沙不可替代性）；维度 key 同时是持久 scorecard schema |
-| `src/autoslice/cover_emote.py` `emote_catalog_prompt_block` | 表情包目录 prompt 块内嵌「李豆沙 / kmx（粉丝团名）」释义，经 `cover_generation.py` 拼入封面生成 prompt |
+**多数已参数化**：〔已参数化〕的行改为从 profile 渲染（`display_name`/`prompt_name`/
+`short_name`），**默认 profile 下渲染字节与原文逐字相同**（全套测试背书），换
+profile 自动代入你的名字。仍硬编码的是没有 profile 字段可承载的内容（外貌
+描述、频道梗 lore）——改它们=改 prompt 字节，须走变更纪律。
+
+| 位置 | 状态 | 内容 |
+|---|---|---|
+| `src/autoslice/cover_punch_semantics.py` | 〔已参数化〕 | 裁决 persona：「你是【主播名】切片封面的最终文字语义裁决者」 |
+| `src/autoslice/final_review_auditor.py` `_AUDIT_PROMPT` | 〔已参数化〕 | 审片员 persona 与自称专名经 `{host_name}`/`{host_short}` 占位注入 |
+| `src/autoslice/source_fact_review.py` | 〔已参数化〕 | 裁决 persona：「你是【主播名】切片派生文案的…裁决者」 |
+| `src/autoslice/publish_staging.py`（AI 封面重试 prompt） | 〔已参数化〕 | 「labelled 【主播名】 … Make 【prompt_name】 a LARGE …」 |
+| `src/autoslice/cover_generation.py`（多人消歧+主体优先句） | 〔部分参数化〕 | 名字已 profile 渲染；「panda-hood」外貌短语仍硬编码 |
+| `src/autoslice/cover_generation.py`（场景道具规则） | 硬编码 | 「白色奶龙」梗释义——频道 lore，未来应迁入 persona/glossary 资产 |
+| `src/autoslice/cover_source_composition.py` `_QUESTION_PREFIX` | 〔部分参数化〕 | 「定位【主播名】」已渲染；「白发/可见名牌」外貌仍硬编码 |
+| `src/autoslice/cover_host_identity_gate.py` `_QUESTION` | 硬编码 | 外貌描述与联动者名；verdict 字段名（`source_lidousha_located` 等）是持久 schema |
+| `src/autoslice/semantic_candidate_selector.py` + `selection_scorecard.py` | 〔部分参数化〕 | 维度释义已渲染主播名；维度 key `lidousha_centrality` 是持久 scorecard schema，保留 |
+| `src/autoslice/cover_emote.py` `emote_catalog_prompt_block` | 硬编码（与资产绑定） | companion 规则整段是示例频道 lore（kmx 贴纸代画粉丝、复数小李梗），与 lidousha 的 `emote_library` 资产绑死——换频道连资产一起换，或不启用表情包通道（歌切本就禁用） |
 
 ## B. 控制流/默认值绑定默认 profile（可逐点改为 CHANNEL_PROFILE 字段）
 
 | 位置 | 内容 |
 |---|---|
-| `src/autoslice/huozi_luanshua.py` | `speaker != "lidousha"` 拒绝逻辑与 `human_reviewed_lidousha`/`verified_lidousha_voiceprint` 授权 token |
-| `src/autoslice/clip_context.py` | `load_scoped_speech_memory(speaker_id="lidousha", channel_id="lidousha")` |
-| `src/autoslice/cpa_semantic_qa.py` `build_mock_cpa_response` | mock 模式内嵌「天不熊→kmx」词表检查 |
-| `src/autoslice/subtitle_regression.py` `_SPEAKER_LABEL` | 正则硬编码 `[李豆沙|连线]` 说话人标签 |
-| `src/autoslice/self_reference_absorption.py` | `_CANONICAL_NAMES = ("李豆沙","小李","豆沙")` 与 `host_phonetic_ratio` 目标名 |
+| `src/autoslice/huozi_luanshua.py` | 〔已参数化〕speaker 判定改 `CHANNEL_PROFILE.profile_id`；`human_reviewed_lidousha` 等授权 token 是持久词汇（E 组），保留 |
+| `src/autoslice/clip_context.py` | 〔已参数化〕speech-memory 的 speaker/channel id 改 `profile_id` |
+| `src/autoslice/cpa_semantic_qa.py` `build_mock_cpa_response` | mock 模式内嵌「天不熊→kmx」词表检查（仅开发 mock lane） |
+| `src/autoslice/subtitle_regression.py` `_SPEAKER_LABEL` | 〔已参数化〕正则由 `host/guest_speaker_label` 构建 |
+| `src/autoslice/self_reference_absorption.py` | 〔已参数化〕`_CANONICAL_NAMES`＝profile 自称列表；`host_phonetic_ratio` 目标＝`display_name` |
 | `src/autoslice/shadow_review.py` `_default_style_profile` | 内置风格兜底含「小皇帝」等频道口癖 |
 | `src/autoslice/term_authority.py` | 词表加载单源指向 `scripts.profile_glossary_terms`（按选中 profile 读 glossary，机制已通用，失败静默跳过需注意） |
 | `src/autoslice/title_policy.py` | `_TITLE_BANNED_REGEXES[0]` 位置性假设（槽位 0 = 「秒X」规则，import 时取用——`banned_regexes` 为空会直接 IndexError；模板骨架已带该槽位默认值） |
 | `src/autoslice/upload_tag_policy.py` | tag prompt 内容契约在 import 时强制（`base_tags` 非空、模板必须保留 `{existing_tags}`/`{title}`/`{srt_text}`）；模板骨架已满足 |
-| `scripts/evaluate_speaker_phase1.py` | `TRUTH_TO_AUTO = {"lidousha": "李豆沙", …}` 标签映射 |
+| `scripts/evaluate_speaker_phase1.py` | 〔已参数化〕`TRUTH_TO_AUTO` 由 `profile_id`/说话人标签构建 |
 
 ## C. 资产路径旁路 profile 解析（对默认 profile 字节等价，最安全的第一批修复）
 

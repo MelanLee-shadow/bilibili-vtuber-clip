@@ -762,6 +762,195 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "可以直接白嫖；再聚合剪映作备源，就能整体替代中文管线里的 whisper 和 agy 精听",
         "可以直接白嫖；聚合剪映作备源后**已整体替代**中文管线里的 whisper 和 agy 精听",
     ),
+    # ---- v4.7：prompt/控制流身份占位化（Ivan 放行：默认 profile 渲染字节不变） ----
+    # 每处 = 字面身份 → CHANNEL_PROFILE 字段；default profile 下输出逐字节等于原文，
+    # 由全套 pytest 相等性背书。外貌描述/频道梗释义等无 profile 字段者仍留在耦合清单。
+    (
+        "src/autoslice/cover_punch_semantics.py",
+        "from src.autoslice.llm_client import LlmCall, extract_json_object",
+        "from src.autoslice.llm_client import LlmCall, extract_json_object\n"
+        "from src.autoslice.surface_canon import CHANNEL_PROFILE",
+    ),
+    (
+        "src/autoslice/cover_punch_semantics.py",
+        '        "你是李豆沙切片封面的最终文字语义裁决者。你没有音频或图像输入，"',
+        '        f"你是{CHANNEL_PROFILE.display_name}切片封面的最终文字语义裁决者。你没有音频或图像输入，"',
+    ),
+    (
+        "src/autoslice/source_fact_review.py",
+        "from src.autoslice.llm_client import LlmCall, extract_json_object",
+        "from src.autoslice.llm_client import LlmCall, extract_json_object\n"
+        "from src.autoslice.surface_canon import CHANNEL_PROFILE",
+    ),
+    (
+        "src/autoslice/source_fact_review.py",
+        '        "你是李豆沙切片派生文案的 source-fact 最终裁决者。你只有文字输入，"',
+        '        f"你是{CHANNEL_PROFILE.display_name}切片派生文案的 source-fact 最终裁决者。你只有文字输入，"',
+    ),
+    (
+        "src/autoslice/final_review_auditor.py",
+        "from src.autoslice.chat_evidence import (",
+        "from src.autoslice.surface_canon import CHANNEL_PROFILE\n"
+        "from src.autoslice.chat_evidence import (",
+    ),
+    (
+        "src/autoslice/final_review_auditor.py",
+        '_AUDIT_PROMPT = """你是李豆沙切片的终审审片员。',
+        '_AUDIT_PROMPT = """你是{host_name}切片的终审审片员。',
+    ),
+    (
+        "src/autoslice/final_review_auditor.py",
+        "（她的自称专名是「李豆沙」和「小李」，两者平等；",
+        "（她的自称专名是「{host_name}」和「{host_short}」，两者平等；",
+    ),
+    (
+        "src/autoslice/final_review_auditor.py",
+        "  温柔型李豆沙案，维护者 裁定）**：",
+        "  温柔型{host_name}案，维护者 裁定）**：",
+    ),
+    (
+        "src/autoslice/final_review_auditor.py",
+        "    prompt = _AUDIT_PROMPT.format(\n        max_findings=MAX_FINDINGS,",
+        "    prompt = _AUDIT_PROMPT.format(\n"
+        "        host_name=CHANNEL_PROFILE.display_name,\n"
+        "        host_short=CHANNEL_PROFILE.short_name,\n"
+        "        max_findings=MAX_FINDINGS,",
+    ),
+    (
+        "src/autoslice/subtitle_regression.py",
+        "from src.autoslice.chat_authority import normalize_chat_text",
+        "from src.autoslice.chat_authority import normalize_chat_text\n"
+        "from src.autoslice.surface_canon import CHANNEL_PROFILE",
+    ),
+    (
+        "src/autoslice/subtitle_regression.py",
+        '_SPEAKER_LABEL = re.compile(r"^\\[(?:李豆沙|连线)\\]\\s*")',
+        '_SPEAKER_LABEL = re.compile(\n'
+        '    r"^\\[(?:"\n'
+        "    + re.escape(CHANNEL_PROFILE.host_speaker_label)\n"
+        '    + "|"\n'
+        "    + re.escape(CHANNEL_PROFILE.guest_speaker_label)\n"
+        '    + r")\\]\\s*"\n'
+        ")",
+    ),
+    (
+        "src/autoslice/self_reference_absorption.py",
+        "from src.autoslice.jingting_chunker import parse_srt_cues",
+        "from src.autoslice.jingting_chunker import parse_srt_cues\n"
+        "from src.autoslice.surface_canon import CHANNEL_PROFILE",
+    ),
+    (
+        "src/autoslice/self_reference_absorption.py",
+        '_CANONICAL_NAMES = ("李豆沙", "小李", "豆沙")',
+        "_CANONICAL_NAMES = tuple(CHANNEL_PROFILE.self_reference_aliases)",
+    ),
+    (
+        "src/autoslice/self_reference_absorption.py",
+        '    target = _phonetic_text("李豆沙")',
+        "    target = _phonetic_text(CHANNEL_PROFILE.display_name)",
+    ),
+    (
+        "src/autoslice/clip_context.py",
+        "from src.autoslice.speech_memory_ledger import load_scoped_speech_memory",
+        "from src.autoslice.speech_memory_ledger import load_scoped_speech_memory\n"
+        "from src.autoslice.surface_canon import CHANNEL_PROFILE",
+    ),
+    (
+        "src/autoslice/clip_context.py",
+        '        speaker_id="lidousha",',
+        "        speaker_id=CHANNEL_PROFILE.profile_id,",
+    ),
+    (
+        "src/autoslice/clip_context.py",
+        '        channel_id="lidousha",',
+        "        channel_id=CHANNEL_PROFILE.profile_id,",
+    ),
+    (
+        "src/autoslice/huozi_luanshua.py",
+        "from typing import Iterable, Mapping, Sequence",
+        "from typing import Iterable, Mapping, Sequence\n"
+        "\n"
+        "from src.autoslice.surface_canon import CHANNEL_PROFILE",
+    ),
+    (
+        "src/autoslice/huozi_luanshua.py",
+        '        if speaker != "lidousha" and not (speaker == "mixed" and has_trusted_ranges):',
+        "        if speaker != CHANNEL_PROFILE.profile_id and not (speaker == \"mixed\" and has_trusted_ranges):",
+    ),
+    (
+        "src/autoslice/huozi_luanshua.py",
+        '                    speaker="lidousha",',
+        "                    speaker=CHANNEL_PROFILE.profile_id,",
+    ),
+    (
+        "src/autoslice/huozi_luanshua.py",
+        '        if piece.get("speaker") != "lidousha":',
+        '        if piece.get("speaker") != CHANNEL_PROFILE.profile_id:',
+    ),
+    (
+        "src/autoslice/cover_generation.py",
+        '        "the source person visibly labelled 李豆沙, or the one matching the Li Dousha panda-hood identity when "',
+        '        f"the source person visibly labelled {CHANNEL_PROFILE.display_name}, or the one matching the {CHANNEL_PROFILE.prompt_name} panda-hood identity when "',
+    ),
+    (
+        "src/autoslice/cover_generation.py",
+        '        "MANDATORY SUBJECT PROMINENCE: Li Dousha must be the immediate first visual focus and carry the story reaction. "',
+        '        f"MANDATORY SUBJECT PROMINENCE: {CHANNEL_PROFILE.prompt_name} must be the immediate first visual focus and carry the story reaction. "',
+    ),
+    (
+        "src/autoslice/publish_staging.py",
+        '                        "be the person labelled 李豆沙; do not hybridize her with "',
+        '                        f"be the person labelled {CHANNEL_PROFILE.display_name}; do not hybridize her with "',
+    ),
+    (
+        "src/autoslice/publish_staging.py",
+        '                        "Make Li Dousha a LARGE, clear, immediately dominant "',
+        '                        f"Make {CHANNEL_PROFILE.prompt_name} a LARGE, clear, immediately dominant "',
+    ),
+    (
+        "src/autoslice/semantic_candidate_selector.py",
+        "- dimensions 七项都打 0..4 整数：lidousha_centrality（李豆沙不可替代性）、stance_intensity、",
+        "- dimensions 七项都打 0..4 整数：lidousha_centrality（{CHANNEL_PROFILE.display_name}不可替代性）、stance_intensity、",
+    ),
+    (
+        "src/autoslice/cover_source_composition.py",
+        "from PIL import Image",
+        "from PIL import Image\n"
+        "\n"
+        "from src.autoslice.surface_canon import CHANNEL_PROFILE",
+    ),
+    (
+        "src/autoslice/cover_source_composition.py",
+        '    "白发和可见名牌定位李豆沙；不要把其他白发角色或游戏 UI 当成她。"',
+        '    f"白发和可见名牌定位{CHANNEL_PROFILE.display_name}；不要把其他白发角色或游戏 UI 当成她。"',
+    ),
+    (
+        "scripts/evaluate_speaker_phase1.py",
+        "from pathlib import Path",
+        "from pathlib import Path\n"
+        "\n"
+        "from src.autoslice.surface_canon import CHANNEL_PROFILE",
+    ),
+    (
+        "scripts/evaluate_speaker_phase1.py",
+        'TRUTH_TO_AUTO = {"lidousha": "李豆沙", "non_lidousha": "连线"}',
+        "TRUTH_TO_AUTO = {\n"
+        "    CHANNEL_PROFILE.profile_id: CHANNEL_PROFILE.host_speaker_label,\n"
+        '    f"non_{CHANNEL_PROFILE.profile_id}": CHANNEL_PROFILE.guest_speaker_label,\n'
+        "}",
+    ),
+    # ---- v4.7 棘轮对账：auditor prompt 注入 host 占位（import+2 kwargs = 模块
+    #      +3 行、函数 +2 行），显式改账本 ----
+    (
+        "tests/test_runtime_architecture.py",
+        '    ("src/autoslice/final_review_auditor.py", "audit_final_subtitles"): 407,',
+        '    ("src/autoslice/final_review_auditor.py", "audit_final_subtitles"): 409,',
+    ),
+    (
+        "tests/test_runtime_architecture.py",
+        '    "src/autoslice/final_review_auditor.py": 3_433,',
+        '    "src/autoslice/final_review_auditor.py": 3_436,',
+    ),
     # ---- v4.5：合集 ID 账号专属，强制部署方自填（Ivan：绝不默认给我的合集） ----
     (
         "scripts/authorized_upload.py",
@@ -1231,11 +1420,211 @@ _TEMPLATE_TEXT_PLACEHOLDERS = {
     ),
 }
 
-# 非身份的工艺资产：默认直接给示例频道的完整内容（Ivan：默认值全给，想改再改）。
+# 非身份的工艺资产：默认直接给示例频道的完整内容（Ivan：默认值全给，想改再改），
+# 但通用规则里的身份词必须占位化——只有标注「示例/判例/真例/锚点」的行保留真名
+# 作教学材料；未标记行经身份映射后不得残留身份词（硬校验，残留即导出失败）。
 _TEMPLATE_COPY_DEFAULT = ("slice_selection_metric", "subtitle_correction_principles")
 _TEMPLATE_COPY_HEADER = (
-    "> 默认沿用示例频道（李豆沙）的口径，可直接使用；要改就按你频道的判断改。\n\n"
+    "> 模板默认值：源自示例频道的完整方法论，身份已占位（标注「示例」的行保留\n"
+    "> 真实条目作示范）。可直接使用；要改就按你频道的判断改。\n\n"
 )
+
+_TEMPLATE_IDENTITY_MAP = (("李豆沙", "主播"),)
+_TEMPLATE_EXAMPLE_MARKERS = ("示例", "判例", "真例", "锚点")
+_TEMPLATE_IDENTITY_CHECK = re.compile(
+    r"李豆沙|小李|(?<!红)豆沙|kmx|礼墨|露蒂丝|lycoris|shadowlee|萱萱|Kaya|掏兜|侄女|熊猫|钢镚|shadow"
+)
+
+# 逐文件手工改写对（old 必须精确命中一次；作用于脱敏后的文本）。
+_TEMPLATE_DOC_REWRITES: dict[str, tuple[tuple[str, str], ...]] = {
+    "subtitle_correction_principles": (
+        (
+            "# 李豆沙字幕校正 prompt 原则",
+            "# 字幕校正 prompt 原则",
+        ),
+        (
+            "本文件是李豆沙切片**字幕文本校正 prompt** 的权威原则资产",
+            "本文件是频道切片**字幕文本校正 prompt** 的权威原则资产",
+        ),
+        (
+            "出处：由项目全历史积累汇总（glossary 文本规则、bilive-autoslice-publish / song-lyrics-timeline-aligner skill、CPA/AGY 提示词里反复踩坑写下的操作规则、以及各 memory）。",
+            "出处：由示例频道全历史运营积累汇总。",
+        ),
+        (
+            "- **专名平等铁律（维护者 2026-07-16，2026-07-28 补充边界）**：`kmx`、礼墨/Sumi、\n  萱萱卡娅/Kaya 以及名单里的任何**已登记词面彼此平等**。",
+            "- **专名平等铁律**：名单里的任何**已登记词面彼此平等**（示例频道词面：kmx、礼墨/Sumi、萱萱卡娅/Kaya）。",
+        ),
+        (
+            "- **元规则·自称误听**：凡来历不明、发音接近“小李/李豆沙/豆沙”的人名（刘彩/李彩/留下/刘禅/刘婵/里豆沙/李杜莎/流沙…），都是主播第三人称自称的误听，一律按语境修正为“小李/李豆沙”，**绝不当成刘禅等真实人名保留**。",
+            "- **元规则·自称误听**：凡来历不明、发音接近主播各个自称的人名，都是主播第三人称自称的误听，一律按语境修正为对应自称，**绝不当成同音真实人名保留**（示例频道：刘彩/李彩/留下/刘禅/流沙…一律修正为“小李/李豆沙”）。",
+        ),
+        (
+            "- **元规则·kmx**：只有本句实际音节、结构化弹幕/SC、同一接话链、重复专名槽或源时间真值支持时才写 **kmx**（一律小写）。停放熊/康姆叉/卡姆西/开姆克斯/秦伟雄/提莫怂/请问熊/KY小红等是已知误听面，只能提高 `kmx` 候选优先级，不能绕过本句证据；更不能因为 `kmx` 或礼墨/Sumi 在词表里，就让二者互相覆盖。单字「提」和常用词「提防」禁止作为全局误听面。",
+            "- **元规则·粉丝团名**：只有本句实际音节、结构化弹幕/SC、同一接话链、重复专名槽或源时间真值支持时才写粉丝团名。已知误听面清单只能提高候选优先级，不能绕过本句证据；也不能因为两个词都在词表里就互相覆盖。单字和常用词禁止作为全局误听面（示例频道：粉丝团名 kmx 一律小写，误听面 停放熊/康姆叉/卡姆西 等；禁用面「提」「提防」）。",
+        ),
+        (
+            "按整段话题选对的那个：讲抢钱/薅弹幕/偷学 → “掏兜”（非“偷渡”）；",
+            "按整段话题选对的那个（示例频道：抢钱/薅弹幕语境 → 梗词“掏兜”，非“偷渡”）；",
+        ),
+        (
+            "- **人设先验也是同音取舍的证据（维护者 2026-07-19，摸摸/么么案）**：李豆沙是可爱治愈妈妈型人设，不是诱惑型——安抚/哄人语境下的 mō/me 音优先判“**摸摸**”（像照顾小宝宝一样摸头），不是“么么”（飞吻）。同理其他同音多写在两个都通时按 persona 卡的性格倾向选；音频与人设先验冲突时以音频为准，拿不准只报不改。",
+            "- **人设先验也是同音取舍的证据**：同音多写在两个都通时按 persona 卡的性格倾向选（示例频道为治愈妈妈型：安抚语境下的 mō 音优先判“摸摸”而非“么么”）；音频与人设先验冲突时以音频为准，拿不准只报不改。",
+        ),
+        (
+            "- **主播用“她”（维护者 2026-07-10）**：明知是主播联动的场合，被指代的联动主播一律写**她/她们**（本圈主播默认女性没问题——联动三人全是女主播；“TA说是二”这类指打手势队友的都该是“她”）。同理，谈及其他 VTuber/主播时默认“她”，除非明确是男性。",
+            "- **联动主播代词按你频道联动圈的实际构成默认**（示例频道联动圈全为女主播：被指代的联动主播一律写**她/她们**）；性别不明时按下面 TA 规则处理。",
+        ),
+        (
+            "“钢镚”＝她对 2 元小额 SC 的玩梗称法，保留原词。",
+            "主播对小额 SC 的玩梗称法保留原词（示例频道：“钢镚”＝2 元 SC）。",
+        ),
+        (
+            "- 保留李豆沙的口癖、重复、吐槽语气、停顿感、直播间腔调，不要过度书面化。",
+            "- 保留主播的口癖、重复、吐槽语气、停顿感、直播间腔调，不要过度书面化。",
+        ),
+        (
+            "- **说话人别名**：对话中作为名字出现的精确词 `shadow` 是李豆沙的自称之一；说话人分离必须归入李豆沙，不得据此创造第四位说话人。不要把它与词表中的相关专名 `shadowlee` 混为一谈。",
+            "- **说话人别名**：主播在词表登记的拼写别名自称必须归入主播本人，不得据此创造额外说话人（示例频道：`shadow` 是自称之一，勿与词表专名 `shadowlee` 混为一谈）。",
+        ),
+        (
+            "- **自称平等铁律**（维护者 2026-07-13）：李豆沙/小李/豆沙是**平等的自称专名**，写音频里实际说的那一个，**绝不互相替换**（把清晰的「李豆沙」写成「小李」与听错同罪）。",
+            "- **自称平等铁律**：主播的各个自称是**平等的自称专名**，写音频里实际说的那一个，**绝不互相替换**（示例频道：李豆沙/小李/豆沙；把清晰的「李豆沙」写成「小李」与听错同罪）。",
+        ),
+        (
+            "「李豆沙」「小李」是平等自称专名，说哪个写哪个，绝不互换或\"统一风格\"。",
+            "各个自称是平等专名，说哪个写哪个，绝不互换或\"统一风格\"。",
+        ),
+        (
+            "匿名且性别无从判断的人（“我同学/一个朋友/那个人/kmx”，或查不到性别的名人）",
+            "匿名且性别无从判断的人（示例：“我同学/一个朋友/那个人/kmx”，或查不到性别的名人）",
+        ),
+        (
+            "（机制强制，`subtitle_fidelity` 守卫；2026-07-14 一九零/小李两案）",
+            "（机制强制，`subtitle_fidelity` 守卫；示例：一九零/小李两类）",
+        ),
+        (
+            "（维护者 2026-07-19，「只有kmx」案）",
+            "（示例：「只有kmx」拼贴病）",
+        ),
+    ),
+    "slice_selection_metric": (
+        (
+            "# 李豆沙切片选题 metric（通用 rubric 权威）",
+            "# 切片选题 metric（通用 rubric 权威）",
+        ),
+        (
+            "> v5，2026-07-22 维护者 校准 + Pro 独立复核：本文件继续定义偏好；",
+            "> 本文件定义选题偏好；",
+        ),
+        (
+            "> v4，2026-07-13 维护者 校准（学猫叫案：**装可爱表演 + 与观众互动感**必须更高分——\n> 「弹幕让她学猫叫，从喵喵、哈气演到嗷呜，最后急着强调自己是能一掌拍飞猫的熊」\n> 这类互动驱动的可爱演出 0.87 落选是错误。同日对账铁律：可恢复失败的原选手先复活，\n> 候补不上位、席位保留，分数高为准）。\n> v3，2026-07-06 维护者 校准（无人值守首批：生成器把「小猪自证」「幻想全职主播」排进 top5、\n> 把「弹幕拱她去找李墨素、她识破磕CP」划进落选。维护者：CP/百合类必须更高分）。\n> v2，2026-07-05 维护者 校准（「百合是工作」事件：高语义分题材被误判 niche 划走）。\n> 每一维都有 维护者 已上传/已拒绝的真实判例背书；改这里，语义召回 prompt 全局同步（勿在代码里另写一份）。",
+            "> 本模板源自示例频道多轮真实上传/拒发判例的逐维校准；分层框架与七维算术通用，\n> **判例与人物请换成你频道自己的**。改这里，语义召回 prompt 全局同步（勿在代码里另写一份）。",
+        ),
+        (
+            "不许因为低层候选「语义分略高 0.02」就把高层候选挤出 top-N（首批就是这么把李墨素 CP 挤掉的）。",
+            "不许因为低层候选「语义分略高 0.02」就把高层候选挤出 top-N（示例频道判例：首批就是这样把第一层 CP 候选挤掉的）。",
+        ),
+        (
+            "- **第一层（最高，\"看不腻\"）· 百合/CP/关系或完整互动表演链**：李豆沙的百合(GL)爱好、与具体人物(kmx/\n  礼墨Sumi/露蒂丝等)的 CP/磕CP/暧昧/关系拉扯/立场自白。**这类观众永远不腻**，是频道的命脉。\n  判例：「主播是一面镜子，李豆沙喜欢女生」「向kmx推荐恋死」「叛逆小李要喊kmx妈妈」；",
+            "- **第一层（最高，\"看不腻\"）· 频道命脉题材（关系/立场或完整互动表演链）**：把本层定义成\n  **你频道观众永远看不腻的核心题材**。示例频道为百合(GL)与圈内人物(kmx/礼墨Sumi/露蒂丝等)\n  的 CP/关系拉扯/立场自白。判例（示例频道）：「主播是一面镜子，李豆沙喜欢女生」「向kmx推荐恋死」「叛逆小李要喊kmx妈妈」；",
+        ),
+        (
+            "玩梗、自证（「不是小猪是小李」这类）。",
+            "玩梗、自证（示例频道：「不是小猪是小李」这类）。",
+        ),
+        (
+            "  7/6 应做未做：**「弹幕拱她去找礼墨Sumi，她识破你只是想磕CP」（CP）、「想成为真正拉拉还得五年高考十年模拟」（百合爱好）**。",
+            "  判例（示例频道，应做未做）：**「弹幕拱她去找礼墨Sumi，她识破你只是想磕CP」（CP）、「想成为真正拉拉还得五年高考十年模拟」（百合爱好）**。",
+        ),
+        (
+            "1. **围绕李豆沙本人（25%）**：不只表层身份符号（熊猫/名字/自我玩梗）",
+            "1. **围绕主播本人（25%）**：不只表层身份符号（示例频道：熊猫/名字/自我玩梗）",
+        ),
+        (
+            "   已上传真例：「李豆沙年龄歧视露蒂丝」「侄女卖姬太舒适了，直呼找到舒适区」。",
+            "   已上传真例（示例频道）：「李豆沙年龄歧视露蒂丝」「侄女卖姬太舒适了，直呼找到舒适区」。",
+        ),
+        (
+            "   已上传真例：「主播是一面镜子，李豆沙喜欢女生，kmx也喜欢女生」（GL 立场自白）。\n   **反例（维护者 拒发）**：「熊猫伪装成人类」「奶龙斗虫宇宙」——纯脑洞设定、无立场无关系钩子。",
+            "   已上传真例（示例频道）：「主播是一面镜子，李豆沙喜欢女生，kmx也喜欢女生」。\n   反例·判例（示例频道，拒发）：「熊猫伪装成人类」「奶龙斗虫宇宙」——纯脑洞设定、无立场无关系钩子。",
+        ),
+        (
+            "3. **受众兴趣对齐（15%）**：题材是不是她观众核心在意的——**百合/GL、她在追的作品、圈内人物（kmx/露蒂丝/lycoris/shadowlee）、生日/新皮肤/新表情等人设事件**。问「这是不是她观众在意的东西」，不只「这好不好笑」。\n   判例：「百合是工作」「百合漫画塞男角色」「小丑鼻子（生日事件）」被 维护者 点名要做；「shadowlee 的逆出道」「新哭哭表情」已上传。",
+            "3. **受众兴趣对齐（15%）**：题材是不是**你频道观众**核心在意的——在追的作品、圈内人物、生日/新皮肤/新表情等人设事件。问「这是不是她观众在意的东西」，不只「这好不好笑」。\n   判例（示例频道）：核心题材为百合/GL 与圈内人物（kmx/露蒂丝/lycoris/shadowlee）；「百合是工作」「小丑鼻子（生日事件）」被点名要做；「shadowlee 的逆出道」「新哭哭表情」已上传。",
+        ),
+        (
+            "4. **关系拉扯/互动（15%）**（历史上传最高频主题，24 条里 kmx 相关 5 条）：她与 kmx/弹幕/SC 的来回攻防、谁爱谁、辈分颠倒、互相推荐互相拆台。\n   已上传真例：「叛逆小李一定要喊kmx妈妈，kmx只好喊宝宝」「下播被kmx叫妈妈」「吵闹熊猫头到底爱不爱kmx，kmx反击早就不在意了」「向kmx推荐恋死，kmx反向推荐lycoris」。",
+            "4. **关系拉扯/互动（15%）**（示例频道历史上传的最高频主题）：主播与粉丝团/弹幕/SC 的来回攻防、谁爱谁、辈分颠倒、互相推荐互相拆台。\n   已上传真例（示例频道）：「叛逆小李一定要喊kmx妈妈，kmx只好喊宝宝」「下播被kmx叫妈妈」「向kmx推荐恋死，kmx反向推荐lycoris」。",
+        ),
+        (
+            "   **v4 扩展（维护者 2026-07-13 点名）：弹幕起哄→她照做表演的互动驱动内容属本维高分**——",
+            "   **扩展：弹幕起哄→她照做表演的互动驱动内容属本维高分**——",
+        ),
+        (
+            "   一掌拍飞猫的**熊**）是完整高分结构，不得因\"纯表演、无观点\"降档到第二层同质内容。\n   判例：「被问为什么总把自己猫塑，小李当场强调熊猫一掌就能打飞猫」conf 0.87 落选＝错误示范，此类应进层内前列。",
+            "   反差收尾）是完整高分结构，不得因\"纯表演、无观点\"降档到第二层同质内容。\n   判例（示例频道）：「被问为什么总把自己猫塑，小李当场强调熊猫一掌就能打飞猫」落选＝错误示范，此类应进层内前列。",
+        ),
+        (
+            "7.22 executable 对照锚点（机器值见 `selection_score_calibration.v1.json`）：",
+            "对照锚点（机器值见 `selection_score_calibration.v1.json`；以下为示例频道锚点，换频道后用你自己的已审判例重建）：",
+        ),
+        (
+            "- `auto_193450_3573_3665`「展示最喜欢的金发有角妹妹→被说像礼墨Sumi立刻否认→",
+            "- 示例锚点 `auto_193450_3573_3665`「展示最喜欢的金发有角妹妹→被说像礼墨Sumi立刻否认→",
+        ),
+        (
+            "- `auto_193450_5341_5459`「两人争论下播时没人挽留谁更可怜→李豆沙坦白留搭档只是",
+            "- 示例锚点 `auto_193450_5341_5459`「两人争论下播时没人挽留谁更可怜→李豆沙坦白留搭档只是",
+        ),
+        (
+            "## 歌切偏好（历史 7 首）\n\n温柔/哄睡/情绪钩子优先（虫儿飞哄睡、《宝贝》哄你睡觉、假装不知情的《年轮》、牵着你轮回）；",
+            "## 歌切偏好\n\n按你频道的演唱风格定偏好（示例频道：温柔/哄睡/情绪钩子优先——虫儿飞哄睡、《宝贝》哄你睡觉、假装不知情的《年轮》）；",
+        ),
+        (
+            "目录式铁律统一生成，固定为 `【李豆沙】豆沙歌，《歌名》`，本 metric 不得给标题添加 hook 或副标题。",
+            "目录式铁律统一生成（profile 的歌切格式；示例频道为 `【李豆沙】豆沙歌，《歌名》`），本 metric 不得给标题添加 hook 或副标题。",
+        ),
+        (
+            "  0.0x 就把第一层候选（CP/百合）挤出名额——首批 top5 就是这么错的。",
+            "  0.0x 就把第一层候选挤出名额（示例频道判例：首批 top5 就是这么错的）。",
+        ),
+        (
+            "## 歌切检测速判特征（维护者 2026-07-14）",
+            "## 歌切检测速判特征",
+        ),
+        (
+            "- **打 call 式弹幕 = 正在唱歌**：弹幕突然变成连刷\"李豆沙！李豆沙！\"这类**无实意、重复、打 call 节奏**的内容",
+            "- **打 call 式弹幕 = 正在唱歌**：弹幕突然变成连刷主播名（示例：\"李豆沙！李豆沙！\"）这类**无实意、重复、打 call 节奏**的内容",
+        ),
+    ),
+}
+
+
+def _genericize_template_doc(key: str, text: str) -> str:
+    for old, new in _TEMPLATE_DOC_REWRITES.get(key, ()):
+        hits = text.count(old)
+        if hits != 1:
+            raise RuntimeError(
+                f"template rewrite drifted ({key}): {hits} hits for {old[:50]!r}…"
+            )
+        text = text.replace(old, new)
+    out_lines: list[str] = []
+    violations: list[str] = []
+    for line in text.splitlines(keepends=True):
+        marked = any(marker in line for marker in _TEMPLATE_EXAMPLE_MARKERS)
+        if not marked:
+            for token, generic in _TEMPLATE_IDENTITY_MAP:
+                line = line.replace(token, generic)
+            line = _apply_comment_date_rules(line)
+            if _TEMPLATE_IDENTITY_CHECK.search(line):
+                violations.append(line.strip()[:90])
+        out_lines.append(line)
+    if violations:
+        raise RuntimeError(
+            f"template {key} still has identity tokens on unmarked lines:\n  "
+            + "\n  ".join(violations)
+        )
+    return "".join(out_lines)
 
 _TEMPLATE_DIR_NOTES = {
     "fonts": (
@@ -1354,7 +1743,9 @@ def build_template_assets(out_root: Path) -> int:
         elif key in _TEMPLATE_COPY_DEFAULT:
             source_rel = default_files.get(key)
             body = (default_root / source_rel).read_text(encoding="utf-8")
-            payload = _TEMPLATE_COPY_HEADER + _sanitize_text(body)
+            payload = _TEMPLATE_COPY_HEADER + _genericize_template_doc(
+                key, _sanitize_text(body)
+            )
         elif key in _TEMPLATE_TEXT_PLACEHOLDERS:
             payload = _TEMPLATE_TEXT_PLACEHOLDERS[key]
         elif rel_name.endswith((".md", ".txt")):
