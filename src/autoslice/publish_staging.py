@@ -1119,8 +1119,14 @@ def _stage_cpa_redraw_cover(
     base_url: str,
     api_key: str,
     full_text_cover_contract: Mapping[str, object] | None = None,
+    demotion_detail: str | None = None,
 ) -> dict[str, object]:
-    """Resolve optional emote direction and materialize the CPA redraw lane."""
+    """Resolve optional emote direction and materialize the CPA redraw lane.
+
+    ``demotion_detail`` 非空表示本次重绘是截图路线物化失败后的**显式降级**执行
+    （非静默改道）：成功记录写 READY_DEGRADED 并携带失败细节，验证器要求
+    screenshot_direct 的 BLOCKED 回执同时在场才放行。
+    """
 
     # Strong-reason emote pick (Ivan 2026-07-19): "replace" swaps the CPA
     # reference from the live frame to the official sticker (subject swap,
@@ -1500,9 +1506,12 @@ def _stage_cpa_redraw_cover(
     record_cover_route_execution(
         cover_generation,
         actual_treatment="cpa_redraw",
-        execution_status="READY",
+        execution_status=(
+            "READY_DEGRADED" if demotion_detail else "READY"
+        ),
         image_generation_attempted=True,
         image_generation_used=True,
+        detail=demotion_detail,
         final_participant_verification=final_participant_verification,
     )
     return {
@@ -1914,9 +1923,16 @@ def _stage_lidousha_ai_cover(
             and route.get("verified_stream_frame") is True
             else str(story_contract.get("cover_fallback_mode") or "HOST_ONLY_GENERIC")
         )
+    demotion_detail: str | None = None
     if treatment in ("screenshot_direct", "screenshot_polish"):
-        # The selected route is an authorization boundary.  A materialization
-        # failure blocks this cover; it never authorizes a silent CPA redraw.
+        # The selected route is an authorization boundary: a materialization
+        # failure never authorizes a SILENT redraw.  It is, however, positive
+        # evidence that the screenshot lane is infeasible for this frame
+        # (composition veto / crop failure), so we demote to cpa_redraw
+        # EXPLICITLY: the screenshot BLOCKED receipt stays in the evidence,
+        # the redraw runs through its own precondition gates below, and the
+        # final execution records READY_DEGRADED with the failure detail —
+        # the authorization chain shows exactly what happened.
         result = _stage_screenshot_direct_cover(
             media_path=media_path,
             candidate_id=candidate_id,
@@ -1936,7 +1952,28 @@ def _stage_lidousha_ai_cover(
             api_key=api_key,
             full_text_cover_contract=full_text_cover_contract,
         )
-        return _enforce_final_talk_cover_thumbnail_gate(result)
+        result = _enforce_final_talk_cover_thumbnail_gate(result)
+        if "SCREENSHOT_ROUTE_MATERIALIZATION_FAILED" not in (
+            result.get("reason_codes") or []
+        ):
+            return result
+        screenshot_receipt = cover_generation.get("screenshot_direct")
+        demotion_detail = (
+            "demoted from "
+            f"{treatment}: "
+            + str(
+                (screenshot_receipt or {}).get("detail")
+                if isinstance(screenshot_receipt, Mapping)
+                else ""
+            )
+        )
+        cover_generation["route_demotion"] = {
+            "schema_version": "cover-route-demotion.v1",
+            "from_treatment": treatment,
+            "to_treatment": "cpa_redraw",
+            "reason_codes": list(result.get("reason_codes") or []),
+            "detail": demotion_detail,
+        }
     if route.get("host_identity_required") is True and final_host_identity_verifier is None:
         detail = (
             "cover requires a CPA-primary source/final Li Dousha "
@@ -2008,6 +2045,7 @@ def _stage_lidousha_ai_cover(
         base_url=base_url,
         api_key=api_key,
         full_text_cover_contract=full_text_cover_contract,
+        demotion_detail=demotion_detail,
     )
     result = _degrade_unavailable_redraw_identity_to_direct(
         redraw_result=redraw_result,

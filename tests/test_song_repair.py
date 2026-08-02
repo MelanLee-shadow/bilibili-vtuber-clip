@@ -4635,3 +4635,31 @@ def test_gemini_api_observe_requests_agy_parity_thinking_budget(
     assert generation_config["thinkingConfig"] == {
         "thinkingBudget": expected_budget
     }
+
+
+def test_song_lrc_gemini_api_model_env_override_and_default():
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    probe = (
+        "from src.autoslice.song_common import GEMINI_API_AUDIO_LRC_MODEL as M;"
+        "print(M)"
+    )
+    default = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        cwd=root,
+        env={k: v for k, v in __import__("os").environ.items() if k != "SONG_LRC_GEMINI_API_MODEL"},
+    )
+    assert default.stdout.strip() == "gemini-3.6-flash", default.stderr
+    overridden = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        cwd=root,
+        env={**__import__("os").environ, "SONG_LRC_GEMINI_API_MODEL": "gemini-3.5-flash"},
+    )
+    assert overridden.stdout.strip() == "gemini-3.5-flash", overridden.stderr

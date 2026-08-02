@@ -23,6 +23,7 @@ from bisect import bisect_left
 import copy
 import hashlib
 import json
+import os
 import re
 import unicodedata
 from dataclasses import asdict, dataclass
@@ -64,7 +65,12 @@ AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY = "canonical-lrc-by-exact-index.v1"
 AGY_AUDIO_LRC_PROVIDER = "agy"
 AGY_AUDIO_LRC_MODEL = "Gemini 3.6 Flash (High)"
 GEMINI_API_AUDIO_LRC_PROVIDER = "gemini_api"
-GEMINI_API_AUDIO_LRC_MODEL = "gemini-3.6-flash"
+# 失败转移用的 Gemini API 型号。env 覆盖位与另两个 Gemini 调用点同款惯例
+# （ENTITY_AUDIO_GEMINI_API_MODEL / JINGTING_GEMINI_MODEL）；该串会写进 run
+# 元数据并被 gate 回验，改 env 必须整个部署一致，历史工件回验按当时取值。
+GEMINI_API_AUDIO_LRC_MODEL = os.environ.get(
+    "SONG_LRC_GEMINI_API_MODEL", "gemini-3.6-flash"
+)
 AGY_AUDIO_LRC_FALLBACK_FAILURE_CATEGORIES = frozenset(
     {
         "AGY_UNAVAILABLE",

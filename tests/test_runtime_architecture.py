@@ -53,9 +53,13 @@ FUNCTION_DEBT_LEDGER = {
     # 2026-07-31 +6：full-text contract 穿透形参与调用（Ivan 07-31 `/goal`
     # 「直接按照 fable 的 advise 继续，直至修复所有问题」授权；Fable 裁定 4
     # 点名「contract 不穿透 = 静默把唯一合法全文通道杀死」，必须补）。
-    ("src/autoslice/publish_staging.py", "_stage_cpa_redraw_cover"): 415,
+    # 2026-08-02 +9：显式降级执行位（demotion_detail 形参 + READY_DEGRADED
+    # 记录）——Ivan 8/2 /goal「全都按你的想法进行修复」授权，封面路由 P1。
+    ("src/autoslice/publish_staging.py", "_stage_cpa_redraw_cover"): 424,
     # 2026-07-31 +2：同上，contract 穿透接线。
-    ("src/autoslice/publish_staging.py", "_stage_lidousha_ai_cover"): 389,
+    # 2026-08-02 +29：截图物化失败→显式降级重绘（降级回执+细节留痕，重绘
+    # 前置门照跑）——同上授权；测试 test_cover_route_demotion.py + shadow 用例。
+    ("src/autoslice/publish_staging.py", "_stage_lidousha_ai_cover"): 418,
     # 2026-07-31 +27：reuse 封面绑定（1013 jyl-r9 案——reuse 不绑 cover sha，
     # recovery manifest 必然 REFUSE；Ivan 常设修复授权链）。已连续吃增长，
     # 下次动这个函数必须先拆，不许再抬。
@@ -76,7 +80,9 @@ MODULE_DEBT_LEDGER = {
     # 2026-08-01 新记：OSS 发布整备（Ivan 授权）把导出器扩成改名/patch/模板引擎；
     # 私库专用构建工具，导出时自剥离，不进 OSS 面。
     "scripts/export_oss_snapshot.py": 2_149,
-    "scripts/free_session_autoslice.py": 2_063,
+    # 2026-08-02 +15：--smoke-segment 有界 backfill（帽 3）——Ivan 8/2 /goal
+    # 「全都按你的想法进行修复，当然都要配测试」授权；测试 test_smoke_backfill.py。
+    "scripts/free_session_autoslice.py": 2_078,
     # 2026-07-31 +122：封面文案链修复（分行权威等级 + 锁定模式 + 缩略图合同背带
     # + max_lines 按合同封顶）。新增逻辑已抽成 _talk_locked_split /
     # _assert_talk_thumbnail_contract 两个模块级函数，_overlay_lidousha_cover_title
@@ -100,7 +106,8 @@ MODULE_DEBT_LEDGER = {
     # 2026-07-31 再 +27：reuse 封面 sha 绑定（同函数条目注释）。
     # 2026-08-01 +47：同上（证据包结转）。此模块 7/31-8/1 三次靠抬账过关，
     # 拆解已经不是建议是欠账。
-    "src/autoslice/publish_staging.py": 2_828,
+    # 2026-08-02 +38：封面路由显式降级（同函数条目注释，Ivan 8/2 /goal）。
+    "src/autoslice/publish_staging.py": 2_866,
     "src/autoslice/same_bv_repair.py": 2_422,
 }
 SCRIPT_EXCLUSIONS = {
@@ -131,7 +138,9 @@ FOCUSED_MODULE_LINE_BUDGETS = {
     # 这个模块已经连续两轮靠抬预算过关——下次再超必须真拆，不许再抬。
     Path("src/autoslice/chat_repair.py"): 1_088,
     Path("src/autoslice/chat_proposals.py"): 1_250,
-    Path("src/autoslice/song_common.py"): 525,
+    # 2026-08-02 +5：LRC 失败转移模型加 env 覆盖位（与另两个 Gemini 调用点同款
+    # 惯例；Ivan 8/2 /goal 授权，测试 test_song_repair.py 的 env-override 用例）。
+    Path("src/autoslice/song_common.py"): 530,
     Path("src/autoslice/song_lrc_provider.py"): 550,
     Path("src/autoslice/song_alignment.py"): 1_175,
     Path("src/autoslice/song_performance.py"): 1_200,

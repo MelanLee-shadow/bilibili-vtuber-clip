@@ -5204,10 +5204,15 @@ def test_screenshot_direct_cover_skips_cpa_and_needs_no_creds(tmp_path, monkeypa
     assert validate_cover_route_decision(generation)
 
 
-def test_screenshot_materialization_failure_blocks_without_calling_ai(
+def test_screenshot_materialization_failure_demotes_explicitly_to_redraw(
     tmp_path, monkeypatch
 ):
-    """Once screenshot is selected, its failure cannot authorize a CPA redraw."""
+    """Screenshot failure demotes to CPA redraw with receipts, never silently.
+
+    旧政策（失败即 BLOCK、绝不重绘）把"帧不可行"变成整张封面死刑；新契约：
+    物化失败=该路线不可行的证据，显式降级进重绘 lane（降级回执+失败细节全部
+    留痕），重绘自身仍走全部前置门；若重绘也失败，照旧 fail-closed。
+    """
 
     from src.autoslice import publish_staging
     from tests.test_cover_frame_selection import _write_synthetic_performance_clip
@@ -5222,9 +5227,9 @@ def test_screenshot_materialization_failure_blocks_without_calling_ai(
     def fail_screenshot(*_args, **_kwargs):
         raise RuntimeError("synthetic crop failure")
 
-    def forbidden_image_edit(**_kwargs):
+    def failing_image_edit(**_kwargs):
         calls["image_edit"] += 1
-        raise AssertionError("screenshot failure must not call CPA")
+        raise RuntimeError("synthetic redraw failure")
 
     monkeypatch.setattr(
         publish_staging, "extract_zoomed_cover_frame", fail_screenshot
@@ -5232,30 +5237,38 @@ def test_screenshot_materialization_failure_blocks_without_calling_ai(
     result = publish_staging._stage_lidousha_ai_cover(
         {"status": "MATERIALIZED", "media_path": str(media)},
         media_path=media,
-        candidate_id="shot-fails-closed",
-        title="【李豆沙】截图失败不能偷偷改画风",
-        cover_text="截图失败不能偷偷改画风",
+        candidate_id="shot-demotes-explicitly",
+        title="【李豆沙】截图失败显式降级不偷偷改",
+        cover_text="截图失败显式降级不偷偷改",
         run_ffmpeg=True,
         art_direction_llm_call=None,
-        image_edit=forbidden_image_edit,
+        image_edit=failing_image_edit,
         punch_allowed=True,
     )
 
-    assert calls["image_edit"] == 0
-    assert result["status"] == "BLOCKED_AI_COVER_REQUIRED"
-    assert "SCREENSHOT_ROUTE_MATERIALIZATION_FAILED" in result["reason_codes"]
+    # 降级后真的进了重绘 lane（不再禁止），且降级三件套齐全
+    assert calls["image_edit"] >= 1
     generation = result["cover_generation"]
     assert generation["screenshot_direct"]["status"] == "BLOCKED"
-    assert generation["method"] == "screenshot_direct"
-    assert generation["model"] == "none"
-    assert generation.get("cover_origin") != "AI_REDRAW"
+    assert (
+        generation["screenshot_direct"]["reason_code"]
+        == "SCREENSHOT_ROUTE_MATERIALIZATION_FAILED"
+    )
+    demotion = generation["route_demotion"]
+    assert demotion["from_treatment"] == "screenshot_direct"
+    assert demotion["to_treatment"] == "cpa_redraw"
+    assert (
+        "SCREENSHOT_ROUTE_MATERIALIZATION_FAILED" in demotion["reason_codes"]
+    )
+    # 重绘也失败 → 整体仍然 fail-closed，没有封面就是没有封面
+    assert result["status"] == "BLOCKED_AI_COVER_REQUIRED"
     route = generation["route_decision"]
     assert route["selected_treatment"] == "screenshot_direct"
     assert route["actual_treatment"] is None
     assert route["execution_status"] == "BLOCKED"
-    assert route["image_generation_attempted"] is False
-    assert route["image_generation_used"] is False
-    assert "synthetic crop failure" in route["execution_detail"]
+    # 降级后重绘 lane 真实尝试过（与旧"绝不 attempted"相反，这正是新契约）
+    assert route["image_generation_attempted"] is True
+    assert str(route.get("execution_detail") or "").strip()
 
 
 def test_manual_title_can_finish_on_screenshot_without_hidden_cpa_fallback(

@@ -268,6 +268,9 @@ HOST_VOCAL_MODEL_DIR = Path(
 )
 MAX_TALK_PICKS = 5
 TALK_ATTEMPT_CAP = 10  # reject unsafe content candidates and backfill, bounded
+# 冒烟同款 backfill（帽更小）：talk[0] 一票否决曾让整次冒烟颗粒无收，而它偏偏
+# 是文档推荐的"第一支切片"入口——单候选级 fail-closed 时换下一个候选再试。
+SMOKE_TALK_ATTEMPT_CAP = 3
 MAX_SONGS_PER_SESSION = 1  # Ivan 2026-07-16: 每场直播至多一个歌切；已发布歌曲不再出
 MAX_SONGS_PER_DATE = MAX_SONGS_PER_SESSION  # compatibility alias for callers/tests
 MIN_TALK_EFFECTIVE_DURATION_MS = 45_000
@@ -2020,37 +2023,49 @@ def main(argv: list[str] | None = None) -> int:
         chat_binding = resolve_structured_chat_binding(segment)
         candidates, lane, extras = recall_candidates(srt, danmaku_hints(xml))
         talk = [c for c in candidates if getattr(c, "content_type_hint", "talk") != "song"]
-        log(f"smoke: {len(candidates)} candidates via {lane}; producing first talk candidate")
+        log(f"smoke: {len(candidates)} candidates via {lane}; producing first deliverable talk candidate")
         if not talk:
             log("smoke: no talk candidate found")
             return 1
-        cand = talk[0]
-        meta = extras.get(cand.anchor.candidate_id, {})
         seg_tag = re.sub(r"\D", "", segment.stem)[-6:]
-        item = {
-            "cid": f"auto_{seg_tag}_{int(cand.boundary.resolved_start_ms) // 1000}_{int(cand.boundary.resolved_end_ms) // 1000}",
-            "segment_path": str(segment),
-            "seg_dur_ms": ffprobe_ms(segment),
-            "start_ms": max(0, int(cand.boundary.resolved_start_ms)),
-            "end_ms": int(cand.boundary.resolved_end_ms),
-            "xml": str(xml) if xml else None,
-            **chat_binding,
-            "hook": meta.get("hook", ""),
-            "confidence": meta.get("confidence"),
-            "selection_scorecard": (
-                dict(meta["selection_scorecard"])
-                if isinstance(meta.get("selection_scorecard"), dict)
-                else None
-            ),
-            "lane": lane,
-            "bcut_srt_path": str(srt),
-            "filler_proposals": list(meta.get("filler_proposals") or []),
-            "filler_proposal_srt_sha256": meta.get(
-                "filler_proposal_srt_sha256"
-            ),
-            "merge_gap_removals": list(meta.get("merge_gap_removals") or []),
-        }
-        result = produce_talk(date, item)
+        seg_dur_ms = ffprobe_ms(segment)
+        attempts = talk[:SMOKE_TALK_ATTEMPT_CAP]
+        result: dict = {}
+        for attempt_index, cand in enumerate(attempts, start=1):
+            meta = extras.get(cand.anchor.candidate_id, {})
+            item = {
+                "cid": f"auto_{seg_tag}_{int(cand.boundary.resolved_start_ms) // 1000}_{int(cand.boundary.resolved_end_ms) // 1000}",
+                "segment_path": str(segment),
+                "seg_dur_ms": seg_dur_ms,
+                "start_ms": max(0, int(cand.boundary.resolved_start_ms)),
+                "end_ms": int(cand.boundary.resolved_end_ms),
+                "xml": str(xml) if xml else None,
+                **chat_binding,
+                "hook": meta.get("hook", ""),
+                "confidence": meta.get("confidence"),
+                "selection_scorecard": (
+                    dict(meta["selection_scorecard"])
+                    if isinstance(meta.get("selection_scorecard"), dict)
+                    else None
+                ),
+                "lane": lane,
+                "bcut_srt_path": str(srt),
+                "filler_proposals": list(meta.get("filler_proposals") or []),
+                "filler_proposal_srt_sha256": meta.get(
+                    "filler_proposal_srt_sha256"
+                ),
+                "merge_gap_removals": list(meta.get("merge_gap_removals") or []),
+            }
+            result = produce_talk(date, item)
+            if result.get("status") in DELIVERED_TALK_STATUSES:
+                if attempt_index > 1:
+                    result = {**result, "smoke_backfill_attempt": attempt_index}
+                break
+            log(
+                f"smoke: candidate {item['cid']} not delivered "
+                f"(status={result.get('status')}); "
+                f"attempt {attempt_index}/{len(attempts)}"
+            )
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
         return 0 if result.get("status") in DELIVERED_TALK_STATUSES else 1
     if args.once:

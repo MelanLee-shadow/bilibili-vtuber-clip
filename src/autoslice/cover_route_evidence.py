@@ -967,12 +967,22 @@ def validate_cover_route_decision(
     ):
         return False
     if actual == "cpa_redraw":
+        if method != "images.edit" or origin != "AI_REDRAW" or not used:
+            return False
+        if selected == "cpa_redraw":
+            return execution_status == "READY"
+        # 截图路线→重绘的显式降级：只有截图物化失败的 BLOCKED 回执在场、
+        # execution_detail 非空且状态为 READY_DEGRADED 时才是合法执行；
+        # 缺任一件即静默改道，拒绝。
+        demotion_receipt = cover_generation.get("screenshot_direct")
         return bool(
-            selected == "cpa_redraw"
-            and execution_status == "READY"
-            and method == "images.edit"
-            and origin == "AI_REDRAW"
-            and used
+            selected in {"screenshot_direct", "screenshot_polish"}
+            and execution_status == "READY_DEGRADED"
+            and str(route.get("execution_detail") or "").strip()
+            and isinstance(demotion_receipt, Mapping)
+            and demotion_receipt.get("status") == "BLOCKED"
+            and demotion_receipt.get("reason_code")
+            == "SCREENSHOT_ROUTE_MATERIALIZATION_FAILED"
         )
     if actual == "screenshot_polish":
         return bool(

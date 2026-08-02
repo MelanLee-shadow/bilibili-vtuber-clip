@@ -425,7 +425,7 @@ def test_repair_rejects_source_label_bound_only_in_other_corpus() -> None:
     assert review["passes"][0]["reason_code"] == "CPA_TEXT_REVIEW_INVALID"
 
 
-def test_provider_failure_fails_closed_without_repair_loop() -> None:
+def test_provider_failure_fails_closed_after_bounded_retries() -> None:
     calls = 0
 
     def cpa(_prompt: str) -> str:
@@ -444,7 +444,10 @@ def test_provider_failure_fails_closed_without_repair_loop() -> None:
     assert not source_fact_review_passes(review)
     assert review["status"] == "FAILED"
     assert review["reason_code"] == "CPA_TEXT_REVIEW_CALL_FAILED"
-    assert calls == 1
+    # provider 层失败在同一 pass 内有界重掷（1 次原始 + 2 次重试），仍 fail-closed
+    assert calls == 3
+    assert [row["attempt"] for row in review["provider_retries"]] == [1, 2]
+    assert len(review["passes"]) == 1
 
 
 def test_multiple_repairs_converge_before_bounded_keep() -> None:
@@ -1024,3 +1027,56 @@ def test_entry_canonicalizes_banned_surface_in_handwritten_spec() -> None:
     assert review["original_selection_hook"] == canon_hook
     assert review["final_title"] == canon_title
     assert f"selection_hook:\n{canon_hook}" in seen["prompt"]
+
+
+def test_transient_invalid_response_retried_within_same_pass() -> None:
+    hook = "小李当场语塞三秒，弹幕全体起立。"
+    title = "【李豆沙】小李当场语塞三秒弹幕全体起立"
+    calls = {"n": 0}
+
+    def cpa(prompt: str) -> str:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "这不是JSON"
+        return _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+        )
+
+    review = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript="当场语塞了三秒，弹幕全体起立",
+        clip_context_prompt="",
+        llm_call=cpa,
+    )
+
+    assert review["status"] == "PASS"
+    assert review["decision"] == "KEEP"
+    assert calls["n"] == 2
+    assert len(review["passes"]) == 1
+    assert len(review["provider_retries"]) == 1
+    assert review["provider_retries"][0]["reason_code"] == "CPA_TEXT_REVIEW_CALL_FAILED"
+    assert validate_source_fact_review(
+        review,
+        selection_hook=hook,
+        title=title,
+        final_transcript="当场语塞了三秒，弹幕全体起立",
+        clip_context_prompt="",
+    )
+
+
+def test_unavailable_provider_is_not_retried() -> None:
+    review = review_and_repair_source_facts(
+        selection_hook="测试钩子",
+        title="【李豆沙】测试标题",
+        final_transcript="测试字幕",
+        clip_context_prompt="",
+        llm_call=None,
+    )
+
+    assert review["status"] == "FAILED"
+    assert review["reason_code"] == "CPA_TEXT_REVIEW_UNAVAILABLE"
+    assert review["provider_retries"] == []

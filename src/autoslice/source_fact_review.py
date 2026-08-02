@@ -17,6 +17,11 @@ from src.autoslice.title_policy import publish_title_policy_violations
 
 SCHEMA_VERSION = "lidousha-source-fact-review.v1"
 MAX_REVIEW_PASSES = 5
+# 同一 review pass 内的 provider 级重试帽：这道门是 LLM 采样，同一份输入一次
+# 形状无效/调用失败就把整次产线判死是把骰子当结论。重试只针对 provider 层
+# 失败（形状无效/调用异常），语义结果（KEEP/REPAIR）永不重掷；UNAVAILABLE
+# （没配 llm_call）不重试。每次重试都进回执披露。
+MAX_PROVIDER_RETRIES_PER_PASS = 2
 
 
 def _sha256_text(value: str) -> str:
@@ -452,19 +457,39 @@ def review_and_repair_source_facts(
     current_hook = selection_hook
     current_title = title
     passes: list[dict[str, object]] = []
+    provider_retries: list[dict[str, object]] = []
     seen_surfaces = {(current_hook, current_title)}
 
     for review_pass in range(1, MAX_REVIEW_PASSES + 1):
-        review = _single_review(
-            selection_hook=current_hook,
-            title=current_title,
-            final_transcript=final_transcript,
-            clip_context_prompt=clip_context_prompt,
-            selection_scorecard=selection_scorecard,
-            llm_call=llm_call,
-            review_pass=review_pass,
-            enforce_automatic_title_style=enforce_automatic_title_style,
-        )
+        attempt = 0
+        while True:
+            review = _single_review(
+                selection_hook=current_hook,
+                title=current_title,
+                final_transcript=final_transcript,
+                clip_context_prompt=clip_context_prompt,
+                selection_scorecard=selection_scorecard,
+                llm_call=llm_call,
+                review_pass=review_pass,
+                enforce_automatic_title_style=enforce_automatic_title_style,
+            )
+            if (
+                review.get("status") != "FAILED"
+                or review.get("reason_code")
+                not in {"CPA_TEXT_REVIEW_INVALID", "CPA_TEXT_REVIEW_CALL_FAILED"}
+                or attempt >= MAX_PROVIDER_RETRIES_PER_PASS
+            ):
+                break
+            attempt += 1
+            provider_retries.append(
+                {
+                    "review_pass": review_pass,
+                    "attempt": attempt,
+                    "reason_code": review.get("reason_code"),
+                    "request_sha256": review.get("request_sha256"),
+                    "response_sha256": review.get("response_sha256"),
+                }
+            )
         passes.append(review)
         if review.get("status") == "KEEP":
             return _finalize_receipt(
@@ -477,6 +502,7 @@ def review_and_repair_source_facts(
                     "final_selection_hook": current_hook,
                     "final_title": current_title,
                     "passes": passes,
+                    "provider_retries": provider_retries,
                 }
             )
         if review.get("status") != "REPAIR":
@@ -491,6 +517,7 @@ def review_and_repair_source_facts(
                     "final_selection_hook": selection_hook,
                     "final_title": title,
                     "passes": passes,
+                    "provider_retries": provider_retries,
                 }
             )
 
@@ -508,6 +535,7 @@ def review_and_repair_source_facts(
                     "final_selection_hook": selection_hook,
                     "final_title": title,
                     "passes": passes,
+                    "provider_retries": provider_retries,
                 }
             )
         if (
@@ -529,6 +557,7 @@ def review_and_repair_source_facts(
                     "final_selection_hook": selection_hook,
                     "final_title": title,
                     "passes": passes,
+                    "provider_retries": provider_retries,
                 }
             )
         next_surfaces = (repaired_hook, repaired_title)
@@ -544,6 +573,7 @@ def review_and_repair_source_facts(
                     "final_selection_hook": selection_hook,
                     "final_title": title,
                     "passes": passes,
+                    "provider_retries": provider_retries,
                 }
             )
         seen_surfaces.add(next_surfaces)
@@ -560,6 +590,7 @@ def review_and_repair_source_facts(
             "final_selection_hook": selection_hook,
             "final_title": title,
             "passes": passes,
+            "provider_retries": provider_retries,
         }
     )
 
