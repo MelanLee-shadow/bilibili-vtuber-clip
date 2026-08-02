@@ -24,11 +24,17 @@
    profile 是 `lidousha`（示例频道）；`AUTOSLICE_PROFILE` 在进程 import 时
    读取。校验：`python3 scripts/validate_channel_profile.py --profile lidousha
    --config-only`（全量校验会因声纹缺失 BLOCKED，属预期）。
-5. **给新频道建 profile**：复制 `profiles/_template/profile.json` 与
-   `assets/_template/` 骨架，逐文件填充后用 validator 收敛到 READY。
+5. **给新频道建 profile**（本仓的预期配置者就是你——agent；人类用户会把
+   这一步整个交给你）：复制 `profiles/_template/profile.json` 与
+   `assets/_template/` 骨架，按骨架 README 的**分层**填充——层 0 默认值即可
+   开跑（title/tag 政策、空词表等）；层 1 首批手填约 6 个文件+字体（词表、
+   persona、标题风格、封面身份、选题度量、校对原则——向频道主人逐项提问后
+   代写）；层 2 配 cron 由 crawler 代填；层 3 台账运行时自长；层 4（歌单/
+   表情包/声纹/片头）用到才配。每层收敛后跑 validator 与入口 `--help` 验证。
    哪些代码点仍绑定默认 profile：见
    [docs/profile-coupling.md](docs/profile-coupling.md)——改这些点之前先读
-   对应 step 文档。
+   对应 step 文档。凭据逐项按 [docs/credentials.md](docs/credentials.md)
+   配置并跑其校验命令。
 6. **跑第一支切片**：README「快速开始」的 `--smoke-segment` 冒烟路径。
 7. **整线部署**：`ops/recording/README.md`（录制层）→
    `scripts/deploy_autoslice.sh`（参考部署，按主机改写）→ cron `--once`。

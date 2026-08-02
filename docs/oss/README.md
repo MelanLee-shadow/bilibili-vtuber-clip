@@ -28,8 +28,9 @@ cp .env.example .env        # 填 CPA / Gemini（凭据清单见 docs/credential
 .venv/bin/python -m pytest -q    # 冒烟：应全绿（不需要任何凭据和网络）
 ```
 
-配频道（示例频道 `lidousha` 开箱即用；配自己的频道照
-[profiles/README.md](profiles/README.md) 做，有 `assets/_template/` 骨架可整套复制）：
+配自己的频道：**把这件事交给你的 AI agent**——本仓的预期配置者就是 agent，
+[AGENTS.md](AGENTS.md) 是为它准备的完整 runbook（人类照
+[profiles/README.md](profiles/README.md) 手配也行）。先验证示例频道：
 
 ```bash
 .venv/bin/python scripts/validate_channel_profile.py --profile lidousha --config-only
@@ -68,7 +69,22 @@ AUTOSLICE_BASE=$PWD/.autoslice \
 5. [AGENTS.md](AGENTS.md) —— 给 AI 代理的完整操作约定与架构细节。
 
 `assets/` 下的一大堆 JSON 是**频道数据**（词表、策略、台账模板），不是代码，
-不需要读——配新频道时复制 `assets/_template/` 骨架再逐个填就行。
+不需要读。配新频道 = 整套复制 `assets/_template/` 骨架，但**不是 22 个都要
+填**：骨架分层（见其 README）——大部分默认值即可开跑，首批手填只有约 6 个
+（词表/人设/标题风格/封面身份/选题度量/校对原则 + 字体），4 个由 crawler
+自动代填，台账类是管线运行时自己长出来的。
+
+## 为什么文件这么多（以及为什么你不用怕）
+
+- **src ~190 个模块**：反屎山架构的直接结果。同样的功能量要么是几个几千行的
+  god-file，要么是 190 个单一职责、平均一两百行、可独立测试的小模块——本仓
+  选后者，并用"债务棘轮"测试锁死模块行数只许降不许升。孤儿扫描证明零死件。
+- **tests 1700+ 用例**：这是"发布错误不可接受"的实现方式——每道 fail-closed
+  门至少一枚回归钉子。摊到每个模块不到 10 个用例，并不密；它们也是任何人
+  改代码时的安全网。
+- **assets 22 个骨架**：管线消费 22 种频道知识，validator 逐一强制存在——
+  但如上所述，绝大多数不需要你手填。
+- 结论：**你需要读的只有上面那几个 README**；其余交给 agent 和测试。
 
 ## 术语表
 

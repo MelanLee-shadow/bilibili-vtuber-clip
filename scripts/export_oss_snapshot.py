@@ -526,8 +526,9 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
     (
         "profiles/README.md",
         "Validate a committed profile and all of its runtime paths before use:",
-        "`assets/_template/` 是自动派生的最小骨架（结构合法、内容为空）；复制后按上表逐文件\n"
-        "填充。注意：示例 profile `lidousha` 在全新 clone 里全量校验会因\n"
+        "`assets/_template/` 是自动派生的最小骨架（结构合法、内容为空）；复制后按其\n"
+        "README 的**分层**填充——首批手填只有约 6 个文件+字体，其余默认可跑/crawler\n"
+        "代填/运行时自长。注意：示例 profile `lidousha` 在全新 clone 里全量校验会因\n"
         "`voiceprint_profile.v1.json` 缺失而 BLOCKED——声纹属生物特征，不随开源仓分发，\n"
         "这是预期行为（先用 `--config-only`，或补齐你自己的声纹再全量校验）。\n"
         "\n"
@@ -738,6 +739,12 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "   修复时哪个好了就可以改哪个」）：批仍 `recovery_incomplete` 时，可用",
         "3b. 逐案放行：批仍 `recovery_incomplete` 时，可用",
     ),
+    # ---- v4.4：个别 patch 先于日期清理跑，处理规则难辨的语义 ----
+    (
+        "src/autoslice/song_name_pin.py",
+        "2026-07-14 起 pypinyin 已装",
+        "pypinyin 已装",
+    ),
     # ---- v4.3：裸日期出处也去日期（保留"维护者拍板"事实，不留时间线） ----
     (
         "docs/pipeline/60-title.md",
@@ -840,6 +847,131 @@ def classify(path: str) -> str:
 
 def _is_text_target(path: Path) -> bool:
     return path.suffix.lower() not in BINARY_SUFFIXES
+
+
+# ---------------------------------------------------------------------------
+# v4.4：代码注释/docstring 的日期化出处清理（Ivan：决策理由保留，日期案名不留）。
+# 只作用于 Python 的 COMMENT token 与 docstring 行、shell 的 # 注释行；
+# 字符串字面量（schema epoch、功能默认值）天然不受影响。
+
+_DATE = r"2026-\d{2}-\d{2}"
+_COMMENT_DATE_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
+    # 「维护者 2026-07-14 定、2026-07-19 重申」→「维护者」
+    (re.compile(rf"维护者 {_DATE}(?:[ \t]*[/、,，][ \t]*{_DATE})*"), "维护者"),
+    # 「(first: 2026-07-26 BV…)」「(first real run, 2026-07-06)」「(2026-07-25 measured: …)」
+    (re.compile(rf"[（(][ \t]*first[^）)]*[）)][:：]?"), ""),
+    # 「（2026-07-25 两场次实损)」「(2026-07-04 教训)」等叙事括注
+    (
+        re.compile(
+            rf"[（(][ \t]*{_DATE}[^（）()]*?"
+            r"(?:教训|案|实测|复盘|事故|指示|拍板|实损|lesson|audit|measured|proven"
+            r"|BV[0-9A-Za-z]{6,})[^（）()]*[）)]"
+        ),
+        "",
+    ),
+    # 行首叙事日期：「2026-07-25 loss lesson:」「2026-07-09 起：」「2026-07-27：」
+    (re.compile(rf"{_DATE}[ \t]*(?=(?:loss lesson|lesson|external audit|audit)\b)"), ""),
+    (re.compile(rf"{_DATE}[ \t]*起[:：][ \t]*"), ""),
+    (re.compile(rf"{_DATE}[ \t]*[:：][ \t]*"), ""),
+    # 括号内裸日期「（2026-07-24）」
+    (re.compile(rf"[（(][ \t]*{_DATE}[ \t]*[）)]"), ""),
+    # 括号开头的日期：「（2026-07-13，由…」「(2026-07-22 1863:」→ 去日期保内容
+    (re.compile(rf"([（(])[ \t]*{_DATE}[ \t]*[，,][ \t]*"), r"\1"),
+    (re.compile(rf"([（(])[ \t]*{_DATE}[ \t]+"), r"\1"),
+    # 收尾/逗号前的日期：「…2026-07-18)」「…2026-07-25，」
+    (re.compile(rf"[ \t]*{_DATE}[ \t]*([，,）)])"), r"\1"),
+    # 破折号缀「—— 2026-07-14 实战定稿」
+    (re.compile(rf"[-—]{{2}}[ \t]*{_DATE}[ \t]*"), "——"),
+    # 英文叙事「on 2026-07-18」「first hit 2026-07-06」「raised 2026-07-10」「delivered 2026-07-11」
+    (re.compile(rf"[ \t]+on[ \t]+{_DATE}"), ""),
+    (re.compile(rf"(first hit|raised|delivered|regression:)[ \t]+{_DATE}[ \t]*"), r"\1 "),
+    # docstring/注释起始的日期「\"\"\"2026-07-16 实案抽象：」「# 2026-07-25 …」
+    (re.compile(rf'("""|\'\'\')[ \t]*{_DATE}[ \t]*'), r"\1"),
+    (re.compile(rf"(#+[ \t]*){_DATE}[ \t]+(?!起)"), r"\1"),
+    # 句中孤立日期缀「（通用机制，2026-07-13）」已由前规则覆盖；剩余「，2026-07-13）」
+    (re.compile(rf"[，,][ \t]*{_DATE}([ \t]*[）)])"), r"\1"),
+    # 英文句中形态：「the 2026-07-29 incident」「observed 2026-07-19」「since 2026-08-02」
+    (re.compile(rf"([Tt]he)[ \t]+{_DATE}[ \t]+"), r"\1 "),
+    (re.compile(rf"(observed)[ \t]+{_DATE}[ \t]*"), r"\1 "),
+    (re.compile(rf"[ \t]+since[ \t]+{_DATE}"), ""),
+    (re.compile(rf"[Rr]eal[ \t]+{_DATE}[ \t]+case"), "real case"),
+    (re.compile(rf"真实[ \t]*{_DATE}[ \t]*案例"), "真实案例"),
+    # 兜底：剩余孤立日期直接摘除（pre-2026-07-10 之类带连字符的版本锚不受影响）
+    (re.compile(rf"(?<![\d/-]){_DATE}(?![\d-])[ \t]*"), ""),
+)
+
+# 功能性日期行（解释代码里的真实默认值/兼容 cutover/账本政策锚）：整行跳过自动清理。
+_COMMENT_DATE_KEEP = re.compile(
+    rf"地平线|horizon|{_DATE}\s*之后|{_DATE}\s*起(?![:：])"
+)
+
+
+def _apply_comment_date_rules(fragment: str) -> str:
+    if _COMMENT_DATE_KEEP.search(fragment):
+        return fragment
+    for pattern, replacement in _COMMENT_DATE_RULES:
+        fragment = pattern.sub(replacement, fragment)
+    return fragment
+
+
+def _strip_py_comment_dates(text: str) -> tuple[str, int]:
+    """重写 Python 源里注释与 docstring 的日期化出处；返回 (新文本, 改动行数)。"""
+    import ast
+    import io
+    import tokenize as tok
+
+    doc_lines: set[int] = set()
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return text, 0
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            body = getattr(node, "body", [])
+            if body and isinstance(body[0], ast.Expr) and isinstance(
+                getattr(body[0], "value", None), ast.Constant
+            ) and isinstance(body[0].value.value, str):
+                doc_lines.update(range(body[0].lineno, body[0].end_lineno + 1))
+    comment_starts: dict[int, int] = {}
+    try:
+        for token in tok.generate_tokens(io.StringIO(text).readline):
+            if token.type == tok.COMMENT:
+                comment_starts[token.start[0]] = token.start[1]
+    except tok.TokenizeError:
+        return text, 0
+    lines = text.splitlines(keepends=True)
+    changed = 0
+    for index, line in enumerate(lines, start=1):
+        if "2026-" not in line:
+            continue
+        if index in doc_lines:
+            new_line = _apply_comment_date_rules(line)
+        elif index in comment_starts:
+            col = comment_starts[index]
+            new_line = line[:col] + _apply_comment_date_rules(line[col:])
+        else:
+            continue
+        if new_line != line:
+            if new_line.count("\n") != line.count("\n"):
+                raise RuntimeError(f"date rule ate a newline: {line!r}")
+            lines[index - 1] = new_line
+            changed += 1
+    return "".join(lines), changed
+
+
+def _strip_sh_comment_dates(text: str) -> tuple[str, int]:
+    lines = text.splitlines(keepends=True)
+    changed = 0
+    for index, line in enumerate(lines):
+        if "2026-" not in line or not line.lstrip().startswith("#"):
+            continue
+        new_line = _apply_comment_date_rules(line)
+        if new_line != line:
+            if new_line.count("\n") != line.count("\n"):
+                raise RuntimeError(f"date rule ate a newline: {line!r}")
+            lines[index] = new_line
+            changed += 1
+    return "".join(lines), changed
 
 
 def _sanitize_text(text: str) -> str:
@@ -1143,6 +1275,22 @@ def build_template_assets(out_root: Path) -> int:
         "- `voiceprint_profile.v1.json` 是 UNCONFIGURED 占位：声纹属于生物特征，须\n"
         "  自己 enroll 后用 `scripts/install_voiceprints.py` 安装。\n"
         "\n"
+        "## 分层：22 个文件里你真正要手填的只有约 6 个\n"
+        "\n"
+        "- **层 0（骨架默认值即可开跑，之后再调口径）**：`title_policy.json`、\n"
+        "  `upload_tag_policy.json`、`intro/branding_intro.v1.json`（默认关）、\n"
+        "  `entity_confusables.json`（空=暂无已知混淆）、`clip_opening_address.json`、\n"
+        "  `known_songs.json`（空=当全新歌处理）。\n"
+        "- **层 1（首批手填，决定产出质量）**：`glossary.txt`、`persona.md`、\n"
+        "  `title_style.md`、`cover_identity_prompt.txt`、`slice_selection_metric.md`、\n"
+        "  `subtitle_correction_principles.md`，外加 `fonts/` 放两个可再分发字体。\n"
+        "- **层 2（你给种子，crawler 代填）**：`timely_term_seeds/sources` → \n"
+        "  `timely_terms`、`psplive_roster_sources` → `psplive_roster`、\n"
+        "  `topic_entity_graph`（配 cron 自动刷新）。\n"
+        "- **层 3（运行时自己长出来）**：`subtitle_truth_ledger`、\n"
+        "  `session_relation_ledger`、`published_songs` 与各 override/评审目录。\n"
+        "- **层 4（用到对应功能才配）**：`voiceprint_profile`（声纹栈）、启用片头。\n"
+        "\n"
         "## 首跑前最小清单\n"
         "\n"
         "- `upload_tag_policy.json` / `title_policy.json` 骨架带中性默认值，**开箱可\n"
@@ -1246,6 +1394,34 @@ def main() -> int:
             print("  ", row)
         return 4
 
+    comment_date_lines = 0
+    residual_comment_dates: list[str] = []
+    for path in out_root.rglob("*"):
+        if not path.is_file():
+            continue
+        rel_str = str(path.relative_to(out_root))
+        if not rel_str.startswith(("src/", "scripts/", "tests/", "ops/")):
+            continue
+        if path.suffix == ".py":
+            stripper = _strip_py_comment_dates
+        elif path.suffix == ".sh" or rel_str.endswith(".cron"):
+            stripper = _strip_sh_comment_dates
+        else:
+            continue
+        text = path.read_text(encoding="utf-8")
+        new_text, changed = stripper(text)
+        if changed:
+            path.write_text(new_text, encoding="utf-8")
+            comment_date_lines += changed
+        if "2026-" in new_text:
+            probe, _ = stripper(new_text)
+            for line_number, line in enumerate(new_text.splitlines(), start=1):
+                if "2026-" in line and (
+                    line.lstrip().startswith("#") or '"""' in line or "'''" in line
+                ):
+                    residual_comment_dates.append(f"{rel_str}:{line_number}: {line.strip()[:90]}")
+            del probe
+
     for prefix in sorted(templated_dirs_seen):
         if prefix.endswith("/"):
             marker_dir = out_root / prefix
@@ -1315,10 +1491,16 @@ def main() -> int:
         "stripped": len(stripped),
         "template_assets": template_asset_count,
         "patches": len(PATCHES),
+        "comment_date_lines_rewritten": comment_date_lines,
+        "comment_date_residual": len(residual_comment_dates),
         "lidousha_flow_files": lidousha_flow_files,
         "forbidden_hits": len(violations),
     }
     print(json.dumps(report, ensure_ascii=False))
+    if residual_comment_dates:
+        print("residual dated comments (manual triage):")
+        for row in residual_comment_dates[:25]:
+            print("  ", row)
     if violations:
         print("FORBIDDEN CONTENT — snapshot NOT publishable yet:")
         for row in violations[:60]:
