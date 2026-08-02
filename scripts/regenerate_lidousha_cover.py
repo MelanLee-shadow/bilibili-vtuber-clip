@@ -360,6 +360,10 @@ def main(argv=None) -> int:
                         "cover_text that cannot fit the 1-2 line thumbnail contract turns the "
                         "punch review on regardless, and a missing/invalid semantic receipt "
                         "then fails closed before any pixel is written.")
+    p.add_argument("--bind-package", type=Path,
+                   help="produce_slice_package 交付目录：出图成功后把封面回写进包内 "
+                        "publish/record（与 runner cover-only repair 同一套校验与 "
+                        "binding 回执；任何校验失败包保持原样，出图产物仍在）。")
     args = p.parse_args(argv)
 
     meta = regenerate_cover(
@@ -381,10 +385,16 @@ def main(argv=None) -> int:
         allow_punch=args.allow_punch,
     )
     ad = meta["art_direction"]
-    print(json.dumps({"out": str(args.out), "layout": ad["layout"], "role": ad["role"],
-                      "background_style": ad["background_style"], "hook_color": ad["hook_color"],
-                      "hook_word": ad["hook_word"], "cover_sha256": meta["final_cover_sha256"]},
-                     ensure_ascii=False, indent=2))
+    summary = {"out": str(args.out), "layout": ad["layout"], "role": ad["role"],
+               "background_style": ad["background_style"], "hook_color": ad["hook_color"],
+               "hook_word": ad["hook_word"], "cover_sha256": meta["final_cover_sha256"]}
+    if args.bind_package:
+        from src.autoslice.cover_repair import bind_manual_package_cover
+
+        summary["package_bind"] = bind_manual_package_cover(
+            package_dir=args.bind_package, cover=args.out
+        )
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0
 
 

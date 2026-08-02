@@ -48,9 +48,20 @@ def main() -> int:
     parser.add_argument("--model-target-dir", type=Path)
     args = parser.parse_args()
 
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[1]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    from src.autoslice.channel_profile import load_channel_profile
+
+    channel_profile = load_channel_profile(repo_root)
+    expected_schema = f"{channel_profile.profile_id}-voiceprint-profile.v1"
     profile = json.loads(args.profile.read_text(encoding="utf-8"))
-    if profile.get("schema_version") != "lidousha-voiceprint-profile.v1" or profile.get("configuration_status") != "READY":
-        raise SystemExit("voiceprint profile is not production READY")
+    if profile.get("schema_version") != expected_schema or profile.get("configuration_status") != "READY":
+        raise SystemExit(
+            f"voiceprint profile is not production READY (need schema {expected_schema})"
+        )
     references = profile.get("references")
     if not isinstance(references, list) or len(references) != 3:
         raise SystemExit("voiceprint profile must bind exactly three references")

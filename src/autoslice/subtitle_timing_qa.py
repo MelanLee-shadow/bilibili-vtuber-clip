@@ -262,6 +262,7 @@ def build_ssh_silero_vad_provider(
 
     def provider(source_video: Path, start_ms: int, end_ms: int) -> list[SpeechSpan]:
         duration_ms = max(1, end_ms - start_ms)
+        local_host = host in {"localhost", "127.0.0.1"}
         remote_wav = f"/tmp/vad_{start_ms}_{end_ms}_{Path(source_video).stem[:24]}.wav"
         with tempfile.TemporaryDirectory(prefix="vad_wav_") as tmp:
             wav_path = Path(tmp) / "window.wav"
@@ -294,28 +295,40 @@ def build_ssh_silero_vad_provider(
             )
             if extract.returncode != 0:
                 raise RuntimeError(f"vad wav extraction failed: {extract.stderr[-300:]}")
-            copy = subprocess.run(
-                ["scp", "-q", str(wav_path), f"{host}:{remote_wav}"],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=300,
-            )
-            if copy.returncode != 0:
-                raise RuntimeError(f"vad wav upload failed: {copy.stderr[-300:]}")
-        run = subprocess.run(
-            [
-                "ssh",
-                host,
-                f"python3 {shlex.quote(remote_script)} {shlex.quote(remote_wav)}; rc=$?; rm -f {shlex.quote(remote_wav)}; exit $rc",
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
+            if local_host:
+                # localhost 快路径：免 scp/免 self-ssh，直接对本地 wav 跑
+                # spans 脚本。生产宿主金丝雀证明直执行与 ssh localhost 的
+                # 输出逐字节相同（python3 从 PATH 解析，与 ssh 登录壳一致）。
+                run = subprocess.run(
+                    ["python3", remote_script, str(wav_path)],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=600,
+                )
+            else:
+                copy = subprocess.run(
+                    ["scp", "-q", str(wav_path), f"{host}:{remote_wav}"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                )
+                if copy.returncode != 0:
+                    raise RuntimeError(f"vad wav upload failed: {copy.stderr[-300:]}")
+                run = subprocess.run(
+                    [
+                        "ssh",
+                        host,
+                        f"python3 {shlex.quote(remote_script)} {shlex.quote(remote_wav)}; rc=$?; rm -f {shlex.quote(remote_wav)}; exit $rc",
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=600,
+                )
         if run.returncode != 0:
-            raise RuntimeError(f"remote silero vad failed rc={run.returncode}: {run.stderr[-300:]}")
+            raise RuntimeError(f"silero vad failed rc={run.returncode}: {run.stderr[-300:]}")
         payload = json.loads(run.stdout)
         return [
             SpeechSpan(start_ms=start_ms + int(span["start_ms"]), end_ms=start_ms + int(span["end_ms"]))

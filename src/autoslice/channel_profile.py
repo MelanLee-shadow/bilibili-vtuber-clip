@@ -31,12 +31,14 @@ _REQUIRED_ASSET_FILES = frozenset(
     {
         "clip_opening_address",
         "entity_confusables",
+        "final_media_review_contracts",
         "glossary",
         "branding_intro_manifest",
         "cover_identity_prompt",
         "cover_reference_overrides",
         "gift_names",
         "known_songs",
+        "publication_registry",
         "manual_archive_metadata",
         "manual_title_overrides",
         "persona",
@@ -65,6 +67,7 @@ _REQUIRED_ASSET_FILES = frozenset(
 _REQUIRED_ASSET_DIRECTORIES = frozenset(
     {
         "fonts",
+        "manual_title_repair_authorities",
         "reviewed_subtitle_baselines",
         "speaker_overrides",
         "subtitle_regressions",

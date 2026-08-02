@@ -1,6 +1,6 @@
 # scripts/ 地图
 
-62 个脚本按 lane 分组。刚上手真正会用到的只有七个：
+63 个脚本按 lane 分组。刚上手真正会用到的只有七个：
 `preflight.py`（部署体检：字体/ffmpeg/目录/凭据/VAD 一次查清）、
 `validate_channel_profile.py`（配 profile）、`session_autoslice.py`（runner/冒烟）、
 `produce_slice_package.py`（单候选产线）、`audit_review_package.py`（包审计）、
@@ -36,7 +36,8 @@
 
 | 脚本 | 用途 |
 |---|---|
-| `build_daily_review_manifest.py` | 按日构建人工评审清单 |
+| `build_daily_review_manifest.py` | 按日构建人工评审清单（runner 车道，state 见证） |
+| `build_manual_review_manifest.py` | 手动产线包的评审清单（`produce_slice_package` 直产包进审计/上传闭环；操作者显式署名替代 state 见证，upload_allowed 恒 false） |
 | `build_song_review_manifest.py` | 歌切评审清单 |
 | `build_recovery_review_manifest.py` | 恢复流评审清单 |
 | `build_final_human_review.py` | 终审证据模板/回执（create-only） |

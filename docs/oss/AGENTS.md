@@ -90,24 +90,13 @@ python3 scripts/produce_slice_package.py --spec <spec.json> --ssh-host localhost
 - **凭据**：每个 cookie/key 的模板与校验命令见
   [docs/credentials.md](docs/credentials.md)；全部凭据不入库。
 
-## 换频道剩余耦合（发布前必读）
+## 换频道耦合现状（发布前必读）
 
-身份/prompt/控制流已全部 profile 化（默认 profile 渲染字节与原实现一致）。
-剩余耦合集中在**发布与声纹 lane 的资产路径**——它们仍指向示例频道的资产文件，
-修复前非默认 profile 可产包评审、不可公开发布：
-
-| 位置 | 内容 |
-|---|---|
-| `src/autoslice/publication_registry.py` | `DEFAULT_REGISTRY_PATH` 指向 `assets/lidousha/publication_registry.v1.json`（上传授权唯一门） |
-| `src/autoslice/final_human_review.py` | 终审契约路径指向 `assets/lidousha/final_media_review_contracts.v1.json` |
-| `src/autoslice/review_package_owner_audit.py` | 真值台账路径指向 lidousha 资产 |
-| `src/autoslice/manual_title_repair_authority.py` | `AUTHORITY_ROOT` 与字面 schema 前缀 |
-| `scripts/audit_review_package.py` | 指纹源列表中的真值台账为字面路径（同文件其余已走 `CHANNEL_PROFILE.asset_file`） |
-| `src/autoslice/term_lexicon.py`、`scripts/score_blind_subtitle.py` | lidousha 兜底路径 |
-| `scripts/install_voiceprints.py` | 接受门为字面 `lidousha-voiceprint-profile.v1`（应为 `<profile-id>-…`） |
-
-修法模式：改为 `CHANNEL_PROFILE.asset_file(...)`/按 `profile_id` 派生（对默认
-profile 字节等价）；个别键需先在 profile manifest 增设资产键。
+身份/prompt/控制流/**发布与声纹 lane 的资产路径**已全部 profile 化（默认
+profile 渲染与路径逐字节等价）：出版登记、终审契约、真值台账、手动标题
+授权目录、审计指纹源、声纹接受门都按 `CHANNEL_PROFILE.asset_file()`/
+`profile_id` 派生——换频道即各用各的登记台账与授权面，可产包评审也可走
+完整发布闭环（上传授权仍归 `authorized_upload` 的 manifest+出版登记门）。
 
 **词汇级兼容，绝对不要改**：持久证据/schema 词汇保留 `lidousha-` 拼写以不打碎
 旧包哈希——`lidousha-*.v1` schema 串、`lidousha_role`、`human_reviewed_lidousha`、

@@ -31,6 +31,10 @@ from src.autoslice.cover_route_evidence import (
 )
 from src.autoslice.publication_registry import cover_maintenance_block_reason
 from src.autoslice.story_contract import cover_story_contract_binding_matches
+from src.autoslice.cover_maintenance import (
+    _atomic_write_bytes_file,
+    _json_file_bytes,
+)
 from src.autoslice.verified_io import (
     _matches_sha256,
     _read_json_object,
@@ -465,7 +469,14 @@ def _updated_song_delivery_manifest(
 
 
 def _cover_reason_codes_without_transient_failure(value: object) -> list[str]:
-    prefixes = ("CPA_AI_COVER", "CPA_IMAGE_EDIT", "COVER_REFERENCE_EXTRACTION")
+    # SCREENSHOT_* 全族都是"这张封面当时怎么失败的"记录：修复成功后留着就是
+    # 包内自相矛盾（publish 说 READY、reason 说截图路线死了）。
+    prefixes = (
+        "CPA_AI_COVER",
+        "CPA_IMAGE_EDIT",
+        "COVER_REFERENCE_EXTRACTION",
+        "SCREENSHOT_",
+    )
     return [
         str(code)
         for code in (value if isinstance(value, list) else [])
@@ -986,6 +997,163 @@ def _roll_forward_prepared_cover_transactions(
             continue
         recovered = True
     return recovered
+
+
+def bind_manual_package_cover(*, package_dir: Path, cover: Path) -> dict:
+    """手动产线包的封面回写：regenerate 工作流成品 → 包内 publish/record。
+
+    `produce_slice_package` 的包不在 runner state 里，出封面事故后用
+    `regenerate_lidousha_cover` 手补的 cover.png 曾经无处回写——包内
+    publish.json 停留在 BLOCKED、与磁盘产物自相矛盾。本函数用与 runner
+    cover-only repair **同一套**校验与更新规则（generation 全 hash 校验、
+    故事契约富化、binding 回执、upload_enabled 恒 False、原子写），只是
+    文档定位不走 runner state：包目录里恰好一份 publish.json + 同 stem 的
+    mp4（及可选 record.json）就是权威文档集。任何校验失败包保持原样。
+    """
+
+    import scripts.free_session_autoslice  # noqa: F401  (RunnerProxy 解析面)
+
+    package_dir = package_dir.resolve(strict=True)
+    publish_paths = sorted(
+        path
+        for path in package_dir.glob("*.publish.json")
+        if not path.name.endswith(".recut.publish.json")
+    )
+    if len(publish_paths) != 1:
+        raise ValueError(
+            "manual package must contain exactly one publish draft, "
+            f"found {len(publish_paths)} in {package_dir}"
+        )
+    publish_path = publish_paths[0]
+    publish_document = _read_json_object(
+        publish_path, label="package publish draft"
+    )
+    if publish_document.get("schema_version") != "shadow-publish-draft.v1":
+        raise ValueError("package publish draft schema mismatch")
+    if publish_document.get("upload_enabled") is not False:
+        raise ValueError("package publish draft must keep upload_enabled false")
+    cid = str(publish_document.get("candidate_id") or "")
+    title = str(publish_document.get("title") or "")
+    if not cid or not title:
+        raise ValueError("package publish draft lacks candidate/title binding")
+    stem = publish_path.name[: -len(".publish.json")]
+    mp4 = publish_path.with_name(stem + ".mp4")
+    if not mp4.is_file():
+        raise ValueError(f"package delivery media missing: {mp4}")
+    media_sha256 = "sha256:" + _runner._sha256_regular_file(mp4)
+    if _document_video_hash(publish_document) != media_sha256:
+        raise ValueError(
+            "package publish draft video hash does not match delivery media"
+        )
+    documents: list[tuple[Path, dict]] = []
+    record_path = publish_path.with_name(stem + ".record.json")
+    if record_path.is_file():
+        record_document = _read_json_object(
+            record_path, label="package delivery record"
+        )
+        record_staging = record_document.get("publish_staging")
+        if not isinstance(record_staging, dict):
+            raise ValueError("package delivery record has no publish_staging object")
+        if (
+            record_staging.get("title") != title
+            or record_staging.get("upload_enabled") is not False
+        ):
+            raise ValueError(
+                "package delivery record title/upload binding mismatch"
+            )
+        if _document_video_hash(record_document) != media_sha256:
+            raise ValueError("package delivery record video hash mismatch")
+        documents.append((record_path, record_document))
+    documents.append((publish_path, publish_document))
+
+    generation, generation_path = _validate_repaired_cover_generation(
+        cover=cover, title=title, candidate_id=cid
+    )
+    generation, generation_path = _enrich_repaired_cover_generation(
+        generation=generation,
+        generation_path=generation_path,
+        documents=documents,
+        title=title,
+    )
+    cover_sha256 = "sha256:" + _runner._sha256_regular_file(cover)
+    generation_sha256 = "sha256:" + _runner._sha256_regular_file(generation_path)
+    binding_path = cover.with_suffix(".cover-binding.json")
+    if binding_path.exists():
+        raise ValueError(f"immutable cover binding already exists: {binding_path}")
+    binding = {
+        "schema_version": "lidousha-cover-repair-binding.v1",
+        "candidate_id": cid,
+        "title": title,
+        "media_path": str(mp4.resolve(strict=True)),
+        "media_sha256": media_sha256,
+        "cover_path": str(cover.resolve()),
+        "cover_sha256": cover_sha256,
+        "generation_cover_path": str(cover.resolve(strict=True)),
+        "generation_cover_sha256": cover_sha256,
+        "generation_manifest_path": str(generation_path.resolve(strict=True)),
+        "generation_manifest_sha256": generation_sha256,
+        "selected_model": generation["model"],
+        "attempted_models": generation.get("attempted_models") or [],
+        "model_fallback_used": bool(generation.get("model_fallback_used")),
+        "authority_type": "talk_delivery_record",
+        "delivery_manifest_path": None,
+        "manual_package_dir": str(package_dir),
+        "bound_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "upload_enabled": False,
+    }
+    binding_bytes = _json_file_bytes(binding)
+    binding_sha256 = "sha256:" + hashlib.sha256(binding_bytes).hexdigest()
+    updated_documents = [
+        (
+            path,
+            _updated_cover_document(
+                document,
+                cover=cover,
+                cover_sha256=cover_sha256,
+                generation=generation,
+                binding_path=binding_path,
+                binding_sha256=binding_sha256,
+            ),
+        )
+        for path, document in documents
+    ]
+    publish_rows = [
+        (path, document)
+        for path, document in updated_documents
+        if document.get("schema_version") == "shadow-publish-draft.v1"
+    ]
+    if len(publish_rows) != 1:
+        raise ValueError("manual cover binding requires one updated publish draft")
+    publish_payload = _json_file_bytes(publish_rows[0][1])
+    publish_sha256 = "sha256:" + hashlib.sha256(publish_payload).hexdigest()
+    updated_documents = [
+        (
+            path,
+            _updated_record_publish_draft_hash(
+                document, publish_draft_sha256=publish_sha256
+            ),
+        )
+        for path, document in updated_documents
+    ]
+    # 全部校验完成后才落任何字节：binding 先写（新文件），文档逐个原子替换。
+    _atomic_write_bytes_file(binding_path, binding_bytes)
+    written: list[str] = [str(binding_path)]
+    for path, document in updated_documents:
+        payload = (
+            publish_payload
+            if document.get("schema_version") == "shadow-publish-draft.v1"
+            else _json_file_bytes(document)
+        )
+        _atomic_write_bytes_file(path, payload)
+        written.append(str(path))
+    return {
+        "status": "BOUND",
+        "binding_path": str(binding_path),
+        "binding_sha256": binding_sha256,
+        "cover_sha256": cover_sha256,
+        "publish_draft_sha256": publish_sha256,
+        "updated_files": written,
+    }
 
 
 def _bind_repaired_cover(

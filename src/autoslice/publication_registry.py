@@ -26,12 +26,13 @@ from src.autoslice.publication_reconciliation import (
 )
 
 REGISTRY_SCHEMA = "publication-registry.v1"
-DEFAULT_REGISTRY_PATH = (
+# 出版登记是上传唯一授权门；路径按 profile manifest 派生（默认 profile 字节
+# 等价），换频道即各用各的登记台账。
+from src.autoslice.channel_profile import load_channel_profile as _load_channel_profile
+
+DEFAULT_REGISTRY_PATH = _load_channel_profile(
     Path(__file__).resolve().parent.parent.parent
-    / "assets"
-    / "lidousha"
-    / "publication_registry.v1.json"
-)
+).asset_file("publication_registry")
 
 _VALID_STATUSES = {
     "published",

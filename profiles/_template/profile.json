@@ -38,6 +38,7 @@
       "cover_reference_overrides": "cover_reference_overrides.v1.json",
       "emote_library": "emote_library.v1.json",
       "entity_confusables": "entity_confusables.json",
+      "final_media_review_contracts": "final_media_review_contracts.v1.json",
       "gift_names": "bilibili_gift_names.v1.json",
       "glossary": "glossary.txt",
       "known_songs": "known_songs.json",
@@ -46,6 +47,7 @@
       "persona": "persona.md",
       "psplive_roster": "psplive_roster.md",
       "psplive_roster_sources": "psplive_roster_sources.json",
+      "publication_registry": "publication_registry.v1.json",
       "published_songs": "published_songs.v1.json",
       "selection_score_calibration": "selection_score_calibration.v1.json",
       "session_relation_ledger": "session_relation_ledger.v1.json",
@@ -64,6 +66,7 @@
     },
     "directories": {
       "fonts": "fonts",
+      "manual_title_repair_authorities": "manual_title_repair_authorities",
       "reviewed_subtitle_baselines": "reviewed_subtitle_baselines",
       "speaker_overrides": "speaker_overrides",
       "subtitle_regressions": "subtitle_regressions",

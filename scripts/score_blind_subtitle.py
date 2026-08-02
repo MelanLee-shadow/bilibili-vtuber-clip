@@ -39,11 +39,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
 
+    from src.autoslice.channel_profile import load_channel_profile
+
     truth = args.truth_asset or (
-        ROOT
-        / "assets"
-        / "lidousha"
-        / "subtitle_regressions"
+        load_channel_profile(ROOT).asset_directory("subtitle_regressions")
         / f"{args.candidate_id}.subtitle-regression.v1.json"
     )
     try:

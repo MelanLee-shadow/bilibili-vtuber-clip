@@ -91,7 +91,9 @@ MODULE_DEBT_LEDGER = {
     # 120px 下限版面自愈（Ivan 07-31 原话拍板「120px 是硬性要求，无所谓是什么
     # layout，接受版面切换」）。
     "src/autoslice/cover_generation.py": 2_338,
-    "src/autoslice/cover_repair.py": 2_049,
+    # 2026-08-02 +166：bind_manual_package_cover——手动产线包封面回写（同一套
+    # 校验/binding/原子写；Ivan 8/2 /goal 授权；测试 test_manual_cover_bind.py）。
+    "src/autoslice/cover_repair.py": 2_217,
     "src/autoslice/delivery_recovery.py": 2_078,
     "src/autoslice/final_review_auditor.py": 3_433,
     "src/autoslice/live_source_review.py": 2_035,

@@ -79,12 +79,17 @@ def discover_term_lexicon(start_path: str | Path) -> Path | None:
         if candidate.is_file():
             return candidate.resolve()
     start = Path(start_path).expanduser().resolve()
+    from src.autoslice.channel_profile import load_channel_profile
+
+    output_directory = load_channel_profile(
+        Path(__file__).resolve().parents[2]
+    ).output_directory
     anchors: Iterable[Path] = (start.parent, *start.parents)
     for anchor in anchors:
         direct = anchor / "term_lexicon.json"
         if direct.is_file():
             return direct.resolve()
-        nested = anchor / "lidousha" / "term_lexicon.json"
+        nested = anchor / output_directory / "term_lexicon.json"
         if nested.is_file():
             return nested.resolve()
     return None

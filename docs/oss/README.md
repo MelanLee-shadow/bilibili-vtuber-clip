@@ -39,8 +39,9 @@ set -a; source .env; set +a # .env 不会被自动加载，跑脚本前手动 so
 ```
 
 第一支切片（在录播文件所在的机器上直接跑，`--ssh-host localhost`）。媒体
-读取与切割走本地路径；**听音复核与 VAD 时轴证据两个阶段会 `ssh localhost`
-执行**，所以机器要能免密 ssh 自己（`ssh-keygen -t ed25519` 后把公钥追加进
+读取、切割与 VAD 时轴证据全部走本地路径，纯中文谈话切片**不需要任何 SSH**；
+只有用到 AGY 听音复核的场景（字幕混外文 token、歌切）会 `ssh localhost`，
+届时机器要能免密 ssh 自己（`ssh-keygen -t ed25519` 后把公钥追加进
 `~/.ssh/authorized_keys`；`scripts/preflight.py` 会检查这一项）：
 
 ```bash
@@ -74,7 +75,7 @@ AUTOSLICE_BASE=$PWD/.autoslice AUTOSLICE_BRANDING_INTRO=off \
 
 1. 本 README；
 2. [profiles/README.md](profiles/README.md) —— 怎么配你的频道；
-3. [scripts/README.md](scripts/README.md) —— 62 个脚本按用途分组，先看"你会真正用到的七个"；
+3. [scripts/README.md](scripts/README.md) —— 63 个脚本按用途分组，先看"你会真正用到的七个"；
 4. 要深挖规则再看 [docs/pipeline/README.md](docs/pipeline/README.md)（给 agent/维护者的分步权威，技术密度高）；
 5. [AGENTS.md](AGENTS.md) —— 给 AI 代理的完整操作约定与架构细节。
 
@@ -114,15 +115,17 @@ AUTOSLICE_BASE=$PWD/.autoslice AUTOSLICE_BRANDING_INTRO=off \
 - **说话人分离（多人自动分轨）：待做，欢迎 PR。** 目前成品统一按主播处理
   （uniform-host）+ CAM++ 声纹确认；完整的多人分轨是明确的下一步。
 - **Docker 化：待做，欢迎 PR。**
-- Alpha：参考部署已无人值守运行数周，但多频道支持还在完善——**发布/声纹
-  lane 目前默认 profile 专用**（少数发布路径仍指向示例频道资产，清单见
-  AGENTS.md「换频道剩余耦合」；换频道可产包评审，公开发布还差这一步）。
+- Alpha：参考部署已无人值守运行数周。发布/声纹 lane 的资产路径已全部按
+  profile 派生（出版登记/终审契约/授权目录各频道各自一份）；多频道支持的
+  剩余边界是**持久证据词汇**保留示例频道拼写（见 AGENTS.md「词汇级兼容」，
+  刻意为之，不影响功能）。
 - 示例 profile 的**片头媒体不随仓分发**：默认 profile 跑 talk 交付要
   `AUTOSLICE_BRANDING_INTRO=off`（见快速上手），或按
   `assets/lidousha/intro/` 的 manifest 自备媒体。配自己频道时片头默认关闭。
-- 听音复核/VAD 阶段经 `ssh <host>` 调 **系统 python3**（不是 `.venv`）：那台
-  机器的系统 python3 要装 `numpy`/`onnxruntime`
-  （`pip install --user numpy onnxruntime`；preflight 会经 ssh 探测）。
+- VAD 在 `--ssh-host localhost` 下本地直跑，但用的是 **PATH 里的 python3**
+  （不是 `.venv`）：系统 python3 要装 `numpy`/`onnxruntime`
+  （`pip install --user numpy onnxruntime`；preflight 会探测）。媒体在远端
+  宿主时 VAD 经 ssh 在宿主上跑，宿主同理。
 - 测试套件以默认 profile 为基准：跑 `pytest` 时不要设置 `AUTOSLICE_PROFILE`。
 - 出版登记/真值台账等运营状态在本仓只有空模板——它们属于每个部署自己的数据。
 - 示例 profile 全量校验会因声纹文件缺失而 BLOCKED（生物特征不随仓分发，预期行为）。

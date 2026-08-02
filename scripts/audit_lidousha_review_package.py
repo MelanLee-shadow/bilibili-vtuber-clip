@@ -262,7 +262,7 @@ def _audit_policy_fingerprint() -> str:
         ROOT / "src/autoslice/cover_screenshot_poster.py",
         CHANNEL_PROFILE.asset_file("title_policy"),
         CHANNEL_PROFILE.asset_file("selection_score_calibration"),
-        ROOT / "assets/lidousha/subtitle_truth_ledger.v1.json",
+        CHANNEL_PROFILE.asset_file("subtitle_truth_ledger"),
     ]
     digest = hashlib.sha256()
     digest.update(AUDIT_POLICY_EPOCH.encode("utf-8"))

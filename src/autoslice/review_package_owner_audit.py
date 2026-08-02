@@ -36,10 +36,11 @@ SOURCE_TRUTH_SUCCESS_STATUSES = {
     "APPLIED",
     "ALREADY_SATISFIED",
 }
-SOURCE_TRUTH_LEDGER_PATH = (
+from src.autoslice.channel_profile import load_channel_profile as _load_channel_profile
+
+SOURCE_TRUTH_LEDGER_PATH = _load_channel_profile(
     Path(__file__).resolve().parents[2]
-    / "assets/lidousha/subtitle_truth_ledger.v1.json"
-)
+).asset_file("subtitle_truth_ledger")
 
 
 def _strict_int(value: object) -> bool:

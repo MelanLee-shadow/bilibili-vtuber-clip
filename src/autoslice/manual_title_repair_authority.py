@@ -8,9 +8,16 @@ from pathlib import Path
 from typing import Mapping
 
 
-SCHEMA_VERSION = "lidousha-manual-title-repair-authority.v1"
+from src.autoslice.channel_profile import load_channel_profile as _load_channel_profile
+
 ROOT = Path(__file__).resolve().parents[2]
-AUTHORITY_ROOT = ROOT / "assets/lidousha/manual_title_repair_authorities"
+_CHANNEL_PROFILE = _load_channel_profile(ROOT)
+# 授权文件是部署本地一次性配置（人手写、当场消费），schema 与目录按 profile
+# 派生；默认 profile 字节等价。
+SCHEMA_VERSION = (
+    f"{_CHANNEL_PROFILE.profile_id}-manual-title-repair-authority.v1"
+)
+AUTHORITY_ROOT = _CHANNEL_PROFILE.asset_directory("manual_title_repair_authorities")
 _FIELDS = {
     "schema_version",
     "candidate_id",
@@ -67,7 +74,9 @@ def load_manual_title_repair_authority(
 ) -> dict[str, object] | None:
     """Load exactly one candidate-scoped authority, never a wildcard grant."""
 
-    authority_root = root / "assets/lidousha/manual_title_repair_authorities"
+    authority_root = _CHANNEL_PROFILE.asset_directory(
+        "manual_title_repair_authorities", repo_root=root
+    )
     if not authority_root.is_dir():
         return None
     matches: list[dict[str, object]] = []

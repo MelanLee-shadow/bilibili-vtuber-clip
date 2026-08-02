@@ -205,36 +205,31 @@ def check_self_ssh() -> None:
         check=False,
         timeout=15,
     )
-    if probe.returncode == 0:
-        _record("ok", "self-ssh", "ssh localhost 免密可用（听音复核/VAD 阶段需要）")
-        deps = subprocess.run(
-            [
-                "ssh",
-                "-o",
-                "BatchMode=yes",
-                "localhost",
-                "python3 -c 'import numpy, onnxruntime'",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=30,
+    deps = subprocess.run(
+        ["python3", "-c", "import numpy, onnxruntime"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    if deps.returncode == 0:
+        _record("ok", "system-python-vad", "PATH python3 有 numpy/onnxruntime（VAD 本地直跑用）")
+    else:
+        _record(
+            "warn",
+            "system-python-vad",
+            "VAD 用 PATH 里的 python3（不是 .venv），它缺 numpy/onnxruntime——"
+            "时轴 QA 会失败；pip install --user numpy onnxruntime",
         )
-        if deps.returncode == 0:
-            _record("ok", "ssh-python-vad", "ssh 侧系统 python3 有 numpy/onnxruntime")
-        else:
-            _record(
-                "warn",
-                "ssh-python-vad",
-                "ssh 走的是系统 python3（不是 .venv），它缺 numpy/onnxruntime——"
-                "VAD 阶段会失败；pip install --user numpy onnxruntime",
-            )
+    if probe.returncode == 0:
+        _record("ok", "self-ssh", "ssh localhost 免密可用（AGY 听音复核阶段用）")
     else:
         _record(
             "warn",
             "self-ssh",
-            "ssh localhost 不可用——produce 的听音复核与 VAD 阶段会失败；"
-            "ssh-keygen -t ed25519 后把公钥追加进 ~/.ssh/authorized_keys",
+            "ssh localhost 不可用——AGY 听音复核（外文 token/歌切）会失败；"
+            "纯中文谈话切片不受影响。ssh-keygen -t ed25519 后把公钥追加进 "
+            "~/.ssh/authorized_keys",
         )
 
 

@@ -27,18 +27,23 @@ from .final_human_review_evidence import (
 from .final_human_review_evidence import validate_bound_review_evidence
 
 
+# 终审回执 schema 是包内持久证据词汇（旧包哈希兼容），保留 lidousha- 拼写。
 SCHEMA_VERSION = "lidousha-final-human-review.v2"
 REVIEW_EVIDENCE_SCHEMA_VERSION = _review_evidence.SCHEMA_VERSION
 _CHECK_ANCHORS = _review_evidence.CHECK_ANCHORS
 REVIEW_SCOPE = "same_bv_repair"
 ACCEPTED_STATUS = "ACCEPTED_FOR_SAME_BV"
-REVIEW_CONTRACT_SCHEMA = "lidousha-final-media-review-contracts.v1"
 ROOT = Path(__file__).resolve().parents[2]
-FINAL_MEDIA_REVIEW_CONTRACT_PATH = (
-    ROOT
-    / "assets"
-    / "lidousha"
-    / "final_media_review_contracts.v1.json"
+from src.autoslice.channel_profile import load_channel_profile as _load_channel_profile
+
+_CHANNEL_PROFILE = _load_channel_profile(ROOT)
+# 契约文件是部署本地配置（非包内持久证据）：schema 与路径按 profile 派生，
+# 默认 profile 字节等价。
+REVIEW_CONTRACT_SCHEMA = (
+    f"{_CHANNEL_PROFILE.profile_id}-final-media-review-contracts.v1"
+)
+FINAL_MEDIA_REVIEW_CONTRACT_PATH = _CHANNEL_PROFILE.asset_file(
+    "final_media_review_contracts"
 )
 _SHA256_RX = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _CANDIDATE_RX = re.compile(r"[A-Za-z0-9_-]{1,96}\Z")
