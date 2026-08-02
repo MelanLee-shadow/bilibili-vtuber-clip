@@ -266,11 +266,12 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         '"workflow": "docs/workflows/huozi-luanshua.md",',
         '"workflow": ".agent/skills/huozi-luanshua/SKILL.md",',
     ),
-    # --- 债务棘轮：authorized_upload 简介常量外化后少 2 行，账本同步收紧 ---
+    # --- 债务棘轮：authorized_upload 简介外化(-2)+合集ID强制配置化(+13)，账本
+    #     同步为 2938 并在此说明（升行数=显式改账本，符合棘轮纪律）---
     (
         "tests/test_runtime_architecture.py",
         '"scripts/authorized_upload.py": 2_929,',
-        '"scripts/authorized_upload.py": 2_927,',
+        '"scripts/authorized_upload.py": 2_938,',
     ),
     # --- 债务棘轮：被剥离脚本的例外条目同步移除 ---
     (
@@ -526,9 +527,10 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
     (
         "profiles/README.md",
         "Validate a committed profile and all of its runtime paths before use:",
-        "`assets/_template/` 是自动派生的最小骨架（结构合法、内容为空）；复制后按其\n"
-        "README 的**分层**填充——首批手填只有约 6 个文件+字体，其余默认可跑/crawler\n"
-        "代填/运行时自长。注意：示例 profile `lidousha` 在全新 clone 里全量校验会因\n"
+        "`assets/_template/` 是自动派生的骨架；复制后按其 README 的**分层**填充——\n"
+        "身份四件套（词表/人设/标题风格/封面身份）由 agent 采访播种（模板内含提问\n"
+        "清单与真实示例），字体与工艺口径默认给全，其余 crawler 代填/运行时自长。\n"
+        "注意：示例 profile `lidousha` 在全新 clone 里全量校验会因\n"
         "`voiceprint_profile.v1.json` 缺失而 BLOCKED——声纹属生物特征，不随开源仓分发，\n"
         "这是预期行为（先用 `--config-only`，或补齐你自己的声纹再全量校验）。\n"
         "\n"
@@ -738,6 +740,54 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "3b. 逐案放行（维护者 2026-07-26：「没有任何纪律要求必须5个全complete才能动BV，\n"
         "   修复时哪个好了就可以改哪个」）：批仍 `recovery_incomplete` 时，可用",
         "3b. 逐案放行：批仍 `recovery_incomplete` 时，可用",
+    ),
+    # ---- v4.5：合集 ID 账号专属，强制部署方自填（Ivan：绝不默认给我的合集） ----
+    (
+        "scripts/authorized_upload.py",
+        "EXPECTED_SEASON_IDS = {\n"
+        '    "talk": {"season_id": 8383206, "section_id": 9320779},\n'
+        '    "song": {"season_id": 8410735, "section_id": 9364628},\n'
+        "}",
+        '_SEASON_IDS_ENV = "AUTOSLICE_SEASON_IDS"\n'
+        "\n"
+        "\n"
+        "def expected_season_ids() -> dict:\n"
+        '    """入集校验的合集/小节 ID——账号专属，强制部署方自填，无默认值。"""\n'
+        "    raw = os.environ.get(_SEASON_IDS_ENV)\n"
+        "    if not raw:\n"
+        "        raise SystemExit(\n"
+        '            "AUTOSLICE_SEASON_IDS 未配置：发布入集校验需要你自己账号的合集/小节 ID。\\n"\n'
+        "            '格式：{\"talk\": {\"season_id\": 0, \"section_id\": 0}, '\n"
+        "            '\"song\": {\"season_id\": 0, \"section_id\": 0}}\\n'\n"
+        '            "获取：在创作中心手动把任一稿件加入目标合集，再用 "\n'
+        '            "scripts/bili_archive_tool.py view 回读该稿件的 season_id/section_id。"\n'
+        "        )\n"
+        "    return json.loads(raw)",
+    ),
+    (
+        "scripts/authorized_upload.py",
+        '    expected_ids = EXPECTED_SEASON_IDS.get(str(block.get("lane") or ""))',
+        '    expected_ids = expected_season_ids().get(str(block.get("lane") or ""))',
+    ),
+    (
+        "scripts/authorized_upload.py",
+        "    package_problems.extend(human_review.attach_final_human_review("
+        "manifest, args.final_human_review, season_ids=EXPECTED_SEASON_IDS))",
+        "    package_problems.extend(human_review.attach_final_human_review("
+        "manifest, args.final_human_review, season_ids=expected_season_ids()))",
+    ),
+    (
+        "tests/test_authorized_upload_season.py",
+        'def _isolated_default_upload_lock(tmp_path, monkeypatch):\n'
+        '    monkeypatch.setattr(au, "DEFAULT_UPLOAD_LOCK", tmp_path / "default-upload.lock")',
+        'def _isolated_default_upload_lock(tmp_path, monkeypatch):\n'
+        '''    monkeypatch.setenv(
+        "AUTOSLICE_SEASON_IDS",
+        '{"talk": {"season_id": 8383206, "section_id": 9320779},'
+        ' "song": {"season_id": 8410735, "section_id": 9364628}}',
+    )
+'''
+        '    monkeypatch.setattr(au, "DEFAULT_UPLOAD_LOCK", tmp_path / "default-upload.lock")',
     ),
     # ---- v4.4：个别 patch 先于日期清理跑，处理规则难辨的语义 ----
     (
@@ -1100,38 +1150,81 @@ def _template_payload(kind: str, original: Path) -> str:
 # assets/_template/：按 profiles/_template/profile.json 的资产清单，从默认
 # profile 的同 key 资产派生"结构合法、内容为空"的骨架。文本资产给用途占位。
 
+# 身份四件套：采访引导式模板——格式契约 + agent 该问的问题 + 示例频道真实条目
+# 作示范（Ivan 授权直接取材）。从少量播种起步，随运营积累，不要求一次写完。
 _TEMPLATE_TEXT_PLACEHOLDERS = {
     "glossary": (
-        "# 频道词表（glossary）\n"
-        "# 每行一个专名条目；「不要写成/不要改成/听成 X 等」子句会被解析为误听黑名单。\n"
-        "# 示例（替换成你的频道专名）：\n"
-        "# - 正确专名A：ASR 常听成「错形甲」「错形乙」，不要写成「错形甲」。\n"
-        "# - 正确专名B：主播的粉丝团名，不要改成「近音错形」。\n"
+        "# 频道词表（glossary）——专名与误听黑名单\n\n"
+        "写法（解析器契约）：每行一个 `- ` 条目；条目里「不要写成 X / 不要改成 X /\n"
+        "听成 X 等」子句会被解析成误听黑名单，喂给字幕术语 QA 门。\n\n"
+        "## agent 首次配置时，向频道主人问这些\n\n"
+        "- 主播名/自称/常用昵称？粉丝团怎么称呼？\n"
+        "- 有哪些固定梗词、口癖、圈内黑话？\n"
+        "- 哪些专名 ASR 经常听错？错成什么样？\n"
+        "- 常联动的主播/团体叫什么？\n\n"
+        "## 真实示例（来自示例频道李豆沙，仅示范写法——删掉换成你的）\n\n"
+        "- 梗词：掏兜（薅弹幕/抢钱/偷学技能那套玩笑里的\"掏兜/偷学掏兜技能\"）。"
+        "不要写成偷渡、淘兜、掏斗。\n"
+        "- 品牌/话题词：和成天下（槟榔品牌）。ASR 常误写成\"合成天下/何成天下\"，"
+        "一律写成和成天下。\n\n"
+        "## 积累纪律\n\n"
+        "从 3–5 条起步就够开跑；之后每次误听裁定、每个新梗随手加一条。\n"
+        "这个文件是运营沉淀出来的，不是一次写完的。\n"
     ),
     "persona": (
-        "# 主播 persona\n\n"
-        "描述主播的形象、性格、口癖与禁忌（封面/标题生成会读取本文件）。\n"
+        "# 主播 persona（标题/封面/语义裁决共用）\n\n"
+        "## agent 首次配置时，问频道主人\n\n"
+        "- 身份一句话（平台/分区/内容特色）？\n"
+        "- 形象要点（发色/标志特征/衍生形象）？封面绝对禁止画错什么？\n"
+        "- 地域/语言特色？性格气质里最常被标题抓住的是什么？\n\n"
+        "## 真实示例（李豆沙，仅示范颗粒度——换成你的）\n\n"
+        "- 身份：B站虚拟主播，温柔声线唱歌 + 高能杂谈双修。\n"
+        "- 形象：虚拟熊猫少女——白发+头顶自带小熊猫耳（不是头套）；封面里必须是视觉主角。\n"
+        "- 地域：湖南长沙，直播里会飙长沙话。\n\n"
+        "从几条起步随运营补充；封面/标题产出质量直接由这个文件决定。\n"
     ),
     "title_style": (
-        "# 标题风格语料\n\n"
-        "自动标题的风格谱系与 few-shot 语料。只放你自己频道的定稿标题；\n"
-        "机器生成的旧标题不要进词库。\n"
-    ),
-    "slice_selection_metric": (
-        "# 选题度量\n\n"
-        "描述你的频道「什么算好切片」：围绕主播本人、观点强度、受众兴趣等硬维度。\n"
-    ),
-    "subtitle_correction_principles": (
-        "# 字幕校对原则\n\n"
-        "你的频道的字幕修正裁决原则（证据优先级、专名保向等）。\n"
+        "# 标题风格语料（few-shot）\n\n"
+        "铁律：**只收人工定稿的标题**，机器生成的旧标题绝不入库（会污染词库）。\n"
+        "长度与违禁词的硬门在 `title_policy.json`，这里只管风格与范例。\n\n"
+        "## agent 首次配置时，问频道主人\n\n"
+        "- 贴 3–5 条你满意的历史标题（没有就先空着用默认风格跑，出稿后人工定几条再回填）。\n"
+        "- 你讨厌什么味道的标题？（示例频道的答案：一切机器味词）\n\n"
+        "## 真实示例（李豆沙，示范\"结构\"而非内容）\n\n"
+        "- 档案标题可用冒号\"引语：反应\"结构：`李豆沙第999次澄清：我不是奶皮！`\n"
+        "- 封面嵌字从不用冒号，分句用换行：`唱完《旅行的意义》\\n才发现伴奏像KTV录的`\n"
     ),
     "psplive_roster": (
         "# 关联主播名册\n\n"
-        "与本频道同场/联动的主播与专名名册（occurrence-neutral）。\n"
+        "由 crawler 维护（`scripts/crawl_psplive_roster.py`；参考部署默认装 cron）。\n"
+        "先留空，或手填几条常联动主播起步。\n"
     ),
     "cover_identity_prompt": (
-        "描述主播的视觉身份（发色、服装、标志性特征），供 AI 封面生成使用。\n"
+        "描述主播视觉身份的英文 prompt（AI 封面生成用）。要素：发色发型、标志性\n"
+        "特征、衍生形象名、必须保真的细节、绝对禁止的改动。\n\n"
+        "agent 首次配置时问频道主人：发色？标志特征（耳朵/饰品/服装）？有没有\n"
+        "Q 版衍生形象？封面绝对不能出现什么？\n\n"
+        "真实示例（李豆沙首句，示范颗粒度）：\n"
+        "Li Dousha is a cute anime VTuber whose signature look is a white PANDA hood\n"
+        "with PANDA EARS over WHITE hair; her chibi/derivative form is '小李' (little Li).\n"
     ),
+}
+
+# 非身份的工艺资产：默认直接给示例频道的完整内容（Ivan：默认值全给，想改再改）。
+_TEMPLATE_COPY_DEFAULT = ("slice_selection_metric", "subtitle_correction_principles")
+_TEMPLATE_COPY_HEADER = (
+    "> 默认沿用示例频道（李豆沙）的口径，可直接使用；要改就按你频道的判断改。\n\n"
+)
+
+_TEMPLATE_DIR_NOTES = {
+    "fonts": (
+        "烧录与封面渲染用字体。默认已含两个可再分发的开源字体（ZCOOL 快乐体、\n"
+        "得意黑，均为 SIL OFL 许可），开箱即用；要换字体就替换文件本体。\n"
+    ),
+    "reviewed_subtitle_baselines": "已审字幕基线（同稿修复的精确重放用）：由发布/修复工具写入，人不手编。\n",
+    "speaker_overrides": "逐候选说话人人工覆盖：由评审工具写入（apply_speaker_turn_overrides.py），无需手填。\n",
+    "subtitle_regressions": "字幕回归钉子：每次修复裁定后由工具落盘，防止后续重跑回退已修文本。\n",
+    "subtitle_text_overrides": "逐候选字幕文本覆盖：评审裁定的产物，由工具写入，无需手填。\n",
 }
 
 
@@ -1237,6 +1330,10 @@ def build_template_assets(out_root: Path) -> int:
                 ensure_ascii=False,
                 indent=2,
             ) + "\n"
+        elif key in _TEMPLATE_COPY_DEFAULT:
+            source_rel = default_files.get(key)
+            body = (default_root / source_rel).read_text(encoding="utf-8")
+            payload = _TEMPLATE_COPY_HEADER + _sanitize_text(body)
         elif key in _TEMPLATE_TEXT_PLACEHOLDERS:
             payload = _TEMPLATE_TEXT_PLACEHOLDERS[key]
         elif rel_name.endswith((".md", ".txt")):
@@ -1248,14 +1345,20 @@ def build_template_assets(out_root: Path) -> int:
             payload = _scrub_identity_strings(payload)
         target.write_text(payload, encoding="utf-8")
         written += 1
-    for dir_rel in sorted(template_manifest["assets"]["directories"].values()):
+    for dir_key, dir_rel in sorted(template_manifest["assets"]["directories"].items()):
         marker_dir = target_root / dir_rel
         marker_dir.mkdir(parents=True, exist_ok=True)
         (marker_dir / "README.md").write_text(
-            "运行时目录骨架：本目录存放每个部署自己的数据（字体或逐候选评审/修复文件）。\n",
+            _TEMPLATE_DIR_NOTES.get(
+                dir_key, "运行时目录骨架：管线工具写入的部署数据，无需手填。\n"
+            ),
             encoding="utf-8",
         )
         written += 1
+        if dir_key == "fonts":
+            for font in sorted((default_root / "fonts").glob("*.ttf")):
+                shutil.copy2(font, marker_dir / font.name)
+                written += 1
     (target_root / "README.md").write_text(
         "# assets/_template — 新频道最小资产骨架\n"
         "\n"
@@ -1275,21 +1378,23 @@ def build_template_assets(out_root: Path) -> int:
         "- `voiceprint_profile.v1.json` 是 UNCONFIGURED 占位：声纹属于生物特征，须\n"
         "  自己 enroll 后用 `scripts/install_voiceprints.py` 安装。\n"
         "\n"
-        "## 分层：22 个文件里你真正要手填的只有约 6 个\n"
+        "## 分层：谁在什么时候填什么\n"
         "\n"
-        "- **层 0（骨架默认值即可开跑，之后再调口径）**：`title_policy.json`、\n"
-        "  `upload_tag_policy.json`、`intro/branding_intro.v1.json`（默认关）、\n"
-        "  `entity_confusables.json`（空=暂无已知混淆）、`clip_opening_address.json`、\n"
-        "  `known_songs.json`（空=当全新歌处理）。\n"
-        "- **层 1（首批手填，决定产出质量）**：`glossary.txt`、`persona.md`、\n"
-        "  `title_style.md`、`cover_identity_prompt.txt`、`slice_selection_metric.md`、\n"
-        "  `subtitle_correction_principles.md`，外加 `fonts/` 放两个可再分发字体。\n"
-        "- **层 2（你给种子，crawler 代填）**：`timely_term_seeds/sources` → \n"
+        "- **层 0 · 默认给全（agent 独立完成，开箱即用）**：`fonts/` 两个开源字体\n"
+        "  （直接用）、`title_policy.json`、`upload_tag_policy.json`、\n"
+        "  `slice_selection_metric.md` 与 `subtitle_correction_principles.md`\n"
+        "  （示例频道完整口径，可改）、`intro/`（默认关）、`entity_confusables.json`/\n"
+        "  `known_songs.json`/`clip_opening_address.json`（积累类，空起步）。\n"
+        "- **层 1 · 采访播种（agent 提问、频道主人回答、agent 代写）**：\n"
+        "  `glossary.txt`、`persona.md`、`title_style.md`、`cover_identity_prompt.txt`\n"
+        "  ——每个文件内已写好该问的问题与真实示例；3–5 条播种即可开跑，随运营积累，\n"
+        "  **不要求一次写完**。\n"
+        "- **层 2 · 你给种子，crawler 代填**：`timely_term_seeds/sources` → \n"
         "  `timely_terms`、`psplive_roster_sources` → `psplive_roster`、\n"
-        "  `topic_entity_graph`（配 cron 自动刷新）。\n"
-        "- **层 3（运行时自己长出来）**：`subtitle_truth_ledger`、\n"
+        "  `topic_entity_graph`（参考部署默认装 cron；不走 deploy 就手动跑或自配）。\n"
+        "- **层 3 · 运行时自己长出来**：`subtitle_truth_ledger`、\n"
         "  `session_relation_ledger`、`published_songs` 与各 override/评审目录。\n"
-        "- **层 4（用到对应功能才配）**：`voiceprint_profile`（声纹栈）、启用片头。\n"
+        "- **层 4 · 用到对应功能才配**：`voiceprint_profile`（声纹栈）、启用片头。\n"
         "\n"
         "## 首跑前最小清单\n"
         "\n"

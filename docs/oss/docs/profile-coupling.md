@@ -60,6 +60,7 @@
 | `src/autoslice/producer_request.py` | `--ssh-host` 默认 `free`（参考部署主机名） | 显式传 `--ssh-host` |
 | `src/autoslice/producer_speaker.py` | `/opt/bilive/autoslice/{voiceprints,venv-diar,models/campp,repo}` | 函数参数/部署布局对齐 |
 | `src/autoslice/bilibili_member_api.py` | `BILIUP_BIN=/opt/bilive/bin/biliup`（常量） | 部署布局对齐 |
+| `scripts/authorized_upload.py` | 入集校验的合集/小节 ID | **已强制配置化**：`AUTOSLICE_SEASON_IDS` 必填、无默认（账号专属，绝不复用示例频道的合集） |
 | `src/autoslice/speaker_context.py`、`subtitle_timing_qa.py`、`semantic_candidate_selector.py` | `/opt/bilive/...` env 兜底 | 对应环境变量 |
 | `scripts/gemini_slice_jingting.py` | `HOST_VIDEOS` 指向参考部署网盘挂载 | 环境变量/参数 |
 | `scripts/transcribe_live_*_via_agy.sh`、`llm_via_free_groq.sh` | `ssh free` | 改脚本头部主机变量 |
