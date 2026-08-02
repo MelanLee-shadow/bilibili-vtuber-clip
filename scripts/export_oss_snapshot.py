@@ -1793,7 +1793,7 @@ def build_template_assets(out_root: Path) -> int:
             source_rel = default_files.get(key)
             source = default_root / source_rel if source_rel else None
             payload = _template_payload("empty_entries", source or Path("/nonexistent"))
-            payload = _scrub_identity_strings(payload)
+            payload = _scrub_identity_strings(_sanitize_text(payload))
         target.write_text(payload, encoding="utf-8")
         written += 1
     for dir_key, dir_rel in sorted(template_manifest["assets"]["directories"].items()):
