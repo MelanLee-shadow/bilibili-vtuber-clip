@@ -912,3 +912,115 @@ def test_manual_exact_title_repair_requires_new_authority_before_cover(
     assert publish["source_fact_review"]["reason_code"] == ("SOURCE_FACT_TITLE_AUTHORITY_REQUIRED")
     assert publish["cover_status"] == "BLOCKED_TITLE_AUTHORITY"
     assert calls == 1
+
+
+def test_prompt_teaches_hard_meme_canon_semantics() -> None:
+    hook = "小李面对百合拷问当场自曝立场，弹幕全体起立。"
+    title = "【李豆沙】小李面对百合拷问当场自曝立场"
+    seen: dict[str, str] = {}
+
+    def cpa(prompt: str) -> str:
+        seen["prompt"] = prompt
+        return _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+        )
+
+    review = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript="你真的是侄女吗，弹幕都看呆了",
+        clip_context_prompt="- danmaku @1000ms: 主播是直女吗",
+        llm_call=cpa,
+    )
+
+    assert review["status"] == "PASS"
+    prompt = seen["prompt"]
+    assert "hard-meme-canon" in prompt
+    assert "「直女」一律写作「侄女」" in prompt
+    assert "不得把规范词面" in prompt or "永远不得把规范词面" in prompt
+
+
+def test_judge_repair_reintroducing_banned_surface_is_recanonicalized() -> None:
+    hook = "小李当场自曝侄女立场，弹幕全体起立。"
+    title = "【李豆沙】小李当场自曝侄女立场引发弹幕轰动"
+    transcript = "我就是侄女立场怎么了，弹幕全体起立"
+    passes = {"count": 0}
+
+    def cpa(prompt: str) -> str:
+        passes["count"] += 1
+        if passes["count"] == 1:
+            return _completion(
+                status="REPAIR",
+                final_hook=hook,
+                final_title="【李豆沙】小李亲口承认直女立场引发弹幕轰动",
+                supported_by=["final_transcript"],
+                changed_surfaces=[
+                    {
+                        "artifact": "title",
+                        "before": "当场自曝直女立场",
+                        "after": "亲口承认直女立场",
+                        "reason": "字幕原话是承认而非自曝",
+                        "evidence": ["final_transcript: 我就是侄女立场怎么了"],
+                    }
+                ],
+            )
+        return _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title="【李豆沙】小李亲口承认侄女立场引发弹幕轰动",
+            supported_by=["final_transcript"],
+        )
+
+    review = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript=transcript,
+        clip_context_prompt="- danmaku @900ms: 你是直女吗",
+        llm_call=cpa,
+    )
+
+    assert review["status"] == "PASS"
+    assert review["decision"] == "REPAIRED"
+    assert "直女" not in str(review["final_title"])
+    assert "侄女" in str(review["final_title"])
+    assert validate_source_fact_review(
+        review,
+        selection_hook=str(review["final_selection_hook"]),
+        title=str(review["final_title"]),
+        final_transcript=transcript,
+        clip_context_prompt="- danmaku @900ms: 你是直女吗",
+    )
+
+
+def test_entry_canonicalizes_banned_surface_in_handwritten_spec() -> None:
+    raw_hook = "小李被问是不是直女，当场语塞三秒。"
+    canon_hook = "小李被问是不是侄女，当场语塞三秒。"
+    raw_title = "【李豆沙】小李被问是不是直女当场语塞三秒"
+    canon_title = "【李豆沙】小李被问是不是侄女当场语塞三秒"
+    seen: dict[str, str] = {}
+
+    def cpa(prompt: str) -> str:
+        seen["prompt"] = prompt
+        return _completion(
+            status="KEEP",
+            final_hook=canon_hook,
+            final_title=canon_title,
+            supported_by=["final_transcript"],
+        )
+
+    review = review_and_repair_source_facts(
+        selection_hook=raw_hook,
+        title=raw_title,
+        final_transcript="你是不是侄女，当场语塞了三秒",
+        clip_context_prompt="- danmaku @500ms: 是不是直女",
+        llm_call=cpa,
+    )
+
+    assert review["status"] == "PASS"
+    assert review["decision"] == "KEEP"
+    assert review["original_selection_hook"] == canon_hook
+    assert review["final_title"] == canon_title
+    assert f"selection_hook:\n{canon_hook}" in seen["prompt"]

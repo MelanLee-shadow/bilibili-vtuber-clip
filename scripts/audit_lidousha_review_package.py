@@ -1984,7 +1984,7 @@ def audit_package(root: str | Path) -> dict[str, Any]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Audit a Li Dousha finished/review package for subtitle, title, and cover gates.")
+    parser = argparse.ArgumentParser(description="Audit a finished/review package for subtitle, title, and cover gates.")
     parser.add_argument("package_root", type=Path)
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     args = parser.parse_args()

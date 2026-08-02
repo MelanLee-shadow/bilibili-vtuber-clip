@@ -8,6 +8,10 @@ import re
 from typing import Mapping
 
 from src.autoslice.llm_client import LlmCall, extract_json_object
+from src.autoslice.surface_canon import (
+    canonicalize_hard_meme_surfaces,
+    hard_meme_surface_rules,
+)
 from src.autoslice.title_policy import publish_title_policy_violations
 
 
@@ -42,6 +46,32 @@ def _finalize_receipt(receipt: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _hard_meme_canon_prompt_block() -> str:
+    """Teach the judge the channel's unbypassable meme canon.
+
+    Without this the literal-evidence gate and the meme canon deadlock: the
+    final transcript spells the meme canonically, raw danmaku keeps the banned
+    surface, and a judge that only does literal binding "repairs" derived copy
+    back and forth until the candidate dies (hook rewrite then also trips the
+    scorecard-stale gate).  The canon is final-output law, so the judge must
+    read canonical spellings as carrying the original surface's semantics.
+    """
+
+    rules = hard_meme_surface_rules()
+    if not rules:
+        return ""
+    listing = "；".join(
+        f"「{rule.surface}」一律写作「{rule.canonical}」" for rule in rules
+    )
+    return (
+        "频道钦定梗词规范（hard-meme-canon，最终输出铁律）：" + listing + "。"
+        "规范词面是同一个梗的钦定拼写，不是换词：最终字幕与两份文案里的规范"
+        "词面承载原词的完整语义，判断事实支持时必须按原词语义理解；不得因为"
+        "弹幕/证据原文用了被禁拼写而判定文案不受支持，也永远不得把规范词面"
+        "改回被禁拼写。你输出的一切文案必须使用规范词面。\n"
+    )
+
+
 def _prompt(
     *,
     selection_hook: str,
@@ -56,6 +86,7 @@ def _prompt(
         "你是李豆沙切片派生文案的 source-fact 最终裁决者。你只有文字输入，"
         "不要声称听见音频或看见画面。一次联合裁决 selection_hook 与投稿标题，"
         "不是字幕改写任务。\n"
+        + _hard_meme_canon_prompt_block() +
         "判断两份文案里的每个具体事件、对象、因果、身份、专名、事实模态和同音"
         "释义，是否能由最终字幕或同片 hash-bound 结构化弹幕/SC/上下文支持。"
         "允许不逐字的自然概括，但不允许把提议写成既成事实、把猜测写成断言，"
@@ -267,8 +298,33 @@ def _single_review(
     status = payload.get("status")
     final_hook = payload.get("final_selection_hook")
     final_title = payload.get("final_title")
+    # 钦定梗词铁律先于一切 shape 校验：裁决者若把规范词面改回被禁拼写，
+    # 这里确定性回正（changed_surfaces.after 同步回正以保持包含性校验一致）。
+    if isinstance(final_hook, str):
+        final_hook, _ = canonicalize_hard_meme_surfaces(final_hook)
+    if isinstance(final_title, str):
+        final_title, _ = canonicalize_hard_meme_surfaces(final_title)
     supported_by = payload.get("supported_by")
     changes = payload.get("changed_surfaces")
+    if isinstance(changes, list):
+        # before/after 同步回正：入口铁律保证被评审的两份文案永远是规范
+        # 词面，被禁拼写的 before/after 只可能是裁决者笔误，回正后包含性
+        # 校验才在同一词面上成立。
+        changes = [
+            (
+                {
+                    **row,
+                    **{
+                        key: canonicalize_hard_meme_surfaces(row[key])[0]
+                        for key in ("before", "after")
+                        if isinstance(row.get(key), str)
+                    },
+                }
+                if isinstance(row, Mapping)
+                else row
+            )
+            for row in changes
+        ]
     scorecard_review = payload.get("selection_scorecard_review")
     summary = payload.get("summary")
     hook_changed = bool(isinstance(final_hook, str) and final_hook != selection_hook)
@@ -388,6 +444,11 @@ def review_and_repair_source_facts(
 ) -> dict[str, object]:
     """Run a bounded, evidence-bound KEEP/REPAIR convergence review."""
 
+    # 入口即回正：hard-meme-canon 是最终输出铁律，被禁拼写不允许进入评审
+    # 循环（也保证 KEEP 的逐字等式在规范词面上成立）。默认链路上游已回正，
+    # 这里对手写 spec 等旁路输入兜底。
+    selection_hook, _ = canonicalize_hard_meme_surfaces(selection_hook)
+    title, _ = canonicalize_hard_meme_surfaces(title)
     current_hook = selection_hook
     current_title = title
     passes: list[dict[str, object]] = []

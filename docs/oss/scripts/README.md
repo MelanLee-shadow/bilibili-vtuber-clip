@@ -1,6 +1,7 @@
 # scripts/ 地图
 
-61 个脚本按 lane 分组。刚上手真正会用到的只有六个：
+62 个脚本按 lane 分组。刚上手真正会用到的只有七个：
+`preflight.py`（部署体检：字体/ffmpeg/目录/凭据/VAD 一次查清）、
 `validate_channel_profile.py`（配 profile）、`session_autoslice.py`（runner/冒烟）、
 `produce_slice_package.py`（单候选产线）、`audit_review_package.py`（包审计）、
 `build_final_human_review.py`（终审回执）、`authorized_upload.py`（唯一上传入口）。
@@ -74,6 +75,7 @@
 
 | 脚本 | 用途 |
 |---|---|
+| `preflight.py` | 部署体检：python/ffmpeg/字体/profile 资产/凭据 env/VAD/self-ssh 一次查清（`--live` 才真调 CPA） |
 | `deploy_autoslice.sh` | 参考部署（校验→同步→回滚账本；按你的主机改写） |
 | `sync_profile_assets.sh` | 同步 profile 资产到部署主机 |
 | `validate_channel_profile.py` | profile 校验器（`--config-only` 起步，READY 才可跑） |

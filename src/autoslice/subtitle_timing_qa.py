@@ -24,6 +24,7 @@ for the evidence trail.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -237,17 +238,27 @@ def _char_count(text: str) -> int:
     return len(_normalize_text(text))
 
 
-def build_ssh_silero_vad_provider(host: str, *, remote_script: str = "/opt/bilive/vad/silero_vad_spans.py") -> SpeechSpansProvider:
+def build_ssh_silero_vad_provider(
+    host: str,
+    *,
+    remote_script: str | None = None,
+) -> SpeechSpansProvider:
     """Speech spans via silero VAD (onnxruntime) on the remote host.
 
     Extracts the [start_ms, end_ms) window of the source video as 16k mono WAV
     locally, ships it over, and maps the returned clip-relative spans back to
-    source-timeline milliseconds.  Provisioning: scripts/free_silero_vad_spans.py
-    + /opt/bilive/vad/silero_vad.onnx on the host.
+    source-timeline milliseconds.  Provisioning: scripts/silero_vad_spans.py +
+    assets/vad/silero_vad.onnx（随仓分发；参考部署放 <host>:/opt/bilive/vad/）。
+    脚本路径可用 ``AUTOSLICE_VAD_SCRIPT`` 覆盖，默认为参考部署路径。
 
     Raises RuntimeError on any failure — the caller decides whether timing QA
     is best-effort (record and skip) or mandatory.
     """
+
+    if remote_script is None:
+        remote_script = os.environ.get(
+            "AUTOSLICE_VAD_SCRIPT", "/opt/bilive/vad/silero_vad_spans.py"
+        )
 
     def provider(source_video: Path, start_ms: int, end_ms: int) -> list[SpeechSpan]:
         duration_ms = max(1, end_ms - start_ms)

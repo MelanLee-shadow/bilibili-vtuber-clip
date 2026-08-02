@@ -191,6 +191,20 @@ REWRITE_SKIP_PREFIXES = ("assets/",)
 # 否则导出失败（上游变了必须回来改这张表，不允许静默漂移）。
 # 类别：PII / 私有拓扑 / 死引用 / 运营叙事进规则文档。
 PATCHES: tuple[tuple[str, str, str], ...] = (
+    (
+        # VAD 脚本默认路径：私库默认保持参考部署（/opt/bilive/vad，生产不动）；
+        # OSS 默认指仓内脚本——媒体在本机（quickstart 路径）时零配置可用，
+        # 远端媒体宿主用 AUTOSLICE_VAD_SCRIPT 指向部署路径。
+        "src/autoslice/subtitle_timing_qa.py",
+        '        remote_script = os.environ.get(\n'
+        '            "AUTOSLICE_VAD_SCRIPT", "/opt/bilive/vad/silero_vad_spans.py"\n'
+        '        )',
+        '        remote_script = os.environ.get("AUTOSLICE_VAD_SCRIPT") or str(\n'
+        '            Path(__file__).resolve().parents[2]\n'
+        '            / "scripts"\n'
+        '            / "silero_vad_spans.py"\n'
+        '        )',
+    ),
     # --- PII：私人告警邮箱（邮件通道本就 disabled，置空为纯数据变更） ---
     (
         "scripts/slice_monitor.py",
@@ -278,7 +292,7 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "tests/test_runtime_architecture.py",
         "    # 2026-08-01 新记：OSS 发布整备（维护者 授权）把导出器扩成改名/patch/模板引擎；\n"
         "    # 私库专用构建工具，导出时自剥离，不进 OSS 面。\n"
-        '    "scripts/export_oss_snapshot.py": 2_100,\n',
+        '    "scripts/export_oss_snapshot.py": 2_142,\n',
         "",
     ),
     # --- 债务棘轮：被剥离脚本的例外条目同步移除 ---
@@ -794,9 +808,15 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "src/autoslice/source_fact_review.py",
-        "from src.autoslice.llm_client import LlmCall, extract_json_object",
-        "from src.autoslice.llm_client import LlmCall, extract_json_object\n"
-        "from src.autoslice.surface_canon import CHANNEL_PROFILE",
+        "from src.autoslice.surface_canon import (\n"
+        "    canonicalize_hard_meme_surfaces,\n"
+        "    hard_meme_surface_rules,\n"
+        ")",
+        "from src.autoslice.surface_canon import (\n"
+        "    CHANNEL_PROFILE,\n"
+        "    canonicalize_hard_meme_surfaces,\n"
+        "    hard_meme_surface_rules,\n"
+        ")",
     ),
     (
         "src/autoslice/source_fact_review.py",
@@ -1340,6 +1360,9 @@ def _template_payload(kind: str, original: Path) -> str:
                 data[key] = []
             elif isinstance(value, dict):
                 data[key] = {}
+        if "account_mid" in data:
+            # 账号 UID 是部署专属标量：模板一律归零（对应 lane 会要求填真值）。
+            data["account_mid"] = 0
     return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
 
 
@@ -1411,6 +1434,8 @@ _TEMPLATE_TEXT_PLACEHOLDERS = {
 # 但通用规则里的身份词必须占位化——只有标注「示例/判例/真例/锚点」的行保留真名
 # 作教学材料；未标记行经身份映射后不得残留身份词（硬校验，残留即导出失败）。
 _TEMPLATE_COPY_DEFAULT = ("slice_selection_metric", "subtitle_correction_principles")
+# 平台级 JSON 数据（非频道身份）：模板整份给全（Ivan：礼物名是平台固定专名）。
+_TEMPLATE_COPY_VERBATIM_JSON = ("gift_names",)
 _TEMPLATE_COPY_HEADER = (
     "> 模板默认值：源自示例频道的完整方法论，身份已占位（标注「示例」的行保留\n"
     "> 真实条目作示范）。可直接使用；要改就按你频道的判断改。\n\n"
@@ -1512,7 +1537,12 @@ _TEMPLATE_DOC_REWRITES: dict[str, tuple[tuple[str, str], ...]] = {
     "slice_selection_metric": (
         (
             "# 李豆沙切片选题 metric（通用 rubric 权威）",
-            "# 切片选题 metric（通用 rubric 权威）",
+            "# 切片选题 metric（通用 rubric 权威）\n"
+            "\n"
+            "> **必改项**：分层框架与七维算术直接可用，但**第一层「频道命脉题材」的\n"
+            "> 定义必须换成你频道自己的**。文内全部判例只示范打分思路；判例里的人名\n"
+            "> 是示例频道的圈内人物，对你的频道没有任何约束力，照抄会把别人频道的\n"
+            "> 命脉当成你的选题标准。",
         ),
         (
             "> v5，2026-07-22 维护者 校准 + Pro 独立复核：本文件继续定义偏好；",
@@ -1751,6 +1781,10 @@ def build_template_assets(out_root: Path) -> int:
             payload = _TEMPLATE_COPY_HEADER + _genericize_template_doc(
                 key, _sanitize_text(body)
             )
+        elif key in _TEMPLATE_COPY_VERBATIM_JSON:
+            source_rel = default_files.get(key)
+            body = (default_root / source_rel).read_text(encoding="utf-8")
+            payload = _scrub_identity_strings(_sanitize_text(body))
         elif key in _TEMPLATE_TEXT_PLACEHOLDERS:
             payload = _TEMPLATE_TEXT_PLACEHOLDERS[key]
         elif rel_name.endswith((".md", ".txt")):
@@ -1820,9 +1854,14 @@ def build_template_assets(out_root: Path) -> int:
         "\n"
         "- **层 0 · 默认给全（agent 独立完成，开箱即用）**：`fonts/` 两个开源字体\n"
         "  （直接用）、`title_policy.json`、`upload_tag_policy.json`、\n"
-        "  `slice_selection_metric.md` 与 `subtitle_correction_principles.md`\n"
-        "  （示例频道完整口径，可改）、`intro/`（默认关）、`entity_confusables.json`/\n"
-        "  `known_songs.json`/`clip_opening_address.json`（积累类，空起步）。\n"
+        "  `subtitle_correction_principles.md`（示例频道完整口径，可改）、\n"
+        "  `bilibili_gift_names.v1.json`（B站平台礼物专名，直接用）、`intro/`（默认关）、\n"
+        "  `entity_confusables.json`/`known_songs.json`/`clip_opening_address.json`\n"
+        "  （积累类，空起步）。\n"
+        "- **层 0.5 · 框架直用、定义必改**：`slice_selection_metric.md`——分层框架与\n"
+        "  七维算术通用，但**第一层「频道命脉题材」的定义必须换成你频道自己的**；\n"
+        "  文内判例只是示范打分思路，里面的人名是示例频道的圈内人物，对你的频道\n"
+        "  没有任何约束力。\n"
         "- **层 1 · 先问后写（agent 拿问题清单问频道主人，答完代写）**：\n"
         "  `glossary.txt`、`persona.md`、`title_style.md`、`cover_identity_prompt.txt`\n"
         "  ——每个文件内已写好该问的问题与真实示例；先写 3–5 条就能开跑，之后边用\n"
@@ -1830,8 +1869,11 @@ def build_template_assets(out_root: Path) -> int:
         "- **层 2 · 你给种子，crawler 代填**：`timely_term_seeds/sources` → \n"
         "  `timely_terms`、`psplive_roster_sources` → `psplive_roster`、\n"
         "  `topic_entity_graph`（参考部署默认装 cron；不走 deploy 就手动跑或自配）。\n"
-        "- **层 3 · 运行时自己长出来**：`subtitle_truth_ledger`、\n"
-        "  `session_relation_ledger`、`published_songs` 与各 override/评审目录。\n"
+        "- **层 3 · 运行时/人工裁定自己长出来**：`subtitle_truth_ledger`、\n"
+        "  `session_relation_ledger`、`published_songs`、`speech_memory_ledger`、\n"
+        "  `selection_score_calibration`（随运营积累标定锚点）、各 manual/cover\n"
+        "  override（`manual_title_overrides`/`manual_archive_metadata`/\n"
+        "  `cover_reference_overrides`）与各评审目录。\n"
         "- **层 4 · 用到对应功能才配**：`voiceprint_profile`（声纹栈）、启用片头。\n"
         "\n"
         "## 首跑前最小清单\n"

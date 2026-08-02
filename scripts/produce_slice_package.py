@@ -22,6 +22,9 @@ Spec JSON:
   "output_root": "reports/.../finals",
   "delivery_name": "买弹幕梗当场拆台",
   "selection_hook": "弹幕让李豆沙表演上下摇……", # selected main event; auto-title must retain it
+  "selection_scorecard": {...},             # selector 评分卡；边界门的 selector_story_witness 从它
+                                            # 派生——手写 spec 也必须如实填一张（null 必被
+                                            # WITNESS_INSUFFICIENT 拦），结构见 selection_scorecard.py
   "given_title": null,                      # Ivan-given title is verbatim-final
   "lead_pad_ms": 300,
   "pieces": [                                # concatenated in order

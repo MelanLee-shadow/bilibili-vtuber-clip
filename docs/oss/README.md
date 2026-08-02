@@ -25,7 +25,9 @@
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 cp .env.example .env        # 填 CPA / Gemini（凭据清单见 docs/credentials.md）
-.venv/bin/python -m pytest -q    # 自检：全部测试应通过（不需要任何凭据和网络）
+set -a; source .env; set +a # .env 不会被自动加载，跑脚本前手动 source（或写进服务环境）
+.venv/bin/python -m pytest -q       # 自检：全部测试应通过（无凭据无网络，密闭守卫强制）
+.venv/bin/python scripts/preflight.py   # 体检：字体/ffmpeg/目录/凭据/VAD 一次查清
 ```
 
 配自己的频道：**把这件事交给你的 AI agent**——本项目预期就由 agent 来配置，
@@ -36,8 +38,10 @@ cp .env.example .env        # 填 CPA / Gemini（凭据清单见 docs/credential
 .venv/bin/python scripts/validate_channel_profile.py --profile lidousha --config-only
 ```
 
-第一支切片（在录播文件所在的机器上直接跑，**不需要 SSH**——
-`--ssh-host localhost` 走本地直读，SSH 只在媒体在另一台机器时才用）：
+第一支切片（在录播文件所在的机器上直接跑，`--ssh-host localhost`）。媒体
+读取与切割走本地路径；**听音复核与 VAD 时轴证据两个阶段会 `ssh localhost`
+执行**，所以机器要能免密 ssh 自己（`ssh-keygen -t ed25519` 后把公钥追加进
+`~/.ssh/authorized_keys`；`scripts/preflight.py` 会检查这一项）：
 
 ```bash
 AUTOSLICE_BASE=$PWD/.autoslice \
@@ -54,9 +58,9 @@ AUTOSLICE_BASE=$PWD/.autoslice \
 | 一台服务器 | 推荐 8 核 / 32 GB / 500 GB+ 磁盘（4 核 16 GB 可用但并行烧录吃紧） |
 | [BililiveRecorder](https://github.com/BililiveRecorder/BililiveRecorder) | 录播姬。`ops/recording/` 是参考配置 |
 | LLM 通道 | 能访问 Gemini 系列与 GPT 系列。推荐自建 [CLIProxyAPI](https://github.com/luispater/CLIProxyAPI) 统一入口（两个环境变量搞定） |
-| [Google Antigravity](https://antigravity.google/) | 谷歌官方工具，直接下载。本项目用它的命令行做"听音复核"：日常谈话切片的字幕**不需要它**；只有字幕专名的听音仲裁和歌词对轴会用到——缺它时这些环节明确拒绝，不会瞎猜 |
+| [Google Antigravity](https://antigravity.google/) | 谷歌官方工具，直接下载。本项目用它的命令行做"听音复核"：纯中文谈话切片的字幕通常**用不到它**；字幕专名的听音仲裁、字幕混入外文/拉丁词面时的独立听写、歌词对轴会用到——缺它时这些环节明确拒绝，不会瞎猜 |
 | [biliup](https://github.com/biliup/biliup) | 投稿 CLI。只产包评审不上传可不装 |
-| Python 3.11+，`ffmpeg` 7+ | 转写用的免费必剪接口不需要 key |
+| Python 3.11+，`ffmpeg` 6.1+ | 6.1 与 7.x 都在真实产线跑通过；转写用的免费必剪接口不需要 key |
 
 全部凭据（cookie 放哪、长什么样、怎么验证）见 **[docs/credentials.md](docs/credentials.md)**。
 
@@ -64,7 +68,7 @@ AUTOSLICE_BASE=$PWD/.autoslice \
 
 1. 本 README；
 2. [profiles/README.md](profiles/README.md) —— 怎么配你的频道；
-3. [scripts/README.md](scripts/README.md) —— 61 个脚本按用途分组，先看"你会真正用到的六个"；
+3. [scripts/README.md](scripts/README.md) —— 62 个脚本按用途分组，先看"你会真正用到的七个"；
 4. 要深挖规则再看 [docs/pipeline/README.md](docs/pipeline/README.md)（给 agent/维护者的分步权威，技术密度高）；
 5. [AGENTS.md](AGENTS.md) —— 给 AI 代理的完整操作约定与架构细节。
 

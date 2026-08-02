@@ -75,6 +75,18 @@ def _canonicalize_expected_value_surfaces_with_rules(
     return normalized, replacements
 
 
+def hard_meme_surface_rules():
+    """Expose the unbypassable meme-canon rules to downstream judges.
+
+    Text gates that reason over evidence (e.g. source-fact review) must be
+    taught these rules explicitly: the canonical spelling carries the banned
+    surface's full semantics, so a literal-evidence judge may neither treat
+    the canonical form as unsupported nor repair it back to the banned form.
+    """
+
+    return _HARD_MEME_SURFACE_RULES
+
+
 def canonicalize_hard_meme_surfaces(
     text: str,
 ) -> tuple[str, list[dict[str, str | int]]]:

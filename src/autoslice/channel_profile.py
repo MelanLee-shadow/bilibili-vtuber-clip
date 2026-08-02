@@ -34,12 +34,19 @@ _REQUIRED_ASSET_FILES = frozenset(
         "glossary",
         "branding_intro_manifest",
         "cover_identity_prompt",
+        "cover_reference_overrides",
+        "gift_names",
         "known_songs",
+        "manual_archive_metadata",
+        "manual_title_overrides",
         "persona",
         "psplive_roster",
         "psplive_roster_sources",
+        "published_songs",
+        "selection_score_calibration",
         "session_relation_ledger",
         "slice_selection_metric",
+        "speech_memory_ledger",
         "subtitle_correction_principles",
         "subtitle_truth_ledger",
         "timely_term_seeds",
@@ -52,6 +59,9 @@ _REQUIRED_ASSET_FILES = frozenset(
         "voiceprint_profile",
     }
 )
+# 必需集的口径：管线代码硬读（asset_file 直取，无 fail-open 守卫）的每个键都
+# 必须在这里，否则 config-only 校验会对一个跑不完整线的 profile 报 READY。
+# emote_library 是唯一例外：消费方 fail-open（缺失→空库→默认重绘），保持可选。
 _REQUIRED_ASSET_DIRECTORIES = frozenset(
     {
         "fonts",

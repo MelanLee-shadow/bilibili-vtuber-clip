@@ -1,0 +1,234 @@
+#!/usr/bin/env python3
+"""部署体检：一条命令查清首跑前的常见缺件。
+
+默认完全离线（不花钱、不打任何网络）；`--live` 才会真调一次 CPA 验证凭据。
+输出三级：`ok` / `warn`（对应 lane 用到才需要）/ `FAIL`（跑不了主线）。
+退出码：有 FAIL → 1，否则 0。
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+RESULTS: list[tuple[str, str, str]] = []
+
+
+def _record(level: str, name: str, detail: str) -> None:
+    RESULTS.append((level, name, detail))
+    mark = {"ok": "✓", "warn": "⚠", "FAIL": "✗"}[level]
+    print(f"{mark} [{level:4}] {name}: {detail}")
+
+
+def check_python() -> None:
+    if sys.version_info >= (3, 11):
+        _record("ok", "python", f"{sys.version.split()[0]}")
+    else:
+        _record("FAIL", "python", f"{sys.version.split()[0]}（需要 3.11+）")
+
+
+def check_ffmpeg() -> None:
+    path = shutil.which("ffmpeg")
+    if not path:
+        _record("FAIL", "ffmpeg", "PATH 里没有 ffmpeg（切割/烧录/转码全线依赖）")
+        return
+    probe = subprocess.run(
+        ["ffmpeg", "-version"], capture_output=True, text=True, check=False
+    )
+    first = (probe.stdout or "").splitlines()[0] if probe.stdout else ""
+    version = first.split(" ")[2] if len(first.split(" ")) > 2 else "?"
+    major = version.split(".")[0]
+    if major.isdigit() and int(major) >= 6:
+        _record("ok", "ffmpeg", f"{version}（6.1+ 实测可用）")
+    else:
+        _record("warn", "ffmpeg", f"{version}——低于 6 未验证过，建议升级")
+
+
+def check_profile() -> None:
+    try:
+        from src.autoslice.channel_profile import load_channel_profile
+
+        profile = load_channel_profile(ROOT)
+    except Exception as exc:  # 体检工具：任何加载失败都要人话呈现
+        _record("FAIL", "profile", f"加载失败：{type(exc).__name__}: {exc}")
+        return
+    _record("ok", "profile", f"{profile.profile_id}（{profile.display_name}）")
+    missing = [
+        f"{key} → {path}"
+        for key, path in sorted(profile.asset_files.items())
+        if not Path(path).is_file()
+    ]
+    if missing:
+        _record("warn", "profile-assets", "缺文件：" + "；".join(missing[:6]))
+    else:
+        _record("ok", "profile-assets", f"{len(profile.asset_files)} 个资产文件齐全")
+    fonts_dir = profile.asset_directories.get("fonts")
+    fonts = (
+        sorted(
+            p.name
+            for p in Path(fonts_dir).iterdir()
+            if p.suffix.lower() in {".ttf", ".otf", ".ttc"}
+        )
+        if fonts_dir and Path(fonts_dir).is_dir()
+        else []
+    )
+    if fonts:
+        _record("ok", "fonts", f"{len(fonts)} 个字体（烧录/封面用）")
+    else:
+        _record("FAIL", "fonts", "profile fonts 目录里没有 ttf/otf——字幕烧录会失败")
+
+
+def check_env() -> None:
+    base = os.environ.get("AUTOSLICE_BASE")
+    if base:
+        path = Path(base)
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            _record("ok", "AUTOSLICE_BASE", str(path))
+        except OSError as exc:
+            _record("FAIL", "AUTOSLICE_BASE", f"{base} 不可写：{exc}")
+    else:
+        _record(
+            "warn",
+            "AUTOSLICE_BASE",
+            "未设置（runner/状态目录需要它；.env 不会被自动加载，记得 source）",
+        )
+    if os.environ.get("CPA_BASE_URL") and os.environ.get("CPA_API_KEY"):
+        _record("ok", "CPA env", "CPA_BASE_URL/CPA_API_KEY 已设置（--live 可真调验证）")
+    else:
+        _record(
+            "warn",
+            "CPA env",
+            "未设置——选题/校对/标题/封面 lane 会 fail-closed（见 docs/credentials.md #1）",
+        )
+    if os.environ.get("GEMINI_API_KEY"):
+        _record("ok", "Gemini env", "GEMINI_API_KEY 已设置")
+    else:
+        _record("warn", "Gemini env", "未设置——转写精修/声学听写用（credentials.md #2）")
+    agy = os.path.expanduser(os.environ.get("AGY_BIN", "~/.local/bin/agy"))
+    if Path(agy).is_file() or shutil.which(agy):
+        _record("ok", "AGY", agy)
+    else:
+        _record(
+            "warn",
+            "AGY",
+            "未找到——专名听音仲裁/外文听写/歌词对轴 lane 用（credentials.md #7）",
+        )
+
+
+def check_vad() -> None:
+    script = ROOT / "scripts" / "silero_vad_spans.py"
+    if not script.is_file():
+        _record("warn", "VAD", "scripts/silero_vad_spans.py 缺失（时轴 QA 证据不可用）")
+        return
+    model_env = os.environ.get("AUTOSLICE_VAD_MODEL")
+    model = Path(model_env) if model_env else ROOT / "assets" / "vad" / "silero_vad.onnx"
+    if not model.is_file():
+        _record("warn", "VAD", f"模型缺失：{model}")
+        return
+    try:
+        import numpy  # noqa: F401
+        import onnxruntime  # noqa: F401
+    except ImportError as exc:
+        _record("warn", "VAD", f"依赖缺失：{exc}（pip install -r requirements.txt）")
+        return
+    _record("ok", "VAD", f"脚本+模型+onnxruntime 就绪（{model.name}）")
+
+
+def check_self_ssh() -> None:
+    probe = subprocess.run(
+        [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=3",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "localhost",
+            "true",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=15,
+    )
+    if probe.returncode == 0:
+        _record("ok", "self-ssh", "ssh localhost 免密可用（听音复核/VAD 阶段需要）")
+    else:
+        _record(
+            "warn",
+            "self-ssh",
+            "ssh localhost 不可用——produce 的听音复核与 VAD 阶段会失败；"
+            "ssh-keygen -t ed25519 后把公钥追加进 ~/.ssh/authorized_keys",
+        )
+
+
+def check_upload_tools() -> None:
+    for tool, hint in (
+        ("biliup", "上传 lane 用（不上传可不装）"),
+        ("BBDown", "官方回放救援 lane 用（可选）"),
+    ):
+        if shutil.which(tool):
+            _record("ok", tool, shutil.which(tool))
+        else:
+            _record("warn", tool, f"未安装——{hint}")
+
+
+def check_cpa_live() -> None:
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="preflight_cpa_") as tmp:
+        prompt = Path(tmp) / "p.txt"
+        reply = Path(tmp) / "c.txt"
+        prompt.write_text("回复OK两个字", encoding="utf-8")
+        probe = subprocess.run(
+            ["bash", str(ROOT / "scripts" / "llm_via_cpa.sh"), str(prompt), str(reply)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=240,
+        )
+        if probe.returncode == 0 and reply.is_file() and reply.read_text().strip():
+            _record("ok", "CPA live", f"回复：{reply.read_text().strip()[:40]}")
+        else:
+            _record("FAIL", "CPA live", f"调用失败：{(probe.stderr or '')[-200:]}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="真调一次 CPA 验证凭据（会产生一次极小的真实调用）",
+    )
+    args = parser.parse_args()
+
+    check_python()
+    check_ffmpeg()
+    check_profile()
+    check_env()
+    check_vad()
+    check_self_ssh()
+    check_upload_tools()
+    if args.live:
+        check_cpa_live()
+
+    fails = [row for row in RESULTS if row[0] == "FAIL"]
+    warns = [row for row in RESULTS if row[0] == "warn"]
+    print()
+    print(f"体检完成：{len(RESULTS) - len(fails) - len(warns)} ok / {len(warns)} warn / {len(fails)} FAIL")
+    if fails:
+        print("先修 FAIL 项再跑主线；warn 项只影响对应 lane。")
+    return 1 if fails else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

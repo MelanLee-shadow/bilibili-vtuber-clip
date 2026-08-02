@@ -3003,10 +3003,14 @@ def test_unproven_foreign_cue_defers_across_tiny_timing_sliver():
 
 
 def test_source_truth_owned_cue_is_not_mutated_by_final_review(monkeypatch):
+    # 终审 llm_call 由 producer_final_review_transport 构建；patch
+    # pipeline.build_llm_call 是死 seam（曾靠开发机 ambient CPA 凭据真打
+    # 网络"变绿"，密闭守卫见根 conftest）。必须 patch pipeline 自己引用的
+    # _build_final_review_llm_call。
     monkeypatch.setattr(
         pipeline,
-        "build_llm_call",
-        lambda config: lambda prompt: json.dumps(
+        "_build_final_review_llm_call",
+        lambda: lambda prompt: json.dumps(
             {
                 "findings": [
                     {

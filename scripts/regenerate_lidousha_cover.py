@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Canonical Li Dousha cover (re)generation workflow — a thin, reusable entry
+"""Canonical channel-cover (re)generation workflow — a thin, reusable entry
 that wraps the SAME functions the main autoslice/publish pipeline uses
 (`_lidousha_cover_art_direction` / `_lidousha_cover_prompt` /
 `_call_cpa_image_edit` / `_overlay_lidousha_cover_title` in
@@ -330,7 +330,7 @@ def regenerate_cover(
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(description="Regenerate a Li Dousha cover in the redesigned persona-driven style.")
+    p = argparse.ArgumentParser(description="Regenerate a channel cover in the redesigned persona-driven style.")
     p.add_argument("--title", required=True, help="Archive title (【李豆沙】… prefix is auto-stripped for the cover text).")
     p.add_argument(
         "--cover-text",

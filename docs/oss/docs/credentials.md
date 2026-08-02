@@ -3,11 +3,20 @@
 每个凭据：干什么用、放哪、长什么样、怎么验证。**所有 cookie/key 都绝不入库**
 （`.gitignore` 已拦 `.env*`；cookie 文件按约定放在仓库外的部署目录）。
 
+> **`.env` 不会被自动加载**：它只是模板/记录处。跑任何脚本前先
+> `set -a; source .env; set +a`（或把变量写进服务/cron 环境）。无人值守
+> runner 的参考部署另读 `$AUTOSLICE_BASE/cpa.env`（deploy 脚本会生成）。
+
 ## 1. CPA（LLM 统一入口）— 必需
 
 - 用途：选题、语义校对裁决、标题、封面的全部 LLM 调用。
 - 放哪：`.env` 的 `CPA_BASE_URL` / `CPA_API_KEY`（模板见 `.env.example`）。
-- 校验：`bash scripts/llm_via_cpa.sh '回复OK两个字'` —— 能回话即通。
+- 校验（脚本签名是 `{prompt文件} {completion文件}`，不是内联字符串）：
+
+```bash
+printf '回复OK两个字' > /tmp/cpa_probe.txt
+bash scripts/llm_via_cpa.sh /tmp/cpa_probe.txt /tmp/cpa_reply.txt && cat /tmp/cpa_reply.txt
+```
 
 ## 2. Gemini key（转写精修/声学听写）— 必需
 
@@ -47,8 +56,12 @@
 ## 6. BBDown cookies — 仅官方回放救援 lane（可选）
 
 - 用途：`official-replay-rescue` skill 里 BBDown 下载官方回放。
-- 模板：单行 Cookie 串文件，至少含 `SESSDATA=…`；部署约定放
-  `$AUTOSLICE_BASE/vod_ingest_cookies.txt`。
+- 安装：BBDown 是独立工具——`dotnet tool install --global BBDown`，或从
+  [BBDown releases](https://github.com/nilaoda/BBDown/releases) 下载单文件二进制。
+- 模板：**单行 Cookie 串**文件，至少含 `SESSDATA=…`；部署约定放
+  `$AUTOSLICE_BASE/vod_ingest_cookies.txt`。注意浏览器插件导出的 Netscape
+  `cookies.txt`（多行制表符格式）**不能直接用**，要自己拼成
+  `SESSDATA=…; bili_jct=…` 这样的一行。
 - 校验：`BBDown info <任一公开BV> -c "$(cat 文件)"` 能取到清晰度列表即通。
 
 ## 7. AGY（Google Antigravity CLI）— talk 声学仲裁与歌切 lane

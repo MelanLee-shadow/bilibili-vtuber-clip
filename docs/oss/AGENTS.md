@@ -18,7 +18,11 @@
    LLM/HTTP 边界全部 mock；缺 `ffmpeg` 时个别用例 skip）。套件以
    **默认 profile** 为基准：跑测试时不要设置 `AUTOSLICE_PROFILE`。
 3. **配环境**：`cp .env.example .env`，填 `CPA_BASE_URL`/`CPA_API_KEY` 与
-   Gemini key。没有 CPA？先读 README 的 LLM 通道一节——没有 LLM 入口时
+   Gemini key。**`.env` 只是模板，不会被任何脚本自动加载**——跑脚本前
+   `set -a; source .env; set +a`，无人值守 runner 的参考部署读
+   `$AUTOSLICE_BASE/cpa.env`（`deploy_autoslice.sh` 生成）。配完跑
+   `python3 scripts/preflight.py` 一次体检（字体/ffmpeg/目录/凭据/VAD）。
+   没有 CPA？先读 README 的 LLM 通道一节——没有 LLM 入口时
    选题/校对/封面 lane 会 fail-closed 拒绝，而不是降级。
 4. **认识 profile**：读 [profiles/README.md](profiles/README.md)。默认
    profile 是 `lidousha`（示例频道）；`AUTOSLICE_PROFILE` 在进程 import 时
@@ -58,7 +62,8 @@
 ## 常用命令
 
 ```bash
-python3 -m pytest -q                  # 全套件；无凭据可跑（网络层全 mock）
+python3 -m pytest -q                  # 全套件；无凭据可跑（密闭守卫机械封死真实 LLM 通道）
+python3 scripts/preflight.py          # 部署体检：字体/ffmpeg/目录/凭据/VAD
 python3 scripts/validate_channel_profile.py --profile <id> [--config-only]
 python3 scripts/produce_slice_package.py --spec <spec.json> --ssh-host localhost
 ```
