@@ -67,7 +67,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--related-entity-seeds",
         type=Path,
-        default=ROOT / "assets/lidousha/related_entity_seeds.json",
+        default=CHANNEL_PROFILE.asset_file("related_entity_seeds"),
         help="reviewed source-backed units/groups missing from the cast API",
     )
     result.add_argument("--offline", action="store_true")

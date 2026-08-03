@@ -331,7 +331,7 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "    # 2026-08-02 +55：二轮测试修复（骨架逐键摘除治 governance:{} 必炸类、\n"
         "    # prompt 注入类模板全占位化、tag prompt JSON 契约）——维护者 8/2 /goal 授权；\n"
         "    # 测试 test_template_skeletons.py。\n"
-        '    "scripts/export_oss_snapshot.py": 2_240,\n',
+        '    "scripts/export_oss_snapshot.py": 2_268,\n',
         "",
     ),
     # --- 债务棘轮：被剥离脚本的例外条目同步移除 ---
@@ -1090,9 +1090,19 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "7. ~~**语义 QA 评审文本≠最终交付文本**~~（已闭环）：finalizer 现在逐项验证",
     ),
     (
+        "docs/bilibili-ai-subtitle-via-bcut.md",
+        "## 2. 聚合免费接口：三家实测（2026-07-04，李豆沙 7/2 录播）",
+        "## 2. 聚合免费接口：三家实测（同一场真实录播，同一段音频）",
+    ),
+    (
         "docs/auto-review-architecture.md",
+        "# 李豆沙 autoslice 架构\n"
+        "\n"
         "> 当前高层结构图，2026-07-24。本文件不定义准入、schema、阈值或状态机；现行规则只读",
-        "> 当前高层结构图。本文件不定义准入、schema、阈值或状态机；现行规则只读",
+        "# autoslice 架构总览\n"
+        "\n"
+        "> 当前高层结构图（背景阅读；入口见 AGENTS.md）。本文件不定义准入、schema、\n"
+        "> 阈值或状态机；现行规则只读",
     ),
 )
 
@@ -1397,6 +1407,21 @@ def _template_payload(kind: str, original: Path) -> str:
         if "account_mid" in data:
             # 账号 UID 是部署专属标量：模板一律归零（对应 lane 会要求填真值）。
             data["account_mid"] = 0
+        # 运营时间戳/来源说明是"我这次跑出来的"，骨架里必须中性化，否则新频道
+        # 的空模板带着示例部署的日期与主机名。
+        # 占位必须**形状合法**：timely_terms 的加载器要求非空 ISO 串，置空会让
+        # 新频道一加载词表就被拒（骨架必须能跑，不能只是"看着干净"）。
+        for stale_key, placeholder in (
+            ("verified_through", "1970-01-01T00:00:00Z"),
+            ("generated_at", "1970-01-01T00:00:00Z"),
+            ("expires_at", "1970-01-02T00:00:00Z"),
+            ("updated_at", "1970-01-01"),
+            ("extracted_at", "1970-01-01"),
+            ("authority", "REPLACE_ME（本资产的权威来源说明）"),
+            ("source", "REPLACE_ME（数据来源说明）"),
+        ):
+            if stale_key in data and isinstance(data[stale_key], str):
+                data[stale_key] = placeholder
     return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
 
 
@@ -1752,6 +1777,9 @@ _PROFILE_SCHEMA_RE = re.compile(r"^lidousha([-.][A-Za-z0-9_.-]+)$")
 # 契约（base_tags 非空、banned_regexes[0] 存在、prompt 三占位符），空壳会让新
 # profile 连 --help 都起不来。值都是中性模板默认，供采用者替换。
 _TEMPLATE_ASSET_JSON = {
+    # 实体图 crawler 的人工补种：cast API 查不到的团体/组合，由你按可查证的
+    # 公开来源补。空数组=不补种，crawler 照跑。
+    "related_entity_seeds": {"entities": []},
     "upload_tag_policy": {
         "schema_version": "vtuber-slice.upload-tag-policy.v1",
         "base_tags": ["虚拟主播", "直播切片", "直播回放", "切片"],
