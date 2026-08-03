@@ -129,7 +129,7 @@ def _before_snapshot() -> dict:
         },
         "section": {
             "available": True,
-            "section_id": 9320779,
+            "section_id": 9110001,
             "matches": [
                 {
                     "bvid": BVID,
@@ -407,8 +407,8 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
             "source": "https://live.bilibili.com/",
         },
         "season": {
-            "season_id": 8383206,
-            "section_id": 9320779,
+            "season_id": 8110001,
+            "section_id": 9110001,
             "season_title": "小主切片",
         },
         "authorization": {"by": "Ivan", "quote": "尽量上传"},
@@ -543,7 +543,7 @@ class FakeAdapter:
     def observe(self, bvid: str, section_id: int) -> dict:
         self.observe_calls += 1
         assert bvid == BVID
-        assert section_id == 9320779
+        assert section_id == 9110001
         return copy.deepcopy(self.snapshot)
 
     def _append_new(self) -> None:
@@ -633,7 +633,7 @@ class FakeAdapter:
     ) -> dict:
         self.section_sync_calls += 1
         assert bvid == BVID
-        assert section_id == 9320779
+        assert section_id == 9110001
         assert expected_current_title == "旧标题"
         assert target_title == FINAL_TITLE
         if self.section_sync_mode == "raise_before":
@@ -1257,7 +1257,7 @@ def test_production_adapter_rebinds_exact_live_episode_identity():
     section_payload = {
         "code": 0,
         "data": {
-            "id": 9320779,
+            "id": 9110001,
             "episodes": [
                 {
                     "id": 210909973,
@@ -1265,8 +1265,8 @@ def test_production_adapter_rebinds_exact_live_episode_identity():
                     "aid": 42,
                     "bvid": BVID,
                     "cid": NEW_CID,
-                    "seasonId": 8383206,
-                    "sectionId": 9320779,
+                    "seasonId": 8110001,
+                    "sectionId": 9110001,
                     "order": 68,
                 }
             ],
@@ -1282,7 +1282,7 @@ def test_production_adapter_rebinds_exact_live_episode_identity():
 
     response = adapter.sync_section_title(
         BVID,
-        9320779,
+        9110001,
         expected_current_title="旧标题",
         target_title=FINAL_TITLE,
     )
@@ -1293,8 +1293,8 @@ def test_production_adapter_rebinds_exact_live_episode_identity():
         "title": FINAL_TITLE,
         "aid": 42,
         "cid": NEW_CID,
-        "season_id": 8383206,
-        "section_id": 9320779,
+        "season_id": 8110001,
+        "section_id": 9110001,
         "order": 68,
         "page_cids": [NEW_CID],
     }
@@ -1802,7 +1802,7 @@ def test_public_tags_failure_is_unavailable_not_an_empty_tag_observation():
     section = {
         "code": 0,
         "data": {
-            "id": 9320779,
+            "id": 9110001,
             "episodes": [
                 {
                     "bvid": BVID,
@@ -1816,7 +1816,7 @@ def test_public_tags_failure_is_unavailable_not_an_empty_tag_observation():
 
     snapshot = normalise_snapshot(
         bvid=BVID,
-        section_id=9320779,
+        section_id=9110001,
         creator_data=creator,
         public_payload=public,
         public_tags_payload={"code": -500},

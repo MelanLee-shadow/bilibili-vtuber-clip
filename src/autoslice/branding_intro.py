@@ -5,7 +5,7 @@ Ivan (2026-07-12) selected the 活字乱刷 candidate-2 render
 auto-slice deliverables.  The selected profile's committed
 ``branding_intro_manifest`` asset is the single switch and binds the exact
 intro bytes by SHA-256; the media itself lives outside the repo tree
-(``free:/opt/bilive/autoslice/assets/intro/``) like the CAM++ model and
+(``<host>:/opt/bilive/autoslice/assets/intro/``) like the CAM++ model and
 enrollment WAVs.
 
 Fail-closed contract: when the committed manifest is enabled, a missing or

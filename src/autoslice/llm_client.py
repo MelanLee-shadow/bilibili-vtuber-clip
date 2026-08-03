@@ -7,7 +7,7 @@ Two transports:
   manifests or logs.
 - ``command``: run an external command template with ``{prompt_file}`` and
   ``{completion_file}`` placeholders.  This keeps provider keys on the host
-  that owns them (e.g. ``free``) — the local pipeline ships a prompt file over
+  that owns them (e.g. the media host) — the local pipeline ships a prompt file over
   the bridge and reads back plain-text completion.
 
 Both raise ``LlmCallError`` on failure; callers are repair stages that must

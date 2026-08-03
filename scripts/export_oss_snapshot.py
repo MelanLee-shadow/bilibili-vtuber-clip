@@ -146,6 +146,13 @@ TEMPLATE_DIRS = (
 # `lidousha-*.v1` schema 串、assets/lidousha、profiles/lidousha、
 # free_asr_client（此 free=免费）、llm_via_free_groq（同）。
 RENAME_STEMS: tuple[tuple[str, str], ...] = (
+    # 维护者真实账号的合集/小节 ID（账号专属，绝不出仓）→ 假号。全树 token
+    # 重写覆盖测试 fixture 与文档示例；authorized_upload 的默认映射块另由
+    # PATCHES 换成强制 env（其 old 按重写后的假号书写）。
+    ("8383206", "8110001"),
+    ("9320779", "9110001"),
+    ("8410735", "8110002"),
+    ("9364628", "9110002"),
     # scripts（含同名测试文件、docs、skills、pyproject 引用）
     ("build_lidousha_recovery_review_manifest", "build_recovery_review_manifest"),
     ("build_lidousha_cover_only_audit_scope", "build_cover_only_audit_scope"),
@@ -303,7 +310,7 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "    # 2026-08-02 +55：二轮测试修复（骨架逐键摘除治 governance:{} 必炸类、\n"
         "    # prompt 注入类模板全占位化、tag prompt JSON 契约）——维护者 8/2 /goal 授权；\n"
         "    # 测试 test_template_skeletons.py。\n"
-        '    "scripts/export_oss_snapshot.py": 2_208,\n',
+        '    "scripts/export_oss_snapshot.py": 2_241,\n',
         "",
     ),
     # --- 债务棘轮：被剥离脚本的例外条目同步移除 ---
@@ -336,6 +343,32 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "docs/pipeline/README.md",
         "   `free:/opt/bilive/autoslice/{repo,state,out,reports}` 与 B 站公开/创作中心面。",
         "   部署主机 `$AUTOSLICE_BASE/{repo,state,out,reports}` 与 B 站公开/创作中心面。",
+    ),
+    # --- 参考部署里的真实网盘挂载路径 → 中性路径（私库生产默认不动） ---
+    (
+        "ops/recording/bililive_recorder_adapter.py",
+        '            "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160"',
+        '            "/srv/live-streaming/22966160"',
+    ),
+    (
+        "ops/recording/docker-compose.bililive-recorder.yml",
+        "      - /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming:/app/Videos:rshared",
+        "      - /srv/live-streaming:/app/Videos:rshared",
+    ),
+    (
+        "ops/recording/docker-compose.bililive-recorder.yml",
+        "      - /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming:/adapter/Videos:rshared",
+        "      - /srv/live-streaming:/adapter/Videos:rshared",
+    ),
+    (
+        "ops/recording/docker-compose.bililive-recorder.yml",
+        "      - /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming:/rec/Videos:rshared",
+        "      - /srv/live-streaming:/rec/Videos:rshared",
+    ),
+    (
+        "scripts/clouddrive_upload_fatal_sentinel.sh",
+        'MOUNT="${UPLOAD_SENTINEL_MOUNT:-/root/clouddrive2/CloudNAS/CloudDrive}"',
+        'MOUNT="${UPLOAD_SENTINEL_MOUNT:-/path/to/cloud-drive}"',
     ),
     # --- 10-source：私有主机/网盘路径块改部署约定 ---
     (
@@ -975,8 +1008,8 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
     (
         "scripts/authorized_upload.py",
         "EXPECTED_SEASON_IDS = {\n"
-        '    "talk": {"season_id": 8383206, "section_id": 9320779},\n'
-        '    "song": {"season_id": 8410735, "section_id": 9364628},\n'
+        '    "talk": {"season_id": 8110001, "section_id": 9110001},\n'
+        '    "song": {"season_id": 8110002, "section_id": 9110002},\n'
         "}",
         '_SEASON_IDS_ENV = "AUTOSLICE_SEASON_IDS"\n'
         "\n"
@@ -1013,8 +1046,8 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         'def _isolated_default_upload_lock(tmp_path, monkeypatch):\n'
         '''    monkeypatch.setenv(
         "AUTOSLICE_SEASON_IDS",
-        '{"talk": {"season_id": 8383206, "section_id": 9320779},'
-        ' "song": {"season_id": 8410735, "section_id": 9364628}}',
+        '{"talk": {"season_id": 8110001, "section_id": 9110001},'
+        ' "song": {"season_id": 8110002, "section_id": 9110002}}',
     )
 '''
         '    monkeypatch.setattr(au, "DEFAULT_UPLOAD_LOCK", tmp_path / "default-upload.lock")',

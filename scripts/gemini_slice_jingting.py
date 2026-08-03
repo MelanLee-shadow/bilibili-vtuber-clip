@@ -2,7 +2,7 @@
 """
 Channel-profile-aware slice fine-transcription runner.
 
-Runs on the `free` host. Full-recording subtitles still drive rough semantic
+Runs on the media host. Full-recording subtitles still drive rough semantic
 slicing; this script refines final slice sidecars only and writes a separate
 `<slice>.jingting.srt` plus a hash/log manifest.
 

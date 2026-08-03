@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Suggest B站 upload tags for delivered slices (快速原型, 2026-07-13).
 
-当前上传链路 (free:do_upload.sh) 的 tag 是写死的 6 个基础位:
+当前上传链路 (部署宿主的 do_upload.sh) 的 tag 是写死的 6 个基础位:
     虚拟UP主,VTuber,直播切片,李豆沙,虚拟主播,VUP
 本原型为每条切片自动补充内容相关 tag, 两层来源:
 

@@ -124,7 +124,7 @@ def _snapshot(
         },
         "section": {
             "available": True,
-            "section_id": 9320779,
+            "section_id": 9110001,
             "matches": [
                 {"bvid": BVID, "aid": 101, "cid": cid, "title": title}
             ],
@@ -146,8 +146,8 @@ def _materialize(tmp_path: Path, monkeypatch):
             "source": "https://live.bilibili.com/",
         },
         "season": {
-            "season_id": 8383206,
-            "section_id": 9320779,
+            "season_id": 8110001,
+            "section_id": 9110001,
             "season_title": "小主切片",
         },
         "cover": {
@@ -201,7 +201,7 @@ class FakeAdapter:
 
     def observe(self, bvid: str, section_id: int):
         assert bvid == BVID
-        assert section_id == 9320779
+        assert section_id == 9110001
         if self.observations:
             self.last_observation = self.observations.pop(0)
         return self.last_observation

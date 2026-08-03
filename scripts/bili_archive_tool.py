@@ -6,7 +6,7 @@
   view        python3 scripts/bili_archive_tool.py view BV1xx
   换封面/标题  python3 scripts/bili_archive_tool.py edit BV1xx [--title 新标题] [--part-title 分P标题] [--cover new.png] [--tags "a,b,c"]
   零配额换源   python3 scripts/bili_archive_tool.py replace BV1xx --media new.mp4 [--cover new.png] [--title 新标题]
-  入合集       python3 scripts/bili_archive_tool.py season-add BV1xx --section-id 9320779
+  入合集       python3 scripts/bili_archive_tool.py season-add BV1xx --section-id 9110001
 
 新投稿不在此工具范围 —— 走 scripts/authorized_upload.py（授权引语冻结 +
 配额 + 台账）。编辑不占投稿配额；删稿有验证码墙，别在这里找。

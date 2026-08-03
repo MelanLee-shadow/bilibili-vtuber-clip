@@ -266,12 +266,12 @@ def test_build_edit_payload_can_replace_part_title(cookie_file):
 
 def test_season_add_treats_already_in_as_success(cookie_file):
     session, _ = make_session(cookie_file(BILIUP_SHAPE), [{"code": SEASON_ALREADY_IN_CODE}])
-    response = session.season_episode_add(9320779, aid=1, cid=2, title="t")
+    response = session.season_episode_add(9110001, aid=1, cid=2, title="t")
     assert response["code"] == SEASON_ALREADY_IN_CODE
 
     session2, _ = make_session(cookie_file(BILIUP_SHAPE), [{"code": -400}])
     with pytest.raises(RuntimeError, match="season add failed"):
-        session2.season_episode_add(9320779, aid=1, cid=2, title="t")
+        session2.season_episode_add(9110001, aid=1, cid=2, title="t")
 
 
 def test_season_episode_edit_preserves_episode_and_page_order(cookie_file):
@@ -282,8 +282,8 @@ def test_season_episode_edit_preserves_episode_and_page_order(cookie_file):
         title="【主播】新标题",
         aid=116969558771366,
         cid=40389051822,
-        season_id=8383206,
-        section_id=9320779,
+        season_id=8110001,
+        section_id=9110001,
         order=68,
         page_cids=[40389051822],
     )
@@ -296,8 +296,8 @@ def test_season_episode_edit_preserves_episode_and_page_order(cookie_file):
         "title": "【主播】新标题",
         "aid": 116969558771366,
         "cid": 40389051822,
-        "seasonId": 8383206,
-        "sectionId": 9320779,
+        "seasonId": 8110001,
+        "sectionId": 9110001,
         "sorts": [{"id": 40389051822, "sort": 1}],
         "order": 68,
     }

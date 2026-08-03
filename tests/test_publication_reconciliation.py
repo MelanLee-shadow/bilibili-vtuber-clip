@@ -483,7 +483,7 @@ def test_same_bv_completed_sidecar_can_resume_only_local_reconciliation(
             "sha256": _sha(manifest_path),
         },
         "replacement": {},
-        "season": {"section_id": 9320779},
+        "season": {"section_id": 9110001},
         "recovery_publication_authority": {
             "candidate_id": CANDIDATE,
             "aid": 1001,

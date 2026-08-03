@@ -2,7 +2,7 @@
 """
 李豆沙 自动切片监控 (lidousha auto-slice monitor)
 
-Runs locally on Ivan's Mac (cron), SSHes into the `free` host, and checks the
+Runs locally on Ivan's Mac (cron), SSHes into the recording host, and checks the
 health of the bilive auto-slice pipeline for room 22966160 (李豆沙). A former
 secondary test-room probe was removed with the recorder migration.
 
@@ -768,7 +768,7 @@ def evaluate(probe, state):
     for alert in hb.get("alerts", []):
         problems.append({"id": f"autoslice_alert_{alert['name']}", "sev": "WARN",
                          "msg": f"autoslice 近 6h 告警 {alert['name']}: {alert['last'][:160]}",
-                         "fix": "看 free:/opt/bilive/autoslice/reports/ 对应 ALERT 文件全文。"})
+                         "fix": "看 <宿主>:/opt/bilive/autoslice/reports/ 对应 ALERT 文件全文。"})
 
     # ---- finished stream but the runner hasn't concluded that date ----
     if (not live) and rec.get("mtime"):
