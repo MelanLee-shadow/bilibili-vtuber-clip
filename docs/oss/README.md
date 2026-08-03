@@ -17,8 +17,11 @@
 > 回答 agent 提出的频道问题、最后过目成品。
 >
 > 本项目需要两个**多模态** LLM 才能完整工作：一个**能听音频**的模型
-> （默认 `gemini-3.6-flash`：声学听写、字幕听音仲裁、歌词对轴），和一个
-> **能看画面**的模型（默认 `gpt-5.6-sol`：封面视觉裁判、构图/身份核验）。
+> （默认 `gemini-3.6-flash`：声学听写、字幕听音仲裁、歌词对轴——两种接入
+> **二选一**：[Google Antigravity](https://antigravity.google/) 官方订阅的
+> CLI（AGY），或 Gemini API key。**它们是同一个模型**，只是订阅面和 API 面
+> 的区别；都配上则自动按 订阅→API 的次序做配额兜底），和一个**能看画面**
+> 的模型（默认 `gpt-5.6-sol`：封面视觉裁判、构图/身份核验）。
 > 纯文本模型跑不完整条产线。
 
 ## 功能一览
@@ -80,9 +83,8 @@ AUTOSLICE_BASE=$PWD/.autoslice AUTOSLICE_BRANDING_INTRO=off \
 |---|---|
 | 一台服务器 | 推荐 8 核 / 32 GB / 500 GB+ 磁盘（4 核 16 GB 可用但并行烧录吃紧） |
 | [BililiveRecorder](https://github.com/BililiveRecorder/BililiveRecorder) | 录播姬。`ops/recording/` 是参考配置 |
-| LLM 通道 | 两条独立的腿，**都必须是多模态模型**：①**能看画面**的 GPT 系列（默认 `gpt-5.6-sol`，封面视觉裁判/构图与身份核验）经自建 [CLIProxyAPI](https://github.com/luispater/CLIProxyAPI)（`CPA_BASE_URL`/`CPA_API_KEY`）；②**能听音频**的 Gemini 系列（默认 `gemini-3.6-flash`，声学听写/听音仲裁/歌词对轴）走 `GEMINI_API_KEY` 直连官方 API，不经 CPA——CPA 上不需要配任何 Gemini 模型 |
+| LLM 通道 | 两条独立的腿，**都必须是多模态模型**：①**能看画面**的 GPT 系列（默认 `gpt-5.6-sol`，封面视觉裁判/构图与身份核验）经自建 [CLIProxyAPI](https://github.com/luispater/CLIProxyAPI)（`CPA_BASE_URL`/`CPA_API_KEY`）；②**能听音频**的 Gemini 系列（默认 `gemini-3.6-flash`，声学听写/听音仲裁/歌词对轴）——接入方式**二选一**：[Google Antigravity](https://antigravity.google/) 订阅的 CLI（AGY，`AGY_BIN`），或 `GEMINI_API_KEY` 直连官方 API（不经 CPA）。**同一个模型的两种入口**，配一个就够；都配则按 订阅→API 次序自动兜底。纯中文谈话切片的主链（BCUT ASR+CPA 校对）不碰这条腿，只有专名听音仲裁、外文/拉丁词面独立听写、歌词对轴会用——缺了这些环节明确拒绝，不会瞎猜 |
 | 系统 CJK 字体 | Linux 上 `apt install fonts-noto-cjk`（字幕烧录经 libass 用系统字体，缺了整片烧成豆腐块；profile 自带字体只管封面标题字。preflight 会检查） |
-| [Google Antigravity](https://antigravity.google/) | 谷歌官方工具，直接下载。本项目用它的命令行做"听音复核"：纯中文谈话切片的字幕通常**用不到它**；字幕专名的听音仲裁、字幕混入外文/拉丁词面时的独立听写、歌词对轴会用到——缺它时这些环节明确拒绝，不会瞎猜 |
 | [biliup](https://github.com/biliup/biliup) | 投稿 CLI。只产包评审不上传可不装 |
 | Python 3.11+，`ffmpeg` 6.1+ | 6.1 与 7.x 都在真实产线跑通过；转写用的免费必剪接口不需要 key |
 
@@ -122,7 +124,7 @@ AUTOSLICE_BASE=$PWD/.autoslice AUTOSLICE_BRANDING_INTRO=off \
 |---|---|
 | CPA | 自建 [CLIProxyAPI](https://github.com/luispater/CLIProxyAPI) 统一 LLM 入口 |
 | BCUT | 必剪开放转写接口（免费、词级毫秒时间轴的 ASR） |
-| AGY | [Google Antigravity](https://antigravity.google/) 的 CLI，本仓用作声学听写引擎 |
+| AGY | [Google Antigravity](https://antigravity.google/) 的 CLI——听音腿的**订阅接入**（与 `GEMINI_API_KEY` 是同一个模型的两种入口，二选一） |
 | bilive | 本项目部署层的约定名（`/opt/bilive` 目录、`ops/recording/` 服务名） |
 | 出版登记 | 候选 ↔ B 站稿件的对应台账，是唯一上传授权 |
 | 真值台账 | 已发布字幕修复的唯一合法记录（防止修复引入新错误） |

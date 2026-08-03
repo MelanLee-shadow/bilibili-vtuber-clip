@@ -18,14 +18,22 @@ printf '回复OK两个字' > /tmp/cpa_probe.txt
 bash scripts/llm_via_cpa.sh /tmp/cpa_probe.txt /tmp/cpa_reply.txt && cat /tmp/cpa_reply.txt
 ```
 
-## 2. Gemini key（转写精修/声学听写）— 必需
+## 2. 听音腿：AGY 订阅 或 Gemini API key（二选一）— 必需
 
-- 用途：**直连 Gemini 官方 API，不经 CPA**（CPA 上不需要配 Gemini 模型）。
-- 放哪：`.env` 的 `GEMINI_API_KEY`（可留空 `GEMINI_KEY_BACKUP` 兜底位）。
+**AGY（Google Antigravity 的 CLI）与 Gemini API key 是同一个模型
+（gemini-3.6 系）的两种接入**——订阅面 vs API 面。配一个就能跑；两个都配
+则管线自动按 **订阅→API** 的次序做配额兜底。
+
+- **接入 A（AGY 订阅）**：[Google Antigravity](https://antigravity.google/)
+  官方下载并登录；`.env` 的 `AGY_BIN` 指向其 CLI（默认 `~/.local/bin/agy`）。
+  校验：`"$AGY_BIN" --version` 有输出即可被管线调用。
+- **接入 B（API key）**：`.env` 的 `GEMINI_API_KEY`（可留空
+  `GEMINI_KEY_BACKUP` 付费兜底位），**直连官方 API、不经 CPA**。
   注意 runner 的读取路径：参考部署从 `/opt/bilive/.env` 读 GEMINI 系列 key、
   从 `$AUTOSLICE_BASE/cpa.env` 读 CPA 对——**都不读仓库根 `.env`**；非 /opt
   布局把 GEMINI key export 进 runner 的进程环境即可（子进程会继承）。
-- 校验：跑一次 README 的 `--smoke-segment` 冒烟，观察转写阶段不报 key 错。
+- 校验：`preflight.py` 的"听音腿"行；或跑一次 `--smoke-segment` 冒烟观察
+  转写阶段不报 key 错。
 
 ## 3. 录播姬的 B 站登录 — 录制层需要
 
@@ -81,8 +89,7 @@ PY
 - 安全提示：`-c "$(cat …)"` 会把 SESSDATA 放进进程 argv（本机 `ps` 可见）。
   单用户机器可接受；共享机器建议用 `BBDown login` 的官方登录态代替。
 
-## 7. AGY（Google Antigravity CLI）— talk 声学仲裁与歌切 lane
+## 7.（并入第 2 条）
 
-- 安装：[Google Antigravity](https://antigravity.google/) 官方下载并登录。
-- 放哪：`.env` 的 `AGY_BIN`（默认 `~/.local/bin/agy`）。
-- 校验：`"$AGY_BIN" --version` 有输出即可被管线调用。
+AGY 不是独立凭据：它与 Gemini API key 是**同一个模型的两种接入**，见
+上面第 2 条「听音腿」。

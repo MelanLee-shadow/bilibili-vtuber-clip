@@ -153,18 +153,23 @@ def check_env() -> None:
             "CPA env",
             "未设置——选题/校对/标题/封面 lane 会 fail-closed（见 docs/credentials.md #1）",
         )
-    if os.environ.get("GEMINI_API_KEY"):
-        _record("ok", "Gemini env", "GEMINI_API_KEY 已设置")
-    else:
-        _record("warn", "Gemini env", "未设置——转写精修/声学听写用（credentials.md #2）")
+    # 听音腿：AGY（订阅）与 GEMINI_API_KEY（API）是同一个模型的两种接入，
+    # 二选一即可；都配则管线按 订阅→API 次序自动兜底。
     agy = os.path.expanduser(os.environ.get("AGY_BIN", "~/.local/bin/agy"))
-    if Path(agy).is_file() or shutil.which(agy):
-        _record("ok", "AGY", agy)
+    agy_ok = Path(agy).is_file() or bool(shutil.which(agy))
+    gemini_ok = bool(os.environ.get("GEMINI_API_KEY"))
+    if agy_ok and gemini_ok:
+        _record("ok", "听音腿(Gemini)", f"AGY({agy}) + API key 都在——订阅→API 自动兜底")
+    elif agy_ok:
+        _record("ok", "听音腿(Gemini)", f"经 AGY 订阅接入（{agy}；可选配 GEMINI_API_KEY 作兜底）")
+    elif gemini_ok:
+        _record("ok", "听音腿(Gemini)", "经 GEMINI_API_KEY 接入（未装 AGY——同一模型，二选一即可）")
     else:
         _record(
             "warn",
-            "AGY",
-            "未找到——专名听音仲裁/外文听写/歌词对轴 lane 用（credentials.md #7）",
+            "听音腿(Gemini)",
+            "AGY 与 GEMINI_API_KEY 都缺——声学听写/听音仲裁/歌词对轴不可用；"
+            "两者是同一模型的两种接入，配一个即可（credentials.md #2）",
         )
 
 
