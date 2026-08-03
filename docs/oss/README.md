@@ -154,6 +154,14 @@ AUTOSLICE_BASE=$PWD/.autoslice AUTOSLICE_BRANDING_INTRO=off \
 - [BililiveRecorder](https://github.com/BililiveRecorder/BililiveRecorder) — 录制层。
 - [biliup](https://github.com/biliup/biliup) — 上传层。
 
+## 参与
+
+- 贡献流程与铁律：[CONTRIBUTING.md](CONTRIBUTING.md)（agent 写的 PR 完全欢迎，
+  人对结果负责）
+- 安全漏洞：走 [SECURITY.md](SECURITY.md) 的私密披露通道，不要开公开 issue
+- 行为准则：[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- CI：每个 PR 自动跑全量测试套件（无凭据无网络，密闭守卫强制）
+
 ## 许可
 
 [Apache-2.0](LICENSE)。再分发（含衍生品）须保留 `LICENSE` 与 `NOTICE`
