@@ -2191,6 +2191,10 @@ def main() -> int:
                 and rel_str in ("LICENSE", "README.md", "NOTICE")
             ):
                 continue  # 作者署名是有意公开的内容；邮箱仍禁
+            if hit and hit.group(0) == "1703797642" and rel_str == "README.md":
+                # 示例频道主页链接是维护者钦点的 README 标志物致谢；
+                # 代码/脚本等流程面仍然禁止出现该 UID。
+                continue
             if hit:
                 violations.append(
                     f"{rel_str}:{line_number}: {line.strip()[:110]}"
