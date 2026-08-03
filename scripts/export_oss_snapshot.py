@@ -269,23 +269,39 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         '# $4 = manifest 冻结的完整 tag 行（authorized_upload.py 传入, 含基础位; 上限12\n'
         '# 已实测）。无 tags 的旧 manifest 回退基础4位（维护者 2026-07-13 口径, 砍 VUP/VTuber）。\n'
         'TAGS="${4:-李豆沙,虚拟主播,虚拟UP主,直播切片}"\n'
-        'DESC="李豆沙个人主页：https://space.bilibili.com/1703797642\n'
+        'DESC="本切片由 bilibili-vtuber-clip 项目提供：https://github.com/MelanLee-shadow/bilibili-vtuber-clip\n'
+        '李豆沙个人主页：https://space.bilibili.com/1703797642\n'
         '李豆沙直播间：https://live.bilibili.com/22966160"',
         '# $4 = manifest 冻结的完整 tag 行（authorized_upload.py 传入, 含基础位; 上限12\n'
         '# 已实测）。无 tags 的旧 manifest 回退 AUTOSLICE_FALLBACK_TAGS。\n'
         '# 频道简介/tag 兜底是频道身份数据：来自环境变量（见 .env.example），不硬编码。\n'
+        '# 简介第一行默认带项目署名（README 礼节性请求的默认实现，可自行改掉）。\n'
         'TAGS="${4:-${AUTOSLICE_FALLBACK_TAGS:-虚拟主播,直播切片}}"\n'
-        'DESC="${AUTOSLICE_UPLOAD_DESC:-}"',
+        'DESC="本切片由 bilibili-vtuber-clip 项目提供：https://github.com/MelanLee-shadow/bilibili-vtuber-clip\n'
+        '${AUTOSLICE_UPLOAD_DESC:-}"',
     ),
     # --- 频道身份数据出脚本进环境：authorized_upload 的简介常量（同 do_upload） ---
     (
         "scripts/authorized_upload.py",
+        '# 简介第一行固定项目署名（维护者 指令：默认带上，含开源项目名与网址）。\n'
+        'PROJECT_ATTRIBUTION_LINE = (\n'
+        '    "本切片由 bilibili-vtuber-clip 项目提供："\n'
+        '    "https://github.com/MelanLee-shadow/bilibili-vtuber-clip"\n'
+        ')\n'
         'SUBMISSION_DESCRIPTION = (\n'
+        '    PROJECT_ATTRIBUTION_LINE + "\\n"\n'
         '    "李豆沙个人主页：https://space.bilibili.com/1703797642\\n"\n'
         '    "李豆沙直播间：https://live.bilibili.com/22966160"\n'
         ')',
-        '# 稿件简介是频道身份数据：来自环境变量（见 .env.example），不硬编码。\n'
-        'SUBMISSION_DESCRIPTION = os.environ.get("AUTOSLICE_UPLOAD_DESC", "")',
+        '# 简介第一行默认带项目署名（README 礼节性请求的默认实现；不想带可改掉）；\n'
+        '# 频道自己的简介行是身份数据：来自环境变量（见 .env.example），不硬编码。\n'
+        'PROJECT_ATTRIBUTION_LINE = (\n'
+        '    "本切片由 bilibili-vtuber-clip 项目提供："\n'
+        '    "https://github.com/MelanLee-shadow/bilibili-vtuber-clip"\n'
+        ')\n'
+        'SUBMISSION_DESCRIPTION = (\n'
+        '    PROJECT_ATTRIBUTION_LINE + "\\n" + os.environ.get("AUTOSLICE_UPLOAD_DESC", "")\n'
+        ').strip()',
     ),
     # --- 死引用：huozi skill 指向未随仓分发的 workflow 文档 ---
     (
@@ -300,12 +316,12 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         '"workflow": "docs/workflows/huozi-luanshua.md",',
         '"workflow": ".agent/skills/huozi-luanshua/SKILL.md",',
     ),
-    # --- 债务棘轮：authorized_upload 简介外化(-2)+合集ID强制配置化(+13)，账本
-    #     同步为 2938 并在此说明（升行数=显式改账本，符合棘轮纪律）---
+    # --- 债务棘轮：authorized_upload 简介外化+项目署名+合集ID强制配置化，账本
+    #     同步为 2945 并在此说明（升行数=显式改账本，符合棘轮纪律）---
     (
         "tests/test_runtime_architecture.py",
-        '"scripts/authorized_upload.py": 2_929,',
-        '"scripts/authorized_upload.py": 2_938,',
+        '"scripts/authorized_upload.py": 2_935,',
+        '"scripts/authorized_upload.py": 2_945,',
     ),
     # --- 债务棘轮：导出器自身的账本行随文件剥离一并移除（私库保留该行） ---
     (
@@ -315,7 +331,7 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "    # 2026-08-02 +55：二轮测试修复（骨架逐键摘除治 governance:{} 必炸类、\n"
         "    # prompt 注入类模板全占位化、tag prompt JSON 契约）——维护者 8/2 /goal 授权；\n"
         "    # 测试 test_template_skeletons.py。\n"
-        '    "scripts/export_oss_snapshot.py": 2_220,\n',
+        '    "scripts/export_oss_snapshot.py": 2_236,\n',
         "",
     ),
     # --- 债务棘轮：被剥离脚本的例外条目同步移除 ---

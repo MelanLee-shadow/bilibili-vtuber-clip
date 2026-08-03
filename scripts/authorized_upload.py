@@ -147,7 +147,13 @@ EXPECTED_SEASON_IDS = {
     "talk": {"season_id": 8383206, "section_id": 9320779},
     "song": {"season_id": 8410735, "section_id": 9364628},
 }
+# 简介第一行固定项目署名（Ivan 指令：默认带上，含开源项目名与网址）。
+PROJECT_ATTRIBUTION_LINE = (
+    "本切片由 bilibili-vtuber-clip 项目提供："
+    "https://github.com/MelanLee-shadow/bilibili-vtuber-clip"
+)
 SUBMISSION_DESCRIPTION = (
+    PROJECT_ATTRIBUTION_LINE + "\n"
     "李豆沙个人主页：https://space.bilibili.com/1703797642\n"
     "李豆沙直播间：https://live.bilibili.com/22966160"
 )

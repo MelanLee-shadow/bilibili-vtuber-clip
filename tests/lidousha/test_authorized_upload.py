@@ -1411,6 +1411,8 @@ def test_make_manifest_then_verify_ok(tmp_path, capsys):
     }
     assert data["description"] == (
         "https://live.bilibili.com/\n"
+        "本切片由 bilibili-vtuber-clip 项目提供："
+        "https://github.com/MelanLee-shadow/bilibili-vtuber-clip\n"
         "李豆沙个人主页：https://space.bilibili.com/1703797642\n"
         "李豆沙直播间：https://live.bilibili.com/22966160"
     )

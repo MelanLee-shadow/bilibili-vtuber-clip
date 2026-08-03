@@ -80,13 +80,15 @@ FUNCTION_DEBT_LEDGER = {
 MODULE_DEBT_LEDGER = {
     # 2026-08-02 +20：同上（manual run_mode 准入+署名门）。
     "scripts/audit_lidousha_review_package.py": 2_023,
-    "scripts/authorized_upload.py": 2_929,
+    # 2026-08-02 +6：简介第一行固定项目署名常量（Ivan 8/3 指令：默认带
+    # 项目名+网址；OSS 同步为署名+env 频道行）。
+    "scripts/authorized_upload.py": 2_935,
     # 2026-08-01 新记：OSS 发布整备（Ivan 授权）把导出器扩成改名/patch/模板引擎；
     # 私库专用构建工具，导出时自剥离，不进 OSS 面。
     # 2026-08-02 +55：二轮测试修复（骨架逐键摘除治 governance:{} 必炸类、
     # prompt 注入类模板全占位化、tag prompt JSON 契约）——Ivan 8/2 /goal 授权；
     # 测试 test_template_skeletons.py。
-    "scripts/export_oss_snapshot.py": 2_220,
+    "scripts/export_oss_snapshot.py": 2_236,
     # 2026-08-02 +15：--smoke-segment 有界 backfill（帽 3）——Ivan 8/2 /goal
     # 「全都按你的想法进行修复，当然都要配测试」授权；测试 test_smoke_backfill.py。
     # 2026-08-02 再 +3：child_env 加 PYTHONUNBUFFERED（二轮实测：候选日志因子

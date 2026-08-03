@@ -1,5 +1,7 @@
 # bilibili-vtuber-clip — 无人值守的直播录播切片流水线
 
+[![CI](https://github.com/MelanLee-shadow/bilibili-vtuber-clip/actions/workflows/ci.yml/badge.svg)](https://github.com/MelanLee-shadow/bilibili-vtuber-clip/actions/workflows/ci.yml)
+
 主播下播后，这套系统自己完成从录播到成品的全部工作：挑出值得切的片段、
 生成并校对字幕、烧录、配 AI 封面和标题，最后把等待人工过目的成品包放到
 交付目录。它为"发布错误不可接受"的场景设计：任何一步证据不齐就**拒绝交付**，
