@@ -8,6 +8,17 @@
 > An unattended VTuber-stream clipping pipeline for Bilibili (Chinese-first;
 > docs are in Chinese). Fail-closed at every stage.
 
+> [!IMPORTANT]
+> **不推荐人类手动配置本项目——请直接把整个仓库交给你的 AI agent 去配置。**
+> 本项目的配置面（profile 体系、资产模板、校验器、文档）就是按"由 agent
+> 阅读并执行"设计的，[AGENTS.md](AGENTS.md) 是它的完整操作手册；人类只需要
+> 回答 agent 提出的频道问题、最后过目成品。
+>
+> 本项目需要两个**多模态** LLM 才能完整工作：一个**能听音频**的模型
+> （默认 `gemini-3.6-flash`：声学听写、字幕听音仲裁、歌词对轴），和一个
+> **能看画面**的模型（默认 `gpt-5.6-sol`：封面视觉裁判、构图/身份核验）。
+> 纯文本模型跑不完整条产线。
+
 ## 功能一览
 
 | 功能 | 输入 | 输出 | 它做了什么 |
@@ -67,7 +78,7 @@ AUTOSLICE_BASE=$PWD/.autoslice AUTOSLICE_BRANDING_INTRO=off \
 |---|---|
 | 一台服务器 | 推荐 8 核 / 32 GB / 500 GB+ 磁盘（4 核 16 GB 可用但并行烧录吃紧） |
 | [BililiveRecorder](https://github.com/BililiveRecorder/BililiveRecorder) | 录播姬。`ops/recording/` 是参考配置 |
-| LLM 通道 | 两条独立的腿：**GPT 系列经自建 [CLIProxyAPI](https://github.com/luispater/CLIProxyAPI)**（`CPA_BASE_URL`/`CPA_API_KEY` 两个变量），**Gemini 系列走 `GEMINI_API_KEY` 直连官方 API**（转写精修/声学听写），不经 CPA——CPA 上不需要配任何 Gemini 模型 |
+| LLM 通道 | 两条独立的腿，**都必须是多模态模型**：①**能看画面**的 GPT 系列（默认 `gpt-5.6-sol`，封面视觉裁判/构图与身份核验）经自建 [CLIProxyAPI](https://github.com/luispater/CLIProxyAPI)（`CPA_BASE_URL`/`CPA_API_KEY`）；②**能听音频**的 Gemini 系列（默认 `gemini-3.6-flash`，声学听写/听音仲裁/歌词对轴）走 `GEMINI_API_KEY` 直连官方 API，不经 CPA——CPA 上不需要配任何 Gemini 模型 |
 | 系统 CJK 字体 | Linux 上 `apt install fonts-noto-cjk`（字幕烧录经 libass 用系统字体，缺了整片烧成豆腐块；profile 自带字体只管封面标题字。preflight 会检查） |
 | [Google Antigravity](https://antigravity.google/) | 谷歌官方工具，直接下载。本项目用它的命令行做"听音复核"：纯中文谈话切片的字幕通常**用不到它**；字幕专名的听音仲裁、字幕混入外文/拉丁词面时的独立听写、歌词对轴会用到——缺它时这些环节明确拒绝，不会瞎猜 |
 | [biliup](https://github.com/biliup/biliup) | 投稿 CLI。只产包评审不上传可不装 |
