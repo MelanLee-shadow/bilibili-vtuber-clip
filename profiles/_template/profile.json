@@ -49,6 +49,7 @@
       "psplive_roster_sources": "psplive_roster_sources.json",
       "publication_registry": "publication_registry.v1.json",
       "published_songs": "published_songs.v1.json",
+      "related_entity_seeds": "related_entity_seeds.json",
       "selection_score_calibration": "selection_score_calibration.v1.json",
       "session_relation_ledger": "session_relation_ledger.v1.json",
       "slice_selection_metric": "slice_selection_metric.md",

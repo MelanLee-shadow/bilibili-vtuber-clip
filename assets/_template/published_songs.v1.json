@@ -2,7 +2,7 @@
   "schema_version": "vtuber-slice.published-songs.v1",
   "profile_id": "REPLACE_ME（按你的频道改写；写法参考 assets/lidousha/ 的同名资产）",
   "account_mid": 0,
-  "verified_through": "2026-07-17T00:00:00Z",
-  "authority": "free creator-center GET /x/web/archives status=pubed plus public state=0",
+  "verified_through": "1970-01-01T00:00:00Z",
+  "authority": "REPLACE_ME（本资产的权威来源说明）",
   "songs": []
 }

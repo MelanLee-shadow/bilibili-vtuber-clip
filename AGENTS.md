@@ -60,6 +60,13 @@
 | `profiles/`、`assets/_template/`、`assets/lidousha/` | 频道 profile 模板、最小骨架与完整实战示例 |
 | `.agent/skills/` | 可复用的代理技能（发布闭环、标题风格、歌词对轴等） |
 
+**背景阅读（非规则，理解"为什么长这样"时看）**：
+[docs/auto-review-architecture.md](docs/auto-review-architecture.md)（一页式
+高层结构图：录制权威→选题→边界→字幕→封面/标题→交付→发布）、
+[docs/bilibili-ai-subtitle-via-bcut.md](docs/bilibili-ai-subtitle-via-bcut.md)
+（当初为什么选必剪免费 ASR 做中文转写层的调研底稿）。两者都不定义规则——
+规则只在 `docs/pipeline/`。
+
 ## 常用命令
 
 ```bash

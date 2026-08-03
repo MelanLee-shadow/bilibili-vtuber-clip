@@ -1,6 +1,7 @@
-# 李豆沙 autoslice 架构
+# autoslice 架构总览
 
-> 当前高层结构图。本文件不定义准入、schema、阈值或状态机；现行规则只读
+> 当前高层结构图（背景阅读；入口见 AGENTS.md）。本文件不定义准入、schema、
+> 阈值或状态机；现行规则只读
 > [pipeline/README.md](pipeline/README.md) 的对应 step 及其指向的机器强制层。
 
 ```text
