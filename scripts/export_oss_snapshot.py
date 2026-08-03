@@ -149,6 +149,11 @@ RENAME_STEMS: tuple[tuple[str, str], ...] = (
     # 维护者真实账号的合集/小节 ID（账号专属，绝不出仓）→ 假号。全树 token
     # 重写覆盖测试 fixture 与文档示例；authorized_upload 的默认映射块另由
     # PATCHES 换成强制 env（其 old 按重写后的假号书写）。
+    # 真实网盘挂载路径（部署独属）→ 中性路径：全树 token 重写，覆盖 compose/
+    # adapter/runner/监控/看门狗默认值与测试 fixture、文档残留。
+    ("/root/clouddrive2/CloudNAS/CloudDrive", "/path/to/cloud-drive"),
+    ("/123云盘/live-streaming", "/live-streaming"),
+    ("123云盘", "云盘"),
     ("8383206", "8110001"),
     ("9320779", "9110001"),
     ("8410735", "8110002"),
@@ -310,7 +315,7 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "    # 2026-08-02 +55：二轮测试修复（骨架逐键摘除治 governance:{} 必炸类、\n"
         "    # prompt 注入类模板全占位化、tag prompt JSON 契约）——维护者 8/2 /goal 授权；\n"
         "    # 测试 test_template_skeletons.py。\n"
-        '    "scripts/export_oss_snapshot.py": 2_241,\n',
+        '    "scripts/export_oss_snapshot.py": 2_220,\n',
         "",
     ),
     # --- 债务棘轮：被剥离脚本的例外条目同步移除 ---
@@ -344,32 +349,6 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "   `free:/opt/bilive/autoslice/{repo,state,out,reports}` 与 B 站公开/创作中心面。",
         "   部署主机 `$AUTOSLICE_BASE/{repo,state,out,reports}` 与 B 站公开/创作中心面。",
     ),
-    # --- 参考部署里的真实网盘挂载路径 → 中性路径（私库生产默认不动） ---
-    (
-        "ops/recording/bililive_recorder_adapter.py",
-        '            "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160"',
-        '            "/srv/live-streaming/22966160"',
-    ),
-    (
-        "ops/recording/docker-compose.bililive-recorder.yml",
-        "      - /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming:/app/Videos:rshared",
-        "      - /srv/live-streaming:/app/Videos:rshared",
-    ),
-    (
-        "ops/recording/docker-compose.bililive-recorder.yml",
-        "      - /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming:/adapter/Videos:rshared",
-        "      - /srv/live-streaming:/adapter/Videos:rshared",
-    ),
-    (
-        "ops/recording/docker-compose.bililive-recorder.yml",
-        "      - /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming:/rec/Videos:rshared",
-        "      - /srv/live-streaming:/rec/Videos:rshared",
-    ),
-    (
-        "scripts/clouddrive_upload_fatal_sentinel.sh",
-        'MOUNT="${UPLOAD_SENTINEL_MOUNT:-/root/clouddrive2/CloudNAS/CloudDrive}"',
-        'MOUNT="${UPLOAD_SENTINEL_MOUNT:-/path/to/cloud-drive}"',
-    ),
     # --- 10-source：私有主机/网盘路径块改部署约定 ---
     (
         "docs/pipeline/10-source-recording.md",
@@ -377,7 +356,7 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "- 录播姬配置：`free:/opt/bilive/bililive-recorder/config.json`；\n"
         "- adapter 状态/账本：`free:/opt/bilive/recording/`；\n"
         "- 自动切片部署：`free:/opt/bilive/autoslice/repo`（现查 `DEPLOYED_COMMIT`）；\n"
-        "- 原始录播：`free:/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/`。",
+        "- 原始录播：`free:/path/to/cloud-drive/live-streaming/22966160/`。",
         "- 录制服务：部署主机 compose 中的 `bililive_recorder`（参考 `ops/recording/`）；\n"
         "- 录播姬配置：部署主机 `bililive-recorder/config.json`；\n"
         "- adapter 状态/账本：部署主机 `recording/`；\n"
