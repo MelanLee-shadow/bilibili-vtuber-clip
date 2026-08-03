@@ -158,8 +158,15 @@ def expected_season_ids() -> dict:
             "scripts/bili_archive_tool.py view 回读该稿件的 season_id/section_id。"
         )
     return json.loads(raw)
-# 稿件简介是频道身份数据：来自环境变量（见 .env.example），不硬编码。
-SUBMISSION_DESCRIPTION = os.environ.get("AUTOSLICE_UPLOAD_DESC", "")
+# 简介第一行默认带项目署名（README 礼节性请求的默认实现；不想带可改掉）；
+# 频道自己的简介行是身份数据：来自环境变量（见 .env.example），不硬编码。
+PROJECT_ATTRIBUTION_LINE = (
+    "本切片由 bilibili-vtuber-clip 项目提供："
+    "https://github.com/MelanLee-shadow/bilibili-vtuber-clip"
+)
+SUBMISSION_DESCRIPTION = (
+    PROJECT_ATTRIBUTION_LINE + "\n" + os.environ.get("AUTOSLICE_UPLOAD_DESC", "")
+).strip()
 EXPECTED_TID = 21
 EXPECTED_COPYRIGHT = 2
 EXPECTED_SOURCE = "https://live.bilibili.com/"

@@ -16,8 +16,10 @@ VIDEO="$1"; COVER="$2"; TITLE="$3"
 # $4 = manifest 冻结的完整 tag 行（authorized_upload.py 传入, 含基础位; 上限12
 # 已实测）。无 tags 的旧 manifest 回退 AUTOSLICE_FALLBACK_TAGS。
 # 频道简介/tag 兜底是频道身份数据：来自环境变量（见 .env.example），不硬编码。
+# 简介第一行默认带项目署名（README 礼节性请求的默认实现，可自行改掉）。
 TAGS="${4:-${AUTOSLICE_FALLBACK_TAGS:-虚拟主播,直播切片}}"
-DESC="${AUTOSLICE_UPLOAD_DESC:-}"
+DESC="本切片由 bilibili-vtuber-clip 项目提供：https://github.com/MelanLee-shadow/bilibili-vtuber-clip
+${AUTOSLICE_UPLOAD_DESC:-}"
 /opt/bilive/bin/biliup -u biliup_cookies.json upload "$VIDEO" \
   --cover "$COVER" --copyright 2 --source "https://live.bilibili.com/" --tid 21 \
   --title "$TITLE" --tag "$TAGS" \

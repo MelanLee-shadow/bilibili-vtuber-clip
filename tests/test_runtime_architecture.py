@@ -80,7 +80,9 @@ FUNCTION_DEBT_LEDGER = {
 MODULE_DEBT_LEDGER = {
     # +20：同上（manual run_mode 准入+署名门）。
     "scripts/audit_review_package.py": 2_023,
-    "scripts/authorized_upload.py": 2_938,
+    # +6：简介第一行固定项目署名常量（维护者 8/3 指令：默认带
+    # 项目名+网址；OSS 同步为署名+env 频道行）。
+    "scripts/authorized_upload.py": 2_945,
     # +15：--smoke-segment 有界 backfill（帽 3）——维护者 8/2 /goal
     # 「全都按你的想法进行修复，当然都要配测试」授权；测试 test_smoke_backfill.py。
     # 再 +3：child_env 加 PYTHONUNBUFFERED（二轮实测：候选日志因子
