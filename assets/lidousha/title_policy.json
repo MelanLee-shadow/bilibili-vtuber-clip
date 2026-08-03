@@ -1,0 +1,46 @@
+{
+  "schema_version": "vtuber-slice.title-policy.v1",
+  "banned_hype_words": [
+    "炸裂",
+    "震惊",
+    "天花板",
+    "绝了",
+    "犯规",
+    "太顶"
+  ],
+  "suffix_only_hype_words": [
+    "离谱"
+  ],
+  "banned_filler_words": [
+    "直接",
+    "当场"
+  ],
+  "banned_regexes": [
+    "秒[一-鿿]"
+  ],
+  "min_length": 12,
+  "max_length": 49,
+  "max_attempts": 3,
+  "generic_hook_words": [
+    "主播",
+    "直播",
+    "弹幕",
+    "观众",
+    "自己",
+    "这个",
+    "那个",
+    "然后",
+    "时候",
+    "表演"
+  ],
+  "meaningless_particles": [
+    "让",
+    "叫",
+    "她",
+    "他",
+    "的",
+    "了",
+    "在",
+    "又"
+  ]
+}

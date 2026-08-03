@@ -1,0 +1,451 @@
+{
+  "schema_version": "lidousha-referent-groups.v2",
+  "groups": [
+    {
+      "audio_verify_all_surfaces": true,
+      "entities": [
+        {
+          "canonical": "恋青",
+          "surfaces": [
+            "恋青"
+          ],
+          "readings": [
+            "lian qing",
+            "lianqing"
+          ]
+        },
+        {
+          "canonical": "恋死",
+          "surfaces": [
+            "恋死"
+          ],
+          "readings": [
+            "lian si",
+            "liansi"
+          ]
+        }
+      ],
+      "reason": "Distinct works. Exact chat establishes spelling only after raw audio independently proves which title the streamer actually said; an immediate reply then inherits that resolved entity. 2026-07-14 kmx先例推广：文本已是规范形+音频拿不准(含断供)→保留不阻塞；误听面(梦现代/母鸡卡/木子卡等)UNCERTAIN 照旧阻塞——两组规范形间无互误听方向(音节差异大)。",
+      "uncertain_keep_canonicals": [
+        "恋青",
+        "恋死"
+      ]
+    },
+    {
+      "audio_verify_all_surfaces": true,
+      "entities": [
+        {
+          "canonical": "梦限大",
+          "surfaces": [
+            "梦限大",
+            "梦现代"
+          ],
+          "readings": [
+            "meng xian da",
+            "mengxianda",
+            "夢限大みゅーたいぷ"
+          ]
+        },
+        {
+          "canonical": "Ave Mujica",
+          "surfaces": [
+            "Ave Mujica",
+            "Mujica",
+            "母鸡卡",
+            "木子卡"
+          ],
+          "readings": [
+            "ave mujica",
+            "mujica",
+            "mu ji ka"
+          ]
+        }
+      ],
+      "reason": "Distinct BanG Dream entities. 梦限大 is time-sensitive in July 2026; recency raises candidate priority but never overrides incompatible syllables. 2026-07-14 kmx先例推广：文本已是规范形+音频拿不准(含断供)→保留不阻塞；误听面(梦现代/母鸡卡/木子卡等)UNCERTAIN 照旧阻塞——两组规范形间无互误听方向(音节差异大)。",
+      "uncertain_keep_canonicals": [
+        "梦限大",
+        "Ave Mujica"
+      ]
+    },
+    {
+      "audio_verify_all_surfaces": true,
+      "entities": [
+        {
+          "canonical": "立希",
+          "surfaces": [
+            "立希",
+            "椎名立希"
+          ],
+          "readings": [
+            "li xi",
+            "lixi",
+            "taki"
+          ]
+        },
+        {
+          "canonical": "祥子",
+          "surfaces": [
+            "祥子",
+            "丰川祥子",
+            "Saki",
+            "saki"
+          ],
+          "readings": [
+            "xiang zi",
+            "xiangzi",
+            "saki"
+          ]
+        }
+      ],
+      "reason": "Distinct BanG Dream characters. Resolve 立希 versus Saki/祥子 from actual syllables, not franchise membership alone. 2026-07-14 kmx先例推广：文本已是规范形+音频拿不准(含断供)→保留不阻塞；误听面(梦现代/母鸡卡/木子卡等)UNCERTAIN 照旧阻塞——两组规范形间无互误听方向(音节差异大)。",
+      "uncertain_keep_canonicals": [
+        "立希",
+        "祥子"
+      ]
+    },
+    {
+      "audio_verify_all_surfaces": true,
+      "entities": [
+        {
+          "canonical": "kmx",
+          "surfaces": [
+            "kmx",
+            "kimo熊",
+            "kimo 熊",
+            "Kimo熊",
+            "kimoxiong",
+            "基默熊",
+            "提莫熊",
+            "提莫的熊",
+            "提莫怂",
+            "请问熊",
+            "KY小红",
+            "KY 小红",
+            "纹熊",
+            "皮毛熊",
+            "K头小",
+            "K头头",
+            "Q我熊",
+            "Q 我熊",
+            "给我修",
+            "KO熊",
+            "KO 熊"
+          ],
+          "readings": [
+            "ki mo xiong",
+            "kimo xiong"
+          ]
+        },
+        {
+          "canonical": "乒乓球",
+          "surfaces": [
+            "乒乓球"
+          ],
+          "readings": [
+            "ping pang qiu"
+          ]
+        }
+      ],
+      "reason": "维护者 2026-07-17: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，维护者 确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 2026-07-25 维护者 叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。",
+      "uncertain_keep_canonicals": [
+        "kmx"
+      ],
+      "uncertain_keep_surfaces": [
+        "纹熊"
+      ],
+      "association_core_chars": [
+        "熊"
+      ]
+    },
+    {
+      "audio_verify_all_surfaces": true,
+      "positions": [
+        "witness_disagreement"
+      ],
+      "uncertain_keep_canonicals": [
+        "李豆沙",
+        "小李"
+      ],
+      "entities": [
+        {
+          "canonical": "李豆沙",
+          "surfaces": [],
+          "readings": [
+            "li dou sha",
+            "lidousha"
+          ]
+        },
+        {
+          "canonical": "小李",
+          "surfaces": [],
+          "readings": [
+            "xiao li",
+            "xiaoli"
+          ]
+        }
+      ],
+      "reason": "平等自称专名（维护者 铁律：说哪个写哪个，绝不互换/统一风格）。修正层引入某形态而 BCUT draft 同时轴无此形态时只记录来源差异；初始听写不是语义定稿后的硬门，禁止再交黑帧 Gemini 强制二选一改回。"
+    },
+    {
+      "audio_verify_all_surfaces": false,
+      "positions": [
+        "transcript_only"
+      ],
+      "uncertain_keep_canonicals": [
+        "素惹",
+        "素人"
+      ],
+      "uncertain_keep_surfaces": [
+        "苏人",
+        "苏惹"
+      ],
+      "entities": [
+        {
+          "canonical": "素惹",
+          "surfaces": [
+            "苏人",
+            "苏惹"
+          ],
+          "readings": [
+            "su re",
+            "sure"
+          ]
+        },
+        {
+          "canonical": "素人",
+          "surfaces": [],
+          "readings": [
+            "su ren",
+            "suren"
+          ]
+        }
+      ],
+      "reason": "素惹=男同性恋刻板印象梗词（维护者 2026-07-14，0:51 案：语境可判）。ASR 常写 苏人/苏惹；su-re vs su-ren 音频可分。误听面触发二选一；UNCERTAIN 保留。"
+    },
+    {
+      "audio_verify_all_surfaces": false,
+      "positions": [
+        "transcript_only"
+      ],
+      "uncertain_keep_canonicals": [
+        "李豆沙",
+        "小李"
+      ],
+      "uncertain_keep_surfaces": [
+        "留下",
+        "理论上",
+        "小雨",
+        "流沙",
+        "流下来",
+        "李文轩"
+      ],
+      "entities": [
+        {
+          "canonical": "李豆沙",
+          "surfaces": [
+            "留下",
+            "理论上",
+            "流沙",
+            "里头她",
+            "零三",
+            "李文轩",
+            "流下来"
+          ],
+          "readings": [
+            "li dou sha",
+            "lidousha"
+          ]
+        },
+        {
+          "canonical": "小李",
+          "surfaces": [
+            "小雨"
+          ],
+          "readings": [
+            "xiao li",
+            "xiaoli"
+          ]
+        }
+      ],
+      "reason": "自称误听拯救（2026-07-14：0:26「理论上」实为李豆沙、生日案「留下」）：仅误听面出现才触发音频二选一，改写只在音频确证时；真句「留下来」「理论上」UNCERTAIN 保留绝不阻塞。与 witness_disagreement 自称组互补：那组管修正层引入，本组管双证人同错。 2026-07-14 增：小雨(旧五年之约案，真雨天语境 UNCERTAIN 保留)。2026-07-19 增（精心设计/七星案）：流沙、里头她、零三、李文轩、流下来；流沙/流下来/李文轩 真词语境 UNCERTAIN 保留。"
+    },
+    {
+      "audio_verify_all_surfaces": false,
+      "positions": [
+        "transcript_only"
+      ],
+      "uncertain_keep_canonicals": [
+        "奶P",
+        "奶瓶"
+      ],
+      "uncertain_keep_surfaces": [
+        "奶瓶",
+        "奶皮子"
+      ],
+      "entities": [
+        {
+          "canonical": "奶P",
+          "surfaces": [
+            "奶皮子",
+            "卖批"
+          ],
+          "readings": [
+            "nai pi",
+            "naipi"
+          ]
+        },
+        {
+          "canonical": "奶瓶",
+          "surfaces": [],
+          "readings": [
+            "nai ping",
+            "naiping"
+          ]
+        }
+      ],
+      "reason": "奶P=李豆沙的粉丝梗称（百合/GL 语境「较奶的P」，维护者 2026-07-19 确认专名）。她精心设计案：介绍自己/两个字形容/弹幕计数语境里 ASR 写成 奶皮子/奶瓶/卖批。误听面出现才触发音频二选一；真奶瓶（婴儿语境）/真奶皮子（食物）UNCERTAIN 保留。"
+    },
+    {
+      "audio_verify_all_surfaces": false,
+      "positions": [
+        "transcript_only"
+      ],
+      "uncertain_keep_canonicals": [
+        "ありがとう",
+        "おめでとう"
+      ],
+      "uncertain_keep_surfaces": [],
+      "entities": [
+        {
+          "canonical": "ありがとう",
+          "surfaces": [
+            "林更多",
+            "阿里嘎多",
+            "灵感多",
+            "领个多"
+          ],
+          "readings": [
+            "a li ga dou",
+            "a ri ga tou",
+            "li gen duo"
+          ]
+        },
+        {
+          "canonical": "おめでとう",
+          "surfaces": [
+            "没得到",
+            "没得多",
+            "欧美得多"
+          ],
+          "readings": [
+            "o me de tou",
+            "omedetou",
+            "mei de dao"
+          ]
+        }
+      ],
+      "reason": "两个高频日语插话（glossary 日语插话节）。2026-07-18 七星案（维护者 确认）：谢礼物语境的 ありがとう 被 ASR 写成人名「林更多」×3——不存在叫林更多的常客，谢礼/谢SC语境优先按 ありがとう 复核；おめでとう 误听面沿 glossary（没得到系）。误听面出现才触发音频复核，规范形 UNCERTAIN 保留。"
+    },
+    {
+      "audio_verify_all_surfaces": true,
+      "entities": [
+        {
+          "canonical": "田中姬",
+          "surfaces": [
+            "田中姬",
+            "田中基"
+          ],
+          "readings": [
+            "tian zhong ji",
+            "tanaka hime"
+          ]
+        },
+        {
+          "canonical": "铃木雏",
+          "surfaces": [
+            "铃木雏"
+          ],
+          "readings": [
+            "ling mu chu",
+            "suzuki hina"
+          ]
+        },
+        {
+          "canonical": "田中雏",
+          "surfaces": [
+            "田中雏",
+            "田中楚"
+          ],
+          "readings": [
+            "tian zhong chu"
+          ]
+        },
+        {
+          "canonical": "Hime",
+          "surfaces": [
+            "Hime",
+            "提美",
+            "黑妹"
+          ],
+          "readings": [
+            "hime",
+            "ti mei",
+            "hei mei"
+          ]
+        },
+        {
+          "canonical": "Hina",
+          "surfaces": [
+            "Hina",
+            "希娜",
+            "金娜",
+            "黑那"
+          ],
+          "readings": [
+            "hina",
+            "xi na",
+            "jin na",
+            "hei na"
+          ]
+        }
+      ],
+      "reason": "HimeHina 双人组（维护者 2026-07-19 裁定，auto_134819_346_505 结婚照切片实案）：中文全名写田中姬/铃木雏，改姓玩笑混合名「田中雏」按玩笑保留不得纠正回铃木雏；罗马音单称写 Hime/Hina 首字母大写，站位语境 Hime1/Hina1。误听面（提美/黑妹/希娜/金娜/黑那/田中基/田中楚）只作方向候选，逐处须本句音频仲裁成立才按 canonical 改写；音频不确定时规范形保留、误听面照旧阻塞。",
+      "uncertain_keep_canonicals": [
+        "田中姬",
+        "铃木雏",
+        "田中雏",
+        "Hime",
+        "Hina"
+      ]
+    },
+    {
+      "audio_verify_all_surfaces": true,
+      "uncertain_keep_canonicals": [
+        "南町"
+      ],
+      "entities": [
+        {
+          "canonical": "南町",
+          "surfaces": [
+            "南町",
+            "大N",
+            "大N老师",
+            "小N",
+            "南町nightin",
+            "大恩老师",
+            "大卫老师",
+            "大黄老师",
+            "邓老师"
+          ],
+          "readings": [
+            "nan cho",
+            "nancho",
+            "da en",
+            "xiao en"
+          ]
+        }
+      ],
+      "reason": "维护者 2026-07-22：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+    }
+  ]
+}

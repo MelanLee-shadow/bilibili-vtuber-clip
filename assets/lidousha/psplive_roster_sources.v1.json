@@ -1,0 +1,42 @@
+{
+  "schema_version": "lidousha-psplive-roster-sources.v1",
+  "sources": [
+    {
+      "api_url": "https://api.bilibili.com/x/web-interface/view?bvid=BV1GTFseLESN",
+      "public_url": "https://www.bilibili.com/video/BV1GTFseLESN/",
+      "owner_mid": 454673997,
+      "owner_name": "psplive",
+      "title_contains": "虚拟艺人团体psplive",
+      "participant_marker": "参与人员",
+      "minimum_participants": 20
+    }
+  ],
+  "member_overrides": {
+    "安晚aWa": {"canonical": "安晚", "aliases": ["aWa", "awa", "awawa"]},
+    "白神遥Haruka": {"canonical": "白神遥", "aliases": ["Haruka"]},
+    "北柚香Yuka": {"canonical": "北柚香", "aliases": ["Yuka"]},
+    "病院坂Rei": {"canonical": "病院坂Rei", "aliases": ["病院坂灵", "Rei"]},
+    "春野萌Moe": {"canonical": "春野萌", "aliases": ["Moe"]},
+    "东爱璃Lovely": {"canonical": "东爱璃", "aliases": ["Lovely", "狍子", "大璃"]},
+    "红晓音Akane": {"canonical": "红晓音", "aliases": ["Akane", "Kurenai Akane"]},
+    "礼墨Sumi": {"canonical": "礼墨", "aliases": ["Sumi", "礼墨Sumi"]},
+    "李豆沙_Channel": {"canonical": "李豆沙", "aliases": ["小李", "豆沙", "Shadow Lee"]},
+    "莲汰-AiTeN": {"canonical": "莲汰", "aliases": ["AiTeN"]},
+    "綾奈奈奈": {"canonical": "綾奈奈奈", "aliases": ["绫奈奈奈", "Ayana Nana"]},
+    "露蒂丝": {"canonical": "露蒂丝", "aliases": []},
+    "盲盲Memo": {"canonical": "盲盲", "aliases": ["Memo"]},
+    "南町Nightin": {"canonical": "南町", "aliases": ["Nightin", "大N老师"]},
+    "秋凛子Rinco": {"canonical": "秋凛子", "aliases": ["Rinco"]},
+    "帅比笙歌超可爱OvO": {"canonical": "笙歌", "aliases": ["帅比笙歌超可爱OvO", "OvO"]},
+    "桃姆Q吃手手": {"canonical": "桃姆Q", "aliases": ["桃姆Q吃手手"]},
+    "汀汀汀TTT": {"canonical": "汀汀汀", "aliases": ["TTT"]},
+    "尾幼mayori": {"canonical": "尾幼", "aliases": ["mayori"]},
+    "无前Namae&Bison仓鼠": {"canonical": "无前", "aliases": ["Namae", "Bison仓鼠"]},
+    "小千村柚柚": {"canonical": "小千村柚柚", "aliases": []},
+    "星汐Seki": {"canonical": "星汐", "aliases": ["Seki", "星汐Seki"]},
+    "萱萱卡娅Kaya": {"canonical": "萱萱卡娅", "aliases": ["Kaya", "萱萱卡娅Kaya"]},
+    "叶秋羽YQY": {"canonical": "叶秋羽", "aliases": ["YQY"]},
+    "伊索尔Sol": {"canonical": "伊索尔", "aliases": ["Sol", "142"]},
+    "这是亦枝YY": {"canonical": "亦枝", "aliases": ["这是亦枝YY", "亦枝YY", "YY"]}
+  }
+}

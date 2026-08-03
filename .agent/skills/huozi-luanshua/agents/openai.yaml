@@ -1,0 +1,4 @@
+interface:
+  display_name: "活字乱刷"
+  short_description: "从主播历史直播中高置信重组语音并交付可追溯试听候选"
+  default_prompt: "Use $huozi-luanshua to reconstruct my sentence from verified Li Dousha live-stream speech."

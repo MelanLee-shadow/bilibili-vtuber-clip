@@ -1,0 +1,1996 @@
+"""终稿忠实性守卫：无证人不得改写（维护者 一九零/小李两案抽象）。
+
+类定义：LLM 修正层（AGY 缺席时尤甚）会把口语"规范化"成它认为更通顺的
+转述——「190」→「一米九」、「留下(误听的李豆沙)」→猜成「小李」。这不是
+风格问题而是无证据改写。原则（维护者 原话）：没有相关专名依据时自然要忠实
+原文。
+
+机制：BCUT draft 是逐字形态证人（ASR 按字面转写），AGY 精听是音频证人。
+draft→终稿 的每个编辑跨度必须被至少一类证人背书：
+
+- 同音重拼（内置封闭同音组：他她它TA / 的得地 / 吗嘛）；一般拼音同音
+  仍可作声学保真改字，但疑似人名/称呼的同音汉字不能靠音频模型自证写法；
+- 数字读法等价（190 ↔ 一九零/幺九零 逐字读法）；
+- 白名单规范表（硬梗表、代码切换表、实体混淆面→canonical、时效词
+  alias/confusable→canonical）——这些表本身就是有据词典；
+- 音频证人：新文本逐字出现在同 cue 的 AGY 文本里；
+- 纯标点/空白差异；
+- 整 cue 置空（幻听丢弃，修正合同明确允许）。
+
+违者只回退该最小编辑跨度；同 cue 内已经有证据的修复继续保留。终稿先按
+draft 的时间键对齐，删除/增补 cue 不再让整个守卫跳过。后续证据车道
+（chat authority / 实体音频仲裁 / 礼物链 / 硬表）
+在本守卫之后运行且各自带证据，不受影响；代词终审(_cpa_pronoun_ta_pass)
+的 tā 组已在同音白名单内。
+"""
+
+from __future__ import annotations
+
+from difflib import SequenceMatcher
+import json
+import re
+from pathlib import Path
+from typing import Any, Iterable, Mapping, Sequence
+
+from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.redelivery_subtitle_baseline import (
+    MIN_ALIGNMENT_OVERLAP_MS,
+)
+from src.autoslice.source_subtitle_truth import (
+    MIN_CUE_OVERLAP_MS,
+    source_truth_owner_windows,
+)
+
+try:  # 可选依赖：有 pypinyin 时同音判定是
+    # 真声学等价；缺失时退回下方手写封闭组保守运行，绝不因缺依赖崩产线。
+    from pypinyin import lazy_pinyin as _lazy_pinyin
+
+    _HAS_PYPINYIN = True
+except Exception:  # pragma: no cover - 依赖缺失环境
+    _lazy_pinyin = None
+    _HAS_PYPINYIN = False
+
+_HOMOPHONE_SETS: tuple[frozenset[str], ...] = (
+    frozenset({"他", "她", "它", "TA", "ta"}),
+    frozenset({"的", "得", "地"}),
+    frozenset({"吗", "嘛"}),
+)
+
+_DIGIT_READINGS: dict[str, frozenset[str]] = {
+    "0": frozenset({"零", "〇"}),
+    "1": frozenset({"一", "幺"}),
+    "2": frozenset({"二", "两"}),
+    "3": frozenset({"三"}),
+    "4": frozenset({"四"}),
+    "5": frozenset({"五"}),
+    "6": frozenset({"六"}),
+    "7": frozenset({"七"}),
+    "8": frozenset({"八"}),
+    "9": frozenset({"九"}),
+}
+
+_NON_TEXT_RX = re.compile(r"[^0-9A-Za-z一-鿿]+")
+_ARABIC_NUMBER_RX = re.compile(r"(?<![0-9A-Za-z])\d+(?:\.\d+)?(?![0-9A-Za-z])")
+_JAPANESE_KANA_RX = re.compile(r"[ぁ-ゖァ-ヺー]")
+_LATIN_WORD_RX = re.compile(r"\b[A-Za-z]+(?:['’-][A-Za-z]+)?\b")
+_EMBEDDED_LATIN_WORD_RX = re.compile(
+    r"(?<![A-Za-z])[A-Za-z]+(?:['’-][A-Za-z]+)?(?![A-Za-z])"
+)
+_CP_FORMULA_RX = re.compile(
+    r"(?i)(?<![A-Za-z])(?:[nlhb][\s._-]*){2,}(?![A-Za-z])"
+)
+_CHINESE_ROMANIZED_PRONOUN_RX = re.compile(r"(?<![A-Za-z])TA(?![A-Za-z])")
+_QUESTION_INTENT_RX = re.compile(
+    r"为什么|怎么样|怎么|什么|哪里|哪儿|哪个|哪位|多少|何时|谁|几(?:个|点|岁|次|天|年|位|只|条|遍|回|分钟|小时)"
+)
+_NAME_LIKE_PREFIXES = ("小", "老", "阿")
+_NAME_LIKE_SUFFIXES = (
+    "老师",
+    "姐姐",
+    "哥哥",
+    "妈妈",
+    "爸爸",
+    "神",
+    "姐",
+    "哥",
+    "酱",
+    "桑",
+    "君",
+    "总",
+    "宝",
+)
+_SAFE_CODE_SWITCH_PHRASE_RX = re.compile(
+    r"(?i)(?<![A-Za-z0-9])3D\s*Live(?![A-Za-z0-9])"
+)
+_SRT_CLOCK_RX = re.compile(r"^(\d{2}):(\d{2}):(\d{2}),(\d{3})$")
+_IMPOSSIBLE_PUNCTUATION_RX = re.compile(r"[,，]\s*([。！？!?])")
+_SAFE_CODE_SWITCH_WORDS = frozenset(
+    {
+        "ado",
+        "ai",
+        "awa",
+        # 909_1014: two independent Chinese ASR passes rendered
+        # the same spoken technical sentence as staff/斯大夫 + bug.  These
+        # ordinary live-production loanwords are lexical code-switches, not
+        # the multi-word English-salad failure this guard is meant to catch.
+        "bug",
+        # Bilibili handles frequently keep the literal ``_Channel`` suffix;
+        # paired with SC this is a structured-chat name surface, not an
+        # English phrase that needs acoustic retranscription.
+        "channel",
+        # cosplay 族：她口播日语借词音
+        # コスプレ，中文观众惯写 cosplay/cos——正当中英混写，见证人
+        # 报 ja + 罗马音相似度 0 是拼写系统差异，不是外语整句误解码。
+        "cos",
+        "coser",
+        "cosplay",
+        "fate",
+        "galgame",
+        "hime",
+        "himehina",
+        "hina",
+        "id",
+        "kmx",
+        "level",
+        "mujica",
+        "mygo",
+        "ok",
+        "san",
+        "sc",
+        "soyo",
+        "staff",
+        "sumi",
+        "testarossa",
+        "vip",
+    }
+)
+
+
+def _strip_non_text(value: str) -> str:
+    return _NON_TEXT_RX.sub("", value)
+
+
+def _is_cp_formula_text(value: str) -> bool:
+    letters = "".join(re.findall(r"[A-Za-z]", value)).lower()
+    return len(letters) >= 2 and set(letters) <= set("nlhb")
+
+
+def _homophone_representative(char: str) -> str:
+    for group in _HOMOPHONE_SETS:
+        if char in group:
+            return sorted(group)[0]
+    return char
+
+
+def _toneless_syllables(value: str) -> tuple[str, ...]:
+    """去声调音节序列（非汉字符号原样小写保留，如 TA/psp/数字）。"""
+
+    stripped = _strip_non_text(value)
+    if not stripped or _lazy_pinyin is None:
+        return ()
+    return tuple(s.lower() for s in _lazy_pinyin(stripped) if s)
+
+
+def _homophone_equal(left: str, right: str) -> bool:
+    a, b = _strip_non_text(left), _strip_non_text(right)
+    if len(a) == len(b) and all(
+        _homophone_representative(x) == _homophone_representative(y)
+        for x, y in zip(a, b)
+    ):
+        # 手写封闭组优先：覆盖 pypinyin 多音字口径差（的/地、TA）。
+        return True
+    if _HAS_PYPINYIN and a and b:
+        sa, sb = _toneless_syllables(a), _toneless_syllables(b)
+        return bool(sa) and sa == sb
+    return False
+
+
+def _near_homophone_equal(left: str, right: str) -> bool:
+    """Allow only the common ``-n``/``-ng`` ASR boundary drift.
+
+    This is deliberately narrower than a general pinyin-similarity score.  It
+    exists for name/address orthography protection: an audio refiner cannot
+    turn a draft spelling such as ``毁神`` into ``绘声`` merely because both
+    renderings fit nearly identical syllables.
+    """
+
+    left_syllables = _toneless_syllables(left)
+    right_syllables = _toneless_syllables(right)
+    if not left_syllables or len(left_syllables) != len(right_syllables):
+        return False
+
+    def collapse_nasal_final(syllable: str) -> str:
+        return syllable[:-1] if syllable.endswith("ng") else syllable
+
+    return all(
+        collapse_nasal_final(a) == collapse_nasal_final(b)
+        for a, b in zip(left_syllables, right_syllables)
+    )
+
+
+def _question_intent_signature(value: str) -> tuple[str, ...]:
+    """Meaning-bearing interrogatives; changing the family changes the question."""
+
+    return tuple(match.group(0) for match in _QUESTION_INTENT_RX.finditer(value))
+
+
+def _revert_name_like_homophone_rewrites(
+    draft_text: str, final_text: str
+) -> tuple[str, list[dict[str, str]]]:
+    """Revert only ambiguous homophone edits in a name/address slot.
+
+    Audio can distinguish ``liu xia`` from ``li dou sha`` but it cannot decide
+    whether the same ``hui shen`` syllables are written 毁神 or 灰神.  Common
+    address morphology bounds the conservative rule so ordinary lexical fixes
+    such as 季下→记下 remain eligible.  Other independently witnessed edits in
+    the same cue remain intact.
+    """
+
+    matcher = SequenceMatcher(None, draft_text, final_text, autojunk=False)
+    rebuilt: list[str] = []
+    reverted: list[dict[str, str]] = []
+    for op, a1, a2, b1, b2 in matcher.get_opcodes():
+        if op == "equal":
+            rebuilt.append(final_text[b1:b2])
+            continue
+        before = draft_text[a1:a2]
+        after = final_text[b1:b2]
+        if op != "replace" or not before or not after or before == after:
+            rebuilt.append(after)
+            continue
+        left = final_text[max(0, b1 - 2) : b1]
+        right = final_text[b2 : b2 + 3]
+        name_like = any(
+            left.endswith(prefix) for prefix in _NAME_LIKE_PREFIXES
+        ) or any(
+            right.startswith(suffix) for suffix in _NAME_LIKE_SUFFIXES
+        ) or any(
+            before.startswith(prefix) for prefix in _NAME_LIKE_PREFIXES
+        ) or any(
+            before.endswith(suffix) for suffix in _NAME_LIKE_SUFFIXES
+        )
+        if not name_like or not (
+            _homophone_equal(before, after)
+            or _near_homophone_equal(before, after)
+        ):
+            rebuilt.append(after)
+            continue
+        rebuilt.append(before)
+        reverted.append({"draft_span": before, "final_span": after})
+    return "".join(rebuilt), reverted
+
+
+def digit_reading_equivalent(left: str, right: str) -> bool:
+    """「190」↔「一九零/幺九零」逐字读法等价；插入量词（一米九）不算。"""
+
+    a, b = _strip_non_text(left), _strip_non_text(right)
+    if not a or not b:
+        return False
+    if not (a.isdigit() or b.isdigit()):
+        return False
+    digits, reading = (a, b) if a.isdigit() else (b, a)
+    if len(digits) != len(reading):
+        return False
+    return all(
+        reading[i] in _DIGIT_READINGS.get(digit, frozenset())
+        for i, digit in enumerate(digits)
+    )
+
+
+def _sanctioned_match(
+    draft_span: str, final_span: str, pairs: Iterable[tuple[str, str]]
+) -> bool:
+    for surface, canonical in pairs:
+        if not surface or not canonical:
+            continue
+        if draft_span == surface and final_span == canonical:
+            return True
+        if surface in draft_span and draft_span.replace(surface, canonical, 1) == final_span:
+            return True
+    return False
+
+
+def _sanctioned_cue_equal(
+    draft_text: str, final_text: str, pairs: Iterable[tuple[str, str]]
+) -> bool:
+    """Cue 级白名单改写（SequenceMatcher 会把「直女→侄女」切成「直→侄」，
+    跨度级匹配不到表对，所以整句层面先试一次单表对应用）。
+
+    比对做去标点归一：修复层按词表把
+    音译误听换成日语原词时顺带调了标点（尾部「！」），精确相等把内容
+    正确的白名单改写冤枉成无见证外语引入。标点渲染差异不是内容差异。
+    """
+
+    final_norm = _strip_non_text(final_text)
+    for surface, canonical in pairs:
+        if surface and canonical and surface in draft_text:
+            if _strip_non_text(draft_text.replace(surface, canonical)) == final_norm:
+                return True
+    return False
+
+
+def sanctioned_respell_pairs() -> frozenset[tuple[str, str]]:
+    """白名单规范表汇总——委托唯一加载源 term_authority（屎山
+    整改：此前与审片员各自读表，两把尺漂移正是「立语→俚语」险案的病根）。"""
+
+    from src.autoslice.term_authority import respell_pairs
+
+    return respell_pairs()
+
+
+def _span_verdict(
+    op: str,
+    draft_span: str,
+    final_span: str,
+    *,
+    agy_cue_text: str | None,
+    corroborating_cue_text: str | None,
+    corroborating_texts: Iterable[str],
+    pairs: Iterable[tuple[str, str]],
+) -> str | None:
+    """Return None when the span is witnessed, else a bounded violation code."""
+
+    if not _strip_non_text(draft_span) and not _strip_non_text(final_span):
+        return None
+    if op == "replace":
+        if _homophone_equal(draft_span, final_span):
+            return None
+        if digit_reading_equivalent(draft_span, final_span):
+            return None
+        if _sanctioned_match(draft_span, final_span, pairs):
+            return None
+        if agy_cue_text and _strip_non_text(final_span) and _strip_non_text(final_span) in _strip_non_text(agy_cue_text):
+            return None
+        if _corroborating_repeat_support(
+            final_span,
+            cue_text=corroborating_cue_text,
+            all_texts=corroborating_texts,
+        ):
+            return None
+        return "REPLACE_UNWITNESSED"
+    if op == "insert":
+        if agy_cue_text and _strip_non_text(final_span) and _strip_non_text(final_span) in _strip_non_text(agy_cue_text):
+            return None
+        if _corroborating_repeat_support(
+            final_span,
+            cue_text=corroborating_cue_text,
+            all_texts=corroborating_texts,
+        ):
+            return None
+        return "INSERT_UNWITNESSED"
+    if op == "delete":
+        if len(_strip_non_text(draft_span)) <= 2:
+            return None
+        if agy_cue_text is not None and _strip_non_text(draft_span) not in _strip_non_text(agy_cue_text):
+            # 双证人都没有这段（BCUT 幻听、AGY 未闻）→ 允许删。
+            return None
+        return "DELETE_UNWITNESSED"
+    return None
+
+
+def _corroborating_repeat_support(
+    final_span: str,
+    *,
+    cue_text: str | None,
+    all_texts: Iterable[str],
+) -> bool:
+    """Use a fallback listen only when the same non-trivial span recurs.
+
+    A hash-bound API fallback did hear the audio, but it is not an independent
+    witness for its own one-off guess.  Requiring the current cue plus another
+    cue to contain the same span turns it into bounded repetition support
+    without globally trusting every fallback rewrite.  Single-character slots
+    such as ``提`` are intentionally ineligible.
+    """
+
+    needle = _strip_non_text(final_span)
+    if len(needle) < 2 or cue_text is None:
+        return False
+    if needle not in _strip_non_text(cue_text):
+        return False
+    return (
+        sum(1 for text in all_texts if needle in _strip_non_text(text))
+        >= 2
+    )
+
+
+def apply_subtitle_fidelity_guard(
+    draft_srt: str,
+    corrected_srt: str,
+    *,
+    agy_srt: str | None = None,
+    corroborating_srt: str | None = None,
+    sanctioned: Iterable[tuple[str, str]] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Revert only unwitnessed spans on the immutable draft timeline."""
+
+    pairs = tuple(sanctioned) if sanctioned is not None else tuple(sanctioned_respell_pairs())
+    draft_cues = parse_srt_cues(draft_srt)
+    final_cues = parse_srt_cues(corrected_srt)
+    audit: dict[str, Any] = {
+        "schema_version": "subtitle-fidelity-audit.v2",
+        "agy_witness_available": agy_srt is not None,
+        "corroborating_audio_available": corroborating_srt is not None,
+        "reverted": [],
+        "hallucination_drops": [],
+        "unauthorized_drops_reverted": [],
+        "alignment_gaps": [],
+        "ignored_final_cues": [],
+    }
+    agy_cues = parse_srt_cues(agy_srt) if agy_srt else []
+    corroborating_cues = (
+        parse_srt_cues(corroborating_srt) if corroborating_srt else []
+    )
+
+    def by_timing(cues):
+        grouped: dict[tuple[int, int], list[Any]] = {}
+        for cue in cues:
+            grouped.setdefault((cue.start_ms, cue.end_ms), []).append(cue)
+        return grouped
+
+    final_by_timing = by_timing(final_cues)
+    agy_by_timing = by_timing(agy_cues)
+    corroborating_by_timing = by_timing(corroborating_cues)
+    draft_timing_keys = {(cue.start_ms, cue.end_ms) for cue in draft_cues}
+    for cue in final_cues:
+        if (cue.start_ms, cue.end_ms) not in draft_timing_keys:
+            audit["ignored_final_cues"].append(
+                {
+                    "start_ms": cue.start_ms,
+                    "end_ms": cue.end_ms,
+                    "text": cue.text,
+                    "reason_code": "FINAL_CUE_HAS_NO_DRAFT_TIMING_KEY",
+                }
+            )
+
+    out_lines: list[str] = []
+    for index, draft_cue in enumerate(draft_cues, start=1):
+        timing_key = (draft_cue.start_ms, draft_cue.end_ms)
+        exact_final = final_by_timing.get(timing_key) or []
+        if len(exact_final) == 1:
+            final_text = exact_final[0].text
+        elif len(exact_final) > 1:
+            final_text = draft_cue.text
+            audit["alignment_gaps"].append(
+                {
+                    "cue_index": index,
+                    "start_ms": draft_cue.start_ms,
+                    "end_ms": draft_cue.end_ms,
+                    "reason_code": "FINAL_TIMING_KEY_AMBIGUOUS",
+                }
+            )
+        else:
+            overlapping = [
+                cue
+                for cue in final_cues
+                if min(cue.end_ms, draft_cue.end_ms)
+                > max(cue.start_ms, draft_cue.start_ms)
+            ]
+            if overlapping:
+                final_text = draft_cue.text
+                audit["alignment_gaps"].append(
+                    {
+                        "cue_index": index,
+                        "start_ms": draft_cue.start_ms,
+                        "end_ms": draft_cue.end_ms,
+                        "reason_code": "FINAL_TIMING_DRIFT_OR_MERGE",
+                        "overlapping_final_cue_count": len(overlapping),
+                    }
+                )
+            else:
+                # A correction model omitting a cue is not acoustic evidence
+                # that the source is silent.  Keep the draft timing key; the
+                # later acoustic_drop_cue lane is the only authority allowed
+                # to delete a whole audible/inaudible cue.
+                final_text = ""
+                audit["alignment_gaps"].append(
+                    {
+                        "cue_index": index,
+                        "start_ms": draft_cue.start_ms,
+                        "end_ms": draft_cue.end_ms,
+                        "reason_code": "FINAL_CUE_MISSING_UNAUTHORIZED",
+                    }
+                )
+        draft_text = draft_cue.text
+        exact_agy = agy_by_timing.get(timing_key) or []
+        agy_text = exact_agy[0].text if len(exact_agy) == 1 else None
+        exact_corroborating = corroborating_by_timing.get(timing_key) or []
+        corroborating_text = (
+            exact_corroborating[0].text
+            if len(exact_corroborating) == 1
+            else None
+        )
+        kept = final_text
+        if final_text != draft_text:
+            sanctioned_cue = _sanctioned_cue_equal(draft_text, final_text, pairs)
+            candidate_text = final_text
+            name_orthography_reverts: list[dict[str, str]] = []
+            if not sanctioned_cue:
+                candidate_text, name_orthography_reverts = (
+                    _revert_name_like_homophone_rewrites(draft_text, final_text)
+                )
+            question_intent_changed = (
+                _question_intent_signature(draft_text)
+                != _question_intent_signature(candidate_text)
+            )
+            kept = candidate_text
+            if name_orthography_reverts:
+                audit["reverted"].append(
+                    {
+                        "cue_index": index,
+                        "draft": draft_text,
+                        "attempted": final_text,
+                        "kept": candidate_text,
+                        "violations": [
+                            {
+                                "op": "replace",
+                                "draft_span": row["draft_span"],
+                                "final_span": row["final_span"],
+                                "reason": "HOMOPHONE_NAME_ORTHOGRAPHY_UNWITNESSED",
+                            }
+                            for row in name_orthography_reverts
+                        ],
+                    }
+                )
+            if not candidate_text.strip():
+                kept = draft_text
+                drop_reversion = {
+                    "cue_index": index,
+                    "draft": draft_text,
+                    "attempted": final_text,
+                    "kept": kept,
+                    "agy_same_timing_text": agy_text,
+                    "corroborating_same_timing_text": corroborating_text,
+                    "reason_code": "CUE_DELETION_REQUIRES_ACOUSTIC_AUTHORITY",
+                }
+                audit["unauthorized_drops_reverted"].append(drop_reversion)
+                audit["reverted"].append(
+                    {
+                        **drop_reversion,
+                        "violations": [
+                            {
+                                "op": "delete",
+                                "draft_span": draft_text[:40],
+                                "final_span": "",
+                                "reason": (
+                                    "CUE_DELETION_REQUIRES_ACOUSTIC_AUTHORITY"
+                                ),
+                            }
+                        ],
+                    }
+                )
+            elif question_intent_changed and not sanctioned_cue:
+                kept = draft_text
+                audit["reverted"].append(
+                    {
+                        "cue_index": index,
+                        "draft": draft_text,
+                        "attempted": final_text,
+                        "kept": kept,
+                        "violations": [
+                            {
+                                "op": "replace",
+                                "draft_span": draft_text[:40],
+                                "final_span": candidate_text[:40],
+                                "reason": "QUESTION_INTENT_UNWITNESSED",
+                            }
+                        ],
+                    }
+                )
+            elif candidate_text == draft_text:
+                pass
+            elif agy_text is not None and _strip_non_text(candidate_text) == _strip_non_text(agy_text):
+                pass  # 整句采信音频证人
+            elif _homophone_equal(draft_text, candidate_text):
+                pass
+            elif sanctioned_cue:
+                pass
+            else:
+                violations: list[dict[str, str]] = []
+                rebuilt: list[str] = []
+                matcher = SequenceMatcher(None, draft_text, candidate_text, autojunk=False)
+                for op, a1, a2, b1, b2 in matcher.get_opcodes():
+                    if op == "equal":
+                        rebuilt.append(draft_text[a1:a2])
+                        continue
+                    verdict = _span_verdict(
+                        op,
+                        draft_text[a1:a2],
+                        candidate_text[b1:b2],
+                        agy_cue_text=agy_text,
+                        corroborating_cue_text=corroborating_text,
+                        corroborating_texts=(
+                            cue.text for cue in corroborating_cues
+                        ),
+                        pairs=pairs,
+                    )
+                    if verdict:
+                        rebuilt.append(draft_text[a1:a2])
+                        violations.append(
+                            {
+                                "op": op,
+                                "draft_span": draft_text[a1:a2][:40],
+                                "final_span": candidate_text[b1:b2][:40],
+                                "reason": verdict,
+                            }
+                        )
+                    else:
+                        rebuilt.append(candidate_text[b1:b2])
+                if violations:
+                    kept = "".join(rebuilt)
+                    audit["reverted"].append(
+                        {
+                            "cue_index": index,
+                            "draft": draft_text,
+                            "attempted": final_text,
+                            "kept": kept,
+                            "violations": violations,
+                        }
+                    )
+        start = draft_cue.start_ms
+        end = draft_cue.end_ms
+        out_lines.append(
+            f"{index}\n{_ms_to_ts(start)} --> {_ms_to_ts(end)}\n{kept}\n"
+        )
+    audit["draft_cue_count"] = len(draft_cues)
+    audit["final_cue_count"] = len(final_cues)
+    audit["status"] = (
+        "APPLIED"
+        if audit["reverted"]
+        else (
+            "ALIGNED_WITH_GAPS"
+            if audit["alignment_gaps"] or audit["ignored_final_cues"]
+            else "CLEAN"
+        )
+    )
+    audit["reverted_count"] = len(audit["reverted"])
+    return "\n".join(out_lines), audit
+
+
+def apply_numeric_fact_provenance_guard(
+    draft_srt: str,
+    final_srt: str,
+    *,
+    structured_evidence: Iterable[object] = (),
+    matched_structured_evidence: Iterable[Mapping[str, Any]] = (),
+    evidence_pre_ms: int = 10_000,
+    evidence_post_ms: int = 15_000,
+) -> tuple[str, dict[str, Any]]:
+    """Revert Arabic-number facts introduced without an independent source.
+
+    A multimodal correction model is not an independent witness for a number
+    it introduced itself (``0.4`` incident).  A numeric token may survive when
+    it was already present on the initial ASR timeline, when same-time
+    structured chat/SC contains that exact token, or when the chat-authority
+    stage has already matched that exact structured text to the cue's spoken
+    span.  The full cue is reverted so the number and its surrounding fact
+    phrase cannot be validated separately.
+    """
+
+    draft_cues = parse_srt_cues(draft_srt)
+    final_cues = parse_srt_cues(final_srt)
+    audit: dict[str, Any] = {
+        "schema_version": "numeric-fact-provenance-audit.v1",
+        "status": "CLEAN",
+        "reverted": [],
+        "supported": [],
+    }
+    if len(draft_cues) != len(final_cues):
+        audit["status"] = "SKIPPED_CUE_COUNT_MISMATCH"
+        return final_srt, audit
+    evidence_rows: list[tuple[int, str, str]] = []
+    for item in structured_evidence:
+        try:
+            offset_ms = int(getattr(item, "offset_ms"))
+            text = str(getattr(item, "text"))
+            kind = str(getattr(item, "kind"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        evidence_rows.append((offset_ms, text, kind))
+    matched_evidence_rows: list[dict[str, Any]] = []
+    for item in matched_structured_evidence:
+        if item.get("survived") is not True:
+            continue
+        try:
+            matched_start_ms = int(item["matched_start_ms"])
+            matched_end_ms = int(item["matched_end_ms"])
+            text = str(item["exact_text"])
+            kind = str(item["kind"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if matched_end_ms <= matched_start_ms:
+            continue
+        matched_evidence_rows.append(
+            {
+                "evidence_id": str(item.get("evidence_id") or ""),
+                "kind": kind,
+                "matched_start_ms": matched_start_ms,
+                "matched_end_ms": matched_end_ms,
+                "text": text,
+            }
+        )
+
+    rendered: list[str] = []
+    for index, (draft_cue, final_cue) in enumerate(
+        zip(draft_cues, final_cues), start=1
+    ):
+        final_tokens = tuple(match.group(0) for match in _ARABIC_NUMBER_RX.finditer(final_cue.text))
+        draft_tokens = set(
+            match.group(0) for match in _ARABIC_NUMBER_RX.finditer(draft_cue.text)
+        )
+        unsupported: list[dict[str, Any]] = []
+        for token in final_tokens:
+            if token in draft_tokens:
+                continue
+            support = [
+                {
+                    "kind": kind,
+                    "offset_ms": offset_ms,
+                    "text": text,
+                }
+                for offset_ms, text, kind in evidence_rows
+                if final_cue.start_ms - evidence_pre_ms
+                <= offset_ms
+                <= final_cue.end_ms + evidence_post_ms
+                and token in text
+            ]
+            support.extend(
+                {
+                    **row,
+                    "basis": "chat_authority_matched_spoken_span",
+                }
+                for row in matched_evidence_rows
+                if max(
+                    0,
+                    min(final_cue.end_ms, row["matched_end_ms"])
+                    - max(final_cue.start_ms, row["matched_start_ms"]),
+                )
+                > 0
+                and token in row["text"]
+            )
+            if support:
+                audit["supported"].append(
+                    {
+                        "cue_index": index,
+                        "token": token,
+                        "evidence": support,
+                    }
+                )
+                continue
+            unsupported.append(
+                {
+                    "token": token,
+                    "reason_code": "NUMERIC_TOKEN_ABSENT_FROM_INITIAL_ASR_AND_STRUCTURED_EVIDENCE",
+                }
+            )
+        kept = draft_cue.text if unsupported else final_cue.text
+        if unsupported:
+            audit["reverted"].append(
+                {
+                    "cue_index": index,
+                    "start_ms": final_cue.start_ms,
+                    "end_ms": final_cue.end_ms,
+                    "draft": draft_cue.text,
+                    "attempted": final_cue.text,
+                    "unsupported": unsupported,
+                }
+            )
+        rendered.append(
+            f"{index}\n{_ms_to_ts(final_cue.start_ms)} --> "
+            f"{_ms_to_ts(final_cue.end_ms)}\n{kept}"
+        )
+    if audit["reverted"]:
+        audit["status"] = "REVERTED_UNPROVEN_NUMERIC_FACT"
+    audit["reverted_count"] = len(audit["reverted"])
+    return "\n\n".join(rendered) + ("\n" if rendered else ""), audit
+
+
+_WITNESS_STRIP_RX = re.compile(r"[\s，。！？!?、；;：:…“”\"'（）()《》]+")
+
+
+def _phonetic_transliteration_witness(
+    source_text: str, final_text: str
+) -> dict[str, Any] | None:
+    """假名引入的拼音见证。
+
+    注册外语插话实体（term_authority.foreign_insert_entities）的注册误听面
+    走 sanctioned 对；**新变体**靠这里：剥掉两文本公共前后缀，剩余段若
+    final 侧＝实体 canonical、draft 侧与其 readings 拼音对齐 ≥0.55，即构成
+    有见证的转写修复。发现引擎在此只当证人，不当改写权。"""
+
+    try:
+        from src.autoslice.term_authority import foreign_insert_entities
+        from src.autoslice.phonetic_scan import _aligned_score, _syllables
+
+        entities = foreign_insert_entities()
+    except Exception:
+        return None
+    if not entities:
+        return None
+    # 公共前后缀在去标点形态上对齐（r7 案：尾部多一个「。」就
+    # 掐断了后缀匹配）——标点渲染差异不是内容差异。
+    source_clean = _WITNESS_STRIP_RX.sub("", source_text)
+    final_clean = _WITNESS_STRIP_RX.sub("", final_text)
+    prefix = 0
+    while (
+        prefix < len(source_clean)
+        and prefix < len(final_clean)
+        and source_clean[prefix] == final_clean[prefix]
+    ):
+        prefix += 1
+    suffix = 0
+    while (
+        suffix < len(source_clean) - prefix
+        and suffix < len(final_clean) - prefix
+        and source_clean[len(source_clean) - 1 - suffix]
+        == final_clean[len(final_clean) - 1 - suffix]
+    ):
+        suffix += 1
+    draft_mid = source_clean[prefix : len(source_clean) - suffix]
+    final_mid = final_clean[prefix : len(final_clean) - suffix]
+    if not draft_mid or not final_mid:
+        return None
+    for canonical, readings in entities:
+        # 连说形态——
+        # final 段允许是 canonical 的 1-3 次重复；draft 段只需与单次读音
+        # 对齐（ASR 常把连说塌缩成一个乱码）。
+        repeat = 0
+        for n in (1, 2, 3):
+            if final_mid == canonical * n:
+                repeat = n
+                break
+        if repeat == 0:
+            continue
+        spaced = [r.split() for r in readings if " " in str(r)]
+        window = _syllables(draft_mid)
+        if not spaced or not window:
+            continue
+        score = max(
+            _aligned_score(window, reading * n)
+            for reading in spaced
+            for n in range(1, repeat + 1)
+        )
+        if score >= 0.55:
+            return {
+                "target": canonical,
+                "draft_segment": draft_mid,
+                "repeat": repeat,
+                "phonetic_score": round(score, 3),
+            }
+    return None
+
+
+def _structured_chat_name_witness(
+    final_text: str,
+    names: Sequence[str],
+) -> dict[str, Any] | None:
+    """Witness kana that comes verbatim from a bound structured-chat name.
+
+    A superchat/gift sender's username is authoritative platform text, so its
+    script is not decidable from how the host pronounces it — she routinely
+    reads a kana handle with Chinese pronunciation.  A name copied verbatim
+    from the candidate's bound chat record therefore witnesses its own kana.
+    The exemption is exact and total: every kana in the cue must fall inside
+    such a name, so an invented Japanese clause riding alongside a real name
+    still fails closed.
+    """
+
+    matched: list[str] = []
+    remainder = final_text
+    for name in sorted({str(name) for name in names if str(name).strip()}, key=len, reverse=True):
+        if _JAPANESE_KANA_RX.search(name) and name in remainder:
+            matched.append(name)
+            remainder = remainder.replace(name, "")
+    if not matched or _JAPANESE_KANA_RX.search(remainder):
+        return None
+    return {
+        "kind": "structured_chat_name",
+        "names": sorted(matched),
+    }
+
+
+def apply_source_language_preservation_guard(
+    draft_srt: str,
+    final_srt: str,
+    *,
+    sanctioned: Iterable[tuple[str, str]] | None = None,
+    structured_chat_names: Sequence[str] = (),
+) -> tuple[str, dict[str, Any]]:
+    """Keep foreign-language speech in its spoken language during correction.
+
+    The subtitle correction lane fixes transcription; it is not a translation
+    lane.  In particular, an embedded Japanese game/anime voice must not become
+    an invented Chinese paraphrase.  A whole-cue sanctioned proper-name
+    respelling is still allowed because that is transcript normalization rather
+    than translation.  Kana restored verbatim from a bound structured-chat
+    sender/gift name is likewise transcript fidelity, not translation.
+    """
+
+    pairs = (
+        tuple(sanctioned)
+        if sanctioned is not None
+        else tuple(sanctioned_respell_pairs())
+    )
+    draft_cues = parse_srt_cues(draft_srt)
+    final_cues = parse_srt_cues(final_srt)
+    audit: dict[str, Any] = {
+        "schema_version": "source-language-preservation-audit.v1",
+        "status": "CLEAN",
+        "reverted": [],
+        "unproven_foreign_introductions": [],
+    }
+    cue_count_matches = len(draft_cues) == len(final_cues)
+    if not cue_count_matches:
+        audit["draft_cue_count"] = len(draft_cues)
+        audit["final_cue_count"] = len(final_cues)
+
+    introduced_kana_rows: list[dict[str, Any]] = []
+    for index, final_cue in enumerate(final_cues, start=1):
+        if cue_count_matches:
+            source_text = draft_cues[index - 1].text
+        else:
+            # Correction providers occasionally re-segment without changing
+            # the timeline.  Cue-count drift must not disable the language
+            # gate: bind each final cue to every overlapping source witness.
+            source_text = " ".join(
+                cue.text
+                for cue in draft_cues
+                if cue.start_ms < final_cue.end_ms and cue.end_ms > final_cue.start_ms
+            ).strip()
+        draft_kana_count = len(_JAPANESE_KANA_RX.findall(source_text))
+        final_kana_count = len(_JAPANESE_KANA_RX.findall(final_cue.text))
+        if (
+            draft_kana_count == 0
+            and final_kana_count >= 2
+            and len(re.findall(r"[\u3400-\u9fff]", source_text)) >= 2
+            and _strip_non_text(source_text) != _strip_non_text(final_cue.text)
+            and not _sanctioned_cue_equal(source_text, final_cue.text, pairs)
+        ):
+            witness = _phonetic_transliteration_witness(
+                source_text, final_cue.text
+            ) or _structured_chat_name_witness(
+                final_cue.text, structured_chat_names
+            )
+            if witness is not None:
+                audit.setdefault("witnessed_foreign_introductions", []).append(
+                    {
+                        "cue_index": index,
+                        "draft": source_text,
+                        "attempted": final_cue.text,
+                        "witness": witness,
+                    }
+                )
+                continue
+            introduced_kana_rows.append(
+                {
+                    "cue_index": index,
+                    "start_ms": final_cue.start_ms,
+                    "end_ms": final_cue.end_ms,
+                    "draft": source_text,
+                    "attempted": final_cue.text,
+                    "reason": "FOREIGN_LANGUAGE_INTRODUCED_WITHOUT_SOURCE_WITNESS",
+                }
+            )
+    # An isolated foreign cue is not automatically a host code-switch.  The
+    # watched-video incident was exactly one Japanese cue introduced
+    # after BCUT and therefore escaped the old adjacent-cluster rule.  Keep the
+    # recovered text for review, but fail closed until a timeline-bound human
+    # decision either drops background media speech or explicitly preserves a
+    # host-spoken code-switch.
+    audit["unproven_foreign_introductions"] = introduced_kana_rows
+    if not cue_count_matches:
+        audit["status"] = (
+            "BLOCKED_UNPROVEN_FOREIGN_SPEAKER"
+            if introduced_kana_rows
+            else "SKIPPED_CUE_COUNT_MISMATCH"
+        )
+        audit["reverted_count"] = 0
+        return final_srt, audit
+
+    rendered: list[str] = []
+    for index, (draft_cue, final_cue) in enumerate(
+        zip(draft_cues, final_cues), start=1
+    ):
+        draft_kana_count = len(_JAPANESE_KANA_RX.findall(draft_cue.text))
+        final_kana_count = len(_JAPANESE_KANA_RX.findall(final_cue.text))
+        draft_latin_words = _EMBEDDED_LATIN_WORD_RX.findall(draft_cue.text)
+        final_latin_words = _EMBEDDED_LATIN_WORD_RX.findall(final_cue.text)
+        draft_cjk_count = len(re.findall(r"[\u3400-\u9fff]", draft_cue.text))
+        source_language_removed = (
+            (draft_kana_count >= 2 and final_kana_count == 0)
+            # Whole-cue rollback is safe only for a Latin-language cue.  A
+            # Chinese cue with short Latin labels is mixed speech, not an
+            # English passage; count-based rollback restored the deleted `h tb`
+            # echo in the incident.
+            or (
+                draft_cjk_count == 0
+                and not _is_cp_formula_text(draft_cue.text)
+                and len(draft_latin_words) >= 3
+                and len(final_latin_words) <= 1
+            )
+        )
+        translated = (
+            source_language_removed
+            and bool(final_cue.text.strip())
+            and _strip_non_text(draft_cue.text) != _strip_non_text(final_cue.text)
+            and not _sanctioned_cue_equal(draft_cue.text, final_cue.text, pairs)
+        )
+        kept = draft_cue.text if translated else final_cue.text
+        if translated:
+            audit["reverted"].append(
+                {
+                    "cue_index": index,
+                    "start_ms": final_cue.start_ms,
+                    "end_ms": final_cue.end_ms,
+                    "draft": draft_cue.text,
+                    "attempted": final_cue.text,
+                    "reason": "SOURCE_LANGUAGE_TRANSLATED_IN_CORRECTION_LANE",
+                }
+            )
+        rendered.append(
+            f"{index}\n{_ms_to_ts(final_cue.start_ms)} --> "
+            f"{_ms_to_ts(final_cue.end_ms)}\n{kept}"
+        )
+    if introduced_kana_rows:
+        # Do not silently choose between the draft and the correction here:
+        # either could be the wrong-language ASR.  The producer blocks unless
+        # a timeline-bound reviewed override resolves every affected cue.
+        audit["status"] = "BLOCKED_UNPROVEN_FOREIGN_SPEAKER"
+    elif audit["reverted"]:
+        audit["status"] = "REVERTED_TRANSLATION"
+    audit["reverted_count"] = len(audit["reverted"])
+    return "\n\n".join(rendered) + ("\n" if rendered else ""), audit
+
+
+def unproven_foreign_introductions_covered_by_overrides(
+    audit: dict[str, Any],
+    document: dict[str, Any],
+) -> bool:
+    """Prove every un-witnessed foreign-language cue has reviewed authority.
+
+    A model may legitimately recover Japanese that the first ASR missed, but a
+    correction model may also hallucinate Japanese from similar-sounding
+    Chinese.  Only an exact timeline-bound schema-v3 override can release an
+    introduced foreign passage, including a single isolated cue.
+    """
+
+    findings = audit.get("unproven_foreign_introductions")
+    overrides = document.get("overrides")
+    if (
+        not isinstance(findings, list)
+        or not findings
+        or document.get("schema_version") != 3
+        or not isinstance(overrides, list)
+    ):
+        return False
+
+    def overlaps(
+        left_start: int, left_end: int, right_start: int, right_end: int
+    ) -> bool:
+        return left_start < right_end and left_end > right_start
+
+    for finding in findings:
+        if not isinstance(finding, dict):
+            return False
+        attempted = str(finding.get("attempted") or "")
+        finding_start = int(finding.get("start_ms") or 0)
+        finding_end = int(finding.get("end_ms") or 0)
+        covered = False
+        for override in overrides:
+            if not isinstance(override, dict):
+                continue
+            action = str(override.get("action", "replace"))
+            replacement = str(override.get("text") or "")
+            if action in {"replace", "drop"}:
+                expected = override.get("expect")
+                if not isinstance(expected, dict):
+                    continue
+                expected_start = _srt_clock_ms(str(expected.get("start") or ""))
+                expected_end = _srt_clock_ms(str(expected.get("end") or ""))
+                expected_texts = [
+                    expected.get("text"),
+                    *(expected.get("text_alternatives") or []),
+                ]
+                covered = (
+                    expected_start == finding_start
+                    and expected_end == finding_end
+                    and attempted in expected_texts
+                )
+                if action == "replace" and not replacement:
+                    covered = False
+            elif action == "replace_substring":
+                if not replacement:
+                    continue
+                locator = override.get("locator")
+                if not isinstance(locator, dict):
+                    continue
+                locator_start = _srt_clock_ms(str(locator.get("start") or ""))
+                locator_end = _srt_clock_ms(str(locator.get("end") or ""))
+                old_text = str(override.get("old_text") or "")
+                covered = (
+                    locator_start is not None
+                    and locator_end is not None
+                    and overlaps(
+                        finding_start,
+                        finding_end,
+                        locator_start,
+                        locator_end,
+                    )
+                    and bool(old_text)
+                    and attempted.count(old_text) == 1
+                )
+            if covered:
+                break
+        if not covered:
+            return False
+    return True
+
+
+def _interval_fully_covered(
+    start_ms: int,
+    end_ms: int,
+    windows: Sequence[tuple[int, int]],
+) -> bool:
+    """Return whether the union of ``windows`` contains the whole interval."""
+
+    if start_ms >= end_ms:
+        return False
+    cursor = start_ms
+    for window_start, window_end in sorted(windows):
+        if window_end <= cursor:
+            continue
+        if window_start > cursor:
+            return False
+        cursor = max(cursor, window_end)
+        if cursor >= end_ms:
+            return True
+    return False
+
+
+def resolve_deferred_foreign_introductions(
+    audit: Mapping[str, Any],
+    final_srt: str,
+    *,
+    authority_rows: Sequence[Mapping[str, Any]],
+    authority_kind: str,
+    timeline_offset_ms: int = 0,
+) -> dict[str, Any]:
+    """Prove a late, deterministic text authority resolved blocked kana.
+
+    This is deliberately narrower than re-running the generic source-language
+    guard: reviewed source truth may itself contain legitimate code-switch
+    names.  We only revisit the exact kana runs that an earlier correction
+    introduced without a source witness.  Each finding must be fully owned by
+    one authority row.  An introduced run must either be absent from the final
+    text or be explicitly present in the committed canonical surface of an
+    applied/satisfied source-truth row.  Merely surviving in the row's broad
+    output window is never a witness.
+    """
+
+    result: dict[str, Any] = {
+        "schema_version": "deferred-foreign-introduction-resolution.v1",
+        "status": "FAILED",
+        "authority_kind": authority_kind,
+        "timeline_offset_ms": int(timeline_offset_ms),
+        "findings": [],
+        "failures": [],
+    }
+    owner_overlap_ms = {
+        "source_subtitle_truth": MIN_CUE_OVERLAP_MS,
+        "hash_bound_redelivery_baseline": MIN_ALIGNMENT_OVERLAP_MS,
+    }.get(authority_kind)
+    if owner_overlap_ms is None:
+        result["failures"].append(
+            {"reason_code": "UNSUPPORTED_DEFERRED_AUTHORITY_KIND"}
+        )
+        return result
+    findings = audit.get("unproven_foreign_introductions")
+    if not isinstance(findings, list) or not findings:
+        result["failures"].append({"reason_code": "NO_DEFERRED_FINDINGS"})
+        return result
+
+    parsed_rows: list[tuple[Mapping[str, Any], list[tuple[int, int]]]] = []
+    for row in authority_rows:
+        if not isinstance(row, Mapping):
+            continue
+        if authority_kind == "source_subtitle_truth":
+            windows = source_truth_owner_windows(row)
+            if windows:
+                parsed_rows.append((row, windows))
+            continue
+        windows: list[tuple[int, int]] = []
+        for window in row.get("local_windows") or []:
+            if not isinstance(window, Mapping):
+                continue
+            start = window.get("start_ms")
+            end = window.get("end_ms")
+            if (
+                isinstance(start, int)
+                and not isinstance(start, bool)
+                and isinstance(end, int)
+                and not isinstance(end, bool)
+                and start < end
+            ):
+                windows.append((start, end))
+        if windows:
+            parsed_rows.append((row, windows))
+
+    final_cues = parse_srt_cues(final_srt)
+    final_timeline_end_ms = max(
+        (cue.end_ms for cue in final_cues),
+        default=0,
+    )
+    kana_run_rx = re.compile(r"[ぁ-ゖァ-ヺー]{2,}")
+    for finding in findings:
+        if not isinstance(finding, Mapping):
+            result["failures"].append(
+                {"reason_code": "DEFERRED_FINDING_INVALID"}
+            )
+            continue
+        raw_start = finding.get("start_ms")
+        raw_end = finding.get("end_ms")
+        attempted = str(finding.get("attempted") or "")
+        introduced_surfaces = sorted(set(kana_run_rx.findall(attempted)))
+        if (
+            not isinstance(raw_start, int)
+            or isinstance(raw_start, bool)
+            or not isinstance(raw_end, int)
+            or isinstance(raw_end, bool)
+            or raw_start >= raw_end
+            or not introduced_surfaces
+        ):
+            result["failures"].append(
+                {
+                    "cue_index": finding.get("cue_index"),
+                    "reason_code": "DEFERRED_FINDING_NOT_ADDRESSABLE",
+                }
+            )
+            continue
+        start_ms = raw_start - int(timeline_offset_ms)
+        end_ms = raw_end - int(timeline_offset_ms)
+        owners = [
+            (row, windows)
+            for row, windows in parsed_rows
+            if (
+                windows_fully_cover(start_ms, end_ms, windows)
+                if authority_kind == "hash_bound_redelivery_baseline"
+                else _interval_fully_covered(start_ms, end_ms, windows)
+            )
+        ]
+        row_result: dict[str, Any] = {
+            "cue_index": finding.get("cue_index"),
+            "source_start_ms": raw_start,
+            "source_end_ms": raw_end,
+            "final_start_ms": start_ms,
+            "final_end_ms": end_ms,
+            "introduced_surfaces": introduced_surfaces,
+            "authority_ids": [],
+            "resolved": False,
+        }
+        result["findings"].append(row_result)
+        if final_timeline_end_ms > 0 and (
+            end_ms <= 0 or start_ms >= final_timeline_end_ms
+        ):
+            row_result["reason_code"] = "FINDING_OUTSIDE_FINAL_DELIVERY"
+            row_result["resolved"] = True
+            continue
+        if not owners:
+            row_result["reason_code"] = "FINDING_NOT_FULLY_AUTHORITY_OWNED"
+            result["failures"].append(dict(row_result))
+            continue
+
+        owned_windows = sorted(
+            {
+                window
+                for _row, windows in owners
+                for window in windows
+            }
+        )
+        row_result["authority_ids"] = sorted(
+            {
+                str(
+                    row.get("truth_id")
+                    or row.get("authority_id")
+                    or row.get("current_cue_index")
+                    or "unnamed-authority"
+                )
+                for row, _windows in owners
+            }
+        )
+        owned_texts = [
+            cue.text
+            for cue in final_cues
+            if any(
+                max(
+                    0,
+                    min(cue.end_ms, window_end)
+                    - max(cue.start_ms, window_start),
+                )
+                >= owner_overlap_ms
+                for window_start, window_end in owned_windows
+            )
+        ]
+        row_result["final_window_texts"] = owned_texts
+        if not owned_texts:
+            row_result["reason_code"] = "AUTHORITY_WINDOW_HAS_NO_FINAL_CUE"
+            result["failures"].append(dict(row_result))
+            continue
+        joined = "\n".join(owned_texts)
+        unresolved = [surface for surface in introduced_surfaces if surface in joined]
+        if unresolved:
+            # Source-interval truth can positively authorize a mixed-script
+            # proper name (for example a hash-bound SC sender).  Only canonical
+            # fields declared by the authority itself count.  Do not inspect
+            # ``after``: it is the whole post-edit cue and could contain an
+            # unrelated unproven foreign run that happened to share a window.
+            witnessed_by: dict[str, set[str]] = {
+                surface: set() for surface in unresolved
+            }
+            for owner, _windows in owners:
+                declared_texts: list[str] = []
+                contract = owner.get("declared_output_contract")
+                if (
+                    authority_kind == "source_subtitle_truth"
+                    and isinstance(contract, Mapping)
+                    and owner.get("assertion_state") == "VERIFIED_ACTIVE"
+                    and re.fullmatch(
+                        r"sha256:[0-9a-f]{64}",
+                        str(owner.get("entry_sha256") or ""),
+                    )
+                    is not None
+                    and contract.get("schema_version")
+                    == "source-truth-declared-output.v1"
+                    and contract.get("action") == owner.get("action")
+                ):
+                    canonical_texts = contract.get("canonical_texts")
+                    if isinstance(canonical_texts, list) and all(
+                        isinstance(text, str) for text in canonical_texts
+                    ):
+                        if owner.get("action") == "replace_cue":
+                            declared_texts.extend(canonical_texts)
+                        elif owner.get("action") == "replace_substring":
+                            required_text = contract.get("required_text")
+                            if isinstance(required_text, str) and required_text:
+                                declared_texts.append(required_text)
+                            # A configured replacement is not proof that it
+                            # matched.  Only canonicals recorded as actually
+                            # applied may additionally witness a foreign run.
+                            for replacement in owner.get("replacements") or []:
+                                if isinstance(replacement, Mapping):
+                                    canonical = replacement.get("canonical")
+                                    if isinstance(canonical, str) and canonical:
+                                        declared_texts.append(canonical)
+                elif (
+                    authority_kind == "hash_bound_redelivery_baseline"
+                    and owner.get("authority_kind")
+                    == "hash_bound_redelivery_baseline"
+                    and re.fullmatch(
+                        r"(?:sha256:)?[0-9a-f]{64}",
+                        str(owner.get("baseline_sha256") or ""),
+                    )
+                    is not None
+                    and owner.get("mapping_kind")
+                    == "exact_reviewed_interval_replay"
+                    and isinstance(owner.get("baseline_cue_index"), int)
+                    and not isinstance(owner.get("baseline_cue_index"), bool)
+                    and owner["baseline_cue_index"] > 0
+                    and isinstance(owner.get("output_cue_index"), int)
+                    and not isinstance(owner.get("output_cue_index"), bool)
+                    and owner["output_cue_index"] > 0
+                ):
+                    canonicals = owner.get(
+                        "authorized_native_script_surfaces"
+                    )
+                    if isinstance(canonicals, list) and all(
+                        isinstance(text, str) and text
+                        for text in canonicals
+                    ):
+                        declared_texts.extend(canonicals)
+                declared_surfaces = {
+                    run
+                    for text in declared_texts
+                    for run in kana_run_rx.findall(text)
+                }
+                authority_id = str(
+                    owner.get("truth_id")
+                    or owner.get("authority_id")
+                    or owner.get("current_cue_index")
+                    or "unnamed-authority"
+                )
+                for surface in unresolved:
+                    if surface in declared_surfaces:
+                        witnessed_by[surface].add(authority_id)
+
+            still_unresolved = [
+                surface for surface in unresolved if not witnessed_by[surface]
+            ]
+            if still_unresolved:
+                row_result["unresolved_surfaces"] = still_unresolved
+                row_result["reason_code"] = (
+                    "INTRODUCED_FOREIGN_SURFACE_SURVIVED"
+                )
+                if any(witnessed_by.values()):
+                    row_result["witnessed_surfaces"] = sorted(
+                        surface
+                        for surface, witnesses in witnessed_by.items()
+                        if witnesses
+                    )
+                result["failures"].append(dict(row_result))
+                continue
+            row_result["witnessed_surfaces"] = sorted(unresolved)
+            row_result["positive_witness_authority_ids"] = sorted(
+                {
+                    authority_id
+                    for witnesses in witnessed_by.values()
+                    for authority_id in witnesses
+                }
+            )
+            row_result["reason_code"] = (
+                "INTRODUCED_FOREIGN_SURFACE_WITNESSED_BY_SOURCE_TRUTH"
+                if authority_kind == "source_subtitle_truth"
+                else (
+                    "INTRODUCED_FOREIGN_SURFACE_WITNESSED_BY_"
+                    "REDELIVERY_NATIVE_SCRIPT_CANON"
+                )
+            )
+        row_result["resolved"] = True
+
+    if result["findings"] and not result["failures"]:
+        result["status"] = "PASS"
+    return result
+
+
+def windows_fully_cover(
+    start_ms: int,
+    end_ms: int,
+    windows: Sequence[tuple[int, int]],
+) -> bool:
+    """Whether authority windows own a cue despite tiny boundary jitter.
+
+    Subtitle cue edges are model-generated and can drift by a few frames from
+    the hash-bound source-truth interval.  Treat only small *outer* slivers as
+    owned; an internal gap remains a hard failure so adjacent, unrelated truth
+    assertions cannot be joined into authority over intervening speech.
+    """
+
+    if start_ms >= end_ms:
+        return False
+    duration_ms = end_ms - start_ms
+    cursor = start_ms
+    left_sliver_ms = 0
+    saw_overlap = False
+    for window_start, window_end in sorted(windows):
+        if window_end <= start_ms or window_start >= end_ms:
+            continue
+        clipped_start = max(start_ms, window_start)
+        if not saw_overlap and clipped_start > start_ms:
+            left_sliver_ms = clipped_start - start_ms
+            cursor = clipped_start
+        elif saw_overlap and clipped_start > cursor:
+            return False
+        saw_overlap = True
+        cursor = max(cursor, window_end)
+        if cursor >= end_ms:
+            break
+    if not saw_overlap:
+        return False
+    right_sliver_ms = max(0, end_ms - cursor)
+    uncovered_ms = left_sliver_ms + right_sliver_ms
+    return uncovered_ms == 0 or (
+        uncovered_ms <= 250
+        and uncovered_ms / duration_ms <= 0.1
+    )
+
+
+def valid_redelivery_baseline_config(value: object) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    schema_version = value.get("schema_version")
+    expected_sha = str(value.get("sha256") or "").removeprefix("sha256:")
+    base_valid = (
+        schema_version
+        in {
+            "subtitle-redelivery-baseline.v1",
+            "subtitle-redelivery-baseline.v2",
+        }
+        and value.get("mode") == "preserve_text_outside_source_truth"
+        and bool(str(value.get("path") or "").strip())
+        and len(expected_sha) == 64
+        and all(char in "0123456789abcdef" for char in expected_sha)
+        and bool(str(value.get("authority") or "").strip())
+    )
+    if not base_valid or schema_version == "subtitle-redelivery-baseline.v1":
+        return base_valid
+    source_basename = str(value.get("source_recording_basename") or "")
+    source_sha = str(value.get("source_sha256") or "").removeprefix("sha256:")
+    start = value.get("absolute_source_start_ms")
+    end = value.get("absolute_source_end_ms")
+    replay = value.get("exact_interval_replay", False)
+    return (
+        bool(source_basename)
+        and Path(source_basename).name == source_basename
+        and len(source_sha) == 64
+        and all(char in "0123456789abcdef" for char in source_sha)
+        and isinstance(start, int)
+        and not isinstance(start, bool)
+        and isinstance(end, int)
+        and not isinstance(end, bool)
+        and 0 <= start < end
+        and isinstance(replay, bool)
+    )
+
+
+def defer_unproven_foreign_introductions_to_late_authority(
+    audit: dict[str, Any],
+    *,
+    source_truth_windows: Sequence[tuple[int, int]],
+    redelivery_baseline_config: object,
+) -> None:
+    """Release the early gate only to a deterministic, later text authority."""
+
+    if not str(audit.get("status") or "").startswith(
+        "BLOCKED_UNPROVEN_FOREIGN_"
+    ):
+        return
+    findings = audit.get("unproven_foreign_introductions")
+    if not isinstance(findings, list) or not findings:
+        return
+    addressable: list[tuple[int, int]] = []
+    for finding in findings:
+        if not isinstance(finding, Mapping):
+            return
+        start = finding.get("start_ms")
+        end = finding.get("end_ms")
+        attempted = str(finding.get("attempted") or "")
+        if (
+            not isinstance(start, int)
+            or isinstance(start, bool)
+            or not isinstance(end, int)
+            or isinstance(end, bool)
+            or start >= end
+            or not attempted.strip()
+        ):
+            return
+        addressable.append((start, end))
+
+    if source_truth_windows and all(
+        windows_fully_cover(start, end, source_truth_windows)
+        for start, end in addressable
+    ):
+        audit["status"] = "DEFERRED_TO_SOURCE_SUBTITLE_TRUTH"
+        audit["deferred_reason"] = (
+            "every un-witnessed foreign-language cue is fully contained by "
+            "a committed source-truth interval; the exact introduced kana "
+            "must disappear after that authority runs"
+        )
+        audit["deferred_authority_windows"] = [
+            {"start_ms": start, "end_ms": end}
+            for start, end in sorted(source_truth_windows)
+        ]
+        return
+
+    # A hash-bound reviewed redelivery baseline runs only after final recut.
+    # Its mapper must own every affected final cue one-to-one, and package
+    # finalization separately proves the introduced kana is gone.  Merely
+    # having a baseline-shaped dict is not success: invalid hash/path/mapping
+    # still fails closed in redelivery_subtitle_baseline.py.
+    if valid_redelivery_baseline_config(redelivery_baseline_config):
+        audit["status"] = "DEFERRED_TO_REDELIVERY_BASELINE"
+        audit["deferred_reason"] = (
+            "a hash-bound reviewed subtitle baseline is configured; final "
+            "recut must prove one-to-one ownership and removal of every "
+            "introduced foreign surface"
+        )
+
+
+def defer_truth_owned_mixed_latin_cues(
+    audit: dict[str, Any],
+    *,
+    source_truth_windows: Sequence[tuple[int, int]],
+) -> None:
+    """Release the mixed-latin gate only to a committed source-truth owner.
+
+    742_887 案：BCUT 把「啥意思，谁发的哈」乱码成
+    「say you say father 哈」，而该时窗恰有 SOURCE_INTERVAL_TRUTH
+    （20260725-shayisi-shuifade-r1）——真值 pass 稍后必然以裁定文本接管，
+    早期 foreign 门在接管前的乱码上把候选拍死等于否决更高权威。与
+    `_defer_unproven_foreign_introductions_to_late_authority` 同款范式：
+    每条 mixed cue 都被真值窗口完整覆盖（仅容边缘抖动）才降级，部分
+    覆盖仍 BLOCK；语言簇（kana cluster）路线不受本函数影响。
+    """
+
+    if str(audit.get("status") or "") != "BLOCKED_MIXED_CJK_LATIN_PHRASE":
+        return
+    rows = audit.get("mixed_cjk_latin_cues")
+    if not isinstance(rows, list) or not rows:
+        return
+    if not source_truth_windows:
+        return
+    for row in rows:
+        if not isinstance(row, Mapping):
+            return
+        start = row.get("start_ms")
+        end = row.get("end_ms")
+        if (
+            isinstance(start, bool)
+            or not isinstance(start, int)
+            or isinstance(end, bool)
+            or not isinstance(end, int)
+            or not windows_fully_cover(start, end, source_truth_windows)
+        ):
+            return
+    audit["status"] = "DEFERRED_TO_SOURCE_SUBTITLE_TRUTH"
+    audit["deferred_reason"] = (
+        "every mixed CJK/Latin cue is fully contained by a committed "
+        "source-truth interval; the adjudicated truth text supersedes the "
+        "suspect Latin decode before delivery"
+    )
+
+
+def has_unapproved_mixed_cjk_latin_phrase(text: str) -> bool:
+    """Return whether one Chinese talk cue contains unsupported Latin word salad."""
+
+    text = _SAFE_CODE_SWITCH_PHRASE_RX.sub("", text)
+    # The pronoun finalizer deliberately emits uppercase TA for an unknown
+    # person's gender.  It is a Chinese pronoun surface, not a Latin word.
+    text = _CHINESE_ROMANIZED_PRONOUN_RX.sub("", text)
+    # CP-order formulas are spoken labels, not an accidentally decoded foreign
+    # sentence: NNLL / L L N N / NNLLHHB may coexist with one real Latin name.
+    text = _CP_FORMULA_RX.sub("", text)
+    # Single letters inside Chinese talk are option/grade/label tokens
+    # (\u9009A\u8fd8\u662f\u9009B, S\u7ea7), not words of a foreign phrase \u2014 an A/B
+    # game-choice readout blocked a whole delivery.
+    latin_words = [
+        word.lower()
+        for word in _EMBEDDED_LATIN_WORD_RX.findall(text)
+        if len(word) >= 2
+    ]
+    return (
+        len(latin_words) >= 2
+        and re.search(r"[\u3400-\u9fff]", text) is not None
+        and _JAPANESE_KANA_RX.search(text) is None
+        and any(word not in _SAFE_CODE_SWITCH_WORDS for word in latin_words)
+    )
+
+
+def _srt_clock_ms(value: str) -> int | None:
+    match = _SRT_CLOCK_RX.fullmatch(value.strip())
+    if match is None:
+        return None
+    hours, minutes, seconds, millis = (int(part) for part in match.groups())
+    return ((hours * 60 + minutes) * 60 + seconds) * 1000 + millis
+
+
+def mixed_cjk_latin_findings_covered_by_overrides(
+    audit: dict[str, Any],
+    document: dict[str, Any],
+) -> bool:
+    """Prove every mixed-language finding has an exact, timeline-bound repair.
+
+    A configured override file alone is not enough: each blocked cue must be
+    covered by a schema-v3 decision whose projected output removes the anomaly.
+    This lets the automatic lane fail closed while still allowing a reviewed
+    local substring repair to run after LLM sentence resegmentation.
+    """
+
+    findings = audit.get("mixed_cjk_latin_cues")
+    overrides = document.get("overrides")
+    if (
+        not isinstance(findings, list)
+        or not findings
+        or document.get("schema_version") != 3
+        or not isinstance(overrides, list)
+    ):
+        return False
+
+    def overlaps(
+        left_start: int, left_end: int, right_start: int, right_end: int
+    ) -> bool:
+        return left_start < right_end and left_end > right_start
+
+    for finding in findings:
+        if not isinstance(finding, dict):
+            return False
+        finding_text = str(finding.get("text") or "")
+        finding_start = int(finding.get("start_ms") or 0)
+        finding_end = int(finding.get("end_ms") or 0)
+        covered = False
+        for override in overrides:
+            if not isinstance(override, dict):
+                continue
+            action = str(override.get("action", "replace"))
+            if action == "replace_substring":
+                locator = override.get("locator")
+                if not isinstance(locator, dict):
+                    continue
+                locator_start = _srt_clock_ms(str(locator.get("start") or ""))
+                locator_end = _srt_clock_ms(str(locator.get("end") or ""))
+                old_text = str(override.get("old_text") or "")
+                replacement = str(override.get("text") or "")
+                if (
+                    locator_start is None
+                    or locator_end is None
+                    or not overlaps(
+                        finding_start,
+                        finding_end,
+                        locator_start,
+                        locator_end,
+                    )
+                    or not old_text
+                    or finding_text.count(old_text) != 1
+                    or not replacement
+                ):
+                    continue
+                projected = finding_text.replace(old_text, replacement, 1)
+                covered = not has_unapproved_mixed_cjk_latin_phrase(projected)
+            elif action == "replace":
+                expected = override.get("expect")
+                if not isinstance(expected, dict):
+                    continue
+                expected_start = _srt_clock_ms(str(expected.get("start") or ""))
+                expected_end = _srt_clock_ms(str(expected.get("end") or ""))
+                expected_texts = [
+                    expected.get("text"),
+                    *(expected.get("text_alternatives") or []),
+                ]
+                replacement = str(override.get("text") or "")
+                covered = (
+                    expected_start == finding_start
+                    and expected_end == finding_end
+                    and finding_text in expected_texts
+                    and bool(replacement)
+                    and not has_unapproved_mixed_cjk_latin_phrase(replacement)
+                )
+            if covered:
+                break
+        if not covered:
+            return False
+    return True
+
+
+def audit_foreign_script_consistency(srt_text: str) -> dict[str, Any]:
+    """Detect a Japanese passage decoded as several English-heavy ASR cues.
+
+    Source-language preservation prevents translation, but the ASR witness can
+    itself be wrong.  A nearby run of Latin-heavy cues after kana dialogue is
+    therefore held for language-aware transcription instead of being delivered.
+    """
+
+    cues = parse_srt_cues(srt_text)
+    kana_indexes = [
+        index
+        for index, cue in enumerate(cues, start=1)
+        if len(_JAPANESE_KANA_RX.findall(cue.text)) >= 2
+    ]
+    latin_rows = [
+        {
+            "cue_index": index,
+            "text": cue.text,
+            "latin_word_count": len(_LATIN_WORD_RX.findall(cue.text)),
+        }
+        for index, cue in enumerate(cues, start=1)
+        if len(_LATIN_WORD_RX.findall(cue.text)) >= 3
+        and len(_JAPANESE_KANA_RX.findall(cue.text)) == 0
+    ]
+    clustered = [
+        row
+        for row in latin_rows
+        if any(abs(int(row["cue_index"]) - kana_index) <= 12 for kana_index in kana_indexes)
+    ]
+    mixed_cjk_latin_rows = []
+    for index, cue in enumerate(cues, start=1):
+        latin_words = [
+            word.lower() for word in _EMBEDDED_LATIN_WORD_RX.findall(cue.text)
+        ]
+        if has_unapproved_mixed_cjk_latin_phrase(cue.text):
+            mixed_cjk_latin_rows.append(
+                {
+                    "cue_index": index,
+                    "start_ms": cue.start_ms,
+                    "end_ms": cue.end_ms,
+                    "text": cue.text,
+                    "latin_words": latin_words,
+                }
+            )
+    foreign_cluster_blocked = bool(kana_indexes) and len(clustered) >= 2
+    mixed_cjk_latin_blocked = bool(mixed_cjk_latin_rows)
+    if foreign_cluster_blocked:
+        status = "BLOCKED_MIXED_FOREIGN_SCRIPT_CLUSTER"
+        reason = (
+            "Japanese passage contains a nearby run of Latin-heavy ASR cues; "
+            "language-aware source transcription is required"
+        )
+    elif mixed_cjk_latin_blocked:
+        status = "BLOCKED_MIXED_CJK_LATIN_PHRASE"
+        reason = (
+            "Chinese talk cue contains an unapproved multi-word Latin phrase; "
+            "source-aware transcription is required"
+        )
+    else:
+        status = "CLEAN"
+        reason = None
+    return {
+        "schema_version": "foreign-script-consistency-audit.v1",
+        "status": status,
+        "kana_cue_indexes": kana_indexes,
+        "latin_heavy_cues": clustered,
+        "mixed_cjk_latin_cues": mixed_cjk_latin_rows,
+        "reason": reason,
+    }
+
+
+def apply_title_mark_balance_guard(
+    srt_text: str,
+) -> tuple[str, dict[str, Any]]:
+    """Balance one clearly dangling Chinese title mark without rewriting text."""
+
+    cues = parse_srt_cues(srt_text)
+    audit: dict[str, Any] = {
+        "schema_version": "title-mark-balance-audit.v1",
+        "status": "CLEAN",
+        "repairs": [],
+        "unresolved": [],
+        "cross_cue_pairs": [],
+    }
+    rendered: list[str] = []
+    for index, cue in enumerate(cues, start=1):
+        text = cue.text
+        opening_count = text.count("《")
+        closing_count = text.count("》")
+        if (
+            text.count("》》") == 1
+            and closing_count == opening_count + 1
+        ):
+            repaired = text.replace("》》", "》", 1)
+            if repaired.count("《") == repaired.count("》"):
+                audit["repairs"].append(
+                    {
+                        "cue_index": index,
+                        "before": text,
+                        "after": repaired,
+                        "reason": "ONE_DUPLICATED_CHINESE_TITLE_CLOSE_MARK",
+                    }
+                )
+                text = repaired
+                opening_count = text.count("《")
+                closing_count = text.count("》")
+        if opening_count == closing_count + 1:
+            next_text = cues[index].text if index < len(cues) else ""
+            if next_text.count("》") > next_text.count("《"):
+                audit["cross_cue_pairs"].append(
+                    {
+                        "cue_index": index,
+                        "next_cue_index": index + 1,
+                        "text": text,
+                        "reason": "POSSIBLE_CROSS_CUE_TITLE_MARK_PAIR",
+                    }
+                )
+                rendered.append(
+                    f"{index}\n{_ms_to_ts(cue.start_ms)} --> "
+                    f"{_ms_to_ts(cue.end_ms)}\n{text}"
+                )
+                continue
+            match = re.search(r"([。！？!?.,，]?)$", text)
+            assert match is not None
+            punctuation = match.group(1)
+            body = text[: len(text) - len(punctuation)] if punctuation else text
+            repaired = f"{body}》{punctuation}"
+            audit["repairs"].append(
+                {
+                    "cue_index": index,
+                    "before": text,
+                    "after": repaired,
+                    "reason": "ONE_DANGLING_CHINESE_TITLE_OPEN_MARK",
+                }
+            )
+            text = repaired
+        elif closing_count == opening_count + 1:
+            previous_text = cues[index - 2].text if index > 1 else ""
+            if previous_text.count("《") > previous_text.count("》"):
+                # The opening cue recorded this pair.  A title may legally span
+                # SRT cues, so a balanced adjacent pair is evidence, not an
+                # unresolved single-cue structure error.
+                pass
+            else:
+                leading_title = re.match(
+                    r"^([^《》：:，。！？!?]{2,30})》(?=[，。！？!?.,、]|$)",
+                    text,
+                )
+                prefixed_prose = (
+                    "接下来",
+                    "下一首",
+                    "这个叫",
+                    "作品叫",
+                    "书名叫",
+                    "标题叫",
+                )
+                if leading_title and not leading_title.group(1).startswith(prefixed_prose):
+                    repaired = "《" + text
+                    audit["repairs"].append(
+                        {
+                            "cue_index": index,
+                            "before": text,
+                            "after": repaired,
+                            "reason": "ONE_DANGLING_CHINESE_TITLE_CLOSE_MARK",
+                        }
+                    )
+                    text = repaired
+                else:
+                    audit["unresolved"].append(
+                        {
+                            "cue_index": index,
+                            "text": text,
+                            "opening_count": opening_count,
+                            "closing_count": closing_count,
+                        }
+                    )
+        elif opening_count != closing_count:
+            audit["unresolved"].append(
+                {
+                    "cue_index": index,
+                    "text": text,
+                    "opening_count": opening_count,
+                    "closing_count": closing_count,
+                }
+            )
+        rendered.append(
+            f"{index}\n{_ms_to_ts(cue.start_ms)} --> {_ms_to_ts(cue.end_ms)}\n{text}"
+        )
+    if audit["unresolved"]:
+        audit["status"] = "UNRESOLVED_COMPLEX_IMBALANCE"
+    elif audit["repairs"]:
+        audit["status"] = "APPLIED"
+    elif audit["cross_cue_pairs"]:
+        audit["status"] = "CROSS_CUE_BALANCED"
+    audit["repair_count"] = len(audit["repairs"])
+    return "\n\n".join(rendered) + ("\n" if rendered else ""), audit
+
+
+def apply_impossible_punctuation_guard(
+    srt_text: str,
+) -> tuple[str, dict[str, Any]]:
+    """Collapse comma-plus-terminal punctuation without changing any words."""
+
+    cues = parse_srt_cues(srt_text)
+    audit: dict[str, Any] = {
+        "schema_version": "impossible-punctuation-audit.v1",
+        "status": "CLEAN",
+        "repairs": [],
+    }
+    rendered: list[str] = []
+    for index, cue in enumerate(cues, start=1):
+        repaired = _IMPOSSIBLE_PUNCTUATION_RX.sub(r"\1", cue.text)
+        if repaired != cue.text:
+            audit["repairs"].append(
+                {
+                    "cue_index": index,
+                    "start_ms": cue.start_ms,
+                    "end_ms": cue.end_ms,
+                    "before": cue.text,
+                    "after": repaired,
+                }
+            )
+        rendered.append(
+            f"{index}\n{_ms_to_ts(cue.start_ms)} --> {_ms_to_ts(cue.end_ms)}\n{repaired}"
+        )
+    if audit["repairs"]:
+        audit["status"] = "APPLIED"
+    audit["repair_count"] = len(audit["repairs"])
+    return "\n\n".join(rendered) + ("\n" if rendered else ""), audit
+
+
+def _ms_to_ts(value_ms: int) -> str:
+    hours, rem = divmod(int(value_ms), 3_600_000)
+    minutes, rem = divmod(rem, 60_000)
+    seconds, millis = divmod(rem, 1_000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
+
+def persist_fidelity_audit(path: Path, audit: dict[str, Any]) -> None:
+    try:
+        path.write_text(
+            json.dumps(audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass

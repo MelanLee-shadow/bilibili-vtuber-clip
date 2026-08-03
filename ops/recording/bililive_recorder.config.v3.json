@@ -1,0 +1,84 @@
+{
+  "version": 3,
+  "global": {
+    "RecordMode": {
+      "HasValue": true
+    },
+    "CuttingMode": {
+      "HasValue": true,
+      "Value": 1
+    },
+    "CuttingNumber": {
+      "HasValue": true,
+      "Value": 30
+    },
+    "CuttingByTitle": {
+      "HasValue": true
+    },
+    "RecordDanmaku": {
+      "HasValue": true,
+      "Value": true
+    },
+    "RecordDanmakuRaw": {
+      "HasValue": true,
+      "Value": true
+    },
+    "RecordDanmakuSuperChat": {
+      "HasValue": true,
+      "Value": true
+    },
+    "RecordDanmakuGift": {
+      "HasValue": true,
+      "Value": true
+    },
+    "RecordDanmakuGuard": {
+      "HasValue": true,
+      "Value": true
+    },
+    "WebHookUrlsV2": {
+      "HasValue": true,
+      "Value": "http://bililive-adapter:18080/webhook"
+    },
+    "SaveStreamCover": {
+      "HasValue": true
+    },
+    "RecordingQuality": {
+      "HasValue": true,
+      "Value": "avc10000,avc400,avc250"
+    },
+    "FileNameRecordTemplate": {
+      "HasValue": true,
+      "Value": "Videos/{{ roomId }}/{{ \"now\" | time_zone: \"Asia/Shanghai\" | format_date: \"yyyy-MM-dd\" }}/{{ roomId }}_{{ \"now\" | time_zone: \"Asia/Shanghai\" | format_date: \"yyyyMMdd-HH-mm-ss\" }}.flv"
+    },
+    "FlvProcessorSplitOnScriptTag": {
+      "HasValue": true,
+      "Value": true
+    },
+    "FlvProcessorDisableSplitOnH264AnnexB": {
+      "HasValue": true
+    },
+    "FlvWriteMetadata": {
+      "HasValue": true,
+      "Value": true
+    },
+    "NetworkTransportUseSystemProxy": {
+      "HasValue": true
+    },
+    "NetworkTransportAllowedAddressFamily": {
+      "HasValue": true,
+      "Value": 1
+    }
+  },
+  "rooms": [
+    {
+      "RoomId": {
+        "HasValue": true,
+        "Value": 22966160
+      },
+      "AutoRecord": {
+        "HasValue": true,
+        "Value": true
+      }
+    }
+  ]
+}

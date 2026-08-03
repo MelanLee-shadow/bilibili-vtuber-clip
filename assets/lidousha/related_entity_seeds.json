@@ -1,0 +1,49 @@
+{
+  "entities": [
+    {
+      "aliases": [
+        "スミミ"
+      ],
+      "canonical_zh": "sumimi",
+      "entity_id": "official:bandori:unit:sumimi",
+      "kind": "unit",
+      "native_names": [
+        "sumimi"
+      ],
+      "readings": [
+        "sumimi",
+        "すみみ"
+      ],
+      "role": "RELATED",
+      "sources": [
+        {
+          "published_at": "2023-06-29",
+          "publisher": "BanG Dream! It's MyGO!!!!! official character profile",
+          "url": "https://anime.bang-dream.com/mygo/character/uika/"
+        },
+        {
+          "published_at": "2023-06-30",
+          "publisher": "BanG Dream official sumimi discography",
+          "url": "https://bang-dream.com/discographies/3390/"
+        },
+        {
+          "published_at": "2025-01-02",
+          "publisher": "BanG Dream official Ave Mujica character profile",
+          "url": "https://anime.bang-dream.com/avemujica/character/uika/"
+        },
+        {
+          "published_at": "2025-01-02",
+          "publisher": "BanG Dream official Ave Mujica character profile",
+          "url": "https://anime.bang-dream.com/avemujica/character/mana/"
+        }
+      ],
+      "work_surfaces": [
+        "BanG Dream! It's MyGO!!!!!",
+        "MyGO",
+        "BanG Dream! Ave Mujica",
+        "Ave Mujica"
+      ]
+    }
+  ],
+  "schema_version": "lidousha-related-entity-seeds.v1"
+}

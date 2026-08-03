@@ -1,0 +1,122 @@
+{
+  "schema_version": "vtuber-slice.channel-profile.v1",
+  "profile_id": "replace_me",
+  "identity": {
+    "display_name": "替换为主播名",
+    "prompt_name": "Replace With Host Name",
+    "short_name": "主播",
+    "self_reference_aliases": [
+      "替换为主播名",
+      "主播"
+    ],
+    "speaker_identity_aliases": [
+      "替换为主播名",
+      "replace_me"
+    ],
+    "room_id": "000000",
+    "output_directory": "replace_me",
+    "host_speaker_label": "主播",
+    "guest_speaker_label": "嘉宾",
+    "cover_identity": {
+      "gate_appearance_zh": "描述主播外貌供封面终检定位（示例频道：白发、蓝白熊猫帽/熊猫耳）",
+      "gate_rival_note_zh": "（列出容易和主播混淆的相似角色及其可区分特征，供终检排除误认；无则填“（暂无需排除的相似角色）”）",
+      "gate_imitation_zh": "给别的角色加上主播标志特征的做法（如“加XX耳”）",
+      "locator_zh": "描述终检/构图判断用来先定位主播的可见特征（如标志装饰、发色、可见名牌）",
+      "composition_decoys_zh": "容易被误认成主播的相似角色或画面元素（如同发色角色、游戏 UI）",
+      "prompt_tag_en": "replace-with-identity-tag",
+      "feature_en": "replace-with-signature-feature",
+      "scene_prop_meme_note_zh": "描述本频道容易被误画成实物道具的自身形象梗（如虚拟形象故障/外号），说明它应保持人物参考表达而非另画实物",
+      "emote_companion_lore_zh": "描述表情包与人物同框（companion 模式）允许的强理由梗（如分身梗、代画粉丝昵称等）"
+    }
+  },
+  "assets": {
+    "root": "assets/replace_me",
+    "files": {
+      "branding_intro_manifest": "intro/branding_intro.v1.json",
+      "clip_opening_address": "clip_opening_address.json",
+      "cover_identity_prompt": "cover_identity_prompt.txt",
+      "cover_reference_overrides": "cover_reference_overrides.v1.json",
+      "emote_library": "emote_library.v1.json",
+      "entity_confusables": "entity_confusables.json",
+      "final_media_review_contracts": "final_media_review_contracts.v1.json",
+      "gift_names": "bilibili_gift_names.v1.json",
+      "glossary": "glossary.txt",
+      "known_songs": "known_songs.json",
+      "manual_archive_metadata": "manual_archive_metadata.v1.json",
+      "manual_title_overrides": "manual_title_overrides.v1.json",
+      "persona": "persona.md",
+      "psplive_roster": "psplive_roster.md",
+      "psplive_roster_sources": "psplive_roster_sources.json",
+      "publication_registry": "publication_registry.v1.json",
+      "published_songs": "published_songs.v1.json",
+      "selection_score_calibration": "selection_score_calibration.v1.json",
+      "session_relation_ledger": "session_relation_ledger.v1.json",
+      "slice_selection_metric": "slice_selection_metric.md",
+      "speech_memory_ledger": "speech_memory_ledger.v1.json",
+      "subtitle_correction_principles": "subtitle_correction_principles.md",
+      "subtitle_truth_ledger": "subtitle_truth_ledger.v1.json",
+      "timely_term_seeds": "timely_term_seeds.json",
+      "timely_term_sources": "timely_term_sources.json",
+      "timely_terms": "timely_terms.json",
+      "title_policy": "title_policy.json",
+      "title_style": "title_style.md",
+      "topic_entity_graph": "topic_entity_graph.json",
+      "upload_tag_policy": "upload_tag_policy.json",
+      "voiceprint_profile": "voiceprint_profile.v1.json"
+    },
+    "directories": {
+      "fonts": "fonts",
+      "manual_title_repair_authorities": "manual_title_repair_authorities",
+      "reviewed_subtitle_baselines": "reviewed_subtitle_baselines",
+      "speaker_overrides": "speaker_overrides",
+      "subtitle_regressions": "subtitle_regressions",
+      "subtitle_text_overrides": "subtitle_text_overrides"
+    },
+    "pipeline_fingerprint_files": [
+      "entity_confusables",
+      "glossary",
+      "branding_intro_manifest",
+      "cover_identity_prompt",
+      "known_songs",
+      "persona",
+      "psplive_roster",
+      "psplive_roster_sources",
+      "session_relation_ledger",
+      "slice_selection_metric",
+      "subtitle_correction_principles",
+      "subtitle_truth_ledger",
+      "timely_term_seeds",
+      "timely_term_sources",
+      "timely_terms",
+      "topic_entity_graph",
+      "title_policy",
+      "title_style",
+      "upload_tag_policy",
+      "voiceprint_profile"
+    ],
+    "pipeline_fingerprint_directories": [
+      "fonts"
+    ]
+  },
+  "runtime": {
+    "voiceprint_reference_subdirectory": "replace_me"
+  },
+  "titles": {
+    "talk_prefix": "【替换为主播名】",
+    "song_prefix": "【替换为主播名】歌切，",
+    "song_plain_template": "【替换为主播名】歌切，《{song_title}》"
+  },
+  "text_normalization": {
+    "canonical_surfaces": []
+  },
+  "decisions": {
+    "host_vocal_present": "HOST_VOCAL_PRESENT",
+    "host_vocal_absent": "NO_HOST_VOCAL_DETECTED",
+    "verified_host_singing": "VERIFIED_HOST_SINGING",
+    "host_not_singing_reason": "SONG_NOT_HOST_SINGING",
+    "lyric_vocal_subject": "HOST"
+  },
+  "tools": {
+    "cover_regenerator": "scripts/regenerate_channel_cover.py"
+  }
+}

@@ -1,0 +1,29 @@
+{
+ "schema_version": "manual-branding-intro.v1",
+ "status": "ADOPTED_IN_ROTATION",
+ "intro_id": "huozi-lidousha-kmx-baobao-guankou-z2-v1",
+ "display_name": "活字乱刷片头-Z2-kmx是我的宝宝妈妈老公主人-姐姐",
+ "target_text": "kmx是我的宝宝、妈妈、老公、主人，姐姐！",
+ "note": "2026-07-19 萤火虫互动舞台惩罚现场原声。喊词『宝宝』为 维护者 2026-07-20 人工亲听裁定(推翻模型两次『爸爸』判读);间隔档位 gap010(主人→姐姐约0.10秒)由 维护者 从四档试听中选定并于同日拍板与 Z1 轮换插入。画面为舞台三人画面裁切至李豆沙面板(crop=268:332:1652:430)+模糊撑边,只保留李豆沙。渲染遵循 scripts/huozi_luanshua.py 工艺(响度归一/片间停顿/sapphire72字幕/终编参数),手工驱动,非 verified-plan 产物。",
+ "source": {
+  "bvid": "BV1yrKq6hEap",
+  "origin": "东爱璃直播间21692711录播(爱瑠璃投稿) 萤火虫互动舞台 2026-07-19 12:22:53+08:00",
+  "pieces": [
+   {"id": "p1-chant", "interval_s": [1043.72, 1048.46], "text": "kmx是我的宝宝、妈妈、老公、主人", "lead_pause_ms": 120, "tail_pause_ms": 20},
+   {"id": "p2-jiejie", "interval_s": [1065.03, 1066.29], "text": "姐姐!"}
+  ]
+ },
+ "artifacts": {
+  "video": {
+   "path": "/opt/bilive/autoslice/assets/intro/lidousha-branding-intro.z2-kmx-baobao-guankou-20260719.mp4",
+   "sha256": "d37f4c358cc5d2515bca5a6fbc54bb5a10d7d2b8a36008777842def3d502ac29",
+   "duration_ms": 6188,
+   "bytes": 2065153
+  },
+  "subtitle_srt": {
+   "path": "assets/lidousha/intro/lidousha-branding-intro.z2-kmx-baobao-guankou-20260719.srt",
+   "sha256": "ae956206d41572c44824f648e752ed81054c8da22e8b1ab394526fa5131da768"
+  }
+ },
+ "upload_enabled": false
+}

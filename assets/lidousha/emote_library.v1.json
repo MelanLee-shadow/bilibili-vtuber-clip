@@ -1,0 +1,293 @@
+{
+  "schema_version": "lidousha-emote-library.v1",
+  "enabled": true,
+  "policy": {
+    "default": "character_redraw",
+    "note": "表情包只有强理由才可用：切片里李豆沙的反应与某个表情包高度贴合、用它明显比常规人物重绘更传神；拿不准一律人物重绘。replace 与人物重绘互斥（二选一）；companion（表情包与人物同框）仅限分身/复数小李梗、或用熊猫类表情包代画粉丝 kmx（kimo熊，指李豆沙的粉丝们，不是吉祥物）等强理由。歌切封面永不使用表情包。表情包重绘必须轻度：保持原姿势/表情/服饰/配件，只做高清化与背景融合，不改设计；成图中表情包与人物重绘同理，必须占据画面主体。"
+  },
+  "media_root": {
+    "env": "AUTOSLICE_EMOTE_DIR",
+    "runtime_roots": [
+      "/opt/bilive/autoslice/assets/emote"
+    ],
+    "repo_default": "assets/emote",
+    "note": "媒体不入库（assets/emote 已 gitignore）。探测顺序：AUTOSLICE_EMOTE_DIR（显式覆盖）→ runtime_roots（free 树外安装，镜像 intro 的 runtime_media_paths 模式，部署清单即生效）→ repo 内默认。free 部署把本目录 rsync 到 /opt/bilive/autoslice/assets/emote/ 即可，无需注入服务环境变量。"
+  },
+  "emotes": [
+    {
+      "id": "01",
+      "label": "别走好吗",
+      "subject": "lidousha",
+      "file": "01_李豆沙_别走好吗.png",
+      "hd_file": "hd/01_李豆沙_别走好吗.png",
+      "hd_sha256": "a2d1413682a25a8942f301fe646831d1115389fe5c24a2e97c8d63f0bc996772",
+      "baked_text": "别走好吗",
+      "description": "含泪委屈挽留，眼眶湿润扁着嘴抓住袖口，配字“别走好吗”",
+      "use_when": "挽留/舍不得/被抛下/求别走"
+    },
+    {
+      "id": "02",
+      "label": "抱抱",
+      "subject": "lidousha",
+      "file": "02_李豆沙_抱抱.png",
+      "hd_file": "hd/02_李豆沙_抱抱.png",
+      "hd_sha256": "01dcb5018e22e100fee036ec54b302219323c7b7afa0291a5250711aa4c0eab0",
+      "baked_text": "抱抱",
+      "description": "张开双臂开心求抱抱，配字“抱抱”",
+      "use_when": "撒娇求安慰/宠粉贴贴/亲近"
+    },
+    {
+      "id": "03",
+      "label": "阴险",
+      "subject": "lidousha",
+      "file": "03_李豆沙_阴险.png",
+      "hd_file": "hd/03_李豆沙_阴险.png",
+      "hd_sha256": "0da26a55c729c8f45a1de662839b13f9eb0aa3345f8d59bdf9d1fdf893abc60d",
+      "baked_text": "",
+      "description": "侧目半眯眼坏笑，一脸小算盘将要得逞的阴险",
+      "use_when": "使坏/算计/憋坏主意/腹黑"
+    },
+    {
+      "id": "04",
+      "label": "真正的音乐",
+      "subject": "lidousha",
+      "file": "04_李豆沙_真正的音乐.png",
+      "hd_file": "hd/04_李豆沙_真正的音乐.png",
+      "hd_sha256": "cea5025493b57311f08af386f2974fcb7bd4e532a7c42f5c3f360f6a81fe0e89",
+      "baked_text": "",
+      "description": "戴大耳机安静沉浸听歌，微张嘴认真脸",
+      "use_when": "听歌品鉴/音乐话题/一本正经论乐"
+    },
+    {
+      "id": "05",
+      "label": "被吓到",
+      "subject": "lidousha",
+      "file": "05_李豆沙_被吓到.png",
+      "hd_file": "hd/05_李豆沙_被吓到.png",
+      "hd_sha256": "53f65c0dd69d549a61a62d0d53ca2ce8260ea603f3f06fa6d0a879b06777190d",
+      "baked_text": "",
+      "description": "受惊瞪圆眼张嘴，头顶炸出惊吓闪线",
+      "use_when": "突发惊吓/被吓一跳/愣住"
+    },
+    {
+      "id": "06",
+      "label": "哇嗷",
+      "subject": "lidousha",
+      "file": "06_李豆沙_哇嗷.png",
+      "hd_file": "hd/06_李豆沙_哇嗷.png",
+      "hd_sha256": "3531f0401b37aecfdb11ab58b0a3eaa80aa85d9d610f253a1bff4e8f6829f91a",
+      "baked_text": "",
+      "description": "星星眼两手贴在胸前兴奋仰慕，墨镜推在头顶",
+      "use_when": "惊叹羡慕/两眼放光/哇塞"
+    },
+    {
+      "id": "07",
+      "label": "贡丸",
+      "subject": "lidousha",
+      "file": "07_李豆沙_贡丸.png",
+      "hd_file": "hd/07_李豆沙_贡丸.png",
+      "hd_sha256": "cdc38415829b0713661e6327d272d708ea4afd481b5407bf965d7c334df26341",
+      "baked_text": "贡丸",
+      "description": "头顶顶着一颗贡丸趴在桌边卖萌，配字“贡丸”",
+      "use_when": "贡丸梗/干饭吃货/顶东西卖萌"
+    },
+    {
+      "id": "08",
+      "label": "大笑",
+      "subject": "lidousha",
+      "file": "08_李豆沙_大笑.png",
+      "hd_file": "hd/08_李豆沙_大笑.png",
+      "hd_sha256": "9d43ab888f85134c949c907b87a32110e9db6988d61f70c2e99293ab370f569f",
+      "baked_text": "",
+      "description": "眯眼XD张嘴大笑，一只手笑到向外乱拍",
+      "use_when": "爆笑/乐子/笑不活了"
+    },
+    {
+      "id": "09",
+      "label": "打call",
+      "subject": "lidousha",
+      "file": "09_李豆沙_打call.png",
+      "hd_file": "hd/09_李豆沙_打call.png",
+      "hd_sha256": "9a5e118b6960ceb5378ba27307567bf24dced088f86a4e1f5e944badd1587aee",
+      "baked_text": "",
+      "description": "双手各挥一根蓝色荧光棒，XD兴奋应援",
+      "use_when": "应援打call/演唱会气氛/冲鸭"
+    },
+    {
+      "id": "10",
+      "label": "百合花",
+      "subject": "lidousha",
+      "file": "10_李豆沙_百合花.png",
+      "hd_file": "hd/10_李豆沙_百合花.png",
+      "hd_sha256": "67a05681123423637ceaa3930c35dfb2a13e08ee00ab7773ed6fb2552e191ae0",
+      "baked_text": "",
+      "description": "双手捧着一枝白色百合花往前递",
+      "use_when": "百合GL话题/送花示好/纯情"
+    },
+    {
+      "id": "11",
+      "label": "赞",
+      "subject": "lidousha",
+      "file": "11_李豆沙_赞.png",
+      "hd_file": "hd/11_李豆沙_赞.png",
+      "hd_sha256": "4e11917ba90f17929520bda4c03c551680bce792749f2f7cb7acf469600b0e88",
+      "baked_text": "",
+      "description": "简笔涂鸦画风竖起大拇指，线稿感十足",
+      "use_when": "点赞认可/好评/可以"
+    },
+    {
+      "id": "12",
+      "label": "安眠",
+      "subject": "lidousha",
+      "file": "12_李豆沙_安眠.png",
+      "hd_file": "hd/12_李豆沙_安眠.png",
+      "hd_sha256": "704b1ee8971630fafc6624c627832a1f2ee6ce950e04ede55b6f7f09328c7bd4",
+      "baked_text": "",
+      "description": "枕着枕头闭眼熟睡，头顶冒Zzz和小星星",
+      "use_when": "哄睡/晚安/困了睡着"
+    },
+    {
+      "id": "13",
+      "label": "得意",
+      "subject": "lidousha",
+      "file": "13_李豆沙_得意.png",
+      "hd_file": "hd/13_李豆沙_得意.png",
+      "hd_sha256": "a3fc2e273ca5818d4d45b1491ca58a2953389f51ab11d168c57ec4610c05f0f8",
+      "baked_text": "",
+      "description": "半眯眼上扬嘴角的得意微笑，旁边闪小星星",
+      "use_when": "得意得逞/嘚瑟/计划通"
+    },
+    {
+      "id": "14",
+      "label": "什么",
+      "subject": "lidousha",
+      "file": "14_李豆沙_什么.png",
+      "hd_file": "hd/14_李豆沙_什么.png",
+      "hd_sha256": "f9c00bdc52803665b2c84b630796a3cdf51df1a0fec653c95102effe9b34a21c",
+      "baked_text": "",
+      "description": "一手扶起墨镜露出疑惑三角嘴，满脸问号的茫然",
+      "use_when": "没听懂/黑人问号/what"
+    },
+    {
+      "id": "15",
+      "label": "吓飞",
+      "subject": "lidousha",
+      "file": "15_李豆沙_吓飞.png",
+      "hd_file": "hd/15_李豆沙_吓飞.png",
+      "hd_sha256": "632ba3c29ad2450608e8e8ccb68f32eab19e6721d023709c76eaa333983da76d",
+      "baked_text": "",
+      "description": "惊恐嚎叫大张红嘴眼泪飞出，头发炸毛带小骷髅标记",
+      "use_when": "吓疯/破大防/崩溃惨叫"
+    },
+    {
+      "id": "16",
+      "label": "侦探",
+      "subject": "lidousha",
+      "file": "16_李豆沙_侦探.png",
+      "hd_file": "hd/16_李豆沙_侦探.png",
+      "hd_sha256": "95629fc5e00c9a3518cab494034a65c2655585003da631b0ab4f835ab217eb2b",
+      "baked_text": "",
+      "description": "单眼举着放大镜凑近审视，侦探做派",
+      "use_when": "找茬审视/鉴定真伪/一眼AI/侦探"
+    },
+    {
+      "id": "17",
+      "label": "疑问",
+      "subject": "lidousha",
+      "file": "17_李豆沙_疑问.png",
+      "hd_file": "hd/17_李豆沙_疑问.png",
+      "hd_sha256": "66ac4e5394afc8ade87be47a0039baaeb89e0ccd2c6d34144259b3f243fe885b",
+      "baked_text": "",
+      "description": "头顶冒红色问号，无辜张小嘴歪头困惑",
+      "use_when": "疑惑/懵懵/为什么"
+    },
+    {
+      "id": "18",
+      "label": "宕机",
+      "subject": "lidousha",
+      "file": "18_李豆沙_宕机.png",
+      "hd_file": "hd/18_李豆沙_宕机.png",
+      "hd_sha256": "c636c23a0af75ae4dbcb32d9d252e0a89b57b70ce4dca40b5c61092857607900",
+      "baked_text": "",
+      "description": "脸被加载转圈图标整个挡住，手里还捧着书",
+      "use_when": "宕机死机/大脑过载/转不动了"
+    },
+    {
+      "id": "19",
+      "label": "举手",
+      "subject": "lidousha",
+      "file": "19_李豆沙_举手.png",
+      "hd_file": "hd/19_李豆沙_举手.png",
+      "hd_sha256": "d002bfc5f10d9c3c4042caff41dc2c8bc0c3629915228fcc6b9b4ed38ec474c1",
+      "baked_text": "",
+      "description": "高高举起一只手臂张嘴要发言",
+      "use_when": "举手报名/我要我要/选我"
+    },
+    {
+      "id": "20",
+      "label": "展示",
+      "subject": "lidousha",
+      "file": "20_李豆沙_展示.png",
+      "hd_file": "hd/20_李豆沙_展示.png",
+      "hd_sha256": "287f634fa6a4b71a9f856c5a45f9ce5733c660cf2b69e6bc1796643c6d4232d9",
+      "baked_text": "",
+      "description": "侧身伸手向旁展示，得体自信的介绍手势",
+      "use_when": "展示介绍/请看/隆重推出"
+    },
+    {
+      "id": "21",
+      "label": "谁是猪",
+      "subject": "lidousha",
+      "file": "21_李豆沙_谁是猪.png",
+      "hd_file": "hd/21_李豆沙_谁是猪.png",
+      "hd_sha256": "7e7545b00f266ff3ba79dd853df478774151311a99c9f4df5e70961f8d522ae7",
+      "baked_text": "",
+      "description": "脸上被贴了粉色猪鼻子，眼神写满不服气",
+      "use_when": "被叫猪/互怼被整/猪猪梗"
+    },
+    {
+      "id": "22",
+      "label": "没眼看",
+      "subject": "lidousha",
+      "file": "22_李豆沙_没眼看.png",
+      "hd_file": "hd/22_李豆沙_没眼看.png",
+      "hd_sha256": "274a13dfdef0d5a2118878d98f1ec0ec7e6598723f4b10d754492ef3258f82e5",
+      "baked_text": "",
+      "description": "双手死死捂住眼睛不忍直视",
+      "use_when": "没眼看/尴尬羞耻/辣眼睛"
+    },
+    {
+      "id": "23",
+      "label": "扯扯",
+      "subject": "lidousha",
+      "file": "23_李豆沙_扯扯.png",
+      "hd_file": "hd/23_李豆沙_扯扯.png",
+      "hd_sha256": "32698616fcee8bcc31dd3d51ee48526cee2d9e9e5279bd52ff5368eef7e356bd",
+      "baked_text": "",
+      "description": "脸颊被两侧拽扯揉搓，闭眼任人摆布",
+      "use_when": "被拿捏/捏脸揉脸/任人摆布"
+    },
+    {
+      "id": "24",
+      "label": "爱心",
+      "subject": "lidousha",
+      "file": "24_李豆沙_爱心.png",
+      "hd_file": "hd/24_李豆沙_爱心.png",
+      "hd_sha256": "e6d29adbd49779cf8d5ecee75f529ba18cbaf38ca3507c513c02e263ddd2acb8",
+      "baked_text": "",
+      "description": "闭眼幸福地抱住一颗大粉红爱心",
+      "use_when": "爱意感谢/贴贴/比心"
+    },
+    {
+      "id": "25",
+      "label": "只是熊猫",
+      "subject": "panda_creature",
+      "file": "25_李豆沙_只是熊猫.png",
+      "hd_file": "hd/25_李豆沙_只是熊猫.png",
+      "hd_sha256": "1c81f44edb7909131f028e9ac410a71fe79b963ea069276c907f86d9b15536fd",
+      "baked_text": "",
+      "description": "纯熊猫毛球本体（黑白圆眼小熊猫兽形，不是人形小李），呆萌无辜",
+      "use_when": "熊猫头梗/装无辜“我只是熊猫”/代画粉丝kmx(kimo熊)"
+    }
+  ]
+}

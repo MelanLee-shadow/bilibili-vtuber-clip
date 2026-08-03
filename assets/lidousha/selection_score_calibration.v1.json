@@ -1,0 +1,49 @@
+{
+  "schema_version": "lidousha-selection-score-calibration.v1",
+  "authority": "维护者 2026-07-23 plus ChatGPT Pro rubric consultation: Tier is hard admission; effective score is calibrated within tier after uncertainty and same-session fatigue penalties.",
+  "anchors": [
+    {
+      "candidate_id": "auto_193450_3573_3665",
+      "label": "金发有角妹妹像礼墨Sumi，看到男性角色又改口不熟",
+      "expected_tier": 1,
+      "effective_score_min": 75,
+      "effective_score_max": 85,
+      "dimensions": {
+        "lidousha_centrality": 4,
+        "stance_intensity": 3,
+        "audience_salience": 4,
+        "relationship_interaction": 3,
+        "persona_reversal": 3,
+        "comedic_payoff": 3,
+        "self_contained": 4
+      },
+      "uncertainty_penalty": 4,
+      "fatigue_penalty": 2
+    },
+    {
+      "candidate_id": "auto_193450_5341_5459",
+      "label": "下播没人挽留之争，坦白挽留只因东西没下好",
+      "expected_tier": 2,
+      "effective_score_min": 50,
+      "effective_score_max": 60,
+      "dimensions": {
+        "lidousha_centrality": 4,
+        "stance_intensity": 2,
+        "audience_salience": 2,
+        "relationship_interaction": 2,
+        "persona_reversal": 2,
+        "comedic_payoff": 3,
+        "self_contained": 4
+      },
+      "uncertainty_penalty": 8,
+      "fatigue_penalty": 4.5
+    }
+  ],
+  "ordering_constraints": [
+    {
+      "higher_candidate_id": "auto_193450_3573_3665",
+      "lower_candidate_id": "auto_193450_5341_5459",
+      "reason": "Tier 1 relationship and preference reversal must outrank a Tier 2 sign-off exchange regardless of recall confidence."
+    }
+  ]
+}

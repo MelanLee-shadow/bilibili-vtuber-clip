@@ -1,0 +1,281 @@
+{
+  "artifacts": {
+    "subtitle_ass": {
+      "path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-final-with-budui-20260718/out/Z1定版候选-李豆沙一直是零-不对-李豆沙一直是为爱做一.ass",
+      "sha256": "80a1db2cede0bd5e61e8ccd54c325fd6f548df514e3151153128977447aa6baf"
+    },
+    "subtitle_srt": {
+      "path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-final-with-budui-20260718/out/Z1定版候选-李豆沙一直是零-不对-李豆沙一直是为爱做一.srt",
+      "sha256": "5943b4ae57a45443ef6060075080fbe31add789089c9388a41afca320b218d0f"
+    },
+    "video": {
+      "duration_ms": 5754,
+      "path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-final-with-budui-20260718/out/Z1定版候选-李豆沙一直是零-不对-李豆沙一直是为爱做一.mp4",
+      "sha256": "bbd0c7e3b34d3d5af543bb8444861ab1e18f835c9252629480b2ec2fd34e7dc5"
+    }
+  },
+  "manifest_sha256": "043ae779e87fd07bf44c50d7a53319d9c0cae8950dbd0bba7de208a6fafd1903",
+  "normalized_target": "李豆沙一直是零不对李豆沙一直是为爱做一",
+  "pieces": [
+    {
+      "piece_id": "p001",
+      "rendered_duration_ms": 2250,
+      "rendered_path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-final-with-budui-20260718/work/final/piece-001.mp4",
+      "rendered_sha256": "76dd89774030a5d5a87ab52896aa06ea3d6f44c0422e21c2368a9e1ec5b1d499",
+      "source_core_interval_ms": [
+        2230,
+        4100
+      ],
+      "source_date": "2026-07-16",
+      "source_id": "solo-20260716-210002-zero-tail-4100-avatar-clean-selected-z1",
+      "source_interval_ms": [
+        2230,
+        4100
+      ],
+      "source_media_path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-dual-order-20260718/sources/source-context-480000-495000.avatar-clean.mp4",
+      "source_media_sha256": "b1142433095aea4fc0fe346388b2a62e8b7651426b11b086f858b99016c7e8da",
+      "source_utterance_text": "李豆沙一直是零",
+      "speaker_authority": "ivan_confirmed_phrase",
+      "speaker_confidence": 1.0,
+      "speaker_evidence": [
+        {
+          "authority": "ivan_confirmation",
+          "coverage_ranges_ms": [
+            [
+              2230,
+              4100
+            ]
+          ],
+          "path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-zero-tail-micro-20260718/evidence/Z1-zero-boundary-confirmation.json",
+          "sha256": "89493a508c1e6a6943a69c85297a5c49f4689c1b1ab69b0fe7f966dc20671b04"
+        }
+      ],
+      "text": "李豆沙一直是零",
+      "transcript_authorities": [
+        "bcut+ivan_exact_text+zero_tail_4100",
+        "jianying+ivan_exact_text+zero_tail_4100"
+      ],
+      "utterance_id": "solo-20260716-210002-zero-tail-4100-avatar-clean-selected-z1:u00001",
+      "verification_evidence": {
+        "evidence": [
+          {
+            "authority": "bcut+ivan_exact_text+zero_tail_4100",
+            "observed_interval_ms": [
+              2230,
+              4100
+            ],
+            "observed_text": "李豆沙一直是零",
+            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-zero-tail-micro-20260718/evidence/Z1-source-context.bcut.human-promoted.json",
+            "sha256": "106995fa4b887da6d69844692f441764c50c89cff3d9efe14d02e7343d06acbb",
+            "timing_delta_ms": {
+              "end": 0,
+              "maximum_absolute": 0,
+              "start": 0
+            },
+            "utterance_index": 0
+          },
+          {
+            "authority": "jianying+ivan_exact_text+zero_tail_4100",
+            "observed_interval_ms": [
+              2230,
+              4100
+            ],
+            "observed_text": "李豆沙一直是零",
+            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-zero-tail-micro-20260718/evidence/Z1-source-context.jianying.human-promoted.json",
+            "sha256": "1abb3a85d058b7d52caeda4aeb4af04f17042316d73ef69e21c81253f99fcfb5",
+            "timing_delta_ms": {
+              "end": 0,
+              "maximum_absolute": 0,
+              "start": 0
+            },
+            "utterance_index": 0
+          }
+        ],
+        "media_sha256": "b1142433095aea4fc0fe346388b2a62e8b7651426b11b086f858b99016c7e8da",
+        "observed_text": "李豆沙一直是零",
+        "status": "VERIFIED",
+        "transcript_authorities": [
+          "bcut+ivan_exact_text+zero_tail_4100",
+          "jianying+ivan_exact_text+zero_tail_4100"
+        ],
+        "transcript_confidence": 0.99
+      }
+    },
+    {
+      "piece_id": "p002",
+      "rendered_duration_ms": 655,
+      "rendered_path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-final-with-budui-20260718/work/final/piece-002.mp4",
+      "rendered_sha256": "5c173c21f0b95378041ed8aa6204df72997a3706a4addb1ca6c9d517ddafddba",
+      "source_core_interval_ms": [
+        1120,
+        1440
+      ],
+      "source_date": "2026-07-10",
+      "source_id": "solo-20260710-190017-budui-full-frame",
+      "source_interval_ms": [
+        1100,
+        1495
+      ],
+      "source_media_path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-final-with-budui-20260718/sources/budui-context-1274000-1277000.mp4",
+      "source_media_sha256": "9db18449722ef1cab119524fec13846e2966763e97af10896d99d93c7a330bde",
+      "source_utterance_text": "还没看我们明天不对",
+      "speaker_authority": "ivan_confirmed_solo_session",
+      "speaker_confidence": 1.0,
+      "speaker_evidence": [
+        {
+          "authority": "ivan_confirmed_solo_session",
+          "path": "/opt/bilive/autoslice/cache/huozi-luanshua/solo-session-human-authority.md",
+          "sha256": "295b5fe1ab4fdaf20556bf951f1b9861f2e7ab7b6fbb806064a429c6a82ecccc"
+        }
+      ],
+      "text": "不对",
+      "transcript_authorities": [
+        "bcut",
+        "jianying"
+      ],
+      "utterance_id": "solo-20260710-190017-budui-full-frame:u00001",
+      "verification_evidence": {
+        "evidence": [
+          {
+            "authority": "bcut",
+            "observed_interval_ms": [
+              1120,
+              1440
+            ],
+            "observed_text": "还没看我们明天不对",
+            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-final-with-budui-20260718/evidence/budui-context.bcut.json",
+            "sha256": "8d0ad84c65b6fb5a3e72ce58d6dbc0777a038c2a9c9454a00438788553d1de54",
+            "timing_delta_ms": {
+              "end": 0,
+              "maximum_absolute": 0,
+              "start": 0
+            },
+            "utterance_index": 0
+          },
+          {
+            "authority": "jianying",
+            "observed_interval_ms": [
+              1090,
+              1450
+            ],
+            "observed_text": "不对我们周天来看吧",
+            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-final-with-budui-20260718/evidence/budui-context.jianying.json",
+            "sha256": "5e207c4c15505a18faf58725bdafbf64f98903fcf5f7833c9541b617b5331122",
+            "timing_delta_ms": {
+              "end": 10,
+              "maximum_absolute": 30,
+              "start": -30
+            },
+            "utterance_index": 1
+          }
+        ],
+        "media_sha256": "9db18449722ef1cab119524fec13846e2966763e97af10896d99d93c7a330bde",
+        "observed_text": "还没看我们明天不对",
+        "status": "VERIFIED",
+        "transcript_authorities": [
+          "bcut",
+          "jianying"
+        ],
+        "transcript_confidence": 0.99
+      }
+    },
+    {
+      "piece_id": "p003",
+      "rendered_duration_ms": 2810,
+      "rendered_path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-final-with-budui-20260718/work/final/piece-003.mp4",
+      "rendered_sha256": "4ee6231e5387b2e5060b1411058f90a1d997e5c3b6fcb27e875f75f3a8f4f45d",
+      "source_core_interval_ms": [
+        9630,
+        12420
+      ],
+      "source_date": "2026-07-16",
+      "source_id": "solo-20260716-210002-zero-tail-4100-avatar-clean-selected-z1",
+      "source_interval_ms": [
+        9630,
+        12440
+      ],
+      "source_media_path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-dual-order-20260718/sources/source-context-480000-495000.avatar-clean.mp4",
+      "source_media_sha256": "b1142433095aea4fc0fe346388b2a62e8b7651426b11b086f858b99016c7e8da",
+      "source_utterance_text": "李豆沙一直是为爱做一",
+      "speaker_authority": "ivan_confirmed_phrase",
+      "speaker_confidence": 1.0,
+      "speaker_evidence": [
+        {
+          "authority": "ivan_confirmation",
+          "coverage_ranges_ms": [
+            [
+              9630,
+              12460
+            ]
+          ],
+          "path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-dual-order-20260718/evidence/one-tail-confirmation.shifted.json",
+          "sha256": "53633ebb7a8ca7f5cbc94f9c075aa1d64a08e2c99d65a44491f668c12726e01f"
+        }
+      ],
+      "text": "李豆沙一直是为爱做一",
+      "transcript_authorities": [
+        "bcut+ivan_exact_text+zero_tail_4100",
+        "jianying+ivan_exact_text+zero_tail_4100"
+      ],
+      "utterance_id": "solo-20260716-210002-zero-tail-4100-avatar-clean-selected-z1:u00002",
+      "verification_evidence": {
+        "evidence": [
+          {
+            "authority": "bcut+ivan_exact_text+zero_tail_4100",
+            "observed_interval_ms": [
+              9630,
+              12420
+            ],
+            "observed_text": "李豆沙一直是为爱做一",
+            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-zero-tail-micro-20260718/evidence/Z1-source-context.bcut.human-promoted.json",
+            "sha256": "106995fa4b887da6d69844692f441764c50c89cff3d9efe14d02e7343d06acbb",
+            "timing_delta_ms": {
+              "end": 0,
+              "maximum_absolute": 0,
+              "start": 0
+            },
+            "utterance_index": 1
+          },
+          {
+            "authority": "jianying+ivan_exact_text+zero_tail_4100",
+            "observed_interval_ms": [
+              9630,
+              12420
+            ],
+            "observed_text": "李豆沙一直是为爱做一",
+            "path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-zero-tail-micro-20260718/evidence/Z1-source-context.jianying.human-promoted.json",
+            "sha256": "1abb3a85d058b7d52caeda4aeb4af04f17042316d73ef69e21c81253f99fcfb5",
+            "timing_delta_ms": {
+              "end": 0,
+              "maximum_absolute": 0,
+              "start": 0
+            },
+            "utterance_index": 1
+          }
+        ],
+        "media_sha256": "b1142433095aea4fc0fe346388b2a62e8b7651426b11b086f858b99016c7e8da",
+        "observed_text": "李豆沙一直是为爱做一",
+        "status": "VERIFIED",
+        "transcript_authorities": [
+          "bcut+ivan_exact_text+zero_tail_4100",
+          "jianying+ivan_exact_text+zero_tail_4100"
+        ],
+        "transcript_confidence": 0.99
+      }
+    }
+  ],
+  "quality": {
+    "average_piece_characters": 6.333,
+    "character_count": 19,
+    "fragmented": false,
+    "longest_piece_characters": 10,
+    "multi_character_coverage_ratio": 1.0,
+    "piece_count": 3,
+    "single_character_piece_count": 0
+  },
+  "schema_version": "huozi-render.v1",
+  "status": "REVIEW_READY_NO_UPLOAD",
+  "target": "李豆沙一直是零，不对，李豆沙一直是为爱做一",
+  "upload_enabled": false,
+  "verified_plan_sha256": "2ac78d6c0e66a7a930f7a678298f6491d60ff0a9db038dd52bdf343e9d6c7091"
+}

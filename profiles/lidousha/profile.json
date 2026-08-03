@@ -1,0 +1,246 @@
+{
+  "schema_version": "vtuber-slice.channel-profile.v1",
+  "profile_id": "lidousha",
+  "identity": {
+    "display_name": "李豆沙",
+    "prompt_name": "Li Dousha",
+    "short_name": "小李",
+    "self_reference_aliases": [
+      "李豆沙",
+      "小李",
+      "豆沙"
+    ],
+    "speaker_identity_aliases": [
+      "李豆沙",
+      "shadow"
+    ],
+    "room_id": "22966160",
+    "output_directory": "lidousha",
+    "host_speaker_label": "李豆沙",
+    "guest_speaker_label": "连线",
+    "cover_identity": {
+      "gate_appearance_zh": "白发、蓝白熊猫帽/熊猫耳的小个子形象",
+      "gate_rival_note_zh": "（例如带红金角饰、白发长辫、红领结的伊索尔Sol）",
+      "gate_imitation_zh": "加熊猫耳",
+      "locator_zh": "熊猫帽/熊猫耳、白发和可见名牌",
+      "composition_decoys_zh": "其他白发角色或游戏 UI",
+      "prompt_tag_en": "panda-hood",
+      "feature_en": "panda ears",
+      "scene_prop_meme_note_zh": "例如“白色奶龙表情/旧模型”是李豆沙自身形象的称呼，",
+      "emote_companion_lore_zh": "分身/复数小李梗,或用熊猫类表情包代画粉丝 kmx(kmx 读 kimo熊,是李豆沙粉丝们的名字,不是吉祥物——切片明显在互动/回应 kmx 时,用贴纸代画观众而不画路人群像)"
+    }
+  },
+  "assets": {
+    "root": "assets/lidousha",
+    "files": {
+      "branding_intro_manifest": "intro/branding_intro.v1.json",
+      "clip_opening_address": "clip_opening_address.json",
+      "cover_identity_prompt": "cover_identity_prompt.txt",
+      "cover_reference_overrides": "cover_reference_overrides.v1.json",
+      "emote_library": "emote_library.v1.json",
+      "entity_confusables": "entity_confusables.json",
+      "final_media_review_contracts": "final_media_review_contracts.v1.json",
+      "gift_names": "bilibili_gift_names.v1.json",
+      "glossary": "glossary.txt",
+      "known_songs": "known_songs.json",
+      "manual_archive_metadata": "manual_archive_metadata.v1.json",
+      "manual_title_overrides": "manual_title_overrides.v1.json",
+      "persona": "persona.md",
+      "psplive_roster": "psplive_roster.v1.md",
+      "psplive_roster_sources": "psplive_roster_sources.v1.json",
+      "publication_registry": "publication_registry.v1.json",
+      "published_songs": "published_songs.v1.json",
+      "selection_score_calibration": "selection_score_calibration.v1.json",
+      "session_relation_ledger": "session_relation_ledger.v1.json",
+      "slice_selection_metric": "slice_selection_metric.md",
+      "speech_memory_ledger": "speech_memory_ledger.v1.json",
+      "subtitle_correction_principles": "subtitle_correction_principles.md",
+      "subtitle_truth_ledger": "subtitle_truth_ledger.v1.json",
+      "timely_term_seeds": "timely_term_seeds.json",
+      "timely_term_sources": "timely_term_sources.json",
+      "timely_terms": "timely_terms.json",
+      "title_policy": "title_policy.json",
+      "title_style": "title_style.md",
+      "topic_entity_graph": "topic_entity_graph.json",
+      "upload_tag_policy": "upload_tag_policy.json",
+      "voiceprint_profile": "voiceprint_profile.v1.json"
+    },
+    "directories": {
+      "fonts": "fonts",
+      "manual_title_repair_authorities": "manual_title_repair_authorities",
+      "reviewed_subtitle_baselines": "reviewed_subtitle_baselines",
+      "speaker_overrides": "speaker_overrides",
+      "subtitle_regressions": "subtitle_regressions",
+      "subtitle_text_overrides": "subtitle_text_overrides"
+    },
+    "pipeline_fingerprint_files": [
+      "entity_confusables",
+      "glossary",
+      "branding_intro_manifest",
+      "cover_reference_overrides",
+      "cover_identity_prompt",
+      "emote_library",
+      "gift_names",
+      "known_songs",
+      "manual_archive_metadata",
+      "manual_title_overrides",
+      "persona",
+      "psplive_roster",
+      "psplive_roster_sources",
+      "session_relation_ledger",
+      "selection_score_calibration",
+      "slice_selection_metric",
+      "speech_memory_ledger",
+      "subtitle_correction_principles",
+      "subtitle_truth_ledger",
+      "timely_term_seeds",
+      "timely_term_sources",
+      "timely_terms",
+      "topic_entity_graph",
+      "title_policy",
+      "title_style",
+      "upload_tag_policy",
+      "voiceprint_profile"
+    ],
+    "pipeline_fingerprint_directories": [
+      "fonts"
+    ]
+  },
+  "runtime": {
+    "voiceprint_reference_subdirectory": "lidousha"
+  },
+  "titles": {
+    "talk_prefix": "【李豆沙】",
+    "song_prefix": "【李豆沙】豆沙歌，",
+    "song_plain_template": "【李豆沙】豆沙歌，《{song_title}》"
+  },
+  "text_normalization": {
+    "canonical_surfaces": [
+      {
+        "surface": "哇哭哇哭",
+        "canonical": "ワクワク",
+        "authority": "lidousha-japanese-native-script-canon.v1"
+      },
+      {
+        "surface": "哇库哇库",
+        "canonical": "ワクワク",
+        "authority": "lidousha-japanese-native-script-canon.v1"
+      },
+      {
+        "surface": "wakuwaku",
+        "canonical": "ワクワク",
+        "authority": "lidousha-japanese-native-script-canon.v1"
+      },
+      {
+        "surface": "boku",
+        "canonical": "ぼく",
+        "authority": "lidousha-japanese-native-script-canon.v1"
+      },
+      {
+        "surface": "ore",
+        "canonical": "おれ",
+        "authority": "lidousha-japanese-native-script-canon.v1"
+      },
+      {
+        "surface": "atashi",
+        "canonical": "あたし",
+        "authority": "lidousha-japanese-native-script-canon.v1"
+      },
+      {
+        "surface": "直女",
+        "canonical": "侄女",
+        "authority": "lidousha-hard-meme-canon.v1"
+      },
+      {
+        "surface": "林墨",
+        "canonical": "礼墨",
+        "authority": "lidousha-expected-value-canon.v1"
+      },
+      {
+        "surface": "小诗",
+        "canonical": "小室",
+        "authority": "lidousha-expected-value-canon.v1"
+      },
+      {
+        "surface": "粉丝灯牌",
+        "canonical": "粉丝团灯牌",
+        "authority": "lidousha-expected-value-canon.v1"
+      },
+      {
+        "surface": "粉团灯牌",
+        "canonical": "粉丝团灯牌",
+        "authority": "lidousha-expected-value-canon.v1"
+      },
+      {
+        "surface": "难崩小视频",
+        "canonical": "难绷小视频",
+        "authority": "lidousha-hard-slang-canon.v1"
+      },
+      {
+        "surface": "gala game",
+        "canonical": "Galgame",
+        "authority": "lidousha-code-switch-canon.v1"
+      },
+      {
+        "surface": "嘎啦 game",
+        "canonical": "Galgame",
+        "authority": "lidousha-code-switch-canon.v1"
+      },
+      {
+        "surface": "嘎啦game",
+        "canonical": "Galgame",
+        "authority": "lidousha-code-switch-canon.v1"
+      },
+      {
+        "surface": "kimo熊",
+        "canonical": "kmx",
+        "authority": "维护者-confirmed-kmx-pronunciation.v1"
+      },
+      {
+        "surface": "kimo 熊",
+        "canonical": "kmx",
+        "authority": "维护者-confirmed-kmx-pronunciation.v1"
+      },
+      {
+        "surface": "Kimo熊",
+        "canonical": "kmx",
+        "authority": "维护者-confirmed-kmx-pronunciation.v1"
+      },
+      {
+        "surface": "kimoxiong",
+        "canonical": "kmx",
+        "authority": "维护者-confirmed-kmx-pronunciation.v1"
+      },
+      {
+        "surface": "基默熊",
+        "canonical": "kmx",
+        "authority": "维护者-confirmed-kmx-pronunciation.v1"
+      },
+      {
+        "surface": "李豆莎",
+        "canonical": "李豆沙",
+        "authority": "维护者-confirmed-self-name.v1"
+      },
+      {
+        "surface": "苏马奶",
+        "canonical": "十麻乃",
+        "authority": "维护者-confirmed-sc-sender.v1"
+      },
+      {
+        "surface": "日嘎多",
+        "canonical": "ありがとう",
+        "authority": "lidousha-code-switch-canon.v1"
+      }
+    ]
+  },
+  "decisions": {
+    "host_vocal_present": "LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS",
+    "host_vocal_absent": "NO_LIDOUSHA_VOCAL_DETECTED",
+    "verified_host_singing": "VERIFIED_LIDOUSHA_SINGING",
+    "host_not_singing_reason": "SONG_NOT_LIDOUSHA_SINGING",
+    "lyric_vocal_subject": "LIDOUSHA"
+  },
+  "tools": {
+    "cover_regenerator": "scripts/regenerate_channel_cover.py"
+  }
+}

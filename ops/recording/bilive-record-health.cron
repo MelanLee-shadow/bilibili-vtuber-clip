@@ -1,0 +1,3 @@
+# Refuse to run the host-side health audit on a plain system-disk directory.
+# The same strict CloudFS/FUSE probe is shared with the recorder boot gate.
+*/10 * * * * root /usr/bin/flock -n /opt/bilive/autoslice/watchdog.lock /bin/bash -lc '/opt/bilive/autoslice/mount_watchdog.sh --probe-only && /usr/bin/python3 /opt/bilive/ops/record_health_audit.py --lookback-hours 96' >> /opt/bilive/logs/runtime/record-health-cron.log 2>&1

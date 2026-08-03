@@ -1,0 +1,835 @@
+{
+  "entities": [
+    {
+      "aliases": [
+        "Tomorin",
+        "灯",
+        "燈"
+      ],
+      "canonical_zh": "高松灯",
+      "entity_id": "bgm:character:127790",
+      "kind": "character",
+      "native_names": [
+        "高松燈"
+      ],
+      "readings": [
+        "たかまつ ともり",
+        "Takamatsu Tomori",
+        "ともり",
+        "Tomori"
+      ],
+      "role": "MAIN",
+      "sources": [
+        {
+          "published_at": "2023-06-29",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/127790"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:428735",
+        "bgm:subject:454684"
+      ]
+    },
+    {
+      "aliases": [
+        "爱音",
+        "愛音"
+      ],
+      "canonical_zh": "千早爱音",
+      "entity_id": "bgm:character:127791",
+      "kind": "character",
+      "native_names": [
+        "千早愛音"
+      ],
+      "readings": [
+        "ちはや あのん",
+        "Chihaya Anon",
+        "あのん",
+        "Anon"
+      ],
+      "role": "MAIN",
+      "sources": [
+        {
+          "published_at": "2023-06-29",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/127791"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:428735",
+        "bgm:subject:454684"
+      ]
+    },
+    {
+      "aliases": [
+        "乐奈",
+        "楽奈"
+      ],
+      "canonical_zh": "要乐奈",
+      "entity_id": "bgm:character:127792",
+      "kind": "character",
+      "native_names": [
+        "要楽奈"
+      ],
+      "readings": [
+        "かなめ らーな",
+        "Kaname Rāna",
+        "らーな",
+        "Rāna"
+      ],
+      "role": "MAIN",
+      "sources": [
+        {
+          "published_at": "2023-06-29",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/127792"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:428735",
+        "bgm:subject:454684"
+      ]
+    },
+    {
+      "aliases": [
+        "长崎素世",
+        "Soyorin",
+        "爽世",
+        "そよ"
+      ],
+      "canonical_zh": "长崎爽世",
+      "entity_id": "bgm:character:127793",
+      "kind": "character",
+      "native_names": [
+        "長崎そよ"
+      ],
+      "readings": [
+        "ながさき そよ",
+        "Nagasaki Soyo",
+        "そよ",
+        "Soyo"
+      ],
+      "role": "MAIN",
+      "sources": [
+        {
+          "published_at": "2023-06-29",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/127793"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:428735",
+        "bgm:subject:454684"
+      ]
+    },
+    {
+      "aliases": [
+        "Rikki",
+        "立希"
+      ],
+      "canonical_zh": "椎名立希",
+      "entity_id": "bgm:character:127794",
+      "kind": "character",
+      "native_names": [
+        "椎名立希"
+      ],
+      "readings": [
+        "しいな たき",
+        "Shiina Taki",
+        "たき",
+        "Taki"
+      ],
+      "role": "MAIN",
+      "sources": [
+        {
+          "published_at": "2023-06-29",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/127794"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:428735",
+        "bgm:subject:454684"
+      ]
+    },
+    {
+      "aliases": [
+        "Oblivionis",
+        "祥子"
+      ],
+      "canonical_zh": "丰川祥子",
+      "entity_id": "bgm:character:132476",
+      "kind": "character",
+      "native_names": [
+        "豊川祥子"
+      ],
+      "readings": [
+        "とがわ さきこ",
+        "Togawa Sakiko",
+        "さきこ",
+        "Sakiko"
+      ],
+      "role": "SUPPORTING",
+      "sources": [
+        {
+          "published_at": "2023-06-29",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/132476"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:428735",
+        "bgm:subject:454684"
+      ]
+    },
+    {
+      "aliases": [
+        "Mortis",
+        "睦"
+      ],
+      "canonical_zh": "若叶睦",
+      "entity_id": "bgm:character:132477",
+      "kind": "character",
+      "native_names": [
+        "若葉睦"
+      ],
+      "readings": [
+        "わかば むつみ",
+        "Wakaba Mutsumi",
+        "むつみ",
+        "Mutsumi"
+      ],
+      "role": "SUPPORTING",
+      "sources": [
+        {
+          "published_at": "2023-06-29",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/132477"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:428735",
+        "bgm:subject:454684"
+      ]
+    },
+    {
+      "aliases": [
+        "ドロリス",
+        "Doloris"
+      ],
+      "canonical_zh": "三角初华",
+      "entity_id": "bgm:character:132479",
+      "kind": "character",
+      "native_names": [
+        "三角初華"
+      ],
+      "readings": [
+        "みすみ ういか",
+        "Misumi Uika",
+        "ういか",
+        "Uika"
+      ],
+      "role": "SUPPORTING",
+      "sources": [
+        {
+          "published_at": "2023-06-29",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/132479"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:428735",
+        "bgm:subject:454684"
+      ]
+    },
+    {
+      "aliases": [
+        "真奈",
+        "まな"
+      ],
+      "canonical_zh": "纯田真奈",
+      "entity_id": "bgm:character:132481",
+      "kind": "character",
+      "native_names": [
+        "純田まな"
+      ],
+      "readings": [
+        "すみた まな",
+        "Sumita Mana",
+        "まな",
+        "Mana"
+      ],
+      "role": "SUPPORTING",
+      "sources": [
+        {
+          "published_at": "2023-06-29",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/132481"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:428735",
+        "bgm:subject:454684"
+      ]
+    },
+    {
+      "aliases": [
+        "Timoris",
+        "海铃",
+        "海鈴"
+      ],
+      "canonical_zh": "八幡海铃",
+      "entity_id": "bgm:character:132924",
+      "kind": "character",
+      "native_names": [
+        "八幡海鈴"
+      ],
+      "readings": [
+        "やはた うみり",
+        "Yahata Umiri",
+        "うみり",
+        "Umiri"
+      ],
+      "role": "SUPPORTING",
+      "sources": [
+        {
+          "published_at": "2023-06-29",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/132924"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:428735",
+        "bgm:subject:454684"
+      ]
+    },
+    {
+      "aliases": [
+        "祐天寺喵梦",
+        "Amoris",
+        "にゃむち",
+        "にゃむ"
+      ],
+      "canonical_zh": "祐天寺若麦",
+      "entity_id": "bgm:character:133285",
+      "kind": "character",
+      "native_names": [
+        "祐天寺にゃむ"
+      ],
+      "readings": [
+        "ゆうてんじ にゃむ",
+        "Yūtenji Nyamu",
+        "にゃむ",
+        "Nyamu"
+      ],
+      "role": "SUPPORTING",
+      "sources": [
+        {
+          "published_at": "2023-06-29",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/133285"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:428735",
+        "bgm:subject:454684"
+      ]
+    },
+    {
+      "aliases": [
+        "Mortis"
+      ],
+      "canonical_zh": "墨缇斯",
+      "entity_id": "bgm:character:172369",
+      "kind": "character",
+      "native_names": [
+        "モーティス"
+      ],
+      "readings": [
+        "モーティス"
+      ],
+      "role": "SUPPORTING",
+      "sources": [
+        {
+          "published_at": "2025-01-02",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/172369"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:454684"
+      ]
+    },
+    {
+      "aliases": [],
+      "canonical_zh": "户山香澄",
+      "entity_id": "bgm:character:43162",
+      "kind": "character",
+      "native_names": [
+        "戸山香澄"
+      ],
+      "readings": [
+        "とやま かすみ",
+        "Toyama Kasumi",
+        "かすみ",
+        "Kasumi"
+      ],
+      "role": "MAIN",
+      "sources": [
+        {
+          "published_at": "2017-01-21",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/43162"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:186515"
+      ]
+    },
+    {
+      "aliases": [
+        "花园妙",
+        "おたえ"
+      ],
+      "canonical_zh": "花园多惠",
+      "entity_id": "bgm:character:43164",
+      "kind": "character",
+      "native_names": [
+        "花園たえ"
+      ],
+      "readings": [
+        "はなぞの たえ",
+        "Hanazono Tae",
+        "たえ",
+        "Tae"
+      ],
+      "role": "MAIN",
+      "sources": [
+        {
+          "published_at": "2017-01-21",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/43164"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:186515"
+      ]
+    },
+    {
+      "aliases": [
+        "りみりん"
+      ],
+      "canonical_zh": "牛込里美",
+      "entity_id": "bgm:character:43165",
+      "kind": "character",
+      "native_names": [
+        "牛込りみ"
+      ],
+      "readings": [
+        "うしごめ りみ",
+        "Ushigome Rimi",
+        "りみ",
+        "Rimi"
+      ],
+      "role": "MAIN",
+      "sources": [
+        {
+          "published_at": "2017-01-21",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/43165"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:186515"
+      ]
+    },
+    {
+      "aliases": [
+        "さーや"
+      ],
+      "canonical_zh": "山吹沙绫",
+      "entity_id": "bgm:character:43167",
+      "kind": "character",
+      "native_names": [
+        "山吹沙綾"
+      ],
+      "readings": [
+        "やまぶき さあや",
+        "Yamabuki Saaya",
+        "さあや",
+        "Saaya"
+      ],
+      "role": "MAIN",
+      "sources": [
+        {
+          "published_at": "2017-01-21",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/43167"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:186515"
+      ]
+    },
+    {
+      "aliases": [],
+      "canonical_zh": "市谷有咲",
+      "entity_id": "bgm:character:43168",
+      "kind": "character",
+      "native_names": [
+        "市ヶ谷有咲"
+      ],
+      "readings": [
+        "いちがや ありさ",
+        "Ichigaya Arisa",
+        "ありさ",
+        "Arisa"
+      ],
+      "role": "MAIN",
+      "sources": [
+        {
+          "published_at": "2017-01-21",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/43168"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:186515"
+      ]
+    },
+    {
+      "aliases": [],
+      "canonical_zh": "牛込百合",
+      "entity_id": "bgm:character:51998",
+      "kind": "character",
+      "native_names": [
+        "牛込ゆり"
+      ],
+      "readings": [
+        "うしごめ ゆり",
+        "Ushigome Yuri",
+        "ゆり",
+        "Yuri"
+      ],
+      "role": "SUPPORTING",
+      "sources": [
+        {
+          "published_at": "2017-01-21",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/51998"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:186515"
+      ]
+    },
+    {
+      "aliases": [],
+      "canonical_zh": "鹈泽莉",
+      "entity_id": "bgm:character:51999",
+      "kind": "character",
+      "native_names": [
+        "鵜沢リィ"
+      ],
+      "readings": [
+        "Uzawa Rii",
+        "Rii"
+      ],
+      "role": "SUPPORTING",
+      "sources": [
+        {
+          "published_at": "2017-01-21",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/51999"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:186515"
+      ]
+    },
+    {
+      "aliases": [],
+      "canonical_zh": "鳄部七菜",
+      "entity_id": "bgm:character:52000",
+      "kind": "character",
+      "native_names": [
+        "鰐部七菜"
+      ],
+      "readings": [
+        "Wanibe Nanana",
+        "Nanana"
+      ],
+      "role": "SUPPORTING",
+      "sources": [
+        {
+          "published_at": "2017-01-21",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/52000"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:186515"
+      ]
+    },
+    {
+      "aliases": [
+        "あっちゃん"
+      ],
+      "canonical_zh": "户山明日香",
+      "entity_id": "bgm:character:52002",
+      "kind": "character",
+      "native_names": [
+        "戸山明日香"
+      ],
+      "readings": [
+        "とやま あすか",
+        "Toyama Asuka",
+        "あすか",
+        "Asuka"
+      ],
+      "role": "SUPPORTING",
+      "sources": [
+        {
+          "published_at": "2017-01-21",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/52002"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:186515"
+      ]
+    },
+    {
+      "aliases": [],
+      "canonical_zh": "都筑诗船",
+      "entity_id": "bgm:character:52004",
+      "kind": "character",
+      "native_names": [
+        "都築詩船"
+      ],
+      "readings": [
+        "Tsuzuki Shisen",
+        "Shisen"
+      ],
+      "role": "SUPPORTING",
+      "sources": [
+        {
+          "published_at": "2017-01-21",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/52004"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:186515"
+      ]
+    },
+    {
+      "aliases": [],
+      "canonical_zh": "真次凛凛子",
+      "entity_id": "bgm:character:52005",
+      "kind": "character",
+      "native_names": [
+        "真次凛々子"
+      ],
+      "readings": [
+        "まつぎ りりこ",
+        "りりこ"
+      ],
+      "role": "SUPPORTING",
+      "sources": [
+        {
+          "published_at": "2017-01-21",
+          "publisher": "Bangumi structured character record",
+          "url": "https://bgm.tv/character/52005"
+        }
+      ],
+      "work_ids": [
+        "bgm:subject:186515"
+      ]
+    },
+    {
+      "aliases": [
+        "スミミ"
+      ],
+      "canonical_zh": "sumimi",
+      "entity_id": "official:bandori:unit:sumimi",
+      "kind": "unit",
+      "native_names": [
+        "sumimi"
+      ],
+      "readings": [
+        "sumimi",
+        "すみみ"
+      ],
+      "role": "RELATED",
+      "sources": [
+        {
+          "published_at": "2023-06-29",
+          "publisher": "BanG Dream! It's MyGO!!!!! official character profile",
+          "url": "https://anime.bang-dream.com/mygo/character/uika/"
+        },
+        {
+          "published_at": "2023-06-30",
+          "publisher": "BanG Dream official sumimi discography",
+          "url": "https://bang-dream.com/discographies/3390/"
+        },
+        {
+          "published_at": "2025-01-02",
+          "publisher": "BanG Dream official Ave Mujica character profile",
+          "url": "https://anime.bang-dream.com/avemujica/character/uika/"
+        },
+        {
+          "published_at": "2025-01-02",
+          "publisher": "BanG Dream official Ave Mujica character profile",
+          "url": "https://anime.bang-dream.com/avemujica/character/mana/"
+        }
+      ],
+      "activation_work_ids": [
+        "bgm:subject:428735",
+        "bgm:subject:454684"
+      ],
+      "work_ids": []
+    }
+  ],
+  "expires_at": "2026-07-19T21:00:00-04:00",
+  "generated_at": "2026-07-12T21:00:00-04:00",
+  "generator": "scripts/crawl_topic_entity_graph.py",
+  "input_timely_terms_sha256": "5ffbae588bf5f6a06b9384b3d441f1d7057465e239503e18c8c746e32867894c",
+  "schema_version": "lidousha-topic-entity-graph.v1",
+  "status": "fresh",
+  "topics": [
+    {
+      "active_from": "2026-06-01",
+      "active_until": "2026-09-30",
+      "aliases": [
+        "梦限大MewType",
+        "夢限大みゅーたいぷ",
+        "ゆめみた",
+        "BanG Dream!",
+        "邦多利",
+        "MyGO!!!!!",
+        "Ave Mujica"
+      ],
+      "canonical": "梦限大",
+      "sources": [
+        {
+          "published_at": "2026-06-01",
+          "publisher": "BanG Dream! official anime site",
+          "url": "https://anime.bang-dream.com/yumemita/news/post-5"
+        },
+        {
+          "published_at": "2026-06-01",
+          "publisher": "BanG Dream! official site",
+          "url": "https://bang-dream.com/news/2357/"
+        }
+      ],
+      "topic_id": "timely:e344b7348a667a6cb43a",
+      "work_ids": [
+        "bgm:subject:186515",
+        "bgm:subject:428735",
+        "bgm:subject:454684"
+      ]
+    }
+  ],
+  "works": [
+    {
+      "aired_from": "2017-01-21",
+      "aliases": [],
+      "canonical": "BanG Dream!",
+      "entity_ids": [
+        "bgm:character:43162",
+        "bgm:character:43167",
+        "bgm:character:43164",
+        "bgm:character:43165",
+        "bgm:character:43168",
+        "bgm:character:51998",
+        "bgm:character:51999",
+        "bgm:character:52000",
+        "bgm:character:52002",
+        "bgm:character:52004",
+        "bgm:character:52005"
+      ],
+      "sources": [
+        {
+          "published_at": "2017-01-21",
+          "publisher": "Bangumi structured anime subject",
+          "url": "https://bgm.tv/subject/186515"
+        }
+      ],
+      "topic_ids": [
+        "timely:e344b7348a667a6cb43a"
+      ],
+      "work_id": "bgm:subject:186515"
+    },
+    {
+      "aired_from": "2023-06-29",
+      "aliases": [
+        "MyGO!!!!!"
+      ],
+      "canonical": "BanG Dream! It's MyGO!!!!!",
+      "entity_ids": [
+        "bgm:character:127790",
+        "bgm:character:127791",
+        "bgm:character:127792",
+        "bgm:character:127793",
+        "bgm:character:127794",
+        "bgm:character:132476",
+        "bgm:character:132477",
+        "bgm:character:132479",
+        "bgm:character:132924",
+        "bgm:character:133285",
+        "bgm:character:132481"
+      ],
+      "retrieval_entity_ids": [
+        "official:bandori:unit:sumimi"
+      ],
+      "sources": [
+        {
+          "published_at": "2023-06-29",
+          "publisher": "Bangumi structured anime subject",
+          "url": "https://bgm.tv/subject/428735"
+        }
+      ],
+      "topic_ids": [
+        "timely:e344b7348a667a6cb43a"
+      ],
+      "work_id": "bgm:subject:428735"
+    },
+    {
+      "aired_from": "2025-01-02",
+      "aliases": [
+        "Ave Mujica"
+      ],
+      "canonical": "BanG Dream! Ave Mujica",
+      "entity_ids": [
+        "bgm:character:132479",
+        "bgm:character:132477",
+        "bgm:character:132924",
+        "bgm:character:133285",
+        "bgm:character:132476",
+        "bgm:character:127790",
+        "bgm:character:127791",
+        "bgm:character:127792",
+        "bgm:character:127793",
+        "bgm:character:127794",
+        "bgm:character:132481",
+        "bgm:character:172369"
+      ],
+      "retrieval_entity_ids": [
+        "official:bandori:unit:sumimi"
+      ],
+      "sources": [
+        {
+          "published_at": "2025-01-02",
+          "publisher": "Bangumi structured anime subject",
+          "url": "https://bgm.tv/subject/454684"
+        }
+      ],
+      "topic_ids": [
+        "timely:e344b7348a667a6cb43a"
+      ],
+      "work_id": "bgm:subject:454684"
+    }
+  ]
+}

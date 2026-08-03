@@ -1,0 +1,6 @@
+{
+  "schema_version": "<profile-id>-voiceprint-profile.v1",
+  "configuration_status": "UNCONFIGURED",
+  "notes": "声纹 enroll 后由 install_voiceprints.py 安装；references 必须绑定恰好三段参考音频。",
+  "references": []
+}

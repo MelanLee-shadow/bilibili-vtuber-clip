@@ -1,0 +1,16 @@
+{
+  "schema_version": "vtuber-slice.upload-tag-policy.v1",
+  "base_tags": [
+    "虚拟主播",
+    "直播切片",
+    "直播回放",
+    "切片"
+  ],
+  "max_tags_default": 12,
+  "max_tag_chars": 20,
+  "term_rules": [],
+  "known_proper_surfaces_extra": [],
+  "theme_allowed": [],
+  "banned_content_tags": [],
+  "content_prompt_template": "你在为B站虚拟主播的直播切片选投稿标签(tag)。\n只出**通用、可搜索**的内容词——观众真的会在搜索框里搜的现成入口词（如：可爱 撒娇 破防 吐槽 社死 名场面 搞笑 反差萌 治愈 唱歌）；太专一于本条内容的描述词没人搜，一律不要。\n硬性规则：禁止输出任何人名/角色名/作品名/团体名（专名由另一套确定性规则处理）；每个标签2~6个字、不带标点；不与已定标签重复：{existing_tags}；每个标签配一句依据；宁缺毋滥。\n只输出严格 JSON：{{\"tags\": [{{\"tag\": \"...\", \"why\": \"...\"}}]}}\n\n标题: {title}\n\n字幕全文:\n{srt_text}"
+}

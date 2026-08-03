@@ -1,0 +1,564 @@
+{
+ "schema_version": "vtuber-slice.upload-tag-policy.v1",
+ "base_tags": [
+  "李豆沙",
+  "虚拟主播",
+  "虚拟UP主",
+  "直播切片"
+ ],
+ "max_tags_default": 12,
+ "max_tag_chars": 20,
+ "term_rules": [
+  {
+   "name": "adachi_shimamura",
+   "patterns": [
+    "安达与岛村",
+    "安達与島村",
+    "樱抱月",
+    "岛村抱月",
+    "安达樱"
+   ],
+   "tags": [
+    "安达与岛村",
+    "百合",
+    "女同"
+   ],
+   "min_hits": 1,
+   "note": "维护者 2026-07-25 樱抱月案：内容与百合作品相关（含间接关联如ID人名组合）标题和tag都要显示；樱抱月=安达樱×岛村抱月CP组合ID"
+  },
+  {
+   "name": "zhinv",
+   "patterns": [
+    "侄女",
+    "直女"
+   ],
+   "tags": [
+    "侄女",
+    "百合",
+    "女同"
+   ],
+   "min_hits": 1,
+   "note": "维护者: 提到侄女→侄女/百合/女同; 铁律: 字幕中「直女」永远是「侄女」误听, 同样触发"
+  },
+  {
+   "name": "mengxianda",
+   "patterns": [
+    "梦限大",
+    "夢限大",
+    "みゅーたいぷ",
+    "MewType"
+   ],
+   "tags": [
+    "梦限大",
+    "夢限大みゅーたいぷ",
+    "BanG Dream",
+    "邦多利"
+   ],
+   "min_hits": 1,
+   "note": "glossary: BanG Dream 企划 梦限大MewType"
+  },
+  {
+   "name": "bangdream",
+   "patterns": [
+    "邦多利",
+    "BanG\\s*Dream",
+    "バンドリ"
+   ],
+   "tags": [
+    "BanG Dream",
+    "邦多利"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "mujica",
+   "patterns": [
+    "Mujica"
+   ],
+   "tags": [
+    "Ave Mujica",
+    "BanG Dream",
+    "邦多利"
+   ],
+   "min_hits": 1,
+   "note": "glossary: Mujica 与梦限大是不同实体, tag 可并存"
+  },
+  {
+   "name": "popipa",
+   "patterns": [
+    "Popipa",
+    "ポピパ"
+   ],
+   "tags": [
+    "Poppin'Party",
+    "BanG Dream",
+    "邦多利"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "bushiroad",
+   "patterns": [
+    "武士道"
+   ],
+   "tags": [
+    "武士道"
+   ],
+   "min_hits": 1,
+   "note": "Bushiroad 公司, 邦多利语境"
+  },
+  {
+   "name": "mygo",
+   "patterns": [
+    "MyGO"
+   ],
+   "tags": [
+    "MyGO!!!!!",
+    "BanG Dream",
+    "邦多利"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "takamatsu_tomori",
+   "patterns": [
+    "高松灯"
+   ],
+   "tags": [
+    "高松灯",
+    "MyGO!!!!!",
+    "BanG Dream",
+    "邦多利"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "rana",
+   "patterns": [
+    "要乐奈"
+   ],
+   "tags": [
+    "要乐奈",
+    "MyGO!!!!!",
+    "BanG Dream",
+    "邦多利"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "taki",
+   "patterns": [
+    "椎名立希",
+    "立希"
+   ],
+   "tags": [
+    "椎名立希",
+    "MyGO!!!!!",
+    "BanG Dream",
+    "邦多利"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "sakiko",
+   "patterns": [
+    "祥子"
+   ],
+   "tags": [
+    "丰川祥子",
+    "BanG Dream",
+    "邦多利"
+   ],
+   "min_hits": 1,
+   "note": "祥子=丰川祥子(待维护者确认口径)"
+  },
+  {
+   "name": "142",
+   "patterns": [
+    "(?<!\\d)142(?!\\d)",
+    "伊索尔",
+    "一四二",
+    "幺四二"
+   ],
+   "tags": [
+    "伊索尔"
+   ],
+   "min_hits": 1,
+   "note": "维护者: 142→伊索尔"
+  },
+  {
+   "name": "limo",
+   "patterns": [
+    "礼墨",
+    "lmsm",
+    "Sumi"
+   ],
+   "tags": [
+    "礼墨Sumi"
+   ],
+   "min_hits": 1,
+   "note": "维护者: lmsm→礼墨Sumi"
+  },
+  {
+   "name": "nanmachi",
+   "patterns": [
+    "南町",
+    "大N老师",
+    "大N"
+   ],
+   "tags": [
+    "南町"
+   ],
+   "min_hits": 1,
+   "note": "维护者: 大N老师→南町, 只出正主名"
+  },
+  {
+   "name": "douting_cp",
+   "patterns": [
+    "豆町"
+   ],
+   "tags": [
+    "南町",
+    "百合"
+   ],
+   "min_hits": 1,
+   "note": "CP名豆町只作触发面, 出南町+百合"
+  },
+  {
+   "name": "anwan",
+   "patterns": [
+    "安晚",
+    "awawa",
+    "(?<![A-Za-z])awa(?![A-Za-z])"
+   ],
+   "tags": [
+    "安晚awa"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "xingxi",
+   "patterns": [
+    "星汐",
+    "七宝",
+    "小七",
+    "邪哥",
+    "香香烧烤",
+    "山猪王",
+    "小山猪",
+    "xxsk"
+   ],
+   "tags": [
+    "星汐Seki"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "baishenyao",
+   "patterns": [
+    "白神遥",
+    "小海豹",
+    "豹豹",
+    "豹总",
+    "(?<!\\d)5835(?!\\d)",
+    "五八三十五"
+   ],
+   "tags": [
+    "白神遥"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "dongaili",
+   "patterns": [
+    "东爱璃",
+    "狍子",
+    "大璃"
+   ],
+   "tags": [
+    "东爱璃"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "wuqian",
+   "patterns": [
+    "(?<![毫从并绝])无前"
+   ],
+   "tags": [
+    "无前"
+   ],
+   "min_hits": 2,
+   "note": "短词易误命中, 要求≥2次"
+  },
+  {
+   "name": "byz_rei",
+   "patterns": [
+    "病院坂"
+   ],
+   "tags": [
+    "病院坂Rei"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "qiulinzi",
+   "patterns": [
+    "秋凛子"
+   ],
+   "tags": [
+    "秋凛子"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "ayana",
+   "patterns": [
+    "绫奈奈奈"
+   ],
+   "tags": [
+    "绫奈奈奈"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "miya",
+   "patterns": [
+    "星之谷米娅"
+   ],
+   "tags": [
+    "星之谷米娅"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "yizhi",
+   "patterns": [
+    "亦枝YY",
+    "亦枝"
+   ],
+   "tags": [
+    "亦枝YY"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "beiyouxiang",
+   "patterns": [
+    "北柚香"
+   ],
+   "tags": [
+    "北柚香"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "shengge",
+   "patterns": [
+    "笙歌"
+   ],
+   "tags": [
+    "笙歌"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "taomuq",
+   "patterns": [
+    "桃姆Q"
+   ],
+   "tags": [
+    "桃姆Q"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "hongxiaoyin",
+   "patterns": [
+    "红晓音"
+   ],
+   "tags": [
+    "红晓音"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "cantony",
+   "patterns": [
+    "残Tony",
+    "残托尼"
+   ],
+   "tags": [
+    "残Tony"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "psplive",
+   "patterns": [
+    "psplive",
+    "披萨盘",
+    "Project\\s*SP",
+    "(?<![A-Za-z])P-SP(?![A-Za-z])"
+   ],
+   "tags": [
+    "PSPLive"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "snh48",
+   "patterns": [
+    "河粉",
+    "塞纳河",
+    "SNH48",
+    "左婧媛"
+   ],
+   "tags": [
+    "SNH48"
+   ],
+   "min_hits": 1,
+   "note": "维护者: 河粉=SNH48粉丝"
+  },
+  {
+   "name": "bw",
+   "patterns": [
+    "(?<![A-Za-z])BW(?![A-Za-z0-9])",
+    "BilibiliWorld",
+    "哔哩哔哩世界"
+   ],
+   "tags": [
+    "BilibiliWorld"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "lycoris",
+   "patterns": [
+    "露蒂丝",
+    "lycoris",
+    "莉可丽丝"
+   ],
+   "tags": [
+    "莉可丽丝"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "botan",
+   "patterns": [
+    "上伊那牡丹"
+   ],
+   "tags": [
+    "上伊那牡丹",
+    "百合"
+   ],
+   "min_hits": 1,
+   "note": "glossary: 她聊的百合作品"
+  },
+  {
+   "name": "yuri_signal",
+   "patterns": [
+    "百合",
+    "百破图",
+    "百乃工",
+    "宿敌恋人",
+    "女同(?!\\s*[事学胞])"
+   ],
+   "tags": [
+    "百合",
+    "女同"
+   ],
+   "min_hits": 1,
+   "note": "百合信号词; 女同事/女同学不触发"
+  },
+  {
+   "name": "xiantong",
+   "patterns": [
+    "仙童数学"
+   ],
+   "tags": [
+    "仙童数学"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "changsha",
+   "patterns": [
+    "长沙话",
+    "湖南话",
+    "塑普"
+   ],
+   "tags": [
+    "长沙话"
+   ],
+   "min_hits": 1,
+   "note": ""
+  },
+  {
+   "name": "yinghuochong",
+   "patterns": [
+    "萤火虫"
+   ],
+   "tags": [
+    "萤火虫漫展"
+   ],
+   "min_hits": 1,
+   "note": "05实测: 3D线下见面=萤火虫live; tag命名口径待维护者定"
+  }
+ ],
+ "known_proper_surfaces_extra": [
+  "kmx",
+  "沙豆李",
+  "shadowlee",
+  "Ado",
+  "小室",
+  "奶油苏打",
+  "恋青",
+  "恋死",
+  "十麻乃"
+ ],
+ "theme_allowed": [
+  "女同",
+  "熊猫",
+  "百合",
+  "磕糖",
+  "长沙话"
+ ],
+ "banned_content_tags": [
+  "初次登场",
+  "宠粉",
+  "彩排",
+  "暴力女",
+  "热情邀约",
+  "玩梗",
+  "粉丝互动",
+  "线下合照",
+  "脑补剧情"
+ ],
+ "content_prompt_template": "你在为B站虚拟主播「李豆沙」的直播切片选投稿标签(tag)。\n李豆沙: B站虚拟主播, 虚拟熊猫少女(白发+熊猫耳), 湖南长沙人会飙长沙话; 温柔声线唱歌+高能杂谈双修, 容易破防、一本正经犯傻、嘴快爱吐槽、也有温柔哄睡面。\n\n下面是一条切片的标题和完整字幕。请提出 3~6 个「内容标签」: 描述这条切片的情绪/行为/场景/话题的词。\n\n最重要的一条(维护者 口径): 标签必须**既贴合这条切片的内容, 又足够通用**——是B站观众真的会在搜索框里搜、或看到会点的现成入口词。太专一于本条内容的描述词没人会搜, 一律不要。\n- 好的例子: 可爱 撒娇 嘴硬 破防 吐槽 社死 名场面 搞笑 沙雕 反差萌 姨母笑 治愈 温柔 唱歌 跳舞 3D 漫展 百合 磕CP 磕糖 方言 长沙话 坏女人 宿敌恋人\n- 坏的例子(全部是\"贴内容但没人搜\"的过专一词, 不要出这类): 彩排 宠粉 玩梗 热情邀约 初次登场 脑补剧情 粉丝互动 线下合照 角色分析 催更续写 动漫杂谈\n\n其余硬性规则:\n- 禁止输出任何人名、角色名、作品名、企划名、团体名、活动名(专名由另一套确定性规则处理, 你绝对不要出)。\n- 每个标签2~6个字, 最长不超过10个字符, 不带标点。\n- 不要与这些已定标签重复: {existing_tags}\n- 每个标签配一句依据(引用切片里的具体内容)。宁缺毋滥, 达不到通用度就少出。\n\n只输出严格 JSON: {{\"tags\": [{{\"tag\": \"...\", \"why\": \"...\"}}]}}\n\n标题: {title}\n\n字幕全文:\n{srt_text}\n"
+}

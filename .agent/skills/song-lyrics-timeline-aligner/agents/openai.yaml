@@ -1,0 +1,4 @@
+interface:
+  display_name: "Song Lyrics Timeline Aligner"
+  short_description: "Align song subtitles from trusted lyric timelines"
+  default_prompt: "Use $song-lyrics-timeline-aligner to rebuild song subtitles from an external timed lyric source and verify the clip anchors."

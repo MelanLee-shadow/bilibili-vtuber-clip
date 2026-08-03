@@ -1,0 +1,14 @@
+{
+  "schema_version": "publication-registry.v1",
+  "notes": "候选↔BV 出版登记：published 候选禁止再走新投稿（修复只允许 authorized_upload.py repair-* 的原 BV 修复链）；hold_pending_review 候选在放行前禁止任何上传。",
+  "entries": [
+    {
+      "_example": true,
+      "candidate_id": "auto_000000_0_0",
+      "recording_date": "2026-01-01",
+      "status": "published",
+      "bvid": "BV1xxxxxxxxx",
+      "note": "example entry — replace with your own uploads"
+    }
+  ]
+}

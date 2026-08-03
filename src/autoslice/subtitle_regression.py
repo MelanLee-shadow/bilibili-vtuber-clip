@@ -1,0 +1,279 @@
+"""Candidate-scoped subtitle truth gates.
+
+These gates turn corrections learned from 维护者's review into deterministic
+delivery invariants.  They are intentionally evaluated on both final subtitle
+surfaces, after text finalization and speaker rendering but before subtitle
+burning or delivery.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from pathlib import Path
+from typing import Any, Mapping, Sequence
+
+from src.autoslice.chat_authority import normalize_chat_text
+from src.autoslice.surface_canon import CHANNEL_PROFILE
+from src.autoslice.jingting_chunker import parse_srt_cues
+
+
+SCHEMA_VERSION = "lidousha-subtitle-regression.v1"
+AUDIT_SCHEMA_VERSION = "lidousha-subtitle-regression-audit.v1"
+_SPEAKER_LABEL = re.compile(
+    r"^\[(?:"
+    + re.escape(CHANNEL_PROFILE.host_speaker_label)
+    + "|"
+    + re.escape(CHANNEL_PROFILE.guest_speaker_label)
+    + r")\]\s*"
+)
+
+
+class SubtitleRegressionError(ValueError):
+    """The truth asset itself is malformed or bound to another candidate."""
+
+
+def _string_list(document: Mapping[str, Any], key: str, *, required: bool) -> tuple[str, ...]:
+    value = document.get(key)
+    if value is None and not required:
+        return ()
+    if not isinstance(value, list) or (required and not value):
+        qualifier = "non-empty " if required else ""
+        raise SubtitleRegressionError(f"{key} must be a {qualifier}list")
+    if any(not isinstance(item, str) or not item.strip() for item in value):
+        raise SubtitleRegressionError(f"{key} entries must be non-empty strings")
+    normalized = tuple(normalize_chat_text(item) for item in value)
+    if any(not item for item in normalized):
+        raise SubtitleRegressionError(f"{key} entries must contain subtitle text")
+    if len(set(normalized)) != len(normalized):
+        raise SubtitleRegressionError(f"{key} contains duplicate normalized entries")
+    return tuple(str(item) for item in value)
+
+
+def _string_groups(document: Mapping[str, Any], key: str) -> tuple[tuple[str, ...], ...]:
+    value = document.get(key)
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise SubtitleRegressionError(f"{key} must be a list of non-empty string lists")
+    groups: list[tuple[str, ...]] = []
+    for group in value:
+        if (
+            not isinstance(group, list)
+            or not group
+            or any(not isinstance(item, str) or not item.strip() for item in group)
+        ):
+            raise SubtitleRegressionError(
+                f"{key} must contain only non-empty string lists"
+            )
+        normalized = [normalize_chat_text(item) for item in group]
+        if any(not item for item in normalized) or len(set(normalized)) != len(normalized):
+            raise SubtitleRegressionError(
+                f"{key} groups must contain unique subtitle text alternatives"
+            )
+        groups.append(tuple(group))
+    return tuple(groups)
+
+
+def _minimum_occurrences(
+    document: Mapping[str, Any],
+    key: str,
+) -> tuple[tuple[str, int], ...]:
+    value = document.get(key)
+    if value is None:
+        return ()
+    if not isinstance(value, dict):
+        raise SubtitleRegressionError(f"{key} must be an object mapping text to counts")
+    normalized_seen: set[str] = set()
+    rules: list[tuple[str, int]] = []
+    for text, count in value.items():
+        if not isinstance(text, str) or not text.strip():
+            raise SubtitleRegressionError(f"{key} keys must be non-empty strings")
+        normalized = normalize_chat_text(text)
+        if not normalized or normalized in normalized_seen:
+            raise SubtitleRegressionError(
+                f"{key} keys must contain unique normalized subtitle text"
+            )
+        if isinstance(count, bool) or not isinstance(count, int) or not 2 <= count <= 100:
+            raise SubtitleRegressionError(
+                f"{key} counts must be integers between 2 and 100"
+            )
+        normalized_seen.add(normalized)
+        rules.append((text, count))
+    return tuple(rules)
+
+
+def load_subtitle_regression_document(
+    path: Path,
+    *,
+    candidate_id: str,
+) -> tuple[dict[str, Any], str]:
+    """Load one immutable candidate truth asset and return its byte hash."""
+
+    if path.is_symlink() or not path.is_file():
+        raise SubtitleRegressionError("subtitle regression asset must be a regular non-symlink file")
+    raw = path.read_bytes()
+    try:
+        document = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SubtitleRegressionError(f"invalid subtitle regression JSON: {exc}") from exc
+    if not isinstance(document, dict):
+        raise SubtitleRegressionError("subtitle regression document must be an object")
+    if document.get("schema_version") != SCHEMA_VERSION:
+        raise SubtitleRegressionError("unsupported subtitle regression schema_version")
+    if document.get("candidate_id") != candidate_id:
+        raise SubtitleRegressionError("subtitle regression candidate_id mismatch")
+
+    required = _string_list(document, "required_payload_substrings", required=True)
+    required_any = _string_groups(document, "required_any_substring_groups")
+    required_min_occurrences = _minimum_occurrences(
+        document,
+        "required_payload_min_occurrences",
+    )
+    forbidden = _string_list(document, "forbidden_payload_substrings", required=False)
+    forbidden_exact = _string_list(document, "forbidden_exact_cues", required=False)
+    required_norm = {normalize_chat_text(item) for item in required}
+    forbidden_norm = {normalize_chat_text(item) for item in forbidden}
+    if required_norm & forbidden_norm:
+        raise SubtitleRegressionError("the same normalized text cannot be both required and forbidden")
+    if any(
+        normalize_chat_text(item) in forbidden_norm
+        for group in required_any
+        for item in group
+    ):
+        raise SubtitleRegressionError(
+            "required alternatives cannot also be forbidden"
+        )
+    if any(
+        normalize_chat_text(item) in forbidden_norm
+        for item, _count in required_min_occurrences
+    ):
+        raise SubtitleRegressionError(
+            "minimum-occurrence text cannot also be forbidden"
+        )
+
+    normalized_document = dict(document)
+    normalized_document["required_payload_substrings"] = list(required)
+    normalized_document["required_any_substring_groups"] = [
+        list(group) for group in required_any
+    ]
+    normalized_document["required_payload_min_occurrences"] = {
+        item: count for item, count in required_min_occurrences
+    }
+    normalized_document["forbidden_payload_substrings"] = list(forbidden)
+    normalized_document["forbidden_exact_cues"] = list(forbidden_exact)
+    return normalized_document, hashlib.sha256(raw).hexdigest()
+
+
+def _surface_payload(srt_text: str) -> tuple[str, set[str]]:
+    cue_payloads: list[str] = []
+    for cue in parse_srt_cues(srt_text):
+        text = _SPEAKER_LABEL.sub("", cue.text).strip()
+        if text:
+            cue_payloads.append(normalize_chat_text(text))
+    return normalize_chat_text("".join(cue_payloads)), set(cue_payloads)
+
+
+def _surface_audit(
+    srt_text: str,
+    *,
+    required: Sequence[str],
+    required_any: Sequence[Sequence[str]],
+    required_min_occurrences: Sequence[tuple[str, int]],
+    forbidden: Sequence[str],
+    forbidden_exact: Sequence[str],
+) -> dict[str, Any]:
+    payload, exact_cues = _surface_payload(srt_text)
+    missing_required = [item for item in required if normalize_chat_text(item) not in payload]
+    missing_required_any = [
+        list(group)
+        for group in required_any
+        if not any(normalize_chat_text(item) in payload for item in group)
+    ]
+    missing_required_min_occurrences = []
+    for item, required_count in required_min_occurrences:
+        found_count = payload.count(normalize_chat_text(item))
+        if found_count < required_count:
+            missing_required_min_occurrences.append(
+                {
+                    "text": item,
+                    "required_count": required_count,
+                    "found_count": found_count,
+                }
+            )
+    found_forbidden = [item for item in forbidden if normalize_chat_text(item) in payload]
+    found_forbidden_exact = [
+        item for item in forbidden_exact if normalize_chat_text(item) in exact_cues
+    ]
+    return {
+        "payload_sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+        "required_count": len(required),
+        "required_any_group_count": len(required_any),
+        "required_min_occurrence_rule_count": len(required_min_occurrences),
+        "missing_required": missing_required,
+        "missing_required_any_groups": missing_required_any,
+        "missing_required_min_occurrences": missing_required_min_occurrences,
+        "found_forbidden": found_forbidden,
+        "found_forbidden_exact_cues": found_forbidden_exact,
+        "status": (
+            "PASS"
+            if (
+                not missing_required
+                and not missing_required_any
+                and not missing_required_min_occurrences
+                and not found_forbidden
+                and not found_forbidden_exact
+            )
+            else "FAIL"
+        ),
+    }
+
+
+def verify_subtitle_regression_surfaces(
+    document_path: Path,
+    *,
+    candidate_id: str,
+    final_text_srt: str,
+    final_speaker_srt: str,
+) -> dict[str, Any]:
+    """Return a hash-bound audit for both delivery subtitle surfaces."""
+
+    document, document_sha256 = load_subtitle_regression_document(
+        document_path,
+        candidate_id=candidate_id,
+    )
+    required = document["required_payload_substrings"]
+    required_any = document["required_any_substring_groups"]
+    required_min_occurrences = document["required_payload_min_occurrences"]
+    forbidden = document["forbidden_payload_substrings"]
+    forbidden_exact = document["forbidden_exact_cues"]
+    surfaces = {
+        "final_text_srt": _surface_audit(
+            final_text_srt,
+            required=required,
+            required_any=required_any,
+            required_min_occurrences=tuple(required_min_occurrences.items()),
+            forbidden=forbidden,
+            forbidden_exact=forbidden_exact,
+        ),
+        "final_speaker_srt": _surface_audit(
+            final_speaker_srt,
+            required=required,
+            required_any=required_any,
+            required_min_occurrences=tuple(required_min_occurrences.items()),
+            forbidden=forbidden,
+            forbidden_exact=forbidden_exact,
+        ),
+    }
+    status = "PASS" if all(row["status"] == "PASS" for row in surfaces.values()) else "FAIL"
+    return {
+        "schema_version": AUDIT_SCHEMA_VERSION,
+        "status": status,
+        "candidate_id": candidate_id,
+        "truth_asset_path": str(document_path),
+        "truth_asset_sha256": document_sha256,
+        "final_text_srt_sha256": hashlib.sha256(final_text_srt.encode("utf-8")).hexdigest(),
+        "final_speaker_srt_sha256": hashlib.sha256(final_speaker_srt.encode("utf-8")).hexdigest(),
+        "surfaces": surfaces,
+    }

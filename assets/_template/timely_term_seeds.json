@@ -1,0 +1,22 @@
+{
+  "schema_version": "REPLACE_ME-timely-terms.v1",
+  "generated_at": "REPLACE_ME-ISO8601 timestamp",
+  "expires_at": "REPLACE_ME-ISO8601 timestamp",
+  "status": "fresh",
+  "terms": [
+    {
+      "canonical": "REPLACE_ME-canonical 写法",
+      "display_name": "REPLACE_ME-展示名（含限定词的完整称呼）",
+      "readings": ["REPLACE_ME-reading1"],
+      "aliases": ["REPLACE_ME-alias1"],
+      "confusables": ["REPLACE_ME-容易混淆的近音/近形词"],
+      "topic_entities": ["REPLACE_ME-topic1"],
+      "active_from": "REPLACE_ME-YYYY-MM-DD",
+      "active_until": "REPLACE_ME-YYYY-MM-DD",
+      "reason": "REPLACE_ME-为什么这个词当期重要（如新番开播/联动公告等）。写法参考：示例频道曾为一部当季新番登记条目——canonical 用官方汉字名，aliases 收官方日文名与粉丝缩写，confusables 收 ASR 实际听错过的近音词，active 窗口对齐放送档期，sources 附官方公告 URL。注意：这个文件是功能性种子，crawler 会把这里的每个词当真词喂进你频道的字幕词表——不要保留任何别的频道的条目。",
+      "sources": [
+        {"url": "REPLACE_ME-来源URL", "published_at": "REPLACE_ME-YYYY-MM-DD", "publisher": "REPLACE_ME-来源方"}
+      ]
+    }
+  ]
+}

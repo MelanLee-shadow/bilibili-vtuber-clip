@@ -1,0 +1,50 @@
+# 运行时/报告输出。例外：授权上传的证据快照（manifest/回执/台账）是出版记录，必须入库。
+reports/**
+!reports/**/
+!reports/**/*.uploaded.json
+!reports/**/*.uploaded.*.json
+!reports/**/*.public_verify.json
+!reports/**/*.public_verify.*.json
+!reports/**/*.upload_manifest*.json
+!reports/**/upload_ledger.jsonl
+!reports/**/*.cover_edit*.json
+!reports/**/*.season_add*.json
+!reports/**/tag_plan*.json
+!reports/**/tag_update_results*.json
+cleanup_manifests/*.tmp
+
+# profile 输出目录（本地交付/媒体拉取，不入库；目录名 = 各 profile 的 output_directory）
+lidousha/**
+
+# 媒体永不入库
+*.mp4
+*.flv
+*.m4s
+*.part
+*.ts
+*.mov
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# 缓存与工具产物
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+
+# OS/编辑器噪音
+.DS_Store
+*.swp
+*.swo
+
+# 部署备份
+*.bak-*
+*.backup
+
+# 表情包媒体随仓发布（assets/<profile>/emote/，示例频道官方表情包）；
+# 换频道时用 AUTOSLICE_EMOTE_DIR 指向你自己的媒体目录。

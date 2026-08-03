@@ -1,0 +1,18 @@
+{
+  "schema_version": "lidousha-final-media-review-contracts.v1",
+  "authority": "per-candidate exact final-review points; timestamps are deliberately broad windows around the reported issue",
+  "contracts": [
+    {
+      "_example": true,
+      "candidate_id": "auto_000000_0_0",
+      "subtitle_review_points": [
+        {
+          "point_id": "example-point",
+          "final_video_start_ms": 0,
+          "final_video_end_ms": 5000,
+          "expectation": "描述评审者必须逐帧/逐句核对的点"
+        }
+      ]
+    }
+  ]
+}

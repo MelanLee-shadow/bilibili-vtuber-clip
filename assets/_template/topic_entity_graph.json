@@ -1,0 +1,11 @@
+{
+  "expires_at": "2026-07-19T21:00:00-04:00",
+  "generated_at": "2026-07-12T21:00:00-04:00",
+  "generator": "scripts/crawl_topic_entity_graph.py",
+  "input_timely_terms_sha256": "5ffbae588bf5f6a06b9384b3d441f1d7057465e239503e18c8c746e32867894c",
+  "schema_version": "REPLACE_ME-topic-entity-graph.v1",
+  "status": "fresh",
+  "entities": [],
+  "topics": [],
+  "works": []
+}
