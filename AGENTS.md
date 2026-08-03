@@ -18,7 +18,7 @@
    LLM/HTTP 边界全部 mock；缺 `ffmpeg` 时个别用例 skip）。套件以
    **默认 profile** 为基准：跑测试时不要设置 `AUTOSLICE_PROFILE`。
 3. **配环境**：`cp .env.example .env`，填 `CPA_BASE_URL`/`CPA_API_KEY` 与
-   Gemini key。**`.env` 只是模板，不会被任何脚本自动加载**——跑脚本前
+   听音腿（**AGY 订阅或 Gemini API key 二选一**——同一个模型的两种接入）。**`.env` 只是模板，不会被任何脚本自动加载**——跑脚本前
    `set -a; source .env; set +a`，无人值守 runner 的参考部署读
    `$AUTOSLICE_BASE/cpa.env`（`deploy_autoslice.sh` 生成）。配完跑
    `python3 scripts/preflight.py` 一次体检（字体/ffmpeg/目录/凭据/VAD）。
@@ -27,7 +27,8 @@
 4. **认识 profile**：读 [profiles/README.md](profiles/README.md)。默认
    profile 是 `lidousha`（示例频道）；`AUTOSLICE_PROFILE` 在进程 import 时
    读取。校验：`python3 scripts/validate_channel_profile.py --profile lidousha
-   --config-only`（全量校验会因声纹缺失 BLOCKED，属预期）。
+   --config-only`（输出里的 `voiceprint_status` 为 UNCONFIGURED 属预期——
+   声纹不随仓分发，READY≠声纹已 enroll）。
 5. **给新频道建 profile**（本仓的预期配置者就是你——agent；人类用户会把
    这一步整个交给你）：复制 `profiles/_template/profile.json` 与
    `assets/_template/` 骨架，按骨架 README 的**分层**填充——层 0 默认给全
@@ -39,9 +40,9 @@
    与入口 `--help` 验证。**发布 lane 另需 `AUTOSLICE_SEASON_IDS`（部署方
    自己账号的合集/小节 ID，账号专属、无默认值、必填；获取方式见
    `.env.example`）。**
-   哪些代码点仍绑定默认 profile：见下方「换频道剩余耦合」一节——改这些点
-   之前先读对应 step 文档。凭据逐项按 [docs/credentials.md](docs/credentials.md)
-   配置并跑其校验命令。
+   换频道的耦合现状见下方「换频道耦合现状」一节（发布面已全 profile 化，
+   持久证据词汇保留示例拼写属刻意）。凭据逐项按
+   [docs/credentials.md](docs/credentials.md) 配置并跑其校验命令。
 6. **跑第一支切片**：README「快速开始」的 `--smoke-segment` 冒烟路径。
 7. **整线部署**：`ops/recording/README.md`（录制层）→
    `scripts/deploy_autoslice.sh`（参考部署，按主机改写）→ cron `--once`。
