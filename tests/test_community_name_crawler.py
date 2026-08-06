@@ -87,7 +87,10 @@ def _registry():
 def _config():
     config = load_config(Path("assets/lidousha/community_name_sources.v1.json"))
     config = json.loads(json.dumps(config))
-    config["comment_enrichment_limit"] = 0
+    config["historical_member_limit"] = 0
+    config["candidate_query_limit"] = 0
+    config["comment_discovery_video_limit"] = 0
+    config["request_interval_seconds"] = 0
     return config
 
 
@@ -346,6 +349,8 @@ def test_search_total_failure_keeps_last_good_snapshot_unwritten():
 def test_successful_member_cursor_rotates_orders_then_pages_then_query():
     registry = _registry()
     state = empty_state()
+    config = _config()
+    config["historical_member_limit"] = 1
     expected = [
         (1, "pubdate"),
         (1, "totalrank"),
@@ -358,17 +363,20 @@ def test_successful_member_cursor_rotates_orders_then_pages_then_query():
         (3, "click"),
     ]
     for offset, (expected_page, expected_order) in enumerate(expected, start=1):
-        client = FakeClient([_search_payload("花礼Harei", "鼠鼠", [])])
+        responses = [_search_payload("花礼Harei", "鼠鼠", [])]
+        if (expected_page, expected_order) != (1, "pubdate"):
+            responses.append(_search_payload("花礼Harei", "鼠鼠", []))
+        client = FakeClient(responses)
         result = crawl(
             client=client,
             registry=registry,
-            config=_config(),
+            config=config,
             state=state,
             now=NOW + dt.timedelta(days=offset),
             llm_call=None,
             forced_entities=["花礼Harei"],
         )
-        query = urllib.parse.parse_qs(urllib.parse.urlsplit(client.urls[0]).query)
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(client.urls[-1]).query)
         assert query["page"] == [str(expected_page)]
         assert query["keyword"] == ["花礼"]
         assert query["order"] == [expected_order]

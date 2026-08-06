@@ -47,20 +47,25 @@ strict identity and minimum-count gates.
 
 ## Daily community relation lane
 
-The daily stage reads the last-good official registry and fairly rotates 12
-cold members. Up to four near-threshold candidates may receive an additional
-hot query without displacing cold coverage. With the current 112-member
-registry, every member is attempted within ten daily runs.
+The daily stage reads the last-good official registry and gives **every member**
+one fresh `pubdate/page 1` Bilibili search. The configured registry ceiling is
+128; the current 112-member registry is therefore checked in one daily run,
+not sampled over ten days. This freshness lane answers whether a new incident
+or nickname appeared today.
 
-Each selected member gets one Bilibili video-search request. A durable cursor
-prefers the shortest official CJK surface (for example, `犬绒` before
-`犬绒Mofu`), rotates `pubdate` → `totalrank` → `click`, then walks pages
-1 → 2 → 3 before widening to the canonical surface and `canonical + 切片`.
-Failures do not advance the cursor. This keeps new events visible while slowly
-backfilling established community language over a two-year evidence window.
-Every bounded result title is visible to the structured judge in newest/oldest
-interleaved order; the larger description/tag fields are evenly sampled to keep
-its daily prompt bounded. Repeated target co-occurrence across titles whose
+Freshness is separate from historical coverage. A durable round-robin cursor
+gives 16 members an additional backfill position each day, rotating
+`pubdate` → `totalrank` → `click`, pages 1 → 3, and the shortest official CJK
+surface (for example, `犬绒`) through the canonical and `canonical + 切片`
+queries. Up to eight stored candidates also receive a surface-specific query
+such as `花礼 鼠鼠`; existing candidates are deterministically matched against
+every newly returned row even when the model does not propose them again.
+Consequently a broad result page cannot strand an already-known name at its
+first two witnesses.
+
+The judge runs in batches of at most 16 members and only revisits BVIDs whose
+metadata or sampled comment page has not yet been judged. Each member contributes
+at most 50 rows per batch. Repeated target co-occurrence across titles whose
 other participants change is treated as stronger identity evidence than one
 ambiguous multi-person title.
 The judge may propose exact metadata substrings and one of four relation types:
@@ -73,15 +78,25 @@ The judge may propose exact metadata substrings and one of four relation types:
 | `associated_with` | a useful association whose type is still unclear |
 
 The judge has no mutation tools. Its output is rejected unless the surface is a
-safe 2–24-character atom and appears byte-for-byte in every cited BVID's
-metadata. Multiple registry members without an explicit one-to-one link must
-not be guessed. Raw title, description, tag, and comment text never enters the
-subtitle prompt or the accepted snapshot; the durable state keeps only stable
-BVID/MID/date/field facts and a raw-content SHA-256.
+safe 2–24-character atom and appears byte-for-byte in every cited BVID's title,
+description, tags, or fetched comments. Multiple registry members without an
+explicit one-to-one link must not be guessed.
 
-Comments are a limited corroboration surface for metadata-proposed candidates,
-not a standalone discovery or acceptance path. The crawler reads at most one
-20-comment page for six videos and never fetches nested replies.
+Comments are a first-class discovery surface because fans, rather than official
+accounts, often originate nicknames and incident memes. Before the judge runs,
+the crawler fairly rotates one 20-comment top-level page across up to 24 videos.
+It prefers a target's official upload and otherwise requires a single-entity
+metadata anchor; a multi-person video's comment must name the target in the same
+comment before it can count. Placement under an official upload strengthens
+entity attribution but is explicitly **not** treated as official adoption of
+the nickname.
+
+Clear comment text and account identity are transient. The mode-0600 durable
+state stores BVID, dates, uploader MID, raw-content SHA-256, and salted hashes of
+the comment and commenter. It stores neither message text, username, clear
+commenter MID, nor RPID. The public accepted snapshot contains only aggregate
+counts. The per-runtime random salt is created during the v1 → v2 state
+migration and is never committed or exported.
 
 ### Acceptance and persistence
 
@@ -99,6 +114,21 @@ One uploader can publish any number of clips and still only create a
 second uploader and a second video. A surface owned by another official entity
 becomes `conflict`. Accepted mappings persist when search results age out; a
 registry identity conflict is the only automatic downgrade path.
+
+Comment-originated relations have a separate independence gate instead of
+pretending that a comment is metadata score:
+
+- normally, at least four distinct salted commenter keys across two videos and
+  two comment dates;
+- with at least one target official-upload context, at least three commenters
+  plus either two videos or two dates;
+- for a same-day `meme_of`, at least three commenters across two videos, with an
+  official-upload context or two distinct video uploader MIDs.
+
+The same commenter counts once across all videos. `associated_with` cannot be
+accepted by comments alone. The official-comment reason code is
+`OFFICIAL_UPLOAD_COMMENT_CONTEXT_PLUS_COMMUNITY_QUORUM`, not
+`OFFICIAL_SELF_EVIDENCE_PLUS_INDEPENDENT_SUPPORT`.
 
 An event/persona `meme_of` has a deliberately faster, same-day path because the
 event itself may last only one news cycle: score at least 5, two strong-title
@@ -119,19 +149,22 @@ rejected/conflict rows and raw source text stay out of the subtitle prompt.
 
 The production job runs daily at 06:27 UTC with `flock -n` and these caps:
 
-- 24 real HTTP requests total;
-- 12 cold + up to 4 hot member searches;
-- one page / 50 search rows per member, with persistent query/order/page cursors;
-- up to 6 one-page comment checks;
-- 2 retry slots for intermittent Bilibili 412/network failures;
+- 176 real HTTP requests total;
+- all registry members, up to 128, receive one fresh `pubdate/page 1` search;
+- up to 16 historical backfill searches and 8 candidate-specific searches;
+- up to 24 one-page comment discovery checks;
+- one request at a time, at least 2 seconds apart, with a 15-minute HTTP-phase cap;
 - 15 seconds and 512 KiB per response;
-- 18-hour fresh cache and 7-day stale-on-error cache.
+- 18-hour fresh cache, 7-day stale-on-error cache, and 1,024 cache entries.
 
-Stale cache hits do not invent a new source identity. One member's failure does
-not block healthy members. If every selected search fails, the job updates only
-failure state and refuses to replace the last-good prompt snapshot. State is
-mode 0600; the prompt-safe snapshot is mode 0444. No cookie, WBI credential,
-raw response, title, description, or comment is committed or exported.
+HTTP 412, 429, or a request/runtime budget exhaustion opens an endpoint circuit
+for that run; the crawler does not immediately repeat the same blocked URL.
+Other member failures remain isolated. Stale cache can preserve already fetched
+source facts, but it does not advance freshness or historical cursors. If every
+search fails or is stale, the job updates only failure state and refuses to
+replace the last-good prompt snapshot. State is mode 0600; the prompt-safe
+snapshot is mode 0444. No cookie, WBI credential, raw response, title,
+description, clear comment identity, or comment text is committed or exported.
 Accepted/conflict decisions persist; noisy candidate/rejected state is capped
 at 2,048 mappings so an unattended daily job cannot grow without bound.
 

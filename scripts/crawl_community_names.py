@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -26,7 +27,11 @@ from src.autoslice.community_name_crawler import (  # noqa: E402
 )
 from src.autoslice.llm_client import LlmConfig, build_llm_call  # noqa: E402
 from src.autoslice.streamer_registry_crawler import validate_snapshot as validate_registry  # noqa: E402
-from src.autoslice.timely_term_crawler import BoundedHttpClient, HttpCache  # noqa: E402
+from src.autoslice.timely_term_crawler import (  # noqa: E402
+    BoundedHttpClient,
+    FetchLimitError,
+    HttpCache,
+)
 
 
 PROFILE = load_channel_profile(ROOT)
@@ -51,7 +56,36 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--now")
     result.add_argument("--llm-command", default=DEFAULT_LLM_COMMAND)
     result.add_argument("--no-llm", action="store_true")
+    result.add_argument("--request-interval-seconds", type=float)
+    result.add_argument("--max-runtime-seconds", type=int)
     return result
+
+
+class _PacedClient:
+    def __init__(self, client, *, interval_seconds: float, max_runtime_seconds: int):  # noqa: ANN001
+        self._client = client
+        self._interval = interval_seconds
+        self._started = time.monotonic()
+        self._deadline = self._started + max_runtime_seconds
+        self._last_fetch: float | None = None
+
+    def __getattr__(self, name):  # noqa: ANN001, ANN204
+        return getattr(self._client, name)
+
+    def fetch(self, url, **kwargs):  # noqa: ANN001, ANN201
+        current = time.monotonic()
+        if self._last_fetch is not None:
+            remaining = self._interval - (current - self._last_fetch)
+            if remaining > 0:
+                if current + remaining > self._deadline:
+                    raise FetchLimitError("community-name runtime budget exhausted")
+                time.sleep(remaining)
+        if time.monotonic() > self._deadline:
+            raise FetchLimitError("community-name runtime budget exhausted")
+        try:
+            return self._client.fetch(url, **kwargs)
+        finally:
+            self._last_fetch = time.monotonic()
 
 
 def _atomic_write(path: Path, text: str, *, mode: int) -> bool:
@@ -109,15 +143,37 @@ def main(argv: list[str] | None = None) -> int:
                     timeout_seconds=240.0,
                 )
             )
-        client = BoundedHttpClient(
+        raw_client = BoundedHttpClient(
             allowed_hosts=frozenset(str(item).lower() for item in config["source_hosts"]),
             max_requests=int(config["max_requests"]),
             max_response_bytes=512 * 1024,
             timeout_seconds=15,
-            cache=HttpCache(args.cache_dir, max_body_bytes=512 * 1024),
+            cache=HttpCache(
+                args.cache_dir,
+                max_body_bytes=512 * 1024,
+                max_entries=1024,
+                max_total_bytes=256 * 1024 * 1024,
+            ),
             cache_ttl=dt.timedelta(hours=18),
             stale_if_error=dt.timedelta(days=7),
             now=now,
+        )
+        interval = (
+            args.request_interval_seconds
+            if args.request_interval_seconds is not None
+            else float(config["request_interval_seconds"])
+        )
+        runtime = (
+            args.max_runtime_seconds
+            if args.max_runtime_seconds is not None
+            else int(config["max_runtime_seconds"])
+        )
+        if interval < 0 or not 60 <= runtime <= 3600:
+            raise CommunityNameError("invalid request pacing override")
+        client = _PacedClient(
+            raw_client,
+            interval_seconds=interval,
+            max_runtime_seconds=runtime,
         )
         result = crawl(
             client=client,
@@ -153,6 +209,10 @@ def main(argv: list[str] | None = None) -> int:
                     "network_requests": last_run["network_requests"],
                     "selected_entities": len(last_run["selected_entities"]),
                     "successful_entities": len(last_run["successful_entities"]),
+                    "search_stats": last_run["search_stats"],
+                    "comment_stats": last_run["comment_stats"],
+                    "search_circuit": last_run["search_circuit"],
+                    "comment_circuit": last_run["comment_circuit"],
                     "snapshot_changed": snapshot_changed,
                     "state_changed": state_changed,
                 },
