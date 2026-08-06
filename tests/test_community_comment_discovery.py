@@ -29,6 +29,17 @@ class FakeClient:
         del kwargs
         self.urls.append(url)
         self.requests_made += 1
+        if "/x/web-interface/nav" in url:
+            payload = {
+                "code": -101,
+                "data": {
+                    "wbi_img": {
+                        "img_url": "https://i0.hdslb.com/bfs/wbi/" + "a" * 32 + ".png",
+                        "sub_url": "https://i0.hdslb.com/bfs/wbi/" + "b" * 32 + ".png",
+                    }
+                },
+            }
+            return CachedResponse(json.dumps(payload).encode(), "application/json", NOW)
         response = self.responses.pop(0)
         if isinstance(response, Exception):
             raise response
@@ -158,6 +169,10 @@ def test_comment_only_name_is_discovered_and_accepted_by_independent_commenters(
     assert mapping["distinct_commenters"] == 4
     assert mapping["comment_video_count"] == 2
     assert result["snapshot"]["relations"][0]["surface"] == "鼠鼠"
+    assert sum("/x/web-interface/nav" in url for url in client.urls) == 1
+    reply_urls = [url for url in client.urls if "/reply/wbi/main" in url]
+    assert len(reply_urls) == 2
+    assert all({"w_rid", "wts"} <= urllib.parse.parse_qs(url).keys() for url in reply_urls)
 
     persisted = canonical_json(result["state"])
     assert "鼠鼠好可爱" not in persisted
@@ -349,7 +364,7 @@ def test_comment_risk_control_code_opens_circuit_and_retries_same_cursor_next_ru
         llm_call=None,
         forced_entities=["花礼Harei"],
     )
-    assert client.requests_made == 2
+    assert client.requests_made == 3
     assert "-352" in result["state"]["last_run"]["comment_circuit"]
     assert result["state"]["comment_cursor"] == state["comment_cursor"]
 

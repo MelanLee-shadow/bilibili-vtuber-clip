@@ -97,6 +97,10 @@ the comment and commenter. It stores neither message text, username, clear
 commenter MID, nor RPID. The public accepted snapshot contains only aggregate
 counts. The per-runtime random salt is created during the v1 → v2 state
 migration and is never committed or exported.
+The current reply endpoint is `/x/v2/reply/wbi/main`: once per run, the crawler
+reads Bilibili's public `nav` signing image names, derives the protocol mixin key,
+and signs the bounded reply queries. This uses no login cookie or account token;
+the bootstrap response is cached like every other source response.
 
 ### Acceptance and persistence
 
@@ -149,10 +153,11 @@ rejected/conflict rows and raw source text stay out of the subtitle prompt.
 
 The production job runs daily at 06:27 UTC with `flock -n` and these caps:
 
-- 176 real HTTP requests total;
+- 177 real HTTP requests total;
 - all registry members, up to 128, receive one fresh `pubdate/page 1` search;
 - up to 16 historical backfill searches and 8 candidate-specific searches;
 - up to 24 one-page comment discovery checks;
+- at most one public WBI signing bootstrap when comment targets exist;
 - one request at a time, at least 10 seconds apart, with a 40-minute HTTP-phase cap;
 - 15 seconds and 512 KiB per response;
 - 18-hour fresh cache, 7-day stale-on-error cache, and 1,024 cache entries.
@@ -163,7 +168,7 @@ Other member failures remain isolated. Stale cache can preserve already fetched
 source facts, but it does not advance freshness or historical cursors. If every
 search fails or is stale, the job updates only failure state and refuses to
 replace the last-good prompt snapshot. State is mode 0600; the prompt-safe
-snapshot is mode 0444. No cookie, WBI credential, raw response, title,
+snapshot is mode 0444. No cookie, account credential, raw response, title,
 description, clear comment identity, or comment text is committed or exported.
 Accepted/conflict decisions persist; noisy candidate/rejected state is capped
 at 2,048 mappings so an unattended daily job cannot grow without bound.

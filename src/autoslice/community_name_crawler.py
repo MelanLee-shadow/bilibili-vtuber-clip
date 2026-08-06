@@ -134,6 +134,7 @@ def load_config(path) -> dict[str, Any]:  # noqa: ANN001 - accepts pathlib.Path 
         "schema_version",
         "search_endpoint",
         "reply_endpoint",
+        "wbi_nav_endpoint",
         "source_hosts",
         "max_registry_members",
         "historical_member_limit",
@@ -184,7 +185,7 @@ def load_config(path) -> dict[str, Any]:  # noqa: ANN001 - accepts pathlib.Path 
         raise CommunityNameError("lookback_days is invalid")
     if not 8 <= int(payload["max_evidence_per_mapping"]) <= 96:
         raise CommunityNameError("max_evidence_per_mapping is invalid")
-    planned_requests = sum(
+    planned_requests = 1 + sum(
         int(payload[key])
         for key in (
             "max_registry_members",
@@ -1121,6 +1122,26 @@ def _collect_comments(
     stats = Counter()
     attempted = 0
     circuit: str | None = None
+    if not targets:
+        return {}, int(state["comment_cursor"]), None
+    try:
+        mixin_key, bootstrap_fresh = comment_discovery.fetch_wbi_mixin_key(
+            client, endpoint=str(config["wbi_nav_endpoint"])
+        )
+        if not bootstrap_fresh:
+            return (
+                {"wbi_bootstrap_stale": 1},
+                int(state["comment_cursor"]),
+                "STALE_WBI_BOOTSTRAP_AFTER_NETWORK_ERROR",
+            )
+        stats["wbi_bootstrap_observed"] += 1
+    except (CrawlError, OSError, ValueError) as exc:
+        errors["comment:wbi_bootstrap"] = f"{type(exc).__name__}: {exc}"
+        return (
+            {"wbi_bootstrap_failed": 1},
+            int(state["comment_cursor"]),
+            f"WBI_BOOTSTRAP_FAILED: {type(exc).__name__}: {exc}",
+        )
     for member, row in targets:
         try:
             page = comment_discovery.fetch_comment_page(
@@ -1128,6 +1149,8 @@ def _collect_comments(
                 endpoint=str(config["reply_endpoint"]),
                 video=row,
                 limit=int(config["comments_per_video"]),
+                mixin_key=mixin_key,
+                signed_at=now,
             )
             row["comments"] = list(page.comments)
             row["_comments_observed"] = True
