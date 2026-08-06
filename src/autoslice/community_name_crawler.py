@@ -349,9 +349,11 @@ def proposal_prompt(bundles: list[dict[str, Any]]) -> str:
         "relation_kind 只能是：alias_of=社区用来称呼本人；fan_name_of=粉丝群称呼；"
         "meme_of=事件、形象、物件或人格梗，不能与本人姓名互换；associated_with=有关联但类型不明。\n"
         "多人同框且没有明确一对一语法时不要猜；普通名词、标题动作、情绪、游戏名、组织名、"
-        "单纯搜索命中都不要报。若同一词根同时有基础叠词和小X/X姐等派生称呼，优先报告原文"
-        "实际出现的基础叠词，不要让派生称呼挤掉它。surface 必须是 2-24 字原文子串。"
-        "每个 entity 最多 6 个。\n"
+        "单纯搜索命中都不要报。canonical/official_surfaces 已经是官方词面，绝对不要重复报告。"
+        "先穷举标题里明确指代本人的非官方绰号，尤其食物、动物、物件等比喻性名词；再报告"
+        "粉丝名和事件梗。若同一词根同时有基础叠词和小X/X姐等派生称呼，优先报告原文实际"
+        "出现的基础叠词，不要让派生称呼挤掉它。surface 必须是 2-24 字原文子串。"
+        "每个 entity 最多 10 个。\n"
         "只输出 JSON：{\"relations\":[{\"entity_id\":\"...\",\"surface\":\"...\","
         "\"relation_kind\":\"alias_of|fan_name_of|meme_of|associated_with\","
         "\"evidence_bvids\":[\"BV...\"]}]}\n"
@@ -368,6 +370,10 @@ def _parse_proposals(completion: str, bundles: list[dict[str, Any]]) -> list[dic
         str(bundle["member"]["entity_id"]): {row["bvid"]: row for row in bundle["rows"]}
         for bundle in bundles
     }
+    official_keys_by_entity = {
+        str(bundle["member"]["entity_id"]): community_plan.official_surface_keys(bundle["member"])
+        for bundle in bundles
+    }
     result: list[dict[str, Any]] = []
     counts: Counter[str] = Counter()
     seen: set[tuple[str, str]] = set()
@@ -382,12 +388,11 @@ def _parse_proposals(completion: str, bundles: list[dict[str, Any]]) -> list[dic
         entity_id = str(raw["entity_id"])
         if entity_id not in rows_by_entity:
             continue
-        counts[entity_id] += 1
-        if counts[entity_id] > 6:
-            continue
         try:
             surface = _safe_surface(raw["surface"], label="judge surface")
         except CommunityNameError:
+            continue
+        if _match_key(surface) in official_keys_by_entity[entity_id]:
             continue
         relation_kind = str(raw["relation_kind"])
         if relation_kind not in RELATION_KINDS:
@@ -410,6 +415,9 @@ def _parse_proposals(completion: str, bundles: list[dict[str, Any]]) -> list[dic
             continue
         key = (entity_id, _match_key(surface))
         if key in seen:
+            continue
+        counts[entity_id] += 1
+        if counts[entity_id] > 10:
             continue
         seen.add(key)
         result.append(
@@ -714,7 +722,7 @@ def crawl(
     rows_by_entity = {
         str(bundle["member"]["entity_id"]): bundle["rows"] for bundle in bundles
     }
-    mapping_by_key = {str(row["mapping_key"]): dict(row) for row in state["mappings"]}
+    mapping_by_key = community_plan.community_mappings_by_key(state["mappings"], members_by_id)
     owners = _registry_surface_owners(registry)
     enrichment_left = int(config["comment_enrichment_limit"])
     for proposal in proposals:

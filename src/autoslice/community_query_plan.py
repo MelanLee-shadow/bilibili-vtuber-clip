@@ -3,11 +3,38 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any, Mapping, Sequence, TypeVar
 
 
 _CJK_RX = re.compile(r"[\u3400-\u9fff]")
 _T = TypeVar("_T")
+
+
+def _surface_key(value: object) -> str:
+    return "".join(
+        char
+        for char in unicodedata.normalize("NFKC", str(value)).casefold()
+        if unicodedata.category(char)[0] in {"L", "N"}
+    )
+
+
+def official_surface_keys(member: Mapping[str, Any]) -> set[str]:
+    return {
+        _surface_key(value)
+        for value in (member["canonical"], *member["official_surfaces"], *member["aliases"])
+    }
+
+
+def community_mappings_by_key(
+    rows: Sequence[Mapping[str, Any]], members_by_id: Mapping[str, Mapping[str, Any]]
+) -> dict[str, dict[str, Any]]:
+    official = {entity_id: official_surface_keys(member) for entity_id, member in members_by_id.items()}
+    return {
+        str(row["mapping_key"]): dict(row)
+        for row in rows
+        if _surface_key(row["surface"]) not in official.get(str(row["entity_id"]), set())
+    }
 
 
 def hot_entity_ids(
