@@ -5,6 +5,7 @@ import urllib.parse
 
 from src.autoslice.community_query_plan import (
     bounded_mappings,
+    community_mappings_by_key,
     evenly_sample,
     hot_entity_ids,
     query_variants,
@@ -256,6 +257,41 @@ def test_one_bad_relation_does_not_discard_a_valid_sibling():
     assert [row["surface"] for row in result["state"]["mappings"]] == ["鼠鼠"]
 
 
+def test_official_surfaces_do_not_consume_community_relation_slots():
+    registry = _registry()
+    specs = [(11, "2026-08-01")]
+    client = FakeClient([_search_payload("花礼Harei", "鼠鼠", specs)])
+    completion = json.dumps(
+        {
+            "relations": [
+                {
+                    "entity_id": "bilibili:1048135385",
+                    "surface": "花礼",
+                    "relation_kind": "alias_of",
+                    "evidence_bvids": ["BV1000000001"],
+                },
+                {
+                    "entity_id": "bilibili:1048135385",
+                    "surface": "鼠鼠",
+                    "relation_kind": "alias_of",
+                    "evidence_bvids": ["BV1000000001"],
+                },
+            ]
+        },
+        ensure_ascii=False,
+    )
+    result = crawl(
+        client=client,
+        registry=registry,
+        config=_config(),
+        state=empty_state(),
+        now=NOW,
+        llm_call=lambda _: completion,
+        forced_entities=["花礼Harei"],
+    )
+    assert [row["surface"] for row in result["state"]["mappings"]] == ["鼠鼠"]
+
+
 def test_search_total_failure_keeps_last_good_snapshot_unwritten():
     registry = _registry()
     client = FakeClient([CrawlError("HTTP 412"), CrawlError("HTTP 412")])
@@ -358,6 +394,16 @@ def test_hot_rotation_counts_entities_instead_of_candidate_surfaces():
         {"entity_id": "dog", "status": "candidate", "score": 8},
     ]
     assert hot_entity_ids(rows, {"flower", "dog"}, 2) == ["flower", "dog"]
+
+
+def test_existing_official_surface_rows_are_removed_from_community_state():
+    members = {"flower": _registry()["members"][0]}
+    rows = [
+        {"mapping_key": "official", "entity_id": "flower", "surface": "花礼"},
+        {"mapping_key": "community", "entity_id": "flower", "surface": "鼠鼠"},
+    ]
+    kept = community_mappings_by_key(rows, members)
+    assert set(kept) == {"community"}
 
 
 def test_prompt_context_keeps_official_and_community_authority_separate(tmp_path, monkeypatch):
