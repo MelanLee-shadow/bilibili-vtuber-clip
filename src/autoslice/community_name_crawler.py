@@ -766,6 +766,35 @@ def crawl(
             "evidence": evidence,
         }
 
+    for mapping in mapping_by_key.values():
+        member = members_by_id.get(str(mapping["entity_id"]))
+        if member is None:
+            continue
+        summary = _summary(mapping["evidence"])
+        summary["uploader_mids"] = sorted(
+            {
+                row["uploader_mid"]
+                for row in mapping["evidence"]
+                if isinstance(row.get("uploader_mid"), int)
+            }
+        )
+        owner_ids = owners.get(_match_key(str(mapping["surface"])), set())
+        if mapping["status"] == "accepted" and not owner_ids - {str(mapping["entity_id"])}:
+            continue
+        status, reason_codes = community_acceptance.mapping_status(
+            prior_status=str(mapping["status"]), member=member, summary=summary,
+            config=config, conflict=bool(owner_ids - {str(mapping["entity_id"])}),
+            relation_kind=str(mapping["relation_kind"]),
+        )
+        mapping.update(status=status, reason_codes=reason_codes, **{
+            key: summary[key]
+            for key in ("score", "video_count", "distinct_uploader_mids", "distinct_days", "strong_link_count")
+        })
+        if status == "accepted" and not mapping.get("accepted_at"):
+            mapping["accepted_at"] = _iso(now)
+        elif status != "accepted":
+            mapping["accepted_at"] = None
+
     new_state = {
         "schema_version": STATE_SCHEMA,
         "rule_version": RULE_VERSION,

@@ -193,6 +193,35 @@ def test_event_name_stays_typed_as_meme_instead_of_person_alias():
     ]
 
 
+def test_existing_event_candidate_is_regraded_from_stored_evidence():
+    registry = _registry()
+    specs = [(11, "2026-08-01"), (22, "2026-08-01")]
+    strict_config = _config()
+    strict_config["acceptance"]["meme_minimum_score"] = 99
+    first = crawl(
+        client=FakeClient([_search_payload("李豆沙", "白色奶龙", specs)]),
+        registry=registry,
+        config=strict_config,
+        state=empty_state(),
+        now=NOW,
+        llm_call=lambda _: _judge("bilibili:11223344", "白色奶龙", "meme_of", 2),
+        forced_entities=["李豆沙"],
+    )
+    assert first["state"]["mappings"][0]["status"] == "candidate"
+    second = crawl(
+        client=FakeClient([_search_payload("李豆沙", "白色奶龙", [])]),
+        registry=registry,
+        config=_config(),
+        state=first["state"],
+        now=NOW + dt.timedelta(days=1),
+        llm_call=None,
+        forced_entities=["李豆沙"],
+    )
+    mapping = second["state"]["mappings"][0]
+    assert mapping["status"] == "accepted"
+    assert mapping["reason_codes"] == ["EVENT_MEME_INDEPENDENT_QUORUM_MET"]
+
+
 def test_injected_or_hallucinated_surface_never_enters_state_or_snapshot():
     registry = _registry()
     specs = [(11, "2026-08-01")]
