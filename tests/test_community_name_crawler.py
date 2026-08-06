@@ -37,6 +37,17 @@ class FakeClient:
     def fetch(self, url, **kwargs):
         self.urls.append(url)
         self.requests_made += 1
+        if "/x/web-interface/nav" in url:
+            payload = {
+                "code": -101,
+                "data": {
+                    "wbi_img": {
+                        "img_url": "https://i0.hdslb.com/bfs/wbi/" + "a" * 32 + ".png",
+                        "sub_url": "https://i0.hdslb.com/bfs/wbi/" + "b" * 32 + ".png",
+                    }
+                },
+            }
+            return CachedResponse(json.dumps(payload).encode(), "application/json", NOW)
         if not self.responses:
             raise AssertionError("unexpected fetch")
         response = self.responses.pop(0)
@@ -87,7 +98,10 @@ def _registry():
 def _config():
     config = load_config(Path("assets/lidousha/community_name_sources.v1.json"))
     config = json.loads(json.dumps(config))
-    config["comment_enrichment_limit"] = 0
+    config["historical_member_limit"] = 0
+    config["candidate_query_limit"] = 0
+    config["comment_discovery_video_limit"] = 0
+    config["request_interval_seconds"] = 0
     return config
 
 
@@ -147,6 +161,11 @@ def test_repeated_cross_uploader_name_is_accepted_but_remains_occurrence_neutral
     assert result["snapshot"]["relations"][0]["surface"] == "鼠鼠"
     assert result["snapshot"]["occurrence_policy"] == OCCURRENCE_POLICY
     validate_snapshot(result["snapshot"], as_of=NOW)
+    search_url = next(url for url in client.urls if "/wbi/search/type" in url)
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(search_url).query)
+    assert {"w_rid", "wts"} <= query.keys()
+    assert query["platform"] == ["pc"]
+    assert query["web_location"] == ["1430654"]
 
 
 def test_one_uploader_nickname_is_discovered_but_stays_a_candidate():
@@ -346,6 +365,8 @@ def test_search_total_failure_keeps_last_good_snapshot_unwritten():
 def test_successful_member_cursor_rotates_orders_then_pages_then_query():
     registry = _registry()
     state = empty_state()
+    config = _config()
+    config["historical_member_limit"] = 1
     expected = [
         (1, "pubdate"),
         (1, "totalrank"),
@@ -358,17 +379,20 @@ def test_successful_member_cursor_rotates_orders_then_pages_then_query():
         (3, "click"),
     ]
     for offset, (expected_page, expected_order) in enumerate(expected, start=1):
-        client = FakeClient([_search_payload("花礼Harei", "鼠鼠", [])])
+        responses = [_search_payload("花礼Harei", "鼠鼠", [])]
+        if (expected_page, expected_order) != (1, "pubdate"):
+            responses.append(_search_payload("花礼Harei", "鼠鼠", []))
+        client = FakeClient(responses)
         result = crawl(
             client=client,
             registry=registry,
-            config=_config(),
+            config=config,
             state=state,
             now=NOW + dt.timedelta(days=offset),
             llm_call=None,
             forced_entities=["花礼Harei"],
         )
-        query = urllib.parse.parse_qs(urllib.parse.urlsplit(client.urls[0]).query)
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(client.urls[-1]).query)
         assert query["page"] == [str(expected_page)]
         assert query["keyword"] == ["花礼"]
         assert query["order"] == [expected_order]
