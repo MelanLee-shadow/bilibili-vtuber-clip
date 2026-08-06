@@ -6,6 +6,7 @@ import urllib.parse
 from src.autoslice.community_query_plan import (
     bounded_mappings,
     evenly_sample,
+    hot_entity_ids,
     query_variants,
     title_complete_prompt_rows,
 )
@@ -348,6 +349,15 @@ def test_candidate_state_is_bounded_without_evicting_durable_decisions():
     rows.append({"mapping_key": "accepted", "status": "accepted", "score": 0})
     kept = bounded_mappings(rows, transient_limit=2)
     assert {row["mapping_key"] for row in kept} == {"accepted", "3", "4"}
+
+
+def test_hot_rotation_counts_entities_instead_of_candidate_surfaces():
+    rows = [
+        {"entity_id": "flower", "status": "candidate", "score": 12},
+        {"entity_id": "flower", "status": "candidate", "score": 10},
+        {"entity_id": "dog", "status": "candidate", "score": 8},
+    ]
+    assert hot_entity_ids(rows, {"flower", "dog"}, 2) == ["flower", "dog"]
 
 
 def test_prompt_context_keeps_official_and_community_authority_separate(tmp_path, monkeypatch):

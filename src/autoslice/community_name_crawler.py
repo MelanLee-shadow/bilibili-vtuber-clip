@@ -599,20 +599,11 @@ def _choose_members(
     cold_count = min(int(config["daily_member_limit"]), len(members))
     chosen = [members[(cursor + offset) % len(members)] for offset in range(cold_count)]
     chosen_ids = {row["entity_id"] for row in chosen}
-    hot_ids = [
-        row["entity_id"]
-        for row in sorted(
-            (
-                row
-                for row in state["mappings"]
-                if row["status"] == "candidate" and int(row.get("score", 0)) >= 4
-            ),
-            key=lambda row: (-int(row.get("score", 0)), str(row["entity_id"])),
-        )
-        if row["entity_id"] not in chosen_ids
-    ][: int(config["hot_candidate_limit"])]
     by_id = {row["entity_id"]: row for row in members}
-    chosen.extend(by_id[entity_id] for entity_id in hot_ids if entity_id in by_id)
+    hot_ids = community_plan.hot_entity_ids(
+        state["mappings"], set(by_id) - chosen_ids, int(config["hot_candidate_limit"])
+    )
+    chosen.extend(by_id[entity_id] for entity_id in hot_ids)
     return chosen, (cursor + cold_count) % len(members)
 
 
