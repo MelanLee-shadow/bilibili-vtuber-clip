@@ -117,6 +117,10 @@ python3 scripts/free_session_autoslice.py --once
 The production deploy installs a daily 06:17 bounded refresh into
 `/opt/bilive/autoslice/state/timely_terms.json`. The runner prefers that runtime
 snapshot over the committed fallback without modifying the deployed Git tree.
+This daily clock is for news/community freshness. Official streamer membership
+is intentionally not refreshed here; its slower registry and the separate
+daily community nickname/meme lane are documented in
+[`community-name-crawler.md`](community-name-crawler.md).
 
 ## Topic -> work -> character subgraph
 

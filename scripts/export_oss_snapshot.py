@@ -104,7 +104,6 @@ STRIP_PREFIXES = (
     "scripts/regen_covers_latest_flow.py",      # 7/3 成品一次性重出封面
     "scripts/ab_model_replay_closed_set.py",    # 重放私库历史裁决=OSS 不可用的 legacy
 )
-
 # 运营状态 → 模板化（内容剔除，形状保留）。值=模板生成器名。
 TEMPLATE_FILES = {
     "assets/lidousha/publication_registry.v1.json": "registry",
@@ -119,8 +118,9 @@ TEMPLATE_FILES = {
     "assets/lidousha/cover_reference_overrides.v1.json": "empty_entries",
     "assets/lidousha/selection_score_calibration.v1.json": "keep",  # 标定=劳动成果
     "assets/lidousha/timely_terms.json": "empty_entries",  # 运行时缓存
+    "assets/lidousha/streamer_registry.v1.json": "empty_entries",
+    "assets/lidousha/community_names.v1.json": "empty_entries",
 }
-
 # 整目录运营状态：剔除全部内容，保目录+模板说明。
 TEMPLATE_DIRS = (
     "assets/lidousha/recovery_publication_authority_",  # 前缀匹配单文件们
@@ -136,7 +136,6 @@ TEMPLATE_DIRS = (
     "assets/lidousha/talk_recoveries/",
     "assets/lidousha/voiceprint_profile.v1.json",  # 生物特征，绝不发布
 )
-
 # ---------------------------------------------------------------------------
 # v4：流程面去频道名/去私有主机名。精确 token 全树重写（文件名 + 文本内容），
 # 长 token 优先避免子串误伤。assets/** 不重写（资产字节权威）；profiles/**
@@ -2015,9 +2014,12 @@ def build_template_assets(out_root: Path) -> int:
     )
     return written + 1
 
-
 def main() -> int:
     out_root = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_OUT
+    final_root = out_root  # replacement target; a Git checkout is never valid here
+    if final_root.is_symlink() or (final_root / ".git").exists():
+        print(f"REFUSING snapshot target {final_root}: symlink or .git; use a fresh directory")
+        return 2
     tracked = tracked_files()
     unknown_pre = [rel for rel in tracked if classify(rel) == "unknown"]
     if unknown_pre:
@@ -2025,12 +2027,10 @@ def main() -> int:
         for rel in unknown_pre:
             print("  ", rel)
         return 2
-    final_root = out_root
     out_root = final_root.with_name(final_root.name + ".building")
     if out_root.exists():
         shutil.rmtree(out_root)
     out_root.mkdir(parents=True)
-
     kept, templated, stripped, unknown = [], [], [], []
     rootmap_entries: list[str] = []
     templated_dirs_seen = set()

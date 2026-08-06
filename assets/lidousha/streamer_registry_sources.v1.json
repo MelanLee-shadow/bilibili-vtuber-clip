@@ -1,0 +1,35 @@
+{
+  "schema_version": "vtuber-slice.streamer-registry-sources.v1",
+  "sources": [
+    {
+      "source_id": "psplive-official-roster-video",
+      "kind": "psplive_bilibili_video",
+      "organization_id": "psplive",
+      "legacy_config": "psplive_roster_sources.v1.json",
+      "api_url": "https://api.bilibili.com/x/web-interface/view?bvid=BV1GTFseLESN",
+      "public_url": "https://www.bilibili.com/video/BV1GTFseLESN/"
+    },
+    {
+      "source_id": "virtuareal-official-member-api",
+      "kind": "virtuareal_member_api",
+      "organization_id": "virtuareal",
+      "api_url": "https://vrp.live/api/members/search/list?locale=zh_CN&size=1000&sort=updatedAt,desc",
+      "public_url": "https://vrp.live/about",
+      "minimum_members": 50
+    },
+    {
+      "source_id": "virtuareal-official-bilibili-announcements",
+      "kind": "virtuareal_bilibili_announcements",
+      "organization_id": "virtuareal",
+      "endpoint": "https://api.bilibili.com/x/web-interface/search/type",
+      "public_url": "https://space.bilibili.com/413748120/video",
+      "query": "VirtuaReal新成员加入",
+      "page_size": 50,
+      "owner_mid": 413748120,
+      "owner_name": "VirtuaReal",
+      "title_contains": "VirtuaReal新成员加入",
+      "minimum_announcements": 8,
+      "minimum_members": 20
+    }
+  ]
+}

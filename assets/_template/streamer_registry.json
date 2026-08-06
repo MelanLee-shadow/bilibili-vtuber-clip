@@ -1,0 +1,10 @@
+{
+  "authority": "runtime_crawler_required",
+  "expires_at": "2099-01-01T00:00:00+00:00",
+  "generated_at": "2026-01-01T00:00:00+00:00",
+  "members": [],
+  "occurrence_policy": "ENTITY_EXISTENCE_ONLY_NOT_CUE_OCCURRENCE_EVIDENCE",
+  "schema_version": "vtuber-slice.streamer-registry.v1",
+  "sources": [],
+  "status": "unconfigured"
+}

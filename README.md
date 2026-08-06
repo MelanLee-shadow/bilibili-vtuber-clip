@@ -35,6 +35,7 @@ workflows、日期化报告和 memory 都不能覆盖 step。
 - 部署器：`scripts/deploy_free_autoslice.sh`
 - 活字乱刷：[docs/workflows/huozi-luanshua.md](docs/workflows/huozi-luanshua.md)
 - 时效专名：[docs/workflows/timely-term-crawler.md](docs/workflows/timely-term-crawler.md)
+- 主播名册与社区昵称/梗名：[docs/workflows/community-name-crawler.md](docs/workflows/community-name-crawler.md)
 
 ## 本地验证
 

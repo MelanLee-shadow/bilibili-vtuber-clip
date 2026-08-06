@@ -29,6 +29,12 @@
   插入或局部删除变化都必须由 CPA 明确选择 `PROPOSED`；整 cue 删除则须在
   `target_audible=false` 时进入显式 `CURRENT / PROPOSED / DROP` 三选一，只有 CPA 明选
   `DROP` 才可置空。AGY/声学与拼音只作证据和冲突诊断，不拥有对 CPA 明确裁决的第二张否决票。
+- 官方主播 registry 与社区称呼 snapshot 都是 occurrence-neutral 候选，但权限不同：低频
+  `streamer_registry` 只确认官方实体/词面存在；每日 `community_names` 中的 `alias_of`、
+  `fan_name_of`、`meme_of`、`associated_with` 只确认社区映射达到证据门。社区关系不得伪装成
+  `official_roster`、不得进入零 CPA expected-value 表、不得生成机械 `surface → canonical`
+  替换；当前 cue 仍须由音频、结构化弹幕/SC 和话题独立见证。事件/形象梗（例如某次事件产生
+  的形象称呼）必须保留为 `meme_of`，不能扁平化成主播永久别名。
 - glossary 中“一个明确 canonical + 明列误听面”的三字及以上变体自动进入零 CPA
   expected-value 表，并在所有 mutable 文本阶段之后重新规范化；括号中的事故日期/说明不是
   词面。两字日常词（如“小时/留下”）无条件替换的误伤先验过高，除非 profile 单独显式提升，

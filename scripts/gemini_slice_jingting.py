@@ -109,6 +109,26 @@ _REPO_PSPLIVE_ROSTER = str(
 PSPLIVE_ROSTER_PATHS = (
     [_PSPLIVE_ROSTER_ENV] if _PSPLIVE_ROSTER_ENV else [_REPO_PSPLIVE_ROSTER]
 )
+_STREAMER_REGISTRY_ENV = os.environ.get("AUTOSLICE_STREAMER_REGISTRY") or os.environ.get(
+    "LIDOUSHA_STREAMER_REGISTRY"
+)
+_REPO_STREAMER_REGISTRY = str(
+    CHANNEL_PROFILE.asset_file("streamer_registry", repo_root=REPO_ROOT)
+)
+STREAMER_REGISTRY_PATHS = (
+    [_STREAMER_REGISTRY_ENV]
+    if _STREAMER_REGISTRY_ENV
+    else [_REPO_STREAMER_REGISTRY]
+)
+_COMMUNITY_NAMES_ENV = os.environ.get("AUTOSLICE_COMMUNITY_NAMES") or os.environ.get(
+    "LIDOUSHA_COMMUNITY_NAMES"
+)
+_REPO_COMMUNITY_NAMES = str(
+    CHANNEL_PROFILE.asset_file("community_names", repo_root=REPO_ROOT)
+)
+COMMUNITY_NAMES_PATHS = (
+    [_COMMUNITY_NAMES_ENV] if _COMMUNITY_NAMES_ENV else [_REPO_COMMUNITY_NAMES]
+)
 
 
 def gift_names_context() -> str:
@@ -733,6 +753,84 @@ def psplive_roster_context(*, as_of: dt.datetime | None = None) -> str:
     return "\n".join(lines) + "\n"
 
 
+def streamer_registry_context(*, as_of: dt.datetime | None = None) -> str:
+    """Render the low-frequency official multi-organization entity registry."""
+
+    if os.environ.get("LIDOUSHA_DISABLE_STREAMER_REGISTRY") == "1":
+        return ""
+    raw = _read_first(STREAMER_REGISTRY_PATHS)
+    if not raw.strip():
+        return ""
+    try:
+        from src.autoslice.streamer_registry_crawler import validate_snapshot
+
+        snapshot = validate_snapshot(json.loads(raw), as_of=as_of)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return ""
+    if snapshot.get("status") != "fresh":
+        return ""
+    lines = [
+        "关联主播实体候选（低频官方 registry；只证明实体/官方词面存在，绝不证明本句提到它；",
+        "PSPLive、VirtuaReal及其他组织一律按当前音频、结构化弹幕/SC和话题判断，不得因收录而盲选）:",
+    ]
+    for member in snapshot["members"]:
+        lines.append(
+            "- "
+            + json.dumps(
+                {
+                    "entity_id": member["entity_id"],
+                    "canonical": member["canonical"],
+                    "official_surfaces": member["official_surfaces"],
+                    "aliases": member["aliases"],
+                    "affiliations": member["affiliations"],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+    return "\n".join(lines) + "\n"
+
+
+def community_names_context(*, as_of: dt.datetime | None = None) -> str:
+    """Render only accepted typed community relations, never raw evidence."""
+
+    if os.environ.get("LIDOUSHA_DISABLE_COMMUNITY_NAMES") == "1":
+        return ""
+    raw = _read_first(COMMUNITY_NAMES_PATHS)
+    if not raw.strip():
+        return ""
+    try:
+        from src.autoslice.community_name_crawler import validate_snapshot
+
+        snapshot = validate_snapshot(json.loads(raw), as_of=as_of)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return ""
+    if snapshot.get("status") != "fresh" or not snapshot["relations"]:
+        return ""
+    lines = [
+        "社区称呼候选（每日社区证据 crawler；不是官方 roster，也没有机械改字权限；",
+        "alias_of=人物昵称，fan_name_of=粉丝名，meme_of=事件/形象梗，associated_with=仅关联；",
+        "映射存在仍绝不证明当前 cue 出现，必须由本句音频、结构化原文和话题独立见证）:",
+    ]
+    for relation in snapshot["relations"]:
+        lines.append(
+            "- "
+            + json.dumps(
+                {
+                    "entity_id": relation["entity_id"],
+                    "canonical": relation["canonical"],
+                    "surface": relation["surface"],
+                    "relation_kind": relation["relation_kind"],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+    return "\n".join(lines) + "\n"
+
+
 def glossary(*, as_of: dt.datetime | None = None) -> str:
     """Term canon + subtitle-correction principles, concatenated.
 
@@ -743,12 +841,14 @@ def glossary(*, as_of: dt.datetime | None = None) -> str:
     terms = _read_first(GLOSSARY_PATHS)
     principles = subtitle_principles()
     timely = timely_terms_context(as_of=as_of)
-    roster = psplive_roster_context(as_of=as_of)
+    registry = streamer_registry_context(as_of=as_of)
+    roster = "" if registry else psplive_roster_context(as_of=as_of)
+    community_names = community_names_context(as_of=as_of)
     gifts = gift_names_context()
     return (
         "\n\n".join(
             part.strip()
-            for part in (terms, timely, roster, gifts, principles)
+            for part in (terms, timely, registry, roster, community_names, gifts, principles)
             if part
         ).strip()
         + "\n"
