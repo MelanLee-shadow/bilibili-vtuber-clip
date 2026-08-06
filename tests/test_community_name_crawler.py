@@ -8,6 +8,7 @@ from src.autoslice.community_query_plan import (
     community_mappings_by_key,
     evenly_sample,
     hot_entity_ids,
+    outside_in,
     query_variants,
     title_complete_prompt_rows,
 )
@@ -372,8 +373,13 @@ def test_prompt_keeps_all_titles_but_bounds_larger_metadata_fields():
         for index in range(50)
     ]
     prompt_rows = title_complete_prompt_rows(rows, 12)
-    assert [row["title"] for row in prompt_rows] == [row["title"] for row in rows]
+    assert {row["title"] for row in prompt_rows} == {row["title"] for row in rows}
+    assert [row["title"] for row in prompt_rows[:4]] == ["title-0", "title-49", "title-1", "title-48"]
     assert sum("description" in row for row in prompt_rows) == 12
+
+
+def test_outside_in_covers_every_row_once():
+    assert outside_in(list(range(6))) == [0, 5, 1, 4, 2, 3]
 
 
 def test_candidate_state_is_bounded_without_evicting_durable_decisions():

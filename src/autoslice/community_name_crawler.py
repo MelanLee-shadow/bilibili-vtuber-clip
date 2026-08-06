@@ -353,6 +353,7 @@ def proposal_prompt(bundles: list[dict[str, Any]]) -> str:
         "先穷举标题里明确指代本人的非官方绰号，尤其食物、动物、物件等比喻性名词；再报告"
         "粉丝名和事件梗。若同一词根同时有基础叠词和小X/X姐等派生称呼，优先报告原文实际"
         "出现的基础叠词，不要让派生称呼挤掉它。surface 必须是 2-24 字原文子串。"
+        "若同一非官方称呼在多个标题中都与目标 entity 共现、而其他同框者发生变化，这是该称呼指向目标的强线索，应报告 alias_of 或 meme_of；不要因单条多人标题而漏掉这种跨标题交集。"
         "每个 entity 最多 10 个。\n"
         "只输出 JSON：{\"relations\":[{\"entity_id\":\"...\",\"surface\":\"...\","
         "\"relation_kind\":\"alias_of|fan_name_of|meme_of|associated_with\","
