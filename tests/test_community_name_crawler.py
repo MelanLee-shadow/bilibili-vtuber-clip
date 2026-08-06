@@ -139,6 +139,31 @@ def _judge(entity_id, surface, kind, count):
     )
 
 
+def _fan_group_payload():
+    titles = (
+        "【李豆沙】李1民出来说话！",
+        "【李豆沙】试图把观众洗脑成为李1民",
+        "【李豆沙】李1民和李0民还挺好嗑的",
+        "【李豆沙】论为什么有李1民",
+    )
+    rows = []
+    for index, title in enumerate(titles, start=1):
+        rows.append(
+            {
+                "bvid": f"BV1{index:09d}",
+                "aid": index,
+                "mid": (11, 22, 33, 44)[index - 1],
+                "pubdate": int(
+                    (NOW - dt.timedelta(days=index)).timestamp()
+                ),
+                "title": title,
+                "description": "李豆沙切片",
+                "tag": "李豆沙,虚拟主播",
+            }
+        )
+    return {"code": 0, "data": {"result": rows}}
+
+
 def test_repeated_cross_uploader_name_is_accepted_but_remains_occurrence_neutral():
     registry = _registry()
     specs = [(11, "2026-08-01"), (11, "2026-08-02"), (22, "2026-08-03"), (33, "2026-08-04")]
@@ -168,6 +193,132 @@ def test_repeated_cross_uploader_name_is_accepted_but_remains_occurrence_neutral
     assert query["web_location"] == ["1430654"]
 
 
+def test_fan_group_grammar_overrides_a_wrong_alias_proposal():
+    result = crawl(
+        client=FakeClient([_fan_group_payload()]),
+        registry=_registry(),
+        config=_config(),
+        state=empty_state(),
+        now=NOW,
+        llm_call=lambda _: _judge("bilibili:11223344", "李1民", "alias_of", 4),
+        forced_entities=["李豆沙"],
+    )
+
+    mapping = result["state"]["mappings"][0]
+    assert mapping["surface"] == "李1民"
+    assert mapping["relation_kind"] == "fan_name_of"
+    assert mapping["status"] == "accepted"
+    assert result["snapshot"]["relations"][0]["relation_kind"] == "fan_name_of"
+
+
+def test_fan_group_evidence_reclassifies_a_stored_accepted_alias():
+    first = crawl(
+        client=FakeClient([_fan_group_payload()]),
+        registry=_registry(),
+        config=_config(),
+        state=empty_state(),
+        now=NOW,
+        llm_call=lambda _: _judge("bilibili:11223344", "李1民", "fan_name_of", 4),
+        forced_entities=["李豆沙"],
+    )
+    stale_state = json.loads(json.dumps(first["state"], ensure_ascii=False))
+    stale_state["mappings"][0]["relation_kind"] = "alias_of"
+
+    repaired = crawl(
+        client=FakeClient([_fan_group_payload()]),
+        registry=_registry(),
+        config=_config(),
+        state=stale_state,
+        now=NOW + dt.timedelta(days=1),
+        llm_call=None,
+        forced_entities=["李豆沙"],
+    )
+
+    mapping = repaired["state"]["mappings"][0]
+    assert mapping["status"] == "accepted"
+    assert mapping["relation_kind"] == "fan_name_of"
+    assert mapping["reason_codes"] == [
+        "RELATION_RECLASSIFIED_FAN_NAME",
+        "ACCEPTED_MAPPING_PERSISTS",
+    ]
+    assert repaired["snapshot"]["relations"][0]["relation_kind"] == "fan_name_of"
+
+
+def test_official_uploader_can_anchor_an_unknown_surface_without_name_text():
+    official_mid = 1125641408
+    rows = [
+        {
+            "bvid": "BV1000000001",
+            "aid": 1,
+            "mid": official_mid,
+            "pubdate": int((NOW - dt.timedelta(days=1)).timestamp()),
+            "title": "蒜蓉蘑菇今天也来开会",
+            "description": "",
+            "tag": "虚拟主播",
+        },
+        {
+            "bvid": "BV1000000002",
+            "aid": 2,
+            "mid": 44,
+            "pubdate": int((NOW - dt.timedelta(days=2)).timestamp()),
+            "title": "【犬绒Mofu】蒜蓉蘑菇你这个坏女人",
+            "description": "犬绒Mofu切片",
+            "tag": "犬绒Mofu,虚拟主播",
+        },
+    ]
+    payload = {"code": 0, "data": {"result": rows}}
+    result = crawl(
+        client=FakeClient([payload]),
+        registry=_registry(),
+        config=_config(),
+        state=empty_state(),
+        now=NOW,
+        llm_call=lambda _: _judge(
+            "bilibili:1125641408", "蒜蓉蘑菇", "alias_of", 2
+        ),
+        forced_entities=["犬绒Mofu"],
+    )
+
+    mapping = result["state"]["mappings"][0]
+    assert mapping["status"] == "accepted"
+    assert mapping["reason_codes"] == [
+        "OFFICIAL_SELF_EVIDENCE_PLUS_INDEPENDENT_SUPPORT"
+    ]
+    assert mapping["strong_metadata_link_count"] == 2
+
+
+def test_nonofficial_no_anchor_row_remains_untrusted():
+    payload = {
+        "code": 0,
+        "data": {
+            "result": [
+                {
+                    "bvid": "BV1000000001",
+                    "aid": 1,
+                    "mid": 44,
+                    "pubdate": int((NOW - dt.timedelta(days=1)).timestamp()),
+                    "title": "蒜蓉蘑菇今天也来开会",
+                    "description": "",
+                    "tag": "虚拟主播",
+                }
+            ]
+        },
+    }
+    result = crawl(
+        client=FakeClient([payload]),
+        registry=_registry(),
+        config=_config(),
+        state=empty_state(),
+        now=NOW,
+        llm_call=lambda _: _judge(
+            "bilibili:1125641408", "蒜蓉蘑菇", "alias_of", 1
+        ),
+        forced_entities=["犬绒Mofu"],
+    )
+
+    assert result["state"]["mappings"] == []
+
+
 def test_one_uploader_nickname_is_discovered_but_stays_a_candidate():
     registry = _registry()
     specs = [(44, "2026-08-01"), (44, "2026-08-02")]
@@ -188,6 +339,45 @@ def test_one_uploader_nickname_is_discovered_but_stays_a_candidate():
     assert mapping["status"] == "candidate"
     assert mapping["reason_codes"] == ["INSUFFICIENT_INDEPENDENT_EVIDENCE"]
     assert result["snapshot"]["relations"] == []
+
+
+def test_distinctive_candidate_uses_exact_surface_search_for_better_recall():
+    registry = _registry()
+    first = crawl(
+        client=FakeClient(
+            [_search_payload("犬绒Mofu", "蒜蓉蘑菇", [(44, "2026-08-01")])]
+        ),
+        registry=registry,
+        config=_config(),
+        state=empty_state(),
+        now=NOW,
+        llm_call=lambda _: _judge(
+            "bilibili:1125641408", "蒜蓉蘑菇", "alias_of", 1
+        ),
+        forced_entities=["犬绒Mofu"],
+    )
+    config = _config()
+    config["candidate_query_limit"] = 1
+    client = FakeClient(
+        [
+            _search_payload("犬绒Mofu", "蒜蓉蘑菇", []),
+            _search_payload("犬绒Mofu", "蒜蓉蘑菇", []),
+        ]
+    )
+
+    crawl(
+        client=client,
+        registry=registry,
+        config=config,
+        state=first["state"],
+        now=NOW + dt.timedelta(days=1),
+        llm_call=None,
+        forced_entities=["犬绒Mofu"],
+    )
+
+    candidate_url = next(url for url in client.urls if "/wbi/search/type" in url)
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(candidate_url).query)
+    assert query["keyword"] == ["蒜蓉蘑菇"]
 
 
 def test_event_name_stays_typed_as_meme_instead_of_person_alias():
