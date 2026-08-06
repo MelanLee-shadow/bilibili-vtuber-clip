@@ -37,6 +37,17 @@ class FakeClient:
     def fetch(self, url, **kwargs):
         self.urls.append(url)
         self.requests_made += 1
+        if "/x/web-interface/nav" in url:
+            payload = {
+                "code": -101,
+                "data": {
+                    "wbi_img": {
+                        "img_url": "https://i0.hdslb.com/bfs/wbi/" + "a" * 32 + ".png",
+                        "sub_url": "https://i0.hdslb.com/bfs/wbi/" + "b" * 32 + ".png",
+                    }
+                },
+            }
+            return CachedResponse(json.dumps(payload).encode(), "application/json", NOW)
         if not self.responses:
             raise AssertionError("unexpected fetch")
         response = self.responses.pop(0)
@@ -150,6 +161,11 @@ def test_repeated_cross_uploader_name_is_accepted_but_remains_occurrence_neutral
     assert result["snapshot"]["relations"][0]["surface"] == "鼠鼠"
     assert result["snapshot"]["occurrence_policy"] == OCCURRENCE_POLICY
     validate_snapshot(result["snapshot"], as_of=NOW)
+    search_url = next(url for url in client.urls if "/wbi/search/type" in url)
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(search_url).query)
+    assert {"w_rid", "wts"} <= query.keys()
+    assert query["platform"] == ["pc"]
+    assert query["web_location"] == ["1430654"]
 
 
 def test_one_uploader_nickname_is_discovered_but_stays_a_candidate():

@@ -84,7 +84,11 @@ explicit one-to-one link must not be guessed.
 
 Comments are a first-class discovery surface because fans, rather than official
 accounts, often originate nicknames and incident memes. Before the judge runs,
-the crawler fairly rotates one 20-comment top-level page across up to 24 videos.
+the crawler fairly rotates one 20-comment page across up to 24 videos, alternating
+chronological and popular order so a new incident name and an established nickname
+both have a discovery path. Inline child replies already returned with a root are
+included within the same 20-comment cap; the crawler does not recursively fetch
+unbounded reply threads.
 It prefers a target's official upload and otherwise requires a single-entity
 metadata anchor; a multi-person video's comment must name the target in the same
 comment before it can count. Placement under an official upload strengthens
@@ -97,10 +101,12 @@ the comment and commenter. It stores neither message text, username, clear
 commenter MID, nor RPID. The public accepted snapshot contains only aggregate
 counts. The per-runtime random salt is created during the v1 → v2 state
 migration and is never committed or exported.
-The current reply endpoint is `/x/v2/reply/wbi/main`: once per run, the crawler
-reads Bilibili's public `nav` signing image names, derives the protocol mixin key,
-and signs the bounded reply queries. This uses no login cookie or account token;
-the bootstrap response is cached like every other source response.
+The current search and reply endpoints are `/x/web-interface/wbi/search/type`
+and `/x/v2/reply/wbi/main`. Once per run, the crawler reads Bilibili's public
+`nav` signing image names, derives the protocol mixin key, and signs both bounded
+query lanes. Search requests also declare the PC platform and Bilibili search
+page location. This uses no login cookie or account token; the bootstrap response
+is cached like every other source response.
 
 ### Acceptance and persistence
 

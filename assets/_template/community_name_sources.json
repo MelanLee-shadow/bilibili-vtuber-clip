@@ -1,6 +1,6 @@
 {
   "schema_version": "vtuber-slice.community-name-sources.v2",
-  "search_endpoint": "https://api.bilibili.com/x/web-interface/search/type",
+  "search_endpoint": "https://api.bilibili.com/x/web-interface/wbi/search/type",
   "reply_endpoint": "https://api.bilibili.com/x/v2/reply/wbi/main",
   "wbi_nav_endpoint": "https://api.bilibili.com/x/web-interface/nav",
   "source_hosts": ["bilibili.com"],

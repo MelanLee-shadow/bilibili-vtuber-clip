@@ -359,21 +359,32 @@ def _search_rows(
     order: str,
     page: int,
     max_results: int,
+    mixin_key: str,
+    signed_at: dt.datetime,
 ) -> tuple[list[dict[str, Any]], bool]:
     url = endpoint + "?" + urllib.parse.urlencode(
-        {
-            "search_type": "video",
-            "keyword": query,
-            "page": page,
-            "page_size": max_results,
-            "order": order,
-        }
+        comment_discovery.wbi_signed_params(
+            {
+                "search_type": "video",
+                "keyword": query,
+                "page": page,
+                "page_size": max_results,
+                "order": order,
+                "platform": "pc",
+                "web_location": 1430654,
+            },
+            mixin_key=mixin_key,
+            signed_at=signed_at,
+        )
+    )
+    referer = "https://search.bilibili.com/video?" + urllib.parse.urlencode(
+        {"keyword": query}
     )
     response = client.fetch(
         url,
         headers={
             "User-Agent": BILIBILI_USER_AGENT,
-            "Referer": "https://search.bilibili.com/",
+            "Referer": referer,
         },
     )
     try:
@@ -785,6 +796,7 @@ def _search_and_normalize(
     order: str,
     page: int,
     now: dt.datetime,
+    mixin_key: str,
 ) -> tuple[list[dict[str, Any]], bool]:
     raw_rows, fresh = _search_rows(
         client,
@@ -793,6 +805,8 @@ def _search_and_normalize(
         order=order,
         page=page,
         max_results=int(config["max_results"]),
+        mixin_key=mixin_key,
+        signed_at=now,
     )
     return (
         _normalized_rows(
@@ -844,6 +858,7 @@ def _collect_candidate_searches(
     errors: dict[str, str],
     stats: Counter,
     successful_entities: set[str],
+    mixin_key: str,
 ) -> dict[str, Any]:
     selected_ids = {str(row["entity_id"]) for row in selected}
     candidates = sorted(
@@ -874,6 +889,7 @@ def _collect_candidate_searches(
                 order="pubdate",
                 page=1,
                 now=now,
+                mixin_key=mixin_key,
             )
             _add_bundle_rows(
                 bundles_by_id,
@@ -912,6 +928,7 @@ def _collect_search_bundles(
     config: Mapping[str, Any],
     state: Mapping[str, Any],
     now: dt.datetime,
+    mixin_key: str,
 ) -> dict[str, Any]:
     bundles_by_id: dict[str, dict[str, Any]] = {}
     member_crawl = {
@@ -931,6 +948,7 @@ def _collect_search_bundles(
         errors=errors,
         stats=stats,
         successful_entities=successful_entities,
+        mixin_key=mixin_key,
     )
     search_circuit: str | None = candidate["circuit"]
 
@@ -952,6 +970,7 @@ def _collect_search_bundles(
                 order="pubdate",
                 page=1,
                 now=now,
+                mixin_key=mixin_key,
             )
             fresh_results[entity_id] = (rows, fresh, query)
             _add_bundle_rows(
@@ -1011,6 +1030,7 @@ def _collect_search_bundles(
                         order=orders[order_variant],
                         page=page,
                         now=now,
+                        mixin_key=mixin_key,
                     )
                     _add_bundle_rows(
                         bundles_by_id,
@@ -1112,6 +1132,7 @@ def _collect_comments(
     member_crawl: dict[str, dict[str, Any]],
     now: dt.datetime,
     errors: dict[str, str],
+    mixin_key: str,
 ) -> tuple[dict[str, int], int, str | None]:
     targets, _ = comment_discovery.select_comment_targets(
         bundles,
@@ -1124,26 +1145,10 @@ def _collect_comments(
     circuit: str | None = None
     if not targets:
         return {}, int(state["comment_cursor"]), None
-    try:
-        mixin_key, bootstrap_fresh = comment_discovery.fetch_wbi_mixin_key(
-            client, endpoint=str(config["wbi_nav_endpoint"])
-        )
-        if not bootstrap_fresh:
-            return (
-                {"wbi_bootstrap_stale": 1},
-                int(state["comment_cursor"]),
-                "STALE_WBI_BOOTSTRAP_AFTER_NETWORK_ERROR",
-            )
-        stats["wbi_bootstrap_observed"] += 1
-    except (CrawlError, OSError, ValueError) as exc:
-        errors["comment:wbi_bootstrap"] = f"{type(exc).__name__}: {exc}"
-        return (
-            {"wbi_bootstrap_failed": 1},
-            int(state["comment_cursor"]),
-            f"WBI_BOOTSTRAP_FAILED: {type(exc).__name__}: {exc}",
-        )
-    for member, row in targets:
+    stats["wbi_bootstrap_observed"] += 1
+    for target_index, (member, row) in enumerate(targets):
         try:
+            mode = 2 if (int(state["run_sequence"]) + target_index) % 2 == 0 else 3
             page = comment_discovery.fetch_comment_page(
                 client,
                 endpoint=str(config["reply_endpoint"]),
@@ -1151,6 +1156,7 @@ def _collect_comments(
                 limit=int(config["comments_per_video"]),
                 mixin_key=mixin_key,
                 signed_at=now,
+                mode=mode,
             )
             row["comments"] = list(page.comments)
             row["_comments_observed"] = True
@@ -1391,12 +1397,18 @@ def crawl(
     state = validate_state(json.loads(json.dumps(state, ensure_ascii=False)))
     registry_sha = digest_payload(registry)
     selected = _selected_members(registry, config, forced_entities)
+    mixin_key, wbi_bootstrap_fresh = comment_discovery.fetch_wbi_mixin_key(
+        client, endpoint=str(config["wbi_nav_endpoint"])
+    )
+    if not wbi_bootstrap_fresh:
+        raise CrawlError("Bilibili WBI bootstrap used stale fallback")
     search = _collect_search_bundles(
         client=client,
         selected=selected,
         config=config,
         state=state,
         now=now,
+        mixin_key=mixin_key,
     )
     bundles = search["bundles"]
     member_crawl = search["member_crawl"]
@@ -1410,6 +1422,7 @@ def crawl(
         member_crawl=member_crawl,
         now=now,
         errors=errors,
+        mixin_key=mixin_key,
     )
     proposals, judge_error, judge_batches = _judge_new_surfaces(
         bundles=bundles,

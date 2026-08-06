@@ -10,6 +10,7 @@ from src.autoslice.community_name_crawler import (
     load_config,
     validate_state,
 )
+from src.autoslice.community_comment_discovery import fetch_comment_page
 from src.autoslice.timely_term_crawler import CachedResponse, CrawlError
 
 
@@ -141,6 +142,34 @@ def _judge(surface, bvids, kind="alias_of"):
         },
         ensure_ascii=False,
     )
+
+
+def test_comment_page_includes_inline_children_within_one_bounded_request():
+    payload = _reply_payload([(1901, "2026-08-01", "根评论")])
+    child = _reply_payload([(1902, "2026-08-01", "楼中楼里的鼠鼠")])["data"][
+        "replies"
+    ][0]
+    duplicate = dict(child)
+    payload["data"]["replies"][0]["replies"] = [child, duplicate]
+    client = FakeClient([payload])
+
+    page = fetch_comment_page(
+        client,
+        endpoint="https://api.bilibili.com/x/v2/reply/wbi/main",
+        video={
+            "aid": 1,
+            "bvid": "BV1000000001",
+            "url": "https://www.bilibili.com/video/BV1000000001/",
+        },
+        limit=2,
+        mixin_key="a" * 32,
+        signed_at=NOW,
+        mode=2,
+    )
+
+    assert [row["message"] for row in page.comments] == ["根评论", "楼中楼里的鼠鼠"]
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(client.urls[0]).query)
+    assert query["mode"] == ["2"]
 
 
 def test_comment_only_name_is_discovered_and_accepted_by_independent_commenters():
@@ -303,7 +332,8 @@ def test_existing_candidate_accumulates_targeted_search_evidence_without_llm_rep
     assert mapping["status"] == "accepted"
     assert mapping["video_count"] == 5
     assert mapping["distinct_uploader_mids"] == 4
-    candidate_query = urllib.parse.parse_qs(urllib.parse.urlsplit(client.urls[0]).query)
+    candidate_url = next(url for url in client.urls if "/wbi/search/type" in url)
+    candidate_query = urllib.parse.parse_qs(urllib.parse.urlsplit(candidate_url).query)
     assert candidate_query["keyword"] == ["花礼 鼠鼠"]
 
 
@@ -323,7 +353,7 @@ def test_every_registry_member_gets_a_fresh_daily_query():
         now=NOW,
         llm_call=None,
     )
-    assert client.requests_made == 20
+    assert client.requests_made == 21
     assert len(result["state"]["last_run"]["selected_entities"]) == 20
     assert result["state"]["last_run"]["search_stats"]["fresh_observed"] == 20
 
@@ -343,7 +373,7 @@ def test_http_412_opens_search_circuit_instead_of_immediate_retry():
         now=NOW,
         llm_call=None,
     )
-    assert client.requests_made == 1
+    assert client.requests_made == 2
     assert result["full_failure"] is True
     assert result["state"]["last_run"]["search_stats"]["fresh_deferred"] == 19
     assert "412" in result["state"]["last_run"]["search_circuit"]

@@ -88,7 +88,7 @@ def fetch_wbi_mixin_key(
     return mixin, not response.stale
 
 
-def _wbi_signed_params(
+def wbi_signed_params(
     params: Mapping[str, object], *, mixin_key: str, signed_at: dt.datetime
 ) -> dict[str, object]:
     signed = dict(params)
@@ -114,16 +114,20 @@ def fetch_comment_page(
     limit: int,
     mixin_key: str,
     signed_at: dt.datetime,
+    mode: int = 3,
 ) -> CommentPage:
     """Read one modern top-level reply page without retaining account display data."""
 
+    if mode not in {2, 3}:
+        raise ValueError("Bilibili comment mode must be chronological or popular")
+
     url = endpoint + "?" + urllib.parse.urlencode(
-        _wbi_signed_params(
+        wbi_signed_params(
             {
                 "next": 0,
                 "type": 1,
                 "oid": int(video["aid"]),
-                "mode": 3,
+                "mode": mode,
                 "plat": 1,
                 "web_location": 1315875,
             },
@@ -147,8 +151,20 @@ def fetch_comment_page(
     if not isinstance(replies, list):
         raise CrawlError("Bilibili comment discovery returned invalid replies")
 
+    visible_replies: list[Mapping[str, Any]] = []
+    for root in replies:
+        if not isinstance(root, Mapping):
+            continue
+        visible_replies.append(root)
+        children = root.get("replies")
+        if isinstance(children, list):
+            visible_replies.extend(
+                child for child in children if isinstance(child, Mapping)
+            )
+
     comments: list[dict[str, Any]] = []
-    for raw in replies[:limit]:
+    seen_rpids: set[int] = set()
+    for raw in visible_replies:
         if not isinstance(raw, Mapping):
             continue
         try:
@@ -159,8 +175,15 @@ def fetch_comment_page(
         except (OSError, OverflowError, TypeError, ValueError):
             continue
         message = _plain_text(raw.get("content", {}).get("message"), limit=320)
-        if rpid <= 0 or commenter_mid <= 0 or ctime <= 0 or not message:
+        if (
+            rpid <= 0
+            or rpid in seen_rpids
+            or commenter_mid <= 0
+            or ctime <= 0
+            or not message
+        ):
             continue
+        seen_rpids.add(rpid)
         comments.append(
             {
                 "comment_ref": hashlib.sha256(
@@ -172,6 +195,8 @@ def fetch_comment_page(
                 "message": message,
             }
         )
+        if len(comments) >= limit:
+            break
     return CommentPage(tuple(comments), bool(response.stale))
 
 
