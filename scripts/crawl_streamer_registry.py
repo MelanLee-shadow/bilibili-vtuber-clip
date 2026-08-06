@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import http.client
 import json
 import os
 from pathlib import Path
 import sys
 import tempfile
+import urllib.error
 import urllib.parse
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,7 +26,12 @@ from src.autoslice.streamer_registry_crawler import (  # noqa: E402
     load_source_config,
     snapshot_json,
 )
-from src.autoslice.timely_term_crawler import BoundedHttpClient, HttpCache  # noqa: E402
+from src.autoslice.timely_term_crawler import (  # noqa: E402
+    BILIBILI_USER_AGENT,
+    BoundedHttpClient,
+    CrawlError,
+    HttpCache,
+)
 
 
 PROFILE = load_channel_profile(ROOT)
@@ -76,6 +83,24 @@ def _url(source: dict[str, object]) -> str:
     return f"{source['endpoint']}?{query}"
 
 
+def _fetch_with_retries(
+    client: BoundedHttpClient, source: dict[str, object], *, attempts: int = 3
+):
+    headers = {
+        "User-Agent": (
+            BILIBILI_USER_AGENT if "bilibili" in str(source["kind"]) else "Mozilla/5.0"
+        ),
+        "Referer": str(source["public_url"]),
+    }
+    for attempt in range(1, attempts + 1):
+        try:
+            return client.fetch(_url(source), headers=headers)
+        except (CrawlError, OSError, urllib.error.URLError, http.client.IncompleteRead):
+            if attempt == attempts:
+                raise
+    raise AssertionError("unreachable bounded retry loop")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     now = (
@@ -92,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
         legacy_config = load_psplive_config(legacy_path)
         client = BoundedHttpClient(
             allowed_hosts=frozenset({"api.bilibili.com", "bilibili.com", "vrp.live"}),
-            max_requests=len(config["sources"]) + 1,
+            max_requests=len(config["sources"]) * 3,
             max_response_bytes=1024 * 1024,
             timeout_seconds=15,
             cache=HttpCache(args.cache_dir, max_body_bytes=1024 * 1024),
@@ -101,13 +126,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         payloads: dict[str, dict[str, object]] = {}
         for source in config["sources"]:
-            response = client.fetch(
-                _url(source),
-                headers={
-                    "User-Agent": "Mozilla/5.0",
-                    "Referer": str(source["public_url"]),
-                },
-            )
+            response = _fetch_with_retries(client, source)
             payloads[str(source["source_id"])] = json.loads(response.body)
         snapshot = build_snapshot(
             payloads=payloads,

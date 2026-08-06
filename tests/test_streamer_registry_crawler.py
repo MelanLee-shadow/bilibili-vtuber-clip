@@ -12,6 +12,7 @@ from src.autoslice.streamer_registry_crawler import (
     load_source_config,
     validate_snapshot,
 )
+from src.autoslice.timely_term_crawler import CachedResponse, CrawlError
 
 
 NOW = dt.datetime(2026, 8, 6, 1, 50, tzinfo=dt.timezone.utc)
@@ -144,3 +145,29 @@ def test_registry_rejects_occurrence_authority_drift():
 
     with pytest.raises(StreamerRegistryError, match="occurrence-neutral"):
         validate_snapshot(snapshot)
+
+
+def test_registry_cli_retry_is_bounded_and_uses_full_bilibili_user_agent():
+    from scripts.crawl_streamer_registry import _fetch_with_retries
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        def fetch(self, url, *, headers):
+            self.calls.append((url, headers))
+            if len(self.calls) < 3:
+                raise CrawlError("HTTP 412")
+            return CachedResponse(b"{}", "application/json", NOW)
+
+    source = next(
+        row
+        for row in _config()["sources"]
+        if row["kind"] == "virtuareal_bilibili_announcements"
+    )
+    client = Client()
+    response = _fetch_with_retries(client, source, attempts=3)
+
+    assert response.body == b"{}"
+    assert len(client.calls) == 3
+    assert "Chrome/" in client.calls[0][1]["User-Agent"]

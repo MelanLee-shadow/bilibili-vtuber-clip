@@ -40,6 +40,10 @@ python3 scripts/crawl_streamer_registry.py \
 Production writes `/opt/bilive/autoslice/state/streamer_registry.json` every
 Sunday at 06:07 UTC. The legacy PSP snapshot refreshes Sunday at 06:12 UTC for
 backward compatibility; it is no longer a daily job.
+The weekly job performs at most three attempts per official endpoint (nine
+requests total) so an intermittent Bilibili 412 or truncated website response
+does not discard an otherwise valid refresh; all attempts still use the same
+strict identity and minimum-count gates.
 
 ## Daily community relation lane
 
