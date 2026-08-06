@@ -10,6 +10,29 @@ _CJK_RX = re.compile(r"[\u3400-\u9fff]")
 _T = TypeVar("_T")
 
 
+def hot_entity_ids(
+    rows: Sequence[Mapping[str, Any]], eligible_ids: set[str], limit: int
+) -> list[str]:
+    """Rank near-threshold entities once each, not once per candidate surface."""
+
+    ranked = sorted(
+        (
+            row
+            for row in rows
+            if row.get("status") == "candidate" and int(row.get("score", 0)) >= 4
+        ),
+        key=lambda row: (-int(row.get("score", 0)), str(row.get("entity_id", ""))),
+    )
+    result: list[str] = []
+    for row in ranked:
+        entity_id = str(row.get("entity_id", ""))
+        if entity_id in eligible_ids and entity_id not in result:
+            result.append(entity_id)
+        if len(result) == limit:
+            break
+    return result
+
+
 def bounded_mappings(
     rows: Sequence[Mapping[str, Any]], *, transient_limit: int = 2_048
 ) -> list[Mapping[str, Any]]:
