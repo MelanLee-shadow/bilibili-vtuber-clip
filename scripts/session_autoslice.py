@@ -98,6 +98,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from scripts.suggest_upload_tags import generate_upload_tags
 from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.runtime_candidate_asset import bind_runtime_candidate_asset
 from src.autoslice.host_vocal_proof import verify_host_vocal_proof_claim
 from src.autoslice.reviewed_subtitle_baseline_registry import (
     ReviewedSubtitleBaseline,
@@ -1094,57 +1095,23 @@ def child_env() -> dict[str, str]:
             env[key] = bilive_env[key]
     env.setdefault("HOME", "/root")
     truth_mode = human_truth_mode()
-    blind_timely_terms = os.environ.get("AUTOSLICE_BLIND_TIMELY_TERMS")
-    configured_timely_terms = os.environ.get("AUTOSLICE_TIMELY_TERMS")
-    runtime_timely_terms = BASE / "state" / "timely_terms.json"
-    committed_timely_terms = profile_asset_file("timely_terms")
-    if truth_mode == "withheld":
-        timely_terms = Path(blind_timely_terms) if blind_timely_terms else None
-    elif configured_timely_terms:
-        timely_terms = Path(configured_timely_terms)
-    elif runtime_timely_terms.is_file() and not runtime_timely_terms.is_symlink():
-        timely_terms = runtime_timely_terms
-    else:
-        timely_terms = committed_timely_terms
-    if timely_terms is not None and timely_terms.is_file() and not timely_terms.is_symlink():
-        env["LIDOUSHA_TIMELY_TERMS"] = str(timely_terms.resolve())
-        env["LIDOUSHA_TIMELY_TERMS_SHA256"] = (
-            "sha256:" + _sha256_regular_file(timely_terms)
-        )
-        env.pop("LIDOUSHA_DISABLE_TIMELY_TERMS", None)
-    elif truth_mode == "withheld":
-        env["LIDOUSHA_DISABLE_TIMELY_TERMS"] = "1"
-        env.pop("LIDOUSHA_TIMELY_TERMS", None)
-        env.pop("LIDOUSHA_TIMELY_TERMS_SHA256", None)
-
-    blind_psplive_roster = os.environ.get("AUTOSLICE_BLIND_PSPLIVE_ROSTER")
-    configured_psplive_roster = os.environ.get("AUTOSLICE_PSPLIVE_ROSTER")
-    runtime_psplive_roster = BASE / "state" / "psplive_roster.json"
-    committed_psplive_roster = profile_asset_file("psplive_roster")
-    if truth_mode == "withheld":
-        psplive_roster = (
-            Path(blind_psplive_roster) if blind_psplive_roster else None
-        )
-    elif configured_psplive_roster:
-        psplive_roster = Path(configured_psplive_roster)
-    elif runtime_psplive_roster.is_file() and not runtime_psplive_roster.is_symlink():
-        psplive_roster = runtime_psplive_roster
-    else:
-        psplive_roster = committed_psplive_roster
-    if (
-        psplive_roster is not None
-        and psplive_roster.is_file()
-        and not psplive_roster.is_symlink()
+    selected_assets = {}
+    for asset_key, state_name, env_suffix in (
+        ("timely_terms", "timely_terms.json", "TIMELY_TERMS"),
+        ("psplive_roster", "psplive_roster.json", "PSPLIVE_ROSTER"),
+        ("streamer_registry", "streamer_registry.json", "STREAMER_REGISTRY"),
+        ("community_names", "community_names.json", "COMMUNITY_NAMES"),
     ):
-        env["LIDOUSHA_PSPLIVE_ROSTER"] = str(psplive_roster.resolve())
-        env["LIDOUSHA_PSPLIVE_ROSTER_SHA256"] = (
-            "sha256:" + _sha256_regular_file(psplive_roster)
+        selected_assets[asset_key] = bind_runtime_candidate_asset(
+            env,
+            selectors=os.environ,
+            truth_mode=truth_mode,
+            env_suffix=env_suffix,
+            runtime_path=BASE / "state" / state_name,
+            committed_path=profile_asset_file(asset_key),
+            digest_file=_sha256_regular_file,
         )
-        env.pop("LIDOUSHA_DISABLE_PSPLIVE_ROSTER", None)
-    elif truth_mode == "withheld":
-        env["LIDOUSHA_DISABLE_PSPLIVE_ROSTER"] = "1"
-        env.pop("LIDOUSHA_PSPLIVE_ROSTER", None)
-        env.pop("LIDOUSHA_PSPLIVE_ROSTER_SHA256", None)
+    timely_terms = selected_assets["timely_terms"]
 
     blind_topic_graph = os.environ.get("AUTOSLICE_BLIND_TOPIC_ENTITY_GRAPH")
     configured_topic_graph = os.environ.get("AUTOSLICE_TOPIC_ENTITY_GRAPH")

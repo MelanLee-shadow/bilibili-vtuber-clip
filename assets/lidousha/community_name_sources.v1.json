@@ -1,0 +1,26 @@
+{
+  "schema_version": "vtuber-slice.community-name-sources.v1",
+  "search_endpoint": "https://api.bilibili.com/x/web-interface/search/type",
+  "reply_endpoint": "https://api.bilibili.com/x/v2/reply",
+  "source_hosts": ["bilibili.com"],
+  "daily_member_limit": 12,
+  "hot_candidate_limit": 4,
+  "max_results": 50,
+  "max_search_pages": 3,
+  "max_requests": 24,
+  "comment_enrichment_limit": 6,
+  "lookback_days": 730,
+  "max_evidence_per_mapping": 24,
+  "query_suffixes": ["", " 切片"],
+  "query_orders": ["pubdate", "totalrank", "click"],
+  "acceptance": {
+    "minimum_score": 8,
+    "minimum_videos": 4,
+    "minimum_uploaders": 3,
+    "minimum_days": 2,
+    "minimum_strong_links": 2,
+    "official_minimum_score": 5,
+    "official_minimum_videos": 2,
+    "official_minimum_uploaders": 2
+  }
+}

@@ -30,6 +30,8 @@ _PROTOCOL_TOKEN_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,127}$")
 _REQUIRED_ASSET_FILES = frozenset(
     {
         "clip_opening_address",
+        "community_name_sources",
+        "community_names",
         "entity_confusables",
         "final_media_review_contracts",
         "glossary",
@@ -44,6 +46,8 @@ _REQUIRED_ASSET_FILES = frozenset(
         "persona",
         "psplive_roster",
         "psplive_roster_sources",
+        "streamer_registry",
+        "streamer_registry_sources",
         "published_songs",
         "related_entity_seeds",
         "selection_score_calibration",

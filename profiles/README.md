@@ -35,7 +35,9 @@ The asset directory is the customization surface:
 
 | Knowledge or behavior | Profile-owned asset |
 | --- | --- |
-| Permanent names, memes, aliases | `glossary`, `psplive_roster` |
+| Reviewed permanent canon and compatibility roster | `glossary`, `psplive_roster` |
+| Low-frequency official streamer identity | `streamer_registry`, `streamer_registry_sources` |
+| Daily community nicknames, fan names, and event/persona memes | `community_names`, `community_name_sources` |
 | ASR-confusable names and canonical spellings | `entity_confusables`, `text_normalization.canonical_surfaces` |
 | Time-sensitive names/topics and discovery inputs | `timely_terms`, `timely_term_seeds`, `timely_term_sources`, `topic_entity_graph` |
 | Known songs and lyric hints | `known_songs` |

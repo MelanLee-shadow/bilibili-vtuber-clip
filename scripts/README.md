@@ -30,7 +30,8 @@
 | `auto_review_shadow_daemon.py` | 评审 shadow 守护（轮询新交付） |
 | `cpa_semantic_review.py` / `cpa_semantic_qa_llm.py` / `run_cpa_semantic_qa.py` | CPA 语义审查/QA 的三个入口（观众视角审查、LLM QA、mock 产物） |
 | `profile_glossary_terms.py` | 把 profile 词表解析成 CPA 术语 QA 输入 |
-| `crawl_timely_terms.py` / `crawl_psplive_roster.py` / `crawl_topic_entity_graph.py` | 词表/名册/实体图资产刷新（profile 驱动） |
+| `crawl_streamer_registry.py` / `crawl_psplive_roster.py` | 低频官方主播名册刷新（profile 驱动；旧 PSP 入口保留兼容） |
+| `crawl_timely_terms.py` / `crawl_community_names.py` / `crawl_topic_entity_graph.py` | 每日新闻时效词、社区昵称/梗名证据、话题实体图刷新 |
 | `huozi_luanshua.py` | 「活字乱刷」语音重组 lane（plan/verify/render 三段，证据绑定） |
 
 ## 评审 / 校对

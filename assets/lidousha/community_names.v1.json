@@ -1,0 +1,9 @@
+{
+  "expires_at": "1970-01-02T00:00:00Z",
+  "generated_at": "1970-01-01T00:00:00Z",
+  "occurrence_policy": "COMMUNITY_RELATION_EXISTS_NOT_CUE_OCCURRENCE_OR_MUTATION_AUTHORITY",
+  "registry_sha256": "",
+  "schema_version": "vtuber-slice.community-names.v1",
+  "status": "unconfigured",
+  "relations": []
+}

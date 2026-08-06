@@ -1,0 +1,17 @@
+{
+  "schema_version": "vtuber-slice.community-name-sources.v1",
+  "search_endpoint": "https://api.bilibili.com/x/web-interface/search/type",
+  "reply_endpoint": "https://api.bilibili.com/x/v2/reply",
+  "daily_member_limit": 12,
+  "hot_candidate_limit": 4,
+  "max_results": 50,
+  "max_search_pages": 3,
+  "max_requests": 24,
+  "comment_enrichment_limit": 6,
+  "lookback_days": 730,
+  "max_evidence_per_mapping": 24,
+  "source_hosts": [],
+  "query_suffixes": [],
+  "query_orders": [],
+  "acceptance": {}
+}
