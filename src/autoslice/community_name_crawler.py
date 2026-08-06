@@ -29,7 +29,7 @@ import unicodedata
 import urllib.parse
 from typing import Any, Callable, Mapping
 
-from src.autoslice import community_query_plan as community_plan
+from src.autoslice import community_acceptance, community_query_plan as community_plan
 from src.autoslice.llm_client import LlmCallError, extract_json_object
 from src.autoslice.streamer_registry_crawler import (
     SNAPSHOT_SCHEMA as REGISTRY_SCHEMA,
@@ -173,6 +173,10 @@ def load_config(path) -> dict[str, Any]:  # noqa: ANN001 - accepts pathlib.Path 
         "minimum_uploaders",
         "minimum_days",
         "minimum_strong_links",
+        "meme_minimum_score",
+        "meme_minimum_videos",
+        "meme_minimum_uploaders",
+        "meme_minimum_strong_links",
         "official_minimum_score",
         "official_minimum_videos",
         "official_minimum_uploaders",
@@ -536,42 +540,6 @@ def _summary(evidence: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _status(
-    *,
-    prior_status: str | None,
-    member: Mapping[str, Any],
-    summary: Mapping[str, Any],
-    config: Mapping[str, Any],
-    conflict: bool,
-) -> tuple[str, list[str]]:
-    if conflict:
-        return "conflict", ["SURFACE_CONFLICTS_WITH_ANOTHER_REGISTRY_ENTITY"]
-    if prior_status == "accepted":
-        return "accepted", ["ACCEPTED_MAPPING_PERSISTS"]
-    gate = config["acceptance"]
-    official_mid = member.get("official_mid")
-    official_supported = isinstance(official_mid, int) and any(
-        row_mid == official_mid for row_mid in summary.get("uploader_mids", [])
-    )
-    if official_supported and (
-        summary["score"] >= int(gate["official_minimum_score"])
-        and summary["video_count"] >= int(gate["official_minimum_videos"])
-        and summary["distinct_uploader_mids"] >= int(gate["official_minimum_uploaders"])
-    ):
-        return "accepted", ["OFFICIAL_SELF_EVIDENCE_PLUS_INDEPENDENT_SUPPORT"]
-    community_pass = (
-        summary["score"] >= int(gate["minimum_score"])
-        and summary["video_count"] >= int(gate["minimum_videos"])
-        and summary["distinct_uploader_mids"] >= int(gate["minimum_uploaders"])
-        and summary["distinct_days"] >= int(gate["minimum_days"])
-        and summary["strong_link_count"] >= int(gate["minimum_strong_links"])
-        and summary["max_videos_from_one_uploader"] * 2 <= summary["video_count"]
-    )
-    if community_pass:
-        return "accepted", ["INDEPENDENT_COMMUNITY_QUORUM_MET"]
-    return "candidate", ["INSUFFICIENT_INDEPENDENT_EVIDENCE"]
-
-
 def _registry_surface_owners(registry: Mapping[str, Any]) -> dict[str, set[str]]:
     owners: defaultdict[str, set[str]] = defaultdict(set)
     for member in registry["members"]:
@@ -760,12 +728,13 @@ def crawl(
         owner_ids = owners.get(_match_key(surface), set())
         conflict = bool(owner_ids - {entity_id})
         prior_status = str(prior["status"]) if prior else None
-        status, reason_codes = _status(
+        status, reason_codes = community_acceptance.mapping_status(
             prior_status=prior_status,
             member=member,
             summary=summary,
             config=config,
             conflict=conflict,
+            relation_kind=proposal["relation_kind"],
         )
         if prior and prior["relation_kind"] != proposal["relation_kind"]:
             status = "conflict" if prior_status == "accepted" else "candidate"
@@ -796,6 +765,35 @@ def crawl(
             else None,
             "evidence": evidence,
         }
+
+    for mapping in mapping_by_key.values():
+        member = members_by_id.get(str(mapping["entity_id"]))
+        if member is None:
+            continue
+        summary = _summary(mapping["evidence"])
+        summary["uploader_mids"] = sorted(
+            {
+                row["uploader_mid"]
+                for row in mapping["evidence"]
+                if isinstance(row.get("uploader_mid"), int)
+            }
+        )
+        owner_ids = owners.get(_match_key(str(mapping["surface"])), set())
+        if mapping["status"] == "accepted" and not owner_ids - {str(mapping["entity_id"])}:
+            continue
+        status, reason_codes = community_acceptance.mapping_status(
+            prior_status=str(mapping["status"]), member=member, summary=summary,
+            config=config, conflict=bool(owner_ids - {str(mapping["entity_id"])}),
+            relation_kind=str(mapping["relation_kind"]),
+        )
+        mapping.update(status=status, reason_codes=reason_codes, **{
+            key: summary[key]
+            for key in ("score", "video_count", "distinct_uploader_mids", "distinct_days", "strong_link_count")
+        })
+        if status == "accepted" and not mapping.get("accepted_at"):
+            mapping["accepted_at"] = _iso(now)
+        elif status != "accepted":
+            mapping["accepted_at"] = None
 
     new_state = {
         "schema_version": STATE_SCHEMA,
