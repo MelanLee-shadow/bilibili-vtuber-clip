@@ -63,6 +63,22 @@ every newly returned row even when the model does not propose them again.
 Consequently a broad result page cannot strand an already-known name at its
 first two witnesses.
 
+A distinctive candidate of at least three normalized characters is searched by
+its exact surface rather than by concatenating the member name and surface.
+Bilibili multi-token search can omit exact-title matches such as “蒜蓉蘑菇”.
+Very short names such as “鼠鼠” retain the member anchor because their bare
+result pages are dominated by unrelated homonyms. In both cases the normalizer
+still requires the member's official surface in returned metadata (or the exact
+verified official uploader MID), raising recall without admitting unrelated
+rows.
+
+For a member with a verified numeric official MID, a search row uploaded by
+that exact MID is itself a safe entity anchor even when its title uses only a
+new nickname and omits the canonical name. This check happens before the normal
+metadata-anchor filter. A nonofficial uploader receives no such exception, so
+an unanchored community row remains untrusted. An official title occurrence is
+strong metadata evidence, but still needs independent support before acceptance.
+
 The judge runs in batches of at most 16 members and only revisits BVIDs whose
 metadata or sampled comment page has not yet been judged. Each member contributes
 at most 50 rows per batch. Repeated target co-occurrence across titles whose
@@ -81,6 +97,12 @@ The judge has no mutation tools. Its output is rejected unless the surface is a
 safe 2–24-character atom and appears byte-for-byte in every cited BVID's title,
 description, tags, or fetched comments. Multiple registry members without an
 explicit one-to-one link must not be guessed.
+Before a relation is stored, a deterministic type guard checks fan-group
+grammar separately from evidence quantity. A surface used in constructions
+such as “become X”, “X come speak/gather”, or opposing X/Y fan camps is
+`fan_name_of`, not an alias for the streamer. High-confidence evidence can
+reclassify a previously accepted `alias_of` in place; the videos and acceptance
+history remain intact while the corrected type reaches the next snapshot.
 
 Comments are a first-class discovery surface because fans, rather than official
 accounts, often originate nicknames and incident memes. Before the judge runs,
@@ -123,7 +145,8 @@ One uploader can publish any number of clips and still only create a
 `candidate`. An official self-post has a narrower path, but still needs a
 second uploader and a second video. A surface owned by another official entity
 becomes `conflict`. Accepted mappings persist when search results age out; a
-registry identity conflict is the only automatic downgrade path.
+high-confidence relation-type correction may change the typed edge without
+discarding its evidence, while an unresolved type conflict remains fail-closed.
 
 Comment-originated relations have a separate independence gate instead of
 pretending that a comment is metadata score:

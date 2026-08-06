@@ -60,6 +60,30 @@ RELATION_KINDS = frozenset({"alias_of", "fan_name_of", "meme_of", "associated_wi
 _HTML_RX = re.compile(r"<[^>]{1,256}>")
 _BVID_RX = re.compile(r"BV[0-9A-Za-z]{10}")
 _SAFE_SURFACE_RX = re.compile(r"^[0-9A-Za-z\u3040-\u30ff\u3400-\u9fff _&·.-]{2,24}$")
+_NUMBERED_FAN_GROUP_RX = re.compile(r".+[0-9０-９]民$")
+_FAN_GROUP_PREFIXES = (
+    "成为",
+    "变成",
+    "加入",
+    "支持",
+    "召集",
+    "所有",
+    "我们这些",
+    "我是",
+    "有",
+)
+_FAN_GROUP_SUFFIXES = (
+    "们",
+    "出来",
+    "集合",
+    "可以",
+    "应该",
+    "都",
+    "和",
+    "与",
+    "阵营",
+    "粉丝",
+)
 _GENERIC_SURFACES = frozenset(
     {
         "bilibili",
@@ -432,7 +456,13 @@ def _normalized_rows(
         description = _plain_text(row.get("description"), limit=320)
         tags = _plain_text(row.get("tag"), limit=160)
         combined_key = _match_key(" ".join((title, description, tags)))
-        if not any(anchor in combined_key for anchor in anchor_keys):
+        official_upload_for_target = (
+            isinstance(member.get("official_mid"), int)
+            and uploader_mid == int(member["official_mid"])
+        )
+        if not official_upload_for_target and not any(
+            anchor in combined_key for anchor in anchor_keys
+        ):
             continue
         normalized.append(
             {
@@ -444,10 +474,7 @@ def _normalized_rows(
                 "title": title,
                 "description": description,
                 "tags": tags,
-                "official_upload_for_target": (
-                    isinstance(member.get("official_mid"), int)
-                    and uploader_mid == int(member["official_mid"])
-                ),
+                "official_upload_for_target": official_upload_for_target,
                 "target_entity_count": 1,
                 "comments": [],
                 "lanes": [],
@@ -490,13 +517,16 @@ def proposal_prompt(bundles: list[dict[str, Any]], *, detail_limit: int = 12) ->
         "目标主播官方投稿下会增强实体归属，但绝不等于官方采用或认可该称呼。\n"
         "relation_kind 只能是：alias_of=社区用来称呼本人；fan_name_of=粉丝群称呼；"
         "meme_of=事件、形象、物件或人格梗，不能与本人姓名互换；associated_with=有关联但类型不明。\n"
+        "判断 alias_of 前必须先问 surface 能否替换主播本人的名字。‘成为X’、‘X们’、"
+        "‘X出来说话/集合’、‘X与Y阵营’等表示一群观众的语法必须报告 fan_name_of，"
+        "不能因为它跨多个标题重复就当成本人别名。"
         "多人同框且没有明确一对一语法时不要猜；普通名词、标题动作、情绪、游戏名、组织名、"
         "单纯搜索命中都不要报。多人视频的评论若没有在评论原文中点名目标，不要归给任何人。"
         "canonical/official_surfaces 已经是官方词面，绝对不要重复报告。"
         "先穷举标题里明确指代本人的非官方绰号，尤其食物、动物、物件等比喻性名词；再报告"
         "粉丝名和事件梗。若同一词根同时有基础叠词和小X/X姐等派生称呼，优先报告原文实际"
         "出现的基础叠词，不要让派生称呼挤掉它。surface 必须是 2-24 字原文子串。"
-        "若同一非官方称呼在多个标题中都与目标 entity 共现、而其他同框者发生变化，这是该称呼指向目标的强线索，应报告 alias_of 或 meme_of；不要因单条多人标题而漏掉这种跨标题交集。"
+        "若同一非官方称呼在多个标题中都与目标 entity 共现、而其他同框者发生变化，这是该称呼指向目标的强线索，应按语义报告 alias_of、fan_name_of 或 meme_of；不要因单条多人标题而漏掉这种跨标题交集。"
         "每个 entity 最多 10 个。\n"
         "只输出 JSON：{\"relations\":[{\"entity_id\":\"...\",\"surface\":\"...\","
         "\"relation_kind\":\"alias_of|fan_name_of|meme_of|associated_with\","
@@ -504,6 +534,41 @@ def proposal_prompt(bundles: list[dict[str, Any]], *, detail_limit: int = 12) ->
         "UNTRUSTED_DATA="
         + json.dumps(data, ensure_ascii=False, separators=(",", ":"))
     )
+
+
+def _fan_group_evidence_bvids(
+    surface: str, rows: list[dict[str, Any]]
+) -> set[str]:
+    result: set[str] = set()
+    for row in rows:
+        texts = [str(row.get(field) or "") for field in ("title", "description", "tags")]
+        texts.extend(
+            str(comment.get("message") or "")
+            for comment in row.get("comments", [])
+            if isinstance(comment, Mapping)
+        )
+        for text in texts:
+            compact = "".join(text.split())
+            if surface not in compact:
+                continue
+            if any(prefix + surface in compact for prefix in _FAN_GROUP_PREFIXES) or any(
+                surface + suffix in compact for suffix in _FAN_GROUP_SUFFIXES
+            ):
+                result.add(str(row["bvid"]))
+                break
+    return result
+
+
+def _ground_relation_kind(
+    *, surface: str, proposed_kind: str, rows: list[dict[str, Any]]
+) -> str:
+    """Correct high-confidence fan-group grammar before it becomes sticky state."""
+
+    if _NUMBERED_FAN_GROUP_RX.search(surface):
+        return "fan_name_of"
+    if len(_fan_group_evidence_bvids(surface, rows)) >= 2:
+        return "fan_name_of"
+    return proposed_kind
 
 
 def _parse_proposals(completion: str, bundles: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -565,6 +630,11 @@ def _parse_proposals(completion: str, bundles: list[dict[str, Any]]) -> list[dic
                 verified_bvids.append(str(bvid))
         if not verified_bvids:
             continue
+        relation_kind = _ground_relation_kind(
+            surface=surface,
+            proposed_kind=relation_kind,
+            rows=[rows_by_entity[entity_id][bvid] for bvid in verified_bvids],
+        )
         key = (entity_id, _match_key(surface))
         if key in seen:
             continue
@@ -622,11 +692,15 @@ def _row_evidence(
         if not fields:
             score = 0
             strength = "comment"
-        elif "title" in fields and anchor_in_title:
+        elif "title" in fields and (
+            anchor_in_title or bool(row.get("official_upload_for_target"))
+        ):
             score = 3
             strength = "strong"
         elif ("description" in fields and (anchor_in_title or anchor_in_description)) or (
             "title" in fields and anchor_in_description
+        ) or (
+            "description" in fields and bool(row.get("official_upload_for_target"))
         ):
             score = 2
             strength = "medium"
@@ -879,8 +953,14 @@ def _collect_candidate_searches(
     for candidate in candidate_rows:
         member = members_by_id[str(candidate["entity_id"])]
         entity_id = str(member["entity_id"])
+        surface = str(candidate["surface"])
         anchor = community_plan.query_variants(member, config["query_suffixes"])[0]
-        query = f"{anchor} {candidate['surface']}"
+        # Longer, distinctive phrases get an exact-surface query: Bilibili's
+        # multi-token search can omit those exact-title matches. Very short
+        # names such as 鼠鼠 keep the member anchor because their unqualified
+        # result pages are dominated by unrelated homonyms. Normalization still
+        # requires a verified target anchor (or the exact official uploader MID).
+        query = surface if len(_match_key(surface)) >= 3 else f"{anchor} {surface}"
         try:
             rows, fresh = _search_and_normalize(
                 client,
@@ -1313,18 +1393,30 @@ def _refresh_mappings(
         if member is None:
             continue
         proposal = proposal_by_key.get(key)
-        relation_kind = str(mapping["relation_kind"])
+        entity_rows = rows_by_entity.get(entity_id, [])
+        prior_relation_kind = str(mapping["relation_kind"])
+        relation_kind = _ground_relation_kind(
+            surface=str(mapping["surface"]),
+            proposed_kind=prior_relation_kind,
+            rows=entity_rows,
+        )
         relation_conflict = False
         if proposal and relation_kind != proposal["relation_kind"]:
-            relation_conflict = True
-            relation_kind = "associated_with"
+            proposed_kind = _ground_relation_kind(
+                surface=str(mapping["surface"]),
+                proposed_kind=str(proposal["relation_kind"]),
+                rows=entity_rows,
+            )
+            if relation_kind != proposed_kind:
+                relation_conflict = True
+                relation_kind = "associated_with"
         evidence_by_bvid = {
             str(row["bvid"]): dict(row) for row in mapping.get("evidence", [])
         }
         observed = _row_evidence(
             member=member,
             surface=str(mapping["surface"]),
-            rows=rows_by_entity.get(entity_id, []),
+            rows=entity_rows,
             privacy_salt=str(state["comment_hash_salt"]),
         )
         for evidence in observed:
@@ -1360,6 +1452,12 @@ def _refresh_mappings(
         if relation_conflict:
             status = "conflict" if mapping.get("status") == "accepted" else "candidate"
             reason_codes = ["RELATION_TYPE_CONFLICT"]
+        elif (
+            status == "accepted"
+            and prior_relation_kind != relation_kind
+            and relation_kind == "fan_name_of"
+        ):
+            reason_codes = ["RELATION_RECLASSIFIED_FAN_NAME", *reason_codes]
         mapping.update(
             canonical=member["canonical"],
             relation_kind=relation_kind,
