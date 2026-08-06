@@ -58,8 +58,11 @@ prefers the shortest official CJK surface (for example, `犬绒` before
 1 → 2 → 3 before widening to the canonical surface and `canonical + 切片`.
 Failures do not advance the cursor. This keeps new events visible while slowly
 backfilling established community language over a two-year evidence window.
-Every bounded result title is visible to the structured judge; the larger
-description/tag fields are evenly sampled to keep its daily prompt bounded.
+Every bounded result title is visible to the structured judge in newest/oldest
+interleaved order; the larger description/tag fields are evenly sampled to keep
+its daily prompt bounded. Repeated target co-occurrence across titles whose
+other participants change is treated as stronger identity evidence than one
+ambiguous multi-person title.
 The judge may propose exact metadata substrings and one of four relation types:
 
 | Relation | Meaning |

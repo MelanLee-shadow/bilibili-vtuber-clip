@@ -129,6 +129,20 @@ def evenly_sample(rows: Sequence[_T], limit: int) -> list[_T]:
     return [rows[index] for index in indexes]
 
 
+def outside_in(rows: Sequence[_T]) -> list[_T]:
+    """Interleave newest and oldest rows so deep-page titles get early attention."""
+
+    result: list[_T] = []
+    left, right = 0, len(rows) - 1
+    while left <= right:
+        result.append(rows[left])
+        if left != right:
+            result.append(rows[right])
+        left += 1
+        right -= 1
+    return result
+
+
 def title_complete_prompt_rows(
     rows: Sequence[Mapping[str, Any]], detail_limit: int
 ) -> list[dict[str, Any]]:
@@ -136,7 +150,7 @@ def title_complete_prompt_rows(
 
     detailed_bvids = {str(row["bvid"]) for row in evenly_sample(rows, detail_limit)}
     result: list[dict[str, Any]] = []
-    for row in rows:
+    for row in outside_in(rows):
         prompt_row = {
             key: row[key]
             for key in ("bvid", "uploader_mid", "published_at", "title")
