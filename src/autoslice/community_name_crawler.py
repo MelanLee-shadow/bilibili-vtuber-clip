@@ -354,7 +354,9 @@ def proposal_prompt(bundles: list[dict[str, Any]]) -> str:
         "relation_kind 只能是：alias_of=社区用来称呼本人；fan_name_of=粉丝群称呼；"
         "meme_of=事件、形象、物件或人格梗，不能与本人姓名互换；associated_with=有关联但类型不明。\n"
         "多人同框且没有明确一对一语法时不要猜；普通名词、标题动作、情绪、游戏名、组织名、"
-        "单纯搜索命中都不要报。surface 必须是 2-24 字原文子串。每个 entity 最多 6 个。\n"
+        "单纯搜索命中都不要报。若同一词根同时有基础叠词和小X/X姐等派生称呼，优先报告原文"
+        "实际出现的基础叠词，不要让派生称呼挤掉它。surface 必须是 2-24 字原文子串。"
+        "每个 entity 最多 6 个。\n"
         "只输出 JSON：{\"relations\":[{\"entity_id\":\"...\",\"surface\":\"...\","
         "\"relation_kind\":\"alias_of|fan_name_of|meme_of|associated_with\","
         "\"evidence_bvids\":[\"BV...\"]}]}\n"
@@ -381,29 +383,36 @@ def _parse_proposals(completion: str, bundles: list[dict[str, Any]]) -> list[dic
             "relation_kind",
             "evidence_bvids",
         }:
-            raise CommunityNameError(f"community-name judge relation {index} has invalid fields")
+            continue
         entity_id = str(raw["entity_id"])
         if entity_id not in rows_by_entity:
-            raise CommunityNameError("community-name judge returned an unknown entity_id")
+            continue
         counts[entity_id] += 1
         if counts[entity_id] > 6:
-            raise CommunityNameError("community-name judge exceeded per-entity output cap")
-        surface = _safe_surface(raw["surface"], label="judge surface")
+            continue
+        try:
+            surface = _safe_surface(raw["surface"], label="judge surface")
+        except CommunityNameError:
+            continue
         relation_kind = str(raw["relation_kind"])
         if relation_kind not in RELATION_KINDS:
-            raise CommunityNameError("community-name judge returned an invalid relation kind")
+            continue
         evidence_bvids = raw["evidence_bvids"]
         if not isinstance(evidence_bvids, list) or not 1 <= len(evidence_bvids) <= 8:
-            raise CommunityNameError("community-name judge evidence_bvids are invalid")
+            continue
         verified_bvids: list[str] = []
         for bvid in evidence_bvids:
             row = rows_by_entity[entity_id].get(str(bvid))
             if row is None:
-                raise CommunityNameError("community-name judge cited an unknown BVID")
+                verified_bvids = []
+                break
             if not any(surface in str(row[field]) for field in ("title", "description", "tags")):
-                raise CommunityNameError("community-name judge surface is absent from cited evidence")
+                verified_bvids = []
+                break
             if str(bvid) not in verified_bvids:
                 verified_bvids.append(str(bvid))
+        if not verified_bvids:
+            continue
         key = (entity_id, _match_key(surface))
         if key in seen:
             continue

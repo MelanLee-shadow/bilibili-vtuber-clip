@@ -207,8 +207,44 @@ def test_injected_or_hallucinated_surface_never_enters_state_or_snapshot():
     )
 
     assert result["state"]["mappings"] == []
-    assert "safe community-name atom" in result["state"]["last_run"]["judge_error"]
+    assert result["state"]["last_run"]["judge_error"] is None
     assert result["snapshot"]["relations"] == []
+
+
+def test_one_bad_relation_does_not_discard_a_valid_sibling():
+    registry = _registry()
+    specs = [(11, "2026-08-01")]
+    client = FakeClient([_search_payload("花礼Harei", "鼠鼠", specs)])
+    completion = json.dumps(
+        {
+            "relations": [
+                {
+                    "entity_id": "bilibili:1048135385",
+                    "surface": "不存在于原文",
+                    "relation_kind": "alias_of",
+                    "evidence_bvids": ["BV1000000001"],
+                },
+                {
+                    "entity_id": "bilibili:1048135385",
+                    "surface": "鼠鼠",
+                    "relation_kind": "alias_of",
+                    "evidence_bvids": ["BV1000000001"],
+                },
+            ]
+        },
+        ensure_ascii=False,
+    )
+    result = crawl(
+        client=client,
+        registry=registry,
+        config=_config(),
+        state=empty_state(),
+        now=NOW,
+        llm_call=lambda _: completion,
+        forced_entities=["花礼Harei"],
+    )
+
+    assert [row["surface"] for row in result["state"]["mappings"]] == ["鼠鼠"]
 
 
 def test_search_total_failure_keeps_last_good_snapshot_unwritten():
