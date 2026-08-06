@@ -153,11 +153,11 @@ The production job runs daily at 06:27 UTC with `flock -n` and these caps:
 - all registry members, up to 128, receive one fresh `pubdate/page 1` search;
 - up to 16 historical backfill searches and 8 candidate-specific searches;
 - up to 24 one-page comment discovery checks;
-- one request at a time, at least 2 seconds apart, with a 15-minute HTTP-phase cap;
+- one request at a time, at least 10 seconds apart, with a 40-minute HTTP-phase cap;
 - 15 seconds and 512 KiB per response;
 - 18-hour fresh cache, 7-day stale-on-error cache, and 1,024 cache entries.
 
-HTTP 412, 429, or a request/runtime budget exhaustion opens an endpoint circuit
+HTTP 412/429, Bilibili risk-control code `-352`, or a request/runtime budget exhaustion opens an endpoint circuit
 for that run; the crawler does not immediately repeat the same blocked URL.
 Other member failures remain isolated. Stale cache can preserve already fetched
 source facts, but it does not advance freshness or historical cursors. If every

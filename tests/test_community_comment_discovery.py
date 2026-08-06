@@ -274,7 +274,7 @@ def test_existing_candidate_accumulates_targeted_search_evidence_without_llm_rep
         _video(12, uploader=33, day="2026-08-03", surface="鼠鼠"),
         _video(13, uploader=44, day="2026-08-04", surface="鼠鼠"),
     ]
-    client = FakeClient([_search_payload([]), _search_payload(expanded)])
+    client = FakeClient([_search_payload(expanded), _search_payload([])])
     second = crawl(
         client=client,
         registry=_registry(),
@@ -288,7 +288,7 @@ def test_existing_candidate_accumulates_targeted_search_evidence_without_llm_rep
     assert mapping["status"] == "accepted"
     assert mapping["video_count"] == 5
     assert mapping["distinct_uploader_mids"] == 4
-    candidate_query = urllib.parse.parse_qs(urllib.parse.urlsplit(client.urls[1]).query)
+    candidate_query = urllib.parse.parse_qs(urllib.parse.urlsplit(client.urls[0]).query)
     assert candidate_query["keyword"] == ["花礼 鼠鼠"]
 
 
@@ -332,6 +332,26 @@ def test_http_412_opens_search_circuit_instead_of_immediate_retry():
     assert result["full_failure"] is True
     assert result["state"]["last_run"]["search_stats"]["fresh_deferred"] == 19
     assert "412" in result["state"]["last_run"]["search_circuit"]
+
+
+def test_comment_risk_control_code_opens_circuit_and_retries_same_cursor_next_run():
+    videos = [_video(1), _video(2, uploader=22)]
+    client = FakeClient(
+        [_search_payload(videos), {"code": -352, "message": "risk control"}]
+    )
+    state = empty_state()
+    result = crawl(
+        client=client,
+        registry=_registry(),
+        config=_config(comments=2),
+        state=state,
+        now=NOW,
+        llm_call=None,
+        forced_entities=["花礼Harei"],
+    )
+    assert client.requests_made == 2
+    assert "-352" in result["state"]["last_run"]["comment_circuit"]
+    assert result["state"]["comment_cursor"] == state["comment_cursor"]
 
 
 def test_legacy_comment_boolean_migrates_but_never_counts_as_commenter_quorum():

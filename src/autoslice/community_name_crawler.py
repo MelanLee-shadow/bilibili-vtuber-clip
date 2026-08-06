@@ -772,7 +772,7 @@ def _selected_members(
 
 def _is_endpoint_circuit_error(exc: BaseException) -> bool:
     message = str(exc).casefold()
-    return any(token in message for token in ("412", "429", "budget exhausted"))
+    return any(token in message for token in ("412", "429", "-352", "budget exhausted"))
 
 
 def _search_and_normalize(
@@ -832,6 +832,78 @@ def _rotated_subset(rows: list[Any], cursor: int, limit: int) -> tuple[list[Any]
     return [rows[(start + offset) % len(rows)] for offset in range(count)], start
 
 
+def _collect_candidate_searches(
+    *,
+    client: BoundedHttpClient,
+    selected: list[dict[str, Any]],
+    config: Mapping[str, Any],
+    state: Mapping[str, Any],
+    now: dt.datetime,
+    bundles_by_id: dict[str, dict[str, Any]],
+    errors: dict[str, str],
+    stats: Counter,
+    successful_entities: set[str],
+) -> dict[str, Any]:
+    selected_ids = {str(row["entity_id"]) for row in selected}
+    candidates = sorted(
+        (
+            row
+            for row in state["mappings"]
+            if row.get("status") == "candidate" and str(row.get("entity_id")) in selected_ids
+        ),
+        key=lambda row: str(row.get("mapping_key", "")),
+    )
+    candidate_rows, start = _rotated_subset(
+        candidates, int(state["candidate_cursor"]), int(config["candidate_query_limit"])
+    )
+    members_by_id = {str(row["entity_id"]): row for row in selected}
+    attempted = 0
+    circuit: str | None = None
+    for candidate in candidate_rows:
+        member = members_by_id[str(candidate["entity_id"])]
+        entity_id = str(member["entity_id"])
+        anchor = community_plan.query_variants(member, config["query_suffixes"])[0]
+        query = f"{anchor} {candidate['surface']}"
+        try:
+            rows, fresh = _search_and_normalize(
+                client,
+                config=config,
+                member=member,
+                query=query,
+                order="pubdate",
+                page=1,
+                now=now,
+            )
+            _add_bundle_rows(
+                bundles_by_id,
+                member=member,
+                rows=rows,
+                lane="candidate" if fresh else "stale",
+            )
+            if fresh:
+                stats["candidate_observed"] += 1
+                successful_entities.add(entity_id)
+                attempted += 1
+            else:
+                stats["candidate_stale"] += 1
+                circuit = "STALE_FALLBACK_AFTER_SEARCH_NETWORK_ERROR"
+        except (CrawlError, OSError, ValueError) as exc:
+            errors[f"candidate:{candidate['mapping_key']}"] = f"{type(exc).__name__}: {exc}"
+            stats["candidate_failed"] += 1
+            if _is_endpoint_circuit_error(exc):
+                circuit = f"{type(exc).__name__}: {exc}"
+            else:
+                attempted += 1
+        if circuit:
+            break
+    return {
+        "attempted": attempted,
+        "start": start,
+        "total": len(candidates),
+        "circuit": circuit,
+    }
+
+
 def _collect_search_bundles(
     *,
     client: BoundedHttpClient,
@@ -848,9 +920,23 @@ def _collect_search_bundles(
     stats = Counter()
     successful_entities: set[str] = set()
     fresh_results: dict[str, tuple[list[dict[str, Any]], bool, str]] = {}
-    search_circuit: str | None = None
+    candidate = _collect_candidate_searches(
+        client=client,
+        selected=selected,
+        config=config,
+        state=state,
+        now=now,
+        bundles_by_id=bundles_by_id,
+        errors=errors,
+        stats=stats,
+        successful_entities=successful_entities,
+    )
+    search_circuit: str | None = candidate["circuit"]
 
     for index, member in enumerate(selected):
+        if search_circuit:
+            stats["fresh_deferred"] += len(selected) - index
+            break
         entity_id = str(member["entity_id"])
         prior = member_crawl.get(entity_id, {})
         crawl_row = dict(prior)
@@ -906,7 +992,6 @@ def _collect_search_bundles(
             page = max(1, int(crawl_row.get("search_page_cursor", 1)))
             page = page if page <= int(config["max_search_pages"]) else 1
             query = variants[variant]
-            history_attempted += 1
             crawl_row["history_last_attempt_at"] = _iso(now)
             duplicate = fresh_results.get(entity_id)
             try:
@@ -946,6 +1031,7 @@ def _collect_search_bundles(
                             query_count=len(variants),
                         )
                     )
+                    history_attempted += 1
                 else:
                     stats["historical_stale"] += 1
                     search_circuit = "STALE_FALLBACK_AFTER_SEARCH_NETWORK_ERROR"
@@ -954,58 +1040,9 @@ def _collect_search_bundles(
                 stats["historical_failed"] += 1
                 if _is_endpoint_circuit_error(exc):
                     search_circuit = f"{type(exc).__name__}: {exc}"
-            member_crawl[entity_id] = crawl_row
-            if search_circuit:
-                break
-
-    selected_ids = {str(row["entity_id"]) for row in selected}
-    candidates = sorted(
-        (
-            row
-            for row in state["mappings"]
-            if row.get("status") == "candidate" and str(row.get("entity_id")) in selected_ids
-        ),
-        key=lambda row: str(row.get("mapping_key", "")),
-    )
-    candidate_rows, candidate_start = _rotated_subset(
-        candidates, int(state["candidate_cursor"]), int(config["candidate_query_limit"])
-    )
-    candidate_attempted = 0
-    members_by_id = {str(row["entity_id"]): row for row in selected}
-    if not search_circuit:
-        for candidate in candidate_rows:
-            member = members_by_id[str(candidate["entity_id"])]
-            entity_id = str(member["entity_id"])
-            anchor = community_plan.query_variants(member, config["query_suffixes"])[0]
-            query = f"{anchor} {candidate['surface']}"
-            candidate_attempted += 1
-            try:
-                rows, fresh = _search_and_normalize(
-                    client,
-                    config=config,
-                    member=member,
-                    query=query,
-                    order="pubdate",
-                    page=1,
-                    now=now,
-                )
-                _add_bundle_rows(
-                    bundles_by_id,
-                    member=member,
-                    rows=rows,
-                    lane="candidate" if fresh else "stale",
-                )
-                if fresh:
-                    stats["candidate_observed"] += 1
-                    successful_entities.add(entity_id)
                 else:
-                    stats["candidate_stale"] += 1
-                    search_circuit = "STALE_FALLBACK_AFTER_SEARCH_NETWORK_ERROR"
-            except (CrawlError, OSError, ValueError) as exc:
-                errors[f"candidate:{candidate['mapping_key']}"] = f"{type(exc).__name__}: {exc}"
-                stats["candidate_failed"] += 1
-                if _is_endpoint_circuit_error(exc):
-                    search_circuit = f"{type(exc).__name__}: {exc}"
+                    history_attempted += 1
+            member_crawl[entity_id] = crawl_row
             if search_circuit:
                 break
 
@@ -1025,8 +1062,8 @@ def _collect_search_bundles(
         history_start + history_attempted
     ) % len(selected) if selected else 0
     next_candidate_cursor = (
-        candidate_start + candidate_attempted
-    ) % len(candidates) if candidates else 0
+        int(candidate["start"]) + int(candidate["attempted"])
+    ) % int(candidate["total"]) if candidate["total"] else 0
     return {
         "bundles": bundles,
         "member_crawl": member_crawl,
@@ -1085,7 +1122,6 @@ def _collect_comments(
     attempted = 0
     circuit: str | None = None
     for member, row in targets:
-        attempted += 1
         try:
             page = comment_discovery.fetch_comment_page(
                 client,
@@ -1110,12 +1146,14 @@ def _collect_comments(
                 member_crawl[entity_id] = crawl_row
             if circuit:
                 break
+            attempted += 1
         except (CrawlError, OSError, ValueError) as exc:
             errors[f"comment:{row['bvid']}"] = f"{type(exc).__name__}: {exc}"
             stats["comment_failed"] += 1
             if _is_endpoint_circuit_error(exc):
                 circuit = f"{type(exc).__name__}: {exc}"
                 break
+            attempted += 1
     next_cursor = int(state["comment_cursor"]) + attempted
     return dict(stats), next_cursor, circuit
 
