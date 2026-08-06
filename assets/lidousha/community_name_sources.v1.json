@@ -19,6 +19,10 @@
     "minimum_uploaders": 3,
     "minimum_days": 2,
     "minimum_strong_links": 2,
+    "meme_minimum_score": 5,
+    "meme_minimum_videos": 2,
+    "meme_minimum_uploaders": 2,
+    "meme_minimum_strong_links": 2,
     "official_minimum_score": 5,
     "official_minimum_videos": 2,
     "official_minimum_uploaders": 2

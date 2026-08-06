@@ -173,7 +173,7 @@ def test_one_uploader_nickname_is_discovered_but_stays_a_candidate():
 
 def test_event_name_stays_typed_as_meme_instead_of_person_alias():
     registry = _registry()
-    specs = [(11, "2026-08-01"), (22, "2026-08-02"), (33, "2026-08-03"), (44, "2026-08-04")]
+    specs = [(11, "2026-08-01"), (22, "2026-08-01")]
     client = FakeClient([_search_payload("李豆沙", "白色奶龙", specs)])
     result = crawl(
         client=client,
@@ -181,13 +181,16 @@ def test_event_name_stays_typed_as_meme_instead_of_person_alias():
         config=_config(),
         state=empty_state(),
         now=NOW,
-        llm_call=lambda _: _judge("bilibili:11223344", "白色奶龙", "meme_of", 4),
+        llm_call=lambda _: _judge("bilibili:11223344", "白色奶龙", "meme_of", 2),
         forced_entities=["李豆沙"],
     )
 
     relation = result["snapshot"]["relations"][0]
     assert relation["surface"] == "白色奶龙"
     assert relation["relation_kind"] == "meme_of"
+    assert result["state"]["mappings"][0]["reason_codes"] == [
+        "EVENT_MEME_INDEPENDENT_QUORUM_MET"
+    ]
 
 
 def test_injected_or_hallucinated_surface_never_enters_state_or_snapshot():

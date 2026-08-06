@@ -100,6 +100,12 @@ second uploader and a second video. A surface owned by another official entity
 becomes `conflict`. Accepted mappings persist when search results age out; a
 registry identity conflict is the only automatic downgrade path.
 
+An event/persona `meme_of` has a deliberately faster, same-day path because the
+event itself may last only one news cycle: score at least 5, two strong-title
+videos from two independent uploaders, and balanced contributions. Its weaker
+acceptance does not grant stronger authority: it remains occurrence-neutral
+context and can never become a mechanical subtitle replacement.
+
 This is why a person nickname such as `鼠鼠`, a food-shaped community moniker
 such as `蒜蓉蘑菇`, and an event/persona name such as `白色奶龙` do not share one
 flat `aliases` array. The crawler may discover all three, but it must preserve
