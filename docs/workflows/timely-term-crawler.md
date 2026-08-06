@@ -53,7 +53,8 @@ add new endpoints or event-watch rules.
 
 Defaults:
 
-- request budget: 8 network calls;
+- request budget: 14 network calls, including one public WBI bootstrap and one
+  bounded transient-failure retry reserve;
 - AniList: 3 × 50 anime plus 1 × 50 manga/light-novel records maximum;
 - per-response limit: 2 MiB;
 - HTTP timeout: 15 seconds;
@@ -69,6 +70,10 @@ Cache entries are content-hashed and written atomically with mode `0600`.
 Adapters are failure-isolated: one failed feed does not erase results from
 healthy sources. A run exits `1` when it produced a valid partial snapshot and
 reports adapter errors; it exits `2` when no valid snapshot can be produced.
+The Bilibili community lane uses signed `/x/web-interface/wbi/search/type`
+requests with no cookie or account token. HTTP 412/429, code `-352`, and
+`v_voucher` responses are treated as risk control and are not immediately
+retried; the next daily run retains the last-good snapshot.
 
 ## Commands
 

@@ -19,17 +19,24 @@ import os
 from pathlib import Path
 import re
 import tempfile
-from typing import Iterable, Protocol
+from typing import Iterable, Mapping, Protocol
 import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
+from src.autoslice.bilibili_wbi import (
+    WbiProtocolError,
+    mixin_key as bilibili_wbi_mixin_key,
+    signed_params as bilibili_wbi_signed_params,
+)
+
 
 SCHEMA_VERSION = "lidousha-timely-term-sources.v2"
-DEFAULT_NETWORK_REQUEST_BUDGET = 13
+DEFAULT_NETWORK_REQUEST_BUDGET = 14
 NETWORK_RETRY_RESERVE = 1
+BILIBILI_WBI_NAV_ENDPOINT = "https://api.bilibili.com/x/web-interface/nav"
 DEFAULT_ALLOWED_HOSTS = frozenset(
     {
         "graphql.anilist.co",
@@ -1208,6 +1215,14 @@ class BilibiliCommunityAdapter:
             for target_index, target in enumerate(targets)
             for query in target.queries
         ]
+        if not jobs:
+            return []
+        mixin_key = self._wbi_mixin_key(client)
+        signed_at = getattr(client, "now", None)
+        if not isinstance(signed_at, dt.datetime):
+            signed_at = dt.datetime.combine(
+                window.as_of, dt.time(tzinfo=dt.timezone.utc)
+            )
 
         # Keep one real network request in reserve for a single bounded retry.
         # Cache hits do not consume the client's counter, so this calculation is
@@ -1225,24 +1240,46 @@ class BilibiliCommunityAdapter:
         else:
             scheduled_jobs = jobs
         deferred = len(jobs) - len(scheduled_jobs)
+        retry_candidates: list[tuple[int, str]] = []
+        risk_circuit = False
 
-        for target_index, query in scheduled_jobs:
+        for job_index, (target_index, query) in enumerate(scheduled_jobs):
             try:
-                rows_by_target[target_index].extend(self._search(client, query))
+                rows_by_target[target_index].extend(
+                    self._search(
+                        client,
+                        query,
+                        mixin_key=mixin_key,
+                        signed_at=signed_at,
+                    )
+                )
                 successful_queries += 1
             except Exception as exc:
                 failed_attempts.append(
                     (target_index, query, self._diagnostic_exception(exc))
                 )
+                if self._is_risk_control_error(exc):
+                    risk_circuit = True
+                    deferred += len(scheduled_jobs) - job_index - 1
+                    break
+                else:
+                    retry_candidates.append((target_index, query))
 
         retried = False
         retry_succeeded = False
-        if failed_attempts and retry_reserved:
-            target_index, query, _ = failed_attempts[0]
+        if retry_candidates and retry_reserved and not risk_circuit:
+            target_index, query = retry_candidates[0]
             if getattr(client, "requests_made", 0) < max_requests:
                 retried = True
                 try:
-                    rows_by_target[target_index].extend(self._search(client, query))
+                    rows_by_target[target_index].extend(
+                        self._search(
+                            client,
+                            query,
+                            mixin_key=mixin_key,
+                            signed_at=signed_at,
+                        )
+                    )
                     successful_queries += 1
                     retry_succeeded = True
                 except Exception as exc:
@@ -1256,6 +1293,7 @@ class BilibiliCommunityAdapter:
             retry_text = (
                 " retry recovered one query" if retry_succeeded else
                 " retry also failed" if retried else
+                " risk-control circuit opened without retry" if risk_circuit else
                 " no retry budget was available"
             )
             diagnostics.append(
@@ -1288,29 +1326,81 @@ class BilibiliCommunityAdapter:
         message = _SPACE_RX.sub(" ", str(exc)).strip()[:120]
         return f"{type(exc).__name__}: {message or 'no detail'}"
 
-    def _search(self, client: BoundedHttpClient, query: str) -> list[dict[str, object]]:
+    @staticmethod
+    def _is_risk_control_error(exc: Exception) -> bool:
+        message = str(exc).casefold()
+        return any(
+            token in message
+            for token in ("412", "429", "-352", "v_voucher", "risk control")
+        )
+
+    @staticmethod
+    def _wbi_mixin_key(client: BoundedHttpClient) -> str:
+        response = client.fetch(
+            BILIBILI_WBI_NAV_ENDPOINT,
+            headers={
+                "User-Agent": BILIBILI_USER_AGENT,
+                "Referer": "https://www.bilibili.com/",
+            },
+        )
+        if response.stale:
+            raise CrawlError("Bilibili WBI bootstrap used stale fallback")
+        try:
+            payload = json.loads(response.body)
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise CrawlError("Bilibili WBI bootstrap returned invalid JSON") from exc
+        if not isinstance(payload, Mapping):
+            raise CrawlError("Bilibili WBI bootstrap returned invalid JSON")
+        try:
+            return bilibili_wbi_mixin_key(payload)
+        except WbiProtocolError as exc:
+            raise CrawlError(str(exc)) from exc
+
+    def _search(
+        self,
+        client: BoundedHttpClient,
+        query: str,
+        *,
+        mixin_key: str,
+        signed_at: dt.datetime,
+    ) -> list[dict[str, object]]:
         parameters = urllib.parse.urlencode(
-            {
-                "search_type": "video",
-                "keyword": query,
-                "page": 1,
-                "page_size": self.max_results,
-                "order": "pubdate",
-            }
+            bilibili_wbi_signed_params(
+                {
+                    "search_type": "video",
+                    "keyword": query,
+                    "page": 1,
+                    "page_size": self.max_results,
+                    "order": "pubdate",
+                    "platform": "pc",
+                    "web_location": 1430654,
+                },
+                mixin_key=mixin_key,
+                signed_at=signed_at,
+            )
+        )
+        referer = "https://search.bilibili.com/video?" + urllib.parse.urlencode(
+            {"keyword": query}
         )
         response = client.fetch(
             f"{self.endpoint}?{parameters}",
             headers={
                 "User-Agent": BILIBILI_USER_AGENT,
-                "Referer": "https://search.bilibili.com/",
+                "Referer": referer,
             },
         )
         try:
             payload = json.loads(response.body)
-            data = payload["data"]
-            rows = data["result"]
-        except (UnicodeError, json.JSONDecodeError, TypeError, KeyError) as exc:
+        except (UnicodeError, json.JSONDecodeError) as exc:
             raise CrawlError("Bilibili returned malformed search JSON") from exc
+        if not isinstance(payload, Mapping):
+            raise CrawlError("Bilibili returned malformed search JSON")
+        data = payload.get("data")
+        if isinstance(data, Mapping) and data.get("v_voucher"):
+            raise CrawlError("Bilibili search returned v_voucher risk control")
+        if payload.get("code") in {-352, -412, -429}:
+            raise CrawlError(f"Bilibili search returned risk code {payload.get('code')}")
+        rows = data.get("result") if isinstance(data, Mapping) else None
         if payload.get("code") != 0 or not isinstance(rows, list) or len(rows) > self.max_results:
             raise CrawlError("Bilibili search result has an unexpected shape")
         return [row for row in rows if isinstance(row, dict)]

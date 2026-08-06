@@ -13,7 +13,7 @@
     "endpoint": "https://api.bgm.tv/calendar"
   },
   "bilibili_community": {
-    "endpoint": "https://api.bilibili.com/x/web-interface/search/type",
+    "endpoint": "https://api.bilibili.com/x/web-interface/wbi/search/type",
     "source_hosts": ["bilibili.com"],
     "auto_query_count": 3,
     "max_results": 20,
