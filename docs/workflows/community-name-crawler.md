@@ -52,9 +52,12 @@ cold members. Up to four near-threshold candidates may receive an additional
 hot query without displacing cold coverage. With the current 112-member
 registry, every member is attempted within ten daily runs.
 
-Each selected member gets one Bilibili video-search query, alternating the
-official surface and `official surface + 切片`. A bounded structured judge may
-propose exact metadata substrings and one of four relation types:
+Each selected member gets one Bilibili video-search request. A durable cursor
+walks pages 1 → 2 → 3 before alternating the official surface and
+`official surface + 切片`; failures do not advance either cursor. This gives new
+events page-1 visibility while completing a bounded historical bootstrap over
+three member turns. A bounded structured judge may propose exact metadata
+substrings and one of four relation types:
 
 | Relation | Meaning |
 | --- | --- |
@@ -106,7 +109,7 @@ The production job runs daily at 06:27 UTC with `flock -n` and these caps:
 
 - 24 real HTTP requests total;
 - 12 cold + up to 4 hot member searches;
-- 20 search rows per member;
+- one page / 20 search rows per member, with a three-page persistent cursor;
 - up to 6 one-page comment checks;
 - 2 retry slots for intermittent Bilibili 412/network failures;
 - 15 seconds and 512 KiB per response;

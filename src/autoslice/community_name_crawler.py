@@ -131,6 +131,7 @@ def load_config(path) -> dict[str, Any]:  # noqa: ANN001 - accepts pathlib.Path 
         "daily_member_limit",
         "hot_candidate_limit",
         "max_results",
+        "max_search_pages",
         "max_requests",
         "comment_enrichment_limit",
         "lookback_days",
@@ -148,6 +149,8 @@ def load_config(path) -> dict[str, Any]:  # noqa: ANN001 - accepts pathlib.Path 
         raise CommunityNameError("hot_candidate_limit is invalid")
     if not 5 <= int(payload["max_results"]) <= 50:
         raise CommunityNameError("max_results is invalid")
+    if not 1 <= int(payload["max_search_pages"]) <= 5:
+        raise CommunityNameError("max_search_pages is invalid")
     if not 4 <= int(payload["max_requests"]) <= 40:
         raise CommunityNameError("max_requests is invalid")
     if not 0 <= int(payload["comment_enrichment_limit"]) <= 8:
@@ -245,13 +248,14 @@ def _search_rows(
     *,
     endpoint: str,
     query: str,
+    page: int,
     max_results: int,
 ) -> list[dict[str, Any]]:
     url = endpoint + "?" + urllib.parse.urlencode(
         {
             "search_type": "video",
             "keyword": query,
-            "page": 1,
+            "page": page,
             "page_size": max_results,
             "order": "pubdate",
         }
@@ -641,6 +645,10 @@ def crawl(
         entity_id = str(member["entity_id"])
         prior = member_crawl.get(entity_id, {})
         variant = int(prior.get("query_variant_cursor", 0)) % len(suffixes)
+        page = max(1, int(prior.get("search_page_cursor", 1)))
+        max_pages = int(config["max_search_pages"])
+        if page > max_pages:
+            page = 1
         query = str(member["canonical"]) + str(suffixes[variant])
         rows: list[dict[str, Any]] | None = None
         try:
@@ -648,6 +656,7 @@ def crawl(
                 client,
                 endpoint=str(config["search_endpoint"]),
                 query=query,
+                page=page,
                 max_results=int(config["max_results"]),
             )
             rows = _normalized_rows(
@@ -664,6 +673,7 @@ def crawl(
                         client,
                         endpoint=str(config["search_endpoint"]),
                         query=query,
+                        page=page,
                         max_results=int(config["max_results"]),
                     )
                     rows = _normalized_rows(
@@ -678,12 +688,15 @@ def crawl(
                 errors[entity_id] = f"{type(exc).__name__}: {exc}"
         crawl_row = dict(prior)
         crawl_row["last_attempt_at"] = _iso(now)
-        crawl_row["query_variant_cursor"] = (variant + 1) % len(suffixes)
         if rows is None:
             crawl_row["failure_streak"] = int(prior.get("failure_streak", 0)) + 1
         else:
             crawl_row["failure_streak"] = 0
             crawl_row["last_success_at"] = _iso(now)
+            crawl_row["search_page_cursor"] = page % max_pages + 1
+            crawl_row["query_variant_cursor"] = (
+                (variant + 1) % len(suffixes) if page == max_pages else variant
+            )
             bundles.append({"member": member, "rows": rows})
         member_crawl[entity_id] = crawl_row
     judge_error: str | None = None

@@ -229,6 +229,29 @@ def test_search_total_failure_keeps_last_good_snapshot_unwritten():
     assert result["state"]["member_crawl"]["bilibili:1048135385"]["failure_streak"] == 1
 
 
+def test_successful_member_cursor_walks_three_pages_before_query_variant_changes():
+    registry = _registry()
+    state = empty_state()
+    for expected_page in (1, 2, 3):
+        client = FakeClient([_search_payload("花礼Harei", "鼠鼠", [])])
+        result = crawl(
+            client=client,
+            registry=registry,
+            config=_config(),
+            state=state,
+            now=NOW + dt.timedelta(days=expected_page),
+            llm_call=None,
+            forced_entities=["花礼Harei"],
+        )
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(client.urls[0]).query)
+        assert query["page"] == [str(expected_page)]
+        assert query["keyword"] == ["花礼Harei"]
+        state = result["state"]
+    crawl_row = state["member_crawl"]["bilibili:1048135385"]
+    assert crawl_row["search_page_cursor"] == 1
+    assert crawl_row["query_variant_cursor"] == 1
+
+
 def test_prompt_context_keeps_official_and_community_authority_separate(tmp_path, monkeypatch):
     from scripts import gemini_slice_jingting as jingting
 
