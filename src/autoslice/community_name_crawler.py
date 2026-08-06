@@ -35,6 +35,7 @@ from src.autoslice import (
     community_comment_discovery as comment_discovery,
     community_query_plan as community_plan,
 )
+from src.autoslice.bilibili_wbi import signed_params as bilibili_wbi_signed_params
 from src.autoslice.llm_client import LlmCallError, extract_json_object
 from src.autoslice.streamer_registry_crawler import (
     SNAPSHOT_SCHEMA as REGISTRY_SCHEMA,
@@ -363,7 +364,7 @@ def _search_rows(
     signed_at: dt.datetime,
 ) -> tuple[list[dict[str, Any]], bool]:
     url = endpoint + "?" + urllib.parse.urlencode(
-        comment_discovery.wbi_signed_params(
+        bilibili_wbi_signed_params(
             {
                 "search_type": "video",
                 "keyword": query,

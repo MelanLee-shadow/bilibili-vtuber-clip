@@ -51,6 +51,17 @@ class FakeClient:
     def fetch(self, url, **kwargs):
         self.requests.append((url, kwargs))
         self.requests_made += 1
+        if "/x/web-interface/nav" in url:
+            payload = {
+                "code": -101,
+                "data": {
+                    "wbi_img": {
+                        "img_url": "https://i0.hdslb.com/bfs/wbi/" + "a" * 32 + ".png",
+                        "sub_url": "https://i0.hdslb.com/bfs/wbi/" + "b" * 32 + ".png",
+                    }
+                },
+            }
+            return CachedResponse(json.dumps(payload).encode(), "application/json", NOW)
         if not self.responses:
             raise AssertionError("unexpected fetch")
         response = self.responses.pop(0)
@@ -151,7 +162,8 @@ def test_bilibili_community_derives_repeated_chinese_alias_family_without_seed(
         auto_query_count=0,
     )
 
-    terms = adapter.collect(FakeClient([_response(payload)]), WINDOW, {})
+    client = FakeClient([_response(payload)])
+    terms = adapter.collect(client, WINDOW, {})
 
     assert len(terms) == 1
     assert terms[0].canonical == "BanG Dream! YUME∞MITA"
@@ -161,6 +173,10 @@ def test_bilibili_community_derives_repeated_chinese_alias_family_without_seed(
     assert len(terms[0].sources) == 3
     assert all(source.url.startswith("https://www.bilibili.com/video/") for source in terms[0].sources)
     assert terms[0].active_from == dt.date(2026, 7, 11)
+    assert sum("/x/web-interface/nav" in url for url, _ in client.requests) == 1
+    search_url = next(url for url, _ in client.requests if "/search/type" in url)
+    assert "w_rid=" in search_url and "wts=" in search_url
+    assert "platform=pc" in search_url and "web_location=1430654" in search_url
 
     snapshot = {
         "schema_version": "lidousha-timely-terms.v1",
@@ -488,7 +504,7 @@ def test_bilibili_community_family_rejects_shared_videos_from_one_uploader():
     ) == []
 
 
-def test_bilibili_community_uses_equivalent_query_when_one_search_is_rate_limited():
+def test_bilibili_community_risk_control_opens_circuit_without_an_immediate_retry():
     rows = [
         _bilibili_row(
             aid=index,
@@ -512,14 +528,17 @@ def test_bilibili_community_uses_equivalent_query_when_one_search_is_rate_limite
         auto_query_count=0,
     )
 
-    terms = adapter.collect(
-        FakeClient([CrawlError("HTTP 412"), _response({"code": 0, "data": {"result": rows}})]),
-        WINDOW,
-        {},
+    client = FakeClient(
+        [CrawlError("HTTP 412"), _response({"code": 0, "data": {"result": rows}})],
+        max_requests=4,
     )
 
-    assert terms[0].aliases == ["示例典", "示例典MewType"]
-    assert "partial query failure" in adapter.diagnostics[0]
+    with pytest.raises(CrawlError, match="all 1 Bilibili community query attempts failed"):
+        adapter.collect(client, WINDOW, {})
+
+    assert len(client.requests) == 2  # one nav bootstrap and one blocked search
+    assert len(client.responses) == 1
+    assert "risk-control circuit opened without retry" in adapter.diagnostics[0]
 
 
 def test_related_family_is_deterministic_across_python_hash_seeds():
@@ -588,8 +607,8 @@ def test_bilibili_budget_leaves_one_request_for_retry_on_full_default_plan():
     )
 
     assert adapter.collect(client, WINDOW, existing) == []
-    assert len(client.requests) == 5
-    assert client.requests_made == 12
+    assert len(client.requests) == 6
+    assert client.requests_made == 13
     assert client.max_requests - client.requests_made == 1
     assert adapter.diagnostics == ()
 
@@ -602,6 +621,7 @@ def test_repo_source_config_leaves_one_request_in_default_budget_for_retry():
         + manga.max_pages
         + 1  # Bangumi calendar
         + len(rss)
+        + 1  # public Bilibili WBI bootstrap
         + sum(len(watch.queries) for watch in bilibili.entity_watches)
         + bilibili.auto_query_count
     )
@@ -648,7 +668,7 @@ def test_partial_bilibili_failure_is_retried_and_exposed_by_crawl_result():
     empty = _response({"code": 0, "data": {"result": []}})
     populated = _response({"code": 0, "data": {"result": rows}})
     client = FakeClient(
-        [CrawlError("HTTP 412"), populated, empty, empty, empty, populated],
+        [CrawlError("temporary network failure"), populated, empty, empty, empty, populated],
         max_requests=DEFAULT_NETWORK_REQUEST_BUDGET,
         requests_made=7,
     )
