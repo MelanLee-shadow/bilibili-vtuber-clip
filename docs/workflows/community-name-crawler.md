@@ -53,11 +53,14 @@ hot query without displacing cold coverage. With the current 112-member
 registry, every member is attempted within ten daily runs.
 
 Each selected member gets one Bilibili video-search request. A durable cursor
-walks pages 1 → 2 → 3 before alternating the official surface and
-`official surface + 切片`; failures do not advance either cursor. This gives new
-events page-1 visibility while completing a bounded historical bootstrap over
-three member turns. A bounded structured judge may propose exact metadata
-substrings and one of four relation types:
+prefers the shortest official CJK surface (for example, `犬绒` before
+`犬绒Mofu`), rotates `pubdate` → `totalrank` → `click`, then walks pages
+1 → 2 → 3 before widening to the canonical surface and `canonical + 切片`.
+Failures do not advance the cursor. This keeps new events visible while slowly
+backfilling established community language over a two-year evidence window.
+Every bounded result title is visible to the structured judge; the larger
+description/tag fields are evenly sampled to keep its daily prompt bounded.
+The judge may propose exact metadata substrings and one of four relation types:
 
 | Relation | Meaning |
 | --- | --- |
@@ -109,7 +112,7 @@ The production job runs daily at 06:27 UTC with `flock -n` and these caps:
 
 - 24 real HTTP requests total;
 - 12 cold + up to 4 hot member searches;
-- one page / 20 search rows per member, with a three-page persistent cursor;
+- one page / 50 search rows per member, with persistent query/order/page cursors;
 - up to 6 one-page comment checks;
 - 2 retry slots for intermittent Bilibili 412/network failures;
 - 15 seconds and 512 KiB per response;
@@ -120,6 +123,8 @@ not block healthy members. If every selected search fails, the job updates only
 failure state and refuses to replace the last-good prompt snapshot. State is
 mode 0600; the prompt-safe snapshot is mode 0444. No cookie, WBI credential,
 raw response, title, description, or comment is committed or exported.
+Accepted/conflict decisions persist; noisy candidate/rejected state is capped
+at 2,048 mappings so an unattended daily job cannot grow without bound.
 
 Production command shape:
 

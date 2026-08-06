@@ -29,6 +29,7 @@ import unicodedata
 import urllib.parse
 from typing import Any, Callable, Mapping
 
+from src.autoslice import community_query_plan as community_plan
 from src.autoslice.llm_client import LlmCallError, extract_json_object
 from src.autoslice.streamer_registry_crawler import (
     SNAPSHOT_SCHEMA as REGISTRY_SCHEMA,
@@ -136,7 +137,7 @@ def load_config(path) -> dict[str, Any]:  # noqa: ANN001 - accepts pathlib.Path 
         "comment_enrichment_limit",
         "lookback_days",
         "max_evidence_per_mapping",
-        "query_suffixes",
+        "query_suffixes", "query_orders",
         "acceptance",
     }
     if not isinstance(payload, dict) or set(payload) != required:
@@ -162,6 +163,9 @@ def load_config(path) -> dict[str, Any]:  # noqa: ANN001 - accepts pathlib.Path 
     suffixes = payload["query_suffixes"]
     if not isinstance(suffixes, list) or not 1 <= len(suffixes) <= 4:
         raise CommunityNameError("query_suffixes are invalid")
+    orders = payload["query_orders"]
+    if not isinstance(orders, list) or not orders or set(orders) - {"pubdate", "totalrank", "click"}:
+        raise CommunityNameError("query_orders are invalid")
     acceptance = payload["acceptance"]
     expected_acceptance = {
         "minimum_score",
@@ -248,6 +252,7 @@ def _search_rows(
     *,
     endpoint: str,
     query: str,
+    order: str,
     page: int,
     max_results: int,
 ) -> list[dict[str, Any]]:
@@ -257,7 +262,7 @@ def _search_rows(
             "keyword": query,
             "page": page,
             "page_size": max_results,
-            "order": "pubdate",
+            "order": order,
         }
     )
     response = client.fetch(
@@ -332,17 +337,7 @@ def _member_prompt_row(member: Mapping[str, Any], rows: list[dict[str, Any]]) ->
         "entity_id": member["entity_id"],
         "canonical": member["canonical"],
         "official_surfaces": member["official_surfaces"],
-        "videos": [
-            {
-                "bvid": row["bvid"],
-                "uploader_mid": row["uploader_mid"],
-                "published_at": row["published_at"],
-                "title": row["title"],
-                "description": row["description"],
-                "tags": row["tags"],
-            }
-            for row in rows[:12]
-        ],
+        "videos": community_plan.title_complete_prompt_rows(rows, 12),
     }
 
 
@@ -645,7 +640,6 @@ def crawl(
         forced_entities=forced_entities,
     )
     run_sequence = int(state["run_sequence"]) + 1
-    suffixes = list(config["query_suffixes"])
     bundles: list[dict[str, Any]] = []
     errors: dict[str, str] = {}
     retries_left = 2
@@ -653,18 +647,22 @@ def crawl(
     for member in selected:
         entity_id = str(member["entity_id"])
         prior = member_crawl.get(entity_id, {})
-        variant = int(prior.get("query_variant_cursor", 0)) % len(suffixes)
+        variants = community_plan.query_variants(member, config["query_suffixes"])
+        variant = int(prior.get("query_variant_cursor", 0)) % len(variants)
+        orders = list(config["query_orders"])
+        order_variant = int(prior.get("search_order_cursor", 0)) % len(orders)
         page = max(1, int(prior.get("search_page_cursor", 1)))
         max_pages = int(config["max_search_pages"])
         if page > max_pages:
             page = 1
-        query = str(member["canonical"]) + str(suffixes[variant])
+        query = variants[variant]
         rows: list[dict[str, Any]] | None = None
         try:
             raw_rows = _search_rows(
                 client,
                 endpoint=str(config["search_endpoint"]),
                 query=query,
+                order=orders[order_variant],
                 page=page,
                 max_results=int(config["max_results"]),
             )
@@ -682,6 +680,7 @@ def crawl(
                         client,
                         endpoint=str(config["search_endpoint"]),
                         query=query,
+                        order=orders[order_variant],
                         page=page,
                         max_results=int(config["max_results"]),
                     )
@@ -702,9 +701,11 @@ def crawl(
         else:
             crawl_row["failure_streak"] = 0
             crawl_row["last_success_at"] = _iso(now)
-            crawl_row["search_page_cursor"] = page % max_pages + 1
-            crawl_row["query_variant_cursor"] = (
-                (variant + 1) % len(suffixes) if page == max_pages else variant
+            crawl_row.update(
+                community_plan.advance_query_cursor(
+                    order=order_variant, order_count=len(orders), page=page,
+                    page_count=max_pages, query=variant, query_count=len(variants),
+                )
             )
             bundles.append({"member": member, "rows": rows})
         member_crawl[entity_id] = crawl_row
@@ -805,7 +806,7 @@ def crawl(
         "cold_cursor": next_cursor,
         "member_crawl": member_crawl,
         "mappings": sorted(
-            mapping_by_key.values(),
+            community_plan.bounded_mappings(list(mapping_by_key.values())),
             key=lambda row: (str(row["entity_id"]), str(row["normalized_key"])),
         ),
         "last_run": {

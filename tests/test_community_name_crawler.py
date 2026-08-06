@@ -3,6 +3,12 @@ import json
 from pathlib import Path
 import urllib.parse
 
+from src.autoslice.community_query_plan import (
+    bounded_mappings,
+    evenly_sample,
+    query_variants,
+    title_complete_prompt_rows,
+)
 from src.autoslice.community_name_crawler import (
     OCCURRENCE_POLICY,
     crawl,
@@ -59,7 +65,9 @@ def _member(index, canonical=None, mid=None):
 def _registry():
     members = [_member(index) for index in range(1, 21)]
     members[0] = _member(1, "花礼Harei", 1048135385)
+    members[0]["official_surfaces"] = ["Harei", "花礼", "花礼Harei"]
     members[1] = _member(2, "犬绒Mofu", 1125641408)
+    members[1]["official_surfaces"] = ["Mofu", "犬绒", "犬绒Mofu"]
     members[2] = _member(3, "李豆沙", 11223344)
     return {
         "schema_version": "vtuber-slice.streamer-registry.v1",
@@ -138,7 +146,7 @@ def test_repeated_cross_uploader_name_is_accepted_but_remains_occurrence_neutral
     validate_snapshot(result["snapshot"], as_of=NOW)
 
 
-def test_one_uploader_meme_is_discovered_and_persisted_as_candidate_not_alias():
+def test_one_uploader_nickname_is_discovered_but_stays_a_candidate():
     registry = _registry()
     specs = [(44, "2026-08-01"), (44, "2026-08-02")]
     client = FakeClient([_search_payload("犬绒Mofu", "蒜蓉蘑菇", specs)])
@@ -148,13 +156,13 @@ def test_one_uploader_meme_is_discovered_and_persisted_as_candidate_not_alias():
         config=_config(),
         state=empty_state(),
         now=NOW,
-        llm_call=lambda _: _judge("bilibili:1125641408", "蒜蓉蘑菇", "meme_of", 2),
+        llm_call=lambda _: _judge("bilibili:1125641408", "蒜蓉蘑菇", "alias_of", 2),
         forced_entities=["犬绒Mofu"],
     )
 
     mapping = result["state"]["mappings"][0]
     assert mapping["surface"] == "蒜蓉蘑菇"
-    assert mapping["relation_kind"] == "meme_of"
+    assert mapping["relation_kind"] == "alias_of"
     assert mapping["status"] == "candidate"
     assert mapping["reason_codes"] == ["INSUFFICIENT_INDEPENDENT_EVIDENCE"]
     assert result["snapshot"]["relations"] == []
@@ -265,27 +273,81 @@ def test_search_total_failure_keeps_last_good_snapshot_unwritten():
     assert result["state"]["member_crawl"]["bilibili:1048135385"]["failure_streak"] == 1
 
 
-def test_successful_member_cursor_walks_three_pages_before_query_variant_changes():
+def test_successful_member_cursor_rotates_orders_then_pages_then_query():
     registry = _registry()
     state = empty_state()
-    for expected_page in (1, 2, 3):
+    expected = [
+        (1, "pubdate"),
+        (1, "totalrank"),
+        (1, "click"),
+        (2, "pubdate"),
+        (2, "totalrank"),
+        (2, "click"),
+        (3, "pubdate"),
+        (3, "totalrank"),
+        (3, "click"),
+    ]
+    for offset, (expected_page, expected_order) in enumerate(expected, start=1):
         client = FakeClient([_search_payload("花礼Harei", "鼠鼠", [])])
         result = crawl(
             client=client,
             registry=registry,
             config=_config(),
             state=state,
-            now=NOW + dt.timedelta(days=expected_page),
+            now=NOW + dt.timedelta(days=offset),
             llm_call=None,
             forced_entities=["花礼Harei"],
         )
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(client.urls[0]).query)
         assert query["page"] == [str(expected_page)]
-        assert query["keyword"] == ["花礼Harei"]
+        assert query["keyword"] == ["花礼"]
+        assert query["order"] == [expected_order]
         state = result["state"]
     crawl_row = state["member_crawl"]["bilibili:1048135385"]
     assert crawl_row["search_page_cursor"] == 1
     assert crawl_row["query_variant_cursor"] == 1
+    assert crawl_row["search_order_cursor"] == 0
+
+
+def test_query_plan_uses_short_official_surface_without_hardcoding_a_nickname():
+    member = _registry()["members"][1]
+    assert query_variants(member, ["", " 切片"]) == ["犬绒", "犬绒Mofu", "犬绒Mofu 切片"]
+
+
+def test_even_sample_observes_the_full_search_page():
+    rows = list(range(50))
+    sampled = evenly_sample(rows, 12)
+    assert len(sampled) == 12
+    assert sampled[0] == 0
+    assert sampled[-1] == 49
+
+
+def test_prompt_keeps_all_titles_but_bounds_larger_metadata_fields():
+    rows = [
+        {
+            "bvid": f"BV1{index:09d}",
+            "uploader_mid": index,
+            "published_at": NOW.isoformat(),
+            "title": f"title-{index}",
+            "description": f"description-{index}",
+            "tags": f"tags-{index}",
+        }
+        for index in range(50)
+    ]
+    prompt_rows = title_complete_prompt_rows(rows, 12)
+    assert [row["title"] for row in prompt_rows] == [row["title"] for row in rows]
+    assert sum("description" in row for row in prompt_rows) == 12
+
+
+def test_candidate_state_is_bounded_without_evicting_durable_decisions():
+    rows = [
+        {"mapping_key": str(index), "status": "candidate", "score": index,
+         "last_seen_at": NOW.isoformat()}
+        for index in range(5)
+    ]
+    rows.append({"mapping_key": "accepted", "status": "accepted", "score": 0})
+    kept = bounded_mappings(rows, transient_limit=2)
+    assert {row["mapping_key"] for row in kept} == {"accepted", "3", "4"}
 
 
 def test_prompt_context_keeps_official_and_community_authority_separate(tmp_path, monkeypatch):
