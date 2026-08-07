@@ -4,6 +4,17 @@ Updated: 2026-08-07 by Claude（8/7 鹅鸭杀场三症状通病修复会话）�
 
 ## 2026-08-07 live 状态
 
+- **第二次部署 `26dfd83`（21:37Z）**：狍哥案 selection-rescore 车道全闭环（执行器挂
+  delivery_recovery.requeue 尾部；rescore_pending 不进 produce）、动态主题提示通道
+  （crawler+cron 06:47+prompt 块）、gitignore 裸 lidousha/ 规则锚定修复。全套 3084 绿。
+  `auto_220747_1271_1323` 已经 revive 脚本复活（fix-commit 26dfd83），下个 tick 走新车道。
+- 真善美 `auto_203735_555_680` 已用新流水线重产（PRODUCE_EXIT 0）：马有利/香香烧烤/萱萱卡娅
+  落地、speaker 双样式烧录（29 主播/32 连线）。**待 Ivan 复核**：「有用→殉情」语义翻转、
+  标题「李姐」称呼、疑标 cue「李姐很了解女人的」。
+- 已知残留：rescore 车道 title 修正只入回执不进 given_title（worker 披露 #2）；provider
+  失败重试无 backoff（每 tick 一次，CPA 长宕机时调用数无帽）；rebuilder 闭包卡参数根修
+  （设计稿 §8）未做。
+
 - **生产基线已在分支**：`codex/virtuareal-community-crawler`（beda5bf，8/7 18:05Z 部署，
   社区称呼 crawler 子系统）**未合回 main**。本会话工作分支
   `claude/session-live-context` 基于 beda5bf 之上（马有利/狍哥 roster+glossary、
