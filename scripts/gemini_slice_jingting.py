@@ -831,6 +831,36 @@ def community_names_context(*, as_of: dt.datetime | None = None) -> str:
     return "\n".join(lines) + "\n"
 
 
+def game_glossary_context() -> str:
+    """Render the session-resolved game term candidates, if any.
+
+    The runner resolves at most one game per session day
+    (``session-game-context.v1``, written by ``src.autoslice.game_context``)
+    and binds its path via ``LIDOUSHA_SESSION_GAME_CONTEXT``.  Unresolved or
+    unbound sessions render nothing; the block is occurrence-neutral
+    candidates with no mechanical mutation authority.
+    """
+
+    if os.environ.get("LIDOUSHA_DISABLE_SESSION_GAME_CONTEXT") == "1":
+        return ""
+    path = os.environ.get("LIDOUSHA_SESSION_GAME_CONTEXT") or ""
+    if not path:
+        return ""
+    raw = _read_first([path])
+    if not raw.strip():
+        return ""
+    try:
+        from src.autoslice.game_context import (
+            render_game_glossary_context,
+            validate_session_game_context,
+        )
+
+        context = validate_session_game_context(json.loads(raw))
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return ""
+    return render_game_glossary_context(context)
+
+
 def glossary(*, as_of: dt.datetime | None = None) -> str:
     """Term canon + subtitle-correction principles, concatenated.
 
@@ -844,11 +874,14 @@ def glossary(*, as_of: dt.datetime | None = None) -> str:
     registry = streamer_registry_context(as_of=as_of)
     roster = "" if registry else psplive_roster_context(as_of=as_of)
     community_names = community_names_context(as_of=as_of)
+    game_terms = game_glossary_context()
     gifts = gift_names_context()
     return (
         "\n\n".join(
             part.strip()
-            for part in (terms, timely, registry, roster, community_names, gifts, principles)
+            for part in (
+                terms, timely, registry, roster, community_names, game_terms, gifts, principles,
+            )
             if part
         ).strip()
         + "\n"

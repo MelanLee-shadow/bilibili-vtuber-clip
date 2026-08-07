@@ -1,0 +1,102 @@
+{
+  "schema_version": "vtuber-slice.game-glossary.v1",
+  "occurrence_policy": "GAME_TERM_EXISTS_NOT_CUE_OCCURRENCE_OR_MUTATION_AUTHORITY",
+  "games": [
+    {
+      "game_id": "goose-goose-duck",
+      "canonical": "鹅鸭杀",
+      "aliases": ["Goose Goose Duck", "鹅鹅鸭"],
+      "sources": [
+        {
+          "publisher": "中文维基百科《鹅鸭杀》角色与规则",
+          "url": "https://zh.wikipedia.org/zh-hans/%E9%B9%85%E9%B8%AD%E6%9D%80",
+          "note": "鹅/鸭/中立三阵营官方中文角色名"
+        },
+        {
+          "publisher": "游民星空《鹅鸭杀》全角色能力介绍",
+          "url": "https://www.gamersky.com/handbook/202301/1553524.shtml",
+          "note": "社区通行中文角色名与玩法叫法"
+        },
+        {
+          "publisher": "知乎《鹅鸭杀规则攻略（简易科普向）》",
+          "url": "https://zhuanlan.zhihu.com/p/589898163",
+          "note": "迷雾/管道等地图与机制词"
+        },
+        {
+          "publisher": "雷电模拟器 鹅鸭杀跟踪者攻略",
+          "url": "https://www.ldmnq.com/7388/zixun/1035204.html",
+          "note": "跟踪者角色确认"
+        }
+      ],
+      "detection_surfaces": [
+        "正义使者", "加拿大鹅", "通灵者", "复仇者", "跟踪者", "殡仪员",
+        "观鸟者", "呆呆鸟", "鹈鹕", "秃鹫", "爆炸王", "炸弹王", "食鸟鸭",
+        "专业杀手", "连环杀手", "肉汁", "警长", "法医", "巫医", "迷雾", "殉情"
+      ],
+      "terms": [
+        {"surface": "鹅阵营", "kind": "faction"},
+        {"surface": "鸭阵营", "kind": "faction"},
+        {"surface": "中立", "kind": "faction"},
+        {"surface": "警长", "kind": "role"},
+        {"surface": "通灵者", "kind": "role"},
+        {"surface": "通灵", "kind": "role"},
+        {"surface": "正义使者", "kind": "role"},
+        {"surface": "复仇者", "kind": "role"},
+        {"surface": "侦探", "kind": "role"},
+        {"surface": "加拿大鹅", "kind": "role"},
+        {"surface": "肉汁", "kind": "role"},
+        {"surface": "模仿者", "kind": "role"},
+        {"surface": "观鸟者", "kind": "role"},
+        {"surface": "保镖", "kind": "role"},
+        {"surface": "政治家", "kind": "role"},
+        {"surface": "锁匠", "kind": "role"},
+        {"surface": "殡仪员", "kind": "role"},
+        {"surface": "网红", "kind": "role"},
+        {"surface": "冒险家", "kind": "role"},
+        {"surface": "星界", "kind": "role"},
+        {"surface": "预言家", "kind": "role"},
+        {"surface": "验尸官", "kind": "role"},
+        {"surface": "科学家", "kind": "role"},
+        {"surface": "探测员", "kind": "role"},
+        {"surface": "士兵", "kind": "role"},
+        {"surface": "工程师", "kind": "role"},
+        {"surface": "恋人", "kind": "role"},
+        {"surface": "专业杀手", "kind": "role"},
+        {"surface": "间谍", "kind": "role"},
+        {"surface": "刺客", "kind": "role"},
+        {"surface": "静音", "kind": "role"},
+        {"surface": "告密者", "kind": "role"},
+        {"surface": "连环杀手", "kind": "role"},
+        {"surface": "食鸟鸭", "kind": "role"},
+        {"surface": "变形者", "kind": "role"},
+        {"surface": "爆炸王", "kind": "role"},
+        {"surface": "呆呆鸟", "kind": "role"},
+        {"surface": "鹈鹕", "kind": "role"},
+        {"surface": "秃鹫", "kind": "role"},
+        {"surface": "猎鹰", "kind": "role"},
+        {"surface": "流浪儿童", "kind": "role"},
+        {"surface": "跟踪者", "kind": "role"},
+        {"surface": "法医", "kind": "role_community"},
+        {"surface": "巫医", "kind": "role_community"},
+        {"surface": "炸弹王", "kind": "role_community"},
+        {"surface": "隐身狼", "kind": "role_community"},
+        {"surface": "殉情", "kind": "mechanic"},
+        {"surface": "迷雾", "kind": "map"},
+        {"surface": "进雾", "kind": "mechanic"},
+        {"surface": "管道", "kind": "mechanic"},
+        {"surface": "首刀", "kind": "mechanic"},
+        {"surface": "狼坑", "kind": "mechanic"},
+        {"surface": "鸡腿", "kind": "mechanic"},
+        {"surface": "表水", "kind": "mechanic"},
+        {"surface": "穿身份", "kind": "mechanic"},
+        {"surface": "跳身份", "kind": "mechanic"},
+        {"surface": "双死", "kind": "mechanic"},
+        {"surface": "下蛋", "kind": "mechanic"},
+        {"surface": "平票", "kind": "mechanic"},
+        {"surface": "弃票", "kind": "mechanic"},
+        {"surface": "抱团", "kind": "mechanic"},
+        {"surface": "单走", "kind": "mechanic"}
+      ]
+    }
+  ]
+}

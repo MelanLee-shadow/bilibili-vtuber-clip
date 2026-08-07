@@ -1,7 +1,26 @@
 # Current handoff
 
-Updated: 2026-07-31T14:45:00-04:00 by Claude（从 Codex root 接手；Ivan 于 07-31 14:0x
-停止该 Codex 任务并指示 Claude 接手）。
+Updated: 2026-08-07 by Claude（8/7 鹅鸭杀场三症状通病修复会话）。7/31 以下旧节仅存历史。
+
+## 2026-08-07 live 状态
+
+- **生产基线已在分支**：`codex/virtuareal-community-crawler`（beda5bf，8/7 18:05Z 部署，
+  社区称呼 crawler 子系统）**未合回 main**。本会话工作分支
+  `claude/session-live-context` 基于 beda5bf 之上（马有利/狍哥 roster+glossary、
+  会话游戏语境通道、评分卡 rescore 设计稿），部署以该分支 tip 为准。
+  **main 的下一次上游化必须合并这两串提交，不得从 main 直接部署（会回滚 codex 17 提交）。**
+- **说话人二分已验证**：CAM++ 二分 finalizer 对 8/7 `auto_203735_555_680` 冒烟
+  READY（61 cue=25 主播+36 连线，LDS/GUEST 双样式）。生产翻转方式=runner cron 行加
+  `env AUTOSLICE_SPEAKER_MODE=auto`（默认仍 uniform_host；翻转即撤销 7/13 uniform 政策，
+  不确定场会 speaker_review_required 持留，符合 40-doc speaker_mode=required 口径）。
+- roster crawler 是每周日 06:12 cron；member_overrides 别名变更后需手动跑一次
+  `scripts/crawl_psplive_roster.py --write /opt/bilive/autoslice/state/psplive_roster.json` 才达生产 prompt。
+- 评分卡 rescore 状态机**设计稿**（未实施）：
+  `docs/reviews/2026-08-07-source-fact-rescore-design.md`；`auto_220747_1271_1323`
+  在实施前仍处 candidate_rejected 终态（revive 脚本救不了，见设计稿 §1）。
+- 8/7 场联动台账行未写（参与者尾幼/星汐/萱萱卡娅/北柚香/汀汀汀有 roster+弹幕证据，
+  紫妍/尤娜/天云海等非 PSP 成员写法未裁定）——等 Ivan 裁定后按 7/22 南町行格式补
+  `session_relation_ledger.v1.json`。
 
 本文件只记录会影响下一次操作的 live 状态。流水线规则只读
 [`docs/pipeline/`](pipeline/README.md)。`review_ready`、本地 commit、旧 PID 或旧 handoff

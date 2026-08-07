@@ -147,8 +147,13 @@ def test_default_profile_jingting_prompt_matches_authoritative_glossary_fingerpr
     #   source-truth 投影/假名 canon 两种所有者——正确分层是钉子管转录、truth
     #   ledger 管所有权（三条 SOURCE_INTERVAL_TRUTH 已在 2ff018f 入账），
     #   同一改写不能两层同时上，否则改写者归因不了。
+    # 2026-08-07：8/7 鹅鸭杀联动场三条词表变更（Ivan 当日裁定）——
+    #   马有利（尾幼mayori 口播梗名）canonical + 误听面 马悠李/马尤丽 入
+    #   zero-CPA expected-value 车道；狍哥（东爱璃昵称）入人名条目，同音真词
+    #   「袍哥」明示逐处交 CPA；东爱璃行补 狍哥。会话游戏语境块
+    #   （game_glossary_context）不在本指纹内：默认无 env 绑定时渲染为空。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "ca80691e044c970164bc8ba086924f00a8bdda86f56a67bb1a6e89ea1c1747f5"
+        "17ecaff6451c97dc8740f78c9c3e27ef45146a226fb55555dd80aea4b702eea6"
     )
 
 

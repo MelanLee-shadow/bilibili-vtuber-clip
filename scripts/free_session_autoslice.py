@@ -99,6 +99,7 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.suggest_upload_tags import generate_upload_tags
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.runtime_candidate_asset import bind_runtime_candidate_asset
+from src.autoslice.game_context import bind_session_game_context
 from src.autoslice.host_vocal_proof import verify_host_vocal_proof_claim
 from src.autoslice.reviewed_subtitle_baseline_registry import (
     ReviewedSubtitleBaseline,
@@ -1164,6 +1165,19 @@ def child_env() -> dict[str, str]:
 def child_env_for_date(recording_date: str) -> dict[str, str]:
     env = child_env()
     env["LIDOUSHA_TERM_AS_OF"] = recording_date
+    # 会话游戏语境（Ivan 2026-08-07 指令：鹅鸭杀场三症状通病修复）。检测与
+    # 状态文件都在 src.autoslice.game_context；这里只按日期绑定 env，失败即
+    # 无语境，绝不阻断产线。
+    bind_session_game_context(
+        env,
+        recording_date=recording_date,
+        recordings_root=REC_ROOT,
+        cache_root=BASE / "cache",
+        state_root=BASE / "state",
+        glossary_path=profile_asset_file("game_glossary"),
+        truth_mode=human_truth_mode(),
+        selectors=os.environ,
+    )
     return env
 
 

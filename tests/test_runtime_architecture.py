@@ -93,7 +93,11 @@ MODULE_DEBT_LEDGER = {
     # 「全都按你的想法进行修复，当然都要配测试」授权；测试 test_smoke_backfill.py。
     # 2026-08-02 再 +3：child_env 加 PYTHONUNBUFFERED（二轮实测：候选日志因子
     # 进程全缓冲十几分钟 0 字节，观察者只能猜死没死）。同一 /goal 授权。
-    "scripts/free_session_autoslice.py": 2_048,
+    # 2026-08-07 +14：child_env_for_date 绑定会话游戏语境（Ivan 8/7 指令：
+    # 鹅鸭杀场「流水线不知道在玩什么」通病修复）。检测/状态/渲染本体全在
+    # src/autoslice/game_context.py，runner 只留 import + 按日期绑定调用；
+    # 测试 tests/lidousha/test_game_context.py。
+    "scripts/free_session_autoslice.py": 2_062,
     # 2026-07-31 +122：封面文案链修复（分行权威等级 + 锁定模式 + 缩略图合同背带
     # + max_lines 按合同封顶）。新增逻辑已抽成 _talk_locked_split /
     # _assert_talk_thumbnail_contract 两个模块级函数，_overlay_lidousha_cover_title

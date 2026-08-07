@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -154,6 +155,35 @@ def _cover_route_projection(row: dict) -> dict[str, object]:
     }
 
 
+def _session_game_line(date: str) -> str:
+    """Project the session game-context receipt into one summary line.
+
+    Fail-open: a missing or malformed receipt reports UNKNOWN — this line is
+    disclosure only and must never take reporting down.
+    """
+
+    status, detail = "UNKNOWN", ""
+    try:
+        path = Path(_runner.BASE) / "state" / "session_game_context" / f"{date}.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        status = str(data.get("status") or "UNKNOWN")
+        game = data.get("game")
+        if status == "RESOLVED" and isinstance(game, Mapping):
+            evidence = game.get("evidence")
+            evidence = evidence if isinstance(evidence, Mapping) else {}
+            detail = (
+                f"（{game.get('canonical')}；特征词面 "
+                f"{evidence.get('distinct_detection_surfaces', 0)} 种×"
+                f"{evidence.get('total_detection_hits', 0)} 次）"
+            )
+    except (OSError, ValueError, AttributeError):
+        pass
+    return (
+        f"- 游戏语境: **{status}**{detail}"
+        "（会话级候选闭集，只扩大候选与解释空间，不证明本句出现）"
+    )
+
+
 def _format_delivery_duration(pick: Mapping[str, object]) -> str:
     summary = pick.get("summary")
     summary_duration = (
@@ -248,6 +278,7 @@ def write_reports(date: str, state: dict) -> None:
         f"未来候选场 {capture.get('candidate_session_count', 0)}/"
         f"{capture.get('candidate_session_quota', 5)}（仅未标注开发证据，不代表已确认联动或可训练）",
         f"- 会话关系权威: **{(state.get('session_relation_authority') or {}).get('state', 'UNKNOWN') if isinstance(state.get('session_relation_authority'), dict) else 'UNKNOWN'}**",
+        _session_game_line(date),
         "",
         "## 谈话成品（仅当前合规交付）",
         "",
