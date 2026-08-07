@@ -170,7 +170,10 @@ FOCUSED_MODULE_LINE_BUDGETS = {
     # Compatibility/public workflow facades must not absorb extracted domains.
     Path("src/autoslice/chat_authority.py"): 150,
     Path("src/autoslice/song_repair.py"): 1_200,
-    Path("src/autoslice/speaker_finalizer.py"): 1_800,
+    # 2026-08-07 +1：Ivan 2026-08-07 说话人默认连线裁定——ambiguous-cue 语义
+    # 佐证接线（confidence 穿透 + 移除死掉的 neighbour smoothing 分支），净增
+    # 只有 1 行；重活在新模块 src/autoslice/speaker_host_evidence.py。
+    Path("src/autoslice/speaker_finalizer.py"): 1_801,
     # Extracted domains retain a small amount of headroom for real behavior,
     # while failing long before another 3k-4k line domain bus can form.
     # 2026-07-31：+3 来自 4666765（转录实体改由 CPA 路由）。预算贴实际值。

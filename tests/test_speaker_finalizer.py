@@ -32,7 +32,7 @@ from src.autoslice.speaker_finalizer import (
     validate_speaker_review_manifest_document,
 )
 from src.autoslice.host_vocal_proof import _sha256_directory
-from src.autoslice.speaker_common import HOST_SPEAKER
+from src.autoslice.speaker_common import GUEST_SPEAKER, HOST_SPEAKER
 from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
@@ -779,8 +779,11 @@ def test_runner_rejects_malformed_speaker_review_manifest(tmp_path: Path, monkey
 
 def test_context_prompt_treats_exact_shadow_name_as_host_not_fourth_speaker() -> None:
     prompt = _context_prompt([], [], [])
+    # Pin updated 2026-08-07: Ivan's asymmetric host-evidence ruling added a
+    # sentence telling the judge its HOST vote is only adopted inside the
+    # acoustic corroboration band (speaker_host_evidence.py).
     assert hashlib.sha256(prompt.encode("utf-8")).hexdigest() == (
-        "505e5aef8a21689a4ca3e3d065a9e9ba5b61ab5a7e4fdc8fadecc169a53b0d4a"
+        "24fdbbaacdc0e2e71a343e81828c21fe7cfa02575cade8d7318ca7111f90adbd"
     )
     assert (
         f"精确词 {CHANNEL_PROFILE.speaker_identity_aliases[-1]} 是{HOST_SPEAKER}的自称之一"
@@ -804,16 +807,48 @@ def test_speaker_context_loads_private_runtime_cpa_env(tmp_path: Path, monkeypat
     assert env["CPA_API_KEY"] == "secret-test-value"
 
 
-def test_ambiguous_speaker_resolution_records_context_and_fallback_sources() -> None:
+def test_ambiguous_speaker_resolution_defaults_to_guest_and_requires_hard_evidence() -> None:
+    """Ivan 2026-08-07: default GUEST; HOST only inside the corroboration band."""
+
+    policy = {
+        "host_semantic_corroboration_margin_below_threshold": 0.08,
+        "host_semantic_min_confidence": 0.7,
+    }
     labels, sources = resolve_ambiguous_labels(
         ["连线", None, HOST_SPEAKER, None, HOST_SPEAKER],
         [-0.3, -0.02, 0.3, 0.01, 0.4],
         0.0,
         {1: HOST_SPEAKER},
+        band=0.1,
+        policy=policy,
+        context_confidences={1: 0.9},
     )
-    assert labels == ["连线", HOST_SPEAKER, HOST_SPEAKER, HOST_SPEAKER, HOST_SPEAKER]
-    assert sources[1] == "whole_clip_context"
-    assert sources[3] == "neighbour_context_fallback"
+    # index 1 sits inside the narrow corroboration band and the context vote
+    # clears the confidence floor, so it corroborates to HOST; index 3 sits
+    # inside the same band but has no context vote at all and defaults GUEST.
+    assert labels == ["连线", HOST_SPEAKER, HOST_SPEAKER, GUEST_SPEAKER, HOST_SPEAKER]
+    assert sources[1] == "campp_semantic_corroborated"
+    assert sources[3] == "guest_default_ambiguity"
+
+
+def test_ambiguous_speaker_resolution_rejects_semantic_host_outside_corroboration_band() -> None:
+    """A confident semantic HOST vote must not override deep guest-ward acoustics."""
+
+    policy = {
+        "host_semantic_corroboration_margin_below_threshold": 0.08,
+        "host_semantic_min_confidence": 0.7,
+    }
+    labels, sources = resolve_ambiguous_labels(
+        [None],
+        [-0.5],
+        0.0,
+        {0: HOST_SPEAKER},
+        band=0.6,
+        policy=policy,
+        context_confidences={0: 0.95},
+    )
+    assert labels == [GUEST_SPEAKER]
+    assert sources[0] == "guest_default_ambiguity"
 
 
 def test_finalizer_binds_text_before_speaker_and_renders_colour_without_prefixes(tmp_path: Path) -> None:

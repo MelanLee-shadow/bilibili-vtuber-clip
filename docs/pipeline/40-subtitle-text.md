@@ -354,6 +354,21 @@
   词项（例如技术语境的 `staff`、`bug`）；它不是整句外语白名单，未登记的多词 Latin 组合
   仍须精确音频见证或更高文本权威。
 - 交付 `.srt`/`.ass` 走内容时间轴；片头偏移只记录在 `burned_preview.branding_intro.intro_offset_ms`（见 [80-package-delivery.md](80-package-delivery.md)）。
-- talk 成品 `speaker_mode=required`。说话人未决或证据不足进入
-  `speaker_review_required` / `speaker_evidence_insufficient` 并 fail closed；不得为了
-  “统一李豆沙色”把不确定来宾涂成主播后放行。歌切不进入 talk speaker 链。
+- talk 成品 `speaker_mode=required`。二分默认连线（GUEST）；判李豆沙（HOST）须硬证据——
+  CAM++ 声纹置信通过，或（新）响度证据（同场次相对 host-anchor 响度基线的硬 margin，
+  `talk_speaker_policy.host_loudness_required_margin_db`，当前只在
+  `src/autoslice/speaker_host_evidence.py` 的代码默认里，未写回共享
+  `voiceprint_profile.v1.json`——该文件被多份历史 session anchor 按 sha256 绑定，写回
+  会级联使那些锚点document 的 `profile_sha256` 失配，需要单独一轮迁移；实测本机麦克风
+  更响的经验假设在 auto_203735_555_680 一场未成立，margin 因此保守校准到基本不触发，等
+  更强的单人响度特征）。语义（整段
+  whole-clip context judge）不是独立证据，只能在声学临界带内佐证已有的临界判断、或确认
+  连线，不得单独定案（cue43 证明朴素语义启发式两个方向都错过）。说话人不确定（临界带
+  内无声学/响度硬通过、也无佐证）直接判连线可交付，不再进 `speaker_review_required` /
+  `speaker_evidence_insufficient`；该 fail-closed hold 只留给基础设施故障（模型不可用/
+  judge 连续报错取不到任何回应），不再用于"标签不确定"（Ivan 2026-08-07 裁定，取代
+  7/13 "统一李豆沙色" uniform 口径与旧的标签不确定 fail-closed hold 口径；混合 cue v1：
+  同一 cue 内声学证据不一致时整句判连线，除非每个证据窗口都支持李豆沙——
+  `src/autoslice/speaker_host_evidence.py`，v1 无真实子 cue 音频分窗，见该模块与
+  `tests/lidousha/test_speaker_host_evidence.py` 的落地范围说明）。歌切不进入 talk
+  speaker 链。

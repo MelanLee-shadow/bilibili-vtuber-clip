@@ -887,32 +887,42 @@ def _run_campplus_analysis(
         for index, speaker in (reviewed_context_votes or {}).items()
         if index in ambiguous and speaker in SPEAKERS
     }
+    # Ivan 2026-08-07: the whole-clip judge is a corroborating signal, not an
+    # independent one, so its votes must carry a real confidence value that
+    # resolve_ambiguous_labels/speaker_host_evidence can gate on.
     context_vote_rows, context_attempts, context_errors = _whole_clip_context_votes(
         cues,
         labels,
         ambiguous,
         context_call,
         initial_speakers=reviewed_votes,
+        require_confidence=True,
     )
     votes = {
         index: str(row["speaker"]) for index, row in context_vote_rows.items()
     }
+    confidences = {
+        index: float(row["confidence"])
+        for index, row in context_vote_rows.items()
+        if row.get("confidence") is not None
+    }
     unresolved_context = [index for index in ambiguous if index not in votes]
-    resolved, sources = resolve_ambiguous_labels(labels, margins, threshold, votes)
+    resolved, sources = resolve_ambiguous_labels(
+        labels,
+        margins,
+        threshold,
+        votes,
+        band=band,
+        policy=policy,
+        context_confidences=confidences,
+    )
     for index in reviewed_votes:
         if index in ambiguous:
             sources[index] = "accepted_context_baseline"
 
-    # Smooth only acoustically ambiguous one-cue islands; never override a
-    # whole-clip context judgement or confident audio label.
-    for index in range(1, len(resolved) - 1):
-        if (
-            resolved[index - 1] == resolved[index + 1] != resolved[index]
-            and sources[index] in {"neighbour_context_fallback", "acoustic_threshold_fallback"}
-            and abs(margins[index] - threshold) < band
-        ):
-            resolved[index] = resolved[index - 1]
-            sources[index] = "ambiguous_island_smoothing"
+    # Ivan 2026-08-07: no neighbour-island smoothing toward HOST -- ambiguous
+    # cues already default to GUEST (speaker_host_evidence), so there is
+    # nothing left to smooth without manufacturing HOST from adjacency alone.
 
     _assert_runtime_assets_stable(
         model_dir=model_dir,
