@@ -236,6 +236,45 @@ def validate_session_game_context(payload: object) -> dict[str, Any]:
     return dict(payload)
 
 
+# Ivan 2026-08-07 游戏场配额放宽指令：「本场游戏直播的切片可突破5个上限，放宽到
+# 10个……前提是分数在90分以上」——一场直播的 session_game_context 若已 RESOLVED，
+# 该场话题切片上限从 5 提到 10；超出原上限的额外席位只收
+# selection_scorecard.effective_score>=90 的候选，1-5 号席位不变。
+GAME_SESSION_TALK_PICK_CAP = 10
+GAME_SESSION_EXTRA_SLOT_MIN_SCORE = 90.0
+
+
+def talk_pick_cap(
+    recording_date: str,
+    state_root: Path,
+    *,
+    default_cap: int = 5,
+    extra_cap: int = GAME_SESSION_TALK_PICK_CAP,
+    extra_slot_min_score: float = GAME_SESSION_EXTRA_SLOT_MIN_SCORE,
+) -> tuple[int, float | None]:
+    """Return (talk-pick cap, extra-slot score gate) for one recording date.
+
+    Fails open to ``(default_cap, None)`` on any missing/unreadable/invalid
+    state file or a status other than RESOLVED (NO_MATCH, AMBIGUOUS,
+    NO_GLOSSARY, GLOSSARY_INVALID) — a broken or absent game-context lane
+    must never silently loosen the ordinary delivery cap.
+    """
+
+    safe_date = re.sub(r"[^0-9-]", "", str(recording_date))[:10]
+    if not safe_date:
+        return default_cap, None
+    state_path = Path(state_root) / "session_game_context" / f"{safe_date}.json"
+    try:
+        if not state_path.is_file() or state_path.is_symlink():
+            return default_cap, None
+        context = validate_session_game_context(json.loads(state_path.read_text(encoding="utf-8")))
+    except (OSError, ValueError, GameContextError):
+        return default_cap, None
+    if context.get("status") != "RESOLVED":
+        return default_cap, None
+    return extra_cap, extra_slot_min_score
+
+
 def render_game_glossary_context(context: Mapping[str, Any]) -> str:
     """Render the resolved game's terms as an occurrence-neutral prompt block."""
 

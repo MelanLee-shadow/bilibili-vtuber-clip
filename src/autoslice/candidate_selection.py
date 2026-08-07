@@ -12,7 +12,8 @@ from datetime import datetime
 from pathlib import Path
 
 from src.autoslice.runner_proxy import RunnerProxy
-from src.autoslice.selection_scorecard import selection_rank_key
+from src.autoslice.selection_scorecard import selection_rank_key, selection_scorecard_is_valid
+from src.autoslice.game_context import talk_pick_cap
 from src.autoslice.publication_reconciliation import (
     publication_row_is_verified,
 )
@@ -246,7 +247,32 @@ def song_delivery_budget(state: dict, session_id: str | None = None) -> int:
     return max(0, _runner.MAX_SONGS_PER_SESSION - consumed)
 
 
-def _talk_slots_for_session(state: dict, session_id: str) -> int:
+def _talk_pick_policy_for_session(session_id: str) -> tuple[int, float | None]:
+    """(cap, extra-slot score gate) for a session, via its recording date.
+
+    Ivan 2026-08-07 游戏场配额放宽指令: a RESOLVED session_game_context lifts
+    the cap from MAX_TALK_PICKS to 10, gating positions past MAX_TALK_PICKS
+    on selection_scorecard.effective_score.  Non-``live-YYYYMMDDTHHMMSS``
+    session ids (legacy/test fixtures) fail open to the ordinary cap.
+    """
+
+    match = _SESSION_ID_RX.match(session_id)
+    if match is None:
+        return _runner.MAX_TALK_PICKS, None
+    raw_date = match.group(1)
+    recording_date = f"{raw_date[0:4]}-{raw_date[4:6]}-{raw_date[6:8]}"
+    return talk_pick_cap(
+        recording_date,
+        _runner.BASE / "state",
+        default_cap=_runner.MAX_TALK_PICKS,
+    )
+
+
+def _talk_admission_for_session(
+    state: dict, session_id: str
+) -> tuple[int, int, int, float | None]:
+    """(available slots, produced count, reserved-for-revival count, score gate)."""
+
     records = [
         item
         for item in state.get("picks", [])
@@ -272,11 +298,17 @@ def _talk_slots_for_session(state: dict, session_id: str) -> int:
         + int(item.get("talk_repair_retry_count") or 0)
         < _runner.TALK_REPAIR_LIFETIME_RETRY_CAP
     )
+    cap, extra_slot_min_score = _talk_pick_policy_for_session(session_id)
     attempts_left = max(0, _runner.TALK_ATTEMPT_CAP - len(records))
-    return min(
-        max(0, _runner.MAX_TALK_PICKS - produced - reserved_for_revival),
-        attempts_left,
+    slots = min(max(0, cap - produced - reserved_for_revival), attempts_left)
+    return slots, produced, reserved_for_revival, extra_slot_min_score
+
+
+def _talk_slots_for_session(state: dict, session_id: str) -> int:
+    slots, _produced, _reserved, _extra_slot_min_score = _talk_admission_for_session(
+        state, session_id
     )
+    return slots
 
 
 def _assign_cover_diversity_slots(state: dict) -> None:
@@ -909,13 +941,35 @@ def prioritize(state: dict) -> None:
         if session_id in pinned_sessions:
             deferred.extend(ranked)
             continue
-        slots = _talk_slots_for_session(state, session_id)
+        slots, produced, reserved_for_revival, extra_slot_min_score = (
+            _talk_admission_for_session(state, session_id)
+        )
         session_keep: list[dict] = []
         session_deferred: list[dict] = []
         per_seg: dict[str, int] = {}
+
+        def _admits_extra_slot(item: dict) -> bool:
+            # Slots 1..MAX_TALK_PICKS are unchanged; only positions past that
+            # (game-context RESOLVED sessions only) need the score gate.
+            # A pending revival retry already reserves an earlier ordinal seat
+            # than any newly kept candidate, so it counts toward the position
+            # base alongside produced picks.
+            position = produced + reserved_for_revival + len(session_keep) + 1
+            if extra_slot_min_score is None or position <= _runner.MAX_TALK_PICKS:
+                return True
+            scorecard = item.get("selection_scorecard")
+            return bool(
+                selection_scorecard_is_valid(scorecard)
+                and float(scorecard["effective_score"]) >= extra_slot_min_score
+            )
+
         for item in ranked:
             seg = item["segment_path"]
-            if len(session_keep) < slots and per_seg.get(seg, 0) < _runner.TALK_PER_SEGMENT_CAP:
+            if (
+                len(session_keep) < slots
+                and per_seg.get(seg, 0) < _runner.TALK_PER_SEGMENT_CAP
+                and _admits_extra_slot(item)
+            ):
                 session_keep.append(item)
                 per_seg[seg] = per_seg.get(seg, 0) + 1
             else:
@@ -924,6 +978,8 @@ def prioritize(state: dict) -> None:
         for item in list(session_deferred):
             if len(session_keep) >= slots:
                 break
+            if not _admits_extra_slot(item):
+                continue
             session_keep.append(item)
             session_deferred.remove(item)
         keep.extend(session_keep)
