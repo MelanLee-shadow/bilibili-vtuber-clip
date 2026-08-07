@@ -34,7 +34,11 @@
   `fan_name_of`、`meme_of`、`associated_with` 只确认社区映射达到证据门。社区关系不得伪装成
   `official_roster`、不得进入零 CPA expected-value 表、不得生成机械 `surface → canonical`
   替换；当前 cue 仍须由音频、结构化弹幕/SC 和话题独立见证。事件/形象梗（例如某次事件产生
-  的形象称呼）必须保留为 `meme_of`，不能扁平化成主播永久别名。
+  的形象称呼，以及观众动物化/物件化主播的互动行为模式）必须保留为 `meme_of`，不能扁平化成
+  主播永久别名。关系类型由 CPA 基于已落地证据作语义判断；机械语法只作为特征，不能独自把昵称
+  判成粉丝名。profile 的版本化 `reviewed_relations` 只可纠正已发现关系的 owner/type，并须重新
+  满足目标类型的证据门；不得凭人工表创建或直接接受关系。相同证据哈希和 prompt 版本不得重复
+  调 CPA，版本或证据变化才触发旧关系复判。
 - glossary 中“一个明确 canonical + 明列误听面”的三字及以上变体自动进入零 CPA
   expected-value 表，并在所有 mutable 文本阶段之后重新规范化；括号中的事故日期/说明不是
   词面。两字日常词（如“小时/留下”）无条件替换的误伤先验过高，除非 profile 单独显式提升，

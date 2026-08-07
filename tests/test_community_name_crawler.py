@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 import urllib.parse
 
+import pytest
+
 from src.autoslice.community_query_plan import (
     bounded_mappings,
     community_mappings_by_key,
@@ -19,6 +21,7 @@ from src.autoslice.community_name_crawler import (
     load_config,
     validate_snapshot,
 )
+from src.autoslice.community_relation_semantics import semantic_diagnostics
 from src.autoslice.timely_term_crawler import CachedResponse, CrawlError
 
 
@@ -239,9 +242,266 @@ def test_fan_group_evidence_reclassifies_a_stored_accepted_alias():
     assert mapping["relation_kind"] == "fan_name_of"
     assert mapping["reason_codes"] == [
         "RELATION_RECLASSIFIED_FAN_NAME",
-        "ACCEPTED_MAPPING_PERSISTS",
+        "INDEPENDENT_COMMUNITY_QUORUM_MET",
     ]
     assert repaired["snapshot"]["relations"][0]["relation_kind"] == "fan_name_of"
+
+
+def test_relation_review_prompt_exposes_referent_tests_without_hard_typing():
+    from src.autoslice.community_name_crawler import relation_review_prompt
+
+    prompt = relation_review_prompt([])
+
+    assert "男X/女X" in prompt
+    assert "X们/百万X/资深X" in prompt
+    assert "下锅、饲养、制作等玩笑" in prompt
+    assert "讲、搞、开始、停止、让你们做" in prompt
+
+
+def test_semantic_diagnostics_expose_exact_contexts_and_distinct_cues():
+    def row(index, title):
+        return {
+            "bvid": f"BV1{index:09d}",
+            "title": title,
+            "description": "",
+            "tags": "",
+        }
+
+    fan = semantic_diagnostics(
+        "小博兔",
+        [row(1, "直播间驱逐小博兔"), row(2, "小博兔自用"), row(3, "制作小博兔")],
+        official_surfaces=["弥月Mizuki"],
+    )
+    behavior = semantic_diagnostics(
+        "猪塑",
+        [row(4, "让你们猪塑吧"), row(5, "猪塑民集合")],
+        official_surfaces=["三理Mit3uri"],
+    )
+    alias = semantic_diagnostics(
+        "满区",
+        [row(6, "满区吃个苹果")],
+        official_surfaces=["灰泽满Hazel"],
+    )
+
+    assert len(fan["exact_surface_contexts"]) == 3
+    assert fan["collective_identity_bvids"] == ["BV1000000001", "BV1000000002"]
+    assert behavior["activity_or_process_bvids"] == ["BV1000000004"]
+    assert behavior["derived_group_form_bvids"] == ["BV1000000005"]
+    assert alias["person_predicate_bvids"] == ["BV1000000006"]
+
+
+@pytest.mark.parametrize(
+    ("canonical", "mid", "surface", "stale_kind", "expected_kind", "specs"),
+    [
+        (
+            "灰泽满Hazel",
+            1298779265,
+            "绿冻",
+            "meme_of",
+            "fan_name_of",
+            [(11, "2026-08-01"), (22, "2026-08-02"), (33, "2026-08-03"), (44, "2026-08-04")],
+        ),
+        (
+            "弥月Mizuki",
+            1789460279,
+            "小博兔",
+            "meme_of",
+            "fan_name_of",
+            [(11, "2026-08-01"), (22, "2026-08-02"), (33, "2026-08-03"), (44, "2026-08-04")],
+        ),
+        (
+            "灰泽满Hazel",
+            1298779265,
+            "满区",
+            "fan_name_of",
+            "alias_of",
+            [(11, "2026-08-01"), (22, "2026-08-02"), (33, "2026-08-03"), (44, "2026-08-04")],
+        ),
+        (
+            "三理Mit3uri",
+            2030198123,
+            "猪塑",
+            "fan_name_of",
+            "meme_of",
+            [(11, "2026-08-01"), (22, "2026-08-02")],
+        ),
+    ],
+)
+def test_reviewed_relation_retypes_existing_evidence_without_creating_acceptance(
+    canonical, mid, surface, stale_kind, expected_kind, specs
+):
+    registry = _registry()
+    registry["members"][3] = _member(4, canonical, mid)
+    first = crawl(
+        client=FakeClient([_search_payload(canonical, surface, specs)]),
+        registry=registry,
+        config=_config(),
+        state=empty_state(),
+        now=NOW,
+        llm_call=lambda _: _judge(f"bilibili:{mid}", surface, stale_kind, len(specs)),
+        forced_entities=[canonical],
+    )
+    stale_state = json.loads(json.dumps(first["state"], ensure_ascii=False))
+    stale_state["mappings"][0]["relation_kind"] = stale_kind
+    stale_state["mappings"][0].pop("relation_review", None)
+    accepted_at = stale_state["mappings"][0]["accepted_at"]
+
+    repaired = crawl(
+        client=FakeClient([_search_payload(canonical, surface, specs)]),
+        registry=registry,
+        config=_config(),
+        state=stale_state,
+        now=NOW + dt.timedelta(days=1),
+        llm_call=None,
+        forced_entities=[canonical],
+    )
+
+    mapping = repaired["state"]["mappings"][0]
+    assert mapping["relation_kind"] == expected_kind
+    assert mapping["status"] == "accepted"
+    assert mapping["accepted_at"] == accepted_at
+    assert mapping["relation_review"]["relation_kind"] == expected_kind
+    assert "REVIEWED_RELATION_RETYPE" in mapping["reason_codes"]
+
+
+def test_reviewed_relation_does_not_create_a_mapping_without_discovered_evidence():
+    registry = _registry()
+    registry["members"][3] = _member(4, "灰泽满Hazel", 1298779265)
+    result = crawl(
+        client=FakeClient([_search_payload("灰泽满Hazel", "绿冻", [])]),
+        registry=registry,
+        config=_config(),
+        state=empty_state(),
+        now=NOW,
+        llm_call=None,
+        forced_entities=["灰泽满Hazel"],
+    )
+
+    assert result["state"]["mappings"] == []
+
+
+def test_exclusive_review_owner_rejects_a_preexisting_wrong_owner_mapping():
+    registry = _registry()
+    registry["members"][3] = _member(4, "小松绿Viridis", 1891335475)
+    specs = [(11, "2026-08-01"), (22, "2026-08-02"), (33, "2026-08-03"), (44, "2026-08-04")]
+    unreviewed = _config()
+    unreviewed["reviewed_relations"] = []
+    first = crawl(
+        client=FakeClient([_search_payload("小松绿Viridis", "小博兔", specs)]),
+        registry=registry,
+        config=unreviewed,
+        state=empty_state(),
+        now=NOW,
+        llm_call=lambda _: _judge("bilibili:1891335475", "小博兔", "alias_of", 4),
+        forced_entities=["小松绿Viridis"],
+    )
+    assert first["state"]["mappings"][0]["status"] == "accepted"
+
+    repaired = crawl(
+        client=FakeClient([_search_payload("小松绿Viridis", "小博兔", specs)]),
+        registry=registry,
+        config=_config(),
+        state=first["state"],
+        now=NOW + dt.timedelta(days=1),
+        llm_call=None,
+        forced_entities=["小松绿Viridis"],
+    )
+
+    mapping = repaired["state"]["mappings"][0]
+    assert mapping["status"] == "rejected"
+    assert mapping["accepted_at"] is None
+    assert mapping["reason_codes"] == ["REVIEWED_RELATION_OWNER_MISMATCH"]
+
+
+def test_multi_entity_metadata_does_not_cross_fields_to_invent_an_owner():
+    registry = _registry()
+    registry["members"][3] = _member(4, "小松绿Viridis", 1891335475)
+    registry["members"][4] = _member(5, "弥月Mizuki", 1789460279)
+    payload = {
+        "code": 0,
+        "data": {
+            "result": [
+                {
+                    "bvid": "BV1000000001",
+                    "aid": 1,
+                    "mid": 55,
+                    "pubdate": int((NOW - dt.timedelta(days=1)).timestamp()),
+                    "title": "【弥月Mizuki】新人真是小博兔？",
+                    "description": "小松绿Viridis：https://space.bilibili.com/1891335475",
+                    "tag": "虚拟主播",
+                }
+            ]
+        },
+    }
+    config = _config()
+    config["reviewed_relations"] = []
+    result = crawl(
+        client=FakeClient([payload]),
+        registry=registry,
+        config=config,
+        state=empty_state(),
+        now=NOW,
+        llm_call=lambda _: _judge("bilibili:1891335475", "小博兔", "alias_of", 1),
+        forced_entities=["小松绿Viridis"],
+    )
+
+    assert result["state"]["mappings"] == []
+
+
+def test_existing_relation_semantics_are_content_addressed_and_not_rejudged_twice():
+    registry = _registry()
+    specs = [(11, "2026-08-01"), (11, "2026-08-02"), (22, "2026-08-03"), (33, "2026-08-04")]
+    config = _config()
+    config["reviewed_relations"] = []
+    first = crawl(
+        client=FakeClient([_search_payload("花礼Harei", "鼠鼠", specs)]),
+        registry=registry,
+        config=config,
+        state=empty_state(),
+        now=NOW,
+        llm_call=lambda _: _judge("bilibili:1048135385", "鼠鼠", "alias_of", 4),
+        forced_entities=["花礼Harei"],
+    )
+    mapping_key = first["state"]["mappings"][0]["mapping_key"]
+    calls = []
+
+    def review_once(prompt):
+        calls.append(prompt)
+        return json.dumps(
+            {
+                "relation_reviews": [
+                    {"mapping_key": mapping_key, "relation_kind": "alias_of"}
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    second = crawl(
+        client=FakeClient([_search_payload("花礼Harei", "鼠鼠", specs)]),
+        registry=registry,
+        config=config,
+        state=first["state"],
+        now=NOW + dt.timedelta(days=1),
+        llm_call=review_once,
+        forced_entities=["花礼Harei"],
+    )
+    assert len(calls) == 1
+    assert second["state"]["mappings"][0]["semantic_review"]["proposed_kind"] == "alias_of"
+
+    def fail_if_called(_):
+        raise AssertionError("unchanged evidence must use the semantic review cache")
+
+    third = crawl(
+        client=FakeClient([_search_payload("花礼Harei", "鼠鼠", specs)]),
+        registry=registry,
+        config=config,
+        state=second["state"],
+        now=NOW + dt.timedelta(days=2),
+        llm_call=fail_if_called,
+        forced_entities=["花礼Harei"],
+    )
+    assert third["state"]["last_run"]["semantic_review_count"] == 0
+    assert third["state"]["mappings"][0]["relation_kind"] == "alias_of"
 
 
 def test_official_uploader_can_anchor_an_unknown_surface_without_name_text():

@@ -1,5 +1,5 @@
 {
-  "schema_version": "vtuber-slice.community-name-sources.v2",
+  "schema_version": "vtuber-slice.community-name-sources.v3",
   "search_endpoint": "https://api.bilibili.com/x/web-interface/wbi/search/type",
   "reply_endpoint": "https://api.bilibili.com/x/v2/reply/wbi/main",
   "wbi_nav_endpoint": "https://api.bilibili.com/x/web-interface/nav",
@@ -20,5 +20,6 @@
   "source_hosts": [],
   "query_suffixes": [],
   "query_orders": [],
+  "reviewed_relations": [],
   "acceptance": {}
 }
