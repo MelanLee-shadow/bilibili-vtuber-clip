@@ -78,4 +78,4 @@ assets/emote/
 # 本地锁与临时工件不入库
 uv.lock
 tmp/
-lidousha/
+/lidousha/
