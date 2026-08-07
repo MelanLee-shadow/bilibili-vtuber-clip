@@ -193,41 +193,49 @@ def _dynamic_items(payload: Mapping[str, Any], *, uid: int) -> tuple[list[dict[s
     items: list[dict[str, Any]] = []
     skipped = 0
     for row in rows[:MAX_ITEMS]:
-        parsed = _one_dynamic_item(row, uid=uid)
-        if parsed is None:
+        parsed, malformed = _one_dynamic_item(row, uid=uid)
+        if malformed:
             skipped += 1
-            continue
-        items.append(parsed)
+        if parsed is not None:
+            items.append(parsed)
     return items, skipped
 
 
-def _one_dynamic_item(row: object, *, uid: int) -> dict[str, Any] | None:
+def _one_dynamic_item(row: object, *, uid: int) -> tuple[dict[str, Any] | None, bool]:
+    """Return (item-or-None, malformed).
+
+    ``malformed`` only counts structurally broken rows (bad id/modules/pub_ts):
+    a live feed legitimately mixes text-less posts (images/video/forwards)
+    and other people's mid — those are normal filtering, not crawl failures,
+    and must not turn a healthy run into a false-positive partial exit.
+    """
+
     if not isinstance(row, Mapping):
-        return None
+        return None, True
     dynamic_id = str(row.get("id_str") or "")
     modules = row.get("modules")
     if not _DYNAMIC_ID_RX.fullmatch(dynamic_id) or not isinstance(modules, Mapping):
-        return None
+        return None, True
     author = modules.get("module_author")
     dynamic = modules.get("module_dynamic")
     if not isinstance(author, Mapping) or not isinstance(dynamic, Mapping):
-        return None
-    if int(author.get("mid") or 0) != uid:
-        return None
+        return None, True
     try:
         published_at = dt.datetime.fromtimestamp(int(author.get("pub_ts") or 0), dt.timezone.utc)
     except (OSError, OverflowError, TypeError, ValueError):
-        return None
+        return None, True
+    if int(author.get("mid") or 0) != uid:
+        return None, False
     desc = dynamic.get("desc")
     raw_text = desc.get("text") if isinstance(desc, Mapping) else None
     text = _clean_text(raw_text, max_chars=MAX_TEXT_CHARS)
     if not text:
-        return None
+        return None, False
     return {
         "dynamic_id": dynamic_id,
         "published_at": published_at.isoformat(timespec="seconds"),
         "text": text,
-    }
+    }, False
 
 
 def fetch_recent_dynamics(
@@ -319,6 +327,10 @@ def validate_session_theme_hints(payload: object) -> dict[str, Any]:
         text = hint.get("text")
         if not isinstance(text, str) or not text or len(text) > MAX_TEXT_CHARS:
             raise StreamerDynamicsError(f"session theme hint {index} text is invalid")
+        if _INSTRUCTION_RX.search(text.casefold()):
+            raise StreamerDynamicsError(f"session theme hint {index} text is instruction-shaped")
+        if any(unicodedata.category(char).startswith("C") for char in text):
+            raise StreamerDynamicsError(f"session theme hint {index} text contains control characters")
         _parse_time(hint["published_at"])
     return dict(payload)
 
