@@ -1581,6 +1581,51 @@ def test_source_backed_letter_name_spelling_survives_acoustic_grapheme_veto():
     assert audit["orthography_equivalence"]["matched"] is True
 
 
+def test_glossary_candidate_cannot_win_bare_witness_conflict_on_semantics_alone():
+    """2026-08-07 auto_203735_555_680 cue59 实案回归：候选「殉情」来自
+    game-glossary 注入（鹅鸭杀恋人机制词），拼音证人只听到前句尾字「懂吗」
+    与错位片段，核心候选词拼音与真值「偶遇」明显不容；CPA judge 仍以
+    「语境更通顺」为由选中 PROPOSED（生产实况 p=0.96），把真实听写（AGY
+    refine 与 fidelity guard 双双给出「偶遇」）顶替成误听「殉情」。此案没有
+    任何 declared respell / strict homophone / ascii 发音键等正向文字证据
+    （``orthography_ambiguous`` 应为 False），glossary 候选必须记
+    ORTHOGRAPHY_NOT_DECIDABLE 并保留原字幕，不得让语义合理性单独盖过拼音
+    冲突。"""
+
+    source = _srt("你知道我要偶遇啊！偶遇")
+    finding = {
+        "cue_index": 1,
+        "suspect": "偶遇啊！偶遇",
+        "suggestion": "殉情啊！殉情",
+        "proposed_full_cue": "你知道我要殉情啊！殉情",
+        "repair_class": "source_backed_entity",
+        "candidate_provenance": {
+            "kind": "glossary",
+            "surface": "殉情",
+        },
+        "why": "鹅鸭杀恋人机制词，语境呼应死亡后果",
+    }
+
+    def short_misaligned_witness(request):
+        # 生产实况：证人只覆盖前句尾字「懂吗」加错位片段，未听清目标差异段。
+        return _witness(request, "dong ma ni")
+
+    output, audit = adjudicate_context_finding(
+        source,
+        finding,
+        entity_verifier=short_misaligned_witness,
+        judge_llm_call=_judge("PROPOSED"),
+    )
+
+    assert "偶遇" in output
+    assert "殉情" not in output
+    assert audit["repaired"] is False
+    assert audit["policy_branch"] == (
+        "GLOSSARY_CANDIDATE_WITNESS_CONFLICT_ORTHOGRAPHY_NOT_DECIDABLE"
+    )
+    assert audit["orthography_ambiguous"] is False
+
+
 def test_cpa_can_use_distinguishing_pinyin_without_text_authority():
     source = _srt("毁神来了")
     finding = {

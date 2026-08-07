@@ -152,8 +152,13 @@ def test_default_profile_jingting_prompt_matches_authoritative_glossary_fingerpr
     #   zero-CPA expected-value 车道；狍哥（东爱璃昵称）入人名条目，同音真词
     #   「袍哥」明示逐处交 CPA；东爱璃行补 狍哥。会话游戏语境块
     #   （game_glossary_context）不在本指纹内：默认无 env 绑定时渲染为空。
+    # 2026-08-07b：cue59「殉情」误顶替真值「偶遇」实案法证（Ivan 2026-08-07
+    #   auto_203735_555_680 speaker-truth-diff 裁决）——PSPLive 小节新增
+    #   方向性误听面词条「天云海→萱萱卡娅」（萱萱卡娅已在 psplive_roster 登记，
+    #   单向记方向，不做全局替换；不加「偶遇」入 game glossary，Ivan 明确它不是
+    #   游戏术语，cue59 已由 final_review_auditor 的候选层守卫机制性覆盖）。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "17ecaff6451c97dc8740f78c9c3e27ef45146a226fb55555dd80aea4b702eea6"
+        "e3fd2a923ef37474cdb484b5152ef543867d97e51a6bcf6ec45ef007970279b8"
     )
 
 

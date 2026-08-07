@@ -135,7 +135,14 @@ MODULE_DEBT_LEDGER = {
     # 2026-08-07 再 +4：Ivan 2026-08-07 狍哥案实施指令（闭环接线）——同上
     # 的收口调用点。
     "src/autoslice/delivery_recovery.py": 2_132,
-    "src/autoslice/final_review_auditor.py": 3_433,
+    # 2026-08-07 +79：cue59「殉情」顶替真值「偶遇」实案（Ivan 2026-08-07
+    # auto_203735_555_680 speaker-truth-diff 裁决 + 落地授权）——新增
+    # _glossary_session_candidate_undecidable / _adjudicate_with_glossary_witness_guard
+    # 两个模块级函数；两个调用点保持原行数不变（drop-in 改名），已ledgered 的
+    # 764 行 adjudicate_context_finding 未再增长。测试
+    # tests/test_final_review_auditor.py::
+    # test_glossary_candidate_cannot_win_bare_witness_conflict_on_semantics_alone。
+    "src/autoslice/final_review_auditor.py": 3_512,
     "src/autoslice/live_source_review.py": 2_035,
     # 2026-08-07 +18：狍哥案实施指令（同上）——marker 选择改判
     # SOURCE_FACT_REPAIRED_RESCORE_REQUIRED + 写 pending sidecar。

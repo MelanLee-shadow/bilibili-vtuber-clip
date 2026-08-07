@@ -338,6 +338,85 @@ def _orthography_ambiguous(
     return bool(current_key and current_key == proposed_key)
 
 
+_GLOSSARY_WITNESS_CONFLICT_BRANCH = "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
+GLOSSARY_CANDIDATE_ORTHOGRAPHY_NOT_DECIDABLE = (
+    "GLOSSARY_CANDIDATE_WITNESS_CONFLICT_ORTHOGRAPHY_NOT_DECIDABLE"
+)
+
+
+def _glossary_session_candidate_undecidable(
+    *,
+    repaired: bool,
+    policy_branch: str,
+    orthography_ambiguous: bool,
+    finding: Mapping[str, Any],
+) -> bool:
+    """Session/theme glossary candidates must not win a bare witness conflict.
+
+    2026-08-07 auto_203735_555_680 cue59 实案：候选「殉情」来自 game-glossary
+    注入（``candidate_provenance.kind == "glossary"``，鹅鸭杀恋人机制词），核心
+    候选词与真值「偶遇」的无调拼音相似度仅 ~0.31（远低于本文件近音门槛
+    0.45），候选-盲拼音证人也自认覆盖错位；但 CPA judge 仍以「语境更通顺」
+    为由判 PROPOSED（p=0.96），把真实听写 (agy_refined 与 fidelity guard
+    双双给出「偶遇」) 顶替成误听。已注册专名 respell、strict homophone 或
+    ascii 发音键等**正向**证据（``orthography_ambiguous=True``）继续走既有
+    text-authority 通道，不受此门影响；只有这类正向证据缺席、纯靠语义盖过
+    拼音冲突时，glossary 来源候选才必须记 ORTHOGRAPHY_NOT_DECIDABLE 并保留
+    原字幕，不得让语义合理性单独顶替声学证据。
+    """
+
+    if not repaired or policy_branch != _GLOSSARY_WITNESS_CONFLICT_BRANCH:
+        return False
+    if orthography_ambiguous:
+        return False
+    provenance = finding.get("candidate_provenance")
+    return isinstance(provenance, Mapping) and provenance.get("kind") == "glossary"
+
+
+def _adjudicate_with_glossary_witness_guard(
+    *,
+    check_request: Mapping[str, Any],
+    witness: Mapping[str, Any],
+    llm_call: Callable[[str], str] | None,
+    structured_chat_context: str = "",
+) -> tuple[bool, str, dict[str, Any]]:
+    """``adjudicate_with_witness`` plus the glossary/witness-conflict guard.
+
+    Same call signature as ``adjudicate_with_witness`` (a drop-in rename at
+    both call sites) so ``adjudicate_context_finding`` — already on the
+    function-line debt ledger at 764 lines, tests/test_runtime_architecture.py
+    — does not grow. ``check_request`` always carries ``candidate_provenance``,
+    ``suspect``/``replacement`` and ``current_cue``/``proposed_cue``
+    (``build_context_adjudication_request``), which is everything
+    ``_orthography_ambiguous`` and the glossary guard need; no extra
+    parameters or caller-side plumbing required.
+    """
+
+    repaired, policy_branch, witness_judge_audit = adjudicate_with_witness(
+        check_request=check_request,
+        witness=witness,
+        llm_call=llm_call,
+        structured_chat_context=structured_chat_context,
+    )
+    orthography_ambiguous = _orthography_ambiguous(
+        current_cue=str(check_request.get("current_cue") or ""),
+        proposed_cue=str(check_request.get("proposed_cue") or ""),
+        finding={
+            "suspect": check_request.get("suspect"),
+            "suggestion": check_request.get("replacement"),
+        },
+    )
+    if _glossary_session_candidate_undecidable(
+        repaired=repaired,
+        policy_branch=policy_branch,
+        orthography_ambiguous=orthography_ambiguous,
+        finding=check_request,
+    ):
+        repaired = False
+        policy_branch = GLOSSARY_CANDIDATE_ORTHOGRAPHY_NOT_DECIDABLE
+    return repaired, policy_branch, witness_judge_audit
+
+
 def _declared_respell_edit(current_cue: str, proposed_cue: str) -> bool:
     """Return whether this exact edit is a committed spelling rule.
 
@@ -2322,7 +2401,7 @@ def adjudicate_context_finding(
     witness_judge_audit: dict[str, Any] = {}
     strict_tie = _strict_homophone_tie(decision_finding, request)
     if valid:
-        repaired, policy_branch, witness_judge_audit = adjudicate_with_witness(
+        repaired, policy_branch, witness_judge_audit = _adjudicate_with_glossary_witness_guard(
             check_request=request,
             witness=verdict,
             llm_call=judge_llm_call,
@@ -2612,7 +2691,7 @@ def adjudicate_context_finding(
                             repaired,
                             policy_branch,
                             witness_judge_audit,
-                        ) = adjudicate_with_witness(
+                        ) = _adjudicate_with_glossary_witness_guard(
                             check_request=request,
                             witness=verdict,
                             llm_call=judge_llm_call,

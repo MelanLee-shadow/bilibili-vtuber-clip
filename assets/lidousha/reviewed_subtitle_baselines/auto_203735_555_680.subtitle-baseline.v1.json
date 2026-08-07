@@ -1,0 +1,14 @@
+{
+ "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
+ "candidate_id": "auto_203735_555_680",
+ "schema_version": "subtitle-redelivery-baseline.v2",
+ "mode": "preserve_text_outside_source_truth",
+ "exact_interval_replay": true,
+ "path": "auto_203735_555_680.reviewed.srt",
+ "sha256": "49e63c6c23026226b64227d7b1bd503df0f520770b86abb3c941fa0498b31c0e",
+ "authority": "Ivan-annotated 2026-08-07 speaker-truth-diff adjudication (ivan-speaker-truth-diff.v1, source_machine_sha256 89cc0251d80e1fef4f2427d4307fcfbbf6f8582fda9f2b34ee673ccff6fbdea7); 61 cues, 16 text_changed, 全部按 Ivan 逐字裁定落盘，修订由 Claude 落盘。",
+ "source_recording_basename": "22966160_20260807-20-37-35.mp4",
+ "source_sha256": "100a7cd3a1949c12a73eb764e06f2555cb3fcbf4db4fc8912ea044271662d6b1",
+ "absolute_source_start_ms": 555430,
+ "absolute_source_end_ms": 681000
+}
