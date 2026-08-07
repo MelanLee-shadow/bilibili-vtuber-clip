@@ -1,0 +1,10 @@
+{
+  "authority": "REPLACE_ME（本资产的权威来源说明）",
+  "expires_at": "1970-01-02T00:00:00Z",
+  "generated_at": "1970-01-01T00:00:00Z",
+  "occurrence_policy": "ENTITY_EXISTENCE_ONLY_NOT_CUE_OCCURRENCE_EVIDENCE",
+  "schema_version": "vtuber-slice.streamer-registry.v1",
+  "status": "unconfigured",
+  "members": [],
+  "sources": []
+}

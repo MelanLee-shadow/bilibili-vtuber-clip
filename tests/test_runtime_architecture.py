@@ -87,7 +87,7 @@ MODULE_DEBT_LEDGER = {
     # 「全都按你的想法进行修复，当然都要配测试」授权；测试 test_smoke_backfill.py。
     # 再 +3：child_env 加 PYTHONUNBUFFERED（二轮实测：候选日志因子
     # 进程全缓冲十几分钟 0 字节，观察者只能猜死没死）。同一 /goal 授权。
-    "scripts/session_autoslice.py": 2_081,
+    "scripts/session_autoslice.py": 2_048,
     # +122：封面文案链修复（分行权威等级 + 锁定模式 + 缩略图合同背带
     # + max_lines 按合同封顶）。新增逻辑已抽成 _talk_locked_split /
     # _assert_talk_thumbnail_contract 两个模块级函数，_overlay_cover_title
