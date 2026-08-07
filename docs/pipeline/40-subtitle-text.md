@@ -76,6 +76,9 @@
   [../workflows/session-game-context.md](../workflows/session-game-context.md)），RESOLVED 时该游戏
   的审定词表随 `glossary()` 注入为候选闭集。它与 roster/社区称呼同级：只扩大候选与解释
   空间，不证明本句出现，无机械改字权限；NO_MATCH/AMBIGUOUS/失败一律不注入且不阻断。
+  同级还有会话主题提示（不是所有直播都是游戏，主播近期 B 站动态命中会话日窗口时同样作为
+  候选闭集注入，规则见
+  [../workflows/session-theme-hints.md](../workflows/session-theme-hints.md)）。
 - “语境”默认是**整个切片和当前场次**，不是争议 cue 前后几句。clip-context 必须让审片员
   看见片内开头到结尾的 callback/复述/调侃链，也可携带与该日期和话题直接相关的结构化
   直播标题、联动对象、游戏/活动/公告实体；这些只能扩大候选与解释空间，不能在没有音频/

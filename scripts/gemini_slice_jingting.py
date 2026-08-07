@@ -861,6 +861,37 @@ def game_glossary_context() -> str:
     return render_game_glossary_context(context)
 
 
+def theme_hints_context() -> str:
+    """Render the resolved session's streamer-dynamics theme hints, if any.
+
+    Not every stream is a game; the owner's own B 站动态 may name the real
+    theme.  The runner associates dynamics published near the session date
+    (``session-theme-hints.v1``, written by ``src.autoslice.streamer_dynamics``)
+    and binds its path via ``LIDOUSHA_SESSION_THEME_HINTS``.  Unassociated or
+    unbound sessions render nothing; the block is occurrence-neutral
+    candidates with no mechanical mutation authority.
+    """
+
+    if os.environ.get("LIDOUSHA_DISABLE_SESSION_THEME_HINTS") == "1":
+        return ""
+    path = os.environ.get("LIDOUSHA_SESSION_THEME_HINTS") or ""
+    if not path:
+        return ""
+    raw = _read_first([path])
+    if not raw.strip():
+        return ""
+    try:
+        from src.autoslice.streamer_dynamics import (
+            render_theme_hints_context,
+            validate_session_theme_hints,
+        )
+
+        receipt = validate_session_theme_hints(json.loads(raw))
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return ""
+    return render_theme_hints_context(receipt)
+
+
 def glossary(*, as_of: dt.datetime | None = None) -> str:
     """Term canon + subtitle-correction principles, concatenated.
 
@@ -875,12 +906,14 @@ def glossary(*, as_of: dt.datetime | None = None) -> str:
     roster = "" if registry else psplive_roster_context(as_of=as_of)
     community_names = community_names_context(as_of=as_of)
     game_terms = game_glossary_context()
+    theme_hints = theme_hints_context()
     gifts = gift_names_context()
     return (
         "\n\n".join(
             part.strip()
             for part in (
-                terms, timely, registry, roster, community_names, game_terms, gifts, principles,
+                terms, timely, registry, roster, community_names, game_terms, theme_hints,
+                gifts, principles,
             )
             if part
         ).strip()

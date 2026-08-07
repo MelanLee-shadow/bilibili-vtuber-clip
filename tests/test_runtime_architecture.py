@@ -97,7 +97,11 @@ MODULE_DEBT_LEDGER = {
     # 鹅鸭杀场「流水线不知道在玩什么」通病修复）。检测/状态/渲染本体全在
     # src/autoslice/game_context.py，runner 只留 import + 按日期绑定调用；
     # 测试 tests/lidousha/test_game_context.py。
-    "scripts/free_session_autoslice.py": 2_062,
+    # 2026-08-07 再 +8：child_env_for_date 绑定会话动态主题提示（Ivan
+    # 2026-08-07 指令：「不是所有直播都是游戏，主题可能在主播 B 站动态里」）。
+    # 检测/状态/渲染本体全在 src/autoslice/streamer_dynamics.py，runner 只留
+    # import + 按日期绑定调用；测试 tests/lidousha/test_streamer_dynamics.py。
+    "scripts/free_session_autoslice.py": 2_070,
     # 2026-07-31 +122：封面文案链修复（分行权威等级 + 锁定模式 + 缩略图合同背带
     # + max_lines 按合同封顶）。新增逻辑已抽成 _talk_locked_split /
     # _assert_talk_thumbnail_contract 两个模块级函数，_overlay_lidousha_cover_title

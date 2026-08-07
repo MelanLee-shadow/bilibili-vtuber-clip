@@ -100,6 +100,7 @@ from scripts.suggest_upload_tags import generate_upload_tags
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.runtime_candidate_asset import bind_runtime_candidate_asset
 from src.autoslice.game_context import bind_session_game_context
+from src.autoslice.streamer_dynamics import bind_session_theme_hints
 from src.autoslice.host_vocal_proof import verify_host_vocal_proof_claim
 from src.autoslice.reviewed_subtitle_baseline_registry import (
     ReviewedSubtitleBaseline,
@@ -1175,6 +1176,13 @@ def child_env_for_date(recording_date: str) -> dict[str, str]:
         cache_root=BASE / "cache",
         state_root=BASE / "state",
         glossary_path=profile_asset_file("game_glossary"),
+        truth_mode=human_truth_mode(),
+        selectors=os.environ,
+    )
+    bind_session_theme_hints(
+        env, recording_date=recording_date,
+        snapshot_path=BASE / "state" / "streamer_dynamics.json",
+        state_root=BASE / "state",
         truth_mode=human_truth_mode(),
         selectors=os.environ,
     )

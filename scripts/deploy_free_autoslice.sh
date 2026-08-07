@@ -689,6 +689,7 @@ streamer_registry_cron='7 6 * * 0 /usr/bin/flock -n /opt/bilive/autoslice/stream
 psplive_roster_cron='12 6 * * 0 /usr/bin/flock -n /opt/bilive/autoslice/psplive-roster.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_psplive_roster.py --cache-dir /opt/bilive/autoslice/cache/psplive-roster-crawler --write /opt/bilive/autoslice/state/psplive_roster.json'\'' >> /opt/bilive/autoslice/logs/psplive-roster.log 2>&1'
 community_names_cron='27 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/community-names.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && set -a && source /opt/bilive/autoslice/cpa.env && set +a && python3 scripts/crawl_community_names.py --registry /opt/bilive/autoslice/state/streamer_registry.json --cache-dir /opt/bilive/autoslice/cache/community-name-crawler --state /opt/bilive/autoslice/state/community_name_state.json --write /opt/bilive/autoslice/state/community_names.json'\'' >> /opt/bilive/autoslice/logs/community-names.log 2>&1'
 topic_entity_cron='37 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/topic-entity.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_topic_entity_graph.py --timely-terms /opt/bilive/autoslice/state/timely_terms.json --cache-dir /opt/bilive/autoslice/cache/topic-entity-crawler --write /opt/bilive/autoslice/state/topic_entity_graph.json'\'' >> /opt/bilive/autoslice/logs/topic-entity.log 2>&1'
+streamer_dynamics_cron='47 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/streamer-dynamics.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_streamer_dynamics.py --cache-dir /opt/bilive/autoslice/cache/streamer-dynamics-crawler --write /opt/bilive/autoslice/state/streamer_dynamics.json'\'' >> /opt/bilive/autoslice/logs/streamer-dynamics.log 2>&1'
 existing_crontab=$(crontab -l 2>/dev/null || true)
 {
     printf '%s\n' "$existing_crontab" \
@@ -698,7 +699,8 @@ existing_crontab=$(crontab -l 2>/dev/null || true)
         | grep -Fv 'scripts/crawl_streamer_registry.py' \
         | grep -Fv 'scripts/crawl_psplive_roster.py' \
         | grep -Fv 'scripts/crawl_community_names.py' \
-        | grep -Fv 'scripts/crawl_topic_entity_graph.py' || true
+        | grep -Fv 'scripts/crawl_topic_entity_graph.py' \
+        | grep -Fv 'scripts/crawl_streamer_dynamics.py' || true
     printf '%s\n' "$watchdog_cron"
     printf '%s\n' "$upload_fatal_cron"
     printf '%s\n' "$streamer_registry_cron"
@@ -706,6 +708,7 @@ existing_crontab=$(crontab -l 2>/dev/null || true)
     printf '%s\n' "$timely_terms_cron"
     printf '%s\n' "$community_names_cron"
     printf '%s\n' "$topic_entity_cron"
+    printf '%s\n' "$streamer_dynamics_cron"
 } | crontab -
 crontab -l | grep -Fxq "$watchdog_cron"
 test "$(crontab -l | grep -Fxc "$watchdog_cron")" -eq 1
@@ -721,6 +724,8 @@ crontab -l | grep -Fxq "$community_names_cron"
 test "$(crontab -l | grep -Fxc "$community_names_cron")" -eq 1
 crontab -l | grep -Fxq "$topic_entity_cron"
 test "$(crontab -l | grep -Fxc "$topic_entity_cron")" -eq 1
+crontab -l | grep -Fxq "$streamer_dynamics_cron"
+test "$(crontab -l | grep -Fxc "$streamer_dynamics_cron")" -eq 1
 REMOTE_EXTERNAL_INSTALL
 
 # verify: the deployed runner is byte-identical to the committed one

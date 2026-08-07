@@ -16,6 +16,7 @@ def test_official_registry_is_weekly_while_news_and_community_are_daily():
     assert "timely_terms_cron='17 6 * * * " in deploy
     assert "community_names_cron='27 6 * * * " in deploy
     assert "topic_entity_cron='37 6 * * * " in deploy
+    assert "streamer_dynamics_cron='47 6 * * * " in deploy
     assert "source /opt/bilive/autoslice/cpa.env" in deploy
     for script in (
         "crawl_streamer_registry.py",
@@ -23,12 +24,17 @@ def test_official_registry_is_weekly_while_news_and_community_are_daily():
         "crawl_timely_terms.py",
         "crawl_community_names.py",
         "crawl_topic_entity_graph.py",
+        "crawl_streamer_dynamics.py",
     ):
         assert f"grep -Fv 'scripts/{script}'" in deploy
 
 
 def test_new_crawler_entrypoints_and_deploy_shell_parse():
-    for script in ("crawl_streamer_registry.py", "crawl_community_names.py"):
+    for script in (
+        "crawl_streamer_registry.py",
+        "crawl_community_names.py",
+        "crawl_streamer_dynamics.py",
+    ):
         completed = subprocess.run(
             [sys.executable, str(ROOT / "scripts" / script), "--help"],
             cwd=ROOT,
