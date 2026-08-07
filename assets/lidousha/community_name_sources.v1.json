@@ -1,5 +1,5 @@
 {
-  "schema_version": "vtuber-slice.community-name-sources.v2",
+  "schema_version": "vtuber-slice.community-name-sources.v3",
   "search_endpoint": "https://api.bilibili.com/x/web-interface/wbi/search/type",
   "reply_endpoint": "https://api.bilibili.com/x/v2/reply/wbi/main",
   "wbi_nav_endpoint": "https://api.bilibili.com/x/web-interface/nav",
@@ -20,6 +20,44 @@
   "max_evidence_per_mapping": 64,
   "query_suffixes": ["", " 切片"],
   "query_orders": ["pubdate", "totalrank", "click"],
+  "reviewed_relations": [
+    {
+      "entity_id": "bilibili:1298779265",
+      "surface": "绿冻",
+      "relation_kind": "fan_name_of",
+      "version": 1,
+      "reviewed_at": "2026-08-07",
+      "note": "灰泽满粉丝群体的名称，不是灰泽满本人的昵称或事件梗",
+      "exclusive_owner": true
+    },
+    {
+      "entity_id": "bilibili:1789460279",
+      "surface": "小博兔",
+      "relation_kind": "fan_name_of",
+      "version": 1,
+      "reviewed_at": "2026-08-07",
+      "note": "弥月粉丝群体的名称，不是弥月本人的昵称或事件梗",
+      "exclusive_owner": true
+    },
+    {
+      "entity_id": "bilibili:1298779265",
+      "surface": "满区",
+      "relation_kind": "alias_of",
+      "version": 1,
+      "reviewed_at": "2026-08-07",
+      "note": "社区用来称呼灰泽满本人的昵称",
+      "exclusive_owner": true
+    },
+    {
+      "entity_id": "bilibili:2030198123",
+      "surface": "猪塑",
+      "relation_kind": "meme_of",
+      "version": 1,
+      "reviewed_at": "2026-08-07",
+      "note": "观众在互动中把三理比作小猪的塑造行为，不是昵称或粉丝群体名",
+      "exclusive_owner": true
+    }
+  ],
   "acceptance": {
     "minimum_score": 8,
     "minimum_videos": 4,

@@ -90,19 +90,29 @@ The judge may propose exact metadata substrings and one of four relation types:
 | --- | --- |
 | `alias_of` | the community uses the surface to call the person |
 | `fan_name_of` | the surface names the person's fans, not the person |
-| `meme_of` | an incident/persona/appearance/object meme associated with the person |
+| `meme_of` | an incident/persona/appearance/object or interaction-behaviour meme associated with the person |
 | `associated_with` | a useful association whose type is still unclear |
 
 The judge has no mutation tools. Its output is rejected unless the surface is a
 safe 2–24-character atom and appears byte-for-byte in every cited BVID's title,
 description, tags, or fetched comments. Multiple registry members without an
 explicit one-to-one link must not be guessed.
-Before a relation is stored, a deterministic type guard checks fan-group
-grammar separately from evidence quantity. A surface used in constructions
-such as “become X”, “X come speak/gather”, or opposing X/Y fan camps is
-`fan_name_of`, not an alias for the streamer. High-confidence evidence can
-reclassify a previously accepted `alias_of` in place; the videos and acceptance
-history remain intact while the corrected type reaches the next snapshot.
+Relation typing is semantic rather than purely mechanical. CPA receives the
+grounded evidence rows plus deterministic features such as fan-group grammar
+and audience-address patterns; those features are hints, not automatic labels.
+Only the high-precision numbered-group form (for example, a surface ending in
+`民`) remains a hard type guard. Existing accepted relations are rejudged only
+when the evidence-card hash or semantic prompt version changes, so settled
+relations do not consume an LLM call every day.
+
+Versioned `reviewed_relations` in the profile config provide durable human
+adjudication of owner and relation kind. They can retype an already discovered
+mapping only when its evidence independently passes the target kind's quorum;
+they never create a surface, manufacture evidence, or make a candidate accepted.
+CPA disagreement is retained as a review flag rather than overriding the human
+adjudication. A behaviour word describing how viewers animal-code or otherwise
+persona-code a streamer remains `meme_of`; a derived “word + fan suffix” does
+not turn the base behaviour word into a fan-group name.
 
 Comments are a first-class discovery surface because fans, rather than official
 accounts, often originate nicknames and incident memes. Before the judge runs,
