@@ -84,7 +84,10 @@ FUNCTION_DEBT_LEDGER = {
     # 计算、consumed 账本、hook/scorecard 交换）接入 requeue 主循环。重活在
     # src/autoslice/selection_rescore.py，这里是状态机接线本身，行数属于
     # requeue_recoverable_talks 而不是可再抽的独立函数。
-    ("src/autoslice/delivery_recovery.py", "requeue_recoverable_talks"): 315,
+    # 2026-08-07 再 +4：Ivan 2026-08-07 狍哥案实施指令（闭环接线）——收口
+    # 调用 selection_rescore.execute_pending_rescores，唯一薄调用点覆盖
+    # exact-contract 与普通两条 requeue 分支。
+    ("src/autoslice/delivery_recovery.py", "requeue_recoverable_talks"): 319,
 }
 
 # 2026-07-31 冻结基线：12 项。同上，全部是欠账。
@@ -112,7 +115,10 @@ MODULE_DEBT_LEDGER = {
     # 2026-08-07 指令：「不是所有直播都是游戏，主题可能在主播 B 站动态里」）。
     # 检测/状态/渲染本体全在 src/autoslice/streamer_dynamics.py，runner 只留
     # import + 按日期绑定调用；测试 tests/lidousha/test_streamer_dynamics.py。
-    "scripts/free_session_autoslice.py": 2_070,
+    # 2026-08-07 +4：Ivan 2026-08-07 狍哥案实施指令（闭环接线）——produce
+    # 派发前过滤 rescore_pending 项（谓词在 selection_rescore.py），本体只
+    # 留 import + 4 行调用点。
+    "scripts/free_session_autoslice.py": 2_074,
     # 2026-07-31 +122：封面文案链修复（分行权威等级 + 锁定模式 + 缩略图合同背带
     # + max_lines 按合同封顶）。新增逻辑已抽成 _talk_locked_split /
     # _assert_talk_thumbnail_contract 两个模块级函数，_overlay_lidousha_cover_title
@@ -126,7 +132,9 @@ MODULE_DEBT_LEDGER = {
     "src/autoslice/cover_repair.py": 2_217,
     # 2026-08-07 +50：狍哥案实施指令（同上）——rescore_retry 路线（决策元组
     # 新字段、fingerprint 消费账本、requeue item 的 hook/scorecard 交换）。
-    "src/autoslice/delivery_recovery.py": 2_128,
+    # 2026-08-07 再 +4：Ivan 2026-08-07 狍哥案实施指令（闭环接线）——同上
+    # 的收口调用点。
+    "src/autoslice/delivery_recovery.py": 2_132,
     "src/autoslice/final_review_auditor.py": 3_433,
     "src/autoslice/live_source_review.py": 2_035,
     # 2026-08-07 +18：狍哥案实施指令（同上）——marker 选择改判

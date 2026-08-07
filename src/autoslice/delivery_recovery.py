@@ -1925,6 +1925,10 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
         )
     state["picks"] = kept
     state.setdefault("pending_talk", []).extend(requeued)
+    # 闭环接线（Ivan 2026-08-07 狍哥案实施指令）：这是 exact-contract 和
+    # 普通两条 requeue 路径共同经过的唯一收口——一次调用覆盖两条分支，
+    # 不新增第二个调用点。重活在 selection_rescore.py。
+    selection_rescore.execute_pending_rescores(date, state)
     return len(requeued)
 
 

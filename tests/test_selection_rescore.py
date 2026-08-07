@@ -5,21 +5,19 @@ matrix.  Each ``test_scenario_N_*`` docstring names the matrix row it covers;
 scenarios this file cannot cover with a real (non-faked) test are named in
 the module docstring below rather than silently skipped.
 
-NOT covered here (disclosed, not faked):
-- The live runner-tick wiring that would call
-  ``semantic_candidate_selector.rescore_candidate_scorecard`` from inside
-  ``scripts/free_session_autoslice.py`` / ``produce_slice_package.py`` and
-  feed its result back into ``candidate_selection.prioritize`` within one
-  tick.  That wiring is out of this bounded slice's explicit file list; the
-  two halves (delivery_recovery's requeue behavior, and the scorecard
-  regeneration primitive) are each tested directly instead.  Scenarios 3/4
-  of the design's matrix ("仍入 Top-N" / "跌出 Top-N") are therefore covered
-  at the unit level (ranking primitive + requeue item shape), not as an
-  end-to-end placement-into-pending_talk-vs-talk_backlog integration test.
-- Scenario 9's fixture is a shape-faithful reconstruction from the design
-  doc's own description of ``auto_220747_1271_1323`` (its real receipt lives
-  on the production host, not in this repo/worktree — confirmed absent by
-  grep before writing this file), not the literal production JSON.
+2026-08-07 闭环接线（Ivan「你把狍哥案解决了」实施指令）：``selection_rescore.
+execute_pending_rescores`` 现在从 ``delivery_recovery.requeue_recoverable_
+talks`` 尾部被调用（唯一薄接线点，覆盖 exact-contract 与普通两条 requeue
+分支），``scripts/free_session_autoslice.py`` 的 produce 派发前用
+``selection_rescore.split_produce_blocked_talk_items`` 挡住
+``rescore_pending`` 项。下面 ``test_scenario_3_*_integration`` /
+``test_scenario_4_*_integration`` / ``test_provider_failure_*`` /
+``test_rescore_pending_never_popped_for_produce`` 是这段接线的端到端覆盖。
+
+Scenario 9's fixture is a shape-faithful reconstruction from the design
+doc's own description of ``auto_220747_1271_1323`` (its real receipt lives
+on the production host, not in this repo/worktree — confirmed absent by
+grep before writing this file), not the literal production JSON.
 """
 
 from __future__ import annotations
@@ -41,7 +39,12 @@ from src.autoslice.source_fact_review import (
     source_fact_review_passes,
     validate_source_fact_rescore_candidate_receipt,
 )
-from src.autoslice.selection_scorecard import selection_rank_key, selection_scorecard_is_valid
+from src.autoslice.candidate_selection import prioritize
+from src.autoslice.selection_scorecard import (
+    normalize_selection_scorecard,
+    selection_rank_key,
+    selection_scorecard_is_valid,
+)
 from src.autoslice.talk_lane import classify_talk_failure
 
 import scripts.free_session_autoslice as runner
@@ -676,3 +679,242 @@ def test_scenario_10_rejected_talk_table_excludes_pending_but_keeps_terminal_fai
     ]
     assert [row["candidate_id"] for row in rejected_talk] == ["b"]
     assert callable(write_reports)  # import surface stays wired
+
+
+# --- Closeout: bounded execution wired into the live runner flow (Ivan
+# 2026-08-07 狍哥案实施指令，闭环接线) -----------------------------------
+
+
+def _uniform_scorecard(tier: int, *, all_dim: int, uncertainty: int = 0) -> dict[str, object]:
+    dims = {
+        name: all_dim
+        for name in (
+            "lidousha_centrality",
+            "stance_intensity",
+            "audience_salience",
+            "relationship_interaction",
+            "persona_reversal",
+            "comedic_payoff",
+            "self_contained",
+        )
+    }
+    card = normalize_selection_scorecard(
+        {
+            "tier": tier,
+            "tier_basis": "personal_stance",
+            "tier_reason": "fixture",
+            "tier_evidence_cues": [1, 2, 3, 4],
+            "dimensions": dims,
+            "uncertainty_penalty": uncertainty,
+            "fatigue_penalty": 0,
+        },
+        start_cue=1,
+        end_cue=4,
+    )
+    assert card is not None
+    return card
+
+
+def _filler_talk_item(cid: str) -> dict[str, object]:
+    return {
+        "cid": cid,
+        "candidate_id": cid,
+        "segment_path": "segA.mp4",
+        "start_ms": 0,
+        "end_ms": 5_000,
+        "hook": f"filler hook {cid}",
+        "confidence": 0.9,
+        "selection_scorecard": _uniform_scorecard(2, all_dim=3),
+    }
+
+
+def _pending_rescore_item(cid: str, *, repaired_hook: str) -> dict[str, object]:
+    receipt = {
+        "schema_version": selection_rescore.RESCORE_RECEIPT_SCHEMA,
+        "candidate_id": cid,
+        "repaired_hook": repaired_hook,
+        "repaired_hook_sha256": _sha256_text(repaired_hook),
+        "repaired_title": None,
+        "stale_scorecard_sha256": "sha256:stale",
+        "stale_reason": "test fixture",
+        "attempts": [],
+        "status": "PENDING",
+    }
+    return {
+        "cid": cid,
+        "candidate_id": cid,
+        "segment_path": "segA.mp4",
+        "start_ms": 0,
+        "end_ms": 5_000,
+        "hook": repaired_hook,
+        "confidence": 0.9,
+        "selection_scorecard": None,
+        "selected_repair": True,
+        "rescore_pending": True,
+        "source_fact_rescore": receipt,
+        "rescore_consumed_fingerprints": ["sha256:fp1"],
+    }
+
+
+def _write_recut_srt(base: object, date: str, cid: str, texts: list[str]) -> None:
+    out_root = base / "out" / date / cid / "replacement_recuts"
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    def fmt(ms: int) -> str:
+        h, rem = divmod(ms, 3_600_000)
+        m, rem = divmod(rem, 60_000)
+        s, msec = divmod(rem, 1_000)
+        return f"{h:02d}:{m:02d}:{s:02d},{msec:03d}"
+
+    blocks = []
+    for index, text in enumerate(texts, start=1):
+        start_ms = (index - 1) * 3_000
+        end_ms = start_ms + 2_500
+        blocks.append(f"{index}\n{fmt(start_ms)} --> {fmt(end_ms)}\n{text}\n")
+    (out_root / f"{cid}.recut.srt").write_text("\n".join(blocks), encoding="utf-8")
+
+
+def _rescore_payload(tier: int, all_dim: int) -> str:
+    dims = {
+        name: all_dim
+        for name in (
+            "lidousha_centrality",
+            "stance_intensity",
+            "audience_salience",
+            "relationship_interaction",
+            "persona_reversal",
+            "comedic_payoff",
+            "self_contained",
+        )
+    }
+    return json.dumps(
+        {
+            "status": "SUPPORTED",
+            "selection_scorecard": {
+                "tier": tier,
+                "tier_basis": "personal_stance",
+                "tier_reason": "test fixture",
+                "tier_evidence_cues": [1, 2, 3, 4],
+                "dimensions": dims,
+                "uncertainty_penalty": 0,
+                "fatigue_penalty": 0,
+            },
+        },
+        ensure_ascii=False,
+    )
+
+
+def test_scenario_3_rescore_success_high_score_reaches_pending_talk_top5(
+    tmp_path, monkeypatch
+) -> None:
+    """Design §6 scenario 3, end-to-end: requeue -> execute -> prioritize."""
+
+    date = "2026-08-07"
+    monkeypatch.setattr(runner, "BASE", tmp_path)
+    _write_recut_srt(tmp_path, date, "rescored_1", ["有人问狍哥是谁", "她说要去找狍哥表忠心", "说完就跟着队伍走了", "她说这样非常有安全感"])
+
+    fillers = [_filler_talk_item(f"filler_{i}") for i in range(5)]
+    winner = _pending_rescore_item("rescored_1", repaired_hook="她投奔狍哥求庇护")
+    state = {"picks": [], "pending_talk": fillers + [winner]}
+
+    executed = selection_rescore.execute_pending_rescores(
+        date, state, llm_call=lambda _prompt: _rescore_payload(tier=2, all_dim=4)
+    )
+    assert executed == 1
+    rescored_item = next(
+        item for item in state["pending_talk"] if item["cid"] == "rescored_1"
+    )
+    assert rescored_item["rescore_pending"] is False
+    assert rescored_item["selected_repair"] is False
+    assert selection_scorecard_is_valid(rescored_item["selection_scorecard"])
+    assert rescored_item["hook"] == "她投奔狍哥求庇护"
+    assert rescored_item["source_fact_rescore"]["attempts"][-1]["outcome"] == "RESCORED"
+
+    prioritize(state)
+    pending_ids = {item["cid"] for item in state["pending_talk"]}
+    assert "rescored_1" in pending_ids
+    assert len(state["pending_talk"]) == 5  # MAX_TALK_PICKS
+
+
+def test_scenario_4_rescore_success_low_score_falls_to_talk_backlog(
+    tmp_path, monkeypatch
+) -> None:
+    """Design §6 scenario 4: rescored candidate still RESERVE, not rejected."""
+
+    date = "2026-08-07"
+    monkeypatch.setattr(runner, "BASE", tmp_path)
+    _write_recut_srt(tmp_path, date, "rescored_2", ["有人问狍哥是谁", "她说要去找狍哥表忠心", "说完就跟着队伍走了", "她说这样非常有安全感"])
+
+    fillers = [_filler_talk_item(f"filler_{i}") for i in range(5)]
+    loser = _pending_rescore_item("rescored_2", repaired_hook="她投奔狍哥求庇护")
+    state = {"picks": [], "pending_talk": fillers + [loser]}
+
+    executed = selection_rescore.execute_pending_rescores(
+        date, state, llm_call=lambda _prompt: _rescore_payload(tier=2, all_dim=2)
+    )
+    assert executed == 1
+    rescored_item = next(
+        item for item in state["pending_talk"] if item["cid"] == "rescored_2"
+    )
+    assert rescored_item["rescore_pending"] is False
+    assert selection_scorecard_is_valid(rescored_item["selection_scorecard"])
+
+    prioritize(state)
+    pending_ids = {item["cid"] for item in state["pending_talk"]}
+    backlog_ids = {item["cid"] for item in state["talk_backlog"]}
+    assert "rescored_2" not in pending_ids
+    assert "rescored_2" in backlog_ids
+    # RESERVE, not a rejection: never moved into picks.
+    assert state["picks"] == []
+
+
+def test_provider_failure_survives_and_a_later_pass_with_a_live_llm_still_succeeds(
+    tmp_path, monkeypatch
+) -> None:
+    """Design §6 scenario 6: outcome=PROVIDER_UNAVAILABLE spends no budget."""
+
+    date = "2026-08-07"
+    monkeypatch.setattr(runner, "BASE", tmp_path)
+    # No recut SRT written yet: the executor cannot find its source cues.
+    item = _pending_rescore_item("rescored_3", repaired_hook="她投奔狍哥求庇护")
+    state = {"picks": [], "pending_talk": [item]}
+
+    def raising_llm(_prompt: str) -> str:
+        raise AssertionError("must not call the LLM when the source artifact is missing")
+
+    executed = selection_rescore.execute_pending_rescores(date, state, llm_call=raising_llm)
+    assert executed == 1
+    survivor = state["pending_talk"][0]
+    assert survivor["rescore_pending"] is True
+    assert survivor["rescore_consumed_fingerprints"] == ["sha256:fp1"]  # unconsumed further
+    attempts = survivor["source_fact_rescore"]["attempts"]
+    assert attempts[-1]["outcome"] == "PROVIDER_UNAVAILABLE"
+    assert survivor.get("status") != "candidate_rejected"
+    assert state["picks"] == []
+
+    # Artifact now available; a later tick with a live LLM must still succeed —
+    # proving the first failure did not burn the one-shot budget.
+    _write_recut_srt(tmp_path, date, "rescored_3", ["有人问狍哥是谁", "她说要去找狍哥表忠心", "说完就跟着队伍走了", "她说这样非常有安全感"])
+    executed_again = selection_rescore.execute_pending_rescores(
+        date, state, llm_call=lambda _prompt: _rescore_payload(tier=2, all_dim=4)
+    )
+    assert executed_again == 1
+    healed = state["pending_talk"][0]
+    assert healed["rescore_pending"] is False
+    outcomes = [row["outcome"] for row in healed["source_fact_rescore"]["attempts"]]
+    assert outcomes == ["PROVIDER_UNAVAILABLE", "RESCORED"]
+
+
+def test_rescore_pending_never_popped_for_produce() -> None:
+    """The produce-eligibility guard: rescore_pending items are held back."""
+
+    ready = {"cid": "a", "rescore_pending": False}
+    also_ready = {"cid": "b"}
+    blocked = {"cid": "c", "rescore_pending": True}
+    eligible, held = selection_rescore.split_produce_blocked_talk_items(
+        [ready, also_ready, blocked]
+    )
+    assert [item["cid"] for item in eligible] == ["a", "b"]
+    assert [item["cid"] for item in held] == ["c"]
+    assert selection_rescore.produce_eligible(blocked) is False
+    assert selection_rescore.produce_eligible(ready) is True

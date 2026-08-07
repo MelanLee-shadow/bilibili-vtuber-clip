@@ -839,6 +839,7 @@ from src.autoslice.candidate_selection import (  # noqa: E402
     prioritize,
 )
 from src.autoslice.exact_talk_recovery_scope import maintain_delivery_recovery_scope, suppress_exact_talk_recovery_song_work  # noqa: E402
+from src.autoslice.selection_rescore import split_produce_blocked_talk_items  # noqa: E402
 from src.autoslice.cover_repair import (  # noqa: E402
     COVER_TRANSACTION_SCHEMA_VERSION,
     _validate_repaired_cover_generation,
@@ -1799,10 +1800,13 @@ def process_date(date: str) -> None:
     # not re-done.  CPA was gated at entry; a mid-batch outage just fails a slice.
     while state["pending_talk"]:
         talk_items = list(state["pending_talk"])
+        talk_items, rescore_blocked_items = split_produce_blocked_talk_items(talk_items)
+        if rescore_blocked_items:
+            log(f"{date}: {len(rescore_blocked_items)} talk item(s) held for pending source-fact rescore")
         results = produce_batch(date, talk_items, produce_talk)
         # deploy-yield 只返回已开工项（输入序前缀）；未派发的尾巴必须留在
         # 队列里等下个 tick，否则候选无声蒸发（2026-07-27 850_940 批次案）。
-        deferred_tail = talk_items[len(results):]
+        deferred_tail = talk_items[len(results):] + rescore_blocked_items
         retry: list[dict] = []
         rejected = 0
         recoverable_failure = False
