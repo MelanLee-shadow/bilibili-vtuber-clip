@@ -127,8 +127,18 @@ def project_terminal_batch_state(
     failures = [
         row
         for row in picks + songs
-        if row.get("status") in talk_failure_statuses
-        or row.get("status") in {"candidate_rejected", cover_pending_status}
+        if (
+            row.get("status") in talk_failure_statuses
+            or row.get("status") in {"candidate_rejected", cover_pending_status}
+        )
+        # 狍哥案修复（2026-08-07）：有界重评分车道的 status="failed" 行计入
+        # retry_wait（复用既有 next_retry_at_epoch/scheduled_talk_retry_epoch
+        # 机制），不算 failure、不冒充 review_ready_with_failures。真终态失败
+        # 走 status=candidate_rejected，仍照常计入。
+        and not (
+            row.get("status") == "failed"
+            and row.get("failure_kind") == "selection_rescore"
+        )
     ]
 
     exact_status = str(exact_closure.get("status") or "")

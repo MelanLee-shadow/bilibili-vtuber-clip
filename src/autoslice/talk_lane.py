@@ -1051,6 +1051,24 @@ def classify_talk_failure(attempt_output: str) -> dict:
             "title_fact_consistency",
             False,
         )
+    elif "SOURCE_FACT_REPAIRED_RESCORE_REQUIRED" in tail:
+        # 狍哥案修复（2026-08-07）：hook 已修正、旧卡 INCOMPATIBLE，进有界
+        # 重评分车道而不是终态 story_contract 拒绝——recoverable=True 是
+        # 状态机的核心，backfillable_talk_rejection 只判 story_contract。
+        kind, stage, recoverable = (
+            "selection_rescore",
+            "source_fact_repair",
+            True,
+        )
+    elif "SOURCE_FACT_REVIEW_UNRESOLVED" in tail:
+        # 语义污染修复的另一半：REPAIR_CYCLE/TITLE_AUTHORITY 等非"真耗尽"
+        # 分支不再字面写 EXHAUSTED，但仍是同一条终态语义——只重命名 marker，
+        # 不改变可恢复性。
+        kind, stage, recoverable = (
+            "story_contract",
+            "source_fact_repair",
+            False,
+        )
     elif "SOURCE_FACT_REPAIR_EXHAUSTED" in tail:
         kind, stage, recoverable = (
             "story_contract",
@@ -1752,7 +1770,11 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     # 复活审计块贯穿 requeue item → 新 pick，缺一环即断链
     if item.get("revivals"):
         result["revivals"] = list(item["revivals"])
-    for field, value_type in (("sanctioned_revival_retry", dict), ("final_review_carryover_consumed_fingerprints", list)):
+    for field, value_type in (
+        ("sanctioned_revival_retry", dict),
+        ("final_review_carryover_consumed_fingerprints", list),
+        ("rescore_consumed_fingerprints", list),
+    ):
         if isinstance(item.get(field), value_type):
             result[field] = value_type(item[field])
     # Classify only bytes written by this subprocess attempt.  The log is
@@ -1770,6 +1792,19 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
             result["next_retry_at"] = time.strftime(
                 "%Y-%m-%dT%H:%M:%SZ", time.gmtime(retry_epoch)
             )
+        if result["failure_kind"] == "selection_rescore":
+            # 狍哥案修复：从 finalization 侧写的 sidecar 读回修正 hook/title，
+            # 绑定这次失败的 fingerprint，落 PENDING source-fact-rescore.v1
+            # 回执供 delivery_recovery 有界重评分车道消费。
+            from src.autoslice import selection_rescore
+
+            receipt = selection_rescore.attach_pending_rescore_receipt(
+                out_root / cid,
+                candidate_id=cid,
+                failure_fingerprint=str(result["failure_fingerprint"]),
+            )
+            if receipt is not None:
+                result["source_fact_rescore"] = receipt
         if (
             "TITLE_AUTHORITY_UNRESOLVED" in tail
             and str(result.get("title_authority_status") or "").startswith("UNRESOLVED")

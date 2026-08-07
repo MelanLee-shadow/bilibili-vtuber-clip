@@ -16,7 +16,14 @@ from src.autoslice.title_policy import publish_title_policy_violations
 
 
 SCHEMA_VERSION = "lidousha-source-fact-review.v1"
+RESCORE_CANDIDATE_SCHEMA_VERSION = "source-fact-rescore-candidate.v1"
 MAX_REVIEW_PASSES = 5
+# 程度升级词面：狍哥案（2026-08-07 §7）机器可复核部分——degree 槽只准逐字或
+# 降级，不得升级；升级词若不在 before 原文也不在任何 evidence 原文中出现，
+# 判定该 changed_surface 无效（CPA_TEXT_REVIEW_INVALID），逼判者要么不升级
+# 要么必须逐字引用来源。这条不依赖 claim_decomposition 字段本身，纯词面
+# 比对，保持对既有回执/测试 fixture 的完全向后兼容。
+_DEGREE_UPGRADE_WORDS = ("最", "所有", "永远", "绝对", "彻底", "唯一", "一定", "必然")
 # 同一 review pass 内的 provider 级重试帽：这道门是 LLM 采样，同一份输入一次
 # 形状无效/调用失败就把整次产线判死是把骰子当结论。重试只针对 provider 层
 # 失败（形状无效/调用异常），语义结果（KEEP/REPAIR）永不重掷；UNAVAILABLE
@@ -106,6 +113,17 @@ def _prompt(
         "语义还原，不能仅因它没有逐字出现在单独一行字幕里而拒绝。反之，只有孤立"
         "近音、没有相邻或同主题证据时必须修复。长期记忆和普通 ASR 初稿只提供"
         "候选，不能单独授权新事实。\n"
+        "合理概括 vs 无依据升级：changed_surfaces 每行可选附 claim_decomposition，"
+        "把改动拆成 actor/action/object/degree/outcome 五槽，每槽标"
+        "SUPPORTED_BY_CUES（cue 逐字支持）、GENERALIZED_FROM（由连续/邻近 cue 链"
+        "共同蕴含的间接概括）或 UNSUPPORTED。允许的概括：每槽至少一条 cue 证据、"
+        "无槽为 UNSUPPORTED 的间接言语行为整体归纳（例如多条连续弹幕/发言共同"
+        "蕴含“投奔求庇护”）。禁止的升级（任一即整行无效，必须改判 REPAIR 给出"
+        "正确文案而不是放弃）：受事换人（把对 A 的动作写成对 B 本人）、因果虚构"
+        "（把两件独立的事编成前者导致后者的戏剧闭环）、程度升级（degree 槽只能"
+        "逐字或降级，不得把“非常”写成“最”“所有”“永远”这类升级词，除非升级词本身"
+        "逐字出现在证据原文里）、把提案/意向写成既成事实。单个窄音频 cue 的裁决"
+        "只拥有该 cue 自己的字面，不得反向抹除其他 cue 链共同蕴含的语义支持。\n"
         "若两份文案全部受支持，status=KEEP，两个 final 字段都必须逐字等于输入。"
         "还要检查省略是否改变了语法角色、条件或因果：来源若是“今天是某人的生日，"
         "转发这条信息才能得奖”，不得概括为“转发某人的生日能得奖”或“生日能得奖”；"
@@ -211,6 +229,24 @@ def _evidence_row_is_bound(
     )
 
 
+def _degree_upgrade_unsupported(
+    before: str, after: str, evidence: list[str]
+) -> bool:
+    """Reject a degree upgrade unless the upgraded word is itself quoted evidence.
+
+    ``_evidence_row_is_bound`` already proves each evidence row is a literal
+    substring of the source; this only asks whether the *specific* upgrade
+    word appears in that already-bound text, not whether the row is bound.
+    """
+
+    added = [
+        word for word in _DEGREE_UPGRADE_WORDS if word in after and word not in before
+    ]
+    if not added:
+        return False
+    return not any(any(word in row for word in added) for row in evidence)
+
+
 def _valid_changed_surface(
     value: object,
     *,
@@ -245,6 +281,9 @@ def _valid_changed_surface(
                 clip_context_prompt=clip_context_prompt,
             )
             for row in evidence
+        )
+        and not _degree_upgrade_unsupported(
+            str(value.get("before")), str(value.get("after")), evidence
         )
     )
 
@@ -546,6 +585,11 @@ def review_and_repair_source_facts(
                 or review["selection_scorecard_review"].get("status") != "COMPATIBLE"
             )
         ):
+            # 狍哥案修复（2026-08-07，docs/reviews/2026-08-07-
+            # source-fact-rescore-design.md §3.1）：修正成果不再只活在
+            # passes[-1]——rescore_candidate 块把它挂到回执顶层，供下游有界
+            # 重评分车道消费。final_selection_hook/title 仍回置原文，
+            # "未授权不落盘"不变式不变；只有这个新块携带修正稿。
             return _finalize_receipt(
                 {
                     "schema_version": SCHEMA_VERSION,
@@ -558,6 +602,23 @@ def review_and_repair_source_facts(
                     "final_title": title,
                     "passes": passes,
                     "provider_retries": provider_retries,
+                    "rescore_candidate": {
+                        "schema_version": RESCORE_CANDIDATE_SCHEMA_VERSION,
+                        "repaired_selection_hook": repaired_hook,
+                        "repaired_selection_hook_sha256": _sha256_text(repaired_hook),
+                        "repaired_title": repaired_title,
+                        "repaired_title_sha256": _sha256_text(repaired_title),
+                        "stale_selection_scorecard_sha256": _sha256_json(
+                            selection_scorecard
+                        ),
+                        "selection_scorecard_review": (
+                            dict(review["selection_scorecard_review"])
+                            if isinstance(
+                                review.get("selection_scorecard_review"), Mapping
+                            )
+                            else None
+                        ),
+                    },
                 }
             )
         next_surfaces = (repaired_hook, repaired_title)
@@ -749,4 +810,68 @@ def validate_source_fact_review(
     return bool(
         final_pass.get("selection_hook_sha256") == _sha256_text(selection_hook)
         and final_pass.get("title_sha256") == _sha256_text(title)
+    )
+
+
+def validate_source_fact_rescore_candidate_receipt(
+    review: object,
+    *,
+    selection_hook: str,
+    title: str,
+    selection_scorecard: object = None,
+) -> bool:
+    """Recheck a REPAIR_SCORECARD_STALE receipt's ``rescore_candidate`` block.
+
+    Deliberately a sibling of ``validate_source_fact_review`` rather than an
+    extension of it: that function's every existing call site treats a
+    ``True`` result as "this receipt is a deliverable PASS", gated by
+    ``source_fact_review_passes`` (status == "PASS").  A FAILED/
+    REPAIR_SCORECARD_STALE receipt must never validate as deliverable through
+    that gate, so the bounded rescore lane gets its own narrow verifier
+    instead of widening the shared one's contract.
+    """
+
+    if not isinstance(review, Mapping):
+        return False
+    receipt = dict(review)
+    declared_receipt_sha256 = receipt.pop("receipt_sha256", None)
+    if not isinstance(declared_receipt_sha256, str):
+        return False
+    if _finalize_receipt(receipt).get("receipt_sha256") != declared_receipt_sha256:
+        return False
+    if (
+        review.get("schema_version") != SCHEMA_VERSION
+        or review.get("status") != "FAILED"
+        or review.get("decision") != "REPAIR_SCORECARD_STALE"
+        or review.get("reason_code") != "SOURCE_FACT_REPAIRED_HOOK_SCORECARD_STALE"
+        or review.get("final_selection_hook") != selection_hook
+        or review.get("final_title") != title
+    ):
+        return False
+    passes = review.get("passes")
+    if not isinstance(passes, list) or not passes or not isinstance(passes[-1], Mapping):
+        return False
+    last_pass = passes[-1]
+    if (
+        last_pass.get("status") != "REPAIR"
+        or last_pass.get("selection_scorecard_sha256") != _sha256_json(selection_scorecard)
+    ):
+        return False
+    block = review.get("rescore_candidate")
+    if not isinstance(block, Mapping):
+        return False
+    repaired_hook = last_pass.get("final_selection_hook")
+    repaired_title = last_pass.get("final_title")
+    return bool(
+        block.get("schema_version") == RESCORE_CANDIDATE_SCHEMA_VERSION
+        and isinstance(repaired_hook, str)
+        and block.get("repaired_selection_hook") == repaired_hook
+        and block.get("repaired_selection_hook_sha256") == _sha256_text(repaired_hook)
+        and isinstance(repaired_title, str)
+        and block.get("repaired_title") == repaired_title
+        and block.get("repaired_title_sha256") == _sha256_text(repaired_title)
+        and block.get("stale_selection_scorecard_sha256")
+        == _sha256_json(selection_scorecard)
+        and block.get("selection_scorecard_review")
+        == last_pass.get("selection_scorecard_review")
     )

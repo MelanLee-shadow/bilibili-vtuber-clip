@@ -130,7 +130,15 @@ def exact_talk_contract_closure(state: dict) -> dict[str, object]:
         if len(attempts) > 1 or len(queued) > 1 or (attempts and queued):
             disposition = "DUPLICATE_OR_CONFLICTING"
         elif queued:
-            disposition = "SELECTED_PENDING"
+            # 狍哥案修复（2026-08-07 design §5）：重评分车道占用合同槽位时
+            # 诚实呈现 RESCORE_PENDING——闭包仍是 INCOMPLETE（不是
+            # CURRENT_COMPLIANT_DELIVERY），但不能和普通"已选待产"混淆；
+            # 完成后按新卡在原槽位继续，绝不补入其他候选。
+            disposition = (
+                "RESCORE_PENDING"
+                if queued[0].get("rescore_pending") is True
+                else "SELECTED_PENDING"
+            )
         elif not attempts:
             disposition = "MISSING"
         else:

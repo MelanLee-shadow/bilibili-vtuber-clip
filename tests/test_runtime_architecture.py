@@ -45,7 +45,13 @@ FUNCTION_DEBT_LEDGER = {
     ("src/autoslice/producer_boundary_resolution.py", "_repair_boundary"): 305,
     ("src/autoslice/producer_package_finalization.py", "_materialize_final_recut"): 320,
     ("src/autoslice/producer_package_finalization.py", "_run_exact_final_review_gate"): 340,
-    ("src/autoslice/producer_package_finalization.py", "_stage_record"): 330,
+    # 2026-08-07 +17：狍哥案实施指令（Ivan 2026-08-07「你把狍哥案解决了」，
+    # docs/reviews/2026-08-07-source-fact-rescore-design.md）——
+    # SOURCE_FACT_REPAIRED_HOOK_SCORECARD_STALE 不再落 EXHAUSTED，改写
+    # pending rescore sidecar 并抛 SOURCE_FACT_REPAIRED_RESCORE_REQUIRED；
+    # 新增逻辑的重量已推给 src/autoslice/selection_rescore.py，这里只留
+    # 薄调用点。测试 tests/test_selection_rescore.py。
+    ("src/autoslice/producer_package_finalization.py", "_stage_record"): 335,
     ("src/autoslice/producer_text_finalization.py", "verify_chat_authority_final_surfaces"): 335,
     # 2026-07-31 +40：SC 发送者裁决对 v2 精确重放 redelivery 的 deferral
     # （jyl-r10 案：CPA 宕机/岔听下 UNRESOLVED，而该 cue 终局注定被基线盖回；
@@ -74,6 +80,11 @@ FUNCTION_DEBT_LEDGER = {
     # 2026-07-31 +3：同上，截图/polish 路径的 contract 穿透。
     ("src/autoslice/publish_staging.py", "_stage_screenshot_direct_cover"): 322,
     ("src/autoslice/song_lane.py", "produce_song"): 311,
+    # 2026-08-07 新记：同上狍哥案实施指令——rescore_retry 路线（fingerprint
+    # 计算、consumed 账本、hook/scorecard 交换）接入 requeue 主循环。重活在
+    # src/autoslice/selection_rescore.py，这里是状态机接线本身，行数属于
+    # requeue_recoverable_talks 而不是可再抽的独立函数。
+    ("src/autoslice/delivery_recovery.py", "requeue_recoverable_talks"): 315,
 }
 
 # 2026-07-31 冻结基线：12 项。同上，全部是欠账。
@@ -113,10 +124,14 @@ MODULE_DEBT_LEDGER = {
     # 2026-08-02 +166：bind_manual_package_cover——手动产线包封面回写（同一套
     # 校验/binding/原子写；Ivan 8/2 /goal 授权；测试 test_manual_cover_bind.py）。
     "src/autoslice/cover_repair.py": 2_217,
-    "src/autoslice/delivery_recovery.py": 2_078,
+    # 2026-08-07 +50：狍哥案实施指令（同上）——rescore_retry 路线（决策元组
+    # 新字段、fingerprint 消费账本、requeue item 的 hook/scorecard 交换）。
+    "src/autoslice/delivery_recovery.py": 2_128,
     "src/autoslice/final_review_auditor.py": 3_433,
     "src/autoslice/live_source_review.py": 2_035,
-    "src/autoslice/producer_package_finalization.py": 2_765,
+    # 2026-08-07 +18：狍哥案实施指令（同上）——marker 选择改判
+    # SOURCE_FACT_REPAIRED_RESCORE_REQUIRED + 写 pending sidecar。
+    "src/autoslice/producer_package_finalization.py": 2_771,
     # 2026-07-31 +40：同上（SC 发送者 deferral）。
     "src/autoslice/producer_text_pipeline.py": 2_197,
     # 2026-07-31 +12：contract 穿透接线（形参 + 4 个调用点）。

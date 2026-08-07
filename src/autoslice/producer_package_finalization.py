@@ -86,6 +86,7 @@ from src.autoslice.source_subtitle_truth import (
     source_truth_owner_windows,
 )
 from src.autoslice.source_fact_review import source_fact_review_passes
+from src.autoslice import selection_rescore
 from src.autoslice.surface_canon import (
     canonicalize_japanese_native_script_surfaces,
     normalize_japanese_native_script_surfaces,
@@ -2375,15 +2376,20 @@ def _stage_record(
             if isinstance(source_fact_review, Mapping)
             else "missing_receipt"
         )
-        marker = (
-            "SOURCE_FACT_REVIEW_INFRA_UNRESOLVED"
-            if reason
-            in {
-                "CPA_TEXT_REVIEW_UNAVAILABLE",
-                "CPA_TEXT_REVIEW_CALL_FAILED",
-            }
-            else "SOURCE_FACT_REPAIR_EXHAUSTED"
+        # 狍哥案修复（2026-08-07 Ivan「你把狍哥案解决了」授权，design §3.2）：
+        # marker 分类本身是纯函数，抽到 selection_rescore.py 独立可测；
+        # RESCORE_REQUIRED 一支还要落 pending sidecar，留在这个薄调用点。
+        marker = selection_rescore.classify_source_fact_review_marker(
+            source_fact_review
         )
+        if marker == "SOURCE_FACT_REPAIRED_RESCORE_REQUIRED" and isinstance(
+            source_fact_review, Mapping
+        ):
+            selection_rescore.write_pending_rescore_sidecar(
+                recut_dir,
+                candidate_id=cid,
+                source_fact_review=source_fact_review,
+            )
         raise SystemExit(f"{marker}: {reason}")
     raw_final_story_contract = record.get("story_contract")
     if not isinstance(raw_final_story_contract, Mapping):

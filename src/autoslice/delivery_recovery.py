@@ -29,6 +29,7 @@ from src.autoslice.recovery_title_authority import (
     expected_recovery_publish_title,
     validate_recovery_publication_authority,
 )
+from src.autoslice import selection_rescore
 from src.autoslice.selection_scorecard import apply_reviewed_selection_calibration
 
 
@@ -92,6 +93,8 @@ class _TalkRetryDecision(NamedTuple):
     carryover_fingerprint: str | None
     carryover_retry: bool
     sanctioned_retry: bool
+    rescore_fingerprint: str | None
+    rescore_retry: bool
 
 
 def _pending_sanctioned_revival_retry(
@@ -204,6 +207,12 @@ def _talk_retry_decision(
     carryover_fingerprint = _unconsumed_final_review_carryover(record)
     carryover_retry = carryover_fingerprint is not None
     sanctioned_retry = sanctioned_revival_retry is not None
+    # 狍哥案修复（2026-08-07）：selection_rescore 有自己的有界一次性预算
+    # （sha256(failure_fingerprint + repaired_hook_sha256)，CAP=2），独立于
+    # 通用 transient/lifetime 重试计数——同一 fingerprint 只吃一次，与
+    # final_review_carryover 同款账本模式（rescore_consumed_fingerprints）。
+    rescore_fingerprint = selection_rescore.unconsumed_rescore_fingerprint(record)
+    rescore_retry = rescore_fingerprint is not None
     if (
         infrastructure_waiting
         and not sanctioned_retry
@@ -220,6 +229,7 @@ def _talk_retry_decision(
             or cover_route_retry
             or sanctioned_retry
             or carryover_retry
+            or rescore_retry
         )
         or (
             retry_count >= _runner.TALK_REPAIR_LIFETIME_RETRY_CAP
@@ -228,6 +238,7 @@ def _talk_retry_decision(
             and not cover_route_retry
             and not sanctioned_retry
             and not carryover_retry
+            and not rescore_retry
         )
     ):
         return None
@@ -242,6 +253,8 @@ def _talk_retry_decision(
         carryover_fingerprint,
         carryover_retry,
         sanctioned_retry,
+        rescore_fingerprint,
+        rescore_retry,
     )
 
 
@@ -275,7 +288,14 @@ class RecoveryReviewRerunError(ValueError):
 
 
 def backfillable_talk_rejection(result: dict) -> tuple[str, str] | None:
-    """Return the persisted rejection status/reason when a reserve may replace it."""
+    """Return the persisted rejection status/reason when a reserve may replace it.
+
+    ``failure_kind == "selection_rescore"`` is deliberately its own kind, not
+    a member of the ``{"subtitle_authority", "story_contract"}`` set below —
+    that keeps the bounded rescore lane out of ``candidate_rejected +
+    story_contract_unresolved_backfilled`` without touching either real
+    terminal kind's semantics (狍哥案修复, 2026-08-07).
+    """
 
     status = result.get("status")
     if status in {
@@ -1677,6 +1697,8 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             carryover_fingerprint,
             carryover_retry,
             sanctioned_retry,
+            rescore_fingerprint,
+            rescore_retry,
         ) = decision
         segment_name = Path(str(record.get("segment") or record.get("segment_path") or "")).name
         segment = _runner.REC_ROOT / date / segment_name
@@ -1763,11 +1785,24 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             "end_ms": min(seg_dur, end_ms) if seg_dur else end_ms,
             "xml": str(xml) if (xml := _runner.find_danmaku_xml(segment)) else None,
             **chat_binding,
-            "hook": record.get("hook", ""),
+            # 狍哥案修复：rescore requeue 携带修正 hook，清空旧卡（重评分
+            # 车道重新提卡）；其余路线的 hook 不变。
+            "hook": (
+                str(
+                    (record.get("source_fact_rescore") or {}).get("repaired_hook")
+                    or record.get("hook", "")
+                )
+                if rescore_retry
+                else record.get("hook", "")
+            ),
             "confidence": record.get("confidence"),
-            "selection_scorecard": apply_reviewed_selection_calibration(
-                cid,
-                record.get("selection_scorecard"),
+            "selection_scorecard": (
+                None
+                if rescore_retry
+                else apply_reviewed_selection_calibration(
+                    cid,
+                    record.get("selection_scorecard"),
+                )
             ),
             "session_relation_authority": record.get("session_relation_authority"),
             "lane": record.get("lane", ""),
@@ -1782,6 +1817,7 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
                 and not cover_route_retry
                 and not sanctioned_retry
                 and not carryover_retry
+                and not rescore_retry
                 else 0
             ),
             "retry_reason": (
@@ -1789,6 +1825,8 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
                 if sanctioned_retry
                 else "final_review_carryover"
                 if carryover_retry
+                else "source_fact_rescore"
+                if rescore_retry
                 else "cover_route_regeneration"
                 if cover_route_retry
                 else "pipeline_fingerprint_changed"
@@ -1843,6 +1881,18 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             item["given_title"] = given_title
             item["recovery_publication_authority"] = (
                 publication_authority
+            )
+        if rescore_retry:
+            item["rescore_pending"] = True
+            item["source_fact_rescore"] = dict(record.get("source_fact_rescore") or {})
+            consumed_rescores = [
+                value
+                for value in (record.get("rescore_consumed_fingerprints") or [])
+                if isinstance(value, str)
+            ]
+            consumed_rescores.append(rescore_fingerprint)
+            item["rescore_consumed_fingerprints"] = list(
+                dict.fromkeys(consumed_rescores)
             )
         requeued.append(item)
         existing_pending.add(cid)

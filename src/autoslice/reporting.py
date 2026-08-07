@@ -54,7 +54,13 @@ def _current_talk_reserves(state: dict, attempts: list[dict]) -> list[dict]:
             if exact_ids and cid not in exact_ids:
                 continue
             row = dict(raw)
-            row["candidate_disposition"] = disposition
+            # 狍哥案修复（2026-08-07）：有界重评分车道的 pending_talk 行不是
+            # 普通"已选待产"，诚实标出 RESCORE_PENDING，别和常规排队混在一起。
+            row["candidate_disposition"] = (
+                "RESCORE_PENDING"
+                if disposition == "SELECTED_PENDING" and raw.get("rescore_pending") is True
+                else disposition
+            )
             reserves.append(row)
             seen.add(cid)
     return reserves
@@ -237,6 +243,13 @@ def write_reports(date: str, state: dict) -> None:
             "failed",
             "quarantine",  # read-only compatibility for pre-2026-07-10 state
         }
+        # 狍哥案修复：status="failed" 的 selection_rescore 行是有界重评分
+        # 车道的临时待重试态，不是拒绝——终态失败会走 status=candidate_rejected
+        # + rejection_reason=selection_rescore_failed，仍正常出现在这张表里。
+        and not (
+            row.get("status") == "failed"
+            and row.get("failure_kind") == "selection_rescore"
+        )
         and (not exact_ids or _candidate_id(row) in exact_ids)
     ]
     reserves = _current_talk_reserves(state, picks)
