@@ -9,10 +9,13 @@ Updated: 2026-08-07 by Claude（8/7 鹅鸭杀场三症状通病修复会话）�
   `claude/session-live-context` 基于 beda5bf 之上（马有利/狍哥 roster+glossary、
   会话游戏语境通道、评分卡 rescore 设计稿），部署以该分支 tip 为准。
   **main 的下一次上游化必须合并这两串提交，不得从 main 直接部署（会回滚 codex 17 提交）。**
-- **说话人二分已验证**：CAM++ 二分 finalizer 对 8/7 `auto_203735_555_680` 冒烟
-  READY（61 cue=25 主播+36 连线，LDS/GUEST 双样式）。生产翻转方式=runner cron 行加
-  `env AUTOSLICE_SPEAKER_MODE=auto`（默认仍 uniform_host；翻转即撤销 7/13 uniform 政策，
-  不确定场会 speaker_review_required 持留，符合 40-doc speaker_mode=required 口径）。
+- **说话人二分已验证并已翻转**：CAM++ 二分 finalizer 对 8/7 `auto_203735_555_680` 冒烟
+  READY（61 cue=25 主播+36 连线，LDS/GUEST 双样式）。8/7 部署（`78f64aa`，deploy 门内
+  3036 全绿）后 runner cron 行已加 `env AUTOSLICE_SPEAKER_MODE=auto`（备份
+  `/opt/bilive/autoslice/crontab.backup-20260807-speakermode`；翻转撤销 7/13 uniform 政策，
+  不确定场 speaker_review_required 持留，符合 40-doc 口径；回滚=恢复备份 crontab）。
+  roster 快照已手动刷新（马有利/狍哥/香香烧烤 已达生产 prompt）；8/7 游戏语境
+  state=RESOLVED 鹅鸭杀（17 特征词面×90 次）。
 - roster crawler 是每周日 06:12 cron；member_overrides 别名变更后需手动跑一次
   `scripts/crawl_psplive_roster.py --write /opt/bilive/autoslice/state/psplive_roster.json` 才达生产 prompt。
 - 评分卡 rescore 状态机**设计稿**（未实施）：
