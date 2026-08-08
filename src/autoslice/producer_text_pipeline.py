@@ -92,6 +92,7 @@ from src.autoslice.producer_source_truth_authority import (
     reconcile_required_source_truth_chat_authority,
     verify_source_truth_preview_formal_binding,
 )
+from src.autoslice.restatement_recall import merge_restatement_priority_findings
 from src.autoslice.song_name_pin import pin_song_names_in_srt
 from src.autoslice.terminal_closure_guard import preserve_context_only_terminal_closure
 from src.autoslice.foreign_span_witness import (
@@ -2147,6 +2148,12 @@ def run_text_pipeline(
             final_srt_text,
             timeline_offset_ms=timeline_offset_ms,
             entity_verifier=entity_context.verify_confusable_entity,
+        )
+        # 2026-08-08 +6：会话内重述修复接线（Ivan 8/8 指令，docs/reviews/
+        # 2026-08-08-restatement-repair-design.md §4）——重述候选并入同一
+        # exact-final 优先 findings 通道；裁决层不变，微线索 audit 原样透传。
+        microcue_findings, microcue_audit = merge_restatement_priority_findings(
+            final_srt_text, microcue_findings, microcue_audit, out_root=out_root, cid=cid
         )
         exact_correction_audit = exact_delivery_correction_audit(
             final_srt_text=final_srt_text,
