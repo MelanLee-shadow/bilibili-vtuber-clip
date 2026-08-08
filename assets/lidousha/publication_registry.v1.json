@@ -228,6 +228,12 @@
    "status": "published",
    "bvid": "BV1ScGN6cE47",
    "note": "2026-07-31 authorized upload；CPA title-cover joint QC + public/Creator/section/cover-byte verified"
+  },
+  {
+   "candidate_id": "auto_210739_1142_1436",
+   "recording_date": "2026-08-07",
+   "status": "hold_pending_review",
+   "note": "Ivan 2026-08-08 裁定：非李豆沙主角（抱团叙事主线在他人），T1/86.5 高分仍不可作为频道成品发布；仅作流水线优化材料（42 处文字+8 处说话人订正已收割入 reports/ivan_truth_harvest/2026-08-07）。放行需 Ivan 明示。"
   }
  ]
 }

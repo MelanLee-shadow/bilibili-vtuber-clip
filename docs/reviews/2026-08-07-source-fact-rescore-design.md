@@ -200,3 +200,15 @@ justification 缺乏可审计结构。补丁（改 prompt + 回执 schema，不�
 receipt/schema（source_fact_review）→ marker 与分类（finalization/talk_lane）→
 recovery 车道与投影 → rescore 执行位 → prompt decomposition → 测试矩阵 9 件套 →
 `auto_220747_1271_1323` 真实回归。全程不动 uniform 案例外的既有终态语义。
+
+## 附录（2026-08-08）：主角维度反例数据点——auto_210739_1142_1436
+
+Ivan 审后裁定：「没人抱团认南天为大哥」T1/86.5 高分成品**非李豆沙主角**（叙事主线在
+他人），不可作为频道成品发布，仅作流水线优化材料（出版登记已 hold_pending_review）。
+
+对本设计稿的含义：rescore 车道未来落地时，评分卡的语义维度必须包含**主角归属**
+（selection metric v2 的「围绕本人」是硬维度——见 lidousha-slice-selection-metric），
+且它是会被事实修正翻转的维度之一：hook 文字上"她"字当头不代表叙事主线在李豆沙。
+本案是该维度静默失败的第一个 T1 级实例（sem 分聚合掩盖了主线归属），rescore 判
+COMPATIBLE/INCOMPATIBLE 的 prompt 分解里应有单独的 protagonist 判项。仅记录，
+不在本稿实施。
