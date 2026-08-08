@@ -35,9 +35,9 @@ processing,1 talk carryover 重试 + 1 song 在队,勿打扰)。
 **等 Ivan 的输入(汇总在 synthesis 文档,一轮批完)**:
 1. е2 卡 1:证人冲突加权(`CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT`
    同分支 4 修对/6 改错;建议选项 B=证人明确反对时需结构化支持或已登记方向)。
-2. е2 卡 2:cue19「大N/大白老师」+ cue49 满席证人 vs 已登记专名,需音频亲裁。
-3. 由菜/Yuna 规范写法确认(非 PSP 联动客,truth 里 Ivan 写「由菜Yuna」)+
-   F9(游戏场画面读人名)/F10(crawler 扩围到联动客)两条自动化方向认可。
+   ~~卡 2~~ 已撤回(Ivan 8/8:标注稿即裁决;南天/大白老师方向已落 854487e)。
+2. 重产完成后:审贪生怕死二分版+女同封面;上传授权与先后次序。
+(词条方向确认已不需要:由菜=PSP 官方成员经 Ivan 确认,走 crawler 修复。)
 
 **接力任务队列(按序)**:
 1. **通病修复波 8**(synthesis 修复清单 F1-F8,各独立 test-gated commit+负向
@@ -48,9 +48,12 @@ processing,1 talk carryover 重试 + 1 song 在队,勿打扰)。
    声学参与、F8 AGY 整段 UNAVAILABLE 的 transient 分类核对。卡 1/卡 2 涉及的
    修复等 Ivan 批完再动。
 2. **(c) 类词条登记(8/8 深夜已按 Ivan 质疑核验收缩,见 synthesis 更正节)**:
-   南町Nightin/大N老师/安晚 roster 快照里全有,不是登记疏漏;真正缺的只有
-   由菜/Yuna(非 PSP,走 F10 crawler 扩围+Ivan 裁定写法)与邪恶大马头(游戏内
-   ID,走 F9 画面读人名)。手动入 glossary 的面大幅缩小。
+   南町Nightin/大N老师/安晚 roster 快照里全有,不是登记疏漏;南天/大白老师
+   方向已落库(854487e)。由菜Yuna=PSP 官方成员(Ivan 8/8 确认)而 roster 缺=
+   **crawler bug**:唯一源是单支视频 BV1GTFseLESN 简介参与人员名单,成员名录
+   停格在其发布日→F10=crawler 修复(补新官方源/爬成员合集,验收=由菜出现在
+   crawler 输出)。邪恶大马头走 F9 画面读人名(CPA 看画面分工 7/15+7/24 已有
+   裁定,落实优先级上调)。
 2b. **重述车道真实首执核查**:波 7 上线后今晚 8/8 批就是首个真实执行(部署时
    receipts-found=0,还没候选走到 exact-final)。successor 查
    free:out/2026-08-08/<cid>/*.restatement-candidates.json 是否落盘、有无 pair

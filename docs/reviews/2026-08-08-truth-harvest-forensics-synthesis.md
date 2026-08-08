@@ -110,3 +110,21 @@ CURRENT/PROPOSED 裁决,若证人拒绝 PROPOSED,按设计稿 §2 补全政策�
    人声所以我没有审阅」):真值工件 authority 已改
    `pristine-unreviewed-20260808`,零 diff **不代表机器全对**,此前「0+0/机器全对」
    表述作废;说话人二分版重产后 Ivan 再审,那才是该片的真值轮。
+
+## 8/8 深夜更正二(Ivan 追加三条)
+
+1. **卡 2 撤回**:cue19「大N老师」/cue49「家人们」Ivan 在标注稿里已经亲裁过
+   ——他的改稿就是裁决,「待音频亲裁」框架错误。方向词条已按其真值落库
+   (854487e:南天/大白老师 入 entity_confusables 南町组 + glossary 注记 +
+   指纹测试按维护惯例更新)。cue19/49 同时成为「满席证人也会错」的登记例证,
+   反哺卡 1 建议 B(证人非无谬,登记方向应保留胜诉能力)。
+2. **crawler 根因确认(Ivan:由菜Yuna 是 PSP 官方成员)**:roster 唯一源=
+   `psplive_roster_sources.v1.json` 里单支视频 BV1GTFseLESN 简介的「参与人员」
+   名单——**成员名录被停格在那支视频的发布日**,之后加入/未参演者永远进不来
+   (快照 26 人无由菜)。F10 改写为 **crawler 修复**:补充更新的官方源(sources
+   数组本就支持多源并集)或改爬官方空间成员合集;验收标志物=由菜Yuna 出现在
+   `crawl_psplive_roster.py --write` 输出且 minimum_participants 门不降。
+3. **F9 出处补注**:「CPA 看画面」是 Ivan 既有裁定不是新提案
+   (ivan-requirements-ledger-2026-07-26.md:134 07-15 分工雏形、:139 07-24~25
+   正式重申"第二次");游戏内人名画面读取=该分工在游戏场的落实,优先级按
+   「说过很多次」上调,与 F5/pyannote 同批考虑。
