@@ -1,0 +1,14 @@
+{
+  "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
+  "candidate_id": "auto_200511_61_138",
+  "schema_version": "subtitle-redelivery-baseline.v2",
+  "mode": "preserve_text_outside_source_truth",
+  "exact_interval_replay": true,
+  "path": "auto_200511_61_138.reviewed.srt",
+  "sha256": "07bc7780d5eef6536659edef64cbe514f9fae794f75481ea79ca885123d71080",
+  "authority": "Ivan-annotated 2026-08-08 speaker-truth-diff adjudication (ivan-speaker-truth-diff.v1, source_machine_sha256 fe802962785a20ed49b3279c4375b0cb7320eb5e97940bc172f8d72b0a56bdb1); 40 cues, 3 text_changed, 全部按 Ivan 逐字裁定落盘，修订由 Claude 落盘。2026-07-22 南町联动候选，speaker_mode=uniform_host 原始交付未经声纹判定；本次是该候选第一次离线人工核对（docs/reviews/2026-08-07-speaker-crosssession-eval.md 附录）。candidate_id auto_200511_61_138 在 assets/lidousha/publication_registry.v1.json 中未找到精确匹配条目——本候选在 free 2026-07-22 runner state 中的 status 是 review_ready（非 published）。但内容大概率已发布：另一候选 auto_193450_1863_2056（同日不同录制文件段、同一主题「弹幕追问李豆沙为何请南町吃火锅」）已发布为 BV1xgg462Env，其 absolute_source 墙钟窗口 20:05:53.55–20:09:06.08 完全覆盖本候选的墙钟窗口 20:06:12.54–20:07:29.74（均由各自 recording_basename 文件名时间戳 + absolute_source_start/end_ms 换算得出）——是否对应、是否需要 edit-replace 到 BV1xgg462Env，需 Ivan 核实确认，本文件不预判、不触发任何操作。",
+  "source_recording_basename": "22966160_20260722-20-05-11.mp4",
+  "source_sha256": "fe2200e080cb91cdafa37737340c7709db714ac6cea0c1a066ab1b2533286be2",
+  "absolute_source_start_ms": 61540,
+  "absolute_source_end_ms": 138740
+}

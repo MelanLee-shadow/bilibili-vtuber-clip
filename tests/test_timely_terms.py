@@ -157,8 +157,14 @@ def test_default_profile_jingting_prompt_matches_authoritative_glossary_fingerpr
     #   方向性误听面词条「天云海→萱萱卡娅」（萱萱卡娅已在 psplive_roster 登记，
     #   单向记方向，不做全局替换；不加「偶遇」入 game glossary，Ivan 明确它不是
     #   游戏术语，cue59 已由 final_review_auditor 的候选层守卫机制性覆盖）。
+    # 2026-08-08：南町/大N 词条误听高发列表新增「大人」（Ivan 2026-08-08 对
+    #   2026-07-22 南町联动 auto_200511_61_138 cue31「终于和大人见面了」逐句裁决，
+    #   正确写法「终于和大N见面了」；同片其余 5 处「大N」都听对，仅此一处听岔——
+    #   entity 已登记（glossary 本条 + psplive_roster_sources.v1.json「南町Nightin」
+    #   →别名「大N老师」），但这个具体误听方向此前不在任一登记表，属于登记 gap
+    #   不是 entity 未知；方向单向，不做全局替换）。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "e3fd2a923ef37474cdb484b5152ef543867d97e51a6bcf6ec45ef007970279b8"
+        "5739b14d2b87534558cfac0220a8969e1247565a9c359141886d6c50e443122a"
     )
 
 

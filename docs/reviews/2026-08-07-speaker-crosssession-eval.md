@@ -261,3 +261,77 @@ HOST**——equal-quality 对谈的高频短插话是这条判定链目前最大
 在真值里真的都是南町/连线，说明短句默认 GUEST 这条保守规则在 equal-quality 场次下仍然安全；如果
 其中有本人的短接话被误判成连线，则短句强制阈值本身（1500ms）在 equal-quality 场次可能需要重新
 校准，而不是像 8/7 校准时那样只调语义佐证 floor。本文档到此为止不预判，留给标注结果。
+
+## 附录（2026-08-08）：equal-quality 场次第一次真值核对结果——false-host 不是 0
+
+Ivan 已逐句核对标注底稿（`lidousha/2026-07-22/auto_200511_61_138.speaker-eval.srt`，40 cue，A/B
+标记语法）。诊断脚本与完整逐 cue 记录见
+`/private/tmp/claude-501/-Users-ivan-Project-vtuber-slice/5cbe14f2-2623-4f3f-8308-060346f7e8ab/scratchpad/ivan_722_truth_diff.json`
+（schema `ivan-speaker-truth-diff.v1`，未入库；落地产物见"已交付真值"一节）。
+
+### 标签准确率（回答第 259-263 行悬而未决的问题）
+
+| 指标 | 数值 |
+|---|---|
+| 总 cue 数 | 40 |
+| 未标注（机器判定确认正确） | 29/40 = 72.5% |
+| 整句重判（machine GUEST → truth HOST，false-guest） | **4**（cue 4/5/27/32），**0** 整句 false-host |
+| 混合 cue（句内换人，仅局部重判） | **7**（cue 9/12/20/23/25/36/40） |
+| 混合 cue 内 false-host 子段 | **4**（cue 9/12/20/40 各一处，均为句首或句尾的短接话/语气词，从未整句误判） |
+| 混合 cue 内 false-guest 子段 | **3**（cue 23/25/36） |
+| **false-host 合计（含子段）** | **4** —— **不是 0** |
+| **false-guest 合计（含子段）** | **7**（4 整句 + 3 子段） |
+
+**结论：整句层面 false-host 仍是 0**（与 8/7 游戏语音场次、以及 Ivan 不对称裁定的方向一致：机器
+从未把一整句连线误判成本人），**但子段层面 false-host 不是 0**——4 处本人的极短接话/语气词
+（"哦"cue9、"啊哈哈"cue12、"行"cue20、"行"cue40）被机器判成连线。这 4 处全部落在混合 cue 内部，
+不是被"短句强制进临界带"的独立整句（对照 §2c 表格：cue4/5/27/32 才是被短句强制/margin判定误判
+成连线的整句，且全部方向是 false-guest 不是 false-host）——即真正验证成立的是"整句层面机器保守
+偏 GUEST"，但"句内快速换人接话"这个第 3 节风险点 4 预判的暴露面在这条候选上确实兑现了：机器
+把说话人切换点判晚了半句（把李豆沙刚说完让给对方的最后一个字/词仍算给自己），而不是把整句
+张冠李戴。第 4 节"我无法评估的部分"里"equal-quality 对谈的抢话/重叠频率"这一条，现在有了第一个
+真实样本：7/40=17.5% 的 cue 存在句内换人，其中 4 处（10%）产生了子段级 false-host。
+
+### 文本纠错（proper-noun 类 vs 一般听误）
+
+3 处文本与机器原文不同（详见下表），仅 1 处是专名类：
+
+| cue | 机器原文 | 真值 | 类别 | 登记状态 | 今天的管线会不会修对 |
+|---|---|---|---|---|---|
+| 5 | 我还没认识 | 我还没看时间 | (d) 非专名听误 | 不适用 | 无对应门；纯语义/语音误听，无词表可挂，仅作听误案例记录，不入词表 |
+| 23 | 不是，主要是火锅了 | 不是，主要是想吃火锅了（漏字补全） | (d) 非专名听误 | 不适用 | 无对应门；ASR 吞字类，无专名可挂，仅作听误案例记录 |
+| 31 | 终于和大人见面了 | 终于和大N见面了 | (c) 专名类，误听方向未登记 | 实体已登记（`assets/lidousha/glossary.txt` 南町/大N 词条 + `assets/lidousha/psplive_roster_sources.v1.json` `南町Nightin`→别名`大N老师`），但"大人"这个具体误听方向此前不在任一登记表 | **本次已修**：`glossary.txt` 南町词条误听高发列表新增"大人"，方向单向注明来源（本轮裁决）。修之前：即使实体已注册，逐 mention 音频仲裁（词表原文"每个 mention 分别凭本句音频与局部上下文判断"）不会自动纠正未登记的具体误听面，所以"大N"registered 不等于这一句会被修对——同一切片其余 5 处"大N"都听对了、仅这一处听岔，说明这是逐句声学问题不是实体未知问题，属于登记 confusables 列表能提高候选优先级、但最终仍需逐句音频裁决的情形。修之后：下次同类"大人"误听至少会进入候选提示。 |
+
+`entity_confusables.json`（repo）逐字核对不含南町/大N 任何条目；free 运行时状态三个文件逐字核对
+（`psplive_roster.json`、`community_names.json`、`streamer_registry.json`，均 `grep`/Python 正则实测，
+非推断）：后两者各命中若干"南町"/"大N老师"条目（登记的是别名，见下），但**没有任何一个文件出现过
+"大人"这个具体误听面**——`glossary.txt` 是该场唯一登记来源，本轮才补上。
+
+### 已交付真值（不触发任何上传/edit-replace）
+
+- 复核字幕基线：`assets/lidousha/reviewed_subtitle_baselines/auto_200511_61_138.reviewed.srt` +
+  `auto_200511_61_138.subtitle-baseline.v1.json`（与 `auto_203735_555_680` 同一 `subtitle-redelivery-baseline.v2`
+  格式；source binding 公式与该 precedent 一致：`source_pieces.start_ms(51770) + boundary_audit.final_start_ms(9770)/final_end_ms(86970)`
+  = `absolute_source_start_ms=61540` / `absolute_source_end_ms=138740`，跨度 77200ms 与 `duration_ms` 精确相等；
+  `recording_basename=22966160_20260722-20-05-11.mp4`）。
+- 说话人 override：`assets/lidousha/speaker_overrides/auto_200511_61_138.speaker.v1.json`（与
+  `auto_203735_555_680.speaker.v1.json` 同一 schema 与语义，11 条 override：4 整句重判 + 7 混合 cue 双段；
+  `expect.text` 是绑定 SRT 的机器原文逐字，真值文本只落在 `segments[].text`，与 precedent 一致，不与 truth 混写）。
+- `assets/lidousha/glossary.txt` 南町/大N 词条新增"大人"误听方向（方向单向，非强制替换；已用
+  `scripts.lidousha_glossary_terms.load_glossary_terms` 实跑验证"大人"未进入 `mishear_blacklist`
+  或 expected-value 机械替换车道——只作为该条目既有的、`canon` 列表里已长期存在的"误听高发"提示词一部分，
+  这是该条目的既有 pre-existing 解析特征，安晚/大安/打完老师/大恩老师/大卫老师/大黄老师同样如此，
+  不是本次改动引入的新行为）。
+
+**`candidate_id=auto_200511_61_138` 在 `assets/lidousha/publication_registry.v1.json` 中未找到精确匹配
+条目，free 2026-07-22 runner state 里其 `status=review_ready`（非 `published`）**——但内容大概率已经
+发布，只是换了一个 candidate_id：同日另一候选 `auto_193450_1863_2056`（同一录制会话被拆成两段录制文件，
+分别以 `22966160_20260722-19-34-50.mp4` 与 `22966160_20260722-20-05-11.mp4` 命名）已发布为
+**BV1xgg462Env**（`assets/lidousha/publication_registry.v1.json` 记录），其发布标题「弹幕追问李豆沙为何请
+南町吃火锅，从"付出劳动"嘴硬到"最最喜欢"，刚认识就互相霸凌」与本候选主题完全一致；把两条候选各自的
+`recording_basename` 时间戳与 `absolute_source_start/end_ms` 换算成墙钟时间：`auto_193450_1863_2056`
+覆盖 20:05:53.55–20:09:06.08，`auto_200511_61_138` 落在 20:06:12.54–20:07:29.74，后者完全落在前者窗口
+内。**这是强证据但不是确认**——是否真的是同一段内容被两条不同 pipeline 跑法（本候选走
+`speaker_mode=uniform_host` 的常规产线，`auto_193450_1863_2056` 走的是另一条 `full-rerun-v8` 恢复线）
+各自切出、`auto_193450_1863_2056` 是否完整覆盖了本候选的南町吃火锅片段、以及是否需要把本文档的 40-cue
+真值套用到 BV1xgg462Env 做 edit-replace，**都是 Ivan 的裁定，本次不预判、不触发任何上传或换源操作**。
