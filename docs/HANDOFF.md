@@ -289,3 +289,10 @@ receipt。
   `return 2`（旧实现仅作 endpoint archaeology 保留），现行入口是
   `scripts/authorized_upload.py cover-repair-plan / cover-repair-run /
   cover-repair-verify-live`。禁止新建替代 BV、裸 API、legacy replace 或删除旧证据制造绿灯。
+
+### 2026-08-08 夜间权宜上传授权（Ivan 就寝前原话）
+「你晚上把所有切片做完后可以执行权宜上传，我醒来后再进行审阅修改。」范围=8/7 两条
+（真善美 auto_203735_555_680 真值版、交付件 auto_200736_298_383 重产版），前提=全部
+fail-closed 门通过+真善美验收（Ivan 真值逐字相等/假李豆沙=0）。被拦项不传留证待晨审。
+7/22 auto_200511_61_138 Ivan 已裁定封存不编辑不上传。上传后按 authorized-upload 惯例
+commit 证据。之后执行工程优化①②③（任务卡 #10/#11/#12），完成前不碰新切片。
