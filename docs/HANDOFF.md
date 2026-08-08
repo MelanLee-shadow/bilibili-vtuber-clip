@@ -16,7 +16,7 @@ processing,1 talk carryover 重试 + 1 song 在队,勿打扰)。
 - 真值工件:`reports/ivan_truth_harvest/2026-08-07/*.truth-diff.v2.json`
   (`scripts/harvest_ivan_truth.py` 产,A/B 语法 fail-closed 解析,16 混说 cue 人工
   核对):换身份 18文字+8说话人 / 被劝受骗 7+6 / 没人抱团 42+8 / 真善美 0+6 /
-  贪生怕死 0+0。
+  贪生怕死 **未审阅**(Ivan 8/8:无说话人分离没法审,零diff≠机器全对;二分重产后再审)。
 - 六连问法证:docs/reviews/ 三片报告 + `2026-08-08-truth-harvest-forensics-synthesis.md`
   (汇总+修复清单 F1-F8+е2 卡)。67 文字错=(b)仲裁缺陷 30 / (c)未登记~18 /
   (d)听错~14 / (a)1 / 重述车道已覆盖 1;假李豆沙 3;混说 6 cue 单标签只盖
@@ -36,8 +36,8 @@ processing,1 talk carryover 重试 + 1 song 在队,勿打扰)。
 1. е2 卡 1:证人冲突加权(`CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT`
    同分支 4 修对/6 改错;建议选项 B=证人明确反对时需结构化支持或已登记方向)。
 2. е2 卡 2:cue19「大N/大白老师」+ cue49 满席证人 vs 已登记专名,需音频亲裁。
-3. 复裁清单里的 (c) 类新词条方向(由菜/Yuna/南町nightin/安晚/邪恶大马头等)
-   可顺手确认。
+3. 由菜/Yuna 规范写法确认(非 PSP 联动客,truth 里 Ivan 写「由菜Yuna」)+
+   F9(游戏场画面读人名)/F10(crawler 扩围到联动客)两条自动化方向认可。
 
 **接力任务队列(按序)**:
 1. **通病修复波 8**(synthesis 修复清单 F1-F8,各独立 test-gated commit+负向
@@ -47,7 +47,10 @@ processing,1 talk carryover 重试 + 1 song 在队,勿打扰)。
    诊断(producer_speaker.py:576-589)、F6 短句门证据源分层、F7 语境专断强制
    声学参与、F8 AGY 整段 UNAVAILABLE 的 transient 分类核对。卡 1/卡 2 涉及的
    修复等 Ivan 批完再动。
-2. **(c) 类词条登记**:按保向铁律落 glossary/entity_confusables,逐条带 8/7 案出处。
+2. **(c) 类词条登记(8/8 深夜已按 Ivan 质疑核验收缩,见 synthesis 更正节)**:
+   南町Nightin/大N老师/安晚 roster 快照里全有,不是登记疏漏;真正缺的只有
+   由菜/Yuna(非 PSP,走 F10 crawler 扩围+Ivan 裁定写法)与邪恶大马头(游戏内
+   ID,走 F9 画面读人名)。手动入 glossary 的面大幅缩小。
 2b. **重述车道真实首执核查**:波 7 上线后今晚 8/8 批就是首个真实执行(部署时
    receipts-found=0,还没候选走到 exact-final)。successor 查
    free:out/2026-08-08/<cid>/*.restatement-candidates.json 是否落盘、有无 pair

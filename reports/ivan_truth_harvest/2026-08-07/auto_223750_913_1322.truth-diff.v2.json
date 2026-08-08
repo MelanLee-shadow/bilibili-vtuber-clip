@@ -3,7 +3,7 @@
  "candidate_id": "auto_223750_913_1322",
  "source_machine_sha256": "eea72b1635e9ffd3b3cb7c8968ebc8105e3e34d51ae8164559880fe045441431",
  "annotated_sha256": "eea72b1635e9ffd3b3cb7c8968ebc8105e3e34d51ae8164559880fe045441431",
- "authority": "Ivan-annotated-2026-08-08",
+ "authority": "pristine-unreviewed-20260808(Ivan未审阅:uniform期无说话人分离,零diff不代表机器全对;等说话人二分重产版再审)",
  "generated_by": "scripts/harvest_ivan_truth.py",
  "summary": {
   "cues": 77,

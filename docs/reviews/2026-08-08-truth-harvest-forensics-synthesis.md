@@ -85,3 +85,28 @@ audit 自然重冻;在那之前若上传闸/审计报 policy_fingerprint 失败,
 受骗片法证发现 cue17 两路独立听写收敛到同一错——统一重产时重述候选进
 CURRENT/PROPOSED 裁决,若证人拒绝 PROPOSED,按设计稿 §2 补全政策复核
 (前缀相容+残段无矛盾即可胜出);金丝雀结果无论向哪边都要记回设计稿。
+
+## 8/8 深夜更正(Ivan 三条纠偏,罪证留原文不改上文)
+
+1. **「(c) 未登记」名单大幅收缩——Ivan 质疑「crawler 不是该自动抓吗」经 roster
+   快照核验成立**:8/7 生产时 `state/psplive_roster.json` 里 南町 条目完整
+   (`canonical:南町, official_surface:南町Nightin, aliases:[Nightin,南町Nightin,大N老师]`)、
+   安晚 条目完整(aliases 含 aWa 系)。故:
+   - 南町nightin 规范写法、大N老师、安晚 **全部已登记**(cue34 安晚案改判
+     (a) roster prompt-only 结构限制+召回缺口;cue19 本来就是「登记候选被满席
+     证人击败」的 UNRESOLVED,归类不变);上文 (c) 表相应作废。
+   - 真正词表外仅剩:**由菜/Yuna**(非 PSP 联动客——crawler 只爬 PSP roster,
+     范围缺口不是登记疏漏)与**邪恶大马头**(游戏内 ID)。
+2. **新修复项(自动化优先,呼应 Ivan「不该手动加」的一贯令)**:
+   - **F9 游戏场画面读人名**(Ivan 8/8:「邪恶大马头应该是看画面看到的」):
+     游戏语境 RESOLVED 的场,抽帧读游戏内玩家名牌/结算名单(复用
+     screen_read_witness 歌单 OCR 机制),产 session 玩家名候选(带 screen-read
+     provenance 的结构化支持)进既有候选通道。游戏内 ID 的正确写法本来就只
+     存在于画面上,音频/roster 都不可能有。
+   - **F10 crawler 范围扩展**:联动场非 PSP 参与者(由菜/紫妍/天云海类)进
+     社区称呼 crawler 的抓取面(以联动台账/弹幕/标题为种子,https 来源纪律
+     沿用);在此之前这类名字仍需 Ivan 逐案裁定写法。
+3. **贪生怕死 auto_223750_913_1322 更正为「未审阅」**(Ivan 8/8:「根本没有分
+   人声所以我没有审阅」):真值工件 authority 已改
+   `pristine-unreviewed-20260808`,零 diff **不代表机器全对**,此前「0+0/机器全对」
+   表述作废;说话人二分版重产后 Ivan 再审,那才是该片的真值轮。
