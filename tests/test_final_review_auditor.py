@@ -1626,6 +1626,103 @@ def test_glossary_candidate_cannot_win_bare_witness_conflict_on_semantics_alone(
     assert audit["orthography_ambiguous"] is False
 
 
+def test_glossary_candidate_with_registered_misheard_direction_wins_witness_conflict():
+    """2026-08-07 Ivan 回归修正正向金丝雀之一：kmx 类误听面方向历史合法胜出案例。
+
+    ``停放熊 -> kmx`` 是 ``assets/lidousha/glossary.txt`` 登记的已知 kmx 误听
+    面，但只登记在 ``expected_value_respell_pairs()``（不在
+    ``respell_pairs()``，两者来源不同），所以 ``orthography_ambiguous``
+    （只查 ``respell_pairs()`` 的 ``_declared_respell_edit``）对这一对必然是
+    False。84e3603 首版守卫只要 ``candidate_provenance.kind == "glossary"``
+    就拦截，会连带把这类历史上应当胜出的登记误听方向也拦掉——这正是
+    Ivan 指出的回归风险。此用例证明收窄后的 ``registered_direction`` 检查
+    （同时查 ``respell_pairs()`` 与 ``expected_value_respell_pairs()``）放行
+    了它；回退到收窄前的守卫代码，本用例会转为失败（错误地拦截）。"""
+
+    source = _srt("你听到停放熊在门口叫了吗")
+    finding = {
+        "cue_index": 1,
+        "suspect": "停放熊",
+        "suggestion": "kmx",
+        "proposed_full_cue": "你听到kmx在门口叫了吗",
+        "repair_class": "source_backed_entity",
+        "candidate_provenance": {
+            "kind": "glossary",
+            "surface": "kmx",
+        },
+        "why": "kmx 常见误听面",
+    }
+
+    def short_misaligned_witness(request):
+        return _witness(request, "dong ma ni")
+
+    output, audit = adjudicate_context_finding(
+        source,
+        finding,
+        entity_verifier=short_misaligned_witness,
+        judge_llm_call=_judge("PROPOSED"),
+    )
+
+    assert "kmx" in output
+    assert "停放熊" not in output
+    assert audit["repaired"] is True
+    assert audit["orthography_ambiguous"] is False
+    assert audit["policy_branch"] == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
+
+
+def test_glossary_candidate_with_bound_structured_chat_support_wins_witness_conflict():
+    """2026-08-07 Ivan 回归修正正向金丝雀之二：独立结构化文字支持胜出案例。
+
+    与上面 cue59 负向金丝雀同一事实模式（候选「殉情」、同一错位证人、同一
+    judge PROPOSED），唯一变量是这次候选替换词面「殉情」被一条 sha256 绑定
+    的弹幕/SC 独立佐证（``clip_context.structured_chat``）——这正是 Ivan
+    描述的「历史上耳朵持续听错、词表/独立文字证据佐证的候选正确胜出」场景
+    的机制对照组。收窄后的 ``structured_text_support`` 检查放行；回退到
+    收窄前的守卫代码（不接收 ``clip_context``），本用例会转为失败（错误地
+    拦截），证明这不是巧合通过。"""
+
+    source = _srt("你知道我要偶遇啊！偶遇")
+    finding = {
+        "cue_index": 1,
+        "suspect": "偶遇啊！偶遇",
+        "suggestion": "殉情啊！殉情",
+        "proposed_full_cue": "你知道我要殉情啊！殉情",
+        "repair_class": "source_backed_entity",
+        "candidate_provenance": {
+            "kind": "glossary",
+            "surface": "殉情",
+        },
+        "why": "鹅鸭杀恋人机制词，弹幕独立确认",
+    }
+    clip_context = {
+        "structured_chat": [
+            {
+                "kind": "danmaku",
+                "text": "啊啊啊两人要殉情了吗",
+                "source_event_id": "event-59",
+                "source_sha256": "b" * 64,
+            }
+        ]
+    }
+
+    def short_misaligned_witness(request):
+        return _witness(request, "dong ma ni")
+
+    output, audit = adjudicate_context_finding(
+        source,
+        finding,
+        entity_verifier=short_misaligned_witness,
+        clip_context=clip_context,
+        judge_llm_call=_judge("PROPOSED"),
+    )
+
+    assert "殉情" in output
+    assert "偶遇" not in output
+    assert audit["repaired"] is True
+    assert audit["orthography_ambiguous"] is False
+    assert audit["policy_branch"] == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
+
+
 def test_cpa_can_use_distinguishing_pinyin_without_text_authority():
     source = _srt("毁神来了")
     finding = {

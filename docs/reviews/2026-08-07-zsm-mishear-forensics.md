@@ -44,13 +44,25 @@ Ivan 对候选 `auto_203735_555_680` 的字幕文本逐字裁决（16/61 cue tex
 - 新增 `_glossary_session_candidate_undecidable()`（`_orthography_ambiguous` 定义之后，约行 341）。
 - 接入两处 `adjudicate_with_witness()` 调用点：约行 2325（首次仲裁）与约行 2658（proposal-rebuild 重试后的二次仲裁）。
 
-**规则**：当 `adjudicate_with_witness` 返回 `CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT`（即声学证人与候选冲突、judge 仍选 PROPOSED）且候选 `candidate_provenance.kind == "glossary"`（game/theme 词表注入）且**没有**任何正向文字证据（`orthography_ambiguous` 为 False——已排除 declared respell、strict homophone、ascii 发音键三类正向信号），则改判 `repaired=False`，`policy_branch="GLOSSARY_CANDIDATE_WITNESS_CONFLICT_ORTHOGRAPHY_NOT_DECIDABLE"`，保留原字幕。
+**规则（2026-08-07 首版，已被下方收窄修正取代其条件部分）**：当 `adjudicate_with_witness` 返回 `CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT`（即声学证人与候选冲突、judge 仍选 PROPOSED）且候选 `candidate_provenance.kind == "glossary"`（game/theme 词表注入）且**没有**任何正向文字证据（`orthography_ambiguous` 为 False——已排除 declared respell、strict homophone、ascii 发音键三类正向信号），则改判 `repaired=False`，`policy_branch="GLOSSARY_CANDIDATE_WITNESS_CONFLICT_ORTHOGRAPHY_NOT_DECIDABLE"`，保留原字幕。
 
 已注册专名 respell（林墨→礼墨）、严格同音对、ascii 发音键等价（大大恩/大N）三类合法覆盖场景全部因 `orthography_ambiguous=True` 而豁免，不受影响（回归测试全绿覆盖此三类）。
 
 **范围收窄理由**：没有对 `_near_homophone_gate` 本身做通用「差异段隔离」重算——虽然该函数在本案里因复读填充字把 0.308 抬到 0.5，但同一算法对文档里已证实合法的近音案例（查烟查/恰烟恰 0.636→隔离后 0.428，低于门槛）会误伤，属于跨很多其他生产用例的高风险改动。改为在**候选来源为 glossary 且缺乏独立正向文字证据**这一更窄、更可验证的条件上拦截，只影响本类失败模式已证实存在的分支。
 
 **回归测试**：`tests/test_final_review_auditor.py::test_glossary_candidate_cannot_win_bare_witness_conflict_on_semantics_alone`——用生产实况的 suspect/suggestion/witness/judge 复刻 cue59；已用负向金丝雀验证（临时回退 `final_review_auditor.py` 后该测试真实失败并复现「殉情」顶替「偶遇」），排除测试假绿。
+
+### 2026-08-07 收窄修正（Ivan 回归纠正）
+
+Ivan 指出首版门槛把 `candidate_provenance.kind == "glossary"` 本身当唯一拦截条件，范围过宽：历史上大量案例正是靠 glossary/roster 登记的误听方向（kmx 系「停放熊」等误听面、林墨→礼墨、大恩→大N 等）在声学证人本身破碎/错位（短、错位、覆盖前句）时正确顶替声学证据——这是 ASR 局限下刻意设计的既有行为，不能被 kind==glossary 连坐拦掉。核对发现首版的漏洞是真实的：kmx 类误听面方向（如「停放熊」）只登记在 `term_authority.expected_value_respell_pairs()`（走 `assets/lidousha/glossary.txt` 的 expected-value-canon 通道），不在 `respell_pairs()`（`_declared_respell_edit`/`orthography_ambiguous` 只查后者）——所以首版会把这类历史合法覆盖误判为「纯语义盖过声学」而拦截。
+
+**收窄后规则**：拦截需要**同时**满足三个「缺席」条件才成立——(a) `orthography_ambiguous` 为 False（同音/ascii 发音键/已声明 respell 均缺席）；(b) `registered_direction` 为 False（`(suspect, replacement)` 有向对既不在 `respell_pairs()` 也不在 `expected_value_respell_pairs()` 中——kmx 类误听面方向由此纳入覆盖，方向单向，反向对不豁免，遵循「授权保向铁律」）；(c) `structured_text_support` 为 False（候选替换词面或 `candidate_provenance.surface` 都未被任何 sha256 绑定的弹幕/SC 命中，且 proposed cue 不在已登记 exact-cue canon 中）。三者任一为真即放行，只有三者皆缺、纯靠 judge 语义盖过声学冲突时才拦截。cue59 的「殉情」在三条件上均为缺席（未登记为「偶遇」的误听方向，也没有独立结构化文字支持），仍然照旧拦截，负向金丝雀保持全绿。
+
+**新增正向金丝雀**（`tests/test_final_review_auditor.py`）：
+- `test_glossary_candidate_with_registered_misheard_direction_wins_witness_conflict`——用 `停放熊 -> kmx`（仅登记在 `expected_value_respell_pairs()`）复现同一破碎证人/judge PROPOSED 组合，证明收窄后放行；回退到收窄前代码会转为失败（错误拦截），证伪测试假绿。
+- `test_glossary_candidate_with_bound_structured_chat_support_wins_witness_conflict`——与 cue59 负向金丝雀完全相同的事实模式（同一「殉情/偶遇」候选、同一破碎证人），唯一变量是附加一条 sha256 绑定的弹幕独立佐证「殉情」，证明收窄后 `structured_text_support` 放行；回退到收窄前代码同样转为失败，证明不是巧合通过。
+
+**任务前提核查（重要）**：交办本次收窄时曾假设 84e3603 已经修了 `_near_homophone_gate` 的「差异段相似度」bug（复读填充字把 0.308 抬到 0.5）。核实结果：**该 bug 未修**，且是 84e3603 自己在上面「范围收窄理由」一段中明确记录的、刻意不做的改动（会误伤查烟查/恰烟恰等已证实合法案例）。本次收窄未新增该重算，维持 84e3603 的原判断；cue59 仍然因为 (a)(b)(c) 三条件皆缺席而被拦截，不依赖这条未落地的相似度修复。
 
 ## glossary.txt 词条
 

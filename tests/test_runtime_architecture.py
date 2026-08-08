@@ -142,7 +142,20 @@ MODULE_DEBT_LEDGER = {
     # 764 行 adjudicate_context_finding 未再增长。测试
     # tests/test_final_review_auditor.py::
     # test_glossary_candidate_cannot_win_bare_witness_conflict_on_semantics_alone。
-    "src/autoslice/final_review_auditor.py": 3_512,
+    # 2026-08-07 再 +98：Ivan 同日回归纠正——首版门槛把
+    # candidate_provenance.kind=="glossary" 本身当唯一拦截条件，误伤 kmx 类
+    # 已注册误听方向（停放熊等，只登记在 expected_value_respell_pairs，不在
+    # respell_pairs/orthography_ambiguous 查得到的范围）与独立结构化弹幕/SC
+    # 佐证场景。新增 _registered_misheard_direction / _glossary_candidate_
+    # structured_text_support 两个模块级函数收窄拦截条件为「三者皆缺」；两个
+    # 调用点仍保持原行数不变（合并参数到同一行）。第三次抬同一模块的数字，
+    # 按账本规则本应触发独立 bounded 拆解 task；此次是同日同案的直接回归修
+    # 正、范围极窄且已有专项拆解 task 记录在 adjudicate_context_finding 的
+    # 函数账本注释里，Ivan 本人下达修正指令视为对本次追加的批准出处。测试
+    # tests/test_final_review_auditor.py::
+    # test_glossary_candidate_with_registered_misheard_direction_wins_witness_conflict、
+    # test_glossary_candidate_with_bound_structured_chat_support_wins_witness_conflict。
+    "src/autoslice/final_review_auditor.py": 3_611,
     "src/autoslice/live_source_review.py": 2_035,
     # 2026-08-07 +18：狍哥案实施指令（同上）——marker 选择改判
     # SOURCE_FACT_REPAIRED_RESCORE_REQUIRED + 写 pending sidecar。

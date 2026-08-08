@@ -344,11 +344,78 @@ GLOSSARY_CANDIDATE_ORTHOGRAPHY_NOT_DECIDABLE = (
 )
 
 
+def _registered_misheard_direction(*, suspect: str, replacement: str) -> bool:
+    """Whether ``suspect -> replacement`` is a source-registered ASR-mishearing
+    direction, not just an incidental glossary lookup hit.
+
+    Directional only (授权保向铁律，见
+    ``docs/memory/lidousha-entity-authority-directional``): the reverse pair
+    does not escape. Covers both the strict respell whitelist
+    (``respell_pairs``, e.g. 林墨→礼墨, and entity_confusables.json surfaces
+    such as 提莫熊/kimo熊→kmx — pronunciation-identical or entity-confusable
+    rewrites) and the wider expected-value misheard-surface registry
+    (``expected_value_respell_pairs``, e.g. glossary.txt-only kmx surfaces
+    停放熊/康姆叉/卡姆西/开姆克斯→kmx that are *not* in entity_confusables.json
+    and therefore not in the strict respell set). Both sets must be checked —
+    this is the concrete gap the 2026-08-07 regression correction closes
+    (see ``_glossary_session_candidate_undecidable``).
+    """
+
+    if not suspect or not replacement:
+        return False
+    try:
+        from src.autoslice.term_authority import (
+            expected_value_respell_pairs,
+            respell_pairs,
+        )
+
+        pair = (suspect, replacement)
+        return pair in respell_pairs() or pair in expected_value_respell_pairs()
+    except Exception:
+        return False
+
+
+def _glossary_candidate_structured_text_support(
+    *,
+    replacement: str,
+    provenance_surface: str,
+    proposed_cue: str,
+    clip_context: Mapping[str, object] | None,
+) -> bool:
+    """Whether independent structured text already witnesses this candidate.
+
+    Two admitted sources, both outside the acoustic channel and both already
+    used elsewhere in this module as positive text authority: a sha256-bound
+    danmaku/SC row that literally contains the candidate's registered
+    ``candidate_provenance.surface`` (the bare glossary term, e.g. ``殉情``)
+    or the raw ``replacement`` span (the padded/reduplicated near-homophone
+    window, e.g. ``殉情啊！殉情`` — kept as a fallback for candidates whose
+    surface is not separately recorded) via ``_bound_structured_chat_surface``
+    (the same check ``_latin_candidate_support_for_edit`` uses); or an
+    operator-registered exact-cue canon (``term_authority.exact_cue_canons``)
+    that already covers the full proposed cue verbatim.
+    """
+
+    for surface in (provenance_surface, replacement):
+        if surface and _bound_structured_chat_surface(clip_context, surface) is not None:
+            return True
+    if proposed_cue:
+        try:
+            from src.autoslice.term_authority import exact_cue_canons
+
+            return proposed_cue in exact_cue_canons()
+        except Exception:
+            return False
+    return False
+
+
 def _glossary_session_candidate_undecidable(
     *,
     repaired: bool,
     policy_branch: str,
     orthography_ambiguous: bool,
+    registered_direction: bool,
+    structured_text_support: bool,
     finding: Mapping[str, Any],
 ) -> bool:
     """Session/theme glossary candidates must not win a bare witness conflict.
@@ -358,16 +425,31 @@ def _glossary_session_candidate_undecidable(
     候选词与真值「偶遇」的无调拼音相似度仅 ~0.31（远低于本文件近音门槛
     0.45），候选-盲拼音证人也自认覆盖错位；但 CPA judge 仍以「语境更通顺」
     为由判 PROPOSED（p=0.96），把真实听写 (agy_refined 与 fidelity guard
-    双双给出「偶遇」) 顶替成误听。已注册专名 respell、strict homophone 或
-    ascii 发音键等**正向**证据（``orthography_ambiguous=True``）继续走既有
-    text-authority 通道，不受此门影响；只有这类正向证据缺席、纯靠语义盖过
-    拼音冲突时，glossary 来源候选才必须记 ORTHOGRAPHY_NOT_DECIDABLE 并保留
-    原字幕，不得让语义合理性单独顶替声学证据。
+    双双给出「偶遇」) 顶替成误听。「殉情」在任何词表里都没有登记为「偶遇」
+    的误听方向，也没有独立结构化文字（弹幕/SC/exact-cue）支持——纯粹是
+    session/game 词表按语义合理性单方面压过两路独立听写，这才是本门要拦
+    截的失败模式。
+
+    **2026-08-07 Ivan 收窄修正（回归风险）**：本门首版把
+    ``candidate_provenance.kind == "glossary"`` 本身当拦截条件，过宽——历史
+    上大量案例正是靠 glossary/roster 登记的误听方向（kmx 系「停放熊」等、
+    林墨→礼墨、大恩→大N 等）在证人证据本身破碎/错位时正确顶替声学证据，
+    这是 ASR 局限下的既有设计，不能被本门连坐拦掉。收窄后拦截需要**同时**
+    满足：(a) 无正向 orthography 证据（``orthography_ambiguous``，同音/
+    ascii 发音键/已声明 respell）；(b) 无已注册误听方向
+    （``registered_direction`` —— ``respell_pairs()`` 或
+    ``expected_value_respell_pairs()`` 中登记的 ``(suspect, replacement)``
+    有向对，kmx 类误听面走的正是后者，前一版没查所以会被误拦）；(c) 无独立
+    结构化文字支持（``structured_text_support`` —— sha 绑定弹幕/SC 命中该
+    替换词，或 proposed cue 命中已登记 exact-cue canon）。三者任一为真都
+    放行，只有三者皆缺、纯靠 judge 语义盖过声学冲突时才拦截并记
+    ORTHOGRAPHY_NOT_DECIDABLE、保留原字幕。cue59 的「殉情」三者皆缺，仍然
+    照旧拦截。
     """
 
     if not repaired or policy_branch != _GLOSSARY_WITNESS_CONFLICT_BRANCH:
         return False
-    if orthography_ambiguous:
+    if orthography_ambiguous or registered_direction or structured_text_support:
         return False
     provenance = finding.get("candidate_provenance")
     return isinstance(provenance, Mapping) and provenance.get("kind") == "glossary"
@@ -379,17 +461,20 @@ def _adjudicate_with_glossary_witness_guard(
     witness: Mapping[str, Any],
     llm_call: Callable[[str], str] | None,
     structured_chat_context: str = "",
+    clip_context: Mapping[str, object] | None = None,
 ) -> tuple[bool, str, dict[str, Any]]:
     """``adjudicate_with_witness`` plus the glossary/witness-conflict guard.
 
     Same call signature as ``adjudicate_with_witness`` (a drop-in rename at
-    both call sites) so ``adjudicate_context_finding`` — already on the
-    function-line debt ledger at 764 lines, tests/test_runtime_architecture.py
-    — does not grow. ``check_request`` always carries ``candidate_provenance``,
-    ``suspect``/``replacement`` and ``current_cue``/``proposed_cue``
-    (``build_context_adjudication_request``), which is everything
-    ``_orthography_ambiguous`` and the glossary guard need; no extra
-    parameters or caller-side plumbing required.
+    both call sites) plus one optional ``clip_context`` kwarg — both call
+    sites are inside ``adjudicate_context_finding`` where ``clip_context`` is
+    already a parameter in scope, so this does not grow
+    ``adjudicate_context_finding`` itself (already on the function-line debt
+    ledger at 764 lines, tests/test_runtime_architecture.py). ``check_request``
+    always carries ``candidate_provenance``, ``suspect``/``replacement`` and
+    ``current_cue``/``proposed_cue`` (``build_context_adjudication_request``),
+    which is everything ``_orthography_ambiguous`` and the glossary guard
+    need.
     """
 
     repaired, policy_branch, witness_judge_audit = adjudicate_with_witness(
@@ -398,18 +483,32 @@ def _adjudicate_with_glossary_witness_guard(
         llm_call=llm_call,
         structured_chat_context=structured_chat_context,
     )
+    suspect = str(check_request.get("suspect") or "")
+    replacement = str(check_request.get("replacement") or "")
+    request_provenance = check_request.get("candidate_provenance")
+    provenance_surface = (
+        str(request_provenance.get("surface") or "")
+        if isinstance(request_provenance, Mapping)
+        else ""
+    )
     orthography_ambiguous = _orthography_ambiguous(
         current_cue=str(check_request.get("current_cue") or ""),
         proposed_cue=str(check_request.get("proposed_cue") or ""),
-        finding={
-            "suspect": check_request.get("suspect"),
-            "suggestion": check_request.get("replacement"),
-        },
+        finding={"suspect": suspect, "suggestion": replacement},
     )
     if _glossary_session_candidate_undecidable(
         repaired=repaired,
         policy_branch=policy_branch,
         orthography_ambiguous=orthography_ambiguous,
+        registered_direction=_registered_misheard_direction(
+            suspect=suspect, replacement=replacement
+        ),
+        structured_text_support=_glossary_candidate_structured_text_support(
+            replacement=replacement,
+            provenance_surface=provenance_surface,
+            proposed_cue=str(check_request.get("proposed_cue") or ""),
+            clip_context=clip_context,
+        ),
         finding=check_request,
     ):
         repaired = False
@@ -2405,7 +2504,7 @@ def adjudicate_context_finding(
             check_request=request,
             witness=verdict,
             llm_call=judge_llm_call,
-            structured_chat_context=structured_chat_context,
+            structured_chat_context=structured_chat_context, clip_context=clip_context,
         )
         if repaired and policy_branch == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE":
             original_request = request
@@ -2695,7 +2794,7 @@ def adjudicate_context_finding(
                             check_request=request,
                             witness=verdict,
                             llm_call=judge_llm_call,
-                            structured_chat_context=structured_chat_context,
+                            structured_chat_context=structured_chat_context, clip_context=clip_context,
                         )
                         if policy_branch == "JUDGE_REJECTS_CLOSED_SET":
                             policy_branch = (
