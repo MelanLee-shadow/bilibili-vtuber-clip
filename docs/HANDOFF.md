@@ -35,7 +35,7 @@ provider 门根修 + 游戏场配额 20 条/≥85 分 + 候选池 12→18 + TALK
    （90-publish.md 契约；清单构建器已修好认说话人产物名，但批状态 processing 时会拒出清单，
    等批收线）。
 8. **积压工程**（Ivan 已授权，按序）：优化①边界后移进程内重放（task#10）；
-   优化③ERes2NetV2 嵌入试点**已在跑**（task#12，worker 于 free 离线回放
+   优化③ERes2NetV2 嵌入试点**已在跑**（task#12，worker 于本机 Mac 离线回放（Ivan 指示：别抢 free 产线 CPU；音频一次性 scp）
    61+40 句双真值对比 CAM++，评判=假李豆沙=0 前提下假连线更少+短句区分度，产
    docs/reviews/2026-08-08-eres2netv2-pilot.md；赢则按 host_vocal_proof.py:638 sha 门
    +voiceprint_profile 重绑走切换流程）；SOTA 第二优先=pyannote segmentation-3.0
