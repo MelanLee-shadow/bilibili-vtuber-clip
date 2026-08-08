@@ -35,7 +35,12 @@ provider 门根修 + 游戏场配额 20 条/≥85 分 + 候选池 12→18 + TALK
    （90-publish.md 契约；清单构建器已修好认说话人产物名，但批状态 processing 时会拒出清单，
    等批收线）。
 8. **积压工程**（Ivan 已授权，按序）：优化①边界后移进程内重放（task#10）；
-   优化③ERes2NetV2 嵌入试点（task#12，61+40 句真值回放）；误听自动积累写路径
+   优化③ERes2NetV2 嵌入试点**已在跑**（task#12，worker 于 free 离线回放
+   61+40 句双真值对比 CAM++，评判=假李豆沙=0 前提下假连线更少+短句区分度，产
+   docs/reviews/2026-08-08-eres2netv2-pilot.md；赢则按 host_vocal_proof.py:638 sha 门
+   +voiceprint_profile 重绑走切换流程）；SOTA 第二优先=pyannote segmentation-3.0
+   句内子窗（治混说/重叠），排在 Ivan 标注收割的根因法证之后——他标的句内混说错误
+   正是其判据（调研 docs/reviews/2026-08-08-diarization-sota-survey.md）；误听自动积累写路径
    （勘探完毕 docs/reviews/2026-08-08-mishear-mining-probe.md：382实例/246方向/99%新面，
    三条腿=自采矿+审阅收割+历史回填，晋升阈值≥3日期零反向待 Ivan 拍板）；
    final_review_auditor 强制拆解（账本第三抬触发）；producer_package_finalization 拆解（第二抬）。
