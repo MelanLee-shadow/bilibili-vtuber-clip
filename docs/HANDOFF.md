@@ -2,6 +2,52 @@
 
 Updated: 2026-08-07 by Claude（8/7 鹅鸭杀场三症状通病修复会话）。7/31 以下旧节仅存历史。
 
+## ⭐ 2026-08-08 晚 当前状态与接力任务（后来 agent 从这里开始）
+
+**此刻在发生什么**：Ivan 正在本地 `lidousha/2026-08-07/*.speaker.srt` 里按 A/B 语法标注
+说话人与文字错误（A=李豆沙、B=非李豆沙、句内多标记管到前一标记为止、不标=机器对，
+同时直接改错字）。**在他说标完之前绝不碰这些文件。** 8/8 批 runner 自动处理中（只产不传）。
+
+**代码/部署位**：分支 `claude/session-live-context`（生产唯一合法部署源；从 main 部署会
+回滚 codex 17 提交）。部署波 6 = e658e79（优化②judge瞬断三件套）+ 2b65885（song
+provider 门根修 + 游戏场配额 20 条/≥85 分 + 候选池 12→18 + TALK_ATTEMPT_CAP 10→20）
++ 本 HANDOFF，全套 3122 绿。部署用 `bash scripts/deploy_free_autoslice.sh free`（自动
+排 tick 间隙，不断 8/8 流水线——Ivan 规则：8/8 健康就不打扰，出问题才先部署修复再自愈）。
+
+**Ivan 审完标注后的任务队列（他定的执行序，逐条做）**：
+1. **收割标注**：对每条 speaker.srt 与 free 上 pristine 机器版逐 cue diff（解析脚本先例
+   与真值工件 schema `ivan-speaker-truth-diff.v1` 见本会话 scratchpad/ivan_truth_diff.json
+   的生成逻辑；标记语法陷阱：孤立 ' A'/' B' 才是标记，BW 之类不是）。
+2. **根因法证（通病优先于修切片——Ivan 明令）**：每处错拉 free 裁决链回执
+   （entity_verdicts/fidelity/final_review_audit）定根因，机制实证才升系统守卫，
+   其余按保向纪律只落方向词条/真值（先例 docs/reviews/2026-08-07-zsm-mishear-forensics.md）。
+3. 通病修复 + 测试全绿 + 部署。
+4. **统一重产**：所有带错候选按 reviewed-baseline+override 车道重产（陈旧 spec 教训：
+   baseline 只在 runner 建 spec 时注入，手动重产必须用 free:/opt/bilive/autoslice/tmp/
+   inject_baseline_and_produce.py 的产线函数注入法）；**贪生怕死 auto_223750_913_1322 要出
+   说话人二分版**（现为统一色时代产物）。验收=剥标记逐字相等+假李豆沙=0。
+5. **封面**：auto_223750 AI 封面 8 连败法证（worker 在产
+   docs/reviews/2026-08-08-cover-punch-exhaustion-forensics.md）→ 给 Ivan 逐轮解释 +
+   降级路提案（梗字审耗尽→退非梗字版式）等他拍板。
+6. **歌**：《一起长大》song_230754_1118 等 8/7 歌候选已被旧 bug 终态化；部署波 6 后用
+   scripts/revive_rejected_candidates.py（fix-commit 2b65885）复活重产，付费链现可达。
+7. **上传**：权宜授权已撤回——全部修好 + Ivan 明示后才走 authorized_upload
+   （90-publish.md 契约；清单构建器已修好认说话人产物名，但批状态 processing 时会拒出清单，
+   等批收线）。
+8. **积压工程**（Ivan 已授权，按序）：优化①边界后移进程内重放（task#10）；
+   优化③ERes2NetV2 嵌入试点（task#12，61+40 句真值回放）；误听自动积累写路径
+   （勘探完毕 docs/reviews/2026-08-08-mishear-mining-probe.md：382实例/246方向/99%新面，
+   三条腿=自采矿+审阅收割+历史回填，晋升阈值≥3日期零反向待 Ivan 拍板）；
+   final_review_auditor 强制拆解（账本第三抬触发）；producer_package_finalization 拆解（第二抬）。
+
+**悬案/边界**：7/22 auto_200511_61_138 Ivan 裁定封存（真值只作数据，不编辑不上传）；
+狍哥案 auto_220747_1271_1323 死于「狍哥 vs 小炮哥」实体振荡，需音频重裁（Ivan 输入）；
+说话人等音质场准确率待 Ivan 的 7/22 裁定收割（工作表已标完 30s，全长版已给）。
+
+**运营铁律（本会话学费）**：审阅交付=本地最小四件套（mp4/speaker.srt/cover.png/publish.json）；
+worker 提示必须 edits-first+精确锚点（80 调用帽会被纯探索吃光）；同一 worktree 单 writer；
+账本增行必须带 Ivan 出处；free 一切产线操作走 flock 礼让。
+
 ## 2026-08-07 live 状态
 
 - **第二次部署 `26dfd83`（21:37Z）**：狍哥案 selection-rescore 车道全闭环（执行器挂
