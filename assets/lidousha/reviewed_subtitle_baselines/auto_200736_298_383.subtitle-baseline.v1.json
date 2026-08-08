@@ -1,0 +1,14 @@
+{
+  "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
+  "candidate_id": "auto_200736_298_383",
+  "schema_version": "subtitle-redelivery-baseline.v2",
+  "mode": "preserve_text_outside_source_truth",
+  "exact_interval_replay": true,
+  "path": "auto_200736_298_383.reviewed.srt",
+  "sha256": "da7454d7e02e7b966039f469fd2e04b1325d004844366721ee8ae0e322e25343",
+  "authority": "Ivan-annotated 2026-08-08 speaker-truth-diff adjudication over reports/ivan_truth_harvest/2026-08-07/auto_200736_298_383.truth-diff.v2.json (schema ivan-speaker-truth-diff.v2, source_machine_sha256 b51a54436af23900192b94c1de8d6f28fa6f89db62615014e7249fd1a1b00678, annotated_sha256 b82f6c3b241436545e7534a4c3ed849f1f00ae7779148f5b4b855388be4f1583); 44 cues, 7 text_changed, 6 label_changed, 1 mixed, 6 marked；贴音/证据裁定后由 Claude 落盘。",
+  "source_recording_basename": "22966160_20260807-20-07-36.mp4",
+  "source_sha256": "46e72f699ede43e8ce83a4de42e5df3269efbe42e7e3f5b50ae1d0686cba031a",
+  "absolute_source_start_ms": 298320,
+  "absolute_source_end_ms": 383130
+}

@@ -1,0 +1,207 @@
+{
+  "schema_version": 1,
+  "source_media_sha256": "f6d03835044a3c64f552a41a60f29f0cb6aaa52fdb4d8d8c5842e01ee4f91fef",
+  "text_final_srt_sha256": "dea0107fb47c8532019ab406ce77076a7cd55bb75027bcd0e5153990c11aff35",
+  "source_srt_sha256": "5cbb3d934601be5fd2011a3ac2ce0bac3adb056ec68dc38f9304a368600c7fea",
+  "candidate_id": "auto_220747_488_680",
+  "status": "ivan_reviewed_speaker_binary_default_guest",
+  "reviewed_at": "2026-08-08",
+  "overlap_policy": "保留主说话人；只有词和时间都可靠时才增加抢话层。",
+  "notes": "Truth landing for Ivan's 2026-08-08 speaker adjudication on candidate auto_220747_488_680 (reports/ivan_truth_harvest/2026-08-07/auto_220747_488_680.truth-diff.v2.json, schema ivan-speaker-truth-diff.v2, source_machine_sha256 5cbb3d934601be5fd2011a3ac2ce0bac3adb056ec68dc38f9304a368600c7fea, annotated_sha256 aad891fc22491f26d6862931e801eb95e55507e2e0e7293c5ed7b410b4bb8a11). source_srt_sha256 binds this override to the automatic-labelled SRT produced by the current pristine machine run auto_220747_488_680 (2026-08-07 out dir auto_220747_488_680/replacement_recuts/auto_220747_488_680.recut.speaker-final.srt / .json). A future re-production from a changed text baseline (different text_final_srt / automatic labelled SRT hash) will need this override re-bound to the new source_srt_sha256 before it can apply again; the speaker labels below remain Ivan's authority regardless of hash drift. Mixed-cue sub-segment timestamps are approximate character-length-proportion estimates (see per-override note); a pyannote-based sub-window diarization pass to replace these approximate boundaries with acoustic ones remains a pending TODO, tracked alongside the other 2026-08-07 candidates. Mixed-cue detail: cue 14 (00:00:32,360 --> 00:00:38,440): [连线] 李豆沙面刀啊 / [李豆沙] 不是我，不是我 / [连线] 我都看见了; cue 37 (00:01:23,460 --> 00:01:24,180): [连线] 李姐 / [李豆沙] 不; cue 38 (00:01:24,180 --> 00:01:26,250): [李豆沙] 当然不 / [连线] 回答我; cue 44 (00:01:34,070 --> 00:01:35,650): [连线] 李姐 / [李豆沙] 扣不出来; cue 48 (00:01:41,820 --> 00:01:43,860): [李豆沙] 我也觉得 / [连线] 对吧.",
+  "overrides": [
+    {
+      "source_cue": 14,
+      "expect": {
+        "start": "00:00:32,360",
+        "end": "00:00:38,440",
+        "text": "李豆沙没刀啊，不是我，不是我，我都看见了"
+      },
+      "authority": "Ivan-annotated-2026-08-08",
+      "note": "Ivan-annotated-2026-08-08 speaker correction; mixed cue split into 3 segments. Sub-segment start/end are approximated by character-length proportion within the machine cue window (no word-level timestamps were available from the adjudication pass); treat sub-segment boundaries as approximate, the speaker label and segment order are authoritative. Text also corrected from the machine automatic label (mishear fix; expect.text below is the pristine machine text this override binds against, the corrected truth text is in segments[].text).",
+      "segments": [
+        {
+          "start": "00:00:32,360",
+          "end": "00:00:34,387",
+          "speaker": "连线",
+          "speaker_detail": "连线",
+          "text": "李豆沙面刀啊"
+        },
+        {
+          "start": "00:00:34,387",
+          "end": "00:00:36,751",
+          "speaker": "李豆沙",
+          "speaker_detail": "李豆沙",
+          "text": "不是我，不是我"
+        },
+        {
+          "start": "00:00:36,751",
+          "end": "00:00:38,440",
+          "speaker": "连线",
+          "speaker_detail": "连线",
+          "text": "我都看见了"
+        }
+      ]
+    },
+    {
+      "source_cue": 37,
+      "expect": {
+        "start": "00:01:23,460",
+        "end": "00:01:24,180",
+        "text": "理解不"
+      },
+      "authority": "Ivan-annotated-2026-08-08",
+      "note": "Ivan-annotated-2026-08-08 speaker correction; mixed cue split into 2 segments. Sub-segment start/end are approximated by character-length proportion within the machine cue window (no word-level timestamps were available from the adjudication pass); treat sub-segment boundaries as approximate, the speaker label and segment order are authoritative. Text also corrected from the machine automatic label (mishear fix; expect.text below is the pristine machine text this override binds against, the corrected truth text is in segments[].text).",
+      "segments": [
+        {
+          "start": "00:01:23,460",
+          "end": "00:01:23,940",
+          "speaker": "连线",
+          "speaker_detail": "连线",
+          "text": "李姐"
+        },
+        {
+          "start": "00:01:23,940",
+          "end": "00:01:24,180",
+          "speaker": "李豆沙",
+          "speaker_detail": "李豆沙",
+          "text": "不"
+        }
+      ]
+    },
+    {
+      "source_cue": 38,
+      "expect": {
+        "start": "00:01:24,180",
+        "end": "00:01:26,250",
+        "text": "当然不回答我"
+      },
+      "authority": "Ivan-annotated-2026-08-08",
+      "note": "Ivan-annotated-2026-08-08 speaker correction; mixed cue split into 2 segments. Sub-segment start/end are approximated by character-length proportion within the machine cue window (no word-level timestamps were available from the adjudication pass); treat sub-segment boundaries as approximate, the speaker label and segment order are authoritative.",
+      "segments": [
+        {
+          "start": "00:01:24,180",
+          "end": "00:01:25,215",
+          "speaker": "李豆沙",
+          "speaker_detail": "李豆沙",
+          "text": "当然不"
+        },
+        {
+          "start": "00:01:25,215",
+          "end": "00:01:26,250",
+          "speaker": "连线",
+          "speaker_detail": "连线",
+          "text": "回答我"
+        }
+      ]
+    },
+    {
+      "source_cue": 41,
+      "expect": {
+        "start": "00:01:28,450",
+        "end": "00:01:31,090",
+        "text": "哈哈哈哈"
+      },
+      "authority": "Ivan-annotated-2026-08-08",
+      "note": "Ivan-annotated-2026-08-08 speaker correction; text also corrected from the machine automatic label (mishear fix; expect.text below is the pristine machine text this override binds against, the corrected truth text is in segments[].text).",
+      "segments": [
+        {
+          "start": "00:01:28,450",
+          "end": "00:01:31,090",
+          "speaker": "李豆沙",
+          "speaker_detail": "李豆沙",
+          "text": "哼哼"
+        }
+      ]
+    },
+    {
+      "source_cue": 42,
+      "expect": {
+        "start": "00:01:31,830",
+        "end": "00:01:33,030",
+        "text": "扣不出来"
+      },
+      "authority": "Ivan-annotated-2026-08-08",
+      "note": "Ivan-annotated-2026-08-08 speaker correction; text unchanged from the machine automatic label.",
+      "segments": [
+        {
+          "start": "00:01:31,830",
+          "end": "00:01:33,030",
+          "speaker": "李豆沙",
+          "speaker_detail": "李豆沙",
+          "text": "扣不出来"
+        }
+      ]
+    },
+    {
+      "source_cue": 44,
+      "expect": {
+        "start": "00:01:34,070",
+        "end": "00:01:35,650",
+        "text": "李姐扣不出来"
+      },
+      "authority": "Ivan-annotated-2026-08-08",
+      "note": "Ivan-annotated-2026-08-08 speaker correction; mixed cue split into 2 segments. Sub-segment start/end are approximated by character-length proportion within the machine cue window (no word-level timestamps were available from the adjudication pass); treat sub-segment boundaries as approximate, the speaker label and segment order are authoritative.",
+      "segments": [
+        {
+          "start": "00:01:34,070",
+          "end": "00:01:34,597",
+          "speaker": "连线",
+          "speaker_detail": "连线",
+          "text": "李姐"
+        },
+        {
+          "start": "00:01:34,597",
+          "end": "00:01:35,650",
+          "speaker": "李豆沙",
+          "speaker_detail": "李豆沙",
+          "text": "扣不出来"
+        }
+      ]
+    },
+    {
+      "source_cue": 48,
+      "expect": {
+        "start": "00:01:41,820",
+        "end": "00:01:43,860",
+        "text": "我也觉得，对吧"
+      },
+      "authority": "Ivan-annotated-2026-08-08",
+      "note": "Ivan-annotated-2026-08-08 speaker correction; mixed cue split into 2 segments. Sub-segment start/end are approximated by character-length proportion within the machine cue window (no word-level timestamps were available from the adjudication pass); treat sub-segment boundaries as approximate, the speaker label and segment order are authoritative. Text also corrected from the machine automatic label (mishear fix; expect.text below is the pristine machine text this override binds against, the corrected truth text is in segments[].text).",
+      "segments": [
+        {
+          "start": "00:01:41,820",
+          "end": "00:01:43,180",
+          "speaker": "李豆沙",
+          "speaker_detail": "李豆沙",
+          "text": "我也觉得"
+        },
+        {
+          "start": "00:01:43,180",
+          "end": "00:01:43,860",
+          "speaker": "连线",
+          "speaker_detail": "连线",
+          "text": "对吧"
+        }
+      ]
+    },
+    {
+      "source_cue": 70,
+      "expect": {
+        "start": "00:02:23,830",
+        "end": "00:02:25,030",
+        "text": "哎，不是"
+      },
+      "authority": "Ivan-annotated-2026-08-08",
+      "note": "Ivan-annotated-2026-08-08 speaker correction; text unchanged from the machine automatic label.",
+      "segments": [
+        {
+          "start": "00:02:23,830",
+          "end": "00:02:25,030",
+          "speaker": "李豆沙",
+          "speaker_detail": "李豆沙",
+          "text": "哎，不是"
+        }
+      ]
+    }
+  ]
+}
