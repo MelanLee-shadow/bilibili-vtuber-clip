@@ -40,7 +40,7 @@ Personal VAD 是源头：给定一个说话人的声纹（acoustic footprint）�
 
 另一条相关但方向不同的 2026 年 1 月新论文——[Adaptive Speaker Embedding Self-Augmentation for Personal VAD with Short Enrollment Speech](https://arxiv.org/pdf/2601.12769)——处理的是"enrollment 音频本身很短"（而非我们的问题：enrollment 音频充足，是**待判定的 cue** 很短），用混合语音里挑出的关键帧去增强 enrollment embedding。方向相邻但不是同一问题，仅供谱系参考。
 
-### 1.2 逐系统核查："原生 enrollment→binary" 有没有"
+### 1.2 逐系统核查："原生 enrollment→binary" 有没有
 
 | 系统 | 是否原生支持 enrollment 二分 | 依据 |
 |---|---|---|
@@ -49,7 +49,7 @@ Personal VAD 是源头：给定一个说话人的声纹（acoustic footprint）�
 | pyannoteAI **Precision-2**（商业 API） | 是，但只在付费云 API：可上传 enrollment 视频/音频建 voiceprint，diarization 后按最高匹配分打标 | [pyannote 博客](https://www.pyannote.ai/blog/what-is-speaker-diarization) |
 | **DiariZen**（WavLM-Large + Conformer + powerset + VBx，ICASSP 2025，"开源 SOTA"自我定位） | **否**。本质是 EEND+聚类，输出匿名 speaker 标签，同 pyannote 一样需要后接身份匹配 | [BUTSpeechFIT/DiariZen](https://github.com/BUTSpeechFIT/DiariZen)、[教程](https://arxiv.org/html/2604.21507) |
 | **3D-Speaker / SpeakerLab**（CAM++ 的娘家：ERes2Net、ERes2NetV2、ERes2Net-large） | **是，原生**。这些是纯 verification 模型，输入两段音频输出相似度，enrollment-binary 本来就是它的设计目标——我们现在的架构已经是这条路线 | [3D-Speaker README](https://github.com/modelscope/3D-Speaker/blob/main/README.md) |
-| **WeSpeaker 2.x** | 是（verification 工具箱同款设计），但中文侧只有一个 `wespeaker-cnceleb-resnet34`（[HF](https://huggingface.co/Wespeaker/wespeaker-cnceleb-resnet34)），未找到与 3D-Speaker 200k 说话人规模同级的中文旗舰模型；其最强架构（ResNet293, VoxCeleb1-O EER 0.447%）是英文优先 | [wespeaker/README](https://github.com/wenet-e2e/wespeaker/blob/master/README.md) |
+| **WeSpeaker 2.x** | 是（verification 工具箱同款设计），确认有一个中文 checkpoint `wespeaker-cnceleb-resnet34`（[HF](https://huggingface.co/Wespeaker/wespeaker-cnceleb-resnet34)），本次调研未枚举完整中文模型列表、未找到与 3D-Speaker 200k 说话人规模同级的中文旗舰模型；其最强架构（ResNet293, VoxCeleb1-O EER 0.447%）是英文优先 | [wespeaker/README](https://github.com/wenet-e2e/wespeaker/blob/master/README.md) |
 | **ECAPA2** | 是（verification 模型），但未找到中文预训练 checkpoint，仅 VoxCeleb 英文 | [arXiv:2401.08342](https://arxiv.org/abs/2401.08342) |
 | **SpeakerLM**（Aug 2025 / AAAI 2026，Alibaba 系，Qwen2.5-7B + SenseVoice-large + ERes2NetV2 embedding） | **是，且是本次调研里唯一"联合 ASR+diarization+enrollment"三合一的系统**：`Match-Regist` 模式下预登记说话人，模型直接输出"该片段属于哪个登记说话人"，含 Mandarin 评测（AliMeeting-Eval cpCER 16.05%、AISHELL4-Eval 18.37%） | [arXiv:2508.06372](https://arxiv.org/abs/2508.06372) |
 
@@ -126,7 +126,7 @@ ECAPA2（[arXiv:2401.08342](https://arxiv.org/abs/2401.08342)）走的是另一�
 
 | 项目 | 内容 |
 |---|---|
-| 模型 | `pyannote/segmentation-3.0` 或 Community-1（HF，MIT，需接受许可协议）；备选 3D-Speaker 自带 `--include_overlap` 阶段（同样底层依赖 HF token） |
+| 模型 | `pyannote/segmentation-3.0`（HF，MIT，已核实）或 Community-1（HF，需接受许可协议，本次未独立核实其许可证名称，"publicly accessible with license acceptance" 是能确认的全部信息）；备选 3D-Speaker 自带 `--include_overlap` 阶段（同样底层依赖 HF token） |
 | 集成点 | 新增一个前处理步骤：对判定为 mixed 的 cue（现有 6/61 走 `mixed_cue_speaker` 路径的那批）先跑分窗，得到 sub-window 边界，每个 window 单独过现有/候选 1 打分器算 margin，结果作为 `window_speakers: list[str]` 传给 `src/autoslice/speaker_host_evidence.py:142` 的 `mixed_cue_speaker`——这个函数今天的签名就是为这个用法设计的（docstring 明说是"reusable combinator seam for a future per-cue audio-window scorer"） |
 | 针对的失败面 | 直接命中失败面 2（mixed cue，~10%）和失败面 4（overlap，当前零处理）——这是三个候选里唯一直接处理这两个失败面的 |
 | 不解决的失败面 | 1（短 cue 阈值本身）、3（薄 margin 分离度，除非分窗后单窗口更纯净、间接有帮助但未验证） |
