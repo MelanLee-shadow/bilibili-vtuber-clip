@@ -15,6 +15,8 @@ reports/**
 !reports/**/*.upload_manifest*.json
 !reports/**/upload_ledger.jsonl
 !reports/**/ivan_*_results.json
+# 2026-08-08: Ivan 标注收割真值工件（审阅收割腿）是法证与重产验收的唯一输入。
+!reports/**/*.truth-diff.v2.json
 # 2026-07-16: cover edit + season-add are publish actions too — keep tracked.
 !reports/**/*.cover_edit*.json
 !reports/**/*.season_add*.json

@@ -1,0 +1,1326 @@
+{
+ "schema": "ivan-speaker-truth-diff.v2",
+ "candidate_id": "auto_223750_913_1322",
+ "source_machine_sha256": "eea72b1635e9ffd3b3cb7c8968ebc8105e3e34d51ae8164559880fe045441431",
+ "annotated_sha256": "eea72b1635e9ffd3b3cb7c8968ebc8105e3e34d51ae8164559880fe045441431",
+ "authority": "Ivan-annotated-2026-08-08",
+ "generated_by": "scripts/harvest_ivan_truth.py",
+ "summary": {
+  "cues": 77,
+  "text_changed": 0,
+  "label_changed": 0,
+  "mixed": 0,
+  "marked": 0
+ },
+ "cues": [
+  {
+   "cue": 1,
+   "timing": "00:00:00,250 --> 00:00:03,220",
+   "machine_label": null,
+   "machine_text": "那就出shadowlee",
+   "truth_segments": [
+    {
+     "text": "那就出shadowlee",
+     "label": null
+    }
+   ],
+   "truth_text": "那就出shadowlee",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 2,
+   "timing": "00:00:03,220 --> 00:00:07,640",
+   "machine_label": null,
+   "machine_text": "前面奈奈莉娅是说shadowlee在什么什么什么抱尸体是吧",
+   "truth_segments": [
+    {
+     "text": "前面奈奈莉娅是说shadowlee在什么什么什么抱尸体是吧",
+     "label": null
+    }
+   ],
+   "truth_text": "前面奈奈莉娅是说shadowlee在什么什么什么抱尸体是吧",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 3,
+   "timing": "00:00:07,640 --> 00:00:09,210",
+   "machine_label": null,
+   "machine_text": "站在尸体上面还是怎么的",
+   "truth_segments": [
+    {
+     "text": "站在尸体上面还是怎么的",
+     "label": null
+    }
+   ],
+   "truth_text": "站在尸体上面还是怎么的",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 4,
+   "timing": "00:00:09,210 --> 00:00:11,850",
+   "machine_label": null,
+   "machine_text": "小李不知道shadowlee怎么辩吧",
+   "truth_segments": [
+    {
+     "text": "小李不知道shadowlee怎么辩吧",
+     "label": null
+    }
+   ],
+   "truth_text": "小李不知道shadowlee怎么辩吧",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 5,
+   "timing": "00:00:11,850 --> 00:00:13,890",
+   "machine_label": null,
+   "machine_text": "如果觉得她不做好就出她呗",
+   "truth_segments": [
+    {
+     "text": "如果觉得她不做好就出她呗",
+     "label": null
+    }
+   ],
+   "truth_text": "如果觉得她不做好就出她呗",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 6,
+   "timing": "00:00:14,290 --> 00:00:16,330",
+   "machine_label": null,
+   "machine_text": "别的没信息",
+   "truth_segments": [
+    {
+     "text": "别的没信息",
+     "label": null
+    }
+   ],
+   "truth_text": "别的没信息",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 7,
+   "timing": "00:00:16,900 --> 00:00:20,340",
+   "machine_label": null,
+   "machine_text": "小李哪知道这些，两个都是宝",
+   "truth_segments": [
+    {
+     "text": "小李哪知道这些，两个都是宝",
+     "label": null
+    }
+   ],
+   "truth_text": "小李哪知道这些，两个都是宝",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 8,
+   "timing": "00:00:20,780 --> 00:00:22,380",
+   "machine_label": null,
+   "machine_text": "狍哥是吧",
+   "truth_segments": [
+    {
+     "text": "狍哥是吧",
+     "label": null
+    }
+   ],
+   "truth_text": "狍哥是吧",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 9,
+   "timing": "00:00:22,570 --> 00:00:25,610",
+   "machine_label": null,
+   "machine_text": "香香烧烤，绝世猛一，死保",
+   "truth_segments": [
+    {
+     "text": "香香烧烤，绝世猛一，死保",
+     "label": null
+    }
+   ],
+   "truth_text": "香香烧烤，绝世猛一，死保",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 10,
+   "timing": "00:00:25,610 --> 00:00:26,450",
+   "machine_label": null,
+   "machine_text": "有点软",
+   "truth_segments": [
+    {
+     "text": "有点软",
+     "label": null
+    }
+   ],
+   "truth_text": "有点软",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 11,
+   "timing": "00:00:26,450 --> 00:00:27,530",
+   "machine_label": null,
+   "machine_text": "那我也保",
+   "truth_segments": [
+    {
+     "text": "那我也保",
+     "label": null
+    }
+   ],
+   "truth_text": "那我也保",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 12,
+   "timing": "00:00:27,650 --> 00:00:30,010",
+   "machine_label": null,
+   "machine_text": "我保这个女高中生",
+   "truth_segments": [
+    {
+     "text": "我保这个女高中生",
+     "label": null
+    }
+   ],
+   "truth_text": "我保这个女高中生",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 13,
+   "timing": "00:00:30,130 --> 00:00:31,150",
+   "machine_label": null,
+   "machine_text": "我也保",
+   "truth_segments": [
+    {
+     "text": "我也保",
+     "label": null
+    }
+   ],
+   "truth_text": "我也保",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 14,
+   "timing": "00:00:31,150 --> 00:00:33,250",
+   "machine_label": null,
+   "machine_text": "她是最强女高中生",
+   "truth_segments": [
+    {
+     "text": "她是最强女高中生",
+     "label": null
+    }
+   ],
+   "truth_text": "她是最强女高中生",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 15,
+   "timing": "00:00:33,330 --> 00:00:35,530",
+   "machine_label": null,
+   "machine_text": "我这把非常地有贡献啊",
+   "truth_segments": [
+    {
+     "text": "我这把非常地有贡献啊",
+     "label": null
+    }
+   ],
+   "truth_text": "我这把非常地有贡献啊",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 16,
+   "timing": "00:00:35,530 --> 00:00:39,410",
+   "machine_label": null,
+   "machine_text": "我这把，我平时一个贪生怕死不做任务的人",
+   "truth_segments": [
+    {
+     "text": "我这把，我平时一个贪生怕死不做任务的人",
+     "label": null
+    }
+   ],
+   "truth_text": "我这把，我平时一个贪生怕死不做任务的人",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 17,
+   "timing": "00:00:39,410 --> 00:00:40,650",
+   "machine_label": null,
+   "machine_text": "我这把在猛猛地做任务",
+   "truth_segments": [
+    {
+     "text": "我这把在猛猛地做任务",
+     "label": null
+    }
+   ],
+   "truth_text": "我这把在猛猛地做任务",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 18,
+   "timing": "00:00:40,650 --> 00:00:41,210",
+   "machine_label": null,
+   "machine_text": "我为啥",
+   "truth_segments": [
+    {
+     "text": "我为啥",
+     "label": null
+    }
+   ],
+   "truth_text": "我为啥",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 19,
+   "timing": "00:00:41,210 --> 00:00:44,530",
+   "machine_label": null,
+   "machine_text": "就是因为我拥有了最强的女高中生",
+   "truth_segments": [
+    {
+     "text": "就是因为我拥有了最强的女高中生",
+     "label": null
+    }
+   ],
+   "truth_text": "就是因为我拥有了最强的女高中生",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 20,
+   "timing": "00:00:44,530 --> 00:00:45,860",
+   "machine_label": null,
+   "machine_text": "她说她会保护我",
+   "truth_segments": [
+    {
+     "text": "她说她会保护我",
+     "label": null
+    }
+   ],
+   "truth_text": "她说她会保护我",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 21,
+   "timing": "00:00:45,860 --> 00:00:46,660",
+   "machine_label": null,
+   "machine_text": "我相信她",
+   "truth_segments": [
+    {
+     "text": "我相信她",
+     "label": null
+    }
+   ],
+   "truth_text": "我相信她",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 22,
+   "timing": "00:00:46,660 --> 00:00:47,900",
+   "machine_label": null,
+   "machine_text": "我非常地相信她",
+   "truth_segments": [
+    {
+     "text": "我非常地相信她",
+     "label": null
+    }
+   ],
+   "truth_text": "我非常地相信她",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 23,
+   "timing": "00:00:47,980 --> 00:00:49,740",
+   "machine_label": null,
+   "machine_text": "在她的注视下",
+   "truth_segments": [
+    {
+     "text": "在她的注视下",
+     "label": null
+    }
+   ],
+   "truth_text": "在她的注视下",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 24,
+   "timing": "00:00:49,740 --> 00:00:52,680",
+   "machine_label": null,
+   "machine_text": "我已经做了两个任务呵",
+   "truth_segments": [
+    {
+     "text": "我已经做了两个任务呵",
+     "label": null
+    }
+   ],
+   "truth_text": "我已经做了两个任务呵",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 25,
+   "timing": "00:00:52,680 --> 00:00:54,540",
+   "machine_label": null,
+   "machine_text": "我下把也会继续努力的",
+   "truth_segments": [
+    {
+     "text": "我下把也会继续努力的",
+     "label": null
+    }
+   ],
+   "truth_text": "我下把也会继续努力的",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 26,
+   "timing": "00:00:54,920 --> 00:00:57,360",
+   "machine_label": null,
+   "machine_text": "最强女高中生继续保护我好吗",
+   "truth_segments": [
+    {
+     "text": "最强女高中生继续保护我好吗",
+     "label": null
+    }
+   ],
+   "truth_text": "最强女高中生继续保护我好吗",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 27,
+   "timing": "00:00:57,600 --> 00:01:00,120",
+   "machine_label": null,
+   "machine_text": "我们一起带好人走向胜利",
+   "truth_segments": [
+    {
+     "text": "我们一起带好人走向胜利",
+     "label": null
+    }
+   ],
+   "truth_text": "我们一起带好人走向胜利",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 28,
+   "timing": "00:01:00,480 --> 00:01:02,380",
+   "machine_label": null,
+   "machine_text": "冷静，家人们",
+   "truth_segments": [
+    {
+     "text": "冷静，家人们",
+     "label": null
+    }
+   ],
+   "truth_text": "冷静，家人们",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 29,
+   "timing": "00:01:02,380 --> 00:01:04,540",
+   "machine_label": null,
+   "machine_text": "我真，我真的不是我杀的",
+   "truth_segments": [
+    {
+     "text": "我真，我真的不是我杀的",
+     "label": null
+    }
+   ],
+   "truth_text": "我真，我真的不是我杀的",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 30,
+   "timing": "00:01:04,540 --> 00:01:06,860",
+   "machine_label": null,
+   "machine_text": "我敢，我敢发誓",
+   "truth_segments": [
+    {
+     "text": "我敢，我敢发誓",
+     "label": null
+    }
+   ],
+   "truth_text": "我敢，我敢发誓",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 31,
+   "timing": "00:01:06,860 --> 00:01:09,990",
+   "machine_label": null,
+   "machine_text": "如果那个，如果那个要是安晚",
+   "truth_segments": [
+    {
+     "text": "如果那个，如果那个要是安晚",
+     "label": null
+    }
+   ],
+   "truth_text": "如果那个，如果那个要是安晚",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 32,
+   "timing": "00:01:09,990 --> 00:01:11,390",
+   "machine_label": null,
+   "machine_text": "安晚，那个安晚，安晚",
+   "truth_segments": [
+    {
+     "text": "安晚，那个安晚，安晚",
+     "label": null
+    }
+   ],
+   "truth_text": "安晚，那个安晚，安晚",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 33,
+   "timing": "00:01:11,390 --> 00:01:12,590",
+   "machine_label": null,
+   "machine_text": "如果是我杀的话",
+   "truth_segments": [
+    {
+     "text": "如果是我杀的话",
+     "label": null
+    }
+   ],
+   "truth_text": "如果是我杀的话",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 34,
+   "timing": "00:01:12,590 --> 00:01:13,650",
+   "machine_label": null,
+   "machine_text": "我就是女同",
+   "truth_segments": [
+    {
+     "text": "我就是女同",
+     "label": null
+    }
+   ],
+   "truth_text": "我就是女同",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 35,
+   "timing": "00:01:13,650 --> 00:01:15,440",
+   "machine_label": null,
+   "machine_text": "我真不是我杀的",
+   "truth_segments": [
+    {
+     "text": "我真不是我杀的",
+     "label": null
+    }
+   ],
+   "truth_text": "我真不是我杀的",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 36,
+   "timing": "00:01:15,440 --> 00:01:17,390",
+   "machine_label": null,
+   "machine_text": "我真的就是往下走",
+   "truth_segments": [
+    {
+     "text": "我真的就是往下走",
+     "label": null
+    }
+   ],
+   "truth_text": "我真的就是往下走",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 37,
+   "timing": "00:01:17,390 --> 00:01:19,970",
+   "machine_label": null,
+   "machine_text": "而且那个时候其实很多人经过我",
+   "truth_segments": [
+    {
+     "text": "而且那个时候其实很多人经过我",
+     "label": null
+    }
+   ],
+   "truth_text": "而且那个时候其实很多人经过我",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 38,
+   "timing": "00:01:19,970 --> 00:01:21,570",
+   "machine_label": null,
+   "machine_text": "那香香烧烤也经过了我",
+   "truth_segments": [
+    {
+     "text": "那香香烧烤也经过了我",
+     "label": null
+    }
+   ],
+   "truth_text": "那香香烧烤也经过了我",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 39,
+   "timing": "00:01:21,570 --> 00:01:22,750",
+   "machine_label": null,
+   "machine_text": "然后我没有",
+   "truth_segments": [
+    {
+     "text": "然后我没有",
+     "label": null
+    }
+   ],
+   "truth_text": "然后我没有",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 40,
+   "timing": "00:01:22,750 --> 00:01:24,390",
+   "machine_label": null,
+   "machine_text": "我没有对她动手",
+   "truth_segments": [
+    {
+     "text": "我没有对她动手",
+     "label": null
+    }
+   ],
+   "truth_text": "我没有对她动手",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 41,
+   "timing": "00:01:24,390 --> 00:01:26,490",
+   "machine_label": null,
+   "machine_text": "这不就证明了一切了吗",
+   "truth_segments": [
+    {
+     "text": "这不就证明了一切了吗",
+     "label": null
+    }
+   ],
+   "truth_text": "这不就证明了一切了吗",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 42,
+   "timing": "00:01:26,490 --> 00:01:28,410",
+   "machine_label": null,
+   "machine_text": "我当时就是在那边做任务",
+   "truth_segments": [
+    {
+     "text": "我当时就是在那边做任务",
+     "label": null
+    }
+   ],
+   "truth_text": "我当时就是在那边做任务",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 43,
+   "timing": "00:01:28,410 --> 00:01:30,250",
+   "machine_label": null,
+   "machine_text": "做完任务之后发现人群都散了",
+   "truth_segments": [
+    {
+     "text": "做完任务之后发现人群都散了",
+     "label": null
+    }
+   ],
+   "truth_text": "做完任务之后发现人群都散了",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 44,
+   "timing": "00:01:30,250 --> 00:01:31,690",
+   "machine_label": null,
+   "machine_text": "我就在想去找人",
+   "truth_segments": [
+    {
+     "text": "我就在想去找人",
+     "label": null
+    }
+   ],
+   "truth_text": "我就在想去找人",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 45,
+   "timing": "00:01:31,690 --> 00:01:34,670",
+   "machine_label": null,
+   "machine_text": "然后再往下走就看到这个白色的尸体",
+   "truth_segments": [
+    {
+     "text": "然后再往下走就看到这个白色的尸体",
+     "label": null
+    }
+   ],
+   "truth_text": "然后再往下走就看到这个白色的尸体",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 46,
+   "timing": "00:01:34,670 --> 00:01:36,210",
+   "machine_label": null,
+   "machine_text": "然后我准备报警",
+   "truth_segments": [
+    {
+     "text": "然后我准备报警",
+     "label": null
+    }
+   ],
+   "truth_text": "然后我准备报警",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 47,
+   "timing": "00:01:36,210 --> 00:01:38,140",
+   "machine_label": null,
+   "machine_text": "但是我不知道怎么报警",
+   "truth_segments": [
+    {
+     "text": "但是我不知道怎么报警",
+     "label": null
+    }
+   ],
+   "truth_text": "但是我不知道怎么报警",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 48,
+   "timing": "00:01:38,140 --> 00:01:40,020",
+   "machine_label": null,
+   "machine_text": "我真的不知道怎么报警",
+   "truth_segments": [
+    {
+     "text": "我真的不知道怎么报警",
+     "label": null
+    }
+   ],
+   "truth_text": "我真的不知道怎么报警",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 49,
+   "timing": "00:01:40,020 --> 00:01:41,880",
+   "machine_label": null,
+   "machine_text": "然后上面就来人了",
+   "truth_segments": [
+    {
+     "text": "然后上面就来人了",
+     "label": null
+    }
+   ],
+   "truth_text": "然后上面就来人了",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 50,
+   "timing": "00:01:41,880 --> 00:01:43,320",
+   "machine_label": null,
+   "machine_text": "然后奈奈就报警了",
+   "truth_segments": [
+    {
+     "text": "然后奈奈就报警了",
+     "label": null
+    }
+   ],
+   "truth_text": "然后奈奈就报警了",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 51,
+   "timing": "00:01:43,320 --> 00:01:45,950",
+   "machine_label": null,
+   "machine_text": "然后她就开着混响说shadowlee了",
+   "truth_segments": [
+    {
+     "text": "然后她就开着混响说shadowlee了",
+     "label": null
+    }
+   ],
+   "truth_text": "然后她就开着混响说shadowlee了",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 52,
+   "timing": "00:01:45,950 --> 00:01:47,490",
+   "machine_label": null,
+   "machine_text": "但真的不是我",
+   "truth_segments": [
+    {
+     "text": "但真的不是我",
+     "label": null
+    }
+   ],
+   "truth_text": "但真的不是我",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 53,
+   "timing": "00:01:47,490 --> 00:01:48,490",
+   "machine_label": null,
+   "machine_text": "真的不是我",
+   "truth_segments": [
+    {
+     "text": "真的不是我",
+     "label": null
+    }
+   ],
+   "truth_text": "真的不是我",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 54,
+   "timing": "00:01:48,490 --> 00:01:51,110",
+   "machine_label": null,
+   "machine_text": "请相信小李，结束",
+   "truth_segments": [
+    {
+     "text": "请相信小李，结束",
+     "label": null
+    }
+   ],
+   "truth_text": "请相信小李，结束",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 55,
+   "timing": "00:01:51,120 --> 00:01:52,400",
+   "machine_label": null,
+   "machine_text": "女高中生",
+   "truth_segments": [
+    {
+     "text": "女高中生",
+     "label": null
+    }
+   ],
+   "truth_text": "女高中生",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 56,
+   "timing": "00:01:52,520 --> 00:01:54,350",
+   "machine_label": null,
+   "machine_text": "没有你我怎么办啊",
+   "truth_segments": [
+    {
+     "text": "没有你我怎么办啊",
+     "label": null
+    }
+   ],
+   "truth_text": "没有你我怎么办啊",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 57,
+   "timing": "00:01:54,350 --> 00:01:57,180",
+   "machine_label": null,
+   "machine_text": "没有你我都不敢走路哦",
+   "truth_segments": [
+    {
+     "text": "没有你我都不敢走路哦",
+     "label": null
+    }
+   ],
+   "truth_text": "没有你我都不敢走路哦",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 58,
+   "timing": "00:01:57,180 --> 00:02:00,840",
+   "machine_label": null,
+   "machine_text": "生在同一个世界会变成什么样",
+   "truth_segments": [
+    {
+     "text": "生在同一个世界会变成什么样",
+     "label": null
+    }
+   ],
+   "truth_text": "生在同一个世界会变成什么样",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 59,
+   "timing": "00:02:00,840 --> 00:02:02,420",
+   "machine_label": null,
+   "machine_text": "这个世界如此地陌生",
+   "truth_segments": [
+    {
+     "text": "这个世界如此地陌生",
+     "label": null
+    }
+   ],
+   "truth_text": "这个世界如此地陌生",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 60,
+   "timing": "00:02:02,420 --> 00:02:03,830",
+   "machine_label": null,
+   "machine_text": "如此地让我恐惧",
+   "truth_segments": [
+    {
+     "text": "如此地让我恐惧",
+     "label": null
+    }
+   ],
+   "truth_text": "如此地让我恐惧",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 61,
+   "timing": "00:02:03,830 --> 00:02:06,570",
+   "machine_label": null,
+   "machine_text": "我看到了Yuna和绝世猛一",
+   "truth_segments": [
+    {
+     "text": "我看到了Yuna和绝世猛一",
+     "label": null
+    }
+   ],
+   "truth_text": "我看到了Yuna和绝世猛一",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 62,
+   "timing": "00:02:06,570 --> 00:02:08,580",
+   "machine_label": null,
+   "machine_text": "感觉她俩看起来有点靠谱的样子",
+   "truth_segments": [
+    {
+     "text": "感觉她俩看起来有点靠谱的样子",
+     "label": null
+    }
+   ],
+   "truth_text": "感觉她俩看起来有点靠谱的样子",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 63,
+   "timing": "00:02:08,580 --> 00:02:10,280",
+   "machine_label": null,
+   "machine_text": "我就说，我就跑过去说",
+   "truth_segments": [
+    {
+     "text": "我就说，我就跑过去说",
+     "label": null
+    }
+   ],
+   "truth_text": "我就说，我就跑过去说",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 64,
+   "timing": "00:02:10,280 --> 00:02:13,230",
+   "machine_label": null,
+   "machine_text": "你俩能代替女高中生保护我一下吗",
+   "truth_segments": [
+    {
+     "text": "你俩能代替女高中生保护我一下吗",
+     "label": null
+    }
+   ],
+   "truth_text": "你俩能代替女高中生保护我一下吗",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 65,
+   "timing": "00:02:13,230 --> 00:02:15,350",
+   "machine_label": null,
+   "machine_text": "她们非常大方地收留了我",
+   "truth_segments": [
+    {
+     "text": "她们非常大方地收留了我",
+     "label": null
+    }
+   ],
+   "truth_text": "她们非常大方地收留了我",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 66,
+   "timing": "00:02:15,350 --> 00:02:17,670",
+   "machine_label": null,
+   "machine_text": "然后跟她们一起走了一段",
+   "truth_segments": [
+    {
+     "text": "然后跟她们一起走了一段",
+     "label": null
+    }
+   ],
+   "truth_text": "然后跟她们一起走了一段",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 67,
+   "timing": "00:02:17,670 --> 00:02:18,770",
+   "machine_label": null,
+   "machine_text": "做了个任务",
+   "truth_segments": [
+    {
+     "text": "做了个任务",
+     "label": null
+    }
+   ],
+   "truth_text": "做了个任务",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 68,
+   "timing": "00:02:18,770 --> 00:02:21,430",
+   "machine_label": null,
+   "machine_text": "然后我这把会很努力做任务的",
+   "truth_segments": [
+    {
+     "text": "然后我这把会很努力做任务的",
+     "label": null
+    }
+   ],
+   "truth_text": "然后我这把会很努力做任务的",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 69,
+   "timing": "00:02:21,430 --> 00:02:24,070",
+   "machine_label": null,
+   "machine_text": "我觉得绝世猛一跟Yuna她们那么好",
+   "truth_segments": [
+    {
+     "text": "我觉得绝世猛一跟Yuna她们那么好",
+     "label": null
+    }
+   ],
+   "truth_text": "我觉得绝世猛一跟Yuna她们那么好",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 70,
+   "timing": "00:02:24,070 --> 00:02:25,460",
+   "machine_label": null,
+   "machine_text": "都肯定是好人",
+   "truth_segments": [
+    {
+     "text": "都肯定是好人",
+     "label": null
+    }
+   ],
+   "truth_text": "都肯定是好人",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 71,
+   "timing": "00:02:25,460 --> 00:02:28,970",
+   "machine_label": null,
+   "machine_text": "然后我的最强女高中生也是一个铁铁的好人",
+   "truth_segments": [
+    {
+     "text": "然后我的最强女高中生也是一个铁铁的好人",
+     "label": null
+    }
+   ],
+   "truth_text": "然后我的最强女高中生也是一个铁铁的好人",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 72,
+   "timing": "00:02:28,970 --> 00:02:31,490",
+   "machine_label": null,
+   "machine_text": "然后呢，这个狼坑位啊，非常地简单",
+   "truth_segments": [
+    {
+     "text": "然后呢，这个狼坑位啊，非常地简单",
+     "label": null
+    }
+   ],
+   "truth_text": "然后呢，这个狼坑位啊，非常地简单",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 73,
+   "timing": "00:02:31,490 --> 00:02:33,110",
+   "machine_label": null,
+   "machine_text": "现在的狼坑位就锁定了",
+   "truth_segments": [
+    {
+     "text": "现在的狼坑位就锁定了",
+     "label": null
+    }
+   ],
+   "truth_text": "现在的狼坑位就锁定了",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 74,
+   "timing": "00:02:33,110 --> 00:02:35,870",
+   "machine_label": null,
+   "machine_text": "狍哥、香香烧烤、咩咩T",
+   "truth_segments": [
+    {
+     "text": "狍哥、香香烧烤、咩咩T",
+     "label": null
+    }
+   ],
+   "truth_text": "狍哥、香香烧烤、咩咩T",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 75,
+   "timing": "00:02:35,990 --> 00:02:37,770",
+   "machine_label": null,
+   "machine_text": "哦，还有一个咪咪T啊",
+   "truth_segments": [
+    {
+     "text": "哦，还有一个咪咪T啊",
+     "label": null
+    }
+   ],
+   "truth_text": "哦，还有一个咪咪T啊",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 76,
+   "timing": "00:02:37,770 --> 00:02:40,550",
+   "machine_label": null,
+   "machine_text": "我们狼队会变得怎么样",
+   "truth_segments": [
+    {
+     "text": "我们狼队会变得怎么样",
+     "label": null
+    }
+   ],
+   "truth_text": "我们狼队会变得怎么样",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 77,
+   "timing": "00:02:41,460 --> 00:02:43,420",
+   "machine_label": null,
+   "machine_text": "除非拉客也是坏人咯",
+   "truth_segments": [
+    {
+     "text": "除非拉客也是坏人咯",
+     "label": null
+    }
+   ],
+   "truth_text": "除非拉客也是坏人咯",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  }
+ ]
+}
