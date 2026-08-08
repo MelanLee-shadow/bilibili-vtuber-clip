@@ -15,12 +15,42 @@ provider 门根修 + 游戏场配额 20 条/≥85 分 + 候选池 12→18 + TALK
 排 tick 间隙，不断 8/8 流水线——Ivan 规则：8/8 健康就不打扰，出问题才先部署修复再自愈）。
 
 **Ivan 审完标注后的任务队列（他定的执行序，逐条做）**：
-1. **收割标注**：对每条 speaker.srt 与 free 上 pristine 机器版逐 cue diff（解析脚本先例
-   与真值工件 schema `ivan-speaker-truth-diff.v1` 见本会话 scratchpad/ivan_truth_diff.json
-   的生成逻辑；标记语法陷阱：孤立 ' A'/' B' 才是标记，BW 之类不是）。
-2. **根因法证（通病优先于修切片——Ivan 明令）**：每处错拉 free 裁决链回执
-   （entity_verdicts/fidelity/final_review_audit）定根因，机制实证才升系统守卫，
-   其余按保向纪律只落方向词条/真值（先例 docs/reviews/2026-08-07-zsm-mishear-forensics.md）。
+1. **收割标注（先存证再动手）**：⚠️ 第一步先把每条候选的 pristine 机器产物从 free 归档
+   （`out/<date>/<cid>/replacement_recuts/*.speaker-final.srt` + `padded_*.asr_draft.srt` +
+   `padded_*.agy_refined.srt` → 存到本机法证目录）——重产会覆盖它们，不先存证法证就断根。
+   然后对 Ivan 标注稿（本地 `lidousha/2026-08-07/*.speaker.srt`）与 pristine 版逐 cue diff。
+   标记语法（Ivan 定义）：孤立的 ` A`=该段李豆沙、` B`=非李豆沙，句内多标记时每个标记
+   管到上一标记为止，未标=机器标签对；标记外的文字差异=他改的错字。陷阱：只有被空格
+   包围的孤立 A/B 是标记（`BW`/`OK` 里的字母不是）；行尾空格要剥。产出每候选真值工件
+   （schema `ivan-speaker-truth-diff.v1`：per cue machine_label/machine_text/
+   truth_segments[{text,label}]/text_changed/label_changed/mixed），并对 3 个含混说的 cue
+   人工核对解析结果。此工件是后续一切法证与验收的唯一输入。
+2. **根因法证（Ivan 核心问题：为什么错、以及为什么本来修得对却没修对——通病优先于修切片）**：
+   对**每一处**文本错走五连问阶梯，每问都以 free 上的回执为证（引用原文，不许推测）：
+   ① **候选在场吗**——重建该次 produce 的 prompt 视野：正确写法当时在不在
+   glossary/roster/游戏语境/主题提示/timely 块里？（查 assets 当时版本 + free state 快照 +
+   record.json 里的 env/sha 绑定；roster 是 prompt-only 候选、glossary 误听面才有机械车道——
+   区分"没登记"和"登记了但只到 prompt 层"。）
+   ② **草稿听对过吗**——BCUT draft 或 AGY refined 里出现过正确文本吗？出现过而终稿错
+   =后段改坏（过度修正类，先例 cue11「我是小三」被修正链吞掉）——翻 fidelity-audit +
+   chat-authority.json 的 final_review_audit applied repairs + exact_final_cpa_self_heal
+   passes 找到**具体哪一遍**改坏的。
+   ③ **召回触发了吗**——候选在场但从未被提案：召回缺口（先例 cue28 天云海→萱萱卡娅，
+   review-flags 里该 cue 零 findings）。判定哪条召回车道该触发没触发（expected-value 对？
+   confusable 组？语境关联召回？还是 roster prompt-only 的结构性局限——这类要提机制补案）。
+   ④ **声学证人说了什么**——entity_verdicts/<hash>/ 的候选盲拼音 vs 真值：证人对而终稿错
+   =裁决层病（哪个门/逃生口压过了它，先例 cue59 的
+   CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT，注意守卫已收窄勿重复修）；
+   证人也错=ASR 限度类（只落方向词条+错误历史台账，按保向铁律绝不全局替换）。
+   ⑤ **权威冲突/回执断链/供应商断供**——两个权威振荡（先例 狍哥vs小炮哥）；回执从未落盘
+   （先例 封面文案审 7/9 轮无响应存档）；judge 断供（e658e79 后 error_cascade 会留全链）。
+   标签错另走：对照 speaker-final.json 的 analysis.decisions 逐 cue 证据源
+   （campp/语义佐证/默认连线/短句门），假李豆沙必须归零，假连线按证据源分布定阈值/门修。
+   **产出物**：`docs/reviews/` 法证报告（先例 2026-08-07-zsm-mishear-forensics.md 的
+   per-cue 表格式），每处错必须落到 (a)已登记-时序问题 (b)登记但仲裁缺陷→**点名文件:行号**
+   (c)未登记→当场补方向条目 (d)纯听错→台账 四类之一；凡判 (b) 的**必修**且配负向金丝雀
+   （revert 修复测试必须变红——本会话七个先例：cue59 守卫/cue28 召回/cue11 过度修正/
+   陈旧 spec 绕基线/owned_intervals 无人读/清单认错脸/song 瞬态码不识——全是这把梯子爬出来的）。
 3. 通病修复 + 测试全绿 + 部署。
 4. **统一重产**：所有带错候选按 reviewed-baseline+override 车道重产（陈旧 spec 教训：
    baseline 只在 runner 建 spec 时注入，手动重产必须用 free:/opt/bilive/autoslice/tmp/
