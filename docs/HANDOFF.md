@@ -1,128 +1,78 @@
 # Current handoff
 
-Updated: 2026-08-07 by Claude（8/7 鹅鸭杀场三症状通病修复会话）。7/31 以下旧节仅存历史。
+Updated: 2026-08-08 深夜 by Claude（8/7 批审阅收割/法证/重述车道会话）。8/7 及 7/31 以下旧节仅存历史。
 
-## ⭐ 2026-08-08 晚 当前状态与接力任务（后来 agent 从这里开始）
+## ⭐ 2026-08-08 深夜 当前状态与接力任务（后来 agent 从这里开始）
 
-**此刻在发生什么**：Ivan 正在本地 `lidousha/2026-08-07/*.speaker.srt` 里按 A/B 语法标注
-说话人与文字错误（A=李豆沙、B=非李豆沙、句内多标记管到前一标记为止、不标=机器对，
-同时直接改错字）。**在他说标完之前绝不碰这些文件。** 8/8 批 runner 自动处理中（只产不传）。
+**部署位**:free = `9f8b928`(2026-08-08T22:14:21Z,波 7,含会话内重述修复车道全链)。
+本地 tip 仅领先 docs-only(法证报告 `7d4d834`),无需追部署。分支
+`claude/session-live-context` 仍是生产唯一合法部署源(从 main 部署会回滚 codex
+17 提交)。全量测试 3154 绿。8/8 批 runner 自动处理中(只产不传,晚间为
+processing,1 talk carryover 重试 + 1 song 在队,勿打扰)。
 
-**代码/部署位**：分支 `claude/session-live-context`（生产唯一合法部署源；从 main 部署会
-回滚 codex 17 提交）。部署波 6 = e658e79（优化②judge瞬断三件套）+ 2b65885（song
-provider 门根修 + 游戏场配额 20 条/≥85 分 + 候选池 12→18 + TALK_ATTEMPT_CAP 10→20）
-+ 本 HANDOFF，全套 3122 绿。部署用 `bash scripts/deploy_free_autoslice.sh free`（自动
-排 tick 间隙，不断 8/8 流水线——Ivan 规则：8/8 健康就不打扰，出问题才先部署修复再自愈）。
+**Ivan 8/7 批审阅已收割完毕(原队列 1-2 已闭环,证据全部入库)**:
+- pristine 存证:`~/Project/vtuber-slice-forensics/2026-08-07-pristine/`(2380 文件,
+  五候选 cue 数全对齐;重产覆盖 free 原件后这是唯一 diff 权威,只读)。
+- 真值工件:`reports/ivan_truth_harvest/2026-08-07/*.truth-diff.v2.json`
+  (`scripts/harvest_ivan_truth.py` 产,A/B 语法 fail-closed 解析,16 混说 cue 人工
+  核对):换身份 18文字+8说话人 / 被劝受骗 7+6 / 没人抱团 42+8 / 真善美 0+6 /
+  贪生怕死 0+0。
+- 六连问法证:docs/reviews/ 三片报告 + `2026-08-08-truth-harvest-forensics-synthesis.md`
+  (汇总+修复清单 F1-F8+е2 卡)。67 文字错=(b)仲裁缺陷 30 / (c)未登记~18 /
+  (d)听错~14 / (a)1 / 重述车道已覆盖 1;假李豆沙 3;混说 6 cue 单标签只盖
+  45.8% 真值文字、被吞侧全是李豆沙、`mixed_overlap_evidence` 全 null。
+- **没人抱团 auto_210739_1142_1436 = Ivan 裁定非李豆沙主角,出版登记
+  hold_pending_review,永不作为成品发布**;其 42+8 订正只作流水线优化材料。
 
-**Ivan 审完标注后的任务队列（他定的执行序，逐条做）**：
-1. **收割标注（先存证再动手）**：⚠️ 第一步先把每条候选的 pristine 机器产物从 free 归档
-   （`out/<date>/<cid>/replacement_recuts/*.speaker-final.srt` + `padded_*.asr_draft.srt` +
-   `padded_*.agy_refined.srt` → 存到本机法证目录）——重产会覆盖它们，不先存证法证就断根。
-   然后对 Ivan 标注稿（本地 `lidousha/2026-08-07/*.speaker.srt`）与 pristine 版逐 cue diff。
-   标记语法（Ivan 定义）：孤立的 ` A`=该段李豆沙、` B`=非李豆沙，句内多标记时每个标记
-   管到上一标记为止，未标=机器标签对；标记外的文字差异=他改的错字。陷阱：只有被空格
-   包围的孤立 A/B 是标记（`BW`/`OK` 里的字母不是）；行尾空格要剥。产出每候选真值工件
-   （schema `ivan-speaker-truth-diff.v1`：per cue machine_label/machine_text/
-   truth_segments[{text,label}]/text_changed/label_changed/mixed），并对 3 个含混说的 cue
-   人工核对解析结果。此工件是后续一切法证与验收的唯一输入。
-2. **根因法证（Ivan 核心问题：为什么错、以及为什么本来修得对却没修对——通病优先于修切片）**：
-   对**每一处**文本错走五连问阶梯，每问都以 free 上的回执为证（引用原文，不许推测）：
-   ① **候选在场吗**——重建该次 produce 的 prompt 视野：正确写法当时在不在
-   glossary/roster/游戏语境/主题提示/timely 块里？（查 assets 当时版本 + free state 快照 +
-   record.json 里的 env/sha 绑定；roster 是 prompt-only 候选、glossary 误听面才有机械车道——
-   区分"没登记"和"登记了但只到 prompt 层"。）
-   ② **草稿听对过吗**——BCUT draft 或 AGY refined 里出现过正确文本吗？出现过而终稿错
-   =后段改坏（过度修正类，先例 cue11「我是小三」被修正链吞掉）——翻 fidelity-audit +
-   chat-authority.json 的 final_review_audit applied repairs + exact_final_cpa_self_heal
-   passes 找到**具体哪一遍**改坏的。
-   ③ **召回触发了吗**——候选在场但从未被提案：召回缺口（先例 cue28 天云海→萱萱卡娅，
-   review-flags 里该 cue 零 findings）。判定哪条召回车道该触发没触发（expected-value 对？
-   confusable 组？语境关联召回？还是 roster prompt-only 的结构性局限——这类要提机制补案）。
-   ④ **声学证人说了什么**——entity_verdicts/<hash>/ 的候选盲拼音 vs 真值：证人对而终稿错
-   =裁决层病（哪个门/逃生口压过了它，先例 cue59 的
-   CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT，注意守卫已收窄勿重复修）；
-   证人也错=ASR 限度类（只落方向词条+错误历史台账，按保向铁律绝不全局替换）。
-   ⑤ **权威冲突/回执断链/供应商断供**——两个权威振荡（先例 狍哥vs小炮哥）；回执从未落盘
-   （先例 封面文案审 7/9 轮无响应存档）；judge 断供（e658e79 后 error_cascade 会留全链）。
-   ⑥ **【Ivan 点名必查】是不是"刻意改错"——历史决策审计**：草稿/证人本来是对的，而某条
-   **有意建的规则**主动把它改错了（≠bug，是规则按设计运行但在本案打错了）。诊断法：从
-   applied repair 的 authority/receipt 反查到具体规则条目，再查该条目的**出处注记**
-   （本仓纪律：glossary 词条/hard-meme-canon/expected-value 对/守卫/账本行全部带
-   Ivan 裁定日期+原话或 commit）——找到是哪个历史决策、当时为什么这么定。然后二分：
-   (е1) 决策本身仍对、只是机械套用超出了其记录的适用范围 → 工程修（收窄适用条件），
-   不需要新裁定；(е2) 本案构成对决策本身的反例（当时的前提变了/范围划宽了）→
-   **必须请 Ivan 重新裁定**，禁止 agent 自行推翻或扩大任何带 Ivan 出处的规则。
-   本会话四个先例全是这个形状：cue59 词表压耳朵（7月有意机制→8/8 Ivan 重裁收窄成
-   三逃生口）；uniform_host 统一涂色（7/13 裁定→8/7 Ivan 重裁撤销）；120px 字号硬下限
-   （7/31 裁定→8/8 Ivan 重裁开窄例外）；狍哥方向（8/7 裁定→逐处音频仲裁边界待重申）。
-   **(е2) 类的产出格式=决策卡片**，全部汇总进一份 docs/reviews/ 复裁清单让 Ivan 一轮批完：
-   每张卡=原裁定（日期/原话/出处）→ 本案反例（回执证据引用）→ 冲突本质一句话 →
-   建议选项（维持原判/收窄范围/撤销）。
-   标签错另走：对照 speaker-final.json 的 analysis.decisions 逐 cue 证据源
-   （campp/语义佐证/默认连线/短句门），假李豆沙必须归零，假连线按证据源分布定阈值/门修。
-   **产出物**：`docs/reviews/` 法证报告（先例 2026-08-07-zsm-mishear-forensics.md 的
-   per-cue 表格式），每处错必须落到 (a)已登记-时序问题 (b)登记但仲裁缺陷→**点名文件:行号**
-   (c)未登记→当场补方向条目 (d)纯听错→台账 (e)历史决策所致→按⑥出决策卡片
-   （е1 工程收窄 / е2 提请 Ivan 复裁）五类之一；凡判 (b) 的**必修**且配负向金丝雀
-   （revert 修复测试必须变红——本会话七个先例：cue59 守卫/cue28 召回/cue11 过度修正/
-   陈旧 spec 绕基线/owned_intervals 无人读/清单认错脸/song 瞬态码不识——全是这把梯子爬出来的）。
-3. 通病修复 + 测试全绿 + 部署。
-4. **统一重产**：所有带错候选按 reviewed-baseline+override 车道重产（陈旧 spec 教训：
-   baseline 只在 runner 建 spec 时注入，手动重产必须用 free:/opt/bilive/autoslice/tmp/
-   inject_baseline_and_produce.py 的产线函数注入法）；**贪生怕死 auto_223750_913_1322 要出
-   说话人二分版**（现为统一色时代产物）。验收=剥标记逐字相等+假李豆沙=0。
-5. **封面（Ivan 已拍板，2026-08-08 原话）**：「既然「我就是女同」只有带着「如果是我杀的」
-   前提才成立为玩笑，那就加上呗……宽度限制可以换行啊，实在不行可以调小一点点字号。」
-   执行两层：
-   (i) **本候选 IVAN_EXPLICIT 文案授权**：auto_223750_913_1322 封面文案=完整梗
-   「如果是我杀的我就是女同」，双行排版优先，实在放不下才允许字号在 120px 下限基础上
-   **微调小一点点**（此为 Ivan 对 7/31「120px 硬下限」裁定在完整梗场景的窄例外，
-   仅限降不下时的最后手段）。按 70-cover.md 的 IVAN_EXPLICIT full-text-cover contract
-   流程落地（重出 manifest+CPA 联合质检那套，见旧节 cover-only lane 注意事项），
-   出图仍过身份门（三分身缺陷警惕，法证报告里有那轮实图证据）。
-   (ii) **通病修复**：梗字链的处理顺序病——超宽时先砍前提导致"两段拼不成一件事"反模式
-   被误触发。修法：前提+梗点构成同一事件时允许**换行保全整梗**（宽度超限→先尝试双行，
-   再尝试窄幅字号微调，最后才降候选），文案审的反模式判定要能识别"前提+punch"结构
-   不当作两个独立片段。配法证报告里的三条最小修复（身份门字段一致性校验/逐轮持久化
-   punch 审回执/耗尽理由字段）一起做，全部带测试。
-6. **歌**：《一起长大》song_230754_1118 等 8/7 歌候选已被旧 bug 终态化；部署波 6 后用
-   scripts/revive_rejected_candidates.py（fix-commit 2b65885）复活重产，付费链现可达。
-7. **上传**：权宜授权已撤回——全部修好 + Ivan 明示后才走 authorized_upload
-   （90-publish.md 契约；清单构建器已修好认说话人产物名，但批状态 processing 时会拒出清单，
-   等批收线）。
-8. **积压工程**（Ivan 已授权，按序）：优化①边界后移进程内重放（task#10）；
-   优化③ERes2NetV2 嵌入试点**已在跑**（task#12，worker 于本机 Mac 离线回放（Ivan 指示：别抢 free 产线 CPU；音频一次性 scp）
-   61+40 句双真值对比 CAM++，评判=假李豆沙=0 前提下假连线更少+短句区分度，产
-   docs/reviews/2026-08-08-eres2netv2-pilot.md；赢则按 host_vocal_proof.py:638 sha 门
-   +voiceprint_profile 重绑走切换流程）；SOTA 第二优先=pyannote segmentation-3.0
-   句内子窗（治混说/重叠），排在 Ivan 标注收割的根因法证之后——他标的句内混说错误
-   正是其判据（调研 docs/reviews/2026-08-08-diarization-sota-survey.md）；误听自动积累写路径
-   （勘探完毕 docs/reviews/2026-08-08-mishear-mining-probe.md：382实例/246方向/99%新面，
-   三条腿=自采矿+审阅收割+历史回填，晋升阈值≥3日期零反向待 Ivan 拍板）；
-   final_review_auditor 强制拆解（账本第三抬触发）；producer_package_finalization 拆解（第二抬）。
+**会话内重述修复车道已上线(Ivan 8/8 新机制,波 7)**:乱码 cue 用稍后慢速完整
+重述修复。检测器+探针 `src/autoslice/restatement_recall.py` /
+`scripts/probe_restatement_recall.py`,设计稿
+`docs/reviews/2026-08-08-restatement-repair-design.md`(§2 修复条件:当前文字与
+音频不相容∧重述前缀相容;§4.3 守卫零改动结论)。接线=exact-final 优先 findings
+通道(与 microcue 并列,`{cid}.restatement-candidates.json` 回执),改字仍全过
+候选盲声学+CPA 闭集裁决。旗舰案=受骗片 cue17←cue29。
 
-**悬案/边界**：7/22 auto_200511_61_138 Ivan 裁定封存（真值只作数据，不编辑不上传）；
-狍哥案 auto_220747_1271_1323 死于「狍哥 vs 小炮哥」实体振荡，需音频重裁（Ivan 输入）；
-说话人等音质场准确率待 Ivan 的 7/22 裁定收割（工作表已标完 30s，全长版已给）。
+**等 Ivan 的输入(汇总在 synthesis 文档,一轮批完)**:
+1. е2 卡 1:证人冲突加权(`CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT`
+   同分支 4 修对/6 改错;建议选项 B=证人明确反对时需结构化支持或已登记方向)。
+2. е2 卡 2:cue19「大N/大白老师」+ cue49 满席证人 vs 已登记专名,需音频亲裁。
+3. 复裁清单里的 (c) 类新词条方向(由菜/Yuna/南町nightin/安晚/邪恶大马头等)
+   可顺手确认。
 
-**⭐ 本机优先原则（Ivan 2026-08-08 关停前指令）**：凡不需要 free 的工作一律在本机 Mac 执行——
-标注收割/diff 解析、法证文档、测试套件、ERes2NetV2 等离线评测（本地 venv+一次性 scp 数据）、
-矿藏后处理。free 只用于：产线函数注入重产、回执/状态拉取、部署、revive、上传。
+**接力任务队列(按序)**:
+1. **通病修复波 8**(synthesis 修复清单 F1-F8,各独立 test-gated commit+负向
+   金丝雀):F1 转写回声环(final_review_auditor.py:1211-1256)、F2 代词政策
+   执行位(full_session_transcription.py:522-606)、F4 语义走廊 margin 前置
+   (speaker_host_evidence.py:135-138,е1 已获裁定原文支持)、F5 重叠检测失效
+   诊断(producer_speaker.py:576-589)、F6 短句门证据源分层、F7 语境专断强制
+   声学参与、F8 AGY 整段 UNAVAILABLE 的 transient 分类核对。卡 1/卡 2 涉及的
+   修复等 Ivan 批完再动。
+2. **(c) 类词条登记**:按保向铁律落 glossary/entity_confusables,逐条带 8/7 案出处。
+3. **统一重产**(原队列 4):换身份/被劝受骗(带 Ivan 订正,reviewed-baseline+
+   override 车道,产线函数注入法:free:/opt/bilive/autoslice/tmp/
+   inject_baseline_and_produce.py)+ 贪生怕死出说话人二分版。验收=剥标记逐字
+   相等+假李豆沙=0。**重述金丝雀**:受骗片重产时 cue17 的 session_restatement
+   候选进裁决,法证预警两路听写曾收敛同错——若证人拒 PROPOSED,按设计稿 §2
+   补全政策复核,结果记回设计稿。没人抱团不重产成品(hold)。
+4. **封面**(原队列 5,不变):贪生怕死 IVAN_EXPLICIT「如果是我杀的我就是女同」
+   完整梗双行 + 梗字链前提+punch 同事件通病修复,三条最小修复一起。
+5. **歌**(原队列 6,不变):8/7 歌候选 revive 重产(scripts/revive_rejected_candidates.py)。
+6. **上传**(原队列 7,不变):全部修好 + Ivan 明示后走 authorized_upload;
+   没人抱团永不传。
+7. **积压工程**(原队列 8,不变):优化①边界后移进程内重放;ERes2NetV2 试点
+   按 `docs/reviews/2026-08-08-eres2netv2-pilot.md` §6 续跑(本机默认;Ivan 8/8
+   晚补充:本机卡顿可转 wsl-codex,控制资源占用);pyannote 子窗(判据数据已由
+   混说量化补齐);误听自动积累写路径(守卫收窄已落地,写路径待建);
+   final_review_auditor/producer_package_finalization 拆解待 Ivan 排期。
 
-**会话关停时的在飞状态（successor 需接手重启）**：
-- ERes2NetV2 试点 worker 随会话死亡——已落 PARTIAL 报告 docs/reviews/2026-08-08-eres2netv2-pilot.md——**按其 §6 的精确续跑命令重启**（本机 venv/媒体/脚本全就位，含 Python3.11 陷阱与 5.77s 片头偏移教训；两模型分数不同尺度，阈值不可移植需重推导）。
-- 封面 8 连败法证 worker 死于中途——其报告草稿已由 integrator 代提交
-  （docs/reviews/2026-08-08-cover-punch-exhaustion-forensics.md，**未经原 worker 终检，
-  successor 用前先核对逐轮回执引用是否完整**）。
-- 部署波 6（e658e79 judge瞬断 + 2b658859 song门/配额20/85 + HANDOFF 链）：本地测试门
-  3122 已过，关停时处于同步段——successor 第一件事：核对
-  free:/opt/bilive/autoslice/repo/DEPLOYED_COMMIT 是否已到本分支 tip；没到就
-  `bash scripts/deploy_free_autoslice.sh free` 重跑（幂等）。
-- 8/8 批 runner 产线自动运行，与会话无关；Ivan 的 srt 标注仍在进行中。
+**⭐ 本机优先原则(Ivan 2026-08-08,8/8 晚补充)**:凡不需要 free 的工作一律本机
+Mac;本机卡顿运营不过来时可积极转 wsl-codex 并行(控制资源占用,最终运行目标
+是 free,多机只是开发期并行;容器化可选)。free 只用于产线函数注入重产/回执/
+部署/revive/上传。
 
-**运营铁律（本会话学费）**：审阅交付=本地最小四件套（mp4/speaker.srt/cover.png/publish.json）；
-worker 提示必须 edits-first+精确锚点（80 调用帽会被纯探索吃光）；同一 worktree 单 writer；
-账本增行必须带 Ivan 出处；free 一切产线操作走 flock 礼让。
+**运营铁律(沿用)**:审阅交付=本地最小四件套;worker 提示 edits-first+精确锚点;
+同一工作树单 writer(worker 走 worktree 隔离,integrator 审 diff 合入);账本
+增行必须带 Ivan 出处;free 一切产线操作走 flock 礼让;pristine 归档目录只读。
 
 ## 2026-08-07 live 状态
 
