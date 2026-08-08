@@ -609,6 +609,19 @@ def _lrc_title_is_exact_hint(lrc: LrcResult, preferred_title_hints: Sequence[str
     return normalize_lyric_text(lrc.song_title) in _preferred_title_keys(preferred_title_hints)
 
 
+def _lrc_title_hint_family_match(lrc: LrcResult, preferred_title_hints: Sequence[str]) -> bool:
+    """Family-normalized hint match: a hook-quoted/visual title hint names the
+    song, not a specific catalog variant string.  A provider's "(Live)" /
+    "(Cover)" / decoration suffix must not defeat an otherwise exact title
+    hint (song_230754_1118 案 2026-08-08: hint "一起长大" vs provider title
+    "一起长大 (live)").  Kept separate from ``_lrc_title_is_exact_hint`` (used
+    for tie-break sort ordering among an already-admitted family) so that
+    stricter call site keeps requiring literal equality."""
+
+    hint_families = _preferred_title_keys(preferred_title_hints)
+    return bool(hint_families) and _lrc_title_family(lrc) in hint_families
+
+
 def _lrc_variant_penalty(lrc: LrcResult) -> int:
     """Count catalog decorations that usually denote a non-canonical timeline."""
 
@@ -851,11 +864,19 @@ def _group_audio_lrc_candidates(
     groups = [[entries[index] for index in members] for members in group_indices]
     if not groups:
         raise ValueError("no canonical LRC identity is available for audio alignment")
+    # 2026-08-08 songlane 修复：`song_lane.py` 早于此已按 doc 政策（"视觉歌名
+    # hint 优先于演唱 ASR"）把 hook 引号标题/画面歌名喂进 preferred_title_hints；
+    # 但这里此前仍对齐 min_recall_ratio 地板，导致演唱 ASR 一旦乱码（旋律拉长音
+    # 常见）即使精确标题命中也永远进不了 AGY 音频验证（song_230754_1118 案，
+    # 3% recall 卡在 20% 地板，唯一非零候选却被判 SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS
+    # 终态弃选，从未真正跑过音频证据）。精确标题命中改为只要求非零 ASR 关联
+    # （排除纯捏造），不再要求达到通用地板；多个精确标题候选之间的消歧义仍走
+    # 下方 margin 检查，未减弱。
     exact_title_groups = sorted(
         (
             group
             for group in groups
-            if max(item[0] for item in group) >= min_recall_ratio
+            if max(item[0] for item in group) > 0.0
             and any(_lrc_title_is_exact_hint(item[1], preferred_title_hints) for item in group)
         ),
         key=lambda group: (
@@ -1068,9 +1089,27 @@ def _choose_audio_lrc_candidate(
             raise ValueError(
                 f"curated LRC identity has only {top_ratio:.0%} ASR recall; refusing to force it onto audio"
             )
-    elif top_ratio < min_recall_ratio or (
-        not preferred_top and top_ratio - second_ratio < min_margin
-    ):
+    elif preferred_top:
+        # An exact title-hint match already cleared the (now floor-free) exact
+        # title admission above and any competing exact-title homonym's margin
+        # check.  Requiring the generic min_recall_ratio here too would just
+        # re-impose the same floor exact_title_groups deliberately dropped.
+        if top_ratio <= 0.0:
+            raise ValueError(
+                "exact-title LRC identity has zero ASR correlation; refusing to force it onto audio"
+            )
+    elif top_ratio > 0.0 and second_ratio <= 0.0:
+        # 2026-08-08 song_230754_1118 案：唯一有任何 ASR 关联的候选（其余全部
+        # discovered LRC 均 0%），仅因为演唱段 ASR 严重乱码（长音/旋律拉伸是
+        # BCUT 常见失效模式，"一起长大 (live)" 与 hook 引号标题只差一个
+        # provider 装饰后缀，够不上 exact_title_groups 的字面相等）就被通用
+        # 20% 地板拦死，从未真正调用过 AGY 音频验证。该地板的设计目的是防止
+        # 在多个同样弱、真正互相竞争的候选之间瞎选一个喂给 AGY（见函数
+        # docstring）；当没有第二个候选携带任何证据时不存在"在候选之间选错"
+        # 的风险，真正的身份判定仍然留给下游 AGY 音频 + host-vocal + 现场
+        # 演出证明。
+        pass
+    elif top_ratio < min_recall_ratio or top_ratio - second_ratio < min_margin:
         raise ValueError(
             "ambiguous low-ASR LRC identity: "
             f"best={top_ratio:.0%}, runner-up={second_ratio:.0%}, "

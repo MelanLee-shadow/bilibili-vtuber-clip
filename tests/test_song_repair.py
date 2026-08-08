@@ -1166,6 +1166,150 @@ def test_audio_identity_keeps_near_tied_exact_title_homonyms_ambiguous():
         )
 
 
+def test_audio_identity_accepts_sole_nonzero_candidate_below_general_recall_floor():
+    """2026-08-08 song_230754_1118 案：演唱段落 ASR 严重乱码（旋律拉长音常见
+    BCUT 失效模式），provider 搜出的 8 个 LRC 候选里只有《一起长大 (live)》
+    命中任何一句（3%），其余全部 0%；旧代码仍按通用 20% 地板把它判成
+    SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS 终态弃选，从未真正调用过 AGY 音频
+    验证。地板本意是防止在多个同样弱、真正互相竞争的候选间瞎选一个喂给
+    AGY；没有第二个候选携带任何证据时不存在"选错候选"的风险，必须放行
+    交给下游 AGY 音频 + host-vocal + 现场演出证明去做真正的身份判定。"""
+    canonical = _japanese_lrc()
+    canonical = LrcResult(
+        provider="netease",
+        song_title="一起长大 (live)",
+        artist="李豆沙",
+        source_ref="netease://song/29932202",
+        lines=canonical.lines,
+    )
+    unrelated_zero = LrcResult(
+        provider="netease",
+        song_title="拉多加",
+        artist="unrelated artist",
+        source_ref="netease://song/2045009171",
+        lines=tuple(LrcLine(index * 5_000, f"unrelated lyric {index}") for index in range(34)),
+    )
+
+    chosen = _choose_audio_lrc_candidate(
+        [(0.03, canonical, []), (0.0, unrelated_zero, [])],
+        pinned_lrc_results=(),
+        min_recall_ratio=0.20,
+        min_margin=0.08,
+    )
+
+    assert chosen.source_ref == canonical.source_ref
+
+
+def test_audio_identity_still_rejects_low_recall_with_a_second_nonzero_competitor():
+    """出现第二个非零候选时通用地板未被削弱：这才是地板真正要防的"多个
+    同样弱的候选里瞎选一个"场景，必须继续拒绝进音频验证。"""
+    canonical = _japanese_lrc()
+    canonical = LrcResult(
+        provider="netease",
+        song_title="一起长大 (live)",
+        artist="李豆沙",
+        source_ref="netease://song/29932202",
+        lines=canonical.lines,
+    )
+    weak_competitor = LrcResult(
+        provider="netease",
+        song_title="拉多加",
+        artist="unrelated artist",
+        source_ref="netease://song/2045009171",
+        lines=tuple(LrcLine(index * 5_000, f"unrelated lyric {index}") for index in range(34)),
+    )
+
+    with pytest.raises(ValueError, match="ambiguous low-ASR LRC identity"):
+        _choose_audio_lrc_candidate(
+            [(0.03, canonical, []), (0.02, weak_competitor, [])],
+            pinned_lrc_results=(),
+            min_recall_ratio=0.20,
+            min_margin=0.08,
+        )
+
+
+def test_audio_identity_still_rejects_low_recall_alone_without_hint():
+    """没有 hint、也没有"唯一非零候选"豁免适用时（这里单候选本身就满足
+    sole-nonzero 条件，故改用两个都非零的候选验证纯低 recall 仍拒绝）。"""
+    canonical = _japanese_lrc()
+    canonical = LrcResult(
+        provider="netease",
+        song_title="一起长大 (live)",
+        artist="李豆沙",
+        source_ref="netease://song/29932202",
+        lines=canonical.lines,
+    )
+    other = LrcResult(
+        provider="netease",
+        song_title="拉多加",
+        artist="unrelated artist",
+        source_ref="netease://song/2045009171",
+        lines=tuple(LrcLine(index * 5_000, f"unrelated lyric {index}") for index in range(34)),
+    )
+
+    with pytest.raises(ValueError, match="ambiguous low-ASR LRC identity"):
+        _choose_audio_lrc_candidate(
+            [(0.03, canonical, []), (0.03, other, [])],
+            pinned_lrc_results=(),
+            min_recall_ratio=0.20,
+            min_margin=0.08,
+        )
+
+
+def test_audio_identity_still_rejects_zero_recall_exact_title_hint():
+    """精确标题命中但零 ASR 关联（纯捏造/完全不相关）仍必须拒绝，不能空口
+    白牙把任意 LRC 塞给 AGY：零 recall 连 exact_title_groups 的非零地板都进
+    不去，退回通用地板判词，而不是被 hint 直接放行。"""
+    canonical = _japanese_lrc()
+    canonical = LrcResult(
+        provider="netease",
+        song_title="一起长大 (live)",
+        artist="李豆沙",
+        source_ref="netease://song/29932202",
+        lines=canonical.lines,
+    )
+
+    with pytest.raises(ValueError, match="ambiguous low-ASR LRC identity"):
+        _choose_audio_lrc_candidate(
+            [(0.0, canonical, [])],
+            pinned_lrc_results=(),
+            min_recall_ratio=0.20,
+            min_margin=0.08,
+            preferred_title_hints=("一起长大",),
+        )
+
+
+def test_audio_identity_accepts_literal_exact_title_hint_below_general_recall_floor():
+    """字面精确命中 hint（provider 标题无装饰后缀）+ 低于地板但非零 recall
+    的候选：exact_title_groups 的非零地板放行，走 preferred_top 分支，不
+    再要求达到通用 20%。"""
+    canonical = _japanese_lrc()
+    canonical = LrcResult(
+        provider="netease",
+        song_title="一起长大",
+        artist="李豆沙",
+        source_ref="netease://song/29932202",
+        lines=canonical.lines,
+    )
+    weak_other_title = LrcResult(
+        provider="netease",
+        song_title="拉多加",
+        artist="unrelated artist",
+        source_ref="netease://song/2045009171",
+        lines=tuple(LrcLine(index * 5_000, f"unrelated lyric {index}") for index in range(34)),
+    )
+
+    chosen = _choose_audio_lrc_candidate(
+        [(0.05, canonical, []), (0.10, weak_other_title, [])],
+        pinned_lrc_results=(),
+        min_recall_ratio=0.20,
+        min_margin=0.08,
+        preferred_title_hints=("一起长大",),
+    )
+
+    assert chosen.source_ref == canonical.source_ref
+
+
 def test_audio_identity_collapses_same_title_with_different_line_splitting():
     canonical = _japanese_lrc()
     # Same lyrics, but provider B merged pairs of lines and shifted timing.
