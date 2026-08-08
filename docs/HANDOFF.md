@@ -296,3 +296,49 @@ receipt。
 fail-closed 门通过+真善美验收（Ivan 真值逐字相等/假李豆沙=0）。被拦项不传留证待晨审。
 7/22 auto_200511_61_138 Ivan 已裁定封存不编辑不上传。上传后按 authorized-upload 惯例
 commit 证据。之后执行工程优化①②③（任务卡 #10/#11/#12），完成前不碰新切片。
+
+**2026-08-08 夜间执行结果：0/3 传出，全部 fail-closed 拦下，未强推。** 范围按
+Ivan 原话「所有切片做完后」覆盖到 8/7 全部 review_ready talk（真善美另需真值验收，
+本轮排除；`auto_223750_913_1322` cover_pending、`auto_220747_1271_1323`
+candidate_rejected 本就不在范围）：`auto_200736_298_383`、`auto_210739_1142_1436`、
+`auto_220747_488_680`。三条均在 package audit / manifest 构建阶段即被拦，
+从未触达 `authorized_upload.py make-manifest/verify/upload`：
+
+- `auto_200736_298_383`：`audit_lidousha_review_package.py` BLOCK（47 项）。根因是
+  record.json `artifact_hashes.ass_sha256`/`burned_video_sha256` 与当前
+  `.recut.final-sapphire72.ass`/`.recut.burned-final-sapphire72.mp4` 磁盘字节不一致
+  （record mtime 晚于 ass 文件却仍不匹配，疑似 record 的 artifact_hashes 块本身滞后于
+  某次后续重写，尚未查明是哪个环节）。今晚未进一步调查（不做新 produce、直播中）。
+- `auto_210739_1142_1436` / `auto_220747_488_680`：`build_lidousha_daily_review_manifest.py`
+  REFUSE `required package file missing: ...recut.burned-final-sapphire72.mp4`。
+  两者 `replacement_recuts/` 下只有 `burned-final-speaker.mp4` +
+  `speaker-final.ass/.srt/.json`（8/7 `AUTOSLICE_SPEAKER_MODE=auto` 翻转后的双样式
+  产物），从未产出旧 `sapphire72` 统一主播样式烧录。`build_lidousha_daily_review_manifest.py:343,350`
+  硬编码 `{stem}.burned-final-sapphire72.mp4`/`{stem}.final-sapphire72.ass`，翻转后未随之
+  更新，两条案例同一根因。
+
+证据落盘 `reports/authorized_uploads/2026-08-08-provisional-attempt-blocked/`
+（package audit JSON、两条 manifest-builder 拒绝原文+目录清单）。下一步：先修
+`build_lidousha_daily_review_manifest.py` 认识 speaker-mode 产物命名（或按 record
+分支），再单独查 `200736_298_383` 的 hash 漂移根因；直播结束后再重试上传，仍不得
+为了变绿而强推任一门。
+
+**Part B（真善美 baseline-injected 复现，`tmp/reproduce_zsm8.log`）诊断结论**：
+`PRODUCE_EXIT 1`，标记 `CHAT_AUTHORITY_FINAL_ARTIFACT_FAILED` 指向
+`out/2026-08-07/auto_203735_555_680/auto_203735_555_680.chat-authority.json`；
+`final_status=FINAL_ARTIFACTS_FAILED`，
+`final_verification_failure=REDELIVERY_BASELINE_FINAL_OWNER_NOT_VERIFIED`。**不是
+baseline 绑定/注入错误**：注入 sha（`49e63c6c...`）与 `redelivery_subtitle_baseline_audit`
+一致，`status=APPLIED`，61/61 cue mapped，应用阶段 `failures=[]`。真正原因是**下游
+覆盖**：`exact_final_cpa_self_heal`（`final_review_audit` 内的 CPA judge + AGY/Gemini
+声学 witness 自愈通道）在 baseline 已正确应用之后，独立重新聆听并覆盖了 3 个已受
+baseline 保护的 cue（52/58/59：「哈哈，我的信原来在你手里吗」→「我想死在你手里吗」、
+「你懂吧」→「懂吗你」、「你知道我要偶遇偶遇」→「我要有遗言遗言」），与 Ivan 真值逐字
+不符；两轮自愈的 `repairs` 明确记录了这三处改写。末端 owner 校验门正确拦下
+（PRODUCE_EXIT 1），没有坏文本流出。根因：`redelivery_subtitle_baseline.py` 只写
+`owned_intervals`，全仓库无任何读取/使用（`grep owned_intervals` 只命中写入行）——
+自愈通道不知道、也不尊重 baseline 已拥有的区间。下一步：在
+`exact_final_cpa_self_heal`/`final_review_audit` 里读并遵守 `owned_intervals`
+（已被 reviewed baseline 覆盖的区间禁止自愈改写）+ 回归测试；修复须部署自当前分支
+tip（`codex/virtuareal-community-crawler` 之上，**不是 main**，main 会回滚 17 个 codex
+提交），直播结束后重跑复现，通过后再走真善美真值验收。
