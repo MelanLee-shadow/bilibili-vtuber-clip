@@ -49,6 +49,22 @@ provider 门根修 + 游戏场配额 20 条/≥85 分 + 候选池 12→18 + TALK
 狍哥案 auto_220747_1271_1323 死于「狍哥 vs 小炮哥」实体振荡，需音频重裁（Ivan 输入）；
 说话人等音质场准确率待 Ivan 的 7/22 裁定收割（工作表已标完 30s，全长版已给）。
 
+**⭐ 本机优先原则（Ivan 2026-08-08 关停前指令）**：凡不需要 free 的工作一律在本机 Mac 执行——
+标注收割/diff 解析、法证文档、测试套件、ERes2NetV2 等离线评测（本地 venv+一次性 scp 数据）、
+矿藏后处理。free 只用于：产线函数注入重产、回执/状态拉取、部署、revive、上传。
+
+**会话关停时的在飞状态（successor 需接手重启）**：
+- ERes2NetV2 试点 worker 随会话死亡——按队列第 8 条的本机方案**重启**（无需抢救状态，
+  scratchpad 里可能残留半建的 venv 可复用可弃）。
+- 封面 8 连败法证 worker 死于中途——其报告草稿已由 integrator 代提交
+  （docs/reviews/2026-08-08-cover-punch-exhaustion-forensics.md，**未经原 worker 终检，
+  successor 用前先核对逐轮回执引用是否完整**）。
+- 部署波 6（e658e79 judge瞬断 + 2b658859 song门/配额20/85 + HANDOFF 链）：本地测试门
+  3122 已过，关停时处于同步段——successor 第一件事：核对
+  free:/opt/bilive/autoslice/repo/DEPLOYED_COMMIT 是否已到本分支 tip；没到就
+  `bash scripts/deploy_free_autoslice.sh free` 重跑（幂等）。
+- 8/8 批 runner 产线自动运行，与会话无关；Ivan 的 srt 标注仍在进行中。
+
 **运营铁律（本会话学费）**：审阅交付=本地最小四件套（mp4/speaker.srt/cover.png/publish.json）；
 worker 提示必须 edits-first+精确锚点（80 调用帽会被纯探索吃光）；同一 worktree 单 writer；
 账本增行必须带 Ivan 出处；free 一切产线操作走 flock 礼让。
