@@ -163,8 +163,14 @@ def test_default_profile_jingting_prompt_matches_authoritative_glossary_fingerpr
     #   entity 已登记（glossary 本条 + psplive_roster_sources.v1.json「南町Nightin」
     #   →别名「大N老师」），但这个具体误听方向此前不在任一登记表，属于登记 gap
     #   不是 entity 未知；方向单向，不做全局替换）。
+    # 2026-08-08b：南町行新增误听面「南天」「大白老师」（Ivan 2026-08-08 对
+    #   2026-08-07 鹅鸭杀联动 auto_210739_1142_1436 逐句真值：「南天」是 ASR 高发
+    #   错写且成 10 处簇、曾被转写回声环自证固化；cue19 满席证人听成「大白老师」
+    #   而 Ivan 裁定为「大N老师」——卡2撤回案，他的标注即裁决。两方向单向，
+    #   逐处仍须本句音频判断；entity_confusables 南町组 surfaces/readings 同步
+    #   +南天/大白老师/nan tian/da bai）。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "5739b14d2b87534558cfac0220a8969e1247565a9c359141886d6c50e443122a"
+        "943699c73c2fff08108834ccafed777e9780a4b4cbd7eb55ba839a8f30ec939d"
     )
 
 
