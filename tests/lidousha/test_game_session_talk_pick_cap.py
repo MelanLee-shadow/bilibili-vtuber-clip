@@ -1,9 +1,10 @@
-"""Ivan 2026-08-07 游戏场配额放宽指令测试：
+"""Ivan 游戏场配额放宽指令测试：
 
-「本场游戏直播的切片可突破5个上限，放宽到10个。当然，前提是分数在90分以上。」
+2026-08-07：「本场游戏直播的切片可突破5个上限，放宽到10个。当然，前提是分数在
+90分以上。」2026-08-08 再放宽：「8.8切片配额到20条，分数在85分以上即可」。
 
-session_game_context 已 RESOLVED 的场次话题上限由 5 提到 10；第 6-10 席只收
-selection_scorecard.effective_score>=90 的候选，1-5 席不变；非游戏场/
+session_game_context 已 RESOLVED 的场次话题上限由 5 提到 20；第 6-20 席只收
+selection_scorecard.effective_score>=85 的候选，1-5 席不变；非游戏场/
 缺失/AMBIGUOUS 语境一律留在 5；exact-contract 招回模式不受影响。
 """
 
@@ -21,7 +22,7 @@ SESSION_ID = "live-20260807T190000+0800"
 RECORDING_DATE = "2026-08-07"
 
 
-def _scorecard(*, uncertainty_penalty: float = 0.0) -> dict:
+def _scorecard(*, uncertainty_penalty: float = 0.0, fatigue_penalty: float = 0.0) -> dict:
     normalized = normalize_selection_scorecard(
         {
             "tier": 2,
@@ -38,7 +39,7 @@ def _scorecard(*, uncertainty_penalty: float = 0.0) -> dict:
                 "self_contained": 4,
             },
             "uncertainty_penalty": uncertainty_penalty,
-            "fatigue_penalty": 0,
+            "fatigue_penalty": fatigue_penalty,
         },
         start_cue=1,
         end_cue=2,
@@ -47,7 +48,11 @@ def _scorecard(*, uncertainty_penalty: float = 0.0) -> dict:
     return normalized
 
 
-def _candidate(index: int, *, effective_uncertainty: float = 0.0) -> dict:
+def _candidate(
+    index: int, *, effective_uncertainty: float = 0.0, effective_fatigue: float = 0.0
+) -> dict:
+    # uncertainty_penalty caps at 15 (selection_scorecard.py), so a target
+    # effective_score below 85 needs some fatigue_penalty too.
     return {
         "cid": f"eguoshai-{index}",
         "segment_path": f"/rec/eguoshai-{index}.mp4",
@@ -56,7 +61,9 @@ def _candidate(index: int, *, effective_uncertainty: float = 0.0) -> dict:
         "confidence": 0.9,
         "hook": f"鹅鸭杀候选{index}",
         "session_id": SESSION_ID,
-        "selection_scorecard": _scorecard(uncertainty_penalty=effective_uncertainty),
+        "selection_scorecard": _scorecard(
+            uncertainty_penalty=effective_uncertainty, fatigue_penalty=effective_fatigue
+        ),
     }
 
 
@@ -82,7 +89,7 @@ def _write_game_context(base: Path, *, status: str = "RESOLVED") -> None:
     state_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
-def test_resolved_game_session_fills_up_to_ten_when_scores_qualify(
+def test_resolved_game_session_fills_up_to_twenty_when_scores_qualify(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     base = tmp_path / "autoslice"
@@ -92,32 +99,32 @@ def test_resolved_game_session_fills_up_to_ten_when_scores_qualify(
         "picks": [],
         "songs": [],
         "pending_song": [],
-        "pending_talk": [_candidate(i, effective_uncertainty=0.0) for i in range(10)],
+        "pending_talk": [_candidate(i, effective_uncertainty=0.0) for i in range(20)],
     }
 
     runner.prioritize(state)
 
-    assert len(state["pending_talk"]) == 10
+    assert len(state["pending_talk"]) == 20
     assert state["talk_backlog"] == []
 
 
-def test_resolved_game_session_slot_six_refused_below_ninety(
+def test_resolved_game_session_slot_six_refused_below_eighty_five(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     base = tmp_path / "autoslice"
     monkeypatch.setattr(runner, "BASE", base)
     _write_game_context(base)
-    # Five unconditional slots (effective score 96..100, all comfortably >=90
+    # Five unconditional slots (effective score 96..100, all comfortably >=85
     # to isolate the boundary case at position six) plus a sixth candidate
-    # that must clear the 90 gate.
+    # that must clear the 85 gate.
     candidates = [_candidate(i, effective_uncertainty=i) for i in range(5)]
-    sixth_89_99 = _candidate(5, effective_uncertainty=10.01)
-    assert sixth_89_99["selection_scorecard"]["effective_score"] == 89.99
+    sixth_84_99 = _candidate(5, effective_uncertainty=15, effective_fatigue=0.01)
+    assert sixth_84_99["selection_scorecard"]["effective_score"] == 84.99
     state = {
         "picks": [],
         "songs": [],
         "pending_song": [],
-        "pending_talk": candidates + [sixth_89_99],
+        "pending_talk": candidates + [sixth_84_99],
     }
 
     runner.prioritize(state)
@@ -126,51 +133,29 @@ def test_resolved_game_session_slot_six_refused_below_ninety(
     assert [item["cid"] for item in state["pending_talk"]] == [
         c["cid"] for c in candidates
     ]
-    assert sixth_89_99["cid"] in [item["cid"] for item in state["talk_backlog"]]
+    assert sixth_84_99["cid"] in [item["cid"] for item in state["talk_backlog"]]
 
 
-def test_resolved_game_session_slot_six_refused_at_exactly_89(
+def test_resolved_game_session_slot_six_admits_at_exactly_eighty_five(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     base = tmp_path / "autoslice"
     monkeypatch.setattr(runner, "BASE", base)
     _write_game_context(base)
     candidates = [_candidate(i, effective_uncertainty=i) for i in range(5)]
-    sixth_89 = _candidate(5, effective_uncertainty=11)
-    assert sixth_89["selection_scorecard"]["effective_score"] == 89.0
+    sixth_85 = _candidate(5, effective_uncertainty=15)
+    assert sixth_85["selection_scorecard"]["effective_score"] == 85.0
     state = {
         "picks": [],
         "songs": [],
         "pending_song": [],
-        "pending_talk": candidates + [sixth_89],
-    }
-
-    runner.prioritize(state)
-
-    assert len(state["pending_talk"]) == 5
-    assert sixth_89["cid"] not in [item["cid"] for item in state["pending_talk"]]
-
-
-def test_resolved_game_session_slot_six_admits_at_exactly_ninety(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    base = tmp_path / "autoslice"
-    monkeypatch.setattr(runner, "BASE", base)
-    _write_game_context(base)
-    candidates = [_candidate(i, effective_uncertainty=i) for i in range(5)]
-    sixth_90 = _candidate(5, effective_uncertainty=10)
-    assert sixth_90["selection_scorecard"]["effective_score"] == 90.0
-    state = {
-        "picks": [],
-        "songs": [],
-        "pending_song": [],
-        "pending_talk": candidates + [sixth_90],
+        "pending_talk": candidates + [sixth_85],
     }
 
     runner.prioritize(state)
 
     assert len(state["pending_talk"]) == 6
-    assert sixth_90["cid"] in [item["cid"] for item in state["pending_talk"]]
+    assert sixth_85["cid"] in [item["cid"] for item in state["pending_talk"]]
 
 
 def test_non_game_session_stays_at_five(
@@ -213,7 +198,7 @@ def test_resolved_game_session_gate_is_ordinal_across_already_produced_picks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """5 already-delivered picks occupy positions 1-5; new candidates land at
-    position 6+ and must clear the 90 gate regardless of an empty batch."""
+    position 6+ and must clear the 85 gate regardless of an empty batch."""
 
     base = tmp_path / "autoslice"
     monkeypatch.setattr(runner, "BASE", base)
@@ -227,7 +212,7 @@ def test_resolved_game_session_gate_is_ordinal_across_already_produced_picks(
         for i in range(5)
     ]
     admitted = _candidate(10, effective_uncertainty=8)  # effective 92
-    refused = _candidate(11, effective_uncertainty=11)  # effective 89
+    refused = _candidate(11, effective_uncertainty=15, effective_fatigue=1)  # effective 84
     state = {
         "picks": produced_picks,
         "songs": [],
@@ -245,7 +230,7 @@ def test_resolved_game_session_gate_counts_reserved_revival_seats(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """3 delivered + 2 revival-reserved failed picks already occupy positions
-    1-5; a new below-90 candidate must NOT slip into an ungated position 4-5
+    1-5; a new below-85 candidate must NOT slip into an ungated position 4-5
     just because ``produced`` alone undercounts the session's taken seats."""
 
     base = tmp_path / "autoslice"
@@ -265,7 +250,7 @@ def test_resolved_game_session_gate_counts_reserved_revival_seats(
         }
         for i in range(2)
     ]
-    below_gate = _candidate(20, effective_uncertainty=15)  # effective 85
+    below_gate = _candidate(20, effective_uncertainty=15, effective_fatigue=1)  # effective 84
     state = {
         "picks": picks,
         "songs": [],

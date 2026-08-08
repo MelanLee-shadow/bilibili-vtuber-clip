@@ -240,8 +240,10 @@ def validate_session_game_context(payload: object) -> dict[str, Any]:
 # 10个……前提是分数在90分以上」——一场直播的 session_game_context 若已 RESOLVED，
 # 该场话题切片上限从 5 提到 10；超出原上限的额外席位只收
 # selection_scorecard.effective_score>=90 的候选，1-5 号席位不变。
-GAME_SESSION_TALK_PICK_CAP = 10
-GAME_SESSION_EXTRA_SLOT_MIN_SCORE = 90.0
+# 2026-08-08 Ivan 再放宽：「8.8切片配额到20条，分数在85分以上即可」——上限
+# 10 -> 20，6-20 号额外席位门槛 90 -> 85；1-5 号席位与非游戏场 5 上限不变。
+GAME_SESSION_TALK_PICK_CAP = 20
+GAME_SESSION_EXTRA_SLOT_MIN_SCORE = 85.0
 
 
 def talk_pick_cap(

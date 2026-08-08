@@ -633,6 +633,19 @@ def produce_song(date: str, item: dict) -> dict:
             transient_code = specific_agy_transient
         elif transient_code is None and "AGY_SOURCE_CONTEXT_RUNNER_FAILED" in reason_set:
             transient_code = "AGY_SOURCE_CONTEXT_RUNNER_FAILED"
+        elif transient_code is None:
+            # Ivan 2026-08-08 歌lane provider门修复: JINGTING_PROVIDER_NOT_AGY
+            # and siblings were never recognized here, so a Jingting-chain
+            # outage (with its cascading SONG_*_MISSING/INVALID artifacts)
+            # left transient_failure_code unset and got terminally rejected
+            # by project_terminal_song_disposition instead of waiting
+            # (2026-08-07 song_230754_1118 recurrence).  Any remaining
+            # SONG_INFRA_TRANSIENT_REASON_CODES member from THIS attempt
+            # wins per 50-song-lane.md's "同一 attempt 有明确 typed transient
+            # 则 transient 优先".
+            remaining_infra = reason_set & _runner.SONG_INFRA_TRANSIENT_REASON_CODES
+            if remaining_infra:
+                transient_code = min(remaining_infra)
         result["reason_codes"] = list(
             dict.fromkeys(
                 [*reasons, *completion["reason_codes"], *([transient_code] if transient_code else [])]

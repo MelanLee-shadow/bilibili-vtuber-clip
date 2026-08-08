@@ -86,7 +86,14 @@ FUNCTION_DEBT_LEDGER = {
     ("src/autoslice/publish_staging.py", "_stage_publish_draft"): 578,
     # 2026-07-31 +3：同上，截图/polish 路径的 contract 穿透。
     ("src/autoslice/publish_staging.py", "_stage_screenshot_direct_cover"): 322,
-    ("src/autoslice/song_lane.py", "produce_song"): 311,
+    # 2026-08-08 +13：歌lane provider门修复（Ivan 2026-08-08「老毛病竟然还
+    # 重新犯，你必须修复」）——JINGTING_PROVIDER_NOT_AGY 及同族此前未被识别
+    # 为 transient，同一 attempt 里跟着的 SONG_*_MISSING/INVALID 级联码就会
+    # 被 project_terminal_song_disposition 判定终态弃选（2026-08-07
+    # song_230754_1118 复发）。新增分支在 SONG_INFRA_TRANSIENT_REASON_CODES
+    # 里找本次 attempt 剩余的 infra 码。测试
+    # test_full_song_provider_outage_stays_infra_wait_not_terminal_rejection。
+    ("src/autoslice/song_lane.py", "produce_song"): 324,
     # 2026-08-07 新记：同上狍哥案实施指令——rescore_retry 路线（fingerprint
     # 计算、consumed 账本、hook/scorecard 交换）接入 requeue 主循环。重活在
     # src/autoslice/selection_rescore.py，这里是状态机接线本身，行数属于
@@ -125,7 +132,11 @@ MODULE_DEBT_LEDGER = {
     # 2026-08-07 +4：Ivan 2026-08-07 狍哥案实施指令（闭环接线）——produce
     # 派发前过滤 rescore_pending 项（谓词在 selection_rescore.py），本体只
     # 留 import + 4 行调用点。
-    "scripts/free_session_autoslice.py": 2_074,
+    # 2026-08-08 +7：8.8 配额授权（Ivan「8.8切片配额到20条，分数在85分以上即
+    # 可，候选也最好搞多一点」）——TALK_ATTEMPT_CAP 10→20 的 rationale 注释 +
+    # PER_SEGMENT_CANDIDATES 12→18 的 rationale 注释。测试
+    # tests/lidousha/test_game_session_talk_pick_cap.py。
+    "scripts/free_session_autoslice.py": 2_081,
     # 2026-07-31 +122：封面文案链修复（分行权威等级 + 锁定模式 + 缩略图合同背带
     # + max_lines 按合同封顶）。新增逻辑已抽成 _talk_locked_split /
     # _assert_talk_thumbnail_contract 两个模块级函数，_overlay_lidousha_cover_title

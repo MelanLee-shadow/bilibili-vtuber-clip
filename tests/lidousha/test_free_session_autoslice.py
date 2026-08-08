@@ -4895,6 +4895,115 @@ def test_full_song_proof_retry_seeds_original_anchor_and_enables_audio_lrc(
     ]
 
 
+def test_full_song_provider_outage_stays_infra_wait_not_terminal_rejection(
+    tmp_path, monkeypatch
+):
+    """Ivan 2026-08-08 歌lane provider门修复: the 2026-08-07 song_230754_1118
+    recurrence — a full-source attempt whose SAME summary carries both a
+    Jingting provider-outage marker and the cascading SONG_AUDIO_LRC_
+    ALIGNMENT_INVALID it drags along must stay in the infra-wait lane
+    (transient_failure_code set, no terminal disposition), not become a
+    deterministic content REJECT that burns the candidate forever."""
+
+    date = "2026-07-09"
+    cid = "song_provider_outage"
+    base = tmp_path / "autoslice"
+    repo = tmp_path / "repo"
+    out_dir = base / "out" / date / cid
+    (base / "logs").mkdir(parents=True)
+    out_dir.mkdir(parents=True)
+    repo.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(runner, "cpa_qa_cmd", lambda: "judge")
+
+    segment = tmp_path / "segment.mp4"
+    segment.write_bytes(b"segment")
+    anchor_start, anchor_end, duration = 50_000, 100_000, 200_000
+    tight_start = max(0, anchor_start - runner.SONG_WINDOW_PRE_MS)
+    tight_end = min(duration, anchor_end + runner.SONG_WINDOW_POST_MS)
+    full_start, full_end = runner.song_proof_retry_window(anchor_start, anchor_end, duration)
+    runner.song_window_media_path(out_dir, cid, "", tight_start, tight_end).write_bytes(b"tight")
+    runner.song_window_media_path(out_dir, cid, "_full", full_start, full_end).write_bytes(b"full")
+
+    def fake_slice_srt(_source, _start, _end, destination):
+        destination.write_text("1\n00:00:00,000 --> 00:00:01,000\n歌词\n", encoding="utf-8")
+        return 1
+
+    monkeypatch.setattr(runner, "slice_srt", fake_slice_srt)
+    selector_commands = []
+
+    class Completed:
+        returncode = 0
+
+    outage_reason_codes = [
+        "JINGTING_PROVIDER_NOT_AGY",
+        "JINGTING_MODEL_MISSING",
+        "SONG_AUDIO_LRC_ALIGNMENT_INVALID",
+        "SONG_FULL_BOUNDARY_PROOF_MISSING",
+        "SONG_LYRICS_ALIGNMENT_PROOF_MISSING",
+        "SONG_HOST_VOCAL_UNPROVEN",
+    ]
+
+    def fake_run(command, **_kwargs):
+        selector_commands.append(command)
+        selector_dir = Path(command[command.index("--output-dir") + 1])
+        seeded = "--seed-song-candidate-id" in command
+        full_source = "--agy-audio-lrc-align" in command
+        (selector_dir / "summary.json").write_text(
+            json.dumps(
+                {
+                    "records": [
+                        {
+                            "candidate_id": "seededsong_45000_95000" if seeded else "semanticsong_15000_65000",
+                            "decision_action": "BLOCK",
+                            "reason_codes": (
+                                outage_reason_codes
+                                if full_source
+                                else [
+                                    "TIGHT_ATTEMPT_DIAGNOSTIC",
+                                    "SONG_FULL_BOUNDARY_PROOF_MISSING",
+                                ]
+                            ),
+                            "source_context_job": {
+                                "content_type_hint": "song",
+                                "song_candidate": True,
+                                "requires_full_source_song_boundary_redo": True,
+                            },
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        return Completed()
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    result = runner.produce_song(
+        date,
+        {
+            "cid": cid,
+            "segment_path": str(segment),
+            "seg_dur_ms": duration,
+            "anchor_start_ms": anchor_start,
+            "anchor_end_ms": anchor_end,
+            "danmaku": 18,
+            "hook": "测试",
+            "preview": "provider outage during full-source proof",
+        },
+    )
+
+    assert result["window_classified_song"] is True
+    assert "full_source_retry" in result
+    assert set(outage_reason_codes).issubset(result["reason_codes"])
+    assert result["transient_failure_code"] in runner.SONG_INFRA_TRANSIENT_REASON_CODES
+    assert result["status"] != "candidate_rejected"
+    assert result["decision"] != "REJECT" or "next_retry_at_epoch" in result
+    assert "song_terminal_disposition" not in result
+    assert "next_retry_at_epoch" in result
+
+
 def test_full_song_authoritative_retry_timeout_always_promotes_block(tmp_path, monkeypatch):
     date = "2026-07-09"
     cid = "song_timeout_retry"

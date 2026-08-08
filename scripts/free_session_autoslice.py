@@ -270,7 +270,11 @@ HOST_VOCAL_MODEL_DIR = Path(
     )
 )
 MAX_TALK_PICKS = 5
-TALK_ATTEMPT_CAP = 10  # reject unsafe content candidates and backfill, bounded
+# Ivan 2026-08-08「8.8切片配额到20条」: this must stay >= the game-session
+# extra cap (game_context.GAME_SESSION_TALK_PICK_CAP) or a RESOLVED game
+# session's later slots silently starve mid-run once already-picked records
+# exhaust the attempt budget, well before its own higher cap is reached.
+TALK_ATTEMPT_CAP = 20  # reject unsafe content candidates and backfill, bounded
 # 冒烟同款 backfill（帽更小）：talk[0] 一票否决曾让整次冒烟颗粒无收，而它偏偏
 # 是文档推荐的"第一支切片"入口——单候选级 fail-closed 时换下一个候选再试。
 SMOKE_TALK_ATTEMPT_CAP = 3
@@ -330,7 +334,10 @@ TALK_COVER_PENDING_STATUS = "media_ready_cover_pending"
 # Recall pool, not delivery quota. Long sessions are recalled in overlapping
 # 30-minute windows and need enough global slack for review gates before the
 # per-live-session top-5 delivery selection.
-PER_SEGMENT_CANDIDATES = 12
+# 2026-08-08 12 -> 18 (+50%, Ivan「候选也最好搞多一点」): a RESOLVED game
+# session can now deliver up to 20 talk picks, so the recall pool feeding it
+# needs more slack too.
+PER_SEGMENT_CANDIDATES = 18
 MIN_SEGMENT_BYTES = 5_000_000  # recorder restart stubs are a few KB — dead on sight
 BCUT_MAX_ATTEMPTS = 2
 TITLE_MAX_ATTEMPTS = 3
