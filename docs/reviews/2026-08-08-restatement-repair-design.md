@@ -56,11 +56,11 @@ receipt 标注 `completed_from_restatement`(来源 cue、相似度、前缀长)�
    candidate_provenance `kind="session_restatement"`(source_cue/similarity/
    prefix_run/late_text_sha),入既有 replace_cue 仲裁队列,声学证人按 §2 两条件
    判,CPA 语义终审照旧。
-3. **守卫接线**:`final_review_auditor.py` 的
-   `_glossary_candidate_structured_text_support` 增认 `session_restatement`
-   provenance(sha 绑定重述 cue 原文)。该模块在债务账本(第三抬已触发),
-   新增行必须最小(预估 ≤6 行,重活全在 restatement_recall 模块),账本 bump
-   注记引 Ivan 2026-08-08 重述机制指令为出处。
+3. **守卫接线**:~~增认 session_restatement~~ **经查证不需要(2026-08-08 落地时结论)**:
+   收窄后 cue59 守卫只拦 `candidate_provenance.kind=="glossary"` 的裸候选;
+   `session_restatement` 是独立 kind,走标准候选盲声学 + CPA CURRENT/PROPOSED
+   闭集裁决,不经过该守卫。`final_review_auditor.py` 零改动(债务模块免动)。
+   若未来观察到重述候选被某个门错拦,再按该门自己的语义开支持臂。
 4. **测试 + 负向金丝雀**:cue17→29 事实模式端到端(提案生成→守卫放行);
    revert 守卫接线该测试必须变红;cue76 忠实重启零改动回归;
    min_early_chars 挡「我是」回归。
