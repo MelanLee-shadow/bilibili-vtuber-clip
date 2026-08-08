@@ -44,6 +44,65 @@ INAUDIBLE_DECISION_CONTRACT = "inaudible-current-proposed-drop.v1"
 # Retained as a diagnostic threshold; CPA, not the witness, owns the decision.
 MIN_CHOICE_COMPATIBILITY = 0.55
 
+# Ivan 2026-08-08 工程优化②授权：judge 供应商瞬断自动重试，不再整轮报废
+# （真善美 zsm4 三模型均短暂 400 事故）。同一 judge_word_choice 调用内，一次
+# provider-shaped 失败（HTTP 4xx/5xx/超时/连接类）允许一次同轮重试；语义性
+# 失败（JSON 解析、非法 choice）不重试——那是模型已应答，不是供应商抖动。
+JUDGE_MAX_PROVIDER_RETRIES = 1
+_JUDGE_CALL_PROVIDER_MARKERS = (
+    "HTTPERROR",
+    "TIMEOUT",
+    "TIMED OUT",
+    "CONNECTION",
+    "SUBPROCESS",
+    "RESET",
+    " 400",
+    " 401",
+    " 403",
+    " 404",
+    " 408",
+    " 409",
+    " 425",
+    " 429",
+    " 500",
+    " 502",
+    " 503",
+    " 504",
+)
+
+
+def _judge_call_provider_transient(message: str) -> bool:
+    upper = message.upper()
+    return any(marker in upper for marker in _JUDGE_CALL_PROVIDER_MARKERS)
+
+
+def _judge_error_cascade(
+    messages: list[str], *, cap_per_entry: int = 300, max_entries: int = 32
+) -> list[str]:
+    """Preserve each attempt's own error instead of one doubly-truncated tail.
+
+    ``llm_via_cpa.sh`` fans a single judge call out across up to three CPA
+    models before failing; the underlying exception text is multi-line (one
+    line per model/attempt — a full exhaustion is ~9 curl errors + 3
+    "trying next model" + 1 "failed on all models" ≈ 13 lines).  Flattening
+    that into a single ``str[:300]`` (as the old ``error`` field did on top
+    of ``_call_command``'s own ``stderr[-400:]`` cut) threw away exactly the
+    early-model evidence a human needs to see which providers were down.
+    With the same-run retry above, an exhausted retry concatenates two such
+    cascades (~26 lines); ``max_entries`` must clear that or the retry's own
+    error history gets truncated the same way item 3 was fixing one level
+    down. This keeps one capped entry per line/attempt instead.
+    """
+
+    cascade: list[str] = []
+    for message in messages:
+        for line in message.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            cascade.append(line[:cap_per_entry])
+    return cascade[:max_entries]
+
 
 def valid_cpa_witness_adjudication(verdict: Mapping[str, Any]) -> bool:
     """Validate the typed evidence chain for a CPA-owned acoustic choice."""
@@ -701,16 +760,44 @@ def judge_word_choice(
                 return served
         except (OSError, ValueError):
             pass
+    call_errors: list[str] = []
+    completion: str | None = None
+    for call_attempt in range(JUDGE_MAX_PROVIDER_RETRIES + 1):
+        try:
+            completion = llm_call(prompt)
+            break
+        except Exception as exc:
+            message = f"{type(exc).__name__}: {exc}"
+            call_errors.append(message)
+            if (
+                call_attempt < JUDGE_MAX_PROVIDER_RETRIES
+                and _judge_call_provider_transient(message)
+            ):
+                continue
+            return {
+                "schema_version": ADJUDICATION_SCHEMA,
+                "status": "JUDGE_UNAVAILABLE",
+                "choice": "UNCERTAIN",
+                "reason_code": "JUDGE_CALL_FAILED",
+                "error": message[:300],
+                "error_cascade": _judge_error_cascade(call_errors),
+                "provider_retry_attempted": call_attempt > 0,
+                "prompt_sha256": prompt_sha256,
+                "decision_contract": decision_contract,
+                "choice_set": sorted(allowed_choices),
+            }
     try:
-        completion = llm_call(prompt)
-        payload = extract_json_object(completion)
+        payload = extract_json_object(completion or "")
     except Exception as exc:
+        message = f"{type(exc).__name__}: {exc}"
         return {
             "schema_version": ADJUDICATION_SCHEMA,
             "status": "JUDGE_UNAVAILABLE",
             "choice": "UNCERTAIN",
             "reason_code": "JUDGE_CALL_FAILED",
-            "error": f"{type(exc).__name__}: {exc}"[:300],
+            "error": message[:300],
+            "error_cascade": _judge_error_cascade(call_errors + [message]),
+            "provider_retry_attempted": len(call_errors) > 0,
             "prompt_sha256": prompt_sha256,
             "decision_contract": decision_contract,
             "choice_set": sorted(allowed_choices),
@@ -749,6 +836,7 @@ def judge_word_choice(
             "prompt_sha256": prompt_sha256,
             "decision_contract": decision_contract,
             "choice_set": sorted(allowed_choices),
+            "provider_retry_attempted": bool(call_errors),
         }
     verdict = {
         "schema_version": ADJUDICATION_SCHEMA,
@@ -765,6 +853,11 @@ def judge_word_choice(
         "check_request_sha256": str(
             check_request.get("request_sha256") or ""
         ).removeprefix("sha256:"),
+        # Ivan 2026-08-08 工程优化②授权：MAX_PROVIDER_RETRIES_PER_PASS 同款
+        # house pattern（source_fact_review.py）——"每次重试都进回执披露"；
+        # 一个二次尝试才拿到的 JUDGED 终态不得看起来和首次成功一模一样，
+        # 尤其它还会被写入 judge-verdict-cache 原样回放。
+        "provider_retry_attempted": bool(call_errors),
     }
     if cache_path is not None:
         # 只缓存 JUDGED 终态；写失败绝不影响生产（与声学缓存同约定）。

@@ -7815,6 +7815,131 @@ def test_foreign_audio_provider_failure_is_retryable(tmp_path: Path):
     assert classified["gate_violation"]["cue_index"] == 16
 
 
+def test_foreign_judge_call_outage_is_retryable(tmp_path: Path):
+    """Ivan 2026-08-08 工程优化②授权：真善美 zsm4 事故——三个 CPA 模型均短暂
+    400 的 judge-call 失败此前落 subtitle_authority（不可恢复），把整轮候选
+    报废。judge-layer outage 必须归类为 provider_transient，与 talk_lane.py
+    的 FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED 先例同构。"""
+
+    authority = tmp_path / "candidate.chat-authority.json"
+    authority.write_text(
+        json.dumps(
+            {
+                "foreign_script_consistency_audit": {
+                    "mixed_cjk_latin_cues": [
+                        {
+                            "cue_index": 42,
+                            "start_ms": 60_000,
+                            "end_ms": 62_500,
+                            "text": "错误 ore boku",
+                            "latin_words": ["ore", "boku"],
+                        }
+                    ],
+                    "audio_witness_rows": [
+                        {
+                            "cue_index": 42,
+                            "witnessed": False,
+                            "exact_transcript": "ore boku",
+                            "audio_sha256": "audio42",
+                        }
+                    ],
+                    "cpa_adjudication_rows": [
+                        {
+                            "cue_index": 42,
+                            "resolved": False,
+                            "reason_code": "CPA_ADJUDICATION_DID_NOT_RESOLVE",
+                            "adjudication": {
+                                "judge": {
+                                    "status": "JUDGE_UNAVAILABLE",
+                                    "choice": "UNCERTAIN",
+                                    "reason_code": "JUDGE_CALL_FAILED",
+                                    "error": (
+                                        "LlmCallError: llm command failed rc=1: "
+                                        "CPA /responses failed on all models: "
+                                        "gpt-5.6-sol gpt-5.5 gpt-5.4"
+                                    ),
+                                    "error_cascade": [
+                                        "CPA /responses failed 3x on gpt-5.6-sol, trying next model",
+                                        "curl: (22) The requested URL returned error: 400",
+                                        "CPA /responses failed on all models: gpt-5.6-sol gpt-5.5 gpt-5.4",
+                                    ],
+                                }
+                            },
+                        }
+                    ],
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    classified = runner.classify_talk_failure(
+        f"FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED: {authority}"
+    )
+
+    assert classified["failure_kind"] == "provider_transient"
+    assert classified["failure_stage"] == "foreign_source_audio_witness"
+    assert classified["failure_recoverable"] is True
+    assert classified["gate_violation"]["cue_index"] == 42
+
+
+def test_foreign_judge_semantic_rejection_stays_subtitle_authority(tmp_path: Path):
+    """Regression guard: a judge that actually answered (JUDGED, just not a
+    resolving choice) is NOT a provider outage and must stay terminal."""
+
+    authority = tmp_path / "candidate.chat-authority.json"
+    authority.write_text(
+        json.dumps(
+            {
+                "foreign_script_consistency_audit": {
+                    "mixed_cjk_latin_cues": [
+                        {
+                            "cue_index": 5,
+                            "start_ms": 10_000,
+                            "end_ms": 11_500,
+                            "text": "错误 ore boku",
+                            "latin_words": ["ore", "boku"],
+                        }
+                    ],
+                    "audio_witness_rows": [
+                        {
+                            "cue_index": 5,
+                            "witnessed": False,
+                            "exact_transcript": "ore boku",
+                            "audio_sha256": "audio5",
+                        }
+                    ],
+                    "cpa_adjudication_rows": [
+                        {
+                            "cue_index": 5,
+                            "resolved": False,
+                            "reason_code": "CPA_ADJUDICATION_DID_NOT_RESOLVE",
+                            "adjudication": {
+                                "judge": {
+                                    "status": "JUDGED",
+                                    "choice": "NEITHER",
+                                    "reason": "既不是 current 也不是 proposed",
+                                }
+                            },
+                        }
+                    ],
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    classified = runner.classify_talk_failure(
+        f"FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED: {authority}"
+    )
+
+    assert classified["failure_kind"] == "subtitle_authority"
+    assert classified["failure_stage"] == "foreign_source_transcription"
+    assert classified["failure_recoverable"] is False
+
+
 def test_foreign_source_rejection_reports_unwitnessed_cue_not_first_valid_english(
     tmp_path: Path,
 ):

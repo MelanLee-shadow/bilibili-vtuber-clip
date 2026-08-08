@@ -166,38 +166,111 @@ def foreign_source_gate_violation(
     }
 
 
+_JUDGE_PROVIDER_MARKERS = (
+    "HTTPERROR",
+    "TIMEOUT",
+    "TIMED OUT",
+    "CONNECTION",
+    "SUBPROCESS",
+    "RESET",
+    "QUOTA",
+    " 400",
+    " 401",
+    " 403",
+    " 404",
+    " 408",
+    " 409",
+    " 425",
+    " 429",
+    " 500",
+    " 502",
+    " 503",
+    " 504",
+)
+
+
+def _judge_row_provider_transient(row: object) -> bool:
+    """A judge-layer call outage (JUDGE_CALL_FAILED/JUDGE_UNAVAILABLE) with a
+    provider-shaped error is the same recoverable class as an unavailable
+    audio witness — mirrors talk_lane.py's FINAL_REVIEW_ADJUDICATION_INFRA_
+    UNRESOLVED precedent.
+
+    Ivan 2026-08-08 工程优化②授权：judge 供应商瞬断（如三个 CPA 模型均短暂
+    400）此前误落 subtitle_authority（不可恢复），整轮候选被报废——真善美
+    zsm4 事故。判者语义拒绝（JUDGED 但 CURRENT/NEITHER/DROP）绝不在此列，
+    只有调用层本身失败（未拿到判者语义结果）才可能是可恢复的。
+    """
+
+    if not isinstance(row, dict):
+        return False
+    adjudication = row.get("adjudication")
+    judge = adjudication.get("judge") if isinstance(adjudication, dict) else None
+    if not isinstance(judge, dict):
+        return False
+    status = judge.get("status")
+    reason_code = judge.get("reason_code")
+    if status != "JUDGE_UNAVAILABLE" or reason_code != "JUDGE_CALL_FAILED":
+        return False
+    haystacks = [str(judge.get("error") or "").upper()]
+    cascade = judge.get("error_cascade")
+    if isinstance(cascade, list):
+        haystacks.extend(str(entry).upper() for entry in cascade)
+    haystacks = [text for text in haystacks if text]
+    if not haystacks:
+        # No captured error text to classify from — do not guess transient.
+        return False
+    return any(
+        any(marker in haystack for marker in _JUDGE_PROVIDER_MARKERS)
+        for haystack in haystacks
+    )
+
+
 def foreign_source_provider_transient(
     violation: dict[str, object] | None,
 ) -> bool:
-    """Distinguish an unavailable audio witness from a textual gate verdict."""
+    """Distinguish an unavailable audio/judge witness from a textual gate verdict."""
 
     if not isinstance(violation, dict):
         return False
     unresolved = violation.get("unresolved_findings")
-    rows = violation.get("witness_rows")
-    if not isinstance(unresolved, list) or not unresolved or not isinstance(rows, list):
+    if not isinstance(unresolved, list) or not unresolved:
         return False
     unresolved_indexes = {
         row.get("cue_index") for row in unresolved if isinstance(row, dict)
     }
-    relevant = [
+    rows = violation.get("witness_rows")
+    relevant_witness = [
         row
-        for row in rows
+        for row in (rows if isinstance(rows, list) else [])
         if isinstance(row, dict) and row.get("cue_index") in unresolved_indexes
     ]
-    if not relevant:
-        return False
-    provider_markers = (
-        "AGY_FOREIGN_WITNESS_",
-        "WITNESS_PROVIDERS_FAILED",
-        "WITNESS_AUDIO_EXTRACTION_FAILED",
-        "HTTPERROR",
-        "QUOTA",
-        "TIMED OUT",
-        "TIMEOUT",
-        "SUBPROCESS",
-    )
-    return all(
-        any(marker in str(row.get("failure") or "").upper() for marker in provider_markers)
-        for row in relevant
-    )
+    if relevant_witness:
+        provider_markers = (
+            "AGY_FOREIGN_WITNESS_",
+            "WITNESS_PROVIDERS_FAILED",
+            "WITNESS_AUDIO_EXTRACTION_FAILED",
+            "HTTPERROR",
+            "QUOTA",
+            "TIMED OUT",
+            "TIMEOUT",
+            "SUBPROCESS",
+        )
+        if all(
+            any(
+                marker in str(row.get("failure") or "").upper()
+                for marker in provider_markers
+            )
+            for row in relevant_witness
+        ):
+            return True
+    # Ivan 2026-08-08 工程优化②授权：判者层瞬断（同 cue 的 CPA judge 调用
+    # 失败，而非听写本身有问题）同样属于可恢复基础设施等待，不是文本终态。
+    cpa_rows = violation.get("cpa_adjudication_rows")
+    relevant_cpa = [
+        row
+        for row in (cpa_rows if isinstance(cpa_rows, list) else [])
+        if isinstance(row, dict) and row.get("cue_index") in unresolved_indexes
+    ]
+    if relevant_cpa and all(_judge_row_provider_transient(row) for row in relevant_cpa):
+        return True
+    return False

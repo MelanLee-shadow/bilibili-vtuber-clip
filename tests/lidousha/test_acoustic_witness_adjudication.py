@@ -126,6 +126,84 @@ def test_judge_call_failure_fails_closed():
     assert branch == "JUDGE_UNCERTAIN_KEEP_CURRENT"
 
 
+def test_judge_call_retries_once_on_provider_transient_error_then_succeeds():
+    """Ivan 2026-08-08 工程优化②：真善美 zsm4 三模型均短暂 400 报废整轮候选
+    的事故——同轮内单次 provider-shaped 失败必须能自愈重试，不立刻判死。"""
+
+    attempts = {"n": 0}
+
+    def flaky(_prompt):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise RuntimeError("HTTPError: 400 Bad Request")
+        return json.dumps({"choice": "PROPOSED", "reason": "recovered"})
+
+    verdict = judge_word_choice(
+        llm_call=flaky,
+        check_request=CHECK_REQUEST,
+        witness=_witness("hai mei you ge zhai ne"),
+    )
+
+    assert attempts["n"] == 2
+    assert verdict["status"] == "JUDGED"
+    assert verdict["choice"] == "PROPOSED"
+    # source_fact_review.py house pattern: "每次重试都进回执披露" — a JUDGED
+    # verdict reached only after a provider-transient retry must not look
+    # identical to a clean first-try success, especially since it is what
+    # gets written into the judge-verdict-cache and replayed verbatim.
+    assert verdict["provider_retry_attempted"] is True
+
+
+def test_judge_call_does_not_retry_semantic_out_of_set_refusal():
+    """Retries are for provider-layer failures only; a model that answered
+    with an out-of-set choice already responded — retrying would be re-rolling
+    a semantic result, which Ivan's 2026-07-27 ruling forbids."""
+
+    attempts = {"n": 0}
+
+    def out_of_set(_prompt):
+        attempts["n"] += 1
+        return json.dumps({"choice": "还没有歌坛呢", "reason": "invented"})
+
+    verdict = judge_word_choice(
+        llm_call=out_of_set,
+        check_request=CHECK_REQUEST,
+        witness=_witness("hai mei you ge zhai ne"),
+    )
+
+    assert attempts["n"] == 1
+    assert verdict["reason_code"] == "JUDGE_CHOICE_OUT_OF_SET"
+
+
+def test_judge_call_exhausts_retry_and_preserves_full_error_cascade():
+    """Double-truncation regression: llm_client's stderr[-400:] plus the old
+    flat error[:300] threw away exactly which earlier models failed. Every
+    attempt's error must survive in ``error_cascade``, not just the tail."""
+
+    attempts = {"n": 0}
+
+    def always_fails(_prompt):
+        attempts["n"] += 1
+        raise RuntimeError(f"HTTPError: 400 Bad Request on gpt-5.6-sol attempt {attempts['n']}")
+
+    verdict = judge_word_choice(
+        llm_call=always_fails,
+        check_request=CHECK_REQUEST,
+        witness=_witness("hai mei you ge zhai ne"),
+    )
+
+    assert attempts["n"] == 2
+    assert verdict["status"] == "JUDGE_UNAVAILABLE"
+    assert verdict["reason_code"] == "JUDGE_CALL_FAILED"
+    assert verdict["provider_retry_attempted"] is True
+    cascade = verdict["error_cascade"]
+    assert len(cascade) == 2
+    assert "attempt 1" in cascade[0]
+    assert "attempt 2" in cascade[1]
+    # The old single-string field must still be present (additive schema).
+    assert "error" in verdict and isinstance(verdict["error"], str)
+
+
 def test_judge_can_reject_a_malformed_closed_set_without_mutating_text():
     repaired, branch, audit = adjudicate_with_witness(
         check_request=CHECK_REQUEST,
