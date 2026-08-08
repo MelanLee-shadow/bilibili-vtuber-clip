@@ -62,17 +62,22 @@ $ python3 -m pytest tests/lidousha/test_speaker_host_evidence.py -q
 | 响度硬通过 lane | 全场零触发（host/guest 响度中位数几乎重叠：host −22.95dB vs guest −22.0dB，guest 中位数反而更响，`loudness_study` 数据） |
 
 **新旧策略对比（同一场次，逐 cue 机械计算，非引用）**：对 `..._machine_decisions_20260807.json`
-里持久化的历史（旧策略实际下发）`speaker` 字段与 `ivan_truth_diff_20260807.json` 真值逐 cue 比对
-（55 条非 mixed cue，脚本对比未落盘为测试，纯分析）：
+里持久化的**旧策略机器原始判定**（未经人工修正的 `speaker` 字段）与 `ivan_truth_diff_20260807.json`
+真值逐 cue 比对（55 条非 mixed cue，脚本对比未落盘为测试，纯分析）。核实：这 10 条旧策略
+false-host cue 全部落在 `speaker_overrides/auto_203735_555_680.speaker.v1.json` 的 20 条覆盖范围
+内——即它们是 Ivan 8/7 那轮 61-cue 逐句裁决当场发现并手工纠正过的，这份 override 文档本身就是
+`speaker_host_evidence.py` 的校准来源；换句话说，下表左列反映的是"如果没有这次人工修正，旧策略
+原本会判成什么"，不是"公开发布的字幕曾经写错"：
 
-| | 旧策略（历史下发标签） | 新策略（`speaker_host_evidence.py` 回放） |
+| | 旧策略（机器原始判定，未经本轮人工修正） | 新策略（`speaker_host_evidence.py` 回放） |
 |---|---|---|
 | false-host（判 HOST，真值 GUEST） | **10**（cue 4/5/6/7/9/11/12/14/33/47） | **0** |
 | false-guest（判 GUEST，真值 HOST） | 4（cue 40/46/48/49） | 1（cue 40） |
 | 正确 | 41/55 = 74.5% | 54/55 = 98.2% |
 
 新策略把 false-host 从 10 降到 0，正是 8/7 裁定要解决的问题（旧策略里 10 条 cue 被语义投票误判
-成李豆沙，而这些 cue 的 CAM++ margin 实际上离阈值很远，属于纯粹的语义误决策）。这是新策略唯一
+成李豆沙，而这些 cue 的 CAM++ margin 实际上离阈值很远，属于纯粹的语义误决策）；这也印证新代码
+策略的目的就是让这类修正从"靠 Ivan 手工逐条 override"变成"机器默认就对"。这是新策略唯一
 一次端到端的真值验证，方向符合 Ivan 的不对称裁定（宁可漏判连线不误判本人）。**但这场是游戏
 语音**：嘉宾音频经语音聊天压缩，与直播麦克风声道在编码特征上天然可分（按场次形态推断，未逐条
 核实压缩链路）——这正是下一节要指出的、equal-quality 场次不具备的分离信号来源。这组"旧策略
