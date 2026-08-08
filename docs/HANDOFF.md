@@ -110,8 +110,7 @@ provider 门根修 + 游戏场配额 20 条/≥85 分 + 候选池 12→18 + TALK
 矿藏后处理。free 只用于：产线函数注入重产、回执/状态拉取、部署、revive、上传。
 
 **会话关停时的在飞状态（successor 需接手重启）**：
-- ERes2NetV2 试点 worker 随会话死亡——按队列第 8 条的本机方案**重启**（无需抢救状态，
-  scratchpad 里可能残留半建的 venv 可复用可弃）。
+- ERes2NetV2 试点 worker 随会话死亡——已落 PARTIAL 报告 docs/reviews/2026-08-08-eres2netv2-pilot.md——**按其 §6 的精确续跑命令重启**（本机 venv/媒体/脚本全就位，含 Python3.11 陷阱与 5.77s 片头偏移教训；两模型分数不同尺度，阈值不可移植需重推导）。
 - 封面 8 连败法证 worker 死于中途——其报告草稿已由 integrator 代提交
   （docs/reviews/2026-08-08-cover-punch-exhaustion-forensics.md，**未经原 worker 终检，
   successor 用前先核对逐轮回执引用是否完整**）。
