@@ -55,8 +55,10 @@
 ## е2 决策卡(请 Ivan 一轮批完)
 
 **卡 1|证人冲突加权**
-- 原裁定:2026-07-04「封面/文字终裁归 CPA,AGY 只当耳朵」(cpa-real-ai-cover /
-  裁决架构系列裁定;7/27 成本令沿用:闭集裁决归 CPA、音频只当耳朵)。
+- 原裁定:2026-07-27 成本令「闭集裁决归 CPA,音频只当耳朵」。代码位
+  `acoustic_witness_adjudication.py:1019-1021` 注释原文:"AGY pinyin remains a
+  diagnostic … but cannot overturn CPA's explicit PROPOSED choice"——**该注释未带
+  Ivan 日期出处**(worker 初报的 7/04 经查不实,已更正;若 Ivan 记得另有出处请指正)。
 - 反例:换身份片同一分支(`acoustic_witness_adjudication.py:1010-1022`
   `CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT`)4 处修对、6 处改错
   (cue2/14×2/53/97,报告有逐处回执引用);非 glossary 出处,cue59 收窄守卫不覆盖。
@@ -69,6 +71,14 @@
 - 原裁定:授权保向铁律(裁定文档只记方向,逐处真伪由音频仲裁)。
 - 反例:满席高置信证人战胜已登记专名候选,真值站证人一边还是专名一边未决。
 - 需要:Ivan 对两处音频亲裁(报告给了精确时间窗),裁完落方向词条。
+
+## 波 7 部署的 policy fingerprint 副作用(披露)
+
+`producer_text_pipeline.py` 在 `audit_lidousha_review_package._audit_policy_fingerprint()`
+的 25 模块名单里——波 7 起指纹已换,**8/7 批(及更早)所有 pre-deploy 冻结的
+review-package audit 对新代码校验必然 mismatch**。这是已知结构债(07-31 旧节
+队列#5,显式 policy 版本号方案未做)的正常表现,不是新 bug:统一重产会重出
+audit 自然重冻;在那之前若上传闸/审计报 policy_fingerprint 失败,不要当新病诊断。
 
 ## 重述车道生产金丝雀预警
 

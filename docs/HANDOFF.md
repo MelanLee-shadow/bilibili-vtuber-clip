@@ -48,6 +48,13 @@ processing,1 talk carryover 重试 + 1 song 在队,勿打扰)。
    声学参与、F8 AGY 整段 UNAVAILABLE 的 transient 分类核对。卡 1/卡 2 涉及的
    修复等 Ivan 批完再动。
 2. **(c) 类词条登记**:按保向铁律落 glossary/entity_confusables,逐条带 8/7 案出处。
+2b. **重述车道真实首执核查**:波 7 上线后今晚 8/8 批就是首个真实执行(部署时
+   receipts-found=0,还没候选走到 exact-final)。successor 查
+   free:out/2026-08-08/<cid>/*.restatement-candidates.json 是否落盘、有无 pair
+   进裁决;全零 pair 也是合法结果,记录之。另:波 7 换了 policy fingerprint
+   (producer_text_pipeline 在 25 模块名单),8/7 旧冻结 audit 对新代码必然
+   mismatch——是已知结构债表现,重产自然重冻,勿当新病(详 synthesis 披露节)。
+   pristine 包已镜像 free:/opt/bilive/autoslice/reports/ivan-truth-pristine-20260807.tgz。
 3. **统一重产**(原队列 4):换身份/被劝受骗(带 Ivan 订正,reviewed-baseline+
    override 车道,产线函数注入法:free:/opt/bilive/autoslice/tmp/
    inject_baseline_and_produce.py)+ 贪生怕死出说话人二分版。验收=剥标记逐字
