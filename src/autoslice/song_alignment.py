@@ -609,19 +609,6 @@ def _lrc_title_is_exact_hint(lrc: LrcResult, preferred_title_hints: Sequence[str
     return normalize_lyric_text(lrc.song_title) in _preferred_title_keys(preferred_title_hints)
 
 
-def _lrc_title_hint_family_match(lrc: LrcResult, preferred_title_hints: Sequence[str]) -> bool:
-    """Family-normalized hint match: a hook-quoted/visual title hint names the
-    song, not a specific catalog variant string.  A provider's "(Live)" /
-    "(Cover)" / decoration suffix must not defeat an otherwise exact title
-    hint (song_230754_1118 案 2026-08-08: hint "一起长大" vs provider title
-    "一起长大 (live)").  Kept separate from ``_lrc_title_is_exact_hint`` (used
-    for tie-break sort ordering among an already-admitted family) so that
-    stricter call site keeps requiring literal equality."""
-
-    hint_families = _preferred_title_keys(preferred_title_hints)
-    return bool(hint_families) and _lrc_title_family(lrc) in hint_families
-
-
 def _lrc_variant_penalty(lrc: LrcResult) -> int:
     """Count catalog decorations that usually denote a non-canonical timeline."""
 
