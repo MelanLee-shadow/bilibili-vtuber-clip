@@ -179,3 +179,85 @@ CAM++ margin、没有人工说话人真值、没有语义投票记录可供比�
 - 分支/工作树：`claude/session-live-context`，`/Users/ivan/Project/vtuber-slice`，base SHA `84e3603ff29bb08cc9128cd4506705031f7b4779`（评估期间未变更）。
 - 本次运行的唯一命令：`python3 -m pytest tests/lidousha/test_speaker_host_evidence.py -q` → `9 passed`（本地 Mac，Python 3.14；未在 `free` 上跑，遵循 free 无 pytest 的既有记录）。
 - 未修改任何生产代码、阈值、`voiceprint_profile.v1.json`、crontab 或已发布产物；未新增测试 fixture（现有 fixture 已完整覆盖唯一可回放场次，无需重复造数据）。
+
+## 附录（2026-08-08）：第 5.1 节验证——2026-07-22 南町联动离线 CAM++ 打分首跑
+
+按第 5 节建议 1，对 2026-07-22 南町联动唯一已发布 equal-quality 候选跑了一次离线 CAM++ 二分打分
+（`src.autoslice.producer_speaker.run_speaker_finalizer`，`host="localhost"`，`free` 上部署 commit
+`84e3603`，只写 `/opt/bilive/autoslice/tmp/`，未碰生产 `out/`/`lidousha/` 交付物、未改 crontab、未上传）。
+
+**候选**：`auto_200511_61_138`（发布标题「李豆沙解释为什么请南町吃火锅，从"付出劳动"一路改口，最后
+承认她是最最最最喜欢的人」，77.2s，40 cue，`replacement_recuts/*.recut.mp4`+`.recut.srt`）——即第 5 节
+建议 1 点名的候选。`source_media_sha256=f5662ff2…5cbc7`，`text_final_srt_sha256=81d32633…6dfed4`，
+`profile_sha256=663eee98…85ad1d`（`voiceprint_profile.v1.json`，未变更）。
+
+**finalizer 状态**：`READY`，`production_ready=true`——**未触发 `SPEAKER_REVIEW_REQUIRED`**。这是
+equal-quality 场次第一次跑通整条判定链并产出可读的 margin/decision 逐 cue 记录。
+
+### 标签分布与判定来源
+
+| 指标 | 数值 |
+|---|---|
+| 李豆沙(HOST) | 26/40 = 65% |
+| 连线(GUEST) | 14/40 = 35% |
+| `campp_audio`（非临界带，声学直接判定） | 23/40 = 57.5% |
+| `campp_semantic_corroborated`（临界带内，语义佐证判 HOST） | 8/40 = 20% |
+| `whole_clip_context_guest_confirmed`（临界带内，语义投票判 GUEST） | 5/40 = 12.5% |
+| `guest_default_ambiguity`（临界带内，语义未能佐证 HOST，按默认判 GUEST） | 4/40 = 10% |
+| `loudness_hard`（响度硬通过） | **0**——响度参数未接入 `speaker_finalizer.py` 的 `resolve_ambiguous_labels` 调用点（未传 `cue_loudness_db`），这条 lane 在当前 finalizer 生产路径里根本没有被调用，不只是"零触发"，是**未接线**。与第 3 节风险点 3 的怀疑方向一致，但结论更强。 |
+
+### 临界带（ambiguity band）占比——关键新发现
+
+区分两种"进入临界带"的原因：margin 落在 `threshold±band` 内（声学本身不确定），vs cue 时长
+`<short_cue_ms(1500ms)` 被无条件强制视为临界带（不看 margin 多确定）。
+
+| | 2026-07-22（equal-quality，本次） | 2026-08-07（游戏语音，`auto_203735_555_680`） |
+|---|---|---|
+| 纯 margin 落在 `threshold±band` 内 | 7/40 = **17.5%** | 11/61 = **18.0%** |
+| 含短句强制（`<1.5s`）后的临界带总量 | 17/40 = **42.5%**（其中 10 条纯因短句被强制，margin 本身已在带外） | 未知——8/7 fixture 未持久化 cue 时长，无法同口径复算 |
+
+**纯 margin 意义上的临界带占比几乎相同**（17.5% vs 18.0%），不支持"equal-quality margin 分布更连续、
+`_two_means` 更不稳定"这一假设——至少这一条候选上没有观察到。但**短句强制这一项让实际需要语义
+兜底的 cue 几乎翻倍到 42.5%**，且短句强制的 10 条里语义投票只佐证成功 0 条（全部落在
+`guest_default_ambiguity`/`whole_clip_context_guest_confirmed`，即全部按默认判 GUEST）——equal-quality
+对谈里"哎""对对对""啊怎么了"这类 <1.5s 的应和/插话密度明显高于游戏语音场次，第 3 节风险点 4
+（对谈抢话/重叠频率更高）在这里以"短句强制进临界带"的形式先一步体现出来，即使还没出现真正的
+重叠 cue。
+
+### Margin 分离度（cluster separation）
+
+`_two_means` 得到 `low_center(guest)=-0.157`，`high_center(host)=+0.265`，`threshold=0.0538`——
+双峰缺口依然存在，**不是退化成单峰连续分布**。按机器自身标签分组（非人工真值，仅自洽性）：
+
+| | HOST median margin | GUEST median margin | 分离度(HOST−GUEST) |
+|---|---|---|---|
+| 2026-07-22（机器标签自洽，本次） | 0.2947 | −0.0961 | 0.3908 |
+| 2026-08-07（Ivan 真值分组，`auto_203735_555_680`，55 条非 mixed cue） | 0.3704 | −0.0777 | 0.4481 |
+
+分离度量级接近（0.39 vs 0.45），但**7/22 一列是机器标签自洽统计，不是真值验证**——不能说明
+准确率，只能说明"如果 threshold 判对了，两组声学分数确实拉得开"。这正是第 4 节列出的缺口：
+false-host/false-guest 仍然是 0/0（未知），要等 Ivan 用下方标注文件逐句核对之后才能算。
+
+### 已交付的人工核对材料
+
+- 标注底稿：`/Users/ivan/Project/vtuber-slice/lidousha/2026-07-22/auto_200511_61_138.speaker-eval.srt`
+  （`lidousha/` 已 gitignore，未入库）——40 条 cue，每条附机器标签、`decision_source`、`margin`，
+  文件头注明 Ivan 标记语法（A=李豆沙，B=非李豆沙，句内多标记=每个标记管辖到上一个标记为止，
+  不标=认可机器当前标注）。
+- 30s 双样式烧录对比（`free:/opt/bilive/autoslice/tmp/speaker-eval-20260722-auto_200511_61_138/`，
+  未落生产/未上传）：`baseline_30s.mp4`（无说话人区分的当前 `uniform_host` 风格）+
+  `speaker_30s.mp4`（`lidousha-speaker-sapphire-host-white-guest-v2`，HOST=细橙棕描边、GUEST=粗体
+  深藏青描边）；两张同一时间点（cue4「哎，现在几点了？」，机器判 GUEST）截帧对比已本地核实
+  （`baseline_frame.png` vs `speaker_frame.png`，裁剪对比确认描边粗细/颜色确有可辨差异）。
+
+### 结论更新
+
+equal-quality 场次的**纯声学可分性**（margin-only 临界带占比、双峰缺口）在这一条候选上看起来
+和游戏语音场次相当，没有观察到第 3 节风险点 2 担心的分布退化；**但真正需要语义兜底的 cue 比例
+因短句强制机制而显著更高（42.5% vs margin-only 的 17.5%），且这部分短句里语义投票目前 0 命中
+HOST**——equal-quality 对谈的高频短插话是这条判定链目前最大的未验证暴露面，比原文第 3 节笼统
+描述的"抢话/重叠"更具体、更早出现（不需要真正重叠才触发，只需要说话人快速换人接话）。**是否
+"验证可行"取决于 Ivan 核对标注底稿后 false-host 是否为 0**——如果短句强制之后判成 GUEST 的 10 条
+在真值里真的都是南町/连线，说明短句默认 GUEST 这条保守规则在 equal-quality 场次下仍然安全；如果
+其中有本人的短接话被误判成连线，则短句强制阈值本身（1500ms）在 equal-quality 场次可能需要重新
+校准，而不是像 8/7 校准时那样只调语义佐证 floor。本文档到此为止不预判，留给标注结果。
