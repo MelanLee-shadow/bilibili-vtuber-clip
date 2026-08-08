@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 
@@ -6,12 +7,14 @@ import pytest
 from scripts.build_lidousha_daily_review_manifest import (
     DailyManifestError,
     _sha256,
+    _resolve_final_burn_artifacts,
     _resolve_final_cover,
     _lane_manifest_contract_fields,
     _source_fact_manifest_fields,
     _sync_record_bound_candidate_artifacts,
     _sync_declared_artifact,
     _validate_source_fact_receipts,
+    build,
 )
 from src.autoslice.source_fact_review import review_and_repair_source_facts
 from src.autoslice.surface_canon import CHANNEL_PROFILE
@@ -286,3 +289,261 @@ def test_song_manifest_does_not_require_talk_source_fact_receipt(
         publish_doc={"title": "【主播·歌】《测试歌曲》"},
         subtitle_path=subtitle,
     ) == {}
+
+
+def test_resolve_final_burn_artifacts_uses_legacy_sapphire72_names_when_uniform(
+    tmp_path: Path,
+) -> None:
+    stem = "auto_test.recut"
+    (tmp_path / f"{stem}.burned-final-sapphire72.mp4").write_bytes(b"video")
+    (tmp_path / f"{stem}.final-sapphire72.ass").write_bytes(b"ass")
+
+    burned, ass, speaker_srt = _resolve_final_burn_artifacts(
+        package_root=tmp_path, stem=stem, uniform_fallback=True
+    )
+
+    assert burned.name == f"{stem}.burned-final-sapphire72.mp4"
+    assert ass.name == f"{stem}.final-sapphire72.ass"
+    assert speaker_srt is None
+
+
+def test_resolve_final_burn_artifacts_uses_speaker_names_when_not_uniform(
+    tmp_path: Path,
+) -> None:
+    stem = "auto_test.recut"
+    (tmp_path / f"{stem}.burned-final-speaker.mp4").write_bytes(b"video")
+    (tmp_path / f"{stem}.speaker-final.ass").write_bytes(b"ass")
+    (tmp_path / f"{stem}.speaker-final.srt").write_bytes(b"srt")
+
+    burned, ass, speaker_srt = _resolve_final_burn_artifacts(
+        package_root=tmp_path, stem=stem, uniform_fallback=False
+    )
+
+    assert burned.name == f"{stem}.burned-final-speaker.mp4"
+    assert ass.name == f"{stem}.speaker-final.ass"
+    assert speaker_srt is not None
+    assert speaker_srt.name == f"{stem}.speaker-final.srt"
+
+
+def test_resolve_final_burn_artifacts_refuses_missing_speaker_family(
+    tmp_path: Path,
+) -> None:
+    stem = "auto_test.recut"
+    # Only the legacy sapphire72 burn exists — the pre-8/7-flip shape a
+    # speaker-finalized package must never silently accept.
+    (tmp_path / f"{stem}.burned-final-sapphire72.mp4").write_bytes(b"video")
+
+    with pytest.raises(DailyManifestError, match="required package file missing"):
+        _resolve_final_burn_artifacts(
+            package_root=tmp_path, stem=stem, uniform_fallback=False
+        )
+
+
+def _build_daily_talk_package(
+    tmp_path: Path,
+    *,
+    speaker_finalized: bool,
+) -> tuple[Path, Path, Path, str]:
+    """Replicate the on-disk shape of a real daily talk package.
+
+    Mirrors the free fixtures ``auto_210739_1142_1436`` /
+    ``auto_220747_488_680`` (2026-08-08 provisional-upload blocked report):
+    a talk candidate whose ``replacement_recuts/`` carries either the legacy
+    uniform_host sapphire72 burn or the AUTOSLICE_SPEAKER_MODE=auto
+    speaker-finalized burn family, never both.
+    """
+
+    candidate_id = "auto_test_1000_1100"
+    day_root = tmp_path / "2026-08-08"
+    package_root = day_root / "replacement_recuts"
+    package_root.mkdir(parents=True)
+    stem = f"{candidate_id}.recut"
+
+    hook = "弹幕问起白板上的涂鸦，主播随口解释了来历。"
+    title = CHANNEL_PROFILE.talk_title_prefix + "弹幕问起涂鸦来历"
+    transcript_line = "这块涂鸦是上次乱画的"
+    clip_context_prompt = "- superchat: 这个涂鸦哪来的"
+    receipt = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript=transcript_line,
+        clip_context_prompt=clip_context_prompt,
+        llm_call=lambda _prompt: _keep_completion(hook, title),
+    )
+
+    subtitle = package_root / f"{stem}.srt"
+    subtitle.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n" + transcript_line + "\n",
+        encoding="utf-8",
+    )
+
+    chat_authority_source = day_root / f"{candidate_id}.chat-authority.json"
+    clip_context_source = day_root / f"{candidate_id}.clip-context.json"
+    clip_context_source.write_bytes(b"{}\n")
+    if speaker_finalized:
+        chat_authority_doc = {
+            "final_text_srt_sha256": "1" * 64,
+            "final_speaker_srt_sha256": "2" * 64,
+            "speaker_ass_path": str(
+                package_root / f"{stem}.speaker-final.ass"
+            ),
+            "speaker_ass_sha256": "3" * 64,
+        }
+    else:
+        text_sha256 = hashlib.sha256(subtitle.read_bytes()).hexdigest()
+        chat_authority_doc = {
+            "final_text_srt_sha256": text_sha256,
+            "final_speaker_srt_sha256": text_sha256,
+            "speaker_ass_path": None,
+            "speaker_ass_sha256": None,
+        }
+    chat_authority_source.write_text(
+        json.dumps(chat_authority_doc, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    if speaker_finalized:
+        (package_root / f"{stem}.burned-final-speaker.mp4").write_bytes(
+            b"speaker-burn-bytes"
+        )
+        (package_root / f"{stem}.speaker-final.ass").write_bytes(
+            b"[Events]\nspeaker-ass\n"
+        )
+        (package_root / f"{stem}.speaker-final.srt").write_text(
+            "1\n00:00:00,000 --> 00:00:01,000\n"
+            "[LDS] " + transcript_line + "\n",
+            encoding="utf-8",
+        )
+    else:
+        (package_root / f"{stem}.burned-final-sapphire72.mp4").write_bytes(
+            b"uniform-burn-bytes"
+        )
+        (package_root / f"{stem}.final-sapphire72.ass").write_bytes(
+            b"[Events]\nuniform-ass\n"
+        )
+
+    covers_dir = package_root / "covers"
+    covers_dir.mkdir()
+    cover_path = covers_dir / "final.cover.png"
+    cover_path.write_bytes(b"cover-bytes")
+
+    generation_dir = tmp_path / "generation"
+    generation_dir.mkdir(exist_ok=True)
+    pre_overlay_source = generation_dir / "pre-overlay.png"
+    pre_overlay_source.write_bytes(b"pre-overlay-bytes")
+    background_source = generation_dir / "background.png"
+    background_source.write_bytes(b"background-bytes")
+    mask_source = generation_dir / "mask.png"
+    mask_source.write_bytes(b"mask-bytes")
+
+    cover_generation = {
+        "final_cover": str(cover_path),
+        "final_cover_sha256": "sha256:" + _sha256(cover_path),
+        "pre_overlay_path": str(pre_overlay_source),
+        "pre_overlay_sha256": "sha256:" + _sha256(pre_overlay_source),
+        "ai_background": str(background_source),
+        "ai_background_sha256": "sha256:" + _sha256(background_source),
+        "rendered_text_pixels": {
+            "mask_path": str(mask_source),
+            "mask_sha256": "sha256:" + _sha256(mask_source),
+        },
+    }
+
+    record_doc = {
+        "classification": "talk",
+        "artifact_hashes": {
+            "chat_authority_audit_sha256": (
+                "sha256:" + _sha256(chat_authority_source)
+            ),
+            "clip_context_file_sha256": (
+                "sha256:" + _sha256(clip_context_source)
+            ),
+        },
+        "story_contract": {
+            "selection_hook": hook,
+            "clip_context_prompt": clip_context_prompt,
+            "source_fact_review": receipt,
+        },
+        "publish_staging": {
+            "title": title,
+            "source_fact_review": receipt,
+        },
+    }
+    (package_root / f"{candidate_id}.record.json").write_text(
+        json.dumps(record_doc, ensure_ascii=False), encoding="utf-8"
+    )
+
+    publish_doc = {
+        "title": title,
+        "source_fact_review": receipt,
+        "cover_generation": cover_generation,
+    }
+    (package_root / f"{stem}.publish.json").write_text(
+        json.dumps(publish_doc, ensure_ascii=False), encoding="utf-8"
+    )
+
+    state_path = day_root / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "date": "2026-08-08",
+                "status": "review_ready",
+                "picks": [
+                    {
+                        "candidate_id": candidate_id,
+                        "status": "review_ready",
+                        "rc": 0,
+                        "cover_path": str(cover_path),
+                        "cover_sha256": (
+                            "sha256:" + _sha256(cover_path)
+                        ),
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    deployed_commit_file = tmp_path / "DEPLOYED_COMMIT"
+    deployed_commit_file.write_text("abc123deadbeef\n", encoding="utf-8")
+
+    return package_root, state_path, deployed_commit_file, candidate_id
+
+
+def test_build_uniform_host_package_keeps_legacy_sapphire72_naming(
+    tmp_path: Path,
+) -> None:
+    package_root, state_path, deployed_commit_file, candidate_id = (
+        _build_daily_talk_package(tmp_path, speaker_finalized=False)
+    )
+
+    manifest = build(package_root, state_path, deployed_commit_file, candidate_id)
+
+    stem = f"{candidate_id}.recut"
+    item = manifest["items"][0]
+    assert item["video"] == f"{stem}.burned-final-sapphire72.mp4"
+    assert item["ass_path"] == f"{stem}.final-sapphire72.ass"
+    assert item["speaker_srt"] == item["subtitle_srt"]
+    assert item["speaker_srt_sha256"] == item["sha256"]["subtitle_srt"]
+
+
+def test_build_speaker_finalized_package_uses_speaker_artifact_family(
+    tmp_path: Path,
+) -> None:
+    package_root, state_path, deployed_commit_file, candidate_id = (
+        _build_daily_talk_package(tmp_path, speaker_finalized=True)
+    )
+
+    manifest = build(package_root, state_path, deployed_commit_file, candidate_id)
+
+    stem = f"{candidate_id}.recut"
+    item = manifest["items"][0]
+    assert item["video"] == f"{stem}.burned-final-speaker.mp4"
+    assert item["ass_path"] == f"{stem}.speaker-final.ass"
+    assert item["speaker_srt"] == f"{stem}.speaker-final.srt"
+    assert item["speaker_srt"] != item["subtitle_srt"]
+    assert (package_root / item["speaker_srt"]).is_file()
+    assert item["speaker_srt_sha256"] == _sha256(
+        package_root / f"{stem}.speaker-final.srt"
+    )

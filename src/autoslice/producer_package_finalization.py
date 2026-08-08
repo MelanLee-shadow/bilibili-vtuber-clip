@@ -72,6 +72,9 @@ from src.autoslice.producer_text_finalization import (
     _render_cues_to_srt,
     verify_chat_authority_final_surfaces,
 )
+from src.autoslice.redelivery_baseline_ownership import (
+    suppress_baseline_owned_self_heal_findings,
+)
 from src.autoslice.redelivery_subtitle_baseline import (
     apply_redelivery_subtitle_baseline,
 )
@@ -1611,6 +1614,9 @@ def _run_exact_final_review_gate(
                 for row in replayable
             )
             audit = _overlay_exact_carryover_findings(audit, replayable)
+        suppress_baseline_owned_self_heal_findings(
+            final_text, audit, recut.redelivery_baseline_audit
+        )
         chat_authority_audit["final_review_audit"] = audit
         persist_review_audit(review_audit_path, audit)
         expected_srt_sha256 = "sha256:" + hashlib.sha256(

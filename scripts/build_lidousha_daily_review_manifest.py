@@ -35,6 +35,9 @@ if str(ROOT) not in sys.path:
 
 from src.autoslice.jingting_chunker import parse_srt_cues  # noqa: E402
 from src.autoslice.channel_profile import load_channel_profile  # noqa: E402
+from src.autoslice.review_package_ass_audit import (  # noqa: E402
+    uniform_host_fallback_declared,
+)
 from src.autoslice.source_fact_review import (  # noqa: E402
     validate_source_fact_review,
 )
@@ -253,6 +256,49 @@ def _resolve_final_cover(
     return relative
 
 
+def _need_package_file(package_root: Path, name: str) -> Path:
+    path = package_root / name
+    if not path.is_file():
+        raise DailyManifestError(f"required package file missing: {name}")
+    return path
+
+
+def _resolve_final_burn_artifacts(
+    *,
+    package_root: Path,
+    stem: str,
+    uniform_fallback: bool,
+) -> tuple[Path, Path, Path | None]:
+    """Locate the burned video + ASS (+ labeled speaker SRT) for this package.
+
+    Two finalization styles exist depending on ``AUTOSLICE_SPEAKER_MODE`` at
+    production time. Packages that self-declare the uniform_host fallback
+    (single-speaker; the standing daily default — see
+    ``review_package_ass_audit.uniform_host_fallback_declared``) never run
+    producer_speaker finalization and only ever materialize the legacy
+    unified-style ``sapphire72`` burn. Speaker-mode packages (``auto``/
+    ``required``) instead materialize a labeled speaker ASS and a distinct
+    ``-speaker`` burned video family; the packaged text SRT is no longer a
+    stand-in for the speaker face in that case, so a real ``speaker-final``
+    SRT is returned too. Detection here must agree with the release audit
+    chain (``review_package_ass_audit.py``), which is why both consult the
+    same self-declaration rather than each guessing from filenames.
+    """
+    if uniform_fallback:
+        return (
+            _need_package_file(
+                package_root, f"{stem}.burned-final-sapphire72.mp4"
+            ),
+            _need_package_file(package_root, f"{stem}.final-sapphire72.ass"),
+            None,
+        )
+    return (
+        _need_package_file(package_root, f"{stem}.burned-final-speaker.mp4"),
+        _need_package_file(package_root, f"{stem}.speaker-final.ass"),
+        _need_package_file(package_root, f"{stem}.speaker-final.srt"),
+    )
+
+
 def _sync_record_bound_candidate_artifacts(
     *,
     package_root: Path,
@@ -340,16 +386,16 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
         publish_doc=publish_doc,
         subtitle_path=subtitle,
     )
-    burned = need(f"{stem}.burned-final-sapphire72.mp4")
     cover_rel = _resolve_final_cover(
         package_root=package_root,
         pick=pick,
         cover_generation=cover_generation,
     )
 
-    ass = need(f"{stem}.final-sapphire72.ass")
     # 装配步骤：candidate-root 的冻结证据即使在包内已有旧副本，也必须
-    # 重新对照当前 record 声明同步，避免远端 auditor 偷读包外文件。
+    # 重新对照当前 record 声明同步，避免远端 auditor 偷读包外文件。这一步
+    # 必须先于烧录产物的文件名解析：speaker-mode 检测要读已同步的 chat
+    # authority。
     portable_evidence = _sync_record_bound_candidate_artifacts(
         package_root=package_root,
         candidate_id=candidate_id,
@@ -357,6 +403,21 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
     )
     chat_name = portable_evidence["chat_authority"]
     clip_context_name = portable_evidence["clip_context"]
+    chat_authority_doc = json.loads(
+        (package_root / chat_name).read_text(encoding="utf-8")
+    )
+    # AUTOSLICE_SPEAKER_MODE=auto 翻转（2026-08-07）后，speaker-finalized
+    # 包不再产出旧 sapphire72 统一样式烧录；命名解析必须按同一份自证信号
+    # 分岔，镜像 review_package_ass_audit.py 已用的判定，两条审计链才不会
+    # 对同一包给出不同答案。
+    uniform_fallback = uniform_host_fallback_declared(
+        record_doc, chat_authority_doc
+    )
+    burned, ass, speaker_srt_file = _resolve_final_burn_artifacts(
+        package_root=package_root,
+        stem=stem,
+        uniform_fallback=uniform_fallback,
+    )
     def cover_artifact(generation_key: str, sha_key: str) -> str:
         """Locate a package-internal cover artifact declared by generation.
 
@@ -465,8 +526,17 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
         "ass_sha256": _sha256(ass),
         # uniform_host 政策（ee29e08）：单说话人包的 speaker 面与正文同体；
         # finalization 的 final_speaker_srt_sha256 即正文 srt 的 sha（已核）。
-        "speaker_srt": f"{upload_stem}.srt",
-        "speaker_srt_sha256": _sha256(subtitle),
+        # speaker-finalized 包（uniform_fallback=False）没有这一同体前提，
+        # 必须指向真正带 LDS/GUEST 标签的 speaker-final SRT，否则
+        # review_package_ass_audit 的事件级 parity 复放会对着错误的文件跑。
+        "speaker_srt": (
+            f"{upload_stem}.srt"
+            if uniform_fallback
+            else speaker_srt_file.name
+        ),
+        "speaker_srt_sha256": _sha256(
+            subtitle if uniform_fallback else speaker_srt_file
+        ),
         "sha256": {
             "subtitle_srt": _sha256(subtitle),
             "publish_json": _sha256(publish),

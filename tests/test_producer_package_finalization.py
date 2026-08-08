@@ -1536,6 +1536,233 @@ def test_exact_final_review_gate_self_heals_cpa_authorized_finding(
     )["exact_final_cpa_self_heal"]["status"] == "PASS"
 
 
+def test_exact_final_review_gate_suppresses_baseline_owned_finding(
+    tmp_path: Path,
+) -> None:
+    """zsm8 shape (2026-08-08): baseline-applied cues 52/58/59 must survive
+    self-heal untouched, and the final owner-verifier must then PASS.
+
+    redelivery_subtitle_baseline.py writes owned_intervals for cues whose
+    text came from an Ivan-reviewed baseline diff, but nothing previously
+    read it back: the exact-final CPA self-heal channel independently
+    re-listened to the same window and overwrote the reviewed text. This
+    reproduces that shape at the gate boundary — a CPA-authorized finding
+    targeting a baseline-owned cue must be dropped with a typed
+    ``BASELINE_OWNED_CUE_SELF_HEAL_SUPPRESSED`` receipt instead of applied.
+    """
+
+    subtitle = tmp_path / "candidate.recut.srt"
+    baseline_true_cue = "我想死在你手里吗"
+    self_heal_proposed_cue = "哈哈，我的信原来在你手里吗"
+    baseline_sha256 = hashlib.sha256(
+        baseline_true_cue.encode("utf-8")
+    ).hexdigest()
+    subtitle.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n"
+        + baseline_true_cue
+        + "\n\n2\n00:00:01,100 --> 00:00:02,000\n完整收束\n",
+        encoding="utf-8",
+    )
+    chat_path = tmp_path / "candidate.chat-authority.json"
+    baseline_audit_path = tmp_path / "candidate.redelivery-baseline.json"
+    calls: list[str] = []
+
+    def boundary_receipt() -> dict:
+        return {
+            "schema_version": "talk-boundary-semantic-review.v1",
+            "status": "PASS",
+            "review_scope": "final_delivery",
+            "reason_codes": [],
+            "request_sha256": "sha256:" + "d" * 64,
+            "cue_grid_sha256": "sha256:" + "e" * 64,
+            "source_separation_witness": {
+                "schema_version": (
+                    "talk-boundary-source-separation-witness.v1"
+                ),
+                "status": "PASS",
+                "source_review_sha256": "sha256:" + "a" * 64,
+                "source_request_sha256": "sha256:" + "b" * 64,
+                "source_cue_grid_sha256": "sha256:" + "c" * 64,
+                "source_final_start_ms": 0,
+                "source_final_end_ms": 2_400,
+                "reason_codes": [],
+            },
+            "final_endpoint_binding": {
+                "schema_version": (
+                    "talk-boundary-final-endpoint-binding.v1"
+                ),
+                "status": "PASS",
+                "recommended_end_cue_index": 2,
+                "recommended_end_ms": 2_000,
+                "final_closure_cue_index": 2,
+                "final_snapped_end_ms": 2_000,
+                "final_end_ms": 2_400,
+                "semantic_cue_grid_sha256": "sha256:" + "e" * 64,
+                "final_cue_grid_sha256": "sha256:" + "e" * 64,
+                "reason_codes": [],
+            },
+        }
+
+    def mutation_audit() -> dict:
+        return {
+            "schema_version": "subtitle-correction-mutation-audit.v1",
+            "status": "PASS",
+            "applied_count": 0,
+            "validated_mutation_count": 0,
+            "failures": [],
+        }
+
+    def exact_review(
+        text,
+        _authority,
+        _timeline_offset_ms,
+        _source_final_end_ms,
+    ):
+        calls.append(text)
+        return {
+            "schema_version": "final-review-audit.v2",
+            "reviewed_srt_sha256": (
+                "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+            ),
+            "boundary_semantic_review": boundary_receipt(),
+            "correction_mutation_authority": mutation_audit(),
+            "correction_pass": {"findings": []},
+            "status": "FLAGGED",
+            "release_gate": "BLOCK",
+            "reason_codes": ["FINAL_REVIEW_UNRESOLVED_FINDINGS"],
+            "discovery": {
+                "status": "COMPLETE",
+                "explicit_empty_findings": False,
+            },
+            "findings": [
+                {
+                    "cue_index": 1,
+                    "base_text_sha256": baseline_sha256,
+                    "proposed_full_cue": self_heal_proposed_cue,
+                    "exact_release_adjudication": {
+                        "schema_version": (
+                            "subtitle-span-adjudication.v1"
+                        ),
+                        "status": "OBSERVED",
+                        "decision_authority": "CPA_JUDGE",
+                        "repaired": True,
+                        "timing_immutable": True,
+                        "mutation_authority": {
+                            "schema_version": (
+                                "subtitle-correction-mutation-authority.v1"
+                            ),
+                            "status": "PASS",
+                        },
+                        "request": {
+                            "schema_version": (
+                                "subtitle-span-acoustic-check-request.v1"
+                            ),
+                            "request_sha256": "f" * 64,
+                            "base_text_sha256": baseline_sha256,
+                            "current_cue": baseline_true_cue,
+                            "proposed_cue": self_heal_proposed_cue,
+                        },
+                        "witness_judge": {
+                            "judge": {
+                                "status": "JUDGED",
+                                "choice": "PROPOSED",
+                            }
+                        },
+                    },
+                }
+            ],
+            "validated_finding_count": 1,
+        }
+
+    def unused(*_args, **_kwargs):
+        raise AssertionError("unrelated adapter called")
+
+    adapters = finalization.ProducerFinalizationAdapters(
+        accurate_recut_command=unused,
+        run_command=unused,
+        write_source_range_srt=unused,
+        apply_text_override_document=unused,
+        run_speaker_finalization=unused,
+        burn_preview_subtitles=unused,
+        stage_publish_draft=unused,
+        generate_upload_tags=unused,
+        delivery_root=unused,
+        run_exact_final_review=exact_review,
+    )
+    baseline_audit: dict[str, object] = {
+        "status": "APPLIED",
+        "owned_intervals": [{"start_ms": 0, "end_ms": 1_000}],
+        "mappings": [
+            {
+                "mapping_kind": "exact_reviewed_interval_replay",
+                "baseline_cue_index": 1,
+                "output_cue_index": 1,
+                "start_ms": 0,
+                "end_ms": 1_000,
+                "text": baseline_true_cue,
+            }
+        ],
+    }
+    # Production wires the same baseline audit object into both the recut
+    # (self-heal reads owned_intervals from here) and the chat authority
+    # (the final owner-verifier reads mappings from here) — see
+    # ``_materialize_final_recut``'s
+    # ``chat_authority_audit["redelivery_subtitle_baseline_audit"] =
+    # redelivery_baseline_audit`` binding.
+    chat_authority_audit: dict[str, object] = {
+        "redelivery_subtitle_baseline_audit": baseline_audit,
+    }
+
+    result = finalization._run_exact_final_review_gate(
+        cid="candidate",
+        out_root=tmp_path,
+        final_start=0,
+        final_end=2_400,
+        recut=finalization.FinalRecutArtifacts(
+            recut_dir=tmp_path,
+            media_path=tmp_path / "candidate.recut.mp4",
+            subtitle_path=subtitle,
+            text_manifest_path=None,
+            text_manifest=None,
+            redelivery_baseline_audit_path=baseline_audit_path,
+            redelivery_baseline_audit=baseline_audit,
+        ),
+        chat_authority_audit=chat_authority_audit,
+        chat_authority_path=chat_path,
+        adapters=adapters,
+    )
+
+    assert result["status"] == "CLEAN"
+    assert result["release_gate"] == "PASS"
+    assert result["findings"] == []
+    # Never retried/repaired: suppression clears the gate on the first pass.
+    assert len(calls) == 1
+    assert baseline_true_cue in subtitle.read_text(encoding="utf-8")
+    assert self_heal_proposed_cue not in subtitle.read_text(encoding="utf-8")
+    suppressed = result["baseline_owned_findings_suppressed"]
+    assert len(suppressed) == 1
+    assert suppressed[0]["reason_code"] == (
+        "BASELINE_OWNED_CUE_SELF_HEAL_SUPPRESSED"
+    )
+    assert suppressed[0]["cue_index"] == 1
+    assert suppressed[0]["owned_interval"] == {
+        "start_ms": 0,
+        "end_ms": 1_000,
+    }
+    # No self-heal pass ever ran, so entity_repairs stays untouched.
+    assert "exact_final_cpa_self_heal" not in chat_authority_audit
+    # The final owner-verifier (the gate zsm8 actually failed at) must PASS
+    # now that self-heal left the baseline-owned cue untouched.
+    assert finalization.verify_chat_authority_final_surfaces(
+        chat_authority_audit,
+        final_text_srt=subtitle.read_text(encoding="utf-8"),
+        final_speaker_srt=subtitle.read_text(encoding="utf-8"),
+        delivery_start_ms=0,
+        delivery_end_ms=2_400,
+    )
+    assert "final_verification_failure" not in chat_authority_audit
+
+
 def test_exact_final_self_heal_registration_failure_rolls_back_all_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -44,7 +44,14 @@ FUNCTION_DEBT_LEDGER = {
     ("src/autoslice/final_review_auditor.py", "audit_final_subtitles"): 407,
     ("src/autoslice/producer_boundary_resolution.py", "_repair_boundary"): 305,
     ("src/autoslice/producer_package_finalization.py", "_materialize_final_recut"): 320,
-    ("src/autoslice/producer_package_finalization.py", "_run_exact_final_review_gate"): 340,
+    # 2026-08-08 +3：owned_intervals 执法接线（Ivan 2026-08-08 配额上传波
+    # 修复——zsm8 案：baseline 已应用的 cue 被 exact-final CPA 自愈无声改写；
+    # redelivery_subtitle_baseline.py 写 owned_intervals 从未被读取）。
+    # 全部新增逻辑已抽到新模块 src/autoslice/redelivery_baseline_ownership.py
+    # 的 suppress_baseline_owned_self_heal_findings，这里只留 3 行调用点。
+    # 测试 tests/test_producer_package_finalization.py::
+    # test_exact_final_review_gate_suppresses_baseline_owned_finding。
+    ("src/autoslice/producer_package_finalization.py", "_run_exact_final_review_gate"): 343,
     # 2026-08-07 +17：狍哥案实施指令（Ivan 2026-08-07「你把狍哥案解决了」，
     # docs/reviews/2026-08-07-source-fact-rescore-design.md）——
     # SOURCE_FACT_REPAIRED_HOOK_SCORECARD_STALE 不再落 EXHAUSTED，改写
@@ -159,7 +166,12 @@ MODULE_DEBT_LEDGER = {
     "src/autoslice/live_source_review.py": 2_035,
     # 2026-08-07 +18：狍哥案实施指令（同上）——marker 选择改判
     # SOURCE_FACT_REPAIRED_RESCORE_REQUIRED + 写 pending sidecar。
-    "src/autoslice/producer_package_finalization.py": 2_771,
+    # 2026-08-08 +6：owned_intervals 执法调用点接线（Ivan 2026-08-08 配额上传
+    # 波修复，zsm8 案；主体逻辑已抽到新模块
+    # src/autoslice/redelivery_baseline_ownership.py，未计入本模块行数）。
+    # 本项第二次抬数字：按账本规则应触发独立 bounded 拆解 task，记为剩余风险，
+    # 留给下一次动这个 god-file 的人先拆再改。
+    "src/autoslice/producer_package_finalization.py": 2_777,
     # 2026-07-31 +40：同上（SC 发送者 deferral）。
     "src/autoslice/producer_text_pipeline.py": 2_197,
     # 2026-07-31 +12：contract 穿透接线（形参 + 4 个调用点）。
@@ -209,7 +221,12 @@ FOCUSED_MODULE_LINE_BUDGETS = {
     # 惯例；Ivan 8/2 /goal 授权，测试 test_song_repair.py 的 env-override 用例）。
     Path("src/autoslice/song_common.py"): 530,
     Path("src/autoslice/song_lrc_provider.py"): 550,
-    Path("src/autoslice/song_alignment.py"): 1_175,
+    # 2026-08-08 +10：369e92b（song_230754_1118 案：唯一非零 ASR 候选被通用
+    # 20% recall 地板终态弃选，AGY 音频验证从未真正跑过）——两条窄口子放宽
+    # 地板，margin 消歧义不变；8d4b09b 已把该案首版试过又回退的 family-match
+    # 死函数删掉（-13 行），净增贴当前实际值。测试 test_song_alignment.py 的
+    # 对应 bypass/floor-holds 回归用例。
+    Path("src/autoslice/song_alignment.py"): 1_185,
     Path("src/autoslice/song_performance.py"): 1_200,
     Path("src/autoslice/speaker_common.py"): 100,
     Path("src/autoslice/speaker_context.py"): 500,
