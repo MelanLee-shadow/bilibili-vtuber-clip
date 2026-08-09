@@ -186,6 +186,57 @@ def test_freeze_required_boundary_owner_contract_ignores_trailing_reserve_piece(
     assert with_reserve_target == without_reserve_target
 
 
+def test_payoff_outside_story_yields_only_to_reachable_reviewed_tail():
+    """Synthetic 1722 shape: the chat row stays outside the immutable story
+    owner set, while its payoff hypothesis can yield to a reachable reviewed
+    v2 tail cap.  The trailing reserve remains source witness only.
+    """
+
+    content = {"start_ms": 0, "end_ms": 90_000}
+    spec = {
+        "candidate_id": "candidate-payoff-tail",
+        "semantic_start_ms": 0,
+        "semantic_end_ms": 80_570,
+        "boundary_repair_extend_cap_ms": 30_000,
+        "semantic_tail_trim_cap_ms": 15_000,
+        "pieces": [content, RESERVE_PIECE],
+        "subtitle_redelivery_baseline": {
+            "schema_version": "subtitle-redelivery-baseline.v2",
+            "absolute_source_start_ms": 0,
+            "absolute_source_end_ms": 67_760,
+        },
+    }
+    payoff = {
+        "kind": "danmaku",
+        "finding_id": "later-payoff-hypothesis",
+        "source_offset_ms": 80_000,
+        "matched_start_ms": 82_000,
+        "matched_end_ms": 84_240,
+        "owner_eligible": True,
+    }
+    audit: dict[str, object] = {"applied": [payoff]}
+
+    freeze_required_boundary_owner_contract(
+        spec=spec,
+        durations=[90_000, 88_000],
+        chat_authority_audit=audit,
+        required_boundary_owners=[],
+    )
+
+    assert payoff["boundary_required"] is False
+    assert payoff["boundary_owner_rejection"] == (
+        "OUTSIDE_IMMUTABLE_STORY_SCOPE"
+    )
+    frozen = audit["frozen_boundary_owner_contract"]
+    assert frozen["required_owner_count"] == 0
+    scope = frozen["boundary_search_scope"]
+    assert scope["status"] == "PASS"
+    assert scope["structured_payoff_ms"] == 84_240
+    assert scope["structured_payoff_clamped_from_ms"] == 84_240
+    assert scope["delivery_lower_bound_ms"] == 67_760
+    assert scope["max_recommended_end_ms"] == 67_760
+
+
 def test_available_local_source_context_end_ms_counts_the_reserve_piece():
     """The whole point of appending a reserve piece: sum(durations) — the
     coverage gate's available-context measurement — must include it."""

@@ -70,6 +70,55 @@ def _optional_int_ms(name: str, value: object) -> int | None:
     return _required_int_ms(name, value)
 
 
+def _bounded_delivery_geometry(
+    *,
+    semantic_target_ms: int,
+    manual_lower_bound_ms: int | None,
+    published_recall_anchor_ms: int | None,
+    structured_payoff_ms: int | None,
+    required_owner_end_ms: int | None,
+    boundary_end_mode: str,
+    semantic_tail_trim_cap_ms: int,
+) -> tuple[int, int]:
+    """Return search origin and delivery floor for a non-pin scope.
+
+    Keeping the calculation in one helper lets the reviewed-tail payoff clamp
+    ask the exact counterfactual it governs: where would delivery land if the
+    payoff detection hypothesis were absent?
+    """
+
+    search_origin_ms = max(
+        [
+            semantic_target_ms,
+            *(
+                value
+                for value in (
+                    manual_lower_bound_ms,
+                    published_recall_anchor_ms,
+                    structured_payoff_ms,
+                )
+                if value is not None
+            ),
+        ]
+    )
+    tail_trim_floor_ms = search_origin_ms
+    if (
+        boundary_end_mode
+        in {"semantic_lower_bound", "published_recall_anchor"}
+        and manual_lower_bound_ms is None
+        and semantic_tail_trim_cap_ms > 0
+    ):
+        tail_trim_floor_ms = max(
+            0, search_origin_ms - semantic_tail_trim_cap_ms
+        )
+    return search_origin_ms, max(
+        tail_trim_floor_ms,
+        required_owner_end_ms or 0,
+        structured_payoff_ms or 0,
+        manual_lower_bound_ms or 0,
+    )
+
+
 def boundary_search_scope_sha256(scope: Mapping[str, object]) -> str:
     """Digest a scope without trusting its self-declared digest."""
 
@@ -205,6 +254,9 @@ def build_boundary_search_scope(
         raise BoundarySemanticReviewError(
             "BOUNDARY_SEARCH_SCOPE_SEMANTIC_TAIL_TRIM_CAP_MS_INVALID"
         )
+    baseline_tail_cap = _optional_int_ms(
+        "baseline_tail_cap_ms", baseline_tail_cap_ms
+    )
     if boundary_end_mode not in {
         "semantic_lower_bound",
         "published_recall_anchor",
@@ -223,31 +275,30 @@ def build_boundary_search_scope(
 
     # r13 尾锚的补全（2026-07-27 1573 鼠标话题案）：structured payoff 是
     # 检测假设，不是复核权威。redelivery 尾锚在、其余锚（语义/手动/owner）
-    # 全部落在 baseline 之内、唯独 payoff 越界时，假设让位于已复核终点——
-    # 钳制并披露（评审仍在已发布终点裁收尾；评审判收不住才是真冲突）。
-    # 任一复核锚越界仍走 BOUNDARY_REQUIRED_OWNER_EXCLUDED 硬拦。
+    # 全部可在 baseline 之内交付、唯独 payoff 越界时，假设让位于已复核终点
+    # ——钳制并披露（评审仍在已发布终点裁收尾；评审判收不住才是真冲突）。
+    # “可交付”复用同一条 bounded semantic-tail trim 计算；manual/owner 真越界
+    # 或回剪帽仍够不到 baseline 时，照旧走 REQUIRED_OWNER_EXCLUDED 硬拦。
     structured_payoff_clamped_from_ms: int | None = None
     structured_payoff_effective = structured_payoff
     if (
         boundary_end_mode != "exact_source_pin"
-        and baseline_tail_cap_ms is not None
+        and baseline_tail_cap is not None
         and structured_payoff is not None
-        and structured_payoff
-        > _required_int_ms("baseline_tail_cap_ms", baseline_tail_cap_ms)
-        and semantic_target <= baseline_tail_cap_ms
-        and (
-            manual_lower_bound is None
-            or manual_lower_bound <= baseline_tail_cap_ms
-        )
-        and (
-            required_owner_end is None
-            or required_owner_end <= baseline_tail_cap_ms
-        )
+        and structured_payoff > baseline_tail_cap
+        and _bounded_delivery_geometry(
+            semantic_target_ms=semantic_target,
+            manual_lower_bound_ms=manual_lower_bound,
+            published_recall_anchor_ms=published_recall_anchor,
+            structured_payoff_ms=None,
+            required_owner_end_ms=required_owner_end,
+            boundary_end_mode=boundary_end_mode,
+            semantic_tail_trim_cap_ms=semantic_tail_trim_cap,
+        )[1]
+        <= baseline_tail_cap
     ):
         structured_payoff_clamped_from_ms = structured_payoff
-        structured_payoff_effective = _required_int_ms(
-            "baseline_tail_cap_ms", baseline_tail_cap_ms
-        )
+        structured_payoff_effective = baseline_tail_cap
 
     exact_source_pin = (
         manual_lower_bound
@@ -281,42 +332,24 @@ def build_boundary_search_scope(
                     "BOUNDARY_EXACT_SOURCE_PIN_PAYOFF_CONFLICT"
                 )
         search_origin_ms = exact_source_pin
+        delivery_lower_bound_ms = max(
+            search_origin_ms,
+            required_owner_end or 0,
+            structured_payoff_effective or 0,
+            manual_lower_bound or 0,
+        )
     else:
-        search_origin_ms = max(
-            [
-                semantic_target,
-                *(
-                    value
-                    for value in (
-                        manual_lower_bound,
-                        published_recall_anchor,
-                        structured_payoff_effective,
-                    )
-                    if value is not None
-                ),
-            ]
+        search_origin_ms, delivery_lower_bound_ms = (
+            _bounded_delivery_geometry(
+                semantic_target_ms=semantic_target,
+                manual_lower_bound_ms=manual_lower_bound,
+                published_recall_anchor_ms=published_recall_anchor,
+                structured_payoff_ms=structured_payoff_effective,
+                required_owner_end_ms=required_owner_end,
+                boundary_end_mode=boundary_end_mode,
+                semantic_tail_trim_cap_ms=semantic_tail_trim_cap,
+            )
         )
-    # Automatic candidate end is a recall/search anchor, not a human-reviewed
-    # immutable endpoint.  A bounded CPA source review may trim a short tail
-    # that has already entered a new/open topic, but never below a manual end,
-    # structured payoff, or required owner.  Exact pins keep their dedicated
-    # pre-pin closure rule and do not use this lane.
-    tail_trim_floor_ms = search_origin_ms
-    if (
-        boundary_end_mode
-        in {"semantic_lower_bound", "published_recall_anchor"}
-        and manual_lower_bound is None
-        and semantic_tail_trim_cap > 0
-    ):
-        tail_trim_floor_ms = max(
-            0, search_origin_ms - semantic_tail_trim_cap
-        )
-    delivery_lower_bound_ms = max(
-        tail_trim_floor_ms,
-        required_owner_end or 0,
-        structured_payoff_effective or 0,
-        manual_lower_bound or 0,
-    )
     max_recommended_end_ms = (
         exact_source_pin
         if exact_source_pin is not None
@@ -331,12 +364,10 @@ def build_boundary_search_scope(
     # BLOCK）；pin 模式的终点已被更强权威定死，尾锚无增量约束。
     if (
         boundary_end_mode != "exact_source_pin"
-        and baseline_tail_cap_ms is not None
-        and baseline_tail_cap_ms < max_recommended_end_ms
+        and baseline_tail_cap is not None
+        and baseline_tail_cap < max_recommended_end_ms
     ):
-        max_recommended_end_ms = _required_int_ms(
-            "baseline_tail_cap_ms", baseline_tail_cap_ms
-        )
+        max_recommended_end_ms = baseline_tail_cap
     if delivery_lower_bound_ms > max_recommended_end_ms:
         reasons.append("BOUNDARY_REQUIRED_OWNER_EXCLUDED")
     recommendation_forward_ms = max(
@@ -378,7 +409,7 @@ def build_boundary_search_scope(
         "repair_cap_ms": repair_cap,
         "semantic_tail_trim_cap_ms": semantic_tail_trim_cap,
         # 尾锚参与 sha 与重建验证；旧产物无此键=旧行为，向后兼容。
-        "baseline_tail_cap_ms": baseline_tail_cap_ms,
+        "baseline_tail_cap_ms": baseline_tail_cap,
         # payoff 钳制披露：非 None 即「假设让位于已复核 baseline 终点」。
         "structured_payoff_clamped_from_ms": structured_payoff_clamped_from_ms,
         "max_recommended_end_ms": max_recommended_end_ms,

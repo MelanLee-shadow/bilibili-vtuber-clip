@@ -51,7 +51,11 @@ cue、required owner/structured payoff 越过 pin、grid/index 漂移或最终
 source-full-window CPA 可在最多 15 秒的 `semantic_tail_trim_cap_ms` 内向前回剪，但只能选
 **最晚一个**同时满足四命题的 cue，并须显式确认 `content_anchor_covered=true`；后续 cue
 必须能证明是新话题、未回答的新问题或不完整尾巴。manual lower bound、structured payoff、
-required owner 与 exact pin 均不得被这条窄门跨过。最终 scope 必须披露
+required owner 与 exact pin 均不得被这条窄门跨过。唯一例外是 v2 reviewed baseline 的
+终点帽：若去掉 structured-payoff **检测假设**后，按同一回剪帽计算出的交付下界以及
+manual/required-owner 均不越过该终点，payoff 可钳制到 reviewed 终点并以
+`structured_payoff_clamped_from_ms` 披露；回剪帽够不到、manual/owner 越界或没有 reviewed
+终点帽时仍硬拦，普通首投的 payoff 保护不变。最终 scope 必须披露
 `recommendation_backward_ms`，resolver 复算同一 SHA 后才可采用；final-delivery 层仍只审
 实际成片最后 cue，不能在成片落地后凭文本结论偷偷再剪。
 

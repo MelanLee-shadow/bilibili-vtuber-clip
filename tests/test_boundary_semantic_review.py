@@ -1046,6 +1046,70 @@ def test_structured_payoff_hypothesis_yields_to_baseline_tail_cap():
     assert hard_blocked["structured_payoff_clamped_from_ms"] is None
 
 
+def test_structured_payoff_yields_when_bounded_trim_reaches_reviewed_tail():
+    """A payoff detection hypothesis must not strand a reviewed v2 endpoint
+    when the same configured semantic-tail trim reaches that endpoint.
+
+    The 1722-shaped values are synthetic: no harvested worksheet truth is a
+    test oracle.  Manual/owner conflicts and ordinary no-baseline production
+    remain hard floors.
+    """
+
+    from src.autoslice.boundary_semantic_review import (
+        boundary_search_scope_is_valid,
+        build_boundary_search_scope,
+    )
+
+    kwargs = {
+        "semantic_target_ms": 80_570,
+        "repair_cap_ms": 30_000,
+        "structured_payoff_ms": 84_240,
+        "required_owner_end_ms": 27_510,
+        "semantic_tail_trim_cap_ms": 15_000,
+    }
+    clamped = build_boundary_search_scope(
+        **kwargs,
+        baseline_tail_cap_ms=67_760,
+    )
+    assert clamped["status"] == "PASS"
+    assert clamped["reason_codes"] == []
+    assert clamped["structured_payoff_ms"] == 84_240
+    assert clamped["structured_payoff_clamped_from_ms"] == 84_240
+    assert clamped["semantic_search_origin_ms"] == 80_570
+    assert clamped["delivery_lower_bound_ms"] == 67_760
+    assert clamped["max_recommended_end_ms"] == 67_760
+    assert clamped["recommendation_backward_ms"] == 12_810
+    assert boundary_search_scope_is_valid(clamped)
+
+    below_trim_floor = build_boundary_search_scope(
+        **kwargs,
+        baseline_tail_cap_ms=65_569,
+    )
+    assert below_trim_floor["status"] == "BLOCK"
+    assert below_trim_floor["structured_payoff_clamped_from_ms"] is None
+    assert "BOUNDARY_REQUIRED_OWNER_EXCLUDED" in below_trim_floor["reason_codes"]
+
+    owner_conflict = build_boundary_search_scope(
+        **{**kwargs, "required_owner_end_ms": 67_761},
+        baseline_tail_cap_ms=67_760,
+    )
+    assert owner_conflict["status"] == "BLOCK"
+    assert owner_conflict["structured_payoff_clamped_from_ms"] is None
+
+    manual_conflict = build_boundary_search_scope(
+        **kwargs,
+        manual_lower_bound_ms=90_000,
+        baseline_tail_cap_ms=67_760,
+    )
+    assert manual_conflict["status"] == "BLOCK"
+    assert manual_conflict["structured_payoff_clamped_from_ms"] is None
+
+    ordinary_production = build_boundary_search_scope(**kwargs)
+    assert ordinary_production["status"] == "PASS"
+    assert ordinary_production["structured_payoff_clamped_from_ms"] is None
+    assert ordinary_production["delivery_lower_bound_ms"] == 84_240
+
+
 def test_exact_pin_payoff_hypothesis_yields_to_the_published_endpoint():
     """r13 钳制的 pin 模式对偶（2026-07-31 1013 jyl-r5 案）：pin 是已验证公开
     媒体的字节终点，比 baseline 尾锚更强；同一个越界 payoff 检测假设在弱模式
