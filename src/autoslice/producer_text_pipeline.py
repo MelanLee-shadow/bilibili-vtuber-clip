@@ -13,7 +13,6 @@ from typing import Any, Callable, Mapping, Sequence
 from src.autoslice.chat_authority import (
     ChatEvidence,
     ReferentGroup,
-    apply_audio_entity_verification,
     apply_authoritative_chat_evidence,
     build_human_text_entity_verifier,
     clip_opening_address_group,
@@ -35,6 +34,13 @@ from src.autoslice.clip_context import (
     build_clip_context,
     clip_context_prompt_text,
     write_clip_context,
+)
+from src.autoslice.delivery_fast_path import (
+    discover_priority_findings,
+    pinned_replay_reviewed_text_ownership as _pinned_replay_reviewed_text_ownership,
+    resolve_truth_full_ownership,
+    skipped_final_review_audit,
+    verify_transcript_entities,
 )
 from src.autoslice.final_review_carryover import (
     carryover_path,
@@ -72,7 +78,6 @@ from src.autoslice.frozen_source_boundary_receipt import (
 from src.autoslice.final_source_language_owner import register_final_source_language_cpa_repairs
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import LlmConfig, build_llm_call, extract_json_object
-from src.autoslice.microcue_acoustic_discovery import discover_microcue_findings
 from src.autoslice.producer_chat_input import (
     DANMAKU_PRE_CONTEXT_MS,
     GIFT_PRE_CONTEXT_MS,
@@ -101,7 +106,6 @@ from src.autoslice.producer_source_truth_authority import (
     reconcile_required_source_truth_chat_authority,
     verify_source_truth_preview_formal_binding,
 )
-from src.autoslice.restatement_recall import merge_restatement_priority_findings
 from src.autoslice.song_name_semantic_verification import verify_and_pin_song_names
 from src.autoslice.terminal_closure_guard import preserve_context_only_terminal_closure
 from src.autoslice.foreign_span_witness import (
@@ -497,6 +501,7 @@ def _apply_entity_authority(
     adapters: TextPipelineAdapters,
     session_topic_absorption_audits: list[dict[str, Any]] | None = None,
     source_truth_protected_cue_indexes: Sequence[int] = (),
+    truth_full_ownership: Mapping[str, object] | None = None,
 ) -> EntityAuthorityResult:
     draft_witness_path = padded.with_suffix(".asr_draft.srt")
     source_witness_srt = (
@@ -623,11 +628,12 @@ def _apply_entity_authority(
                 "SOURCE_TRUTH_PREVIEW_PROTECTED_CUE_INVALID"
             )
         ledger_excluded_cues.add(raw_index)
-    srt_text, transcript_entity_audit = apply_audio_entity_verification(
+    srt_text, transcript_entity_audit = verify_transcript_entities(
         srt_text,
         referent_groups=transcript_groups,
         entity_verifier=verify_confusable_entity,
         excluded_cue_indexes=handled_entity_cues | ledger_excluded_cues,
+        truth_full_ownership=truth_full_ownership,
     )
     if ledger_excluded_cues:
         transcript_entity_audit["ledger_excluded_cue_indexes"] = sorted(
@@ -1169,47 +1175,6 @@ def _run_exact_final_release_review(
         "resolved_findings": resolved_findings,
         "unresolved_findings_disclosed": disclosed_keep_current,
         "validated_finding_count": len(unresolved_findings),
-    }
-
-
-def _pinned_replay_reviewed_text_ownership(
-    spec: Mapping[str, object],
-) -> dict[str, object] | None:
-    """判定「审片员产出注定被覆盖」的钉死重放修复模式。
-
-    两个后置所有权同时成立才返回披露块：v2 exact_interval_replay 基线拥有
-    全部非真值文本（逐字节重放已发布 reviewed SRT），verified_public_exact
-    出版权威拥有标题。此时审片员（_run_final_review）对一次性 ASR 文本的
-    发现与修复不可能到达交付（r19 实证：交付 diff=恰真值台账句），其 1-2
-    分钟深推理 CPA 调用是纯等待。任何条件缺失/形状不符 → None 走原路径。
-    fail-closed 不变：重放自身校验基线 sha 且不符即中止；重放后的
-    exact-final 终审（discovery=COMPLETE 硬门、绑交付 SRT sha）与边界评审
-    照常运行。
-    """
-
-    baseline = spec.get("subtitle_redelivery_baseline")
-    if not (
-        _valid_redelivery_baseline_config(baseline)
-        and isinstance(baseline, Mapping)
-        and baseline.get("schema_version") == "subtitle-redelivery-baseline.v2"
-        and baseline.get("exact_interval_replay") is True
-    ):
-        return None
-    authority = spec.get("recovery_publication_authority")
-    if not (
-        isinstance(authority, Mapping)
-        and authority.get("title_mode") == "verified_public_exact"
-        and str(authority.get("authority_sha256") or "").strip()
-    ):
-        return None
-    return {
-        "baseline_schema_version": "subtitle-redelivery-baseline.v2",
-        "baseline_sha256": str(baseline.get("sha256") or ""),
-        "exact_interval_replay": True,
-        "title_mode": "verified_public_exact",
-        "publication_authority_sha256": str(
-            authority.get("authority_sha256") or ""
-        ),
     }
 
 
@@ -1895,6 +1860,7 @@ def run_text_pipeline(
         _redelivery_baseline_boundary_owner(spec, durations)
     )
     spec["required_boundary_owners"] = required_boundary_owners
+    truth_ownership = resolve_truth_full_ownership(spec)
     authority = _apply_entity_authority(
         srt_text=draft.srt_text,
         authoritative_chat=authoritative_chat,
@@ -1912,6 +1878,7 @@ def run_text_pipeline(
         source_truth_protected_cue_indexes=(
             draft_source_truth_preview["protected_cue_indexes"]
         ),
+        truth_full_ownership=truth_ownership,
     )
     authority.chat_authority_audit[
         "source_truth_preview_receipts"
@@ -1966,17 +1933,17 @@ def run_text_pipeline(
     ]["pre_correction_review"] = review_source_truth_preview
     pinned_replay_ownership = _pinned_replay_reviewed_text_ownership(spec)
     if pinned_replay_ownership is not None:
-        # 修复快路径（2026-08-02 提速②）：审片员阶段对一次性 ASR 文本的
-        # 全部产出注定被 v2 精确重放覆盖，跳过并披露；证据链的把关职责由
-        # 重放后的 exact-final 终审与边界评审原样承担。
+        # 修复快路径（2026-08-02 提速②）：审片员产出注定被 v2 精确重放覆盖。
         reviewed_srt = authority.srt_text
-        final_review_audit = {
-            "schema_version": "final-review-audit.v1",
-            "status": "SKIPPED_PINNED_REPLAY",
-            "pinned_replay_ownership": pinned_replay_ownership,
-            "findings": [],
-            "applied_count": 0,
-        }
+        final_review_audit = skipped_final_review_audit(
+            "SKIPPED_PINNED_REPLAY", pinned_replay_ownership=pinned_replay_ownership
+        )
+    elif truth_ownership is not None:
+        # F20 真值全所有权快路径（Ivan 2026-08-09 立项）：同理，真值拥有词面。
+        reviewed_srt = authority.srt_text
+        final_review_audit = skipped_final_review_audit(
+            "SKIPPED_TRUTH_FULL_OWNERSHIP", truth_full_ownership=truth_ownership
+        )
     else:
         reviewed_srt, final_review_audit = _run_final_review(
             srt_text=authority.srt_text,
@@ -2094,16 +2061,14 @@ def run_text_pipeline(
         timeline_offset_ms: int,
         source_final_end_ms: int,
     ) -> dict[str, object]:
-        microcue_findings, microcue_audit = discover_microcue_findings(
+        # 微 cue 盲声学发现 + 重述候选合流的优先 findings 通道（裁决层不变）。
+        microcue_findings, microcue_audit = discover_priority_findings(
             final_srt_text,
             timeline_offset_ms=timeline_offset_ms,
             entity_verifier=entity_context.verify_confusable_entity,
-        )
-        # 2026-08-08 +6：会话内重述修复接线（Ivan 8/8 指令，docs/reviews/
-        # 2026-08-08-restatement-repair-design.md §4）——重述候选并入同一
-        # exact-final 优先 findings 通道；裁决层不变，微线索 audit 原样透传。
-        microcue_findings, microcue_audit = merge_restatement_priority_findings(
-            final_srt_text, microcue_findings, microcue_audit, out_root=out_root, cid=cid
+            out_root=out_root,
+            cid=cid,
+            truth_full_ownership=truth_ownership,
         )
         exact_correction_audit = exact_delivery_correction_audit(
             final_srt_text=final_srt_text,

@@ -40,14 +40,26 @@ BASELINE_SCHEMAS = {
 BASELINE_MODE = "preserve_text_outside_source_truth"
 ARBITRATION_SCHEMA = "reviewed-speaker-machine-cue-arbitration.v1"
 DELIVERY_RECEIPT_SCHEMA = "reviewed-speaker-truth-delivery.v2"
+TRUTH_FULL_OWNERSHIP_PIN_SCHEMA = "truth-full-ownership-pin.v1"
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 TIMING_RE = re.compile(
     r"(\d{2}):(\d{2}):(\d{2}),(\d{3})\s*-->\s*"
     r"(\d{2}):(\d{2}):(\d{2}),(\d{3})\Z"
 )
-STAGE_NOTE_RE = re.compile(
-    r"\s*(?:\(|（)(跃起|无可辨别人声|无可分辨人声)(?:\)|）)\s*\Z"
+# Ivan 2026-08-10 令：真值里的圆括号注记分两类，且只有机器类可以被剥。
+#   - MACHINE（下面这张白名单）＝标注者对**机器听写可信度**的元评论
+#     （「(无可辨别人声)」「(无可分辨人声)」）。它不是李豆沙说的话，
+#     烧进字幕就是把审阅便签当台词，必须剥掉。
+#   - CONTENT＝Ivan 手写的动作/舞台注记（「(跃起)」等）。它是内容的一部分，
+#     **原样保留并渲染**。1323/104「你起什么哄啊(跃起)」、1323/128
+#     「你不许再说话(跃起)」正是被旧的一刀切规则误删的实证。
+# 判别用白名单类别（而不是「凡括号皆注记」或「按标注来源猜」）：机器类是一个
+# 封闭、可枚举、语义单一的短语集；内容类是开放集，天然只能靠 fail-open 保留。
+MACHINE_STAGE_NOTES = ("无可辨别人声", "无可分辨人声")
+MACHINE_STAGE_NOTE_RE = re.compile(
+    r"\s*(?:\(|（)(" + "|".join(MACHINE_STAGE_NOTES) + r")(?:\)|）)\s*\Z"
 )
+CONTENT_NOTE_RE = re.compile(r"(?:\(|（)([^()（）]+)(?:\)|）)")
 ALLOWED_SPEAKERS = {HOST_SPEAKER, GUEST_SPEAKER}
 
 
@@ -94,11 +106,13 @@ def _timing_parts(value: str) -> tuple[str, str]:
     return _format_timestamp(start), _format_timestamp(end)
 
 
-def _strip_stage_notes(value: str) -> tuple[str, list[str]]:
+def _strip_machine_notes(value: str) -> tuple[str, list[str]]:
+    """Remove only the machine-annotation notes; keep every content note."""
+
     text = str(value).strip()
     removed: list[str] = []
     while True:
-        match = STAGE_NOTE_RE.search(text)
+        match = MACHINE_STAGE_NOTE_RE.search(text)
         if match is None:
             break
         removed.insert(0, match.group(1))
@@ -106,6 +120,16 @@ def _strip_stage_notes(value: str) -> tuple[str, list[str]]:
     if not text:
         raise DeliveryCompileError("stage-note stripping produced empty subtitle text")
     return text, removed
+
+
+def _content_notes(value: str) -> list[str]:
+    """Disclose the parenthetical notes that stay in the delivered subtitle."""
+
+    return [
+        note.strip()
+        for note in CONTENT_NOTE_RE.findall(str(value))
+        if note.strip() and note.strip() not in MACHINE_STAGE_NOTES
+    ]
 
 
 def _normalise_payload(value: str) -> str:
@@ -315,6 +339,22 @@ def _build_delivery_outputs(
 
     truth_sha = _sha256(truth_path)
     media_sha = _sha256(source_media)
+    # F20 覆盖证明：每一条交付 cue 的文字都来自这份 hash-bound 真值，而且它
+    # 恰好属于「Ivan 复核的说话人 override」或「Ivan 留给机器判说话人、但由
+    # 正面人声仲裁保住的 cue」两桶之一。编译器的分桶本来就是穷尽的，这里把
+    # 它写成显式不变量，pin 才有资格当下游快路径的授权凭据。
+    if len(overrides) + len(machine_rows) != len(clean_rows):
+        raise DeliveryCompileError("truth cue ownership does not cover the delivery grid")
+    truth_full_ownership_pin = {
+        "schema_version": TRUTH_FULL_OWNERSHIP_PIN_SCHEMA,
+        "authority": authority,
+        "truth_input": {"path": truth_relative, "sha256": truth_sha},
+        "baseline_sha256": baseline_sha,
+        "arbitration_receipt_sha256": receipt_sha,
+        "cue_count": len(clean_rows),
+        "reviewed_override_count": len(overrides),
+        "machine_cues": [int(row["source_cue"]) for row in machine_rows],
+    }
     baseline_manifest = {
         "registry_schema_version": BASELINE_REGISTRY_SCHEMA,
         "candidate_id": candidate_id,
@@ -332,6 +372,9 @@ def _build_delivery_outputs(
                 "source_sha256": source_recording_sha256,
                 "absolute_source_start_ms": absolute_source_start_ms,
                 "absolute_source_end_ms": absolute_source_end_ms,
+                # 只有精确区间重放才让文字所有权 100% 落到真值上；v1 基线是
+                # 按窗口合并的，交付文本仍可能混入本轮 ASR，不发这张 pin。
+                "truth_full_ownership": truth_full_ownership_pin,
             }
         )
     override_document = {
@@ -387,6 +430,7 @@ def _build_delivery_outputs(
         "reviewed_override_count": len(overrides),
         "machine_cues": [row["source_cue"] for row in machine_rows],
         "anchor_source_cues": anchors,
+        "truth_full_ownership": truth_full_ownership_pin,
         "transformations": transform_rows,
     }
     return {
@@ -532,6 +576,7 @@ def compile_delivery(
             raise DeliveryCompileError(f"truth cue {truth_cue} has no truth segments")
         segments: list[dict[str, str | None]] = []
         removed_notes: list[str] = []
+        retained_notes: list[str] = []
         for segment_position, segment in enumerate(raw_segments, start=1):
             if not isinstance(segment, Mapping):
                 raise DeliveryCompileError(
@@ -542,8 +587,9 @@ def compile_delivery(
                 raise DeliveryCompileError(
                     f"truth cue {truth_cue} segment {segment_position} speaker is invalid"
                 )
-            cleaned, removed = _strip_stage_notes(str(segment.get("text") or ""))
+            cleaned, removed = _strip_machine_notes(str(segment.get("text") or ""))
             removed_notes.extend(removed)
+            retained_notes.extend(_content_notes(cleaned))
             segments.append({"speaker": label, "text": cleaned})
         if any(segment["speaker"] is None for segment in segments):
             if len(segments) != 1 or segments[0]["speaker"] is not None:
@@ -564,7 +610,8 @@ def compile_delivery(
                         "source_cues": source_numbers,
                         "final_cue": None,
                         "timing_policy": timing_policy,
-                        "removed_stage_notes": removed_notes,
+                        "removed_machine_notes": removed_notes,
+                        "retained_content_notes": retained_notes,
                         "speaker_disposition": "DROPPED_NO_HUMAN_VOICE",
                         "arbitration_reason": str(decision["reason"]),
                     }
@@ -591,7 +638,7 @@ def compile_delivery(
             speaker_disposition = "MACHINE_DECISION_REQUIRED"
         else:
             if raw_row.get("text_changed") is True:
-                clean_text, _ignored = _strip_stage_notes(
+                clean_text, _ignored = _strip_machine_notes(
                     str(raw_row.get("truth_text") or "")
                 )
             else:
@@ -638,7 +685,8 @@ def compile_delivery(
                 "source_cues": source_numbers,
                 "final_cue": final_cue,
                 "timing_policy": timing_policy,
-                "removed_stage_notes": removed_notes,
+                "removed_machine_notes": removed_notes,
+                "retained_content_notes": retained_notes,
                 "speaker_disposition": speaker_disposition,
             }
         )

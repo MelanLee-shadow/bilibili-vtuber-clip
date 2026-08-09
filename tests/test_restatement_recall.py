@@ -234,11 +234,22 @@ def test_merge_restatement_priority_findings_fails_open_to_microcue_findings_onl
 def test_producer_text_pipeline_wires_restatement_findings_into_review_closure() -> None:
     # Negative canary: reverting the pipeline wiring (dropping the call
     # inside review_exact_final_srt) must turn this test red.
+    # 2026-08-10（F20）：微 cue 发现 + 重述注入合并成
+    # delivery_fast_path.discover_priority_findings 一个调用点，快路径才能
+    # 在真值全所有权时整条跳过；金丝雀跟着搬到那一层，语义不变。
+    import src.autoslice.delivery_fast_path as delivery_fast_path
     import src.autoslice.producer_text_pipeline as producer_text_pipeline
 
     assert (
-        producer_text_pipeline.merge_restatement_priority_findings
+        delivery_fast_path.merge_restatement_priority_findings
         is merge_restatement_priority_findings
     )
+    assert (
+        producer_text_pipeline.discover_priority_findings
+        is delivery_fast_path.discover_priority_findings
+    )
     source = inspect.getsource(producer_text_pipeline.run_text_pipeline)
-    assert "merge_restatement_priority_findings" in source
+    assert "discover_priority_findings" in source
+    assert "merge_restatement_priority_findings" in inspect.getsource(
+        delivery_fast_path.discover_priority_findings
+    )

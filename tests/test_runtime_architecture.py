@@ -210,7 +210,12 @@ MODULE_DEBT_LEDGER = {
     # 2026-08-08 +23：Ivan 2026-08-08 优化①边界重放(8b 冻结 loader 接线)
     # +30：Ivan 8/8 真值法证 F2 代词发现器接线;两处主体均在独立新模块。
     # 2026-08-09 净 -1：F16/F17 priority assembler 保留旧测试入口并拆分候选计数。
-    "src/autoslice/producer_text_pipeline.py": 2_155,
+    # 2026-08-10 净 -35：F20 真值全所有权快路径（Ivan 2026-08-09 立项，
+    # docs/HANDOFF.md ⭐⭐⭐⭐「Ivan 三问的答案」）——两条后置所有权判定、
+    # 跳过阶段包装与 truth_full_ownership.v1 回执全部落在新模块
+    # src/autoslice/delivery_fast_path.py（钉死重放判定也一并搬过去），
+    # 这里只剩 import 与三处调用点，净收益锁进账本。
+    "src/autoslice/producer_text_pipeline.py": 2_120,
     # 2026-07-31 +12：contract 穿透接线（形参 + 4 个调用点）。
     # 2026-07-31 再 +17：封面路由 P1——witness 从「路由法官」降回「置信输入」，
     # 删掉无条件放行、几何否决移到关系分支之后、置信改为 几何 OR witness bbox。
