@@ -25,6 +25,24 @@
   连同 `speaker_srt_sha256`、`ass_sha256` 放进 package。两条路径都只能指向 package-relative
   regular file；绝对路径、越界、缺文件以及路径任一层 symlink 都拒绝。song lane 不进入这条
   talk speaker gate。
+- 已在一个 host 完整冻结、随后复制到另一 host 的 talk 包，只能用
+  `scripts/relocate_slice_package.py` 投影运行时 locator。调用方必须显式给出且物理核对
+  source/destination package、candidate evidence root 与 deployed repo root；更具体的 package
+  root 映射优先于 candidate root。工具只可改 record/publish/speaker 中明列的 locator 与由此
+  必须更新的 standalone hash，禁止改分析、标题、封面、决策或其他 provenance。chat/context
+  原始字节必须保持不变；chat 内 speaker hash 绑定迁移前 manifest，journal 显式证明
+  before→after speaker 谱系。迁移前后都要重验 record/publish 全镜像、全部已声明 artifact
+  hash、regular/non-symlink 路径和 embedded/standalone speaker 图；严格 journal 只接受固定
+  document/evidence 集、allowed changed pointers 与
+  `chat → context → pre-relocation speaker/publish/record → speaker → publish → record`
+  提交顺序，并以 fsync/原子替换向前恢复。三份迁移前 JSON 原字节必须先作为 package 内
+  preimage 固化；speaker preimage 还须等于 chat 内绑定的迁移前 manifest hash，恢复或
+  `COMMITTED` 重放必须从这些 preimage 重新计算完整投影、changed pointers 与 after hash，
+  不信 journal 自报。locator 另按字段绑定物理 root role：媒体/字幕/烧录/封面与 recut audit
+  只能在 package，最终 filler audit 只能在 candidate，voiceprint profile 只能在 deployed
+  repo；允许 candidate/repo 双来源的 speaker authority 也必须保留 preimage 的原 root，
+  同 hash 副本不得跨 root 重绑。candidate evidence root 必须物理等于 package parent。
+  禁止手改 JSON 路径、伪造 journal，或为凑审计器改产物名。
 - reviewed baseline 执行 exact interval replay 时，必须在 mapping 中 hash-bound 保留每个
   重叠输入 cue 的 replay 前文本、时间和 current cue index。最终权威若撤回较早的
   correction/owner，只有从这些去重后的 pre-replay cue 能重建出旧文本、且 replay 后文本
