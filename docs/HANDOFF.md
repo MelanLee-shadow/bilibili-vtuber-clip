@@ -87,6 +87,17 @@ merge 容差+全角标点标记);队列2 法证=docs/reviews/2026-08-09-workshee
 - 同茎手术已做(213135/230125/210131 三条 state+publish cover 路径→同茎,
   备份 *.bak-coverstem-*,flock+原子写;QC 回执按路径+sha 双绑定,必须先手术后 QC)。
 
+**8/9 深夜追加波(Ivan「趁等实现全部立项」令)**:tip=3daf498(3377 绿),
+部署已入队(直播锁后自动落)。I=runner 状态写回三方合并(丢失更新根修)+文本
+基线标签前缀 fail-closed+F8 证人同轮补试;H=F19 歌名歌词语义门(合成案
+ラブコード=MATCH/LoveLive!=DISPUTED,typed lyrics provider 禁默认联网)+
+important_content_ips tag 契约(战斗吧歌姬首例);G=F16 法官三路证据
+(draft贴合/邻句词面/chat强度入 prompt+回执可复算)+F17 会话词面保真
+(session_transcript_recurrence+盲见证硬门+AST 禁 glossary 写)。J=F12 受话人
+归属+F5 重叠检测(在飞)。free 锁队列:runner 直播等待持锁→我的 reconcile+
+revive×8(8/8 五连+8/7 三连)排队,下播依序自动落。BV1Bau16nEyq r3 置换
+=40755790146 已亲验干净。快车道 F 在 wsl produce 中。
+
 **盘后决定/披露(等 Ivan)**:①F13 事件场 6-15 席位 ≥85 门是我类比加的,可否?
 ②pyannote no-go 后,多嘉宾"不确定=连线可交付"政策延伸案(对**未来**多嘉宾场;
 本批两条已由快车道人工真值解决)要不要开?③210131 封面文案重出走 punch 车道。
