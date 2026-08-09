@@ -21,11 +21,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.apply_speaker_turn_overrides import atomic_write_text
+from scripts.apply_speaker_turn_overrides import Cue, atomic_write_text, parse_labelled_srt
 from scripts.harvest_ivan_truth import parse_srt, split_label
 from src.autoslice.reviewed_speaker_baseline import (
     REVIEWED_SPEAKER_BASELINE_SCHEMA,
     TRUTH_SCHEMA,
+    canonical_labelled_srt_sha256,
 )
 from src.autoslice.speaker_common import GUEST_SPEAKER, HOST_SPEAKER
 
@@ -38,7 +39,7 @@ BASELINE_SCHEMAS = {
 }
 BASELINE_MODE = "preserve_text_outside_source_truth"
 ARBITRATION_SCHEMA = "reviewed-speaker-machine-cue-arbitration.v1"
-DELIVERY_RECEIPT_SCHEMA = "reviewed-speaker-truth-delivery.v1"
+DELIVERY_RECEIPT_SCHEMA = "reviewed-speaker-truth-delivery.v2"
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 TIMING_RE = re.compile(
     r"(\d{2}):(\d{2}):(\d{2}),(\d{3})\s*-->\s*"
@@ -146,11 +147,14 @@ def _validate_arbitration(
     document: Mapping[str, object],
     *,
     candidate_id: str,
+    automatic_srt_sha256: str,
 ) -> tuple[str, dict[int, Mapping[str, object]]]:
     if document.get("schema_version") != ARBITRATION_SCHEMA:
         raise DeliveryCompileError("machine-cue arbitration schema is unsupported")
     if document.get("candidate_id") != candidate_id:
         raise DeliveryCompileError("machine-cue arbitration candidate mismatch")
+    if document.get("automatic_labelled_srt_sha256") != automatic_srt_sha256:
+        raise DeliveryCompileError("machine-cue arbitration automatic SRT hash mismatch")
     receipt_sha = str(document.get("receipt_sha256") or "")
     if not SHA256_RE.fullmatch(receipt_sha):
         raise DeliveryCompileError("machine-cue arbitration receipt hash is invalid")
@@ -190,8 +194,74 @@ def _validate_arbitration(
             raise DeliveryCompileError(
                 f"machine-cue arbitration action contradicts voice verdict: {cue_number}"
             )
+        speaker = decision.get("speaker")
+        if decision["action"] == "retain_machine" and speaker not in ALLOWED_SPEAKERS:
+            raise DeliveryCompileError(
+                f"machine-cue arbitration speaker is invalid: {cue_number}"
+            )
+        if decision["action"] == "drop_hallucination" and speaker is not None:
+            raise DeliveryCompileError(
+                f"dropped machine-cue arbitration must not assign a speaker: {cue_number}"
+            )
         decisions[cue_number] = decision
     return receipt_sha, decisions
+
+
+def _load_automatic_speaker_srt(
+    path: Path,
+    *,
+    repo_root: Path,
+) -> tuple[str, str, list[Cue]]:
+    candidate = path.absolute()
+    if not candidate.is_relative_to(repo_root):
+        raise DeliveryCompileError("automatic speaker SRT must be inside the repository")
+    relative = candidate.relative_to(repo_root)
+    current = repo_root
+    for component in relative.parts:
+        current = current / component
+        if current.is_symlink():
+            raise DeliveryCompileError("automatic speaker SRT must not traverse symlinks")
+    try:
+        resolved = candidate.resolve(strict=True)
+        cues = parse_labelled_srt(resolved)
+    except (OSError, ValueError) as exc:
+        raise DeliveryCompileError("automatic speaker SRT is invalid") from exc
+    if not resolved.is_relative_to(repo_root) or not resolved.is_file():
+        raise DeliveryCompileError("automatic speaker SRT escapes the repository")
+    actual_sha256 = _sha256(resolved)
+    if canonical_labelled_srt_sha256(cues) != actual_sha256:
+        raise DeliveryCompileError(
+            "automatic speaker SRT is not canonical labelled SRT bytes"
+        )
+    return str(relative), actual_sha256, cues
+
+
+def _validate_automatic_speaker_grid(
+    automatic_cues: list[Cue],
+    *,
+    clean_rows: list[dict[str, object]],
+    machine_rows: list[dict[str, object]],
+) -> None:
+    if len(automatic_cues) != len(clean_rows):
+        raise DeliveryCompileError("automatic speaker SRT cue count drift")
+    for position, (automatic_cue, clean_row) in enumerate(
+        zip(automatic_cues, clean_rows, strict=True), start=1
+    ):
+        if getattr(automatic_cue, "source_index", None) != position:
+            raise DeliveryCompileError(
+                "automatic speaker SRT cue indices are not contiguous"
+            )
+        for field in ("start", "end", "text"):
+            if getattr(automatic_cue, field, None) != clean_row[field]:
+                raise DeliveryCompileError(
+                    f"automatic speaker SRT cue {position} {field} drift"
+                )
+    for machine_row in machine_rows:
+        cue_number = int(machine_row["source_cue"])
+        if getattr(automatic_cues[cue_number - 1], "speaker", None) != machine_row["speaker"]:
+            raise DeliveryCompileError(
+                f"automatic speaker SRT machine cue {cue_number} label drift"
+            )
 
 
 def _build_delivery_outputs(
@@ -204,6 +274,7 @@ def _build_delivery_outputs(
     source_media: Path,
     source_cue_count: int,
     receipt_sha: str,
+    automatic_srt_relative: str,
     automatic_srt_sha256: str,
     source_recording_basename: str,
     source_recording_sha256: str,
@@ -281,6 +352,10 @@ def _build_delivery_outputs(
             "schema_version": REVIEWED_SPEAKER_BASELINE_SCHEMA,
             "authority": authority,
             "truth_input": {"path": truth_relative, "sha256": truth_sha},
+            "automatic_input": {
+                "path": automatic_srt_relative,
+                "sha256": automatic_srt_sha256,
+            },
             "cue_count": len(clean_rows),
             "anchor_source_cues": anchors,
             "machine_cues": machine_rows,
@@ -303,7 +378,11 @@ def _build_delivery_outputs(
             "sha256": baseline_sha,
             "cue_count": len(clean_rows),
         },
-        "automatic_labelled_srt_sha256": automatic_srt_sha256,
+        "automatic_labelled_srt": {
+            "path": automatic_srt_relative,
+            "sha256": automatic_srt_sha256,
+            "cue_count": len(clean_rows),
+        },
         "arbitration_receipt_sha256": receipt_sha,
         "reviewed_override_count": len(overrides),
         "machine_cues": [row["source_cue"] for row in machine_rows],
@@ -326,7 +405,7 @@ def compile_delivery(
     repo_root: Path,
     authority: str,
     arbitration: Mapping[str, object],
-    automatic_srt_sha256: str,
+    automatic_srt_path: Path,
     source_recording_basename: str,
     source_recording_sha256: str,
     absolute_source_start_ms: int,
@@ -340,8 +419,6 @@ def compile_delivery(
         raise DeliveryCompileError("authority must be non-empty")
     if baseline_schema_version not in BASELINE_SCHEMAS:
         raise DeliveryCompileError("baseline schema version is unsupported")
-    if not SHA256_RE.fullmatch(automatic_srt_sha256):
-        raise DeliveryCompileError("automatic_srt_sha256 is invalid")
     if not SHA256_RE.fullmatch(source_recording_sha256):
         raise DeliveryCompileError("source_recording_sha256 is invalid")
     if Path(source_recording_basename).name != source_recording_basename:
@@ -362,6 +439,9 @@ def compile_delivery(
     if not truth_path.is_relative_to(repo_root):
         raise DeliveryCompileError("truth input must be inside the repository")
     truth_relative = str(truth_path.relative_to(repo_root))
+    automatic_srt_relative, automatic_srt_sha256, automatic_cues = (
+        _load_automatic_speaker_srt(automatic_srt_path, repo_root=repo_root)
+    )
     truth = json.loads(truth_path.read_text(encoding="utf-8"))
     if not isinstance(truth, Mapping) or truth.get("schema") != TRUTH_SCHEMA:
         raise DeliveryCompileError("truth input schema is unsupported")
@@ -373,6 +453,7 @@ def compile_delivery(
     receipt_sha, arbitration_rows = _validate_arbitration(
         arbitration,
         candidate_id=candidate_id,
+        automatic_srt_sha256=automatic_srt_sha256,
     )
     source_cues = parse_srt(source_text_srt.read_text(encoding="utf-8"))
     expected_source_ordinals = list(range(1, len(source_cues) + 1))
@@ -499,6 +580,7 @@ def compile_delivery(
                 {
                     "source_cue": final_cue,
                     "expect": expect,
+                    "speaker": str(decision["speaker"]),
                     "reason": str(decision["reason"]),
                     "arbitration": {
                         "human_voice_observed": True,
@@ -569,6 +651,11 @@ def compile_delivery(
         raise DeliveryCompileError(f"machine-cue arbitration contains unused rows: {unused}")
     if not clean_rows:
         raise DeliveryCompileError("delivery baseline contains no cues")
+    _validate_automatic_speaker_grid(
+        automatic_cues,
+        clean_rows=clean_rows,
+        machine_rows=machine_rows,
+    )
 
     return _build_delivery_outputs(
         candidate_id=candidate_id,
@@ -579,6 +666,7 @@ def compile_delivery(
         source_media=source_media,
         source_cue_count=len(source_cues),
         receipt_sha=receipt_sha,
+        automatic_srt_relative=automatic_srt_relative,
         automatic_srt_sha256=automatic_srt_sha256,
         source_recording_basename=source_recording_basename,
         source_recording_sha256=source_recording_sha256,
@@ -605,7 +693,7 @@ def main() -> int:
     parser.add_argument("--repo-root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--authority", required=True)
     parser.add_argument("--arbitration", required=True, type=Path)
-    parser.add_argument("--automatic-srt-sha256", required=True)
+    parser.add_argument("--automatic-speaker-srt", required=True, type=Path)
     parser.add_argument("--source-recording-basename", required=True)
     parser.add_argument("--source-recording-sha256", required=True)
     parser.add_argument("--absolute-source-start-ms", required=True, type=int)
@@ -631,7 +719,7 @@ def main() -> int:
         repo_root=args.repo_root,
         authority=args.authority,
         arbitration=arbitration,
-        automatic_srt_sha256=args.automatic_srt_sha256,
+        automatic_srt_path=args.automatic_speaker_srt,
         source_recording_basename=args.source_recording_basename,
         source_recording_sha256=args.source_recording_sha256,
         absolute_source_start_ms=args.absolute_source_start_ms,

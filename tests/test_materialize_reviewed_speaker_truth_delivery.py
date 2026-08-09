@@ -22,6 +22,7 @@ def _sha256(path: Path) -> str:
 
 
 def _fixture(tmp_path: Path) -> dict[str, object]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     source_srt = tmp_path / "source.srt"
     source_srt.write_text(
         """1
@@ -48,6 +49,27 @@ def _fixture(tmp_path: Path) -> dict[str, object]:
     )
     media = tmp_path / "media.mp4"
     media.write_bytes(b"synthetic media")
+    automatic_srt = tmp_path / "assets" / "automatic-labelled.srt"
+    automatic_srt.parent.mkdir()
+    automatic_srt.write_text(
+        """1
+00:00:00,000 --> 00:00:01,500
+[李豆沙] 主播一
+
+2
+00:00:01,500 --> 00:00:02,900
+[连线] 嘉宾说 主播答
+
+3
+00:00:03,000 --> 00:00:04,000
+[连线] 可能听见
+
+4
+00:00:04,000 --> 00:00:05,500
+[李豆沙] 主播五
+""",
+        encoding="utf-8",
+    )
     truth = {
         "schema": "ivan-speaker-truth-diff.v2",
         "candidate_id": CANDIDATE,
@@ -110,11 +132,13 @@ def _fixture(tmp_path: Path) -> dict[str, object]:
     arbitration = {
         "schema_version": ARBITRATION_SCHEMA,
         "candidate_id": CANDIDATE,
+        "automatic_labelled_srt_sha256": _sha256(automatic_srt),
         "receipt_sha256": "a" * 64,
         "decisions": {
             "4": {
                 "action": "retain_machine",
                 "human_voice_observed": True,
+                "speaker": "连线",
                 "reason": "positive synthetic voice witness",
             }
         },
@@ -126,7 +150,7 @@ def _fixture(tmp_path: Path) -> dict[str, object]:
         "repo_root": tmp_path,
         "authority": AUTHORITY,
         "arbitration": arbitration,
-        "automatic_srt_sha256": "d" * 64,
+        "automatic_srt_path": automatic_srt,
         "source_recording_basename": "source.mp4",
         "source_recording_sha256": "e" * 64,
         "absolute_source_start_ms": 10_000,
@@ -153,6 +177,7 @@ def test_compiler_strips_notes_merges_and_renumbers_before_speaker_binding(
         row["source_cue"]
         for row in override["reviewed_speaker_baseline"]["machine_cues"]
     ] == [3]
+    assert override["reviewed_speaker_baseline"]["machine_cues"][0]["speaker"] == "连线"
     merged = override["overrides"][1]
     assert merged["segments"][0]["start"] == "00:00:01,500"
     assert merged["segments"][-1]["end"] == "00:00:02,900"
@@ -168,6 +193,14 @@ def test_compiler_strips_notes_merges_and_renumbers_before_speaker_binding(
     )
     assert loaded is not None
     assert loaded.machine_cues == (3,)
+    assert result["receipt"]["schema_version"] == (
+        "reviewed-speaker-truth-delivery.v2"
+    )
+    assert result["receipt"]["automatic_labelled_srt"] == {
+        "path": "assets/automatic-labelled.srt",
+        "sha256": _sha256(tmp_path / "assets/automatic-labelled.srt"),
+        "cue_count": 4,
+    }
 
 
 def test_compiler_requires_arbitration_for_every_unlabelled_truth_cue(
@@ -177,6 +210,55 @@ def test_compiler_requires_arbitration_for_every_unlabelled_truth_cue(
     fixture["arbitration"]["decisions"] = {}
     with pytest.raises(DeliveryCompileError, match="requires audio arbitration"):
         compile_delivery(**fixture)
+
+
+def test_compiler_rejects_machine_label_or_automatic_hash_drift(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    fixture["arbitration"]["automatic_labelled_srt_sha256"] = "0" * 64
+    with pytest.raises(DeliveryCompileError, match="automatic SRT hash mismatch"):
+        compile_delivery(**fixture)
+
+    fixture = _fixture(tmp_path / "speaker-drift")
+    fixture["arbitration"]["decisions"]["4"]["speaker"] = "unknown"
+    with pytest.raises(DeliveryCompileError, match="speaker is invalid"):
+        compile_delivery(**fixture)
+
+
+def test_compiler_rejects_noncanonical_automatic_srt_bytes(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    automatic = fixture["automatic_srt_path"]
+    automatic.write_bytes(
+        automatic.read_text(encoding="utf-8").replace("\n", "\r\n").encode()
+    )
+    fixture["arbitration"]["automatic_labelled_srt_sha256"] = _sha256(automatic)
+
+    with pytest.raises(DeliveryCompileError, match="not canonical labelled SRT"):
+        compile_delivery(**fixture)
+
+
+def test_compiler_rejects_external_and_symlinked_automatic_srt(
+    tmp_path: Path,
+) -> None:
+    external_fixture = _fixture(tmp_path / "external-root")
+    external = tmp_path / "outside-automatic.srt"
+    external.write_bytes(external_fixture["automatic_srt_path"].read_bytes())
+    external_fixture["automatic_srt_path"] = external
+    external_fixture["arbitration"]["automatic_labelled_srt_sha256"] = _sha256(
+        external
+    )
+    with pytest.raises(DeliveryCompileError, match="inside the repository"):
+        compile_delivery(**external_fixture)
+
+    symlink_fixture = _fixture(tmp_path / "symlink-root")
+    automatic = symlink_fixture["automatic_srt_path"]
+    real = automatic.with_name("real-automatic.srt")
+    automatic.rename(real)
+    automatic.symlink_to(real.name)
+    symlink_fixture["arbitration"]["automatic_labelled_srt_sha256"] = _sha256(real)
+    with pytest.raises(DeliveryCompileError, match="must not traverse symlinks"):
+        compile_delivery(**symlink_fixture)
 
 
 def test_compiler_rejects_truth_to_source_text_hash_drift(tmp_path: Path) -> None:
@@ -191,6 +273,7 @@ def test_compiler_rejects_extra_arbitration_rows(tmp_path: Path) -> None:
     fixture["arbitration"]["decisions"]["1"] = {
         "action": "retain_machine",
         "human_voice_observed": True,
+        "speaker": "连线",
         "reason": "not an unresolved cue",
     }
     with pytest.raises(DeliveryCompileError, match="unused rows"):

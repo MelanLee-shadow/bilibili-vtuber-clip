@@ -1,0 +1,9 @@
+{
+  "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
+  "candidate_id": "auto_200130_1722_1792",
+  "schema_version": "subtitle-redelivery-baseline.v1",
+  "mode": "preserve_text_outside_source_truth",
+  "path": "auto_200130_1722_1792.reviewed.srt",
+  "sha256": "0efb99954da04e0faea233890e504e5935e40e65d1fa29f5c3fe87ad5cf28e01",
+  "authority": "Ivan-annotated-2026-08-09 fast-track delivery"
+}
