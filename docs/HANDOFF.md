@@ -1,6 +1,77 @@
 # Current handoff
 
-Updated: 2026-08-09 by Claude(8/9 接力会话,orchestrator)。8/7 及 7/31 以下旧节仅存历史。
+Updated: 2026-08-09 深夜二次交棒 by Claude(context 满,Ivan 令收笔)。8/7 及 7/31 以下旧节仅存历史。
+
+## ⭐⭐⭐⭐ 2026-08-09 深夜交棒(successor 从这里开始;Ivan 三条待答已在文首回复)
+
+**硬约束变更(Ivan 刚令)**:①**Codex 额度已尽——执行 worker 只许 Opus**
+(Agent tool 的 opus 子代理/general-purpose;Sonnet 仍永久禁用)。在飞的两个
+Codex(J=F12/F5 实现中、F=快车道交付链中)**额度断供随时会死**,接手第一件事
+是查它们死活并善后。②Ivan 指示:**不要等 free 的 runner**——重试篮直接用
+wsl/Mac 产(受骗片姿势,per-candidate spec produce,free 只当轻计算臂),这是
+他今晚第三次强调的并行原则,前任(我)在重试篮上没做到,你要立刻做。
+
+**立即核查项(按序)**:
+1. **free 直播状态可能是假的**:runner 自 12:40:04Z 起 "room is LIVE — waiting
+   for stream end" 持锁至今,Ivan 说现在没在播。若已下播而 waiter 未醒=卡死:
+   查 `ssh free 'ps aux|grep free_session_autoslice'` + B站房间实况;卡死则
+   kill 该 tick 进程(3168999,持 runner.lock 的 python3)——它死后锁释放,
+   排队的写操作会依序落地(见下),下个 cron tick 正常开工。**先确认它没在
+   处理刚结束的流再杀**(看 runner.log 尾部)。
+2. **锁队列(runner.lock 后排队,锁一开自动串行落地)**:①my reconcile
+   (boptgokwt:same-BV r3 CID 40755790146 投影到生产 state)②revive×5
+   (8/8:333_427/473_534/600_659/869_1026/806_1068)③revive×3
+   (8/7:213743_1018/213743_1635/220747_313)④部署 br6epz3u9(tip 3daf498,
+   I+H+G 波,DISABLED 会先竖起)。若杀 waiter,这串会立刻开始;部署完成前
+   cron tick 被 DISABLED 挡住,正常。
+3. **快车道 auto_200130_1323_1603:成品已产完,交付链跑到一半!** Codex-F
+   最后动作=旧包已归档 `free:out/2026-08-08/auto_200130_1323_1603/
+   replacement_recuts.pre-final-20260809T190800Z`,正 rsync 416MB 新包。若 F
+   已死:①核 rsync 完整性(对比 wsl ~/Project/vtuber-reproduce/out/2026-08-08/
+   auto_200130_1323_1603/ 与 free 侧字节)②接着走十步链(manifest→audit→
+   QCv2→make-manifest→upload;引语用「所以我希望这两个能进入快车道,优先出
+   成品,优先上传。」+「并且今天要执行权宜上传。只要出片就可以上传,之后我再
+   进行审查。」)③**上传前硬检查门(血泪,不可省)**:抽帧≥4 处画面无
+   [李豆沙]/[连线] 字面、无圆括号注记、1323=159 cue 含 128 合并窗、全流解码
+   零错。1722 同理(其 spec 在 wsl out/2026-08-08/spec_auto_200130_1722_1792.json,
+   可能未产或已产,看 wsl out 目录)。F 的分支=wsl repo `wsl/fasttrack-0809`
+   (含未合入 commit,后续用 bundle 收回 Mac 合入)。
+4. **J(F12 受话人归属+F5 重叠检测)**:worktree
+   /Users/ivan/Project/vtuber-slice-wt/j-f12-f5,日志 scratchpad/codex-j.log。
+   死了就读日志评估完成度,残活交 Opus worker 续或重做。
+
+**Ivan 三问的答案(已在聊天答,存档)**:
+- 快车道为何还要 1.5h 真实生产:人工标注只替代"说话人+文字"两个权威,但产线
+  没有"真值全覆盖时跳过声学证人/CPA 裁决"的短路径——每 cue 仍走全链。这是
+  设计缺口,立项 **F20:真值全所有权快路径**(类比 pinned-replay 6261842:
+  reviewed 覆盖区间跳过裁决,只留渲染+烧录+门,预计把此类重产压到 <20min)。
+- 为何 free 等直播时不用 wsl/Mac 产重试篮:没有技术障碍,是我调度错误。
+  successor 直接按受骗片姿势在 wsl 起 per-candidate produce(注意 free 轻臂
+  调用礼让+CPA 并发别超 2-3 路)。
+- 现在"正在重试的"=零在跑,16 条全在篮里:8/8 十三条(pending_talk 8:
+  4 单人+210131+3 原 failed;revive 队列 5)+8/7 三条。
+
+**今晚战果账(截至交棒)**:发布 BV18Gu16NEcX(后按 Ivan 手令改标题+加
+战斗吧歌姬 tag)+BV1Bau16nEyq(歌名 ラブコード 置换→又因 [李豆沙] 前缀烧字
+三度置换,现 CID 40755790146 干净,线上帧亲验);部署两轮:f2961b4(F13 竖屏
+配额/F14 单人先验/F15 盲证人/F18 裁决收口/B 真值车道/D 置换配套)+排队中的
+3daf498(I 状态写回根修+前缀守卫+F8 同轮补试/H F19 歌词语义门+IP tag/G F16
+三路证据+F17 词面保真);法证报告 docs/reviews/2026-08-09-worksheet-forensics-
+200130.md(实测表+F15-F19 立项全落地);pyannote no-go 已回搬。
+
+**successor 队列(Ivan 意志排序)**:①快车道两条收官上传 ②重试篮 16 条改
+wsl/Mac 主动产(别等 runner;竖屏单人件产完应 all-host 交付,过门即传)③8/7
+真善美/换身份按 unblock 处方收官(wsl logs/reproduce_report.md)④J 善后+
+F20 立项实现(Opus)⑤210131 新封面过 QC 后补传 ⑥晨报(含三个待 Ivan 决定:
+F13 的 6-15 席 ≥85 门是否保留/多嘉宾"不确定=连线可交付"政策/贪生怕死
+IVAN_EXPLICIT 封面)。
+
+**纪律速查**:上传引语逐字;fail-closed 永不绕;free 状态手术必持 runner.lock
+(memory: free-runner-state-writeback-hazards);free 部署权唯一(worker 任务书
+写明禁 deploy);上传前画面无标签字面硬门;真值只作交付输入;媒体不入库;
+证据必 commit。repo 分支尖=0826422(部署位 3daf498 排队中);worktrees:
+f13-f14/f15-f18/lovecode-d(均已合入可删)、g-f16-f17/h-f19-tags(已合入可删)、
+i-runner-guards(已合入,tmp-i 分支挂着)、j-f12-f5(在用)。
 
 ## ⭐⭐⭐ 2026-08-09 夜班终局实况(最新权威;Ivan 就寝令=自主调度到修复+上传全闭环)
 
