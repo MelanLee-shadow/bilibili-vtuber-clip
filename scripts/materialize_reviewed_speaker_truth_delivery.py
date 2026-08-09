@@ -108,6 +108,29 @@ def _strip_stage_notes(value: str) -> tuple[str, list[str]]:
     return text, removed
 
 
+def _strip_render_boundary_separator(
+    value: str,
+    *,
+    segment_position: int,
+) -> tuple[str, str | None]:
+    """Keep punctuation in the clean cue while removing a routed line prefix.
+
+    Ivan's annotation format may place one full-width comma at the start of a
+    non-initial speaker segment to mark the boundary in the unsplit sentence.
+    That comma belongs in the clean sidecar cue, but must not become the first
+    visible glyph of the separately rendered speaker segment.
+    """
+
+    if segment_position <= 1 or not value.startswith("，"):
+        return value, None
+    cleaned = value[1:].lstrip()
+    if not cleaned:
+        raise DeliveryCompileError(
+            "speaker render-boundary separator produced empty segment text"
+        )
+    return cleaned, "，"
+
+
 def _normalise_payload(value: str) -> str:
     return re.sub(r"\s+", "", value)
 
@@ -531,7 +554,9 @@ def compile_delivery(
         if not isinstance(raw_segments, list) or not raw_segments:
             raise DeliveryCompileError(f"truth cue {truth_cue} has no truth segments")
         segments: list[dict[str, str | None]] = []
+        segment_payload_parts: list[str] = []
         removed_notes: list[str] = []
+        removed_render_boundary_separators: list[dict[str, object]] = []
         for segment_position, segment in enumerate(raw_segments, start=1):
             if not isinstance(segment, Mapping):
                 raise DeliveryCompileError(
@@ -544,7 +569,19 @@ def compile_delivery(
                 )
             cleaned, removed = _strip_stage_notes(str(segment.get("text") or ""))
             removed_notes.extend(removed)
-            segments.append({"speaker": label, "text": cleaned})
+            segment_payload_parts.append(cleaned)
+            render_text, removed_separator = _strip_render_boundary_separator(
+                cleaned,
+                segment_position=segment_position,
+            )
+            if removed_separator is not None:
+                removed_render_boundary_separators.append(
+                    {
+                        "segment_position": segment_position,
+                        "separator": removed_separator,
+                    }
+                )
+            segments.append({"speaker": label, "text": render_text})
         if any(segment["speaker"] is None for segment in segments):
             if len(segments) != 1 or segments[0]["speaker"] is not None:
                 raise DeliveryCompileError(
@@ -596,7 +633,7 @@ def compile_delivery(
                 )
             else:
                 clean_text = source_machine_text
-            segment_payload = "".join(str(segment["text"]) for segment in segments)
+            segment_payload = "".join(segment_payload_parts)
             if _normalise_payload(segment_payload) != _normalise_payload(clean_text):
                 raise DeliveryCompileError(
                     f"truth cue {truth_cue} segment payload does not equal clean text"
@@ -632,16 +669,19 @@ def compile_delivery(
                 if len(timed_segments) > 1
                 else "REVIEWED_FULL_CUE"
             )
-        transform_rows.append(
-            {
-                "truth_cue": truth_cue,
-                "source_cues": source_numbers,
-                "final_cue": final_cue,
-                "timing_policy": timing_policy,
-                "removed_stage_notes": removed_notes,
-                "speaker_disposition": speaker_disposition,
-            }
-        )
+        transform_row: dict[str, object] = {
+            "truth_cue": truth_cue,
+            "source_cues": source_numbers,
+            "final_cue": final_cue,
+            "timing_policy": timing_policy,
+            "removed_stage_notes": removed_notes,
+            "speaker_disposition": speaker_disposition,
+        }
+        if removed_render_boundary_separators:
+            transform_row["removed_render_boundary_separators"] = (
+                removed_render_boundary_separators
+            )
+        transform_rows.append(transform_row)
 
     if consumed_source_cues != set(expected_source_ordinals):
         missing = sorted(set(expected_source_ordinals) - consumed_source_cues)

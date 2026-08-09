@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "source_media_sha256": "0e73603f1bbdd7260da1b25f3053e3bd3312b6a5c6124073984ea59eddc9a6c6",
+  "source_media_sha256": "c000f44b5c28866b6f3e4237b43a20705626fa28738022ff235500103975f26e",
   "text_final_srt_sha256": "0e9c2cc74b085bc1704d920b08e957da8104b6f69eb9aaa99dfe3d0c224504b3",
   "source_srt_sha256": "eac35d132202e8e893103b30630008b4ab2f1e5dabeeee76a27478f93036fa8f",
   "candidate_id": "auto_200130_1323_1603",
@@ -2418,12 +2418,12 @@
           "speaker": "李豆沙",
           "text": "不是",
           "start": "00:03:53,440",
-          "end": "00:03:54,173"
+          "end": "00:03:54,320"
         },
         {
           "speaker": "连线",
-          "text": "，不是吗",
-          "start": "00:03:54,173",
+          "text": "不是吗",
+          "start": "00:03:54,320",
           "end": "00:03:55,640"
         }
       ]

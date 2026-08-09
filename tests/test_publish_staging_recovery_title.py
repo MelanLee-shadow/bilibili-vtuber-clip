@@ -1,6 +1,8 @@
+import hashlib
 import json
 from pathlib import Path
 
+from src.autoslice import publish_staging
 from src.autoslice.publish_staging import _stage_publish_draft
 from src.autoslice.recovery_title_authority import (
     ROOT,
@@ -73,3 +75,56 @@ def test_publish_staging_preserves_typed_same_bv_title_authority(
     assert publish["recovery_publication_authority"] == authority
     assert captured_cover[0]["title"] == title
     assert captured_cover[0]["punch_allowed"] is True
+
+
+def test_reused_published_cover_carries_all_artifact_hashes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    candidate_id = "candidate"
+    media = tmp_path / f"{candidate_id}.recut.mp4"
+    media.write_bytes(b"media")
+    covers = tmp_path / "covers"
+    covers.mkdir()
+    cover = covers / f"{candidate_id}.ai-title.cover.png"
+    cover.write_bytes(b"cover")
+    cover_sha256 = "sha256:" + hashlib.sha256(cover.read_bytes()).hexdigest()
+    ai_background_sha256 = "sha256:" + "a" * 64
+    reference_sha256 = "sha256:" + "b" * 64
+    (covers / f"{candidate_id}.published-cover-generation.json").write_text(
+        json.dumps(
+            {
+                "final_cover_sha256": cover_sha256,
+                "ai_background_sha256": ai_background_sha256,
+                "reference_sha256": reference_sha256,
+                "route_decision": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        publish_staging,
+        "validate_cover_route_decision",
+        lambda *_args, **_kwargs: True,
+    )
+
+    record = _stage_publish_draft(
+        {
+            "status": "MATERIALIZED",
+            "media_path": str(media),
+            "artifact_hashes": {},
+        },
+        candidate_id=candidate_id,
+        title="【李豆沙】测试标题正文足够长",
+        cues=[],
+        run_ffmpeg=False,
+        title_llm_call=None,
+        skip_cover=True,
+    )
+
+    assert record is not None
+    hashes = record["artifact_hashes"]
+    assert record["publish_staging"]["cover_path"] == str(cover)
+    assert hashes["cover_sha256"] == cover_sha256
+    assert hashes["ai_background_sha256"] == ai_background_sha256
+    assert hashes["cover_reference_sha256"] == reference_sha256

@@ -824,6 +824,7 @@ def _build_prompt(request: Mapping[str, object]) -> str:
 
 约束：
 - 只可从给出的 cue_index 中选 recommended_end_cue_index；不得改写字幕。
+- evidence_cue_indexes 的每个索引也只可从绑定请求 JSON 的 cues[*].cue_index 中选择；structured_context 和 candidate_context 只帮助理解语义，绝不可从中引用 cue 索引。
 - 只能从 recommendation_cue_indexes 选择。若 boundary_search_scope.recommendation_backward_ms>0，目标 cue 只是自动/旧公开召回尾锚；当它已拖入新话题、未回答问题或不完整尾巴时，可在该有界窗口内回剪到**最晚一个**已经覆盖 selection_hook 全部内容锚点、故事闭环且后续换题可证的 cue，并必须回 content_anchor_covered=true。普通 semantic_lower_bound 超出该窗口不得提前删内容；published_recall_anchor 只允许这次有界回剪，不把旧公开终点伪装成已人工确认的下界；若 boundary_end_mode=exact_source_pin，可选择 source pin 前最多 delivery_tail_pad_ms 的完整语义句尾，最终媒体仍由 source pin 精确截止，不可选择 pin 之后才开始的 cue。
 - recommendation_relaxations 里列出的 cue 是经确定性证明后放行的有界例外：pin_crossing_closure_cue 是包含 pin 的收尾 cue（媒体仍精确截止在 pin）；silent_gap_closure_cue 是下限前最后一个收尾 cue，且它到下限之间没有任何语音；reviewed_exact_interval_terminal_projection 是 hash/source 绑定的 reviewed endpoint 在 fresh 网格上的终点投影，必须把其中 crossing_witness_cue_index 作为下一话题证据。语义合适才可选择。
 - 若 next_topic_separated=true，evidence_cue_indexes 必须包含推荐 cue 之后、证明已进入下一话题/SC/谢礼的 cue；缺了会被判 BOUNDARY_NEXT_TOPIC_WITNESS_MISSING。

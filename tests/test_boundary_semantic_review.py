@@ -594,6 +594,13 @@ def test_boundary_review_rejects_evidence_cue_not_shown_to_reviewer():
         ensure_ascii=False,
     )
 
+    seen_prompt = ""
+
+    def review(prompt: str) -> str:
+        nonlocal seen_prompt
+        seen_prompt = prompt
+        return response
+
     result = review_talk_boundary_semantics(
         cues=cues,
         target_ms=2_000,
@@ -602,13 +609,18 @@ def test_boundary_review_rejects_evidence_cue_not_shown_to_reviewer():
         selection_scorecard=_scorecard(),
         structured_context="",
         candidate_context="",
-        llm_call=lambda _prompt: response,
+        llm_call=review,
         extract_json=_extract,
         max_forward_ms=10_000,
     )
 
     assert result["status"] == "BLOCK"
     assert "BOUNDARY_EVIDENCE_CUES_INVALID" in result["reason_codes"]
+    assert (
+        "evidence_cue_indexes 的每个索引也只可从绑定请求 JSON 的 "
+        "cues[*].cue_index 中选择"
+    ) in seen_prompt
+    assert "绝不可从中引用 cue 索引" in seen_prompt
 
 
 def test_boundary_review_requires_evidence_after_recommended_endpoint():

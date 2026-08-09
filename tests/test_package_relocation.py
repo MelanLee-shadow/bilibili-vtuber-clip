@@ -126,9 +126,9 @@ def _fixture(tmp_path: Path) -> Fixture:
         "status": "READY",
         "production_ready": True,
         "source_media": _source_package_path(files["video"]),
-        "source_media_sha256": "sha256:" + hashes["video"],
+        "source_media_sha256": hashes["video"],
         "text_final_srt": _source_package_path(files["subtitle"]),
-        "text_final_srt_sha256": "sha256:" + hashes["subtitle"],
+        "text_final_srt_sha256": hashes["subtitle"],
         "profile": _source_repo_path("assets/lidousha/profile.json"),
         "profile_sha256": "sha256:" + hashes["profile"],
         "speaker_override": _source_repo_path("assets/lidousha/override.json"),
@@ -138,9 +138,9 @@ def _fixture(tmp_path: Path) -> Fixture:
         "mixed_overlap_evidence": None,
         "mixed_overlap_evidence_sha256": None,
         "output_review_srt": _source_package_path(files["speaker_srt"]),
-        "output_review_srt_sha256": "sha256:" + hashes["speaker_srt"],
+        "output_review_srt_sha256": hashes["speaker_srt"],
         "output_ass": _source_package_path(files["ass"]),
-        "output_ass_sha256": "sha256:" + hashes["ass"],
+        "output_ass_sha256": hashes["ass"],
         "analysis": {
             "frozen_witness_path": f"{SOURCE_CANDIDATE}/speaker-work/cue.wav"
         },

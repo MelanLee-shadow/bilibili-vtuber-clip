@@ -701,7 +701,13 @@ def _validate_graph(
         "ass_sha256": speaker.get("output_ass_sha256"),
     }
     for artifact_key, speaker_value in speaker_hash_bindings.items():
-        if artifact_hashes.get(artifact_key) != speaker_value:
+        if _declared_digest(
+            artifact_hashes.get(artifact_key),
+            label=f"record {artifact_key}",
+        ) != _declared_digest(
+            speaker_value,
+            label=f"speaker {artifact_key}",
+        ):
             raise PackageRelocationError(
                 f"record/speaker: {artifact_key} binding differs"
             )

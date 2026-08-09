@@ -513,6 +513,7 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
         "review_ready",
         "review_ready_with_failures",
         "review_ready_retry_wait",
+        "publication_in_progress",
     }:
         raise DailyManifestError(
             f"batch status not reviewable: {batch_status}"

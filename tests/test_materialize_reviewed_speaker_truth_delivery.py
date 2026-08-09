@@ -203,6 +203,44 @@ def test_compiler_strips_notes_merges_and_renumbers_before_speaker_binding(
     }
 
 
+def test_compiler_keeps_sentence_comma_but_trims_routed_segment_prefix(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    truth = json.loads(fixture["truth_path"].read_text(encoding="utf-8"))
+    merged = truth["cues"][1]
+    merged["truth_segments"] = [
+        {"label": "连线", "text": "嘉宾说"},
+        {"label": "李豆沙", "text": "，主播答(跃起)"},
+    ]
+    merged["truth_text"] = "嘉宾说，主播答(跃起)"
+    fixture["truth_path"].write_text(
+        json.dumps(truth, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    automatic_srt = fixture["automatic_srt_path"]
+    automatic_srt.write_text(
+        automatic_srt.read_text(encoding="utf-8").replace(
+            "[连线] 嘉宾说 主播答",
+            "[连线] 嘉宾说，主播答",
+        ),
+        encoding="utf-8",
+    )
+    fixture["arbitration"]["automatic_labelled_srt_sha256"] = _sha256(
+        automatic_srt
+    )
+
+    result = compile_delivery(**fixture)
+
+    assert "嘉宾说，主播答" in result["baseline_srt"]
+    routed = result["speaker_override"]["overrides"][1]["segments"]
+    assert [segment["text"] for segment in routed] == ["嘉宾说", "主播答"]
+    transform = result["receipt"]["transformations"][1]
+    assert transform["removed_render_boundary_separators"] == [
+        {"segment_position": 2, "separator": "，"}
+    ]
+
+
 def test_compiler_requires_arbitration_for_every_unlabelled_truth_cue(
     tmp_path: Path,
 ) -> None:

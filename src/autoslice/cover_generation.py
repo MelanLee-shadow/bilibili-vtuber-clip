@@ -26,6 +26,7 @@ from src.autoslice.cover_punch_semantics import (
     cover_text_requires_punch_for_thumbnail,
     cover_thumbnail_lines_are_readable,
     extractive_punch_fragment_is_source_safe,
+    punch_fragment_whitespace_is_source_safe,
     validate_full_text_cover_contract,
     punch_line_em_width,
     review_cover_punch_semantics,
@@ -325,9 +326,13 @@ def _validated_cover_punch(value: object, cover_text: str) -> tuple[str, ...]:
             or "\n" in fragment
         ):
             return ()
-        if canon not in haystack or not extractive_punch_fragment_is_source_safe(
-            fragment,
-            cover_text,
+        if (
+            canon not in haystack
+            or not punch_fragment_whitespace_is_source_safe(fragment, cover_text)
+            or not extractive_punch_fragment_is_source_safe(
+                fragment,
+                cover_text,
+            )
         ):
             return ()
         if fragment.startswith(tuple(_COVER_CLOSING_PUNCT)) or fragment.endswith(
