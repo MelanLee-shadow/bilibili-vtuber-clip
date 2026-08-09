@@ -31,7 +31,7 @@ MAX_ACTIVE_MODULE_LINES = 2_000
 
 # 2026-07-31 冻结基线：20 项。全部是欠账，不是许可。
 FUNCTION_DEBT_LEDGER = {
-    ("scripts/audit_lidousha_review_package.py", "_audit_item_story_contract"): 316,
+    ("scripts/audit_lidousha_review_package.py", "_audit_item_story_contract"): 311,
     # 2026-08-02 +20：run_mode 白名单纳入 MANUAL_PRODUCE_REVIEW 且强制
     # manual_attestation 署名（手动产线包进审计闭环；Ivan 8/2 /goal 授权，
     # 测试 test_manual_review_manifest.py + 二轮真实测试实锤此缺口）。
@@ -117,7 +117,6 @@ MODULE_DEBT_LEDGER = {
     # 2026-08-02 +20：同上（manual run_mode 准入+署名门）。
     # 2026-08-08 +1：Ivan 8/8 真值法证 synthesis F2——候选级代词
     # 审计器加入包审计 policy fingerprint，防实现漂移而指纹不变。
-    "scripts/audit_lidousha_review_package.py": 2_024,
     # 2026-08-02 +6：简介第一行固定项目署名常量（Ivan 8/3 指令：默认带
     # 项目名+网址；OSS 同步为署名+env 频道行）。
     "scripts/authorized_upload.py": 2_935,

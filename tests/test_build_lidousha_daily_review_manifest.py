@@ -6,6 +6,7 @@ import pytest
 
 from scripts.build_lidousha_daily_review_manifest import (
     DailyManifestError,
+    _atomic_project_bytes,
     _sha256,
     _resolve_final_burn_artifacts,
     _resolve_final_cover,
@@ -46,6 +47,7 @@ def test_sync_declared_artifact_replaces_stale_package_copy(
     target.write_bytes(b"stale authority\n")
 
     _sync_declared_artifact(
+        package_root=target.parent,
         target=target,
         source=source,
         declared_sha256="sha256:" + _sha256(source),
@@ -67,6 +69,7 @@ def test_sync_declared_artifact_refuses_unbound_source_without_touching_target(
 
     with pytest.raises(DailyManifestError, match="chat authority sha drift"):
         _sync_declared_artifact(
+            package_root=target.parent,
             target=target,
             source=source,
             declared_sha256="sha256:" + "0" * 64,
@@ -74,6 +77,45 @@ def test_sync_declared_artifact_refuses_unbound_source_without_touching_target(
         )
 
     assert target.read_bytes() == b"previous package authority\n"
+
+
+def test_sync_declared_artifact_accepts_exact_package_when_parent_missing(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "candidate" / "chat.json"
+    target = tmp_path / "candidate" / "package" / "chat.json"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"portable exact authority\n")
+
+    _sync_declared_artifact(
+        package_root=target.parent,
+        target=target,
+        source=source,
+        declared_sha256="sha256:" + _sha256(target),
+        label="chat authority",
+    )
+
+    assert target.read_bytes() == b"portable exact authority\n"
+
+
+def test_sync_declared_artifact_rejects_package_symlink(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "candidate" / "chat.json"
+    target = tmp_path / "candidate" / "package" / "chat.json"
+    source.parent.mkdir()
+    target.parent.mkdir()
+    source.write_bytes(b"authority\n")
+    target.symlink_to(source)
+
+    with pytest.raises(DailyManifestError, match="package path contains a symlink"):
+        _sync_declared_artifact(
+            package_root=target.parent,
+            target=target,
+            source=source,
+            declared_sha256="sha256:" + _sha256(source),
+            label="chat authority",
+        )
 
 
 def test_resolve_final_cover_uses_exact_state_and_record_binding(
@@ -547,3 +589,138 @@ def test_build_speaker_finalized_package_uses_speaker_artifact_family(
     assert item["speaker_srt_sha256"] == _sha256(
         package_root / f"{stem}.speaker-final.srt"
     )
+
+
+def test_build_uses_exact_packaged_title_mask_when_source_path_is_missing(
+    tmp_path: Path,
+) -> None:
+    package_root, state_path, deployed_commit_file, candidate_id = (
+        _build_daily_talk_package(tmp_path, speaker_finalized=True)
+    )
+    publish_path = package_root / f"{candidate_id}.recut.publish.json"
+    publish = json.loads(publish_path.read_text(encoding="utf-8"))
+    pixels = publish["cover_generation"]["rendered_text_pixels"]
+    source = Path(pixels["mask_path"])
+    packaged = package_root / "covers_ai_original" / source.name
+    packaged.parent.mkdir(exist_ok=True)
+    packaged.write_bytes(source.read_bytes())
+    source.unlink()
+
+    manifest = build(package_root, state_path, deployed_commit_file, candidate_id)
+
+    item = manifest["items"][0]
+    assert item["cover_title_mask"] == f"covers_ai_original/{packaged.name}"
+    assert _sha256(package_root / item["cover_title_mask"]) == str(
+        pixels["mask_sha256"]
+    ).removeprefix("sha256:")
+
+
+def test_build_rejects_cover_parent_symlink_without_outside_write(
+    tmp_path: Path,
+) -> None:
+    package_root, state_path, deployed_commit_file, candidate_id = (
+        _build_daily_talk_package(tmp_path, speaker_finalized=True)
+    )
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    canary = outside / "pre-overlay.png"
+    canary.write_bytes(b"outside canary")
+    (package_root / "covers_ai_original").symlink_to(
+        outside, target_is_directory=True
+    )
+
+    with pytest.raises(DailyManifestError, match="contains a symlink"):
+        build(package_root, state_path, deployed_commit_file, candidate_id)
+
+    assert canary.read_bytes() == b"outside canary"
+    assert not (outside / "background.png").exists()
+    assert not (outside / "mask.png").exists()
+
+
+def test_build_rejects_title_mask_symlink_without_outside_write(
+    tmp_path: Path,
+) -> None:
+    package_root, state_path, deployed_commit_file, candidate_id = (
+        _build_daily_talk_package(tmp_path, speaker_finalized=True)
+    )
+    publish = json.loads(
+        (package_root / f"{candidate_id}.recut.publish.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    generation = publish["cover_generation"]
+    portable = package_root / "covers_ai_original"
+    portable.mkdir()
+    for key in ("pre_overlay_path", "ai_background"):
+        source = Path(generation[key])
+        (portable / source.name).write_bytes(source.read_bytes())
+    outside = tmp_path / "outside-mask.png"
+    outside.write_bytes(b"outside mask canary")
+    mask_name = Path(generation["rendered_text_pixels"]["mask_path"]).name
+    (portable / mask_name).symlink_to(outside)
+
+    with pytest.raises(DailyManifestError, match="contains a symlink"):
+        build(package_root, state_path, deployed_commit_file, candidate_id)
+
+    assert outside.read_bytes() == b"outside mask canary"
+
+
+def test_build_rejects_same_stem_target_symlink_without_outside_write(
+    tmp_path: Path,
+) -> None:
+    package_root, state_path, deployed_commit_file, candidate_id = (
+        _build_daily_talk_package(tmp_path, speaker_finalized=True)
+    )
+    upload_stem = f"{candidate_id}.recut.burned-final-speaker"
+    outside = tmp_path / "outside-record.json"
+    outside.write_bytes(b"outside record canary")
+    (package_root / f"{upload_stem}.record.json").symlink_to(outside)
+
+    with pytest.raises(DailyManifestError, match="contains a symlink"):
+        build(package_root, state_path, deployed_commit_file, candidate_id)
+
+    assert outside.read_bytes() == b"outside record canary"
+
+
+def test_candidate_id_traversal_is_rejected_before_package_write(
+    tmp_path: Path,
+) -> None:
+    package_root = tmp_path / "replacement_recuts"
+    package_root.mkdir()
+    outside = tmp_path / "escape.chat-authority.json"
+
+    with pytest.raises(DailyManifestError, match="safe path component"):
+        _sync_record_bound_candidate_artifacts(
+            package_root=package_root,
+            candidate_id="../escape",
+            record_doc={"artifact_hashes": {}},
+        )
+
+    assert not outside.exists()
+
+
+def test_atomic_projection_failure_preserves_previous_package_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package_root = tmp_path / "replacement_recuts"
+    package_root.mkdir()
+    target = package_root / "authority.json"
+    target.write_bytes(b"previous authority")
+
+    def fail_replace(_source: object, _target: object) -> None:
+        raise OSError("synthetic replace failure")
+
+    monkeypatch.setattr(
+        "scripts.build_lidousha_daily_review_manifest.os.replace",
+        fail_replace,
+    )
+    with pytest.raises(DailyManifestError, match="atomic package projection failed"):
+        _atomic_project_bytes(
+            package_root=package_root,
+            relative=target.name,
+            payload=b"new authority",
+            label="test authority",
+        )
+
+    assert target.read_bytes() == b"previous authority"
+    assert list(package_root.glob(".authority.json.tmp-*")) == []

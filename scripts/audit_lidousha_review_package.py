@@ -67,6 +67,10 @@ from src.autoslice.review_package_boundary_contract import (  # noqa: E402
 from src.autoslice.review_package_owner_audit import (  # noqa: E402
     audit_source_truth_owner_attestations,
 )
+from src.autoslice.review_package_portable_evidence import (  # noqa: E402
+    portable_item_artifact_path as _portable_item_artifact_path,
+    resolve_review_item_evidence,
+)
 from src.autoslice.review_package_title_audit import (  # noqa: E402
     audit_recovery_publication_surfaces,
     recovery_publication_authority_contract,
@@ -661,42 +665,6 @@ def _cover_artifact_path(
     return item_path if item_path is not None else generation_path
 
 
-def _portable_item_artifact_path(
-    root: Path,
-    item: Mapping[str, Any],
-    key: str,
-) -> Path | None:
-    """Resolve a current-package artifact without trusting host paths."""
-
-    value = item.get(key)
-    if not isinstance(value, str) or not value:
-        return None
-    raw = Path(value)
-    if raw.is_absolute():
-        return None
-    resolved_root = root.resolve()
-    unresolved = root / raw
-    # ``Path.resolve()`` follows the terminal symlink, after which
-    # ``candidate.is_symlink()`` can no longer detect that the manifest named
-    # a link.  Current review packages must carry their own regular bytes, not
-    # aliases to host state.  Reject every symlink component before resolving
-    # containment, including a final link whose target happens to stay inside
-    # the package.
-    cursor = root
-    for part in raw.parts:
-        cursor = cursor / part
-        if cursor.is_symlink():
-            return None
-    candidate = unresolved.resolve()
-    try:
-        candidate.relative_to(resolved_root)
-    except ValueError:
-        return None
-    if not candidate.is_file():
-        return None
-    return candidate
-
-
 def _artifact_matches_sha256(path: Path | None, expected: object) -> bool:
     if path is None or not path.is_file() or not _is_sha256(expected):
         return False
@@ -1057,6 +1025,7 @@ def _audit_item_story_contract(
     story_contract: object,
     story_contract_required: bool,
     is_song: bool,
+    clip_context_path: Path | None = None,
 ) -> None:
     """Audit all story/context/boundary bindings for one manifest item."""
 
@@ -1085,12 +1054,6 @@ def _audit_item_story_contract(
             detail=str(story_contract.get("schema_version")),
         )
     clip_binding = story_contract.get("clip_context_binding")
-    clip_context_path = _resolve(
-        root,
-        item.get("clip_context_json")
-        or item.get("clip_context")
-        or record.get("clip_context_path"),
-    )
     if story_contract_required and not isinstance(clip_binding, dict):
         _add_issue(
             issues,
@@ -1832,11 +1795,10 @@ def audit_package(root: str | Path) -> dict[str, Any]:
         publish_title = _read_publish_title(publish_path)
         if title_txt and publish_title and title_txt != publish_title:
             _add_issue(issues, "PUBLISH_TITLE_TXT_MISMATCH", stem=stem, detail=f"title_txt={title_txt!r}; publish.title={publish_title!r}")
-
         cover_generation = item.get("cover_generation")
-        record_path = _resolve(root, item.get("record") or item.get("record_json"))
+        record_path, chat_authority_path, clip_context_path, path_issues = resolve_review_item_evidence(root=root, item=item, portable_required=story_contract_required and not is_song, stem=stem, manifest_path=manifest_path)
+        issues.extend(path_issues)
         record = _load_json(record_path) if record_path else {}
-        chat_authority_path = _resolve(root, item.get("chat_authority"))
         chat_authority = (
             _load_json(chat_authority_path) if chat_authority_path else {}
         )
@@ -1968,6 +1930,7 @@ def audit_package(root: str | Path) -> dict[str, Any]:
             issues=issues,
             stem=stem,
             subtitle_path=subtitle_path,
+            clip_context_path=clip_context_path,
             chat_authority=chat_authority,
             publish_path=publish_path,
             title_txt_path=title_txt_path,

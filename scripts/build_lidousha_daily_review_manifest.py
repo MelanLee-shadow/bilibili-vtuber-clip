@@ -24,7 +24,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import re
+import stat
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -56,6 +60,152 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _sha256_bytes(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _safe_component(value: object, *, label: str) -> str:
+    name = str(value or "")
+    if (
+        not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name)
+        or name in {".", ".."}
+        or Path(name).name != name
+    ):
+        raise DailyManifestError(f"{label} is not one safe path component: {name!r}")
+    return name
+
+
+def _package_path(
+    package_root: Path,
+    relative: str | Path,
+    *,
+    label: str,
+    create_parents: bool = False,
+) -> Path:
+    """Resolve one contained package path without following any symlink."""
+
+    root = package_root.resolve(strict=True)
+    raw = Path(relative)
+    if raw.is_absolute() or not raw.parts or any(
+        part in {"", ".", ".."} for part in raw.parts
+    ):
+        raise DailyManifestError(f"{label} is not a safe package-relative path: {raw}")
+    cursor = root
+    for index, part in enumerate(raw.parts):
+        cursor = cursor / part
+        if cursor.is_symlink():
+            raise DailyManifestError(f"{label} package path contains a symlink: {cursor}")
+        if index < len(raw.parts) - 1:
+            if cursor.exists() and not cursor.is_dir():
+                raise DailyManifestError(
+                    f"{label} package parent is not a directory: {cursor}"
+                )
+            if create_parents and not cursor.exists():
+                cursor.mkdir()
+                if cursor.is_symlink() or not cursor.is_dir():
+                    raise DailyManifestError(
+                        f"{label} package parent creation was unsafe: {cursor}"
+                    )
+    try:
+        cursor.resolve(strict=False).relative_to(root)
+    except ValueError as exc:
+        raise DailyManifestError(f"{label} escapes package root: {raw}") from exc
+    return cursor
+
+
+def _regular_file(path: Path) -> bool:
+    try:
+        return stat.S_ISREG(path.stat(follow_symlinks=False).st_mode)
+    except (FileNotFoundError, OSError):
+        return False
+
+
+def _package_regular_file(
+    package_root: Path, relative: str | Path, *, label: str
+) -> Path | None:
+    path = _package_path(package_root, relative, label=label)
+    return path if _regular_file(path) else None
+
+
+def _read_regular_source(path: Path, *, label: str) -> bytes:
+    """Read one regular source after rejecting every existing symlink component."""
+
+    absolute = path.absolute()
+    cursor = Path(absolute.anchor)
+    for part in absolute.parts[1:]:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            raise DailyManifestError(f"{label} source path contains a symlink: {cursor}")
+    if not _regular_file(absolute):
+        raise DailyManifestError(f"{label} source missing or invalid: {path}")
+    try:
+        return absolute.read_bytes()
+    except OSError as exc:
+        raise DailyManifestError(f"{label} source unreadable: {path}") from exc
+
+
+def _fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _atomic_project_bytes(
+    *,
+    package_root: Path,
+    relative: str | Path,
+    payload: bytes,
+    label: str,
+) -> Path:
+    """Atomically materialize exact bytes at a safe package-local path."""
+
+    target = _package_path(
+        package_root,
+        relative,
+        label=label,
+        create_parents=True,
+    )
+    if target.exists() and not _regular_file(target):
+        raise DailyManifestError(f"{label} package target is not a regular file: {target}")
+    expected = _sha256_bytes(payload)
+    if _regular_file(target) and _sha256(target) == expected:
+        return target
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=target.parent,
+        prefix=f".{target.name}.tmp-",
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if _sha256(temporary) != expected:
+            raise DailyManifestError(f"{label} temporary projection hash drift")
+        # Recheck all components immediately before replacement.
+        target = _package_path(package_root, relative, label=label)
+        if target.exists() and not _regular_file(target):
+            raise DailyManifestError(
+                f"{label} package target changed to a non-regular file"
+            )
+        os.replace(temporary, target)
+        _fsync_directory(target.parent)
+    except OSError as exc:
+        raise DailyManifestError(f"{label} atomic package projection failed") from exc
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+    verified = _package_regular_file(package_root, relative, label=label)
+    if verified is None or _sha256(verified) != expected:
+        raise DailyManifestError(f"{label} package projection verification failed")
+    return verified
 
 
 def _story_transcript(path: Path) -> str:
@@ -174,6 +324,7 @@ def _lane_manifest_contract_fields(
 
 def _sync_declared_artifact(
     *,
+    package_root: Path,
     target: Path,
     source: Path,
     declared_sha256: str,
@@ -181,21 +332,36 @@ def _sync_declared_artifact(
 ) -> None:
     """Copy the record-bound candidate artifact into the portable package.
 
-    A previous package assembly may have left an older file at ``target``.
-    Presence alone is therefore not proof that the package carries the bytes
-    declared by the current record.  Validate the candidate-root source first,
-    then replace a missing or stale package copy deterministically.
+    A relocated package may no longer have its candidate-root source.  Exact
+    regular bytes already present at ``target`` are therefore authoritative;
+    otherwise repair from an exact regular source.  Neither path may be a
+    symlink and a failed repair never mutates the target.
     """
     expected = str(declared_sha256 or "").removeprefix("sha256:")
-    if not source.is_file():
-        raise DailyManifestError(f"{label} missing: {source}")
-    actual = _sha256(source)
-    if not expected or actual != expected:
+    if not re.fullmatch(r"[0-9a-f]{64}", expected):
+        raise DailyManifestError(f"{label} lacks a declared SHA-256")
+    root = package_root.resolve(strict=True)
+    try:
+        relative = target.absolute().relative_to(root)
+    except ValueError as exc:
+        raise DailyManifestError(f"{label} package target escapes root: {target}") from exc
+    packaged = _package_regular_file(root, relative, label=label)
+    if packaged is not None and _sha256(packaged) == expected:
+        return
+    payload = _read_regular_source(source, label=label)
+    actual = _sha256_bytes(payload)
+    if actual != expected:
         raise DailyManifestError(
             f"{label} sha drift: record={expected} actual={actual}"
         )
-    if not target.is_file() or _sha256(target) != actual:
-        target.write_bytes(source.read_bytes())
+    projected = _atomic_project_bytes(
+        package_root=root,
+        relative=relative,
+        payload=payload,
+        label=label,
+    )
+    if _sha256(projected) != expected:
+        raise DailyManifestError(f"{label} package repair verification failed")
 
 
 def _resolve_final_cover(
@@ -227,11 +393,8 @@ def _resolve_final_cover(
             f"state={Path(pick_path).name}:{pick_expected} "
             f"record={Path(declared).name}:{expected}"
         )
-    if pick_file.is_symlink() or not pick_file.is_file():
-        raise DailyManifestError(
-            f"state final cover missing or invalid: {pick_file}"
-        )
-    pick_actual = _sha256(pick_file)
+    pick_payload = _read_regular_source(pick_file, label="state final cover")
+    pick_actual = _sha256_bytes(pick_payload)
     if pick_actual != pick_expected:
         raise DailyManifestError(
             "state final cover sha drift: "
@@ -242,23 +405,27 @@ def _resolve_final_cover(
     # record's package-internal route filename.  Path basenames are therefore
     # not identity; both surfaces independently matching the same frozen hash
     # is the actual binding.
-    basename = Path(declared).name
+    basename = _safe_component(Path(declared).name, label="final cover basename")
     relative = f"covers/{basename}"
-    final_cover = package_root / relative
     # Cover-only repair commits the new bytes to the title-named delivery
     # alias after the original replacement_recuts package was frozen.  The
     # package builder is the portable assembly boundary, so materialize the
     # publish/state-bound bytes under the generation-declared basename instead
     # of requiring a stale package to have predicted a later repair path.
-    if not final_cover.is_file() or _sha256(final_cover) != expected:
-        final_cover.parent.mkdir(parents=True, exist_ok=True)
-        final_cover.write_bytes(pick_file.read_bytes())
+    final_cover = _atomic_project_bytes(
+        package_root=package_root,
+        relative=relative,
+        payload=pick_payload,
+        label="final cover",
+    )
+    if _sha256(final_cover) != expected:
+        raise DailyManifestError("final cover package projection hash drift")
     return relative
 
 
 def _need_package_file(package_root: Path, name: str) -> Path:
-    path = package_root / name
-    if not path.is_file():
+    path = _package_regular_file(package_root, name, label="required artifact")
+    if path is None:
         raise DailyManifestError(f"required package file missing: {name}")
     return path
 
@@ -306,6 +473,7 @@ def _sync_record_bound_candidate_artifacts(
     record_doc: dict,
 ) -> dict[str, str]:
     """Make candidate-root evidence portable under its record hashes."""
+    candidate_id = _safe_component(candidate_id, label="candidate_id")
     artifact_hashes = record_doc.get("artifact_hashes") or {}
     artifacts = {
         "chat_authority": (
@@ -320,6 +488,7 @@ def _sync_record_bound_candidate_artifacts(
     resolved: dict[str, str] = {}
     for label, (name, declared_sha256) in artifacts.items():
         _sync_declared_artifact(
+            package_root=package_root,
             target=package_root / name,
             source=package_root.parent / name,
             declared_sha256=str(declared_sha256 or ""),
@@ -331,6 +500,7 @@ def _sync_record_bound_candidate_artifacts(
 
 def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
           candidate_id: str) -> dict:
+    candidate_id = _safe_component(candidate_id, label="candidate_id")
     package_root = package_root.resolve()
     if not package_root.is_dir():
         raise DailyManifestError(f"package root missing: {package_root}")
@@ -362,8 +532,10 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
 
     stem = f"{candidate_id}.recut"
     def need(name: str) -> Path:
-        path = package_root / name
-        if not path.is_file():
+        path = _package_regular_file(
+            package_root, name, label="required package artifact"
+        )
+        if path is None:
             raise DailyManifestError(f"required package file missing: {name}")
         return path
 
@@ -403,9 +575,12 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
     )
     chat_name = portable_evidence["chat_authority"]
     clip_context_name = portable_evidence["clip_context"]
-    chat_authority_doc = json.loads(
-        (package_root / chat_name).read_text(encoding="utf-8")
+    chat_path = _package_regular_file(
+        package_root, chat_name, label="chat authority"
     )
+    if chat_path is None:
+        raise DailyManifestError("portable chat authority is missing")
+    chat_authority_doc = json.loads(chat_path.read_text(encoding="utf-8"))
     # AUTOSLICE_SPEAKER_MODE=auto 翻转（2026-08-07）后，speaker-finalized
     # 包不再产出旧 sapphire72 统一样式烧录；命名解析必须按同一份自证信号
     # 分岔，镜像 review_package_ass_audit.py 已用的判定，两条审计链才不会
@@ -435,25 +610,34 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
             raise DailyManifestError(
                 f"cover generation lacks {generation_key}/{sha_key}"
             )
-        basename = Path(declared).name
+        basename = _safe_component(
+            Path(declared).name, label=f"{generation_key} basename"
+        )
         for parent in ("covers", "covers_ai_original", "cover_refs"):
-            candidate_path = package_root / parent / basename
-            if candidate_path.is_file() and _sha256(candidate_path) == expected:
+            relative = f"{parent}/{basename}"
+            candidate_path = _package_regular_file(
+                package_root, relative, label=generation_key
+            )
+            if candidate_path is not None and _sha256(candidate_path) == expected:
                 return f"{parent}/{basename}"
         source = Path(declared)
-        if source.is_symlink() or not source.is_file():
-            raise DailyManifestError(
-                f"cover artifact source missing or invalid: {source}"
-            )
-        actual = _sha256(source)
+        payload = _read_regular_source(source, label=f"cover artifact {generation_key}")
+        actual = _sha256_bytes(payload)
         if actual != expected:
             raise DailyManifestError(
                 f"cover artifact source sha drift: "
                 f"{generation_key}={expected} actual={actual}"
             )
-        portable = package_root / "covers_ai_original" / basename
-        portable.parent.mkdir(parents=True, exist_ok=True)
-        portable.write_bytes(source.read_bytes())
+        portable = _atomic_project_bytes(
+            package_root=package_root,
+            relative=f"covers_ai_original/{basename}",
+            payload=payload,
+            label=f"cover artifact {generation_key}",
+        )
+        if _sha256(portable) != expected:
+            raise DailyManifestError(
+                f"cover artifact package hash drift: {generation_key}"
+            )
         return f"covers_ai_original/{basename}"
 
     cover_pre_overlay = cover_artifact("pre_overlay_path", "pre_overlay_sha256")
@@ -472,22 +656,30 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
             "cover generation lacks rendered text mask path/hash"
         )
     mask_source = Path(mask_declared)
-    if mask_source.is_symlink() or not mask_source.is_file():
-        raise DailyManifestError(
-            f"cover title mask source missing or invalid: {mask_source}"
-        )
-    mask_actual = _sha256(mask_source)
-    if mask_actual != mask_expected:
-        raise DailyManifestError(
-            f"cover title mask source sha drift: "
-            f"record={mask_expected} actual={mask_actual}"
-        )
-    mask_rel = str(
-        Path(cover_pre_overlay).parent / mask_source.name
+    mask_name = _safe_component(mask_source.name, label="cover title mask basename")
+    mask_rel = str(Path(cover_pre_overlay).parent / mask_name)
+    mask_path = _package_regular_file(
+        package_root, mask_rel, label="cover title mask"
     )
-    mask_path = package_root / mask_rel
-    if not mask_path.is_file() or _sha256(mask_path) != mask_expected:
-        mask_path.write_bytes(mask_source.read_bytes())
+    package_matches = bool(mask_path is not None and _sha256(mask_path) == mask_expected)
+    if not package_matches:
+        mask_payload = _read_regular_source(
+            mask_source, label="cover title mask"
+        )
+        mask_actual = _sha256_bytes(mask_payload)
+        if mask_actual != mask_expected:
+            raise DailyManifestError(
+                f"cover title mask source sha drift: "
+                f"record={mask_expected} actual={mask_actual}"
+            )
+        mask_path = _atomic_project_bytes(
+            package_root=package_root,
+            relative=mask_rel,
+            payload=mask_payload,
+            label="cover title mask",
+        )
+        if _sha256(mask_path) != mask_expected:
+            raise DailyManifestError("cover title mask repair verification failed")
 
     # authorized_upload v3 的 same-stem 合同：video stem X 要求包根直下
     # X.record.json / X.srt / X.cover.png。装配为审定字节的副本（字节级
@@ -499,10 +691,13 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
         f"{upload_stem}.cover.png": package_root / cover_rel,
     }
     for name, source_path in upload_family.items():
-        target = package_root / name
         payload = source_path.read_bytes()
-        if not (target.is_file() and target.read_bytes() == payload):
-            target.write_bytes(payload)
+        _atomic_project_bytes(
+            package_root=package_root,
+            relative=name,
+            payload=payload,
+            label="same-stem upload artifact",
+        )
 
     item = {
         "id": candidate_id,

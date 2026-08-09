@@ -1686,6 +1686,110 @@ def test_current_talk_still_requires_chat_authority(
     }
 
 
+def _current_talk_portable_evidence_package(
+    tmp_path: Path,
+) -> tuple[Path, dict[str, Path]]:
+    root = tmp_path / "current-talk-portable-evidence"
+    evidence = root / "evidence"
+    evidence.mkdir(parents=True)
+    paths = {
+        "record": evidence / "candidate.record-evidence.json",
+        "chat_authority": evidence / "candidate.chat-evidence.json",
+        "clip_context": evidence / "candidate.context-evidence.json",
+    }
+    for path in paths.values():
+        path.write_text("{}\n", encoding="utf-8")
+    (root / "review_manifest.json").write_text(
+        json.dumps(
+            {
+                "date": "2026-08-09",
+                "story_contract_required": True,
+                "run_mode": "PRODUCTION_REVIEW",
+                "upload_allowed": False,
+                "items": [
+                    {
+                        "stem": "current-talk-portable-evidence",
+                        "classification": "Talk",
+                        **{
+                            key: path.relative_to(root).as_posix()
+                            for key, path in paths.items()
+                        },
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return root, paths
+
+
+_MANDATORY_PORTABLE_ITEM_PATH_CODES = {
+    "record": "RECORD_PATH_MISSING_OR_NONPORTABLE",
+    "chat_authority": "CHAT_AUTHORITY_PATH_MISSING_OR_NONPORTABLE",
+    "clip_context": "CLIP_CONTEXT_PATH_MISSING_OR_NONPORTABLE",
+}
+
+
+@pytest.mark.parametrize(
+    ("item_key", "issue_code"),
+    tuple(_MANDATORY_PORTABLE_ITEM_PATH_CODES.items()),
+)
+@pytest.mark.parametrize(
+    "invalid_shape",
+    ("parent_traversal", "terminal_symlink", "ancestor_symlink"),
+)
+def test_current_talk_rejects_nonportable_mandatory_item_evidence(
+    tmp_path: Path,
+    item_key: str,
+    issue_code: str,
+    invalid_shape: str,
+) -> None:
+    root, paths = _current_talk_portable_evidence_package(tmp_path)
+    manifest_path = root / "review_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    if invalid_shape == "parent_traversal":
+        outside = tmp_path / f"outside-{item_key}.json"
+        outside.write_text(
+            paths[item_key].read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        manifest["items"][0][item_key] = f"../{outside.name}"
+    elif invalid_shape == "terminal_symlink":
+        link = root / f"linked-{item_key}.json"
+        link.symlink_to(paths[item_key])
+        manifest["items"][0][item_key] = link.relative_to(root).as_posix()
+    else:
+        linked_parent = root / f"linked-{item_key}-parent"
+        linked_parent.symlink_to(paths[item_key].parent, target_is_directory=True)
+        manifest["items"][0][item_key] = (
+            linked_parent.relative_to(root) / paths[item_key].name
+        ).as_posix()
+
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+
+    result = audit_package(root)
+
+    assert issue_code in {issue["code"] for issue in result["issues"]}
+
+
+def test_current_talk_audited_inputs_bind_accepted_mandatory_evidence(
+    tmp_path: Path,
+) -> None:
+    root, paths = _current_talk_portable_evidence_package(tmp_path)
+
+    result = audit_package(root)
+
+    codes = {issue["code"] for issue in result["issues"]}
+    assert not codes.intersection(_MANDATORY_PORTABLE_ITEM_PATH_CODES.values())
+    audited_paths = {row["path"] for row in result["audited_inputs"]}
+    assert {
+        path.relative_to(root).as_posix() for path in paths.values()
+    } <= audited_paths
+
+
 def test_audit_flags_ass_visual_line_count_and_length(tmp_path: Path):
     root = tmp_path / "pkg"
     stem = "138s_semantic_22966160_2026-06-29-22-35-01"
@@ -3025,6 +3129,7 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
                             "ass_sha256": speaker_ass_sha256,
                             "record": record.name,
                             "chat_authority": chat_authority.name,
+                            "clip_context": clip_context_path.name,
                             "cover": cover.relative_to(root).as_posix(),
                             "cover_title_mask": Path(
                                 rendered_text_pixels["mask_path"]
