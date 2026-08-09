@@ -2,7 +2,47 @@
 
 Updated: 2026-08-09 by Claude(8/9 接力会话,orchestrator)。8/7 及 7/31 以下旧节仅存历史。
 
-## ⭐⭐ 2026-08-09 会话进行中实况(最新;下面的 ⭐ 节大部分已执行完毕)
+## ⭐⭐⭐ 2026-08-09 夜班终局实况(最新权威;Ivan 就寝令=自主调度到修复+上传全闭环)
+
+**部署位**:free=`f2961b4`(2026-08-09T10:03:25Z)=**四路 Codex union**:
+F13 事件场配额(segment_scene_context+talk_quota_policy,事件 15/6-15 席 ≥85
+[integrator 类比假设待 Ivan 否决]+同日杂谈独立 5)/F14 竖屏 solo 先验
+(speaker_solo_prior,强反证 veto+横屏金丝雀)/F15 盲证人(blind_pinyin 协议,
+候选文本不再入证人 prompt)/F18 推迟复审+史收敛见证门/D 的置换配套
+(final_human_review 冻结封面窄例外+publication_reconciliation 规范日期)/B 的
+真值交付 lane(reviewed_speaker_baseline 模块+冻结边界 source-only authority+
+manifest 可移植)。union 全量 **3342 绿**。
+
+**今晚已发布/已修(全部入 registry+证据入库)**:
+- **BV18Gu16NEcX**(213135 第一次3D Live)published VERIFIED_PUBLIC;后按 Ivan
+  手令线上改标题(歌姬入题,manual_title_overrides 首条)+tag 加战斗吧歌姬,
+  CID 未动。证据 reports/authorized_uploads/2026-08-09-88-batch-provisional/。
+- **BV1Bau16nEyq**(230125_960 穿越屏幕)published;后按 Ivan 紧急令完成
+  **字幕歌名同 BV 置换**(LoveLive!→ラブコード×3,CID→40746484284,
+  VERIFIED_FRESH_LIVE,PCM 逐位等,Codex-D 1013 剧本全链)。证据
+  reports/authorized_uploads/2026-08-09-960-lovecode-source/。
+- 210131(彩排照)QC 双钩子拦下未传;其封面重产首跑 5400s 超时 crash,
+  等 runner 按 typed 规则重试(新代码下)。
+
+**三起运行时事故全已处置+固化**(memory: free-runner-state-writeback-hazards):
+①07:21 tick 90min 陈旧写回抹掉带外 state 手术(published 恢复/aid)——已用
+publication_reconciliation 正规通道重放归位(双条 VERIFIED_PUBLIC,aid 以
+live 为准 213135=117064283067538/960=117064333264829);带外手术必持 runner.lock。
+②Codex-B 09:43 私自 deploy 其分支顶掉波部署——已 rebase 收编其 4 commit 再
+union 重部署;**free 部署权唯一归 integrator**(通知 3 已下,worker 任务书今后
+必写禁 deploy)。③deploy 自带 DISABLED+等锁停拍,手动持 runner.lock 会自锁死。
+
+**在飞/待收**:
+- 4 条单人误拒件已 revive(fix-commit 标 ee38652,实际生效代=f2961b4),
+  等 tick 重产(F14 应判 solo→all-host 交付)→ review_ready → 权宜上传。
+- F13 事件场 ≥85 新席位等 tick selection 自行准入(再见拉拉等;注意"穿越屏幕
+  86.8 候补"=已发布件同窗,勿重计)。
+- Codex-B(wsl)快车道两条 200130 仍在产(用它的 reviewed_speaker_baseline
+  lane 消费 Ivan A/B 真值);产完走链上传;之后 8/7 真善美/换身份收官。
+- 新 F 队列:F19 歌名歌词语义验证(Ivan 逐字令在 synthesis)+歌姬 tag/标题
+  流水线化+runner state CAS(丢失更新根修)+cover QC 工具已收编 repo。
+
+## ⭐⭐ 2026-08-09 会话进行中实况(已被上节取代,仅存过程)
 
 **已完成(证据全入库)**:队列1 收割=6 份真值工件 e9364a9(pristine 归档
 ~/Project/vtuber-slice-forensics/2026-08-08-pristine/ 50MB/5722件;收割器扩展:
