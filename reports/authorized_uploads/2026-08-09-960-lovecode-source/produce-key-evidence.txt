@@ -1,0 +1,36 @@
+COMMAND
+/usr/bin/python3 scripts/produce_slice_package.py --spec /opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/out/2026-08-08/spec_auto_230125_960_1072.json --ssh-host localhost --speaker-mode auto --reuse-cover
+
+EXIT
+PRODUCE_EXIT=0 elapsed=1282s
+
+PRODUCER SUMMARY
+candidate_id=auto_230125_960_1072
+final_end_ms=122040
+duration_ms=112320
+closure_sentence=所以才会有再一次啊
+boundary_verdict=ok_sentence_boundary_cut
+red_flags=[]
+boundary_repairs=[]
+cover_status=REUSED_COVER
+speaker_status=READY
+redelivery_baseline_status=APPLIED
+
+DISCLOSED UPSTREAM EVENT
+draft_cue_count=70
+refined_cue_count=69
+missing_cue_indexes=["14"]
+missing_fraction=0.014285714285714285
+status=SPARSE_REFINED_CUES_FILLED_FROM_DRAFT
+
+FINAL REDELIVERY CLOSURE
+status=APPLIED
+application_strategy=exact_reviewed_interval_replay
+owned_interval_count=48
+final_owner_verified_count=48
+baseline_sha256=73fbf084dbad349ca90be073711f6da31738f9617ee04e702ed7ac2389149037
+output_sha256=73fbf084dbad349ca90be073711f6da31738f9617ee04e702ed7ac2389149037
+conclusion=SPARSE_SELF_HEAL_OCCURRED_UPSTREAM_BEFORE_EXACT_REPLAY; FINAL_48_OWNED_INTERVALS_AND_OUTPUT_ARE_BYTE_BOUND_TO_REVIEWED_BASELINE
+
+Full producer log: logs/produce-r2.log
+Machine evidence: verification/self-heal-evidence.json

@@ -1,0 +1,62 @@
+{
+  "audio": {
+    "decoded_pcm_sha256_equal_to_published_predecessor": true,
+    "new": "SHA256=49e4d37e6771b72379fe615f473c0dad64bbbfe17fd89d18ac26c4831ce7cc11",
+    "old": "SHA256=49e4d37e6771b72379fe615f473c0dad64bbbfe17fd89d18ac26c4831ce7cc11"
+  },
+  "candidate_id": "auto_230125_960_1072",
+  "contact_sheet": {
+    "inspection": "PASS_BY_CODEX_ROOT_COARSE_FULL_CLIP_VISUAL_SCAN",
+    "path": "/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/verification/full-video-contact-sheet.png",
+    "sha256": "0dcc93dec3c217778d1aa8d5c87aa3ef8c7964539405d82f75384f8be3f3b4a5"
+  },
+  "decode": {
+    "all_streams_to_eof_rc": 0,
+    "log_path": "/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/verification/full-decode.log",
+    "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "format": {
+    "audio": {
+      "channels": 2,
+      "codec": "aac",
+      "sample_rate": "48000"
+    },
+    "duration_seconds": 118.553971,
+    "size_bytes": 13108987,
+    "video": {
+      "codec": "h264",
+      "fps": "30/1",
+      "height": 1080,
+      "width": 1920
+    }
+  },
+  "frames": [
+    {
+      "observed_text": "[李豆沙] 嗯，ラブコード的那首歌呢",
+      "path": "/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/verification/frame-lovecode-01.png",
+      "sha256": "42fe13743af160ecc10ceb49c3be2b3be76c2a37c7361b5f7c6fb12bb38eae9f",
+      "video_time_seconds": 7.5,
+      "visual_status": "PASS_BY_CODEX_ROOT_INSPECTION"
+    },
+    {
+      "observed_text": "[李豆沙] 然后在ラブコード的前奏的时候",
+      "path": "/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/verification/frame-lovecode-02.png",
+      "sha256": "b36e1111983b4832237d89a6dfc01354184488dee95721ef00bbd61b01ec321b",
+      "video_time_seconds": 20.5,
+      "visual_status": "PASS_BY_CODEX_ROOT_INSPECTION"
+    },
+    {
+      "observed_text": "[李豆沙] 呃，ラブコード的后面就是和大家合跳了",
+      "path": "/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/verification/frame-lovecode-03.png",
+      "sha256": "cacb37f9046d32d3f9dae46beb438137d5742967b95e83ee555a6e1b81463608",
+      "video_time_seconds": 80.5,
+      "visual_status": "PASS_BY_CODEX_ROOT_INSPECTION"
+    }
+  ],
+  "schema_version": "lovecode-media-validation.v1",
+  "status": "PASS",
+  "video": {
+    "path": "/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/repo/lidousha/2026-08-08/小李解释偶像曲里那句“请感受穿越屏幕.mp4",
+    "sha256": "8ae72e64c5d5a1a16c8f7ca8df510a07fb5ac05ecb2752bd85d9a35197534245"
+  }
+}

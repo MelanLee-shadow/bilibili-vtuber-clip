@@ -1,0 +1,133 @@
+{
+  "approval_quote": "有一个需要紧急修改的地方，刚上传的请感受穿越屏幕的热烈那个切片，里面提到的歌曲是\"ラブコード\"，不是lovelive，你把那里关于歌曲的字幕全改一下然后极速上传就行",
+  "items": [
+    {
+      "artifacts": {
+        "cover": {
+          "path": "小李解释偶像曲里那句“请感受穿越屏幕.cover.png",
+          "sha256": "sha256:f8f68a504dbcd0acbffd5d9af0ca16d3fae0df30f6ebcecdd6bf3339b02b0616"
+        },
+        "subtitle": {
+          "path": "小李解释偶像曲里那句“请感受穿越屏幕.srt",
+          "sha256": "sha256:73fbf084dbad349ca90be073711f6da31738f9617ee04e702ed7ac2389149037"
+        },
+        "video": {
+          "path": "小李解释偶像曲里那句“请感受穿越屏幕.mp4",
+          "sha256": "sha256:8ae72e64c5d5a1a16c8f7ca8df510a07fb5ac05ecb2752bd85d9a35197534245"
+        }
+      },
+      "candidate_id": "auto_230125_960_1072",
+      "checks": {
+        "boundary_closure": {
+          "evidence": "CLIP_START_AND_EOS — 118.553971 秒成品从片头到 EOS 全流解码为 rc=0；116.8 秒终帧可见“[李豆沙] 所以才会有再一次啊”，对应正文末 cue 110.240-111.920 秒加 6.2 秒片头，之后自然留尾且未带入下一话题。",
+          "status": "PASS"
+        },
+        "cover_identity": {
+          "evidence": "FINAL_COVER — 逐像素查看 SHA f8f68a504d… 的最终封面：白发、蓝眼、黑色熊猫耳的李豆沙人物居中占据大幅面，完整脸部清晰，标题没有遮住五官，也没有出现其他角色抢主体。",
+          "status": "PASS"
+        },
+        "cover_story": {
+          "evidence": "FINAL_COVER_AND_STORY — 最终封面上排清楚写“小李解释偶像曲”，下排写“再一次爱上我吧”；粉色爱心与得意微笑承接片中解释偶像曲喊话及反问观众已经爱上的故事。",
+          "status": "PASS"
+        },
+        "final_burned_full_playback": {
+          "evidence": "00:00.000-EOS — 对新 SHA 8ae72e64c5… 的 118.553971 秒 MP4 从 00:00 到 EOS 执行 video+audio 全流解码，rc=0；另逐格查看覆盖全片的 5 秒间隔 contact sheet，片头、正片和结尾均有连续有效画面，无黑帧断裂或烧录层消失。",
+          "status": "PASS"
+        },
+        "intro_timing": {
+          "evidence": "INTRO_TO_MAIN_TRANSITION — 品牌片头偏移实测约 6.2 秒；正文首 cue 从 0.250 秒起，7.5 秒最终成品帧已完整显示首句“[李豆沙] 嗯，ラブコード的那首歌呢”，片头切入没有吞掉首字或提前叠字幕。",
+          "status": "PASS"
+        },
+        "silence_hallucination": {
+          "evidence": "KNOWN_SILENCE_AND_FULL_VIDEO — redelivery audit 将 48 个 owned interval 全部 exact replay，uncovered cue 为 0，final_owner_verified 为 48/48；最终 SRT 与审定基线逐字节相等，因此上游 ASR sparse self-heal 没有留下额外静音幻听 cue 或孤立 A/B。",
+          "status": "PASS"
+        },
+        "subtitle_audio": {
+          "evidence": "FULL_VIDEO_AUDIO_SUBTITLE — 最终正文 48 cue 的 SHA 为 73fbf084…，speaker SRT 剥一层生产标签后逐字节回到该基线；新旧成品解码 PCM 音频均为 49e4d37e6771…，证明音轨未改，三处可见字幕只把 LoveLive! 订正为ラブコード。",
+          "status": "PASS"
+        },
+        "title_story": {
+          "evidence": "FINAL_TITLE_AND_FULL_STORY — 最终标题逐字为“【李豆沙】小李解释偶像曲里那句“请感受穿越屏幕的热烈，再一次爱上我吧””；它与 45.470-49.590 秒喊话 cue 及 98.450-111.920 秒“再一次”故事解释链一致，且命中 verified-public exact authority。",
+          "status": "PASS"
+        }
+      },
+      "cover_story_claims": [
+        {
+          "claim": "封面文字呈现“小李解释偶像曲 / 再一次爱上我吧”",
+          "evidence": "FINAL_COVER/COVER_TEXT — 在最终 f8f68a504d… 封面中，上排粉字“小李解释偶像曲”和下排浅黄字“再一次爱上我吧”均完整清楚，字符未裁边、未被人物遮挡，和标题的故事内容钩子逐字一致。",
+          "presentation": "COVER_TEXT",
+          "status": "PASS"
+        }
+      ],
+      "publication_target": {
+        "aid": 117064333264829,
+        "authority_sha256": "sha256:efb6318f8b80d65892f29eddc413880a26dfb8241e485ad515433df3ec7f1d82",
+        "bvid": "BV1Bau16nEyq",
+        "candidate_id": "auto_230125_960_1072",
+        "cid": 40743275821,
+        "final_title": "【李豆沙】小李解释偶像曲里那句“请感受穿越屏幕的热烈，再一次爱上我吧”"
+      },
+      "record": {
+        "path": "小李解释偶像曲里那句“请感受穿越屏幕.record.json",
+        "sha256": "sha256:a38ca541ec65536dfac59b7f439fefef1f6763674dc9e688d2574770ab88ad49"
+      },
+      "reviewed_title": "【李豆沙】小李解释偶像曲里那句“请感受穿越屏幕的热烈，再一次爱上我吧”",
+      "subtitle_review_points": [
+        {
+          "evidence": "00:00:06.200-00:00:09.000 — 7.5 秒 r2 成品帧清楚显示烧录字幕“[李豆沙] 嗯，ラブコード的那首歌呢”；该窗 audio 音轨属于与发布前件 decoded-PCM SHA 完全相同的未改音频，画面没有 LoveLive! 残留。",
+          "expectation": "片头后首次歌名必须渲染为「ラブコード」，不得残留 LoveLive! 或把歌曲误当成 franchise。",
+          "final_video_end_ms": 9000,
+          "final_video_start_ms": 6200,
+          "point_id": "lovecode-song-name-opening",
+          "status": "PASS"
+        },
+        {
+          "evidence": "00:00:18.500-00:00:23.000 — 20.5 秒 r2 成品帧的烧录字幕显示“[李豆沙] 然后在ラブコード的前奏的时候”；对应 audio 音频流完整解码，第二处片名为同一日文写法，字形完整并与前后句连贯。",
+          "expectation": "说到前奏的第二处歌名必须同形为「ラブコード」，且与语音和后文连贯。",
+          "final_video_end_ms": 23000,
+          "final_video_start_ms": 18500,
+          "point_id": "lovecode-song-name-prelude",
+          "status": "PASS"
+        },
+        {
+          "evidence": "00:01:18.500-00:01:23.000 — 80.5 秒 r2 成品帧的烧录字幕显示“[李豆沙] 呃，ラブコード的后面就是和大家合跳了”；对应 audio 音频流完整解码，第三处订正可见且整片三处均为ラブコード。",
+          "expectation": "说到歌曲后面和大家合跳的第三处歌名必须为「ラブコード」，整片三处一致。",
+          "final_video_end_ms": 83000,
+          "final_video_start_ms": 78500,
+          "point_id": "lovecode-song-name-after",
+          "status": "PASS"
+        },
+        {
+          "evidence": "00:01:44.500-00:01:58.500 — 116.8 秒终段烧录字幕可见“[李豆沙] 所以才会有再一次啊”；末四 cue 从“难道你们不是已经爱上了吗”推进到这句收束，video 与 audio 音频流继续解码至 118.553971 秒后 EOS，没有话中截断或下一话题。",
+          "expectation": "结尾必须完整收束「因为已经爱上，所以才会有再一次」的解释与包袱，不断在话中、不带入下一话题。",
+          "final_video_end_ms": 118500,
+          "final_video_start_ms": 104500,
+          "point_id": "lovecode-ending-closure",
+          "status": "PASS"
+        }
+      ]
+    }
+  ],
+  "package_evidence": {
+    "package_audit": {
+      "path": "verification/package-audit.json",
+      "sha256": "sha256:6011d341896599538d084cc07428f0822e4799d710775261ca10a3f77c173c8c"
+    },
+    "review_evidence": {
+      "bytes": 6945,
+      "path": "verification/final-human-review-evidence.v2.json",
+      "sha256": "sha256:3fb3803b7dd6df517c93e3f414c5f45ef42a7d87aed8be33457ecbfc7c8b2389"
+    },
+    "review_manifest": {
+      "path": "review_manifest.json",
+      "sha256": "sha256:f33cc1074f7d9cc633b5c2f048652cf38075d5e2ef35e9ef233675a40822c99d"
+    }
+  },
+  "review_contract_sha256": "sha256:06611aade9800d4826a578a010f0701a5111c6659a8372bc9bd18a1ee27532b8",
+  "reviewed_at": "2026-08-09T09:01:07Z",
+  "reviewed_by": "Codex root",
+  "reviewer_kind": "delegated_root_agent",
+  "schema_version": "lidousha-final-human-review.v2",
+  "scope": "same_bv_repair",
+  "status": "ACCEPTED_FOR_SAME_BV"
+}

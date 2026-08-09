@@ -1,0 +1,15 @@
+Allowed remote sandbox:
+/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/
+
+Production state was read-only and byte-unchanged across this run:
+archived-before sha256=840dfe8f802fe2d66ee95c86d57366d10802b859a61d4f310eff6ca4ea97d7c3
+current-after   sha256=840dfe8f802fe2d66ee95c86d57366d10802b859a61d4f310eff6ca4ea97d7c3
+path=/opt/bilive/autoslice/state/2026-08-08.json
+
+Production out predecessor remained byte-unchanged/read-only:
+video sha256=e6577c25464f5cba73094a527c28cf1d85e3ac8844b03e7c3b2b113b314473b5
+cover sha256=f8f68a504dbcd0acbffd5d9af0ca16d3fae0df30f6ebcecdd6bf3339b02b0616
+path=/opt/bilive/autoslice/out/2026-08-08/auto_230125_960_1072/replacement_recuts/
+
+No git commit was created. The local main repository was not used as a write
+target; all local writes are within this lovecode-d worktree.
