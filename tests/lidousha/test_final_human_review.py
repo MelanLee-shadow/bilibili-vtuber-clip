@@ -76,6 +76,8 @@ def test_committed_review_contract_extends_exact_recovery_five_for_daily_repairs
         "auto_142942_496_618",
         "auto_225056_1013_1116",
         "auto_230125_960_1072",
+        # 2026-08-10 Ivan 直令三合一置换(BV1hquD6pE7X):手标 (跃起) 回填+公主抱封面+手定标题
+        "auto_200130_1323_1603",
     ]
     review = json.loads(
         (
