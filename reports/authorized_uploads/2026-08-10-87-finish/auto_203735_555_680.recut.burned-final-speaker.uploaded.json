@@ -1,0 +1,22 @@
+{
+  "schema_version": "authorized-upload-result.v3",
+  "status": "VERIFIED_PUBLIC",
+  "bvid": "BV1houS6SEF3",
+  "aid": 117067806154024,
+  "cid": 40762281697,
+  "title": "【李豆沙】说完再也不信真善美，又自夸太了解小马，真心换真心后被弹幕叫坏女人",
+  "uploaded_at": "2026-08-09T22:06:57+0000",
+  "video_sha256": "0846e09ad2cf3a890630ba31a12f89afe49884aeea7220d78e1a3991f4a2d625",
+  "cover_sha256": "855189f1ff23a2088463e799508ff9d6a9d0e08bcc689a388e36f3ec60a81d06",
+  "record_sha256": "8a2b64dc41ab782f51ab842c5cb3651b7aaedbefae831185e9f52bd4521a1e0c",
+  "subtitle_sha256": "6a21bada764e8038fd3c87743aa2e9080ce52f9ed5eb58ec49f0db2acee45c16",
+  "package_audit_sha256": "149d0c4a83b84633fab6576c8abad2eab0bc0177d6e9dd9b04db88ca24f98004",
+  "review_manifest_sha256": "33d6004b922b38f8ebaaa275eba0be02c70f7101294e0d0b217ff8ee80f59cf7",
+  "title_cover_qc_sha256": "ceb8adddc469e63b4f4c649e2f5c1e813b1e60bf80a7e4aea5a32ef8da147f31",
+  "manifest": "/opt/bilive/autoslice/out/2026-08-07/auto_203735_555_680/replacement_recuts/auto_203735_555_680.recut.burned-final-speaker.upload_manifest.json",
+  "manifest_sha256": "30c2bf87e960513448b609c4d977a9a35a9dcaabf78ada572ff9d635919b97ff",
+  "public_verify": "/opt/bilive/autoslice/out/2026-08-07/auto_203735_555_680/replacement_recuts/auto_203735_555_680.recut.burned-final-speaker.public_verify.json",
+  "public_verify_sha256": "b30ea8f21982b0342093d614f77a197a26ac727890dc892e32eea1d70411ddf8",
+  "authorized_by": "Ivan",
+  "authorization_quote": "「所以我希望这两个能进入快车道，优先出成品，优先上传。」\n「并且今天要执行权宜上传。只要出片就可以上传，之后我再进行审查。」"
+}

@@ -1,0 +1,38 @@
+{
+ "schema_version": "lidousha-title-cover-joint-qc.v1",
+ "candidate_id": "auto_220747_488_680",
+ "title": "【李豆沙】刚缠着队友换身份，旁边就有人暴毙，小李连声“不是我”，从走位讲到不会报警",
+ "title_sha256": "sha256:81eed432121fcc05b65448438ef35ab3a7ae9e725a1a86dbe18522ee0056c5ab",
+ "cover_path": "/opt/bilive/autoslice/out/2026-08-07/auto_220747_488_680/replacement_recuts/auto_220747_488_680.recut.burned-final-speaker.cover.png",
+ "cover_sha256": "sha256:40b43b927df4bde11cf6796afa3c1499cb675f946afe7ead9e389dbfe2df01b7",
+ "preferred_provider": "cpa",
+ "selected_provider": "cpa",
+ "witness": {
+  "schema_version": "cpa-frame-witness.v1",
+  "image_path": "/opt/bilive/autoslice/out/2026-08-07/auto_220747_488_680/replacement_recuts/auto_220747_488_680.recut.burned-final-speaker.cover.png",
+  "question": "你是李豆沙频道的标题+封面联合质检员。下图是最终封面,拟用标题是:\n《【李豆沙】刚缠着队友换身份，旁边就有人暴毙，小李连声“不是我”，从走位讲到不会报警》\n请只输出一个 JSON 对象(不要 markdown 代码块,不要多余文字),字段与含义:\n{\"lidousha_primary\": bool 封面主体是否是李豆沙(白发+头顶小熊猫耳的虚拟熊猫少女;熊猫耳长在头上不是头套/帽子;头顶墨镜或发饰是可选配饰,可有可无),\"thumbnail_readable\": bool 缩略图尺寸下封面大字是否清晰可读,\"single_clear_hook\": bool 封面文案是否构成一个清晰单一的钩子,\"text_overcrowded\": bool 文字是否过度拥挤,\"title_cover_aligned\": bool 标题与封面是否讲同一件事,\"physical_text_line_count\": int 封面主文案的物理行数,\"unrelated_or_misleading_elements\": [] 与内容无关或误导的元素列表(没有就空数组),\"reason\": str 一句话理由,\"pass\": bool 综合是否通过}\n如实判断,不要迎合。",
+  "model": "gpt-5.6-sol",
+  "provider": "cpa",
+  "image_sha256": "40b43b927df4bde11cf6796afa3c1499cb675f946afe7ead9e389dbfe2df01b7",
+  "frame_sha256": "1f74cefbfc0f2d8b58e9e2f1acf9da88d370ce3dbb2f0b519158b3f42aa4f04d",
+  "prompt_sha256": "68535ebce0aaf1d296c6bbfc30c84f2d6a92e6cc3b9ce24b58155531cd1776eb",
+  "status": "OBSERVED",
+  "answer": "{\"lidousha_primary\":true,\"thumbnail_readable\":true,\"single_clear_hook\":true,\"text_overcrowded\":false,\"title_cover_aligned\":true,\"physical_text_line_count\":2,\"unrelated_or_misleading_elements\":[],\"reason\":\"主体特征明确，大字清晰，以“旁边有人暴毙—小李否认”为单一钩子，与标题核心情节一致且版面不拥挤。\",\"pass\":true}",
+  "response_sha256": "1e725eb284ce551dc6bd4aa98a92d39a27ef63f57219147ee3337b12d542479b"
+ },
+ "verdict": {
+  "lidousha_primary": true,
+  "thumbnail_readable": true,
+  "single_clear_hook": true,
+  "text_overcrowded": false,
+  "title_cover_aligned": true,
+  "physical_text_line_count": 2,
+  "unrelated_or_misleading_elements": [],
+  "reason": "主体特征明确，大字清晰，以“旁边有人暴毙—小李否认”为单一钩子，与标题核心情节一致且版面不拥挤。",
+  "pass": true
+ },
+ "status": "PASS",
+ "pass": true,
+ "generated_at": "2026-08-09T21:59:08Z",
+ "authority": "IVAN_EXPLICIT_20260808(title+cover both hand-authorized)"
+}

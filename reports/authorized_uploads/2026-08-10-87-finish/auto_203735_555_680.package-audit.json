@@ -1,0 +1,113 @@
+{
+  "audited_inputs": [
+    {
+      "bytes": 230125,
+      "path": "auto_203735_555_680.chat-authority.json",
+      "sha256": "981ecaec03a93c445b0ca89defb74b59ad2037c070f9ee9a40d1916cef08aec7"
+    },
+    {
+      "bytes": 30096,
+      "path": "auto_203735_555_680.clip-context.json",
+      "sha256": "267cea30442fb5e848100567d5d0502c20bdb34a541b579428e87ca6c1231389"
+    },
+    {
+      "bytes": 216161,
+      "path": "auto_203735_555_680.record.json",
+      "sha256": "8a2b64dc41ab782f51ab842c5cb3651b7aaedbefae831185e9f52bd4521a1e0c"
+    },
+    {
+      "bytes": 2206786,
+      "path": "auto_203735_555_680.recut.burned-final-speaker.cover.png",
+      "sha256": "855189f1ff23a2088463e799508ff9d6a9d0e08bcc689a388e36f3ec60a81d06"
+    },
+    {
+      "bytes": 25056856,
+      "path": "auto_203735_555_680.recut.burned-final-speaker.mp4",
+      "sha256": "0846e09ad2cf3a890630ba31a12f89afe49884aeea7220d78e1a3991f4a2d625"
+    },
+    {
+      "bytes": 216161,
+      "path": "auto_203735_555_680.recut.burned-final-speaker.record.json",
+      "sha256": "8a2b64dc41ab782f51ab842c5cb3651b7aaedbefae831185e9f52bd4521a1e0c"
+    },
+    {
+      "bytes": 3521,
+      "path": "auto_203735_555_680.recut.burned-final-speaker.srt",
+      "sha256": "6a21bada764e8038fd3c87743aa2e9080ce52f9ed5eb58ec49f0db2acee45c16"
+    },
+    {
+      "bytes": 5038,
+      "path": "auto_203735_555_680.recut.final-sapphire72.ass",
+      "sha256": "c298a512c96c3ea0a273c3bbcccc58024ecb45ce62e38d7118c15b7ab57cadd8"
+    },
+    {
+      "bytes": 22579544,
+      "path": "auto_203735_555_680.recut.mp4",
+      "sha256": "d34dc193a2d0e1d94b691d7adbbc12912d33b719e48bcec15cc76828f57c5c08"
+    },
+    {
+      "bytes": 45384,
+      "path": "auto_203735_555_680.recut.publish.json",
+      "sha256": "178d2599f157dcfd03b013f279af2c9bd1be5490ad2d5eb40a90dd386dd151ae"
+    },
+    {
+      "bytes": 5244,
+      "path": "auto_203735_555_680.recut.speaker-final.ass",
+      "sha256": "e0c074b9ad872799b356793ec58818260388af90a3fa3f95db6fb7f8d62f36ee"
+    },
+    {
+      "bytes": 4367,
+      "path": "auto_203735_555_680.recut.speaker-final.srt",
+      "sha256": "ee28d0529d301b03eb80b93cbbda23f91e766cfde84c5b35c498333ca3608570"
+    },
+    {
+      "bytes": 3521,
+      "path": "auto_203735_555_680.recut.srt",
+      "sha256": "6a21bada764e8038fd3c87743aa2e9080ce52f9ed5eb58ec49f0db2acee45c16"
+    },
+    {
+      "bytes": 53240,
+      "path": "auto_203735_555_680.redelivery-baseline.json",
+      "sha256": "b04637dc29e1539c4d206ed408c503dac6b67f09104d82f2cb631f87121b0595"
+    },
+    {
+      "bytes": 4133,
+      "path": "auto_203735_555_680.speaker-work/automatic-labelled.srt",
+      "sha256": "8e8aad0566ce1bcd5acfe8fa01e27f59e9c25266cfd34c798ce2f7570720523f"
+    },
+    {
+      "bytes": 2206786,
+      "path": "covers/auto_203735_555_680.ai-title.cover.png",
+      "sha256": "855189f1ff23a2088463e799508ff9d6a9d0e08bcc689a388e36f3ec60a81d06"
+    },
+    {
+      "bytes": 2205819,
+      "path": "covers/auto_203735_555_680.ai-title.cover.pre-overlay.png",
+      "sha256": "1deeb4536f4f0399a2436bd6c46d662a08e103960bdf64f516b2c44bcfa9f558"
+    },
+    {
+      "bytes": 39327,
+      "path": "covers/auto_203735_555_680.ai-title.cover.title-mask.png",
+      "sha256": "3149c106e320fa64e8c6d541ce050689cabd7edf58d2d8102dbac34b30045f40"
+    },
+    {
+      "bytes": 2205819,
+      "path": "covers_ai_original/auto_203735_555_680.ai-bg.cpa-image-edit.png",
+      "sha256": "1deeb4536f4f0399a2436bd6c46d662a08e103960bdf64f516b2c44bcfa9f558"
+    },
+    {
+      "bytes": 7226,
+      "path": "review_manifest.json",
+      "sha256": "33d6004b922b38f8ebaaa275eba0be02c70f7101294e0d0b217ff8ee80f59cf7"
+    }
+  ],
+  "auditor_source_sha256": "sha256:f1bdd01a2c674473dbf06d02e5302722d0c5294eee6af9e9d891a3e29cffbea9",
+  "blocking_issue_count": 0,
+  "issue_count": 0,
+  "issues": [],
+  "passed": true,
+  "policy_epoch": "2026-07-31.final-artifact-gates.v5",
+  "policy_fingerprint": "sha256:fd8e22f1beda6d7ad0f86a757786f46f27e58e2e0bcb19dd85a76470fd0d5e9d",
+  "root": "/opt/bilive/autoslice/out/2026-08-07/auto_203735_555_680/replacement_recuts",
+  "schema_version": "lidousha-review-package-audit.v2"
+}

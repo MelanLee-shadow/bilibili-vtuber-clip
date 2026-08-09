@@ -1,0 +1,60 @@
+{
+  "burned_video": {
+    "duration_s": 198.454667,
+    "path": "/opt/bilive/autoslice/out/2026-08-07/auto_220747_488_680/replacement_recuts/auto_220747_488_680.recut.burned-final-speaker.mp4",
+    "sha256": "sha256:24c6e7accc5b6d662e40d779924e4e6b5a3b4f97ae5962d8d6f354e6fda564e6"
+  },
+  "candidate_id": "auto_220747_488_680",
+  "decode_gate": {
+    "command": "ffmpeg -v error -xerror -i <burned> -f null -",
+    "exit_code": 0,
+    "status": "PASS",
+    "stderr_bytes": 0,
+    "stderr_log": "/opt/bilive/autoslice/out/2026-08-07/auto_220747_488_680/release_evidence_87finish/auto_220747_488_680.decode-check.log"
+  },
+  "frame_gate": {
+    "frames_checked": 6,
+    "inspected_by": "integrator subagent (visual read of every extracted frame)",
+    "no_machine_parenthetical_note_on_screen": true,
+    "no_speaker_label_literal_on_screen": true,
+    "note": "Source-stream danmu overlay may contain viewer text mentioning 李豆沙; that is recorded source content, not a burned speaker label.",
+    "status": "PASS",
+    "timestamps_s": [
+      7.0,
+      30.0,
+      70.0,
+      120.0,
+      165.0,
+      197.5
+    ]
+  },
+  "generated_at": "2026-08-09T21:36:00Z",
+  "parenthetical_gate": {
+    "policy": "Ivan 2026-08-10: hand-labelled action notes are content and must survive; only machine stage notes are stripped.",
+    "speaker_srt_parentheticals": [],
+    "status": "PASS",
+    "text_srt_parentheticals": [],
+    "truth_baseline": "/opt/bilive/autoslice/repo/assets/lidousha/reviewed_subtitle_baselines/auto_220747_488_680.reviewed.srt",
+    "truth_baseline_sha256": "sha256:e1b6df6d111c4522512d6ff451c70c642f7fd0b5c73d87142afbbef28f63649e",
+    "truth_parenthetical_count": 0
+  },
+  "schema_version": "lidousha-87finish-pre-upload-hard-gate.v1",
+  "sidecar_srt_gate": {
+    "cues": 98,
+    "cues_with_any_bracket_tag": [],
+    "path": "/opt/bilive/autoslice/out/2026-08-07/auto_220747_488_680/replacement_recuts/auto_220747_488_680.recut.srt",
+    "status": "PASS"
+  },
+  "speaker_srt_gate": {
+    "cues": 104,
+    "cues_without_exactly_one_tag": [],
+    "cues_without_leading_speaker_prefix": [],
+    "labels_seen": [
+      "[李豆沙]",
+      "[连线]"
+    ],
+    "path": "/opt/bilive/autoslice/out/2026-08-07/auto_220747_488_680/replacement_recuts/auto_220747_488_680.recut.speaker-final.srt",
+    "status": "PASS"
+  },
+  "status": "PASS"
+}

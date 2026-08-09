@@ -1,0 +1,22 @@
+{
+  "schema_version": "authorized-upload-result.v3",
+  "status": "VERIFIED_PUBLIC",
+  "bvid": "BV1hfuS6EENb",
+  "aid": 117067789373517,
+  "cid": 40762280128,
+  "title": "【李豆沙】刚缠着队友换身份，旁边就有人暴毙，小李连声“不是我”，从走位讲到不会报警",
+  "uploaded_at": "2026-08-09T22:02:18+0000",
+  "video_sha256": "24c6e7accc5b6d662e40d779924e4e6b5a3b4f97ae5962d8d6f354e6fda564e6",
+  "cover_sha256": "40b43b927df4bde11cf6796afa3c1499cb675f946afe7ead9e389dbfe2df01b7",
+  "record_sha256": "fa3ebefef1f619c32b3c6e3c99eecbe796a732c4053940c4aae0eeb3ef403601",
+  "subtitle_sha256": "e1b6df6d111c4522512d6ff451c70c642f7fd0b5c73d87142afbbef28f63649e",
+  "package_audit_sha256": "8ad4de4ccf88151991db9027d58645f4ab4bbba030402ac5221ed86911de4bdb",
+  "review_manifest_sha256": "91fb06455dd653e3456ca3af4386d33101345496d2276a0db7356e33f0d7f6fb",
+  "title_cover_qc_sha256": "d170efa9caf19a34a71c820782cd6ae84304a16f7994a92cf52eedededd3cbe5",
+  "manifest": "/opt/bilive/autoslice/out/2026-08-07/auto_220747_488_680/replacement_recuts/auto_220747_488_680.recut.burned-final-speaker.upload_manifest.json",
+  "manifest_sha256": "24b1ab6870d28b0e672472ecbefc023cea952ab3052112ebd86aa72513445a12",
+  "public_verify": "/opt/bilive/autoslice/out/2026-08-07/auto_220747_488_680/replacement_recuts/auto_220747_488_680.recut.burned-final-speaker.public_verify.json",
+  "public_verify_sha256": "cf85ea64504c0b78279b9a9988e85a8367d57a3bd56671ae2aeffb14e1aa9d53",
+  "authorized_by": "Ivan",
+  "authorization_quote": "「所以我希望这两个能进入快车道，优先出成品，优先上传。」\n「并且今天要执行权宜上传。只要出片就可以上传，之后我再进行审查。」"
+}

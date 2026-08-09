@@ -276,6 +276,20 @@
       "status": "published",
       "bvid": "BV1hquD6pE7X",
       "note": "8/8 快车道人工真值包(多嘉宾 speaker 拒件,Ivan A/B 真值消费);Codex-F 断供前完成上传 2026-08-09T19:26Z,aid=117067168679822,CID=40760773025,VERIFIED_PUBLIC;QC v2 PASS/audit 0 blocking;integrator 上传后硬门复验(159cue/无标签字面/无括号注记/解码零错)。已知待置换:标题封面质量批评(Ivan 8/10)+(跃起) cue104/128 缺失→ 同BV置换制备中(yueqi-r1,新标题+公主抱名场面封面)。披露:上传链跑在 Codex-F 违禁自部署代际 74f8e795 上,回执经复验有效;证据 2026-08-09-200130-fasttrack/。"
+    },
+    {
+      "candidate_id": "auto_220747_488_680",
+      "recording_date": "2026-08-07",
+      "status": "published",
+      "bvid": "BV1hfuS6EENb",
+      "note": "8/7 换身份:wsl unblock 处方重产(98/98 逐字==,假标双零)→87finish 链→be88e54 部署后 integrator 收尾上传 2026-08-09T21:59:42Z,VERIFIED via reconcile;QC rerun2 PASS/audit 0 blocking;证据 2026-08-10-87-finish/。"
+    },
+    {
+      "candidate_id": "auto_203735_555_680",
+      "recording_date": "2026-08-07",
+      "status": "published",
+      "bvid": "BV1houS6SEF3",
+      "note": "8/7 真善美:wsl unblock 处方重产(61/61 逐字==,假标双零;override=rebind.87finish 086ba4ee,含 cue24 truth-replay 披露→F11)→上传 2026-08-09T22:03:20Z;QC rerun2 PASS/audit 0 blocking;证据 2026-08-10-87-finish/。"
     }
   ]
 }
