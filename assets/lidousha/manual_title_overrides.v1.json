@@ -1,68 +1,104 @@
 {
- "schema_version": "lidousha-manual-title-overrides.v1",
- "comment": "Ivan 手定标题正文按 candidate 注入：正文不送 LLM 改写，也不套自动标题的 selection-hook/机器味重写；最终发布仍统一经过频道前缀、12–48 字与标点结构门。candidate_id 匹配忽略 rN 重切后缀——重切不改内容主题，标题跟内容走。",
- "overrides": [
-  {
-   "candidate_id": "auto_225942_411_1073",
-   "title": "大喊李豆沙是姐姐妈妈宝宝老公主人，观众已见怪不怪了，这就是主包和kmx的羁绊啊",
-   "authority": "Ivan-2026-07-19"
-  },
-  {
-   "candidate_id": "auto_235936_527_695",
-   "title": "都，都怪你kmx，你看看现在别人对我都什么印象，老李头私下烟酒槟榔都来的（误",
-   "authority": "Ivan-2026-07-19"
-  },
-  {
-   "candidate_id": "auto_225942_698_931",
-   "title": "精心设计MC环节想让kmx用两个字为大家介绍自己，是奶P！才，才不是熊猫呢！",
-   "authority": "Ivan-2026-07-19"
-  },
-  {
-   "candidate_id": "auto_232939_1565_1693",
-   "title": "李豆沙第一次收到这么贵重的礼物花篮，非常感谢kmx，kmx都是好人！",
-   "authority": "Ivan-2026-07-19"
-  },
-  {
-   "candidate_id": "auto_163109_91_291",
-   "title": "豆沙小课堂，侄女究竟应该如何找女朋友呢？",
-   "authority": "Ivan-2026-07-20"
-  },
-  {
-   "candidate_id": "auto_193450_3573_3665",
-   "title": "最包容异性恋的直播间，看到男角色只能说出一句不熟",
-   "authority": "Ivan-2026-07-22"
-  },
-  {
-   "candidate_id": "auto_193450_672_945",
-   "title": "被坏女人南町问到最最最最喜欢的原因，后来才发现自己才是被收集的那个",
-   "authority": "Ivan-2026-07-22"
-  },
-  {
-   "candidate_id": "auto_145940_1533_1619",
-   "title": "嘲笑爱音上不起“月之森贵族学校”，道歉说忘了她是英国留子，又猜她回国可能因为不会做饭",
-   "authority": "Codex-2026-07-30-CPA-source-fact-adjudication+Ivan-backlog-repair-authorization"
-  },
-  {
-   "candidate_id": "auto_152944_964_1091",
-   "title": "长沙人李豆沙亲自打假“长沙大香肠”，话还没说完，弹幕又提议把技能叫“李姐拉拉”",
-   "authority": "Ivan-2026-07-30-directed-repair+source-fact-QA"
-  },
-  {
-   "candidate_id": "auto_200736_298_383",
-   "title": "坏女人小李今天就是要去骗女主播的哼哼",
-   "authority": "Ivan-2026-08-08"
-  }
- ],
- "entries": [
-  {
-   "candidate_id": "auto_213135_469_710",
-   "recording_date": "2026-08-08",
-   "bvid": "BV18Gu16NEcX",
-   "title": "【李豆沙】第一次3D Live紧张到手抖，想起五年前看歌姬时的心情，自己好像正走在实现五年前舞台愿望的路上",
-   "authorized_by": "Ivan",
-   "quote": "就是第一次3D Live紧张到手抖这个切片，提到了战斗吧歌姬，tag里应该提到，还有就是，标题也应该提到歌姬，不过这是你后面放在流水线应有的功能考虑的，现在直接用我的指定标题，“第一次3D Live紧张到手抖，想起五年前看歌姬时的心情，自己好像正走在实现五年前舞台愿望的路上”",
-   "applied_at": "2026-08-09",
-   "note": "已发布后线上编辑(x/vu/web/edit,CID 40742880014 未动);tags 同笔加入 战斗吧歌姬;回执 reports/authorized_uploads/2026-08-09-88-batch-provisional/bv18g-title-tags-edit/;【李豆沙】前缀=频道惯例保留,指定文本为内容部"
-  }
- ]
+  "schema_version": "lidousha-manual-title-overrides.v1",
+  "comment": "Ivan 手定标题正文按 candidate 注入：正文不送 LLM 改写，也不套自动标题的 selection-hook/机器味重写；最终发布仍统一经过频道前缀、12–48 字与标点结构门。candidate_id 匹配忽略 rN 重切后缀——重切不改内容主题，标题跟内容走。",
+  "overrides": [
+    {
+      "candidate_id": "auto_225942_411_1073",
+      "title": "大喊李豆沙是姐姐妈妈宝宝老公主人，观众已见怪不怪了，这就是主包和kmx的羁绊啊",
+      "authority": "Ivan-2026-07-19"
+    },
+    {
+      "candidate_id": "auto_235936_527_695",
+      "title": "都，都怪你kmx，你看看现在别人对我都什么印象，老李头私下烟酒槟榔都来的（误",
+      "authority": "Ivan-2026-07-19"
+    },
+    {
+      "candidate_id": "auto_225942_698_931",
+      "title": "精心设计MC环节想让kmx用两个字为大家介绍自己，是奶P！才，才不是熊猫呢！",
+      "authority": "Ivan-2026-07-19"
+    },
+    {
+      "candidate_id": "auto_232939_1565_1693",
+      "title": "李豆沙第一次收到这么贵重的礼物花篮，非常感谢kmx，kmx都是好人！",
+      "authority": "Ivan-2026-07-19"
+    },
+    {
+      "candidate_id": "auto_163109_91_291",
+      "title": "豆沙小课堂，侄女究竟应该如何找女朋友呢？",
+      "authority": "Ivan-2026-07-20"
+    },
+    {
+      "candidate_id": "auto_193450_3573_3665",
+      "title": "最包容异性恋的直播间，看到男角色只能说出一句不熟",
+      "authority": "Ivan-2026-07-22"
+    },
+    {
+      "candidate_id": "auto_193450_672_945",
+      "title": "被坏女人南町问到最最最最喜欢的原因，后来才发现自己才是被收集的那个",
+      "authority": "Ivan-2026-07-22"
+    },
+    {
+      "candidate_id": "auto_145940_1533_1619",
+      "title": "嘲笑爱音上不起“月之森贵族学校”，道歉说忘了她是英国留子，又猜她回国可能因为不会做饭",
+      "authority": "Codex-2026-07-30-CPA-source-fact-adjudication+Ivan-backlog-repair-authorization"
+    },
+    {
+      "candidate_id": "auto_152944_964_1091",
+      "title": "长沙人李豆沙亲自打假“长沙大香肠”，话还没说完，弹幕又提议把技能叫“李姐拉拉”",
+      "authority": "Ivan-2026-07-30-directed-repair+source-fact-QA"
+    },
+    {
+      "candidate_id": "auto_200736_298_383",
+      "title": "坏女人小李今天就是要去骗女主播的哼哼",
+      "authority": "Ivan-2026-08-08"
+    }
+  ],
+  "entries": [
+    {
+      "candidate_id": "auto_213135_469_710",
+      "recording_date": "2026-08-08",
+      "bvid": "BV18Gu16NEcX",
+      "title": "【李豆沙】第一次3D Live紧张到手抖，想起五年前看歌姬时的心情，自己好像正走在实现五年前舞台愿望的路上",
+      "authorized_by": "Ivan",
+      "quote": "就是第一次3D Live紧张到手抖这个切片，提到了战斗吧歌姬，tag里应该提到，还有就是，标题也应该提到歌姬，不过这是你后面放在流水线应有的功能考虑的，现在直接用我的指定标题，“第一次3D Live紧张到手抖，想起五年前看歌姬时的心情，自己好像正走在实现五年前舞台愿望的路上”",
+      "applied_at": "2026-08-09",
+      "note": "已发布后线上编辑(x/vu/web/edit,CID 40742880014 未动);tags 同笔加入 战斗吧歌姬;回执 reports/authorized_uploads/2026-08-09-88-batch-provisional/bv18g-title-tags-edit/;【李豆沙】前缀=频道惯例保留,指定文本为内容部"
+    },
+    {
+      "_draft_disclosure": {
+        "note": "APPEND-ONLY draft for the Mac repo file assets/lidousha/manual_title_overrides.v1.json. Append `append_to_entries` as the LAST element of the top-level `entries` array. Nothing else in that file changes. Not applied by the prep agent.",
+        "target_file": "assets/lidousha/manual_title_overrides.v1.json",
+        "target_array": "/entries",
+        "position": "append (last)",
+        "shape_precedent": "the auto_213135_469_710 / BV18Gu16NEcX row already in /entries (Ivan 2026-08-09 post-publish title+tags edit)"
+      },
+      "append_to_entries": {
+        "candidate_id": "auto_200130_1323_1603",
+        "recording_date": "2026-08-08",
+        "bvid": "BV1hquD6pE7X",
+        "title": "【李豆沙】打歌服没召唤出来，公主抱倒是先来了",
+        "authorized_by": "Ivan",
+        "quote": "你再好好学一下b站李豆沙相关的高播放量的切片封面标题都是什么样子的，包括我自己起的那些标题，你学习到后自己起一个。封面选公主抱吧",
+        "applied_at": "TODO_YYYY-MM-DD (fill on the day the live title edit lands)",
+        "note": "已发布后线上编辑(x/vu/web/edit)先改标题，同轮随后走 same-BV repair 置换视频(回填 (跃起) 重烧件)与封面(公主抱名场面裁切 afe8cbc5)；标题编辑那一笔 CID 未动(40760773025)，视频置换在其后单独产生新 CID。旧标题=44 字机器罗列版。回执 reports/authorized_uploads/2026-08-10-1323-yueqi/"
+      },
+      "_why_entries_not_overrides": {
+        "rule": "/overrides is machine-read by title_policy.manual_title_override(); /entries is a human ledger only.",
+        "empirical": "prep agent ran the real validator (read-only, no repo write): with 1323 present in /overrides, recovery_title_authority.build_recovery_publication_authorities raises RECOVERY_PUBLICATION_TITLE_MODE_INVALID for BOTH title modes, because verified_public_exact requires manual_title_override(cand) is None while ivan_manual_override requires observed_public_title to equal the un-prefixed override body — and 1323 is published WITH the 【李豆沙】 prefix.",
+        "probe_results": {
+          "C1 verified_public_exact + no /overrides row": "PASS, final title 【李豆沙】打歌服没召唤出来，公主抱倒是先来了",
+          "C2 verified_public_exact + /overrides row present": "FAIL RECOVERY_PUBLICATION_TITLE_MODE_INVALID"
+        },
+        "consequence": "1323 must NOT go into /overrides. The hand-set title is recorded in /entries and made authoritative for the repair by the committed recovery_publication_authority registry (title_mode=verified_public_exact) captured AFTER the standalone title edit.",
+        "precedent_match": "this is exactly what the 8/9 BV18Gu16NEcX title edit did."
+      },
+      "_verification": {
+        "final_title": "【李豆沙】打歌服没召唤出来，公主抱倒是先来了",
+        "length": 22,
+        "publish_title_policy_violations": [],
+        "title_sha256": "sha256:1dd0b04b7cf41f70b05cc62dcca54249bfbc56f8a8510ec575c54498c212390f",
+        "sha_matches": "verification/title-cover-joint-qc.json /title_sha256"
+      }
+    }
+  ]
 }

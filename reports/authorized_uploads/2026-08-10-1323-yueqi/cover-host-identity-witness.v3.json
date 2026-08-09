@@ -1,0 +1,46 @@
+{
+ "schema_version": "lidousha-cover-final-host-identity-verification.v3",
+ "authority": "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_AND_PROMINENCE_COMPARISON",
+ "final_cover_path": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/delivery/auto_200130_1323_1603.recut.burned-final-speaker.cover.png",
+ "reference_path": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/cover/frames/f-73.5.png",
+ "final_cover_sha256": "sha256:afe8cbc50979a60b582456740e666c04da9b9424087d499eeca80b9a61a3619d",
+ "reference_sha256": "sha256:017eda8460b9450bb6137b29095e7028b6343d16eb1372d3cd493cb359f238e1",
+ "comparison_path": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/delivery/auto_200130_1323_1603.recut.burned-final-speaker.cover.host-identity-witness.png",
+ "comparison_sha256": "sha256:bdb2d800a89c871d420bc5dc69d871c02c7fdc0d6e9ebf3f862efce2c5831131",
+ "witness": {
+  "schema_version": "cpa-frame-witness.v1",
+  "image_path": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/delivery/auto_200130_1323_1603.recut.burned-final-speaker.cover.host-identity-witness.png",
+  "question": "左侧是同一切片的 SOURCE REFERENCE，右侧是待发布 FINAL COVER。请先在左图用可见名牌、服装和外形定位李豆沙；若名牌可见，必须以名牌为准。李豆沙是白发、蓝白熊猫帽/熊猫耳的小个子形象。特别注意：不要把左图其他人物（例如带红金角饰、白发长辫、红领结的伊索尔Sol）误认成李豆沙；给别的角色加熊猫耳也不算身份正确。再判断右图最大、最显眼、承担故事反应的主角是否确实延续左图李豆沙，而不是其他参与者。次要人物可以存在，但主角必须是李豆沙。这是信息流缩略图终检，不只验身份：李豆沙不能缩在角落或小到需要寻找；脸部必须足够大、完整、清楚，且她的表情/动作必须承担标题所讲事件的反应。通常脸或上半身应形成第一视觉焦点；仅仅能认出她不算通过。专门留给已渲染标题的干净文字区是合理留白，但标题以外不得有大片死空白、无意义纯色红条/色块、装饰噪声或与故事无关的强元素压过人物。陌生观众只看右图时应立即知道看谁、看到一个明确点击钩子。不确定就 FAIL。只输出 JSON：{\"source_lidousha_located\":true|false,\"primary_subject_is_lidousha\":true|false,\"primary_subject_matches_other_source_participant\":true|false,\"primary_subject_is_visually_dominant\":true|false,\"primary_subject_face_is_large_and_clear\":true|false,\"primary_subject_carries_story_reaction\":true|false,\"excessive_dead_space\":true|false,\"meaningless_dominant_decoration\":true|false,\"thumbnail_has_clear_click_hook\":true|false,\"primary_subject_identity\":\"简短身份\",\"identity_conflicts\":[\"冲突特征\"],\"composition_conflicts\":[\"主体过小/角落小人/死空白/无意义装饰等\"],\"reason\":\"简短中文说明\"}",
+  "model": "gpt-5.6-sol",
+  "provider": "cpa",
+  "image_sha256": "bdb2d800a89c871d420bc5dc69d871c02c7fdc0d6e9ebf3f862efce2c5831131",
+  "frame_sha256": "5f4d0d05c2b24304d8962c3c5cdb5878c78c775081077ebd4e0a92d5026915b7",
+  "prompt_sha256": "9c1c57bf60f808632319a064263de6051d17ad4ffab8b1e3d5e4955119a37dba",
+  "status": "OBSERVED",
+  "answer": "{\"source_lidousha_located\":true,\"primary_subject_is_lidousha\":true,\"primary_subject_matches_other_source_participant\":false,\"primary_subject_is_visually_dominant\":true,\"primary_subject_face_is_large_and_clear\":true,\"primary_subject_carries_story_reaction\":true,\"excessive_dead_space\":false,\"meaningless_dominant_decoration\":false,\"thumbnail_has_clear_click_hook\":true,\"primary_subject_identity\":\"白发、黑白熊猫耳的李豆沙\",\"identity_conflicts\":[],\"composition_conflicts\":[],\"reason\":\"左图中央被抱起的白发熊猫耳小个子为李豆沙；右图延续同一造型，其正脸、惊讶表情和被抱动作构成主要视觉与故事反应，标题区留白合理，点击钩子明确。\"}",
+  "response_sha256": "52af0c37ebcb75e7cfe8988023cff23f1c61a3811ed1aa33306b183ed9ff80ae",
+  "routing": {
+   "preferred_provider": "cpa",
+   "selected_provider": "cpa",
+   "fallback_used": false
+  }
+ },
+ "preferred_witness_provider": "cpa",
+ "selected_witness_provider": "cpa",
+ "verdict": {
+  "source_lidousha_located": true,
+  "primary_subject_is_lidousha": true,
+  "primary_subject_matches_other_source_participant": false,
+  "primary_subject_is_visually_dominant": true,
+  "primary_subject_face_is_large_and_clear": true,
+  "primary_subject_carries_story_reaction": true,
+  "excessive_dead_space": false,
+  "meaningless_dominant_decoration": false,
+  "thumbnail_has_clear_click_hook": true,
+  "primary_subject_identity": "白发、黑白熊猫耳的李豆沙",
+  "identity_conflicts": [],
+  "composition_conflicts": [],
+  "reason": "左图中央被抱起的白发熊猫耳小个子为李豆沙；右图延续同一造型，其正脸、惊讶表情和被抱动作构成主要视觉与故事反应，标题区留白合理，点击钩子明确。"
+ },
+ "status": "PASS"
+}

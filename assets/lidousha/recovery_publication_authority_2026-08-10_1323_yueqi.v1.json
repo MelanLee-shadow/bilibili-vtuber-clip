@@ -1,0 +1,20 @@
+{
+  "schema_version": "lidousha-recovery-publication-authority.v1",
+  "authority": "Ivan 2026-08-10:1323(BV1hquD6pE7X)快车道成品三合一置换授权——字幕漏了 Ivan 手标动作注记 (跃起)(前任任务书误列剥离清单),视频按修正后括号门在原构建主机(wsl)重烧;封面按 Ivan 直令换公主抱名场面截图裁切;标题按 Ivan 委托由 integrator 学习高播放语料后定稿。Ivan 引语(逐字):「为什么你不能自己拟一个更好的标题，你再好好学一下b站李豆沙相关的高播放量的切片封面标题都是什么样子的，怎么做的，你学习到后自己起一个。封面选公主抱吧」及「我需要保留这个(跃起)，其他的括号不留」。标题改动已先以独立 x/vu/web/edit 落地(2026-08-09T22:0xZ,edit code 0)并抓取身份回执;本条目冻结改后公开标题与目标 BV/AID 身份,供同 BV 视频+封面置换使用。",
+  "entries": [
+    {
+      "candidate_id": "auto_200130_1323_1603",
+      "title_mode": "verified_public_exact",
+      "observed_public_title": "【李豆沙】打歌服没召唤出来，公主抱倒是先来了",
+      "required_given_end_ms": 1603100,
+      "boundary_end_mode": "exact_source_pin",
+      "bvid": "BV1hquD6pE7X",
+      "aid": 117067168679822,
+      "cid": 40760773025,
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-08-10-1323-yueqi/auto_200130_1323_1603.publication_identity.json",
+      "source_public_verify_sha256": "sha256:812609dc2183768b02f0dc8c80baf63eab0eeca2d71e14a5557f36c7ef42e371",
+      "source_public_verify_status": "VERIFIED_TITLE_AND_TARGET_IDENTITY",
+      "source_public_verify_schema_version": "recovery-publication-identity.v1"
+    }
+  ]
+}
