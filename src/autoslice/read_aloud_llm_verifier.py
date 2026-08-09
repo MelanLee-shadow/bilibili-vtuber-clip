@@ -42,6 +42,12 @@ from src.autoslice.acoustic_witness_adjudication import (
     WITNESS_REQUEST_SCHEMA,
     build_witness_request,
     pinyin_compatibility,
+    valid_witness_evidence,
+)
+from src.autoslice.acoustic_witness_protocol import (
+    BLIND_PINYIN_PROTOCOL,
+    bind_blind_witness_protocol,
+    witness_protocol,
 )
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.llm_client import extract_json_object
@@ -247,22 +253,16 @@ def _closed_choice_with_witness(
             "reason_code": "WITNESS_PROVIDER_ERROR",
             "error": f"{type(exc).__name__}: {exc}"[:300],
         }
-    witness = dict(observed) if isinstance(observed, Mapping) else {}
+    witness = bind_blind_witness_protocol(
+        observed if isinstance(observed, Mapping) else {},
+        witness_request=witness_request,
+    )
     witness_valid = bool(
-        witness.get("schema_version") == _WITNESS_VERDICT_SCHEMA
-        and witness.get("request_sha256") == witness_request["request_sha256"]
-        and witness.get("status") in {"OBSERVED", "UNCERTAIN"}
-        and not any(
-            key in witness
-            for key in (
-                "candidate_id",
-                "canonical_entity",
-                "proposed_cue",
-                "rewritten_text",
-                "current_fit",
-                "proposed_fit",
-            )
+        valid_witness_evidence(
+            witness,
+            request_sha256=witness_request["request_sha256"],
         )
+        and witness_protocol(witness) == BLIND_PINYIN_PROTOCOL
     )
     if not witness_valid:
         witness = {
@@ -351,6 +351,7 @@ def _closed_choice_with_witness(
         "decision_authority": "CPA_JUDGE",
         "witness_authority": "EVIDENCE_ONLY",
         "witness_status": witness.get("status"),
+        "witness_protocol": witness_protocol(witness),
         "acoustic_evidence_used": not context_only,
         "witness_target_audible": witness.get("target_audible"),
         "witness_request_sha256": witness_request["request_sha256"],

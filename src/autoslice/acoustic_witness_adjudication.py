@@ -21,26 +21,29 @@ authorities.
 
 from __future__ import annotations
 
-import difflib
 import hashlib
 import json
 import os
-import re
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from src.autoslice.acoustic_pinyin import (
+    candidate_pinyin_similarities,
+    neutral_syllable_count_hint,
+    pinyin_compatibility,
+)
+from src.autoslice.acoustic_witness_protocol import (
+    BLIND_PINYIN_PROTOCOL,
+    LEGACY_SIGHTED_PROTOCOL,
+    supported_witness_protocol,
+    witness_protocol,
+)
 from src.autoslice.candidate_support import (
     orthography_ambiguous,
     registered_misheard_direction,
     structured_text_support,
 )
 from src.autoslice.llm_client import extract_json_object
-
-try:  # 生产已装（song_name_pin/T1 同款可选依赖）；缺失时拼音校验不可用 → fail closed
-    from pypinyin import lazy_pinyin as _lazy_pinyin
-except Exception:  # pragma: no cover - environment-dependent
-    _lazy_pinyin = None
-
 
 WITNESS_REQUEST_SCHEMA = "subtitle-span-acoustic-witness-request.v1"
 ADJUDICATION_SCHEMA = "acoustic-witness-adjudication.v1"
@@ -468,6 +471,7 @@ def build_witness_request(check_request: Mapping[str, Any]) -> dict[str, Any]:
 
     request: dict[str, Any] = {
         "schema_version": WITNESS_REQUEST_SCHEMA,
+        "witness_protocol": BLIND_PINYIN_PROTOCOL,
         "kind": "subtitle_span_acoustic_witness",
         "evidence_id": str(check_request.get("evidence_id") or ""),
         "cue_indexes": list(check_request.get("cue_indexes") or []),
@@ -479,6 +483,12 @@ def build_witness_request(check_request: Mapping[str, Any]) -> dict[str, Any]:
             check_request["source_media_timeline_offset_ms"]
         ),
     }
+    syllable_hint = neutral_syllable_count_hint(
+        str(check_request.get("current_cue") or ""),
+        str(check_request.get("proposed_cue") or ""),
+    )
+    if syllable_hint is not None:
+        request["syllable_count_hint"] = syllable_hint
     request["request_sha256"] = hashlib.sha256(
         json.dumps(
             request, ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -496,6 +506,7 @@ def valid_witness_evidence(
     return bool(
         witness.get("schema_version") == "subtitle-span-acoustic-witness.v1"
         and witness.get("request_sha256") == request_sha256
+        and supported_witness_protocol(witness)
         and status in {"OBSERVED", "UNCERTAIN"}
         and (status == "UNCERTAIN" or isinstance(witness.get("target_audible"), bool))
         and not any(
@@ -510,61 +521,6 @@ def valid_witness_evidence(
             )
         )
     )
-
-
-def _pinyin_tokens(text: str) -> list[str] | None:
-    if _lazy_pinyin is None:
-        return None
-    tokens = [
-        token.strip().lower()
-        for token in _lazy_pinyin(text)
-        if token and token.strip()
-    ]
-    # non-hanzi spans (latin letters, digits) come back verbatim; keep them
-    # as single tokens so KO/N-style spellings still participate.
-    return [re.sub(r"\s+", "", token) for token in tokens if token]
-
-
-def pinyin_compatibility(
-    candidate_text: str,
-    *,
-    heard_pinyin: str,
-    uncertain_positions: list[int] | tuple[int, ...] = (),
-) -> float | None:
-    """Token-level similarity between a candidate's pinyin and the dictation.
-
-    ``?`` witness tokens and tokens listed in ``uncertain_positions`` are
-    wildcards: they match whatever the candidate has at the aligned position
-    (the witness itself declared no knowledge there). Returns None when the
-    pinyin backend is unavailable — callers must fail closed on None.
-    """
-
-    candidate = _pinyin_tokens(candidate_text)
-    if candidate is None:
-        return None
-    heard = [token for token in heard_pinyin.strip().lower().split() if token]
-    uncertain = {
-        int(value)
-        for value in uncertain_positions
-        if isinstance(value, int) and not isinstance(value, bool)
-    }
-    if not candidate or not heard:
-        return 0.0
-    normalized_heard = list(heard)
-    matcher = difflib.SequenceMatcher(None, normalized_heard, candidate)
-    matched = sum(block.size for block in matcher.get_matching_blocks())
-    # grant wildcard credit for unmatched witness positions declared unsure
-    unmatched_wild = 0
-    matched_positions: set[int] = set()
-    for block in matcher.get_matching_blocks():
-        matched_positions.update(range(block.a, block.a + block.size))
-    for index, token in enumerate(normalized_heard):
-        if index in matched_positions:
-            continue
-        if token == "?" or index in uncertain:
-            unmatched_wild += 1
-    effective = matched + min(unmatched_wild, max(0, len(candidate) - matched))
-    return (2.0 * effective) / (len(candidate) + len(heard))
 
 
 # 2026-08-08 Ivan「贴音优先、证据兜底」裁定（卡1结案，synthesis 文档）。
@@ -603,6 +559,10 @@ _JUDGE_PROMPT = """# 字幕选字裁决（闭集）
 - 音节数: {syllable_count}
 - 不确定位置: {uncertain_positions}
 - 证人置信: {confidence}
+
+## 代码计算的双候选拼音贴合（由盲听 heard_pinyin 得出）
+- CURRENT: {current_pinyin_similarity}
+- PROPOSED: {proposed_pinyin_similarity}
 
 ## 闭集候选
 - CURRENT（现字幕整句）: {current_cue}
@@ -665,6 +625,18 @@ def judge_word_choice(
 ) -> dict[str, Any]:
     """Ask the CPA judge to pick from the closed set; never trusts free text."""
 
+    similarities = (
+        candidate_pinyin_similarities(
+            current_text=str(check_request.get("current_cue") or ""),
+            proposed_text=str(check_request.get("proposed_cue") or ""),
+            heard_pinyin=str(witness.get("heard_pinyin") or ""),
+            uncertain_positions=list(witness.get("uncertain_positions") or []),
+        )
+        if witness_protocol(witness) == BLIND_PINYIN_PROTOCOL
+        and witness.get("status") == "OBSERVED"
+        and witness.get("target_audible") is True
+        else {"current": None, "proposed": None}
+    )
     inaudible_three_way = bool(
         witness.get("status") == "OBSERVED"
         and witness.get("target_audible") is False
@@ -713,6 +685,8 @@ def judge_word_choice(
         syllable_count=witness.get("syllable_count"),
         uncertain_positions=witness.get("uncertain_positions"),
         confidence=witness.get("confidence"),
+        current_pinyin_similarity=similarities["current"],
+        proposed_pinyin_similarity=similarities["proposed"],
         current_cue=str(check_request.get("current_cue") or ""),
         proposed_cue=(
             str(check_request.get("proposed_cue") or "")
@@ -868,6 +842,7 @@ def judge_word_choice(
         # 一个二次尝试才拿到的 JUDGED 终态不得看起来和首次成功一模一样，
         # 尤其它还会被写入 judge-verdict-cache 原样回放。
         "provider_retry_attempted": bool(call_errors),
+        "candidate_pinyin_similarity": similarities,
     }
     if cache_path is not None:
         # 只缓存 JUDGED 终态；写失败绝不影响生产（与声学缓存同约定）。
@@ -906,12 +881,14 @@ def adjudicate_with_witness(
         "witness_status": witness.get("status"),
         "decision_authority": "CPA_JUDGE",
         "witness_authority": "EVIDENCE_ONLY",
+        "witness_protocol": witness_protocol(witness),
     }
     witness_status = witness.get("status") if isinstance(witness, Mapping) else None
     witness_valid = (
         isinstance(witness, Mapping)
         and witness.get("schema_version") == "subtitle-span-acoustic-witness.v1"
         and witness_status in {"OBSERVED", "UNCERTAIN"}
+        and supported_witness_protocol(witness)
         and (
             witness_status == "UNCERTAIN"
             or isinstance(witness.get("target_audible"), bool)
@@ -919,6 +896,11 @@ def adjudicate_with_witness(
     )
     if not witness_valid:
         return False, "WITNESS_UNAVAILABLE_KEEP_CURRENT", audit
+    if (
+        witness_status == "OBSERVED"
+        and witness_protocol(witness) == LEGACY_SIGHTED_PROTOCOL
+    ):
+        return False, "LEGACY_SIGHTED_WITNESS_NOT_REUSABLE", audit
     if llm_call is None:
         return False, "JUDGE_UNAVAILABLE_KEEP_CURRENT", audit
 
@@ -995,16 +977,15 @@ def adjudicate_with_witness(
         return False, "JUDGE_UNCERTAIN_KEEP_CURRENT", audit
     heard = str(witness.get("heard_pinyin") or "")
     uncertain = list(witness.get("uncertain_positions") or [])
-    compat_proposed = pinyin_compatibility(
-        str(check_request.get("proposed_cue") or ""),
+    similarities = candidate_pinyin_similarities(
+        current_text=str(check_request.get("current_cue") or ""),
+        proposed_text=str(check_request.get("proposed_cue") or ""),
         heard_pinyin=heard,
         uncertain_positions=uncertain,
     )
-    compat_current = pinyin_compatibility(
-        str(check_request.get("current_cue") or ""),
-        heard_pinyin=heard,
-        uncertain_positions=uncertain,
-    )
+    compat_current = similarities["current"]
+    compat_proposed = similarities["proposed"]
+    audit["candidate_pinyin_similarity"] = similarities
     audit["pinyin_compatibility"] = {
         "proposed": compat_proposed,
         "current": compat_current,

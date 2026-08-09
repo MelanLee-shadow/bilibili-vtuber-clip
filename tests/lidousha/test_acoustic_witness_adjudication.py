@@ -11,7 +11,9 @@ from src.autoslice.acoustic_witness_adjudication import (
     build_witness_request,
     judge_word_choice,
     pinyin_compatibility,
+    valid_witness_evidence,
 )
+from src.autoslice.acoustic_pinyin import neutral_syllable_count_hint
 from src.autoslice.entity_audio_verifier import (
     _verify_local_audio_request,
     _witness_prompt,
@@ -41,6 +43,7 @@ CHECK_REQUEST = {
 def _witness(heard: str, *, audible: bool = True, uncertain=()):
     return {
         "schema_version": "subtitle-span-acoustic-witness.v1",
+        "witness_protocol": "blind_pinyin",
         "status": "OBSERVED",
         "target_audible": audible,
         "heard_pinyin": heard,
@@ -58,6 +61,16 @@ def test_witness_request_strips_every_textual_channel():
         assert leak not in serialized
     assert request["matched_start_ms"] == 10_000
     assert request["source_media_timeline_offset_ms"] == 9_730
+    assert request["witness_protocol"] == "blind_pinyin"
+    assert request["syllable_count_hint"] == 6
+
+
+def test_neutral_syllable_hint_ignores_punctuation_without_biasing_length():
+    assert neutral_syllable_count_hint("你好！", "你好吗") is None
+    assert neutral_syllable_count_hint("你好！", "你好。") == 2
+    assert neutral_syllable_count_hint("你好2", "你好2") is None
+    unequal = dict(CHECK_REQUEST, current_cue="你好！", proposed_cue="你好吗")
+    assert "syllable_count_hint" not in build_witness_request(unequal)
 
 
 def test_witness_prompt_never_contains_candidates_or_hanzi_context():
@@ -98,6 +111,89 @@ def test_pinyin_wildcards_cover_declared_uncertainty():
         "还没有歌债呢", heard_pinyin=heard, uncertain_positions=[3]
     )
     assert score == 1.0
+
+
+def test_legacy_sighted_witness_stays_valid_but_is_not_recomputed():
+    request = build_witness_request(CHECK_REQUEST)
+    legacy = _witness("hai mei you ge zhai ne")
+    legacy.pop("witness_protocol")
+    legacy["request_sha256"] = request["request_sha256"]
+
+    assert valid_witness_evidence(
+        legacy, request_sha256=request["request_sha256"]
+    ) is True
+    repaired, branch, audit = adjudicate_with_witness(
+        check_request=CHECK_REQUEST,
+        witness=legacy,
+        llm_call=lambda _prompt: json.dumps({"choice": "PROPOSED"}),
+    )
+
+    assert repaired is False
+    assert branch == "LEGACY_SIGHTED_WITNESS_NOT_REUSABLE"
+    assert audit["witness_protocol"] == "legacy_sighted"
+    assert "candidate_pinyin_similarity" not in audit
+
+
+def test_unknown_witness_protocol_fails_closed_before_judge():
+    witness = _witness("hai mei you ge zhai ne")
+    witness["witness_protocol"] = "future_untrusted_protocol"
+    called = False
+
+    def judge(_prompt):
+        nonlocal called
+        called = True
+        return json.dumps({"choice": "PROPOSED"})
+
+    repaired, branch, _audit = adjudicate_with_witness(
+        check_request=CHECK_REQUEST,
+        witness=witness,
+        llm_call=judge,
+    )
+
+    assert repaired is False
+    assert branch == "WITNESS_UNAVAILABLE_KEEP_CURRENT"
+    assert called is False
+
+
+def test_blind_protocol_canary_rejects_sycophantic_proposal_mismatch():
+    """A sighted echo would confirm PROPOSED; blind audio matches CURRENT."""
+
+    audio_pinyin = "hai mei you ge za ne"
+
+    def compliant_witness(request):
+        return (
+            "hai mei you ge zhai ne"
+            if "proposed_cue" in request
+            else audio_pinyin
+        )
+
+    proposed_echo = compliant_witness(CHECK_REQUEST)
+    assert pinyin_compatibility(
+        CHECK_REQUEST["proposed_cue"], heard_pinyin=proposed_echo
+    ) == 1.0
+    blind_request = build_witness_request(CHECK_REQUEST)
+    assert compliant_witness(blind_request) == audio_pinyin
+
+    prompts = []
+    repaired, branch, audit = adjudicate_with_witness(
+        check_request=CHECK_REQUEST,
+        witness=_witness(compliant_witness(blind_request)),
+        llm_call=lambda prompt: prompts.append(prompt)
+        or json.dumps(
+            {
+                "choice": "PROPOSED",
+                "reason": "semantic proposal looks fluent",
+            }
+        ),
+    )
+
+    assert repaired is False
+    assert branch == "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
+    assert audit["witness_protocol"] == "blind_pinyin"
+    assert audit["candidate_pinyin_similarity"]["current"] > audit[
+        "candidate_pinyin_similarity"
+    ]["proposed"]
+    assert "代码计算的双候选拼音贴合" in prompts[0]
 
 
 def test_judge_out_of_set_answer_is_a_refusal():

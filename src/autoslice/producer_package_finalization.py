@@ -32,6 +32,10 @@ from src.autoslice.exact_final_convergence import (
     collect_exact_final_convergence_memos,
     rebind_exact_final_convergence_memos,
 )
+from src.autoslice.exact_final_witness_authority import (
+    build_self_heal_repair_receipt,
+    valid_convergence_mutation_authority,
+)
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.cover_reference_authority import (
     load_candidate_cover_reference,
@@ -1065,6 +1069,11 @@ def _apply_exact_final_cpa_repairs(
                 inaudible_nonempty
                 and not inaudible_override_valid
             )
+            or not valid_convergence_mutation_authority(
+                adjudication,
+                proposed=proposed,
+                window=(current.start_ms, current.end_ms),
+            )
         ):
             continue
         cues[cue_index - 1] = type(current)(
@@ -1074,70 +1083,20 @@ def _apply_exact_final_cpa_repairs(
             text=proposed,
         )
         repairs.append(
-            {
-                "schema_version": "exact-final-cpa-self-heal.v1",
-                "cue_index": cue_index,
-                "matched_start_ms": current.start_ms,
-                "matched_end_ms": current.end_ms,
-                "before": current.text,
-                "after": proposed,
-                "before_sha256": "sha256:" + current_sha256,
-                "after_sha256": "sha256:"
-                + hashlib.sha256(proposed.encode("utf-8")).hexdigest(),
-                "finding_sha256": "sha256:"
-                + hashlib.sha256(
-                    json.dumps(
-                        finding,
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                ).hexdigest(),
-                "request_sha256": "sha256:" + request_sha256,
-                "decision_authority": "CPA_JUDGE",
-                "action": "DROP_CUE" if is_drop else "REPLACE_CUE_TEXT",
-                "repair_class": request.get("repair_class"),
-                "policy_branch": adjudication.get("policy_branch"),
-                "acoustic_witness": (
-                    {
-                        key: adjudication["verdict"].get(key)
-                        for key in (
-                            "schema_version",
-                            "status",
-                            "request_sha256",
-                            "target_audible",
+            build_self_heal_repair_receipt(
+                finding=finding,
+                cue_index=cue_index,
+                current_text=current.text,
+                proposed=proposed,
+                matched_start_ms=current.start_ms,
+                matched_end_ms=current.end_ms,
+                adjudication=adjudication,
+                judge=judge,
+                mutation=mutation,
+                request_sha256=request_sha256,
+                is_drop=is_drop,
+                inaudible_override_valid=inaudible_override_valid,
                         )
-                    }
-                    if isinstance(adjudication.get("verdict"), Mapping)
-                    else None
-                ),
-                "judge": dict(judge),
-                "drop_authority": (
-                    dict(adjudication["drop_authority"])
-                    if is_drop
-                    and isinstance(
-                        adjudication.get("drop_authority"), Mapping
-                    )
-                    else None
-                ),
-                "inaudible_witness_override": (
-                    dict(
-                        witness_judge[
-                            "inaudible_witness_override"
-                        ]
-                    )
-                    if inaudible_override_valid
-                    and isinstance(
-                        witness_judge.get(
-                            "inaudible_witness_override"
-                        ),
-                        Mapping,
-                    )
-                    else None
-                ),
-                "mutation_authority": dict(mutation),
-                "timing_immutable": True,
-            }
         )
     if not repairs:
         return srt_text, []

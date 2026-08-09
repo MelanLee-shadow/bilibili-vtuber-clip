@@ -829,6 +829,57 @@ def test_unavailable_correction_discovery_cannot_be_laundered_by_empty_rescan(
     )
 
 
+def test_same_cue_unresolved_cannot_be_laundered_by_empty_rescan(monkeypatch):
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    monkeypatch.setattr(
+        pipeline,
+        "_build_final_review_llm_call",
+        lambda: (lambda _prompt: '{"findings":[]}'),
+    )
+    correction = _correction_pass()
+    correction.update(
+        status="PARTIAL",
+        applied_count=0,
+        findings=[
+            {
+                "cue_index": 1,
+                "routed": "same_cue_unresolved",
+                "context_audio_adjudication": {
+                    "status": "SAME_CUE_REENTRY_UNRESOLVED",
+                    "repaired": False,
+                    "reason_code": (
+                        "DEFERRED_FINDING_ORIGINAL_BASE_BINDING_INVALID"
+                    ),
+                },
+            }
+        ],
+    )
+
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=_srt("第一句", "第二句", "第三句"),
+        correction_audit=correction,
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="",
+        clip_context={},
+    )
+
+    mutation_audit = receipt["correction_mutation_authority"]
+    assert receipt["status"] == "FLAGGED"
+    assert mutation_audit["status"] == "BLOCK"
+    assert mutation_audit["failures"] == [
+        {
+            "reason_code": "CORRECTION_SAME_CUE_REENTRY_UNRESOLVED",
+            "cue_index": 1,
+        }
+    ]
+    with pytest.raises(
+        FinalReviewContractError,
+        match="FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID",
+    ):
+        validate_final_review_release(receipt)
+
+
 def test_correction_mutation_audit_blocks_explicit_empty_unavailable_state():
     mutation_audit = pipeline.audit_correction_mutation_authority(
         {
@@ -1009,6 +1060,7 @@ def test_exact_final_release_review_unresolved_finding_is_a_block(
 def _witness_verdict(request, heard, *, audible=True):
     return {
         "schema_version": "subtitle-span-acoustic-witness.v1",
+        "witness_protocol": "blind_pinyin",
         "request_sha256": request["request_sha256"],
         "status": "OBSERVED",
         "target_audible": audible,
@@ -2202,7 +2254,7 @@ def test_single_character_glossary_prose_cannot_authorize_li_to_li():
     )
 
 
-def test_final_review_allows_only_one_contextual_mutation_per_cue(monkeypatch):
+def test_final_review_reenters_deferred_same_cue_after_first_mutation(monkeypatch):
     findings = [
         {
             "cue": 1,
@@ -2230,10 +2282,96 @@ def test_final_review_allows_only_one_contextual_mutation_per_cue(monkeypatch):
 
     def observe(request):
         requests.append(request)
-        return _witness_verdict(request, "hao jia he huai yi")
+        return _witness_verdict(request, "hao jia he hao yi")
 
+    chat_audit = {"applied": []}
     output, audit = pipeline._run_final_review(
         srt_text=_srt("坏甲和坏乙"),
+        chat_authority_audit=chat_audit,
+        handled_entity_cues=set(),
+        verify_confusable_entity=observe,
+        adapters=_adapters(),
+    )
+
+    assert len(requests) == 2
+    assert "好甲和好乙" in output
+    second = audit["findings"][1]
+    assert second["routed"] == "same_cue_readjudicated_fix"
+    reentry = second["context_audio_adjudication"]["same_cue_reentry"]
+    assert reentry["schema_version"] == (
+        "subtitle-deferred-same-cue-resolution.v1"
+    )
+    assert reentry["status"] == "READJUDICATED"
+    assert reentry["final_disposition"] == "APPLIED"
+    adjudication_request = second["context_audio_adjudication"]["request"]
+    assert adjudication_request["current_cue"] == "好甲和坏乙"
+    assert adjudication_request["proposed_cue"] == "好甲和好乙"
+    assert adjudication_request["base_text_sha256"] == hashlib.sha256(
+        "好甲和坏乙".encode()
+    ).hexdigest()
+    owners = chat_audit["entity_repairs"]
+    assert len(owners) == 1
+    assert owners[0]["before"] == ["坏甲和坏乙"]
+    assert owners[0]["after"] == ["好甲和好乙"]
+    assert len(owners[0]["same_cue_mutation_chain"]) == 2
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    assert verify_chat_authority_final_surfaces(
+        chat_audit,
+        final_text_srt=output,
+        final_speaker_srt=output,
+        delivery_start_ms=0,
+        delivery_end_ms=60_000,
+    )
+    reverted = output.replace("好甲和好乙", "坏甲和坏乙")
+    assert not verify_chat_authority_final_surfaces(
+        chat_audit,
+        final_text_srt=reverted,
+        final_speaker_srt=reverted,
+        delivery_start_ms=0,
+        delivery_end_ms=60_000,
+    )
+    assert audit["status"] == "APPLIED"
+    assert pipeline.audit_correction_mutation_authority(audit)["status"] == (
+        "PASS"
+    )
+
+
+def test_overlapping_same_cue_finding_gets_typed_supersession(monkeypatch):
+    findings = [
+        {
+            "cue": 1,
+            "kind": "context",
+            "proposed_full_cue": "好词留在这里",
+            "repair_class": "phonetic",
+            "why": "first",
+        },
+        {
+            "cue": 1,
+            "kind": "context",
+            "proposed_full_cue": "佳词留在这里",
+            "repair_class": "phonetic",
+            "why": "overlapping second",
+        },
+    ]
+    monkeypatch.setattr(
+        pipeline,
+        "_build_final_review_llm_call",
+        lambda: _split_llm(
+            json.dumps({"findings": findings}, ensure_ascii=False),
+            "PROPOSED",
+        ),
+    )
+    requests = []
+
+    def observe(request):
+        requests.append(request)
+        return _witness_verdict(request, "hao ci liu zai zhe li")
+
+    output, audit = pipeline._run_final_review(
+        srt_text=_srt("坏词留在这里"),
         chat_authority_audit={"applied": []},
         handled_entity_cues=set(),
         verify_confusable_entity=observe,
@@ -2241,9 +2379,221 @@ def test_final_review_allows_only_one_contextual_mutation_per_cue(monkeypatch):
     )
 
     assert len(requests) == 1
-    assert "好甲和坏乙" in output
-    assert audit["findings"][1]["routed"] == "deferred_same_cue"
-    assert audit["status"] == "PARTIAL"
+    assert "好词留在这里" in output
+    second = audit["findings"][1]
+    adjudication = second["context_audio_adjudication"]
+    assert second["routed"] == "same_cue_superseded"
+    assert adjudication["status"] == "SUPERSEDED_BY_SAME_CUE_MUTATION"
+    assert adjudication["reason_code"] == (
+        "EDIT_SPAN_OVERLAPS_PRIOR_SAME_CUE_MUTATION"
+    )
+    assert adjudication["same_cue_reentry"]["final_disposition"] == (
+        "SUPERSEDED"
+    )
+    assert adjudication["same_cue_reentry"]["original_disposition"] == (
+        "DEFERRED_SAME_CUE"
+    )
+    from src.autoslice.final_review_contract import (
+        correction_carryover_consumed,
+    )
+
+    second["carryover_replay_remap"] = {
+        "schema_version": "final-review-carryover-remap.v1",
+        "status": "PASS",
+    }
+    assert correction_carryover_consumed(second) is False
+
+
+def test_route_stage_mutation_rebuilds_first_disclosure_on_live_base(monkeypatch):
+    original = _srt("坏甲和坏乙")
+    direct = {
+        "cue_index": 1,
+        "suspect": "坏甲",
+        "suggestion": "好甲",
+        "span_start_codepoint": 0,
+        "span_end_codepoint": 2,
+        "proposed_full_cue": "好甲和坏乙",
+        "base_text_sha256": hashlib.sha256("坏甲和坏乙".encode()).hexdigest(),
+    }
+    disclosure = {
+        "cue_index": 1,
+        "suspect": "坏乙",
+        "suggestion": "好乙",
+        "span_start_codepoint": 3,
+        "span_end_codepoint": 5,
+        "proposed_full_cue": "坏甲和好乙",
+        "base_text_sha256": hashlib.sha256("坏甲和坏乙".encode()).hexdigest(),
+        "repair_class": "phonetic",
+        "why": "must bind the route-mutated base",
+    }
+    monkeypatch.setattr(
+        pipeline, "audit_final_subtitles", lambda *_args, **_kwargs: [direct, disclosure]
+    )
+
+    def route(_srt_text, _rows, **_kwargs):
+        applied = dict(direct, routed="exact_cue_canon")
+        pending = dict(disclosure, routed="disclosure")
+        return _srt("好甲和坏乙"), {
+            "schema_version": "final-review-audit.v1",
+            "status": "APPLIED",
+            "applied_count": 1,
+            "findings": [applied, pending],
+        }
+
+    monkeypatch.setattr(pipeline, "route_findings", route)
+    monkeypatch.setattr(
+        pipeline,
+        "_build_final_review_llm_call",
+        lambda: lambda _prompt: _judge_json("PROPOSED"),
+    )
+    requests = []
+
+    def observe(request):
+        requests.append(request)
+        return _witness_verdict(request, "hao jia he hao yi")
+
+    output, audit = pipeline._run_final_review(
+        srt_text=original,
+        chat_authority_audit={"applied": []},
+        handled_entity_cues=set(),
+        verify_confusable_entity=observe,
+        adapters=_adapters(),
+    )
+
+    assert "好甲和好乙" in output
+    assert len(requests) == 1
+    row = audit["findings"][1]
+    request = row["context_audio_adjudication"]["request"]
+    assert request["current_cue"] == "好甲和坏乙"
+    assert request["proposed_cue"] == "好甲和好乙"
+    assert request["base_text_sha256"] == hashlib.sha256(
+        "好甲和坏乙".encode()
+    ).hexdigest()
+    assert row["context_audio_adjudication"]["same_cue_reentry"][
+        "original_disposition"
+    ] == "REBASED_AFTER_ROUTE_MUTATION"
+
+
+def test_deferred_rebase_invalid_invariants_fail_unresolved_not_superseded():
+    from src.autoslice.deferred_same_cue_resolution import (
+        UNRESOLVED,
+        rebase_deferred_finding,
+    )
+
+    finding = {
+        "base_text_sha256": "0" * 64,
+        "proposed_full_cue": "甲好",
+        "suspect": "乙",
+        "suggestion": "好",
+        "span_start_codepoint": 1,
+        "span_end_codepoint": 2,
+    }
+    rebuilt, receipt = rebase_deferred_finding(
+        finding,
+        original_text="甲乙",
+        live_text="甲乙",
+        cue_index=1,
+        matched_start_ms=5_000,
+        matched_end_ms=9_000,
+    )
+
+    assert rebuilt is None
+    assert receipt["status"] == UNRESOLVED
+    assert receipt["final_disposition"] == "UNRESOLVED"
+    assert receipt["reason_code"] == (
+        "DEFERRED_FINDING_ORIGINAL_BASE_BINDING_INVALID"
+    )
+
+
+def test_same_point_insert_after_prior_insert_is_typed_overlap():
+    from src.autoslice.deferred_same_cue_resolution import (
+        SUPERSEDED,
+        rebase_deferred_finding,
+    )
+
+    finding = {
+        "base_text_sha256": hashlib.sha256("甲乙".encode()).hexdigest(),
+        "proposed_full_cue": "甲另乙",
+        "suspect": "",
+        "suggestion": "另",
+        "span_start_codepoint": 1,
+        "span_end_codepoint": 1,
+    }
+    rebuilt, receipt = rebase_deferred_finding(
+        finding,
+        original_text="甲乙",
+        live_text="甲新乙",
+        cue_index=1,
+        matched_start_ms=5_000,
+        matched_end_ms=9_000,
+    )
+
+    assert rebuilt is None
+    assert receipt["status"] == SUPERSEDED
+    assert receipt["reason_code"] == (
+        "EDIT_SPAN_OVERLAPS_PRIOR_SAME_CUE_MUTATION"
+    )
+
+
+@pytest.mark.parametrize(
+    ("live_text", "expected"),
+    (("新乙", "新另乙"), ("甲新", "甲另新")),
+)
+def test_zero_width_insert_rebases_at_adjacent_half_open_boundary(
+    live_text, expected
+):
+    from src.autoslice.deferred_same_cue_resolution import (
+        rebase_deferred_finding,
+    )
+
+    finding = {
+        "base_text_sha256": hashlib.sha256("甲乙".encode()).hexdigest(),
+        "proposed_full_cue": "甲另乙",
+        "suspect": "",
+        "suggestion": "另",
+        "span_start_codepoint": 1,
+        "span_end_codepoint": 1,
+    }
+    rebuilt, receipt = rebase_deferred_finding(
+        finding,
+        original_text="甲乙",
+        live_text=live_text,
+        cue_index=1,
+        matched_start_ms=5_000,
+        matched_end_ms=9_000,
+    )
+
+    assert rebuilt is not None
+    assert rebuilt["proposed_full_cue"] == expected
+    assert receipt["status"] == "PENDING_READJUDICATION"
+
+
+@pytest.mark.parametrize(
+    "branch",
+    (
+        "JUDGE_KEEPS_CURRENT",
+        "JUDGE_CHOICE_PINYIN_INCOMPATIBLE_KEEP_CURRENT",
+        "TARGET_INAUDIBLE_KEEP_CURRENT",
+    ),
+)
+def test_deferred_receipt_recognizes_all_decided_keep_branches(branch):
+    from src.autoslice.deferred_same_cue_resolution import (
+        finalize_reentry_receipt,
+    )
+
+    receipt = finalize_reentry_receipt(
+        {"schema_version": "subtitle-deferred-same-cue-resolution.v1"},
+        adjudication={
+            "status": "OBSERVED",
+            "repaired": False,
+            "timing_immutable": True,
+            "policy_branch": branch,
+            "mutation_authority": {"status": "NOT_APPLIED"},
+        },
+    )
+
+    assert receipt["status"] == "READJUDICATED"
+    assert receipt["final_disposition"] == "KEEP_CURRENT"
 
 
 def test_final_review_context_fixes_register_for_final_surface_verification(monkeypatch):
@@ -2458,6 +2808,153 @@ def test_final_review_marks_findings_beyond_audio_budget(monkeypatch):
     assert audit["findings"][12]["routed"] == "skipped_budget"
     assert audit["findings"][12]["context_audio_adjudication"]["status"] == "SKIPPED_BUDGET"
     assert audit["status"] == "PARTIAL"
+
+
+def test_audio_budget_rejects_whole_same_cue_group_before_any_mutation(monkeypatch):
+    source_texts = [f"坏词{index}留在这里" for index in range(1, 13)]
+    findings = [
+        {
+            "cue": index,
+            "kind": "context",
+            "proposed_full_cue": f"好词{index}留在这里",
+            "repair_class": "phonetic",
+            "why": "one-call group",
+        }
+        for index in range(1, 12)
+    ]
+    findings.extend(
+        [
+            {
+                "cue": 12,
+                "kind": "context",
+                "proposed_full_cue": "好词12留在这里",
+                "repair_class": "phonetic",
+                "why": "first of atomic group",
+            },
+            {
+                "cue": 12,
+                "kind": "context",
+                "proposed_full_cue": "坏词12留于这里",
+                "repair_class": "phonetic",
+                "why": "second of atomic group",
+            },
+        ]
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_build_final_review_llm_call",
+        lambda: _split_llm(
+            json.dumps({"findings": findings}, ensure_ascii=False), "CURRENT"
+        ),
+    )
+    requests = []
+
+    def observe(request):
+        requests.append(request)
+        return _witness_verdict(request, "huai ci liu zai zhe li")
+
+    output, audit = pipeline._run_final_review(
+        srt_text=_srt(*source_texts),
+        chat_authority_audit={"applied": []},
+        handled_entity_cues=set(),
+        verify_confusable_entity=observe,
+        adapters=_adapters(),
+    )
+
+    assert len(requests) == 11
+    assert "坏词12留在这里" in output
+    for row in audit["findings"][-2:]:
+        assert row["routed"] == "skipped_budget"
+        assert row["context_audio_adjudication"]["status"] == "SKIPPED_BUDGET"
+
+
+def test_deferred_windows_survive_drop_and_cue_renumbering():
+    from src.autoslice.deferred_same_cue_resolution import (
+        SUPERSEDED,
+        adjudicate_routed_findings,
+    )
+    from src.autoslice.jingting_chunker import parse_srt_cues
+    from src.autoslice.producer_text_finalization import _render_cues_to_srt
+
+    source = _srt("删掉这句", "坏的下一句")
+
+    def finding(cue_index, current, suspect, suggestion, proposed):
+        return {
+            "cue_index": cue_index,
+            "base_text_sha256": hashlib.sha256(current.encode()).hexdigest(),
+            "suspect": suspect,
+            "suggestion": suggestion,
+            "span_start_codepoint": current.index(suspect) if suspect else 0,
+            "span_end_codepoint": (
+                current.index(suspect) + len(suspect) if suspect else 0
+            ),
+            "proposed_full_cue": proposed,
+            "repair_class": "phonetic",
+        }
+
+    rows = [
+        finding(1, "删掉这句", "删掉这句", "", ""),
+        finding(1, "删掉这句", "这句", "那句", "删掉那句"),
+        finding(2, "坏的下一句", "坏的", "好的", "好的下一句"),
+    ]
+    calls = []
+
+    def adjudicate(live_srt, row):
+        calls.append((row["cue_index"], row["proposed_full_cue"]))
+        cues = [cue for cue in parse_srt_cues(live_srt) if cue.text.strip()]
+        cue = cues[row["cue_index"] - 1]
+        proposed = row["proposed_full_cue"]
+        if proposed:
+            cues[row["cue_index"] - 1] = type(cue)(
+                index=cue.index,
+                start_ms=cue.start_ms,
+                end_ms=cue.end_ms,
+                text=proposed,
+            )
+        else:
+            cues.pop(row["cue_index"] - 1)
+        request = {
+            "current_cue": cue.text,
+            "proposed_cue": proposed,
+            "matched_start_ms": cue.start_ms,
+            "matched_end_ms": cue.end_ms,
+            "repair_class": row["repair_class"],
+            "request_sha256": "a" * 64,
+        }
+        return _render_cues_to_srt(cues), {
+            "status": "OBSERVED",
+            "repaired": True,
+            "timing_immutable": True,
+            "policy_branch": (
+                "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
+                if not proposed
+                else "WITNESS_JUDGE_APPLY_PROPOSED"
+            ),
+            "decision_authority": "CPA_JUDGE",
+            "mutation_authority": {"status": "PASS"},
+            "request": request,
+            "witness_judge": {"judge": {"status": "JUDGED"}},
+        }
+
+    output, count, partial, applied, _owners = adjudicate_routed_findings(
+        source,
+        rows,
+        max_adjudications=3,
+        adjudicate=adjudicate,
+        original_srt_text=source,
+    )
+
+    assert count == 2
+    assert applied == 2
+    assert partial is False
+    assert calls == [(1, ""), (1, "好的下一句")]
+    assert "删掉这句" not in output
+    assert "好的下一句" in output
+    assert rows[1]["context_audio_adjudication"]["status"] == SUPERSEDED
+    assert rows[1]["context_audio_adjudication"]["reason_code"] == (
+        "SAME_CUE_REMOVED_BY_PRIOR_MUTATION"
+    )
+    assert rows[2]["cue_index"] == 1
 
 
 def test_final_review_lets_cpa_decide_when_agy_provider_fails(monkeypatch):

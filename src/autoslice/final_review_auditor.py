@@ -18,7 +18,6 @@
 一秒识别的胡话在交付前暴露出来；非 operator/mechanical/expected-value
 改写必须再经 CPA 定夺，并把请求、候选和判决完整留痕。
 """
-
 from __future__ import annotations
 
 import hashlib
@@ -42,6 +41,7 @@ from src.autoslice.acoustic_witness_adjudication import (
     valid_inaudible_witness_override,
     valid_witness_evidence,
 )
+from src.autoslice.acoustic_witness_protocol import bind_blind_witness_protocol
 from src.autoslice.candidate_support import (
     bound_structured_chat_surface as _bound_structured_chat_surface,
     orthography_ambiguous as _candidate_orthography_ambiguous,
@@ -2098,10 +2098,10 @@ def adjudicate_context_finding(
                 "reason_code": "CONTEXT_VERIFIER_ERROR",
                 "error": f"{type(exc).__name__}: {exc}",
             }
-        return (
-            dict(observed) if isinstance(observed, Mapping) else {},
-            request_for_witness,
-        )
+        return bind_blind_witness_protocol(
+            observed if isinstance(observed, Mapping) else {},
+            witness_request=request_for_witness,
+        ), request_for_witness
 
     verdict, witness_request = _fetch_witness(request)
     convergence_rewrite = bool(
@@ -2932,24 +2932,23 @@ def audit_correction_mutation_authority(
             applied_rows.append((row, row.get("mutation_authority")))
             continue
         if routed in {"homophone_fix", "witnessed_near_homophone_fix"}:
-            failures.append(
-                {
-                    "reason_code": "NON_CPA_MUTATION_ROUTE_FORBIDDEN",
-                    "cue_index": row.get("cue_index"),
-                    "routed": routed,
-                }
-            )
+            failures.append({
+                "reason_code": "NON_CPA_MUTATION_ROUTE_FORBIDDEN", "cue_index": row.get("cue_index"), "routed": routed,
+            })
             applied_rows.append((row, row.get("orthography_authority")))
             continue
         adjudication = row.get("context_audio_adjudication")
-        if (
-            routed == "context_audio_adjudicated_fix"
+        if routed == "same_cue_unresolved" or (
+            isinstance(adjudication, Mapping)
+            and adjudication.get("status") == "SAME_CUE_REENTRY_UNRESOLVED"
+        ):
+            failures.append({"reason_code": "CORRECTION_SAME_CUE_REENTRY_UNRESOLVED", "cue_index": row.get("cue_index")})
+            continue
+        if (routed in ("context_audio_adjudicated_fix", "same_cue_readjudicated_fix")
             and isinstance(adjudication, Mapping)
             and adjudication.get("repaired") is True
         ):
-            applied_rows.append(
-                (row, adjudication.get("mutation_authority"))
-            )
+            applied_rows.append((row, adjudication.get("mutation_authority")))
     if (
         isinstance(applied_count, bool)
         or not isinstance(applied_count, int)
@@ -3011,7 +3010,7 @@ def audit_correction_mutation_authority(
             )
         elif routed in {"homophone_fix", "witnessed_near_homophone_fix"}:
             receipt_valid = False
-        elif routed == "context_audio_adjudicated_fix":
+        elif routed in ("context_audio_adjudicated_fix", "same_cue_readjudicated_fix"):
             adjudication = row.get("context_audio_adjudication")
             orthography_ambiguous = (
                 adjudication.get("orthography_ambiguous")

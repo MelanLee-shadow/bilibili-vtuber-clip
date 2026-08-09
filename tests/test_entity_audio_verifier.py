@@ -721,7 +721,7 @@ def test_witness_acoustic_cache_replays_same_audio_without_provider(tmp_path, mo
 
     monkeypatch.setattr(verifier_module.subprocess, "run", fake_run)
 
-    def check_request(evidence, start):
+    def check_request(evidence, start, text="你好"):
         return {
             "evidence_id": evidence,
             "cue_indexes": [3],
@@ -730,6 +730,8 @@ def test_witness_acoustic_cache_replays_same_audio_without_provider(tmp_path, mo
             "context_start_ms": start - 1_000,
             "context_end_ms": start + 2_500,
             "source_media_timeline_offset_ms": 0,
+            "current_cue": text,
+            "proposed_cue": text,
         }
 
     output_dir = tmp_path / "base" / "out" / "2026-07-25" / "auto_x"
@@ -741,7 +743,8 @@ def test_witness_acoustic_cache_replays_same_audio_without_provider(tmp_path, mo
         agy_bin="agy-test",
     )
 
-    first = verify(build_witness_request(check_request("e" * 64, 10_000)))
+    first_request = build_witness_request(check_request("e" * 64, 10_000))
+    first = verify(first_request)
     assert first["status"] == "OBSERVED"
     assert first["heard_pinyin"] == "hai mei you ge zhai ne"
     assert len(agy_calls) == 1
@@ -750,8 +753,21 @@ def test_witness_acoustic_cache_replays_same_audio_without_provider(tmp_path, mo
     assert "zhe ge shi he tian yi de lian dong o" not in prompt
     assert "e.g." not in prompt
 
-    # 不同 evidence/几何 → 不同 request_sha，但音频字节相同 → 缓存命中
-    second = verify(build_witness_request(check_request("f" * 64, 10_040)))
+    # The per-request manifest must not bypass the prompt contract gate.
+    manifest_path = first_job / "verdict.manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["witness_prompt_contract"] == (
+        verifier_module.WITNESS_PROMPT_CONTRACT
+    )
+    manifest.pop("witness_prompt_contract")
+    manifest["verdict"]["heard_pinyin"] = "stale manifest answer"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    replayed = verify(first_request)
+    assert replayed["heard_pinyin"] == "hai mei you ge zhai ne"
+    assert len(agy_calls) == 1
+
+    # 不同 evidence → 不同 request_sha，问题/音频字节相同 → 缓存命中
+    second = verify(build_witness_request(check_request("f" * 64, 10_000)))
     assert second["status"] == "OBSERVED"
     assert second["heard_pinyin"] == "hai mei you ge zhai ne"
     assert len(agy_calls) == 1  # 零新 provider 调用
@@ -763,17 +779,31 @@ def test_witness_acoustic_cache_replays_same_audio_without_provider(tmp_path, mo
         if not path.name.endswith((".prompt.json", ".response.json"))
     )
     cached = json.loads(cache_entry.read_text(encoding="utf-8"))
-    assert cached["schema_version"] == "witness-acoustic-cache.v2"
+    assert cached["schema_version"] == "witness-acoustic-cache.v3"
     assert cached["prompt_contract"] == verifier_module.WITNESS_PROMPT_CONTRACT
+
+    # Same clip/hint but different target markers is a different question.
+    geometry_drift = verify(
+        build_witness_request(check_request("i" * 64, 10_040))
+    )
+    assert geometry_drift["status"] == "OBSERVED"
+    assert len(agy_calls) == 2
+
+    # Same clip under a different neutral length hint is a different prompt.
+    changed_hint = verify(
+        build_witness_request(check_request("h" * 64, 10_000, "你好吗"))
+    )
+    assert changed_hint["status"] == "OBSERVED"
+    assert len(agy_calls) == 3
 
     # A legacy Gemini API observation must not be replayed as AGY evidence.
     cached["provider"] = "gemini_api"
     cached["model"] = "gemini-3.6-flash"
     cache_entry.write_text(json.dumps(cached), encoding="utf-8")
-    third = verify(build_witness_request(check_request("g" * 64, 10_080)))
+    third = verify(build_witness_request(check_request("g" * 64, 10_000)))
     assert third["status"] == "OBSERVED"
     assert third["provider"] == "agy"
-    assert len(agy_calls) == 2
+    assert len(agy_calls) == 4
 
 
 def test_witness_rejects_legacy_prompt_copy_and_does_not_cache_it(
@@ -847,8 +877,9 @@ def test_witness_acoustic_cache_rejects_pre_contract_v1_entry(tmp_path):
     job_dir = output_dir / "entity_verdicts" / "job"
     job_dir.mkdir(parents=True)
     clip_sha = "a" * 64
+    prompt_identity = "b" * 64
     entry_path = verifier_module._witness_acoustic_cache_path(
-        output_dir, clip_sha
+        output_dir, clip_sha, prompt_identity
     )
     entry_path.parent.mkdir(parents=True)
     entry_path.write_text(
@@ -875,9 +906,65 @@ def test_witness_acoustic_cache_rejects_pre_contract_v1_entry(tmp_path):
             clip_sha256=clip_sha,
             job_dir=job_dir,
             expected_model=verifier_module.ENTITY_AUDIO_MODEL,
+            expected_prompt_identity_sha256=prompt_identity,
         )
         is None
     )
+
+
+def test_witness_acoustic_cache_rejects_tampered_response_artifact(tmp_path):
+    output_dir = tmp_path / "base" / "out" / "2026-08-09" / "auto_tamper"
+    job_dir = output_dir / "entity_verdicts" / "job"
+    job_dir.mkdir(parents=True)
+    prompt_path = job_dir / "prompt.md"
+    response_path = job_dir / "response.json"
+    prompt_path.write_text("candidate-free prompt", encoding="utf-8")
+    observed = {
+        "schema_version": verifier_module.WITNESS_SCHEMA,
+        "status": "OBSERVED",
+        "target_audible": True,
+        "heard_pinyin": "yuan shi ting xie",
+        "uncertain_positions": [],
+        "syllable_count": 4,
+        "confidence": 0.95,
+        "reason": "clear",
+    }
+    response_path.write_text(json.dumps(observed), encoding="utf-8")
+    outcome = verifier_module._EntityProviderOutcome(
+        observed=observed,
+        provider="agy",
+        model=verifier_module.ENTITY_AUDIO_MODEL,
+        prompt_path=prompt_path,
+        response_path=response_path,
+        accepted_key_tier=None,
+        paid_policy_stamp=None,
+        provider_failures=[],
+    )
+    clip_sha = "a" * 64
+    prompt_identity = "b" * 64
+    verifier_module._store_witness_acoustic_cache(
+        output_dir=output_dir,
+        clip_sha256=clip_sha,
+        observed=observed,
+        outcome=outcome,
+        prompt_identity_sha256=prompt_identity,
+    )
+    entry_path = verifier_module._witness_acoustic_cache_path(
+        output_dir, clip_sha, prompt_identity
+    )
+    response_sidecar = entry_path.with_suffix(".response.json")
+    response_sidecar.write_text('{"heard_pinyin":"tampered"}', encoding="utf-8")
+    entry = json.loads(entry_path.read_text(encoding="utf-8"))
+    entry["provider_response_sha256"] = verifier_module._sha256(response_sidecar)
+    entry_path.write_text(json.dumps(entry), encoding="utf-8")
+
+    assert verifier_module._serve_witness_acoustic_cache(
+        output_dir=output_dir,
+        clip_sha256=clip_sha,
+        job_dir=job_dir,
+        expected_model=verifier_module.ENTITY_AUDIO_MODEL,
+        expected_prompt_identity_sha256=prompt_identity,
+    ) is None
 
 
 def test_witness_acoustic_cache_never_stores_failures(tmp_path, monkeypatch):

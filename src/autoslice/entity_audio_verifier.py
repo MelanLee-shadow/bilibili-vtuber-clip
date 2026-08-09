@@ -31,6 +31,10 @@ from scripts.gemini_slice_jingting import (
     timely_terms_context,
 )
 from src.autoslice import gemini_backup_policy
+from src.autoslice.acoustic_witness_protocol import (
+    BLIND_PINYIN_PROTOCOL,
+    contains_han_text,
+)
 from src.autoslice.llm_client import extract_json_object
 
 ENTITY_AUDIO_MODEL = "Gemini 3.6 Flash (High)"
@@ -57,7 +61,7 @@ WITNESS_SCHEMA = "subtitle-span-acoustic-witness.v1"
 # production incident proved why: the old prompt embedded one valid pinyin
 # example and AGY copied it verbatim for unrelated audio.  Audio bytes alone
 # are not a sufficient cache key when the dictation instructions change.
-WITNESS_PROMPT_CONTRACT = "candidate-free-toneless-pinyin-no-example.v2"
+WITNESS_PROMPT_CONTRACT = "candidate-free-toneless-pinyin-neutral-length.v3"
 _LEGACY_PROMPT_COPY_PINYIN = "zhe ge shi he tian yi de lian dong o"
 
 
@@ -79,6 +83,7 @@ def _uncertain(request: Mapping[str, Any], reason: str, detail: str = "") -> dic
     if request.get("schema_version") == WITNESS_REQUEST_SCHEMA:
         return {
             "schema_version": WITNESS_SCHEMA,
+            "witness_protocol": BLIND_PINYIN_PROTOCOL,
             "request_sha256": request.get("request_sha256"),
             "status": "UNCERTAIN",
             "reason_code": reason,
@@ -107,6 +112,7 @@ def _witness_prompt(
     delivery_mode: str = "agy",
     target_audio_start_ms: int | None,
     target_audio_end_ms: int | None,
+    syllable_count_hint: int | None = None,
 ) -> str:
     """Pure-dictation witness prompt. Deliberately shows NO candidate text,
     no adjacent transcript, and no glossary — anything textual would prime
@@ -141,6 +147,8 @@ do not output any Chinese characters anywhere.
 Recording date: {recording_date}
 The target interval occupies {target_audio_start_ms if target_audio_start_ms is not None else "unknown"} ms
 through {target_audio_end_ms if target_audio_end_ms is not None else "unknown"} ms in the attached clip.
+Neutral length hint: {syllable_count_hint if syllable_count_hint is not None else "unknown"} target syllables.
+This hint carries no candidate wording; trust the audio if the count differs.
 Audio before/after the target is context for speech-rate and speaker only —
 never merge its syllables into the target report.
 
@@ -478,17 +486,34 @@ class _EntityProviderOutcome:
     provider_failures: list[dict[str, Any]]
 
 
-_ACOUSTIC_CACHE_SCHEMA = "witness-acoustic-cache.v2"
+_ACOUSTIC_CACHE_SCHEMA = "witness-acoustic-cache.v3"
 
 
-def _witness_acoustic_cache_path(output_dir: Path, clip_sha256: str) -> Path:
+def _witness_cache_prompt_identity(
+    request: Mapping[str, Any], *, recording_date: str
+) -> str:
+    prompt = _witness_prompt(
+        recording_date=recording_date,
+        delivery_mode="agy",
+        syllable_count_hint=request.get("syllable_count_hint"),
+        target_audio_start_ms=request.get("target_audio_start_ms"),
+        target_audio_end_ms=request.get("target_audio_end_ms"),
+    )
+    return hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+
+
+def _witness_acoustic_cache_path(
+    output_dir: Path,
+    clip_sha256: str,
+    prompt_identity_sha256: str | None = None,
+) -> Path:
     """Global content-addressed cache entry for one witness audio clip.
 
     成本裁定（Ivan 2026-07-27，3 天 $40 案）：付费声学证人 88% 的消耗来自
     重产轮次对**同一段音频**的重复听写——witness 请求按设计不携带候选
     （纯听写），答案只由音频决定，request_sha 里的文本漂移不改变问题本身。
-    键=音频片 sha256，但 entry schema 与 prompt contract 也必须精确匹配；
-    这样纯文本候选漂移仍然免调用，听写指令升级则自动淘汰旧结果。
+    键=音频片 sha256，但 entry schema、prompt contract 与 prompt sha 也必须
+    精确匹配；中性音节提示漂移会 miss，等价 prompt 才可免调用。
     BASE 从候选包目录上溯（out/<date>/<cid> → BASE），主树与 V15
     恢复树各自命中自己的缓存。
     """
@@ -499,7 +524,7 @@ def _witness_acoustic_cache_path(output_dir: Path, clip_sha256: str) -> Path:
         / "cache"
         / "witness-acoustic"
         / clip_sha256[:2]
-        / f"{clip_sha256}.json"
+        / f"{clip_sha256}{'.' + prompt_identity_sha256 if prompt_identity_sha256 else ''}.json"
     )
 
 
@@ -509,6 +534,7 @@ def _serve_witness_acoustic_cache(
     clip_sha256: str,
     job_dir: Path,
     expected_model: str,
+    expected_prompt_identity_sha256: str,
 ) -> _EntityProviderOutcome | None:
     """Return a synthetic provider outcome from the acoustic cache, or None.
 
@@ -516,7 +542,9 @@ def _serve_witness_acoustic_cache(
     下游照常重算全部 sha 与报告校验——缓存只省 provider 调用，不省验证。
     """
 
-    entry_path = _witness_acoustic_cache_path(output_dir, clip_sha256)
+    entry_path = _witness_acoustic_cache_path(
+        output_dir, clip_sha256, expected_prompt_identity_sha256
+    )
     try:
         entry = json.loads(entry_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -528,6 +556,8 @@ def _serve_witness_acoustic_cache(
         or entry.get("audio_clip_sha256") != clip_sha256
         or entry.get("provider") != "agy"
         or entry.get("model") != expected_model
+        or entry.get("prompt_identity_sha256")
+        != expected_prompt_identity_sha256
         or not isinstance(observed, dict)
         or observed.get("status") != "OBSERVED"
     ):
@@ -535,6 +565,18 @@ def _serve_witness_acoustic_cache(
     prompt_src = entry_path.with_suffix(".prompt.json")
     response_src = entry_path.with_suffix(".response.json")
     if not prompt_src.is_file() or not response_src.is_file():
+        return None
+    if _sha256(prompt_src) != entry.get("provider_prompt_sha256"):
+        return None
+    if _sha256(response_src) != entry.get("provider_response_sha256"):
+        return None
+    try:
+        response_observed = json.loads(
+            strip_markdown_fence(response_src.read_text(encoding="utf-8"))
+        )
+    except (OSError, TypeError, ValueError):
+        return None
+    if response_observed != observed:
         return None
     prompt_path = job_dir / "prompt.acoustic-cache.json"
     response_path = job_dir / "response.acoustic-cache.json"
@@ -561,6 +603,7 @@ def _store_witness_acoustic_cache(
     clip_sha256: str,
     observed: Mapping[str, Any],
     outcome: _EntityProviderOutcome,
+    prompt_identity_sha256: str,
 ) -> None:
     """Best-effort AGY-only write-through; absence must never fail production."""
 
@@ -568,7 +611,11 @@ def _store_witness_acoustic_cache(
         return
 
     try:
-        entry_path = _witness_acoustic_cache_path(output_dir, clip_sha256)
+        provider_prompt_sha256 = _sha256(outcome.prompt_path)
+        provider_response_sha256 = _sha256(outcome.response_path)
+        entry_path = _witness_acoustic_cache_path(
+            output_dir, clip_sha256, prompt_identity_sha256
+        )
         entry_path.parent.mkdir(parents=True, exist_ok=True)
         entry_path.with_suffix(".prompt.json").write_bytes(
             outcome.prompt_path.read_bytes()
@@ -582,6 +629,9 @@ def _store_witness_acoustic_cache(
                     "schema_version": _ACOUSTIC_CACHE_SCHEMA,
                     "prompt_contract": WITNESS_PROMPT_CONTRACT,
                     "audio_clip_sha256": clip_sha256,
+                    "prompt_identity_sha256": prompt_identity_sha256,
+                    "provider_prompt_sha256": provider_prompt_sha256,
+                    "provider_response_sha256": provider_response_sha256,
                     "observed": dict(observed),
                     "provider": outcome.provider,
                     "model": outcome.model,
@@ -625,7 +675,7 @@ def _observe_entity_audio(
     if witness_mode:
         prompt = _witness_prompt(
             recording_date=recording_date,
-            delivery_mode="agy",
+            delivery_mode="agy", syllable_count_hint=request.get("syllable_count_hint"),
             target_audio_start_ms=request.get("target_audio_start_ms"),
             target_audio_end_ms=request.get("target_audio_end_ms"),
         )
@@ -789,7 +839,7 @@ def _observe_entity_audio(
         else:
             api_prompt = _witness_prompt(
                 recording_date=recording_date,
-                delivery_mode="gemini_api",
+                delivery_mode="gemini_api", syllable_count_hint=request.get("syllable_count_hint"),
                 target_audio_start_ms=request.get("target_audio_start_ms"),
                 target_audio_end_ms=request.get("target_audio_end_ms"),
             )
@@ -901,7 +951,6 @@ def _observe_entity_audio(
 
 
 _PINYIN_SYLLABLE_RX = re.compile(r"^(?:[a-zü]+|\?)$")
-_CJK_RX = re.compile(r"[㐀-鿿]")
 
 
 def _subtitle_acoustic_witness_verdict(
@@ -946,7 +995,7 @@ def _subtitle_acoustic_witness_verdict(
         and isinstance(observed.get("target_audible"), bool)
         and (bool(tokens) or silence_observation)
         and all(_PINYIN_SYLLABLE_RX.fullmatch(token) for token in tokens)
-        and not _CJK_RX.search(json.dumps(dict(observed), ensure_ascii=False))
+        and not contains_han_text(json.dumps(dict(observed), ensure_ascii=False))
         and not any(
             key in observed
             for key in (
@@ -1005,6 +1054,7 @@ def _subtitle_acoustic_witness_verdict(
         )
     return {
         "schema_version": WITNESS_SCHEMA,
+        "witness_protocol": BLIND_PINYIN_PROTOCOL,
         "request_sha256": request_sha,
         "status": "OBSERVED",
         "target_audible": bool(observed["target_audible"]),
@@ -1272,6 +1322,59 @@ def _crop_black_frame_audio(
     return True, ""
 
 
+def _serve_local_verdict_manifest(
+    *,
+    manifest_path: Path,
+    audio_path: Path,
+    request: Mapping[str, Any],
+    request_sha256: str,
+    verifier: _LocalAudioVerifier,
+    witness_mode: bool,
+    expected_prompt_identity_sha256: str | None,
+) -> Mapping[str, Any] | None:
+    if not manifest_path.is_file() or not audio_path.is_file():
+        return None
+    try:
+        cached = json.loads(manifest_path.read_text(encoding="utf-8"))
+        prompt_sha256 = str(cached.get("prompt_sha256") or "")
+        prompt_artifact_valid = any(
+            path.is_file() and _sha256(path) == prompt_sha256
+            for path in manifest_path.parent.glob("prompt*")
+        )
+        if not (
+            cached.get("schema_version") == "entity-audio-verdict-manifest.v1"
+            and cached.get("request_sha256") == request_sha256
+            and cached.get("request_payload_sha256")
+            == _json_sha256(dict(request))
+            and cached.get("source_media_sha256") == verifier.source_sha256
+            and cached.get("audio_clip_sha256") == _sha256(audio_path)
+            and cached.get("provider") == "agy"
+            and cached.get("model") == verifier.model
+            and prompt_artifact_valid
+            and (
+                not witness_mode
+                or (
+                    cached.get("witness_prompt_contract")
+                    == WITNESS_PROMPT_CONTRACT
+                    and cached.get("witness_prompt_identity_sha256")
+                    == expected_prompt_identity_sha256
+                )
+            )
+        ):
+            return None
+        verdict = cached.get("verdict")
+        if isinstance(verdict, Mapping) and verdict.get("reason_code") in {
+            "ENTITY_AUDIO_PROVIDER_FAILED",
+            "ENTITY_VERIFIER_ERROR",
+            "ENTITY_AUDIO_RESPONSE_INVALID",
+            "ENTITY_AUDIO_CROP_FAILED",
+        }:
+            return None
+        return verdict if isinstance(verdict, Mapping) else None
+    except (OSError, ValueError, TypeError):
+        return None
+
+
 def _verify_local_audio_request(
     *,
     verifier: _LocalAudioVerifier,
@@ -1285,7 +1388,30 @@ def _verify_local_audio_request(
     if witness_mode:
         # A dictation witness must not carry candidates at all — their mere
         # presence in the request would prime the transcription.
-        if candidates is not None:
+        forbidden_text_channels = {
+            "candidate_entities",
+            "current_cue",
+            "proposed_cue",
+            "matched_audio_text",
+            "context_before",
+            "context_after",
+            "suspect",
+            "replacement",
+        }
+        hint = request.get("syllable_count_hint")
+        if (
+            request.get("witness_protocol") != BLIND_PINYIN_PROTOCOL
+            or (
+                hint is not None
+                and (
+                    isinstance(hint, bool)
+                    or not isinstance(hint, int)
+                    or hint <= 0
+                )
+            )
+        ):
+            return _uncertain(request, "WITNESS_REQUEST_PROTOCOL_INVALID")
+        if any(key in request for key in forbidden_text_channels):
             return _uncertain(request, "WITNESS_REQUEST_CARRIES_CANDIDATES")
         candidates = []
     elif not isinstance(candidates, list) or len(candidates) < 2:
@@ -1311,32 +1437,6 @@ def _verify_local_audio_request(
     job_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = job_dir / "verdict.manifest.json"
     audio_path = job_dir / "input.mp4"
-    if manifest_path.is_file() and audio_path.is_file():
-        try:
-            cached = json.loads(manifest_path.read_text(encoding="utf-8"))
-            if (
-                cached.get("request_sha256") == request_sha
-                and cached.get("source_media_sha256") == verifier.source_sha256
-                and cached.get("audio_clip_sha256") == _sha256(audio_path)
-                and cached.get("provider") == "agy"
-                and cached.get("model") == verifier.model
-            ):
-                cached_verdict = cached["verdict"]
-                # Provider failures must be retried rather than poisoning cache.
-                if not (
-                    isinstance(cached_verdict, dict)
-                    and cached_verdict.get("reason_code")
-                    in {
-                        "ENTITY_AUDIO_PROVIDER_FAILED",
-                        "ENTITY_VERIFIER_ERROR",
-                        "ENTITY_AUDIO_RESPONSE_INVALID",
-                        "ENTITY_AUDIO_CROP_FAILED",
-                    }
-                ):
-                    return cached_verdict
-        except (OSError, ValueError, KeyError, TypeError):
-            pass
-
     span = _prepare_audio_span(
         request=request,
         context_mode=context_mode,
@@ -1346,6 +1446,20 @@ def _verify_local_audio_request(
     )
     if span is None:
         return _uncertain(request, "ENTITY_AUDIO_SPAN_INVALID")
+    acoustic_prompt_identity = _witness_cache_prompt_identity(
+        span.observed_request, recording_date=verifier.recording_date
+    ) if witness_mode else None
+    cached_verdict = _serve_local_verdict_manifest(
+        manifest_path=manifest_path,
+        audio_path=audio_path,
+        request=request,
+        request_sha256=request_sha,
+        verifier=verifier,
+        witness_mode=witness_mode,
+        expected_prompt_identity_sha256=acoustic_prompt_identity,
+    )
+    if cached_verdict is not None:
+        return cached_verdict
     crop_succeeded, crop_error = _crop_black_frame_audio(
         source_media=verifier.source_media,
         audio_path=audio_path,
@@ -1364,6 +1478,7 @@ def _verify_local_audio_request(
             clip_sha256=acoustic_clip_sha,
             job_dir=job_dir,
             expected_model=verifier.model,
+            expected_prompt_identity_sha256=str(acoustic_prompt_identity or ""),
         )
         if cached_outcome is not None:
             outcome = cached_outcome
@@ -1439,6 +1554,7 @@ def _verify_local_audio_request(
                 clip_sha256=acoustic_clip_sha,
                 observed=observed,
                 outcome=outcome,
+                prompt_identity_sha256=str(acoustic_prompt_identity or ""),
             )
         manifest = {
             "schema_version": "entity-audio-verdict-manifest.v1",
@@ -1462,6 +1578,14 @@ def _verify_local_audio_request(
             "response_sha256": _sha256(outcome.response_path),
             "model": outcome.model,
             "provider": outcome.provider,
+            **(
+                {
+                    "witness_prompt_contract": WITNESS_PROMPT_CONTRACT,
+                    "witness_prompt_identity_sha256": acoustic_prompt_identity,
+                }
+                if witness_mode
+                else {}
+            ),
             **({"key_tier": outcome.accepted_key_tier} if outcome.accepted_key_tier else {}),
             **(
                 {"paid_backup_policy": dict(outcome.paid_policy_stamp)}

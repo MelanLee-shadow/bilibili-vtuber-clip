@@ -16,6 +16,7 @@ from src.autoslice.final_review_auditor import audit_final_subtitles
 def _witness(heard_pinyin: str) -> dict[str, object]:
     return {
         "schema_version": "subtitle-span-acoustic-witness.v1",
+        "witness_protocol": "blind_pinyin",
         "status": "OBSERVED",
         "target_audible": True,
         "heard_pinyin": heard_pinyin,

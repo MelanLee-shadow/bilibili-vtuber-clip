@@ -444,18 +444,28 @@ def is_keep_current_disclosed(finding: object) -> bool:
         adjudication = finding.get("context_audio_adjudication")
     if not isinstance(adjudication, Mapping):
         return False
+    return decided_keep_current_adjudication(
+        adjudication,
+        timing_immutable=(
+            adjudication.get("timing_immutable") is True
+            or finding.get("timing_immutable") is True
+        ),
+    )
+
+
+def decided_keep_current_adjudication(
+    adjudication: Mapping[str, object],
+    *,
+    timing_immutable: bool,
+) -> bool:
+    """Shared terminal predicate for a fully decided CURRENT outcome."""
+
     mutation = adjudication.get("mutation_authority")
     return bool(
         adjudication.get("status") == "OBSERVED"
         and adjudication.get("policy_branch") in _DECIDED_KEEP_CURRENT_BRANCHES
         and adjudication.get("repaired") is False
-        # Auditor receipts historically bind timing immutability on the
-        # finding envelope; newer synthetic/unit receipts may carry the same
-        # bit inside the adjudication.  Both are the same fail-closed fact.
-        and (
-            adjudication.get("timing_immutable") is True
-            or finding.get("timing_immutable") is True
-        )
+        and timing_immutable
         and isinstance(mutation, Mapping)
         and mutation.get("status") == "NOT_APPLIED"
     )

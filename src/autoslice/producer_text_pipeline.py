@@ -45,6 +45,7 @@ from src.autoslice.exact_final_convergence import (
     resolve_findings_from_exact_final_convergence_memos,
 )
 from src.autoslice.danmaku_evidence import DanmakuItem
+from src.autoslice.deferred_same_cue_resolution import adjudicate_routed_findings
 from src.autoslice.final_review_auditor import (
     FinalReviewAuditError,
     MAX_CONTEXT_ADJUDICATIONS,
@@ -826,131 +827,33 @@ def _run_final_review(
                 if row.get("routed") == "disclosure"
                 and row.get("proposed_full_cue") is not None
             ]
-            adjudicated_cues: set[int] = set()
-            adjudication_count = 0
-            partial = False
-            for row in adjudicable:
-                suspect = str(row["suspect"])
-                finding_cue = int(row.get("cue_index") or 0)
-                if finding_cue in adjudicated_cues:
-                    row["routed"] = "deferred_same_cue"
-                    row["context_audio_adjudication"] = {
-                        "schema_version": "subtitle-span-adjudication.v1",
-                        "status": "DEFERRED_SAME_CUE",
-                        "repaired": False,
-                    }
-                    partial = True
-                    continue
-                if adjudication_count >= MAX_CONTEXT_ADJUDICATIONS:
-                    row["routed"] = "skipped_budget"
-                    row["context_audio_adjudication"] = {
-                        "schema_version": "subtitle-span-adjudication.v1",
-                        "status": "SKIPPED_BUDGET",
-                        "repaired": False,
-                    }
-                    partial = True
-                    continue
-                adjudicated_cues.add(finding_cue)
-                adjudication_count += 1
-                # 过期发现守卫（2026-07-14 恋青/练死案）：审片发现产自它当时
-                # 看到的文本快照；若后续 pass 已改写该 cue、suspect 不在当前
-                # 文本里，这条发现的前提已失效——只披露，绝不再持刀。
-                live_cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
-                live_text = (
-                    live_cues[finding_cue - 1].text
-                    if 0 < finding_cue <= len(live_cues)
-                    else ""
-                )
-                if suspect not in live_text:
-                    row["context_audio_adjudication"] = {
-                        "status": "STALE_FINDING_SKIPPED",
-                        "repaired": False,
-                    }
-                    continue
-                srt_text, adj_audit = adjudicate_context_finding(
-                    srt_text,
+            def adjudicate(live_srt: str, finding: dict[str, Any]):
+                return adjudicate_context_finding(
+                    live_srt,
                     entity_verifier=verify_confusable_entity,
-                    finding=row,
+                    finding=finding,
                     clip_context=clip_context,
                     judge_llm_call=review_llm_call,
                     screen_read_probe=screen_read_probe,
                 )
-                rebuilt_finding = adj_audit.get("rebuilt_finding")
-                if isinstance(rebuilt_finding, Mapping):
-                    for key in (
-                        "suspect",
-                        "suggestion",
-                        "span_start_codepoint",
-                        "span_end_codepoint",
-                        "proposed_full_cue",
-                        "base_text_sha256",
-                        "candidate_provenance",
-                        "candidate_memory_id",
-                        "why",
-                        "repair_class",
-                    ):
-                        if key in rebuilt_finding:
-                            row[key] = rebuilt_finding[key]
-                repaired = bool(adj_audit.get("repaired"))
-                row["context_audio_adjudication"] = adj_audit
-                if repaired:
-                    row["routed"] = "context_audio_adjudicated_fix"
-                    final_review_audit["applied_count"] = int(
-                        final_review_audit.get("applied_count") or 0
-                    ) + 1
-                    final_review_audit["status"] = "APPLIED"
-                    # 终稿面复证登记（delivery-divergence 防线，xinyi 案同类）：
-                    # 已应用的裁决修复必须和 chat/实体修复一样被
-                    # verify_chat_authority_final_surfaces 在交付工件上按原时窗
-                    # 复证存活。无 expected_entity/resolved_canonical，故不会被
-                    # 未注册回退或矛盾和解误伤。
-                    request = adj_audit.get("request") or {}
-                    staged_entity_repairs.append(
-                        {
-                            "mode": "final_review_context_adjudication",
-                            "action": (
-                                "DROP_CUE"
-                                if adj_audit.get("policy_branch")
-                                == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
-                                else "REPLACE_CUE_TEXT"
-                            ),
-                            "repair_class": request.get("repair_class"),
-                            "decision_authority": adj_audit.get(
-                                "decision_authority"
-                            ),
-                            "policy_branch": adj_audit.get("policy_branch"),
-                            "mutation_authority": adj_audit.get(
-                                "mutation_authority"
-                            ),
-                            "evidence_id": request.get("evidence_id"),
-                            "cue_indexes": [finding_cue],
-                            "matched_start_ms": int(request.get("matched_start_ms") or 0),
-                            "matched_end_ms": int(request.get("matched_end_ms") or 0),
-                            "before": [request.get("current_cue")],
-                            "after": [request.get("proposed_cue")],
-                            "structured_exact_text": request.get("proposed_cue"),
-                            "survived": True,
-                            "verdict": adj_audit.get("verdict"),
-                            "acoustic_witness": adj_audit.get("verdict"),
-                            "judge": (
-                                (adj_audit.get("witness_judge") or {}).get(
-                                    "judge"
-                                )
-                            ),
-                            "drop_authority": adj_audit.get(
-                                "drop_authority"
-                            ),
-                            "inaudible_witness_override": (
-                                (
-                                    adj_audit.get("witness_judge") or {}
-                                ).get("inaudible_witness_override")
-                            ),
-                            "request_sha256": request.get("request_sha256"),
-                            "timing_immutable": adj_audit.get(
-                                "timing_immutable"
-                            ),
-                        }
-                    )
+
+            (
+                srt_text,
+                adjudication_count,
+                partial,
+                newly_applied,
+                staged_entity_repairs,
+            ) = adjudicate_routed_findings(
+                srt_text,
+                adjudicable,
+                max_adjudications=MAX_CONTEXT_ADJUDICATIONS, adjudicate=adjudicate,
+                original_srt_text=original_srt_text,
+            )
+            if newly_applied:
+                final_review_audit["applied_count"] = int(
+                    final_review_audit.get("applied_count") or 0
+                ) + newly_applied
+                final_review_audit["status"] = "APPLIED"
             final_review_audit["context_adjudication_count"] = adjudication_count
             final_review_audit["context_adjudication_budget"] = MAX_CONTEXT_ADJUDICATIONS
             final_review_audit["priority_raw_finding_count"] = len(priority_rows)

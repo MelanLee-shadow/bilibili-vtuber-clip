@@ -67,7 +67,6 @@ FUNCTION_DEBT_LEDGER = {
     # （jyl-r10 案：CPA 宕机/岔听下 UNRESOLVED，而该 cue 终局注定被基线盖回；
     # source_truth 同款 DEFERRED 惯例）。连续吃增长，下次动它先拆。
     ("src/autoslice/producer_text_pipeline.py", "_finalize_text_evidence"): 345,
-    ("src/autoslice/producer_text_pipeline.py", "_run_final_review"): 304,
     # 2026-08-08 +6：会话内重述修复接线（Ivan 2026-08-08 当日指令，
     # docs/reviews/2026-08-08-restatement-repair-design.md §4）——同上，
     # 重活在 restatement_recall.py，这里只留调用点。
@@ -188,7 +187,7 @@ MODULE_DEBT_LEDGER = {
     # 同时接入 Ivan 8/8 真值法证 F1 回声环修复；锁定拆解后的模块收益。
     # 2026-08-08 再净 -16：同日 truth-harvest synthesis F7 删除无声学
     # context-only mutation 快捷路，保留显式 disclosure 降级门。
-    "src/autoslice/final_review_auditor.py": 3_326,
+    "src/autoslice/final_review_auditor.py": 3_325,
     "src/autoslice/live_source_review.py": 2_035,
     # 2026-08-07 +18：狍哥案实施指令（同上）——marker 选择改判
     # SOURCE_FACT_REPAIRED_RESCORE_REQUIRED + 写 pending sidecar。
@@ -199,7 +198,7 @@ MODULE_DEBT_LEDGER = {
     # 留给下一次动这个 god-file 的人先拆再改。
     # 2026-08-08 +5：Ivan 2026-08-08 优化①边界重放 + wsl 重产 BLOCK
     # 实证——把两层 carry/skip 披露写入最终 boundary audit。
-    "src/autoslice/producer_package_finalization.py": 2_782,
+    "src/autoslice/producer_package_finalization.py": 2_741,
     # 2026-07-31 +40：同上（SC 发送者 deferral）。
     # 2026-08-08 +7：会话内重述修复接线（Ivan 2026-08-08 当日指令，
     # docs/reviews/2026-08-08-restatement-repair-design.md §4）——会话内
@@ -207,7 +206,7 @@ MODULE_DEBT_LEDGER = {
     # src/autoslice/restatement_recall.py，这里只留 import + 一处调用点。
     # 2026-08-08 +23：Ivan 2026-08-08 优化①边界重放(8b 冻结 loader 接线)
     # +30：Ivan 8/8 真值法证 F2 代词发现器接线;两处主体均在独立新模块。
-    "src/autoslice/producer_text_pipeline.py": 2_257,
+    "src/autoslice/producer_text_pipeline.py": 2_160,
     # 2026-07-31 +12：contract 穿透接线（形参 + 4 个调用点）。
     # 2026-07-31 再 +17：封面路由 P1——witness 从「路由法官」降回「置信输入」，
     # 删掉无条件放行、几何否决移到关系分支之后、置信改为 几何 OR witness bbox。

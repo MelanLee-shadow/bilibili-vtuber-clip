@@ -576,10 +576,8 @@ def adjudicate_language_preservation_audit(
     all_resolved = len(results) == len(rows)
     cpa_hearing_count = 0
 
-    from src.autoslice.acoustic_witness_adjudication import (
-        _pinyin_tokens,
-        adjudicate_with_witness,
-    )
+    from src.autoslice.acoustic_pinyin import text_pinyin_tokens as _pinyin_tokens
+    from src.autoslice.acoustic_witness_adjudication import adjudicate_with_witness
 
     for result in results:
         cue_index = result.get("cue_index")
@@ -630,6 +628,7 @@ def adjudicate_language_preservation_audit(
         )
         witness = {
             "schema_version": "subtitle-span-acoustic-witness.v1",
+            "witness_protocol": "blind_pinyin",
             "status": "OBSERVED",
             "request_sha256": hashlib.sha256(
                 json.dumps(
@@ -961,10 +960,8 @@ def adjudicate_foreign_script_audit(
     all_resolved = len(results) == len(rows)
     cpa_hearing_count = 0
 
-    from src.autoslice.acoustic_witness_adjudication import (
-        _pinyin_tokens,
-        adjudicate_with_witness,
-    )
+    from src.autoslice.acoustic_pinyin import text_pinyin_tokens as _pinyin_tokens
+    from src.autoslice.acoustic_witness_adjudication import adjudicate_with_witness
 
     for result in results:
         cue_index = result.get("cue_index")
@@ -1015,6 +1012,7 @@ def adjudicate_foreign_script_audit(
         )
         witness = {
             "schema_version": "subtitle-span-acoustic-witness.v1",
+            "witness_protocol": "blind_pinyin",
             "status": "OBSERVED",
             "request_sha256": hashlib.sha256(
                 json.dumps(

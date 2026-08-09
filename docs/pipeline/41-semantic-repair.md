@@ -171,6 +171,26 @@
   所有 mutation 先 staged；任一 discovery/routing 异常必须恢复输入 SRT 与原 audit，并输出
   `status=AUDITOR_UNAVAILABLE`、`release_gate=BLOCK`、typed reason、`findings=[]`、
   `applied_count=0`。
+  span 声学证人固定走 `blind_pinyin`：hash-bound 请求只含音频时间窗、cue 几何和候选双方
+  音节数相同时才可给出的中性长度提示，物理上不得携带 CURRENT、PROPOSED、上下文字幕、
+  suspect/replacement 或候选实体。证人只回 `heard_pinyin`；代码先计算 CURRENT/PROPOSED 双
+  候选贴合并连同分数交 CPA 闭集裁决。新回执必须写 `witness_protocol=blind_pinyin`；历史回执
+  缺该字段时只按 `legacy_sighted` 原样读取，禁止补标、重算或据其重新生成拼音证词。
+  长度提示只对去标点后的纯汉字候选计数；Latin、数字或未知脚本混入时一律省略，禁止把标点
+  伪算成音节而偏向某个候选。全局声学缓存与逐请求 manifest 除音频、模型和 prompt contract
+  外，还须绑定完整候选盲 prompt SHA（含录制日、中性长度提示和目标区间 markers）；同音频但
+  问题漂移必须 miss，旧 cache schema 不得回放；provider response SHA 及其重解析 observation
+  也必须与 cache entry 一致。cache path 同时分隔音频与 prompt identity，禁止不同提示相互覆盖
+  并造成交替重付费。
+  correction pass 同一不可变 cue 时间窗有多笔 finding 时，第一笔 mutation 落定后必须把后续
+  finding 在 live `base_text_sha256` 上重建并重新入裁决；编辑 span 已被前一笔改动覆盖或 cue 已
+  删除时，才可终态写 `SUPERSEDED_BY_SAME_CUE_MUTATION` 及 typed reason。每笔原
+  `DEFERRED_SAME_CUE` 都须留下 READJUDICATED 或 SUPERSEDED 最终去向；同窗多次落字的终稿
+  owner 合成为 initial-before → final-after，并保存连续 mutation chain，禁止遗留要求中间文本
+  仍存活的多个 owner。外部裁决预算按不可变时间窗整组预留：整组能在调用帽内才准入第一笔，
+  否则必须在尚未 mutation 前整组写 `SKIPPED_BUDGET`；禁止窗内改到一半再截断。只有前笔覆盖
+  edit span 或删除 cue 才能写 SUPERSEDED；原 base/span 自身不合法必须写 typed UNRESOLVED，
+  correction mutation audit 随即 BLOCK，后续独立 exact-final 空扫描不得洗白。
 - 全部 authority 和确定性 guard 落地后，必须对精确最终 SRT 再跑一次 discovery，输出
   `final-review-audit.v2`。该回执绑定最终 SRT SHA-256；只有 discovery 完整、显式合法的空
   findings、零未决项、release gate PASS、`subtitle-correction-mutation-audit.v1` PASS，
@@ -209,6 +229,14 @@
   临时 QC/clean 副本替代 active recut SRT 的发布门。自愈修复必须先在 staged authority 上
   完成 ledger registration，再原子安装 sidecar 与 active SRT；任一异常须把 active SRT、
   chat authority、review flags、redelivery baseline 和内存 audit 全部恢复到该 pass 前状态。
+  历史/振荡收敛的 CPA 若选择非空 PROPOSED，还必须同时持有该 exact proposed/time window 的
+  声学授权：(a) 本轮新鲜 `blind_pinyin` OBSERVED 见证，或 (b) 历史 repair 中可从完整
+  check-request、候选盲 witness-request、OBSERVED witness、CPA judge payload 重新校验全部 SHA
+  绑定的见证。旧式只留若干摘要 hash 的 compact receipt 仍是合法历史，但不足以复用声学授权。
+  两者皆无时 finding 必须降为 `disclosure_only`，写
+  `HISTORY_CONVERGENCE_ACOUSTIC_WITNESS_REQUIRED` 和 NOT_APPLIED；package 落字层须独立重验
+  该 gate，不能只信 convergence 的 PASS 状态或 policy_branch；convergence memo、judge schema、
+  witness status、mutation basis 与顶层/内嵌 gate 必须相互一致，禁止改 policy 名字伪装普通落字。
   已有完整 exact-final CPA `PROPOSED` 闭集收据的 carryover 必须连同该收据持久化；
   下轮 exact gate 只在当前 cue 文本 SHA-256 唯一命中、起止毫秒与原请求完全相同
   时重放这份 CPA 决定，再必须跑一次 clean exact-final。文本或时间任一漂移就禁止重放，
@@ -227,9 +255,9 @@
 | 词表/专名权威 | `term_authority.py`、`assets/lidousha/glossary.txt`（含方言节）、`entity_confusables.json` |
 | 弹幕/SC 证据修复 | `chat_proposals.py`、`chat_repair.py`（阈值 score≥0.68/coverage≥0.60/precision≥0.52） |
 | 见证人规则 | `subtitle_fidelity.py`（通用 mutation 的候选/fidelity 门；同音/近音正字法另须 `final_review_auditor.py` 的 typed textual authority receipt） |
-| 终审审片员 | `pronoun_consistency.py`（候选级代词逐项完整性回执，只发现不改字）+ `final_review_auditor.py`（发现器；同音/近音候选、typed mutation receipt、声学仲裁路由与插入契约） |
+| 终审审片员 | `pronoun_consistency.py`（候选级代词逐项完整性回执，只发现不改字）+ `final_review_auditor.py`（发现器；同音/近音候选、typed mutation receipt、声学仲裁路由与插入契约）+ `deferred_same_cue_resolution.py`（同窗 fresh-base 复审、typed supersession 与 owner chain） |
 | 最终字节放行 | `final_review_contract.py`（验 `final-review-audit.v2` 的精确 SRT hash、完整 discovery、零 finding、correction mutation audit 与 final boundary endpoint binding） |
-| 声学证人/裁决 | `entity_audio_verifier.py`（AGY 为首选高可信候选盲黑帧证人；AGY 明确失败时仅对候选盲拼音请求开放 hash-bound Gemini API 后备；只复用 AGY 成功缓存）+ `read_aloud_llm_verifier.py` / `acoustic_witness_adjudication.py`（CPA 仅看文字闭集并最终选边，任何音频 provider 都无落字权） |
+| 声学证人/裁决 | `entity_audio_verifier.py`（AGY 为首选高可信候选盲黑帧证人；AGY 明确失败时仅对候选盲拼音请求开放 hash-bound Gemini API 后备；只复用 AGY 成功缓存）+ `acoustic_pinyin.py` / `acoustic_witness_protocol.py`（公共拼音贴合与 blind/legacy 协议）+ `read_aloud_llm_verifier.py` / `acoustic_witness_adjudication.py`（CPA 仅看文字闭集并最终选边，任何音频 provider 都无落字权）+ `exact_final_witness_authority.py`（历史收敛见证强绑定与 package 再验） |
 | 源真值 ledger | `source_subtitle_truth.py` + `subtitle_truth_ledger.v1.json`（Ivan 审定钉子，唯一不受 provider 故障影响的通道；已审定完整口播必须用 `replace_cue`，不能假设 ASR 仍保留待替换误词；整 cue 静音幻听用严格包含语义的 `drop_cue`，跨界即冲突停用；官方回放等替代源只能用 ledger 内显式 alias，且候选 piece 必须同时精确绑定替代源 SHA-256 与审定时间轴偏移，文件名相似不继承真值） |
 | 梗词铁律 | `surface_canon.py`（直女→侄女等 hard canon） |
 
