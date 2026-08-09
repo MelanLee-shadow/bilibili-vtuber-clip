@@ -176,7 +176,18 @@ final-delivery 回执与 exact-final 放行回执失效，均须从相应层重�
 原始字节 SHA、单一源录像 basename/SHA、绝对 source interval、selection hook/scorecard、
 冻结终端 closure 文本/毫秒及最终 transcript/grid 全部与 pristine record 一致时，才可把
 历史 PASS **verdict** 投影到当前 request。当前 grid 上的 recommendation/evidence ordinal、
-scope 与 closure 仍须唯一通过现有确定性校验；生成的是带
+scope 与 closure 仍须唯一通过现有确定性校验。source 层另允许一个更窄的 fresh-ASR owner
+单调放宽：仅限普通 `semantic_lower_bound`、没有 manual/given-end、published recall 或
+structured payoff，冻结 `delivery_lower_bound_ms` 确由旧 `required_owner_end_ms` 形成，
+当前 owner 缺失或更早，并且变化只表现为 delivery/minimum floor 向前、backward allowance
+按同一毫秒差扩大；scope 其余字段必须逐项相等，双方 scope 都须通过 canonical 重建校验，
+不能只信自声明哈希。冻结 owner contract 还必须来自 record 的
+`artifact_hashes.chat_authority_audit_sha256` 逐字节绑定文件；当前 contract 由本轮 owner freeze
+现场传入。两份 contract 都须通过 schema/contract hash 校验、candidate owner-eligibility scope
+相同、`deterministic_owner_set_sha256` 相同，且差集 owner kind 只能来自已列举的 per-attempt
+story/chat ASR 类型；任何 `source_subtitle_truth` 消失都拒绝。该例外不回填历史 owner，最终
+closure 仍须在当前 grid 唯一命中；新/更晚 owner、人工下界或任一无关 scope 漂移一律 fresh。
+final-delivery 层不使用该放宽，scope 仍须精确相等。生成的是带
 `frozen_decision_binding` 的 current-bound derived receipt，不冒充旧 LLM 审过当前 request。
 final-delivery 层还必须逐原始字节命中冻结 `artifact_hashes.subtitle_sha256`，并保持 source
 witness 的推荐 end/最终 interval 不漂。两层均在 `boundary_receipt_replay` 披露 frozen/current
