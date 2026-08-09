@@ -87,8 +87,9 @@ Updated: 2026-08-08 深夜 by Claude（8/7 批审阅收割/法证/重述车道�
 
 **Codex 用法(临时指派约至 8/10:执行全给 Codex;Sonnet 永久禁用,Opus/Codex only)**:
 - Mac:`cd <worktree> && codex exec --skip-git-repo-check --sandbox workspace-write
-  -c 'service_tier="fast"' - < 任务文件 > 日志 2>&1 &`。**裸调继承
-  ~/.codex/config.toml 的 gpt-5.6-sol+ultra,不要传 -m/--effort**。
+  - < 任务文件 > 日志 2>&1 &`。**裸调继承 ~/.codex/config.toml 的
+  gpt-5.6-sol+ultra,不要传 -m/--effort;Ivan 8/9 令:不再用 service_tier=fast,
+  用默认 normal(任何 -c service_tier 都不要传)**。
 - wsl:`ssh wsl-codex '... ~/.local/bin/codex exec --skip-git-repo-check
   --sandbox danger-full-access ...'`(产线要 ssh free 故用 danger;codex 不在
   非交互 PATH,用全路径)。
