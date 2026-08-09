@@ -378,3 +378,12 @@
   `src/autoslice/speaker_host_evidence.py`，v1 无真实子 cue 音频分窗，见该模块与
   `tests/lidousha/test_speaker_host_evidence.py` 的落地范围说明）。歌切不进入 talk
   speaker 链。
+- 已由 Ivan 完成逐 cue 说话人标注的交付重产可在现有 speaker override 内携带
+  `reviewed-speaker-baseline.v1`，但它只在 delivery truth mode 使用。baseline 必须绑定
+  candidate、最终媒体/clean SRT、真值输入文件 SHA、非空 authority、完整连续 cue 分区，
+  并逐 cue 精确绑定最终位置、时间和去注记后的文字。只有 reviewed、单说话人、整段覆盖的
+  李豆沙 cue 可作 CAM++ 同片 host anchor；混说、重叠、drop、无人声注记或未裁定 cue 禁止
+  充当 anchor。分析器仍对全部 cue 运行，reviewed cue 最后由 override 覆盖；明确留给机器的
+  cue 必须保留原 acoustic/context 决策，若机器证据本身 unresolved 仍阻断，绝不能因真值
+  文件漏标而默认为连线。合并 cue 先按最终 clean SRT 连续重编号，再建立 override；真值工作表
+  只作成品交付输入，机制回归必须使用合成 fixture。

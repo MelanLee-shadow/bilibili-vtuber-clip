@@ -31,7 +31,6 @@ from scripts.apply_speaker_turn_overrides import (
     apply_overrides,
     atomic_write_text,
     sha256_file,
-    validate_bound_speaker_override_document,
     write_ass,
     write_srt,
 )
@@ -71,7 +70,6 @@ from src.autoslice.speaker_evidence import (
 from src.autoslice.speaker_context import (
     _two_means,
     resolve_ambiguous_labels,
-    _reviewed_context_votes,
     _singleton_nonlexical_dominant as _singleton_nonlexical_dominant,
     _resolve_singleton_outlier,
     _context_prompt as _context_prompt,
@@ -80,6 +78,10 @@ from src.autoslice.speaker_context import (
     _call_context_via_cpa,
 )
 from src.autoslice.speaker_host_evidence import acoustic_hard_pass
+from src.autoslice.reviewed_speaker_baseline import (
+    ReviewedSpeakerBaseline,
+    load_speaker_override_state,
+)
 
 
 def _cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
@@ -610,6 +612,7 @@ class _CampPlusAnchorState:
     host_prints: list[Path]
     host_anchor_scope: str
     source_session_evidence: dict[str, object] | None
+    reviewed_speaker_baseline: dict[str, object] | None
     host_bank_similarity: Callable[[int], float]
 
 
@@ -622,6 +625,8 @@ def _prepare_campplus_anchor_state(
     model_dir: Path,
     work_dir: Path,
     source_session_anchor_path: Path | None,
+    reviewed_anchor_labels: Mapping[int, str] | None = None,
+    reviewed_speaker_baseline: Mapping[str, object] | None = None,
 ) -> _CampPlusAnchorState:
     """Load hash-bound runtime assets and construct the trusted host bank."""
 
@@ -658,6 +663,10 @@ def _prepare_campplus_anchor_state(
         if seed_scores[index] >= float(policy["host_session_seed_min"])
     ][:anchor_count]
     source_session_evidence: dict[str, object] | None = None
+    if source_session_anchor_path is not None and reviewed_anchor_labels:
+        raise SpeakerFinalizationError(
+            "source-session anchors and reviewed speaker anchors are mutually exclusive"
+        )
     if source_session_anchor_path is not None:
         host_prints, source_session_evidence = _load_source_session_anchor_samples(
             source_session_anchor_path.resolve(strict=True),
@@ -671,6 +680,27 @@ def _prepare_campplus_anchor_state(
         )
         host_indices: list[int] = []
         host_anchor_scope = "source_session"
+        reviewed_baseline_evidence = None
+    elif reviewed_anchor_labels:
+        if any(
+            isinstance(index, bool)
+            or not isinstance(index, int)
+            or not 0 <= index < len(cues)
+            or speaker != HOST_SPEAKER
+            for index, speaker in reviewed_anchor_labels.items()
+        ):
+            raise SpeakerFinalizationError(
+                "reviewed speaker anchor labels are invalid"
+            )
+        host_indices = sorted(reviewed_anchor_labels)
+        if len(host_indices) < 2:
+            raise SpeakerFinalizationError(
+                "reviewed speaker baseline supplied fewer than two host anchors"
+            )
+        host_prints = [cue_paths[index] for index in host_indices]
+        host_anchor_scope = "reviewed_speaker_baseline"
+        source_session_evidence = None
+        reviewed_baseline_evidence = dict(reviewed_speaker_baseline or {})
     else:
         host_indices = clip_host_indices
         if len(host_indices) < 2:
@@ -679,6 +709,7 @@ def _prepare_campplus_anchor_state(
             )
         host_prints = [cue_paths[index] for index in host_indices]
         host_anchor_scope = "clip"
+        reviewed_baseline_evidence = None
 
     score_cache: dict[int, float] = {}
 
@@ -706,6 +737,7 @@ def _prepare_campplus_anchor_state(
         host_prints=host_prints,
         host_anchor_scope=host_anchor_scope,
         source_session_evidence=source_session_evidence,
+        reviewed_speaker_baseline=reviewed_baseline_evidence,
         host_bank_similarity=host_bank_similarity,
     )
 
@@ -721,6 +753,8 @@ def _run_campplus_analysis(
     context_call: Callable[[str], str] | None,
     reviewed_context_votes: Mapping[int, str] | None = None,
     source_session_anchor_path: Path | None = None,
+    reviewed_anchor_labels: Mapping[int, str] | None = None,
+    reviewed_speaker_baseline: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     anchors = _prepare_campplus_anchor_state(
         media_path=media_path,
@@ -730,6 +764,8 @@ def _run_campplus_analysis(
         model_dir=model_dir,
         work_dir=work_dir,
         source_session_anchor_path=source_session_anchor_path,
+        reviewed_anchor_labels=reviewed_anchor_labels,
+        reviewed_speaker_baseline=reviewed_speaker_baseline,
     )
     policy = anchors.policy
     references = anchors.references
@@ -742,6 +778,7 @@ def _run_campplus_analysis(
     host_prints = anchors.host_prints
     host_anchor_scope = anchors.host_anchor_scope
     source_session_evidence = anchors.source_session_evidence
+    reviewed_baseline_evidence = anchors.reviewed_speaker_baseline
     host_bank_similarity = anchors.host_bank_similarity
 
     guest_candidates: list[int] = []
@@ -801,6 +838,7 @@ def _run_campplus_analysis(
                 **singleton,
                 "host_anchor_scope": host_anchor_scope,
                 "source_session_anchor": source_session_evidence,
+                "reviewed_speaker_baseline": reviewed_baseline_evidence,
                 "policy": policy,
                 "model_tree_sha256": model_hash,
                 "reference_hashes": {
@@ -827,6 +865,7 @@ def _run_campplus_analysis(
             "multi_speaker_detected": False,
             "host_anchor_scope": host_anchor_scope,
             "source_session_anchor": source_session_evidence,
+            "reviewed_speaker_baseline": reviewed_baseline_evidence,
             "policy": policy,
             "model_tree_sha256": model_hash,
             "reference_hashes": {str(reference["id"]): str(reference["sha256"]) for reference in references},
@@ -934,6 +973,7 @@ def _run_campplus_analysis(
         "multi_speaker_detected": True,
         "host_anchor_scope": host_anchor_scope,
         "source_session_anchor": source_session_evidence,
+        "reviewed_speaker_baseline": reviewed_baseline_evidence,
         "policy": policy,
         "model_tree_sha256": model_hash,
         "reference_hashes": {str(reference["id"]): str(reference["sha256"]) for reference in references},
@@ -1031,65 +1071,6 @@ def _snapshot_speaker_inputs(
         mixed_overlap_evidence_original=mixed_original,
         mixed_overlap_evidence_snapshot=mixed_snapshot,
         mixed_overlap_evidence_sha256=mixed_sha256,
-    )
-
-
-@dataclass(frozen=True)
-class _SpeakerOverrideState:
-    document: dict[str, object] | None
-    reviewed_votes: dict[int, str]
-    expected_automatic_sha256: str
-
-
-def _load_speaker_override_state(
-    override_path: Path | None,
-    *,
-    candidate_id: str | None,
-    media_path: Path,
-    text_srt_path: Path,
-    cue_count: int,
-) -> _SpeakerOverrideState:
-    """Validate one optional human override against the current frozen inputs."""
-
-    if override_path is None:
-        return _SpeakerOverrideState(None, {}, "")
-    loaded = json.loads(override_path.read_text(encoding="utf-8"))
-    if not isinstance(loaded, dict):
-        raise SpeakerFinalizationError("speaker override document must be an object")
-    expected_text = str(loaded.get("text_final_srt_sha256") or "")
-    expected_automatic = str(loaded.get("source_srt_sha256") or "")
-    expected_media = str(loaded.get("source_media_sha256") or "")
-    actual_text = sha256_file(text_srt_path)
-    actual_media = sha256_file(media_path)
-    if not expected_media:
-        raise SpeakerFinalizationError("speaker override is missing source_media_sha256")
-    if expected_media != actual_media:
-        raise SpeakerFinalizationError(
-            f"speaker override media hash mismatch: expected {expected_media!r}, got {actual_media!r}"
-        )
-    if expected_text and expected_text != actual_text:
-        raise SpeakerFinalizationError(
-            f"speaker override text-final hash mismatch: expected {expected_text!r}, got {actual_text!r}"
-        )
-    if not str(candidate_id or "").strip():
-        raise SpeakerFinalizationError(
-            "candidate_id is required when a speaker override is present"
-        )
-    try:
-        validate_bound_speaker_override_document(
-            override_path,
-            candidate_id=str(candidate_id),
-            expected_source_media_sha256=actual_media,
-            expected_text_final_srt_sha256=actual_text,
-        )
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        raise SpeakerFinalizationError(
-            f"speaker override authority binding failed: {exc}"
-        ) from exc
-    return _SpeakerOverrideState(
-        document=loaded,
-        reviewed_votes=_reviewed_context_votes(loaded, cue_count=cue_count),
-        expected_automatic_sha256=expected_automatic,
     )
 
 
@@ -1211,6 +1192,7 @@ def _run_bound_speaker_analysis(
     analyzer: Callable[..., dict[str, object]],
     context_call: Callable[[str], str] | None,
     reviewed_votes: Mapping[int, str],
+    reviewed_baseline: ReviewedSpeakerBaseline | None,
     mixed_overlap_document: Mapping[str, object] | None,
 ) -> dict[str, object]:
     """Run the analyzer, then prove every bound input stayed unchanged."""
@@ -1225,6 +1207,12 @@ def _run_bound_speaker_analysis(
         context_call=context_call,
         reviewed_context_votes=reviewed_votes,
         source_session_anchor_path=bound.source_session_anchor_snapshot,
+        reviewed_anchor_labels=(
+            reviewed_baseline.anchor_labels if reviewed_baseline is not None else None
+        ),
+        reviewed_speaker_baseline=(
+            reviewed_baseline.evidence if reviewed_baseline is not None else None
+        ),
     )
     if sha256_file(bound.profile_path) != bound.profile_sha256:
         raise SpeakerFinalizationError("voiceprint profile drifted during speaker analysis")
@@ -1512,7 +1500,7 @@ def finalize_speaker_subtitles(
         source_session_anchor_path=source_session_anchor_path,
         mixed_overlap_evidence_path=mixed_overlap_evidence_path,
     )
-    override_state = _load_speaker_override_state(
+    override_state = load_speaker_override_state(
         override_path,
         candidate_id=candidate_id,
         media_path=bound.media_path,
@@ -1521,6 +1509,7 @@ def finalize_speaker_subtitles(
     )
     override_document = override_state.document
     reviewed_votes = override_state.reviewed_votes
+    reviewed_baseline = override_state.reviewed_baseline
     expected_automatic = override_state.expected_automatic_sha256
     mixed_gate = _evaluate_mixed_overlap_gate(
         bound=bound,
@@ -1541,6 +1530,7 @@ def finalize_speaker_subtitles(
         analyzer=analyzer,
         context_call=context_call,
         reviewed_votes=reviewed_votes,
+        reviewed_baseline=reviewed_baseline,
         mixed_overlap_document=mixed_overlap_document,
     )
     labels = _materialize_speaker_labels(

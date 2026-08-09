@@ -1,0 +1,392 @@
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+
+from scripts.apply_speaker_turn_overrides import Cue, sha256_file, write_srt
+from scripts.apply_subtitle_text_overrides import TextCue
+from src.autoslice import reviewed_speaker_baseline as reviewed_baseline_module
+from src.autoslice import speaker_finalizer
+from src.autoslice.reviewed_speaker_baseline import (
+    REVIEWED_SPEAKER_BASELINE_SCHEMA,
+    load_reviewed_speaker_baseline,
+)
+from src.autoslice.speaker_common import (
+    GUEST_SPEAKER,
+    HOST_SPEAKER,
+    SpeakerFinalizationError,
+)
+
+
+AUTHORITY = "Ivan synthetic reviewed speaker fixture"
+ARBITRATION_SHA = "a" * 64
+CANDIDATE = "synthetic_candidate"
+
+
+def _cues() -> list[TextCue]:
+    return [
+        TextCue(1, "00:00:00,000", "00:00:01,500", "主播一"),
+        TextCue(2, "00:00:01,500", "00:00:03,100", "主播二"),
+        TextCue(3, "00:00:03,100", "00:00:04,400", "待机器裁决"),
+    ]
+
+
+def _write_truth(root: Path) -> tuple[str, str]:
+    path = root / "reports" / "synthetic.truth-diff.v2.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "ivan-speaker-truth-diff.v2",
+                "candidate_id": CANDIDATE,
+                "cues": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return str(path.relative_to(root)), sha256_file(path)
+
+
+def _override_row(cue: TextCue, speaker: str = HOST_SPEAKER) -> dict:
+    return {
+        "source_cue": cue.source_index,
+        "expect": {"start": cue.start, "end": cue.end, "text": cue.text},
+        "authority": AUTHORITY,
+        "segments": [
+            {
+                "start": cue.start,
+                "end": cue.end,
+                "speaker": speaker,
+                "text": cue.text,
+            }
+        ],
+    }
+
+
+def _document(root: Path) -> dict:
+    cues = _cues()
+    truth_path, truth_sha = _write_truth(root)
+    return {
+        "schema_version": 1,
+        "candidate_id": CANDIDATE,
+        "source_media_sha256": "b" * 64,
+        "text_final_srt_sha256": "c" * 64,
+        "source_srt_sha256": "d" * 64,
+        "reviewed_speaker_baseline": {
+            "schema_version": REVIEWED_SPEAKER_BASELINE_SCHEMA,
+            "authority": AUTHORITY,
+            "truth_input": {"path": truth_path, "sha256": truth_sha},
+            "cue_count": len(cues),
+            "anchor_source_cues": [1, 2],
+            "machine_cues": [
+                {
+                    "source_cue": 3,
+                    "expect": {
+                        "start": cues[2].start,
+                        "end": cues[2].end,
+                        "text": cues[2].text,
+                    },
+                    "reason": "positive voice arbitration keeps machine ownership",
+                    "arbitration": {
+                        "human_voice_observed": True,
+                        "receipt_sha256": ARBITRATION_SHA,
+                    },
+                }
+            ],
+        },
+        "overrides": [_override_row(cues[0]), _override_row(cues[1])],
+    }
+
+
+def test_reviewed_baseline_binds_complete_partition_and_exact_host_anchors(
+    tmp_path: Path,
+) -> None:
+    loaded = load_reviewed_speaker_baseline(
+        _document(tmp_path),
+        candidate_id=CANDIDATE,
+        cues=_cues(),
+        repo_root=tmp_path,
+    )
+    assert loaded is not None
+    assert loaded.anchor_labels == {0: HOST_SPEAKER, 1: HOST_SPEAKER}
+    assert loaded.machine_cues == (3,)
+    assert loaded.evidence["reviewed_cue_count"] == 2
+
+
+@pytest.mark.parametrize(
+    "mutate, error",
+    [
+        (
+            lambda document: document["reviewed_speaker_baseline"].update(
+                {"cue_count": 4}
+            ),
+            "cue count drift",
+        ),
+        (
+            lambda document: document["reviewed_speaker_baseline"].update(
+                {"anchor_source_cues": [1]}
+            ),
+            "at least two",
+        ),
+        (
+            lambda document: document["overrides"][0]["expect"].update(
+                {"text": "漂移"}
+            ),
+            "text drift",
+        ),
+        (
+            lambda document: document["reviewed_speaker_baseline"]["truth_input"].update(
+                {"sha256": "0" * 64}
+            ),
+            "truth input hash drift",
+        ),
+        (
+            lambda document: document["reviewed_speaker_baseline"].update(
+                {"machine_cues": []}
+            ),
+            "cue partition drift",
+        ),
+        (
+            lambda document: document["overrides"][0]["segments"][0].update(
+                {"speaker": GUEST_SPEAKER}
+            ),
+            "exact full-cue",
+        ),
+    ],
+)
+def test_reviewed_baseline_rejects_drift_and_invalid_anchors(
+    tmp_path: Path,
+    mutate,
+    error: str,
+) -> None:
+    document = _document(tmp_path)
+    mutate(document)
+    with pytest.raises(SpeakerFinalizationError, match=error):
+        load_reviewed_speaker_baseline(
+            document,
+            candidate_id=CANDIDATE,
+            cues=_cues(),
+            repo_root=tmp_path,
+        )
+
+
+def test_reviewed_host_anchors_rescue_a_clip_with_zero_profile_anchors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cues = _cues()
+    media = tmp_path / "media.mp4"
+    media.write_bytes(b"media")
+    cue_paths = []
+    for index in range(len(cues)):
+        path = tmp_path / f"cue-{index}.wav"
+        path.write_bytes(str(index).encode())
+        cue_paths.append(path)
+    reference = tmp_path / "reference.wav"
+    reference.write_bytes(b"reference")
+    monkeypatch.setattr(
+        speaker_finalizer,
+        "_load_runtime",
+        lambda *_args, **_kwargs: ({}, [{"path": reference}], "model-hash", object()),
+    )
+    monkeypatch.setattr(
+        speaker_finalizer,
+        "_policy",
+        lambda _profile: {"host_session_anchor_count": 4, "host_session_seed_min": 0.68},
+    )
+    monkeypatch.setattr(
+        speaker_finalizer,
+        "_extract_cue_wavs",
+        lambda *_args, **_kwargs: (object(), 16_000, cue_paths),
+    )
+    monkeypatch.setattr(
+        speaker_finalizer,
+        "_build_embedding_similarity",
+        lambda **_kwargs: (lambda _left, _right: 0.1),
+    )
+
+    with pytest.raises(SpeakerFinalizationError, match="not enough"):
+        speaker_finalizer._prepare_campplus_anchor_state(
+            media_path=media,
+            cues=cues,
+            profile_path=tmp_path / "profile.json",
+            reference_dir=tmp_path,
+            model_dir=tmp_path,
+            work_dir=tmp_path / "without-review",
+            source_session_anchor_path=None,
+        )
+
+    state = speaker_finalizer._prepare_campplus_anchor_state(
+        media_path=media,
+        cues=cues,
+        profile_path=tmp_path / "profile.json",
+        reference_dir=tmp_path,
+        model_dir=tmp_path,
+        work_dir=tmp_path / "with-review",
+        source_session_anchor_path=None,
+        reviewed_anchor_labels={0: HOST_SPEAKER, 1: HOST_SPEAKER},
+        reviewed_speaker_baseline={"authority": AUTHORITY},
+    )
+    assert state.clip_host_indices == []
+    assert state.host_indices == [0, 1]
+    assert state.host_anchor_scope == "reviewed_speaker_baseline"
+
+
+def _write_text_srt(path: Path, cues: list[TextCue]) -> None:
+    path.write_text(
+        "\n\n".join(
+            f"{cue.source_index}\n{cue.start} --> {cue.end}\n{cue.text}"
+            for cue in cues
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_reviewed_rows_override_analyzer_but_machine_owned_cue_does_not(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cues = _cues()
+    media = tmp_path / "media.mp4"
+    media.write_bytes(b"synthetic media")
+    text_srt = tmp_path / "text.srt"
+    _write_text_srt(text_srt, cues)
+    profile = tmp_path / "profile.json"
+    profile.write_text("{}", encoding="utf-8")
+    (tmp_path / "references").mkdir()
+    (tmp_path / "model").mkdir()
+
+    automatic_path = tmp_path / "expected-automatic.srt"
+    write_srt(
+        [
+            Cue(
+                source_index=cue.source_index,
+                start=cue.start,
+                end=cue.end,
+                speaker=GUEST_SPEAKER,
+                text=cue.text,
+                decision_source="synthetic_machine",
+            )
+            for cue in cues
+        ],
+        automatic_path,
+    )
+    document = _document(tmp_path)
+    document.update(
+        source_media_sha256=sha256_file(media),
+        text_final_srt_sha256=sha256_file(text_srt),
+        source_srt_sha256=sha256_file(automatic_path),
+    )
+    override = tmp_path / "override.json"
+    override.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(reviewed_baseline_module, "REPO_ROOT", tmp_path)
+
+    def analyzer(**kwargs):
+        assert kwargs["reviewed_anchor_labels"] == {
+            0: HOST_SPEAKER,
+            1: HOST_SPEAKER,
+        }
+        assert kwargs["reviewed_speaker_baseline"]["machine_cues"] == [3]
+        return {
+            "host_anchor_scope": "reviewed_speaker_baseline",
+            "context_unresolved_cues": [],
+            "decisions": [
+                {
+                    "speaker": GUEST_SPEAKER,
+                    "decision_source": "synthetic_machine",
+                }
+                for _cue in cues
+            ],
+        }
+
+    output_srt = tmp_path / "speaker.srt"
+    manifest = speaker_finalizer.finalize_speaker_subtitles(
+        media_path=media,
+        text_srt_path=text_srt,
+        profile_path=profile,
+        reference_dir=tmp_path / "references",
+        model_dir=tmp_path / "model",
+        output_srt_path=output_srt,
+        output_ass_path=tmp_path / "speaker.ass",
+        output_manifest_path=tmp_path / "speaker.json",
+        work_dir=tmp_path / "work",
+        candidate_id=CANDIDATE,
+        override_path=override,
+        analyzer=analyzer,
+    )
+    output = output_srt.read_text(encoding="utf-8")
+    assert f"[{HOST_SPEAKER}] 主播一" in output
+    assert f"[{HOST_SPEAKER}] 主播二" in output
+    assert f"[{GUEST_SPEAKER}] 待机器裁决" in output
+    assert manifest["reviewed_output_cue_count"] == 2
+    assert manifest["host_anchor_scope"] == "reviewed_speaker_baseline"
+
+
+def test_unresolved_machine_owned_cue_still_blocks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cues = _cues()
+    media = tmp_path / "media.mp4"
+    media.write_bytes(b"synthetic media")
+    text_srt = tmp_path / "text.srt"
+    _write_text_srt(text_srt, cues)
+    profile = tmp_path / "profile.json"
+    profile.write_text("{}", encoding="utf-8")
+    (tmp_path / "references").mkdir()
+    (tmp_path / "model").mkdir()
+    automatic_path = tmp_path / "expected-automatic.srt"
+    write_srt(
+        [
+            Cue(
+                source_index=cue.source_index,
+                start=cue.start,
+                end=cue.end,
+                speaker=GUEST_SPEAKER,
+                text=cue.text,
+                decision_source="synthetic_machine",
+            )
+            for cue in cues
+        ],
+        automatic_path,
+    )
+    document = _document(tmp_path)
+    document.update(
+        source_media_sha256=sha256_file(media),
+        text_final_srt_sha256=sha256_file(text_srt),
+        source_srt_sha256=sha256_file(automatic_path),
+    )
+    override = tmp_path / "override.json"
+    override.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(reviewed_baseline_module, "REPO_ROOT", tmp_path)
+
+    def analyzer(**_kwargs):
+        return {
+            "context_unresolved_cues": [3],
+            "decisions": [
+                {
+                    "speaker": GUEST_SPEAKER,
+                    "decision_source": "synthetic_machine",
+                }
+                for _cue in cues
+            ],
+        }
+
+    with pytest.raises(SpeakerFinalizationError, match="did not resolve.*3"):
+        speaker_finalizer.finalize_speaker_subtitles(
+            media_path=media,
+            text_srt_path=text_srt,
+            profile_path=profile,
+            reference_dir=tmp_path / "references",
+            model_dir=tmp_path / "model",
+            output_srt_path=tmp_path / "speaker.srt",
+            output_ass_path=tmp_path / "speaker.ass",
+            output_manifest_path=tmp_path / "speaker.json",
+            work_dir=tmp_path / "work",
+            candidate_id=CANDIDATE,
+            override_path=override,
+            analyzer=analyzer,
+        )
