@@ -355,6 +355,38 @@ def test_boundary_semantic_review_is_downstream_of_final_text_authority():
     )
 
 
+def test_frozen_boundary_loader_receives_fresh_owner_contract():
+    """Keep the producer handoff aligned with the hash-bound replay loader."""
+
+    run_tree = ast.parse(inspect.getsource(pipeline.run_text_pipeline))
+    freeze_calls = [
+        node
+        for node in ast.walk(run_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "freeze_required_boundary_owner_contract"
+    ]
+    loader_calls = [
+        node
+        for node in ast.walk(run_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "load_frozen_boundary_receipt"
+    ]
+
+    assert len(freeze_calls) == 1
+    assert len(loader_calls) == 1
+    assert freeze_calls[0].lineno < loader_calls[0].lineno
+    owner_keyword = next(
+        keyword
+        for keyword in loader_calls[0].keywords
+        if keyword.arg == "current_owner_contract"
+    )
+    assert ast.unparse(owner_keyword.value) == (
+        "authority.chat_authority_audit.get('frozen_boundary_owner_contract')"
+    )
+
+
 def test_final_boundary_review_indexes_exact_post_authority_grid():
     seen_prompt = ""
 

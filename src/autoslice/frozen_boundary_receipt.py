@@ -22,6 +22,9 @@ from src.autoslice.jingting_chunker import parse_srt_cues
 
 REFERENCE_SCHEMA_VERSION = "talk-boundary-frozen-receipt-ref.v1"
 REPLAY_AUDIT_SCHEMA_VERSION = "talk-boundary-frozen-receipt-replay.v1"
+OWNER_PROJECTION_REFERENCE_SCHEMA_VERSION = (
+    "talk-boundary-owner-projection-ref.v1"
+)
 _REVIEW_SCHEMA_VERSION = "talk-boundary-semantic-review.v1"
 _ENDPOINT_SCHEMA_VERSION = "talk-boundary-final-endpoint-binding.v1"
 _SHA256_RX = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -35,6 +38,7 @@ class FrozenBoundaryReview:
     json_path: str
     exact_interval_projection: bool = False
     selection_hook_sha256: str | None = None
+    owner_floor_projection: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -391,8 +395,172 @@ def _receipt_reference(spec: Mapping[str, object]) -> tuple[
     return baseline, reference
 
 
+def _owner_tail_ms(contract: Mapping[str, object]) -> int | None:
+    owners = contract.get("owners")
+    if not isinstance(owners, list):
+        return None
+    ends = [
+        window.get("end_ms")
+        for owner in owners
+        if isinstance(owner, Mapping)
+        for window in (owner.get("local_windows") or [])
+        if isinstance(window, Mapping)
+    ]
+    if any(
+        isinstance(value, bool) or not isinstance(value, int)
+        for value in ends
+    ):
+        return None
+    return max(ends, default=None)
+
+
+def _load_owner_floor_projection_evidence(
+    *,
+    support_reference: Mapping[str, object],
+    record: Mapping[str, object],
+    source_review: Mapping[str, object],
+    current_owner_contract: object,
+) -> dict[str, object] | None:
+    """Bind old/new owner provenance before a scalar floor may relax."""
+
+    if (
+        support_reference.get("schema_version")
+        != OWNER_PROJECTION_REFERENCE_SCHEMA_VERSION
+        or support_reference.get("json_path")
+        != "frozen_boundary_owner_contract"
+        or not isinstance(current_owner_contract, Mapping)
+    ):
+        return None
+    raw_path = str(support_reference.get("path") or "").strip()
+    expected_sha256 = _normalized_sha256(support_reference.get("sha256"))
+    if not raw_path or expected_sha256 is None:
+        return None
+    support_path = Path(raw_path)
+    try:
+        if support_path.is_symlink() or not support_path.is_file():
+            return None
+        payload = support_path.read_bytes()
+        if _file_sha256(payload) != expected_sha256:
+            return None
+        support = json.loads(payload.decode("utf-8", errors="strict"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    artifact_hashes = record.get("artifact_hashes")
+    frozen_contract = (
+        support.get("frozen_boundary_owner_contract")
+        if isinstance(support, Mapping)
+        else None
+    )
+    if not (
+        isinstance(artifact_hashes, Mapping)
+        and _normalized_sha256(
+            artifact_hashes.get("chat_authority_audit_sha256")
+        )
+        == expected_sha256
+        and isinstance(frozen_contract, Mapping)
+    ):
+        return None
+    try:
+        # Local imports keep the boundary-review/frozen-receipt dependency
+        # graph acyclic at module initialization while reusing the canonical
+        # validators at the runtime choke point.
+        from src.autoslice.boundary_semantic_review import (
+            boundary_search_scope_is_valid,
+        )
+        from src.autoslice.producer_boundary_owner_contract import (
+            validate_frozen_boundary_owner_contract,
+        )
+
+        frozen = validate_frozen_boundary_owner_contract(frozen_contract)
+        current = validate_frozen_boundary_owner_contract(
+            current_owner_contract
+        )
+    except (ImportError, RuntimeError):
+        return None
+    frozen_scope = frozen.get("boundary_search_scope")
+    current_scope = current.get("boundary_search_scope")
+    frozen_owner_scope = frozen.get("owner_eligibility_scope")
+    current_owner_scope = current.get("owner_eligibility_scope")
+    allowed_owner_kinds = {
+        "source_subtitle_truth",
+        "exact_read",
+        "sc_sender",
+        "gift_name",
+        "reply_coreference",
+        "entity_repair",
+    }
+    all_owners = [
+        owner
+        for contract in (frozen, current)
+        for owner in (contract.get("owners") or [])
+        if isinstance(owner, Mapping)
+    ]
+    if not (
+        isinstance(frozen_scope, Mapping)
+        and isinstance(current_scope, Mapping)
+        and boundary_search_scope_is_valid(frozen_scope)
+        and boundary_search_scope_is_valid(current_scope)
+        and frozen_scope == source_review.get("boundary_search_scope")
+        and isinstance(frozen_owner_scope, Mapping)
+        and isinstance(current_owner_scope, Mapping)
+        and frozen_owner_scope.get("candidate_id")
+        == source_review.get("candidate_id")
+        and frozen_owner_scope.get("scope_sha256")
+        == current_owner_scope.get("scope_sha256")
+        and frozen.get("deterministic_owner_set_sha256") is not None
+        and frozen.get("deterministic_owner_set_sha256")
+        == current.get("deterministic_owner_set_sha256")
+        and all(
+            str(owner.get("owner_kind") or "") in allowed_owner_kinds
+            for owner in all_owners
+        )
+        and frozen_scope.get("required_owner_end_ms")
+        == _owner_tail_ms(frozen)
+        and current_scope.get("required_owner_end_ms")
+        == _owner_tail_ms(current)
+    ):
+        return None
+    expected_reference = {
+        "schema_version": OWNER_PROJECTION_REFERENCE_SCHEMA_VERSION,
+        "path": raw_path,
+        "sha256": expected_sha256,
+        "json_path": "frozen_boundary_owner_contract",
+        "contract_sha256": frozen.get("contract_sha256"),
+        "owner_set_sha256": frozen.get("owner_set_sha256"),
+        "deterministic_owner_set_sha256": frozen.get(
+            "deterministic_owner_set_sha256"
+        ),
+        "owner_eligibility_scope_sha256": frozen_owner_scope.get(
+            "scope_sha256"
+        ),
+    }
+    if dict(support_reference) != expected_reference:
+        return None
+    return {
+        "status": "PROVEN",
+        "authority": "HASH_BOUND_PER_ATTEMPT_OWNER_CONTRACTS",
+        "frozen_support_path": str(support_path.resolve()),
+        "frozen_support_sha256": expected_sha256,
+        "frozen_contract_sha256": frozen.get("contract_sha256"),
+        "current_contract_sha256": current.get("contract_sha256"),
+        "frozen_owner_set_sha256": frozen.get("owner_set_sha256"),
+        "current_owner_set_sha256": current.get("owner_set_sha256"),
+        "deterministic_owner_set_sha256": frozen.get(
+            "deterministic_owner_set_sha256"
+        ),
+        "owner_eligibility_scope_sha256": frozen_owner_scope.get(
+            "scope_sha256"
+        ),
+        "frozen_scope_sha256": frozen_scope.get("scope_sha256"),
+        "current_scope_sha256": current_scope.get("scope_sha256"),
+    }
+
+
 def load_frozen_boundary_receipt(
-    spec: Mapping[str, object], *, candidate_id: str
+    spec: Mapping[str, object],
+    *,
+    candidate_id: str,
+    current_owner_contract: object = None,
 ) -> FrozenBoundaryReceipt | None:
     """Load a pristine record only for an explicitly bound redelivery spec."""
 
@@ -442,6 +610,19 @@ def load_frozen_boundary_receipt(
     )
     if source is None or final is None or not _source_witness_matches(final, source):
         return None
+    owner_floor_projection: dict[str, object] | None = None
+    owner_support = reference.get("source_owner_projection")
+    if owner_support is not None:
+        if not isinstance(owner_support, Mapping):
+            return None
+        owner_floor_projection = _load_owner_floor_projection_evidence(
+            support_reference=owner_support,
+            record=document,
+            source_review=source,
+            current_owner_contract=current_owner_contract,
+        )
+        if owner_floor_projection is None:
+            return None
     source_binding = _endpoint_binding(source)
     final_binding = _endpoint_binding(final)
     artifact_hashes = document.get("artifact_hashes")
@@ -488,6 +669,7 @@ def load_frozen_boundary_receipt(
             "boundary_audit.boundary_semantic_review",
             exact_interval_projection,
             selection_hook_sha256,
+            owner_floor_projection,
         ),
         final_delivery=FrozenBoundaryReview(
             final,
@@ -550,6 +732,154 @@ def _effective_end_ms(
     return None
 
 
+def _source_scope_monotone_owner_floor_relaxation(
+    frozen_scope: object,
+    current_scope: object,
+    *,
+    owner_projection_evidence: object,
+) -> dict[str, object] | None:
+    """Prove that fresh derivation only removed a weaker ASR-owner floor.
+
+    Entity owners are fresh-ASR observations, not immutable publication
+    authority.  An exact-interval replay may therefore keep the older semantic
+    verdict when a later run derives fewer owners and only widens the allowed
+    search interval backwards.  Every unrelated scope field remains exact;
+    manual/given-end and structured-payoff scopes stay outside this exception.
+    """
+
+    if (
+        not isinstance(frozen_scope, Mapping)
+        or not isinstance(current_scope, Mapping)
+        or not isinstance(owner_projection_evidence, Mapping)
+        or owner_projection_evidence.get("status") != "PROVEN"
+        or owner_projection_evidence.get("frozen_scope_sha256")
+        != frozen_scope.get("scope_sha256")
+        or owner_projection_evidence.get("current_scope_sha256")
+        != current_scope.get("scope_sha256")
+    ):
+        return None
+    if frozen_scope == current_scope:
+        return None
+
+    def _valid_scope_digest(scope: Mapping[str, object]) -> bool:
+        expected = _normalized_sha256(scope.get("scope_sha256"))
+        core = {
+            str(key): value
+            for key, value in scope.items()
+            if key != "scope_sha256"
+        }
+        return expected is not None and expected == _canonical_sha256(core)
+
+    if not _valid_scope_digest(frozen_scope) or not _valid_scope_digest(
+        current_scope
+    ):
+        return None
+    try:
+        from src.autoslice.boundary_semantic_review import (
+            boundary_search_scope_is_valid,
+        )
+    except ImportError:
+        return None
+    if not boundary_search_scope_is_valid(
+        frozen_scope
+    ) or not boundary_search_scope_is_valid(current_scope):
+        return None
+    mutable_fields = {
+        "required_owner_end_ms",
+        "delivery_lower_bound_ms",
+        "minimum_recommended_end_ms",
+        "recommendation_backward_ms",
+        "scope_sha256",
+    }
+    if {
+        key: value
+        for key, value in frozen_scope.items()
+        if key not in mutable_fields
+    } != {
+        key: value
+        for key, value in current_scope.items()
+        if key not in mutable_fields
+    }:
+        return None
+    if not (
+        frozen_scope.get("schema_version")
+        == current_scope.get("schema_version")
+        == "talk-boundary-search-scope.v1"
+        and frozen_scope.get("status")
+        == current_scope.get("status")
+        == "PASS"
+        and frozen_scope.get("boundary_end_mode")
+        == current_scope.get("boundary_end_mode")
+        == "semantic_lower_bound"
+        and frozen_scope.get("manual_lower_bound_ms") is None
+        and frozen_scope.get("published_recall_anchor_ms") is None
+        and frozen_scope.get("structured_payoff_ms") is None
+        and frozen_scope.get("structured_payoff_clamped_from_ms") is None
+    ):
+        return None
+
+    frozen_owner = frozen_scope.get("required_owner_end_ms")
+    current_owner = current_scope.get("required_owner_end_ms")
+    integer_fields = (
+        "semantic_search_origin_ms",
+        "delivery_lower_bound_ms",
+        "minimum_recommended_end_ms",
+        "recommendation_backward_ms",
+    )
+    if (
+        isinstance(frozen_owner, bool)
+        or not isinstance(frozen_owner, int)
+        or frozen_owner < 0
+        or (
+            current_owner is not None
+            and (
+                isinstance(current_owner, bool)
+                or not isinstance(current_owner, int)
+                or current_owner < 0
+            )
+        )
+        or any(
+            isinstance(frozen_scope.get(field), bool)
+            or not isinstance(frozen_scope.get(field), int)
+            or isinstance(current_scope.get(field), bool)
+            or not isinstance(current_scope.get(field), int)
+            for field in integer_fields
+        )
+    ):
+        return None
+    if current_owner is not None and current_owner >= frozen_owner:
+        return None
+
+    frozen_floor = int(frozen_scope["delivery_lower_bound_ms"])
+    current_floor = int(current_scope["delivery_lower_bound_ms"])
+    origin = int(frozen_scope["semantic_search_origin_ms"])
+    frozen_backward = int(frozen_scope["recommendation_backward_ms"])
+    current_backward = int(current_scope["recommendation_backward_ms"])
+    if not (
+        frozen_floor == frozen_owner
+        and current_floor < frozen_floor
+        and (current_owner is None or current_floor >= current_owner)
+        and frozen_scope.get("minimum_recommended_end_ms") == frozen_floor
+        and current_scope.get("minimum_recommended_end_ms") == current_floor
+        and frozen_backward == max(0, origin - frozen_floor)
+        and current_backward == max(0, origin - current_floor)
+        and current_backward > frozen_backward
+    ):
+        return None
+    return {
+        "scope_projection_mode": (
+            "MONOTONE_REQUIRED_OWNER_FLOOR_RELAXATION"
+        ),
+        "frozen_scope_sha256": frozen_scope.get("scope_sha256"),
+        "current_scope_sha256": current_scope.get("scope_sha256"),
+        "frozen_required_owner_end_ms": frozen_owner,
+        "current_required_owner_end_ms": current_owner,
+        "frozen_delivery_lower_bound_ms": frozen_floor,
+        "current_delivery_lower_bound_ms": current_floor,
+        "owner_projection_evidence": dict(owner_projection_evidence),
+    }
+
+
 def _projected_payload_overrides(
     review: Mapping[str, object],
     *,
@@ -557,6 +887,7 @@ def _projected_payload_overrides(
     cue_grid_sha256: str,
     expected_scope: str,
     selection_hook_sha256: str | None,
+    owner_floor_projection: Mapping[str, object] | None,
 ) -> tuple[dict[str, object], dict[str, object]] | None:
     """Uniquely rebind an exact-interval verdict to current cue ordinals."""
 
@@ -565,14 +896,25 @@ def _projected_payload_overrides(
     evidence_indexes = review.get("evidence_cue_indexes")
     recommended_index = review.get("recommended_end_cue_index")
     endpoint = review.get("final_endpoint_binding")
+    frozen_scope = review.get("boundary_search_scope")
+    current_scope = request.get("boundary_search_scope")
+    scope_projection = (
+        _source_scope_monotone_owner_floor_relaxation(
+            frozen_scope,
+            current_scope,
+            owner_projection_evidence=owner_floor_projection,
+        )
+        if expected_scope == "source_full_window"
+        and frozen_scope != current_scope
+        else None
+    )
     if not (
         review.get("status") == "PASS"
         and review.get("review_scope") == expected_scope
         and review.get("candidate_id") == request.get("candidate_id")
         and review.get("target_ms") == request.get("target_ms")
         and review.get("max_forward_ms") == request.get("max_forward_ms")
-        and review.get("boundary_search_scope")
-        == request.get("boundary_search_scope")
+        and (frozen_scope == current_scope or scope_projection is not None)
         and review.get("selector_story_witness")
         == request.get("selector_story_witness")
         and isinstance(rows, list)
@@ -650,18 +992,21 @@ def _projected_payload_overrides(
         ):
             return None
         current_evidence = list(evidence_indexes)
+    projection_audit = {
+        "frozen_recommended_end_cue_index": recommended_index,
+        "current_recommended_end_cue_index": current_recommended_index,
+        "frozen_evidence_cue_indexes": list(evidence_indexes),
+        "current_evidence_cue_indexes": current_evidence,
+        "closure_text_sha256": endpoint.get("closure_text_sha256"),
+    }
+    if scope_projection is not None:
+        projection_audit.update(scope_projection)
     return (
         {
             "recommended_end_cue_index": current_recommended_index,
             "evidence_cue_indexes": current_evidence,
         },
-        {
-            "frozen_recommended_end_cue_index": recommended_index,
-            "current_recommended_end_cue_index": current_recommended_index,
-            "frozen_evidence_cue_indexes": list(evidence_indexes),
-            "current_evidence_cue_indexes": current_evidence,
-            "closure_text_sha256": endpoint.get("closure_text_sha256"),
-        },
+        projection_audit,
     )
 
 
@@ -699,6 +1044,7 @@ def frozen_review_payload(
             cue_grid_sha256=cue_grid_sha256,
             expected_scope=expected_scope,
             selection_hook_sha256=frozen.selection_hook_sha256,
+            owner_floor_projection=frozen.owner_floor_projection,
         )
         if frozen.exact_interval_projection and not strict_match
         else None

@@ -11,9 +11,16 @@ from src.autoslice.boundary_semantic_review import (
     review_talk_boundary_semantics,
 )
 from src.autoslice.frozen_boundary_receipt import (
+    OWNER_PROJECTION_REFERENCE_SCHEMA_VERSION,
     REFERENCE_SCHEMA_VERSION,
+    _source_scope_monotone_owner_floor_relaxation,
     load_frozen_boundary_receipt,
     redelivery_baseline_boundary_binding,
+)
+from src.autoslice.producer_boundary_owner_contract import (
+    _normalized_owner_set,
+    deterministic_owner_set_sha256,
+    frozen_boundary_owner_contract_sha256,
 )
 from src.autoslice.jingting_chunker import SrtCue, parse_srt_cues
 from src.autoslice.producer_boundary_review_stage import (
@@ -41,6 +48,17 @@ def _sha256(payload: bytes) -> str:
 
 def _text_sha256(text: str) -> str:
     return _sha256(text.encode("utf-8"))
+
+
+def _canonical_sha256(value: object) -> str:
+    return _sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
 
 
 def _source_cues(*, opening: str = "故事开场铺垫") -> list[SrtCue]:
@@ -89,10 +107,19 @@ def _extract(payload: str) -> dict:
     return json.loads(payload)
 
 
-def _scope() -> dict[str, object]:
+def _scope(
+    *,
+    required_owner_end_ms: int | None = None,
+    semantic_tail_trim_cap_ms: int = 0,
+    repair_cap_ms: int = 30_000,
+    manual_lower_bound_ms: int | None = None,
+) -> dict[str, object]:
     return build_boundary_search_scope(
         semantic_target_ms=5_600,
-        repair_cap_ms=30_000,
+        repair_cap_ms=repair_cap_ms,
+        manual_lower_bound_ms=manual_lower_bound_ms,
+        required_owner_end_ms=required_owner_end_ms,
+        semantic_tail_trim_cap_ms=semantic_tail_trim_cap_ms,
         last_piece_start_ms=PIECE_START_MS,
     )
 
@@ -111,8 +138,96 @@ def _endpoint_reference(review: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _build_spec_and_record(tmp_path: Path) -> tuple[dict, Path, str, dict]:
+def _owner_contract(
+    *,
+    scope: dict[str, object],
+    owners: list[dict[str, object]],
+) -> dict[str, object]:
+    owner_scope: dict[str, object] = {
+        "schema_version": "candidate-boundary-owner-scope.v1",
+        "candidate_id": CID,
+        "story_start_ms": 1_000,
+        "story_end_ms": 5_600,
+    }
+    owner_scope["scope_sha256"] = _canonical_sha256(owner_scope)
+    contract: dict[str, object] = {
+        "schema_version": "frozen-boundary-owner-contract.v1",
+        "status": "FROZEN",
+        "story_start_ms": 1_000,
+        "story_end_ms": 5_600,
+        "boundary_review_target_ms": scope["review_target_ms"],
+        "owner_discovery_end_ms": 5_600,
+        "required_owner_count": len(owners),
+        "owners": owners,
+        "owner_eligibility_scope": owner_scope,
+        "owner_set_sha256": _canonical_sha256(
+            _normalized_owner_set(owners)
+        ),
+        "deterministic_owner_set_sha256": (
+            deterministic_owner_set_sha256(owners)
+        ),
+        "boundary_search_scope": scope,
+    }
+    contract["contract_sha256"] = (
+        frozen_boundary_owner_contract_sha256(contract)
+    )
+    return contract
+
+
+def _attach_owner_projection_support(
+    *,
+    spec: dict,
+    record_path: Path,
+    support_path: Path,
+    frozen_contract: dict[str, object],
+) -> None:
+    support_path.write_text(
+        json.dumps(
+            {"frozen_boundary_owner_contract": frozen_contract},
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    support_sha256 = _sha256(support_path.read_bytes())
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record["artifact_hashes"]["chat_authority_audit_sha256"] = (
+        support_sha256
+    )
+    record_path.write_text(
+        json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
+    reference = spec["subtitle_redelivery_baseline"][
+        "frozen_boundary_receipt"
+    ]
+    reference["sha256"] = _sha256(record_path.read_bytes())
+    reference["source_owner_projection"] = {
+        "schema_version": OWNER_PROJECTION_REFERENCE_SCHEMA_VERSION,
+        "path": str(support_path),
+        "sha256": support_sha256,
+        "json_path": "frozen_boundary_owner_contract",
+        "contract_sha256": frozen_contract["contract_sha256"],
+        "owner_set_sha256": frozen_contract["owner_set_sha256"],
+        "deterministic_owner_set_sha256": frozen_contract[
+            "deterministic_owner_set_sha256"
+        ],
+        "owner_eligibility_scope_sha256": frozen_contract[
+            "owner_eligibility_scope"
+        ]["scope_sha256"],
+    }
+
+
+def _build_spec_and_record(
+    tmp_path: Path,
+    *,
+    source_scope: dict[str, object] | None = None,
+) -> tuple[dict, Path, str, dict]:
     source_cues = _source_cues()
+    source_scope = source_scope or _scope()
     source_review = review_talk_boundary_semantics(
         cues=source_cues,
         target_ms=5_600,
@@ -124,7 +239,7 @@ def _build_spec_and_record(tmp_path: Path) -> tuple[dict, Path, str, dict]:
         llm_call=lambda _prompt: _pass_response(2, [2, 3]),
         extract_json=_extract,
         max_forward_ms=30_000,
-        boundary_search_scope=_scope(),
+        boundary_search_scope=source_scope,
     )
     source_review, reasons = bind_final_semantic_endpoint(
         semantic_review=source_review,
@@ -235,6 +350,7 @@ def _review_source(
     llm_call,
     opening: str,
     shifted_grid: bool = False,
+    source_scope: dict[str, object] | None = None,
 ) -> tuple[dict[str, object], dict[str, object]]:
     replay_audit: dict[str, object] = {}
     cues = (
@@ -253,14 +369,234 @@ def _review_source(
         boundary_max_forward_ms=30_000,
         llm_call=llm_call,
         extract_json=_extract,
-        boundary_search_scope=_scope(),
-        available_local_source_context_end_ms=_scope()[
+        boundary_search_scope=source_scope or _scope(),
+        available_local_source_context_end_ms=(source_scope or _scope())[
             "required_local_source_context_end_ms"
         ],
         frozen_review=frozen_review,
         replay_audit=replay_audit,
     )
     return review, replay_audit
+
+
+def test_exact_replay_allows_only_monotone_source_owner_floor_relaxation(
+    tmp_path: Path,
+):
+    frozen_scope = _scope(
+        required_owner_end_ms=5_000,
+        semantic_tail_trim_cap_ms=1_500,
+    )
+    current_scope = _scope(semantic_tail_trim_cap_ms=1_500)
+    spec, record_path, _final_srt, _source = _build_spec_and_record(
+        tmp_path,
+        source_scope=frozen_scope,
+    )
+    frozen_contract = _owner_contract(
+        scope=frozen_scope,
+        owners=[
+            {
+                "owner_kind": "entity_repair",
+                "owner_id": "entity-owner-at-tail",
+                "required": True,
+                "local_windows": [{"start_ms": 4_500, "end_ms": 5_000}],
+            }
+        ],
+    )
+    current_contract = _owner_contract(scope=current_scope, owners=[])
+    _attach_owner_projection_support(
+        spec=spec,
+        record_path=record_path,
+        support_path=tmp_path / "frozen.chat-authority.json",
+        frozen_contract=frozen_contract,
+    )
+    receipt = load_frozen_boundary_receipt(
+        spec,
+        candidate_id=CID,
+        current_owner_contract=current_contract,
+    )
+    assert receipt is not None
+
+    calls = 0
+
+    def forbidden_llm(_prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("monotone owner-floor replay must not call the LLM")
+
+    review, replay = _review_source(
+        spec=spec,
+        frozen_review=receipt.source_full_window,
+        llm_call=forbidden_llm,
+        opening="故事开场铺垫",
+        source_scope=current_scope,
+    )
+
+    assert calls == 0
+    assert review["status"] == "PASS"
+    assert replay["replay_mode"] == (
+        "EXACT_INTERVAL_FROZEN_VERDICT_PROJECTION"
+    )
+    assert replay["scope_projection_mode"] == (
+        "MONOTONE_REQUIRED_OWNER_FLOOR_RELAXATION"
+    )
+    assert replay["frozen_required_owner_end_ms"] == 5_000
+    assert replay["current_required_owner_end_ms"] is None
+    assert replay["frozen_delivery_lower_bound_ms"] == 5_000
+    assert replay["current_delivery_lower_bound_ms"] == 4_100
+
+    for unsafe_scope in (
+        _scope(
+            required_owner_end_ms=5_200,
+            semantic_tail_trim_cap_ms=1_500,
+        ),
+        _scope(
+            semantic_tail_trim_cap_ms=1_500,
+            repair_cap_ms=29_000,
+        ),
+        _scope(
+            required_owner_end_ms=5_000,
+            semantic_tail_trim_cap_ms=1_500,
+            manual_lower_bound_ms=5_800,
+        ),
+    ):
+        assert _source_scope_monotone_owner_floor_relaxation(
+            frozen_scope,
+            unsafe_scope,
+            owner_projection_evidence=(
+                receipt.source_full_window.owner_floor_projection
+            ),
+        ) is None
+
+    digest_tamper = copy.deepcopy(current_scope)
+    digest_tamper["delivery_lower_bound_ms"] = 4_099
+    assert _source_scope_monotone_owner_floor_relaxation(
+        frozen_scope,
+        digest_tamper,
+        owner_projection_evidence=(
+            receipt.source_full_window.owner_floor_projection
+        ),
+    ) is None
+
+
+def test_owner_floor_projection_rejects_immutable_owner_removal(
+    tmp_path: Path,
+):
+    frozen_scope = _scope(
+        required_owner_end_ms=5_000,
+        semantic_tail_trim_cap_ms=1_500,
+    )
+    current_scope = _scope(semantic_tail_trim_cap_ms=1_500)
+    spec, record_path, _final_srt, _source = _build_spec_and_record(
+        tmp_path,
+        source_scope=frozen_scope,
+    )
+    frozen_contract = _owner_contract(
+        scope=frozen_scope,
+        owners=[
+            {
+                "owner_kind": "source_subtitle_truth",
+                "owner_id": "immutable-ledger-owner",
+                "required": True,
+                "local_windows": [{"start_ms": 4_500, "end_ms": 5_000}],
+            }
+        ],
+    )
+    _attach_owner_projection_support(
+        spec=spec,
+        record_path=record_path,
+        support_path=tmp_path / "immutable-owner.chat-authority.json",
+        frozen_contract=frozen_contract,
+    )
+
+    assert load_frozen_boundary_receipt(
+        spec,
+        candidate_id=CID,
+        current_owner_contract=_owner_contract(
+            scope=current_scope,
+            owners=[],
+        ),
+    ) is None
+    assert load_frozen_boundary_receipt(
+        spec,
+        candidate_id=CID,
+        current_owner_contract=None,
+    ) is None
+
+
+def test_owner_floor_projection_rejects_self_hashed_invalid_frozen_scope(
+    tmp_path: Path,
+):
+    valid_frozen_scope = _scope(
+        required_owner_end_ms=5_000,
+        semantic_tail_trim_cap_ms=1_500,
+    )
+    current_scope = _scope(semantic_tail_trim_cap_ms=1_500)
+    spec, record_path, _final_srt, _source = _build_spec_and_record(
+        tmp_path,
+        source_scope=valid_frozen_scope,
+    )
+    invalid_scope = copy.deepcopy(valid_frozen_scope)
+    invalid_scope.update(
+        required_owner_end_ms=40_000,
+        delivery_lower_bound_ms=40_000,
+        minimum_recommended_end_ms=40_000,
+        recommendation_backward_ms=0,
+    )
+    invalid_scope["scope_sha256"] = _canonical_sha256(
+        {
+            key: value
+            for key, value in invalid_scope.items()
+            if key != "scope_sha256"
+        }
+    )
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    source_review = record["boundary_audit"]["boundary_semantic_review"]
+    source_review["boundary_search_scope"] = invalid_scope
+    final_review = record["boundary_audit"][
+        "final_delivery_boundary_semantic_review"
+    ]
+    final_review["source_separation_witness"]["source_review_sha256"] = (
+        _canonical_sha256(source_review)
+    )
+    record_path.write_text(
+        json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
+    reference = spec["subtitle_redelivery_baseline"][
+        "frozen_boundary_receipt"
+    ]
+    reference["source_full_window"][
+        "boundary_search_scope_sha256"
+    ] = invalid_scope["scope_sha256"]
+    frozen_contract = _owner_contract(
+        scope=invalid_scope,
+        owners=[
+            {
+                "owner_kind": "entity_repair",
+                "owner_id": "impossible-owner-tail",
+                "required": True,
+                "local_windows": [
+                    {"start_ms": 39_000, "end_ms": 40_000}
+                ],
+            }
+        ],
+    )
+    _attach_owner_projection_support(
+        spec=spec,
+        record_path=record_path,
+        support_path=tmp_path / "invalid-scope.chat-authority.json",
+        frozen_contract=frozen_contract,
+    )
+
+    assert load_frozen_boundary_receipt(
+        spec,
+        candidate_id=CID,
+        current_owner_contract=_owner_contract(
+            scope=current_scope,
+            owners=[],
+        ),
+    ) is None
 
 
 def test_exact_replay_carries_both_verdicts_with_zero_llm_calls(tmp_path: Path):

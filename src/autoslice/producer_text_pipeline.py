@@ -2139,7 +2139,7 @@ def run_text_pipeline(
         )
     )
     frozen_boundary_receipt = load_frozen_boundary_receipt(
-        spec, candidate_id=cid
+        spec, candidate_id=cid, current_owner_contract=authority.chat_authority_audit.get("frozen_boundary_owner_contract")
     )
     source_boundary_replay: dict[str, object] = {}
     final_review_audit["boundary_semantic_review"] = review_final_boundary_semantics(
