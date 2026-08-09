@@ -30,6 +30,36 @@ def load_env(path: str) -> dict:
     return out
 
 
+def resolve_delivery_cover(package_root: Path, publish: dict) -> Path:
+    """Bind the cover path the upload manifest will actually carry.
+
+    publish 声明的是生成路由(``covers/<...>.png``);daily manifest builder 另外
+    在包根装配同茎上传别名 ``<video.stem>.cover.png``,而
+    ``authorized_upload make-manifest`` 的 title+cover QC 门比对的是
+    ``manifest.cover.path``——即同茎别名。别名存在且逐字节相同就绑别名,QC 回执
+    与上传清单才指同一个文件(否则门红:"joint-QC cover_path does not bind final
+    cover")。别名缺失或字节漂移时退回 publish 声明路径,由该门 fail-closed。
+    """
+
+    declared = Path(
+        str(
+            (publish.get("cover_generation") or {}).get("final_cover")
+            or publish.get("cover_path")
+        )
+    ).resolve()
+    digest = hashlib.sha256(declared.read_bytes()).hexdigest()
+    aliases = sorted(
+        path
+        for path in package_root.glob("*.cover.png")
+        if path.is_file()
+        and not path.is_symlink()
+        and hashlib.sha256(path.read_bytes()).hexdigest() == digest
+    )
+    if len(aliases) == 1:
+        return aliases[0].resolve()
+    return declared
+
+
 def main() -> int:
     package_root = Path(sys.argv[1]).resolve()
     title = sys.argv[2]
@@ -40,7 +70,7 @@ def main() -> int:
     story = record.get("story_contract") or {}
     candidate_id = str(story.get("candidate_id") or record.get("delivery_candidate_id") or "")
     publish = json.loads(next(package_root.glob("*.publish.json")).read_text(encoding="utf-8"))
-    cover_path = Path(str((publish.get("cover_generation") or {}).get("final_cover") or publish.get("cover_path"))).resolve()
+    cover_path = resolve_delivery_cover(package_root, publish)
     cover_sha = hashlib.sha256(cover_path.read_bytes()).hexdigest()
 
     question = (
