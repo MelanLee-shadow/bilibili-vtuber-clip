@@ -898,7 +898,7 @@ def _chat_speaker_manifest_digest(payload: bytes) -> str:
     )
 
 
-def _journal_timestamp(value: object, *, label: str) -> None:
+def _journal_timestamp(value: object, *, label: str) -> datetime:
     if not isinstance(value, str) or not value.endswith("Z"):
         raise PackageRelocationError(f"journal: invalid {label}")
     try:
@@ -907,6 +907,7 @@ def _journal_timestamp(value: object, *, label: str) -> None:
         raise PackageRelocationError(f"journal: invalid {label}") from exc
     if parsed.tzinfo is None:
         raise PackageRelocationError(f"journal: invalid {label}")
+    return parsed
 
 
 def _journal_digest(value: object, *, label: str) -> str:
@@ -955,9 +956,17 @@ def _validate_journal_contract(
         transaction_id
     ):
         raise PackageRelocationError("journal: invalid transaction_id")
-    _journal_timestamp(journal.get("prepared_at"), label="prepared_at")
+    prepared_at = _journal_timestamp(
+        journal.get("prepared_at"), label="prepared_at"
+    )
     if status == "COMMITTED":
-        _journal_timestamp(journal.get("committed_at"), label="committed_at")
+        committed_at = _journal_timestamp(
+            journal.get("committed_at"), label="committed_at"
+        )
+        if committed_at < prepared_at:
+            raise PackageRelocationError(
+                "journal: committed_at precedes prepared_at"
+            )
 
     documents = journal.get("documents")
     if not isinstance(documents, Mapping) or set(documents) != set(

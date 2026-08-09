@@ -943,6 +943,7 @@ def test_committed_override_preserves_its_preimage_root_role(
         ("changed_pointer", "speaker changed pointer not allowed"),
         ("evidence", "staged evidence chat_authority hash drift"),
         ("lineage", "speaker lineage hash mismatch"),
+        ("timestamp_order", "committed_at precedes prepared_at"),
         ("commit_order", "commit_order mismatch"),
     ],
 )
@@ -966,6 +967,9 @@ def test_committed_journal_tampering_is_rejected(
         journal["staged_evidence"]["chat_authority"]["sha256"] = "0" * 64
     elif mutation == "lineage":
         journal["speaker_manifest_lineage"]["after_sha256"] = "0" * 64
+    elif mutation == "timestamp_order":
+        journal["prepared_at"] = "2099-01-01T00:00:00Z"
+        journal["committed_at"] = "2000-01-01T00:00:00Z"
     else:
         journal["commit_order"] = list(reversed(journal["commit_order"]))
     journal_path.write_bytes(_json_bytes(journal))
