@@ -2,104 +2,130 @@
 
 Updated: 2026-08-08 深夜 by Claude（8/7 批审阅收割/法证/重述车道会话）。8/7 及 7/31 以下旧节仅存历史。
 
-## ⭐ 2026-08-08 深夜 当前状态与接力任务（后来 agent 从这里开始）
+## ⭐ 2026-08-09 当前状态与接力任务(后来 agent 从这里开始)
 
-**部署位**:free = `9f8b928`(2026-08-08T22:14:21Z,波 7,含会话内重述修复车道全链)。
-本地 tip 仅领先 docs-only(法证报告 `7d4d834`),无需追部署。分支
-`claude/session-live-context` 仍是生产唯一合法部署源(从 main 部署会回滚 codex
-17 提交)。全量测试 3154 绿。8/8 批 runner 自动处理中(只产不传,晚间为
-processing,1 talk carryover 重试 + 1 song 在队,勿打扰)。
+**部署位**:free = `e238cd4`(**波 8 全量**:重述车道/F1 回声环/F3 贴音证据兜底/
+8b 冻结边界 loader/F2 代词候选级/F7 语境声学门/F4 走廊 margin/F6 短句门证据分层,
+全量 3205 绿)。本地 tip 领先 docs-only。分支 `claude/session-live-context` 仍是
+唯一合法部署源(main 部署会回滚 codex 17 提交)。
 
-**Ivan 8/7 批审阅已收割完毕(原队列 1-2 已闭环,证据全部入库)**:
-- pristine 存证:`~/Project/vtuber-slice-forensics/2026-08-07-pristine/`(2380 文件,
-  五候选 cue 数全对齐;重产覆盖 free 原件后这是唯一 diff 权威,只读)。
-- 真值工件:`reports/ivan_truth_harvest/2026-08-07/*.truth-diff.v2.json`
-  (`scripts/harvest_ivan_truth.py` 产,A/B 语法 fail-closed 解析,16 混说 cue 人工
-  核对):换身份 18文字+8说话人 / 被劝受骗 7+6 / 没人抱团 42+8 / 真善美 0+6 /
-  贪生怕死 **未审阅**(Ivan 8/8:无说话人分离没法审,零diff≠机器全对;二分重产后再审)。
-- 六连问法证:docs/reviews/ 三片报告 + `2026-08-08-truth-harvest-forensics-synthesis.md`
-  (汇总+修复清单 F1-F8+е2 卡)。67 文字错=(b)仲裁缺陷 30 / (c)未登记~18 /
-  (d)听错~14 / (a)1 / 重述车道已覆盖 1;假李豆沙 3;混说 6 cue 单标签只盖
-  45.8% 真值文字、被吞侧全是李豆沙、`mixed_overlap_evidence` 全 null。
-- **没人抱团 auto_210739_1142_1436 = Ivan 裁定非李豆沙主角,出版登记
-  hold_pending_review,永不作为成品发布**;其 42+8 订正只作流水线优化材料。
+**已发布**:受骗片 `auto_200736_298_383` = **BV1JLuj6zEdM**(VERIFIED_PUBLIC;
+证据 `reports/authorized_uploads/2026-08-09-200736-huainvren/`;登记 published)。
+首个 wsl 订正重产成品;上传链全程手术记录见下"上传链手册"。
 
-**会话内重述修复车道已上线(Ivan 8/8 新机制,波 7)**:乱码 cue 用稍后慢速完整
-重述修复。检测器+探针 `src/autoslice/restatement_recall.py` /
-`scripts/probe_restatement_recall.py`,设计稿
-`docs/reviews/2026-08-08-restatement-repair-design.md`(§2 修复条件:当前文字与
-音频不相容∧重述前缀相容;§4.3 守卫零改动结论)。接线=exact-final 优先 findings
-通道(与 microcue 并列,`{cid}.restatement-candidates.json` 回执),改字仍全过
-候选盲声学+CPA 闭集裁决。旗舰案=受骗片 cue17←cue29。
+**Ivan 两条新裁定(已入 synthesis,待实现)**:
+- **F13 事件场配额**(8/9 重申,裁定失落案):8/8 3DLive 场 pick 上限=**15**,
+  同日杂谈场**独立计数**=5。现行代码只有游戏场 RESOLVED→10
+  (`candidate_selection.py _talk_pick_policy_for_session`)。落地后 8/8 按新政策补产。
+- **F14 单人场先验**(8/9 结论):8/8 被 speaker 拒的 6 条里,**只有
+  auto_200130_1323_1603 / auto_200130_1722_1792 是多嘉宾场,其余 4 条
+  (230125×3/233123)全是李豆沙单人直播**——单人场无身份可解问题,4 条属**误拒**
+  (舞台 BGM/观众声压低声纹置信)。修法=会话级"谁在场"先验(单人场→host 默认/
+  uniform),挂 session 语境通道;这也是 8/7 三症状"谁在场"的直系续篇。
+  含金量:8/8 的 ≥85 有 7 条,最高分(夜蝶91.5/Holiday91.5/打歌服86.8/SUKI85.5)
+  恰恰全死在该门——修好即救回精华。
 
-**等 Ivan 的输入(汇总在 synthesis 文档,一轮批完)**:
-1. е2 卡 1:证人冲突加权(`CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT`
-   同分支 4 修对/6 改错;建议选项 B=证人明确反对时需结构化支持或已登记方向)。
-   ~~卡 2~~ 已撤回(Ivan 8/8:标注稿即裁决;南天/大白老师方向已落 854487e)。
-2. 重产完成后:审贪生怕死二分版+女同封面;上传授权与先后次序。
-(词条方向确认已不需要:由菜=PSP 官方成员经 Ivan 确认,走 crawler 修复。)
+**在飞/待收**:
+- **pyannote 子窗试点**(wsl,重启后 running):token 已就位
+  (`~/Project/vtuber-reproduce/base/hf.env` + `~/.cache/huggingface/token`,
+  权威=free:/opt/bilive/autoslice/hf.env)。报告出到 wsl repo
+  `docs/reviews/2026-08-09-pyannote-subwindow-pilot.md`(回搬主 repo)。
+  poll `~/Project/vtuber-reproduce/logs/pyannote_pilot.log`。评测=13 混说 cue
+  边界偏差+三套真值假李豆沙/假连线 vs CAM++ 基线+8/8 场可判定性。
+- **Ivan 在审**:8/8 三条成品(free repo `lidousha/2026-08-08/`)+ 6 份标定工作表
+  (`lidousha/2026-08-08-标定工作表/`,mp4+无标签srt,裸 A/B 语法,README 在目录)。
+  注:4 条单人场标注会很快(几乎全 A);2 条 200130 多嘉宾场才是标定重头。
 
-**8/8 深夜进展追记**:波 8a(F1 回声环禁自证+F3 贴音优先/证据兜底)已实现合入
-`5a43ea3`(Codex sol+ultra 实现,双金丝雀 revert 验证,债务模块净减 269 行,
-全量 3188 绿)并部署 free。三片重产在 wsl 执行中(Codex driver,产物落
-wsl:~/Project/vtuber-reproduce/out/,免密 sudo/密钥/树外资产/wsl→free 直连
-均已就位;卡在 FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED 的诊断由 driver 负责,
-禁改门代码)。贪生怕死重产排波 8 封面修复后;歌 revive 待发;卡 1 已由
-Ivan 裁定结案(贴音优先/证据兜底=F3)。
+**Ivan 审完 8/8 后的任务队列(按序)**:
+1. **收割**:成品若有订正→先归档 pristine(free out/2026-08-08/<cid>/ 非媒体 tar,
+   同 8/7 手法,存 ~/Project/vtuber-slice-forensics/2026-08-08-pristine/)→
+   `python3 scripts/harvest_ivan_truth.py --pristine <机器稿> --annotated <Ivan稿>
+   --candidate-id <cid> --authority Ivan-annotated-2026-08-09 --out
+   reports/ivan_truth_harvest/2026-08-08/<cid>.truth-diff.v2.json`。
+   标定工作表 6 份=无 [标签] 前缀底稿(machine_label=None 路径,解析器支持),
+   pristine 即工作表自身的 free 原件。混说 cue 逐条人工核对(打印原始行 vs 解析段)。
+2. **法证**:新文字错走六连问(方法论原文在 git 历史 b854552 的 HANDOFF 节;
+   报告格式=docs/reviews/2026-08-08-forensics-*.md 三份先例;汇总进
+   2026-08-08-truth-harvest-forensics-synthesis.md 加附录)。**8/8 是首个
+   真值盲+波8a 代码的批次:订正密度 vs 8/7 的 67 处=修复效果实测数,必须算出来**。
+3. **pyannote 试点收割**:报告回搬,若赢→按报告的产线接入设计做集成任务(Codex);
+   若不赢→把"不确定=连线可交付"政策延伸案提请 Ivan 复裁。
+4. **F14+F13 实现**(Codex,worktree,金丝雀,出处注记)→ 部署 → **revive**:
+   4 条单人场误拒件(F14 后)+2 条多嘉宾件(pyannote 或政策后)+8/8 候补补产
+   (F13 后,≥85 未尝试的还有:再见拉拉90.2/羡慕全职89.2/穿越屏幕86.8)。
+   revive 机制注意:driver-3 报告 C 节实测 revive 只扫 picks,speaker 拒绝件的
+   复活通道要核对(song 的 sanctioned_revival_retry 不被消费同族问题)。
+5. **8/7 收尾**(wsl,处方在 `wsl:~/Project/vtuber-reproduce/logs/reproduce_report.md`
+   unblock 节,精确到 sha):真善美=spec 边界字段还原冻结代际(undo driver-1 的
+   tail_trim/given_end 实验;frozen PASS 锚 target135000/forward400/scope 63a81c5f);
+   换身份=完整两层 PASS 在 `logs/evidence/auto_220747_488_680.prior-success.record.json`,
+   按它组 frozen_boundary_receipt → produce → 验收(logs/validate_reproduction.py,
+   剥前缀逐字==reviewed baseline+假李豆沙=0)→ 按受骗片先例上传(需 Ivan 点头)。
+6. **贪生怕死**(lifetime cap 先解——查 talk_failure_recovery/lifetime 计数放行道)
+   +IVAN_EXPLICIT 女同封面(70-cover.md contract,授权已在案);
+   **候补 auto_210739_1695_1804**(44.8s 前向源余量缺口先解:driver-3 B 节)。
+7. **歌 revive**(free 侧,8/8 批彻底收线后;预计只有《一起长大》过门)。
+8. **波 8 剩余**:F5 重叠检测失效诊断(producer_speaker.py:576-589)/
+   F8 证人 provider 轮内重试/F9 游戏场画面读人名/F10 crawler 修复
+   (单源停格视频 BV1GTFseLESN;验收=由菜Yuna 出现在输出)/F11 CAM++ 输出
+   确定性(真值盲诊断)/F12 hook 受话人归属/F-cover(砍前提修复+游戏场截图
+   新规[不要求主体主导,趣味性判]+F-cover-2 小窗合成)/F13/F14(见上)。
 
-**8/8 深夜 Ivan 增令**:①正常产线活(贪生怕死类)也放 wsl——free 被 8/8 批占;
-②日配额 5 篇未达(抱团 hold 后只剩 4),**直接晋升候补补位**(T1>T2 纪律:首选
-auto_210739_1695_1804 T1/75.5,备选 auto_213743_1018_1295 T2/89);③歌也走 wsl
-(若 song lane 与 runner 强耦合则退回 free 批后 revive,先探明);④8/7 所有
-剩余产出统一 wsl 出。执行=wsl Codex driver 二阶段任务(一阶段 3 片收线后发)。
+**Codex 用法(临时指派约至 8/10:执行全给 Codex;Sonnet 永久禁用,Opus/Codex only)**:
+- Mac:`cd <worktree> && codex exec --skip-git-repo-check --sandbox workspace-write
+  -c 'service_tier="fast"' - < 任务文件 > 日志 2>&1 &`。**裸调继承
+  ~/.codex/config.toml 的 gpt-5.6-sol+ultra,不要传 -m/--effort**。
+- wsl:`ssh wsl-codex '... ~/.local/bin/codex exec --skip-git-repo-check
+  --sandbox danger-full-access ...'`(产线要 ssh free 故用 danger;codex 不在
+  非交互 PATH,用全路径)。
+- **沙箱挡 worktree 的 git commit**(元数据在主仓 .git)→ Codex 完工输出 diff,
+  **integrator 亲自 commit→rebase 到分支尖→ff-only merge**;账本冲突以 rebase 后
+  实际行数调和(先例:2257=8b+8c 两次抬号之和)。
+- 修复任务纪律:独立 worktree(从当前 tip `git worktree add`),spec 引 synthesis
+  修复清单条目,负向金丝雀 revert 验证一次,**真值盲验证**(Ivan 铁律:修流水线
+  不用真值,出成品才用),全量 pytest 门,禁区写明(别碰 restatement/boundary/
+  speaker 互相的面)。
+- 已修环境坑:code-mode host 缺失→已 symlink `/opt/homebrew/bin/codex-code-mode-host`
+  (指 Codex.app 内);codex-rescue 插件转发器**不用**(effort 白名单会把 ultra 盖低、
+  job 不耐久);`--skip-git-repo-check` 必带(worktree/非信任目录)。
 
-**接力任务队列(按序)**:
-1. **通病修复波 8**(synthesis 修复清单 F1-F8,各独立 test-gated commit+负向
-   金丝雀):F1 转写回声环(final_review_auditor.py:1211-1256)、F2 代词政策
-   执行位(full_session_transcription.py:522-606)、F4 语义走廊 margin 前置
-   (speaker_host_evidence.py:135-138,е1 已获裁定原文支持)、F5 重叠检测失效
-   诊断(producer_speaker.py:576-589)、F6 短句门证据源分层、F7 语境专断强制
-   声学参与、F8 AGY 整段 UNAVAILABLE 的 transient 分类核对。卡 1/卡 2 涉及的
-   修复等 Ivan 批完再动。
-2. **(c) 类词条登记(8/8 深夜已按 Ivan 质疑核验收缩,见 synthesis 更正节)**:
-   南町Nightin/大N老师/安晚 roster 快照里全有,不是登记疏漏;南天/大白老师
-   方向已落库(854487e)。由菜Yuna=PSP 官方成员(Ivan 8/8 确认)而 roster 缺=
-   **crawler bug**:唯一源是单支视频 BV1GTFseLESN 简介参与人员名单,成员名录
-   停格在其发布日→F10=crawler 修复(补新官方源/爬成员合集,验收=由菜出现在
-   crawler 输出)。邪恶大马头走 F9 画面读人名(CPA 看画面分工 7/15+7/24 已有
-   裁定,落实优先级上调)。
-2b. **重述车道真实首执核查**:波 7 上线后今晚 8/8 批就是首个真实执行(部署时
-   receipts-found=0,还没候选走到 exact-final)。successor 查
-   free:out/2026-08-08/<cid>/*.restatement-candidates.json 是否落盘、有无 pair
-   进裁决;全零 pair 也是合法结果,记录之。另:波 7 换了 policy fingerprint
-   (producer_text_pipeline 在 25 模块名单),8/7 旧冻结 audit 对新代码必然
-   mismatch——是已知结构债表现,重产自然重冻,勿当新病(详 synthesis 披露节)。
-   pristine 包已镜像 free:/opt/bilive/autoslice/reports/ivan-truth-pristine-20260807.tgz。
-3. **统一重产**(原队列 4):换身份/被劝受骗(带 Ivan 订正,reviewed-baseline+
-   override 车道,产线函数注入法:free:/opt/bilive/autoslice/tmp/
-   inject_baseline_and_produce.py)+ 贪生怕死出说话人二分版。验收=剥标记逐字
-   相等+假李豆沙=0。**重述金丝雀**:受骗片重产时 cue17 的 session_restatement
-   候选进裁决,法证预警两路听写曾收敛同错——若证人拒 PROPOSED,按设计稿 §2
-   补全政策复核,结果记回设计稿。没人抱团不重产成品(hold)。
-4. **封面**(原队列 5,不变):贪生怕死 IVAN_EXPLICIT「如果是我杀的我就是女同」
-   完整梗双行 + 梗字链前提+punch 同事件通病修复,三条最小修复一起。
-5. **歌**(原队列 6,不变):8/7 歌候选 revive 重产(scripts/revive_rejected_candidates.py)。
-6. **上传**(原队列 7,不变):全部修好 + Ivan 明示后走 authorized_upload;
-   没人抱团永不传。
-7. **积压工程**(原队列 8,不变):优化①边界后移进程内重放;ERes2NetV2 试点
-   按 `docs/reviews/2026-08-08-eres2netv2-pilot.md` §6 续跑(本机默认;Ivan 8/8
-   晚补充:本机卡顿可转 wsl-codex,控制资源占用);pyannote 子窗(判据数据已由
-   混说量化补齐);误听自动积累写路径(守卫收窄已落地,写路径待建);
-   final_review_auditor/producer_package_finalization 拆解待 Ivan 排期。
+**wsl 环境速查**:repo=`~/Project/repo`(bundle 克隆;更新=Mac
+`git bundle create /tmp/vs-<sha>.bundle claude/session-live-context` → scp →
+`git fetch ../vs-*.bundle claude/session-live-context:refresh && git checkout refresh`);
+工作根=`~/Project/vtuber-reproduce/`(base/=AUTOSLICE_BASE 含 cpa.env+hf.env;
+logs/ 全部任务书+日志+验收脚本;out/2026-08-07/ 产物;pilot/ 试点资产;venv/)。
+密钥双路径:base/cpa.env + `/opt/bilive/.env`(硬编码路径,GEMINI 四键)。
+树外资产已镜像 `/opt/bilive/autoslice/assets/{intro,emote}`。wsl→free 直连已通
+(`~/.ssh/id_ed25519_free`,free authorized_keys 尾行,可删回滚)。
+produce 姿势:`env AUTOSLICE_BASE=/home/ivan/Project/vtuber-reproduce/base
+AUTOSLICE_HUMAN_TRUTH_MODE=delivery AUTOSLICE_SPEAKER_MODE=auto
+venv/bin/python scripts/produce_slice_package.py --spec <spec> --ssh-host free
+--speaker-mode auto`(free=计算臂:缓存裁切/AGY/VAD/CAM++ 远端跑,产物落 wsl)。
 
-**⭐ 本机优先原则(Ivan 2026-08-08,8/8 晚补充)**:凡不需要 free 的工作一律本机
-Mac;本机卡顿运营不过来时可积极转 wsl-codex 并行(控制资源占用,最终运行目标
-是 free,多机只是开发期并行;容器化可选)。free 只用于产线函数注入重产/回执/
-部署/revive/上传。
+**上传链手册(受骗片 BV1JLuj6zEdM 实战验证全序)**:
+①产物 `rsync -a --delete` 到 free `out/<date>/<cid>/replacement_recuts/`(先归档旧件!)
+②包内 json 的 wsl 路径规整为 free 路径 ③state 绑定手术(封面/标题,备份+flock+原子写,
+先例脚本模式在本会话 scratchpad,精神=名称+sha 双改) ④封面必须同茎
+`<video.stem>.cover.png`(video.stem 含 .recut.burned-final-speaker)
+⑤`build_lidousha_daily_review_manifest.py --state <state> --deployed-commit-file
+DEPLOYED_COMMIT --candidate <cid> <package_root=replacement_recuts>`
+⑥`audit_lidousha_review_package.py --json <package_root>` 必须 passed:true/0 blocking
+⑦联合质检:free:/tmp/run_title_cover_joint_qc.py(真 CPA 裁决,schema
+lidousha-title-cover-joint-qc.v1,verdict=CPA answer 逐字节解析绑定)
+⑧`authorized_upload.py make-manifest --video --cover --package-audit --title
+--authorized-by Ivan --quote <逐字引语> --title-cover-qc <receipt> --season auto`
+⑨`authorized_upload.py upload --manifest <manifest>` ⑩证据入 repo
+`reports/authorized_uploads/<date>-<tag>/`+registry entry+commit。
+**手定标题变更**:先登记 `manual_title_overrides.v1.json`;已产包改标题要扩
+source_fact 回执 REPAIRED 链(free:/tmp/repair_source_fact_title.py 模式:
+original 值从未动参照恢复,用模块 _finalize_receipt 重算 sha,双联+publish 顶层
+三处同步)。教训:**手定标题在产前登记,产线原生走,零手术**。
 
-**运营铁律(沿用)**:审阅交付=本地最小四件套;worker 提示 edits-first+精确锚点;
-同一工作树单 writer(worker 走 worktree 隔离,integrator 审 diff 合入);账本
-增行必须带 Ivan 出处;free 一切产线操作走 flock 礼让;pristine 归档目录只读。
+**运营铁律(全量)**:真值使用铁律(修流水线不用真值,出成品才用;真值只作对照
+标尺);同一工作树单 writer(Codex 写 worktree,integrator 合入);媒体不入库;
+fail-closed 门永不绕过(门红=修数据/修代码/上报,三选一);账本增行带 Ivan 出处;
+free 产线操作 flock 礼让;pristine 归档只读;上传证据必 commit;发布即快照。
+Mac=轻活(文本/测试/集成),wsl=重活(ffmpeg/produce/评测),free=产线+计算臂+凭据。
 
 ## 2026-08-07 live 状态
 
