@@ -811,21 +811,20 @@ def test_ambiguous_speaker_resolution_defaults_to_guest_and_requires_hard_eviden
     """Ivan 2026-08-07: default GUEST; HOST only inside the corroboration band."""
 
     policy = {
-        "host_semantic_corroboration_margin_below_threshold": 0.08,
         "host_semantic_min_confidence": 0.7,
     }
     labels, sources = resolve_ambiguous_labels(
         ["连线", None, HOST_SPEAKER, None, HOST_SPEAKER],
-        [-0.3, -0.02, 0.3, 0.01, 0.4],
+        [-0.3, 0.02, 0.3, 0.01, 0.4],
         0.0,
         {1: HOST_SPEAKER},
         band=0.1,
         policy=policy,
         context_confidences={1: 0.9},
     )
-    # index 1 sits inside the narrow corroboration band and the context vote
-    # clears the confidence floor, so it corroborates to HOST; index 3 sits
-    # inside the same band but has no context vote at all and defaults GUEST.
+    # index 1 sits on the HOST-leaning half of the narrow corroboration band and
+    # the context vote clears the confidence floor, so it corroborates to HOST;
+    # index 3 sits inside the same half-band but has no vote and defaults GUEST.
     assert labels == ["连线", HOST_SPEAKER, HOST_SPEAKER, GUEST_SPEAKER, HOST_SPEAKER]
     assert sources[1] == "campp_semantic_corroborated"
     assert sources[3] == "guest_default_ambiguity"
@@ -835,7 +834,6 @@ def test_ambiguous_speaker_resolution_rejects_semantic_host_outside_corroboratio
     """A confident semantic HOST vote must not override deep guest-ward acoustics."""
 
     policy = {
-        "host_semantic_corroboration_margin_below_threshold": 0.08,
         "host_semantic_min_confidence": 0.7,
     }
     labels, sources = resolve_ambiguous_labels(
@@ -1827,9 +1825,21 @@ def test_speaker_review_manifest_validator_rejects_unbound_rows() -> None:
 def test_two_guest_anchors_keep_existing_cluster_path(tmp_path: Path, monkeypatch) -> None:
     import src.autoslice.speaker_finalizer as speaker_finalizer
 
+    # Wave 8 F6 negative canary: the first four HOST cues are deliberately
+    # shorter than short_cue_ms.  Their CAM++ margins are nevertheless strong,
+    # so the higher-quality acoustic source must settle them before the lower-
+    # quality whole-clip-context veto pool is built.
+    cue_bounds = [
+        (0, 1_000),
+        (1_000, 2_000),
+        (2_000, 3_000),
+        (3_000, 4_000),
+        (4_000, 6_000),
+        (6_000, 8_000),
+    ]
     cues = [
-        TextCue(index + 1, _timestamp(index * 2000), _timestamp((index + 1) * 2000), f"cue {index + 1}")
-        for index in range(6)
+        TextCue(index + 1, _timestamp(start), _timestamp(end), f"cue {index + 1}")
+        for index, (start, end) in enumerate(cue_bounds)
     ]
     cue_paths = [tmp_path / f"cue-{index}.wav" for index in range(6)]
     references = [{"id": "r1", "sha256": "a" * 64, "path": tmp_path / "ref.wav"}]
@@ -1878,6 +1888,7 @@ def test_two_guest_anchors_keep_existing_cluster_path(tmp_path: Path, monkeypatc
 
     assert result["mode"] == "multi_speaker"
     assert result["guest_anchor_groups"] == [[5, 6]]
+    assert result["context_required_cues"] == []
     assert [row["speaker"] for row in result["decisions"]] == [
         HOST_SPEAKER,
         HOST_SPEAKER,

@@ -4,8 +4,8 @@ Contract:
 
 1. input SRT is already text-final (ASR, terminology, pronouns, and any human
    corrections are complete);
-2. CAM++ supplies acoustic evidence, whole-conversation context resolves short
-   or boundary-band cues, and optional hash-bound human decisions are applied;
+2. CAM++ is primary; context only resolves margin-borderline cues; hash-bound
+   human decisions apply last;
 3. a clean text SRT remains the wording authority, while a review-labelled SRT,
    colour ASS, and evidence manifest are emitted before burn.
 
@@ -51,7 +51,6 @@ from src.autoslice.speaker_common import (
     CAMPP_SCORE_ROUNDING_TOLERANCE,
     CHANNEL_PROFILE,
     FAST_FRESH_DERIVATION_SCHEMA,
-    GUEST_SPEAKER,
     HOST_SPEAKER,
     MIXED_OVERLAP_EVIDENCE_SCHEMA as MIXED_OVERLAP_EVIDENCE_SCHEMA,
     PROFILE_ID,
@@ -80,6 +79,8 @@ from src.autoslice.speaker_context import (
     _speaker_context_env as _speaker_context_env,
     _call_context_via_cpa,
 )
+from src.autoslice.speaker_host_evidence import acoustic_hard_pass
+
 
 def _cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
     """Dependency-free equivalent of Torch cosine for test/runtime fallbacks.
@@ -871,16 +872,15 @@ def _run_campplus_analysis(
         margins.append(float(host_score - guest_score))
     low_center, high_center, threshold = _two_means(margins)
     band = float(policy["ambiguity_band"])
-    short_ms = int(policy["short_cue_ms"])
     labels: list[str | None] = []
     ambiguous: list[int] = []
-    for index, (cue, margin) in enumerate(zip(cues, margins, strict=True)):
-        short = _ms(cue.end) - _ms(cue.start) < short_ms
-        if short or abs(margin - threshold) < band:
+    for index, margin in enumerate(margins):
+        hard_speaker = acoustic_hard_pass(margin, threshold, band)
+        if hard_speaker is None:
             labels.append(None)
             ambiguous.append(index)
         else:
-            labels.append(HOST_SPEAKER if margin >= threshold else GUEST_SPEAKER)
+            labels.append(hard_speaker)
 
     reviewed_votes = {
         index: speaker

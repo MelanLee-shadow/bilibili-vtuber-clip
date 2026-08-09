@@ -2,10 +2,12 @@
 evidence (CAM++ margin or loudness) or acoustic-corroborated semantics.
 
 This replays the new decision layer (src/autoslice/speaker_host_evidence.py +
-speaker_context.resolve_ambiguous_labels) against Ivan's 61-cue adjudicated
-truth diff for auto_203735_555_680, using an extract of that run's real
-CAM++ margins/threshold (fixtures/auto_203735_555_680_machine_decisions_
-20260807.json) so the replay does not need CAM++/CPA at test time.
+speaker_context.resolve_ambiguous_labels) against Ivan's offline truth sets.
+The historical 61-cue fixture and the current pristine v2 truth have different
+source hashes, so tests name and assert those lineages instead of silently
+combining them.  The 40-cue cross-session replay joins a test-only machine-
+evidence extract to the hash-bound override asset.  The 12-case forensic slice
+is reported separately because six of its cases overlap the current 61.
 
 Historical whole_clip_context votes did not persist per-vote confidence
 (require_confidence was not enabled for the main ambiguous flow at
@@ -32,24 +34,34 @@ from src.autoslice.speaker_host_evidence import (
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
+REPO_ROOT = Path(__file__).parents[2]
 TRUTH_PATH = FIXTURES / "ivan_truth_diff_20260807.json"
 DECISIONS_PATH = FIXTURES / "auto_203735_555_680_machine_decisions_20260807.json"
 LOUDNESS_PATH = FIXTURES / "auto_203735_555_680_loudness_study_20260807.json"
+CURRENT_61_TRUTH_PATH = (
+    REPO_ROOT
+    / "reports/ivan_truth_harvest/2026-08-07/auto_203735_555_680.truth-diff.v2.json"
+)
+OVERRIDES = REPO_ROOT / "assets/lidousha/speaker_overrides"
+CROSS_SESSION_DECISIONS_PATH = (
+    FIXTURES / "auto_200511_61_138_machine_decisions_20260808.json"
+)
 
 POLICY = {
-    "host_semantic_corroboration_margin_below_threshold": 0.08,
     "host_semantic_min_confidence": 0.7,
     "host_loudness_required_margin_db": 9.0,
 }
 
 
-def _load_truth() -> dict[int, dict]:
-    document = json.loads(TRUTH_PATH.read_text(encoding="utf-8"))
+def _load_truth(path: Path = TRUTH_PATH) -> dict[int, dict]:
+    document = json.loads(path.read_text(encoding="utf-8"))
     return {row["cue"]: row for row in document["cues"]}
 
 
-def _load_decisions() -> tuple[dict[int, dict], float, float]:
-    document = json.loads(DECISIONS_PATH.read_text(encoding="utf-8"))
+def _load_decisions(
+    path: Path = DECISIONS_PATH,
+) -> tuple[dict[int, dict], float, float]:
+    document = json.loads(path.read_text(encoding="utf-8"))
     by_cue = {row["source_index"]: row for row in document["decisions"]}
     return by_cue, float(document["threshold"]), float(document["ambiguity_band"])
 
@@ -65,11 +77,15 @@ def _replay_cue(*, margin: float, threshold: float, band: float, historical_row:
     hard = acoustic_hard_pass(margin, threshold, band)
     if hard is not None:
         return hard, "campp_audio"
-    context_speaker = (
-        historical_row["speaker"]
-        if historical_row.get("decision_source") == "whole_clip_context"
-        else None
-    )
+    historical_source = historical_row.get("decision_source")
+    if historical_source == "whole_clip_context":
+        context_speaker = historical_row["speaker"]
+    elif historical_source == "campp_semantic_corroborated":
+        context_speaker = HOST_SPEAKER
+    elif historical_source == "whole_clip_context_guest_confirmed":
+        context_speaker = GUEST_SPEAKER
+    else:
+        context_speaker = None
     context_confidence = 1.0 if context_speaker is not None else None
     decision = resolve_ambiguous_cue_speaker(
         margin=margin,
@@ -82,24 +98,26 @@ def _replay_cue(*, margin: float, threshold: float, band: float, historical_row:
     return decision.speaker, decision.decision_source
 
 
-def test_replay_false_host_is_zero_on_non_mixed_cues_and_reports_false_guest() -> None:
-    truth = _load_truth()
-    decisions, threshold, band = _load_decisions()
-
+def _measure_replay(
+    truth: dict[int, dict],
+    decisions: dict[int, dict],
+    threshold: float,
+    band: float,
+) -> tuple[int, int, list[int], list[int]]:
     false_host = []
     false_guest = []
     correct = 0
     non_mixed_total = 0
     for cue, row in decisions.items():
         truth_row = truth[cue]
-        if truth_row["mixed"]:
-            continue
-        margin = row["margin"]
-        if margin is None:
+        if truth_row["mixed"] or row["margin"] is None:
             continue
         non_mixed_total += 1
         speaker, _source = _replay_cue(
-            margin=margin, threshold=threshold, band=band, historical_row=row
+            margin=row["margin"],
+            threshold=threshold,
+            band=band,
+            historical_row=row,
         )
         truth_label = truth_row["truth_segments"][0]["label"]
         if speaker == truth_label:
@@ -108,6 +126,15 @@ def test_replay_false_host_is_zero_on_non_mixed_cues_and_reports_false_guest() -
             false_host.append(cue)
         elif speaker == GUEST_SPEAKER and truth_label == HOST_SPEAKER:
             false_guest.append(cue)
+    return correct, non_mixed_total, false_host, false_guest
+
+
+def test_replay_false_host_is_zero_on_non_mixed_cues_and_reports_false_guest() -> None:
+    truth = _load_truth()
+    decisions, threshold, band = _load_decisions()
+    correct, non_mixed_total, false_host, false_guest = _measure_replay(
+        truth, decisions, threshold, band
+    )
 
     # The whole point of the 2026-08-07 ruling: never guess HOST without hard
     # evidence.  Zero false-host is the hard requirement.
@@ -116,16 +143,180 @@ def test_replay_false_host_is_zero_on_non_mixed_cues_and_reports_false_guest() -
     # call guest).  Cues 46/48/49 were false-host under the old policy (via a
     # wrong semantic vote) but their CAM++ margins are actually well past the
     # hard acoustic threshold, so acoustic_hard_pass alone recovers them
-    # correctly here -- only cue 40 remains: its margin sits inside the
-    # corroboration band but the only available (historical) semantic vote
-    # said GUEST, so the policy correctly does not invent a HOST override on
-    # weaker grounds than the vote it actually has.
-    assert false_guest == [40], (
+    # correctly here.  Wave 8 F4 additionally forbids a semantic HOST vote from
+    # reversing a GUEST-leaning margin; cue 24 is the accepted-direction loss
+    # from that narrowing, while cue 40 retains its historical GUEST vote.
+    assert false_guest == [24, 40], (
         f"unexpected false-guest set: {false_guest} (expected a small, named "
         "acceptable-direction set; investigate if this changes)"
     )
     assert non_mixed_total == 55
     assert correct == non_mixed_total - len(false_guest)
+
+
+def test_current_v2_61_truth_replay_keeps_lineage_explicit_and_false_host_zero() -> None:
+    """Current v2 truth is measured separately from the invalidated v1 truth.
+
+    The acoustic extract retains the same candidate/cue coordinate, but its
+    historical truth partner had a different source hash.  Assert that mismatch
+    here so a future edit cannot accidentally describe this as one lineage.
+    """
+
+    legacy_truth = json.loads(TRUTH_PATH.read_text(encoding="utf-8"))
+    current_truth_document = json.loads(CURRENT_61_TRUTH_PATH.read_text(encoding="utf-8"))
+    current_override = json.loads(
+        (OVERRIDES / "auto_203735_555_680.speaker.v1.json").read_text(encoding="utf-8")
+    )
+    assert legacy_truth["source_machine_sha256"] != current_truth_document[
+        "source_machine_sha256"
+    ]
+    assert current_truth_document["source_machine_sha256"] == current_override[
+        "source_srt_sha256"
+    ]
+    assert current_truth_document["summary"] == {
+        "cues": 61,
+        "text_changed": 0,
+        "label_changed": 6,
+        "mixed": 5,
+        "marked": 6,
+    }
+
+    decisions, threshold, band = _load_decisions()
+    correct, non_mixed_total, false_host, false_guest = _measure_replay(
+        _load_truth(CURRENT_61_TRUTH_PATH), decisions, threshold, band
+    )
+    assert false_host == []
+    assert false_guest == [24, 40]
+    assert non_mixed_total == 56
+    assert correct == 54
+
+
+def test_cross_session_40_replay_has_zero_whole_cue_false_host() -> None:
+    """The 40-cue truth is differential; unchanged worksheet rows are truth.
+
+    Seven multi-segment overrides are excluded from this whole-cue metric.  It
+    intentionally says nothing about segment-level mixed-speaker accuracy.
+    """
+
+    machine_document = json.loads(
+        CROSS_SESSION_DECISIONS_PATH.read_text(encoding="utf-8")
+    )
+    override_document = json.loads(
+        (OVERRIDES / "auto_200511_61_138.speaker.v1.json").read_text(encoding="utf-8")
+    )
+    assert machine_document["automatic_labelled_srt_sha256"] == override_document[
+        "source_srt_sha256"
+    ]
+    decisions, threshold, band = _load_decisions(CROSS_SESSION_DECISIONS_PATH)
+    overrides = {row["source_cue"]: row for row in override_document["overrides"]}
+    truth = {}
+    for cue, machine_row in decisions.items():
+        override = overrides.get(cue)
+        if override is None:
+            truth[cue] = {
+                "mixed": False,
+                "truth_segments": [{"label": machine_row["speaker"]}],
+            }
+            continue
+        truth[cue] = {
+            "mixed": len(override["segments"]) > 1,
+            "truth_segments": [
+                {"label": segment["speaker"]} for segment in override["segments"]
+            ],
+        }
+
+    correct, non_mixed_total, false_host, false_guest = _measure_replay(
+        truth, decisions, threshold, band
+    )
+    assert false_host == []
+    assert false_guest == [5, 27, 30]
+    assert non_mixed_total == 33
+    assert correct == 30
+
+
+def test_forensic_12_case_slice_reports_overlap_and_zero_false_host() -> None:
+    """F4/F6 hard cases: six non-mixed decisions plus six mixed exclusions.
+
+    The 200736 values are the evidence table in the 2026-08-08 forensic report;
+    203735 reuses the exact committed machine-decision extract.  This is a
+    separately reported stress slice, not 12 new rows added to the 61 corpus.
+    """
+
+    evidence_200736 = {
+        10: (0.391, "whole_clip_context_guest_confirmed", GUEST_SPEAKER),
+        17: (0.161, "guest_default_ambiguity", GUEST_SPEAKER),
+        18: (-0.085, "guest_default_ambiguity", GUEST_SPEAKER),
+        23: (0.1167, "campp_semantic_corroborated", HOST_SPEAKER),
+        34: (0.416, "whole_clip_context_guest_confirmed", GUEST_SPEAKER),
+        35: (0.403, "whole_clip_context_guest_confirmed", GUEST_SPEAKER),
+    }
+    decisions_203735, threshold_203735, band = _load_decisions()
+    candidates = {
+        "auto_200736_298_383": (
+            OVERRIDES / "auto_200736_298_383.speaker.v1.json",
+            0.15825,
+            {
+                cue: {
+                    "source_index": cue,
+                    "margin": margin,
+                    "decision_source": source,
+                    "speaker": speaker,
+                }
+                for cue, (margin, source, speaker) in evidence_200736.items()
+            },
+        ),
+        "auto_203735_555_680": (
+            OVERRIDES / "auto_203735_555_680.speaker.v1.json",
+            threshold_203735,
+            {cue: decisions_203735[cue] for cue in (30, 31, 40, 41, 44, 59)},
+        ),
+    }
+
+    false_host = []
+    false_guest = []
+    mixed = []
+    correct = 0
+    observed = {}
+    for candidate_id, (override_path, threshold, evidence) in candidates.items():
+        overrides = json.loads(override_path.read_text(encoding="utf-8"))["overrides"]
+        truth = {row["source_cue"]: row for row in overrides}
+        assert set(evidence) == set(truth)
+        for cue, evidence_row in evidence.items():
+            truth_row = truth[cue]
+            if len(truth_row["segments"]) > 1:
+                mixed.append((candidate_id, cue))
+                continue
+            speaker, source = _replay_cue(
+                margin=evidence_row["margin"],
+                threshold=threshold,
+                band=band,
+                historical_row=evidence_row,
+            )
+            observed[(candidate_id, cue)] = (speaker, source)
+            truth_label = truth_row["segments"][0]["speaker"]
+            if speaker == truth_label:
+                correct += 1
+            elif speaker == HOST_SPEAKER and truth_label == GUEST_SPEAKER:
+                false_host.append((candidate_id, cue))
+            elif speaker == GUEST_SPEAKER and truth_label == HOST_SPEAKER:
+                false_guest.append((candidate_id, cue))
+
+    assert len(mixed) == 6
+    assert false_host == []
+    assert false_guest == [
+        ("auto_200736_298_383", 18),
+        ("auto_203735_555_680", 40),
+    ]
+    assert correct == 4
+    assert observed[("auto_200736_298_383", 23)] == (
+        GUEST_SPEAKER,
+        "guest_default_ambiguity",
+    )
+    for cue in (10, 34, 35):
+        assert observed[("auto_200736_298_383", cue)] == (
+            HOST_SPEAKER,
+            "campp_audio",
+        )
 
 
 def test_mixed_cues_default_guest_under_v1_rule() -> None:
@@ -134,9 +325,9 @@ def test_mixed_cues_default_guest_under_v1_rule() -> None:
     No live sub-cue audio windowing is wired in this slice (see docs/
     pipeline/40-subtitle-text.md); with zero real windows, "every window
     supports HOST" is unattainable, so mixed_cue_speaker() is conservative by
-    construction.  For auto_203735_555_680 the six truth-mixed cues (10, 30,
-    31, 41, 44, 59) are landed via the hash-bound override document instead
-    of relying on live auto-detection.
+    construction.  In the historical v1 fixture the six truth-mixed cues (10,
+    30, 31, 41, 44, 59) are landed via its hash-bound override document instead
+    of relying on live auto-detection; current v2 is measured separately above.
     """
 
     assert mixed_cue_speaker([]).speaker == GUEST_SPEAKER
@@ -154,18 +345,18 @@ def test_mixed_cues_default_guest_under_v1_rule() -> None:
         assert mixed_cue_speaker([]).speaker == GUEST_SPEAKER
 
 
-def test_semantic_corroboration_band_matches_the_calibration_gap() -> None:
-    """Corroboration floor (0.08 below threshold) sits inside the observed gap:
-    the 2 correct historical semantic-HOST votes sat within 0.0675-0.0673 of
-    threshold; the 10 wrong ones all sat >=0.1009 below it."""
+def test_semantic_corroboration_requires_hostward_borderline_acoustics() -> None:
+    """F4 supersedes the old below-threshold floor with a margin-state gate."""
 
     threshold = 0.13210677927927927
     assert semantic_corroboration_eligible(
-        threshold - 0.0675, threshold, corroboration_margin_below_threshold=0.08
+        threshold + 0.0673, threshold, band=0.1
     )
     assert not semantic_corroboration_eligible(
-        threshold - 0.1009, threshold, corroboration_margin_below_threshold=0.08
+        threshold - 0.0001, threshold, band=0.1
     )
+    assert not semantic_corroboration_eligible(threshold + 0.1, threshold, band=0.1)
+    assert not semantic_corroboration_eligible(None, threshold, band=0.1)
 
 
 def test_semantics_alone_never_assigns_host_outside_the_corroboration_band() -> None:
@@ -182,6 +373,53 @@ def test_semantics_alone_never_assigns_host_outside_the_corroboration_band() -> 
     )
     assert decision.speaker == GUEST_SPEAKER
     assert decision.decision_source == "guest_default_ambiguity"
+
+
+def test_f4_guestward_borderline_margin_cannot_be_reversed_to_host() -> None:
+    """Wave 8 F4: semantics corroborates hostward acoustics; it cannot reverse
+    a guestward CAM++ margin even when that margin remains inside the ambiguity
+    band.  The numbers are the 2026-08-08 cue23 forensic counterexample.
+    """
+
+    decision = resolve_ambiguous_cue_speaker(
+        margin=0.1167,
+        threshold=0.15825,
+        band=0.1,
+        policy=POLICY,
+        context_speaker=HOST_SPEAKER,
+        context_confidence=0.99,
+    )
+    assert decision.speaker == GUEST_SPEAKER
+    assert decision.decision_source == "guest_default_ambiguity"
+    assert decision.semantic_eligible is False
+
+
+def test_f4_missing_acoustics_cannot_be_replaced_by_semantic_host() -> None:
+    decision = resolve_ambiguous_cue_speaker(
+        margin=None,
+        threshold=0.15825,
+        band=0.1,
+        policy=POLICY,
+        context_speaker=HOST_SPEAKER,
+        context_confidence=0.99,
+    )
+    assert decision.speaker == GUEST_SPEAKER
+    assert decision.decision_source == "guest_default_ambiguity"
+    assert decision.semantic_eligible is False
+
+
+def test_f4_hard_acoustic_margin_outranks_semantic_source() -> None:
+    decision = resolve_ambiguous_cue_speaker(
+        margin=0.391,
+        threshold=0.15825,
+        band=0.1,
+        policy=POLICY,
+        context_speaker=GUEST_SPEAKER,
+        context_confidence=0.99,
+    )
+    assert decision.speaker == HOST_SPEAKER
+    assert decision.decision_source == "campp_audio"
+    assert decision.semantic_eligible is False
 
 
 def test_semantics_can_always_confirm_guest() -> None:
@@ -250,7 +488,7 @@ def test_resolve_ambiguous_labels_integration_matches_module_contract() -> None:
 
     labels, sources = resolve_ambiguous_labels(
         [GUEST_SPEAKER, None, None],
-        [-0.3, -0.02, -0.5],
+        [-0.3, 0.02, -0.5],
         0.0,
         {1: HOST_SPEAKER},
         band=0.1,
@@ -261,5 +499,5 @@ def test_resolve_ambiguous_labels_integration_matches_module_contract() -> None:
     assert sources == [
         "campp_audio",
         "campp_semantic_corroborated",
-        "guest_default_ambiguity",
+        "campp_audio",
     ]

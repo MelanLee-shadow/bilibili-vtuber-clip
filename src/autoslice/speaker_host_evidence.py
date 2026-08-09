@@ -4,9 +4,9 @@ Default label is GUEST (连线).  Labelling a cue as HOST (李豆沙) requires h
 evidence: a confident CAM++ voiceprint margin, or (new) a loudness margin
 against the session's host-anchor baseline.  Semantics (the whole-clip LLM
 context judge) is a corroborating signal, not an independent one: it may only
-tip an acoustically *borderline* cue to HOST, and it may always confirm GUEST.
-When acoustic evidence is absent, unavailable, or clearly guest-ward,
-semantics alone must never assign HOST (Ivan: 「我没说语义应该完全出局，语义
+confirm the HOST-leaning half of an acoustically *borderline* cue, and it may
+always confirm GUEST.  When acoustic evidence is absent, unavailable, or
+guest-ward, semantics alone must never assign HOST (Ivan: 「我没说语义应该完全出局，语义
 当然也是一个线索，但是不能作为独立线索而已」；cue43 in the 真善美 clip proved
 naive semantic heuristics wrong in both directions).
 
@@ -22,13 +22,6 @@ from typing import Mapping
 
 from src.autoslice.speaker_common import GUEST_SPEAKER, HOST_SPEAKER
 
-# Among acoustically-ambiguous (within-band) cues in the calibration clip,
-# whole-clip-context HOST votes were correct in only 4/14 cases; all 10 wrong
-# votes sat >=0.10 below the CAM++ threshold, while the 2 correct ones sat
-# within 0.07 of it.  The corroboration floor below is set at 0.08 below
-# threshold: inside the observed gap, so it keeps the 2 correct corroborated
-# flips while excluding every observed wrong one.
-DEFAULT_HOST_SEMANTIC_CORROBORATION_MARGIN_BELOW_THRESHOLD = 0.08
 DEFAULT_HOST_SEMANTIC_MIN_CONFIDENCE = 0.7
 
 # Loudness lane: a same-session mean-volume(dB) study on the calibration clip
@@ -53,9 +46,13 @@ class HostEvidenceDecision:
     semantic_eligible: bool
 
 
-def acoustic_hard_pass(margin: float, threshold: float, band: float) -> str | None:
+def acoustic_hard_pass(
+    margin: float | None, threshold: float, band: float
+) -> str | None:
     """Confident (non-ambiguous) acoustic margin -> speaker, else None."""
 
+    if margin is None:
+        return None
     distance = margin - threshold
     if distance >= band:
         return HOST_SPEAKER
@@ -65,11 +62,18 @@ def acoustic_hard_pass(margin: float, threshold: float, band: float) -> str | No
 
 
 def semantic_corroboration_eligible(
-    margin: float, threshold: float, *, corroboration_margin_below_threshold: float
+    margin: float | None, threshold: float, *, band: float
 ) -> bool:
-    """True only inside the narrow band where semantics may corroborate HOST."""
+    """True only on the HOST-leaning half of the acoustic borderline band.
 
-    return margin - threshold >= -corroboration_margin_below_threshold
+    Semantics may corroborate an acoustic indication toward HOST, but it may
+    not reverse a GUEST-leaning margin or replace missing acoustics.
+    """
+
+    if margin is None:
+        return False
+    distance = margin - threshold
+    return 0.0 <= distance < band
 
 
 def loudness_hard_pass(
@@ -85,7 +89,7 @@ def loudness_hard_pass(
 
 def resolve_ambiguous_cue_speaker(
     *,
-    margin: float,
+    margin: float | None,
     threshold: float,
     band: float,
     policy: Mapping[str, object],
@@ -97,17 +101,11 @@ def resolve_ambiguous_cue_speaker(
     """Resolve one acoustically-ambiguous cue under the asymmetric policy.
 
     Default is GUEST.  HOST requires a hard acoustic/loudness lane, or a
-    semantic vote inside the narrow acoustic borderline band with sufficient
-    confidence.  The whole-clip LLM path can never assign HOST on its own
-    when acoustic evidence is absent or clearly guest-ward.
+    semantic vote on the HOST-leaning half of the narrow acoustic borderline
+    band with sufficient confidence.  The whole-clip LLM path can never
+    assign HOST on its own when acoustic evidence is absent or guest-ward.
     """
 
-    corroboration_floor = float(
-        policy.get(
-            "host_semantic_corroboration_margin_below_threshold",
-            DEFAULT_HOST_SEMANTIC_CORROBORATION_MARGIN_BELOW_THRESHOLD,
-        )
-    )
     min_confidence = float(
         policy.get("host_semantic_min_confidence", DEFAULT_HOST_SEMANTIC_MIN_CONFIDENCE)
     )
@@ -120,11 +118,13 @@ def resolve_ambiguous_cue_speaker(
     if loudness_hard_pass(
         cue_loudness_db, host_anchor_baseline_db, required_margin_db=loudness_margin
     ):
-        return HostEvidenceDecision(HOST_SPEAKER, "loudness_hard", True)
+        return HostEvidenceDecision(HOST_SPEAKER, "loudness_hard", False)
 
-    eligible = semantic_corroboration_eligible(
-        margin, threshold, corroboration_margin_below_threshold=corroboration_floor
-    )
+    hard_speaker = acoustic_hard_pass(margin, threshold, band)
+    if hard_speaker is not None:
+        return HostEvidenceDecision(hard_speaker, "campp_audio", False)
+
+    eligible = semantic_corroboration_eligible(margin, threshold, band=band)
     if (
         eligible
         and context_speaker == HOST_SPEAKER

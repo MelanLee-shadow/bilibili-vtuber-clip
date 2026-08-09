@@ -354,16 +354,22 @@
   词项（例如技术语境的 `staff`、`bug`）；它不是整句外语白名单，未登记的多词 Latin 组合
   仍须精确音频见证或更高文本权威。
 - 交付 `.srt`/`.ass` 走内容时间轴；片头偏移只记录在 `burned_preview.branding_intro.intro_offset_ms`（见 [80-package-delivery.md](80-package-delivery.md)）。
-- talk 成品 `speaker_mode=required`。二分默认连线（GUEST）；判李豆沙（HOST）须硬证据——
-  CAM++ 声纹置信通过，或（新）响度证据（同场次相对 host-anchor 响度基线的硬 margin，
+- talk 成品 `speaker_mode=required`。二分默认连线（GUEST）；证据源按质量分层，判李豆沙
+  （HOST）先看 CAM++ 声纹硬 margin，不得因 cue 短于 `short_cue_ms` 就把已硬通过的声学
+  结论降入 whole-clip context 可否决池；另一路硬证据是响度（同场次相对 host-anchor
+  响度基线的硬 margin，
   `talk_speaker_policy.host_loudness_required_margin_db`，当前只在
   `src/autoslice/speaker_host_evidence.py` 的代码默认里，未写回共享
   `voiceprint_profile.v1.json`——该文件被多份历史 session anchor 按 sha256 绑定，写回
   会级联使那些锚点document 的 `profile_sha256` 失配，需要单独一轮迁移；实测本机麦克风
   更响的经验假设在 auto_203735_555_680 一场未成立，margin 因此保守校准到基本不触发，等
-  更强的单人响度特征）。语义（整段
-  whole-clip context judge）不是独立证据，只能在声学临界带内佐证已有的临界判断、或确认
-  连线，不得单独定案（cue43 证明朴素语义启发式两个方向都错过）。说话人不确定（临界带
+  更强的单人响度特征）。语义（整段 whole-clip context judge）不是独立证据：只有 CAM++
+  `margin-threshold` 位于 HOST 侧半个临界带（`0 <= delta < ambiguity_band`）时，语义才可
+  佐证 HOST；声学缺席或 delta 位于 GUEST 侧时，语义 HOST 票不得反向翻案。语义仍可确认
+  连线（cue43 证明朴素语义启发式两个方向都错过）。8/8 法证的单候选分源测距为 whole-clip
+  context `6/59=10.2%` 错、CAM++ `2/69=2.9%` 错（后两处均属句内混说颗粒度），只用于说明
+  证据层级，不据此发明新数值阈值；61/40/12 真值材料也只作离线对照，绝不进入生产决策。
+  说话人不确定（临界带
   内无声学/响度硬通过、也无佐证）直接判连线可交付，不再进 `speaker_review_required` /
   `speaker_evidence_insufficient`；该 fail-closed hold 只留给基础设施故障（模型不可用/
   judge 连续报错取不到任何回应），不再用于"标签不确定"（Ivan 2026-08-07 裁定，取代

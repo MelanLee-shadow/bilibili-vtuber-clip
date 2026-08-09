@@ -62,10 +62,10 @@ def resolve_ambiguous_labels(
     """Resolve ambiguous cue labels under the asymmetric host-evidence policy.
 
     Default is GUEST (Ivan 2026-08-07).  HOST requires a confident acoustic
-    margin or a semantic vote inside the narrow corroboration band with
+    margin or a semantic vote on the HOST-leaning half of the narrow band with
     sufficient confidence; see ``speaker_host_evidence.resolve_ambiguous_cue_
     speaker``.  The whole-clip context judge can never assign HOST on its own
-    outside that band -- it only ever confirms GUEST or is ignored.
+    outside that half-band -- it only ever confirms GUEST or is ignored.
     ``context_votes``/``context_confidences`` use zero-based cue indices.
     """
 
