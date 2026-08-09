@@ -1,0 +1,83 @@
+{
+  "audited_inputs": [
+    {
+      "bytes": 12671,
+      "path": "review_manifest.json",
+      "sha256": "f0af4fffcd54871c751b3fa302682eb68d1c24b22a602e36370347d53a8aa4f9"
+    },
+    {
+      "bytes": 142825,
+      "path": "小李解释偶像曲里那句“请感受穿越屏幕.chat-authority.json",
+      "sha256": "4ddb0c0f55dcc41c1bc9a19fa53b15f6dea2e7584dd83607d51f25f98a5c19de"
+    },
+    {
+      "bytes": 32573,
+      "path": "小李解释偶像曲里那句“请感受穿越屏幕.clip-context.json",
+      "sha256": "5fe54f48587eaeb3b957e03a3fcd398bac52f3251f49a8241911ad3a4f6277e3"
+    },
+    {
+      "bytes": 2539602,
+      "path": "小李解释偶像曲里那句“请感受穿越屏幕.cover.png",
+      "sha256": "f8f68a504dbcd0acbffd5d9af0ca16d3fae0df30f6ebcecdd6bf3339b02b0616"
+    },
+    {
+      "bytes": 2539123,
+      "path": "小李解释偶像曲里那句“请感受穿越屏幕.cover.pre-overlay.png",
+      "sha256": "71f2aeb5ae47cc0db41d65b2679946050b466b1540486b9fbc17862b92a12c0f"
+    },
+    {
+      "bytes": 2539123,
+      "path": "小李解释偶像曲里那句“请感受穿越屏幕.cover.route-background.png",
+      "sha256": "71f2aeb5ae47cc0db41d65b2679946050b466b1540486b9fbc17862b92a12c0f"
+    },
+    {
+      "bytes": 32205,
+      "path": "小李解释偶像曲里那句“请感受穿越屏幕.cover.title-mask.png",
+      "sha256": "2c1b19d4f7f6c5235dc450cb9c8316d2c9b7b2e0f6ff2c7bc9bfc3c8046edc15"
+    },
+    {
+      "bytes": 12633410,
+      "path": "小李解释偶像曲里那句“请感受穿越屏幕.mp4",
+      "sha256": "c4e549684a593ff140c1165d3a6e16a0d1540ccbc8cb132ce969c32dba775139"
+    },
+    {
+      "bytes": 40291,
+      "path": "小李解释偶像曲里那句“请感受穿越屏幕.publish.json",
+      "sha256": "e4a34354bc6f5eee306c5a35dbf9bc6ec83daae212a104b38a0a0468e35564e9"
+    },
+    {
+      "bytes": 165367,
+      "path": "小李解释偶像曲里那句“请感受穿越屏幕.record.json",
+      "sha256": "3645a436923cab84d45a6d8588bc893f012a799991b97c743f50f6dd820fe972"
+    },
+    {
+      "bytes": 45131,
+      "path": "小李解释偶像曲里那句“请感受穿越屏幕.redelivery-baseline.json",
+      "sha256": "cebe640f8a776685b18e2908f951cd6e3200089bcdda76573e8f0d94d2f6b8ff"
+    },
+    {
+      "bytes": 4223,
+      "path": "小李解释偶像曲里那句“请感受穿越屏幕.speaker.ass",
+      "sha256": "b79c9c7868a0b724ca90e30250160e357d4b43e9b0eb4f0fbdfc36d0f03fb9cc"
+    },
+    {
+      "bytes": 3539,
+      "path": "小李解释偶像曲里那句“请感受穿越屏幕.speaker.srt",
+      "sha256": "73fbf084dbad349ca90be073711f6da31738f9617ee04e702ed7ac2389149037"
+    },
+    {
+      "bytes": 2963,
+      "path": "小李解释偶像曲里那句“请感受穿越屏幕.srt",
+      "sha256": "d06d0a7158932a5a606f1a2ca856da9007660480d37df3ae00d62dca97d475dd"
+    }
+  ],
+  "auditor_source_sha256": "sha256:7bdb9f058df7d211545e44d27a549cf1ebbfd66a8cd9fa400e95932c4cec3242",
+  "blocking_issue_count": 0,
+  "issue_count": 0,
+  "issues": [],
+  "passed": true,
+  "policy_epoch": "2026-07-31.final-artifact-gates.v5",
+  "policy_fingerprint": "sha256:09f4e5515639d379a43fd4e1eb8d922cfec201615a89ea3cd3b451c32483f2d9",
+  "root": "/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/repo/lidousha/2026-08-08",
+  "schema_version": "lidousha-review-package-audit.v2"
+}

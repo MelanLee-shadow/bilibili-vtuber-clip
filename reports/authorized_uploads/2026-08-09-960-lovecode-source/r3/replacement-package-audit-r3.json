@@ -1,0 +1,108 @@
+{
+  "audited_inputs": [
+    {
+      "bytes": 142874,
+      "path": "auto_230125_960_1072.chat-authority.json",
+      "sha256": "1a3c9d158e58588d35938602017a6937122c46db1f21884263ab7650319a313c"
+    },
+    {
+      "bytes": 32573,
+      "path": "auto_230125_960_1072.clip-context.json",
+      "sha256": "5fe54f48587eaeb3b957e03a3fcd398bac52f3251f49a8241911ad3a4f6277e3"
+    },
+    {
+      "bytes": 165414,
+      "path": "auto_230125_960_1072.record.json",
+      "sha256": "3a2491f6c74da24d5680fedf941cd554fd4a8a953f06774bbf77af71c0aac293"
+    },
+    {
+      "bytes": 2539602,
+      "path": "auto_230125_960_1072.recut.burned-final-speaker.cover.png",
+      "sha256": "f8f68a504dbcd0acbffd5d9af0ca16d3fae0df30f6ebcecdd6bf3339b02b0616"
+    },
+    {
+      "bytes": 12633410,
+      "path": "auto_230125_960_1072.recut.burned-final-speaker.mp4",
+      "sha256": "c4e549684a593ff140c1165d3a6e16a0d1540ccbc8cb132ce969c32dba775139"
+    },
+    {
+      "bytes": 165414,
+      "path": "auto_230125_960_1072.recut.burned-final-speaker.record.json",
+      "sha256": "3a2491f6c74da24d5680fedf941cd554fd4a8a953f06774bbf77af71c0aac293"
+    },
+    {
+      "bytes": 2963,
+      "path": "auto_230125_960_1072.recut.burned-final-speaker.srt",
+      "sha256": "d06d0a7158932a5a606f1a2ca856da9007660480d37df3ae00d62dca97d475dd"
+    },
+    {
+      "bytes": 15745556,
+      "path": "auto_230125_960_1072.recut.mp4",
+      "sha256": "0607a0425e3411e0b95bd048c696c2c7f32ca8fb4b664fe362548941c6ea566f"
+    },
+    {
+      "bytes": 40291,
+      "path": "auto_230125_960_1072.recut.publish.json",
+      "sha256": "4e6e1a8af86cc42d49d2395a8c29a355d4395bc494c114b33a5619cefa61081f"
+    },
+    {
+      "bytes": 4223,
+      "path": "auto_230125_960_1072.recut.speaker-final.ass",
+      "sha256": "b79c9c7868a0b724ca90e30250160e357d4b43e9b0eb4f0fbdfc36d0f03fb9cc"
+    },
+    {
+      "bytes": 3539,
+      "path": "auto_230125_960_1072.recut.speaker-final.srt",
+      "sha256": "73fbf084dbad349ca90be073711f6da31738f9617ee04e702ed7ac2389149037"
+    },
+    {
+      "bytes": 2963,
+      "path": "auto_230125_960_1072.recut.srt",
+      "sha256": "d06d0a7158932a5a606f1a2ca856da9007660480d37df3ae00d62dca97d475dd"
+    },
+    {
+      "bytes": 45131,
+      "path": "auto_230125_960_1072.redelivery-baseline.json",
+      "sha256": "cebe640f8a776685b18e2908f951cd6e3200089bcdda76573e8f0d94d2f6b8ff"
+    },
+    {
+      "bytes": 4115,
+      "path": "auto_230125_960_1072.speaker-work/automatic-labelled.srt",
+      "sha256": "144f8efa20d31ce9004a1499d0213d677c01ff055ea090f365a6c3fb50f8f1ff"
+    },
+    {
+      "bytes": 2539602,
+      "path": "covers/auto_230125_960_1072.ai-title.cover.png",
+      "sha256": "f8f68a504dbcd0acbffd5d9af0ca16d3fae0df30f6ebcecdd6bf3339b02b0616"
+    },
+    {
+      "bytes": 2539123,
+      "path": "covers/auto_230125_960_1072.ai-title.cover.pre-overlay.png",
+      "sha256": "71f2aeb5ae47cc0db41d65b2679946050b466b1540486b9fbc17862b92a12c0f"
+    },
+    {
+      "bytes": 32205,
+      "path": "covers/auto_230125_960_1072.ai-title.cover.title-mask.png",
+      "sha256": "2c1b19d4f7f6c5235dc450cb9c8316d2c9b7b2e0f6ff2c7bc9bfc3c8046edc15"
+    },
+    {
+      "bytes": 2539123,
+      "path": "covers_ai_original/auto_230125_960_1072.ai-bg.cpa-image-edit.png",
+      "sha256": "71f2aeb5ae47cc0db41d65b2679946050b466b1540486b9fbc17862b92a12c0f"
+    },
+    {
+      "bytes": 10209,
+      "path": "review_manifest.json",
+      "sha256": "de35d8c2aaf4c0756e9d12b24e50fd7edc6bff5fa9e46dde817e67312acd9177"
+    }
+  ],
+  "auditor_source_sha256": "sha256:7bdb9f058df7d211545e44d27a549cf1ebbfd66a8cd9fa400e95932c4cec3242",
+  "blocking_issue_count": 0,
+  "issue_count": 0,
+  "issues": [],
+  "passed": true,
+  "policy_epoch": "2026-07-31.final-artifact-gates.v5",
+  "policy_fingerprint": "sha256:09f4e5515639d379a43fd4e1eb8d922cfec201615a89ea3cd3b451c32483f2d9",
+  "root": "/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/out/2026-08-08/auto_230125_960_1072/replacement_recuts",
+  "schema_version": "lidousha-review-package-audit.v2"
+}

@@ -1,0 +1,108 @@
+{
+  "aid": 117064333264829,
+  "bvid": "BV1Bau16nEyq",
+  "candidate_id": "auto_230125_960_1072",
+  "live_snapshot": {
+    "creator": {
+      "aid": 117064333264829,
+      "available": true,
+      "bvid": "BV1Bau16nEyq",
+      "metadata": {
+        "copyright": 2,
+        "cover": "//bilibili-cover-asset/bfs/archive/0c6f6057edc85e71684d621cd74f91ecfb51f36e.png",
+        "desc": "https://live.bilibili.com/\n本切片由 bilibili-vtuber-clip 项目提供：https://github.com/MelanLee-shadow/bilibili-vtuber-clip\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+        "source": "https://live.bilibili.com/",
+        "tags": [
+          "偶像",
+          "可爱",
+          "帅气",
+          "撩人",
+          "李豆沙",
+          "直播切片",
+          "虚拟UP主",
+          "虚拟主播"
+        ],
+        "tid": 21,
+        "title": "【李豆沙】小李解释偶像曲里那句“请感受穿越屏幕的热烈，再一次爱上我吧”"
+      },
+      "state": 0,
+      "state_desc": "开放浏览",
+      "videos": [
+        {
+          "cid": 40755790146,
+          "filename": "n260809adx4l9d3hq4rpg2jd9s5v5047",
+          "title": "【李豆沙】小李解释偶像曲里那句“请感受穿越屏幕的热烈，再一次爱上我吧”"
+        }
+      ]
+    },
+    "public": {
+      "aid": 117064333264829,
+      "available": true,
+      "bvid": "BV1Bau16nEyq",
+      "cid": 40755790146,
+      "metadata": {
+        "copyright": 2,
+        "cover": "//bilibili-cover-asset/bfs/archive/0c6f6057edc85e71684d621cd74f91ecfb51f36e.png",
+        "desc": "https://live.bilibili.com/\n本切片由 bilibili-vtuber-clip 项目提供：https://github.com/MelanLee-shadow/bilibili-vtuber-clip\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+        "tags": [
+          "偶像",
+          "可爱",
+          "帅气",
+          "撩人",
+          "李豆沙",
+          "直播切片",
+          "虚拟UP主",
+          "虚拟主播"
+        ],
+        "tid": 21,
+        "title": "【李豆沙】小李解释偶像曲里那句“请感受穿越屏幕的热烈，再一次爱上我吧”"
+      },
+      "state": 0
+    },
+    "section": {
+      "available": true,
+      "matches": [
+        {
+          "aid": 117064333264829,
+          "bvid": "BV1Bau16nEyq",
+          "cid": 40755790146,
+          "title": "【李豆沙】小李解释偶像曲里那句“请感受穿越屏幕的热烈，再一次爱上我吧”"
+        }
+      ],
+      "section_id": 9320779
+    }
+  },
+  "manifest": {
+    "path": "/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/repo/lidousha/2026-08-08/verification/authorized-upload-manifest-r3.json",
+    "sha256": "b4d9c9bb82943d98919d760e2bed7c9db4aaf0c2f49d64ee0560214e3e394dc8"
+  },
+  "new_cid": 40755790146,
+  "plan": {
+    "path": "/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/repo/lidousha/2026-08-08/verification/same-bv-repair-plan-r3.json",
+    "plan_id": "f969ce66a14a421981fd8b7137e83ff4",
+    "sha256": "fe9be89c078588c67b70aa5c846599fa0d6ef797f1422fef984adea9bb4d66d6"
+  },
+  "rc": 0,
+  "remote_mutation": false,
+  "replacement": {
+    "cover": {
+      "bytes": 2539602,
+      "path": "/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/repo/lidousha/2026-08-08/小李解释偶像曲里那句“请感受穿越屏幕.cover.png",
+      "sha256": "f8f68a504dbcd0acbffd5d9af0ca16d3fae0df30f6ebcecdd6bf3339b02b0616"
+    },
+    "video": {
+      "bytes": 12633410,
+      "path": "/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/repo/lidousha/2026-08-08/小李解释偶像曲里那句“请感受穿越屏幕.mp4",
+      "sha256": "c4e549684a593ff140c1165d3a6e16a0d1540ccbc8cb132ce969c32dba775139"
+    }
+  },
+  "schema_version": "same-bv-repair-completed.v1",
+  "status": "VERIFIED_FRESH_LIVE",
+  "verified_at": "2026-08-09T15:03:07+0000",
+  "verified_journal_row": {
+    "at": "2026-08-09T15:02:17.270396+00:00",
+    "journal_path": "/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/reports/same_bv_repair_ledger.jsonl",
+    "row_sha256": "d4a5370b07ee2421241d1c130840edf4f2db146b8029afc9718222910eed82d3",
+    "seq": 16
+  }
+}

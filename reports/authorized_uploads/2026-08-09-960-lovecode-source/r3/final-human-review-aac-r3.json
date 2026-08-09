@@ -1,0 +1,133 @@
+{
+  "approval_quote": "还有个紧急修复，为什么再一次爱上我吧那个切片所有字幕前面加了个[李豆沙]，不行的，从来不应该这样加，只是单纯的用颜色区分，你完全是搞错了我的意思。",
+  "items": [
+    {
+      "artifacts": {
+        "cover": {
+          "path": "小李解释偶像曲里那句“请感受穿越屏幕.cover.png",
+          "sha256": "sha256:f8f68a504dbcd0acbffd5d9af0ca16d3fae0df30f6ebcecdd6bf3339b02b0616"
+        },
+        "subtitle": {
+          "path": "小李解释偶像曲里那句“请感受穿越屏幕.srt",
+          "sha256": "sha256:d06d0a7158932a5a606f1a2ca856da9007660480d37df3ae00d62dca97d475dd"
+        },
+        "video": {
+          "path": "小李解释偶像曲里那句“请感受穿越屏幕.mp4",
+          "sha256": "sha256:c4e549684a593ff140c1165d3a6e16a0d1540ccbc8cb132ce969c32dba775139"
+        }
+      },
+      "candidate_id": "auto_230125_960_1072",
+      "checks": {
+        "boundary_closure": {
+          "evidence": "CLIP_START_AND_EOS — 开头从片头名卡进入正片，结尾最后一句“所以才会有再一次啊”说完后自然收尾；118.521029 秒 EOS 没有截断句子或引入下一话题，起止语义完整。",
+          "status": "PASS"
+        },
+        "cover_identity": {
+          "evidence": "FINAL_COVER — 封面中央是李豆沙白发、熊猫耳与星形脸饰的人物立绘，主体无遮挡，身份特征清楚可辨。",
+          "status": "PASS"
+        },
+        "cover_story": {
+          "evidence": "FINAL_COVER_AND_STORY — 封面文字分成“小李解释偶像曲”和“再一次爱上我吧”两层，直接对应正片解释偶像曲台词由来的故事。",
+          "status": "PASS"
+        },
+        "final_burned_full_playback": {
+          "evidence": "00:00.000-EOS — 从 00:00 开头到 118.521029 秒 EOS 完成视频与音频全流解码，3555 个视频帧及 5555 个 AAC 帧均无错；逐五秒联系表和四个重点窗未见字面 [李豆沙] 字幕前缀。",
+          "status": "PASS"
+        },
+        "intro_timing": {
+          "evidence": "INTRO_TO_MAIN_TRANSITION — 5.8 秒仍显示李豆沙片头名卡，6.3 秒已经切入正片人物画面，约 6.45 秒出现首条无前缀烧录字幕，片头到正片衔接清楚。",
+          "status": "PASS"
+        },
+        "silence_hallucination": {
+          "evidence": "KNOWN_SILENCE_AND_FULL_VIDEO — 75.978–77.608 秒实测为静音段，76.9 秒取帧没有字幕；全流检查也未在该停顿及 117.820 秒后的尾部静音中发现额外 cue 或幻听文字。",
+          "status": "PASS"
+        },
+        "subtitle_audio": {
+          "evidence": "FULL_VIDEO_AUDIO_SUBTITLE — 48 条交付字幕均无字面前缀，speaker SRT 各剥一层前缀后与 d06 sidecar 逐字节相等；audio 候选 AAC 84f375… 逐字节等于 151037 字节指定片头 AAC 8798c8… 加 1832787 字节精确 recut 源 AAC 2e4238…。因此 PCM 与前任/r1 链不等属于拼接后的解码 priming/边界表现，不是正文音源漂移。",
+          "status": "PASS"
+        },
+        "title_story": {
+          "evidence": "FINAL_TITLE_AND_FULL_STORY — 标题逐字指向“请感受穿越屏幕的热烈，再一次爱上我吧”；正片故事从解释《ラブコード》前奏喊话推进到合跳与“再一次”的由来，内容关系闭合。",
+          "status": "PASS"
+        }
+      },
+      "cover_story_claims": [
+        {
+          "claim": "封面文字呈现“小李解释偶像曲 / 再一次爱上我吧”",
+          "evidence": "FINAL_COVER/COVER_TEXT — 实际封面顶部大字可见“小李解释偶像曲”，下方清楚写着“再一次爱上我吧”，两行文字准确概括本条内容的叙事关系。",
+          "presentation": "COVER_TEXT",
+          "status": "PASS"
+        }
+      ],
+      "publication_target": {
+        "aid": 117064333264829,
+        "authority_sha256": "sha256:efb6318f8b80d65892f29eddc413880a26dfb8241e485ad515433df3ec7f1d82",
+        "bvid": "BV1Bau16nEyq",
+        "candidate_id": "auto_230125_960_1072",
+        "cid": 40743275821,
+        "final_title": "【李豆沙】小李解释偶像曲里那句“请感受穿越屏幕的热烈，再一次爱上我吧”"
+      },
+      "record": {
+        "path": "小李解释偶像曲里那句“请感受穿越屏幕.record.json",
+        "sha256": "sha256:3645a436923cab84d45a6d8588bc893f012a799991b97c743f50f6dd820fe972"
+      },
+      "reviewed_title": "【李豆沙】小李解释偶像曲里那句“请感受穿越屏幕的热烈，再一次爱上我吧”",
+      "subtitle_review_points": [
+        {
+          "evidence": "00:00:06.200-00:00:09.000 — 该窗 audio 音频流已解码；7.5 秒烧录字幕显示“嗯，ラブコード的那首歌呢”，日文曲名正确，画面没有 [李豆沙] 字面前缀。",
+          "expectation": "片头后首次歌名必须渲染为「ラブコード」，不得残留 LoveLive! 或把歌曲误当成 franchise。",
+          "final_video_end_ms": 9000,
+          "final_video_start_ms": 6200,
+          "point_id": "lovecode-song-name-opening",
+          "status": "PASS"
+        },
+        {
+          "evidence": "00:00:18.500-00:00:23.000 — 18.5–23.0 秒 audio 音频流连续无错；20.5 秒画面烧录字幕为“然后在ラブコード的前奏的时候”，没有说话人标签叠字。",
+          "expectation": "说到前奏的第二处歌名必须同形为「ラブコード」，且与语音和后文连贯。",
+          "final_video_end_ms": 23000,
+          "final_video_start_ms": 18500,
+          "point_id": "lovecode-song-name-prelude",
+          "status": "PASS"
+        },
+        {
+          "evidence": "00:01:18.500-00:01:23.000 — 后段 audio 音频流正常解码；80.5 秒烧录字幕写“呃，ラブコード的后面就是和大家合跳了”，样式区分保留且无字面姓名。",
+          "expectation": "说到歌曲后面和大家合跳的第三处歌名必须为「ラブコード」，整片三处一致。",
+          "final_video_end_ms": 83000,
+          "final_video_start_ms": 78500,
+          "point_id": "lovecode-song-name-after",
+          "status": "PASS"
+        },
+        {
+          "evidence": "00:01:44.500-00:01:58.500 — 104.5–118.5 秒 audio 音频流完整延续到尾；116.8 秒烧录字幕显示“所以才会有再一次啊”，随后自然落入尾部静音，没有新增标签。",
+          "expectation": "结尾必须完整收束「因为已经爱上，所以才会有再一次」的解释与包袱，不断在话中、不带入下一话题。",
+          "final_video_end_ms": 118500,
+          "final_video_start_ms": 104500,
+          "point_id": "lovecode-ending-closure",
+          "status": "PASS"
+        }
+      ]
+    }
+  ],
+  "package_evidence": {
+    "package_audit": {
+      "path": "verification/package-audit.json",
+      "sha256": "sha256:7ac2c8339e10db5faba0984117d853cea20d31b03d4dd48932a1dd48c9203175"
+    },
+    "review_evidence": {
+      "bytes": 6257,
+      "path": "verification/final-human-review-evidence-aac-r3.v2.json",
+      "sha256": "sha256:af48113b3c246a88b731febee56e2a15c33874ad396c09f20c7c94ab4bb6940e"
+    },
+    "review_manifest": {
+      "path": "review_manifest.json",
+      "sha256": "sha256:f0af4fffcd54871c751b3fa302682eb68d1c24b22a602e36370347d53a8aa4f9"
+    }
+  },
+  "review_contract_sha256": "sha256:06611aade9800d4826a578a010f0701a5111c6659a8372bc9bd18a1ee27532b8",
+  "reviewed_at": "2026-08-09T14:57:13Z",
+  "reviewed_by": "Codex root",
+  "reviewer_kind": "delegated_root_agent",
+  "schema_version": "lidousha-final-human-review.v2",
+  "scope": "same_bv_repair",
+  "status": "ACCEPTED_FOR_SAME_BV"
+}

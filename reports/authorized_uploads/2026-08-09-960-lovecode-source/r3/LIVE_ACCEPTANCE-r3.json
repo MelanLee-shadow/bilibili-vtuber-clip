@@ -1,0 +1,60 @@
+{
+  "schema_version": "lovecode-same-bv-live-acceptance.r3",
+  "result": "PASS",
+  "bvid": "BV1Bau16nEyq",
+  "predecessor_cid": 40746484284,
+  "new_cid": 40755790146,
+  "title": "【李豆沙】小李解释偶像曲里那句“请感受穿越屏幕的热烈，再一次爱上我吧”",
+  "fresh_live": {
+    "status": "VERIFIED_FRESH_LIVE",
+    "state": 0,
+    "single_part": true,
+    "creator_public_section_same_cid": true,
+    "completed_receipt_path": "receipts/same-bv-repair-completed-r3.json",
+    "completed_receipt_sha256": "4ddec1c38ee01772acd5d4d4f845c3c59aac9269ca470896bf2cad503e834d20"
+  },
+  "cdn_video": {
+    "api_quality": 80,
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "duration_seconds": 118.521,
+    "bytes": 6255091,
+    "sha256": "4da74818b568d0b5bfe088105efa80048c020b8d47650a1b18ed6fa17f0baf65",
+    "cid_bound_path": "/upgcxcode/46/01/40755790146/40755790146-1-30080.m4s",
+    "full_video_decode_rc": 0
+  },
+  "visual_review": {
+    "reviewed_by": "Codex root",
+    "reviewed_at": "2026-08-09T15:08:10Z",
+    "literal_speaker_prefix_absent": true,
+    "lovecode_spelling_correct": true,
+    "frames": [
+      {
+        "time_seconds": 7.5,
+        "path": "live-frames/live-07.5s.png",
+        "sha256": "2a84c8b61d8e075d8b5f68c151259b56352677f0e25fc757512240ff5b1640c1",
+        "visible_subtitle": "嗯，ラブコード的那首歌呢"
+      },
+      {
+        "time_seconds": 20.5,
+        "path": "live-frames/live-20.5s.png",
+        "sha256": "a1cae5a56745151d7ba80035517287b013f681fa19f242fcc8a1614c51c29677",
+        "visible_subtitle": "然后在ラブコード的前奏的时候"
+      },
+      {
+        "time_seconds": 80.5,
+        "path": "live-frames/live-80.5s.png",
+        "sha256": "ce475628605ceaa2b00f271b04f39d90e29de8e417f085bc8b938aae0b41b950",
+        "visible_subtitle": "呃，ラブコード的后面就是和大家合跳了"
+      },
+      {
+        "time_seconds": 116.8,
+        "path": "live-frames/live-116.8s.png",
+        "sha256": "79022a53a9390e16f2437e329ab0b71d8a82c6e08461e1dddf4ffc6417e19b71",
+        "visible_subtitle": "所以才会有再一次啊"
+      }
+    ]
+  }
+}
+

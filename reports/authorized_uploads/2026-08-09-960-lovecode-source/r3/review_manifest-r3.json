@@ -1,0 +1,213 @@
+{
+  "counts": {
+    "items": 1,
+    "song": 0,
+    "talk": 1
+  },
+  "cover_route_attestations": [
+    {
+      "candidate_id": "auto_230125_960_1072",
+      "final_cover_sha256": "sha256:f8f68a504dbcd0acbffd5d9af0ca16d3fae0df30f6ebcecdd6bf3339b02b0616",
+      "method": "images.edit",
+      "reference_authority": null,
+      "reference_sha256": "sha256:8bb1f1e5b47a8df53e1d2440e3ba75b1a363bac0d1d0883d1ebff1e9609c91d0",
+      "route_decision": {
+        "actual_treatment": "cpa_redraw",
+        "alternatives": [
+          {
+            "rationale": "the selected source frame is strong enough to preserve as the final visual without image generation",
+            "rejected_reason": "the source moment should be preserved, but the route evidence says bounded cleanup is needed before it is cover-ready; selected evidence: usable moment + CPA touch-up (score=3.46)",
+            "status": "REJECTED",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rationale": "usable moment + CPA touch-up (score=3.46)",
+            "rejected_reason": null,
+            "status": "SELECTED",
+            "treatment": "screenshot_polish"
+          },
+          {
+            "rationale": "the available source frame is not a sufficiently strong or verified cover composition",
+            "rejected_reason": "the usable real moment should be preserved; full redraw is broader than the demonstrated cleanup need; selected evidence: usable moment + CPA touch-up (score=3.46)",
+            "status": "REJECTED",
+            "treatment": "cpa_redraw"
+          }
+        ],
+        "alternatives_considered": [
+          "screenshot_direct",
+          "screenshot_polish",
+          "cpa_redraw"
+        ],
+        "cover_mode": "auto",
+        "cover_punch_allowed": true,
+        "execution_detail": "demoted from screenshot_polish: ValueError: SOURCE_COMPOSITION_CROP_NOT_AUTHORIZED",
+        "execution_status": "READY_DEGRADED",
+        "final_visibility_authority": "NOT_REQUIRED",
+        "final_visible_participant_ids": [],
+        "frame_emotion": 0.0,
+        "frame_score": 3.4553,
+        "full_text_cover_contract": false,
+        "host_identity_required": true,
+        "image_generation_attempted": true,
+        "image_generation_planned": true,
+        "image_generation_used": true,
+        "is_song": false,
+        "motion_dispersion_frac": 0.5722,
+        "punch_semantic_status": "REVISED",
+        "reason": "usable moment + CPA touch-up (score=3.46)",
+        "reference_authority_id": null,
+        "rejected_alternatives": [
+          {
+            "rejected_reason": "the source moment should be preserved, but the route evidence says bounded cleanup is needed before it is cover-ready; selected evidence: usable moment + CPA touch-up (score=3.46)",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rejected_reason": "the usable real moment should be preserved; full redraw is broader than the demonstrated cleanup need; selected evidence: usable moment + CPA touch-up (score=3.46)",
+            "treatment": "cpa_redraw"
+          }
+        ],
+        "relationship_semantic_evidence": [],
+        "relationship_visual_required": false,
+        "relationship_visual_safety_evidence": {
+          "relation_state": "UNKNOWN",
+          "required_participant_ids": [],
+          "requirement_basis": [],
+          "schema_version": "lidousha-cover-relationship-visual-safety.v1",
+          "status": "NOT_REQUIRED"
+        },
+        "required_participant_ids": [],
+        "schema_version": "lidousha-cover-route-decision.v2",
+        "selected_rationale": "usable moment + CPA touch-up (score=3.46)",
+        "selected_treatment": "screenshot_polish",
+        "selection_policy": "lidousha-cover-treatment-router.v2",
+        "source_composition_redraw_recommended": false,
+        "source_composition_schema_version": "lidousha-cover-source-composition-verification.v1",
+        "source_composition_status": "PASS",
+        "source_composition_witness_sha256": "sha256:afa973249dea5ade50de291fc450615b8bf07e8863df0f64c4d1db74e42172e8",
+        "source_visibility_authority": "NO_IDENTITY_AUTHORITY",
+        "source_visible_participant_ids": [],
+        "subject_confident": false,
+        "thumbnail_text_requires_punch": true,
+        "verified_stream_frame": false
+      },
+      "stem": "小李解释偶像曲里那句“请感受穿越屏幕"
+    }
+  ],
+  "created_at": "2026-08-09T14:32:54.902630+00:00",
+  "date": "2026-08-08",
+  "deployed_commit": "a661e144324350d869e9280af456ab8e596de51a",
+  "exact_candidate_ids": [
+    "auto_230125_960_1072"
+  ],
+  "generated_by": "build_lidousha_recovery_review_manifest.v1",
+  "items": [
+    {
+      "ass_path": "小李解释偶像曲里那句“请感受穿越屏幕.speaker.ass",
+      "ass_sha256": "sha256:b79c9c7868a0b724ca90e30250160e357d4b43e9b0eb4f0fbdfc36d0f03fb9cc",
+      "candidate_id": "auto_230125_960_1072",
+      "chat_authority": "小李解释偶像曲里那句“请感受穿越屏幕.chat-authority.json",
+      "clip_context": "小李解释偶像曲里那句“请感受穿越屏幕.clip-context.json",
+      "cover": "小李解释偶像曲里那句“请感受穿越屏幕.cover.png",
+      "cover_pre_overlay": "小李解释偶像曲里那句“请感受穿越屏幕.cover.pre-overlay.png",
+      "cover_route_background": "小李解释偶像曲里那句“请感受穿越屏幕.cover.route-background.png",
+      "cover_route_summary": {
+        "actual_treatment": "cpa_redraw",
+        "execution_status": "READY_DEGRADED",
+        "final_visible_participant_ids": [],
+        "image_generation_attempted": true,
+        "image_generation_planned": true,
+        "image_generation_used": true,
+        "rejected_alternatives": [
+          {
+            "rejected_reason": "the source moment should be preserved, but the route evidence says bounded cleanup is needed before it is cover-ready; selected evidence: usable moment + CPA touch-up (score=3.46)",
+            "treatment": "screenshot_direct"
+          },
+          {
+            "rejected_reason": "the usable real moment should be preserved; full redraw is broader than the demonstrated cleanup need; selected evidence: usable moment + CPA touch-up (score=3.46)",
+            "treatment": "cpa_redraw"
+          }
+        ],
+        "schema_version": "lidousha-cover-route-decision.v2",
+        "selected_rationale": "usable moment + CPA touch-up (score=3.46)",
+        "selected_treatment": "screenshot_polish",
+        "source_visible_participant_ids": []
+      },
+      "cover_title_mask": "小李解释偶像曲里那句“请感受穿越屏幕.cover.title-mask.png",
+      "mp4": "小李解释偶像曲里那句“请感受穿越屏幕.mp4",
+      "publish_json": "小李解释偶像曲里那句“请感受穿越屏幕.publish.json",
+      "record": "小李解释偶像曲里那句“请感受穿越屏幕.record.json",
+      "recovery_publication_authority": {
+        "aid": 117064333264829,
+        "authority_sha256": "sha256:efb6318f8b80d65892f29eddc413880a26dfb8241e485ad515433df3ec7f1d82",
+        "boundary_end_mode": "exact_source_pin",
+        "bvid": "BV1Bau16nEyq",
+        "candidate_id": "auto_230125_960_1072",
+        "cid": 40743275821,
+        "observed_public_title": "【李豆沙】小李解释偶像曲里那句“请感受穿越屏幕的热烈，再一次爱上我吧”",
+        "registry_authority": "Ivan-lovecode-directive-2026-08-09: 「有一个需要紧急修改的地方，刚上传的请感受穿越屏幕的热烈那个切片，里面提到的歌曲是\"ラブコード\"，不是lovelive，你把那里关于歌曲的字幕全改一下然后极速上传就行」 上传总授权：「并且今天要执行权宜上传。只要出片就可以上传，之后我再进行审查。」 Published exact source interval 960450-1072770ms and exact verified-public title are frozen for same-BV subtitle redelivery.",
+        "registry_repo_path": "assets/lidousha/recovery_publication_authority_2026-08-09_960_lovecode.v1.json",
+        "registry_schema_version": "lidousha-recovery-publication-authority.v1",
+        "registry_sha256": "sha256:21d1b62f0aee99ec771e3355ec9927551c18bfc2e47d2e25109952439de6985f",
+        "required_given_end_ms": 1072770,
+        "schema_version": "recovery-same-bv-publication-authority.v1",
+        "source_kind": "committed_verified_publication_registry",
+        "source_public_verify_repo_path": "reports/authorized_uploads/2026-08-09-960-lovecode-source/auto_230125_960_1072.public_verify.json",
+        "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+        "source_public_verify_sha256": "sha256:cc9aad0d49812dbcf20db27fec6ad2f7a43ce852a9a45380bae5a4251f784ead",
+        "source_public_verify_status": "VERIFIED_PUBLIC",
+        "title_mode": "verified_public_exact"
+      },
+      "redelivery_baseline": "小李解释偶像曲里那句“请感受穿越屏幕.redelivery-baseline.json",
+      "redelivery_baseline_status": "CONFIGURED",
+      "speaker_srt": "小李解释偶像曲里那句“请感受穿越屏幕.speaker.srt",
+      "speaker_srt_sha256": "sha256:73fbf084dbad349ca90be073711f6da31738f9617ee04e702ed7ac2389149037",
+      "stem": "小李解释偶像曲里那句“请感受穿越屏幕",
+      "subtitle_regression_status": "NOT_CONFIGURED",
+      "subtitle_srt": "小李解释偶像曲里那句“请感受穿越屏幕.srt",
+      "title": "【李豆沙】小李解释偶像曲里那句“请感受穿越屏幕的热烈，再一次爱上我吧”",
+      "video": "小李解释偶像曲里那句“请感受穿越屏幕.mp4"
+    }
+  ],
+  "recovery_publication_authorities_by_candidate": {
+    "auto_230125_960_1072": {
+      "aid": 117064333264829,
+      "authority_sha256": "sha256:efb6318f8b80d65892f29eddc413880a26dfb8241e485ad515433df3ec7f1d82",
+      "boundary_end_mode": "exact_source_pin",
+      "bvid": "BV1Bau16nEyq",
+      "candidate_id": "auto_230125_960_1072",
+      "cid": 40743275821,
+      "observed_public_title": "【李豆沙】小李解释偶像曲里那句“请感受穿越屏幕的热烈，再一次爱上我吧”",
+      "registry_authority": "Ivan-lovecode-directive-2026-08-09: 「有一个需要紧急修改的地方，刚上传的请感受穿越屏幕的热烈那个切片，里面提到的歌曲是\"ラブコード\"，不是lovelive，你把那里关于歌曲的字幕全改一下然后极速上传就行」 上传总授权：「并且今天要执行权宜上传。只要出片就可以上传，之后我再进行审查。」 Published exact source interval 960450-1072770ms and exact verified-public title are frozen for same-BV subtitle redelivery.",
+      "registry_repo_path": "assets/lidousha/recovery_publication_authority_2026-08-09_960_lovecode.v1.json",
+      "registry_schema_version": "lidousha-recovery-publication-authority.v1",
+      "registry_sha256": "sha256:21d1b62f0aee99ec771e3355ec9927551c18bfc2e47d2e25109952439de6985f",
+      "required_given_end_ms": 1072770,
+      "schema_version": "recovery-same-bv-publication-authority.v1",
+      "source_kind": "committed_verified_publication_registry",
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-08-09-960-lovecode-source/auto_230125_960_1072.public_verify.json",
+      "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+      "source_public_verify_sha256": "sha256:cc9aad0d49812dbcf20db27fec6ad2f7a43ce852a9a45380bae5a4251f784ead",
+      "source_public_verify_status": "VERIFIED_PUBLIC",
+      "title_mode": "verified_public_exact"
+    }
+  },
+  "run_mode": "RECOVERY_REVIEW",
+  "schema_version": "lidousha-review-package.v1",
+  "selection_contract": {
+    "authority": "Ivan-lovecode-directive-2026-08-09: 「有一个需要紧急修改的地方，刚上传的请感受穿越屏幕的热烈那个切片，里面提到的歌曲是\"ラブコード\"，不是lovelive，你把那里关于歌曲的字幕全改一下然后极速上传就行」 上传总授权：「并且今天要执行权宜上传。只要出片就可以上传，之后我再进行审查。」",
+    "candidate_ids": [
+      "auto_230125_960_1072"
+    ],
+    "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+    "schema_version": "talk-selection-contract.v1",
+    "source_state_sha256": "sha256:840dfe8f802fe2d66ee95c86d57366d10802b859a61d4f310eff6ca4ea97d7c3"
+  },
+  "status": "finished_review_package_no_upload_pending_human_review",
+  "story_contract_required": true,
+  "subtitle_visual_contract": {
+    "max_chars_per_line": 28,
+    "max_visual_lines": 2,
+    "profile": "autoslice-sapphire72"
+  },
+  "upload_allowed": false
+}

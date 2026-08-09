@@ -1,0 +1,101 @@
+{
+  "manifest_version": 3,
+  "schema_version": "authorized-upload-manifest.v3",
+  "artifact_id": "c4e549684a59",
+  "video": {
+    "path": "/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/repo/lidousha/2026-08-08/小李解释偶像曲里那句“请感受穿越屏幕.mp4",
+    "sha256": "c4e549684a593ff140c1165d3a6e16a0d1540ccbc8cb132ce969c32dba775139",
+    "bytes": 12633410
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/repo/lidousha/2026-08-08/小李解释偶像曲里那句“请感受穿越屏幕.cover.png",
+    "sha256": "f8f68a504dbcd0acbffd5d9af0ca16d3fae0df30f6ebcecdd6bf3339b02b0616",
+    "bytes": 2539602
+  },
+  "title": "【李豆沙】小李解释偶像曲里那句“请感受穿越屏幕的热烈，再一次爱上我吧”",
+  "description": "https://live.bilibili.com/\n本切片由 bilibili-vtuber-clip 项目提供：https://github.com/MelanLee-shadow/bilibili-vtuber-clip\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+  "publish_policy": {
+    "tid": 21,
+    "copyright": 2,
+    "source": "https://live.bilibili.com/"
+  },
+  "season": {
+    "lane": "talk",
+    "season_title": "小李切片",
+    "source": "auto:title-prefix",
+    "season_id": 8383206,
+    "section_id": 9320779
+  },
+  "package_attestation": {
+    "schema_version": "authorized-upload-package-attestation.v1",
+    "package_root": "/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/repo/lidousha/2026-08-08",
+    "package_audit": {
+      "path": "/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/repo/lidousha/2026-08-08/verification/package-audit.json",
+      "sha256": "7ac2c8339e10db5faba0984117d853cea20d31b03d4dd48932a1dd48c9203175",
+      "bytes": 3372
+    },
+    "review_manifest": {
+      "path": "/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/repo/lidousha/2026-08-08/review_manifest.json",
+      "sha256": "f0af4fffcd54871c751b3fa302682eb68d1c24b22a602e36370347d53a8aa4f9",
+      "bytes": 12671
+    },
+    "record": {
+      "path": "/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/repo/lidousha/2026-08-08/小李解释偶像曲里那句“请感受穿越屏幕.record.json",
+      "sha256": "3645a436923cab84d45a6d8588bc893f012a799991b97c743f50f6dd820fe972",
+      "bytes": 165367
+    },
+    "subtitle": {
+      "path": "/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/repo/lidousha/2026-08-08/小李解释偶像曲里那句“请感受穿越屏幕.srt",
+      "sha256": "d06d0a7158932a5a606f1a2ca856da9007660480d37df3ae00d62dca97d475dd",
+      "bytes": 2963
+    },
+    "final_human_review": {
+      "path": "/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/repo/lidousha/2026-08-08/verification/final-human-review-aac-r3.json",
+      "sha256": "dc9b6266afb5beb7b70e95f87b8de12a5284786b8894a587dfffd2ca9a0b73b1",
+      "bytes": 7783
+    },
+    "title_cover_qc": {
+      "path": "/opt/bilive/autoslice/recovery/2026-08-09/auto_230125_960_1072-lovecode-r2/repo/lidousha/2026-08-08/verification/title-cover-joint-qc.receipt.json",
+      "sha256": "eabf3e142f37600d65ea95bcd920f5cf4f62d063514c973ef23225b361d06c7a",
+      "bytes": 3377
+    }
+  },
+  "authorization": {
+    "by": "Ivan",
+    "quote": "还有个紧急修复，为什么再一次爱上我吧那个切片所有字幕前面加了个[李豆沙]，不行的，从来不应该这样加，只是单纯的用颜色区分，你完全是搞错了我的意思。",
+    "at": "2026-08-09T14:58:28+0000"
+  },
+  "created_at": "2026-08-09T14:58:28+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "偶像",
+    "撩人",
+    "帅气",
+    "可爱"
+  ],
+  "tags_source": "cli",
+  "recovery_publication_authority": {
+    "aid": 117064333264829,
+    "boundary_end_mode": "exact_source_pin",
+    "bvid": "BV1Bau16nEyq",
+    "candidate_id": "auto_230125_960_1072",
+    "cid": 40743275821,
+    "observed_public_title": "【李豆沙】小李解释偶像曲里那句“请感受穿越屏幕的热烈，再一次爱上我吧”",
+    "registry_authority": "Ivan-lovecode-directive-2026-08-09: 「有一个需要紧急修改的地方，刚上传的请感受穿越屏幕的热烈那个切片，里面提到的歌曲是\"ラブコード\"，不是lovelive，你把那里关于歌曲的字幕全改一下然后极速上传就行」 上传总授权：「并且今天要执行权宜上传。只要出片就可以上传，之后我再进行审查。」 Published exact source interval 960450-1072770ms and exact verified-public title are frozen for same-BV subtitle redelivery.",
+    "registry_repo_path": "assets/lidousha/recovery_publication_authority_2026-08-09_960_lovecode.v1.json",
+    "registry_schema_version": "lidousha-recovery-publication-authority.v1",
+    "registry_sha256": "sha256:21d1b62f0aee99ec771e3355ec9927551c18bfc2e47d2e25109952439de6985f",
+    "required_given_end_ms": 1072770,
+    "schema_version": "recovery-same-bv-publication-authority.v1",
+    "source_kind": "committed_verified_publication_registry",
+    "source_public_verify_repo_path": "reports/authorized_uploads/2026-08-09-960-lovecode-source/auto_230125_960_1072.public_verify.json",
+    "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+    "source_public_verify_sha256": "sha256:cc9aad0d49812dbcf20db27fec6ad2f7a43ce852a9a45380bae5a4251f784ead",
+    "source_public_verify_status": "VERIFIED_PUBLIC",
+    "title_mode": "verified_public_exact",
+    "authority_sha256": "sha256:efb6318f8b80d65892f29eddc413880a26dfb8241e485ad515433df3ec7f1d82"
+  }
+}
