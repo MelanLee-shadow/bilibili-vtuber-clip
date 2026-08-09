@@ -9,6 +9,10 @@ from src.autoslice.reviewed_subtitle_baseline_registry import (
     load_candidate_reviewed_subtitle_baseline,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.redelivery_boundary_projection import (
+    PROJECTION_MODE,
+    PROJECTION_MODE_CONFIG_KEY,
+)
 from src.autoslice.subtitle_validation import validate_srt_file
 
 
@@ -65,6 +69,20 @@ def test_loads_hash_bound_v2_and_resolves_only_sibling_path(tmp_path):
     assert loaded.fingerprint_paths == (manifest.resolve(), baseline.resolve())
 
 
+def test_loads_only_the_supported_opt_in_terminal_projection_mode(tmp_path):
+    manifest, _baseline = _write_asset(tmp_path)
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    document[PROJECTION_MODE_CONFIG_KEY] = PROJECTION_MODE
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+
+    loaded = load_candidate_reviewed_subtitle_baseline(
+        tmp_path, "auto_1_2_3"
+    )
+
+    assert loaded is not None
+    assert loaded.config[PROJECTION_MODE_CONFIG_KEY] == PROJECTION_MODE
+
+
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
@@ -80,6 +98,17 @@ def test_loads_hash_bound_v2_and_resolves_only_sibling_path(tmp_path):
         (
             lambda doc: doc.update(exact_interval_replay="yes"),
             "replay flag must be boolean",
+        ),
+        (
+            lambda doc: doc.update(terminal_projection_mode="trust_me"),
+            "projection mode is unsupported",
+        ),
+        (
+            lambda doc: doc.update(
+                terminal_projection_mode=PROJECTION_MODE,
+                exact_interval_replay=False,
+            ),
+            "projection requires exact interval replay",
         ),
         (
             lambda doc: doc.update(absolute_source_end_ms=10_000),

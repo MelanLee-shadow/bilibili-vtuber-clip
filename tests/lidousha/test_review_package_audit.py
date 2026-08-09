@@ -14,6 +14,7 @@ from scripts.audit_lidousha_review_package import (
     audit_package,
 )
 from src.autoslice.boundary_semantic_review import (
+    build_boundary_search_scope,
     cue_grid_sha256,
     semantic_review_sha256,
 )
@@ -43,6 +44,12 @@ from src.autoslice.producer_boundary_owner_contract import (
 from src.autoslice.recovery_title_authority import (
     build_recovery_publication_authorities,
     expected_recovery_publish_title,
+)
+from src.autoslice.redelivery_boundary_projection import (
+    AUTHORITY_CONFIG_KEY,
+    PROJECTION_MODE,
+    PROJECTION_MODE_CONFIG_KEY,
+    build_terminal_projection_authority,
 )
 from src.autoslice.source_subtitle_truth import (
     candidate_boundary_owner_scope,
@@ -461,6 +468,215 @@ def _owner_attestation_codes(
         record=record,
     )
     return {issue["code"] for issue in issues}
+
+
+def test_projection_materialization_receipt_is_bound_to_frozen_authority(
+    tmp_path: Path,
+):
+    baseline = tmp_path / "projection.reviewed.srt"
+    baseline.write_text(
+        "1\n00:00:00,000 --> 00:00:03,000\n审定收尾\n",
+        encoding="utf-8",
+    )
+    config = {
+        "schema_version": "subtitle-redelivery-baseline.v2",
+        "mode": "preserve_text_outside_source_truth",
+        "path": str(baseline),
+        "sha256": hashlib.sha256(baseline.read_bytes()).hexdigest(),
+        "authority": "synthetic reviewed delivery",
+        "exact_interval_replay": True,
+        PROJECTION_MODE_CONFIG_KEY: PROJECTION_MODE,
+        "source_recording_basename": "recording.mp4",
+        "source_sha256": "a" * 64,
+        "absolute_source_start_ms": 101_000,
+        "absolute_source_end_ms": 104_000,
+    }
+    spec = {
+        "candidate_id": "projection-owner-audit",
+        "semantic_start_ms": 100_000,
+        "semantic_end_ms": 104_000,
+        "pieces": [
+            {
+                "remote_media": "/recordings/recording.mp4",
+                "start_ms": 100_000,
+                "end_ms": 110_000,
+            }
+        ],
+        "boundary_repair_extend_cap_ms": 30_000,
+        "subtitle_redelivery_baseline": config,
+    }
+    authority = build_terminal_projection_authority(
+        spec=spec,
+        piece_provenance_rows=[
+            {
+                "source_path": "/recordings/recording.mp4",
+                "source_sha256": "a" * 64,
+            }
+        ],
+        spec_parent=tmp_path,
+    )
+    assert authority is not None
+    config[AUTHORITY_CONFIG_KEY] = authority
+    chat: dict = {}
+    freeze_required_boundary_owner_contract(
+        spec=spec,
+        durations=[10_000],
+        chat_authority_audit=chat,
+        required_boundary_owners=[],
+    )
+    frozen = chat["frozen_boundary_owner_contract"]
+    source_review = {
+        "candidate_id": "projection-owner-audit",
+        "boundary_search_scope": frozen["boundary_search_scope"],
+        "selected_terminal_projection_binding": {"selected": True},
+    }
+    baseline_audit = {
+        "status": "APPLIED",
+        "application_strategy": "exact_reviewed_interval_replay",
+        "video_tail_extension_ms": 0,
+        "baseline_sha256": str(authority["baseline_srt_sha256"]).removeprefix(
+            "sha256:"
+        ),
+        "expected_baseline_sha256": str(
+            authority["baseline_srt_sha256"]
+        ).removeprefix("sha256:"),
+        "authority": authority["authority"],
+        "source_recording_identity": {
+            "expected_basename": "recording.mp4",
+            "current_basename": "recording.mp4",
+            "expected_sha256": "a" * 64,
+            "current_sha256": "a" * 64,
+        },
+        "reviewed_coverage": {
+            "absolute_source_start_ms": 101_000,
+            "absolute_source_end_ms": 104_000,
+        },
+        "current_source_interval": {
+            "absolute_source_start_ms": 101_000,
+            "absolute_source_end_ms": 104_000,
+        },
+        "terminal_projection_materialization": {
+            "schema_version": (
+                "reviewed-exact-interval-terminal-projection-materialization.v1"
+            ),
+            "status": "PASS",
+            "authority_sha256": authority["authority_sha256"],
+            "application_strategy": "exact_reviewed_interval_replay",
+            "absolute_source_start_ms": 101_000,
+            "absolute_source_end_ms": 104_000,
+            "video_tail_extension_ms": 0,
+        },
+    }
+    chat.update(
+        {
+            "source_subtitle_truth_audit": _source_truth_audit_fixture(),
+            "redelivery_subtitle_baseline_audit": baseline_audit,
+        }
+    )
+    record = {"boundary_audit": {"boundary_semantic_review": source_review}}
+
+    def codes() -> set[str]:
+        issues: list[dict] = []
+        _audit_source_truth_owner_attestations(
+            issues=issues,
+            stem="projection-owner-audit",
+            chat_authority_path=tmp_path / "chat-authority.json",
+            chat_authority=chat,
+            record_path=tmp_path / "record.json",
+            record=record,
+        )
+        return {issue["code"] for issue in issues}
+
+    projection_code = (
+        "REDELIVERY_TERMINAL_PROJECTION_MATERIALIZATION_INVALID"
+    )
+    assert projection_code not in codes()
+
+    receipt = baseline_audit["terminal_projection_materialization"]
+    for field, value in (
+        ("authority_sha256", "sha256:" + "0" * 64),
+        ("video_tail_extension_ms", 1),
+    ):
+        original = receipt[field]
+        receipt[field] = value
+        assert projection_code in codes()
+        receipt[field] = original
+
+    removed_receipt = baseline_audit.pop(
+        "terminal_projection_materialization"
+    )
+    assert projection_code in codes()
+    baseline_audit["terminal_projection_materialization"] = removed_receipt
+
+    original_baseline_sha = baseline_audit["baseline_sha256"]
+    baseline_audit["baseline_sha256"] = "0" * 64
+    assert projection_code in codes()
+    baseline_audit["baseline_sha256"] = original_baseline_sha
+
+    source_identity = baseline_audit["source_recording_identity"]
+    original_basename = source_identity["current_basename"]
+    source_identity["current_basename"] = "other.mp4"
+    assert projection_code in codes()
+    source_identity["current_basename"] = original_basename
+
+    source_review["candidate_id"] = "other-candidate"
+    assert projection_code in codes()
+    source_review["candidate_id"] = "projection-owner-audit"
+
+    original_source_scope = source_review["boundary_search_scope"]
+    source_review["boundary_search_scope"] = build_boundary_search_scope(
+        semantic_target_ms=original_source_scope["semantic_target_ms"],
+        repair_cap_ms=original_source_scope["repair_cap_ms"],
+        manual_lower_bound_ms=original_source_scope["manual_lower_bound_ms"],
+        structured_payoff_ms=original_source_scope["structured_payoff_ms"],
+        required_owner_end_ms=original_source_scope["required_owner_end_ms"],
+        last_piece_start_ms=original_source_scope["last_piece_start_ms"],
+        prior_piece_duration_ms=original_source_scope[
+            "prior_piece_duration_ms"
+        ],
+        witness_reserve_ms=original_source_scope["witness_reserve_ms"] + 1,
+        boundary_end_mode=original_source_scope["boundary_end_mode"],
+        published_recall_anchor_ms=original_source_scope[
+            "published_recall_anchor_ms"
+        ],
+        baseline_tail_cap_ms=original_source_scope["baseline_tail_cap_ms"],
+        semantic_tail_trim_cap_ms=original_source_scope[
+            "semantic_tail_trim_cap_ms"
+        ],
+        reviewed_exact_interval_projection=original_source_scope[
+            "reviewed_exact_interval_projection"
+        ],
+    )
+    assert projection_code in codes()
+    source_review["boundary_search_scope"] = original_source_scope
+
+    invalid_source_scope = dict(original_source_scope)
+    invalid_source_scope["scope_sha256"] = "sha256:" + "0" * 64
+    source_review["boundary_search_scope"] = invalid_source_scope
+    assert projection_code in codes()
+    source_review["boundary_search_scope"] = original_source_scope
+
+    removed_authority = frozen.pop(AUTHORITY_CONFIG_KEY)
+    frozen["contract_sha256"] = frozen_boundary_owner_contract_sha256(frozen)
+    assert projection_code in codes()
+    frozen[AUTHORITY_CONFIG_KEY] = removed_authority
+    frozen["contract_sha256"] = frozen_boundary_owner_contract_sha256(frozen)
+
+    source_review.pop("selected_terminal_projection_binding")
+    baseline_audit.pop("terminal_projection_materialization")
+    baseline_audit["video_tail_extension_ms"] = 400
+    baseline_audit["current_source_interval"][
+        "absolute_source_end_ms"
+    ] = 104_400
+    assert projection_code not in codes()
+
+    removed_baseline_audit = chat.pop("redelivery_subtitle_baseline_audit")
+    assert projection_code in codes()
+    chat["redelivery_subtitle_baseline_audit"] = removed_baseline_audit
+
+    source_identity["current_sha256"] = "0" * 64
+    assert projection_code in codes()
+    source_identity["current_sha256"] = "a" * 64
 
 
 def _truth_row(
@@ -1225,6 +1441,9 @@ def test_owner_scope_candidate_id_must_match_packaged_story_contract():
         "src/autoslice/source_subtitle_truth.py",
         "src/autoslice/producer_text_finalization.py",
         "src/autoslice/review_package_owner_audit.py",
+        "src/autoslice/redelivery_boundary_projection.py",
+        "src/autoslice/redelivery_subtitle_baseline.py",
+        "src/autoslice/review_package_boundary_validators.py",
         "assets/lidousha/subtitle_truth_ledger.v1.json",
     ],
 )
@@ -1393,6 +1612,63 @@ def _passing_boundary_review(
     }
 
 
+def _projected_source_boundary_review(candidate_id: str) -> dict[str, object]:
+    reviewed_end_ms = 67_760
+    closure_end_ms = 67_670
+    authority_sha256 = "sha256:" + "a" * 64
+    grid_sha256 = "sha256:" + "e" * 64
+    closure_text_sha256 = "sha256:" + "f" * 64
+    binding = {
+        "kind": "reviewed_exact_interval_terminal_projection",
+        "cue_index": 1,
+        "cue_start_ms": 64_440,
+        "cue_end_ms": closure_end_ms,
+        "cue_text_sha256": closure_text_sha256,
+        "reviewed_endpoint_ms": reviewed_end_ms,
+        "terminal_drift_ms": 90,
+        "max_terminal_drift_ms": 250,
+        "crossing_witness_cue_index": 2,
+        "crossing_witness_start_ms": closure_end_ms,
+        "crossing_witness_end_ms": 69_210,
+        "crossing_witness_text_sha256": "sha256:" + "b" * 64,
+        "authority_sha256": authority_sha256,
+        "cue_grid_sha256": grid_sha256,
+    }
+    review = _passing_boundary_review(
+        candidate_id,
+        end_ms=reviewed_end_ms,
+        cue_grid_digest=grid_sha256,
+    )
+    review.update(
+        {
+            "evidence_cue_indexes": [1, 2],
+            "boundary_search_scope": {
+                "reviewed_exact_interval_projection": {
+                    "schema_version": (
+                        "reviewed-exact-interval-terminal-projection-scope.v1"
+                    ),
+                    "authority_sha256": authority_sha256,
+                    "reviewed_endpoint_ms": reviewed_end_ms,
+                    "max_terminal_drift_ms": 250,
+                }
+            },
+            "recommendation_relaxations": [binding],
+            "selected_terminal_projection_binding": binding,
+        }
+    )
+    endpoint = review["final_endpoint_binding"]
+    assert isinstance(endpoint, dict)
+    endpoint.update(
+        {
+            "final_snapped_end_ms": closure_end_ms,
+            "final_start_ms": 9_630,
+            "final_end_ms": reviewed_end_ms,
+            "closure_text_sha256": closure_text_sha256,
+        }
+    )
+    return review
+
+
 def test_exact_source_pin_boundary_authority_survives_package_audit(
     tmp_path: Path,
 ):
@@ -1535,6 +1811,81 @@ def test_exact_source_pin_boundary_authority_survives_package_audit(
     assert "BOUNDARY_DELIVERY_COVERAGE_INVALID" in {
         issue["code"] for issue in late_end_issues
     }
+
+
+def test_reviewed_terminal_projection_bridge_survives_package_audit(
+    tmp_path: Path,
+):
+    stem = "candidate-reviewed-terminal-projection"
+    source_review = _projected_source_boundary_review(stem)
+    subtitle = _write(
+        tmp_path / f"{stem}.srt",
+        "1\n00:00:00,000 --> 00:00:58,130\n审定收尾\n",
+    )
+    final_cues = parse_srt_cues(subtitle.read_text(encoding="utf-8"))
+    final_review = _passing_boundary_review(
+        stem,
+        end_ms=58_130,
+        review_scope="final_delivery",
+        source_review=source_review,
+        cue_grid_digest=cue_grid_sha256(final_cues),
+        closure_text=final_cues[-1].text,
+    )
+    record = {
+        "boundary_audit": {
+            "boundary_authority": (
+                "correlated_semantic_review_plus_deterministic_guards"
+            ),
+            "boundary_semantic_review": source_review,
+            "final_delivery_boundary_semantic_review": final_review,
+            "final_start_ms": 9_630,
+            "snapped_sentence_end_ms": 67_670,
+            "final_end_ms": 67_760,
+            "boundary_selection_lower_bound_ms": 67_670,
+            "delivery_coverage_lower_bound_ms": 67_760,
+            "tail_pad_coverage_bridge": {
+                "status": "USED",
+                "closure_lower_bound_ms": 67_670,
+                "delivery_lower_bound_ms": 67_760,
+                "maximum_tail_pad_ms": 400,
+            },
+            "delivery_coverage_verification": {
+                "status": "PASS",
+                "failure": None,
+            },
+        }
+    }
+
+    def run_audit() -> set[str]:
+        issues: list[dict] = []
+        audit_boundary_contract(
+            issue_adder=lambda rows, code, **fields: rows.append(
+                {"code": code, **fields}
+            ),
+            issues=issues,
+            stem=stem,
+            record_path=tmp_path / f"{stem}.record.json",
+            subtitle_path=subtitle,
+            exact_final_review={"boundary_semantic_review": final_review},
+            record=record,
+            story_contract={"boundary_semantic_review": final_review},
+            required=True,
+            is_song=False,
+        )
+        return {issue["code"] for issue in issues}
+
+    assert "BOUNDARY_DELIVERY_COVERAGE_INVALID" not in run_audit()
+
+    record["boundary_audit"]["tail_pad_coverage_bridge"][
+        "closure_lower_bound_ms"
+    ] = 67_760
+    assert "BOUNDARY_DELIVERY_COVERAGE_INVALID" in run_audit()
+
+    record["boundary_audit"]["tail_pad_coverage_bridge"][
+        "closure_lower_bound_ms"
+    ] = 67_670
+    source_review["evidence_cue_indexes"] = [1]
+    assert "BOUNDARY_SEMANTIC_REVIEW_NOT_PASS" in run_audit()
 
 
 def _minimal_package(tmp_path: Path) -> Path:

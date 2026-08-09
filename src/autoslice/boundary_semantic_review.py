@@ -21,6 +21,11 @@ from src.autoslice.frozen_boundary_receipt import (
     FrozenBoundaryReview,
     frozen_review_payload,
 )
+from src.autoslice.redelivery_boundary_projection import (
+    RedeliveryBoundaryProjectionError,
+    terminal_projection_relaxation,
+    validate_projection_scope,
+)
 
 from src.autoslice.clip_context import MAX_PROMPT_CHARS
 
@@ -164,6 +169,9 @@ def boundary_search_scope_is_valid(scope: object) -> bool:
             semantic_tail_trim_cap_ms=scope.get(
                 "semantic_tail_trim_cap_ms", 0
             ),
+            reviewed_exact_interval_projection=scope.get(
+                "reviewed_exact_interval_projection"
+            ),
         )
     except BoundarySemanticReviewError:
         return False
@@ -176,6 +184,7 @@ def boundary_search_scope_is_valid(scope: object) -> bool:
             "semantic_tail_trim_cap_ms",
             "recommendation_backward_ms",
             "published_recall_anchor_ms",
+            "reviewed_exact_interval_projection",
         )
         if key not in observed
     ]
@@ -204,6 +213,7 @@ def build_boundary_search_scope(
     published_recall_anchor_ms: int | None = None,
     baseline_tail_cap_ms: int | None = None,
     semantic_tail_trim_cap_ms: int = 0,
+    reviewed_exact_interval_projection: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Build the one scope shared by source review, resolver, and retry.
 
@@ -257,6 +267,24 @@ def build_boundary_search_scope(
     baseline_tail_cap = _optional_int_ms(
         "baseline_tail_cap_ms", baseline_tail_cap_ms
     )
+    try:
+        terminal_projection = (
+            validate_projection_scope(reviewed_exact_interval_projection)
+            if reviewed_exact_interval_projection is not None
+            else None
+        )
+    except RedeliveryBoundaryProjectionError as exc:
+        raise BoundarySemanticReviewError(
+            "BOUNDARY_SEARCH_SCOPE_REVIEWED_EXACT_INTERVAL_PROJECTION_INVALID"
+        ) from exc
+    if terminal_projection is not None and (
+        baseline_tail_cap is None
+        or terminal_projection["reviewed_endpoint_ms"] != baseline_tail_cap
+        or boundary_end_mode == "exact_source_pin"
+    ):
+        raise BoundarySemanticReviewError(
+            "BOUNDARY_SEARCH_SCOPE_REVIEWED_EXACT_INTERVAL_PROJECTION_INVALID"
+        )
     if boundary_end_mode not in {
         "semantic_lower_bound",
         "published_recall_anchor",
@@ -436,6 +464,8 @@ def build_boundary_search_scope(
         ),
         "reason_codes": sorted(set(reasons)),
     }
+    if terminal_projection is not None:
+        core["reviewed_exact_interval_projection"] = terminal_projection
     return {
         **core,
         "scope_sha256": boundary_search_scope_sha256(core),
@@ -575,6 +605,11 @@ def recommendation_eligibility(
       ``minimum`` contains no cue start and is at most
       ``SEMANTIC_FLOOR_SILENT_GAP_MS``. The former keeps its delivery floor;
       the latter already exposes a bounded backward review window.
+    - A source-bound exact reviewed interval may project the unique cue just
+      before its endpoint when the immediately following next-topic cue
+      crosses that endpoint by no more than the stricter reviewed-timing drift
+      bound. The reviewer still judges the fresh closure text and must cite the
+      crossing cue as next-topic evidence.
     """
 
     minimum_end_ms = int(scope["minimum_recommended_end_ms"])
@@ -650,6 +685,46 @@ def recommendation_eligibility(
                         "tolerance_ms": SEMANTIC_FLOOR_SILENT_GAP_MS,
                     }
                 )
+        projection_scope = scope.get(
+            "reviewed_exact_interval_projection"
+        )
+        if not positions and projection_scope is not None:
+            try:
+                projection = terminal_projection_relaxation(
+                    rows,
+                    projection_scope=projection_scope,
+                    minimum_end_ms=minimum_end_ms,
+                    cap_end_ms=cap_end_ms,
+                    cue_grid_sha256=_canonical_sha256(
+                        {
+                            "schema_version": "talk-boundary-cue-grid.v1",
+                            "cues": [dict(row) for row in rows],
+                        }
+                    ),
+                )
+            except RedeliveryBoundaryProjectionError as exc:
+                raise BoundarySemanticReviewError(
+                    "BOUNDARY_REVIEWED_EXACT_INTERVAL_PROJECTION_INVALID"
+                ) from exc
+            if projection is not None:
+                position = next(
+                    (
+                        ordinal
+                        for ordinal, row in enumerate(rows)
+                        if int(row["cue_index"])
+                        == int(projection["cue_index"])
+                    ),
+                    None,
+                )
+                if position is None:
+                    raise BoundarySemanticReviewError(
+                        "BOUNDARY_REVIEWED_EXACT_INTERVAL_PROJECTION_INVALID"
+                    )
+                positions.append(position)
+                effective_end_ms[int(projection["cue_index"])] = int(
+                    projection["reviewed_endpoint_ms"]
+                )
+                relaxations.append(projection)
     positions.sort()
     return {
         "positions": positions,
@@ -750,7 +825,7 @@ def _build_prompt(request: Mapping[str, object]) -> str:
 约束：
 - 只可从给出的 cue_index 中选 recommended_end_cue_index；不得改写字幕。
 - 只能从 recommendation_cue_indexes 选择。若 boundary_search_scope.recommendation_backward_ms>0，目标 cue 只是自动/旧公开召回尾锚；当它已拖入新话题、未回答问题或不完整尾巴时，可在该有界窗口内回剪到**最晚一个**已经覆盖 selection_hook 全部内容锚点、故事闭环且后续换题可证的 cue，并必须回 content_anchor_covered=true。普通 semantic_lower_bound 超出该窗口不得提前删内容；published_recall_anchor 只允许这次有界回剪，不把旧公开终点伪装成已人工确认的下界；若 boundary_end_mode=exact_source_pin，可选择 source pin 前最多 delivery_tail_pad_ms 的完整语义句尾，最终媒体仍由 source pin 精确截止，不可选择 pin 之后才开始的 cue。
-- recommendation_relaxations 里列出的 cue 是经确定性证明后放行的有界例外：pin_crossing_closure_cue 是包含 pin 的收尾 cue（媒体仍精确截止在 pin）；silent_gap_closure_cue 是下限前最后一个收尾 cue，且它到下限之间没有任何语音。语义合适就正常选择它们。
+- recommendation_relaxations 里列出的 cue 是经确定性证明后放行的有界例外：pin_crossing_closure_cue 是包含 pin 的收尾 cue（媒体仍精确截止在 pin）；silent_gap_closure_cue 是下限前最后一个收尾 cue，且它到下限之间没有任何语音；reviewed_exact_interval_terminal_projection 是 hash/source 绑定的 reviewed endpoint 在 fresh 网格上的终点投影，必须把其中 crossing_witness_cue_index 作为下一话题证据。语义合适才可选择。
 - 若 next_topic_separated=true，evidence_cue_indexes 必须包含推荐 cue 之后、证明已进入下一话题/SC/谢礼的 cue；缺了会被判 BOUNDARY_NEXT_TOPIC_WITNESS_MISSING。
 - 可以从目标 cue 向后寻找，最多 {request["max_forward_ms"]}ms；exact_source_pin 的该值为 0。
 - 若目标本身已闭环，即使后面无停顿继续说，也应选目标；若目标半句或包袱未落地，才向后选最早同时满足三项的 cue。
@@ -889,6 +964,62 @@ def _frozen_decision_binding(
         if replay_audit
         else {}
     )
+
+
+def _next_topic_witness_assessment(
+    *,
+    booleans: Mapping[str, bool],
+    recommendation_valid: bool,
+    recommended_index: int | None,
+    rows: Sequence[Mapping[str, object]],
+    evidence_indexes: Sequence[int],
+    source_separation_witness: Mapping[str, object] | None,
+    recommendation_relaxations: Sequence[Mapping[str, object]],
+) -> tuple[bool, Mapping[str, object] | None]:
+    row_positions = {
+        int(row["cue_index"]): position
+        for position, row in enumerate(rows)
+    }
+    recommended_position = (
+        row_positions.get(recommended_index)
+        if recommended_index is not None
+        else None
+    )
+    valid = bool(
+        not booleans["next_topic_separated"]
+        or (
+            recommendation_valid
+            and recommended_position is not None
+            and (
+                any(
+                    row_positions.get(index, -1) > recommended_position
+                    for index in evidence_indexes
+                )
+                or (
+                    isinstance(source_separation_witness, Mapping)
+                    and source_separation_witness.get("status") == "PASS"
+                    and recommended_position == len(rows) - 1
+                )
+            )
+        )
+    )
+    selected_projection = next(
+        (
+            row
+            for row in recommendation_relaxations
+            if row.get("kind")
+            == "reviewed_exact_interval_terminal_projection"
+            and row.get("cue_index") == recommended_index
+        ),
+        None,
+    )
+    if (
+        selected_projection is not None
+        and selected_projection.get("crossing_witness_cue_index")
+        not in evidence_indexes
+    ):
+        valid = False
+    return valid, selected_projection
 
 
 def review_talk_boundary_semantics(
@@ -1063,31 +1194,15 @@ def review_talk_boundary_semantics(
         if index in by_index
         and int(by_index[index]["end_ms"]) > target_end
     ]
-    row_positions = {
-        int(row["cue_index"]): position
-        for position, row in enumerate(rows)
-    }
-    recommended_position = (
-        row_positions.get(recommended_index)
-        if recommended_index is not None
-        else None
-    )
-    next_topic_witness_valid = bool(
-        not booleans["next_topic_separated"]
-        or (
-            recommendation_valid
-            and recommended_position is not None
-            and (
-                any(
-                    row_positions.get(index, -1) > recommended_position
-                    for index in evidence_indexes
-                )
-                or (
-                    isinstance(source_separation_witness, Mapping)
-                    and source_separation_witness.get("status") == "PASS"
-                    and recommended_position == len(rows) - 1
-                )
-            )
+    next_topic_witness_valid, selected_projection = (
+        _next_topic_witness_assessment(
+            booleans=booleans,
+            recommendation_valid=recommendation_valid,
+            recommended_index=recommended_index,
+            rows=rows,
+            evidence_indexes=evidence_indexes,
+            source_separation_witness=source_separation_witness,
+            recommendation_relaxations=recommendation_relaxations,
         )
     )
     same_topic_reported = payload.get(
@@ -1140,6 +1255,10 @@ def review_talk_boundary_semantics(
         reason_codes.append("BOUNDARY_EVIDENCE_CUES_INVALID")
     if not next_topic_witness_valid:
         reason_codes.append("BOUNDARY_NEXT_TOPIC_WITNESS_MISSING")
+        if selected_projection is not None:
+            reason_codes.append(
+                "BOUNDARY_REVIEWED_PROJECTION_WITNESS_MISSING"
+            )
     if not content_anchor_covered:
         reason_codes.append("CONTENT_ANCHOR_COVERED_NOT_PROVEN")
     if needs_more_context:

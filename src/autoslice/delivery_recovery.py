@@ -75,10 +75,10 @@ CONTENT_BOUNDARY_RECOVERY_RELATIVES = (
     "src/autoslice/producer_boundary.py",
     "src/autoslice/producer_boundary_owner_contract.py",
     "src/autoslice/producer_boundary_resolution.py",
-    "src/autoslice/producer_boundary_review_stage.py",
+    "src/autoslice/producer_boundary_review_stage.py", "src/autoslice/producer_source_media.py",
     "src/autoslice/producer_request.py",
-    "src/autoslice/producer_text_pipeline.py",
-    "src/autoslice/talk_lane.py",
+    "src/autoslice/producer_text_pipeline.py", "src/autoslice/redelivery_boundary_projection.py",
+    "src/autoslice/redelivery_subtitle_baseline.py", "src/autoslice/talk_lane.py",
 )
 
 

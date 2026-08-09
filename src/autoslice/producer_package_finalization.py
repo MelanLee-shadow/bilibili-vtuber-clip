@@ -73,6 +73,8 @@ from src.autoslice.redelivery_source_binding import (
     final_recut_absolute_source_interval,
     resolve_v2_redelivery_source_binding,
 )
+# Exact projection replay is activated only by the resolver-selected grant.
+from src.autoslice.redelivery_boundary_projection import materialization_spec_for_selected_projection
 from src.autoslice.producer_text_finalization import (
     _render_cues_to_srt,
     verify_chat_authority_final_surfaces,
@@ -80,9 +82,7 @@ from src.autoslice.producer_text_finalization import (
 from src.autoslice.redelivery_baseline_ownership import (
     suppress_baseline_owned_self_heal_findings,
 )
-from src.autoslice.redelivery_subtitle_baseline import (
-    apply_redelivery_subtitle_baseline,
-)
+from src.autoslice.redelivery_subtitle_baseline import apply_redelivery_subtitle_baseline
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
     validate_recovery_publication_authority,
@@ -2679,7 +2679,7 @@ def finalize_producer_package(
     talk_filler_audit_path: Path | None = None,
 ) -> int:
     recut = _materialize_final_recut(
-        spec=spec,
+        spec=materialization_spec_for_selected_projection(spec, audit),
         cid=cid,
         out_root=out_root,
         padded=padded,

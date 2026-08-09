@@ -13,8 +13,18 @@ from src.autoslice.acoustic_witness_adjudication import (
     valid_inaudible_drop_repair,
     valid_inaudible_override_repair,
 )
+from src.autoslice.boundary_semantic_review import (
+    boundary_search_scope_is_valid,
+)
 from src.autoslice.producer_boundary_owner_contract import (
     validate_frozen_boundary_owner_contract,
+)
+from src.autoslice.redelivery_boundary_projection import (
+    AUTHORITY_CONFIG_KEY,
+    MATERIALIZATION_SCHEMA_VERSION,
+    RedeliveryBoundaryProjectionError,
+    projection_scope_binding,
+    validate_terminal_projection_authority,
 )
 from src.autoslice.source_subtitle_truth import (
     BOUNDARY_OWNER_LEAD_TOLERANCE_MS,
@@ -1133,6 +1143,150 @@ def _final_decision_coverage_valid(
     )
 
 
+def _terminal_projection_materialization_valid(
+    *,
+    frozen: object,
+    baseline_audit: object,
+    source_review: object,
+) -> bool:
+    authority_raw = (
+        frozen.get(AUTHORITY_CONFIG_KEY)
+        if isinstance(frozen, Mapping)
+        else None
+    )
+    frozen_scope = (
+        frozen.get("boundary_search_scope")
+        if isinstance(frozen, Mapping)
+        else None
+    )
+    projection_scope = (
+        frozen_scope.get("reviewed_exact_interval_projection")
+        if isinstance(frozen_scope, Mapping)
+        else None
+    )
+    selected = (
+        source_review.get("selected_terminal_projection_binding")
+        if isinstance(source_review, Mapping)
+        else None
+    )
+    source_scope = (
+        source_review.get("boundary_search_scope")
+        if isinstance(source_review, Mapping)
+        else None
+    )
+    if authority_raw is None and projection_scope is None and selected is None:
+        return True
+    if authority_raw is None or projection_scope is None:
+        return False
+    try:
+        authority = validate_terminal_projection_authority(authority_raw)
+        expected_scope = projection_scope_binding(authority)
+    except RedeliveryBoundaryProjectionError:
+        return False
+    owner_scope = (
+        frozen.get("owner_eligibility_scope")
+        if isinstance(frozen, Mapping)
+        else None
+    )
+    source_identity = (
+        baseline_audit.get("source_recording_identity")
+        if isinstance(baseline_audit, Mapping)
+        else None
+    )
+    reviewed_coverage = (
+        baseline_audit.get("reviewed_coverage")
+        if isinstance(baseline_audit, Mapping)
+        else None
+    )
+    current_interval = (
+        baseline_audit.get("current_source_interval")
+        if isinstance(baseline_audit, Mapping)
+        else None
+    )
+    source_sha256 = str(authority["source_sha256"]).removeprefix(
+        "sha256:"
+    )
+    baseline_sha256 = str(authority["baseline_srt_sha256"]).removeprefix(
+        "sha256:"
+    )
+    tail_ms = (
+        baseline_audit.get("video_tail_extension_ms")
+        if isinstance(baseline_audit, Mapping)
+        else None
+    )
+    common_valid = bool(
+        isinstance(baseline_audit, Mapping)
+        and baseline_audit.get("status") in {"APPLIED", "ALREADY_SATISFIED"}
+        and baseline_audit.get("application_strategy")
+        == "exact_reviewed_interval_replay"
+        and _strict_nonnegative_int(tail_ms)
+        and tail_ms <= 400
+        and baseline_audit.get("baseline_sha256") == baseline_sha256
+        and baseline_audit.get("expected_baseline_sha256")
+        == baseline_sha256
+        and baseline_audit.get("authority") == authority["authority"]
+        and isinstance(source_identity, Mapping)
+        and source_identity.get("expected_basename")
+        == authority["source_recording_basename"]
+        and source_identity.get("current_basename")
+        == authority["source_recording_basename"]
+        and source_identity.get("expected_sha256") == source_sha256
+        and source_identity.get("current_sha256") == source_sha256
+        and isinstance(reviewed_coverage, Mapping)
+        and reviewed_coverage.get("absolute_source_start_ms")
+        == authority["absolute_source_start_ms"]
+        and reviewed_coverage.get("absolute_source_end_ms")
+        == authority["absolute_source_end_ms"]
+        and isinstance(current_interval, Mapping)
+        and current_interval.get("absolute_source_start_ms")
+        == authority["absolute_source_start_ms"]
+        and current_interval.get("absolute_source_end_ms")
+        == authority["absolute_source_end_ms"] + tail_ms
+        and isinstance(owner_scope, Mapping)
+        and owner_scope.get("candidate_id") == authority["candidate_id"]
+        and isinstance(source_review, Mapping)
+        and source_review.get("candidate_id") == authority["candidate_id"]
+        and boundary_search_scope_is_valid(frozen_scope)
+        and boundary_search_scope_is_valid(source_scope)
+        and source_scope == frozen_scope
+    )
+    if not common_valid:
+        return False
+    if selected is None:
+        return bool(
+            projection_scope == expected_scope
+            and isinstance(source_scope, Mapping)
+            and source_scope.get("reviewed_exact_interval_projection")
+            == expected_scope
+            and (
+                baseline_audit.get("terminal_projection_materialization")
+                is None
+            )
+        )
+    if not isinstance(baseline_audit, Mapping):
+        return False
+    receipt = baseline_audit.get("terminal_projection_materialization")
+    return bool(
+        projection_scope == expected_scope
+        and isinstance(source_scope, Mapping)
+        and source_scope.get("reviewed_exact_interval_projection")
+        == expected_scope
+        and isinstance(receipt, Mapping)
+        and receipt.get("schema_version") == MATERIALIZATION_SCHEMA_VERSION
+        and receipt.get("status") == "PASS"
+        and receipt.get("authority_sha256") == authority["authority_sha256"]
+        and receipt.get("application_strategy")
+        == "exact_reviewed_interval_replay"
+        and receipt.get("absolute_source_start_ms")
+        == authority["absolute_source_start_ms"]
+        and receipt.get("absolute_source_end_ms")
+        == authority["absolute_source_end_ms"]
+        and receipt.get("video_tail_extension_ms") == 0
+        and baseline_audit.get("video_tail_extension_ms") == 0
+        and current_interval == reviewed_coverage
+    )
+
+
 def audit_source_truth_owner_attestations(
     *,
     issue_adder: IssueAdder,
@@ -1220,6 +1374,23 @@ def audit_source_truth_owner_attestations(
         )
 
     frozen = chat_authority.get("frozen_boundary_owner_contract")
+    boundary_audit = record.get("boundary_audit")
+    source_review = (
+        boundary_audit.get("boundary_semantic_review")
+        if isinstance(boundary_audit, Mapping)
+        else None
+    )
+    if not _terminal_projection_materialization_valid(
+        frozen=frozen,
+        baseline_audit=baseline_audit,
+        source_review=source_review,
+    ):
+        issue_adder(
+            issues,
+            "REDELIVERY_TERMINAL_PROJECTION_MATERIALIZATION_INVALID",
+            stem=stem,
+            path=chat_authority_path,
+        )
     frozen_valid, frozen_owners = _frozen_owner_contract_valid(
         frozen=frozen,
         truth_rows=truth_rows,

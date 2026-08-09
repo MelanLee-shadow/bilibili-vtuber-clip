@@ -11,6 +11,9 @@ from src.autoslice.boundary_endpoint_binding import (
 )
 from src.autoslice.boundary_semantic_review import semantic_review_sha256
 from src.autoslice.producer_boundary import TAIL_PAD_MS
+from src.autoslice.redelivery_boundary_projection import (
+    stored_projection_endpoint_is_valid,
+)
 from src.autoslice.review_package_boundary_validators import (
     expected_boundary_authority as _expected_boundary_authority,
     is_boundary_int as _is_int,
@@ -221,6 +224,18 @@ def audit_boundary_contract(
         "delivery_coverage_verification"
     )
     tail_bridge = audit.get("tail_pad_coverage_bridge")
+    projection_endpoint_valid = bool(
+        isinstance(source_review, dict)
+        and isinstance(source_endpoint, dict)
+        and stored_projection_endpoint_is_valid(
+            source_review, source_endpoint
+        )
+    )
+    expected_closure_lower_bound_ms = (
+        snapped_end_ms
+        if projection_endpoint_valid
+        else source_recommended_end_ms
+    )
     if (
         not semantic_recommendation_is_materialized(
             source_review,
@@ -254,7 +269,7 @@ def audit_boundary_contract(
         == delivery_lower_bound_ms
         and _is_int(tail_bridge.get("closure_lower_bound_ms"))
         and tail_bridge.get("closure_lower_bound_ms")
-        == source_recommended_end_ms
+        == expected_closure_lower_bound_ms
         and _is_int(tail_bridge.get("maximum_tail_pad_ms"))
         and tail_bridge.get("maximum_tail_pad_ms") == TAIL_PAD_MS
         and (

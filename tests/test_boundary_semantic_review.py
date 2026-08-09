@@ -31,6 +31,17 @@ def _extract(value: str) -> dict:
     return json.loads(value)
 
 
+def _projection_scope(*, endpoint_ms: int = 67_760) -> dict[str, object]:
+    return {
+        "schema_version": (
+            "reviewed-exact-interval-terminal-projection-scope.v1"
+        ),
+        "authority_sha256": "sha256:" + "d" * 64,
+        "reviewed_endpoint_ms": endpoint_ms,
+        "max_terminal_drift_ms": 250,
+    }
+
+
 def _source_window_review(
     *,
     final_start_ms: int = 10_000,
@@ -1108,6 +1119,142 @@ def test_structured_payoff_yields_when_bounded_trim_reaches_reviewed_tail():
     assert ordinary_production["status"] == "PASS"
     assert ordinary_production["structured_payoff_clamped_from_ms"] is None
     assert ordinary_production["delivery_lower_bound_ms"] == 84_240
+
+
+def test_reviewed_exact_interval_tail_bridge_exposes_crossing_grid_closure():
+    """Synthetic exact-replay timing jitter: the reviewed endpoint is 90ms
+    after the true closure cue, inside a fresh ASR cue for the next topic.
+    Only an explicit reviewed-interval bridge may expose the closure cue, and
+    the semantic reviewer must still prove closure and next-topic separation.
+    """
+
+    scope = build_boundary_search_scope(
+        semantic_target_ms=80_570,
+        repair_cap_ms=30_000,
+        structured_payoff_ms=84_240,
+        required_owner_end_ms=27_510,
+        baseline_tail_cap_ms=67_760,
+        semantic_tail_trim_cap_ms=15_000,
+        reviewed_exact_interval_projection=_projection_scope(),
+    )
+    cues = [
+        _cue(1, 60_000, 65_000, "前情收束"),
+        _cue(2, 65_000, 67_670, "你站这来"),
+        _cue(3, 67_670, 69_210, "我站哪儿有什么区别吗"),
+        _cue(4, 75_550, 80_570, "你要看我们三个的表演"),
+    ]
+    response = json.dumps(
+        {
+            "syntax_complete": True,
+            "story_closed": True,
+            "next_topic_separated": True,
+            "content_anchor_covered": True,
+            "recommended_end_cue_index": 2,
+            "evidence_cue_indexes": [1, 2, 3, 4],
+            "same_topic_continues_after_target": False,
+            "needs_more_context": False,
+            "reason_codes": [],
+            "summary": "第二句闭合，第三句起已转入站位和表演新话题。",
+        },
+        ensure_ascii=False,
+    )
+
+    review = review_talk_boundary_semantics(
+        cues=cues,
+        target_ms=80_570,
+        candidate_id="candidate-reviewed-tail-bridge",
+        selection_hook="关系梗在站位话题前闭合",
+        selection_scorecard=_scorecard(),
+        structured_context="hash-bound exact reviewed interval",
+        candidate_context="synthetic fixture",
+        llm_call=lambda _prompt: response,
+        extract_json=_extract,
+        max_forward_ms=0,
+        boundary_search_scope=scope,
+    )
+
+    assert review["status"] == "PASS"
+    assert review["recommended_end_cue_index"] == 2
+    assert review["recommended_end_ms"] == 67_760
+    assert review["recommendation_relaxations"] == [
+        {
+            "kind": "reviewed_exact_interval_terminal_projection",
+            "cue_index": 2,
+            "cue_start_ms": 65_000,
+            "cue_end_ms": 67_670,
+            "cue_text_sha256": "sha256:" + (
+                "ba1b84c3f97fafeced908827fa7a71444984e02f16d07a9d9da166c3bf753077"
+            ),
+            "reviewed_endpoint_ms": 67_760,
+            "terminal_drift_ms": 90,
+            "max_terminal_drift_ms": 250,
+            "crossing_witness_cue_index": 3,
+            "crossing_witness_start_ms": 67_670,
+            "crossing_witness_end_ms": 69_210,
+            "crossing_witness_text_sha256": "sha256:" + (
+                "259f90b6a1d69ba3b7212c01f168c550bfd13311c3a0e41a8c9c8f06c0fec0bb"
+            ),
+            "authority_sha256": "sha256:" + "d" * 64,
+            "cue_grid_sha256": cue_grid_sha256(cues),
+        }
+    ]
+
+
+def test_ordinary_scope_keeps_legacy_shape_without_projection_null_field():
+    scope = build_boundary_search_scope(
+        semantic_target_ms=80_570,
+        repair_cap_ms=30_000,
+        baseline_tail_cap_ms=95_000,
+    )
+
+    assert "reviewed_exact_interval_projection" not in scope
+    assert boundary_search_scope_is_valid(scope)
+
+
+def test_reviewed_tail_bridge_is_fail_closed_without_exact_bounded_grant():
+    cues = [
+        _cue(1, 65_000, 67_670, "故事闭合"),
+        _cue(2, 67_670, 69_210, "下一话题跨过旧终点"),
+    ]
+    rows = [
+        {
+            "cue_index": index,
+            "start_ms": cue.start_ms,
+            "end_ms": cue.end_ms,
+            "text": cue.text,
+        }
+        for index, cue in enumerate(cues, start=1)
+    ]
+    base_kwargs = {
+        "semantic_target_ms": 80_570,
+        "repair_cap_ms": 30_000,
+        "structured_payoff_ms": 84_240,
+        "baseline_tail_cap_ms": 67_760,
+        "semantic_tail_trim_cap_ms": 15_000,
+    }
+
+    without_grant = build_boundary_search_scope(**base_kwargs)
+    from src.autoslice.boundary_semantic_review import recommendation_eligibility
+
+    assert recommendation_eligibility(rows, without_grant)["cue_indexes"] == []
+
+    with pytest.raises(
+        BoundarySemanticReviewError,
+        match="REVIEWED_EXACT_INTERVAL_PROJECTION_INVALID",
+    ):
+        build_boundary_search_scope(
+            semantic_target_ms=80_570,
+            repair_cap_ms=30_000,
+            reviewed_exact_interval_projection=_projection_scope(),
+        )
+
+    too_wide = build_boundary_search_scope(
+        **{**base_kwargs, "baseline_tail_cap_ms": 68_071},
+        reviewed_exact_interval_projection=_projection_scope(
+            endpoint_ms=68_071
+        ),
+    )
+    assert recommendation_eligibility(rows, too_wide)["cue_indexes"] == []
 
 
 def test_exact_pin_payoff_hypothesis_yields_to_the_published_endpoint():

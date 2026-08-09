@@ -8,6 +8,9 @@ from typing import Any
 from src.autoslice.boundary_semantic_review import (
     PIN_CROSSING_TOLERANCE_MS,
 )
+from src.autoslice.redelivery_boundary_projection import (
+    stored_projection_endpoint_is_valid,
+)
 
 
 _SHA256_RX = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -32,6 +35,8 @@ def semantic_endpoint_snapped_is_valid(review: object) -> bool:
     ):
         return False
     if snapped_end_ms == recommended_end_ms:
+        return True
+    if stored_projection_endpoint_is_valid(review, endpoint):
         return True
     scope = review.get("boundary_search_scope")
     relaxations = review.get("recommendation_relaxations")

@@ -636,9 +636,28 @@ def test_finalize_routes_exact_endpoint_receipt_into_story_contract(
     }
     exact_audit = {"boundary_semantic_review": delivery_review}
     captured: dict = {}
+    materialization_spec = {"projection_activation": "selected"}
 
     monkeypatch.setattr(
-        finalization, "_materialize_final_recut", lambda **_kwargs: recut
+        finalization,
+        "materialization_spec_for_selected_projection",
+        lambda current_spec, current_audit: (
+            captured.update(
+                {
+                    "projection_input_spec": current_spec,
+                    "projection_input_audit": current_audit,
+                }
+            )
+            or materialization_spec
+        ),
+    )
+    monkeypatch.setattr(
+        finalization,
+        "_materialize_final_recut",
+        lambda **kwargs: (
+            captured.setdefault("materialization_spec", kwargs["spec"])
+            and recut
+        ),
     )
     monkeypatch.setattr(
         finalization,
@@ -745,6 +764,9 @@ def test_finalize_routes_exact_endpoint_receipt_into_story_contract(
     )
 
     assert result == 0
+    assert captured["projection_input_spec"] is spec
+    assert captured["projection_input_audit"] is boundary_audit
+    assert captured["materialization_spec"] is materialization_spec
     assert spec["boundary_semantic_review"] == delivery_review
     assert boundary_audit["final_delivery_boundary_semantic_review"] == (
         delivery_review

@@ -45,7 +45,9 @@ FUNCTION_DEBT_LEDGER = {
     # 2026-08-08 +12:Ivan 8/8 真值法证 F1 回声环修复(synthesis)——
     # 只接入登记误听面分类、弱 provenance 与声学路由；分类器在新小模块。
     ("src/autoslice/final_review_auditor.py", "audit_final_subtitles"): 419,
-    ("src/autoslice/producer_boundary_resolution.py", "_repair_boundary"): 305,
+    # 2026-08-09 -3：exact reviewed terminal projection 接线同时把 tail-pad
+    # coverage receipt 抽到模块级 helper，锁定本次边界修复的净拆解收益。
+    ("src/autoslice/producer_boundary_resolution.py", "_repair_boundary"): 302,
     ("src/autoslice/producer_package_finalization.py", "_materialize_final_recut"): 314,
     # 2026-08-08 +3：owned_intervals 执法接线（Ivan 2026-08-08 配额上传波
     # 修复——zsm8 案：baseline 已应用的 cue 被 exact-final CPA 自愈无声改写；
@@ -414,6 +416,35 @@ def test_dynamic_boundary_context_cap_is_wired_to_post_authority_review_only() -
         "boundary_max_forward_ms"
         in calls["review_final_boundary_semantics"]
     )
+
+
+def test_source_media_receives_the_request_spec_parent() -> None:
+    path = ROOT / "scripts/produce_slice_package.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    main = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "main"
+    )
+    calls = [
+        node
+        for node in ast.walk(main)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "prepare_source_media"
+    ]
+    assert len(calls) == 1
+    keyword = next(
+        value.value
+        for value in calls[0].keywords
+        if value.arg == "spec_parent"
+    )
+    assert isinstance(keyword, ast.Attribute)
+    assert keyword.attr == "parent"
+    assert isinstance(keyword.value, ast.Attribute)
+    assert keyword.value.attr == "spec"
+    assert isinstance(keyword.value.value, ast.Name)
+    assert keyword.value.value.id == "args"
 
 
 def test_final_text_result_cues_and_receipt_reach_the_same_boundary_resolver() -> None:

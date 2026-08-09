@@ -57,6 +57,51 @@ def _pin_crossing_review() -> dict[str, object]:
     }
 
 
+def _projected_endpoint_review() -> dict[str, object]:
+    authority_sha256 = "sha256:" + "d" * 64
+    cue_grid_sha256 = "sha256:" + "e" * 64
+    closure_sha256 = "sha256:" + "f" * 64
+    binding = {
+        "kind": "reviewed_exact_interval_terminal_projection",
+        "cue_index": 35,
+        "cue_start_ms": 64_440,
+        "cue_end_ms": 67_670,
+        "cue_text_sha256": closure_sha256,
+        "reviewed_endpoint_ms": 67_760,
+        "terminal_drift_ms": 90,
+        "max_terminal_drift_ms": 250,
+        "crossing_witness_cue_index": 36,
+        "crossing_witness_start_ms": 67_670,
+        "crossing_witness_end_ms": 69_210,
+        "crossing_witness_text_sha256": "sha256:" + "a" * 64,
+        "authority_sha256": authority_sha256,
+        "cue_grid_sha256": cue_grid_sha256,
+    }
+    return {
+        "cue_grid_sha256": cue_grid_sha256,
+        "recommended_end_cue_index": 35,
+        "recommended_end_ms": 67_760,
+        "evidence_cue_indexes": [35, 36],
+        "boundary_search_scope": {
+            "reviewed_exact_interval_projection": {
+                "schema_version": (
+                    "reviewed-exact-interval-terminal-projection-scope.v1"
+                ),
+                "authority_sha256": authority_sha256,
+                "reviewed_endpoint_ms": 67_760,
+                "max_terminal_drift_ms": 250,
+            }
+        },
+        "recommendation_relaxations": [binding],
+        "selected_terminal_projection_binding": binding,
+        "final_endpoint_binding": {
+            "final_snapped_end_ms": 67_670,
+            "final_end_ms": 67_760,
+            "closure_text_sha256": closure_sha256,
+        },
+    }
+
+
 def test_exact_pin_crossing_endpoint_is_valid_and_materialized():
     review = _pin_crossing_review()
 
@@ -70,6 +115,20 @@ def test_exact_pin_crossing_endpoint_is_valid_and_materialized():
         snapped_sentence_end_ms=95_680,
         final_end_ms=95_670,
     )
+
+
+def test_reviewed_projection_endpoint_is_valid_only_with_crossing_evidence():
+    review = _projected_endpoint_review()
+
+    assert semantic_endpoint_snapped_is_valid(review)
+    assert semantic_recommendation_is_materialized(
+        review,
+        snapped_sentence_end_ms=67_670,
+        final_end_ms=67_760,
+    )
+
+    review["evidence_cue_indexes"] = [35]
+    assert not semantic_endpoint_snapped_is_valid(review)
 
 
 def test_exact_pin_crossing_rejects_unbound_or_excessive_relaxation():
