@@ -1,0 +1,106 @@
+{
+  "schema_version": "cleanup-manifest.v1",
+  "date": "2026-08-10",
+  "host": "free",
+  "reason": "Ordinary capacity cleanup under Ivan's direct authorization: / was at 97% (376G/394G, 15G free). Reclaimed ~29.7 GiB by deleting only (a) sandbox-rerun media that is byte-identical to a copy surviving in the protected live tree, (b) regenerable pipeline intermediates with zero authority references, and (c) one re-downloadable external VOD. No JSON/SRT/ASS/receipt/log was deleted; no state write, no deploy, no lock taken.",
+  "disk_usage": {
+    "before": "376G/394G used, 15G available, 97%",
+    "after": "346.28 GiB used, 43.22 GiB available, 89%",
+    "reclaimed": "~29.7 GiB (df used-delta)"
+  },
+  "method": {
+    "n100_archive_finding": "N100 /vol1/1000/Disk1/agent-archive holds ONLY Mac agent data (claude/codex/hermes/docs/novel/prediction.git/skillopt). No autoslice media copy exists there, so the 'N100 has a copy' precondition is unsatisfiable as literally written.",
+    "standard_applied_instead": "The precedent already committed in cleanup_manifests/free_autoslice_enospc_recovery_cleanup_20260730.json: 'regenerable from retained source recordings' + zero references. Strengthened for batch 1 and batch 4b to a provable on-host byte-identical survivor.",
+    "reference_scan": "Two-tier. Tier A (authority): state/, repo/assets, repo/profiles, repo/src, repo/scripts, repo/docs, cache/ (adjudication), forensics/, evals/, review_jobs/, review_packages/, upload_staging/, manual_review/, quarantine/, plus reports/ and recovery/ json|jsonl|md. Tier B (log-only): *.log and logs/ dirs, treated as historical records rather than resolvers. Tier A always protects; Tier-B-only references do not.",
+    "regenerability_check": "CloudFS 123云盘 /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/<date>/ verified present and nonzero for every touched date before deletion.",
+    "quiet_window": "DISABLED flag present throughout; runner.log confirmed 'DISABLED flag present — runner paused' each tick; zero ffmpeg/autoslice processes; runner.lock never touched."
+  },
+  "deleted": [
+    {
+      "target": "/opt/bilive/autoslice/recovery/2026-07-29/all-talk-cpa-context-r1/**/lidousha/**",
+      "scope": "1553 media files (mp4/png/mp3) across 10 repo snapshots inside a 2026-07-31 sandbox rerun workspace",
+      "bytes": 13357000000,
+      "verification_before_delete": {
+        "authority_references_to_media": 0,
+        "authority_references_total": "4, all to *.publication_reconciliation.json files, which were PRESERVED",
+        "surviving_copy": "every deleted file byte-identical (sha256) to /opt/bilive/autoslice/repo/lidousha/<same relative path>, a protected path with a distinct inode (verified no cross-tree hardlink sharing)",
+        "not_deleted_from_same_tree": "70 LIVE_MISSING files (246 MB) and 145 SIZE_DIFF files (782 MB), concentrated on 2026-07-25/26/29 — the rerun's own subject dates"
+      },
+      "recoverability": "Byte-identical copies remain in repo/lidousha. This workspace is exactly what the 2026-07-30 manifest's follow_up forbids creating ('never copy repo/lidousha, reports or generated media wholesale')."
+    },
+    {
+      "target": [
+        "/opt/bilive/autoslice/out/2026-07-{06,12,18,19,22,29}/**/source-context.context.mp4",
+        "/opt/bilive/autoslice/out/2026-07-{06,12,18,19,22,29}/**/padded_*.mp4",
+        "/opt/bilive/autoslice/out/2026-07-{06,12,18,19,22,29}/**/piece_*.mp4",
+        "/opt/bilive/autoslice/out/2026-07-{06,12,18,19,22,29}/**/input.complete-audio.mp3"
+      ],
+      "scope": "282 regenerable pipeline intermediates only",
+      "bytes": 16259000000,
+      "per_day": {
+        "2026-07-29": "2 files, 0.04 GB",
+        "2026-07-22": "14 files, 1.41 GB",
+        "2026-07-12": "54 files, 3.33 GB",
+        "2026-07-06": "19 files, 1.22 GB",
+        "2026-07-18": "103 files, 4.75 GB",
+        "2026-07-19": "90 files, 4.39 GB"
+      },
+      "verification_before_delete": {
+        "authority_referenced_excluded": "21 files (padded_N x5, piece_N x15, complete-audio x1) matched Tier A and were kept",
+        "day_closure_rule_1c": "satisfied ONLY by 2026-07-29 (publication_closure.v1, 5/5 published). The other five days hold genuinely unpublished review_ready picks — NOT stale statuses: 07-22's registry-published ids are the auto_193450_* series while state's review_ready ids are auto_193515_*, a different series.",
+        "pending_revive_markers": "pending_talk=0 and pending_song=0 on all six days; the only revive script on the host (revive_song_230754_1118_20260808.py) targets out/2026-08-07; state/2026-08-*.json contain zero references into out/2026-07-*",
+        "basis_used": "rule-4 regenerable carve-out (reference scan only), NOT rule 1c"
+      },
+      "recoverability": "Regenerable from retained CloudFS source recordings. Same class, same directories and same day-statuses as the 33.6 GB the 2026-07-30 manifest deleted from 07-18/07-19.",
+      "flagged": "2026-07-19 is status=paused_cpa_down (weakest day). Nothing resumes it spontaneously — the runner has since processed 07-22 through 08-08 — and an explicit revive would re-extract from source."
+    },
+    {
+      "target": "/opt/bilive/autoslice/vod_ingest/BV1qANw62EZG.mp4",
+      "scope": "one downloaded external Bilibili VOD",
+      "bytes": 1811013479,
+      "verification_before_delete": {
+        "local_path_references": 0,
+        "citation_form": "appears only as a bvid KEY in state/community_name_state.json's bvid->timestamp crawl ledger, and in logs/vod_chain*.log"
+      },
+      "recoverability": "Public Bilibili VOD, re-downloadable via the documented BBDown ingest playbook."
+    },
+    {
+      "target": "/opt/bilive/autoslice/recovery/2026-07-29/all-talk-cpa-context-r1/out/**/{padded_*,piece_*}.mp4",
+      "scope": "10 sandbox intermediates for 2026-07-29",
+      "bytes": 253970000,
+      "verification_before_delete": {
+        "per_file_references": 0,
+        "day_closure": "2026-07-29 fully passes rule 1c"
+      },
+      "recoverability": "Regenerable from retained source recordings."
+    }
+  ],
+  "preserved": [
+    "all source recordings (local and CloudFS)",
+    "all JSON, SRT, ASS, adjudication records, upload receipts and logs everywhere — nothing but media was deleted",
+    "out/2026-08-07, out/2026-08-08, recovery/2026-08-09, recovery/2026-08-10, state/, repo/, assets/, DISABLED, danmaku-backup, quarantine/, and every /opt/bilive tree outside autoslice",
+    "all *.recut.mp4 and *.recut.burned-final-*.mp4 deliverables in July out/ (the 2026-07-24 incident class)",
+    "all song feedstock: song_*_full_*_source.mp4, song_*_tight_*_source.mp4, xstitch sources",
+    "vod_ingest/BV1yrKq6hEap.mp4 — path-referenced by 4 repo/lidousha/2026-07-19 stage-slice .record.json",
+    "the adjudication cache (cache/) — untouched, per the 2026-07-27 cost decree",
+    "modelscope_cache speaker-diarization models, out/acceptance, reports/, autoslice/tmp"
+  ],
+  "post_verification": {
+    "authority_referenced_intermediates_present": "21/21",
+    "registry_referenced_reconciliation_json_present": "verified",
+    "repo_lidousha_deliverable_counts_unchanged": "07-06:10 07-12:7 07-18:6 07-19:11 07-22:5 07-29:4",
+    "z2_branding_intro_sha256_matches_render_manifest": "d37f4c358cc5d2515bca5a6fbc54bb5a10d7d2b8a36008777842def3d502ac29",
+    "state_and_runner_lock_unmodified": true
+  },
+  "pending_ivan_adjudication": [
+    "The rule-1c interpretation itself: five of six July days were cleaned under the rule-4 regenerable carve-out rather than day closure. Ratify or reverse the standard for future passes.",
+    "batch-1 keeps: 70 LIVE_MISSING (246 MB) + 145 SIZE_DIFF (782 MB) in the 07-29 sandbox — includes a 2026-07-29 deliverable absent from live repo/lidousha (SC说转发佐伯沙弥香生日能拿菲尔兹奖.mp4) and one divergent-size deliverable",
+    "out/acceptance 5.4G — host-vocal/speaker acceptance evidence, referenced by state/2026-07-09.json and forensics",
+    "reports/ 6.0G (5.9G media)",
+    "recovery/2026-07-22 1.9G — includes a 4-way-hardlinked 1.08 GB 'official_source' remux (22966160_20260722-19-34-50.mp4) with NO matching CloudFS filename; do not delete without a ruling",
+    "vod_ingest/BV1yrKq6hEap.mp4 1.26 GB — kept because 4 stage-slice .record.json cite its local path",
+    "autoslice/tmp/xstitch 351 MB and tmp/claude-kmx-find 159 MB — manual song-stitch and Z2 chant extraction working sets",
+    "within-pick duplicate pairs in out/ (padded_N vs piece_N are byte-size-identical but separate inodes) — dedup was deliberately NOT attempted"
+  ],
+  "follow_up": "Cleanup evidence retained on free at logs/cleanup-20260810.log with per-batch manifests and df reconciliation; machine-readable scans at tmp/dupscan_rec0729.json and tmp/outplan2.json. Recommend an autoslice-side retention policy for source-context/padded/piece intermediates so this class is pruned on a schedule instead of during capacity emergencies."
+}
