@@ -1,0 +1,75 @@
+{
+  "manifest_version": 3,
+  "schema_version": "authorized-upload-manifest.v3",
+  "artifact_id": "6613ab8f7ca3",
+  "video": {
+    "path": "/opt/bilive/autoslice/out/2026-08-07/auto_200736_298_383/replacement_recuts/auto_200736_298_383.recut.burned-final-speaker.mp4",
+    "sha256": "6613ab8f7ca3891bffafb7d5de506469a556111f809a7e86f66580e045038364",
+    "bytes": 51132900
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/out/2026-08-07/auto_200736_298_383/replacement_recuts/auto_200736_298_383.recut.burned-final-speaker.cover.png",
+    "sha256": "65da986e548199b35fc36e02cf5ed20520de4952c613a61fa8ea008cdd7b0390",
+    "bytes": 2602106
+  },
+  "title": "【李豆沙】坏女人小李今天就是要去骗女主播的哼哼",
+  "description": "https://live.bilibili.com/\n本切片由 bilibili-vtuber-clip 项目提供：https://github.com/MelanLee-shadow/bilibili-vtuber-clip\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+  "publish_policy": {
+    "tid": 21,
+    "copyright": 2,
+    "source": "https://live.bilibili.com/"
+  },
+  "season": {
+    "lane": "talk",
+    "season_title": "小李切片",
+    "source": "auto:title-prefix"
+  },
+  "package_attestation": {
+    "schema_version": "authorized-upload-package-attestation.v1",
+    "package_root": "/opt/bilive/autoslice/out/2026-08-07/auto_200736_298_383/replacement_recuts",
+    "package_audit": {
+      "path": "/opt/bilive/autoslice/reports/upload-qc/20260809T-200736-ivan-explicit/auto_200736_298_383.package-audit.json",
+      "sha256": "f0bee9204e7866e81dce2bc72947fab6f1b740a9d5bab9e96b182a652474b9a2",
+      "bytes": 6402
+    },
+    "review_manifest": {
+      "path": "/opt/bilive/autoslice/out/2026-08-07/auto_200736_298_383/replacement_recuts/review_manifest.json",
+      "sha256": "f525a9c5a36589cea60034bdef89ae73d210b34e1a4f54033e635e7d7d115f88",
+      "bytes": 7908
+    },
+    "record": {
+      "path": "/opt/bilive/autoslice/out/2026-08-07/auto_200736_298_383/replacement_recuts/auto_200736_298_383.recut.burned-final-speaker.record.json",
+      "sha256": "3ca6c2da38e930dd12b6b2c6f6a433169c5ddad0d0aacd4f0c517caa3837d0c2",
+      "bytes": 180369
+    },
+    "subtitle": {
+      "path": "/opt/bilive/autoslice/out/2026-08-07/auto_200736_298_383/replacement_recuts/auto_200736_298_383.recut.burned-final-speaker.srt",
+      "sha256": "da7454d7e02e7b966039f469fd2e04b1325d004844366721ee8ae0e322e25343",
+      "bytes": 2588
+    },
+    "title_cover_qc": {
+      "path": "/opt/bilive/autoslice/reports/upload-qc/20260809T-200736-ivan-explicit/auto_200736_298_383.title-cover-joint-qc.json",
+      "sha256": "367b0f2c7f7cdc3478919d1eac116ba523e18bf3c80aa56b22e8f4d45d1db876",
+      "bytes": 3046
+    }
+  },
+  "authorization": {
+    "by": "Ivan",
+    "quote": "可以,走上传吧 / 标题改为:坏女人小李今天就是要去骗女主播的哼哼 / 选A,然后就可以上传了 / 没问题,你可以先上传这个切片了 / 按我的授权来就行,你自己传。",
+    "at": "2026-08-09T03:46:30+0000"
+  },
+  "created_at": "2026-08-09T03:46:30+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "北柚香",
+    "口出狂言",
+    "反差萌",
+    "黑色幽默",
+    "嘴硬",
+    "沙雕"
+  ],
+  "tags_source": "record.json:suggest-upload-tags.v1"
+}

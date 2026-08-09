@@ -1,0 +1,22 @@
+{
+  "schema_version": "authorized-upload-result.v3",
+  "status": "VERIFIED_PUBLIC",
+  "bvid": "BV1JLuj6zEdM",
+  "aid": 117063494403403,
+  "cid": 40737244138,
+  "title": "【李豆沙】坏女人小李今天就是要去骗女主播的哼哼",
+  "uploaded_at": "2026-08-09T03:50:30+0000",
+  "video_sha256": "6613ab8f7ca3891bffafb7d5de506469a556111f809a7e86f66580e045038364",
+  "cover_sha256": "65da986e548199b35fc36e02cf5ed20520de4952c613a61fa8ea008cdd7b0390",
+  "record_sha256": "3ca6c2da38e930dd12b6b2c6f6a433169c5ddad0d0aacd4f0c517caa3837d0c2",
+  "subtitle_sha256": "da7454d7e02e7b966039f469fd2e04b1325d004844366721ee8ae0e322e25343",
+  "package_audit_sha256": "f0bee9204e7866e81dce2bc72947fab6f1b740a9d5bab9e96b182a652474b9a2",
+  "review_manifest_sha256": "f525a9c5a36589cea60034bdef89ae73d210b34e1a4f54033e635e7d7d115f88",
+  "title_cover_qc_sha256": "367b0f2c7f7cdc3478919d1eac116ba523e18bf3c80aa56b22e8f4d45d1db876",
+  "manifest": "/opt/bilive/autoslice/out/2026-08-07/auto_200736_298_383/replacement_recuts/auto_200736_298_383.recut.burned-final-speaker.upload_manifest.json",
+  "manifest_sha256": "6a38f1173460419482e348b1fb486e287a45b3ab04929d1a2b5131ebe6d4adce",
+  "public_verify": "/opt/bilive/autoslice/out/2026-08-07/auto_200736_298_383/replacement_recuts/auto_200736_298_383.recut.burned-final-speaker.public_verify.json",
+  "public_verify_sha256": "2318029b87bfd7d77dbcb136bcd5d39f2f69a318515a022594e2c7e83eb0ed2b",
+  "authorized_by": "Ivan",
+  "authorization_quote": "可以,走上传吧 / 标题改为:坏女人小李今天就是要去骗女主播的哼哼 / 选A,然后就可以上传了 / 没问题,你可以先上传这个切片了 / 按我的授权来就行,你自己传。"
+}
