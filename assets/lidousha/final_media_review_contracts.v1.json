@@ -497,6 +497,29 @@
           "expectation": "结尾必须完整收束「因为已经爱上，所以才会有再一次」的解释与包袱，不断在话中、不带入下一话题。"
         }
       ]
+    },
+    {
+      "candidate_id": "auto_200130_1323_1603",
+      "subtitle_review_points": [
+        {
+          "point_id": "yueqi-cue104",
+          "final_video_start_ms": 193000,
+          "final_video_end_ms": 198000,
+          "expectation": "Ivan 手标动作注记必须完整烧录:该窗字幕须为「我是，我是这样的 你起什么哄啊(跃起)」,(跃起) 逐字可见;画面不得出现 [李豆沙]/[连线] 标签字面。"
+        },
+        {
+          "point_id": "yueqi-cue128-merged",
+          "final_video_start_ms": 230000,
+          "final_video_end_ms": 236000,
+          "expectation": "合并窗(原 128+129)字幕须为「我是李豆的什么 你不许再说话(跃起)」,(跃起) 逐字可见且时间轴与机器原时轴一致;画面不得出现标签字面。"
+        },
+        {
+          "point_id": "machine-note-strip",
+          "final_video_start_ms": 0,
+          "final_video_end_ms": 286389,
+          "expectation": "全片除 Ivan 手标 (跃起)×2 外不得出现任何其它圆括号注记(「(无可辨别人声)」「(无可分辨人声)」类机器注记必须剥离);159 cue 全程说话人只走颜色样式,无标签字面。"
+        }
+      ]
     }
   ]
 }
