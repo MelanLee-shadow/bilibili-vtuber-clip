@@ -1212,6 +1212,95 @@ def test_reviewed_exact_interval_tail_bridge_exposes_crossing_grid_closure():
     ]
 
 
+def test_reviewed_exact_interval_pins_floor_without_structured_payoff():
+    """Production shape of the 2026-08-08 对食 fast track (auto_200130_1722_1792).
+
+    The reviewed exact interval ends 90ms after the fresh closure cue, but no
+    structured payoff exists to clamp the delivery floor onto the tail anchor.
+    Before the floor was pinned, ``minimum_recommended_end_ms`` stayed on the
+    bounded semantic-tail-trim lower bound (65_570), the closure cue at 67_670
+    became an ordinary in-window candidate, and the projection never ran - the
+    delivery came out 90ms short and only died later at the redelivery baseline
+    gate.  An exact-interval replay has no trim discretion: the floor is the
+    reviewed endpoint, so the bridge is reachable in this shape too.
+    """
+
+    kwargs = {
+        "semantic_target_ms": 80_570,
+        "repair_cap_ms": 60_000,
+        "required_owner_end_ms": 27_510,
+        "baseline_tail_cap_ms": 67_760,
+        "semantic_tail_trim_cap_ms": 15_000,
+    }
+
+    trim_lane = build_boundary_search_scope(**kwargs)
+    assert trim_lane["status"] == "PASS"
+    assert trim_lane["delivery_lower_bound_ms"] == 65_570
+    assert trim_lane["max_recommended_end_ms"] == 67_760
+    # Untouched without the exact-interval grant: the trim lane keeps its floor.
+    assert trim_lane["minimum_recommended_end_ms"] == 65_570
+
+    scope = build_boundary_search_scope(
+        **kwargs,
+        reviewed_exact_interval_projection=_projection_scope(),
+    )
+    assert scope["status"] == "PASS"
+    # The delivery floor disclosure is unchanged; only the review window pins.
+    assert scope["delivery_lower_bound_ms"] == 65_570
+    assert scope["minimum_recommended_end_ms"] == 67_760
+    assert scope["max_recommended_end_ms"] == 67_760
+    assert boundary_search_scope_is_valid(scope)
+
+    cues = [
+        _cue(1, 61_360, 64_319, "你是猜的那个，我是猜的那个"),
+        _cue(2, 64_440, 67_670, "嗯，你你你背，你站这来"),
+        _cue(3, 67_670, 69_210, "我站哪儿有什么区别吗"),
+        _cue(4, 69_210, 71_610, "你站这来，你要看我们三个的表演"),
+    ]
+    response = json.dumps(
+        {
+            "syntax_complete": True,
+            "story_closed": True,
+            "next_topic_separated": True,
+            "content_anchor_covered": True,
+            "recommended_end_cue_index": 2,
+            "evidence_cue_indexes": [1, 2, 3, 4],
+            "same_topic_continues_after_target": False,
+            "needs_more_context": False,
+            "reason_codes": [],
+            "summary": "第二句收在站位指令，第三句起转入站位争论新话题。",
+        },
+        ensure_ascii=False,
+    )
+
+    review = review_talk_boundary_semantics(
+        cues=cues,
+        target_ms=80_570,
+        candidate_id="auto_200130_1722_1792",
+        selection_hook="对食梗在站位话题前闭合",
+        selection_scorecard=_scorecard(),
+        structured_context="hash-bound exact reviewed interval",
+        candidate_context="synthetic fixture",
+        llm_call=lambda _prompt: response,
+        extract_json=_extract,
+        max_forward_ms=0,
+        boundary_search_scope=scope,
+    )
+
+    assert review["status"] == "PASS"
+    assert review["recommended_end_cue_index"] == 2
+    assert review["recommended_end_ms"] == 67_760
+    relaxation = review["recommendation_relaxations"][0]
+    assert relaxation["kind"] == (
+        "reviewed_exact_interval_terminal_projection"
+    )
+    assert relaxation["cue_index"] == 2
+    assert relaxation["cue_end_ms"] == 67_670
+    assert relaxation["reviewed_endpoint_ms"] == 67_760
+    assert relaxation["terminal_drift_ms"] == 90
+    assert relaxation["crossing_witness_cue_index"] == 3
+
+
 def test_ordinary_scope_keeps_legacy_shape_without_projection_null_field():
     scope = build_boundary_search_scope(
         semantic_target_ms=80_570,
