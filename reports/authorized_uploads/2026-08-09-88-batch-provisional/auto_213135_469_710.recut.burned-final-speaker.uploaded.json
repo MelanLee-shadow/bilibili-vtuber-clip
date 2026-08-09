@@ -1,0 +1,22 @@
+{
+  "schema_version": "authorized-upload-result.v3",
+  "status": "VERIFIED_PUBLIC",
+  "bvid": "BV18Gu16NEcX",
+  "aid": 117064283067538,
+  "cid": 40742880014,
+  "title": "【李豆沙】第一次3D Live紧张到手抖，高铁上想到自己好像正走在实现五年前舞台愿望的路上",
+  "uploaded_at": "2026-08-09T07:21:50+0000",
+  "video_sha256": "1614366924689f1e9f56ac6ae90c1e682edc78536ae7e1148a7273dac10df7a2",
+  "cover_sha256": "4a90d1099e7cd485c4e55cc02fe8d766e04181a2694eaacabaa777d4fab1f30d",
+  "record_sha256": "d8525db05e02ba9fc047006c4b4cab6ae285d47f2979d65f2e0e7db396ea86ec",
+  "subtitle_sha256": "b8639a00b42f184b530c5c7b129e2116fd496ac36d85edadafcaf51f1c018b8b",
+  "package_audit_sha256": "f6806e454fbe89e8a041cd922dc0a226c44a55a5b231d32e9a4e3142709c1138",
+  "review_manifest_sha256": "6451ae9ca3cb82db3e758b329fca733da2b91456841883f6f68928e33170dd8b",
+  "title_cover_qc_sha256": "4a438eec52fe5b0dd31cebf7c8f78e332f5ca9618fc1772a9abbeb4f0c02b4e9",
+  "manifest": "/opt/bilive/autoslice/out/2026-08-08/auto_213135_469_710/replacement_recuts/auto_213135_469_710.recut.burned-final-speaker.upload_manifest.json",
+  "manifest_sha256": "921265db0143d1297dea31ade498a044372a27e41cded4a83fb35a29be9a664b",
+  "public_verify": "/opt/bilive/autoslice/out/2026-08-08/auto_213135_469_710/replacement_recuts/auto_213135_469_710.recut.burned-final-speaker.public_verify.json",
+  "public_verify_sha256": "2db9a550c9b3551335ba975494ffdbb356f1918dcb7ecb322b12f59fb9fe46f8",
+  "authorized_by": "Ivan",
+  "authorization_quote": "并且今天要执行权宜上传。只要出片就可以上传，之后我再进行审查。"
+}

@@ -1,0 +1,74 @@
+{
+  "manifest_version": 3,
+  "schema_version": "authorized-upload-manifest.v3",
+  "artifact_id": "e6577c25464f",
+  "video": {
+    "path": "/opt/bilive/autoslice/out/2026-08-08/auto_230125_960_1072/replacement_recuts/auto_230125_960_1072.recut.burned-final-speaker.mp4",
+    "sha256": "e6577c25464f5cba73094a527c28cf1d85e3ac8844b03e7c3b2b113b314473b5",
+    "bytes": 12853230
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/out/2026-08-08/auto_230125_960_1072/replacement_recuts/auto_230125_960_1072.recut.burned-final-speaker.cover.png",
+    "sha256": "f8f68a504dbcd0acbffd5d9af0ca16d3fae0df30f6ebcecdd6bf3339b02b0616",
+    "bytes": 2539602
+  },
+  "title": "【李豆沙】小李解释偶像曲里那句“请感受穿越屏幕的热烈，再一次爱上我吧”",
+  "description": "https://live.bilibili.com/\n本切片由 bilibili-vtuber-clip 项目提供：https://github.com/MelanLee-shadow/bilibili-vtuber-clip\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+  "publish_policy": {
+    "tid": 21,
+    "copyright": 2,
+    "source": "https://live.bilibili.com/"
+  },
+  "season": {
+    "lane": "talk",
+    "season_title": "小李切片",
+    "source": "auto:title-prefix"
+  },
+  "package_attestation": {
+    "schema_version": "authorized-upload-package-attestation.v1",
+    "package_root": "/opt/bilive/autoslice/out/2026-08-08/auto_230125_960_1072/replacement_recuts",
+    "package_audit": {
+      "path": "/tmp/auto_230125_960_1072.package-audit.json",
+      "sha256": "5fa2b3b04f24d4d5cadda6d26eee6948614aaddbefd2d208324d49a1e66be4ea",
+      "bytes": 3992
+    },
+    "review_manifest": {
+      "path": "/opt/bilive/autoslice/out/2026-08-08/auto_230125_960_1072/replacement_recuts/review_manifest.json",
+      "sha256": "2ebff48ef1816cac564d2e30299e1ae9b57c4e8690db9e0cc8c3f7c500095a85",
+      "bytes": 7003
+    },
+    "record": {
+      "path": "/opt/bilive/autoslice/out/2026-08-08/auto_230125_960_1072/replacement_recuts/auto_230125_960_1072.recut.burned-final-speaker.record.json",
+      "sha256": "e2e090303df03f9082eddf2a5e81d16141312c6b3741bd17504e444944c81f98",
+      "bytes": 109703
+    },
+    "subtitle": {
+      "path": "/opt/bilive/autoslice/out/2026-08-08/auto_230125_960_1072/replacement_recuts/auto_230125_960_1072.recut.burned-final-speaker.srt",
+      "sha256": "1cb9459f828ffcfd8305f41eb8a82a22336e5b4b467c4cdbe0429094f3957956",
+      "bytes": 2945
+    },
+    "title_cover_qc": {
+      "path": "/opt/bilive/autoslice/out/2026-08-08/auto_230125_960_1072/replacement_recuts/title-cover-joint-qc.receipt.json",
+      "sha256": "3b1447aa974b9ab5e3dbcce00cff855c352d2ac467abc674d3a3d879dd65650b",
+      "bytes": 3335
+    }
+  },
+  "authorization": {
+    "by": "Ivan",
+    "quote": "并且今天要执行权宜上传。只要出片就可以上传，之后我再进行审查。",
+    "at": "2026-08-09T07:07:56+0000"
+  },
+  "created_at": "2026-08-09T07:07:56+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "撩人",
+    "偶像",
+    "自信",
+    "可爱",
+    "唱跳"
+  ],
+  "tags_source": "record.json:suggest-upload-tags.v1"
+}

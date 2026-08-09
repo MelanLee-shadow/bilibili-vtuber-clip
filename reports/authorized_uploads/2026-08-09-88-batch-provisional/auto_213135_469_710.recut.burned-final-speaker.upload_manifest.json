@@ -1,0 +1,74 @@
+{
+  "manifest_version": 3,
+  "schema_version": "authorized-upload-manifest.v3",
+  "artifact_id": "161436692468",
+  "video": {
+    "path": "/opt/bilive/autoslice/out/2026-08-08/auto_213135_469_710/replacement_recuts/auto_213135_469_710.recut.burned-final-speaker.mp4",
+    "sha256": "1614366924689f1e9f56ac6ae90c1e682edc78536ae7e1148a7273dac10df7a2",
+    "bytes": 288511486
+  },
+  "cover": {
+    "path": "/opt/bilive/autoslice/out/2026-08-08/auto_213135_469_710/replacement_recuts/auto_213135_469_710.recut.burned-final-speaker.cover.png",
+    "sha256": "4a90d1099e7cd485c4e55cc02fe8d766e04181a2694eaacabaa777d4fab1f30d",
+    "bytes": 2455273
+  },
+  "title": "【李豆沙】第一次3D Live紧张到手抖，高铁上想到自己好像正走在实现五年前舞台愿望的路上",
+  "description": "https://live.bilibili.com/\n本切片由 bilibili-vtuber-clip 项目提供：https://github.com/MelanLee-shadow/bilibili-vtuber-clip\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+  "publish_policy": {
+    "tid": 21,
+    "copyright": 2,
+    "source": "https://live.bilibili.com/"
+  },
+  "season": {
+    "lane": "talk",
+    "season_title": "小李切片",
+    "source": "auto:title-prefix"
+  },
+  "package_attestation": {
+    "schema_version": "authorized-upload-package-attestation.v1",
+    "package_root": "/opt/bilive/autoslice/out/2026-08-08/auto_213135_469_710/replacement_recuts",
+    "package_audit": {
+      "path": "/tmp/auto_213135_469_710.package-audit.json",
+      "sha256": "f6806e454fbe89e8a041cd922dc0a226c44a55a5b231d32e9a4e3142709c1138",
+      "bytes": 3976
+    },
+    "review_manifest": {
+      "path": "/opt/bilive/autoslice/out/2026-08-08/auto_213135_469_710/replacement_recuts/review_manifest.json",
+      "sha256": "6451ae9ca3cb82db3e758b329fca733da2b91456841883f6f68928e33170dd8b",
+      "bytes": 6974
+    },
+    "record": {
+      "path": "/opt/bilive/autoslice/out/2026-08-08/auto_213135_469_710/replacement_recuts/auto_213135_469_710.recut.burned-final-speaker.record.json",
+      "sha256": "d8525db05e02ba9fc047006c4b4cab6ae285d47f2979d65f2e0e7db396ea86ec",
+      "bytes": 154725
+    },
+    "subtitle": {
+      "path": "/opt/bilive/autoslice/out/2026-08-08/auto_213135_469_710/replacement_recuts/auto_213135_469_710.recut.burned-final-speaker.srt",
+      "sha256": "b8639a00b42f184b530c5c7b129e2116fd496ac36d85edadafcaf51f1c018b8b",
+      "bytes": 6408
+    },
+    "title_cover_qc": {
+      "path": "/opt/bilive/autoslice/out/2026-08-08/auto_213135_469_710/replacement_recuts/title-cover-joint-qc.receipt.json",
+      "sha256": "4a438eec52fe5b0dd31cebf7c8f78e332f5ca9618fc1772a9abbeb4f0c02b4e9",
+      "bytes": 3304
+    }
+  },
+  "authorization": {
+    "by": "Ivan",
+    "quote": "并且今天要执行权宜上传。只要出片就可以上传，之后我再进行审查。",
+    "at": "2026-08-09T07:07:46+0000"
+  },
+  "created_at": "2026-08-09T07:07:46+0000",
+  "tags": [
+    "李豆沙",
+    "虚拟主播",
+    "虚拟UP主",
+    "直播切片",
+    "3D",
+    "紧张",
+    "跳舞",
+    "圆梦",
+    "感动"
+  ],
+  "tags_source": "record.json:suggest-upload-tags.v1"
+}
