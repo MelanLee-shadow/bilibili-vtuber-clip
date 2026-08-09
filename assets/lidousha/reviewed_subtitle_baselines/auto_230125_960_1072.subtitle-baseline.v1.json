@@ -1,0 +1,14 @@
+{
+  "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
+  "candidate_id": "auto_230125_960_1072",
+  "schema_version": "subtitle-redelivery-baseline.v2",
+  "mode": "preserve_text_outside_source_truth",
+  "exact_interval_replay": true,
+  "path": "auto_230125_960_1072.reviewed.srt",
+  "sha256": "73fbf084dbad349ca90be073711f6da31738f9617ee04e702ed7ac2389149037",
+  "authority": "Ivan-lovecode-directive-2026-08-09: 「有一个需要紧急修改的地方，刚上传的请感受穿越屏幕的热烈那个切片，里面提到的歌曲是\"ラブコード\"，不是lovelive，你把那里关于歌曲的字幕全改一下然后极速上传就行」",
+  "source_recording_basename": "22966160_20260808-23-01-25.mp4",
+  "source_sha256": "6cf042681885d18ac4e3abb9548fe8ac3033f8b2e3365c44b6748fd3e4a324a3",
+  "absolute_source_start_ms": 960450,
+  "absolute_source_end_ms": 1072770
+}

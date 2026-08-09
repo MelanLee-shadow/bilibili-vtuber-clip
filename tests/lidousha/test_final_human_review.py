@@ -75,6 +75,7 @@ def test_committed_review_contract_extends_exact_recovery_five_for_daily_repairs
         "auto_195000_1493_1579",
         "auto_142942_496_618",
         "auto_225056_1013_1116",
+        "auto_230125_960_1072",
     ]
     review = json.loads(
         (
@@ -226,6 +227,28 @@ def test_committed_review_contract_extends_exact_recovery_five_for_daily_repairs
             ),
         }
     ]
+
+    lovecode = next(
+        row
+        for row in review["contracts"]
+        if row["candidate_id"] == "auto_230125_960_1072"
+    )
+    lovecode_points = {
+        row["point_id"]: row
+        for row in lovecode["subtitle_review_points"]
+    }
+    assert lovecode_points["lovecode-song-name-opening"][
+        "final_video_start_ms"
+    ] == 6_200
+    assert lovecode_points["lovecode-song-name-prelude"][
+        "final_video_start_ms"
+    ] == 18_500
+    assert lovecode_points["lovecode-song-name-after"][
+        "final_video_start_ms"
+    ] == 78_500
+    assert lovecode_points["lovecode-ending-closure"][
+        "final_video_end_ms"
+    ] == 118_500
 
 
 def _sha256(path: Path) -> str:

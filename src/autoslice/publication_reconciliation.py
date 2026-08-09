@@ -259,12 +259,30 @@ def _candidate_and_date(manifest: Mapping[str, object]) -> tuple[str, str]:
             "manifest record has no publication candidate_id"
         )
     package_root = Path(str(attestation.get("package_root") or ""))
-    dates = [part for part in package_root.parts if _DATE_RX.fullmatch(part)]
-    if len(set(dates)) != 1:
+    parts = package_root.parts
+    canonical_dates = {
+        parts[index + 1]
+        for index, part in enumerate(parts[:-1])
+        if part in {"out", "lidousha"}
+        and _DATE_RX.fullmatch(parts[index + 1])
+    }
+    if len(canonical_dates) > 1:
+        raise PublicationReconciliationError(
+            "package_root has conflicting canonical recording dates"
+        )
+    if canonical_dates:
+        return candidate_id, next(iter(canonical_dates))
+
+    # Legacy/test package roots can predate the canonical out/<date> and
+    # lidousha/<date> layouts.  Retain their strict unique-date fallback, but
+    # do not let an outer recovery wrapper date compete with a canonical
+    # package-layout date.
+    dates = {part for part in parts if _DATE_RX.fullmatch(part)}
+    if len(dates) != 1:
         raise PublicationReconciliationError(
             "cannot resolve one recording date from package_root"
         )
-    return candidate_id, dates[0]
+    return candidate_id, next(iter(dates))
 
 
 def _manifest_binding(manifest: dict, manifest_path: Path) -> dict:

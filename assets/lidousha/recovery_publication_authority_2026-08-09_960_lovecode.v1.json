@@ -1,0 +1,20 @@
+{
+  "schema_version": "lidousha-recovery-publication-authority.v1",
+  "authority": "Ivan-lovecode-directive-2026-08-09: 「有一个需要紧急修改的地方，刚上传的请感受穿越屏幕的热烈那个切片，里面提到的歌曲是\"ラブコード\"，不是lovelive，你把那里关于歌曲的字幕全改一下然后极速上传就行」 上传总授权：「并且今天要执行权宜上传。只要出片就可以上传，之后我再进行审查。」 Published exact source interval 960450-1072770ms and exact verified-public title are frozen for same-BV subtitle redelivery.",
+  "entries": [
+    {
+      "candidate_id": "auto_230125_960_1072",
+      "title_mode": "verified_public_exact",
+      "observed_public_title": "【李豆沙】小李解释偶像曲里那句“请感受穿越屏幕的热烈，再一次爱上我吧”",
+      "required_given_end_ms": 1072770,
+      "boundary_end_mode": "exact_source_pin",
+      "bvid": "BV1Bau16nEyq",
+      "aid": 117064333264829,
+      "cid": 40743275821,
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-08-09-960-lovecode-source/auto_230125_960_1072.public_verify.json",
+      "source_public_verify_sha256": "sha256:cc9aad0d49812dbcf20db27fec6ad2f7a43ce852a9a45380bae5a4251f784ead",
+      "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+      "source_public_verify_status": "VERIFIED_PUBLIC"
+    }
+  ]
+}

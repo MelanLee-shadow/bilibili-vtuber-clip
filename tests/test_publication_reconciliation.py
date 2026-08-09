@@ -199,6 +199,72 @@ def _reconcile_new(fixture: dict, *, at: str = "2026-07-29T12:01:00+00:00"):
     )
 
 
+def test_recording_date_prefers_canonical_package_layout_inside_recovery(
+    tmp_path: Path,
+) -> None:
+    package = (
+        tmp_path
+        / "recovery"
+        / "2026-08-09"
+        / CANDIDATE
+        / "repo"
+        / "lidousha"
+        / DATE
+    )
+    record = package / "clip.record.json"
+    _write_json(
+        record,
+        {
+            "story_contract": {"candidate_id": CANDIDATE},
+            "delivery_candidate_id": CANDIDATE,
+        },
+    )
+    manifest = {
+        "package_attestation": {
+            "package_root": str(package.resolve()),
+            "record": _entry(record),
+        }
+    }
+
+    assert reconciliation._candidate_and_date(manifest) == (  # noqa: SLF001
+        CANDIDATE,
+        DATE,
+    )
+
+
+def test_recording_date_rejects_conflicting_canonical_package_layouts(
+    tmp_path: Path,
+) -> None:
+    package = (
+        tmp_path
+        / "out"
+        / "2026-07-28"
+        / CANDIDATE
+        / "lidousha"
+        / DATE
+    )
+    record = package / "clip.record.json"
+    _write_json(
+        record,
+        {
+            "story_contract": {"candidate_id": CANDIDATE},
+            "delivery_candidate_id": CANDIDATE,
+        },
+    )
+    manifest = {
+        "package_attestation": {
+            "package_root": str(package.resolve()),
+            "record": _entry(record),
+        }
+    }
+
+    with pytest.raises(
+        reconciliation.PublicationReconciliationError,
+        match="conflicting canonical recording dates",
+    ):
+        reconciliation._candidate_and_date(manifest)  # noqa: SLF001
+
+
 def test_new_bv_public_closure_reconciles_registry_and_failed_runner_row(
     tmp_path: Path,
 ) -> None:
