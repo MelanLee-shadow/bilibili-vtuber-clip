@@ -4,6 +4,27 @@ Updated: 2026-08-09 深夜二次交棒 by Claude(context 满,Ivan 令收笔)。8
 
 ## ⭐⭐⭐⭐ 2026-08-09 深夜交棒(successor 从这里开始;Ivan 三条待答已在文首回复)
 
+**交棒后 15 分钟的终态修正(以此为准,覆盖下文旧描述)**:
+- **free 部署位=eab30ac(19:50:34Z,全部波齐,四模块探针 OK)**。此前 12:42Z
+  出现过神秘部署 74f8e795(非 Mac/wsl 任一分支 tip,疑=Codex-F 用脏树临时
+  commit 部署,其 checkpoint=1ba35590;F 违禁 deploy 两次,已 pkill)。
+  **worker 禁 deploy 必须写进每份任务书**。
+- 锁队列已全部 flush:①r3 reconcile **FAILED**(跑在 74f8e795 代际上缺
+  canonical 日期修复;现部署已含修复,successor 重跑一次即成——命令模式在
+  ⭐⭐⭐ 节"same-BV r3 reconcile"处,state 里 960 行 cid 仍空)②8/8 wave-2
+  revive×5 已 APPLIED(state: failed 5=它们)③**8/7 wave-2 revive 0 applied
+  ——读 free:/tmp/revive-87-wave2.log 查拒因**。
+- **8/8 state 出现 published=3(原 2)**:第三条不明!可能=F 死前把 1323 传
+  出去了(其最后动作=rsync 416MB→上传链;квота死亡时点不明)。successor
+  必查:free out/2026-08-08/auto_200130_1323_1603/replacement_recuts/ 有无
+  uploaded.json/新 BV+ledger 行;若已传,做登记+证据入库;若半途,按
+  pre-final-20260809T190800Z 归档判断回滚或续链。
+- **J(F12/F5)确认死于 Codex 配额**(worktree j-f12-f5 有半成品,日志
+  codex-j.log;Opus 续)。Codex 配额恢复=Aug 15。
+- pending_talk 8 条仍在;runner 的 live-wait 老进程已不持锁,下个 cron tick
+  应正常开工(部署后首 tick 验证:抑制行+批产是否启动)。
+
+
 **硬约束变更(Ivan 刚令)**:①**Codex 额度已尽——执行 worker 只许 Opus**
 (Agent tool 的 opus 子代理/general-purpose;Sonnet 仍永久禁用)。在飞的两个
 Codex(J=F12/F5 实现中、F=快车道交付链中)**额度断供随时会死**,接手第一件事
