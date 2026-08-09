@@ -1,0 +1,22 @@
+{
+  "schema_version": "authorized-upload-result.v3",
+  "status": "VERIFIED_PUBLIC",
+  "bvid": "BV13zuX6fEwh",
+  "aid": 117067973921757,
+  "cid": 40762673619,
+  "title": "【李豆沙】话题从有没有发现变化，一路歪到宫中禁止对食",
+  "uploaded_at": "2026-08-09T22:52:08+0000",
+  "video_sha256": "6b2c0ca148b6360bafc0f18ad696638e41fe51cf813a77bcefa0f6cc26d463f9",
+  "cover_sha256": "6c274f8661ac597992f3663d677380c212725883ec1f97279e7647520b32f3f6",
+  "record_sha256": "5fab79afabb978084ea5c3baca8c1f5a6d9d7ddda233adff217eeaf17dac0d6b",
+  "subtitle_sha256": "0efb99954da04e0faea233890e504e5935e40e65d1fa29f5c3fe87ad5cf28e01",
+  "package_audit_sha256": "08f52e5953fa0d53136ae659c426851d2531c8d80f82e6b7c34e650c22f1cff2",
+  "review_manifest_sha256": "1415df4cfc4271fc67a67cc686bc28ec7f5e8fd11d723e9df416790eddf1450e",
+  "title_cover_qc_sha256": "06f92997164d127748c74b3e3759fdf35900b0939149459383e3d8d1ceb410ef",
+  "manifest": "/opt/bilive/autoslice/out/2026-08-08/auto_200130_1722_1792/replacement_recuts/auto_200130_1722_1792.recut.burned-final-speaker.upload_manifest.json",
+  "manifest_sha256": "fc35e02cfbdafb386c84e721324ee2c3dc5374bec5fbe70756ef5f505ada9316",
+  "public_verify": "/opt/bilive/autoslice/out/2026-08-08/auto_200130_1722_1792/replacement_recuts/auto_200130_1722_1792.recut.burned-final-speaker.public_verify.json",
+  "public_verify_sha256": "16f9adb06ed75e90986a185cdd376b19c73ceb94985a2fd761b8bf83e3f01a03",
+  "authorized_by": "Ivan",
+  "authorization_quote": "「所以我希望这两个能进入快车道，优先出成品，优先上传。」\n「并且今天要执行权宜上传。只要出片就可以上传，之后我再进行审查。」"
+}

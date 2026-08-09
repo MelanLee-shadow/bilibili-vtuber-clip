@@ -1,0 +1,103 @@
+{
+  "audited_inputs": [
+    {
+      "bytes": 134039,
+      "path": "auto_200130_1722_1792.chat-authority.json",
+      "sha256": "b512af808a93af68262df8884931a7b4f84653b2bbb1ddde3014160c9a60c1e4"
+    },
+    {
+      "bytes": 90319,
+      "path": "auto_200130_1722_1792.clip-context.json",
+      "sha256": "45094a3383f57940194d58470231438fe93a48221ae5f4c7fb3183aa7a0fa13b"
+    },
+    {
+      "bytes": 202007,
+      "path": "auto_200130_1722_1792.record.json",
+      "sha256": "5fab79afabb978084ea5c3baca8c1f5a6d9d7ddda233adff217eeaf17dac0d6b"
+    },
+    {
+      "bytes": 2588439,
+      "path": "auto_200130_1722_1792.recut.burned-final-speaker.cover.png",
+      "sha256": "6c274f8661ac597992f3663d677380c212725883ec1f97279e7647520b32f3f6"
+    },
+    {
+      "bytes": 38548552,
+      "path": "auto_200130_1722_1792.recut.burned-final-speaker.mp4",
+      "sha256": "6b2c0ca148b6360bafc0f18ad696638e41fe51cf813a77bcefa0f6cc26d463f9"
+    },
+    {
+      "bytes": 202007,
+      "path": "auto_200130_1722_1792.recut.burned-final-speaker.record.json",
+      "sha256": "5fab79afabb978084ea5c3baca8c1f5a6d9d7ddda233adff217eeaf17dac0d6b"
+    },
+    {
+      "bytes": 2243,
+      "path": "auto_200130_1722_1792.recut.burned-final-speaker.srt",
+      "sha256": "0efb99954da04e0faea233890e504e5935e40e65d1fa29f5c3fe87ad5cf28e01"
+    },
+    {
+      "bytes": 38207605,
+      "path": "auto_200130_1722_1792.recut.mp4",
+      "sha256": "64c87edf914a295aea2e8cee37c6a78ff25c5f78c5e8a72108f061a32afcd781"
+    },
+    {
+      "bytes": 48448,
+      "path": "auto_200130_1722_1792.recut.publish.json",
+      "sha256": "f47850ffd06c149d2179bba0000865f682fdcfbeee6a6c45c53231983ae839c6"
+    },
+    {
+      "bytes": 3437,
+      "path": "auto_200130_1722_1792.recut.speaker-final.ass",
+      "sha256": "e7c014e8a07c0fbd9d7180409548c4e9f05b6360f4bd5ac300360c7fad3c8401"
+    },
+    {
+      "bytes": 2618,
+      "path": "auto_200130_1722_1792.recut.speaker-final.srt",
+      "sha256": "8bdd62dd177f8c6d7b53d8a9dbbe66993da980c19c34a2b24676d48afc5890dd"
+    },
+    {
+      "bytes": 2243,
+      "path": "auto_200130_1722_1792.recut.srt",
+      "sha256": "0efb99954da04e0faea233890e504e5935e40e65d1fa29f5c3fe87ad5cf28e01"
+    },
+    {
+      "bytes": 38371,
+      "path": "auto_200130_1722_1792.redelivery-baseline.json",
+      "sha256": "aa7b0683e2d04f33f371c67f04b7c1f8a213c9879f5712bb8131e48d5c3d1195"
+    },
+    {
+      "bytes": 2588439,
+      "path": "covers/auto_200130_1722_1792.ai-title.cover.png",
+      "sha256": "6c274f8661ac597992f3663d677380c212725883ec1f97279e7647520b32f3f6"
+    },
+    {
+      "bytes": 2594375,
+      "path": "covers/auto_200130_1722_1792.ai-title.cover.pre-overlay.png",
+      "sha256": "dcb39f99f33489a8c2c18c6a4e5d50579d50fb7e7e3e693b5d8c7ac3438b979a"
+    },
+    {
+      "bytes": 33986,
+      "path": "covers/auto_200130_1722_1792.ai-title.cover.title-mask.png",
+      "sha256": "d393300ae750ae12bd6f4e60106f1e35a978b2577d9039bf704b294548bd6102"
+    },
+    {
+      "bytes": 2594375,
+      "path": "covers_ai_original/auto_200130_1722_1792.ai-bg.cpa-image-edit.png",
+      "sha256": "dcb39f99f33489a8c2c18c6a4e5d50579d50fb7e7e3e693b5d8c7ac3438b979a"
+    },
+    {
+      "bytes": 7219,
+      "path": "review_manifest.json",
+      "sha256": "1415df4cfc4271fc67a67cc686bc28ec7f5e8fd11d723e9df416790eddf1450e"
+    }
+  ],
+  "auditor_source_sha256": "sha256:9d86f454ce634087474f56b5d3d8bc2b013772b0eb1d3452fbb313b838e2f928",
+  "blocking_issue_count": 0,
+  "issue_count": 0,
+  "issues": [],
+  "passed": true,
+  "policy_epoch": "2026-07-31.final-artifact-gates.v5",
+  "policy_fingerprint": "sha256:e76ad6652e24d32023d2df0de129368a3159ed258d9d5914ed282c005043b3ef",
+  "root": "/opt/bilive/autoslice/out/2026-08-08/auto_200130_1722_1792/replacement_recuts",
+  "schema_version": "lidousha-review-package-audit.v2"
+}

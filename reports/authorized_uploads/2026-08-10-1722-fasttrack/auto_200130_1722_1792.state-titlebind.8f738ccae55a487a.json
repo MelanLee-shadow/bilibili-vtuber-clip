@@ -1,0 +1,37 @@
+{
+ "schema_version": "fasttrack-state-titlebind-refresh.v1",
+ "candidate_id": "auto_200130_1722_1792",
+ "reason": "两轮授权标题手术(REPAIRED 链 sha256:76cd2374…)后 state 绑定字节刷新;F bind 工具前置(首绑自拒绝态)不适用于重绑,故最小手术",
+ "authority": "Ivan 2026-08-10 标题委托+F12 受话人归属立法;integrator 执行",
+ "state_before_sha256": "sha256:f4d5661063ef14aacadeb505a3d71b8fc984299524ec2e47e4adc398e7753185",
+ "state_after_sha256": "sha256:8f738ccae55a487acb4683da0cf59c1e3489adcf0ebaca292cef6814cc40146e",
+ "changed": [
+  {
+   "field": "title",
+   "before": "【李豆沙】问大家有没有发现变化，话题却拐进“宫中禁止对食”，上下位声明后还有人作证",
+   "after": "【李豆沙】话题从有没有发现变化，一路歪到宫中禁止对食"
+  },
+  {
+   "field": "summary.title",
+   "before": "【李豆沙】问大家有没有发现变化，话题却拐进“宫中禁止对食”，上下位声明后还有人作证",
+   "after": "【李豆沙】话题从有没有发现变化，一路歪到宫中禁止对食"
+  },
+  {
+   "field": "fdb.publish_sha256",
+   "before": "sha256:fd4bf019ccb9acf8e22670ea09fe5aa16ec47fbe25f4d056b29cb2fb90ef90e7",
+   "after": "sha256:f47850ffd06c149d2179bba0000865f682fdcfbeee6a6c45c53231983ae839c6"
+  },
+  {
+   "field": "fdb.record_sha256",
+   "before": "sha256:173e0a4468af7be9e92a34548f08df66f4e65fdb88465abfff7c11668f597290",
+   "after": "sha256:5fab79afabb978084ea5c3baca8c1f5a6d9d7ddda233adff217eeaf17dac0d6b"
+  },
+  {
+   "field": "summary.fasttrack_record_sha256",
+   "before": "sha256:173e0a4468af7be9e92a34548f08df66f4e65fdb88465abfff7c11668f597290",
+   "after": "sha256:5fab79afabb978084ea5c3baca8c1f5a6d9d7ddda233adff217eeaf17dac0d6b"
+  }
+ ],
+ "backup": "/opt/bilive/autoslice/state/2026-08-08.json.bak-1722titlebind-20260809T224748Z",
+ "at": "20260809T224748Z"
+}

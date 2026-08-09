@@ -290,6 +290,13 @@
       "status": "published",
       "bvid": "BV1houS6SEF3",
       "note": "8/7 真善美:wsl unblock 处方重产(61/61 逐字==,假标双零;override=rebind.87finish 086ba4ee,含 cue24 truth-replay 披露→F11)→上传 2026-08-09T22:03:20Z;QC rerun2 PASS/audit 0 blocking;证据 2026-08-10-87-finish/。"
+    },
+    {
+      "candidate_id": "auto_200130_1722_1792",
+      "recording_date": "2026-08-08",
+      "status": "published",
+      "bvid": "BV13zuX6fEwh",
+      "note": "8/8 快车道第二条(多嘉宾 speaker 拒件,Ivan A/B 真值消费):F 断供接力链(边界 floor pin a8600994+speaker v2 部署+terminal-projection 验收面 df4afed);交付字幕与 Ivan 基线逐字节(0efb9995);标题两轮手术至中性归属定稿(F12 立法适用,回执 76cd2374);audit passed/QC PASS;上传 2026-08-09T22:49Z aid=117067973921757 CID=40762673619;证据 2026-08-10-1722-fasttrack/。"
     }
   ]
 }
