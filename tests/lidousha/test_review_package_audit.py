@@ -1539,6 +1539,229 @@ def test_exact_source_pin_boundary_authority_survives_package_audit(
     }
 
 
+# 2026-08-09 auto_200130_1722_1792「对食」快车道包的真实形状：Ivan 复核区间
+# 终点钉在 67760，但新鲜栅格上最后一个闭合 cue 收在 67670，下一话题 cue
+# (36) 跨过终点。producer 用 typed reviewed_exact_interval_terminal_projection
+# 桥接这 90ms（帽 250ms）。验收面必须认这条 typed 桥，且只在桥自洽时才把
+# tail-pad 桥的 closure 下界从复核终点放宽到 snapped 闭合点。
+_TP_REVIEWED_END_MS = 67_760
+_TP_SNAPPED_END_MS = 67_670
+_TP_FINAL_START_MS = 9_630
+_TP_DRIFT_MS = 90
+_TP_DRIFT_CAP_MS = 250
+
+
+def _terminal_projection_binding(
+    *,
+    authority_sha256: str,
+    grid_sha256: str,
+    closure_text_sha256: str,
+) -> dict[str, object]:
+    return {
+        "kind": "reviewed_exact_interval_terminal_projection",
+        "cue_index": 35,
+        "cue_start_ms": 64_440,
+        "cue_end_ms": _TP_SNAPPED_END_MS,
+        "cue_text_sha256": closure_text_sha256,
+        "reviewed_endpoint_ms": _TP_REVIEWED_END_MS,
+        "terminal_drift_ms": _TP_DRIFT_MS,
+        "max_terminal_drift_ms": _TP_DRIFT_CAP_MS,
+        "crossing_witness_cue_index": 36,
+        "crossing_witness_start_ms": _TP_SNAPPED_END_MS,
+        "crossing_witness_end_ms": 69_210,
+        "crossing_witness_text_sha256": "sha256:" + "9" * 64,
+        "authority_sha256": authority_sha256,
+        "cue_grid_sha256": grid_sha256,
+    }
+
+
+def _terminal_projection_case(tmp_path: Path) -> dict[str, object]:
+    """Build the 1722-shaped source/final reviews plus its boundary audit."""
+
+    stem = "auto_200130_1722_1792.recut"
+    delivered_duration_ms = _TP_REVIEWED_END_MS - _TP_FINAL_START_MS
+    subtitle = _write(
+        tmp_path / f"{stem}.srt",
+        "1\n00:00:00,000 --> 00:00:58,130\n那我们就先这样啊\n",
+    )
+    source_review = _passing_boundary_review(
+        "auto_200130_1722_1792",
+        end_ms=_TP_REVIEWED_END_MS,
+    )
+    grid_sha256 = str(source_review["cue_grid_sha256"])
+    authority_sha256 = "sha256:" + "7" * 64
+    closure_text_sha256 = "sha256:" + "f" * 64
+    binding = _terminal_projection_binding(
+        authority_sha256=authority_sha256,
+        grid_sha256=grid_sha256,
+        closure_text_sha256=closure_text_sha256,
+    )
+    source_review["recommended_end_cue_index"] = 35
+    source_review["evidence_cue_indexes"] = [28, 29, 35, 36]
+    source_review["boundary_search_scope"] = {
+        "boundary_end_mode": "semantic_lower_bound",
+        "minimum_recommended_end_ms": _TP_REVIEWED_END_MS,
+        "max_recommended_end_ms": _TP_REVIEWED_END_MS,
+        "reviewed_exact_interval_projection": {
+            "schema_version": (
+                "reviewed-exact-interval-terminal-projection-scope.v1"
+            ),
+            "authority_sha256": authority_sha256,
+            "reviewed_endpoint_ms": _TP_REVIEWED_END_MS,
+            "max_terminal_drift_ms": _TP_DRIFT_CAP_MS,
+        },
+    }
+    source_review["recommendation_relaxations"] = [binding]
+    source_review["selected_terminal_projection_binding"] = binding
+    source_review["final_endpoint_binding"].update(
+        {
+            "recommended_end_cue_index": 35,
+            "final_closure_cue_index": 35,
+            "final_snapped_end_ms": _TP_SNAPPED_END_MS,
+            "final_start_ms": _TP_FINAL_START_MS,
+            "final_end_ms": _TP_REVIEWED_END_MS,
+            "closure_text_sha256": closure_text_sha256,
+        }
+    )
+    final_cues = parse_srt_cues(subtitle.read_text(encoding="utf-8"))
+    final_review = _passing_boundary_review(
+        "auto_200130_1722_1792",
+        end_ms=delivered_duration_ms,
+        review_scope="final_delivery",
+        source_review=source_review,
+        cue_grid_digest=cue_grid_sha256(final_cues),
+        closure_text=final_cues[-1].text,
+    )
+    record = {
+        "boundary_audit": {
+            "boundary_authority": (
+                "correlated_semantic_review_plus_deterministic_guards"
+            ),
+            "boundary_semantic_review": source_review,
+            "final_delivery_boundary_semantic_review": final_review,
+            "final_start_ms": _TP_FINAL_START_MS,
+            "final_end_ms": _TP_REVIEWED_END_MS,
+            "snapped_sentence_end_ms": _TP_SNAPPED_END_MS,
+            "delivery_coverage_lower_bound_ms": _TP_REVIEWED_END_MS,
+            "tail_pad_coverage_bridge": {
+                "status": "USED",
+                "closure_lower_bound_ms": _TP_SNAPPED_END_MS,
+                "delivery_lower_bound_ms": _TP_REVIEWED_END_MS,
+                "maximum_tail_pad_ms": 400,
+            },
+            "delivery_coverage_verification": {
+                "status": "PASS",
+                "failure": None,
+            },
+        }
+    }
+    return {
+        "stem": stem,
+        "subtitle": subtitle,
+        "record": record,
+        "source_review": source_review,
+        "final_review": final_review,
+        "binding": binding,
+    }
+
+
+def _terminal_projection_issue_codes(
+    case: dict[str, object],
+    tmp_path: Path,
+) -> set[str]:
+    issues: list[dict] = []
+    final_review = case["final_review"]
+    audit_boundary_contract(
+        issue_adder=lambda rows, code, **fields: rows.append(
+            {"code": code, **fields}
+        ),
+        issues=issues,
+        stem=str(case["stem"]),
+        record_path=tmp_path / f"{case['stem']}.record.json",
+        subtitle_path=case["subtitle"],
+        exact_final_review={"boundary_semantic_review": final_review},
+        record=case["record"],
+        story_contract={"boundary_semantic_review": final_review},
+        required=True,
+        is_song=False,
+    )
+    return {issue["code"] for issue in issues}
+
+
+def test_reviewed_terminal_projection_passes_the_1722_shaped_boundary_gate(
+    tmp_path: Path,
+):
+    case = _terminal_projection_case(tmp_path)
+
+    assert _terminal_projection_issue_codes(case, tmp_path) == set()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        # 漂移超帽：桥只在 reviewed 时序容差内成立。
+        ("terminal_drift_ms", _TP_DRIFT_CAP_MS + 1),
+        # 桥自称的帽与 scope 授权的帽必须一致。
+        ("max_terminal_drift_ms", _TP_DRIFT_CAP_MS + 1),
+        # 跨越 cue 必须紧贴闭合 cue 收尾，不能留缝。
+        ("crossing_witness_start_ms", _TP_SNAPPED_END_MS - 10),
+        # 跨越 cue 必须真的跨过复核终点。
+        ("crossing_witness_end_ms", _TP_REVIEWED_END_MS - 10),
+        # 桥必须绑到 scope 里那一份 authority。
+        ("authority_sha256", "sha256:" + "1" * 64),
+        # 桥必须绑到复核时那一张栅格。
+        ("cue_grid_sha256", "sha256:" + "2" * 64),
+        # 闭合 cue 必须就是 endpoint binding 认定的收尾 cue。
+        ("cue_index", 34),
+    ],
+)
+def test_reviewed_terminal_projection_is_fail_closed(
+    tmp_path: Path,
+    field: str,
+    value: object,
+):
+    case = _terminal_projection_case(tmp_path)
+    case["binding"][field] = value
+
+    assert _terminal_projection_issue_codes(case, tmp_path) >= {
+        "BOUNDARY_SEMANTIC_REVIEW_NOT_PASS",
+        "BOUNDARY_RECOMMENDED_END_NOT_MATERIALIZED",
+        "BOUNDARY_DELIVERY_COVERAGE_INVALID",
+    }
+
+
+def test_reviewed_terminal_projection_needs_the_crossing_cue_as_evidence(
+    tmp_path: Path,
+):
+    case = _terminal_projection_case(tmp_path)
+    case["source_review"]["evidence_cue_indexes"] = [28, 29, 35]
+
+    assert _terminal_projection_issue_codes(case, tmp_path) >= {
+        "BOUNDARY_SEMANTIC_REVIEW_NOT_PASS",
+        "BOUNDARY_RECOMMENDED_END_NOT_MATERIALIZED",
+        "BOUNDARY_DELIVERY_COVERAGE_INVALID",
+    }
+
+
+def test_reviewed_terminal_projection_does_not_relax_a_plain_short_closure(
+    tmp_path: Path,
+):
+    """没有 typed 桥时，closure 下界照旧钉在复核终点（本次移植不削弱既有谓词）。"""
+
+    case = _terminal_projection_case(tmp_path)
+    source_review = case["source_review"]
+    source_review.pop("selected_terminal_projection_binding")
+    source_review["recommendation_relaxations"] = []
+    scope = source_review["boundary_search_scope"]
+    scope.pop("reviewed_exact_interval_projection")
+
+    assert _terminal_projection_issue_codes(case, tmp_path) >= {
+        "BOUNDARY_SEMANTIC_REVIEW_NOT_PASS",
+        "BOUNDARY_RECOMMENDED_END_NOT_MATERIALIZED",
+        "BOUNDARY_DELIVERY_COVERAGE_INVALID",
+    }
+
+
 def _minimal_package(tmp_path: Path) -> Path:
     root = tmp_path / "pkg"
     (root / "subtitles").mkdir(parents=True)
