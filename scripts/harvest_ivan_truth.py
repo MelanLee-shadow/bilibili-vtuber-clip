@@ -34,7 +34,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 MARKER_LABELS = {"A": "李豆沙", "B": "连线"}
-_MARKER_RE = re.compile(r" ([AB])(?=[ \n]|$)")
+# A marker is an isolated ` A`/` B` followed by whitespace, end-of-text, or a
+# CJK punctuation mark (Ivan writes `不是 A，不是吗 B` — the marker governs the
+# text before it even when a full-width comma follows). Letters inside words
+# (`BW`/`OK`) never match because they lack the leading space.
+_MARKER_RE = re.compile(r" ([AB])(?=[ \n，。？！、）]|$)")
 _PREFIX_RE = re.compile(r"^\[([^\]]+)\] ?")
 _WS_RE = re.compile(r"\s+")
 

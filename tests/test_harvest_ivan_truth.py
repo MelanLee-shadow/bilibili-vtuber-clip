@@ -216,3 +216,22 @@ def test_harvest_merge_rejects_unmatched_deletion(tmp_path: Path) -> None:
     )
     with pytest.raises(HarvestError):
         harvest(pristine, annotated, "auto_test", "unit", timing_tolerance_ms=100)
+
+
+def test_marker_followed_by_cjk_punctuation(tmp_path: Path) -> None:
+    pristine = tmp_path / "p.srt"
+    annotated = tmp_path / "a.srt"
+    pristine.write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\n不是，不是吗\n", encoding="utf-8"
+    )
+    annotated.write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\n不是 A，不是吗 B\n", encoding="utf-8"
+    )
+    artifact = harvest(pristine, annotated, "auto_test", "unit")
+    row = artifact["cues"][0]
+    assert row["truth_segments"] == [
+        {"text": "不是", "label": "李豆沙"},
+        {"text": "，不是吗", "label": "连线"},
+    ]
+    assert row["text_changed"] is False
+    assert row["mixed"] is True

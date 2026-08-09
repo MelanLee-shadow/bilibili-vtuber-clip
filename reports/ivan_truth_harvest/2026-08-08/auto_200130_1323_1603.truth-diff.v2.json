@@ -7,9 +7,9 @@
  "generated_by": "scripts/harvest_ivan_truth.py",
  "summary": {
   "cues": 159,
-  "text_changed": 37,
+  "text_changed": 36,
   "label_changed": 157,
-  "mixed": 5,
+  "mixed": 6,
   "marked": 157,
   "merged": 1,
   "timing_tweaked": 2
@@ -2275,14 +2275,18 @@
    "machine_text": "不是，不是吗",
    "truth_segments": [
     {
-     "text": "不是 A，不是吗",
+     "text": "不是",
+     "label": "李豆沙"
+    },
+    {
+     "text": "，不是吗",
      "label": "连线"
     }
    ],
-   "truth_text": "不是 A，不是吗",
-   "text_changed": true,
+   "truth_text": "不是 ，不是吗",
+   "text_changed": false,
    "label_changed": true,
-   "mixed": false,
+   "mixed": true,
    "marked": true
   },
   {
