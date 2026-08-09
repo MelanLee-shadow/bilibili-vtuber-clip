@@ -39,6 +39,14 @@ processing,1 talk carryover 重试 + 1 song 在队,勿打扰)。
 2. 重产完成后:审贪生怕死二分版+女同封面;上传授权与先后次序。
 (词条方向确认已不需要:由菜=PSP 官方成员经 Ivan 确认,走 crawler 修复。)
 
+**8/8 深夜进展追记**:波 8a(F1 回声环禁自证+F3 贴音优先/证据兜底)已实现合入
+`5a43ea3`(Codex sol+ultra 实现,双金丝雀 revert 验证,债务模块净减 269 行,
+全量 3188 绿)并部署 free。三片重产在 wsl 执行中(Codex driver,产物落
+wsl:~/Project/vtuber-reproduce/out/,免密 sudo/密钥/树外资产/wsl→free 直连
+均已就位;卡在 FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED 的诊断由 driver 负责,
+禁改门代码)。贪生怕死重产排波 8 封面修复后;歌 revive 待发;卡 1 已由
+Ivan 裁定结案(贴音优先/证据兜底=F3)。
+
 **接力任务队列(按序)**:
 1. **通病修复波 8**(synthesis 修复清单 F1-F8,各独立 test-gated commit+负向
    金丝雀):F1 转写回声环(final_review_auditor.py:1211-1256)、F2 代词政策
