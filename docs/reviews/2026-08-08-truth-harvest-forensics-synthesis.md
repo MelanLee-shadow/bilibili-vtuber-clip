@@ -208,3 +208,21 @@ JUDGE_KEEPS_CURRENT 保幻觉;邻句词面/draft 贴合度/chat 强度未入判)
 **F17** 会话级词面保真(打哥服/猪人梗被常识化,严禁全局 glossary 化);
 **F18** 裁决通道泄漏收口(DEFERRED_SAME_CUE 推迟即死 producer_text_pipeline.py:839;
 CPA_HISTORY_CONVERGENCE_APPLY_PROPOSED 仍无新鲜见证 exact_final_convergence.py:805-813)。
+
+## 8/9 追加:F19 歌名语义验证 + 歌姬 tag/标题功能(Ivan 两道新指令)
+
+**F19(Ivan 原话逐字)**:「紧急修复完了之后你可以跟所有修复流水线的工作一起探究，
+为什么这个歌曲名会被听错，取法证，并且在法证的基础上你要想好怎么修复，我认为这个
+应该包含在语义修复里，就是明明整个语境也提到了这首歌的歌曲大意是什么，那么自然就
+可以搜一下这个歌词，看看和李豆沙的描述是否一致，这是个很简单的验证方法，然后再
+继续出其他切片。」
+案:BV1Bau16nEyq 字幕把歌曲「ラブコード」听成 LoveLive!(franchise 名),
+三处 cue;标题引的歌词行「请感受穿越屏幕的热烈,再一次爱上我吧」本身就可反查歌词
+命中正主。修法方向=song-name pin 层加歌词检索交叉验证(候选歌名→歌词库/搜索→
+与主播复述的歌词/大意比对),法证待做(entity_verdicts/song-name-pin 回执)。
+
+**歌姬 tag/标题功能(Ivan 原话)**:「提到了战斗吧歌姬，tag里应该提到，还有就是，
+标题也应该提到歌姬，不过这是你后面放在流水线应有的功能考虑的」——内容里出现的
+重要 IP/节目名应进 tags(政策面:通用可搜词与专名正主的边界按 upload_tag_policy
+扩)与标题选材信号。BV18Gu16NEcX 本次为 Ivan 手定标题+手工 tag(登记在
+manual_title_overrides);流水线化与 F19 同批设计。
