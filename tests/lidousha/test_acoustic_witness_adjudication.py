@@ -227,21 +227,22 @@ def test_judge_can_reject_a_malformed_closed_set_without_mutating_text():
     assert audit["judge"]["choice"] == "NEITHER"
 
 
-def test_judged_proposed_owns_decision_when_pinyin_witness_disagrees():
-    # CPA sees the dictation and still says PROPOSED; the witness cannot veto.
+def test_judged_proposed_needs_support_when_pinyin_witness_disagrees():
+    # Ivan 2026-08-08：CPA 仍终裁，但无第三方结构化证据不得背离耳朵。
     repaired, branch, audit = adjudicate_with_witness(
         check_request=CHECK_REQUEST,
         witness=_witness("hai mei you ge za ne"),
         llm_call=lambda prompt: json.dumps({"choice": "PROPOSED"}),
     )
-    assert repaired is True
-    assert branch == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
+    assert repaired is False
+    assert branch == "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
     assert audit["witness_diagnostic_conflict"] is True
+    assert audit["witness_conflict_gate"]["status"] == "BLOCK"
     compat = audit["pinyin_compatibility"]
     assert compat["current"] > compat["proposed"]
 
 
-def test_850_cpa_choice_is_not_overturned_by_equal_low_pinyin_scores():
+def test_equal_low_pinyin_scores_need_structured_support_to_apply():
     request = {
         **CHECK_REQUEST,
         "current_cue": "请问什么打不过这 NPC",
@@ -257,8 +258,8 @@ def test_850_cpa_choice_is_not_overturned_by_equal_low_pinyin_scores():
         llm_call=lambda _prompt: json.dumps({"choice": "PROPOSED"}),
     )
 
-    assert repaired is True
-    assert branch == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
+    assert repaired is False
+    assert branch == "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
     assert audit["pinyin_compatibility"]["current"] == audit[
         "pinyin_compatibility"
     ]["proposed"]
@@ -313,10 +314,10 @@ def test_judge_verdict_cache_round_trip(tmp_path, monkeypatch):
     assert calls["n"] == 5
 
 
-def test_self_inconsistent_witness_cannot_veto_judge_choice():
+def test_self_inconsistent_witness_still_needs_third_party_support():
     """刘若莎案（2026-07-27，BV1ec3A6bEWF）：听写自称 14 音节却写出对不上
-    的拼音串（self_count_mismatch），其拼音门仍把 judge 排序选中的「李豆沙」
-    压回「刘若莎」发布。自不一致的测量没有否决权——judge 的选择生效。"""
+    的拼音串（self_count_mismatch）。8/8 裁定补足边界：证人并非最终票，
+    但 CPA 背离它仍需第三方结构化证据，不能只凭语义重投一次。"""
 
     witness = {**_witness("hai mei you ge za ne"), "self_count_mismatch": True}
     repaired, branch, _ = adjudicate_with_witness(
@@ -324,10 +325,10 @@ def test_self_inconsistent_witness_cannot_veto_judge_choice():
         witness=witness,
         llm_call=lambda prompt: json.dumps({"choice": "PROPOSED"}),
     )
-    assert repaired is True
-    assert branch == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
+    assert repaired is False
+    assert branch == "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
 
-    # 删除类同样由看过证据的 CPA 拍板；AGY 自一致也不等于最终票。
+    # 删除类亦不得靠无结构化证据的语义裁决背离耳朵。
     request = {
         **CHECK_REQUEST,
         "current_cue": "我草，乱说的啊",
@@ -342,8 +343,8 @@ def test_self_inconsistent_witness_cannot_veto_judge_choice():
                  "self_count_mismatch": True},
         llm_call=lambda prompt: json.dumps({"choice": "PROPOSED"}),
     )
-    assert kept is True
-    assert branch == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
+    assert kept is False
+    assert branch == "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
 
 
 def test_judged_proposed_with_agreeing_pinyin_applies():
@@ -527,14 +528,14 @@ def test_acoustic_delete_demands_clear_pinyin_win():
     )
     assert repaired is True and branch == "WITNESS_JUDGE_APPLY_PROPOSED"
 
-    # Even conflicting pinyin cannot override CPA's explicit closed-set choice.
+    # A conflicting witness plus no independent support keeps CURRENT.
     repaired, branch, _ = adjudicate_with_witness(
         check_request=request,
         witness=_witness("wo cao luan shuo de a"),
         llm_call=lambda prompt: json.dumps({"choice": "PROPOSED"}),
     )
-    assert repaired is True
-    assert branch == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
+    assert repaired is False
+    assert branch == "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
 
 
 def test_judge_prompt_carries_witness_and_closed_set():

@@ -279,8 +279,8 @@ def sanitize_chat_display_text(text: str, *, max_chars: int = 500) -> str:
     return value[:max_chars].strip()
 
 
-def load_referent_groups(path: str | Path) -> list[ReferentGroup]:
-    """Load canonical/surface-aware mutually-confusable entity groups."""
+def load_referent_groups(path: str | Path, *, include_singletons: bool = False) -> list[ReferentGroup]:
+    """Load confusable groups; optionally expose singleton surface registries."""
 
     try:
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -328,7 +328,7 @@ def load_referent_groups(path: str | Path) -> list[ReferentGroup]:
             )
             parsed.append(ReferentEntity(canonical, tuple(surfaces), readings))
         canonicals = {entity.canonical.lower() for entity in parsed}
-        if len(parsed) >= 2 and len(canonicals) == len(parsed):
+        if len(parsed) >= (1 if include_singletons else 2) and len(canonicals) == len(parsed):
             raw_keep = row.get("uncertain_keep_canonicals") or []
             keep = tuple(
                 dict.fromkeys(

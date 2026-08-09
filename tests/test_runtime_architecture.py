@@ -41,7 +41,9 @@ FUNCTION_DEBT_LEDGER = {
     ("src/autoslice/cover_repair.py", "_roll_forward_prepared_cover_transactions"): 346,
     # 764 行，全场最重的一项，已单列 bounded 拆解 task。
     ("src/autoslice/final_review_auditor.py", "adjudicate_context_finding"): 764,
-    ("src/autoslice/final_review_auditor.py", "audit_final_subtitles"): 407,
+    # 2026-08-08 +12:Ivan 8/8 真值法证 F1 回声环修复(synthesis)——
+    # 只接入登记误听面分类、弱 provenance 与声学路由；分类器在新小模块。
+    ("src/autoslice/final_review_auditor.py", "audit_final_subtitles"): 419,
     ("src/autoslice/producer_boundary_resolution.py", "_repair_boundary"): 305,
     ("src/autoslice/producer_package_finalization.py", "_materialize_final_recut"): 320,
     # 2026-08-08 +3：owned_intervals 执法接线（Ivan 2026-08-08 配额上传波
@@ -176,7 +178,9 @@ MODULE_DEBT_LEDGER = {
     # tests/test_final_review_auditor.py::
     # test_glossary_candidate_with_registered_misheard_direction_wins_witness_conflict、
     # test_glossary_candidate_with_bound_structured_chat_support_wins_witness_conflict。
-    "src/autoslice/final_review_auditor.py": 3_611,
+    # 2026-08-08 净 -269：F3 三逃生口纯判定抽到 candidate_support.py，
+    # 同时接入 Ivan 8/8 真值法证 F1 回声环修复；锁定拆解后的模块收益。
+    "src/autoslice/final_review_auditor.py": 3_342,
     "src/autoslice/live_source_review.py": 2_035,
     # 2026-08-07 +18：狍哥案实施指令（同上）——marker 选择改判
     # SOURCE_FACT_REPAIRED_RESCORE_REQUIRED + 写 pending sidecar。

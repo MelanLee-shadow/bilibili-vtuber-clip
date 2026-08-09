@@ -1476,7 +1476,7 @@ def test_exact_release_self_heals_a_bootstrapped_missing_candidate():
     assert repairs[0]["decision_authority"] == "CPA_JUDGE"
 
 
-def test_missing_candidate_allows_bounded_full_cue_garbage_replacement():
+def test_missing_candidate_without_structured_support_keeps_current_on_conflict():
     source = _srt(
         "那咱算不算？咱",
         "烦 嗯 烦死人了下 はい りっちゃん",
@@ -1511,8 +1511,12 @@ def test_missing_candidate_allows_bounded_full_cue_garbage_replacement():
         judge_llm_call=cpa,
     )
 
-    assert "嗯，咱有点像あたし" in output
-    assert audit["repaired"] is True
+    assert output == source
+    assert audit["repaired"] is False
+    assert audit["policy_branch"] == (
+        "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
+    )
+    assert audit["witness_judge"]["witness_conflict_gate"]["status"] == "BLOCK"
     assert audit["proposal_bootstrap"]["bounded_full_cue_repair"] is True
     assert audit["proposal_bootstrap"]["mutation_authorized"] is False
     assert audit["rebuilt_finding"]["span_start_codepoint"] == 0
@@ -1588,9 +1592,8 @@ def test_glossary_candidate_cannot_win_bare_witness_conflict_on_semantics_alone(
     「语境更通顺」为由选中 PROPOSED（生产实况 p=0.96），把真实听写（AGY
     refine 与 fidelity guard 双双给出「偶遇」）顶替成误听「殉情」。此案没有
     任何 declared respell / strict homophone / ascii 发音键等正向文字证据
-    （``orthography_ambiguous`` 应为 False），glossary 候选必须记
-    ORTHOGRAPHY_NOT_DECIDABLE 并保留原字幕，不得让语义合理性单独盖过拼音
-    冲突。"""
+    （``orthography_ambiguous`` 应为 False），F3 通用门必须记无支持并保留
+    原字幕，不得让语义合理性单独盖过拼音冲突。"""
 
     source = _srt("你知道我要偶遇啊！偶遇")
     finding = {
@@ -1621,7 +1624,7 @@ def test_glossary_candidate_cannot_win_bare_witness_conflict_on_semantics_alone(
     assert "殉情" not in output
     assert audit["repaired"] is False
     assert audit["policy_branch"] == (
-        "GLOSSARY_CANDIDATE_WITNESS_CONFLICT_ORTHOGRAPHY_NOT_DECIDABLE"
+        "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
     )
     assert audit["orthography_ambiguous"] is False
 
@@ -2945,7 +2948,11 @@ def test_semantic_trigger_prefers_danmaku_pool_before_frames():
         judge_llm_call=_judge("PROPOSED"),
         clip_context={
             "structured_chat": [
-                {"sender": "观众A", "text": "魔涯号营来啦"},
+                {
+                    "sender": "观众A",
+                    "text": "魔涯号营来啦",
+                    "source_sha256": "a" * 64,
+                },
                 {"sender": "观众B", "text": "今天天气不错"},
             ]
         },

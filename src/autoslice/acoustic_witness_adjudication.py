@@ -10,8 +10,8 @@ poor for discourse reasoning. This module splits the roles:
   no hanzi allowed out;
 - word choice is reasoned by the CPA judge (gpt-5.6-sol) from the CLOSED
   candidate set with wide subtitle context;
-- code — not any model — enforces that the judged choice stays compatible
-  with the witnessed pinyin. Every layer fails toward keeping current text.
+- code — not any model — enforces that a pinyin-incompatible PROPOSED carries
+  registered or independently bound support. Every layer fails toward CURRENT.
 
 No acoustic/text witness may choose the delivered text.  A non-operator
 mutation must carry a CPA ``PROPOSED`` verdict; witness confidence and typed
@@ -29,6 +29,11 @@ import re
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from src.autoslice.candidate_support import (
+    orthography_ambiguous,
+    registered_misheard_direction,
+    structured_text_support,
+)
 from src.autoslice.llm_client import extract_json_object
 
 try:  # 生产已装（song_name_pin/T1 同款可选依赖）；缺失时拼音校验不可用 → fail closed
@@ -40,6 +45,9 @@ except Exception:  # pragma: no cover - environment-dependent
 WITNESS_REQUEST_SCHEMA = "subtitle-span-acoustic-witness-request.v1"
 ADJUDICATION_SCHEMA = "acoustic-witness-adjudication.v1"
 INAUDIBLE_DECISION_CONTRACT = "inaudible-current-proposed-drop.v1"
+WITNESS_CONFLICT_UNSUPPORTED_PROPOSED = (
+    "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
+)
 
 # Retained as a diagnostic threshold; CPA, not the witness, owns the decision.
 MIN_CHOICE_COMPATIBILITY = 0.55
@@ -559,6 +567,7 @@ def pinyin_compatibility(
     return (2.0 * effective) / (len(candidate) + len(heard))
 
 
+# 2026-08-08 Ivan「贴音优先、证据兜底」裁定（卡1结案，synthesis 文档）。
 _JUDGE_PROMPT = """# 字幕选字裁决（闭集）
 
 你是字幕修复的最终选字法官。一名听写证人已经把目标区间的音节按拼音记录如下；
@@ -566,22 +575,23 @@ _JUDGE_PROMPT = """# 字幕选字裁决（闭集）
 「拼音证据 + 语境」的候选。铁律：
 
 1. {choice_rule}
-2. 拼音证据是高可信辅助，不拥有最终裁决权。先判断这串拼音是否真的覆盖目标
+2. 依据 Ivan 2026-08-08 裁定，裁决必须优先在与证人听写拼音相容的候选内选择；PROPOSED 与听写明显不相容且无独立结构化证据时选择 CURRENT。
+3. 拼音证据是高可信辅助，不单独拥有最终裁决权。先判断这串拼音是否真的覆盖目标
    整句；若它明显只听到邻句、半句或错位片段，必须在理由中披露错位，并由你
    结合完整语境在闭集内定夺，不能因为 AGY 与两个候选都不齐就机械选 NEITHER。
-3. 语境（前后句、弹幕、平行句）在拼音无法区分候选、听写证据被标记为
+4. 语境（前后句、弹幕、平行句）在拼音无法区分候选、听写证据被标记为
    受污染/不可用、或拼音与两个候选都显示窗口错位时，可以在闭集内定夺。
    只有两个候选本身都不完整/不通顺，确实需要第三个候选时才选 NEITHER。
-4. 目标区间外出现过相同词语，本身不证明目标区间内说了它；但相邻句对同一
+5. 目标区间外出现过相同词语，本身不证明目标区间内说了它；但相邻句对同一
    词的重复、呼应或应答，可作为闭集内选择的佐证——仍绝不引入闭集外新字。
-5. 真实的中英/中日混杂是存在的（Ivan 2026-07-26）：外语候选若在语境中
+6. 真实的中英/中日混杂是存在的（Ivan 2026-07-26）：外语候选若在语境中
    **语义通顺**，应正常参与裁决、可以当选；只有当外语读法在语境里根本
    不通顺、而拼音证据又与中文候选相容时，才判定为中文被拉丁化误转写、
    选择中文候选。分辨的根本理由是语义，不是文字系统。
-6. 「绑定文字证据」只证明候选的规范写法，不单独证明目标区间说了它。若
+7. 「绑定文字证据」只证明候选的规范写法，不单独证明目标区间说了它。若
    拼音/语篇确认目标指向该实体或原文，必须采用其规范写法；AGY、ASR、
    glossary、roster、弹幕、OCR 都只是证据，最终闭集选择仍由你作出。
-7. 证人状态为 UNCERTAIN 时表示 AGY 本轮没有提供可用听音；这不剥夺你的
+8. 证人状态为 UNCERTAIN 时表示 AGY 本轮没有提供可用听音；这不剥夺你的
    最终裁决权。必须忽略缺失的拼音、仅根据闭集、完整语境和绑定文字证据
    排序 CURRENT / PROPOSED / NEITHER，不得因为 AGY 不可用而拒绝裁决。
 
@@ -886,6 +896,7 @@ def adjudicate_with_witness(
     witness: Mapping[str, Any],
     llm_call: Callable[[str], str] | None,
     structured_chat_context: str = "",
+    clip_context: Mapping[str, object] | None = None,
 ) -> tuple[bool, str, dict[str, Any]]:
     """Fuse optional AGY evidence with CPA-owned closed-set word choice."""
 
@@ -1015,8 +1026,34 @@ def adjudicate_with_witness(
     )
     audit["witness_diagnostic_conflict"] = witness_conflict
     if witness_conflict:
-        # CPA already received the witness, closed candidate set and context.
-        # AGY pinyin remains a diagnostic, including for deletion proposals,
-        # but cannot overturn CPA's explicit PROPOSED choice.
+        # 2026-08-08 Ivan 卡1结案：贴音优先；背离耳朵必须有第三方结构化证据。
+        suspect = str(check_request.get("suspect") or "")
+        replacement = str(check_request.get("replacement") or "")
+        support = {
+            "orthography_ambiguous": orthography_ambiguous(
+                current_cue=str(check_request.get("current_cue") or ""),
+                proposed_cue=str(check_request.get("proposed_cue") or ""),
+                suspect=suspect,
+                replacement=replacement,
+            ),
+            "registered_direction": registered_misheard_direction(
+                suspect=suspect, replacement=replacement
+            ),
+            "structured_text_support": structured_text_support(
+                candidate_provenance=check_request.get("candidate_provenance"),
+                replacement=replacement,
+                proposed_cue=str(check_request.get("proposed_cue") or ""),
+                clip_context=clip_context,
+            ),
+        }
+        supported = any(support.values())
+        audit["witness_conflict_gate"] = {
+            "schema_version": "witness-conflict-proposed-support.v1",
+            "status": "PASS" if supported else "BLOCK",
+            **support,
+            "reason_code": None if supported else WITNESS_CONFLICT_UNSUPPORTED_PROPOSED,
+        }
+        if not supported:
+            return False, WITNESS_CONFLICT_UNSUPPORTED_PROPOSED, audit
         return True, "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT", audit
     return True, "WITNESS_JUDGE_APPLY_PROPOSED", audit

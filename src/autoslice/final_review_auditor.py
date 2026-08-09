@@ -42,6 +42,11 @@ from src.autoslice.acoustic_witness_adjudication import (
     valid_inaudible_witness_override,
     valid_witness_evidence,
 )
+from src.autoslice.candidate_support import (
+    bound_structured_chat_surface as _bound_structured_chat_surface,
+    orthography_ambiguous as _candidate_orthography_ambiguous,
+    orthography_pronunciation_key as _orthography_pronunciation_key,
+)
 from src.autoslice.glossary_expected_value import glossary_expected_value_gate
 from src.autoslice.final_review_schema_retry import (
     detailed_invalid_finding_diagnostics,
@@ -63,6 +68,7 @@ from src.autoslice.source_subtitle_truth import (
 from src.autoslice.subtitle_fidelity import (
     _homophone_equal,
 )
+from src.autoslice.transcript_echo import confusable_transcript_echo
 
 MAX_FINDINGS = 24
 MAX_CONTEXT_ADJUDICATIONS = 12
@@ -115,57 +121,6 @@ def _pinyin_similarity(a: str, b: str) -> float:
     return SequenceMatcher(
         None, " ".join(_lazy_pinyin(a)), " ".join(_lazy_pinyin(b))
     ).ratio()
-
-
-# Spoken Mandarin letter names.  This table is not an entity dictionary: it is
-# used only to compare the pronunciation of an already source-backed proposal
-# with the current cue.  In particular, 南町's canonical nickname ``大N`` is
-# normally spoken ``大恩``; an acoustic model must not veto the canonical
-# grapheme merely because it reports the spoken letter name.
-_LATIN_LETTER_PRONUNCIATION = {
-    "a": "ei", "b": "bi", "c": "xi", "d": "di", "e": "yi",
-    "f": "ai fu", "g": "ji", "h": "ei chi", "i": "ai", "j": "jie",
-    "k": "kei", "l": "ai le", "m": "ai mu", "n": "en", "o": "ou",
-    "p": "pi", "q": "kiu", "r": "a er", "s": "ai si", "t": "ti",
-    "u": "you", "v": "wei", "w": "da bu liu", "x": "ai ke si",
-    "y": "wai", "z": "zei",
-}
-
-
-def _orthography_pronunciation_key(text: str) -> tuple[str, ...]:
-    """Return a conservative toneless pronunciation key.
-
-    Punctuation is ignored and adjacent duplicate syllables are collapsed so
-    a harmless oral restart (``大大恩``) can compare equal to canonical
-    ``大N``.  This key is never sufficient provenance for a repair; the caller
-    additionally requires a source-backed entity candidate.
-    """
-
-    if not text or _lazy_pinyin is None:
-        return ()
-    tokens: list[str] = []
-    han_buffer: list[str] = []
-
-    def flush_han() -> None:
-        if han_buffer:
-            tokens.extend(str(value).casefold() for value in _lazy_pinyin("".join(han_buffer)))
-            han_buffer.clear()
-
-    for char in text:
-        if char.isascii() and char.isalpha():
-            flush_han()
-            tokens.extend(_LATIN_LETTER_PRONUNCIATION[char.casefold()].split())
-        elif char.isalnum():
-            han_buffer.append(char)
-        else:
-            flush_han()
-    flush_han()
-    collapsed: list[str] = []
-    for token in tokens:
-        normalized = re.sub(r"[^a-z0-9üv]", "", token.casefold())
-        if normalized and (not collapsed or collapsed[-1] != normalized):
-            collapsed.append(normalized)
-    return tuple(collapsed)
 
 
 _BOUND_ORTHOGRAPHY_PROVENANCE_KINDS = frozenset(
@@ -225,36 +180,6 @@ def _latin_proposal_cue_support(
             if token not in current_folded:
                 support.setdefault(token, set()).add(cue_index)
     return {token: frozenset(indexes) for token, indexes in support.items()}
-
-
-def _bound_structured_chat_surface(
-    candidate_context: Mapping[str, object] | None,
-    surface: str,
-) -> dict[str, object] | None:
-    """Return a source-bound chat witness for an exact ASCII lexical token."""
-
-    if not isinstance(candidate_context, Mapping) or not surface:
-        return None
-    rows = candidate_context.get("structured_chat")
-    if not isinstance(rows, list):
-        return None
-    pattern = re.compile(
-        rf"(?<![A-Za-z0-9_]){re.escape(surface)}(?![A-Za-z0-9_])",
-        re.IGNORECASE,
-    )
-    for row in rows:
-        if not isinstance(row, Mapping):
-            continue
-        source_sha256 = str(row.get("source_sha256") or "")
-        text = str(row.get("text") or row.get("message") or "")
-        if re.fullmatch(r"[0-9a-f]{64}", source_sha256) and pattern.search(text):
-            return {
-                "kind": "structured_chat_bound",
-                "surface": surface,
-                "source_sha256": source_sha256,
-                "source_event_id": str(row.get("source_event_id") or "") or None,
-            }
-    return None
 
 
 def _latin_candidate_support_for_edit(
@@ -323,218 +248,12 @@ def _orthography_ambiguous(
 ) -> bool:
     """Whether audio cannot determine the changed written surface."""
 
-    if _declared_respell_edit(current_cue, proposed_cue):
-        return True
-    suspect = str(finding.get("suspect") or "")
-    suggestion = str(finding.get("suggestion") or "")
-    if (
-        suspect
-        and suggestion
-        and _homophone_equal(suspect, suggestion)
-    ):
-        return True
-    current_key = _orthography_pronunciation_key(current_cue)
-    proposed_key = _orthography_pronunciation_key(proposed_cue)
-    return bool(current_key and current_key == proposed_key)
-
-
-_GLOSSARY_WITNESS_CONFLICT_BRANCH = "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
-GLOSSARY_CANDIDATE_ORTHOGRAPHY_NOT_DECIDABLE = (
-    "GLOSSARY_CANDIDATE_WITNESS_CONFLICT_ORTHOGRAPHY_NOT_DECIDABLE"
-)
-
-
-def _registered_misheard_direction(*, suspect: str, replacement: str) -> bool:
-    """Whether ``suspect -> replacement`` is a source-registered ASR-mishearing
-    direction, not just an incidental glossary lookup hit.
-
-    Directional only (授权保向铁律，见
-    ``docs/memory/lidousha-entity-authority-directional``): the reverse pair
-    does not escape. Covers both the strict respell whitelist
-    (``respell_pairs``, e.g. 林墨→礼墨, and entity_confusables.json surfaces
-    such as 提莫熊/kimo熊→kmx — pronunciation-identical or entity-confusable
-    rewrites) and the wider expected-value misheard-surface registry
-    (``expected_value_respell_pairs``, e.g. glossary.txt-only kmx surfaces
-    停放熊/康姆叉/卡姆西/开姆克斯→kmx that are *not* in entity_confusables.json
-    and therefore not in the strict respell set). Both sets must be checked —
-    this is the concrete gap the 2026-08-07 regression correction closes
-    (see ``_glossary_session_candidate_undecidable``).
-    """
-
-    if not suspect or not replacement:
-        return False
-    try:
-        from src.autoslice.term_authority import (
-            expected_value_respell_pairs,
-            respell_pairs,
-        )
-
-        pair = (suspect, replacement)
-        return pair in respell_pairs() or pair in expected_value_respell_pairs()
-    except Exception:
-        return False
-
-
-def _glossary_candidate_structured_text_support(
-    *,
-    replacement: str,
-    provenance_surface: str,
-    proposed_cue: str,
-    clip_context: Mapping[str, object] | None,
-) -> bool:
-    """Whether independent structured text already witnesses this candidate.
-
-    Two admitted sources, both outside the acoustic channel and both already
-    used elsewhere in this module as positive text authority: a sha256-bound
-    danmaku/SC row that literally contains the candidate's registered
-    ``candidate_provenance.surface`` (the bare glossary term, e.g. ``殉情``)
-    or the raw ``replacement`` span (the padded/reduplicated near-homophone
-    window, e.g. ``殉情啊！殉情`` — kept as a fallback for candidates whose
-    surface is not separately recorded) via ``_bound_structured_chat_surface``
-    (the same check ``_latin_candidate_support_for_edit`` uses); or an
-    operator-registered exact-cue canon (``term_authority.exact_cue_canons``)
-    that already covers the full proposed cue verbatim.
-    """
-
-    for surface in (provenance_surface, replacement):
-        if surface and _bound_structured_chat_surface(clip_context, surface) is not None:
-            return True
-    if proposed_cue:
-        try:
-            from src.autoslice.term_authority import exact_cue_canons
-
-            return proposed_cue in exact_cue_canons()
-        except Exception:
-            return False
-    return False
-
-
-def _glossary_session_candidate_undecidable(
-    *,
-    repaired: bool,
-    policy_branch: str,
-    orthography_ambiguous: bool,
-    registered_direction: bool,
-    structured_text_support: bool,
-    finding: Mapping[str, Any],
-) -> bool:
-    """Session/theme glossary candidates must not win a bare witness conflict.
-
-    2026-08-07 auto_203735_555_680 cue59 实案：候选「殉情」来自 game-glossary
-    注入（``candidate_provenance.kind == "glossary"``，鹅鸭杀恋人机制词），核心
-    候选词与真值「偶遇」的无调拼音相似度仅 ~0.31（远低于本文件近音门槛
-    0.45），候选-盲拼音证人也自认覆盖错位；但 CPA judge 仍以「语境更通顺」
-    为由判 PROPOSED（p=0.96），把真实听写 (agy_refined 与 fidelity guard
-    双双给出「偶遇」) 顶替成误听。「殉情」在任何词表里都没有登记为「偶遇」
-    的误听方向，也没有独立结构化文字（弹幕/SC/exact-cue）支持——纯粹是
-    session/game 词表按语义合理性单方面压过两路独立听写，这才是本门要拦
-    截的失败模式。
-
-    **2026-08-07 Ivan 收窄修正（回归风险）**：本门首版把
-    ``candidate_provenance.kind == "glossary"`` 本身当拦截条件，过宽——历史
-    上大量案例正是靠 glossary/roster 登记的误听方向（kmx 系「停放熊」等、
-    林墨→礼墨、大恩→大N 等）在证人证据本身破碎/错位时正确顶替声学证据，
-    这是 ASR 局限下的既有设计，不能被本门连坐拦掉。收窄后拦截需要**同时**
-    满足：(a) 无正向 orthography 证据（``orthography_ambiguous``，同音/
-    ascii 发音键/已声明 respell）；(b) 无已注册误听方向
-    （``registered_direction`` —— ``respell_pairs()`` 或
-    ``expected_value_respell_pairs()`` 中登记的 ``(suspect, replacement)``
-    有向对，kmx 类误听面走的正是后者，前一版没查所以会被误拦）；(c) 无独立
-    结构化文字支持（``structured_text_support`` —— sha 绑定弹幕/SC 命中该
-    替换词，或 proposed cue 命中已登记 exact-cue canon）。三者任一为真都
-    放行，只有三者皆缺、纯靠 judge 语义盖过声学冲突时才拦截并记
-    ORTHOGRAPHY_NOT_DECIDABLE、保留原字幕。cue59 的「殉情」三者皆缺，仍然
-    照旧拦截。
-    """
-
-    if not repaired or policy_branch != _GLOSSARY_WITNESS_CONFLICT_BRANCH:
-        return False
-    if orthography_ambiguous or registered_direction or structured_text_support:
-        return False
-    provenance = finding.get("candidate_provenance")
-    return isinstance(provenance, Mapping) and provenance.get("kind") == "glossary"
-
-
-def _adjudicate_with_glossary_witness_guard(
-    *,
-    check_request: Mapping[str, Any],
-    witness: Mapping[str, Any],
-    llm_call: Callable[[str], str] | None,
-    structured_chat_context: str = "",
-    clip_context: Mapping[str, object] | None = None,
-) -> tuple[bool, str, dict[str, Any]]:
-    """``adjudicate_with_witness`` plus the glossary/witness-conflict guard.
-
-    Same call signature as ``adjudicate_with_witness`` (a drop-in rename at
-    both call sites) plus one optional ``clip_context`` kwarg — both call
-    sites are inside ``adjudicate_context_finding`` where ``clip_context`` is
-    already a parameter in scope, so this does not grow
-    ``adjudicate_context_finding`` itself (already on the function-line debt
-    ledger at 764 lines, tests/test_runtime_architecture.py). ``check_request``
-    always carries ``candidate_provenance``, ``suspect``/``replacement`` and
-    ``current_cue``/``proposed_cue`` (``build_context_adjudication_request``),
-    which is everything ``_orthography_ambiguous`` and the glossary guard
-    need.
-    """
-
-    repaired, policy_branch, witness_judge_audit = adjudicate_with_witness(
-        check_request=check_request,
-        witness=witness,
-        llm_call=llm_call,
-        structured_chat_context=structured_chat_context,
+    return _candidate_orthography_ambiguous(
+        current_cue=current_cue,
+        proposed_cue=proposed_cue,
+        suspect=str(finding.get("suspect") or ""),
+        replacement=str(finding.get("suggestion") or ""),
     )
-    suspect = str(check_request.get("suspect") or "")
-    replacement = str(check_request.get("replacement") or "")
-    request_provenance = check_request.get("candidate_provenance")
-    provenance_surface = (
-        str(request_provenance.get("surface") or "")
-        if isinstance(request_provenance, Mapping)
-        else ""
-    )
-    orthography_ambiguous = _orthography_ambiguous(
-        current_cue=str(check_request.get("current_cue") or ""),
-        proposed_cue=str(check_request.get("proposed_cue") or ""),
-        finding={"suspect": suspect, "suggestion": replacement},
-    )
-    if _glossary_session_candidate_undecidable(
-        repaired=repaired,
-        policy_branch=policy_branch,
-        orthography_ambiguous=orthography_ambiguous,
-        registered_direction=_registered_misheard_direction(
-            suspect=suspect, replacement=replacement
-        ),
-        structured_text_support=_glossary_candidate_structured_text_support(
-            replacement=replacement,
-            provenance_surface=provenance_surface,
-            proposed_cue=str(check_request.get("proposed_cue") or ""),
-            clip_context=clip_context,
-        ),
-        finding=check_request,
-    ):
-        repaired = False
-        policy_branch = GLOSSARY_CANDIDATE_ORTHOGRAPHY_NOT_DECIDABLE
-    return repaired, policy_branch, witness_judge_audit
-
-
-def _declared_respell_edit(current_cue: str, proposed_cue: str) -> bool:
-    """Return whether this exact edit is a committed spelling rule.
-
-    A pinyin witness can prove the target was spoken, but cannot overturn a
-    registered proper-name grapheme direction such as 林墨 -> 礼墨.
-    """
-
-    try:
-        from src.autoslice.term_authority import respell_pairs
-
-        return any(
-            surface
-            and canonical
-            and surface in current_cue
-            and current_cue.replace(surface, canonical, 1) == proposed_cue
-            for surface, canonical in respell_pairs()
-        )
-    except Exception:
-        return False
 
 
 def _strict_homophone_tie(
@@ -1213,6 +932,13 @@ def audit_final_subtitles(
             other_cues = "\n".join(
                 cue.text for index, cue in enumerate(cues, start=1) if index != cue_index
             )
+            # 2026-08-08 Ivan 8/8 真值法证 F1：登记误听面不得靠同源转写
+            # 或 glossary prose 回声自证；绑定弹幕/SC 仍是独立结构化证据。
+            echo_suspected = confusable_transcript_echo(source_surface)
+            unbound_text_hit = any(
+                source_surface.casefold() in text.casefold()
+                for text in (glossary_text, structured_context_text, other_cues)
+            )
             if source_surface not in proposed:
                 if repair_class == "source_backed_entity":
                     contract_error = "ENTITY_SOURCE_SURFACE_INVALID"
@@ -1222,6 +948,8 @@ def audit_final_subtitles(
                 candidate_context, source_surface
             )) is not None:
                 provenance = bound_chat
+            elif echo_suspected is not None and unbound_text_hit:
+                provenance = echo_suspected
             elif source_surface.casefold() in glossary_text.casefold():
                 provenance = {
                     "kind": (
@@ -1267,15 +995,16 @@ def audit_final_subtitles(
                 "ledger_sha256": memory_ledger_sha256,
                 "mutation_authorized": False,
             }
-        # Another cue from the same transcript is recall context, not authority.
-        # Let it propose a
-        # closed candidate, then require the acoustic lane; otherwise one ASR
-        # spelling can circularly certify the same error elsewhere in the
-        # clip.  Glossary and structured-chat witnesses retain their existing
-        # authority because they have separate lineages.
+        # Same-transcript recall can only nominate a closed candidate.  A
+        # registered misheard surface is even weaker: it may not claim a
+        # correlated text witness, and carries its canonical/legal alternatives.
         transcript_context_candidate = bool(
             isinstance(provenance, Mapping)
             and provenance.get("kind") == "transcript_context"
+        )
+        transcript_echo_candidate = bool(
+            isinstance(provenance, Mapping)
+            and provenance.get("kind") == "transcript_echo_suspected"
         )
 
         suspect = derived_suspect if proposed_supplied else reported_suspect
@@ -1313,7 +1042,9 @@ def audit_final_subtitles(
             "candidate_provenance": provenance,
             "candidate_memory_id": candidate_memory_id or None,
             "force_acoustic": (
-                memory_candidate_valid or transcript_context_candidate
+                memory_candidate_valid
+                or transcript_context_candidate
+                or transcript_echo_candidate
             ),
             "correlated_text_witness": transcript_context_candidate,
             "span_start_codepoint": span_start if proposed_supplied else None,
@@ -2500,7 +2231,7 @@ def adjudicate_context_finding(
     witness_judge_audit: dict[str, Any] = {}
     strict_tie = _strict_homophone_tie(decision_finding, request)
     if valid:
-        repaired, policy_branch, witness_judge_audit = _adjudicate_with_glossary_witness_guard(
+        repaired, policy_branch, witness_judge_audit = adjudicate_with_witness(
             check_request=request,
             witness=verdict,
             llm_call=judge_llm_call,
@@ -2790,7 +2521,7 @@ def adjudicate_context_finding(
                             repaired,
                             policy_branch,
                             witness_judge_audit,
-                        ) = _adjudicate_with_glossary_witness_guard(
+                        ) = adjudicate_with_witness(
                             check_request=request,
                             witness=verdict,
                             llm_call=judge_llm_call,
