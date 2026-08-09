@@ -35,22 +35,31 @@ Updated: 2026-08-08 深夜 by Claude（8/7 批审阅收割/法证/重述车道�
   `docs/reviews/2026-08-09-pyannote-subwindow-pilot.md`(回搬主 repo)。
   poll `~/Project/vtuber-reproduce/logs/pyannote_pilot.log`。评测=13 混说 cue
   边界偏差+三套真值假李豆沙/假连线 vs CAM++ 基线+8/8 场可判定性。
-- **Ivan 正在标注中**(8/9 深夜进行时;标完=successor 的开工信号):8/8 三条成品(free repo `lidousha/2026-08-08/`)+ 6 份标定工作表
-  (`lidousha/2026-08-08-标定工作表/`,mp4+无标签srt,裸 A/B 语法,README 在目录)。
-  注:4 条单人场标注会很快(几乎全 A);2 条 200130 多嘉宾场才是标定重头。
+- **Ivan 标注已全部完成(2026-08-09)**:`lidousha/2026-08-07/`(已收割)与
+  `lidousha/2026-08-08-标定工作表/` 6 份(**开工信号已发,successor 立即开始**)。
+  口径:单人场他**没有做说话人标记**(未标=全李豆沙,与竖屏定律一致),但
+  **顺手改了文字准确率**——文字订正是这 6 份的主要真值;2 条 200130 多嘉宾场
+  含 A/B 说话人标记。
 
 **Ivan 审完 8/8 后的任务队列(按序)**:
-1. **收割**:成品若有订正→先归档 pristine(free out/2026-08-08/<cid>/ 非媒体 tar,
-   同 8/7 手法,存 ~/Project/vtuber-slice-forensics/2026-08-08-pristine/)→
+1. **收割(⭐Ivan 8/9 铁令,本队列的核心交付)**:先归档 pristine(free
+   out/2026-08-08/<cid>/ 非媒体 tar,同 8/7 手法,存
+   ~/Project/vtuber-slice-forensics/2026-08-08-pristine/;工作表的 pristine=
+   工作表 srt 的 free 原件 out/2026-08-08/<cid>/replacement_recuts/<cid>.recut.srt)→
    `python3 scripts/harvest_ivan_truth.py --pristine <机器稿> --annotated <Ivan稿>
    --candidate-id <cid> --authority Ivan-annotated-2026-08-09 --out
    reports/ivan_truth_harvest/2026-08-08/<cid>.truth-diff.v2.json`。
    标定工作表 6 份=无 [标签] 前缀底稿(machine_label=None 路径,解析器支持),
    pristine 即工作表自身的 free 原件。混说 cue 逐条人工核对(打印原始行 vs 解析段)。
-2. **法证**:新文字错走六连问(方法论原文在 git 历史 b854552 的 HANDOFF 节;
-   报告格式=docs/reviews/2026-08-08-forensics-*.md 三份先例;汇总进
-   2026-08-08-truth-harvest-forensics-synthesis.md 加附录)。**8/8 是首个
-   真值盲+波8a 代码的批次:订正密度 vs 8/7 的 67 处=修复效果实测数,必须算出来**。
+2. **法证(Ivan 原话逐字:「一定要看我标记后的字幕和标记前的字幕有什么区别,
+   有哪些是本应能修好的,为什么没有修好,怎么解决,一定要定位根因修复,
+   不能只修这一个切片」)**:对每处文字订正走六连问(方法论 b854552;格式先例
+   docs/reviews/2026-08-08-forensics-*.md),**必答三问**:①该错是否落在已部署
+   修复(F1回声环/F2代词/F3贴音兜底/重述车道/方向词表)的**应修范围**内?
+   ②在范围内却没修好的:哪一环失守(检测没触发/提案没进裁决/裁决判错/
+   守卫误拦),点名文件:行号;③修复只许机制级(新F项或既有F项补强+负向
+   金丝雀),**禁止单片手补**。产出:修复效果实测表(8/8 订正密度 vs 8/7 的
+   67 处基线,按错误类分桶)+失修清单+根因修复队列。汇总进 synthesis 附录。
 3. **pyannote 试点收割**:报告回搬,若赢→按报告的产线接入设计做集成任务(Codex);
    若不赢→把"不确定=连线可交付"政策延伸案提请 Ivan 复裁。
 4. **F14+F13 实现**(Codex,worktree,金丝雀,出处注记;F14 首选竖屏纵横比
