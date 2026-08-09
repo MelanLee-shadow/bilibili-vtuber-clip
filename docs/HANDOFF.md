@@ -47,6 +47,12 @@ wsl:~/Project/vtuber-reproduce/out/,免密 sudo/密钥/树外资产/wsl→free �
 禁改门代码)。贪生怕死重产排波 8 封面修复后;歌 revive 待发;卡 1 已由
 Ivan 裁定结案(贴音优先/证据兜底=F3)。
 
+**8/8 深夜 Ivan 增令**:①正常产线活(贪生怕死类)也放 wsl——free 被 8/8 批占;
+②日配额 5 篇未达(抱团 hold 后只剩 4),**直接晋升候补补位**(T1>T2 纪律:首选
+auto_210739_1695_1804 T1/75.5,备选 auto_213743_1018_1295 T2/89);③歌也走 wsl
+(若 song lane 与 runner 强耦合则退回 free 批后 revive,先探明);④8/7 所有
+剩余产出统一 wsl 出。执行=wsl Codex driver 二阶段任务(一阶段 3 片收线后发)。
+
 **接力任务队列(按序)**:
 1. **通病修复波 8**(synthesis 修复清单 F1-F8,各独立 test-gated commit+负向
    金丝雀):F1 转写回声环(final_review_auditor.py:1211-1256)、F2 代词政策
