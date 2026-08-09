@@ -2080,83 +2080,6 @@ def adjudicate_context_finding(
                 separators=(",", ":"),
             ).encode("utf-8")
         ).hexdigest()
-        cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
-        cue_index = int(finding["cue_index"])
-        live_cue = cues[cue_index - 1]
-        if hashlib.sha256(live_cue.text.encode("utf-8")).hexdigest() != request[
-            "base_text_sha256"
-        ]:
-            return srt_text, {
-                "schema_version": "subtitle-span-adjudication.v1",
-                "status": "UNCERTAIN",
-                "repaired": False,
-                "reason_code": "STALE_BASE",
-                "policy_branch": "STALE_BASE_KEEP_CURRENT",
-                "proposal_bootstrap": proposal_bootstrap_audit,
-                "cpa_missing_proposal_convergence": dict(convergence),
-                "decision_authority": "CPA_JUDGE",
-                "witness_authority": "EVIDENCE_ONLY",
-            }
-        texts = [cue.text for cue in cues]
-        texts[cue_index - 1] = str(request["proposed_cue"])
-        retained = [
-            (cue, text)
-            for cue, text in zip(cues, texts)
-            if text.strip()
-        ]
-        output = "\n".join(
-            f"{index}\n{_ms(cue.start_ms)} --> {_ms(cue.end_ms)}\n{text}\n"
-            for index, (cue, text) in enumerate(retained, start=1)
-        )
-        return output, {
-            "schema_version": "subtitle-span-adjudication.v1",
-            "status": "OBSERVED",
-            "repaired": True,
-            "policy_branch": (
-                "CPA_CONTEXT_ONLY_REPLACE_WITH_EXACT_TEXT"
-            ),
-            "timing_immutable": True,
-            "request": request,
-            "verdict": {
-                "schema_version": "subtitle-span-acoustic-witness.v1",
-                "status": "NOT_REQUIRED",
-                "target_audible": None,
-                "reason_code": "CPA_CONTEXT_ONLY_FINAL_CONVERGENCE",
-            },
-            "witness_judge": {
-                "witness_status": "NOT_REQUIRED",
-                "judge": {
-                    "schema_version": "subtitle-cpa-context-judge.v1",
-                    "status": "JUDGED",
-                    "choice": "PROPOSED",
-                    "reason": convergence.get("reason"),
-                    "prompt_sha256": convergence.get("prompt_sha256"),
-                    "completion_sha256": convergence.get(
-                        "completion_sha256"
-                    ),
-                },
-            },
-            "proposal_bootstrap": proposal_bootstrap_audit,
-            "cpa_missing_proposal_convergence": dict(convergence),
-            "rebuilt_finding": dict(finding),
-            "orthography_equivalence": {"matched": False},
-            "orthography_ambiguous": False,
-            "orthography_authority": {
-                "schema_version": "subtitle-orthography-authority.v1",
-                "status": "NOT_REQUIRED",
-            },
-            "decision_authority": "CPA_JUDGE",
-            "witness_authority": "EVIDENCE_ONLY",
-            "mutation_authority": {
-                "schema_version": (
-                    "subtitle-correction-mutation-authority.v1"
-                ),
-                "status": "PASS",
-                "basis": (
-                    "CPA_CONTEXT_ONLY_EXACT_TEXT_FINAL_CONVERGENCE"
-                ),
-            },
-        }
     def _fetch_witness(
         check_request: Mapping[str, Any],
     ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -2181,6 +2104,62 @@ def adjudicate_context_finding(
         )
 
     verdict, witness_request = _fetch_witness(request)
+    convergence_rewrite = bool(
+        isinstance(convergence, Mapping)
+        and convergence.get("status") == "RESOLVED"
+        and convergence.get("decision") == "REPLACE_WITH_EXACT_TEXT"
+    )
+    witness_observed = bool(
+        valid_witness_evidence(
+            verdict,
+            request_sha256=witness_request["request_sha256"],
+        )
+        and verdict.get("status") == "OBSERVED"
+    )
+    if convergence_rewrite and not witness_observed:
+        if not verdict:
+            verdict = {
+                "schema_version": "subtitle-span-acoustic-witness.v1",
+                "request_sha256": witness_request["request_sha256"],
+                "status": "UNCERTAIN",
+                "reason_code": "CONTEXT_VERIFIER_UNAVAILABLE",
+            }
+        downgraded = dict(finding)
+        downgraded["repair_class"] = "disclosure_only"
+        provenance = downgraded.get("candidate_provenance")
+        if isinstance(provenance, Mapping):
+            downgraded["candidate_provenance"] = {
+                **provenance,
+                "mutation_authorized": False,
+            }
+        downgraded["why"] = (
+            "[语境改写缺声学证人，降为 disclosure_only] "
+            + str(downgraded.get("why") or "")
+        )[:240]
+        return srt_text, {
+            "schema_version": "subtitle-span-adjudication.v1",
+            "status": "UNCERTAIN",
+            "repaired": False,
+            "reason_code": "CONTEXT_REWRITE_ACOUSTIC_WITNESS_REQUIRED",
+            "policy_branch": (
+                "CONTEXT_REWRITE_DOWNGRADED_TO_DISCLOSURE_ONLY"
+            ),
+            "timing_immutable": True,
+            "request": request,
+            "verdict": verdict,
+            "proposal_bootstrap": proposal_bootstrap_audit,
+            "cpa_missing_proposal_convergence": dict(convergence),
+            "rebuilt_finding": downgraded,
+            "decision_authority": "CPA_PROPOSAL_ONLY",
+            "witness_authority": "ACOUSTIC_WITNESS_REQUIRED",
+            "mutation_authority": {
+                "schema_version": (
+                    "subtitle-correction-mutation-authority.v1"
+                ),
+                "status": "NOT_APPLIED",
+                "basis": "ACOUSTIC_WITNESS_NOT_OBSERVED",
+            },
+        }
     screen_read_audit: dict[str, Any] | None = None
     # 证据升级通道（Ivan 2026-07-27 424_522 1:24「战斗回合用尽」案 + 同日
     # 扩展令）：触发器 = 听不清（弱证词）∪ 语境不通（审片员立了 finding
@@ -2678,6 +2657,11 @@ def adjudicate_context_finding(
         **(
             {"proposal_bootstrap": proposal_bootstrap_audit}
             if proposal_bootstrap_audit is not None
+            else {}
+        ),
+        **(
+            {"cpa_missing_proposal_convergence": dict(convergence)}
+            if isinstance(convergence, Mapping)
             else {}
         ),
         **(

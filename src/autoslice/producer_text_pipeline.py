@@ -82,6 +82,10 @@ from src.autoslice.producer_chat_input import (
 from src.autoslice.producer_final_review_transport import (
     build_final_review_llm_call as _build_final_review_llm_call,
 )
+from src.autoslice.pronoun_consistency import (
+    CandidatePronounAuditError,
+    discover_candidate_pronoun_findings,
+)
 from src.autoslice.producer_boundary_review_stage import (
     exact_delivery_correction_audit,
     review_final_boundary_semantics,
@@ -1084,20 +1088,46 @@ def _run_exact_final_release_review(
             "validated_finding_count": 0,
         }
     try:
+        review_glossary = adapters.review_glossary()
+        candidate_context_text = clip_context_prompt_text(clip_context)
+        pronoun_findings, pronoun_audit = (
+            discover_candidate_pronoun_findings(
+                srt_text,
+                policy_text=review_glossary,
+                candidate_context_text=candidate_context_text,
+                llm_call=_build_final_review_llm_call(),
+                extract_json=extract_json_object,
+            )
+        )
+        base["candidate_pronoun_consistency_audit"] = pronoun_audit
+        priority_findings = [*pronoun_findings, *priority_raw_findings]
         findings = audit_final_subtitles(
             srt_text,
             llm_call=_build_final_review_llm_call(),
             extract_json=extract_json_object,
-            glossary_text=adapters.review_glossary(),
+            glossary_text=review_glossary,
             structured_context_text=_final_review_structured_context(
                 selection_hook=selection_hook,
                 authoritative_chat=authoritative_chat,
             ),
-            candidate_context_text=clip_context_prompt_text(clip_context),
+            candidate_context_text=candidate_context_text,
             candidate_context=clip_context,
-            extra_raw_findings=priority_raw_findings,
-            prioritize_extra_raw_findings=bool(priority_raw_findings),
+            extra_raw_findings=priority_findings,
+            prioritize_extra_raw_findings=bool(priority_findings),
         )
+    except CandidatePronounAuditError as exc:
+        return {
+            **base,
+            "status": "AUDITOR_UNAVAILABLE",
+            "release_gate": "BLOCK",
+            "reason_codes": [exc.reason_code],
+            "discovery": {
+                "status": "AUDITOR_UNAVAILABLE",
+                "detail": exc.detail,
+            },
+            "findings": [],
+            "validated_finding_count": 0,
+        }
     except FinalReviewAuditError as exc:
         return {
             **base,

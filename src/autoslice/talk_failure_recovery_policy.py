@@ -18,6 +18,7 @@ def subtitle_authority_recovery_relatives(
         "src/autoslice/producer_text_finalization.py",
         "src/autoslice/producer_package_finalization.py",
         "src/autoslice/final_review_auditor.py",
+        "src/autoslice/pronoun_consistency.py",
         "src/autoslice/final_review_contract.py",
         "src/autoslice/missing_proposal_bootstrap.py",
         "src/autoslice/producer_source_truth_authority.py",

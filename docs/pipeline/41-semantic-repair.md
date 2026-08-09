@@ -51,6 +51,13 @@
      mutation authority。候选随后必须经过 AGY 无候选盲听，再由第二轮 CPA 在
      CURRENT/PROPOSED 中最终选边；CPA 提案 `UNRESOLVED`、越界改写或第二轮未明确选择时均
      fail closed。exact-final 的合法闭集收据可按下述同轮自愈合同落字并重扫。
+     若首轮文字提案失败、第二轮 CPA 仅凭语境收敛出
+     `REPLACE_WITH_EXACT_TEXT`，该结果也仍只是候选：它必须取得 hash-bound、状态为
+     `OBSERVED` 的候选盲声学证人行后才能进入最终 CPA 闭集裁决。证人缺席、未绑定、
+     `NOT_REQUIRED` 或 `UNCERTAIN` 时保留 CURRENT，并把 finding 降为
+     `disclosure_only`；不得伪造 `NOT_REQUIRED` witness 或签 context-only mutation
+     PASS。此窄门不适用于零改字的 `KEEP_EXISTING`，也不改变下述已有完整、非语境重建
+     闭集的 infra 规则。（Ivan 2026-08-08，truth-harvest synthesis F7）
    - mixed CJK/Latin fidelity 门同样没有终审权：严格整句相似度命中可作为 verbatim 见证；
      未命中时，候选盲音频转写只作为 PROPOSED，与 CURRENT 组成闭集交 CPA。CPA 选择
      CURRENT 才能保留正常 code-switch，选择 PROPOSED 即由 mutation authority 继续校验后
@@ -174,6 +181,13 @@
   `NEITHER` 先按上述第三候选闭环重建；最多五轮有 mutation 的同轮自愈加最后一次 clean scan，
   仍无法完整重算或净空才写 carryover 并阻断，禁止为消费一个已定案修复而无条件重跑 ASR、
   封面和整片生产。
+  每轮 exact-final discovery 还必须先运行候选级代词一致性审计：代码逐 occurrence 枚举
+  `TA/他/她/它/TA们/他们/她们/它们`（含复数），CPA 对每项都返回 KEEP 或 REWRITE；
+  少行、重复、错位或单双数非法互换一律 typed BLOCK。REWRITE 只生成普通 final-review
+  finding，继续走既有 CPA mutation/self-heal 收据，审计器本身不改字。因为 self-heal 每次
+  改字后都会重扫，晚期新引入的代词也不能越过本规则；他/她、他们/她们严格同音时按 Ivan
+  2026-07-10 书面指代政策走文字语义正字车道，声学拼音不冒充性别证据。（Ivan
+  2026-08-08，truth-harvest synthesis F2）
   如果 finding 的初始 span 因改动幅度过大而没有形成 `proposed_full_cue`，但后续
   hash-bound 声学闭集请求已构造完整 `proposed_cue`、CPA 明确选中 `PROPOSED`
   且 mutation/timing 收据全部合法，同轮自愈和 carryover 必须使用该请求内的完整目标句。
@@ -213,7 +227,7 @@
 | 词表/专名权威 | `term_authority.py`、`assets/lidousha/glossary.txt`（含方言节）、`entity_confusables.json` |
 | 弹幕/SC 证据修复 | `chat_proposals.py`、`chat_repair.py`（阈值 score≥0.68/coverage≥0.60/precision≥0.52） |
 | 见证人规则 | `subtitle_fidelity.py`（通用 mutation 的候选/fidelity 门；同音/近音正字法另须 `final_review_auditor.py` 的 typed textual authority receipt） |
-| 终审审片员 | `final_review_auditor.py`（发现器；同音/近音候选、typed mutation receipt、声学仲裁路由与插入契约） |
+| 终审审片员 | `pronoun_consistency.py`（候选级代词逐项完整性回执，只发现不改字）+ `final_review_auditor.py`（发现器；同音/近音候选、typed mutation receipt、声学仲裁路由与插入契约） |
 | 最终字节放行 | `final_review_contract.py`（验 `final-review-audit.v2` 的精确 SRT hash、完整 discovery、零 finding、correction mutation audit 与 final boundary endpoint binding） |
 | 声学证人/裁决 | `entity_audio_verifier.py`（AGY 为首选高可信候选盲黑帧证人；AGY 明确失败时仅对候选盲拼音请求开放 hash-bound Gemini API 后备；只复用 AGY 成功缓存）+ `read_aloud_llm_verifier.py` / `acoustic_witness_adjudication.py`（CPA 仅看文字闭集并最终选边，任何音频 provider 都无落字权） |
 | 源真值 ledger | `source_subtitle_truth.py` + `subtitle_truth_ledger.v1.json`（Ivan 审定钉子，唯一不受 provider 故障影响的通道；已审定完整口播必须用 `replace_cue`，不能假设 ASR 仍保留待替换误词；整 cue 静音幻听用严格包含语义的 `drop_cue`，跨界即冲突停用；官方回放等替代源只能用 ledger 内显式 alias，且候选 piece 必须同时精确绑定替代源 SHA-256 与审定时间轴偏移，文件名相似不继承真值） |

@@ -56,10 +56,10 @@ _PROMPT = """# 字幕缺失候选重建（只提案，不裁决）
 {{"status":"PROPOSED"或"UNRESOLVED","proposed_cue":"单行完整候选；UNRESOLVED 时为空","reason":"一句话说明文字语境依据"}}
 """
 
-_CONVERGENCE_PROMPT = """# 字幕缺失候选最终收敛（CPA 最终裁决）
+_CONVERGENCE_PROMPT = """# 字幕缺失候选最终收敛（CPA 文字候选裁决）
 
-上一轮文字提案没有产生一个满足局部 span 合同的候选。你现在是最终文字裁决者；
-AGY 只会提供声学辅助，不能替你决定。此轮必须根据完整局部语境，在以下两个动作
+上一轮文字提案没有产生一个满足局部 span 合同的候选。你现在是文字候选裁决者；
+此轮必须根据完整局部语境，在以下两个动作
 中二选一，不能返回 UNRESOLVED：
 
 - KEEP_EXISTING：现有完整 cue 在语境中合理，保留原文。
@@ -71,7 +71,8 @@ AGY 只会提供声学辅助，不能替你决定。此轮必须根据完整局�
 3. 结构化聊天只是绑定语境，不是逐字真值；必须结合相邻消息链与 cue 上下文判断。
 4. KEEP_EXISTING 时 replacement_text 必须为空；REPLACE_WITH_EXACT_TEXT 时必须与
    CURRENT 不同，并覆盖审片员指出的 SUSPECT。
-5. 你的决定将绑定 cue/current/context/final-SRT 哈希并直接成为最终裁决。
+5. 你的决定将绑定 cue/current/context/final-SRT 哈希；REPLACE 只生成候选，
+   必须再有候选盲声学证人行并由后续 CPA 闭集裁决，不能直接授权改字。
 
 ## 哈希绑定
 - FINAL_SRT_SHA256: {final_srt_sha256}
@@ -135,10 +136,11 @@ def converge_missing_proposal(
     llm_call: Callable[[str], str] | None,
     derive_single_span_edit: Callable[..., tuple[str, str, int, int, str | None]],
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    """Force a second CPA pass to decide keep-current or exact replacement.
+    """Force a second CPA pass to decide keep-current or exact candidate.
 
-    This is the final text decision for a missing-candidate finding.  It does
-    not ask AGY to choose words.  Provider/schema failure remains fail-closed.
+    This pass does not ask AGY to choose words and never authorizes mutation.
+    A replacement still needs a typed acoustic witness row and the downstream
+    CPA closed-set decision. Provider/schema failure remains fail-closed.
     """
 
     audit: dict[str, Any] = {
@@ -298,11 +300,10 @@ def converge_missing_proposal(
             replacement = replacement_text
             start = 0
             end = len(current)
-        # Unlike the proposal layer, this is CPA's final, hash-bound decision
-        # over the complete target cue.  A local SequenceMatcher span is only
-        # audit metadata here: shared prefixes, repeated one-character
-        # suspects, or a broad exact rewrite must not let deterministic code
-        # overrule CPA and recreate a permanent suggestion=null blocker.
+        # The complete cue decision is a hash-bound candidate, not mutation
+        # authority. A local SequenceMatcher span is only audit metadata here:
+        # shared prefixes/repeated suspects must not recreate suggestion=null,
+        # while the final reviewer still requires an acoustic witness row.
         audit.update(
             status="RESOLVED",
             decision=decision,
@@ -310,7 +311,7 @@ def converge_missing_proposal(
             replacement_text_sha256="sha256:"
             + hashlib.sha256(replacement_text.encode("utf-8")).hexdigest(),
             reason=reason,
-            mutation_authorized=True,
+            mutation_authorized=False,
         )
         if full_cue_audit_fallback:
             audit["full_cue_audit_fallback"] = True
@@ -324,8 +325,8 @@ def converge_missing_proposal(
             proposed_full_cue=replacement_text,
             base_text_sha256=current_sha256,
             candidate_provenance={
-                "kind": "cpa_context_only_exact_text_convergence",
-                "mutation_authorized": True,
+                "kind": "cpa_context_exact_text_candidate",
+                "mutation_authorized": False,
                 "prompt_sha256": "sha256:" + prompt_sha256,
                 "context_sha256": "sha256:" + context_sha256,
                 "final_srt_sha256": "sha256:" + final_srt_sha256,

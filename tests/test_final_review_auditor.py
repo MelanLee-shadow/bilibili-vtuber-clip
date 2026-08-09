@@ -1227,7 +1227,7 @@ def test_missing_candidate_second_cpa_can_keep_existing_without_agy():
     assert "下班休息" in calls[1]
 
 
-def test_missing_candidate_second_cpa_exact_text_self_heals_without_agy():
+def test_missing_candidate_second_cpa_exact_text_self_heals_with_acoustic_witness():
     source = _srt("今天可以吗", "今天能多啵啵嘛", "好不好")
 
     def cpa(prompt):
@@ -1240,12 +1240,17 @@ def test_missing_candidate_second_cpa_exact_text_self_heals_without_agy():
                 },
                 ensure_ascii=False,
             )
+        if "# 字幕缺失候选最终收敛" in prompt:
+            return json.dumps(
+                {
+                    "decision": "REPLACE_WITH_EXACT_TEXT",
+                    "replacement_text": "今天能多抱抱嘛",
+                    "reason": "相邻语境是在请求抱抱",
+                },
+                ensure_ascii=False,
+            )
         return json.dumps(
-            {
-                "decision": "REPLACE_WITH_EXACT_TEXT",
-                "replacement_text": "今天能多抱抱嘛",
-                "reason": "相邻语境是在请求抱抱",
-            },
+            {"choice": "PROPOSED", "reason": "盲听与文字候选一致"},
             ensure_ascii=False,
         )
 
@@ -1261,8 +1266,8 @@ def test_missing_candidate_second_cpa_exact_text_self_heals_without_agy():
                 "why": "语境用词可疑",
             }
         ],
-        entity_verifier=lambda request: pytest.fail(
-            f"AGY must not decide exact-text convergence: {request}"
+        entity_verifier=lambda request: _witness(
+            request, "jin tian neng duo bao bao ma"
         ),
         judge_llm_call=cpa,
     )
@@ -1274,18 +1279,18 @@ def test_missing_candidate_second_cpa_exact_text_self_heals_without_agy():
     assert adjudication["repaired"] is True
     assert (
         adjudication["policy_branch"]
-        == "CPA_CONTEXT_ONLY_REPLACE_WITH_EXACT_TEXT"
+        in {
+            "WITNESS_JUDGE_APPLY_PROPOSED",
+            "CPA_SEMANTIC_ORTHOGRAPHY_TIEBREAK_APPLY_PROPOSED",
+        }
     )
     binding = adjudication["request"]["cpa_convergence_binding"]
     assert binding["final_srt_sha256"] == (
         "sha256:" + hashlib.sha256(source.encode("utf-8")).hexdigest()
     )
     assert binding["context_sha256"].startswith("sha256:")
-    assert adjudication["mutation_authority"] == {
-        "schema_version": "subtitle-correction-mutation-authority.v1",
-        "status": "PASS",
-        "basis": "CPA_CONTEXT_ONLY_EXACT_TEXT_FINAL_CONVERGENCE",
-    }
+    assert adjudication["verdict"]["status"] == "OBSERVED"
+    assert adjudication["mutation_authority"]["status"] == "PASS"
     from src.autoslice.producer_package_finalization import (
         _apply_exact_final_cpa_repairs,
     )
@@ -1312,12 +1317,17 @@ def test_exact_text_convergence_allows_shared_prefix_inside_wide_suspect():
                 },
                 ensure_ascii=False,
             )
+        if "# 字幕缺失候选最终收敛" in prompt:
+            return json.dumps(
+                {
+                    "decision": "REPLACE_WITH_EXACT_TEXT",
+                    "replacement_text": "我上次",
+                    "reason": "保留共享主语我，替换其后的误听片段",
+                },
+                ensure_ascii=False,
+            )
         return json.dumps(
-            {
-                "decision": "REPLACE_WITH_EXACT_TEXT",
-                "replacement_text": "我上次",
-                "reason": "保留共享主语我，替换其后的误听片段",
-            },
+            {"choice": "PROPOSED", "reason": "盲听支持文字候选"},
             ensure_ascii=False,
         )
 
@@ -1330,9 +1340,7 @@ def test_exact_text_convergence_allows_shared_prefix_inside_wide_suspect():
             "proposed_full_cue": None,
             "repair_class": "phonetic",
         },
-        entity_verifier=lambda request: pytest.fail(
-            f"AGY must not decide exact-text convergence: {request}"
-        ),
+        entity_verifier=lambda request: _witness(request, "wo shang ci"),
         judge_llm_call=cpa,
     )
 
@@ -1359,15 +1367,19 @@ def test_exact_text_convergence_handles_repeated_narrow_suspect():
             "repair_class": "phonetic",
             "why": "审片员只标出重复出现的单字",
         },
-        entity_verifier=lambda request: pytest.fail(
-            f"AGY must not decide exact-text convergence: {request}"
+        entity_verifier=lambda request: _witness(
+            request, "zhi nv bu shi zi nv"
         ),
-        judge_llm_call=lambda _prompt: json.dumps(
-            {
-                "decision": "REPLACE_WITH_EXACT_TEXT",
-                "replacement_text": "直女不是子女",
-                "reason": "完整 cue 语境支持后一处是子女",
-            },
+        judge_llm_call=lambda prompt: json.dumps(
+            (
+                {
+                    "decision": "REPLACE_WITH_EXACT_TEXT",
+                    "replacement_text": "直女不是子女",
+                    "reason": "完整 cue 语境支持后一处是子女",
+                }
+                if "# 字幕缺失候选最终收敛" in prompt
+                else {"choice": "PROPOSED", "reason": "盲听支持文字候选"}
+            ),
             ensure_ascii=False,
         ),
     )

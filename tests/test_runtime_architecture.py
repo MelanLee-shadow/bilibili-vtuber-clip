@@ -39,8 +39,9 @@ FUNCTION_DEBT_LEDGER = {
     ("scripts/build_lidousha_recovery_review_manifest.py", "build_manifest"): 365,
     ("scripts/run_auto_review_shadow_pipeline.py", "_run_live_source"): 316,
     ("src/autoslice/cover_repair.py", "_roll_forward_prepared_cover_transactions"): 346,
-    # 764 行，全场最重的一项，已单列 bounded 拆解 task。
-    ("src/autoslice/final_review_auditor.py", "adjudicate_context_finding"): 764,
+    # 2026-08-08 净 -16：Ivan 8/8 真值法证 synthesis F7——删除无声学
+    # context-only 直改分支，统一落回候选盲声学见证路径并锁定拆解收益。
+    ("src/autoslice/final_review_auditor.py", "adjudicate_context_finding"): 748,
     # 2026-08-08 +12:Ivan 8/8 真值法证 F1 回声环修复(synthesis)——
     # 只接入登记误听面分类、弱 provenance 与声学路由；分类器在新小模块。
     ("src/autoslice/final_review_auditor.py", "audit_final_subtitles"): 419,
@@ -115,7 +116,9 @@ FUNCTION_DEBT_LEDGER = {
 # 2026-07-31 冻结基线：12 项。同上，全部是欠账。
 MODULE_DEBT_LEDGER = {
     # 2026-08-02 +20：同上（manual run_mode 准入+署名门）。
-    "scripts/audit_lidousha_review_package.py": 2_023,
+    # 2026-08-08 +1：Ivan 8/8 真值法证 synthesis F2——候选级代词
+    # 审计器加入包审计 policy fingerprint，防实现漂移而指纹不变。
+    "scripts/audit_lidousha_review_package.py": 2_024,
     # 2026-08-02 +6：简介第一行固定项目署名常量（Ivan 8/3 指令：默认带
     # 项目名+网址；OSS 同步为署名+env 频道行）。
     "scripts/authorized_upload.py": 2_935,
@@ -183,7 +186,9 @@ MODULE_DEBT_LEDGER = {
     # test_glossary_candidate_with_bound_structured_chat_support_wins_witness_conflict。
     # 2026-08-08 净 -269：F3 三逃生口纯判定抽到 candidate_support.py，
     # 同时接入 Ivan 8/8 真值法证 F1 回声环修复；锁定拆解后的模块收益。
-    "src/autoslice/final_review_auditor.py": 3_342,
+    # 2026-08-08 再净 -16：同日 truth-harvest synthesis F7 删除无声学
+    # context-only mutation 快捷路，保留显式 disclosure 降级门。
+    "src/autoslice/final_review_auditor.py": 3_326,
     "src/autoslice/live_source_review.py": 2_035,
     # 2026-08-07 +18：狍哥案实施指令（同上）——marker 选择改判
     # SOURCE_FACT_REPAIRED_RESCORE_REQUIRED + 写 pending sidecar。
@@ -200,9 +205,9 @@ MODULE_DEBT_LEDGER = {
     # docs/reviews/2026-08-08-restatement-repair-design.md §4）——会话内
     # 重述候选注入 exact-final 优先 findings；重活在
     # src/autoslice/restatement_recall.py，这里只留 import + 一处调用点。
-    # 2026-08-08 +23：Ivan 2026-08-08 优化①边界重放 + wsl 重产 BLOCK
-    # 实证——冻结 loader 与两层回执接线；判断本体位于新独立模块。
-    "src/autoslice/producer_text_pipeline.py": 2_227,
+    # 2026-08-08 +23：Ivan 2026-08-08 优化①边界重放(8b 冻结 loader 接线)
+    # +30：Ivan 8/8 真值法证 F2 代词发现器接线;两处主体均在独立新模块。
+    "src/autoslice/producer_text_pipeline.py": 2_257,
     # 2026-07-31 +12：contract 穿透接线（形参 + 4 个调用点）。
     # 2026-07-31 再 +17：封面路由 P1——witness 从「路由法官」降回「置信输入」，
     # 删掉无条件放行、几何否决移到关系分支之后、置信改为 几何 OR witness bbox。
