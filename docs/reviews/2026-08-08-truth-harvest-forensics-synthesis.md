@@ -192,3 +192,19 @@ Ivan:8/8 被 speaker 拒的 6 条里只有 auto_200130_1323_1603/auto_200130_172
 声纹置信)。修法=会话级"谁在场"先验进 speaker finalization(单人场→host 默认),
 挂 session 语境通道。数据注记:8/8 ≥85 共 7 条,最高分段(夜蝶 91.5/Holiday 91.5/
 打歌服 86.8/SUKI 85.5)全数死在该门;交付的 3 条反为 80-82 段——修 F14 即救回精华。
+
+## 8/9 附录:8/8 标定工作表法证结论(全文见 2026-08-09-worksheet-forensics-200130.md)
+
+代际口径:8/8 批产于 17:51-18:29Z,跑在 26dfd83 上,波 7/8 全部晚于批产。
+实测:全批订正密度 16.4%→10.4%;多嘉宾场域 32.8%(8/7 没人抱团)→20.3%
+(200130 两份);单人四份 0 订正;假李豆沙 0。40 处订正分桶:A 流水线主动改坏
+11(其中 7 处已被波 8 CONTEXT_REWRITE_ACOUSTIC_WITNESS_REQUIRED 门闭环)/
+B 提案未达终稿 3 / C 谐音梗压平 5 / D 众声域限 ~21。
+
+新立根因修复队列(机制级):**F15** 盲证人协议(span 见证 prompt 明文携带提案,
+acoustic_witness_adjudication.py:609,AGY 顺从确认 4 处);**F16** 法官证据输入面
+(cue86 打高尔夫案:draft+fidelity revert+7 证据 cue+chat 候选全对,
+JUDGE_KEEPS_CURRENT 保幻觉;邻句词面/draft 贴合度/chat 强度未入判);
+**F17** 会话级词面保真(打哥服/猪人梗被常识化,严禁全局 glossary 化);
+**F18** 裁决通道泄漏收口(DEFERRED_SAME_CUE 推迟即死 producer_text_pipeline.py:839;
+CPA_HISTORY_CONVERGENCE_APPLY_PROPOSED 仍无新鲜见证 exact_final_convergence.py:805-813)。
