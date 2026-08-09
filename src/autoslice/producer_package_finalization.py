@@ -68,7 +68,11 @@ from src.autoslice.producer_media import (
     _validated_burned_artifact,
     _write_json_atomic,
 )
-from src.autoslice.piece_roles import single_content_piece_index
+from src.autoslice.redelivery_source_binding import (
+    RedeliverySourceBindingError,
+    final_recut_absolute_source_interval,
+    resolve_v2_redelivery_source_binding,
+)
 from src.autoslice.producer_text_finalization import (
     _render_cues_to_srt,
     verify_chat_authority_final_surfaces,
@@ -581,55 +585,21 @@ def _materialize_final_recut(
     chat_authority_audit: dict | None = None,
 ) -> FinalRecutArtifacts:
     baseline_config = spec.get("subtitle_redelivery_baseline")
-    v2_source_binding: tuple[Mapping[str, object], Mapping[str, object], int, int] | None = None
-    if (
-        isinstance(baseline_config, Mapping)
-        and baseline_config.get("schema_version") == "subtitle-redelivery-baseline.v2"
-    ):
-        pieces = spec.get("pieces") or []
-        try:
-            content_index = single_content_piece_index(pieces)
-        except (TypeError, ValueError) as exc:
-            raise SystemExit(
-                "REDELIVERY_BASELINE_V2_REQUIRES_ONE_BOUND_SOURCE_PIECE"
-            ) from exc
-        if len(piece_provenance_rows) != len(pieces):
-            raise SystemExit(
-                "REDELIVERY_BASELINE_V2_REQUIRES_ONE_BOUND_SOURCE_PIECE"
-            )
-        piece = pieces[content_index]
-        provenance = piece_provenance_rows[content_index]
-        try:
-            piece_start_ms = int(piece["start_ms"])
-            piece_end_ms = int(piece["end_ms"])
-            padded_content_start_ms = sum(
-                int(row["end_ms"]) - int(row["start_ms"])
-                for row in pieces[:content_index]
-            )
-        except (KeyError, TypeError, ValueError) as exc:
-            raise SystemExit(
-                "REDELIVERY_BASELINE_V2_SOURCE_PIECE_INTERVAL_INVALID"
-            ) from exc
-        padded_content_end_ms = padded_content_start_ms + (
-            piece_end_ms - piece_start_ms
+    try:
+        v2_source_binding = resolve_v2_redelivery_source_binding(
+            spec=spec,
+            piece_provenance_rows=piece_provenance_rows,
+            final_start=final_start,
+            final_end=final_end,
         )
-        if (
-            piece_end_ms <= piece_start_ms
-            or final_start < padded_content_start_ms
-            or final_end <= final_start
-            or final_end > padded_content_end_ms
-        ):
-            raise SystemExit(
-                "REDELIVERY_BASELINE_V2_FINAL_INTERVAL_OUTSIDE_CONTENT_PIECE"
-            )
-        content_relative_start_ms = final_start - padded_content_start_ms
-        content_relative_end_ms = final_end - padded_content_start_ms
-        v2_source_binding = (
-            piece,
-            provenance,
-            piece_start_ms + content_relative_start_ms,
-            piece_start_ms + content_relative_end_ms,
-        )
+    except RedeliverySourceBindingError as exc:
+        raise SystemExit(str(exc)) from exc
+    absolute_source_start_ms, absolute_source_end_ms = final_recut_absolute_source_interval(
+        spec,
+        final_start=final_start,
+        final_end=final_end,
+        v2_binding=v2_source_binding,
+    )
     recut_dir = out_root / "replacement_recuts"
     recut_dir.mkdir(exist_ok=True)
     media_path = recut_dir / f"{cid}.recut.mp4"
@@ -650,24 +620,8 @@ def _materialize_final_recut(
                 "source_sha256": _sha256(padded),
                 "start_ms": final_start,
                 "end_ms": final_end,
-                "absolute_source_start_ms": (
-                    v2_source_binding[2]
-                    if v2_source_binding is not None
-                    else (
-                        int(spec["pieces"][0]["start_ms"]) + final_start
-                        if len(spec["pieces"]) == 1
-                        else None
-                    )
-                ),
-                "absolute_source_end_ms": (
-                    v2_source_binding[3]
-                    if v2_source_binding is not None
-                    else (
-                        int(spec["pieces"][0]["start_ms"]) + final_end
-                        if len(spec["pieces"]) == 1
-                        else None
-                    )
-                ),
+                "absolute_source_start_ms": absolute_source_start_ms,
+                "absolute_source_end_ms": absolute_source_end_ms,
                 "output_path": str(media_path.resolve()),
                 "output_sha256": _sha256(media_path),
             },
@@ -739,20 +693,11 @@ def _materialize_final_recut(
         current_source_end_ms: int | None = None
         current_source_recording_basename: str | None = None
         current_source_sha256: str | None = None
-        if baseline_config.get("schema_version") == "subtitle-redelivery-baseline.v2":
-            if v2_source_binding is None:
-                raise SystemExit("REDELIVERY_BASELINE_V2_SOURCE_BINDING_MISSING")
-            _piece, provenance, current_source_start_ms, current_source_end_ms = (
-                v2_source_binding
-            )
-            source_path = str(provenance.get("source_path") or "").strip()
-            source_sha256 = str(provenance.get("source_sha256") or "").strip()
-            if not source_path or not source_sha256:
-                raise SystemExit(
-                    "REDELIVERY_BASELINE_V2_SOURCE_PROVENANCE_MISSING"
-                )
-            current_source_recording_basename = Path(source_path).name
-            current_source_sha256 = source_sha256
+        if v2_source_binding is not None:
+            current_source_start_ms = v2_source_binding.absolute_source_start_ms
+            current_source_end_ms = v2_source_binding.absolute_source_end_ms
+            current_source_recording_basename = v2_source_binding.source_recording_basename
+            current_source_sha256 = v2_source_binding.source_sha256
         output_text, redelivery_baseline_audit = (
             apply_redelivery_subtitle_baseline(
                 current_text,

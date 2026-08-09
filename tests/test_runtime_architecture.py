@@ -46,7 +46,7 @@ FUNCTION_DEBT_LEDGER = {
     # 只接入登记误听面分类、弱 provenance 与声学路由；分类器在新小模块。
     ("src/autoslice/final_review_auditor.py", "audit_final_subtitles"): 419,
     ("src/autoslice/producer_boundary_resolution.py", "_repair_boundary"): 305,
-    ("src/autoslice/producer_package_finalization.py", "_materialize_final_recut"): 320,
+    ("src/autoslice/producer_package_finalization.py", "_materialize_final_recut"): 314,
     # 2026-08-08 +3：owned_intervals 执法接线（Ivan 2026-08-08 配额上传波
     # 修复——zsm8 案：baseline 已应用的 cue 被 exact-final CPA 自愈无声改写；
     # redelivery_subtitle_baseline.py 写 owned_intervals 从未被读取）。
@@ -198,7 +198,7 @@ MODULE_DEBT_LEDGER = {
     # 留给下一次动这个 god-file 的人先拆再改。
     # 2026-08-08 +5：Ivan 2026-08-08 优化①边界重放 + wsl 重产 BLOCK
     # 实证——把两层 carry/skip 披露写入最终 boundary audit。
-    "src/autoslice/producer_package_finalization.py": 2_782,
+    "src/autoslice/producer_package_finalization.py": 2_781,
     # 2026-07-31 +40：同上（SC 发送者 deferral）。
     # 2026-08-08 +7：会话内重述修复接线（Ivan 2026-08-08 当日指令，
     # docs/reviews/2026-08-08-restatement-repair-design.md §4）——会话内
