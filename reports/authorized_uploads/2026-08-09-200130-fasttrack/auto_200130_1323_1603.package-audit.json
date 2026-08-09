@@ -1,0 +1,118 @@
+{
+  "audited_inputs": [
+    {
+      "bytes": 247379,
+      "path": "auto_200130_1323_1603.chat-authority.json",
+      "sha256": "45522913a37329de11b90bd74bdb9fd91eca9488a8f1f62fcf6bc46601896e8e"
+    },
+    {
+      "bytes": 97648,
+      "path": "auto_200130_1323_1603.clip-context.json",
+      "sha256": "c48a29dfcbda6e944f0106ff8dfcd2691bb04e2dd3ef696709331a1e62ee38d1"
+    },
+    {
+      "bytes": 401437,
+      "path": "auto_200130_1323_1603.record.json",
+      "sha256": "1f143a40f4991e1c4e9ccc5775538ef64520886191d1bca805eb27fba136fde9"
+    },
+    {
+      "bytes": 2314374,
+      "path": "auto_200130_1323_1603.recut.burned-final-speaker.cover.png",
+      "sha256": "fe53cdc24e6081fe33ef510fac4a4927f8a41c8c1e806003a75dd8ed223ad47c"
+    },
+    {
+      "bytes": 174894405,
+      "path": "auto_200130_1323_1603.recut.burned-final-speaker.mp4",
+      "sha256": "a904f4fdc346256ea52d2a03a9d1ce219fe7c9601f35b5fde0e5c7327fbd8387"
+    },
+    {
+      "bytes": 401437,
+      "path": "auto_200130_1323_1603.recut.burned-final-speaker.record.json",
+      "sha256": "1f143a40f4991e1c4e9ccc5775538ef64520886191d1bca805eb27fba136fde9"
+    },
+    {
+      "bytes": 9488,
+      "path": "auto_200130_1323_1603.recut.burned-final-speaker.srt",
+      "sha256": "0e9c2cc74b085bc1704d920b08e957da8104b6f69eb9aaa99dfe3d0c224504b3"
+    },
+    {
+      "bytes": 185301769,
+      "path": "auto_200130_1323_1603.recut.mp4",
+      "sha256": "c000f44b5c28866b6f3e4237b43a20705626fa28738022ff235500103975f26e"
+    },
+    {
+      "bytes": 51177,
+      "path": "auto_200130_1323_1603.recut.publish.json",
+      "sha256": "b3b87b0a5685141b4055d009b0b4cfb92b4774c7dcf9c7859c5be44a767c2967"
+    },
+    {
+      "bytes": 12541,
+      "path": "auto_200130_1323_1603.recut.speaker-final.ass",
+      "sha256": "a0e46e524d08c003120c65c6de60b31e27c09f0059e54d741bba5fd5ef6da01d"
+    },
+    {
+      "bytes": 11309,
+      "path": "auto_200130_1323_1603.recut.speaker-final.srt",
+      "sha256": "a8fc669106ff7e94a9cc435edda26e6f2b537bd90d2d6f69f636a7d6bea8250d"
+    },
+    {
+      "bytes": 9488,
+      "path": "auto_200130_1323_1603.recut.srt",
+      "sha256": "0e9c2cc74b085bc1704d920b08e957da8104b6f69eb9aaa99dfe3d0c224504b3"
+    },
+    {
+      "bytes": 135709,
+      "path": "auto_200130_1323_1603.redelivery-baseline.json",
+      "sha256": "7c3643fc26e9b9a627f9d49171abf18e691f133c71cbd88b79bf83cbf3f923fb"
+    },
+    {
+      "bytes": 2225004,
+      "path": "covers/auto_200130_1323_1603.ai-title.cover.png",
+      "sha256": "56b08a2916e4c2ba6fb7fadfe304788f5e181206007e8243a9b7b0197766a925"
+    },
+    {
+      "bytes": 2168016,
+      "path": "covers/auto_200130_1323_1603.ai-title.cover.pre-overlay.png",
+      "sha256": "f6327fee628aae06cb5d140b4abfea57190428dc1e725b49f0910b7b9b5cab98"
+    },
+    {
+      "bytes": 37214,
+      "path": "covers/auto_200130_1323_1603.ai-title.cover.title-mask.png",
+      "sha256": "a0e7b0d57923c99e15730a04ba2e1d278ecc5eda2ef5b0e533296c3531f7283f"
+    },
+    {
+      "bytes": 2314374,
+      "path": "covers/auto_200130_1323_1603.ai-title.host-identity-retry.cover.png",
+      "sha256": "fe53cdc24e6081fe33ef510fac4a4927f8a41c8c1e806003a75dd8ed223ad47c"
+    },
+    {
+      "bytes": 2216232,
+      "path": "covers/auto_200130_1323_1603.ai-title.host-identity-retry.cover.pre-overlay.png",
+      "sha256": "d56aa3b9a29bac991712496e4f4111eab4ce8fc0cdd9143fb257baca62f95432"
+    },
+    {
+      "bytes": 37214,
+      "path": "covers/auto_200130_1323_1603.ai-title.host-identity-retry.cover.title-mask.png",
+      "sha256": "a0e7b0d57923c99e15730a04ba2e1d278ecc5eda2ef5b0e533296c3531f7283f"
+    },
+    {
+      "bytes": 2216232,
+      "path": "covers_ai_original/auto_200130_1323_1603.ai-bg.host-identity-retry.png",
+      "sha256": "d56aa3b9a29bac991712496e4f4111eab4ce8fc0cdd9143fb257baca62f95432"
+    },
+    {
+      "bytes": 7091,
+      "path": "review_manifest.json",
+      "sha256": "7a81e53883c0324c06879f546fdf333a6865f716b6e91ac609437378b4fa2fda"
+    }
+  ],
+  "auditor_source_sha256": "sha256:f1bdd01a2c674473dbf06d02e5302722d0c5294eee6af9e9d891a3e29cffbea9",
+  "blocking_issue_count": 0,
+  "issue_count": 0,
+  "issues": [],
+  "passed": true,
+  "policy_epoch": "2026-07-31.final-artifact-gates.v5",
+  "policy_fingerprint": "sha256:437329c921396013b1a0b17e37baff312c1d83ec76802b65cacce3514d375d9f",
+  "root": "/opt/bilive/autoslice/out/2026-08-08/auto_200130_1323_1603/replacement_recuts",
+  "schema_version": "lidousha-review-package-audit.v2"
+}
