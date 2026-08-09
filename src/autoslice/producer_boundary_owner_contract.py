@@ -9,7 +9,10 @@ from collections.abc import Mapping, Sequence
 from src.autoslice.boundary_semantic_review import (
     build_boundary_search_scope,
 )
-from src.autoslice.piece_roles import last_content_piece_index
+from src.autoslice.piece_roles import (
+    last_content_piece_index,
+    single_content_piece_index,
+)
 from src.autoslice.source_subtitle_truth import (
     candidate_boundary_owner_scope,
 )
@@ -287,6 +290,14 @@ def _redelivery_baseline_tail_rel_ms(
         return None
     end = config.get("absolute_source_end_ms")
     if isinstance(end, bool) or not isinstance(end, int):
+        return None
+    pieces = spec.get("pieces") or []
+    try:
+        content_index = single_content_piece_index(pieces)
+        content_start_ms = int(pieces[content_index]["start_ms"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if content_start_ms != last_piece_start_ms or prior_piece_duration_ms != 0:
         return None
     return prior_piece_duration_ms + (int(end) - last_piece_start_ms)
 

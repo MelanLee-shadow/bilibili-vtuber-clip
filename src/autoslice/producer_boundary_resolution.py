@@ -18,7 +18,10 @@ from src.autoslice.boundary_semantic_review import (
 from src.autoslice.boundary_endpoint_binding import (
     bind_final_semantic_endpoint as _bind_final_semantic_endpoint,
 )
-from src.autoslice.piece_roles import last_content_piece_index
+from src.autoslice.piece_roles import (
+    last_content_piece_index,
+    single_content_piece_index,
+)
 from src.autoslice.producer_boundary import (
     BOUNDARY_REPAIR_EXTEND_CAP_MS,
     LEAD_AIR_MS,
@@ -510,10 +513,11 @@ def _redelivery_baseline_head_rel_ms(spec: Mapping[str, object]) -> int | None:
         return None
     start = config.get("absolute_source_start_ms")
     pieces = spec.get("pieces") or []
-    if isinstance(start, bool) or not isinstance(start, int) or len(pieces) != 1:
+    if isinstance(start, bool) or not isinstance(start, int):
         return None
     try:
-        return int(start) - int(pieces[0]["start_ms"])
+        content_index = single_content_piece_index(pieces)
+        return int(start) - int(pieces[content_index]["start_ms"])
     except (KeyError, TypeError, ValueError):
         return None
 

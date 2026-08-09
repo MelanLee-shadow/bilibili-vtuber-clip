@@ -68,6 +68,7 @@ from src.autoslice.producer_media import (
     _validated_burned_artifact,
     _write_json_atomic,
 )
+from src.autoslice.piece_roles import single_content_piece_index
 from src.autoslice.producer_text_finalization import (
     _render_cues_to_srt,
     verify_chat_authority_final_surfaces,
@@ -579,6 +580,56 @@ def _materialize_final_recut(
     spec_parent: Path | None = None,
     chat_authority_audit: dict | None = None,
 ) -> FinalRecutArtifacts:
+    baseline_config = spec.get("subtitle_redelivery_baseline")
+    v2_source_binding: tuple[Mapping[str, object], Mapping[str, object], int, int] | None = None
+    if (
+        isinstance(baseline_config, Mapping)
+        and baseline_config.get("schema_version") == "subtitle-redelivery-baseline.v2"
+    ):
+        pieces = spec.get("pieces") or []
+        try:
+            content_index = single_content_piece_index(pieces)
+        except (TypeError, ValueError) as exc:
+            raise SystemExit(
+                "REDELIVERY_BASELINE_V2_REQUIRES_ONE_BOUND_SOURCE_PIECE"
+            ) from exc
+        if len(piece_provenance_rows) != len(pieces):
+            raise SystemExit(
+                "REDELIVERY_BASELINE_V2_REQUIRES_ONE_BOUND_SOURCE_PIECE"
+            )
+        piece = pieces[content_index]
+        provenance = piece_provenance_rows[content_index]
+        try:
+            piece_start_ms = int(piece["start_ms"])
+            piece_end_ms = int(piece["end_ms"])
+            padded_content_start_ms = sum(
+                int(row["end_ms"]) - int(row["start_ms"])
+                for row in pieces[:content_index]
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise SystemExit(
+                "REDELIVERY_BASELINE_V2_SOURCE_PIECE_INTERVAL_INVALID"
+            ) from exc
+        padded_content_end_ms = padded_content_start_ms + (
+            piece_end_ms - piece_start_ms
+        )
+        if (
+            piece_end_ms <= piece_start_ms
+            or final_start < padded_content_start_ms
+            or final_end <= final_start
+            or final_end > padded_content_end_ms
+        ):
+            raise SystemExit(
+                "REDELIVERY_BASELINE_V2_FINAL_INTERVAL_OUTSIDE_CONTENT_PIECE"
+            )
+        content_relative_start_ms = final_start - padded_content_start_ms
+        content_relative_end_ms = final_end - padded_content_start_ms
+        v2_source_binding = (
+            piece,
+            provenance,
+            piece_start_ms + content_relative_start_ms,
+            piece_start_ms + content_relative_end_ms,
+        )
     recut_dir = out_root / "replacement_recuts"
     recut_dir.mkdir(exist_ok=True)
     media_path = recut_dir / f"{cid}.recut.mp4"
@@ -600,14 +651,22 @@ def _materialize_final_recut(
                 "start_ms": final_start,
                 "end_ms": final_end,
                 "absolute_source_start_ms": (
-                    int(spec["pieces"][0]["start_ms"]) + final_start
-                    if len(spec["pieces"]) == 1
-                    else None
+                    v2_source_binding[2]
+                    if v2_source_binding is not None
+                    else (
+                        int(spec["pieces"][0]["start_ms"]) + final_start
+                        if len(spec["pieces"]) == 1
+                        else None
+                    )
                 ),
                 "absolute_source_end_ms": (
-                    int(spec["pieces"][0]["start_ms"]) + final_end
-                    if len(spec["pieces"]) == 1
-                    else None
+                    v2_source_binding[3]
+                    if v2_source_binding is not None
+                    else (
+                        int(spec["pieces"][0]["start_ms"]) + final_end
+                        if len(spec["pieces"]) == 1
+                        else None
+                    )
                 ),
                 "output_path": str(media_path.resolve()),
                 "output_sha256": _sha256(media_path),
@@ -639,7 +698,6 @@ def _materialize_final_recut(
         adapters.write_source_range_srt(sanitized, final_start, final_end, subtitle_path)
     redelivery_baseline_audit_path: Path | None = None
     redelivery_baseline_audit: dict | None = None
-    baseline_config = spec.get("subtitle_redelivery_baseline")
     if baseline_config is not None:
         if text_override_path is not None:
             raise SystemExit(
@@ -682,21 +740,17 @@ def _materialize_final_recut(
         current_source_recording_basename: str | None = None
         current_source_sha256: str | None = None
         if baseline_config.get("schema_version") == "subtitle-redelivery-baseline.v2":
-            if len(spec.get("pieces") or []) != 1 or len(piece_provenance_rows) != 1:
-                raise SystemExit(
-                    "REDELIVERY_BASELINE_V2_REQUIRES_ONE_BOUND_SOURCE_PIECE"
-                )
-            piece = spec["pieces"][0]
-            provenance = piece_provenance_rows[0]
+            if v2_source_binding is None:
+                raise SystemExit("REDELIVERY_BASELINE_V2_SOURCE_BINDING_MISSING")
+            _piece, provenance, current_source_start_ms, current_source_end_ms = (
+                v2_source_binding
+            )
             source_path = str(provenance.get("source_path") or "").strip()
             source_sha256 = str(provenance.get("source_sha256") or "").strip()
             if not source_path or not source_sha256:
                 raise SystemExit(
                     "REDELIVERY_BASELINE_V2_SOURCE_PROVENANCE_MISSING"
                 )
-            piece_start_ms = int(piece["start_ms"])
-            current_source_start_ms = piece_start_ms + final_start
-            current_source_end_ms = piece_start_ms + final_end
             current_source_recording_basename = Path(source_path).name
             current_source_sha256 = source_sha256
         output_text, redelivery_baseline_audit = (
