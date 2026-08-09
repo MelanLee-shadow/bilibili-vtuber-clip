@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from src.autoslice.acoustic_witness_availability import witness_audio_locally_resolvable
 from src.autoslice.chat_authority import (
     ChatEvidence,
     ReferentGroup,
@@ -360,9 +361,8 @@ def _build_entity_verification_context(
         else None
     )
     audio_entity_verifier = None
-    if host in {"localhost", "127.0.0.1"}:
+    if witness_audio_locally_resolvable(padded, host=host):  # F21：音频窗可解析门，不再是 host 门
         from src.autoslice.entity_audio_verifier import build_local_audio_entity_verifier
-
         audio_entity_verifier = build_local_audio_entity_verifier(
             source_media=padded,
             output_dir=out_root,
@@ -869,10 +869,10 @@ def _run_final_review(
                 final_review_audit["status"] = "PARTIAL"
             # 2026-07-18 交付事故类机制：区分「证据裁决后的保留」与「基础设施
             # 失败导致的未决」。前者（OBSERVED 下 keep-current）是正当结论；
-            # 后者（provider 额度/异常，裁决根本没发生）不许当作终局——审片员
-            # 已给出高置信修复提案、只是没有法官到场。这些行记入
-            # infra_unresolved，由 run_text_pipeline 在全部 provenance 落盘后
-            # 拒绝带伤交付（先命中 AGY 成功缓存，否则转 runner 有界重试）。
+            # 后者（provider 额度/异常，裁决根本没发生）不许当作终局，记入
+            # infra_unresolved 由 run_text_pipeline 拒绝带伤交付、转 runner 重试。
+            # F21 刻意不收 AUDIO_VERIFIER_UNAVAILABLE：那是「本机没有声学
+            # provider」不是瞬时故障，重试永不会好；它照旧走 exact-final 未决门。
             infra_unresolved = []
             for row in adjudicable:
                 adjudication = row.get("context_audio_adjudication") or {}

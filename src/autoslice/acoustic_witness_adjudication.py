@@ -32,6 +32,9 @@ from src.autoslice.acoustic_pinyin import (
     neutral_syllable_count_hint,
     pinyin_compatibility,
 )
+from src.autoslice.acoustic_witness_availability import (
+    AUDIO_VERIFIER_UNAVAILABLE,
+)
 from src.autoslice.acoustic_witness_protocol import (
     BLIND_PINYIN_PROTOCOL,
     LEGACY_SIGHTED_PROTOCOL,
@@ -934,9 +937,10 @@ def adjudicate_with_witness(
     )
     audit["judge"] = verdict
     if witness_status == "UNCERTAIN":
-        audit["witness_unavailable_reason"] = str(
+        witness_unavailable_reason = str(
             witness.get("reason_code") or witness.get("detail") or "UNKNOWN"
         )
+        audit["witness_unavailable_reason"] = witness_unavailable_reason
         if verdict.get("choice") == "NEITHER":
             return False, "JUDGE_REJECTS_CLOSED_SET", audit
         if verdict.get("choice") != "PROPOSED":
@@ -946,6 +950,20 @@ def adjudicate_with_witness(
                 else "JUDGE_UNCERTAIN_KEEP_CURRENT"
             )
             return False, branch, audit
+        # F21 张力封口（Ivan 2026-08-10 立项时点名，默认关死待复裁）：
+        # 无声学改字路 ``CPA_JUDGE_APPLY_PROPOSED_WITHOUT_AUDIO_WITNESS`` 是
+        # 7/25 起就存在的既有出口，语义是「provider 真的被调用过、真的失败了，
+        # 语境证据仍可定夺」。F21 新开的 ``AUDIO_VERIFIER_UNAVAILABLE`` 是另一
+        # 回事：证人链**从未听过**这段音频（host 门降级 / 根本没有 provider）。
+        # 让这类证词继承既有改字权，等于让「接线缺陷」自动升级成「声学豁免」，
+        # 与 8/8 F7 方向直接冲突。默认只许 KEEP_CURRENT + 披露，等 Ivan 复裁。
+        if witness_unavailable_reason == AUDIO_VERIFIER_UNAVAILABLE:
+            audit["acoustic_witness_never_attempted"] = True
+            return (
+                False,
+                "WITNESS_NEVER_ATTEMPTED_KEEP_CURRENT_DISCLOSED",
+                audit,
+            )
         return True, "CPA_JUDGE_APPLY_PROPOSED_WITHOUT_AUDIO_WITNESS", audit
     if not witness["target_audible"]:
         choice = verdict.get("choice")

@@ -31,6 +31,9 @@ from src.autoslice.acoustic_witness_adjudication import (
     build_witness_request,
     valid_witness_evidence,
 )
+from src.autoslice.acoustic_witness_availability import (
+    unavailable_acoustic_witness,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues
 
 SCHEMA_VERSION = "microcue-candidate-blind-acoustic-discovery.v1"
@@ -126,7 +129,15 @@ def discover_microcue_findings(
         }
         witness_request = build_witness_request(check_request)
         try:
-            witness = dict(entity_verifier(witness_request))
+            raw_witness = entity_verifier(witness_request)
+            # F21：``dict(None)`` 会抛 TypeError 并被下面记成
+            # MICROCUE_AUDIO_VERIFIER_ERROR，把「根本没有证人」伪装成
+            # 「证人炸了」。非 Mapping（含 None）一律走 typed 不可用尾巴。
+            witness = (
+                dict(raw_witness)
+                if isinstance(raw_witness, Mapping)
+                else unavailable_acoustic_witness(witness_request)
+            )
         except Exception as exc:
             witness = {
                 "schema_version": "subtitle-span-acoustic-witness.v1",

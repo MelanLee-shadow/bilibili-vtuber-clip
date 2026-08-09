@@ -50,6 +50,11 @@ GEMINI_API_URL = (
 ENTITY_AUDIO_API_MODEL_ENV = "ENTITY_AUDIO_GEMINI_API_MODEL"
 ENTITY_AUDIO_API_MODEL_DEFAULT = "gemini-3.6-flash"
 ENTITY_AUDIO_API_REQUEST_MAX_BYTES = 20_000_000
+# F21（Ivan 2026-08-10）：显式关掉 AGY 那一环时的开关。默认不设 = AGY 仍是
+# 首选；设为 1 时链直接从免费 3 key 起跑。key 顺序本身不变：AGY 订阅 →
+# 免费 3 key 轮换 → 政策门控付费 backup（7/19 裁定，同一 Gemini 模型的配额
+# 顺序，不是不同 provider 的证据等级）。
+ENTITY_AUDIO_DISABLE_AGY_ENV = "ENTITY_AUDIO_DISABLE_AGY"
 
 # Phase 1 acoustic-witness architecture (Ivan 2026-07-25 ruling): the audio
 # model is a WITNESS, not a judge. In witness mode it never sees any
@@ -721,7 +726,15 @@ def _store_witness_acoustic_cache(
     outcome: _EntityProviderOutcome,
     prompt_identity_sha256: str,
 ) -> None:
-    """Best-effort AGY-only write-through; absence must never fail production."""
+    """Best-effort AGY-only write-through; absence must never fail production.
+
+    F21 已知残留（未修，待 Ivan 裁）：读写两面都写死 ``agy``，所以 AGY 缺席的
+    wsl 姿势下声学缓存恒不命中，重产轮会对同一段音频重复付费 Gemini——与
+    7/27 成本裁定「重试轮零重复请求」相抵。放开需要一条新裁定：既有单测
+    ``test_witness_acoustic_cache_replays_same_audio_without_provider`` 明令
+    「legacy Gemini API observation 不得当作 AGY 证据回放」，跨 provider 缓存
+    身份要先被定义，不能顺手放宽。
+    """
 
     if outcome.provider != "agy":
         return
@@ -820,7 +833,15 @@ def _observe_entity_audio(
     paid_policy_stamp: Mapping[str, Any] | None = None
     provider_failures: list[dict[str, Any]] = []
     response_path = job_dir / "verdict.raw.json"
-    if agy_quota_circuit.is_open():
+    if os.environ.get(ENTITY_AUDIO_DISABLE_AGY_ENV, "").strip() == "1":
+        provider_failures.append(
+            {
+                "provider": "agy",
+                "category": "AGY_DISABLED_BY_ENV",
+                "attempted": False,
+            }
+        )
+    elif agy_quota_circuit.is_open():
         provider_failures.append(
             {
                 "provider": "agy",
@@ -864,7 +885,14 @@ def _observe_entity_audio(
             provider_failures.append(
                 {
                     "provider": "agy",
-                    "category": "AGY_SUBPROCESS_ERROR",
+                    # F21：wsl 产线上根本没有 agy 二进制。这不是"子进程炸了"，
+                    # 是"这一环不存在"——回执必须说清楚，否则运维会去查一个
+                    # 不存在的 AGY 故障，而真正的 provider 是下面的 Gemini。
+                    "category": (
+                        "AGY_BINARY_ABSENT"
+                        if isinstance(exc, FileNotFoundError)
+                        else "AGY_SUBPROCESS_ERROR"
+                    ),
                     "error_type": type(exc).__name__,
                 }
             )

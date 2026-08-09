@@ -44,6 +44,9 @@ from src.autoslice.acoustic_witness_adjudication import (
     pinyin_compatibility,
     valid_witness_evidence,
 )
+from src.autoslice.acoustic_witness_availability import (
+    unavailable_acoustic_witness,
+)
 from src.autoslice.acoustic_witness_protocol import (
     BLIND_PINYIN_PROTOCOL,
     bind_blind_witness_protocol,
@@ -243,7 +246,9 @@ def _closed_choice_with_witness(
         observed = (
             next_verifier(witness_request)
             if next_verifier is not None
-            else None
+            # F21：无声学 provider 也必须交出 schema 合法的 typed 证词，
+            # 让法官在「明确知道本轮没有听音」的前提下继续闭集裁决。
+            else unavailable_acoustic_witness(witness_request)
         )
     except Exception as exc:
         observed = {
@@ -395,12 +400,11 @@ used by the CPA judge.
     """
 
     def _defer(request: Mapping[str, Any]) -> Any:
-        if (
-            request.get("schema_version") == WITNESS_REQUEST_SCHEMA
-            and next_verifier is not None
-        ):
+        if request.get("schema_version") != WITNESS_REQUEST_SCHEMA:
+            return None
+        if next_verifier is not None:
             return next_verifier(request)
-        return None
+        return unavailable_acoustic_witness(request)
 
     def verify(request: Mapping[str, Any]) -> Any:
         schema = request.get("schema_version")
