@@ -25,6 +25,10 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from src.autoslice.jingting_chunker import SrtCue, parse_srt_cues
+from src.autoslice.text_baseline_guard import (
+    BASELINE_CONTAINS_SPEAKER_LABEL_PREFIX,
+    contains_speaker_label_prefix,
+)
 
 
 SCHEMA_VERSION = "subtitle-redelivery-baseline.v1"
@@ -1198,6 +1202,12 @@ def apply_redelivery_subtitle_baseline(
         audit["failures"].append({"reason_code": "REDELIVERY_BASELINE_UTF8_INVALID"})
         audit["output_sha256"] = audit["current_input_sha256"]
         return current_srt, audit
+    if contains_speaker_label_prefix(baseline_srt):
+        return _fail(
+            current_srt,
+            audit,
+            BASELINE_CONTAINS_SPEAKER_LABEL_PREFIX,
+        )
     current = parse_srt_cues(current_srt)
     baseline = parse_srt_cues(baseline_srt)
     if not current or not baseline:

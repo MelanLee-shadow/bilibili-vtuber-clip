@@ -23,6 +23,10 @@ from scripts.apply_speaker_turn_overrides import (
 from scripts.apply_subtitle_text_overrides import parse_srt
 from src.autoslice.speaker_common import HOST_SPEAKER, SpeakerFinalizationError
 from src.autoslice.speaker_context import _reviewed_context_votes
+from src.autoslice.text_baseline_guard import (
+    BASELINE_CONTAINS_SPEAKER_LABEL_PREFIX,
+    contains_speaker_label_prefix,
+)
 
 
 REVIEWED_SPEAKER_BASELINE_SCHEMA = "reviewed-speaker-baseline.v1"
@@ -219,6 +223,12 @@ def load_reviewed_speaker_baseline(
     raw = document.get("reviewed_speaker_baseline")
     if raw is None:
         return None
+    if contains_speaker_label_prefix(
+        str(getattr(cue, "text", "")) for cue in cues
+    ):
+        raise SpeakerFinalizationError(
+            BASELINE_CONTAINS_SPEAKER_LABEL_PREFIX
+        )
     if not isinstance(raw, Mapping):
         raise SpeakerFinalizationError(
             "reviewed_speaker_baseline must be an object"

@@ -115,6 +115,28 @@ def test_reviewed_baseline_binds_complete_partition_and_exact_host_anchors(
     assert loaded.evidence["reviewed_cue_count"] == 2
 
 
+def test_reviewed_speaker_baseline_rejects_labelled_text_surface(
+    tmp_path: Path,
+) -> None:
+    document = _document(tmp_path)
+    cues = _cues()
+    labelled = "[李豆沙] 主播一"
+    cues[0] = TextCue(1, cues[0].start, cues[0].end, labelled)
+    document["overrides"][0]["expect"]["text"] = labelled
+    document["overrides"][0]["segments"][0]["text"] = labelled
+
+    with pytest.raises(
+        SpeakerFinalizationError,
+        match="BASELINE_CONTAINS_SPEAKER_LABEL_PREFIX",
+    ):
+        load_reviewed_speaker_baseline(
+            document,
+            candidate_id=CANDIDATE,
+            cues=cues,
+            repo_root=tmp_path,
+        )
+
+
 @pytest.mark.parametrize(
     "mutate, error",
     [

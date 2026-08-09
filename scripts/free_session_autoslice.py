@@ -115,7 +115,7 @@ from src.autoslice.batch_terminal_state import (
     project_terminal_batch_state,
     project_terminal_song_disposition,
 )
-from src.autoslice import publication_reconciliation
+from src.autoslice import publication_reconciliation, runner_state_writeback
 from src.autoslice.selection_scorecard import (
     SelectionCalibrationPolicyError,
     load_selected_selection_calibration_policy,
@@ -1302,7 +1302,7 @@ def _apply_runtime_publication_projection(date: str, state: dict) -> dict:
     return state
 
 
-def read_state(date: str) -> dict:
+def _read_state_untracked(date: str) -> dict:
     """State loader that never mistakes damage for a fresh start.
 
     Missing file → {} (genuinely new date).  Corrupt JSON → the damaged file is
@@ -1347,17 +1347,17 @@ def read_state(date: str) -> dict:
         return _apply_runtime_publication_projection(date, restored)
 
 
+def read_state(date: str) -> dict:
+    return runner_state_writeback.track_state(state_path(date), _read_state_untracked(date))
+
+
 def write_state(date: str, state: dict) -> None:
-    """Atomic write (tmp + os.replace) keeping the previous version as .bak —
-    a mid-write crash can no longer leave a half-written unparseable state."""
-    state["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-    path = state_path(date)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-    if path.exists():
-        os.replace(path, path.with_suffix(".json.bak"))
-    os.replace(tmp, path)
+    runner_state_writeback.write_state(
+        state_path(date),
+        state,
+        updated_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        log=log,
+    )
 
 
 def write_alert(name: str, message: str) -> None:

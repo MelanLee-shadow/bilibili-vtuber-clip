@@ -1,6 +1,7 @@
 import hashlib
 import json
 from pathlib import Path
+import urllib.error
 
 import pytest
 
@@ -533,7 +534,13 @@ def test_agy_quota_opens_run_circuit_and_later_cues_go_directly_to_api(
 
 @pytest.mark.parametrize(
     "first_failure",
-    ("ordinary_error", "rate_limited", "timeout", "invalid_verdict"),
+    (
+        "ordinary_error",
+        "rate_limited",
+        "server_error",
+        "timeout",
+        "invalid_verdict",
+    ),
 )
 def test_agy_run_circuit_ignores_non_quota_failures(
     tmp_path, monkeypatch, first_failure
@@ -557,6 +564,8 @@ def test_agy_run_circuit_ignores_non_quota_failures(
                 return _Completed(returncode=1, stderr="temporary backend crash")
             if first_failure == "rate_limited":
                 return _Completed(returncode=1, stderr="HTTP 429 rate limit; retry later")
+            if first_failure == "server_error":
+                return _Completed(returncode=1, stderr="HTTP 503 backend unavailable")
             if first_failure == "timeout":
                 raise verifier_module.subprocess.TimeoutExpired(command, timeout=1)
             Path(kwargs["cwd"], "verdict.json").write_text("not-json", encoding="utf-8")
@@ -678,6 +687,145 @@ def test_candidate_blind_witness_uses_direct_api_after_agy_quota(
     prompt_text = prompt.read_text(encoding="utf-8")
     assert "attached audio clip" in prompt_text
     assert "好爽哦" not in prompt_text
+
+
+@pytest.mark.parametrize(
+    ("failure", "category", "error_type", "http_status"),
+    [
+        ("429", "GEMINI_API_QUOTA_EXHAUSTED", "HTTPError", 429),
+        ("503", "GEMINI_API_SERVER_ERROR", "HTTPError", 503),
+        ("timeout", "GEMINI_API_TIMEOUT", "TimeoutError", None),
+    ],
+)
+def test_blind_witness_retries_next_free_provider_in_same_round_after_transient(
+    tmp_path, monkeypatch, failure, category, error_type, http_status
+):
+    monkeypatch.setenv("GEMINI_API_KEY", "free-key-1")
+    monkeypatch.setenv("GEMINI_API_KEY_2", "free-key-2")
+    monkeypatch.delenv("GEMINI_API_KEY_3", raising=False)
+    monkeypatch.delenv("GEMINI_KEY_BACKUP", raising=False)
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path / "base"))
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+    monkeypatch.setattr(verifier_module.subprocess, "run", _agy_quota_run)
+    calls = []
+
+    def fake_api(**kwargs):
+        calls.append(kwargs["key"])
+        if kwargs["key"] == "free-key-1":
+            if failure == "timeout":
+                raise TimeoutError("provider timed out")
+            raise urllib.error.HTTPError(
+                "https://example.invalid", int(failure), "transient", None, None
+            )
+        return _observed_blind_witness()
+
+    monkeypatch.setattr(
+        verifier_module, "_gemini_api_observe_witness", fake_api
+    )
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-08-09",
+        source_duration_ms=10_000,
+        agy_bin="agy-test",
+    )
+    request = _blind_witness_request(evidence_id="8" * 64, start_ms=2_000)
+
+    verdict = verify(request)
+
+    assert verdict["status"] == "OBSERVED"
+    assert calls == ["free-key-1", "free-key-2"]
+    manifest = json.loads(
+        (
+            tmp_path
+            / "out/entity_verdicts"
+            / request["request_sha256"][:20]
+            / "verdict.manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    expected_failure = {
+        "provider": "gemini_api",
+        "key_tier": "free",
+        "key_ordinal": 1,
+        "attempt_round": 1,
+        "model": manifest["model"],
+        "category": category,
+        "error_type": error_type,
+    }
+    if http_status is not None:
+        expected_failure["http_status"] = http_status
+    assert manifest["provider_failures"][1] == expected_failure
+
+
+def test_blind_witness_429_rounds_record_real_strikes_before_paid_retry(
+    tmp_path, monkeypatch
+):
+    for ordinal in (1, 2, 3):
+        name = "GEMINI_API_KEY" if ordinal == 1 else f"GEMINI_API_KEY_{ordinal}"
+        monkeypatch.setenv(name, f"free-key-{ordinal}")
+    monkeypatch.setenv("GEMINI_KEY_BACKUP", "paid-key")
+    monkeypatch.delenv("GEMINI_PAID_BACKUP_DEV_EXCEPTION", raising=False)
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path / "base"))
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+    monkeypatch.setattr(verifier_module.subprocess, "run", _agy_quota_run)
+    calls = []
+
+    def fake_api(**kwargs):
+        calls.append(kwargs["key"])
+        if kwargs["key"] != "paid-key":
+            raise urllib.error.HTTPError(
+                "https://example.invalid", 429, "quota", None, None
+            )
+        return _observed_blind_witness()
+
+    monkeypatch.setattr(
+        verifier_module, "_gemini_api_observe_witness", fake_api
+    )
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-08-09",
+        source_duration_ms=10_000,
+        agy_bin="agy-test",
+    )
+    request = _blind_witness_request(evidence_id="9" * 64, start_ms=2_000)
+
+    verdict = verify(request)
+
+    assert verdict["status"] == "OBSERVED"
+    assert calls == [
+        "free-key-1",
+        "free-key-2",
+        "free-key-3",
+    ] * 3 + ["paid-key"]
+    manifest = json.loads(
+        (
+            tmp_path
+            / "out/entity_verdicts"
+            / request["request_sha256"][:20]
+            / "verdict.manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert manifest["key_tier"] == "paid_backup"
+    assert manifest["paid_backup_policy"]["free_chain_strikes"] >= 3
+    api_failures = [
+        row
+        for row in manifest["provider_failures"]
+        if row["provider"] == "gemini_api"
+    ]
+    assert [row["attempt_round"] for row in api_failures] == [
+        1,
+        1,
+        1,
+        2,
+        2,
+        2,
+        3,
+        3,
+        3,
+    ]
 
 
 def test_witness_acoustic_cache_replays_same_audio_without_provider(tmp_path, monkeypatch):

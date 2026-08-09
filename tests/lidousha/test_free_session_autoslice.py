@@ -5837,6 +5837,169 @@ def test_write_state_atomic_and_read_state_corruption(tmp_path, monkeypatch):
     assert runner.read_state("2026-01-01") == {}
 
 
+def test_tracked_write_rebuilds_main_from_matching_backup_crash_window(
+    tmp_path, monkeypatch
+):
+    date = "2026-08-09"
+    monkeypatch.setattr(runner, "BASE", tmp_path)
+    runner.write_state(date, {"status": "processing", "n": 1})
+    runner.write_state(date, {"status": "processing", "n": 2})
+    path = runner.state_path(date)
+    path.unlink()
+
+    recovered = runner.read_state(date)
+    assert recovered["n"] == 1
+    recovered["n"] = 3
+    runner.write_state(date, recovered)
+
+    assert runner.read_state(date)["n"] == 3
+
+
+def test_tick_writeback_preserves_external_update_to_untouched_candidate(
+    tmp_path, monkeypatch
+):
+    """A long tick may commit A only; a concurrent legal edit to B must survive."""
+
+    date = "2026-08-09"
+    monkeypatch.setattr(runner, "BASE", tmp_path)
+    runner.write_state(
+        date,
+        {
+            "status": "processing",
+            "pending_talk": [{"cid": "candidate-a", "status": "pending"}],
+            "picks": [
+                {
+                    "candidate_id": "candidate-b",
+                    "status": "candidate_rejected",
+                }
+            ],
+            "pending_song": [],
+            "songs": [],
+        },
+    )
+    held_by_tick = runner.read_state(date)
+
+    held_by_tick["pending_talk"] = []
+    held_by_tick["picks"].append(
+        {"candidate_id": "candidate-a", "status": "review_ready"}
+    )
+
+    path = runner.state_path(date)
+    external = json.loads(path.read_text(encoding="utf-8"))
+    external["picks"][0].update(
+        {
+            "status": "failed",
+            "failure_recoverable": True,
+            "revivals": [{"schema_version": "candidate-revival.v1"}],
+        }
+    )
+    path.write_text(json.dumps(external, ensure_ascii=False), encoding="utf-8")
+
+    runner.write_state(date, held_by_tick)
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    by_id = {row["candidate_id"]: row for row in saved["picks"]}
+    assert by_id["candidate-a"]["status"] == "review_ready"
+    assert by_id["candidate-b"]["status"] == "failed"
+    assert by_id["candidate-b"]["failure_recoverable"] is True
+    assert by_id["candidate-b"]["revivals"] == [
+        {"schema_version": "candidate-revival.v1"}
+    ]
+    assert saved["pending_talk"] == []
+
+
+def test_tick_writeback_same_candidate_conflict_abandons_local_move(
+    tmp_path, monkeypatch
+):
+    date = "2026-08-09"
+    monkeypatch.setattr(runner, "BASE", tmp_path)
+    runner.write_state(
+        date,
+        {
+            "status": "processing",
+            "pending_talk": [{"cid": "candidate-a", "status": "pending"}],
+            "picks": [],
+        },
+    )
+    held_by_tick = runner.read_state(date)
+    held_by_tick["pending_talk"] = []
+    held_by_tick["picks"] = [
+        {"candidate_id": "candidate-a", "status": "review_ready"}
+    ]
+
+    path = runner.state_path(date)
+    external = json.loads(path.read_text(encoding="utf-8"))
+    external["pending_talk"][0].update(
+        {
+            "status": "failed",
+            "failure_recoverable": True,
+            "revivals": [{"schema_version": "candidate-revival.v1"}],
+        }
+    )
+    path.write_text(json.dumps(external, ensure_ascii=False), encoding="utf-8")
+    messages = []
+    monkeypatch.setattr(runner, "log", messages.append)
+
+    runner.write_state(date, held_by_tick)
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["picks"] == []
+    assert saved["pending_talk"] == [external["pending_talk"][0]]
+    assert any(
+        "RUNNER_STATE_WRITEBACK_CONFLICT" in message
+        and "candidate:candidate-a" in message
+        for message in messages
+    )
+
+
+def test_tick_writeback_preserves_local_candidate_queue_reordering(
+    tmp_path, monkeypatch
+):
+    date = "2026-08-09"
+    monkeypatch.setattr(runner, "BASE", tmp_path)
+    runner.write_state(
+        date,
+        {
+            "status": "processing",
+            "pending_talk": [
+                {"cid": "candidate-a", "status": "pending"},
+                {"cid": "candidate-b", "status": "pending"},
+            ],
+        },
+    )
+    held_by_tick = runner.read_state(date)
+    held_by_tick["pending_talk"].reverse()
+
+    runner.write_state(date, held_by_tick)
+
+    saved = json.loads(runner.state_path(date).read_text(encoding="utf-8"))
+    assert [row["cid"] for row in saved["pending_talk"]] == [
+        "candidate-b",
+        "candidate-a",
+    ]
+
+
+def test_tick_writeback_preserves_mixed_legacy_queue_order_when_unchanged(
+    tmp_path, monkeypatch
+):
+    date = "2026-08-09"
+    monkeypatch.setattr(runner, "BASE", tmp_path)
+    expected = [
+        "legacy song backlog row",
+        {"cid": "candidate-a", "status": "pending"},
+    ]
+    runner.write_state(
+        date,
+        {"status": "processing", "song_backlog": expected},
+    )
+    held_by_tick = runner.read_state(date)
+
+    runner.write_state(date, held_by_tick)
+
+    saved = json.loads(runner.state_path(date).read_text(encoding="utf-8"))
+    assert saved["song_backlog"] == expected
+
+
 def test_source_health_error_detects_missing_root(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "REC_ROOT", tmp_path / "nope")
     assert runner.source_health_error() is not None

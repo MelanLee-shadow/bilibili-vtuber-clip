@@ -167,6 +167,29 @@ def test_redelivery_fails_closed_on_stale_baseline_hash(tmp_path):
     ]
 
 
+def test_redelivery_fails_closed_on_speaker_label_prefix_in_text_baseline(
+    tmp_path,
+):
+    baseline = tmp_path / "baseline.srt"
+    baseline.write_text(
+        _srt((0, 1_000, "[李豆沙] 这行只能属于 speaker override 面")),
+        encoding="utf-8",
+    )
+    current = _srt((0, 1_000, "纯文本当前行"))
+
+    output, audit = apply_redelivery_subtitle_baseline(
+        current,
+        config=_config(baseline),
+        spec_parent=tmp_path,
+    )
+
+    assert output == current
+    assert audit["status"] == "FAILED"
+    assert audit["failures"] == [
+        {"reason_code": "BASELINE_CONTAINS_SPEAKER_LABEL_PREFIX"}
+    ]
+
+
 def test_v2_projects_by_absolute_source_time_after_start_shift(tmp_path):
     baseline = tmp_path / "baseline.srt"
     baseline.write_text(

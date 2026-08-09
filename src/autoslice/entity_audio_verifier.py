@@ -328,6 +328,8 @@ def _classify_agy_failure(returncode: int, stdout: str, stderr: str) -> str:
         return "AGY_TIMEOUT"
     if any(marker in diagnostic for marker in ("429", "rate limit", "too many requests")):
         return "AGY_RATE_LIMITED"
+    if re.search(r"\b5[0-9]{2}\b", diagnostic):
+        return "AGY_SERVER_ERROR"
     return f"AGY_FAILED_RC_{returncode}"
 
 
@@ -376,9 +378,13 @@ def _api_failure_category(exc: Exception) -> str:
     status = getattr(exc, "code", None)
     if status == 429:
         return "GEMINI_API_QUOTA_EXHAUSTED"
+    if isinstance(status, int) and 500 <= status <= 599:
+        return "GEMINI_API_SERVER_ERROR"
     if status in {401, 403}:
         return "GEMINI_API_AUTH_FAILED"
-    if isinstance(exc, (TimeoutError, subprocess.TimeoutExpired)):
+    if isinstance(exc, (TimeoutError, subprocess.TimeoutExpired)) or isinstance(
+        getattr(exc, "reason", None), TimeoutError
+    ):
         return "GEMINI_API_TIMEOUT"
     if isinstance(exc, (json.JSONDecodeError, ValueError)):
         return "GEMINI_API_INVALID_OUTPUT"
@@ -472,6 +478,116 @@ def _gemini_api_observe_witness(
             if isinstance(part, dict)
         )
     )
+
+
+def _run_gemini_api_fallback(
+    *,
+    audio_path: Path,
+    prompt: str,
+    response_path: Path,
+    model: str,
+    provider_failures: list[dict[str, Any]],
+) -> tuple[Any, str | None, Mapping[str, Any] | None]:
+    """Try free keys in receipt-backed rounds, then the policy-gated paid key."""
+
+    observed: Any = None
+    accepted_key_tier: str | None = None
+    paid_policy_stamp: Mapping[str, Any] | None = None
+
+    def attempt_api_key(
+        attempt_key: str,
+        *,
+        key_tier: str,
+        key_ordinal: int,
+        attempt_round: int,
+    ) -> bool:
+        nonlocal observed, accepted_key_tier
+        try:
+            raw = _gemini_api_observe_witness(
+                audio_path=audio_path,
+                prompt=prompt,
+                key=attempt_key,
+                model=model,
+            )
+            response_path.write_text(
+                (raw or "") if (raw or "").endswith("\n") else (raw or "") + "\n",
+                encoding="utf-8",
+            )
+            if not raw or len(raw.encode("utf-8")) > 2_000_000:
+                raise ValueError("empty or oversized Gemini API output")
+            observed = extract_json_object(raw)
+            accepted_key_tier = key_tier
+            return True
+        except Exception as exc:
+            provider_failures.append(
+                {
+                    "provider": "gemini_api",
+                    "key_tier": key_tier,
+                    "key_ordinal": key_ordinal,
+                    "attempt_round": attempt_round,
+                    "model": model,
+                    "category": _api_failure_category(exc),
+                    "error_type": type(exc).__name__,
+                    **(
+                        {"http_status": int(exc.code)}
+                        if isinstance(getattr(exc, "code", None), int)
+                        else {}
+                    ),
+                }
+            )
+            return False
+
+    item_key = _sha256(audio_path)
+    free_keys = _configured_free_keys()
+    attempt_round = 1
+    for attempt_round in range(
+        1, gemini_backup_policy.MIN_FREE_CHAIN_STRIKES + 1
+    ):
+        round_start = len(provider_failures)
+        for key_ordinal, key in enumerate(free_keys, start=1):
+            if attempt_api_key(
+                key,
+                key_tier=gemini_backup_policy.FREE_KEY_TIER,
+                key_ordinal=key_ordinal,
+                attempt_round=attempt_round,
+            ):
+                break
+        if observed is not None or not free_keys:
+            break
+        strikes = gemini_backup_policy.record_free_chain_failure(item_key)
+        if strikes >= gemini_backup_policy.MIN_FREE_CHAIN_STRIKES:
+            break
+        round_categories = [
+            row.get("category")
+            for row in provider_failures[round_start:]
+            if row.get("provider") == "gemini_api"
+        ]
+        if not gemini_backup_policy.quota_exhausted_round(round_categories):
+            break
+    if observed is not None:
+        return observed, accepted_key_tier, paid_policy_stamp
+
+    allowed, gate_reason = gemini_backup_policy.paid_attempt_allowed(item_key)
+    if allowed and attempt_api_key(
+        str(gemini_backup_policy.paid_backup_key()),
+        key_tier=gemini_backup_policy.PAID_KEY_TIER,
+        key_ordinal=len(free_keys) + 1,
+        attempt_round=attempt_round,
+    ):
+        paid_policy_stamp = gemini_backup_policy.record_paid_use(
+            item_key, purpose="candidate_blind_audio_witness"
+        )
+    elif not allowed and gate_reason != "PAID_KEY_NOT_CONFIGURED":
+        provider_failures.append(
+            {
+                "provider": "gemini_api",
+                "key_tier": gemini_backup_policy.PAID_KEY_TIER,
+                "key_ordinal": len(free_keys) + 1,
+                "attempt_round": attempt_round,
+                "category": f"PAID_BACKUP_SKIPPED:{gate_reason}",
+            }
+        )
+    return observed, accepted_key_tier, paid_policy_stamp
 
 
 @dataclass(frozen=True)
@@ -844,96 +960,15 @@ def _observe_entity_audio(
                 target_audio_end_ms=request.get("target_audio_end_ms"),
             )
             api_prompt_path.write_text(api_prompt, encoding="utf-8")
-
-            def attempt_api_key(
-                attempt_key: str, *, key_tier: str
-            ) -> bool:
-                nonlocal observed, accepted_key_tier
-                try:
-                    raw = _gemini_api_observe_witness(
-                        audio_path=api_audio_path,
-                        prompt=api_prompt,
-                        key=attempt_key,
-                        model=model_used,
-                    )
-                    api_response_path.write_text(
-                        (raw or "")
-                        if (raw or "").endswith("\n")
-                        else (raw or "") + "\n",
-                        encoding="utf-8",
-                    )
-                    if not raw or len(raw.encode("utf-8")) > 2_000_000:
-                        raise ValueError(
-                            "empty or oversized Gemini API output"
-                        )
-                    observed = extract_json_object(raw)
-                    accepted_key_tier = key_tier
-                    return True
-                except Exception as exc:
-                    provider_failures.append(
-                        {
-                            "provider": "gemini_api",
-                            "key_tier": key_tier,
-                            "model": model_used,
-                            "category": _api_failure_category(exc),
-                            "error_type": type(exc).__name__,
-                        }
-                    )
-                    return False
-
-            item_key = _sha256(api_audio_path)
-            round_start = len(provider_failures)
-            for key in _configured_free_keys():
-                if attempt_api_key(
-                    key, key_tier=gemini_backup_policy.FREE_KEY_TIER
-                ):
-                    break
-            quota_fastpath = False
-            if observed is None:
-                gemini_backup_policy.record_free_chain_failure(item_key)
-                round_categories = [
-                    row.get("category")
-                    for row in provider_failures[round_start:]
-                    if row.get("provider") == "gemini_api"
-                ]
-                quota_fastpath = gemini_backup_policy.quota_exhausted_round(
-                    round_categories
+            observed, accepted_key_tier, paid_policy_stamp = (
+                _run_gemini_api_fallback(
+                    audio_path=api_audio_path,
+                    prompt=api_prompt,
+                    response_path=api_response_path,
+                    model=model_used,
+                    provider_failures=provider_failures,
                 )
-            if observed is None:
-                if quota_fastpath:
-                    allowed, gate_reason = (
-                        gemini_backup_policy.paid_attempt_allowed(
-                            item_key,
-                            prior_strikes=(
-                                gemini_backup_policy.MIN_FREE_CHAIN_STRIKES
-                            ),
-                        )
-                    )
-                    gate_reason = f"QUOTA_FASTPATH:{gate_reason}"
-                else:
-                    allowed, gate_reason = (
-                        gemini_backup_policy.paid_attempt_allowed(item_key)
-                    )
-                if allowed and attempt_api_key(
-                    str(gemini_backup_policy.paid_backup_key()),
-                    key_tier=gemini_backup_policy.PAID_KEY_TIER,
-                ):
-                    paid_policy_stamp = gemini_backup_policy.record_paid_use(
-                        item_key, purpose="candidate_blind_audio_witness"
-                    )
-                elif (
-                    not allowed
-                    and gate_reason != "PAID_KEY_NOT_CONFIGURED"
-                ):
-                    provider_failures.append(
-                        {
-                            "provider": "gemini_api",
-                            "key_tier": gemini_backup_policy.PAID_KEY_TIER,
-                            "category": (
-                                f"PAID_BACKUP_SKIPPED:{gate_reason}"
-                            ),
-                        }
-                    )
+            )
         if observed is not None:
             response_path = api_response_path
             prompt_path = api_prompt_path
