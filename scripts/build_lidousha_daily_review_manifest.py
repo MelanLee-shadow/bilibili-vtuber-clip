@@ -509,10 +509,22 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
     # retry_wait 只表示批内其他 pick 还有重试预算；review_ready pick 的产物
     # 已冻结（主车道从不 re-supersede review_ready）。processing 仍然拒绝：
     # runner 正在写 picks。
+    #
+    # 当天第一条投稿之后，`batch_terminal_state` 会把 publication-closure 的
+    # 状态提升成顶层 `status`（`project_publication_closure` 只在“当天还没有
+    # 任何已发布件”时返回 NOT_APPLICABLE）。这些也是 tick 收尾写入的终态，
+    # 与 runner 正在写 picks 无关，因此同样可评审——否则一天里的第二条投稿
+    # 永远造不出 manifest（2026-08-07 `ready_unpublished_with_failures` 实拒；
+    # Codex-F 在未合入的 `wsl/fasttrack-0809` 53dc752c 只补了
+    # `publication_in_progress`，仍不够）。`published*` 蕴含没有 ready 行，
+    # 逐条 pick 门会照常拒绝，这里不必也不应放行。
     if batch_status not in {
         "review_ready",
         "review_ready_with_failures",
         "review_ready_retry_wait",
+        "publication_in_progress",
+        "ready_unpublished",
+        "ready_unpublished_with_failures",
     }:
         raise DailyManifestError(
             f"batch status not reviewable: {batch_status}"

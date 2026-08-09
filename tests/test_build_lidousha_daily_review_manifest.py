@@ -726,3 +726,57 @@ def test_atomic_projection_failure_preserves_previous_package_bytes(
 
     assert target.read_bytes() == b"previous authority"
     assert list(package_root.glob(".authority.json.tmp-*")) == []
+
+
+def _rewrite_batch_status(state_path: Path, status: str) -> None:
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["status"] = status
+    state_path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "batch_status",
+    [
+        "publication_in_progress",
+        "ready_unpublished",
+        "ready_unpublished_with_failures",
+    ],
+)
+def test_build_accepts_publication_closure_batch_statuses(
+    tmp_path: Path, batch_status: str
+) -> None:
+    """A day's second upload must still be buildable.
+
+    ``batch_terminal_state`` promotes the publication-closure status onto the
+    top-level ``status`` as soon as the day has one verified publication, so a
+    frozen ``review_ready`` pick would otherwise become permanently
+    unreviewable (2026-08-07 ``ready_unpublished_with_failures`` refusal).
+    """
+
+    package_root, state_path, deployed_commit_file, candidate_id = (
+        _build_daily_talk_package(tmp_path, speaker_finalized=True)
+    )
+    _rewrite_batch_status(state_path, batch_status)
+
+    manifest = build(package_root, state_path, deployed_commit_file, candidate_id)
+
+    assert manifest["batch_status"] == batch_status
+    assert manifest["items"][0]["video"] == (
+        f"{candidate_id}.recut.burned-final-speaker.mp4"
+    )
+
+
+@pytest.mark.parametrize(
+    "batch_status",
+    ["processing", "retry_wait", "no_delivery", "recovery_incomplete", "published"],
+)
+def test_build_still_refuses_non_reviewable_batch_statuses(
+    tmp_path: Path, batch_status: str
+) -> None:
+    package_root, state_path, deployed_commit_file, candidate_id = (
+        _build_daily_talk_package(tmp_path, speaker_finalized=True)
+    )
+    _rewrite_batch_status(state_path, batch_status)
+
+    with pytest.raises(DailyManifestError, match="batch status not reviewable"):
+        build(package_root, state_path, deployed_commit_file, candidate_id)
