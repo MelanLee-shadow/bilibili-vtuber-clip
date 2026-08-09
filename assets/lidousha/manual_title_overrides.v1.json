@@ -1,51 +1,56 @@
 {
-  "schema_version": "lidousha-manual-title-overrides.v1",
-  "comment": "Ivan 手定标题正文按 candidate 注入：正文不送 LLM 改写，也不套自动标题的 selection-hook/机器味重写；最终发布仍统一经过频道前缀、12–48 字与标点结构门。candidate_id 匹配忽略 rN 重切后缀——重切不改内容主题，标题跟内容走。",
-  "overrides": [
-    {
-      "candidate_id": "auto_225942_411_1073",
-      "title": "大喊李豆沙是姐姐妈妈宝宝老公主人，观众已见怪不怪了，这就是主包和kmx的羁绊啊",
-      "authority": "Ivan-2026-07-19"
-    },
-    {
-      "candidate_id": "auto_235936_527_695",
-      "title": "都，都怪你kmx，你看看现在别人对我都什么印象，老李头私下烟酒槟榔都来的（误",
-      "authority": "Ivan-2026-07-19"
-    },
-    {
-      "candidate_id": "auto_225942_698_931",
-      "title": "精心设计MC环节想让kmx用两个字为大家介绍自己，是奶P！才，才不是熊猫呢！",
-      "authority": "Ivan-2026-07-19"
-    },
-    {
-      "candidate_id": "auto_232939_1565_1693",
-      "title": "李豆沙第一次收到这么贵重的礼物花篮，非常感谢kmx，kmx都是好人！",
-      "authority": "Ivan-2026-07-19"
-    },
-    {
-      "candidate_id": "auto_163109_91_291",
-      "title": "豆沙小课堂，侄女究竟应该如何找女朋友呢？",
-      "authority": "Ivan-2026-07-20"
-    },
-    {
-      "candidate_id": "auto_193450_3573_3665",
-      "title": "最包容异性恋的直播间，看到男角色只能说出一句不熟",
-      "authority": "Ivan-2026-07-22"
-    },
-    {
-      "candidate_id": "auto_193450_672_945",
-      "title": "被坏女人南町问到最最最最喜欢的原因，后来才发现自己才是被收集的那个",
-      "authority": "Ivan-2026-07-22"
-    },
-    {
-      "candidate_id": "auto_145940_1533_1619",
-      "title": "嘲笑爱音上不起“月之森贵族学校”，道歉说忘了她是英国留子，又猜她回国可能因为不会做饭",
-      "authority": "Codex-2026-07-30-CPA-source-fact-adjudication+Ivan-backlog-repair-authorization"
-    },
-    {
-      "candidate_id": "auto_152944_964_1091",
-      "title": "长沙人李豆沙亲自打假“长沙大香肠”，话还没说完，弹幕又提议把技能叫“李姐拉拉”",
-      "authority": "Ivan-2026-07-30-directed-repair+source-fact-QA"
-    }
-  ]
+ "schema_version": "lidousha-manual-title-overrides.v1",
+ "comment": "Ivan 手定标题正文按 candidate 注入：正文不送 LLM 改写，也不套自动标题的 selection-hook/机器味重写；最终发布仍统一经过频道前缀、12–48 字与标点结构门。candidate_id 匹配忽略 rN 重切后缀——重切不改内容主题，标题跟内容走。",
+ "overrides": [
+  {
+   "candidate_id": "auto_225942_411_1073",
+   "title": "大喊李豆沙是姐姐妈妈宝宝老公主人，观众已见怪不怪了，这就是主包和kmx的羁绊啊",
+   "authority": "Ivan-2026-07-19"
+  },
+  {
+   "candidate_id": "auto_235936_527_695",
+   "title": "都，都怪你kmx，你看看现在别人对我都什么印象，老李头私下烟酒槟榔都来的（误",
+   "authority": "Ivan-2026-07-19"
+  },
+  {
+   "candidate_id": "auto_225942_698_931",
+   "title": "精心设计MC环节想让kmx用两个字为大家介绍自己，是奶P！才，才不是熊猫呢！",
+   "authority": "Ivan-2026-07-19"
+  },
+  {
+   "candidate_id": "auto_232939_1565_1693",
+   "title": "李豆沙第一次收到这么贵重的礼物花篮，非常感谢kmx，kmx都是好人！",
+   "authority": "Ivan-2026-07-19"
+  },
+  {
+   "candidate_id": "auto_163109_91_291",
+   "title": "豆沙小课堂，侄女究竟应该如何找女朋友呢？",
+   "authority": "Ivan-2026-07-20"
+  },
+  {
+   "candidate_id": "auto_193450_3573_3665",
+   "title": "最包容异性恋的直播间，看到男角色只能说出一句不熟",
+   "authority": "Ivan-2026-07-22"
+  },
+  {
+   "candidate_id": "auto_193450_672_945",
+   "title": "被坏女人南町问到最最最最喜欢的原因，后来才发现自己才是被收集的那个",
+   "authority": "Ivan-2026-07-22"
+  },
+  {
+   "candidate_id": "auto_145940_1533_1619",
+   "title": "嘲笑爱音上不起“月之森贵族学校”，道歉说忘了她是英国留子，又猜她回国可能因为不会做饭",
+   "authority": "Codex-2026-07-30-CPA-source-fact-adjudication+Ivan-backlog-repair-authorization"
+  },
+  {
+   "candidate_id": "auto_152944_964_1091",
+   "title": "长沙人李豆沙亲自打假“长沙大香肠”，话还没说完，弹幕又提议把技能叫“李姐拉拉”",
+   "authority": "Ivan-2026-07-30-directed-repair+source-fact-QA"
+  },
+  {
+   "candidate_id": "auto_200736_298_383",
+   "title": "坏女人小李今天就是要去骗女主播的哼哼",
+   "authority": "Ivan-2026-08-08"
+  }
+ ]
 }
