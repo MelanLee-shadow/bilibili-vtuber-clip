@@ -247,7 +247,17 @@ FOCUSED_MODULE_LINE_BUDGETS = {
     # 2026-08-07 +1：Ivan 2026-08-07 说话人默认连线裁定——ambiguous-cue 语义
     # 佐证接线（confidence 穿透 + 移除死掉的 neighbour smoothing 分支），净增
     # 只有 1 行；重活在新模块 src/autoslice/speaker_host_evidence.py。
-    Path("src/autoslice/speaker_finalizer.py"): 1_801,
+    # 2026-08-10 合并波按实际行数调和到 1_804（先例：2257＝两次抬号之和）。
+    # 旧号 1_801 是 2026-08-07 留的上限，彼时实际 1_793；本波两笔接线各自落在
+    # 独立模块，本文件只留穿透与调用点：
+    #   +5 来自 7a55dc79「冻结复核交付机器基线」——fresh/frozen automatic 标签
+    #   物化与 replay 证据的调用接线，本体在
+    #   src/autoslice/reviewed_speaker_baseline.py；
+    #   +6 来自 4e748c2「F5 子cue混说证据面」——disclosure-only sidecar 挂点
+    #   （text_srt_path 穿透 + 一处调用），本体在新模块
+    #   src/autoslice/speaker_overlap_evidence.py。
+    # 两笔都没有在本模块做实活，预算贴实际值。
+    Path("src/autoslice/speaker_finalizer.py"): 1_804,
     # Extracted domains retain a small amount of headroom for real behavior,
     # while failing long before another 3k-4k line domain bus can form.
     # 2026-07-31：+3 来自 4666765（转录实体改由 CPA 路由）。预算贴实际值。
