@@ -14,8 +14,8 @@
   字幕全文提出 3~6 个通用内容词 (可爱/撒娇/破防/吐槽…)。输出过校验:
   长度、去重、且不得撞已知专名表面形式 (防幻觉专名混入)。
 
-合并: 基础位 > 人工裁定 > 专名(标题命中优先, 次数排序) > 内容, 默认封顶 12 个
-(2026-07-13 编辑模式实测 12 个提交+读回成功), 单 tag ≤20 字符、无逗号。
+合并: 基础位 > 人工裁定 > 专名/IP(标题命中优先, 次数排序) > 内容；固定 4 个基础位+
+最多 6 个 dynamic 位，默认封顶 10 个，单 tag ≤20 字符、无逗号。
 
 Ivan 2026-07-13 审查拍板的口径(已固化):
 * 基础位砍成 4 个(李豆沙/虚拟主播/虚拟UP主/直播切片), 其余给内容位。
@@ -52,13 +52,18 @@ from src.autoslice.llm_client import (  # noqa: E402
 # Channel names, proper-noun mappings, and prompt policy are selected through
 # the active profile. Keep these compatibility constants so existing callers
 # do not need to know where the policy bytes live.
-from src.autoslice.upload_tag_policy import load_selected_upload_tag_policy  # noqa: E402
+from src.autoslice.upload_tag_policy import (  # noqa: E402
+    TermRule,
+    load_selected_upload_tag_policy,
+)
 
 _UPLOAD_TAG_POLICY = load_selected_upload_tag_policy()
 BASE_TAGS = _UPLOAD_TAG_POLICY.base_tags
 MAX_TAGS_DEFAULT = _UPLOAD_TAG_POLICY.max_tags_default
+MAX_DYNAMIC_TAGS = _UPLOAD_TAG_POLICY.max_dynamic_tags
 MAX_TAG_CHARS = _UPLOAD_TAG_POLICY.max_tag_chars
 TERM_RULES = _UPLOAD_TAG_POLICY.term_rules
+IMPORTANT_CONTENT_IP_RULES = _UPLOAD_TAG_POLICY.important_content_ips
 _THEME_ALLOWED = set(_UPLOAD_TAG_POLICY.theme_allowed)
 _BANNED_CONTENT_TAGS = set(_UPLOAD_TAG_POLICY.banned_content_tags)
 CONTENT_PROMPT = _UPLOAD_TAG_POLICY.content_prompt_template
@@ -69,7 +74,7 @@ _KNOWN_PROPER_SURFACES: tuple[str, ...] = tuple(
     sorted(
         {
             surface
-            for rule in TERM_RULES
+            for rule in (*TERM_RULES, *IMPORTANT_CONTENT_IP_RULES)
             for surface in rule.tags
         }
         | set(_UPLOAD_TAG_POLICY.known_proper_surfaces_extra),
@@ -99,12 +104,24 @@ def parse_srt_text(srt_path: Path) -> str:
     return "\n".join(lines)
 
 
-def scan_proper_nouns(title: str, body: str) -> list[ProperHit]:
+def scan_proper_nouns(
+    title: str,
+    body: str,
+    *,
+    term_rules: tuple[TermRule, ...] | None = None,
+    important_content_ip_rules: tuple[TermRule, ...] | None = None,
+) -> list[ProperHit]:
     # 专名常被字幕跨 cue 截断(实案: "梦\n限大"), 逐行文本会漏; 额外在去空白
     # 连体文本上匹配一次, 每个 pattern 取两种视图的最大命中数(不相加防重复计数)。
     condensed_body = re.sub(r"[\s，。？！—…·]+", "", body)
     merged: dict[str, ProperHit] = {}
-    for rule in TERM_RULES:
+    selected_term_rules = TERM_RULES if term_rules is None else term_rules
+    selected_ip_rules = (
+        IMPORTANT_CONTENT_IP_RULES
+        if important_content_ip_rules is None
+        else important_content_ip_rules
+    )
+    for rule in (*selected_term_rules, *selected_ip_rules):
         evidence: dict[str, int] = {}
         title_hit = False
         for pattern in rule.patterns:
@@ -183,16 +200,24 @@ def llm_content_tags(
     return accepted, warnings
 
 
-def merge_tags(base: tuple[str, ...], proper: list[ProperHit], content: list[dict], max_total: int) -> list[str]:
+def merge_tags(
+    base: tuple[str, ...],
+    proper: list[ProperHit],
+    content: list[dict],
+    max_total: int,
+    *,
+    max_dynamic: int = MAX_DYNAMIC_TAGS,
+) -> list[str]:
     final: list[str] = []
     seen: set[str] = set()
+    effective_limit = min(max_total, len(base) + max_dynamic)
     for tag in list(base) + [h.tag for h in proper] + [c["tag"] for c in content]:
         key = tag.casefold()
         if key in seen or not _valid_tag(tag):
             continue
         seen.add(key)
         final.append(tag)
-        if len(final) >= max_total:
+        if len(final) >= effective_limit:
             break
     return final
 
@@ -208,6 +233,7 @@ def suggest_for_slice(
     timeout: float = 240.0,
     suppress_tags: dict[str, str] | None = None,
     add_tags: dict[str, str] | None = None,
+    important_content_ip_rules: tuple[TermRule, ...] | None = None,
     llm_call=None,
 ) -> dict:
     """suppress_tags/add_tags: 人工裁定通道 {tag: 理由}。
@@ -221,7 +247,16 @@ def suggest_for_slice(
     # 早期已发布切片可能没有字幕存档(成品字幕只烧在视频里) — title-only 模式:
     # 专名层只扫标题, LLM 层被明确告知没有字幕、宁缺毋滥。
     srt_text = parse_srt_text(srt_path) if srt_path else ""
-    proper = scan_proper_nouns(title, srt_text)
+    active_ip_rules = (
+        IMPORTANT_CONTENT_IP_RULES
+        if important_content_ip_rules is None
+        else important_content_ip_rules
+    )
+    proper = scan_proper_nouns(
+        title,
+        srt_text,
+        important_content_ip_rules=active_ip_rules,
+    )
     overridden = [h.tag for h in proper if h.tag in suppress_tags]
     proper = [h for h in proper if h.tag not in suppress_tags]
     # 人工裁定的补充 tag 排在专名最前(人工判断优先于统计排序)。
@@ -255,6 +290,14 @@ def suggest_for_slice(
             }
             for h in proper
         ],
+        "important_content_ips": [
+            h.tag
+            for h in proper
+            if any(
+                rule_name in {rule.name for rule in active_ip_rules}
+                for rule_name in h.rules
+            )
+        ],
         "content_tags": content,
         "warnings": warnings,
         "overrides": {"suppressed": suppress_tags, "added": add_tags},
@@ -265,7 +308,7 @@ def suggest_for_slice(
     }
 
 
-ENGINE_VERSION = "suggest-upload-tags.v1"
+ENGINE_VERSION = "suggest-upload-tags.v2"
 
 
 def generate_upload_tags(
@@ -298,6 +341,7 @@ def generate_upload_tags(
             "final_tags": result["final_tags"],
             "final_tag_line": result["final_tag_line"],
             "proper_noun_tags": result["proper_noun_tags"],
+            "important_content_ips": result["important_content_ips"],
             "content_tags": result["content_tags"],
             "warnings": result["warnings"],
         }

@@ -237,4 +237,8 @@
 - 新 BV 与 exact same-BV repair 的两条发布 lane、权限边界、正式 receipt schema、live
   验收和执行顺序只读 [90-publish.md](90-publish.md)。打包步骤不得复制、放宽或自行推导发布
   准入，也不得把 package audit、pending-human manifest 或任意旧版/手写 receipt 当成授权。
-- tag 按成品字幕出（`upload_tag_policy.py`，Ivan 2026-07-13）。
+- tag 按成品字幕重算（`upload_tag_policy.py` + `scripts/suggest_upload_tags.py`）。profile
+  `upload-tag-policy.v2` 固定 4 个 base 位与最多 6 个 dynamic 位，总上限 10；专名（含
+  `important_content_ips` 白名单中的高显著 IP/节目名）只由确定性 owner 从标题/最终 SRT 命中，
+  trigger 标点/别名只作表面，输出 canonical 正主名。LLM 仍只提通用内容词，不能发明或重复
+  专名；最终 6 个 dynamic 位按人工补充 → 确定性专名/IP → LLM 内容词的既有优先级竞争。

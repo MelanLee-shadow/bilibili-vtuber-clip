@@ -1,7 +1,6 @@
 """Fail-closed title, AI-cover, and publish-draft staging.
 
-This module can prepare local evidence only. Every emitted publish document keeps
-``upload_enabled`` false and remains downstream of the release decision gate.
+Prepares local evidence only; every document keeps upload disabled behind the release gate.
 """
 
 from __future__ import annotations
@@ -17,6 +16,7 @@ from typing import Callable, Mapping, NamedTuple, Sequence
 from .auto_review import DecisionAction, ReviewDecision
 from .channel_profile import load_channel_profile
 from .chat_authority import canonicalize_hard_surfaces
+from .content_ip_signal import important_content_ip_signal_from_srt
 from .cover_emote import (
     EmoteLibrary,
     compose_companion_reference,
@@ -400,10 +400,8 @@ def _stage_publish_draft(
     record = dict(materialized_recut)
     media_path = Path(str(record["media_path"]))
     publish_json_path = media_path.with_suffix(".publish.json")
-    # Ivan's manual title owns its body. It does not bypass the shared archive
-    # envelope: every title receives the channel prefix and the same structural
-    # postcondition before cover generation or delivery.
     staged_title = title
+    important_content_ips: list[dict[str, object]] = []
     title_policy_violations: list[str] = []
     title_authority_error: str | None = None
     title_state = _recovery_publication_staging_state(
@@ -414,8 +412,6 @@ def _stage_publish_draft(
     )
     title_source, title_authority_status, normalized_recovery_publication_authority = title_state
     story_contract = record.get("story_contract")
-    # Ivan 手定标题正文按 candidate 注入：命中后 LLM 不再改正文，但共享
-    # publication envelope / structure gate 仍在后面运行。
     manual_override = manual_title_override(candidate_id)
     if manual_override is not None:
         staged_title = manual_override
@@ -426,6 +422,12 @@ def _stage_publish_draft(
         selection_hook = str(selection_hook or "").strip()
         selection_hook_clause = _selection_hook_first_clause(selection_hook)
         transcript_sample = _staged_transcript_sample(record, cues)
+        important_ip_signal = important_content_ip_signal_from_srt(
+            subtitle_path=record.get("subtitle_path"),
+            fallback_body="\n".join(cue.text for cue in cues),
+            title=selection_hook,
+        )
+        important_content_ips = important_ip_signal.as_receipt()
         style_asset = profile_asset_text("title_style")
         persona_asset = profile_asset_text("persona")
         selection_hook_contract = ""
@@ -454,6 +456,7 @@ def _stage_publish_draft(
             f"\n{CHANNEL_PROFILE.display_name}特质:\n{persona_asset}\n"
             f"\n标题风格规范与历史标题范例(严格模仿这个风格):\n{style_asset}\n"
             f"\n本切片转写内容节选(辅助素材): {transcript_sample}\n"
+            f"{important_ip_signal.prompt_block}"
             f"{selection_hook_contract}"
             f"{clip_context_contract}"
             f"硬性要求：含{CHANNEL_PROFILE.talk_title_prefix}前缀后 {_TITLE_MIN_LEN}–{_TITLE_MAX_LEN} 字"
@@ -478,12 +481,7 @@ def _stage_publish_draft(
         if automatic.title_authority_status is not None:
             title_authority_status = automatic.title_authority_status
 
-        # Keep the shared publication choke point authoritative even if a
-        # recovery attempt reaches it with an older/blocked automatic-title
-        # result.  This is deliberately narrower than regenerating a title:
-        # only profile-declared disposable filler words may change, and the
-        # cleaned title must independently retain an exact phrase from the
-        # authoritative selection hook before the prior block is cleared.
+        # Shared publication choke point: only declared filler cleanup is allowed.
         choke_repaired_title = canonicalize_automatic_title_fillers(staged_title)
         choke_hook_valid = not selection_hook or _selection_hook_has_inferable_anchor(
             selection_hook=selection_hook,
@@ -915,6 +913,7 @@ def _stage_publish_draft(
         "recovery_publication_authority": normalized_recovery_publication_authority,
         "title_authority_error": title_authority_error,
         "title_policy_violations": title_policy_violations,
+        "important_content_ips": important_content_ips,
         "title_story_audit": title_story_audit,
         "source_fact_review": source_fact_review,
         "manual_title_repair_authority_consumption": manual_title_repair_authority_consumption,
@@ -939,6 +938,7 @@ def _stage_publish_draft(
         "recovery_publication_authority": normalized_recovery_publication_authority,
         "title_authority_error": title_authority_error,
         "title_policy_violations": title_policy_violations,
+        "important_content_ips": important_content_ips,
         "title_story_audit": title_story_audit,
         "source_fact_review": source_fact_review,
         "manual_title_repair_authority_consumption": manual_title_repair_authority_consumption,

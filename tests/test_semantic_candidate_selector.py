@@ -47,6 +47,18 @@ def test_prompt_is_viewer_perspective_and_lists_all_cues():
     assert "背景音乐都不是歌切" in prompt
     assert "#1 " in prompt and "#5 " in prompt
     assert "第5句话" in prompt
+    assert "内容提及的重要 IP" in prompt
+    assert "不要求机械插词" in prompt
+
+
+def test_f19_hook_input_exposes_registered_content_ip_as_signal_only():
+    cues = [SourceCue("c1", 0, 2_000, "刚才在聊战斗吧！歌姬的节目内容")]
+
+    prompt = build_semantic_recall_prompt(cues, max_candidates=1)
+
+    assert "内容提及的重要 IP（白名单确定性信号）: 战斗吧歌姬" in prompt
+    assert "不自动加分" in prompt
+    assert "若只是偶然提及可忽略" in prompt
 
 
 def test_long_session_recall_is_sharded_with_overlap_and_covers_the_second_hour():
@@ -104,9 +116,9 @@ def test_default_profile_semantic_prompt_policy_fingerprint():
         danmaku_hints="00:01 burst",
     )
 
-    # 2026-07-23：v5 七维量化表、可执行校准资产与 event_key 合并规则。
+    # 2026-08-09：F19 内容 IP 白名单显著性信号；不自动加分或机械插词。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "35509373643f69736d9a0b88e5725da0ee658fa81b1553414def64b49fb8ab28"
+        "6037d954da7f4c6d2a337c0e12eedc1c354d11e7f19bd10b666e495b592918aa"
     )
 
 

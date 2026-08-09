@@ -18,6 +18,10 @@
    - 上述补位只适用于普通生产。`RECOVERY_REVIEW` 若绑定
      `talk-selection-contract.v1 / EXACT_CANDIDATE_SET_NO_BACKFILL`，候选集合本身就是
      人工 authority：任一条失败必须保留原槽位为失败，不得从 backlog 偷换成另一条。
+   - profile `upload_tag_policy.v2 / important_content_ips` 是高显著 IP/节目专名白名单；语义
+     召回 prompt 从完整 cue 文本确定性列出命中的 canonical 名，首项为「战斗吧歌姬」。它只
+     是 `audience_salience` / hook 选材信号，不自动授予 Tier/分数、不要求 hook 机械插词；
+     偶然提及可忽略，最终 scorecard 仍由候选窗内证据和固定代码复算。
 2. 弹幕热度 hints：`danmaku_evidence.py`（爆发窗口，选题信号，不改文本）。
 3. CPA 观众视角审查：每个候选无条件过 `scripts/cpa_semantic_qa_llm.py` 判官（`viewer_context_ok` 语境自足性 + 自动扩窗建议），失败即 BLOCK（`live_source_review.py::_merge_cpa_semantic_review_into_decision`）。
 4. 候选是内容锚点不是最终边界；边界由 [30-boundary.md](30-boundary.md) 决定。

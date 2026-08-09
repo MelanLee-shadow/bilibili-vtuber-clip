@@ -3425,7 +3425,10 @@ def test_publish_staging_writes_upload_disabled_draft_and_blocks_unfinished_ai_c
     srt = tmp_path / "clip.srt"
     # The title sample now prefers the FINAL subtitle file (fresh transcription
     # with glossary corrections) over the context cues.
-    srt.write_text("1\n00:00:00,000 --> 00:00:02,000\n价格有点贵哈哈哈\n", encoding="utf-8")
+    srt.write_text(
+        "1\n00:00:00,000 --> 00:00:02,000\n刚聊到战斗吧！歌姬，价格有点贵哈哈哈\n",
+        encoding="utf-8",
+    )
     record = {
         "status": "MATERIALIZED",
         "media_path": str(media),
@@ -3439,6 +3442,8 @@ def test_publish_staging_writes_upload_disabled_draft_and_blocks_unfinished_ai_c
     def fake_title_llm(prompt: str) -> str:
         title_prompts.append(prompt)
         assert "价格有点贵哈哈哈" in prompt
+        assert "内容提及的重要 IP（白名单确定性信号）: 战斗吧歌姬" in prompt
+        assert "不要求机械插词" in prompt
         return '{"title": "主播吐槽游戏价格贵，笑场三连"}'
 
     staged = shadow_pipeline._stage_publish_draft(
@@ -3456,7 +3461,7 @@ def test_publish_staging_writes_upload_disabled_draft_and_blocks_unfinished_ai_c
     # outside the fake callback so an asset drift fails as a fingerprint
     # assertion instead of being swallowed by the production LLM error gate.
     assert hashlib.sha256(title_prompts[0].encode()).hexdigest() == (
-        "aa84cddcce6e4ee9dd24d523d808a96f41bf5c1af546999be4deee4167b0ec7c"  # + Japanese native-script canon (Ivan 2026-07-29)
+        "a6869a8a3081a14cd770b845a86aa59d01bf803ce71ec4a90f01b60c55384536"  # + F19 important-content-IP signal (Ivan 2026-08-09)
     )
     assert staging["status"] == "STAGED"
     assert staging["upload_enabled"] is False
@@ -3464,10 +3469,12 @@ def test_publish_staging_writes_upload_disabled_draft_and_blocks_unfinished_ai_c
     assert staging["title"] == "【李豆沙】主播吐槽游戏价格贵，笑场三连"
     assert staging["title_source"] == "llm+lidousha_style_asset"
     assert staging["title_policy_violations"] == []
+    assert staging["important_content_ips"][0]["canonical_name"] == "战斗吧歌姬"
     draft = _load_json(Path(staging["publish_json_path"]))
     assert draft["upload_enabled"] is False
     assert draft["title"] == "【李豆沙】主播吐槽游戏价格贵，笑场三连"
     assert draft["title_policy_violations"] == []
+    assert draft["important_content_ips"] == staging["important_content_ips"]
     assert draft["cover_status"] == "BLOCKED_AI_COVER_REQUIRED"
     assert draft["cover_path"] is None
     assert draft["cover_generation"]["fallback_used"] is False

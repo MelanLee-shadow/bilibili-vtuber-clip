@@ -52,6 +52,10 @@
 - 核心原则：标题围绕李豆沙本人；替换成任何别的主播还成立的标题就是失败。
 - 自动标题除共享门外，还受违禁词与 selection-hook 锚点约束；失败可做有界重写。
   人工正文不自动重写，但结构/长度不合规仍 fail closed 并要求修正文档 authority。
+- 自动 talk 标题 prompt 必须从**完整最终 SRT**（不是 600 字节选）扫描 profile
+  `important_content_ips`，以「内容提及的重要 IP」字段携带 canonical 名、命中次数与表面证据，
+  publish draft/staging 同步保存该 signal。它只供选材：内容中心时自然使用，偶然一提时可省略；
+  不加入 required entity、不机械改标题、不因标题未出现该 IP 而报错。歌切目录式标题不接此信号。
 - selection hook 属于生成摘要而非源字幕。恢复源 hash 导致旧 session-relation authority
   暂不可用时，如果最终 CPA/词表链已经在整片字幕中稳定落下登记规范专名，hook 内对应的
   **未登记**误听面可继承该 expected-value 证据机械规范化；普通短语 false-positive 必须

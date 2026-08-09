@@ -12,7 +12,7 @@
 | 3 | `_build_entity_verification_context` | `read_aloud_llm_verifier.py`、`entity_audio_verifier.py` | 实体仲裁闭包（人工 override → 朗读 LLM → 音频仲裁） |
 | 4 | `_apply_entity_authority` | `self_reference_absorption.py`、`chat_proposals.py`、`subtitle_fidelity.py`、`chat_repair.py` | 自称吸收、弹幕权威修复、数字事实门、音频实体落地 |
 | 5 | `_run_final_review` | `final_review_auditor.py` | correction pass：发现问题、路由修复和逐条声学复核；产物为 `final-review-audit.v1`，不是放行回执 |
-| 6 | `_finalize_text_evidence` | `subtitle_fidelity.py` 各 guard、`surface_canon.py`、`song_name_pin.py`、`source_subtitle_truth.py` | 语言保持/书名号/标点门、梗词定形、歌名钉、源真值投影（FAILED 即 SystemExit） |
+| 6 | `_finalize_text_evidence` | `subtitle_fidelity.py` 各 guard、`surface_canon.py`、`song_name_semantic_verification.py`、`song_name_pin.py`、`source_subtitle_truth.py` | 语言保持/书名号/标点门、梗词定形、歌词语义验证后的歌名钉、源真值投影（FAILED 即 SystemExit） |
 | 7 | `review_final_boundary_semantics` | `producer_boundary_review_stage.py`、`boundary_semantic_review.py` | 对 resolver 前的 source full-window cue grid 评审四命题并保留 post-end witness，签发 `review_scope=source_full_window` 回执 |
 | 8 | boundary resolver + `_materialize_final_recut` | `producer_boundary_resolution.py`、`producer_package_finalization.py` | snap/cut 后恢复最终边界对应的 reviewed baseline、重放 source truth 与其他 materialize authority，写出实际交付 SRT |
 | 9 | `exact_delivery_correction_audit` | `producer_boundary_review_stage.py`、`boundary_semantic_review.py` | 从实际交付 SRT 重新解析 delivery-local grid，借 hash-bound source separation witness 复审并签发 `review_scope=final_delivery` 回执 |
@@ -23,6 +23,17 @@
 
 ## 硬约束
 
+- 谈话切片中的歌名候选（包括可能其实是 franchise/企划名的字符串）在
+  `song_name_pin.py` 改字前必须先有 `song-name-semantic-verification.v1`：回执绑定 pin 前
+  SRT、完整候选集合、标题引语/selection hook/歌名语境邻近 cue、逐候选歌词来源与 hash、
+  命中面、分数和 `MATCH / DISPUTED / LYRICS_UNAVAILABLE / INSUFFICIENT_EVIDENCE` 判定。
+  只有唯一 `MATCH` 可以进入 pin；语义证据可在另一个候选拥有强字面/近音表面时纠正误选，
+  但不能在尾句根本不像任何候选歌名时凭大意生造。缺回执、同分、多匹配、歌词缺失或不一致
+  都不得改字。产物分别为 `<candidate>.song-name-semantic-verification.json` 与
+  `<candidate>.song-name-pin.json`。
+- 歌词检索严格 local-first：默认只读 profile `known_songs` 的本地 fingerprint/LRC 缓存。
+  外部歌词 provider 只有 typed `SongLyricsProvider` 注入位，生产默认不注入、不启用；本地缺失
+  时只落 `song-name-lyrics-verification-request.v1 / DISABLED_BY_DEFAULT`，禁止临时裸调未审接口。
 - 上传语义修复只允许三类非 CPA mutation：Ivan operator truth、纯机械规范化和有完整
   `glossary-expected-value-gate.v1` 的高先验 canon。expected-value 只接受未登记近音误听面
   到登记 glossary/roster 词面；两边都是登记词面时专名平等，必须交 CPA。其余词面、语义、

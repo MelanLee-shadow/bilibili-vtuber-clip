@@ -1772,19 +1772,19 @@ _TEMPLATE_DIR_NOTES = {
 _IDENTITY_TOKENS = ("李豆沙", "lidousha", "豆沙", "kmx", "小李")
 _PROFILE_SCHEMA_RE = re.compile(r"^lidousha([-.][A-Za-z0-9_.-]+)$")
 
-# 这三个资产的骨架必须"可加载"而不只是"形状对"：loader 在 import 时就执行内容
-# 契约（base_tags 非空、banned_regexes[0] 存在、prompt 三占位符），空壳会让新
-# profile 连 --help 都起不来。值都是中性模板默认，供采用者替换。
+# 资产骨架必须能过 loader 内容契约；值均为供采用者替换的中性默认。
 _TEMPLATE_ASSET_JSON = {
     # 实体图 crawler 的人工补种：cast API 查不到的团体/组合，由你按可查证的
     # 公开来源补。空数组=不补种，crawler 照跑。
     "related_entity_seeds": {"entities": []},
     "upload_tag_policy": {
-        "schema_version": "vtuber-slice.upload-tag-policy.v1",
+        "schema_version": "vtuber-slice.upload-tag-policy.v2",
         "base_tags": ["虚拟主播", "直播切片", "直播回放", "切片"],
-        "max_tags_default": 12,
+        "max_tags_default": 10,
+        "max_dynamic_tags": 6,
         "max_tag_chars": 20,
         "term_rules": [],
+        "important_content_ips": [],
         "known_proper_surfaces_extra": [],
         "theme_allowed": [],
         "banned_content_tags": [],

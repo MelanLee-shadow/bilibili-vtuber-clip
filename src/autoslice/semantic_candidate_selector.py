@@ -26,6 +26,7 @@ from typing import Mapping, Sequence
 from src.autoslice.auto_review import DecisionAction
 from src.autoslice.boundary_resolver import AnchorCandidate, BoundaryResolution
 from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.content_ip_signal import detect_important_content_ips
 # Same-package reuse of the recall-stage plumbing: candidate dataclass, window
 # overlap dedupe, and the canonical song-anchor boundary (song candidates must
 # always go through the full-source song-boundary redo).
@@ -120,6 +121,7 @@ def build_semantic_recall_prompt(
         text = " ".join(cue.text.split())
         lines.append(f"#{position} [{_mmss(cue.source_start_ms)}-{_mmss(cue.source_end_ms)}] {text}")
     transcript = "\n".join(lines)
+    important_ip_block = detect_important_content_ips(title="", body=transcript).prompt_block
     danmaku_block = ""
     if danmaku_hints:
         danmaku_block = f"""
@@ -129,7 +131,7 @@ def build_semantic_recall_prompt(
     metric = _slice_selection_metric()
     metric_block = f"\n选题优先级 metric(Ivan 逐条校准过的权威,选题和排序都必须对照它;历史真例/反例都在里面):\n{metric}\n" if metric else ""
     scope_block = f"\n召回范围说明:{scope_note}\n" if scope_note else ""
-    return f"""你是{CHANNEL_PROFILE.display_name}(B站虚拟主播)切片频道的选题编辑。下面是一场直播的完整字幕时间轴,每行格式是 #编号 [开始-结束] 文本。{danmaku_block}{metric_block}{scope_block}
+    return f"""你是{CHANNEL_PROFILE.display_name}(B站虚拟主播)切片频道的选题编辑。下面是一场直播的完整字幕时间轴,每行格式是 #编号 [开始-结束] 文本。{danmaku_block}{metric_block}{scope_block}{important_ip_block}
 
 你的任务:站在一个没看过这场直播的普通观众视角,从整场里选出最值得做成切片的片段(最多 {max_candidates} 个)。
 “最多”是上限，不是必须凑满的数量。**同一场连续事件只能占一个候选**：话题中间即使有短暂停顿、

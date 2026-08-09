@@ -164,6 +164,24 @@
     少一个 mention、无合法投影或其他未决槽仍 fail closed。该规则只承认 operator truth，不把
     结构化聊天本身升级成文字真值，也不绕过两个已登记专名之间的 CPA 裁决。
 
+## 谈话歌名歌词语义门（F19）
+
+- `song_name_semantic_verification.py` 是谈话歌名的歌词证据 owner；它不处理歌切边界或歌切
+  canonical 标题。输入只取 pin 前 SRT、候选闭集、标题引语/selection hook 与歌名语境邻近
+  cue，逐候选从本地歌词缓存取证。
+- `song-name-semantic-verification.v1` 必须逐候选披露证据行、歌词 provider/ref/hash、实际
+  matched surface、semantic score 与 verdict，并以 receipt SHA 绑定所有字段。receipt 或输入
+  hash 被改、候选集合漂移，`song_name_pin.py` 直接拒绝。
+- `MATCH` 只接受至少 8 个规范化字符的完整短语，或至少 8 字且覆盖率/相似度同时过门的共享
+  短语；这条确定性面用于歌词行/近似复述，不能把歌名字符串自身、franchise 名或搜索排序当作
+  歌词证据。歌词存在但不吻合记 `DISPUTED`；没有 reviewed lyrics 记
+  `LYRICS_UNAVAILABLE`，两者都只会降候选、不得抬置信。
+- 唯一歌词语义 winner 可以在另一个候选更像当前误听表面时纠正它，并把
+  `lyrics_semantic_override` 与两边分数写入 pin audit；仍要求当前尾句强匹配候选闭集中的某一
+  表面，避免把“下一首还没想好”之类普通句子强塞成歌名。
+- 外部检索不在默认生产路径。typed provider 只有显式 `allow_external_lookup=true` 才能被
+  调用；默认只生成 disabled request，后续接 provider 时不得绕过同一 receipt 与 hash 门。
+
 ## 两次审查不可合并
 
 - correction pass 输出 `final-review-audit.v1`，用途是发现问题、决定是否需要同音修复或声学
@@ -302,7 +320,8 @@ Ivan 指正=该句整体替换的锚，不是插入片段：钉子文本必须�
    source-truth owner 与 reviewed-baseline owner 在最终 clean/speaker SRT 的原时间窗真实存活，
    package audit 重新验收这些 attestation。选题 QA 仍不是文字权威，只提供 StoryContract 与
    callback 上下文。
-8. **歌词正文绕过词表链**（LRC 是歌词权威，影响面小，记录在案）。
+8. **歌切歌词正文绕过词表链**（谈话歌名已由 F19 本地歌词语义门覆盖；歌切正文仍以 LRC 为
+   歌词权威，影响面小，记录在案）。
 9. **幻听插入词的全量自动发现仍未完成**（2026-07-18 七星「为什么/偶像脸」案）：
    整句通顺但某词无声学证据。当前已能用 `acoustic_delete` / `acoustic_drop_cue` 对已发现
    项 fail closed 落地，并在最终 owner/SRT 门复验；尚欠的是覆盖所有 cue 的确定性发现器。

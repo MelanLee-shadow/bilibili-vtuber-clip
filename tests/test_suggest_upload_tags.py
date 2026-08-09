@@ -52,9 +52,37 @@ def test_merge_caps_and_dedupes():
     proper = [st.ProperHit(tag=f"专名{i}") for i in range(10)]
     content = [{"tag": "可爱", "why": ""}]
     final = st.merge_tags(st.BASE_TAGS, proper, content, 12)
-    assert len(final) == 12
+    assert len(final) == 10  # four fixed slots + six dynamic slots
     assert final[: len(st.BASE_TAGS)] == list(st.BASE_TAGS)
     assert len(set(t.casefold() for t in final)) == len(final)
+
+
+def test_f19_important_content_ip_canary_disappears_when_whitelist_is_disabled():
+    body = "今天重看了战斗吧！歌姬，里面这一段真的很有意思"
+
+    enabled = st.scan_proper_nouns("一个不机械塞专名的标题", body)
+    disabled = st.scan_proper_nouns(
+        "一个不机械塞专名的标题",
+        body,
+        important_content_ip_rules=(),
+    )
+
+    assert "战斗吧歌姬" in {hit.tag for hit in enabled}
+    assert "战斗吧歌姬" not in {hit.tag for hit in disabled}
+    hit = next(hit for hit in enabled if hit.tag == "战斗吧歌姬")
+    assert hit.rules == ["battle_girl_project"]
+    assert "战斗吧！歌姬" not in {item.tag for item in enabled}
+
+
+def test_f19_important_content_ip_is_a_final_subtitle_tag_candidate(tmp_path):
+    srt = _srt(tmp_path, ["刚刚聊到战斗吧歌姬", "接着说别的话"])
+    out = st.generate_upload_tags("标题不机械插入节目名", srt, use_llm=False)
+
+    assert out["status"] == "OK"
+    assert out["important_content_ips"] == ["战斗吧歌姬"]
+    assert out["final_tags"][:4] == list(st.BASE_TAGS)
+    assert "战斗吧歌姬" in out["final_tags"]
+    assert len(out["final_tags"]) <= len(st.BASE_TAGS) + st.MAX_DYNAMIC_TAGS
 
 
 def test_generate_upload_tags_ok_with_stub_llm(tmp_path):

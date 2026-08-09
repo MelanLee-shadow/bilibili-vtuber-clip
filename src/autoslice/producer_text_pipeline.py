@@ -101,7 +101,7 @@ from src.autoslice.producer_source_truth_authority import (
     verify_source_truth_preview_formal_binding,
 )
 from src.autoslice.restatement_recall import merge_restatement_priority_findings
-from src.autoslice.song_name_pin import pin_song_names_in_srt
+from src.autoslice.song_name_semantic_verification import verify_and_pin_song_names
 from src.autoslice.terminal_closure_guard import preserve_context_only_terminal_closure
 from src.autoslice.foreign_span_witness import (
     adjudicate_language_preservation_audit,
@@ -1479,6 +1479,7 @@ def _finalize_text_evidence(
     referent_groups: list[ReferentGroup],
     final_review_audit: dict,
     song_name_candidates: list[str],
+    known_songs_path: Path,
     session_topic_authorities: tuple[dict[str, Any], ...],
     source_language_witness_srt: str,
     text_override_path: Path | None,
@@ -1644,34 +1645,33 @@ def _finalize_text_evidence(
         raise SystemExit(
             f"FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED: {chat_authority_path}"
         )
-    # Deterministic song-name pin (Ivan 2026-07-13): belt over the LLM prompt
-    # context above.  A talk cue that signals a song mention (下一首/点歌/想唱/…)
-    # gets its trailing mention span fuzzy-matched against machine-evidence
-    # candidates (screen songlist + 点歌 + known-songs) and, on a strong match,
-    # rewritten to 《title》.  A cue with no intent phrase or a weak match is
-    # never touched — see src/autoslice/song_name_pin.py.
     if song_name_candidates:
-        srt_text, song_name_pin_audit = pin_song_names_in_srt(
-            srt_text, candidates=song_name_candidates
+        srt_text, song_name_pin_audit, semantic_verification = verify_and_pin_song_names(
+            srt_text,
+            candidates=song_name_candidates,
+            known_songs_path=known_songs_path,
+            selection_hook=str(spec.get("selection_hook") or ""),
+            title_quote=str(spec.get("given_title") or ""),
         )
-        song_name_pin_path = out_root / f"{cid}.song-name-pin.json"
-        song_name_pin_path.write_text(
-            json.dumps(song_name_pin_audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        for suffix, payload in (
+            ("song-name-semantic-verification", semantic_verification),
+            ("song-name-pin", song_name_pin_audit),
+        ):
+            (out_root / f"{cid}.{suffix}.json").write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
         if song_name_pin_audit.get("replacements"):
             print(
                 f"{cid}: pinned {len(song_name_pin_audit['replacements'])} "
                 "song name(s) from screen-songlist/点歌 evidence"
             )
-    # 称呼串等价类（2026-07-19）：、包夹的单字近音 token 按成员词补全，
-    # 与 hard canon 同一 choke point、同级确定性。
+    # 称呼串等价类：、包夹单字近音按成员词补全，与 hard canon 同级。
     from src.autoslice.surface_canon import repair_address_enumerations
     srt_text, address_enumeration_audit = repair_address_enumerations(srt_text)
     chat_authority_audit["address_enumeration_audit"] = address_enumeration_audit
-    # Final unbypassable meme canon (currently only 直女→侄女).  This runs after
-    # every LLM/entity/song-name text stage; the later hash-bound human override
-    # path independently re-runs the same policy before speaker rendering.
+    # Final meme canon runs after every mutable text stage; the later bound
+    # human override independently re-runs it before speaker rendering.
     srt_text, hard_meme_surface_audit = normalize_hard_meme_surfaces(srt_text)
     chat_authority_audit["final_hard_meme_surface_audit"] = (
         hard_meme_surface_audit
@@ -2008,6 +2008,7 @@ def run_text_pipeline(
         referent_groups=entity_context.referent_groups,
         final_review_audit=final_review_audit,
         song_name_candidates=draft.song_name_candidates,
+        known_songs_path=adapters.profile_asset_file("known_songs"),
         session_topic_authorities=draft.session_topic_authorities,
         source_language_witness_srt=draft.source_language_witness_srt,
         text_override_path=text_override_path,
@@ -2017,10 +2018,9 @@ def run_text_pipeline(
         padded=padded,
         clip_context=clip_context,
     )
-    # 带伤交付闸（2026-07-18 醉堆/七夕/核酸天下案）：审片员的修复提案若因
-    # provider 基础设施失败（而非证据裁决）未落地、且后续确定性 pass（如
-    # source_subtitle_truth ledger）也没有修掉对应文本，则拒绝交付——全部
-    # provenance 已在上方落盘，runner 按 provider_transient 有界重试。
+    # 带伤交付闸：provider 失败且后续确定性 pass 未修掉的提案拒绝交付；
+    # provenance 已落盘，runner 按 provider_transient 有界重试。
+    # 未修 suspect 不得继续进入交付面。
     still_unresolved = [
         row
         for row in (final_review_audit.get("infra_unresolved") or [])

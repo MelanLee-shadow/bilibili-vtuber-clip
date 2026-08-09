@@ -1,12 +1,13 @@
 {
- "schema_version": "vtuber-slice.upload-tag-policy.v1",
+ "schema_version": "vtuber-slice.upload-tag-policy.v2",
  "base_tags": [
   "李豆沙",
   "虚拟主播",
   "虚拟UP主",
   "直播切片"
  ],
- "max_tags_default": 12,
+ "max_tags_default": 10,
+ "max_dynamic_tags": 6,
  "max_tag_chars": 20,
  "term_rules": [
   {
@@ -529,6 +530,19 @@
    ],
    "min_hits": 1,
    "note": "05实测: 3D线下见面=萤火虫live; tag命名口径待Ivan定"
+  }
+ ],
+ "important_content_ips": [
+  {
+   "name": "battle_girl_project",
+   "patterns": [
+    "战斗吧[！!]?\\s*歌姬"
+   ],
+   "tags": [
+    "战斗吧歌姬"
+   ],
+   "min_hits": 1,
+   "note": "Ivan 2026-08-09：高显著内容 IP/节目专名走白名单确定性 owner；标点变体只作触发面，tag 使用正主名"
   }
  ],
  "known_proper_surfaces_extra": [
