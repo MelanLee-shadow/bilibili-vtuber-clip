@@ -480,14 +480,42 @@ def _compact_final_review_finding(row: object) -> dict[str, object] | None:
         summary["candidate_provenance"] = {
             key: provenance.get(key)
             for key in (
+                "schema_version",
                 "kind",
+                "scope",
                 "surface",
                 "memory_id",
                 "mutation_authorized",
                 "ledger_sha256",
                 "nearest_cue_distance",
+                "session_scope_id",
+                "source_srt_sha256",
+                "current_srt_sha256",
+                "occurrence_count",
+                "occurrence_cue_count",
+                "occurrence_positions",
+                "max_cue_distance",
+                "global_glossary_authorized",
+                "draft_fidelity_kept",
+                "kept_candidate",
+                "current_text_sha256",
+                "audit_sha256",
+                "kept_text_sha256",
+                "violation_reason_codes",
             )
             if provenance.get(key) is not None
+        }
+    fidelity_context = row.get("draft_fidelity_kept_provenance")
+    if isinstance(fidelity_context, dict):
+        summary["draft_fidelity_kept_provenance"] = {
+            key: fidelity_context.get(key)
+            for key in (
+                "schema_version", "kind", "scope", "cue_index", "surface",
+                "draft_fidelity_kept", "kept_candidate", "audit_sha256",
+                "source_srt_sha256", "kept_text_sha256", "current_text_sha256",
+                "violation_reason_codes", "mutation_authorized",
+            )
+            if fidelity_context.get(key) is not None
         }
     return summary
 

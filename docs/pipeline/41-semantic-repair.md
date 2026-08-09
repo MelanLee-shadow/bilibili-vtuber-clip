@@ -44,7 +44,15 @@
      CPA 整段润色曾提出、但因忠实性守卫缺少声学证人而回退的单一 replacement 不得就此丢失：
      只把能逐字绑定当前 cue、且 `current.replace(suspect,replacement)==attempted` 的最多 8 个
      高收益候选优先送入终审闭集。它们只保留 candidate authority；忠实性回退本身不证明提案
-     正确，最终仍由 CPA 结合当前 cue、前后文和结构化证据选择 CURRENT 或 PROPOSED。
+     正确，最终仍由 CPA 结合当前 cue、前后文和结构化证据选择 CURRENT 或 PROPOSED。若后续
+     correction 已把 current 漂到 attempted 一侧，同一桥必须反向提名 audit 的 kept 文本；两种
+     方向都携带 `draft_fidelity_kept`、kept 候选侧和 audit/source/text hash。闭集 request、CPA
+     prompt 与 keep-current 回执必须保存相同的三路结构化证据对象及其摘要：draft 贴合度、
+     cue±2 词面命中、绑定结构化聊天的事件/cue 数。
+     同场原始转写的重复词面另走 `session_transcript_recurrence`：至少两个不同且邻近的 raw cue
+     精确出现，逐项保留 cue/时间/字位；该 provenance 是 session scope、candidate-only，禁止编入
+     全局 glossary。它不计作独立正字 authority，也不能让 `UNCERTAIN` witness 走纯文字改写；
+     每个目标 cue 必须重新取得贴音的 `OBSERVED` 候选盲声学行后，才可进入 CPA 闭集。
      若独立 exact-final 审片员只标出有界 `suspect`、因不愿猜测而没有给
      `proposed_full_cue`，不得在声学层前以 `SUGGESTION_EMPTY` 永久终止：先让 CPA 文字提案层
      根据目标 cue 前后三条与绑定结构化聊天生成一个覆盖 suspect 的最小完整 cue；该层仍无

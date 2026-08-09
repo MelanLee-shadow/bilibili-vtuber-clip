@@ -3730,7 +3730,7 @@ def test_pinned_replay_branch_skips_reviewer_without_touching_gates():
     assert "SKIPPED_PINNED_REPLAY" in then_src
     assert "pinned_replay_ownership" in then_src
     assert "_run_final_review" in else_src
-    assert "_fidelity_review_candidates" in else_src
+    assert "_review_priority_candidates" in else_src
     # 快路径不得越权：重放后的 exact-final 终审与边界评审必须仍在
     # 无条件路径上（不在这个 if 的任一分支里被吞掉）。
     assert "_run_exact_final_release_review" not in then_src

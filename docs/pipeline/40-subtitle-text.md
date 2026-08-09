@@ -100,6 +100,17 @@
   即使与误听同音也必须走声学仲裁。片内另一个由同一 ASR 派生的 cue 同样只是相关候选，
   不得作为独立文字证人直接改字。上下文展示用的 `id=` 不是 ID 本体；终审只可在去掉
   **一个**该固定展示前缀后精确命中哈希绑定 ledger 时受控规范化，未知 ID 禁止模糊匹配。
+- fidelity guard 的 `reverted[].kept` 不得在后续 correction 漂移后丢失：只有 audit v2、原始
+  `.asr_draft.srt` cue 文本和时间三者精确绑定时，才以
+  `candidate_provenance.kind=draft_fidelity_kept` 进入 CURRENT/PROPOSED 闭集。kept 在哪一侧
+  必须显式记录；法官 request 与 `JUDGE_KEEPS_CURRENT` / `KEEP_EXISTING` 回执同时保存可复算的
+  kept 贴合度、目标 cue±2 的候选词面命中、`structured_chat_bound` 绑定事件/cue 数及证据摘要。
+  三路都只是候选证据，不增加 mutation authority。
+- 原始 `.asr_draft.srt` 在同场邻近窗中把同一汉字词面写在至少两个不同 cue 时，可生成
+  session-only 候选 `session_transcript_recurrence`；provenance 必须绑定 raw/current SRT SHA、
+  每次出现的 cue/时间/字位和 `global_glossary_authorized=false`。它只证明该词面在本场出现，
+  每个待改目标仍须新鲜 `blind_pinyin`、`OBSERVED`、`target_audible=true` 且贴音后再交 CPA；
+  `UNCERTAIN` 不得靠纯文字 CPA 落字。该通道永不读取、追加或回写全局 glossary/profile。
 - 音频二听只证明读音，不证明任何同音/近同音/字母写法；人名形态守卫还会特别检查带
   「小/老/阿」前缀或「神/老师/姐/哥/酱/桑/君/总/宝」后缀的跨度。没有文字权威就只回退
   该换字跨度，同 cue 其余有见证修复仍保留。守卫同时检查 draft 改写跨度本身的人名形态，

@@ -47,6 +47,13 @@ from src.autoslice.candidate_support import (
     orthography_ambiguous as _candidate_orthography_ambiguous,
     orthography_pronunciation_key as _orthography_pronunciation_key,
 )
+from src.autoslice.closed_set_evidence import (
+    closed_set_structured_evidence,
+    current_draft_fidelity_context,
+    evidence_cue_ids as _evidence_cue_ids,
+    structured_chat_lines_for_finding as _structured_chat_lines_for_finding,
+    validated_priority_candidate_provenance,
+)
 from src.autoslice.glossary_expected_value import glossary_expected_value_gate
 from src.autoslice.final_review_schema_retry import (
     detailed_invalid_finding_diagnostics,
@@ -78,6 +85,7 @@ _PROPOSAL_REBUILD_SCHEMA = "subtitle-closed-set-proposal-rebuild.v1"
 _PROPOSAL_REBUILD_CACHE_SCHEMA = "proposal-rebuild-cache.v1"
 _INAUDIBLE_DROP_PROMOTION_SCHEMA = "subtitle-inaudible-drop-promotion.v1"
 _INAUDIBLE_DROP_AUTHORITY_SCHEMA = "subtitle-cpa-inaudible-drop-authority.v1"
+_TRUSTED_PRIORITY_CANDIDATE = object()
 _AUTO_REPAIR_CLASSES = frozenset(
     {
         "phonetic",
@@ -657,6 +665,7 @@ def _merged_raw_findings(
         suspect = str(row.get("suspect") or "")
         if suspect and suspect not in cues[cue_index - 1].text:
             continue
+        row["_trusted_priority_candidate"] = _TRUSTED_PRIORITY_CANDIDATE
         merged.append(dict(row))
         seen.add(key)
     if prioritize_extra:
@@ -698,9 +707,7 @@ def audit_final_subtitles(
     )
     if _schema_repair_retry:
         prompt = schema_repair_prompt(prompt, _schema_repair_detail)
-    raw = _request_final_review_findings(
-        prompt, llm_call=llm_call, extract_json=extract_json
-    )
+    raw = _request_final_review_findings(prompt, llm_call=llm_call, extract_json=extract_json)
     raw = _merged_raw_findings(
         raw,
         extra_raw_findings,
@@ -926,8 +933,9 @@ def audit_final_subtitles(
                     contract_error = "SPEECH_MEMORY_CANDIDATE_INVALID"
                 else:
                     memory_candidate_valid = True
-        provenance: dict[str, Any] | None = None
-        if proposed_supplied and not contract_error and source_surface:
+        provenance = validated_priority_candidate_provenance(row, proposed_cue=proposed, current_cue=base_text, cue_index=cue_index, current_srt_sha256="sha256:" + hashlib.sha256(srt_text.encode("utf-8")).hexdigest(), cue_count=len(cues), trusted_priority=row.get("_trusted_priority_candidate") is _TRUSTED_PRIORITY_CANDIDATE)
+        draft_fidelity_context = current_draft_fidelity_context(raw, current_cue=base_text, cue_index=cue_index, trusted_sentinel=_TRUSTED_PRIORITY_CANDIDATE)
+        if provenance is None and proposed_supplied and not contract_error and source_surface:
             # Resolve the candidate's textual provenance without authorizing it.
             other_cues = "\n".join(
                 cue.text for index, cue in enumerate(cues, start=1) if index != cue_index
@@ -1006,7 +1014,6 @@ def audit_final_subtitles(
             isinstance(provenance, Mapping)
             and provenance.get("kind") == "transcript_echo_suspected"
         )
-
         suspect = derived_suspect if proposed_supplied else reported_suspect
         suggestion = (
             derived_replacement if proposed_supplied and not contract_error else None
@@ -1022,14 +1029,9 @@ def audit_final_subtitles(
                 }
             )
             continue
-        evidence_cue_ids: list[int] = []
-        for value in row.get("evidence_cue_ids") or []:
-            try:
-                evidence_index = int(value)
-            except (TypeError, ValueError):
-                continue
-            if 1 <= evidence_index <= len(cues) and evidence_index != cue_index:
-                evidence_cue_ids.append(evidence_index)
+        evidence_cue_ids = _evidence_cue_ids(
+            row, cue_count=len(cues), target_cue_index=cue_index
+        )
         finding = {
             "cue_index": cue_index,
             "suspect": suspect,
@@ -1040,11 +1042,17 @@ def audit_final_subtitles(
             "repair_class": repair_class,
             "evidence_cue_ids": evidence_cue_ids,
             "candidate_provenance": provenance,
+            "draft_fidelity_kept_provenance": draft_fidelity_context,
             "candidate_memory_id": candidate_memory_id or None,
             "force_acoustic": (
                 memory_candidate_valid
                 or transcript_context_candidate
                 or transcript_echo_candidate
+                or (
+                    isinstance(provenance, Mapping)
+                    and provenance.get("kind")
+                    in {"draft_fidelity_kept", "session_transcript_recurrence"}
+                )
             ),
             "correlated_text_witness": transcript_context_candidate,
             "span_start_codepoint": span_start if proposed_supplied else None,
@@ -1485,6 +1493,12 @@ def build_context_adjudication_request(
         "candidate_provenance": finding.get("candidate_provenance"),
         "orthography_authority": _orthography_text_authority(finding),
         "evidence_cue_ids": list(finding.get("evidence_cue_ids") or []),
+        "closed_set_structured_evidence": closed_set_structured_evidence(
+            srt_text,
+            finding,
+            proposed_cue=proposed,
+            clip_context=clip_context,
+        ),
         "reason": str(finding.get("why") or "")[:120],
     }
     if isinstance(clip_context, Mapping):
@@ -1508,97 +1522,6 @@ def build_context_adjudication_request(
         ).encode("utf-8")
     ).hexdigest()
     return request
-
-
-def _structured_chat_lines(
-    clip_context: Mapping[str, object] | None,
-    *,
-    target_start_ms: int | None = None,
-    target_end_ms: int | None = None,
-) -> str:
-    """Platform-recorded chat/SC lines for the judge (context, not authority)."""
-
-    if not isinstance(clip_context, Mapping):
-        return ""
-    rows = clip_context.get("structured_chat")
-    if not isinstance(rows, list):
-        return ""
-    selected_rows = rows
-    if (
-        isinstance(target_start_ms, int)
-        and isinstance(target_end_ms, int)
-        and target_end_ms >= target_start_ms
-    ):
-        timed_rows = [
-            row
-            for row in rows
-            if isinstance(row, Mapping)
-            and isinstance(row.get("offset_ms"), (int, float))
-            and not isinstance(row.get("offset_ms"), bool)
-        ]
-        timed_rows.sort(key=lambda row: float(row["offset_ms"]))
-        window_start = target_start_ms - 30_000
-        window_end = target_end_ms + 30_000
-        selected_rows = [
-            row
-            for row in timed_rows
-            if window_start <= float(row["offset_ms"]) <= window_end
-        ]
-        if not selected_rows and timed_rows:
-            target_mid = (target_start_ms + target_end_ms) / 2
-            nearest_index = min(
-                range(len(timed_rows)),
-                key=lambda index: abs(
-                    float(timed_rows[index]["offset_ms"]) - target_mid
-                ),
-            )
-            selected_rows = timed_rows[
-                max(0, nearest_index - 5) : nearest_index + 6
-            ]
-        elif len(selected_rows) > 20:
-            target_mid = (target_start_ms + target_end_ms) / 2
-            selected_rows = sorted(
-                selected_rows,
-                key=lambda row: abs(float(row["offset_ms"]) - target_mid),
-            )[:20]
-            selected_rows.sort(key=lambda row: float(row["offset_ms"]))
-    lines: list[str] = []
-    for row in selected_rows[:20]:
-        if not isinstance(row, Mapping):
-            continue
-        sender = str(row.get("sender") or "").strip()
-        text = str(row.get("text") or row.get("message") or "").strip()
-        if text or sender:
-            offset = row.get("offset_ms")
-            kind = str(row.get("kind") or "chat")
-            prefix = (
-                f"[{float(offset) / 1000:+.3f}s][{kind}] "
-                if isinstance(offset, (int, float))
-                and not isinstance(offset, bool)
-                else f"[{kind}] "
-            )
-            lines.append(f"- {prefix}{sender}: {text}"[:240])
-    return "\n".join(lines)
-
-
-def _structured_chat_lines_for_finding(
-    srt_text: str,
-    finding: Mapping[str, Any],
-    clip_context: Mapping[str, object] | None,
-) -> str:
-    try:
-        cue_index = int(finding.get("cue_index") or 0)
-    except (TypeError, ValueError):
-        cue_index = 0
-    cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
-    if not 1 <= cue_index <= len(cues):
-        return _structured_chat_lines(clip_context)
-    cue = cues[cue_index - 1]
-    return _structured_chat_lines(
-        clip_context,
-        target_start_ms=cue.start_ms,
-        target_end_ms=cue.end_ms,
-    )
 
 
 _PROPOSAL_REBUILD_PROMPT = """# 字幕坏闭集重建（只提案，不裁决）
@@ -1953,7 +1876,6 @@ def adjudicate_context_finding(
     CPA judge from the closed set; code enforces pinyin compatibility of the
     judged choice. The mutation-authority receipt contract is unchanged.
     """
-
     structured_chat_context = _structured_chat_lines_for_finding(
         srt_text,
         finding,
@@ -1991,6 +1913,7 @@ def adjudicate_context_finding(
             "context_sha256": str(
                 convergence.get("context_sha256") or ""
             ).removeprefix("sha256:"),
+            "closed_set_structured_evidence": convergence.get("closed_set_structured_evidence"),
             "decision": "KEEP_EXISTING",
             "timing_immutable": True,
         }

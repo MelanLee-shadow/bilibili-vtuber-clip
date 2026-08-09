@@ -34,6 +34,8 @@ _ROW_KEYS = (
     "proposed_full_cue",
     "repair_class",
     "source_surface",
+    "candidate_provenance",
+    "draft_fidelity_kept_provenance",
     "candidate_memory_id",
     "evidence_cue_ids",
     "suspect",

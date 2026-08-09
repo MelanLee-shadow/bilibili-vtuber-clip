@@ -15,6 +15,9 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from src.autoslice.closed_set_evidence import (
+    closed_set_structured_evidence,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import extract_json_object
 
@@ -73,6 +76,8 @@ _CONVERGENCE_PROMPT = """# 字幕缺失候选最终收敛（CPA 文字候选裁�
    CURRENT 不同，并覆盖审片员指出的 SUSPECT。
 5. 你的决定将绑定 cue/current/context/final-SRT 哈希；REPLACE 只生成候选，
    必须再有候选盲声学证人行并由后续 CPA 闭集裁决，不能直接授权改字。
+6. 下列 draft 保真、邻句词面命中和结构化聊天绑定强度都是可复算候选证据；
+   不得用常识词面偏好覆盖它们，也不得把任一路单独当成改字授权。
 
 ## 哈希绑定
 - FINAL_SRT_SHA256: {final_srt_sha256}
@@ -95,6 +100,9 @@ _CONVERGENCE_PROMPT = """# 字幕缺失候选最终收敛（CPA 文字候选裁�
 
 ## 邻近结构化消息链（按时间顺序，只作语境）
 {structured_chat}
+
+## 三路结构化保真证据
+{closed_set_structured_evidence}
 
 只回 JSON（无 markdown、无其他文字）：
 {{"decision":"KEEP_EXISTING"或"REPLACE_WITH_EXACT_TEXT","replacement_text":"完整单行 cue；KEEP_EXISTING 时为空","reason":"一句话说明语境依据"}}
@@ -177,12 +185,21 @@ def converge_missing_proposal(
     after = "\n".join(row.text for row in after_rows) or "（无）"
     structured = structured_chat or "（无）"
     final_srt_sha256 = hashlib.sha256(srt_text.encode("utf-8")).hexdigest()
+    proposed_hint = finding.get("proposed_full_cue")
+    structured_evidence = closed_set_structured_evidence(
+        srt_text,
+        finding,
+        proposed_cue=(
+            proposed_hint if isinstance(proposed_hint, str) else current
+        ),
+    )
     context_binding = {
         "cue_index": cue_index,
         "current": current,
         "before": [row.text for row in before_rows],
         "after": [row.text for row in after_rows],
         "structured_chat": structured,
+        "closed_set_structured_evidence": structured_evidence,
     }
     context_sha256 = hashlib.sha256(
         json.dumps(
@@ -212,6 +229,9 @@ def converge_missing_proposal(
         before=before,
         after=after,
         structured_chat=structured,
+        closed_set_structured_evidence=json.dumps(
+            structured_evidence, ensure_ascii=False, sort_keys=True
+        ),
     )
     prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     audit.update(
@@ -221,6 +241,7 @@ def converge_missing_proposal(
         context_sha256="sha256:" + context_sha256,
         prompt_sha256="sha256:" + prompt_sha256,
         suspect_occurrence_count=suspect_occurrence_count,
+        closed_set_structured_evidence=structured_evidence,
     )
     cache_path = _convergence_cache_path(prompt_sha256)
     payload: Mapping[str, Any] | None = None

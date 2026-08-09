@@ -62,8 +62,9 @@ from src.autoslice.final_review_contract import (
     SCHEMA_VERSION as FINAL_REVIEW_SCHEMA_VERSION,
     is_keep_current_disclosed,
 )
-from src.autoslice.fidelity_review_candidates import (
-    fidelity_review_candidates as _fidelity_review_candidates,
+from src.autoslice.review_priority_candidates import (
+    fidelity_review_candidates as _fidelity_review_candidates, review_priority_candidate_counts as _review_priority_candidate_counts,
+    review_priority_candidates as _review_priority_candidates,
 )
 from src.autoslice.frozen_source_boundary_receipt import (
     load_boundary_review_authorities,
@@ -857,9 +858,7 @@ def _run_final_review(
             final_review_audit["context_adjudication_count"] = adjudication_count
             final_review_audit["context_adjudication_budget"] = MAX_CONTEXT_ADJUDICATIONS
             final_review_audit["priority_raw_finding_count"] = len(priority_rows)
-            final_review_audit["fidelity_candidate_count"] = len(
-                priority_raw_findings
-            )
+            final_review_audit.update(_review_priority_candidate_counts(priority_raw_findings))
             if partial:
                 final_review_audit["status"] = "PARTIAL"
             # 2026-07-18 交付事故类机制：区分「证据裁决后的保留」与「基础设施
@@ -1993,7 +1992,7 @@ def run_text_pipeline(
                 review_source_truth_preview["protected_cue_indexes"]
             ),
             carryover_file=carryover_path(out_root, cid),
-            priority_raw_findings=_fidelity_review_candidates(
+            priority_raw_findings=_review_priority_candidates(
                 padded,
                 authority.srt_text,
             ),

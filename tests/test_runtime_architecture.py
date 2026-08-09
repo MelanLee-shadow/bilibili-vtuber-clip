@@ -44,7 +44,8 @@ FUNCTION_DEBT_LEDGER = {
     ("src/autoslice/final_review_auditor.py", "adjudicate_context_finding"): 748,
     # 2026-08-08 +12:Ivan 8/8 真值法证 F1 回声环修复(synthesis)——
     # 只接入登记误听面分类、弱 provenance 与声学路由；分类器在新小模块。
-    ("src/autoslice/final_review_auditor.py", "audit_final_subtitles"): 419,
+    # 2026-08-09 净 -1：F16/F17 trusted priority provenance 接线压成薄调用。
+    ("src/autoslice/final_review_auditor.py", "audit_final_subtitles"): 418,
     ("src/autoslice/producer_boundary_resolution.py", "_repair_boundary"): 305,
     ("src/autoslice/producer_package_finalization.py", "_materialize_final_recut"): 320,
     # 2026-08-08 +3：owned_intervals 执法接线（Ivan 2026-08-08 配额上传波
@@ -186,7 +187,10 @@ MODULE_DEBT_LEDGER = {
     # 同时接入 Ivan 8/8 真值法证 F1 回声环修复；锁定拆解后的模块收益。
     # 2026-08-08 再净 -16：同日 truth-harvest synthesis F7 删除无声学
     # context-only mutation 快捷路，保留显式 disclosure 降级门。
-    "src/autoslice/final_review_auditor.py": 3_325,
+    # 2026-08-09 净 -77：Ivan F16/F17 指令要求新逻辑放新模块；结构化闭集
+    # 证据与 chat window renderer 抽到 closed_set_evidence.py，god-file 只留
+    # 可信 provenance、request 接线，锁定本轮债务偿还。
+    "src/autoslice/final_review_auditor.py": 3_248,
     "src/autoslice/live_source_review.py": 2_035,
     # 2026-08-07 +18：狍哥案实施指令（同上）——marker 选择改判
     # SOURCE_FACT_REPAIRED_RESCORE_REQUIRED + 写 pending sidecar。
@@ -205,7 +209,8 @@ MODULE_DEBT_LEDGER = {
     # src/autoslice/restatement_recall.py，这里只留 import + 一处调用点。
     # 2026-08-08 +23：Ivan 2026-08-08 优化①边界重放(8b 冻结 loader 接线)
     # +30：Ivan 8/8 真值法证 F2 代词发现器接线;两处主体均在独立新模块。
-    "src/autoslice/producer_text_pipeline.py": 2_156,
+    # 2026-08-09 净 -1：F16/F17 priority assembler 保留旧测试入口并拆分候选计数。
+    "src/autoslice/producer_text_pipeline.py": 2_155,
     # 2026-07-31 +12：contract 穿透接线（形参 + 4 个调用点）。
     # 2026-07-31 再 +17：封面路由 P1——witness 从「路由法官」降回「置信输入」，
     # 删掉无条件放行、几何否决移到关系分支之后、置信改为 几何 OR witness bbox。

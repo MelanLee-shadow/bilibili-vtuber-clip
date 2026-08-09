@@ -43,6 +43,9 @@ from src.autoslice.candidate_support import (
     registered_misheard_direction,
     structured_text_support,
 )
+from src.autoslice.closed_set_evidence import (
+    session_recurrence_acoustic_gate,
+)
 from src.autoslice.llm_client import extract_json_object
 
 WITNESS_REQUEST_SCHEMA = "subtitle-span-acoustic-witness-request.v1"
@@ -580,6 +583,9 @@ _JUDGE_PROMPT = """# 字幕选字裁决（闭集）
 ## 绑定文字证据（证据，不是先行裁决）
 {text_evidence}
 
+## 三路结构化保真证据（均为候选证据，不单独授权改字）
+{closed_set_structured_evidence}
+
 {structured_chat_block}
 按概率排序并**必须选概率最高者**（Ivan 2026-07-27：不许拿不准就保持原样——
 原样可能是最差的；把 {ranking_description} 的概率
@@ -715,6 +721,11 @@ def judge_word_choice(
             ensure_ascii=False,
             sort_keys=True,
         ),
+        closed_set_structured_evidence=json.dumps(
+            check_request.get("closed_set_structured_evidence") or {},
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
         structured_chat_block=chat_block,
         ranking_description=(
             "CURRENT、PROPOSED 和“整 cue 无字幕”DROP"
@@ -843,6 +854,9 @@ def judge_word_choice(
         # 尤其它还会被写入 judge-verdict-cache 原样回放。
         "provider_retry_attempted": bool(call_errors),
         "candidate_pinyin_similarity": similarities,
+        "closed_set_structured_evidence": check_request.get(
+            "closed_set_structured_evidence"
+        ),
     }
     if cache_path is not None:
         # 只缓存 JUDGED 终态；写失败绝不影响生产（与声学缓存同约定）。
@@ -882,6 +896,9 @@ def adjudicate_with_witness(
         "decision_authority": "CPA_JUDGE",
         "witness_authority": "EVIDENCE_ONLY",
         "witness_protocol": witness_protocol(witness),
+        "closed_set_structured_evidence": check_request.get(
+            "closed_set_structured_evidence"
+        ),
     }
     witness_status = witness.get("status") if isinstance(witness, Mapping) else None
     witness_valid = (
@@ -901,6 +918,11 @@ def adjudicate_with_witness(
         and witness_protocol(witness) == LEGACY_SIGHTED_PROTOCOL
     ):
         return False, "LEGACY_SIGHTED_WITNESS_NOT_REUSABLE", audit
+    recurrence_gate = session_recurrence_acoustic_gate(check_request, witness)
+    if recurrence_gate is not None:
+        audit["session_transcript_recurrence_acoustic_gate"] = recurrence_gate
+        if recurrence_gate["status"] != "PASS":
+            return False, str(recurrence_gate["reason_code"]), audit
     if llm_call is None:
         return False, "JUDGE_UNAVAILABLE_KEEP_CURRENT", audit
 
