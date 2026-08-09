@@ -1,6 +1,60 @@
 # Current handoff
 
-Updated: 2026-08-08 深夜 by Claude（8/7 批审阅收割/法证/重述车道会话）。8/7 及 7/31 以下旧节仅存历史。
+Updated: 2026-08-09 by Claude(8/9 接力会话,orchestrator)。8/7 及 7/31 以下旧节仅存历史。
+
+## ⭐⭐ 2026-08-09 会话进行中实况(最新;下面的 ⭐ 节大部分已执行完毕)
+
+**已完成(证据全入库)**:队列1 收割=6 份真值工件 e9364a9(pristine 归档
+~/Project/vtuber-slice-forensics/2026-08-08-pristine/ 50MB/5722件;收割器扩展:
+merge 容差+全角标点标记);队列2 法证=docs/reviews/2026-08-09-worksheet-forensics-
+200130.md(5c213dd,synthesis 已挂附录):40 处订正(实质37),桶A 流水线改坏11
+(6 处零见证语境改写已被波8 :2119 门闭环——8/8 批产 17:51-18:29Z 跑在 26dfd83 上,
+早于波7/8 部署),新立 **F15 盲证人/F16 法官证据输入面/F17 会话词面保真/F18
+裁决通道泄漏**;队列3 pyannote 报告已回搬(5ff069d,no-go,产线不动)。
+
+**Ivan 8/9 新令(引语逐字冻结,manifest --quote 在用)**:
+「并且今天要执行权宜上传。只要出片就可以上传，之后我再进行审查。」
+「所以我希望这两个能进入快车道，优先出成品，优先上传。」(指 200130 两条)
+另:执行全分 Codex/部署优先可并行/开工后汇报进度。
+
+**三路 Codex 在飞(nohup detached,Monitor 看护)**:
+- A=Mac worktree vtuber-slice-wt/f13-f14(基 ca16371):F13 事件场配额 15+同日
+  独立 5 / F14 竖屏 solo 先验。日志 scratchpad/codex-a.log。**注意:spec 给事件场
+  6-15 席位加了 ≥85 分数门(类比游戏场结构,Ivan 未明说,待其否决)**。
+- B=wsl ~/Project/repo 分支 wsl/fasttrack-0809(基 e9364a9):快车道两条产+传
+  (真值消费规则+上传链在任务书)→ 然后 8/7 真善美/换身份按 unblock 处方收官。
+  日志 wsl:/tmp/codex-b-fasttrack.log;/tmp/INTEGRATOR-NOTICE-*.md 两份补充指令
+  (cue133 修复版真值;上传前字节自检:禁括号笔记/159cue 合并/cue26 盲听已答)。
+- C=Mac worktree vtuber-slice-wt/f15-f18(基 5c213dd):F15 盲证人+F18 泄漏收口。
+  日志 scratchpad/codex-c.log。F16/F17 压后待 Ivan 读法证再立项。
+  integrator 合入纪律:A/C 完工后我 commit→rebase→ff 合入→全量 pytest→部署;
+  文件面 A(selection/game_context/speaker)与 C(裁决/见证)不相交。
+
+**8/8 三条 review_ready 上传链(task7;5e4dd95 已在部署,原"依赖"不存在)**:
+- auto_213135_469_710:**upload 已发起(后台跑)**,manifest artifact_id
+  161436692468。auto_230125_960_1072:manifest 就绪(e6577c25464f),排在 213135
+  完成后传(upload.lock 串行)。两条 audit passed / QC v2 PASS。
+- auto_210131_1576_1802:**hold 留证**——QC single_clear_hook=false 两轮一致
+  (封面双钩子叠放"彩排照藏玄机"+"半小时教二叔学舞",亲验属实),封面文案需
+  punch 重出后再传。回执在包内+/tmp/auto_213135_469_710.jointqc-roll2-FAIL.json
+  同目录族。
+- **重大发现:联合质检工具身份参照错**——/tmp/run_title_cover_joint_qc.py 的
+  prompt 把李豆沙写成「白发熊猫耳**墨镜**女孩」(墨镜是可选配饰!persona.md 权威
+  无墨镜),导致 lidousha_primary 假阴性彩票(213135 三轮 1P2F;熊猫帽措辞事故
+  同族)。已出 v2(/tmp/run_title_cover_joint_qc_v2.py,单变量修正身份行,按
+  persona.md 措辞);**v1/v2 回执全部保留**。待办:v2 收编 repo scripts/ 出
+  deploy(临时 /tmp 工具重启即失);受骗片当时用 v1 通过属彩票幸存。
+- 同茎手术已做(213135/230125/210131 三条 state+publish cover 路径→同茎,
+  备份 *.bak-coverstem-*,flock+原子写;QC 回执按路径+sha 双绑定,必须先手术后 QC)。
+
+**盘后决定/披露(等 Ivan)**:①F13 事件场 6-15 席位 ≥85 门是我类比加的,可否?
+②pyannote no-go 后,多嘉宾"不确定=连线可交付"政策延伸案(对**未来**多嘉宾场;
+本批两条已由快车道人工真值解决)要不要开?③210131 封面文案重出走 punch 车道。
+
+**后续队列(部署完成后)**:三条恢复通道(4 单人 revive 在 F14 部署后;
+≥85 补产在 F13 部署后——注意 state 里"穿越屏幕 86.8 候补"与已交付
+auto_230125_960_1072 是不同窗口,补产前核对勿混;200130 两条已走快车道不占
+恢复通道)→ 歌 revive → 波8 剩余(F5/F8/F9/F10/F11/F12/F-cover + 新 F15-F18)。
 
 ## ⭐ 2026-08-09 当前状态与接力任务(后来 agent 从这里开始)
 
