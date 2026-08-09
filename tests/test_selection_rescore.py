@@ -71,6 +71,8 @@ def _completion(
             "final_title": final_title,
             "supported_by": supported_by,
             "changed_surfaces": changed_surfaces or [],
+            # F12：判项必填；本文件的用例均无说话人转写，走 UNVERIFIABLE 车道。
+            "addressee_attribution": [],
             "selection_scorecard_review": (
                 selection_scorecard_review
                 or {"status": "NOT_NEEDED", "reason": "selection hook remains unchanged"}

@@ -18,6 +18,7 @@ def _completion(
     supported_by: list[str],
     changed_surfaces: list[dict[str, object]] | None = None,
     selection_scorecard_review: dict[str, str] | None = None,
+    addressee_attribution: list[dict[str, object]] | None = None,
 ) -> str:
     return json.dumps(
         {
@@ -27,6 +28,9 @@ def _completion(
             "final_title": final_title,
             "supported_by": supported_by,
             "changed_surfaces": changed_surfaces or [],
+            # F12：受话人归属判项在每份新回应里都必须存在（缺键=形状无效）。
+            # 这些历史用例都没有说话人转写，判项按 UNVERIFIABLE 车道留空。
+            "addressee_attribution": addressee_attribution or [],
             "selection_scorecard_review": (
                 selection_scorecard_review
                 or {

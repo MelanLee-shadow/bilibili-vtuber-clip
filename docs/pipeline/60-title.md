@@ -60,6 +60,19 @@
   暂不可用时，如果最终 CPA/词表链已经在整片字幕中稳定落下登记规范专名，hook 内对应的
   **未登记**误听面可继承该 expected-value 证据机械规范化；普通短语 false-positive 必须
   保留，两个已登记专名冲突仍交 CPA，不能借字幕中任意出现一次就互换。
+- **受话人归属判项（F12，Ivan 2026-08-08 受骗片标题案纠错）**：source-fact 复审此前只验
+  “这话说过没有”，不验“对谁说”，于是「李豆沙刚被劝别再受骗」这种把连线主持对上一位选手
+  说的话安到主角头上的 hook 能整条通过。现在 `review_and_repair_source_facts` 额外接收一份
+  **带说话人标签的最终转写**（`speaker-final.srt` 经 sha 绑定 + 与最终字幕逐条对齐才采用，
+  `addressee_attribution.py`），判官必须对文案里每个「主角被 X / 主角对 X 说 Y」类归属断言
+  产出 `SUPPORTED / WRONG_ADDRESSEE / UNVERIFIABLE`。缺该键即形状无效；
+  `WRONG_ADDRESSEE` 与 `status=KEEP` 互斥（fail-closed 打回，判官必须给出去掉错归属的完整
+  两份文案，走既有 REPAIR 复审环）；SUPPORTED/WRONG_ADDRESSEE 必须逐字引用
+  `speaker_transcript:` 行。确定性反证：断言主语是主角（文案未点名连线）却只引用了**主角
+  首次发言之前的连线台词**时，SUPPORTED 一律不成立。没有可信说话人标签（uniform_host 场、
+  产物缺失或漂移）时只允许 `UNVERIFIABLE`，回执以
+  `addressee_attribution_mode=unverifiable_no_speaker_transcript` 披露，**不拦发**。
+  `SCHEMA_VERSION` 不变——它是已落盘回执的相等性锚。
 - recovery publication authority 是“修媒体时固定原 BV 身份与复用哪种已审标题来源”，不是
   自动标题。两种模式都不调用标题 LLM，且仍须通过 StoryContract 与共享发布标题门；staging
   分别写 `recovery_verified_same_bv_public_title / RESOLVED_RECOVERY_PUBLIC` 或

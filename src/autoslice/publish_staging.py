@@ -89,8 +89,8 @@ from .recovery_title_authority import (
 from .shadow_review import _sha256, _write_json_file
 from .source_fact_review import (
     authorize_manual_title_repair,
-    review_and_repair_source_facts,
-    source_fact_review_passes,
+    build_addressee_transcripts,
+    review_and_repair_source_facts, source_fact_review_passes,
 )
 from .story_contract import (
     audit_story_artifact,
@@ -526,7 +526,7 @@ def _stage_publish_draft(
     source_fact_review = None
     manual_title_repair_authority_consumption = None
     if title_authority_error is None and source_fact_llm_call is not None:
-        final_transcript = "\n".join(cue.text.strip() for cue in cues if cue.text.strip())
+        final_transcript, speaker_transcript = build_addressee_transcripts(record, cues)  # F12 受话人归属
         context_prompt = (
             str(story_contract.get("clip_context_prompt") or "")
             if isinstance(story_contract, Mapping)
@@ -536,7 +536,7 @@ def _stage_publish_draft(
             selection_hook=str(selection_hook or ""),
             title=staged_title,
             final_transcript=final_transcript,
-            clip_context_prompt=context_prompt,
+            clip_context_prompt=context_prompt, speaker_transcript=speaker_transcript,
             llm_call=source_fact_llm_call,
             selection_scorecard=(
                 story_contract.get("selection_scorecard")

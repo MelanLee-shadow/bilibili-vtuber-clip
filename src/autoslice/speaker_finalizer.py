@@ -77,6 +77,7 @@ from src.autoslice.speaker_context import (
     _call_context_via_cpa,
 )
 from src.autoslice.speaker_host_evidence import acoustic_hard_pass
+from src.autoslice.speaker_overlap_evidence import subcue_mixed_overlap_disclosure
 from src.autoslice.reviewed_speaker_baseline import (
     ReviewedSpeakerBaseline,
     build_fresh_automatic_labels,
@@ -741,6 +742,7 @@ def _run_campplus_analysis(
     source_session_anchor_path: Path | None = None,
     reviewed_anchor_labels: Mapping[int, str] | None = None,
     reviewed_speaker_baseline: Mapping[str, object] | None = None,
+    text_srt_path: Path | None = None,
 ) -> dict[str, object]:
     anchors = _prepare_campplus_anchor_state(
         media_path=media_path,
@@ -976,6 +978,9 @@ def _run_campplus_analysis(
         },
         "context_required_cues": [index + 1 for index in ambiguous],
         "context_unresolved_cues": [index + 1 for index in unresolved_context],
+        # F5 披露专用（Ivan 2026-08-09「证据只披露不改标签」）：产出 mixed gate 可
+        # 消费的 sidecar，但本轮不喂回门、不改 decisions。见 speaker_overlap_evidence。
+        "subcue_mixed_overlap": subcue_mixed_overlap_disclosure(cues=cues, cue_audio_paths=cue_paths, media_path=media_path, text_srt_path=text_srt_path, work_dir=work_dir, host_prints=host_prints, guest_groups=guest_groups, threshold=threshold, band=band, similarity=similarity) if text_srt_path is not None else None,
         "decisions": [
             {
                 "source_index": index + 1,
@@ -1198,6 +1203,7 @@ def _run_bound_speaker_analysis(
         reviewed_speaker_baseline=(
             reviewed_baseline.evidence if reviewed_baseline is not None else None
         ),
+            text_srt_path=bound.text_srt_path,
         )
     except SpeakerIdentityIndeterminate as exc:
         identity_error = exc

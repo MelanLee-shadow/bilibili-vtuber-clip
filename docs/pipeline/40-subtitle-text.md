@@ -400,6 +400,27 @@
   `src/autoslice/speaker_host_evidence.py`，v1 无真实子 cue 音频分窗，见该模块与
   `tests/lidousha/test_speaker_host_evidence.py` 的落地范围说明）。歌切不进入 talk
   speaker 链。
+- **句内混说/重叠证据（F5，2026-08-09）**：`mixed_overlap_evidence` 此前在生产上恒为
+  `null`，不是阈值死区也不是标志位算成假——**产出侧根本不存在**：`overlap_detected` /
+  `mixed_speaker_within_unit_detected` 全仓库只有校验方与消费方，唯一产出面是
+  `AUTOSLICE_SPEAKER_ROUTING_PROVIDER_COMMAND_JSON` 指向的外部密封 provider；该 env 从未
+  在任何部署面配置，而且 `speaker_session_router.AUDITED_PROVIDER_BUNDLES` 是空 dict，
+  `validate_provider_authority(require_audited=True)` 必然判 "not repo-audited"。三重断路
+  使 `producer_speaker.py` 的 `mixed_or_overlap_detected is True` 分支结构性不可达
+  （manifest 侧表现为 `speaker_routing.reason=ROUTING_CLAIM_MISSING`）。
+  现由 `src/autoslice/speaker_overlap_evidence.py` 在终定阶段补上产出者：按时长（**不按
+  margin**，否则会在 8/7 假李豆沙 cue33/37 那类 0.43/0.34 高置信案上重建死区）把够长的 cue
+  等分成 ≤4 个 ≥700ms 子窗，复用同一套 host/guest 打分与 `acoustic_hard_pass`，仅当同一 cue
+  的子窗出现**互相冲突的确信标签**时记 `CUE_MIXED_SPEAKER`。产物是
+  `work_dir/detected-mixed-overlap-evidence.json`（schema 与
+  `validate_mixed_overlap_evidence_document` 完全一致）+ READY manifest 的
+  `analysis.subcue_mixed_overlap` 披露块。**只披露不改标签**：不做句内切分、不动二分语义，
+  也没有任何代码把它自动喂回 `_evaluate_mixed_overlap_gate`——提升成阻断输入需要显式把该
+  文件作为 `--mixed-overlap-evidence` 传入，是运维/Ivan 的开关。检测器故障一律降级成
+  `status=UNAVAILABLE` 披露，绝不把披露通道变成新阻断；`AUTOSLICE_SPEAKER_SUBCUE_OVERLAP=0`
+  可关。已知 v1 盲区：短于两个最小窗的 cue 不分窗；真正的同时重叠只会让子窗落进模糊带，
+  v1 不据此断言 `CUE_OVERLAPPING_SPEECH`；远程终定分支会 `rm -rf` 远端 work_dir，sidecar
+  只在本机（free-local）落得下，manifest 内的披露块两种路径都在。
 - 竖屏单人先验按**候选源 segment**绑定，而不是按可能坍缩的 recording session ID
   绑定：所有当前 source pieces 必须来自同一源 segment，且 hash-bound
   `speaker-session-context.v1` 的 orientation 为 `portrait` 才可激活；横屏、unknown、

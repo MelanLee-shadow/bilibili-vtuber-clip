@@ -7,6 +7,15 @@ import json
 import re
 from typing import Mapping
 
+from src.autoslice.addressee_attribution import (
+    ADDRESSEE_UNRESOLVED_REASON,
+    SPEAKER_TRANSCRIPT_LABEL,
+    addressee_prompt_block,
+    # 有意从本模块转出：调用方要的是"这条产线的两份转写 + 复审"这一对，
+    # 输入构造器和消费它的 review 函数留在同一个 import 面更难接错。
+    build_addressee_transcripts as build_addressee_transcripts,
+    evaluate_addressee_attribution,
+)
 from src.autoslice.llm_client import LlmCall, extract_json_object
 from src.autoslice.surface_canon import (
     canonicalize_hard_meme_surfaces,
@@ -93,6 +102,7 @@ def _prompt(
     selection_scorecard: object,
     review_pass: int,
     title_policy_violations: list[str],
+    speaker_transcript: str | None,
 ) -> str:
     return (
         "你是李豆沙切片派生文案的 source-fact 最终裁决者。你只有文字输入，"
@@ -134,7 +144,8 @@ def _prompt(
         "的新事实。修复后会继续用同一份 source authority 复审；只要仍有受证据"
         "支持的改动，就可以继续 REPAIR，直到明确 KEEP。最多复审 5 轮；不得为了"
         "结束复审而放弃仍然存在的事实问题，也不得在不同文案之间来回振荡。\n"
-        "投稿标题总长度必须为 12–49 个字符并满足下方 deterministic title policy。"
+        + addressee_prompt_block(speaker_transcript)
+        + "投稿标题总长度必须为 12–49 个字符并满足下方 deterministic title policy。"
         "若 violations 非空，当前标题不能 KEEP；必须在不丢失核心事实与事实模态的"
         "前提下压缩或修正完整标题，并用 REPAIR 返回。只有 violations 为空且所有"
         "source facts 都正确时才能 KEEP。\n"
@@ -155,15 +166,21 @@ def _prompt(
         )
         + "\n"
         "只输出一个 JSON 对象。supported_by 只能使用 final_transcript、"
-        "structured_chat、same_clip_context；不得填写 audio 或 image。"
+        f"structured_chat、same_clip_context、{SPEAKER_TRANSCRIPT_LABEL}；"
+        "不得填写 audio 或 image。"
         "changed_surfaces 在 KEEP 时为空数组，REPAIR 时逐项列出 artifact、"
-        "before、after、reason 和实际 evidence 原文。\n"
+        "before、after、reason 和实际 evidence 原文。"
+        "addressee_attribution 永远必须存在（无归属断言时填空数组）。\n"
         '{"schema_version":"lidousha-source-fact-review.v1",'
         '"status":"KEEP|REPAIR","final_selection_hook":"完整钩子",'
         '"final_title":"完整标题","supported_by":["final_transcript"],'
         '"changed_surfaces":[{"artifact":"selection_hook|title",'
         '"before":"...","after":"...","reason":"...",'
         '"evidence":["..."]}],'
+        '"addressee_attribution":[{"assertion":"文案里逐字复制的归属断言",'
+        '"verdict":"SUPPORTED|WRONG_ADDRESSEE|UNVERIFIABLE",'
+        '"actual_speaker":"...","actual_addressee":"...","reason":"...",'
+        f'"evidence":["{SPEAKER_TRANSCRIPT_LABEL}: 1 [说话人] 原话"]}}],'
         '"selection_scorecard_review":{"status":'
         '"NOT_NEEDED|COMPATIBLE|INCOMPATIBLE","reason":"..."},'
         '"summary":"..."}'
@@ -298,6 +315,7 @@ def _single_review(
     llm_call: LlmCall | None,
     review_pass: int,
     enforce_automatic_title_style: bool,
+    speaker_transcript: str | None = None,
 ) -> dict[str, object]:
     title_policy_violations = publish_title_policy_violations(
         title,
@@ -311,6 +329,7 @@ def _single_review(
         selection_scorecard=selection_scorecard,
         review_pass=review_pass,
         title_policy_violations=title_policy_violations,
+        speaker_transcript=speaker_transcript,
     )
     base: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
@@ -318,6 +337,9 @@ def _single_review(
         "selection_hook_sha256": _sha256_text(selection_hook),
         "title_sha256": _sha256_text(title),
         "final_transcript_sha256": _sha256_text(final_transcript),
+        "speaker_transcript_sha256": (
+            _sha256_text(speaker_transcript) if speaker_transcript else None
+        ),
         "clip_context_prompt_sha256": _sha256_text(clip_context_prompt),
         "selection_scorecard_sha256": _sha256_json(selection_scorecard),
         "title_policy_mode": ("automatic" if enforce_automatic_title_style else "baseline"),
@@ -371,6 +393,13 @@ def _single_review(
         ]
     scorecard_review = payload.get("selection_scorecard_review")
     summary = payload.get("summary")
+    addressee = evaluate_addressee_attribution(
+        payload.get("addressee_attribution"),
+        selection_hook=selection_hook,
+        title=title,
+        speaker_transcript=speaker_transcript,
+        status=status,
+    )
     hook_changed = bool(isinstance(final_hook, str) and final_hook != selection_hook)
     title_changed = bool(isinstance(final_title, str) and final_title != title)
     expected_changed_artifacts = {
@@ -436,6 +465,7 @@ def _single_review(
                 "final_transcript",
                 "structured_chat",
                 "same_clip_context",
+                SPEAKER_TRANSCRIPT_LABEL,
             }
             for value in supported_by
         )
@@ -443,6 +473,7 @@ def _single_review(
         and isinstance(summary, str)
         and len(summary.strip()) >= 4
         and scorecard_review_valid
+        and addressee.valid
         and (
             (
                 status == "KEEP"
@@ -462,11 +493,17 @@ def _single_review(
     return {
         **base,
         "status": status if shape_valid else "FAILED",
-        "reason_code": None if shape_valid else "CPA_TEXT_REVIEW_INVALID",
+        "reason_code": (
+            None
+            if shape_valid
+            else (addressee.reason_code or "CPA_TEXT_REVIEW_INVALID")
+        ),
         "final_selection_hook": (final_hook if isinstance(final_hook, str) else ""),
         "final_title": final_title if isinstance(final_title, str) else "",
         "supported_by": (list(supported_by) if isinstance(supported_by, list) else []),
         "changed_surfaces": list(changes) if isinstance(changes, list) else [],
+        "addressee_attribution": addressee.rows,
+        "addressee_attribution_mode": addressee.mode,
         "selection_scorecard_review": (
             dict(scorecard_review) if isinstance(scorecard_review, Mapping) else None
         ),
@@ -485,6 +522,7 @@ def review_and_repair_source_facts(
     selection_scorecard: object = None,
     title_repair_allowed: bool = True,
     enforce_automatic_title_style: bool = False,
+    speaker_transcript: str | None = None,
 ) -> dict[str, object]:
     """Run a bounded, evidence-bound KEEP/REPAIR convergence review."""
 
@@ -511,11 +549,18 @@ def review_and_repair_source_facts(
                 llm_call=llm_call,
                 review_pass=review_pass,
                 enforce_automatic_title_style=enforce_automatic_title_style,
+                speaker_transcript=speaker_transcript,
             )
             if (
                 review.get("status") != "FAILED"
                 or review.get("reason_code")
-                not in {"CPA_TEXT_REVIEW_INVALID", "CPA_TEXT_REVIEW_CALL_FAILED"}
+                not in {
+                    "CPA_TEXT_REVIEW_INVALID",
+                    "CPA_TEXT_REVIEW_CALL_FAILED",
+                    # 自相矛盾的归属判项（WRONG_ADDRESSEE 却判 KEEP、或该判不判）
+                    # 与形状无效同类：同一份输入重掷一次形状，不是重掷语义结论。
+                    ADDRESSEE_UNRESOLVED_REASON,
+                }
                 or attempt >= MAX_PROVIDER_RETRIES_PER_PASS
             ):
                 break

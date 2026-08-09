@@ -168,6 +168,8 @@ def _source_fact_keep_receipt(
                     "same_clip_context",
                 ],
                 "changed_surfaces": [],
+                # F12：判项必填；无说话人转写 -> UNVERIFIABLE 车道，留空数组。
+                "addressee_attribution": [],
                 "selection_scorecard_review": {
                     "status": "NOT_NEEDED",
                     "reason": "selection hook remains unchanged",

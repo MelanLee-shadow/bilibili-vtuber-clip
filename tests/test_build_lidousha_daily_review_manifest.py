@@ -30,6 +30,8 @@ def _keep_completion(hook: str, title: str) -> str:
             "final_title": title,
             "supported_by": ["final_transcript", "structured_chat"],
             "changed_surfaces": [],
+            # F12：判项必填；无说话人转写 -> UNVERIFIABLE 车道，留空数组。
+            "addressee_attribution": [],
             "summary": "字幕与结构化弹幕共同支持现有派生事实。",
         },
         ensure_ascii=False,
