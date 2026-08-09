@@ -109,10 +109,8 @@ from src.autoslice.story_contract import (
 )
 from src.autoslice.clip_context import validate_clip_context
 
-
 ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(ROOT)
-
 
 def _snapshot_file_bytes(
     paths: list[Path],
@@ -121,7 +119,6 @@ def _snapshot_file_bytes(
         path: path.read_bytes() if path.exists() else None
         for path in dict.fromkeys(paths)
     }
-
 
 def _write_bytes_atomic(path: Path, payload: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -140,7 +137,6 @@ def _write_bytes_atomic(path: Path, payload: bytes) -> None:
     finally:
         temporary.unlink(missing_ok=True)
 
-
 def _restore_file_bytes(
     snapshots: Mapping[Path, bytes | None],
 ) -> None:
@@ -149,7 +145,6 @@ def _restore_file_bytes(
             path.unlink(missing_ok=True)
         else:
             _write_bytes_atomic(path, payload)
-
 
 def _json_bytes(document: Mapping[str, object]) -> bytes:
     return (
@@ -162,7 +157,6 @@ def _json_bytes(document: Mapping[str, object]) -> bytes:
         + "\n"
     ).encode("utf-8")
 
-
 @dataclass(frozen=True)
 class ProducerFinalizationOptions:
     spec: Path
@@ -174,7 +168,6 @@ class ProducerFinalizationOptions:
     speaker_mixed_overlap_evidence: Path | None
     speaker_python: Path
     reuse_cover: bool
-
 
 @dataclass(frozen=True)
 class ProducerFinalizationAdapters:
@@ -189,7 +182,6 @@ class ProducerFinalizationAdapters:
     delivery_root: Callable[[], Path]
     run_exact_final_review: Callable[..., dict] | None = None
 
-
 @dataclass(frozen=True)
 class FinalRecutArtifacts:
     recut_dir: Path
@@ -200,14 +192,12 @@ class FinalRecutArtifacts:
     redelivery_baseline_audit_path: Path | None = None
     redelivery_baseline_audit: dict | None = None
 
-
 @dataclass(frozen=True)
 class SpeakerArtifacts:
     manifest: dict | None
     review_srt: Path | None
     ass: Path | None
     manifest_path: Path | None
-
 
 @dataclass(frozen=True)
 class AuthorityArtifacts:
@@ -1894,6 +1884,15 @@ def _finalize_speaker(
                 relative_to=options.spec.parent,
             )
         )
+        speaker_session_context_path = _resolved_optional_path(
+            spec.get("speaker_session_context"), relative_to=options.spec.parent
+        )
+        if not (  # downstream binds every current piece to this context source
+            speaker_session_context_path
+            and speaker_session_context_path.is_file()
+            and not speaker_session_context_path.is_symlink()
+        ):
+            speaker_session_context_path = None
         speaker_manifest = adapters.run_speaker_finalization(
             speaker_mode=options.speaker_mode,
             host=host,
@@ -1907,6 +1906,7 @@ def _finalize_speaker(
             override_path=speaker_override_path,
             source_session_anchor_path=source_session_anchor_path,
             mixed_overlap_evidence_path=mixed_overlap_evidence_path,
+            speaker_session_context_path=speaker_session_context_path,
             speaker_python=options.speaker_python,
             spec=spec,
             spec_parent=options.spec.parent,

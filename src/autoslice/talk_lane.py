@@ -43,6 +43,10 @@ from src.autoslice.speaker_finalizer import (
     SpeakerFinalizationError,
     validate_speaker_review_manifest_document,
 )
+from src.autoslice.speaker_solo_prior import (
+    build_speaker_session_context,
+    write_speaker_session_context,
+)
 from src.autoslice.story_contract import (
     canonicalize_relation_summary,
     canonicalize_story_scorecard,
@@ -55,6 +59,27 @@ from src.autoslice.talk_filler import (
 
 
 _runner = RunnerProxy()
+
+
+def _persist_speaker_session_context(
+    *, item: Mapping[str, object], pieces: list[dict], out_root: Path
+) -> str | None:
+    document = build_speaker_session_context(
+        candidate_id=str(item.get("cid") or ""),
+        session_id=str(item.get("session_id") or ""),
+        segment_path=str(item.get("segment_path") or ""),
+        start_ms=int(item["start_ms"]),
+        end_ms=int(item["end_ms"]),
+        segment_scene_context=item.get("segment_scene_context"),
+        session_relation_authority=item.get("session_relation_authority"),
+        source_piece_count=len(pieces),
+        source_piece_segments=[str(piece["remote_media"]) for piece in pieces],
+    )
+    if document is None:
+        return None
+    path = out_root / f"{item['cid']}.speaker-session-context.json"
+    write_speaker_session_context(path, document)
+    return str(path)
 
 def _bound_boundary_retry_source_end_ms(
     *,
@@ -1698,6 +1723,14 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         if item.get(routing_key) is not None:
             spec[routing_key] = item[routing_key]
     out_root.mkdir(parents=True, exist_ok=True)
+    speaker_session_context = _persist_speaker_session_context(
+        item=item, pieces=pieces, out_root=out_root
+    )
+    if speaker_session_context is not None:
+        spec["speaker_session_context"] = speaker_session_context
+        spec["speaker_session_context_sha256"] = (
+            "sha256:" + hashlib.sha256(Path(speaker_session_context).read_bytes()).hexdigest()
+        )
     spec_path = out_root / f"spec_{cid}.json"
     spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
     filler_plan_path = out_root / f"{cid}.filler-plan.json"
@@ -1733,6 +1766,8 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     )
     result = {
         "candidate_id": cid, "segment": Path(item["segment_path"]).name,
+        "segment_path": item["segment_path"], "session_id": item.get("session_id"),
+        "segment_scene_context": item.get("segment_scene_context"),
         "start_ms": item["start_ms"], "end_ms": item["end_ms"],
         "hook": item.get("hook", ""), "confidence": item.get("confidence"),
         "selection_scorecard": item.get("selection_scorecard"),

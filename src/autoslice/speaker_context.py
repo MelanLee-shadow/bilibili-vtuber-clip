@@ -23,16 +23,17 @@ from src.autoslice.speaker_common import (
     SINGLETON_NONLEXICAL_RESIDUALS,
     SPEAKERS,
     SpeakerFinalizationError,
+    SpeakerIdentityIndeterminate,
     milliseconds as _ms,
 )
 from src.autoslice.speaker_host_evidence import resolve_ambiguous_cue_speaker
 
 def _two_means(values: Sequence[float]) -> tuple[float, float, float]:
     if len(values) < 2:
-        raise SpeakerFinalizationError("not enough cue margins for two-speaker clustering")
+        raise SpeakerIdentityIndeterminate("not enough cue margins for two-speaker clustering")
     low, high = min(values), max(values)
     if low == high:
-        raise SpeakerFinalizationError("speaker margin distribution has no separation")
+        raise SpeakerIdentityIndeterminate("speaker margin distribution has no separation")
     for _ in range(40):
         high_side = [value for value in values if abs(value - high) < abs(value - low)]
         low_side = [value for value in values if abs(value - high) >= abs(value - low)]

@@ -46,6 +46,10 @@ class SpeakerFinalizationError(RuntimeError):
     pass
 
 
+class SpeakerIdentityIndeterminate(SpeakerFinalizationError):
+    """CAM++ completed far enough to show identity separation is unavailable."""
+
+
 def milliseconds(value: str) -> int:
     hours, minutes, rest = value.split(":")
     seconds, millis = rest.split(",")

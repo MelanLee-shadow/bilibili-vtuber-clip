@@ -378,3 +378,18 @@
   `src/autoslice/speaker_host_evidence.py`，v1 无真实子 cue 音频分窗，见该模块与
   `tests/lidousha/test_speaker_host_evidence.py` 的落地范围说明）。歌切不进入 talk
   speaker 链。
+- 竖屏单人先验按**候选源 segment**绑定，而不是按可能坍缩的 recording session ID
+  绑定：所有当前 source pieces 必须来自同一源 segment，且 hash-bound
+  `speaker-session-context.v1` 的 orientation 为 `portrait` 才可激活；横屏、unknown、
+  读探针失败、跨 segment pieces 和显式人工 speaker override 全部保持现行路径。裁定出处
+  （Ivan 2026-08-09 竖屏定律）：「竖屏直播 ⇒ 99% 单人直播。从录制分辨率纵横比直接判
+  session/场级 solo 先验(比任何音频分析都便宜),再叠 roster/语境佐证」。
+- 注入点位于 provider mixed/overlap gate 与现有 CAM++ 分析之后、speaker label
+  materialize 之前；只在身份不可判或仍含 unresolved cue 时把全部 cue 归 HOST，并在
+  READY manifest 写 `solo_prior=portrait` 与可复算 receipt。模型/资产/IO 漂移等一般故障
+  继续阻断，既有二分本身不重写。
+- 1% 逃生口保守沿用 speaker-work 的现有 `ambiguity_band`：双簇中心差至少
+  `2 * ambiguity_band`（当前 band 0.10，即 0.20），并同时至少有 2 条 hard HOST、2 条
+  hard GUEST 和 2 个 guest anchors，才算 CAM++ 强反证；受治理 relation authority 确认
+  多人/冲突，或已接受的高置信 GUEST whole-clip context，也会 veto 先验并维持 unresolved
+  拒绝。实现见 `src/autoslice/speaker_solo_prior.py` 与 `src/autoslice/speaker_finalizer.py`。

@@ -102,6 +102,7 @@ def _run(
     mode: str,
     final_source_start_ms: int = 0,
     final_source_end_ms: int = 2_000,
+    speaker_session_context_path: Path | None = None,
 ):
     return producer.run_producer_speaker_finalization(
         speaker_mode=mode,
@@ -121,6 +122,7 @@ def _run(
         speaker_python=Path("/must-not-run/model-python"),
         final_source_start_ms=final_source_start_ms,
         final_source_end_ms=final_source_end_ms,
+        speaker_session_context_path=speaker_session_context_path,
     )
 
 
@@ -246,6 +248,56 @@ def test_required_mode_ignores_fast_claim_and_runs_binary(
 
     assert len(binary_calls) == 1
     assert manifest["speaker_routing"]["reason"] == "SPEAKER_MODE_REQUIRED"
+
+
+@pytest.mark.parametrize(
+    "case", ["bound", "drifted", "multiple_same_source", "foreign_piece"]
+)
+def test_binary_portrait_context_requires_hash_bound_same_source_spec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    inputs = _inputs(tmp_path)
+    context_path = tmp_path / "speaker-session-context.json"
+    source_segment = Path(inputs["spec"]["pieces"][0]["remote_media"]).name
+    context_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "speaker-session-context.v1",
+                "source_segment": source_segment,
+                "source_piece_segments": [source_segment],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    inputs["spec"]["speaker_session_context_sha256"] = (
+        "sha256:" + hashlib.sha256(context_path.read_bytes()).hexdigest()
+    )
+    if case == "drifted":
+        context_path.write_text('{"fixture":"tampered"}\n', encoding="utf-8")
+    elif case == "multiple_same_source":
+        inputs["spec"]["pieces"].append(dict(inputs["spec"]["pieces"][0]))
+    elif case == "foreign_piece":
+        inputs["spec"]["pieces"].append(
+            {"remote_media": str(tmp_path / "landscape-next-segment.mp4")}
+        )
+    binary_calls = []
+    monkeypatch.setattr(
+        producer,
+        "run_speaker_finalizer",
+        lambda **kwargs: binary_calls.append(kwargs)
+        or {"status": "READY", "production_ready": True},
+    )
+
+    _run(
+        tmp_path,
+        inputs,
+        mode="required",
+        speaker_session_context_path=context_path,
+    )
+
+    expected = context_path if case in {"bound", "multiple_same_source"} else None
+    assert binary_calls[0]["speaker_session_context_path"] == expected
 
 
 def test_final_recut_outside_claim_coverage_falls_back_before_verification(

@@ -22,6 +22,23 @@
 3. CPA 观众视角审查：每个候选无条件过 `scripts/cpa_semantic_qa_llm.py` 判官（`viewer_context_ok` 语境自足性 + 自动扩窗建议），失败即 BLOCK（`live_source_review.py::_merge_cpa_semantic_review_into_decision`）。
 4. 候选是内容锚点不是最终边界；边界由 [30-boundary.md](30-boundary.md) 决定。
 
+## 同日场级配额
+
+- 配额按候选的**源 segment 场**记账，不按 recording session 日期桶直接合并。
+  `segment-scene-context.v1` 把源文件 stat、录制 metadata/XML 标题和 ffprobe
+  `width/height/orientation` 耐久化到 state；缓存输入指纹漂移时重探，UNKNOWN 也在后续
+  tick 重试但本 tick 仍按杂谈。事件场必须同时命中
+  3D/生日/周年类标题语境且为横屏，竖屏永远是杂谈场；标题、探针缺失/不可读或方向
+  unknown 都 fail closed 到杂谈场，不得静默放宽。
+- 普通生产在 exact contract 短路之后，互斥优先级为
+  `RESOLVED game > event > talk`，三类政策不叠加：游戏场保留既有 `20 / 第 6 席起 >=85`；
+  事件场为 `15 / 第 6 席起 >=85`；杂谈场为默认 `5`。同一坍缩 session 内分别使用
+  `game:`、`event:`、`talk:` scope，因此同日事件场的 15 席与杂谈场的 5 席独立计数。
+- 裁定出处（Ivan 2026-08-09，裁定失落案重申）：「我记得我当时说过 88 这个 3D live 场
+  放宽到 15 个,然后当天的杂谈场认为是独立的,自然有 5 个」。实现见
+  `src/autoslice/segment_scene_context.py`、`src/autoslice/talk_quota_policy.py` 和
+  `src/autoslice/candidate_selection.py`。
+
 场次联动关系的现行 authority 是
 `src/autoslice/session_relation_authority.py` +
 `assets/lidousha/session_relation_ledger.v1.json`：它以日期/官方源 SHA/参与者绑定关系，

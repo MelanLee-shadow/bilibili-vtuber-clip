@@ -37,6 +37,7 @@ from src.autoslice.speaker_session_router import (
     verify_speaker_routing_claim,
     verify_speaker_routing_claim_for_candidate,
 )
+from src.autoslice.speaker_solo_prior import SESSION_CONTEXT_SCHEMA
 
 ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(ROOT)
@@ -218,6 +219,7 @@ def run_speaker_finalizer(
     override_path: Path | None = None,
     source_session_anchor_path: Path | None = None,
     mixed_overlap_evidence_path: Path | None = None,
+    speaker_session_context_path: Path | None = None,
     speaker_python: Path = Path("/opt/bilive/autoslice/venv-diar/bin/python"),
     reference_dir: Path | None = None,
     profile_path: Path | None = None,
@@ -255,6 +257,11 @@ def run_speaker_finalizer(
             if mixed_overlap_evidence_path is not None
             else None
         ),
+        "speaker_session_context_sha256": (
+            _sha256(speaker_session_context_path)
+            if speaker_session_context_path is not None
+            else None
+        ),
     }
 
     def valid_review_manifest(document: object) -> bool:
@@ -284,6 +291,8 @@ def run_speaker_finalizer(
             command.extend(["--source-session-anchors", str(source_session_anchor_path)])
         if mixed_overlap_evidence_path is not None:
             command.extend(["--mixed-overlap-evidence", str(mixed_overlap_evidence_path)])
+        if speaker_session_context_path is not None:
+            command.extend(["--speaker-session-context", str(speaker_session_context_path)])
         completed = subprocess.run(
             command, cwd=str(ROOT), check=False, capture_output=True, text=True, timeout=1800
         )
@@ -297,6 +306,7 @@ def run_speaker_finalizer(
         remote_override = f"{remote_dir}/overrides.json"
         remote_session_anchors = f"{remote_dir}/source-session-anchors.json"
         remote_mixed_overlap = f"{remote_dir}/mixed-overlap-evidence.json"
+        remote_speaker_context = f"{remote_dir}/speaker-session-context.json"
         run(["ssh", host, f"rm -rf {shlex.quote(remote_dir)} && mkdir -p {shlex.quote(remote_dir)}/work"], timeout=120)
         try:
             run(["scp", "-q", str(media_path), str(text_srt_path), f"{host}:{remote_dir}/"], timeout=1800)
@@ -316,6 +326,11 @@ def run_speaker_finalizer(
             if mixed_overlap_evidence_path is not None:
                 run(
                     ["scp", "-q", str(mixed_overlap_evidence_path), f"{host}:{remote_mixed_overlap}"],
+                    timeout=120,
+                )
+            if speaker_session_context_path is not None:
+                run(
+                    ["scp", "-q", str(speaker_session_context_path), f"{host}:{remote_speaker_context}"],
                     timeout=120,
                 )
             try:
@@ -343,6 +358,8 @@ def run_speaker_finalizer(
                 remote_command.extend(["--source-session-anchors", remote_session_anchors])
             if mixed_overlap_evidence_path is not None:
                 remote_command.extend(["--mixed-overlap-evidence", remote_mixed_overlap])
+            if speaker_session_context_path is not None:
+                remote_command.extend(["--speaker-session-context", remote_speaker_context])
             shell_command = "cd /opt/bilive/autoslice/repo && " + " ".join(
                 shlex.quote(part) for part in remote_command
             )
@@ -437,6 +454,18 @@ def run_speaker_finalizer(
         != frozen_inputs["mixed_overlap_evidence_sha256"]
     ):
         raise RuntimeError("SPEAKER_FINALIZATION_MIXED_OVERLAP_BINDING_MISMATCH")
+    analysis = manifest.get("analysis")
+    prior_receipt = (
+        analysis.get("solo_prior_receipt") if isinstance(analysis, dict) else None
+    )
+    if isinstance(prior_receipt, dict) and (
+        frozen_inputs["speaker_session_context_sha256"] is None
+        or str(prior_receipt.get("speaker_session_context_sha256") or "").removeprefix(
+            "sha256:"
+        )
+        != frozen_inputs["speaker_session_context_sha256"]
+    ):
+        raise RuntimeError("SPEAKER_FINALIZATION_SOLO_PRIOR_BINDING_MISMATCH")
     current_inputs = {
         "source_media_sha256": _sha256(media_path),
         "text_final_srt_sha256": _sha256(text_srt_path),
@@ -450,6 +479,11 @@ def run_speaker_finalizer(
         "mixed_overlap_evidence_sha256": (
             _sha256(mixed_overlap_evidence_path)
             if mixed_overlap_evidence_path is not None
+            else None
+        ),
+        "speaker_session_context_sha256": (
+            _sha256(speaker_session_context_path)
+            if speaker_session_context_path is not None
             else None
         ),
     }
@@ -467,6 +501,44 @@ def _default_speaker_mode() -> str:
 
     mode = os.environ.get("AUTOSLICE_SPEAKER_MODE", "uniform_host")
     return mode if mode in ("uniform_host", "required", "auto") else "uniform_host"
+
+
+def _bound_speaker_session_context_path(
+    path: Path | None, *, spec: dict
+) -> Path | None:
+    pieces = spec.get("pieces")
+    if (
+        path is None
+        or path.is_symlink()
+        or not path.is_file()
+        or not isinstance(pieces, list)
+        or not pieces
+    ):
+        return None
+    expected = str(spec.get("speaker_session_context_sha256") or "")
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        actual = "sha256:" + _sha256(path)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(document, dict):
+        return None
+    source_segment = str(document.get("source_segment") or "")
+    declared_segments = document.get("source_piece_segments")
+    if (
+        document.get("schema_version") != SESSION_CONTEXT_SCHEMA
+        or not source_segment
+        or not isinstance(declared_segments, list)
+        or not declared_segments
+        or any(value != source_segment for value in declared_segments)
+        or any(
+            not isinstance(piece, dict)
+            or Path(str(piece.get("remote_media") or "")).name != source_segment
+            for piece in pieces
+        )
+    ):
+        return None
+    return path if expected == actual else None
 
 
 @dataclass(frozen=True)
@@ -504,6 +576,7 @@ def run_producer_speaker_finalization(
     speaker_python: Path,
     final_source_start_ms: int | None,
     final_source_end_ms: int | None,
+    speaker_session_context_path: Path | None = None,
     adapters: SpeakerFinalizationAdapters | None = None,
 ) -> dict:
     """Dispatch a verified FAST route or the existing binary finalizer.
@@ -515,6 +588,9 @@ def run_producer_speaker_finalization(
     """
 
     adapters = adapters or SpeakerFinalizationAdapters()
+    speaker_session_context_path = _bound_speaker_session_context_path(
+        speaker_session_context_path, spec=spec
+    )
 
     if speaker_mode == "uniform_host":
         raise ValueError(
@@ -700,6 +776,7 @@ def run_producer_speaker_finalization(
         override_path=override_path,
         source_session_anchor_path=source_session_anchor_path,
         mixed_overlap_evidence_path=mixed_overlap_evidence_path,
+        speaker_session_context_path=speaker_session_context_path,
         speaker_python=speaker_python,
     )
     manifest["speaker_routing"] = {

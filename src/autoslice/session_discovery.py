@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from src.autoslice.runner_proxy import RunnerProxy
+from src.autoslice.segment_scene_context import resolve_segment_scene_context
 from src.autoslice.story_contract import canonicalize_relation_summary
 
 
@@ -144,10 +145,23 @@ def annotate_state_sessions(date: str, state: dict) -> bool:
         relation_mapping = {}
         state["segment_relation_authorities"] = relation_mapping
         changed = True
+    scene_mapping = state.setdefault("segment_scene_contexts", {})
+    if not isinstance(scene_mapping, dict):
+        scene_mapping = {}
+        state["segment_scene_contexts"] = scene_mapping
+        changed = True
     for segment in _runner.list_segments(date):
         if not mapping.get(segment.stem):
             session_id = recording_session_id(segment, date)
             mapping[segment.stem] = session_id
+            changed = True
+        scene = resolve_segment_scene_context(
+            segment,
+            xml_path=_runner.find_danmaku_xml(segment),
+            cached=scene_mapping.get(segment.stem),
+        )
+        if scene_mapping.get(segment.stem) != scene:
+            scene_mapping[segment.stem] = scene
             changed = True
         relation = _session_relation_for_state(date, segment, state)
         if relation is not None and relation_mapping.get(segment.stem) != relation:
@@ -198,6 +212,20 @@ def annotate_state_sessions(date: str, state: dict) -> bool:
             if not segment_value:
                 continue
             segment_path = Path(str(segment_value))
+            scene = scene_mapping.get(segment_path.stem)
+            if scene is None and segment_path.is_file():
+                scene = resolve_segment_scene_context(
+                    segment_path,
+                    xml_path=_runner.find_danmaku_xml(segment_path),
+                )
+                scene_mapping[segment_path.stem] = scene
+                changed = True
+            if isinstance(scene, dict) and row.get("segment_scene_context") != scene:
+                row["segment_scene_context"] = scene
+                changed = True
+            elif scene is None and "segment_scene_context" in row:
+                del row["segment_scene_context"]
+                changed = True
             relation = relation_mapping.get(segment_path.stem)
             if isinstance(relation, dict) and row.get(
                 "session_relation_authority"
@@ -432,6 +460,14 @@ def discover_segments(date: str, state: dict) -> None:
                 _runner.log(f"segment {segment.name}: BCUT failed {attempts[stem]}x → dead")
             continue
         xml = _runner.find_danmaku_xml(segment)
+        scene_mapping = state.setdefault("segment_scene_contexts", {})
+        if not isinstance(scene_mapping, dict):
+            scene_mapping = {}
+            state["segment_scene_contexts"] = scene_mapping
+        segment_scene = resolve_segment_scene_context(
+            segment, xml_path=xml, cached=scene_mapping.get(stem)
+        )
+        scene_mapping[stem] = segment_scene
         verified_source_sha256 = _verified_state_source_sha256(state, segment)
         try:
             chat_binding = _runner.resolve_structured_chat_binding(
@@ -541,6 +577,7 @@ def discover_segments(date: str, state: dict) -> None:
                 "preview": cand.text_preview[:80],
                 "bcut_srt_path": str(srt),
                 "session_id": session_id,
+                "segment_scene_context": segment_scene,
                 "session_relation_authority": session_relation,
                 "filler_proposals": list(meta.get("filler_proposals") or []),
                 "filler_proposal_srt_sha256": meta.get(

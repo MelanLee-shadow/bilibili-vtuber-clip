@@ -13,7 +13,6 @@ The ML imports are lazy so ordinary unit tests do not need the production venv.
 """
 
 from __future__ import annotations
-
 import argparse
 import hashlib
 import importlib.metadata
@@ -24,7 +23,6 @@ import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
-
 from scripts.apply_speaker_turn_overrides import (
     Cue,
     SPEAKER_SUBTITLE_STYLE_ID,
@@ -42,7 +40,6 @@ from src.autoslice.host_vocal_proof import (
     _sha256_directory,
     _validate_profile,
 )
-
 from src.autoslice.speaker_common import (
     CAMPP_COSINE_EPSILON,
     CAMPP_EMBEDDING_CACHE_SCHEMA,
@@ -58,9 +55,11 @@ from src.autoslice.speaker_common import (
     SPEAKERS,
     SPEAKER_FINALIZATION_SCHEMA,
     SpeakerFinalizationError,
+    SpeakerIdentityIndeterminate,
     milliseconds as _ms,
     speaker_policy as _policy,
 )
+from src.autoslice.speaker_solo_prior import apply_portrait_solo_prior_from_path, identity_indeterminate_analysis
 from src.autoslice.speaker_evidence import (
     validate_speaker_review_manifest_document,
     validate_mixed_overlap_evidence_document,
@@ -80,7 +79,6 @@ from src.autoslice.speaker_context import (
     _call_context_via_cpa,
 )
 from src.autoslice.speaker_host_evidence import acoustic_hard_pass
-
 
 def _cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
     """Dependency-free equivalent of Torch cosine for test/runtime fallbacks.
@@ -115,7 +113,6 @@ def _cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
         raise SpeakerFinalizationError("CAM++ similarity must be finite and within [-1, 1]")
     return min(1.0, max(-1.0, score))
 
-
 def _validate_campp_embedding(values: Sequence[float]) -> list[float]:
     vector = [float(value) for value in values]
     if len(vector) != CAMPP_EMBEDDING_DIMENSION:
@@ -128,7 +125,6 @@ def _validate_campp_embedding(values: Sequence[float]) -> list[float]:
     if not math.isfinite(norm) or norm < CAMPP_MIN_EMBEDDING_NORM:
         raise SpeakerFinalizationError("CAM++ embedding norm is degenerate")
     return vector
-
 
 def _campp_runtime_fingerprint(verifier: Callable[..., object]) -> str:
     components: dict[str, str] = {
@@ -143,7 +139,6 @@ def _campp_runtime_fingerprint(verifier: Callable[..., object]) -> str:
             components[package] = "unavailable"
     payload = json.dumps(components, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(payload).hexdigest()
-
 
 def _embedding_binding_sha256(
     *,
@@ -166,7 +161,6 @@ def _embedding_binding_sha256(
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
-
 
 def _load_cached_embedding(
     path: Path,
@@ -208,7 +202,6 @@ def _load_cached_embedding(
     except (OSError, TypeError, ValueError, SpeakerFinalizationError):
         return None
 
-
 def _write_cached_embedding(
     path: Path,
     *,
@@ -236,7 +229,6 @@ def _write_cached_embedding(
         path,
         json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n",
     )
-
 
 def _campp_similarity_score(
     verifier: Callable[..., object],
@@ -278,7 +270,6 @@ def _campp_similarity_score(
         raise SpeakerFinalizationError("CAM++ similarity must be finite and within [-1, 1]")
     return min(1.0, max(-1.0, score))
 
-
 def _campp_embedding(verifier: Callable[..., object], path: Path) -> list[float]:
     """Return the CAM++ speaker embedding for one wav.
 
@@ -292,7 +283,6 @@ def _campp_embedding(verifier: Callable[..., object], path: Path) -> list[float]
     row = embeddings[0]
     values = row.tolist() if hasattr(row, "tolist") else list(row)
     return _validate_campp_embedding(values)
-
 
 def _build_embedding_similarity(
     *, verifier: Callable[..., object], model_hash: str, work_dir: Path
@@ -354,7 +344,6 @@ def _build_embedding_similarity(
 
     return similarity
 
-
 def _extract_cue_wavs(media_path: Path, cues: Sequence[TextCue], work_dir: Path) -> tuple[object, int, list[Path]]:
     try:
         import soundfile as sf  # type: ignore[import-not-found]
@@ -392,7 +381,6 @@ def _extract_cue_wavs(media_path: Path, cues: Sequence[TextCue], work_dir: Path)
         )
         cue_paths.append(cue_path)
     return audio, sample_rate, cue_paths
-
 
 def _load_source_session_anchor_samples(
     manifest_path: Path,
@@ -565,7 +553,6 @@ def _load_source_session_anchor_samples(
         raise SpeakerFinalizationError("source-session target provenance drifted during analysis")
     return anchor_paths, evidence
 
-
 def _load_runtime(profile_path: Path, reference_dir: Path, model_dir: Path):
     profile = json.loads(profile_path.read_text(encoding="utf-8"))
     model_info, expected_references = _validate_profile(profile)
@@ -579,7 +566,6 @@ def _load_runtime(profile_path: Path, reference_dir: Path, model_dir: Path):
             raise SpeakerFinalizationError(f"voiceprint reference hash mismatch: {expected['id']}")
         references.append({**expected, "path": path})
     return profile, references, actual_model_hash, _load_campplus_pipeline(model_dir)
-
 
 def _assert_runtime_assets_stable(
     *,
@@ -596,7 +582,6 @@ def _assert_runtime_assets_stable(
                 f"voiceprint reference drifted during speaker analysis: {reference['id']}"
             )
 
-
 @dataclass(frozen=True)
 class _CampPlusAnchorState:
     policy: dict[str, object]
@@ -611,7 +596,6 @@ class _CampPlusAnchorState:
     host_anchor_scope: str
     source_session_evidence: dict[str, object] | None
     host_bank_similarity: Callable[[int], float]
-
 
 def _prepare_campplus_anchor_state(
     *,
@@ -674,7 +658,7 @@ def _prepare_campplus_anchor_state(
     else:
         host_indices = clip_host_indices
         if len(host_indices) < 2:
-            raise SpeakerFinalizationError(
+            raise SpeakerIdentityIndeterminate(
                 f"not enough {CHANNEL_PROFILE.prompt_name} clip anchors: {host_indices}"
             )
         host_prints = [cue_paths[index] for index in host_indices]
@@ -708,7 +692,6 @@ def _prepare_campplus_anchor_state(
         source_session_evidence=source_session_evidence,
         host_bank_similarity=host_bank_similarity,
     )
-
 
 def _run_campplus_analysis(
     *,
@@ -814,7 +797,7 @@ def _run_campplus_analysis(
                 "threshold": None,
             }
         if median_seed < float(policy["single_host_median_seed_min"]) or unexplained_long_low:
-            raise SpeakerFinalizationError(
+            raise SpeakerIdentityIndeterminate(
                 f"guest evidence exists but purified guest anchors are insufficient: {guest_candidates}"
             )
         _assert_runtime_assets_stable(
@@ -964,7 +947,6 @@ def _run_campplus_analysis(
         ],
     }
 
-
 @dataclass(frozen=True)
 class _BoundSpeakerInputs:
     media_path: Path
@@ -979,7 +961,6 @@ class _BoundSpeakerInputs:
     mixed_overlap_evidence_original: Path | None
     mixed_overlap_evidence_snapshot: Path | None
     mixed_overlap_evidence_sha256: str | None
-
 
 def _snapshot_speaker_inputs(
     *,
@@ -1033,13 +1014,11 @@ def _snapshot_speaker_inputs(
         mixed_overlap_evidence_sha256=mixed_sha256,
     )
 
-
 @dataclass(frozen=True)
 class _SpeakerOverrideState:
     document: dict[str, object] | None
     reviewed_votes: dict[int, str]
     expected_automatic_sha256: str
-
 
 def _load_speaker_override_state(
     override_path: Path | None,
@@ -1091,7 +1070,6 @@ def _load_speaker_override_state(
         reviewed_votes=_reviewed_context_votes(loaded, cue_count=cue_count),
         expected_automatic_sha256=expected_automatic,
     )
-
 
 @dataclass(frozen=True)
 class _MixedOverlapGate:
@@ -1215,17 +1193,22 @@ def _run_bound_speaker_analysis(
 ) -> dict[str, object]:
     """Run the analyzer, then prove every bound input stayed unchanged."""
 
-    analysis = analyzer(
-        media_path=bound.media_path,
-        cues=bound.cues,
-        profile_path=bound.profile_snapshot,
-        reference_dir=reference_dir,
-        model_dir=model_dir,
-        work_dir=work_dir,
-        context_call=context_call,
-        reviewed_context_votes=reviewed_votes,
-        source_session_anchor_path=bound.source_session_anchor_snapshot,
-    )
+    identity_error: SpeakerIdentityIndeterminate | None = None
+    try:
+        analysis = analyzer(
+            media_path=bound.media_path,
+            cues=bound.cues,
+            profile_path=bound.profile_snapshot,
+            reference_dir=reference_dir,
+            model_dir=model_dir,
+            work_dir=work_dir,
+            context_call=context_call,
+            reviewed_context_votes=reviewed_votes,
+            source_session_anchor_path=bound.source_session_anchor_snapshot,
+        )
+    except SpeakerIdentityIndeterminate as exc:
+        identity_error = exc
+        analysis = None
     if sha256_file(bound.profile_path) != bound.profile_sha256:
         raise SpeakerFinalizationError("voiceprint profile drifted during speaker analysis")
     if (
@@ -1252,6 +1235,9 @@ def _run_bound_speaker_analysis(
             cues=bound.cues,
             expected_audio_root=bound.mixed_overlap_evidence_original.parent,
         )
+    if identity_error is not None:
+        raise identity_error
+    assert analysis is not None
     return analysis
 
 
@@ -1476,6 +1462,8 @@ def _write_ready_speaker_delivery(
             cue.decision_source == "accepted_context_baseline" for cue in final_cues
         ),
         "overlap_output_cue_count": sum(cue.placement == "above" for cue in final_cues),
+        "solo_prior": analysis.get("solo_prior"),
+        "solo_prior_receipt": analysis.get("solo_prior_receipt"),
         "analysis": analysis,
         "final_decisions": [asdict(cue) for cue in final_cues],
     }
@@ -1484,7 +1472,6 @@ def _write_ready_speaker_delivery(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
     )
     return manifest
-
 
 def finalize_speaker_subtitles(
     *,
@@ -1501,6 +1488,7 @@ def finalize_speaker_subtitles(
     override_path: Path | None = None,
     source_session_anchor_path: Path | None = None,
     mixed_overlap_evidence_path: Path | None = None,
+    speaker_session_context_path: Path | None = None,
     analyzer: Callable[..., dict[str, object]] = _run_campplus_analysis,
     context_call: Callable[[str], str] | None = None,
 ) -> dict[str, object]:
@@ -1533,16 +1521,28 @@ def finalize_speaker_subtitles(
     if mixed_gate.review_manifest is not None:
         return mixed_gate.review_manifest
     mixed_overlap_document = mixed_gate.document
-    analysis = _run_bound_speaker_analysis(
-        bound=bound,
-        reference_dir=reference_dir,
-        model_dir=model_dir,
-        work_dir=work_dir,
-        analyzer=analyzer,
-        context_call=context_call,
-        reviewed_votes=reviewed_votes,
-        mixed_overlap_document=mixed_overlap_document,
+    identity_error: SpeakerIdentityIndeterminate | None = None
+    try:
+        analysis = _run_bound_speaker_analysis(
+            bound=bound,
+            reference_dir=reference_dir,
+            model_dir=model_dir,
+            work_dir=work_dir,
+            analyzer=analyzer,
+            context_call=context_call,
+            reviewed_votes=reviewed_votes,
+            mixed_overlap_document=mixed_overlap_document,
+        )
+    except SpeakerIdentityIndeterminate as exc:
+        identity_error = exc
+        analysis = identity_indeterminate_analysis(cue_count=len(bound.cues), reason=str(exc))
+    analysis = apply_portrait_solo_prior_from_path(
+        analysis,
+        context_path=(speaker_session_context_path if override_document is None else None),
+        candidate_id=candidate_id,
     )
+    if identity_error is not None and analysis.get("solo_prior") != "portrait":
+        raise identity_error
     labels = _materialize_speaker_labels(
         analysis,
         cues=bound.cues,
@@ -1574,7 +1574,6 @@ def finalize_speaker_subtitles(
         output_ass_path=output_ass_path,
         output_manifest_path=output_manifest_path,
     )
-
 
 def finalize_fast_solo_subtitles(
     *,
@@ -1739,7 +1738,6 @@ def finalize_fast_solo_subtitles(
     )
     return manifest
 
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--media", type=Path, required=True)
@@ -1755,6 +1753,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--overrides", type=Path)
     parser.add_argument("--source-session-anchors", type=Path)
     parser.add_argument("--mixed-overlap-evidence", type=Path)
+    parser.add_argument("--speaker-session-context", type=Path)
     parser.add_argument("--no-context-judge", action="store_true")
     args = parser.parse_args(argv)
     repo_root = Path(__file__).resolve().parents[2]
@@ -1776,6 +1775,7 @@ def main(argv: list[str] | None = None) -> int:
             override_path=args.overrides,
             source_session_anchor_path=args.source_session_anchors,
             mixed_overlap_evidence_path=args.mixed_overlap_evidence,
+            speaker_session_context_path=args.speaker_session_context,
             context_call=context_call,
         )
     except Exception as exc:

@@ -32,7 +32,12 @@ from src.autoslice.speaker_finalizer import (
     validate_speaker_review_manifest_document,
 )
 from src.autoslice.host_vocal_proof import _sha256_directory
+from src.autoslice.segment_scene_context import resolve_segment_scene_context
 from src.autoslice.speaker_common import GUEST_SPEAKER, HOST_SPEAKER
+from src.autoslice.speaker_solo_prior import (
+    build_speaker_session_context,
+    write_speaker_session_context,
+)
 from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
@@ -1635,6 +1640,29 @@ def test_mixed_overlap_provider_evidence_stops_before_analyzer_and_render(tmp_pa
         ),
         encoding="utf-8",
     )
+    source_segment = tmp_path / "22966160_20260808-23-01-25.mp4"
+    source_segment.write_bytes(b"portrait source")
+    scene = resolve_segment_scene_context(
+        source_segment,
+        dimension_probe=lambda _path: {
+            "status": "PASS",
+            "width": 1080,
+            "height": 1920,
+        },
+    )
+    speaker_context = build_speaker_session_context(
+        candidate_id="portrait-mixed",
+        session_id="live-20260808Tunknown",
+        segment_path=source_segment,
+        start_ms=0,
+        end_ms=2_030,
+        segment_scene_context=scene,
+        session_relation_authority=None,
+        source_piece_count=1,
+    )
+    assert speaker_context is not None
+    speaker_context_path = tmp_path / "speaker-session-context.json"
+    write_speaker_session_context(speaker_context_path, speaker_context)
     analyzer_called = False
 
     def analyzer(**_kwargs):
@@ -1654,7 +1682,9 @@ def test_mixed_overlap_provider_evidence_stops_before_analyzer_and_render(tmp_pa
         output_ass_path=output_ass,
         output_manifest_path=tmp_path / "speaker.json",
         work_dir=tmp_path / "work",
+        candidate_id="portrait-mixed",
         mixed_overlap_evidence_path=evidence_path,
+        speaker_session_context_path=speaker_context_path,
         analyzer=analyzer,
     )
 
@@ -1664,6 +1694,7 @@ def test_mixed_overlap_provider_evidence_stops_before_analyzer_and_render(tmp_pa
     assert manifest["mixed_overlap_evidence_sha256"] == hashlib.sha256(
         evidence_path.read_bytes()
     ).hexdigest()
+    assert "solo_prior" not in manifest["analysis"]
     assert not output_srt.exists()
     assert not output_ass.exists()
 
