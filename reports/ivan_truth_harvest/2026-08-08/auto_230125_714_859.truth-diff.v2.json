@@ -1,0 +1,1088 @@
+{
+ "schema": "ivan-speaker-truth-diff.v2",
+ "candidate_id": "auto_230125_714_859",
+ "source_machine_sha256": "4e76e5f66f518b15a7c9869513c5f9b067aace066731a1a094b6db2b7fa20c2c",
+ "annotated_sha256": "4e76e5f66f518b15a7c9869513c5f9b067aace066731a1a094b6db2b7fa20c2c",
+ "authority": "Ivan-annotated-2026-08-09",
+ "generated_by": "scripts/harvest_ivan_truth.py",
+ "summary": {
+  "cues": 63,
+  "text_changed": 0,
+  "label_changed": 0,
+  "mixed": 0,
+  "marked": 0
+ },
+ "cues": [
+  {
+   "cue": 1,
+   "timing": "00:00:00,250 --> 00:00:02,730",
+   "machine_label": null,
+   "machine_text": "然后holiday，然后下面的就",
+   "truth_segments": [
+    {
+     "text": "然后holiday，然后下面的就",
+     "label": null
+    }
+   ],
+   "truth_text": "然后holiday，然后下面的就",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 2,
+   "timing": "00:00:02,730 --> 00:00:05,250",
+   "machine_label": null,
+   "machine_text": "就是好き好き大好き",
+   "truth_segments": [
+    {
+     "text": "就是好き好き大好き",
+     "label": null
+    }
+   ],
+   "truth_text": "就是好き好き大好き",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 3,
+   "timing": "00:00:10,290 --> 00:00:12,370",
+   "machine_label": null,
+   "machine_text": "这个给给小李跳爽了",
+   "truth_segments": [
+    {
+     "text": "这个给给小李跳爽了",
+     "label": null
+    }
+   ],
+   "truth_text": "这个给给小李跳爽了",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 4,
+   "timing": "00:00:12,410 --> 00:00:13,890",
+   "machine_label": null,
+   "machine_text": "但我发现就是",
+   "truth_segments": [
+    {
+     "text": "但我发现就是",
+     "label": null
+    }
+   ],
+   "truth_text": "但我发现就是",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 5,
+   "timing": "00:00:13,890 --> 00:00:15,450",
+   "machine_label": null,
+   "machine_text": "虽然我跳得特别爽",
+   "truth_segments": [
+    {
+     "text": "虽然我跳得特别爽",
+     "label": null
+    }
+   ],
+   "truth_text": "虽然我跳得特别爽",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 6,
+   "timing": "00:00:15,450 --> 00:00:17,050",
+   "machine_label": null,
+   "machine_text": "但是有一些切镜你其实",
+   "truth_segments": [
+    {
+     "text": "但是有一些切镜你其实",
+     "label": null
+    }
+   ],
+   "truth_text": "但是有一些切镜你其实",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 7,
+   "timing": "00:00:17,050 --> 00:00:19,130",
+   "machine_label": null,
+   "machine_text": "看不出来小李在爽跳",
+   "truth_segments": [
+    {
+     "text": "看不出来小李在爽跳",
+     "label": null
+    }
+   ],
+   "truth_text": "看不出来小李在爽跳",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 8,
+   "timing": "00:00:19,770 --> 00:00:23,210",
+   "machine_label": null,
+   "machine_text": "你你有一些你有你有一些",
+   "truth_segments": [
+    {
+     "text": "你你有一些你有你有一些",
+     "label": null
+    }
+   ],
+   "truth_text": "你你有一些你有你有一些",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 9,
+   "timing": "00:00:23,210 --> 00:00:25,970",
+   "machine_label": null,
+   "machine_text": "那个切、切镜只切了半身的话",
+   "truth_segments": [
+    {
+     "text": "那个切、切镜只切了半身的话",
+     "label": null
+    }
+   ],
+   "truth_text": "那个切、切镜只切了半身的话",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 10,
+   "timing": "00:00:25,970 --> 00:00:29,130",
+   "machine_label": null,
+   "machine_text": "你就看不出来，看不出来在爽跳",
+   "truth_segments": [
+    {
+     "text": "你就看不出来，看不出来在爽跳",
+     "label": null
+    }
+   ],
+   "truth_text": "你就看不出来，看不出来在爽跳",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 11,
+   "timing": "00:00:29,290 --> 00:00:32,010",
+   "machine_label": null,
+   "machine_text": "要不明天，要不明天再跳一次吧",
+   "truth_segments": [
+    {
+     "text": "要不明天，要不明天再跳一次吧",
+     "label": null
+    }
+   ],
+   "truth_text": "要不明天，要不明天再跳一次吧",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 12,
+   "timing": "00:00:32,570 --> 00:00:33,970",
+   "machine_label": null,
+   "machine_text": "kmx，是的",
+   "truth_segments": [
+    {
+     "text": "kmx，是的",
+     "label": null
+    }
+   ],
+   "truth_text": "kmx，是的",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 13,
+   "timing": "00:00:34,330 --> 00:00:35,730",
+   "machine_label": null,
+   "machine_text": "kmx好社恐",
+   "truth_segments": [
+    {
+     "text": "kmx好社恐",
+     "label": null
+    }
+   ],
+   "truth_text": "kmx好社恐",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 14,
+   "timing": "00:00:35,850 --> 00:00:38,650",
+   "machine_label": null,
+   "machine_text": "kmx们感觉比李豆沙还偷偷摸摸的",
+   "truth_segments": [
+    {
+     "text": "kmx们感觉比李豆沙还偷偷摸摸的",
+     "label": null
+    }
+   ],
+   "truth_text": "kmx们感觉比李豆沙还偷偷摸摸的",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 15,
+   "timing": "00:00:39,730 --> 00:00:42,170",
+   "machine_label": null,
+   "machine_text": "你知道1200人在那听薯ki吗",
+   "truth_segments": [
+    {
+     "text": "你知道1200人在那听薯ki吗",
+     "label": null
+    }
+   ],
+   "truth_text": "你知道1200人在那听薯ki吗",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 16,
+   "timing": "00:00:43,610 --> 00:00:45,010",
+   "machine_label": null,
+   "machine_text": "谁不想听呢",
+   "truth_segments": [
+    {
+     "text": "谁不想听呢",
+     "label": null
+    }
+   ],
+   "truth_text": "谁不想听呢",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 17,
+   "timing": "00:00:46,170 --> 00:00:47,170",
+   "machine_label": null,
+   "machine_text": "不想",
+   "truth_segments": [
+    {
+     "text": "不想",
+     "label": null
+    }
+   ],
+   "truth_text": "不想",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 18,
+   "timing": "00:00:47,570 --> 00:00:48,530",
+   "machine_label": null,
+   "machine_text": "谁不想听",
+   "truth_segments": [
+    {
+     "text": "谁不想听",
+     "label": null
+    }
+   ],
+   "truth_text": "谁不想听",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 19,
+   "timing": "00:00:48,530 --> 00:00:51,010",
+   "machine_label": null,
+   "machine_text": "听着大大方方的，挺舒服呢",
+   "truth_segments": [
+    {
+     "text": "听着大大方方的，挺舒服呢",
+     "label": null
+    }
+   ],
+   "truth_text": "听着大大方方的，挺舒服呢",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 20,
+   "timing": "00:00:51,610 --> 00:00:53,850",
+   "machine_label": null,
+   "machine_text": "宝宝，我们能别唱难听歌了吗",
+   "truth_segments": [
+    {
+     "text": "宝宝，我们能别唱难听歌了吗",
+     "label": null
+    }
+   ],
+   "truth_text": "宝宝，我们能别唱难听歌了吗",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 21,
+   "timing": "00:00:54,050 --> 00:00:55,330",
+   "machine_label": null,
+   "machine_text": "这不难听吗",
+   "truth_segments": [
+    {
+     "text": "这不难听吗",
+     "label": null
+    }
+   ],
+   "truth_text": "这不难听吗",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 22,
+   "timing": "00:00:55,730 --> 00:00:57,730",
+   "machine_label": null,
+   "machine_text": "这不，这这难听吗",
+   "truth_segments": [
+    {
+     "text": "这不，这这难听吗",
+     "label": null
+    }
+   ],
+   "truth_text": "这不，这这难听吗",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 23,
+   "timing": "00:00:57,730 --> 00:00:59,410",
+   "machine_label": null,
+   "machine_text": "我最喜欢难听歌了",
+   "truth_segments": [
+    {
+     "text": "我最喜欢难听歌了",
+     "label": null
+    }
+   ],
+   "truth_text": "我最喜欢难听歌了",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 24,
+   "timing": "00:00:59,410 --> 00:01:00,850",
+   "machine_label": null,
+   "machine_text": "嗯，怎么怎么换了",
+   "truth_segments": [
+    {
+     "text": "嗯，怎么怎么换了",
+     "label": null
+    }
+   ],
+   "truth_text": "嗯，怎么怎么换了",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 25,
+   "timing": "00:01:01,570 --> 00:01:03,130",
+   "machine_label": null,
+   "machine_text": "听到自己声音了",
+   "truth_segments": [
+    {
+     "text": "听到自己声音了",
+     "label": null
+    }
+   ],
+   "truth_text": "听到自己声音了",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 26,
+   "timing": "00:01:04,050 --> 00:01:05,810",
+   "machine_label": null,
+   "machine_text": "真的吗？这能听得出来吗",
+   "truth_segments": [
+    {
+     "text": "真的吗？这能听得出来吗",
+     "label": null
+    }
+   ],
+   "truth_text": "真的吗？这能听得出来吗",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 27,
+   "timing": "00:01:06,610 --> 00:01:08,010",
+   "machine_label": null,
+   "machine_text": "我明天还想再跳一次",
+   "truth_segments": [
+    {
+     "text": "我明天还想再跳一次",
+     "label": null
+    }
+   ],
+   "truth_text": "我明天还想再跳一次",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 28,
+   "timing": "00:01:08,010 --> 00:01:09,210",
+   "machine_label": null,
+   "machine_text": "要不明天再跳一次吧",
+   "truth_segments": [
+    {
+     "text": "要不明天再跳一次吧",
+     "label": null
+    }
+   ],
+   "truth_text": "要不明天再跳一次吧",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 29,
+   "timing": "00:01:09,570 --> 00:01:11,650",
+   "machine_label": null,
+   "machine_text": "明天，明天的直播是没有切镜的",
+   "truth_segments": [
+    {
+     "text": "明天，明天的直播是没有切镜的",
+     "label": null
+    }
+   ],
+   "truth_text": "明天，明天的直播是没有切镜的",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 30,
+   "timing": "00:01:11,650 --> 00:01:13,050",
+   "machine_label": null,
+   "machine_text": "我们明天再跳一次好不好",
+   "truth_segments": [
+    {
+     "text": "我们明天再跳一次好不好",
+     "label": null
+    }
+   ],
+   "truth_text": "我们明天再跳一次好不好",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 31,
+   "timing": "00:01:13,530 --> 00:01:16,490",
+   "machine_label": null,
+   "machine_text": "我们明天最后一首再跳一次好不好",
+   "truth_segments": [
+    {
+     "text": "我们明天最后一首再跳一次好不好",
+     "label": null
+    }
+   ],
+   "truth_text": "我们明天最后一首再跳一次好不好",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 32,
+   "timing": "00:01:16,810 --> 00:01:18,690",
+   "machine_label": null,
+   "machine_text": "好不好，好不好",
+   "truth_segments": [
+    {
+     "text": "好不好，好不好",
+     "label": null
+    }
+   ],
+   "truth_text": "好不好，好不好",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 33,
+   "timing": "00:01:20,290 --> 00:01:22,210",
+   "machine_label": null,
+   "machine_text": "好爽，跳这首好爽",
+   "truth_segments": [
+    {
+     "text": "好爽，跳这首好爽",
+     "label": null
+    }
+   ],
+   "truth_text": "好爽，跳这首好爽",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 34,
+   "timing": "00:01:23,330 --> 00:01:25,290",
+   "machine_label": null,
+   "machine_text": "跳，跳这首好爽",
+   "truth_segments": [
+    {
+     "text": "跳，跳这首好爽",
+     "label": null
+    }
+   ],
+   "truth_text": "跳，跳这首好爽",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 35,
+   "timing": "00:01:27,810 --> 00:01:29,810",
+   "machine_label": null,
+   "machine_text": "录完Suki感觉灵魂被净化",
+   "truth_segments": [
+    {
+     "text": "录完Suki感觉灵魂被净化",
+     "label": null
+    }
+   ],
+   "truth_text": "录完Suki感觉灵魂被净化",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 36,
+   "timing": "00:01:29,810 --> 00:01:31,530",
+   "machine_label": null,
+   "machine_text": "今天听完感觉飞升，你们",
+   "truth_segments": [
+    {
+     "text": "今天听完感觉飞升，你们",
+     "label": null
+    }
+   ],
+   "truth_text": "今天听完感觉飞升，你们",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 37,
+   "timing": "00:01:31,530 --> 00:01:32,530",
+   "machine_label": null,
+   "machine_text": "说那个",
+   "truth_segments": [
+    {
+     "text": "说那个",
+     "label": null
+    }
+   ],
+   "truth_text": "说那个",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 38,
+   "timing": "00:01:32,530 --> 00:01:39,210",
+   "machine_label": null,
+   "machine_text": "好き好き大好き的时候很神圣吗",
+   "truth_segments": [
+    {
+     "text": "好き好き大好き的时候很神圣吗",
+     "label": null
+    }
+   ],
+   "truth_text": "好き好き大好き的时候很神圣吗",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 39,
+   "timing": "00:01:39,410 --> 00:01:40,890",
+   "machine_label": null,
+   "machine_text": "你们觉得很神圣吗",
+   "truth_segments": [
+    {
+     "text": "你们觉得很神圣吗",
+     "label": null
+    }
+   ],
+   "truth_text": "你们觉得很神圣吗",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 40,
+   "timing": "00:01:40,970 --> 00:01:41,810",
+   "machine_label": null,
+   "machine_text": "其他人呢",
+   "truth_segments": [
+    {
+     "text": "其他人呢",
+     "label": null
+    }
+   ],
+   "truth_text": "其他人呢",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 41,
+   "timing": "00:01:41,810 --> 00:01:43,650",
+   "machine_label": null,
+   "machine_text": "当然有其他人啦，但是主",
+   "truth_segments": [
+    {
+     "text": "当然有其他人啦，但是主",
+     "label": null
+    }
+   ],
+   "truth_text": "当然有其他人啦，但是主",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 42,
+   "timing": "00:01:43,690 --> 00:01:45,890",
+   "machine_label": null,
+   "machine_text": "其实没有一个主持啦，就是",
+   "truth_segments": [
+    {
+     "text": "其实没有一个主持啦，就是",
+     "label": null
+    }
+   ],
+   "truth_text": "其实没有一个主持啦，就是",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 43,
+   "timing": "00:01:46,330 --> 00:01:47,730",
+   "machine_label": null,
+   "machine_text": "嗯，基本就是节目",
+   "truth_segments": [
+    {
+     "text": "嗯，基本就是节目",
+     "label": null
+    }
+   ],
+   "truth_text": "嗯，基本就是节目",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 44,
+   "timing": "00:01:47,730 --> 00:01:49,290",
+   "machine_label": null,
+   "machine_text": "然后留下来MC",
+   "truth_segments": [
+    {
+     "text": "然后留下来MC",
+     "label": null
+    }
+   ],
+   "truth_text": "然后留下来MC",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 45,
+   "timing": "00:01:49,890 --> 00:01:51,330",
+   "machine_label": null,
+   "machine_text": "为什么薯ki没有女粉的声音",
+   "truth_segments": [
+    {
+     "text": "为什么薯ki没有女粉的声音",
+     "label": null
+    }
+   ],
+   "truth_text": "为什么薯ki没有女粉的声音",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 46,
+   "timing": "00:01:51,330 --> 00:01:52,330",
+   "machine_label": null,
+   "machine_text": "发声过没有",
+   "truth_segments": [
+    {
+     "text": "发声过没有",
+     "label": null
+    }
+   ],
+   "truth_text": "发声过没有",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 47,
+   "timing": "00:01:54,050 --> 00:01:55,970",
+   "machine_label": null,
+   "machine_text": "因、因为没有",
+   "truth_segments": [
+    {
+     "text": "因、因为没有",
+     "label": null
+    }
+   ],
+   "truth_text": "因、因为没有",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 48,
+   "timing": "00:01:57,210 --> 00:01:59,290",
+   "machine_label": null,
+   "machine_text": "因为全是男的，自",
+   "truth_segments": [
+    {
+     "text": "因为全是男的，自",
+     "label": null
+    }
+   ],
+   "truth_text": "因为全是男的，自",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 49,
+   "timing": "00:01:59,650 --> 00:02:01,170",
+   "machine_label": null,
+   "machine_text": "你女的自己不投",
+   "truth_segments": [
+    {
+     "text": "你女的自己不投",
+     "label": null
+    }
+   ],
+   "truth_text": "你女的自己不投",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 50,
+   "timing": "00:02:01,170 --> 00:02:03,370",
+   "machine_label": null,
+   "machine_text": "还在说别人说全是",
+   "truth_segments": [
+    {
+     "text": "还在说别人说全是",
+     "label": null
+    }
+   ],
+   "truth_text": "还在说别人说全是",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 51,
+   "timing": "00:02:03,370 --> 00:02:04,610",
+   "machine_label": null,
+   "machine_text": "男的，啥意思呢",
+   "truth_segments": [
+    {
+     "text": "男的，啥意思呢",
+     "label": null
+    }
+   ],
+   "truth_text": "男的，啥意思呢",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 52,
+   "timing": "00:02:06,730 --> 00:02:09,170",
+   "machine_label": null,
+   "machine_text": "跳的时候，跳的时候",
+   "truth_segments": [
+    {
+     "text": "跳的时候，跳的时候",
+     "label": null
+    }
+   ],
+   "truth_text": "跳的时候，跳的时候",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 53,
+   "timing": "00:02:09,170 --> 00:02:12,170",
+   "machine_label": null,
+   "machine_text": "跳的时候很享受",
+   "truth_segments": [
+    {
+     "text": "跳的时候很享受",
+     "label": null
+    }
+   ],
+   "truth_text": "跳的时候很享受",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 54,
+   "timing": "00:02:14,010 --> 00:02:17,170",
+   "machine_label": null,
+   "machine_text": "非、非、非常地享受跳的时候",
+   "truth_segments": [
+    {
+     "text": "非、非、非常地享受跳的时候",
+     "label": null
+    }
+   ],
+   "truth_text": "非、非、非常地享受跳的时候",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 55,
+   "timing": "00:02:18,850 --> 00:02:20,810",
+   "machine_label": null,
+   "machine_text": "然后有的有的",
+   "truth_segments": [
+    {
+     "text": "然后有的有的",
+     "label": null
+    }
+   ],
+   "truth_text": "然后有的有的",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 56,
+   "timing": "00:02:20,810 --> 00:02:22,050",
+   "machine_label": null,
+   "machine_text": "笑死人了，对吧",
+   "truth_segments": [
+    {
+     "text": "笑死人了，对吧",
+     "label": null
+    }
+   ],
+   "truth_text": "笑死人了，对吧",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 57,
+   "timing": "00:02:22,370 --> 00:02:23,810",
+   "machine_label": null,
+   "machine_text": "下、下次来投吧",
+   "truth_segments": [
+    {
+     "text": "下、下次来投吧",
+     "label": null
+    }
+   ],
+   "truth_text": "下、下次来投吧",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 58,
+   "timing": "00:02:26,570 --> 00:02:28,050",
+   "machine_label": null,
+   "machine_text": "然后下，呃",
+   "truth_segments": [
+    {
+     "text": "然后下，呃",
+     "label": null
+    }
+   ],
+   "truth_text": "然后下，呃",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 59,
+   "timing": "00:02:28,490 --> 00:02:30,770",
+   "machine_label": null,
+   "machine_text": "啊，薯ki明天再跳一次，薯ki",
+   "truth_segments": [
+    {
+     "text": "啊，薯ki明天再跳一次，薯ki",
+     "label": null
+    }
+   ],
+   "truth_text": "啊，薯ki明天再跳一次，薯ki",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 60,
+   "timing": "00:02:31,890 --> 00:02:34,370",
+   "machine_label": null,
+   "machine_text": "后、后天，不是后天",
+   "truth_segments": [
+    {
+     "text": "后、后天，不是后天",
+     "label": null
+    }
+   ],
+   "truth_text": "后、后天，不是后天",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 61,
+   "timing": "00:02:34,370 --> 00:02:34,930",
+   "machine_label": null,
+   "machine_text": "我在说什么",
+   "truth_segments": [
+    {
+     "text": "我在说什么",
+     "label": null
+    }
+   ],
+   "truth_text": "我在说什么",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 62,
+   "timing": "00:02:34,930 --> 00:02:36,130",
+   "machine_label": null,
+   "machine_text": "我真的太累了",
+   "truth_segments": [
+    {
+     "text": "我真的太累了",
+     "label": null
+    }
+   ],
+   "truth_text": "我真的太累了",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 63,
+   "timing": "00:02:36,130 --> 00:02:38,250",
+   "machine_label": null,
+   "machine_text": "下次走好，下次见",
+   "truth_segments": [
+    {
+     "text": "下次走好，下次见",
+     "label": null
+    }
+   ],
+   "truth_text": "下次走好，下次见",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  }
+ ]
+}

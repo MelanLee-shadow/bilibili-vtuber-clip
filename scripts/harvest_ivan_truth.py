@@ -92,11 +92,31 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def harvest_cue(pristine: Cue, annotated: Cue) -> dict:
+_TIMING_RX = re.compile(r"(\d+):(\d+):(\d+),(\d+)\s*-->\s*(\d+):(\d+):(\d+),(\d+)")
+
+
+def _timing_ms(timing: str) -> tuple[int, int]:
+    match = _TIMING_RX.match(timing)
+    if match is None:
+        raise HarvestError(f"unparseable timing {timing!r}")
+    g = [int(x) for x in match.groups()]
+    return (
+        g[0] * 3600000 + g[1] * 60000 + g[2] * 1000 + g[3],
+        g[4] * 3600000 + g[5] * 60000 + g[6] * 1000 + g[7],
+    )
+
+
+def harvest_cue(
+    pristine: Cue, annotated: Cue, *, timing_tolerance_ms: int = 0
+) -> dict:
     if pristine.timing != annotated.timing:
-        raise HarvestError(
-            f"cue {pristine.index}: timing drift {pristine.timing!r} -> {annotated.timing!r}"
-        )
+        p_start, p_end = _timing_ms(pristine.timing)
+        a_start, a_end = _timing_ms(annotated.timing)
+        jitter = max(abs(p_start - a_start), abs(p_end - a_end))
+        if jitter > timing_tolerance_ms:
+            raise HarvestError(
+                f"cue {pristine.index}: timing drift {pristine.timing!r} -> {annotated.timing!r}"
+            )
     machine_label, machine_body = split_label(pristine.text)
     annotated_label, annotated_body = split_label(annotated.text)
     if machine_label != annotated_label:
@@ -112,7 +132,7 @@ def harvest_cue(pristine: Cue, annotated: Cue) -> dict:
     marked = bool(_MARKER_RE.search(annotated_body))
     segments = parse_truth_segments(annotated_body, machine_label)
     labels = {seg["label"] for seg in segments}
-    return {
+    row = {
         "cue": pristine.index,
         "timing": pristine.timing,
         "machine_label": machine_label,
@@ -125,16 +145,130 @@ def harvest_cue(pristine: Cue, annotated: Cue) -> dict:
         "mixed": len(labels) > 1,
         "marked": marked,
     }
+    if pristine.timing != annotated.timing:
+        row["annotated_timing"] = annotated.timing
+    return row
 
 
-def harvest(pristine_path: Path, annotated_path: Path, candidate_id: str, authority: str) -> dict:
+def _align_with_merges(
+    pristine_cues: list[Cue], annotated_cues: list[Cue], timing_tolerance_ms: int
+) -> list[tuple[list[Cue], Cue]]:
+    """Pair each annotated cue with the pristine cue(s) it covers.
+
+    Only two shapes are accepted: 1:1 (timings equal within tolerance) and an
+    N:1 merge where the annotated cue's span covers a run of consecutive
+    pristine cues (start matches the first, end matches the last, both within
+    tolerance). Anything else raises — deletions, insertions, or reflowed
+    timings must be resolved by a human before harvesting.
+    """
+
+    pairs: list[tuple[list[Cue], Cue]] = []
+    i = 0
+    for annotated in annotated_cues:
+        if i >= len(pristine_cues):
+            raise HarvestError(f"annotated cue {annotated.index} has no pristine counterpart")
+        a_start, a_end = _timing_ms(annotated.timing)
+        p_start, _ = _timing_ms(pristine_cues[i].timing)
+        if abs(p_start - a_start) > timing_tolerance_ms:
+            raise HarvestError(
+                f"annotated cue {annotated.index}: start {annotated.timing!r} does not "
+                f"match pristine cue {pristine_cues[i].index} {pristine_cues[i].timing!r}"
+            )
+        group = [pristine_cues[i]]
+        i += 1
+        while abs(_timing_ms(group[-1].timing)[1] - a_end) > timing_tolerance_ms:
+            if i >= len(pristine_cues):
+                raise HarvestError(
+                    f"annotated cue {annotated.index}: end {annotated.timing!r} matches no "
+                    "consecutive pristine cue run"
+                )
+            nxt = pristine_cues[i]
+            if _timing_ms(nxt.timing)[0] < _timing_ms(group[-1].timing)[1] - timing_tolerance_ms:
+                raise HarvestError(
+                    f"annotated cue {annotated.index}: pristine cues overlap during merge scan"
+                )
+            group.append(nxt)
+            i += 1
+        pairs.append((group, annotated))
+    if i != len(pristine_cues):
+        raise HarvestError(
+            f"{len(pristine_cues) - i} trailing pristine cue(s) unmatched by annotated file"
+        )
+    return pairs
+
+
+def harvest_merged_cue(
+    group: list[Cue], annotated: Cue, *, timing_tolerance_ms: int
+) -> dict:
+    """Harvest an N:1 merge: machine text is the join of the merged cues."""
+
+    if len(group) == 1:
+        return harvest_cue(group[0], annotated, timing_tolerance_ms=timing_tolerance_ms)
+    labels_bodies = [split_label(cue.text) for cue in group]
+    machine_labels = {label for label, _ in labels_bodies}
+    if len(machine_labels) > 1:
+        raise HarvestError(
+            f"cue {group[0].index}: merge spans differing machine labels {machine_labels}"
+        )
+    machine_label = next(iter(machine_labels))
+    for _, body in labels_bodies:
+        if _MARKER_RE.search(body):
+            raise HarvestError(
+                f"cue {group[0].index}: pristine text contains marker-shaped token; "
+                "resolve by hand before harvesting"
+            )
+    annotated_label, annotated_body = split_label(annotated.text)
+    if machine_label != annotated_label:
+        raise HarvestError(
+            f"cue {group[0].index}: label prefix edited "
+            f"{machine_label!r} -> {annotated_label!r}; A/B grammar expected instead"
+        )
+    machine_body = " ".join(body for _, body in labels_bodies)
+    segments = parse_truth_segments(annotated_body, machine_label)
+    labels = {seg["label"] for seg in segments}
+    return {
+        "cue": group[0].index,
+        "timing": group[0].timing,
+        "annotated_timing": annotated.timing,
+        "merged_from": [cue.index for cue in group],
+        "merged_machine_timings": [cue.timing for cue in group],
+        "machine_label": machine_label,
+        "machine_text": machine_body,
+        "truth_segments": segments,
+        "truth_text": " ".join(seg["text"] for seg in segments),
+        "text_changed": _WS_RE.sub("", "".join(seg["text"] for seg in segments))
+        != _WS_RE.sub("", machine_body),
+        "label_changed": any(seg["label"] != machine_label for seg in segments),
+        "mixed": len(labels) > 1,
+        "marked": bool(_MARKER_RE.search(annotated_body)),
+    }
+
+
+def harvest(
+    pristine_path: Path,
+    annotated_path: Path,
+    candidate_id: str,
+    authority: str,
+    *,
+    timing_tolerance_ms: int = 0,
+) -> dict:
     pristine_cues = parse_srt(pristine_path.read_text(encoding="utf-8"))
     annotated_cues = parse_srt(annotated_path.read_text(encoding="utf-8"))
     if len(pristine_cues) != len(annotated_cues):
-        raise HarvestError(
-            f"cue count mismatch: pristine={len(pristine_cues)} annotated={len(annotated_cues)}"
-        )
-    cues = [harvest_cue(p, a) for p, a in zip(pristine_cues, annotated_cues)]
+        if timing_tolerance_ms <= 0:
+            raise HarvestError(
+                f"cue count mismatch: pristine={len(pristine_cues)} annotated={len(annotated_cues)}"
+            )
+        pairs = _align_with_merges(pristine_cues, annotated_cues, timing_tolerance_ms)
+        cues = [
+            harvest_merged_cue(group, a, timing_tolerance_ms=timing_tolerance_ms)
+            for group, a in pairs
+        ]
+    else:
+        cues = [
+            harvest_cue(p, a, timing_tolerance_ms=timing_tolerance_ms)
+            for p, a in zip(pristine_cues, annotated_cues)
+        ]
     return {
         "schema": "ivan-speaker-truth-diff.v2",
         "candidate_id": candidate_id,
@@ -148,6 +282,8 @@ def harvest(pristine_path: Path, annotated_path: Path, candidate_id: str, author
             "label_changed": sum(c["label_changed"] for c in cues),
             "mixed": sum(c["mixed"] for c in cues),
             "marked": sum(c["marked"] for c in cues),
+            "merged": sum(1 for c in cues if c.get("merged_from")),
+            "timing_tweaked": sum(1 for c in cues if c.get("annotated_timing")),
         },
         "cues": cues,
     }
@@ -160,8 +296,24 @@ def main() -> int:
     parser.add_argument("--candidate-id", required=True)
     parser.add_argument("--authority", required=True)
     parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument(
+        "--timing-tolerance-ms",
+        type=int,
+        default=0,
+        help=(
+            "Accept per-cue timing jitter up to this many ms (editor re-serialization) "
+            "and N:1 cue merges whose span matches a consecutive pristine run. "
+            "0 (default) keeps the original strict byte-equal timing behaviour."
+        ),
+    )
     args = parser.parse_args()
-    artifact = harvest(args.pristine, args.annotated, args.candidate_id, args.authority)
+    artifact = harvest(
+        args.pristine,
+        args.annotated,
+        args.candidate_id,
+        args.authority,
+        timing_tolerance_ms=args.timing_tolerance_ms,
+    )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(
         json.dumps(artifact, ensure_ascii=False, indent=1) + "\n", encoding="utf-8"

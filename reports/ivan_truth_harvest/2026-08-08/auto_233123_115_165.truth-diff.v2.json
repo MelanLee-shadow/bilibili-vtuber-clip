@@ -1,0 +1,391 @@
+{
+ "schema": "ivan-speaker-truth-diff.v2",
+ "candidate_id": "auto_233123_115_165",
+ "source_machine_sha256": "d9f156640d4f7bf2f067cbab545b0f8a459487273bb0a782c1433eaf68bc5226",
+ "annotated_sha256": "d9f156640d4f7bf2f067cbab545b0f8a459487273bb0a782c1433eaf68bc5226",
+ "authority": "Ivan-annotated-2026-08-09",
+ "generated_by": "scripts/harvest_ivan_truth.py",
+ "summary": {
+  "cues": 22,
+  "text_changed": 0,
+  "label_changed": 0,
+  "mixed": 0,
+  "marked": 0
+ },
+ "cues": [
+  {
+   "cue": 1,
+   "timing": "00:00:00,250 --> 00:00:01,770",
+   "machine_label": null,
+   "machine_text": "我不是可爱小猪",
+   "truth_segments": [
+    {
+     "text": "我不是可爱小猪",
+     "label": null
+    }
+   ],
+   "truth_text": "我不是可爱小猪",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 2,
+   "timing": "00:00:01,770 --> 00:00:02,770",
+   "machine_label": null,
+   "machine_text": "我不是可爱小猪",
+   "truth_segments": [
+    {
+     "text": "我不是可爱小猪",
+     "label": null
+    }
+   ],
+   "truth_text": "我不是可爱小猪",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 3,
+   "timing": "00:00:02,770 --> 00:00:04,370",
+   "machine_label": null,
+   "machine_text": "我不是可爱小猪，我是可爱",
+   "truth_segments": [
+    {
+     "text": "我不是可爱小猪，我是可爱",
+     "label": null
+    }
+   ],
+   "truth_text": "我不是可爱小猪，我是可爱",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 4,
+   "timing": "00:00:04,370 --> 00:00:05,530",
+   "machine_label": null,
+   "machine_text": "嘿嘿嘿",
+   "truth_segments": [
+    {
+     "text": "嘿嘿嘿",
+     "label": null
+    }
+   ],
+   "truth_text": "嘿嘿嘿",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 5,
+   "timing": "00:00:06,170 --> 00:00:08,770",
+   "machine_label": null,
+   "machine_text": "adhd明显是啥意思",
+   "truth_segments": [
+    {
+     "text": "adhd明显是啥意思",
+     "label": null
+    }
+   ],
+   "truth_text": "adhd明显是啥意思",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 6,
+   "timing": "00:00:09,350 --> 00:00:12,190",
+   "machine_label": null,
+   "machine_text": "小李会HH的亲亲狐狸那段舞蹈吗",
+   "truth_segments": [
+    {
+     "text": "小李会HH的亲亲狐狸那段舞蹈吗",
+     "label": null
+    }
+   ],
+   "truth_text": "小李会HH的亲亲狐狸那段舞蹈吗",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 7,
+   "timing": "00:00:12,510 --> 00:00:15,110",
+   "machine_label": null,
+   "machine_text": "嗯嗯，不告诉你",
+   "truth_segments": [
+    {
+     "text": "嗯嗯，不告诉你",
+     "label": null
+    }
+   ],
+   "truth_text": "嗯嗯，不告诉你",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 8,
+   "timing": "00:00:15,390 --> 00:00:17,310",
+   "machine_label": null,
+   "machine_text": "我不告诉你",
+   "truth_segments": [
+    {
+     "text": "我不告诉你",
+     "label": null
+    }
+   ],
+   "truth_text": "我不告诉你",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 9,
+   "timing": "00:00:17,810 --> 00:00:20,010",
+   "machine_label": null,
+   "machine_text": "我不告诉你，明天你就知道了",
+   "truth_segments": [
+    {
+     "text": "我不告诉你，明天你就知道了",
+     "label": null
+    }
+   ],
+   "truth_text": "我不告诉你，明天你就知道了",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 10,
+   "timing": "00:00:20,010 --> 00:00:21,690",
+   "machine_label": null,
+   "machine_text": "明天你就知道了",
+   "truth_segments": [
+    {
+     "text": "明天你就知道了",
+     "label": null
+    }
+   ],
+   "truth_text": "明天你就知道了",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 11,
+   "timing": "00:00:22,899 --> 00:00:27,020",
+   "machine_label": null,
+   "machine_text": "打歌服和校服能来一个月球姛手势吗",
+   "truth_segments": [
+    {
+     "text": "打歌服和校服能来一个月球姛手势吗",
+     "label": null
+    }
+   ],
+   "truth_text": "打歌服和校服能来一个月球姛手势吗",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 12,
+   "timing": "00:00:27,800 --> 00:00:29,200",
+   "machine_label": null,
+   "machine_text": "我不知道能不能哎",
+   "truth_segments": [
+    {
+     "text": "我不知道能不能哎",
+     "label": null
+    }
+   ],
+   "truth_text": "我不知道能不能哎",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 13,
+   "timing": "00:00:29,200 --> 00:00:30,560",
+   "machine_label": null,
+   "machine_text": "明天问一下好了",
+   "truth_segments": [
+    {
+     "text": "明天问一下好了",
+     "label": null
+    }
+   ],
+   "truth_text": "明天问一下好了",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 14,
+   "timing": "00:00:31,040 --> 00:00:33,200",
+   "machine_label": null,
+   "machine_text": "我不是可爱小猪熊",
+   "truth_segments": [
+    {
+     "text": "我不是可爱小猪熊",
+     "label": null
+    }
+   ],
+   "truth_text": "我不是可爱小猪熊",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 15,
+   "timing": "00:00:33,200 --> 00:00:35,000",
+   "machine_label": null,
+   "machine_text": "kmx是可爱小猪熊",
+   "truth_segments": [
+    {
+     "text": "kmx是可爱小猪熊",
+     "label": null
+    }
+   ],
+   "truth_text": "kmx是可爱小猪熊",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 16,
+   "timing": "00:00:35,000 --> 00:00:36,840",
+   "machine_label": null,
+   "machine_text": "为什么是可爱大猪",
+   "truth_segments": [
+    {
+     "text": "为什么是可爱大猪",
+     "label": null
+    }
+   ],
+   "truth_text": "为什么是可爱大猪",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 17,
+   "timing": "00:00:37,970 --> 00:00:40,170",
+   "machine_label": null,
+   "machine_text": "主播今天感觉一直蹦蹦跳跳的",
+   "truth_segments": [
+    {
+     "text": "主播今天感觉一直蹦蹦跳跳的",
+     "label": null
+    }
+   ],
+   "truth_text": "主播今天感觉一直蹦蹦跳跳的",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 18,
+   "timing": "00:00:40,170 --> 00:00:41,490",
+   "machine_label": null,
+   "machine_text": "因为很激动",
+   "truth_segments": [
+    {
+     "text": "因为很激动",
+     "label": null
+    }
+   ],
+   "truth_text": "因为很激动",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 19,
+   "timing": "00:00:41,970 --> 00:00:43,730",
+   "machine_label": null,
+   "machine_text": "因为我很激动",
+   "truth_segments": [
+    {
+     "text": "因为我很激动",
+     "label": null
+    }
+   ],
+   "truth_text": "因为我很激动",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 20,
+   "timing": "00:00:44,050 --> 00:00:46,050",
+   "machine_label": null,
+   "machine_text": "什么是可爱摇啊",
+   "truth_segments": [
+    {
+     "text": "什么是可爱摇啊",
+     "label": null
+    }
+   ],
+   "truth_text": "什么是可爱摇啊",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 21,
+   "timing": "00:00:46,710 --> 00:00:48,270",
+   "machine_label": null,
+   "machine_text": "我很，我很兴奋",
+   "truth_segments": [
+    {
+     "text": "我很，我很兴奋",
+     "label": null
+    }
+   ],
+   "truth_text": "我很，我很兴奋",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 22,
+   "timing": "00:00:48,270 --> 00:00:49,350",
+   "machine_label": null,
+   "machine_text": "兴奋又紧张",
+   "truth_segments": [
+    {
+     "text": "兴奋又紧张",
+     "label": null
+    }
+   ],
+   "truth_text": "兴奋又紧张",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  }
+ ]
+}

@@ -168,5 +168,51 @@ def test_harvest_artifact_shape(tmp_path: Path) -> None:
         "label_changed": 1,
         "mixed": 1,
         "marked": 1,
+        "merged": 0,
+        "timing_tweaked": 0,
     }
     assert artifact["cues"][1]["truth_segments"][0]["label"] == "李豆沙"
+
+
+def test_harvest_merge_requires_tolerance(tmp_path: Path) -> None:
+    pristine = tmp_path / "p.srt"
+    annotated = tmp_path / "a.srt"
+    pristine.write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\n甲说\n\n"
+        "2\n00:00:02,000 --> 00:00:03,000\n乙说\n",
+        encoding="utf-8",
+    )
+    annotated.write_text(
+        "1\n00:00:01,001 --> 00:00:02,950\n甲说 B 乙改 A\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(HarvestError, match="cue count mismatch"):
+        harvest(pristine, annotated, "auto_test", "unit")
+    artifact = harvest(
+        pristine, annotated, "auto_test", "unit", timing_tolerance_ms=100
+    )
+    assert artifact["summary"]["merged"] == 1
+    row = artifact["cues"][0]
+    assert row["merged_from"] == [1, 2]
+    assert row["machine_text"] == "甲说 乙说"
+    assert row["truth_segments"] == [
+        {"text": "甲说", "label": "连线"},
+        {"text": "乙改", "label": "李豆沙"},
+    ]
+    assert row["text_changed"] is True and row["mixed"] is True
+
+
+def test_harvest_merge_rejects_unmatched_deletion(tmp_path: Path) -> None:
+    pristine = tmp_path / "p.srt"
+    annotated = tmp_path / "a.srt"
+    pristine.write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\n甲说\n\n"
+        "2\n00:00:05,000 --> 00:00:06,000\n乙说\n",
+        encoding="utf-8",
+    )
+    annotated.write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\n甲说\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(HarvestError):
+        harvest(pristine, annotated, "auto_test", "unit", timing_tolerance_ms=100)

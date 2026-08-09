@@ -1,0 +1,629 @@
+{
+ "schema": "ivan-speaker-truth-diff.v2",
+ "candidate_id": "auto_230125_1157_1229",
+ "source_machine_sha256": "949156c990a06042d0403cf393e801e93915fbf16fd26e8af0222630d772fe63",
+ "annotated_sha256": "949156c990a06042d0403cf393e801e93915fbf16fd26e8af0222630d772fe63",
+ "authority": "Ivan-annotated-2026-08-09",
+ "generated_by": "scripts/harvest_ivan_truth.py",
+ "summary": {
+  "cues": 36,
+  "text_changed": 0,
+  "label_changed": 0,
+  "mixed": 0,
+  "marked": 0
+ },
+ "cues": [
+  {
+   "cue": 1,
+   "timing": "00:00:00,250 --> 00:00:02,770",
+   "machine_label": null,
+   "machine_text": "主播有没有跳夜蝶的对象",
+   "truth_segments": [
+    {
+     "text": "主播有没有跳夜蝶的对象",
+     "label": null
+    }
+   ],
+   "truth_text": "主播有没有跳夜蝶的对象",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 2,
+   "timing": "00:00:02,770 --> 00:00:04,450",
+   "machine_label": null,
+   "machine_text": "主播有跳人鱼的对象",
+   "truth_segments": [
+    {
+     "text": "主播有跳人鱼的对象",
+     "label": null
+    }
+   ],
+   "truth_text": "主播有跳人鱼的对象",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 3,
+   "timing": "00:00:05,430 --> 00:00:08,230",
+   "machine_label": null,
+   "machine_text": "主、主播有跳人鱼的对象",
+   "truth_segments": [
+    {
+     "text": "主、主播有跳人鱼的对象",
+     "label": null
+    }
+   ],
+   "truth_text": "主、主播有跳人鱼的对象",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 4,
+   "timing": "00:00:08,250 --> 00:00:09,490",
+   "machine_label": null,
+   "machine_text": "我刚才想说",
+   "truth_segments": [
+    {
+     "text": "我刚才想说",
+     "label": null
+    }
+   ],
+   "truth_text": "我刚才想说",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 5,
+   "timing": "00:00:09,490 --> 00:00:12,090",
+   "machine_label": null,
+   "machine_text": "我就是，我说你好轻啊",
+   "truth_segments": [
+    {
+     "text": "我就是，我说你好轻啊",
+     "label": null
+    }
+   ],
+   "truth_text": "我就是，我说你好轻啊",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 6,
+   "timing": "00:00:12,090 --> 00:00:13,590",
+   "machine_label": null,
+   "machine_text": "我好容易就能抱起你",
+   "truth_segments": [
+    {
+     "text": "我好容易就能抱起你",
+     "label": null
+    }
+   ],
+   "truth_text": "我好容易就能抱起你",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 7,
+   "timing": "00:00:13,590 --> 00:00:15,810",
+   "machine_label": null,
+   "machine_text": "就是我刚刚回来路上跟她说",
+   "truth_segments": [
+    {
+     "text": "就是我刚刚回来路上跟她说",
+     "label": null
+    }
+   ],
+   "truth_text": "就是我刚刚回来路上跟她说",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 8,
+   "timing": "00:00:15,810 --> 00:00:17,170",
+   "machine_label": null,
+   "machine_text": "然后星汐说",
+   "truth_segments": [
+    {
+     "text": "然后星汐说",
+     "label": null
+    }
+   ],
+   "truth_text": "然后星汐说",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 9,
+   "timing": "00:00:18,170 --> 00:00:19,530",
+   "machine_label": null,
+   "machine_text": "为什么你力气这么大",
+   "truth_segments": [
+    {
+     "text": "为什么你力气这么大",
+     "label": null
+    }
+   ],
+   "truth_text": "为什么你力气这么大",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 10,
+   "timing": "00:00:19,530 --> 00:00:21,910",
+   "machine_label": null,
+   "machine_text": "我说我有，有在举铁，是这样的",
+   "truth_segments": [
+    {
+     "text": "我说我有，有在举铁，是这样的",
+     "label": null
+    }
+   ],
+   "truth_text": "我说我有，有在举铁，是这样的",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 11,
+   "timing": "00:00:21,910 --> 00:00:23,450",
+   "machine_label": null,
+   "machine_text": "但是我确，我跟她说",
+   "truth_segments": [
+    {
+     "text": "但是我确，我跟她说",
+     "label": null
+    }
+   ],
+   "truth_text": "但是我确，我跟她说",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 12,
+   "timing": "00:00:23,450 --> 00:00:26,570",
+   "machine_label": null,
+   "machine_text": "我确实这是我第一次这样抱别人",
+   "truth_segments": [
+    {
+     "text": "我确实这是我第一次这样抱别人",
+     "label": null
+    }
+   ],
+   "truth_text": "我确实这是我第一次这样抱别人",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 13,
+   "timing": "00:00:26,570 --> 00:00:28,370",
+   "machine_label": null,
+   "machine_text": "这是我第一次这样抱别人",
+   "truth_segments": [
+    {
+     "text": "这是我第一次这样抱别人",
+     "label": null
+    }
+   ],
+   "truth_text": "这是我第一次这样抱别人",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 14,
+   "timing": "00:00:28,370 --> 00:00:30,330",
+   "machine_label": null,
+   "machine_text": "没想到这么容易，这么轻易",
+   "truth_segments": [
+    {
+     "text": "没想到这么容易，这么轻易",
+     "label": null
+    }
+   ],
+   "truth_text": "没想到这么容易，这么轻易",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 15,
+   "timing": "00:00:30,480 --> 00:00:32,480",
+   "machine_label": null,
+   "machine_text": "然后星汐就说：啊",
+   "truth_segments": [
+    {
+     "text": "然后星汐就说：啊",
+     "label": null
+    }
+   ],
+   "truth_text": "然后星汐就说：啊",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 16,
+   "timing": "00:00:32,560 --> 00:00:34,280",
+   "machine_label": null,
+   "machine_text": "你给了我你的第一次",
+   "truth_segments": [
+    {
+     "text": "你给了我你的第一次",
+     "label": null
+    }
+   ],
+   "truth_text": "你给了我你的第一次",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 17,
+   "timing": "00:00:34,520 --> 00:00:35,620",
+   "machine_label": null,
+   "machine_text": "我说对啊",
+   "truth_segments": [
+    {
+     "text": "我说对啊",
+     "label": null
+    }
+   ],
+   "truth_text": "我说对啊",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 18,
+   "timing": "00:00:35,620 --> 00:00:37,040",
+   "machine_label": null,
+   "machine_text": "那你要负责吗",
+   "truth_segments": [
+    {
+     "text": "那你要负责吗",
+     "label": null
+    }
+   ],
+   "truth_text": "那你要负责吗",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 19,
+   "timing": "00:00:37,510 --> 00:00:38,690",
+   "machine_label": null,
+   "machine_text": "然后星汐又说",
+   "truth_segments": [
+    {
+     "text": "然后星汐又说",
+     "label": null
+    }
+   ],
+   "truth_text": "然后星汐又说",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 20,
+   "timing": "00:00:38,690 --> 00:00:39,770",
+   "machine_label": null,
+   "machine_text": "我会负责的",
+   "truth_segments": [
+    {
+     "text": "我会负责的",
+     "label": null
+    }
+   ],
+   "truth_text": "我会负责的",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 21,
+   "timing": "00:00:39,770 --> 00:00:42,620",
+   "machine_label": null,
+   "machine_text": "哈哈哈哈哈",
+   "truth_segments": [
+    {
+     "text": "哈哈哈哈哈",
+     "label": null
+    }
+   ],
+   "truth_text": "哈哈哈哈哈",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 22,
+   "timing": "00:00:42,620 --> 00:00:45,280",
+   "machine_label": null,
+   "machine_text": "她说，星汐说，好的",
+   "truth_segments": [
+    {
+     "text": "她说，星汐说，好的",
+     "label": null
+    }
+   ],
+   "truth_text": "她说，星汐说，好的",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 23,
+   "timing": "00:00:45,280 --> 00:00:47,840",
+   "machine_label": null,
+   "machine_text": "我会负责的",
+   "truth_segments": [
+    {
+     "text": "我会负责的",
+     "label": null
+    }
+   ],
+   "truth_text": "我会负责的",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 24,
+   "timing": "00:00:48,660 --> 00:00:51,120",
+   "machine_label": null,
+   "machine_text": "然后她说完之后立刻就反应过来",
+   "truth_segments": [
+    {
+     "text": "然后她说完之后立刻就反应过来",
+     "label": null
+    }
+   ],
+   "truth_text": "然后她说完之后立刻就反应过来",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 25,
+   "timing": "00:00:51,120 --> 00:00:51,640",
+   "machine_label": null,
+   "machine_text": "她说",
+   "truth_segments": [
+    {
+     "text": "她说",
+     "label": null
+    }
+   ],
+   "truth_text": "她说",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 26,
+   "timing": "00:00:51,640 --> 00:00:54,020",
+   "machine_label": null,
+   "machine_text": "可是不是你主动要抱我的吗",
+   "truth_segments": [
+    {
+     "text": "可是不是你主动要抱我的吗",
+     "label": null
+    }
+   ],
+   "truth_text": "可是不是你主动要抱我的吗",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 27,
+   "timing": "00:00:54,300 --> 00:00:55,300",
+   "machine_label": null,
+   "machine_text": "我说",
+   "truth_segments": [
+    {
+     "text": "我说",
+     "label": null
+    }
+   ],
+   "truth_text": "我说",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 28,
+   "timing": "00:00:55,459 --> 00:00:55,980",
+   "machine_label": null,
+   "machine_text": "对啊",
+   "truth_segments": [
+    {
+     "text": "对啊",
+     "label": null
+    }
+   ],
+   "truth_text": "对啊",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 29,
+   "timing": "00:00:55,980 --> 00:00:57,060",
+   "machine_label": null,
+   "machine_text": "那你怎么说了",
+   "truth_segments": [
+    {
+     "text": "那你怎么说了",
+     "label": null
+    }
+   ],
+   "truth_text": "那你怎么说了",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 30,
+   "timing": "00:00:57,060 --> 00:00:58,420",
+   "machine_label": null,
+   "machine_text": "那我已经截图了",
+   "truth_segments": [
+    {
+     "text": "那我已经截图了",
+     "label": null
+    }
+   ],
+   "truth_text": "那我已经截图了",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 31,
+   "timing": "00:00:58,730 --> 00:01:00,190",
+   "machine_label": null,
+   "machine_text": "然后她就说，嗯",
+   "truth_segments": [
+    {
+     "text": "然后她就说，嗯",
+     "label": null
+    }
+   ],
+   "truth_text": "然后她就说，嗯",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 32,
+   "timing": "00:01:00,190 --> 00:01:03,330",
+   "machine_label": null,
+   "machine_text": "被奶P赖上了，哈哈",
+   "truth_segments": [
+    {
+     "text": "被奶P赖上了，哈哈",
+     "label": null
+    }
+   ],
+   "truth_text": "被奶P赖上了，哈哈",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 33,
+   "timing": "00:01:04,470 --> 00:01:05,710",
+   "machine_label": null,
+   "machine_text": "那没办法",
+   "truth_segments": [
+    {
+     "text": "那没办法",
+     "label": null
+    }
+   ],
+   "truth_text": "那没办法",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 34,
+   "timing": "00:01:06,710 --> 00:01:07,630",
+   "machine_label": null,
+   "machine_text": "那没办法",
+   "truth_segments": [
+    {
+     "text": "那没办法",
+     "label": null
+    }
+   ],
+   "truth_text": "那没办法",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 35,
+   "timing": "00:01:07,630 --> 00:01:09,510",
+   "machine_label": null,
+   "machine_text": "李0民还说得出话吗",
+   "truth_segments": [
+    {
+     "text": "李0民还说得出话吗",
+     "label": null
+    }
+   ],
+   "truth_text": "李0民还说得出话吗",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 36,
+   "timing": "00:01:09,870 --> 00:01:11,830",
+   "machine_label": null,
+   "machine_text": "李0民还说得出话吗",
+   "truth_segments": [
+    {
+     "text": "李0民还说得出话吗",
+     "label": null
+    }
+   ],
+   "truth_text": "李0民还说得出话吗",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  }
+ ]
+}
