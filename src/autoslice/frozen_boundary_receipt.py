@@ -39,6 +39,12 @@ class FrozenBoundaryReview:
     exact_interval_projection: bool = False
     selection_hook_sha256: str | None = None
     owner_floor_projection: dict[str, object] | None = None
+    projection_replay_mode: str = "EXACT_INTERVAL_FROZEN_VERDICT_PROJECTION"
+    exact_request_replay_mode: str = "EXACT_REQUEST_REPLAY"
+    decision_authority: str = "FROZEN_HASH_BOUND_BOUNDARY_RECEIPT"
+    replay_reason_code: str = "FROZEN_BOUNDARY_RECEIPT_REPLAYED"
+    authority_kind: str | None = None
+    final_delivery_policy: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1071,11 +1077,11 @@ def frozen_review_payload(
     replay_audit = {
         "schema_version": REPLAY_AUDIT_SCHEMA_VERSION,
         "status": "CARRIED",
-        "decision_authority": "FROZEN_HASH_BOUND_BOUNDARY_RECEIPT",
+        "decision_authority": frozen.decision_authority,
         "replay_mode": (
-            "EXACT_REQUEST_REPLAY"
+            frozen.exact_request_replay_mode
             if strict_match
-            else "EXACT_INTERVAL_FROZEN_VERDICT_PROJECTION"
+            else frozen.projection_replay_mode
         ),
         "review_scope": expected_scope,
         "frozen_verdict": review.get("status"),
@@ -1088,8 +1094,12 @@ def frozen_review_payload(
         "current_request_sha256": current_request_sha256,
         "current_cue_grid_sha256": cue_grid_sha256,
         "llm_call_skipped": True,
-        "reason_code": "FROZEN_BOUNDARY_RECEIPT_REPLAYED",
+        "reason_code": frozen.replay_reason_code,
     }
+    if frozen.authority_kind is not None:
+        replay_audit["authority_kind"] = frozen.authority_kind
+    if frozen.final_delivery_policy is not None:
+        replay_audit["final_delivery_policy"] = frozen.final_delivery_policy
     if projection is not None:
         replay_audit.update(projection[1])
     return payload, replay_audit

@@ -64,8 +64,8 @@ from src.autoslice.final_review_contract import (
 from src.autoslice.fidelity_review_candidates import (
     fidelity_review_candidates as _fidelity_review_candidates,
 )
-from src.autoslice.frozen_boundary_receipt import (
-    load_frozen_boundary_receipt,
+from src.autoslice.frozen_source_boundary_receipt import (
+    load_boundary_review_authorities,
 )
 from src.autoslice.final_source_language_owner import register_final_source_language_cpa_repairs
 from src.autoslice.jingting_chunker import parse_srt_cues
@@ -2138,7 +2138,7 @@ def run_text_pipeline(
             required_boundary_owners=required_boundary_owners,
         )
     )
-    frozen_boundary_receipt = load_frozen_boundary_receipt(
+    frozen_boundary_receipt, frozen_source_review = load_boundary_review_authorities(
         spec, candidate_id=cid, current_owner_contract=authority.chat_authority_audit.get("frozen_boundary_owner_contract")
     )
     source_boundary_replay: dict[str, object] = {}
@@ -2163,11 +2163,7 @@ def run_text_pipeline(
         ),
         boundary_search_scope=boundary_search_scope,
         available_local_source_context_end_ms=sum(durations),
-        frozen_review=(
-            frozen_boundary_receipt.source_full_window
-            if frozen_boundary_receipt is not None
-            else None
-        ),
+        frozen_review=frozen_source_review,
         replay_audit=source_boundary_replay,
     )
     if source_boundary_replay:

@@ -371,7 +371,7 @@ def test_frozen_boundary_loader_receives_fresh_owner_contract():
         for node in ast.walk(run_tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == "load_frozen_boundary_receipt"
+        and node.func.id == "load_boundary_review_authorities"
     ]
 
     assert len(freeze_calls) == 1
@@ -385,6 +385,53 @@ def test_frozen_boundary_loader_receives_fresh_owner_contract():
     assert ast.unparse(owner_keyword.value) == (
         "authority.chat_authority_audit.get('frozen_boundary_owner_contract')"
     )
+
+
+def test_source_only_boundary_authority_cannot_reach_final_delivery_gate():
+    """Source-only carry feeds the first gate while final gets only full authority."""
+
+    run_tree = ast.parse(inspect.getsource(pipeline.run_text_pipeline))
+    authority_call = next(
+        node
+        for node in ast.walk(run_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "load_boundary_review_authorities"
+    )
+    assignment = next(
+        node
+        for node in ast.walk(run_tree)
+        if isinstance(node, ast.Assign) and node.value is authority_call
+    )
+    assert ast.unparse(assignment.targets[0]) == (
+        "(frozen_boundary_receipt, frozen_source_review)"
+    )
+
+    source_call = next(
+        node
+        for node in ast.walk(run_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "review_final_boundary_semantics"
+    )
+    source_keyword = next(
+        keyword for keyword in source_call.keywords if keyword.arg == "frozen_review"
+    )
+    assert ast.unparse(source_keyword.value) == "frozen_source_review"
+
+    final_call = next(
+        node
+        for node in ast.walk(run_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "exact_delivery_correction_audit"
+    )
+    final_keyword = next(
+        keyword
+        for keyword in final_call.keywords
+        if keyword.arg == "frozen_boundary_receipt"
+    )
+    assert ast.unparse(final_keyword.value) == "frozen_boundary_receipt"
 
 
 def test_final_boundary_review_indexes_exact_post_authority_grid():

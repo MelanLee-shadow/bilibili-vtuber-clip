@@ -74,7 +74,7 @@ FUNCTION_DEBT_LEDGER = {
     # 2026-08-08 +15：Ivan 2026-08-08 优化①边界重放 + wsl 重产 BLOCK
     # 实证——loader、source/final frozen verdict 与 carry disclosure 接线；
     # hash/输入锚不符仍走原 fresh reviewer。
-    ("src/autoslice/producer_text_pipeline.py", "run_text_pipeline"): 342,
+    ("src/autoslice/producer_text_pipeline.py", "run_text_pipeline"): 338,
     # 2026-07-31 +6：full-text contract 穿透形参与调用（Ivan 07-31 `/goal`
     # 「直接按照 fable 的 advise 继续，直至修复所有问题」授权；Fable 裁定 4
     # 点名「contract 不穿透 = 静默把唯一合法全文通道杀死」，必须补）。
@@ -207,7 +207,7 @@ MODULE_DEBT_LEDGER = {
     # src/autoslice/restatement_recall.py，这里只留 import + 一处调用点。
     # 2026-08-08 +23：Ivan 2026-08-08 优化①边界重放(8b 冻结 loader 接线)
     # +30：Ivan 8/8 真值法证 F2 代词发现器接线;两处主体均在独立新模块。
-    "src/autoslice/producer_text_pipeline.py": 2_257,
+    "src/autoslice/producer_text_pipeline.py": 2_253,
     # 2026-07-31 +12：contract 穿透接线（形参 + 4 个调用点）。
     # 2026-07-31 再 +17：封面路由 P1——witness 从「路由法官」降回「置信输入」，
     # 删掉无条件放行、几何否决移到关系分支之后、置信改为 几何 OR witness bbox。
