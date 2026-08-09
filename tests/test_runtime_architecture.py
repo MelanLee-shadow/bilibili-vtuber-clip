@@ -70,7 +70,10 @@ FUNCTION_DEBT_LEDGER = {
     # 2026-08-08 +6：会话内重述修复接线（Ivan 2026-08-08 当日指令，
     # docs/reviews/2026-08-08-restatement-repair-design.md §4）——同上，
     # 重活在 restatement_recall.py，这里只留调用点。
-    ("src/autoslice/producer_text_pipeline.py", "run_text_pipeline"): 327,
+    # 2026-08-08 +15：Ivan 2026-08-08 优化①边界重放 + wsl 重产 BLOCK
+    # 实证——loader、source/final frozen verdict 与 carry disclosure 接线；
+    # hash/输入锚不符仍走原 fresh reviewer。
+    ("src/autoslice/producer_text_pipeline.py", "run_text_pipeline"): 342,
     # 2026-07-31 +6：full-text contract 穿透形参与调用（Ivan 07-31 `/goal`
     # 「直接按照 fable 的 advise 继续，直至修复所有问题」授权；Fable 裁定 4
     # 点名「contract 不穿透 = 静默把唯一合法全文通道杀死」，必须补）。
@@ -189,13 +192,17 @@ MODULE_DEBT_LEDGER = {
     # src/autoslice/redelivery_baseline_ownership.py，未计入本模块行数）。
     # 本项第二次抬数字：按账本规则应触发独立 bounded 拆解 task，记为剩余风险，
     # 留给下一次动这个 god-file 的人先拆再改。
-    "src/autoslice/producer_package_finalization.py": 2_777,
+    # 2026-08-08 +5：Ivan 2026-08-08 优化①边界重放 + wsl 重产 BLOCK
+    # 实证——把两层 carry/skip 披露写入最终 boundary audit。
+    "src/autoslice/producer_package_finalization.py": 2_782,
     # 2026-07-31 +40：同上（SC 发送者 deferral）。
     # 2026-08-08 +7：会话内重述修复接线（Ivan 2026-08-08 当日指令，
     # docs/reviews/2026-08-08-restatement-repair-design.md §4）——会话内
     # 重述候选注入 exact-final 优先 findings；重活在
     # src/autoslice/restatement_recall.py，这里只留 import + 一处调用点。
-    "src/autoslice/producer_text_pipeline.py": 2_204,
+    # 2026-08-08 +23：Ivan 2026-08-08 优化①边界重放 + wsl 重产 BLOCK
+    # 实证——冻结 loader 与两层回执接线；判断本体位于新独立模块。
+    "src/autoslice/producer_text_pipeline.py": 2_227,
     # 2026-07-31 +12：contract 穿透接线（形参 + 4 个调用点）。
     # 2026-07-31 再 +17：封面路由 P1——witness 从「路由法官」降回「置信输入」，
     # 删掉无条件放行、几何否决移到关系分支之后、置信改为 几何 OR witness bbox。
@@ -255,7 +262,9 @@ FOCUSED_MODULE_LINE_BUDGETS = {
     Path("src/autoslice/speaker_evidence.py"): 625,
     Path("src/autoslice/full_session_transcription.py"): 1_200,
     Path("src/autoslice/boundary_endpoint_binding.py"): 120,
-    Path("src/autoslice/producer_boundary_review_stage.py"): 225,
+    # 2026-08-08 +27：Ivan 2026-08-08 优化①边界重放 + wsl 重产 BLOCK
+    # 实证——source/final 两层 review 穿透与相邻 carry audit 汇总。
+    Path("src/autoslice/producer_boundary_review_stage.py"): 252,
     Path("src/autoslice/review_package_boundary_contract.py"): 350,
 }
 

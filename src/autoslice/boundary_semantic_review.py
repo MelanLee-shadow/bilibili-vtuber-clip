@@ -17,6 +17,11 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
+from src.autoslice.frozen_boundary_receipt import (
+    FrozenBoundaryReview,
+    frozen_review_payload,
+)
+
 from src.autoslice.clip_context import MAX_PROMPT_CHARS
 
 
@@ -780,6 +785,81 @@ def _semantic_review_passes(
     )
 
 
+def _semantic_payload_for_request(
+    request: Mapping[str, object],
+    current_cue_grid_sha256: str,
+    *,
+    frozen_review: FrozenBoundaryReview | None,
+    replay_audit: dict[str, object] | None,
+    llm_call: Callable[[str], str],
+    extract_json: Callable[[str], Any],
+) -> object:
+    frozen_payload = frozen_review_payload(
+        frozen_review,
+        request=request,
+        cue_grid_sha256=current_cue_grid_sha256,
+    )
+    if frozen_payload is not None:
+        payload, carry = frozen_payload
+        if replay_audit is not None:
+            replay_audit.update(carry)
+        return payload
+    try:
+        return extract_json(llm_call(_build_prompt(request)))
+    except Exception as exc:
+        raise BoundarySemanticReviewError(
+            f"BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:{type(exc).__name__}"
+        ) from exc
+
+
+def _semantic_request(
+    *,
+    candidate_id: str,
+    target_ms: int,
+    target_cue_index: int,
+    selection_hook: str,
+    selector_story_witness: object,
+    visible_rows: list[dict[str, object]],
+    structured_context: str,
+    candidate_context: str,
+    max_forward_ms: int,
+    scope: Mapping[str, object],
+    recommendation_indexes: list[int],
+    recommendation_relaxations: list[dict[str, object]],
+    next_topic_witness_rows: Sequence[Mapping[str, object]],
+    source_separation_witness: Mapping[str, object] | None,
+) -> dict[str, object]:
+    return {
+        "schema_version": "talk-boundary-semantic-request.v1",
+        "candidate_id": candidate_id,
+        "target_ms": target_ms,
+        "target_cue_index": target_cue_index,
+        "selection_hook": selection_hook,
+        "selector_story_witness": selector_story_witness,
+        "cues": visible_rows,
+        "structured_context": structured_context[:12_000],
+        "candidate_context": candidate_context,
+        "max_forward_ms": max_forward_ms,
+        "boundary_search_scope": scope,
+        "recommendation_cue_indexes": recommendation_indexes,
+        "recommendation_relaxations": recommendation_relaxations,
+        "next_topic_witness_cue_indexes": [
+            int(row["cue_index"]) for row in next_topic_witness_rows
+        ],
+        "terminal_source_separation_witness": source_separation_witness,
+    }
+
+
+def _frozen_decision_binding(
+    replay_audit: Mapping[str, object] | None,
+) -> dict[str, object]:
+    return (
+        {"frozen_decision_binding": dict(replay_audit)}
+        if replay_audit
+        else {}
+    )
+
+
 def review_talk_boundary_semantics(
     *,
     cues: Sequence[object],
@@ -796,6 +876,8 @@ def review_talk_boundary_semantics(
     source_final_start_ms: int | None = None,
     source_final_end_ms: int | None = None,
     boundary_search_scope: Mapping[str, object] | None = None,
+    frozen_review: FrozenBoundaryReview | None = None,
+    replay_audit: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Return a validated, cue-grid-bound semantic boundary decision."""
 
@@ -878,35 +960,32 @@ def review_talk_boundary_semantics(
         source_final_start_ms=source_final_start_ms,
         source_final_end_ms=source_final_end_ms,
     )
-    request = {
-        "schema_version": "talk-boundary-semantic-request.v1",
-        "candidate_id": candidate_id,
-        "target_ms": target_ms,
-        "target_cue_index": rows[target_pos]["cue_index"],
-        "selection_hook": selection_hook,
-        "selector_story_witness": _scorecard_story_witness(selection_scorecard),
-        "cues": visible_rows,
-        "structured_context": structured_context[:12_000],
-        "candidate_context": candidate_context,
-        "max_forward_ms": max_forward_ms,
-        "boundary_search_scope": scope,
-        "recommendation_cue_indexes": recommendation_indexes,
-        "recommendation_relaxations": recommendation_relaxations,
-        "next_topic_witness_cue_indexes": [
-            int(row["cue_index"])
-            for row in rows[recommendation_hi:witness_hi]
-        ],
-        "terminal_source_separation_witness": (
-            source_separation_witness
-        ),
-    }
+    request = _semantic_request(
+        candidate_id=candidate_id,
+        target_ms=target_ms,
+        target_cue_index=int(rows[target_pos]["cue_index"]),
+        selection_hook=selection_hook,
+        selector_story_witness=_scorecard_story_witness(selection_scorecard),
+        visible_rows=visible_rows,
+        structured_context=structured_context,
+        candidate_context=candidate_context,
+        max_forward_ms=max_forward_ms,
+        scope=scope,
+        recommendation_indexes=recommendation_indexes,
+        recommendation_relaxations=recommendation_relaxations,
+        next_topic_witness_rows=rows[recommendation_hi:witness_hi],
+        source_separation_witness=source_separation_witness,
+    )
     request_sha256 = _canonical_sha256(request)
-    try:
-        payload = extract_json(llm_call(_build_prompt(request)))
-    except Exception as exc:
-        raise BoundarySemanticReviewError(
-            f"BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:{type(exc).__name__}"
-        ) from exc
+    current_cue_grid_sha256 = cue_grid_sha256(cues)
+    payload = _semantic_payload_for_request(
+        request,
+        current_cue_grid_sha256,
+        frozen_review=frozen_review,
+        replay_audit=replay_audit,
+        llm_call=llm_call,
+        extract_json=extract_json,
+    )
     if not isinstance(payload, Mapping):
         raise BoundarySemanticReviewError("BOUNDARY_SEMANTIC_REVIEW_NOT_OBJECT")
 
@@ -1048,7 +1127,7 @@ def review_talk_boundary_semantics(
         ),
         "candidate_id": candidate_id,
         "request_sha256": request_sha256,
-        "cue_grid_sha256": cue_grid_sha256(cues),
+        "cue_grid_sha256": current_cue_grid_sha256,
         "target_ms": target_ms,
         "target_cue_index": rows[target_pos]["cue_index"],
         "max_forward_ms": max_forward_ms,
@@ -1070,6 +1149,7 @@ def review_talk_boundary_semantics(
         "evidence_cue_indexes": evidence_indexes,
         "next_topic_witness_valid": next_topic_witness_valid,
         "source_separation_witness": source_separation_witness,
+        **_frozen_decision_binding(replay_audit),
         "same_topic_continues_after_target": (
             same_topic_continues_after_target
         ),

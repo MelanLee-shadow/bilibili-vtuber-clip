@@ -2716,6 +2716,11 @@ def finalize_producer_package(
     audit["final_delivery_boundary_semantic_review"] = dict(
         final_delivery_boundary_review
     )
+    boundary_receipt_replay = exact_final_review.get(
+        "boundary_receipt_replay"
+    )
+    if isinstance(boundary_receipt_replay, Mapping):
+        audit["boundary_receipt_replay"] = dict(boundary_receipt_replay)
     speaker = _finalize_speaker(
         options=options,
         spec=spec,

@@ -167,6 +167,23 @@ SHA、source review/request/grid SHA 全部一致，delivery 仍推荐唯一最�
 变化会使 source 回执及其下游 witness 失效；materialize 后 SRT 的任何字节/cue 变化会使
 final-delivery 回执与 exact-final 放行回执失效，均须从相应层重新评审，不能只重绑 hash。
 
+唯一窄例外是 Ivan 2026-08-08 优化①边界重放 + wsl 重产 BLOCK 实证所批准的
+`talk-boundary-frozen-receipt-ref.v1`。该引用只能随
+`subtitle_redelivery_baseline` 出现在 redelivery spec；loader 必须先核对 pristine
+`record.json` 原始字节 SHA、candidate、冻结 source/final 两份 PASS 及其 source witness
+互绑、两层 request/grid/scope/endpoint binding。request/grid 完全相等时可作普通精确缓存；
+若 source fresh-ASR grid 漂移，则只有 v2 `exact_interval_replay=true`，且当前 baseline
+原始字节 SHA、单一源录像 basename/SHA、绝对 source interval、selection hook/scorecard、
+冻结终端 closure 文本/毫秒及最终 transcript/grid 全部与 pristine record 一致时，才可把
+历史 PASS **verdict** 投影到当前 request。当前 grid 上的 recommendation/evidence ordinal、
+scope 与 closure 仍须唯一通过现有确定性校验；生成的是带
+`frozen_decision_binding` 的 current-bound derived receipt，不冒充旧 LLM 审过当前 request。
+final-delivery 层还必须逐原始字节命中冻结 `artifact_hashes.subtitle_sha256`，并保持 source
+witness 的推荐 end/最终 interval 不漂。两层均在 `boundary_receipt_replay` 披露 frozen/current
+request 与 grid SHA、record 路径/SHA、`llm_call_skipped=true`。任一字段、文件字节、终端
+closure 或最终 SRT 不符即丢弃冻结件，走原 fresh reviewer；无 baseline/无引用的普通新产
+不得读取该路径，行为与本例外上线前完全相同。
+
 若 exact-final 的 CPA 在 AGY 无有效听音（`UNCERTAIN`）时仅靠文字闭集提出修改，普通 cue
 仍按 CPA 结果处理；但它不得把已由 PASS 的 final-delivery 回执及 source-separation witness
 共同绑定的最后 closure cue 改成新的文本。此时 `terminal-closure-mutation-guard.v1` 以

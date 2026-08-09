@@ -64,6 +64,9 @@ from src.autoslice.final_review_contract import (
 from src.autoslice.fidelity_review_candidates import (
     fidelity_review_candidates as _fidelity_review_candidates,
 )
+from src.autoslice.frozen_boundary_receipt import (
+    load_frozen_boundary_receipt,
+)
 from src.autoslice.final_source_language_owner import register_final_source_language_cpa_repairs
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import LlmConfig, build_llm_call, extract_json_object
@@ -1061,6 +1064,11 @@ def _run_exact_final_release_review(
         "correction_pass": dict(correction_audit),
         "correction_mutation_authority": correction_mutation_audit,
     }
+    boundary_receipt_replay = correction_audit.get(
+        "boundary_receipt_replay"
+    )
+    if isinstance(boundary_receipt_replay, Mapping):
+        base["boundary_receipt_replay"] = dict(boundary_receipt_replay)
     if isinstance(acoustic_discovery_audit, Mapping):
         base["candidate_blind_acoustic_discovery"] = dict(
             acoustic_discovery_audit
@@ -2100,30 +2108,44 @@ def run_text_pipeline(
             required_boundary_owners=required_boundary_owners,
         )
     )
-    final_review_audit["boundary_semantic_review"] = (
-        review_final_boundary_semantics(
-            cues=evidence.cues,
-            boundary_target_ms=boundary_target_ms,
-            candidate_id=cid,
-            selection_hook=str(spec.get("selection_hook") or ""),
-            selection_scorecard=spec.get("selection_scorecard"),
-            structured_context=_final_review_structured_context(
-                selection_hook=str(spec.get("selection_hook") or ""),
-                authoritative_chat=authoritative_chat,
-            ),
-            candidate_context=clip_context_prompt_text(clip_context),
-            boundary_max_forward_ms=int(
-                boundary_search_scope["recommendation_forward_ms"]
-            ),
-            llm_call=_build_final_review_llm_call(),
-            extract_json=extract_json_object,
-            disabled=(
-                os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") == "1"
-            ),
-            boundary_search_scope=boundary_search_scope,
-            available_local_source_context_end_ms=sum(durations),
-        )
+    frozen_boundary_receipt = load_frozen_boundary_receipt(
+        spec, candidate_id=cid
     )
+    source_boundary_replay: dict[str, object] = {}
+    final_review_audit["boundary_semantic_review"] = review_final_boundary_semantics(
+        cues=evidence.cues,
+        boundary_target_ms=boundary_target_ms,
+        candidate_id=cid,
+        selection_hook=str(spec.get("selection_hook") or ""),
+        selection_scorecard=spec.get("selection_scorecard"),
+        structured_context=_final_review_structured_context(
+            selection_hook=str(spec.get("selection_hook") or ""),
+            authoritative_chat=authoritative_chat,
+        ),
+        candidate_context=clip_context_prompt_text(clip_context),
+        boundary_max_forward_ms=int(
+            boundary_search_scope["recommendation_forward_ms"]
+        ),
+        llm_call=_build_final_review_llm_call(),
+        extract_json=extract_json_object,
+        disabled=(
+            os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") == "1"
+        ),
+        boundary_search_scope=boundary_search_scope,
+        available_local_source_context_end_ms=sum(durations),
+        frozen_review=(
+            frozen_boundary_receipt.source_full_window
+            if frozen_boundary_receipt is not None
+            else None
+        ),
+        replay_audit=source_boundary_replay,
+    )
+    if source_boundary_replay:
+        # Ivan 2026-08-08 优化①边界重放 + wsl 重产 BLOCK 实证：披露冻结
+        # authority，并在 current-bound derived receipt 内保留原 review canonical SHA。
+        final_review_audit["boundary_receipt_replay"] = {
+            "source_full_window": source_boundary_replay,
+        }
     persist_review_audit(
         out_root / f"{cid}.review-flags.json", final_review_audit
     )
@@ -2176,6 +2198,7 @@ def run_text_pipeline(
             disabled=(
                 os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") == "1"
             ),
+            frozen_boundary_receipt=frozen_boundary_receipt,
         )
         return _run_exact_final_release_review(
             screen_read_probe=screen_read_probe,

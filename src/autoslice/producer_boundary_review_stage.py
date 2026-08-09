@@ -15,6 +15,11 @@ from src.autoslice.boundary_semantic_review import (
 from src.autoslice.boundary_source_context_coverage import (
     source_context_coverage_block,
 )
+from src.autoslice.frozen_boundary_receipt import (
+    FrozenBoundaryReceipt,
+    FrozenBoundaryReview,
+    matching_final_delivery_review,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues
 
 
@@ -36,6 +41,8 @@ def review_final_boundary_semantics(
     source_final_end_ms: int | None = None,
     boundary_search_scope: Mapping[str, object] | None = None,
     available_local_source_context_end_ms: int | None = None,
+    frozen_review: FrozenBoundaryReview | None = None,
+    replay_audit: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Review the exact post-authority cue grid used by the resolver."""
 
@@ -100,6 +107,8 @@ def review_final_boundary_semantics(
             source_final_start_ms=source_final_start_ms,
             source_final_end_ms=source_final_end_ms,
             boundary_search_scope=boundary_search_scope,
+            frozen_review=frozen_review,
+            replay_audit=replay_audit,
         )
     except BoundarySemanticReviewError as exc:
         reason = str(exc)
@@ -133,6 +142,8 @@ def review_exact_delivery_boundary_semantics(
     llm_call: Callable[[str], str],
     extract_json: Callable[[str], Any],
     disabled: bool = False,
+    frozen_review: FrozenBoundaryReview | None = None,
+    replay_audit: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Re-review and bind the exact delivery grid after every text mutation."""
 
@@ -163,6 +174,8 @@ def review_exact_delivery_boundary_semantics(
         terminal_source_review=source_boundary_review,
         source_final_start_ms=source_final_start_ms,
         source_final_end_ms=source_final_end_ms,
+        frozen_review=frozen_review,
+        replay_audit=replay_audit,
     )
     review = project_correlated_source_boundary_pass(
         review,
@@ -198,10 +211,12 @@ def exact_delivery_correction_audit(
     llm_call: Callable[[str], str],
     extract_json: Callable[[str], Any],
     disabled: bool = False,
+    frozen_boundary_receipt: FrozenBoundaryReceipt | None = None,
 ) -> dict[str, object]:
     """Replace the source review with an exact post-mutation delivery review."""
 
     source_review = correction_audit.get("boundary_semantic_review")
+    delivery_replay_audit: dict[str, object] = {}
     delivery_review = review_exact_delivery_boundary_semantics(
         cues=parse_srt_cues(final_srt_text),
         source_boundary_review=(
@@ -218,7 +233,20 @@ def exact_delivery_correction_audit(
         llm_call=llm_call,
         extract_json=extract_json,
         disabled=disabled,
+        frozen_review=matching_final_delivery_review(
+            frozen_boundary_receipt, final_srt_text
+        ),
+        replay_audit=delivery_replay_audit,
     )
     result = dict(correction_audit)
     result["boundary_semantic_review"] = delivery_review
+    if delivery_replay_audit:
+        existing_replay = result.get("boundary_receipt_replay")
+        replay = (
+            dict(existing_replay)
+            if isinstance(existing_replay, Mapping)
+            else {}
+        )
+        replay["final_delivery"] = delivery_replay_audit
+        result["boundary_receipt_replay"] = replay
     return result
