@@ -1,0 +1,14 @@
+{
+  "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
+  "candidate_id": "auto_200130_1323_1603",
+  "schema_version": "subtitle-redelivery-baseline.v2",
+  "mode": "preserve_text_outside_source_truth",
+  "path": "auto_200130_1323_1603.reviewed.srt",
+  "sha256": "0e9c2cc74b085bc1704d920b08e957da8104b6f69eb9aaa99dfe3d0c224504b3",
+  "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+  "exact_interval_replay": true,
+  "source_recording_basename": "22966160_20260808-20-01-30.mp4",
+  "source_sha256": "14b1e6d725554eeb90dd0eba62f2ba8dc743831ad8c6171727a502e47a288842",
+  "absolute_source_start_ms": 1322930,
+  "absolute_source_end_ms": 1603100
+}

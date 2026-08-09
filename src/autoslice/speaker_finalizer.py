@@ -79,7 +79,10 @@ from src.autoslice.speaker_context import (
 from src.autoslice.speaker_host_evidence import acoustic_hard_pass
 from src.autoslice.reviewed_speaker_baseline import (
     ReviewedSpeakerBaseline,
+    build_fresh_automatic_labels,
     load_speaker_override_state,
+    materialize_reviewed_automatic_labels,
+    reviewed_machine_replay_evidence,
 )
 
 def _cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
@@ -1236,6 +1239,7 @@ class _SpeakerLabels:
     automatic: list[Cue]
     final: list[Cue]
     automatic_srt: Path
+    fresh_automatic_srt: Path | None
 
 
 def _materialize_speaker_labels(
@@ -1245,46 +1249,37 @@ def _materialize_speaker_labels(
     work_dir: Path,
     override_document: Mapping[str, object] | None,
     expected_automatic_sha256: str,
+    reviewed_baseline: ReviewedSpeakerBaseline | None,
 ) -> _SpeakerLabels:
     """Turn analyzer decisions into the immutable automatic and final cue sets."""
 
-    decisions = analysis.get("decisions")
-    if not isinstance(decisions, list) or len(decisions) != len(cues):
-        raise SpeakerFinalizationError("speaker analyzer returned incomplete decisions")
-    automatic: list[Cue] = []
-    for index, (text_cue, decision) in enumerate(
-        zip(cues, decisions, strict=True),
-        start=1,
-    ):
-        if not isinstance(decision, Mapping) or decision.get("speaker") not in SPEAKERS:
-            raise SpeakerFinalizationError(f"speaker decision {index} is invalid")
-        automatic.append(
-            Cue(
-                source_index=index,
-                start=text_cue.start,
-                end=text_cue.end,
-                speaker=str(decision["speaker"]),
-                text=text_cue.text,
-                decision_source=str(decision.get("decision_source") or "campp_audio"),
-                note=(
-                    f"margin={decision.get('margin')}"
-                    if decision.get("margin") is not None
-                    else None
-                ),
-            )
+    fresh_automatic = build_fresh_automatic_labels(analysis, cues)
+    automatic, automatic_srt, fresh_automatic_srt = (
+        materialize_reviewed_automatic_labels(
+            fresh_automatic,
+            work_dir=work_dir,
+            baseline=reviewed_baseline,
         )
-    automatic_srt = work_dir / "automatic-labelled.srt"
-    write_srt(automatic, automatic_srt)
+    )
     final_cues = automatic
     if override_document is not None:
         actual_automatic = sha256_file(automatic_srt)
-        if expected_automatic_sha256 and expected_automatic_sha256 != actual_automatic:
+        if (
+            fresh_automatic_srt is None
+            and expected_automatic_sha256
+            and expected_automatic_sha256 != actual_automatic
+        ):
             raise SpeakerFinalizationError(
                 "speaker override source hash mismatch: "
                 f"expected {expected_automatic_sha256!r}, got {actual_automatic!r}"
             )
         final_cues = apply_overrides(automatic, override_document)
-    return _SpeakerLabels(automatic, final_cues, automatic_srt)
+    return _SpeakerLabels(
+        automatic,
+        final_cues,
+        automatic_srt,
+        fresh_automatic_srt,
+    )
 
 
 def _resolve_unresolved_speaker_gate(
@@ -1541,9 +1536,19 @@ def finalize_speaker_subtitles(
         work_dir=work_dir,
         override_document=override_document,
         expected_automatic_sha256=expected_automatic,
+        reviewed_baseline=reviewed_baseline,
     )
     automatic_srt = labels.automatic_srt
     final_cues = labels.final
+    if labels.fresh_automatic_srt is not None and reviewed_baseline is not None:
+        analysis = dict(analysis)
+        analysis["reviewed_machine_baseline_replay"] = reviewed_machine_replay_evidence(
+            analysis=analysis,
+            selected=labels.automatic,
+            selected_path=automatic_srt,
+            fresh_path=labels.fresh_automatic_srt,
+            baseline=reviewed_baseline,
+        )
     review_manifest = _resolve_unresolved_speaker_gate(
         analysis,
         bound=bound,

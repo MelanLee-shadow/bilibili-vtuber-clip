@@ -11,6 +11,7 @@ from src.autoslice import speaker_finalizer
 from src.autoslice.reviewed_speaker_baseline import (
     REVIEWED_SPEAKER_BASELINE_SCHEMA,
     load_reviewed_speaker_baseline,
+    materialize_reviewed_automatic_labels,
 )
 from src.autoslice.speaker_common import (
     GUEST_SPEAKER,
@@ -68,16 +69,37 @@ def _override_row(cue: TextCue, speaker: str = HOST_SPEAKER) -> dict:
 def _document(root: Path) -> dict:
     cues = _cues()
     truth_path, truth_sha = _write_truth(root)
+    automatic_path = root / "assets" / "synthetic.automatic-labelled.srt"
+    automatic_path.parent.mkdir(exist_ok=True)
+    write_srt(
+        [
+            Cue(
+                source_index=cue.source_index,
+                start=cue.start,
+                end=cue.end,
+                speaker=GUEST_SPEAKER,
+                text=cue.text,
+                decision_source="synthetic_machine",
+            )
+            for cue in cues
+        ],
+        automatic_path,
+    )
+    automatic_sha = sha256_file(automatic_path)
     return {
         "schema_version": 1,
         "candidate_id": CANDIDATE,
         "source_media_sha256": "b" * 64,
         "text_final_srt_sha256": "c" * 64,
-        "source_srt_sha256": "d" * 64,
+        "source_srt_sha256": automatic_sha,
         "reviewed_speaker_baseline": {
             "schema_version": REVIEWED_SPEAKER_BASELINE_SCHEMA,
             "authority": AUTHORITY,
             "truth_input": {"path": truth_path, "sha256": truth_sha},
+            "automatic_input": {
+                "path": str(automatic_path.relative_to(root)),
+                "sha256": automatic_sha,
+            },
             "cue_count": len(cues),
             "anchor_source_cues": [1, 2],
             "machine_cues": [
@@ -88,6 +110,7 @@ def _document(root: Path) -> dict:
                         "end": cues[2].end,
                         "text": cues[2].text,
                     },
+                    "speaker": GUEST_SPEAKER,
                     "reason": "positive voice arbitration keeps machine ownership",
                     "arbitration": {
                         "human_voice_observed": True,
@@ -112,6 +135,7 @@ def test_reviewed_baseline_binds_complete_partition_and_exact_host_anchors(
     assert loaded is not None
     assert loaded.anchor_labels == {0: HOST_SPEAKER, 1: HOST_SPEAKER}
     assert loaded.machine_cues == (3,)
+    assert loaded.machine_labels == {2: GUEST_SPEAKER}
     assert loaded.evidence["reviewed_cue_count"] == 2
 
 
@@ -191,6 +215,132 @@ def test_reviewed_baseline_rejects_drift_and_invalid_anchors(
             candidate_id=CANDIDATE,
             cues=_cues(),
             repo_root=tmp_path,
+        )
+
+
+def test_reviewed_baseline_rejects_automatic_input_path_hash_and_grid_drift(
+    tmp_path: Path,
+) -> None:
+    document = _document(tmp_path)
+    automatic = document["reviewed_speaker_baseline"]["automatic_input"]
+    automatic["path"] = "../escape.srt"
+    with pytest.raises(SpeakerFinalizationError, match="repository-relative"):
+        load_reviewed_speaker_baseline(
+            document, candidate_id=CANDIDATE, cues=_cues(), repo_root=tmp_path
+        )
+
+    document = _document(tmp_path / "hash")
+    document["reviewed_speaker_baseline"]["automatic_input"]["sha256"] = "0" * 64
+    with pytest.raises(SpeakerFinalizationError, match="automatic input hash drift"):
+        load_reviewed_speaker_baseline(
+            document,
+            candidate_id=CANDIDATE,
+            cues=_cues(),
+            repo_root=tmp_path / "hash",
+        )
+
+    grid_root = tmp_path / "grid"
+    document = _document(grid_root)
+    automatic_path = grid_root / document["reviewed_speaker_baseline"]["automatic_input"]["path"]
+    automatic_path.write_text(
+        automatic_path.read_text(encoding="utf-8").replace("待机器裁决", "漂移"),
+        encoding="utf-8",
+    )
+    digest = sha256_file(automatic_path)
+    document["source_srt_sha256"] = digest
+    document["reviewed_speaker_baseline"]["automatic_input"]["sha256"] = digest
+    with pytest.raises(SpeakerFinalizationError, match="cue 3 text drift"):
+        load_reviewed_speaker_baseline(
+            document,
+            candidate_id=CANDIDATE,
+            cues=_cues(),
+            repo_root=grid_root,
+        )
+
+
+def test_reviewed_baseline_rejects_symlinked_automatic_input(tmp_path: Path) -> None:
+    document = _document(tmp_path)
+    relative = Path(
+        document["reviewed_speaker_baseline"]["automatic_input"]["path"]
+    )
+    link = tmp_path / relative
+    real = link.with_name("real.automatic-labelled.srt")
+    link.rename(real)
+    link.symlink_to(real.name)
+    document["reviewed_speaker_baseline"]["automatic_input"]["sha256"] = sha256_file(real)
+    document["source_srt_sha256"] = sha256_file(real)
+
+    with pytest.raises(SpeakerFinalizationError, match="must not traverse symlinks"):
+        load_reviewed_speaker_baseline(
+            document, candidate_id=CANDIDATE, cues=_cues(), repo_root=tmp_path
+        )
+
+
+def test_v2_rejects_noncanonical_frozen_automatic_at_materialization(
+    tmp_path: Path,
+) -> None:
+    document = _document(tmp_path)
+    relative = Path(
+        document["reviewed_speaker_baseline"]["automatic_input"]["path"]
+    )
+    automatic_path = tmp_path / relative
+    automatic_path.write_bytes(
+        automatic_path.read_text(encoding="utf-8").replace("\n", "\r\n").encode()
+    )
+    digest = sha256_file(automatic_path)
+    document["source_srt_sha256"] = digest
+    document["reviewed_speaker_baseline"]["automatic_input"]["sha256"] = digest
+    loaded = load_reviewed_speaker_baseline(
+        document,
+        candidate_id=CANDIDATE,
+        cues=_cues(),
+        repo_root=tmp_path,
+    )
+    assert loaded is not None and loaded.frozen_automatic is not None
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+
+    with pytest.raises(SpeakerFinalizationError, match="canonical SHA-256 drift"):
+        materialize_reviewed_automatic_labels(
+            list(loaded.frozen_automatic),
+            work_dir=work_dir,
+            baseline=loaded,
+        )
+
+
+def test_v1_reviewed_baseline_retains_strict_whole_automatic_hash_gate(
+    tmp_path: Path,
+) -> None:
+    document = _document(tmp_path)
+    baseline = document["reviewed_speaker_baseline"]
+    baseline["schema_version"] = "reviewed-speaker-baseline.v1"
+    baseline.pop("automatic_input")
+    baseline["machine_cues"][0].pop("speaker")
+    loaded = load_reviewed_speaker_baseline(
+        document,
+        candidate_id=CANDIDATE,
+        cues=_cues(),
+        repo_root=tmp_path,
+    )
+    assert loaded is not None and loaded.frozen_automatic is None
+    work = tmp_path / "v1-work"
+    work.mkdir()
+    with pytest.raises(SpeakerFinalizationError, match="source hash mismatch"):
+        speaker_finalizer._materialize_speaker_labels(
+            {
+                "decisions": [
+                    {
+                        "speaker": HOST_SPEAKER,
+                        "decision_source": "synthetic_machine",
+                    }
+                    for _cue in _cues()
+                ]
+            },
+            cues=_cues(),
+            work_dir=work,
+            override_document=document,
+            expected_automatic_sha256=str(document["source_srt_sha256"]),
+            reviewed_baseline=loaded,
         )
 
 
@@ -317,10 +467,10 @@ def test_reviewed_rows_override_analyzer_but_machine_owned_cue_does_not(
             "context_unresolved_cues": [],
             "decisions": [
                 {
-                    "speaker": GUEST_SPEAKER,
+                    "speaker": speaker,
                     "decision_source": "synthetic_machine",
                 }
-                for _cue in cues
+                for speaker in (HOST_SPEAKER, HOST_SPEAKER, GUEST_SPEAKER)
             ],
         }
 
@@ -345,6 +495,37 @@ def test_reviewed_rows_override_analyzer_but_machine_owned_cue_does_not(
     assert f"[{GUEST_SPEAKER}] 待机器裁决" in output
     assert manifest["reviewed_output_cue_count"] == 2
     assert manifest["host_anchor_scope"] == "reviewed_speaker_baseline"
+
+    def machine_drift(**kwargs):
+        result = analyzer(**kwargs)
+        result["decisions"][-1]["speaker"] = HOST_SPEAKER
+        return result
+
+    drift_output = tmp_path / "drift.speaker.srt"
+    drift_manifest = speaker_finalizer.finalize_speaker_subtitles(
+        media_path=media,
+        text_srt_path=text_srt,
+        profile_path=profile,
+        reference_dir=tmp_path / "references",
+        model_dir=tmp_path / "model",
+        output_srt_path=drift_output,
+        output_ass_path=tmp_path / "drift.speaker.ass",
+        output_manifest_path=tmp_path / "drift.speaker.json",
+        work_dir=tmp_path / "drift-work",
+        candidate_id=CANDIDATE,
+        override_path=override,
+        analyzer=machine_drift,
+    )
+    assert drift_output.read_bytes() == output_srt.read_bytes()
+    replay = drift_manifest["analysis"]["reviewed_machine_baseline_replay"]
+    assert replay["status"] == "FROZEN_MACHINE_BASELINE_APPLIED"
+    assert replay["machine_cue_label_drift"] == [
+        {
+            "source_cue": 3,
+            "frozen_speaker": GUEST_SPEAKER,
+            "fresh_speaker": HOST_SPEAKER,
+        }
+    ]
 
 
 def test_unresolved_machine_owned_cue_still_blocks(

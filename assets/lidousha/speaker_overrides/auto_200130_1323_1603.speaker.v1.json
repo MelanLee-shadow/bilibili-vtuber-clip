@@ -1,0 +1,2924 @@
+{
+  "schema_version": 1,
+  "source_media_sha256": "0e73603f1bbdd7260da1b25f3053e3bd3312b6a5c6124073984ea59eddc9a6c6",
+  "text_final_srt_sha256": "0e9c2cc74b085bc1704d920b08e957da8104b6f69eb9aaa99dfe3d0c224504b3",
+  "source_srt_sha256": "eac35d132202e8e893103b30630008b4ab2f1e5dabeeee76a27478f93036fa8f",
+  "candidate_id": "auto_200130_1323_1603",
+  "status": "ivan_reviewed_speaker_partial_machine",
+  "reviewed_at": "2026-08-09",
+  "overlap_policy": "保留主说话人；混说段只用已披露的字符比例近似时轴。",
+  "notes": "Delivery-time compilation from hash-bound Ivan truth. Reviewed cues are post-analysis overrides; explicitly uncovered cues retain the existing machine analyzer decision and never default from omission.",
+  "reviewed_speaker_baseline": {
+    "schema_version": "reviewed-speaker-baseline.v2",
+    "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+    "truth_input": {
+      "path": "reports/ivan_truth_harvest/2026-08-08/auto_200130_1323_1603.truth-diff.v2.json",
+      "sha256": "dab049e6a6114c2c0eda7fbd7a05f1f1e70668f193359bac7fbee38a8d50a924"
+    },
+    "automatic_input": {
+      "path": "assets/lidousha/speaker_automatic_baselines/auto_200130_1323_1603.automatic-labelled.srt",
+      "sha256": "eac35d132202e8e893103b30630008b4ab2f1e5dabeeee76a27478f93036fa8f"
+    },
+    "cue_count": 159,
+    "anchor_source_cues": [
+      90,
+      149,
+      96,
+      85
+    ],
+    "machine_cues": [
+      {
+        "source_cue": 28,
+        "expect": {
+          "start": "00:00:49,210",
+          "end": "00:00:51,190",
+          "text": "我家的别打我"
+        },
+        "speaker": "连线",
+        "reason": "Candidate-free acoustic witness observed human voice; retain Ivan's base text after stripping the stage note, but exact words were weakly supported, so speaker ownership remains with the existing machine analyzer.",
+        "arbitration": {
+          "human_voice_observed": true,
+          "receipt_sha256": "3248c41d51e59ff40c3d0d7ee9aa06e7df1559e072cda61bbf02a60e02b40ef4"
+        }
+      },
+      {
+        "source_cue": 71,
+        "expect": {
+          "start": "00:02:02,010",
+          "end": "00:02:03,610",
+          "text": "快了吧"
+        },
+        "speaker": "李豆沙",
+        "reason": "Candidate-free acoustic witness observed human voice; strip the stage note and retain the base text, but the witness heard an approximate different phrase, so speaker ownership remains with the existing machine analyzer.",
+        "arbitration": {
+          "human_voice_observed": true,
+          "receipt_sha256": "3248c41d51e59ff40c3d0d7ee9aa06e7df1559e072cda61bbf02a60e02b40ef4"
+        }
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "source_cue": 1,
+      "expect": {
+        "start": "00:00:00,250",
+        "end": "00:00:01,930",
+        "text": "打歌服出现吧"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "打歌服出现吧",
+          "start": "00:00:00,250",
+          "end": "00:00:01,930"
+        }
+      ]
+    },
+    {
+      "source_cue": 2,
+      "expect": {
+        "start": "00:00:04,770",
+        "end": "00:00:06,489",
+        "text": "为什么还没有变呢"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "为什么还没有变呢",
+          "start": "00:00:04,770",
+          "end": "00:00:06,489"
+        }
+      ]
+    },
+    {
+      "source_cue": 3,
+      "expect": {
+        "start": "00:00:06,489",
+        "end": "00:00:07,530",
+        "text": "哎，不对啊"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "哎，不对啊",
+          "start": "00:00:06,489",
+          "end": "00:00:07,530"
+        }
+      ]
+    },
+    {
+      "source_cue": 4,
+      "expect": {
+        "start": "00:00:07,530",
+        "end": "00:00:09,330",
+        "text": "应该就是按照剧本的话"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "应该就是按照剧本的话",
+          "start": "00:00:07,530",
+          "end": "00:00:09,330"
+        }
+      ]
+    },
+    {
+      "source_cue": 5,
+      "expect": {
+        "start": "00:00:09,330",
+        "end": "00:00:12,810",
+        "text": "就是这个时候应该已经就是通过了试炼然后变身"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "就是这个时候应该已经就是通过了试炼然后变身",
+          "start": "00:00:09,330",
+          "end": "00:00:12,810"
+        }
+      ]
+    },
+    {
+      "source_cue": 6,
+      "expect": {
+        "start": "00:00:12,810",
+        "end": "00:00:14,660",
+        "text": "哥，我要打你"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "哥，我要打你",
+          "start": "00:00:12,810",
+          "end": "00:00:14,660"
+        }
+      ]
+    },
+    {
+      "source_cue": 7,
+      "expect": {
+        "start": "00:00:14,660",
+        "end": "00:00:18,000",
+        "text": "打你打你，不要打哥，你服不服"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "打你打你，不要打哥，你服不服",
+          "start": "00:00:14,660",
+          "end": "00:00:18,000"
+        }
+      ]
+    },
+    {
+      "source_cue": 8,
+      "expect": {
+        "start": "00:00:18,000",
+        "end": "00:00:18,840",
+        "text": "你服不服"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "你服不服",
+          "start": "00:00:18,000",
+          "end": "00:00:18,840"
+        }
+      ]
+    },
+    {
+      "source_cue": 9,
+      "expect": {
+        "start": "00:00:18,840",
+        "end": "00:00:22,140",
+        "text": "我服了，别打哥了啦"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我服了，别打哥了啦",
+          "start": "00:00:18,840",
+          "end": "00:00:22,140"
+        }
+      ]
+    },
+    {
+      "source_cue": 10,
+      "expect": {
+        "start": "00:00:22,140",
+        "end": "00:00:24,030",
+        "text": "哥嘛，哎呀，服了啦"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "哥嘛，哎呀，服了啦",
+          "start": "00:00:22,140",
+          "end": "00:00:24,030"
+        }
+      ]
+    },
+    {
+      "source_cue": 11,
+      "expect": {
+        "start": "00:00:24,030",
+        "end": "00:00:25,210",
+        "text": "服了啦。对啦"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "服了啦。对啦",
+          "start": "00:00:24,030",
+          "end": "00:00:25,210"
+        }
+      ]
+    },
+    {
+      "source_cue": 12,
+      "expect": {
+        "start": "00:00:25,210",
+        "end": "00:00:26,510",
+        "text": "你们找我们有事儿啊"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "你们找我们有事儿啊",
+          "start": "00:00:25,210",
+          "end": "00:00:26,510"
+        }
+      ]
+    },
+    {
+      "source_cue": 13,
+      "expect": {
+        "start": "00:00:26,510",
+        "end": "00:00:28,270",
+        "text": "找打哥服有事吗"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "找打哥服有事吗",
+          "start": "00:00:26,510",
+          "end": "00:00:28,270"
+        }
+      ]
+    },
+    {
+      "source_cue": 14,
+      "expect": {
+        "start": "00:00:28,270",
+        "end": "00:00:29,990",
+        "text": "什么什么什么 哥服啦"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "什么什么什么 哥服啦",
+          "start": "00:00:28,270",
+          "end": "00:00:29,990"
+        }
+      ]
+    },
+    {
+      "source_cue": 15,
+      "expect": {
+        "start": "00:00:30,210",
+        "end": "00:00:31,370",
+        "text": "我负责打"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我负责打",
+          "start": "00:00:30,210",
+          "end": "00:00:31,370"
+        }
+      ]
+    },
+    {
+      "source_cue": 16,
+      "expect": {
+        "start": "00:00:31,370",
+        "end": "00:00:33,670",
+        "text": "她是哥，她服了，我打她服了"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "她是哥，她服了，我打她服了",
+          "start": "00:00:31,370",
+          "end": "00:00:33,670"
+        }
+      ]
+    },
+    {
+      "source_cue": 17,
+      "expect": {
+        "start": "00:00:33,670",
+        "end": "00:00:35,690",
+        "text": "哦哦，原来打歌服是这个意思"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "哦哦，原来打歌服是这个意思",
+          "start": "00:00:33,670",
+          "end": "00:00:35,690"
+        }
+      ]
+    },
+    {
+      "source_cue": 18,
+      "expect": {
+        "start": "00:00:35,690",
+        "end": "00:00:36,370",
+        "text": "是的呢"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "是的呢",
+          "start": "00:00:35,690",
+          "end": "00:00:36,370"
+        }
+      ]
+    },
+    {
+      "source_cue": 19,
+      "expect": {
+        "start": "00:00:36,370",
+        "end": "00:00:36,950",
+        "text": "这样吗"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "这样吗",
+          "start": "00:00:36,370",
+          "end": "00:00:36,950"
+        }
+      ]
+    },
+    {
+      "source_cue": 20,
+      "expect": {
+        "start": "00:00:36,950",
+        "end": "00:00:37,750",
+        "text": "那只要打"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "那只要打",
+          "start": "00:00:36,950",
+          "end": "00:00:37,750"
+        }
+      ]
+    },
+    {
+      "source_cue": 21,
+      "expect": {
+        "start": "00:00:37,750",
+        "end": "00:00:39,610",
+        "text": "只要打她就可以得到打歌服"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "只要打她就可以得到打歌服",
+          "start": "00:00:37,750",
+          "end": "00:00:39,610"
+        }
+      ]
+    },
+    {
+      "source_cue": 22,
+      "expect": {
+        "start": "00:00:39,610",
+        "end": "00:00:40,210",
+        "text": "你多打两下"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "你多打两下",
+          "start": "00:00:39,610",
+          "end": "00:00:40,210"
+        }
+      ]
+    },
+    {
+      "source_cue": 23,
+      "expect": {
+        "start": "00:00:40,210",
+        "end": "00:00:42,530",
+        "text": "原来是这样，我也没有"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "原来是这样，我也没有",
+          "start": "00:00:40,210",
+          "end": "00:00:42,530"
+        }
+      ]
+    },
+    {
+      "source_cue": 24,
+      "expect": {
+        "start": "00:00:42,530",
+        "end": "00:00:43,590",
+        "text": "呵呵，我也来"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "呵呵，我也来",
+          "start": "00:00:42,530",
+          "end": "00:00:43,590"
+        }
+      ]
+    },
+    {
+      "source_cue": 25,
+      "expect": {
+        "start": "00:00:43,590",
+        "end": "00:00:44,830",
+        "text": "哎呀哎呀"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "哎呀哎呀",
+          "start": "00:00:43,590",
+          "end": "00:00:44,830"
+        }
+      ]
+    },
+    {
+      "source_cue": 26,
+      "expect": {
+        "start": "00:00:44,830",
+        "end": "00:00:46,670",
+        "text": "那我那我得跳到你的身上"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "那我那我得跳到你的身上",
+          "start": "00:00:44,830",
+          "end": "00:00:46,670"
+        }
+      ]
+    },
+    {
+      "source_cue": 27,
+      "expect": {
+        "start": "00:00:46,670",
+        "end": "00:00:49,210",
+        "text": "嘿，哎呀哎呀"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "嘿，哎呀哎呀",
+          "start": "00:00:46,670",
+          "end": "00:00:49,210"
+        }
+      ]
+    },
+    {
+      "source_cue": 29,
+      "expect": {
+        "start": "00:00:51,190",
+        "end": "00:00:52,370",
+        "text": "别在一起"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "别在一起",
+          "start": "00:00:51,190",
+          "end": "00:00:52,370"
+        }
+      ]
+    },
+    {
+      "source_cue": 30,
+      "expect": {
+        "start": "00:00:52,810",
+        "end": "00:00:54,190",
+        "text": "不，别在一起"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "不，别在一起",
+          "start": "00:00:52,810",
+          "end": "00:00:54,190"
+        }
+      ]
+    },
+    {
+      "source_cue": 31,
+      "expect": {
+        "start": "00:00:54,190",
+        "end": "00:00:58,170",
+        "text": "哇哇哇，好大！好好好好好啊哈"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "哇哇哇，好大！好好好好好啊哈",
+          "start": "00:00:54,190",
+          "end": "00:00:58,170"
+        }
+      ]
+    },
+    {
+      "source_cue": 32,
+      "expect": {
+        "start": "00:00:58,170",
+        "end": "00:00:59,640",
+        "text": "我真的背起她"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "我真的背起她",
+          "start": "00:00:58,170",
+          "end": "00:00:59,640"
+        }
+      ]
+    },
+    {
+      "source_cue": 33,
+      "expect": {
+        "start": "00:00:59,640",
+        "end": "00:01:00,830",
+        "text": "原来好厉害啊"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "原来好厉害啊",
+          "start": "00:00:59,640",
+          "end": "00:01:00,830"
+        }
+      ]
+    },
+    {
+      "source_cue": 34,
+      "expect": {
+        "start": "00:01:00,830",
+        "end": "00:01:01,670",
+        "text": "能抱你一下吗"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "能抱你一下吗",
+          "start": "00:01:00,830",
+          "end": "00:01:01,670"
+        }
+      ]
+    },
+    {
+      "source_cue": 35,
+      "expect": {
+        "start": "00:01:01,670",
+        "end": "00:01:02,170",
+        "text": "可以啊"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "可以啊",
+          "start": "00:01:01,670",
+          "end": "00:01:02,170"
+        }
+      ]
+    },
+    {
+      "source_cue": 36,
+      "expect": {
+        "start": "00:01:02,170",
+        "end": "00:01:03,030",
+        "text": "我能抱你一下吗"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "我能抱你一下吗",
+          "start": "00:01:02,170",
+          "end": "00:01:03,030"
+        }
+      ]
+    },
+    {
+      "source_cue": 37,
+      "expect": {
+        "start": "00:01:03,030",
+        "end": "00:01:03,830",
+        "text": "什么意思，她干嘛"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "什么意思，她干嘛",
+          "start": "00:01:03,030",
+          "end": "00:01:03,830"
+        }
+      ]
+    },
+    {
+      "source_cue": 38,
+      "expect": {
+        "start": "00:01:03,830",
+        "end": "00:01:04,390",
+        "text": "你们俩干嘛"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "你们俩干嘛",
+          "start": "00:01:03,830",
+          "end": "00:01:04,390"
+        }
+      ]
+    },
+    {
+      "source_cue": 39,
+      "expect": {
+        "start": "00:01:04,390",
+        "end": "00:01:05,230",
+        "text": "公主抱吗"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "公主抱吗",
+          "start": "00:01:04,390",
+          "end": "00:01:05,230"
+        }
+      ]
+    },
+    {
+      "source_cue": 40,
+      "expect": {
+        "start": "00:01:05,230",
+        "end": "00:01:07,590",
+        "text": "抱抱我，真的假的"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "抱抱我，真的假的",
+          "start": "00:01:05,230",
+          "end": "00:01:07,590"
+        }
+      ]
+    },
+    {
+      "source_cue": 41,
+      "expect": {
+        "start": "00:01:07,590",
+        "end": "00:01:10,640",
+        "text": "啊啊啊啊啊哦哦"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "啊啊啊啊啊哦哦",
+          "start": "00:01:07,590",
+          "end": "00:01:10,640"
+        }
+      ]
+    },
+    {
+      "source_cue": 42,
+      "expect": {
+        "start": "00:01:10,640",
+        "end": "00:01:14,520",
+        "text": "可以可以可以可以可以可以可以可以哇"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "可以可以可以可以可以可以可以可以哇",
+          "start": "00:01:10,640",
+          "end": "00:01:14,520"
+        }
+      ]
+    },
+    {
+      "source_cue": 43,
+      "expect": {
+        "start": "00:01:14,560",
+        "end": "00:01:16,960",
+        "text": "哎哎，等等"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "哎哎，等等",
+          "start": "00:01:14,560",
+          "end": "00:01:16,960"
+        }
+      ]
+    },
+    {
+      "source_cue": 44,
+      "expect": {
+        "start": "00:01:17,030",
+        "end": "00:01:19,430",
+        "text": "OK，我去我去我去"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "OK，我去我去我去",
+          "start": "00:01:17,030",
+          "end": "00:01:19,430"
+        }
+      ]
+    },
+    {
+      "source_cue": 45,
+      "expect": {
+        "start": "00:01:19,430",
+        "end": "00:01:22,510",
+        "text": "我要开始爆装备，爆装备了"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我要开始爆装备，爆装备了",
+          "start": "00:01:19,430",
+          "end": "00:01:22,510"
+        }
+      ]
+    },
+    {
+      "source_cue": 46,
+      "expect": {
+        "start": "00:01:22,510",
+        "end": "00:01:24,260",
+        "text": "哈哈，干什么？哈哈"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "哈哈，干什么？哈哈",
+          "start": "00:01:22,510",
+          "end": "00:01:24,260"
+        }
+      ]
+    },
+    {
+      "source_cue": 47,
+      "expect": {
+        "start": "00:01:24,260",
+        "end": "00:01:24,930",
+        "text": "怎么会这样"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "怎么会这样",
+          "start": "00:01:24,260",
+          "end": "00:01:24,930"
+        }
+      ]
+    },
+    {
+      "source_cue": 48,
+      "expect": {
+        "start": "00:01:24,930",
+        "end": "00:01:26,290",
+        "text": "我来，给我给我"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我来，给我给我",
+          "start": "00:01:24,930",
+          "end": "00:01:26,290"
+        }
+      ]
+    },
+    {
+      "source_cue": 49,
+      "expect": {
+        "start": "00:01:26,290",
+        "end": "00:01:29,370",
+        "text": "对不起太临时起意了"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "对不起太临时起意了",
+          "start": "00:01:26,290",
+          "end": "00:01:29,370"
+        }
+      ]
+    },
+    {
+      "source_cue": 50,
+      "expect": {
+        "start": "00:01:29,370",
+        "end": "00:01:30,770",
+        "text": "好了，起了起了"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "好了，起了起了",
+          "start": "00:01:29,370",
+          "end": "00:01:30,770"
+        }
+      ]
+    },
+    {
+      "source_cue": 51,
+      "expect": {
+        "start": "00:01:30,770",
+        "end": "00:01:32,090",
+        "text": "好了起来，快起来"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "好了起来，快起来",
+          "start": "00:01:30,770",
+          "end": "00:01:32,090"
+        }
+      ]
+    },
+    {
+      "source_cue": 52,
+      "expect": {
+        "start": "00:01:32,090",
+        "end": "00:01:33,330",
+        "text": "快起来吧，快起来吧"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "快起来吧，快起来吧",
+          "start": "00:01:32,090",
+          "end": "00:01:33,330"
+        }
+      ]
+    },
+    {
+      "source_cue": 53,
+      "expect": {
+        "start": "00:01:33,330",
+        "end": "00:01:35,050",
+        "text": "这又是什么姿势了"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "这又是什么姿势了",
+          "start": "00:01:33,330",
+          "end": "00:01:35,050"
+        }
+      ]
+    },
+    {
+      "source_cue": 54,
+      "expect": {
+        "start": "00:01:35,050",
+        "end": "00:01:35,850",
+        "text": "我的狍哥"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我的狍哥",
+          "start": "00:01:35,050",
+          "end": "00:01:35,850"
+        }
+      ]
+    },
+    {
+      "source_cue": 55,
+      "expect": {
+        "start": "00:01:35,850",
+        "end": "00:01:37,530",
+        "text": "我的狍哥！什么情况了"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我的狍哥！什么情况了",
+          "start": "00:01:35,850",
+          "end": "00:01:37,530"
+        }
+      ]
+    },
+    {
+      "source_cue": 56,
+      "expect": {
+        "start": "00:01:37,530",
+        "end": "00:01:37,910",
+        "text": "盘在一起了"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "盘在一起了",
+          "start": "00:01:37,530",
+          "end": "00:01:37,910"
+        }
+      ]
+    },
+    {
+      "source_cue": 57,
+      "expect": {
+        "start": "00:01:37,910",
+        "end": "00:01:39,470",
+        "text": "你要把我的小狍怎么了"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "你要把我的小狍怎么了",
+          "start": "00:01:37,910",
+          "end": "00:01:39,470"
+        }
+      ]
+    },
+    {
+      "source_cue": 58,
+      "expect": {
+        "start": "00:01:39,470",
+        "end": "00:01:42,320",
+        "text": "哎，所以我想到一个特别糟、糟糕的话"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; mixed segment timing uses the established character-proportion proxy and is not acoustic alignment.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "哎，所以",
+          "start": "00:01:39,470",
+          "end": "00:01:40,141"
+        },
+        {
+          "speaker": "李豆沙",
+          "text": "我想到一个特别糟、糟糕的话",
+          "start": "00:01:40,141",
+          "end": "00:01:42,320"
+        }
+      ]
+    },
+    {
+      "source_cue": 59,
+      "expect": {
+        "start": "00:01:42,320",
+        "end": "00:01:43,420",
+        "text": "你是她妈妈对吧"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "你是她妈妈对吧",
+          "start": "00:01:42,320",
+          "end": "00:01:43,420"
+        }
+      ]
+    },
+    {
+      "source_cue": 60,
+      "expect": {
+        "start": "00:01:43,420",
+        "end": "00:01:43,920",
+        "text": "对啊"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "对啊",
+          "start": "00:01:43,420",
+          "end": "00:01:43,920"
+        }
+      ]
+    },
+    {
+      "source_cue": 61,
+      "expect": {
+        "start": "00:01:43,920",
+        "end": "00:01:46,040",
+        "text": "你们缠在一起像那个脐带"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "你们缠在一起像那个脐带",
+          "start": "00:01:43,920",
+          "end": "00:01:46,040"
+        }
+      ]
+    },
+    {
+      "source_cue": 62,
+      "expect": {
+        "start": "00:01:47,300",
+        "end": "00:01:48,200",
+        "text": "啊"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "啊",
+          "start": "00:01:47,300",
+          "end": "00:01:48,200"
+        }
+      ]
+    },
+    {
+      "source_cue": 63,
+      "expect": {
+        "start": "00:01:48,200",
+        "end": "00:01:49,420",
+        "text": "对不起，对不起"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "对不起，对不起",
+          "start": "00:01:48,200",
+          "end": "00:01:49,420"
+        }
+      ]
+    },
+    {
+      "source_cue": 64,
+      "expect": {
+        "start": "00:01:49,420",
+        "end": "00:01:51,560",
+        "text": "对不起，对不起，对不起"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "对不起，对不起，对不起",
+          "start": "00:01:49,420",
+          "end": "00:01:51,560"
+        }
+      ]
+    },
+    {
+      "source_cue": 65,
+      "expect": {
+        "start": "00:01:51,560",
+        "end": "00:01:53,400",
+        "text": "对不起，对不起，对不起对不起"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "对不起，对不起，对不起对不起",
+          "start": "00:01:51,560",
+          "end": "00:01:53,400"
+        }
+      ]
+    },
+    {
+      "source_cue": 66,
+      "expect": {
+        "start": "00:01:53,400",
+        "end": "00:01:55,500",
+        "text": "什么东西啊"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "什么东西啊",
+          "start": "00:01:53,400",
+          "end": "00:01:55,500"
+        }
+      ]
+    },
+    {
+      "source_cue": 67,
+      "expect": {
+        "start": "00:01:55,540",
+        "end": "00:01:57,360",
+        "text": "这家伙脑子里都什么东西"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "这家伙脑子里都什么东西",
+          "start": "00:01:55,540",
+          "end": "00:01:57,360"
+        }
+      ]
+    },
+    {
+      "source_cue": 68,
+      "expect": {
+        "start": "00:01:57,360",
+        "end": "00:01:59,009",
+        "text": "你脑子里到底在想什么"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "你脑子里到底在想什么",
+          "start": "00:01:57,360",
+          "end": "00:01:59,009"
+        }
+      ]
+    },
+    {
+      "source_cue": 69,
+      "expect": {
+        "start": "00:01:59,009",
+        "end": "00:02:00,410",
+        "text": "怪不得变不出来呢"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "怪不得变不出来呢",
+          "start": "00:01:59,009",
+          "end": "00:02:00,410"
+        }
+      ]
+    },
+    {
+      "source_cue": 70,
+      "expect": {
+        "start": "00:02:00,650",
+        "end": "00:02:02,010",
+        "text": "对不起"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "对不起",
+          "start": "00:02:00,650",
+          "end": "00:02:02,010"
+        }
+      ]
+    },
+    {
+      "source_cue": 72,
+      "expect": {
+        "start": "00:02:03,630",
+        "end": "00:02:06,110",
+        "text": "哎哎，我们两个手缠在一起的"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "哎哎，我们两个手缠在一起的",
+          "start": "00:02:03,630",
+          "end": "00:02:06,110"
+        }
+      ]
+    },
+    {
+      "source_cue": 73,
+      "expect": {
+        "start": "00:02:06,110",
+        "end": "00:02:07,910",
+        "text": "哈哈哈"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "哈哈哈",
+          "start": "00:02:06,110",
+          "end": "00:02:07,910"
+        }
+      ]
+    },
+    {
+      "source_cue": 74,
+      "expect": {
+        "start": "00:02:07,910",
+        "end": "00:02:09,710",
+        "text": "你的表情好像恶心死了"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "你的表情好像恶心死了",
+          "start": "00:02:07,910",
+          "end": "00:02:09,710"
+        }
+      ]
+    },
+    {
+      "source_cue": 75,
+      "expect": {
+        "start": "00:02:09,710",
+        "end": "00:02:10,310",
+        "text": "不要这样"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "不要这样",
+          "start": "00:02:09,710",
+          "end": "00:02:10,310"
+        }
+      ]
+    },
+    {
+      "source_cue": 76,
+      "expect": {
+        "start": "00:02:10,310",
+        "end": "00:02:12,160",
+        "text": "不要这样，不要这样"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "不要这样，不要这样",
+          "start": "00:02:10,310",
+          "end": "00:02:12,160"
+        }
+      ]
+    },
+    {
+      "source_cue": 77,
+      "expect": {
+        "start": "00:02:12,160",
+        "end": "00:02:15,490",
+        "text": "所以你今天就是召唤我们来"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "所以你今天就是召唤我们来",
+          "start": "00:02:12,160",
+          "end": "00:02:15,490"
+        }
+      ]
+    },
+    {
+      "source_cue": 78,
+      "expect": {
+        "start": "00:02:15,490",
+        "end": "00:02:16,750",
+        "text": "就为了说这个，哦"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "就为了说这个，哦",
+          "start": "00:02:15,490",
+          "end": "00:02:16,750"
+        }
+      ]
+    },
+    {
+      "source_cue": 79,
+      "expect": {
+        "start": "00:02:16,750",
+        "end": "00:02:18,260",
+        "text": "不是不是不是，嗯嗯嗯"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "不是不是不是，嗯嗯嗯",
+          "start": "00:02:16,750",
+          "end": "00:02:18,260"
+        }
+      ]
+    },
+    {
+      "source_cue": 80,
+      "expect": {
+        "start": "00:02:18,260",
+        "end": "00:02:20,560",
+        "text": "刚刚都是这个花絮"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "刚刚都是这个花絮",
+          "start": "00:02:18,260",
+          "end": "00:02:20,560"
+        }
+      ]
+    },
+    {
+      "source_cue": 81,
+      "expect": {
+        "start": "00:02:20,560",
+        "end": "00:02:22,850",
+        "text": "今天花絮，花絮吗"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "今天花絮，花絮吗",
+          "start": "00:02:20,560",
+          "end": "00:02:22,850"
+        }
+      ]
+    },
+    {
+      "source_cue": 82,
+      "expect": {
+        "start": "00:02:22,850",
+        "end": "00:02:24,570",
+        "text": "正片已经结束了"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "正片已经结束了",
+          "start": "00:02:22,850",
+          "end": "00:02:24,570"
+        }
+      ]
+    },
+    {
+      "source_cue": 83,
+      "expect": {
+        "start": "00:02:24,570",
+        "end": "00:02:26,630",
+        "text": "今天是已经累了是吧"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; mixed segment timing uses the established character-proportion proxy and is not acoustic alignment.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "今天是",
+          "start": "00:02:24,570",
+          "end": "00:02:25,257"
+        },
+        {
+          "speaker": "连线",
+          "text": "已经累了是吧",
+          "start": "00:02:25,257",
+          "end": "00:02:26,630"
+        }
+      ]
+    },
+    {
+      "source_cue": 84,
+      "expect": {
+        "start": "00:02:26,630",
+        "end": "00:02:27,330",
+        "text": "嗯"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "嗯",
+          "start": "00:02:26,630",
+          "end": "00:02:27,330"
+        }
+      ]
+    },
+    {
+      "source_cue": 85,
+      "expect": {
+        "start": "00:02:27,330",
+        "end": "00:02:30,690",
+        "text": "今天是要，就是想让大家来帮李豆沙"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "今天是要，就是想让大家来帮李豆沙",
+          "start": "00:02:27,330",
+          "end": "00:02:30,690"
+        }
+      ]
+    },
+    {
+      "source_cue": 86,
+      "expect": {
+        "start": "00:02:30,690",
+        "end": "00:02:32,410",
+        "text": "找回打歌服的"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "找回打歌服的",
+          "start": "00:02:30,690",
+          "end": "00:02:32,410"
+        }
+      ]
+    },
+    {
+      "source_cue": 87,
+      "expect": {
+        "start": "00:02:32,410",
+        "end": "00:02:32,850",
+        "text": "哦"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "哦",
+          "start": "00:02:32,410",
+          "end": "00:02:32,850"
+        }
+      ]
+    },
+    {
+      "source_cue": 88,
+      "expect": {
+        "start": "00:02:32,850",
+        "end": "00:02:35,400",
+        "text": "哦哦，在哪里找呀"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "哦哦，在哪里找呀",
+          "start": "00:02:32,850",
+          "end": "00:02:35,400"
+        }
+      ]
+    },
+    {
+      "source_cue": 89,
+      "expect": {
+        "start": "00:02:35,400",
+        "end": "00:02:36,200",
+        "text": "怎么找呀"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "怎么找呀",
+          "start": "00:02:35,400",
+          "end": "00:02:36,200"
+        }
+      ]
+    },
+    {
+      "source_cue": 90,
+      "expect": {
+        "start": "00:02:36,200",
+        "end": "00:02:41,290",
+        "text": "就是要通过我们同事之间的羁绊"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "就是要通过我们同事之间的羁绊",
+          "start": "00:02:36,200",
+          "end": "00:02:41,290"
+        }
+      ]
+    },
+    {
+      "source_cue": 91,
+      "expect": {
+        "start": "00:02:41,290",
+        "end": "00:02:42,230",
+        "text": "有这种东西吗"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "有这种东西吗",
+          "start": "00:02:41,290",
+          "end": "00:02:42,230"
+        }
+      ]
+    },
+    {
+      "source_cue": 92,
+      "expect": {
+        "start": "00:02:42,230",
+        "end": "00:02:43,590",
+        "text": "她明明刚才还在说"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "她明明刚才还在说",
+          "start": "00:02:42,230",
+          "end": "00:02:43,590"
+        }
+      ]
+    },
+    {
+      "source_cue": 93,
+      "expect": {
+        "start": "00:02:43,590",
+        "end": "00:02:44,710",
+        "text": "这是什么友谊的羁绊"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "这是什么友谊的羁绊",
+          "start": "00:02:43,590",
+          "end": "00:02:44,710"
+        }
+      ]
+    },
+    {
+      "source_cue": 94,
+      "expect": {
+        "start": "00:02:44,710",
+        "end": "00:02:46,150",
+        "text": "这种东西听上去很没用啊"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "这种东西听上去很没用啊",
+          "start": "00:02:44,710",
+          "end": "00:02:46,150"
+        }
+      ]
+    },
+    {
+      "source_cue": 95,
+      "expect": {
+        "start": "00:02:46,150",
+        "end": "00:02:49,510",
+        "text": "对啊，她刚才原话就是这么说的"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "对啊，她刚才原话就是这么说的",
+          "start": "00:02:46,150",
+          "end": "00:02:49,510"
+        }
+      ]
+    },
+    {
+      "source_cue": 96,
+      "expect": {
+        "start": "00:02:49,630",
+        "end": "00:02:53,090",
+        "text": "不是，那是因为就是我的意思是，呃"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "不是，那是因为就是我的意思是，呃",
+          "start": "00:02:49,630",
+          "end": "00:02:53,090"
+        }
+      ]
+    },
+    {
+      "source_cue": 97,
+      "expect": {
+        "start": "00:02:53,090",
+        "end": "00:02:55,270",
+        "text": "就是同事羁绊"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "就是同事羁绊",
+          "start": "00:02:53,090",
+          "end": "00:02:55,270"
+        }
+      ]
+    },
+    {
+      "source_cue": 98,
+      "expect": {
+        "start": "00:02:55,270",
+        "end": "00:02:58,480",
+        "text": "就是那你不能只有同那个友谊"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "就是那你不能只有同那个友谊",
+          "start": "00:02:55,270",
+          "end": "00:02:58,480"
+        }
+      ]
+    },
+    {
+      "source_cue": 99,
+      "expect": {
+        "start": "00:02:58,480",
+        "end": "00:03:00,600",
+        "text": "你要有友谊再叠加"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "你要有友谊再叠加",
+          "start": "00:02:58,480",
+          "end": "00:03:00,600"
+        }
+      ]
+    },
+    {
+      "source_cue": 100,
+      "expect": {
+        "start": "00:03:00,600",
+        "end": "00:03:02,860",
+        "text": "就是同事不是朋友的意思"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "就是同事不是朋友的意思",
+          "start": "00:03:00,600",
+          "end": "00:03:02,860"
+        }
+      ]
+    },
+    {
+      "source_cue": 101,
+      "expect": {
+        "start": "00:03:02,860",
+        "end": "00:03:04,310",
+        "text": "我知道，我知道，我知道，我知道"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我知道，我知道，我知道，我知道",
+          "start": "00:03:02,860",
+          "end": "00:03:04,310"
+        }
+      ]
+    },
+    {
+      "source_cue": 102,
+      "expect": {
+        "start": "00:03:04,310",
+        "end": "00:03:06,350",
+        "text": "我知道她跟你是朋友"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我知道她跟你是朋友",
+          "start": "00:03:04,310",
+          "end": "00:03:06,350"
+        }
+      ]
+    },
+    {
+      "source_cue": 103,
+      "expect": {
+        "start": "00:03:06,350",
+        "end": "00:03:08,030",
+        "text": "跟我们两个不是这种关系"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "跟我们两个不是这种关系",
+          "start": "00:03:06,350",
+          "end": "00:03:08,030"
+        }
+      ]
+    },
+    {
+      "source_cue": 104,
+      "expect": {
+        "start": "00:03:08,070",
+        "end": "00:03:10,150",
+        "text": "我是，我是这样的 你起什么哄啊"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; mixed segment timing uses the established character-proportion proxy and is not acoustic alignment.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我是，我是这样的",
+          "start": "00:03:08,070",
+          "end": "00:03:09,259"
+        },
+        {
+          "speaker": "李豆沙",
+          "text": "你起什么哄啊",
+          "start": "00:03:09,259",
+          "end": "00:03:10,150"
+        }
+      ]
+    },
+    {
+      "source_cue": 105,
+      "expect": {
+        "start": "00:03:10,150",
+        "end": "00:03:11,090",
+        "text": "是这样子的"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "是这样子的",
+          "start": "00:03:10,150",
+          "end": "00:03:11,090"
+        }
+      ]
+    },
+    {
+      "source_cue": 106,
+      "expect": {
+        "start": "00:03:11,090",
+        "end": "00:03:11,990",
+        "text": "我明白了"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我明白了",
+          "start": "00:03:11,090",
+          "end": "00:03:11,990"
+        }
+      ]
+    },
+    {
+      "source_cue": 107,
+      "expect": {
+        "start": "00:03:11,990",
+        "end": "00:03:13,450",
+        "text": "她是好朋友"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "她是好朋友",
+          "start": "00:03:11,990",
+          "end": "00:03:13,450"
+        }
+      ]
+    },
+    {
+      "source_cue": 108,
+      "expect": {
+        "start": "00:03:13,450",
+        "end": "00:03:14,950",
+        "text": "然后我是好朋友的妈妈"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "然后我是好朋友的妈妈",
+          "start": "00:03:13,450",
+          "end": "00:03:14,950"
+        }
+      ]
+    },
+    {
+      "source_cue": 109,
+      "expect": {
+        "start": "00:03:14,950",
+        "end": "00:03:16,050",
+        "text": "所以我是妈妈"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "所以我是妈妈",
+          "start": "00:03:14,950",
+          "end": "00:03:16,050"
+        }
+      ]
+    },
+    {
+      "source_cue": 110,
+      "expect": {
+        "start": "00:03:16,050",
+        "end": "00:03:18,350",
+        "text": "然后你是她的主、猪人"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "然后你是她的主、猪人",
+          "start": "00:03:16,050",
+          "end": "00:03:18,350"
+        }
+      ]
+    },
+    {
+      "source_cue": 111,
+      "expect": {
+        "start": "00:03:18,510",
+        "end": "00:03:22,070",
+        "text": "所以我们是她的妈妈、猪人和朋友"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "所以我们是她的妈妈、猪人和朋友",
+          "start": "00:03:18,510",
+          "end": "00:03:22,070"
+        }
+      ]
+    },
+    {
+      "source_cue": 112,
+      "expect": {
+        "start": "00:03:22,550",
+        "end": "00:03:24,710",
+        "text": "啊，猪人来了"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "啊，猪人来了",
+          "start": "00:03:22,550",
+          "end": "00:03:24,710"
+        }
+      ]
+    },
+    {
+      "source_cue": 113,
+      "expect": {
+        "start": "00:03:24,890",
+        "end": "00:03:26,070",
+        "text": "就是这个意思"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "就是这个意思",
+          "start": "00:03:24,890",
+          "end": "00:03:26,070"
+        }
+      ]
+    },
+    {
+      "source_cue": 114,
+      "expect": {
+        "start": "00:03:26,070",
+        "end": "00:03:27,630",
+        "text": "我懂了，我懂了，完全懂了"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我懂了，我懂了，完全懂了",
+          "start": "00:03:26,070",
+          "end": "00:03:27,630"
+        }
+      ]
+    },
+    {
+      "source_cue": 115,
+      "expect": {
+        "start": "00:03:27,630",
+        "end": "00:03:29,250",
+        "text": "我们这个羁绊的妈妈、"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我们这个羁绊的妈妈、",
+          "start": "00:03:27,630",
+          "end": "00:03:29,250"
+        }
+      ]
+    },
+    {
+      "source_cue": 116,
+      "expect": {
+        "start": "00:03:29,250",
+        "end": "00:03:30,370",
+        "text": "主人和朋友的羁绊"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "主人和朋友的羁绊",
+          "start": "00:03:29,250",
+          "end": "00:03:30,370"
+        }
+      ]
+    },
+    {
+      "source_cue": 117,
+      "expect": {
+        "start": "00:03:30,370",
+        "end": "00:03:31,690",
+        "text": "可以叫我们一声吗"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "可以叫我们一声吗",
+          "start": "00:03:30,370",
+          "end": "00:03:31,690"
+        }
+      ]
+    },
+    {
+      "source_cue": 118,
+      "expect": {
+        "start": "00:03:31,690",
+        "end": "00:03:32,650",
+        "text": "可以叫一声吗"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "可以叫一声吗",
+          "start": "00:03:31,690",
+          "end": "00:03:32,650"
+        }
+      ]
+    },
+    {
+      "source_cue": 119,
+      "expect": {
+        "start": "00:03:32,650",
+        "end": "00:03:33,890",
+        "text": "叫我们一声吗"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "叫我们一声吗",
+          "start": "00:03:32,650",
+          "end": "00:03:33,890"
+        }
+      ]
+    },
+    {
+      "source_cue": 120,
+      "expect": {
+        "start": "00:03:34,270",
+        "end": "00:03:36,350",
+        "text": "好，接下来呢，我们就是"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "好，接下来呢，我们就是",
+          "start": "00:03:34,270",
+          "end": "00:03:36,350"
+        }
+      ]
+    },
+    {
+      "source_cue": 121,
+      "expect": {
+        "start": "00:03:36,550",
+        "end": "00:03:38,930",
+        "text": "呃，为了获得这干嘛呢"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "呃，为了获得这干嘛呢",
+          "start": "00:03:36,550",
+          "end": "00:03:38,930"
+        }
+      ]
+    },
+    {
+      "source_cue": 122,
+      "expect": {
+        "start": "00:03:38,930",
+        "end": "00:03:39,550",
+        "text": "我在听啊"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我在听啊",
+          "start": "00:03:38,930",
+          "end": "00:03:39,550"
+        }
+      ]
+    },
+    {
+      "source_cue": 123,
+      "expect": {
+        "start": "00:03:39,550",
+        "end": "00:03:40,390",
+        "text": "我在听啊"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我在听啊",
+          "start": "00:03:39,550",
+          "end": "00:03:40,390"
+        }
+      ]
+    },
+    {
+      "source_cue": 124,
+      "expect": {
+        "start": "00:03:40,390",
+        "end": "00:03:42,900",
+        "text": "那声妈妈没有那个环节吗"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "那声妈妈没有那个环节吗",
+          "start": "00:03:40,390",
+          "end": "00:03:42,900"
+        }
+      ]
+    },
+    {
+      "source_cue": 125,
+      "expect": {
+        "start": "00:03:42,900",
+        "end": "00:03:43,420",
+        "text": "没有那个环节"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "没有那个环节",
+          "start": "00:03:42,900",
+          "end": "00:03:43,420"
+        }
+      ]
+    },
+    {
+      "source_cue": 126,
+      "expect": {
+        "start": "00:03:43,420",
+        "end": "00:03:44,620",
+        "text": "没有那个环节吗"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "没有那个环节吗",
+          "start": "00:03:43,420",
+          "end": "00:03:44,620"
+        }
+      ]
+    },
+    {
+      "source_cue": 127,
+      "expect": {
+        "start": "00:03:44,620",
+        "end": "00:03:45,290",
+        "text": "哪个环节"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "哪个环节",
+          "start": "00:03:44,620",
+          "end": "00:03:45,290"
+        }
+      ]
+    },
+    {
+      "source_cue": 128,
+      "expect": {
+        "start": "00:03:45,290",
+        "end": "00:03:47,844",
+        "text": "我是李豆的什么 你不许再说话"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; mixed segment timing uses the established character-proportion proxy and is not acoustic alignment.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我是李豆的什么",
+          "start": "00:03:45,290",
+          "end": "00:03:46,665"
+        },
+        {
+          "speaker": "李豆沙",
+          "text": "你不许再说话",
+          "start": "00:03:46,665",
+          "end": "00:03:47,844"
+        }
+      ]
+    },
+    {
+      "source_cue": 129,
+      "expect": {
+        "start": "00:03:47,910",
+        "end": "00:03:49,610",
+        "text": "哈哈，我没有啊"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "哈哈，我没有啊",
+          "start": "00:03:47,910",
+          "end": "00:03:49,610"
+        }
+      ]
+    },
+    {
+      "source_cue": 130,
+      "expect": {
+        "start": "00:03:49,610",
+        "end": "00:03:51,470",
+        "text": "李豆沙是我的"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "李豆沙是我的",
+          "start": "00:03:49,610",
+          "end": "00:03:51,470"
+        }
+      ]
+    },
+    {
+      "source_cue": 131,
+      "expect": {
+        "start": "00:03:51,470",
+        "end": "00:03:53,440",
+        "text": "我是李豆沙的"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我是李豆沙的",
+          "start": "00:03:51,470",
+          "end": "00:03:53,440"
+        }
+      ]
+    },
+    {
+      "source_cue": 132,
+      "expect": {
+        "start": "00:03:53,440",
+        "end": "00:03:55,640",
+        "text": "不是，不是吗"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; mixed segment timing uses the established character-proportion proxy and is not acoustic alignment.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "不是",
+          "start": "00:03:53,440",
+          "end": "00:03:54,173"
+        },
+        {
+          "speaker": "连线",
+          "text": "，不是吗",
+          "start": "00:03:54,173",
+          "end": "00:03:55,640"
+        }
+      ]
+    },
+    {
+      "source_cue": 133,
+      "expect": {
+        "start": "00:03:55,640",
+        "end": "00:03:58,080",
+        "text": "我是你的宝贝、妈妈、老公、主人"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "我是你的宝贝、妈妈、老公、主人",
+          "start": "00:03:55,640",
+          "end": "00:03:58,080"
+        }
+      ]
+    },
+    {
+      "source_cue": 134,
+      "expect": {
+        "start": "00:03:58,280",
+        "end": "00:03:59,310",
+        "text": "哈哈哈"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "哈哈哈",
+          "start": "00:03:58,280",
+          "end": "00:03:59,310"
+        }
+      ]
+    },
+    {
+      "source_cue": 135,
+      "expect": {
+        "start": "00:03:59,310",
+        "end": "00:04:00,510",
+        "text": "这是你们要的吗"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "这是你们要的吗",
+          "start": "00:03:59,310",
+          "end": "00:04:00,510"
+        }
+      ]
+    },
+    {
+      "source_cue": 136,
+      "expect": {
+        "start": "00:04:00,510",
+        "end": "00:04:01,390",
+        "text": "不是，不知道"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "不是，不知道",
+          "start": "00:04:00,510",
+          "end": "00:04:01,390"
+        }
+      ]
+    },
+    {
+      "source_cue": 137,
+      "expect": {
+        "start": "00:04:01,390",
+        "end": "00:04:02,510",
+        "text": "诶诶，弹幕说呢"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "诶诶，弹幕说呢",
+          "start": "00:04:01,390",
+          "end": "00:04:02,510"
+        }
+      ]
+    },
+    {
+      "source_cue": 138,
+      "expect": {
+        "start": "00:04:02,510",
+        "end": "00:04:03,630",
+        "text": "大家观众台"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "大家观众台",
+          "start": "00:04:02,510",
+          "end": "00:04:03,630"
+        }
+      ]
+    },
+    {
+      "source_cue": 139,
+      "expect": {
+        "start": "00:04:03,630",
+        "end": "00:04:05,980",
+        "text": "台下的观众觉得是你们想要的吗"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "台下的观众觉得是你们想要的吗",
+          "start": "00:04:03,630",
+          "end": "00:04:05,980"
+        }
+      ]
+    },
+    {
+      "source_cue": 140,
+      "expect": {
+        "start": "00:04:05,980",
+        "end": "00:04:06,649",
+        "text": "那肯定不是"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "那肯定不是",
+          "start": "00:04:05,980",
+          "end": "00:04:06,649"
+        }
+      ]
+    },
+    {
+      "source_cue": 141,
+      "expect": {
+        "start": "00:04:06,649",
+        "end": "00:04:07,810",
+        "text": "她们肯定想听我是"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "她们肯定想听我是",
+          "start": "00:04:06,649",
+          "end": "00:04:07,810"
+        }
+      ]
+    },
+    {
+      "source_cue": 142,
+      "expect": {
+        "start": "00:04:07,810",
+        "end": "00:04:09,730",
+        "text": "而不是“不是”这样子"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "而不是“不是”这样子",
+          "start": "00:04:07,810",
+          "end": "00:04:09,730"
+        }
+      ]
+    },
+    {
+      "source_cue": 143,
+      "expect": {
+        "start": "00:04:09,730",
+        "end": "00:04:10,269",
+        "text": "嗯"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "嗯",
+          "start": "00:04:09,730",
+          "end": "00:04:10,269"
+        }
+      ]
+    },
+    {
+      "source_cue": 144,
+      "expect": {
+        "start": "00:04:10,269",
+        "end": "00:04:10,850",
+        "text": "是啊"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "是啊",
+          "start": "00:04:10,269",
+          "end": "00:04:10,850"
+        }
+      ]
+    },
+    {
+      "source_cue": 145,
+      "expect": {
+        "start": "00:04:10,850",
+        "end": "00:04:11,690",
+        "text": "哎等等等等"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "哎等等等等",
+          "start": "00:04:10,850",
+          "end": "00:04:11,690"
+        }
+      ]
+    },
+    {
+      "source_cue": 146,
+      "expect": {
+        "start": "00:04:11,690",
+        "end": "00:04:13,790",
+        "text": "这样子也不会出现打歌服的呀"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "这样子也不会出现打歌服的呀",
+          "start": "00:04:11,690",
+          "end": "00:04:13,790"
+        }
+      ]
+    },
+    {
+      "source_cue": 147,
+      "expect": {
+        "start": "00:04:13,790",
+        "end": "00:04:15,190",
+        "text": "到底怎么样才会出现打歌服"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "到底怎么样才会出现打歌服",
+          "start": "00:04:13,790",
+          "end": "00:04:15,190"
+        }
+      ]
+    },
+    {
+      "source_cue": 148,
+      "expect": {
+        "start": "00:04:15,190",
+        "end": "00:04:16,910",
+        "text": "就是啊 就是啊"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; mixed segment timing uses the established character-proportion proxy and is not acoustic alignment.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "就是啊",
+          "start": "00:04:15,190",
+          "end": "00:04:16,050"
+        },
+        {
+          "speaker": "连线",
+          "text": "就是啊",
+          "start": "00:04:16,050",
+          "end": "00:04:16,910"
+        }
+      ]
+    },
+    {
+      "source_cue": 149,
+      "expect": {
+        "start": "00:04:16,910",
+        "end": "00:04:21,210",
+        "text": "打歌服是这种要创造一下大家之间的羁绊才行"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "打歌服是这种要创造一下大家之间的羁绊才行",
+          "start": "00:04:16,910",
+          "end": "00:04:21,210"
+        }
+      ]
+    },
+    {
+      "source_cue": 150,
+      "expect": {
+        "start": "00:04:21,210",
+        "end": "00:04:23,570",
+        "text": "我们现在已经很有很深的羁绊了"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我们现在已经很有很深的羁绊了",
+          "start": "00:04:21,210",
+          "end": "00:04:23,570"
+        }
+      ]
+    },
+    {
+      "source_cue": 151,
+      "expect": {
+        "start": "00:04:23,570",
+        "end": "00:04:24,470",
+        "text": "什么"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "什么",
+          "start": "00:04:23,570",
+          "end": "00:04:24,470"
+        }
+      ]
+    },
+    {
+      "source_cue": 152,
+      "expect": {
+        "start": "00:04:24,470",
+        "end": "00:04:26,770",
+        "text": "家庭成员在一块儿"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "家庭成员在一块儿",
+          "start": "00:04:24,470",
+          "end": "00:04:26,770"
+        }
+      ]
+    },
+    {
+      "source_cue": 153,
+      "expect": {
+        "start": "00:04:26,770",
+        "end": "00:04:28,070",
+        "text": "等一下等一下你干嘛"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "等一下等一下你干嘛",
+          "start": "00:04:26,770",
+          "end": "00:04:28,070"
+        }
+      ]
+    },
+    {
+      "source_cue": 154,
+      "expect": {
+        "start": "00:04:28,070",
+        "end": "00:04:29,910",
+        "text": "为什么说着说着开始摸我"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "为什么说着说着开始摸我",
+          "start": "00:04:28,070",
+          "end": "00:04:29,910"
+        }
+      ]
+    },
+    {
+      "source_cue": 155,
+      "expect": {
+        "start": "00:04:29,910",
+        "end": "00:04:31,390",
+        "text": "你们是一个家庭吧"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "你们是一个家庭吧",
+          "start": "00:04:29,910",
+          "end": "00:04:31,390"
+        }
+      ]
+    },
+    {
+      "source_cue": 156,
+      "expect": {
+        "start": "00:04:31,390",
+        "end": "00:04:33,170",
+        "text": "我我，我是这个"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "我我，我是这个",
+          "start": "00:04:31,390",
+          "end": "00:04:33,170"
+        }
+      ]
+    },
+    {
+      "source_cue": 157,
+      "expect": {
+        "start": "00:04:33,170",
+        "end": "00:04:34,710",
+        "text": "只有你是外人"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "只有你是外人",
+          "start": "00:04:33,170",
+          "end": "00:04:34,710"
+        }
+      ]
+    },
+    {
+      "source_cue": 158,
+      "expect": {
+        "start": "00:04:34,710",
+        "end": "00:04:37,850",
+        "text": "哦哦，那你要怎么加入我们呢"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "哦哦，那你要怎么加入我们呢",
+          "start": "00:04:34,710",
+          "end": "00:04:37,850"
+        }
+      ]
+    },
+    {
+      "source_cue": 159,
+      "expect": {
+        "start": "00:04:37,850",
+        "end": "00:04:40,170",
+        "text": "我是你家小孩的同学"
+      },
+      "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "我是你家小孩的同学",
+          "start": "00:04:37,850",
+          "end": "00:04:40,170"
+        }
+      ]
+    }
+  ]
+}

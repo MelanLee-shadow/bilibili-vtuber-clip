@@ -416,11 +416,17 @@
   多人/冲突，或已接受的高置信 GUEST whole-clip context，也会 veto 先验并维持 unresolved
   拒绝。实现见 `src/autoslice/speaker_solo_prior.py` 与 `src/autoslice/speaker_finalizer.py`。
 - 已由 Ivan 完成逐 cue 说话人标注的交付重产可在现有 speaker override 内携带
-  `reviewed-speaker-baseline.v1`，但它只在 delivery truth mode 使用。baseline 必须绑定
+  `reviewed-speaker-baseline.v1/v2`，但它只在 delivery truth mode 使用。baseline 必须绑定
   candidate、最终媒体/clean SRT、真值输入文件 SHA、非空 authority、完整连续 cue 分区，
   并逐 cue 精确绑定最终位置、时间和去注记后的文字。只有 reviewed、单说话人、整段覆盖的
   李豆沙 cue 可作 CAM++ 同片 host anchor；混说、重叠、drop、无人声注记或未裁定 cue 禁止
   充当 anchor。分析器仍对全部 cue 运行，reviewed cue 最后由 override 覆盖；明确留给机器的
   cue 必须保留原 acoustic/context 决策，若机器证据本身 unresolved 仍阻断，绝不能因真值
   文件漏标而默认为连线。合并 cue 先按最终 clean SRT 连续重编号，再建立 override；真值工作表
-  只作成品交付输入，机制回归必须使用合成 fixture。
+  只作成品交付输入，机制回归必须使用合成 fixture。v1 继续严格绑定本次分析产生的完整
+  automatic SRT SHA；v2 则额外绑定 repo-relative、禁止 symlink 且逐字节 canonical 的
+  `automatic-labelled.srt` 路径/SHA，并要求其完整 cue/time/text grid 与最终 clean SRT 一致、
+  每个 machine cue 的二元标签与声明一致。v2 仍执行 fresh 分析和 unresolved 门，但最终只从
+  冻结基线继承显式 machine cue；fresh 与 frozen 的机器标签漂移写入
+  `reviewed-machine-baseline-replay.v1` 披露，不得改变交付归属。冻结文件解析后重写的实际 SHA
+  必须仍等于绑定 SHA，非 canonical 换行/字节形态直接拒发。

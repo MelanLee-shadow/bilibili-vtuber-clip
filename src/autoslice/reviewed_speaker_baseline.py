@@ -17,11 +17,19 @@ import re
 from typing import Mapping, Sequence
 
 from scripts.apply_speaker_turn_overrides import (
+    Cue,
+    parse_labelled_srt,
     sha256_file,
     validate_bound_speaker_override_document,
+    write_srt,
 )
-from scripts.apply_subtitle_text_overrides import parse_srt
-from src.autoslice.speaker_common import HOST_SPEAKER, SpeakerFinalizationError
+from scripts.apply_subtitle_text_overrides import TextCue, parse_srt
+from src.autoslice.speaker_common import (
+    GUEST_SPEAKER,
+    HOST_SPEAKER,
+    SPEAKERS,
+    SpeakerFinalizationError,
+)
 from src.autoslice.speaker_context import _reviewed_context_votes
 from src.autoslice.text_baseline_guard import (
     BASELINE_CONTAINS_SPEAKER_LABEL_PREFIX,
@@ -29,7 +37,8 @@ from src.autoslice.text_baseline_guard import (
 )
 
 
-REVIEWED_SPEAKER_BASELINE_SCHEMA = "reviewed-speaker-baseline.v1"
+REVIEWED_SPEAKER_BASELINE_V1_SCHEMA = "reviewed-speaker-baseline.v1"
+REVIEWED_SPEAKER_BASELINE_SCHEMA = "reviewed-speaker-baseline.v2"
 TRUTH_SCHEMA = "ivan-speaker-truth-diff.v2"
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -41,6 +50,9 @@ class ReviewedSpeakerBaseline:
 
     anchor_labels: dict[int, str]
     machine_cues: tuple[int, ...]
+    machine_labels: dict[int, str]
+    frozen_automatic: tuple[Cue, ...] | None
+    frozen_automatic_sha256: str | None
     evidence: dict[str, object]
 
 
@@ -52,6 +64,111 @@ class SpeakerOverrideState:
     reviewed_votes: dict[int, str]
     reviewed_baseline: ReviewedSpeakerBaseline | None
     expected_automatic_sha256: str
+
+
+def build_fresh_automatic_labels(
+    analysis: Mapping[str, object], cues: Sequence[TextCue]
+) -> list[Cue]:
+    """Convert analyzer decisions to the complete automatic cue grid."""
+
+    decisions = analysis.get("decisions")
+    if not isinstance(decisions, list) or len(decisions) != len(cues):
+        raise SpeakerFinalizationError("speaker analyzer returned incomplete decisions")
+    automatic = []
+    for index, (text_cue, decision) in enumerate(zip(cues, decisions, strict=True), 1):
+        if not isinstance(decision, Mapping) or decision.get("speaker") not in SPEAKERS:
+            raise SpeakerFinalizationError(f"speaker decision {index} is invalid")
+        automatic.append(
+            Cue(
+                source_index=index,
+                start=text_cue.start,
+                end=text_cue.end,
+                speaker=str(decision["speaker"]),
+                text=text_cue.text,
+                decision_source=str(decision.get("decision_source") or "campp_audio"),
+                note=(
+                    f"margin={decision.get('margin')}"
+                    if decision.get("margin") is not None
+                    else None
+                ),
+            )
+        )
+    return automatic
+
+
+def canonical_labelled_srt_sha256(cues: Sequence[Cue]) -> str:
+    """Hash the exact canonical bytes emitted by ``write_srt``."""
+
+    payload = "\n\n".join(
+        f"{index}\n{cue.start} --> {cue.end}\n[{cue.speaker}] {cue.text}"
+        for index, cue in enumerate(cues, 1)
+    ) + "\n"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def materialize_reviewed_automatic_labels(
+    fresh: list[Cue],
+    *,
+    work_dir: Path,
+    baseline: ReviewedSpeakerBaseline | None,
+) -> tuple[list[Cue], Path, Path | None]:
+    """Persist fresh evidence and select the frozen v2 machine baseline."""
+
+    frozen = baseline.frozen_automatic if baseline is not None else None
+    fresh_path = (
+        work_dir / "automatic-labelled.fresh.srt"
+        if frozen is not None
+        else work_dir / "automatic-labelled.srt"
+    )
+    write_srt(fresh, fresh_path)
+    selected = list(frozen) if frozen is not None else fresh
+    selected_path = work_dir / "automatic-labelled.srt"
+    if frozen is not None:
+        write_srt(selected, selected_path)
+        if (
+            baseline is None
+            or baseline.frozen_automatic_sha256 != sha256_file(selected_path)
+        ):
+            raise SpeakerFinalizationError(
+                "reviewed speaker frozen automatic canonical SHA-256 drift"
+            )
+    return selected, selected_path, fresh_path if frozen is not None else None
+
+
+def reviewed_machine_replay_evidence(
+    *,
+    analysis: Mapping[str, object],
+    selected: Sequence[Cue],
+    selected_path: Path,
+    fresh_path: Path,
+    baseline: ReviewedSpeakerBaseline,
+) -> dict[str, object]:
+    """Disclose fresh-vs-frozen machine-cue drift without changing authority."""
+
+    decisions = analysis["decisions"]
+    if not isinstance(decisions, list):
+        raise SpeakerFinalizationError("speaker analyzer returned incomplete decisions")
+    drift = []
+    for index in sorted(baseline.machine_labels):
+        decision = decisions[index]
+        if not isinstance(decision, Mapping):
+            raise SpeakerFinalizationError("speaker analyzer returned invalid decisions")
+        fresh_speaker = str(decision.get("speaker") or "")
+        if fresh_speaker != selected[index].speaker:
+            drift.append(
+                {
+                    "source_cue": index + 1,
+                    "frozen_speaker": selected[index].speaker,
+                    "fresh_speaker": fresh_speaker,
+                }
+            )
+    return {
+        "schema_version": "reviewed-machine-baseline-replay.v1",
+        "status": "FROZEN_MACHINE_BASELINE_APPLIED",
+        "frozen_automatic_srt_sha256": sha256_file(selected_path),
+        "fresh_automatic_srt_sha256": sha256_file(fresh_path),
+        "machine_cue_label_drift": drift,
+    }
 
 
 def _sha256(path: Path) -> str:
@@ -108,23 +225,23 @@ def _assert_expect_matches(
             )
 
 
-def _resolve_truth_input(
-    truth_input: Mapping[str, object],
+def _resolve_repo_input(
+    file_input: Mapping[str, object],
     *,
     repo_root: Path,
-    candidate_id: str,
+    label: str,
 ) -> tuple[Path, str]:
-    if set(truth_input) != {"path", "sha256"}:
+    if set(file_input) != {"path", "sha256"}:
         raise SpeakerFinalizationError(
-            "reviewed speaker truth_input must contain exactly path/sha256"
+            f"{label} must contain exactly path/sha256"
         )
     raw_path = _required_text(
-        truth_input.get("path"), label="reviewed speaker truth_input.path"
+        file_input.get("path"), label=f"{label}.path"
     )
     relative = Path(raw_path)
     if relative.is_absolute() or ".." in relative.parts:
         raise SpeakerFinalizationError(
-            "reviewed speaker truth_input.path must be repository-relative"
+            f"{label}.path must be repository-relative"
         )
     root = repo_root.resolve(strict=True)
     candidate = root / relative
@@ -132,27 +249,37 @@ def _resolve_truth_input(
         resolved = candidate.resolve(strict=True)
     except OSError as exc:
         raise SpeakerFinalizationError(
-            "reviewed speaker truth input is unavailable"
+            f"{label} is unavailable"
         ) from exc
     if not resolved.is_relative_to(root) or not resolved.is_file():
-        raise SpeakerFinalizationError(
-            "reviewed speaker truth input escapes the repository"
-        )
+        raise SpeakerFinalizationError(f"{label} escapes the repository")
     current = root
     for part in relative.parts:
         current = current / part
         if current.is_symlink():
             raise SpeakerFinalizationError(
-                "reviewed speaker truth input must not traverse symlinks"
+                f"{label} must not traverse symlinks"
             )
-    expected_sha = str(truth_input.get("sha256") or "")
+    expected_sha = str(file_input.get("sha256") or "")
     if not SHA256_RE.fullmatch(expected_sha):
-        raise SpeakerFinalizationError(
-            "reviewed speaker truth_input.sha256 must be a SHA-256 digest"
-        )
+        raise SpeakerFinalizationError(f"{label}.sha256 must be a SHA-256 digest")
     actual_sha = _sha256(resolved)
     if actual_sha != expected_sha:
-        raise SpeakerFinalizationError("reviewed speaker truth input hash drift")
+        raise SpeakerFinalizationError(f"{label} hash drift")
+    return resolved, actual_sha
+
+
+def _resolve_truth_input(
+    truth_input: Mapping[str, object],
+    *,
+    repo_root: Path,
+    candidate_id: str,
+) -> tuple[Path, str]:
+    resolved, actual_sha = _resolve_repo_input(
+        truth_input,
+        repo_root=repo_root,
+        label="reviewed speaker truth input",
+    )
     try:
         truth = json.loads(resolved.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -164,6 +291,40 @@ def _resolve_truth_input(
     if truth.get("candidate_id") != candidate_id:
         raise SpeakerFinalizationError("reviewed speaker truth candidate mismatch")
     return resolved, actual_sha
+
+
+def _resolve_automatic_input(
+    automatic_input: Mapping[str, object],
+    *,
+    repo_root: Path,
+    cues: Sequence[object],
+    expected_sha256: str,
+) -> tuple[Path, str, tuple[Cue, ...]]:
+    resolved, actual_sha = _resolve_repo_input(
+        automatic_input,
+        repo_root=repo_root,
+        label="reviewed speaker automatic input",
+    )
+    if actual_sha != expected_sha256:
+        raise SpeakerFinalizationError(
+            "reviewed speaker automatic input does not match source_srt_sha256"
+        )
+    automatic = tuple(parse_labelled_srt(resolved))
+    if len(automatic) != len(cues):
+        raise SpeakerFinalizationError("reviewed speaker automatic cue count drift")
+    for position, (frozen, current) in enumerate(
+        zip(automatic, cues, strict=True), start=1
+    ):
+        if frozen.source_index != position:
+            raise SpeakerFinalizationError(
+                "reviewed speaker automatic cue indices are not contiguous"
+            )
+        for field in ("start", "end", "text"):
+            if getattr(frozen, field) != getattr(current, field, None):
+                raise SpeakerFinalizationError(
+                    f"reviewed speaker automatic cue {position} {field} drift"
+                )
+    return resolved, actual_sha, automatic
 
 
 def _validated_override_rows(
@@ -233,6 +394,7 @@ def load_reviewed_speaker_baseline(
         raise SpeakerFinalizationError(
             "reviewed_speaker_baseline must be an object"
         )
+    schema = raw.get("schema_version")
     expected_keys = {
         "schema_version",
         "authority",
@@ -241,11 +403,16 @@ def load_reviewed_speaker_baseline(
         "anchor_source_cues",
         "machine_cues",
     }
+    if schema == REVIEWED_SPEAKER_BASELINE_SCHEMA:
+        expected_keys.add("automatic_input")
     if set(raw) != expected_keys:
         raise SpeakerFinalizationError(
             "reviewed_speaker_baseline fields are incomplete or unsupported"
         )
-    if raw.get("schema_version") != REVIEWED_SPEAKER_BASELINE_SCHEMA:
+    if schema not in {
+        REVIEWED_SPEAKER_BASELINE_V1_SCHEMA,
+        REVIEWED_SPEAKER_BASELINE_SCHEMA,
+    }:
         raise SpeakerFinalizationError("reviewed speaker baseline schema is unsupported")
     authority = _required_text(
         raw.get("authority"), label="reviewed speaker baseline authority"
@@ -263,6 +430,25 @@ def load_reviewed_speaker_baseline(
         repo_root=repo_root or REPO_ROOT,
         candidate_id=candidate_id,
     )
+    frozen_automatic: tuple[Cue, ...] | None = None
+    automatic_path: Path | None = None
+    automatic_sha = str(document.get("source_srt_sha256") or "")
+    if schema == REVIEWED_SPEAKER_BASELINE_SCHEMA:
+        if not SHA256_RE.fullmatch(automatic_sha):
+            raise SpeakerFinalizationError(
+                "reviewed speaker source_srt_sha256 is invalid"
+            )
+        automatic_input = raw.get("automatic_input")
+        if not isinstance(automatic_input, Mapping):
+            raise SpeakerFinalizationError(
+                "reviewed speaker automatic_input must be an object"
+            )
+        automatic_path, automatic_sha, frozen_automatic = _resolve_automatic_input(
+            automatic_input,
+            repo_root=repo_root or REPO_ROOT,
+            cues=cues,
+            expected_sha256=automatic_sha,
+        )
     override_rows = _validated_override_rows(
         document,
         cues=cues,
@@ -278,7 +464,12 @@ def load_reviewed_speaker_baseline(
             raise SpeakerFinalizationError(
                 f"reviewed speaker machine cue {position} must be an object"
             )
-        if set(row) != {"source_cue", "expect", "reason", "arbitration"}:
+        expected_machine_keys = {
+            "source_cue", "expect", "reason", "arbitration"
+        }
+        if schema == REVIEWED_SPEAKER_BASELINE_SCHEMA:
+            expected_machine_keys.add("speaker")
+        if set(row) != expected_machine_keys:
             raise SpeakerFinalizationError(
                 f"reviewed speaker machine cue {position} fields are invalid"
             )
@@ -290,6 +481,13 @@ def load_reviewed_speaker_baseline(
         if cue_number in machine_rows or cue_number in override_rows:
             raise SpeakerFinalizationError(
                 f"reviewed speaker cue ownership is duplicated: {cue_number}"
+            )
+        if (
+            schema == REVIEWED_SPEAKER_BASELINE_SCHEMA
+            and row.get("speaker") not in {HOST_SPEAKER, GUEST_SPEAKER}
+        ):
+            raise SpeakerFinalizationError(
+                f"reviewed speaker machine cue {cue_number} speaker is invalid"
             )
         _required_text(
             row.get("reason"), label=f"reviewed speaker machine cue {cue_number}.reason"
@@ -316,6 +514,13 @@ def load_reviewed_speaker_baseline(
             cues[cue_number - 1],
             label=f"reviewed speaker machine cue {cue_number}",
         )
+        if (
+            frozen_automatic is not None
+            and frozen_automatic[cue_number - 1].speaker != row.get("speaker")
+        ):
+            raise SpeakerFinalizationError(
+                f"reviewed speaker machine cue {cue_number} frozen label drift"
+            )
         machine_rows[cue_number] = row
 
     expected_partition = set(range(1, cue_count + 1))
@@ -373,18 +578,35 @@ def load_reviewed_speaker_baseline(
         )
 
     evidence: dict[str, object] = {
-        "schema_version": REVIEWED_SPEAKER_BASELINE_SCHEMA,
+        "schema_version": schema,
         "authority": authority,
         "truth_input": str(truth_path),
         "truth_input_sha256": truth_sha,
         "cue_count": cue_count,
         "reviewed_cue_count": len(override_rows),
         "machine_cues": sorted(machine_rows),
+        "machine_labels": {
+            str(number): str(machine_rows[number]["speaker"])
+            for number in sorted(machine_rows)
+            if "speaker" in machine_rows[number]
+        },
+        "source_automatic_srt_sha256": automatic_sha,
         "anchor_source_cues": anchor_numbers,
     }
+    if automatic_path is not None:
+        evidence["automatic_input"] = str(automatic_path)
     return ReviewedSpeakerBaseline(
         anchor_labels={number - 1: HOST_SPEAKER for number in anchor_numbers},
         machine_cues=tuple(sorted(machine_rows)),
+        machine_labels={
+            number - 1: str(row["speaker"])
+            for number, row in machine_rows.items()
+            if "speaker" in row
+        },
+        frozen_automatic=frozen_automatic,
+        frozen_automatic_sha256=(
+            automatic_sha if frozen_automatic is not None else None
+        ),
         evidence=evidence,
     )
 
