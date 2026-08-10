@@ -562,6 +562,14 @@ def _per_frame_rejection_evidence(
     scene = source_composition_scene_kind(source_composition_verification)
     if scene != TALK_SCENE:
         parts.append(f"scene={scene}")
+    # 竖屏源是**路线判据**，不是画面质量差评。模板串会说「证据不够强」，那对一张
+    # 完全合格但太高的帧是错的归因，所以真实判据必须前置（Ivan 2026-08-10）。
+    if decision_inputs.get("vertical_source_redraw") is True:
+        ratio = decision_inputs.get("source_frame_aspect_ratio")
+        parts.append(
+            "vertical_source_redraw=true (Ivan 2026-08-10 裁定：竖屏源不适合截图，"
+            f"按裁定走重绘，非降级); source_frame_aspect_ratio={ratio}"
+        )
     score = decision_inputs.get("frame_score")
     if score is not None:
         parts.append(f"frame_score={score}")

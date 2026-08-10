@@ -145,17 +145,23 @@ def _route(
     verification: dict[str, object] | None,
     frame_selection: dict[str, object],
     cover_mode: str = "auto",
+    source_frame_size: tuple[int, int] | None = None,
+    story_contract: object = None,
+    reference_authority: dict[str, object] | None = None,
 ) -> tuple[str, dict[str, object]]:
+    cover_generation: dict[str, object] = {}
+    if source_frame_size is not None:
+        cover_generation["reference_frame_size"] = source_frame_size
     return publish_staging._build_lidousha_cover_route(
-        cover_generation={},
-        story_contract=None,
+        cover_generation=cover_generation,
+        story_contract=story_contract,
         title="【主播】话音刚落小主暴毙",
         cover_text="话音刚落\n小主暴毙",
         cover_mode=cover_mode,
         art_direction=_art_direction(),
         punch_allowed=True,
         frame_selection=frame_selection,
-        reference_authority=None,
+        reference_authority=reference_authority,
         source_composition_verification=verification,
         enforce_final_host_identity=True,
     )
@@ -829,3 +835,149 @@ def test_repair_still_runs_for_demoted_and_blocked_screenshot_attempts(tmp_path)
         "screenshot_direct",
         Path(rec["cover_generation"]["ai_background"]),
     )
+
+
+# ───────────── ⑦ 竖屏源 → 重绘（Ivan 2026-08-10 逐字裁定）─────────────
+#
+# 「并不是所有的都需要截图，特别是竖屏直播，通常不适合截图，只能重绘。」
+# 实测事故：`auto_230125_960_1072`（BV1Bau16nEyq）源帧 1920×3414，16:9 窗口
+# 对准形心后从眼睛处切断。以下三条钉住：判据成立、判据优先级、判据不误伤。
+
+_VERTICAL_SOURCE_SIZE = (1920, 3414)      # 真实事故几何，h/w = 1.7781
+_LANDSCAPE_SOURCE_SIZE = (1920, 1080)     # 16:9，h/w = 0.5625
+
+
+def _hash_bound_authority() -> dict[str, object]:
+    return {
+        "candidate_id": "auto_230125_960_1072",
+        "source_sha256": "sha256:" + "a" * 64,
+        "reference_png_sha256": "sha256:" + "b" * 64,
+        "visible_participant_ids": [],
+    }
+
+
+def test_canary_7a_vertical_source_routes_to_redraw_as_normal_route(tmp_path):
+    """竖版源即使拿到 4.91 强名场面分也走重绘，且回执不得记成降级。"""
+
+    reference = _reference(tmp_path)
+    verification = _verified(reference, _REAL_8_8_DEMOTED_VERDICT)
+    treatment, route = _route(
+        verification=verification,
+        frame_selection={
+            "status": "SELECTED",
+            "best_ms": 30_000,
+            "candidates": [{"score": 4.91, "emotion": 1.0}],
+            "subject_confident": True,
+            "motion_dispersion_frac": 0.21,
+        },
+        source_frame_size=_VERTICAL_SOURCE_SIZE,
+    )
+    assert treatment == "cpa_redraw"
+
+    assert route["vertical_source_redraw"] is True
+    assert route["source_frame_size"] == [1920, 3414]
+    assert route["source_frame_aspect_ratio"] == 1.7781
+    assert route["vertical_source_min_aspect_ratio"] == 1.2
+
+    selected = next(
+        row for row in route["alternatives"] if row["status"] == "SELECTED"
+    )
+    # 正常路由，不是"帧不够好"。措辞与逐帧证据都必须这么说。
+    assert "redraw is the normal route here (Ivan 2026-08-10)" in selected["rationale"]
+    assert "1.7781 >= 1.20" in selected["rationale"]
+    rejected = next(
+        row for row in route["alternatives"] if row["treatment"] == "screenshot_direct"
+    )
+    assert "vertical_source_redraw=true" in rejected["rejected_reason"]
+    assert "非降级" in rejected["rejected_reason"]
+
+
+_RELATIONSHIP_STORY_CONTRACT = {
+    "schema_version": "lidousha-story-contract.v1",
+    # relationship_visual_safety_evidence 的真实门：CONFIRMED + ≥2 participants。
+    "relation_state": "CONFIRMED",
+    "participants": [
+        {"canonical_id": "lidousha"},
+        {"canonical_id": "sekiseki"},
+    ],
+}
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        # hash-bound 见证帧：旧序里这条无条件 return screenshot_direct，
+        # 竖版判据放在它后面就等于对恢复重放整条失效——而重放正是事故现场。
+        {"reference_authority": _hash_bound_authority()},
+        # 关系钩子：同上，也在竖版判据之后。
+        {"story_contract": _RELATIONSHIP_STORY_CONTRACT},
+        # 运营强制截图：竖版源上"强制"也造不出能用的 16:9 裁切。
+        {"cover_mode": "screenshot"},
+    ],
+)
+def test_canary_7b_vertical_beats_every_screenshot_forcing_branch(tmp_path, kwargs):
+    reference = _reference(tmp_path)
+    verification = _verified(reference, _REAL_8_8_DEMOTED_VERDICT)
+    # 分数刻意压到 0：这样**只有**被测的那条强制分支能产出 screenshot_direct，
+    # 下面的标定评分路径在同样输入下只会给 cpa_redraw。否则对照组会被评分路径
+    # 顺带满足，"优先级"就没被证明过。
+    frame_selection = {
+        "status": "SELECTED",
+        "best_ms": 30_000,
+        "candidates": [{"score": 0.0, "emotion": 0.0}],
+        "subject_confident": True,
+        "motion_dispersion_frac": 0.21,
+    }
+    baseline, _ = _route(
+        verification=verification,
+        frame_selection=frame_selection,
+        source_frame_size=_LANDSCAPE_SOURCE_SIZE,
+    )
+    assert baseline == "cpa_redraw"
+
+    # 对照组证明这条强制分支**真的会开火**：横版同参数必须落在 screenshot_direct。
+    control, control_route = _route(
+        verification=verification,
+        frame_selection=frame_selection,
+        source_frame_size=_LANDSCAPE_SOURCE_SIZE,
+        **kwargs,
+    )
+    assert control == "screenshot_direct", control_route["selected_rationale"]
+
+    treatment, _route_decision = _route(
+        verification=verification,
+        frame_selection=frame_selection,
+        source_frame_size=_VERTICAL_SOURCE_SIZE,
+        **kwargs,
+    )
+    assert treatment == "cpa_redraw"
+
+
+@pytest.mark.parametrize(
+    "size",
+    [
+        _LANDSCAPE_SOURCE_SIZE,   # 16:9   h/w = 0.5625
+        (1440, 1080),             # 4:3    h/w = 0.75
+        (1080, 1080),             # 1:1    h/w = 1.0
+        (1920, 2303),             # h/w = 1.1995，刚好在阈值下
+        None,                     # 几何未知 → fail-open，仍由分数决定
+    ],
+)
+def test_canary_7c_landscape_and_unknown_geometry_are_not_touched(tmp_path, size):
+    """别误伤"横版源但人物在画面上部"——那是整脸门的辖区，不是这条判据的。"""
+
+    reference = _reference(tmp_path)
+    verification = _verified(reference, _REAL_8_8_DEMOTED_VERDICT)
+    treatment, route = _route(
+        verification=verification,
+        frame_selection={
+            "status": "SELECTED",
+            "best_ms": 30_000,
+            "candidates": [{"score": 4.46, "emotion": 1.0}],
+            "subject_confident": False,
+            "motion_dispersion_frac": 0.655,
+        },
+        source_frame_size=size,
+    )
+    assert treatment == "screenshot_direct"
+    assert route["vertical_source_redraw"] is False

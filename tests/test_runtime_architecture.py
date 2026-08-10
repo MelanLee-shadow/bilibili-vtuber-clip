@@ -242,7 +242,11 @@ MODULE_DEBT_LEDGER = {
     # 2026-08-10 净 -2：截图优先修复（Ivan 8/10「你直接做掉截图那个」）——
     # 场景分叉与见证调用的新增重量全部落在新模块 cover_scene_binding.py，
     # 本模块只留调用点，顺带把两处内联 try/except 抽走，账本因此收紧。
-    "src/autoslice/publish_staging.py": 2_864,
+    # 2026-08-10 再净 -151：竖屏源判据（Ivan 8/10「特别是竖屏直播，通常不适合
+    # 截图，只能重绘」）。新增重量落在 cover_source_composition 的几何判据上，
+    # 同时把纯决策的 _decide_cover_treatment（含三个标定常量）整体抽到新模块
+    # cover_route_policy.py，本模块只留 import 别名与调用点。
+    "src/autoslice/publish_staging.py": 2_713,
     "src/autoslice/same_bv_repair.py": 2_422,
 }
 SCRIPT_EXCLUSIONS = {

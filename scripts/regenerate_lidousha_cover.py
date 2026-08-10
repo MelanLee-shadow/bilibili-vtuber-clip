@@ -155,7 +155,7 @@ def regenerate_cover(
         ):
             raise SystemExit(
                 "COVER_PUNCH_REVIEW_INVALID: cover_punch 缺少通过校验的"
-                " lidousha-cover-punch-semantic-review.v1 回执；回执为空/失败时"
+                " lidousha-cover-punch-semantic-review.v2 回执；回执为空/失败时"
                 "必须重试或阻断，不得落盘任何像素"
             )
     import dataclasses

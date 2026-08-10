@@ -47,6 +47,105 @@ _SCENE_BOOL_FIELDS = {
     GAME_SCENE: _GAME_BOOL_FIELDS,
 }
 
+# 竖屏源不走截图（Ivan 2026-08-10 逐字裁定）：「并不是所有的都需要截图，特别是
+# 竖屏直播，通常不适合截图，只能重绘。」
+#
+# 阈值依据（几何，不是标定）：成品封面固定 16:9（0.5625 的 h/w）。从一张 h/w=r
+# 的源里裁一条满宽 16:9，只用得到 0.5625/r 的画面高度。r=1.2 时已经只剩 46.9%
+# ——超过一半的直播画面被丢掉，"忠实裁切"这个前提本身就不成立；再往上（3:4 竖屏
+# r=1.333 剩 42%，9:16 手机竖屏 r=1.778 剩 32%）只会更糟。实测事故
+# `auto_230125_960_1072`（源帧 1920×3414，r=1.7781）正是这样把 16:9 窗口对准
+# 形心后从眼睛处切断。横版侧留足余量：16:9=0.5625、4:3=0.75、1:1=1.0 全部远低于
+# 1.2，所以"横版源但人物在画面上部"不会被这条判据误伤（那是整脸门的辖区）。
+VERTICAL_SOURCE_MIN_ASPECT_RATIO = 1.2
+COVER_OUTPUT_ASPECT_RATIO = 1080 / 1920
+
+
+def source_frame_is_vertical(
+    size: object,
+    *,
+    min_ratio: float = VERTICAL_SOURCE_MIN_ASPECT_RATIO,
+) -> bool:
+    """Return whether one source frame is too tall for a 16:9 screenshot.
+
+    Fail-open on unknown geometry: a missing or unparseable size is not proof
+    of a vertical source, and the ordinary scoring route still owns that clip.
+    """
+
+    if not isinstance(size, (list, tuple)) or len(size) != 2:
+        return False
+    try:
+        width = float(size[0])
+        height = float(size[1])
+    except (TypeError, ValueError):
+        return False
+    if not (math.isfinite(width) and math.isfinite(height)) or width <= 0 or height <= 0:
+        return False
+    return (height / width) >= float(min_ratio)
+
+
+def source_frame_aspect_ratio(size: object) -> float | None:
+    """Return one source frame's h/w, or ``None`` when geometry is unknown."""
+
+    if not isinstance(size, (list, tuple)) or len(size) != 2:
+        return None
+    try:
+        width = float(size[0])
+        height = float(size[1])
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(width) and math.isfinite(height)) or width <= 0 or height <= 0:
+        return None
+    return round(height / width, 4)
+
+
+def vertical_source_redraw_reason(
+    size: object,
+    *,
+    min_ratio: float = VERTICAL_SOURCE_MIN_ASPECT_RATIO,
+) -> str | None:
+    """Route reason when the source is vertical, else ``None``.
+
+    这是**正常路由，不是降级**：帧本身可以完全合格，只是装不进 16:9。回执措辞
+    因此写「redraw is the normal route here」并带上实测比例与阈值，别让下游把它
+    读成选帧失败或质量不合格。
+    """
+
+    if not source_frame_is_vertical(size, min_ratio=min_ratio):
+        return None
+    return (
+        "vertical source is unsuitable for a screenshot cover; redraw is the "
+        "normal route here (Ivan 2026-08-10) — source h/w="
+        f"{source_frame_aspect_ratio(size):.4f} >= {float(min_ratio):.2f}"
+    )
+
+
+def vertical_source_decision_inputs(size: object) -> dict[str, object]:
+    """Disclose the measured geometry and the threshold in the route receipt."""
+
+    return {
+        "source_frame_size": (
+            [int(size[0]), int(size[1])]
+            if isinstance(size, (list, tuple)) and len(size) == 2
+            else None
+        ),
+        "source_frame_aspect_ratio": source_frame_aspect_ratio(size),
+        "vertical_source_min_aspect_ratio": VERTICAL_SOURCE_MIN_ASPECT_RATIO,
+        "vertical_source_redraw": source_frame_is_vertical(size),
+    }
+
+
+def read_source_frame_size(path: object) -> tuple[int, int] | None:
+    """Measure one already-extracted reference frame; ``None`` when unreadable."""
+
+    if not path:
+        return None
+    try:
+        with Image.open(Path(str(path))) as image:
+            return (int(image.width), int(image.height))
+    except Exception:
+        return None
+
 
 def normalize_cover_scene_kind(value: object) -> str:
     """Fail-closed scene normalization: anything unproven is a talk scene."""

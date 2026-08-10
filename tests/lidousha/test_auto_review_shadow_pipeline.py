@@ -4670,19 +4670,28 @@ def test_cover_punch_deterministic_baseline_and_gates():
     assert song.cover_punch == ()
 
 
-def test_cover_punch_llm_pick_is_source_bound():
+def test_cover_punch_llm_pick_is_shape_validated():
+    """v2：机械层只验形状，真实性由判官的 no_fabricated_fact 承担。
+
+    2026-08-10 之前这一层还兼职做"必须是标题连续子串"的防编造代理。那条规则
+    Ivan 从未要求过（逐字裁定：「梗字从来没有要求过必须是标题的连续子串吧」），
+    已退役；能拆开的两件事在这里分别钉住：**形状**（可渲染性、断字安全）留在
+    确定性层，**真实性**上移到判官。
+    """
+
     from src.autoslice import cover_generation
 
-    # LLM 选中合法梗字（文案逐字片段）→ 采用（main+sub 两行）。
+    # LLM 选中合法梗字（本例恰好是文案逐字片段）→ 采用（main+sub 两行）。
     def judge_ok(_prompt: str) -> str:
         if "最终文字语义裁决者" in _prompt:
             return (
-                '{"schema_version":"lidousha-cover-punch-semantic-review.v1",'
+                '{"schema_version":"lidousha-cover-punch-semantic-review.v2",'
                 '"status":"PASS",'
                 '"final_punch":{"main":"才，才不是熊猫呢！","sub":"是奶P！"},'
                 '"stranger_can_infer_event":true,'
                 '"contains_concrete_subject":true,'
                 '"contains_action_or_conflict":true,'
+                '"no_fabricated_fact":true,'
                 '"story_summary":"她嘴硬否认自己是熊猫并自称奶P",'
                 '"click_motivation":"身份反差和嘴硬原话让人想看前因后果"}'
             )
@@ -4707,18 +4716,20 @@ def test_cover_punch_llm_pick_is_source_bound():
         {"main": "精心设计MC环节想让k", "sub": None}, _PUNCH_TEXT
     ) == ()
 
-    # 编造的字（不在文案里）→ 拒绝 → 回退确定性兜底。
+    # 非子串的初选梗字**不再被机械层清零**（Ivan 2026-08-10），仍要过判官；
+    # 判官判它编造（no_fabricated_fact=false）→ fail-closed 清零。
     def judge_fabricated(_prompt: str) -> str:
         if "最终文字语义裁决者" in _prompt:
             return (
-                '{"schema_version":"lidousha-cover-punch-semantic-review.v1",'
+                '{"schema_version":"lidousha-cover-punch-semantic-review.v2",'
                 '"status":"PASS",'
-                '"final_punch":{"main":"才不是熊猫呢！","sub":null},'
+                '"final_punch":{"main":"你不许玩谐音梗","sub":null},'
                 '"stranger_can_infer_event":true,'
                 '"contains_concrete_subject":true,'
                 '"contains_action_or_conflict":true,'
-                '"story_summary":"她用原话嘴硬否认自己是熊猫",'
-                '"click_motivation":"强烈否认形成身份反差并引出前因"}'
+                '"no_fabricated_fact":false,'
+                '"story_summary":"片里没有任何人禁止玩谐音梗",'
+                '"click_motivation":"这句是凭空加的禁令，片中无依据"}'
             )
         return (
             '{"role":"stubborn_pout","expression_en":"pouty defiant frown",'
@@ -4726,6 +4737,9 @@ def test_cover_punch_llm_pick_is_source_bound():
             '"cover_punch":{"main":"你不许玩谐音梗","sub":null}}'
         )
 
+    assert cover_generation._validated_cover_punch(
+        {"main": "你不许玩谐音梗", "sub": None}, _PUNCH_TEXT
+    ) == ("你不许玩谐音梗",)
     rejected = shadow_pipeline._lidousha_cover_art_direction(
         candidate_id="cand-7",
         title=_PUNCH_TITLE,
@@ -4733,7 +4747,9 @@ def test_cover_punch_llm_pick_is_source_bound():
         art_direction_llm_call=judge_fabricated,
         allow_punch=True,
     )
-    assert rejected.cover_punch == ("才不是熊猫呢！",)
+    assert rejected.cover_punch == ()
+    assert rejected.cover_punch_semantic_review["status"] == "FAILED"
+    assert rejected.cover_punch_semantic_review["no_fabricated_fact"] is False
 
     # 超长（>12 字）同样拒绝 → 兜底。
     assert cover_generation._validated_cover_punch(
@@ -4761,12 +4777,13 @@ def test_cover_punch_prompt_preserves_forwarding_condition() -> None:
             assert "生日能拿菲尔兹奖" in prompt
             assert "必须 REVISE" in prompt
             return (
-                '{"schema_version":"lidousha-cover-punch-semantic-review.v1",'
+                '{"schema_version":"lidousha-cover-punch-semantic-review.v2",'
                 '"status":"REVISE",'
                 '"final_punch":{"main":"转发这条生日消息","sub":"能拿菲尔兹奖"},'
                 '"stranger_can_infer_event":true,'
                 '"contains_concrete_subject":true,'
                 '"contains_action_or_conflict":true,'
+                '"no_fabricated_fact":true,'
                 '"story_summary":"转发生日消息是获得菲尔兹奖的条件",'
                 '"click_motivation":"荒诞转发条件和主播追问形成反差"}'
             )
@@ -4812,12 +4829,13 @@ def test_cover_punch_cpa_repairs_real_raw_beans_fragmentation():
     def judge(prompt: str) -> str:
         if "最终文字语义裁决者" in prompt:
             return (
-                '{"schema_version":"lidousha-cover-punch-semantic-review.v1",'
+                '{"schema_version":"lidousha-cover-punch-semantic-review.v2",'
                 '"status":"REVISE",'
                 '"final_punch":{"main":"安晚也吃了生豆角","sub":"三人组必须团结"},'
                 '"stranger_can_infer_event":true,'
                 '"contains_concrete_subject":true,'
                 '"contains_action_or_conflict":true,'
+                '"no_fabricated_fact":true,'
                 '"story_summary":"安晚吃了生豆角后她把集体中招说成三人组团结",'
                 '"click_motivation":"食物中毒和团结口号的荒诞反差让人想看她如何圆场"}'
             )
@@ -4907,12 +4925,13 @@ def test_cover_punch_cpa_keeps_pink_sister_phrase_as_one_physical_line(tmp_path)
         if "最终文字语义裁决者" in prompt:
             assert "不能依赖渲染器在词中间二次断行" in prompt
             return (
-                '{"schema_version":"lidousha-cover-punch-semantic-review.v1",'
+                '{"schema_version":"lidousha-cover-punch-semantic-review.v2",'
                 '"status":"REVISE",'
                 '"final_punch":{"main":"小姐姐布下迷魂阵","sub":"我是侄女啊"},'
                 '"stranger_can_infer_event":true,'
                 '"contains_concrete_subject":true,'
                 '"contains_action_or_conflict":true,'
+                '"no_fabricated_fact":true,'
                 '"story_summary":"小姐姐布下迷魂阵后她想起自己的侄女辈分",'
                 '"click_motivation":"迷魂阵和侄女辈分的突然反转值得点开"}'
             )
@@ -4973,14 +4992,15 @@ def test_cover_punch_rejects_fragment_cut_before_quoted_object():
     ) == ("“白色奶龙”表情", "小李拒绝花钱")
 
     def judge(prompt: str) -> str:
-        assert "不得在左括号前截断" in prompt
+        assert "不要停在紧随其后的引号、书名号或括号成分之前" in prompt
         return (
-            '{"schema_version":"lidousha-cover-punch-semantic-review.v1",'
+            '{"schema_version":"lidousha-cover-punch-semantic-review.v2",'
             '"status":"REVISE",'
             '"final_punch":{"main":"让新3D永久保留","sub":"小李拒绝花钱"},'
             '"stranger_can_infer_event":true,'
             '"contains_concrete_subject":true,'
             '"contains_action_or_conflict":true,'
+                '"no_fabricated_fact":true,'
             '"story_summary":"观众让新3D保留表情但小李拒绝花钱",'
             '"click_motivation":"永久保留表情和花钱之间的冲突值得点开"}'
         )
@@ -4996,6 +5016,153 @@ def test_cover_punch_rejects_fragment_cut_before_quoted_object():
     assert reviewed == ()
     assert proof["status"] == "FAILED"
     assert proof["reason_code"] == "CPA_PUNCH_SEMANTIC_REVIEW_REJECTED"
+
+
+# ── Ivan 2026-08-10：梗字不必是标题连续子串 ────────────────────────────────
+#
+# 「梗字从来没有要求过必须是标题的连续子串吧，我不记得我要求过，事实上很多高
+# 播放量的切片，封面字块里的梗字和标题不一致，反而可能承接了一些解释原因或者
+# 补充说明的感觉，不需要与标题一致重复。」
+#
+# 真实被清零的形状：`auto_230125_960_1072` / BV1Bau16nEyq——判官三项语义全 true、
+# click_motivation 正面，final_punch 却因为两行都不是标题子串被机械层清成 []。
+
+_LOVECODE_TITLE = "【李豆沙】小李被问《ラブコード》算不算偶像曲，越解释越像在表白"
+_LOVECODE_COVER_TEXT = _LOVECODE_TITLE.removeprefix("【李豆沙】")
+_LOVECODE_HOOK = (
+    "观众问《ラブコード》算不算偶像曲，李豆沙一边解释一边把歌词"
+    "「再一次爱上我吧」念出来，越解释越像在对观众表白。"
+)
+
+
+def _lovecode_review_json(*, no_fabricated_fact: str = "true") -> str:
+    return (
+        '{"schema_version":"lidousha-cover-punch-semantic-review.v2",'
+        '"status":"PASS",'
+        '"final_punch":{"main":"再一次爱上我吧","sub":"小李解释偶像曲"},'
+        '"stranger_can_infer_event":true,'
+        '"contains_concrete_subject":true,'
+        '"contains_action_or_conflict":true,'
+        f'"no_fabricated_fact":{no_fabricated_fact},'
+        '"story_summary":"她解释这首偶像曲时把歌词再一次爱上我吧念了出来",'
+        '"click_motivation":"解释歌曲却像在对观众表白，反差值得点开"}'
+    )
+
+
+def test_cover_punch_non_substring_lines_are_allowed_bv1bau16neyq():
+    """BV1Bau16nEyq 的真实形状在 v2 下必须放行（两行都不是标题子串）。"""
+
+    from src.autoslice import cover_generation
+
+    punch = ("再一次爱上我吧", "小李解释偶像曲")
+    # 载荷性质：正是这一点让旧规则把它清零。
+    for line in punch:
+        assert line not in _LOVECODE_COVER_TEXT
+
+    reviewed, proof = cover_generation.review_cover_punch_semantics(
+        title=_LOVECODE_TITLE,
+        cover_text=_LOVECODE_COVER_TEXT,
+        story_hook=_LOVECODE_HOOK,
+        punch=punch,
+        llm_call=lambda _prompt: _lovecode_review_json(),
+        punch_validator=cover_generation._validated_cover_punch,
+    )
+    assert reviewed == punch
+    assert proof["status"] == "PASS"
+    assert proof["reason_code"] is None
+    assert proof["no_fabricated_fact"] is True
+
+    # 包审计面（producer/regenerate/auditor 共用）必须同样放行，否则生成端
+    # 放开、审计端再清零一次，等于没改。
+    assert cover_generation.validate_cover_punch_semantic_review(
+        proof,
+        rendered_lines=list(punch),
+        cover_text=_LOVECODE_COVER_TEXT,
+        story_hook=_LOVECODE_HOOK,
+    )
+    # 判官的提问里必须带上 Ivan 的裁定，别让模型继续自我设限。
+    from src.autoslice import cover_punch_semantics
+
+    prompt = cover_punch_semantics._review_prompt(
+        title=_LOVECODE_TITLE,
+        cover_text=_LOVECODE_COVER_TEXT,
+        story_hook=_LOVECODE_HOOK,
+        punch=punch,
+    )
+    assert "**不要求**是标题或封面文案的逐字连续片段" in prompt
+    assert "不需要与标题一致重复" in prompt
+    assert "只能说片里真有的事" in prompt
+
+
+def test_cover_punch_fabrication_gate_blocks_facts_absent_from_the_clip():
+    """替代保护：不得断言片中没有的事——fail-closed，缺字段也不通过。"""
+
+    from src.autoslice import cover_generation
+
+    punch = ("现场直接官宣恋情", "小李解释偶像曲")
+
+    def judge_fabricated(_prompt: str) -> str:
+        return (
+            '{"schema_version":"lidousha-cover-punch-semantic-review.v2",'
+            '"status":"PASS",'
+            '"final_punch":{"main":"现场直接官宣恋情","sub":"小李解释偶像曲"},'
+            '"stranger_can_infer_event":true,'
+            '"contains_concrete_subject":true,'
+            '"contains_action_or_conflict":true,'
+            '"no_fabricated_fact":false,'
+            '"story_summary":"梗字声称她官宣恋情，但片中只有解释歌曲",'
+            '"click_motivation":"官宣恋情是编的，标题与语境都无支撑"}'
+        )
+
+    reviewed, proof = cover_generation.review_cover_punch_semantics(
+        title=_LOVECODE_TITLE,
+        cover_text=_LOVECODE_COVER_TEXT,
+        story_hook=_LOVECODE_HOOK,
+        punch=punch,
+        llm_call=judge_fabricated,
+        punch_validator=cover_generation._validated_cover_punch,
+    )
+    assert reviewed == ()
+    assert proof["status"] == "FAILED"
+    assert proof["reason_code"] == "CPA_PUNCH_SEMANTIC_REVIEW_REJECTED"
+
+    # 缺字段（老 prompt / 老模型 / v1 回执）同样不通过，不是"没说就是没编造"。
+    silent = json.loads(_lovecode_review_json())
+    silent.pop("no_fabricated_fact")
+    reviewed_silent, proof_silent = cover_generation.review_cover_punch_semantics(
+        title=_LOVECODE_TITLE,
+        cover_text=_LOVECODE_COVER_TEXT,
+        story_hook=_LOVECODE_HOOK,
+        punch=("再一次爱上我吧", "小李解释偶像曲"),
+        llm_call=lambda _prompt: json.dumps(silent, ensure_ascii=False),
+        punch_validator=cover_generation._validated_cover_punch,
+    )
+    assert reviewed_silent == ()
+    assert proof_silent["status"] == "FAILED"
+
+    # 审计面：把 no_fabricated_fact 翻成 false / 摘掉，回执一律失效。
+    good = json.loads(_lovecode_review_json())
+    good["status"] = "PASS"
+    good["final_punch"] = ["再一次爱上我吧", "小李解释偶像曲"]
+    good["cover_text_sha256"] = hashlib.sha256(
+        _LOVECODE_COVER_TEXT.encode("utf-8")
+    ).hexdigest()
+    good["story_hook_sha256"] = hashlib.sha256(
+        _LOVECODE_HOOK.encode("utf-8")
+    ).hexdigest()
+    assert cover_generation.validate_cover_punch_semantic_review(
+        good,
+        rendered_lines=good["final_punch"],
+        cover_text=_LOVECODE_COVER_TEXT,
+        story_hook=_LOVECODE_HOOK,
+    )
+    for mutated in ({**good, "no_fabricated_fact": False}, {k: v for k, v in good.items() if k != "no_fabricated_fact"}):
+        assert not cover_generation.validate_cover_punch_semantic_review(
+            mutated,
+            rendered_lines=good["final_punch"],
+            cover_text=_LOVECODE_COVER_TEXT,
+            story_hook=_LOVECODE_HOOK,
+        )
 
 
 def test_cover_punch_renderer_fails_closed_instead_of_midword_wrap():
@@ -5464,7 +5631,7 @@ def test_814_shaped_forced_screenshot_reroutes_from_unverified_subject():
         hook_word="原点组",
         cover_punch=(),
         cover_punch_semantic_review={
-            "schema_version": "lidousha-cover-punch-semantic-review.v1",
+            "schema_version": "lidousha-cover-punch-semantic-review.v2",
             "status": "FAILED",
             "reason_code": "CPA_PUNCH_SEMANTIC_REVIEW_REJECTED",
             "original_punch": ["我也磕原点组", "怎么没有"],
@@ -5555,7 +5722,7 @@ def test_235_shaped_readable_punch_still_reroutes_unverified_subject():
         hook_word="抽烟",
         cover_punch=("咖啡店遇人抽烟", "电脑都有烟味"),
         cover_punch_semantic_review={
-            "schema_version": "lidousha-cover-punch-semantic-review.v1",
+            "schema_version": "lidousha-cover-punch-semantic-review.v2",
             "status": "REVISED",
             "final_punch": ["咖啡店遇人抽烟", "电脑都有烟味"],
         },
@@ -6121,7 +6288,7 @@ def test_964_full_title_fails_then_cpa_punch_is_readable() -> None:
         if "最终文字语义裁决者" in prompt:
             return json.dumps(
                 {
-                    "schema_version": "lidousha-cover-punch-semantic-review.v1",
+                    "schema_version": "lidousha-cover-punch-semantic-review.v2",
                     "status": "PASS",
                     "final_punch": {
                         "main": "打假“长沙大香肠”",
@@ -6130,6 +6297,7 @@ def test_964_full_title_fails_then_cpa_punch_is_readable() -> None:
                     "stranger_can_infer_event": True,
                     "contains_concrete_subject": True,
                     "contains_action_or_conflict": True,
+            "no_fabricated_fact": True,
                     "story_summary": "长沙人亲自打假长沙大香肠。",
                     "click_motivation": "想知道她如何识破并吐槽。",
                 },

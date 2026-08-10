@@ -298,11 +298,12 @@ def _cover_default_punch(cover_text: str) -> tuple[str, ...]:
 
 
 def _validated_cover_punch(value: object, cover_text: str) -> tuple[str, ...]:
-    """Accept an LLM cover punch only when provably source-bound.
+    """Validate the LLM's initial cover punch **shape** only（v2, 2026-08-10）。
 
-    main 必填、sub 可选；每行都必须是 cover_text 的逐字连续片段（忽略布局空
-    白），2-12 字，行首禁闭标点/行末禁开标点。任何不合格 → () → 调用方回退
-    确定性兜底。防的是 LLM 编造封面字（字幕/标题同源的真实性铁律）。
+    main 必填、sub 可选；每行 2-12 字、单物理行、行首禁闭标点/行末禁开标点。任何不合格 → ()
+    → 调用方回退确定性兜底。**逐字连续子串已不再是要求**（Ivan 2026-08-10 裁定；考据与动机转移
+    见 `cover_punch_semantics.SCHEMA_VERSION` 注释）：防编造改由终审 `no_fabricated_fact` 承担，
+    这一层只保证可渲染。白色奶龙护栏（截在左引号前=截掉一个语义原子）仍在，但只对**确实是原文子串**的片段成立——对自由改写的梗字，原文括号位置说明不了任何事。
     """
 
     if not isinstance(value, Mapping):
@@ -325,7 +326,7 @@ def _validated_cover_punch(value: object, cover_text: str) -> tuple[str, ...]:
             or "\n" in fragment
         ):
             return ()
-        if canon not in haystack or not extractive_punch_fragment_is_source_safe(
+        if canon in haystack and not extractive_punch_fragment_is_source_safe(
             fragment,
             cover_text,
         ):
@@ -585,10 +586,9 @@ def _cover_art_direction_prompt(
             "  **梗字必须扣住本条的具体名场面**（2026-07-25 Ivan 生豆角案铁律）：main+sub 合起来必须包含核心具象"
             "意象——事件里的具体东西/动作/原话（如'生豆角''有骗子！'）；**禁止只用抽象总结词**（'团结默契''下播暗示'"
             "这类无画面、换条也能用的词）。若最出圈的感叹句本身抽象，则 main 取具象意象词、sub 取该感叹句（或反之）。\n"
-            "  硬约束：main 必须是封面文案里的**逐字连续片段**（不加/不减/不改字，可含标点），2-12 字；sub 可选"
-            "（null 或第二行 2-12 字小字补语境，同样必须是文案原文片段）。**几乎永远都选得出来**——按优先级找：含具象"
-            "意象的她的原话感叹句＞引号里的梗词＞含具象意象的短分句＞最后一个短分句；只有文案完全不存在 2-12 字连续"
-            "片段时才允许 main 给 null（极罕见）。梗字模式下 lines/words 仍要照常输出（作回退）。\n"
+            "  **梗字不必是标题/封面文案的连续子串，也不必与标题一致重复**（Ivan 2026-08-10 逐字裁定：「梗字从来没有要求过必须是标题的连续子串吧，我不记得我要求过，事实上很多高播放量的切片，封面字块里的梗字和标题不一致，反而可能承接了一些解释原因或者补充说明的感觉，不需要与标题一致重复。」）。原话直引依然是最好的第一选择，但你也可以改写、缩写、换口语说法；**sub 尤其鼓励承接解释原因或补充说明**，而不是把 main 的词再抄一遍。\n"
+            "  **只能说片里真有的事**：梗字里的每个具体指涉（人/物/动作/数字/结论）都必须由本条标题或切片语境支撑；不得新增没出现过的人物或情节，不得把推测写成已发生的事实，不得升级程度或结果。编造会在终审被 no_fabricated_fact 门拦下。\n"
+            "  硬约束：main 与 sub 各 2-12 字、各自是一条能直接渲染的物理行（可含标点）；sub 可选（null 或第二行小字）。若直接抽取原文片段，不得停在紧随的引号/书名号/括号成分之前。**几乎永远都写得出来**——按优先级找：含具象意象的她的原话感叹句＞引号里的梗词＞含具象意象的短分句＞你自己写的、有支撑的一句补充说明；只有本条完全无从概括时才允许 main 给 null（极罕见）。梗字模式下 lines/words 仍要照常输出（作回退）。\n"
         )
         punch_output_field = ',"cover_punch":null|{"main":"...","sub":null|"..."}'
     return (
