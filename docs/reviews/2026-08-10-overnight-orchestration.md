@@ -1,5 +1,34 @@
 # 2026-08-10 夜间自主调度记录(Ivan 就寝令)
 
+## ⚠️ 先说结论:**你要的东西今晚没做到**
+
+Ivan 的目标是「878889 的切片和歌切都上传成功」。**实际结果:0 条交付、0 条上传。**
+不粉饰,也不用"修了很多东西"来抵。下面是为什么、以及我判断该由你拍板的地方。
+
+| 目标 | 结果 | 卡在哪 |
+|---|---|---|
+| 8/7 切片 | 0 新增(此前已发 3) | 该日席位已满;唯一 `review_ready` 件卡 punch v2 回执 |
+| 8/8 切片 | **0**(13 条全灭) | **三个内容门**:说话人锚点 / 终审正字法 / 边界语义 |
+| 8/9 切片 | 待产(素材完好,5 席) | 排在 8/8 之后,时间不够 |
+| 歌切 | **0**(8/8 三首全 `candidate_rejected`) | 身份门已过、`repaired=True`、`FULL_SONG_READY`,**但栽在 `song_complete` 完整歌门** |
+
+**基础设施侧我修好了,内容门侧我没有权限替你放宽。**
+09:12 部署之后 runner.log 里**再没有一次 provider failure**(此前 8/7 那批是 400 抽签 + 90 分钟超时全灭);
+歌 lane 从"一条 repair 霸占唯一名额、26 次尝试 0 产出"变成**逐个候选正常轮转**;
+《花の塔》从"身份歧义"变成"song identified";《心型病毒》的 `reason_codes` 从
+`SONG_AUDIO_LRC_ALIGNMENT_INVALID` 变成 **空数组**。
+**这些都验证成功了,但它们都不是最后那道门。**
+
+**最后一道门是内容门,我按纪律没碰**:
+- 谈话切:解法只有 §六之六 的选项 D,而 D 会发出审片员**已判定为错**的字幕。
+- 歌切:`song_complete` 完整歌校验——`song_boundary` 已 `FULL_SONG_READY`
+  (歌词覆盖 15.0s–131.2s / 全长 132.7s、96.43% 行匹配),**但 lane 层仍判不完整**。
+  这中间的落差**值得你亲自看一眼**(§六之十八),因为证据看起来是够的。
+
+**一个正向的副作用**:心型病毒这次是**干净地终态 `candidate_rejected`**,不再是"伪装成基础设施故障无限重试"。
+即使没交付,产线也不再空转烧机时了。
+
+
 **Ivan 逐字令(本夜唯一授权源)**:
 > 我要睡觉了，你自己调度，我希望明天早上能看到878889的切片和歌切都上传成功
 
@@ -535,6 +564,43 @@ song_boundary      = {"status": "FULL_SONG_READY", "first_lyric_start_ms": 15000
 
 **剩余一步**:lane 层还要"positive LRC boundary proof",tight 窗(1195–1352s)没给出,
 已自动用 `_full` 窗(1090–1692s)重试中。三条歌今晚都走了同一条 tight→full 的升级路径,是设计内行为。
+
+## 六之十八、⭐ **歌切为什么"从来没有"发出去过:交付物化(materialized_recut)整段缺失**
+
+这是今晚最有价值的发现,也直接回答了"为什么这三天歌切产出恒为 0"。
+
+`song_210131_1210`(心型病毒)最终 state 逐字:
+```
+status = candidate_rejected   decision = REJECT
+window_classified_song = True     song_complete = False
+reason_codes = ['START_BOUNDARY_LOW', 'END_BOUNDARY_LOW', 'OPEN_LOOPS_PRESENT',
+  'CPA_SEMANTIC_INCOMPLETE', 'CPA_RELEASE_NOT_READY', 'VIEWER_CONTEXT_INCOMPLETE',
+  'SONG_NOT_LIDOUSHA_SINGING',
+  'SONG_MATERIALIZED_RECUT_MISSING', 'SONG_SUBTITLE_ARTIFACT_HASH_INVALID',
+  'SONG_BURNED_PREVIEW_MISSING', 'SONG_RECUT_MANIFEST_HASH_INVALID',
+  'SONG_RECUT_MANIFEST_CONTENT_INVALID', 'SONG_RECUT_SOURCE_BINDING_INVALID',
+  'SONG_RECUT_PROOF_BINDING_INVALID', 'SONG_RECUT_INTERVAL_BINDING_INVALID',
+  'SONG_RECUT_STREAM_CONTRACT_INVALID', 'SONG_RECUT_ARTIFACT_BINDING_INVALID', …]
+song_completion_evidence.ready = false
+song_completion_evidence.song_boundary_status = "FULL_SONG_READY"
+```
+
+**读法**:**证明侧全绿**(`FULL_SONG_READY`、96.43% 行匹配、`repaired=True`、`reason_codes` 在 repair 层已清空),
+**物化侧整段缺失**——`materialized_recut` 没有、烧录预览没有、字幕产物哈希无效、recut manifest/来源/证明/区间/流/产物
+**七个 binding 全部 invalid**。这不是"某一道门判它不合格",是**交付物根本没有被生成**。
+
+这与项目 memory 里记的「`song_212005` materialized_recut 交付集成缺口 fail-closed」是同一件事。
+free 上 `find` 全盘**没有任何一个已交付的歌包**,与此一致。
+
+**结论(要紧)**:**只修证明侧的门,永远不会产出歌切**。
+今晚 D1 / F3 / provenance lane / 名额降级四个修复都验证成功了,它们把候选从
+"因假原因被误杀 / 无限重试"推进到"证明齐备",但**最后的物化交付环节需要被实现**,不是被放宽。
+建议单独立项:让通过证明的歌候选真正走完 recut → 烧录 → manifest → 绑定 这一段。
+
+**另一条独立的门也红了**:`SONG_NOT_LIDOUSHA_SINGING`(host 声纹未确认是李豆沙在唱)。
+注意前会话法证记录的同一条曾是 **28/28 `LIDOUSHA SINGING_THIS_LYRIC`**,
+所以这条**很可能是本次 attempt 没跑到声纹步**,而不是真的判定"不是她唱的"。**我没有把这条钉死**,
+只标出这个矛盾供你复核——不要据此以为声纹判错了。
 
 ## 七、留给 Ivan 的待裁项(未擅自决定)
 
