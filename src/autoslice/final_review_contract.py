@@ -17,6 +17,9 @@ from src.autoslice.exact_final_witness_authority import (
     GATE_SCHEMA as _HISTORY_CONVERGENCE_GATE_SCHEMA,
     REQUIRED_REASON as _HISTORY_CONVERGENCE_REQUIRED_REASON,
 )
+from src.autoslice.unreadable_span_policy import (
+    unreadable_cue_drop_audit_problem,
+)
 
 SCHEMA_VERSION = "final-review-audit.v2"
 EXACT_FINAL_CPA_SELF_HEAL_MAX_REPAIR_PASSES = 5
@@ -351,6 +354,17 @@ def validate_final_review_release(
         audit,
         expected_srt_sha256=expected_srt_sha256,
     )
+    # 不可读窗删除是**独立**的第二条自愈通道，与 CPA 自愈互不放松：CPA 那条
+    # 要求 decision_authority == CPA_JUDGE 且 mutation PASS（判官做了决定），
+    # 本条恰恰是「判官做不了决定、耳朵说这段物理上听不出来」，授权来自 Ivan
+    # 2026-08-10 的裁定而不是判官。缺省（None）时本函数什么都不做，既有交付
+    # 一个字节不受影响。
+    unreadable_problem = unreadable_cue_drop_audit_problem(
+        audit.get("unreadable_cue_drops"),
+        expected_srt_sha256=expected_srt_sha256,
+    )
+    if unreadable_problem is not None:
+        raise FinalReviewContractError(unreadable_problem)
     return dict(audit)
 
 

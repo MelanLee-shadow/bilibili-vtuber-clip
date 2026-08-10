@@ -51,6 +51,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 
+from src.autoslice import unreadable_cue_review
 from src.autoslice.speaker_common import HOST_SPEAKER, SpeakerIdentityIndeterminate
 
 
@@ -554,11 +555,40 @@ def finalize_delivered_talk_status(
     里 ``rec["status"] = "review_ready"``），根本不重跑 produce。如果猜出来的成品
     先掉进封面待定，它就会绕过停泊、经封面车道升进日审清单并变成可上传——正是
     fail-closed 要挡的那条路。所以先判停泊：停泊件不许被封面车道认领。
+
+    第二类停泊（Ivan 2026-08-10「不可读窗」裁定）同理接在这里：produce 删过
+    字幕的成品一律不许进 ``review_ready``。回执**无论如何都盖**——即使这条已
+    经因说话人证据不足停泊，Ivan 也必须看到「这里还少了一句话」。
     """
 
     status = delivered_talk_status(
         result, candidate_id=candidate_id, work_dir=work_dir
     )
+    unreadable_drops = unreadable_cue_review.drops_from_work_dir(work_dir)
+    if unreadable_drops:
+        unreadable_cue_review.park_for_unreadable_cue_review(
+            result,
+            drops=unreadable_drops,
+            artifacts=delivered_artifact_paths(result),
+            held_status=status,
+        )
+        if status == "review_ready":
+            result["status"] = (
+                unreadable_cue_review.UNREADABLE_CUE_REVIEW_STATUS
+            )
+            result["failure_recoverable"] = False
+            result.setdefault(
+                "failure_message",
+                "UNREADABLE_CUE_DROPPED_PENDING_HUMAN_REVIEW: "
+                + "; ".join(
+                    f"cue {drop.get('cue_index')} "
+                    f"「{drop.get('deleted_text')}」 "
+                    f"{drop.get('witness_reason_code') or drop.get('status')}"
+                    for drop in unreadable_drops
+                )[:600],
+            )
+            return str(result["status"])
+        return status
     if status != "review_ready":
         return status
     if not cover_ready:

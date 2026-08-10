@@ -59,7 +59,14 @@ FUNCTION_DEBT_LEDGER = {
     # 的 suppress_baseline_owned_self_heal_findings，这里只留 3 行调用点。
     # 测试 tests/test_producer_package_finalization.py::
     # test_exact_final_review_gate_suppresses_baseline_owned_finding。
-    ("src/autoslice/producer_package_finalization.py", "_run_exact_final_review_gate"): 343,
+    # 2026-08-10 +35：不可读窗删除车道接线（Ivan 2026-08-10 逐字「遇到这种情况
+    # 证人报 WITNESS_IMPLAUSIBLE_SYLLABLE_RATE：11 个音节塞进 0.92s，根本听不
+    # 出来，应该直接报需要审查，并且在权宜上传时也不能上传，可以把这段字幕删掉
+    # 然后出成品等待审阅，而不是拦住」）。判据/守卫/授权/事务落盘全部推给两个
+    # 新模块 src/autoslice/unreadable_span_policy.py 与
+    # src/autoslice/unreadable_cue_drop_stage.py，这里只留 stage/seal 两处薄调用
+    # 点 + 一条 rationale 注释。测试 tests/test_unreadable_cue_drop.py。
+    ("src/autoslice/producer_package_finalization.py", "_run_exact_final_review_gate"): 378,
     # 2026-08-07 +17：狍哥案实施指令（Ivan 2026-08-07「你把狍哥案解决了」，
     # docs/reviews/2026-08-07-source-fact-rescore-design.md）——
     # SOURCE_FACT_REPAIRED_HOOK_SCORECARD_STALE 不再落 EXHAUSTED，改写
@@ -263,7 +270,11 @@ MODULE_DEBT_LEDGER = {
     # 并进了已有的 `from src.autoslice import selection_rescore` 那行，不另占行。
     # 2026-08-10b：与 ft-a8600994 合并后按**实测**行数记（两侧各自记的 2_742 /
     # 2_740 都不是合并后的真实值；账本记实测，不记任一侧的旧快照）。
-    "src/autoslice/producer_package_finalization.py": 2_741,
+    # 2026-08-10c +39：不可读窗删除车道（Ivan 2026-08-10 逐字见上面
+    # _run_exact_final_review_gate 那条）。新增逻辑的重量全在两个新模块
+    # （unreadable_span_policy.py / unreadable_cue_drop_stage.py，未计入本模块
+    # 行数），本模块只涨了 stage/seal 两处调用点、import 与 rationale 注释。
+    "src/autoslice/producer_package_finalization.py": 2_780,
     # 2026-07-31 +40：同上（SC 发送者 deferral）。
     # 2026-08-08 +7：会话内重述修复接线（Ivan 2026-08-08 当日指令，
     # docs/reviews/2026-08-08-restatement-repair-design.md §4）——会话内
