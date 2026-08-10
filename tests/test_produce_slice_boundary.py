@@ -31,6 +31,13 @@ from src.autoslice.producer_boundary_resolution import (
     BoundaryResolutionAdapters,
     _select_initial_boundary,
 )
+from src.autoslice.redelivery_boundary_projection import (
+    AUTHORITY_CONFIG_KEY,
+    PROJECTION_MODE,
+    PROJECTION_MODE_CONFIG_KEY,
+    build_terminal_projection_authority,
+    projection_scope_binding,
+)
 from src.autoslice.producer_media import _validated_burned_ass_artifact
 from src.autoslice.recovery_title_authority import (
     ROOT,
@@ -1694,6 +1701,139 @@ def test_hotpot_exact_source_pin_accepts_pin_crossing_closure_cue(tmp_path):
     assert resolution.final_end == official_local_end_ms
     assert (
         source_start_ms + resolution.final_end == official_source_end_ms
+    )
+
+
+def test_exact_reviewed_tail_bridge_materializes_before_crossing_next_topic(
+    tmp_path,
+):
+    """Synthetic 1722 shape: exact reviewed timing owns the 90ms media tail,
+    while the semantic closure remains the prior fresh cue and the crossing
+    next-topic cue is excluded from delivery subtitles.
+    """
+
+    source_start_ms = 1_000_000
+    reviewed_head_ms = 9_630
+    reviewed_tail_ms = 67_760
+    baseline = tmp_path / "reviewed.srt"
+    baseline.write_text(
+        "1\n00:00:00,000 --> 00:00:55,000\n前情。\n\n"
+        "2\n00:00:55,000 --> 00:00:58,130\n你站这来。\n",
+        encoding="utf-8",
+    )
+    import hashlib
+
+    baseline_config = {
+        "schema_version": "subtitle-redelivery-baseline.v2",
+        "exact_interval_replay": True,
+        PROJECTION_MODE_CONFIG_KEY: PROJECTION_MODE,
+        "path": str(baseline),
+        "sha256": hashlib.sha256(baseline.read_bytes()).hexdigest(),
+        "authority": "synthetic reviewed delivery",
+        "source_recording_basename": "recording.mp4",
+        "source_sha256": "a" * 64,
+        "absolute_source_start_ms": source_start_ms + reviewed_head_ms,
+        "absolute_source_end_ms": source_start_ms + reviewed_tail_ms,
+    }
+    spec = {
+        "candidate_id": "candidate-reviewed-tail-bridge",
+        "pieces": [
+            {
+                "remote_media": "/recordings/recording.mp4",
+                "start_ms": source_start_ms,
+                "end_ms": source_start_ms + 100_000,
+            }
+        ],
+        "semantic_start_ms": source_start_ms + reviewed_head_ms,
+        "semantic_end_ms": source_start_ms + 80_570,
+        "semantic_tail_trim_cap_ms": 15_000,
+        "subtitle_redelivery_baseline": baseline_config,
+    }
+    baseline_config[AUTHORITY_CONFIG_KEY] = (
+        build_terminal_projection_authority(
+            spec=spec,
+            piece_provenance_rows=[
+                {
+                    "source_path": "/recordings/recording.mp4",
+                    "source_sha256": "a" * 64,
+                }
+            ],
+            spec_parent=tmp_path,
+        )
+    )
+    scope = build_boundary_search_scope(
+        semantic_target_ms=80_570,
+        repair_cap_ms=30_000,
+        structured_payoff_ms=84_240,
+        baseline_tail_cap_ms=reviewed_tail_ms,
+        semantic_tail_trim_cap_ms=15_000,
+        reviewed_exact_interval_projection=(
+            projection_scope_binding(baseline_config[AUTHORITY_CONFIG_KEY])
+        ),
+        last_piece_start_ms=source_start_ms,
+    )
+    cues = [
+        _cue(9_630, 12_000, "故事开场。"),
+        _cue(65_000, 67_670, "你站这来。"),
+        _cue(67_670, 69_210, "我站哪儿有什么区别吗。"),
+        _cue(75_550, 80_570, "你要看我们三个的表演。"),
+    ]
+    grid_sha = boundary_resolution.cue_grid_sha256(cues)
+    from src.autoslice.boundary_semantic_review import recommendation_eligibility
+
+    relaxation = recommendation_eligibility(
+        boundary_resolution.cue_rows(cues), scope
+    )["relaxations"][0]
+
+    resolution = boundary_resolution.resolve_producer_boundary(
+        spec={
+            **spec,
+            "boundary_search_scope": scope,
+            "boundary_semantic_review": {
+                "schema_version": "talk-boundary-semantic-review.v1",
+                "status": "PASS",
+                "request_sha256": "sha256:" + "a" * 64,
+                "cue_grid_sha256": grid_sha,
+                "recommended_end_cue_index": 2,
+                "recommended_end_ms": reviewed_tail_ms,
+                "recommendation_relaxations": [relaxation],
+                "boundary_search_scope": scope,
+            },
+        },
+        durations=[100_000],
+        padded=tmp_path / "unused.mp4",
+        padded_dur=100_000,
+        cid="candidate-reviewed-tail-bridge",
+        out_root=tmp_path,
+        transcriber=lambda *_args: "",
+        cues=cues,
+        spans=[
+            SpeechSpan(9_650, 11_900),
+            SpeechSpan(65_000, 69_190),
+            SpeechSpan(75_550, 80_550),
+        ],
+        boundary_repair_extend_cap_ms=30_000,
+        adapters=BoundaryResolutionAdapters(
+            accurate_recut_command=lambda **_kwargs: [],
+            run_command=lambda *_args, **_kwargs: None,
+        ),
+        required_tail_end_ms=84_240,
+    )
+
+    assert resolution.final_start == reviewed_head_ms
+    assert resolution.audit["snapped_sentence_end_ms"] == 67_670
+    assert resolution.final_end == reviewed_tail_ms
+    assert resolution.audit["tail_adjustment"]["reason"] == (
+        "tail_fixed_at_reviewed_baseline_endpoint"
+    )
+    assert resolution.audit["tail_pad_coverage_bridge"] == {
+        "status": "USED",
+        "closure_lower_bound_ms": 67_670,
+        "delivery_lower_bound_ms": reviewed_tail_ms,
+        "maximum_tail_pad_ms": 400,
+    }
+    assert [cue.text for cue in resolution.sanitized_cues][-1] == (
+        "你站这来。"
     )
 
 

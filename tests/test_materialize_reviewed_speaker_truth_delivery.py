@@ -276,6 +276,47 @@ def test_v1_baseline_never_carries_a_truth_full_ownership_pin(
     fixture["baseline_schema_version"] = "subtitle-redelivery-baseline.v1"
     manifest = compile_delivery(**fixture)["baseline_manifest"]
     assert "truth_full_ownership" not in manifest
+def test_compiler_keeps_sentence_comma_but_trims_routed_segment_prefix(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    truth = json.loads(fixture["truth_path"].read_text(encoding="utf-8"))
+    merged = truth["cues"][1]
+    merged["truth_segments"] = [
+        {"label": "连线", "text": "嘉宾说"},
+        {"label": "李豆沙", "text": "，主播答(跃起)"},
+    ]
+    merged["truth_text"] = "嘉宾说，主播答(跃起)"
+    fixture["truth_path"].write_text(
+        json.dumps(truth, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    automatic_srt = fixture["automatic_srt_path"]
+    automatic_srt.write_text(
+        automatic_srt.read_text(encoding="utf-8").replace(
+            "[连线] 嘉宾说 主播答",
+            "[连线] 嘉宾说，主播答",
+        ),
+        encoding="utf-8",
+    )
+    fixture["arbitration"]["automatic_labelled_srt_sha256"] = _sha256(
+        automatic_srt
+    )
+
+    result = compile_delivery(**fixture)
+
+    assert "嘉宾说，主播答" in result["baseline_srt"]
+    routed = result["speaker_override"]["overrides"][1]["segments"]
+    # 合并说明：ft 分支写这条时,尾部括注还是一律剥离,故原断言是「主播答」。
+    # 主线 0625105 之后按 Ivan 2026-08-10 令改成 typed 白名单——只剥机器注记
+    # (无可辨别人声/无可分辨人声),手标注记「(跃起)」保留。本条测试真正要验的是
+    # 行首「，」被移出渲染段(见下方 removed_render_boundary_separators 断言),
+    # 与括注策略无关,故只把期望值对齐到已裁定的保留语义,不动任何门。
+    assert [segment["text"] for segment in routed] == ["嘉宾说", "主播答(跃起)"]
+    transform = result["receipt"]["transformations"][1]
+    assert transform["removed_render_boundary_separators"] == [
+        {"segment_position": 2, "separator": "，"}
+    ]
 
 
 def test_compiler_requires_arbitration_for_every_unlabelled_truth_cue(

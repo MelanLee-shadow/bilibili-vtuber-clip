@@ -1,9 +1,15 @@
 {
   "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
   "candidate_id": "auto_200130_1722_1792",
-  "schema_version": "subtitle-redelivery-baseline.v1",
+  "schema_version": "subtitle-redelivery-baseline.v2",
   "mode": "preserve_text_outside_source_truth",
   "path": "auto_200130_1722_1792.reviewed.srt",
   "sha256": "0efb99954da04e0faea233890e504e5935e40e65d1fa29f5c3fe87ad5cf28e01",
-  "authority": "Ivan-annotated-2026-08-09 fast-track delivery"
+  "authority": "Ivan-annotated-2026-08-09 fast-track delivery",
+  "exact_interval_replay": true,
+  "terminal_projection_mode": "source_bound_reviewed_endpoint",
+  "source_recording_basename": "22966160_20260808-20-01-30.mp4",
+  "source_sha256": "14b1e6d725554eeb90dd0eba62f2ba8dc743831ad8c6171727a502e47a288842",
+  "absolute_source_start_ms": 1721770,
+  "absolute_source_end_ms": 1779900
 }

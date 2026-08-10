@@ -8906,6 +8906,16 @@ def test_redelivery_baseline_failure_is_not_unknown_retryable_producer_error():
     assert classified["failure_recoverable"] is False
 
 
+def test_terminal_projection_failure_is_not_retryable_producer_error():
+    classified = runner.classify_talk_failure(
+        "REDELIVERY_TERMINAL_PROJECTION_SELECTION_INVALID"
+    )
+
+    assert classified["failure_kind"] == "subtitle_authority"
+    assert classified["failure_stage"] == "redelivery_terminal_projection"
+    assert classified["failure_recoverable"] is False
+
+
 def test_runtime_health_rejects_missing_tracked_speaker_profile(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(
@@ -10603,6 +10613,33 @@ def test_content_boundary_recovery_fingerprint_tracks_semantic_trim_logic(
         )
         != baseline
     )
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "src/autoslice/producer_source_media.py",
+        "src/autoslice/redelivery_boundary_projection.py",
+        "src/autoslice/redelivery_subtitle_baseline.py",
+    ],
+)
+def test_content_boundary_recovery_fingerprint_tracks_projection_seams(
+    tmp_path, monkeypatch, relative
+):
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    for tracked in runner.CONTENT_BOUNDARY_RECOVERY_RELATIVES:
+        path = tmp_path / tracked
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(tracked, encoding="utf-8")
+    baseline = runner.talk_failure_recovery_fingerprint(
+        "content_boundary", "candidate"
+    )
+
+    (tmp_path / relative).write_text("projection policy drift", encoding="utf-8")
+
+    assert runner.talk_failure_recovery_fingerprint(
+        "content_boundary", "candidate"
+    ) != baseline
 
 
 def test_subtitle_authority_recovery_fingerprint_tracks_final_surface_verifier(

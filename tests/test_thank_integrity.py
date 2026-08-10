@@ -692,6 +692,16 @@ def test_redelivery_baseline_head_rel_conversion() -> None:
         },
     }
     assert _redelivery_baseline_head_rel_ms(spec) == 9_760
+    spec["pieces"].append(
+        {
+            "start_ms": 0,
+            "end_ms": 80_000,
+            "piece_role": "boundary_witness_reserve",
+        }
+    )
+    assert _redelivery_baseline_head_rel_ms(spec) == 9_760
+    spec["pieces"][1].pop("piece_role")
+    assert _redelivery_baseline_head_rel_ms(spec) is None
     assert _redelivery_baseline_head_rel_ms({"pieces": []}) is None
     assert (
         _redelivery_baseline_head_rel_ms(

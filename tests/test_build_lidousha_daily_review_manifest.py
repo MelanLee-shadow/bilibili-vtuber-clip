@@ -593,6 +593,24 @@ def test_build_speaker_finalized_package_uses_speaker_artifact_family(
     )
 
 
+def test_build_accepts_individually_green_pick_during_publication_closure(
+    tmp_path: Path,
+) -> None:
+    package_root, state_path, deployed_commit_file, candidate_id = (
+        _build_daily_talk_package(tmp_path, speaker_finalized=True)
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["status"] = "publication_in_progress"
+    state_path.write_text(
+        json.dumps(state, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    manifest = build(package_root, state_path, deployed_commit_file, candidate_id)
+
+    assert manifest["items"][0]["candidate_id"] == candidate_id
+
+
 def test_build_uses_exact_packaged_title_mask_when_source_path_is_missing(
     tmp_path: Path,
 ) -> None:

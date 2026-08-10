@@ -9,7 +9,15 @@ from collections.abc import Mapping, Sequence
 from src.autoslice.boundary_semantic_review import (
     build_boundary_search_scope,
 )
-from src.autoslice.piece_roles import last_content_piece_index
+from src.autoslice.piece_roles import (
+    last_content_piece_index,
+    single_content_piece_index,
+)
+from src.autoslice.redelivery_boundary_projection import (
+    AUTHORITY_CONFIG_KEY,
+    RedeliveryBoundaryProjectionError,
+    projection_scope_from_spec,
+)
 from src.autoslice.source_subtitle_truth import (
     candidate_boundary_owner_scope,
 )
@@ -288,6 +296,14 @@ def _redelivery_baseline_tail_rel_ms(
     end = config.get("absolute_source_end_ms")
     if isinstance(end, bool) or not isinstance(end, int):
         return None
+    pieces = spec.get("pieces") or []
+    try:
+        content_index = single_content_piece_index(pieces)
+        content_start_ms = int(pieces[content_index]["start_ms"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if content_start_ms != last_piece_start_ms or prior_piece_duration_ms != 0:
+        return None
     return prior_piece_duration_ms + (int(end) - last_piece_start_ms)
 
 
@@ -366,6 +382,10 @@ def freeze_required_boundary_owner_contract(
         ),
         default=None,
     )
+    try:
+        terminal_projection_scope = projection_scope_from_spec(spec)
+    except RedeliveryBoundaryProjectionError as exc:
+        raise RuntimeError(str(exc)) from exc
     boundary_search_scope = build_boundary_search_scope(
         semantic_target_ms=semantic_target_ms,
         manual_lower_bound_ms=manual_lower_bound_ms,
@@ -386,6 +406,7 @@ def freeze_required_boundary_owner_contract(
         semantic_tail_trim_cap_ms=int(
             spec.get("semantic_tail_trim_cap_ms", 0)
         ),
+        reviewed_exact_interval_projection=terminal_projection_scope,
     )
     spec["boundary_search_scope"] = boundary_search_scope
     boundary_target_ms = int(boundary_search_scope["review_target_ms"])
@@ -407,6 +428,13 @@ def freeze_required_boundary_owner_contract(
         ),
         "boundary_search_scope": boundary_search_scope,
     }
+    baseline_config = spec.get("subtitle_redelivery_baseline")
+    if terminal_projection_scope is not None and isinstance(
+        baseline_config, Mapping
+    ):
+        frozen_contract[
+            "reviewed_exact_interval_terminal_projection"
+        ] = baseline_config.get(AUTHORITY_CONFIG_KEY)
     frozen_contract["contract_sha256"] = (
         frozen_boundary_owner_contract_sha256(frozen_contract)
     )

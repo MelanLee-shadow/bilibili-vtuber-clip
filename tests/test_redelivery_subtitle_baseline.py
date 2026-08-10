@@ -1,5 +1,12 @@
 import hashlib
 
+from src.autoslice.redelivery_boundary_projection import (
+    AUTHORITY_CONFIG_KEY,
+    PROJECTION_MODE,
+    PROJECTION_MODE_CONFIG_KEY,
+    build_terminal_projection_authority,
+)
+
 from src.autoslice.redelivery_subtitle_baseline import (
     MODE,
     SCHEMA_VERSION,
@@ -651,6 +658,76 @@ def test_v2_exact_interval_replays_reviewed_missing_cues_when_authorized(
         }
     ]
     assert audit["mappings"][1]["pre_replay_cues"] == []
+
+
+def test_terminal_projection_requires_and_receipts_exact_replay(tmp_path):
+    baseline = tmp_path / "baseline.srt"
+    baseline.write_text(
+        _srt((0, 1_000, "第一句"), (1_000, 2_000, "审核收尾")),
+        encoding="utf-8",
+    )
+    config = _config_v2(baseline)
+    config["exact_interval_replay"] = True
+    config[PROJECTION_MODE_CONFIG_KEY] = PROJECTION_MODE
+    spec = {
+        "candidate_id": "candidate-projection",
+        "pieces": [
+            {
+                "remote_media": f"/recordings/{SOURCE_BASENAME}",
+                "start_ms": 100_000,
+                "end_ms": 103_000,
+            }
+        ],
+        "subtitle_redelivery_baseline": config,
+    }
+    authority = build_terminal_projection_authority(
+        spec=spec,
+        piece_provenance_rows=[
+            {
+                "source_path": f"/recordings/{SOURCE_BASENAME}",
+                "source_sha256": SOURCE_SHA256,
+            }
+        ],
+        spec_parent=tmp_path,
+    )
+    assert authority is not None
+    config[AUTHORITY_CONFIG_KEY] = authority
+
+    output, audit = _run_v2(
+        _srt((0, 1_000, "随机第一句")),
+        baseline=baseline,
+        tmp_path=tmp_path,
+        config=config,
+    )
+
+    assert output == baseline.read_text(encoding="utf-8")
+    assert audit["status"] == "APPLIED"
+    assert audit["terminal_projection_materialization"] == {
+        "schema_version": (
+            "reviewed-exact-interval-terminal-projection-materialization.v1"
+        ),
+        "status": "PASS",
+        "authority_sha256": authority["authority_sha256"],
+        "application_strategy": "exact_reviewed_interval_replay",
+        "absolute_source_start_ms": 100_000,
+        "absolute_source_end_ms": 102_000,
+        "video_tail_extension_ms": 0,
+    }
+
+    failed_output, failed_audit = _run_v2(
+        _srt((0, 1_000, "随机第一句"), (1_000, 2_200, "越界尾巴")),
+        baseline=baseline,
+        tmp_path=tmp_path,
+        config=config,
+        current_source_end_ms=102_200,
+    )
+    assert "越界尾巴" in failed_output
+    assert failed_audit["status"] == "FAILED"
+    assert any(
+        row["reason_code"]
+        == "REDELIVERY_TERMINAL_PROJECTION_REQUIRES_EXACT_INTERVAL"
+        for row in failed_audit["failures"]
+    )
 
 
 def test_v2_exact_interval_replays_with_bounded_video_only_tail(

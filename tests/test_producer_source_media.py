@@ -5,6 +5,11 @@ import shutil
 import pytest
 
 from src.autoslice import producer_source_media
+from src.autoslice.redelivery_boundary_projection import (
+    AUTHORITY_CONFIG_KEY,
+    PROJECTION_MODE,
+    PROJECTION_MODE_CONFIG_KEY,
+)
 from src.autoslice.source_subtitle_truth import apply_source_subtitle_truth
 
 
@@ -120,6 +125,68 @@ def test_prepare_source_media_binds_runner_piece_for_subtitle_truth_alias(
 
     assert "审定文本" in corrected
     assert audit["status"] == "APPLIED"
+
+
+def test_prepare_source_media_injects_runtime_terminal_projection_authority(
+    monkeypatch, tmp_path
+):
+    source_sha256 = "a" * 64
+    out_root = _install_cached_media(
+        monkeypatch,
+        tmp_path,
+        source_sha256=source_sha256,
+    )
+    (out_root / "piece_0_1000_5000.provenance.json").write_text(
+        json.dumps(
+            {
+                "source_path": "/recordings/official-replay.mp4",
+                "source_sha256": source_sha256,
+            }
+        ),
+        encoding="utf-8",
+    )
+    baseline = tmp_path / "reviewed.srt"
+    baseline.write_text(
+        _srt_ms(0, 2_000, "审定收尾"),
+        encoding="utf-8",
+    )
+    config = {
+        "schema_version": "subtitle-redelivery-baseline.v2",
+        "exact_interval_replay": True,
+        PROJECTION_MODE_CONFIG_KEY: PROJECTION_MODE,
+        "path": str(baseline),
+        "sha256": hashlib.sha256(baseline.read_bytes()).hexdigest(),
+        "authority": "synthetic reviewed delivery",
+        "source_recording_basename": "official-replay.mp4",
+        "source_sha256": source_sha256,
+        "absolute_source_start_ms": 2_000,
+        "absolute_source_end_ms": 4_000,
+    }
+    spec = {
+        "candidate_id": "candidate-projection",
+        "pieces": [
+            {
+                "remote_media": "/recordings/official-replay.mp4",
+                "start_ms": 1_000,
+                "end_ms": 5_000,
+            }
+        ],
+        "subtitle_redelivery_baseline": config,
+    }
+
+    producer_source_media.prepare_source_media(
+        spec=spec,
+        cid="candidate-projection",
+        out_root=out_root,
+        host="free",
+        spec_parent=tmp_path,
+    )
+
+    authority = config[AUTHORITY_CONFIG_KEY]
+    assert authority["status"] == "BOUND"
+    assert authority["source_sha256"] == "sha256:" + source_sha256
+    assert authority["local_source_start_ms"] == 1_000
+    assert authority["local_source_end_ms"] == 3_000
 
 
 def test_prepare_source_media_rejects_declared_hash_before_using_cache(

@@ -16,6 +16,11 @@ from pathlib import Path
 import re
 from typing import Any, Mapping
 
+from src.autoslice.redelivery_boundary_projection import (
+    PROJECTION_MODE,
+    PROJECTION_MODE_CONFIG_KEY,
+)
+
 
 REGISTRY_SCHEMA_VERSION = "candidate-reviewed-subtitle-baseline.v1"
 BASELINE_SCHEMA_VERSIONS = frozenset(
@@ -165,6 +170,18 @@ def load_candidate_reviewed_subtitle_baseline(
         ):
             raise ReviewedSubtitleBaselineRegistryError(
                 "baseline absolute source interval is invalid"
+            )
+        projection_mode = document.get(PROJECTION_MODE_CONFIG_KEY)
+        if projection_mode is not None and projection_mode != PROJECTION_MODE:
+            raise ReviewedSubtitleBaselineRegistryError(
+                "baseline terminal projection mode is unsupported"
+            )
+        if (
+            projection_mode is not None
+            and document.get("exact_interval_replay") is not True
+        ):
+            raise ReviewedSubtitleBaselineRegistryError(
+                "baseline terminal projection requires exact interval replay"
             )
 
     config = dict(document)

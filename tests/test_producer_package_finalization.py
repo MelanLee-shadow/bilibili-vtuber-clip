@@ -636,9 +636,28 @@ def test_finalize_routes_exact_endpoint_receipt_into_story_contract(
     }
     exact_audit = {"boundary_semantic_review": delivery_review}
     captured: dict = {}
+    materialization_spec = {"projection_activation": "selected"}
 
     monkeypatch.setattr(
-        finalization, "_materialize_final_recut", lambda **_kwargs: recut
+        finalization,
+        "materialization_spec_for_selected_projection",
+        lambda current_spec, current_audit: (
+            captured.update(
+                {
+                    "projection_input_spec": current_spec,
+                    "projection_input_audit": current_audit,
+                }
+            )
+            or materialization_spec
+        ),
+    )
+    monkeypatch.setattr(
+        finalization,
+        "_materialize_final_recut",
+        lambda **kwargs: (
+            captured.setdefault("materialization_spec", kwargs["spec"])
+            and recut
+        ),
     )
     monkeypatch.setattr(
         finalization,
@@ -745,6 +764,9 @@ def test_finalize_routes_exact_endpoint_receipt_into_story_contract(
     )
 
     assert result == 0
+    assert captured["projection_input_spec"] is spec
+    assert captured["projection_input_audit"] is boundary_audit
+    assert captured["materialization_spec"] is materialization_spec
     assert spec["boundary_semantic_review"] == delivery_review
     assert boundary_audit["final_delivery_boundary_semantic_review"] == (
         delivery_review
@@ -2831,8 +2853,10 @@ def test_final_recut_applies_hash_bound_redelivery_baseline_outside_truth(
     assert recut.redelivery_baseline_audit_path.is_file()
 
 
+@pytest.mark.parametrize("with_boundary_witness_reserve", [False, True])
 def test_final_recut_v2_projects_reviewed_text_and_remerges_release_sliver(
     tmp_path: Path,
+    with_boundary_witness_reserve: bool,
 ) -> None:
     padded = tmp_path / "padded.mp4"
     padded.write_bytes(b"padded")
@@ -2898,6 +2922,28 @@ def test_final_recut_v2_projects_reviewed_text_and_remerges_release_sliver(
             "absolute_source_end_ms": 103_000,
         },
     }
+    piece_provenance_rows = [
+        {
+            "source_path": "/recordings/recording.mp4",
+            "source_sha256": source_sha256,
+        }
+    ]
+    if with_boundary_witness_reserve:
+        for ordinal in (1, 2):
+            spec["pieces"].append(
+                {
+                    "remote_media": f"/recordings/next-{ordinal}.mp4",
+                    "start_ms": 0,
+                    "end_ms": 30_000,
+                    "piece_role": "boundary_witness_reserve",
+                }
+            )
+            piece_provenance_rows.append(
+                {
+                    "source_path": f"/recordings/next-{ordinal}.mp4",
+                    "source_sha256": f"{ordinal + 1:x}" * 64,
+                }
+            )
 
     recut = finalization._materialize_final_recut(
         spec=spec,
@@ -2905,12 +2951,7 @@ def test_final_recut_v2_projects_reviewed_text_and_remerges_release_sliver(
         out_root=tmp_path / "out",
         padded=padded,
         padded_provenance_path=padded_provenance,
-        piece_provenance_rows=[
-            {
-                "source_path": "/recordings/recording.mp4",
-                "source_sha256": source_sha256,
-            }
-        ],
+        piece_provenance_rows=piece_provenance_rows,
         final_start=1_000,
         final_end=4_000,
         sanitized=[],
@@ -2940,6 +2981,135 @@ def test_final_recut_v2_projects_reviewed_text_and_remerges_release_sliver(
     ] == hashlib.sha256(output.encode("utf-8")).hexdigest()
     assert recut.redelivery_baseline_audit["uncovered_current_cue_count"] == 1
     assert recut.redelivery_baseline_audit["omitted_baseline_cue_count"] == 1
+    provenance = json.loads(
+        recut.media_path.with_suffix(".provenance.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert provenance["final_recut"]["absolute_source_start_ms"] == 101_000
+    assert provenance["final_recut"]["absolute_source_end_ms"] == 104_000
+    if with_boundary_witness_reserve:
+        assert len(provenance["source_piece"]) == 3
+    else:
+        assert provenance["source_piece"]["source_path"] == (
+            "/recordings/recording.mp4"
+        )
+
+
+@pytest.mark.parametrize(
+    ("second_piece_role", "final_end", "drop_provenance", "reason"),
+    [
+        (
+            None,
+            4_000,
+            False,
+            "REDELIVERY_BASELINE_V2_REQUIRES_ONE_BOUND_SOURCE_PIECE",
+        ),
+        (
+            "boundary_witness_reserve",
+            4_001,
+            False,
+            "REDELIVERY_BASELINE_V2_FINAL_INTERVAL_OUTSIDE_CONTENT_PIECE",
+        ),
+        (
+            "boundary_witness_reserve",
+            4_000,
+            True,
+            "REDELIVERY_BASELINE_V2_REQUIRES_ONE_BOUND_SOURCE_PIECE",
+        ),
+    ],
+)
+def test_final_recut_v2_rejects_ambiguous_or_cross_source_binding(
+    tmp_path: Path,
+    second_piece_role: str | None,
+    final_end: int,
+    drop_provenance: bool,
+    reason: str,
+) -> None:
+    padded = tmp_path / "padded.mp4"
+    padded.write_bytes(b"padded")
+    (tmp_path / "out").mkdir()
+    padded_provenance = tmp_path / "padded.provenance.json"
+    padded_provenance.write_text("{}\n", encoding="utf-8")
+    baseline = tmp_path / "reviewed.srt"
+    baseline.write_text(
+        "1\n00:00:00,000 --> 00:00:03,000\n人工审定\n",
+        encoding="utf-8",
+    )
+
+    def unused(*_args, **_kwargs):
+        raise AssertionError("finalization must fail before adapters run")
+
+    adapters = finalization.ProducerFinalizationAdapters(
+        accurate_recut_command=unused,
+        run_command=unused,
+        write_source_range_srt=unused,
+        apply_text_override_document=unused,
+        run_speaker_finalization=unused,
+        burn_preview_subtitles=unused,
+        stage_publish_draft=unused,
+        generate_upload_tags=unused,
+        delivery_root=lambda: tmp_path / "delivery",
+    )
+    source_sha256 = "a" * 64
+    second_piece = {
+        "remote_media": "/recordings/next.mp4",
+        "start_ms": 0,
+        "end_ms": 30_000,
+    }
+    if second_piece_role is not None:
+        second_piece["piece_role"] = second_piece_role
+    spec = {
+        "pieces": [
+            {
+                "remote_media": "/recordings/recording.mp4",
+                "start_ms": 100_000,
+                "end_ms": 104_000,
+            },
+            second_piece,
+        ],
+        "subtitle_redelivery_baseline": {
+            "schema_version": "subtitle-redelivery-baseline.v2",
+            "mode": "preserve_text_outside_source_truth",
+            "path": str(baseline),
+            "sha256": hashlib.sha256(baseline.read_bytes()).hexdigest(),
+            "authority": "Ivan reviewed delivery",
+            "source_recording_basename": "recording.mp4",
+            "source_sha256": source_sha256,
+            "absolute_source_start_ms": 100_000,
+            "absolute_source_end_ms": 103_000,
+        },
+    }
+    provenance = [
+        {
+            "source_path": "/recordings/recording.mp4",
+            "source_sha256": source_sha256,
+        },
+        {
+            "source_path": "/recordings/next.mp4",
+            "source_sha256": "b" * 64,
+        },
+    ]
+    if drop_provenance:
+        provenance.pop()
+
+    with pytest.raises(SystemExit, match=reason):
+        finalization._materialize_final_recut(
+            spec=spec,
+            cid="candidate-v2-negative",
+            out_root=tmp_path / "out",
+            padded=padded,
+            padded_provenance_path=padded_provenance,
+            piece_provenance_rows=provenance,
+            final_start=1_000,
+            final_end=final_end,
+            sanitized=[],
+            timing_qa={},
+            text_override_path=None,
+            adapters=adapters,
+            spec_parent=tmp_path,
+            chat_authority_audit={},
+        )
 
 
 def test_final_recut_replays_truth_after_broad_window_was_satisfied(

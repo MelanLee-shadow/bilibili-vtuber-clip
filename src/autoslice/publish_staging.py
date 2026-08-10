@@ -839,10 +839,25 @@ def _stage_publish_draft(
             ):
                 carry_drop_reason = "carried_bundle_failed_route_validation"
                 carried_generation = None
+        carried_artifact_hashes: dict[str, str] = {}
+        if carried_generation is not None:
+            for result_key, generation_key in (
+                ("ai_background_sha256", "ai_background_sha256"),
+                ("cover_reference_sha256", "reference_sha256"),
+            ):
+                value = carried_generation.get(generation_key)
+                if isinstance(value, str) and value:
+                    carried_artifact_hashes[result_key] = value
         cover_result = {
             "status": "REUSED_COVER",
-            "cover_path": None,
+            "cover_path": (
+                str(reused_cover_path)
+                if carried_generation is not None
+                and reused_cover_path is not None
+                else None
+            ),
             **({"cover_sha256": reused_sha} if reused_sha else {}),
+            **carried_artifact_hashes,
             "cover_generation": (
                 carried_generation
                 if carried_generation is not None
@@ -894,7 +909,11 @@ def _stage_publish_draft(
             diversity_slot=cover_diversity_slot,
         )
     cover_status = str(cover_result["status"])
-    cover_path_value = cover_result.get("cover_path") if cover_status == "AI_COVER_READY" else None
+    cover_path_value = (
+        cover_result.get("cover_path")
+        if cover_status in {"AI_COVER_READY", "REUSED_COVER"}
+        else None
+    )
     cover_generation = cover_result["cover_generation"]
     raw_reason_codes = cover_result.get("reason_codes")
     reason_codes = (

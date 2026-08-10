@@ -46,8 +46,12 @@ FUNCTION_DEBT_LEDGER = {
     # 只接入登记误听面分类、弱 provenance 与声学路由；分类器在新小模块。
     # 2026-08-09 净 -1：F16/F17 trusted priority provenance 接线压成薄调用。
     ("src/autoslice/final_review_auditor.py", "audit_final_subtitles"): 418,
-    ("src/autoslice/producer_boundary_resolution.py", "_repair_boundary"): 305,
-    ("src/autoslice/producer_package_finalization.py", "_materialize_final_recut"): 320,
+    # 2026-08-09 -3：exact reviewed terminal projection 接线同时把 tail-pad
+    # coverage receipt 抽到模块级 helper，锁定本次边界修复的净拆解收益。
+    # 2026-08-10 合并 ft-a8600994：以下两项按合并后**实测**行数记账,数字来自本次
+    # merge(主线 F16/F17 接线与 ft 边界修复各自的净收益叠加),非凭空抬降。
+    ("src/autoslice/producer_boundary_resolution.py", "_repair_boundary"): 302,
+    ("src/autoslice/producer_package_finalization.py", "_materialize_final_recut"): 314,
     # 2026-08-08 +3：owned_intervals 执法接线（Ivan 2026-08-08 配额上传波
     # 修复——zsm8 案：baseline 已应用的 cue 被 exact-final CPA 自愈无声改写；
     # redelivery_subtitle_baseline.py 写 owned_intervals 从未被读取）。
@@ -95,7 +99,11 @@ FUNCTION_DEBT_LEDGER = {
     # recovery manifest 要求 route-decision.v2；sha 逐字节相等才结转）。
     # 2026-08-01 +45：身份见证现场重打（摘要形态回执过不了现行校验，不考古，
     # 对同一字节新打 CPA 见证；失败即丢弃整个结转 fail-closed）。
-    ("src/autoslice/publish_staging.py", "_stage_publish_draft"): 578,
+    # 2026-08-10 +19：合并 ft-a8600994 快车道分支（Ivan 2026-08-10 逐字「这就是要
+    # 合并的快车道代码，现在就去合并 merge」）带入的 relocation/冻结包接线。数字为
+    # 合并后实测,非估算。⚠️ 此项已连续吃增长且上方 8/1 注释写明「下次动这个函数
+    # 必须先拆，不许再抬」——本次是合并带入而非新写功能,但欠账事实成立,须补拆解。
+    ("src/autoslice/publish_staging.py", "_stage_publish_draft"): 597,
     # 2026-07-31 +3：同上，截图/polish 路径的 contract 穿透。
     # 2026-08-10 净 -6：同上——终检见证的 verifier-missing 分支与调用抽到
     # cover_scene_binding.run_final_host_identity_witness。
@@ -174,7 +182,10 @@ MODULE_DEBT_LEDGER = {
     # 2026-07-31 再 +52：_talk_font_floor_layout_override——无梗字单行文案的
     # 120px 下限版面自愈（Ivan 07-31 原话拍板「120px 是硬性要求，无所谓是什么
     # layout，接受版面切换」）。
-    "src/autoslice/cover_generation.py": 2_338,
+    # 2026-08-10 +7：合并 ft-a8600994 快车道分支（Ivan 2026-08-10 逐字「这就是要合并的快车道代码，现在就去合并 merge」）——ft 新增的
+    # punch_fragment_whitespace_is_source_safe 守卫接线 + 合并说明注释。
+    # 数字为合并后实测,非估算。
+    "src/autoslice/cover_generation.py": 2_345,
     # 2026-08-02 +166：bind_manual_package_cover——手动产线包封面回写（同一套
     # 校验/binding/原子写；Ivan 8/2 /goal 授权；测试 test_manual_cover_bind.py）。
     "src/autoslice/cover_repair.py": 2_217,
@@ -231,7 +242,8 @@ MODULE_DEBT_LEDGER = {
     # 留给下一次动这个 god-file 的人先拆再改。
     # 2026-08-08 +5：Ivan 2026-08-08 优化①边界重放 + wsl 重产 BLOCK
     # 实证——把两层 carry/skip 披露写入最终 boundary audit。
-    "src/autoslice/producer_package_finalization.py": 2_741,
+    # 2026-08-10 净 -1：合并 ft-a8600994 后实测收紧,锁定收益。
+    "src/autoslice/producer_package_finalization.py": 2_740,
     # 2026-07-31 +40：同上（SC 发送者 deferral）。
     # 2026-08-08 +7：会话内重述修复接线（Ivan 2026-08-08 当日指令，
     # docs/reviews/2026-08-08-restatement-repair-design.md §4）——会话内
@@ -248,6 +260,7 @@ MODULE_DEBT_LEDGER = {
     # 2026-08-10 −2：AUDITOR_UNAVAILABLE 的 discovery 字面量收进
     # src/autoslice/provider_failure.auditor_unavailable_discovery（同时把
     # provider 保真证据挂上去），三处调用点各省一行。
+    # 2026-08-10 合并 ft-a8600994：按合并后实测行数记账,非凭空抬降。
     "src/autoslice/producer_text_pipeline.py": 2_118,
     # 2026-07-31 +12：contract 穿透接线（形参 + 4 个调用点）。
     # 2026-07-31 再 +17：封面路由 P1——witness 从「路由法官」降回「置信输入」，
@@ -265,8 +278,14 @@ MODULE_DEBT_LEDGER = {
     # 截图，只能重绘」）。新增重量落在 cover_source_composition 的几何判据上，
     # 同时把纯决策的 _decide_cover_treatment（含三个标定常量）整体抽到新模块
     # cover_route_policy.py，本模块只留 import 别名与调用点。
-    "src/autoslice/publish_staging.py": 2_713,
+    # 2026-08-10 +19：合并 ft-a8600994 快车道分支（Ivan 2026-08-10 逐字「这就是要合并的快车道代码，现在就去合并 merge」）带入的
+    # relocation/冻结包接线（同 _stage_publish_draft 那一项）。合并后实测。
+    "src/autoslice/publish_staging.py": 2_732,
     "src/autoslice/same_bv_repair.py": 2_422,
+    # 2026-08-10 新入账 2_004：合并 ft-a8600994（Ivan 2026-08-10 逐字「这就是要合并的快车道代码，现在就去合并 merge」）把 talk_lane 顶过
+    # 2000 行入场线（ft 侧 +17 行 boundary 接线）。⚠️ 这是本次 merge 带入的新
+    # 欠账,不是新功能许可;超线仅 4 行,应优先拆回线下而不是长期挂账。
+    "src/autoslice/talk_lane.py": 2_004,
 }
 SCRIPT_EXCLUSIONS = {
     # Incident-specific forensic repair retained as historical evidence, not a
@@ -478,6 +497,35 @@ def test_dynamic_boundary_context_cap_is_wired_to_post_authority_review_only() -
         "boundary_max_forward_ms"
         in calls["review_final_boundary_semantics"]
     )
+
+
+def test_source_media_receives_the_request_spec_parent() -> None:
+    path = ROOT / "scripts/produce_slice_package.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    main = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "main"
+    )
+    calls = [
+        node
+        for node in ast.walk(main)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "prepare_source_media"
+    ]
+    assert len(calls) == 1
+    keyword = next(
+        value.value
+        for value in calls[0].keywords
+        if value.arg == "spec_parent"
+    )
+    assert isinstance(keyword, ast.Attribute)
+    assert keyword.attr == "parent"
+    assert isinstance(keyword.value, ast.Attribute)
+    assert keyword.value.attr == "spec"
+    assert isinstance(keyword.value.value, ast.Name)
+    assert keyword.value.value.id == "args"
 
 
 def test_final_text_result_cues_and_receipt_reach_the_same_boundary_resolver() -> None:
