@@ -234,6 +234,25 @@
   普通 production 的 `candidate_rejected` 仍是终态，不能借此复活。
 - authorized uploader 在任何副作用前重跑**当前** canonical package auditor、严格 SRT 与共享
   标题门，并要求重跑结果与 manifest 绑定的 v2 audit 完全一致；它不信任旧 audit 自报。
+- **外部主机（wsl/Mac）产出的包只能经 `scripts/import_external_package.py` 进入交付链。**
+  它们用同一份 repo、同一套 produce，包是完整的；卡的是跨主机导入——凭据、
+  `publication_registry` 和 upload 读的 state 只在 free。该工具按序做：源包定位符契约校验
+  → 逐文件 sha256 前后比对的字节搬运 → `slice-package-relocation.v2` 事务化路径规整 →
+  持 `runner.lock` 的 state 绑定 → manifest → package audit → 标题+封面联合质检，
+  typed 回执落 `<pkg>/<cid>.external-import-receipt.json`；不带 `--apply` 为 dry-run。
+  用法：`python3 scripts/import_external_package.py --source <外部包的
+  replacement_recuts 目录> --date <date> --candidate <cid> [--allow-new-pick] --apply`
+  （跨主机传输不在工具内，先 rsync/scp 到 free 的暂存目录；暂存目录与目标目录必须不同）。
+  硬边界：只走 talk 车道；只接受 pick 行缺失（需 `--allow-new-pick`）或已是
+  `review_ready`+`rc=0` 的重绑，`candidate_rejected`/`failed` 必须先过
+  `scripts/revive_rejected_candidates.py`；批级状态不在 manifest builder 白名单内时直接
+  typed 拒绝而不修状态；**不做 `authorized_upload make-manifest`**，上传授权仍只走
+  [90-publish.md](90-publish.md)。路径投影只动
+  `package_relocation_contract.py` 白名单里的运行期定位符，冻结证据（`story_contract`、
+  `cover_generation`、`boundary_audit`、`analysis` 等）逐字节保留产出主机的值；改写后的
+  publish/speaker 哈希由 record 的 `artifact_hashes.publish_draft_sha256` 与
+  `speaker_finalization_manifest_sha256` 重新绑定，chat-authority 里产出主机的
+  `speaker_manifest_sha256` 不改写，只在事务日志记 `speaker_manifest_lineage`。
 - 新 BV 与 exact same-BV repair 的两条发布 lane、权限边界、正式 receipt schema、live
   验收和执行顺序只读 [90-publish.md](90-publish.md)。打包步骤不得复制、放宽或自行推导发布
   准入，也不得把 package audit、pending-human manifest 或任意旧版/手写 receipt 当成授权。
