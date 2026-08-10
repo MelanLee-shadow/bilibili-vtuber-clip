@@ -621,10 +621,21 @@ def _prepare_agy_lrc_job(
     job_dir = Path(tempfile.mkdtemp(prefix=f"{safe_candidate}-", dir=output_dir))
     os.chmod(job_dir, 0o700)
     media_path = job_dir / "input.mp4"
-    shutil.copy2(source_media_path, media_path)
-    os.chmod(media_path, 0o600)
+    # Hardlink rather than copy: every retry attempt used to stage its own byte
+    # copy of the same song window, and each AGY variant staged another. On
+    # 2026-08-08 that put twelve 1.27 GiB copies of one window on disk. A link
+    # is indistinguishable from a regular file inside the job sandbox and costs
+    # nothing. Don't chmod a link — mode lives on the shared inode, so 0600
+    # here would also lock down the source every other stage reads.
+    try:
+        os.link(source_media_path, media_path)
+        linked = True
+    except OSError:
+        shutil.copy2(source_media_path, media_path)
+        os.chmod(media_path, 0o600)
+        linked = False
     source_sha = _sha256(media_path)
-    if source_sha != _sha256(source_media_path):
+    if not linked and source_sha != _sha256(source_media_path):
         raise RuntimeError("copied AGY media does not match the current source")
     duration_ms = _duration_ms(media_path)
     lrc_path = job_dir / "source.lrc"

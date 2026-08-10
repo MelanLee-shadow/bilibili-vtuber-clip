@@ -2,6 +2,7 @@ import base64
 import io
 import json
 import hashlib
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -192,6 +193,89 @@ def test_agy_adapter_preserves_provider_echo_and_writes_canonical_projection(tmp
     assert manifest["canonicalization"]["strategy"] == AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY
     assert manifest["artifacts"]["provider_raw_output_sha256"] == run.provider_raw_output_sha256
     assert manifest["artifacts"]["output_sha256"] == run.output_sha256
+
+
+def test_agy_job_hardlinks_media_instead_of_copying_it(tmp_path, monkeypatch):
+    """Retries must share one file, not stage a byte copy each.
+
+    Before this, every attempt (and every AGY variant inside it) copy2'd the
+    whole song window: 2026-08-08 held twelve 1.27 GiB copies of one window.
+    Also pins that staging must not chmod the link — mode lives on the shared
+    inode, so locking the job copy to 0600 would lock the source too.
+    """
+    lrc = _japanese_lrc()
+    media = tmp_path / "source.mp4"
+    media.write_bytes(b"fake-media")
+    os.chmod(media, 0o644)
+    fake_agy = tmp_path / "agy"
+    fake_agy.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv("AGY_BIN", str(fake_agy))
+    monkeypatch.setattr(agy_lrc_alignment, "_duration_ms", lambda _path: 100_000)
+
+    def fake_run(_command, *, cwd, **_kwargs):
+        Path(cwd, "alignment.json").write_text(
+            json.dumps(
+                _valid_audio_lrc_api_payload(
+                    Path(cwd, "prompt.md").read_text(encoding="utf-8"), lrc
+                ),
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(agy_lrc_alignment.subprocess, "run", fake_run)
+    jobs = tmp_path / "jobs"
+    agy_lrc_alignment.run_agy_audio_lrc_alignment(media, lrc, "linkcheck", jobs)
+    agy_lrc_alignment.run_agy_audio_lrc_alignment(media, lrc, "linkcheck", jobs)
+
+    staged = sorted(jobs.glob("*/input.mp4"))
+    assert len(staged) == 2, "each run stages its own job dir"
+    source_inode = media.stat().st_ino
+    for path in staged:
+        assert path.stat().st_ino == source_inode, f"{path} is a copy, not a link"
+    assert media.stat().st_mode & 0o777 == 0o644, "staging must not chmod the shared inode"
+
+
+def test_agy_job_falls_back_to_copy_when_hardlink_is_unavailable(tmp_path, monkeypatch):
+    """Cross-device job dirs still work — copy, and keep the integrity check."""
+    lrc = _japanese_lrc()
+    media = tmp_path / "source.mp4"
+    media.write_bytes(b"fake-media")
+    fake_agy = tmp_path / "agy"
+    fake_agy.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv("AGY_BIN", str(fake_agy))
+    monkeypatch.setattr(agy_lrc_alignment, "_duration_ms", lambda _path: 100_000)
+
+    def deny_link(*_args, **_kwargs):
+        raise OSError(18, "Invalid cross-device link")
+
+    monkeypatch.setattr(agy_lrc_alignment.os, "link", deny_link)
+
+    def fake_run(_command, *, cwd, **_kwargs):
+        Path(cwd, "alignment.json").write_text(
+            json.dumps(
+                _valid_audio_lrc_api_payload(
+                    Path(cwd, "prompt.md").read_text(encoding="utf-8"), lrc
+                ),
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(agy_lrc_alignment.subprocess, "run", fake_run)
+    run = agy_lrc_alignment.run_agy_audio_lrc_alignment(
+        media, lrc, "copyfallback", tmp_path / "jobs"
+    )
+
+    staged = Path(str(run.media_path)) if hasattr(run, "media_path") else None
+    copies = sorted((tmp_path / "jobs").glob("*/input.mp4"))
+    assert len(copies) == 1
+    assert copies[0].stat().st_ino != media.stat().st_ino, "fallback must be a real copy"
+    assert copies[0].read_bytes() == media.read_bytes()
+    assert copies[0].stat().st_mode & 0o777 == 0o600
+    assert staged is None or Path(staged).exists()
 
 
 def _valid_audio_lrc_api_payload(prompt: str, lrc: LrcResult) -> dict[str, object]:
