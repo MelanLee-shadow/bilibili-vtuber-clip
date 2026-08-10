@@ -444,6 +444,95 @@ def test_ordered_queries_ignore_a_non_audio_authority_shaped_field():
     ) == ["画面歌名", "新型病毒", "演唱 ASR"]
 
 
+def test_carried_authority_survives_a_retry_that_produced_no_fresh_audio_evidence(
+    tmp_path, monkeypatch
+):
+    """一次 infra 失败不得把已证真名清回 None。
+
+    重试链在本仓是常态（provider outage / AGY quota / 窗口切失败）。若某轮跑
+    不到音频证据就把 ``song_name_authority`` 抹掉，state 行会被这轮结果整体
+    替换，下一轮 requeue 就又带着 BCUT 的《新型病毒》去检索——修复等于只生效
+    一轮。
+    """
+
+    date, cid = "2026-08-09", "song_210131_1210"
+    base = tmp_path / "autoslice"
+    (base / "logs").mkdir(parents=True)
+    out_dir = base / "out" / date / cid
+    out_dir.mkdir(parents=True)
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path / "repo")
+    monkeypatch.setattr(runner, "child_env", lambda: {})
+    monkeypatch.setattr(runner, "cpa_qa_cmd", lambda: "judge")
+
+    segment = tmp_path / "segment.mp4"
+    segment.write_bytes(b"segment")
+    anchor_start, anchor_end, duration = 50_000, 100_000, 200_000
+    runner.song_window_media_path(
+        out_dir,
+        cid,
+        "",
+        max(0, anchor_start - runner.SONG_WINDOW_PRE_MS),
+        min(duration, anchor_end + runner.SONG_WINDOW_POST_MS),
+    ).write_bytes(b"tight")
+    monkeypatch.setattr(
+        runner,
+        "slice_srt",
+        lambda _s, _a, _b, destination: (
+            destination.write_text("1\n00:00:00,000 --> 00:00:01,000\n歌词\n", encoding="utf-8"),
+            1,
+        )[1],
+    )
+
+    class Completed:
+        returncode = 0
+
+    commands = []
+
+    def fake_run(command, **_kwargs):
+        commands.append(command)
+        selector_dir = Path(command[command.index("--output-dir") + 1])
+        (selector_dir / "summary.json").write_text(
+            json.dumps(
+                {
+                    "records": [
+                        {
+                            "candidate_id": "seededsong_retry",
+                            "decision_action": "BLOCK",
+                            "reason_codes": ["AGY_QUOTA_EXHAUSTED"],
+                            "source_context_job": {"song_candidate": True},
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        return Completed()
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    monkeypatch.setattr(runner, "record_is_song", lambda _record: False)
+
+    authority = extract_audio_song_name_authority(_audio_summary_record())
+    result = runner.produce_song(
+        date,
+        {
+            "cid": cid,
+            "segment_path": str(segment),
+            "seg_dur_ms": duration,
+            "anchor_start_ms": anchor_start,
+            "anchor_end_ms": anchor_end,
+            "hook": XINXING_HOOK,
+            "preview": XINXING_PREVIEW,
+            **carry_song_identity_evidence({"song_name_authority": authority}),
+        },
+    )
+
+    assert _lrc_queries(commands[0])[0] == "心型病毒 (Live)"
+    assert "新型病毒" not in _lrc_queries(commands[0])
+    assert result["song_name_authority"] == authority
+    assert carry_song_identity_evidence(result)["song_name_authority"] == authority
+
+
 def test_retry_carries_the_audio_authority_so_the_bad_name_never_returns():
     authority = extract_audio_song_name_authority(_audio_summary_record())
     carried = carry_song_identity_evidence(

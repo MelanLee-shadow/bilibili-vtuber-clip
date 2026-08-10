@@ -584,7 +584,7 @@ def produce_song(date: str, item: dict) -> dict:
         result = {"candidate_id": cid, "segment": segment.name, "start_ms": start, "end_ms": end,
                   "danmaku": item.get("danmaku", 0), "hook": item.get("hook", ""), "preview": item.get("preview", "")[:60], "rc": -1,
                   "discovery_lane": item.get("lane"), "title_hint": item.get("title_hint"),
-                  "visual_song_evidence": item.get("visual_song_evidence"),
+                  "visual_song_evidence": item.get("visual_song_evidence"), "song_name_authority": item.get("song_name_authority"),
                   "pipeline_fingerprint": _runner.pipeline_fingerprint(),
                   "song_pipeline_fingerprint": _runner.song_pipeline_fingerprint(),
                   "transient_retry_count": int(item.get("transient_retry_count") or 0),

@@ -186,15 +186,14 @@ def record_song_naming(result: Any) -> None:
 
     权威可能是在 ``_full`` 那一趟证出来的：窄窗那趟根本没有 audio aligner。
     全源趟失败时 ``produce_song`` 只按白名单把它折进 ``full_source_retry``，
-    所以这里要把权威从那层提上来——否则真名会像修复前的标题一样被埋掉。
+    所以全源那层优先——否则本次跑出来的、hash 绑定的新出处会被上一轮带过来
+    的旧权威压住；顶层次之（上一轮证过、本轮没跑到音频就该原样存活，不能
+    一次 infra 失败就把真名清成 None、下一轮又回到 BCUT 的错名）。
     """
 
     if not isinstance(result, dict):
         return
-    authority = result.get("song_name_authority")
-    if not isinstance(authority, Mapping):
-        retry = _mapping(result.get("full_source_retry"))
-        nested = retry.get("song_name_authority")
-        authority = nested if isinstance(nested, Mapping) else None
-    result["song_name_authority"] = dict(authority) if authority else None
+    nested = _mapping(result.get("full_source_retry")).get("song_name_authority")
+    authority = nested if isinstance(nested, Mapping) else result.get("song_name_authority")
+    result["song_name_authority"] = dict(authority) if isinstance(authority, Mapping) else None
     result["song_title_candidates"] = song_name_hint_candidates(result)
