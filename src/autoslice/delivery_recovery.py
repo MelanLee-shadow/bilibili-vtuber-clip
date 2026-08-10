@@ -31,6 +31,11 @@ from src.autoslice.recovery_title_authority import (
 )
 from src.autoslice import selection_rescore
 from src.autoslice.selection_scorecard import apply_reviewed_selection_calibration
+from src.autoslice.speaker_manual_review import (
+    SPEAKER_MANUAL_REVIEW_STATUSES,
+    park_for_manual_review,
+    restore_fossilized_speaker_holds,
+)
 from src.autoslice.talk_quota_freeze import carry_frozen_admission
 
 
@@ -355,6 +360,13 @@ def apply_talk_backfill_rejection_policy(
     if backfill_rejection is None:
         return result.get("status") == "candidate_rejected"
     rejected_status, rejection_reason = backfill_rejection
+    # Ivan 2026-08-10：「说话人证据不足应该转人工审阅，不是判死」——说话人分离
+    # 是刚开的功能（生产 8/7 才翻到 AUTOSLICE_SPEAKER_MODE=auto），不许拿它的
+    # 不成熟去毙内容。处置与下面 exact 分支的既有范式同款：保留候选自己的说话
+    # 人状态，不铸 candidate_rejected 化石；exact/普通两条路都盖同一份停泊回执。
+    speaker_hold = rejected_status in SPEAKER_MANUAL_REVIEW_STATUSES
+    if speaker_hold:
+        park_for_manual_review(result, reason=rejection_reason)
     if exact_selected:
         result["backfill_suppressed_by_exact_contract"] = {
             "schema_version": "exact-selection-backfill-suppression.v1",
@@ -362,6 +374,10 @@ def apply_talk_backfill_rejection_policy(
             "reason": rejection_reason,
         }
         return False
+    if speaker_hold:
+        # 仍返回 True——席位照常让给候补（35fc448「Fix speaker evidence reserve
+        # backfill」的既有裁定）。停泊只改"判死 vs 等人看"，不改配额。
+        return True
     result["rejected_status"] = rejected_status
     result["status"] = "candidate_rejected"
     result["rejection_reason"] = rejection_reason
@@ -1623,6 +1639,9 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
     per-candidate lifetime cap.
     """
 
+    # Ivan 2026-08-10 裁定的迁移面：裁定之前化石化的说话人拒绝行先迁回停泊态，
+    # 再进下面的常规恢复判定（本体在 src/autoslice/speaker_manual_review.py）。
+    restore_fossilized_speaker_holds(state)
     existing_pending = {
         str(item.get("cid") or item.get("candidate_id") or "")
         for item in state.get("pending_talk", [])

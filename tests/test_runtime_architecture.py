@@ -120,7 +120,13 @@ FUNCTION_DEBT_LEDGER = {
     # 限制。」授权的配额政策根治：cap/分数门改由按日期资产 + 准入冻结承载，
     # 复活件丢掉冻结章就等于把回溯改写的洞重新打开。本体全在新模块
     # src/autoslice/talk_quota_freeze.py，这里只有调用点。
-    ("src/autoslice/delivery_recovery.py", "requeue_recoverable_talks"): 321,
+    # 2026-08-10 +3：Ivan 2026-08-10 逐字「说话人证据不足应该转人工审阅，不是
+    # 判死」——裁定之前化石化的说话人拒绝行必须先迁回停泊态再进常规恢复判定，
+    # 这里只有一行调用点 + 两行出处注释；识别与回执本体全在新模块
+    # src/autoslice/speaker_manual_review.py。测试
+    # tests/test_speaker_manual_review.py::
+    # test_fossilized_speaker_rejection_migrates_to_manual_review_hold。
+    ("src/autoslice/delivery_recovery.py", "requeue_recoverable_talks"): 324,
 }
 
 # 2026-07-31 冻结基线：12 项。同上，全部是欠账。
@@ -177,7 +183,12 @@ MODULE_DEBT_LEDGER = {
     # SONG_INFRA_RETRY_CAP 上限语义）抽到 batch_terminal_state
     # .song_infra_transient_is_active，与 project_terminal_song_disposition
     # 共用一套；这里只剩一个调用点。收紧到实际值以锁定收益。
-    "src/autoslice/delivery_recovery.py": 2_134,
+    # 2026-08-10 +19：Ivan 2026-08-10 逐字「说话人证据不足应该转人工审阅，不是
+    # 判死」——说话人失败改落停泊态而非 candidate_rejected 化石。本文件只有
+    # 三处接线（一段 import、backfill 政策里的停泊分支+出处注释、requeue 顶部
+    # 的迁移调用点）；停泊回执、化石迁移与报表本体全在新模块
+    # src/autoslice/speaker_manual_review.py。测试 tests/test_speaker_manual_review.py。
+    "src/autoslice/delivery_recovery.py": 2_153,
     # 2026-08-07 +79：cue59「殉情」顶替真值「偶遇」实案（Ivan 2026-08-07
     # auto_203735_555_680 speaker-truth-diff 裁决 + 落地授权）——新增
     # _glossary_session_candidate_undecidable / _adjudicate_with_glossary_witness_guard

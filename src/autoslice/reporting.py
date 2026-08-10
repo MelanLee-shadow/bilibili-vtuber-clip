@@ -16,6 +16,7 @@ from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.publication_reconciliation import (
     publication_row_is_verified,
 )
+from src.autoslice import speaker_manual_review
 
 
 _runner = RunnerProxy()
@@ -238,8 +239,6 @@ def write_reports(date: str, state: dict) -> None:
         in {
             "candidate_rejected",
             "boundary_unrepairable",
-            "speaker_review_required",
-            "speaker_evidence_insufficient",
             "failed",
             "quarantine",  # read-only compatibility for pre-2026-07-10 state
         }
@@ -275,6 +274,7 @@ def write_reports(date: str, state: dict) -> None:
         talk_notes.append(f"{unrepairable} 条边界不可修复未交付")
     if quarantined:
         talk_notes.append(f"{quarantined} 条旧版 quarantine(历史状态)")
+    talk_notes.extend(speaker_manual_review.report_notes(picks, exact_ids=exact_ids))
     lines = [
         f"# {date} 无人值守自动切片批次",
         "",
@@ -431,6 +431,7 @@ def write_reports(date: str, state: dict) -> None:
                 f"{evidence_label} |"
             )
 
+    lines += speaker_manual_review.render_report_section(picks, exact_ids=exact_ids)
     if reserves:
         lines += [
             "",
