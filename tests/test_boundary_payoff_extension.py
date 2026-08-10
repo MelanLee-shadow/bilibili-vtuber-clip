@@ -402,6 +402,16 @@ def test_extension_is_idempotent() -> None:
     assert [c.boundary for c in twice] == [c.boundary for c in once]
 
 
+def _danmaku_xml(tmp_path, name: str = "danmaku.xml"):
+    xml_path = tmp_path / name
+    nodes = "".join(
+        f'<d p="{item.offset_ms / 1000:.3f},1,25,16777215,0,0,0,0">{item.text}</d>'
+        for item in _danmaku()
+    )
+    xml_path.write_text(f"<i>{nodes}</i>", encoding="utf-8")
+    return xml_path
+
+
 @pytest.mark.parametrize("with_danmaku", [True, False])
 def test_semantic_recall_lane_wires_the_extension(with_danmaku: bool, tmp_path) -> None:
     """端到端：历史 LLM 输出 → 真实召回代码路径 → 边界与回执。"""
@@ -429,14 +439,7 @@ def test_semantic_recall_lane_wires_the_extension(with_danmaku: bool, tmp_path) 
             },
         ]
     }
-    xml_path = None
-    if with_danmaku:
-        xml_path = tmp_path / "danmaku.xml"
-        nodes = "".join(
-            f'<d p="{item.offset_ms / 1000:.3f},1,25,16777215,0,0,0,0">{item.text}</d>'
-            for item in _danmaku()
-        )
-        xml_path.write_text(f"<i>{nodes}</i>", encoding="utf-8")
+    xml_path = _danmaku_xml(tmp_path) if with_danmaku else None
 
     selected, diagnostics = select_semantic_session_candidates_covered(
         cues,
@@ -455,3 +458,64 @@ def test_semantic_recall_lane_wires_the_extension(with_danmaku: bool, tmp_path) 
     assert bool(receipts) is with_danmaku
     if with_danmaku:
         assert receipts[0]["extended_end_ms"] == IVAN_CONFIRMED_END_MS
+
+
+def test_sharded_recall_also_gets_the_extension(tmp_path) -> None:
+    """长场分片路径同样接线：后延挂在聚合层，用的是全场 cue 栅格与全场弹幕。
+
+    分片存在的理由就是两小时场（2026-07-22 案），生产必走这条分支。补一条尾部
+    dummy cue 把覆盖终点顶过单次召回上限即可触发分片；真实那 51 条 cue 全部落在
+    0 号分片窗口内，所以 cue 编号与全局一致，历史 payload 原样可用。
+    """
+
+    cues = _cues() + (
+        SourceCue(
+            cue_id="tail",
+            source_start_ms=46 * 60 * 1_000,
+            source_end_ms=46 * 60 * 1_000 + 2_000,
+            text="很久以后的另一段",
+        ),
+    )
+    positions = {cue.source_start_ms: index for index, cue in enumerate(cues, start=1)}
+    ends = {cue.source_end_ms: index for index, cue in enumerate(cues, start=1)}
+    payload = {
+        "candidates": [
+            {
+                "start_cue": positions[REAL_START_MS],
+                "end_cue": ends[REAL_PIPELINE_END_MS],
+                "kind": "talk",
+                "event_key": "求饶后吃莉亚",
+                "hook": "小李求莉亚放过自己，转头就吃了她",
+                "confidence": 0.88,
+            },
+            {
+                "start_cue": positions[NEXT_CANDIDATE_START_MS],
+                "end_cue": ends[737_160],
+                "kind": "talk",
+                "event_key": "听沙多利怎么说",
+                "hook": "听听沙多利怎么说",
+                "confidence": 0.86,
+            },
+        ]
+    }
+    calls: list[str] = []
+
+    def stub(prompt: str) -> str:
+        calls.append(prompt)
+        return json.dumps(payload if len(calls) == 1 else {"candidates": []}, ensure_ascii=False)
+
+    selected, diagnostics = select_semantic_session_candidates_covered(
+        cues,
+        llm_call=stub,
+        max_candidates=18,
+        min_talk_window_ms=2_000,
+        danmaku_xml=_danmaku_xml(tmp_path, "sharded.xml"),
+    )
+
+    assert diagnostics["mode"] == "sharded"
+    assert len(calls) > 1
+    target = next(c for c in selected if c.boundary.resolved_start_ms == REAL_START_MS)
+    assert target.boundary.resolved_end_ms == IVAN_CONFIRMED_END_MS
+    assert AUDIENCE_PAYOFF_EXTENDED_REASON in target.boundary.reason_codes
+    receipts = diagnostics["audience_payoff_extensions"]
+    assert [r["extended_end_ms"] for r in receipts] == [IVAN_CONFIRMED_END_MS]
