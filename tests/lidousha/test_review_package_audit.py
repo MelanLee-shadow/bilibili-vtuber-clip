@@ -4103,3 +4103,139 @@ def test_legacy_retry_receipt_keeps_historical_package_auditable():
         )
         is False
     )
+
+
+# 合并说明：以下为 ft-a8600994 分支独有的验收面测试。主线 df4afed 窄移植同一
+# 终端投影特性时用了 _TP_* 具名常量 + 四条金丝雀的写法,与 ft 这条内联字面量写法
+# 在同一段文本里交织冲突。取主线那段(覆盖更全:fail-closed 参数化/跨界 cue 证据/
+# 不放宽普通短收尾),并把 ft 这条独有用例原样补回,两边覆盖都不丢。
+def _projected_source_boundary_review(candidate_id: str) -> dict[str, object]:
+    reviewed_end_ms = 67_760
+    closure_end_ms = 67_670
+    authority_sha256 = "sha256:" + "a" * 64
+    grid_sha256 = "sha256:" + "e" * 64
+    closure_text_sha256 = "sha256:" + "f" * 64
+    binding = {
+        "kind": "reviewed_exact_interval_terminal_projection",
+        "cue_index": 1,
+        "cue_start_ms": 64_440,
+        "cue_end_ms": closure_end_ms,
+        "cue_text_sha256": closure_text_sha256,
+        "reviewed_endpoint_ms": reviewed_end_ms,
+        "terminal_drift_ms": 90,
+        "max_terminal_drift_ms": 250,
+        "crossing_witness_cue_index": 2,
+        "crossing_witness_start_ms": closure_end_ms,
+        "crossing_witness_end_ms": 69_210,
+        "crossing_witness_text_sha256": "sha256:" + "b" * 64,
+        "authority_sha256": authority_sha256,
+        "cue_grid_sha256": grid_sha256,
+    }
+    review = _passing_boundary_review(
+        candidate_id,
+        end_ms=reviewed_end_ms,
+        cue_grid_digest=grid_sha256,
+    )
+    review.update(
+        {
+            "evidence_cue_indexes": [1, 2],
+            "boundary_search_scope": {
+                "reviewed_exact_interval_projection": {
+                    "schema_version": (
+                        "reviewed-exact-interval-terminal-projection-scope.v1"
+                    ),
+                    "authority_sha256": authority_sha256,
+                    "reviewed_endpoint_ms": reviewed_end_ms,
+                    "max_terminal_drift_ms": 250,
+                }
+            },
+            "recommendation_relaxations": [binding],
+            "selected_terminal_projection_binding": binding,
+        }
+    )
+    endpoint = review["final_endpoint_binding"]
+    assert isinstance(endpoint, dict)
+    endpoint.update(
+        {
+            "final_snapped_end_ms": closure_end_ms,
+            "final_start_ms": 9_630,
+            "final_end_ms": reviewed_end_ms,
+            "closure_text_sha256": closure_text_sha256,
+        }
+    )
+    return review
+
+
+def test_reviewed_terminal_projection_bridge_survives_package_audit(
+    tmp_path: Path,
+):
+    stem = "candidate-reviewed-terminal-projection"
+    source_review = _projected_source_boundary_review(stem)
+    subtitle = _write(
+        tmp_path / f"{stem}.srt",
+        "1\n00:00:00,000 --> 00:00:58,130\n审定收尾\n",
+    )
+    final_cues = parse_srt_cues(subtitle.read_text(encoding="utf-8"))
+    final_review = _passing_boundary_review(
+        stem,
+        end_ms=58_130,
+        review_scope="final_delivery",
+        source_review=source_review,
+        cue_grid_digest=cue_grid_sha256(final_cues),
+        closure_text=final_cues[-1].text,
+    )
+    record = {
+        "boundary_audit": {
+            "boundary_authority": (
+                "correlated_semantic_review_plus_deterministic_guards"
+            ),
+            "boundary_semantic_review": source_review,
+            "final_delivery_boundary_semantic_review": final_review,
+            "final_start_ms": 9_630,
+            "snapped_sentence_end_ms": 67_670,
+            "final_end_ms": 67_760,
+            "boundary_selection_lower_bound_ms": 67_670,
+            "delivery_coverage_lower_bound_ms": 67_760,
+            "tail_pad_coverage_bridge": {
+                "status": "USED",
+                "closure_lower_bound_ms": 67_670,
+                "delivery_lower_bound_ms": 67_760,
+                "maximum_tail_pad_ms": 400,
+            },
+            "delivery_coverage_verification": {
+                "status": "PASS",
+                "failure": None,
+            },
+        }
+    }
+
+    def run_audit() -> set[str]:
+        issues: list[dict] = []
+        audit_boundary_contract(
+            issue_adder=lambda rows, code, **fields: rows.append(
+                {"code": code, **fields}
+            ),
+            issues=issues,
+            stem=stem,
+            record_path=tmp_path / f"{stem}.record.json",
+            subtitle_path=subtitle,
+            exact_final_review={"boundary_semantic_review": final_review},
+            record=record,
+            story_contract={"boundary_semantic_review": final_review},
+            required=True,
+            is_song=False,
+        )
+        return {issue["code"] for issue in issues}
+
+    assert "BOUNDARY_DELIVERY_COVERAGE_INVALID" not in run_audit()
+
+    record["boundary_audit"]["tail_pad_coverage_bridge"][
+        "closure_lower_bound_ms"
+    ] = 67_760
+    assert "BOUNDARY_DELIVERY_COVERAGE_INVALID" in run_audit()
+
+    record["boundary_audit"]["tail_pad_coverage_bridge"][
+        "closure_lower_bound_ms"
+    ] = 67_670
+    source_review["evidence_cue_indexes"] = [1]
+    assert "BOUNDARY_SEMANTIC_REVIEW_NOT_PASS" in run_audit()

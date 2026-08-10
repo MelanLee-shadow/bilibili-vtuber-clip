@@ -16,6 +16,10 @@ from src.autoslice.producer_media import (
     run,
 )
 from src.autoslice.recut_materialization import _accurate_reencode_recut_command
+from src.autoslice.redelivery_boundary_projection import (
+    AUTHORITY_CONFIG_KEY,
+    build_terminal_projection_authority,
+)
 from src.autoslice.shadow_review import _sha256
 
 
@@ -111,6 +115,7 @@ def prepare_source_media(
     cid: str,
     out_root: Path,
     host: str,
+    spec_parent: Path | None = None,
 ) -> PreparedSourceMedia:
     piece_paths: list[Path] = []
     piece_provenance_rows: list[dict] = []
@@ -245,6 +250,15 @@ def prepare_source_media(
             {**expected_padded, "output_sha256": _sha256(padded)},
         )
     padded_dur = ffprobe_duration_ms(padded)
+    terminal_projection = build_terminal_projection_authority(
+        spec=spec,
+        piece_provenance_rows=piece_provenance_rows,
+        spec_parent=spec_parent or Path.cwd(),
+    )
+    if terminal_projection is not None:
+        spec["subtitle_redelivery_baseline"][
+            AUTHORITY_CONFIG_KEY
+        ] = terminal_projection
     return PreparedSourceMedia(
         durations=durations,
         padded=padded,

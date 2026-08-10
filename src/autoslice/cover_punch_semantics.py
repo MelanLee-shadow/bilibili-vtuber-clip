@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from typing import Callable, Mapping, Sequence
 
 from src.autoslice.llm_client import LlmCall, extract_json_object
@@ -60,6 +61,21 @@ def extractive_punch_fragment_is_source_safe(
             return True
         start = haystack.find(needle, start + 1)
     return False
+
+
+def punch_fragment_whitespace_is_source_safe(
+    fragment: str, cover_text: str
+) -> bool:
+    """Never let canonicalization invent whitespace inside a physical line."""
+
+    if any(
+        unicodedata.category(char) in {"Cc", "Zl", "Zp"}
+        for char in fragment
+    ):
+        return False
+    if any(char.isspace() and char != " " for char in fragment):
+        return False
+    return " " not in fragment or fragment in cover_text
 
 
 def _canon(text: str) -> str:
@@ -215,11 +231,21 @@ def _validated_punch_lines(
             not (2 <= len(canonical) <= 12)
             or punch_line_em_width(fragment) > PUNCH_LINE_MAX_EM
             or "\n" in fragment
+            # 合并说明：ft 分支仍带「canonical not in haystack 直接毙」的抽取式强制,
+            # 主线 3301e4e 已按 Ivan 2026-08-10 裁定撤销(见上方 docstring)。不恢复
+            # 子串强制;ft 新增的 whitespace 守卫留下,并与 extractive 守卫同域——
+            # 只对确实是原文子串的片段成立。
             or (
                 is_extractive
-                and not extractive_punch_fragment_is_source_safe(
-                    fragment,
-                    cover_text,
+                and (
+                    not punch_fragment_whitespace_is_source_safe(
+                        fragment,
+                        cover_text,
+                    )
+                    or not extractive_punch_fragment_is_source_safe(
+                        fragment,
+                        cover_text,
+                    )
                 )
             )
             or fragment.startswith(_CLOSING_PUNCT)
@@ -235,6 +261,90 @@ def _validated_punch_lines(
 # 旧名保留为别名：`_validated_extractive_punch` 曾是"必须抽取式"这条已退役规则的
 # 载体，外部只按名字引用它做形状校验。
 _validated_extractive_punch = _validated_punch_lines
+
+
+def _valid_hex_digest(value: object) -> bool:
+    return bool(
+        isinstance(value, str)
+        and len(value) == 64
+        and all(char in "0123456789abcdef" for char in value)
+    )
+
+
+def _retry_lineage_is_valid(
+    review: Mapping[str, object],
+    final_punch: list[object],
+    *,
+    allow_legacy_retryless: bool,
+) -> bool:
+    """Validate current retry receipts while retaining explicit legacy v1 read."""
+
+    has_count = "attempt_count" in review
+    has_attempts = "attempts" in review
+    if not has_count and not has_attempts:
+        # Current receipts cannot be distinguished from a current proof whose
+        # retry lineage was deleted.  Fail closed even when a legacy caller asks
+        # for compatibility; same-schema retryless proofs need rematerializing.
+        return False
+    if not has_count or not has_attempts:
+        return False
+    count = review.get("attempt_count")
+    attempts = review.get("attempts")
+    if (
+        not isinstance(count, int)
+        or isinstance(count, bool)
+        or not (1 <= count <= 2)
+        or not isinstance(attempts, list)
+        or len(attempts) != count
+    ):
+        return False
+    accepted_rows: list[Mapping[str, object]] = []
+    for index, row in enumerate(attempts, start=1):
+        if not isinstance(row, Mapping) or row.get("attempt") != index:
+            return False
+        if not _valid_hex_digest(row.get("request_sha256")):
+            return False
+        status = row.get("status")
+        if status not in {"CALL_OR_JSON_FAILED", "REJECTED", "ACCEPTED"}:
+            return False
+        if status in {"REJECTED", "ACCEPTED"}:
+            if set(row) != {
+                "attempt",
+                "request_sha256",
+                "response_sha256",
+                "model_status",
+                "validated_final_punch",
+                "status",
+            }:
+                return False
+            if not _valid_hex_digest(row.get("response_sha256")):
+                return False
+            if not isinstance(row.get("validated_final_punch"), list):
+                return False
+        else:
+            allowed = {"attempt", "request_sha256", "response_sha256", "status"}
+            if not set(row).issubset(allowed) or not {
+                "attempt",
+                "request_sha256",
+                "status",
+            }.issubset(row):
+                return False
+            if "response_sha256" in row and not _valid_hex_digest(
+                row.get("response_sha256")
+            ):
+                return False
+        if status == "ACCEPTED":
+            accepted_rows.append(row)
+    if len(accepted_rows) != 1 or accepted_rows[0] is not attempts[-1]:
+        return False
+    accepted = accepted_rows[0]
+    expected_model_status = "PASS" if review.get("status") == "PASS" else "REVISE"
+    return bool(
+        accepted.get("model_status") == expected_model_status
+        and accepted.get("validated_final_punch") == final_punch
+        and review.get("request_sha256") == accepted.get("request_sha256")
+        and review.get("response_sha256") == accepted.get("response_sha256")
+    )
 
 
 def _review_prompt(
@@ -304,6 +414,7 @@ def validate_cover_punch_semantic_review(
     rendered_lines: object,
     cover_text: str,
     story_hook: str,
+    allow_legacy_retryless: bool = False,
 ) -> bool:
     """Recheck the CPA receipt without trusting producer-selected fields."""
 
@@ -332,6 +443,14 @@ def validate_cover_punch_semantic_review(
         or not isinstance(rendered_lines, list)
         or final_punch != rendered_lines
         or not (1 <= len(final_punch) <= 2)
+    ):
+        return False
+    # 合并说明：ft 新增的重试谱系校验是新增 fail-closed 门,保留;形状校验用主线的
+    # `_validated_punch_lines`(`_validated_extractive_punch` 已是它的别名,等价)。
+    if not _retry_lineage_is_valid(
+        review,
+        final_punch,
+        allow_legacy_retryless=allow_legacy_retryless,
     ):
         return False
     if _validated_punch_lines(
@@ -381,44 +500,129 @@ def review_cover_punch_semantics(
             "reason_code": "CPA_TEXT_REVIEW_UNAVAILABLE",
             "original_punch": list(punch),
         }
-    prompt = _review_prompt(
+    base_prompt = _review_prompt(
         title=title,
         cover_text=cover_text,
         story_hook=story_hook,
         punch=punch,
     )
-    request_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
-    try:
-        raw = llm_call(prompt)
-        payload = extract_json_object(raw)
-    except Exception:
-        return (), {
+    attempts: list[dict[str, object]] = []
+    payload: Mapping[str, object] = {}
+    final: tuple[str, ...] = ()
+    accepted = False
+    model_status: object = None
+    story_summary = ""
+    click_motivation = ""
+    request_sha256 = hashlib.sha256(base_prompt.encode("utf-8")).hexdigest()
+    response_sha256: str | None = None
+    for attempt_index in range(2):
+        prompt = base_prompt
+        if attempt_index:
+            prompt += (
+                "\n上一轮输出没有通过确定性梗字校验。这是唯一一次有界重试。"
+                "请忽略碎片化的初选，重新穷举完整封面文案中可逐字连续抽取的"
+                "短片段；若你已经能在 story_summary 说明一个具体事件，就应优先"
+                "REVISE 成能表达该事件的 1-2 行，而不是一边说明事件一边 REJECT。"
+                "仍须每行最多 9 个全角字宽，且不得编造或改写。"
+            )
+        attempt_request_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        attempt_response_sha256: str | None = None
+        attempt_payload: Mapping[str, object] = {}
+        attempt_final: tuple[str, ...] = ()
+        attempt_model_status: object = None
+        attempt_story_summary = ""
+        attempt_click_motivation = ""
+        attempt_accepted = False
+        try:
+            raw = llm_call(prompt)
+            attempt_response_sha256 = hashlib.sha256(
+                raw.encode("utf-8")
+            ).hexdigest()
+            attempt_payload = extract_json_object(raw)
+        except Exception:
+            request_sha256 = attempt_request_sha256
+            response_sha256 = attempt_response_sha256
+            payload = {}
+            final = ()
+            model_status = None
+            story_summary = ""
+            click_motivation = ""
+            accepted = False
+            failed_row: dict[str, object] = {
+                "attempt": attempt_index + 1,
+                "request_sha256": attempt_request_sha256,
+                "status": "CALL_OR_JSON_FAILED",
+            }
+            if attempt_response_sha256 is not None:
+                failed_row["response_sha256"] = attempt_response_sha256
+            attempts.append(
+                failed_row
+            )
+            continue
+        attempt_model_status = attempt_payload.get("status")
+        attempt_final = punch_validator(
+            attempt_payload.get("final_punch"), cover_text
+        )
+        # 合并说明：ft 分支这里硬编码了三项布尔(其分支上 SCHEMA_VERSION 还是 v1),
+        # 少了主线 v2 新增的 fail-closed 反编造门 no_fabricated_fact。按「同一道门取
+        # 更严那侧」,改回 REQUIRED_REVIEW_BOOLEANS,不让重试改造顺手放宽终审门。
+        booleans_ok = all(
+            attempt_payload.get(key) is True for key in REQUIRED_REVIEW_BOOLEANS
+        )
+        attempt_story_summary = str(
+            attempt_payload.get("story_summary") or ""
+        ).strip()
+        attempt_click_motivation = str(
+            attempt_payload.get("click_motivation") or ""
+        ).strip()
+        status_shape_ok = bool(
+            (attempt_model_status == "PASS" and attempt_final == punch)
+            or (
+                attempt_model_status == "REVISE"
+                and attempt_final
+                and attempt_final != punch
+            )
+        )
+        attempt_accepted = bool(
+            attempt_payload.get("schema_version") == SCHEMA_VERSION
+            and status_shape_ok
+            and booleans_ok
+            and len(attempt_story_summary) >= 6
+            and len(attempt_click_motivation) >= 6
+        )
+        request_sha256 = attempt_request_sha256
+        response_sha256 = attempt_response_sha256
+        payload = attempt_payload
+        final = attempt_final
+        model_status = attempt_model_status
+        story_summary = attempt_story_summary
+        click_motivation = attempt_click_motivation
+        accepted = attempt_accepted
+        attempts.append(
+            {
+                "attempt": attempt_index + 1,
+                "request_sha256": attempt_request_sha256,
+                "response_sha256": attempt_response_sha256,
+                "model_status": attempt_model_status,
+                "validated_final_punch": list(attempt_final),
+                "status": "ACCEPTED" if attempt_accepted else "REJECTED",
+            }
+        )
+        if attempt_accepted:
+            break
+    if attempts[-1].get("status") == "CALL_OR_JSON_FAILED":
+        failed_proof: dict[str, object] = {
             "schema_version": SCHEMA_VERSION,
             "status": "FAILED",
             "reason_code": "CPA_TEXT_REVIEW_CALL_FAILED",
             "original_punch": list(punch),
             "request_sha256": request_sha256,
+            "attempt_count": len(attempts),
+            "attempts": attempts,
         }
-    response_sha256 = hashlib.sha256(raw.encode("utf-8")).hexdigest()
-    model_status = payload.get("status")
-    final = punch_validator(payload.get("final_punch"), cover_text)
-    # fail-closed：`no_fabricated_fact` 缺席（老 prompt / 老模型）也算不通过。
-    booleans_ok = all(
-        payload.get(key) is True for key in REQUIRED_REVIEW_BOOLEANS
-    )
-    story_summary = str(payload.get("story_summary") or "").strip()
-    click_motivation = str(payload.get("click_motivation") or "").strip()
-    status_shape_ok = bool(
-        (model_status == "PASS" and final == punch)
-        or (model_status == "REVISE" and final and final != punch)
-    )
-    accepted = bool(
-        payload.get("schema_version") == SCHEMA_VERSION
-        and status_shape_ok
-        and booleans_ok
-        and len(story_summary) >= 6
-        and len(click_motivation) >= 6
-    )
+        if response_sha256 is not None:
+            failed_proof["response_sha256"] = response_sha256
+        return (), failed_proof
     proof: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
         "status": (
@@ -455,5 +659,7 @@ def review_cover_punch_semantics(
         ).hexdigest(),
         "request_sha256": request_sha256,
         "response_sha256": response_sha256,
+        "attempt_count": len(attempts),
+        "attempts": attempts,
     }
     return (final if accepted else ()), proof

@@ -1118,14 +1118,19 @@ def classify_talk_failure(attempt_output: str) -> dict:
             "chat_authority_final_artifact",
             False,
         )
-    elif "REDELIVERY_SUBTITLE_BASELINE_FAILED" in tail:
-        # Reviewed-redelivery text/timing equivalence is a deterministic
-        # authority gate.  Classify it explicitly instead of laundering a
-        # concrete baseline defect into producer_error/unknown and retrying the
-        # identical fingerprint forever.
+    elif (
+        "REDELIVERY_SUBTITLE_BASELINE_FAILED" in tail
+        or "REDELIVERY_TERMINAL_PROJECTION_" in tail
+    ):
+        # Reviewed-redelivery text/timing and terminal projection equivalence
+        # are deterministic authority gates, not retryable producer defects.
         kind, stage, recoverable = (
             "subtitle_authority",
-            "redelivery_subtitle_baseline",
+            (
+                "redelivery_terminal_projection"
+                if "REDELIVERY_TERMINAL_PROJECTION_" in tail
+                else "redelivery_subtitle_baseline"
+            ),
             False,
         )
     elif "STORY_CONTRACT_INPUT_INVALID" in tail:

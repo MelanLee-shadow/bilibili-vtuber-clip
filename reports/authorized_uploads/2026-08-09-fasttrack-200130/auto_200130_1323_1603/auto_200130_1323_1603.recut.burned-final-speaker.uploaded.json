@@ -1,0 +1,22 @@
+{
+  "schema_version": "authorized-upload-result.v3",
+  "status": "VERIFIED_PUBLIC",
+  "bvid": "BV1hquD6pE7X",
+  "aid": 117067168679822,
+  "cid": 40760773025,
+  "title": "【李豆沙】打歌服召唤不出，众人拆成“打、哥、服”，闹到公主抱和“宝贝、妈妈、老公、主人”",
+  "uploaded_at": "2026-08-09T19:26:01+0000",
+  "video_sha256": "a904f4fdc346256ea52d2a03a9d1ce219fe7c9601f35b5fde0e5c7327fbd8387",
+  "cover_sha256": "fe53cdc24e6081fe33ef510fac4a4927f8a41c8c1e806003a75dd8ed223ad47c",
+  "record_sha256": "1f143a40f4991e1c4e9ccc5775538ef64520886191d1bca805eb27fba136fde9",
+  "subtitle_sha256": "0e9c2cc74b085bc1704d920b08e957da8104b6f69eb9aaa99dfe3d0c224504b3",
+  "package_audit_sha256": "ec6c1b4f959b2de921d61ed217aa1b6daffaae1c7a0f12ece9b40ce3e301454c",
+  "review_manifest_sha256": "7a81e53883c0324c06879f546fdf333a6865f716b6e91ac609437378b4fa2fda",
+  "title_cover_qc_sha256": "c62f0888e5ed30fc3e9abd39fcb856d4feed8253cffd85b0a4d916b00700d3af",
+  "manifest": "/opt/bilive/autoslice/out/2026-08-08/auto_200130_1323_1603/replacement_recuts/auto_200130_1323_1603.recut.burned-final-speaker.upload_manifest.json",
+  "manifest_sha256": "c0e41505dea4d3e4286c3d9a78a82458070da9e01049011c8819a3de740bf578",
+  "public_verify": "/opt/bilive/autoslice/out/2026-08-08/auto_200130_1323_1603/replacement_recuts/auto_200130_1323_1603.recut.burned-final-speaker.public_verify.json",
+  "public_verify_sha256": "0dd2d664792ffa2d7d0b5dd9d5772f18174cc39d2d7168cce720e32b5ae76d78",
+  "authorized_by": "Ivan",
+  "authorization_quote": "「所以我希望这两个能进入快车道，优先出成品，优先上传。」\n「并且今天要执行权宜上传。只要出片就可以上传，之后我再进行审查。」"
+}

@@ -244,6 +244,7 @@ def _audit_policy_fingerprint() -> str:
         ROOT / "src/autoslice/boundary_semantic_review.py",
         ROOT / "src/autoslice/boundary_endpoint_binding.py",
         ROOT / "src/autoslice/redelivery_boundary_projection.py",
+        ROOT / "src/autoslice/redelivery_subtitle_baseline.py",
         ROOT / "src/autoslice/producer_boundary.py",
         ROOT / "src/autoslice/producer_boundary_owner_contract.py",
         ROOT / "src/autoslice/producer_boundary_resolution.py",

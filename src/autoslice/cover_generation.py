@@ -26,6 +26,7 @@ from src.autoslice.cover_punch_semantics import (
     cover_text_requires_punch_for_thumbnail,
     cover_thumbnail_lines_are_readable,
     extractive_punch_fragment_is_source_safe,
+    punch_fragment_whitespace_is_source_safe,
     validate_full_text_cover_contract,
     punch_line_em_width,
     review_cover_punch_semantics,
@@ -326,9 +327,15 @@ def _validated_cover_punch(value: object, cover_text: str) -> tuple[str, ...]:
             or "\n" in fragment
         ):
             return ()
-        if canon in haystack and not extractive_punch_fragment_is_source_safe(
-            fragment,
-            cover_text,
+        # 合并 ft-a8600994：不恢复 ft 的「必须是标题子串」强制(主线 3301e4e 已按
+        # Ivan 2026-08-10 裁定撤销);ft 新增的 whitespace 守卫留下,与 extractive
+        # 同域——只对确实是原文子串的片段成立。
+        if canon in haystack and (
+            not punch_fragment_whitespace_is_source_safe(fragment, cover_text)
+            or not extractive_punch_fragment_is_source_safe(
+                fragment,
+                cover_text,
+            )
         ):
             return ()
         if fragment.startswith(tuple(_COVER_CLOSING_PUNCT)) or fragment.endswith(

@@ -5150,6 +5150,23 @@ def test_cover_punch_fabrication_gate_blocks_facts_absent_from_the_clip():
     good["story_hook_sha256"] = hashlib.sha256(
         _LOVECODE_HOOK.encode("utf-8")
     ).hexdigest()
+    # 合并 ft-a8600994：ft 新增 _retry_lineage_is_valid——回执必须自带重试谱系
+    # (attempt_count/attempts,且唯一 ACCEPTED 必须是末条并与顶层 request/response
+    # sha 对齐)。本用例考的是 no_fabricated_fact 门,故这里补一条合法的单次谱系当
+    # 正向对照;下面翻/摘 no_fabricated_fact 的反例照旧失效(布尔门与谱系门独立)。
+    good["request_sha256"] = "a" * 64
+    good["response_sha256"] = "b" * 64
+    good["attempt_count"] = 1
+    good["attempts"] = [
+        {
+            "attempt": 1,
+            "request_sha256": good["request_sha256"],
+            "response_sha256": good["response_sha256"],
+            "model_status": "PASS",
+            "validated_final_punch": list(good["final_punch"]),
+            "status": "ACCEPTED",
+        }
+    ]
     assert cover_generation.validate_cover_punch_semantic_review(
         good,
         rendered_lines=good["final_punch"],

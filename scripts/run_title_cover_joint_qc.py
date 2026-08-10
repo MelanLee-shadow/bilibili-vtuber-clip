@@ -9,7 +9,7 @@ Run on free from /opt/bilive/autoslice/repo:
 The verdict is the exact parsed CPA answer (validator replays this bond);
 any gate the model fails leaves status=FAIL and the upload chain stops.
 """
-import hashlib, json, sys, time
+import hashlib, json, os, stat, sys, time
 from pathlib import Path
 
 sys.path.insert(0, ".")
@@ -30,34 +30,98 @@ def load_env(path: str) -> dict:
     return out
 
 
-def resolve_delivery_cover(package_root: Path, publish: dict) -> Path:
-    """Bind the cover path the upload manifest will actually carry.
+def resolve_package_inputs(
+    package_root: Path, title: str
+) -> tuple[dict, dict, Path]:
+    """Resolve the exact same-stem upload cover after daily assembly."""
 
-    publish 声明的是生成路由(``covers/<...>.png``);daily manifest builder 另外
-    在包根装配同茎上传别名 ``<video.stem>.cover.png``,而
-    ``authorized_upload make-manifest`` 的 title+cover QC 门比对的是
-    ``manifest.cover.path``——即同茎别名。别名存在且逐字节相同就绑别名,QC 回执
-    与上传清单才指同一个文件(否则门红:"joint-QC cover_path does not bind final
-    cover")。别名缺失或字节漂移时退回 publish 声明路径,由该门 fail-closed。
-    """
+    def strict_regular(
+        path: Path, *, label: str, root: Path | None = None
+    ) -> Path:
+        absolute = path.absolute()
+        cursor = Path(absolute.anchor)
+        for component in absolute.parts[1:]:
+            cursor /= component
+            info = os.lstat(cursor)
+            if stat.S_ISLNK(info.st_mode):
+                raise ValueError(f"{label} traverses a symlink")
+        if not stat.S_ISREG(os.lstat(absolute).st_mode):
+            raise ValueError(f"{label} is not a regular file")
+        resolved = absolute.resolve(strict=True)
+        if root is not None and not resolved.is_relative_to(root):
+            raise ValueError(f"{label} escapes package root")
+        return resolved
 
-    declared = Path(
-        str(
-            (publish.get("cover_generation") or {}).get("final_cover")
-            or publish.get("cover_path")
-        )
-    ).resolve()
-    digest = hashlib.sha256(declared.read_bytes()).hexdigest()
-    aliases = sorted(
-        path
-        for path in package_root.glob("*.cover.png")
-        if path.is_file()
-        and not path.is_symlink()
-        and hashlib.sha256(path.read_bytes()).hexdigest() == digest
+    package_absolute = package_root.absolute()
+    package_info = os.lstat(package_absolute)
+    if stat.S_ISLNK(package_info.st_mode) or not stat.S_ISDIR(package_info.st_mode):
+        raise ValueError("package root is not a real directory")
+    package_root = package_absolute.resolve(strict=True)
+    review_path = package_root / "review_manifest.json"
+    review_path = strict_regular(
+        review_path, label="review manifest", root=package_root
     )
-    if len(aliases) == 1:
-        return aliases[0].resolve()
-    return declared
+    review = json.loads(review_path.read_text(encoding="utf-8"))
+    items = review.get("items")
+    if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
+        raise ValueError("review manifest must contain exactly one item")
+    item = items[0]
+    if item.get("title") != title:
+        raise ValueError("review manifest title differs from joint-QC title")
+
+    def package_file(key: str, *, direct: bool = True) -> Path:
+        raw = item.get(key)
+        if not isinstance(raw, str) or not raw or Path(raw).is_absolute():
+            raise ValueError(f"review manifest {key} is not package-relative")
+        relative = Path(raw)
+        if any(part in {"", ".", ".."} for part in relative.parts):
+            raise ValueError(f"review manifest {key} has an unsafe component")
+        path = strict_regular(
+            package_root / relative,
+            label=f"review manifest {key}",
+            root=package_root,
+        )
+        if direct and path.parent != package_root:
+            raise ValueError(f"review manifest {key} is not a package-root file")
+        return path
+
+    video_path = package_file("video")
+    if video_path.suffix != ".mp4":
+        raise ValueError("review manifest video is not MP4")
+    upload_stem = video_path.name.removesuffix(".mp4")
+    expected_cover_name = f"{upload_stem}.cover.png"
+    expected_record_name = f"{upload_stem}.record.json"
+    if item.get("cover") != expected_cover_name:
+        raise ValueError("review manifest cover is not same-stem with video")
+    if item.get("record") != expected_record_name:
+        raise ValueError("review manifest record is not same-stem with video")
+    record_path = package_file("record")
+    publish_path = package_file("publish_json")
+    cover_path = package_file("cover")
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    publish = json.loads(publish_path.read_text(encoding="utf-8"))
+    if publish.get("title") != title:
+        raise ValueError("publish title differs from joint-QC title")
+    generation = publish.get("cover_generation")
+    if not isinstance(generation, dict):
+        raise ValueError("publish cover generation is missing")
+    generated_raw = generation.get("final_cover") or publish.get("cover_path")
+    if not isinstance(generated_raw, str) or not generated_raw:
+        raise ValueError("publish final cover path is missing")
+    generated_path = Path(generated_raw)
+    if not generated_path.is_absolute():
+        generated_path = package_root / generated_path
+    generated_path = strict_regular(
+        generated_path, label="publish final cover", root=package_root
+    )
+    generated_sha = hashlib.sha256(generated_path.read_bytes()).hexdigest()
+    same_stem_sha = hashlib.sha256(cover_path.read_bytes()).hexdigest()
+    declared_sha = str(generation.get("final_cover_sha256") or "").removeprefix(
+        "sha256:"
+    )
+    if not declared_sha or generated_sha != declared_sha or same_stem_sha != declared_sha:
+        raise ValueError("same-stem cover differs from frozen cover generation")
+    return record, publish, cover_path
 
 
 def main() -> int:
@@ -66,11 +130,9 @@ def main() -> int:
     out_path = Path(sys.argv[3])
     env = load_env("/opt/bilive/autoslice/cpa.env")
 
-    record = json.loads(next(package_root.glob("*.record.json")).read_text(encoding="utf-8"))
+    record, publish, cover_path = resolve_package_inputs(package_root, title)
     story = record.get("story_contract") or {}
     candidate_id = str(story.get("candidate_id") or record.get("delivery_candidate_id") or "")
-    publish = json.loads(next(package_root.glob("*.publish.json")).read_text(encoding="utf-8"))
-    cover_path = resolve_delivery_cover(package_root, publish)
     cover_sha = hashlib.sha256(cover_path.read_bytes()).hexdigest()
 
     question = (
@@ -135,7 +197,6 @@ def main() -> int:
         "status": "PASS" if ok else "FAIL",
         "pass": bool(ok),
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "authority": "IVAN_EXPLICIT_20260808(title+cover both hand-authorized)",
     }
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(receipt, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")

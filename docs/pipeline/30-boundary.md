@@ -51,9 +51,29 @@ cue、required owner/structured payoff 越过 pin、grid/index 漂移或最终
 source-full-window CPA 可在最多 15 秒的 `semantic_tail_trim_cap_ms` 内向前回剪，但只能选
 **最晚一个**同时满足四命题的 cue，并须显式确认 `content_anchor_covered=true`；后续 cue
 必须能证明是新话题、未回答的新问题或不完整尾巴。manual lower bound、structured payoff、
-required owner 与 exact pin 均不得被这条窄门跨过。最终 scope 必须披露
+required owner 与 exact pin 均不得被这条窄门跨过。唯一例外是 v2 reviewed baseline 的
+终点帽：若去掉 structured-payoff **检测假设**后，按同一回剪帽计算出的交付下界以及
+manual/required-owner 均不越过该终点，payoff 可钳制到 reviewed 终点并以
+`structured_payoff_clamped_from_ms` 披露；回剪帽够不到、manual/owner 越界或没有 reviewed
+终点帽时仍硬拦，普通首投的 payoff 保护不变。最终 scope 必须披露
 `recommendation_backward_ms`，resolver 复算同一 SHA 后才可采用；final-delivery 层仍只审
 实际成片最后 cue，不能在成片落地后凭文本结论偷偷再剪。
+
+v2 `exact_interval_replay=true` 的已审区间还有一个独立、比普通 timing absorption 更窄的
+`reviewed_exact_interval_terminal_projection`。它只在 source piece 已实际取回并验哈希后由
+producer 现场签发，caller 不得在 spec 里自带：签名同时绑定 reviewed SRT 原始字节 SHA、
+authority、baseline 最后一 cue 恰好结束于区间时长、唯一 content source 的 basename/实际
+SHA 和绝对 source 区间。只有 scope 的 `minimum_recommended_end_ms` 与
+`max_recommended_end_ms` 都等于该 reviewed endpoint、普通 cue 与纯静音桥均无可选项时，
+fresh grid 才可把 endpoint 前不超过 250ms 的**紧邻上一条 closure cue**列为 recommendation；
+紧随其后的唯一 cue 必须从该 closure end 起步并跨过 endpoint。跨界 cue 只作下一话题 witness，
+CPA 必须审 fresh closure 文本并在 evidence 中引用该 witness；baseline 文本不签发任何故事
+闭环结论。resolver 必须从当前完整 grid 和当前 source-bound authority 重算同一投影，snap 到
+上一条 closure cue，再把最终媒体 end 精确锁回 reviewed endpoint；字幕物化必须是无 tail
+extension 的 exact reviewed interval replay，之后仍跑正常 final-delivery 语义重审。source/
+baseline/区间/terminal timing 任一漂移、crossing 不唯一、间隙超过 250ms、缺 witness、最终
+媒体 endpoint 或 exact replay 不一致，均 fail closed；不得复用 `pin_crossing_closure_cue`，
+也不得把这条车道推广给非 exact redelivery。
 
 `content_boundary` 的恢复指纹必须覆盖完整的生产边界决策面：semantic reviewer、
 request/scope 构造、owner/resolver、final-review contract 与 talk-lane 分类，而不只是顶层
