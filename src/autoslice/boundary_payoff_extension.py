@@ -17,10 +17,12 @@ LLM 给的 `end_cue`**：它直接构造一个 `BoundaryResolution(reason_codes=
 被调用，**这条 lane 一次都不走**。所以「是哪条判据让它停在 654170」的答案是：一条都没有——
 654170 就是 LLM 选的 cue #272 的结束时刻，后面没有任何确定性复核。
 
-弹幕当时也只是**提示**：`talk_lane.danmaku_hints()` 把 `find_danmaku_bursts()` 的结果取
-前 6 条塞进 prompt。8/7 那场 660000–690000 的爆发（x22）被检测到了，但按 count 排在第 7，
+弹幕当时也只是**提示**：`talk_lane.danmaku_hints()` 当时把 `find_danmaku_bursts()` 的结果
+取前 6 条塞进 prompt。8/7 那场 660000–690000 的爆发（x22）被检测到了，但按 count 排在第 7，
 **正好被 `[:6]` 截掉**，选题模型连提示都没看到。确定性层面弹幕对 talk 边界的参与度是零
 （`danmaku_count_in()` 只服务歌切）。
+（那道提示名额已于 2026-08-10 按 136 个真实弹幕 XML 的实测放宽到
+`danmaku_evidence.DANMAKU_HINT_MAX_BURSTS` = 20，依据见该常量注释；本模块的判据不受影响。）
 
 ## 判据（Ivan 2026-08-10 确认的收敛判据，按可靠性排序）
 
@@ -91,9 +93,10 @@ PAYOFF_MAX_CROSSED_SILENCE_MS = 15_000
 PAYOFF_MAX_ADOPTION_MS = 120_000
 # 链式后延的步数帽（收敛性由「每步消费一个新爆发」保证，步数帽是第二道保险）。
 PAYOFF_MAX_EXTENSION_STEPS = 4
-# 爆发扫描面必须是全量：`danmaku_hints` 的 top-6 截断正是本案漏掉 660000-690000 那次
-# 爆发的直接原因。这里只放宽**返回条数**，`find_danmaku_bursts` 的检测算术
-# （bucket/min_count/baseline_factor）一字不动。
+# 爆发扫描面必须是全量：`danmaku_hints` 当时的 top-6 截断正是本案漏掉 660000-690000
+# 那次爆发的直接原因。这里只放宽**返回条数**，`find_danmaku_bursts` 的检测算术
+# （bucket/min_count/baseline_factor）一字不动。本常量是**确定性扫描**预算（不进 prompt，
+# 所以可以给 64）；进 prompt 的名额是另一回事，见 `DANMAKU_HINT_MAX_BURSTS`。
 PAYOFF_BURST_SCAN_MAX = 64
 
 
