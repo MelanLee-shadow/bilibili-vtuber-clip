@@ -759,17 +759,24 @@ def plan_import(
 ) -> ImportPlan:
     """Resolve roots and enumerate exactly which bytes must move."""
 
+    # 歌切成品是压平改名的评审包，不是 replacement_recuts 生产树：让它撞上
+    # talk 的 `{cid}.record.json` 文件名约定只会报"文档缺失"，掩盖真正的原因。
+    from src.autoslice.song_package_import import (  # 延迟导入：避免循环
+        refuse_if_song_review_package,
+        song_lane_import_hint,
+    )
+
     source_package_dir = require_directory(
         source_package_dir, label="source package"
     )
+    refuse_if_song_review_package(source_package_dir)
     documents = read_package_documents(source_package_dir, candidate_id)
     lane = package_lane(documents.record, documents.publish)
     if lane != "talk":
         raise PackageImportError(
             "LANE_NOT_SUPPORTED",
             f"candidate lane is {lane!r}; this importer only covers the talk lane",
-            hint="song packages carry a different proof chain (lyrics/alignment); "
-            "import them by hand until a song lane is added here",
+            hint=song_lane_import_hint(),
         )
     roots = derive_source_roots(
         record=documents.record,
