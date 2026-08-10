@@ -178,6 +178,24 @@ def candidate_states(base: str) -> tuple[dict[str, str], set[str]]:
     return status, pending
 
 
+def in_flight_candidates(base: str) -> set[str]:
+    """Candidates someone is mid-replacement on, which state cannot tell us.
+
+    A terminal status is not the same as "nobody is working on it": the 1323
+    three-way replacement was the only in-flight delivery on 2026-08-10 while
+    its state row read `published`. Two on-disk signals mark real in-flight
+    work — a staging directory under recovery/, and a
+    `replacement_recuts.pre-*` freeze snapshot, which exists precisely to roll
+    a replacement back.
+    """
+    found: set[str] = set()
+    for staging in glob.glob(f"{base}/recovery/*/*"):
+        found.update(CANDIDATE_ID.findall(os.path.basename(staging)))
+    for frozen in glob.glob(f"{base}/out/*/*/replacement_recuts.pre-*"):
+        found.update(CANDIDATE_ID.findall(frozen))
+    return found
+
+
 def owning_ids(path: str) -> list[str]:
     return CANDIDATE_ID.findall(path)
 
@@ -210,8 +228,10 @@ def main() -> int:
 
     refs, refdirs = authority_references(base)
     status, pending = candidate_states(base)
+    in_flight = in_flight_candidates(base)
     print(f"GATE 2 authority: {len(refs)} out/ paths cited, {len(refdirs)} specific dirs")
-    print(f"GATE 3 states: {len(status)} candidates known, {len(pending)} with queued work")
+    print(f"GATE 3 states: {len(status)} candidates known, {len(pending)} with queued work, "
+          f"{len(in_flight)} mid-replacement on disk")
 
     plan, held = [], collections.Counter()
     for root, _, files in os.walk(out_root):
@@ -234,6 +254,9 @@ def main() -> int:
             ids = owning_ids(path)
             if any(i in pending for i in ids):
                 held["gate3_owner_has_queued_work"] += size
+                continue
+            if any(i in in_flight for i in ids):
+                held["gate3_owner_mid_replacement"] += size
                 continue
             live = [i for i in ids if status.get(i, "unknown") not in TERMINAL_STATES]
             if live or not ids:
