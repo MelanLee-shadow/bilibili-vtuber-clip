@@ -343,7 +343,7 @@ BCUT_MAX_ATTEMPTS = 2
 TITLE_MAX_ATTEMPTS = 3
 COVER_REPAIR_MAX_ATTEMPTS = 3  # one attempt per tick → retries spread ~10min apart
 COVER_REPAIR_LIFETIME_ATTEMPT_CAP = 9  # three bounded repair generations; never loop forever
-MAX_PARALLEL_PRODUCE = 3  # slices are independent; produce them concurrently (each is
+MAX_PARALLEL_PRODUCE = 5  # slices are independent; produce them concurrently (each is
                           # network-bound on AGY/CPA/gpt-image-2, so a few in flight
                           # cut wall-clock ~3x; bounded by free CPU + CPA concurrency)
 # Top-5 is a ceiling, not a promise to ship five weak events.  The 2026-07-16
