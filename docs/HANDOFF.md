@@ -27,6 +27,12 @@
 - 8/7 `auto_220747_313_380`;8/8 五条(`auto_230125_1157_1229`/`_333_427`/`_550_701`/`auto_233123_115_165`/`_473_534`);
   8/9 三条(`auto_190617_473_766`/`auto_193611_1250_1450`/`auto_193611_1612_1693`)
 - 歌 `song_210131_1210`(心型病毒)已复活,哨兵指纹 `sanctioned-revival:bf0d008`
+- ⛔ **两条已 hold,禁传**(出版登记 `assets/lidousha/publication_registry.v1.json`,`hold_pending_review` 属
+  `_BLOCKING_STATUSES`,上传 fail-closed):
+  - `auto_210739_1142_1436` —— Ivan 2026-08-08「**非李豆沙主角**(抱团叙事主线在他人),T1/86.5 高分仍不可
+    作为频道成品发布;仅作流水线优化材料」。**⚠️ 我整晚误把它当"唯一能传的成品、只卡 punch v2"汇报,是错的。**
+    **教训:谈"能不能上传"之前必须先查出版登记 —— 它是上传权限的唯一权威,不是 state 的 review_ready。**
+  - `auto_223750_913_1322`(**贪生怕死**)—— Ivan 2026-08-10 逐字「先这么做,贪生怕死这个不要上传」。
 - 8/7 `auto_223750_913_1322`(**贪生怕死**)封面预算已重置(9→0,带回执);
   **它的真实状态是"等 Ivan 审阅",不是"不许上传"** —— Ivan 逐字(raw JSONL 核):
   2026-08-08T20:05Z「贪生怕死这个也需要改成说话人分离的版本,不过你先别改,先等根因修复之后再说」;
@@ -82,6 +88,9 @@
   Mac forensics pristine、wsl `vtuber-reproduce`;优先查 `publication_registry` 这种权威台账而不是文件系统。
   (我因只搜 free 就断言"歌切从未发布过",被 Ivan 一句话推翻——`song_192000_1321`《海海海》
    2026-07-25 已发布 `BV1BJGc6aEWf`。)
+- **hold 记在仓内权威资产 `assets/lidousha/publication_registry.v1.json`,不是运行时叠加层**。
+  我误写进 `state/publication_registry.runtime.v1.json`(schema 不同)→ `PUBLICATION_RUNTIME_REGISTRY_INVALID`
+  → **拦住了所有上传**(fail-closed 未误放行),已回滚重做。改登记前先看已有 hold 条目的格式。
 - **`search_session_transcripts` 够不到 raw JSONL** —— 用它查不到 Ivan 逐字**不等于**没说过。
   今晚一条"疑似伪裁定"就是这样被误判的(真裁定在 `2026-07-26T17:45:10Z`)。
 
