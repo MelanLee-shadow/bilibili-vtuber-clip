@@ -89,8 +89,9 @@
     "after": "1c7a7dd8a13930325f878ea7a2c391d5e654a183fcb8b069fed2274aa4792753",
     "note": "after = post-retarget; the intermediate tombstone-only state was 2eb57acb7bde38cc840127504577f261beb46fb43eaf48003f4c631408380447"
   },
-  "scope_discipline": "The full-state scan found 302 dangling media references across 13 live day files. Per Ivan's standing rule (发现面扩大就只出报告不扩权) only the one named reference was remediated; everything else is reported in cleanup_manifests/free_state_dangling_media_refs_scan_20260809.json and docs/reviews/2026-08-09-state-dangling-media-refs-audit.md.",
+  "scope_discipline": "The full-state scan found 302 dangling media references across 13 live day files. Per Ivan's standing rule (发现面扩大就只出报告不扩权) only the one named reference was remediated. A follow-up cross-host search (free / mac / wsl-codex) then resolved every other class without any further state writes — see cleanup_manifests/free_state_dangling_media_refs_scan_20260809.json and docs/reviews/2026-08-09-state-dangling-media-refs-audit.md.",
   "found_by": "2026-08-10 capacity-cleanup worker report (cleanup_manifests/free_autoslice_capacity_cleanup_20260810.json)",
   "companion_scan": "cleanup_manifests/free_state_dangling_media_refs_scan_20260809.json",
-  "note_on_receipt_path": "reports/** is gitignored except the upload-evidence allowlist, so this receipt lives in cleanup_manifests/ alongside the manifest that caused the dangling reference. The tombstone string in live state points here."
+  "note_on_receipt_path": "reports/** is gitignored except the upload-evidence allowlist, so this receipt lives in cleanup_manifests/ alongside the manifest that caused the dangling reference. The tombstone string in live state points here.",
+  "cross_host_outcome": "No media loss in any class. The 28 references that looked most alarming (cover identity witnesses on published 08-07/08-08 rows) live on WSL (ROG-EYE) at the exact recorded paths, 14/14 byte-verified against the sha256 in state. The tombstoned 07-18 reference remains the only genuinely deleted file, and its bytes survive in the delivered artifact."
 }

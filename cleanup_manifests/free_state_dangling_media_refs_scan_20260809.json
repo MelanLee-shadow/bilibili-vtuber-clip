@@ -11,7 +11,8 @@
   },
   "by_class": {
     "B_cleanup_deleted": 194,
-    "A_repo_unresolved": 49,
+    "A_retired_in_place": 2,
+    "A_repo_unresolved": 47,
     "A_rename_drift": 31,
     "C_foreign_workspace": 28
   },
@@ -34,7 +35,8 @@
     "A_rename_drift": "repo/lidousha deliverable that survives on disk under a different stem after hook/title surgery; state kept the pre-surgery filename. No data loss.",
     "A_repo_unresolved": "repo/lidousha path with no surviving stem carrying that candidate_id in the day dir. Needs eyes.",
     "B_cleanup_deleted": "out/ pipeline intermediate removed by the 2026-07-30 ENOSPC recovery cleanup or the 2026-08-10 capacity cleanup.",
-    "C_foreign_workspace": "path under /home/ivan/Project/vtuber-reproduce, a tree that does not exist on free at all; production state recorded an off-host workspace path."
+    "C_foreign_workspace": "path under /home/ivan/Project/vtuber-reproduce — that tree lives on WSL (hostname ROG-EYE), not on free. RESOLVED: all files present there, sha256-verified.",
+    "A_retired_in_place": "same filename retired into the day dir's _superseded/ or _quarantine/ subtree; moved, not deleted"
   },
   "remediated": [
     {
@@ -68,8 +70,9 @@
       "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/聊三人游戏聊到《胡闹厨房》，两位队友.mp4",
       "candidate_id": "auto_210025_1065_1218",
       "row_status": "review_ready",
-      "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "cls": "A_retired_in_place",
+      "resolution": "same filename retired into the day dir's _superseded/_quarantine subtree",
+      "surviving_stem": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/_superseded/聊三人游戏聊到《胡闹厨房》，两位队友.mp4"
     },
     {
       "state_file": "2026-07-09.json",
@@ -77,8 +80,9 @@
       "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/李豆沙卡在动画里害全员罚站，当场抛弃.mp4",
       "candidate_id": "auto_213023_323_431",
       "row_status": "review_ready",
-      "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "cls": "A_retired_in_place",
+      "resolution": "same filename retired into the day dir's _superseded/_quarantine subtree",
+      "surviving_stem": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/_superseded/李豆沙卡在动画里害全员罚站，当场抛弃.mp4"
     },
     {
       "state_file": "2026-07-09.json",
@@ -96,7 +100,7 @@
       "candidate_id": "auto_190017_1068_1217",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "listed in talk_superseded_attempts / song_superseded_attempts and absent from the publication registry: a superseded attempt, never published. Not a loss."
     },
     {
       "state_file": "2026-07-10.json",
@@ -105,7 +109,7 @@
       "candidate_id": "auto_190017_1068_1217",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "listed in talk_superseded_attempts / song_superseded_attempts and absent from the publication registry: a superseded attempt, never published. Not a loss."
     },
     {
       "state_file": "2026-07-10.json",
@@ -114,7 +118,7 @@
       "candidate_id": "auto_190017_1068_1217",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "listed in talk_superseded_attempts / song_superseded_attempts and absent from the publication registry: a superseded attempt, never published. Not a loss."
     },
     {
       "state_file": "2026-07-10.json",
@@ -123,7 +127,7 @@
       "candidate_id": "auto_190017_1068_1217",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "listed in talk_superseded_attempts / song_superseded_attempts and absent from the publication registry: a superseded attempt, never published. Not a loss."
     },
     {
       "state_file": "2026-07-10.json",
@@ -132,7 +136,7 @@
       "candidate_id": "auto_190017_1068_1217",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "listed in talk_superseded_attempts / song_superseded_attempts and absent from the publication registry: a superseded attempt, never published. Not a loss."
     },
     {
       "state_file": "2026-07-10.json",
@@ -141,7 +145,7 @@
       "candidate_id": "auto_190017_1068_1217",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "listed in talk_superseded_attempts / song_superseded_attempts and absent from the publication registry: a superseded attempt, never published. Not a loss."
     },
     {
       "state_file": "2026-07-10.json",
@@ -150,8 +154,8 @@
       "candidate_id": "auto_200009_524_545",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找"
     },
     {
       "state_file": "2026-07-10.json",
@@ -160,8 +164,8 @@
       "candidate_id": "auto_200009_524_545",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找"
     },
     {
       "state_file": "2026-07-10.json",
@@ -170,8 +174,8 @@
       "candidate_id": "auto_200009_524_545",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找"
     },
     {
       "state_file": "2026-07-10.json",
@@ -180,8 +184,8 @@
       "candidate_id": "auto_200009_524_545",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找"
     },
     {
       "state_file": "2026-07-10.json",
@@ -190,8 +194,8 @@
       "candidate_id": "auto_200009_524_545",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找"
     },
     {
       "state_file": "2026-07-10.json",
@@ -200,8 +204,8 @@
       "candidate_id": "auto_200009_524_545",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找"
     },
     {
       "state_file": "2026-07-10.json",
@@ -210,8 +214,8 @@
       "candidate_id": "auto_200009_524_545",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找"
     },
     {
       "state_file": "2026-07-10.json",
@@ -220,8 +224,8 @@
       "candidate_id": "auto_200009_524_545",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找"
     },
     {
       "state_file": "2026-07-10.json",
@@ -230,8 +234,8 @@
       "candidate_id": "auto_212005_163_311",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "李豆沙坚称自己没被坏女人欺负，却完整",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "李豆沙坚称自己没被坏女人欺负，却完整"
     },
     {
       "state_file": "2026-07-10.json",
@@ -240,8 +244,8 @@
       "candidate_id": "auto_212005_163_311",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "李豆沙坚称自己没被坏女人欺负，却完整",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "李豆沙坚称自己没被坏女人欺负，却完整"
     },
     {
       "state_file": "2026-07-10.json",
@@ -250,8 +254,8 @@
       "candidate_id": "auto_212005_163_311",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "李豆沙坚称自己没被坏女人欺负，却完整",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "李豆沙坚称自己没被坏女人欺负，却完整"
     },
     {
       "state_file": "2026-07-10.json",
@@ -260,8 +264,8 @@
       "candidate_id": "auto_212005_163_311",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "李豆沙坚称自己没被坏女人欺负，却完整",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "李豆沙坚称自己没被坏女人欺负，却完整"
     },
     {
       "state_file": "2026-07-10.json",
@@ -270,8 +274,8 @@
       "candidate_id": "auto_212005_163_311",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "李豆沙坚称自己没被坏女人欺负，却完整",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "李豆沙坚称自己没被坏女人欺负，却完整"
     },
     {
       "state_file": "2026-07-10.json",
@@ -280,8 +284,8 @@
       "candidate_id": "auto_212005_163_311",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "李豆沙坚称自己没被坏女人欺负，却完整",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "李豆沙坚称自己没被坏女人欺负，却完整"
     },
     {
       "state_file": "2026-07-10.json",
@@ -290,7 +294,7 @@
       "candidate_id": "auto_193009_1539_1637",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "listed in talk_superseded_attempts / song_superseded_attempts and absent from the publication registry: a superseded attempt, never published. Not a loss."
     },
     {
       "state_file": "2026-07-10.json",
@@ -299,7 +303,7 @@
       "candidate_id": "auto_193009_1539_1637",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "listed in talk_superseded_attempts / song_superseded_attempts and absent from the publication registry: a superseded attempt, never published. Not a loss."
     },
     {
       "state_file": "2026-07-10.json",
@@ -308,7 +312,7 @@
       "candidate_id": "auto_193009_1539_1637",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "listed in talk_superseded_attempts / song_superseded_attempts and absent from the publication registry: a superseded attempt, never published. Not a loss."
     },
     {
       "state_file": "2026-07-10.json",
@@ -317,7 +321,7 @@
       "candidate_id": "auto_193009_1539_1637",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "listed in talk_superseded_attempts / song_superseded_attempts and absent from the publication registry: a superseded attempt, never published. Not a loss."
     },
     {
       "state_file": "2026-07-10.json",
@@ -326,7 +330,7 @@
       "candidate_id": "auto_193009_1539_1637",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "listed in talk_superseded_attempts / song_superseded_attempts and absent from the publication registry: a superseded attempt, never published. Not a loss."
     },
     {
       "state_file": "2026-07-10.json",
@@ -335,7 +339,7 @@
       "candidate_id": "auto_193009_1539_1637",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "listed in talk_superseded_attempts / song_superseded_attempts and absent from the publication registry: a superseded attempt, never published. Not a loss."
     },
     {
       "state_file": "2026-07-10.json",
@@ -344,7 +348,7 @@
       "candidate_id": "auto_193009_1539_1637",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "listed in talk_superseded_attempts / song_superseded_attempts and absent from the publication registry: a superseded attempt, never published. Not a loss."
     },
     {
       "state_file": "2026-07-10.json",
@@ -353,7 +357,7 @@
       "candidate_id": "auto_193009_1539_1637",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "listed in talk_superseded_attempts / song_superseded_attempts and absent from the publication registry: a superseded attempt, never published. Not a loss."
     },
     {
       "state_file": "2026-07-10.json",
@@ -362,8 +366,8 @@
       "candidate_id": "auto_200009_76_110",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "聊到3D线下见面会，李豆沙认真畅想见",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "聊到3D线下见面会，李豆沙认真畅想见"
     },
     {
       "state_file": "2026-07-10.json",
@@ -372,8 +376,8 @@
       "candidate_id": "auto_200009_76_110",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "聊到3D线下见面会，李豆沙认真畅想见",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "聊到3D线下见面会，李豆沙认真畅想见"
     },
     {
       "state_file": "2026-07-10.json",
@@ -382,8 +386,8 @@
       "candidate_id": "auto_200009_76_110",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "聊到3D线下见面会，李豆沙认真畅想见",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "聊到3D线下见面会，李豆沙认真畅想见"
     },
     {
       "state_file": "2026-07-10.json",
@@ -392,8 +396,8 @@
       "candidate_id": "auto_200009_76_110",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "聊到3D线下见面会，李豆沙认真畅想见",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "聊到3D线下见面会，李豆沙认真畅想见"
     },
     {
       "state_file": "2026-07-10.json",
@@ -402,8 +406,8 @@
       "candidate_id": "auto_200009_76_110",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "聊到3D线下见面会，李豆沙认真畅想见",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "聊到3D线下见面会，李豆沙认真畅想见"
     },
     {
       "state_file": "2026-07-10.json",
@@ -412,8 +416,8 @@
       "candidate_id": "auto_200009_76_110",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "聊到3D线下见面会，李豆沙认真畅想见",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "聊到3D线下见面会，李豆沙认真畅想见"
     },
     {
       "state_file": "2026-07-10.json",
@@ -440,7 +444,7 @@
       "candidate_id": "song_200009_217",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "listed in talk_superseded_attempts / song_superseded_attempts and absent from the publication registry: a superseded attempt, never published. Not a loss."
     },
     {
       "state_file": "2026-07-10.json",
@@ -449,7 +453,7 @@
       "candidate_id": "song_200009_217",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "listed in talk_superseded_attempts / song_superseded_attempts and absent from the publication registry: a superseded attempt, never published. Not a loss."
     },
     {
       "state_file": "2026-07-10.json",
@@ -476,7 +480,7 @@
       "candidate_id": "song_212005_1444",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "listed in talk_superseded_attempts / song_superseded_attempts and absent from the publication registry: a superseded attempt, never published. Not a loss."
     },
     {
       "state_file": "2026-07-10.json",
@@ -485,7 +489,7 @@
       "candidate_id": "song_212005_1444",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "listed in talk_superseded_attempts / song_superseded_attempts and absent from the publication registry: a superseded attempt, never published. Not a loss."
     },
     {
       "state_file": "2026-07-10.json",
@@ -494,7 +498,7 @@
       "candidate_id": "song_212005_1444",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "listed in talk_superseded_attempts / song_superseded_attempts and absent from the publication registry: a superseded attempt, never published. Not a loss."
     },
     {
       "state_file": "2026-07-10.json",
@@ -503,7 +507,7 @@
       "candidate_id": "song_212005_1444",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "listed in talk_superseded_attempts / song_superseded_attempts and absent from the publication registry: a superseded attempt, never published. Not a loss."
     },
     {
       "state_file": "2026-07-10.json",
@@ -512,7 +516,7 @@
       "candidate_id": "song_212005_1444",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "listed in talk_superseded_attempts / song_superseded_attempts and absent from the publication registry: a superseded attempt, never published. Not a loss."
     },
     {
       "state_file": "2026-07-10.json",
@@ -521,7 +525,7 @@
       "candidate_id": "auto_190017_1068_1217",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "listed in talk_superseded_attempts / song_superseded_attempts and absent from the publication registry: a superseded attempt, never published. Not a loss."
     },
     {
       "state_file": "2026-07-10.json",
@@ -539,8 +543,8 @@
       "candidate_id": "auto_200009_524_545",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找"
     },
     {
       "state_file": "2026-07-10.json",
@@ -558,8 +562,8 @@
       "candidate_id": "auto_180011_393_432",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "听说粉毛花臂小时候抢过同事三部手机，",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "听说粉毛花臂小时候抢过同事三部手机，"
     },
     {
       "state_file": "2026-07-11.json",
@@ -568,8 +572,8 @@
       "candidate_id": "auto_180011_393_432",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "听说粉毛花臂小时候抢过同事三部手机，",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "听说粉毛花臂小时候抢过同事三部手机，"
     },
     {
       "state_file": "2026-07-11.json",
@@ -578,8 +582,8 @@
       "candidate_id": "auto_173012_946_1037",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "李豆沙坚称自己是侄女，回忆大舞台上全",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "李豆沙坚称自己是侄女，回忆大舞台上全"
     },
     {
       "state_file": "2026-07-11.json",
@@ -588,8 +592,8 @@
       "candidate_id": "auto_173012_946_1037",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "李豆沙坚称自己是侄女，回忆大舞台上全",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "李豆沙坚称自己是侄女，回忆大舞台上全"
     },
     {
       "state_file": "2026-07-11.json",
@@ -598,7 +602,8 @@
       "candidate_id": "auto_170019_302_355",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_170019_302_354. Not a loss.",
+      "superseded_by": "auto_170019_302_354"
     },
     {
       "state_file": "2026-07-11.json",
@@ -607,7 +612,8 @@
       "candidate_id": "auto_170019_302_355",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_170019_302_354. Not a loss.",
+      "superseded_by": "auto_170019_302_354"
     },
     {
       "state_file": "2026-07-11.json",
@@ -616,7 +622,8 @@
       "candidate_id": "auto_173012_345_521",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_173012_345_512 + auto_173012_374_521. Not a loss.",
+      "superseded_by": "auto_173012_345_512 + auto_173012_374_521"
     },
     {
       "state_file": "2026-07-11.json",
@@ -625,7 +632,8 @@
       "candidate_id": "auto_173012_345_521",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_173012_345_512 + auto_173012_374_521. Not a loss.",
+      "superseded_by": "auto_173012_345_512 + auto_173012_374_521"
     },
     {
       "state_file": "2026-07-11.json",
@@ -634,7 +642,8 @@
       "candidate_id": "auto_180011_1636_1782",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_180011_1561_1782. Not a loss.",
+      "superseded_by": "auto_180011_1561_1782"
     },
     {
       "state_file": "2026-07-11.json",
@@ -643,7 +652,8 @@
       "candidate_id": "auto_180011_1636_1782",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_180011_1561_1782. Not a loss.",
+      "superseded_by": "auto_180011_1561_1782"
     },
     {
       "state_file": "2026-07-11.json",
@@ -688,8 +698,8 @@
       "candidate_id": "auto_223227_596_763",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "弹幕拆出直男、弯男、侄女、弯女，她挨",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "弹幕拆出直男、弯男、侄女、弯女，她挨"
     },
     {
       "state_file": "2026-07-13.json",
@@ -698,8 +708,8 @@
       "candidate_id": "auto_223227_596_763",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "弹幕拆出直男、弯男、侄女、弯女，她挨",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "弹幕拆出直男、弯男、侄女、弯女，她挨"
     },
     {
       "state_file": "2026-07-13.json",
@@ -708,8 +718,8 @@
       "candidate_id": "auto_223227_426_561",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "侄女爱弯男、弯男爱直男？越讲越觉得这",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "侄女爱弯男、弯男爱直男？越讲越觉得这"
     },
     {
       "state_file": "2026-07-13.json",
@@ -718,8 +728,8 @@
       "candidate_id": "auto_223227_426_561",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "侄女爱弯男、弯男爱直男？越讲越觉得这",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "侄女爱弯男、弯男爱直男？越讲越觉得这"
     },
     {
       "state_file": "2026-07-15.json",
@@ -746,7 +756,8 @@
       "candidate_id": "auto_155648_152_178",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: operator-quarantined. Not a loss.",
+      "superseded_by": "operator-quarantined"
     },
     {
       "state_file": "2026-07-16.json",
@@ -755,7 +766,8 @@
       "candidate_id": "auto_155648_152_178",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: operator-quarantined. Not a loss.",
+      "superseded_by": "operator-quarantined"
     },
     {
       "state_file": "2026-07-16.json",
@@ -764,7 +776,8 @@
       "candidate_id": "auto_162645_712_787",
       "row_status": "delivery_quarantined",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_162645_712_967 (merged). Not a loss.",
+      "superseded_by": "auto_162645_712_967 (merged)"
     },
     {
       "state_file": "2026-07-16.json",
@@ -773,7 +786,8 @@
       "candidate_id": "auto_162645_712_787",
       "row_status": "delivery_quarantined",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_162645_712_967 (merged). Not a loss.",
+      "superseded_by": "auto_162645_712_967 (merged)"
     },
     {
       "state_file": "2026-07-16.json",
@@ -782,7 +796,8 @@
       "candidate_id": "auto_162645_712_787",
       "row_status": "delivery_quarantined",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_162645_712_967 (merged). Not a loss.",
+      "superseded_by": "auto_162645_712_967 (merged)"
     },
     {
       "state_file": "2026-07-16.json",
@@ -791,7 +806,8 @@
       "candidate_id": "auto_162645_938_967",
       "row_status": "delivery_quarantined",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_162645_712_967 (merged). Not a loss.",
+      "superseded_by": "auto_162645_712_967 (merged)"
     },
     {
       "state_file": "2026-07-16.json",
@@ -800,7 +816,8 @@
       "candidate_id": "auto_162645_938_967",
       "row_status": "delivery_quarantined",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_162645_712_967 (merged). Not a loss.",
+      "superseded_by": "auto_162645_712_967 (merged)"
     },
     {
       "state_file": "2026-07-16.json",
@@ -809,7 +826,8 @@
       "candidate_id": "auto_162645_938_967",
       "row_status": "delivery_quarantined",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_162645_712_967 (merged). Not a loss.",
+      "superseded_by": "auto_162645_712_967 (merged)"
     },
     {
       "state_file": "2026-07-16.json",
@@ -836,7 +854,8 @@
       "candidate_id": "auto_225942_962_980",
       "row_status": "candidate_rejected",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_225942_411_1073 (merged). Not a loss.",
+      "superseded_by": "auto_225942_411_1073 (merged)"
     },
     {
       "state_file": "2026-07-18.json",
@@ -845,7 +864,8 @@
       "candidate_id": "auto_225942_962_980",
       "row_status": "candidate_rejected",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_225942_411_1073 (merged). Not a loss.",
+      "superseded_by": "auto_225942_411_1073 (merged)"
     },
     {
       "state_file": "2026-07-18.json",
@@ -854,7 +874,8 @@
       "candidate_id": "auto_225942_962_980",
       "row_status": "candidate_rejected",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_225942_411_1073 (merged). Not a loss.",
+      "superseded_by": "auto_225942_411_1073 (merged)"
     },
     {
       "state_file": "2026-07-18.json",
@@ -863,7 +884,8 @@
       "candidate_id": "auto_225942_962_980",
       "row_status": "candidate_rejected",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_225942_411_1073 (merged). Not a loss.",
+      "superseded_by": "auto_225942_411_1073 (merged)"
     },
     {
       "state_file": "2026-07-18.json",
@@ -872,7 +894,8 @@
       "candidate_id": "auto_225942_962_980",
       "row_status": "candidate_rejected",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_225942_411_1073 (merged). Not a loss.",
+      "superseded_by": "auto_225942_411_1073 (merged)"
     },
     {
       "state_file": "2026-07-18.json",
@@ -881,7 +904,8 @@
       "candidate_id": "auto_225942_1025_1073",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_225942_411_1073 (merged). Not a loss.",
+      "superseded_by": "auto_225942_411_1073 (merged)"
     },
     {
       "state_file": "2026-07-18.json",
@@ -890,7 +914,8 @@
       "candidate_id": "auto_225942_1025_1073",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_225942_411_1073 (merged). Not a loss.",
+      "superseded_by": "auto_225942_411_1073 (merged)"
     },
     {
       "state_file": "2026-07-18.json",
@@ -899,7 +924,8 @@
       "candidate_id": "auto_225942_434_520",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_225942_411_1073 (merged). Not a loss.",
+      "superseded_by": "auto_225942_411_1073 (merged)"
     },
     {
       "state_file": "2026-07-18.json",
@@ -908,7 +934,8 @@
       "candidate_id": "auto_225942_434_520",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_225942_411_1073 (merged). Not a loss.",
+      "superseded_by": "auto_225942_411_1073 (merged)"
     },
     {
       "state_file": "2026-07-18.json",
@@ -917,7 +944,8 @@
       "candidate_id": "auto_225942_962_980",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_225942_411_1073 (merged). Not a loss.",
+      "superseded_by": "auto_225942_411_1073 (merged)"
     },
     {
       "state_file": "2026-07-18.json",
@@ -926,7 +954,8 @@
       "candidate_id": "auto_225942_962_980",
       "row_status": "review_ready",
       "cls": "A_repo_unresolved",
-      "resolution": "no surviving stem found for this candidate_id"
+      "resolution": "superseded by a boundary re-cut/merge: auto_225942_411_1073 (merged). Not a loss.",
+      "superseded_by": "auto_225942_411_1073 (merged)"
     },
     {
       "state_file": "2026-07-19.json",
@@ -935,8 +964,8 @@
       "candidate_id": "auto_134819_346_505",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "观众拿“结婚照”拷问HimeHina",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "观众拿“结婚照”拷问HimeHina"
     },
     {
       "state_file": "2026-07-19.json",
@@ -945,8 +974,8 @@
       "candidate_id": "auto_134819_346_505",
       "row_status": "review_ready",
       "cls": "A_rename_drift",
-      "surviving_stem": "观众拿“结婚照”拷问HimeHina",
-      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)",
+      "surviving_stem": "观众拿“结婚照”拷问HimeHina"
     },
     {
       "state_file": "2026-07-24.json",
@@ -2548,7 +2577,8 @@
       "candidate_id": "auto_203735_555_680",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-07.json",
@@ -2557,7 +2587,8 @@
       "candidate_id": "auto_203735_555_680",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-07.json",
@@ -2566,7 +2597,8 @@
       "candidate_id": "auto_203735_555_680",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-07.json",
@@ -2575,7 +2607,8 @@
       "candidate_id": "auto_203735_555_680",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-07.json",
@@ -2584,7 +2617,8 @@
       "candidate_id": "auto_203735_555_680",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-07.json",
@@ -2593,7 +2627,8 @@
       "candidate_id": "auto_203735_555_680",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-07.json",
@@ -2602,7 +2637,8 @@
       "candidate_id": "auto_220747_488_680",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-07.json",
@@ -2611,7 +2647,8 @@
       "candidate_id": "auto_220747_488_680",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-07.json",
@@ -2620,7 +2657,8 @@
       "candidate_id": "auto_220747_488_680",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-07.json",
@@ -2629,7 +2667,8 @@
       "candidate_id": "auto_220747_488_680",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-07.json",
@@ -2638,7 +2677,8 @@
       "candidate_id": "auto_220747_488_680",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-07.json",
@@ -2647,7 +2687,8 @@
       "candidate_id": "auto_220747_488_680",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-08.json",
@@ -2656,7 +2697,8 @@
       "candidate_id": "auto_200130_1323_1603",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-08.json",
@@ -2665,7 +2707,8 @@
       "candidate_id": "auto_200130_1323_1603",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-08.json",
@@ -2674,7 +2717,8 @@
       "candidate_id": "auto_200130_1323_1603",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-08.json",
@@ -2683,7 +2727,8 @@
       "candidate_id": "auto_200130_1323_1603",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-08.json",
@@ -2692,7 +2737,8 @@
       "candidate_id": "auto_200130_1323_1603",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-08.json",
@@ -2701,7 +2747,8 @@
       "candidate_id": "auto_200130_1323_1603",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-08.json",
@@ -2710,7 +2757,8 @@
       "candidate_id": "auto_200130_1323_1603",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-08.json",
@@ -2719,7 +2767,8 @@
       "candidate_id": "auto_200130_1323_1603",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-08.json",
@@ -2728,7 +2777,8 @@
       "candidate_id": "auto_200130_1323_1603",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-08.json",
@@ -2737,7 +2787,8 @@
       "candidate_id": "auto_200130_1323_1603",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-08.json",
@@ -2746,7 +2797,8 @@
       "candidate_id": "auto_200130_1722_1792",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-08.json",
@@ -2755,7 +2807,8 @@
       "candidate_id": "auto_200130_1722_1792",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-08.json",
@@ -2764,7 +2817,8 @@
       "candidate_id": "auto_200130_1722_1792",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-08.json",
@@ -2773,7 +2827,8 @@
       "candidate_id": "auto_200130_1722_1792",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-08.json",
@@ -2782,7 +2837,8 @@
       "candidate_id": "auto_200130_1722_1792",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     },
     {
       "state_file": "2026-08-08.json",
@@ -2791,7 +2847,19 @@
       "candidate_id": "auto_200130_1722_1792",
       "row_status": "published",
       "cls": "C_foreign_workspace",
-      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+      "resolution": "present on WSL at the exact recorded path; all 14 unique PNGs verified byte-exact against the sha256 recorded in state (14/14 match). Cover identity/composition verification ran on WSL, not free.",
+      "resolved_on_host": "wsl-codex (ROG-EYE)"
     }
-  ]
+  ],
+  "cross_host_resolution": {
+    "searched": [
+      "free (/opt/bilive/autoslice)",
+      "mac (/Users/ivan/Project)",
+      "wsl-codex = ROG-EYE (/home/ivan/Project)"
+    ],
+    "finding": "Ivan runs three machines. /home/ivan/Project/vtuber-reproduce exists only on WSL. All 28 C-class references resolve to 14 unique PNGs there, every one byte-exact against the sha256 already recorded in free's state. Nothing was lost; free's state simply records paths from the machine the cover verification ran on.",
+    "verification": "14/14 sha256 match on wsl-codex; 0 found on mac; 0 found on free",
+    "a_class_followup": "None of the 38 A_repo_unresolved basenames exist on WSL or mac either, and none of the 10 mp4 refs carrying a recorded hash byte-match anything in their day dir. Per-day inspection shows they are superseded artifacts, not losses: 07-09 moved into _superseded/, 07-10 all listed in *_superseded_attempts and never published, 07-11 boundary re-cuts under adjacent candidate ids, 07-16 two candidates merged into auto_162645_712_967, 07-18 three candidates merged into auto_225942_411_1073.",
+    "conclusion": "No media loss found in any class. Every dangling reference is explained by relocation, supersession, off-host execution, or deliberate intermediate cleanup."
+  }
 }

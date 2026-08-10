@@ -1,7 +1,7 @@
 # free autoslice state 悬空媒体引用审计 + 《暖暖》歌切（song_232939_870）tombstone 修复
 
 - 日期：2026-08-09
-- 宿主：free（`/opt/bilive/autoslice`）
+- 宿主：free（`/opt/bilive/autoslice`）；跨机核实覆盖 mac（`/Users/ivan/Project`）与 wsl-codex / ROG-EYE（`/home/ivan/Project`）
 - 静默窗：`DISABLED` 标志全程在位，`ps` 零 `free_session_autoslice` / `ffmpeg`；写入段持 `flock /opt/bilive/autoslice/runner.lock`
 - 机读件（`reports/**` 被 gitignore，故回执与清单落在全量跟踪的 `cleanup_manifests/`，与致因 manifest 同处）：
   - 修复回执 `cleanup_manifests/free_state_dangling_media_ref_tombstone_20260809.json`（free 侧镜像 `state/manual-remediation/2026-07-18-dangling-media-tombstone-20260809T235834Z.json`）
@@ -11,9 +11,15 @@
 
 ## 结论
 
-被点名的那一条属实，已按 fail-closed 惯例在 state 层 tombstone 并留回执。但全量扫描把发现面从 1 条扩到 **302 条**，横跨 13 个活 state 文件，且分成三个成因完全不同的类。按「发现面扩大就只出报告不扩权」，本次只修了被点名的那一条，其余全部只报不动。
+被点名的那一条属实，已按 fail-closed 惯例在 state 层 tombstone 并留回执。全量扫描把发现面从 1 条扩到 **302 条**，横跨 13 个活 state 文件。按「发现面扩大就只出报告不扩权」，只修了被点名的那一条。
 
-真正需要 Ivan 裁定的不是被点名那条（它已经无害且 fail-closed），而是下面两项：**C 类** 生产 state 引用了 free 上根本不存在的 `vtuber-reproduce` 树，涉及 28 条、全部挂在 `published` 行上；以及 **A_repo_unresolved** 里 14 个 `review_ready` 候选的成品 mp4 在盘上找不到对应文件。
+随后按 Ivan 提示做了跨三台机器（free / mac / wsl-codex）的追查，**结果是：没有任何一类存在真正的媒体丢失。**
+
+- **C 类 28 条**（初看最吓人：已发布视频的封面身份见证指向 free 上不存在的树）——那棵 `vtuber-reproduce` 树在 **WSL（ROG-EYE）** 上。14 个唯一文件全部在位，且**逐个与 state 里已记的 sha256 精确匹配（14/14）**。不是丢件，是封面核验那一步在 WSL 上跑的，state 记下了那台机器的路径。
+- **A 类** 那些「找不到成品」的候选，逐日核对后全是**被取代**而非丢失：07-09 移进了 `_superseded/`、07-10 全部登记在 `*_superseded_attempts` 且从未发布、07-11 是边界重切换了 candidate id、07-16 与 07-18 是多个候选合并成一个更宽的成品。
+- **B 类 194 条**是清理按设计删掉的中间件。
+
+唯一真正被删掉的文件，就是被点名 tombstone 的那一个——而它的字节还完整活在成品里。
 
 ## ① 被点名引用：消费方与实际风险
 
@@ -56,14 +62,17 @@ TOMBSTONE:cleanup_deleted;deleted_on=2026-07-30T09:15Z;manifest=cleanup_manifest
 
 没有这么做，是因为那等于悄悄把一个 `review_ready` 候选解封——在没有裁定的情况下改动 live 政策，违反 7/27 出版 hold-gate 纪律，也违背该次清理的本意。这条路留给 Ivan 主动发起。
 
-## ③ 全量扫描：302 条，三类
+## ③ 全量扫描：302 条，四类（跨机核实后无一真丢件）
 
 | 类 | 条数 | 含义 |
 |---|---:|---|
 | `B_cleanup_deleted` | 194 | `out/` 下的流水线中间件，被 7/30 或 8/10 清理删除 |
-| `A_repo_unresolved` | 49 | `repo/lidousha` 路径，日目录里找不到承载该 candidate_id 的存活文件 |
+| `A_repo_unresolved` | 47 | `repo/lidousha` 路径，日目录里找不到承载该 candidate_id 的存活文件——逐日核实后全为「被取代」 |
 | `A_rename_drift` | 31 | 成品仍在盘上，只是改名了（hook/标题手术），state 留着手术前的文件名 |
-| `C_foreign_workspace` | 28 | 指向 `/home/ivan/Project/vtuber-reproduce`，该树在 free 上**根本不存在** |
+| `C_foreign_workspace` | 28 | 指向 `/home/ivan/Project/vtuber-reproduce`——该树在 free 上不存在，**实际在 WSL 上**，已 sha256 核验 |
+| `A_retired_in_place` | 2 | 同名文件被移进日目录的 `_superseded/` / `_quarantine/` 子树 |
+
+（`A_repo_unresolved` + `A_retired_in_place` = 49；后者是补上 `_superseded` 识别后从原 49 条里分出来的 2 条。）
 
 按 state 文件分布：07-24（53）、07-26（68）、07-25（56）、07-10（49）领跑；当前活跃的 08-07（12）、08-08（16）也在列。
 
@@ -77,25 +86,25 @@ TOMBSTONE:cleanup_deleted;deleted_on=2026-07-30T09:15Z;manifest=cleanup_manifest
 
 标题/hook 手术改了文件名，state 没跟着更新。成品都在。属账面漂移，不是丢件。
 
-### A_repo_unresolved：49 条，其中 14 个候选值得看
+### A_retired_in_place / A_repo_unresolved：47 条，逐日核完全是「被取代」不是丢件
 
-按行状态拆：38 条 `review_ready`、6 条 `delivery_quarantined`、5 条 `candidate_rejected`。后两类是正常的——被拒/被隔离的候选，成品本来就该清掉。
+初判为「找不到成品」的 49 条，跨机搜索 + 逐日核对后全部有着落，无一是真丢件。三台机器都搜过：38 个唯一文件名在 mac 与 wsl-codex 上均为零命中；带记录哈希的 10 个 mp4 引用，在各自日目录里也无任何字节匹配。所以不是「挪到别的机器了」，而是**原件已被新版本取代**：
 
-真正需要眼睛的是这 14 个 `review_ready` 候选（去重后）：
+| state | 原候选 | 实际去向 |
+|---|---|---|
+| 2026-07-09 | `auto_210025_1065_1218`、`auto_213023_323_431` | 同名文件就在该日目录的 `_superseded/` 子目录里（该日为早期格式，无 `.record.json` sidecar，所以 candidate_id 索引失配）|
+| 2026-07-10 | `auto_190017_1068_1217`、`auto_193009_1539_1637`、`song_200009_217`、`song_212005_1444` | 四个全部登记在 `talk_superseded_attempts` / `song_superseded_attempts`，且出版登记零条目——从未发布的被取代尝试 |
+| 2026-07-11 | `auto_170019_302_355`、`auto_173012_345_521`、`auto_180011_1636_1782` | 边界重切换了 candidate id：`302_354`、`345_512`+`374_521`、`1561_1782` |
+| 2026-07-16 | `auto_162645_712_787`、`auto_162645_938_967` | 合并为 `auto_162645_712_967`；`auto_155648_152_178` 属 operator 隔离 |
+| 2026-07-18 | `auto_225942_962_980`、`auto_225942_1025_1073`、`auto_225942_434_520` | 三个合并为一个更宽的成品 `auto_225942_411_1073`（kmx 称呼串）|
 
-| state | candidate_id |
-|---|---|
-| 2026-07-09 | `auto_210025_1065_1218`、`auto_213023_323_431` |
-| 2026-07-10 | `auto_190017_1068_1217`、`auto_193009_1539_1637`、`song_200009_217`、`song_212005_1444` |
-| 2026-07-11 | `auto_170019_302_355`、`auto_173012_345_521`、`auto_180011_1636_1782` |
-| 2026-07-16 | `auto_155648_152_178`（在 `operator_quarantined_picks` 里）、`auto_162645_712_787`、`auto_162645_938_967` |
-| 2026-07-18 | `auto_225942_1025_1073`、`auto_225942_434_520` |
+行状态仍标 `review_ready` 是账面滞后：state 保留了被取代前的行和文件名，没跟着新候选走。
 
-这些行仍标 `review_ready`，但 `summary.delivery` 指向的成品 mp4 在日目录里找不到同 candidate_id 的存活文件。可能是更早的改名规则（record.json 里没留 candidate_id 痕迹）导致索引失配，也可能是真丢件。逐条判真伪需要打开对应 record.json 和音频比对，超出本次授权，只登记。
+扫描器已补上 `_superseded/`、`_quarantine/` 子树的同名匹配（新类 `A_retired_in_place`），07-09 那 2 条现在自动归类，剩余 47 条按上表已人工核清。
 
-`song_212005_1444` 与既有记忆里「song_212005 materialized_recut 交付集成缺口 fail-closed」对得上，可能是同一根因的另一面。
+`song_212005_1444`（台风）与 `song_200009_217`（怎么办）另有既有记忆佐证：7/13 权宜清单里这两首就是「滞留带片头旧烧录、补传前必须无片头重烧」，成品被有意撤下，符合此处观察。
 
-### C 类：生产 state 引用不存在的 reproduce 树 —— 建议优先裁定
+### C 类：不是丢件，是在 WSL 上 —— 已核实闭环
 
 28 条全部来自 `state/2026-08-07.json`（12）和 `state/2026-08-08.json`（16），全部挂在 **`published`** 行上，路径形如：
 
@@ -103,23 +112,22 @@ TOMBSTONE:cleanup_deleted;deleted_on=2026-07-30T09:15Z;manifest=cleanup_manifest
 /home/ivan/Project/vtuber-reproduce/out/2026-08-08/auto_200130_1323_1603/replacement_recuts/covers/….cover.png
 ```
 
-`/home/ivan/Project/vtuber-reproduce` 在 free 上**整棵树都不存在**，从来没被这台机器写过。字段集中在封面身份核验证据：`final_host_identity_verification.{comparison_path,final_cover_path,reference_path,witness.image_path}`、`source_composition_verification.*`，08-08 pick[1] 还多一组 `rejected_final_host_identity_verification.*`。
+`/home/ivan/Project/vtuber-reproduce` 在 free 上确实整棵树都不存在。三台机器搜下来：mac 无，**WSL（`wsl-codex`，hostname `ROG-EYE`）上有**，且路径逐字符相同。
 
-这不是清理删除，也不是改名——是**异机工作区路径漏进了生产 state**。涉及的候选（`auto_203735_555_680`、`auto_220747_488_680`、`auto_200130_1323_1603`、`auto_200130_1722_1792`）都已 published，意味着已发布内容的封面身份见证在本机无法复核。与既有记忆「生产基线在 codex 分支上，main 勿直接部署」指向同一片区域。
+28 条引用去重后是 14 个唯一 PNG。拿 state 里本来就记着的 sha256 逐个比对，**14/14 精确匹配**。所以封面身份见证没有丢，只是这一步在 WSL 上跑的，state 忠实记下了执行机的路径。涉及候选 `auto_203735_555_680`、`auto_220747_488_680`、`auto_200130_1323_1603`、`auto_200130_1722_1792`。
 
-急迫性在于 **2026-08-08 是活跃日**：`status=publication_in_progress`、`pending_talk=8`、`pending_song=1`。runner 一旦解封就会继续 tick 这个文件。
+剩下的是一个**可选的工程决定**，不是数据事故：要不要让生产 state 只记 free 可解析的路径（或把这些证据同步一份到 free）。不动也不会坏——这些字段是历史见证，runner 正常 tick 不解引用它们。
 
 ## 未做 / 剩余风险
 
-- 只修了被点名的 1 条，其余 301 条只登记不动。
+- 只修了被点名的 1 条，其余 301 条只核实、不改写。
 - 成品侧的冻结 sidecar（`*.delivery.manifest.json`、`*.record.json`）内部几乎肯定也带着同一条已死的 `out/` 路径。它们是内容寻址的冻结件，不在本次范围内——所以**不要指望这次 state 手术能让歌切评审包重新构建成功，它仍会 fail-closed，这是设计如此**。
 - `.pre-*` 备份快照未扫也未动（默认排除；`--include-backups` 可开）。
-- A_repo_unresolved 那 14 个 `review_ready` 候选的真伪未逐条仲裁。
-- 未对 C 类做任何清理或重绑。
+- C 类证据只做了存在性与 sha256 核验，没有搬运、没有重绑。
 
-## 建议下一步（均需 Ivan 裁定）
+## 建议下一步
 
-1. **C 类优先**：决定已发布条目的封面身份见证是补录到 free、重绑到本机路径、还是标记为异机产出。08-08 仍在活跃窗内。
-2. 给容量清理流程加一道**删除前 state 引用扫描**，把 `scripts/scan_state_dangling_media_refs.py` 挂进去——7/30 那次的缺失正是这一步。
-3. A_rename_drift 那 31 条可批量重绑到存活文件名，纯账面修正、无媒体动作。
+1. 给容量清理流程加一道**删除前 state 引用扫描**，把 `scripts/scan_state_dangling_media_refs.py` 挂进去——7/30 那次缺的正是这一步，也是 7/24 事故的同一课。
+2. （可选）A_rename_drift 31 条 + A_retired_in_place 2 条可批量重绑到存活文件名，纯账面修正、无媒体动作。
+3. （可选）C 类：决定生产 state 是否只应记录本机可解析路径，或把 14 个 WSL 见证件同步一份到 free。
 4. 《暖暖》歌切若要继续推进，走上面那条 `cp` 复原路（字节等同，无需重产）。

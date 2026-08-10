@@ -72,6 +72,27 @@ def surviving_stem_index(base: str) -> dict[tuple[str, str], set[str]]:
     return index
 
 
+def relocated_index(base: str) -> dict[tuple[str, str], str]:
+    """(day dir, basename) -> where the file actually sits now.
+
+    A day dir retires artifacts into `_superseded/` and `_quarantine/<tag>/`
+    rather than deleting them, and pre-record.json days (2026-07-09 and older)
+    have no sidecar to match a candidate id against.  Matching on basename
+    catches both: same filename, different directory means moved, not lost.
+    """
+    index: dict[tuple[str, str], str] = {}
+    for retired in glob.glob(f"{base}/repo/lidousha/*/_*/**/*", recursive=True):
+        if not os.path.isfile(retired):
+            continue
+        parts = retired.split(os.sep)
+        try:
+            day_dir = os.sep.join(parts[: parts.index("lidousha") + 2])
+        except ValueError:
+            continue
+        index.setdefault((day_dir, os.path.basename(retired)), retired)
+    return index
+
+
 def row_for(doc, path):
     if len(path) >= 2 and path[0] in ROW_CONTAINERS:
         try:
@@ -81,7 +102,7 @@ def row_for(doc, path):
     return None
 
 
-def classify(base, index, missing_path, row):
+def classify(base, index, retired, missing_path, row):
     cid = (row or {}).get("candidate_id")
     if not missing_path.startswith(base + "/"):
         return "C_foreign_workspace", None, (
@@ -89,13 +110,21 @@ def classify(base, index, missing_path, row):
             "production state recorded an off-host workspace path"
         )
     if missing_path.startswith(base + "/repo/"):
-        survivors = sorted(index.get((os.path.dirname(missing_path), cid), []))
+        day_dir = os.path.dirname(missing_path)
+        moved = retired.get((day_dir, os.path.basename(missing_path)))
+        if moved:
+            return "A_retired_in_place", moved, (
+                "same filename retired into the day dir's _superseded/_quarantine subtree"
+            )
+        survivors = sorted(index.get((day_dir, cid), []))
         if survivors:
             return "A_rename_drift", survivors[0], (
                 "deliverable survives under a renamed stem (hook/title surgery)"
             )
         return "A_repo_unresolved", None, (
-            "no surviving stem in the day dir carries this candidate_id"
+            "no surviving stem in the day dir carries this candidate_id; "
+            "usually a boundary re-cut or merge under a new candidate id — "
+            "confirm before calling it a loss"
         )
     return "B_cleanup_deleted", None, "out/ intermediate removed by a capacity cleanup"
 
@@ -112,6 +141,7 @@ def main() -> int:
 
     base = args.base.rstrip("/")
     index = surviving_stem_index(base)
+    retired = relocated_index(base)
     rows = []
     for state_file in sorted(glob.glob(f"{base}/state/*.json")):
         name = os.path.basename(state_file)
@@ -129,7 +159,7 @@ def main() -> int:
             if os.path.exists(value):
                 continue
             row = row_for(doc, path) or {}
-            cls, survivor, resolution = classify(base, index, value, row)
+            cls, survivor, resolution = classify(base, index, retired, value, row)
             entry = {
                 "state_file": name,
                 "json_path": ".".join(path),
