@@ -339,14 +339,15 @@ subtitle regression / speaker override / reviewed baseline（**绝大多数候�
 
 ### 3.4 本次改动的实测波及面
 
-方法：`git archive` 出 `a2b07e8` 与本分支 HEAD 两份纯净树，分别跑 fingerprint 函数对比。
+方法：`git archive` 出 `a2b07e8` 与本分支交付位 `3a89478` 两份纯净树，分别跑
+fingerprint 函数对比。两边都只含 git 内容，所以绝对值与生产不同——有意义的是「变 / 不变」。
 
 | fingerprint | a2b07e8 | 本分支 | 变？ |
 |---|---|---|---|
-| `pipeline_fingerprint` | `98d920be…` | `51bb54d2…` | **变** |
-| `song_pipeline_fingerprint` | `30287957…` | `52d06ad3…` | **变**（`llm_via_cpa.sh` 在歌 lane 显式清单里）|
-| recovery `content_boundary` | `69e34714…` | `e6473c7d…` | **变**（`talk_lane.py` 在 15 文件里）|
-| recovery `subtitle_authority` | `15eeb730…` | `ca3c6c20…` | **变**（`talk_lane.py` 在 19 文件里）|
+| `pipeline_fingerprint` | `98d920be…` | `dc94df11…` | **变** |
+| `song_pipeline_fingerprint` | `30287957…` | `95499f8b…` | **变**（`llm_via_cpa.sh` 在歌 lane 显式清单里）|
+| recovery `content_boundary` | `69e34714…` | `4a4ed609…` | **变**（`talk_lane.py` 在 15 文件里）|
+| recovery `subtitle_authority` | `15eeb730…` | `598dc2fd…` | **变**（`talk_lane.py` 在 19 文件里）|
 | recovery `speaker_evidence` | `9e4c4157…` | `9e4c4157…` | 不变 |
 | recovery `runtime_prerequisite` | `387335ae…` | `387335ae…` | 不变 |
 
