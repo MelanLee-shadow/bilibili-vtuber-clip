@@ -1,6 +1,6 @@
 # LLM 退避重试覆盖 + 基础设施失败不杀候选
 
-日期：2026-08-10 · 分支 `tmp-llm-backoff`（base `a2b07e8`）· 实现 commit `5b395ec`
+日期：2026-08-10 · 分支 `tmp-llm-backoff`（base `a2b07e8`）· 实现 commit `5b395ec` + `3a89478`
 
 Ivan 2026-08-10 #9 逐字裁定：
 
