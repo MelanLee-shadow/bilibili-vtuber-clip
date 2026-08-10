@@ -580,3 +580,86 @@ def test_infra_incomplete_branches_stay_blocked_even_dressed_as_keep_current():
     # 白名单里的名字配上非 OBSERVED 状态也不行（史收敛降级是唯一例外）。
     assert _is_keep_current_disclosed(dressed(status="UNCERTAIN")) is False
     assert _is_keep_current_disclosed(dressed(status="SKIPPED_BUDGET")) is False
+
+
+def test_release_accepts_disclosed_history_convergence_downgrade():
+    """合同层放行：耳朵听见的降级条目随包披露；耳朵没听清的仍是合同违规。
+
+    只测谓词不够——真正卡住交付的是 ``validate_final_review_release`` 里
+    ``unresolved_findings_disclosed`` 那一圈校验；这条测的是整份回执能不能
+    带着降级条目通过发布门。
+    """
+
+    import pytest
+
+    from src.autoslice.final_review_contract import (
+        FinalReviewContractError,
+        validate_final_review_release,
+    )
+
+    grid = "sha256:" + "d" * 64
+    audit = {
+        "schema_version": "final-review-audit.v2",
+        "reviewed_srt_sha256": "sha256:" + "b" * 64,
+        "status": "CLEAN",
+        "release_gate": "PASS",
+        "discovery": {"status": "COMPLETE"},
+        "correction_mutation_authority": {
+            "schema_version": "subtitle-correction-mutation-audit.v1",
+            "status": "PASS",
+        },
+        "findings": [],
+        "validated_finding_count": 0,
+        "unresolved_findings_disclosed": [
+            _downgraded_row(_OBSERVED_BLIND_WITNESS)
+        ],
+        "boundary_semantic_review": {
+            "status": "PASS",
+            "review_scope": "final_delivery",
+            "request_sha256": "sha256:" + "e" * 64,
+            "cue_grid_sha256": grid,
+            "final_endpoint_binding": {
+                "schema_version": (
+                    "talk-boundary-final-endpoint-binding.v1"
+                ),
+                "status": "PASS",
+                "recommended_end_cue_index": 7,
+                "recommended_end_ms": 81000,
+                "final_closure_cue_index": 7,
+                "final_snapped_end_ms": 81000,
+                "reason_codes": [],
+                "semantic_cue_grid_sha256": grid,
+                "final_cue_grid_sha256": grid,
+            },
+            "source_separation_witness": {
+                "schema_version": (
+                    "talk-boundary-source-separation-witness.v1"
+                ),
+                "status": "PASS",
+                "source_review_sha256": "sha256:" + "f" * 64,
+                "source_request_sha256": "sha256:" + "0" * 64,
+                "source_cue_grid_sha256": "sha256:" + "1" * 64,
+                "source_final_start_ms": 388000,
+                "source_final_end_ms": 526000,
+                "reason_codes": [],
+            },
+        },
+    }
+
+    assert validate_final_review_release(
+        audit,
+        expected_srt_sha256="sha256:" + "b" * 64,
+    )["release_gate"] == "PASS"
+
+    # 耳朵没能给出观测的同名降级条目混进披露 —— 仍是合同违规,拦死。
+    audit["unresolved_findings_disclosed"] = [
+        _downgraded_row(_UNCERTAIN_BLIND_WITNESS)
+    ]
+    with pytest.raises(
+        FinalReviewContractError,
+        match="FINAL_REVIEW_FINDINGS_CONTRACT_INVALID",
+    ):
+        validate_final_review_release(
+            audit,
+            expected_srt_sha256="sha256:" + "b" * 64,
+        )
