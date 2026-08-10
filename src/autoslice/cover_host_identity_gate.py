@@ -199,13 +199,41 @@ _BOOLEAN_VERDICT_FIELDS = (
 )
 
 
-def _identity_answer_valid(answer: str) -> bool:
+# 游戏场终检字段（Ivan 2026-08-09 02:20）。身份底线由「小窗里可见 + 小窗里是她」
+# 承担，取代「她必须是画面最大最显眼的主角」；`primary_subject_is_visually_dominant`
+# 仍然照问、照落盘，但降为**披露项**，不再是 PASS 前置。反垃圾三项一条不少：
+# 空面板/加载页（7/22 案）由 `frame_is_interesting` + `excessive_dead_space` 拦，
+# 无意义装饰压过内容由 `meaningless_dominant_decoration` 拦。
+_GAME_BOOLEAN_VERDICT_FIELDS = (
+    "source_lidousha_located",
+    "host_window_visible_in_final",
+    "host_window_identity_matches",
+    "primary_subject_is_visually_dominant",
+    "frame_is_interesting",
+    "excessive_dead_space",
+    "meaningless_dominant_decoration",
+    "thumbnail_has_clear_click_hook",
+)
+
+_SCENE_VERDICT_FIELDS = {
+    "talk": _BOOLEAN_VERDICT_FIELDS,
+    "game": _GAME_BOOLEAN_VERDICT_FIELDS,
+}
+
+
+def _normalize_scene_kind(value: object) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in _SCENE_VERDICT_FIELDS else "talk"
+
+
+def _identity_answer_valid(answer: str, *, scene_kind: str = "talk") -> bool:
     try:
         verdict = _extract_json_object(answer)
     except (ValueError, json.JSONDecodeError):
         return False
+    fields = _SCENE_VERDICT_FIELDS[_normalize_scene_kind(scene_kind)]
     return bool(
-        all(isinstance(verdict.get(key), bool) for key in _BOOLEAN_VERDICT_FIELDS)
+        all(isinstance(verdict.get(key), bool) for key in fields)
         and isinstance(verdict.get("identity_conflicts"), list)
         and isinstance(verdict.get("composition_conflicts"), list)
         and all(
@@ -272,6 +300,47 @@ _QUESTION = (
     '"composition_conflicts":["主体过小/角落小人/死空白/无意义装饰等"],'
     '"reason":"简短中文说明"}'
 )
+
+
+# 游戏截图封面的终检问卷（Ivan 2026-08-09 02:20 逐字裁定的落地面）：
+# 「如果是截图封面的话，当然不要求李豆沙在画面里占主要部分，毕竟是游戏截图，
+# 只要截图足够有趣就行，主体肯定会会是游戏。」
+# 因此身份轴改问小窗，构图轴改问"这张游戏画面是否值得点"。**没有放松的是**：
+# 小窗里必须确实是她（多人场冒名仍然拦）、画面不能是空面板/加载页（7/22 案）、
+# 不得有无意义装饰压过内容、必须有明确点击钩子。
+_GAME_QUESTION = (
+    "左侧是同一切片的 SOURCE REFERENCE，右侧是待发布 FINAL COVER。"
+    "本条是**游戏直播截图封面**：画面主体本来就是游戏，"
+    f"不要求{CHANNEL_PROFILE.display_name}占据画面主要部分，也不要因为她小就判失败。"
+    f"请先在左图用可见名牌、服装和外形定位{CHANNEL_PROFILE.display_name}；若名牌可见，必须以名牌为准。"
+    f"{CHANNEL_PROFILE.display_name}是{CHANNEL_PROFILE.cover_identity.gate_appearance_zh}。特别注意：不要把左图其他人物"
+    f"{CHANNEL_PROFILE.cover_identity.gate_rival_note_zh}误认成{CHANNEL_PROFILE.display_name}；给别的角色"
+    f"{CHANNEL_PROFILE.cover_identity.gate_imitation_zh}也不算身份正确。"
+    f"然后判断右图里她的面捕小窗/立绘是否仍然可见（host_window_visible_in_final），"
+    f"以及那个小窗里的人是否确实是{CHANNEL_PROFILE.display_name}本人而不是别的参与者"
+    "（host_window_identity_matches）；小窗被裁掉、被文字完全盖住、糊到认不出或换成了"
+    "别人，这两项就为 false。primary_subject_is_visually_dominant 仍然如实回答，"
+    "但它只是披露，不影响本场景的通过判断。"
+    "构图上判断这张游戏画面本身是否承载一个看得出来的事件（frame_is_interesting："
+    "战况、结算、道具、失误、名场面或可读的关键 UI 文字）；空面板、加载页、菜单、"
+    "纯色过渡、什么都没发生的静止画面一律 false。专门留给已渲染标题的干净文字区是"
+    "合理留白，但标题以外不得有大片死空白、无意义纯色红条/色块或装饰噪声压过内容。"
+    "陌生观众只看右图时应立即看到一个明确点击钩子。不确定就 FAIL。只输出 JSON："
+    '{"source_lidousha_located":true|false,'
+    '"host_window_visible_in_final":true|false,'
+    '"host_window_identity_matches":true|false,'
+    '"primary_subject_is_visually_dominant":true|false,'
+    '"frame_is_interesting":true|false,'
+    '"excessive_dead_space":true|false,'
+    '"meaningless_dominant_decoration":true|false,'
+    '"thumbnail_has_clear_click_hook":true|false,'
+    '"primary_subject_identity":"简短身份",'
+    '"identity_conflicts":["冲突特征"],'
+    '"composition_conflicts":["小窗被裁/小窗换人/死空白/无意义装饰/空面板等"],'
+    '"reason":"简短中文说明"}'
+)
+
+_SCENE_QUESTION = {"talk": _QUESTION, "game": _GAME_QUESTION}
 
 
 def _pending_self_inconsistency_disclosure(
@@ -396,9 +465,11 @@ def verify_lidousha_final_host_identity(
     reference_path: Path,
     base_url: str = "",
     api_key: str = "",
+    scene_kind: str = "talk",
 ) -> dict[str, object]:
     """Return a fail-closed CPA-primary verdict bound to source/final bytes."""
 
+    scene = _normalize_scene_kind(scene_kind)
     final_cover_path = Path(final_cover_path)
     reference_path = Path(reference_path)
     verification: dict[str, object] = {
@@ -407,6 +478,9 @@ def verify_lidousha_final_host_identity(
         "final_cover_path": str(final_cover_path),
         "reference_path": str(reference_path),
     }
+    if scene != "talk":
+        # talk 回执逐字节保持既有形状（保真钉）。
+        verification["scene_kind"] = scene
     try:
         actual_final_sha = _sha256(final_cover_path)
         reference_sha = _sha256(reference_path)
@@ -449,10 +523,16 @@ def verify_lidousha_final_host_identity(
     comparison_sha = _sha256(comparison_path)
     witness = image_vision_probe(
         comparison_path,
-        _QUESTION,
+        _SCENE_QUESTION[scene],
         api_base=base_url,
         api_key=api_key,
-        answer_validator=_identity_answer_valid,
+        answer_validator=(
+            _identity_answer_valid
+            if scene == "talk"
+            else lambda answer: _identity_answer_valid(
+                answer, scene_kind=scene
+            )
+        ),
     )
     verification.update(
         comparison_path=str(comparison_path),
@@ -505,30 +585,51 @@ def verify_lidousha_final_host_identity(
         return verification
     identity_conflicts = verdict.get("identity_conflicts")
     composition_conflicts = verdict.get("composition_conflicts")
-    identity_passed = bool(
-        verdict.get("source_lidousha_located") is True
-        and verdict.get("primary_subject_is_lidousha") is True
-        and verdict.get("primary_subject_matches_other_source_participant")
-        is False
-        and isinstance(identity_conflicts, list)
-        and not identity_conflicts
-    )
-    composition_passed = bool(
-        verdict.get("primary_subject_is_visually_dominant") is True
-        and verdict.get("primary_subject_face_is_large_and_clear") is True
-        and verdict.get("primary_subject_carries_story_reaction") is True
-        and verdict.get("excessive_dead_space") is False
-        and verdict.get("meaningless_dominant_decoration") is False
-        and verdict.get("thumbnail_has_clear_click_hook") is True
-        and isinstance(composition_conflicts, list)
-        and not composition_conflicts
-    )
+    if scene == "game":
+        identity_passed = bool(
+            verdict.get("source_lidousha_located") is True
+            and verdict.get("host_window_visible_in_final") is True
+            and verdict.get("host_window_identity_matches") is True
+            and isinstance(identity_conflicts, list)
+            and not identity_conflicts
+        )
+        composition_passed = bool(
+            verdict.get("frame_is_interesting") is True
+            and verdict.get("excessive_dead_space") is False
+            and verdict.get("meaningless_dominant_decoration") is False
+            and verdict.get("thumbnail_has_clear_click_hook") is True
+            and isinstance(composition_conflicts, list)
+            and not composition_conflicts
+        )
+    else:
+        identity_passed = bool(
+            verdict.get("source_lidousha_located") is True
+            and verdict.get("primary_subject_is_lidousha") is True
+            and verdict.get("primary_subject_matches_other_source_participant")
+            is False
+            and isinstance(identity_conflicts, list)
+            and not identity_conflicts
+        )
+        composition_passed = bool(
+            verdict.get("primary_subject_is_visually_dominant") is True
+            and verdict.get("primary_subject_face_is_large_and_clear") is True
+            and verdict.get("primary_subject_carries_story_reaction") is True
+            and verdict.get("excessive_dead_space") is False
+            and verdict.get("meaningless_dominant_decoration") is False
+            and verdict.get("thumbnail_has_clear_click_hook") is True
+            and isinstance(composition_conflicts, list)
+            and not composition_conflicts
+        )
     if identity_passed and composition_passed:
         verification["status"] = "PASS"
     elif identity_passed:
         verification.update(
             status="FAIL",
-            reason_code="FINAL_COVER_SUBJECT_PROMINENCE_FAILED",
+            reason_code=(
+                "FINAL_COVER_GAME_SCENE_COMPOSITION_FAILED"
+                if scene == "game"
+                else "FINAL_COVER_SUBJECT_PROMINENCE_FAILED"
+            ),
             detail=str(
                 verdict.get("reason")
                 or composition_conflicts

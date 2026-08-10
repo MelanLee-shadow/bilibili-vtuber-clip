@@ -433,3 +433,117 @@ ssh free "find /opt/bilive/autoslice -name '*.record.json' -newermt 2026-08-05"
 # 逐份读 publish_staging.cover_generation.route_decision / route_demotion
 #        publish_staging.cover_generation.source_composition_verification.verdict
 ```
+
+---
+
+## E. 实施记录（2026-08-10，分支 `tmp-screenshot-first`，未 commit / 未部署）
+
+触发：Ivan 2026-08-10「你直接做掉截图那个」。base = `7d08564`。
+worktree `/Users/ivan/Project/vtuber-slice-wt/screenshot-first`。
+
+### E1. P1–P6 落点
+
+| 项 | 落点（文件:行为） | 与 D 节的差异 |
+|---|---|---|
+| P1 | `cover_source_composition.py::extract_authority_source_crop` 授权式由四布尔 AND 收窄为 `source_face_complete ∧ faithful_crop_can_make_dominant` | 无 |
+| P2 | `cover_source_composition.py` 新增 `_GAME_QUESTION_PREFIX` + 按场景的 `_verdict_is_coherent` / `recommends_redraw` / `supports_subject`；`cover_host_identity_gate.py` 新增 `_GAME_QUESTION` 与游戏场 pass-set；场景绑定在新模块 `cover_scene_binding.py` | 见 E2①②③ |
+| P3 | `cover_source_composition.py::extract_authority_source_crop_or_full_frame`：`CROP_NOT_AUTHORIZED` / `BBOX_INVALID` → `HASH_BOUND_FULL_FRAME_NO_CROP_COMPOSITOR`；`VERIFICATION_INVALID` 仍 fail closed | 见 E2④ |
+| P4 | 游戏场 `source_composition_supports_subject()==False` → `publish_staging.py` camera-window 分支首次可达 | 见 E2⑤ |
+| P5 | `cover_repair_route_lineage.py`：preflight `refuse_recoverable_screenshot_route`（付费生图前）+ `record_screenshot_route_displacement` typed 披露 | 见 E2⑥ |
+| P6 | `cover_route_evidence.py::_per_frame_rejection_evidence`，真实判据前置、模板降为后缀 | 无 |
+| C4 | `docs/pipeline/70-cover.md` 第 10 行（游戏场分叉）与第 31–37 行（story_reaction 出否决集合 + 全幅兜底 + 返修 + 拒绝理由） | 任务书写的 `assets/lidousha/70-cover.md` 不存在，真实路径是 `docs/pipeline/70-cover.md` |
+| 伪裁定 | `publish_staging.py` camera-window 分支注释改为据实注明「助手 7/25 03:34 作答 + Ivan 未反对 + 03:38 授权配套修复」 | 无 |
+
+### E2. 与 D 节设计稿的偏差（以代码实证为准）
+
+1. **游戏场字段集独立，不是"talk 四布尔 + 两个新字段"**。诚实的游戏场回答必然
+   `faithful_crop_can_make_dominant=false`，与 talk 的一致性式
+   `cpa_redraw_recommended == not(face ∧ dominant ∧ reaction)` 直接冲突。改为每个场景
+   一套字段 + 一套一致性式；两套字段互不重叠，回执因此**自带结构绑定**——一份自称
+   游戏场却带 talk 答案的回执过不了 coherence。
+2. **终检不能只把 `primary_subject_is_visually_dominant` 降为披露**。D2 的验收样本
+   （8.17 抱团片）在游戏封面上 `primary_subject_is_lidousha` 本来就是 false（主角是游戏），
+   照 D 节字面实现会卡在 `FINAL_HOST_IDENTITY_MISMATCH`；`primary_subject_face_is_large_
+   and_clear` 与 `primary_subject_carries_story_reaction` 同理（C1 那条病在终检的复刻）。
+   游戏场改用独立身份轴 `host_window_visible_in_final ∧ host_window_identity_matches`，
+   反垃圾三项 + `frame_is_interesting` 原样保留。
+3. **`scene_kind` 只实现 `talk` / `game`，没有 `stage`**。StoryContract 无场景字段
+   （已核 `story_contract.py` 全部 `COVER_BINDING_KEYS`），`segment_scene_context` 的
+   `scene_kind ∈ {talk,event}` 是 3D live 事件配额判据、不是游戏判据。判据 = 会话级
+   `session-game-context.v1` RESOLVED ∧ 逐条 `camera_window_bbox_frac`，两条都是既有产物。
+4. **P3 落在裁切层而不是"再走一遍 `_stage_screenshot_direct_cover`"**。在
+   `_screenshot_base_and_crop` 之内退回全幅，等价地保留了下游全部门（polish 整脸门、
+   缩略图文字门、最终身份/显著性门都在同一次调用里照跑），且不会重复烧一次 CPA polish。
+   `VERIFICATION_INVALID` 不在兜底射程内。
+5. **游戏场物化是"整幅不裁"，不是"小窗放大 + 游戏背景拼贴"**。把她的小窗 1.38x 裁出来
+   恰好丢掉 Ivan 要的游戏画面，并且等于用截图重演一次"角落小人放大成大头"。F-cover-2
+   的拼贴合成器不存在（`cover_screenshot_poster.py` 只有 full_frame / contain / fit_crop
+   三种卡），新建它超出本次范围。P4 因此只交付**路由分支可达性**，未交付窗口放大。
+6. **P5 不能"继承 selected_treatment"**。`_enrich_repaired_cover_generation` 运行在付费
+   重绘**之后**（docstring 自述 "regenerate_lidousha_cover owns the paid image result"），
+   把 `selected_treatment` 写成 `screenshot_*` 是伪造路由。改为：付费**之前**在
+   `_cover_authority_preflight` fail-closed（仅当截图像素仍在盘上，否则不阻断交付），
+   之后只做 typed 披露。歌切与 legacy 迁移两处硬编码按 D 节保留不动。
+7. **D1/D2 的「3 direct / 2 polish」与 B3 表格不符**。按 B3 的真实分数，5 条降级案是
+   **2 direct（4.91 emo / 4.46 emo）+ 3 polish（3.55 / 3.46 / 3.02）**。金丝雀按 B3 建。
+
+### E2b. 四类保护的现行执法点复验（逐条）
+
+放宽的只有**事前预判**那一道；下面五条的执法点全部仍然生效，且都有金丝雀钉住。
+
+| 保护 | 现行执法点 | 本次是否改动 | 证据 |
+|---|---|---|---|
+| 主体锁定李豆沙（7/14 142 多人场事故） | 谈话场 `cover_host_identity_gate.py:614` 区块的 `primary_subject_matches_other_source_participant is False`；游戏场 `:588` 区块的 `host_window_identity_matches`；关系型另有 `cover_route_evidence.py:269/511` + `validate_final_participant_verification` | 关系分支与 participant 门**零改动**；游戏场新增等价身份轴 | `test_canary_2b_...`（`host_window_identity_matches=False` → `FINAL_HOST_IDENTITY_MISMATCH`） |
+| 角落小人上公开面（7/26 BV1E93L6rErV 1411） | 路由端 `cover_source_composition.py:395` `source_composition_recommends_redraw`（`faithful_crop_can_make_dominant is False`）；像素端 `cover_host_identity_gate.py:614` `primary_subject_is_visually_dominant` + `FINAL_COVER_SUBJECT_PROMINENCE_FAILED`（`:631`） | 两处均未放松 | `test_canary_1_...`（含强制 screenshot/polish 模式）、`test_canary_1b_...` |
+| 空面板 / 加载页（7/22 游戏 UI 案） | 谈话场同上几何否决 + `excessive_dead_space` / `thumbnail_has_clear_click_hook`；游戏场新增 `frame_is_interesting`，见证端 `cover_source_composition.py:630`、像素端 `cover_host_identity_gate.py:588` 区块 | 反垃圾三项一条不少 | `test_canary_2_...`、`test_canary_2b_...`（四项逐个翻假逐个必红） |
+| 吐舌禁令 | `cover_generation.py:184-185` 词面护栏 + `:844/886/923` prompt 硬句 + polish 整脸门 `cover_polish_gate.py::_verify_polish_face_integrity` | **完全未触碰**（只约束生成像素；截图路线本就不生成人脸，polish 改脸由整脸门拦） | `git diff` 不含 `cover_generation.py` |
+| 双人联动必须双方可见 | `publish_staging.py:2146-2164` 关系分支排在一切几何否决之前；`validate_final_participant_verification` + no-crop participant proof | 关系分支位置与内容**零改动**，游戏场分叉全部插在其后 | 全量 `tests/test_cover_reference_authority.py` 等既有用例绿 |
+
+### E2c. 已披露风险
+
+1. **P5 会把一部分自动返修变成 BLOCK**。原路线是截图且其像素链仍在盘上时，通用重绘
+   返修 fail-closed 报 `COVER_SCREENSHOT_ROUTE_REPAIR_REQUIRED`，需人工走
+   `scripts/repair_screenshot_cover.py`。像素已丢、被降级过（`actual_treatment=cpa_redraw`）
+   或截图尝试本身 BLOCKED 的记录都不受影响，不会把返修锁死。
+2. **P1/P2/P3 把更多候选送进截图 lane，而该 lane 对终检失败的既有契约是 BLOCK 而不是
+   降级重绘**（`publish_staging.py:1962` 的降级只认 `SCREENSHOT_ROUTE_MATERIALIZATION_FAILED`，
+   `COVER_FINAL_HOST_IDENTITY_UNVERIFIED` 不在其中）。这不是新失败模式，是原有契约被更多
+   候选触达；净效果是「以前静默重绘、现在尝试后被拒并留证」。要改成降级需另行裁定。
+3. **polish 的修图 prompt 没有按场景分叉**（`cover_polish_gate.py::_cover_screenshot_polish_prompt`
+   仍是"清 UI 杂物+画质"）。整幅游戏截图上，它可能抹掉 `frame_is_interesting` 依赖的战况/
+   结算 UI；唯一兜底是游戏场终检判 false → BLOCK。设计稿未要求分叉，本次未改，登记为风险。
+
+### E2d. 预期效果量化（8/7–8/8 十条真实 `route_decision` 重放）
+
+以 B3 表的落盘数据重放，分三层，**不给交付条数**——最终像素门无法离线重放，
+设计稿 D1 自己也这么说。
+
+* **确定性翻转（只靠 P1，无需任何新见证）：5/10**。这 5 条的回执已经落盘证明
+  `source_face_complete=true ∧ faithful_crop_can_make_dominant=true`，收窄后授权成立：
+  **2 条 `screenshot_direct`**（8/8 auto_200130_1323_1603 = 4.91+emo、
+  8/8 auto_213135_469_710 = 4.46+emo）＋ **3 条 `screenshot_polish`**
+  （8/7 auto_200736_298_383 = 3.55、8/8 auto_230125_960_1072 = 3.46、
+  8/8 auto_210131_1576_1802 = 3.02）。物化层重绘率由 10/10 降到 5/10。
+* **条件性（P2/P4）：另外 4 条见证几何否决案变成"可重问"**，但**不给数字**：归档的
+  verdict 回答的是 talk 问卷，无法离线换成游戏问卷重放；`decision_inputs` 也没有记
+  `camera_window_bbox_frac`，因此无法统计其中几条真有面捕小窗。8/7 auto_210739_1142_1436
+  （8.17 分抱团片）是设计稿点名的验收样本：它落盘的拒绝理由「李豆沙位于右下角……
+  无法成为大号第一主体」正是 Ivan 8/9 亲自否掉的判据。
+* **不受影响：1 条**（8/7 auto_223750_913_1322，BLOCKED 于 punch 耗尽，属文字 lane）。
+
+上界因此是重绘 1/10、下界 5/10；真实落点由 D2 第 6 条「上线后一场观测门」判定。
+
+### E3. 金丝雀与测试
+
+`tests/test_cover_screenshot_first_canaries.py`（20 条，全合成 fixture、零 provider 调用）。
+全量 pytest：base `3495 passed` → 现 `3515 passed`，零失败。
+金丝雀④ 已实证 revert 敏感：临时恢复四布尔 AND 后，恰好
+`test_canary_4_story_reaction_false_no_longer_blocks_the_crop` 一条转红。
+ruff（`select = E4,E7,E9,F`）：与 base 逐条一致，无新增（唯一差异是一条既有 F821 的行号漂移）。
+架构账本只降不升：`publish_staging.py` 2866→2864、`_stage_lidousha_ai_cover` 418→411、
+`_stage_screenshot_direct_cover` 322→316，`cover_repair.py` 持平 2217。
+
+### E4. 未做
+
+零 commit、零部署、未碰其它 worktree、未改上传面与裁决闭集语义。D2 第 6 条「上线后一场
+观测门」需要真实跑一场才能验收，不在本次范围。

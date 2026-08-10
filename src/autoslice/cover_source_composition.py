@@ -23,12 +23,63 @@ from src.autoslice.surface_canon import CHANNEL_PROFILE
 SCHEMA_VERSION = "lidousha-cover-source-composition-verification.v1"
 AUTHORITY = "CPA_PRIMARY_HASH_BOUND_SOURCE_COMPOSITION"
 
+# 场景分叉（Ivan 2026-08-09 02:20 逐字裁定）：「如果是截图封面的话，当然不要求
+# 李豆沙在画面里占主要部分，毕竟是游戏截图，只要截图足够有趣就行，主体肯定会
+# 会是游戏。」——单人主导框架只对谈话场成立；游戏场问的是**小窗可见 + 画面有趣**。
+# 未证明是游戏场的一律按 talk 走（fail-closed），talk 提问与判据逐字节不变。
+TALK_SCENE = "talk"
+GAME_SCENE = "game"
+COVER_SCENE_KINDS = (TALK_SCENE, GAME_SCENE)
+
 _BOOL_FIELDS = (
     "source_face_complete",
     "faithful_crop_can_make_dominant",
     "source_carries_story_reaction",
     "cpa_redraw_recommended",
 )
+_GAME_BOOL_FIELDS = (
+    "host_window_visible",
+    "frame_is_interesting",
+    "cpa_redraw_recommended",
+)
+_SCENE_BOOL_FIELDS = {
+    TALK_SCENE: _BOOL_FIELDS,
+    GAME_SCENE: _GAME_BOOL_FIELDS,
+}
+
+
+def normalize_cover_scene_kind(value: object) -> str:
+    """Fail-closed scene normalization: anything unproven is a talk scene."""
+
+    text = str(value or "").strip().lower()
+    return text if text in COVER_SCENE_KINDS else TALK_SCENE
+
+
+def resolve_cover_scene_kind(
+    *,
+    session_game_context: object = None,
+    frame_selection: Mapping[str, object] | None = None,
+) -> str:
+    """Classify one clip's cover scene from evidence that already exists.
+
+    没有新探测器：游戏场 = ①本场 `session-game-context.v1` 已 RESOLVED（会话级，
+    `src/autoslice/game_context.py` 既有产物）**且** ②本条选帧探到了固定位置的
+    面捕小窗 `camera_window_bbox_frac`（`cover_frame_selection.py` 既有产物，
+    正是"全屏游戏 + 角落小窗"这个版式的判据）。两条缺一即 talk——游戏场里的纯
+    杂谈切片没有小窗，不会被误判进放宽面。
+    """
+
+    if not isinstance(session_game_context, Mapping):
+        return TALK_SCENE
+    if session_game_context.get("schema_version") != "session-game-context.v1":
+        return TALK_SCENE
+    if session_game_context.get("status") != "RESOLVED":
+        return TALK_SCENE
+    if not isinstance(frame_selection, Mapping):
+        return TALK_SCENE
+    if not _valid_bbox(frame_selection.get("camera_window_bbox_frac")):
+        return TALK_SCENE
+    return GAME_SCENE
 
 
 def _sha256(path: Path) -> str:
@@ -73,15 +124,31 @@ def _valid_bbox(value: object) -> bool:
     )
 
 
-def _verdict_is_coherent(verdict: Mapping[str, object]) -> bool:
+def _verdict_is_coherent(
+    verdict: Mapping[str, object], *, scene_kind: str = TALK_SCENE
+) -> bool:
+    scene = normalize_cover_scene_kind(scene_kind)
     if not _valid_bbox(verdict.get("lidousha_bbox_frac")):
         return False
-    if not all(isinstance(verdict.get(key), bool) for key in _BOOL_FIELDS):
+    if not all(
+        isinstance(verdict.get(key), bool) for key in _SCENE_BOOL_FIELDS[scene]
+    ):
         return False
     if not isinstance(verdict.get("reason"), str) or not str(
         verdict.get("reason") or ""
     ).strip():
         return False
+
+    if scene == GAME_SCENE:
+        # 游戏场没有"她能否成为大主体"这个判据（Ivan 8/9：主体本来就是游戏）。
+        # 唯一的一致性要求：小窗可见且画面有趣时不得同时建议整张重绘。
+        game_screenshot_safe = bool(
+            verdict.get("host_window_visible") is True
+            and verdict.get("frame_is_interesting") is True
+        )
+        return verdict.get("cpa_redraw_recommended") is (
+            not game_screenshot_safe
+        )
 
     screenshot_safe = bool(
         verdict.get("source_face_complete") is True
@@ -94,9 +161,11 @@ def _verdict_is_coherent(verdict: Mapping[str, object]) -> bool:
     return verdict.get("cpa_redraw_recommended") is (not screenshot_safe)
 
 
-def _answer_valid(answer: str) -> bool:
+def _answer_valid(answer: str, *, scene_kind: str = TALK_SCENE) -> bool:
     try:
-        return _verdict_is_coherent(_extract_json_object(answer))
+        return _verdict_is_coherent(
+            _extract_json_object(answer), scene_kind=scene_kind
+        )
     except (ValueError, json.JSONDecodeError):
         return False
 
@@ -143,6 +212,36 @@ _QUESTION_PREFIX = (
 )
 
 
+# 游戏场提问（Ivan 2026-08-09 02:20 裁定的落地面）。与 talk 版的差别是**故意**的：
+# 删掉「让她成为大号第一主体」与「不要因为游戏画面显眼而放行」——这两句正是把
+# 游戏场恒判重绘的那两句；改问 Ivan 给的两个判据：小窗里能不能认出她、这张游戏
+# 画面本身够不够有趣。她占画面比例在这里只作披露，不参与放行。
+_GAME_QUESTION_PREFIX = (
+    f"这是待制作{CHANNEL_PROFILE.display_name}切片封面的、已经 hash-bound 的 SOURCE REFERENCE。"
+    "本条是**游戏直播场**：画面主体本来就是游戏，"
+    f"不要求{CHANNEL_PROFILE.display_name}在画面里占主要部分。"
+    f"先按当场服装、{CHANNEL_PROFILE.cover_identity.locator_zh}在画面中定位{CHANNEL_PROFILE.display_name}"
+    f"的面捕小窗/立绘；不要把{CHANNEL_PROFILE.cover_identity.composition_decoys_zh} 当成她。"
+    "给出该小窗的归一化 bbox=[x0,y0,x1,y1]，坐标必须在 0..1 且紧包住小窗里她的脸和上半身。"
+    "然后只判断两件事：①host_window_visible——小窗确实存在、没有被遮挡或裁掉，"
+    "里面的人可以被认出就是她（哪怕很小）；②frame_is_interesting——这张游戏画面本身"
+    "是否承载一个看得出来的事件（战况、结算、道具、失误、名场面、可读的关键 UI 文字），"
+    "而不是空面板、加载页、菜单、纯黑/纯色过渡或什么都没发生的静止画面。"
+    "两者都为真才 cpa_redraw_recommended=false；任一为假就必须 cpa_redraw_recommended=true。"
+    "只输出 JSON："
+    '{"lidousha_bbox_frac":[0.0,0.0,1.0,1.0],'
+    '"host_window_visible":true|false,'
+    '"frame_is_interesting":true|false,'
+    '"cpa_redraw_recommended":true|false,'
+    '"reason":"简短中文像素依据"}'
+)
+
+_SCENE_QUESTION_PREFIX = {
+    TALK_SCENE: _QUESTION_PREFIX,
+    GAME_SCENE: _GAME_QUESTION_PREFIX,
+}
+
+
 def verify_lidousha_source_composition(
     *,
     reference_path: Path,
@@ -152,9 +251,11 @@ def verify_lidousha_source_composition(
     base_url: str = "",
     api_key: str = "",
     image_probe: Callable[..., dict[str, object]] | None = None,
+    scene_kind: str = TALK_SCENE,
 ) -> dict[str, object]:
     """Return a strict source-composition receipt bound to reference bytes."""
 
+    scene = normalize_cover_scene_kind(scene_kind)
     reference_path = Path(reference_path)
     receipt: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
@@ -164,6 +265,9 @@ def verify_lidousha_source_composition(
         "story_hook": str(story_hook),
         "title": str(title),
     }
+    if scene != TALK_SCENE:
+        # talk 回执逐字节保持既有形状（保真钉）；只有游戏场才多带 scene_kind。
+        receipt["scene_kind"] = scene
     try:
         actual_reference_sha256 = _sha256(reference_path)
     except OSError as exc:
@@ -189,7 +293,7 @@ def verify_lidousha_source_composition(
 
         image_probe = image_vision_probe
     question = (
-        _QUESTION_PREFIX
+        _SCENE_QUESTION_PREFIX[scene]
         + "\n故事钩子："
         + (str(story_hook).strip() or "未提供；只按标题的明确事件判断")
         + "\n投稿标题："
@@ -201,7 +305,11 @@ def verify_lidousha_source_composition(
             question,
             api_base=base_url,
             api_key=api_key,
-            answer_validator=_answer_valid,
+            answer_validator=(
+                _answer_valid
+                if scene == TALK_SCENE
+                else lambda answer: _answer_valid(answer, scene_kind=scene)
+            ),
         )
     except Exception as exc:
         receipt.update(
@@ -243,7 +351,7 @@ def verify_lidousha_source_composition(
         )
         return receipt
     receipt["verdict"] = verdict
-    if not _verdict_is_coherent(verdict):
+    if not _verdict_is_coherent(verdict, scene_kind=scene):
         receipt.update(
             status="FAIL",
             reason_code="SOURCE_COMPOSITION_VERDICT_INVALID",
@@ -252,6 +360,14 @@ def verify_lidousha_source_composition(
         return receipt
     receipt["status"] = "PASS"
     return receipt
+
+
+def source_composition_scene_kind(verification: object) -> str:
+    """Read the scene a receipt was actually asked under (absent → talk)."""
+
+    if not isinstance(verification, Mapping):
+        return TALK_SCENE
+    return normalize_cover_scene_kind(verification.get("scene_kind"))
 
 
 def validate_source_composition_verification(
@@ -267,6 +383,14 @@ def validate_source_composition_verification(
     verdict = verification.get("verdict")
     if not isinstance(witness, Mapping) or not isinstance(verdict, Mapping):
         return False
+    # 一份回执不能自称游戏场却带着 talk 提问的答案（反之亦然）：两套字段集互不
+    # 重叠，coherence 自带这道结构绑定，无需再信任任何自述标签。未知 scene 标签
+    # 直接判非法，避免拼错的标签被静默当成 talk 放行。
+    if "scene_kind" in verification and (
+        verification.get("scene_kind") not in COVER_SCENE_KINDS
+    ):
+        return False
+    scene = source_composition_scene_kind(verification)
     witness_image_sha = "sha256:" + str(witness.get("image_sha256") or "")
     return bool(
         verification.get("schema_version") == SCHEMA_VERSION
@@ -279,7 +403,7 @@ def validate_source_composition_verification(
         and verification.get("witness_receipt_sha256")
         == _canonical_sha256(witness)
         and _routing_valid(witness)
-        and _verdict_is_coherent(verdict)
+        and _verdict_is_coherent(verdict, scene_kind=scene)
     )
 
 
@@ -299,6 +423,13 @@ def source_composition_recommends_redraw(verification: object) -> bool:
     verdict = verification.get("verdict")
     if not isinstance(verdict, Mapping):
         return False
+    if source_composition_scene_kind(verification) == GAME_SCENE:
+        # 游戏场（Ivan 2026-08-09）：几何否决只剩「小窗不可见」与「画面无聊」。
+        # "她不能成为大主体"在这里不是缺陷，是这类封面的定义。
+        return (
+            verdict.get("host_window_visible") is False
+            or verdict.get("frame_is_interesting") is False
+        )
     return (
         verdict.get("source_face_complete") is False
         or verdict.get("faithful_crop_can_make_dominant") is False
@@ -318,6 +449,12 @@ def source_composition_supports_subject(verification: object) -> bool:
         return False
     verdict = verification.get("verdict")
     if not isinstance(verdict, Mapping):
+        return False
+    if source_composition_scene_kind(verification) == GAME_SCENE:
+        # 游戏场恒 False，且这是**故意**的：`subject_confident` 的语义就是
+        # 「她能当大主体」，而 Ivan 8/9 明说游戏场不要求这个。返回 False 让路由
+        # 落到既有的 camera-window 分支（`publish_staging.py` 小窗回归，7/25 Ivan
+        # 授权）——那条分支在见证在场时原本永远不可达，正是 C5 的死代码。
         return False
     return bool(
         verdict.get("faithful_crop_can_make_dominant") is True
@@ -366,6 +503,149 @@ def _bbox_crop_box(
     )
 
 
+CROP_NOT_AUTHORIZED = "SOURCE_COMPOSITION_CROP_NOT_AUTHORIZED"
+BBOX_INVALID = "SOURCE_COMPOSITION_BBOX_INVALID"
+NO_CROP_COMPOSITOR = "HASH_BOUND_FULL_FRAME_NO_CROP_COMPOSITOR"
+# 只有这两种失败可以退到"全幅不裁"：它们说的都是**裁切**这一步不可行，源帧本身
+# 仍是 hash-bound 的真实瞬间。回执本身不可信（VERIFICATION_INVALID）绝不在此列
+# ——那是 fail-closed 的射程，退到全幅等于用一份废回执放行像素。
+_FULL_FRAME_FALLBACK_REASONS = (CROP_NOT_AUTHORIZED, BBOX_INVALID)
+
+
+def extract_authority_source_crop_or_full_frame(
+    *,
+    reference_path: Path,
+    output_path: Path,
+    frame_ms: int,
+    verification: Mapping[str, object],
+    verification_receipt_path: Path,
+    verification_receipt_sha256: str,
+) -> dict[str, object]:
+    """Crop when authorized, else keep the uncropped hash-bound frame.
+
+    把"重绘是兜底"从口号变成控制流事实（2026-08-10，治 C6）。此前截图物化只要
+    裁不出来就整条降级 `cpa_redraw`，而关系路线早就在用
+    ``HASH_BOUND_FULL_FRAME_NO_CROP_COMPOSITOR``——同一份 hash-bound 源帧，不裁，
+    整幅装进海报底板。裁不动 ≠ 这一帧不能当封面，所以先落全幅，重绘留到全幅也
+    失败之后。
+
+    放宽的是**尝试权**不是**验收**：全幅成品照样要过 polish 整脸门、缩略图文字门
+    和 `cover_host_identity_gate` 的最终像素显著性门；角落小人只是从"不许尝试"
+    变成"尝试后被拒"，公开面一寸没松。
+    """
+
+    try:
+        return extract_authority_source_crop(
+            reference_path=reference_path,
+            output_path=output_path,
+            frame_ms=frame_ms,
+            verification=verification,
+            verification_receipt_path=verification_receipt_path,
+            verification_receipt_sha256=verification_receipt_sha256,
+        )
+    except ValueError as exc:
+        if str(exc) not in _FULL_FRAME_FALLBACK_REASONS:
+            raise
+        fallback_reason = str(exc)
+    evidence = _extract_full_frame_no_crop(
+        reference_path=Path(reference_path),
+        reference_sha256=_sha256(Path(reference_path)),
+        output_path=output_path,
+        frame_ms=frame_ms,
+        verification=verification,
+        verification_receipt_path=verification_receipt_path,
+        verification_receipt_sha256=verification_receipt_sha256,
+    )
+    evidence["status"] = NO_CROP_COMPOSITOR
+    evidence["crop_fallback_reason_code"] = fallback_reason
+    return evidence
+
+
+def _extract_full_frame_no_crop(
+    *,
+    reference_path: Path,
+    reference_sha256: str,
+    output_path: Path,
+    frame_ms: int,
+    verification: Mapping[str, object],
+    verification_receipt_path: Path,
+    verification_receipt_sha256: str,
+) -> dict[str, object]:
+    """Write the exact reference frame as the screenshot base, uncropped."""
+
+    with Image.open(reference_path) as raw_image:
+        source = raw_image.convert("RGB")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    source.save(output_path, format="PNG", optimize=False)
+    return {
+        "schema": "cover-frame-transfer.v2",
+        "status": "HASH_BOUND_FULL_FRAME",
+        "frame_ms": int(frame_ms),
+        "source_path": str(reference_path),
+        "source_sha256": reference_sha256,
+        "reference_sha256": reference_sha256,
+        "crop_applied": False,
+        "full_frame_preserved": True,
+        "source_size": [source.width, source.height],
+        "zoom": 1.0,
+        "camera_window_crop": False,
+        "authority_identity_crop": False,
+        "authority_bbox_frac": source_composition_bbox(verification),
+        "motion_bbox_role": "CANDIDATE_ONLY_NOT_AUTHORITY",
+        "source_composition_schema_version": SCHEMA_VERSION,
+        "source_composition_witness_sha256": str(
+            verification.get("witness_receipt_sha256") or ""
+        ),
+        "source_composition_receipt_path": str(verification_receipt_path),
+        "source_composition_receipt_sha256": verification_receipt_sha256,
+        "crop_output_sha256": _sha256(output_path),
+    }
+
+
+def _extract_game_scene_full_frame(
+    *,
+    reference_path: Path,
+    reference_sha256: str,
+    output_path: Path,
+    frame_ms: int,
+    verification: Mapping[str, object],
+    verification_receipt_path: Path,
+    verification_receipt_sha256: str,
+) -> dict[str, object]:
+    """Keep the whole game frame — the game IS the subject (Ivan 2026-08-09).
+
+    「如果是截图封面的话，当然不要求李豆沙在画面里占主要部分，毕竟是游戏截图，
+    只要截图足够有趣就行，主体肯定会会是游戏。」把小窗 1.38x 裁出来当封面恰好
+    做反了：那样丢掉的正是 Ivan 要的游戏画面，而且等于用截图重演一次"角落小人
+    放大成大头"——重绘 lane 做这件事本来就更强。所以游戏场用**原样全幅**，
+    她的小窗 bbox 只作披露，供最终身份门定位。
+    """
+
+    verdict = verification["verdict"]
+    assert isinstance(verdict, Mapping)
+    if (
+        verdict.get("host_window_visible") is not True
+        or verdict.get("frame_is_interesting") is not True
+    ):
+        raise ValueError(CROP_NOT_AUTHORIZED)
+    bbox = source_composition_bbox(verification)
+    if bbox is None:
+        raise ValueError(BBOX_INVALID)
+    evidence = _extract_full_frame_no_crop(
+        reference_path=reference_path,
+        reference_sha256=reference_sha256,
+        output_path=output_path,
+        frame_ms=frame_ms,
+        verification=verification,
+        verification_receipt_path=verification_receipt_path,
+        verification_receipt_sha256=verification_receipt_sha256,
+    )
+    evidence["status"] = "HASH_BOUND_GAME_SCENE_FULL_FRAME"
+    evidence["scene_kind"] = GAME_SCENE
+    evidence["host_window_bbox_frac"] = bbox
+    return evidence
+
+
 def extract_authority_source_crop(
     *,
     reference_path: Path,
@@ -375,7 +655,23 @@ def extract_authority_source_crop(
     verification_receipt_path: Path,
     verification_receipt_sha256: str,
 ) -> dict[str, object]:
-    """Crop exact reference pixels around the CPA identity bbox."""
+    """Crop exact reference pixels around the CPA identity bbox.
+
+    执行端授权式收窄到与路由端一致的**两个几何布尔**（2026-08-10，治 C1/C2）。
+    此前这里是四布尔 AND，多出的两条是：
+
+    * ``source_carries_story_reaction`` —— 2026-07-31 `9f51987` 已经把它从路由端
+      的否决集合里拿掉，理由自己写在 `source_composition_recommends_redraw` 的
+      docstring 里（故事由 `narrative_presentation → COVER_TEXT` 承担，
+      `docs/pipeline/70-cover.md`），但执行端漏改，于是路由放行的同一类候选被后门
+      原样拦回。8/7–8/8 两场 20/20 次降级全部出自这里。
+    * ``cpa_redraw_recommended`` —— 它是前三者的派生量（见 `_verdict_is_coherent`
+      的一致性约束），本就不该在授权式里单独出现；留着它等于把已经拿掉的第三条
+      从后门再放回来。
+
+    保留的两条是真几何不可能：脸不完整、或忠实裁切也成不了大主体（7/26 1411
+    角落小人案），下游显著性门必死，提前拒绝是省钱不是收权。
+    """
 
     reference_sha256 = _sha256(Path(reference_path))
     if not validate_source_composition_verification(
@@ -385,16 +681,25 @@ def extract_authority_source_crop(
         raise ValueError("SOURCE_COMPOSITION_VERIFICATION_INVALID")
     verdict = verification["verdict"]
     assert isinstance(verdict, Mapping)
+    scene = source_composition_scene_kind(verification)
+    if scene == GAME_SCENE:
+        return _extract_game_scene_full_frame(
+            reference_path=Path(reference_path),
+            reference_sha256=reference_sha256,
+            output_path=output_path,
+            frame_ms=frame_ms,
+            verification=verification,
+            verification_receipt_path=verification_receipt_path,
+            verification_receipt_sha256=verification_receipt_sha256,
+        )
     if (
         verdict.get("source_face_complete") is not True
         or verdict.get("faithful_crop_can_make_dominant") is not True
-        or verdict.get("source_carries_story_reaction") is not True
-        or verdict.get("cpa_redraw_recommended") is not False
     ):
-        raise ValueError("SOURCE_COMPOSITION_CROP_NOT_AUTHORIZED")
+        raise ValueError(CROP_NOT_AUTHORIZED)
     bbox = source_composition_bbox(verification)
     if bbox is None:
-        raise ValueError("SOURCE_COMPOSITION_BBOX_INVALID")
+        raise ValueError(BBOX_INVALID)
     with Image.open(reference_path) as raw_image:
         source = raw_image.convert("RGB")
     crop_box = _bbox_crop_box(

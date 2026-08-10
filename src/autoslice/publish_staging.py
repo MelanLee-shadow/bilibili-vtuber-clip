@@ -49,9 +49,12 @@ from .cover_route_evidence import (
     story_participant_ids,
     validate_final_participant_verification,
 )
+from .cover_scene_binding import run_final_host_identity_witness, run_source_composition_witness
 from .cover_source_composition import (
-    extract_authority_source_crop,
+    GAME_SCENE,
+    extract_authority_source_crop_or_full_frame,
     source_composition_recommends_redraw,
+    source_composition_scene_kind,
     source_composition_supports_subject,
     validate_source_composition_verification,
     verify_lidousha_source_composition,
@@ -1628,13 +1631,13 @@ def _build_lidousha_cover_route(
                 else None
             ),
             "source_composition_redraw_recommended": (
-                source_composition_recommends_redraw(
-                    source_composition_verification
-                )
+                source_composition_recommends_redraw(source_composition_verification)
                 if isinstance(source_composition_verification, Mapping)
                 else None
             ),
         },
+        # C9：拒绝理由必须带这一帧的真实判据（见证原文+分数+场景），不是模板。
+        source_composition_verification=source_composition_verification,
     )
     cover_generation["route_decision"] = route
     record_cover_route_execution(
@@ -1744,27 +1747,20 @@ def _stage_lidousha_ai_cover(
             or verify_lidousha_source_composition
         )
         reference_sha256 = "sha256:" + _sha256(reference_path)
-        try:
-            source_composition_verification = dict(
-                active_source_composition_verifier(
-                    reference_path=reference_path,
-                    reference_sha256=reference_sha256,
-                    story_hook=(
-                        str(story_contract.get("selection_hook") or "")
-                        if isinstance(story_contract, Mapping)
-                        else ""
-                    ),
-                    title=title,
-                    base_url=base_url,
-                    api_key=api_key,
-                )
-            )
-        except Exception as exc:
-            source_composition_verification = {
-                "status": "FAIL",
-                "reason_code": "SOURCE_COMPOSITION_VERIFIER_EXCEPTION",
-                "detail": f"{type(exc).__name__}: {exc}",
-            }
+        source_composition_verification = run_source_composition_witness(
+            active_source_composition_verifier,
+            reference_path=reference_path,
+            reference_sha256=reference_sha256,
+            story_hook=(
+                str(story_contract.get("selection_hook") or "")
+                if isinstance(story_contract, Mapping)
+                else ""
+            ),
+            title=title,
+            base_url=base_url,
+            api_key=api_key,
+            frame_selection=frame_selection,
+        )
         cover_generation["source_composition_verification"] = dict(
             source_composition_verification
         )
@@ -2131,6 +2127,7 @@ def _decide_cover_treatment(
     （强：5.1-9.1；中：2.8-3.9；弱：1.9-2.1）。
     """
 
+    scene_kind = source_composition_scene_kind(source_composition_verification)
     if cover_mode == "cpa":
         return "cpa_redraw", "mode=cpa (forced)"
     if is_song:
@@ -2238,10 +2235,17 @@ def _decide_cover_treatment(
     if subject_confident and best >= _COVER_TREATMENT_SCORE_LO:
         return "screenshot_polish", f"usable moment + CPA touch-up (score={best:.2f})"
     if best >= _COVER_TREATMENT_SCORE_LO:
-        # 游戏场小窗回归（2026-07-25 Ivan：截图修图优先于重绘）：全局运动
-        # 弥散但探测到位置固定的立绘小窗时，裁窗放大做截图底走 polish，
-        # 真名场面不再被"无自信主体"一票否决；无窗才落重绘。
+        # 游戏场小窗回归。**出处据实**：「截图修图优先于重绘」是 2026-07-25 03:34
+        # 助手对 Ivan 提问的回答，不是 Ivan 的裁定；Ivan 当场没有反对，并在 03:38
+        # 逐字授权了配套修复（「你可以现在开始做小窗裁剪」）。2026-08-09 02:20 另有
+        # 逐字裁定：游戏截图封面不要求她占画面主要部分。2026-08-10：本分支在见证
+        # 在场（正常 talk 生产恒真）时曾**逻辑不可达**——faithful_crop=false 在上面
+        # 提前 return，=true 又把 subject_confident 抬成 True；游戏场受证
+        # `supports_subject()==False` 之后它才第一次真正可达。
         if frame_selection.get("camera_window_bbox_frac"):
+            if scene_kind == GAME_SCENE:
+                lead = "game scene: host camera window visible; full game frame"
+                return "screenshot_polish", f"{lead} + CPA touch-up (score={best:.2f})"
             return (
                 "screenshot_polish",
                 f"camera window crop + CPA touch-up (score={best:.2f})",
@@ -2307,7 +2311,7 @@ def _screenshot_base_and_crop(
                 or "sha256:" + _sha256(receipt_path) != receipt_sha256
             ):
                 raise ValueError("SOURCE_COMPOSITION_RECEIPT_HASH_MISMATCH")
-            crop_evidence = extract_authority_source_crop(
+            crop_evidence = extract_authority_source_crop_or_full_frame(
                 reference_path=reference_path,
                 output_path=screenshot_base,
                 frame_ms=int(frame_selection["best_ms"]),
@@ -2512,21 +2516,15 @@ def _stage_screenshot_direct_cover(
             }
         )
         if isinstance(route, Mapping) and route.get("host_identity_required") is True:
-            if final_host_identity_verifier is None:
-                host_identity_verification: Mapping[str, object] = {
-                    "status": "FAIL",
-                    "reason_code": "HOST_IDENTITY_VERIFIER_MISSING",
-                }
-            else:
-                host_identity_verification = dict(
-                    final_host_identity_verifier(
-                        final_cover_path=final_cover_path,
-                        final_cover_sha256=cover_generation["final_cover_sha256"],
-                        reference_path=reference_path,
-                        base_url=base_url,
-                        api_key=api_key,
-                    )
-                )
+            host_identity_verification = run_final_host_identity_witness(
+                final_host_identity_verifier,
+                final_cover_path=final_cover_path,
+                final_cover_sha256=cover_generation["final_cover_sha256"],
+                reference_path=reference_path,
+                base_url=base_url,
+                api_key=api_key,
+                cover_generation=cover_generation,
+            )
             cover_generation["final_host_identity_verification"] = dict(host_identity_verification)
             if not validate_final_host_identity_verification(cover_generation):
                 detail = (

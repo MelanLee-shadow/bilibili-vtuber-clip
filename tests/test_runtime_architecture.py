@@ -84,7 +84,10 @@ FUNCTION_DEBT_LEDGER = {
     # 2026-07-31 +2：同上，contract 穿透接线。
     # 2026-08-02 +29：截图物化失败→显式降级重绘（降级回执+细节留痕，重绘
     # 前置门照跑）——同上授权；测试 test_cover_route_demotion.py + shadow 用例。
-    ("src/autoslice/publish_staging.py", "_stage_lidousha_ai_cover"): 418,
+    # 2026-08-10 净 -7：截图优先修复顺带还债——source-composition 见证的调用+
+    # 异常包装整体抽到 src/autoslice/cover_scene_binding.py
+    # （run_source_composition_witness），场景分叉的新增行零留在本函数。
+    ("src/autoslice/publish_staging.py", "_stage_lidousha_ai_cover"): 411,
     # 2026-07-31 +27：reuse 封面绑定（1013 jyl-r9 案——reuse 不绑 cover sha，
     # recovery manifest 必然 REFUSE；Ivan 常设修复授权链）。已连续吃增长，
     # 下次动这个函数必须先拆，不许再抬。
@@ -94,7 +97,9 @@ FUNCTION_DEBT_LEDGER = {
     # 对同一字节新打 CPA 见证；失败即丢弃整个结转 fail-closed）。
     ("src/autoslice/publish_staging.py", "_stage_publish_draft"): 578,
     # 2026-07-31 +3：同上，截图/polish 路径的 contract 穿透。
-    ("src/autoslice/publish_staging.py", "_stage_screenshot_direct_cover"): 322,
+    # 2026-08-10 净 -6：同上——终检见证的 verifier-missing 分支与调用抽到
+    # cover_scene_binding.run_final_host_identity_witness。
+    ("src/autoslice/publish_staging.py", "_stage_screenshot_direct_cover"): 316,
     # 2026-08-08 +13：歌lane provider门修复（Ivan 2026-08-08「老毛病竟然还
     # 重新犯，你必须修复」）——JINGTING_PROVIDER_NOT_AGY 及同族此前未被识别
     # 为 transient，同一 attempt 里跟着的 SONG_*_MISSING/INVALID 级联码就会
@@ -225,7 +230,10 @@ MODULE_DEBT_LEDGER = {
     # 2026-08-01 +47：同上（证据包结转）。此模块 7/31-8/1 三次靠抬账过关，
     # 拆解已经不是建议是欠账。
     # 2026-08-02 +38：封面路由显式降级（同函数条目注释，Ivan 8/2 /goal）。
-    "src/autoslice/publish_staging.py": 2_866,
+    # 2026-08-10 净 -2：截图优先修复（Ivan 8/10「你直接做掉截图那个」）——
+    # 场景分叉与见证调用的新增重量全部落在新模块 cover_scene_binding.py，
+    # 本模块只留调用点，顺带把两处内联 try/except 抽走，账本因此收紧。
+    "src/autoslice/publish_staging.py": 2_864,
     "src/autoslice/same_bv_repair.py": 2_422,
 }
 SCRIPT_EXCLUSIONS = {

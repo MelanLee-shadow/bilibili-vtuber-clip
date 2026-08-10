@@ -7,7 +7,7 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
 证据，全部带 `do_not_execute=true`；repair CLI 会 fail-closed 拒绝。当前修复计划必须从
 当前 state/artifact hashes 新建，不能复制历史候选、标题或路径。
 
-- 默认 `auto` 路由：单人名场面只有同时具备强表情/动作证据、可信主播主体几何且全局运动不发散时才保留真实直播帧；双人联动的安全门先读 **StoryContract 的 typed 参与者关系**，关系语义/标题词只解释叙事，不能关闭人物门。hash-bound 源帧同时清楚出现双方，并能提供与故事有关的真实人物、物件、文字或情绪证据时，即使运动分数不高，也可优先保留真实互动；源帧没有直接拍到的动作或反转只能由封面文字/版式表达，不能倒推成像素事实。游戏运动高分但 `subject_confident=false`，或累计动作热区超过半屏，即使局部运动块误判为主体，也不能冒充主播名场面，必须走 CPA `gpt-image-2 images.edit` 大脸重绘。正常生产与 cover-only regenerator 都必须在 generation 明示 `image_gen_model=cpa`；缺失该 provenance 即使图片和人物门通过也不能进入同 BV 最终人审。真实帧不得把整张同场截图直接当背景，必须装入当前 `cover_diversity_slot` 对应的图形海报底板（不同配色、纹理、卡片角度）后再叠梗字；中等且主体可信的帧可先轻修再进入同一底板。任何所选路线失败都 fail-closed，不得用低质随手截帧冒充成品。
+- 默认 `auto` 路由：单人名场面只有同时具备强表情/动作证据、可信主播主体几何且全局运动不发散时才保留真实直播帧；双人联动的安全门先读 **StoryContract 的 typed 参与者关系**，关系语义/标题词只解释叙事，不能关闭人物门。hash-bound 源帧同时清楚出现双方，并能提供与故事有关的真实人物、物件、文字或情绪证据时，即使运动分数不高，也可优先保留真实互动；源帧没有直接拍到的动作或反转只能由封面文字/版式表达，不能倒推成像素事实。**游戏场分叉（Ivan 2026-08-09 02:20 逐字裁定）**：「事实上，如果是截图封面的话，当然不要求李豆沙在画面里占主要部分，毕竟是游戏截图，只要截图足够有趣就行，主体肯定会会是游戏。」——本场 `session-game-context.v1` 已 RESOLVED **且**本条选帧探到固定面捕小窗 `camera_window_bbox_frac` 时判为游戏场（两条缺一即按谈话场，fail-closed，不新建探测器）。游戏场的见证与终检都改问「小窗可见可辨 + 画面本身有事件」，`subject_confident=false` 与累计动作热区超过半屏**不再**构成重绘理由，路线走 camera-window 分支的截图 polish，物化保留**整幅**游戏画面（裁成她的小窗会丢掉 Ivan 要的游戏主体）。谈话场维持原判据不变：运动高分但主体几何不可信、或局部运动块误判为主体，仍不能冒充主播名场面，必须走 CPA `gpt-image-2 images.edit` 大脸重绘。正常生产与 cover-only regenerator 都必须在 generation 明示 `image_gen_model=cpa`；缺失该 provenance 即使图片和人物门通过也不能进入同 BV 最终人审。真实帧不得把整张同场截图直接当背景，必须装入当前 `cover_diversity_slot` 对应的图形海报底板（不同配色、纹理、卡片角度）后再叠梗字；中等且主体可信的帧可先轻修再进入同一底板。任何所选路线失败都 fail-closed，不得用低质随手截帧冒充成品。
 - 形象铁律：以当场直播形象为原型，只改动作/表情/Q版；禁加饰品服装；多人场景主体锁定李豆沙；表情永不吐舌头。
 - 同场批内创新硬门：selection 为 talk 入选项持久化 `cover_diversity_slot`；前 5 张不得碰撞背景家族。0–5 依次为蓝色漫画爆炸、暖色手账拼贴、紫色霓虹舞台、薄荷贴纸涂鸦、黑白漫画分镜、珊瑚棋盘杂志。返修必须继承该槽位，不能退回独立随机抽色。
 - 版式：talk 轮换 left-split/right-split/banner；歌切恒 song-clean 且标题字要大（banner 级）；art direction 由 `_lidousha_cover_art_direction` 决定（`cover_generation.py`）。短梗字会为可读性强制 banner，但背景家族仍必须批内不同。
@@ -28,13 +28,28 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   `faithful_crop_can_make_dominant`、`source_carries_story_reaction` 与
   `cpa_redraw_recommended`；CPA 不可用/输出不合约时只允许按统一 `visual_witness` 路由披露
   后备 AGY，reference hash、bbox、provider routing、回执或两端见证任一不可用/非法都须在任何
-  生图前 fail closed。只要脸不完整、无法忠实裁成大主体、或源图没有承担 StoryContract 的反应，
-  初始 v2 `selected_treatment` 就必须是 `cpa_redraw`（7/26 1411 角落小人案），最终 v3
-  不可再因 witness 不可用静默跨线为截图。反之，源反应明确且 CPA 判定可忠实裁切时，单人
-  screenshot route 必须以该 identity bbox 从 exact reference 重裁；crop evidence 同时绑定
-  reference SHA、bbox、source-composition witness/receipt SHA 与 crop output SHA。motion/
+  生图前 fail closed。**只要脸不完整、或无法忠实裁成大主体**，初始 v2
+  `selected_treatment` 就必须是 `cpa_redraw`（7/26 1411 角落小人案）；最终 v3
+  不可再因 witness 不可用静默跨线为截图。**「源图没有承担 StoryContract 的反应」不在
+  否决集合里**（2026-07-31 `9f51987` 路由端已拿掉、2026-08-10 执行端补齐）：故事由
+  `narrative_presentation → COVER_TEXT` 承担（见下文），反应缺失的正确出路是降级 polish
+  或换帧重选，不是整张重画——把它当截图准入前置，8/7–8/8 实测 20/20 次降级全部出自这一条。
+  反之，CPA 判定可忠实裁切时，单人 screenshot route 必须以该 identity bbox 从 exact
+  reference 重裁；crop evidence 同时绑定 reference SHA、bbox、source-composition
+  witness/receipt SHA 与 crop output SHA。**裁切不授权（脸被切/bbox 非法）时先落
+  `HASH_BOUND_FULL_FRAME_NO_CROP_COMPOSITOR` 全幅不裁海报，只有它也失败才降 `cpa_redraw`
+  ——重绘是兜底，不是首选**；回执本身不可信（`SOURCE_COMPOSITION_VERIFICATION_INVALID`）
+  仍然 fail closed，不得退到全幅。游戏场（上文分叉）恒走全幅不裁。motion/
   camera-window bbox 只能作候选，不能覆盖 CPA identity bbox；关系型 no-crop participant proof
   仍按下文独立规则保留完整 hash-bound source frame。
+- 返修不得单向吞掉截图路线：cover-only repair 在付费生图**之前**先看被顶替的路线。原路线
+  是 `screenshot_direct/polish` 且其 hash-bound 像素仍在盘上时，通用重绘 fail closed 报
+  `COVER_SCREENSHOT_ROUTE_REPAIR_REQUIRED`，返修改走 `scripts/repair_screenshot_cover.py`；
+  像素已丢时重绘是唯一出路，但必须落 `cover-repair-route-displacement.v1` typed 披露。
+  `actual_treatment` 永远如实记实际产出的路线，绝不把重绘字节记成截图。
+- 路由证据的逐项拒绝理由必须带**这一帧**的真实判据（见证 verdict 的 reason 原文、场景类型、
+  分数、情绪命中、主体几何置信），查表模板只能作后缀；只有模板串的 `rejected_reason` 视为
+  「默认/自动选择」充数，不满足下文的逐项记录要求。
 - 短梗字不能只过“逐字来自标题、每行 2–12 字”的词面门。选择器必须把完整
   StoryContract `selection_hook` 连同标题交给 **CPA 文字模型**做最终语义裁决，并落盘
   hash-bound `lidousha-cover-punch-semantic-review.v1`：陌生观众只看最终 1–2 行也必须能
