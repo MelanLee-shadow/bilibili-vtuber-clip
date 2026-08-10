@@ -849,6 +849,7 @@ from src.autoslice.candidate_selection import (  # noqa: E402
     refill_songs,
     prioritize,
 )
+from src.autoslice.operator_processing_scope import operator_scope_admission  # noqa: E402
 from src.autoslice.exact_talk_recovery_scope import maintain_delivery_recovery_scope, suppress_exact_talk_recovery_song_work  # noqa: E402
 from src.autoslice.selection_rescore import split_produce_blocked_talk_items  # noqa: E402
 from src.autoslice.cover_repair import (  # noqa: E402
@@ -1450,7 +1451,17 @@ def list_dates() -> list[str]:
         recovery_in_progress = historical_source_recovery_in_progress(
             state, TALK_COVER_PENDING_STATUS
         )
-        if state.get("status") == "source_incomplete" or recovery_in_progress:
+        # 第三条例外：运维显式点名（Ivan 2026-08-10 逐字「87 现在需要纳入处理
+        # 范围」）。判据、出处校验与"干完就自动出圈"全在
+        # src/autoslice/operator_processing_scope.py。
+        admission = operator_scope_admission(state, date=date)
+        if admission.log_line:
+            log(f"list_dates: {date}: {admission.log_line}")
+        if (
+            state.get("status") == "source_incomplete"
+            or recovery_in_progress
+            or admission.admitted
+        ):
             selected.add(date)
     return sorted(selected)
 

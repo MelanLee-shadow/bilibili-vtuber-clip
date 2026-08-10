@@ -11,6 +11,10 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from src.autoslice.operator_processing_scope import (
+    hold_talk_outside_operator_scope,
+    release_operator_scope_held_talk,
+)
 from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.selection_scorecard import selection_rank_key, selection_scorecard_is_valid
 from src.autoslice.publication_reconciliation import (
@@ -1018,6 +1022,10 @@ def prioritize(state: dict) -> None:
     state.setdefault("pending_talk", []).extend(prior_backlog)
     _runner.exclude_session_edge_bgm_candidates(state)
     _runner.quarantine_overlapping_talk_candidates(state)
+    # 运维范围授权点名了具体候选时，没被点名的这一轮不进准入池（只收窄，不动
+    # 席位数/分数门/Tier 排序）；本函数收尾会整体覆写 talk_backlog，所以压下的
+    # 行必须在那之后交回。本体在 src/autoslice/operator_processing_scope.py。
+    operator_scope_held = hold_talk_outside_operator_scope(state)
     pending_talk = state.get("pending_talk", [])
     exact_ids = _exact_talk_contract_ids(state)
     if exact_ids:
@@ -1134,6 +1142,7 @@ def prioritize(state: dict) -> None:
     # successful siblings now fill the ordinary delivery quota.
     state["pending_talk"] = pinned_selections + keep
     state["talk_backlog"] = deferred
+    release_operator_scope_held_talk(state, operator_scope_held)
     _assign_cover_diversity_slots(state)
     for item in deferred:
         policy = _talk_quota_policy(item)

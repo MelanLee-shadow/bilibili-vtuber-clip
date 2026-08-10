@@ -173,7 +173,15 @@ MODULE_DEBT_LEDGER = {
     # 2 行出处注释），否则将来修好猜法也唤不醒已经停泊的候选。降级本体、梯子、
     # 逐 cue 证据缺口披露全在新模块 src/autoslice/speaker_guess.py。
     # 测试 tests/test_speaker_guess.py。
-    "scripts/free_session_autoslice.py": 2_082,
+    # 2026-08-10 +11：Ivan 2026-08-10 两句逐字——①「把 tier1 的 4 条做了」；
+    # ②「87 现在需要纳入处理范围」。2026-08-07 早已滑出 list_dates() 的最新三天
+    # 窗口，既有两个例外（source_incomplete / historical_source_recovery_in_progress）
+    # 一个都不成立，仓里此前没有「运维显式指定某天进处理范围」的通道。本文件只有
+    # 两处接线：一行 import + list_dates() 里的第三条例外分支（1 次判定调用、1 行
+    # 日志、把原来的两项 or 拆成三项）。出处校验、收敛即自动出圈、expires_at 兜底、
+    # 候选级限定全在新模块 src/autoslice/operator_processing_scope.py。
+    # 测试 tests/test_operator_processing_scope.py。
+    "scripts/free_session_autoslice.py": 2_093,
     # 2026-07-31 +122：封面文案链修复（分行权威等级 + 锁定模式 + 缩略图合同背带
     # + max_lines 按合同封顶）。新增逻辑已抽成 _talk_locked_split /
     # _assert_talk_thumbnail_contract 两个模块级函数，_overlay_lidousha_cover_title
