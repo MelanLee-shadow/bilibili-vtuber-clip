@@ -257,12 +257,32 @@ def test_missing_danmaku_is_a_no_op() -> None:
     assert extended[0].boundary.resolved_end_ms == REAL_PIPELINE_END_MS
 
 
-def test_burst_that_started_before_the_cut_is_not_a_license() -> None:
-    """存量反应不算许可：要的是切点之后才炸出来的新反应（L1）。"""
+def test_burst_spanning_the_cut_is_not_a_license() -> None:
+    """L1：跨着切点一直在烧的存量反应不算许可，要的是切点之后才炸出来的新反应。
+
+    构造：21 号桶（630000-660000）也过阈值，于是 21+22 合并成一次
+    630000-690000 的爆发——它覆盖语音重启点 660680（L2 成立），但起点在切点
+    654170 之前。只有 L1 能拦住它。
+    """
 
     cues = _cues()
-    # 把爆发整体移到切点之前（20/21 号桶），语音重启点 660680 就不再落在任何
-    # 「切点之后开始」的爆发里。
+    buckets = tuple(
+        (bucket, 20 if bucket == 21 else count)
+        for bucket, count in REAL_DANMAKU_BUCKETS
+    )
+    extended, receipts = _extend(
+        [_candidate(REAL_START_MS, REAL_PIPELINE_END_MS, cues)], cues, _danmaku(buckets)
+    )
+    assert receipts == []
+    assert extended[0].boundary.resolved_end_ms == REAL_PIPELINE_END_MS
+
+
+def test_burst_that_misses_the_speech_resume_is_not_a_license() -> None:
+    """L2：爆发必须覆盖语音重新开始的那一刻，隔壁时段的爆发不算数。"""
+
+    cues = _cues()
+    # 把切点后那次爆发整体移到 21 号桶（630000-660000），语音重启点 660680
+    # 就不再落在任何「切点之后开始」的爆发里。
     buckets = tuple(
         (bucket, count) for bucket, count in REAL_DANMAKU_BUCKETS if bucket != 22
     ) + ((21, 24),)
