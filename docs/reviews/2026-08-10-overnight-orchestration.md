@@ -166,6 +166,49 @@ fingerprint 绑定一次性预算(`delivery_recovery.py:196-206`),且该候选
 (声明用来兼容 v1)**全仓无任何引用**——向后兼容路径根本没接线。要么接上,要么删掉,
 不要留着让人误以为 v1 能过。
 
+## 三之二、歌切根因的**最终版**(两份独立法证互证;推翻我自己的假设)
+
+我一开始的假设是「`JINGTING_PROVIDER_NOT_AGY` = Gemini 配额层被 provider 门歧视」。**这个机制是错的**,
+两份独立法证(worker A 的 `2026-08-10-song-lane-forensics.md` + 前会话 agent 的
+`2026-08-10-song-lane-forensics-independent.md`)都给出了更准确的版本:
+
+**歌切按设计就跳过 AGY 精听**(外部 LRC 才是字幕权威),`source_context_executor` 故意写自证三元组
+`provider="source_draft_context"` / `model=null` /
+`subtitle_authority_scope="proof_context_only_external_lrc_required"`;
+而 `auto_review.evaluate_jingting_provenance` 只认 `provider=="agy"`,**根本没读那两个自证字段**,
+于是把**设计内旁路**当成未授权的 provider 替换判死。
+
+**更坏的二阶后果**:这两个 code 同属 `SONG_INFRA_TRANSIENT_REASON_CODES`,导致
+`remaining_infra` 恒不为空 → transient「免死金牌」恒生效 → **真实的内容否决被伪装成基础设施故障而无限重试**
+(8/8 单场 26 次尝试 / 0 产出的僵尸循环)。
+
+### 今晚真正能救回的只有 1 条
+- **8/8 `song_210131_1210` = 心型病毒 (Live)**:`96% row recall`、28/28 行全部 `heard`、
+  28/28 `LIDOUSHA SINGING_THIS_LYRIC`、`FULL_STUDIO_SEQUENCE`、有头有尾——**一份已经完整成立的正向证据**,
+  却被 `song_common.py:335` 的 `agy_rc < 0` 判据误杀成 `SONG_AUDIO_LRC_ALIGNMENT_INVALID`。
+  该判据本身是**循环论证**:`agy_rc=-9` 意为 AGY 被 SIGKILL(8/9 那次 OOM),
+  **"AGY 被杀"正是 failover 的触发条件,不能反过来成为否定 failover 产物的理由**。
+- **8/7 六条:无一持有可交付的正向证据**(LRC 召回 3–23%,门槛 20%/55%),属**真实内容否决**。
+  四条 `songvis_*` 的 `title_hint` 还是 OCR 垃圾(`'na'`/`'Leee'`/`'町'`/`'中生'`)。**复活它们没有意义**。
+- **8/9 是最优下注**:`songvis_200615_1170_5dda2f5b` 的 `title_hint='告白气球'`(完整真实歌名),
+  且该日 15 条候选**零预算消耗**、从未产出过任何东西。→ 印证了解挂 8/9 是对的。
+
+### 已合入(`f2b78d6`,全量 **3675 passed**)
+worker A 的 `8d1b13d`:typed provenance lane(AGY / Gemini API 兜底 / 歌切旁路各自校验完整自证,
+未知 provider 照旧阻断)+ 新增 `JINGTING_BYPASS_MODEL_UNEXPECTED` **硬阻断(是收紧不是放松)**
++ `song_alignment.generate_llm_song_queries` 的 `max_lines` 18→120
+(旧帽把 200+ cue 的权威复证窗抽成 1/12,演唱段只剩 3 条 → 模型正确返回空数组;实测 3→23 条)
++ `revive_rejected_candidates.py --lane song`(原脚本只读 `state["picks"]`,对歌切完全无效)。
+**内容门一律未动**:LRC 0.20/0.08/0.55、完整歌校验、歌词对齐、host-vocal 声纹、AGY 回声防御、
+`alignment_model` 字符串、`song_lane.py:173` 区间字节铁律。
+
+### 未合入(在飞,writer 仍在写)
+`song_common.py` 的 D1 修复(`agy_rc<0` → 类别一致性判据)、`SONG_INFRA_RETRY_CAP=6`
+(全仓此前**没有任何** `transient_retry_count` 上限)、`refill_songs` 让耗尽重试的 repair
+**降级而非丢弃**(2026-08-08 一条 repair 跨 26 次尝试霸占每场唯一交付名额,把另外 8 条饿死在 backlog),
+以及新模块 `song_script_family.py`(跨字系:日文歌对中文 ASR 恒 0%)。
+我按「不整合移动靶」的纪律**暂不合入**,等其收敛。
+
 ## 七、留给 Ivan 的待裁项(未擅自决定)
 
 1. 多嘉宾场「可交付但依赖审阅」政策 —— 未落地。
