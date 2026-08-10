@@ -633,6 +633,123 @@ def test_cli_refuses_without_a_registry_hold_and_writes_a_typed_receipt(
     assert "STATE_BIND" in receipt["not_reached"]
 
 
+def _stub_apply_gates(
+    monkeypatch: pytest.MonkeyPatch, *, upload_gate_ok: bool = True
+) -> None:
+    """Stub only the two host-dependent gates, never the import's own judgements.
+
+    The canonical auditor replays glyph rasterization pixel-exactly, which is
+    platform-specific (it reproduces on free, not on macOS).  Stubbing it here
+    is what lets the CLI's apply chain — audit regeneration, upload-gate parity,
+    state bind, readback — be exercised at all.
+    """
+
+    import scripts.authorized_upload as authorized_upload
+    import scripts.build_lidousha_song_review_manifest as song_builder
+
+    monkeypatch.setattr(
+        song_builder,
+        "run_canonical_auditor",
+        lambda root: {
+            "schema_version": "lidousha-review-package-audit.v2",
+            "policy_epoch": "test-epoch",
+            "passed": True,
+            "root": str(Path(root).resolve()),
+            "audited_inputs": [],
+            "issues": [],
+            "issue_count": 0,
+            "blocking_issue_count": 0,
+        },
+    )
+    monkeypatch.setattr(
+        authorized_upload,
+        "_strict_verified_song_package",
+        lambda **_kwargs: upload_gate_ok,
+    )
+
+
+def test_cli_apply_chain_lands_audits_and_binds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import scripts.import_external_song_package as cli
+
+    package = _source_package(tmp_path, monkeypatch)
+    base = tmp_path / "free"
+    state_path = base / "state" / f"{DATE}.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps(_before_state()), encoding="utf-8")
+    _stub_apply_gates(monkeypatch)
+
+    receipt, code = cli.run_song_import(
+        source=package,
+        date=DATE,
+        candidate_id=CANDIDATE_ID,
+        base=base,
+        state_path=state_path,
+        runner_lock=base / "runner.lock",
+        apply=True,
+        supersede_existing_row=False,
+        registry_path=_registry(tmp_path),
+    )
+
+    assert code == 0
+    assert receipt["status"] == "IMPORTED_NO_UPLOAD"
+    assert receipt["not_reached"] == []
+    steps = {row["step"]: row for row in receipt["steps"]}
+    assert [row["status"] for row in receipt["steps"]] == ["PASS"] * 6
+    package_root = base / "review_packages" / DATE / f"{CANDIDATE_ID}-r1"
+    audit = json.loads(
+        (package_root / "package_audit.json").read_text(encoding="utf-8")
+    )
+    # 目的地的审计根是目的地自己的，不是产它那台机的。
+    assert Path(audit["root"]) == package_root.resolve()
+    assert steps["STATE_BIND"]["created_song_row"] is True
+    assert receipt["next_step"]["upload_authority"].endswith(
+        "publication_registry.v1.json"
+    )
+
+    written = json.loads(state_path.read_text(encoding="utf-8"))
+    row = written["songs"][0]
+    assert row["candidate_id"] == CANDIDATE_ID
+    assert row["status"] == "review_ready" and row["rc"] == 0
+    assert row["delivery_upload_enabled"] is False
+    assert written["picks"] == _before_state()["picks"]
+    assert Path(row["delivered"]).is_file()
+    assert json.dumps(receipt, ensure_ascii=False)  # 回执可序列化
+
+
+def test_cli_refuses_when_the_upload_gate_rejects_the_landed_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import scripts.import_external_song_package as cli
+
+    package = _source_package(tmp_path, monkeypatch)
+    base = tmp_path / "free"
+    state_path = base / "state" / f"{DATE}.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps(_before_state()), encoding="utf-8")
+    _stub_apply_gates(monkeypatch, upload_gate_ok=False)
+
+    receipt, code = cli.run_song_import(
+        source=package,
+        date=DATE,
+        candidate_id=CANDIDATE_ID,
+        base=base,
+        state_path=state_path,
+        runner_lock=base / "runner.lock",
+        apply=True,
+        supersede_existing_row=False,
+        registry_path=_registry(tmp_path),
+    )
+
+    assert code == 2
+    refusals = [row for row in receipt["steps"] if row["status"] == "REFUSE"]
+    assert refusals[0]["code"] == "UPLOAD_GATE_REJECTS_LANDED_PACKAGE"
+    assert "STATE_BIND" in receipt["not_reached"]
+    # 上传面拒绝时 state 一个字都没动。
+    assert json.loads(state_path.read_text(encoding="utf-8")) == _before_state()
+
+
 def test_talk_importer_refuses_a_song_review_package_by_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
