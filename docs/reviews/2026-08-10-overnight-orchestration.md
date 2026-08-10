@@ -239,6 +239,43 @@ provider 打不通时 producer 先死在**边界解析面**(`producer_boundary_r
    正确修法是**标题重生成局部重试、其余产物按哈希复用**,不是放宽 48 字门。建议单独立项。
 3. **断点续产仍未做**——这是 Ivan #9「不要整条重产」的最后一块,本夜未闭合。
 
+## 六之四、**今晚谈话切的头号拦路虎:终审正字法门**(实测,未擅自放宽)
+
+部署 `d7956e7` 后仍存在。今晚跑完的两条 8/7(`auto_213743_1635_1717` / `auto_203735_388_526`)
+都只产出 `.recut.mp4`、**没有 `burned-final-speaker` 产物**,日志反复:
+`FINAL_REVIEW_RELEASE_BLOCKED: FINAL_REVIEW_UNRESOLVED_FINDINGS`。
+
+`auto_213743_1635_1717.review-flags.json` 实测:
+- `status=FLAGGED`、`release_gate=BLOCK`、`reason_codes=["FINAL_REVIEW_UNRESOLVED_FINDINGS"]`
+- `discovery={status: COMPLETE, raw_validated_finding_count: 7, resolved_finding_count: 2}` → **5 条未解决**
+- `unresolved_findings_disclosed = []` ← **disclosed 出口一条都没走**
+- 5 条未解决的形状(第 0 条逐字):
+  - `exact_release_acoustic_closure_blocked_reason = ORTHOGRAPHY_NOT_DECIDABLE_FROM_AUDIO`
+  - 判官已裁:`mutation_authority={basis: SEMANTIC_JUDGE_ORTHOGRAPHY_TIEBREAK, status: PASS}`、`repaired=true`
+  - **但** `orthography_authority={status: BLOCK, reason_code: ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED, provenance_kind: null}`
+  - 候选对:`CURRENT="我觉得她还行吧"` vs `PROPOSED="我觉得TA还行吧"`
+
+即:**音频判不了(同音)→ 判官提议改字 → 改字需"文本权威"而没有 → 整条候选 BLOCK。**
+
+**我的疑问(已交 worker 量化,未擅自动门)**:PROPOSED 是一个**改进提议**(她→TA,更中性)。
+保留 CURRENT 是**零编造风险**的安全默认。把「无法授权一个改进」升级成「原文不可发布」,逻辑上可能是反的。
+但这是**内容门**,且 Ivan 在睡觉,我**没有碰它**。worker 在量化影响面
+(今天已成功发布 4 条,所以它不是 100% 拦死),拿到真实比例再决定。
+
+## 六之五、`auto_210739_1142_1436` 审计实测(punch v2 预判被证实)
+
+`build_lidousha_daily_review_manifest` **通过**(rc=0),`audit` **不过**,且只有 1 条 blocking:
+```
+COVER_PUNCH_SEMANTIC_REVIEW_INVALID
+punch mode requires hash-bound CPA text proof that a stranger can infer the concrete event and click motive
+```
+正是 v1 回执撞 v2 校验。
+
+**处置纪律(重要)**:修法是**只重生成封面**(`cover_route_regeneration`,该候选
+`cover_repair_attempts=0` 预算未用),**不是** `revive --force-redo` 的整条重产——
+因为整条重产会重新走文本流水线,可能把这个**已经 `review_ready`(冻结、安全)**的包
+送进上面那个正字法门而彻底失去。**同字节重摇 QC 换绿更是明令禁止**。
+
 ## 七、留给 Ivan 的待裁项(未擅自决定)
 
 1. 多嘉宾场「可交付但依赖审阅」政策 —— 未落地。
