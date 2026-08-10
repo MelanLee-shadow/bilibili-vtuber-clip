@@ -265,6 +265,36 @@ def _talk_retry_decision(
     )
 
 
+def _repair_budget_charge(decision: _TalkRetryDecision) -> int:
+    """这次 requeue 要不要吃掉一格终生修复预算。
+
+    ``TALK_REPAIR_LIFETIME_RETRY_CAP`` 计的是"真修复尝试"，可此前 requeue 无条件
+    ``+1``：于是纯基础设施抖动（CPA 挂了、挂载掉了、配额窗口没开）光靠定时唤醒就
+    能把额度烧光，等真修复部署下来时预算已经被噪声吃完（A1，Ivan 2026-08-10 逐字
+    「就按 A1 走吧」「A1 要做」）。
+
+    判据照抄写回处 ``talk_transient_retry_count`` 已有的那串路线判据（同一组标志
+    位），只把 ``transient`` 换成 ``infrastructure_retry``——等价于"当且仅当本次
+    ``retry_reason`` 解析成 ``transient_infrastructure_failure`` 才不收费"。
+
+    两个刻意保留的性质：``changed`` 在 ``retry_reason`` 阶梯上压着
+    ``infrastructure_retry``，所以"infra 失败 + 相关部署落地"那一次仍算真修复、
+    照常收费；``talk_transient_retry_count`` 一字未动，infra 退避曲线
+    （``infra_retry_policy``）读的仍是它。存量计数不追溯重算，单调不回退。
+    """
+
+    if (
+        decision.infrastructure_retry
+        and not decision.changed
+        and not decision.cover_route_retry
+        and not decision.sanctioned_retry
+        and not decision.carryover_retry
+        and not decision.rescore_retry
+    ):
+        return 0
+    return 1
+
+
 def historical_source_recovery_in_progress(
     state: dict, cover_pending_status: str
 ) -> bool:
@@ -1827,7 +1857,7 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             "lane": record.get("lane", ""),
             "preview": record.get("preview", ""),
             "selected_repair": True,
-            "talk_repair_retry_count": retry_count + 1,
+            "talk_repair_retry_count": retry_count + _repair_budget_charge(decision),
             "talk_transient_retry_count": transient_count
             + (
                 1
