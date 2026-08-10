@@ -1,0 +1,2797 @@
+{
+  "schema_version": "state-dangling-media-ref-scan.v1",
+  "date": "2026-08-09",
+  "host": "free",
+  "scope": "/opt/bilive/autoslice/state/*.json, live day files only (*.pre-* backups excluded)",
+  "method": "recursive walk of every JSON string leaf that is an absolute path with a media/subtitle extension (.mp4 .m4s .mp3 .wav .flac .m4a .mkv .ts .aac .png .jpg .jpeg .webp .ass .srt); os.path.exists() on each; classification by target tree plus a repo/lidousha candidate_id->surviving-stem index built from each day dir's *.record.json media_path",
+  "quiet_window": "DISABLED flag present, zero free_session_autoslice/ffmpeg processes; scan is read-only and took no lock",
+  "totals": {
+    "dangling_refs": 302,
+    "state_files_with_dangling_refs": 13
+  },
+  "by_class": {
+    "B_cleanup_deleted": 194,
+    "A_repo_unresolved": 49,
+    "A_rename_drift": 31,
+    "C_foreign_workspace": 28
+  },
+  "by_state_file": {
+    "2026-07-09.json": 5,
+    "2026-07-10.json": 49,
+    "2026-07-11.json": 14,
+    "2026-07-13.json": 4,
+    "2026-07-15.json": 2,
+    "2026-07-16.json": 10,
+    "2026-07-18.json": 11,
+    "2026-07-19.json": 2,
+    "2026-07-24.json": 53,
+    "2026-07-25.json": 56,
+    "2026-07-26.json": 68,
+    "2026-08-07.json": 12,
+    "2026-08-08.json": 16
+  },
+  "class_legend": {
+    "A_rename_drift": "repo/lidousha deliverable that survives on disk under a different stem after hook/title surgery; state kept the pre-surgery filename. No data loss.",
+    "A_repo_unresolved": "repo/lidousha path with no surviving stem carrying that candidate_id in the day dir. Needs eyes.",
+    "B_cleanup_deleted": "out/ pipeline intermediate removed by the 2026-07-30 ENOSPC recovery cleanup or the 2026-08-10 capacity cleanup.",
+    "C_foreign_workspace": "path under /home/ivan/Project/vtuber-reproduce, a tree that does not exist on free at all; production state recorded an off-host workspace path."
+  },
+  "remediated": [
+    {
+      "state_file": "2026-07-18.json",
+      "json_path": "songs.[2].song_completion_evidence.burned_preview_path",
+      "action": "tombstoned in place (see cleanup_manifests/free_state_dangling_media_ref_tombstone_20260809.json)"
+    }
+  ],
+  "rows": [
+    {
+      "state_file": "2026-07-09.json",
+      "json_path": "false_green_containment.no_upload_verification.run_refs.[4]",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-09/song_223019_166_mebukutoki_rerun_v4/song_223019_166_mebukutoki_rerun_v4_full_source.mp4",
+      "candidate_id": null,
+      "row_status": null,
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-09.json",
+      "json_path": "false_green_containment.no_upload_verification.source_video_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-09/song_223019_166_mebukutoki_rerun_v4/song_223019_166_mebukutoki_rerun_v4_full_source.mp4",
+      "candidate_id": null,
+      "row_status": null,
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-09.json",
+      "json_path": "picks.[3].summary.delivery",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/聊三人游戏聊到《胡闹厨房》，两位队友.mp4",
+      "candidate_id": "auto_210025_1065_1218",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-09.json",
+      "json_path": "picks.[4].summary.delivery",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-09/李豆沙卡在动画里害全员罚站，当场抛弃.mp4",
+      "candidate_id": "auto_213023_323_431",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-09.json",
+      "json_path": "songs.[1].negative_acceptance.source_video_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-09/song_223019_166_mebukutoki_rerun_v4/song_223019_166_mebukutoki_rerun_v4_full_source.mp4",
+      "candidate_id": "song_223019_166",
+      "row_status": "blocked",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[0].summary.delivery",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/聊到邦多利新登场的“神秘坏女人”，她.mp4",
+      "candidate_id": "auto_190017_1068_1217",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[0].summary.subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/聊到邦多利新登场的“神秘坏女人”，她.srt",
+      "candidate_id": "auto_190017_1068_1217",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[0].summary.speaker_subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/聊到邦多利新登场的“神秘坏女人”，她.speaker.srt",
+      "candidate_id": "auto_190017_1068_1217",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[0].summary.speaker_ass",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/聊到邦多利新登场的“神秘坏女人”，她.speaker.ass",
+      "candidate_id": "auto_190017_1068_1217",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[0].summary.cover_path",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/聊到邦多利新登场的“神秘坏女人”，她.cover.png",
+      "candidate_id": "auto_190017_1068_1217",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[0].cover_path",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/聊到邦多利新登场的“神秘坏女人”，她.cover.png",
+      "candidate_id": "auto_190017_1068_1217",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[1].summary.delivery",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/临时被叫去彩排，她连声问观众“结束后.mp4",
+      "candidate_id": "auto_200009_524_545",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[1].summary.subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/临时被叫去彩排，她连声问观众“结束后.srt",
+      "candidate_id": "auto_200009_524_545",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[1].summary.speaker_subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/临时被叫去彩排，她连声问观众“结束后.speaker.srt",
+      "candidate_id": "auto_200009_524_545",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[1].summary.speaker_ass",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/临时被叫去彩排，她连声问观众“结束后.speaker.ass",
+      "candidate_id": "auto_200009_524_545",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[1].summary.cover_path",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/临时被叫去彩排，她连声问观众“结束后.cover.png",
+      "candidate_id": "auto_200009_524_545",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[1].superseded_cover_authorities.[0].cover_path",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/临时被叫去彩排，她连声问观众“结束后.cover.png",
+      "candidate_id": "auto_200009_524_545",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[1].reviewed_cover_repair.cover_path",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/临时被叫去彩排，她连声问观众“结束后.cover.png",
+      "candidate_id": "auto_200009_524_545",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[1].cover_path",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/临时被叫去彩排，她连声问观众“结束后.cover.png",
+      "candidate_id": "auto_200009_524_545",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[3].summary.delivery",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/小李嘴硬否认被坏女人欺负，却自爆主动.mp4",
+      "candidate_id": "auto_212005_163_311",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "李豆沙坚称自己没被坏女人欺负，却完整",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[3].summary.subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/小李嘴硬否认被坏女人欺负，却自爆主动.srt",
+      "candidate_id": "auto_212005_163_311",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "李豆沙坚称自己没被坏女人欺负，却完整",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[3].summary.speaker_subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/小李嘴硬否认被坏女人欺负，却自爆主动.speaker.srt",
+      "candidate_id": "auto_212005_163_311",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "李豆沙坚称自己没被坏女人欺负，却完整",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[3].summary.speaker_ass",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/小李嘴硬否认被坏女人欺负，却自爆主动.speaker.ass",
+      "candidate_id": "auto_212005_163_311",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "李豆沙坚称自己没被坏女人欺负，却完整",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[3].summary.cover_path",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/小李嘴硬否认被坏女人欺负，却自爆主动.cover.png",
+      "candidate_id": "auto_212005_163_311",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "李豆沙坚称自己没被坏女人欺负，却完整",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[3].cover_path",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/小李嘴硬否认被坏女人欺负，却自爆主动.cover.png",
+      "candidate_id": "auto_212005_163_311",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "李豆沙坚称自己没被坏女人欺负，却完整",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[4].summary.delivery",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/弹幕让李豆沙表演上下摇，她先把自己摇.mp4",
+      "candidate_id": "auto_193009_1539_1637",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[4].summary.subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/弹幕让李豆沙表演上下摇，她先把自己摇.srt",
+      "candidate_id": "auto_193009_1539_1637",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[4].summary.speaker_subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/弹幕让李豆沙表演上下摇，她先把自己摇.speaker.srt",
+      "candidate_id": "auto_193009_1539_1637",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[4].summary.speaker_ass",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/弹幕让李豆沙表演上下摇，她先把自己摇.speaker.ass",
+      "candidate_id": "auto_193009_1539_1637",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[4].summary.cover_path",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/弹幕让李豆沙表演上下摇，她先把自己摇.cover.png",
+      "candidate_id": "auto_193009_1539_1637",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[4].superseded_cover_authorities.[0].cover_path",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/弹幕让李豆沙表演上下摇，她先把自己摇.cover.png",
+      "candidate_id": "auto_193009_1539_1637",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[4].reviewed_cover_repair.cover_path",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/弹幕让李豆沙表演上下摇，她先把自己摇.cover.png",
+      "candidate_id": "auto_193009_1539_1637",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[4].cover_path",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/弹幕让李豆沙表演上下摇，她先把自己摇.cover.png",
+      "candidate_id": "auto_193009_1539_1637",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[5].summary.delivery",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/李豆沙宣布将第一次以3D形态在线下见.mp4",
+      "candidate_id": "auto_200009_76_110",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "聊到3D线下见面会，李豆沙认真畅想见",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[5].summary.subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/李豆沙宣布将第一次以3D形态在线下见.srt",
+      "candidate_id": "auto_200009_76_110",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "聊到3D线下见面会，李豆沙认真畅想见",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[5].summary.speaker_subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/李豆沙宣布将第一次以3D形态在线下见.speaker.srt",
+      "candidate_id": "auto_200009_76_110",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "聊到3D线下见面会，李豆沙认真畅想见",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[5].summary.speaker_ass",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/李豆沙宣布将第一次以3D形态在线下见.speaker.ass",
+      "candidate_id": "auto_200009_76_110",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "聊到3D线下见面会，李豆沙认真畅想见",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[5].summary.cover_path",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/李豆沙宣布将第一次以3D形态在线下见.cover.png",
+      "candidate_id": "auto_200009_76_110",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "聊到3D线下见面会，李豆沙认真畅想见",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "picks.[5].cover_path",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/李豆沙宣布将第一次以3D形态在线下见.cover.png",
+      "candidate_id": "auto_200009_76_110",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "聊到3D线下见面会，李豆沙认真畅想见",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "songs.[1].song_completion_evidence.burned_preview_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-10/song_200009_217/song_selector_full/attempt-itn1_e13/seededsong_45000_224250/replacement_recuts/seededsong_45000_224250.recut.burned-final-sapphire72.mp4",
+      "candidate_id": "song_200009_217",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "songs.[1].song_completion_evidence.recut_source_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-10/song_200009_217/song_200009_217_full_214600_483850_source.mp4",
+      "candidate_id": "song_200009_217",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "songs.[1].delivered",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/歌切_【李豆沙】豆沙歌，《怎么办》｜__song_200009_217.mp4",
+      "candidate_id": "song_200009_217",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "songs.[1].delivered_sidecars.subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/歌切_【李豆沙】豆沙歌，《怎么办》｜__song_200009_217.srt",
+      "candidate_id": "song_200009_217",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "songs.[5].song_completion_evidence.burned_preview_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-10/song_212005_1444/song_selector_full/attempt-e9ikt4tt/seededsong_45000_174070/replacement_recuts/seededsong_45000_174070.recut.burned-final-sapphire72.mp4",
+      "candidate_id": "song_212005_1444",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "songs.[5].song_completion_evidence.recut_source_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-10/song_212005_1444/song_212005_1444_full_source.mp4",
+      "candidate_id": "song_212005_1444",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "songs.[5].delivered",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/歌切_【李豆沙】豆沙歌，《想和你迎着__song_212005_1444.mp4",
+      "candidate_id": "song_212005_1444",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "songs.[5].delivered_sidecars.subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/歌切_【李豆沙】豆沙歌，《想和你迎着__song_212005_1444.srt",
+      "candidate_id": "song_212005_1444",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "songs.[5].delivered_sidecars.cover",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/歌切_【李豆沙】豆沙歌，《想和你迎着__song_212005_1444.cover.png",
+      "candidate_id": "song_212005_1444",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "songs.[5].reviewed_cover_repair.cover_path",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/歌切_【李豆沙】豆沙歌，《想和你迎着__song_212005_1444.cover.png",
+      "candidate_id": "song_212005_1444",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "songs.[5].cover_path",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/歌切_【李豆沙】豆沙歌，《想和你迎着__song_212005_1444.cover.png",
+      "candidate_id": "song_212005_1444",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "talk_superseded_attempts.[0].summary.delivery",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/聊到邦多利新登场的“神秘坏女人”，她.mp4",
+      "candidate_id": "auto_190017_1068_1217",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "talk_superseded_attempts.[0].quarantined_artifacts.[1]",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-10/quarantine-pre-authority-20260710T235715Z/delivery/auto_190017_1068_1217/聊到邦多利新登场的“神秘坏女人”，她.mp4",
+      "candidate_id": "auto_190017_1068_1217",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "talk_superseded_attempts.[1].summary.delivery",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-10/临时被叫去彩排，她连声问观众“结束后.mp4",
+      "candidate_id": "auto_200009_524_545",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "临去彩排前反复撒娇确认“你们还要来找",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-10.json",
+      "json_path": "talk_superseded_attempts.[1].quarantined_artifacts.[1]",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-10/quarantine-pre-authority-20260710T235715Z/delivery/auto_200009_524_545/临时被叫去彩排，她连声问观众“结束后.mp4",
+      "candidate_id": "auto_200009_524_545",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-11.json",
+      "json_path": "picks.[1].summary.delivery",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-11/听完伊索尔与童年粉毛宿敌长大后进同一.mp4",
+      "candidate_id": "auto_180011_393_432",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "听说粉毛花臂小时候抢过同事三部手机，",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-11.json",
+      "json_path": "picks.[1].summary.subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-11/听完伊索尔与童年粉毛宿敌长大后进同一.srt",
+      "candidate_id": "auto_180011_393_432",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "听说粉毛花臂小时候抢过同事三部手机，",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-11.json",
+      "json_path": "picks.[3].summary.delivery",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-11/李豆沙坚称自己是直女，回忆大舞台上全.mp4",
+      "candidate_id": "auto_173012_946_1037",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "李豆沙坚称自己是侄女，回忆大舞台上全",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-11.json",
+      "json_path": "picks.[3].summary.subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-11/李豆沙坚称自己是直女，回忆大舞台上全.srt",
+      "candidate_id": "auto_173012_946_1037",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "李豆沙坚称自己是侄女，回忆大舞台上全",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-11.json",
+      "json_path": "picks.[4].summary.delivery",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-11/弹幕许愿她和PSP所有女同事结婚，又.mp4",
+      "candidate_id": "auto_170019_302_355",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-11.json",
+      "json_path": "picks.[4].summary.subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-11/弹幕许愿她和PSP所有女同事结婚，又.srt",
+      "candidate_id": "auto_170019_302_355",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-11.json",
+      "json_path": "picks.[5].summary.delivery",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-11/粉丝把一串离谱冷笑话留到见面会最后轰.mp4",
+      "candidate_id": "auto_173012_345_521",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-11.json",
+      "json_path": "picks.[5].summary.subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-11/粉丝把一串离谱冷笑话留到见面会最后轰.srt",
+      "candidate_id": "auto_173012_345_521",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-11.json",
+      "json_path": "picks.[7].summary.delivery",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-11/本来担心自己不擅长游戏，看到能养熊猫.mp4",
+      "candidate_id": "auto_180011_1636_1782",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-11.json",
+      "json_path": "picks.[7].summary.subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-11/本来担心自己不擅长游戏，看到能养熊猫.srt",
+      "candidate_id": "auto_180011_1636_1782",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-11.json",
+      "json_path": "songs.[1].song_completion_evidence.burned_preview_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-11/song_180011_861/song_selector_full/attempt-xk91bqk1/seededsong_45000_340890/replacement_recuts/seededsong_45000_340890.recut.burned-final-sapphire72.mp4",
+      "candidate_id": "song_180011_861",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-11.json",
+      "json_path": "songs.[1].song_completion_evidence.recut_source_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-11/song_180011_861/song_180011_861_full_816390_1202280_source.mp4",
+      "candidate_id": "song_180011_861",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-11.json",
+      "json_path": "songs.[2].song_completion_evidence.burned_preview_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-11/song_183008_953/song_selector_full/attempt-6vd6zo2x/seededsong_45000_273360/replacement_recuts/seededsong_45000_273360.recut.burned-final-sapphire72.mp4",
+      "candidate_id": "song_183008_953",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-11.json",
+      "json_path": "songs.[2].song_completion_evidence.recut_source_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-11/song_183008_953/song_183008_953_full_908420_1226780_source.mp4",
+      "candidate_id": "song_183008_953",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-13.json",
+      "json_path": "picks.[0].summary.delivery",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-13/弹幕把李豆沙拆成直男、弯男、直女、弯.mp4",
+      "candidate_id": "auto_223227_596_763",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "弹幕拆出直男、弯男、侄女、弯女，她挨",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-13.json",
+      "json_path": "picks.[0].summary.subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-13/弹幕把李豆沙拆成直男、弯男、直女、弯.srt",
+      "candidate_id": "auto_223227_596_763",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "弹幕拆出直男、弯男、侄女、弯女，她挨",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-13.json",
+      "json_path": "picks.[3].summary.delivery",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-13/李豆沙构思直女爱弯男、弯男爱直男的闭.mp4",
+      "candidate_id": "auto_223227_426_561",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "侄女爱弯男、弯男爱直男？越讲越觉得这",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-13.json",
+      "json_path": "picks.[3].summary.subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-13/李豆沙构思直女爱弯男、弯男爱直男的闭.srt",
+      "candidate_id": "auto_223227_426_561",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "侄女爱弯男、弯男爱直男？越讲越觉得这",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-15.json",
+      "json_path": "songs.[0].song_completion_evidence.burned_preview_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-15/song_224231_1103/song_selector_full/attempt-vzm3vnae/seededsong_45000_299210/replacement_recuts/seededsong_45000_299210.recut.burned-final-sapphire72.mp4",
+      "candidate_id": "song_224231_1103",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-15.json",
+      "json_path": "songs.[0].song_completion_evidence.recut_source_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-15/song_224231_1103/song_224231_1103_full_1058740_1402950_source.mp4",
+      "candidate_id": "song_224231_1103",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-16.json",
+      "json_path": "operator_quarantined_picks.[0].summary.delivery",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/《夏雪冬花》到底算不算苦情歌？她认为.mp4",
+      "candidate_id": "auto_155648_152_178",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-16.json",
+      "json_path": "operator_quarantined_picks.[0].summary.subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/《夏雪冬花》到底算不算苦情歌？她认为.srt",
+      "candidate_id": "auto_155648_152_178",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-16.json",
+      "json_path": "operator_superseded_picks.[14].artifacts.[1].from",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/弹幕追问她喜欢“妈感姐”还是“妈感妹.cover.png",
+      "candidate_id": "auto_162645_712_787",
+      "row_status": "delivery_quarantined",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-16.json",
+      "json_path": "operator_superseded_picks.[14].artifacts.[2].from",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/弹幕追问她喜欢“妈感姐”还是“妈感妹.mp4",
+      "candidate_id": "auto_162645_712_787",
+      "row_status": "delivery_quarantined",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-16.json",
+      "json_path": "operator_superseded_picks.[14].artifacts.[4].from",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/弹幕追问她喜欢“妈感姐”还是“妈感妹.srt",
+      "candidate_id": "auto_162645_712_787",
+      "row_status": "delivery_quarantined",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-16.json",
+      "json_path": "operator_superseded_picks.[15].artifacts.[1].from",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/刚给女主播们划分完“姐感妹感”，就撞.cover.png",
+      "candidate_id": "auto_162645_938_967",
+      "row_status": "delivery_quarantined",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-16.json",
+      "json_path": "operator_superseded_picks.[15].artifacts.[2].from",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/刚给女主播们划分完“姐感妹感”，就撞.mp4",
+      "candidate_id": "auto_162645_938_967",
+      "row_status": "delivery_quarantined",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-16.json",
+      "json_path": "operator_superseded_picks.[15].artifacts.[4].from",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-16/刚给女主播们划分完“姐感妹感”，就撞.srt",
+      "candidate_id": "auto_162645_938_967",
+      "row_status": "delivery_quarantined",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-16.json",
+      "json_path": "songs.[3].song_completion_evidence.burned_preview_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-16/song_200010_41/song_selector_recovery/attempt-qih8hoch/replacement_recuts/seededsong_41860_131270.recut.burned-final-sapphire72.mp4",
+      "candidate_id": "song_200010_41",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-16.json",
+      "json_path": "songs.[3].song_completion_evidence.recut_source_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-16/song_200010_41/song_200010_41_full_0_491270_source.mp4",
+      "candidate_id": "song_200010_41",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-18.json",
+      "json_path": "picks.[0].summary.delivery",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-18/弹幕拱她明天线下喊“提莫熊宝宝妈妈”.mp4",
+      "candidate_id": "auto_225942_962_980",
+      "row_status": "candidate_rejected",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-18.json",
+      "json_path": "picks.[0].summary.subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-18/弹幕拱她明天线下喊“提莫熊宝宝妈妈”.srt",
+      "candidate_id": "auto_225942_962_980",
+      "row_status": "candidate_rejected",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-18.json",
+      "json_path": "picks.[0].summary.cover_path",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-18/弹幕拱她明天线下喊kmx“宝宝妈妈”.cover.png",
+      "candidate_id": "auto_225942_962_980",
+      "row_status": "candidate_rejected",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-18.json",
+      "json_path": "picks.[0].cover_path",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-18/弹幕拱她明天线下喊kmx“宝宝妈妈”.cover.png",
+      "candidate_id": "auto_225942_962_980",
+      "row_status": "candidate_rejected",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-18.json",
+      "json_path": "picks.[0].manual_truth_correction.cover_reuse_binding.path",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-18/弹幕拱她明天线下喊kmx“宝宝妈妈”.cover.png",
+      "candidate_id": "auto_225942_962_980",
+      "row_status": "candidate_rejected",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-18.json",
+      "json_path": "picks.[1].summary.delivery",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-18/一句“最可爱的姐姐妈妈主人宝宝”把李.mp4",
+      "candidate_id": "auto_225942_1025_1073",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-18.json",
+      "json_path": "picks.[1].summary.subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-18/一句“最可爱的姐姐妈妈主人宝宝”把李.srt",
+      "candidate_id": "auto_225942_1025_1073",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-18.json",
+      "json_path": "picks.[3].summary.delivery",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-18/宝宝姐姐主人称呼排成一串，李豆沙发现.mp4",
+      "candidate_id": "auto_225942_434_520",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-18.json",
+      "json_path": "picks.[3].summary.subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-18/宝宝姐姐主人称呼排成一串，李豆沙发现.srt",
+      "candidate_id": "auto_225942_434_520",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-18.json",
+      "json_path": "talk_superseded_attempts.[8].summary.delivery",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-18/弹幕拱她明天线下喊“提莫熊宝宝妈妈”.mp4",
+      "candidate_id": "auto_225942_962_980",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-18.json",
+      "json_path": "talk_superseded_attempts.[8].summary.subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-18/弹幕拱她明天线下喊“提莫熊宝宝妈妈”.srt",
+      "candidate_id": "auto_225942_962_980",
+      "row_status": "review_ready",
+      "cls": "A_repo_unresolved",
+      "resolution": "no surviving stem found for this candidate_id"
+    },
+    {
+      "state_file": "2026-07-19.json",
+      "json_path": "picks.[1].summary.delivery",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-19/观众拿“结婚照”拷问希雏站位，李豆沙.mp4",
+      "candidate_id": "auto_134819_346_505",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "观众拿“结婚照”拷问HimeHina",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-19.json",
+      "json_path": "picks.[1].summary.subtitle",
+      "missing_path": "/opt/bilive/autoslice/repo/lidousha/2026-07-19/观众拿“结婚照”拷问希雏站位，李豆沙.srt",
+      "candidate_id": "auto_134819_346_505",
+      "row_status": "review_ready",
+      "cls": "A_rename_drift",
+      "surviving_stem": "观众拿“结婚照”拷问HimeHina",
+      "resolution": "deliverable survives under a renamed stem (hook/title surgery)"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[0].cover_generation.ai_background",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_537_702/replacement_recuts/covers_ai_original/auto_193129_537_702.ai-bg.cpa-image-edit.png",
+      "candidate_id": "auto_193129_537_702",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[0].cover_generation.final_cover",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_537_702/replacement_recuts/covers/auto_193129_537_702.ai-title.cover.png",
+      "candidate_id": "auto_193129_537_702",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[0].cover_generation.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_537_702/replacement_recuts/covers/auto_193129_537_702.ai-title.cover.pre-overlay.png",
+      "candidate_id": "auto_193129_537_702",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[0].cover_generation.reference_image",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_537_702/replacement_recuts/cover_refs/auto_193129_537_702.cover-ref.png",
+      "candidate_id": "auto_193129_537_702",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[0].cover_generation.rendered_text_pixels.mask_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_537_702/replacement_recuts/covers/auto_193129_537_702.ai-title.cover.title-mask.png",
+      "candidate_id": "auto_193129_537_702",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[0].cover_generation.rendered_text_pixels.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_537_702/replacement_recuts/covers/auto_193129_537_702.ai-title.cover.pre-overlay.png",
+      "candidate_id": "auto_193129_537_702",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[0].cover_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_537_702/replacement_recuts/covers/auto_193129_537_702.ai-title.cover.png",
+      "candidate_id": "auto_193129_537_702",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[1].cover_generation.ai_background",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_190124_199_480/replacement_recuts/covers_ai_original/auto_190124_199_480.ai-bg.cpa-image-edit.png",
+      "candidate_id": "auto_190124_199_480",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[1].cover_generation.final_cover",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_190124_199_480/replacement_recuts/covers/auto_190124_199_480.ai-title.cover.png",
+      "candidate_id": "auto_190124_199_480",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[1].cover_generation.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_190124_199_480/replacement_recuts/covers/auto_190124_199_480.ai-title.cover.pre-overlay.png",
+      "candidate_id": "auto_190124_199_480",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[1].cover_generation.reference_image",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_190124_199_480/replacement_recuts/cover_refs/auto_190124_199_480.cover-ref.png",
+      "candidate_id": "auto_190124_199_480",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[1].cover_generation.rendered_text_pixels.mask_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_190124_199_480/replacement_recuts/covers/auto_190124_199_480.ai-title.cover.title-mask.png",
+      "candidate_id": "auto_190124_199_480",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[1].cover_generation.rendered_text_pixels.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_190124_199_480/replacement_recuts/covers/auto_190124_199_480.ai-title.cover.pre-overlay.png",
+      "candidate_id": "auto_190124_199_480",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[1].cover_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_190124_199_480/replacement_recuts/covers/auto_190124_199_480.ai-title.cover.png",
+      "candidate_id": "auto_190124_199_480",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[2].cover_generation.ai_background",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_424_535/replacement_recuts/covers_ai_original/auto_193129_424_535.screenshot-poster.png",
+      "candidate_id": "auto_193129_424_535",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[2].cover_generation.final_cover",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_424_535/replacement_recuts/covers/auto_193129_424_535.screenshot-title.cover.png",
+      "candidate_id": "auto_193129_424_535",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[2].cover_generation.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_424_535/replacement_recuts/covers/auto_193129_424_535.screenshot-title.cover.pre-overlay.png",
+      "candidate_id": "auto_193129_424_535",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[2].cover_generation.reference_image",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_424_535/replacement_recuts/cover_refs/auto_193129_424_535.cover-ref.png",
+      "candidate_id": "auto_193129_424_535",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[2].cover_generation.rendered_text_pixels.mask_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_424_535/replacement_recuts/covers/auto_193129_424_535.screenshot-title.cover.title-mask.png",
+      "candidate_id": "auto_193129_424_535",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[2].cover_generation.rendered_text_pixels.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_424_535/replacement_recuts/covers/auto_193129_424_535.screenshot-title.cover.pre-overlay.png",
+      "candidate_id": "auto_193129_424_535",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[2].cover_generation.screenshot_graphic_poster.output_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_424_535/replacement_recuts/covers_ai_original/auto_193129_424_535.screenshot-poster.png",
+      "candidate_id": "auto_193129_424_535",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[2].cover_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_424_535/replacement_recuts/covers/auto_193129_424_535.screenshot-title.cover.png",
+      "candidate_id": "auto_193129_424_535",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[3].cover_generation.ai_background",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_200133_44_293/replacement_recuts/covers_ai_original/auto_200133_44_293.screenshot-poster.png",
+      "candidate_id": "auto_200133_44_293",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[3].cover_generation.final_cover",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_200133_44_293/replacement_recuts/covers/auto_200133_44_293.screenshot-title.cover.png",
+      "candidate_id": "auto_200133_44_293",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[3].cover_generation.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_200133_44_293/replacement_recuts/covers/auto_200133_44_293.screenshot-title.cover.pre-overlay.png",
+      "candidate_id": "auto_200133_44_293",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[3].cover_generation.reference_image",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_200133_44_293/replacement_recuts/cover_refs/auto_200133_44_293.cover-ref.png",
+      "candidate_id": "auto_200133_44_293",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[3].cover_generation.rendered_text_pixels.mask_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_200133_44_293/replacement_recuts/covers/auto_200133_44_293.screenshot-title.cover.title-mask.png",
+      "candidate_id": "auto_200133_44_293",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[3].cover_generation.rendered_text_pixels.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_200133_44_293/replacement_recuts/covers/auto_200133_44_293.screenshot-title.cover.pre-overlay.png",
+      "candidate_id": "auto_200133_44_293",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[3].cover_generation.screenshot_graphic_poster.output_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_200133_44_293/replacement_recuts/covers_ai_original/auto_200133_44_293.screenshot-poster.png",
+      "candidate_id": "auto_200133_44_293",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[3].cover_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_200133_44_293/replacement_recuts/covers/auto_200133_44_293.screenshot-title.cover.png",
+      "candidate_id": "auto_200133_44_293",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[4].cover_generation.ai_background",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_607_723/replacement_recuts/covers_ai_original/auto_183122_607_723.screenshot-poster.png",
+      "candidate_id": "auto_183122_607_723",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[4].cover_generation.final_cover",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_607_723/replacement_recuts/covers/auto_183122_607_723.screenshot-title.cover.png",
+      "candidate_id": "auto_183122_607_723",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[4].cover_generation.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_607_723/replacement_recuts/covers/auto_183122_607_723.screenshot-title.cover.pre-overlay.png",
+      "candidate_id": "auto_183122_607_723",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[4].cover_generation.reference_image",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_607_723/replacement_recuts/cover_refs/auto_183122_607_723.cover-ref.png",
+      "candidate_id": "auto_183122_607_723",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[4].cover_generation.rendered_text_pixels.mask_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_607_723/replacement_recuts/covers/auto_183122_607_723.screenshot-title.cover.title-mask.png",
+      "candidate_id": "auto_183122_607_723",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[4].cover_generation.rendered_text_pixels.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_607_723/replacement_recuts/covers/auto_183122_607_723.screenshot-title.cover.pre-overlay.png",
+      "candidate_id": "auto_183122_607_723",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[4].cover_generation.screenshot_graphic_poster.output_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_607_723/replacement_recuts/covers_ai_original/auto_183122_607_723.screenshot-poster.png",
+      "candidate_id": "auto_183122_607_723",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[4].cover_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_607_723/replacement_recuts/covers/auto_183122_607_723.screenshot-title.cover.png",
+      "candidate_id": "auto_183122_607_723",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[5].cover_generation.ai_background",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/cover_repair/generations/780fca168f97-01-1785222709513706160/ai-background.png",
+      "candidate_id": "auto_193129_850_940",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[5].cover_generation.final_cover",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/cover_repair/generations/780fca168f97-01-1785222709513706160/final.cover.png",
+      "candidate_id": "auto_193129_850_940",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[5].cover_generation.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/cover_repair/generations/780fca168f97-01-1785222709513706160/final.cover.pre-overlay.png",
+      "candidate_id": "auto_193129_850_940",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[5].cover_generation.reference_image",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/replacement_recuts/cover_refs/auto_193129_850_940.cover-ref.png",
+      "candidate_id": "auto_193129_850_940",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[5].cover_generation.rendered_text_pixels.mask_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/cover_repair/generations/780fca168f97-01-1785222709513706160/final.cover.title-mask.png",
+      "candidate_id": "auto_193129_850_940",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[5].cover_generation.rendered_text_pixels.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_193129_850_940/cover_repair/generations/780fca168f97-01-1785222709513706160/final.cover.pre-overlay.png",
+      "candidate_id": "auto_193129_850_940",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[6].cover_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/covers/auto_183122_1209_1410.screenshot-title.cover.png",
+      "candidate_id": "auto_183122_1209_1410",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[6].cover_generation.ai_background",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/covers_ai_original/auto_183122_1209_1410.screenshot-poster.png",
+      "candidate_id": "auto_183122_1209_1410",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[6].cover_generation.final_cover",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/covers/auto_183122_1209_1410.screenshot-title.cover.png",
+      "candidate_id": "auto_183122_1209_1410",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[6].cover_generation.polish_face_verification.witness.image_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/covers/auto_183122_1209_1410.screenshot-title.cover.png",
+      "candidate_id": "auto_183122_1209_1410",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[6].cover_generation.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/covers/auto_183122_1209_1410.screenshot-title.cover.pre-overlay.png",
+      "candidate_id": "auto_183122_1209_1410",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[6].cover_generation.reference_image",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/cover_refs/auto_183122_1209_1410.cover-ref.png",
+      "candidate_id": "auto_183122_1209_1410",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[6].cover_generation.rendered_text_pixels.mask_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/covers/auto_183122_1209_1410.screenshot-title.cover.title-mask.png",
+      "candidate_id": "auto_183122_1209_1410",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[6].cover_generation.rendered_text_pixels.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/covers/auto_183122_1209_1410.screenshot-title.cover.pre-overlay.png",
+      "candidate_id": "auto_183122_1209_1410",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-24.json",
+      "json_path": "picks.[6].cover_generation.screenshot_graphic_poster.output_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-24/auto_183122_1209_1410/replacement_recuts/covers_ai_original/auto_183122_1209_1410.screenshot-poster.png",
+      "candidate_id": "auto_183122_1209_1410",
+      "row_status": "review_ready",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[0].cover_generation.ai_background",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_195000_1493_1579/replacement_recuts/covers_ai_original/auto_195000_1493_1579.screenshot-poster.png",
+      "candidate_id": "auto_195000_1493_1579",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[0].cover_generation.final_cover",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_195000_1493_1579/replacement_recuts/covers/auto_195000_1493_1579.screenshot-title.cover.png",
+      "candidate_id": "auto_195000_1493_1579",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[0].cover_generation.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_195000_1493_1579/replacement_recuts/covers/auto_195000_1493_1579.screenshot-title.cover.pre-overlay.png",
+      "candidate_id": "auto_195000_1493_1579",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[0].cover_generation.reference_image",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_195000_1493_1579/replacement_recuts/cover_refs/auto_195000_1493_1579.cover-ref.png",
+      "candidate_id": "auto_195000_1493_1579",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[0].cover_generation.rendered_text_pixels.mask_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_195000_1493_1579/replacement_recuts/covers/auto_195000_1493_1579.screenshot-title.cover.title-mask.png",
+      "candidate_id": "auto_195000_1493_1579",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[0].cover_generation.rendered_text_pixels.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_195000_1493_1579/replacement_recuts/covers/auto_195000_1493_1579.screenshot-title.cover.pre-overlay.png",
+      "candidate_id": "auto_195000_1493_1579",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[0].cover_generation.screenshot_graphic_poster.output_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_195000_1493_1579/replacement_recuts/covers_ai_original/auto_195000_1493_1579.screenshot-poster.png",
+      "candidate_id": "auto_195000_1493_1579",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[0].cover_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_195000_1493_1579/replacement_recuts/covers/auto_195000_1493_1579.screenshot-title.cover.png",
+      "candidate_id": "auto_195000_1493_1579",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[1].cover_generation.ai_background",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_195000_742_887/replacement_recuts/covers_ai_original/auto_195000_742_887.ai-bg.cpa-image-edit.png",
+      "candidate_id": "auto_195000_742_887",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[1].cover_generation.final_cover",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_195000_742_887/replacement_recuts/covers/auto_195000_742_887.ai-title.cover.png",
+      "candidate_id": "auto_195000_742_887",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[1].cover_generation.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_195000_742_887/replacement_recuts/covers/auto_195000_742_887.ai-title.cover.pre-overlay.png",
+      "candidate_id": "auto_195000_742_887",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[1].cover_generation.reference_image",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_195000_742_887/replacement_recuts/cover_refs/auto_195000_742_887.cover-ref.png",
+      "candidate_id": "auto_195000_742_887",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[1].cover_generation.rendered_text_pixels.mask_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_195000_742_887/replacement_recuts/covers/auto_195000_742_887.ai-title.cover.title-mask.png",
+      "candidate_id": "auto_195000_742_887",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[1].cover_generation.rendered_text_pixels.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_195000_742_887/replacement_recuts/covers/auto_195000_742_887.ai-title.cover.pre-overlay.png",
+      "candidate_id": "auto_195000_742_887",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[1].cover_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_195000_742_887/replacement_recuts/covers/auto_195000_742_887.ai-title.cover.png",
+      "candidate_id": "auto_195000_742_887",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[2].cover_generation.ai_background",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_202004_553_831/replacement_recuts/covers_ai_original/auto_202004_553_831.ai-bg.cpa-image-edit.png",
+      "candidate_id": "auto_202004_553_831",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[2].cover_generation.final_cover",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_202004_553_831/replacement_recuts/covers/auto_202004_553_831.ai-title.cover.png",
+      "candidate_id": "auto_202004_553_831",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[2].cover_generation.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_202004_553_831/replacement_recuts/covers/auto_202004_553_831.ai-title.cover.pre-overlay.png",
+      "candidate_id": "auto_202004_553_831",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[2].cover_generation.reference_image",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_202004_553_831/replacement_recuts/cover_refs/auto_202004_553_831.cover-ref.png",
+      "candidate_id": "auto_202004_553_831",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[2].cover_generation.rendered_text_pixels.mask_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_202004_553_831/replacement_recuts/covers/auto_202004_553_831.ai-title.cover.title-mask.png",
+      "candidate_id": "auto_202004_553_831",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[2].cover_generation.rendered_text_pixels.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_202004_553_831/replacement_recuts/covers/auto_202004_553_831.ai-title.cover.pre-overlay.png",
+      "candidate_id": "auto_202004_553_831",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[2].cover_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_202004_553_831/replacement_recuts/covers/auto_202004_553_831.ai-title.cover.png",
+      "candidate_id": "auto_202004_553_831",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[3].cover_generation.ai_background",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_192000_243_371/replacement_recuts/covers_ai_original/auto_192000_243_371.ai-bg.cpa-image-edit.png",
+      "candidate_id": "auto_192000_243_371",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[3].cover_generation.final_cover",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_192000_243_371/replacement_recuts/covers/auto_192000_243_371.ai-title.cover.png",
+      "candidate_id": "auto_192000_243_371",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[3].cover_generation.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_192000_243_371/replacement_recuts/covers/auto_192000_243_371.ai-title.cover.pre-overlay.png",
+      "candidate_id": "auto_192000_243_371",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[3].cover_generation.rendered_text_pixels.mask_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_192000_243_371/replacement_recuts/covers/auto_192000_243_371.ai-title.cover.title-mask.png",
+      "candidate_id": "auto_192000_243_371",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[3].cover_generation.rendered_text_pixels.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_192000_243_371/replacement_recuts/covers/auto_192000_243_371.ai-title.cover.pre-overlay.png",
+      "candidate_id": "auto_192000_243_371",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[3].cover_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_192000_243_371/replacement_recuts/covers/auto_192000_243_371.ai-title.cover.png",
+      "candidate_id": "auto_192000_243_371",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[4].cover_generation.ai_background",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_202004_1160_1262/replacement_recuts/covers_ai_original/auto_202004_1160_1262.screenshot-poster.png",
+      "candidate_id": "auto_202004_1160_1262",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[4].cover_generation.final_cover",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_202004_1160_1262/replacement_recuts/covers/auto_202004_1160_1262.screenshot-title.cover.png",
+      "candidate_id": "auto_202004_1160_1262",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[4].cover_generation.polish_face_verification.witness.image_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_202004_1160_1262/replacement_recuts/covers/auto_202004_1160_1262.screenshot-title.cover.png",
+      "candidate_id": "auto_202004_1160_1262",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[4].cover_generation.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_202004_1160_1262/replacement_recuts/covers/auto_202004_1160_1262.screenshot-title.cover.pre-overlay.png",
+      "candidate_id": "auto_202004_1160_1262",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[4].cover_generation.reference_image",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_202004_1160_1262/replacement_recuts/cover_refs/auto_202004_1160_1262.cover-ref.png",
+      "candidate_id": "auto_202004_1160_1262",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[4].cover_generation.rendered_text_pixels.mask_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_202004_1160_1262/replacement_recuts/covers/auto_202004_1160_1262.screenshot-title.cover.title-mask.png",
+      "candidate_id": "auto_202004_1160_1262",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[4].cover_generation.rendered_text_pixels.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_202004_1160_1262/replacement_recuts/covers/auto_202004_1160_1262.screenshot-title.cover.pre-overlay.png",
+      "candidate_id": "auto_202004_1160_1262",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[4].cover_generation.screenshot_graphic_poster.output_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_202004_1160_1262/replacement_recuts/covers_ai_original/auto_202004_1160_1262.screenshot-poster.png",
+      "candidate_id": "auto_202004_1160_1262",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[4].cover_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_202004_1160_1262/replacement_recuts/covers/auto_202004_1160_1262.screenshot-title.cover.png",
+      "candidate_id": "auto_202004_1160_1262",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[5].cover_generation.ai_background",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_192000_909_1014/replacement_recuts/covers_ai_original/auto_192000_909_1014.ai-bg.cpa-image-edit.png",
+      "candidate_id": "auto_192000_909_1014",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[5].cover_generation.final_cover",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_192000_909_1014/replacement_recuts/covers/auto_192000_909_1014.ai-title.cover.png",
+      "candidate_id": "auto_192000_909_1014",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[5].cover_generation.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_192000_909_1014/replacement_recuts/covers/auto_192000_909_1014.ai-title.cover.pre-overlay.png",
+      "candidate_id": "auto_192000_909_1014",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[5].cover_generation.reference_image",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_192000_909_1014/replacement_recuts/cover_refs/auto_192000_909_1014.cover-ref.png",
+      "candidate_id": "auto_192000_909_1014",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[5].cover_generation.rendered_text_pixels.mask_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_192000_909_1014/replacement_recuts/covers/auto_192000_909_1014.ai-title.cover.title-mask.png",
+      "candidate_id": "auto_192000_909_1014",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[5].cover_generation.rendered_text_pixels.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_192000_909_1014/replacement_recuts/covers/auto_192000_909_1014.ai-title.cover.pre-overlay.png",
+      "candidate_id": "auto_192000_909_1014",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "picks.[5].cover_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/auto_192000_909_1014/replacement_recuts/covers/auto_192000_909_1014.ai-title.cover.png",
+      "candidate_id": "auto_192000_909_1014",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "songs.[0].cover_generation.ai_background",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/song_192000_1321/cover_repair/generations/656a3317f6fe-02-1785490230751734554/ai-background.png",
+      "candidate_id": "song_192000_1321",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "songs.[0].cover_generation.final_cover",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/song_192000_1321/cover_repair/generations/656a3317f6fe-02-1785490230751734554/final.cover.png",
+      "candidate_id": "song_192000_1321",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "songs.[0].cover_generation.final_host_identity_verification.comparison_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/song_192000_1321/cover_repair/generations/656a3317f6fe-02-1785490230751734554/final.cover.host-identity-witness.png",
+      "candidate_id": "song_192000_1321",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "songs.[0].cover_generation.final_host_identity_verification.final_cover_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/song_192000_1321/cover_repair/generations/656a3317f6fe-02-1785490230751734554/final.cover.png",
+      "candidate_id": "song_192000_1321",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "songs.[0].cover_generation.final_host_identity_verification.reference_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/song_192000_1321/cover_repair/generations/656a3317f6fe-02-1785490230751734554/final.cover.cover-ref.png",
+      "candidate_id": "song_192000_1321",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "songs.[0].cover_generation.final_host_identity_verification.witness.image_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/song_192000_1321/cover_repair/generations/656a3317f6fe-02-1785490230751734554/final.cover.host-identity-witness.png",
+      "candidate_id": "song_192000_1321",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "songs.[0].cover_generation.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/song_192000_1321/cover_repair/generations/656a3317f6fe-02-1785490230751734554/final.cover.pre-overlay.png",
+      "candidate_id": "song_192000_1321",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "songs.[0].cover_generation.reference_image",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/song_192000_1321/cover_repair/generations/656a3317f6fe-02-1785490230751734554/final.cover.cover-ref.png",
+      "candidate_id": "song_192000_1321",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "songs.[0].cover_generation.rendered_text_pixels.mask_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/song_192000_1321/cover_repair/generations/656a3317f6fe-02-1785490230751734554/final.cover.title-mask.png",
+      "candidate_id": "song_192000_1321",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "songs.[0].cover_generation.rendered_text_pixels.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/song_192000_1321/cover_repair/generations/656a3317f6fe-02-1785490230751734554/final.cover.pre-overlay.png",
+      "candidate_id": "song_192000_1321",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "songs.[0].song_completion_evidence.burned_preview_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/song_192000_1321/song_selector_full/attempt-2qypk6g8/seededsong_120000_421470/replacement_recuts/seededsong_120000_421470.recut.burned-final-sapphire72.mp4",
+      "candidate_id": "song_192000_1321",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-25.json",
+      "json_path": "songs.[0].song_completion_evidence.recut_source_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-25/song_192000_1321/song_192000_1321_full_1201970_1804215_source.mp4",
+      "candidate_id": "song_192000_1321",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[0].cover_generation.ai_background",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_155948_424_522/replacement_recuts/covers_ai_original/auto_155948_424_522.screenshot-poster.png",
+      "candidate_id": "auto_155948_424_522",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[0].cover_generation.final_cover",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_155948_424_522/replacement_recuts/covers/auto_155948_424_522.screenshot-title.cover.png",
+      "candidate_id": "auto_155948_424_522",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[0].cover_generation.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_155948_424_522/replacement_recuts/covers/auto_155948_424_522.screenshot-title.cover.pre-overlay.png",
+      "candidate_id": "auto_155948_424_522",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[0].cover_generation.reference_image",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_155948_424_522/replacement_recuts/cover_refs/auto_155948_424_522.cover-ref.png",
+      "candidate_id": "auto_155948_424_522",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[0].cover_generation.rendered_text_pixels.mask_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_155948_424_522/replacement_recuts/covers/auto_155948_424_522.screenshot-title.cover.title-mask.png",
+      "candidate_id": "auto_155948_424_522",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[0].cover_generation.rendered_text_pixels.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_155948_424_522/replacement_recuts/covers/auto_155948_424_522.screenshot-title.cover.pre-overlay.png",
+      "candidate_id": "auto_155948_424_522",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[0].cover_generation.screenshot_graphic_poster.output_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_155948_424_522/replacement_recuts/covers_ai_original/auto_155948_424_522.screenshot-poster.png",
+      "candidate_id": "auto_155948_424_522",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[0].cover_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_155948_424_522/replacement_recuts/covers/auto_155948_424_522.screenshot-title.cover.png",
+      "candidate_id": "auto_155948_424_522",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[1].cover_generation.ai_background",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_145940_1533_1619/cover_repair/generations/manual-cpa-redraw-punch-v4/ai-background.png",
+      "candidate_id": "auto_145940_1533_1619",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[1].cover_generation.final_cover",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_145940_1533_1619/cover_repair/generations/manual-cpa-redraw-punch-v4/final.cover.png",
+      "candidate_id": "auto_145940_1533_1619",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[1].cover_generation.final_host_identity_verification.comparison_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_145940_1533_1619/cover_repair/generations/manual-cpa-redraw-punch-v4/final.cover.host-identity-witness.png",
+      "candidate_id": "auto_145940_1533_1619",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[1].cover_generation.final_host_identity_verification.final_cover_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_145940_1533_1619/cover_repair/generations/manual-cpa-redraw-punch-v4/final.cover.png",
+      "candidate_id": "auto_145940_1533_1619",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[1].cover_generation.final_host_identity_verification.reference_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_145940_1533_1619/replacement_recuts/cover_refs/auto_145940_1533_1619.cover-ref.png",
+      "candidate_id": "auto_145940_1533_1619",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[1].cover_generation.final_host_identity_verification.witness.image_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_145940_1533_1619/cover_repair/generations/manual-cpa-redraw-punch-v4/final.cover.host-identity-witness.png",
+      "candidate_id": "auto_145940_1533_1619",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[1].cover_generation.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_145940_1533_1619/cover_repair/generations/manual-cpa-redraw-punch-v4/final.cover.pre-overlay.png",
+      "candidate_id": "auto_145940_1533_1619",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[1].cover_generation.reference_image",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_145940_1533_1619/replacement_recuts/cover_refs/auto_145940_1533_1619.cover-ref.png",
+      "candidate_id": "auto_145940_1533_1619",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[1].cover_generation.rendered_text_pixels.mask_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_145940_1533_1619/cover_repair/generations/manual-cpa-redraw-punch-v4/final.cover.title-mask.png",
+      "candidate_id": "auto_145940_1533_1619",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[1].cover_generation.rendered_text_pixels.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_145940_1533_1619/cover_repair/generations/manual-cpa-redraw-punch-v4/final.cover.pre-overlay.png",
+      "candidate_id": "auto_145940_1533_1619",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[2].cover_generation.ai_background",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_142942_1329_1380/replacement_recuts/covers_ai_original/auto_142942_1329_1380.screenshot-poster.png",
+      "candidate_id": "auto_142942_1329_1380",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[2].cover_generation.final_cover",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_142942_1329_1380/replacement_recuts/covers/auto_142942_1329_1380.screenshot-title.cover.png",
+      "candidate_id": "auto_142942_1329_1380",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[2].cover_generation.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_142942_1329_1380/replacement_recuts/covers/auto_142942_1329_1380.screenshot-title.cover.pre-overlay.png",
+      "candidate_id": "auto_142942_1329_1380",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[2].cover_generation.reference_image",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_142942_1329_1380/replacement_recuts/cover_refs/auto_142942_1329_1380.cover-ref.png",
+      "candidate_id": "auto_142942_1329_1380",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[2].cover_generation.rendered_text_pixels.mask_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_142942_1329_1380/replacement_recuts/covers/auto_142942_1329_1380.screenshot-title.cover.title-mask.png",
+      "candidate_id": "auto_142942_1329_1380",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[2].cover_generation.rendered_text_pixels.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_142942_1329_1380/replacement_recuts/covers/auto_142942_1329_1380.screenshot-title.cover.pre-overlay.png",
+      "candidate_id": "auto_142942_1329_1380",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[2].cover_generation.screenshot_graphic_poster.output_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_142942_1329_1380/replacement_recuts/covers_ai_original/auto_142942_1329_1380.screenshot-poster.png",
+      "candidate_id": "auto_142942_1329_1380",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[2].cover_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_142942_1329_1380/replacement_recuts/covers/auto_142942_1329_1380.screenshot-title.cover.png",
+      "candidate_id": "auto_142942_1329_1380",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[3].cover_generation.ai_background",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_155948_327_424/replacement_recuts/covers_ai_original/auto_155948_327_424.screenshot-poster.png",
+      "candidate_id": "auto_155948_327_424",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[3].cover_generation.final_cover",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_155948_327_424/replacement_recuts/covers/auto_155948_327_424.screenshot-title.cover.png",
+      "candidate_id": "auto_155948_327_424",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[3].cover_generation.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_155948_327_424/replacement_recuts/covers/auto_155948_327_424.screenshot-title.cover.pre-overlay.png",
+      "candidate_id": "auto_155948_327_424",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[3].cover_generation.reference_image",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_155948_327_424/replacement_recuts/cover_refs/auto_155948_327_424.cover-ref.png",
+      "candidate_id": "auto_155948_327_424",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[3].cover_generation.rendered_text_pixels.mask_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_155948_327_424/replacement_recuts/covers/auto_155948_327_424.screenshot-title.cover.title-mask.png",
+      "candidate_id": "auto_155948_327_424",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[3].cover_generation.rendered_text_pixels.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_155948_327_424/replacement_recuts/covers/auto_155948_327_424.screenshot-title.cover.pre-overlay.png",
+      "candidate_id": "auto_155948_327_424",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[3].cover_generation.screenshot_graphic_poster.output_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_155948_327_424/replacement_recuts/covers_ai_original/auto_155948_327_424.screenshot-poster.png",
+      "candidate_id": "auto_155948_327_424",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[3].cover_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_155948_327_424/replacement_recuts/covers/auto_155948_327_424.screenshot-title.cover.png",
+      "candidate_id": "auto_155948_327_424",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[4].cover_generation.ai_background",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_142942_496_618/cover_repair/generations/0be082789d29-01-1785486373568852226/ai-background.png",
+      "candidate_id": "auto_142942_496_618",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[4].cover_generation.final_cover",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_142942_496_618/cover_repair/generations/0be082789d29-01-1785486373568852226/final.cover.png",
+      "candidate_id": "auto_142942_496_618",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[4].cover_generation.final_host_identity_verification.comparison_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_142942_496_618/cover_repair/generations/0be082789d29-01-1785486373568852226/final.cover.host-identity-witness.png",
+      "candidate_id": "auto_142942_496_618",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[4].cover_generation.final_host_identity_verification.final_cover_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_142942_496_618/cover_repair/generations/0be082789d29-01-1785486373568852226/final.cover.png",
+      "candidate_id": "auto_142942_496_618",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[4].cover_generation.final_host_identity_verification.reference_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_142942_496_618/replacement_recuts/cover_refs/auto_142942_496_618.cover-ref.png",
+      "candidate_id": "auto_142942_496_618",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[4].cover_generation.final_host_identity_verification.witness.image_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_142942_496_618/cover_repair/generations/0be082789d29-01-1785486373568852226/final.cover.host-identity-witness.png",
+      "candidate_id": "auto_142942_496_618",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[4].cover_generation.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_142942_496_618/cover_repair/generations/0be082789d29-01-1785486373568852226/final.cover.pre-overlay.png",
+      "candidate_id": "auto_142942_496_618",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[4].cover_generation.reference_image",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_142942_496_618/replacement_recuts/cover_refs/auto_142942_496_618.cover-ref.png",
+      "candidate_id": "auto_142942_496_618",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[4].cover_generation.rendered_text_pixels.mask_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_142942_496_618/cover_repair/generations/0be082789d29-01-1785486373568852226/final.cover.title-mask.png",
+      "candidate_id": "auto_142942_496_618",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[4].cover_generation.rendered_text_pixels.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_142942_496_618/cover_repair/generations/0be082789d29-01-1785486373568852226/final.cover.pre-overlay.png",
+      "candidate_id": "auto_142942_496_618",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[5].cover_generation.ai_background",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_964_1091/cover_repair/generations/3ec651455fff-01-1785499358102326363/ai-background.png",
+      "candidate_id": "auto_152944_964_1091",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[5].cover_generation.final_cover",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_964_1091/cover_repair/generations/3ec651455fff-01-1785499358102326363/final.cover.png",
+      "candidate_id": "auto_152944_964_1091",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[5].cover_generation.final_host_identity_verification.comparison_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_964_1091/cover_repair/generations/3ec651455fff-01-1785499358102326363/final.cover.host-identity-witness.png",
+      "candidate_id": "auto_152944_964_1091",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[5].cover_generation.final_host_identity_verification.final_cover_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_964_1091/cover_repair/generations/3ec651455fff-01-1785499358102326363/final.cover.png",
+      "candidate_id": "auto_152944_964_1091",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[5].cover_generation.final_host_identity_verification.reference_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_964_1091/candidate_revisions/20260731T040626Z-before-source-fact-rerun/replacement_recuts/cover_refs/auto_152944_964_1091.cover-ref.png",
+      "candidate_id": "auto_152944_964_1091",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[5].cover_generation.final_host_identity_verification.witness.image_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_964_1091/cover_repair/generations/3ec651455fff-01-1785499358102326363/final.cover.host-identity-witness.png",
+      "candidate_id": "auto_152944_964_1091",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[5].cover_generation.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_964_1091/cover_repair/generations/3ec651455fff-01-1785499358102326363/final.cover.pre-overlay.png",
+      "candidate_id": "auto_152944_964_1091",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[5].cover_generation.reference_image",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_964_1091/candidate_revisions/20260731T040626Z-before-source-fact-rerun/replacement_recuts/cover_refs/auto_152944_964_1091.cover-ref.png",
+      "candidate_id": "auto_152944_964_1091",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[5].cover_generation.rendered_text_pixels.mask_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_964_1091/cover_repair/generations/3ec651455fff-01-1785499358102326363/final.cover.title-mask.png",
+      "candidate_id": "auto_152944_964_1091",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[5].cover_generation.rendered_text_pixels.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_964_1091/cover_repair/generations/3ec651455fff-01-1785499358102326363/final.cover.pre-overlay.png",
+      "candidate_id": "auto_152944_964_1091",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[5].superseded_cover_authorities.[0].cover_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_964_1091/replacement_recuts/covers/auto_152944_964_1091.ai-title.cover.png",
+      "candidate_id": "auto_152944_964_1091",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[6].cover_generation.ai_background",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_1411_1463/replacement_recuts/covers_ai_original/auto_152944_1411_1463.ai-bg.cpa-image-edit.png",
+      "candidate_id": "auto_152944_1411_1463",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[6].cover_generation.final_cover",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_1411_1463/replacement_recuts/covers/auto_152944_1411_1463.ai-title.cover.png",
+      "candidate_id": "auto_152944_1411_1463",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[6].cover_generation.final_host_identity_verification.comparison_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_1411_1463/replacement_recuts/covers/auto_152944_1411_1463.ai-title.cover.host-identity-witness.png",
+      "candidate_id": "auto_152944_1411_1463",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[6].cover_generation.final_host_identity_verification.final_cover_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_1411_1463/replacement_recuts/covers/auto_152944_1411_1463.ai-title.cover.png",
+      "candidate_id": "auto_152944_1411_1463",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[6].cover_generation.final_host_identity_verification.reference_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_1411_1463/replacement_recuts/cover_refs/auto_152944_1411_1463.cover-ref.png",
+      "candidate_id": "auto_152944_1411_1463",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[6].cover_generation.final_host_identity_verification.witness.image_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_1411_1463/replacement_recuts/covers/auto_152944_1411_1463.ai-title.cover.host-identity-witness.png",
+      "candidate_id": "auto_152944_1411_1463",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[6].cover_generation.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_1411_1463/replacement_recuts/covers/auto_152944_1411_1463.ai-title.cover.pre-overlay.png",
+      "candidate_id": "auto_152944_1411_1463",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[6].cover_generation.reference_image",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_1411_1463/replacement_recuts/cover_refs/auto_152944_1411_1463.cover-ref.png",
+      "candidate_id": "auto_152944_1411_1463",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[6].cover_generation.rendered_text_pixels.mask_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_1411_1463/replacement_recuts/covers/auto_152944_1411_1463.ai-title.cover.title-mask.png",
+      "candidate_id": "auto_152944_1411_1463",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[6].cover_generation.rendered_text_pixels.pre_overlay_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_1411_1463/replacement_recuts/covers/auto_152944_1411_1463.ai-title.cover.pre-overlay.png",
+      "candidate_id": "auto_152944_1411_1463",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[6].cover_generation.source_composition_verification.reference_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_1411_1463/replacement_recuts/cover_refs/auto_152944_1411_1463.cover-ref.png",
+      "candidate_id": "auto_152944_1411_1463",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[6].cover_generation.source_composition_verification.witness.image_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_1411_1463/replacement_recuts/cover_refs/auto_152944_1411_1463.cover-ref.png",
+      "candidate_id": "auto_152944_1411_1463",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-07-26.json",
+      "json_path": "picks.[6].cover_path",
+      "missing_path": "/opt/bilive/autoslice/out/2026-07-26/auto_152944_1411_1463/replacement_recuts/covers/auto_152944_1411_1463.ai-title.cover.png",
+      "candidate_id": "auto_152944_1411_1463",
+      "row_status": "published",
+      "cls": "B_cleanup_deleted",
+      "resolution": "out/ intermediate removed by a capacity cleanup"
+    },
+    {
+      "state_file": "2026-08-07.json",
+      "json_path": "picks.[0].cover_generation.final_host_identity_verification.comparison_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-07/auto_203735_555_680/replacement_recuts/covers/auto_203735_555_680.ai-title.cover.host-identity-witness.png",
+      "candidate_id": "auto_203735_555_680",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-07.json",
+      "json_path": "picks.[0].cover_generation.final_host_identity_verification.final_cover_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-07/auto_203735_555_680/replacement_recuts/covers/auto_203735_555_680.ai-title.cover.png",
+      "candidate_id": "auto_203735_555_680",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-07.json",
+      "json_path": "picks.[0].cover_generation.final_host_identity_verification.reference_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-07/auto_203735_555_680/replacement_recuts/cover_refs/auto_203735_555_680.cover-ref.png",
+      "candidate_id": "auto_203735_555_680",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-07.json",
+      "json_path": "picks.[0].cover_generation.final_host_identity_verification.witness.image_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-07/auto_203735_555_680/replacement_recuts/covers/auto_203735_555_680.ai-title.cover.host-identity-witness.png",
+      "candidate_id": "auto_203735_555_680",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-07.json",
+      "json_path": "picks.[0].cover_generation.source_composition_verification.reference_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-07/auto_203735_555_680/replacement_recuts/cover_refs/auto_203735_555_680.cover-ref.png",
+      "candidate_id": "auto_203735_555_680",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-07.json",
+      "json_path": "picks.[0].cover_generation.source_composition_verification.witness.image_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-07/auto_203735_555_680/replacement_recuts/cover_refs/auto_203735_555_680.cover-ref.png",
+      "candidate_id": "auto_203735_555_680",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-07.json",
+      "json_path": "picks.[3].cover_generation.final_host_identity_verification.comparison_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-07/auto_220747_488_680/replacement_recuts/covers/auto_220747_488_680.ai-title.cover.host-identity-witness.png",
+      "candidate_id": "auto_220747_488_680",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-07.json",
+      "json_path": "picks.[3].cover_generation.final_host_identity_verification.final_cover_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-07/auto_220747_488_680/replacement_recuts/covers/auto_220747_488_680.ai-title.cover.png",
+      "candidate_id": "auto_220747_488_680",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-07.json",
+      "json_path": "picks.[3].cover_generation.final_host_identity_verification.reference_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-07/auto_220747_488_680/replacement_recuts/cover_refs/auto_220747_488_680.cover-ref.png",
+      "candidate_id": "auto_220747_488_680",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-07.json",
+      "json_path": "picks.[3].cover_generation.final_host_identity_verification.witness.image_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-07/auto_220747_488_680/replacement_recuts/covers/auto_220747_488_680.ai-title.cover.host-identity-witness.png",
+      "candidate_id": "auto_220747_488_680",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-07.json",
+      "json_path": "picks.[3].cover_generation.source_composition_verification.reference_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-07/auto_220747_488_680/replacement_recuts/cover_refs/auto_220747_488_680.cover-ref.png",
+      "candidate_id": "auto_220747_488_680",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-07.json",
+      "json_path": "picks.[3].cover_generation.source_composition_verification.witness.image_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-07/auto_220747_488_680/replacement_recuts/cover_refs/auto_220747_488_680.cover-ref.png",
+      "candidate_id": "auto_220747_488_680",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-08.json",
+      "json_path": "picks.[1].cover_generation.final_host_identity_verification.comparison_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-08/auto_200130_1323_1603/replacement_recuts/covers/auto_200130_1323_1603.ai-title.host-identity-retry.cover.host-identity-witness.png",
+      "candidate_id": "auto_200130_1323_1603",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-08.json",
+      "json_path": "picks.[1].cover_generation.final_host_identity_verification.final_cover_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-08/auto_200130_1323_1603/replacement_recuts/covers/auto_200130_1323_1603.ai-title.host-identity-retry.cover.png",
+      "candidate_id": "auto_200130_1323_1603",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-08.json",
+      "json_path": "picks.[1].cover_generation.final_host_identity_verification.reference_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-08/auto_200130_1323_1603/replacement_recuts/cover_refs/auto_200130_1323_1603.cover-ref.png",
+      "candidate_id": "auto_200130_1323_1603",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-08.json",
+      "json_path": "picks.[1].cover_generation.final_host_identity_verification.witness.image_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-08/auto_200130_1323_1603/replacement_recuts/covers/auto_200130_1323_1603.ai-title.host-identity-retry.cover.host-identity-witness.png",
+      "candidate_id": "auto_200130_1323_1603",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-08.json",
+      "json_path": "picks.[1].cover_generation.rejected_final_host_identity_verification.comparison_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-08/auto_200130_1323_1603/replacement_recuts/covers/auto_200130_1323_1603.ai-title.cover.host-identity-witness.png",
+      "candidate_id": "auto_200130_1323_1603",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-08.json",
+      "json_path": "picks.[1].cover_generation.rejected_final_host_identity_verification.final_cover_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-08/auto_200130_1323_1603/replacement_recuts/covers/auto_200130_1323_1603.ai-title.cover.png",
+      "candidate_id": "auto_200130_1323_1603",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-08.json",
+      "json_path": "picks.[1].cover_generation.rejected_final_host_identity_verification.reference_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-08/auto_200130_1323_1603/replacement_recuts/cover_refs/auto_200130_1323_1603.cover-ref.png",
+      "candidate_id": "auto_200130_1323_1603",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-08.json",
+      "json_path": "picks.[1].cover_generation.rejected_final_host_identity_verification.witness.image_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-08/auto_200130_1323_1603/replacement_recuts/covers/auto_200130_1323_1603.ai-title.cover.host-identity-witness.png",
+      "candidate_id": "auto_200130_1323_1603",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-08.json",
+      "json_path": "picks.[1].cover_generation.source_composition_verification.reference_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-08/auto_200130_1323_1603/replacement_recuts/cover_refs/auto_200130_1323_1603.cover-ref.png",
+      "candidate_id": "auto_200130_1323_1603",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-08.json",
+      "json_path": "picks.[1].cover_generation.source_composition_verification.witness.image_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-08/auto_200130_1323_1603/replacement_recuts/cover_refs/auto_200130_1323_1603.cover-ref.png",
+      "candidate_id": "auto_200130_1323_1603",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-08.json",
+      "json_path": "picks.[2].cover_generation.final_host_identity_verification.comparison_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-08/auto_200130_1722_1792/replacement_recuts/covers/auto_200130_1722_1792.ai-title.cover.host-identity-witness.png",
+      "candidate_id": "auto_200130_1722_1792",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-08.json",
+      "json_path": "picks.[2].cover_generation.final_host_identity_verification.final_cover_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-08/auto_200130_1722_1792/replacement_recuts/covers/auto_200130_1722_1792.ai-title.cover.png",
+      "candidate_id": "auto_200130_1722_1792",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-08.json",
+      "json_path": "picks.[2].cover_generation.final_host_identity_verification.reference_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-08/auto_200130_1722_1792/replacement_recuts/cover_refs/auto_200130_1722_1792.cover-ref.png",
+      "candidate_id": "auto_200130_1722_1792",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-08.json",
+      "json_path": "picks.[2].cover_generation.final_host_identity_verification.witness.image_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-08/auto_200130_1722_1792/replacement_recuts/covers/auto_200130_1722_1792.ai-title.cover.host-identity-witness.png",
+      "candidate_id": "auto_200130_1722_1792",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-08.json",
+      "json_path": "picks.[2].cover_generation.source_composition_verification.reference_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-08/auto_200130_1722_1792/replacement_recuts/cover_refs/auto_200130_1722_1792.cover-ref.png",
+      "candidate_id": "auto_200130_1722_1792",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    },
+    {
+      "state_file": "2026-08-08.json",
+      "json_path": "picks.[2].cover_generation.source_composition_verification.witness.image_path",
+      "missing_path": "/home/ivan/Project/vtuber-reproduce/out/2026-08-08/auto_200130_1722_1792/replacement_recuts/cover_refs/auto_200130_1722_1792.cover-ref.png",
+      "candidate_id": "auto_200130_1722_1792",
+      "row_status": "published",
+      "cls": "C_foreign_workspace",
+      "resolution": "referenced tree does not exist on free; written by an off-host workspace"
+    }
+  ]
+}

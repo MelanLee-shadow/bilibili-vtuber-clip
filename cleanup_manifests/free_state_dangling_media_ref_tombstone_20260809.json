@@ -1,0 +1,96 @@
+{
+  "schema_version": "state-remediation-receipt.v1",
+  "date": "2026-08-09",
+  "host": "free",
+  "state_file": "/opt/bilive/autoslice/state/2026-07-18.json",
+  "reason": "state/2026-07-18.json carried a live authority reference to an out/ burned-preview mp4 that the committed 2026-07-30 ENOSPC recovery cleanup had deleted. Same class as the 2026-07-24 mis-delete incident: the 07-30 pass deleted out/2026-07-18/*/song_selector_full/**/*.mp4 wholesale on a 'regenerable from retained source recordings' basis without a state reference scan.",
+  "candidate": {
+    "candidate_id": "song_232939_870",
+    "selector_record_candidate_id": "seededsong_120000_424730",
+    "row_status": "review_ready",
+    "cover_status": "BLOCKED_COVER_AUTHORITY_PREFLIGHT",
+    "delivery_upload_enabled": false,
+    "published": false,
+    "publication_registry_entries": 0
+  },
+  "change": {
+    "json_path": "songs.[2].song_completion_evidence.burned_preview_path",
+    "old": "/opt/bilive/autoslice/out/2026-07-18/song_232939_870/song_selector_full/attempt-blpt632u/seededsong_120000_424730/replacement_recuts/seededsong_120000_424730.recut.burned-final-sapphire72.mp4",
+    "new": "TOMBSTONE:cleanup_deleted;deleted_on=2026-07-30T09:15Z;manifest=cleanup_manifests/free_autoslice_enospc_recovery_cleanup_20260730.json;original_path=/opt/bilive/autoslice/out/2026-07-18/song_232939_870/song_selector_full/attempt-blpt632u/seededsong_120000_424730/replacement_recuts/seededsong_120000_424730.recut.burned-final-sapphire72.mp4;surviving_identical_bytes=/opt/bilive/autoslice/repo/lidousha/2026-07-18/歌切_【李豆沙】豆沙歌，《暖暖》｜自__song_232939_870.mp4;sha256=94fd762b2be604c577573b5708614952cc39fd048041ffbe493df45464ee7550;receipt=cleanup_manifests/free_state_dangling_media_ref_tombstone_20260809.json",
+    "leaves_changed": 1,
+    "burned_preview_sha256": "sha256:94fd762b2be604c577573b5708614952cc39fd048041ffbe493df45464ee7550 (untouched — it is the proof link to the surviving bytes)",
+    "updated_at": "2026-07-24T10:30:18+0000 (untouched — this surgery is not a tick)"
+  },
+  "tombstone_design": {
+    "type": "string",
+    "does_not_start_with_slash": true,
+    "rationale": "A non-path sentinel string keeps the value type-stable for str-assuming consumers, stops path scanners and witness tooling from treating it as a live reference, and makes the FileNotFoundError raised by Path(...).resolve(strict=True) carry its own provenance."
+  },
+  "consumers_verified": [
+    {
+      "site": "scripts/build_lidousha_song_review_manifest.py:_completion_artifact_bindings",
+      "deref": "Path(source_value).resolve(strict=True)",
+      "behaviour": "raises SongReviewManifestError — fail-closed before and after the tombstone"
+    },
+    {
+      "site": "scripts/build_lidousha_song_review_manifest.py:358",
+      "deref": "fresh != frozen drift check",
+      "behaviour": "already unsatisfiable: a fresh recompute cannot see the deleted file, so it fails the delivery-ready gate at ~line 350 before the frozen comparison. The tombstone changes no outcome."
+    },
+    {
+      "site": "scripts/authorized_upload.py:388",
+      "deref": "reads song_completion_evidence from the review package, not runtime state; matches burned_preview_sha256 against the package's own bytes",
+      "behaviour": "never derefs the state path — unaffected"
+    },
+    {
+      "site": "src/autoslice/song_completion.py:1345",
+      "deref": "producer of the field from a fresh record, not a consumer of state",
+      "behaviour": "unaffected"
+    }
+  ],
+  "risk_assessment": {
+    "live_runner": "none — 2026-07-18 is a closed past day (pending_talk=[], pending_song=[]); the runner ticks current dates only",
+    "published_artifacts": "none — song_232939_870 was never published; 0 entries in publication_registry.runtime.v1.json",
+    "silent_false_green": "none observed — every consumer path is fail-closed",
+    "actual_impact": "any future Song review-manifest build for this candidate hard-fails; before the tombstone the failure was an unattributed missing file, now it names the deleting manifest"
+  },
+  "media_not_reproduced": true,
+  "available_revive_path_not_taken": {
+    "description": "The deleted intermediate is byte-identical (sha256 94fd762b…) to the surviving deliverable repo/lidousha/2026-07-18/歌切_【李豆沙】豆沙歌，《暖暖》｜自__song_232939_870.mp4, so a plain cp would restore the reference exactly with no re-encode.",
+    "why_not_taken": "It would silently un-block a review_ready candidate — a live-policy change without a ruling, against the 2026-07-27 publication hold-gate discipline and against the cleanup's intent. Left for Ivan to invoke."
+  },
+  "procedure": {
+    "quiet_window": "DISABLED flag present; zero free_session_autoslice/ffmpeg processes; both re-checked inside the lock at write time",
+    "lock": "/usr/bin/flock -w 300 /opt/bilive/autoslice/runner.lock",
+    "backup": [
+      "/opt/bilive/autoslice/state/2026-07-18.pre-dangling-media-tombstone-20260809T235834Z.json (tombstone write)",
+      "/opt/bilive/autoslice/state/2026-07-18.pre-tombstone-receipt-retarget-20260810T000536Z.json (receipt-pointer retarget)"
+    ],
+    "write": "tmp file + fsync + os.replace + directory fsync, serialized with json.dumps(ensure_ascii=False, indent=2) to match runner_state_writeback._atomic_write",
+    "on_disk_was_canonical_serialization": true,
+    "preconditions_asserted": [
+      "current value equals the expected dead path",
+      "the dead path really does not exist",
+      "the surviving identical-bytes deliverable is present",
+      "burned_preview_sha256 matches the expected proof hash",
+      "the computed diff touches exactly one leaf"
+    ],
+    "post_verification": [
+      "file re-parses",
+      "deep leaf diff against the backup shows exactly one changed leaf",
+      "rescan: 2026-07-18 dangling refs 12 -> 11",
+      "the tombstone is no longer counted as a path reference",
+      "runner.lock and the DISABLED flag unchanged"
+    ],
+    "two_writes": "The tombstone was written first with a reports/ receipt path; reports/** turned out to be gitignored, so a second write under the same lock/backup/atomic discipline repointed the receipt= field at cleanup_manifests/. Both writes changed exactly one leaf."
+  },
+  "state_sha256": {
+    "before": "e16c93bcea1938cce1f34718f46d8504b1f7ad1a35af430ece69afc1de5c1625",
+    "after": "1c7a7dd8a13930325f878ea7a2c391d5e654a183fcb8b069fed2274aa4792753",
+    "note": "after = post-retarget; the intermediate tombstone-only state was 2eb57acb7bde38cc840127504577f261beb46fb43eaf48003f4c631408380447"
+  },
+  "scope_discipline": "The full-state scan found 302 dangling media references across 13 live day files. Per Ivan's standing rule (发现面扩大就只出报告不扩权) only the one named reference was remediated; everything else is reported in cleanup_manifests/free_state_dangling_media_refs_scan_20260809.json and docs/reviews/2026-08-09-state-dangling-media-refs-audit.md.",
+  "found_by": "2026-08-10 capacity-cleanup worker report (cleanup_manifests/free_autoslice_capacity_cleanup_20260810.json)",
+  "companion_scan": "cleanup_manifests/free_state_dangling_media_refs_scan_20260809.json",
+  "note_on_receipt_path": "reports/** is gitignored except the upload-evidence allowlist, so this receipt lives in cleanup_manifests/ alongside the manifest that caused the dangling reference. The tombstone string in live state points here."
+}
