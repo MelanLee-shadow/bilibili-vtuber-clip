@@ -7,6 +7,7 @@ import re
 from typing import Mapping
 
 from src.autoslice.acoustic_witness_adjudication import (
+    WITNESS_CONFLICT_UNSUPPORTED_PROPOSED,
     valid_inaudible_drop_repair,
     valid_inaudible_override_repair,
 )
@@ -347,14 +348,36 @@ def validate_final_review_release(
     return dict(audit)
 
 
+# Ivan 2026-07-26T17:45Z 逐字（已核 raw transcript，userType=external、
+# isSidechain=false，b533569f-161f-4656-bec9-a512bd639042.jsonl:1223）：
+# 「流水线最终是无人值守的，不能因为没有人工参与就fail……生产阶段是没有
+#   人工真值的，最多就是发出去了我检查有问题了再修，而不是一直不发。」
+# 该裁定管的是「已决定的 keep-current 必须随包披露发出去，不许无限期阻断」，
+# **没有**枚举任何分支名。下面这张表只是「引擎当时吐哪些 decided-keep 名字」
+# 的快照，不是 Ivan 划的政策线——引擎改名/新增出口时必须同步，否则一条已裁
+# 的 keep-current 会因为名字没登记而永远回不到 resolved（2026-08-09 谈话切
+# 4/4 全灭即此病）。
+#
+# 收录门槛（三条全中才可加）：
+#   1. 分支返回 repaired=False（本条 finding 一个字节都没改）；
+#   2. mutation_authority.status == NOT_APPLIED（没有任何变更授权被行使）；
+#   3. 结论是「机器已经决定保留原文」，不是「机器没能决定」——基础设施未
+#      走完（witness/judge/后端不可用、stale base、预算跳过、响应非法）
+#      一律留在 blocker 侧。
 _DECIDED_KEEP_CURRENT_BRANCHES = frozenset(
     {
-        # judge 明确选 CURRENT（Ivan 2026-07-27：decided keep 是已完成的
-        # 机器决定，发出去检查有问题再修，而不是一直不发）
+        # judge 明确选 CURRENT。
         "JUDGE_KEEPS_CURRENT",
-        # judge 选了 PROPOSED 但代码级拼音门否决——门本身就是决定
+        # judge 选了 PROPOSED 但代码级证据门否决——门本身就是决定。
+        # 这条出口 2026-07-28 d71e856（CPA 成为终审声学判官）起改由
+        # 「贴音优先 + 三逃生口」实现，2026-08-08 5a43ea3（Ivan 8/8 卡1
+        # 结案）落为 typed 分支 WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_
+        # CURRENT。直接引用引擎常量，避免再次改名后白名单静默失配。
+        WITNESS_CONFLICT_UNSUPPORTED_PROPOSED,
+        # 以下两个是 0a97deb(7/27) 写表当时的引擎名字，d71e856(7/28) 已把
+        # 产出点删除——src 中再无任何代码吐出它们。保留仅为兼容那之前落盘
+        # 的历史回执重放；新回执不会再出现。
         "JUDGE_CHOICE_PINYIN_INCOMPATIBLE_KEEP_CURRENT",
-        # CPA 看完「目标不可闻」证据仍选了一个非删除替换；证据门保留。
         "TARGET_INAUDIBLE_KEEP_CURRENT",
     }
 )
