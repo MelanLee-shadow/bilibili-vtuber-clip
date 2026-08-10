@@ -21,7 +21,16 @@ Updated: 2026-08-10 00:20Z by Claude(Fable→Opus 接力,单 orchestrator + Opus
 
 **今夜机制成果(已部署)**:F20 真值全所有权快路径+(跃起) typed 注记白名单 / F12 hook 受话人归属 fail-closed / F5 子cue混说证据面(disclosure-only+kill switch) / terminal-projection 验收面移植 / **同日第二条投稿的 manifest 白名单缺陷(B1)** / **QC 同茎绑定缺陷(B2)** / 1323 感知复审契约。未部署待裁:**F21 声学证人 Gemini fallback**(worktree `f21-gemini-witness` @ `aa553a1`,3392 绿;含"从未听过 vs 听了失败"语义分割,须 Ivan 裁定是否按字面全关改字路)。
 
-**产线状态**:DISABLED 已于 00:12Z 撤除,runner 恢复。重试篮 16 条(8/8 pending_talk 8 + revive 8)由 free runner 在新代码上产——**wsl 产线对 talk lane 结构性不可用**(声学证人只在 localhost+AGY 活;法证结论见下)。首个 tick 需盯 **F12 无 kill switch**:若判官系统性漏 `addressee_attribution` 键会成批 `BLOCKED_SOURCE_FACT_REVIEW`,系统性即回滚部署。
+**产线状态(01:30Z 订正)**:runner 恢复运行;8/7 复活件 4 条已产,8/8 批报 4/5 交付,**2026-08-09 已于 01:23Z 首次进队**(new=True)。
+
+**三处此前记录有误,以此为准**:
+1. **8/9 有直播有录播**——`/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/2026-08-09` 存在,webhook journal 有完整 SessionStarted→StreamEnded(21:06–22:38Z)。先前"8/9 没播"的结论是查错了路径(查了 upload-fatal-rescue 镜像)。
+2. **wsl talk lane 不是"结构性死"**——Gemini fallback 一直都在且可用,唯一堵点是 `producer_text_pipeline.py:358` 的 host 门只在 localhost 构造 verifier。**F21 修的就是这行**(host 门改为"音频本地可解析即放行"),部署后 wsl 即可重新接 talk lane。
+3. **8/9 12:40Z 起 7 小时冻结的真凶不是 runner 等待**——`tick()` 见在播是立刻 return、不持锁不循环。真凶是 **Codex-F 遗留的持锁哨兵**(`bash -s -- fasttrack-0809-…`,PID 3092403):F 死后释放哨兵文件永不出现,它永久攥住 runner.lock,后续 tick 全被 `flock -n` 静默挡掉(挡掉不写日志=静默 7 小时)。根修方向:哨兵 TTL+父死即退、runner 侧锁看门狗告警。
+
+**配额口径事故(考据实证,报告 `docs/reviews/2026-08-10-talk-pick-quota-forensics.md`)**:Ivan 8/7 原话=游戏场放宽到 10 **但要 ≥90 分**;Ivan 8/8 原话=**20 条/≥85**。commit `4af4a88` 把 8/8 的数字写进**游戏 lane 全局常量**(10→20、90→85),结果没管到 8/8(NO_MATCH 不触发游戏 lane)却**回溯放宽了 8/7**(唯一 RESOLVED 游戏日),多进 4 条(89.0/87.25/86.75/86.0,90 门下全不合格)。8/7 合法交付数按原话应为 5。**待 Ivan 裁**:①8/7 这 4 条追认还是退回 ②8/8 用 F13 的 15 还是当场原话 20/85。根修在做:配额政策改按日期显式资产+准入时冻结,禁止改常量回溯翻案。
+
+首个 tick 仍需盯 **F12 无 kill switch**:若判官系统性漏 `addressee_attribution` 键会成批 `BLOCKED_SOURCE_FACT_REVIEW`,系统性即回滚部署。
 
 **磁盘**:free 15G→44G(回收 29.7GiB,清单 `cleanup_manifests/free_autoslice_capacity_cleanup_20260810.json`)。
 
