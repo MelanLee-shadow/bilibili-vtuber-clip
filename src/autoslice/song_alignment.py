@@ -150,8 +150,17 @@ def _build_lyric_queries(
     return list(dict.fromkeys(q for q in queries if q))
 
 
-def generate_llm_song_queries(window: Sequence[SourceCue], llm_call: LlmCall, *, max_lines: int = 18) -> list[str]:
-    """Ask an LLM to recognize the song(s) behind garbled ASR lyrics."""
+def generate_llm_song_queries(window: Sequence[SourceCue], llm_call: LlmCall, *, max_lines: int = 120) -> list[str]:
+    """Ask an LLM to recognize the song(s) behind garbled ASR lyrics.
+
+    ``max_lines`` 18 -> 120 (2026-08-10)：这是**输入采样帽**，不是内容门 ——
+    LRC 召回/歧义/对齐阈值（0.20 / 0.08 / 0.55）一字未动。权威的 ``_full``
+    复证窗按 SONG_PROOF_RETRY_PRE/POST_MS 开成 2 分钟前摇 + 6 分钟后摇，常态
+    200+ cue；18 行帽把 2026-08-07 那条 214-cue 窗抽成 1/12，整段演唱只剩 3
+    条同音错字，模型照 prompt 指示正确返回空数组 —— 4/6 条 ``_full`` attempt
+    的「no usable song guesses」全来自这里，短窗反而认得出。详见
+    docs/reviews/2026-08-10-song-lane-forensics.md。
+    """
 
     lines = [cue.text.strip().replace("\n", " ") for cue in window if cue.text.strip()]
     if len(lines) > max_lines:
