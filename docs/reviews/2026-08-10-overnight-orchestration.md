@@ -565,9 +565,12 @@ song_boundary      = {"status": "FULL_SONG_READY", "first_lyric_start_ms": 15000
 **剩余一步**:lane 层还要"positive LRC boundary proof",tight 窗(1195–1352s)没给出,
 已自动用 `_full` 窗(1090–1692s)重试中。三条歌今晚都走了同一条 tight→full 的升级路径,是设计内行为。
 
-## 六之十八、⭐ **歌切为什么"从来没有"发出去过:交付物化(materialized_recut)整段缺失**
+## 六之十八、⭐ 歌切根因(**已被 Ivan 推翻并修正,以本节修正版为准**)
 
-这是今晚最有价值的发现,也直接回答了"为什么这三天歌切产出恒为 0"。
+> **更正声明**:我最初写的是「歌切从来没发出去过,因为交付物化整段缺失/从未实现」。
+> **这是错的**,Ivan 直接指出「很可能是你没有在 wsl 和 mac 上找,东西不一定只在 free 上」。
+> 我据此复查,**结论被推翻**——见下。原错误结论产生的原因:我只 `find` 了 free 的 `out/`,
+> **没搜 `review_packages/`,也没搜 Mac/wsl**,就下了"从来没有"的全称判断。
 
 `song_210131_1210`(心型病毒)最终 state 逐字:
 ```
@@ -592,10 +595,43 @@ song_completion_evidence.song_boundary_status = "FULL_SONG_READY"
 这与项目 memory 里记的「`song_212005` materialized_recut 交付集成缺口 fail-closed」是同一件事。
 free 上 `find` 全盘**没有任何一个已交付的歌包**,与此一致。
 
-**结论(要紧)**:**只修证明侧的门,永远不会产出歌切**。
-今晚 D1 / F3 / provenance lane / 名额降级四个修复都验证成功了,它们把候选从
-"因假原因被误杀 / 无限重试"推进到"证明齐备",但**最后的物化交付环节需要被实现**,不是被放宽。
-建议单独立项:让通过证明的歌候选真正走完 recut → 烧录 → manifest → 绑定 这一段。
+### 事实更正:**歌切成功发布过,物化链路是通的**
+`publication_registry` 里有:
+```
+song_192000_1321  →  BV1BJGc6aEWf  published / VERIFIED_PUBLIC
+标题《【李豆沙】豆沙歌，《海海海》》  录制日 2026-07-25  cid 40462319895
+```
+完整交付包在 **`/opt/bilive/autoslice/review_packages/2026-07-25/song_192000_1321-r3/`**
+(mp4 / srt / 封面四件 / `recut.manifest.json` / `delivery.manifest.json` /
+`host-vocal-proof.json` / `package_audit.json` / `review_manifest.json` /
+`authorized-upload.manifest.json` + uploaded/public_verify/season_verify 回执)。
+**所以 recut → 烧录 → manifest → 绑定 → 上传这一整段是实现过、跑通过、发布过的。**
+
+### 那 `SONG_MATERIALIZED_RECUT_MISSING` 是什么
+它是**下游症状,不是根因**。`song_completion.py:939` 的判据是
+`record["materialized_recut"]` 是否为 `status=="MATERIALIZED"` 的 dict ——
+它检查的是**物化有没有已经发生并被记录**。
+
+对照两条:
+| | 7/25《海海海》(成功) | 8/8《心型病毒》(今晚) |
+|---|---|---|
+| `decision` | **`AUTO_RECUT`** | **`REJECT`** |
+| `song_complete` | True | False |
+| `reason_codes` | `['SONG_FULL_BOUNDARY_READY']` | `START_BOUNDARY_LOW` / `END_BOUNDARY_LOW` / `OPEN_LOOPS_PRESENT` / `CPA_SEMANTIC_INCOMPLETE` / `CPA_RELEASE_NOT_READY` / `VIEWER_CONTEXT_INCOMPLETE` / `SONG_NOT_LIDOUSHA_SINGING` / + recut 族 |
+| `completion.ready` | True,codes `[]` | false |
+| `delivered` | 真实 mp4 路径 | None |
+
+→ **候选先因编排/边界/语义类判据被判 `REJECT`,于是根本没走到物化,
+于是 `materialized_recut` 缺席,于是那一族 `SONG_RECUT_*` 码全亮。**
+
+### 修正后的结论
+- **不要**去"实现物化交付"——它已经存在且发布过。
+- 今晚真正拦住《心型病毒》的是**编排/边界/语义判据**:
+  `START_BOUNDARY_LOW` / `END_BOUNDARY_LOW` / `OPEN_LOOPS_PRESENT` /
+  `CPA_SEMANTIC_INCOMPLETE` / `VIEWER_CONTEXT_INCOMPLETE` / `SONG_NOT_LIDOUSHA_SINGING`,
+  与 lane 日志的 "positive LRC boundary proof is missing" 一致。
+- **诚实标注**:上面这条因果链(拒 → 不物化 → recut 族亮)我是**按两条实例对照 + 判据代码**推出的,
+  **没有逐行走读 `AUTO_RECUT` 分支的调用顺序**。方向我有把握,但若要据此动代码,请先补这一步走读。
 
 **另一条独立的门也红了**:`SONG_NOT_LIDOUSHA_SINGING`(host 声纹未确认是李豆沙在唱)。
 注意前会话法证记录的同一条曾是 **28/28 `LIDOUSHA SINGING_THIS_LYRIC`**,
