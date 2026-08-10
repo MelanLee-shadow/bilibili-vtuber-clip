@@ -297,6 +297,12 @@
       "status": "published",
       "bvid": "BV13zuX6fEwh",
       "note": "8/8 快车道第二条(多嘉宾 speaker 拒件,Ivan A/B 真值消费):F 断供接力链(边界 floor pin a8600994+speaker v2 部署+terminal-projection 验收面 df4afed);交付字幕与 Ivan 基线逐字节(0efb9995);标题两轮手术至中性归属定稿(F12 立法适用,回执 76cd2374);audit passed/QC PASS;上传 2026-08-09T22:49Z aid=117067973921757 CID=40762673619;证据 2026-08-10-1722-fasttrack/。"
+    },
+    {
+      "candidate_id": "auto_223750_913_1322",
+      "recording_date": "2026-08-07",
+      "status": "hold_pending_review",
+      "note": "Ivan 2026-08-10 逐字：「先这么做，贪生怕死这个不要上传」。背景：Ivan 2026-08-08 逐字「贪生怕死那个是因为根本没有分人声所以我没有审阅」与「贪生怕死这个也需要改成说话人分离的版本，不过你先别改，先等根因修复之后再说」。2026-08-10 扫全部 4573 个 jsonl 复核：Ivan 从未对本候选说过「因为不是主角所以不传」——那条「非李豆沙主角」裁定属 auto_210739_1142_1436（本表上一条 hold），勿混。放行需 Ivan 明示。"
     }
   ]
 }
