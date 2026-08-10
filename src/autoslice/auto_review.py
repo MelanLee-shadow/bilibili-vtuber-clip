@@ -22,6 +22,26 @@ REQUIRED_PUBLISH_ARTIFACT_KEYS: tuple[str, ...] = (
     "publish_json_sha256",
 )
 
+# Typed provenance lanes.  A jingting manifest is valid evidence when it says
+# HONESTLY which layer produced the refined subtitle — not only when that layer
+# happened to be agy.  Ivan 2026-07-19（项目 memory）：AGY 订阅 / 免费 key /
+# 付费 backup 是同一个 Gemini 模型的配额顺序，「按 provider 层拒证据的门 = 过度
+# 限制」，处方是「任一层证据有效 + 按层钉模型串」。Ivan 2026-08-10：「需要调用
+# AGY->gemini 这条链的，全都复用一种接口才好」/「CPA请求失败的逻辑是积极重试，
+# 而不是判候选死，毕竟这跟候选没有关系啊」。
+JINGTING_LANE_AGY = "agy"
+JINGTING_LANE_GEMINI_API_FALLBACK = "gemini_api_fallback"
+JINGTING_LANE_SONG_LRC_BYPASS = "song_lrc_bypass"
+JINGTING_LANE_UNKNOWN = "unknown"
+
+# ``source_context_executor`` deliberately skips agy refinement for songs: the
+# independently fetched LRC plus audio alignment is the subtitle authority, so a
+# talk-style multimodal rewrite is both redundant and an avoidable provider
+# dependency.  That bypass writes this exact self-attesting triple.
+SONG_LRC_BYPASS_PROVIDER = "source_draft_context"
+SONG_LRC_BYPASS_AUTHORITY_SCOPE = "proof_context_only_external_lrc_required"
+GEMINI_API_FALLBACK_PROVIDER = "gemini_api"
+
 
 class DecisionAction(StrEnum):
     AUTO_UPLOAD = "AUTO_UPLOAD"
@@ -33,13 +53,21 @@ class DecisionAction(StrEnum):
 
 @dataclass(frozen=True)
 class JingtingProvenance:
-    """Machine-readable proof that jingting subtitles came from agy without fallback."""
+    """Machine-readable proof of WHICH layer produced the jingting subtitle.
+
+    ``refinement_required``/``subtitle_authority_scope`` are the song lane's
+    self-attestation that agy refinement was deliberately skipped.  Dropping
+    them (as this dataclass used to) makes a designed bypass indistinguishable
+    from an unauthorized provider substitution — the 2026-08-07 root cause.
+    """
 
     manifest_present: bool = False
     provider: str | None = None
     agy_rc: int | None = None
     model: str | None = None
     provider_fallback_used: bool | None = None
+    refinement_required: bool | None = None
+    subtitle_authority_scope: str | None = None
 
     @classmethod
     def from_manifest(cls, manifest: Mapping[str, object] | None) -> "JingtingProvenance":
@@ -51,10 +79,27 @@ class JingtingProvenance:
             agy_rc=_optional_int(manifest.get("agy_rc")),
             model=_optional_str(manifest.get("model")),
             provider_fallback_used=_optional_bool(manifest.get("provider_fallback_used")),
+            refinement_required=_optional_bool(manifest.get("refinement_required")),
+            subtitle_authority_scope=_optional_str(manifest.get("subtitle_authority_scope")),
         )
 
+    def lane(self) -> str:
+        """Which typed provenance lane this manifest claims, if any."""
+
+        if (
+            self.provider == SONG_LRC_BYPASS_PROVIDER
+            and self.refinement_required is False
+            and self.subtitle_authority_scope == SONG_LRC_BYPASS_AUTHORITY_SCOPE
+        ):
+            return JINGTING_LANE_SONG_LRC_BYPASS
+        if self.provider == GEMINI_API_FALLBACK_PROVIDER:
+            return JINGTING_LANE_GEMINI_API_FALLBACK
+        if self.provider == JINGTING_LANE_AGY:
+            return JINGTING_LANE_AGY
+        return JINGTING_LANE_UNKNOWN
+
     def to_metadata(self) -> dict[str, object]:
-        return asdict(self)
+        return {**asdict(self), "lane": self.lane()}
 
 
 @dataclass(frozen=True)
@@ -220,6 +265,9 @@ def review_candidate(candidate: CandidateReview) -> ReviewDecision:
         "JINGTING_PROVIDER_NOT_AGY",
         "JINGTING_AGY_FAILED",
         "JINGTING_MODEL_MISSING",
+        # A bypass manifest that claims a model string is lying about which
+        # layer ran.  Provenance dishonesty is a BLOCK, never a retry.
+        "JINGTING_BYPASS_MODEL_UNEXPECTED",
         "JINGTING_PROVIDER_FALLBACK_USED",
         "JINGTING_PROVIDER_FALLBACK_UNKNOWN",
         "RELEASE_READY_MISSING",
@@ -402,12 +450,49 @@ def evaluate_required_evidence(candidate: CandidateReview) -> tuple[ProvenanceCh
 
 
 def evaluate_jingting_provenance(provenance: JingtingProvenance | None) -> tuple[ProvenanceCheck, ...]:
+    """Fail-closed provenance checks, evaluated per typed lane.
+
+    Every lane still has to prove the SAME four things — an execution outcome,
+    an honest model string (or an honest declaration that no model ran), an
+    honest fallback flag, and a recognized provider.  What changed on
+    2026-08-10 is that "recognized provider" is no longer a synonym for
+    ``agy``: a fully self-attesting song-LRC bypass and a fully self-attesting
+    Gemini API failover are evidence, not violations.  An INCOMPLETE
+    self-attestation blocks exactly as before.
+    """
+
     if provenance is None:
         provenance = JingtingProvenance(manifest_present=False)
 
-    provider_accepted = provenance.provider == "agy"
-    execution_succeeded = provenance.agy_rc == 0
-    fallback_accepted = provenance.provider_fallback_used is False
+    lane = provenance.lane()
+    provider_accepted = lane != JINGTING_LANE_UNKNOWN
+
+    if lane == JINGTING_LANE_SONG_LRC_BYPASS:
+        # No model ran, so claiming one is a dishonest manifest — the mirror
+        # image of, not an instance of, JINGTING_MODEL_MISSING.
+        model_passed = provenance.model is None
+        model_reason = None if model_passed else "JINGTING_BYPASS_MODEL_UNEXPECTED"
+        execution_succeeded = provenance.agy_rc == 0
+        fallback_accepted = provenance.provider_fallback_used is False
+    elif lane == JINGTING_LANE_GEMINI_API_FALLBACK:
+        # 按层钉模型串: the failover must name the model it actually ran and
+        # must record that the agy leg was attempted and how it exited.
+        model_passed = bool(provenance.model)
+        model_reason = None if model_passed else "JINGTING_MODEL_MISSING"
+        execution_succeeded = provenance.agy_rc is not None
+        fallback_accepted = provenance.provider_fallback_used is True
+    else:
+        model_passed = bool(provenance.model)
+        model_reason = None if model_passed else "JINGTING_MODEL_MISSING"
+        execution_succeeded = provenance.agy_rc == 0
+        fallback_accepted = provenance.provider_fallback_used is False
+
+    lane_evidence = {
+        "lane": lane,
+        "provider": provenance.provider,
+        "refinement_required": provenance.refinement_required,
+        "subtitle_authority_scope": provenance.subtitle_authority_scope,
+    }
     return (
         ProvenanceCheck(
             code="JINGTING_MANIFEST_PRESENT",
@@ -421,28 +506,32 @@ def evaluate_jingting_provenance(provenance: JingtingProvenance | None) -> tuple
             passed=provider_accepted,
             severity="BLOCK",
             reason_code=None if provider_accepted else "JINGTING_PROVIDER_NOT_AGY",
-            evidence={"provider": provenance.provider},
+            evidence=lane_evidence,
         ),
         ProvenanceCheck(
             code="JINGTING_AGY_SUCCESS",
             passed=execution_succeeded,
             severity="BLOCK",
             reason_code=None if execution_succeeded else "JINGTING_AGY_FAILED",
-            evidence={"agy_rc": provenance.agy_rc},
+            evidence={"agy_rc": provenance.agy_rc, "lane": lane},
         ),
         ProvenanceCheck(
             code="JINGTING_MODEL_RECORDED",
-            passed=bool(provenance.model),
+            passed=model_passed,
             severity="BLOCK",
-            reason_code=None if provenance.model else "JINGTING_MODEL_MISSING",
-            evidence={"model": provenance.model},
+            reason_code=model_reason,
+            evidence={"model": provenance.model, "lane": lane},
         ),
         ProvenanceCheck(
             code="JINGTING_PROVIDER_FALLBACK_NOT_USED",
             passed=fallback_accepted,
             severity="BLOCK",
-            reason_code=None if fallback_accepted else _fallback_reason_code(provenance.provider_fallback_used),
-            evidence={"provider_fallback_used": provenance.provider_fallback_used},
+            reason_code=(
+                None
+                if fallback_accepted
+                else _fallback_reason_code(provenance.provider_fallback_used, lane=lane)
+            ),
+            evidence={"provider_fallback_used": provenance.provider_fallback_used, "lane": lane},
         ),
     )
 
@@ -465,7 +554,13 @@ def _decision_score(candidate: CandidateReview) -> float:
     return candidate.editorial_score if candidate.editorial_score is not None else 0.0
 
 
-def _fallback_reason_code(provider_fallback_used: bool | None) -> str | None:
+def _fallback_reason_code(
+    provider_fallback_used: bool | None, *, lane: str = JINGTING_LANE_AGY
+) -> str | None:
+    if lane == JINGTING_LANE_GEMINI_API_FALLBACK:
+        # This lane REQUIRES the flag to be True.  Anything else means the
+        # manifest did not honestly say which quota layer ran.
+        return None if provider_fallback_used is True else "JINGTING_PROVIDER_FALLBACK_UNKNOWN"
     if provider_fallback_used is False:
         return None
     if provider_fallback_used is True:

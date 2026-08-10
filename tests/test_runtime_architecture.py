@@ -299,7 +299,13 @@ FOCUSED_MODULE_LINE_BUDGETS = {
     # 地板，margin 消歧义不变；8d4b09b 已把该案首版试过又回退的 family-match
     # 死函数删掉（-13 行），净增贴当前实际值。测试 test_song_alignment.py 的
     # 对应 bypass/floor-holds 回归用例。
-    Path("src/autoslice/song_alignment.py"): 1_185,
+    # 2026-08-10 +9：generate_llm_song_queries 的 max_lines 采样帽 18 -> 120
+    # （权威 _full 复证窗 200+ cue 被抽成 1/12，演唱段落只剩 3 条 → 模型正确
+    # 返回空猜测；4/6 条 8/7 _full attempt 的「no usable song guesses」根因）。
+    # 净增全在解释该判断的注释上，阈值与逻辑各只动一个数字；LRC 召回/歧义/
+    # 对齐阈值一字未动。测试 test_jingting_provenance_lanes.py 的
+    # TestSongHintSamplingDensity。
+    Path("src/autoslice/song_alignment.py"): 1_194,
     Path("src/autoslice/song_performance.py"): 1_200,
     Path("src/autoslice/speaker_common.py"): 100,
     Path("src/autoslice/speaker_context.py"): 500,

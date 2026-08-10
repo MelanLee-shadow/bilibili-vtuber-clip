@@ -187,7 +187,22 @@ def test_non_agy_provider_blocks_auto_upload():
     assert "JINGTING_PROVIDER_NOT_AGY" in decision.reason_codes
 
 
-def test_gemini_api_fallback_provenance_is_rejected():
+def test_gemini_api_fallback_without_recorded_agy_outcome_is_rejected():
+    """2026-08-10 改判：拒绝的理由从「provider 不是 agy」改成「没说清 AGY 那条腿
+    怎么失败的」。
+
+    旧断言（``JINGTING_PROVIDER_NOT_AGY`` / ``JINGTING_PROVIDER_FALLBACK_USED``）
+    是一个**按 provider 层拒证据的门**——Ivan 2026-07-19 已拍板：AGY 订阅 /
+    免费 3key / 付费 backup 是同一个 Gemini 模型（``gemini-3.6-flash``）的配额
+    顺序，「按 provider 层拒证据的门 = 过度限制」，处方是「任一层证据有效 +
+    按层钉模型串」。2026-08-10 free 实测三把免费 key 全部 HTTP 200 可用，
+    进一步坐实了这里拦掉的不是「没有证据」或「证据质量差」，而是「证据来自
+    同一模型的另一个配额层」。
+
+    这条 manifest 仍然被 BLOCK——因为 ``agy_rc=None`` 意味着它没有如实记录
+    AGY 那条腿是否尝试过、怎么退出的。fail-closed 保留，只是理由变准确了。
+    """
+
     decision = review_candidate(
         base_candidate(
             candidate_id="gemini-api-fallback",
@@ -201,9 +216,28 @@ def test_gemini_api_fallback_provenance_is_rejected():
     )
 
     assert decision.action == DecisionAction.BLOCK
-    assert "JINGTING_PROVIDER_NOT_AGY" in decision.reason_codes
     assert "JINGTING_AGY_FAILED" in decision.reason_codes
-    assert "JINGTING_PROVIDER_FALLBACK_USED" in decision.reason_codes
+    assert "JINGTING_PROVIDER_NOT_AGY" not in decision.reason_codes
+    assert "JINGTING_PROVIDER_FALLBACK_USED" not in decision.reason_codes
+
+
+def test_fully_typed_gemini_api_fallback_provenance_is_accepted():
+    """按层钉模型串齐全（模型串 + 兜底标记 + AGY 退出码）→ 有效证据。"""
+
+    decision = review_candidate(
+        base_candidate(
+            candidate_id="gemini-api-fallback-typed",
+            jingting_provenance=good_jingting_provenance(
+                provider="gemini_api",
+                agy_rc=1,
+                provider_fallback_used=True,
+                model="gemini-3.6-flash",
+            ),
+        )
+    )
+
+    assert decision.action == DecisionAction.AUTO_UPLOAD
+    assert decision.reason_codes == ()
 
 
 def test_provider_fallback_used_or_unknown_blocks_auto_upload():

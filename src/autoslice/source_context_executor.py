@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
+from src.autoslice.auto_review import GEMINI_API_FALLBACK_PROVIDER
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.term_lexicon import load_discovered_term_lexicon, normalize_text
 
@@ -549,6 +550,19 @@ def _agy_reason_codes(
 ) -> tuple[str, ...]:
     if not refinement_required and result.provider == "source_draft_context":
         return ()
+    if result.provider == GEMINI_API_FALLBACK_PROVIDER:
+        # Ivan 2026-07-19（项目 memory）：AGY 订阅 / 免费 3key / 付费 backup 是
+        # 同一个 Gemini 模型的配额顺序，「按 provider 层拒证据的门 = 过度限制」；
+        # 处方是「任一层证据有效 + 按层钉模型串」。所以兜底本身不是拒绝理由,
+        # 但它必须如实说明用了哪一层、跑的哪个模型、AGY 那条腿怎么退出的。
+        reasons = []
+        if result.provider_fallback_used is not True:
+            reasons.append("JINGTING_PROVIDER_FALLBACK_UNKNOWN")
+        if not result.model:
+            reasons.append("JINGTING_MODEL_MISSING")
+        if result.agy_rc is None:
+            reasons.append("AGY_FAILED")
+        return tuple(dict.fromkeys(reasons))
     reasons: list[str] = []
     if result.provider != "agy":
         reasons.append("JINGTING_PROVIDER_NOT_AGY")

@@ -228,7 +228,20 @@ def test_agy_retry_after_is_persisted_for_autonomous_resume(tmp_path):
     assert review_required["metadata"]["retry_after_seconds"] == 2458
 
 
-def test_gemini_api_fallback_is_rejected_as_source_context_provider(tmp_path):
+def test_gemini_api_fallback_without_recorded_agy_outcome_is_rejected(tmp_path):
+    """2026-08-10 改判：拒绝理由从「provider 不是 agy」改成「没记录 AGY 那条腿
+    怎么退出的」。
+
+    旧断言是一个**按 provider 层拒证据的门**。Ivan 2026-07-19 拍板（项目
+    memory）：AGY 订阅 / 免费 3key / 付费 backup 是同一个 Gemini 模型的配额
+    顺序，「按 provider 层拒证据的门 = 过度限制」，处方是「任一层证据有效 +
+    按层钉模型串」。歌lane 的音频/LRC 证明链
+    （``song_common.validate_audio_lrc_execution_metadata``）早就是这么做的，
+    source-context 这一层是唯一还没跟上的。
+
+    ``agy_rc=None`` 仍然 RETRY_INFRA —— fail-closed 保留，理由变准确。
+    """
+
     source = tmp_path / "source.mp4"
     source.write_bytes(b"source bytes")
     srt = tmp_path / "full.srt"
@@ -254,10 +267,47 @@ def test_gemini_api_fallback_is_rejected_as_source_context_provider(tmp_path):
     )
 
     assert result.decision == "RETRY_INFRA"
-    assert "JINGTING_PROVIDER_NOT_AGY" in result.reason_codes
-    assert "JINGTING_PROVIDER_FALLBACK_USED" in result.reason_codes
+    assert "AGY_FAILED" in result.reason_codes
+    assert "JINGTING_PROVIDER_NOT_AGY" not in result.reason_codes
+    assert "JINGTING_PROVIDER_FALLBACK_USED" not in result.reason_codes
     manifest = json.loads(Path(result.jingting_manifest_path).read_text(encoding="utf-8"))
     assert manifest["provider"] == "gemini_api"
+    assert manifest["provider_fallback_used"] is True
+
+
+def test_fully_typed_gemini_api_fallback_is_accepted_as_source_context_provider(tmp_path):
+    """按层钉模型串齐全（模型串 + fallback=True + AGY 退出码）→ READY。"""
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source bytes")
+    srt = tmp_path / "full.srt"
+    write_srt(srt)
+
+    def gemini_fallback_runner(_media, draft, output) -> AgyExecutionResult:
+        output.write_text(draft.read_text(encoding="utf-8"), encoding="utf-8")
+        return AgyExecutionResult(
+            provider="gemini_api",
+            model="gemini-3.6-flash",
+            agy_rc=1,
+            provider_fallback_used=True,
+            provider_request_id="fallback-job",
+        )
+
+    result = execute_source_context_job(
+        job_manifest_for_source(source),
+        source_video_path=source,
+        output_dir=tmp_path / "out",
+        full_source_srt_path=srt,
+        agy_runner=gemini_fallback_runner,
+        run_ffmpeg=False,
+    )
+
+    assert result.decision == "READY"
+    assert result.reason_codes == ()
+    assert result.jingting_done is True
+    manifest = json.loads(Path(result.jingting_manifest_path).read_text(encoding="utf-8"))
+    assert manifest["provider"] == "gemini_api"
+    assert manifest["model"] == "gemini-3.6-flash"
     assert manifest["provider_fallback_used"] is True
 
 
