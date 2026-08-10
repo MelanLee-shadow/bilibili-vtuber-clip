@@ -114,11 +114,17 @@ def quiet_window(base: str) -> list[str]:
     if os.path.exists(lock):
         held = subprocess.run(["fuser", lock], capture_output=True, text=True)
         holders = {int(tok) for tok in held.stdout.split() if tok.isdigit()}
+        ancestry = _own_process_ancestry()
         # Running under `flock runner.lock` is the *intended* way to delete:
-        # taking the lock is what stops the next cron tick from starting. Our
-        # own flock must not read as someone else's tick.
-        foreign = holders - _own_process_ancestry()
-        if foreign:
+        # taking the lock is what stops the next cron tick from starting.
+        # fuser reports everyone with the file *open*, which is not the same as
+        # holding the lock — a stale reader shows up there too. flock is
+        # exclusive, so once an ancestor of ours holds it nobody else can, and
+        # the remaining open handles are noise. Only when we do NOT hold it
+        # does a foreign handle mean someone else's tick (or, as on 2026-08-09,
+        # an orphaned sentinel that sat on the lock for seven hours).
+        foreign = holders - ancestry
+        if foreign and not (holders & ancestry):
             problems.append(f"runner.lock is held by another process: {sorted(foreign)}")
     return problems
 
