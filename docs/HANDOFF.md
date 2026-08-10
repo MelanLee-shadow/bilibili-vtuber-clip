@@ -26,8 +26,14 @@
    8/8 与 8/9 合计 **0/11**,8/9 那批 **4/4** 全死于 `subtitle_authority/final_review_findings`,**与素材类型无关**。
    B=纯修 bug(白名单 3 个分支名 vs 引擎 7+),但救不了当下;D=解锁全部,**但会发出审片员已判错的字幕**。
    更深:终审**没有 apply 通道**,"判定该改"的 finding 永远回不到 resolved。
-2. **歌切交付物化缺失** —— 证明侧全绿仍 `candidate_rejected`
-   (`SONG_MATERIALIZED_RECUT_MISSING` + 7 个 recut binding invalid)。**只修证明门永远产不出歌**,需单独立项。
+2. **歌切:被编排/边界/语义判据拒**(⚠️ 此条我先写错过,已更正)——
+   **物化链路是通的**:`song_192000_1321`《海海海》2026-07-25 已发布 `BV1BJGc6aEWf`,
+   完整包在 `review_packages/2026-07-25/song_192000_1321-r3/`。
+   `SONG_MATERIALIZED_RECUT_MISSING` 那一族是**被判 REJECT 之后的下游症状**。
+   真正拦住《心型病毒》的是 `START_BOUNDARY_LOW` / `END_BOUNDARY_LOW` / `OPEN_LOOPS_PRESENT` /
+   `CPA_SEMANTIC_INCOMPLETE` / `VIEWER_CONTEXT_INCOMPLETE` / `SONG_NOT_LIDOUSHA_SINGING`
+   (成功件对照:`decision=AUTO_RECUT`、`reason_codes=['SONG_FULL_BOUNDARY_READY']`)。
+   → 该看的是这些编排/边界判据对当前素材是不是过严,**不是去重写物化**。
 3. **sudocode 分组路由(Ivan #8)** —— 实测每请求 15–17% 失败;客户端缓解已部署,根治在他 oracle。
 4. 1323 合集分P标题 —— 契约已查清(整节重排写),**需先部署 `tmp-section-title` 的修正**再实调,或他手改一行。
 
