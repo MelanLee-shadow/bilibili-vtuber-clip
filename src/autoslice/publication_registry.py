@@ -10,6 +10,14 @@
 - hold_pending_review 候选：Ivan 放行前禁止任何上传；
 - released_for_upload 候选：保留历史 hold 与 Ivan 放行证据，但不再阻断新投稿；
 - registry 缺失或不可读时 fail-closed（宁可拒发也不重复出版）。
+
+2026-08-10 贪生怕死（auto_223750_913_1322）：封面维护车道当时只认 published，
+被 Ivan 明令搁置的 hold 件照旧每个 tick 刷预算、出图（已烧 9 次尝试），而按
+定义那些像素永远不会被上传。Ivan 逐字「贪生怕死不需要进行上传，就不需要封面
+了」。所以 cover 闸口按 ``_BLOCKING_STATUSES`` 成员判定：登记里凡是阻断上传
+的状态，一律不再为它花图片额度。判据是每次调用现读 committed registry 的纯
+函数，不在 state 里写任何 hold 标记——Ivan 把该行改成 released_for_upload，
+下一 tick 封面自然恢复，没有需要人工清理的终态。
 """
 
 from __future__ import annotations
@@ -182,13 +190,24 @@ def cover_maintenance_block_reason(
     registry: Mapping | None = None,
     registry_path: Path | None = None,
 ) -> str | None:
-    """Refuse generic cover maintenance for an already-published candidate.
+    """Refuse generic cover maintenance for any upload-blocked candidate.
 
     Cover-policy fingerprints intentionally invalidate old evidence, but that
     must never turn the unattended maintenance loop into an implicit same-BV
     repair lane. Published pixels may change only through the explicit
     authorized repair workflow. Registry read failures also stop maintenance:
     spending image quota is not safe while publication identity is unknown.
+
+    ``hold_pending_review`` is refused for a different reason with the same
+    conclusion: a held candidate cannot be uploaded at all, so every image
+    request spent on its cover is pure waste. The membership test is
+    ``_BLOCKING_STATUSES`` itself so a future blocking status cannot silently
+    keep burning image quota — an unknown blocking status falls back to a
+    generic refusal rather than to spending.
+
+    This is a *cover* gate only; it never widens the upload gate, and it
+    persists nothing — flipping the row to ``released_for_upload`` restores
+    normal cover maintenance on the next call.
     """
 
     cid = str(candidate_id or "").strip()
@@ -208,12 +227,26 @@ def cover_maintenance_block_reason(
         row_date = str(row.get("recording_date") or "")
         if recording_date and row_date and row_date != recording_date:
             continue
-        if row.get("status") == "published":
+        status = row.get("status")
+        if status not in _BLOCKING_STATUSES:
+            continue
+        if status == "published":
             return (
                 f"candidate {cid} is already published as {row.get('bvid')}; "
                 "generic cover maintenance is forbidden and any pixel change "
                 "must use the authorized same-BV repair lane"
             )
+        if status == "hold_pending_review":
+            return (
+                f"candidate {cid} is held pending Ivan's review"
+                f" ({row.get('note') or 'no note'}) — it cannot be uploaded, "
+                "so no cover is generated or repaired until the registry "
+                "releases it"
+            )
+        return (
+            f"candidate {cid} is upload-blocked by the publication registry "
+            f"({status}); no image quota is spent on its cover"
+        )
     return None
 
 

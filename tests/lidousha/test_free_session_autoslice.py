@@ -1046,6 +1046,148 @@ def test_published_1533_is_suppressed_before_any_cover_maintenance(
     assert logs and "already published" in logs[0]
 
 
+def _held_registry(tmp_path, monkeypatch, *, status: str) -> Path:
+    """把出版登记指到临时文件，并断开 runtime overlay（本机没有 /opt/bilive）。"""
+
+    from src.autoslice import publication_registry
+
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path / "no-runtime-base"))
+    path = tmp_path / "publication_registry.v1.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "publication-registry.v1",
+                "entries": [
+                    {
+                        "candidate_id": "auto_223750_913_1322",
+                        "recording_date": "2026-08-07",
+                        "status": status,
+                        "note": "Ivan 2026-08-10 逐字：「先这么做，贪生怕死这个不要上传」",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(publication_registry, "DEFAULT_REGISTRY_PATH", path)
+    return path
+
+
+def _tanshengpasi_pick() -> dict:
+    """free 上 2026-08-07 贪生怕死那一行的真实形状（已烧 9 次封面尝试）。"""
+
+    return {
+        "candidate_id": "auto_223750_913_1322",
+        "status": runner.TALK_COVER_PENDING_STATUS,
+        "title": "【李豆沙】平时贪生怕死不做任务的小李被“最强女高中生”宠到猛做任务",
+        "hook": "平时贪生怕死不做任务的小李被“最强女高中生”宠到猛做任务。",
+        "cover_status": "BLOCKED_AI_COVER_REQUIRED",
+        "cover_integrity_status": None,
+        "bundle_lifecycle": "PENDING_COVER",
+        "bundle_compliance": "COVER_REQUIRED",
+        "cover_diversity_slot": 1,
+        "cover_repair_attempts": 0,
+        "cover_repair_lifetime_attempts": 0,
+        "cover_repair_generation": "sha256:" + "4a" * 32,
+        "cover_repair_attempt_history": [
+            {"pipeline_fingerprint": "sha256:" + "0f" * 32, "attempts": 1},
+        ],
+    }
+
+
+def test_held_candidate_spends_no_cover_budget_and_never_reaches_generation(
+    tmp_path, monkeypatch
+):
+    """搁置件（贪生怕死）不再出图，也不空转。
+
+    Ivan 2026-08-10 逐字「贪生怕死不需要进行上传，就不需要封面了」。以前封面
+    车道只认 published，这条 hold_pending_review 每个 tick 照旧刷预算/出图，
+    烧掉的每一张按定义都不会被上传。抑制必须发生在事务恢复、预算刷新和
+    provider 调用之前，且一个字都不写回 state（否则就是每 tick 判一次、记一次
+    失败的空转）。
+    """
+
+    _held_registry(tmp_path, monkeypatch, status="hold_pending_review")
+    record = _tanshengpasi_pick()
+    baseline = json.dumps(record, ensure_ascii=False, sort_keys=True)
+    state = {"picks": [record], "songs": []}
+    logs: list[str] = []
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("held candidate reached cover maintenance")
+
+    # 这一层就是"更早的候选筛选处"：needs_cover 靠它决定要不要把这一天叫醒。
+    assert not cover_repair_needed("2026-08-07", record)
+
+    monkeypatch.setattr(runner, "delivered_paths", forbidden)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", forbidden)
+    monkeypatch.setattr(runner, "_refresh_cover_repair_budget", forbidden)
+    monkeypatch.setattr(runner, "_roll_forward_prepared_cover_transactions", forbidden)
+    monkeypatch.setattr(runner, "write_state", forbidden)
+    monkeypatch.setattr(runner.subprocess, "run", forbidden)
+    monkeypatch.setattr(runner, "log", logs.append)
+
+    runner.repair_covers("2026-08-07", state)
+
+    # 不出图、不计尝试、不刷 fingerprint 台账 —— state 一字节未动。
+    assert json.dumps(record, ensure_ascii=False, sort_keys=True) == baseline
+    assert logs and "held pending Ivan" in logs[0]
+    assert "先这么做，贪生怕死这个不要上传" in logs[0]
+
+    # 抑制封面绝不等于放宽上传门：上传唯一授权仍是那张登记表。
+    from src.autoslice.publication_registry import upload_block_reason
+
+    assert upload_block_reason(
+        "auto_223750_913_1322", recording_date="2026-08-07"
+    )
+
+
+def test_released_candidate_resumes_normal_cover_generation(tmp_path, monkeypatch):
+    """Ivan 把登记改成 released_for_upload 后，封面必须能重新开始做。
+
+    抑制是每次现读登记的纯函数，state 里没有任何 hold 痕迹，所以放行是可逆的。
+    """
+
+    _held_registry(tmp_path, monkeypatch, status="released_for_upload")
+    record = _tanshengpasi_pick()
+    state = {"picks": [record], "songs": []}
+
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:" + "a" * 64)
+    monkeypatch.setattr(runner, "cover_ref_for", lambda _date, _cid: None)
+    monkeypatch.setattr(runner, "child_env_for_date", lambda _date: {})
+    monkeypatch.setattr(runner, "_cover_authority_preflight", lambda *_args: None)
+    monkeypatch.setattr(runner, "write_state", lambda _date, _state: None)
+    (runner.BASE / "logs").mkdir(parents=True)
+    mp4 = tmp_path / "clip.mp4"
+    mp4.write_bytes(b"video")
+    cover = tmp_path / "clip.cover.png"
+    monkeypatch.setattr(runner, "delivered_paths", lambda _date, _rec: (mp4, cover))
+
+    assert cover_repair_needed("2026-08-07", record)
+
+    commands: list[list[str]] = []
+
+    class Completed:
+        returncode = 1
+
+    def generate(command, **_kwargs):
+        commands.append(command)
+        return Completed()
+
+    monkeypatch.setattr(runner.subprocess, "run", generate)
+
+    runner.repair_covers("2026-08-07", state)
+
+    assert commands, "released candidate must reach the cover generator again"
+    assert record["cover_repair_attempts"] == 1
+    assert record["cover_integrity_status"] == "INVALID_REPAIR_PENDING"
+    # 预算按新 fingerprint 正常刷新，而不是停在 hold 期间的化石值。
+    assert record["cover_repair_generation"] == "sha256:" + "a" * 64
+
+
 def test_cover_repair_bounded_and_skips_undelivered(tmp_path, monkeypatch):
     rec = _delivered_talk_pick(tmp_path, monkeypatch, with_cover=False)
     rec["cover_repair_attempts"] = COVER_REPAIR_MAX_ATTEMPTS
