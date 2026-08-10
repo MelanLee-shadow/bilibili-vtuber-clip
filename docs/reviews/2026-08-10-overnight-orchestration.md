@@ -513,6 +513,29 @@ song lane song_200130_1012: song identified but positive LRC boundary proof is m
 ——**正是被旧门误判成 `JINGTING_PROVIDER_NOT_AGY` + `JINGTING_MODEL_MISSING` 的那个"设计内旁路"**,
 现在不再喷噪声码,链条得以继续往下走。
 
+## 六之十七、**D1 修复生产验证成功:心型病毒的 `reason_codes` 清空了**
+
+11:01 歌 lane 跑到 `song_210131_1210`《心型病毒 (Live)》。今晚新 attempt(`v860himc`)的
+`song_repair` 回执逐字:
+```
+song_title         = 心型病毒 (Live)      artist = SNH48祁静   provider = netease
+line_count = 28    matched_line_count = 27    matched_line_ratio = 0.9643
+alignment_model    = external_lrc_global_shift.v1      offset_ms = 840
+repaired           = True
+reason_codes       = []            ← 关键
+song_boundary      = {"status": "FULL_SONG_READY", "first_lyric_start_ms": 15000,
+                      "last_lyric_end_ms": 131150, "song_title": "心型病毒 (Live)"}
+```
+
+**对照修复前**:同一条曾被 `song_common.py:335` 的 `agy_rc < 0` 判据打成
+`SONG_AUDIO_LRC_ALIGNMENT_INVALID`(逐字错误信息 `audio aligner Gemini API failover metadata is invalid`)。
+**现在 `reason_codes` 是空数组** —— 那条循环论证的误杀没有了,`repaired=True`、`FULL_SONG_READY`。
+**D1 修复在生产真实数据上验证通过。**
+(`alignment_model` 字符串保持 `external_lrc_global_shift.v1` **未改名**,生产门未被动。)
+
+**剩余一步**:lane 层还要"positive LRC boundary proof",tight 窗(1195–1352s)没给出,
+已自动用 `_full` 窗(1090–1692s)重试中。三条歌今晚都走了同一条 tight→full 的升级路径,是设计内行为。
+
 ## 七、留给 Ivan 的待裁项(未擅自决定)
 
 **按重要性排序。前两条会直接决定谈话切能不能量产。**
