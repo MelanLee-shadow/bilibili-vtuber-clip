@@ -130,6 +130,20 @@ free 单机产能已经超过上传配额,**"三天全部上传"在今晚算术�
 - **`review_ready` 包不会被 requeue**:`build_lidousha_daily_review_manifest.py:509-511` 明确
   「review_ready pick 的产物已冻结——主车道从不 re-supersede review_ready」。故部署不会毁掉已就绪的包。
 
+## 一之二、席位账(按 `assets/lidousha/talk_quota_policy_authority.v1.json` 实查)
+
+| 日期 | scope | cap | 额外席位门 | 已用 | 可再进 |
+|---|---|---|---|---|---|
+| 2026-08-07 | game(鹅鸭杀) | 10 | ≥85 | 10(满) | 0 |
+| 2026-08-08 | event(3D live) | 15 | ≥85 | 5(4 published + 1 rejected) | ~10 |
+| 2026-08-09 | **无条目 → fail-closed 回落 `default_policy`** | **5** | 无额外席位 | 0 | 5 |
+
+8/9 恰好有 5 条 pending_talk,与默认 5 席**正好吻合**,且该日**已发 0 条**——
+所以 8/9 是「878889 都上传」里唯一真正为零的缺口,配额应优先给它。
+
+**再次印证第一节的结论**:可产席位(8/8 十席 + 8/9 五席)= 15,远大于今晚可用的 ~6 个上传席。
+**瓶颈在上传配额,不在产能**;`import_external_package.py`(增外部产能)今晚不解决瓶颈。
+
 ## 六之二、**punch schema v2 部署使所有 05:50Z 之前的未发布包无法过审计**(本夜新发现)
 
 `3301e4e`(梗字去抽取式 + 新增 `no_fabricated_fact`)把封面梗字回执升到
