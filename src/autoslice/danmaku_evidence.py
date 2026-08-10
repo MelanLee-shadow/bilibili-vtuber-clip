@@ -27,6 +27,44 @@ from typing import Sequence
 
 DANMAKU_EVIDENCE_SCHEMA_VERSION = "danmaku-evidence.v1"
 
+# 选题 prompt 能带多少条弹幕爆发提示（`talk_lane.danmaku_hints()` 用）。
+#
+# ## 旧值 6 是一条实证成因，不是保守估计
+#
+# 8/7 那场 660000-690000 的爆发（x22）**检测到了**，但按 count 排在第 7，正好被
+# `danmaku_hints()` 里的 `bursts[:6]` 丢掉，选题模型连提示都没看到，于是
+# `auto_223750_578_654` 被切在包袱之前（`docs/reviews/2026-08-10-ivan-blind-review-
+# tier1-ground-truth.md`）。同一场同一个文件的直方图已经作为回归基线冻结在
+# `tests/test_boundary_payoff_extension.py::REAL_DANMAKU_BUCKETS`。
+#
+# ## 20 的依据：free 上 136 个真实弹幕 XML 全量重放
+#
+# 2026-06-24 ~ 08-10 全部录制日（`live-streaming/22966160/*/*.xml`，136 个文件、
+# 367 条爆发）按本文件的检测算术原样重放，**bucket_ms / min_count / baseline_factor
+# 一字未动**，只统计 `find_danmaku_bursts` 到底吐出多少条：
+#
+#   - blrec 30 分钟分段（n=135，这才是 talk lane 真正的喂入单位）：
+#     中位数 2、P90 7、P95 8、**最大 12**；
+#   - 另有 1 个 155 分钟整场 XML（B 站 VOD 导入形态）：**19 条**，全样本最大值。
+#
+# 取 20 = 覆盖观测到的 136 个文件的**全部**爆发，一条不丢。对照：
+# 旧的 6 会在 14.7% 的文件上丢掉共 50 条爆发；8 仍会在 4 个文件上丢掉共 18 条。
+#
+# 代价实测（真实弹幕文本渲染出的整块提示字符数）：中位 86、P95 320、全样本最大 946。
+# 同一段字幕 transcript 在 prompt 里约 23000 字符（8/7 22-37-50 实测 788 条 cue），
+# 所以提示块占比只从 1.1% 抬到最多 1.4% —— 撑不爆 prompt，也谈不上稀释注意力。
+#
+# ## 为什么必须保留上限，以及必须**显式传进来**
+#
+# 30 分钟分段结构上最多 60 个桶、即最多 30 个窗口，但长整场 XML 没有这个天花板，
+# 所以名额帽不能取消；超额时按 count 降序保留最强的，丢最弱的。
+#
+# 更要命的是 `find_danmaku_bursts` 自己的默认 `max_bursts=8` 是**第二道看不见的截断**：
+# 只放宽调用方的切片，名额仍会被它按 8 卡死。调用方因此必须把同一个常量显式传成
+# `max_bursts=`——这正是本次事故「两道帽子、小的那道藏在被调方」的同型陷阱。
+# 本模块自己的默认值保持 8 不动：`run_full_session_selector_cpa_shadow.py` 依赖它。
+DANMAKU_HINT_MAX_BURSTS = 20
+
 
 @dataclass(frozen=True)
 class DanmakuItem:

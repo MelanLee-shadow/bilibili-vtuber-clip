@@ -141,14 +141,14 @@ def danmaku_hints(xml_path: Path | None) -> str | None:
     if xml_path is None:
         return None
     try:
-        from src.autoslice.danmaku_evidence import find_danmaku_bursts, load_danmaku_xml
-
+        from src.autoslice.danmaku_evidence import DANMAKU_HINT_MAX_BURSTS, find_danmaku_bursts, load_danmaku_xml
+        # 名额（含为什么必须显式传 max_bursts）与时序呈现的依据都在那个常量的注释里。
         items = load_danmaku_xml(xml_path)
-        bursts = find_danmaku_bursts(items)
+        bursts = find_danmaku_bursts(items, max_bursts=DANMAKU_HINT_MAX_BURSTS)
     except Exception:  # noqa: BLE001 — hints are optional enrichment
         return None
     lines = []
-    for burst in bursts[:6]:
+    for burst in sorted(bursts[:DANMAKU_HINT_MAX_BURSTS], key=lambda b: (b.start_ms, b.end_ms)):
         sample = " / ".join(burst.sample_texts[:3])
         lines.append(f"{burst.start_ms // 60000:02d}:{burst.start_ms // 1000 % 60:02d} x{burst.count}: {sample}")
     return "弹幕突发时段(观众密集反应，强候选提示):\n" + "\n".join(lines) if lines else None
