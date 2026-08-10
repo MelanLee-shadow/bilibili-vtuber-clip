@@ -28,13 +28,37 @@
   8/9 三条(`auto_190617_473_766`/`auto_193611_1250_1450`/`auto_193611_1612_1693`)
 - 歌 `song_210131_1210`(心型病毒)已复活,哨兵指纹 `sanctioned-revival:bf0d008`
 - 8/7 `auto_223750_913_1322`(**贪生怕死**)封面预算已重置(9→0,带回执);
+  **它的真实状态是"等 Ivan 审阅",不是"不许上传"** —— Ivan 逐字(raw JSONL 核):
+  2026-08-08T20:05Z「贪生怕死这个也需要改成说话人分离的版本,不过你先别改,先等根因修复之后再说」;
+  2026-08-08T22:33Z「贪生怕死那个是因为根本没有分人声所以我没有审阅。」
+  (另:2026-08-09T02:20Z 那句「不要求李豆沙在画面里占主要部分」是**截图封面通用政策且是放宽**,
+   与本候选无关,勿记混。)
+  → 上传前应先做**说话人分离版本**,再交 Ivan 审阅。
   它的 9 次失败全是 `COVER_PUNCH_REVIEW_REQUIRED`(`final_punch=[]`),根因是**「梗字必须是标题连续子串」伪裁定**,
   已由 `3301e4e` 拆除,故重置合理。**它另有一条待 Ivan 裁**:是否授权 `IVAN_EXPLICIT` 整段文案封面。
 
 ### ⚠️ 未修完 —— Ivan 明确要求"先修复再重产",这些是解除 DISABLED 的前置
 1. **分步骤重试(最高价值,Ivan 亲提)**:现在整条候选是**一个原子单位**,任何一步失败=整条重来 15-90 分钟,
-   连**预算**也是整条计的(封面挑字失败 9 次就把整条命耗光,哪怕转录/烧录/说话人全过了质检)。
-   应改成:听写→纠正→语义审批→纠正→封面标题,**每步质检后推进,失败只重试该步,复用前面已过质检的成品**。
+   连**预算**也是整条计的。
+   ⚠️ **Ivan 明确纠正过**:他说的「听写→纠正→语义审批→纠正→封面标题」**只是举例**,
+   **要按真实流程拆分,不要机械照搬他的措辞**(这正是本仓伪裁定的高发姿势)。
+   **真实阶段全集**取自 `talk_lane.classify_talk_failure` 的 kind/stage 对:
+   ```
+   candidate_admission / selection_scorecard_gate / source_media_binding
+   foreign_source_transcription
+   boundary_resolution / boundary_semantic_review / boundary_retry_owner_contract
+   speaker_preflight / speaker_finalization
+   subtitle_authority(子阶段 final_review_discovery / _correction_discovery / _findings / _carryover)
+   chat_authority_finalization / redelivery_subtitle_baseline / subtitle_entity_consistency
+   source_fact_repair / title_fact_consistency
+   cover_authority_preflight / cover_maintenance
+   ```
+   与他举例的差异:没有叫"纠正"的阶段(实为 final_review_* 四子阶段 + source_fact_repair +
+   redelivery_subtitle_baseline);"语义审批"实际散在 boundary_semantic_review /
+   subtitle_entity_consistency / title_fact_consistency 三处;封面与标题是两条独立线;
+   他没提的 speaker_preflight / speaker_finalization 恰是今晚判死候选的一类。
+   **重要先例**:封面**已经**有独立预算(`COVER_REPAIR_LIFETIME_ATTEMPT_CAP=9`),
+   所以"按阶段分预算+分阶段重试"在本仓**已有实现范式**,应当是**把封面这套推广出去**,不是从零重构。
    这同时解决 `review_ready` 被新 schema 作废却无法只重做封面的死锁。
 2. **说话人证据不足应转人工审阅,不是拒**(Ivan 裁定,理由:说话人是刚开的功能)。
    现在 `speaker_evidence/speaker_finalization` 是 `failure_recoverable=False` 直接判死(8/7×1、8/8×1)。
