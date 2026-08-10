@@ -1,5 +1,42 @@
 # Current handoff
 
+## ⭐⭐⭐⭐⭐⭐⭐ 2026-08-10 13:00Z 交棒(successor 从这里开始;以下 ⭐×6 及更早节仅存历史)
+
+**权威报告 = `docs/reviews/2026-08-10-overnight-orchestration.md`**(本节只给指针与机器状态,不重复内容)。
+
+### 结论:Ivan 的目标未达成
+夜间令「878889 的切片和歌切都上传成功」→ **实际 0 交付、0 上传**。
+不是基础设施问题(那部分修好了),是**内容门**,而放宽它需要 Ivan 本人拍板。
+
+### 部署位与机器状态
+- **free = `c6a323f`**(2026-08-10T09:12:38Z,3763 绿,runner md5 已验)。`DISABLED` 已撤、`deploy.guard` 已清。
+- **12:54:00 直播开播**,runner 按设计让出 tick;下播后自动恢复。
+- 三日期实查(12:58Z):8/7 `ready_unpublished_with_failures`(picks 10)/
+  8/8 `published_with_failures`(picks 18)/ 8/9 `no_delivery`(**pending_talk 5 + pending_song 1 deferred**)。
+- **上传配额**:滚动 24h 上限 10,窗口内已用 5,**约 5 席可用**。
+- Mac 分支尖已含 `tmp-section-title` 合入(**未部署**),其余 tmp-* 见报告 §八。
+
+### ⚠️ 恢复后会空转
+下播后 tick 会继续产 8/7 / 8/8 / 8/9 的失败件,**它们会撞同一道终审正字法门**。
+在 Ivan 就下面第 1 条拍板前,这台机器是在已知必死的活上烧机时。
+不想空转就按报告 §六之九 的**安全改法**冻日期(**绝不要用 `--preclaim` CLI**)。
+
+### 待 Ivan 拍板(按价值排序,详见报告 §七)
+1. **终审正字法门 B 还是 D** —— 这是**整条谈话切产线的开关**。
+   8/8 与 8/9 合计 **0/11**,8/9 那批 **4/4** 全死于 `subtitle_authority/final_review_findings`,**与素材类型无关**。
+   B=纯修 bug(白名单 3 个分支名 vs 引擎 7+),但救不了当下;D=解锁全部,**但会发出审片员已判错的字幕**。
+   更深:终审**没有 apply 通道**,"判定该改"的 finding 永远回不到 resolved。
+2. **歌切交付物化缺失** —— 证明侧全绿仍 `candidate_rejected`
+   (`SONG_MATERIALIZED_RECUT_MISSING` + 7 个 recut binding invalid)。**只修证明门永远产不出歌**,需单独立项。
+3. **sudocode 分组路由(Ivan #8)** —— 实测每请求 15–17% 失败;客户端缓解已部署,根治在他 oracle。
+4. 1323 合集分P标题 —— 契约已查清(整节重排写),**需先部署 `tmp-section-title` 的修正**再实调,或他手改一行。
+
+### 两个开关地雷(踩过,勿重踩)
+- `--preclaim` CLI **会整体替换 state**,抹掉当天 picks/已发布台账。
+- `manual_preclaim` **挡不住 requeue**,下个 tick 照常开产。
+- 详见 memory `free-runner-switch-hazards` 与报告 §六之九 / §六之十三。
+
+
 ## ⭐⭐⭐⭐⭐⭐ 2026-08-10 05:00Z 交棒(successor 从这里开始;以下 ⭐⭐⭐⭐⭐ 及更早节仅存历史)
 
 **部署位 free=`f6e8a2b`**(2026-08-10T04:41Z)。分支 `claude/session-live-context`,本地尖领先(有未部署 worktree,见"在飞")。
