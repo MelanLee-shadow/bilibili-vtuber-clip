@@ -1,5 +1,51 @@
 # Current handoff
 
+## ⭐⭐⭐⭐⭐⭐ 2026-08-10 05:00Z 交棒(successor 从这里开始;以下 ⭐⭐⭐⭐⭐ 及更早节仅存历史)
+
+**部署位 free=`f6e8a2b`**(2026-08-10T04:41Z)。分支 `claude/session-live-context`,本地尖领先(有未部署 worktree,见"在飞")。
+
+### 产线实况(不需要人干预,10 分钟一轮自动跑)
+- 4 路并行在产 8/7 失败件(`MAX_PARALLEL_PRODUCE=5`);**2026-08-09 已挂起**(state status=`manual_preclaim`,Ivan 令「8.9先不着急做，先把8788做完」;恢复=把 status 改回 `no_delivery`,回执在该 state 的 `manual_preclaim_note`)。
+- **8/7**:10 席满(上限 10/门 85,Ivan 追认)。已发 3(BV1JLuj6zEdM/BV1houS6SEF3/BV1hfuS6EENb),待封面 1,待复核 1(auto_210739_1142_1436,8.17 分名场面),被拒 3,失败重排 2。talk_backlog 还有 20。歌切 6 条全拒 + backlog 4。
+- **8/8**:15 席(门 85)。已发 4(BV18Gu16NEcX/BV1Bau16nEyq/BV1hquD6pE7X/BV13zuX6fEwh),**13 条 pending_talk 排队**,10 席空着。歌切 0 产出,pending 1 + backlog 8。**歌切为什么全军覆没还没查**。
+
+### 今日 Ivan 裁定(逐字,已入代码/资产的注明)
+1. 「只要自相矛盾，当然就认为这个完全没有否决权，完全不可信就完事了。」→ 已实现部署(`cover_host_identity_gate` SELF_INCONSISTENT,结论由同字节联合 QC 承接)。
+2. 「追认。88改成15，85。日常还是5，并没有分数限制。」→ 已实现部署(`talk_quota_policy_authority.v1.json` 按日期资产 + 准入冻结,禁止改常量回溯翻案)。
+3. 「应该积极的用截图，而重绘才是兜底…只有实在找不到合适的截图方案才用重绘。」→ 截图优先六项已部署。
+4. 「**并不是所有的都需要截图，特别是竖屏直播，通常不适合截图，只能重绘。**」→ **未实现**,在 worktree `tmp-punch-vertical`。
+5. 「**梗字从来没有要求过必须是标题的连续子串**…很多高播放量的切片，封面字块里的梗字和标题不一致，反而可能承接了一些解释原因或者补充说明的感觉。」→ **未实现**,同上 worktree(要保留 fabrication 检查)。
+6. 「需要调用AGY->gemini 这条链的，全都复用一种接口才好」→ **未实现**,worktree `tmp-agy-unify`(七入口收敛;`agy_frame_witness`/`visual_song_discovery` 零兜底、4 处硬编码 `/root/.local/bin/agy`)。
+7. 「多嘉宾场目前可以交付，但是需要依赖审阅。」→ **未实现**(政策待落地)。
+8. 「CPA不是依赖订阅的…sudocode占了另一部分」+「sudocode分组其实分为两个，一个是有gpt-image模型能力的，一个是有gpt-5.6-sol能力的,你看一下你可以在oracle上找一下实现修复一下」→ **未做**(要上 oracle 改分组路由)。
+9. 「仅仅是一个CPA请求失败为什么会让整条候选判死…CPA请求失败的逻辑是积极重试，而不是判候选死」→ **只做了一半**:transport 层退避重试已部署(f6e8a2b);**但候选仍会被判 failed 并整条重产(15-55 分钟白烧)**,深层修复(失败不杀候选/断点续产)未做。
+10. 优先级:紧急修复/紧急换源 > 部署 > 线上普通换源=快车道 > 出新片。
+
+### 今日已改线上(证据全入库,registry 41 条)
+- **BV1hquD6pE7X** 三合一置换:CID 40760773025→40765099962,(跃起) 回填、公主抱截图封面(v4D)、手定标题。**残留:合集分P显示标题未同步**(`sync_section_title` -400,工具 POLL_ONLY_NEVER_REEDIT)——用 `x2/creative/web/season/section/episode/edit`(payload 契约见 `bilibili_member_api.py:304`,需 episode_id/order/**当前 cid**/page_cids,上次 -400 极可能是用了置换前的旧 cid);注意 section 9320779 的 episodes 列表里按 aid 已查不到该条,先查明它落在哪个 section。
+- **BV18Gu16NEcX**、**BV1hfuS6EENb** 封面改截图(cover-only edit,不占配额,工具 `free:/tmp/cover_only_edit_0810.py`)。
+- 早前已发:BV1hfuS6EENb 换身份、BV1houS6SEF3 真善美、BV13zuX6fEwh 对食。
+
+### 在飞(两个 worker,回来要 rebase→merge→部署)
+- `tmp-agy-unify`:AGY→Gemini 统一客户端
+- `tmp-punch-vertical`:竖屏走重绘 + 梗字去抽取式(含考据"这条规则谁加的")
+已合入未部署的 worktree 可删:screenshot-first / quota-policy-freeze / live-wait-guard / self-inconsistent-witness / provider-concurrency / f20 / j-f12-f5 / tp-acceptance。
+
+### 待办(按 Ivan 优先级)
+1. 合集标题补同步(上面有做法)
+2. Ivan 裁定 4/5/6/7/8/9 的实现与部署
+3. 210131 封面双钩子重做→QC→补传
+4. 歌切全军覆没根因(8/7 六条全拒、8/8 零产出)
+5. 8/8 那 13 条产完后逐条走上传链;**8/9 解挂**
+6. 晨报剩余待决:F21「从未听过 vs 听了失败」语义分割是否按字面全关
+
+### 血泪教训(今夜新增)
+- **伪裁定是系统性风险**:「截图优先」「梗字必须抽取式」两条都是助手措辞被硬化成"Ivan 裁定"写进代码注释/门。改任何"Ivan 说过"的规则前,先用 `search_session_transcripts` 查他本人 user turn 的逐字。
+- **部署脚本会等 runner 放锁**;in-flight produce 若注定失败(如缺修复),直接 kill 让部署插队更划算。孤儿 deploy 会留下 guard 目录+DISABLED,要手工清。
+- **CPA 现状**:OAuth 三把周配额 8/15-16 才恢复,流量落 sudocode 腿;小请求通、大请求(≥3.6万字)会 408/400 `group_capability_unavailable`。
+
+
+
 Updated: 2026-08-10 00:20Z by Claude(Fable→Opus 接力,单 orchestrator + Opus worker 群)。以 ⭐⭐⭐⭐⭐ 节为准,以下旧节仅存历史。
 
 ## ⭐⭐⭐⭐⭐ 2026-08-10 凌晨终态(权威;successor 从这里开始)
