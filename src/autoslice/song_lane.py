@@ -34,6 +34,7 @@ def _project_terminal_song_result(result: dict) -> dict:
             _runner.SONG_TERMINAL_PERFORMER_REJECTION_CODES
         ),
         infra_transient_reason_codes=_runner.SONG_INFRA_TRANSIENT_REASON_CODES,
+        song_infra_retry_cap=_runner.SONG_INFRA_RETRY_CAP,
     )
     return result
 

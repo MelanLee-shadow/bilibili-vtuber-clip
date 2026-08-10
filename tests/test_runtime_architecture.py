@@ -173,7 +173,11 @@ MODULE_DEBT_LEDGER = {
     # 2026-08-07 再 +4：Ivan 2026-08-07 狍哥案实施指令（闭环接线）——同上
     # 的收口调用点。
     # 2026-08-10 +3：上面那个 +2 调用点，加一行 import。同一笔授权，同一本体。
-    "src/autoslice/delivery_recovery.py": 2_135,
+    # 2026-08-10 净 -1：F2 僵尸候选修复——歌 transient 的判定本体（含新的
+    # SONG_INFRA_RETRY_CAP 上限语义）抽到 batch_terminal_state
+    # .song_infra_transient_is_active，与 project_terminal_song_disposition
+    # 共用一套；这里只剩一个调用点。收紧到实际值以锁定收益。
+    "src/autoslice/delivery_recovery.py": 2_134,
     # 2026-08-07 +79：cue59「殉情」顶替真值「偶遇」实案（Ivan 2026-08-07
     # auto_203735_555_680 speaker-truth-diff 裁决 + 落地授权）——新增
     # _glossary_session_candidate_undecidable / _adjudicate_with_glossary_witness_guard
@@ -299,13 +303,12 @@ FOCUSED_MODULE_LINE_BUDGETS = {
     # 地板，margin 消歧义不变；8d4b09b 已把该案首版试过又回退的 family-match
     # 死函数删掉（-13 行），净增贴当前实际值。测试 test_song_alignment.py 的
     # 对应 bypass/floor-holds 回归用例。
-    # 2026-08-10 +9：generate_llm_song_queries 的 max_lines 采样帽 18 -> 120
-    # （权威 _full 复证窗 200+ cue 被抽成 1/12，演唱段落只剩 3 条 → 模型正确
-    # 返回空猜测；4/6 条 8/7 _full attempt 的「no usable song guesses」根因）。
-    # 净增全在解释该判断的注释上，阈值与逻辑各只动一个数字；LRC 召回/歧义/
-    # 对齐阈值一字未动。测试 test_jingting_provenance_lanes.py 的
-    # TestSongHintSamplingDensity。
-    Path("src/autoslice/song_alignment.py"): 1_194,
+    # 2026-08-10 +13：三处并行改动合流后的实际值——(a) worker A 的 max_lines
+    # 18->120 采样帽 + 其说明；(b) F3 跨字系放行（中文 ASR 对日/韩歌词恰好
+    # 0.0，ratio 不含信息，交由音频裁决）；(c) integrator 手工合并注记（两个
+    # writer 的工作副本代际不同，整份取用会静默回退 (a)，故记录在案）。
+    # 阈值 0.20/0.08/0.55 一字未动。
+    Path("src/autoslice/song_alignment.py"): 1_198,
     Path("src/autoslice/song_performance.py"): 1_200,
     Path("src/autoslice/speaker_common.py"): 100,
     Path("src/autoslice/speaker_context.py"): 500,

@@ -1,0 +1,47 @@
+{
+  "_fixture_note": "Verbatim execution provenance of the 2026-08-08 song_210131_1210 Gemini failover run captured read-only from free out/2026-08-08/song_210131_1210/song_selector_full/attempt-5w629ekw/seededsong_120000_242040/song_repair/agy_audio_lrc/variant-01/seededsong_120000_242040-u2eehj25/run.manifest.json. agy_rc=-9 is SIGKILL (the 2026-08-09 OOM kill of AGY).",
+  "accepted_key_ordinal": 3,
+  "accepted_key_tier": "free",
+  "agy_failure_category": "AGY_FAILED_RC",
+  "agy_rc": -9,
+  "artifacts": {
+    "api_audio_duration_ms": 602136,
+    "api_audio_path": "/opt/bilive/autoslice/out/2026-08-08/song_210131_1210/song_selector_full/attempt-5w629ekw/seededsong_120000_242040/song_repair/agy_audio_lrc/variant-01/seededsong_120000_242040-u2eehj25/input.complete-audio.mp3",
+    "api_audio_sha256": "102901358f6dd1dfc8d5f662f02d105a91b4716de1c7434bb7df899193f67953",
+    "lrc_path": "/opt/bilive/autoslice/out/2026-08-08/song_210131_1210/song_selector_full/attempt-5w629ekw/seededsong_120000_242040/song_repair/agy_audio_lrc/variant-01/seededsong_120000_242040-u2eehj25/source.lrc",
+    "lrc_sha256": "c6d15f4f8f1efe5cbb33a115c96f6a3d6e8c047025d4da031613f3c1a9966c10",
+    "output_path": "/opt/bilive/autoslice/out/2026-08-08/song_210131_1210/song_selector_full/attempt-5w629ekw/seededsong_120000_242040/song_repair/agy_audio_lrc/variant-01/seededsong_120000_242040-u2eehj25/alignment.canonical.json",
+    "output_sha256": "a811b33882ee35a14ae9d36ece25c3bb8baf89b7454cd4d0642ba4330e6384c4",
+    "prompt_path": "/opt/bilive/autoslice/out/2026-08-08/song_210131_1210/song_selector_full/attempt-5w629ekw/seededsong_120000_242040/song_repair/agy_audio_lrc/variant-01/seededsong_120000_242040-u2eehj25/prompt.gemini-api.md",
+    "prompt_sha256": "1166a4b8279f3277c992c822da43f8e5f8be180610f6527b59ba5a6d038b6980",
+    "provider_raw_output_path": "/opt/bilive/autoslice/out/2026-08-08/song_210131_1210/song_selector_full/attempt-5w629ekw/seededsong_120000_242040/song_repair/agy_audio_lrc/variant-01/seededsong_120000_242040-u2eehj25/alignment.gemini-api.raw.json",
+    "provider_raw_output_sha256": "bf71de0b04de5fd3e0b7f227d0b0049f8a421c7eed5657540c55957d5fb98ea8",
+    "source_duration_ms": 602050,
+    "source_origin_path": "/opt/bilive/autoslice/out/2026-08-08/song_210131_1210/song_210131_1210_full_1090340_1692380_source.mp4",
+    "source_path": "/opt/bilive/autoslice/out/2026-08-08/song_210131_1210/song_selector_full/attempt-5w629ekw/seededsong_120000_242040/song_repair/agy_audio_lrc/variant-01/seededsong_120000_242040-u2eehj25/input.mp4",
+    "source_sha256": "577407e41a478cdd82beb8406b6d5adb2a5fd5936ae786c9b9993dfd77026c49"
+  },
+  "attempt_id": "seededsong_120000_242040-u2eehj25",
+  "candidate_id": "seededsong_120000_242040",
+  "canonicalization": {
+    "canonical_lrc_sha256": "c6d15f4f8f1efe5cbb33a115c96f6a3d6e8c047025d4da031613f3c1a9966c10",
+    "canonicalized_output_sha256": "a811b33882ee35a14ae9d36ece25c3bb8baf89b7454cd4d0642ba4330e6384c4",
+    "provider_raw_output_sha256": "bf71de0b04de5fd3e0b7f227d0b0049f8a421c7eed5657540c55957d5fb98ea8",
+    "restored_fields": [
+      "lrc_time_ms",
+      "text"
+    ],
+    "row_count": 28,
+    "row_identity": "strict_zero_based_lrc_index",
+    "strategy": "canonical-lrc-by-exact-index.v1"
+  },
+  "configured_key_count": 3,
+  "direct_audio_input": true,
+  "finished_at": "2026-08-09T03:53:09.012108+00:00",
+  "model": "gemini-3.6-flash",
+  "provider": "gemini_api",
+  "provider_fallback_used": true,
+  "sandbox": false,
+  "schema_version": "agy-audio-lrc-run.v3",
+  "started_at": "2026-08-09T03:44:42.299005+00:00"
+}

@@ -404,6 +404,17 @@ def _gemini_failure_category(exc: Exception) -> str:
 
 
 def _classify_agy_nonzero(*, returncode: int, stdout: str, stderr: str) -> str:
+    # A negative returncode is subprocess's encoding of "killed by signal N"
+    # (-9 == SIGKILL, which is what the 2026-08-09 OOM killer did to AGY twice
+    # while it held ~14.5GB RSS).  Classify the signal *before* sniffing the
+    # diagnostic text: a killed process still flushes whatever it had buffered,
+    # so an unrelated "timed out" line would otherwise relabel an OOM kill as
+    # AGY_TIMEOUT and hide the memory-pressure signal.  The category stays
+    # AGY_FAILED_RC so every existing transient/failover wiring keeps
+    # recognizing it; the signal itself remains legible as the negative
+    # ``agy_rc`` recorded in the run manifest.
+    if returncode < 0:
+        return "AGY_FAILED_RC"
     diagnostic = f"{stdout}\n{stderr}".casefold()
     if any(marker in diagnostic for marker in ("quota", "429", "rate limit", "too many requests")):
         return "AGY_QUOTA_EXHAUSTED"

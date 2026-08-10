@@ -915,6 +915,22 @@ def quarantine_overlapping_talk_candidates(state: dict) -> None:
 
 
 
+def _song_repair_retries_exhausted(item: dict) -> bool:
+    """Whether an infra-retry repair has burned through SONG_INFRA_RETRY_CAP.
+
+    Only infrastructure retries are counted.  A ``pipeline_fingerprint_changed``
+    repair carries new code and must keep its ordinary priority however high an
+    inherited transient counter happens to be.
+    """
+
+    if item.get("retry_reason") != "transient_infrastructure_failure":
+        return False
+    retries = item.get("transient_retry_count")
+    if isinstance(retries, bool) or not isinstance(retries, int):
+        return False
+    return retries >= int(_runner.SONG_INFRA_RETRY_CAP)
+
+
 def refill_songs(state: dict) -> None:
     """Top up pending_song from the structured backlog, danmaku-desc, honoring
     both the delivery budget and the hard per-session attempt cap. Legacy string
@@ -935,9 +951,18 @@ def refill_songs(state: dict) -> None:
         session_repairs = [
             item for item in selected_repairs if _item_session_id(item) == session_id
         ]
-        selected.extend(session_repairs[:delivery_slots])
-        deferred.extend(session_repairs[delivery_slots:])
-        ordinary_slots = max(0, delivery_slots - min(len(session_repairs), delivery_slots))
+        # A repair past SONG_INFRA_RETRY_CAP loses its *first claim* on the
+        # session's delivery budget (MAX_SONGS_PER_SESSION = 1).  On 2026-08-08
+        # one such candidate held that single slot across 26 superseded
+        # attempts while eight never-attempted candidates starved in the
+        # backlog.  It is demoted, not dropped: it still takes any slot no
+        # fresher repair and no untried candidate claimed, so a genuine
+        # long-running provider outage still recovers on its own.
+        stale_repairs = [item for item in session_repairs if _song_repair_retries_exhausted(item)]
+        fresh_repairs = [item for item in session_repairs if not _song_repair_retries_exhausted(item)]
+        selected.extend(fresh_repairs[:delivery_slots])
+        deferred.extend(fresh_repairs[delivery_slots:])
+        ordinary_slots = max(0, delivery_slots - min(len(fresh_repairs), delivery_slots))
         session_pool = [item for item in pool if _item_session_id(item) == session_id]
         session_pool.sort(
             key=lambda x: (
@@ -962,6 +987,11 @@ def refill_songs(state: dict) -> None:
         )
         selected.extend(session_pool[:allowed])
         deferred.extend(session_pool[allowed:])
+        # Whatever the untried pool did not actually take is still open, so a
+        # demoted repair is deferred only when a fresher candidate outranked it.
+        stale_slots = max(0, ordinary_slots - len(session_pool[:allowed]))
+        selected.extend(stale_repairs[:stale_slots])
+        deferred.extend(stale_repairs[stale_slots:])
     # Infrastructure retries bypass discovery attempt caps, but never run more
     # than the remaining delivery slots concurrently; otherwise several old
     # attempts could all recover at once and over-deliver one live session.
