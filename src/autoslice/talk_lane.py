@@ -909,17 +909,12 @@ def _classify_final_review_release(
         boundary_status == "BLOCK"
         or "FINAL_REVIEW_BOUNDARY_SEMANTIC_BLOCKED" in reason_codes
     ):
-        # Ivan 2026-08-10 #9：一个 CPA 请求失败不该让整条候选判死。边界语义
-        # 复核在 provider 打不通时同样落 status=BLOCK，reason 是
-        # ``BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:<ExcType>``——那是"没人给出
-        # 裁决"，不是"裁决为不合格"。此前两者共用 content_boundary +
-        # recoverable=False，于是一次 LlmCallError 把 15–55 分钟的 produce
-        # 判成内容缺陷，只能等代码波改 fingerprint 才醒。
-        #
-        # 只有 transport 类异常名才改走 provider_transient；TypeError/KeyError
-        # 之流仍然终态——把确定性代码缺陷放进 INFRASTRUCTURE_WAIT_FAILURE_KINDS
-        # 会让同一 fingerprint 每 tick 空转到天荒地老（delivery_recovery 明文
-        # 警告过）。**内容门本身一个字没放松**：BLOCK 依旧拒绝交付。
+        # Ivan 2026-08-10 #9：一个 CPA 请求失败不该让整条候选判死。provider
+        # 打不通时边界复核同样落 status=BLOCK，reason 是
+        # BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:<Exc>——那是"没人给出裁决"，
+        # 不是"裁决为不合格"。只有 transport 类异常名改道；TypeError 之流仍
+        # 终态（确定性缺陷进无界等待车道 = 每 tick 空转，delivery_recovery 明
+        # 文警告过）。内容门一个字没放松：BLOCK 依旧拒绝交付。
         if isinstance(boundary, dict) and _provider_failure.transport_unavailable_reason(
             boundary.get("reason_codes")
         ):
@@ -1035,12 +1030,28 @@ def classify_talk_failure(attempt_output: str) -> dict:
     elif "TALK_EFFECTIVE_DURATION_NOT_OVER_45S_AFTER_BOUNDARY" in tail:
         kind, stage, recoverable = "content_duration", "boundary_resolution", False
     elif "BOUNDARY_CONTEXT_EXHAUSTED" in tail:
-        kind, stage, recoverable = (
-            "content_boundary",
-            "boundary_semantic_review",
-            False,
-        )
         failure_evidence = _boundary_context_failure_evidence(tail)
+        transient = _provider_failure.transport_unavailable_reason(
+            failure_evidence.get("reason_codes")
+        )
+        kind, stage, recoverable = (
+            ("provider_transient", "boundary_semantic_review", True)
+            if transient
+            else ("content_boundary", "boundary_semantic_review", False)
+        )
+    elif _provider_failure.marker_transport_unavailable(
+        tail, "BOUNDARY_SEMANTIC_REVIEW_REQUIRED"
+    ):
+        # 边界解析面（早于终审契约）：spec 里的边界复核非 PASS 就 SystemExit，
+        # provider 打不通时它正是 BLOCK+UNAVAILABLE——所以 transport 故障其实
+        # 死在**这里**，走不到 FINAL_REVIEW_RELEASE_BLOCKED。此前这条 marker
+        # 在分类器里一个分支都没有，整条落 producer_error/unknown（只吃一次
+        # 重试）。详见 docs/reviews/2026-08-10-llm-retry-coverage.md §2.1。
+        kind, stage, recoverable = (
+            "provider_transient",
+            "boundary_semantic_review",
+            True,
+        )
     elif "BOUNDARY_UNREPAIRABLE" in tail:
         kind, stage, recoverable = "content_boundary", "boundary_resolution", False
     elif "voiceprint_profile.v1.json" in tail and (

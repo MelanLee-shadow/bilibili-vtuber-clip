@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 
 PROVIDER_DETAIL_LIMIT = 2000
@@ -151,6 +152,34 @@ def provider_failure_detail_from_cause(
 
     cause = exc.__cause__
     return provider_failure_detail(cause, limit=limit) if cause else ""
+
+
+_MARKER_REASON_RX = re.compile(r":\s*(\[[^\r\n]*?\])")
+
+
+def marker_transport_unavailable(text: str, marker: str) -> str | None:
+    """producer 的 ``<marker>: ["REASON", …]`` 行里是否只是 provider 打不通。
+
+    producer 的致命 marker 把 reason_codes 以 JSON 数组原样打在同一行上，所以
+    "边界复核为什么没通过"这条信息在子进程输出里是可读的——读最后一条同名
+    marker（append-only 日志里，最后一条才是本次致命的那条），解析它自己的
+    reason_codes，再交给闭集 :func:`transport_unavailable_reason` 判定。
+    """
+
+    last = None
+    for line in text.splitlines():
+        if marker in line:
+            last = line
+    if last is None:
+        return None
+    match = _MARKER_REASON_RX.search(last[last.index(marker) + len(marker):])
+    if match is None:
+        return None
+    try:
+        codes = json.loads(match.group(1))
+    except ValueError:
+        return None
+    return transport_unavailable_reason(codes)
 
 
 def provider_failure_status_codes(text: str) -> list[int]:
@@ -311,6 +340,7 @@ __all__ = [
     "transport_unavailable_reason",
     "auditor_unavailable_discovery",
     "classify_provider_failure",
+    "marker_transport_unavailable",
     "describe_provider_failure",
     "provider_failure_detail",
     "provider_failure_detail_from_cause",

@@ -101,6 +101,20 @@ elif transient_failure ...; then
 600s 外层期限仍由 `CPA_DEADLINE_SECONDS=400` 独立守住（400s + 一枪在飞的
 `curl --max-time 180` = 580s < 600s），不依赖 `attempts_per_model=1`。
 
+连带影响的另一个 `argv5=1` 调用点：`scripts/crawl_community_names.py:40`
+（`DEFAULT_LLM_COMMAND`，240s 超时）。空补全在那里现在最多花 9 次请求而不是 3 次，
+但 bridge deadline(400s) > 它自己的 240s 超时，实际上限仍是调用方的 240s；且它的
+失败形态是"丢掉这一批、爬取继续"（`community_name_crawler.py:1376/1527`），不判死
+任何候选。无害，此处记明。
+
+### 1.2b 同批加的埋点：`body_bytes`
+
+桥接每条 attempt 的 stderr 现在带 `body_bytes=<请求体字节数>`。零行为改动，纯诊断——
+理由与用法见 §5.1b：目前全仓没有任何一处记录过请求体大小，"大请求系统性失败"
+只是推论，无法证伪。该 stderr 已被 `provider_failure_detail` 原样收进
+`provider_detail` 落盘，所以下一轮失败即可从 state 直接读出"哪个字节数在什么状态码
+上失败"。
+
 ### 1.3 仍未覆盖的腿（不杀候选，列为剩余风险）
 
 | 位置 | 说明 | 为什么没修 |
@@ -114,18 +128,51 @@ elif transient_failure ...; then
 
 ## 2. 任务 2：候选是怎么被判死的，改成什么
 
-### 2.1 调用链（修复前）
+### 2.1 调用链（修复前）——**两条出口，主路径不是原先以为的那条**
+
+共同前半段：
 
 ```
 boundary_semantic_review.py:809  _semantic_payload_for_request
-      except Exception as exc:
+      except Exception as exc:                    # llm_call() 或 extract_json() 抛的任何东西
           raise BoundarySemanticReviewError(
               f"BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:{type(exc).__name__}") from exc
  ↓
 producer_boundary_review_stage.py:114   except BoundarySemanticReviewError → reason = str(exc)
       return {"status": "BLOCK", "reason_codes": [reason], ...}
  ↓
-producer_text_pipeline.py:2026  写进 final_review_audit["boundary_semantic_review"]
+producer_text_pipeline.py:2012  写进 final_review_audit["boundary_semantic_review"]
+```
+
+从这里分成两条出口，**先撞上的是 (A)**：
+
+#### (A) 边界解析面 —— 主路径（早于终审契约，8/8 十条 `producer_error/unknown` 的真身）
+
+```
+produce_slice_package.py:391-397   spec["boundary_semantic_review"] = final_review_audit[...]
+ ↓
+producer_boundary_resolution.py:581  if semantic_review.get("status") != "PASS":
+      retry_scope = _bounded_boundary_retry_scope(semantic_review)   # 要求 needs_more_context=True
+      # UNAVAILABLE 的 BLOCK 没有 needs_more_context → retry_scope is None
+      raise SystemExit("BOUNDARY_SEMANTIC_REVIEW_REQUIRED: "
+                       '["BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:LlmCallError"]')
+ ↓
+talk_lane.classify_talk_failure
+      # 全仓 grep：`BOUNDARY_SEMANTIC_REVIEW_REQUIRED` 在分类器里**一个分支都没有**
+      else: kind, stage, recoverable = "producer_error", "unknown", True
+ ↓
+delivery_recovery._talk_retry_decision
+      producer_error ∉ INFRASTRUCTURE_WAIT_FAILURE_KINDS → infrastructure_retry=False
+      transient = (… and transient_count < 1) → **只吃一次重试**，之后卡死等 fingerprint
+```
+
+这解释了 8/8 的失败分布：`producer_error/unknown` 10 次，`content_boundary` 只有 1 次。
+free 上 `auto_233123_315_412` / `auto_233123_782_859` 两条的 produce 日志尾，字面就是
+`BOUNDARY_SEMANTIC_REVIEW_REQUIRED: [...]`。
+
+#### (B) 终审契约面（文本 mutation 后的精确交付复核走这条）
+
+```
 producer_text_pipeline.py:1159  reason_codes.append("FINAL_REVIEW_BOUNDARY_SEMANTIC_BLOCKED")
 final_review_contract.py:254    raise FinalReviewContractError(...)  → produce rc≠0
  ↓
@@ -134,14 +181,20 @@ talk_lane._classify_final_review_release
           return ("content_boundary", "final_review_boundary_semantic", False, evidence)
                                                                         ^^^^^ recoverable=False
  ↓
-delivery_recovery._talk_retry_decision
-      transient = (status=="failed" and failure_recoverable is not False and …) or infrastructure_retry
-      → 两项都 False → **不重排**
+delivery_recovery._talk_retry_decision  → 两项都 False → **完全不重排**
 ```
 
-结果：一次 `LlmCallError` 把 15–55 分钟的 produce 记成**内容缺陷**，候选只能等
-`CONTENT_BOUNDARY_RECOVERY_RELATIVES` 里的代码波改了 fingerprint 才醒。这正是
-「基础设施失败被误判成内容失败」。
+两条出口都把「provider 打不通」记成了别的东西：(A) 记成"未知 producer 缺陷"，
+(B) 记成"内容缺陷"。**两条都已修**（§2.3 C/E）。
+
+#### 第三条 marker：`BOUNDARY_CONTEXT_EXHAUSTED` —— 已核，**不受影响**
+
+它只在 `_bounded_boundary_retry_scope` 返回非 None 时抛出，而那要求
+`needs_more_context is True`——那是 LLM **真答了**才会有的字段（
+`boundary_semantic_review.py:1115` 在解析出的裁决上追加）。transport 失败构造的
+BLOCK dict 里没有它。所以这条 marker 天然只承载内容裁决。仍然加了同款 allowlist
+判断作纵深防御（闭集，误报不可能），并用
+`test_boundary_context_exhausted_keeps_its_content_verdict` 把这条不变量锁住。
 
 ### 2.2 `provider_transient` 那条链——**它一直在重试，问题是间隔**
 
@@ -176,8 +229,9 @@ retry_epoch = int(time.time()) + _runner.SONG_INFRA_RETRY_BASE_SECONDS   # 15 �
 | 改动 | 文件 | 效果 |
 |---|---|---|
 | A | `scripts/llm_via_cpa.sh` | 删掉空补全特例分支 → 空补全恢复 transient floor（§1.2） |
-| B | `src/autoslice/provider_failure.py` | 新增闭集 `TRANSPORT_EXCEPTION_NAMES` + `transport_unavailable_reason()` |
-| C | `src/autoslice/talk_lane.py` | `_classify_final_review_release`：边界 BLOCK 若 reason 是 transport 类异常 → `("provider_transient", …, recoverable=True)` |
+| B | `src/autoslice/provider_failure.py` | 新增闭集 `TRANSPORT_EXCEPTION_NAMES` + `transport_unavailable_reason()` + `marker_transport_unavailable()` |
+| C | `src/autoslice/talk_lane.py` | 出口 (B)：`_classify_final_review_release` 边界 BLOCK 若 reason 是 transport 类异常 → `provider_transient` / recoverable=True |
+| **E** | `src/autoslice/talk_lane.py` | **出口 (A)（主路径）**：`classify_talk_failure` 新增 `BOUNDARY_SEMANTIC_REVIEW_REQUIRED` 分支，仅当该 marker 自带的 reason_codes 落在 transport 闭集时 → `provider_transient` / recoverable=True。内容裁决的同名 marker 归类**一个字不动**（仍走原来的 fallthrough）|
 | D | `src/autoslice/infra_retry_policy.py`（新） | `talk_infra_retry_schedule()`：重排时刻改指数退避，复用歌 lane 同一条曲线；配额类从下一档起步 |
 
 **基础设施 vs 内容的界线**（代码与本文口径一致）：
@@ -366,19 +420,97 @@ FAILED  test_empty_completion_also_honors_the_transient_floor
 
 ## 5. 剩余风险与未做的部分
 
+### 5.0 现场活样本（2026-08-10 06:51Z，跑在含 F21 的当前部署位上）
+
+```
+[2026-08-10 06:51:22] auto_203735_388_526: provider failure class=service status=[503, 524]
+```
+
+06:01 起跑，50 分钟后死。produce 日志（`2026-08-07_auto_203735_388_526.log`，
+append-only 跨 attempt）本次尝试的**最后一条**致命 marker 是：
+
+```
+FINAL_REVIEW_RELEASE_BLOCKED: FINAL_REVIEW_DISCOVERY_INCOMPLETE: …chat-authority.json
+```
+
+**问：503/524 之后发生了什么？** → 落 `provider_transient` / `final_review_discovery`
+/ `recoverable=True`（`talk_lane.py:857` 那条既有分支）。**没有判死**，进 `pending_talk`
+等重排。也就是说这一条本身归类是对的——`f6e8a2b` 的 provider 归类层正常工作，
+`class=service status=[503,524]` 就是它打的标签。真正的浪费在**间隔**：修复前
+15 分钟定时到点就整条重产（50 分钟的活），这正是 §2.2 说的病，本次 §2.3-D 修的
+就是它。
+
+**一个必须说清的局限**：该候选当前 state 是
+`talk_transient_retry_count=0, talk_repair_retry_count=4, retry_reason=pipeline_fingerprint_changed`。
+`talk_transient_retry_count` 只在 `transient and not changed` 时递增
+（`delivery_recovery.py:1813`）——**每次部署引发的 requeue 都不计数**。所以在
+部署密集期（正是现在），指数退避的档位一直停在第 0 档，等于没生效。
+退避治的是"故障期间的定时空转"，治不了"部署引发的全量重产"，后者要靠收窄
+fingerprint 恢复面（§5.2b）。
+
+**问：`TITLE_AUTHORITY_UNRESOLVED: title_length_out_of_bounds:50` 会不会造成整条重产？
+→ 会，最多 3 次。** 链路：`talk_lane.py:1921` 见到该 marker 且
+`title_authority_status` 以 `UNRESOLVED` 开头 → 删掉已交付文件与 recuts →
+`result["status"] = "title_failed"` 提前 return（**覆盖掉刚算出来的 failure_kind**）
+→ runner `free_session_autoslice.py:1821` `title_attempts += 1`，
+`< TITLE_MAX_ATTEMPTS(3)` 就 `retry.append(item)` 重新排队 → **整条重产**，
+并把 `state["status"]` 置 `paused_cpa_down`。
+
+50 字比 48 字门只超 2 个字符，代价是最多三次 15–55 分钟的完整重产。这确实是
+"小问题引发大浪费"的同一类病，但**它是内容门，不在本次范围**：正确的修法是让
+标题重生成成为一个**局部重试**（只重跑标题那一段，其余产物按哈希复用），而不是
+放宽 48 字门，也不是把它改成 transient。建议单独立项。
+
 ### 5.1 退避改动的正反面
 
-一次 6 小时的上游故障，单个候选的整条重产次数：
+一次 6 小时的上游故障，单个候选的整条重产次数（**下表是按重试间隔的推算，不是
+观测值**；观测数据是 §0.2 那张 8/7–8/8 分布表）：
 
 | | 修复前（固定 15 分钟） | 修复后（15m→30m→1h→2h→4h→6h 封顶） |
 |---|---|---|
-| 6h 内重产次数 | 受 produce 时长限制，实测约 **6–8 次** | **4 次** |
+| 6h 内可发起的重产次数（推算） | 受 produce 时长限制，约 6–8 次 | 4 次 |
 | 上限 | 无 | 无（只是间隔变长）|
 
 代价：故障恢复后最坏要多等一档（配额类最长 6h）才回到线上。这是刻意的取舍——
 "多等 6 小时" 换 "不再每小时烧掉 2–3 次 15–55 分钟的整条重产"。
 **没有加终止上限**：`INFRASTRUCTURE_WAIT_FAILURE_KINDS` 按设计就是无界等待，
 本次只改间隔不改这一点。
+
+### 5.1b 退避够不够？——`503/524` + "小请求通、大请求挂"
+
+orchestrator 实测：`gpt-5.6-sol` 走 `/responses` 发**小**请求当前 HTTP 200 正常；
+交棒记录写明**大**请求（≥3.6 万字）408 / 400 `group_capability_unavailable`；
+现在又实测到 503 / 524（524 = Cloudflare 源站超时）。
+
+**我的判断：退避是必要的，但很可能不充分。** 依据分列：
+
+*退避仍然正确的依据*
+- 503 与 524 语义不同：503 是"服务此刻不可用"（容量抖动），重试是标准解法；
+  524 是"源站没在 CF 的窗口内回话"。两者同批出现说明至少有一部分是容量抖动。
+- 该 leg **是活的**（小请求 200），不是全挂。8/10 事故记录的形态也是同一分钟里
+  200/400/408/503 混着来、sol 成功率 ~80%——在这种 regime 下重试把多数失败转成成功。
+- 我的改动**不增加**单次 payload，且总时长仍被 `CPA_DEADLINE_SECONDS=400` 封顶，
+  所以"退避不够"的情形下它也不会把事情变更糟。
+
+*退避不充分的依据*
+- 如果失败与 payload 大小**相关**，重试同一个大请求只会同样超时——
+  524 尤其指向"源站耗时"，而耗时随 prompt / reasoning 长度增长。
+- 模型失效备援（sol→5.5→5.4）只在各 leg 容量不同时才帮得上忙。
+
+*但这里有个硬伤：这个推论目前无法证伪。* **全仓没有任何一处记录过请求体大小**——
+`llm_client` 不记，桥接不记，provider_detail 里也没有。所以"大请求系统性失败"
+至今只是推论。本次因此加了一行成本极低的埋点：桥接的每条 attempt stderr 现在带
+`body_bytes=<字节数>`，而该 stderr 已经被 `provider_failure_detail` 原样收进
+`provider_detail` 落盘。**下一轮失败就能直接从 state 读到"哪个字节数在什么状态码
+上失败"**，届时判据是：
+
+- 同一 `body_bytes` 量级反复 524 / 408 → 退避治不好，得**降上下文 / 分块 /
+  换腿**（终审审片 prompt 是最大的那个，`producer_text_pipeline` 侧可控）。
+- `body_bytes` 与状态码不相关 → 就是瞬时抖动，退避是对的解法。
+
+**在拿到这份数据之前，我不建议动分块/降级**——那是对终审审片证据面的结构性改动
+（prompt 一分块，"对最终字节的一次独立重扫"这个性质就要重新论证），凭推论去做
+风险远大于收益。
 
 ### 5.2 未做：`producer_error` / `unknown` 的 typed 归类（8/8 最大头，10 次）
 
@@ -438,6 +570,13 @@ provider 不可用的裁决在 `FINAL_REVIEW_RELEASE_BLOCKED` **之前**走 tran
 
 ### 5.7 部署前必读
 
-见 §3.4：本改动同时改了全局 / 歌 / `content_boundary` / `subtitle_authority`
-四个 fingerprint。部署即触发这四类失败件 + 已产未发包的全量 requeue。
-`speaker_evidence` / `runtime_prerequisite` 不受影响。
+1. **波及面**：见 §3.4。本改动同时改了全局 / 歌 / `content_boundary` /
+   `subtitle_authority` 四个 fingerprint。部署即触发这四类失败件 + 已产未发包的
+   全量 requeue。`speaker_evidence` / `runtime_prerequisite` 不受影响。
+2. **合并基**：本分支基于 `a2b07e8`；期间 main 已推进到 `0ca0caf`（另有 worker
+   落地）。本改动碰了 `talk_lane.py` 与 `llm_via_cpa.sh`，都是可能的冲突面；
+   且 `test_runtime_architecture` 的债务账本**钉的是精确行数**，两边各自绿的
+   文本合并也可能把行数推过账本。**合并后务必重跑
+   `python3 -m pytest tests/test_runtime_architecture.py -q`。**
+   本分支交付时 `talk_lane.py` = 1999 行 / `produce_talk` = 296 行，
+   **均低于修改前**（2016 / 302），没有向账本新增任何条目。

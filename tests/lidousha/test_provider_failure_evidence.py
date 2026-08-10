@@ -480,3 +480,62 @@ def test_quota_class_starts_one_step_further_out():
 
     assert service == runner.SONG_INFRA_RETRY_BASE_SECONDS
     assert quota > service
+
+
+def test_boundary_resolution_marker_transport_failure_waits(tmp_path: Path):
+    """**主路径**：transport 故障其实死在边界解析面，走不到终审契约。
+
+    `producer_boundary_resolution` 见到非 PASS 的边界复核就 SystemExit
+    ``BOUNDARY_SEMANTIC_REVIEW_REQUIRED: [...]``；provider 打不通时那份 review
+    正是 BLOCK + UNAVAILABLE。修复前这条 marker 在 ``classify_talk_failure`` 里
+    **一个分支都没有**，整条落 producer_error/unknown（只吃一次 transient 重
+    试）。2026-08-08 free 实测 10 条 producer_error/unknown 的日志尾正是它。
+    """
+
+    classified = talk_lane.classify_talk_failure(
+        "SystemExit: BOUNDARY_SEMANTIC_REVIEW_REQUIRED: "
+        '["BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:LlmCallError"]'
+    )
+
+    assert classified["failure_kind"] == "provider_transient"
+    assert classified["failure_stage"] == "boundary_semantic_review"
+    assert classified["failure_recoverable"] is True
+
+
+def test_boundary_resolution_marker_content_verdict_stays_unchanged():
+    """反向门：真实的边界内容裁决维持原有归类，一个字不动。"""
+
+    classified = talk_lane.classify_talk_failure(
+        "SystemExit: BOUNDARY_SEMANTIC_REVIEW_REQUIRED: "
+        '["SELECTOR_STORY_WITNESS_INSUFFICIENT", "STORY_PAYOFF_LANDED"]'
+    )
+
+    assert classified["failure_kind"] == "producer_error"
+    assert classified["failure_stage"] == "unknown"
+
+
+def test_last_marker_wins_in_an_append_only_log():
+    """日志是跨 attempt append-only 的；只有最后一条 marker 是本次致命的那条。"""
+
+    classified = talk_lane.classify_talk_failure(
+        'BOUNDARY_SEMANTIC_REVIEW_REQUIRED: ["SELECTOR_STORY_WITNESS_INSUFFICIENT"]\n'
+        "[agy] bounded sparse-cue self-heal: {...}\n"
+        "BOUNDARY_SEMANTIC_REVIEW_REQUIRED: "
+        '["BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:LlmCallError"]'
+    )
+
+    assert classified["failure_kind"] == "provider_transient"
+
+
+def test_boundary_context_exhausted_keeps_its_content_verdict():
+    """BOUNDARY_CONTEXT_EXHAUSTED 只有 LLM 真答了 needs_more_context 才会出现，
+    所以它照旧是 content_boundary；这里锁住这条不变量。"""
+
+    classified = talk_lane.classify_talk_failure(
+        "SystemExit: BOUNDARY_CONTEXT_EXHAUSTED: "
+        '["BOUNDARY_CONTEXT_EXHAUSTED", "NEXT_TOPIC_SEPARATED_NOT_PROVEN"] '
+        "max_forward_ms=30000 retry_scope=same_topic_continues"
+    )
+
+    assert classified["failure_kind"] == "content_boundary"
+    assert classified["failure_recoverable"] is False

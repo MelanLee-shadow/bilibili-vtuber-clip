@@ -173,6 +173,16 @@ HEADER_FILE="$(mktemp)"
 } > "$HEADER_FILE"
 unset CPA_API_KEY
 
+# 2026-08-10：实测 503/524（524 = Cloudflare 源站超时）与"小请求 200、大请求
+# 408/400 group_capability_unavailable"并存，指向 CPA 次级 leg 按 payload 大小
+# 退化。但**没有任何一处记录过请求体大小**，"大请求系统性失败"至今只是推论。
+# 把每次尝试的 body 字节数打进同一行 stderr，让上层的 provider_detail 直接带上
+# 它——这样"重试够不够"才有得判：同一 body_bytes 反复 524 = 退避治不好，得降
+# 上下文/分块；body_bytes 不相关 = 就是瞬时抖动，退避正确。
+body_bytes() {
+  wc -c < "$BODY_FILE" | tr -d ' '
+}
+
 build_body() {
 python3 - "$PROMPT_FILE" "$1" "$EFFORT" > "$BODY_FILE" <<'PY'
 import json, sys
@@ -232,12 +242,12 @@ if not isinstance(text, str) or not text.strip():
 open(sys.argv[2], "w", encoding="utf-8").write(text)
 PY
     then
-      echo "[cpa] model=${MODEL} attempt=${attempt} http=${HTTP_CODE} curl_exit=0 result=ok" >&2
+      echo "[cpa] model=${MODEL} attempt=${attempt} http=${HTTP_CODE} curl_exit=0 body_bytes=$(body_bytes) result=ok" >&2
       exit 0
     fi
     EMPTY_COMPLETION=1
   fi
-  echo "[cpa] model=${MODEL} attempt=${attempt} http=${HTTP_CODE} curl_exit=${CURL_EXIT} empty_completion=${EMPTY_COMPLETION} result=failed" >&2
+  echo "[cpa] model=${MODEL} attempt=${attempt} http=${HTTP_CODE} curl_exit=${CURL_EXIT} empty_completion=${EMPTY_COMPLETION} body_bytes=$(body_bytes) result=failed" >&2
   if transient_failure "$HTTP_CODE" "$CURL_EXIT" "$EMPTY_COMPLETION"; then
     max_attempts="$ATTEMPTS_PER_MODEL"
     if [[ "$TRANSIENT_ATTEMPTS_PER_MODEL" -gt "$max_attempts" ]]; then
