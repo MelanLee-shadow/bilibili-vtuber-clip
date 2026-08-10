@@ -335,8 +335,8 @@ def test_drop_must_land_on_the_exact_cue_bytes_and_window():
     )
 
 
-def test_guards_refuse_the_closing_cue_and_a_total_wipe():
-    """两条 fail-closed 守卫：收束句不删、不许把字幕删空。"""
+def test_guard_refuses_the_closing_cue_and_therefore_never_empties_the_srt():
+    """收束句不删（终点绑定挂着它）；同一条守卫顺带保证字幕不会被删空。"""
 
     closing_srt = (
         "1\n00:01:03,910 --> 00:01:05,670\n开场\n\n"
@@ -357,6 +357,50 @@ def test_guards_refuse_the_closing_cue_and_a_total_wipe():
         )
         is None
     )
+    # 被接受的计划一定留下最后一条 cue —— 成品永远有字幕可看。
+    text, drops = policy.apply_unreadable_cue_drops(
+        _SRT, _flagged_audit([_deadlocked_finding()], _SRT)
+    )
+    assert drops and text.strip()
+    assert "躺着吗" in text
+
+
+def test_cpa_self_heal_wins_the_pass_so_deleting_stays_the_last_resort():
+    """判官这一轮还改得动任何一条，就不许走有损删除。"""
+
+    from src.autoslice.unreadable_cue_drop_stage import (
+        stage_unreadable_cue_drop_pass,
+    )
+
+    def stage(**overrides):
+        kwargs = dict(
+            reason_code="FINAL_REVIEW_UNRESOLVED_FINDINGS",
+            cpa_repairs=[],
+            pass_budget_left=True,
+            final_text=_SRT,
+            audit=_flagged_audit([_deadlocked_finding()], _SRT),
+            expected_srt_sha256="sha256:" + _sha(_SRT),
+            passes=[],
+            recut=None,
+            chat_authority_audit={},
+            chat_authority_path=Path("/nonexistent/chat.json"),
+            review_audit_path=Path("/nonexistent/review.json"),
+            snapshots=({}, {}, None),
+        )
+        kwargs.update(overrides)
+        return stage_unreadable_cue_drop_pass(**kwargs)
+
+    # CPA 还有可落盘的修复 → 本路必须让路（返回 None，连计划都不算）。
+    assert stage(cpa_repairs=[{"action": "REPLACE_CUE_TEXT"}]) is None
+    # 阻断码不是「未解决 findings」→ 不适用。
+    assert stage(reason_code="FINAL_REVIEW_CARRYOVER_UNCONSUMED") is None
+    # pass 预算用尽 → 不适用（不许在最后一轮偷偷改字节）。
+    assert stage(pass_budget_left=False) is None
+    # 已经删满上限 → 不适用。
+    assert stage(passes=[{}] * policy.UNREADABLE_CUE_DROP_MAX_PASSES) is None
+    # 反证：以上四条都放开时它确实会走到落盘（recut=None 让它在落盘处炸）。
+    with pytest.raises(AttributeError):
+        stage()
 
 
 def test_any_other_blocking_finding_keeps_todays_block():

@@ -61,15 +61,17 @@ cue 的 ``start_ms``/``end_ms`` 一字不改，媒体一帧不剪。这与既有
 后续 cue 不会被顺移。留空块不行：``subtitle_validation`` 会以
 ``SRT_BLOCK_TOO_SHORT`` + ``SRT_CUE_INDEX_NON_CONSECUTIVE`` 拒收。
 
-两条守卫（都是 fail-closed 侧，不是放宽）
-  * 删完不许一条 cue 都不剩；
+守卫（fail-closed 侧，不是放宽）
   * 不许删最后一条 cue —— 收束句被终点绑定
     （``talk-boundary-final-endpoint-binding.v1``）挂着，删了只会换一个更难懂的
-    阻断码。这两种情况保持今天的行为：照旧拦死。
-
-还有一条整体守卫：**只有当本轮所有阻断项都是这一类死锁时才走本路**。混进任何
-一条别的阻断项，整条候选照旧按今天拦死 —— 那条 finding 本来就该拦，删了字幕也
-救不回来，反而白白有损。
+    阻断码。这条同时蕴含「不会把整条字幕删空」（最后一条必然幸存），所以不另写
+    一条全删空守卫：翻不红的守卫是伪装成安全的死代码。这种情况保持今天的行为，
+    照旧拦死。
+  * **只有当本轮所有阻断项都是这一类死锁时才走本路**。混进任何一条别的阻断项，
+    整条候选照旧按今天拦死 —— 那条 finding 本来就该拦，删了字幕也救不回来，
+    反而白白有损。
+  * 调用侧（``unreadable_cue_drop_stage``）还压着一条次序守卫：CPA 判官这一轮
+    只要还改得动任何一条，就先走 CPA 自愈，本路一律不动。删字幕永远是最后手段。
 """
 
 from __future__ import annotations
@@ -288,10 +290,9 @@ def plan_unreadable_cue_drops(
     if not plans:
         return None
     if len(cues) in dropped_indexes:
-        # 收束句归终点绑定管，不在本路的处置范围内。
-        return None
-    if len(dropped_indexes) >= len(cues):
-        # 全删空的成品没有可审的内容，等于换一种方式判死。
+        # 收束句归终点绑定管，不在本路的处置范围内。这一条同时**蕴含**「不会把
+        # 字幕删空」：最后一条 cue 必然幸存，所以不再单写一条全删空守卫——写了
+        # 也永远走不到，负向金丝雀翻不红的守卫就是伪装成安全的死代码。
         return None
     return plans
 
