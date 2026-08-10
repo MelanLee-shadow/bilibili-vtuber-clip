@@ -209,6 +209,36 @@ worker A 的 `8d1b13d`:typed provenance lane(AGY / Gemini API 兜底 / 歌切旁
 以及新模块 `song_script_family.py`(跨字系:日文歌对中文 ASR 恒 0%)。
 我按「不整合移动靶」的纪律**暂不合入**,等其收敛。
 
+## 六之三、本夜合入清单(全部经全量测试门,最终 **3743 passed**)
+
+| 合入 | 内容 | 定性 |
+|---|---|---|
+| `8d1b13d` worker A | 歌切 typed provenance lane;新增 `JINGTING_BYPASS_MODEL_UNEXPECTED` 硬阻断;`max_lines` 18→120;`revive --lane song` | 基础设施门修正 + **一处收紧** |
+| `bc4e853` import worker | `scripts/import_external_package.py`(外部包导入至 review_ready,六步做五步,不碰上传授权面) | 新工具(Ivan #1) |
+| `ab13939` worker B | 边界腿 transport 失败改 typed `provider_transient`(不再判死);空补全恢复 transient floor;可恢复失败改指数退避;`body_bytes=` 埋点 | 基础设施门修正 |
+| `016d889` 收编 | D1 `agy_rc<0` 循环论证;`SONG_INFRA_RETRY_CAP=6`;名额降级;F3 跨字系 | 基础设施门修正 + **两处收紧(新增上限)** |
+
+**worker B 推翻了我给它的修正**:边界腿的 transport 死法在生产上根本没落进 `content_boundary`——
+provider 打不通时 producer 先死在**边界解析面**(`producer_boundary_resolution.py:581`),抛的 marker
+在 `classify_talk_failure` 里**一个分支都没有**,整条落进 `producer_error/unknown`(只吃一次重试)。
+这才是 8/8 `unknown ×10` 的真身。我基于 state 统计给的"boundary 腿只有 1 次、不是主要矛盾"是**错的**:
+它一直是主要矛盾,只是被错误归类藏起来了。
+
+**worker B 对我另一个提议的正确拒绝**:我根据 503/524 推测「大 prompt 系统性超时,应该分块」。
+它指出**全仓从来没有一处记录过请求体大小**,该推论目前**无法证伪**,因此加了 `body_bytes=` 埋点
+(零行为改动)而**没有**动分块——「那是对终审证据面的结构性改动,凭推论做风险远大于收益」。
+这个判断是对的,采纳。**下一轮失败即可从 state 直接判定**。
+
+### 三个 worker 一致指出、但我未擅自处理的浪费源
+1. **部署本身是最大的重产来源**:8/7–8/8 五十次重产里 **25 次** 的 `retry_reason` 就是
+   `pipeline_fingerprint_changed`;且部署引发的 requeue **不递增** `talk_transient_retry_count`,
+   所以指数退避在密集部署期一直停在第 0 档。**修法是收窄 fingerprint 恢复面**,不是加退避。
+   (改 `src/autoslice/` 下**任何** `.py`——含新增文件,走 `rglob` 非白名单——都会改全局 fingerprint,共 284 文件。)
+2. **标题超 2 个字符 → 最多 3 次整条重产**:`title_length_out_of_bounds:50`(门 48)会把 status 盖成
+   `title_failed`,runner 按 `title_attempts<3` 整条 requeue 并把 state 置 `paused_cpa_down`。
+   正确修法是**标题重生成局部重试、其余产物按哈希复用**,不是放宽 48 字门。建议单独立项。
+3. **断点续产仍未做**——这是 Ivan #9「不要整条重产」的最后一块,本夜未闭合。
+
 ## 七、留给 Ivan 的待裁项(未擅自决定)
 
 1. 多嘉宾场「可交付但依赖审阅」政策 —— 未落地。

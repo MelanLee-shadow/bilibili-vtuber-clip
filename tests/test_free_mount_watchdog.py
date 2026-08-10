@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -321,7 +322,15 @@ def test_watchdog_alerts_on_starved_runner_and_names_the_lock_holder(tmp_path):
     assert completed.returncode == 0, completed.stdout + completed.stderr
     alert = _stall_alert(tmp_path).read_text(encoding="utf-8")
     assert "runner STALLED" in alert
-    assert "25200s old" in alert
+    # 心跳年龄由 watchdog 在**运行时**重新计算（now - mtime），而 mtime 是在
+    # fixture 里按 now-25200 钉的：两个 now 之间只要跨过一次整秒边界，报出来
+    # 的就是 25201s。原先断言字面量 "25200s old"，因此是一条按秒竞态的 flaky
+    # 用例——它在 2026-08-10 的部署门上真的红过一次，挡下了一次全绿的部署。
+    # 改为断言"报了年龄且量级正确"，保留原意（饥饿时心跳年龄是唯一信号），
+    # 去掉竞态。
+    stall_age = re.search(r"heartbeat (\d+)s old", alert)
+    assert stall_age is not None, alert
+    assert 7 * 3600 <= int(stall_age.group(1)) <= 7 * 3600 + 30, alert
     assert "pid=424242" in alert
     assert "rogue_deploy_step.py" in alert
     assert "NEEDS HUMAN" in alert
