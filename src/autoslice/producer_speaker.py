@@ -31,6 +31,7 @@ from src.autoslice.speaker_finalizer import (
     finalize_fast_solo_subtitles,
     validate_speaker_review_manifest_document,
 )
+from src.autoslice.speaker_guess import finalizer_manifest_block_reason
 from src.autoslice.speaker_session_router import (
     FAST_SOLO,
     SpeakerRoutingError,
@@ -224,11 +225,14 @@ def run_speaker_finalizer(
     reference_dir: Path | None = None,
     profile_path: Path | None = None,
     model_dir: Path = Path("/opt/bilive/autoslice/models/campp"),
+    best_effort_guess: bool = False,
 ) -> dict:
     """Run the pinned speaker runtime locally on free or through a remote temp.
 
     The command consumes the already-final text SRT.  Outputs are accepted only
-    when the manifest says READY and every returned artifact hash matches.
+    when the manifest says READY (or, under ``best_effort_guess``, the declared
+    ``SPEAKER_GUESS`` degrade — see ``src/autoslice/speaker_guess.py``) and
+    every returned artifact hash matches.
     """
 
     safe_cid = re.sub(r"[^A-Za-z0-9_.-]+", "_", candidate_id)[:80]
@@ -293,6 +297,7 @@ def run_speaker_finalizer(
             command.extend(["--mixed-overlap-evidence", str(mixed_overlap_evidence_path)])
         if speaker_session_context_path is not None:
             command.extend(["--speaker-session-context", str(speaker_session_context_path)])
+        command.extend(["--best-effort-guess"] if best_effort_guess else [])
         completed = subprocess.run(
             command, cwd=str(ROOT), check=False, capture_output=True, text=True, timeout=1800
         )
@@ -360,6 +365,7 @@ def run_speaker_finalizer(
                 remote_command.extend(["--mixed-overlap-evidence", remote_mixed_overlap])
             if speaker_session_context_path is not None:
                 remote_command.extend(["--speaker-session-context", remote_speaker_context])
+            remote_command.extend(["--best-effort-guess"] if best_effort_guess else [])
             shell_command = "cd /opt/bilive/autoslice/repo && " + " ".join(
                 shlex.quote(part) for part in remote_command
             )
@@ -427,8 +433,9 @@ def run_speaker_finalizer(
         if valid_review_manifest(manifest):
             raise RuntimeError(f"SPEAKER_REVIEW_REQUIRED: {manifest.get('reason')}")
         raise RuntimeError("SPEAKER_FINALIZATION_BLOCKED: invalid speaker review evidence")
-    if manifest.get("status") != "READY" or manifest.get("production_ready") is not True:
-        raise RuntimeError(f"SPEAKER_FINALIZATION_BLOCKED: {manifest.get('reason')}")
+    blocked = finalizer_manifest_block_reason(manifest, best_effort_guess=best_effort_guess)
+    if blocked is not None:
+        raise RuntimeError(f"SPEAKER_FINALIZATION_BLOCKED: {blocked}")
     expected = {
         output_srt_path: manifest.get("output_review_srt_sha256"),
         output_ass_path: manifest.get("output_ass_sha256"),
@@ -778,6 +785,8 @@ def run_producer_speaker_finalization(
         mixed_overlap_evidence_path=mixed_overlap_evidence_path,
         speaker_session_context_path=speaker_session_context_path,
         speaker_python=speaker_python,
+        # 只有 auto 档降级；required 是"必须有真证据"的严格档，语义不动。
+        best_effort_guess=speaker_mode == "auto",
     )
     manifest["speaker_routing"] = {
         "requested_mode": speaker_mode,

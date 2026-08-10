@@ -93,7 +93,7 @@ from src.autoslice.source_subtitle_truth import (
     source_truth_owner_windows,
 )
 from src.autoslice.source_fact_review import source_fact_review_passes
-from src.autoslice import selection_rescore
+from src.autoslice import selection_rescore, speaker_guess
 from src.autoslice.surface_canon import (
     canonicalize_japanese_native_script_surfaces,
     normalize_japanese_native_script_surfaces,
@@ -2593,6 +2593,7 @@ def _deliver_staged_record(
             "speaker_subtitle": str(delivery / f"{name}.speaker.srt") if speaker_review_srt else None,
             "speaker_ass": str(delivery / f"{name}.speaker.ass") if speaker_ass else None,
             "speaker_status": speaker_manifest.get("status") if speaker_manifest else "OFF",
+            "speaker_guess": speaker_guess.summary_digest(speaker_manifest),
             "subtitle_regression_status": (
                 subtitle_regression_audit.get("status")
                 if subtitle_regression_audit is not None

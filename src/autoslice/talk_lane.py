@@ -1988,12 +1988,11 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     summary = result.get("summary") or {}
     result["red_flags"] = list(summary.get("red_flags") or [])
     result["boundary_repairs"] = list(summary.get("boundary_repairs") or [])
-    if not _talk_cover_delivery_ready(date, result):
-        result["status"] = _runner.TALK_COVER_PENDING_STATUS
-        result["cover_integrity_status"] = "INVALID_OR_MISSING_INITIAL_COVER"
-        result["cover_pending_reason_codes"] = [
-            "TALK_DELIVERY_COVER_PROOF_REQUIRED"
-        ]
-        return result
-    result["status"] = "review_ready"
+    from src.autoslice import speaker_guess  # 出处与理由见该模块 docstring
+    speaker_guess.finalize_delivered_talk_status(
+        result,
+        candidate_id=cid,
+        work_dir=out_root / cid,
+        cover_ready=_talk_cover_delivery_ready(date, result),
+    )
     return result

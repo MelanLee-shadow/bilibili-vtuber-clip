@@ -166,7 +166,14 @@ MODULE_DEBT_LEDGER = {
     # 可，候选也最好搞多一点」）——TALK_ATTEMPT_CAP 10→20 的 rationale 注释 +
     # PER_SEGMENT_CANDIDATES 12→18 的 rationale 注释。测试
     # tests/lidousha/test_game_session_talk_pick_cap.py。
-    "scripts/free_session_autoslice.py": 2_079,
+    # 2026-08-10 +3：Ivan 2026-08-10 逐字「它必须无论如何至少先猜一个说话人，我才
+    # 能审查，不能猜都不猜」——证据不足现在会产出一份**猜的**双人分离并停泊等人
+    # 改。本文件只有一处接线：把 src/autoslice/speaker_guess.py 加进
+    # talk_failure_recovery_fingerprint 的 speaker_evidence 相关文件表（1 行路径 +
+    # 2 行出处注释），否则将来修好猜法也唤不醒已经停泊的候选。降级本体、梯子、
+    # 逐 cue 证据缺口披露全在新模块 src/autoslice/speaker_guess.py。
+    # 测试 tests/test_speaker_guess.py。
+    "scripts/free_session_autoslice.py": 2_082,
     # 2026-07-31 +122：封面文案链修复（分行权威等级 + 锁定模式 + 缩略图合同背带
     # + max_lines 按合同封顶）。新增逻辑已抽成 _talk_locked_split /
     # _assert_talk_thumbnail_contract 两个模块级函数，_overlay_lidousha_cover_title
@@ -231,7 +238,11 @@ MODULE_DEBT_LEDGER = {
     # 留给下一次动这个 god-file 的人先拆再改。
     # 2026-08-08 +5：Ivan 2026-08-08 优化①边界重放 + wsl 重产 BLOCK
     # 实证——把两层 carry/skip 披露写入最终 boundary audit。
-    "src/autoslice/producer_package_finalization.py": 2_741,
+    # 2026-08-10 +1：同上那句逐字——交付摘要里加一个 speaker_guess 紧凑指纹
+    # （lane 从 stdout 摘要认出"这条是猜的"并压回停泊态）。指纹构造在
+    # src/autoslice/speaker_guess.summary_digest，这里只有一行调用点；import
+    # 并进了已有的 `from src.autoslice import selection_rescore` 那行，不另占行。
+    "src/autoslice/producer_package_finalization.py": 2_742,
     # 2026-07-31 +40：同上（SC 发送者 deferral）。
     # 2026-08-08 +7：会话内重述修复接线（Ivan 2026-08-08 当日指令，
     # docs/reviews/2026-08-08-restatement-repair-design.md §4）——会话内
@@ -297,7 +308,18 @@ FOCUSED_MODULE_LINE_BUDGETS = {
     #   （text_srt_path 穿透 + 一处调用），本体在新模块
     #   src/autoslice/speaker_overlap_evidence.py。
     # 两笔都没有在本模块做实活，预算贴实际值。
-    Path("src/autoslice/speaker_finalizer.py"): 1_804,
+    # 2026-08-10 +52：Ivan 2026-08-10 两句逐字——①「它必须无论如何至少先猜一个
+    # 说话人，我才能审查，不能猜都不猜」；②「我说的猜不是全片统一李豆沙……我要的
+    # 就是正常分离两说话人，尽最大努力分开，然后再由我改正」。证据不足时的
+    # best-effort 分离**只能**落在本文件：CAM++ 的逐 cue seed_scores 与 cue 音频
+    # 只在这里存在，退到 producer 层就要整条重跑。本文件里只有三处接线——
+    #   +18 主播锚点提名分支（阈值一字不动，走 speaker_guess.nominate_host_anchors）；
+    #   +20 GuessLadder 三级降级的调用点与 analyze() 闭包（闭包同时把原本重复的
+    #        分析调用收成一处，抵掉了一部分增量）；
+    #   +14 _write_ready_speaker_delivery 的 guess 参数/状态分叉与 CLI 开关。
+    # 梯子语义、提名算法、逐 cue 证据缺口披露、收货门判据全在新模块
+    # src/autoslice/speaker_guess.py。预算贴实际值。测试 tests/test_speaker_guess.py。
+    Path("src/autoslice/speaker_finalizer.py"): 1_856,
     # Extracted domains retain a small amount of headroom for real behavior,
     # while failing long before another 3k-4k line domain bus can form.
     # 2026-07-31：+3 来自 4666765（转录实体改由 CPA 路由）。预算贴实际值。

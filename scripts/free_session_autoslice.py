@@ -1011,6 +1011,9 @@ def talk_failure_recovery_fingerprint(failure_kind: str | None, candidate_id: st
             "src/autoslice/speaker_context.py",
             "src/autoslice/speaker_evidence.py",
             "src/autoslice/speaker_finalizer.py",
+            # 证据不足时的 best-effort 分离本体（Ivan 2026-08-10 第二次裁定）：
+            # 它现在也是"能修好一条说话人失败"的代码之一，改了必须唤醒停泊件。
+            "src/autoslice/speaker_guess.py",
             profile_asset_file("voiceprint_profile"),
         )
     paths = [relative if isinstance(relative, Path) else REPO_ROOT / relative for relative in relatives]
