@@ -169,8 +169,17 @@ def test_default_profile_jingting_prompt_matches_authoritative_glossary_fingerpr
     #   而 Ivan 裁定为「大N老师」——卡2撤回案，他的标注即裁决。两方向单向，
     #   逐处仍须本句音频判断；entity_confusables 南町组 surfaces/readings 同步
     #   +南天/大白老师/nan tian/da bai）。
+    # 2026-08-10：白色奶龙梗一族入 glossary（白/粉/黑奶龙、礼小虎、动捕房、
+    #   做面部、星汐误听面「新C」；误听面=2026-07-24/25 bcut 实测，保向不盲替）。
+    #   这批本体是 2026-07-27 的 19cecda，但它一直没合进主线——今晚按 Ivan 令
+    #   做全量部署盘点时用 git cherry 查出来才补合，中间漏了 14 天。
+    #   合并冲突按「并集 + 逐组比对」解：glossary 星汐行取分支的超集版本（含新C
+    #   与粉色奶龙指针）并保留主线 8/7 加的马有利/萱萱卡娅两行；
+    #   entity_confusables 只追加分支独有的 3 组（奶龙家族/动捕彩排话题簇/星汐新C），
+    #   **跳过分支里的南町组**——主线那组是严格超集（8/8 已加 南天/大白老师），
+    #   套用旧版会把两条裁定回退掉。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "943699c73c2fff08108834ccafed777e9780a4b4cbd7eb55ba839a8f30ec939d"
+        "385b34c789b155aead207a1deefae3fb8ea59e52cfa6530917a9c45ff9ff8737"
     )
 
 

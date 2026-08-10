@@ -1,7 +1,7 @@
 {
   "schema_version": "lidousha-timely-terms.v1",
-  "generated_at": "2026-07-10T00:00:00-04:00",
-  "expires_at": "2026-08-10T00:00:00-04:00",
+  "generated_at": "2026-07-27T00:00:00-04:00",
+  "expires_at": "2026-08-27T00:00:00-04:00",
   "status": "fresh",
   "terms": [
     {
@@ -24,6 +24,28 @@
           "url": "https://bang-dream.com/news/2357/",
           "published_at": "2026-06-01",
           "publisher": "BanG Dream! official site"
+        }
+      ]
+    },
+    {
+      "canonical": "白色奶龙",
+      "readings": ["bai se nai long", "baisenailong"],
+      "aliases": [],
+      "confusables": ["白蛇奶龙"],
+      "topic_entities": ["李豆沙", "星汐Seki", "礼墨", "粉色奶龙", "黑色奶龙", "礼小虎", "动捕彩排"],
+      "active_from": "2026-07-22",
+      "active_until": "2026-10-31",
+      "reason": "李豆沙 2026-07-22/23 动捕彩排新 3D 白模 bug 形象梗，已固化为外号（弹幕 2026-07-24 起爆发）；粉色奶龙=星汐既有梗、黑色奶龙=礼墨（粉丝盖章）、礼小虎=礼墨的猫。2026-07-24/25 bcut 实测误听面：白蛇奶龙。词条只证明实体存在，逐处替换按本句发音+上下文裁定。",
+      "sources": [
+        {
+          "url": "https://www.bilibili.com/video/av116969843988259",
+          "published_at": "2026-07-23",
+          "publisher": "Bilibili community video by 汪三w"
+        },
+        {
+          "url": "https://www.bilibili.com/video/av116974692600813",
+          "published_at": "2026-07-24",
+          "publisher": "Bilibili community video by dioneni"
         }
       ]
     }
