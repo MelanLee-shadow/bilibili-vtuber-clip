@@ -41,7 +41,7 @@ from src.autoslice.verified_io import (
     _read_json_object,
     _document_video_hash,
 )
-from src.autoslice.song_delivery import SongDeliveryError, song_portable_cover_replay_specs
+from src.autoslice.song_delivery import SongDeliveryError, cover_generation_is_song, song_portable_cover_replay_specs
 
 
 _runner = RunnerProxy()
@@ -165,7 +165,7 @@ def _enrich_repaired_cover_generation(
 
     story_contract = _active_story_contract(documents)
     if story_contract is None:
-        if bool(generation.get("is_song")):
+        if cover_generation_is_song(generation):
             enriched = copy.deepcopy(generation)
             cover_text = str(enriched.get("cover_text") or title)
             enriched["cover_origin"] = "AI_REDRAW"
@@ -225,8 +225,8 @@ def _enrich_repaired_cover_generation(
         cover_text=cover_text,
         decision_inputs={
             "cover_mode": "repair",
-            "is_song": bool(enriched.get("is_song")),
-            "cover_punch_allowed": not bool(enriched.get("is_song")),
+            "is_song": cover_generation_is_song(enriched),
+            "cover_punch_allowed": not cover_generation_is_song(enriched),
             "full_text_cover_contract": False,
             "frame_score": None,
             "frame_emotion": None,

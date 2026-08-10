@@ -85,6 +85,30 @@ def record_is_song(entry: dict) -> bool:
     )
 
 
+def cover_generation_is_song(generation: dict) -> bool:
+    """``record_is_song`` 的姊妹判据：这份 **cover generation** 是不是歌切封面。
+
+    权威位置是 ``art_direction`` 子字典，两个写入方都只写在那里——
+    ``scripts/regenerate_lidousha_cover.py`` 显式列 ``art_direction.is_song``，
+    ``publish_staging`` 走 ``asdict(art_direction)``；``cover_punch_semantics``
+    早就按同一处读歌切豁免。顶层 ``is_song`` 生产上从来没有人写过：2026-08-10
+    在 free 上普查 167 份带 cover_generation 的真 publish.json，顶层出现该键的
+    是 0 份，而 ``art_direction.is_song`` 与"命名是歌切"零不一致（5 份文件／2 个
+    candidate_id）。``cover_repair`` 曾经只读顶层，于是每首歌都被判成"无 StoryContract 的旧
+    包"，第一个 tick 必然拿不到原生 v2 route 回执，只能等第二个 tick 的
+    legacy 迁移补——《海海海》《心型病毒》两个真包都带着那个迁移标记。
+
+    顶层只作历史/手工包兜底，且权威位置一旦给出布尔值就说了算（顶层脏数据不
+    得反转它）。两处都不认就按非歌切处理：保守方向，谈话切永远不会被错挂上
+    song 路线回执。
+    """
+
+    art_direction = generation.get("art_direction")
+    if isinstance(art_direction, dict) and isinstance(art_direction.get("is_song"), bool):
+        return art_direction["is_song"]
+    return generation.get("is_song") is True
+
+
 def song_delivery_artifacts(record: dict) -> dict:
     """Best-known materialized artifacts for a song record, with sha256 hashes
     whenever the pipeline recorded them (hash hygiene stays; SEMANTIC gating
