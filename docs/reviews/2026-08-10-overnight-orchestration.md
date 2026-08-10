@@ -9,7 +9,7 @@ Ivan 的目标是「878889 的切片和歌切都上传成功」。**实际结果
 |---|---|---|
 | 8/7 切片 | 0 新增(此前已发 3) | 该日席位已满;唯一 `review_ready` 件卡 punch v2 回执 |
 | 8/8 切片 | **0**(13 条全灭) | **三个内容门**:说话人锚点 / 终审正字法 / 边界语义 |
-| 8/9 切片 | **11:23:25 起 5 条全部并行在产**(该日 0 已发,是唯一真空缺口) | 结果见文末"终局" |
+| 8/9 切片 | **0/5**(4 条 `candidate_rejected` + 1 条 90 分钟超时) | **4/4 全部死于终审正字法门** |
 | 歌切 | **0**(8/8 三首全 `candidate_rejected`) | 身份门已过、`repaired=True`、`FULL_SONG_READY`,**但栽在 `song_complete` 完整歌门** |
 
 **基础设施侧我修好了,内容门侧我没有权限替你放宽。**
@@ -657,8 +657,26 @@ free 上 `find` 全盘**没有任何一个已交付的歌包**,与此一致。
 这是今晚**唯一还可能交付**的一批:8/9 已发 0 条,且是普通杂谈素材,
 与 8/8 那批 3D live 事件场(匿名玩家、专名密集)不同质——终审门在旧代际对普通素材的通过率是 93.8%。
 
-**结果与后续处置见本节下方追加。**(若无追加,说明会话在此之前结束;
-届时请直接看 free 的 `state/2026-08-09.json` 里 `picks` 有无 `review_ready` 行。)
+### 结果:**0/5**,而且证据比 8/8 更干净
+```
+auto_193611_1250_1450  candidate_rejected  rc=1   FINAL_REVIEW_UNRESOLVED_FINDINGS
+auto_190617_473_766    candidate_rejected  rc=1   FINAL_REVIEW_UNRESOLVED_FINDINGS
+auto_214238_835_960    candidate_rejected  rc=1   FINAL_REVIEW_UNRESOLVED_FINDINGS
+auto_193611_1612_1693  candidate_rejected  rc=1   FINAL_REVIEW_UNRESOLVED_FINDINGS
+auto_200615_1320_1467  failed              rc=-1  produce 超时 5400s
+```
+state 里的 failure_kind 统计:**`subtitle_authority / final_review_findings` × 4**,没有第二种。
+
+**这条推翻了我自己的预期**:我原以为 8/9 是普通杂谈素材,会比 8/8 的 3D live 事件场
+(匿名玩家、专名密集)通过率高。**实测 4/4 全死在同一道门上**——
+**终审正字法门与素材类型无关,它就是当前谈话切的唯一决定性拦点。**
+
+这使 §七A 的 B/D 选择成为**今晚最高价值的待裁项**:它不是"某类素材的边缘问题",
+而是**整条谈话切产线的开关**。
+
+### 收尾
+12:54:00 **直播开播**(`room went LIVE`),runner 按设计让出 tick,今夜产线到此为止。
+8/9 剩余 5 条与 1 首歌已 defer 到下个 tick(等下播后自然恢复)。
 
 ### 交棒时的机器状态
 - **free 部署位 `c6a323f`**(2026-08-10T09:12:38Z,3763 绿,runner md5 已验)。
