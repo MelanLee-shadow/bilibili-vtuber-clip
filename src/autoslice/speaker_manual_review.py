@@ -68,20 +68,32 @@ def park_for_manual_review(
     *,
     reason: str,
     migrated_from: Mapping[str, object] | None = None,
+    guess: Mapping[str, object] | None = None,
+    artifacts: Mapping[str, object] | None = None,
 ) -> dict:
     """给停泊件盖一份自述回执；``status`` 保持它自己的说话人状态不动。
 
     回执是收据不是状态机（与 ``song_terminal_disposition`` /
     ``backfill_suppressed_by_exact_contract`` 同款惯例）：真正的 fail-closed
     仍由 ``status`` 不在 ``DELIVERED_TALK_STATUSES`` 里承载。
+
+    ``guess``/``artifacts`` 是 2026-08-10 第二次裁定（「它必须无论如何至少先猜
+    一个说话人，我才能审查」）带来的：停泊件现在**有成品**了。两个字段各有硬用途——
+    ``guess`` 让报表一眼说清"这条的说话人是猜的、哪几句最可能错"；``artifacts``
+    把成品路径写进 state，free 的容量清理在删 out/媒体前会扫 state 引用，不写
+    进去的成品会被当孤儿清掉（2026-07/08 两次误删的血泪）。
     """
 
     existing = record.get("speaker_manual_review")
-    held_at = (
-        existing.get("held_at")
-        if isinstance(existing, Mapping) and existing.get("held_at")
-        else time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    existing = existing if isinstance(existing, Mapping) else {}
+    held_at = existing.get("held_at") or time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
     )
+    # 同一条 pick 会被盖两次章：produce 收尾先盖（带成品与 guess 回执），紧接着
+    # 运行时主循环的 backfill 政策按状态又盖一次（只知道原因码）。第二次必须
+    # **继承**第一次的成品面，否则 Ivan 的审阅入口和防误删引用当场蒸发。
+    guess = guess if guess is not None else existing.get("speaker_guess")
+    artifacts = artifacts if artifacts is not None else existing.get("review_artifacts")
     held_status = str(record.get("status") or "")
     receipt: dict[str, object] = {
         "schema_version": SPEAKER_MANUAL_REVIEW_SCHEMA,
@@ -106,6 +118,14 @@ def park_for_manual_review(
         receipt["context_unresolved_cues"] = unresolved
     if migrated_from is not None:
         receipt["migrated_from"] = dict(migrated_from)
+    if guess is not None:
+        receipt["speaker_guess"] = dict(guess)
+        # 有产物的停泊 vs 完全没产物的停泊：Ivan 的审阅动作不同（前者是打开成品
+        # 改几句，后者是根本没得看），所以回执里显式分开，不靠调用方猜。
+        receipt["disposition"] = "AWAITING_HUMAN_SPEAKER_CORRECTION_ON_GUESSED_DELIVERY"
+        receipt["wakes_on"] = "speaker_evidence_recovery_fingerprint_change"
+    if artifacts:
+        receipt["review_artifacts"] = dict(artifacts)
     record["speaker_manual_review"] = receipt
     return receipt
 
@@ -193,8 +213,14 @@ def render_report_section(
         "模块本身的代码波）会改变 `speaker_evidence` 恢复指纹，下个 tick 自动重产；"
         "看过确认没救就把这行显式改回 `candidate_rejected` 并写明出处。",
         "",
-        "| candidate | 停泊类型 | hook | 阻塞证据 | cue 清单 |",
-        "|---|---|---|---|---|",
+        "> 「成品」一列非空的行**已经有可以打开看的视频和逐句说话人标注**（Ivan "
+        "2026-08-10「它必须无论如何至少先猜一个说话人，我才能审查」）。那份归属是"
+        "**猜的**：`猜法` 说清这次降到哪一级，`存疑句` 是逐句证据缺口的条数——"
+        "改这几句就够，不用整片重标。逐句清单在成品同名的 `.speaker.json` 里"
+        "（`speaker_guess.low_confidence_cues`），改完照常走说话人覆盖件通道。",
+        "",
+        "| candidate | 停泊类型 | hook | 阻塞证据 | cue 清单 | 猜法 | 存疑句 | 成品 |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for row in rows:
         receipt = row.get("speaker_manual_review")
@@ -203,11 +229,18 @@ def render_report_section(
             "speaker_review_manifest"
         )
         unresolved = receipt.get("context_unresolved_cues")
+        guess = receipt.get("speaker_guess")
+        guess = guess if isinstance(guess, Mapping) else {}
+        artifacts = receipt.get("review_artifacts")
+        artifacts = artifacts if isinstance(artifacts, Mapping) else {}
         lines.append(
             f"| `{_candidate_id(row) or '?'}` "
             f"| {_STATUS_LABELS.get(str(row.get('status')), str(row.get('status')))} "
             f"| {row.get('hook') or '—'} "
             f"| {str(receipt.get('failure_message') or row.get('failure_message') or '—')[:160]} "
-            f"| {(str(manifest) + (f'（未定 cue {unresolved}）' if unresolved else '')) if manifest else '—'} |"
+            f"| {(str(manifest) + (f'（未定 cue {unresolved}）' if unresolved else '')) if manifest else '—'} "
+            f"| {guess.get('rung_label') or '—'} "
+            f"| {guess.get('low_confidence_cue_count') if guess.get('low_confidence_cue_count') is not None else '—'} "
+            f"| {artifacts.get('burned_video') or '—'} |"
         )
     return lines

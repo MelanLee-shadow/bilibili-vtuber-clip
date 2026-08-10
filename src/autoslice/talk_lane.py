@@ -1995,5 +1995,6 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
             "TALK_DELIVERY_COVER_PROOF_REQUIRED"
         ]
         return result
-    result["status"] = "review_ready"
+    from src.autoslice import speaker_guess  # 出处与理由见该模块 docstring
+    result["status"] = speaker_guess.delivered_talk_status(result, candidate_id=cid)
     return result

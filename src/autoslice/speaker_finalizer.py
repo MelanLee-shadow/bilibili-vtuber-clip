@@ -76,6 +76,7 @@ from src.autoslice.speaker_context import (
     _speaker_context_env as _speaker_context_env,
     _call_context_via_cpa,
 )
+from src.autoslice import speaker_guess
 from src.autoslice.speaker_host_evidence import acoustic_hard_pass
 from src.autoslice.speaker_overlap_evidence import subcue_mixed_overlap_disclosure
 from src.autoslice.reviewed_speaker_baseline import (
@@ -615,6 +616,7 @@ def _prepare_campplus_anchor_state(
     source_session_anchor_path: Path | None,
     reviewed_anchor_labels: Mapping[int, str] | None = None,
     reviewed_speaker_baseline: Mapping[str, object] | None = None,
+    guess_host_anchors: bool = False,
 ) -> _CampPlusAnchorState:
     """Load hash-bound runtime assets and construct the trusted host bank."""
 
@@ -691,12 +693,28 @@ def _prepare_campplus_anchor_state(
         reviewed_baseline_evidence = dict(reviewed_speaker_baseline or {})
     else:
         host_indices = clip_host_indices
-        if len(host_indices) < 2:
-            raise SpeakerIdentityIndeterminate(
-                f"not enough {CHANNEL_PROFILE.prompt_name} clip anchors: {host_indices}"
-            )
-        host_prints = [cue_paths[index] for index in host_indices]
         host_anchor_scope = "clip"
+        if len(host_indices) < 2:
+            # Ivan 2026-08-10「我要的就是正常分离两说话人，尽最大努力分开」：
+            # 清过 host_session_seed_min 的 cue 不够两条时，**阈值一字不动**，
+            # 改成明示降级——提名 seed 分最高的几条当锚点，下游整条分离链照跑。
+            # 本体（含逐条"没清过阈值"的披露）在 src/autoslice/speaker_guess.py。
+            nomination = (
+                speaker_guess.nominate_host_anchors(
+                    seed_scores,
+                    anchor_count=anchor_count,
+                    seed_min=float(policy["host_session_seed_min"]),
+                )
+                if guess_host_anchors
+                else None
+            )
+            if nomination is None:
+                raise SpeakerIdentityIndeterminate(
+                    f"not enough {CHANNEL_PROFILE.prompt_name} clip anchors: {host_indices}"
+                )
+            host_indices = nomination[0]
+            host_anchor_scope = speaker_guess.GUESSED_HOST_ANCHOR_SCOPE
+        host_prints = [cue_paths[index] for index in host_indices]
         reviewed_baseline_evidence = None
 
     score_cache: dict[int, float] = {}
@@ -743,6 +761,7 @@ def _run_campplus_analysis(
     reviewed_anchor_labels: Mapping[int, str] | None = None,
     reviewed_speaker_baseline: Mapping[str, object] | None = None,
     text_srt_path: Path | None = None,
+    guess_host_anchors: bool = False,
 ) -> dict[str, object]:
     anchors = _prepare_campplus_anchor_state(
         media_path=media_path,
@@ -754,6 +773,7 @@ def _run_campplus_analysis(
         source_session_anchor_path=source_session_anchor_path,
         reviewed_anchor_labels=reviewed_anchor_labels,
         reviewed_speaker_baseline=reviewed_speaker_baseline,
+        guess_host_anchors=guess_host_anchors,
     )
     policy = anchors.policy
     references = anchors.references
@@ -1182,6 +1202,7 @@ def _run_bound_speaker_analysis(
     reviewed_votes: Mapping[int, str],
     reviewed_baseline: ReviewedSpeakerBaseline | None,
     mixed_overlap_document: Mapping[str, object] | None,
+    guess_host_anchors: bool = False,
 ) -> dict[str, object]:
     """Run the analyzer, then prove every bound input stayed unchanged."""
 
@@ -1204,6 +1225,9 @@ def _run_bound_speaker_analysis(
             reviewed_baseline.evidence if reviewed_baseline is not None else None
         ),
             text_srt_path=bound.text_srt_path,
+            # 只在真的要猜时才传，既有 analyzer 假件（**_kwargs 之外的严格签名）
+            # 在非猜路径上一个字节都感觉不到。
+            **({"guess_host_anchors": True} if guess_host_anchors else {}),
         )
     except SpeakerIdentityIndeterminate as exc:
         identity_error = exc
@@ -1397,15 +1421,21 @@ def _write_ready_speaker_delivery(
     output_srt_path: Path,
     output_ass_path: Path,
     output_manifest_path: Path,
+    guess: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    """Atomically materialize the READY subtitle artifacts and their bindings."""
+    """Atomically materialize the subtitle artifacts and their bindings.
+
+    ``guess`` 不为空时产物照写、绑定照做，但状态是 ``SPEAKER_GUESS`` 且
+    ``production_ready`` 恒 False——"READY = 证据充分"这条不变量一个字节都不稀释，
+    下游（producer 门、包内文件名、运行时状态）全程按状态区分两种产物。
+    """
 
     write_srt(final_cues, output_srt_path)
     write_ass(final_cues, output_ass_path, show_speaker_labels=False)
     manifest: dict[str, object] = {
         "schema_version": SPEAKER_FINALIZATION_SCHEMA,
-        "status": "READY",
-        "production_ready": True,
+        "status": speaker_guess.SPEAKER_GUESS_STATUS if guess else "READY",
+        "production_ready": guess is None,
         "stage_order": "text_final_then_speaker_then_ass_then_burn",
         "source_media": str(bound.media_path),
         "source_media_sha256": sha256_file(bound.media_path),
@@ -1455,6 +1485,7 @@ def _write_ready_speaker_delivery(
         "overlap_output_cue_count": sum(cue.placement == "above" for cue in final_cues),
         "solo_prior": analysis.get("solo_prior"),
         "solo_prior_receipt": analysis.get("solo_prior_receipt"),
+        "speaker_guess": dict(guess) if guess else None,
         "analysis": analysis,
         "final_decisions": [asdict(cue) for cue in final_cues],
     }
@@ -1482,6 +1513,7 @@ def finalize_speaker_subtitles(
     speaker_session_context_path: Path | None = None,
     analyzer: Callable[..., dict[str, object]] = _run_campplus_analysis,
     context_call: Callable[[str], str] | None = None,
+    best_effort_guess: bool = False,
 ) -> dict[str, object]:
     bound = _snapshot_speaker_inputs(
         media_path=media_path,
@@ -1514,8 +1546,9 @@ def finalize_speaker_subtitles(
         return mixed_gate.review_manifest
     mixed_overlap_document = mixed_gate.document
     identity_error: SpeakerIdentityIndeterminate | None = None
-    try:
-        analysis = _run_bound_speaker_analysis(
+
+    def analyze(guess_host_anchors: bool = False) -> dict[str, object]:
+        return _run_bound_speaker_analysis(
             bound=bound,
             reference_dir=reference_dir,
             model_dir=model_dir,
@@ -1523,9 +1556,13 @@ def finalize_speaker_subtitles(
             analyzer=analyzer,
             context_call=context_call,
             reviewed_votes=reviewed_votes,
-        reviewed_baseline=reviewed_baseline,
+            reviewed_baseline=reviewed_baseline,
             mixed_overlap_document=mixed_overlap_document,
+            guess_host_anchors=guess_host_anchors,
         )
+
+    try:
+        analysis = analyze()
     except SpeakerIdentityIndeterminate as exc:
         identity_error = exc
         analysis = identity_indeterminate_analysis(cue_count=len(bound.cues), reason=str(exc))
@@ -1534,8 +1571,12 @@ def finalize_speaker_subtitles(
         context_path=(speaker_session_context_path if override_document is None else None),
         candidate_id=candidate_id,
     )
+    ladder = speaker_guess.GuessLadder(best_effort_guess)
     if identity_error is not None and analysis.get("solo_prior") != "portrait":
-        raise identity_error
+        # portrait solo prior 优先级更高，上面已放行；它也救不回来时才轮到猜。
+        analysis = ladder.escalate(
+            identity_error, retry=analyze, cue_count=len(bound.cues)
+        )
     labels = _materialize_speaker_labels(
         analysis,
         cues=bound.cues,
@@ -1555,18 +1596,25 @@ def finalize_speaker_subtitles(
             fresh_path=labels.fresh_automatic_srt,
             baseline=reviewed_baseline,
         )
-    review_manifest = _resolve_unresolved_speaker_gate(
-        analysis,
-        bound=bound,
-        override_document=override_document,
-        override_path=override_path,
-        automatic_srt=automatic_srt,
-        output_srt_path=output_srt_path,
-        output_ass_path=output_ass_path,
-        output_manifest_path=output_manifest_path,
-    )
-    if review_manifest is not None:
+    try:
+        review_manifest = _resolve_unresolved_speaker_gate(
+            analysis,
+            bound=bound,
+            override_document=override_document,
+            override_path=override_path,
+            automatic_srt=automatic_srt,
+            output_srt_path=output_srt_path,
+            output_ass_path=output_ass_path,
+            output_manifest_path=output_manifest_path,
+        )
+    except SpeakerFinalizationError as exc:
+        ladder.absorb_gate_stop(exc)  # 非"语境没定"的同类型异常在这里原样重抛
+        review_manifest = None
+    if review_manifest is not None and not best_effort_guess:
         return review_manifest
+    # 梯子第二级：分离已经跑完，只是若干 cue 语境未定。原本这里删产物、交一份
+    # SPEAKER_REVIEW_REQUIRED 就走人（Ivan 8/10：那样我什么也看不到）。
+    ladder.absorb_gate_manifest(review_manifest)
     return _write_ready_speaker_delivery(
         bound=bound,
         analysis=analysis,
@@ -1576,6 +1624,7 @@ def finalize_speaker_subtitles(
         output_srt_path=output_srt_path,
         output_ass_path=output_ass_path,
         output_manifest_path=output_manifest_path,
+        guess=ladder.receipt(analysis, review_manifest),
     )
 
 def finalize_fast_solo_subtitles(
@@ -1758,6 +1807,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mixed-overlap-evidence", type=Path)
     parser.add_argument("--speaker-session-context", type=Path)
     parser.add_argument("--no-context-judge", action="store_true")
+    # 只有 producer 在 speaker_mode=auto 下才会传；required 永远不带这个开关。
+    parser.add_argument("--best-effort-guess", action="store_true")
     args = parser.parse_args(argv)
     repo_root = Path(__file__).resolve().parents[2]
     context_call = None if args.no_context_judge else (
@@ -1780,6 +1831,7 @@ def main(argv: list[str] | None = None) -> int:
             mixed_overlap_evidence_path=args.mixed_overlap_evidence,
             speaker_session_context_path=args.speaker_session_context,
             context_call=context_call,
+            best_effort_guess=args.best_effort_guess,
         )
     except Exception as exc:
         blocked = {
