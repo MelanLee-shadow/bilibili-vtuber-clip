@@ -285,6 +285,74 @@ punch mode requires hash-bound CPA text proof that a stranger can infer the conc
 因为整条重产会重新走文本流水线,可能把这个**已经 `review_ready`(冻结、安全)**的包
 送进上面那个正字法门而彻底失去。**同字节重摇 QC 换绿更是明令禁止**。
 
+## 六之六、正字法门量化结论(worker 实测;**需要 Ivan 拍板**)
+
+报告全文 `docs/reviews/2026-08-10-final-review-orthography-block.md`(分支 `tmp-orthography`)。
+
+**先更正两处我自己的说法**:
+1. 「今天已发 4 条」**错了**——那 4 条的 `uploaded.json` 时间戳是 **8/9**(19:26–22:52Z)。
+   **8/10 至今零交付、零上传**。(滚动 24h 配额计算不受影响:那 4 条仍在窗口内,5 已用 / 约 5 席可用不变。)
+2. 我推测的「无法授权的改字提议 → 原文被判不可发布」**对我采样那条不成立**:
+   她→TA 那条**改字是被授权的**(`mutation_authority={basis: SEMANTIC_JUDGE_ORTHOGRAPHY_TIEBREAK, status: PASS}`)。
+   而 `ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED` **根本不是判据**——它在 **PASS 的候选里最多出现过 40 次**,
+   约等于"这条 cue 没文本出处"的默认态。我把背景噪声当成了病因。
+
+**真正的判据**是 `final_review_contract.py:350` 的 `_DECIDED_KEEP_CURRENT_BRANCHES`:
+一张**写死三个分支名**的白名单,而引擎实际吐 **7 种以上**分支名 → **白名单落后于引擎**。
+更深一层:`final_review_auditor.py:2644` 把判官改好的 SRT 直接丢弃(`_unused_output`),
+终审**没有 apply 通道**;而 `exact_final_convergence.py:1540` 只认"收敛到保留原文"才算解决
+→ **凡被判定"该改"的 finding 永远回不到 resolved**。
+
+### 通过率(按代际分层,已去重备份件、剔除 v1 老 schema)
+| 代际 | 样本 | PASS | BLOCK | PASS 率 |
+|---|---|---|---|---|
+| F2 前(≤08-09 04:40) | 16 | 15 | 1 | **93.8%** |
+| F2 后(08-09 05:38 起) | 8 | 3 | 5 | 37.5% |
+| **8/10 当前代际** | 4 | **0** | **4** | **0%** |
+
+**成因是发现量放大,不是门变严**:判据一个字没改(`a2b07e8..d7956e7` 在这些文件上 diff 为空);
+变的是 `9b88e9c`(8/9 F2)引入 `candidate_pronoun_consistency_audit` —— 一条候选只要 **1 条** finding
+落在白名单外就整条 BLOCK,**分母一涨,通过概率乘性坍缩**。
+路径本身 7 月就在(`106a52b`/`0a97deb`/`f5daf4b`),与 8/9 的 F12/F16/F17 无关(worker 明确标为未归因,不硬套)。
+
+### 四个选项(worker 用**本仓真函数**跑真实回执测出来的,不是推演)
+| 选项 | 解锁 5 条 BLOCK | 解锁今天 8/7 三条 |
+|---|---|---|
+| A 现状 | 0/5 | 0/3 |
+| **B** 白名单补 2 个 keep-current 分支名 | **1/5** | **0/3** |
+| C = B + 放行 UNCERTAIN 那支 | 1/5 | 0/3 |
+| **D** = C + 所有 `repaired=True` 一律保留原文 | **5/5** | **3/3** |
+
+- **B 不削弱纪律**:那 8 条 finding **根本没改字**(`NOT_APPLIED`/`timing_immutable`),
+  纪律管的是"改字要有授权";B 只是让白名单追上引擎。反向门仍拦死 `repaired=True` 与未走完的 infra 分支。
+- **D 的风险必须明说**:会把审片员**已判定为错**的字幕原样发出去(`我去，张死`/`烧哦`/`刚刚香香烧烤说`/`超超级紧张`)。
+  编造风险为零,但**已知错字上线**风险是满的——同 memory 里 delivery-divergence 把已修件退回 garble 那一类。
+
+**伪裁定核查**:披露规则署名的「Ivan 2026-07-26/27 无人值守裁定:发出去检查有问题再修」,
+4 个检索式查 transcript **没有任何 Ivan 本人 user turn**,只命中该注释被写下的那一刻 → **依据存疑**。
+若那三个分支名不是 Ivan 划的线,**补白名单(B)就只是修 bug 而非改政策**。
+
+### 我今晚的处置:**不动这个门**
+理由:①**D 会发出已知错字**,这是 Ivan 本人被坑过的那类事故,我不越权替他降标准;
+②**B 救不了今晚**(今天 8/7 三条 0/3);③**8/8 的 13 条才是今晚主力**,worker 估 **6–10 条**能过,
+已经超过我仅有的 ~5 席上传配额;④被拦的 4 条**此刻正带 carryover 自动重跑**(07:40:57 起,约 08:20–08:30Z 出回执),
+这是**免费的自愈实验**,先看它。**B 与 D 都留给 Ivan 拍板。**
+
+## 六之七、`visual_song_discovery` 的 Gemini 兜底是**假兜底**(fail-open,今晚部署的新腿)
+
+另一会话的 worker 在 7 份真实录播上实测:**5/7 报 `GEMINI_VISUAL_SONG_DISCOVERY_FAILED`**,
+只有 27MB 的残桩成功。根因:整张 contact sheet 内联提交,而
+`agy_gemini_client.GEMINI_REQUEST_MAX_BYTES = 20_000_000`,30 分钟录播的接触表几乎必然超限。
+
+**最危险的是它 fail-open**:日志写 `visual song inventory failed open`、召回继续,
+于是在没有可用 AGY 的机器上**静默读成"这场没有歌"**。free 的历史日志里这条路径**真的走过**
+(7/25–7/26 因 AGY 配额耗尽多次 `failed open`)。
+
+**今晚不构成阻塞**(已核实):8/8 与 8/9 的歌候选**都已在 backlog 里**(8/9 有 14 条),
+发现阶段早已跑过,不依赖这条腿。**但它是个真缺陷**:AGY 8/9 一天被 OOM 杀 8 次(约 15GB/31GB),
+一旦 free 落到这条腿上,**歌切会静默归零而不是报错**。
+修法建议:接触表分批/降采样后提交;超限时**fail-closed 报错**,绝不 fail-open。
+
 ## 七、留给 Ivan 的待裁项(未擅自决定)
 
 1. 多嘉宾场「可交付但依赖审阅」政策 —— 未落地。
