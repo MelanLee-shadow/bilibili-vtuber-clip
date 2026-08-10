@@ -394,6 +394,29 @@ free 上直打 CPA(`/responses`,`gpt-5.6-sol`):
 401/403/404/422 与普通 400 **仍不重试**,配反向门测试),赶在 8/8 的 13 条起跑前部署。
 **根治仍是 Ivan #8 的 oracle 分组修复,今晚不动他的 oracle。**
 
+## 六之九、⚠️ **`--preclaim` CLI 是个会毁 state 的地雷**(本夜发现,尚未修)
+
+`scripts/free_session_autoslice.py:2014` 的 `--preclaim` 分支:
+```python
+write_state(date, {"status": "manual_preclaim", "segments_done": [...]})
+```
+而 `runner_state_writeback.write_state` 对**普通 dict**(非 `TrackedState`)走的是
+`_atomic_write(path, state)` —— **整体替换,不合并**。
+
+→ 对一个**已有内容**的日期跑 `--preclaim`,会把 `picks` / `publication_closure` /
+`pending_talk` / `song_backlog` / 已发布记录**全部抹掉**,只剩两个字段。
+在 8/7 或 8/8 上跑一次 = 直接丢掉当天全部已发布台账。
+
+**我因此没有用这个 CLI**,而是用逐字段安全改法(只改 `status`、保留其余、备份 + 原子写 + 回执,
+与 8/9 解挂同一套路)。**建议 Ivan 要么修成合并写、要么给它加一道"目标 state 非空即拒"的门。**
+
+## 六之十、把 2026-08-07 暂停,把产能让给 8/8 / 8/9
+
+8/7 席位已满(cap=10、已发 3 条),它的失败件**今晚没有上传价值**,却每个 tick 占满 5 个
+produce 槽约 **50 分钟**,把 8/8(今晚主力 13 条)和 8/9(已发 **0** 条)挤到后面。
+按"配额是瓶颈、产能不是"的原则,已把 8/7 置 `manual_preclaim`(**安全改法**,回执写明解除方式
+并警告不要用 `--preclaim` CLI 解除)。预计每轮省下约 50 分钟。
+
 ## 七、留给 Ivan 的待裁项(未擅自决定)
 
 1. 多嘉宾场「可交付但依赖审阅」政策 —— 未落地。
