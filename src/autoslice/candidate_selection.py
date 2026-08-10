@@ -16,10 +16,17 @@ from src.autoslice.selection_scorecard import selection_rank_key, selection_scor
 from src.autoslice.publication_reconciliation import (
     publication_row_is_verified,
 )
+from src.autoslice.talk_quota_freeze import (
+    freeze_admission_policy,
+    frozen_admission,
+)
 from src.autoslice.talk_quota_policy import (
     TalkQuotaPolicy,
     resolve_talk_quota_policy,
 )
+
+QUOTA_DISCLOSURE_SCHEMA = "talk-quota-policy-disclosure.v1"
+QUOTA_DISCLOSURE_FIELD = "talk_quota_policy_disclosure"
 
 
 _runner = RunnerProxy()
@@ -294,6 +301,137 @@ def _talk_admission_for_policy(
         max(0, policy.cap - produced - reserved_for_revival), attempts_left
     )
     return slots, produced, reserved_for_revival, policy.extra_slot_min_score
+
+
+def _admit_scope(
+    state: dict, policy: TalkQuotaPolicy, ranked: list[dict]
+) -> tuple[list[dict], list[dict], dict]:
+    """Seat one quota scope: frozen seats first, then today's policy.
+
+    A candidate carrying a valid freeze stamp for this scope already won its
+    seat under the policy in force at that moment; a later widening or
+    tightening applies to NEW admissions only and never retroactively rewrites
+    a closed date (2026-08-08 `4af4a88` did exactly that to 8/7).  Fresh
+    candidates are admitted under the policy resolved for this tick, and are
+    stamped as they take their seat.
+    """
+
+    slots, produced, reserved_for_revival, extra_slot_min_score = (
+        _talk_admission_for_policy(state, policy)
+    )
+    keep = [item for item in ranked if frozen_admission(item, policy.scope_key)]
+    fresh = [item for item in ranked if frozen_admission(item, policy.scope_key) is None]
+    deferred: list[dict] = []
+    per_seg: dict[str, int] = {}
+    for item in keep:
+        per_seg[item["segment_path"]] = per_seg.get(item["segment_path"], 0) + 1
+
+    def _position() -> int:
+        # A pending revival retry already reserves an earlier ordinal seat than
+        # any newly kept candidate, so it counts toward the position base
+        # alongside produced picks.
+        return produced + reserved_for_revival + len(keep) + 1
+
+    def _admits_extra_slot(item: dict) -> bool:
+        # Slots 1..MAX_TALK_PICKS are unchanged; only positions past that need
+        # the score gate, and only a dated authority entry can create them.
+        if extra_slot_min_score is None or _position() <= _runner.MAX_TALK_PICKS:
+            return True
+        scorecard = item.get("selection_scorecard")
+        return bool(
+            selection_scorecard_is_valid(scorecard)
+            and float(scorecard["effective_score"]) >= extra_slot_min_score
+        )
+
+    def _seat(item: dict) -> None:
+        freeze_admission_policy(item, policy, admitted_position=_position())
+        keep.append(item)
+        per_seg[item["segment_path"]] = per_seg.get(item["segment_path"], 0) + 1
+
+    for item in fresh:
+        if (
+            len(keep) < slots
+            and per_seg.get(item["segment_path"], 0) < _runner.TALK_PER_SEGMENT_CAP
+            and _admits_extra_slot(item)
+        ):
+            _seat(item)
+        else:
+            deferred.append(item)
+    # The diversity cap is SOFT inside each live session.
+    for item in list(deferred):
+        if len(keep) >= slots:
+            break
+        if not _admits_extra_slot(item):
+            continue
+        _seat(item)
+        deferred.remove(item)
+    return keep, deferred, _quota_disclosure_row(
+        policy,
+        slots=slots,
+        produced=produced,
+        reserved_for_revival=reserved_for_revival,
+        kept=len(keep),
+        # frozen = keep − seated_fresh，而 seated_fresh = fresh − deferred。
+        # 别改成「数 keep 里带章的」——新准入在本 tick 内就盖了章，那样数会把
+        # 刚落座的也算成冻结席（首个 tick 的正确值是 0）。
+        kept_on_frozen_seat=len(keep) - len(fresh) + len(deferred),
+        deferred=len(deferred),
+    )
+
+
+def _quota_disclosure_row(
+    policy: TalkQuotaPolicy,
+    *,
+    slots: int,
+    produced: int,
+    reserved_for_revival: int,
+    kept: int,
+    kept_on_frozen_seat: int,
+    deferred: int,
+    pinned_deferred: bool = False,
+) -> dict:
+    """Record which policy governed this scope this tick, and where it came from."""
+
+    return {
+        "scope_key": policy.scope_key,
+        "kind": policy.kind,
+        "recording_date": policy.recording_date,
+        "cap": policy.cap,
+        "extra_slot_min_score": policy.extra_slot_min_score,
+        "policy_source": policy.policy_source,
+        "produced": produced,
+        "reserved_for_revival": reserved_for_revival,
+        "slots": slots,
+        "kept": kept,
+        "kept_on_frozen_seat": kept_on_frozen_seat,
+        "deferred": deferred,
+        "pinned_deferred": pinned_deferred,
+    }
+
+
+def _disclose_quota_policies(state: dict, rows: list[dict]) -> None:
+    """Publish which quota policy governed each scope, and where it came from.
+
+    Without this the only record of "why did this candidate get in" was the
+    live constants at read time, which is exactly what made the 2026-08-08
+    retroactive widening invisible for two days.
+    """
+
+    state[QUOTA_DISCLOSURE_FIELD] = {
+        "schema_version": QUOTA_DISCLOSURE_SCHEMA,
+        "scopes": rows,
+    }
+    for row in rows:
+        gate = row["extra_slot_min_score"]
+        _runner.log(
+            f"talk quota {row['scope_key']}: cap={row['cap']} "
+            f"额外席位门={'无' if gate is None else f'>={gate:g}'} "
+            f"出处={row['policy_source']} "
+            f"produced={row['produced']} slots={row['slots']} "
+            f"kept={row['kept']}(冻结席{row['kept_on_frozen_seat']}) "
+            f"deferred={row['deferred']}"
+            + (" [pinned-scope deferred]" if row["pinned_deferred"] else "")
+        )
 
 
 def _talk_slots_for_item(state: dict, item: dict) -> int:
@@ -926,6 +1064,7 @@ def prioritize(state: dict) -> None:
         for item in pending_talk
         for policy in (_talk_quota_policy(item),)
     }
+    disclosure: list[dict] = []
     for policy in policies.values():
         ranked = sorted(
             (
@@ -942,50 +1081,24 @@ def prioritize(state: dict) -> None:
         # prioritize() runs again immediately after a deterministic rejection.
         if policy.scope_key in pinned_scopes:
             deferred.extend(ranked)
-            continue
-        slots, produced, reserved_for_revival, extra_slot_min_score = (
-            _talk_admission_for_policy(state, policy)
-        )
-        session_keep: list[dict] = []
-        session_deferred: list[dict] = []
-        per_seg: dict[str, int] = {}
-
-        def _admits_extra_slot(item: dict) -> bool:
-            # Slots 1..MAX_TALK_PICKS are unchanged; only positions past that
-            # (RESOLVED game or landscape event scopes) need the score gate.
-            # A pending revival retry already reserves an earlier ordinal seat
-            # than any newly kept candidate, so it counts toward the position
-            # base alongside produced picks.
-            position = produced + reserved_for_revival + len(session_keep) + 1
-            if extra_slot_min_score is None or position <= _runner.MAX_TALK_PICKS:
-                return True
-            scorecard = item.get("selection_scorecard")
-            return bool(
-                selection_scorecard_is_valid(scorecard)
-                and float(scorecard["effective_score"]) >= extra_slot_min_score
+            disclosure.append(
+                _quota_disclosure_row(
+                    policy,
+                    slots=0,
+                    produced=0,
+                    reserved_for_revival=0,
+                    kept=0,
+                    kept_on_frozen_seat=0,
+                    deferred=len(ranked),
+                    pinned_deferred=True,
+                )
             )
-
-        for item in ranked:
-            seg = item["segment_path"]
-            if (
-                len(session_keep) < slots
-                and per_seg.get(seg, 0) < _runner.TALK_PER_SEGMENT_CAP
-                and _admits_extra_slot(item)
-            ):
-                session_keep.append(item)
-                per_seg[seg] = per_seg.get(seg, 0) + 1
-            else:
-                session_deferred.append(item)
-        # The diversity cap is SOFT inside each live session.
-        for item in list(session_deferred):
-            if len(session_keep) >= slots:
-                break
-            if not _admits_extra_slot(item):
-                continue
-            session_keep.append(item)
-            session_deferred.remove(item)
+            continue
+        session_keep, session_deferred, row = _admit_scope(state, policy, ranked)
+        disclosure.append(row)
         keep.extend(session_keep)
         deferred.extend(session_deferred)
+    _disclose_quota_policies(state, disclosure)
     # These candidates already won selection in an earlier generation and
     # failed without delivery.  Do not discard the retry merely because
     # successful siblings now fill the ordinary delivery quota.
@@ -994,11 +1107,14 @@ def prioritize(state: dict) -> None:
     _assign_cover_diversity_slots(state)
     for item in deferred:
         policy = _talk_quota_policy(item)
+        gate = policy.extra_slot_min_score
         _runner._note_not_selected(
             state,
             f"{Path(item['segment_path']).name} {item['start_ms'] // 1000}-{item['end_ms'] // 1000}s "
             f"conf={item.get('confidence')} hook={item.get('hook', '')[:40]} "
             f"(候补:{policy.kind}场按Tier/量化分全局排序取{policy.cap}席,"
+            f"额外席位门{'无' if gate is None else f'>={gate:g}'},"
+            f"政策出处{policy.policy_source},"
             f"confidence仅破同分,同段软上限{_runner.TALK_PER_SEGMENT_CAP})",
         )
     _runner.refill_songs(state)

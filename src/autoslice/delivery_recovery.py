@@ -31,6 +31,7 @@ from src.autoslice.recovery_title_authority import (
 )
 from src.autoslice import selection_rescore
 from src.autoslice.selection_scorecard import apply_reviewed_selection_calibration
+from src.autoslice.talk_quota_freeze import carry_frozen_admission
 
 
 _runner = RunnerProxy()
@@ -1843,6 +1844,8 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             "filler_proposal_srt_sha256": record.get("filler_proposal_srt_sha256"),
             "merge_gap_removals": list(record.get("merge_gap_removals") or []),
             "cover_diversity_slot": record.get("cover_diversity_slot"),
+            # 配额冻结跨 requeue 存活（本体 src/autoslice/talk_quota_freeze.py）
+            **carry_frozen_admission(record),
             **_cover_route_regeneration_receipt(record),
             "recovery_source_record_sha256": _canonical_object_sha256(record),
         }

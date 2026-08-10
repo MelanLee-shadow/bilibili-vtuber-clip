@@ -39,6 +39,7 @@ from src.autoslice.recovery_title_authority import (
     validate_recovery_publication_authority,
 )
 from src.autoslice.selection_scorecard import selection_scorecard_is_valid
+from src.autoslice.talk_quota_freeze import FREEZE_FIELD as TALK_QUOTA_FREEZE_FIELD
 from src.autoslice.speaker_finalizer import (
     SpeakerFinalizationError,
     validate_speaker_review_manifest_document,
@@ -1835,6 +1836,9 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         result["revivals"] = list(item["revivals"])
     for field, value_type in (
         ("sanctioned_revival_retry", dict),
+        # 准入时冻结的配额政策随 pick 落盘：没有它，「这条当初是在哪套 cap/
+        # 分数门下拿到席位的」事后无从复算（2026-08-10 考据就卡在这里）。
+        (TALK_QUOTA_FREEZE_FIELD, dict),
         ("final_review_carryover_consumed_fingerprints", list),
         ("rescore_consumed_fingerprints", list),
     ):

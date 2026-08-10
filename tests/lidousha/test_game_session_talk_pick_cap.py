@@ -1,11 +1,15 @@
-"""Ivan 游戏场配额放宽指令测试：
+"""Ivan 游戏场配额放宽指令测试（走**按日期授权资产**，不再走全局常量）：
 
-2026-08-07：「本场游戏直播的切片可突破5个上限，放宽到10个。当然，前提是分数在
-90分以上。」2026-08-08 再放宽：「8.8切片配额到20条，分数在85分以上即可」。
+2026-08-07（逐字）：「本场游戏直播的切片可突破5个上限，放宽到10个。当然，前提是
+分数在90分以上。」2026-08-10（逐字）：「追认。88改成15，85。日常还是5，并没有分数
+限制。」——8/7 就此定为 cap 10 / 额外席位门 85，写在
+`assets/lidousha/talk_quota_policy_authority.v1.json` 的 `2026-08-07-game-eguoshai`
+条目里；本文件用的就是那条**已提交的**授权（RECORDING_DATE = 2026-08-07）。
 
-session_game_context 已 RESOLVED 的场次话题上限由 5 提到 20；第 6-20 席只收
-selection_scorecard.effective_score>=85 的候选，1-5 席不变；非游戏场/
-缺失/AMBIGUOUS 语境一律留在 5；exact-contract 招回模式不受影响。
+RESOLVED 的场次进 GAME scope；第 6 席起只收 effective_score>=85 的候选，1-5 席
+不变；非游戏场/缺失/AMBIGUOUS 语境一律留在 5；exact-contract 招回模式不受影响。
+按日期条目缺席时的 fail-closed 与准入冻结另见
+`tests/lidousha/test_talk_quota_policy_freeze.py`。
 """
 
 from __future__ import annotations
@@ -89,9 +93,17 @@ def _write_game_context(base: Path, *, status: str = "RESOLVED") -> None:
     state_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
-def test_resolved_game_session_fills_up_to_twenty_when_scores_qualify(
+def test_resolved_game_session_fills_up_to_the_dated_cap_when_scores_qualify(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """20 qualifying candidates, but 8/7 was granted ten seats — not twenty.
+
+    The 20 came from `4af4a88`, which wrote Ivan's 8/8-scoped ruling into the
+    game lane constant and thereby widened 8/7 retroactively.  The cap now
+    comes from the dated authority entry, so offering more candidates than the
+    grant cannot raise it.
+    """
+
     base = tmp_path / "autoslice"
     monkeypatch.setattr(runner, "BASE", base)
     _write_game_context(base)
@@ -104,8 +116,10 @@ def test_resolved_game_session_fills_up_to_twenty_when_scores_qualify(
 
     runner.prioritize(state)
 
-    assert len(state["pending_talk"]) == 20
-    assert state["talk_backlog"] == []
+    assert len(state["pending_talk"]) == 10
+    assert len(state["talk_backlog"]) == 10
+    scope = state["talk_quota_policy_disclosure"]["scopes"][0]
+    assert scope["policy_source"] == "asset:2026-08-07-game-eguoshai"
 
 
 def test_resolved_game_session_slot_six_refused_below_eighty_five(

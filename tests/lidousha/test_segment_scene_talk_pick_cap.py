@@ -362,11 +362,15 @@ def test_resolved_game_policy_has_priority_without_stacking(
         state_root=state_root,
     )
 
+    # 优先级不变：RESOLVED 游戏日的 event 形状段仍留在 GAME scope。数字则来自
+    # 按日期授权：8/8 的条目 scope=event，绝不漏给 game scope；game scope 这天
+    # 没有条目 → fail-closed 回落 5 席 / 无额外席，而不是继承事件 lane 的 15/85。
     assert (policy.kind, policy.cap, policy.extra_slot_min_score) == (
         "game",
-        20,
-        85.0,
+        5,
+        None,
     )
+    assert policy.policy_source == "asset:default_policy"
 
 
 def test_session_annotation_persists_scene_receipt_on_rows(

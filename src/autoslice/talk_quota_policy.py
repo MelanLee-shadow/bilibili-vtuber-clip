@@ -7,13 +7,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
-from src.autoslice.game_context import talk_pick_cap
+from src.autoslice.game_context import session_game_context_is_resolved
 from src.autoslice.segment_scene_context import (
     SegmentSceneContextError,
     validate_segment_scene_context,
 )
+from src.autoslice.talk_quota_authority import resolve_quota_grant
 
 
+# 历史锚点，**不是**政策来源：Ivan 2026-08-09（回忆）「88 这个 3D live 场放宽到
+# 15 个」曾被实现成事件 lane 全局常量，与游戏 lane 同型病（一条按日裁定变成所有
+# 事件日的默认）。2026-08-10 Ivan 逐字「追认。88改成15，85。日常还是5，并没有分数
+# 限制。」后，15/85 只属于 2026-08-08，写在 assets 的授权条目里；没有条目的事件日
+# 回落 default_policy 的 5 席/无额外席。
 EVENT_TALK_PICK_CAP = 15
 EVENT_EXTRA_SLOT_MIN_SCORE = 85.0
 _LEGACY_SESSION_ID = "legacy-date-session"
@@ -30,6 +36,10 @@ class TalkQuotaPolicy:
     cap: int
     extra_slot_min_score: float | None
     recording_date: str | None
+    # 出处：``asset:<entry_id>`` / ``asset:default_policy`` /
+    # ``default:authority_absent`` / ``default:authority_invalid``。selection
+    # 把它写进日志与 state，好让「这条为什么进/不进」可以事后复算。
+    policy_source: str = "default:authority_absent"
 
 
 def _source_segment(item: Mapping[str, object]) -> str | None:
@@ -74,45 +84,43 @@ def resolve_talk_quota_policy(
     *,
     state_root: Path,
     default_cap: int = 5,
+    authority_path: Path | None = None,
 ) -> TalkQuotaPolicy:
-    """Resolve one candidate to exactly one accounting scope.
+    """Resolve one candidate to exactly one accounting scope and its quota.
 
-    Priority is existing RESOLVED game policy, then landscape event, then
-    ordinary talk.  Policies never stack: an event-looking segment on a date
-    already governed by the existing game authority remains in its GAME
-    scope; everything not positively proven is TALK.
+    Scope identity is unchanged: a RESOLVED game date is GAME, then landscape
+    event, then ordinary talk.  Policies never stack — an event-looking segment
+    on a date already governed by the game authority remains in its GAME scope;
+    everything not positively proven is TALK.
 
-    F13(Ivan 2026-08-09,裁定失落案重申):「我记得我当时说过 88 这个 3D live 场
-    放宽到 15 个,然后当天的杂谈场认为是独立的,自然有 5 个」。
+    The *numbers* attached to that scope no longer come from lane constants.
+    They come from the dated authority asset (``talk_quota_authority``), which
+    is matched on ``(recording_date, scope)`` exactly.  A date with no entry
+    falls back to the document default (5 席 / 无额外席) and, if even that is
+    unavailable, to ``default_cap`` — never to another date's grant and never
+    to a lane constant.  Ivan 2026-08-10(逐字):「追认。88改成15，85。日常还是5，
+    并没有分数限制。」
     """
 
     scene = _validated_scene(item)
     recording_date = _recording_date(item, scene)
     session_id = str(item.get("session_id") or _LEGACY_SESSION_ID)
-    if recording_date is not None:
-        game_cap, game_gate = talk_pick_cap(
-            recording_date, Path(state_root), default_cap=default_cap
-        )
-        if game_gate is not None:
-            return TalkQuotaPolicy(
-                "game",
-                f"game:{session_id}",
-                game_cap,
-                game_gate,
-                recording_date,
-            )
-    if scene is not None and scene.get("scene_kind") == "event":
-        return TalkQuotaPolicy(
-            "event",
-            f"event:{session_id}",
-            EVENT_TALK_PICK_CAP,
-            EVENT_EXTRA_SLOT_MIN_SCORE,
-            recording_date,
-        )
+    if recording_date is not None and session_game_context_is_resolved(
+        recording_date, Path(state_root)
+    ):
+        kind = "game"
+    elif scene is not None and scene.get("scene_kind") == "event":
+        kind = "event"
+    else:
+        kind = "talk"
+    grant = resolve_quota_grant(
+        recording_date, kind, default_cap=default_cap, path=authority_path
+    )
     return TalkQuotaPolicy(
-        "talk",
-        f"talk:{session_id}",
-        default_cap,
-        None,
+        kind,
+        f"{kind}:{session_id}",
+        grant.cap,
+        grant.extra_slot_min_score,
         recording_date,
+        grant.source,
     )

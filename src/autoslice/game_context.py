@@ -236,45 +236,43 @@ def validate_session_game_context(payload: object) -> dict[str, Any]:
     return dict(payload)
 
 
-# Ivan 2026-08-07 游戏场配额放宽指令：「本场游戏直播的切片可突破5个上限，放宽到
-# 10个……前提是分数在90分以上」——一场直播的 session_game_context 若已 RESOLVED，
-# 该场话题切片上限从 5 提到 10；超出原上限的额外席位只收
-# selection_scorecard.effective_score>=90 的候选，1-5 号席位不变。
-# 2026-08-08 Ivan 再放宽：「8.8切片配额到20条，分数在85分以上即可」——上限
-# 10 -> 20，6-20 号额外席位门槛 90 -> 85；1-5 号席位与非游戏场 5 上限不变。
-GAME_SESSION_TALK_PICK_CAP = 20
-GAME_SESSION_EXTRA_SLOT_MIN_SCORE = 85.0
+# Ivan 2026-08-07 游戏场配额放宽指令（逐字）：「本场游戏直播的切片可突破5个上限，
+# 放宽到10个。当然，前提是分数在90分以上。」——这是**按场/按日期**的裁定（本场 =
+# 2026-08-07 鹅鸭杀），下面两个常量只是它的历史锚点。
+#
+# 2026-08-08 `4af4a88` 把 Ivan 另一条按日裁定（「8.8切片配额到20条，分数在85分以上
+# 即可」）写成了这两个常量（10->20 / 90->85）。8/8 是 NO_MATCH 不走游戏 lane，那次
+# 改动没管到 8/8，却回溯放宽了全库唯一 RESOLVED 的游戏日 8/7。
+#
+# **这两个常量不再是政策来源**，任何代码都不再读它们来决定 cap 或分数门；配额一律
+# 由 assets 里按日期的授权条目（`talk_quota_authority`）+ 准入时冻结
+# （`talk_quota_freeze`）承载。留在这里只为存档 Ivan 8/7 原话的数字，改它们不会、
+# 也不允许再改变任何一天的合法性——`tests/lidousha/test_talk_quota_policy_freeze.py`
+# 的金丝雀 ② 把这条钉死。
+GAME_SESSION_TALK_PICK_CAP = 10
+GAME_SESSION_EXTRA_SLOT_MIN_SCORE = 90.0
 
 
-def talk_pick_cap(
-    recording_date: str,
-    state_root: Path,
-    *,
-    default_cap: int = 5,
-    extra_cap: int = GAME_SESSION_TALK_PICK_CAP,
-    extra_slot_min_score: float = GAME_SESSION_EXTRA_SLOT_MIN_SCORE,
-) -> tuple[int, float | None]:
-    """Return (talk-pick cap, extra-slot score gate) for one recording date.
+def session_game_context_is_resolved(recording_date: str, state_root: Path) -> bool:
+    """Whether one recording date has a RESOLVED session game context.
 
-    Fails open to ``(default_cap, None)`` on any missing/unreadable/invalid
-    state file or a status other than RESOLVED (NO_MATCH, AMBIGUOUS,
-    NO_GLOSSARY, GLOSSARY_INVALID) — a broken or absent game-context lane
-    must never silently loosen the ordinary delivery cap.
+    Fails closed to ``False`` on any missing/unreadable/invalid state file or a
+    status other than RESOLVED (NO_MATCH, AMBIGUOUS, NO_GLOSSARY,
+    GLOSSARY_INVALID) — a broken or absent game-context lane must never
+    silently move a date into the game quota scope.
     """
 
     safe_date = re.sub(r"[^0-9-]", "", str(recording_date))[:10]
     if not safe_date:
-        return default_cap, None
+        return False
     state_path = Path(state_root) / "session_game_context" / f"{safe_date}.json"
     try:
         if not state_path.is_file() or state_path.is_symlink():
-            return default_cap, None
+            return False
         context = validate_session_game_context(json.loads(state_path.read_text(encoding="utf-8")))
     except (OSError, ValueError, GameContextError):
-        return default_cap, None
-    if context.get("status") != "RESOLVED":
-        return default_cap, None
-    return extra_cap, extra_slot_min_score
+        return False
+    return context.get("status") == "RESOLVED"
 
 
 def render_game_glossary_context(context: Mapping[str, Any]) -> str:

@@ -115,7 +115,12 @@ FUNCTION_DEBT_LEDGER = {
     # 2026-08-07 再 +4：Ivan 2026-08-07 狍哥案实施指令（闭环接线）——收口
     # 调用 selection_rescore.execute_pending_rescores，唯一薄调用点覆盖
     # exact-contract 与普通两条 requeue 分支。
-    ("src/autoslice/delivery_recovery.py", "requeue_recoverable_talks"): 319,
+    # 2026-08-10 +2：配额冻结跨 requeue 存活的调用点（一行 `**` 展开 + 一行
+    # 注释）。Ivan 2026-08-10 逐字「追认。88改成15，85。日常还是5，并没有分数
+    # 限制。」授权的配额政策根治：cap/分数门改由按日期资产 + 准入冻结承载，
+    # 复活件丢掉冻结章就等于把回溯改写的洞重新打开。本体全在新模块
+    # src/autoslice/talk_quota_freeze.py，这里只有调用点。
+    ("src/autoslice/delivery_recovery.py", "requeue_recoverable_talks"): 321,
 }
 
 # 2026-07-31 冻结基线：12 项。同上，全部是欠账。
@@ -167,7 +172,8 @@ MODULE_DEBT_LEDGER = {
     # 新字段、fingerprint 消费账本、requeue item 的 hook/scorecard 交换）。
     # 2026-08-07 再 +4：Ivan 2026-08-07 狍哥案实施指令（闭环接线）——同上
     # 的收口调用点。
-    "src/autoslice/delivery_recovery.py": 2_132,
+    # 2026-08-10 +3：上面那个 +2 调用点，加一行 import。同一笔授权，同一本体。
+    "src/autoslice/delivery_recovery.py": 2_135,
     # 2026-08-07 +79：cue59「殉情」顶替真值「偶遇」实案（Ivan 2026-08-07
     # auto_203735_555_680 speaker-truth-diff 裁决 + 落地授权）——新增
     # _glossary_session_candidate_undecidable / _adjudicate_with_glossary_witness_guard

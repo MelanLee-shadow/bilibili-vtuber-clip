@@ -274,10 +274,10 @@ HOST_VOCAL_MODEL_DIR = Path(
     )
 )
 MAX_TALK_PICKS = 5
-# Ivan 2026-08-08「8.8切片配额到20条」: this must stay >= the game-session
-# extra cap (game_context.GAME_SESSION_TALK_PICK_CAP) or a RESOLVED game
-# session's later slots silently starve mid-run once already-picked records
-# exhaust the attempt budget, well before its own higher cap is reached.
+# This must stay >= the largest cap any dated grant can award (assets/lidousha/
+# talk_quota_policy_authority.v1.json; guarded by test_talk_quota_policy_freeze)
+# or an authorized session's later slots silently starve mid-run once already
+# picked records exhaust the attempt budget, before its own cap is reached.
 TALK_ATTEMPT_CAP = 20  # reject unsafe content candidates and backfill, bounded
 # 冒烟同款 backfill（帽更小）：talk[0] 一票否决曾让整次冒烟颗粒无收，而它偏偏
 # 是文档推荐的"第一支切片"入口——单候选级 fail-closed 时换下一个候选再试。
