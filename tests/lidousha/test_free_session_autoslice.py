@@ -4036,23 +4036,25 @@ def test_process_date_backfills_after_speaker_anchor_evidence_shortage(monkeypat
     runner.process_date(date)
 
     assert attempted == [first["cid"], reserve["cid"]]
-    assert state["picks"] == [
-        {
-            "candidate_id": first["cid"],
-            "status": "candidate_rejected",
-            "failure_kind": "speaker_evidence",
-            "failure_stage": "speaker_finalization",
-            "failure_recoverable": False,
-            "rejected_status": "speaker_evidence_insufficient",
-            "rejection_reason": "speaker_identity_unresolved_backfilled",
-        },
-        {
-            "candidate_id": reserve["cid"],
-            "status": "review_ready",
-            "bundle_lifecycle": "CURRENT",
-            "bundle_compliance": "COMPLIANT",
-        },
-    ]
+    # Ivan 2026-08-10「说话人证据不足应该转人工审阅，不是判死」：席位照常让给
+    # 候补（本用例原本的 35fc448 裁定不变），但首个候选停在自己的说话人状态上
+    # 等人看，不再被铸成 candidate_rejected 化石。
+    held = state["picks"][0]
+    assert held["status"] == "speaker_evidence_insufficient"
+    assert "rejected_status" not in held and "rejection_reason" not in held
+    assert held["failure_recoverable"] is False
+    receipt = held["speaker_manual_review"]
+    assert receipt["schema_version"] == "speaker-manual-review-hold.v1"
+    assert receipt["status"] == "PENDING_HUMAN_REVIEW"
+    assert receipt["upload_authorized"] is False
+    assert receipt["reason"] == "speaker_identity_unresolved_backfilled"
+    assert state["picks"][1] == {
+        "candidate_id": reserve["cid"],
+        "status": "review_ready",
+        "bundle_lifecycle": "CURRENT",
+        "bundle_compliance": "COMPLIANT",
+    }
+    assert len(state["picks"]) == 2
     assert state["pending_talk"] == []
 
 
