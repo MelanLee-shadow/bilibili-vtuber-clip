@@ -130,6 +130,28 @@ free 单机产能已经超过上传配额,**"三天全部上传"在今晚算术�
 - **`review_ready` 包不会被 requeue**:`build_lidousha_daily_review_manifest.py:509-511` 明确
   「review_ready pick 的产物已冻结——主车道从不 re-supersede review_ready」。故部署不会毁掉已就绪的包。
 
+## 六之二、**punch schema v2 部署使所有 05:50Z 之前的未发布包无法过审计**(本夜新发现)
+
+`3301e4e`(梗字去抽取式 + 新增 `no_fabricated_fact`)把封面梗字回执升到
+`lidousha-cover-punch-semantic-review.v2`,并随 `a2b07e8` 于 05:50Z 部署。
+
+- `src/autoslice/cover_punch_semantics.py:312` 与 `:416` 都是
+  `schema_version != SCHEMA_VERSION`(v2)**直接判否**,注释自己写明
+  「fail-closed:缺字段(例如 **v1 老回执被塞进 v2 校验**)一律不通过」。
+- 该校验由 **`scripts/audit_lidousha_review_package.py:472`** 调用 → **审计时生效**。
+- 实测 `auto_210739_1142_1436`(8/7 20:22 产,唯一 `review_ready` 的 8/7 件)的回执是
+  `/cover_generation/art_direction/cover_punch_semantic_review/schema_version =
+  lidousha-cover-punch-semantic-review.v1` → **必被审计拦**。
+
+**处置**:必须走**封面重生成**拿到新的 v2 回执,**不许**在同一份字节上重摇 QC 换绿
+(同字节重考=彩票,本仓明令禁止)。好消息是 `cover_route_regeneration` 正是为此设计的
+fingerprint 绑定一次性预算(`delivery_recovery.py:196-206`),且该候选
+`cover_repair_attempts=0`(预算未用)。部署后放开 DISABLED,runner 应自行重生成封面。
+
+**顺带发现一个死代码缺陷**:`cover_punch_semantics.py:21` 的 `LEGACY_SCHEMA_VERSIONS`
+(声明用来兼容 v1)**全仓无任何引用**——向后兼容路径根本没接线。要么接上,要么删掉,
+不要留着让人误以为 v1 能过。
+
 ## 七、留给 Ivan 的待裁项(未擅自决定)
 
 1. 多嘉宾场「可交付但依赖审阅」政策 —— 未落地。
