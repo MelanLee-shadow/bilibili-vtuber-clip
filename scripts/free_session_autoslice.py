@@ -115,7 +115,8 @@ from src.autoslice.batch_terminal_state import (
     project_terminal_batch_state,
     project_terminal_song_disposition,
 )
-from src.autoslice import publication_reconciliation, runner_state_writeback
+from src.autoslice import live_gate, publication_reconciliation, runner_state_writeback
+from src.autoslice.live_gate import format_live_basis, live_signal_divergence
 from src.autoslice.selection_scorecard import (
     SelectionCalibrationPolicyError,
     load_selected_selection_calibration_policy,
@@ -247,6 +248,9 @@ RECORDER_STATUS_PATH = Path(
 )
 RECORDER_STATUS_MAX_AGE_SECONDS = int(
     os.environ.get("AUTOSLICE_RECORDER_STATUS_MAX_AGE_SECONDS", "180")
+)
+LIVE_WITHOUT_RECORDING_WARN_SECONDS = int(
+    os.environ.get("AUTOSLICE_LIVE_WITHOUT_RECORDING_WARN_SECONDS", "1800")
 )
 BILIVE_ENV = Path("/opt/bilive/.env")
 CPA_ENV = BASE / "cpa.env"
@@ -1241,33 +1245,26 @@ def cjk_font_present() -> bool:
 
 
 def recorder_live_status() -> bool | None:
-    """True=active, False=sealed, None=unknown (stale/down → fail-safe skip)."""
+    """True=active, False=sealed, None=unknown (src.autoslice.live_gate)."""
 
-    try:
-        if RECORDER_STATUS_PATH.is_symlink() or not RECORDER_STATUS_PATH.is_file():
-            raise ValueError("status file missing or symlinked")
-        data = json.loads(RECORDER_STATUS_PATH.read_text(encoding="utf-8"))
-        if data.get("schema_version") != "recorder-neutral-status.v1":
-            raise ValueError("status schema mismatch")
-        if str(data.get("room_id")) != str(ROOM):
-            raise ValueError("status room mismatch")
-        generated = float(data["generated_at_epoch"])
-        age = time.time() - generated
-        if age < -300 or age > RECORDER_STATUS_MAX_AGE_SECONDS:
-            raise ValueError(f"status stale ({age:.0f}s)")
-        if data.get("service_reachable") is not True or data.get("error"):
-            raise ValueError(str(data.get("error") or "recorder service unreachable"))
-        if data.get("finalizing") is True:
-            return True
-        if data.get("streaming") is True or data.get("recording") is True:
-            return True
-        live_status = data.get("live_status")
-        if live_status not in (0, 1, False, True):
-            raise ValueError("live status is unknown")
-        return bool(live_status)
-    except Exception as exc:  # noqa: BLE001 — any status failure means "unknown"
-        log(f"recorder status unavailable: {exc}")
-        return None
+    return live_gate.read_recorder_live_status(
+        RECORDER_STATUS_PATH, room=ROOM, log=log,
+        max_age_seconds=RECORDER_STATUS_MAX_AGE_SECONDS,
+    )
+
+
+def live_hold_recheck() -> bool:
+    """Positive-only mid-tick live gate (src.autoslice.live_gate)."""
+
+    return live_gate.positive_live_hold_recheck(
+        RECORDER_STATUS_PATH, recorder_live_status, _live_hold_active
+    )
+
+
+def live_determination_basis(live: bool | None) -> dict:
+    """Recorder evidence + today's day dir (src.autoslice.live_gate)."""
+
+    return live_gate.live_determination_basis(live, RECORDER_STATUS_PATH, list_dates)
 
 
 def state_path(date: str) -> Path:
@@ -1575,6 +1572,7 @@ def produce_batch(date: str, items: list[dict], produce_fn) -> list[dict]:
         song_pipeline_fingerprint=song_pipeline_fingerprint,
         song_window_pre_ms=SONG_WINDOW_PRE_MS,
         song_window_post_ms=SONG_WINDOW_POST_MS,
+        live_hold_active_fn=live_hold_recheck,
     )
 
 def _date_work_flags(
@@ -1933,33 +1931,15 @@ def write_heartbeat(body: str) -> None:
 
 
 def _live_hold_active(live: bool | None) -> bool:
-    """直播期间冻结处理（True/未知都冻结，fail-safe）。
+    """直播期间冻结处理（True/未知都冻结，fail-safe；src.autoslice.live_gate）。"""
 
-    例外（Ivan 2026-07-13）：隔离回填 BASE 处理的是几天前的已关闭文件，
-    直播期间跑它们数据上安全，只有资源争抢风险（由外部护栏管）。设
-    `AUTOSLICE_IGNORE_LIVE_HOLD=1` 可豁免——但带自我防护：**只要本 BASE 的
-    录像根里能看到今天（UTC 或北京日）的日期目录，豁免拒绝生效**，因此
-    生产面即使误设该 env 也依然冻结；能豁免的只有只挂历史日期的隔离面。
-    """
-    if live is False:
-        return False
-    if os.environ.get("AUTOSLICE_IGNORE_LIVE_HOLD", "") != "1":
-        return True
-    now = time.time()
-    today_utc = time.strftime("%Y-%m-%d", time.gmtime(now))
-    today_cst = time.strftime("%Y-%m-%d", time.gmtime(now + 8 * 3600))
-    visible = set(list_dates())
-    if visible & {today_utc, today_cst}:
-        log(
-            "AUTOSLICE_IGNORE_LIVE_HOLD=1 REFUSED: today's recordings are visible "
-            f"in {REC_ROOT} — live hold stays (production-shape base)"
-        )
-        return True
-    log(
-        f"live={live} but hold IGNORED (AUTOSLICE_IGNORE_LIVE_HOLD=1, isolated backfill "
-        f"base over closed dates {sorted(visible)})"
+    return live_gate.live_hold_active(
+        live,
+        rec_root=REC_ROOT,
+        list_dates=list_dates,
+        log=log,
+        ignore_hold=os.environ.get("AUTOSLICE_IGNORE_LIVE_HOLD", "") == "1",
     )
-    return False
 
 
 def tick() -> int:
@@ -1979,24 +1959,42 @@ def tick() -> int:
         log(f"recordings source UNAVAILABLE: {source_err} — tick aborted, alert written")
         return 0
     live = recorder_live_status()
+    basis = live_determination_basis(live)
     if _live_hold_active(live):
-        if live is None:
-            write_heartbeat("live=? source=ok (recorder status unavailable — fail-safe skip)")
-            log("live status unknown — fail-safe skip this tick")
-        else:
-            write_heartbeat("live=True source=ok (waiting for stream end)")
-            log("room is LIVE — waiting for stream end")
+        report = live_gate.live_hold_report(
+            live,
+            basis,
+            marker_path=BASE / "state" / "live_without_recording.json",
+            warn_after_seconds=LIVE_WITHOUT_RECORDING_WARN_SECONDS,
+        )
+        for name, message in report["alerts"]:
+            write_alert(name, message)
+            log(f"{name}: {message}")
+        write_heartbeat(report["heartbeat"])
+        log(report["log"])
         return 0
     checked = []
-    for date in list_dates():
+    deferred: list[str] = []
+    dates = list_dates()
+    for index, date in enumerate(dates):
+        # 2026-08-09: a marathon tick read `live` once at 09:40 and was still
+        # producing at 11:40 — 37 minutes into a stream that began at 11:03.
+        # A stale start-of-tick reading must not license hours of work.
+        if live_hold_recheck():
+            deferred = list(dates[index:])
+            log(f"room went LIVE mid-tick — deferring dates {' '.join(deferred)}")
+            break
         state = read_state(date)
         if state.get("status") == "manual_preclaim":
             checked.append(f"{date}:manual_preclaim")
             continue
         checked.append(f"{date}:{state.get('status', 'new')}")
         process_date(date)
-    write_heartbeat(f"live={live} source=ok dates={' '.join(checked) or '(none)'}")
-    log(f"tick done: live={live} dates={' '.join(checked) or '(none)'}")
+    suffix = f" live_yield_deferred={' '.join(deferred)}" if deferred else ""
+    write_heartbeat(
+        f"live={live} source=ok dates={' '.join(checked) or '(none)'}{suffix}"
+    )
+    log(f"tick done: live={live} dates={' '.join(checked) or '(none)'}{suffix}")
     return 0
 
 

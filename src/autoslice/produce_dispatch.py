@@ -61,6 +61,7 @@ def produce_batch_windowed(
     song_pipeline_fingerprint: Callable[[], str],
     song_window_pre_ms: int,
     song_window_post_ms: int,
+    live_hold_active_fn: Callable[[], bool] | None = None,
 ) -> list[dict]:
     """Produce ``items`` concurrently, preserving input order.
 
@@ -130,6 +131,18 @@ def produce_batch_windowed(
                     deploy_yield = True
                     log(
                         "deploy guard present — yielding tick after "
+                        f"{len(in_flight)} in-flight item(s), "
+                        f"{len(queue)} deferred to next tick"
+                    )
+                    break
+                # Same yield contract for a broadcast that starts mid-batch
+                # (2026-08-09: a tick begun before the stream kept producing
+                # 37 minutes into it).  Undispatched items keep their state and
+                # the next tick re-picks them; in-flight items finish.
+                if live_hold_active_fn is not None and live_hold_active_fn():
+                    deploy_yield = True
+                    log(
+                        "room went LIVE — yielding tick after "
                         f"{len(in_flight)} in-flight item(s), "
                         f"{len(queue)} deferred to next tick"
                     )

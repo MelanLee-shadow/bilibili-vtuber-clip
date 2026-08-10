@@ -146,7 +146,7 @@ MODULE_DEBT_LEDGER = {
     # 可，候选也最好搞多一点」）——TALK_ATTEMPT_CAP 10→20 的 rationale 注释 +
     # PER_SEGMENT_CANDIDATES 12→18 的 rationale 注释。测试
     # tests/lidousha/test_game_session_talk_pick_cap.py。
-    "scripts/free_session_autoslice.py": 2_081,
+    "scripts/free_session_autoslice.py": 2_079,
     # 2026-07-31 +122：封面文案链修复（分行权威等级 + 锁定模式 + 缩略图合同背带
     # + max_lines 按合同封顶）。新增逻辑已抽成 _talk_locked_split /
     # _assert_talk_thumbnail_contract 两个模块级函数，_overlay_lidousha_cover_title

@@ -3,12 +3,14 @@ import json
 import hashlib
 import os
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import scripts.free_session_autoslice as runner
+import src.autoslice.live_gate as live_gate
 import src.autoslice.speaker_session_router as speaker_router
 from src.autoslice.boundary_semantic_review import (
     build_boundary_search_scope,
@@ -6079,6 +6081,226 @@ def test_recorder_live_status_is_freshness_bound_and_holds_during_finalize(
         encoding="utf-8",
     )
     assert runner.recorder_live_status() is None
+
+
+def _write_recorder_status(path: Path, **overrides) -> dict:
+    payload = {
+        "schema_version": "recorder-neutral-status.v1",
+        "backend": "BililiveRecorder",
+        "generated_at_epoch": 1_800_000_000.0 - 10,
+        "room_id": runner.ROOM,
+        "service_reachable": True,
+        "error": None,
+        "streaming": False,
+        "recording": False,
+        "finalizing": False,
+        "live_status": 0,
+        "rec_rate": 0,
+        "latest_source": None,
+        "running_status": "idle",
+        **overrides,
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return payload
+
+
+def test_recorder_status_basis_never_raises_and_carries_raw_fields(
+    tmp_path, monkeypatch
+):
+    """2026-08-09：一行光秃秃的 'room is LIVE' 让七小时后无法取证——
+    判定依据必须自带原始字段。"""
+
+    status_path = tmp_path / "status.json"
+    monkeypatch.setattr(runner, "RECORDER_STATUS_PATH", status_path)
+    monkeypatch.setattr(runner.time, "time", lambda: 1_800_000_000.0)
+
+    # 文件不存在：不抛，记 status_error
+    broken = live_gate.recorder_status_basis(status_path)
+    assert "status_error" in broken
+    assert runner.format_live_basis(None, broken).startswith("live=None basis[")
+
+    _write_recorder_status(
+        status_path, live_status=1, streaming=True, rec_rate=1234, running_status="recording"
+    )
+    basis = live_gate.recorder_status_basis(status_path)
+    assert basis["live_status"] == 1
+    assert basis["streaming"] is True
+    assert basis["rec_rate"] == 1234
+    assert basis["status_age_seconds"] == 10.0
+    rendered = runner.format_live_basis(True, basis)
+    assert "live=True" in rendered
+    assert "live_status=1" in rendered and "rec_rate=1234" in rendered
+
+    # 非 JSON 对象也只是证据，不是异常
+    status_path.write_text("[]", encoding="utf-8")
+    assert "status_error" in live_gate.recorder_status_basis(status_path)
+
+
+def test_live_signal_divergence_alerts_but_never_overrides_the_hold(
+    tmp_path, monkeypatch
+):
+    """金丝雀①：合成「房间说在播、录制器 0 速率且完全空闲」。
+
+    Ivan 的处方是「判不在播、继续 tick」——这里**故意不照做**并留证：
+    该形态说明录制坏了，放行会让切片生产和录制抢机器。分歧走 ALERT，
+    冻结照旧（fail-safe）。"""
+
+    status_path = tmp_path / "status.json"
+    monkeypatch.setattr(runner, "BASE", tmp_path)
+    monkeypatch.setattr(runner, "REC_ROOT", tmp_path / "rec")
+    (tmp_path / "rec").mkdir()
+    monkeypatch.setattr(runner, "RECORDER_STATUS_PATH", status_path)
+    monkeypatch.setattr(runner, "cjk_font_present", lambda: True)
+    monkeypatch.setattr(runner, "source_health_error", lambda: None)
+    monkeypatch.setattr(runner, "recorder_live_status", lambda: True)
+    monkeypatch.setattr(
+        runner, "process_date", lambda date: pytest.fail("live 时不许处理任何日期")
+    )
+    _write_recorder_status(status_path, live_status=1, rec_rate=0)
+
+    assert runner.tick() == 0
+
+    alert = (tmp_path / "reports" / "ALERT_LIVE_SIGNAL_DIVERGENCE.txt").read_text(
+        encoding="utf-8"
+    )
+    assert "rec_rate=0" in alert
+    assert "the hold STAYS" in alert
+    heartbeat = (tmp_path / "reports" / "heartbeat.txt").read_text(encoding="utf-8")
+    assert "live=True source=ok (waiting for stream end)" in heartbeat
+
+    # 录制器确实在录（真直播）：没有分歧，也不报警
+    _write_recorder_status(
+        status_path, live_status=1, recording=True, streaming=True, rec_rate=8888
+    )
+    basis = live_gate.recorder_status_basis(status_path)
+    assert runner.live_signal_divergence(True, basis) is None
+    # live=False 永远不进这个门
+    assert runner.live_signal_divergence(False, basis) is None
+
+
+def test_tick_live_branch_returns_without_waiting_and_carries_basis(
+    tmp_path, monkeypatch
+):
+    """金丝雀②+③：真在播（多源一致）时 tick 立刻收工——不产当日、不睡、
+    不把 runner.lock 抱到下播。2026-08-09 的七小时持锁不是这条分支干的，
+    这个测试把「不等待」钉死成契约。"""
+
+    status_path = tmp_path / "status.json"
+    monkeypatch.setattr(runner, "BASE", tmp_path)
+    monkeypatch.setattr(runner, "REC_ROOT", tmp_path / "rec")
+    (tmp_path / "rec").mkdir()
+    monkeypatch.setattr(runner, "RECORDER_STATUS_PATH", status_path)
+    monkeypatch.setattr(runner, "cjk_font_present", lambda: True)
+    monkeypatch.setattr(runner, "source_health_error", lambda: None)
+    monkeypatch.setattr(runner, "recorder_live_status", lambda: True)
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    monkeypatch.setattr(runner, "list_dates", lambda: [today])
+    monkeypatch.setattr(
+        runner, "process_date", lambda date: pytest.fail("live 时不该处理日期")
+    )
+    monkeypatch.setattr(
+        runner.time, "sleep", lambda *_a, **_k: pytest.fail("等待循环已被禁止")
+    )
+    _write_recorder_status(
+        status_path, live_status=1, recording=True, streaming=True, rec_rate=7777
+    )
+
+    started = time.monotonic()
+    assert runner.tick() == 0
+    assert time.monotonic() - started < 5, "live 分支必须秒回，不许等下播"
+
+    heartbeat = (tmp_path / "reports" / "heartbeat.txt").read_text(encoding="utf-8")
+    assert "waiting for stream end" in heartbeat
+    assert "live_status=1" in heartbeat and "rec_rate=7777" in heartbeat
+    assert not (tmp_path / "reports" / "ALERT_LIVE_SIGNAL_DIVERGENCE.txt").exists()
+
+
+def test_live_hold_recheck_is_positive_only_and_honours_the_exemption(
+    tmp_path, monkeypatch
+):
+    """tick 内复检只对**阳性** live 让路：状态文件缺失/过期属未知，
+    未知不该把已开工的批次和非 free 生产臂掐死（tick 起始门仍然保守）。"""
+
+    status_path = tmp_path / "status.json"
+    monkeypatch.setattr(runner, "RECORDER_STATUS_PATH", status_path)
+    monkeypatch.setattr(runner, "REC_ROOT", tmp_path / "rec")
+    (tmp_path / "rec").mkdir()
+    (tmp_path / "rec" / "2026-07-10").mkdir()
+
+    # 没有状态文件（Mac/wsl 生产臂）：不复检、不让路
+    assert runner.live_hold_recheck() is False
+
+    monkeypatch.setattr(runner.time, "time", lambda: 1_800_000_000.0)
+    _write_recorder_status(status_path, live_status=0)
+    assert runner.live_hold_recheck() is False
+
+    # 未知（状态过期）：不让路
+    _write_recorder_status(
+        status_path, live_status=1, generated_at_epoch=1_799_990_000.0
+    )
+    assert runner.recorder_live_status() is None
+    assert runner.live_hold_recheck() is False
+
+    # 阳性：让路
+    _write_recorder_status(status_path, live_status=1)
+    assert runner.live_hold_recheck() is True
+
+    # 隔离回填豁免仍然有效（这就是必须走 _live_hold_active 的原因）
+    monkeypatch.setenv("AUTOSLICE_IGNORE_LIVE_HOLD", "1")
+    assert runner.live_hold_recheck() is False
+
+
+def test_tick_defers_remaining_dates_when_room_goes_live_mid_tick(
+    tmp_path, monkeypatch
+):
+    """2026-08-09 实况：09:40 起跑的 tick 读了一次 live=False，11:40 还在产片，
+    而直播 11:03 就开了。起始快照不该授权几小时的越界作业。"""
+
+    monkeypatch.setattr(runner, "BASE", tmp_path)
+    monkeypatch.setattr(runner, "cjk_font_present", lambda: True)
+    monkeypatch.setattr(runner, "source_health_error", lambda: None)
+    monkeypatch.setattr(runner, "recorder_live_status", lambda: False)
+    monkeypatch.setattr(runner, "live_determination_basis", lambda live: {})
+    monkeypatch.setattr(runner, "read_state", lambda date: {"status": "pending"})
+    monkeypatch.setattr(
+        runner, "list_dates", lambda: ["2026-08-07", "2026-08-08", "2026-08-09"]
+    )
+    processed: list[str] = []
+    live_now = {"value": False}
+
+    def fake_process(date):
+        processed.append(date)
+        live_now["value"] = True  # 第一个日期跑到一半，主播开播
+
+    monkeypatch.setattr(runner, "process_date", fake_process)
+    monkeypatch.setattr(runner, "live_hold_recheck", lambda: live_now["value"])
+
+    assert runner.tick() == 0
+    assert processed == ["2026-08-07"], "开播后不许再开新日期"
+    heartbeat = (tmp_path / "reports" / "heartbeat.txt").read_text(encoding="utf-8")
+    assert "live_yield_deferred=2026-08-08 2026-08-09" in heartbeat
+
+
+def test_produce_batch_yields_when_room_goes_live_mid_batch(tmp_path, monkeypatch):
+    """派发窗口用与 deploy.guard 同一份让路契约：在飞的做完，未派发的顺延。"""
+
+    monkeypatch.setattr(runner, "BASE", tmp_path)
+    monkeypatch.setattr(runner, "MAX_PARALLEL_PRODUCE", 1)
+    live_now = {"value": False}
+    monkeypatch.setattr(runner, "live_hold_recheck", lambda: live_now["value"])
+    calls: list[str] = []
+
+    def fake_produce(date, item):
+        calls.append(item["cid"])
+        live_now["value"] = True
+        return {"cid": item["cid"], "status": "ok"}
+
+    results = runner.produce_batch(
+        "2026-08-09", [{"cid": "a"}, {"cid": "b"}, {"cid": "c"}], fake_produce
+    )
+
+    assert calls == ["a"]
+    assert [row["cid"] for row in results] == ["a"]
 
 
 def test_session_sealed_requires_stable_inventory(tmp_path, monkeypatch):
