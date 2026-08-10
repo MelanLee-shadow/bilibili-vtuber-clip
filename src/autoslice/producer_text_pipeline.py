@@ -94,6 +94,7 @@ from src.autoslice.pronoun_consistency import (
     CandidatePronounAuditError,
     discover_candidate_pronoun_findings,
 )
+from src.autoslice import provider_failure as _pf
 from src.autoslice.producer_boundary_review_stage import (
     exact_delivery_correction_audit,
     review_final_boundary_semantics,
@@ -909,10 +910,9 @@ def _run_final_review(
                 "status": "AUDITOR_UNAVAILABLE",
                 "release_gate": "BLOCK",
                 "reason_codes": [exc.reason_code],
-                "discovery": {
-                    "status": "AUDITOR_UNAVAILABLE",
-                    "detail": exc.detail,
-                },
+                "discovery": _pf.auditor_unavailable_discovery(
+                    exc.detail, _pf.provider_failure_detail_from_cause(exc)
+                ),
                 "findings": [],
                 "applied_count": 0,
                 "error_type": type(exc).__name__,
@@ -1029,10 +1029,9 @@ def _run_exact_final_release_review(
             "status": "AUDITOR_UNAVAILABLE",
             "release_gate": "BLOCK",
             "reason_codes": [exc.reason_code],
-            "discovery": {
-                "status": "AUDITOR_UNAVAILABLE",
-                "detail": exc.detail,
-            },
+            "discovery": _pf.auditor_unavailable_discovery(
+                exc.detail, _pf.provider_failure_detail_from_cause(exc)
+            ),
             "findings": [],
             "validated_finding_count": 0,
         }
@@ -1042,10 +1041,9 @@ def _run_exact_final_release_review(
             "status": "AUDITOR_UNAVAILABLE",
             "release_gate": "BLOCK",
             "reason_codes": [exc.reason_code],
-            "discovery": {
-                "status": "AUDITOR_UNAVAILABLE",
-                "detail": exc.detail,
-            },
+            "discovery": _pf.auditor_unavailable_discovery(
+                exc.detail, _pf.provider_failure_detail_from_cause(exc)
+            ),
             "findings": [],
             "validated_finding_count": 0,
         }

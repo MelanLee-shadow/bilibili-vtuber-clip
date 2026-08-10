@@ -3735,3 +3735,47 @@ def test_pinned_replay_branch_skips_reviewer_without_touching_gates():
     # 无条件路径上（不在这个 if 的任一分支里被吞掉）。
     assert "_run_exact_final_release_review" not in then_src
     assert "review_final_boundary_semantics" not in then_src
+
+
+def test_final_review_provider_outage_writes_the_verbatim_cascade(monkeypatch):
+    """端到端：provider 挂了 → 回执带 HTTP 码，而不是光秃秃一个 LlmCallError。
+
+    2026-08-10 事故的取证成本全在这里：盘上只有 ``detail: "LlmCallError"``，
+    只能翻上游 nginx/CLIProxyAPI 日志才知道是配额还是服务故障。这条用例走
+    完整装配路径（``_run_final_review`` → ``FinalReviewAuditError`` →
+    ``__cause__``），因为只测两端的话，中间任何一层"catch 后不带 from
+    re-raise"都会把证据悄悄丢掉而全套测试照样绿。
+    """
+
+    from src.autoslice.llm_client import LlmCallError
+
+    cascade = (
+        "llm command failed rc=1: "
+        "[cpa] model=gpt-5.6-sol attempt=1 http=503 curl_exit=22 result=failed\n"
+        "[cpa] model=gpt-5.5 attempt=1 http=503 curl_exit=22 result=failed\n"
+        "CPA /responses failed on all models: gpt-5.6-sol gpt-5.5 gpt-5.4"
+    )
+
+    def outage(_prompt: str) -> str:
+        raise LlmCallError(cascade)
+
+    monkeypatch.setattr(
+        pipeline, "_build_final_review_llm_call", lambda: outage
+    )
+
+    source = _srt("欢迎季下", "坏词留在这里")
+    output, audit = pipeline._run_final_review(
+        srt_text=source,
+        chat_authority_audit={"applied": []},
+        handled_entity_cues=set(),
+        verify_confusable_entity=lambda _request: {},
+        adapters=_adapters(),
+    )
+
+    assert output == source
+    assert audit["status"] == "AUDITOR_UNAVAILABLE"
+    discovery = audit["discovery"]
+    assert discovery["detail"] == "LlmCallError"
+    assert "http=503" in discovery["provider_detail"]
+    assert discovery["provider_class"] == "service"
+    assert discovery["provider_status_codes"] == [503]

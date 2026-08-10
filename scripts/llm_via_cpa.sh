@@ -35,10 +35,107 @@ MODELS="${3:-${CPA_CHAT_MODELS:-${CPA_CHAT_MODEL:-gpt-5.6-sol gpt-5.5 gpt-5.4}}}
 EFFORT="${4:-${CPA_REASONING_EFFORT:-medium}}"
 ATTEMPTS_PER_MODEL="${5:-3}"
 
+# 2026-08-10 事故：上游 ChatGPT OAuth 三把凭据同时 usage_limit_reached，流量落到
+# 次级 leg，同一分钟里 200/400/408/503 混着来（实测 sol 成功率掉到 ~80%）。终审
+# 面按 attempts_per_model=1 调用，于是 sol→5.5→5.4 三枪打空就把整条候选判死，
+# 一次 15–55 分钟的 produce 全废、runner 再无限重试、重试又继续烧配额。
+#
+# 因此把「空补全重试」和「服务类故障重试」拆开：
+#  - CPA_TRANSIENT_ATTEMPTS_PER_MODEL（默认 3）只对**服务类**失败生效
+#    （408/429/5xx、curl 连接/超时类退出码），即使 attempts_per_model=1 也照常
+#    退避重试——调用方要的是"一个模型一次逻辑尝试"，不是"抖一下就放弃"。
+#  - 其它 4xx 是确定性拒绝（分组无权、请求非法），同模型重试只会浪费时间，
+#    立即换下一个模型。
+# 退避是指数 + 抖动，总睡眠有上限，保证三个模型跑完仍远小于调用方的 600s 超时。
+TRANSIENT_ATTEMPTS_PER_MODEL="${CPA_TRANSIENT_ATTEMPTS_PER_MODEL:-3}"
+BACKOFF_BASE_SECONDS="${CPA_BACKOFF_BASE_SECONDS:-2}"
+BACKOFF_MAX_TOTAL_SECONDS="${CPA_BACKOFF_MAX_TOTAL_SECONDS:-30}"
+# Hard wall-clock stop for the whole chain.  attempts_per_model=1 used to be the
+# only thing keeping the final-review stage inside its 600s caller timeout; the
+# transient floor above would break that guarantee on its own, so the deadline
+# now carries it explicitly.  It gates **every** dispatch after the first (not
+# just same-model retries), so no request can start past the deadline and the
+# worst case is 400s + one in-flight curl (--max-time 180) = 580s < 600s.
+# The first attempt always runs, so a deadline can never make this a no-op.
+# Set to 0 to disable.
+DEADLINE_SECONDS="${CPA_DEADLINE_SECONDS:-400}"
+
 if ! [[ "$ATTEMPTS_PER_MODEL" =~ ^[1-9][0-9]*$ ]]; then
   echo "attempts_per_model must be a positive integer" >&2
   exit 2
 fi
+
+if ! [[ "$TRANSIENT_ATTEMPTS_PER_MODEL" =~ ^[1-9][0-9]*$ ]]; then
+  echo "CPA_TRANSIENT_ATTEMPTS_PER_MODEL must be a positive integer" >&2
+  exit 2
+fi
+
+if ! [[ "$BACKOFF_BASE_SECONDS" =~ ^[0-9]+$ ]]; then
+  echo "CPA_BACKOFF_BASE_SECONDS must be a non-negative integer" >&2
+  exit 2
+fi
+
+if ! [[ "$BACKOFF_MAX_TOTAL_SECONDS" =~ ^[0-9]+$ ]]; then
+  echo "CPA_BACKOFF_MAX_TOTAL_SECONDS must be a non-negative integer" >&2
+  exit 2
+fi
+
+if ! [[ "$DEADLINE_SECONDS" =~ ^[0-9]+$ ]]; then
+  echo "CPA_DEADLINE_SECONDS must be a non-negative integer" >&2
+  exit 2
+fi
+
+SLEPT_TOTAL=0
+TOTAL_ATTEMPTS=0
+DEADLINE_HIT=0
+SECONDS=0
+
+deadline_reached() {
+  [[ "$DEADLINE_SECONDS" -gt 0 && "$SECONDS" -ge "$DEADLINE_SECONDS" ]]
+}
+
+# Service-class failures are worth waiting out; everything else is not.
+transient_failure() {
+  local http_code="$1" curl_exit="$2" empty_completion="$3"
+  if [[ "$empty_completion" == "1" ]]; then
+    return 0
+  fi
+  case "$curl_exit" in
+    # 7 connect refused, 28 operation timeout, 35 TLS connect, 52 empty reply,
+    # 55/56 send/recv failure — all transport-level, all worth a retry.
+    7|28|35|52|55|56) return 0 ;;
+  esac
+  case "$http_code" in
+    408|429|5??) return 0 ;;
+    4??) return 1 ;;
+  esac
+  # No usable status (transport died before a response, or curl too old to
+  # report one): unclassifiable, so take the conservative branch and retry.
+  # Fail-closing a whole candidate on an unreadable failure is the expensive
+  # mistake; one extra request is the cheap one.
+  return 0
+}
+
+backoff_sleep() {
+  local attempt="$1"
+  local delay=$((BACKOFF_BASE_SECONDS << (attempt - 1)))
+  if [[ "$delay" -gt 0 ]]; then
+    # Jitter keeps concurrent producers from re-colliding on the same second.
+    delay=$((delay + RANDOM % (delay + 1)))
+  fi
+  local remaining=$((BACKOFF_MAX_TOTAL_SECONDS - SLEPT_TOTAL))
+  if [[ "$remaining" -le 0 ]]; then
+    return 1
+  fi
+  if [[ "$delay" -gt "$remaining" ]]; then
+    delay="$remaining"
+  fi
+  SLEPT_TOTAL=$((SLEPT_TOTAL + delay))
+  if [[ "$delay" -gt 0 ]]; then
+    sleep "$delay"
+  fi
+  return 0
+}
 
 if [[ -z "${CPA_BASE_URL:-}" || -z "${CPA_API_KEY:-}" ]]; then
   echo "CPA_BASE_URL/CPA_API_KEY missing" >&2
@@ -88,16 +185,30 @@ PY
 # empty output_text (reasoning model quirk); retry a few times per model, then
 # fail over to the next model in MODELS.
 for MODEL in $MODELS; do
+if [[ "$DEADLINE_HIT" == "1" ]]; then
+  break
+fi
 build_body "$MODEL"
 attempt=0
 while :; do
+  if [[ "$TOTAL_ATTEMPTS" -gt 0 ]] && deadline_reached; then
+    echo "[cpa] deadline ${DEADLINE_SECONDS}s reached before model=${MODEL}; giving up" >&2
+    DEADLINE_HIT=1
+    break
+  fi
   attempt=$((attempt + 1))
+  TOTAL_ATTEMPTS=$((TOTAL_ATTEMPTS + 1))
+  HTTP_CODE=000
+  CURL_EXIT=0
+  EMPTY_COMPLETION=0
   # CPA sits behind Cloudflare, which 403s (error 1010) non-browser user agents.
-  if curl -sS --fail-with-body --max-time 180 \
+  HTTP_CODE="$(curl -sS --fail-with-body --max-time 180 \
+      -o "$RESP_FILE" -w '%{http_code}' \
       -H @"$HEADER_FILE" \
       -d @"$BODY_FILE" \
-      "${CPA_BASE_URL%/}/responses" > "$RESP_FILE" \
-     && python3 - "$RESP_FILE" "$COMPLETION_FILE" <<'PY'
+      "${CPA_BASE_URL%/}/responses")" && CURL_EXIT=0 || CURL_EXIT=$?
+  if [[ "$CURL_EXIT" -eq 0 ]]; then
+    if python3 - "$RESP_FILE" "$COMPLETION_FILE" <<'PY'
 import json, sys
 payload = json.load(open(sys.argv[1], encoding="utf-8"))
 # Responses API: prefer the convenience output_text, else walk output[] for the
@@ -115,10 +226,34 @@ if not isinstance(text, str) or not text.strip():
     raise SystemExit(f"empty completion content (status={payload.get('status')})")
 open(sys.argv[2], "w", encoding="utf-8").write(text)
 PY
-  then
-    exit 0
+    then
+      echo "[cpa] model=${MODEL} attempt=${attempt} http=${HTTP_CODE} curl_exit=0 result=ok" >&2
+      exit 0
+    fi
+    EMPTY_COMPLETION=1
   fi
-  if [[ "$attempt" -ge "$ATTEMPTS_PER_MODEL" ]]; then
+  echo "[cpa] model=${MODEL} attempt=${attempt} http=${HTTP_CODE} curl_exit=${CURL_EXIT} empty_completion=${EMPTY_COMPLETION} result=failed" >&2
+  if [[ "$EMPTY_COMPLETION" == "1" ]]; then
+    # The reasoning-model empty-output quirk keeps the caller's own budget.
+    max_attempts="$ATTEMPTS_PER_MODEL"
+  elif transient_failure "$HTTP_CODE" "$CURL_EXIT" "$EMPTY_COMPLETION"; then
+    max_attempts="$ATTEMPTS_PER_MODEL"
+    if [[ "$TRANSIENT_ATTEMPTS_PER_MODEL" -gt "$max_attempts" ]]; then
+      max_attempts="$TRANSIENT_ATTEMPTS_PER_MODEL"
+    fi
+  else
+    # Deterministic rejection (bad request, unauthorized, group without the
+    # requested capability): the same request will be refused again.  Fail over
+    # immediately instead of burning the model's attempt budget.
+    echo "[cpa] model=${MODEL} deterministic http=${HTTP_CODE}, no same-model retry" >&2
+    max_attempts=1
+  fi
+  if [[ "$attempt" -ge "$max_attempts" ]]; then
+    echo "CPA /responses failed ${attempt}x on ${MODEL}, trying next model" >&2
+    break
+  fi
+  if ! backoff_sleep "$attempt"; then
+    echo "[cpa] model=${MODEL} backoff budget exhausted, trying next model" >&2
     echo "CPA /responses failed ${attempt}x on ${MODEL}, trying next model" >&2
     break
   fi

@@ -33,6 +33,7 @@ from src.autoslice.foreign_source_failure_evidence import (
 from src.autoslice.producer_boundary_owner_contract import (
     validate_frozen_boundary_owner_contract,
 )
+from src.autoslice import provider_failure as _provider_failure
 from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
@@ -573,7 +574,7 @@ def _compact_correction_pass(value: object) -> dict[str, object]:
             "discovery": (
                 {
                     field: discovery.get(field)
-                    for field in ("status", "detail")
+                    for field in _provider_failure.DISCOVERY_EVIDENCE_FIELDS
                     if discovery.get(field) is not None
                 }
                 if isinstance(discovery, Mapping)
@@ -985,7 +986,7 @@ def _normalize_failure_fingerprint_value(value: object) -> object:
         return {
             str(key): _normalize_failure_fingerprint_value(nested)
             for key, nested in value.items()
-            if key != "surface_files"
+            if key not in _provider_failure.FINGERPRINT_VOLATILE_KEYS
         }
     if isinstance(value, list):
         return [_normalize_failure_fingerprint_value(item) for item in value]
@@ -1178,6 +1179,13 @@ def classify_talk_failure(attempt_output: str) -> dict:
     }
     if failure_evidence is not None:
         result["failure_evidence"] = failure_evidence
+    # 2026-08-10：provider_transient 把「配额窗口关了」「上游服务抖了」「请求被
+    # 拒了」三件事混成一个词，运维看不出该等还是该换 key。这里只加一层信息性
+    # 标签（不改 failure_kind / 可恢复性 / 重试语义），从保真的 provider 文本
+    # 里解析：quota=429/usage_limit，service=408/5xx/超时/空补全，rejected=其它 4xx。
+    result.update(
+        _provider_failure.provider_failure_label(failure_evidence, tail)
+    )
     if "FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED" in tail:
         violation = _foreign_source_gate_violation(tail)
         if violation is not None:
@@ -1852,6 +1860,13 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     result.update(_runner.read_publish_meta(out_root / cid))
     if completed.returncode != 0:
         result.update(_runner.classify_talk_failure(attempt_output))
+        if result.get("failure_provider_class"):
+            # 运维要的一句话：该等（quota/service）还是该查请求（rejected）。
+            _runner.log(
+                f"{cid}: provider failure class="
+                f"{result['failure_provider_class']} status="
+                f"{result['failure_provider_status_codes']}"
+            )
         result["failure_recovery_fingerprint"] = _runner.talk_failure_recovery_fingerprint(str(result["failure_kind"]), cid)
         if result["failure_recoverable"]:
             retry_epoch = int(time.time()) + _runner.SONG_INFRA_RETRY_BASE_SECONDS

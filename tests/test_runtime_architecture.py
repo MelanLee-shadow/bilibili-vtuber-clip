@@ -226,7 +226,10 @@ MODULE_DEBT_LEDGER = {
     # 跳过阶段包装与 truth_full_ownership.v1 回执全部落在新模块
     # src/autoslice/delivery_fast_path.py（钉死重放判定也一并搬过去），
     # 这里只剩 import 与三处调用点，净收益锁进账本。
-    "src/autoslice/producer_text_pipeline.py": 2_120,
+    # 2026-08-10 −2：AUDITOR_UNAVAILABLE 的 discovery 字面量收进
+    # src/autoslice/provider_failure.auditor_unavailable_discovery（同时把
+    # provider 保真证据挂上去），三处调用点各省一行。
+    "src/autoslice/producer_text_pipeline.py": 2_118,
     # 2026-07-31 +12：contract 穿透接线（形参 + 4 个调用点）。
     # 2026-07-31 再 +17：封面路由 P1——witness 从「路由法官」降回「置信输入」，
     # 删掉无条件放行、几何否决移到关系分支之后、置信改为 几何 OR witness bbox。
