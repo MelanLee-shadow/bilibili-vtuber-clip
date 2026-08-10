@@ -1256,7 +1256,24 @@ def _cover_binding_fixture(tmp_path, monkeypatch, *, song=False):
         "model_fallback_used": True,
         "attempted_models": ["gpt-image-2", "gpt-image-1.5"],
         "candidate_id": cid,
-        "is_song": song,
+        # 歌切标记的权威位置是 art_direction 子字典（生产上 regenerate 工作流
+        # 和 publish_staging 都只写这里，顶层从来没有 is_song）。夹具以前只写
+        # 顶层，跟真包对不上，把 cover_repair 的键位错配整个盖住了。
+        "art_direction": {
+            "role": "host",
+            "expression_en": "gentle singing face",
+            "background_style": "calm",
+            "layout": "song-clean" if song else "left-split",
+            "hook_color": "cream",
+            "hook_word": "",
+            "is_song": song,
+            "emote_id": "",
+            "emote_mode": "",
+            "emote_reason": "",
+            "cover_punch": [],
+            "cover_punch_semantic_review": {},
+            "scene_props": [],
+        },
         "title": title,
         "cover_text": "修复后的封面文案",
         "final_cover": str(generated_cover),
@@ -2389,7 +2406,10 @@ def test_song_portable_cover_migration_reuses_old_bound_generation_without_image
 def test_song_route_v2_migration_reuses_bound_cpa_cover_without_image_call(tmp_path, monkeypatch):
     fx = _cover_binding_fixture(tmp_path, monkeypatch, song=True)
     legacy = json.loads(fx["generation_path"].read_text(encoding="utf-8"))
-    legacy["is_song"] = False
+    # 造一份"绑定时没被认成歌切"的旧包：权威位置和历史顶层位置都不标歌切，
+    # 于是首次 bind 走不到原生 song 分支，正是 legacy 迁移要救的那种状态。
+    legacy["art_direction"]["is_song"] = False
+    legacy.pop("is_song", None)
     fx["generation_path"].write_text(json.dumps(legacy), encoding="utf-8")
     runner._bind_repaired_cover(fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"])
     assert runner._recover_committed_cover_binding(fx["date"], fx["rec"], fx["mp4"], fx["cover"])
@@ -2399,6 +2419,91 @@ def test_song_route_v2_migration_reuses_bound_cpa_cover_without_image_call(tmp_p
     from src.autoslice.cover_route_evidence import validate_cover_route_decision
 
     assert validate_cover_route_decision(generation, allow_legacy_v1=False)
+
+
+def test_cover_generation_is_song_reads_the_canonical_art_direction_position():
+    """歌切标记的权威位置是 art_direction 子字典，顶层只是历史包兜底。"""
+    from src.autoslice.song_delivery import cover_generation_is_song
+
+    assert cover_generation_is_song({"art_direction": {"is_song": True}}) is True
+    assert cover_generation_is_song({"art_direction": {"is_song": False}}) is False
+    # 真包（regenerate 工作流产物）就是这个形状：顶层没有 is_song。
+    assert cover_generation_is_song({"art_direction": {"is_song": True}, "title": "x"}) is True
+    # 权威位置在场就说了算，顶层脏数据不能反转它。
+    assert cover_generation_is_song({"art_direction": {"is_song": False}, "is_song": True}) is False
+    # 手工/历史包：权威位置缺失或不是布尔时才回落顶层。
+    assert cover_generation_is_song({"is_song": True}) is True
+    assert cover_generation_is_song({"art_direction": {}, "is_song": True}) is True
+    assert cover_generation_is_song({"art_direction": "nope", "is_song": True}) is True
+    # 两处都不认就按非歌切处理（保守方向）。
+    assert cover_generation_is_song({}) is False
+    assert cover_generation_is_song({"is_song": "yes"}) is False
+
+
+def test_song_cover_repair_gets_native_v2_route_on_the_first_bind(tmp_path, monkeypatch):
+    """歌切没有 StoryContract，仍必须**第一次** bind 就拿到原生 v2 route 回执。
+
+    以前 is_song 写在 art_direction 子字典、这里却读顶层，于是每首歌都被当成
+    "StoryContract 之前的旧包"：首个 tick 建包必被拒（无 v2 回执），第二个
+    tick 才靠 legacy 迁移补上。真包（心型病毒 / 海海海）全都带 legacy 迁移标
+    记，就是这条路从没走通过原生 v2 的实证。
+    """
+    from src.autoslice.cover_route_evidence import validate_cover_route_decision
+
+    fx = _cover_binding_fixture(tmp_path, monkeypatch, song=True)
+    before = json.loads(fx["generation_path"].read_text(encoding="utf-8"))
+    assert "is_song" not in before  # 与真包一致：顶层没有这一位
+    assert before["art_direction"]["is_song"] is True
+    for path in (fx["delivery_record"], fx["source_record"], fx["publish_path"]):
+        assert "story_contract" not in json.loads(path.read_text(encoding="utf-8"))
+
+    runner._bind_repaired_cover(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
+    )
+
+    generation = fx["rec"]["cover_generation"]
+    route = generation["route_decision"]
+    assert route["cover_mode"] == "song_repair"
+    assert route["is_song"] is True
+    assert route["cover_punch_allowed"] is False
+    assert route["selected_treatment"] == "cpa_redraw"
+    assert route["actual_treatment"] == "cpa_redraw"
+    assert route["execution_status"] == "READY"
+    assert route["host_identity_required"] is True
+    assert generation["cover_origin"] == "AI_REDRAW"
+    # 回执必须是"通过校验"的，不是"存在就行"。
+    assert validate_cover_route_decision(generation, allow_legacy_v1=False)
+    # 原生 = 没经过 legacy 迁移，也不需要第二个 tick 来补。
+    assert "legacy_route_v2_migration" not in generation
+    assert runner._cover_binding_valid(fx["date"], fx["rec"], fx["mp4"], fx["cover"])
+    assert not runner._recover_committed_cover_binding(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"]
+    )
+
+
+def test_talk_legacy_cover_repair_is_not_misjudged_as_song(tmp_path, monkeypatch):
+    """`_active_story_contract` 返回 None 的路径不止歌切：没有 StoryContract 的
+    谈话旧包必须保持原来的 legacy 行为，绝不能被挂上 song 的 route_decision。"""
+
+    fx = _cover_binding_fixture(tmp_path, monkeypatch)  # song=False
+    generation_before = json.loads(fx["generation_path"].read_text(encoding="utf-8"))
+    assert generation_before["art_direction"]["is_song"] is False
+    for path in (fx["delivery_record"], fx["source_record"], fx["publish_path"]):
+        assert "story_contract" not in json.loads(path.read_text(encoding="utf-8"))
+
+    runner._bind_repaired_cover(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
+    )
+
+    generation = fx["rec"]["cover_generation"]
+    assert "route_decision" not in generation
+    assert "story_contract" not in generation
+    assert "cover_origin" not in generation
+    # art_direction 整个缺席的更老的包同样不许被认成歌切。
+    del generation_before["art_direction"]
+    from src.autoslice.song_delivery import cover_generation_is_song
+
+    assert cover_generation_is_song(generation_before) is False
 
 
 def test_song_active_record_materialization_uses_publish_compatible_filename(tmp_path, monkeypatch):
