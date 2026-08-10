@@ -10369,6 +10369,157 @@ def test_infrastructure_retry_cooldown_survives_unrelated_pipeline_change(
     assert state["picks"][0]["failure_kind"] == "provider_transient"
 
 
+# --- A1 终生预算按路线记账（Ivan 2026-08-10「就按 A1 走吧」「A1 要做」）-------
+#
+# TALK_REPAIR_LIFETIME_RETRY_CAP 计的是"真修复尝试"。此前 requeue 无条件把
+# talk_repair_retry_count +1，于是一次多小时的上游故障（CPA 挂了 / 挂载掉了 /
+# 配额窗口没开）光靠定时唤醒就能把额度烧光，真修复部署下来时已经没预算了。
+# 下面四条钉住 A1 的全部可观察面：infra 不吃预算、真修复照吃、transient 计数
+# 逐字节不变（infra 退避步进读它）、存量高计数不被追溯改写。
+
+
+def test_pure_infrastructure_wake_does_not_consume_talk_repair_budget(
+    tmp_path, monkeypatch
+):
+    # 纯 infra 唤醒（指纹没变、无 cover/sanctioned/carryover/rescore 路线）
+    # 不得 +1 talk_repair_retry_count；talk_transient_retry_count 仍照旧 +1，
+    # 因为 infra_retry_policy.talk_infra_retry_delay_seconds 读的是它来步进
+    # 退避曲线——A1 一个字都没动那条链路。
+    date, state = _requeue_gating_state(
+        tmp_path, monkeypatch, failure_kind="provider_transient", transient_count=3
+    )
+    state["picks"][0]["talk_repair_retry_count"] = 2
+
+    assert runner.requeue_recoverable_talks(date, state) == 1
+    queued = state["pending_talk"][0]
+    assert queued["retry_reason"] == "transient_infrastructure_failure"
+    assert queued["talk_repair_retry_count"] == 2
+    assert queued["talk_transient_retry_count"] == 4
+
+
+def test_infrastructure_wake_budget_exemption_tracks_resolved_retry_reason(
+    tmp_path, monkeypatch
+):
+    # A1 的判据与 retry_reason 阶梯是同一个东西："当且仅当本次解析成
+    # transient_infrastructure_failure 才不 +1"。这条把耦合钉死：同一条
+    # provider_transient 记录，只要恢复指纹变了（真修复部署下来了），路线就
+    # 升级成 pipeline_fingerprint_changed，预算照吃。
+    date, state = _requeue_gating_state(
+        tmp_path, monkeypatch, failure_kind="provider_transient", transient_count=3
+    )
+    state["picks"][0]["talk_repair_retry_count"] = 2
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda _kind, _cid: "sha256:relevant-fix-deployed",
+    )
+
+    assert runner.requeue_recoverable_talks(date, state) == 1
+    queued = state["pending_talk"][0]
+    assert queued["retry_reason"] == "pipeline_fingerprint_changed"
+    assert queued["talk_repair_retry_count"] == 3
+    # changed 路线本来就不 +1 transient（既有判据），A1 没碰。
+    assert queued["talk_transient_retry_count"] == 3
+
+
+def test_talk_repair_budget_still_charges_every_real_repair_route(
+    tmp_path, monkeypatch
+):
+    # 真修复的五条路线（changed / cover_route / sanctioned / carryover /
+    # rescore）以及普通 transient_produce_failure 一律照常 +1——A1 只豁免
+    # infra，不是普遍放宽。
+    date, state = _requeue_gating_state(
+        tmp_path, monkeypatch, failure_kind="producer_error", transient_count=0
+    )
+    state["picks"][0]["talk_repair_retry_count"] = 1
+
+    assert runner.requeue_recoverable_talks(date, state) == 1
+    queued = state["pending_talk"][0]
+    assert queued["retry_reason"] == "transient_produce_failure"
+    assert queued["talk_repair_retry_count"] == 2
+    assert queued["talk_transient_retry_count"] == 1
+
+
+def test_existing_high_talk_repair_counts_are_not_retroactively_rewritten(
+    tmp_path, monkeypatch
+):
+    # 不追溯：2026-08-07 free state 上那四条 6/6/7/7 的行是历史 changed /
+    # carryover / sanctioned 路线烧出来的，A1 不回退它们。这里用一条已经远
+    # 超 TALK_REPAIR_LIFETIME_RETRY_CAP=3 的行做 infra 唤醒，计数只能原样
+    # 保留，既不 +1 也不回退。
+    date, state = _requeue_gating_state(
+        tmp_path, monkeypatch, failure_kind="provider_transient", transient_count=3
+    )
+    state["picks"][0]["talk_repair_retry_count"] = 7
+    monkeypatch.setattr(runner, "TALK_REPAIR_LIFETIME_RETRY_CAP", 3)
+
+    assert runner.requeue_recoverable_talks(date, state) == 1
+    queued = state["pending_talk"][0]
+    assert queued["retry_reason"] == "transient_infrastructure_failure"
+    assert queued["talk_repair_retry_count"] == 7
+    # 台账里留的是消费前的旧值，同样不被改写。
+    assert state["talk_superseded_attempts"][0]["talk_repair_retry_count"] == 7
+
+
+def test_infra_shaken_candidate_keeps_its_reserved_revival_seat(monkeypatch):
+    """A1 已获批的下游行为变化：infra 抖动后老候选仍保留预留席位。
+
+    ``candidate_selection._talk_admission_for_policy`` 的 ``reserved_for_revival``
+    读的是 ``talk_transient_retry_count + talk_repair_retry_count <
+    TALK_REPAIR_LIFETIME_RETRY_CAP``（**两者之和**）。A1 之前，一次纯 infra 唤醒
+    让这个和 +2；之后只 +1（transient 那一格是 infra 退避曲线的步进器，故意不动）。
+    于是同样 2 次 infra 抖动，改前老候选的预留席位已经蒸发，改后还留着——
+    ``slots = cap - produced - reserved_for_revival`` 因此少一个，当天新候选准入
+    名额减少。方向是"保老候选、少放新候选"，Ivan 2026-08-10 已明确接受。
+
+    注意这是**放慢**不是免疫：和仍在涨，3 次 infra 抖动后改前改后都回到
+    reserved=0（3 vs 6，都 >= CAP=3）。
+    """
+
+    from src.autoslice import candidate_selection
+    from src.autoslice.talk_quota_policy import TalkQuotaPolicy
+
+    policy = TalkQuotaPolicy(
+        kind="default",
+        scope_key="date:2026-08-07",
+        cap=5,
+        extra_slot_min_score=None,
+        recording_date="2026-08-07",
+    )
+    monkeypatch.setattr(
+        candidate_selection, "_talk_quota_policy", lambda _item: policy
+    )
+    monkeypatch.setattr(runner, "TALK_REPAIR_LIFETIME_RETRY_CAP", 3)
+
+    def _admission(*, repair: int, transient: int):
+        state = {
+            "picks": [
+                {"cid": "delivered-0", "status": "review_ready"},
+                {"cid": "delivered-1", "status": "review_ready"},
+                {
+                    "cid": "infra-shaken",
+                    "status": "failed",
+                    "failure_recoverable": True,
+                    "talk_repair_retry_count": repair,
+                    "talk_transient_retry_count": transient,
+                },
+            ]
+        }
+        return candidate_selection._talk_admission_for_policy(state, policy)
+
+    # 改前：2 次 infra 唤醒 → repair 2 + transient 2 = 4 >= 3，席位没了。
+    slots_before, produced, reserved_before, _ = _admission(repair=2, transient=2)
+    assert (produced, reserved_before, slots_before) == (2, 0, 3)
+
+    # 改后：同样 2 次 infra 唤醒 → repair 0 + transient 2 = 2 < 3，席位保住。
+    slots_after, produced, reserved_after, _ = _admission(repair=0, transient=2)
+    assert (produced, reserved_after, slots_after) == (2, 1, 2)
+
+    # 第 3 次抖动之后两边重新一致——A1 只是把烧速减半，不是让预留免疫。
+    assert _admission(repair=3, transient=3)[:3] == (3, 2, 0)
+    assert _admission(repair=0, transient=3)[:3] == (3, 2, 0)
+
+
 def test_exact_terminal_failure_waits_for_relevant_fingerprint_change(
     tmp_path, monkeypatch
 ):

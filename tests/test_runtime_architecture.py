@@ -218,7 +218,17 @@ MODULE_DEBT_LEDGER = {
     # 三处接线（一段 import、backfill 政策里的停泊分支+出处注释、requeue 顶部
     # 的迁移调用点）；停泊回执、化石迁移与报表本体全在新模块
     # src/autoslice/speaker_manual_review.py。测试 tests/test_speaker_manual_review.py。
-    "src/autoslice/delivery_recovery.py": 2_153,
+    # 2026-08-10 +30：A1 终生修复预算按路线记账（Ivan 2026-08-10 逐字「就按 A1
+    # 走吧」「A1 要做」）——纯 infra 唤醒（CPA/挂载/配额）此前也无条件 +1
+    # talk_repair_retry_count，把真修复的额度烧光。新增一个模块级谓词
+    # _repair_budget_charge（判据照抄写回处 talk_transient_retry_count 已有的
+    # 路线判据，只把 transient 换成 infrastructure_retry），本体连 docstring
+    # 一起放在模块级**正是为了不再抬函数账本**：requeue_recoverable_talks 的
+    # 324 行一行未涨（原来的 `retry_count + 1` 换成等长的一行调用）。阈值、
+    # talk_transient_retry_count、fail-closed 门一字未动。测试
+    # tests/lidousha/test_free_session_autoslice.py::
+    # test_pure_infrastructure_wake_does_not_consume_talk_repair_budget 等五条。
+    "src/autoslice/delivery_recovery.py": 2_183,
     # 2026-08-07 +79：cue59「殉情」顶替真值「偶遇」实案（Ivan 2026-08-07
     # auto_203735_555_680 speaker-truth-diff 裁决 + 落地授权）——新增
     # _glossary_session_candidate_undecidable / _adjudicate_with_glossary_witness_guard
