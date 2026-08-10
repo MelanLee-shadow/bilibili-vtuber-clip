@@ -1,5 +1,67 @@
 # Current handoff
 
+## ⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-10 15:05Z 交棒(successor 从这里开始)
+
+**权威报告**:`docs/reviews/2026-08-10-overnight-orchestration.md`(全夜法证)+
+`2026-08-10-host-vocal-session-anchor.md`(声纹锚点)+ `2026-08-10-final-review-carryover.md`(白名单)。
+
+### 机器状态
+- **free 部署位 `7b09f95`**(2026-08-10T14:51:44Z,全量 3775 绿)。**Mac 分支尖与 free 零差量。**
+- **`DISABLED` 已置(15:05:22Z)** —— **Ivan 令「先进行修复再重产」**。下播后不会自动开产。
+  **解除前必须先确认下面「未修完」清单已收口。**
+- 直播中(11:58Z 开播),runner 按设计让出。
+- 上传配额:滚动 24h 上限 10,窗口内已用 5,**约 5 席可用**。**今日 0 上传。**
+
+### 今晚已修并部署(全部生产验证)
+| 修复 | 效果 |
+|---|---|
+| 歌切 provenance lane(旁路自证被误判) | 噪声码消失,链条能往下走 |
+| D1 `agy_rc<0` 循环论证 | 心型病毒 `reason_codes` 清空,`FULL_SONG_READY` |
+| F3 跨字系 | 《花の塔》从身份歧义 → `song identified` |
+| `SONG_INFRA_RETRY_CAP` + 名额降级 | 歌 lane 从"一条霸占名额"变正常轮转 |
+| CPA `group_capability_unavailable` 400 改可重试 | **部署后零 provider failure**(此前每请求 15-17% 抽签打死候选) |
+| **声纹会话锚点扫到 source 末尾** | **wsl 实证:心型病毒 host-vocal `READY`、7/7 检查点**(锚点 490000-498000ms/0.55836) |
+| **decided-keep 白名单 import 引擎常量** | **全队解开 9 条候选**(8/7×1、8/8×5、8/9×3) |
+
+### 已复活等重产(**别急着放,见下**)
+- 8/7 `auto_220747_313_380`;8/8 五条(`auto_230125_1157_1229`/`_333_427`/`_550_701`/`auto_233123_115_165`/`_473_534`);
+  8/9 三条(`auto_190617_473_766`/`auto_193611_1250_1450`/`auto_193611_1612_1693`)
+- 歌 `song_210131_1210`(心型病毒)已复活,哨兵指纹 `sanctioned-revival:bf0d008`
+- 8/7 `auto_223750_913_1322`(**贪生怕死**)封面预算已重置(9→0,带回执);
+  它的 9 次失败全是 `COVER_PUNCH_REVIEW_REQUIRED`(`final_punch=[]`),根因是**「梗字必须是标题连续子串」伪裁定**,
+  已由 `3301e4e` 拆除,故重置合理。**它另有一条待 Ivan 裁**:是否授权 `IVAN_EXPLICIT` 整段文案封面。
+
+### ⚠️ 未修完 —— Ivan 明确要求"先修复再重产",这些是解除 DISABLED 的前置
+1. **分步骤重试(最高价值,Ivan 亲提)**:现在整条候选是**一个原子单位**,任何一步失败=整条重来 15-90 分钟,
+   连**预算**也是整条计的(封面挑字失败 9 次就把整条命耗光,哪怕转录/烧录/说话人全过了质检)。
+   应改成:听写→纠正→语义审批→纠正→封面标题,**每步质检后推进,失败只重试该步,复用前面已过质检的成品**。
+   这同时解决 `review_ready` 被新 schema 作废却无法只重做封面的死锁。
+2. **说话人证据不足应转人工审阅,不是拒**(Ivan 裁定,理由:说话人是刚开的功能)。
+   现在 `speaker_evidence/speaker_finalization` 是 `failure_recoverable=False` 直接判死(8/7×1、8/8×1)。
+3. **歌名识别**:现在只有画面 OCR(产出 `na`/`Leee`/`町`/`中生` 垃圾)+ LLM 猜乱码 ASR。
+   **Ivan 令:李豆沙唱日语歌很多,绝不能用 BCUT 的中文 ASR 猜歌,应该用 Gemini 猜;
+   更好的是接免费听歌识曲 API(去查 GitHub 项目)。**
+4. **`import_external_package.py` 支持歌切**(现在 song 直接 typed 拒绝)——
+   Ivan 要求;没有它 wsl 产的歌无法导回 free 上传。
+5. `post_song_talk_start_ms` 在联唱场景把歌间间隙当"歌后说话"(gemini-3.6-flash 兜底产出),
+   且与 `post_song_transition_ms` 一起错、交叉校验查不出;还在喂 recut 与边界收紧。
+6. 选项 C(UNCERTAIN 披露):`HISTORY_CONVERGENCE_DOWNGRADED_TO_DISCLOSURE_ONLY`
+   **端到端从未披露过任何一条**,分流点注释与合同判据自相矛盾。**待 Ivan 裁。**
+7. 硬退出丢 carryover(超时/崩溃跳过侧车落盘)。
+8. host-vocal 出证成本 ≈ `(歌后毫秒/4000)×3.94s`,歌后尾巴 >15 分钟会撞 prover 900s;治本=embed-once。
+
+### 血泪(今晚新踩)
+- **`revive_rejected_candidates.py` 自己持 `runner.lock`,不要再套外层 `flock`** —— 会自锁死。
+- **`--preclaim` CLI 会整体替换 state**,抹掉当天 picks/已发布台账;要冻某天用逐字段安全改法。
+- **`manual_preclaim` 挡不住 requeue**,下个 tick 照常开产。
+- **下"从来没有/从未实现"这类全称否定前,先把搜索面列全**:free 的 `out/` **和** `review_packages/`、
+  Mac forensics pristine、wsl `vtuber-reproduce`;优先查 `publication_registry` 这种权威台账而不是文件系统。
+  (我因只搜 free 就断言"歌切从未发布过",被 Ivan 一句话推翻——`song_192000_1321`《海海海》
+   2026-07-25 已发布 `BV1BJGc6aEWf`。)
+- **`search_session_transcripts` 够不到 raw JSONL** —— 用它查不到 Ivan 逐字**不等于**没说过。
+  今晚一条"疑似伪裁定"就是这样被误判的(真裁定在 `2026-07-26T17:45:10Z`)。
+
+
 ## ⭐⭐⭐⭐⭐⭐⭐ 2026-08-10 13:00Z 交棒(successor 从这里开始;以下 ⭐×6 及更早节仅存历史)
 
 **权威报告 = `docs/reviews/2026-08-10-overnight-orchestration.md`**(本节只给指针与机器状态,不重复内容)。
