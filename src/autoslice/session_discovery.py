@@ -487,7 +487,7 @@ def discover_segments(date: str, state: dict) -> None:
         failures = state.get("structured_chat_binding_failures")
         if isinstance(failures, dict):
             failures.pop(stem, None)
-        candidates, lane, extras = _runner.recall_candidates(srt, _runner.danmaku_hints(xml))
+        candidates, lane, extras = _runner.recall_candidates(srt, _runner.danmaku_hints(xml), xml)
         seg_dur = _runner.ffprobe_ms(segment)
         segment_durations_ms[stem] = seg_dur
         visual_result = _runner.discover_visual_songs(

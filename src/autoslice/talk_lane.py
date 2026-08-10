@@ -220,7 +220,7 @@ def last_json_block(text: str) -> dict:
     return {}
 
 
-def recall_candidates(srt_path: Path, hints: str | None) -> tuple[list, str, dict]:
+def recall_candidates(srt_path: Path, hints: str | None, danmaku_xml: Path | None = None) -> tuple[list, str, dict]:
     """(candidates, lane, extras) — semantic lane first, deterministic fallback.
 
     extras maps candidate_id → hook/confidence plus the deterministic
@@ -250,7 +250,7 @@ def recall_candidates(srt_path: Path, hints: str | None) -> tuple[list, str, dic
     )
     try:
         candidates, diag = select_semantic_session_candidates_covered(
-            cues, llm_call=llm, max_candidates=_runner.PER_SEGMENT_CANDIDATES, danmaku_hints=hints
+            cues, llm_call=llm, max_candidates=_runner.PER_SEGMENT_CANDIDATES, danmaku_hints=hints, danmaku_xml=danmaku_xml
         )
         hooks = diag.get("hooks") or {}
         scorecards = diag.get("scorecards") or {}
