@@ -653,6 +653,78 @@ def test_review_gate_drops_the_cue_ships_the_package_and_writes_the_sidecar(
     assert json.loads(sidecar.read_text(encoding="utf-8")) == drop_audit
 
 
+def test_producer_sidecar_is_exactly_what_the_runner_globs(
+    tmp_path: Path,
+) -> None:
+    """把 produce 落的旁车和 runner 的 glob 焊在一起，用生产目录布局。
+
+    这两半分开测都会绿，合起来才拦得住本仓最典型的那类静默 fail-open：旁车路径
+    与 glob 根一旦漂开，runner 读不到删除记录 → 状态照常 review_ready → 一个
+    少了一句话的成品直接进日审清单、变成可上传。正是 Ivan 裁定里「在权宜上传时
+    也不能上传」要挡的那条路，所以这条走完整链路：
+    ``out/<cid>/replacement_recuts/<cid>.recut.srt`` → 终审门 → 停泊态。
+    """
+
+    from src.autoslice import producer_package_finalization as finalization
+    from src.autoslice import speaker_guess, unreadable_cue_review
+
+    out_root = tmp_path / "out"
+    work_dir = out_root / "candidate"
+    recut_dir = work_dir / "replacement_recuts"
+    recut_dir.mkdir(parents=True)
+    subtitle = recut_dir / "candidate.recut.srt"
+    subtitle.write_text(_SRT, encoding="utf-8")
+    delivery = tmp_path / "delivery" / "candidate.mp4"
+    delivery.parent.mkdir()
+    delivery.write_bytes(b"burned media")
+
+    def reviewer(text, _authority, _offset, _end):
+        audit = _clean_audit(text)
+        if _CUE_TEXT in text:
+            audit.update(_flagged_audit([_deadlocked_finding()], text))
+        return audit
+
+    finalization._run_exact_final_review_gate(
+        cid="candidate",
+        out_root=out_root,
+        final_start=0,
+        final_end=90_000,
+        recut=finalization.FinalRecutArtifacts(
+            recut_dir=recut_dir,
+            media_path=recut_dir / "candidate.recut.mp4",
+            subtitle_path=subtitle,
+            text_manifest_path=None,
+            text_manifest=None,
+        ),
+        chat_authority_audit={},
+        chat_authority_path=out_root / "candidate.chat-authority.json",
+        adapters=_gate_adapters(reviewer),
+    )
+
+    # runner 侧只拿 work_dir 去 glob——没有任何路径是测试手工拼出来的。
+    record: dict = {
+        "candidate_id": "candidate",
+        "summary": {"delivery": str(delivery), "subtitle": str(subtitle)},
+    }
+    status = speaker_guess.finalize_delivered_talk_status(
+        record,
+        candidate_id="candidate",
+        work_dir=work_dir,
+        cover_ready=True,
+    )
+    assert status == unreadable_cue_review.UNREADABLE_CUE_REVIEW_STATUS
+    receipt = record["unreadable_cue_review"]
+    assert receipt["dropped_cue_count"] == 1
+    assert receipt["dropped_cues"][0]["deleted_text"] == _CUE_TEXT
+    assert receipt["dropped_cues"][0]["receipt_path"] == str(
+        recut_dir / "candidate.unreadable-cue-drops.json"
+    )
+    assert receipt["review_artifacts"]["burned_video"] == str(delivery)
+    # 成品真的在，Ivan 打得开；字幕已经少了那一句。
+    assert delivery.is_file()
+    assert _CUE_TEXT not in subtitle.read_text(encoding="utf-8")
+
+
 def test_review_gate_still_blocks_a_machine_undecided_witness(
     tmp_path: Path,
 ) -> None:
