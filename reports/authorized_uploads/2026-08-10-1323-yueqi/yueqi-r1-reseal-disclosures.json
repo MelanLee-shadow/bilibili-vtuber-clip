@@ -1,0 +1,257 @@
+{
+ "schema_version": "yueqi-r1-reseal-disclosures.v4",
+ "candidate_id": "auto_200130_1323_1603",
+ "package_root": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/delivery",
+ "audit_receipt": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/verification/package-audit.json",
+ "audit_state": "canonical package-audit.json (deployed af35e5e9): passed:false, blocking:2 — COVER_ROUTE_DECISION_MISSING_OR_INVALID + SCREENSHOT_COVER_EVIDENCE_MISSING, both a single root cause (the deployed host-identity validator has no self-inconsistency lane).  Diagnostic shadow run under gate 7d08564: passed:true, blocking:0.",
+ "rerun_commands": {
+  "note": "--state now points at a date-stemmed copy.  The manifest builder derives manifest.date from state['date'] or the state file STEM; the packaging state copy carries no 'date' key, so the old stem 'state-copy-for-packaging' became manifest.date and clip-context validation raised CLIP_CONTEXT_DATE_MISMATCH against 2026-08-08. Re-running with the old path reintroduces that BLOCK.",
+  "manifest": "python3 $S/swap-prep/yueqi-probes/v4d_05_manifest.py --apply    # 必须走这个：裸跑 build_lidousha_daily_review_manifest.py 会把 run_mode/selection_contract/exact_candidate_ids/recovery_publication_authorities_by_candidate/items[].recovery_publication_authority 五面授权全部冲掉（builder 只会写 PRODUCTION_REVIEW + status=review_ready），并且不会重算 selection_contract.source_state_sha256。",
+  "audit": "python3 scripts/audit_lidousha_review_package.py --json $S/delivery > $S/verification/package-audit.json    # 绿需要 free 先部署 >=7d08564",
+  "shadow_audit": "python3 $S/swap-prep/yueqi-probes/v4d_06_shadow_audit.py   # 诊断用，把 repo-HEAD 门注入 sys.modules；不是授权凭据"
+ },
+ "cover_iterations": [
+  {
+   "version": 1,
+   "cover_sha256": "sha256:afe8cbc50979a60b582456740e666c04da9b9424087d499eeca80b9a61a3619d",
+   "punch": [
+    "打歌服呢？"
+   ],
+   "crop": [
+    800,
+    100,
+    1920,
+    730
+   ],
+   "punch_review": "FAIL — stranger_can_infer_event=false",
+   "host_identity": "PASS (superseded)",
+   "joint_qc": "PASS (superseded)",
+   "receipts": [
+    "verification/cover-punch-semantic-review.cpa.json",
+    "swap-prep/cover-host-identity-witness.v3.json",
+    "verification/title-cover-joint-qc.single-line-superseded.json"
+   ]
+  },
+  {
+   "version": 2,
+   "cover_sha256": "sha256:63f67c8a7f481f480aec72b41a80453dd5e5da79533d43f55a61154e195f3b80",
+   "punch": [
+    "打歌服没召唤出来",
+    "公主抱倒是先来了"
+   ],
+   "crop": [
+    800,
+    100,
+    1920,
+    730
+   ],
+   "punch_review": "PASS",
+   "host_identity": "FAIL — FINAL_COVER_SUBJECT_PROMINENCE_FAILED (identity passed)",
+   "joint_qc": "PASS",
+   "receipts": [
+    "verification/cover-punch-semantic-review.2line.cpa.json",
+    "verification/cover-host-identity-witness.v3.2line.json",
+    "verification/title-cover-joint-qc.two-line-wide-superseded.json"
+   ]
+  },
+  {
+   "version": 3,
+   "cover_sha256": "sha256:292c24d01a50a8e4038a8fdd3050dcf1c46b955f90cc4ccf91c0f4a7b622c95f",
+   "punch": [
+    "打歌服没召唤出来",
+    "公主抱倒是先来了"
+   ],
+   "crop": [
+    796,
+    162,
+    1612,
+    621
+   ],
+   "punch_review": "PASS (carried forward — see note)",
+   "host_identity": "PASS — composition_conflicts []",
+   "joint_qc": "PASS",
+   "receipts": [
+    "verification/cover-render-recrop.json",
+    "verification/cover-host-identity-witness.v3.recrop.json",
+    "verification/title-cover-joint-qc.json"
+   ],
+   "status": "SUPERSEDED_BY_V4D (integrator/Ivan 感知否决：姿势不可读)"
+  },
+  {
+   "version": 4,
+   "tag": "v4D",
+   "cover_sha256": "sha256:31809a32a94332fb92643f18036a6e9e59f66d831df7f6b9efdb14beef46ab46",
+   "punch": [
+    "打歌服没召唤出来",
+    "公主抱倒是先来了"
+   ],
+   "crop": [
+    790,
+    112,
+    1846,
+    706
+   ],
+   "upscale_factor": 1.818,
+   "punch_review": "PASS (carried forward — 纯文本门，punch 字节未变)",
+   "host_identity": "FAIL / FINAL_HOST_IDENTITY_WITNESS_SELF_INCONSISTENT — 身份轴 A∧¬A（primary_subject_is_lidousha=true ∧ primary_subject_matches_other_source_participant=true ∧ identity_conflicts=[]）。按 Ivan 2026-08-10 裁定「自相矛盾即完全没有否决权、完全不可信」整体作废，结论由绑定同字节的联合 QC 承接。构图轴该份回答本来就全绿。",
+   "joint_qc": "PASS (v4D 字节新回执，非重考)",
+   "receipts": [
+    "verification/cover-render-v4D.json",
+    "verification/cover-host-identity-witness.v3.v4D.json (冻结原文，未改一字节)",
+    "verification/cover-host-identity-witness.v3.v4D.readjudicated-7d08564.json",
+    "verification/title-cover-joint-qc.json (= title-cover-joint-qc.v4D.json)"
+   ],
+   "status": "DELIVERED",
+   "authority": "Ivan 2026-08-10 定版：封面用 v4D",
+   "why_over_v3": "v3 紧裁 (796,162,1612,621) 下切 y=621 把腿全部切掉，公主抱姿势不可读；v4D 下切 y=706（膝下 13px），姿势可读，代价是死边距回到 64.5%。同一帧（73.5s 是唯一可用帧）无法两者兼得。"
+  }
+ ],
+ "recrop_geometry": {
+  "authority": "integrator ruling 2026-08-10, exit (b) 紧裁重构图",
+  "crop_box_xyxy_in_source": [
+   796,
+   162,
+   1612,
+   621
+  ],
+  "crop_size": [
+   816,
+   459
+  ],
+  "aspect": "816/459 = 1.77778 (exact 16:9)",
+  "upscale_factor": 2.3529,
+  "landmark_authority": "verification/cover-render-croppair.json",
+  "targets": {
+   "pair_width_pct": "46.0% (target >=45%) — MET",
+   "pair_height_pct": "62.3% (target >=55%) — MET",
+   "panda_ears_complete": "MET (ear top source y=343 -> output y=426)",
+   "text_ear_clearance_px": "19.9 (target >=10) — MET",
+   "other_pair_excluded": "x0=796 >= other_pair_right_edge_x=784 — MET",
+   "aspect_16_9": "MET (exact)",
+   "bottom_cut": "y=621, mid-thigh; knees and below cut, as authorized",
+   "dead_side_margins_pct": "54.0% (target <=30%) — NOT MET, proven infeasible"
+  },
+  "dead_space_infeasibility_proof": "The two-line punch renders at a fixed 186px in the banner zone, so the top 416px of the 1080 output is reserved for text + the 10px clearance and the subject gets 664px of height.  The pair silhouette is ~0.84 aspect, so at full available height it can never exceed ~558px = 29% of 1920 width; <=30% dead side margins would require the pair to occupy >=70% of the width.  Reaching that needs a head-and-shoulders crop (bottom cut y~=480), which destroys the 公主抱 pose.  Swept the whole feasible envelope y1 in [560,770]: best achievable dead margin is 53.2% (at y1=560, which cuts above the thigh); y1>=770 is infeasible outright because it needs x1>1920 with x0>=784.  Achieved 54.0%, down from 66.5%.",
+  "candidate_sweep": "cover/recrop-candidates.json (A selected, B/C archived)",
+  "note_on_resolution": "816x459 native upscaled 2.35x to 1920x1080 (previous crop was 1.71x). Softer at full size, sharp enough at feed-thumbnail size; joint QC thumbnail_readable=true on the delivered bytes."
+ },
+ "punch_review_not_rerun": {
+  "decision": "carried the v2 PASS proof forward unchanged",
+  "reason": "The cover-punch semantic review is a pure text gate — its own prompt states the judge has no image input — and validate_cover_punch_semantic_review binds only cover_text_sha256 and story_hook_sha256, both byte-identical between v2 and v3 (the punch text did not change).  Re-asking the identical question would be a same-input lottery that can only lose a green (Ivan: 同字节重考=彩票，禁摇绿).  Re-validated against the delivered record: True.",
+  "receipt": "verification/cover-punch-semantic-review.2line.cpa.json"
+ },
+ "gate_divergence_note": "On the v2 wide crop the two CPA gates disagreed on identical bytes: joint QC (which does not ask about subject prominence) passed, while the v3 host-identity gate (which does) failed.  The v3 recrop cleared both.  No gate was ever re-asked on unchanged bytes.",
+ "disclosures": [
+  {
+   "id": "redelivery-baseline-owner-verification-stale",
+   "severity": "MUST_RESOLVE_UPSTREAM",
+   "where": "chat-authority.final_redelivery_baseline_owner_verification",
+   "stored_value": "status=PASS, required_mapping_count=159, failures=[]",
+   "finding": "That PASS was computed against the pre-(跃起) text.  Replaying the producer's verify_chat_authority_final_surfaces() against the delivered bytes now returns False with REDELIVERY_BASELINE_FINAL_OWNER_NOT_VERIFIED on exactly the two cues Ivan edited.",
+   "probe_failures": [
+    {
+     "baseline_cue_index": 104,
+     "expected": "我是我是这样的你起什么哄啊",
+     "text_payload": "我是我是这样的你起什么哄啊跃起"
+    },
+    {
+     "baseline_cue_index": 128,
+     "expected": "我是李豆的什么你不许再说话",
+     "text_payload": "我是李豆的什么你不许再说话跃起"
+    }
+   ],
+   "why_not_fixed_here": "The baseline authority is the Ivan-annotated reviewed SRT asset assets/lidousha/reviewed_subtitle_baselines/auto_200130_1323_1603.reviewed.srt (WSL tree, sha 0e9c2cc7), which still lacks (跃起).  Rewriting the mapping rows inside the package would assert the published baseline contained (跃起), which is false; re-running the verifier here would only convert a stale PASS into a 10th BLOCK without fixing the asset.  The semantic claim still holds — the final text is a strict superset of every reviewed word — the verifier is exact-match, so Ivan's additive annotation reads as a mismatch.",
+   "fix": "Add (跃起) to the reviewed-baseline asset upstream and re-derive redelivery_subtitle_baseline_audit, or record a typed authorized deviation for cues 104/128."
+  },
+  {
+   "id": "route-decision-left-as-router-history",
+   "severity": "INFO",
+   "finding": "route_decision.reason / selected_rationale / frame_score (4.91 @ 56500ms) were deliberately NOT rewritten.  The router genuinely did select screenshot_direct on that evidence; Ivan's later frame choice is a separate authority layer, recorded in reference_selection (human-authority object) and screenshot_frame rather than by overwriting router history."
+  },
+  {
+   "id": "reference-selection-superseded",
+   "severity": "INFO",
+   "finding": "The machine scorer picked 56500ms; the delivered cover uses Ivan's 公主抱 frame at 73500ms (cover/frames/f-73.5.png, sha 017eda84). reference_selection was replaced with a human-authority object (best_ms=73500) and the original scorer object is preserved verbatim under reference_selection.superseded_machine_selection."
+  },
+  {
+   "id": "screenshot-frame-not-cpa-crop-authorized",
+   "severity": "INFO",
+   "finding": "screenshot_frame uses status HASH_BOUND_HUMAN_AUTHORIZED_CROP, not the producer's HASH_BOUND_CPA_IDENTITY_CROP.  cover_generation.source_composition_verification is bound to a different reference (c54c7c1e) with source_carries_story_reaction=false and cpa_redraw_recommended=true, so it does not authorize a crop of f-73.5.png.  The crop authority here is Ivan; geometry comes from verification/cover-render-croppair.json."
+  }
+ ],
+ "superseded_artifacts": {
+  "single_line": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/cover/renders/single-line-superseded",
+  "two_line_wide": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/cover/renders/two-line-wide-superseded",
+  "recrop_candidates": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/cover/renders/recrop-candidates",
+  "note": "Nothing deleted.  single-line-superseded also holds a deterministically rebuilt comparison sheet (sha bdb2d800) that reproduces the v1 host-identity witness binding exactly."
+ },
+ "backups": {
+  "pre_everything": {
+   "timestamp": "20260809T224351Z",
+   "suffix": ".pre-yueqi-refreeze-20260809T224351Z",
+   "files": [
+    "auto_200130_1323_1603.chat-authority.json",
+    "delivery/auto_200130_1323_1603.chat-authority.json",
+    "delivery/auto_200130_1323_1603.record.json",
+    "delivery/auto_200130_1323_1603.recut.burned-final-speaker.record.json",
+    "delivery/auto_200130_1323_1603.recut.publish.json",
+    "verification/package-audit.json"
+   ],
+   "note": "Pre-existing backups from earlier stages (.pre-shafix, .pre-yueqi, .pre-witness) were left untouched.  Scripts used for this pass live in swap-prep/yueqi-probes/."
+  },
+  "pre_two_line": {
+   "timestamp": "20260809T231406Z",
+   "suffix": ".pre-2line-20260809T231406Z",
+   "files": [
+    "delivery/auto_200130_1323_1603.record.json",
+    "delivery/auto_200130_1323_1603.recut.burned-final-speaker.record.json",
+    "delivery/auto_200130_1323_1603.recut.publish.json",
+    "swap-prep/state-for-packaging/2026-08-08.json",
+    "verification/yueqi-r1-reseal-disclosures.json",
+    "verification/package-audit.json"
+   ]
+  },
+  "pre_recrop": {
+   "timestamp": "20260809T233135Z",
+   "suffix": ".pre-recrop-20260809T233135Z",
+   "files": [
+    "delivery/auto_200130_1323_1603.record.json",
+    "delivery/auto_200130_1323_1603.recut.burned-final-speaker.record.json",
+    "delivery/auto_200130_1323_1603.recut.publish.json",
+    "swap-prep/state-for-packaging/2026-08-08.json",
+    "verification/package-audit.json",
+    "verification/yueqi-r1-reseal-disclosures.json",
+    "verification/title-cover-joint-qc.json"
+   ]
+  }
+ },
+ "scope_respected": [
+  "no writes to /opt/bilive/autoslice/state/ (its 22:52:08Z mtime is not from this session; the manifest builder only reads state)",
+  "no deploy, no upload",
+  "source package otherwise read-only; only covers/<stem>.cover.png replaced, as authorized"
+ ],
+ "host_identity_readjudication": {
+  "schema_version": "yueqi-r1-host-identity-readjudication-note.v1",
+  "problem": "冻结的 v4D 见证回执由旧世代 af35e5e9 产出，机器派生尾巴写的是 FINAL_HOST_IDENTITY_MISMATCH；新门的豁免通道（disregard_self_inconsistent_host_identity_witness 与 _self_inconsistent_disregard_valid）硬要求 reason_code == FINAL_HOST_IDENTITY_WITNESS_SELF_INCONSISTENT，逐字节原样安装必被拒。",
+  "resolution": "离线重放：把冻结见证（question/answer/provider/model/各哈希）原样喂回 7d08564 的 verify_lidousha_final_host_identity，由新门自己重算状态尾巴。三道守卫：新门提问与冻结提问逐字节相同、重建对比图 sha == witness.image_sha256（a5b46726…，实测复现）、冻结答案通过当前 answer_validator。零 CPA 调用——同字节重考是彩票，且可能返回带 identity_conflicts 的明确否定（那将保留全额否决权，把 v4D 直接判死）。",
+  "deviation_disclosed": "任务书原话是「原样安装，一个字节都不许改写」。证物（见证对象）确实逐字节保留；被改写的只有机器派生的 status/reason_code/self_inconsistent_witness 尾巴，等同于重新部署后同一函数的输出。冻结文件 cover-host-identity-witness.v3.v4D.json 本身未动（sha256:22d9dce7b16c418b14784d7dc54c9e80b18dbdb96c5d6573371bf7a3f1175918）。",
+  "gate_source": {
+   "commit": "7d0856414e5c111ea43a9c9973e957c8596e60e1",
+   "path": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/swap-prep/gate-7d08564/cover_host_identity_gate.py",
+   "sha256": "sha256:96a8f626be0f2aceb38d47cf18ffe458cc92952aff3b14e14202e2e9a419ba48"
+  }
+ },
+ "blocker_deploy_gap": {
+  "severity": "MUST_RESOLVE_BEFORE_ANY_UPLOAD_STEP",
+  "finding": "任务书前提「自矛盾机制已部署到 free」为假。free 的 /opt/bilive/autoslice/repo/DEPLOYED_COMMIT = af35e5e9 (2026-08-09T23:55:37Z)，早于机制提交 7d08564 (~2026-08-10T00:53Z)；部署树里 grep disregard_self_inconsistent_host_identity_witness 为 0 命中。",
+  "impact": "cover_route_evidence.validate_cover_route_decision 在 route_decision.host_identity_required=true 时会调用 validate_final_host_identity_verification；旧版只认 status==PASS，于是把已作废的自矛盾见证读成普通 FAIL，audit 必红两条。同一条链也在 publish_staging / authorized_upload 上，所以在部署前任何上传步骤都会拒绝本包。",
+  "resolution": "由 Ivan 把 >=7d08564 部署到 free（部署权唯一，本会话禁部署），然后原样重跑 audit 并把回执装回 delivery/ 与 verification/。包本身不需要再改：同一份包在 7d08564 下 passed:true blocking:0。",
+  "evidence": {
+   "canonical_audit": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/verification/package-audit.json",
+   "canonical_audit_sha256": "sha256:d0cb103073cb09bb95198df1cd451f073d9295b33bfee9eeb49e3862adf55382",
+   "shadow_audit": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/verification/package-audit.gate-7d08564-shadow.json",
+   "shadow_disclosure": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/verification/package-audit.gate-7d08564-shadow.disclosure.json"
+  }
+ },
+ "final_human_review_evidence": "NOT touched — 感知复审归 Ivan；现存那份是对 v3 (292c24d0) 做的，对 v4D 已过期，必须重做。"
+}

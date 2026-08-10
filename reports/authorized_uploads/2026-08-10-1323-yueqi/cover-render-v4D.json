@@ -1,0 +1,222 @@
+{
+  "schema_version": "yueqi-r1-cover-render.v4D-pose-recrop",
+  "authority": "Ivan 2026-08-10 定版：封面用 v4D（公主抱姿势可读，被抱者头到膝在画内）",
+  "supersedes": {
+    "cover_sha256": "sha256:292c24d01a50a8e4038a8fdd3050dcf1c46b955f90cc4ccf91c0f4a7b622c95f",
+    "reason": "v3 紧裁 (796,162,1612,621) 把腿全部切掉，公主抱姿势不可读（integrator/Ivan 感知否决）"
+  },
+  "source_frame": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/cover/frames/f-73.5.png",
+  "source_frame_sha256": "sha256:017eda8460b9450bb6137b29095e7028b6343d16eb1372d3cd493cb359f238e1",
+  "source_frame_time_seconds_in_recut": 73.5,
+  "crop_box_xyxy_in_source": [
+    790,
+    112,
+    1846,
+    706
+  ],
+  "crop_size": [
+    1056,
+    594
+  ],
+  "aspect": 1.7777777777777777,
+  "upscale_factor": 1.8181818181818181,
+  "resample": "PIL LANCZOS",
+  "upscaled_base_png": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/cover/base-v4D-1920x1080.png",
+  "upscaled_base_png_sha256": "sha256:1aa964a3c0249a0196b4fb96ac55c3c4e9d26e1015b0df4623c582643c6b65a4",
+  "landmark_authority": "verification/cover-render-croppair.json",
+  "target_function": {
+    "pair_bbox_in_source_xyxy": [
+      962,
+      335,
+      1337,
+      1013
+    ],
+    "designed_for": "被抱者的头到膝盖在画内 — head top y=343 到 knee y=693，下切 y=706 即膝下 13px",
+    "pair_width_pct_of_output": 35.5,
+    "pair_height_pct_of_output": 62.5,
+    "dead_side_margins_pct": 64.5,
+    "other_pair_excluded": "x0=790 >= other_pair_right_edge_x=784",
+    "panda_ear_complete": true,
+    "ear_top_output_y": 420.0,
+    "text_bbox_bottom_output_y": 406,
+    "text_ear_gap_px": 14.0,
+    "knee_in_frame": true,
+    "foot_in_frame": false,
+    "bottom_cut": "y=706 (膝下 13px)",
+    "geometric_tension": "两行 186px banner 占用输出顶部 416px，主体只剩 664px 高；要把膝盖收进画内就必须放宽到 1056px 裁宽，死边距随之回到 64.5%。同一帧无法同时满足姿势与最小死边距，v4D 选姿势。详见 verification/yueqi-r1-cover-v4-frame-swap-findings.json"
+  },
+  "renderer": "src.autoslice.cover_generation._overlay_lidousha_cover_title",
+  "renderer_replay": {
+    "base_reproduced_from_source_frame": true,
+    "cover_reproduced_from_base": true,
+    "note": "本回执由确定性重跑现算：先从 f-73.5 重做 crop+LANCZOS 复现 base 字节，再用同一 art_direction 重跑 overlay 复现成品字节；两级都对得上冻结 sha 才写出。"
+  },
+  "punch": [
+    "打歌服没召唤出来",
+    "公主抱倒是先来了"
+  ],
+  "cover_text": "打歌服没召唤出来，公主抱倒是先来了",
+  "layout": "banner",
+  "hook_color": "red",
+  "no_redraw": true,
+  "no_accessories_added": true,
+  "cover_path": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/cover/renders/cover-v4D.png",
+  "cover_sha256": "sha256:31809a32a94332fb92643f18036a6e9e59f66d831df7f6b9efdb14beef46ab46",
+  "thumbnail_path": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/cover/renders/cover-v4D.thumb-229x143.png",
+  "thumbnail_sha256": "sha256:d61c27ea28ec04fcc0cae1fc30ed4e0e5e08dee2d8c7d68d5f625d874c61217a",
+  "overlay_info": {
+    "font": "ZCOOLKuaiLe-Regular.ttf",
+    "font_selection": {
+      "font": "ZCOOLKuaiLe-Regular.ttf",
+      "rejected": [],
+      "glyph_risk": []
+    },
+    "font_size": 186,
+    "min_talk_font_size": 120,
+    "angle_degrees": -2.0,
+    "overlay_position": {
+      "x": 178,
+      "y": 28
+    },
+    "title_band": "banner",
+    "layout": "banner",
+    "background_style": "mint-doodle-stickers",
+    "hook_color": "red",
+    "hook_word": "打歌服",
+    "role": "witty_smug",
+    "expression_en": "soft cute girl-next-door, shy but spirited, small closed-mouth smile, gentle blush",
+    "line_split": "punch",
+    "cover_text_mode": "punch",
+    "cover_punch": [
+      "打歌服没召唤出来",
+      "公主抱倒是先来了"
+    ],
+    "rendered_lines": [
+      "打歌服没召唤出来",
+      "公主抱倒是先来了"
+    ],
+    "pre_overlay_path": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/cover/renders/cover-v4D.pre-overlay.png",
+    "pre_overlay_sha256": "sha256:1aa964a3c0249a0196b4fb96ac55c3c4e9d26e1015b0df4623c582643c6b65a4",
+    "text_backing": "outline",
+    "scrim": false
+  },
+  "rendered_text_pixels": {
+    "schema_version": "lidousha-cover-rendered-text-pixels.v3",
+    "status": "PASS",
+    "final_cover_sha256": "sha256:31809a32a94332fb92643f18036a6e9e59f66d831df7f6b9efdb14beef46ab46",
+    "pre_overlay_path": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/cover/renders/cover-v4D.pre-overlay.png",
+    "pre_overlay_sha256": "sha256:1aa964a3c0249a0196b4fb96ac55c3c4e9d26e1015b0df4623c582643c6b65a4",
+    "canvas_size": [
+      1920,
+      1080
+    ],
+    "text_pixel_bbox": [
+      266,
+      84,
+      1654,
+      406
+    ],
+    "text_pixel_width": 1388,
+    "text_pixel_height": 322,
+    "font_size": 186,
+    "font_file_name": "ZCOOLKuaiLe-Regular.ttf",
+    "font_file_sha256": "sha256:812a6fc1fe54b6d73a419245c32dfeba8aa33104d5be90d1cf6af082007cb71d",
+    "rendered_text": "打歌服没召唤出来公主抱倒是先来了",
+    "render_spec": {
+      "angle_degrees": -2.0,
+      "font_face_index": 0,
+      "font_file_name": "ZCOOLKuaiLe-Regular.ttf",
+      "font_file_sha256": "sha256:812a6fc1fe54b6d73a419245c32dfeba8aa33104d5be90d1cf6af082007cb71d",
+      "layer_size": [
+        1549,
+        392
+      ],
+      "lines": [
+        {
+          "font_size": 186,
+          "outlines": [
+            {
+              "color": [
+                18,
+                36,
+                79
+              ],
+              "width": 16
+            },
+            {
+              "color": [
+                255,
+                255,
+                255
+              ],
+              "width": 8
+            }
+          ],
+          "segment_pad": 16,
+          "segments": [
+            {
+              "fill": [
+                233,
+                69,
+                69
+              ],
+              "text": "打歌服没召唤出来"
+            }
+          ],
+          "x": 90.0,
+          "y": 45
+        },
+        {
+          "font_size": 93,
+          "outlines": [
+            {
+              "color": [
+                18,
+                36,
+                79
+              ],
+              "width": 8
+            },
+            {
+              "color": [
+                255,
+                255,
+                255
+              ],
+              "width": 4
+            }
+          ],
+          "segment_pad": 8,
+          "segments": [
+            {
+              "fill": [
+                255,
+                246,
+                214
+              ],
+              "text": "公主抱倒是先来了"
+            }
+          ],
+          "x": 432.25,
+          "y": 246
+        }
+      ],
+      "rendered_layer_size": [
+        1563,
+        446
+      ],
+      "schema_version": "lidousha-cover-title-render-spec.v1"
+    },
+    "render_spec_sha256": "sha256:fd9f9819cc7d46070d864720939004425a4f21a80d06a6be79b8375d809039cb",
+    "overlay_position": {
+      "x": 178,
+      "y": 28
+    },
+    "mask_path": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/cover/renders/cover-v4D.title-mask.png",
+    "mask_sha256": "sha256:cbc2938d9ed13826402edae2f8724bb593fe93c7e4343d192aea3e8f78bd959c",
+    "mask_nonzero_pixels": 274124,
+    "changed_pixel_count": 272800,
+    "changed_pixel_ratio": 0.9951700690198596,
+    "masked_final_pixels_sha256": "sha256:2d7f82fb452743b47dfb1b68a5b8f0bef1b63e5795bcdd0b3e0ebefce5f4c0c4"
+  }
+}

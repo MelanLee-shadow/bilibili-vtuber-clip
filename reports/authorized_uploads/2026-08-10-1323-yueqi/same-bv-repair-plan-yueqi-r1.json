@@ -1,0 +1,161 @@
+{
+  "schema_version": "same-bv-repair-plan.v2",
+  "plan_id": "d6a64a5482774bcfb4b15e05523a2e21",
+  "created_at": "2026-08-10T01:51:24.145766+00:00",
+  "bvid": "BV1hquD6pE7X",
+  "manifest": {
+    "path": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/verification/authorized-upload-manifest.json",
+    "sha256": "7aabfb325b004a5467c31744a09391bbd3487c0cffa304d130aa332b6940e6f0"
+  },
+  "replacement": {
+    "video": {
+      "path": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/delivery/auto_200130_1323_1603.recut.burned-final-speaker.mp4",
+      "sha256": "b0ae784d1fbf0265bb96d2d63a2ffa6424ec831321787db23c30387e9528d46d",
+      "bytes": 174797020
+    },
+    "cover": {
+      "path": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/delivery/auto_200130_1323_1603.recut.burned-final-speaker.cover.png",
+      "sha256": "31809a32a94332fb92643f18036a6e9e59f66d831df7f6b9efdb14beef46ab46",
+      "bytes": 825275
+    }
+  },
+  "authorization": {
+    "by": "Ivan",
+    "quote": "「为什么你不能自己拟一个更好的标题，你再好好学一下b站李豆沙相关的高播放量的切片封面标题都是什么样子的，怎么做的，你学习到后自己起一个。封面选公主抱吧」\n「我需要保留这个(跃起)，其他的括号不留」"
+  },
+  "recovery_publication_authority": {
+    "schema_version": "recovery-same-bv-publication-authority.v1",
+    "source_kind": "committed_verified_publication_registry",
+    "candidate_id": "auto_200130_1323_1603",
+    "title_mode": "verified_public_exact",
+    "observed_public_title": "【李豆沙】打歌服没召唤出来，公主抱倒是先来了",
+    "required_given_end_ms": 1603100,
+    "boundary_end_mode": "exact_source_pin",
+    "bvid": "BV1hquD6pE7X",
+    "aid": 117067168679822,
+    "cid": 40760773025,
+    "source_public_verify_repo_path": "reports/authorized_uploads/2026-08-10-1323-yueqi/auto_200130_1323_1603.publication_identity.json",
+    "source_public_verify_sha256": "sha256:812609dc2183768b02f0dc8c80baf63eab0eeca2d71e14a5557f36c7ef42e371",
+    "source_public_verify_status": "VERIFIED_TITLE_AND_TARGET_IDENTITY",
+    "source_public_verify_schema_version": "recovery-publication-identity.v1",
+    "registry_repo_path": "assets/lidousha/recovery_publication_authority_2026-08-10_1323_yueqi.v1.json",
+    "registry_sha256": "sha256:21d49a97b20deedffb5f6ef023b39f9b42a498e48069c73afbea863687e41478",
+    "registry_schema_version": "lidousha-recovery-publication-authority.v1",
+    "registry_authority": "Ivan 2026-08-10:1323(BV1hquD6pE7X)快车道成品三合一置换授权——字幕漏了 Ivan 手标动作注记 (跃起)(前任任务书误列剥离清单),视频按修正后括号门在原构建主机(wsl)重烧;封面按 Ivan 直令换公主抱名场面截图裁切;标题按 Ivan 委托由 integrator 学习高播放语料后定稿。Ivan 引语(逐字):「为什么你不能自己拟一个更好的标题，你再好好学一下b站李豆沙相关的高播放量的切片封面标题都是什么样子的，怎么做的，你学习到后自己起一个。封面选公主抱吧」及「我需要保留这个(跃起)，其他的括号不留」。标题改动已先以独立 x/vu/web/edit 落地(2026-08-09T22:0xZ,edit code 0)并抓取身份回执;本条目冻结改后公开标题与目标 BV/AID 身份,供同 BV 视频+封面置换使用。",
+    "authority_sha256": "sha256:77583e7d88026a91eb138ba87da5015b935e2b2868f3390435c2edf99b537414"
+  },
+  "package_attestation": {
+    "package_root": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/delivery",
+    "review_manifest": {
+      "path": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/delivery/review_manifest.json",
+      "sha256": "d3935f79cd68ac7c6738823ca0ec419ebac0ba172979999b6ee1520327e35fe5",
+      "bytes": 12800
+    },
+    "package_audit": {
+      "path": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/delivery/package-audit.json",
+      "sha256": "58e8e2bd2872697fd52a359e794ee06057ede9798fede26cc67b7c6f6e56a323",
+      "bytes": 3414
+    },
+    "final_human_review": {
+      "path": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/delivery/final-human-review.json",
+      "sha256": "79d4bbc180d029f6b495ac56dd4fe965e1ca69506477093d1ed9cdb6c71f250d",
+      "bytes": 9546
+    }
+  },
+  "season": {
+    "season_id": 8383206,
+    "section_id": 9320779,
+    "season_title": "小李切片"
+  },
+  "target_metadata": {
+    "title": "【李豆沙】打歌服没召唤出来，公主抱倒是先来了",
+    "desc": "https://live.bilibili.com/\n本切片由 bilibili-vtuber-clip 项目提供：https://github.com/MelanLee-shadow/bilibili-vtuber-clip\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+    "tags": [
+      "公主抱",
+      "吐槽",
+      "搞笑",
+      "李豆沙",
+      "沙雕",
+      "直播切片",
+      "磕CP",
+      "虚拟UP主",
+      "虚拟主播"
+    ],
+    "tid": 21,
+    "copyright": 2,
+    "source": "https://live.bilibili.com/",
+    "cover": null
+  },
+  "before": {
+    "creator": {
+      "available": true,
+      "bvid": "BV1hquD6pE7X",
+      "aid": 117067168679822,
+      "state": 0,
+      "state_desc": "开放浏览",
+      "metadata": {
+        "title": "【李豆沙】打歌服没召唤出来，公主抱倒是先来了",
+        "desc": "https://live.bilibili.com/\n本切片由 bilibili-vtuber-clip 项目提供：https://github.com/MelanLee-shadow/bilibili-vtuber-clip\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+        "tags": [
+          "公主抱",
+          "吐槽",
+          "搞笑",
+          "李豆沙",
+          "沙雕",
+          "直播切片",
+          "磕CP",
+          "虚拟UP主",
+          "虚拟主播"
+        ],
+        "tid": 21,
+        "copyright": 2,
+        "source": "",
+        "cover": "//bilibili-cover-asset/bfs/archive/b8704c50461c117f4ab473a554ef3e92ca1d54ba.png"
+      },
+      "videos": [
+        {
+          "cid": 40760773025,
+          "filename": "n260810ad3w2r0avl2uhrp1rka1ji1py",
+          "title": "auto_200130_1323_1603.recut.burned-final-speaker"
+        }
+      ]
+    },
+    "public": {
+      "available": true,
+      "bvid": "BV1hquD6pE7X",
+      "aid": 117067168679822,
+      "cid": 40760773025,
+      "state": 0,
+      "metadata": {
+        "title": "【李豆沙】打歌服没召唤出来，公主抱倒是先来了",
+        "desc": "https://live.bilibili.com/\n本切片由 bilibili-vtuber-clip 项目提供：https://github.com/MelanLee-shadow/bilibili-vtuber-clip\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+        "tags": [
+          "公主抱",
+          "吐槽",
+          "搞笑",
+          "李豆沙",
+          "沙雕",
+          "直播切片",
+          "磕CP",
+          "虚拟UP主",
+          "虚拟主播"
+        ],
+        "tid": 21,
+        "copyright": 2,
+        "cover": "//bilibili-cover-asset/bfs/archive/b8704c50461c117f4ab473a554ef3e92ca1d54ba.png"
+      }
+    },
+    "section": {
+      "available": true,
+      "section_id": 9320779,
+      "matches": [
+        {
+          "bvid": "BV1hquD6pE7X",
+          "aid": 117067168679822,
+          "cid": 40760773025,
+          "title": "【李豆沙】打歌服召唤不出，众人拆成“打、哥、服”，闹到公主抱和“宝贝、妈妈、老公、主人”"
+        }
+      ]
+    }
+  }
+}

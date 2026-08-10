@@ -261,7 +261,7 @@
       "recording_date": "2026-08-08",
       "status": "published",
       "bvid": "BV18Gu16NEcX",
-      "note": "8/8 批 review_ready 权宜上传(Ivan 8/9 引语:「并且今天要执行权宜上传。只要出片就可以上传，之后我再进行审查。」);speaker-mode 包;QC v2(身份参照修正=墨镜可选)PASS;v1 彩票回执留证 reports/authorized_uploads/2026-08-09-88-batch-provisional/;2026-08-09 上传,artifact 161436692468,VERIFIED_PUBLIC。 2026-08-09 追加:Ivan 手定标题线上替换(歌姬入题)+tag 加 战斗吧歌姬(manual_title_overrides 已登记);CID 未动。"
+      "note": "8/8 批 review_ready 权宜上传(Ivan 8/9 引语:「并且今天要执行权宜上传。只要出片就可以上传，之后我再进行审查。」);speaker-mode 包;QC v2(身份参照修正=墨镜可选)PASS;v1 彩票回执留证 reports/authorized_uploads/2026-08-09-88-batch-provisional/;2026-08-09 上传,artifact 161436692468,VERIFIED_PUBLIC。 2026-08-09 追加:Ivan 手定标题线上替换(歌姬入题)+tag 加 战斗吧歌姬(manual_title_overrides 已登记);CID 未动。 2026-08-10 封面改截图(3D Live 舞台真帧 61e8895f,cover-only edit,CID/标题未动);证据 2026-08-10-screenshot-cover-swaps/。"
     },
     {
       "candidate_id": "auto_230125_960_1072",
@@ -275,14 +275,14 @@
       "recording_date": "2026-08-08",
       "status": "published",
       "bvid": "BV1hquD6pE7X",
-      "note": "8/8 快车道人工真值包(多嘉宾 speaker 拒件,Ivan A/B 真值消费);Codex-F 断供前完成上传 2026-08-09T19:26Z,aid=117067168679822,CID=40760773025,VERIFIED_PUBLIC;QC v2 PASS/audit 0 blocking;integrator 上传后硬门复验(159cue/无标签字面/无括号注记/解码零错)。已知待置换:标题封面质量批评(Ivan 8/10)+(跃起) cue104/128 缺失→ 同BV置换制备中(yueqi-r1,新标题+公主抱名场面封面)。披露:上传链跑在 Codex-F 违禁自部署代际 74f8e795 上,回执经复验有效;证据 2026-08-09-200130-fasttrack/。"
+      "note": "8/8 快车道人工真值包(多嘉宾 speaker 拒件,Ivan A/B 真值消费);Codex-F 断供前完成上传 2026-08-09T19:26Z,aid=117067168679822,CID=40760773025,VERIFIED_PUBLIC;QC v2 PASS/audit 0 blocking;integrator 上传后硬门复验(159cue/无标签字面/无括号注记/解码零错)。已知待置换:标题封面质量批评(Ivan 8/10)+(跃起) cue104/128 缺失→ 同BV置换制备中(yueqi-r1,新标题+公主抱名场面封面)。披露:上传链跑在 Codex-F 违禁自部署代际 74f8e795 上,回执经复验有效;证据 2026-08-09-200130-fasttrack/。 2026-08-10 三合一同BV置换完成:CID 40760773025→40765099962,(跃起)回填 cue104/128、封面改公主抱截图裁切(v4D 31809a32,自矛盾witness机制首用)、标题改手定稿;合集分P显示标题待补同步(API -400,POLL_ONLY);证据 2026-08-10-1323-yueqi/。"
     },
     {
       "candidate_id": "auto_220747_488_680",
       "recording_date": "2026-08-07",
       "status": "published",
       "bvid": "BV1hfuS6EENb",
-      "note": "8/7 换身份:wsl unblock 处方重产(98/98 逐字==,假标双零)→87finish 链→be88e54 部署后 integrator 收尾上传 2026-08-09T21:59:42Z,VERIFIED via reconcile;QC rerun2 PASS/audit 0 blocking;证据 2026-08-10-87-finish/。"
+      "note": "8/7 换身份:wsl unblock 处方重产(98/98 逐字==,假标双零)→87finish 链→be88e54 部署后 integrator 收尾上传 2026-08-09T21:59:42Z,VERIFIED via reconcile;QC rerun2 PASS/audit 0 blocking;证据 2026-08-10-87-finish/。 2026-08-10 封面改游戏截图(鹅鸭杀画面+小窗 8313fec8,Ivan 8/9 游戏封面裁定首个公开面实证,cover-only edit);证据 2026-08-10-screenshot-cover-swaps/。"
     },
     {
       "candidate_id": "auto_203735_555_680",

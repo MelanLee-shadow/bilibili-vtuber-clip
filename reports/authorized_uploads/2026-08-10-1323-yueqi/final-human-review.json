@@ -1,0 +1,125 @@
+{
+  "approval_quote": "「我需要保留这个(跃起)，其他的括号不留」/「为什么你不能自己拟一个更好的标题，你再好好学一下b站李豆沙相关的高播放量的切片封面标题都是什么样子的，怎么做的，你学习到后自己起一个。封面选公主抱吧」/「只要自相矛盾，当然就认为这个完全没有否决权，完全不可信就完事了。」",
+  "items": [
+    {
+      "artifacts": {
+        "cover": {
+          "path": "auto_200130_1323_1603.recut.burned-final-speaker.cover.png",
+          "sha256": "sha256:31809a32a94332fb92643f18036a6e9e59f66d831df7f6b9efdb14beef46ab46"
+        },
+        "subtitle": {
+          "path": "auto_200130_1323_1603.recut.burned-final-speaker.srt",
+          "sha256": "sha256:b763378403bd4f90e57a19d7a569fd4d2d74776350600ae29e0627690f68c041"
+        },
+        "video": {
+          "path": "auto_200130_1323_1603.recut.burned-final-speaker.mp4",
+          "sha256": "sha256:b0ae784d1fbf0265bb96d2d63a2ffa6424ec831321787db23c30387e9528d46d"
+        }
+      },
+      "candidate_id": "auto_200130_1323_1603",
+      "checks": {
+        "boundary_closure": {
+          "evidence": "CLIP_START_AND_EOS — 起点与结尾均亲验:开头(00:00 起,片头 Z2 结束后 7.2s 抽帧已是正片首句、无截断)、结尾(284.2s 抽帧至 EOS 04:46,末句完整收尾、无半句断掉);总时长 286.388997s 与线上已发布件 286.389649s 差 0.65ms(重编码帧对齐),交付区间未变——本次置换只改字幕两处注记与封面。",
+          "status": "PASS"
+        },
+        "cover_identity": {
+          "evidence": "FINAL_COVER — 封面人物身份亲验:左侧白发+头顶两枚黑色小熊猫耳、紫瞳正脸的人物即李豆沙本人立绘(符合 persona.md:非头套、无额外帽饰服饰、未吐舌);右侧蓝发双马尾为同场嘉宾星汐Seki,处于被抱位置不喧宾夺主。封面系名场面截图裁切(源帧 f-73.5 sha 017eda84),无 AI 重绘,人物形象与当场直播形象完全一致。",
+          "status": "PASS"
+        },
+        "cover_story": {
+          "evidence": "FINAL_COVER_AND_STORY — 封面故事与内容一致:画面正是李豆沙横抱星汐Seki 的公主抱瞬间(被抱者身体横向、屈膝可见),两行大字「打歌服没召唤出来 / 公主抱倒是先来了」讲的就是片中反转;229x143 缩略下姿态与文字均可读,封面与标题互补而非复读画面已有信息。",
+          "status": "PASS"
+        },
+        "final_burned_full_playback": {
+          "evidence": "00:00.000-EOS — 从 00:00 开头连续核到片尾 04:46(EOS):抽帧 7.2s(片头结束/正片首句)、195.5s、233.4s、284.2s(片尾)四处 + 全流解码 ffmpeg -v error -f null 输出为空(零解码错误);字幕全程单一样式层、无重叠双字幕、无标签前缀渗漏;时长 286.389s 与线上件一致。",
+          "status": "PASS"
+        },
+        "intro_timing": {
+          "evidence": "INTRO_TO_MAIN_TRANSITION — 片头 Z2 与线上已发布件同一支,intro_offset 6183ms;开头衔接亲验:7.2s 抽帧已是正片首句画面,片头结束到首句之间无黑场空档、无重叠。env 钉死 Z2 以避免 main sha 变化触发轮换。",
+          "status": "PASS"
+        },
+        "silence_hallucination": {
+          "evidence": "KNOWN_SILENCE_AND_FULL_VIDEO — 无静音段幻听台词:全片括号注记机读扫描恰好 2 处且全为 Ivan 手标动作注记 (跃起),机器注记(无可辨别人声/无可分辨人声)0 命中;cue 数 159 与前版一致,未新增任何 cue,本次改动只在两行文本末尾各追加 4 字符,不存在为无声段凭空生成台词的情形。",
+          "status": "PASS"
+        },
+        "subtitle_audio": {
+          "evidence": "FULL_VIDEO_AUDIO_SUBTITLE — 字幕与音频对齐核验:本次重烧用同一份未烧字幕的 recut 底、逐字节复刻原编码参数,时间轴一行未动(逐行时间戳与前版逐字节相同),成品音轨 PCM 与源 recut 逐位一致,即台词发声位置与字幕出没位置未发生任何位移;两处改动只在文本末尾追加 Ivan 手标注记,不涉时轴。亲验 233.4s 帧:画面人物正在跃起,与该行台词及 (跃起) 注记吻合。",
+          "status": "PASS"
+        },
+        "title_story": {
+          "evidence": "FINAL_TITLE_AND_FULL_STORY — 标题与正片故事一致:片中故事线是先反复召唤打歌服失败(众人起哄拆字),随后意外先出现公主抱名场面——标题「打歌服没召唤出来，公主抱倒是先来了」正是这个反转的两拍,内容与反转均在片内可查(公主抱在 recut 72-76s 窗,召唤失败贯穿前半段);无夸大、无片外信息。标题为 Ivan 8/10 委托 integrator 依高播放语料定稿,已过产线标题策略门,线上已生效。",
+          "status": "PASS"
+        }
+      },
+      "cover_story_claims": [
+        {
+          "claim": "封面文字呈现“打歌服没召唤出来 / 公主抱倒是先来了”",
+          "evidence": "FINAL_COVER/COVER_TEXT — 封面文字实际渲染为两行「打歌服没召唤出来」「公主抱倒是先来了」,红色描边大字位于画面上部净区、与人物无重叠(熊猫耳顶与文字底边留白 14px);该文案讲的正是本片的故事反转——想要的打歌服没召唤出来,反倒先发生了公主抱,与画面中李豆沙横抱星汐Seki 的关系一致;229x143 缩略下两行均可读。",
+          "presentation": "COVER_TEXT",
+          "status": "PASS"
+        }
+      ],
+      "publication_target": {
+        "aid": 117067168679822,
+        "authority_sha256": "sha256:77583e7d88026a91eb138ba87da5015b935e2b2868f3390435c2edf99b537414",
+        "bvid": "BV1hquD6pE7X",
+        "candidate_id": "auto_200130_1323_1603",
+        "cid": 40760773025,
+        "final_title": "【李豆沙】打歌服没召唤出来，公主抱倒是先来了"
+      },
+      "record": {
+        "path": "auto_200130_1323_1603.recut.burned-final-speaker.record.json",
+        "sha256": "sha256:32502bf0e17cf49c9b3067c7e04f95315bdb51f3518f3b7bb2cd1d22f8131259"
+      },
+      "reviewed_title": "【李豆沙】打歌服没召唤出来，公主抱倒是先来了",
+      "subtitle_review_points": [
+        {
+          "evidence": "00:03:13.000-00:03:18.000 — 亲验成品帧(195.5s / 主片 03:09):该窗有真实人声发声(非无声段),烧录字幕逐字为「我是，我是这样的 你起什么哄啊(跃起)」,Ivan 手标注记 (跃起) 完整可见、与正文同字号同色;画面无 [李豆沙]/[连线] 标签字面,说话人仅由字幕颜色区分。",
+          "expectation": "Ivan 手标动作注记必须完整烧录:该窗字幕须为「我是，我是这样的 你起什么哄啊(跃起)」,(跃起) 逐字可见;画面不得出现 [李豆沙]/[连线] 标签字面。",
+          "final_video_end_ms": 198000,
+          "final_video_start_ms": 193000,
+          "point_id": "yueqi-cue104",
+          "status": "PASS"
+        },
+        {
+          "evidence": "00:03:50.000-00:03:56.000 — 亲验成品帧(233.4s / 主片 03:46,合并窗 原cue128+129):该窗有真实人声发声,烧录字幕逐字为「我是李豆的什么 你不许再说话(跃起)」,(跃起) 完整可见;该帧中人物双脚离地正处跃起动作,注记与画面语义吻合,证明保留此注记有内容价值。画面无标签字面、无其它括号注记。",
+          "expectation": "合并窗(原 128+129)字幕须为「我是李豆的什么 你不许再说话(跃起)」,(跃起) 逐字可见且时间轴与机器原时轴一致;画面不得出现标签字面。",
+          "final_video_end_ms": 236000,
+          "final_video_start_ms": 230000,
+          "point_id": "yueqi-cue128-merged",
+          "status": "PASS"
+        },
+        {
+          "evidence": "00:00:00.000-00:04:46.389 — 全片核验:成品 159 cue,机读扫描括号注记全片恰好命中 2 处且全为 (跃起);「(无可辨别人声)」「(无可分辨人声)」这类标注无声/静音段的机器注记 0 命中——即无声段没有被塞入任何伪台词;[李豆沙]/[连线] 标签字面 0 命中。抽帧亲验 7.2s/195.5s/233.4s/284.2s 四处一致,全流解码零错。",
+          "expectation": "全片除 Ivan 手标 (跃起)×2 外不得出现任何其它圆括号注记(「(无可辨别人声)」「(无可分辨人声)」类机器注记必须剥离);159 cue 全程说话人只走颜色样式,无标签字面。",
+          "final_video_end_ms": 286389,
+          "final_video_start_ms": 0,
+          "point_id": "machine-note-strip",
+          "status": "PASS"
+        }
+      ]
+    }
+  ],
+  "package_evidence": {
+    "package_audit": {
+      "path": "package-audit.json",
+      "sha256": "sha256:58e8e2bd2872697fd52a359e794ee06057ede9798fede26cc67b7c6f6e56a323"
+    },
+    "review_evidence": {
+      "bytes": 8063,
+      "path": "final-human-review-evidence.json",
+      "sha256": "sha256:4d06c4138d5dab6a68cdfcf2a0f52e4ed2107ef863bba61b931857c6641fa10e"
+    },
+    "review_manifest": {
+      "path": "review_manifest.json",
+      "sha256": "sha256:d3935f79cd68ac7c6738823ca0ec419ebac0ba172979999b6ee1520327e35fe5"
+    }
+  },
+  "review_contract_sha256": "sha256:43a91ec0d9160c3701e578c6919fb81360e8807c8c33a712e97fa28aa2f9e93c",
+  "reviewed_at": "2026-08-10T01:46:31+0000",
+  "reviewed_by": "Claude root",
+  "reviewer_kind": "delegated_root_agent",
+  "schema_version": "lidousha-final-human-review.v2",
+  "scope": "same_bv_repair",
+  "status": "ACCEPTED_FOR_SAME_BV"
+}

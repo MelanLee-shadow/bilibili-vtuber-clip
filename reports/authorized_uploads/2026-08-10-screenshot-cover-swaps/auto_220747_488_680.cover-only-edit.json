@@ -1,0 +1,32 @@
+{
+ "schema_version": "lidousha-cover-only-edit.v1",
+ "bvid": "BV1hfuS6EENb",
+ "aid": 117067789373517,
+ "local_cover_path": "/opt/bilive/autoslice/recovery/2026-08-10/auto_220747_488_680-screenshot-cover/renders/auto_220747_488_680.screenshot-title.cover.png",
+ "local_cover_sha256": "sha256:8313fec8f90623cc4817d85ef41e22c563c064039b0790a79fbf123de050d1ea",
+ "old_cover_url": "http://i1.hdslb.com/bfs/archive/0d76556f2c70f67cc5cdbc7f449cbe7affc34cf9.png",
+ "new_cover_url": "http://i0.hdslb.com/bfs/archive/590eb354577c31b90dbf3bb62b250bb7528d984a.png",
+ "public_pic": "http://i1.hdslb.com/bfs/archive/0d76556f2c70f67cc5cdbc7f449cbe7affc34cf9.png",
+ "public_title": "【李豆沙】刚缠着队友换身份，旁边就有人暴毙，小李连声“不是我”，从走位讲到不会报警",
+ "public_cid": 40762280128,
+ "edit_response": {
+  "code": 0,
+  "message": "OK",
+  "ttl": 1,
+  "data": {
+   "aid": 117067789373517,
+   "bvid": "BV1hfuS6EENb"
+  }
+ },
+ "upload_response": {
+  "code": 0,
+  "message": "OK",
+  "ttl": 1,
+  "data": {
+   "url": "https://archive.biliimg.com/bfs/archive/590eb354577c31b90dbf3bb62b250bb7528d984a.png"
+  }
+ },
+ "cid_unchanged": true,
+ "title_unchanged": true,
+ "at": "2026-08-10T04:21:41+0000"
+}

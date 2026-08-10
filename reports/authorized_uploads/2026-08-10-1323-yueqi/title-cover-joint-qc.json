@@ -1,0 +1,38 @@
+{
+ "schema_version": "lidousha-title-cover-joint-qc.v1",
+ "candidate_id": "auto_200130_1323_1603",
+ "title": "【李豆沙】打歌服没召唤出来，公主抱倒是先来了",
+ "title_sha256": "sha256:1dd0b04b7cf41f70b05cc62dcca54249bfbc56f8a8510ec575c54498c212390f",
+ "cover_path": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/delivery/auto_200130_1323_1603.recut.burned-final-speaker.cover.png",
+ "cover_sha256": "sha256:31809a32a94332fb92643f18036a6e9e59f66d831df7f6b9efdb14beef46ab46",
+ "preferred_provider": "cpa",
+ "selected_provider": "cpa",
+ "witness": {
+  "schema_version": "cpa-frame-witness.v1",
+  "image_path": "/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/delivery/auto_200130_1323_1603.recut.burned-final-speaker.cover.png",
+  "question": "你是李豆沙频道的标题+封面联合质检员。下图是最终封面,拟用标题是:\n《【李豆沙】打歌服没召唤出来，公主抱倒是先来了》\n请只输出一个 JSON 对象(不要 markdown 代码块,不要多余文字),字段与含义:\n{\"lidousha_primary\": bool 封面主体是否是李豆沙(白发+头顶小熊猫耳的虚拟熊猫少女;熊猫耳长在头上不是头套/帽子;头顶墨镜或发饰是可选配饰,可有可无),\"thumbnail_readable\": bool 缩略图尺寸下封面大字是否清晰可读,\"single_clear_hook\": bool 封面文案是否构成一个清晰单一的钩子,\"text_overcrowded\": bool 文字是否过度拥挤,\"title_cover_aligned\": bool 标题与封面是否讲同一件事,\"physical_text_line_count\": int 封面主文案的物理行数,\"unrelated_or_misleading_elements\": [] 与内容无关或误导的元素列表(没有就空数组),\"reason\": str 一句话理由,\"pass\": bool 综合是否通过}\n如实判断,不要迎合。",
+  "model": "gpt-5.6-sol",
+  "provider": "cpa",
+  "image_sha256": "31809a32a94332fb92643f18036a6e9e59f66d831df7f6b9efdb14beef46ab46",
+  "frame_sha256": "f4b3ed04d6690f2c6a69f576556f92dd6f803381a2ee3900373590a481d5fc6b",
+  "prompt_sha256": "99467560aecfd720a9e928f2d61805cd6c54a31446de3eb7ec89e600f810a623",
+  "status": "OBSERVED",
+  "answer": "{\"lidousha_primary\":true,\"thumbnail_readable\":true,\"single_clear_hook\":true,\"text_overcrowded\":false,\"title_cover_aligned\":true,\"physical_text_line_count\":2,\"unrelated_or_misleading_elements\":[],\"reason\":\"白发小熊猫耳少女是画面主体之一，封面两行大字清晰呈现“打歌服没来但公主抱先来”的反差，和标题完全一致。\",\"pass\":true}",
+  "response_sha256": "97a05045d1976f22c25d54e9345fe86deec06870e0745ee6b9ed177b37b4bffc"
+ },
+ "verdict": {
+  "lidousha_primary": true,
+  "thumbnail_readable": true,
+  "single_clear_hook": true,
+  "text_overcrowded": false,
+  "title_cover_aligned": true,
+  "physical_text_line_count": 2,
+  "unrelated_or_misleading_elements": [],
+  "reason": "白发小熊猫耳少女是画面主体之一，封面两行大字清晰呈现“打歌服没来但公主抱先来”的反差，和标题完全一致。",
+  "pass": true
+ },
+ "status": "PASS",
+ "pass": true,
+ "generated_at": "2026-08-10T01:29:21Z",
+ "authority": "IVAN_EXPLICIT_20260808(title+cover both hand-authorized)"
+}

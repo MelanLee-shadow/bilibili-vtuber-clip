@@ -1,0 +1,32 @@
+{
+ "schema_version": "lidousha-cover-only-edit.v1",
+ "bvid": "BV18Gu16NEcX",
+ "aid": 117064283067538,
+ "local_cover_path": "/opt/bilive/autoslice/recovery/2026-08-10/auto_213135_469_710-screenshot-cover/renders/auto_213135_469_710.screenshot-title.cover.png",
+ "local_cover_sha256": "sha256:61e8895f54ab5f1861241c74d40b2680f9526fd926ac1507388d16f895c634e8",
+ "old_cover_url": "http://i2.hdslb.com/bfs/archive/ec34dcd718f9e495e23468618c8803da7cb258f6.png",
+ "new_cover_url": "http://i2.hdslb.com/bfs/archive/73335ab4e00f9b1a4d308743bac435185cafbd88.png",
+ "public_pic": "http://i2.hdslb.com/bfs/archive/ec34dcd718f9e495e23468618c8803da7cb258f6.png",
+ "public_title": "【李豆沙】第一次3D Live紧张到手抖，想起五年前看歌姬时的心情，自己好像正走在实现五年前舞台愿望的路上",
+ "public_cid": 40742880014,
+ "edit_response": {
+  "code": 0,
+  "message": "OK",
+  "ttl": 1,
+  "data": {
+   "aid": 117064283067538,
+   "bvid": "BV18Gu16NEcX"
+  }
+ },
+ "upload_response": {
+  "code": 0,
+  "message": "OK",
+  "ttl": 1,
+  "data": {
+   "url": "https://archive.biliimg.com/bfs/archive/73335ab4e00f9b1a4d308743bac435185cafbd88.png"
+  }
+ },
+ "cid_unchanged": true,
+ "title_unchanged": true,
+ "at": "2026-08-10T04:21:15+0000"
+}
