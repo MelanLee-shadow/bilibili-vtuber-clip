@@ -417,6 +417,26 @@ produce 槽约 **50 分钟**,把 8/8(今晚主力 13 条)和 8/9(已发 **0** �
 按"配额是瓶颈、产能不是"的原则,已把 8/7 置 `manual_preclaim`(**安全改法**,回执写明解除方式
 并警告不要用 `--preclaim` CLI 解除)。预计每轮省下约 50 分钟。
 
+## 六之十一、8/7 那一轮的实测结果:**0/4**,以及 90 分钟的 produce 超时
+
+跑在 `d7956e7`(含 worker B 退避)上的 8/7 四条,**全军覆没**:
+| 候选 | 死法 |
+|---|---|
+| `auto_213743_1018_1295` | `provider failure class=rejected status=[400]` ← **分组抽签,当时不重试** |
+| `auto_213743_1635_1717` | `provider failure class=service status=[400, 524]` |
+| `auto_203735_388_526` | **produce 超时 5400 秒(90 分钟)** |
+| `auto_220747_313_380` | 终审 findings 拦 |
+
+**produce 硬超时 = 5400s**,这是排期的关键参数:13 条 / 5 并行 / 最坏 90 分钟 = 最坏 4.5 小时。
+所以 groupcap 修复不只是成功率问题,**也是排期问题**。
+
+## 六之十二、部署位与产线终态(交棒时点)
+
+- **free 部署位 `c6a323f`**(2026-08-10T09:12:38Z,3763 绿,runner md5 已验)。
+- 状态:8/7 `manual_preclaim`(**picks=10 完整保留**)、8/8 `publication_in_progress`(13 talk + 1 song 待产)、
+  8/9 `no_delivery`(5 talk + 1 song 待产)。
+- DISABLED 已撤、deploy guard 已清,产线自 09:20 tick 起把全部产能给 8/8 与 8/9。
+
 ## 七、留给 Ivan 的待裁项(未擅自决定)
 
 1. 多嘉宾场「可交付但依赖审阅」政策 —— 未落地。
