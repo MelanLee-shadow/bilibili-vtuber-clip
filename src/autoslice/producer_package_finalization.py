@@ -93,6 +93,10 @@ from src.autoslice.recovery_title_authority import (
 )
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.shadow_review import _sha256
+from src.autoslice.unreadable_cue_drop_stage import (
+    seal_unreadable_cue_drops,
+    stage_unreadable_cue_drop_pass,
+)
 from src.autoslice.source_subtitle_truth import (
     apply_source_subtitle_truth,
     source_truth_owner_windows,
@@ -1477,6 +1481,7 @@ def _run_exact_final_review_gate(
     if reviewer is None:
         raise SystemExit("FINAL_REVIEW_EXACT_FINALIZER_MISSING")
     self_heal_passes: list[dict[str, object]] = []
+    unreadable_drop_passes: list[dict[str, object]] = []
     carryover_file = carryover_path(out_root, cid)
     replayable_carryover_base_sha256: set[str] = set()
     consumed_carryover_repairs: dict[str, Mapping[str, object]] = {}
@@ -1730,6 +1735,30 @@ def _run_exact_final_review_gate(
                         )
                     raise
                 continue
+            # 「耳朵说这段音频物理上不可读」的死锁（Ivan 2026-08-10 裁定）：删掉
+            # 那条 cue 的字幕、照常出成品、落人工审阅停泊态，而不是把整条候选
+            # 拦死。判据/守卫/授权/事务全在 unreadable_cue_drop_stage，这里只留
+            # 调用点；排在 CPA 自愈之后是刻意的——删字幕有损，永远是最后手段。
+            next_drop_passes = stage_unreadable_cue_drop_pass(
+                reason_code=exc.reason_code,
+                cpa_repairs=repairs,
+                pass_budget_left=pass_index < max_review_passes - 1,
+                final_text=final_text,
+                audit=audit,
+                expected_srt_sha256=expected_srt_sha256,
+                passes=unreadable_drop_passes,
+                recut=recut,
+                chat_authority_audit=chat_authority_audit,
+                chat_authority_path=chat_authority_path,
+                review_audit_path=review_audit_path,
+                snapshots=(
+                    file_bytes_before_pass, chat_authority_before_pass,
+                    baseline_before_pass,
+                ),
+            )
+            if next_drop_passes is not None:
+                unreadable_drop_passes = next_drop_passes
+                continue
             # 终审结转仍是无法在当前 exact-final pass 安全落盘时的后备。
             carryover_count = persist_final_review_carryover(
                 carryover_file, audit
@@ -1791,6 +1820,16 @@ def _run_exact_final_review_gate(
                         + "\n",
                         encoding="utf-8",
                     )
+        if unreadable_drop_passes:
+            seal_unreadable_cue_drops(
+                cid=cid,
+                passes=unreadable_drop_passes,
+                expected_srt_sha256=expected_srt_sha256,
+                audit=audit,
+                chat_authority_audit=chat_authority_audit,
+                recut=recut,
+                review_audit_path=review_audit_path,
+            )
         chat_authority_path.write_text(
             json.dumps(
                 chat_authority_audit,
