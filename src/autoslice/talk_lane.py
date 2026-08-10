@@ -34,6 +34,9 @@ from src.autoslice.producer_boundary_owner_contract import (
     validate_frozen_boundary_owner_contract,
 )
 from src.autoslice import provider_failure as _provider_failure
+from src.autoslice.infra_retry_policy import (
+    talk_infra_retry_schedule as _talk_infra_retry_schedule,
+)
 from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
@@ -906,6 +909,26 @@ def _classify_final_review_release(
         boundary_status == "BLOCK"
         or "FINAL_REVIEW_BOUNDARY_SEMANTIC_BLOCKED" in reason_codes
     ):
+        # Ivan 2026-08-10 #9：一个 CPA 请求失败不该让整条候选判死。边界语义
+        # 复核在 provider 打不通时同样落 status=BLOCK，reason 是
+        # ``BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:<ExcType>``——那是"没人给出
+        # 裁决"，不是"裁决为不合格"。此前两者共用 content_boundary +
+        # recoverable=False，于是一次 LlmCallError 把 15–55 分钟的 produce
+        # 判成内容缺陷，只能等代码波改 fingerprint 才醒。
+        #
+        # 只有 transport 类异常名才改走 provider_transient；TypeError/KeyError
+        # 之流仍然终态——把确定性代码缺陷放进 INFRASTRUCTURE_WAIT_FAILURE_KINDS
+        # 会让同一 fingerprint 每 tick 空转到天荒地老（delivery_recovery 明文
+        # 警告过）。**内容门本身一个字没放松**：BLOCK 依旧拒绝交付。
+        if isinstance(boundary, dict) and _provider_failure.transport_unavailable_reason(
+            boundary.get("reason_codes")
+        ):
+            return (
+                "provider_transient",
+                "final_review_boundary_semantic",
+                True,
+                evidence,
+            )
         return (
             "content_boundary",
             "final_review_boundary_semantic",
@@ -1869,11 +1892,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
             )
         result["failure_recovery_fingerprint"] = _runner.talk_failure_recovery_fingerprint(str(result["failure_kind"]), cid)
         if result["failure_recoverable"]:
-            retry_epoch = int(time.time()) + _runner.SONG_INFRA_RETRY_BASE_SECONDS
-            result["next_retry_at_epoch"] = retry_epoch
-            result["next_retry_at"] = time.strftime(
-                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(retry_epoch)
-            )
+            result.update(_talk_infra_retry_schedule(result))
         if result["failure_kind"] == "selection_rescore":
             # 狍哥案修复：从 finalization 侧写的 sidecar 读回修正 hook/title，
             # 绑定这次失败的 fingerprint，落 PENDING source-fact-rescore.v1

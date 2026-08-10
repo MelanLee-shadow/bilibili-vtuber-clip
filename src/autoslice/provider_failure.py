@@ -55,6 +55,68 @@ SERVICE = "service"
 REJECTED = "rejected"
 UNKNOWN = "unknown"
 
+# ``*_UNAVAILABLE:<ExcType>`` reason codes (boundary semantic review and its
+# siblings) carry the *type name* of whatever escaped the LLM leg.  Only these
+# names mean "the provider never rendered a verdict, so nothing was judged";
+# every other name is a code defect in our own stage.
+#
+# The distinction is load-bearing, not cosmetic: a transport name routes the
+# candidate into ``INFRASTRUCTURE_WAIT_FAILURE_KINDS`` (unbounded timed retry),
+# and ``delivery_recovery`` warns in as many words that putting a deterministic
+# defect on that lane makes it churn the identical fingerprint every tick
+# forever.  So the allowlist stays closed: unknown名字一律按内容/代码缺陷终态。
+TRANSPORT_EXCEPTION_NAMES = frozenset(
+    {
+        # llm_client raises this for every transport outcome it cannot use:
+        # non-zero bridge rc, subprocess timeout, missing/empty completion
+        # file, unparseable JSON in an otherwise-200 completion.  All four are
+        # "ask again later", none is a verdict about the content.
+        "LlmCallError",
+        "TimeoutError",
+        "TimeoutExpired",
+        "SubprocessError",
+        "CalledProcessError",
+        "ConnectionError",
+        "ConnectionAbortedError",
+        "ConnectionRefusedError",
+        "ConnectionResetError",
+        "BrokenPipeError",
+        "OSError",
+        "IOError",
+        "HTTPError",
+        "URLError",
+        "SSLError",
+        "RemoteDisconnected",
+        "IncompleteRead",
+    }
+)
+
+_UNAVAILABLE_REASON_RX = re.compile(r"^[A-Z][A-Z0-9_]*UNAVAILABLE:(.+)$")
+
+
+def transport_unavailable_reason(reason_codes: object) -> str | None:
+    """Return the ``*_UNAVAILABLE:<ExcType>`` code naming a transport failure.
+
+    ``None`` means: no such code, or the exception name is not on the closed
+    transport allowlist — i.e. do not treat this as an infrastructure wait.
+    """
+
+    if isinstance(reason_codes, str):
+        candidates: list[str] = [reason_codes]
+    elif isinstance(reason_codes, (list, tuple)):
+        candidates = [str(code) for code in reason_codes if str(code)]
+    else:
+        return None
+    for code in candidates:
+        match = _UNAVAILABLE_REASON_RX.match(code.strip())
+        if match is None:
+            continue
+        # ``socket.timeout`` and friends arrive dotted; compare on the leaf.
+        exception_name = match.group(1).strip().rsplit(".", 1)[-1]
+        if exception_name in TRANSPORT_EXCEPTION_NAMES:
+            return code
+    return None
+
 
 def provider_failure_detail(
     exc: BaseException, *, limit: int = PROVIDER_DETAIL_LIMIT
@@ -244,7 +306,9 @@ __all__ = [
     "QUOTA",
     "REJECTED",
     "SERVICE",
+    "TRANSPORT_EXCEPTION_NAMES",
     "UNKNOWN",
+    "transport_unavailable_reason",
     "auditor_unavailable_discovery",
     "classify_provider_failure",
     "describe_provider_failure",
