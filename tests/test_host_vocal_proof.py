@@ -280,6 +280,162 @@ def test_shifted_session_host_anchor_requires_ordered_search_evidence(tmp_path):
     assert _verify(bundle) is None
 
 
+def _stretch_source(bundle, *, trailing_ms: int) -> dict:
+    """Give the bundle a long post-song tail and rebind every hash to it."""
+
+    alignment = json.loads(bundle["alignment"].read_text(encoding="utf-8"))
+    alignment["audio_alignment_artifacts"]["source_duration_ms"] = (
+        alignment["post_song_talk_start_ms"] + trailing_ms
+    )
+    _write_json(bundle["alignment"], alignment)
+    bundle["proof"]["lyrics_alignment_report"]["sha256"] = _sha(bundle["alignment"])
+    return alignment
+
+
+def _failed_search_record(positions, *, selected_anchor, medians) -> dict:
+    """Build a candidate list whose scores all miss MIN_SESSION_ENROLL_MEDIAN."""
+
+    candidates = []
+    for index, (start_ms, end_ms) in enumerate(positions):
+        if (start_ms, end_ms) == (selected_anchor["start_ms"], selected_anchor["end_ms"]):
+            candidates.append(selected_anchor)
+            continue
+        candidates.append(
+            {
+                "start_ms": start_ms,
+                "end_ms": end_ms,
+                "window_ms": end_ms - start_ms,
+                "enroll_median_score": medians[index],
+                "passed": medians[index] >= host_vocal.MIN_SESSION_ENROLL_MEDIAN,
+            }
+        )
+    return {
+        "strategy": "first_verified_enrollment_window_after_song",
+        "candidates": candidates,
+    }
+
+
+def test_session_host_anchor_search_reaches_speech_beyond_a_fixed_post_song_horizon(tmp_path):
+    """A medley setlist can put the real post-show talk minutes after the song.
+
+    ``post_song_talk_start_ms`` then lands inside the *next* song, so a search
+    capped a fixed distance after it only ever samples singing.
+    """
+
+    bundle = _fixture(tmp_path)
+    alignment = _stretch_source(bundle, trailing_ms=200_000)
+    first_start = alignment["post_song_talk_start_ms"]
+
+    positions = host_vocal._session_host_anchor_positions(alignment)
+
+    assert positions[:2] == (
+        (first_start, first_start + 8_000),
+        (first_start + 4_000, first_start + 12_000),
+    )
+    assert (first_start + 120_000, first_start + 128_000) in positions
+    assert (first_start + 196_000, first_start + 200_000) in positions
+    assert positions[-1][1] == first_start + 200_000
+
+
+def test_anchor_search_truncated_near_the_song_no_longer_proves_exhaustion(tmp_path):
+    """A failed anchor search must cover the whole tail before it blocks.
+
+    The old fixed horizon made a 13-window search look complete.  It is not:
+    the windows it skipped are exactly where post-show speech lives.
+    """
+
+    bundle = _fixture(tmp_path)
+    alignment = _stretch_source(bundle, trailing_ms=200_000)
+    positions = host_vocal._session_host_anchor_positions(alignment)
+    anchor = bundle["proof"]["session_host_anchor"]
+    anchor["reference_scores"] = [
+        {**row, "score": 0.30} for row in anchor["reference_scores"]
+    ]
+    anchor["enroll_median_score"] = 0.30
+    anchor["passed"] = False
+    truncated = positions[:13]
+    bundle["proof"]["session_host_anchor_search"] = _failed_search_record(
+        truncated,
+        selected_anchor=anchor,
+        medians=[0.30] + [0.10] * (len(truncated) - 1),
+    )
+    _rewrite_proof_and_rebind_claim(bundle)
+
+    assert (
+        _verify(bundle)
+        == "session host anchor search did not retain the best failed window"
+    )
+
+
+def test_anchor_may_never_be_drawn_from_the_song_it_is_proving(tmp_path):
+    """The bridge would otherwise verify the performance with the performance.
+
+    A window inside the lyric span that clears 0.50 would hand every remaining
+    checkpoint a free pass at 0.22 - which is the playback/background-vocal
+    hole this gate exists to close.
+    """
+
+    bundle = _fixture(tmp_path)
+    alignment = _stretch_source(bundle, trailing_ms=200_000)
+    lyric_start = alignment["first_lyric_start_ms"]
+    lyric_end = alignment["last_lyric_end_ms"]
+
+    positions = host_vocal._session_host_anchor_positions(alignment)
+    assert positions
+    assert all(
+        start_ms >= lyric_end or end_ms <= lyric_start for start_ms, end_ms in positions
+    )
+
+    anchor = bundle["proof"]["session_host_anchor"]
+    anchor["start_ms"] = lyric_end - host_vocal.SESSION_HOST_ANCHOR_WINDOW_MS
+    anchor["end_ms"] = lyric_end
+    anchor["window_ms"] = host_vocal.SESSION_HOST_ANCHOR_WINDOW_MS
+    _rewrite_proof_and_rebind_claim(bundle)
+
+    assert _verify(bundle) == "session host anchor timing mismatch"
+
+
+def test_exhausted_search_without_a_qualifying_anchor_still_refuses(tmp_path):
+    """Reverse gate: a wider search must not become a softer one.
+
+    Every window is scanned and every window misses 0.50, so the bridge stays
+    closed even though each checkpoint's session-anchor score clears 0.22.
+    """
+
+    bundle = _fixture(tmp_path, passes=(False,) * 7)
+    alignment = _stretch_source(bundle, trailing_ms=200_000)
+    positions = host_vocal._session_host_anchor_positions(alignment)
+    anchor = bundle["proof"]["session_host_anchor"]
+    anchor["reference_scores"] = [
+        {**row, "score": 0.49} for row in anchor["reference_scores"]
+    ]
+    anchor["enroll_median_score"] = 0.49
+    anchor["passed"] = False
+    for checkpoint in bundle["proof"]["checkpoints"]:
+        checkpoint["session_anchor_score"] = 0.40
+        checkpoint["passed"] = False
+    bundle["proof"]["session_host_anchor_search"] = _failed_search_record(
+        positions,
+        selected_anchor=anchor,
+        medians=[0.49] + [0.10] * (len(positions) - 1),
+    )
+    status, decision, distribution = host_vocal._decision_from_checkpoints(
+        [{"bucket": row["bucket"], "passed": False} for row in bundle["proof"]["checkpoints"]]
+    )
+    bundle["proof"]["status"] = status
+    bundle["proof"]["decision"] = decision
+    bundle["proof"]["distribution"] = distribution
+    bundle["claim"]["status"] = status
+    bundle["claim"]["decision"] = decision
+    _rewrite_proof_and_rebind_claim(bundle)
+
+    assert len(positions) > 13
+    assert _verify(bundle) is None
+    assert bundle["proof"]["status"] == host_vocal.BLOCKED_STATUS
+    assert bundle["proof"]["decision"] == host_vocal.BLOCKED_DECISION
+    assert bundle["proof"]["distribution"]["passed_count"] == 0
+
+
 def test_singing_domain_session_bridge_keeps_five_of_seven_gate():
     assert host_vocal._checkpoint_passed(
         session_anchor_ready=True,

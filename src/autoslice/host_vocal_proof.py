@@ -46,7 +46,7 @@ CHECKPOINT_WINDOW_MS = 4_000
 MIN_LYRIC_CUE_MS = 2_500
 SESSION_HOST_ANCHOR_WINDOW_MS = 8_000
 SESSION_HOST_ANCHOR_SEARCH_STEP_MS = 4_000
-SESSION_HOST_ANCHOR_SEARCH_HORIZON_MS = 48_000
+SESSION_HOST_ANCHOR_SEARCH_SCOPE = "post_song_speech_to_source_end_excluding_lyric_span"
 MIN_SESSION_HOST_ANCHOR_MS = 3_000
 MIN_SESSION_ENROLL_MEDIAN = 0.50
 MIN_SESSION_LYRIC_SCORE = 0.22
@@ -173,7 +173,7 @@ def _canonical_policy() -> dict[str, object]:
         "minimum_lyric_cue_ms": MIN_LYRIC_CUE_MS,
         "session_host_anchor_window_ms": SESSION_HOST_ANCHOR_WINDOW_MS,
         "session_host_anchor_search_step_ms": SESSION_HOST_ANCHOR_SEARCH_STEP_MS,
-        "session_host_anchor_search_horizon_ms": SESSION_HOST_ANCHOR_SEARCH_HORIZON_MS,
+        "session_host_anchor_search_scope": SESSION_HOST_ANCHOR_SEARCH_SCOPE,
         "minimum_session_host_anchor_ms": MIN_SESSION_HOST_ANCHOR_MS,
         "minimum_session_enroll_median": MIN_SESSION_ENROLL_MEDIAN,
         "minimum_session_lyric_score": MIN_SESSION_LYRIC_SCORE,
@@ -190,7 +190,7 @@ def _legacy_reference_profile_policy() -> dict[str, object]:
 
     policy = _canonical_policy()
     policy.pop("session_host_anchor_search_step_ms")
-    policy.pop("session_host_anchor_search_horizon_ms")
+    policy.pop("session_host_anchor_search_scope")
     policy["minimum_session_lyric_score"] = 0.31
     return policy
 
@@ -369,7 +369,28 @@ def _session_host_anchor_position(alignment: Mapping[str, object]) -> tuple[int,
 def _session_host_anchor_positions(
     alignment: Mapping[str, object],
 ) -> tuple[tuple[int, int], ...]:
-    """Search post-song speech instead of assuming its first 8s are clean."""
+    """Search every post-song window, not a fixed horizon after the song.
+
+    The anchor exists to supply one verified sample of the host *speaking* in
+    this session, so the singing checkpoints can be judged against a
+    same-domain reference instead of only against spoken enrollment.  The
+    previous search stopped a fixed 48s after ``post_song_talk_start_ms``,
+    which silently assumed that offset lands on host speech.  In a medley or
+    3D-live setlist it can instead land inside the *next* song, and the real
+    post-show talk then sits far beyond any fixed horizon: the search exhausts
+    itself on singing, no window clears ``MIN_SESSION_ENROLL_MEDIAN``, the
+    bridge stays closed, and a genuine host performance is rejected.  Scanning
+    to the end of the source removes that assumption without moving a single
+    threshold - every returned window still has to clear 0.50 against
+    enrollment on its own.
+
+    Windows overlapping the proven lyric span are excluded.  An anchor drawn
+    from the song under proof would verify the performance with the
+    performance and hand every remaining checkpoint a free bridge, which is
+    precisely the playback/background-vocal hole this gate exists to close.
+    The span comes from the hash-bound alignment report, not from a second
+    boundary source.
+    """
 
     first_start_ms, first_end_ms = _session_host_anchor_position(alignment)
     artifacts = alignment.get("audio_alignment_artifacts")
@@ -377,15 +398,19 @@ def _session_host_anchor_positions(
     source_duration_ms = _require_int(
         artifacts, "source_duration_ms", label="audio_alignment_artifacts"
     )
-    latest_start_ms = min(
-        source_duration_ms - MIN_SESSION_HOST_ANCHOR_MS,
-        first_start_ms + SESSION_HOST_ANCHOR_SEARCH_HORIZON_MS,
+    lyric_start_ms = _require_int(
+        alignment, "first_lyric_start_ms", label="lyrics_alignment_report"
     )
+    lyric_end_ms = _require_int(
+        alignment, "last_lyric_end_ms", label="lyrics_alignment_report"
+    )
+    latest_start_ms = source_duration_ms - MIN_SESSION_HOST_ANCHOR_MS
     positions: list[tuple[int, int]] = []
     start_ms = first_start_ms
     while start_ms <= latest_start_ms:
         end_ms = min(start_ms + SESSION_HOST_ANCHOR_WINDOW_MS, source_duration_ms)
-        if end_ms - start_ms >= MIN_SESSION_HOST_ANCHOR_MS:
+        overlaps_lyrics = start_ms < lyric_end_ms and end_ms > lyric_start_ms
+        if end_ms - start_ms >= MIN_SESSION_HOST_ANCHOR_MS and not overlaps_lyrics:
             positions.append((start_ms, end_ms))
         start_ms += SESSION_HOST_ANCHOR_SEARCH_STEP_MS
     return tuple(positions) or ((first_start_ms, first_end_ms),)
