@@ -303,6 +303,12 @@
       "recording_date": "2026-08-07",
       "status": "hold_pending_review",
       "note": "Ivan 2026-08-10 逐字：「先这么做，贪生怕死这个不要上传」。背景：Ivan 2026-08-08 逐字「贪生怕死那个是因为根本没有分人声所以我没有审阅」与「贪生怕死这个也需要改成说话人分离的版本，不过你先别改，先等根因修复之后再说」。2026-08-10 扫全部 4573 个 jsonl 复核：Ivan 从未对本候选说过「因为不是主角所以不传」——那条「非李豆沙主角」裁定属 auto_210739_1142_1436（本表上一条 hold），勿混。放行需 Ivan 明示。"
+    },
+    {
+      "candidate_id": "song_210131_1210",
+      "recording_date": "2026-08-08",
+      "status": "hold_pending_review",
+      "note": "《心型病毒 (Live)》歌切。Ivan 2026-08-10 裁定「当然以 wsl 成品为准，这三个地方都是同一套代码」——不让 free 重产，改用 wsl 已完成的评审包（已抢救至 free incoming/song_210131_1210-r1，sha256 逐文件核验一致，package_audit passed=true/0 blocking）。该包自称 upload_allowed=false / finished_review_package_no_upload_pending_human_review，等 Ivan 审阅。本条同时是跨主机导入的封面闸口：该包封面血统在 wsl，free 复算不出 _initial_cover_proof_valid，若无阻断行 repair_covers 会花图片额度重画一张已定稿封面并覆盖交付根。放行需 Ivan 明示（改 released_for_upload）。"
     }
   ]
 }
