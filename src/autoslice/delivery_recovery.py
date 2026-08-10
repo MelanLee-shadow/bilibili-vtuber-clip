@@ -20,8 +20,8 @@ from typing import NamedTuple
 
 from src.autoslice.candidate_selection import _exact_talk_contract_ids
 from src.autoslice.batch_terminal_state import (
-    SONG_DETERMINISTIC_PROOF_REJECTION_CODES,
     project_terminal_song_disposition,
+    song_infra_transient_is_active,
 )
 from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.recovery_title_authority import (
@@ -1190,6 +1190,7 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
                 infra_transient_reason_codes=(
                     _runner.SONG_INFRA_TRANSIENT_REASON_CODES
                 ),
+                song_infra_retry_cap=_runner.SONG_INFRA_RETRY_CAP,
             )
         if (
             not isinstance(record, dict)
@@ -1222,20 +1223,18 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
             migrated_legacy_fingerprint = True
         changed = recorded_song_fingerprint != current
         retry_count = int(record.get("transient_retry_count") or 0)
-        # Prefer the explicitly classified transient emitted by song_lane.
-        # Older records did not have that field, so retain the reason-code
-        # fallback unless the attempt reached an audio/LRC proof result.
-        explicit_transient = str(record.get("transient_failure_code") or "")
-        if explicit_transient:
-            infra_transient = (
-                explicit_transient in _runner.SONG_INFRA_TRANSIENT_REASON_CODES
-            )
-        else:
-            infra_transient = bool(
-                reasons & _runner.SONG_INFRA_TRANSIENT_REASON_CODES
-            ) and not bool(
-                reasons & SONG_DETERMINISTIC_PROOF_REJECTION_CODES
-            )
+        # Prefer the explicitly classified transient emitted by song_lane, but
+        # past SONG_INFRA_RETRY_CAP stop letting it outrank a deterministic
+        # content verdict — that unbounded veto is what kept 2026-08-08's
+        # song_200130_1012 holding the session's only delivery slot forever.
+        # Older records have no typed field and keep the reason-code fallback.
+        infra_transient = song_infra_transient_is_active(
+            record=record,
+            reason_codes=reasons,
+            infra_transient_reason_codes=_runner.SONG_INFRA_TRANSIENT_REASON_CODES,
+            retry_cap=_runner.SONG_INFRA_RETRY_CAP,
+            fallback_to_reason_codes=True,
+        )
         next_retry_at = record.get("next_retry_at_epoch")
         infra_retry_due = (
             infra_transient

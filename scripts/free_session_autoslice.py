@@ -1609,10 +1609,9 @@ def _project_terminal_batch_state(state: dict) -> dict[str, object]:
         if isinstance(song, dict):
             project_terminal_song_disposition(
                 song,
-                terminal_performer_rejection_codes=(
-                    SONG_TERMINAL_PERFORMER_REJECTION_CODES
-                ),
+                terminal_performer_rejection_codes=SONG_TERMINAL_PERFORMER_REJECTION_CODES,
                 infra_transient_reason_codes=SONG_INFRA_TRANSIENT_REASON_CODES,
+                song_infra_retry_cap=SONG_INFRA_RETRY_CAP,
             )
     exact_closure = exact_talk_contract_closure(state)
     retry_epoch = scheduled_retry_epoch(state)
@@ -1627,6 +1626,7 @@ def _project_terminal_batch_state(state: dict) -> dict[str, object]:
             SONG_TERMINAL_PERFORMER_REJECTION_CODES
         ),
         song_infra_transient_reason_codes=SONG_INFRA_TRANSIENT_REASON_CODES,
+        song_infra_retry_cap=SONG_INFRA_RETRY_CAP,
     )
 
 

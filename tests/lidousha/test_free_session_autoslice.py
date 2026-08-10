@@ -5788,6 +5788,174 @@ def test_blocked_songs_do_not_consume_budget_and_backlog_backfills():
     assert [s["cid"] for s in state["song_backlog"]] == ["song_c"]
 
 
+def _f2_song_backlog_item(cid: str, *, danmaku: int, start_ms: int, **extra) -> dict:
+    item = {
+        "segment_path": "/rec/s.mp4",
+        "anchor_start_ms": start_ms,
+        "anchor_end_ms": start_ms + 60_000,
+        "danmaku": danmaku,
+        "cid": cid,
+    }
+    item.update(extra)
+    return item
+
+
+def test_exhausted_infra_repair_yields_the_delivery_slot_to_an_untried_candidate():
+    """F2 僵尸候选：transient 重排到帽的 selected_repair 不得继续霸占每场唯一的
+    交付名额。2026-08-08 `song_200130_1012` 以 transient_retry_count=4 占住那个
+    名额，同场另外 8 条候选一次都没被尝试。"""
+
+    zombie = _f2_song_backlog_item(
+        "song_zombie",
+        danmaku=10,
+        start_ms=0,
+        selected_repair=True,
+        retry_reason="transient_infrastructure_failure",
+        transient_retry_count=runner.SONG_INFRA_RETRY_CAP,
+    )
+    untried = _f2_song_backlog_item("song_untried", danmaku=900, start_ms=100_000)
+    state = {"picks": [], "songs": [], "pending_song": [zombie], "song_backlog": [untried]}
+
+    runner.refill_songs(state)
+
+    assert [s["cid"] for s in state["pending_song"]] == ["song_untried"]
+    assert [s["cid"] for s in state["song_backlog"]] == ["song_zombie"]
+
+
+def test_infra_repair_below_the_cap_keeps_its_first_claim_on_the_slot():
+    """降级只在超过 SONG_INFRA_RETRY_CAP 之后发生；帽内的重排优先级不变。"""
+
+    repair = _f2_song_backlog_item(
+        "song_repair",
+        danmaku=10,
+        start_ms=0,
+        selected_repair=True,
+        retry_reason="transient_infrastructure_failure",
+        transient_retry_count=runner.SONG_INFRA_RETRY_CAP - 1,
+    )
+    untried = _f2_song_backlog_item("song_untried", danmaku=900, start_ms=100_000)
+    state = {"picks": [], "songs": [], "pending_song": [repair], "song_backlog": [untried]}
+
+    runner.refill_songs(state)
+
+    assert [s["cid"] for s in state["pending_song"]] == ["song_repair"]
+
+
+def test_exhausted_infra_repair_is_demoted_not_dropped_when_nobody_else_wants_the_slot():
+    """负向面：降级不是丢弃。一场真实的长时间 provider 故障必须还能自己恢复。"""
+
+    zombie = _f2_song_backlog_item(
+        "song_zombie",
+        danmaku=10,
+        start_ms=0,
+        selected_repair=True,
+        retry_reason="transient_infrastructure_failure",
+        transient_retry_count=runner.SONG_INFRA_RETRY_CAP + 3,
+    )
+    state = {"picks": [], "songs": [], "pending_song": [zombie], "song_backlog": []}
+
+    runner.refill_songs(state)
+
+    assert [s["cid"] for s in state["pending_song"]] == ["song_zombie"]
+
+
+def test_fingerprint_change_repair_is_never_demoted_by_an_inherited_transient_count():
+    """content_change_retry 带的是新代码，不该被继承下来的 transient 计数降级。"""
+
+    repair = _f2_song_backlog_item(
+        "song_repair",
+        danmaku=10,
+        start_ms=0,
+        selected_repair=True,
+        retry_reason="pipeline_fingerprint_changed",
+        transient_retry_count=runner.SONG_INFRA_RETRY_CAP + 5,
+    )
+    untried = _f2_song_backlog_item("song_untried", danmaku=900, start_ms=100_000)
+    state = {"picks": [], "songs": [], "pending_song": [repair], "song_backlog": [untried]}
+
+    runner.refill_songs(state)
+
+    assert [s["cid"] for s in state["pending_song"]] == ["song_repair"]
+
+
+def _f2_project_terminal(record: dict) -> bool:
+    return runner.project_terminal_song_disposition(
+        record,
+        terminal_performer_rejection_codes=runner.SONG_TERMINAL_PERFORMER_REJECTION_CODES,
+        infra_transient_reason_codes=runner.SONG_INFRA_TRANSIENT_REASON_CODES,
+        song_infra_retry_cap=runner.SONG_INFRA_RETRY_CAP,
+    )
+
+
+def test_exhausted_transient_stops_shielding_a_deterministic_content_rejection():
+    """F2：`4af4a88` 让显式 transient 压过内容否定，但没有上限——一个假 infra 码
+    就能让内容失败的候选永不终结。超过 SONG_INFRA_RETRY_CAP 之后这层遮蔽失效。"""
+
+    record = {
+        "candidate_id": "song_200130_1012",
+        "status": "blocked",
+        "rc": 0,
+        "reason_codes": ["SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS", "JINGTING_PROVIDER_NOT_AGY"],
+        "transient_failure_code": "JINGTING_PROVIDER_NOT_AGY",
+        "transient_retry_count": runner.SONG_INFRA_RETRY_CAP,
+        "next_retry_at_epoch": 1,
+    }
+
+    assert _f2_project_terminal(record) is True
+    assert record["status"] == "candidate_rejected"
+    assert record["decision"] == "REJECT"
+    assert "transient_failure_code" not in record
+    assert "next_retry_at_epoch" not in record
+
+
+def test_transient_below_the_cap_still_shields_a_content_rejection():
+    """`4af4a88` 的本意不变：帽内的显式 transient 仍然压过内容否定。"""
+
+    record = {
+        "candidate_id": "song_200130_1012",
+        "status": "blocked",
+        "rc": 0,
+        "reason_codes": ["SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS", "JINGTING_PROVIDER_NOT_AGY"],
+        "transient_failure_code": "JINGTING_PROVIDER_NOT_AGY",
+        "transient_retry_count": runner.SONG_INFRA_RETRY_CAP - 1,
+    }
+
+    assert _f2_project_terminal(record) is False
+    assert record["status"] == "blocked"
+
+
+def test_genuine_provider_outage_never_terminalizes_on_the_retry_counter_alone(tmp_path, monkeypatch):
+    """负向金丝雀（必须留）：真 infra 码 + 无内容否定，超帽后仍然是 transient wait。
+    provider 停摆不会因为在队列里坐久了就变成内容失败。"""
+
+    date = "2026-07-12"
+    rec_root = tmp_path / "recordings"
+    (rec_root / date).mkdir(parents=True)
+    segment = rec_root / date / "22966160_20260712-19-00-17.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "song_pipeline_fingerprint", lambda: "sha256:same")
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 600_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
+    record = {
+        "candidate_id": "song_quota",
+        "segment": segment.name,
+        "start_ms": 100_000,
+        "end_ms": 300_000,
+        "status": "failed",
+        "reason_codes": ["AGY_QUOTA_EXHAUSTED"],
+        "transient_failure_code": "AGY_QUOTA_EXHAUSTED",
+        "pipeline_fingerprint": "sha256:same",
+        "song_pipeline_fingerprint": "sha256:same",
+        "transient_retry_count": runner.SONG_INFRA_RETRY_CAP + 4,
+    }
+    state = {"pending_song": [], "songs": [record]}
+
+    assert runner.requeue_recoverable_songs(date, state) == 1
+    assert state["pending_song"][0]["retry_reason"] == "transient_infrastructure_failure"
+
+
 def test_song_attempt_cap_bounds_backfill():
     state = {
         "picks": [], "songs": [{"status": "blocked"}] * runner.SONG_ATTEMPT_CAP,
