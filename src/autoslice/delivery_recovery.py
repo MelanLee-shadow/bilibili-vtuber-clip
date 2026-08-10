@@ -31,6 +31,7 @@ from src.autoslice.recovery_title_authority import (
 )
 from src.autoslice import selection_rescore
 from src.autoslice.selection_scorecard import apply_reviewed_selection_calibration
+from src.autoslice import song_name_authority
 from src.autoslice.talk_quota_freeze import carry_frozen_admission
 
 
@@ -1295,10 +1296,10 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
             # Visual title evidence is a first-class song identity hint.  A
             # retry that drops it is weaker than the failed attempt and can
             # repeat the same LRC ambiguity forever (for example 群青 variants
-            # or a wide frame window that attached the next song title).
+            # or a wide frame window that attached the next song title).  Ivan
+            # 2026-08-10 起同理带走音频已证出的命名权威：不带＝每次重试都退回 BCUT 错名重检索。
             "lane": record.get("discovery_lane") or record.get("lane"),
-            "title_hint": record.get("title_hint"),
-            "visual_song_evidence": record.get("visual_song_evidence"),
+            **song_name_authority.carry_song_identity_evidence(record),
             "transient_retry_count": retry_count + (1 if transient else 0),
             "selected_repair": True,
             "retry_reason": (
@@ -1559,10 +1560,9 @@ def bind_song_delivery_recovery_authority(
         completion,
     ):
         raise _runner.SongDeliveryError("song recovery backfill proof chain is not delivery-ready")
-    job = summary_record.get("source_context_job")
-    boundary = job.get("song_boundary") if isinstance(job, dict) else None
-    canonical_song_title = boundary.get("song_title") if isinstance(boundary, dict) else None
-    title = _runner.verified_song_fallback_title(canonical_song_title, state_record.get("hook"))
+    # 命名权威只认听音频那条链（Ivan 2026-08-10）；hook 是 BCUT 中文 ASR 的派生物，不是名字。
+    verified_name = song_name_authority.extract_audio_song_name_authority(summary_record) or {}
+    title = _runner.verified_song_fallback_title(verified_name.get("song_title"))
     if title is None:
         raise _runner.SongDeliveryError("song recovery backfill has no canonical LRC-bound title")
     source_candidate_id = str(summary_record.get("candidate_id") or "")

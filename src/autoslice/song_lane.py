@@ -21,10 +21,35 @@ from pathlib import Path
 from src.autoslice.batch_terminal_state import project_terminal_song_disposition
 from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.song_delivery import SongDeliveryError
+from src.autoslice.song_name_authority import (
+    authoritative_song_title,
+    extract_audio_song_name_authority,
+    ordered_song_lrc_queries,
+    quoted_titles_in,
+    record_song_naming,
+)
 from src.autoslice.verified_io import _matches_sha256
 
 
 _runner = RunnerProxy()
+
+# 全源趟失败时保留下来的取证键。音频命名权威也在其中：窄窗那趟没有 audio
+# aligner，真名只可能在 ``_full`` 那趟证出来，不带过来就会被这层白名单埋掉
+# （《心型病毒》被埋掉的正是同一层）。
+FULL_SOURCE_RETRY_FORENSIC_KEYS = (
+    "start_ms",
+    "end_ms",
+    "rc",
+    "status",
+    "reason_codes",
+    "window_classified_song",
+    "song_complete",
+    "song_completion_evidence",
+    "song_name_authority",
+    "transient_failure_code",
+    "next_retry_at_epoch",
+    "next_retry_at",
+)
 
 
 def _project_terminal_song_result(result: dict) -> dict:
@@ -36,6 +61,7 @@ def _project_terminal_song_result(result: dict) -> dict:
         infra_transient_reason_codes=_runner.SONG_INFRA_TRANSIENT_REASON_CODES,
         song_infra_retry_cap=_runner.SONG_INFRA_RETRY_CAP,
     )
+    record_song_naming(result)
     return result
 
 
@@ -346,15 +372,18 @@ def _build_song_selector_command(
     semantic_hook = str(item.get("hook") or "").strip()
     known_song_query = str(item.get("preview") or "").strip()
     visual_title_hint = str(item.get("title_hint") or "").strip()
-    quoted_titles = re.findall(
-        r"[《「『]([^》」』]{1,80})[》」』]",
-        "\n".join([semantic_hook, known_song_query]),
-    )
+    quoted_titles = quoted_titles_in(semantic_hook, known_song_query)
     # Prefer the visual/quoted title before noisy singing ASR.  LRC/audio proof,
-    # not this query order, still authorizes the performance.
-    for query in dict.fromkeys([visual_title_hint, *quoted_titles[:2], known_song_query]):
-        if query:
-            command.extend(["--song-lrc-query", query])
+    # not this query order, still authorizes the performance.  一旦音频链已经
+    # 证出真名（重试/续跑携带 song_name_authority），命名权就整体切过去：错名
+    # 不再占 preferred_title_hints 的位置。排序与阈值一字未动。
+    for query in ordered_song_lrc_queries(
+        authority_title=authoritative_song_title(item),
+        visual_title_hint=visual_title_hint,
+        quoted_titles=quoted_titles,
+        known_song_query=known_song_query,
+    ):
+        command.extend(["--song-lrc-query", query])
     command.extend(
         [
             "--seed-song-candidate-id",
@@ -401,6 +430,11 @@ def _read_song_selector_summary(
                 is_song = is_song or _runner.record_is_song(entry)
         except ValueError:
             pass
+    # 命名权威与交付授权解耦：host-vocal 判否只说明「可能不是李豆沙在唱」，
+    # 音频对齐仍然证明了这一段是哪首歌。所以无论这趟能不能交付都记权威名。
+    audio_authority = extract_audio_song_name_authority(summary_record)
+    if audio_authority is not None:
+        result["song_name_authority"] = audio_authority
     if summary_record:
         try:
             result["selector_summary_path"] = str(summary_path.resolve(strict=True))
@@ -506,10 +540,17 @@ def _published_song_delivery_allowed(result: dict, summary_record: dict) -> bool
 def _apply_canonical_song_title(result: dict, *, summary_record: dict, cid: str) -> None:
     """Ivan 2026-07-19 歌切标题铁律：边界/LRC 验证过的《歌名》是唯一标题权威，
     标题固定为「【李豆沙】豆沙歌，《歌名》」——staged/LLM 标题带任何 hook 尾巴
-    或不同拼写时在这里最终定形，覆盖记录留审计。"""
+    或不同拼写时在这里最终定形，覆盖记录留审计。
 
-    boundary = (summary_record.get("source_context_job") or {}).get("song_boundary") or {}
-    canonical_title = _runner.verified_song_fallback_title(boundary.get("song_title"))
+    Ivan 2026-08-10：这个「验证过」明确收窄为**听音频那条链**证过的身份。纯
+    文本 LRC 对齐同样会写出 FULL_SONG_READY 边界，但它归根到底是 BCUT 中文
+    ASR 的匹配结果，分不开《心型病毒》/《新型病毒》这种同音对。音频没证成
+    时正确行为是**没有权威名**（维持既有保守处置），不是回落到垃圾名。"""
+
+    authority = extract_audio_song_name_authority(summary_record)
+    canonical_title = _runner.verified_song_fallback_title(
+        authority.get("song_title") if authority else None
+    )
     if canonical_title and result.get("title") != canonical_title:
         if result.get("title"):
             _runner.log(
@@ -705,7 +746,7 @@ def produce_song(date: str, item: dict) -> dict:
                     date=date,
                     delivery_candidate_id=cid,
                     summary_record=summary_record,
-                    title=str(result.get("title") or item.get("hook") or ""),
+                    title=str(result.get("title") or ""),
                     selector_rc=completed.returncode,
                     summary_authority_root=summary_path.parent,
                 )
@@ -784,19 +825,7 @@ def produce_song(date: str, item: dict) -> dict:
             else:
                 result["full_source_retry"] = {
                     key: proof_retry.get(key)
-                    for key in (
-                        "start_ms",
-                        "end_ms",
-                        "rc",
-                        "status",
-                        "reason_codes",
-                        "window_classified_song",
-                        "song_complete",
-                        "song_completion_evidence",
-                        "transient_failure_code",
-                        "next_retry_at_epoch",
-                        "next_retry_at",
-                    )
+                    for key in FULL_SOURCE_RETRY_FORENSIC_KEYS
                 }
                 for key in (
                     "transient_failure_code",

@@ -6881,6 +6881,14 @@ def test_explicit_song_recovery_authority_backfill_verifies_exact_attempt_and_ti
         "status": "FULL_SONG_READY",
         "song_title": "想和你迎着台风去看海",
     }
+    # Ivan 2026-08-10：命名权威只认听音频那条链，所以恢复路径的 fixture 也必须
+    # 带音频对齐回执（model 后缀是 song_completion 用的同一条判别）。
+    fx["summary"]["source_context_job"]["lyrics_alignment"] = {
+        "status": "READY",
+        "provider": "netease",
+        "model": "netease-agy-audio-lrc-global-shift-v1",
+        "external_lrc": "netease://song/1",
+    }
     summary_path = candidate_root / "attempt" / "summary.json"
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(

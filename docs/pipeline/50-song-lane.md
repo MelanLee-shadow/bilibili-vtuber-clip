@@ -7,6 +7,15 @@
 ## 要点（指针表）
 
 - 识别/去重：`song_lane.py`（视觉歌名 hint 优先于演唱 ASR；已发布歌按 normalized 标题+别名去重 `published_song_history.py`）。
+- 歌名命名权威：`song_name_authority.py`。窗口一旦进歌 lane，命名权就归**听音频那条链**
+  （`agy_audio_lrc` 观察 × canonical LRC 全局位移证明，判别＝alignment model 带
+  `-agy-audio-lrc-global-shift-v1` 后缀，与 `song_completion` 的 `evidence_source` 交叉校验同源）。
+  画面 OCR 歌名与 BCUT 中文 ASR / hook 引号标题一律只是**候选提示**（`song_title_candidates`，
+  带来源标签），任何环节都不得把它们升格成名字。音频证成即写 `song_name_authority`（含
+  `source_ref`/provider/model/`matched_line_ratio`/报告 sha），**与交付授权解耦**——host-vocal
+  判否只说明可能不是本人在唱，不影响「这是哪首歌」已经被证过；音频未证成时**没有权威名**，
+  维持既有保守处置，不回落到提示名。重试跨 tick 带走已证权威并用它领队 LRC 检索，错名不再
+  占 `preferred_title_hints`；无权威时第一趟召回顺序与阈值一字不变。
 - 边界：`live_source_review.py` song_boundary（首尾演唱、≥7 行且 ≥80% 演唱、戏剧对白块四重限制）。
 - 本人演唱证明：`agy-audio-lrc-observation.v5` 与 `host-vocal-proof.v3` 在同一
   source/LRC evidence 上做联合门；CAM++ 只从明确演唱行取样。memory/日期化 review
