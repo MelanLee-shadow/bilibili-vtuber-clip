@@ -11,6 +11,12 @@ from src.autoslice.acoustic_witness_adjudication import (
     valid_inaudible_drop_repair,
     valid_inaudible_override_repair,
 )
+from src.autoslice.acoustic_witness_protocol import BLIND_PINYIN_PROTOCOL
+from src.autoslice.exact_final_witness_authority import (
+    DOWNGRADE_BRANCH as HISTORY_CONVERGENCE_DOWNGRADE_BRANCH,
+    GATE_SCHEMA as _HISTORY_CONVERGENCE_GATE_SCHEMA,
+    REQUIRED_REASON as _HISTORY_CONVERGENCE_REQUIRED_REASON,
+)
 
 SCHEMA_VERSION = "final-review-audit.v2"
 EXACT_FINAL_CPA_SELF_HEAL_MAX_REPAIR_PASSES = 5
@@ -364,6 +370,10 @@ def validate_final_review_release(
 #   3. 结论是「机器已经决定保留原文」，不是「机器没能决定」——基础设施未
 #      走完（witness/judge/后端不可用、stale base、预算跳过、响应非法）
 #      一律留在 blocker 侧。
+# 注意：``HISTORY_CONVERGENCE_DOWNGRADED_TO_DISCLOSURE_ONLY`` **不要**加进这张
+# 表。它的 adjudication status 是 UNCERTAIN，只有携带 OBSERVED 声学证词的那一
+# 半才算已决；整支放进白名单会把「耳朵没听清」也一起放出去。它走
+# ``decided_history_convergence_disclosure`` 那条逐字段核对的独立出口。
 _DECIDED_KEEP_CURRENT_BRANCHES = frozenset(
     {
         # judge 明确选 CURRENT。
@@ -450,6 +460,69 @@ def correction_carryover_consumed(finding: object) -> bool:
     )
 
 
+def decided_history_convergence_disclosure(
+    adjudication: Mapping[str, object],
+    *,
+    timing_immutable: bool,
+) -> bool:
+    """史收敛降级里「耳朵真听见了」的那一半，也是一次已完成的决定。
+
+    ``HISTORY_CONVERGENCE_DOWNGRADED_TO_DISCLOSURE_ONLY`` 的分支名直译就是
+    「已降级为：只披露」，审片员同时把 ``repair_class`` 改成 ``disclosure_only``
+    ——它明确说了「别改、只披露」。但降级同时把 adjudication 的 ``status`` 写成
+    ``UNCERTAIN``（这里的 uncertain 指的是「对那次改写没把握」，不是「没观测
+    到」），于是它撞死在 ``decided_keep_current_adjudication`` 的
+    ``status == "OBSERVED"`` 上：既不许改、又不许披露，整条候选永久悬停
+    （2026-08-10 auto_214238_835_960 的唯一阻断项即此）。
+
+    放行判据只有一条实质内容：**声学机器必须真的跑完并交出一次观测**。
+    降级发生在「CPA 收敛判官选了 PROPOSED，但代码级见证门 BLOCK」时，而门
+    BLOCK 有两种截然不同的成因：
+
+    * ``verdict.status == "OBSERVED"``：耳朵听见了、判官判了、门用证据否掉
+      了这次改写、一个字节没动 —— 证据在手做出的「保留原文」，与白名单里
+      ``WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT``（门本身就是决定）
+      同类，可随包披露发出去，发后可修。
+    * ``verdict`` 非 OBSERVED（如 ``WITNESS_IMPLAUSIBLE_SYLLABLE_RATE`` 让证词
+      落到 UNCERTAIN）：耳朵没能给出观测 —— 这是机器没能决定，按
+      ``is_keep_current_disclosed`` 的既定界线继续拦死，不许借降级出口逃逸。
+
+    其余字段全部按 ``downgrade_convergence_finding`` 落盘的 typed 形状逐项核
+    对（门 schema/BLOCK/reason_code、mutation basis、decision/witness
+    authority），任何一处对不上都视为伪造的降级壳子，不予放行。
+    """
+
+    gate = adjudication.get("history_convergence_acoustic_witness")
+    mutation = adjudication.get("mutation_authority")
+    witness = adjudication.get("verdict")
+    return bool(
+        adjudication.get("policy_branch")
+        == HISTORY_CONVERGENCE_DOWNGRADE_BRANCH
+        and adjudication.get("status") == "UNCERTAIN"
+        and adjudication.get("repaired") is False
+        and adjudication.get("reason_code")
+        == _HISTORY_CONVERGENCE_REQUIRED_REASON
+        and adjudication.get("decision_authority") == "CPA_PROPOSAL_ONLY"
+        and adjudication.get("witness_authority")
+        == "ACOUSTIC_WITNESS_REQUIRED"
+        and timing_immutable
+        and isinstance(gate, Mapping)
+        and gate.get("schema_version") == _HISTORY_CONVERGENCE_GATE_SCHEMA
+        and gate.get("status") == "BLOCK"
+        and gate.get("reason_code") == _HISTORY_CONVERGENCE_REQUIRED_REASON
+        and isinstance(mutation, Mapping)
+        and mutation.get("schema_version")
+        == "subtitle-correction-mutation-authority.v1"
+        and mutation.get("status") == "NOT_APPLIED"
+        and mutation.get("basis") == _HISTORY_CONVERGENCE_REQUIRED_REASON
+        and isinstance(witness, Mapping)
+        and witness.get("schema_version")
+        == "subtitle-span-acoustic-witness.v1"
+        and witness.get("witness_protocol") == BLIND_PINYIN_PROTOCOL
+        and witness.get("status") == "OBSERVED"
+    )
+
+
 def is_keep_current_disclosed(finding: object) -> bool:
     """A completed keep-current adjudication ships with disclosure.
 
@@ -458,6 +531,10 @@ def is_keep_current_disclosed(finding: object) -> bool:
     Infra incompleteness (witness/judge/pinyin backend unavailable, stale
     base, invalid response, budget skip) stays a blocker: those branches are
     machinery failing to decide, not a decision.
+
+    第二个出口是史收敛降级——见
+    ``decided_history_convergence_disclosure``。它只放行「耳朵已给出 OBSERVED
+    观测、见证门用证据否掉改写、零字节变更」的那一半，同一条界线原样成立。
     """
 
     if not isinstance(finding, Mapping):
@@ -467,12 +544,16 @@ def is_keep_current_disclosed(finding: object) -> bool:
         adjudication = finding.get("context_audio_adjudication")
     if not isinstance(adjudication, Mapping):
         return False
+    timing_immutable = (
+        adjudication.get("timing_immutable") is True
+        or finding.get("timing_immutable") is True
+    )
     return decided_keep_current_adjudication(
         adjudication,
-        timing_immutable=(
-            adjudication.get("timing_immutable") is True
-            or finding.get("timing_immutable") is True
-        ),
+        timing_immutable=timing_immutable,
+    ) or decided_history_convergence_disclosure(
+        adjudication,
+        timing_immutable=timing_immutable,
     )
 
 
