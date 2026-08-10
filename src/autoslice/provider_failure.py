@@ -49,6 +49,16 @@ _SERVICE_MARKERS = (
     "could not resolve host",
     "auth_unavailable",
     "no auth available",
+    # 2026-08-10：CPA 上游 sudocode 的分组路由抽签（Ivan 裁定 #8：一个分组带
+    # gpt-image 能力，另一个带 gpt-5.6-sol 能力）。落到没有该能力的分组就 400
+    # group_capability_unavailable——**请求本身是合法的**，单次失败率约 15–17%，
+    # 与 payload 大小、与模型都无关（实测：0B 失败而 2000B 成功，非单调）。
+    # 桥接脚本已把它当瞬时故障退避重试，这里必须跟着归到 service（"该等/会自
+    # 己好"），否则上层读到 class=rejected 会误判成"请求写错了"而放弃。
+    # 线上响应体三种字样都认（机器码 / 中文 / metadata.message_en）。
+    "group_capability_unavailable",
+    "当前分组不支持",
+    "current group does not support",
 )
 
 QUOTA = "quota"
@@ -206,6 +216,15 @@ def classify_provider_failure(text: str) -> str:
     would have served.  That is exactly the 2026-08-10 shape (all ChatGPT
     OAuth credentials ``usage_limit_reached`` → traffic falls through to the
     secondary leg → ``group_capability_unavailable`` 400).
+
+    2026-08-10 补测（free 直打 CPA）修正了那条级联里 400 的读法：
+    ``group_capability_unavailable`` **不是**次级 leg 的拒绝，而是上游 sudocode
+    的分组路由抽签（Ivan 裁定 #8：一组带 gpt-image 能力、一组带 gpt-5.6-sol
+    能力）。同一个请求原样重发就可能落到对的分组：单次失败率 ~15–17%，与
+    payload 大小无关（0B 失败而 2000B 成功）、与模型无关。所以它现在归
+    **service**（等/重试）而不是 ``rejected``——桥接脚本已按瞬时故障退避重试，
+    分类必须一致，否则上层看到 ``class=rejected`` 会把一次抽签失败读成"请求本
+    身写错了"。precedence 不变：级联里只要出现配额信号仍然是 quota。
     """
 
     if not text:
