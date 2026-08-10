@@ -84,6 +84,21 @@ def classify(name: str) -> str:
     return "(unclassified)" + os.path.splitext(name)[1].lower()
 
 
+def _own_process_ancestry() -> set[int]:
+    """Every pid from here up to init, so we can recognise our own flock."""
+    ancestry: set[int] = set()
+    pid = os.getpid()
+    while pid and pid != 1:
+        ancestry.add(pid)
+        try:
+            with open(f"/proc/{pid}/status", encoding="utf-8") as fh:
+                ppid = next(line for line in fh if line.startswith("PPid:"))
+            pid = int(ppid.split()[1])
+        except (OSError, StopIteration, ValueError):
+            break
+    return ancestry
+
+
 def quiet_window(base: str) -> list[str]:
     """Reasons the host is NOT quiet. Empty list means safe to proceed."""
     problems = []
@@ -98,8 +113,13 @@ def quiet_window(base: str) -> list[str]:
     lock = f"{base}/runner.lock"
     if os.path.exists(lock):
         held = subprocess.run(["fuser", lock], capture_output=True, text=True)
-        if held.stdout.strip():
-            problems.append(f"runner.lock is held by pid(s){held.stdout.strip()}")
+        holders = {int(tok) for tok in held.stdout.split() if tok.isdigit()}
+        # Running under `flock runner.lock` is the *intended* way to delete:
+        # taking the lock is what stops the next cron tick from starting. Our
+        # own flock must not read as someone else's tick.
+        foreign = holders - _own_process_ancestry()
+        if foreign:
+            problems.append(f"runner.lock is held by another process: {sorted(foreign)}")
     return problems
 
 
