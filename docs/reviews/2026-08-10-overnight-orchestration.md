@@ -681,10 +681,19 @@ state 里的 failure_kind 统计:**`subtitle_authority / final_review_findings` 
 ### 交棒时的机器状态
 - **free 部署位 `c6a323f`**(2026-08-10T09:12:38Z,3763 绿,runner md5 已验)。
 - `DISABLED` 已撤、`deploy.guard` 已清,cron 每 10 分钟正常跑。
-- **8/7 = `manual_preclaim`**(我为让产能而暂停;**注意 §六之十三:这个状态挡不住 requeue**,
-  且**解除不要用 `--preclaim` CLI**,见 §六之九)。
-- 8/8 = `published_with_failures`(talk 4/18 已发是此前的 4 条;song 0 交付 / 2 retry-blocked / 3 rejected / 6 attempted,已达 `SONG_ATTEMPT_CAP`)。
-- 8/9 = 处理中。
+- **三个日期的真实状态(12:58Z 实查,不是叙述)**:
+  | 日期 | status | pending_talk | pending_song | picks |
+  |---|---|---|---|---|
+  | 2026-08-07 | `ready_unpublished_with_failures` | 0 | 0 | 10 |
+  | 2026-08-08 | `published_with_failures` | 0 | 0 | 18 |
+  | 2026-08-09 | `no_delivery` | **5** | **1** | 5 |
+- ⚠️ **更正我自己**:我 09:12 把 8/7 置成 `manual_preclaim`,但**它没有保持住**——
+  09:20 的 requeue 把状态刷回,8/7 现在是 `ready_unpublished_with_failures`(见 §六之十三)。
+  **所以 8/7 并没有被冻结。**
+- **由此推论,你需要知道**:下播后 tick 恢复时,产线会**继续在已知必死的活上烧机时**——
+  8/7 的可恢复失败、8/8 的失败件、8/9 deferred 的 5+1,**全部会撞同一道终审正字法门**。
+  在你就 §七A 的 B/D 拍板之前,**这台机器会一直空转**。若不想它空转,
+  就先按 §六之九 的**安全改法**(不要用 `--preclaim` CLI)把相应日期冻上。
 - **上传配额**:滚动 24h 上限 10,窗口内已用 5(全部是 8/9 那天的投稿),**约 5 席可用**。
 
 ### 我改了但**没有**部署的东西
