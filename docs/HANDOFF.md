@@ -36,7 +36,21 @@ Updated: 2026-08-10 00:20Z by Claude(Fable→Opus 接力,单 orchestrator + Opus
 
 **待 Ivan 拍板(晨报清单)**:①1323 封面 v4D 放行 ②F13 事件场 6-15 席 ≥85 门 ③多嘉宾"不确定=连线可交付"政策 ④F21 改字路语义分割 ⑤清盘规则4豁免追认 ⑥贪生怕死 IVAN_EXPLICIT 封面 ⑦标题新规律固化进 title_style.md。
 
-**已知欠账(不影响已发布件)**:1323/1722 的 `reviewed_subtitle_baselines/*.reviewed.srt` 仍是旧全剥代(缺 (跃起)),F20 pin 未铸,需按 F20 报告重物化;7/30 清理遗留 `state/2026-07-18.json` 悬空媒体引用(已开独立任务);62 个歌 lane input.mp3 已删,歌 revive 若发生需重抽(成本令风险)。
+**已知欠账(不影响已发布件)**:1323/1722 的 `reviewed_subtitle_baselines/*.reviewed.srt` 仍是旧全剥代(缺 (跃起)),F20 pin 未铸,需按 F20 报告重物化;~~7/30 清理遗留 `state/2026-07-18.json` 悬空媒体引用~~(**已了结,见下节**);62 个歌 lane input.mp3 已删,歌 revive 若发生需重抽(成本令风险)。
+
+### 待部署交接:歌 lane 两个省盘修复(Ivan 8/10 令:部署交给交棒 session)
+
+**未部署 = 每次歌切重试仍在写 1.27 GiB 重复副本。** free 跑的是旧代码。盘 89%(345G/394G,剩 45G),08-08 歌 lane 60.22 GiB 里 51.17 GiB 是同尺寸重复件。
+
+- `b32b1b6` AGY job 暂存 `shutil.copy2`→`os.link`(跨设备回落 copy)。链接路径不 chmod(mode 挂共享 inode,会连带锁死源)、跳过恒真的 copy-vs-source 比对(省 1.27 GiB 的重复 sha256)。
+- `88742d0` source-context 内容寻址复用。key=源 sha256+窗口+ffmpeg 命令(output 路径掩码),仅当源与输出同设备时启用缓存 → 自动排除读 CloudFS 的 talk 源。
+
+已验证:全量 **3500 绿**;两个修复的新测试对修复前代码确实失败;free 实测 `out/` 内硬链接可用、`out/`=dev2049 而 CloudFS=dev51(同设备判据按设计生效,库内无硬编码挂载路径)。语义不变:context 片段落盘后只读、`-c copy` 本就确定性(同候选各 attempt sha256 实测相同);复用 key 含源 sha+区间,守住 `song_lane.py:173` 那条「重试不得复用切自另一区间的字节」铁律。
+
+**同批已了结/已就绪**:
+- 7/18 悬空引用已 tombstone(非路径哨兵串,内嵌删除时间/责任 manifest/存活等价物 sha256/回执);持锁+备份+原子写+单叶 diff;回执 `cleanup_manifests/free_state_dangling_media_ref_tombstone_20260809.json`。
+- 全 state 悬空媒体引用 302 条**已全部查清、无一真丢件**,报告 `docs/reviews/2026-08-09-state-dangling-media-refs-audit.md`。**与本节相关**:08-07/08-08 那 28 条 `/home/ivan/Project/vtuber-reproduce/...` 封面身份见证不是丢件——那棵树在 **WSL(ROG-EYE)**,14 个唯一 PNG 与 state 已记 sha256 逐个精确匹配。无需处理。
+- 清盘四道门预检 `scripts/cleanup_preflight_scan.py`(`0f7f9c6`,Ivan 8/9 批准的删前扫账本门,只出计划不删)。Ivan 已裁「可从源再生的就可以删」→ 12.71 GiB 过门(owner 全终态,CloudFS 源都在)。**Gate 0 目前正确拒绝**:00:21 起的 tick 仍持 runner.lock。窗口开后:`python3 /tmp/cleanup_preflight_scan.py --allow-source-extractions --json /tmp/plan.json`。删 `_source.mp4` 时须在 manifest 记上:它正是 `song_lane.py:173` 注释里说「留着做法证」的东西,Ivan 的裁定覆盖了该意图。
 
 ## ⭐⭐⭐⭐ 2026-08-09 深夜交棒(历史;successor 请以上节为准)
 
