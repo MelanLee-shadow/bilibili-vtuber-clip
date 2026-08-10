@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from src.autoslice import visual_song_discovery
 from src.autoslice.visual_song_discovery import (
     DEFAULT_MODEL,
     VISUAL_SONG_SCHEMA_VERSION,
@@ -130,7 +131,74 @@ def test_discover_visual_songs_caches_success_and_calls_agy_once(tmp_path):
     assert Path(first.cache_path).is_file()
 
 
-def test_discover_visual_songs_failure_isolated_when_agy_missing(tmp_path):
+def _sheet_writing_runner(calls: list[list[str]], *, agy_writes: bool = True):
+    """ffmpeg produces a real frame; agy either answers or is never reached."""
+
+    def fake_run(command, **kwargs):
+        calls.append(list(command))
+        if Path(command[0]).name == "ffmpeg":
+            frame = Path(command[-1].replace("%05d", "00001"))
+            frame.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (520, 620), "#6ba5d2").save(frame)
+        elif agy_writes:
+            Path(kwargs["cwd"], "visual_songs.json").write_text(
+                _response(_song()), encoding="utf-8"
+            )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    return fake_run
+
+
+def test_discover_visual_songs_falls_back_to_gemini_when_agy_absent(
+    tmp_path, monkeypatch
+):
+    """AGY 缺席不再让整条视觉召回 lane 死掉（2026-08-10 统一客户端接入）。
+
+    这条 lane 在此之前是零兜底的：没有 agy 二进制就直接 FAILED，而按 Ivan
+    的长期指示 wsl 产线上本来就不装 AGY。摘掉 agy_gemini_client 的 Gemini
+    腿，这个用例必红。
+    """
+
+    media = tmp_path / "stream.mp4"
+    media.write_bytes(b"real-enough-media-bytes" * 100)
+    monkeypatch.setenv("GEMINI_API_KEY", "free-key-one")
+    seen: dict[str, object] = {}
+
+    def fake_generate_content(*, prompt, key, model, inline_parts=None, **_kwargs):
+        seen["key"] = key
+        seen["model"] = model
+        seen["images"] = len(inline_parts or [])
+        seen["prompt"] = prompt
+        return _response(_song())
+
+    monkeypatch.setattr(
+        visual_song_discovery.agy_gemini_client,
+        "generate_content",
+        fake_generate_content,
+    )
+
+    calls: list[list[str]] = []
+    result = discover_visual_songs(
+        media,
+        tmp_path / "cache",
+        duration_ms=300_000,
+        config=VisualSongConfig(sample_every_seconds=30, timeout_seconds=60),
+        agy_bin=tmp_path / "missing-agy",
+        command_runner=_sheet_writing_runner(calls, agy_writes=False),
+    )
+
+    assert result.status == "READY"
+    assert [candidate.song_title for candidate in result.candidates] == ["晴る"]
+    # AGY was never invoked; only ffmpeg ran as a subprocess.
+    assert {Path(command[0]).name for command in calls} == {"ffmpeg"}
+    assert seen["key"] == "free-key-one"
+    assert seen["images"] >= 1
+    assert "contact sheets are attached" in str(seen["prompt"])
+
+
+def test_discover_visual_songs_failure_isolated_when_no_provider_can_run(tmp_path):
+    """Neither AGY nor a Gemini key: the optional lane still fails isolated."""
+
     media = tmp_path / "stream.mp4"
     media.write_bytes(b"video")
 
@@ -143,7 +211,7 @@ def test_discover_visual_songs_failure_isolated_when_agy_missing(tmp_path):
 
     assert result.status == "FAILED"
     assert result.candidates == ()
-    assert "AGY executable unavailable" in str(result.error)
+    assert result.error
 
 
 def test_discover_visual_songs_failure_isolated_for_unexpected_runner_error(tmp_path):

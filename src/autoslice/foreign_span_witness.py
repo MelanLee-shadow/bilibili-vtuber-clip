@@ -17,13 +17,17 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import subprocess
 import unicodedata
 from pathlib import Path
 from typing import Any, Callable
 
-from src.autoslice import gemini_backup_policy
+# gemini_backup_policy 现在由 agy_gemini_client 调用；这里保留导入是因为单测
+# 通过 fsw.gemini_backup_policy 打闸门 seam，而两边引用的是同一个模块对象。
+from src.autoslice import (  # noqa: F401 - keeps the policy monkeypatch seam
+    agy_gemini_client,
+    gemini_backup_policy,
+)
 from src.autoslice.agy_lrc_alignment import (
     GEMINI_API_AUDIO_LRC_MODEL,
     _gemini_api_observe,
@@ -122,16 +126,7 @@ def _parse_observation(raw: str) -> dict[str, str]:
     }
 
 
-def _is_quota_error(exc: Exception) -> bool:
-    """HTTP 429 / quota-class detection across urllib+requests error shapes."""
-
-    status = getattr(exc, "code", None)
-    if status is None:
-        status = getattr(getattr(exc, "response", None), "status_code", None)
-    if status == 429:
-        return True
-    text = f"{type(exc).__name__}: {exc}".lower()
-    return "429" in text or "resource_exhausted" in text or "quota" in text
+_is_quota_error = agy_gemini_client.is_quota_error
 
 
 def _observe_with_key_ladder(
@@ -140,49 +135,37 @@ def _observe_with_key_ladder(
     prompt: str,
     observe: Callable[..., str],
 ) -> tuple[dict[str, str], str]:
-    """Free keys in order, then the policy-gated paid key. Returns (obs, tier)."""
+    """Free keys in order, then the policy-gated paid key. Returns (obs, tier).
+
+    Ivan 2026-07-20: a fully-429 free chain is deterministic quota exhaustion
+    — the paid backup steps in the SAME round; the >=3 strikes gate applies
+    only to non-quota failure classes.  That is this lane's ``quota_fastpath``
+    knob on the shared ladder; the entity/LRC lanes keep the round-based form.
+    """
 
     audio_sha = hashlib.sha256(audio_path.read_bytes()).hexdigest()
     failures: list[str] = []
-    quota_flags: list[bool] = []
-    for key in _gemini_keys():
-        try:
-            return (
-                _parse_observation(observe(audio_path=audio_path, prompt=prompt, key=key)),
-                gemini_backup_policy.FREE_KEY_TIER,
+
+    def observe_and_parse(key: str) -> dict[str, str]:
+        return _parse_observation(observe(audio_path=audio_path, prompt=prompt, key=key))
+
+    outcome = agy_gemini_client.run_gemini_key_ladder(
+        item_key=audio_sha,
+        observe=observe_and_parse,
+        purpose="foreign_span_witness",
+        record_failure=lambda failure: failures.append(failure.error_type),
+        record_paid_skipped=(
+            lambda _ordinal, _round, gate_reason: failures.append(
+                f"PAID_BACKUP_SKIPPED:{gate_reason}"
             )
-        except Exception as exc:  # each key is an independent failover lane
-            failures.append(type(exc).__name__)
-            quota_flags.append(_is_quota_error(exc))
-    gemini_backup_policy.record_free_chain_failure(audio_sha)
-    if quota_flags and all(quota_flags):
-        # Ivan 2026-07-20: a fully-429 free chain is deterministic quota
-        # exhaustion — the paid backup steps in the SAME round; the >=3
-        # strikes gate applies only to non-quota failure classes.
-        allowed, gate_reason = gemini_backup_policy.paid_attempt_allowed(
-            audio_sha,
-            prior_strikes=gemini_backup_policy.MIN_FREE_CHAIN_STRIKES,
-        )
-        gate_reason = f"QUOTA_FASTPATH:{gate_reason}"
-    else:
-        allowed, gate_reason = gemini_backup_policy.paid_attempt_allowed(audio_sha)
-    if allowed:
-        try:
-            observation = _parse_observation(
-                observe(
-                    audio_path=audio_path,
-                    prompt=prompt,
-                    key=str(gemini_backup_policy.paid_backup_key()),
-                )
-            )
-            gemini_backup_policy.record_paid_use(
-                audio_sha, purpose="foreign_span_witness"
-            )
-            return observation, gemini_backup_policy.PAID_KEY_TIER
-        except Exception as exc:
-            failures.append(type(exc).__name__)
-    else:
-        failures.append(f"PAID_BACKUP_SKIPPED:{gate_reason}")
+        ),
+        quota_fastpath=True,
+        quota_predicate=_is_quota_error,
+        silent_when_paid_unconfigured=False,
+        strike_on_empty_chain=True,
+    )
+    if outcome.accepted:
+        return outcome.observed, outcome.accepted_key_tier
     raise RuntimeError("WITNESS_PROVIDERS_FAILED: " + ",".join(failures[-4:]) or "none")
 
 
@@ -244,38 +227,30 @@ def _observe_with_agy(
         raise RuntimeError(
             "AGY_FOREIGN_WITNESS_MEDIA_RENDER_FAILED: " + rendered.stderr[-160:]
         )
-    binary = os.environ.get("AGY_BIN", str(Path.home() / ".local/bin/agy"))
-    resolved_binary = shutil.which(binary) or binary
-    try:
-        completed = subprocess.run(
-            [
-                resolved_binary,
-                "--sandbox",
-                "--dangerously-skip-permissions",
-                "--add-dir",
-                str(job_dir),
-                "--model",
-                _AGY_MODEL,
-                "-p",
-                (
-                    "Open prompt.md with view_file and follow it exactly. Use only "
-                    "prompt.md and input.mp4. Write verdict.json in this directory. "
-                    "Do not use shell, terminal, browser, web, or search."
-                ),
-                "--print-timeout",
-                _AGY_TIMEOUT,
-            ],
-            cwd=job_dir,
-            env=agy_subprocess_env(),
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=parse_timeout_seconds(_AGY_TIMEOUT) + 120,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    run = agy_gemini_client.run_local_agy(
+        agy_gemini_client.agy_argv(
+            agy_gemini_client.resolve_local_agy_executable(),
+            job_dir=job_dir,
+            model=_AGY_MODEL,
+            prompt=(
+                "Open prompt.md with view_file and follow it exactly. Use only "
+                "prompt.md and input.mp4. Write verdict.json in this directory. "
+                "Do not use shell, terminal, browser, web, or search."
+            ),
+            print_timeout=_AGY_TIMEOUT,
+        ),
+        cwd=job_dir,
+        env=agy_subprocess_env(),
+        timeout=parse_timeout_seconds(_AGY_TIMEOUT) + 120,
+    )
+    if run.completed is None:
+        # 缺席 vs 炸了：分类由统一客户端给，AGY_BINARY_ABSENT 让运维不再去查
+        # 一台本来就不该装 AGY 的机器。下游照旧落 Gemini。
         raise RuntimeError(
-            f"AGY_FOREIGN_WITNESS_SUBPROCESS_FAILED:{type(exc).__name__}"
-        ) from exc
+            f"AGY_FOREIGN_WITNESS_SUBPROCESS_FAILED:{run.failure_category}:"
+            f"{run.launch_error_type}"
+        ) from run.launch_error
+    completed = run.completed
     (job_dir / "agy.stdout").write_text(completed.stdout, encoding="utf-8")
     (job_dir / "agy.stderr").write_text(completed.stderr, encoding="utf-8")
     (job_dir / "agy.rc").write_text(str(completed.returncode) + "\n", encoding="utf-8")

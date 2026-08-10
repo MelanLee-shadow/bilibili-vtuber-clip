@@ -594,3 +594,77 @@ def test_provider_really_failed_keeps_the_preexisting_apply_path():
 
     assert repaired is True
     assert branch == "CPA_JUDGE_APPLY_PROPOSED_WITHOUT_AUDIO_WITNESS"
+
+
+def test_entity_receipt_shape_survives_the_unified_client_extraction(
+    tmp_path, monkeypatch
+):
+    """④ 逐字节形状回归：抽出 agy_gemini_client 之后回执面必须一模一样。
+
+    真值盲——只断言**形状**（键集合 + provider/model/key_tier 三元组 +
+    provider_failures 行的键集合），不对任何转写内容做断言。这条 lane 是
+    F21 用 98 份真回执验证过的蓝本，接口重构不许改动它的回执契约。
+    """
+
+    monkeypatch.setenv("GEMINI_API_KEY", "free-key-1")
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media bytes")
+
+    def fake_run(command, **_kwargs):
+        if command[0] == "ffmpeg":
+            Path(command[-1]).write_bytes(b"cropped witness clip")
+            return _Completed()
+        raise FileNotFoundError(2, "No such file or directory", command[0])
+
+    monkeypatch.setattr(verifier_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        verifier_module,
+        "_gemini_api_observe_witness",
+        lambda **_kw: _observed_blind_witness(),
+    )
+
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-08-10",
+        source_duration_ms=20_000,
+        agy_bin=str(tmp_path / "definitely-absent-agy"),
+    )
+    verdict = verify(_witness_request())
+    manifest = json.loads(
+        next((tmp_path / "out/entity_verdicts").glob("*/verdict.manifest.json")).read_text(
+            encoding="utf-8"
+        )
+    )
+
+    # 三元组回执契约（字段名不许改）。
+    assert {"provider", "model", "key_tier"} <= verdict.keys()
+    assert {"provider", "model", "key_tier", "provider_failures"} <= manifest.keys()
+    # AGY 缺席那一行的形状。
+    absent_row = manifest["provider_failures"][0]
+    assert set(absent_row) == {"provider", "category", "error_type"}
+    assert isinstance(manifest["provider_failures"], list)
+    # 证词本体的键集合（F21 蓝本形状；只比形状，不看任何转写内容）。
+    assert set(verdict) == {
+        "audio_clip_sha256",
+        "audio_end_ms",
+        "audio_start_ms",
+        "confidence",
+        "heard_pinyin",
+        "key_tier",
+        "model",
+        "prompt_sha256",
+        "provider",
+        "reason",
+        "request_sha256",
+        "response_sha256",
+        "schema_version",
+        "self_count_mismatch",
+        "source_media_sha256",
+        "status",
+        "syllable_count",
+        "target_audible",
+        "timeline_binding",
+        "uncertain_positions",
+        "witness_protocol",
+    }

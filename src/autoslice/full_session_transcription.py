@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ import subprocess
 import tempfile
 
 from scripts.run_auto_review_shadow_pipeline import AgyExecutionResult
+from src.autoslice import agy_gemini_client
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.jingting_remote_runner import (
     build_ssh_agy_runner as _attested_build_ssh_agy_runner,
@@ -71,6 +73,137 @@ def _rebase_mmss(mmss: str, offset_ms: int) -> str:
     rebased = abs(rebased)
     return f"{sign}{rebased // 60:02d}:{rebased % 60:02d}"
 
+def _gemini_fresh_transcription(media_path: Path, api_prompt: str) -> str:
+    """Local Gemini audio leg for the SSH transcription lane.
+
+    2026-08-10：这条 lane 只有一条腿——ssh 到 free 上跑 agy。远端那台机器上
+    没有 agy（rc=127）时，整段全窗重转录以前直接没了。媒体本来就在本机
+    （run_agy_job 是 scp 上去的），所以同一段音频改由本机 Gemini 听。
+
+    ``api_prompt`` 必须由 ``build_prompt(delivery_mode="gemini_api")`` 产出，
+    不是把 agy 版做字符串替换——那套文件工具指令在提示词里出现两处。
+    """
+
+    with tempfile.TemporaryDirectory(prefix="fresh_tx_api_") as tmp:
+        audio_path = Path(tmp) / "input.mp3"
+        extract = subprocess.run(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-i", str(media_path),
+                "-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k",
+                str(audio_path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        if extract.returncode != 0 or not audio_path.is_file():
+            return ""
+        audio_bytes = audio_path.read_bytes()
+
+    def observe(key: str) -> str:
+        raw = agy_gemini_client.generate_content(
+            prompt=api_prompt,
+            key=key,
+            model=os.environ.get(
+                "AGY_TRANSCRIBE_GEMINI_API_MODEL",
+                agy_gemini_client.gemini_vision_model(),
+            ),
+            inline_data=audio_bytes,
+            mime_type="audio/mpeg",
+            response_mime_type=None,
+            timeout_seconds=600,
+        )
+        if not raw.strip():
+            raise ValueError("empty Gemini transcription response")
+        return raw
+
+    outcome = agy_gemini_client.run_gemini_key_ladder(
+        item_key=hashlib.sha256(audio_bytes).hexdigest(),
+        observe=observe,
+        purpose="fresh_full_window_transcription",
+    )
+    from scripts.gemini_slice_jingting import strip_markdown_fence
+
+    return strip_markdown_fence(outcome.observed) if outcome.accepted else ""
+
+
+def _build_fresh_transcription_prompt(
+    duration_hint_s: int,
+    danmaku_block: str,
+    screen_text_block: str,
+    *,
+    delivery_mode: str = "agy",
+) -> str:
+    """Same transcription contract, two delivery shapes.
+
+    ``agy`` drives a sandboxed job directory; ``gemini_api`` attaches the
+    audio to one request.  The blueprint lane (``entity_audio_verifier``)
+    already uses this delivery_mode idiom — do NOT string-surgery the agy
+    text instead: the file-tool instructions appear in two places and a
+    partial rewrite silently ships "write output.srt" to an API model.
+    """
+
+    from scripts.gemini_slice_jingting import glossary
+
+    glossary_text = glossary().strip()
+    glossary_block = f"\nGlossary and style rules:\n{glossary_text}\n" if glossary_text else ""
+    if delivery_mode == "gemini_api":
+        source_block = """The complete clip audio is attached to this request. There is no job
+directory and no local filesystem.
+
+Output: return the SRT document itself as your entire reply."""
+        task_line = "2. Return a complete simplified-Chinese transcription of everything the streamer says."
+        output_line = "   - SRT only: index, HH:MM:SS,mmm --> HH:MM:SS,mmm, text. No markdown fences, no prose."
+    else:
+        source_block = """Use only these local files in this job directory:
+- input.mp4
+
+Allowed tools:
+- view_file on prompt.md and input.mp4
+- write_to_file to relative output.srt
+- view_file on output.srt only after writing
+
+Forbidden actions:
+- No shell, terminal, browser, web, search, or any file outside this job directory.
+- Do not write to an absolute path."""
+        task_line = "2. Write output.srt: a complete simplified-Chinese transcription of everything the streamer says."
+        output_line = "   - SRT only in that file: index, HH:MM:SS,mmm --> HH:MM:SS,mmm, text. No markdown fences."
+    return f"""You are transcribing a short Bilibili VTuber TALK clip ({CHANNEL_PROFILE.prompt_name}, ~{duration_hint_s}s).
+
+{source_block}
+
+Task:
+1. Listen to the FULL audio from 00:00 to the end. Do not stop early.
+{task_line}
+   - One utterance/sentence per cue; keep colloquial wording, particles, and tone words faithfully.
+   - Cue timestamps must be as accurate as you can hear them — the cue must start when the words start
+     and end when they end. Never stretch a cue over silence or music.
+   - Meaningful screams/exclamations (啊——, 好可怕) are content: transcribe them with accurate timing.
+   - Pure music/silence gets NO cue.
+   - When the streamer says something absurd, punny, or nonsensical (word games,
+     parody titles, deliberate mispronunciations), transcribe the absurd words
+     VERBATIM as heard — never normalize them to what would make sense given
+     the on-screen image or context.
+   - READ the on-screen text (rolling danmaku, image captions, UI) and use it to get names, memes,
+     and homophones right — only when it matches what you hear.
+{output_line}
+
+TEMPORAL PAIRING RULE (critical): the on-screen text timeline and the danmaku
+timeline below are TIME-PAIRED evidence.
+- Text visible on screen at time T is a STRONG candidate for the words spoken
+  NEAR T (within ~10s) — the streamer constantly reads titles/captions/danmaku
+  aloud the moment they appear. If the audio near T sounds like the on-screen
+  text at T, the on-screen text IS the correct wording (copy it exactly).
+- Conversely, on-screen text or danmaku whose timestamp is FAR from T (more
+  than ~20s away) is NOT a candidate for the words at T — do not borrow it.
+- Times like -00:05 mean the text appeared shortly BEFORE the clip's first
+  frame; it is still a strong candidate for words spoken at the very start
+  (she starts reading a title the moment it appears).
+{glossary_block}{screen_text_block}{danmaku_block}"""
+
+
 def _build_ssh_agy_transcribe_runner(
     host: str,
     *,
@@ -92,7 +225,7 @@ def _build_ssh_agy_transcribe_runner(
     import shlex
     import time as _time
 
-    from scripts.gemini_slice_jingting import glossary, looks_like_srt, strip_markdown_fence
+    from scripts.gemini_slice_jingting import looks_like_srt, strip_markdown_fence
     from src.autoslice.danmaku_evidence import danmaku_in_window, format_danmaku_lines
     from src.autoslice.source_context_executor import AgyRunnerError
 
@@ -136,51 +269,7 @@ Transcribe the text EXACTLY as written, even if absurd or nonsensical —
 absurd parody titles are exactly what we need verbatim.
 JSON only, no markdown fences. An empty array is valid if there is none."""
 
-    def build_prompt(duration_hint_s: int, danmaku_block: str, screen_text_block: str) -> str:
-        glossary_text = glossary().strip()
-        glossary_block = f"\nGlossary and style rules:\n{glossary_text}\n" if glossary_text else ""
-        return f"""You are transcribing a short Bilibili VTuber TALK clip ({CHANNEL_PROFILE.prompt_name}, ~{duration_hint_s}s).
-
-Use only these local files in this job directory:
-- input.mp4
-
-Allowed tools:
-- view_file on prompt.md and input.mp4
-- write_to_file to relative output.srt
-- view_file on output.srt only after writing
-
-Forbidden actions:
-- No shell, terminal, browser, web, search, or any file outside this job directory.
-- Do not write to an absolute path.
-
-Task:
-1. Listen to the FULL audio from 00:00 to the end. Do not stop early.
-2. Write output.srt: a complete simplified-Chinese transcription of everything the streamer says.
-   - One utterance/sentence per cue; keep colloquial wording, particles, and tone words faithfully.
-   - Cue timestamps must be as accurate as you can hear them — the cue must start when the words start
-     and end when they end. Never stretch a cue over silence or music.
-   - Meaningful screams/exclamations (啊——, 好可怕) are content: transcribe them with accurate timing.
-   - Pure music/silence gets NO cue.
-   - When the streamer says something absurd, punny, or nonsensical (word games,
-     parody titles, deliberate mispronunciations), transcribe the absurd words
-     VERBATIM as heard — never normalize them to what would make sense given
-     the on-screen image or context.
-   - READ the on-screen text (rolling danmaku, image captions, UI) and use it to get names, memes,
-     and homophones right — only when it matches what you hear.
-   - SRT only in that file: index, HH:MM:SS,mmm --> HH:MM:SS,mmm, text. No markdown fences.
-
-TEMPORAL PAIRING RULE (critical): the on-screen text timeline and the danmaku
-timeline below are TIME-PAIRED evidence.
-- Text visible on screen at time T is a STRONG candidate for the words spoken
-  NEAR T (within ~10s) — the streamer constantly reads titles/captions/danmaku
-  aloud the moment they appear. If the audio near T sounds like the on-screen
-  text at T, the on-screen text IS the correct wording (copy it exactly).
-- Conversely, on-screen text or danmaku whose timestamp is FAR from T (more
-  than ~20s away) is NOT a candidate for the words at T — do not borrow it.
-- Times like -00:05 mean the text appeared shortly BEFORE the clip's first
-  frame; it is still a strong candidate for words spoken at the very start
-  (she starts reading a title the moment it appears).
-{glossary_block}{screen_text_block}{danmaku_block}"""
+    build_prompt = _build_fresh_transcription_prompt
 
     def run_agy_job(job_dir: str, media_path: Path, prompt: str, output_name: str, *, stage: str) -> str:
         run(["ssh", host, f"mkdir -p {shlex.quote(job_dir)}"])
@@ -195,7 +284,8 @@ timeline below are TIME-PAIRED evidence.
             "Do not inspect any other file or directory. Do not use shell or terminal."
         )
         agy_inner = (
-            f"/root/.local/bin/agy --sandbox --dangerously-skip-permissions --add-dir {shlex.quote(job_dir)} "
+            f"{shlex.quote(agy_gemini_client.resolve_remote_agy_binary())} "
+            f"--sandbox --dangerously-skip-permissions --add-dir {shlex.quote(job_dir)} "
             f"--model {shlex.quote(model)} -p {shlex.quote(short_prompt)} --print-timeout 15m"
         )
         agy_cmd = (
@@ -223,6 +313,16 @@ timeline below are TIME-PAIRED evidence.
             subprocess.run(["ssh", host, f"pkill -f {shlex.quote(job_dir)} || true"], check=False, capture_output=True, timeout=60)
             raise AgyRunnerError("AGY_TIMEOUT", f"{stage} did not finish; see {host}:{job_dir}")
         if rc_line != "rc=0":
+            # 远端 rc=127 = 那台机器上没有 agy。分类归统一客户端，回执说
+            # AGY_BINARY_ABSENT 而不是含糊的 AGY_FAILED_RC。
+            category = agy_gemini_client.classify_remote_agy_rc(
+                agy_gemini_client.parse_remote_rc_line(rc_line)
+            )
+            if category == agy_gemini_client.AGY_BINARY_ABSENT:
+                raise AgyRunnerError(
+                    agy_gemini_client.AGY_BINARY_ABSENT,
+                    f"{stage}: no agy on {host} ({rc_line}); see {host}:{job_dir}",
+                )
             raise AgyRunnerError("AGY_FAILED_RC", f"{stage} failed {rc_line}; see {host}:{job_dir}")
         fetched = subprocess.run(
             ["ssh", host, f"cat {shlex.quote(job_dir)}/{output_name}"],
@@ -339,6 +439,7 @@ timeline below are TIME-PAIRED evidence.
         prompt = build_prompt(duration_hint_s, danmaku_block, screen_text_block)
 
         last_error: Exception | None = None
+        agy_absent = False
         for attempt in range(1, attempts + 1):
             job_dir = f"/opt/bilive/jingting_jobs/fresh-{Path(media_path).stem[:32]}-{stamp}-a{attempt}"
             try:
@@ -348,6 +449,31 @@ timeline below are TIME-PAIRED evidence.
                 return srt_text
             except (AgyRunnerError, RuntimeError) as exc:
                 last_error = exc
+                if getattr(exc, "reason_code", "") == agy_gemini_client.AGY_BINARY_ABSENT:
+                    # 远端没装 agy 时不必再打第二次同样的 ssh。
+                    agy_absent = True
+                    break
+        # 换腿只在**缺席**这一种情况下发生。超时/rc 非零仍按老语义抛出，交给
+        # 调用方既有的重试与 CPA 兜底——静默换 provider 出字幕正是这个仓库
+        # 反复吃过亏的事故类，不能因为「有兜底」就把它扩大到所有失败。
+        if agy_absent:
+            srt_text = _gemini_fresh_transcription(
+                media_path,
+                build_prompt(
+                    duration_hint_s,
+                    danmaku_block,
+                    screen_text_block,
+                    delivery_mode="gemini_api",
+                ),
+            )
+            if srt_text and looks_like_srt(srt_text):
+                # 唯一的披露通道：这个 adapter 只回 SRT 字符串，没有回执面。
+                print(
+                    "[agy] AGY_BINARY_ABSENT on "
+                    f"{host}: fresh transcription came from the Gemini audio "
+                    "leg, not AGY"
+                )
+                return srt_text
         raise last_error
 
     return transcriber
@@ -661,7 +787,8 @@ def _agy_screen_text_lines(host: str, media_path: Path) -> list[str]:
             "Do not inspect any other file or directory. Do not use shell or terminal."
         )
         inner = (
-            f"/root/.local/bin/agy --sandbox --dangerously-skip-permissions --add-dir {shlex.quote(job_dir)} "
+            f"{shlex.quote(agy_gemini_client.resolve_remote_agy_binary())} "
+            f"--sandbox --dangerously-skip-permissions --add-dir {shlex.quote(job_dir)} "
             f"--model {shlex.quote(AGY_MODEL)} -p {shlex.quote(short)} --print-timeout 15m"
         )
         agy_cmd = (
@@ -929,224 +1056,7 @@ def _copy_draft_runner(media_path: Path, draft_srt_path: Path, output_srt_path: 
     return AgyExecutionResult(provider="agy", model="copy-draft-test-runner", agy_rc=0, provider_fallback_used=False)
 
 
-def _legacy_build_ssh_agy_runner(
-    host: str,
-    *,
-    danmaku_items=None,
-    context_start_ms: int = 0,
-    topic_entity_context_provider=None,
-    song_name_candidates=(),
-):
-    """Legacy implementation kept temporarily for behavior comparison."""
-
-    import shlex
-    import time as _time
-
-    from scripts.gemini_slice_jingting import (
-        AGY_MODEL,
-        agy_prompt,
-        looks_like_srt,
-        strip_markdown_fence,
-        validate_same_timing,
-    )
-    from src.autoslice.jingting_chunker import (
-        merge_refined_chunks,
-        plan_jingting_chunks,
-        repair_sparse_refined_chunk,
-    )
-    from src.autoslice.source_context_executor import AgyRunnerError
-
-    chunk_print_timeout = "15m"
-    chunk_poll_deadline_seconds = 1500
-    chunk_poll_interval_seconds = 20
-    attempts_per_chunk = 2
-
-    def run(cmd: list[str], *, timeout: int = 2400) -> subprocess.CompletedProcess:
-        completed = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
-        if completed.returncode != 0:
-            raise RuntimeError(f"{cmd[0]} failed rc={completed.returncode}: {completed.stderr[-400:]}")
-        return completed
-
-    def encode_chunk_clip(media_path: Path, chunk, out_path: Path) -> None:
-        run(
-            [
-                "ffmpeg",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-y",
-                "-ss",
-                f"{chunk.media_start_ms / 1000:.3f}",
-                "-i",
-                str(media_path),
-                "-t",
-                f"{chunk.media_duration_ms / 1000:.3f}",
-                "-vf",
-                "scale=1280:-2",
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-crf",
-                "28",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "96k",
-                str(out_path),
-            ],
-            timeout=1800,
-        )
-
-    from src.autoslice.danmaku_evidence import danmaku_in_window, format_danmaku_lines
-
-    def run_chunk_agy(job_dir: str, chunk_clip: Path, chunk_srt_text: str, chunk) -> str:
-        # On-screen evidence: the rolling danmaku recorded during this chunk is
-        # exactly what the streamer reads aloud/reacts to — first-class hints
-        # for names/memes/homophones.  The visual-read instruction itself lives
-        # in agy_prompt (Gemini reads the frames; free only relays files).
-        chunk_danmaku_lines: list[str] | None = None
-        if danmaku_items:
-            window_start = context_start_ms + chunk.media_start_ms
-            window_end = context_start_ms + chunk.media_end_ms
-            in_window = danmaku_in_window(danmaku_items, window_start, window_end, max_items=60)
-            if in_window:
-                chunk_danmaku_lines = format_danmaku_lines(in_window, base_ms=window_start)
-        topic_entity_context = (
-            str(topic_entity_context_provider() or "")
-            if topic_entity_context_provider is not None
-            else ""
-        )
-        prompt = agy_prompt(
-            chunk_srt_text,
-            danmaku_lines=chunk_danmaku_lines,
-            topic_entity_context=topic_entity_context,
-            song_name_candidates=song_name_candidates,
-        )
-        run(["ssh", host, f"mkdir -p {shlex.quote(job_dir)}"])
-        with tempfile.TemporaryDirectory(prefix="ssh_agy_chunk_") as tmp:
-            prompt_file = Path(tmp) / "prompt.md"
-            prompt_file.write_text(prompt, encoding="utf-8")
-            draft_file = Path(tmp) / "draft.srt"
-            draft_file.write_text(chunk_srt_text if chunk_srt_text.endswith("\n") else chunk_srt_text + "\n", encoding="utf-8")
-            run(["scp", "-q", str(chunk_clip), f"{host}:{job_dir}/input.mp4"])
-            run(["scp", "-q", str(draft_file), f"{host}:{job_dir}/draft.srt"])
-            run(["scp", "-q", str(prompt_file), f"{host}:{job_dir}/prompt.md"])
-        short_prompt = (
-            f"Open {job_dir}/prompt.md with view_file and follow it exactly. "
-            f"Use only {job_dir}/prompt.md, {job_dir}/input.mp4, "
-            f"{job_dir}/draft.srt, and {job_dir}/output.srt. "
-            "Do not inspect any other file or directory. Do not use shell or terminal."
-        )
-        # `script -qec` gives agy a pseudo-TTY: without one, antigravity print
-        # mode is documented to drop its stdout entirely (antigravity-cli#76).
-        # output.srt stays the authority; stdout is only diagnostics.
-        agy_inner = (
-            f"/root/.local/bin/agy --sandbox --dangerously-skip-permissions --add-dir {shlex.quote(job_dir)} "
-            f"--model {shlex.quote(AGY_MODEL)} -p {shlex.quote(short_prompt)} --print-timeout {chunk_print_timeout}"
-        )
-        agy_cmd = (
-            f"cd {shlex.quote(job_dir)} && script -qec {shlex.quote(agy_inner)} /dev/null "
-            f"> {shlex.quote(job_dir)}/agy.stdout 2> {shlex.quote(job_dir)}/agy.stderr; "
-            f"echo rc=$? > {shlex.quote(job_dir)}/agy.rc"
-        )
-        run(["ssh", host, f"nohup bash -c {shlex.quote(agy_cmd)} >/dev/null 2>&1 & echo started"])
-
-        deadline = _time.time() + chunk_poll_deadline_seconds
-        rc_line = ""
-        while _time.time() < deadline:
-            probe = subprocess.run(
-                ["ssh", host, f"cat {shlex.quote(job_dir)}/agy.rc 2>/dev/null"],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            rc_line = probe.stdout.strip()
-            if rc_line:
-                break
-            _time.sleep(chunk_poll_interval_seconds)
-        if not rc_line:
-            subprocess.run(["ssh", host, f"pkill -f {shlex.quote(job_dir)} || true"], check=False, capture_output=True, timeout=60)
-            raise AgyRunnerError(
-                "AGY_TIMEOUT",
-                f"remote agy chunk did not finish within {chunk_poll_deadline_seconds}s; see {host}:{job_dir}",
-            )
-        if rc_line != "rc=0":
-            raise AgyRunnerError("AGY_FAILED_RC", f"remote agy failed {rc_line}; see {host}:{job_dir}/agy.stderr")
-
-        fetched = subprocess.run(
-            ["ssh", host, f"cat {shlex.quote(job_dir)}/output.srt"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        corrected = strip_markdown_fence(fetched.stdout) if fetched.returncode == 0 else ""
-        if not looks_like_srt(corrected):
-            raise AgyRunnerError(
-                "AGY_EMPTY_OUTPUT",
-                f"remote agy exited rc=0 but produced no valid output.srt; see {host}:{job_dir}",
-            )
-        try:
-            validate_same_timing(chunk_srt_text, corrected)
-        except RuntimeError as timing_error:
-            try:
-                corrected, sparse_audit = repair_sparse_refined_chunk(
-                    chunk_srt_text, corrected
-                )
-            except ValueError:
-                raise timing_error
-            print(
-                "[agy] bounded sparse-cue self-heal: "
-                + json.dumps(sparse_audit, ensure_ascii=False, sort_keys=True),
-                flush=True,
-            )
-            validate_same_timing(chunk_srt_text, corrected)
-        return corrected
-
-    def runner(media_path: Path, draft_srt_path: Path, output_srt_path: Path) -> AgyExecutionResult:
-        stamp = _time.strftime("%Y%m%d-%H%M%S")
-        srt_text = Path(draft_srt_path).read_text(encoding="utf-8")
-        chunks = plan_jingting_chunks(srt_text)
-        if not chunks:
-            raise AgyRunnerError("AGY_NO_DRAFT_CUES", f"draft SRT has no parseable cues: {draft_srt_path}")
-
-        refined_pairs: list[tuple[object, str]] = []
-        with tempfile.TemporaryDirectory(prefix="ssh_agy_clips_") as clips_tmp:
-            for chunk in chunks:
-                chunk_clip = Path(clips_tmp) / f"chunk_{chunk.chunk_index:02d}.mp4"
-                encode_chunk_clip(media_path, chunk, chunk_clip)
-                chunk_srt_text = chunk.chunk_srt_text()
-                last_error: Exception | None = None
-                for attempt in range(1, attempts_per_chunk + 1):
-                    job_dir = (
-                        f"/opt/bilive/jingting_jobs/ssh-{Path(media_path).stem}-{stamp}"
-                        f"-c{chunk.chunk_index:02d}a{attempt}"
-                    )
-                    try:
-                        refined_pairs.append((chunk, run_chunk_agy(job_dir, chunk_clip, chunk_srt_text, chunk)))
-                        last_error = None
-                        break
-                    except (AgyRunnerError, RuntimeError) as exc:
-                        last_error = exc
-                if last_error is not None:
-                    raise last_error
-
-        merged = merge_refined_chunks(srt_text, refined_pairs)
-        validate_same_timing(srt_text, merged)
-        Path(output_srt_path).write_text(merged if merged.endswith("\n") else merged + "\n", encoding="utf-8")
-        return AgyExecutionResult(
-            provider="agy",
-            model=AGY_MODEL,
-            agy_rc=0,
-            provider_fallback_used=False,
-            provider_request_id=(
-                f"{host}:jingting-chunked:{stamp}:{len(chunks)}chunks"
-            ),
-        )
-
-    return runner
-
-
+# 2026-08-10：删除死代码 _legacy_build_ssh_agy_runner。它自 _build_ssh_agy_runner
+# 被重新绑定到 jingting_remote_runner.build_ssh_agy_runner 之后就再无任何
+# 引用（全仓 grep 只剩它自己的 def），却还藏着一处写死的 /root/.local/bin/agy。
 _build_ssh_agy_runner = _attested_build_ssh_agy_runner

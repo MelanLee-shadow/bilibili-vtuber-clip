@@ -18,6 +18,7 @@ from scripts.gemini_slice_jingting import (
     strip_markdown_fence,
     validate_same_timing,
 )
+from src.autoslice import agy_gemini_client
 from src.autoslice.danmaku_evidence import (
     danmaku_in_window,
     format_danmaku_lines,
@@ -218,7 +219,8 @@ class _RemoteJingtingRunner:
             "Do not inspect any other file or directory. Do not use shell or terminal."
         )
         agy_inner = (
-            f"/root/.local/bin/agy --sandbox --dangerously-skip-permissions --add-dir {shlex.quote(job_dir)} "
+            f"{shlex.quote(agy_gemini_client.resolve_remote_agy_binary())} "
+            f"--sandbox --dangerously-skip-permissions --add-dir {shlex.quote(job_dir)} "
             f"--model {shlex.quote(AGY_MODEL)} -p {shlex.quote(short_prompt)} "
             f"--print-timeout {self.chunk_print_timeout}"
         )
@@ -272,6 +274,16 @@ class _RemoteJingtingRunner:
                 f"{self.chunk_poll_deadline_seconds}s; see {self.host}:{job_dir}",
             )
         if rc_line != "rc=0":
+            # rc=127 = 那台机器上没有 agy（远端版的 AGY_BINARY_ABSENT）。
+            # 分类归统一客户端，运维不用再去查一台本来就不装 AGY 的机器。
+            category = agy_gemini_client.classify_remote_agy_rc(
+                agy_gemini_client.parse_remote_rc_line(rc_line)
+            )
+            if category == agy_gemini_client.AGY_BINARY_ABSENT:
+                raise AgyRunnerError(
+                    agy_gemini_client.AGY_BINARY_ABSENT,
+                    f"no agy on {self.host} ({rc_line}); see {self.host}:{job_dir}",
+                )
             raise AgyRunnerError(
                 "AGY_FAILED_RC",
                 f"remote agy failed {rc_line}; see {self.host}:{job_dir}/agy.stderr",

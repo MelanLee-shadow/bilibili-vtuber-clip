@@ -9,7 +9,6 @@ Every result is hash-bound; uncertainty fails closed in the caller.
 
 from __future__ import annotations
 
-import base64
 import datetime as dt
 import hashlib
 import json
@@ -17,9 +16,11 @@ import os
 from pathlib import Path
 import re
 import subprocess
-import urllib.error
-import urllib.parse
-import urllib.request
+# 保留 urllib.request 导入：F21 的 fallback 单测通过
+# ``monkeypatch.setattr(verifier_module.urllib.request, "urlopen", ...)``
+# 打在这个模块可见的 urllib 上；真正的请求在 agy_gemini_client 里发出，
+# 两边引用的是同一个 urllib.request 模块对象，所以 patch 依然生效。
+import urllib.request  # noqa: F401 - keeps the F21 urlopen monkeypatch seam
 from dataclasses import dataclass, field
 import threading
 from typing import Any, Callable, Mapping
@@ -30,7 +31,7 @@ from scripts.gemini_slice_jingting import (
     strip_markdown_fence,
     timely_terms_context,
 )
-from src.autoslice import gemini_backup_policy
+from src.autoslice import agy_gemini_client, gemini_backup_policy
 from src.autoslice.acoustic_witness_protocol import (
     BLIND_PINYIN_PROTOCOL,
     contains_han_text,
@@ -43,10 +44,7 @@ ENTITY_AUDIO_TIMEOUT = "10m"
 # AGY remains the preferred high-confidence audio witness.  Direct Gemini API
 # is a bounded availability fallback for candidate-blind witness requests only;
 # it never sees current/proposed text and can never authorize a mutation.
-GEMINI_API_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    "{model}:generateContent"
-)
+GEMINI_API_URL = agy_gemini_client.GEMINI_API_URL
 ENTITY_AUDIO_API_MODEL_ENV = "ENTITY_AUDIO_GEMINI_API_MODEL"
 ENTITY_AUDIO_API_MODEL_DEFAULT = "gemini-3.6-flash"
 ENTITY_AUDIO_API_REQUEST_MAX_BYTES = 20_000_000
@@ -318,24 +316,10 @@ be valid candidates. Report the syllables you actually hear before the choice.
 """
 
 
-_EXPLICIT_AGY_QUOTA_EXHAUSTED_RX = re.compile(
-    r"\b(?:individual\s+)?quota\s+(?:(?:has\s+been|is)\s+)?"
-    r"(?:reached|exhausted|exceeded)\b",
-    re.IGNORECASE,
-)
+_EXPLICIT_AGY_QUOTA_EXHAUSTED_RX = agy_gemini_client.EXPLICIT_AGY_QUOTA_RX
 
-
-def _classify_agy_failure(returncode: int, stdout: str, stderr: str) -> str:
-    diagnostic = f"{stdout}\n{stderr}".casefold()
-    if _EXPLICIT_AGY_QUOTA_EXHAUSTED_RX.search(diagnostic):
-        return "AGY_QUOTA_EXHAUSTED"
-    if any(marker in diagnostic for marker in ("timeout", "timed out")):
-        return "AGY_TIMEOUT"
-    if any(marker in diagnostic for marker in ("429", "rate limit", "too many requests")):
-        return "AGY_RATE_LIMITED"
-    if re.search(r"\b5[0-9]{2}\b", diagnostic):
-        return "AGY_SERVER_ERROR"
-    return f"AGY_FAILED_RC_{returncode}"
+# This lane's granular non-zero classification is now the shared one.
+_classify_agy_failure = agy_gemini_client.classify_agy_failure
 
 
 @dataclass
@@ -363,37 +347,8 @@ class _AgyQuotaCircuitBreaker:
         return True
 
 
-def _configured_free_keys() -> list[str]:
-    """Return distinct configured free keys without ever logging values."""
-
-    return list(
-        dict.fromkeys(
-            value
-            for name in (
-                "GEMINI_API_KEY",
-                "GEMINI_API_KEY_2",
-                "GEMINI_API_KEY_3",
-            )
-            if (value := os.environ.get(name))
-        )
-    )
-
-
-def _api_failure_category(exc: Exception) -> str:
-    status = getattr(exc, "code", None)
-    if status == 429:
-        return "GEMINI_API_QUOTA_EXHAUSTED"
-    if isinstance(status, int) and 500 <= status <= 599:
-        return "GEMINI_API_SERVER_ERROR"
-    if status in {401, 403}:
-        return "GEMINI_API_AUTH_FAILED"
-    if isinstance(exc, (TimeoutError, subprocess.TimeoutExpired)) or isinstance(
-        getattr(exc, "reason", None), TimeoutError
-    ):
-        return "GEMINI_API_TIMEOUT"
-    if isinstance(exc, (json.JSONDecodeError, ValueError)):
-        return "GEMINI_API_INVALID_OUTPUT"
-    return "GEMINI_API_REQUEST_FAILED"
+_configured_free_keys = agy_gemini_client.free_api_keys
+_api_failure_category = agy_gemini_client.classify_gemini_failure
 
 
 def _entity_api_model() -> str:
@@ -408,79 +363,25 @@ def _gemini_api_observe_witness(
 ) -> str:
     """One inline-audio Gemini request; the key exists only in its header."""
 
-    audio_b64 = base64.b64encode(audio_path.read_bytes()).decode("ascii")
-    body = {
-        "contents": [
-            {
-                "parts": [
-                    {"text": prompt},
-                    {
-                        "inline_data": {
-                            "mime_type": "audio/mpeg",
-                            "data": audio_b64,
-                        }
-                    },
-                ]
-            }
-        ],
-        "generationConfig": {
-            "temperature": 0.1,
-            "maxOutputTokens": 65_536,
-            "responseMimeType": "application/json",
-            "thinkingConfig": {
-                "thinkingLevel": os.environ.get(
-                    "ENTITY_GEMINI_THINKING_LEVEL", "low"
-                )
-            },
-        },
-    }
-
-    def post(request_body: dict[str, Any]) -> dict[str, Any]:
-        request_bytes = json.dumps(
-            request_body, ensure_ascii=False
-        ).encode("utf-8")
-        if len(request_bytes) > ENTITY_AUDIO_API_REQUEST_MAX_BYTES:
-            raise RuntimeError("GEMINI_API_REQUEST_TOO_LARGE")
-        request = urllib.request.Request(
-            GEMINI_API_URL.format(
-                model=urllib.parse.quote(model, safe="")
-            ),
-            data=request_bytes,
-            headers={
-                "content-type": "application/json",
-                "x-goog-api-key": key,
-            },
-        )
-        try:
-            timeout_seconds = int(
-                os.environ.get("ENTITY_GEMINI_API_TIMEOUT_SECONDS", "180")
-            )
-        except ValueError:
-            timeout_seconds = 180
-        with urllib.request.urlopen(
-            request, timeout=min(600, max(30, timeout_seconds))
-        ) as response:
-            return json.load(response)
-
     try:
-        payload = post(body)
-    except urllib.error.HTTPError as exc:
-        if exc.code != 400:
-            raise
-        degraded = json.loads(json.dumps(body))
-        degraded["generationConfig"].pop("thinkingConfig", None)
-        payload = post(degraded)
-    candidates = payload.get("candidates") if isinstance(payload, dict) else None
-    candidate = candidates[0] if isinstance(candidates, list) and candidates else None
-    content = candidate.get("content") if isinstance(candidate, dict) else None
-    parts = content.get("parts") if isinstance(content, dict) else None
-    if not isinstance(parts, list):
-        return ""
+        timeout_seconds = int(
+            os.environ.get("ENTITY_GEMINI_API_TIMEOUT_SECONDS", "180")
+        )
+    except ValueError:
+        timeout_seconds = 180
     return strip_markdown_fence(
-        "".join(
-            str(part.get("text") or "")
-            for part in parts
-            if isinstance(part, dict)
+        agy_gemini_client.generate_content(
+            prompt=prompt,
+            key=key,
+            model=model,
+            inline_data=audio_path.read_bytes(),
+            mime_type="audio/mpeg",
+            thinking={
+                "thinkingLevel": os.environ.get("ENTITY_GEMINI_THINKING_LEVEL", "low")
+            },
+            timeout_seconds=timeout_seconds,
+            max_request_bytes=ENTITY_AUDIO_API_REQUEST_MAX_BYTES,
+            degrade_on_400=True,
         )
     )
 
@@ -493,106 +394,65 @@ def _run_gemini_api_fallback(
     model: str,
     provider_failures: list[dict[str, Any]],
 ) -> tuple[Any, str | None, Mapping[str, Any] | None]:
-    """Try free keys in receipt-backed rounds, then the policy-gated paid key."""
+    """Try free keys in receipt-backed rounds, then the policy-gated paid key.
 
-    observed: Any = None
-    accepted_key_tier: str | None = None
-    paid_policy_stamp: Mapping[str, Any] | None = None
+    The ladder mechanics now live in ``agy_gemini_client``; what stays here is
+    this lane's own attempt body (observe -> persist -> parse) and its receipt
+    row shape, both unchanged.
+    """
 
-    def attempt_api_key(
-        attempt_key: str,
-        *,
-        key_tier: str,
-        key_ordinal: int,
-        attempt_round: int,
-    ) -> bool:
-        nonlocal observed, accepted_key_tier
-        try:
-            raw = _gemini_api_observe_witness(
-                audio_path=audio_path,
-                prompt=prompt,
-                key=attempt_key,
-                model=model,
-            )
-            response_path.write_text(
-                (raw or "") if (raw or "").endswith("\n") else (raw or "") + "\n",
-                encoding="utf-8",
-            )
-            if not raw or len(raw.encode("utf-8")) > 2_000_000:
-                raise ValueError("empty or oversized Gemini API output")
-            observed = extract_json_object(raw)
-            accepted_key_tier = key_tier
-            return True
-        except Exception as exc:
-            provider_failures.append(
-                {
-                    "provider": "gemini_api",
-                    "key_tier": key_tier,
-                    "key_ordinal": key_ordinal,
-                    "attempt_round": attempt_round,
-                    "model": model,
-                    "category": _api_failure_category(exc),
-                    "error_type": type(exc).__name__,
-                    **(
-                        {"http_status": int(exc.code)}
-                        if isinstance(getattr(exc, "code", None), int)
-                        else {}
-                    ),
-                }
-            )
-            return False
-
-    item_key = _sha256(audio_path)
-    free_keys = _configured_free_keys()
-    attempt_round = 1
-    for attempt_round in range(
-        1, gemini_backup_policy.MIN_FREE_CHAIN_STRIKES + 1
-    ):
-        round_start = len(provider_failures)
-        for key_ordinal, key in enumerate(free_keys, start=1):
-            if attempt_api_key(
-                key,
-                key_tier=gemini_backup_policy.FREE_KEY_TIER,
-                key_ordinal=key_ordinal,
-                attempt_round=attempt_round,
-            ):
-                break
-        if observed is not None or not free_keys:
-            break
-        strikes = gemini_backup_policy.record_free_chain_failure(item_key)
-        if strikes >= gemini_backup_policy.MIN_FREE_CHAIN_STRIKES:
-            break
-        round_categories = [
-            row.get("category")
-            for row in provider_failures[round_start:]
-            if row.get("provider") == "gemini_api"
-        ]
-        if not gemini_backup_policy.quota_exhausted_round(round_categories):
-            break
-    if observed is not None:
-        return observed, accepted_key_tier, paid_policy_stamp
-
-    allowed, gate_reason = gemini_backup_policy.paid_attempt_allowed(item_key)
-    if allowed and attempt_api_key(
-        str(gemini_backup_policy.paid_backup_key()),
-        key_tier=gemini_backup_policy.PAID_KEY_TIER,
-        key_ordinal=len(free_keys) + 1,
-        attempt_round=attempt_round,
-    ):
-        paid_policy_stamp = gemini_backup_policy.record_paid_use(
-            item_key, purpose="candidate_blind_audio_witness"
+    def observe(attempt_key: str) -> Any:
+        raw = _gemini_api_observe_witness(
+            audio_path=audio_path,
+            prompt=prompt,
+            key=attempt_key,
+            model=model,
         )
-    elif not allowed and gate_reason != "PAID_KEY_NOT_CONFIGURED":
+        response_path.write_text(
+            (raw or "") if (raw or "").endswith("\n") else (raw or "") + "\n",
+            encoding="utf-8",
+        )
+        if not raw or len(raw.encode("utf-8")) > 2_000_000:
+            raise ValueError("empty or oversized Gemini API output")
+        return extract_json_object(raw)
+
+    def record_failure(failure: agy_gemini_client.GeminiAttemptFailure) -> None:
+        provider_failures.append(
+            {
+                "provider": "gemini_api",
+                "key_tier": failure.key_tier,
+                "key_ordinal": failure.key_ordinal,
+                "attempt_round": failure.attempt_round,
+                "model": model,
+                "category": failure.category,
+                "error_type": failure.error_type,
+                **(
+                    {"http_status": failure.http_status}
+                    if failure.http_status is not None
+                    else {}
+                ),
+            }
+        )
+
+    def record_paid_skipped(key_ordinal: int, attempt_round: int, gate_reason: str) -> None:
         provider_failures.append(
             {
                 "provider": "gemini_api",
                 "key_tier": gemini_backup_policy.PAID_KEY_TIER,
-                "key_ordinal": len(free_keys) + 1,
+                "key_ordinal": key_ordinal,
                 "attempt_round": attempt_round,
                 "category": f"PAID_BACKUP_SKIPPED:{gate_reason}",
             }
         )
-    return observed, accepted_key_tier, paid_policy_stamp
+
+    outcome = agy_gemini_client.run_gemini_key_ladder(
+        item_key=_sha256(audio_path),
+        observe=observe,
+        purpose="candidate_blind_audio_witness",
+        record_failure=record_failure,
+        record_paid_skipped=record_paid_skipped,
+    )
+    return outcome.observed, outcome.accepted_key_tier, outcome.paid_policy_stamp
 
 
 @dataclass(frozen=True)
@@ -851,49 +711,28 @@ def _observe_entity_audio(
             }
         )
     else:
-        try:
-            completed = subprocess.run(
-                [
-                    binary,
-                    "--sandbox",
-                    "--dangerously-skip-permissions",
-                    "--add-dir",
-                    str(job_dir),
-                    "--model",
-                    model,
-                    "-p",
-                    short_prompt,
-                    "--print-timeout",
-                    timeout,
-                ],
-                cwd=job_dir,
-                env=agy_subprocess_env(),
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=parse_timeout_seconds(timeout) + 120,
-            )
-        except subprocess.TimeoutExpired as exc:
+        # F21：wsl 产线上根本没有 agy 二进制。这不是"子进程炸了"，是"这一环
+        # 不存在"——回执必须说清楚，否则运维会去查一个不存在的 AGY 故障，而
+        # 真正的 provider 是下面的 Gemini。分类归统一客户端。
+        run = agy_gemini_client.run_local_agy(
+            agy_gemini_client.agy_argv(
+                binary,
+                job_dir=job_dir,
+                model=model,
+                prompt=short_prompt,
+                print_timeout=timeout,
+            ),
+            cwd=job_dir,
+            env=agy_subprocess_env(),
+            timeout=parse_timeout_seconds(timeout) + 120,
+        )
+        completed = run.completed
+        if completed is None:
             provider_failures.append(
                 {
                     "provider": "agy",
-                    "category": "AGY_TIMEOUT",
-                    "error_type": type(exc).__name__,
-                }
-            )
-        except OSError as exc:
-            provider_failures.append(
-                {
-                    "provider": "agy",
-                    # F21：wsl 产线上根本没有 agy 二进制。这不是"子进程炸了"，
-                    # 是"这一环不存在"——回执必须说清楚，否则运维会去查一个
-                    # 不存在的 AGY 故障，而真正的 provider 是下面的 Gemini。
-                    "category": (
-                        "AGY_BINARY_ABSENT"
-                        if isinstance(exc, FileNotFoundError)
-                        else "AGY_SUBPROCESS_ERROR"
-                    ),
-                    "error_type": type(exc).__name__,
+                    "category": run.failure_category,
+                    "error_type": run.launch_error_type,
                 }
             )
         else:
@@ -1744,7 +1583,7 @@ def build_local_audio_entity_verifier(
     source_media = source_media.resolve()
     output_dir = output_dir.resolve()
     source_sha256 = _sha256(source_media)
-    binary = agy_bin or os.environ.get("AGY_BIN", str(Path.home() / ".local/bin/agy"))
+    binary = agy_gemini_client.resolve_local_agy_binary(agy_bin)
     try:
         as_of = dt.datetime.combine(
             dt.date.fromisoformat(recording_date),
