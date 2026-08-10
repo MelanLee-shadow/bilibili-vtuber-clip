@@ -1,6 +1,9 @@
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
+
+import src.autoslice.source_context_executor as source_context_executor
 
 from src.autoslice.source_context_executor import (
     AgyExecutionResult,
@@ -361,3 +364,119 @@ def test_mismatched_source_sha256_still_blocks(tmp_path):
 
     assert result.decision == "RETRY"
     assert "SOURCE_SHA256_MISMATCH" in result.reason_codes
+
+
+def _fake_ffmpeg(calls: list, payload: bytes = b"encoded-context-clip"):
+    """Stand in for ffmpeg: record the call and write the output it promised."""
+
+    def run(cmd, **_kwargs):
+        calls.append(cmd)
+        Path(cmd[-1]).write_bytes(payload)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    return run
+
+
+def test_second_attempt_reuses_the_first_context_clip_instead_of_re_cutting(
+    tmp_path, monkeypatch
+):
+    """Retries share one clip.
+
+    Each song retry used to cut its own copy of the same window into a fresh
+    attempt dir — on 2026-08-08 that was 1.27 GiB per attempt, byte-identical
+    every time. Reuse is keyed on the source hash and the window, so a genuine
+    change still re-cuts.
+    """
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"not a real mp4; reuse test")
+    srt = tmp_path / "source.srt"
+    write_srt(srt)
+    calls: list = []
+    monkeypatch.setattr(source_context_executor.subprocess, "run", _fake_ffmpeg(calls))
+
+    outputs = []
+    for attempt in ("attempt-one", "attempt-two"):
+        result = execute_source_context_job(
+            job_manifest_for_source(source),
+            source_video_path=source,
+            output_dir=tmp_path / attempt,
+            full_source_srt_path=srt,
+            refinement_required=False,
+        )
+        outputs.append(Path(result.context_media_path))
+
+    assert len(calls) == 1, "the second attempt must not re-run ffmpeg"
+    assert outputs[0] != outputs[1], "each attempt keeps its own path"
+    assert outputs[0].stat().st_ino == outputs[1].stat().st_ino, "both must share one inode"
+    assert outputs[1].read_bytes() == b"encoded-context-clip"
+
+
+def test_a_changed_source_re_cuts_rather_than_serving_a_stale_clip(tmp_path, monkeypatch):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"first source")
+    srt = tmp_path / "source.srt"
+    write_srt(srt)
+    calls: list = []
+    monkeypatch.setattr(source_context_executor.subprocess, "run", _fake_ffmpeg(calls))
+
+    execute_source_context_job(
+        job_manifest_for_source(source),
+        source_video_path=source,
+        output_dir=tmp_path / "attempt-one",
+        full_source_srt_path=srt,
+        refinement_required=False,
+    )
+    source.write_bytes(b"second source, different bytes")
+    execute_source_context_job(
+        job_manifest_for_source(source),
+        source_video_path=source,
+        output_dir=tmp_path / "attempt-two",
+        full_source_srt_path=srt,
+        refinement_required=False,
+    )
+
+    assert len(calls) == 2, "a different source hash must produce a fresh cut"
+
+
+def test_cache_is_skipped_when_source_and_output_are_on_different_filesystems(
+    tmp_path, monkeypatch
+):
+    """Talk sources are read off the CloudFS mount; never cache onto it."""
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"remote-ish source")
+    srt = tmp_path / "source.srt"
+    write_srt(srt)
+    calls: list = []
+    monkeypatch.setattr(source_context_executor.subprocess, "run", _fake_ffmpeg(calls))
+
+    real_stat = Path.stat
+
+    class _OtherDevice:
+        """Everything the real stat says, except it lives on another device."""
+
+        def __init__(self, info):
+            self._info = info
+
+        def __getattr__(self, name):
+            return getattr(self._info, name)
+
+        @property
+        def st_dev(self):
+            return self._info.st_dev + 1
+
+    def split_devices(self, *args, **kwargs):
+        info = real_stat(self, *args, **kwargs)
+        return _OtherDevice(info) if self == source else info
+
+    monkeypatch.setattr(Path, "stat", split_devices)
+    for attempt in ("attempt-one", "attempt-two"):
+        execute_source_context_job(
+            job_manifest_for_source(source),
+            source_video_path=source,
+            output_dir=tmp_path / attempt,
+            full_source_srt_path=srt,
+            refinement_required=False,
+        )
+
+    assert len(calls) == 2, "no cross-device cache, so each attempt cuts its own"
+    assert not (tmp_path / ".context_clip_cache").exists()
