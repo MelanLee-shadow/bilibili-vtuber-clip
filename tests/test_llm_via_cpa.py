@@ -4,6 +4,8 @@ import stat
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "llm_via_cpa.sh"
@@ -97,6 +99,71 @@ if status == "empty":
     if write_out:
         sys.stdout.write("200")
     raise SystemExit(0)
+
+# 2026-08-10 实测的上游分组抽签正文（原样照抄自 free 直打 CPA 的响应体）。
+# 三个 token 拆出三种字样，验证桥接层三种都认：
+#   400gc   = 线上完整形状（中文 message + 机器码 code + metadata.message_en）
+#   400gczh = 只有中文 message（无机器码）
+#   400gcen = 只有英文机器码 + 英文 message
+# 另外 <code>gcbody 形式（如 403gcbody）= 非 400 的状态码配同一正文，用来钉住
+# "必须 http=400 与正文同时成立"的与门。
+GROUPCAP_ZH = (
+    "当前分组不支持本次请求所需"
+    "能力，请调整请求或切换分组"
+    "后重试。 (request id: 20260810-test-req-id)"
+)
+GROUPCAP_EN = (
+    "The current group does not support the capability required by this request. "
+    "Please adjust the request or switch groups."
+)
+GROUPCAP_FULL = json.dumps(
+    dict(
+        error=dict(
+            message=GROUPCAP_ZH,
+            type="invalid_request_error",
+            param=None,
+            code="group_capability_unavailable",
+            metadata=dict(message_en=GROUPCAP_EN, message_zh=GROUPCAP_ZH),
+        )
+    ),
+    ensure_ascii=False,
+)
+GROUPCAP_ZH_ONLY = json.dumps(
+    dict(error=dict(message=GROUPCAP_ZH, type="invalid_request_error")),
+    ensure_ascii=False,
+)
+GROUPCAP_EN_ONLY = json.dumps(
+    dict(
+        error=dict(
+            message=GROUPCAP_EN,
+            type="invalid_request_error",
+            code="group_capability_unavailable",
+        )
+    ),
+    ensure_ascii=False,
+)
+GROUPCAP_BODIES = dict(
+    gc=GROUPCAP_FULL, gczh=GROUPCAP_ZH_ONLY, gcen=GROUPCAP_EN_ONLY, gcbody=GROUPCAP_FULL
+)
+
+# "<code>nobody" = 收到了状态码但 curl 没往 -o 写任何正文（连接在响应体阶段
+# 断掉）。用来钉住"每枪先清空 RESP_FILE"，否则上一枪的分组正文会给这一枪定性。
+if status.endswith("nobody"):
+    if write_out:
+        sys.stdout.write(status[: -len("nobody")])
+    raise SystemExit(22)
+
+groupcap_suffix = ""
+for suffix in ("gcbody", "gczh", "gcen", "gc"):
+    if status.endswith(suffix):
+        groupcap_suffix = suffix
+        break
+if groupcap_suffix:
+    if out_path:
+        open(out_path, "w", encoding="utf-8").write(GROUPCAP_BODIES[groupcap_suffix])
+    if write_out:
+        sys.stdout.write(status[: -len(groupcap_suffix)])
+    raise SystemExit(22)
 
 if status and status != "200":
     if out_path:
@@ -386,6 +453,186 @@ def test_deterministic_rejection_fails_over_without_same_model_retry(tmp_path):
     ]
     assert "no same-model retry" in completed.stderr
     assert _sleeps(tmp_path) == []
+
+
+def _cpa_lines(completed: subprocess.CompletedProcess[str]) -> list[str]:
+    """只取桥接自己打的 ``[cpa] `` 行。
+
+    测试用 ``bash -x`` 跑脚本，于是 group_capability_body() 的 grep 命令行
+    （连同 ``group_capability_unavailable`` 模式串）每次 400 都会被 trace 到
+    stderr 上。直接对整块 stderr 做子串断言会被这条 trace 蒙混过关，必须先把
+    脚本自己的日志行筛出来。
+    """
+
+    return [line for line in completed.stderr.splitlines() if line.startswith("[cpa] ")]
+
+
+def test_group_capability_400_retries_the_same_model_and_then_succeeds(tmp_path):
+    """金丝雀⑤（2026-08-10 实测）：分组抽签 400 必须退避重试，不是判死候选。
+
+    上游 sudocode 把凭据分成两组（Ivan 裁定 #8：一组带 gpt-image 能力、一组带
+    gpt-5.6-sol 能力）。请求轮询落到没有该能力的分组就 400
+    ``group_capability_unavailable``——**请求本身合法**，原样重发就可能落到对
+    的分组。实测单次失败率 ~15–17%，与 payload 大小无关（0B 失败而 2000B 成
+    功，非单调）、与模型无关（sol 5/6、gpt-5.5 5/6、gpt-5.4 6/6）。
+
+    修复前 ``transient_failure()`` 的 ``4??) return 1`` 把它判成确定性拒绝，
+    一次抽签失败就把整条候选打死；本用例在修复前必红（第一枪 400 直接换模型，
+    第二枪打在 gpt-second 上）。
+    """
+
+    completed, capture, completion, _tmp = _run_bridge(
+        tmp_path,
+        chat_models_env="gpt-first gpt-second",
+        extra_args=("gpt-first gpt-second", "medium", "1"),
+        status_sequence=("400gc", "400gc", "200"),
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completion.read_text(encoding="utf-8") == "safe completion"
+    assert capture["invocation_count"] == 3
+    # 三枪全打在同一个模型上：抽签失败不该烧掉失效备援。
+    assert [body["model"] for body in capture["bodies"]] == ["gpt-first"] * 3
+
+
+def test_group_capability_400_without_the_retry_fix_burns_the_whole_chain(tmp_path):
+    """反面：同一序列若只给每个模型一枪（=修复前语义），整条链打空判死。"""
+
+    completed, capture, completion, _tmp = _run_bridge(
+        tmp_path,
+        chat_models_env="gpt-first gpt-second",
+        extra_args=("gpt-first gpt-second", "medium", "1"),
+        status_sequence=("400gc", "400gc", "400gc"),
+        env_overrides={"CPA_TRANSIENT_ATTEMPTS_PER_MODEL": "1"},
+    )
+
+    assert completed.returncode == 1
+    assert not completion.exists()
+    assert [body["model"] for body in capture["bodies"]] == ["gpt-first", "gpt-second"]
+
+
+@pytest.mark.parametrize("token", ["400gc", "400gczh", "400gcen"])
+def test_group_capability_400_is_recognised_from_either_language(tmp_path, token):
+    """中文正文、英文机器码、两者齐全——三种字样都要认。
+
+    线上响应体同时带 ``"code":"group_capability_unavailable"``、中文
+    ``当前分组不支持…`` 和 ``metadata.message_en``；但不能假设三者永远同时出现，
+    所以任一出现即成立。
+    """
+
+    completed, capture, completion, _tmp = _run_bridge(
+        tmp_path,
+        chat_models_env="gpt-only",
+        extra_args=("gpt-only", "medium", "1"),
+        status_sequence=(token, "200"),
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completion.read_text(encoding="utf-8") == "safe completion"
+    assert capture["invocation_count"] == 2
+
+
+def test_group_capability_400_puts_its_code_on_the_stderr_cascade(tmp_path):
+    """stderr 上必须留下 token：上层分类器只看得见 stderr，看不见响应体。
+
+    ``src/autoslice/provider_failure.py`` 靠这个 token 把这类 400 归到
+    service 而不是 rejected；不写进 stderr，那边的归类就是死代码。
+    """
+
+    completed, _capture, _completion, _tmp = _run_bridge(
+        tmp_path,
+        chat_models_env="gpt-only",
+        extra_args=("gpt-only", "medium", "1"),
+        status_sequence=("400gc",),
+    )
+
+    assert completed.returncode == 1
+    attempt_lines = [line for line in _cpa_lines(completed) if "attempt=" in line]
+    assert attempt_lines
+    assert all("http=400" in line for line in attempt_lines)
+    assert all(
+        "upstream_code=group_capability_unavailable" in line for line in attempt_lines
+    )
+
+
+def test_plain_400_carries_no_group_capability_token_and_never_retries(tmp_path):
+    """反向门①：不带分组字样的普通 400 仍是确定性拒绝，立刻换模型。"""
+
+    completed, capture, completion, _tmp = _run_bridge(
+        tmp_path,
+        chat_models_env="gpt-a gpt-b gpt-c",
+        status_sequence=("400",),
+    )
+
+    assert completed.returncode == 1
+    assert not completion.exists()
+    assert [body["model"] for body in capture["bodies"]] == ["gpt-a", "gpt-b", "gpt-c"]
+    assert "no same-model retry" in completed.stderr
+    assert _sleeps(tmp_path) == []
+    assert not any("upstream_code=" in line for line in _cpa_lines(completed))
+
+
+@pytest.mark.parametrize("status", ["401", "403", "404", "422"])
+def test_other_4xx_rejections_are_still_not_retried(tmp_path, status):
+    """反向门②：401/403/404/422 照旧不重试——没有把 4xx 一把放开。"""
+
+    completed, capture, completion, _tmp = _run_bridge(
+        tmp_path,
+        chat_models_env="gpt-a gpt-b gpt-c",
+        status_sequence=(status,),
+    )
+
+    assert completed.returncode == 1
+    assert not completion.exists()
+    # 每个模型恰好一枪，没有同模型重试。
+    assert [body["model"] for body in capture["bodies"]] == ["gpt-a", "gpt-b", "gpt-c"]
+    assert "no same-model retry" in completed.stderr
+    assert _sleeps(tmp_path) == []
+
+
+def test_group_capability_body_on_a_non_400_status_is_still_a_rejection(tmp_path):
+    """反向门③：与门必须是 http=400 **且** 正文匹配。
+
+    正文是上游可控的，状态码不是。若只按正文放行，一个 403（凭据被吊销/UA 被
+    Cloudflare 拦）只要正文里出现同样字样就会被无限重试。
+    """
+
+    completed, capture, completion, _tmp = _run_bridge(
+        tmp_path,
+        chat_models_env="gpt-a gpt-b gpt-c",
+        status_sequence=("403gcbody",),
+    )
+
+    assert completed.returncode == 1
+    assert not completion.exists()
+    assert [body["model"] for body in capture["bodies"]] == ["gpt-a", "gpt-b", "gpt-c"]
+    assert "no same-model retry" in completed.stderr
+    assert _sleeps(tmp_path) == []
+    assert not any("upstream_code=" in line for line in _cpa_lines(completed))
+
+
+def test_a_stale_group_capability_body_cannot_relabel_a_later_failure(tmp_path):
+    """响应体每枪先清空：上一次的分组正文不能给这一次的失败定性。
+
+    curl 只在真收到响应体时才写 ``-o``；正文阶段断掉的那一枪会把上一次的正文
+    原样留在文件里。这里第一枪是分组 400（写正文），第二枪是 400 但**没写正
+    文**——没有先清空的话，第二枪会读到上一枪的分组正文，被误判成可重试。
+    """
+
+    completed, capture, _completion, _tmp = _run_bridge(
+        tmp_path,
+        chat_models_env="gpt-only",
+        extra_args=("gpt-only", "medium", "1"),
+        status_sequence=("400gc", "400nobody"),
+    )
+
+    assert completed.returncode == 1
+    attempt_lines = [line for line in _cpa_lines(completed) if "attempt=" in line]
+    assert len(attempt_lines) == 2
+    assert "upstream_code=group_capability_unavailable" in attempt_lines[0]
+    assert "upstream_code=" not in attempt_lines[1]
+    # 第二枪被判成确定性拒绝 → 不再重试，链子到此为止。
+    assert capture["invocation_count"] == 2
 
 
 def test_quota_status_is_retried_and_reported_in_the_cascade(tmp_path):

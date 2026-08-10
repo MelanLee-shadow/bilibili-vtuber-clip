@@ -49,8 +49,9 @@ ATTEMPTS_PER_MODEL="${5:-3}"
 #    面**（boundary/auditor/pronoun/裁决 共十条腿全走它）一次空补全就换模型、
 #    三枪打空判死。空补全本来就在 transient_failure() 的服务类里，那条特例分支
 #    只是把 floor 抹掉了——已删除。
-#  - 其它 4xx 是确定性拒绝（分组无权、请求非法），同模型重试只会浪费时间，
-#    立即换下一个模型。
+#  - 其它 4xx 是确定性拒绝（凭据无权、请求非法），同模型重试只会浪费时间，
+#    立即换下一个模型。**例外**见下面 group_capability_body()：
+#    http=400 + group_capability_unavailable 是分组路由抽签，不是请求错误。
 # 退避是指数 + 抖动，总睡眠有上限，保证三个模型跑完仍远小于调用方的 600s 超时。
 TRANSIENT_ATTEMPTS_PER_MODEL="${CPA_TRANSIENT_ATTEMPTS_PER_MODEL:-3}"
 BACKOFF_BASE_SECONDS="${CPA_BACKOFF_BASE_SECONDS:-2}"
@@ -99,9 +100,39 @@ deadline_reached() {
   [[ "$DEADLINE_SECONDS" -gt 0 && "$SECONDS" -ge "$DEADLINE_SECONDS" ]]
 }
 
+# 2026-08-10 实测（free 上直打 https://cpa.aierlma.top/v1/responses）：CPA 的上游
+# sudocode 把凭据分成两组——一组带 gpt-image 能力，一组带 gpt-5.6-sol 能力
+# （Ivan 2026-08-10 裁定 #8）。请求轮询一旦落到没有该模型能力的分组，就直接
+# 400 group_capability_unavailable。这**与 payload 大小无关、与模型无关**：
+#   · 同一个极小请求重复打：sol 5/6 成功（一次 408）、gpt-5.5 5/6（一次 400）、
+#     gpt-5.4 6/6；
+#   · 同一模型按 body 大小阶梯打：0B→400、200B/500B/1000B/2000B→200、4000B→400。
+#     0B 失败而 2000B 成功 —— 非单调，所以不是"大请求把次级 leg 压垮"。
+# 单次失败率约 15–17%；退避重试三次 ≈ 0.17³ ≈ 0.5%。按本文件自己在
+# body_bytes() 那段写下的判据（「同一 body_bytes 反复失败 = 退避治不好，得降
+# 上下文/分块；body_bytes 不相关 = 就是瞬时抖动，退避正确」），这类 400 正落在
+# "瞬时抖动"一侧，必须当服务类退避重试，而不是一枪把整条候选判死。
+#
+# 根治是 Ivan #8 的 oracle 侧分组修复（让一个分组同时具备两种能力，或按模型
+# 定向路由）；本函数只是**客户端缓解**，把抽签失败当瞬时故障吸收掉。
+#
+# 线上响应体（8/10 实测原文）同时带三种可识别字样：
+#   "code":"group_capability_unavailable"
+#   "message":"当前分组不支持本次请求所需能力，请调整请求或切换分组后重试。"
+#   "metadata":{"message_en":"The current group does not support the capability …"}
+# 三种都认。LC_ALL=C + grep -F 走字节匹配，不受 locale 和正则元字符影响。
+group_capability_body() {
+  [[ -s "$RESP_FILE" ]] || return 1
+  LC_ALL=C grep -qF \
+    -e 'group_capability_unavailable' \
+    -e '当前分组不支持' \
+    -e 'current group does not support' \
+    -- "$RESP_FILE"
+}
+
 # Service-class failures are worth waiting out; everything else is not.
 transient_failure() {
-  local http_code="$1" curl_exit="$2" empty_completion="$3"
+  local http_code="$1" curl_exit="$2" empty_completion="$3" group_cap="${4:-0}"
   if [[ "$empty_completion" == "1" ]]; then
     return 0
   fi
@@ -110,6 +141,12 @@ transient_failure() {
     # 55/56 send/recv failure — all transport-level, all worth a retry.
     7|28|35|52|55|56) return 0 ;;
   esac
+  # 分组能力抽签失败：请求本身完全合法，只是这一次轮询落到没有该能力的分组，
+  # 原样再发一次就可能落到对的分组。**必须**与 http=400 同时成立——只看正文
+  # 会把 403/422 这类真·拒绝一起放开（正文可控，状态码不可控）。
+  if [[ "$group_cap" == "1" && "$http_code" == "400" ]]; then
+    return 0
+  fi
   case "$http_code" in
     408|429|5??) return 0 ;;
     4??) return 1 ;;
@@ -216,6 +253,12 @@ while :; do
   HTTP_CODE=000
   CURL_EXIT=0
   EMPTY_COMPLETION=0
+  GROUP_CAP=0
+  UPSTREAM_NOTE=""
+  # curl 只在真的收到响应体时才写 -o；连接阶段就死掉的那一枪会把上一次尝试的
+  # 正文原样留在文件里。分组抽签判据要读这个文件，所以每枪先清空，杜绝拿上一
+  # 次的 group_capability_unavailable 正文去给这一次的失败定性。
+  : > "$RESP_FILE"
   # CPA sits behind Cloudflare, which 403s (error 1010) non-browser user agents.
   HTTP_CODE="$(curl -sS --fail-with-body --max-time 180 \
       -o "$RESP_FILE" -w '%{http_code}' \
@@ -247,16 +290,25 @@ PY
     fi
     EMPTY_COMPLETION=1
   fi
-  echo "[cpa] model=${MODEL} attempt=${attempt} http=${HTTP_CODE} curl_exit=${CURL_EXIT} empty_completion=${EMPTY_COMPLETION} body_bytes=$(body_bytes) result=failed" >&2
-  if transient_failure "$HTTP_CODE" "$CURL_EXIT" "$EMPTY_COMPLETION"; then
+  # 判定一次就够，而且必须在下面这行 stderr **之前**：上层
+  # (src/autoslice/provider_failure.py) 只看得见桥接脚本的 stderr，永远看不到
+  # 响应体。这个 token 不写进 stderr，那边的 service 归类就是死代码。
+  if [[ "$HTTP_CODE" == "400" ]] && group_capability_body; then
+    GROUP_CAP=1
+    UPSTREAM_NOTE=" upstream_code=group_capability_unavailable"
+  fi
+  echo "[cpa] model=${MODEL} attempt=${attempt} http=${HTTP_CODE} curl_exit=${CURL_EXIT} empty_completion=${EMPTY_COMPLETION} body_bytes=$(body_bytes) result=failed${UPSTREAM_NOTE}" >&2
+  if transient_failure "$HTTP_CODE" "$CURL_EXIT" "$EMPTY_COMPLETION" "$GROUP_CAP"; then
     max_attempts="$ATTEMPTS_PER_MODEL"
     if [[ "$TRANSIENT_ATTEMPTS_PER_MODEL" -gt "$max_attempts" ]]; then
       max_attempts="$TRANSIENT_ATTEMPTS_PER_MODEL"
     fi
   else
-    # Deterministic rejection (bad request, unauthorized, group without the
-    # requested capability): the same request will be refused again.  Fail over
-    # immediately instead of burning the model's attempt budget.
+    # Deterministic rejection (malformed request, unauthorized, unknown model):
+    # the same request will be refused again.  Fail over immediately instead of
+    # burning the model's attempt budget.  Note the 400
+    # ``group_capability_unavailable`` case is NOT here — see
+    # group_capability_body(): that one is a routing lottery, not a verdict.
     echo "[cpa] model=${MODEL} deterministic http=${HTTP_CODE}, no same-model retry" >&2
     max_attempts=1
   fi
