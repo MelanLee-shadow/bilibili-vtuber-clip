@@ -24,6 +24,10 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from src.autoslice.auto_review import DecisionAction
+from src.autoslice.boundary_payoff_extension import (
+    extend_candidates_for_audience_payoff,
+    load_payoff_danmaku_items,
+)
 from src.autoslice.boundary_resolver import AnchorCandidate, BoundaryResolution
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.content_ip_signal import detect_important_content_ips
@@ -598,6 +602,7 @@ def select_semantic_session_candidates_covered(
     min_talk_window_ms: int = DEFAULT_MIN_TALK_WINDOW_MS,
     max_talk_window_ms: int = DEFAULT_MAX_TALK_WINDOW_MS,
     danmaku_hints: str | None = None,
+    danmaku_xml: Path | str | None = None,
 ) -> tuple[list[FullSessionCandidate], dict[str, object]]:
     """Recall a whole session without letting long timelines starve later time.
 
@@ -607,6 +612,10 @@ def select_semantic_session_candidates_covered(
     failure still raises ``LlmCallError`` so the existing deterministic
     fallback remains authoritative instead of silently accepting partial
     semantic coverage.
+
+    观众 payoff 后延（2026-08-10 `auto_223750_578_654` 案）挂在这一层而不是分片内层：
+    分片的 cue 列表是截断的，包袱可能整个落在分片边界之外；这里拿得到全场 cue 栅格和
+    全场弹幕。详见 ``boundary_payoff_extension``。
     """
 
     shards = plan_semantic_recall_shards(cues)
@@ -624,6 +633,7 @@ def select_semantic_session_candidates_covered(
             "skipped": [],
         }
     coverage_end_ms = max(cue.source_end_ms for cue in cues)
+    danmaku_items = load_payoff_danmaku_items(danmaku_xml)
     if len(shards) == 1:
         selected, diagnostics = select_semantic_session_candidates(
             tuple(shards[0]["cues"]),
@@ -634,10 +644,18 @@ def select_semantic_session_candidates_covered(
             danmaku_hints=danmaku_hints,
         )
         diagnostics = dict(diagnostics)
+        selected, payoff_extensions = extend_candidates_for_audience_payoff(
+            selected,
+            cues=cues,
+            danmaku_items=danmaku_items,
+            max_talk_window_ms=max_talk_window_ms,
+            merge_gaps=diagnostics.get("merge_gaps"),
+        )
         diagnostics.update(
             {
                 "mode": "single",
                 "coverage_end_ms": coverage_end_ms,
+                "audience_payoff_extensions": payoff_extensions,
                 "shards": [
                     {
                         key: shards[0][key]
@@ -752,11 +770,19 @@ def select_semantic_session_candidates_covered(
             continue
         selected.append(candidate)
 
+    selected, payoff_extensions = extend_candidates_for_audience_payoff(
+        selected,
+        cues=cues,
+        danmaku_items=danmaku_items,
+        max_talk_window_ms=max_talk_window_ms,
+        merge_gaps=merge_gaps,
+    )
     selected_ids = {candidate.anchor.candidate_id for candidate in selected}
     return selected, {
         "stage": SEMANTIC_RECALL_STAGE,
         "mode": "sharded",
         "coverage_end_ms": coverage_end_ms,
+        "audience_payoff_extensions": payoff_extensions,
         "shards": shard_diagnostics,
         "raw_candidates": sum(
             int(shard.get("raw_candidates") or 0) for shard in shard_diagnostics

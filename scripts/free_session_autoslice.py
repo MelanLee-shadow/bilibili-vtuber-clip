@@ -2036,7 +2036,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         xml = find_danmaku_xml(segment)
         chat_binding = resolve_structured_chat_binding(segment)
-        candidates, lane, extras = recall_candidates(srt, danmaku_hints(xml))
+        candidates, lane, extras = recall_candidates(srt, danmaku_hints(xml), xml)
         talk = [c for c in candidates if getattr(c, "content_type_hint", "talk") != "song"]
         log(f"smoke: {len(candidates)} candidates via {lane}; producing first deliverable talk candidate")
         if not talk:
