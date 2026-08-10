@@ -274,33 +274,63 @@ def test_season_add_treats_already_in_as_success(cookie_file):
         session2.season_episode_add(9110001, aid=1, cid=2, title="t")
 
 
-def test_season_episode_edit_preserves_episode_and_page_order(cookie_file):
+def test_season_episode_edit_sends_whole_section_sorts_by_episode_id(cookie_file):
+    """契约锚点：sorts 用整节的 episode id + 1 起位次（创作中心前端反编译，2026-08-10）。
+
+    旧实现拿分 P 的 cid 当 ``sorts[].id`` 且只发一条，线上恒 -400 参数错误。
+    """
+
     session, calls = make_session(cookie_file(BILIUP_SHAPE), [{"code": 0, "message": "0"}])
 
     response = session.season_episode_edit(
-        episode_id=210909973,
+        episode_id=210909975,
         title="【主播】新标题",
         aid=116969558771366,
         cid=40389051822,
         season_id=8110001,
         section_id=9110001,
-        order=68,
-        page_cids=[40389051822],
+        order=3,
+        section_episode_ids=[210909973, 210909974, 210909975, 210909976],
     )
 
     assert response["code"] == 0
     request = calls[0]
     assert request.full_url.endswith("/x2/creative/web/season/section/episode/edit?csrf=csrf-token")
     assert json.loads(request.data) == {
-        "id": 210909973,
+        "id": 210909975,
         "title": "【主播】新标题",
         "aid": 116969558771366,
         "cid": 40389051822,
         "seasonId": 8110001,
         "sectionId": 9110001,
-        "sorts": [{"id": 40389051822, "sort": 1}],
-        "order": 68,
+        "sorts": [
+            {"id": 210909973, "sort": 1},
+            {"id": 210909974, "sort": 2},
+            {"id": 210909975, "sort": 3},
+            {"id": 210909976, "sort": 4},
+        ],
+        "order": 3,
     }
+
+
+def test_season_episode_edit_never_puts_page_cid_into_sorts(cookie_file):
+    """回归门：cid 只能出现在 ``cid`` 字段，绝不允许再流进 ``sorts``。"""
+
+    session, calls = make_session(cookie_file(BILIUP_SHAPE), [{"code": 0, "message": "0"}])
+    session.season_episode_edit(
+        episode_id=210909973,
+        title="标题",
+        aid=116969558771366,
+        cid=40389051822,
+        season_id=8110001,
+        section_id=9110001,
+        order=1,
+        section_episode_ids=[210909973],
+    )
+
+    payload = json.loads(calls[0].data)
+    assert [entry["id"] for entry in payload["sorts"]] == [210909973]
+    assert all(entry["id"] != 40389051822 for entry in payload["sorts"])
 
 
 @pytest.mark.parametrize(
@@ -308,9 +338,13 @@ def test_season_episode_edit_preserves_episode_and_page_order(cookie_file):
     [
         {"episode_id": 0},
         {"title": ""},
-        {"page_cids": []},
-        {"page_cids": [2, 2]},
-        {"page_cids": [3]},
+        {"section_episode_ids": []},
+        {"section_episode_ids": [1, 1]},
+        # 本条不在整节顺序表里
+        {"section_episode_ids": [7, 8]},
+        # order 与位次不符（旧实现直接把 API 的 order 当真值传，这里必须拦住漂移）
+        {"section_episode_ids": [9, 1], "order": 5},
+        {"section_episode_ids": [1, 9], "order": 2},
     ],
 )
 def test_season_episode_edit_rejects_unsafe_identity(cookie_file, override):
@@ -322,8 +356,8 @@ def test_season_episode_edit_rejects_unsafe_identity(cookie_file, override):
         "cid": 2,
         "season_id": 3,
         "section_id": 4,
-        "order": 5,
-        "page_cids": [2],
+        "order": 1,
+        "section_episode_ids": [1],
     }
     kwargs.update(override)
 
