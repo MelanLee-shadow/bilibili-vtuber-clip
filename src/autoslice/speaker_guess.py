@@ -452,7 +452,7 @@ def summary_digest(manifest: Mapping[str, object] | None) -> dict[str, object] |
     }
 
 
-def _guess_digest_from_result(result: Mapping[str, object]) -> dict[str, object] | None:
+def _guess_digest_from_summary(result: Mapping[str, object]) -> dict[str, object] | None:
     summary = result.get("summary")
     if not isinstance(summary, Mapping):
         return None
@@ -462,7 +462,41 @@ def _guess_digest_from_result(result: Mapping[str, object]) -> dict[str, object]
     return dict(digest) if isinstance(digest, Mapping) else {}
 
 
-def delivered_talk_status(result: dict, *, candidate_id: str) -> str:
+def _guess_digest_from_manifests(work_dir: object) -> dict[str, object] | None:
+    """从落盘的 speaker manifest 认 guess——这是**权威**源，stdout 摘要只是便道。
+
+    为什么不能只信 stdout：lane 读的是 ``last_json_block(attempt_output[-4000:])``，
+    交付摘要本身就带 closure_sentence / boundary_repairs / 一串绝对路径，再加上
+    guess 指纹，撑破 4000 字节尾窗完全可能。撑破之后 ``last_json_block`` 会退而
+    匹配到某个**嵌套**对象（比如 timing_qa），于是 ``speaker_status`` 读不到，
+    猜出来的成品就被判成 review_ready ——检测失败必须 fail-closed，不能 fail-open。
+
+    多份 manifest 时只要有一份自称 guess 就停泊：宁可多停一条让人看一眼，
+    也不能把猜的当证据充分放行。
+    """
+
+    from pathlib import Path
+
+    try:
+        paths = sorted(Path(str(work_dir)).glob("replacement_recuts/*.speaker-final.json"))
+    except OSError:
+        return None
+    for path in paths:
+        try:
+            import json
+
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        digest = summary_digest(document if isinstance(document, Mapping) else {})
+        if digest is not None:
+            return digest
+    return None
+
+
+def delivered_talk_status(
+    result: dict, *, candidate_id: str, work_dir: object | None = None
+) -> str:
     """交付成功后的最终状态：猜出来的成品压回停泊态，其余照常 review_ready。
 
     这是 rc==0 的路径，``classify_talk_failure`` 不会跑，所以失败面字段必须逐个
@@ -471,7 +505,9 @@ def delivered_talk_status(result: dict, *, candidate_id: str) -> str:
     唤醒它、每次都重烧一遍完整产线。
     """
 
-    digest = _guess_digest_from_result(result)
+    digest = _guess_digest_from_summary(result)
+    if digest is None and work_dir is not None:
+        digest = _guess_digest_from_manifests(work_dir)
     if digest is None:
         return "review_ready"
     from src.autoslice import speaker_manual_review
@@ -506,6 +542,38 @@ def delivered_talk_status(result: dict, *, candidate_id: str) -> str:
         artifacts=delivered_artifact_paths(result),
     )
     return status
+
+
+def finalize_delivered_talk_status(
+    result: dict, *, candidate_id: str, work_dir: object, cover_ready: bool
+) -> str:
+    """produce 成功收尾时**唯一**决定终态的地方；停泊优先级高于封面待定。
+
+    次序不是随手排的：``media_ready_cover_pending`` 有自己的修复车道，封面一旦
+    绑定成功那条车道会**直接**把状态提成 ``review_ready``（``cover_maintenance``
+    里 ``rec["status"] = "review_ready"``），根本不重跑 produce。如果猜出来的成品
+    先掉进封面待定，它就会绕过停泊、经封面车道升进日审清单并变成可上传——正是
+    fail-closed 要挡的那条路。所以先判停泊：停泊件不许被封面车道认领。
+    """
+
+    status = delivered_talk_status(
+        result, candidate_id=candidate_id, work_dir=work_dir
+    )
+    if status != "review_ready":
+        return status
+    if not cover_ready:
+        result["status"] = _cover_pending_status()
+        result["cover_integrity_status"] = "INVALID_OR_MISSING_INITIAL_COVER"
+        result["cover_pending_reason_codes"] = ["TALK_DELIVERY_COVER_PROOF_REQUIRED"]
+        return str(result["status"])
+    result["status"] = "review_ready"
+    return "review_ready"
+
+
+def _cover_pending_status() -> str:
+    from src.autoslice import talk_lane
+
+    return str(talk_lane._runner.TALK_COVER_PENDING_STATUS)
 
 
 def _runner_recovery_fingerprint(candidate_id: str) -> str:

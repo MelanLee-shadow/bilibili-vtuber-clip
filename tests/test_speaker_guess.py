@@ -450,6 +450,81 @@ def test_guessed_delivery_parks_and_is_not_auto_uploadable() -> None:
     )
 
 
+def test_guess_park_outranks_the_cover_pending_lane() -> None:
+    """封面待定车道会**直接**把状态提成 review_ready（不重跑 produce）。
+
+    ``cover_maintenance`` 绑定成功时执行 ``rec["status"] = "review_ready"``。
+    猜出来的成品若先掉进封面待定，就会绕过停泊、经封面车道升进日审清单并变成
+    可上传——所以停泊必须先判、优先级高于封面。
+    """
+
+    result = _delivered_result({"rung": speaker_guess.RUNG_GUESSED_ANCHORS})
+
+    status = speaker_guess.finalize_delivered_talk_status(
+        result,
+        candidate_id="auto_220747_1271_1323",
+        work_dir="/nonexistent",
+        cover_ready=False,  # 封面没就绪，旧次序会在这里返回 cover_pending
+    )
+
+    assert status in speaker_manual_review.SPEAKER_MANUAL_REVIEW_STATUSES
+    assert status != runner.TALK_COVER_PENDING_STATUS
+    assert result["status"] == status
+    assert "cover_pending_reason_codes" not in result
+    # 反面：非猜的成品照旧走封面待定，那条既有行为一个字节不变。
+    plain = _delivered_result(None)
+    assert (
+        speaker_guess.finalize_delivered_talk_status(
+            plain,
+            candidate_id="auto_213135_62_138",
+            work_dir="/nonexistent",
+            cover_ready=False,
+        )
+        == runner.TALK_COVER_PENDING_STATUS
+    )
+    assert plain["cover_pending_reason_codes"] == ["TALK_DELIVERY_COVER_PROOF_REQUIRED"]
+
+
+def test_truncated_stdout_summary_still_parks_via_the_speaker_manifest(
+    tmp_path: Path,
+) -> None:
+    """检测失败必须 fail-closed：摘要撑破 4000 字节尾窗不能把猜的放成 review_ready。
+
+    ``last_json_block`` 在尾窗被截断时会退而匹配到某个嵌套对象（这里模拟成
+    ``timing_qa``），``speaker_status`` 就读不到了。落盘的 speaker manifest 是
+    权威源，必须兜住。
+    """
+
+    recuts = tmp_path / "replacement_recuts"
+    recuts.mkdir(parents=True)
+    (recuts / "auto_220747_1271_1323.recut.speaker-final.json").write_text(
+        json.dumps(
+            {
+                "status": speaker_guess.SPEAKER_GUESS_STATUS,
+                "speaker_guess": {
+                    "rung": speaker_guess.RUNG_GUESSED_ANCHORS,
+                    "low_confidence_cue_count": 9,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    truncated = {"candidate_id": "auto_220747_1271_1323", "summary": {"counts": {}}}
+
+    status = speaker_guess.finalize_delivered_talk_status(
+        truncated,
+        candidate_id="auto_220747_1271_1323",
+        work_dir=tmp_path,
+        cover_ready=True,
+    )
+
+    assert status in speaker_manual_review.SPEAKER_MANUAL_REVIEW_STATUSES
+    assert status not in runner.DELIVERED_TALK_STATUSES
+    assert truncated["speaker_manual_review"]["speaker_guess"][
+        "low_confidence_cue_count"
+    ] == 9
+
+
 def test_backfill_policy_repark_keeps_the_guess_and_the_artifacts() -> None:
     """同一条 pick 会被盖两次章，第二次不许把成品面抹掉。
 
