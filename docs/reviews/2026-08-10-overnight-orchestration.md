@@ -437,6 +437,27 @@ produce 槽约 **50 分钟**,把 8/8(今晚主力 13 条)和 8/9(已发 **0** �
   8/9 `no_delivery`(5 talk + 1 song 待产)。
 - DISABLED 已撤、deploy guard 已清,产线自 09:20 tick 起把全部产能给 8/8 与 8/9。
 
+## 六之十三、`manual_preclaim` **挡不住 requeue**(实测观察,机制未完全钉死)
+
+我 09:12:03 把 8/7 置成 `manual_preclaim`(picks 完整保留)。下一个 tick:
+```
+09:20:26 2026-08-07: requeued 0 stale CURRENT talk package(s), 3 recoverable talk failure(s), …
+09:20:40 processing 2026-08-07: new=False pending=True
+```
+→ **status 被改回 `processing`,8/7 照常开产**。
+
+代码面:`run_once` 的 `manual_preclaim` 检查在 `:1988`、`process_date` 在 `:1992`,顺序是对的;
+`process_date` 自己在 `:1767` 写 `state["status"]="processing"`。
+所以嫌疑最大的是**在该检查之前运行的 `requeue_recoverable_deliveries`**(它对所有日期先跑一遍)把状态刷掉了。
+**我没有把机制钉死**(未逐行走读该函数的写回路径),只如实记录观察到的行为。
+
+**实际影响**:`manual_preclaim` 只能挡住"什么都不做"的日期,**挡不住有 recoverable failure 的日期**。
+我最终是**直接 kill 掉 8/7 的 produce 进程**才让 tick 走到 8/8(省下最多 90 分钟)。
+`picks 10→7` **不是丢数据**:是 requeue 把 3 条失败件从 `picks` 挪进了 `pending_talk`(合计仍 10)。
+
+**给 Ivan**:如果想要一个真能"整日冻结"的开关,现在这个不够;
+配合 §六之九 的 `--preclaim` 毁 state 缺陷,这一整块开关语义建议一起修。
+
 ## 七、留给 Ivan 的待裁项(未擅自决定)
 
 **按重要性排序。前两条会直接决定谈话切能不能量产。**
