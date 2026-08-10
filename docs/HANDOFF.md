@@ -39,6 +39,24 @@
 5. 8/8 那 13 条产完后逐条走上传链;**8/9 解挂**
 6. 晨报剩余待决:F21「从未听过 vs 听了失败」语义分割是否按字面全关
 
+### ⭐ 版本真相表(Ivan 8/10 令:**永远以 free 为主源;Mac/wsl 只是临时 worktree,有更新第一时间推 free**)
+| 位置 | 版本 | 含哪些 |
+|---|---|---|
+| **free(生产,唯一主源)** | `f6e8a2b` @04:41Z | F20 / F12+F5 / terminal-projection / manifest 白名单 B1 / QC 同茎 B2 / 自矛盾 witness / 配额按日冻结 / 截图优先六项 / 歌 lane 省盘 / 哨兵 TTL+锁看门狗 / **provider 退避重试** |
+| Mac 分支尖 | `3301e4e` | 上面全部 **+ AGY→Gemini 统一客户端(4a9a6b2)+ 竖屏走重绘/梗字去抽取式(3301e4e)** |
+| wsl `repo-basket` | 跟随 Mac 尖(8/8 车道 worker 正在更新) | 同 Mac |
+**待部署差量=2 个 commit**。竖屏/梗字那条把 punch schema 升到 **v2** → 未上传包的 v1 梗字回执会被审计拦、门文件指纹变化会触发 requeue,**故意压到 8/8 这批产完再部署**。
+
+### 三次伪裁定考据(都已证实并修正;这是本仓的系统性风险类)
+1. **「截图优先、重绘兜底」** —— 逐字出自 2026-07-25 助手回答,被 `publish_staging.py:2241` 注释标成「2026-07-25 Ivan」。Ivan 真实原话是 7/21「我其实也非常希望能够截图直出封面…如果是这样的话我不要求CPA强制出图」+ 7/25「你可以现在开始做小窗裁剪」+ 8/9「如果是截图封面的话，当然不要求李豆沙在画面里占主要部分」。报告 `docs/reviews/2026-08-10-cover-route-screenshot-first-forensics.md`。
+2. **「梗字必须是标题连续子串」** —— Ivan 从未说过(51+ 份 transcript 全量扫他本人 turn,零命中)。实现者两层自造:`409e22f`(7/20,fail-open)→ `e35b74a`(7/28,fail-closed)。自述动机是"防 LLM 编造封面字",子串只是粗暴代理,且与同 commit 调研报告自相矛盾(34.4 万播放那条封面字是**她的原话≠标题**)。已改为判官第四项 `no_fabricated_fact`。
+3. **配额数字被写成全局常量** —— Ivan 给 8/8 的「20 条/85 分」被 `4af4a88` 写进游戏 lane 全局常量,**没管到 8/8 却回溯放宽了 8/7**。已改按日期资产 + 准入冻结。
+**Ivan 7/31 就点过同一种病**:「我什么时候说过3行不能过质检门了？还是你之前定下的规矩？」。**动任何"Ivan 说过"的规则前,必须先用 `search_session_transcripts` 查他本人 user turn 的逐字。**
+
+### wsl 产物为什么还要人工交付链(缺口,应补)
+不是 repo 差异——wsl 用同一份 repo、同一套 produce,产出的包是完整的。卡点在**跨主机导入**:上传所需的凭据、`publication_registry`、以及 upload 读的 state 都只在 free。所以要把 wsl 的包搬进 free 并绑进 free 的 state(路径规整→state 绑定→manifest→audit→QC→make-manifest)。**这六步没人把它脚本化**,于是每条都要手工。
+**应做**:写 `scripts/import_external_package.py`——一条命令完成"外部产出的包导入 free 并达到 review_ready",fail-closed、持 runner.lock、出回执。做完 wsl/Mac 产的片就能和 free 自产的一样自动进待复核。
+
 ### 血泪教训(今夜新增)
 - **伪裁定是系统性风险**:「截图优先」「梗字必须抽取式」两条都是助手措辞被硬化成"Ivan 裁定"写进代码注释/门。改任何"Ivan 说过"的规则前,先用 `search_session_transcripts` 查他本人 user turn 的逐字。
 - **部署脚本会等 runner 放锁**;in-flight produce 若注定失败(如缺修复),直接 kill 让部署插队更划算。孤儿 deploy 会留下 guard 目录+DISABLED,要手工清。
