@@ -79,7 +79,8 @@ for index, arg in enumerate(args[:-1]):
 write_out = any(arg == "-w" for arg in args)
 
 # FAKE_CURL_STATUS_SEQUENCE drives one HTTP status per invocation ("" reuses the
-# last entry once exhausted); "200" means a normal completion body.
+# last entry once exhausted); "200" means a normal completion body and "empty"
+# means HTTP 200 carrying the reasoning-model empty-output_text quirk.
 sequence = [s for s in os.environ.get("FAKE_CURL_STATUS_SEQUENCE", "").split(",") if s]
 status = ""
 if sequence:
@@ -87,6 +88,15 @@ if sequence:
 
 if os.environ.get("FAKE_CURL_FAIL") == "1" and not status:
     raise SystemExit(22)
+
+if status == "empty":
+    if out_path:
+        open(out_path, "w", encoding="utf-8").write(
+            json.dumps({{"status": "completed", "output_text": ""}})
+        )
+    if write_out:
+        sys.stdout.write("200")
+    raise SystemExit(0)
 
 if status and status != "200":
     if out_path:
@@ -454,3 +464,53 @@ def test_first_attempt_always_runs_even_with_a_zero_length_budget(tmp_path):
     assert completed.returncode == 0, completed.stderr
     assert completion.read_text(encoding="utf-8") == "safe completion"
     assert capture["invocation_count"] == 1
+
+
+def test_empty_completion_also_honors_the_transient_floor(tmp_path):
+    """金丝雀④（2026-08-10 补漏）：空补全在 attempts_per_model=1 下同样退避重试。
+
+    ``transient_failure()`` 早就把空补全算进服务类，但此前有一条**先于它**的
+    特例分支把上限钉回 ``ATTEMPTS_PER_MODEL``。于是恰恰是唯一按
+    ``attempts_per_model=1`` 调用的终审面传输层（boundary 语义复核、终审审片、
+    代词一致性、逐条裁决等十条腿全共用它）碰上推理模型的空 output_text 就是
+    "一枪换一模型"，三枪打空判死候选。
+
+    修复前本用例会失败：第一次空补全后直接换模型，invocation_count==2 且
+    第二个模型被用掉；修复后同模型退避重试，第二枪就拿到正常补全。
+    """
+
+    completed, capture, completion, _tmp = _run_bridge(
+        tmp_path,
+        chat_models_env="gpt-first gpt-second",
+        extra_args=("gpt-first gpt-second", "medium", "1"),
+        status_sequence=("empty", "200"),
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completion.read_text(encoding="utf-8") == "safe completion"
+    assert capture["invocation_count"] == 2
+    # 关键：两枪都打在同一个模型上，没有为了一次空补全就烧掉失效备援。
+    assert [body["model"] for body in capture["bodies"]] == [
+        "gpt-first",
+        "gpt-first",
+    ]
+    assert "empty_completion=1" in completed.stderr
+
+
+def test_empty_completion_floor_can_still_be_switched_off(tmp_path):
+    """floor 是可调的：显式关掉后，空补全仍旧立刻失效备援到下一个模型。"""
+
+    completed, capture, completion, _tmp = _run_bridge(
+        tmp_path,
+        chat_models_env="gpt-first gpt-second",
+        extra_args=("gpt-first gpt-second", "medium", "1"),
+        status_sequence=("empty", "200"),
+        env_overrides={"CPA_TRANSIENT_ATTEMPTS_PER_MODEL": "1"},
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completion.read_text(encoding="utf-8") == "safe completion"
+    assert [body["model"] for body in capture["bodies"]] == [
+        "gpt-first",
+        "gpt-second",
+    ]

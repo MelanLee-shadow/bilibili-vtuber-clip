@@ -16,6 +16,7 @@ import pytest
 
 import scripts.free_session_autoslice as runner  # noqa: F401  (binds talk_lane's RunnerProxy)
 from src.autoslice import provider_failure as pf
+from src.autoslice import infra_retry_policy
 from src.autoslice import talk_lane
 from src.autoslice.final_review_auditor import (
     FinalReviewAuditError,
@@ -306,3 +307,235 @@ def test_non_provider_failures_keep_their_state_shape(tmp_path: Path):
     assert classified["failure_kind"] == "content_boundary"
     assert "failure_provider_class" not in classified
     assert "failure_provider_status_codes" not in classified
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-10 Ivan #9 第二半：「CPA请求失败的逻辑是积极重试，而不是判候选死」
+# ---------------------------------------------------------------------------
+
+
+def _authority_with_boundary_review(
+    tmp_path: Path, candidate_id: str, boundary_review: dict
+) -> str:
+    """终审面通过、只有边界语义复核 BLOCK 的最小 audit 对。"""
+
+    audit = {
+        "schema_version": "final-review-audit.v2",
+        "status": "FLAGGED",
+        "release_gate": "BLOCK",
+        "reason_codes": ["FINAL_REVIEW_BOUNDARY_SEMANTIC_BLOCKED"],
+        "reviewed_srt_sha256": "sha256:" + "e" * 64,
+        "discovery": {"status": "COMPLETE"},
+        "findings": [],
+        "validated_finding_count": 0,
+        "boundary_semantic_review": boundary_review,
+    }
+    directory = tmp_path / candidate_id
+    directory.mkdir(parents=True, exist_ok=True)
+    authority = directory / f"{candidate_id}.chat-authority.json"
+    authority.write_text(
+        json.dumps({"final_review_audit": audit}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (directory / f"{candidate_id}.review-flags.json").write_text(
+        json.dumps(audit, ensure_ascii=False), encoding="utf-8"
+    )
+    return str(authority)
+
+
+def _classify_boundary(tmp_path: Path, candidate_id: str, review: dict) -> dict:
+    return talk_lane.classify_talk_failure(
+        "FINAL_REVIEW_RELEASE_BLOCKED: FINAL_REVIEW_BOUNDARY_SEMANTIC_BLOCKED: "
+        + _authority_with_boundary_review(tmp_path, candidate_id, review)
+    )
+
+
+def test_boundary_review_transport_failure_waits_instead_of_dying(
+    tmp_path: Path,
+):
+    """provider 打不通 ≠ 边界内容不合格。
+
+    修复前：``BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:LlmCallError`` 落
+    ``content_boundary`` + ``failure_recoverable=False``，于是一次 CPA 请求失败
+    把 15–55 分钟的 produce 判成内容缺陷，只能等代码波改 fingerprint 才醒。
+    """
+
+    classified = _classify_boundary(
+        tmp_path,
+        "auto_boundary_transport",
+        {
+            "schema_version": "talk-boundary-semantic-review.v1",
+            "status": "BLOCK",
+            "reason_codes": ["BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:LlmCallError"],
+        },
+    )
+
+    assert classified["failure_kind"] == "provider_transient"
+    assert classified["failure_stage"] == "final_review_boundary_semantic"
+    assert classified["failure_recoverable"] is True
+
+
+def test_boundary_review_code_defect_stays_terminal(tmp_path: Path):
+    """反向门：确定性代码缺陷不许混进基础设施等待车道。
+
+    ``INFRASTRUCTURE_WAIT_FAILURE_KINDS`` 是无上限定时重试；把 TypeError 之流
+    放进去 = 同一 fingerprint 每 tick 空转到天荒地老。
+    """
+
+    classified = _classify_boundary(
+        tmp_path,
+        "auto_boundary_bug",
+        {
+            "schema_version": "talk-boundary-semantic-review.v1",
+            "status": "BLOCK",
+            "reason_codes": ["BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:TypeError"],
+        },
+    )
+
+    assert classified["failure_kind"] == "content_boundary"
+    assert classified["failure_recoverable"] is False
+
+
+def test_boundary_review_content_verdict_stays_terminal(tmp_path: Path):
+    """内容门一个字没放松：真实的边界内容裁决照旧终态。"""
+
+    classified = _classify_boundary(
+        tmp_path,
+        "auto_boundary_content",
+        {
+            "schema_version": "talk-boundary-semantic-review.v1",
+            "status": "BLOCK",
+            "reason_codes": ["BOUNDARY_SEMANTIC_REVIEW_REQUIRED"],
+            "syntax_complete": False,
+            "story_closed": False,
+        },
+    )
+
+    assert classified["failure_kind"] == "content_boundary"
+    assert classified["failure_recoverable"] is False
+
+
+def test_transport_unavailable_reason_allowlist_is_closed():
+    """未知异常名一律不算 transport——allowlist 是白名单不是黑名单。"""
+
+    assert (
+        pf.transport_unavailable_reason(
+            ["BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:LlmCallError"]
+        )
+        == "BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:LlmCallError"
+    )
+    assert (
+        pf.transport_unavailable_reason(
+            ["AUDITOR_UNAVAILABLE:TimeoutExpired"]
+        )
+        == "AUDITOR_UNAVAILABLE:TimeoutExpired"
+    )
+    for hostile in (
+        ["BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:KeyError"],
+        ["BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:AssertionError"],
+        ["BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE"],  # 无异常名
+        ["BOUNDARY_SEMANTIC_REVIEW_REQUIRED"],
+        [],
+        None,
+        {"status": "BLOCK"},
+    ):
+        assert pf.transport_unavailable_reason(hostile) is None
+
+
+def test_infra_retry_delay_escalates_instead_of_reburning_every_15_minutes():
+    """固定 15 分钟 + 15–55 分钟的 produce = 故障期间机时全烧在必然的重复失败上。
+
+    复用歌 lane 的同一条指数曲线：间隔变长，但**永不判死**。
+    """
+
+    delays = [
+        infra_retry_policy.talk_infra_retry_delay_seconds(
+            {"talk_transient_retry_count": n}
+        )
+        for n in range(5)
+    ]
+
+    assert delays[0] == runner.SONG_INFRA_RETRY_BASE_SECONDS
+    assert delays == sorted(delays)
+    assert delays[3] > delays[0]
+    assert all(delay <= runner.SONG_INFRA_RETRY_MAX_SECONDS for delay in delays)
+    # 上限存在，且是"等更久"而不是"不再等"
+    assert (
+        infra_retry_policy.talk_infra_retry_delay_seconds(
+            {"talk_transient_retry_count": 99}
+        )
+        == runner.SONG_INFRA_RETRY_MAX_SECONDS
+    )
+
+
+def test_quota_class_starts_one_step_further_out():
+    """配额窗口按小时/天计，用 15 分钟去撞一个还要几小时才开的窗口是纯浪费。"""
+
+    service = infra_retry_policy.talk_infra_retry_delay_seconds(
+        {"talk_transient_retry_count": 0, "failure_provider_class": pf.SERVICE}
+    )
+    quota = infra_retry_policy.talk_infra_retry_delay_seconds(
+        {"talk_transient_retry_count": 0, "failure_provider_class": pf.QUOTA}
+    )
+
+    assert service == runner.SONG_INFRA_RETRY_BASE_SECONDS
+    assert quota > service
+
+
+def test_boundary_resolution_marker_transport_failure_waits(tmp_path: Path):
+    """**主路径**：transport 故障其实死在边界解析面，走不到终审契约。
+
+    `producer_boundary_resolution` 见到非 PASS 的边界复核就 SystemExit
+    ``BOUNDARY_SEMANTIC_REVIEW_REQUIRED: [...]``；provider 打不通时那份 review
+    正是 BLOCK + UNAVAILABLE。修复前这条 marker 在 ``classify_talk_failure`` 里
+    **一个分支都没有**，整条落 producer_error/unknown（只吃一次 transient 重
+    试）。2026-08-08 free 实测 10 条 producer_error/unknown 的日志尾正是它。
+    """
+
+    classified = talk_lane.classify_talk_failure(
+        "SystemExit: BOUNDARY_SEMANTIC_REVIEW_REQUIRED: "
+        '["BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:LlmCallError"]'
+    )
+
+    assert classified["failure_kind"] == "provider_transient"
+    assert classified["failure_stage"] == "boundary_semantic_review"
+    assert classified["failure_recoverable"] is True
+
+
+def test_boundary_resolution_marker_content_verdict_stays_unchanged():
+    """反向门：真实的边界内容裁决维持原有归类，一个字不动。"""
+
+    classified = talk_lane.classify_talk_failure(
+        "SystemExit: BOUNDARY_SEMANTIC_REVIEW_REQUIRED: "
+        '["SELECTOR_STORY_WITNESS_INSUFFICIENT", "STORY_PAYOFF_LANDED"]'
+    )
+
+    assert classified["failure_kind"] == "producer_error"
+    assert classified["failure_stage"] == "unknown"
+
+
+def test_last_marker_wins_in_an_append_only_log():
+    """日志是跨 attempt append-only 的；只有最后一条 marker 是本次致命的那条。"""
+
+    classified = talk_lane.classify_talk_failure(
+        'BOUNDARY_SEMANTIC_REVIEW_REQUIRED: ["SELECTOR_STORY_WITNESS_INSUFFICIENT"]\n'
+        "[agy] bounded sparse-cue self-heal: {...}\n"
+        "BOUNDARY_SEMANTIC_REVIEW_REQUIRED: "
+        '["BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:LlmCallError"]'
+    )
+
+    assert classified["failure_kind"] == "provider_transient"
+
+
+def test_boundary_context_exhausted_keeps_its_content_verdict():
+    """BOUNDARY_CONTEXT_EXHAUSTED 只有 LLM 真答了 needs_more_context 才会出现，
+    所以它照旧是 content_boundary；这里锁住这条不变量。"""
+
+    classified = talk_lane.classify_talk_failure(
+        "SystemExit: BOUNDARY_CONTEXT_EXHAUSTED: "
+        '["BOUNDARY_CONTEXT_EXHAUSTED", "NEXT_TOPIC_SEPARATED_NOT_PROVEN"] '
+        "max_forward_ms=30000 retry_scope=same_topic_continues"
+    )
+
+    assert classified["failure_kind"] == "content_boundary"
+    assert classified["failure_recoverable"] is False

@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 
 PROVIDER_DETAIL_LIMIT = 2000
@@ -55,6 +56,68 @@ SERVICE = "service"
 REJECTED = "rejected"
 UNKNOWN = "unknown"
 
+# ``*_UNAVAILABLE:<ExcType>`` reason codes (boundary semantic review and its
+# siblings) carry the *type name* of whatever escaped the LLM leg.  Only these
+# names mean "the provider never rendered a verdict, so nothing was judged";
+# every other name is a code defect in our own stage.
+#
+# The distinction is load-bearing, not cosmetic: a transport name routes the
+# candidate into ``INFRASTRUCTURE_WAIT_FAILURE_KINDS`` (unbounded timed retry),
+# and ``delivery_recovery`` warns in as many words that putting a deterministic
+# defect on that lane makes it churn the identical fingerprint every tick
+# forever.  So the allowlist stays closed: unknown名字一律按内容/代码缺陷终态。
+TRANSPORT_EXCEPTION_NAMES = frozenset(
+    {
+        # llm_client raises this for every transport outcome it cannot use:
+        # non-zero bridge rc, subprocess timeout, missing/empty completion
+        # file, unparseable JSON in an otherwise-200 completion.  All four are
+        # "ask again later", none is a verdict about the content.
+        "LlmCallError",
+        "TimeoutError",
+        "TimeoutExpired",
+        "SubprocessError",
+        "CalledProcessError",
+        "ConnectionError",
+        "ConnectionAbortedError",
+        "ConnectionRefusedError",
+        "ConnectionResetError",
+        "BrokenPipeError",
+        "OSError",
+        "IOError",
+        "HTTPError",
+        "URLError",
+        "SSLError",
+        "RemoteDisconnected",
+        "IncompleteRead",
+    }
+)
+
+_UNAVAILABLE_REASON_RX = re.compile(r"^[A-Z][A-Z0-9_]*UNAVAILABLE:(.+)$")
+
+
+def transport_unavailable_reason(reason_codes: object) -> str | None:
+    """Return the ``*_UNAVAILABLE:<ExcType>`` code naming a transport failure.
+
+    ``None`` means: no such code, or the exception name is not on the closed
+    transport allowlist — i.e. do not treat this as an infrastructure wait.
+    """
+
+    if isinstance(reason_codes, str):
+        candidates: list[str] = [reason_codes]
+    elif isinstance(reason_codes, (list, tuple)):
+        candidates = [str(code) for code in reason_codes if str(code)]
+    else:
+        return None
+    for code in candidates:
+        match = _UNAVAILABLE_REASON_RX.match(code.strip())
+        if match is None:
+            continue
+        # ``socket.timeout`` and friends arrive dotted; compare on the leaf.
+        exception_name = match.group(1).strip().rsplit(".", 1)[-1]
+        if exception_name in TRANSPORT_EXCEPTION_NAMES:
+            return code
+    return None
+
 
 def provider_failure_detail(
     exc: BaseException, *, limit: int = PROVIDER_DETAIL_LIMIT
@@ -89,6 +152,34 @@ def provider_failure_detail_from_cause(
 
     cause = exc.__cause__
     return provider_failure_detail(cause, limit=limit) if cause else ""
+
+
+_MARKER_REASON_RX = re.compile(r":\s*(\[[^\r\n]*?\])")
+
+
+def marker_transport_unavailable(text: str, marker: str) -> str | None:
+    """producer 的 ``<marker>: ["REASON", …]`` 行里是否只是 provider 打不通。
+
+    producer 的致命 marker 把 reason_codes 以 JSON 数组原样打在同一行上，所以
+    "边界复核为什么没通过"这条信息在子进程输出里是可读的——读最后一条同名
+    marker（append-only 日志里，最后一条才是本次致命的那条），解析它自己的
+    reason_codes，再交给闭集 :func:`transport_unavailable_reason` 判定。
+    """
+
+    last = None
+    for line in text.splitlines():
+        if marker in line:
+            last = line
+    if last is None:
+        return None
+    match = _MARKER_REASON_RX.search(last[last.index(marker) + len(marker):])
+    if match is None:
+        return None
+    try:
+        codes = json.loads(match.group(1))
+    except ValueError:
+        return None
+    return transport_unavailable_reason(codes)
 
 
 def provider_failure_status_codes(text: str) -> list[int]:
@@ -244,9 +335,12 @@ __all__ = [
     "QUOTA",
     "REJECTED",
     "SERVICE",
+    "TRANSPORT_EXCEPTION_NAMES",
     "UNKNOWN",
+    "transport_unavailable_reason",
     "auditor_unavailable_discovery",
     "classify_provider_failure",
+    "marker_transport_unavailable",
     "describe_provider_failure",
     "provider_failure_detail",
     "provider_failure_detail_from_cause",

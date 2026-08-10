@@ -42,8 +42,13 @@ ATTEMPTS_PER_MODEL="${5:-3}"
 #
 # 因此把「空补全重试」和「服务类故障重试」拆开：
 #  - CPA_TRANSIENT_ATTEMPTS_PER_MODEL（默认 3）只对**服务类**失败生效
-#    （408/429/5xx、curl 连接/超时类退出码），即使 attempts_per_model=1 也照常
-#    退避重试——调用方要的是"一个模型一次逻辑尝试"，不是"抖一下就放弃"。
+#    （408/429/5xx、curl 连接/超时类退出码、空补全），即使 attempts_per_model=1
+#    也照常退避重试——调用方要的是"一个模型一次逻辑尝试"，不是"抖一下就放弃"。
+#    2026-08-10 补：空补全（推理模型 output_text 为空的已知怪癖）此前被单独一
+#    条分支按 attempts_per_model 封顶，于是**恰恰是 attempts_per_model=1 的终审
+#    面**（boundary/auditor/pronoun/裁决 共十条腿全走它）一次空补全就换模型、
+#    三枪打空判死。空补全本来就在 transient_failure() 的服务类里，那条特例分支
+#    只是把 floor 抹掉了——已删除。
 #  - 其它 4xx 是确定性拒绝（分组无权、请求非法），同模型重试只会浪费时间，
 #    立即换下一个模型。
 # 退避是指数 + 抖动，总睡眠有上限，保证三个模型跑完仍远小于调用方的 600s 超时。
@@ -168,6 +173,16 @@ HEADER_FILE="$(mktemp)"
 } > "$HEADER_FILE"
 unset CPA_API_KEY
 
+# 2026-08-10：实测 503/524（524 = Cloudflare 源站超时）与"小请求 200、大请求
+# 408/400 group_capability_unavailable"并存，指向 CPA 次级 leg 按 payload 大小
+# 退化。但**没有任何一处记录过请求体大小**，"大请求系统性失败"至今只是推论。
+# 把每次尝试的 body 字节数打进同一行 stderr，让上层的 provider_detail 直接带上
+# 它——这样"重试够不够"才有得判：同一 body_bytes 反复 524 = 退避治不好，得降
+# 上下文/分块；body_bytes 不相关 = 就是瞬时抖动，退避正确。
+body_bytes() {
+  wc -c < "$BODY_FILE" | tr -d ' '
+}
+
 build_body() {
 python3 - "$PROMPT_FILE" "$1" "$EFFORT" > "$BODY_FILE" <<'PY'
 import json, sys
@@ -227,16 +242,13 @@ if not isinstance(text, str) or not text.strip():
 open(sys.argv[2], "w", encoding="utf-8").write(text)
 PY
     then
-      echo "[cpa] model=${MODEL} attempt=${attempt} http=${HTTP_CODE} curl_exit=0 result=ok" >&2
+      echo "[cpa] model=${MODEL} attempt=${attempt} http=${HTTP_CODE} curl_exit=0 body_bytes=$(body_bytes) result=ok" >&2
       exit 0
     fi
     EMPTY_COMPLETION=1
   fi
-  echo "[cpa] model=${MODEL} attempt=${attempt} http=${HTTP_CODE} curl_exit=${CURL_EXIT} empty_completion=${EMPTY_COMPLETION} result=failed" >&2
-  if [[ "$EMPTY_COMPLETION" == "1" ]]; then
-    # The reasoning-model empty-output quirk keeps the caller's own budget.
-    max_attempts="$ATTEMPTS_PER_MODEL"
-  elif transient_failure "$HTTP_CODE" "$CURL_EXIT" "$EMPTY_COMPLETION"; then
+  echo "[cpa] model=${MODEL} attempt=${attempt} http=${HTTP_CODE} curl_exit=${CURL_EXIT} empty_completion=${EMPTY_COMPLETION} body_bytes=$(body_bytes) result=failed" >&2
+  if transient_failure "$HTTP_CODE" "$CURL_EXIT" "$EMPTY_COMPLETION"; then
     max_attempts="$ATTEMPTS_PER_MODEL"
     if [[ "$TRANSIENT_ATTEMPTS_PER_MODEL" -gt "$max_attempts" ]]; then
       max_attempts="$TRANSIENT_ATTEMPTS_PER_MODEL"
