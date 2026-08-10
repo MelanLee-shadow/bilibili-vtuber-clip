@@ -489,6 +489,30 @@ produce 槽约 **50 分钟**,把 8/8(今晚主力 13 条)和 8/9(已发 **0** �
 
 10:47:50 歌 lane 已起跑:`song lane song_200130_1012: window 997-1314s (danmaku x622)`。
 
+## 六之十六、**F3 跨字系修复在生产上验证成功**(实证)
+
+10:47:50 歌 lane 起跑 `song_200130_1012`《花の塔》。10:50:28 日志:
+```
+song lane song_200130_1012: song identified but positive LRC boundary proof is missing
+                            — retrying with original-source context 892-1654s
+```
+
+**对照修复前**(前会话法证逐字):
+> `song_200130_1012` | 花の塔 | LRC 发现✅命中 `'花の塔'` | **`0% of 36 lines matched`** →
+> **`ambiguous low-ASR LRC identity: best=19%, runner-up=16%`**(19% 来自噪声候选《乌鲁木齐九月》)
+
+即:修复前它**死在身份门**——真正的日文歌名对中文 ASR 恒 0%,被 19% 的中文同音噪声顶掉。
+**修复后它"song identified"**,进入下一步(要 LRC 边界正向证明),并自动用更宽的
+`_full` 窗口(892–1654s)重试。**这正是 F3 写来治的那个病,在真实生产数据上过了。**
+
+同时验证了 worker A 的 provenance lane 修复:该次 attempt 的
+`source-context.jingting.manifest.json` 逐字为
+`provider=source_draft_context` / `model=None` / `refinement_required=False` /
+`subtitle_authority_scope=proof_context_only_external_lrc_required` /
+`provider_request_id=BYPASSED_NOT_AUTHORITATIVE_FOR_SONG_LRC`
+——**正是被旧门误判成 `JINGTING_PROVIDER_NOT_AGY` + `JINGTING_MODEL_MISSING` 的那个"设计内旁路"**,
+现在不再喷噪声码,链条得以继续往下走。
+
 ## 七、留给 Ivan 的待裁项(未擅自决定)
 
 **按重要性排序。前两条会直接决定谈话切能不能量产。**
