@@ -800,3 +800,14 @@ tip（`codex/virtuareal-community-crawler` 之上，**不是 main**，main 会�
 ### 2026-08-08 晚：权宜上传授权已撤回（Ivan 原话「如果没有上传就可以先不上传了。我要先看8/7的切片审阅后再说」）
 确认零上传发生。改为审阅优先：真善美真值终版（验收 text=0 diff/假李豆沙=0）已发 Ivan；
 其余三条 8/7 talk 待其审阅。上传须 Ivan 审后重新明示。8/8 批产线继续（产≠传）。
+
+## ⚠️ 2026-08-10 07:50Z 追加(前一班收尾发现,夜班已通报)
+
+**`visual_song_discovery` 的 Gemini 兜底是个假兜底(今晚 4a9a6b2 新加的腿)**:wsl worker 实测 7 份 8/8 录播 **5/7 报 `GEMINI_VISUAL_SONG_DISCOVERY_FAILED`**——它把整张 contact sheet 内联提交,撞 `GEMINI_REQUEST_MAX_BYTES=20_000_000`;30 分钟录播几乎必然超。**且 fail-open**:日志写 "failed open"、召回继续,于是在无 AGY 的机器上**静默读成"这场没有歌"**。free 有 AGY 暂不受影响,但 AGY 在 8/9 一天被 OOM 杀 **8 次**(每次约 15GB / 31GB 机器),一旦走到这条腿,歌切会静默归零而非报错。**修法:分批/降采样提交,或超限时 fail-closed 报错。**
+
+**Gemini 腿本体可用(实证)**:`agy_gemini_client.generate_content(audio/mpeg, gemini-3.6-flash)` 对真实 12s 音频 → 免费 key #1 应答、真实中文转写(回执 `wsl:~/Project/vtuber-reproduce/wsl-88-base/reports/gemini-leg-canary-20260810.txt`)。所以 8/9 那五条死于 `BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:LlmCallError` **不是 Gemini 不行**,是别处。
+
+**wsl 主机不能无人值守**:Ubuntu 发行版在最后一个 wsl.exe 客户端退出后约 10s 自毁,靠一条长 SSH 吊着;会话一断即没(磁盘状态保留)。要常驻需 Windows 侧计划任务(持久机器配置,未经 Ivan 许可未建)。`C:` 仅剩 15.3GB(WSL 停时)。**别把关键路径压在 wsl 上。**
+
+**wsl 上已就绪可复活的资产**:8/8 录播镜像(7/7 mp4 与 free 逐字节一致)+ `wsl-88-base` 车道(5 条 8/8 最低分候选,用 `talk_selection_contract` v1 精确锁定,`upload_allowed=false`,与 free 零重叠);8/9 镜像 9.9GB + `wsl-lane-base`。两条车道均挂 LOOP_STOP+DISABLED。
+**注意**:把非目标候选挪进 `talk_backlog` 来收范围是**无效的**——`candidate_selection.py:986-990` 的 `prioritize()` 每轮会把 backlog 弹回 `pending_talk` 顶部;要锁范围必须用 `talk_selection_contract` v1 / `EXACT_CANDIDATE_SET_NO_BACKFILL`。
