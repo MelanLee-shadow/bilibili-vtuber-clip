@@ -17,7 +17,7 @@ Updated: 2026-08-10 00:20Z by Claude(Fable→Opus 接力,单 orchestrator + Opus
 - 标题已线上单独 edit 生效(【李豆沙】打歌服没召唤出来，公主抱倒是先来了);身份回执已抓并入库。
 - staging=`free:/opt/bilive/autoslice/recovery/2026-08-10/auto_200130_1323_1603-yueqi-r1/`;包 audit **passed:true blocking:0**;授权资产 `assets/lidousha/recovery_publication_authority_2026-08-10_1323_yueqi.v1.json` 已提交+部署;感知复审契约条目已加(+金丝雀登记)。
 - **卡点=封面 v4D 的 host-identity witness 自相矛盾**:同一回答 `primary_subject_is_lidousha:true`+`identity_conflicts:[]`+文字认李豆沙,却 `primary_subject_matches_other_source_participant:true` 判 FAIL。三版封面回执并列在 `verification/`(v1 punch FAIL / v3 292c24d0 机器全绿但公主抱姿态被裁没 / v4D 31809a32 姿态可读+构图全绿,仅该字段拦)。**待 Ivan 裁:是否把 7/27「自不一致 witness 无否决权」扩用到本门**。放行后:填 `delivery/final-human-review-evidence.json`(integrator 亲做感知复审;(跃起) 两帧已亲验)→ build 回执 → make-manifest → repair-plan → repair-run(唯一远端写)→ repair-verify-live → 证据入库。
-- 事实纠正:公主抱是**嘉宾抱李豆沙**(72-76s 窗;78s 无横抱)。
+- 身份定论(**Ivan 2026-08-10 亲裁,权威**):公主抱是**李豆沙抱星汐Seki**(李豆沙站姿施抱,星汐头靠其肩、双腿伸向画左);窗口 72-76s(78s 已无横抱)。integrator 中途一度误判为"嘉宾抱李豆沙",已按 Ivan 更正;判方向只认音画+Ivan,不认 worker 的单帧推断。
 
 **今夜机制成果(已部署)**:F20 真值全所有权快路径+(跃起) typed 注记白名单 / F12 hook 受话人归属 fail-closed / F5 子cue混说证据面(disclosure-only+kill switch) / terminal-projection 验收面移植 / **同日第二条投稿的 manifest 白名单缺陷(B1)** / **QC 同茎绑定缺陷(B2)** / 1323 感知复审契约。未部署待裁:**F21 声学证人 Gemini fallback**(worktree `f21-gemini-witness` @ `aa553a1`,3392 绿;含"从未听过 vs 听了失败"语义分割,须 Ivan 裁定是否按字面全关改字路)。
 
