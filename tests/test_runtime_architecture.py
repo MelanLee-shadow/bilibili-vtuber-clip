@@ -107,7 +107,11 @@ FUNCTION_DEBT_LEDGER = {
     # song_230754_1118 复发）。新增分支在 SONG_INFRA_TRANSIENT_REASON_CODES
     # 里找本次 attempt 剩余的 infra 码。测试
     # test_full_song_provider_outage_stays_infra_wait_not_terminal_rejection。
-    ("src/autoslice/song_lane.py", "produce_song"): 324,
+    # 2026-08-10 净 -12：歌名命名权威切换（Ivan 逐字「如果意识到了可能是歌
+    # 再从 BCUT 切换过来」）顺带还债——全源趟取证键白名单抽成模块常量
+    # FULL_SOURCE_RETRY_FORENSIC_KEYS（音频命名权威也进这张表，否则真名会像
+    # 修复前的标题一样被这层白名单埋掉）。本函数只减不增，账本按实际收紧。
+    ("src/autoslice/song_lane.py", "produce_song"): 312,
     # 2026-08-07 新记：同上狍哥案实施指令——rescore_retry 路线（fingerprint
     # 计算、consumed 账本、hook/scorecard 交换）接入 requeue 主循环。重活在
     # src/autoslice/selection_rescore.py，这里是状态机接线本身，行数属于
