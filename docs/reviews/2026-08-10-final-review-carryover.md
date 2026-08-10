@@ -189,12 +189,20 @@ WITNESS_CONFLICT_UNSUPPORTED_PROPOSED`——**引擎再改名时 import 就断�
 一次命中（5719 个 session 文件全扫）。
 
 **出处**：`~/.claude/projects/-Users-ivan-Project-vtuber-slice/b533569f-161f-4656-bec9-a512bd639042.jsonl:1223`
-**时间**：`2026-07-26T17:45:10.775Z`（= 本地 7/27，与注释署名的日期一致）
+**时间**：`2026-07-26T17:45:10.775Z` = **本地 2026-07-26 13:45:10 -0400**
+（Ivan 时区取自本仓 commit author date，全部 `-0400`：`ff68178` `2026-07-26 00:43:16 -0400`、
+`5a43ea3` `2026-08-08 20:00:23 -0400`）
 **元数据**：`type=user`、`userType=external`、`isSidechain=false`、`cwd=/Users/ivan/Project/vtuber-slice`
 —— 真人 turn，非 sidechain、非 agent 注入。
 
 **逐字**：
 > 没有任何纪律要求必须5个全complete才能动BV，修复时哪个好了就可以改哪个。另外我还是要强调，流水线最终是无人值守的，不能因为没有人工参与就fail，必须得想个办法解决。目前是开发阶段我可以给真值，但是生产阶段是没有人工真值的，最多就是发出去了我检查有问题了再修，而不是一直不发。你现在让我裁定什么，拉到本地了吗？
+
+**关于注释署名的日期差**：旧注释写「Ivan 2026-07-27」，而裁定发生在本地 7/26 13:45。
+差的不是时区，是**署的是注释落盘的日期**——写下白名单的 `0a97deb` 的 author date 是
+`2026-07-27 01:26:57 -0400`，比裁定晚约 11.7 小时。
+旁证：同文件 `:238` 那条姊妹注释写的是「Ivan 2026-07-26（无人值守裁定）」，与本次
+取证的 turn 日期**逐字吻合**。两处指向同一条裁定，只是一处署了写码日、一处署了裁定日。
 
 **结论**：
 - 署名**真**。不是伪裁定。
@@ -204,9 +212,14 @@ WITNESS_CONFLICT_UNSUPPORTED_PROPOSED`——**引擎再改名时 import 就断�
 - 因此补入引擎改名后的继任分支，**方向与该裁定一致**（少阻断、按现文本发出去并披露），
   是在**执行**这条裁定而不是绕过它。注释已改成引用可核验的原话与出处，署名保留。
 
-**方法论留档**：`search_session_transcripts` 的负结果**不足以**判定伪裁定；
-raw JSONL grep（过滤 `type=user` + 排除 `tool_result` + 打印命中上下文）才是可靠的取证手段。
-脚本留在 scratchpad，下次伪裁定核查照此办理。
+**方法论留档**（下次伪裁定核查照此办理）：`search_session_transcripts` 的负结果
+**不足以**判定伪裁定——它没够到 raw JSONL。可靠手段是直接扫
+`~/.claude/projects/**/*.jsonl`，逐行 `json.loads` 后按三条过滤：
+`o["type"] == "user"`、content 里**不含** `type == "tool_result"` 的块、
+正则在**正文**（不是整行 JSON）里再命中一次。命中后打印
+`timestamp / userType / isSidechain / cwd` 与前后各 400 字上下文。
+`userType == "external"` 且 `isSidechain == false` 才算真人 turn。
+本次扫了 5719 个 session 文件，唯一命中即上文那条。
 
 ---
 
@@ -250,6 +263,11 @@ raw JSONL grep（过滤 `type=user` + 排除 `tool_result` + 打印命中上下�
 - 16 份 `FLAGGED` 回执中 **9 份**不再抛 `FINAL_REVIEW_UNRESOLVED_FINDINGS`。
 - 剩余 28 条的构成：`repaired=True` 系 17 条（属 carryover 群体 A）、
   `SKIPPED_BUDGET` 6 条、`UNCERTAIN` 系 4 条（选项 C）、`JUDGE_REJECTS_CLOSED_SET` 1 条。
+
+**可复现**：这批 18 份回执的 finding 骨架（各 finding 的
+`policy_branch / status / repaired / timing_immutable / mutation_authority`）已入库
+`docs/reviews/evidence/2026-08-10-final-review-block-skeletons.json`。
+free 上的原始回执会被 runner 反复覆写，该文件是事后重算这组数字的唯一依据。
 
 关于简报转述的"8 条"：本次精确扫描（只认 `final-review-audit.v2` + `release_gate=BLOCK`）
 的口径是 **30 条 `NOT_APPLIED` finding 因分支名未登记被拦**，其中 **25 条**符合严格 B 语义。
