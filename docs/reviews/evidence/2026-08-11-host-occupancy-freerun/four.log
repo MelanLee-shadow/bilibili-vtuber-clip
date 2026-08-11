@@ -1,0 +1,21 @@
+enrollment: {"profile_id": "lidousha-campp-v1", "schema_version": "lidousha-voiceprint-profile.v1", "prototype_count": 3, "total_duration_ms": 167690, "prototypes": [{"id": "lidousha-1", "sha256": "d54a637d520df906a4a17728f2112ca3819b6afe43e2e038e8d6db52c094105f", "duration_ms": 60001}, {"id": "lidousha-2", "sha256": "8fc095fe8558d218fadea7f6273ee5296f85662164aa125aae68eb9381ce7ef3", "duration_ms": 47690}, {"id": "lidousha-3", "sha256": "d257b7aef63f022772fbacc61d35954a65b4727b29f062edb0b398531b95c5a2", "duration_ms": 59999}], "pro_recommended_prototype_range": [3, 5], "pro_recommended_clip_range": [6, 12], "pro_recommended_total_seconds": [60, 120]}
+2026-08-11 01:15:16,191 - modelscope - INFO - initiate model from /opt/bilive/autoslice/models/campp
+2026-08-11 01:15:16,192 - modelscope - INFO - initiate model from location /opt/bilive/autoslice/models/campp.
+2026-08-11 01:15:16,192 - modelscope - INFO - initialize model from /opt/bilive/autoslice/models/campp
+2026-08-11 01:15:16,195 - modelscope - INFO - cuda is not available, using cpu instead.
+/opt/bilive/autoslice/venv-diar/lib/python3.11/site-packages/modelscope/models/audio/sv/DTDNN.py:201: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  torch.load(
+2026-08-11 01:15:16,476 - modelscope - WARNING - No preprocessor field found in cfg.
+2026-08-11 01:15:16,477 - modelscope - WARNING - No val key and type key found in preprocessor domain of configuration.json file.
+2026-08-11 01:15:16,477 - modelscope - WARNING - Cannot find available config to build preprocessor at mode inference, current config: {'model_dir': '/opt/bilive/autoslice/models/campp'}. trying to build by task and model information.
+2026-08-11 01:15:16,477 - modelscope - INFO - No preprocessor key ('cam++-sv', 'speaker-verification') found in PREPROCESSOR_MAP, skip building preprocessor. If the pipeline runs normally, please ignore this log.
+2026-08-11 01:15:16,477 - modelscope - INFO - cuda is not available, using cpu instead.
+model_load_seconds=16.61
+[W811 01:15:25.784064601 NNPACK.cpp:61] Could not initialize NNPACK! Reason: Unsupported hardware.
+segment 22966160_20260807-21-07-39 done in 75.0s
+segment 22966160_20260807-22-37-50 done in 50.4s
+COST {"wall_seconds": 125.41, "model_load_seconds": 16.61, "ffmpeg_extract_seconds": 36.25, "campp_score_seconds": 88.86, "similarity_calls": 783, "candidate_count": 4, "candidate_audio_seconds": 386.1}
+auto_210739_727_840	MULTI_VERIFIED	host_share=0.0426	band=trace	cov=0.9126	unk=0.0874	other_run=11000	attr=VERIFIED_HOST_MINOR	['SUSTAINED_NON_HOST_SPEECH']
+auto_210739_1695_1804	UNKNOWN	host_share=0.3968	band=mixed	cov=0.7079	unk=0.2921	other_run=12000	attr=UNVERIFIED	['ATTRIBUTION_GATE_FAILED_CLASSIFIED_COVERAGE', 'ATTRIBUTION_GATE_FAILED_UNKNOWN_SHARE']
+auto_223750_578_654	UNKNOWN	host_share=0.7308	band=dominant	cov=0.5778	unk=0.4222	other_run=4000	attr=UNVERIFIED	['ATTRIBUTION_GATE_FAILED_CLASSIFIED_COVERAGE', 'ATTRIBUTION_GATE_FAILED_UNKNOWN_SHARE']
+auto_223750_734_822	MULTI_VERIFIED	host_share=0.0	band=trace	cov=0.9054	unk=0.0946	other_run=9000	attr=VERIFIED_HOST_MINOR	['SUSTAINED_NON_HOST_SPEECH']

@@ -31,8 +31,10 @@ OR 也是错的**。正确形态是"语义路径 OR"——
 
 ## `attribution_status`：稳定接口，不在本模块判定
 
-``VERIFIED_SOLO``（单人直播）/ ``VERIFIED_HOST_DOMINANT``（已分离且主播为主体）
-可以继续算分；``UNVERIFIED`` **停泊转人工审阅**（Ivan 第 3 条），不是扣分、不是猜。
+``VERIFIED_SOLO``（单人直播）/ ``VERIFIED_HOST_DOMINANT``（已分离且主播为主体）/
+``VERIFIED_HOST_MINOR``（已分离但主播不是主体）可以继续算分——**归属已确定就该算分**，
+「主角不是她」要靠 centrality 看着 ``[其他]`` 标签自然给低分，不靠伪装成存疑；
+``UNVERIFIED`` **停泊转人工审阅**（Ivan 第 3 条），不是扣分、不是猜。
 停泊复用既有机制 ``speaker_manual_review``（``speaker_review_required`` /
 ``speaker_evidence_insufficient`` 天然不在 ``DELIVERED_TALK_STATUSES`` 里），
 本模块不新造平行状态。
@@ -75,11 +77,20 @@ RUBRIC_VERSION = f"{_CHANNEL_PROFILE.profile_id}-scorecard-rubric.v1"
 # 归属状态（本模块只消费，不判定）。
 ATTRIBUTION_VERIFIED_SOLO = "VERIFIED_SOLO"
 ATTRIBUTION_VERIFIED_HOST_DOMINANT = "VERIFIED_HOST_DOMINANT"
+# 2026-08-10 候选级占比检测（``host_occupancy.py``）落地时补的第四态：
+# **已分离，但主播不是主体**。原来的三态词汇没有它的名字，而两个替代都是错的：
+# 叫 ``VERIFIED_HOST_DOMINANT`` 是事实错误（Ivan 盲审对两条候选的原话正是
+# 「这里的主要发言人不是李豆沙」），叫 ``UNVERIFIED`` 会把一条归属**已经确定**
+# 的候选送去人工，既淹没人工队列（Pro §5）又违反 Ivan「最好是能够自然给出低分，
+# 而不是强制压低」。纯加性：``passed = status != UNVERIFIED`` 一字未改，既有
+# 两个状态的行为逐字不变，停泊仍然只留给 ``UNVERIFIED``。
+ATTRIBUTION_VERIFIED_HOST_MINOR = "VERIFIED_HOST_MINOR"
 ATTRIBUTION_UNVERIFIED = "UNVERIFIED"
 ATTRIBUTION_STATUSES = frozenset(
     {
         ATTRIBUTION_VERIFIED_SOLO,
         ATTRIBUTION_VERIFIED_HOST_DOMINANT,
+        ATTRIBUTION_VERIFIED_HOST_MINOR,
         ATTRIBUTION_UNVERIFIED,
     }
 )
