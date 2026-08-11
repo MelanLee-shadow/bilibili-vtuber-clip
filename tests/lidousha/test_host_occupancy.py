@@ -285,6 +285,75 @@ def test_unknown_occupancy_state_is_rejected() -> None:
 
 
 # --------------------------------------------------------------------------
+# 标签按时间对齐到现有 ASR（centrality rubric 唯一被允许的身份来源）
+# --------------------------------------------------------------------------
+
+
+def _labelled(pattern: str):
+    return _windows(pattern)
+
+
+def test_cue_labels_follow_time_overlap_only() -> None:
+    observations = _labelled("HHHOOO")
+    cues = [
+        {"cue_id": "a", "start_ms": 0, "end_ms": 3_000},
+        {"cue_id": "b", "start_ms": 4_000, "end_ms": 7_000},
+    ]
+    labels = {row["cue_id"]: row["speaker_label"] for row in ho.label_cues(cues, observations)}
+    assert labels == {"a": ho.CUE_LABEL_HOST, "b": ho.CUE_LABEL_OTHER}
+
+
+def test_uncovered_cue_is_uncertain_not_nearest_neighbour() -> None:
+    """覆盖不足不许"就近取一个"——rubric 明文禁止自行认定未标注话语。"""
+
+    rows = ho.label_cues(
+        [{"cue_id": "z", "start_ms": 500_000, "end_ms": 502_000}], _labelled("HHHH")
+    )
+    assert rows[0]["speaker_label"] == ho.CUE_LABEL_UNCERTAIN
+    assert rows[0]["overlap_share"] == 0.0
+
+
+def test_partially_covered_cue_is_uncertain() -> None:
+    rows = ho.label_cues(
+        [{"cue_id": "p", "start_ms": 0, "end_ms": 10_000}], _labelled("HH")
+    )
+    assert rows[0]["overlap_share"] < ho.CUE_LABEL_MIN_OVERLAP_SHARE
+    assert rows[0]["speaker_label"] == ho.CUE_LABEL_UNCERTAIN
+
+
+def test_tied_coverage_is_uncertain_not_alphabetical() -> None:
+    """平票不许靠标签名的字典序决定归属。"""
+
+    observations = [
+        ho.WindowObservation(start_ms=0, end_ms=2_000, label=ho.LABEL_HOST),
+        ho.WindowObservation(start_ms=2_000, end_ms=4_000, label=ho.LABEL_OTHER),
+    ]
+    rows = ho.label_cues([{"cue_id": "t", "start_ms": 0, "end_ms": 4_000}], observations)
+    assert rows[0]["speaker_label"] == ho.CUE_LABEL_UNCERTAIN
+
+
+def test_unknown_windows_never_produce_a_speaker_label() -> None:
+    rows = ho.label_cues([{"cue_id": "u", "start_ms": 0, "end_ms": 3_000}], _labelled("UUU"))
+    assert rows[0]["speaker_label"] == ho.CUE_LABEL_UNCERTAIN
+
+
+def test_key_moment_with_uncertain_speaker_blocks_scoring() -> None:
+    """rubric 规则 4：关键落点是 [存疑] → 不得输出 0–4 分。"""
+
+    labeled = ho.label_cues(
+        [
+            {"cue_id": "setup", "start_ms": 0, "end_ms": 3_000},
+            {"cue_id": "payoff", "start_ms": 500_000, "end_ms": 502_000},
+        ],
+        _labelled("HHHH"),
+    )
+    assert ho.key_moments_are_attributed(labeled, ["setup"]) is True
+    assert ho.key_moments_are_attributed(labeled, ["setup", "payoff"]) is False
+    assert ho.key_moments_are_attributed(labeled, []) is False
+    assert ho.key_moments_are_attributed(labeled, ["absent"]) is False
+
+
+# --------------------------------------------------------------------------
 # 双阈值：重叠带全部 abstain
 # --------------------------------------------------------------------------
 
@@ -360,9 +429,13 @@ def test_window_grid_is_globally_anchored_not_candidate_anchored() -> None:
 
     left = set(ho.grid_windows(100_000, 140_000))
     right = set(ho.grid_windows(100_500, 140_000))
-    shared = left & right
-    assert shared
+    # 错位 500ms 的跨度不许把栅格也挪 500ms：窗口起点是**绝对**栅格点，于是
+    # 错位跨度的窗口是对齐跨度窗口的真子集，共用的那些逐字节相同。
+    assert right < left
+    assert min(start for start, _ in right) == 101_000
+    assert min(start for start, _ in left) == 100_000
     assert all(start % ho.HOP_MS == ho.GRID_ANCHOR_MS for start, _ in left | right)
+    assert all(start >= 100_500 for start, _ in right)
 
 
 def test_partial_window_is_not_zero_padded() -> None:

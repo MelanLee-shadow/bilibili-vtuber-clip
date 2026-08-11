@@ -656,6 +656,76 @@ def map_attribution_status(occupancy: Mapping[str, object]) -> str:
     return ATTRIBUTION_VERIFIED_HOST_MINOR
 
 
+CUE_LABEL_HOST = f"[{CHANNEL_PROFILE.host_speaker_label}]"
+CUE_LABEL_OTHER = "[其他]"
+CUE_LABEL_UNCERTAIN = "[存疑]"
+# 一条 cue 要被判给某个说话人，该说话人的窗口必须覆盖这条 cue 的多数时长。
+CUE_LABEL_MIN_OVERLAP_SHARE = 0.5
+
+
+def label_cues(
+    cues: Sequence[Mapping[str, object]], observations: Sequence[WindowObservation]
+) -> list[dict[str, object]]:
+    """把逐窗标签按时间交叠贴到现有 ASR 行上（Pro §2 末「输出给 LLM」）。
+
+    这是 centrality rubric 唯一被允许的身份来源：rubric 明文「不得根据措辞、语气、
+    人物自称或上下文自行把未标注话语认作李豆沙」「『我』『我们』绝不能用于推断
+    说话人身份」。所以这里**只按时间**贴标签，一个字的文本都不看。
+
+    覆盖不足 / 主导标签不明确 → ``[存疑]``，不是"就近取一个"。
+    """
+
+    results: list[dict[str, object]] = []
+    for cue in cues:
+        start = int(cue["start_ms"])  # type: ignore[call-overload]
+        end = int(cue["end_ms"])  # type: ignore[call-overload]
+        duration = max(0, end - start)
+        overlaps: dict[str, int] = {LABEL_HOST: 0, LABEL_OTHER: 0}
+        for observation in observations:
+            if observation.label not in overlaps:
+                continue
+            covered = min(end, observation.end_ms) - max(start, observation.start_ms)
+            if covered > 0:
+                overlaps[observation.label] += covered
+        winner, covered_ms = max(overlaps.items(), key=lambda item: (item[1], item[0]))
+        runner_up = min(overlaps.values())
+        share = covered_ms / duration if duration else 0.0
+        # 覆盖不足、或两个说话人覆盖打平（谁主导不明确）→ 存疑。平票不许靠
+        # 名字的字典序决定归属。
+        if share < CUE_LABEL_MIN_OVERLAP_SHARE or covered_ms <= runner_up:
+            label = CUE_LABEL_UNCERTAIN
+        else:
+            label = CUE_LABEL_HOST if winner == LABEL_HOST else CUE_LABEL_OTHER
+        results.append(
+            {
+                "cue_id": cue.get("cue_id"),
+                "start_ms": start,
+                "end_ms": end,
+                "speaker_label": label,
+                "overlap_share": round(min(1.0, share), 4),
+            }
+        )
+    return results
+
+
+def key_moments_are_attributed(
+    labeled_cues: Sequence[Mapping[str, object]], key_cue_ids: Sequence[object]
+) -> bool:
+    """rubric 规则 4：关键推进/落点的说话人是 ``[存疑]`` → 不得输出 0–4 分。"""
+
+    wanted = {value for value in key_cue_ids}
+    if not wanted:
+        return False
+    seen = {
+        cue["cue_id"]: cue["speaker_label"]
+        for cue in labeled_cues
+        if cue.get("cue_id") in wanted
+    }
+    if set(seen) != wanted:
+        return False
+    return all(label != CUE_LABEL_UNCERTAIN for label in seen.values())
+
+
 def requires_manual_review(occupancy: Mapping[str, object]) -> bool:
     return map_attribution_status(occupancy) == ATTRIBUTION_UNVERIFIED
 
