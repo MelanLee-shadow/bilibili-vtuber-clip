@@ -85,7 +85,15 @@ FUNCTION_DEBT_LEDGER = {
     # 2026-08-08 +15：Ivan 2026-08-08 优化①边界重放 + wsl 重产 BLOCK
     # 实证——loader、source/final frozen verdict 与 carry disclosure 接线；
     # hash/输入锚不符仍走原 fresh reviewer。
-    ("src/autoslice/producer_text_pipeline.py", "run_text_pipeline"): 338,
+    # 2026-08-10 +9：终审结转硬退出侧车（Ivan 2026-08-10 15:05Z 交棒清单第 7 项
+    # 逐字「硬退出丢 carryover(超时/崩溃跳过侧车落盘)」，docs/HANDOFF.md:80）——
+    # review_exact_final_srt 把每个终审 pass 的确证行「算出来就写」，不再等整个
+    # 终审门跑完最多五轮自愈；SIGKILL(runner subprocess timeout=5400)救不了 pass
+    # 内部，但跨 pass 与非 SystemExit 异常这两条路从此不丢。取舍谓词、原子落盘、
+    # 完整性标记、封存/在途两态的读法全在 src/autoslice/final_review_carryover.py，
+    # 本文件只有一处薄调用点（赋值 + 调用 + 出处注释）。
+    # 测试 tests/test_final_review_carryover_hard_exit.py。
+    ("src/autoslice/producer_text_pipeline.py", "run_text_pipeline"): 347,
     # 2026-07-31 +6：full-text contract 穿透形参与调用（Ivan 07-31 `/goal`
     # 「直接按照 fable 的 advise 继续，直至修复所有问题」授权；Fable 裁定 4
     # 点名「contract 不穿透 = 静默把唯一合法全文通道杀死」，必须补）。
@@ -302,7 +310,12 @@ MODULE_DEBT_LEDGER = {
     # src/autoslice/provider_failure.auditor_unavailable_discovery（同时把
     # provider 保真证据挂上去），三处调用点各省一行。
     # 2026-08-10 合并 ft-a8600994：按合并后实测行数记账,非凭空抬降。
-    "src/autoslice/producer_text_pipeline.py": 2_118,
+    # 2026-08-10 +10：终审结转硬退出侧车（Ivan 2026-08-10 15:05Z 交棒清单第 7 项
+    # 逐字「硬退出丢 carryover(超时/崩溃跳过侧车落盘)」，docs/HANDOFF.md:80）——
+    # +9 是 run_text_pipeline 里的薄调用点（见函数账本同日条目），+1 是 import。
+    # 本体（谓词、原子落盘、完整性标记、封存/在途两态）全在
+    # src/autoslice/final_review_carryover.py。
+    "src/autoslice/producer_text_pipeline.py": 2_128,
     # 2026-07-31 +12：contract 穿透接线（形参 + 4 个调用点）。
     # 2026-07-31 再 +17：封面路由 P1——witness 从「路由法官」降回「置信输入」，
     # 删掉无条件放行、几何否决移到关系分支之后、置信改为 几何 OR witness bbox。
