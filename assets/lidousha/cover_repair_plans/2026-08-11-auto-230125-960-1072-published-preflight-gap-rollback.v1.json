@@ -1,0 +1,61 @@
+{
+  "schema_version": "reviewed-cover-invalidation-rollback-plan.v1",
+  "purpose": "ROLLBACK_LOCAL_INVALIDATION_AFTER_PUBLISHED_PREFLIGHT_GAP_NO_PUBLIC_EDIT",
+  "date": "2026-08-08",
+  "candidate_id": "auto_230125_960_1072",
+  "authority": "Ivan 2026-08-11 asked to repair the production fixes before advancing reviewable products. The attempted generic cover repair was correctly refused because this candidate is already published; this plan only restores the pre-attempt local state and active documents and never edits the BV.",
+  "incident": "repair_reviewed_covers committed local invalidation before the late cover_maintenance publication-registry refusal; online video/cover bytes were never changed",
+  "upload_enabled": false,
+  "public_edit_enabled": false,
+  "publication_registry": {
+    "path": "/opt/bilive/autoslice/repo/assets/lidousha/publication_registry.v1.json",
+    "sha256": "58770c2500398841133e127e649afb63af5e89c15f70d1daafad08e87030d0d6",
+    "bvid": "BV1Bau16nEyq"
+  },
+  "invalidation_plan": {
+    "path": "/opt/bilive/autoslice/repo/assets/lidousha/cover_repair_plans/2026-08-11-auto-230125-960-1072-v2-proof.v1.json",
+    "sha256": "793b1aec46642b65ef54573cf1e3f05ec2600c6cfae5571fce8885aa7bad5826"
+  },
+  "invalidation_transaction": {
+    "path": "/opt/bilive/autoslice/out/2026-08-08/reviewed_cover_repairs/793b1aec46642b65/invalidation-transaction.json",
+    "sha256": "fab174303d810f2d9a12de6ba7c638b83749138d8b85854cc3966261a4fe43f2"
+  },
+  "state": {
+    "path": "/opt/bilive/autoslice/state/2026-08-08.json",
+    "expected_current_file_sha256": "b1f7565c4328983fae3af87669fa7ded39e15d78428cb293b5b0103a738c42e9",
+    "expected_current_record_sha256": "b164f2de77ce6c754da5e62972c7bcb03d8dc65519f89f11c69e961582ad5c0f",
+    "preimage_path": "/opt/bilive/autoslice/state/2026-08-08.json.bak",
+    "preimage_file_sha256": "b7d97caf6e1e6b60b26b193e27ed3bbb616a4da890a6fb1fb5b24b25be4223c2",
+    "preimage_record_sha256": "069e014baa2d162f80c5af2caf3d03de0031aed2cfd934b503a95242e0be6f1c"
+  },
+  "documents": [
+    {
+      "kind": "record",
+      "target": "/opt/bilive/autoslice/repo/lidousha/2026-08-08/小李解释偶像曲里那句“请感受穿越屏幕.record.json",
+      "expected_invalidated_sha256": "b1f2e34444281328c389bd41f1d6a5c8719c7f4bd4196db9009400348c845a3e",
+      "original_expected_sha256": "e2e090303df03f9082eddf2a5e81d16141312c6b3741bd17504e444944c81f98",
+      "preimage_path": "/opt/bilive/autoslice/out/2026-08-08/auto_230125_960_1072/replacement_recuts/auto_230125_960_1072.recut.burned-final-speaker.record.json",
+      "recovery_preimage_sha256": "e2e090303df03f9082eddf2a5e81d16141312c6b3741bd17504e444944c81f98",
+      "preimage_kind": "EXACT_ORIGINAL_PREIMAGE"
+    },
+    {
+      "kind": "record",
+      "target": "/opt/bilive/autoslice/out/2026-08-08/auto_230125_960_1072/replacement_recuts/auto_230125_960_1072.record.json",
+      "expected_invalidated_sha256": "b1f2e34444281328c389bd41f1d6a5c8719c7f4bd4196db9009400348c845a3e",
+      "original_expected_sha256": "e2e090303df03f9082eddf2a5e81d16141312c6b3741bd17504e444944c81f98",
+      "preimage_path": "/opt/bilive/autoslice/out/2026-08-08/auto_230125_960_1072/replacement_recuts/auto_230125_960_1072.recut.burned-final-speaker.record.json",
+      "recovery_preimage_sha256": "e2e090303df03f9082eddf2a5e81d16141312c6b3741bd17504e444944c81f98",
+      "preimage_kind": "EXACT_ORIGINAL_PREIMAGE"
+    },
+    {
+      "kind": "publish",
+      "target": "/opt/bilive/autoslice/out/2026-08-08/auto_230125_960_1072/replacement_recuts/auto_230125_960_1072.recut.publish.json",
+      "expected_invalidated_sha256": "93416776a87dc8b1fb8b4bdf740c87c9fe9109abce7458b8de4550c5f3a8c046",
+      "original_expected_sha256": "a74a796326797949b737ec0df9a37ac3c5fabec1fa2a2c06d1aee7782e4b12bd",
+      "preimage_path": "/opt/bilive/autoslice/repo/lidousha/2026-08-08/小李解释偶像曲里那句“请感受穿越屏幕.publish.json",
+      "recovery_preimage_sha256": "d3af8728ff8836197b340d16dbefaa841f1451ce4069c27b3c3ee989d1e0fb21",
+      "preimage_kind": "SANCTIONED_ACTIVE_SIBLING",
+      "original_preimage_unavailable_reason": "The manifest-bound a74a7963 raw source-publish preimage is no longer present. The immutable record binds publish_draft_sha256 d3af8728, and applying the exact invalidation transform to this active delivery sibling reproduces committed target 93416776 byte-for-byte."
+    }
+  ]
+}

@@ -227,3 +227,95 @@ def test_checked_in_historical_cover_plans_cannot_be_executed(name):
         match="historical evidence only",
     ):
         reviewed.load_plan(path)
+
+
+def test_run_preflights_every_selected_candidate_before_state_or_transaction_mutation(
+    monkeypatch,
+):
+    date = "2026-08-08"
+    plan = {
+        "date": date,
+        "repair_candidates": [
+            {"candidate_id": "auto_b"},
+            {"candidate_id": "auto_a"},
+        ],
+        "invalidations": [{"candidate_id": "auto_a"}],
+    }
+    calls = []
+
+    monkeypatch.setattr(reviewed, "load_plan", lambda _path: (plan, "a" * 64))
+    monkeypatch.setattr(reviewed, "_assert_ledger", lambda _plan: None)
+
+    def publication_block(candidate_id, *, recording_date):
+        calls.append((candidate_id, recording_date))
+        return "published candidate" if candidate_id == "auto_a" else None
+
+    monkeypatch.setattr(
+        reviewed,
+        "cover_maintenance_block_reason",
+        publication_block,
+    )
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("publication preflight must run before state or transaction work")
+
+    for name in (
+        "read_state",
+        "pipeline_fingerprint",
+        "_prepare_transaction",
+        "_commit_transaction",
+        "write_state",
+        "write_reports",
+        "_atomic_write_json_file",
+        "repair_covers",
+    ):
+        monkeypatch.setattr(reviewed, name, forbidden)
+
+    with pytest.raises(
+        reviewed.ReviewedCoverRepairError,
+        match="publication preflight refused before invalidation",
+    ):
+        reviewed.run(Path("unused.json"))
+
+    assert calls == [("auto_a", date), ("auto_b", date)]
+
+
+def test_run_publication_preflight_includes_repair_only_candidates(monkeypatch):
+    date = "2026-08-08"
+    plan = {
+        "date": date,
+        "repair_candidates": [
+            {"candidate_id": "auto_a"},
+            {"candidate_id": "auto_b"},
+        ],
+        "invalidations": [{"candidate_id": "auto_a"}],
+    }
+    calls = []
+
+    monkeypatch.setattr(reviewed, "load_plan", lambda _path: (plan, "a" * 64))
+    monkeypatch.setattr(reviewed, "_assert_ledger", lambda _plan: None)
+
+    def publication_block(candidate_id, *, recording_date):
+        calls.append((candidate_id, recording_date))
+        return "held candidate" if candidate_id == "auto_b" else None
+
+    monkeypatch.setattr(
+        reviewed,
+        "cover_maintenance_block_reason",
+        publication_block,
+    )
+    monkeypatch.setattr(
+        reviewed,
+        "read_state",
+        lambda _date: (_ for _ in ()).throw(
+            AssertionError("repair-only candidate must block before state read")
+        ),
+    )
+
+    with pytest.raises(
+        reviewed.ReviewedCoverRepairError,
+        match="publication preflight refused before invalidation",
+    ):
+        reviewed.run(Path("unused.json"))
+
+    assert calls == [("auto_a", date), ("auto_b", date)]
