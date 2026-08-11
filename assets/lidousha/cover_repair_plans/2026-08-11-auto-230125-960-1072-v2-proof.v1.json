@@ -1,0 +1,48 @@
+{
+  "schema_version": "reviewed-cover-repair-plan.v1",
+  "date": "2026-08-08",
+  "authority": "Ivan 2026-08-11 explicitly prioritized solo clips that do not need speaker separation and asked to repair first, then advance reviewable production; preserve the existing title and rendered cover text while refreshing the package under current gates",
+  "upload_enabled": false,
+  "upload_ledger": {
+    "path": "/opt/bilive/autoslice/reports/upload_ledger.jsonl",
+    "sha256": "144d05f3c8ee097980fd158fa843d1c7a4c44b5cb29a3b8599dc7c6da4105337"
+  },
+  "repair_candidates": [
+    {
+      "candidate_id": "auto_230125_960_1072",
+      "expected_state_record_sha256": "069e014baa2d162f80c5af2caf3d03de0031aed2cfd934b503a95242e0be6f1c"
+    }
+  ],
+  "invalidations": [
+    {
+      "candidate_id": "auto_230125_960_1072",
+      "expected_title": "【李豆沙】小李解释偶像曲里那句“请感受穿越屏幕的热烈，再一次爱上我吧”",
+      "title": "【李豆沙】小李解释偶像曲里那句“请感受穿越屏幕的热烈，再一次爱上我吧”",
+      "expected_cover_text": "小李解释偶像曲\n再一次爱上我吧",
+      "require_rendered_text_exact": true,
+      "cover_diversity_slot": 1,
+      "media": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-08-08/小李解释偶像曲里那句“请感受穿越屏幕.mp4",
+        "sha256": "e6577c25464f5cba73094a527c28cf1d85e3ac8844b03e7c3b2b113b314473b5"
+      },
+      "cover": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-08-08/小李解释偶像曲里那句“请感受穿越屏幕.cover.png",
+        "sha256": "f8f68a504dbcd0acbffd5d9af0ca16d3fae0df30f6ebcecdd6bf3339b02b0616"
+      },
+      "documents": [
+        {
+          "path": "/opt/bilive/autoslice/repo/lidousha/2026-08-08/小李解释偶像曲里那句“请感受穿越屏幕.record.json",
+          "sha256": "e2e090303df03f9082eddf2a5e81d16141312c6b3741bd17504e444944c81f98"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-08-08/auto_230125_960_1072/replacement_recuts/auto_230125_960_1072.record.json",
+          "sha256": "e2e090303df03f9082eddf2a5e81d16141312c6b3741bd17504e444944c81f98"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-08-08/auto_230125_960_1072/replacement_recuts/auto_230125_960_1072.recut.publish.json",
+          "sha256": "a74a796326797949b737ec0df9a37ac3c5fabec1fa2a2c06d1aee7782e4b12bd"
+        }
+      ]
+    }
+  ]
+}

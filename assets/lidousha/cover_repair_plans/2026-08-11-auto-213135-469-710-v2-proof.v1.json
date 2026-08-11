@@ -1,0 +1,48 @@
+{
+  "schema_version": "reviewed-cover-repair-plan.v1",
+  "date": "2026-08-08",
+  "authority": "Ivan 2026-08-11 explicitly prioritized solo clips that do not need speaker separation and asked to repair first, then advance reviewable production; preserve the existing title and rendered cover text while refreshing the package under current gates",
+  "upload_enabled": false,
+  "upload_ledger": {
+    "path": "/opt/bilive/autoslice/reports/upload_ledger.jsonl",
+    "sha256": "144d05f3c8ee097980fd158fa843d1c7a4c44b5cb29a3b8599dc7c6da4105337"
+  },
+  "repair_candidates": [
+    {
+      "candidate_id": "auto_213135_469_710",
+      "expected_state_record_sha256": "0ce6b4da073618388c04c20733e5419a254dc523c1b064e2f2ad6f795bdbec43"
+    }
+  ],
+  "invalidations": [
+    {
+      "candidate_id": "auto_213135_469_710",
+      "expected_title": "【李豆沙】第一次3D Live紧张到手抖，高铁上想到自己好像正走在实现五年前舞台愿望的路上",
+      "title": "【李豆沙】第一次3D Live紧张到手抖，高铁上想到自己好像正走在实现五年前舞台愿望的路上",
+      "expected_cover_text": "紧张到手抖\n第一次3D Live",
+      "require_rendered_text_exact": true,
+      "cover_diversity_slot": 2,
+      "media": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-08-08/第一次3DLive前她紧张得手抖，却.mp4",
+        "sha256": "1614366924689f1e9f56ac6ae90c1e682edc78536ae7e1148a7273dac10df7a2"
+      },
+      "cover": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-08-08/第一次3DLive前她紧张得手抖，却.cover.png",
+        "sha256": "4a90d1099e7cd485c4e55cc02fe8d766e04181a2694eaacabaa777d4fab1f30d"
+      },
+      "documents": [
+        {
+          "path": "/opt/bilive/autoslice/repo/lidousha/2026-08-08/第一次3DLive前她紧张得手抖，却.record.json",
+          "sha256": "d8525db05e02ba9fc047006c4b4cab6ae285d47f2979d65f2e0e7db396ea86ec"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-08-08/auto_213135_469_710/replacement_recuts/auto_213135_469_710.record.json",
+          "sha256": "d8525db05e02ba9fc047006c4b4cab6ae285d47f2979d65f2e0e7db396ea86ec"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-08-08/auto_213135_469_710/replacement_recuts/auto_213135_469_710.recut.publish.json",
+          "sha256": "efff27fa824721cea51fc21cefaaa2de26adab78f4b7ffd29bcfa83e879e5c39"
+        }
+      ]
+    }
+  ]
+}
