@@ -203,7 +203,10 @@ def test_embedding_similarity_embeds_each_wav_once_and_persists(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import math as _math
-    import src.autoslice.speaker_finalizer as speaker_finalizer
+    # The embed-once primitives live in campp_embed_once so the fail-closed
+    # host-vocal prover can share them without an import cycle; speaker_finalizer
+    # only re-exports them.
+    import src.autoslice.campp_embed_once as campp_embed_once
 
     unit = {
         "a": _campp_vector(1.0),
@@ -222,13 +225,13 @@ def test_embedding_similarity_embeds_each_wav_once_and_persists(
     work_dir = tmp_path / "work"
     work_dir.mkdir()
     writes: list[tuple[Path, int]] = []
-    real_atomic_write = speaker_finalizer.atomic_write_text
+    real_atomic_write = campp_embed_once._atomic_write_text
 
     def counted_write(path: Path, value: str) -> None:
         writes.append((path, len(value.encode("utf-8"))))
         real_atomic_write(path, value)
 
-    monkeypatch.setattr(speaker_finalizer, "atomic_write_text", counted_write)
+    monkeypatch.setattr(campp_embed_once, "_atomic_write_text", counted_write)
     similarity = _build_embedding_similarity(
         verifier=verifier, model_hash="model-x", work_dir=work_dir
     )

@@ -384,7 +384,12 @@ FOCUSED_MODULE_LINE_BUDGETS = {
     #   +14 _write_ready_speaker_delivery 的 guess 参数/状态分叉与 CLI 开关。
     # 梯子语义、提名算法、逐 cue 证据缺口披露、收货门判据全在新模块
     # src/autoslice/speaker_guess.py。预算贴实际值。测试 tests/test_speaker_guess.py。
-    Path("src/autoslice/speaker_finalizer.py"): 1_856,
+    # 2026-08-10 −256：CAM++ 的 embed-once 原语（cosine/嵌入校验/内容寻址缓存
+    # 读写/绑定 sha/相似度打分）抽到 src/autoslice/campp_embed_once.py，因为
+    # host-vocal 出证也要用它，而 speaker_finalizer 反过来 import
+    # host_vocal_proof——留在本文件就是 import 环。本文件只保留 re-export，
+    # 一行实活没搬回来。按棘轮规矩收紧到实测值锁定收益。
+    Path("src/autoslice/speaker_finalizer.py"): 1_600,
     # Extracted domains retain a small amount of headroom for real behavior,
     # while failing long before another 3k-4k line domain bus can form.
     # 2026-07-31：+3 来自 4666765（转录实体改由 CPA 路由）。预算贴实际值。
