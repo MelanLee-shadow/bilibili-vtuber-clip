@@ -2222,10 +2222,10 @@ def _stage_record(
     title_llm = None
     if not given_title:
         title_llm = build_llm_call(
-            LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' high", timeout_seconds=180.0)
+            LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' high", timeout_seconds=600.0)
         )
     art_direction_llm = None if options.reuse_cover else build_llm_call(
-        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-luna gpt-5.5 gpt-5.4' medium", timeout_seconds=180.0)
+        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-luna gpt-5.5 gpt-5.4' medium", timeout_seconds=600.0)
     )
     source_fact_llm = build_llm_call(
         LlmConfig(
@@ -2234,7 +2234,7 @@ def _stage_record(
                 "bash scripts/llm_via_cpa.sh {prompt_file} "
                 "{completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' high"
             ),
-            timeout_seconds=180.0,
+            timeout_seconds=600.0,
         )
     )
     final_title_cues = [

@@ -939,6 +939,103 @@ def test_stage_record_uses_post_source_fact_story_contract_everywhere(
     assert "cover_output_audits" not in captured["pre_review_contract"]
 
 
+def test_stage_record_gives_every_cpa_bridge_call_its_full_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subtitle = tmp_path / "candidate.recut.srt"
+    subtitle.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n完整剧情\n",
+        encoding="utf-8",
+    )
+    media = tmp_path / "candidate.recut.mp4"
+    media.write_bytes(b"media")
+    recut = finalization.FinalRecutArtifacts(
+        recut_dir=tmp_path,
+        media_path=media,
+        subtitle_path=subtitle,
+        text_manifest_path=None,
+        text_manifest=None,
+    )
+    captured_configs: list[finalization.LlmConfig] = []
+
+    def capture_llm_config(
+        config: finalization.LlmConfig,
+    ):
+        captured_configs.append(config)
+
+        def no_network_call(_prompt: str) -> str:
+            raise AssertionError("captured LLM callable must not run")
+
+        return no_network_call
+
+    monkeypatch.setattr(
+        finalization, "load_candidate_cover_reference", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(finalization, "build_llm_call", capture_llm_config)
+
+    def stage(record: dict, **_kwargs) -> dict:
+        record["publish_staging"] = {
+            "title": "完整剧情",
+            "title_authority_status": "READY",
+            "cover_status": "SKIPPED",
+        }
+        return record
+
+    def unused(*_args, **_kwargs):
+        raise AssertionError("unrelated adapter called")
+
+    adapters = finalization.ProducerFinalizationAdapters(
+        accurate_recut_command=unused,
+        run_command=unused,
+        write_source_range_srt=unused,
+        apply_text_override_document=unused,
+        run_speaker_finalization=unused,
+        burn_preview_subtitles=unused,
+        stage_publish_draft=stage,
+        generate_upload_tags=lambda *_a, **_k: {"status": "READY"},
+        delivery_root=unused,
+        run_exact_final_review=unused,
+    )
+
+    finalization._stage_record(
+        options=finalization.ProducerFinalizationOptions(
+            spec=tmp_path / "spec.json",
+            substrate="source",
+            correct="reviewed",
+            speaker_mode="off",
+            speaker_overrides=None,
+            speaker_source_session_anchors=None,
+            speaker_mixed_overlap_evidence=None,
+            speaker_python=tmp_path / "python",
+            reuse_cover=False,
+        ),
+        spec={
+            "date": "2026-08-11",
+            "pieces": [],
+            "selection_hook": "完整剧情",
+            "selection_scorecard": None,
+            "classification": "talk",
+        },
+        cid="candidate",
+        recut=recut,
+        record={"artifact_hashes": {}},
+        adapters=adapters,
+    )
+
+    assert len(captured_configs) == 3
+    assert all(
+        config.transport == "command"
+        and "scripts/llm_via_cpa.sh" in (config.command_template or "")
+        for config in captured_configs
+    )
+    assert [config.timeout_seconds for config in captured_configs] == [
+        600.0,
+        600.0,
+        600.0,
+    ]
+
+
 def test_cover_audit_rejects_pre_repair_selection_hook_binding(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
