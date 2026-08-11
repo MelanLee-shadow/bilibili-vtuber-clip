@@ -50,7 +50,7 @@ def _receipt() -> dict:
     return review
 
 
-def _package(tmp_path: Path) -> Path:
+def _package(tmp_path: Path, *, speaker_finalized: bool = False) -> Path:
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     stem = "手动闭环用例"
@@ -66,8 +66,34 @@ def _package(tmp_path: Path) -> Path:
         f"{stem}.srt",
         f"1\n00:00:00,000 --> 00:00:02,000\n{TRANSCRIPT}\n".encode("utf-8"),
     )
-    w(f"{stem}.final-sapphire72.ass", b"ass-bytes")
-    w(f"{stem}.chat-authority.json", b"{}")
+    text_srt_sha = "sha256:" + _sha(srt)
+    if speaker_finalized:
+        speaker_srt = w(
+            f"{stem}.speaker.srt",
+            (
+                "1\n00:00:00,000 --> 00:00:02,000\n"
+                f"[李豆沙] {TRANSCRIPT}\n"
+            ).encode("utf-8"),
+        )
+        speaker_ass = w(f"{stem}.speaker.ass", b"speaker-ass-bytes")
+        chat_authority_doc = {
+            "final_text_srt_sha256": text_srt_sha,
+            "final_speaker_srt_sha256": "sha256:" + _sha(speaker_srt),
+            "speaker_ass_path": str(speaker_ass),
+            "speaker_ass_sha256": "sha256:" + _sha(speaker_ass),
+        }
+    else:
+        w(f"{stem}.final-sapphire72.ass", b"ass-bytes")
+        chat_authority_doc = {
+            "final_text_srt_sha256": text_srt_sha,
+            "final_speaker_srt_sha256": text_srt_sha,
+            "speaker_ass_path": None,
+            "speaker_ass_sha256": None,
+        }
+    w(
+        f"{stem}.chat-authority.json",
+        json.dumps(chat_authority_doc, ensure_ascii=False).encode("utf-8"),
+    )
     w(f"{stem}.clip-context.json", json.dumps({"recording_date": "2026-08-02"}).encode())
     cover = w(f"{stem}.cover.png", b"cover-bytes")
     pre_overlay = w(f"{stem}.cover.pre-overlay.png", b"pre-overlay-bytes")
@@ -141,6 +167,37 @@ def test_manual_manifest_is_hash_bound_with_attestation(tmp_path: Path) -> None:
     assert item["video"] == "手动闭环用例.mp4"
     assert item["sha256"]["video"] == _sha(pkg / "手动闭环用例.mp4")
     assert item["cover_pre_overlay"] == "手动闭环用例.cover.pre-overlay.png"
+
+
+def test_manual_manifest_binds_real_speaker_artifacts(tmp_path: Path) -> None:
+    pkg = _package(tmp_path, speaker_finalized=True)
+    manifest = build_manual(pkg, operator="operator-a", note="说话人存疑转人工审阅")
+
+    item = manifest["items"][0]
+    assert item["ass_path"] == "手动闭环用例.speaker.ass"
+    assert item["speaker_srt"] == "手动闭环用例.speaker.srt"
+    assert item["speaker_srt"] != item["subtitle_srt"]
+    assert item["speaker_srt_sha256"] == _sha(
+        pkg / "手动闭环用例.speaker.srt"
+    )
+
+
+def test_manual_manifest_refuses_missing_speaker_ass(tmp_path: Path) -> None:
+    pkg = _package(tmp_path, speaker_finalized=True)
+    (pkg / "手动闭环用例.speaker.ass").unlink()
+
+    with pytest.raises(DailyManifestError, match="speaker.ass"):
+        build_manual(pkg, operator="operator-a", note="说话人存疑转人工审阅")
+
+
+def test_manual_manifest_refuses_invalid_chat_authority(tmp_path: Path) -> None:
+    pkg = _package(tmp_path)
+    next(pkg.glob("*.chat-authority.json")).write_text(
+        "{not-json", encoding="utf-8"
+    )
+
+    with pytest.raises(DailyManifestError, match="chat authority"):
+        build_manual(pkg, operator="operator-a", note="单人包进入人工审阅")
 
 
 def test_manual_manifest_requires_ready_cover(tmp_path: Path) -> None:

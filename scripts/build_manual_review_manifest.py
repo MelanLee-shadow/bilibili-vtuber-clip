@@ -12,7 +12,8 @@ manifest，谁裁定的、为什么，写清楚）。上传授权不因此扩大
 
 手动包的平铺命名（与 runner 的 <cid>.recut.* 不同）：
   <stem>.mp4（烧录成品）/ .publish.json / .record.json / .srt /
-  .final-sapphire72.ass / .chat-authority.json / .clip-context.json /
+  单人车道 .final-sapphire72.ass，或说话人车道 .speaker.srt +
+  .speaker.ass / .chat-authority.json / .clip-context.json /
   .cover.png + .cover.pre-overlay.png / .cover.ai-bg.png / .cover.title-mask.png
 """
 
@@ -33,6 +34,9 @@ from scripts.build_lidousha_daily_review_manifest import (  # noqa: E402
     _candidate_lane,
     _lane_manifest_contract_fields,
     _sha256,
+)
+from src.autoslice.review_package_ass_audit import (  # noqa: E402
+    uniform_host_fallback_declared,
 )
 
 
@@ -113,8 +117,24 @@ def build_manual(
     record = _need(package_root, f"{stem}.record.json")
     record_doc = json.loads(record.read_text(encoding="utf-8"))
     subtitle = _need(package_root, f"{stem}.srt")
-    ass = _need(package_root, f"{stem}.final-sapphire72.ass")
     chat_authority = _need(package_root, f"{stem}.chat-authority.json")
+    try:
+        chat_authority_doc = json.loads(
+            chat_authority.read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise DailyManifestError(
+            "package chat authority is unreadable or invalid"
+        ) from exc
+    uniform_fallback = uniform_host_fallback_declared(
+        record_doc, chat_authority_doc
+    )
+    if uniform_fallback:
+        ass = _need(package_root, f"{stem}.final-sapphire72.ass")
+        speaker_srt = subtitle
+    else:
+        ass = _need(package_root, f"{stem}.speaker.ass")
+        speaker_srt = _need(package_root, f"{stem}.speaker.srt")
     clip_context = _need(package_root, f"{stem}.clip-context.json")
     # manifest.date 是 auditor 对 clip-context 日期绑定的比对面：从包内
     # hash-bound 的 clip-context 原样取（不发明值），缺失即拒。
@@ -183,8 +203,8 @@ def build_manual(
         "clip_context": clip_context.name,
         "ass_path": ass.name,
         "ass_sha256": _sha256(ass),
-        "speaker_srt": subtitle.name,
-        "speaker_srt_sha256": _sha256(subtitle),
+        "speaker_srt": speaker_srt.name,
+        "speaker_srt_sha256": _sha256(speaker_srt),
         "sha256": {
             "subtitle_srt": _sha256(subtitle),
             "publish_json": _sha256(publish),
