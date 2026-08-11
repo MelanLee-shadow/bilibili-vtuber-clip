@@ -196,6 +196,7 @@ def _evidence_row_is_bound(
     *,
     final_transcript: str,
     clip_context_prompt: str,
+    speaker_transcript: str | None = None,
 ) -> bool:
     """Accept exact evidence while tolerating CPA citation-label formatting."""
 
@@ -207,6 +208,18 @@ def _evidence_row_is_bound(
     if source_label:
         quoted_text = source_label.group(1)
         return bool(_compact(quoted_text) and _compact(quoted_text) in _compact(final_transcript))
+    speaker_label = re.fullmatch(
+        rf"\s*{re.escape(SPEAKER_TRANSCRIPT_LABEL)}\s*:\s*(.+?)\s*",
+        value,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if speaker_label:
+        quoted_text = speaker_label.group(1)
+        return bool(
+            speaker_transcript
+            and _compact(quoted_text)
+            and _compact(quoted_text) in _compact(speaker_transcript)
+        )
     if re.match(
         r"\s*(structured_chat|same_clip_context)\s*:",
         value,
@@ -242,7 +255,15 @@ def _evidence_row_is_bound(
 
     compact_value = _compact(value)
     return bool(
-        compact_value and compact_value in _compact(final_transcript + "\n" + clip_context_prompt)
+        compact_value
+        and compact_value
+        in _compact(
+            final_transcript
+            + "\n"
+            + clip_context_prompt
+            + "\n"
+            + str(speaker_transcript or "")
+        )
     )
 
 
@@ -271,6 +292,7 @@ def _valid_changed_surface(
     after_surface: str,
     final_transcript: str,
     clip_context_prompt: str,
+    speaker_transcript: str | None = None,
 ) -> bool:
     if not isinstance(value, Mapping):
         return False
@@ -296,6 +318,7 @@ def _valid_changed_surface(
                 row,
                 final_transcript=final_transcript,
                 clip_context_prompt=clip_context_prompt,
+                speaker_transcript=speaker_transcript,
             )
             for row in evidence
         )
@@ -430,6 +453,7 @@ def _single_review(
                 ),
                 final_transcript=final_transcript,
                 clip_context_prompt=clip_context_prompt,
+                speaker_transcript=speaker_transcript,
             )
             for row in changes
             if isinstance(row, Mapping)

@@ -1,0 +1,88 @@
+{
+  "schema_version": "candidate-entity-surface-projection.v1",
+  "candidate_binding": {
+    "candidate_id": "auto_230125_1157_1229",
+    "reviewed_srt_sha256": "c29cc5aed6b52cca7618a88b083b9b46e86320db5595bcaa5a4ef4c57499ca7b",
+    "source_recording_basename": "22966160_20260808-23-01-25.mp4",
+    "source_sha256": "6cf042681885d18ac4e3abb9548fe8ac3033f8b2e3365c44b6748fd3e4a324a3",
+    "absolute_source_start_ms": 1157280,
+    "absolute_source_end_ms": 1229510
+  },
+  "identity_equivalences": [
+    {
+      "entity_id": "ent_1ac8510680754aad873f02ba79444e02",
+      "equivalent_surfaces": [
+        "星汐Seki",
+        "星汐",
+        "xxsk"
+      ]
+    }
+  ],
+  "surface_projections": [
+    {
+      "entity_id": "ent_1ac8510680754aad873f02ba79444e02",
+      "surface_type": "official",
+      "surface": "星汐Seki"
+    },
+    {
+      "entity_id": "ent_1ac8510680754aad873f02ba79444e02",
+      "surface_type": "session",
+      "surface": "xxsk"
+    },
+    {
+      "entity_id": "ent_1ac8510680754aad873f02ba79444e02",
+      "surface_type": "reviewed",
+      "surface": "xxsk"
+    },
+    {
+      "entity_id": "ent_1ac8510680754aad873f02ba79444e02",
+      "surface_type": "speaker",
+      "surface": "xxsk"
+    },
+    {
+      "entity_id": "ent_1ac8510680754aad873f02ba79444e02",
+      "surface_type": "title_cover",
+      "surface": "xxsk"
+    },
+    {
+      "entity_id": "ent_1ac8510680754aad873f02ba79444e02",
+      "surface_type": "publication",
+      "surface": "星汐"
+    },
+    {
+      "entity_id": "ent_1ac8510680754aad873f02ba79444e02",
+      "surface_type": "mention",
+      "surface": "xxsk",
+      "cue_index": 4,
+      "mention_id": "m1"
+    },
+    {
+      "entity_id": "ent_1ac8510680754aad873f02ba79444e02",
+      "surface_type": "mention",
+      "surface": "xxsk",
+      "cue_index": 8,
+      "mention_id": "m1"
+    },
+    {
+      "entity_id": "ent_1ac8510680754aad873f02ba79444e02",
+      "surface_type": "mention",
+      "surface": "xxsk",
+      "cue_index": 15,
+      "mention_id": "m1"
+    },
+    {
+      "entity_id": "ent_1ac8510680754aad873f02ba79444e02",
+      "surface_type": "mention",
+      "surface": "xxsk",
+      "cue_index": 19,
+      "mention_id": "m1"
+    },
+    {
+      "entity_id": "ent_1ac8510680754aad873f02ba79444e02",
+      "surface_type": "mention",
+      "surface": "xxsk",
+      "cue_index": 22,
+      "mention_id": "m1"
+    }
+  ]
+}

@@ -6,8 +6,11 @@ import pytest
 
 from scripts.apply_subtitle_text_overrides import parse_srt
 from scripts.materialize_reviewed_speaker_truth_delivery import (
+    ARBITRATION_NOT_REQUIRED,
     ARBITRATION_SCHEMA,
     DeliveryCompileError,
+    REVIEW_STATUS_COMPLETE,
+    REVIEW_STATUS_PARTIAL_MACHINE,
     compile_delivery,
 )
 from src.autoslice.reviewed_speaker_baseline import load_reviewed_speaker_baseline
@@ -172,6 +175,8 @@ def test_compiler_strips_notes_merges_and_renumbers_before_speaker_binding(
     assert "4\n00:00:04,000 --> 00:00:05,500\n主播五" in baseline
 
     override = result["speaker_override"]
+    assert override["status"] == REVIEW_STATUS_PARTIAL_MACHINE
+    assert "explicitly uncovered cues" in override["notes"]
     assert [row["source_cue"] for row in override["overrides"]] == [1, 2, 4]
     assert override["reviewed_speaker_baseline"]["anchor_source_cues"] == [1, 4]
     assert [
@@ -325,6 +330,47 @@ def test_compiler_requires_arbitration_for_every_unlabelled_truth_cue(
     fixture = _fixture(tmp_path)
     fixture["arbitration"]["decisions"] = {}
     with pytest.raises(DeliveryCompileError, match="requires audio arbitration"):
+        compile_delivery(**fixture)
+
+
+def test_compiler_allows_no_arbitration_only_for_fully_labelled_truth(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    truth = json.loads(fixture["truth_path"].read_text(encoding="utf-8"))
+    unresolved = next(row for row in truth["cues"] if row["cue"] == 4)
+    unresolved["truth_segments"] = [{"label": "连线", "text": "可能听见"}]
+    unresolved["truth_text"] = "可能听见"
+    unresolved["text_changed"] = False
+    fixture["truth_path"].write_text(
+        json.dumps(truth, ensure_ascii=False), encoding="utf-8"
+    )
+    fixture["arbitration"] = None
+
+    result = compile_delivery(**fixture)
+
+    disposition = result["receipt"]["arbitration_disposition"]
+    assert disposition["status"] == ARBITRATION_NOT_REQUIRED
+    assert disposition["truth_input_sha256"] == _sha256(fixture["truth_path"])
+    assert result["speaker_override"]["reviewed_speaker_baseline"][
+        "machine_cues"
+    ] == []
+    assert result["speaker_override"]["status"] == REVIEW_STATUS_COMPLETE
+    assert "no machine decision is retained" in result["speaker_override"]["notes"]
+    assert result["baseline_manifest"]["truth_full_ownership"][
+        "arbitration_disposition"
+    ] == disposition
+
+
+def test_compiler_rejects_omitted_arbitration_when_one_truth_cue_is_unlabelled(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    fixture["arbitration"] = None
+
+    with pytest.raises(
+        DeliveryCompileError, match="unlabelled truth cue requires"
+    ):
         compile_delivery(**fixture)
 
 

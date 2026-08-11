@@ -108,6 +108,47 @@ def test_full_ownership_receipt_carries_coverage_skips_and_conditions() -> None:
     assert len(receipt["effective_conditions"]) >= 4
 
 
+def test_fully_labelled_truth_uses_typed_no_arbitration_disposition() -> None:
+    spec = _owned_spec()
+    pin = spec["subtitle_redelivery_baseline"]["truth_full_ownership"]
+    pin["reviewed_override_count"] = pin["cue_count"]
+    pin["machine_cues"] = []
+    pin.pop("arbitration_receipt_sha256")
+    pin["arbitration_disposition"] = {
+        "schema_version": "reviewed-speaker-arbitration-disposition.v1",
+        "status": "NOT_REQUIRED_FULLY_LABELLED",
+        "truth_input_sha256": TRUTH_SHA,
+        "automatic_labelled_srt_sha256": "ee" * 32,
+    }
+
+    receipt = resolve_truth_full_ownership(spec)
+
+    assert receipt is not None
+    proof = receipt["coverage"]["proof"]
+    assert proof["arbitration_receipt_sha256"] is None
+    assert proof["arbitration_disposition"]["status"] == (
+        "NOT_REQUIRED_FULLY_LABELLED"
+    )
+
+
+@pytest.mark.parametrize("field", ["truth_input_sha256", "automatic_labelled_srt_sha256"])
+def test_fully_labelled_no_arbitration_disposition_is_hash_bound(field) -> None:
+    spec = _owned_spec()
+    pin = spec["subtitle_redelivery_baseline"]["truth_full_ownership"]
+    pin["reviewed_override_count"] = pin["cue_count"]
+    pin["machine_cues"] = []
+    pin.pop("arbitration_receipt_sha256")
+    pin["arbitration_disposition"] = {
+        "schema_version": "reviewed-speaker-arbitration-disposition.v1",
+        "status": "NOT_REQUIRED_FULLY_LABELLED",
+        "truth_input_sha256": TRUTH_SHA,
+        "automatic_labelled_srt_sha256": "ee" * 32,
+    }
+    pin["arbitration_disposition"][field] = "bad"
+
+    assert resolve_truth_full_ownership(spec) is None
+
+
 @pytest.mark.parametrize(
     "mutate",
     [

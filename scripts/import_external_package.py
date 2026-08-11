@@ -32,8 +32,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -53,6 +55,7 @@ from src.autoslice.runner_state_writeback import (  # noqa: E402
 
 
 DEFAULT_BASE = Path("/opt/bilive/autoslice")
+PACKAGE_AUDIT_NAME = "package_audit.json"
 STEP_ORDER = (
     "PREFLIGHT",
     "COPY",
@@ -244,7 +247,7 @@ def run_import(
             deployed_commit_file=deployed_commit_file,
             candidate_id=candidate_id,
         )
-        _step_audit(
+        package_audit_path = _step_audit(
             receipt=receipt,
             gate_runner=gate_runner,
             destination_package_root=destination_package_root,
@@ -261,6 +264,7 @@ def run_import(
         _step_make_manifest_hint(
             receipt=receipt,
             destination_package_root=destination_package_root,
+            package_audit_path=package_audit_path,
             title=title,
         )
         status = (
@@ -580,7 +584,7 @@ def _step_audit(
     receipt: Receipt,
     gate_runner: GateRunner,
     destination_package_root: Path,
-) -> None:
+) -> Path:
     result = gate_runner.run(
         [
             sys.executable,
@@ -615,12 +619,124 @@ def _step_audit(
             hint="every blocking issue must be repaired in the package or the "
             "code; the audit is never bypassed",
         )
+    audit_path = destination_package_root / PACKAGE_AUDIT_NAME
+    audit_payload = result.stdout.encode("utf-8")
+    audit_write_status = _create_or_verify_audit_report(
+        path=audit_path,
+        payload=audit_payload,
+    )
     receipt.add(
         "AUDIT",
         "PASS",
+        path=str(audit_path),
+        sha256=pi.sha256_file(audit_path),
+        write_status=audit_write_status,
         blocking_issue_count=int(report.get("blocking_issue_count") or 0),
         issue_count=int(report.get("issue_count") or 0),
     )
+    return audit_path
+
+
+def _create_or_verify_audit_report(*, path: Path, payload: bytes) -> str:
+    """Atomically create immutable audit evidence, or accept identical bytes.
+
+    Re-import is intentionally idempotent, so an identical existing report is
+    reused.  A symlink, non-regular path, or different existing report is a
+    hard refusal: the importer never overwrites governed audit evidence.
+    """
+
+    try:
+        pi.require_directory(path.parent, label="package audit parent")
+    except pi.PackageImportError as error:
+        raise Refusal("AUDIT", error) from error
+
+    if path.is_symlink():
+        raise _refuse(
+            "AUDIT",
+            "AUDIT_REPORT_PATH_UNSAFE",
+            f"package audit output may not be a symlink: {path}",
+        )
+    if path.exists():
+        try:
+            existing = pi.require_regular_file(path, label="package audit output")
+        except pi.PackageImportError as error:
+            raise Refusal("AUDIT", error) from error
+        if existing.read_bytes() != payload:
+            raise _refuse(
+                "AUDIT",
+                "AUDIT_REPORT_OVERWRITE_REFUSED",
+                f"different governed audit evidence already exists: {path}",
+                hint="preserve the existing report and investigate why the "
+                "same package now produces different audit bytes",
+            )
+        return "ALREADY_IDENTICAL"
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.tmp-"
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            descriptor = -1
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            # A hard link publishes the already-fsynced complete file and, like
+            # O_EXCL, refuses to replace anything that won the destination race.
+            os.link(temporary, path, follow_symlinks=False)
+        except FileExistsError:
+            if path.is_symlink():
+                raise _refuse(
+                    "AUDIT",
+                    "AUDIT_REPORT_PATH_UNSAFE",
+                    f"package audit output became a symlink: {path}",
+                )
+            try:
+                existing = pi.require_regular_file(
+                    path, label="package audit output"
+                )
+            except pi.PackageImportError as error:
+                raise Refusal("AUDIT", error) from error
+            if existing.read_bytes() != payload:
+                raise _refuse(
+                    "AUDIT",
+                    "AUDIT_REPORT_OVERWRITE_REFUSED",
+                    f"different governed audit evidence won the create race: {path}",
+                )
+            return "ALREADY_IDENTICAL"
+        directory_fd = os.open(
+            path.parent,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except Refusal:
+        raise
+    except OSError as error:
+        raise _refuse(
+            "AUDIT",
+            "AUDIT_REPORT_CREATE_FAILED",
+            f"{type(error).__name__}: {error}",
+        ) from error
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+
+    try:
+        written = pi.require_regular_file(path, label="package audit output")
+    except pi.PackageImportError as error:
+        raise Refusal("AUDIT", error) from error
+    if written.read_bytes() != payload:
+        raise _refuse(
+            "AUDIT",
+            "AUDIT_REPORT_WRITE_DRIFT",
+            f"persisted package audit bytes differ from auditor stdout: {path}",
+        )
+    return "CREATED"
 
 
 def _step_title_cover_qc(
@@ -704,9 +820,13 @@ def _step_make_manifest_hint(
     *,
     receipt: Receipt,
     destination_package_root: Path,
+    package_audit_path: Path | None = None,
     title: str | None,
 ) -> None:
     stem = "<video stem>"
+    audit_path = package_audit_path or (
+        destination_package_root / PACKAGE_AUDIT_NAME
+    )
     receipt.add(
         "MAKE_MANIFEST",
         "SKIPPED_OUT_OF_SCOPE",
@@ -722,6 +842,7 @@ def _step_make_manifest_hint(
             "--cover",
             f"{destination_package_root}/{stem}.cover.png",
             "--package-audit",
+            str(audit_path),
             "--title",
             title if title is not None else "<title from review_manifest>",
             "--authorized-by",

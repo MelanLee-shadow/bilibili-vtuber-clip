@@ -118,7 +118,7 @@ FUNCTION_DEBT_LEDGER = {
     # 合并的快车道代码，现在就去合并 merge」）带入的 relocation/冻结包接线。数字为
     # 合并后实测,非估算。⚠️ 此项已连续吃增长且上方 8/1 注释写明「下次动这个函数
     # 必须先拆，不许再抬」——本次是合并带入而非新写功能,但欠账事实成立,须补拆解。
-    ("src/autoslice/publish_staging.py", "_stage_publish_draft"): 597,
+    ("src/autoslice/publish_staging.py", "_stage_publish_draft"): 586,
     # 2026-07-31 +3：同上，截图/polish 路径的 contract 穿透。
     # 2026-08-10 净 -6：同上——终检见证的 verifier-missing 分支与调用抽到
     # cover_scene_binding.run_final_host_identity_witness。
@@ -334,7 +334,7 @@ MODULE_DEBT_LEDGER = {
     # cover_route_policy.py，本模块只留 import 别名与调用点。
     # 2026-08-10 +19：合并 ft-a8600994 快车道分支（Ivan 2026-08-10 逐字「这就是要合并的快车道代码，现在就去合并 merge」）带入的
     # relocation/冻结包接线（同 _stage_publish_draft 那一项）。合并后实测。
-    "src/autoslice/publish_staging.py": 2_732,
+    "src/autoslice/publish_staging.py": 2_721,
     "src/autoslice/same_bv_repair.py": 2_422,
     # 2026-08-10 新入账：合并 ft-a8600994（Ivan 2026-08-10 逐字「这就是要合并的快车道代码，现在就去合并 merge」）把 talk_lane 顶过
     # 2000 行入场线（ft 侧 +17 行 boundary 接线）。⚠️ 这是本次 merge 带入的新

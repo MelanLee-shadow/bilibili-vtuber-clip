@@ -3,6 +3,7 @@ import json
 from src.autoslice.publish_staging import _stage_publish_draft
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.source_fact_review import (
+    _valid_changed_surface,
     review_and_repair_source_facts,
     source_fact_review_passes,
     validate_source_fact_review,
@@ -103,6 +104,44 @@ def test_source_fact_prompt_forbids_birthday_forwarding_role_drift() -> None:
         final_transcript="今天是她的生日\n转发这条信息能得奖",
         clip_context_prompt="",
         llm_call=cpa,
+    )
+
+
+def test_changed_surface_evidence_can_bind_exact_speaker_transcript_rows() -> None:
+    row = {
+        "artifact": "title",
+        "before": "小李求莉亚放过自己",
+        "after": "莉亚求小李放过自己",
+        "reason": "说话人标签证明求饶者是连线一方。",
+        "evidence": [
+            "speaker_transcript: 5 [连线] 我想活着",
+            "speaker_transcript: 7 [连线] 你放过我好吗",
+        ],
+    }
+    speaker_transcript = "\n".join(
+        [
+            "4 [李豆沙] 莉亚，活着",
+            "5 [连线] 我想活着",
+            "7 [连线] 你放过我好吗",
+        ]
+    )
+
+    assert _valid_changed_surface(
+        row,
+        before_surface="【李豆沙】小李求莉亚放过自己",
+        after_surface="【李豆沙】莉亚求小李放过自己",
+        final_transcript="莉亚，活着\n我想活着\n你放过我好吗",
+        clip_context_prompt="",
+        speaker_transcript=speaker_transcript,
+    )
+
+    assert not _valid_changed_surface(
+        {**row, "evidence": ["speaker_transcript: 5 [李豆沙] 我想活着"]},
+        before_surface="【李豆沙】小李求莉亚放过自己",
+        after_surface="【李豆沙】莉亚求小李放过自己",
+        final_transcript="莉亚，活着\n我想活着\n你放过我好吗",
+        clip_context_prompt="",
+        speaker_transcript=speaker_transcript,
     )
 
 

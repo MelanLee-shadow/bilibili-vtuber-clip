@@ -154,8 +154,6 @@ def _valid_ownership_pin(
     pinned_baseline = _clean_sha256(pin.get("baseline_sha256"))
     if not pinned_baseline or pinned_baseline != baseline_sha256:
         return None
-    if not _clean_sha256(pin.get("arbitration_receipt_sha256")):
-        return None
     truth_input = pin.get("truth_input")
     if (
         not isinstance(truth_input, Mapping)
@@ -184,6 +182,33 @@ def _valid_ownership_pin(
         or reviewed + len(machine) != cue_count
     ):
         return None
+    arbitration_receipt = _clean_sha256(pin.get("arbitration_receipt_sha256"))
+    arbitration_disposition = pin.get("arbitration_disposition")
+    if machine:
+        if not arbitration_receipt or arbitration_disposition is not None:
+            return None
+    else:
+        truth_input_sha = _clean_sha256(truth_input.get("sha256"))
+        if not (
+            arbitration_receipt
+            or (
+                isinstance(arbitration_disposition, Mapping)
+                and arbitration_disposition.get("schema_version")
+                == "reviewed-speaker-arbitration-disposition.v1"
+                and arbitration_disposition.get("status")
+                == "NOT_REQUIRED_FULLY_LABELLED"
+                and _clean_sha256(
+                    arbitration_disposition.get("truth_input_sha256")
+                )
+                == truth_input_sha
+                and _clean_sha256(
+                    arbitration_disposition.get(
+                        "automatic_labelled_srt_sha256"
+                    )
+                )
+            )
+        ):
+            return None
     return pin
 
 
@@ -230,8 +255,14 @@ def resolve_truth_full_ownership(
             "proof": {
                 "truth_input": truth_input,
                 "baseline_sha256": baseline_sha256,
-                "arbitration_receipt_sha256": _clean_sha256(
-                    pin.get("arbitration_receipt_sha256")
+                "arbitration_receipt_sha256": (
+                    _clean_sha256(pin.get("arbitration_receipt_sha256"))
+                    or None
+                ),
+                "arbitration_disposition": (
+                    dict(pin["arbitration_disposition"])
+                    if isinstance(pin.get("arbitration_disposition"), Mapping)
+                    else None
                 ),
                 "authority": str(pin.get("authority") or ""),
                 "source_recording_basename": str(

@@ -16,6 +16,10 @@ from typing import Callable, Mapping, NamedTuple, Sequence
 from .auto_review import DecisionAction, ReviewDecision
 from .channel_profile import load_channel_profile
 from .chat_authority import canonicalize_hard_surfaces
+from .candidate_entity_publish_gate import (
+    enforce_candidate_cover_projection,
+    evaluate_candidate_title_gates,
+)
 from .content_ip_signal import important_content_ip_signal_from_srt
 from .cover_emote import (
     EmoteLibrary,
@@ -95,11 +99,7 @@ from .source_fact_review import (
     build_addressee_transcripts,
     review_and_repair_source_facts, source_fact_review_passes,
 )
-from .story_contract import (
-    audit_story_artifact,
-    cover_relation_prompt,
-    cover_story_contract_binding,
-)
+from .story_contract import cover_relation_prompt, cover_story_contract_binding
 from .title_policy import (
     _TITLE_MAX_ATTEMPTS,
     _TITLE_MAX_LEN,
@@ -109,7 +109,6 @@ from .title_policy import (
     canonicalize_publish_title,
     canonicalize_song_catalog_title,
     manual_title_override,
-    publish_title_policy_violations,
     _selection_hook_anchor_valid,
     _selection_hook_fallback_title,
     _selection_hook_first_clause,
@@ -652,41 +651,21 @@ def _stage_publish_draft(
                         if manual_title_repair_authority_consumption is not None
                         else "RESOLVED_CPA_SOURCE_FACT_REPAIR"
                     )
-    common_title_violations = publish_title_policy_violations(
-        staged_title,
+    title_gate = evaluate_candidate_title_gates(
+        candidate_id=candidate_id,
+        title=staged_title,
         lane=explicit_lane,
         enforce_automatic_style=title_llm_call is not None,
+        prior_violations=title_policy_violations,
+        prior_authority_error=title_authority_error,
+        prior_authority_status=title_authority_status,
+        story_contract=story_contract if isinstance(story_contract, Mapping) else None,
     )
-    title_policy_violations.extend(
-        code for code in common_title_violations if code not in title_policy_violations
-    )
-    source_fact_blocked = title_authority_status == "BLOCKED_SOURCE_FACT_REVIEW"
-    if common_title_violations and not source_fact_blocked:
-        title_authority_error = "publish_title_policy_violation:" + ",".join(
-            common_title_violations
-        )
-        title_authority_status = "BLOCKED_PUBLISH_TITLE_POLICY"
-    title_story_audit = None
-    if isinstance(story_contract, dict):
-        title_story_audit = audit_story_artifact(
-            staged_title,
-            story_contract=story_contract,
-            artifact_kind="title",
-        )
-        if title_story_audit["status"] != "PASS":
-            story_codes = sorted(
-                {
-                    str(row.get("reason_code") or "STORY_CONTRACT_TITLE_FAILED")
-                    for row in title_story_audit["violations"]
-                    if isinstance(row, dict)
-                }
-            )
-            title_policy_violations.extend(
-                code for code in story_codes if code not in title_policy_violations
-            )
-            if not source_fact_blocked:
-                title_authority_error = "story_contract_violation:" + ",".join(story_codes)
-                title_authority_status = "BLOCKED_STORY_CONTRACT"
+    title_policy_violations = list(title_gate.violations)
+    title_authority_error = title_gate.authority_error
+    title_authority_status = title_gate.authority_status
+    title_story_audit = title_gate.story_audit
+    entity_projection_audit = title_gate.entity_projection_audit
     cover_text = _lidousha_cover_text(staged_title)
     if title_authority_error is not None:
         # A candidate id / job fallback is not publish-title authority.  Fail
@@ -908,6 +887,11 @@ def _stage_publish_draft(
             full_text_cover_contract=full_text_cover_contract,
             diversity_slot=cover_diversity_slot,
         )
+    cover_result, cover_entity_projection_audit = enforce_candidate_cover_projection(
+        candidate_id=candidate_id,
+        cover_result=cover_result,
+        projection_required=entity_projection_audit is not None,
+    )
     cover_status = str(cover_result["status"])
     cover_path_value = (
         cover_result.get("cover_path")
@@ -937,6 +921,8 @@ def _stage_publish_draft(
         "title_policy_violations": title_policy_violations,
         "important_content_ips": important_content_ips,
         "title_story_audit": title_story_audit,
+        "entity_projection_audit": entity_projection_audit,
+        "cover_entity_projection_audit": cover_entity_projection_audit,
         "source_fact_review": source_fact_review,
         "manual_title_repair_authority_consumption": manual_title_repair_authority_consumption,
         "video_path": str(media_path),
@@ -962,6 +948,8 @@ def _stage_publish_draft(
         "title_policy_violations": title_policy_violations,
         "important_content_ips": important_content_ips,
         "title_story_audit": title_story_audit,
+        "entity_projection_audit": entity_projection_audit,
+        "cover_entity_projection_audit": cover_entity_projection_audit,
         "source_fact_review": source_fact_review,
         "manual_title_repair_authority_consumption": manual_title_repair_authority_consumption,
         "cover_status": cover_status,
@@ -2083,7 +2071,7 @@ def _stage_lidousha_ai_cover(
         final_participant_verifier=final_participant_verifier,
         final_host_identity_verifier=final_host_identity_verifier,
         base_url=base_url,
-        api_key=api_key,
+        api_key=api_key, full_text_cover_contract=full_text_cover_contract,
     )
     return _enforce_final_talk_cover_thumbnail_gate(result)
 
@@ -2555,6 +2543,7 @@ def _degrade_unavailable_redraw_identity_to_direct(
     final_host_identity_verifier: Callable[..., Mapping[str, object]] | None,
     base_url: str,
     api_key: str,
+    full_text_cover_contract: Mapping[str, object] | None,
 ) -> dict[str, object]:
     """Keep source pixels when the independent redraw identity witness is down."""
 

@@ -128,3 +128,51 @@ def test_reused_published_cover_carries_all_artifact_hashes(
     assert hashes["cover_sha256"] == cover_sha256
     assert hashes["ai_background_sha256"] == ai_background_sha256
     assert hashes["cover_reference_sha256"] == reference_sha256
+
+
+def test_candidate_projection_blocks_wrong_name_in_visible_cover_text(
+    tmp_path: Path,
+) -> None:
+    candidate_id = "auto_223750_578_734"
+    media = tmp_path / f"{candidate_id}.recut.mp4"
+    media.write_bytes(b"media")
+    cover = tmp_path / "cover.png"
+    cover.write_bytes(b"cover")
+
+    def wrong_name_cover(_record, **_kwargs):
+        return {
+            "status": "AI_COVER_READY",
+            "cover_path": str(cover),
+            "cover_generation": {
+                "status": "READY",
+                "rendered_lines": ["莉亚求小李放过她"],
+            },
+            "reason_codes": [],
+        }
+
+    record = _stage_publish_draft(
+        {
+            "status": "MATERIALIZED",
+            "media_path": str(media),
+            "artifact_hashes": {},
+        },
+        candidate_id=candidate_id,
+        title="unused because the candidate has an Ivan title override",
+        cues=[],
+        run_ffmpeg=False,
+        title_llm_call=None,
+        stage_cover=wrong_name_cover,
+    )
+
+    assert record is not None
+    staging = record["publish_staging"]
+    assert staging["title_authority_status"] == "RESOLVED_MANUAL"
+    assert staging["entity_projection_audit"]["status"] == "PASS"
+    assert staging["cover_status"] == "BLOCKED_ENTITY_SURFACE_PROJECTION"
+    assert staging["cover_path"] is None
+    assert staging["reason_codes"] == [
+        "COVER_ENTITY_SURFACE_PROJECTION_FAILED"
+    ]
+    failure = staging["cover_generation"]["entity_projection_audit"]
+    assert failure["status"] == "FAIL"
+    assert "expected=莉娅" in failure["detail"]

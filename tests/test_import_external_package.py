@@ -275,6 +275,7 @@ class StubGateRunner:
         self.qc_title = qc_title
         self.qc_cover = qc_cover
         self.audit_passed = audit_passed
+        self.audit_stdout: str | None = None
 
     def run(self, argv):  # noqa: ANN001 - mirrors GateRunner.run
         argv = [str(value) for value in argv]
@@ -308,7 +309,8 @@ class StubGateRunner:
                 if self.audit_passed
                 else [{"severity": "BLOCK", "code": "COVER_TEXT_OVERCROWDED"}],
             }
-            return cli.GateResult(0, json.dumps(report), "")
+            self.audit_stdout = json.dumps(report)
+            return cli.GateResult(0, self.audit_stdout, "")
         if script == "run_title_cover_joint_qc.py":
             package_root, title, out_path = argv[2], argv[3], Path(argv[4])
             bound_title = self.qc_title if self.qc_title is not None else title
@@ -692,6 +694,7 @@ def test_repeat_import_is_idempotent(tmp_path: Path) -> None:
     second, code = _run(fixture)
     assert code == 0, second
     assert _step(second, "RELOCATE")["status"] == "ALREADY_RELOCATED"
+    assert _step(second, "AUDIT")["write_status"] == "ALREADY_IDENTICAL"
     copy_step = _step(second, "COPY")
     statuses = {row["status"] for row in copy_step["files"]}
     assert statuses <= {"ALREADY_IDENTICAL", "PRESERVED_RELOCATED"}
@@ -756,6 +759,13 @@ def test_gate_chain_order_and_programmatic_title(tmp_path: Path) -> None:
     assert _step(receipt, "TITLE_COVER_QC")["title_sha256"] == (
         "sha256:" + hashlib.sha256(TITLE.encode("utf-8")).hexdigest()
     )
+    audit_path = fixture.destination_package / cli.PACKAGE_AUDIT_NAME
+    assert gate.audit_stdout is not None
+    assert audit_path.read_bytes() == gate.audit_stdout.encode("utf-8")
+    audit_step = _step(receipt, "AUDIT")
+    assert audit_step["path"] == str(audit_path)
+    assert audit_step["sha256"] == _sha256(gate.audit_stdout.encode("utf-8"))
+    assert audit_step["write_status"] == "CREATED"
 
 
 def test_qc_receipt_bound_to_a_different_title_refuses(tmp_path: Path) -> None:
@@ -802,6 +812,10 @@ def test_make_manifest_is_never_run(tmp_path: Path) -> None:
     step = _step(receipt, "MAKE_MANIFEST")
     assert step["status"] == "SKIPPED_OUT_OF_SCOPE"
     assert "authorized_upload.py" in " ".join(step["next_command"])
+    audit_flag = step["next_command"].index("--package-audit")
+    assert step["next_command"][audit_flag + 1] == str(
+        fixture.destination_package / cli.PACKAGE_AUDIT_NAME
+    )
     assert not any("authorized_upload" in call[1] for call in gate.calls)
 
 
@@ -814,6 +828,45 @@ def test_dry_run_writes_nothing(tmp_path: Path) -> None:
     assert not fixture.destination_package.exists()
     assert fixture.state_path.read_bytes() == before
     assert _step(receipt, "STATE_BIND")["status"] == "SKIPPED_DRY_RUN"
+    command = _step(receipt, "MAKE_MANIFEST")["next_command"]
+    audit_flag = command.index("--package-audit")
+    assert command[audit_flag + 1] == str(
+        fixture.destination_package / cli.PACKAGE_AUDIT_NAME
+    )
+
+
+def test_different_existing_audit_report_is_not_overwritten(tmp_path: Path) -> None:
+    fixture = _build_external_package(tmp_path)
+    assert _run(fixture)[1] == 0
+    audit_path = fixture.destination_package / cli.PACKAGE_AUDIT_NAME
+    drift = b'{"passed": true, "root": "different-governed-run"}\n'
+    audit_path.write_bytes(drift)
+
+    receipt, code = _run(fixture)
+
+    assert code == 2
+    step = _step(receipt, "AUDIT")
+    assert step["code"] == "AUDIT_REPORT_OVERWRITE_REFUSED"
+    assert audit_path.read_bytes() == drift
+
+
+def test_symlinked_audit_report_path_is_refused_without_touching_target(
+    tmp_path: Path,
+) -> None:
+    fixture = _build_external_package(tmp_path)
+    assert _run(fixture)[1] == 0
+    audit_path = fixture.destination_package / cli.PACKAGE_AUDIT_NAME
+    audit_path.unlink()
+    target = tmp_path / "outside-audit.json"
+    target.write_bytes(b"outside-governed-evidence")
+    audit_path.symlink_to(target)
+
+    receipt, code = _run(fixture)
+
+    assert code == 2
+    step = _step(receipt, "AUDIT")
+    assert step["code"] == "AUDIT_REPORT_PATH_UNSAFE"
+    assert target.read_bytes() == b"outside-governed-evidence"
 
 
 # ---------------------------------------------------------------- lane / shape

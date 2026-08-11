@@ -1,0 +1,32 @@
+{
+  "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
+  "candidate_id": "auto_223750_578_734",
+  "schema_version": "subtitle-redelivery-baseline.v2",
+  "mode": "preserve_text_outside_source_truth",
+  "path": "auto_223750_578_734.reviewed.srt",
+  "sha256": "6d79fdab105d4c7b5edffec66fe526aa01839de342a7c96b8784f4d0100a8062",
+  "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+  "exact_interval_replay": true,
+  "source_recording_basename": "22966160_20260807-22-37-50.mp4",
+  "source_sha256": "66e9ec0707fe8d7f38cf8a552e863dafbba34fb7eadaece496adb30d04b1ad1e",
+  "absolute_source_start_ms": 577780,
+  "absolute_source_end_ms": 735090,
+  "truth_full_ownership": {
+    "schema_version": "truth-full-ownership-pin.v1",
+    "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+    "truth_input": {
+      "path": "assets/lidousha/reviewed_speaker_truth/auto_223750_578_734.truth-diff.v2.json",
+      "sha256": "aaa1cd5681b8bb1fee34ed347c6e5f2fa9166d480176cd2688a28cb7fa0fd434"
+    },
+    "baseline_sha256": "6d79fdab105d4c7b5edffec66fe526aa01839de342a7c96b8784f4d0100a8062",
+    "cue_count": 52,
+    "reviewed_override_count": 52,
+    "machine_cues": [],
+    "arbitration_disposition": {
+      "schema_version": "reviewed-speaker-arbitration-disposition.v1",
+      "status": "NOT_REQUIRED_FULLY_LABELLED",
+      "truth_input_sha256": "aaa1cd5681b8bb1fee34ed347c6e5f2fa9166d480176cd2688a28cb7fa0fd434",
+      "automatic_labelled_srt_sha256": "19131ea3b2740e286c1c506fedd94c08b36179655c1849091f75e9ac0dfc2838"
+    }
+  }
+}

@@ -1,0 +1,915 @@
+{
+ "schema": "ivan-speaker-truth-diff.v2",
+ "candidate_id": "auto_223750_578_734",
+ "source_machine_sha256": "62da4cf82d57a3d74f23f91e5f88992f97f17fa0c3727666c267856a752d5f70",
+ "annotated_sha256": "38a8860fffb2c7e5d8ebac6c9930198712f4b835189b4e8248c90c8728b79827",
+ "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+ "generated_by": "scripts/harvest_ivan_truth.py",
+ "summary": {
+  "cues": 52,
+  "text_changed": 10,
+  "label_changed": 6,
+  "mixed": 3,
+  "marked": 6,
+  "merged": 0,
+  "timing_tweaked": 0
+ },
+ "cues": [
+  {
+   "cue": 1,
+   "timing": "00:00:00,250 --> 00:00:02,370",
+   "machine_label": "李豆沙",
+   "machine_text": "我想活着诶",
+   "truth_segments": [
+    {
+     "text": "我想活着诶",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "我想活着诶",
+   "text_changed": false,
+   "label_changed": true,
+   "mixed": false,
+   "marked": true
+  },
+  {
+   "cue": 2,
+   "timing": "00:00:02,450 --> 00:00:04,730",
+   "machine_label": "李豆沙",
+   "machine_text": "你好你好",
+   "truth_segments": [
+    {
+     "text": "你好你好",
+     "label": "李豆沙"
+    }
+   ],
+   "truth_text": "你好你好",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 3,
+   "timing": "00:00:04,980 --> 00:00:06,500",
+   "machine_label": "李豆沙",
+   "machine_text": "我们又在一起了",
+   "truth_segments": [
+    {
+     "text": "我们又在一起了",
+     "label": "李豆沙"
+    }
+   ],
+   "truth_text": "我们又在一起了",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 4,
+   "timing": "00:00:06,500 --> 00:00:07,720",
+   "machine_label": "李豆沙",
+   "machine_text": "莉亚，活着",
+   "truth_segments": [
+    {
+     "text": "莉亚",
+     "label": "李豆沙"
+    },
+    {
+     "text": "活着",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "莉亚 活着",
+   "text_changed": true,
+   "label_changed": true,
+   "mixed": true,
+   "marked": true
+  },
+  {
+   "cue": 5,
+   "timing": "00:00:07,720 --> 00:00:08,660",
+   "machine_label": "连线",
+   "machine_text": "我想活着",
+   "truth_segments": [
+    {
+     "text": "我想活着",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "我想活着",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 6,
+   "timing": "00:00:08,660 --> 00:00:09,380",
+   "machine_label": "连线",
+   "machine_text": "就算你是狼",
+   "truth_segments": [
+    {
+     "text": "就算你是狼",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "就算你是狼",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 7,
+   "timing": "00:00:09,380 --> 00:00:10,260",
+   "machine_label": "连线",
+   "machine_text": "你放过我好吗",
+   "truth_segments": [
+    {
+     "text": "你放过我好吗",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "你放过我好吗",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 8,
+   "timing": "00:00:10,260 --> 00:00:11,280",
+   "machine_label": "连线",
+   "machine_text": "我想活着",
+   "truth_segments": [
+    {
+     "text": "我想活着",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "我想活着",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 9,
+   "timing": "00:00:11,280 --> 00:00:13,100",
+   "machine_label": "李豆沙",
+   "machine_text": "好的好的，放心吧",
+   "truth_segments": [
+    {
+     "text": "好的好的，放心吧",
+     "label": "李豆沙"
+    }
+   ],
+   "truth_text": "好的好的，放心吧",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 10,
+   "timing": "00:00:14,770 --> 00:00:16,330",
+   "machine_label": "李豆沙",
+   "machine_text": "那我们一起走吗",
+   "truth_segments": [
+    {
+     "text": "那我们一起走吗",
+     "label": "李豆沙"
+    }
+   ],
+   "truth_text": "那我们一起走吗",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 11,
+   "timing": "00:00:16,330 --> 00:00:17,430",
+   "machine_label": "连线",
+   "machine_text": "真的能放心吗",
+   "truth_segments": [
+    {
+     "text": "真的能放心吗",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "真的能放心吗",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 12,
+   "timing": "00:00:17,430 --> 00:00:18,770",
+   "machine_label": "李豆沙",
+   "machine_text": "我们一起走吗",
+   "truth_segments": [
+    {
+     "text": "我们一起走吗",
+     "label": "李豆沙"
+    }
+   ],
+   "truth_text": "我们一起走吗",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 13,
+   "timing": "00:00:19,690 --> 00:00:22,290",
+   "machine_label": "连线",
+   "machine_text": "好呀好呀好，我做任务",
+   "truth_segments": [
+    {
+     "text": "好呀好呀好，我做任务",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "好呀好呀好，我做任务",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 14,
+   "timing": "00:00:22,369 --> 00:00:23,369",
+   "machine_label": "李豆沙",
+   "machine_text": "对不起",
+   "truth_segments": [
+    {
+     "text": "对不起",
+     "label": "李豆沙"
+    }
+   ],
+   "truth_text": "对不起",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 15,
+   "timing": "00:00:25,230 --> 00:00:28,070",
+   "machine_label": "李豆沙",
+   "machine_text": "对不起，我对不起对不起对不起",
+   "truth_segments": [
+    {
+     "text": "对不起，我对不起对不起对不起",
+     "label": "李豆沙"
+    }
+   ],
+   "truth_text": "对不起，我对不起对不起对不起",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 16,
+   "timing": "00:00:36,010 --> 00:00:38,730",
+   "machine_label": "李豆沙",
+   "machine_text": "你等会要写那个",
+   "truth_segments": [
+    {
+     "text": "你等会要写那个",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "你等会要写那个",
+   "text_changed": false,
+   "label_changed": true,
+   "mixed": false,
+   "marked": true
+  },
+  {
+   "cue": 17,
+   "timing": "00:00:38,730 --> 00:00:42,170",
+   "machine_label": "李豆沙",
+   "machine_text": "我比你好",
+   "truth_segments": [
+    {
+     "text": "我比",
+     "label": "连线"
+    },
+    {
+     "text": "你好",
+     "label": "李豆沙"
+    }
+   ],
+   "truth_text": "我比 你好",
+   "text_changed": false,
+   "label_changed": true,
+   "mixed": true,
+   "marked": true
+  },
+  {
+   "cue": 18,
+   "timing": "00:00:42,370 --> 00:00:43,370",
+   "machine_label": "李豆沙",
+   "machine_text": "你好",
+   "truth_segments": [
+    {
+     "text": "你好",
+     "label": "李豆沙"
+    }
+   ],
+   "truth_text": "你好",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 19,
+   "timing": "00:00:57,130 --> 00:00:58,370",
+   "machine_label": "李豆沙",
+   "machine_text": "怎么没人了",
+   "truth_segments": [
+    {
+     "text": "怎么没人了",
+     "label": "李豆沙"
+    }
+   ],
+   "truth_text": "怎么没人了",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 20,
+   "timing": "00:01:01,370 --> 00:01:02,690",
+   "machine_label": "李豆沙",
+   "machine_text": "怎么没人了",
+   "truth_segments": [
+    {
+     "text": "怎么没人了",
+     "label": "李豆沙"
+    }
+   ],
+   "truth_text": "怎么没人了",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 21,
+   "timing": "00:01:06,710 --> 00:01:07,710",
+   "machine_label": "李豆沙",
+   "machine_text": "我去",
+   "truth_segments": [
+    {
+     "text": "我去",
+     "label": "李豆沙"
+    }
+   ],
+   "truth_text": "我去",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 22,
+   "timing": "00:01:08,430 --> 00:01:11,390",
+   "machine_label": "李豆沙",
+   "machine_text": "这人有诶，有有有有",
+   "truth_segments": [
+    {
+     "text": "这人",
+     "label": "连线"
+    },
+    {
+     "text": "有诶，有有有有",
+     "label": "李豆沙"
+    }
+   ],
+   "truth_text": "这人 有诶，有有有有",
+   "text_changed": false,
+   "label_changed": true,
+   "mixed": true,
+   "marked": true
+  },
+  {
+   "cue": 23,
+   "timing": "00:01:12,150 --> 00:01:16,390",
+   "machine_label": "李豆沙",
+   "machine_text": "啧，没吃到没吃到没吃到没吃到",
+   "truth_segments": [
+    {
+     "text": "没吃到没吃到没吃到没吃到",
+     "label": "李豆沙"
+    }
+   ],
+   "truth_text": "没吃到没吃到没吃到没吃到",
+   "text_changed": true,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 24,
+   "timing": "00:01:22,910 --> 00:01:27,510",
+   "machine_label": "连线",
+   "machine_text": "沙豆李，你还有何话说",
+   "truth_segments": [
+    {
+     "text": "沙豆李，你还有何话说",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "沙豆李，你还有何话说",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 25,
+   "timing": "00:01:30,360 --> 00:01:32,240",
+   "machine_label": "李豆沙",
+   "machine_text": "哦，不是我杀的",
+   "truth_segments": [
+    {
+     "text": "哦，不是我杀的",
+     "label": "李豆沙"
+    }
+   ],
+   "truth_text": "哦，不是我杀的",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 26,
+   "timing": "00:01:32,240 --> 00:01:33,860",
+   "machine_label": "连线",
+   "machine_text": "我做了四个任务",
+   "truth_segments": [
+    {
+     "text": "我做了四个任务",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "我做了四个任务",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 27,
+   "timing": "00:01:33,860 --> 00:01:36,060",
+   "machine_label": "连线",
+   "machine_text": "北柚香一直在守护我们",
+   "truth_segments": [
+    {
+     "text": "北柚香一直在守护我",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "北柚香一直在守护我",
+   "text_changed": true,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 28,
+   "timing": "00:01:36,060 --> 00:01:37,120",
+   "machine_label": "连线",
+   "machine_text": "听这个地方",
+   "truth_segments": [
+    {
+     "text": "门厅这个地方",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "门厅这个地方",
+   "text_changed": true,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 29,
+   "timing": "00:01:37,120 --> 00:01:40,740",
+   "machine_label": "连线",
+   "machine_text": "沙豆李这张能吃尸体",
+   "truth_segments": [
+    {
+     "text": "沙豆李在藏尸体",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "沙豆李在藏尸体",
+   "text_changed": true,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 30,
+   "timing": "00:01:40,740 --> 00:01:42,340",
+   "machine_label": "李豆沙",
+   "machine_text": "不是我",
+   "truth_segments": [
+    {
+     "text": "不是我",
+     "label": "李豆沙"
+    }
+   ],
+   "truth_text": "不是我",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 31,
+   "timing": "00:01:42,420 --> 00:01:46,500",
+   "machine_label": "连线",
+   "machine_text": "她脚下有一个安晚awa的尸体",
+   "truth_segments": [
+    {
+     "text": "她脚下有一个安晚awa的尸体",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "她脚下有一个安晚awa的尸体",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 32,
+   "timing": "00:01:46,780 --> 00:01:49,460",
+   "machine_label": "连线",
+   "machine_text": "全票打飞山",
+   "truth_segments": [
+    {
+     "text": "全票打飞沙豆李",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "全票打飞沙豆李",
+   "text_changed": true,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 33,
+   "timing": "00:01:49,630 --> 00:01:52,950",
+   "machine_label": "李豆沙",
+   "machine_text": "NO，不是不是我",
+   "truth_segments": [
+    {
+     "text": "不是不是我",
+     "label": "李豆沙"
+    }
+   ],
+   "truth_text": "不是不是我",
+   "text_changed": true,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 34,
+   "timing": "00:01:54,150 --> 00:01:56,630",
+   "machine_label": "连线",
+   "machine_text": "呃，我这轮是跟NT",
+   "truth_segments": [
+    {
+     "text": "呃，我这轮是跟南町nightin",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "呃，我这轮是跟南町nightin",
+   "text_changed": true,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 35,
+   "timing": "00:01:56,630 --> 00:01:59,110",
+   "machine_label": "李豆沙",
+   "machine_text": "NT和绝世猛1在一起",
+   "truth_segments": [
+    {
+     "text": "绝世猛1在一起",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "绝世猛1在一起",
+   "text_changed": true,
+   "label_changed": true,
+   "mixed": false,
+   "marked": true
+  },
+  {
+   "cue": 36,
+   "timing": "00:01:59,110 --> 00:02:01,790",
+   "machine_label": "连线",
+   "machine_text": "然后南町没跟我们一起",
+   "truth_segments": [
+    {
+     "text": "然后南町没跟我们一起",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "然后南町没跟我们一起",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 37,
+   "timing": "00:02:01,790 --> 00:02:03,670",
+   "machine_label": "连线",
+   "machine_text": "南町、NT往右走了",
+   "truth_segments": [
+    {
+     "text": "南町nightin往右走了",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "南町nightin往右走了",
+   "text_changed": true,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 38,
+   "timing": "00:02:03,690 --> 00:02:09,130",
+   "machine_label": "连线",
+   "machine_text": "然后我跟这个绝世猛1在书房做了两个任务",
+   "truth_segments": [
+    {
+     "text": "然后我跟这个绝世猛1在书房做了两个任务",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "然后我跟这个绝世猛1在书房做了两个任务",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 39,
+   "timing": "00:02:09,220 --> 00:02:13,000",
+   "machine_label": "连线",
+   "machine_text": "然后绝世猛1跟我一直走一起的",
+   "truth_segments": [
+    {
+     "text": "然后绝世猛1跟我一直走一起的",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "然后绝世猛1跟我一直走一起的",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 40,
+   "timing": "00:02:13,000 --> 00:02:15,700",
+   "machine_label": "连线",
+   "machine_text": "我永远拥护这个绝世猛1啊",
+   "truth_segments": [
+    {
+     "text": "我永远拥护这个绝世猛1啊",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "我永远拥护这个绝世猛1啊",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 41,
+   "timing": "00:02:16,120 --> 00:02:18,720",
+   "machine_label": "连线",
+   "machine_text": "嗯，我们都是报着任务名做的",
+   "truth_segments": [
+    {
+     "text": "嗯，我们都是报着任务名做的",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "嗯，我们都是报着任务名做的",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 42,
+   "timing": "00:02:18,720 --> 00:02:20,100",
+   "machine_label": "连线",
+   "machine_text": "做了两三个任务吧",
+   "truth_segments": [
+    {
+     "text": "做了两三个任务吧",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "做了两三个任务吧",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 43,
+   "timing": "00:02:20,100 --> 00:02:22,100",
+   "machine_label": "连线",
+   "machine_text": "然后我，我们两个说一起走",
+   "truth_segments": [
+    {
+     "text": "然后我，我们两个说一起走",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "然后我，我们两个说一起走",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 44,
+   "timing": "00:02:22,100 --> 00:02:23,240",
+   "machine_label": "连线",
+   "machine_text": "结果走到",
+   "truth_segments": [
+    {
+     "text": "结果走到",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "结果走到",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 45,
+   "timing": "00:02:23,510 --> 00:02:25,030",
+   "machine_label": "连线",
+   "machine_text": "哎，走到哪儿啊",
+   "truth_segments": [
+    {
+     "text": "哎，走到哪儿啊",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "哎，走到哪儿啊",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 46,
+   "timing": "00:02:25,190 --> 00:02:26,630",
+   "machine_label": "连线",
+   "machine_text": "工作室还是哪里",
+   "truth_segments": [
+    {
+     "text": "工作室还是哪里",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "工作室还是哪里",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 47,
+   "timing": "00:02:26,630 --> 00:02:28,790",
+   "machine_label": "连线",
+   "machine_text": "就通马桶那个任务的地方",
+   "truth_segments": [
+    {
+     "text": "就通马桶那个任务的地方",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "就通马桶那个任务的地方",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 48,
+   "timing": "00:02:28,850 --> 00:02:30,330",
+   "machine_label": "连线",
+   "machine_text": "让我拿马桶塞进去",
+   "truth_segments": [
+    {
+     "text": "让我拿马桶塞进去",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "让我拿马桶塞进去",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 49,
+   "timing": "00:02:30,330 --> 00:02:31,310",
+   "machine_label": "连线",
+   "machine_text": "然后那里面一堆",
+   "truth_segments": [
+    {
+     "text": "然后那里面一堆",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "然后那里面一堆",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 50,
+   "timing": "00:02:31,310 --> 00:02:33,110",
+   "machine_label": "李豆沙",
+   "machine_text": "我还可以自爆呢",
+   "truth_segments": [
+    {
+     "text": "我还可以自爆呢",
+     "label": "李豆沙"
+    }
+   ],
+   "truth_text": "我还可以自爆呢",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 51,
+   "timing": "00:02:33,110 --> 00:02:34,210",
+   "machine_label": "连线",
+   "machine_text": "一扭头就走",
+   "truth_segments": [
+    {
+     "text": "一扭头就走",
+     "label": "连线"
+    }
+   ],
+   "truth_text": "一扭头就走",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  },
+  {
+   "cue": 52,
+   "timing": "00:02:34,210 --> 00:02:37,250",
+   "machine_label": "李豆沙",
+   "machine_text": "我以为都能吃掉啊",
+   "truth_segments": [
+    {
+     "text": "我以为都能吃掉啊",
+     "label": "李豆沙"
+    }
+   ],
+   "truth_text": "我以为都能吃掉啊",
+   "text_changed": false,
+   "label_changed": false,
+   "mixed": false,
+   "marked": false
+  }
+ ]
+}

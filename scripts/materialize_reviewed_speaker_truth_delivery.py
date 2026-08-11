@@ -39,6 +39,10 @@ BASELINE_SCHEMAS = {
 }
 BASELINE_MODE = "preserve_text_outside_source_truth"
 ARBITRATION_SCHEMA = "reviewed-speaker-machine-cue-arbitration.v1"
+ARBITRATION_DISPOSITION_SCHEMA = "reviewed-speaker-arbitration-disposition.v1"
+ARBITRATION_NOT_REQUIRED = "NOT_REQUIRED_FULLY_LABELLED"
+REVIEW_STATUS_COMPLETE = "ivan_reviewed_speaker_complete"
+REVIEW_STATUS_PARTIAL_MACHINE = "ivan_reviewed_speaker_partial_machine"
 DELIVERY_RECEIPT_SCHEMA = "reviewed-speaker-truth-delivery.v2"
 TRUTH_FULL_OWNERSHIP_PIN_SCHEMA = "truth-full-ownership-pin.v1"
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
@@ -278,6 +282,49 @@ def _validate_arbitration(
     return receipt_sha, decisions
 
 
+def _resolve_arbitration_authority(
+    *,
+    truth_rows: list[object],
+    arbitration: Mapping[str, object] | None,
+    candidate_id: str,
+    truth_path: Path,
+    automatic_srt_sha256: str,
+) -> tuple[
+    str | None,
+    dict[int, Mapping[str, object]],
+    Mapping[str, object] | None,
+]:
+    fully_labelled = all(
+        isinstance(row, Mapping)
+        and isinstance(row.get("truth_segments"), list)
+        and bool(row.get("truth_segments"))
+        and all(
+            isinstance(segment, Mapping) and segment.get("label") in ALLOWED_SPEAKERS
+            for segment in row.get("truth_segments") or []
+        )
+        for row in truth_rows
+    )
+    if arbitration is not None:
+        receipt_sha, rows = _validate_arbitration(
+            arbitration,
+            candidate_id=candidate_id,
+            automatic_srt_sha256=automatic_srt_sha256,
+        )
+        return receipt_sha, rows, None
+    if not fully_labelled:
+        raise DeliveryCompileError("unlabelled truth cue requires machine-cue arbitration")
+    return (
+        None,
+        {},
+        {
+            "schema_version": ARBITRATION_DISPOSITION_SCHEMA,
+            "status": ARBITRATION_NOT_REQUIRED,
+            "truth_input_sha256": _sha256(truth_path),
+            "automatic_labelled_srt_sha256": automatic_srt_sha256,
+        },
+    )
+
+
 def _load_automatic_speaker_srt(
     path: Path,
     *,
@@ -344,7 +391,8 @@ def _build_delivery_outputs(
     source_text_srt: Path,
     source_media: Path,
     source_cue_count: int,
-    receipt_sha: str,
+    receipt_sha: str | None,
+    arbitration_disposition: Mapping[str, object] | None,
     automatic_srt_relative: str,
     automatic_srt_sha256: str,
     source_recording_basename: str,
@@ -397,11 +445,16 @@ def _build_delivery_outputs(
         "authority": authority,
         "truth_input": {"path": truth_relative, "sha256": truth_sha},
         "baseline_sha256": baseline_sha,
-        "arbitration_receipt_sha256": receipt_sha,
         "cue_count": len(clean_rows),
         "reviewed_override_count": len(overrides),
         "machine_cues": [int(row["source_cue"]) for row in machine_rows],
     }
+    if receipt_sha is not None:
+        truth_full_ownership_pin["arbitration_receipt_sha256"] = receipt_sha
+    elif arbitration_disposition is not None:
+        truth_full_ownership_pin["arbitration_disposition"] = dict(
+            arbitration_disposition
+        )
     baseline_manifest = {
         "registry_schema_version": BASELINE_REGISTRY_SCHEMA,
         "candidate_id": candidate_id,
@@ -424,19 +477,29 @@ def _build_delivery_outputs(
                 "truth_full_ownership": truth_full_ownership_pin,
             }
         )
+    fully_reviewed = not machine_rows
     override_document = {
         "schema_version": 1,
         "source_media_sha256": media_sha,
         "text_final_srt_sha256": baseline_sha,
         "source_srt_sha256": automatic_srt_sha256,
         "candidate_id": candidate_id,
-        "status": "ivan_reviewed_speaker_partial_machine",
+        "status": (
+            REVIEW_STATUS_COMPLETE
+            if fully_reviewed
+            else REVIEW_STATUS_PARTIAL_MACHINE
+        ),
         "reviewed_at": reviewed_at,
         "overlap_policy": "保留主说话人；混说段只用已披露的字符比例近似时轴。",
         "notes": (
-            "Delivery-time compilation from hash-bound Ivan truth. Reviewed cues are "
-            "post-analysis overrides; explicitly uncovered cues retain the existing "
-            "machine analyzer decision and never default from omission."
+            "Delivery-time compilation from hash-bound Ivan truth. Every cue has "
+            "operator-reviewed speaker ownership; no machine decision is retained."
+            if fully_reviewed
+            else (
+                "Delivery-time compilation from hash-bound Ivan truth. Reviewed cues "
+                "are post-analysis overrides; explicitly uncovered cues retain the "
+                "existing machine analyzer decision and never default from omission."
+            )
         ),
         "reviewed_speaker_baseline": {
             "schema_version": REVIEWED_SPEAKER_BASELINE_SCHEMA,
@@ -473,13 +536,16 @@ def _build_delivery_outputs(
             "sha256": automatic_srt_sha256,
             "cue_count": len(clean_rows),
         },
-        "arbitration_receipt_sha256": receipt_sha,
         "reviewed_override_count": len(overrides),
         "machine_cues": [row["source_cue"] for row in machine_rows],
         "anchor_source_cues": anchors,
         "truth_full_ownership": truth_full_ownership_pin,
         "transformations": transform_rows,
     }
+    if receipt_sha is not None:
+        receipt["arbitration_receipt_sha256"] = receipt_sha
+    elif arbitration_disposition is not None:
+        receipt["arbitration_disposition"] = dict(arbitration_disposition)
     return {
         "baseline_srt": baseline_srt,
         "baseline_manifest": baseline_manifest,
@@ -495,7 +561,7 @@ def compile_delivery(
     source_media: Path,
     repo_root: Path,
     authority: str,
-    arbitration: Mapping[str, object],
+    arbitration: Mapping[str, object] | None,
     automatic_srt_path: Path,
     source_recording_basename: str,
     source_recording_sha256: str,
@@ -541,9 +607,13 @@ def compile_delivery(
         raise DeliveryCompileError("truth input candidate_id is missing")
     if truth.get("source_machine_sha256") != _sha256(source_text_srt):
         raise DeliveryCompileError("truth input does not bind source text SRT")
-    receipt_sha, arbitration_rows = _validate_arbitration(
-        arbitration,
-        candidate_id=candidate_id,
+    truth_rows = truth.get("cues")
+    if not isinstance(truth_rows, list) or not truth_rows:
+        raise DeliveryCompileError("truth input cues must be a non-empty list")
+    receipt_sha, arbitration_rows, arbitration_disposition = _resolve_arbitration_authority(
+        truth_rows=truth_rows,
+        arbitration=arbitration,
+        candidate_id=candidate_id, truth_path=truth_path,
         automatic_srt_sha256=automatic_srt_sha256,
     )
     source_cues = parse_srt(source_text_srt.read_text(encoding="utf-8"))
@@ -552,9 +622,6 @@ def compile_delivery(
         raise DeliveryCompileError("source text SRT cue indices are not contiguous")
     source_by_number = {cue.index: cue for cue in source_cues}
 
-    truth_rows = truth.get("cues")
-    if not isinstance(truth_rows, list) or not truth_rows:
-        raise DeliveryCompileError("truth input cues must be a non-empty list")
     consumed_source_cues: set[int] = set()
     clean_rows: list[dict[str, object]] = []
     overrides: list[dict[str, object]] = []
@@ -772,6 +839,7 @@ def compile_delivery(
         source_media=source_media,
         source_cue_count=len(source_cues),
         receipt_sha=receipt_sha,
+        arbitration_disposition=arbitration_disposition,
         automatic_srt_relative=automatic_srt_relative,
         automatic_srt_sha256=automatic_srt_sha256,
         source_recording_basename=source_recording_basename,
@@ -798,7 +866,14 @@ def main() -> int:
     parser.add_argument("--source-media", required=True, type=Path)
     parser.add_argument("--repo-root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--authority", required=True)
-    parser.add_argument("--arbitration", required=True, type=Path)
+    parser.add_argument(
+        "--arbitration",
+        type=Path,
+        help=(
+            "Required whenever any truth segment has no speaker label. Omit only "
+            "for a fully labelled whole-SRT human review."
+        ),
+    )
     parser.add_argument("--automatic-speaker-srt", required=True, type=Path)
     parser.add_argument("--source-recording-basename", required=True)
     parser.add_argument("--source-recording-sha256", required=True)
@@ -815,9 +890,11 @@ def main() -> int:
     parser.add_argument("--speaker-override-out", required=True, type=Path)
     parser.add_argument("--receipt-out", required=True, type=Path)
     args = parser.parse_args()
-    arbitration = json.loads(args.arbitration.read_text(encoding="utf-8"))
-    if not isinstance(arbitration, Mapping):
-        raise DeliveryCompileError("arbitration input must be an object")
+    arbitration = None
+    if args.arbitration is not None:
+        arbitration = json.loads(args.arbitration.read_text(encoding="utf-8"))
+        if not isinstance(arbitration, Mapping):
+            raise DeliveryCompileError("arbitration input must be an object")
     output = compile_delivery(
         truth_path=args.truth,
         source_text_srt=args.source_text_srt,

@@ -1,0 +1,987 @@
+{
+  "schema_version": 1,
+  "source_media_sha256": "b9b3e746ae9007b587bec02dbf4421250f6146e200163cf8fa5e29c542a977e3",
+  "text_final_srt_sha256": "6d79fdab105d4c7b5edffec66fe526aa01839de342a7c96b8784f4d0100a8062",
+  "source_srt_sha256": "19131ea3b2740e286c1c506fedd94c08b36179655c1849091f75e9ac0dfc2838",
+  "candidate_id": "auto_223750_578_734",
+  "status": "ivan_reviewed_speaker_complete",
+  "reviewed_at": "2026-08-11",
+  "overlap_policy": "保留主说话人；混说段只用已披露的字符比例近似时轴。",
+  "notes": "Delivery-time compilation from hash-bound Ivan truth. Every cue has operator-reviewed speaker ownership; no machine decision is retained.",
+  "reviewed_speaker_baseline": {
+    "schema_version": "reviewed-speaker-baseline.v2",
+    "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+    "truth_input": {
+      "path": "assets/lidousha/reviewed_speaker_truth/auto_223750_578_734.truth-diff.v2.json",
+      "sha256": "aaa1cd5681b8bb1fee34ed347c6e5f2fa9166d480176cd2688a28cb7fa0fd434"
+    },
+    "automatic_input": {
+      "path": "assets/lidousha/speaker_automatic_baselines/auto_223750_578_734.automatic-labelled.srt",
+      "sha256": "19131ea3b2740e286c1c506fedd94c08b36179655c1849091f75e9ac0dfc2838"
+    },
+    "cue_count": 52,
+    "anchor_source_cues": [
+      23,
+      33,
+      52,
+      15
+    ],
+    "machine_cues": []
+  },
+  "overrides": [
+    {
+      "source_cue": 1,
+      "expect": {
+        "start": "00:00:00,250",
+        "end": "00:00:02,370",
+        "text": "我想活着诶"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我想活着诶",
+          "start": "00:00:00,250",
+          "end": "00:00:02,370"
+        }
+      ]
+    },
+    {
+      "source_cue": 2,
+      "expect": {
+        "start": "00:00:02,450",
+        "end": "00:00:04,730",
+        "text": "你好你好"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "你好你好",
+          "start": "00:00:02,450",
+          "end": "00:00:04,730"
+        }
+      ]
+    },
+    {
+      "source_cue": 3,
+      "expect": {
+        "start": "00:00:04,980",
+        "end": "00:00:06,500",
+        "text": "我们又在一起了"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "我们又在一起了",
+          "start": "00:00:04,980",
+          "end": "00:00:06,500"
+        }
+      ]
+    },
+    {
+      "source_cue": 4,
+      "expect": {
+        "start": "00:00:06,500",
+        "end": "00:00:07,720",
+        "text": "莉亚 活着"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; mixed segment timing uses the established character-proportion proxy and is not acoustic alignment.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "莉亚",
+          "start": "00:00:06,500",
+          "end": "00:00:07,110"
+        },
+        {
+          "speaker": "连线",
+          "text": "活着",
+          "start": "00:00:07,110",
+          "end": "00:00:07,720"
+        }
+      ]
+    },
+    {
+      "source_cue": 5,
+      "expect": {
+        "start": "00:00:07,720",
+        "end": "00:00:08,660",
+        "text": "我想活着"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我想活着",
+          "start": "00:00:07,720",
+          "end": "00:00:08,660"
+        }
+      ]
+    },
+    {
+      "source_cue": 6,
+      "expect": {
+        "start": "00:00:08,660",
+        "end": "00:00:09,380",
+        "text": "就算你是狼"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "就算你是狼",
+          "start": "00:00:08,660",
+          "end": "00:00:09,380"
+        }
+      ]
+    },
+    {
+      "source_cue": 7,
+      "expect": {
+        "start": "00:00:09,380",
+        "end": "00:00:10,260",
+        "text": "你放过我好吗"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "你放过我好吗",
+          "start": "00:00:09,380",
+          "end": "00:00:10,260"
+        }
+      ]
+    },
+    {
+      "source_cue": 8,
+      "expect": {
+        "start": "00:00:10,260",
+        "end": "00:00:11,280",
+        "text": "我想活着"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我想活着",
+          "start": "00:00:10,260",
+          "end": "00:00:11,280"
+        }
+      ]
+    },
+    {
+      "source_cue": 9,
+      "expect": {
+        "start": "00:00:11,280",
+        "end": "00:00:13,100",
+        "text": "好的好的，放心吧"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "好的好的，放心吧",
+          "start": "00:00:11,280",
+          "end": "00:00:13,100"
+        }
+      ]
+    },
+    {
+      "source_cue": 10,
+      "expect": {
+        "start": "00:00:14,770",
+        "end": "00:00:16,330",
+        "text": "那我们一起走吗"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "那我们一起走吗",
+          "start": "00:00:14,770",
+          "end": "00:00:16,330"
+        }
+      ]
+    },
+    {
+      "source_cue": 11,
+      "expect": {
+        "start": "00:00:16,330",
+        "end": "00:00:17,430",
+        "text": "真的能放心吗"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "真的能放心吗",
+          "start": "00:00:16,330",
+          "end": "00:00:17,430"
+        }
+      ]
+    },
+    {
+      "source_cue": 12,
+      "expect": {
+        "start": "00:00:17,430",
+        "end": "00:00:18,770",
+        "text": "我们一起走吗"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "我们一起走吗",
+          "start": "00:00:17,430",
+          "end": "00:00:18,770"
+        }
+      ]
+    },
+    {
+      "source_cue": 13,
+      "expect": {
+        "start": "00:00:19,690",
+        "end": "00:00:22,290",
+        "text": "好呀好呀好，我做任务"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "好呀好呀好，我做任务",
+          "start": "00:00:19,690",
+          "end": "00:00:22,290"
+        }
+      ]
+    },
+    {
+      "source_cue": 14,
+      "expect": {
+        "start": "00:00:22,369",
+        "end": "00:00:23,369",
+        "text": "对不起"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "对不起",
+          "start": "00:00:22,369",
+          "end": "00:00:23,369"
+        }
+      ]
+    },
+    {
+      "source_cue": 15,
+      "expect": {
+        "start": "00:00:25,230",
+        "end": "00:00:28,070",
+        "text": "对不起，我对不起对不起对不起"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "对不起，我对不起对不起对不起",
+          "start": "00:00:25,230",
+          "end": "00:00:28,070"
+        }
+      ]
+    },
+    {
+      "source_cue": 16,
+      "expect": {
+        "start": "00:00:36,010",
+        "end": "00:00:38,730",
+        "text": "你等会要写那个"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "你等会要写那个",
+          "start": "00:00:36,010",
+          "end": "00:00:38,730"
+        }
+      ]
+    },
+    {
+      "source_cue": 17,
+      "expect": {
+        "start": "00:00:38,730",
+        "end": "00:00:42,170",
+        "text": "我比你好"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; mixed segment timing uses the established character-proportion proxy and is not acoustic alignment.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我比",
+          "start": "00:00:38,730",
+          "end": "00:00:40,450"
+        },
+        {
+          "speaker": "李豆沙",
+          "text": "你好",
+          "start": "00:00:40,450",
+          "end": "00:00:42,170"
+        }
+      ]
+    },
+    {
+      "source_cue": 18,
+      "expect": {
+        "start": "00:00:42,370",
+        "end": "00:00:43,370",
+        "text": "你好"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "你好",
+          "start": "00:00:42,370",
+          "end": "00:00:43,370"
+        }
+      ]
+    },
+    {
+      "source_cue": 19,
+      "expect": {
+        "start": "00:00:57,130",
+        "end": "00:00:58,370",
+        "text": "怎么没人了"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "怎么没人了",
+          "start": "00:00:57,130",
+          "end": "00:00:58,370"
+        }
+      ]
+    },
+    {
+      "source_cue": 20,
+      "expect": {
+        "start": "00:01:01,370",
+        "end": "00:01:02,690",
+        "text": "怎么没人了"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "怎么没人了",
+          "start": "00:01:01,370",
+          "end": "00:01:02,690"
+        }
+      ]
+    },
+    {
+      "source_cue": 21,
+      "expect": {
+        "start": "00:01:06,710",
+        "end": "00:01:07,710",
+        "text": "我去"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "我去",
+          "start": "00:01:06,710",
+          "end": "00:01:07,710"
+        }
+      ]
+    },
+    {
+      "source_cue": 22,
+      "expect": {
+        "start": "00:01:08,430",
+        "end": "00:01:11,390",
+        "text": "这人有诶，有有有有"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; mixed segment timing uses the established character-proportion proxy and is not acoustic alignment.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "这人",
+          "start": "00:01:08,430",
+          "end": "00:01:09,088"
+        },
+        {
+          "speaker": "李豆沙",
+          "text": "有诶，有有有有",
+          "start": "00:01:09,088",
+          "end": "00:01:11,390"
+        }
+      ]
+    },
+    {
+      "source_cue": 23,
+      "expect": {
+        "start": "00:01:12,150",
+        "end": "00:01:16,390",
+        "text": "没吃到没吃到没吃到没吃到"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "没吃到没吃到没吃到没吃到",
+          "start": "00:01:12,150",
+          "end": "00:01:16,390"
+        }
+      ]
+    },
+    {
+      "source_cue": 24,
+      "expect": {
+        "start": "00:01:22,910",
+        "end": "00:01:27,510",
+        "text": "沙豆李，你还有何话说"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "沙豆李，你还有何话说",
+          "start": "00:01:22,910",
+          "end": "00:01:27,510"
+        }
+      ]
+    },
+    {
+      "source_cue": 25,
+      "expect": {
+        "start": "00:01:30,360",
+        "end": "00:01:32,240",
+        "text": "哦，不是我杀的"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "哦，不是我杀的",
+          "start": "00:01:30,360",
+          "end": "00:01:32,240"
+        }
+      ]
+    },
+    {
+      "source_cue": 26,
+      "expect": {
+        "start": "00:01:32,240",
+        "end": "00:01:33,860",
+        "text": "我做了四个任务"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我做了四个任务",
+          "start": "00:01:32,240",
+          "end": "00:01:33,860"
+        }
+      ]
+    },
+    {
+      "source_cue": 27,
+      "expect": {
+        "start": "00:01:33,860",
+        "end": "00:01:36,060",
+        "text": "北柚香一直在守护我"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "北柚香一直在守护我",
+          "start": "00:01:33,860",
+          "end": "00:01:36,060"
+        }
+      ]
+    },
+    {
+      "source_cue": 28,
+      "expect": {
+        "start": "00:01:36,060",
+        "end": "00:01:37,120",
+        "text": "门厅这个地方"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "门厅这个地方",
+          "start": "00:01:36,060",
+          "end": "00:01:37,120"
+        }
+      ]
+    },
+    {
+      "source_cue": 29,
+      "expect": {
+        "start": "00:01:37,120",
+        "end": "00:01:40,740",
+        "text": "沙豆李在藏尸体"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "沙豆李在藏尸体",
+          "start": "00:01:37,120",
+          "end": "00:01:40,740"
+        }
+      ]
+    },
+    {
+      "source_cue": 30,
+      "expect": {
+        "start": "00:01:40,740",
+        "end": "00:01:42,340",
+        "text": "不是我"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "不是我",
+          "start": "00:01:40,740",
+          "end": "00:01:42,340"
+        }
+      ]
+    },
+    {
+      "source_cue": 31,
+      "expect": {
+        "start": "00:01:42,420",
+        "end": "00:01:46,500",
+        "text": "她脚下有一个安晚awa的尸体"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "她脚下有一个安晚awa的尸体",
+          "start": "00:01:42,420",
+          "end": "00:01:46,500"
+        }
+      ]
+    },
+    {
+      "source_cue": 32,
+      "expect": {
+        "start": "00:01:46,780",
+        "end": "00:01:49,460",
+        "text": "全票打飞沙豆李"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "全票打飞沙豆李",
+          "start": "00:01:46,780",
+          "end": "00:01:49,460"
+        }
+      ]
+    },
+    {
+      "source_cue": 33,
+      "expect": {
+        "start": "00:01:49,630",
+        "end": "00:01:52,950",
+        "text": "不是不是我"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "不是不是我",
+          "start": "00:01:49,630",
+          "end": "00:01:52,950"
+        }
+      ]
+    },
+    {
+      "source_cue": 34,
+      "expect": {
+        "start": "00:01:54,150",
+        "end": "00:01:56,630",
+        "text": "呃，我这轮是跟南町nightin"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "呃，我这轮是跟南町nightin",
+          "start": "00:01:54,150",
+          "end": "00:01:56,630"
+        }
+      ]
+    },
+    {
+      "source_cue": 35,
+      "expect": {
+        "start": "00:01:56,630",
+        "end": "00:01:59,110",
+        "text": "绝世猛1在一起"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "绝世猛1在一起",
+          "start": "00:01:56,630",
+          "end": "00:01:59,110"
+        }
+      ]
+    },
+    {
+      "source_cue": 36,
+      "expect": {
+        "start": "00:01:59,110",
+        "end": "00:02:01,790",
+        "text": "然后南町没跟我们一起"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "然后南町没跟我们一起",
+          "start": "00:01:59,110",
+          "end": "00:02:01,790"
+        }
+      ]
+    },
+    {
+      "source_cue": 37,
+      "expect": {
+        "start": "00:02:01,790",
+        "end": "00:02:03,670",
+        "text": "南町nightin往右走了"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "南町nightin往右走了",
+          "start": "00:02:01,790",
+          "end": "00:02:03,670"
+        }
+      ]
+    },
+    {
+      "source_cue": 38,
+      "expect": {
+        "start": "00:02:03,690",
+        "end": "00:02:09,130",
+        "text": "然后我跟这个绝世猛1在书房做了两个任务"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "然后我跟这个绝世猛1在书房做了两个任务",
+          "start": "00:02:03,690",
+          "end": "00:02:09,130"
+        }
+      ]
+    },
+    {
+      "source_cue": 39,
+      "expect": {
+        "start": "00:02:09,220",
+        "end": "00:02:13,000",
+        "text": "然后绝世猛1跟我一直走一起的"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "然后绝世猛1跟我一直走一起的",
+          "start": "00:02:09,220",
+          "end": "00:02:13,000"
+        }
+      ]
+    },
+    {
+      "source_cue": 40,
+      "expect": {
+        "start": "00:02:13,000",
+        "end": "00:02:15,700",
+        "text": "我永远拥护这个绝世猛1啊"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "我永远拥护这个绝世猛1啊",
+          "start": "00:02:13,000",
+          "end": "00:02:15,700"
+        }
+      ]
+    },
+    {
+      "source_cue": 41,
+      "expect": {
+        "start": "00:02:16,120",
+        "end": "00:02:18,720",
+        "text": "嗯，我们都是报着任务名做的"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "嗯，我们都是报着任务名做的",
+          "start": "00:02:16,120",
+          "end": "00:02:18,720"
+        }
+      ]
+    },
+    {
+      "source_cue": 42,
+      "expect": {
+        "start": "00:02:18,720",
+        "end": "00:02:20,100",
+        "text": "做了两三个任务吧"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "做了两三个任务吧",
+          "start": "00:02:18,720",
+          "end": "00:02:20,100"
+        }
+      ]
+    },
+    {
+      "source_cue": 43,
+      "expect": {
+        "start": "00:02:20,100",
+        "end": "00:02:22,100",
+        "text": "然后我，我们两个说一起走"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "然后我，我们两个说一起走",
+          "start": "00:02:20,100",
+          "end": "00:02:22,100"
+        }
+      ]
+    },
+    {
+      "source_cue": 44,
+      "expect": {
+        "start": "00:02:22,100",
+        "end": "00:02:23,240",
+        "text": "结果走到"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "结果走到",
+          "start": "00:02:22,100",
+          "end": "00:02:23,240"
+        }
+      ]
+    },
+    {
+      "source_cue": 45,
+      "expect": {
+        "start": "00:02:23,510",
+        "end": "00:02:25,030",
+        "text": "哎，走到哪儿啊"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "哎，走到哪儿啊",
+          "start": "00:02:23,510",
+          "end": "00:02:25,030"
+        }
+      ]
+    },
+    {
+      "source_cue": 46,
+      "expect": {
+        "start": "00:02:25,190",
+        "end": "00:02:26,630",
+        "text": "工作室还是哪里"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "工作室还是哪里",
+          "start": "00:02:25,190",
+          "end": "00:02:26,630"
+        }
+      ]
+    },
+    {
+      "source_cue": 47,
+      "expect": {
+        "start": "00:02:26,630",
+        "end": "00:02:28,790",
+        "text": "就通马桶那个任务的地方"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "就通马桶那个任务的地方",
+          "start": "00:02:26,630",
+          "end": "00:02:28,790"
+        }
+      ]
+    },
+    {
+      "source_cue": 48,
+      "expect": {
+        "start": "00:02:28,850",
+        "end": "00:02:30,330",
+        "text": "让我拿马桶塞进去"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "让我拿马桶塞进去",
+          "start": "00:02:28,850",
+          "end": "00:02:30,330"
+        }
+      ]
+    },
+    {
+      "source_cue": 49,
+      "expect": {
+        "start": "00:02:30,330",
+        "end": "00:02:31,310",
+        "text": "然后那里面一堆"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "然后那里面一堆",
+          "start": "00:02:30,330",
+          "end": "00:02:31,310"
+        }
+      ]
+    },
+    {
+      "source_cue": 50,
+      "expect": {
+        "start": "00:02:31,310",
+        "end": "00:02:33,110",
+        "text": "我还可以自爆呢"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "我还可以自爆呢",
+          "start": "00:02:31,310",
+          "end": "00:02:33,110"
+        }
+      ]
+    },
+    {
+      "source_cue": 51,
+      "expect": {
+        "start": "00:02:33,110",
+        "end": "00:02:34,210",
+        "text": "一扭头就走"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "连线",
+          "text": "一扭头就走",
+          "start": "00:02:33,110",
+          "end": "00:02:34,210"
+        }
+      ]
+    },
+    {
+      "source_cue": 52,
+      "expect": {
+        "start": "00:02:34,210",
+        "end": "00:02:37,250",
+        "text": "我以为都能吃掉啊"
+      },
+      "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",
+      "note": "Ivan reviewed speaker truth; exact full-cue interval.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "我以为都能吃掉啊",
+          "start": "00:02:34,210",
+          "end": "00:02:37,250"
+        }
+      ]
+    }
+  ]
+}

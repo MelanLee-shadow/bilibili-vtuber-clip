@@ -1,0 +1,120 @@
+{
+  "schema_version": "candidate-entity-surface-projection.v1",
+  "candidate_binding": {
+    "candidate_id": "auto_223750_578_734",
+    "reviewed_srt_sha256": "6d79fdab105d4c7b5edffec66fe526aa01839de342a7c96b8784f4d0100a8062",
+    "source_recording_basename": "22966160_20260807-22-37-50.mp4",
+    "source_sha256": "66e9ec0707fe8d7f38cf8a552e863dafbba34fb7eadaece496adb30d04b1ad1e",
+    "absolute_source_start_ms": 577780,
+    "absolute_source_end_ms": 735090
+  },
+  "identity_equivalences": [
+    {
+      "entity_id": "ent_84bf79617fdc435e900f47202689c02b",
+      "equivalent_surfaces": [
+        "南町Nightin",
+        "南町nightin",
+        "南町",
+        "NT",
+        "nt"
+      ]
+    },
+    {
+      "entity_id": "ent_3c301b25eceb4b4eb0119a83034c1eb0",
+      "equivalent_surfaces": [
+        "莉娅",
+        "莉亚"
+      ]
+    }
+  ],
+  "surface_projections": [
+    {
+      "entity_id": "ent_84bf79617fdc435e900f47202689c02b",
+      "surface_type": "official",
+      "surface": "南町Nightin"
+    },
+    {
+      "entity_id": "ent_84bf79617fdc435e900f47202689c02b",
+      "surface_type": "session",
+      "surface": "南町nightin"
+    },
+    {
+      "entity_id": "ent_84bf79617fdc435e900f47202689c02b",
+      "surface_type": "reviewed",
+      "surface": "南町nightin"
+    },
+    {
+      "entity_id": "ent_84bf79617fdc435e900f47202689c02b",
+      "surface_type": "speaker",
+      "surface": "南町nightin"
+    },
+    {
+      "entity_id": "ent_84bf79617fdc435e900f47202689c02b",
+      "surface_type": "title_cover",
+      "surface": "南町nightin"
+    },
+    {
+      "entity_id": "ent_84bf79617fdc435e900f47202689c02b",
+      "surface_type": "publication",
+      "surface": "南町"
+    },
+    {
+      "entity_id": "ent_84bf79617fdc435e900f47202689c02b",
+      "surface_type": "mention",
+      "surface": "南町nightin",
+      "cue_index": 34,
+      "mention_id": "m1"
+    },
+    {
+      "entity_id": "ent_84bf79617fdc435e900f47202689c02b",
+      "surface_type": "mention",
+      "surface": "南町",
+      "cue_index": 36,
+      "mention_id": "m1"
+    },
+    {
+      "entity_id": "ent_84bf79617fdc435e900f47202689c02b",
+      "surface_type": "mention",
+      "surface": "南町nightin",
+      "cue_index": 37,
+      "mention_id": "m1"
+    },
+    {
+      "entity_id": "ent_3c301b25eceb4b4eb0119a83034c1eb0",
+      "surface_type": "official",
+      "surface": "莉娅"
+    },
+    {
+      "entity_id": "ent_3c301b25eceb4b4eb0119a83034c1eb0",
+      "surface_type": "session",
+      "surface": "莉娅"
+    },
+    {
+      "entity_id": "ent_3c301b25eceb4b4eb0119a83034c1eb0",
+      "surface_type": "reviewed",
+      "surface": "莉亚"
+    },
+    {
+      "entity_id": "ent_3c301b25eceb4b4eb0119a83034c1eb0",
+      "surface_type": "speaker",
+      "surface": "莉娅"
+    },
+    {
+      "entity_id": "ent_3c301b25eceb4b4eb0119a83034c1eb0",
+      "surface_type": "title_cover",
+      "surface": "莉娅"
+    },
+    {
+      "entity_id": "ent_3c301b25eceb4b4eb0119a83034c1eb0",
+      "surface_type": "publication",
+      "surface": "莉娅"
+    },
+    {
+      "entity_id": "ent_3c301b25eceb4b4eb0119a83034c1eb0",
+      "surface_type": "mention",
+      "surface": "莉亚",
+      "cue_index": 4,
+      "mention_id": "m1"
+    }
+  ]
+}

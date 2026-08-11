@@ -7,6 +7,10 @@ import re
 from pathlib import Path
 from typing import Mapping
 
+from src.autoslice.candidate_entity_projection import (
+    CandidateEntityProjectionError,
+    load_candidate_entity_projection,
+)
 from src.autoslice.channel_profile import load_channel_profile
 
 
@@ -129,6 +133,62 @@ def _candidate_family(candidate_id: str) -> str:
     """auto_225942_698_931r2 与 auto_225942_698_931 是同一内容家族。"""
 
     return _CANDIDATE_RECUT_SUFFIX_RX.sub("", str(candidate_id or "").strip())
+
+
+def validate_candidate_title_surface(
+    candidate_id: str,
+    title: str,
+    *,
+    artifact_kind: str = "title",
+) -> dict[str, object] | None:
+    """Enforce a candidate's exact reviewed title/cover name projection.
+
+    The additive projection is optional for legacy candidates.  Once present,
+    it is fail-closed and bound to the exact reviewed SRT bytes.  Identity-
+    equivalent aliases do not become interchangeable title spellings.
+    """
+
+    if artifact_kind not in {"title", "cover"}:
+        raise TitlePolicyError(
+            f"unsupported candidate entity projection artifact {artifact_kind!r}"
+        )
+    family = _candidate_family(candidate_id)
+    if not family:
+        return None
+    projection_path = (
+        CHANNEL_PROFILE.asset_root
+        / "candidate_entity_projections"
+        / f"{family}.entity-projection.v1.json"
+    )
+    if not projection_path.exists():
+        return None
+    reviewed_srt_path = (
+        CHANNEL_PROFILE.asset_directory("reviewed_subtitle_baselines")
+        / f"{family}.reviewed.srt"
+    )
+    try:
+        projection = load_candidate_entity_projection(
+            projection_path=projection_path,
+            candidate_id=family,
+            reviewed_srt_path=reviewed_srt_path,
+        )
+        projection.require_text_surfaces(
+            surface_type="title_cover",
+            text=title,
+        )
+    except CandidateEntityProjectionError as exc:
+        raise TitlePolicyError(
+            f"candidate entity title projection failed for {family}: {exc}"
+        ) from exc
+    return {
+        "schema_version": "candidate-entity-surface-audit.v1",
+        "status": "PASS",
+        "candidate_id": family,
+        "reviewed_srt_sha256": projection.binding.reviewed_srt_sha256,
+        "projection_sha256": projection.projection_sha256,
+        "surface_type": "title_cover",
+        "artifact_kind": artifact_kind,
+    }
 
 
 def manual_title_override(candidate_id: str) -> str | None:
