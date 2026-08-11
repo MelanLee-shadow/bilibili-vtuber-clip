@@ -1,5 +1,110 @@
 # Current handoff
 
+## ⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-11 00:40Z 交棒(successor 从这里开始)
+
+### 机器状态
+- **free 部署位 `0bdf430`**(2026-08-11T00:39:59Z)。**Mac 分支尖与 free 零差量。**
+- **全量测试 3775 → 4123**(今晚净增 348 条)。**部署 18 次,每次全绿。**
+- **`DISABLED` 仍置** —— Ivan「先修复再重产」。**他明确说过「修复完了之后再说出片的事情」。**
+- **今日上传 0。滚动 24h 配额已全部滚出窗口 → 10 席全空。**
+- 待产料:8/8 12 条 failed + 2 判死;8/9 4 failed + 4 backlog + **5 条已在 pending 队列**;
+  **8/10 录播还没处理过(连 state 都没有)**。
+
+### 今晚落地的修复(23 件,全部已部署)
+| 修复 | 来源 | commit |
+|---|---|---|
+| 歌切封面 `is_song` 键位(+同源第二处) | Ivan 定位 | `0ea3176` |
+| 说话人证据不足转停泊,不铸化石 | Ivan 裁定 | `b4d4000` |
+| 白色奶龙词表(7/27 落库,**漏合 14 天**) | 盘点查出 | `94c7175` |
+| 歌名命名权切给听音频那条链 | Ivan 逐字 | `ab641f0` |
+| 说话人必须先猜(三级梯子,统一色降为最后兜底) | Ivan 纠正 | `7ab596b` |
+| 快车道 `ft-a8600994`(11 commit/12000 行) | Ivan 令 | `d8acb77` |
+| 正字法门 `disclosure_only` 自相矛盾 | Ivan 令 | `10ec385` |
+| 运维日期范围通道(8/7 进范围) | Ivan 令 | `30a22d1` |
+| 贪生怕死不再烧封面(登记阻断即不出图) | Ivan 令 | `7fb54df` |
+| A1 修复预算按路线记账 | Ivan 拍板 | `932d8ed` |
+| 歌切跨主机导入 lane | Ivan 定"以 wsl 为准" | `00d6435` |
+| 11 音节 → 删字幕出成品等审阅 | Ivan 裁定 | `590c3d7` |
+| 心型病毒登记 hold | 导入前置 | `806a9e0` |
+| **边界 payoff 后延** | Ivan 盲审 | `b39bedc` |
+| 弹幕爆发提示帽 6→20(+堵掉第二道 cap 8) | Ivan「6 要放宽」 | `1bc0bfc` |
+| carryover in-flight checkpoint + 原子落盘 | 清单 #7 | `d0b9210` 系 |
+| 联唱 `post_song_talk_start_ms` 解耦 + 真独立证人 | 清单 #5 | `e53b639` 系 |
+| CAM++ **embed-once**(前向 6N+56 → N+10) | 清单 #8 | `dac417e` 系 |
+| **metric v2 语义路径 OR**(影子,零调用方) | Pro 方案 | `ec3844d` 系 |
+
+### ⛔ 上传权限唯一权威(未变)
+`assets/lidousha/publication_registry.v1.json`,**43 条 = 40 published + 3 hold**。
+禁传三条:`auto_210739_1142_1436`(非主角)、`auto_223750_913_1322`(贪生怕死)、
+**`song_210131_1210`(心型病毒,今晚新加)**。写 hold 必须改**仓内资产**并部署;
+写 `state/publication_registry.runtime.v1.json` 会 `PUBLICATION_RUNTIME_REGISTRY_INVALID`
+把**所有**上传一起拦掉(7667d9a 血泪)。
+
+### ⭐ 今晚最重要的发现:Ivan 盲审推翻了评分器
+他**不看分数直接看原片**,四条 tier-1 的裁定与 v1 排名**完全倒置**:
+v1 第一(75.5)「没有看点」;第二、三「**主要发言人不是李豆沙**」;
+**v1 最低那条(69.5)是唯一该发的,「至少应该在 90 分以上」**。
+
+**Ivan 硬规则(逐字)**:「主角都不是李豆沙基本就是低分判定,不用看别的。」
+**追加三条裁定**:「最好是能够自然给出低分,而不是强制压低」
+「必须要说话人分离才能判断李豆沙是不是主角,除非是单人直播」
+「说话人存疑都要直接给人工审阅」。
+
+**但根因不在 metric 而在边界**:那条好片的 payoff 与弹幕爆点(660-670s 密度 1.20 条/秒,
+基线 0.34)**整个落在切点之外**。查下去发现**语义召回 lane 对 talk 收尾没有任何确定性判据**
+——逐字采用 LLM 的 `end_cue` 就伪造一个 `BoundaryResolution`。已修(`b39bedc`),
+实证 578030→**734230**,与 Ivan 复核确认的 734200 差 30ms。
+详见 `docs/reviews/2026-08-10-ivan-blind-review-tier1-ground-truth.md`。
+
+### 🔴 未修完 / 等 Ivan 拍板
+1. **centrality 判定的次序矛盾(最大的一件)**。`prioritize()` 在 `prepare_speaker_routing()`
+   **之前**,召回侧纯文本、零说话人标注,所以打分时物理上判不了主角。
+   **Ivan 已定"走 B 两段式"。** 三个子问题待定:
+   - **routing provider 未配**:`speaker_session_router.py`(838 行)**已实现** SOLO_HOST/
+     MULTI_SPEAKER/UNCERTAIN,但 free crontab 里四个
+     `AUTOSLICE_SPEAKER_ROUTING_PROVIDER_*` **一个都没配**(实测命中 0),CAM++ 模型与
+     venv-diar 都在 → **能力具备只是没接线**。启用属部署面。
+   - **N**(进入分离的争席候选数)是新阈值,Ivan 未定。
+   - `assets/lidousha/selection_score_calibration.v1.json` 迁移:
+     `selection_scorecard_is_valid` 硬要求 `weights == DIMENSION_WEIGHTS`,
+     校准锚点要求维度集合逐字相等,authority 写着「Ivan 2026-07-23 + Pro rubric consultation」
+     —— **移出 centrality 会打断它,是政策行为不是重构**。
+   - ⚠️ **Pro 对 Ivan「单人直播除外」的关键纠正**:「整场是否单人」与「该候选能否免
+     speaker attribution」**不等价**(名义单人场可能有 NPC/连麦/视频素材/TTS/嘉宾)。
+     最安全实现是**对所有候选都跑轻量主播检测,高置信单人自动快速通过**——
+     **「单人」是检测结果,不是跳过检测的输入假设**。必须三态,`acoustic_diversity_low`
+     **不能**推出"一定是主播一个人"。Pro 全文
+     `docs/reviews/evidence/2026-08-10-chatgpt-pro-ordering-and-rubric.txt`。
+2. **metric v2 零调用方**(影子口径)。`SOLO_PATH_BASE=80.0`/`FATIGUE_STEP=3.0` 是**临时常量**,
+   要让 v2 决定席位必须先由 Ivan 标定;证据原子**尚未与字幕 hash 绑定**(接线层缺口)。
+3. **两个函数拆解**(都已第二次抬账本,账本自己的规矩要求起独立任务):
+   `_stage_publish_draft` 597 行、`_run_exact_final_review_gate` 378 行。
+   Pro 给了完整方案与验收判据,见 `docs/reviews/2026-08-10-or-gate-metric-and-function-split.md`
+   ——**最该防的是"在 helper 边界上把 fail-closed 合并成 fallback"**。
+4. `scripts/run_full_session_selector_cpa_shadow.py:644` 弹幕 cap 8 同型缺陷未修。
+5. 歌切**联唱检测**信号仓里完全没有(本次只让联唱可表达+被证人约束)。
+6. 心型病毒要真上传还差:free 上跑 `--apply --supersede-existing-row` → Ivan 审阅 →
+   登记翻 `released_for_upload` → 上传面。
+
+### 血泪(今晚新踩)
+- **`git diff HEAD...branch`(三点)是从 merge-base 比,会把"主线自己也做过的改动"算成缺失**。
+  判断某分支是否已合入要用 **`git cherry HEAD <branch>`**。我用三点 diff 误判过
+  `tmp-manifest-closure-gate`/`tmp-f20`/`tmp-j2` 是未合入,实际全都已在 HEAD。
+- **AppleScript 的 `front window's active tab` 不是 MCP 标签页**。我用它轮询 ChatGPT Pro,
+  读到的是 Ivan 另一个对话,差点把别人的答案当成自己的。要按线程 ID 定位。
+- **那个 Chrome 里 pbcopy 不通**:第一次粘贴乱码,第二次粘进了 Ivan 剪贴板里的内容。
+  改成直接键入(单行,避免 Enter 提前提交)。
+- **拿陈旧回执当现状**:我据 8/10 上午的 review-flags 断言"白名单只有 3 个名字",
+  实际是 4 个且早已部署——那批回执产于修复部署之前。
+- **worker 的负面结论要自己复核**:第一个 song-import worker 报"跨主机证据冲突需音频仲裁",
+  复核发现是同一窗口的不同坐标基;但它报的"包是评审包不是生产树"完全属实。
+  两次都不能整体采信或整体否定。
+
+### 纪律(未变)
+fail-closed 门永不绕过;free 状态手术必持 `runner.lock`(但 `revive_rejected_candidates.py`
+自己持锁,别套 `flock`);**绝不用 `--preclaim`**;证据必 commit、媒体不入库;
+部署前跑全量(现 4123 条)。
+
 ## ⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-10 15:05Z 交棒(successor 从这里开始)
 
 **权威报告**:`docs/reviews/2026-08-10-overnight-orchestration.md`(全夜法证)+
