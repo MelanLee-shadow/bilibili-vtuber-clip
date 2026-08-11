@@ -259,6 +259,10 @@ def test_agy_audio_lrc_v5_prompt_marks_media_enum_instructions_untrusted():
     assert "COMPLETE_LIVE_ARRANGEMENT" in prompt
     assert "at least 70% canonical" in prompt
     assert "studio-repeat omission alone must" in prompt
+    # 联唱契约（2026-08-10）：歌间间隙不是歌后说话，两个毫秒可以不相等。
+    assert "A gap between two songs is not post-song talk" in prompt
+    assert "every medley or setlist where another song follows" in prompt
+    assert "never move the talk back into the gap" in prompt
 
 
 def test_default_profile_keeps_the_pre_profile_audio_lrc_prompt_byte_identical():
@@ -270,8 +274,12 @@ def test_default_profile_keeps_the_pre_profile_audio_lrc_prompt_byte_identical()
         duration_ms=90_000,
     )
 
+    # 2026-08-10 重新钉：requirement 5/7 明确区分「歌后说话」与「歌间间隙」
+    # （心型病毒联唱案，见 src/autoslice/post_song_talk_witness.py 的模块说明）。
+    # 这个钉子守的是「换 channel profile 不许悄悄改 prompt」，不是「prompt 永不变」；
+    # 蓄意改动照旧连同哈希一起改（先例 1d43398）。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "155132160ebb2909e98df39e28ce5f8bbf0312eede8e616c8f224fa7be383097"
+        "739dce86e6f64ac9341b0f57425fb4a1d5a31dc1d77faae0d6b513808d9762ff"
     )
     assert "live_start_ms <= tail < live_end_ms" in prompt
     assert "voiceprint gate; that speaker-similarity gate is not a singing classifier" in prompt
