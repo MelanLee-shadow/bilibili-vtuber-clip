@@ -3,8 +3,10 @@
 ## ⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-11 00:40Z 交棒(successor 从这里开始)
 
 ### 机器状态
-- **free 部署位 `0bdf430`**(2026-08-11T00:39:59Z)。**Mac 分支尖与 free 零差量。**
-- **全量测试 3775 → 4123**(今晚净增 348 条)。**部署 18 次,每次全绿。**
+- **free 部署位 `828a845`**(2026-08-11T00:43:59Z)。**Mac 分支尖与 free 零差量,工作树干净。**
+- **全量测试 3775 → 4123**(今晚净增 348 条)。**部署 19 次,每次全绿。**
+- 未合入的 `tmp-f20` / `tmp-j2` / `tmp-orthography` **都不含可部署内容**
+  (前两者的模块与 HEAD 逐字节相同=残留;后者对 src/scripts 净差量为零=纯诊断文档)。
 - **`DISABLED` 仍置** —— Ivan「先修复再重产」。**他明确说过「修复完了之后再说出片的事情」。**
 - **今日上传 0。滚动 24h 配额已全部滚出窗口 → 10 席全空。**
 - 待产料:8/8 12 条 failed + 2 判死;8/9 4 failed + 4 backlog + **5 条已在 pending 队列**;
@@ -56,6 +58,38 @@ v1 第一(75.5)「没有看点」;第二、三「**主要发言人不是李豆�
 实证 578030→**734230**,与 Ivan 复核确认的 734200 差 30ms。
 详见 `docs/reviews/2026-08-10-ivan-blind-review-tier1-ground-truth.md`。
 
+### 🔄 进行中(交棒时仍在跑的后台工作)
+**一个 Opus worker 在跑**:候选级 **Target Host Occupancy Estimator + 两段式(N=10)**,
+工作树 `/Users/ivan/Project/vtuber-slice-wt/host-occupancy`(分支 `tmp-host-occupancy`,base `828a845`)。
+任务书要点:对**进入争席的所有候选**跑轻量主播占比检测(不重转写、前后扩 5-10s、
+重叠候选先求区间并集、16kHz mono、VAD→1.5-2.0s 窗/hop 0.5-1.0s→CAM++→多 prototype
+双阈值→时间平滑),输出**三态** `SOLO_VERIFIED`/`MULTI_VERIFIED`/`UNKNOWN`;
+`UNKNOWN` → 停泊转人工;复用今晚合入的 `campp_embed_once.py` 与 `selection_metric_v2.py`
+的 `attribution_status` 接口;**本次不动** `selection_score_calibration.v1.json`、
+不把 centrality 移出 v1 评分卡(那是下一步、要 Ivan 单独裁)。
+
+⚠️ **它可能带回两个坏消息,别当成"已修复"**:
+1. free 的 enrollment 只有 **3 条**(`/opt/bilive/autoslice/voiceprints/lidousha/`),
+   而 Pro 建议 6-12 条 / 60-120 秒 / 覆盖不同语气 / 保留 3-5 个 prototype。不足会让检测不准。
+2. 若实测**判不出** Ivan 说的那两条「主要发言人不是李豆沙」
+   (`auto_223750_734_822` / `auto_210739_727_840`),则该方案在真实数据上无效——
+   任务书已要求它**立刻停下回报**,不许硬凑一个能过测试的实现。
+
+**其余 worktree 均已回收合入**;`tmp-*` 分支只剩上述三条残留 + 本条在跑。
+
+### 📌 Ivan 最新裁定(00:50Z 前后,尚未全部落地)
+- 「**N 可以选 10 个,不够了再补上**」→ 已写进上面那个 worker 的任务书。
+- 对 Pro「**『单人』是检测结果,不是跳过检测的输入假设**」→ Ivan:「**可以。**」
+- Ivan 一度说「那就部署(routing provider)」,但那是在看到 Pro 上述纠正**之前**。
+  **integrator 的建议(已告知 Ivan,他未反对也未明确采纳)**:
+  **不启用会话级 routing provider,只做候选级检测**——后者覆盖前者要解决的问题且更严,
+  还能省一条模型车道、避免两套判据打架。**接手者若要启用会话级的,需 Ivan 再明确一次。**
+- Ivan 对「centrality 移出评分卡」提过异议(「这不是重要的评分标准吗」)。
+  **已澄清并被接受的口径**:不是降级是升级——现在它是 **25% 权重的可补偿维度**
+  (低 centrality 能被笑点/反差补回来,那两条非主角片正是这么拿到 72.25 和 70.5 的);
+  而 Ivan 自己的规则「**不用看别的**」是**不可补偿**的,即闸门。
+  **只要它还待在加权和里,那句话就落不了地。** 它会在分离之后带真凭据回来当前置条件。
+
 ### 🔴 未修完 / 等 Ivan 拍板
 1. **centrality 判定的次序矛盾(最大的一件)**。`prioritize()` 在 `prepare_speaker_routing()`
    **之前**,召回侧纯文本、零说话人标注,所以打分时物理上判不了主角。
@@ -85,6 +119,27 @@ v1 第一(75.5)「没有看点」;第二、三「**主要发言人不是李豆�
 5. 歌切**联唱检测**信号仓里完全没有(本次只让联唱可表达+被证人约束)。
 6. 心型病毒要真上传还差:free 上跑 `--apply --supersede-existing-row` → Ivan 审阅 →
    登记翻 `released_for_upload` → 上传面。
+
+### ➡️ 下一步(建议顺序)
+1. 收 `tmp-host-occupancy`,审 diff → 全量 → 部署。
+2. 若检测器有效:接线两段式(召回不打 centrality → 六维排序取前 10 → 检测 → 定 centrality → 重排),
+   并**单独找 Ivan 裁** centrality 如何退出 v1 评分卡 + `selection_score_calibration.v1.json` 怎么迁。
+3. 若检测器无效或 enrollment 不足:先补 enrollment(需要 Ivan 提供/确认干净样本),别硬上。
+4. **解除 `DISABLED` 开产**——这是 Ivan 的决定,他说过「修复完了之后再说出片的事情」。
+   开产后 8/8 12 条 + 8/9 9 条 + 8/10 整场都在等,配额 10 席全空。
+5. 剩余技术债:两个函数拆解(`_stage_publish_draft` 597 / `_run_exact_final_review_gate` 378,
+   Pro 已给方案与验收判据)、shadow 脚本弹幕 cap 8、歌切联唱检测、metric v2 标定与接线。
+
+### 📎 本班产出的评审材料(接手者可直接用)
+- `docs/reviews/2026-08-10-ivan-blind-review-tier1-ground-truth.md` —— Ivan 盲审真值(最重要)
+- `docs/reviews/2026-08-10-or-gate-metric-and-function-split.md` + `evidence/…-or-gate-and-split.txt`
+  —— Pro 第一轮(OR 门设计 / 函数拆分,含验收判据)
+- `docs/reviews/evidence/2026-08-10-chatgpt-pro-ordering-and-rubric.txt` —— Pro 第二轮(次序矛盾 / 主播检测规格)
+- `docs/reviews/2026-08-10-song-identification-pilot.md` —— 听歌识曲金丝雀(否决 Shazam 型)
+- 抢救物:Mac `~/Project/vtuber-slice-local-reproduce/rescue-20260810/`(wsl 心型病毒整包 tar + 元数据);
+  free `/opt/bilive/autoslice/incoming/song_210131_1210-r1/`(已解包,sha 一致)
+- 8/7 四条 tier-1 原片与两版重切:free `/opt/bilive/autoslice/incoming/tier1-preview/`
+  (`4c_故事完结版_578-734.2s.mp4` 是 Ivan 确认「收尾没问题」的那版)
 
 ### 血泪(今晚新踩)
 - **`git diff HEAD...branch`(三点)是从 merge-base 比,会把"主线自己也做过的改动"算成缺失**。
