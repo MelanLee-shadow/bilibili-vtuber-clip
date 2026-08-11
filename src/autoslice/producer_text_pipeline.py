@@ -45,7 +45,8 @@ from src.autoslice.delivery_fast_path import (
 )
 from src.autoslice.final_review_carryover import (
     carryover_path,
-    load_final_review_carryover,
+    checkpoint_final_review_carryover,
+    load_replayable_final_review_carryover,
 )
 from src.autoslice.exact_final_convergence import (
     converge_reconsidered_exact_final_findings,
@@ -765,7 +766,7 @@ def _run_final_review(
             # 确证却无权落盘的修复，以 raw 行进同一个解析/校验循环（stale
             # suspect 天然过滤，零特权）——确定性闭环。
             carryover_rows = (
-                load_final_review_carryover(carryover_file)
+                load_replayable_final_review_carryover(carryover_file)
                 if carryover_file is not None
                 else []
             )
@@ -2091,7 +2092,7 @@ def run_text_pipeline(
             ),
             frozen_boundary_receipt=frozen_boundary_receipt,
         )
-        return _run_exact_final_release_review(
+        exact_final_audit = _run_exact_final_release_review(
             screen_read_probe=screen_read_probe,
             srt_text=final_srt_text,
             correction_audit=exact_correction_audit,
@@ -2105,6 +2106,15 @@ def run_text_pipeline(
             priority_raw_findings=microcue_findings,
             acoustic_discovery_audit=microcue_audit,
         )
+        # 硬退出侧车（Ivan 2026-08-10 15:05Z 交棒清单第 7 项「硬退出丢
+        # carryover(超时/崩溃跳过侧车落盘)」）：本 pass 的确证行算出来就写，
+        # 不等整个终审门跑完最多五轮自愈。取舍/原子落盘/完整性标记全在
+        # src/autoslice/final_review_carryover.py，这里只有一处薄调用。
+        # 测试 tests/test_final_review_carryover_hard_exit.py。
+        checkpoint_final_review_carryover(
+            carryover_path(out_root, cid), exact_final_audit
+        )
+        return exact_final_audit
     return TextPipelineResult(
         srt_text=evidence.srt_text,
         cues=evidence.cues,
