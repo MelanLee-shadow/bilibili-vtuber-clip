@@ -40,6 +40,10 @@ from src.autoslice.subtitle_fidelity import valid_redelivery_baseline_config
 
 TRUTH_FULL_OWNERSHIP_SCHEMA = "truth_full_ownership.v1"
 TRUTH_FULL_OWNERSHIP_PIN_SCHEMA = "truth-full-ownership-pin.v1"
+OPERATOR_TEXT_FULL_OWNERSHIP_SCHEMA = "operator_text_full_ownership.v1"
+OPERATOR_TEXT_FULL_OWNERSHIP_PIN_SCHEMA = (
+    "operator-reviewed-text-full-ownership-pin.v1"
+)
 EXACT_REPLAY_BASELINE_SCHEMA = "subtitle-redelivery-baseline.v2"
 FINAL_REVIEW_AUDIT_SCHEMA = "final-review-audit.v1"
 
@@ -84,6 +88,16 @@ TRUTH_FULL_OWNERSHIP_CONDITIONS = (
     "the pin's reviewed_override_count + machine_cues cover its whole cue_count",
     "the pin binds one repository-relative Ivan truth input by sha256",
     "no reviewed text override is in play (the producer already refuses that pair)",
+)
+
+OPERATOR_TEXT_FULL_OWNERSHIP_CONDITIONS = (
+    "spec.subtitle_redelivery_baseline is a valid subtitle-redelivery-baseline.v2 "
+    "config with exact_interval_replay=true",
+    "the baseline carries an operator-reviewed-text-full-ownership-pin.v1 whose "
+    "baseline_sha256 equals the baseline config sha256",
+    "the pin declares one exhaustive reviewed text cue grid and binds the source "
+    "SRT hash without claiming speaker authority",
+    "no reviewed text override is in play",
 )
 
 
@@ -278,6 +292,88 @@ def resolve_truth_full_ownership(
         "skipped_stages": [dict(row) for row in TRUTH_FULL_OWNERSHIP_SKIPPED_STAGES],
         "preserved_stages": list(TRUTH_FULL_OWNERSHIP_PRESERVED_STAGES),
         "effective_conditions": list(TRUTH_FULL_OWNERSHIP_CONDITIONS),
+    }
+
+
+def _valid_operator_text_pin(
+    pin: object, *, baseline_sha256: str
+) -> Mapping[str, object] | None:
+    expected = {
+        "schema_version",
+        "authority",
+        "baseline_sha256",
+        "source_srt_sha256",
+        "cue_count",
+        "changed_cue_count",
+        "speaker_authority",
+    }
+    if (
+        not isinstance(pin, Mapping)
+        or set(pin) != expected
+        or pin.get("schema_version") != OPERATOR_TEXT_FULL_OWNERSHIP_PIN_SCHEMA
+        or not str(pin.get("authority") or "").strip()
+        or _clean_sha256(pin.get("baseline_sha256")) != baseline_sha256
+        or not _clean_sha256(pin.get("source_srt_sha256"))
+        or pin.get("speaker_authority") != "NOT_CLAIMED_TEXT_ONLY"
+    ):
+        return None
+    cue_count = pin.get("cue_count")
+    changed = pin.get("changed_cue_count")
+    if (
+        isinstance(cue_count, bool)
+        or not isinstance(cue_count, int)
+        or cue_count <= 0
+        or isinstance(changed, bool)
+        or not isinstance(changed, int)
+        or not 1 <= changed <= cue_count
+    ):
+        return None
+    return pin
+
+
+def resolve_operator_text_full_ownership(
+    spec: Mapping[str, object],
+) -> dict[str, object] | None:
+    """Return a skip receipt for one exhaustive, text-only operator review."""
+
+    baseline = _exact_replay_baseline(spec)
+    if baseline is None or spec.get("subtitle_text_overrides") is not None:
+        return None
+    baseline_sha256 = _clean_sha256(baseline.get("sha256"))
+    if not baseline_sha256:
+        return None
+    pin = _valid_operator_text_pin(
+        baseline.get("operator_text_full_ownership"),
+        baseline_sha256=baseline_sha256,
+    )
+    if pin is None:
+        return None
+    return {
+        "schema_version": OPERATOR_TEXT_FULL_OWNERSHIP_SCHEMA,
+        "status": "OPERATOR_TEXT_FULL_OWNERSHIP",
+        "coverage": {
+            "cue_count": int(str(pin["cue_count"])),
+            "reviewed_text_cue_count": int(str(pin["cue_count"])),
+            "changed_text_cue_count": int(str(pin["changed_cue_count"])),
+            "text_ownership": "EXACT_INTERVAL_REPLAY_OF_OPERATOR_REVIEWED_BASELINE",
+            "speaker_ownership": "NOT_CLAIMED_TEXT_ONLY",
+            "proof": {
+                "baseline_sha256": baseline_sha256,
+                "source_srt_sha256": _clean_sha256(pin.get("source_srt_sha256")),
+                "authority": str(pin.get("authority") or ""),
+                "source_recording_basename": str(
+                    baseline.get("source_recording_basename") or ""
+                ),
+                "source_sha256": _clean_sha256(baseline.get("source_sha256")),
+                "absolute_source_start_ms": baseline.get(
+                    "absolute_source_start_ms"
+                ),
+                "absolute_source_end_ms": baseline.get("absolute_source_end_ms"),
+            },
+        },
+        "skipped_stages": [dict(row) for row in TRUTH_FULL_OWNERSHIP_SKIPPED_STAGES],
+        "preserved_stages": list(TRUTH_FULL_OWNERSHIP_PRESERVED_STAGES),
+        "effective_conditions": list(OPERATOR_TEXT_FULL_OWNERSHIP_CONDITIONS),
     }
 
 

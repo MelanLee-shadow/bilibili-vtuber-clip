@@ -16,8 +16,10 @@ import pytest
 from scripts.materialize_reviewed_speaker_truth_delivery import compile_delivery
 from src.autoslice import producer_text_pipeline as pipeline
 from src.autoslice.delivery_fast_path import (
+    OPERATOR_TEXT_FULL_OWNERSHIP_SCHEMA,
     TRUTH_FULL_OWNERSHIP_SCHEMA,
     discover_priority_findings,
+    resolve_operator_text_full_ownership,
     resolve_truth_full_ownership,
     skipped_final_review_audit,
     verify_transcript_entities,
@@ -65,6 +67,50 @@ def _owned_spec() -> dict:
             },
         }
     }
+
+
+def _operator_text_owned_spec() -> dict:
+    baseline = _owned_spec()["subtitle_redelivery_baseline"]
+    baseline.pop("truth_full_ownership")
+    baseline["operator_text_full_ownership"] = {
+        "schema_version": "operator-reviewed-text-full-ownership-pin.v1",
+        "authority": "Ivan exhaustive reviewed subtitle truth",
+        "baseline_sha256": BASELINE_SHA,
+        "source_srt_sha256": TRUTH_SHA,
+        "cue_count": 5,
+        "changed_cue_count": 2,
+        "speaker_authority": "NOT_CLAIMED_TEXT_ONLY",
+    }
+    return {"subtitle_redelivery_baseline": baseline}
+
+
+def test_operator_text_ownership_skips_rewriters_without_claiming_speaker() -> None:
+    receipt = resolve_operator_text_full_ownership(_operator_text_owned_spec())
+
+    assert receipt is not None
+    assert receipt["schema_version"] == OPERATOR_TEXT_FULL_OWNERSHIP_SCHEMA
+    assert receipt["status"] == "OPERATOR_TEXT_FULL_OWNERSHIP"
+    coverage = receipt["coverage"]
+    assert coverage["reviewed_text_cue_count"] == coverage["cue_count"] == 5
+    assert coverage["changed_text_cue_count"] == 2
+    assert coverage["speaker_ownership"] == "NOT_CLAIMED_TEXT_ONLY"
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("baseline_sha256", "99" * 32),
+        ("source_srt_sha256", "bad"),
+        ("cue_count", 0),
+        ("changed_cue_count", 6),
+        ("speaker_authority", "UNIFORM_HOST"),
+    ],
+)
+def test_broken_operator_text_pin_falls_back_to_full_chain(field, value) -> None:
+    spec = _operator_text_owned_spec()
+    spec["subtitle_redelivery_baseline"]["operator_text_full_ownership"][field] = value
+
+    assert resolve_operator_text_full_ownership(spec) is None
 
 
 def test_full_ownership_receipt_carries_coverage_skips_and_conditions() -> None:
@@ -404,7 +450,10 @@ def test_ownership_reaches_every_wired_skip_site() -> None:
     """接线金丝雀：判定值必须真的到达每个跳过点，否则快路径只是装饰。"""
 
     pipeline_source = inspect.getsource(pipeline.run_text_pipeline)
-    assert "truth_ownership = resolve_truth_full_ownership(spec)" in pipeline_source
+    assert (
+        "truth_ownership = resolve_truth_full_ownership(spec) or "
+        "resolve_operator_text_full_ownership(spec)" in pipeline_source
+    )
     assert (
         _keyword_argument_names(pipeline_source, "_apply_entity_authority").get(
             "truth_full_ownership"

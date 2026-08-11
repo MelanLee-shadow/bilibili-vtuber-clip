@@ -7,6 +7,10 @@ from scripts.materialize_operator_reviewed_subtitle_baseline import (
     OperatorBaselineCompileError,
     compile_operator_baseline,
 )
+from src.autoslice.delivery_fast_path import (
+    OPERATOR_TEXT_FULL_OWNERSHIP_SCHEMA,
+    resolve_operator_text_full_ownership,
+)
 from src.autoslice.reviewed_subtitle_baseline_registry import (
     load_candidate_reviewed_subtitle_baseline,
 )
@@ -49,9 +53,19 @@ def test_compiles_text_only_exact_replay_baseline_and_receipt(tmp_path: Path) ->
 
     assert "xxsk说" in result["baseline_srt"]
     manifest = result["baseline_manifest"]
+    receipt = result["receipt"]
     assert manifest["exact_interval_replay"] is True
     assert "truth_full_ownership" not in manifest
-    receipt = result["receipt"]
+    pin = manifest["operator_text_full_ownership"]
+    assert pin == {
+        "schema_version": "operator-reviewed-text-full-ownership-pin.v1",
+        "authority": "Ivan exhaustive reviewed subtitle truth",
+        "baseline_sha256": manifest["sha256"],
+        "source_srt_sha256": receipt["source_srt"]["sha256"],
+        "cue_count": 2,
+        "changed_cue_count": 1,
+        "speaker_authority": "NOT_CLAIMED_TEXT_ONLY",
+    }
     assert receipt["speaker_authority"] == "NOT_CLAIMED_TEXT_ONLY"
     assert receipt["changed_cue_count"] == 1
     assert receipt["changed_cues"][0]["absolute_source_start_ms"] == 101_000
@@ -70,6 +84,12 @@ def test_compiles_text_only_exact_replay_baseline_and_receipt(tmp_path: Path) ->
     loaded = load_candidate_reviewed_subtitle_baseline(root, CID)
     assert loaded is not None
     assert loaded.config["sha256"] == hashlib.sha256(baseline.read_bytes()).hexdigest()
+    ownership = resolve_operator_text_full_ownership(
+        {"subtitle_redelivery_baseline": loaded.config}
+    )
+    assert ownership is not None
+    assert ownership["schema_version"] == OPERATOR_TEXT_FULL_OWNERSHIP_SCHEMA
+    assert ownership["coverage"]["speaker_ownership"] == "NOT_CLAIMED_TEXT_ONLY"
 
 
 def test_rejects_timing_drift_and_speaker_annotation(tmp_path: Path) -> None:

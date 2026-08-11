@@ -39,7 +39,7 @@ from src.autoslice.clip_context import (
 from src.autoslice.delivery_fast_path import (
     discover_priority_findings,
     pinned_replay_reviewed_text_ownership as _pinned_replay_reviewed_text_ownership,
-    resolve_truth_full_ownership,
+    resolve_operator_text_full_ownership, resolve_truth_full_ownership,
     skipped_final_review_audit,
     verify_transcript_entities,
 )
@@ -71,7 +71,7 @@ from src.autoslice.final_review_contract import (
     is_keep_current_disclosed,
 )
 from src.autoslice.review_priority_candidates import (
-    fidelity_review_candidates as _fidelity_review_candidates, review_priority_candidate_counts as _review_priority_candidate_counts,
+    fidelity_review_candidates as _fidelity_review_candidates, review_priority_candidate_counts as _review_priority_candidate_counts,  # noqa: F401
     review_priority_candidates as _review_priority_candidates,
 )
 from src.autoslice.frozen_source_boundary_receipt import (
@@ -1859,7 +1859,7 @@ def run_text_pipeline(
         _redelivery_baseline_boundary_owner(spec, durations)
     )
     spec["required_boundary_owners"] = required_boundary_owners
-    truth_ownership = resolve_truth_full_ownership(spec)
+    truth_ownership = resolve_truth_full_ownership(spec) or resolve_operator_text_full_ownership(spec)
     authority = _apply_entity_authority(
         srt_text=draft.srt_text,
         authoritative_chat=authoritative_chat,

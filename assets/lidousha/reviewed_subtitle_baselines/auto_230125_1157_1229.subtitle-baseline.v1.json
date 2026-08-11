@@ -10,5 +10,14 @@
   "source_recording_basename": "22966160_20260808-23-01-25.mp4",
   "source_sha256": "6cf042681885d18ac4e3abb9548fe8ac3033f8b2e3365c44b6748fd3e4a324a3",
   "absolute_source_start_ms": 1157280,
-  "absolute_source_end_ms": 1229510
+  "absolute_source_end_ms": 1229510,
+  "operator_text_full_ownership": {
+    "schema_version": "operator-reviewed-text-full-ownership-pin.v1",
+    "authority": "Ivan 2026-08-11 exhaustive subtitle truth: 0:16 应该是“我对xxsk说”；字幕里所有“星汐”换成“xxsk”；其他没有提到的地方字幕正确。",
+    "baseline_sha256": "c29cc5aed6b52cca7618a88b083b9b46e86320db5595bcaa5a4ef4c57499ca7b",
+    "source_srt_sha256": "41e4d15dcdb3a9859167297694e3f91db5da0cb45d598b8e863a59bf4885afd3",
+    "cue_count": 36,
+    "changed_cue_count": 5,
+    "speaker_authority": "NOT_CLAIMED_TEXT_ONLY"
+  }
 }

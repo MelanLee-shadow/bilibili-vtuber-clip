@@ -77,6 +77,7 @@ _BASELINE_MANIFEST_REQUIRED_FIELDS = {
     "absolute_source_end_ms",
 }
 _BASELINE_MANIFEST_OPTIONAL_FIELDS = {
+    "operator_text_full_ownership",
     "terminal_projection_mode",
     "truth_full_ownership",
 }

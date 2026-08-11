@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Compile one exhaustive operator-reviewed SRT into an exact replay baseline.
 
-This compiler owns subtitle text only.  It deliberately emits no speaker
-override and no ``truth_full_ownership`` fast-path pin; a uniform-host package
-still runs the ordinary release chain, while the reviewed SRT remains the
-exact text authority at the final replay boundary.
+This compiler owns subtitle text only.  It emits no speaker override.  When
+Ivan has explicitly reviewed the whole SRT, its typed text-ownership pin lets
+the producer skip discovery/rewriting work whose output will be overwritten by
+the exact replay.  Boundary, exact-final, rendering, cover, and release gates
+remain mandatory.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ REGISTRY_SCHEMA = "candidate-reviewed-subtitle-baseline.v1"
 BASELINE_SCHEMA = "subtitle-redelivery-baseline.v2"
 BASELINE_MODE = "preserve_text_outside_source_truth"
 RECEIPT_SCHEMA = "operator-reviewed-subtitle-baseline-delivery.v1"
+TEXT_OWNERSHIP_PIN_SCHEMA = "operator-reviewed-text-full-ownership-pin.v1"
 _CANDIDATE_RX = re.compile(r"[A-Za-z0-9_-]{1,96}\Z")
 _SHA256_RX = re.compile(r"[0-9a-f]{64}\Z")
 _SPEAKER_PREFIX_RX = re.compile(r"^\[(?:李豆沙|连线)(?:\s+[+-]?\d+(?:\.\d+)?)?\]\s*")
@@ -170,6 +172,15 @@ def compile_operator_baseline(
         "source_sha256": source_recording_sha256,
         "absolute_source_start_ms": absolute_source_start_ms,
         "absolute_source_end_ms": absolute_source_end_ms,
+        "operator_text_full_ownership": {
+            "schema_version": TEXT_OWNERSHIP_PIN_SCHEMA,
+            "authority": authority,
+            "baseline_sha256": baseline_sha,
+            "source_srt_sha256": source_sha,
+            "cue_count": len(reviewed_cues),
+            "changed_cue_count": len(changed),
+            "speaker_authority": "NOT_CLAIMED_TEXT_ONLY",
+        },
     }
     receipt = {
         "schema_version": RECEIPT_SCHEMA,
