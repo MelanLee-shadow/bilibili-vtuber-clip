@@ -332,6 +332,40 @@ def test_self_contained_gate_blocks_regardless_of_everything_else():
     assert "SELF_CONTAINED_GATE_FAILED" in result["reason_codes"]
 
 
+@pytest.mark.parametrize(
+    "attribution,self_contained,expected_status",
+    [
+        (ATTRIBUTION_UNVERIFIED, 3, "PARKED"),
+        (ATTRIBUTION_VERIFIED_SOLO, 1, "GATED"),
+        (ATTRIBUTION_VERIFIED_HOST_DOMINANT, 3, "VALID"),
+    ],
+)
+def test_record_key_set_is_stable_across_statuses(
+    attribution: str, self_contained: int, expected_status: str
+):
+    """持久化/报表侧不必按 status 分支取字段——键集合不随状态漂移。"""
+
+    result = _evaluate(
+        _v1_card(comedic_payoff=4, self_contained=self_contained),
+        attribution_status=attribution,
+        proof_atoms=_closed_proof("comedic_payoff"),
+    )
+    assert result["status"] == expected_status
+    for field in (
+        "quality_score_v2",
+        "winning_path_v2",
+        "path_scores_v2",
+        "proof_ids_v2",
+        "penalty_components_v2",
+        "verified_level_4_axes",
+        "requires_speaker_manual_review",
+        "legacy_raw_v1",
+        "legacy_effective_v1",
+        "gate_results_v2",
+    ):
+        assert field in result, field
+
+
 def test_self_contained_gate_is_not_an_or_path():
     """gate 是必要条件不是卖点：它不出现在任何路径里。"""
 

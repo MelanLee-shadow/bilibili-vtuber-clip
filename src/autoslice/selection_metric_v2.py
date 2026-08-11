@@ -393,10 +393,14 @@ def evaluate_selection_metric_v2(
         base["path_scores_v2"] = {}
         base["proof_ids_v2"] = {}
         base["penalty_components_v2"] = {}
+        # 键集合不随 status 变化：报表/持久化侧不必按状态分支取字段。
+        base["verified_level_4_axes"] = []
+        base["requires_speaker_manual_review"] = (
+            blocking == "SPEAKER_ATTRIBUTION_UNVERIFIED"
+        )
         base["reason_codes"] = [*base["reason_codes"], blocking]  # type: ignore[list-item]
         if blocking == "SPEAKER_ATTRIBUTION_UNVERIFIED":
             # Ivan 2026-08-10:「说话人存疑都要直接给人工审阅」——不是扣分、不是猜。
-            base["requires_speaker_manual_review"] = True
             base["speaker_manual_review_status"] = PARK_STATUS
         return base
 
