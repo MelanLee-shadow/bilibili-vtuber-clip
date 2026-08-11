@@ -1,5 +1,77 @@
 # Current handoff
 
+## ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-11 07:45Z Codex 声纹准确率夜间接力
+
+### 目标
+
+在不接生产、不降低门槛、不发明人工真值的条件下，提高李豆沙声纹辨认的可验证性：先冻结
+两个未泄漏新场次，再实现 Pro 选择的 score-only 候选，最终必须用两套人工跨场 locked
+holdout 验收。生产自动 speaker gate 仍无授权。
+
+### 已完成
+
+- 本地分支 `claude/session-live-context` 新提交 `4c9fa72`；未 push、未 deploy、未 enable、
+  未 upload。
+- ChatGPT Pro 同一线程已 `read_complete`，prompt/answer 均有 SHA 绑定。Pro 选择
+  **session-stratified、duration-matched centroid--medoid strict-majority consensus +
+  veto-only OTHER bank**；拒绝 min-all-sessions、AS-norm、learned calibration 和 same-session
+  promotion。真实 thresholds 必须保持 `NULL`，因此当前模块不发硬标签。完整证据：
+  `docs/reviews/evidence/2026-08-11-centrality-cue-speaker-shadow/pro-consult-overnight-decision.md`。
+- 新增 `src/autoslice/speaker_scmc_shadow.py` 与
+  `assets/lidousha/speaker_scmc_v0_spec.json`。没有 production caller；现有 v1、designated
+  speaker strategy、centrality、quota/rank/backfill 都未改变。
+- `free` 录制 authority 证明 8/10、8/11 都已 sealed/idle。隔离 scratch
+  `/opt/bilive/autoslice/holdout-runs/20260811-speaker-source-freeze-v0/` 中，v3 对 8/10 的
+  10 段 + 8/11 的 5 段做了两次完整重读；15 个当前 MP4 SHA 全部等于 adapter target hash。
+  两次 deterministic payload SHA 相同：
+  `c4e27632a0c279747697e3168d2a91cab535967a5d186fcd3e0c5cb0ff284184`。
+- accepted remote files：`source-freeze.v3.pass1.json`（file SHA
+  `e80baec84ac8de4bca7de5a1edb265da732de2c4cf674aba29b8886c4c37de57`）与
+  `source-freeze.v3.pass2.json`（file SHA
+  `18c71fe21a3f4ab89c0233b053a6e030308b57c8f4eb56745c7d4576c4ba7370`）。文件 hash 因
+  observation 时间不同；去掉 observation 后 payload 逐字段相同。
+- v2 `source-freeze.pass1.json` 曾暴露 CloudFS 相同路径重复 listing，形成 20 rows/15
+  unique；它是保留的 invalid diagnostic，不是 authority。v3 按绝对路径去重并记录重复数。
+- 本轮 changed-file 检查通过；24 个新定向测试通过；最终整库
+  **4294 passed、0 failed、2 个第三方 warning、75.53s**。全仓 `ruff check .` 仍有 42 条
+  既存 finding，未扩 scope 修改。
+
+### 当前真实状态
+
+- H1/H2 只到 `SOURCE_FROZEN`。两份 accepted manifest 明确：
+  `asr_frozen=false`、`cue_table_frozen=false`、`predictions_frozen=false`、
+  `human_truth_opened=false`、`production_authority=false`、
+  `deployment_authority=false`。
+- `/opt/bilive/autoslice/DISABLED` 仍存在；timer/service inactive。没有 production runner。
+- 8/8 是 development truth；7/22 是 development enrollment；8/9 已有生产/终审痕迹，三者
+  都不能冒充新 holdout。
+- 有限 heartbeat automation `autoslice-speaker-accuracy-overnight` 仍 ACTIVE：每 30 分钟、
+  最多 12 次、每次最多 25 分钟、failed-only notification。它必须保留更新，不重做 unchanged
+  report，也不得写 production state/out/repo。
+
+### 阻塞
+
+1. 还没有专用 holdout-only pre-label extractor。现成 `free_session_autoslice.py` / production
+   surfaces 可能写生产状态，禁止裸跑；`free_asr_client.py` 也尚无被验证的零生产状态 wrapper。
+2. 未生成 exact ASR/cue population、canonical PCM/cue hashes、冻结 candidate predictions 或
+   blind review package。
+3. Pro 候选每个时长层至少需要 3 个独立 HOST session × 每场 3 条 audited HOST，OTHER 每层
+   至少 12 条并选 8 medoid。现有三条长 reference 的独立 session provenance 未证明。
+4. 两套 holdout 的人工 HOST/OTHER/MIXED/UNJUDGEABLE 真值只能在算法、bank、threshold、
+   prediction hashes 全冻结后由 Ivan/人工打开；当前不能由机器代填。
+
+### 下一步
+
+1. 新建并测试 holdout-only extraction wrapper，输入只允许 accepted 15-source manifest，输出只
+   能到隔离 scratch；先静态证明不触及 production consumer/root，再冻结完整 ASR/cue/PCM。
+2. 在**看真值之前**冻结一个完整 candidate manifest：commit/env/model/profile、bank session
+   provenance、centroid/medoid/OTHER members、短长窗规则、两个 threshold tuples、metric code、
+   每 cue prediction。threshold 可以由 development frontier 预注册，但不能看 holdout 调参。
+3. 之后才构建 blind human review package；H1、H2、pooled 分别一次性验收。任一失败都会把该
+   holdout 降为 development，改过的 candidate 必须另找两个 fresh holdout。
+4. 不满足两套新人工跨场 holdout 时，结论固定为 **NO production path**；UNKNOWN 继续走有界
+   人工审阅，不得缩窄弃权区间换 ETA。
+
 ## ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-11 01:29Z Codex 接管审计
 
 完整审计见
