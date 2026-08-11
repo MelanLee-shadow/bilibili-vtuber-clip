@@ -1,5 +1,19 @@
 # Current handoff
 
+## ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-11 08:26Z run-one mock core heartbeat
+
+- 新增 `src/autoslice/speaker_holdout_prelabel.py` 和 validate-only CLI。核心已实现 source/
+  runner/plan hash、private attempt reservation、同 attempt 二次上传阻断、BCUT-only 结果
+  规范化、PCM/cue/word bounds、artifact create-only 与 receipt-last；CLI 没有真实 provider 路由。
+- 16 个 run-one 测试通过；连同 planner/freezer 为 45 passed；最终整库为
+  **4331 passed、0 failed、2 个第三方 warning、68.00s**。`free` 只读 smoke 用相同代码
+  字节验证旧 plan，明确返回 `EXTERNAL_PROVIDER_EXECUTION_NOT_IMPLEMENTED`；planned run root
+  仍不存在。
+- 旧 plan 不可变且仍是 `EXTRACTION_PLAN_FROZEN_EXECUTION_NOT_AUTHORIZED`。代码出现不等于
+  external upload 获权；下一步可冻结绑定 wrapper/ffmpeg/runtime 的新 plan，但真实 BCUT
+  上传仍必须等独立授权。证据：
+  `docs/reviews/evidence/2026-08-11-centrality-cue-speaker-shadow/prelabel-run-one-core.md`。
+
 ## ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-11 08:06Z prelabel plan heartbeat
 
 - 新增 `scripts/build_speaker_holdout_prelabel_plan.py` 与 21 个测试。它只接受 accepted v3

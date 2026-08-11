@@ -132,6 +132,11 @@ finalization。隔离 source freezer 对 8/10 的 10 段和 8/11 的 5 段做了
 `EXTRACTION_PLAN_FROZEN_EXECUTION_NOT_AUTHORIZED`；没有运行 ASR 或生成 cue。完整边界见
 `prelabel-extraction-plan.md`。
 
+08:26Z heartbeat 又实现了 receipt-last `run-one` 核心及 validate-only CLI。当前计划仍因
+external upload=false 且未绑定 wrapper 而在 provider 前拒绝；`free` smoke 只读该计划并返回
+`VALIDATED_ONLY_EXTERNAL_PROVIDER_EXECUTION_NOT_IMPLEMENTED`，没有创建 run root。16 个
+run-one-specific canary 与 45 个聚焦测试通过；详见 `prelabel-run-one-core.md`。
+
 ### Pro 选择的下一代 score-only 候选
 
 Pro 选择 session-stratified、duration-matched centroid--medoid consensus 加 OTHER veto；
