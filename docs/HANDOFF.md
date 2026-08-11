@@ -1,5 +1,27 @@
 # Current handoff
 
+## ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-11 01:29Z Codex 接管审计
+
+完整审计见
+`docs/reviews/2026-08-10-claude-conversation-takeover-audit.md`。Codex 已逐条读取 8 组
+2026-08-07→08-11 Claude 原始会话并复核 main/free/公开面；主线 `4123 passed in
+112.12s`，free 仍部署 `e00f405`，`DISABLED` 存在，runner lock 空闲，7 个近期 BV 均
+`code=0/state=0`，房间 `live_status=0`。
+
+**重要纠正：不要合入/部署 `tmp-host-occupancy` 的 `047f63c` 作为 P0 闭环。** 真实四候选
+测量确实正确抓到两条非主讲（host share 4.26% / 0%），但好片旧窗和完整
+578030–734230ms 都是 UNKNOWN；更关键的是：
+
+1. production caller 为 0，runner 仍先 `prioritize()` 后 speaker routing；
+2. 没有 ASR speaker-label 投影、centrality 重评或最终重排；
+3. `VERIFIED_HOST_MINOR` 不会改变旧 v1 分数，v2 自身 caller 也为 0；
+4. `SOLO_VERIFIED` 漏了 Pro 明确要求的 `solo_source=True` criterion A。
+
+所以 `047f63c` 最多是 shadow scaffold。`DISABLED` 必须保持，直到 centrality 从旧 25%
+可补偿权重迁移为不可补偿前置条件的精确产品口径得到 Ivan 裁定，并完成六维初召回、N=10
+contention、host evidence、带标签 centrality v2、统一 final-rank choke point、真实 challenge
+set、全量与部署 readback。本次未上传、未改 registry、未手术 production state。
+
 ## ⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-11 00:40Z 交棒(successor 从这里开始)
 
 ### 机器状态
