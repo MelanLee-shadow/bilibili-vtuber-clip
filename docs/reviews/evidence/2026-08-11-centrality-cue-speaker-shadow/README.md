@@ -112,6 +112,31 @@ decoded PCM 和 clip hash；但它们与 8/8 challenge 是同一场、同一批 
 - 1722 manifest：remote `results/reviewed-enrollment-2026-08-08-1722.v1.json`，
   file sha256 `f72e99951ee4a128245b73b392466a47fa20b72f2292d7184a90b600d07a1298`
 
+### 8/10 + 8/11 新 holdout source freeze（尚无 cue/预测/真值）
+
+Pro consultation 之后，两个未进入既有生产处理或 speaker truth 的新场次被登记为
+H1/H2。`free` 现场确认录制 idle、CloudFS 正常、全部 segment 有 FileClosed 与 adapter
+finalization。隔离 source freezer 对 8/10 的 10 段和 8/11 的 5 段做了两次完整重读；15 个
+当前 MP4 SHA 均匹配 adapter target hash。两次 deterministic payload 同为
+`c4e27632a0c279747697e3168d2a91cab535967a5d186fcd3e0c5cb0ff284184`。
+
+它们的状态严格只是 `SOURCE_FROZEN`：ASR、cue table、candidate prediction 和 human truth
+全部未冻结/未开放。精确路径、FUSE duplicate-listing 诊断、两次文件 hash 与下一状态见
+`locked-holdout-source-inventory.md`。不能把 source freeze 写成已通过 holdout。
+
+### Pro 选择的下一代 score-only 候选
+
+Pro 选择 session-stratified、duration-matched centroid--medoid consensus 加 OTHER veto；
+每个时长层至少 3 个独立 HOST session、每场至少 3 条 audited HOST，OTHER 每层至少
+12 条并确定性选 8 个 veto medoid。跨场使用严格多数 order statistic，而不是所有场次
+minimum。OTHER 只能把 prospective HOST 降为 UNKNOWN，不能提升；真实 threshold 当前
+固定为 `NULL`，所以该模块不会产生硬标签。
+
+机器可执行 spec 在 `assets/lidousha/speaker_scmc_v0_spec.json`，纯 shadow 数学/泄漏合同在
+`src/autoslice/speaker_scmc_shadow.py`。它没有 production caller，也没有修改现有 designated
+strategy/config/predictions。完整咨询 binding 与 canary 见
+`pro-consult-overnight-decision.md`。
+
 ## 四、8/8 人工真值与最终 v6 结果
 
 reviewed clear truth 共 **188** 条：46 HOST + 142 OTHER；另有 6 mixed，3 条
@@ -172,8 +197,10 @@ v6 的所有 strategy metrics 与重构前 v4 用 `diff -u` 逐项一致；重�
 验收：
 
 - 定向测试：145 passed（随后新增 8/8 样本合同并重构后再次通过相关 26 tests）；
-- `ruff check`、`py_compile`、`git diff --check`：通过；
-- 整库最终：**4270 passed，2 个第三方 DeprecationWarning，0 failed，74.16s**。
+- overnight 新增 source-freeze + SCMC 合同：24 passed；
+- 本轮 changed-file `ruff check`、`py_compile`、`git diff --check`：通过；全仓
+  `ruff check .` 仍报告 42 条既存 lint finding（均不在本轮文件），未借本任务扩 scope 修理；
+- 整库最终：**4294 passed，2 个第三方 DeprecationWarning，0 failed，75.53s**。
 
 ## 六、生产接线、优先级与条件 ETA
 
@@ -183,8 +210,9 @@ runner 仍先跑 legacy `prioritize(v1)`，再做 speaker routing。现在接线
 
 后续唯一允许的顺序：
 
-1. **P0 准确率（最高）**：从至少三个不同直播/语气收集干净 reviewed HOST bank，冻结
-   两个未参与开发的新场次；逐 cue/window/segment 标真值。先修代表样本/consensus、
+1. **P0 准确率（最高）**：8/10 + 8/11 的 raw source 已冻结，但还需先构建 hash-bound
+   pre-label ASR/cue/prediction 包，再由人工逐 cue/window/segment 标真值；同时从至少三个
+   不同直播/语气收集干净 reviewed HOST bank。先修代表样本/consensus、
    overlap/mixed abstention，再要求每场 false-host=0、host recall/clear coverage ≥85%、
    clear UNKNOWN≤15%、verified accuracy≥95%。
 2. **P0 production choke point**：通过后才在 session seal 之后、每一个 `produce_batch`
@@ -196,6 +224,6 @@ runner 仍先跑 legacy `prioritize(v1)`，再做 speaker routing。现在接线
    是另一条独立授权链。
 
 时间口径：本 P0 **代码/证据成品现在已 review-ready**。可部署的声纹成品没有诚实的固定
-日期，因为两个锁定新场次及其人工真值目前不存在；这些材料一旦齐全，算法校准 + 盲测预计
+日期，因为两个新场次只有 source freeze，pre-label 包与人工真值仍不存在；这些材料一旦齐全，算法校准 + 盲测预计
 需要 1 个工作日，production 接线 + shadow canary 再需约 0.5–1 个工作日。若任一 holdout
 没过门，日期自动顺延，不能用调低门槛换“按时上线”。
