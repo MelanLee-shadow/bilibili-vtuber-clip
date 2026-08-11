@@ -13,6 +13,10 @@ from src.autoslice.boundary_semantic_review import (
     semantic_review_sha256,
 )
 from src.autoslice.chat_authority import ReferentEntity, ReferentGroup
+from src.autoslice.delivery_fast_path import (
+    resolve_operator_text_full_ownership,
+    skipped_final_review_audit,
+)
 from src.autoslice.surface_canon import CHANNEL_PROFILE
 from src.autoslice.final_review_contract import (
     FinalReviewContractError,
@@ -24,6 +28,7 @@ from src.autoslice.final_source_language_owner import (
 from src.autoslice.producer_boundary_owner_contract import (
     freeze_story_chat_boundary_owners,
 )
+from tests.test_delivery_fast_path import _operator_text_owned_spec
 
 
 def _srt(*texts: str) -> str:
@@ -803,6 +808,40 @@ def test_exact_final_release_review_binds_explicit_clean_response(
 
     assert receipt["status"] == "CLEAN"
     assert receipt["release_gate"] == "PASS"
+    validate_final_review_release(
+        receipt,
+        expected_srt_sha256=receipt["reviewed_srt_sha256"],
+    )
+
+
+def test_exact_release_accepts_typed_operator_truth_zero_mutation_bridge(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    monkeypatch.setattr(
+        pipeline,
+        "_build_final_review_llm_call",
+        lambda: (lambda _prompt: '{"findings":[]}'),
+    )
+    ownership = resolve_operator_text_full_ownership(_operator_text_owned_spec())
+    assert ownership is not None
+    correction = skipped_final_review_audit(
+        "SKIPPED_TRUTH_FULL_OWNERSHIP", truth_full_ownership=ownership
+    )
+    correction["boundary_semantic_review"] = _boundary_pass()
+
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=_srt("第一句", "第二句", "第三句"),
+        correction_audit=correction,
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="完整回指",
+        clip_context={},
+    )
+
+    assert receipt["status"] == "CLEAN"
+    assert receipt["release_gate"] == "PASS"
+    assert receipt["correction_mutation_authority"]["status"] == "PASS"
     validate_final_review_release(
         receipt,
         expected_srt_sha256=receipt["reviewed_srt_sha256"],

@@ -24,6 +24,7 @@ from src.autoslice.delivery_fast_path import (
     skipped_final_review_audit,
     verify_transcript_entities,
 )
+from src.autoslice.final_review_auditor import audit_correction_mutation_authority
 from src.autoslice.reviewed_subtitle_baseline_registry import (
     load_candidate_reviewed_subtitle_baseline,
 )
@@ -408,6 +409,82 @@ def test_skipped_final_review_audit_keeps_the_reviewer_contract_shape() -> None:
     assert audit["findings"] == []
     assert audit["applied_count"] == 0
     assert audit["truth_full_ownership"] == {"a": 1}
+
+
+@pytest.mark.parametrize(
+    "resolver,spec_factory",
+    [
+        (resolve_truth_full_ownership, _owned_spec),
+        (resolve_operator_text_full_ownership, _operator_text_owned_spec),
+    ],
+)
+def test_exact_release_accepts_zero_mutation_full_ownership_skip(
+    resolver, spec_factory
+) -> None:
+    ownership = resolver(spec_factory())
+    assert ownership is not None
+    correction = skipped_final_review_audit(
+        "SKIPPED_TRUTH_FULL_OWNERSHIP", truth_full_ownership=ownership
+    )
+
+    mutation = audit_correction_mutation_authority(correction)
+
+    assert mutation == {
+        "schema_version": "subtitle-correction-mutation-audit.v1",
+        "status": "PASS",
+        "applied_count": 0,
+        "validated_mutation_count": 0,
+        "failures": [],
+        "truth_full_ownership_skip": ownership,
+    }
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda audit: audit.update(applied_count=1),
+        lambda audit: audit.update(findings=[{"routed": "disclosure"}]),
+        lambda audit: audit["truth_full_ownership"].pop("coverage"),
+        lambda audit: audit["truth_full_ownership"]["coverage"].update(
+            cue_count=0
+        ),
+        lambda audit: audit["truth_full_ownership"]["coverage"].update(
+            cue_count=1,
+            reviewed_text_cue_count=True,
+            changed_text_cue_count=1,
+        ),
+        lambda audit: audit["truth_full_ownership"]["coverage"]["proof"].update(
+            baseline_sha256="bad"
+        ),
+        lambda audit: audit["truth_full_ownership"]["skipped_stages"].append(
+            dict(audit["truth_full_ownership"]["skipped_stages"][0])
+        ),
+    ],
+)
+def test_exact_release_rejects_unbound_or_nonzero_full_ownership_skip(mutate) -> None:
+    ownership = resolve_operator_text_full_ownership(_operator_text_owned_spec())
+    assert ownership is not None
+    correction = skipped_final_review_audit(
+        "SKIPPED_TRUTH_FULL_OWNERSHIP", truth_full_ownership=ownership
+    )
+    mutate(correction)
+
+    mutation = audit_correction_mutation_authority(correction)
+
+    assert mutation["status"] == "BLOCK"
+
+
+def test_exact_release_malformed_machine_cues_fail_closed_without_crashing() -> None:
+    ownership = resolve_truth_full_ownership(_owned_spec())
+    assert ownership is not None
+    ownership["coverage"]["machine_speaker_cues"] = [{}]
+    correction = skipped_final_review_audit(
+        "SKIPPED_TRUTH_FULL_OWNERSHIP", truth_full_ownership=ownership
+    )
+
+    mutation = audit_correction_mutation_authority(correction)
+
+    assert mutation["status"] == "BLOCK"
 
 
 def test_truth_ownership_branch_skips_reviewer_without_touching_gates() -> None:

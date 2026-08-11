@@ -271,7 +271,7 @@ MODULE_DEBT_LEDGER = {
     # 2026-08-09 净 -77：Ivan F16/F17 指令要求新逻辑放新模块；结构化闭集
     # 证据与 chat window renderer 抽到 closed_set_evidence.py，god-file 只留
     # 可信 provenance、request 接线，锁定本轮债务偿还。
-    "src/autoslice/final_review_auditor.py": 3_248,
+    "src/autoslice/final_review_auditor.py": 3_211,
     "src/autoslice/live_source_review.py": 2_035,
     # 2026-08-07 +18：狍哥案实施指令（同上）——marker 选择改判
     # SOURCE_FACT_REPAIRED_RESCORE_REQUIRED + 写 pending sidecar。
