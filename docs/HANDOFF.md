@@ -1,5 +1,20 @@
 # Current handoff
 
+## ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-11 10:13Z exact aggregate verifier heartbeat
+
+- 已实现 exact 10+5 unlabeled holdout aggregate verifier，并让 run-one/finalizer 共用 run-level
+  lock：seal 之后的新 attempt 会在 audio/provider 前失败；finalizer 持锁完成两次全量 replay 与
+  create-only、fsync-durable publication。
+- 两份 fixed-hash accepted source-freeze replay 现在不仅校验文件 hash，还逐字段决定 plan 的
+  exact 15-member population。替换任一成员后即使重算 plan/file hash 也会 fail closed。
+- 每段必须恰一条 success receipt；artifact、MP3→PCM、normalized ASR、cue table、SRT 与
+  truth/prediction false 均重放。状态只到 `ASR_CUE_PACKAGE_FROZEN_PREDICTIONS_NOT_RUN`。
+- 聚焦 **67 passed**；整库 **4352 passed、0 failed、2 个第三方 warning**。本轮未创建真实
+  v1 plan/receipt，未运行 ffmpeg/BCUT，未 remote write/deploy/upload/push。
+- 当前真实阻塞：BCUT resource/upload/task 需要单独外部上传授权；之后还要先冻结 prediction，
+  再由人工打开两套 locked cross-session truth。证据：
+  `docs/reviews/evidence/2026-08-11-centrality-cue-speaker-shadow/prelabel-aggregate-verifier.md`。
+
 ## ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-11 09:35Z hash-bound BCUT wrapper heartbeat
 
 - 已实现未来 v1 plan 可绑定的 direct-BCUT wrapper，但当前 planner 仍固定

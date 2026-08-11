@@ -31,6 +31,7 @@ TOOLCHAIN_FIELDS = {
     "planner",
     "free_asr_client",
     "hash_bound_run_one_wrapper",
+    "hash_bound_aggregate_verifier",
     "run_one_core",
     "ffmpeg",
     "python",
@@ -186,6 +187,7 @@ def build_execution_callbacks(
         raise HoldoutPrelabelWrapperError("execution parameters drifted")
 
     _bound_file(toolchain["planner"], label="planner")
+    _bound_file(toolchain["hash_bound_aggregate_verifier"], label="aggregate verifier")
     _bound_file(toolchain["ffmpeg"], label="ffmpeg", executable=True)
     python = _bound_file(toolchain["python"], label="Python", executable=True)
     core = _bound_file(toolchain["run_one_core"], label="run-one core")

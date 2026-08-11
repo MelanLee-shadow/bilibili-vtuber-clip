@@ -199,7 +199,14 @@ def test_attempt_namespace_is_parent_fsynced_before_source_or_provider(
         mp3_to_pcm_s16le=lambda _mp3: b"\0\0" * 16_000,
         transcribe_bcut=provider,
     )
-    assert events[:5] == ["fsync", "fsync", "fsync", "fsync", "source"]
+    assert events[:6] == [
+        "fsync",
+        "fsync",
+        "fsync",
+        "fsync",
+        "fsync",
+        "source",
+    ]
     assert events.index("provider") > events.index("source")
 
 

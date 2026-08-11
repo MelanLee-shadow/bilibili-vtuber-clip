@@ -150,6 +150,13 @@ attempt 各级目录在 source/provider 前完成 parent fsync，防止崩溃后
 未创建 v1 run root。聚焦 48 passed，整库 4342 passed。详见
 `prelabel-hash-bound-wrapper.md`。
 
+10:13Z heartbeat 完成了 exact 10+5 aggregate verifier：它把 plan 成员逐字段交叉绑定到两份
+fixed-hash accepted source-freeze replay，逐段重放 receipt/artifact/MP3→PCM/ASR/cue/SRT，拒绝
+跨场 PCM 重复，并用共享 run lock 封住“汇总后再追加 attempt”的竞态。最终状态只可能是
+`ASR_CUE_PACKAGE_FROZEN_PREDICTIONS_NOT_RUN`。本轮只有 mock fixture；没有 authorized v1 plan、
+真实 receipt、BCUT 调用或 remote 写入。聚焦 67 passed，整库 4352 passed。完整证据见
+`prelabel-aggregate-verifier.md`。
+
 ### Pro 选择的下一代 score-only 候选
 
 Pro 选择 session-stratified、duration-matched centroid--medoid consensus 加 OTHER veto；

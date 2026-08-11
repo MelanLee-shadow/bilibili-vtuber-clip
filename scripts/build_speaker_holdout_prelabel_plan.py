@@ -345,6 +345,7 @@ def build_plan(
     run_id: str,
     asr_script: Path,
     run_one_wrapper: Path,
+    aggregate_verifier: Path,
     run_one_core: Path,
     ffmpeg_bin: Path,
     python_bin: Path,
@@ -357,6 +358,9 @@ def build_plan(
     scratch_root = _validate_scratch_root(scratch_root, allowed_root=allowed_scratch_root)
     asr_script = _regular_file(asr_script, label="ASR client")
     run_one_wrapper = _regular_file(run_one_wrapper, label="run-one wrapper")
+    aggregate_verifier = _regular_file(
+        aggregate_verifier, label="aggregate verifier"
+    )
     run_one_core = _regular_file(run_one_core, label="run-one core")
     ffmpeg_bin = _regular_file(ffmpeg_bin, label="ffmpeg binary")
     python_bin = _regular_file(python_bin, label="Python binary")
@@ -463,6 +467,10 @@ def build_plan(
                 "path": str(run_one_wrapper),
                 "sha256": f"sha256:{_sha256(run_one_wrapper)}",
             },
+            "hash_bound_aggregate_verifier": {
+                "path": str(aggregate_verifier),
+                "sha256": f"sha256:{_sha256(aggregate_verifier)}",
+            },
             "run_one_core": {
                 "path": str(run_one_core),
                 "sha256": f"sha256:{_sha256(run_one_core)}",
@@ -509,7 +517,9 @@ def build_plan(
     payload["deterministic_payload_sha256"] = _canonical_sha256(payload)
     bound_inputs = _input_bindings([*(path for path, _ in loaded), asr_script, planner])
     bound_inputs.update(
-        _input_bindings([run_one_wrapper, run_one_core, ffmpeg_bin, python_bin])
+        _input_bindings(
+            [run_one_wrapper, aggregate_verifier, run_one_core, ffmpeg_bin, python_bin]
+        )
     )
     return payload, output_path, bound_inputs
 
@@ -582,6 +592,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--asr-script", type=Path, required=True)
     parser.add_argument("--run-one-wrapper", type=Path, required=True)
+    parser.add_argument("--aggregate-verifier", type=Path, required=True)
     parser.add_argument("--run-one-core", type=Path, required=True)
     parser.add_argument("--ffmpeg-bin", type=Path, required=True)
     parser.add_argument("--python-bin", type=Path, required=True)
@@ -592,6 +603,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_id=args.run_id,
         asr_script=args.asr_script,
         run_one_wrapper=args.run_one_wrapper,
+        aggregate_verifier=args.aggregate_verifier,
         run_one_core=args.run_one_core,
         ffmpeg_bin=args.ffmpeg_bin,
         python_bin=args.python_bin,

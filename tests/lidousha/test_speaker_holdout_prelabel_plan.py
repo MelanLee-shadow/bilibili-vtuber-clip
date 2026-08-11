@@ -26,6 +26,8 @@ def _inputs(tmp_path: Path) -> dict[str, object]:
     asr_script.write_text("# fixture\n", encoding="utf-8")
     run_one_wrapper = tmp_path / "run_speaker_holdout_prelabel_one.py"
     run_one_wrapper.write_text("# fixture wrapper\n", encoding="utf-8")
+    aggregate_verifier = tmp_path / "finalize_speaker_holdout_prelabel.py"
+    aggregate_verifier.write_text("# fixture aggregate verifier\n", encoding="utf-8")
     run_one_core = tmp_path / "speaker_holdout_prelabel.py"
     run_one_core.write_text("# fixture core\n", encoding="utf-8")
     ffmpeg_bin = tmp_path / "ffmpeg"
@@ -50,6 +52,7 @@ def _inputs(tmp_path: Path) -> dict[str, object]:
         "scratch": scratch,
         "asr_script": asr_script,
         "run_one_wrapper": run_one_wrapper,
+        "aggregate_verifier": aggregate_verifier,
         "run_one_core": run_one_core,
         "ffmpeg_bin": ffmpeg_bin,
         "python_bin": python_bin,
@@ -65,6 +68,7 @@ def _build(values: dict[str, object]) -> tuple[dict[str, object], Path, dict[Pat
         run_id=values["run_id"],
         asr_script=values["asr_script"],
         run_one_wrapper=values["run_one_wrapper"],
+        aggregate_verifier=values["aggregate_verifier"],
         run_one_core=values["run_one_core"],
         ffmpeg_bin=values["ffmpeg_bin"],
         python_bin=values["python_bin"],
@@ -94,6 +98,9 @@ def test_plan_binds_two_replays_without_running_or_opening_truth(tmp_path: Path)
     assert payload["policy"]["threshold_state"] is None
     assert payload["toolchain"]["hash_bound_run_one_wrapper"]["path"] == str(
         values["run_one_wrapper"]
+    )
+    assert payload["toolchain"]["hash_bound_aggregate_verifier"]["path"] == str(
+        values["aggregate_verifier"]
     )
     assert payload["toolchain"]["planner"]["sha256"].startswith("sha256:")
     assert payload["toolchain"]["free_asr_client"]["sha256"].startswith("sha256:")
@@ -235,6 +242,7 @@ def test_plan_rejects_nonexact_or_overpermissive_scratch(tmp_path: Path) -> None
             run_id=values["run_id"],
             asr_script=values["asr_script"],
             run_one_wrapper=values["run_one_wrapper"],
+            aggregate_verifier=values["aggregate_verifier"],
             run_one_core=values["run_one_core"],
             ffmpeg_bin=values["ffmpeg_bin"],
             python_bin=values["python_bin"],
