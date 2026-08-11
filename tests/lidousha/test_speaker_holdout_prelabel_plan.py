@@ -67,6 +67,7 @@ def test_plan_binds_two_replays_without_running_or_opening_truth(tmp_path: Path)
     payload, output_path, _ = _build(values)
 
     assert payload["status"] == "EXTRACTION_PLAN_FROZEN_EXECUTION_NOT_AUTHORIZED"
+    assert payload["schema_version"] == "speaker-holdout-extraction-plan.v1"
     assert payload["session_count"] == 2
     assert payload["segment_count"] == 2
     assert output_path == values["scratch"] / "fixture-run.plan.json"
@@ -74,6 +75,8 @@ def test_plan_binds_two_replays_without_running_or_opening_truth(tmp_path: Path)
     assert payload["policy"]["asr_model_id"] == "7"
     assert payload["policy"]["threshold_state"] is None
     assert payload["toolchain"]["hash_bound_run_one_wrapper"] is None
+    assert payload["toolchain"]["planner"]["sha256"].startswith("sha256:")
+    assert payload["toolchain"]["free_asr_client"]["sha256"].startswith("sha256:")
     assert payload["execution_contract"]["plan_only"] is True
     assert payload["execution_contract"]["real_provider_execution_authorized"] is False
     assert payload["execution_contract"]["external_audio_upload_authorized"] is False
@@ -235,7 +238,15 @@ def test_plan_records_raw_pcm_dedup_and_relative_outputs(tmp_path: Path) -> None
     assert payload["policy"]["canonical_pcm"]["container"] == "raw_s16le"
     for session in payload["sessions"]:
         for segment in session["segments"]:
-            assert all(not Path(path).is_absolute() for path in segment["outputs"].values())
+            assert segment["outputs"] == {
+                "attempt_root_template": f"segments/{segment['segment_id']}/{{attempt_id}}",
+                "canonical_pcm_s16le": "canonical-pcm.s16le",
+                "asr_input_mp3": "asr-input-16k-mono-64k.mp3",
+                "asr_normalized_json": "asr.normalized.json",
+                "cue_table_json": "cue-table.json",
+                "asr_srt": "asr.srt",
+                "extraction_receipt": "extraction-receipt.json",
+            }
 
 
 def test_dirfd_create_only_plan_cannot_be_overwritten(tmp_path: Path) -> None:

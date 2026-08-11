@@ -21,12 +21,12 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 
-SCHEMA_VERSION = "speaker-holdout-extraction-plan.v0"
+SCHEMA_VERSION = "speaker-holdout-extraction-plan.v1"
 SOURCE_SCHEMA_VERSION = "speaker-holdout-source-freeze.v0"
 SOURCE_PURPOSE = "LOCKED_SOURCE_ONLY_NO_ASR_PREDICTION_TRUTH_OR_PRODUCTION_AUTHORITY"
 PURPOSE = "HOLDOUT_PRELABEL_EXTRACTION_PLAN_ONLY_NO_TRUTH_PREDICTION_OR_PRODUCTION_AUTHORITY"
 ALLOWED_SCRATCH_ROOT = Path(
-    "/tmp/hostocc-v2-20260811/speaker-prelabel-plan-v0"
+    "/tmp/hostocc-v2-20260811/speaker-prelabel-plan-v1"
 )
 CURRENT_ACCEPTANCE: Mapping[str, object] = {
     "acceptance_id": "lidousha-speaker-holdout-source-20260810-20260811.v0",
@@ -379,17 +379,19 @@ def build_plan(
             (item for item in segments if item["session_date"] == session_date),
             key=lambda item: item["segment_id"],
         ):
-            relative_root = Path("segments") / str(row["segment_id"])
             session_segments.append(
                 {
                     **row,
                     "outputs": {
-                        "canonical_pcm_s16le": str(relative_root / "canonical-pcm.s16le"),
-                        "asr_input_mp3": str(relative_root / "asr-input-16k-mono-64k.mp3"),
-                        "asr_raw_json": str(relative_root / "asr.raw.json"),
-                        "cue_table_json": str(relative_root / "cue-table.json"),
-                        "asr_srt": str(relative_root / "asr.srt"),
-                        "extraction_receipt": str(relative_root / "extraction-receipt.json"),
+                        "attempt_root_template": (
+                            f"segments/{row['segment_id']}/{{attempt_id}}"
+                        ),
+                        "canonical_pcm_s16le": "canonical-pcm.s16le",
+                        "asr_input_mp3": "asr-input-16k-mono-64k.mp3",
+                        "asr_normalized_json": "asr.normalized.json",
+                        "cue_table_json": "cue-table.json",
+                        "asr_srt": "asr.srt",
+                        "extraction_receipt": "extraction-receipt.json",
                     },
                     "state": "PLANNED_NOT_EXECUTED",
                 }
@@ -444,8 +446,11 @@ def build_plan(
             "canonical_pcm_cross_session_dedup_required": True,
         },
         "toolchain": {
-            "planner": {"path": str(planner), "sha256": _sha256(planner)},
-            "free_asr_client": {"path": str(asr_script), "sha256": _sha256(asr_script)},
+            "planner": {"path": str(planner), "sha256": f"sha256:{_sha256(planner)}"},
+            "free_asr_client": {
+                "path": str(asr_script),
+                "sha256": f"sha256:{_sha256(asr_script)}",
+            },
             "hash_bound_run_one_wrapper": None,
             "runtime_binding_state": "BLOCKED_HASH_BOUND_RUNNER_NOT_IMPLEMENTED",
         },

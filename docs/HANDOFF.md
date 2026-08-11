@@ -1,5 +1,18 @@
 # Current handoff
 
+## ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-11 08:55Z plan/run contract v1 heartbeat
+
+- 发现并修复 v0 plan 与 run-one 的 P0 合同错位：前者声明 segment 直下的 raw ASR/长 MP3
+  文件名，后者实际写 attempt 子目录的 normalized ASR/短 MP3 文件名。两边原先各自单测
+  通过，但无法合法汇总。
+- planner 升到 `speaker-holdout-extraction-plan.v1`，明确 attempt template 与六个 artifact
+  basename；run-one 在 provider/run-root 前逐项校验并按 plan 名称写。legacy v0 即使伪造
+  authority 也只能 validate-only。toolchain hash 统一成 `sha256:<hex>`。
+- 聚焦 39 passed；整库 **4333 passed、0 failed、2 个第三方 warning**。未建 remote v1
+  plan、未调用 BCUT、未上传、未部署、未 push。下一步先实现并 hash-bind 真实 wrapper；
+  external upload 未单独授权前仍不得实跑。证据：
+  `docs/reviews/evidence/2026-08-11-centrality-cue-speaker-shadow/prelabel-plan-run-contract-v1.md`。
+
 ## ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-11 08:26Z run-one mock core heartbeat
 
 - 新增 `src/autoslice/speaker_holdout_prelabel.py` 和 validate-only CLI。核心已实现 source/

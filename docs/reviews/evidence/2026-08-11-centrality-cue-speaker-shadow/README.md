@@ -137,6 +137,11 @@ external upload=false 且未绑定 wrapper 而在 provider 前拒绝；`free` sm
 `VALIDATED_ONLY_EXTERNAL_PROVIDER_EXECUTION_NOT_IMPLEMENTED`，没有创建 run root。16 个
 run-one-specific canary 与 45 个聚焦测试通过；详见 `prelabel-run-one-core.md`。
 
+08:55Z heartbeat 随后发现 v0 plan 与 run-one 的 attempt 路径、MP3/ASR 文件名不一致，
+因此先升为共享 v1 contract：旧 v0 只能 validate，v1 才可能执行；artifact 漂移会在 provider
+和 run root 前拒绝。没有生成远端 v1 plan，也没有调用 BCUT。详见
+`prelabel-plan-run-contract-v1.md`。
+
 ### Pro 选择的下一代 score-only 候选
 
 Pro 选择 session-stratified、duration-matched centroid--medoid consensus 加 OTHER veto；

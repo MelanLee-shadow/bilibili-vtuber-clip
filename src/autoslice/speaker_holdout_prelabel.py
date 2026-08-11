@@ -17,7 +17,8 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 
-PLAN_SCHEMA = "speaker-holdout-extraction-plan.v0"
+PLAN_SCHEMA = "speaker-holdout-extraction-plan.v1"
+LEGACY_PLAN_SCHEMA = "speaker-holdout-extraction-plan.v0"
 PLAN_PURPOSE = "HOLDOUT_PRELABEL_EXTRACTION_PLAN_ONLY_NO_TRUTH_PREDICTION_OR_PRODUCTION_AUTHORITY"
 EXECUTION_STATUS = "EXTRACTION_PLAN_FROZEN_EXTERNAL_UPLOAD_AUTHORIZED"
 RECEIPT_SCHEMA = "speaker-holdout-segment-extraction-receipt.v0"
@@ -37,6 +38,14 @@ PLAN_FIELDS = {
     "execution_contract",
     "authority",
     "deterministic_payload_sha256",
+}
+ARTIFACT_OUTPUTS = {
+    "canonical_pcm_s16le": "canonical-pcm.s16le",
+    "asr_input_mp3": "asr-input-16k-mono-64k.mp3",
+    "asr_normalized_json": "asr.normalized.json",
+    "cue_table_json": "cue-table.json",
+    "asr_srt": "asr.srt",
+    "extraction_receipt": "extraction-receipt.json",
 }
 
 
@@ -98,7 +107,9 @@ def load_plan(path: Path, *, expected_file_sha256: str) -> dict[str, object]:
 def validate_plan(plan: Mapping[str, object], *, require_execution_authority: bool) -> None:
     if set(plan) != PLAN_FIELDS:
         raise SpeakerHoldoutPrelabelError("holdout extraction plan field set drifted")
-    if plan.get("schema_version") != PLAN_SCHEMA or plan.get("purpose") != PLAN_PURPOSE:
+    if plan.get("schema_version") not in {PLAN_SCHEMA, LEGACY_PLAN_SCHEMA} or plan.get(
+        "purpose"
+    ) != PLAN_PURPOSE:
         raise SpeakerHoldoutPrelabelError("holdout extraction plan schema or purpose drifted")
     deterministic = {
         key: value for key, value in plan.items() if key != "deterministic_payload_sha256"
@@ -143,6 +154,10 @@ def validate_plan(plan: Mapping[str, object], *, require_execution_authority: bo
     ):
         raise SpeakerHoldoutPrelabelError("holdout extraction plan claims forbidden authority")
     if require_execution_authority:
+        if plan.get("schema_version") != PLAN_SCHEMA:
+            raise SpeakerHoldoutPrelabelError(
+                "legacy extraction plan is validate-only and cannot execute"
+            )
         wrapper = toolchain.get("hash_bound_run_one_wrapper")
         if (
             plan.get("status") != EXECUTION_STATUS
@@ -182,6 +197,20 @@ def _source_snapshot(segment: Mapping[str, object]) -> tuple[Path, tuple[int, in
     if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
         raise SpeakerHoldoutPrelabelError("holdout source changed while hashing")
     return path, (after.st_size, after.st_mtime_ns)
+
+
+def _validate_output_contract(segment: Mapping[str, object], *, segment_id: str) -> dict[str, str]:
+    outputs = segment.get("outputs")
+    expected_fields = {"attempt_root_template", *ARTIFACT_OUTPUTS}
+    if not isinstance(outputs, dict) or set(outputs) != expected_fields:
+        raise SpeakerHoldoutPrelabelError("segment output contract field set drifted")
+    expected_root = f"segments/{segment_id}/{{attempt_id}}"
+    if outputs.get("attempt_root_template") != expected_root:
+        raise SpeakerHoldoutPrelabelError("segment attempt root contract drifted")
+    for key, expected_name in ARTIFACT_OUTPUTS.items():
+        if outputs.get(key) != expected_name:
+            raise SpeakerHoldoutPrelabelError(f"segment artifact contract drifted: {key}")
+    return {key: str(outputs[key]) for key in ARTIFACT_OUTPUTS}
 
 
 def normalize_asr(result: Mapping[str, object], *, pcm_sample_count: int) -> dict[str, object]:
@@ -369,6 +398,7 @@ def run_one(
     segment_id = _safe_component(segment_id, label="segment ID")
     attempt_id = _safe_component(attempt_id, label="attempt ID")
     session, segment = _find_segment(plan, segment_id)
+    output_names = _validate_output_contract(segment, segment_id=segment_id)
     runner_path = _regular_file(runner_path, label="hash-bound run-one wrapper")
     wrapper = plan["toolchain"]["hash_bound_run_one_wrapper"]
     if str(runner_path) != wrapper["path"] or file_sha256(runner_path) != wrapper["sha256"]:
@@ -421,11 +451,11 @@ def run_one(
         cue_bytes = _json_bytes(cue_table)
         srt_bytes = render_srt(normalized)
         artifacts = {
-            "asr-input.mp3": mp3,
-            "canonical-pcm.s16le": pcm,
-            "asr.normalized.json": normalized_bytes,
-            "cue-table.json": cue_bytes,
-            "asr.srt": srt_bytes,
+            output_names["asr_input_mp3"]: mp3,
+            output_names["canonical_pcm_s16le"]: pcm,
+            output_names["asr_normalized_json"]: normalized_bytes,
+            output_names["cue_table_json"]: cue_bytes,
+            output_names["asr_srt"]: srt_bytes,
         }
         receipt_payload: dict[str, object] = {
         "schema_version": RECEIPT_SCHEMA,
@@ -468,7 +498,7 @@ def run_one(
         receipt_bytes = _json_bytes(receipt_payload)
         for name, data in artifacts.items():
             _write_exclusive(attempt_fd, name, data)
-        _write_exclusive(attempt_fd, "extraction-receipt.json", receipt_bytes)
+        _write_exclusive(attempt_fd, output_names["extraction_receipt"], receipt_bytes)
         os.fsync(attempt_fd)
         return receipt_payload
     finally:

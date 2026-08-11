@@ -108,7 +108,7 @@ def test_mocked_run_one_writes_exact_artifacts_and_receipt_last(tmp_path: Path) 
     assert receipt["authority"]["human_truth_opened"] is False
     assert receipt["authority"]["predictions_frozen"] is False
     assert {path.name for path in attempt.iterdir()} == {
-        "asr-input.mp3",
+        "asr-input-16k-mono-64k.mp3",
         "canonical-pcm.s16le",
         "asr.normalized.json",
         "cue-table.json",
@@ -120,6 +120,45 @@ def test_mocked_run_one_writes_exact_artifacts_and_receipt_last(tmp_path: Path) 
     cue_table = json.loads((attempt / "cue-table.json").read_text(encoding="utf-8"))
     assert cue_table["truth_state"] == "UNLABELED_LOCKED"
     assert cue_table["prediction_state"] == "NOT_RUN"
+
+
+def test_legacy_v0_plan_is_validate_only_even_if_authority_flags_are_forged(
+    tmp_path: Path,
+) -> None:
+    payload, _, runner, segment_id = _authorized(tmp_path)
+    payload["schema_version"] = prelabel.LEGACY_PLAN_SCHEMA
+    payload["deterministic_payload_sha256"] = prelabel.canonical_sha256(
+        {key: value for key, value in payload.items() if key != "deterministic_payload_sha256"}
+    )
+    called = False
+
+    def provider(_mp3: bytes) -> dict[str, object]:
+        nonlocal called
+        called = True
+        return _result()
+
+    with pytest.raises(prelabel.SpeakerHoldoutPrelabelError, match="validate-only"):
+        _run(payload, runner, segment_id, provider=provider)
+    assert called is False
+
+
+def test_artifact_contract_drift_stops_before_provider_or_run_root(tmp_path: Path) -> None:
+    payload, values, runner, segment_id = _authorized(tmp_path)
+    payload["sessions"][0]["segments"][0]["outputs"]["asr_normalized_json"] = "asr.raw.json"
+    payload["deterministic_payload_sha256"] = prelabel.canonical_sha256(
+        {key: value for key, value in payload.items() if key != "deterministic_payload_sha256"}
+    )
+    called = False
+
+    def provider(_mp3: bytes) -> dict[str, object]:
+        nonlocal called
+        called = True
+        return _result()
+
+    with pytest.raises(prelabel.SpeakerHoldoutPrelabelError, match="artifact contract drifted"):
+        _run(payload, runner, segment_id, provider=provider)
+    assert called is False
+    assert list(values["scratch"].iterdir()) == []
 
 
 def test_elapsed_observation_does_not_change_normalized_asr(tmp_path: Path) -> None:
