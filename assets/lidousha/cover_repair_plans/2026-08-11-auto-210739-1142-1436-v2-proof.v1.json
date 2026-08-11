@@ -1,0 +1,48 @@
+{
+  "schema_version": "reviewed-cover-repair-plan.v1",
+  "date": "2026-08-07",
+  "authority": "Ivan 2026-08-11 explicitly requested advancing finished-product production; preserve the existing title and already-rendered cover text while refreshing the package under current gates",
+  "upload_enabled": false,
+  "upload_ledger": {
+    "path": "/opt/bilive/autoslice/reports/upload_ledger.jsonl",
+    "sha256": "144d05f3c8ee097980fd158fa843d1c7a4c44b5cb29a3b8599dc7c6da4105337"
+  },
+  "repair_candidates": [
+    {
+      "candidate_id": "auto_210739_1142_1436",
+      "expected_state_record_sha256": "250da801f5660ff795dbfedd82791f30cebb1f19465f5b5ef113f07697611af3"
+    }
+  ],
+  "invalidations": [
+    {
+      "candidate_id": "auto_210739_1142_1436",
+      "expected_title": "【李豆沙】想抱团却被拒绝，小李认南天为大哥：“你说啥就是啥”，目睹大哥死后小弟立马办起丧事",
+      "title": "【李豆沙】想抱团却被拒绝，小李认南天为大哥：“你说啥就是啥”，目睹大哥死后小弟立马办起丧事",
+      "expected_cover_text": "目睹大哥死后\n小弟立马办起丧事",
+      "require_rendered_text_exact": true,
+      "cover_diversity_slot": 3,
+      "media": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-08-07/没人肯跟她抱团，她当场认南天为大哥宣.mp4",
+        "sha256": "45ed939624f926f191a1a3ce6aef053a9f56086f016938fde857ee3e2fd858e3"
+      },
+      "cover": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-08-07/没人肯跟她抱团，她当场认南天为大哥宣.cover.png",
+        "sha256": "9417270d8c7f63c00869c998942409910f4d1cd42fb1ed058774cf4eab9c923f"
+      },
+      "documents": [
+        {
+          "path": "/opt/bilive/autoslice/repo/lidousha/2026-08-07/没人肯跟她抱团，她当场认南天为大哥宣.record.json",
+          "sha256": "2189bdd444052204f59be6c374ce574263b6e91de1a9019e6bb8529d4b768787"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-08-07/auto_210739_1142_1436/replacement_recuts/auto_210739_1142_1436.record.json",
+          "sha256": "2189bdd444052204f59be6c374ce574263b6e91de1a9019e6bb8529d4b768787"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-08-07/auto_210739_1142_1436/replacement_recuts/auto_210739_1142_1436.recut.publish.json",
+          "sha256": "a202e85f1cf5af9f32928740d63d403b9928bbda64130215b6d7352e202487f4"
+        }
+      ]
+    }
+  ]
+}
