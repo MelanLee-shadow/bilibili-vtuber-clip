@@ -24,6 +24,16 @@ def _inputs(tmp_path: Path) -> dict[str, object]:
     scratch.chmod(0o700)
     asr_script = tmp_path / "free_asr_client.py"
     asr_script.write_text("# fixture\n", encoding="utf-8")
+    run_one_wrapper = tmp_path / "run_speaker_holdout_prelabel_one.py"
+    run_one_wrapper.write_text("# fixture wrapper\n", encoding="utf-8")
+    run_one_core = tmp_path / "speaker_holdout_prelabel.py"
+    run_one_core.write_text("# fixture core\n", encoding="utf-8")
+    ffmpeg_bin = tmp_path / "ffmpeg"
+    ffmpeg_bin.write_bytes(b"fixture ffmpeg")
+    ffmpeg_bin.chmod(0o700)
+    python_bin = tmp_path / "python"
+    python_bin.write_bytes(b"fixture python")
+    python_bin.chmod(0o700)
     manifests = [replay_one, replay_two]
     acceptance = {
         "acceptance_id": "fixture.v0",
@@ -39,6 +49,10 @@ def _inputs(tmp_path: Path) -> dict[str, object]:
         "second": second,
         "scratch": scratch,
         "asr_script": asr_script,
+        "run_one_wrapper": run_one_wrapper,
+        "run_one_core": run_one_core,
+        "ffmpeg_bin": ffmpeg_bin,
+        "python_bin": python_bin,
         "acceptance": acceptance,
         "run_id": "fixture-run",
     }
@@ -50,6 +64,10 @@ def _build(values: dict[str, object]) -> tuple[dict[str, object], Path, dict[Pat
         scratch_root=values["scratch"],
         run_id=values["run_id"],
         asr_script=values["asr_script"],
+        run_one_wrapper=values["run_one_wrapper"],
+        run_one_core=values["run_one_core"],
+        ffmpeg_bin=values["ffmpeg_bin"],
+        python_bin=values["python_bin"],
         acceptance=values["acceptance"],
         allowed_scratch_root=values["scratch"],
     )
@@ -74,9 +92,17 @@ def test_plan_binds_two_replays_without_running_or_opening_truth(tmp_path: Path)
     assert payload["policy"]["asr_provider"] == "bcut"
     assert payload["policy"]["asr_model_id"] == "7"
     assert payload["policy"]["threshold_state"] is None
-    assert payload["toolchain"]["hash_bound_run_one_wrapper"] is None
+    assert payload["toolchain"]["hash_bound_run_one_wrapper"]["path"] == str(
+        values["run_one_wrapper"]
+    )
     assert payload["toolchain"]["planner"]["sha256"].startswith("sha256:")
     assert payload["toolchain"]["free_asr_client"]["sha256"].startswith("sha256:")
+    assert payload["toolchain"]["runtime_binding_state"] == (
+        "BOUND_EXTERNAL_UPLOAD_NOT_AUTHORIZED"
+    )
+    assert payload["authority"]["next_required_state"] == (
+        "EXTERNAL_AUDIO_UPLOAD_AUTHORITY_OR_STOP"
+    )
     assert payload["execution_contract"]["plan_only"] is True
     assert payload["execution_contract"]["real_provider_execution_authorized"] is False
     assert payload["execution_contract"]["external_audio_upload_authorized"] is False
@@ -208,6 +234,10 @@ def test_plan_rejects_nonexact_or_overpermissive_scratch(tmp_path: Path) -> None
             scratch_root=other,
             run_id=values["run_id"],
             asr_script=values["asr_script"],
+            run_one_wrapper=values["run_one_wrapper"],
+            run_one_core=values["run_one_core"],
+            ffmpeg_bin=values["ffmpeg_bin"],
+            python_bin=values["python_bin"],
             acceptance=values["acceptance"],
             allowed_scratch_root=values["scratch"],
         )

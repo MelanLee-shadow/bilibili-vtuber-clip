@@ -142,6 +142,14 @@ run-one-specific canary 与 45 个聚焦测试通过；详见 `prelabel-run-one-
 和 run root 前拒绝。没有生成远端 v1 plan，也没有调用 BCUT。详见
 `prelabel-plan-run-contract-v1.md`。
 
+09:35Z heartbeat 实现了可被未来 v1 plan 哈希绑定、但默认不可执行的 direct-BCUT wrapper：
+两段 exact ffmpeg pipe argv、固定 model/endpoint/timeout、全 toolchain hash、无 proxy/auto/
+tempfile、ASR client 延迟单 FD 读取；plan 本身也改为单 FD hash+parse，堵住 rename-swap；
+attempt 各级目录在 source/provider 前完成 parent fsync，防止崩溃后重复上传。
+当前 planner 仍固定 external upload=false；`free` 只做 v0 validate-only smoke，未解码、未上传、
+未创建 v1 run root。聚焦 48 passed，整库 4342 passed。详见
+`prelabel-hash-bound-wrapper.md`。
+
 ### Pro 选择的下一代 score-only 候选
 
 Pro 选择 session-stratified、duration-matched centroid--medoid consensus 加 OTHER veto；
@@ -218,7 +226,7 @@ v6 的所有 strategy metrics 与重构前 v4 用 `diff -u` 逐项一致；重�
 - overnight 新增 source-freeze + SCMC 合同：24 passed；
 - 本轮 changed-file `ruff check`、`py_compile`、`git diff --check`：通过；全仓
   `ruff check .` 仍报告 42 条既存 lint finding（均不在本轮文件），未借本任务扩 scope 修理；
-- 整库最终：**4294 passed，2 个第三方 DeprecationWarning，0 failed，75.53s**。
+- 整库本轮最终：**4342 passed，2 个第三方 DeprecationWarning，0 failed，69.10s**。
 
 ## 六、生产接线、优先级与条件 ETA
 

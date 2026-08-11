@@ -1,5 +1,22 @@
 # Current handoff
 
+## ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-11 09:35Z hash-bound BCUT wrapper heartbeat
+
+- 已实现未来 v1 plan 可绑定的 direct-BCUT wrapper，但当前 planner 仍固定
+  `plan_only=true`、external upload=false、runtime un-authorized，所以没有任何当前 plan 能走到
+  ffmpeg 或 provider。真实 BCUT 的 resource/create、PUT、task 仍需独立外部上传授权。
+- wrapper 固定两段 exact ffmpeg pipe argv、BCUT model 7/endpoint/poll/timeout、全 toolchain
+  hash、无 auto/Jianying/Kuaishou、无 proxy/tempfile/任意路径；ASR client 延迟到最后 callback
+  才单 FD 读取与执行。plan 也改为单 FD hash+parse；attempt 目录逐级 parent-fsync，崩溃也不
+  会丢失已占用的 attempt 名。rename-swap/TLS key-log canary 都会在 callback 前失败。
+- `free` 只在 `/tmp/hostocc-v2-20260811/.../run-one-wrapper-validate-v4` 放入两份校验代码，
+  对 immutable v0 plan 返回 `VALIDATED_ONLY_EXECUTION_NOT_ATTEMPTED`；没有 segment/attempt、
+  没有 PCM/ASR/cue/receipt，v1 root 仍不存在。
+- 聚焦 **48 passed**；整库 **4342 passed、0 failed、2 个第三方 warning**。未 deploy、enable、
+  upload、push 或写 production。下一步可做 aggregate receipt verifier；真实 extraction 继续等
+  external-upload authority，locked holdout 继续等人工真值。证据：
+  `docs/reviews/evidence/2026-08-11-centrality-cue-speaker-shadow/prelabel-hash-bound-wrapper.md`。
+
 ## ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-11 08:55Z plan/run contract v1 heartbeat
 
 - 发现并修复 v0 plan 与 run-one 的 P0 合同错位：前者声明 segment 直下的 raw ASR/长 MP3

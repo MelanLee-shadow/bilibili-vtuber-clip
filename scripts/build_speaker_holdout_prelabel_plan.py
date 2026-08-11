@@ -344,6 +344,10 @@ def build_plan(
     scratch_root: Path,
     run_id: str,
     asr_script: Path,
+    run_one_wrapper: Path,
+    run_one_core: Path,
+    ffmpeg_bin: Path,
+    python_bin: Path,
     acceptance: Mapping[str, object] = CURRENT_ACCEPTANCE,
     allowed_scratch_root: Path = ALLOWED_SCRATCH_ROOT,
 ) -> tuple[dict[str, object], Path, dict[Path, str]]:
@@ -352,6 +356,10 @@ def build_plan(
     run_id = _validate_run_id(run_id)
     scratch_root = _validate_scratch_root(scratch_root, allowed_root=allowed_scratch_root)
     asr_script = _regular_file(asr_script, label="ASR client")
+    run_one_wrapper = _regular_file(run_one_wrapper, label="run-one wrapper")
+    run_one_core = _regular_file(run_one_core, label="run-one core")
+    ffmpeg_bin = _regular_file(ffmpeg_bin, label="ffmpeg binary")
+    python_bin = _regular_file(python_bin, label="Python binary")
     loaded = [
         _load_json(path, label=f"source-freeze replay {index}")
         for index, path in enumerate(source_freeze_paths, 1)
@@ -451,8 +459,28 @@ def build_plan(
                 "path": str(asr_script),
                 "sha256": f"sha256:{_sha256(asr_script)}",
             },
-            "hash_bound_run_one_wrapper": None,
-            "runtime_binding_state": "BLOCKED_HASH_BOUND_RUNNER_NOT_IMPLEMENTED",
+            "hash_bound_run_one_wrapper": {
+                "path": str(run_one_wrapper),
+                "sha256": f"sha256:{_sha256(run_one_wrapper)}",
+            },
+            "run_one_core": {
+                "path": str(run_one_core),
+                "sha256": f"sha256:{_sha256(run_one_core)}",
+            },
+            "ffmpeg": {
+                "path": str(ffmpeg_bin),
+                "sha256": f"sha256:{_sha256(ffmpeg_bin)}",
+            },
+            "python": {
+                "path": str(python_bin),
+                "sha256": f"sha256:{_sha256(python_bin)}",
+            },
+            "execution_parameters": {
+                "ffmpeg_timeout_s": 900,
+                "bcut_poll_interval_s": 3,
+                "bcut_poll_timeout_s": 900,
+            },
+            "runtime_binding_state": "BOUND_EXTERNAL_UPLOAD_NOT_AUTHORIZED",
         },
         "sessions": sessions,
         "session_count": len(sessions),
@@ -475,11 +503,14 @@ def build_plan(
             "human_truth_opened": False,
             "production_authority": False,
             "deployment_authority": False,
-            "next_required_state": "IMPLEMENT_HASH_BOUND_RUN_ONE_WRAPPER",
+            "next_required_state": "EXTERNAL_AUDIO_UPLOAD_AUTHORITY_OR_STOP",
         },
     }
     payload["deterministic_payload_sha256"] = _canonical_sha256(payload)
     bound_inputs = _input_bindings([*(path for path, _ in loaded), asr_script, planner])
+    bound_inputs.update(
+        _input_bindings([run_one_wrapper, run_one_core, ffmpeg_bin, python_bin])
+    )
     return payload, output_path, bound_inputs
 
 
@@ -550,12 +581,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--scratch-root", type=Path, required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--asr-script", type=Path, required=True)
+    parser.add_argument("--run-one-wrapper", type=Path, required=True)
+    parser.add_argument("--run-one-core", type=Path, required=True)
+    parser.add_argument("--ffmpeg-bin", type=Path, required=True)
+    parser.add_argument("--python-bin", type=Path, required=True)
     args = parser.parse_args(argv)
     payload, output_path, bound_inputs = build_plan(
         source_freeze_paths=args.source_freeze,
         scratch_root=args.scratch_root,
         run_id=args.run_id,
         asr_script=args.asr_script,
+        run_one_wrapper=args.run_one_wrapper,
+        run_one_core=args.run_one_core,
+        ffmpeg_bin=args.ffmpeg_bin,
+        python_bin=args.python_bin,
     )
     _write_create_only(
         scratch_root=args.scratch_root,

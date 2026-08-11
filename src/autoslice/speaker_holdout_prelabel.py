@@ -21,6 +21,7 @@ PLAN_SCHEMA = "speaker-holdout-extraction-plan.v1"
 LEGACY_PLAN_SCHEMA = "speaker-holdout-extraction-plan.v0"
 PLAN_PURPOSE = "HOLDOUT_PRELABEL_EXTRACTION_PLAN_ONLY_NO_TRUTH_PREDICTION_OR_PRODUCTION_AUTHORITY"
 EXECUTION_STATUS = "EXTRACTION_PLAN_FROZEN_EXTERNAL_UPLOAD_AUTHORIZED"
+EXECUTION_RUNTIME_STATE = "BOUND_EXTERNAL_UPLOAD_AUTHORIZED"
 RECEIPT_SCHEMA = "speaker-holdout-segment-extraction-receipt.v0"
 RECEIPT_PURPOSE = "UNLABELED_HOLDOUT_ASR_CUE_SEGMENT_ONLY_NO_PREDICTION_OR_PRODUCTION_AUTHORITY"
 SAFE_COMPONENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
@@ -90,13 +91,52 @@ def _regular_file(path: Path, *, label: str) -> Path:
     return resolved
 
 
+def _read_regular_file_bytes(path: Path, *, label: str) -> tuple[Path, bytes]:
+    """Read one regular file through one descriptor and reject namespace races."""
+
+    resolved = _regular_file(path, label=label)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(resolved, flags)
+        try:
+            before = os.fstat(descriptor)
+            chunks: list[bytes] = []
+            while chunk := os.read(descriptor, 4 * 1024 * 1024):
+                chunks.append(chunk)
+            after = os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
+        current = resolved.lstat()
+    except OSError as exc:
+        raise SpeakerHoldoutPrelabelError(f"{label} changed while reading") from exc
+    before_identity = (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+    )
+    after_identity = (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+    )
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before_identity != after_identity
+        or (after.st_dev, after.st_ino) != (current.st_dev, current.st_ino)
+    ):
+        raise SpeakerHoldoutPrelabelError(f"{label} changed while reading")
+    return resolved, b"".join(chunks)
+
+
 def load_plan(path: Path, *, expected_file_sha256: str) -> dict[str, object]:
-    path = _regular_file(path, label="holdout extraction plan")
-    if file_sha256(path) != expected_file_sha256:
+    _, plan_bytes = _read_regular_file_bytes(path, label="holdout extraction plan")
+    if bytes_sha256(plan_bytes) != expected_file_sha256:
         raise SpeakerHoldoutPrelabelError("holdout extraction plan file hash drifted")
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        value = json.loads(plan_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SpeakerHoldoutPrelabelError("holdout extraction plan is invalid JSON") from exc
     if not isinstance(value, dict):
         raise SpeakerHoldoutPrelabelError("holdout extraction plan must be one object")
@@ -161,8 +201,10 @@ def validate_plan(plan: Mapping[str, object], *, require_execution_authority: bo
         wrapper = toolchain.get("hash_bound_run_one_wrapper")
         if (
             plan.get("status") != EXECUTION_STATUS
+            or contract.get("plan_only") is not False
             or contract.get("real_provider_execution_authorized") is not True
             or contract.get("external_audio_upload_authorized") is not True
+            or toolchain.get("runtime_binding_state") != EXECUTION_RUNTIME_STATE
             or not isinstance(wrapper, dict)
             or set(wrapper) != {"path", "sha256"}
         ):
@@ -343,16 +385,21 @@ def _open_private_directory(path: Path, *, label: str) -> int:
 
 def _mkdir_open(parent_fd: int, name: str, *, create_only: bool) -> int:
     _safe_component(name, label="directory component")
+    created = False
     if create_only:
         try:
             os.mkdir(name, 0o700, dir_fd=parent_fd)
+            created = True
         except FileExistsError as exc:
             raise SpeakerHoldoutPrelabelError(f"attempt directory already exists: {name}") from exc
     else:
         try:
             os.mkdir(name, 0o700, dir_fd=parent_fd)
+            created = True
         except FileExistsError:
             pass
+    if created:
+        os.fsync(parent_fd)
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(name, flags, dir_fd=parent_fd)
