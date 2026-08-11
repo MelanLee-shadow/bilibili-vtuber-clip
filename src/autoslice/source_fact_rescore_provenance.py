@@ -708,6 +708,21 @@ def bind_publish_staging_provenance(
     record["publish_staging"] = rebound
 
 
+def publish_staging_provenance_fields(
+    record: Mapping[str, object],
+) -> dict[str, object]:
+    """Return the validated provenance fragment shared by both draft mirrors."""
+
+    provenance = record.get(PROVENANCE_FIELD)
+    if provenance is None:
+        return {}
+    if not isinstance(provenance, Mapping):
+        raise SourceFactRescoreProvenanceError(
+            "source-fact rescore provenance must be an object"
+        )
+    return {PROVENANCE_FIELD: deepcopy(dict(provenance))}
+
+
 def bind_story_contract_provenance(
     story_contract: dict[str, object], provenance: Mapping[str, object] | None
 ) -> None:

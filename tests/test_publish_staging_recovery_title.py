@@ -9,6 +9,7 @@ from src.autoslice.recovery_title_authority import (
     build_recovery_publication_authorities,
     expected_recovery_publish_title,
 )
+from src.autoslice.source_fact_rescore_provenance import PROVENANCE_FIELD
 
 
 def test_publish_staging_preserves_typed_same_bv_title_authority(
@@ -75,6 +76,51 @@ def test_publish_staging_preserves_typed_same_bv_title_authority(
     assert publish["recovery_publication_authority"] == authority
     assert captured_cover[0]["title"] == title
     assert captured_cover[0]["punch_allowed"] is True
+
+
+def test_publish_staging_mirrors_source_fact_rescore_provenance(
+    tmp_path: Path,
+) -> None:
+    media = tmp_path / "candidate.recut.mp4"
+    media.write_bytes(b"media")
+    cover = tmp_path / "cover.png"
+    cover.write_bytes(b"cover")
+    provenance = {
+        "schema_version": "source-fact-scorecard-rescore-provenance.v1",
+        "candidate_id": "candidate",
+        "provenance_sha256": "sha256:" + "a" * 64,
+    }
+
+    def fake_stage_cover(_record, **_kwargs):
+        return {
+            "status": "AI_COVER_READY",
+            "cover_path": str(cover),
+            "cover_generation": {"status": "READY"},
+            "reason_codes": [],
+        }
+
+    record = _stage_publish_draft(
+        {
+            "status": "MATERIALIZED",
+            "media_path": str(media),
+            "artifact_hashes": {},
+            PROVENANCE_FIELD: provenance,
+        },
+        candidate_id="candidate",
+        title="【李豆沙】测试标题正文足够长",
+        cues=[],
+        run_ffmpeg=False,
+        title_llm_call=None,
+        stage_cover=fake_stage_cover,
+    )
+
+    assert record is not None
+    staging = record["publish_staging"]
+    publish = json.loads(
+        Path(staging["publish_json_path"]).read_text(encoding="utf-8")
+    )
+    assert staging[PROVENANCE_FIELD] == provenance
+    assert publish[PROVENANCE_FIELD] == provenance
 
 
 def test_reused_published_cover_carries_all_artifact_hashes(

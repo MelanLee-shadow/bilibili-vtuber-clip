@@ -95,10 +95,10 @@ from .recovery_title_authority import (
 )
 from .shadow_review import _sha256, _write_json_file
 from .source_fact_review import (
-    authorize_manual_title_repair,
-    build_addressee_transcripts,
+    authorize_manual_title_repair, build_addressee_transcripts,
     review_and_repair_source_facts, source_fact_review_passes,
 )
+from .source_fact_rescore_provenance import publish_staging_provenance_fields
 from .story_contract import cover_relation_prompt, cover_story_contract_binding
 from .title_policy import (
     _TITLE_MAX_ATTEMPTS,
@@ -897,9 +897,7 @@ def _stage_publish_draft(
     )
     cover_generation = cover_result["cover_generation"]
     raw_reason_codes = cover_result.get("reason_codes")
-    reason_codes = (
-        [str(value) for value in raw_reason_codes] if isinstance(raw_reason_codes, list) else []
-    )
+    reason_codes = [str(value) for value in raw_reason_codes] if isinstance(raw_reason_codes, list) else []
     artifact_hashes = {str(k): str(v) for k, v in dict(record.get("artifact_hashes") or {}).items()}
     for key in ("cover_sha256", "ai_background_sha256", "cover_reference_sha256"):
         value = cover_result.get(key)
@@ -929,6 +927,7 @@ def _stage_publish_draft(
         "cover_generation": cover_generation,
         "reason_codes": reason_codes,
         "artifact_hashes": artifact_hashes,
+        **publish_staging_provenance_fields(record),
     }
     publish_json_path.write_text(
         json.dumps(publish_draft, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -956,6 +955,7 @@ def _stage_publish_draft(
         "reason_codes": reason_codes,
         "publish_json_path": str(publish_json_path),
         "upload_enabled": False,
+        **publish_staging_provenance_fields(record),
     }
     return record
 

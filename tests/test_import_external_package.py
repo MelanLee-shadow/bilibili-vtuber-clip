@@ -608,6 +608,10 @@ def test_unknown_external_host_path_in_frozen_field_refuses(
     publish = json.loads(publish_path.read_text(encoding="utf-8"))
     publish["operator_note"] = f"{SRC_PACKAGE}/scratch/notes.txt"
     _write_json(publish_path, publish)
+    record_path = fixture.staging_package / f"{CANDIDATE}.record.json"
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record["publish_staging"]["operator_note"] = publish["operator_note"]
+    _write_json(record_path, record)
     receipt, code = _run(fixture)
     assert code == 2
     step = _step(receipt, "RELOCATE")
@@ -645,6 +649,46 @@ def test_declared_artifact_sha_drift_refuses_before_copying(
     assert code == 2
     step = _step(receipt, "PREFLIGHT")
     assert step["code"] == "DECLARED_ARTIFACT_SHA_DRIFT"
+    assert not fixture.destination_package.exists()
+
+
+def test_publish_staging_field_set_drift_dry_run_refuses_without_writes(
+    tmp_path: Path,
+) -> None:
+    fixture = _build_external_package(tmp_path)
+    record_path = fixture.staging_package / f"{CANDIDATE}.record.json"
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    del record["publish_staging"]["title"]
+    _write_json(record_path, record)
+    state_before = fixture.state_path.read_bytes()
+
+    receipt, code = _run(fixture, apply=False)
+
+    assert code == 2
+    assert receipt["status"] == "REFUSED"
+    assert _step(receipt, "PREFLIGHT")["code"] == (
+        "PUBLISH_STAGING_FIELD_SET_DRIFT"
+    )
+    assert fixture.state_path.read_bytes() == state_before
+    assert not fixture.destination_package.exists()
+    assert not list(fixture.state_path.parent.glob("*.pre-import-*"))
+
+
+def test_publish_staging_value_drift_dry_run_refuses_without_writes(
+    tmp_path: Path,
+) -> None:
+    fixture = _build_external_package(tmp_path)
+    record_path = fixture.staging_package / f"{CANDIDATE}.record.json"
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record["publish_staging"]["title"] = "stale mirrored title"
+    _write_json(record_path, record)
+    state_before = fixture.state_path.read_bytes()
+
+    receipt, code = _run(fixture, apply=False)
+
+    assert code == 2
+    assert _step(receipt, "PREFLIGHT")["code"] == "PUBLISH_STAGING_VALUE_DRIFT"
+    assert fixture.state_path.read_bytes() == state_before
     assert not fixture.destination_package.exists()
 
 

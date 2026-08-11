@@ -23,6 +23,7 @@ from src.autoslice.source_fact_rescore_provenance import (
     SourceFactRescoreProvenanceError,
     validate_rebound_spec_provenance,
 )
+from src.autoslice.subtitle_regression import load_subtitle_regression_document
 
 
 @dataclass(frozen=True)
@@ -107,6 +108,71 @@ def parse_producer_args(
     )
     return parser.parse_args(argv)
 
+
+def _load_truth_schema_document(path: Path, *, label: str) -> dict:
+    """Read one producer truth input without accepting path indirection."""
+
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"{label} must be a regular non-symlink file: {path}")
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise ValueError(f"cannot read {label}: {path}: {exc}") from exc
+    try:
+        document = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid {label} JSON: {path}: {exc}") from exc
+    if not isinstance(document, dict):
+        raise ValueError(f"{label} document must be a JSON object: {path}")
+    return document
+
+
+def _truth_input_paths(
+    cli_path: Path | None,
+    spec_value: object,
+    *,
+    relative_to: Path,
+) -> tuple[Path | None, Path | None]:
+    """Keep the declared path for symlink checks and the existing runtime path."""
+
+    if cli_path is not None:
+        return cli_path, cli_path
+    resolved = _resolved_optional_path(spec_value, relative_to=relative_to)
+    if resolved is None:
+        return None, None
+    declared = Path(spec_value)  # _resolved_optional_path proved this path-like.
+    if not declared.is_absolute():
+        declared = relative_to / declared
+    return declared, resolved
+
+
+def _validate_truth_input_schemas(
+    *,
+    candidate_id: str,
+    text_override_path: Path | None,
+    subtitle_regression_path: Path | None,
+) -> None:
+    if text_override_path is not None:
+        document = _load_truth_schema_document(
+            text_override_path,
+            label="text override",
+        )
+        schema_version = document.get("schema_version")
+        if type(schema_version) is not int or schema_version not in {1, 2, 3}:
+            raise ValueError(
+                "text override schema_version must be 1, 2, or 3; "
+                f"got {schema_version!r}"
+            )
+
+    if subtitle_regression_path is not None:
+        # The existing regression loader is read-only and already owns this
+        # asset's schema, candidate binding, and structural validation.
+        load_subtitle_regression_document(
+            subtitle_regression_path,
+            candidate_id=candidate_id,
+        )
+
+
 def load_producer_request(
     args: argparse.Namespace,
     *,
@@ -176,6 +242,22 @@ def load_producer_request(
             # Persist the normalized plain dict instead of an arbitrary Mapping
             # implementation supplied by a caller.
             spec[PROVENANCE_FIELD] = rescore_provenance
+    cid = spec["candidate_id"]
+    text_override_preflight_path, text_override_path = _truth_input_paths(
+        args.subtitle_text_overrides,
+        spec.get("subtitle_text_overrides"),
+        relative_to=args.spec.parent,
+    )
+    subtitle_regression_preflight_path, subtitle_regression_path = _truth_input_paths(
+        args.subtitle_regression,
+        spec.get("subtitle_regression"),
+        relative_to=args.spec.parent,
+    )
+    _validate_truth_input_schemas(
+        candidate_id=cid,
+        text_override_path=text_override_preflight_path,
+        subtitle_regression_path=subtitle_regression_preflight_path,
+    )
     try:
         branding_intro = require_branding_intro(
             repo_root,
@@ -190,16 +272,9 @@ def load_producer_request(
         os.environ["AUTOSLICE_TERM_AS_OF"] = spec["date"]
         os.environ["LIDOUSHA_TERM_AS_OF"] = spec["date"]
 
-    cid = spec["candidate_id"]
     out_root = Path(spec["output_root"]) / cid
     out_root.mkdir(parents=True, exist_ok=True)
     host = args.ssh_host
-    text_override_path = args.subtitle_text_overrides or _resolved_optional_path(
-        spec.get("subtitle_text_overrides"), relative_to=args.spec.parent
-    )
-    subtitle_regression_path = args.subtitle_regression or _resolved_optional_path(
-        spec.get("subtitle_regression"), relative_to=args.spec.parent
-    )
     return ProducerRequest(
         spec=spec,
         boundary_repair_extend_cap_ms=boundary_repair_extend_cap_ms,

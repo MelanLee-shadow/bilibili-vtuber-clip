@@ -67,6 +67,11 @@ from src.autoslice.package_relocation_contract import (
     validate_document_root_roles,
     validate_path_root_role,
 )
+from src.autoslice.package_publish_mirror import (
+    PUBLISH_STAGING_LOCAL_KEYS,
+    PublishStagingMirrorError,
+    validate_publish_staging_mirror as _validate_publish_staging_mirror,
+)
 
 
 RELOCATION_SCHEMA_VERSION = "slice-package-relocation.v2"
@@ -108,10 +113,6 @@ _SUPERSEDED_PICK_KEYS = frozenset(
     }
 )
 
-_PUBLISH_STAGING_LOCAL_KEYS = frozenset({"publish_json_path", "status"})
-_PUBLISH_NON_STAGING_KEYS = frozenset(
-    {"artifact_hashes", "candidate_id", "schema_version", "video_path"}
-)
 _DOCUMENT_COMMIT_ORDER = ("speaker", "publish", "record")
 
 _UNIFORM_STEM_SUFFIX = "burned-final-sapphire72"
@@ -669,6 +670,17 @@ def package_lane(record: Mapping[str, Any], publish: Mapping[str, Any]) -> str:
     return "talk"
 
 
+def validate_publish_staging_mirror(
+    record: Mapping[str, Any], publish: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Translate the pure mirror validator into this importer's typed error."""
+
+    try:
+        return _validate_publish_staging_mirror(record, publish)
+    except PublishStagingMirrorError as exc:
+        raise PackageImportError(exc.code, exc.detail) from exc
+
+
 # --------------------------------------------------------------------------
 # copy planning + integrity
 # --------------------------------------------------------------------------
@@ -775,6 +787,7 @@ def plan_import(
             f"candidate lane is {lane!r}; this importer only covers the talk lane",
             hint=song_lane_import_hint(),
         )
+    validate_publish_staging_mirror(documents.record, documents.publish)
     roots = derive_source_roots(
         record=documents.record,
         publish=documents.publish,
@@ -1282,22 +1295,9 @@ def transform_record(
         )
     artifact_hashes["publish_draft_sha256"] = "sha256:" + publish_sha256
 
-    publish_staging = result.get("publish_staging")
-    if not isinstance(publish_staging, dict):
-        raise PackageImportError(
-            "PACKAGE_DOCUMENT_INVALID", "record.publish_staging is not an object"
-        )
-    expected_keys = (
-        set(publish) - _PUBLISH_NON_STAGING_KEYS
-    ) | set(_PUBLISH_STAGING_LOCAL_KEYS)
-    if set(publish_staging) != expected_keys:
-        raise PackageImportError(
-            "PUBLISH_STAGING_FIELD_SET_DRIFT",
-            "record.publish_staging and publish.json declare different field "
-            "sets; the mirror contract is broken",
-        )
+    publish_staging = validate_publish_staging_mirror(result, publish)
     for key in publish_staging:
-        if key in _PUBLISH_STAGING_LOCAL_KEYS:
+        if key in PUBLISH_STAGING_LOCAL_KEYS:
             continue
         publish_staging[key] = copy.deepcopy(publish[key])
 
@@ -1364,6 +1364,7 @@ def relocate_package(
     """
 
     documents = read_package_documents(package_root, candidate_id)
+    validate_publish_staging_mirror(documents.record, documents.publish)
     journal_path = relocation_journal_path(package_root, candidate_id)
     current_payloads: dict[str, bytes] = {
         "publish": documents.publish_path.read_bytes(),
