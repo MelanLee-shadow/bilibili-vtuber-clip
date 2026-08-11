@@ -124,6 +124,14 @@ finalization。隔离 source freezer 对 8/10 的 10 段和 8/11 的 5 段做了
 全部未冻结/未开放。精确路径、FUSE duplicate-listing 诊断、两次文件 hash 与下一状态见
 `locked-holdout-source-inventory.md`。不能把 source freeze 写成已通过 holdout。
 
+08:06Z heartbeat 又冻结了一份**不执行**的 holdout-only extraction plan：它只接受上述
+两份 accepted v3 replay，重新核对当前 15 个源字节，把输出约束到
+`free:/tmp/hostocc-v2-20260811/speaker-prelabel-plan-v0/`，并固定 BCUT/model 7、raw PCM
+格式、完整 population 与 `threshold_state=null`。plan 文件 SHA 为
+`3ad31f1c4e32cfee7d2f270c353930a7216c7b077f9140b8294f34e7b406a263`，但状态明确是
+`EXTRACTION_PLAN_FROZEN_EXECUTION_NOT_AUTHORIZED`；没有运行 ASR 或生成 cue。完整边界见
+`prelabel-extraction-plan.md`。
+
 ### Pro 选择的下一代 score-only 候选
 
 Pro 选择 session-stratified、duration-matched centroid--medoid consensus 加 OTHER veto；

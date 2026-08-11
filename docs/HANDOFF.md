@@ -1,5 +1,20 @@
 # Current handoff
 
+## ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-11 08:06Z prelabel plan heartbeat
+
+- 新增 `scripts/build_speaker_holdout_prelabel_plan.py` 与 21 个测试。它只接受 accepted v3
+  两份 replay、精确 payload/hash、room 22966160 和 10+5 inventory；当前源也逐字节重验。
+- `free:/tmp/hostocc-v2-20260811/speaker-prelabel-plan-v0/` 是新建的 0700 私有根，没有改
+  既有 `/tmp/hostocc-v2-20260811` 资产或权限。create-only plan 文件 SHA：
+  `3ad31f1c4e32cfee7d2f270c353930a7216c7b077f9140b8294f34e7b406a263`；payload：
+  `sha256:f22ab3eb5fffe243199809d941ff17a99c4e07df6d880e27ba9f199100b94a8a`。
+- 状态只到 `EXTRACTION_PLAN_FROZEN_EXECUTION_NOT_AUTHORIZED`。run root 不存在，未运行
+  ffmpeg/BCUT/CAM++，未生成 PCM/ASR/cue/prediction/truth；生产 timer/service/runner 仍停。
+- 新阻塞不是路径安全，而是 `run-one` 尚未实现，且真实 BCUT 会外部上传音频/创建任务，
+  超出本 heartbeat 的仅 repo + `free:/tmp` 写权限。下一步只实现并 mock-test receipt-last
+  `run-one`；没有明确外部上传权限就不得实跑。完整证据：
+  `docs/reviews/evidence/2026-08-11-centrality-cue-speaker-shadow/prelabel-extraction-plan.md`。
+
 ## ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-11 07:45Z Codex 声纹准确率夜间接力
 
 ### 目标
