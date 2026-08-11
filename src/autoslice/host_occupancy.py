@@ -82,8 +82,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
 PROFILE_ID = CHANNEL_PROFILE.profile_id
 
-SCHEMA_VERSION = f"{PROFILE_ID}-host-occupancy.v1"
-ESTIMATOR_VERSION = "target-host-occupancy-campp-window.v1"
+SCHEMA_VERSION = f"{PROFILE_ID}-host-occupancy.v2"
+ESTIMATOR_VERSION = "target-host-occupancy-campp-window.v2"
 # 阈值版本独立于代码版本：改任何一个阈值都必须改这个字符串，出证里带着它。
 THRESHOLD_VERSION = "host-occupancy-thresholds.provisional.v1"
 
@@ -395,6 +395,7 @@ class WindowObservation:
     score: float | None = None
     best_prototype: str = ""
     prototype_scores: dict[str, float] = field(default_factory=dict)
+    audio_sha256: str = ""
 
 
 def classify_score(score: float) -> str:
@@ -412,15 +413,11 @@ def classify_score(score: float) -> str:
 def smooth_labels(observations: Sequence[WindowObservation]) -> list[WindowObservation]:
     """最短持续时间约束：太短的 HOST/OTHER 连段降级为 UNKNOWN。
 
-    ``NON_SPEECH`` 不参与、也不打断连段计数（它本来就不在任何占比分母里）。
+    ``NON_SPEECH``、不同标签和真实时间缺口都会打断连段；静音两侧的孤立
+    ``HOST`` 不能被拼成一段。
     降级方向**只朝 abstain**：短的 OTHER 不会被"平滑"成 HOST，反之亦然。
     """
 
-    speech_indexes = [
-        index
-        for index, observation in enumerate(observations)
-        if observation.label in {LABEL_HOST, LABEL_OTHER, LABEL_UNKNOWN}
-    ]
     smoothed = [
         WindowObservation(
             start_ms=observation.start_ms,
@@ -429,64 +426,141 @@ def smooth_labels(observations: Sequence[WindowObservation]) -> list[WindowObser
             score=observation.score,
             best_prototype=observation.best_prototype,
             prototype_scores=dict(observation.prototype_scores),
+            audio_sha256=observation.audio_sha256,
         )
         for observation in observations
     ]
     run_start = 0
-    while run_start < len(speech_indexes):
-        label = smoothed[speech_indexes[run_start]].label
+    while run_start < len(smoothed):
+        label = smoothed[run_start].label
         run_end = run_start
-        while (
-            run_end + 1 < len(speech_indexes)
-            and smoothed[speech_indexes[run_end + 1]].label == label
-        ):
+        while run_end + 1 < len(smoothed):
+            current = smoothed[run_end]
+            following = smoothed[run_end + 1]
+            if (
+                following.label != label
+                or following.start_ms > current.end_ms
+            ):
+                break
             run_end += 1
         length = run_end - run_start + 1
         if label in {LABEL_HOST, LABEL_OTHER} and length < SMOOTHING_MIN_RUN_WINDOWS:
             for position in range(run_start, run_end + 1):
-                smoothed[speech_indexes[position]].label = LABEL_UNKNOWN
+                smoothed[position].label = LABEL_UNKNOWN
         run_start = run_end + 1
     return smoothed
 
 
-def _covered_ms(observations: Sequence[WindowObservation], label: str) -> int:
-    """带该标签的窗口所覆盖的**去重**毫秒数（窗口重叠 50%，不能直接相加）。"""
+def observation_cells(
+    observations: Sequence[WindowObservation],
+    *,
+    clip_start_ms: int | None = None,
+    clip_end_ms: int | None = None,
+) -> list[tuple[int, int, str]]:
+    """Project overlapping analysis windows onto disjoint attribution cells.
 
-    intervals = sorted(
-        (observation.start_ms, observation.end_ms)
-        for observation in observations
-        if observation.label == label
+    A 2 s window sampled every 1 s is an observation centred on a time point,
+    not two independent seconds of speech.  Giving every window its full span
+    lets different labels own the same millisecond and can make
+    ``HOST + OTHER + UNKNOWN`` exceed the candidate duration.  Midpoints
+    between neighbouring window centres form deterministic Voronoi cells:
+    interior windows own one hop, edge windows own the uncovered half-window,
+    and real gaps are never filled.
+    """
+
+    if (clip_start_ms is None) != (clip_end_ms is None):
+        raise HostOccupancyError("observation cell clipping requires both bounds")
+    if (
+        clip_start_ms is not None
+        and clip_end_ms is not None
+        and clip_end_ms <= clip_start_ms
+    ):
+        raise HostOccupancyError("observation cell clipping must be positive")
+
+    ordered = sorted(
+        observations,
+        key=lambda item: (
+            (item.start_ms + item.end_ms) / 2,
+            item.start_ms,
+            item.end_ms,
+            item.label,
+        ),
     )
-    total = 0
-    current_start = current_end = -1
-    for start, end in intervals:
-        if current_end < 0:
-            current_start, current_end = start, end
-            continue
-        if start <= current_end:
-            current_end = max(current_end, end)
-            continue
-        total += current_end - current_start
-        current_start, current_end = start, end
-    if current_end >= 0:
-        total += current_end - current_start
-    return total
+    cells: list[tuple[int, int, str]] = []
+    for index, observation in enumerate(ordered):
+        if observation.end_ms <= observation.start_ms:
+            raise HostOccupancyError("window observation must be a positive interval")
+        center2 = observation.start_ms + observation.end_ms
+        left = observation.start_ms
+        right = observation.end_ms
+        if index:
+            previous = ordered[index - 1]
+            previous_center2 = previous.start_ms + previous.end_ms
+            if previous.end_ms >= observation.start_ms:
+                boundary = (previous_center2 + center2) // 4
+                left = max(left, boundary)
+        if index + 1 < len(ordered):
+            following = ordered[index + 1]
+            following_center2 = following.start_ms + following.end_ms
+            if observation.end_ms >= following.start_ms:
+                boundary = (center2 + following_center2) // 4
+                right = min(right, boundary)
+        if clip_start_ms is not None and clip_end_ms is not None:
+            left = max(left, clip_start_ms)
+            right = min(right, clip_end_ms)
+        if right > left:
+            cells.append((left, right, observation.label))
+    return cells
 
 
-def longest_run_ms(observations: Sequence[WindowObservation], label: str) -> int:
-    """最长的连续同标签段覆盖时长（同样按覆盖区间算，不是窗数 × 窗长）。"""
+def _covered_ms(
+    observations: Sequence[WindowObservation],
+    label: str,
+    *,
+    clip_start_ms: int | None = None,
+    clip_end_ms: int | None = None,
+) -> int:
+    """Milliseconds owned by ``label`` after cross-label overlap removal."""
+
+    return sum(
+        end - start
+        for start, end, value in observation_cells(
+            observations,
+            clip_start_ms=clip_start_ms,
+            clip_end_ms=clip_end_ms,
+        )
+        if value == label
+    )
+
+
+def longest_run_ms(
+    observations: Sequence[WindowObservation],
+    label: str,
+    *,
+    clip_start_ms: int | None = None,
+    clip_end_ms: int | None = None,
+) -> int:
+    """Longest contiguous attribution-cell run for ``label``."""
 
     best = 0
-    run: list[WindowObservation] = []
-    for observation in observations:
-        if observation.label == label:
-            run.append(observation)
+    run_start: int | None = None
+    run_end: int | None = None
+    for start, end, value in observation_cells(
+        observations,
+        clip_start_ms=clip_start_ms,
+        clip_end_ms=clip_end_ms,
+    ):
+        if value == label and run_end is not None and start <= run_end:
+            run_end = max(run_end, end)
             continue
-        if run:
-            best = max(best, _covered_ms(run, label))
-            run = []
-    if run:
-        best = max(best, _covered_ms(run, label))
+        if run_start is not None and run_end is not None:
+            best = max(best, run_end - run_start)
+        if value == label:
+            run_start, run_end = start, end
+        else:
+            run_start = run_end = None
+    if run_start is not None and run_end is not None:
+        best = max(best, run_end - run_start)
     return best
 
 
@@ -524,6 +598,8 @@ def aggregate_occupancy(
     observations: Sequence[WindowObservation],
     *,
     evidence: MultiSpeakerEvidence | None = None,
+    clip_start_ms: int | None = None,
+    clip_end_ms: int | None = None,
 ) -> dict[str, object]:
     """把逐窗标签聚成一条候选的三态与主播占比。
 
@@ -537,15 +613,35 @@ def aggregate_occupancy(
     """
 
     facts = evidence or MultiSpeakerEvidence()
-    host_ms = _covered_ms(observations, LABEL_HOST)
-    other_ms = _covered_ms(observations, LABEL_OTHER)
-    unknown_ms = _covered_ms(observations, LABEL_UNKNOWN)
+    host_ms = _covered_ms(
+        observations,
+        LABEL_HOST,
+        clip_start_ms=clip_start_ms,
+        clip_end_ms=clip_end_ms,
+    )
+    other_ms = _covered_ms(
+        observations,
+        LABEL_OTHER,
+        clip_start_ms=clip_start_ms,
+        clip_end_ms=clip_end_ms,
+    )
+    unknown_ms = _covered_ms(
+        observations,
+        LABEL_UNKNOWN,
+        clip_start_ms=clip_start_ms,
+        clip_end_ms=clip_end_ms,
+    )
     speech_ms = host_ms + other_ms + unknown_ms
     classified_ms = host_ms + other_ms
     classified_coverage = classified_ms / speech_ms if speech_ms else 0.0
     unknown_share = unknown_ms / speech_ms if speech_ms else 1.0
     host_share = host_ms / classified_ms if classified_ms else None
-    longest_other_ms = longest_run_ms(observations, LABEL_OTHER)
+    longest_other_ms = longest_run_ms(
+        observations,
+        LABEL_OTHER,
+        clip_start_ms=clip_start_ms,
+        clip_end_ms=clip_end_ms,
+    )
 
     metrics: dict[str, object] = {
         "host_speech_ms": host_ms,
@@ -587,6 +683,7 @@ def aggregate_occupancy(
         }
 
     solo_audit = {
+        "trusted_solo_source": facts.solo_source,
         "classified_coverage": classified_coverage >= SOLO_MIN_CLASSIFIED_COVERAGE,
         "host_ratio": host_share is not None and host_share >= SOLO_MIN_HOST_RATIO,
         "unknown_share": unknown_share <= SOLO_MAX_UNKNOWN_SHARE,
@@ -598,7 +695,7 @@ def aggregate_occupancy(
             "state": SOLO_VERIFIED,
             "gates": gates,
             "solo_audit": solo_audit,
-            "reason_codes": ["SOLO_ACOUSTIC_AUDIT_PASSED"],
+            "reason_codes": ["TRUSTED_SOLO_SOURCE_AND_ACOUSTIC_AUDIT_PASSED"],
         }
     if longest_other_ms >= MIN_OTHER_RUN_MS:
         return {
@@ -660,7 +757,10 @@ CUE_LABEL_HOST = f"[{CHANNEL_PROFILE.host_speaker_label}]"
 CUE_LABEL_OTHER = "[其他]"
 CUE_LABEL_UNCERTAIN = "[存疑]"
 # 一条 cue 要被判给某个说话人，该说话人的窗口必须覆盖这条 cue 的多数时长。
-CUE_LABEL_MIN_OVERLAP_SHARE = 0.5
+# A known label must own nearly the whole ASR cue.  A simple majority would let
+# a cue that straddles a speaker change (for example 55% HOST / 45% OTHER) look
+# attributable even though the actual words cannot be assigned safely.
+CUE_LABEL_MIN_OVERLAP_SHARE = 0.85
 
 
 def label_cues(
@@ -680,19 +780,40 @@ def label_cues(
         start = int(cue["start_ms"])  # type: ignore[call-overload]
         end = int(cue["end_ms"])  # type: ignore[call-overload]
         duration = max(0, end - start)
-        overlaps: dict[str, int] = {LABEL_HOST: 0, LABEL_OTHER: 0}
-        for observation in observations:
-            if observation.label not in overlaps:
+        overlaps: dict[str, int] = {
+            LABEL_HOST: 0,
+            LABEL_OTHER: 0,
+            LABEL_UNKNOWN: 0,
+            LABEL_NON_SPEECH: 0,
+        }
+        for cell_start, cell_end, cell_label in observation_cells(observations):
+            if cell_label not in overlaps:
                 continue
-            covered = min(end, observation.end_ms) - max(start, observation.start_ms)
+            covered = min(end, cell_end) - max(start, cell_start)
             if covered > 0:
-                overlaps[observation.label] += covered
-        winner, covered_ms = max(overlaps.items(), key=lambda item: (item[1], item[0]))
-        runner_up = min(overlaps.values())
+                overlaps[cell_label] += covered
+        known_overlaps = {
+            LABEL_HOST: overlaps[LABEL_HOST],
+            LABEL_OTHER: overlaps[LABEL_OTHER],
+        }
+        winner, covered_ms = max(
+            known_overlaps.items(), key=lambda item: (item[1], item[0])
+        )
+        runner_up = min(known_overlaps.values())
+        observed_ms = min(duration, sum(overlaps.values()))
+        uncovered_ms = max(0, duration - observed_ms)
         share = covered_ms / duration if duration else 0.0
-        # 覆盖不足、或两个说话人覆盖打平（谁主导不明确）→ 存疑。平票不许靠
-        # 名字的字典序决定归属。
-        if share < CUE_LABEL_MIN_OVERLAP_SHARE or covered_ms <= runner_up:
+        uncertain_ms = (
+            overlaps[LABEL_UNKNOWN] + overlaps[LABEL_NON_SPEECH] + uncovered_ms
+        )
+        uncertain_share = uncertain_ms / duration if duration else 1.0
+        # Nearly-complete known ownership is required.  UNKNOWN, a speaker
+        # switch, VAD disagreement, or uncovered audio all move toward abstain.
+        if (
+            share < CUE_LABEL_MIN_OVERLAP_SHARE
+            or covered_ms <= runner_up
+            or uncertain_share > (1.0 - CUE_LABEL_MIN_OVERLAP_SHARE)
+        ):
             label = CUE_LABEL_UNCERTAIN
         else:
             label = CUE_LABEL_HOST if winner == LABEL_HOST else CUE_LABEL_OTHER
@@ -703,6 +824,18 @@ def label_cues(
                 "end_ms": end,
                 "speaker_label": label,
                 "overlap_share": round(min(1.0, share), 4),
+                "uncertain_overlap_share": round(min(1.0, uncertain_share), 4),
+                "label_overlap_ms": {
+                    **overlaps,
+                    "UNCOVERED": uncovered_ms,
+                },
+                "label_overlap_share": {
+                    value: round(milliseconds / duration, 4) if duration else 0.0
+                    for value, milliseconds in {
+                        **overlaps,
+                        "UNCOVERED": uncovered_ms,
+                    }.items()
+                },
             }
         )
     return results
@@ -1037,6 +1170,7 @@ def observe_span(
                 score=round(best_score, 5),
                 best_prototype=best_prototype,
                 prototype_scores={name: round(value, 5) for name, value in scores.items()},
+                audio_sha256="sha256:" + hashlib.sha256(window_path.read_bytes()).hexdigest(),
             )
         )
     return smooth_labels(observations)
@@ -1092,8 +1226,18 @@ def estimate_candidate_occupancy(
         candidate_start_ms=span.start_ms,
         candidate_end_ms=span.end_ms,
     )
-    occupancy = aggregate_occupancy(inner, evidence=evidence)
-    context = aggregate_occupancy(padded_windows, evidence=evidence)
+    occupancy = aggregate_occupancy(
+        inner,
+        evidence=evidence,
+        clip_start_ms=span.start_ms,
+        clip_end_ms=span.end_ms,
+    )
+    context = aggregate_occupancy(
+        padded_windows,
+        evidence=evidence,
+        clip_start_ms=padded.start_ms,
+        clip_end_ms=padded.end_ms,
+    )
     status = map_attribution_status(occupancy)
     return {
         "schema_version": SCHEMA_VERSION,
@@ -1121,6 +1265,8 @@ def estimate_candidate_occupancy(
                 "label": observation.label,
                 "score": observation.score,
                 "best_prototype": observation.best_prototype,
+                "prototype_scores": dict(observation.prototype_scores),
+                "audio_sha256": observation.audio_sha256,
             }
             for observation in inner
         ],
@@ -1167,7 +1313,12 @@ def enrollment_prototypes(
             duration_ms = round(handle.getnframes() * 1000 / handle.getframerate())
         prototypes[str(reference["id"])] = path
         manifest.append(
-            {"id": str(reference["id"]), "sha256": digest, "duration_ms": duration_ms}
+            {
+                "id": str(reference["id"]),
+                "filename": str(reference["filename"]),
+                "sha256": digest,
+                "duration_ms": duration_ms,
+            }
         )
     return prototypes, {
         "profile_id": payload.get("profile_id"),

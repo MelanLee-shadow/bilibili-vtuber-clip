@@ -98,11 +98,20 @@ def _windows(pattern: str, *, start_ms: int = 0) -> list[ho.WindowObservation]:
 
 
 def test_clean_host_only_candidate_is_solo_verified() -> None:
-    result = ho.aggregate_occupancy(_windows("H" * 30))
+    result = ho.aggregate_occupancy(
+        _windows("H" * 30), evidence=ho.MultiSpeakerEvidence(solo_source=True)
+    )
     assert result["state"] == ho.SOLO_VERIFIED
     assert result["host_speech_share"] == 1.0
     assert result["host_speech_share_band"] == ho.BAND_DOMINANT
     assert ho.map_attribution_status(result) == ATTRIBUTION_VERIFIED_SOLO
+
+
+def test_clean_host_only_without_trusted_solo_source_is_unknown() -> None:
+    result = ho.aggregate_occupancy(_windows("H" * 30))
+    assert result["state"] == ho.UNKNOWN
+    assert result["solo_audit"]["trusted_solo_source"] is False
+    assert "SOLO_AUDIT_FAILED_TRUSTED_SOLO_SOURCE" in result["reason_codes"]
 
 
 def test_quiet_but_not_strict_candidate_is_unknown_not_solo() -> None:
@@ -147,6 +156,38 @@ def test_single_window_other_island_cannot_support_multi() -> None:
 def test_smoothing_only_moves_toward_abstain() -> None:
     smoothed = ho.smooth_labels(_windows("OHO"))
     assert [item.label for item in smoothed] == [ho.LABEL_UNKNOWN] * 3
+
+
+def test_non_speech_breaks_host_runs_instead_of_joining_islands() -> None:
+    smoothed = ho.smooth_labels(_windows("H" + "N" * 8 + "H" + "N" * 8 + "H"))
+    assert all(item.label != ho.LABEL_HOST for item in smoothed)
+
+
+def test_cross_label_overlap_is_counted_once() -> None:
+    result = ho.aggregate_occupancy(_windows("HO"))
+    assert result["host_speech_ms"] == 1_500
+    assert result["other_speech_ms"] == 1_500
+    assert result["speech_ms"] == 3_000
+
+
+def test_odd_midpoint_cells_meet_without_overlap_or_gap() -> None:
+    observations = [
+        ho.WindowObservation(0, 2_001, ho.LABEL_HOST),
+        ho.WindowObservation(1_000, 3_001, ho.LABEL_OTHER),
+    ]
+    cells = ho.observation_cells(observations)
+    assert cells[0][1] == cells[1][0]
+    assert sum(end - start for start, end, _label in cells) == 3_001
+
+
+def test_aggregate_can_clip_edge_windows_to_exact_candidate_bounds() -> None:
+    result = ho.aggregate_occupancy(
+        [ho.WindowObservation(0, 2_000, ho.LABEL_HOST)],
+        clip_start_ms=750,
+        clip_end_ms=1_250,
+    )
+    assert result["speech_ms"] == 500
+    assert result["host_speech_ms"] == 500
 
 
 def test_named_guest_evidence_forces_multi_before_solo_audit() -> None:
@@ -335,6 +376,17 @@ def test_tied_coverage_is_uncertain_not_alphabetical() -> None:
 def test_unknown_windows_never_produce_a_speaker_label() -> None:
     rows = ho.label_cues([{"cue_id": "u", "start_ms": 0, "end_ms": 3_000}], _labelled("UUU"))
     assert rows[0]["speaker_label"] == ho.CUE_LABEL_UNCERTAIN
+
+
+def test_cue_receipt_discloses_disjoint_label_and_uncovered_shares() -> None:
+    row = ho.label_cues(
+        [{"cue_id": "mix", "start_ms": 0, "end_ms": 4_000}],
+        _labelled("HOU"),
+    )[0]
+    assert row["speaker_label"] == ho.CUE_LABEL_UNCERTAIN
+    assert sum(row["label_overlap_ms"].values()) == 4_000
+    assert row["label_overlap_ms"][ho.LABEL_UNKNOWN] > 0
+    assert row["uncertain_overlap_share"] > 0
 
 
 def test_key_moment_with_uncertain_speaker_blocks_scoring() -> None:
@@ -638,6 +690,7 @@ def test_end_to_end_dedupes_overlapping_window_inference(tmp_path: Path) -> None
         similarity=fake_similarity,
         work_dir=tmp_path / "work",
         extract=fake_extract,
+        evidence=ho.MultiSpeakerEvidence(solo_source=True),
     )
     assert [report["candidate_id"] for report in reports] == ["a", "b"]
     # 一个并集跨度 → 每个栅格窗口恰好一次前向；重叠区不重复。
@@ -649,8 +702,12 @@ def test_end_to_end_dedupes_overlapping_window_inference(tmp_path: Path) -> None
     assert len({name for name, _ in calls}) == len(calls)
     for report in reports:
         assert report["occupancy"]["state"] == ho.SOLO_VERIFIED
+        assert report["schema_version"].endswith("host-occupancy.v2")
         assert report["threshold_version"] == ho.THRESHOLD_VERSION
         assert report["provisional_calibration"] is True
+        assert report["windows"]
+        assert set(report["windows"][0]["prototype_scores"]) == {"p1"}
+        assert str(report["windows"][0]["audio_sha256"]).startswith("sha256:")
 
 
 def test_end_to_end_occupancy_uses_candidate_span_not_padding(tmp_path: Path) -> None:
@@ -679,6 +736,8 @@ def test_end_to_end_occupancy_uses_candidate_span_not_padding(tmp_path: Path) ->
     assert report["occupancy"]["host_speech_share"] > 0.95
     assert report["context_occupancy"]["host_speech_share"] < 0.90
     assert report["padded_start_ms"] == 60_000 - ho.CANDIDATE_PAD_MS
+    assert report["occupancy"]["speech_ms"] <= 60_000
+    assert report["context_occupancy"]["speech_ms"] <= 60_000 + 2 * ho.CANDIDATE_PAD_MS
 
 
 def test_end_to_end_silence_is_unknown_and_parks(tmp_path: Path) -> None:
