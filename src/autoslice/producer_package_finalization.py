@@ -102,6 +102,12 @@ from src.autoslice.source_subtitle_truth import (
     source_truth_owner_windows,
 )
 from src.autoslice.source_fact_review import source_fact_review_passes
+from src.autoslice.source_fact_rescore_provenance import (
+    SourceFactRescoreProvenanceError,
+    bind_finalization_provenance,
+    bind_publish_staging_provenance,
+    bind_story_contract_provenance,
+)
 from src.autoslice import selection_rescore, speaker_guess
 from src.autoslice.surface_canon import (
     canonicalize_japanese_native_script_surfaces,
@@ -2271,12 +2277,9 @@ def _stage_record(
                 if isinstance(piece, Mapping) and piece.get("source_media_sha256")
             ],
         )
-    cover_reference_authority = load_candidate_cover_reference(
-        cid,
-        ledger_path=CHANNEL_PROFILE.asset_file(
-            "cover_reference_overrides", repo_root=ROOT
-        ),
-    )
+    cover_reference_authority = load_candidate_cover_reference(cid, ledger_path=CHANNEL_PROFILE.asset_file(
+        "cover_reference_overrides", repo_root=ROOT
+    ))
     story_selection_hook = canonicalize_relation_summary(
         str(spec.get("selection_hook") or ""),
         session_relation_authority=spec.get("session_relation_authority"),
@@ -2287,66 +2290,54 @@ def _stage_record(
         session_relation_authority=spec.get("session_relation_authority"),
         transcript_text=transcript_text,
     )
-
-    def build_story_contract_for_hook(
-        reviewed_hook: str,
-    ) -> dict[str, object]:
+    rescore_provenance = None
+    def build_story_contract_for_hook(reviewed_hook: str) -> dict[str, object]:
         contract = build_story_contract(
             candidate_id=cid,
             selection_hook=reviewed_hook,
             transcript_text=transcript_text,
             selection_scorecard=story_selection_scorecard,
-            session_relation_authority=spec.get(
-                "session_relation_authority"
-            ),
+            session_relation_authority=spec.get("session_relation_authority"),
             cover_reference_authority=cover_reference_authority,
             source_media_sha256s=[
                 str(piece.get("source_media_sha256"))
                 for piece in (spec.get("pieces") or [])
-                if isinstance(piece, Mapping)
-                and piece.get("source_media_sha256")
+                if isinstance(piece, Mapping) and piece.get("source_media_sha256")
             ],
             clip_context=spec.get("clip_context"),
             recording_date=str(spec.get("date") or ""),
-            boundary_semantic_review=spec.get(
-                "boundary_semantic_review"
-            ),
-            human_boundary_authority=str(
-                spec.get("given_end_authority") or ""
-            ),
+            boundary_semantic_review=spec.get("boundary_semantic_review"),
+            human_boundary_authority=str(spec.get("given_end_authority") or ""),
         )
         contract["input_audits"] = [
-            audit_story_artifact(
-                reviewed_hook,
-                story_contract=contract,
-                artifact_kind="selection_hook",
-            ),
-            audit_story_artifact(
-                transcript_text,
-                story_contract=contract,
-                artifact_kind="subtitle",
-            ),
+            audit_story_artifact(reviewed_hook, story_contract=contract,
+                                 artifact_kind="selection_hook"),
+            audit_story_artifact(transcript_text, story_contract=contract,
+                                 artifact_kind="subtitle"),
         ]
+        bind_story_contract_provenance(contract, rescore_provenance)
         return contract
 
-    story_contract = build_story_contract_for_hook(
-        story_selection_hook
-    )
+    story_contract = build_story_contract_for_hook(story_selection_hook)
     record["selection_scorecard"] = story_selection_scorecard
+    try:
+        rescore_provenance = bind_finalization_provenance(
+            spec=spec, record=record, story_contract=story_contract,
+            selection_hook=story_selection_hook,
+            selection_scorecard=story_selection_scorecard,
+        )
+    except SourceFactRescoreProvenanceError as exc:
+        raise SystemExit(str(exc)) from exc
     record["session_relation_authority"] = spec.get("session_relation_authority")
     record["story_contract"] = story_contract
     if normalized_recovery_publication_authority is not None:
-        record["recovery_publication_authority"] = (
-            normalized_recovery_publication_authority
-        )
+        record["recovery_publication_authority"] = normalized_recovery_publication_authority
     if clip_context_path is not None:
         record["clip_context_path"] = str(clip_context_path)
-        record["clip_context_payload_sha256"] = clip_context.get(
-            "context_sha256"
+        record["clip_context_payload_sha256"] = clip_context.get("context_sha256")
+        record.setdefault("artifact_hashes", {})["clip_context_file_sha256"] = (
+            "sha256:" + _sha256(clip_context_path)
         )
-        record.setdefault("artifact_hashes", {})[
-            "clip_context_file_sha256"
-        ] = "sha256:" + _sha256(clip_context_path)
     record = adapters.stage_publish_draft(
         record,
         candidate_id=cid,
@@ -2360,10 +2351,12 @@ def _stage_record(
         skip_cover=options.reuse_cover,
         selection_hook=story_selection_hook,
         cover_diversity_slot=spec.get("cover_diversity_slot"),
-        recovery_publication_authority=(
-            normalized_recovery_publication_authority
-        ),
+        recovery_publication_authority=normalized_recovery_publication_authority,
     )
+    try:
+        bind_publish_staging_provenance(record, rescore_provenance)
+    except SourceFactRescoreProvenanceError as exc:
+        raise SystemExit(str(exc)) from exc
     staging = record.get("publish_staging") or {}
     source_fact_review = staging.get("source_fact_review")
     if (

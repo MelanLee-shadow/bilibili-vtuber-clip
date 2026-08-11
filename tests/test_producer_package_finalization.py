@@ -7,6 +7,10 @@ import pytest
 
 from scripts.apply_subtitle_text_overrides import apply_document
 from src.autoslice import producer_package_finalization as finalization
+from src.autoslice.source_fact_rescore_provenance import (
+    PROVENANCE_FIELD,
+    canonical_sha256,
+)
 from src.autoslice.story_contract import cover_story_contract_binding
 from src.autoslice.surface_canon import CHANNEL_PROFILE
 
@@ -820,7 +824,7 @@ def test_stage_record_uses_post_source_fact_story_contract_everywhere(
     subtitle = tmp_path / "candidate.recut.srt"
     subtitle.write_text(
         "1\n00:00:00,000 --> 00:00:01,000\n"
-        f"我才是真的表妹\n",
+        "我才是真的表妹\n",
         encoding="utf-8",
     )
     media = tmp_path / "candidate.recut.mp4"
@@ -833,6 +837,13 @@ def test_stage_record_uses_post_source_fact_story_contract_everywhere(
         text_manifest=None,
     )
     captured: dict[str, object] = {}
+    rescore_provenance = {
+        "schema_version": "source-fact-scorecard-rescore-provenance.v1",
+        "candidate_id": "candidate",
+        "corrected_selection_hook": original_hook,
+        "selection_scorecard_sha256": canonical_sha256(None),
+        "provenance_sha256": "sha256:" + "a" * 64,
+    }
 
     monkeypatch.setattr(
         finalization, "load_candidate_cover_reference", lambda *_a, **_k: None
@@ -917,6 +928,7 @@ def test_stage_record_uses_post_source_fact_story_contract_everywhere(
             "selection_hook": original_hook,
             "selection_scorecard": None,
             "classification": classification,
+                PROVENANCE_FIELD: rescore_provenance,
         },
         cid="candidate",
         recut=recut,
@@ -935,6 +947,15 @@ def test_stage_record_uses_post_source_fact_story_contract_everywhere(
     assert active["source_fact_review"] == staged.staging[
         "source_fact_review"
     ]
+    assert active[PROVENANCE_FIELD] == rescore_provenance
+    assert staged.record[PROVENANCE_FIELD] == rescore_provenance
+    assert staged.staging[PROVENANCE_FIELD] == rescore_provenance
+    assert captured["pre_review_contract"][PROVENANCE_FIELD] == (
+        rescore_provenance
+    )
+    assert captured["post_review_contract"][PROVENANCE_FIELD] == (
+        rescore_provenance
+    )
     assert active["cover_output_audits"][0]["status"] == "PASS"
     assert "cover_output_audits" not in captured["pre_review_contract"]
 

@@ -19,6 +19,7 @@ import pytest
 
 from scripts import import_external_package as cli
 from src.autoslice import package_import as pi
+from src.autoslice import repository_asset_authority as raa
 from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
@@ -30,6 +31,12 @@ SRC_REPO = "/home/ivan/Project/repo-87"
 SRC_CANDIDATE = f"/home/ivan/Project/vtuber-reproduce/out/{DATE}/{CANDIDATE}"
 SRC_PACKAGE = f"{SRC_CANDIDATE}/replacement_recuts"
 TITLE = "【李豆沙】她说“熊猫头”那句，我笑了半天"
+RELEASE_QUOTE = (
+    "说起来刚刚通过的这两个可以发布了，只要你根据我的人工真值改完后，"
+    "可以直接去快车道发布，和你的通用车道修复并行进行"
+)
+OTHER_FAILED_CANDIDATE = "auto_other_failed"
+DEPLOYED_TEST_COMMIT = "a" * 40
 
 
 def _sha256(payload: bytes) -> str:
@@ -75,7 +82,10 @@ def _build_external_package(tmp_path: Path) -> Fixture:
         repo_root / "assets" / "lidousha" / "speaker_profile.json",
         {"host": "lidousha"},
     )
-    _write_bytes(repo_root / "DEPLOYED_COMMIT", b"a2b07e86 2026-08-10T00:00:00Z\n")
+    _write_bytes(
+        repo_root / "DEPLOYED_COMMIT",
+        f"{DEPLOYED_TEST_COMMIT} 2026-08-10T00:00:00Z\n".encode("ascii"),
+    )
 
     burned_sha = _write_bytes(staging_package / f"{STEM}.mp4", b"burned-video-bytes")
     subtitle_sha = _write_bytes(
@@ -265,6 +275,130 @@ def _build_external_package(tmp_path: Path) -> Fixture:
     )
 
 
+def _failed_pick_closure(state: dict) -> dict:
+    target = next(
+        row
+        for row in state["picks"]
+        if row.get("candidate_id") == CANDIDATE
+    )
+    target_ready = target.get("status") == "review_ready" and target.get("rc") == 0
+    return {
+        "schema_version": "daily-publication-closure.v1",
+        "status": (
+            "ready_unpublished_with_failures"
+            if target_ready
+            else "published_with_failures"
+        ),
+        "published_candidate_ids": ["auto_already_published"],
+        "ready_unpublished_candidate_ids": [CANDIDATE] if target_ready else [],
+        "unresolved_candidate_ids": (
+            [OTHER_FAILED_CANDIDATE]
+            if target_ready
+            else [OTHER_FAILED_CANDIDATE, CANDIDATE]
+        ),
+    }
+
+
+def _configure_authorized_failed_pick(
+    fixture: Fixture,
+    *,
+    quote: str = RELEASE_QUOTE,
+) -> tuple[dict, dict, Path]:
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    target = {
+        "candidate_id": CANDIDATE,
+        "status": "failed",
+        "rc": 1,
+        "failure_kind": "subtitle_authority",
+        "failure_stage": "final_review_findings",
+        "selected_repair": True,
+        "failure_message": "FINAL_REVIEW_RELEASE_BLOCKED",
+        "failure_evidence": {"release_gate": "BLOCK"},
+        "failure_fingerprint": "sha256:" + "1" * 64,
+        "failure_recoverable": True,
+        "failure_recovery_fingerprint": "sha256:" + "2" * 64,
+        "rejected_status": "failed",
+        "rejection_reason": "subtitle_authority_unresolved_backfilled",
+        "retry_reason": "sanctioned_candidate_revival",
+        "sanctioned_revival_retry": {"status": "PENDING"},
+        "revivals": [{"schema_version": "candidate-revival.v1"}],
+        "talk_repair_retry_count": 1,
+        "hook": "historical selection hook",
+    }
+    other = {
+        "candidate_id": OTHER_FAILED_CANDIDATE,
+        "status": "failed",
+        "rc": 1,
+    }
+    state.update(
+        {
+            "status": "published_with_failures",
+            "picks": [target, other],
+            "pending_talk": [],
+            "pending_song": [],
+            "songs": [],
+        }
+    )
+    state["publication_closure"] = _failed_pick_closure(state)
+    _write_json(fixture.state_path, state)
+
+    authority = {
+        "schema_version": pi.FAILED_PICK_IMPORT_AUTHORITY_SCHEMA_VERSION,
+        "scope": pi.FAILED_PICK_IMPORT_SCOPE,
+        "candidate_id": CANDIDATE,
+        "recording_date": DATE,
+        "state_row_canonical_sha256": (
+            "sha256:" + pi.canonical_json_sha256(target)
+        ),
+        "required_pick_state": {
+            "status": "failed",
+            "rc": 1,
+            "failure_kind": "subtitle_authority",
+            "failure_stage": "final_review_findings",
+            "selected_repair": True,
+        },
+        "required_batch_state": {
+            "status": "published_with_failures",
+            "publication_closure_status": "published_with_failures",
+        },
+        "authorized_transition": {
+            "status": "ready_unpublished_with_failures",
+            "publication_closure_status": "ready_unpublished_with_failures",
+        },
+    }
+    entry = {
+        "candidate_id": CANDIDATE,
+        "recording_date": DATE,
+        "status": "released_for_upload",
+        "released_by": "Ivan",
+        "released_at": "2026-08-11",
+        "release_quote": quote,
+        "failed_pick_import_authority": authority,
+    }
+    registry_path = fixture.repo_root / cli.PUBLICATION_REGISTRY_RELATIVE
+    _write_json(
+        registry_path,
+        {
+            "schema_version": "publication-registry.v1",
+            "entries": [entry],
+        },
+    )
+    _seal_deployed_authority(fixture, registry_path)
+    return state, entry, registry_path
+
+
+def _seal_deployed_authority(fixture: Fixture, registry_path: Path) -> None:
+    manifest = raa.build_deployed_authority_manifest(
+        repo_root=fixture.repo_root,
+        deployed_commit=DEPLOYED_TEST_COMMIT,
+        relative_paths=[registry_path.relative_to(fixture.repo_root)],
+    )
+    _write_json(
+        fixture.repo_root / raa.DEPLOYED_AUTHORITY_MANIFEST,
+        manifest,
+    )
+
+
 class StubGateRunner:
     """Stand in for the real gate scripts; records every argv it was given."""
 
@@ -359,6 +493,24 @@ def _step(receipt: dict, name: str) -> dict:
     rows = [row for row in receipt["steps"] if row["step"] == name]
     assert rows, f"{name} not in receipt: {[r['step'] for r in receipt['steps']]}"
     return rows[-1]
+
+
+def _run_authorized_failed_pick(
+    fixture: Fixture,
+    *,
+    apply: bool = True,
+    quote: str = RELEASE_QUOTE,
+    **overrides,
+):
+    return _run(
+        fixture,
+        apply=apply,
+        allow_new_pick=False,
+        adopt_failed_pick=CANDIDATE,
+        release_quote=quote,
+        closure_projector=_failed_pick_closure,
+        **overrides,
+    )
 
 
 # ---------------------------------------------------------------- path regularization
@@ -605,6 +757,355 @@ def test_failed_pick_row_is_not_a_revival_channel(tmp_path: Path) -> None:
     assert "revive_rejected_candidates.py" in step["hint"]
 
 
+def test_authorized_failed_pick_is_adopted_once_with_preimage_provenance(
+    tmp_path: Path,
+) -> None:
+    fixture = _build_external_package(tmp_path)
+    before_state, entry, registry_path = _configure_authorized_failed_pick(
+        fixture
+    )
+    before_bytes = fixture.state_path.read_bytes()
+    untouched_other = copy.deepcopy(before_state["picks"][1])
+    untouched_collections = {
+        key: copy.deepcopy(before_state[key])
+        for key in ("pending_talk", "pending_song", "songs")
+    }
+
+    receipt, code = _run_authorized_failed_pick(fixture)
+
+    assert code == 0, receipt
+    assert receipt["status"] == "REVIEW_READY"
+    assert receipt["upload_allowed"] is False
+    bind = _step(receipt, "STATE_BIND")
+    assert bind["adopted_failed_pick"] is True
+    assert bind["closure_before"]["status"] == "published_with_failures"
+    assert (
+        bind["closure_after"]["status"]
+        == "ready_unpublished_with_failures"
+    )
+    backup = Path(bind["state_backup_path"])
+    assert backup.read_bytes() == before_bytes
+    assert bind["state_preimage_sha256"] == (
+        "sha256:" + _sha256(before_bytes)
+    )
+
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    assert state["status"] == "ready_unpublished_with_failures"
+    assert (
+        state["publication_closure"]["status"]
+        == "ready_unpublished_with_failures"
+    )
+    assert state["picks"][1] == untouched_other
+    for key, value in untouched_collections.items():
+        assert state[key] == value
+    row = state["picks"][0]
+    assert row["candidate_id"] == CANDIDATE
+    assert row["status"] == "review_ready"
+    assert row["rc"] == 0
+    for key in pi._ACTIVE_FAILURE_PICK_KEYS:
+        assert key not in row
+    # Historical retry evidence is retained; the exact full preimage remains
+    # in the state backup and is hash-bound by the one-shot consumption row.
+    assert row["revivals"] == before_state["picks"][0]["revivals"]
+    assert row["talk_repair_retry_count"] == 1
+    adoption = row["external_package_import"]["failed_pick_adoption"]
+    assert adoption["schema_version"] == (
+        pi.FAILED_PICK_IMPORT_CONSUMPTION_SCHEMA_VERSION
+    )
+    assert adoption["status"] == "CONSUMED"
+    assert adoption["released_by"] == "Ivan"
+    assert adoption["release_quote"] == RELEASE_QUOTE
+    assert adoption["preimage_pick_row_canonical_sha256"] == (
+        entry["failed_pick_import_authority"][
+            "state_row_canonical_sha256"
+        ]
+    )
+    registry_binding = adoption["publication_registry"]
+    assert registry_binding["path"] == str(registry_path.absolute())
+    assert registry_binding["sha256"] == (
+        "sha256:" + _sha256(registry_path.read_bytes())
+    )
+
+    # The permit cannot be consumed twice: the exact preimage and batch state
+    # are gone.  The second authorized attempt is read-only at PREFLIGHT.
+    state_after_adoption = fixture.state_path.read_bytes()
+    second, code = _run_authorized_failed_pick(fixture)
+    assert code == 2
+    assert _step(second, "PREFLIGHT")["code"] in {
+        "FAILED_PICK_BATCH_PREIMAGE_MISMATCH",
+        "FAILED_PICK_ROW_SHAPE_MISMATCH",
+    }
+    assert fixture.state_path.read_bytes() == state_after_adoption
+
+
+def test_ordinary_reimport_preserves_failed_pick_consumption_idempotently(
+    tmp_path: Path,
+) -> None:
+    fixture = _build_external_package(tmp_path)
+    _configure_authorized_failed_pick(fixture)
+    first, code = _run_authorized_failed_pick(fixture)
+    assert code == 0, first
+    first_state = fixture.state_path.read_bytes()
+    first_backup = Path(_step(first, "STATE_BIND")["state_backup_path"])
+    preimage_bytes = first_backup.read_bytes()
+
+    second, code = _run(
+        fixture,
+        allow_new_pick=False,
+        closure_projector=_failed_pick_closure,
+    )
+
+    assert code == 0, second
+    assert fixture.state_path.read_bytes() == first_state
+    assert first_backup.read_bytes() == preimage_bytes
+    row = json.loads(first_state)["picks"][0]
+    assert (
+        row["external_package_import"]["failed_pick_adoption"]["status"]
+        == "CONSUMED"
+    )
+
+
+@pytest.mark.parametrize(
+    ("adopt_failed_pick", "release_quote", "allow_new_pick", "expected"),
+    [
+        (CANDIDATE, None, False, "FAILED_PICK_IMPORT_FLAGS_INCOMPLETE"),
+        (None, RELEASE_QUOTE, False, "FAILED_PICK_IMPORT_FLAGS_INCOMPLETE"),
+        (
+            "auto_wrong_candidate",
+            RELEASE_QUOTE,
+            False,
+            "FAILED_PICK_IMPORT_CANDIDATE_MISMATCH",
+        ),
+        (
+            CANDIDATE,
+            RELEASE_QUOTE,
+            True,
+            "FAILED_PICK_IMPORT_MODE_CONFLICT",
+        ),
+    ],
+)
+def test_failed_pick_flags_are_exact_and_fail_before_target_writes(
+    tmp_path: Path,
+    adopt_failed_pick: str | None,
+    release_quote: str | None,
+    allow_new_pick: bool,
+    expected: str,
+) -> None:
+    fixture = _build_external_package(tmp_path)
+    before = fixture.state_path.read_bytes()
+    receipt, code = _run(
+        fixture,
+        allow_new_pick=allow_new_pick,
+        adopt_failed_pick=adopt_failed_pick,
+        release_quote=release_quote,
+    )
+    assert code == 2
+    assert _step(receipt, "PREFLIGHT")["code"] == expected
+    assert fixture.state_path.read_bytes() == before
+    assert not fixture.destination_package.exists()
+
+
+def test_failed_pick_release_quote_must_match_registry_exactly(
+    tmp_path: Path,
+) -> None:
+    fixture = _build_external_package(tmp_path)
+    _configure_authorized_failed_pick(fixture)
+    before = fixture.state_path.read_bytes()
+
+    receipt, code = _run_authorized_failed_pick(
+        fixture, quote=RELEASE_QUOTE.removeprefix("说起来")
+    )
+
+    assert code == 2
+    assert (
+        _step(receipt, "PREFLIGHT")["code"]
+        == "FAILED_PICK_RELEASE_QUOTE_MISMATCH"
+    )
+    assert fixture.state_path.read_bytes() == before
+    assert not fixture.destination_package.exists()
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        (
+            lambda registry: registry["entries"][0].__setitem__(
+                "status", "hold_pending_review"
+            ),
+            "FAILED_PICK_NOT_RELEASED",
+        ),
+        (
+            lambda registry: registry["entries"][0].__setitem__(
+                "released_by", "Claude"
+            ),
+            "FAILED_PICK_RELEASE_ACTOR_INVALID",
+        ),
+        (
+            lambda registry: registry["entries"].append(
+                copy.deepcopy(registry["entries"][0])
+            ),
+            "FAILED_PICK_RELEASE_NOT_UNIQUE",
+        ),
+        (
+            lambda registry: registry["entries"][0][
+                "failed_pick_import_authority"
+            ]["required_pick_state"].__setitem__(
+                "failure_kind", "speaker_evidence"
+            ),
+            "FAILED_PICK_IMPORT_AUTHORITY_INVALID",
+        ),
+    ],
+)
+def test_failed_pick_registry_authority_is_fail_closed(
+    tmp_path: Path,
+    mutation,
+    expected: str,
+) -> None:
+    fixture = _build_external_package(tmp_path)
+    _state, _entry, registry_path = _configure_authorized_failed_pick(
+        fixture
+    )
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    mutation(registry)
+    _write_json(registry_path, registry)
+    _seal_deployed_authority(fixture, registry_path)
+
+    receipt, code = _run_authorized_failed_pick(fixture)
+
+    assert code == 2
+    assert _step(receipt, "PREFLIGHT")["code"] == expected
+    assert not fixture.destination_package.exists()
+
+
+def test_failed_pick_registry_worktree_drift_refuses_even_if_json_is_valid(
+    tmp_path: Path,
+) -> None:
+    fixture = _build_external_package(tmp_path)
+    _state, _entry, registry_path = _configure_authorized_failed_pick(fixture)
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    registry["entries"][0]["released_at"] = "2026-08-11T23:59:59Z"
+    _write_json(registry_path, registry)
+
+    receipt, code = _run_authorized_failed_pick(fixture)
+
+    assert code == 2
+    assert (
+        _step(receipt, "PREFLIGHT")["code"]
+        == "FAILED_PICK_REGISTRY_AUTHORITY_INVALID"
+    )
+    assert not fixture.destination_package.exists()
+
+
+def test_failed_pick_shape_cannot_be_reauthorized_by_only_rehashing(
+    tmp_path: Path,
+) -> None:
+    fixture = _build_external_package(tmp_path)
+    _state, _entry, registry_path = _configure_authorized_failed_pick(
+        fixture
+    )
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state["picks"][0]["selected_repair"] = False
+    state["publication_closure"] = _failed_pick_closure(state)
+    _write_json(fixture.state_path, state)
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    registry["entries"][0]["failed_pick_import_authority"][
+        "state_row_canonical_sha256"
+    ] = "sha256:" + pi.canonical_json_sha256(state["picks"][0])
+    _write_json(registry_path, registry)
+    _seal_deployed_authority(fixture, registry_path)
+
+    receipt, code = _run_authorized_failed_pick(fixture)
+
+    assert code == 2
+    assert (
+        _step(receipt, "PREFLIGHT")["code"]
+        == "FAILED_PICK_ROW_SHAPE_MISMATCH"
+    )
+    assert not fixture.destination_package.exists()
+
+
+def test_failed_pick_row_canonical_drift_refuses_before_copy(
+    tmp_path: Path,
+) -> None:
+    fixture = _build_external_package(tmp_path)
+    _configure_authorized_failed_pick(fixture)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state["picks"][0]["hook"] = "drift after Ivan release"
+    state["publication_closure"] = _failed_pick_closure(state)
+    _write_json(fixture.state_path, state)
+
+    receipt, code = _run_authorized_failed_pick(fixture)
+
+    assert code == 2
+    assert (
+        _step(receipt, "PREFLIGHT")["code"]
+        == "FAILED_PICK_ROW_PREIMAGE_DRIFT"
+    )
+    assert not fixture.destination_package.exists()
+
+
+@pytest.mark.parametrize("collection", ["pending_talk", "pending_song", "songs"])
+def test_failed_pick_adoption_refuses_candidate_in_other_collections(
+    tmp_path: Path,
+    collection: str,
+) -> None:
+    fixture = _build_external_package(tmp_path)
+    _configure_authorized_failed_pick(fixture)
+    state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
+    state[collection].append({"candidate_id": CANDIDATE})
+    _write_json(fixture.state_path, state)
+
+    receipt, code = _run_authorized_failed_pick(fixture)
+
+    assert code == 2
+    assert _step(receipt, "PREFLIGHT")["code"] in {
+        "CANDIDATE_STILL_QUEUED",
+        "FAILED_PICK_ADOPTION_SCOPE_CONFLICT",
+    }
+    assert not fixture.destination_package.exists()
+
+
+def test_failed_pick_adoption_dry_run_has_zero_target_writes(
+    tmp_path: Path,
+) -> None:
+    fixture = _build_external_package(tmp_path)
+    _configure_authorized_failed_pick(fixture)
+    before = fixture.state_path.read_bytes()
+
+    receipt, code = _run_authorized_failed_pick(fixture, apply=False)
+
+    assert code == 0, receipt
+    assert receipt["status"] == "DRY_RUN_OK"
+    assert receipt["upload_allowed"] is False
+    assert fixture.state_path.read_bytes() == before
+    assert not fixture.destination_package.exists()
+    assert not list(fixture.state_path.parent.glob("*.pre-import-*"))
+
+
+def test_committed_solo_failed_pick_release_is_exactly_bound() -> None:
+    registry_path = (
+        Path(__file__).resolve().parents[1]
+        / cli.PUBLICATION_REGISTRY_RELATIVE
+    )
+    authorization = pi.load_failed_pick_import_authorization(
+        registry_path=registry_path,
+        candidate_id="auto_230125_1157_1229",
+        date="2026-08-08",
+        release_quote=RELEASE_QUOTE,
+    )
+    assert authorization.released_by == "Ivan"
+    assert authorization.state_row_canonical_sha256 == (
+        "66e4d8a48a60d015e5dae3f5fd1de92a02b78c78299e945d983115f8e399a12a"
+    )
+    assert authorization.authority["required_pick_state"] == {
+        "status": "failed",
+        "rc": 1,
+        "failure_kind": "subtitle_authority",
+        "failure_stage": "final_review_findings",
+        "selected_repair": True,
+    }
+
+
 def test_published_pick_row_refuses(tmp_path: Path) -> None:
     fixture = _build_external_package(tmp_path)
     state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
@@ -801,6 +1302,46 @@ def test_blocking_audit_stops_the_chain(tmp_path: Path) -> None:
     assert "run_title_cover_joint_qc.py" not in [
         Path(call[1]).name for call in gate.calls
     ]
+
+
+def test_blocking_audit_rolls_back_authorized_failed_pick_consumption(
+    tmp_path: Path,
+) -> None:
+    fixture = _build_external_package(tmp_path)
+    _configure_authorized_failed_pick(fixture)
+    before = fixture.state_path.read_bytes()
+
+    receipt, code = _run_authorized_failed_pick(
+        fixture,
+        gate=StubGateRunner(fixture, audit_passed=False),
+    )
+
+    assert code == 2
+    assert fixture.state_path.read_bytes() == before
+    assert _step(receipt, "STATE_BIND")["status"] == (
+        "ROLLED_BACK_AFTER_GATE_FAILURE"
+    )
+    assert b'"CONSUMED"' not in fixture.state_path.read_bytes()
+
+
+def test_state_readback_failure_restores_exact_failed_pick_preimage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _build_external_package(tmp_path)
+    _configure_authorized_failed_pick(fixture)
+    before = fixture.state_path.read_bytes()
+
+    def corrupting_write_state(path, document, **kwargs):  # noqa: ANN001, ARG001
+        pi.atomic_write_bytes(path, b'{"corrupt":true}\n')
+
+    monkeypatch.setattr(cli, "write_state", corrupting_write_state)
+    receipt, code = _run_authorized_failed_pick(fixture)
+
+    assert code == 2
+    assert fixture.state_path.read_bytes() == before
+    assert _step(receipt, "STATE_BIND")["code"] == "STATE_READBACK_FAILED"
+    assert b'"CONSUMED"' not in fixture.state_path.read_bytes()
 
 
 def test_make_manifest_is_never_run(tmp_path: Path) -> None:

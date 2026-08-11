@@ -309,6 +309,37 @@
       "recording_date": "2026-08-08",
       "status": "hold_pending_review",
       "note": "《心型病毒 (Live)》歌切。Ivan 2026-08-10 裁定「当然以 wsl 成品为准，这三个地方都是同一套代码」——不让 free 重产，改用 wsl 已完成的评审包（已抢救至 free incoming/song_210131_1210-r1，sha256 逐文件核验一致，package_audit passed=true/0 blocking）。该包自称 upload_allowed=false / finished_review_package_no_upload_pending_human_review，等 Ivan 审阅。本条同时是跨主机导入的封面闸口：该包封面血统在 wsl，free 复算不出 _initial_cover_proof_valid，若无阻断行 repair_covers 会花图片额度重画一张已定稿封面并覆盖交付根。放行需 Ivan 明示（改 released_for_upload）。"
+    },
+    {
+      "candidate_id": "auto_230125_1157_1229",
+      "recording_date": "2026-08-08",
+      "status": "released_for_upload",
+      "released_by": "Ivan",
+      "released_at": "2026-08-11",
+      "release_quote": "说起来刚刚通过的这两个可以发布了，只要你根据我的人工真值改完后，可以直接去快车道发布，和你的通用车道修复并行进行",
+      "failed_pick_import_authority": {
+        "schema_version": "failed-pick-import-authority.v1",
+        "scope": "ADOPT_FAILED_PICK_FOR_EXTERNAL_PACKAGE_IMPORT_ONLY",
+        "candidate_id": "auto_230125_1157_1229",
+        "recording_date": "2026-08-08",
+        "state_row_canonical_sha256": "sha256:66e4d8a48a60d015e5dae3f5fd1de92a02b78c78299e945d983115f8e399a12a",
+        "required_pick_state": {
+          "status": "failed",
+          "rc": 1,
+          "failure_kind": "subtitle_authority",
+          "failure_stage": "final_review_findings",
+          "selected_repair": true
+        },
+        "required_batch_state": {
+          "status": "published_with_failures",
+          "publication_closure_status": "published_with_failures"
+        },
+        "authorized_transition": {
+          "status": "ready_unpublished_with_failures",
+          "publication_closure_status": "ready_unpublished_with_failures"
+        }
+      },
+      "note": "Ivan 2026-08-11 已审 solo 成品并逐字授权按人工真值修正后进入快车道。顶层 released_for_upload 因而有意开放本候选的 publication-registry 上传闸门；内嵌 scope 只授权 import_external_package 的一次性 failed-pick 收编，不旁路 package audit、标题封面联合质检或 authorized_upload，也不授权其他 candidate/state preimage。"
     }
   ]
 }

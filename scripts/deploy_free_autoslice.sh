@@ -10,7 +10,8 @@
 # - owns a remote deploy guard from initial observation through final cleanup
 # - pauses new runs, waits for runner.lock, then swaps every managed component with rollback
 # - verifies rollback against a full path/type/mode/SHA-256 manifest
-# - stamps DEPLOYED_COMMIT only after every runtime/external-file check succeeds
+# - seals DEPLOYED_COMMIT plus a commit-bound authority-asset manifest only
+#   after every runtime/external-file and complete-tree check succeeds
 # - installs the mount watchdog + its cron line (idempotent)
 # - installs the guarded do_upload.sh (refuses bare invocation)
 # - md5-verifies the runner after push (sync lesson: never swallow errors)
@@ -105,6 +106,25 @@ for component in scripts src assets profiles .agent docs cleanup_manifests AGENT
     fi
 done
 test -f "$backup/DEPLOYED_COMMIT.old"
+
+restore_repository_file() {
+    label=$1
+    destination=$2
+    if [ -f "$backup/repository/$label.present" ]; then
+        tmp=$destination.rollback.$$
+        cp -p "$backup/repository/$label.file" "$tmp"
+        cmp -s "$backup/repository/$label.file" "$tmp"
+        mv -f "$tmp" "$destination"
+        cmp -s "$backup/repository/$label.file" "$destination"
+    elif [ -f "$backup/repository/$label.absent" ]; then
+        rm -f "$destination"
+        test ! -e "$destination"
+    else
+        echo "missing repository rollback marker: $label" >&2
+        return 1
+    fi
+}
+restore_repository_file deployed_authority_manifest "$repo/DEPLOYED_AUTHORITY_MANIFEST.json"
 cp "$backup/DEPLOYED_COMMIT.old" "$repo/DEPLOYED_COMMIT"
 
 restore_file() {
@@ -524,6 +544,23 @@ backup=$3
 umask 077
 mkdir -p "$backup"
 cp "$repo/DEPLOYED_COMMIT" "$backup/DEPLOYED_COMMIT.old"
+mkdir -p "$backup/repository"
+capture_repository_file() {
+    label=$1
+    source=$2
+    if [ -e "$source" ]; then
+        test -f "$source"
+        test ! -L "$source"
+        cp -p "$source" "$backup/repository/$label.file"
+        cmp -s "$source" "$backup/repository/$label.file"
+        touch "$backup/repository/$label.present"
+    else
+        touch "$backup/repository/$label.absent"
+    fi
+}
+capture_repository_file \
+    deployed_authority_manifest \
+    "$repo/DEPLOYED_AUTHORITY_MANIFEST.json"
 python3 - "$repo" "$backup/repo.manifest.old.json" <<'PY'
 import hashlib
 import json
@@ -601,6 +638,22 @@ restore_file() {
         return 1
     fi
 }
+restore_repository_file() {
+    label=$1
+    destination=$2
+    if [ -f "$backup/repository/$label.present" ]; then
+        tmp=$destination.rollback.$$
+        cp -p "$backup/repository/$label.file" "$tmp"
+        cmp -s "$backup/repository/$label.file" "$tmp"
+        mv -f "$tmp" "$destination"
+        cmp -s "$backup/repository/$label.file" "$destination"
+    elif [ -f "$backup/repository/$label.absent" ]; then
+        rm -f "$destination"
+        test ! -e "$destination"
+    else
+        return 1
+    fi
+}
 rollback() {
     for component in scripts src assets profiles .agent docs cleanup_manifests AGENTS.md README.md; do
         if [ -e "$backup/$component" ]; then
@@ -614,6 +667,9 @@ rollback() {
             rm -rf "$repo/$component"  # tree added by the deploy: rollback removes it
         fi
     done
+    restore_repository_file \
+        deployed_authority_manifest \
+        "$repo/DEPLOYED_AUTHORITY_MANIFEST.json"
     cp "$backup/DEPLOYED_COMMIT.old" "$repo/DEPLOYED_COMMIT"
     restore_file watchdog /opt/bilive/autoslice/free_mount_watchdog.sh
     restore_file upload_sentinel /opt/bilive/autoslice/upload_fatal_sentinel.sh
@@ -782,7 +838,197 @@ if [ "$LOCAL_MANIFEST" != "$REMOTE_DEPLOYED_MANIFEST" ]; then
     echo "DEPLOY VERIFY FAILED: switched production tree differs from committed tree" >&2
     exit 3
 fi
-ssh "$HOST" "printf '%s  deployed %s\n' '$COMMIT' '$(date -u +%Y-%m-%dT%H:%M:%SZ)' > '$REMOTE_REPO/DEPLOYED_COMMIT'"
+
+# The complete deployed tree has now matched the frozen git archive. Seal the
+# small set of security-sensitive authority assets from those exact deployed
+# bytes. The manifest is installed before DEPLOYED_COMMIT, so a crash between
+# the two atomic renames fails closed (commit mismatch); both files are restored
+# from the rollback tree on every local or remote failure path.
+ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
+    "$REMOTE_REPO" "$BACKUP" "$COMMIT" <<'REMOTE_SEAL_DEPLOYMENT_IDENTITY'
+set -euo pipefail
+repo=$1
+backup=$2
+commit=$3
+manifest_path=$repo/DEPLOYED_AUTHORITY_MANIFEST.json
+commit_path=$repo/DEPLOYED_COMMIT
+umask 022
+
+manifest_tmp=$(mktemp "$repo/.DEPLOYED_AUTHORITY_MANIFEST.json.deploy.XXXXXX")
+commit_tmp=$(mktemp "$repo/.DEPLOYED_COMMIT.deploy.XXXXXX")
+chmod 644 "$manifest_tmp" "$commit_tmp"
+cleanup_tmp() {
+    [ -z "${manifest_tmp:-}" ] || rm -f "$manifest_tmp"
+    [ -z "${commit_tmp:-}" ] || rm -f "$commit_tmp"
+}
+restore_repository_file() {
+    label=$1
+    destination=$2
+    if [ -f "$backup/repository/$label.present" ]; then
+        tmp=$destination.rollback.$$
+        cp -p "$backup/repository/$label.file" "$tmp"
+        cmp -s "$backup/repository/$label.file" "$tmp"
+        mv -f "$tmp" "$destination"
+        cmp -s "$backup/repository/$label.file" "$destination"
+    elif [ -f "$backup/repository/$label.absent" ]; then
+        rm -f "$destination"
+        test ! -e "$destination"
+    else
+        echo "missing repository rollback marker: $label" >&2
+        return 1
+    fi
+}
+restore_identity() {
+    cleanup_tmp
+    restore_repository_file deployed_authority_manifest "$manifest_path"
+    cp "$backup/DEPLOYED_COMMIT.old" "$commit_path"
+    cmp -s "$backup/DEPLOYED_COMMIT.old" "$commit_path"
+}
+trap 'rc=$?; trap - ERR; restore_identity; exit "$rc"' ERR
+trap 'trap - ERR HUP INT TERM; restore_identity; exit 129' HUP
+trap 'trap - ERR HUP INT TERM; restore_identity; exit 130' INT
+trap 'trap - ERR HUP INT TERM; restore_identity; exit 143' TERM
+
+PYTHONDONTWRITEBYTECODE=1 python3 - \
+    "$repo" "$commit" "$manifest_tmp" <<'REMOTE_AUTHORITY_MANIFEST_PY'
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+commit = sys.argv[2]
+output = Path(sys.argv[3])
+if re.fullmatch(r"[0-9a-f]{40}", commit) is None:
+    raise SystemExit("invalid deployed commit for authority manifest")
+sys.path.insert(0, str(root))
+
+from src.autoslice.repository_asset_authority import (  # noqa: E402
+    build_deployed_authority_manifest,
+)
+
+registry = root / "assets/lidousha/publication_registry.v1.json"
+authority_dir = root / "assets/lidousha/authorities"
+if registry.is_symlink() or not registry.is_file():
+    raise SystemExit("publication registry authority is missing or unsafe")
+authority_paths = []
+if authority_dir.exists():
+    if authority_dir.is_symlink() or not authority_dir.is_dir():
+        raise SystemExit("authority asset directory is unsafe")
+    for candidate in authority_dir.rglob("*"):
+        if candidate.is_symlink():
+            raise SystemExit(f"authority asset tree contains symlink: {candidate}")
+        if candidate.is_file() and candidate.suffix == ".json":
+            authority_paths.append(candidate)
+
+manifest = build_deployed_authority_manifest(
+    repo_root=root,
+    deployed_commit=commit,
+    relative_paths=[
+        path.relative_to(root)
+        for path in (registry, *sorted(authority_paths))
+    ],
+)
+serialized = (
+    json.dumps(
+        manifest,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    + "\n"
+).encode("utf-8")
+with output.open("wb") as handle:
+    handle.write(serialized)
+    handle.flush()
+    os.fsync(handle.fileno())
+REMOTE_AUTHORITY_MANIFEST_PY
+printf '%s  deployed %s\n' "$commit" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$commit_tmp"
+python3 - "$commit_tmp" <<'REMOTE_FSYNC_COMMIT_STAMP_PY'
+import os
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    os.fsync(handle.fileno())
+REMOTE_FSYNC_COMMIT_STAMP_PY
+
+# Install manifest first: until the commit stamp moves, readers reject the new
+# manifest rather than accepting an authority document under the old identity.
+mv -f "$manifest_tmp" "$manifest_path"
+manifest_tmp=
+mv -f "$commit_tmp" "$commit_path"
+commit_tmp=
+
+PYTHONDONTWRITEBYTECODE=1 python3 - \
+    "$repo" "$commit" <<'REMOTE_VERIFY_DEPLOYMENT_IDENTITY_PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+expected_commit = sys.argv[2]
+sys.path.insert(0, str(root))
+
+from src.autoslice.repository_asset_authority import (  # noqa: E402
+    DEPLOYED_AUTHORITY_MANIFEST_SCHEMA,
+    build_deployed_authority_manifest,
+    require_repository_asset_authority,
+)
+
+commit_path = root / "DEPLOYED_COMMIT"
+manifest_path = root / "DEPLOYED_AUTHORITY_MANIFEST.json"
+actual_commit = commit_path.read_text(encoding="utf-8").split(maxsplit=1)[0]
+if actual_commit != expected_commit:
+    raise SystemExit("deployed commit readback mismatch")
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+registry = root / "assets/lidousha/publication_registry.v1.json"
+authority_dir = root / "assets/lidousha/authorities"
+if registry.is_symlink() or not registry.is_file():
+    raise SystemExit("publication registry authority is missing or unsafe")
+authority_paths = []
+if authority_dir.exists():
+    if authority_dir.is_symlink() or not authority_dir.is_dir():
+        raise SystemExit("authority asset directory is unsafe")
+    for candidate in authority_dir.rglob("*"):
+        if candidate.is_symlink():
+            raise SystemExit(f"authority asset tree contains symlink: {candidate}")
+        if candidate.is_file() and candidate.suffix == ".json":
+            authority_paths.append(candidate)
+relative_paths = [
+    path.relative_to(root)
+    for path in (registry, *sorted(authority_paths))
+]
+expected_manifest = build_deployed_authority_manifest(
+    repo_root=root,
+    deployed_commit=actual_commit,
+    relative_paths=relative_paths,
+)
+if manifest != expected_manifest:
+    raise SystemExit("deployed authority manifest readback mismatch")
+if manifest.get("schema_version") != DEPLOYED_AUTHORITY_MANIFEST_SCHEMA:
+    raise SystemExit("deployed authority manifest schema mismatch")
+for relative in relative_paths:
+    path = root / relative
+    authority = require_repository_asset_authority(
+        repo_root=root,
+        relative_path=relative,
+        observed_bytes=path.read_bytes(),
+    )
+    if authority.commit != actual_commit or authority.mode != "DEPLOYED_MANIFEST":
+        raise SystemExit(f"deployed authority loader rejected identity: {relative}")
+directory_fd = os.open(root, os.O_RDONLY)
+try:
+    os.fsync(directory_fd)
+finally:
+    os.close(directory_fd)
+REMOTE_VERIFY_DEPLOYMENT_IDENTITY_PY
+
+trap - ERR HUP INT TERM
+cleanup_tmp
+REMOTE_SEAL_DEPLOYMENT_IDENTITY
 COMMITTED=1
 ssh "$HOST" "rm -rf '$BACKUP'" || echo "WARN: deployed successfully but rollback-tree cleanup failed" >&2
 echo "deployed $COMMIT to $HOST (runner md5 verified)"

@@ -73,7 +73,7 @@ FUNCTION_DEBT_LEDGER = {
     # pending rescore sidecar 并抛 SOURCE_FACT_REPAIRED_RESCORE_REQUIRED；
     # 新增逻辑的重量已推给 src/autoslice/selection_rescore.py，这里只留
     # 薄调用点。测试 tests/test_selection_rescore.py。
-    ("src/autoslice/producer_package_finalization.py", "_stage_record"): 335,
+    ("src/autoslice/producer_package_finalization.py", "_stage_record"): 322,
     ("src/autoslice/producer_text_finalization.py", "verify_chat_authority_final_surfaces"): 335,
     # 2026-07-31 +40：SC 发送者裁决对 v2 精确重放 redelivery 的 deferral
     # （jyl-r10 案：CPA 宕机/岔听下 UNRESOLVED，而该 cue 终局注定被基线盖回；
@@ -118,7 +118,7 @@ FUNCTION_DEBT_LEDGER = {
     # 合并的快车道代码，现在就去合并 merge」）带入的 relocation/冻结包接线。数字为
     # 合并后实测,非估算。⚠️ 此项已连续吃增长且上方 8/1 注释写明「下次动这个函数
     # 必须先拆，不许再抬」——本次是合并带入而非新写功能,但欠账事实成立,须补拆解。
-    ("src/autoslice/publish_staging.py", "_stage_publish_draft"): 586,
+    ("src/autoslice/publish_staging.py", "_stage_publish_draft"): 583,
     # 2026-07-31 +3：同上，截图/polish 路径的 contract 穿透。
     # 2026-08-10 净 -6：同上——终检见证的 verifier-missing 分支与调用抽到
     # cover_scene_binding.run_final_host_identity_witness。
@@ -292,7 +292,7 @@ MODULE_DEBT_LEDGER = {
     # _run_exact_final_review_gate 那条）。新增逻辑的重量全在两个新模块
     # （unreadable_span_policy.py / unreadable_cue_drop_stage.py，未计入本模块
     # 行数），本模块只涨了 stage/seal 两处调用点、import 与 rationale 注释。
-    "src/autoslice/producer_package_finalization.py": 2_780,
+    "src/autoslice/producer_package_finalization.py": 2_773,
     # 2026-07-31 +40：同上（SC 发送者 deferral）。
     # 2026-08-08 +7：会话内重述修复接线（Ivan 2026-08-08 当日指令，
     # docs/reviews/2026-08-08-restatement-repair-design.md §4）——会话内
@@ -334,7 +334,7 @@ MODULE_DEBT_LEDGER = {
     # cover_route_policy.py，本模块只留 import 别名与调用点。
     # 2026-08-10 +19：合并 ft-a8600994 快车道分支（Ivan 2026-08-10 逐字「这就是要合并的快车道代码，现在就去合并 merge」）带入的
     # relocation/冻结包接线（同 _stage_publish_draft 那一项）。合并后实测。
-    "src/autoslice/publish_staging.py": 2_721,
+    "src/autoslice/publish_staging.py": 2_718,
     "src/autoslice/same_bv_repair.py": 2_422,
     # 2026-08-10 新入账：合并 ft-a8600994（Ivan 2026-08-10 逐字「这就是要合并的快车道代码，现在就去合并 merge」）把 talk_lane 顶过
     # 2000 行入场线（ft 侧 +17 行 boundary 接线）。⚠️ 这是本次 merge 带入的新

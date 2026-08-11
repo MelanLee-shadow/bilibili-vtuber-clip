@@ -1240,9 +1240,9 @@ def _audit_item_story_contract(
             clip_context_prompt=str(
                 story_contract.get("clip_context_prompt") or ""
             ),
-            selection_scorecard=story_contract.get(
-                "selection_scorecard"
-            ),
+            selection_scorecard=story_contract.get("selection_scorecard"),
+            candidate_id=str(story_contract.get("candidate_id") or ""),
+            final_reviewed_srt_path=subtitle_path,
         ):
             _add_issue(
                 issues,

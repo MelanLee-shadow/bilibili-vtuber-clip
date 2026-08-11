@@ -262,8 +262,9 @@
   replacement_recuts 目录> --date <date> --candidate <cid> [--allow-new-pick] --apply`
   （跨主机传输不在工具内，先 rsync/scp 到 free 的暂存目录；暂存目录与目标目录必须不同）。
   硬边界：只走 talk 车道；只接受 pick 行缺失（需 `--allow-new-pick`）或已是
-  `review_ready`+`rc=0` 的重绑，`candidate_rejected`/`failed` 必须先过
-  `scripts/revive_rejected_candidates.py`；批级状态不在 manifest builder 白名单内时直接
+  `review_ready`+`rc=0` 的重绑。普通 `candidate_rejected`/`failed` 仍必须先过
+  `scripts/revive_rejected_candidates.py`；唯一例外是下述 registry-authorized exact failed-pick
+  adoption。批级状态不在 manifest builder 白名单内时直接
   typed 拒绝而不修状态；**不做 `authorized_upload make-manifest`**，上传授权仍只走
   [90-publish.md](90-publish.md)。路径投影只动
   `package_relocation_contract.py` 白名单里的运行期定位符，冻结证据（`story_contract`、
@@ -271,6 +272,36 @@
   publish/speaker 哈希由 record 的 `artifact_hashes.publish_draft_sha256` 与
   `speaker_finalization_manifest_sha256` 重新绑定，chat-authority 里产出主机的
   `speaker_manifest_sha256` 不改写，只在事务日志记 `speaker_manifest_lineage`。
+- 已经存在于 state 中的 failed pick，仅当当前部署仓库的
+  `assets/lidousha/publication_registry.v1.json` 中有唯一匹配行，才可通过专用
+  模式接纳：`--adopt-failed-pick <cid> --release-quote '<Ivan 逐字原话>'`。
+  两个 flag 必须同时出现，`--adopt-failed-pick` 必须精确等于
+  `--candidate`，不得与 `--allow-new-pick` 共用；quote 必须与 registry 字节级
+  一致。registry 顶层行的 `status=released_for_upload`、`released_by=Ivan`
+  与该 quote 是 Ivan 已明确授权发布的表示，因此它**有意打开 registry
+  upload gate**；不得把它误写成“不授权上传”。但内嵌
+  `failed-pick-import-authority.v1` 的 scope 仍只是
+  `ADOPT_FAILED_PICK_FOR_EXTERNAL_PACKAGE_IMPORT_ONLY`：它只授权这一次 state adoption，
+  不可代替 current package audit、标题+封面联合 QC、authorized-upload manifest/
+  uploader 的任何闸门。
+- failed-pick authority 必须绑定 exact candidate/date、整条失败 pick 的 canonical
+  preimage SHA、允许的失败字段形状、批次/发布闭环的前状态和唯一后状态。
+  importer 在 copy 前持 `runner.lock` 重读 state 和 registry 做预检，bind 时再读一次
+  registry 防止预检后漂移。任一 row SHA/字段、queue/publication membership、
+  batch/closure 或 registry 字节不同都拒绝，不得按“大概是同一条失败”放宽。
+  成功时仅清除白名单内的 active failure/retry 标记，保留历史证据和其他 state
+  字段，并在 `external_package_import.failed_pick_adoption` 写入
+  `failed-pick-import-consumption.v1 / CONSUMED`。该 consumption 与前状态 hash 使授权
+  一次性：已消费、已发布、row 已漂移或批次已迁移后不得再次接纳。
+- state bind 的 rollback 也是该快车道的强制契约，而不是人工补救。bind 前必须在
+  lock 内固化并 hash-验证 exact state preimage backup；写入、读回、
+  `review_ready/rc=0`、failed-pick consumption 或 batch/closure 后状态任一失败，必须在
+  同一 lock 内恢复并重验 exact preimage bytes 后才返回拒绝。bind 成功后的
+  manifest、package audit 或 title+cover QC 任一失败，也必须持 lock 回滚；
+  只有当前 state SHA 仍精确等于固化的 postimage 时才能自动覆盖，否则为避免
+  抹掉并发更改而 fail closed。后置闸门失败回执必须显式记
+  `ROLLED_BACK_AFTER_GATE_FAILURE`。已复制/迁移的 package 字节可作 staged 证据保留，
+  但 state 回滚后不得将它报告为已绑定、review-ready 或可上传。
 - 新 BV 与 exact same-BV repair 的两条发布 lane、权限边界、正式 receipt schema、live
   验收和执行顺序只读 [90-publish.md](90-publish.md)。打包步骤不得复制、放宽或自行推导发布
   准入，也不得把 package audit、pending-human manifest 或任意旧版/手写 receipt 当成授权。

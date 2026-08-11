@@ -39,6 +39,16 @@ from src.autoslice.semantic_candidate_selector import (
     RESCORE_SCORECARD_SCHEMA,
     rescore_candidate_scorecard,
 )
+from src.autoslice.source_fact_rescore_provenance import (
+    MANUAL_RESCORE_COMMAND_TEMPLATE,
+    MANUAL_RESCORE_MODEL,
+    MANUAL_RESCORE_PROVIDER,
+    MANUAL_RESCORE_TIMEOUT_SECONDS,
+    MANUAL_RESCORE_TRANSPORT,
+    SourceFactRescoreProvenanceError,
+    load_committed_correction_authority,
+    validate_correction_authority,
+)
 from src.autoslice.source_fact_review import (
     validate_source_fact_rescore_candidate_receipt,
 )
@@ -48,20 +58,18 @@ PROVIDER_CONFIG_SCHEMA = "manual-source-fact-rescore-provider.v1"
 EXECUTION_AUTHORITY_ENV = "AUTOSLICE_MANUAL_RESCORE_EXECUTION_AUTHORITY"
 EXECUTION_AUTHORITY_VALUE = "SOURCE_FACT_RESCORE_AUTHORIZED"
 PREFLIGHT_SCHEMA = "manual-source-fact-rescore-preflight.v1"
-CPA_PROVIDER = "cpa"
-CPA_MODEL = "gpt-5.6-sol"
-CPA_TRANSPORT = "command"
+CPA_PROVIDER = MANUAL_RESCORE_PROVIDER
+CPA_MODEL = MANUAL_RESCORE_MODEL
+CPA_TRANSPORT = MANUAL_RESCORE_TRANSPORT
 # llm_via_cpa.sh stops new dispatches after 400s and permits one already
 # running curl to consume up to 180s: <=580s.  The production caller contract
 # is therefore exactly 600s; a shorter value kills valid failover, while a
 # longer value hides drift from the audited recovery lane.
-CPA_CALLER_TIMEOUT_SECONDS = 600.0
-CPA_COMMAND_TEMPLATE = (
-    "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} "
-    "'{model}' medium"
-)
+CPA_CALLER_TIMEOUT_SECONDS = MANUAL_RESCORE_TIMEOUT_SECONDS
+CPA_COMMAND_TEMPLATE = MANUAL_RESCORE_COMMAND_TEMPLATE
 _CANDIDATE_ID_RE = re.compile(r"auto_[0-9]+_[0-9]+_[0-9]+\Z")
 _SAFE_PROVIDER_RE = re.compile(r"[A-Za-z0-9._:/+-]+\Z")
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class ManualScorecardRescoreError(RuntimeError):
@@ -78,7 +86,8 @@ class _BoundFile:
 class _ValidatedInputs:
     candidate_id: str
     reviewed_srt: _BoundFile
-    source_fact_receipt: _BoundFile
+    source_fact_receipt: _BoundFile | None
+    correction_authority: _BoundFile | None
     stale_scorecard: _BoundFile
     provider_config: _BoundFile
     calibration_policy: _BoundFile
@@ -86,7 +95,8 @@ class _ValidatedInputs:
     source_start_ms: int
     source_end_ms: int
     cues: tuple[SourceCue, ...]
-    receipt: Mapping[str, object]
+    receipt: Mapping[str, object] | None
+    authority: Mapping[str, object] | None
     scorecard: Mapping[str, object]
     provider: Mapping[str, object]
     input_bindings: Mapping[str, object]
@@ -289,14 +299,17 @@ def validate_manual_rescore_inputs(
     reviewed_final_srt: Path,
     reviewed_final_srt_sha256: str,
     corrected_hook: str,
-    source_fact_receipt: Path,
-    source_fact_receipt_sha256: str,
+    source_fact_receipt: Path | None,
+    source_fact_receipt_sha256: str | None,
     stale_scorecard: Path,
     stale_scorecard_sha256: str,
     source_start_ms: int,
     source_end_ms: int,
     provider_config: Path,
     provider_config_sha256: str,
+    correction_authority: Path | None = None,
+    correction_authority_sha256: str | None = None,
+    stale_hook: str | None = None,
 ) -> _ValidatedInputs:
     """Validate every source/provider/calibration binding without a provider call."""
 
@@ -319,11 +332,6 @@ def validate_manual_rescore_inputs(
         reviewed_final_srt_sha256,
         label="reviewed final SRT",
     )
-    receipt_binding, receipt_raw = _bind_file(
-        source_fact_receipt,
-        source_fact_receipt_sha256,
-        label="stale source-fact receipt",
-    )
     scorecard_binding, scorecard_raw = _bind_file(
         stale_scorecard,
         stale_scorecard_sha256,
@@ -334,7 +342,6 @@ def validate_manual_rescore_inputs(
         provider_config_sha256,
         label="provider config",
     )
-    receipt = _json_object(receipt_raw, label="stale source-fact receipt")
     scorecard = _json_object(scorecard_raw, label="stale scorecard")
     provider = _validate_provider_config(
         _json_object(provider_raw, label="provider config")
@@ -345,33 +352,125 @@ def validate_manual_rescore_inputs(
         source_end_ms=source_end_ms,
     )
 
-    original_hook = receipt.get("original_selection_hook")
-    original_title = receipt.get("original_title")
-    if not isinstance(original_hook, str) or not isinstance(original_title, str):
-        raise ManualScorecardRescoreError(
-            "stale source-fact receipt has no original hook/title binding"
-        )
-    if not validate_source_fact_rescore_candidate_receipt(
-        receipt,
-        selection_hook=original_hook,
-        title=original_title,
-        selection_scorecard=scorecard,
-    ):
-        raise ManualScorecardRescoreError("stale source-fact receipt chain is invalid")
-    rescore_block = receipt.get("rescore_candidate")
-    assert isinstance(rescore_block, Mapping)
-    if rescore_block.get("repaired_selection_hook") != corrected_hook:
-        raise ManualScorecardRescoreError(
-            "corrected hook does not match the source-fact rescore candidate"
-        )
-    passes = receipt.get("passes")
-    assert isinstance(passes, list) and passes and isinstance(passes[-1], Mapping)
     reviewed_transcript = "\n".join(cue.text for cue in cues)
     reviewed_transcript_sha256 = _bytes_sha256(reviewed_transcript.encode("utf-8"))
-    if passes[-1].get("final_transcript_sha256") != reviewed_transcript_sha256:
-        raise ManualScorecardRescoreError(
-            "reviewed final SRT text does not match the stale source-fact receipt"
+
+    receipt_binding: _BoundFile | None = None
+    receipt: Mapping[str, object] | None = None
+    authority_binding: _BoundFile | None = None
+    authority: Mapping[str, object] | None = None
+    if correction_authority is not None or correction_authority_sha256 is not None:
+        if source_fact_receipt is not None or source_fact_receipt_sha256 is not None:
+            raise ManualScorecardRescoreError(
+                "choose exactly one stale source-fact receipt or correction authority"
+            )
+        if correction_authority is None or correction_authority_sha256 is None:
+            raise ManualScorecardRescoreError(
+                "correction authority path and SHA-256 are both required"
+            )
+        authority_binding, authority_raw = _bind_file(
+            correction_authority,
+            correction_authority_sha256,
+            label="candidate correction authority",
         )
+        try:
+            authority = validate_correction_authority(
+                _json_object(authority_raw, label="candidate correction authority"),
+                candidate_id=candidate_id,
+            )
+            committed, committed_path, committed_file_sha256 = (
+                load_committed_correction_authority(
+                    repo_root=ROOT,
+                    candidate_id=candidate_id,
+                )
+            )
+        except SourceFactRescoreProvenanceError as exc:
+            raise ManualScorecardRescoreError(str(exc)) from exc
+        if (
+            authority_binding.path != committed_path
+            or authority_binding.sha256 != committed_file_sha256
+            or authority != committed
+        ):
+            raise ManualScorecardRescoreError(
+                "candidate correction authority is not the committed repository asset"
+            )
+        if stale_hook != authority.get("original_selection_hook"):
+            raise ManualScorecardRescoreError(
+                "stale hook does not match the candidate correction authority"
+            )
+        if corrected_hook != authority.get("corrected_selection_hook"):
+            raise ManualScorecardRescoreError(
+                "corrected hook does not match the candidate correction authority"
+            )
+        if _canonical_sha256(scorecard) != authority.get(
+            "stale_selection_scorecard_sha256"
+        ):
+            raise ManualScorecardRescoreError(
+                "stale scorecard does not match the candidate correction authority"
+            )
+        reviewed_authority = authority.get("reviewed_final_srt")
+        source_authority = authority.get("source")
+        assert isinstance(reviewed_authority, Mapping)
+        assert isinstance(source_authority, Mapping)
+        if (
+            reviewed_binding.sha256 != reviewed_authority.get("sha256")
+            or len(cues) != reviewed_authority.get("cue_count")
+        ):
+            raise ManualScorecardRescoreError(
+                "reviewed final SRT does not match the candidate correction authority"
+            )
+        if (
+            source_start_ms != source_authority.get("absolute_start_ms")
+            or source_end_ms != source_authority.get("absolute_end_ms")
+        ):
+            raise ManualScorecardRescoreError(
+                "source interval does not match the candidate correction authority"
+            )
+        input_mode = "candidate_correction_authority"
+        original_hook = str(authority["original_selection_hook"])
+    else:
+        if (
+            source_fact_receipt is None
+            or source_fact_receipt_sha256 is None
+            or stale_hook is not None
+        ):
+            raise ManualScorecardRescoreError(
+                "stale source-fact receipt path and SHA-256 are required"
+            )
+        receipt_binding, receipt_raw = _bind_file(
+            source_fact_receipt,
+            source_fact_receipt_sha256,
+            label="stale source-fact receipt",
+        )
+        receipt = _json_object(receipt_raw, label="stale source-fact receipt")
+        original_hook = receipt.get("original_selection_hook")
+        original_title = receipt.get("original_title")
+        if not isinstance(original_hook, str) or not isinstance(original_title, str):
+            raise ManualScorecardRescoreError(
+                "stale source-fact receipt has no original hook/title binding"
+            )
+        if not validate_source_fact_rescore_candidate_receipt(
+            receipt,
+            selection_hook=original_hook,
+            title=original_title,
+            selection_scorecard=scorecard,
+            candidate_id=candidate_id,
+            final_reviewed_srt_path=reviewed_binding.path,
+        ):
+            raise ManualScorecardRescoreError("stale source-fact receipt chain is invalid")
+        rescore_block = receipt.get("rescore_candidate")
+        assert isinstance(rescore_block, Mapping)
+        if rescore_block.get("repaired_selection_hook") != corrected_hook:
+            raise ManualScorecardRescoreError(
+                "corrected hook does not match the source-fact rescore candidate"
+            )
+        passes = receipt.get("passes")
+        assert isinstance(passes, list) and passes and isinstance(passes[-1], Mapping)
+        if passes[-1].get("final_transcript_sha256") != reviewed_transcript_sha256:
+            raise ManualScorecardRescoreError(
+                "reviewed final SRT text does not match the stale source-fact receipt"
+            )
+        input_mode = "source_fact_stale_receipt"
 
     calibration = load_selected_selection_calibration_policy()
     calibration_path, calibration_raw = _regular_input(
@@ -384,18 +483,21 @@ def validate_manual_rescore_inputs(
     calibration_binding = _BoundFile(calibration_path, calibration_observed)
 
     input_bindings: dict[str, object] = {
+        "input_mode": input_mode,
         "candidate_id": candidate_id,
         "reviewed_final_srt_sha256": reviewed_binding.sha256,
         "reviewed_final_cue_count": len(cues),
         "reviewed_final_transcript_sha256": reviewed_transcript_sha256,
         "corrected_hook": corrected_hook,
         "corrected_hook_sha256": _bytes_sha256(corrected_hook.encode("utf-8")),
+        "original_selection_hook": original_hook,
+        "original_selection_hook_sha256": _bytes_sha256(
+            original_hook.encode("utf-8")
+        ),
         "source_interval": {
             "absolute_start_ms": source_start_ms,
             "absolute_end_ms": source_end_ms,
         },
-        "source_fact_receipt_file_sha256": receipt_binding.sha256,
-        "source_fact_receipt_sha256": receipt.get("receipt_sha256"),
         "stale_scorecard_file_sha256": scorecard_binding.sha256,
         "stale_scorecard_sha256": _canonical_sha256(scorecard),
         "provider_config_file_sha256": provider_binding.sha256,
@@ -408,10 +510,25 @@ def validate_manual_rescore_inputs(
         "provider_timeout_seconds": provider["llm_config"]["timeout_seconds"],  # type: ignore[index]
         "selection_calibration_sha256": calibration_binding.sha256,
     }
+    if receipt_binding is not None and receipt is not None:
+        input_bindings.update(
+            {
+                "source_fact_receipt_file_sha256": receipt_binding.sha256,
+                "source_fact_receipt_sha256": receipt.get("receipt_sha256"),
+            }
+        )
+    if authority_binding is not None and authority is not None:
+        input_bindings.update(
+            {
+                "correction_authority_file_sha256": authority_binding.sha256,
+                "correction_authority_sha256": authority.get("authority_sha256"),
+            }
+        )
     return _ValidatedInputs(
         candidate_id=candidate_id,
         reviewed_srt=reviewed_binding,
         source_fact_receipt=receipt_binding,
+        correction_authority=authority_binding,
         stale_scorecard=scorecard_binding,
         provider_config=provider_binding,
         calibration_policy=calibration_binding,
@@ -420,6 +537,7 @@ def validate_manual_rescore_inputs(
         source_end_ms=source_end_ms,
         cues=cues,
         receipt=receipt,
+        authority=authority,
         scorecard=scorecard,
         provider=provider,
         input_bindings=input_bindings,
@@ -443,13 +561,21 @@ def _preflight_document(validated: _ValidatedInputs) -> dict[str, object]:
 
 
 def _assert_inputs_unchanged(validated: _ValidatedInputs) -> None:
-    for binding, label in (
+    bindings: list[tuple[_BoundFile, str]] = [
         (validated.reviewed_srt, "reviewed final SRT"),
-        (validated.source_fact_receipt, "stale source-fact receipt"),
         (validated.stale_scorecard, "stale scorecard"),
         (validated.provider_config, "provider config"),
         (validated.calibration_policy, "selection calibration policy"),
-    ):
+    ]
+    if validated.source_fact_receipt is not None:
+        bindings.append(
+            (validated.source_fact_receipt, "stale source-fact receipt")
+        )
+    if validated.correction_authority is not None:
+        bindings.append(
+            (validated.correction_authority, "candidate correction authority")
+        )
+    for binding, label in bindings:
         _, raw = _regular_input(binding.path, label=label)
         if _bytes_sha256(raw) != binding.sha256:
             raise ManualScorecardRescoreError(
@@ -580,12 +706,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--source-fact-receipt",
         type=Path,
-        required=True,
         help="exact REPAIR_SCORECARD_STALE source-fact receipt JSON",
     )
     parser.add_argument(
         "--source-fact-receipt-sha256",
-        required=True,
         help="expected SHA-256 of the receipt file bytes",
     )
     parser.add_argument(
@@ -603,6 +727,19 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-end-ms", type=int, required=True)
     parser.add_argument("--provider-config", type=Path, required=True)
     parser.add_argument("--provider-config-sha256", required=True)
+    parser.add_argument(
+        "--correction-authority",
+        type=Path,
+        help=(
+            "candidate-scoped committed Ivan correction authority; mutually "
+            "exclusive with --source-fact-receipt"
+        ),
+    )
+    parser.add_argument("--correction-authority-sha256")
+    parser.add_argument(
+        "--stale-hook",
+        help="old incorrect hook; required by correction-authority mode",
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
         "--execute-provider-call",
@@ -631,6 +768,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             source_end_ms=args.source_end_ms,
             provider_config=args.provider_config,
             provider_config_sha256=args.provider_config_sha256,
+            correction_authority=args.correction_authority,
+            correction_authority_sha256=args.correction_authority_sha256,
+            stale_hook=args.stale_hook,
             output=args.output,
             execute_provider_call=args.execute_provider_call,
         )

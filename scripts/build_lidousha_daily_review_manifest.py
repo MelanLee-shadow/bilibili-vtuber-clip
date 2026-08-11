@@ -264,6 +264,8 @@ def _validate_source_fact_receipts(
             story_contract.get("clip_context_prompt") or ""
         ),
         selection_scorecard=story_contract.get("selection_scorecard"),
+        candidate_id=str(story_contract.get("candidate_id") or ""),
+        final_reviewed_srt_path=subtitle_path,
     ):
         raise DailyManifestError(
             "source-fact review receipt is invalid or stale"

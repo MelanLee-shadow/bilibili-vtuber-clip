@@ -18,6 +18,11 @@ from src.autoslice.producer_boundary import (
     BOUNDARY_REPAIR_EXTEND_CAP_MS,
 )
 from src.autoslice.producer_media import _resolved_optional_path
+from src.autoslice.source_fact_rescore_provenance import (
+    PROVENANCE_FIELD,
+    SourceFactRescoreProvenanceError,
+    validate_rebound_spec_provenance,
+)
 
 
 @dataclass(frozen=True)
@@ -149,6 +154,7 @@ def load_producer_request(
                     spec.get("subtitle_redelivery_baseline"),
                 ),
                 ("spec.speaker_overrides", spec.get("speaker_overrides")),
+                (f"spec.{PROVENANCE_FIELD}", spec.get(PROVENANCE_FIELD)),
             )
             if value is not None
         ]
@@ -156,6 +162,20 @@ def load_producer_request(
             raise ValueError(
                 "blind subtitle generation refuses human-truth inputs: " + ", ".join(leaked_inputs)
             )
+    if truth_mode == "delivery":
+        try:
+            rescore_provenance = validate_rebound_spec_provenance(
+                spec,
+                repo_root=repo_root,
+            )
+        except SourceFactRescoreProvenanceError as exc:
+            raise ValueError(
+                f"SOURCE_FACT_SCORECARD_RESCORE_PROVENANCE_INVALID: {exc}"
+            ) from exc
+        if rescore_provenance is not None:
+            # Persist the normalized plain dict instead of an arbitrary Mapping
+            # implementation supplied by a caller.
+            spec[PROVENANCE_FIELD] = rescore_provenance
     try:
         branding_intro = require_branding_intro(
             repo_root,

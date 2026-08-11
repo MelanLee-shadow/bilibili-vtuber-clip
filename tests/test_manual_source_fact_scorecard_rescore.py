@@ -31,6 +31,16 @@ ORIGINAL_TITLE = "【李豆沙】技能已经被命名成李姐拉拉"
 CORRECTED_HOOK = "弹幕提议把技能叫李姐拉拉，主播随即拒绝。"
 CORRECTED_TITLE = "【李豆沙】弹幕提议把技能叫李姐拉拉，主播随即拒绝"
 FINAL_TRANSCRIPT = "技能可以叫李姐拉拉吗\n不行，我这个应该叫李姐网"
+STORY_CANDIDATE_ID = "auto_223750_578_734"
+STORY_ORIGINAL_HOOK = (
+    "小李可怜巴巴求莉亚即使是狼也放过自己，刚结伴就突然连声道歉，"
+    "场面瞬间从求生撒娇变成事故现场。"
+)
+STORY_CORRECTED_HOOK = (
+    "莉娅求小李‘就算你是狼也放过我’，小李让她放心并提议一起走，"
+    "莉娅答应后小李突然连声道歉。"
+)
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _file_sha(path: Path) -> str:
@@ -68,6 +78,44 @@ def _stale_scorecard() -> dict[str, object]:
     )
     assert card is not None
     return card
+
+
+def _story_stale_scorecard() -> dict[str, object]:
+    return {
+        "dimensions": {
+            "audience_salience": 2,
+            "comedic_payoff": 3,
+            "lidousha_centrality": 3,
+            "persona_reversal": 4,
+            "relationship_interaction": 4,
+            "self_contained": 3,
+            "stance_intensity": 2,
+        },
+        "effective_score": 69.5,
+        "fatigue_penalty": 0.0,
+        "raw_score": 72.5,
+        "reason_codes": [],
+        "requested_tier": 1,
+        "schema_version": "lidousha-selection-scorecard.v1",
+        "status": "VALID",
+        "tier": 1,
+        "tier_basis": "relationship_chain",
+        "tier_evidence_cues": [250, 255, 256, 258, 259, 262, 263, 264, 265],
+        "tier_reason": (
+            "片内有小李向莉亚求饶、对方答应、两人结伴以及随后连续道歉的"
+            "关系互动和强烈反转，画面可补足具体游戏动作。"
+        ),
+        "uncertainty_penalty": 3.0,
+        "weights": {
+            "audience_salience": 15,
+            "comedic_payoff": 10,
+            "lidousha_centrality": 25,
+            "persona_reversal": 10,
+            "relationship_interaction": 15,
+            "self_contained": 5,
+            "stance_intensity": 20,
+        },
+    }
 
 
 def _stale_receipt(scorecard: dict[str, object]) -> dict[str, object]:
@@ -195,6 +243,54 @@ def _fixture(tmp_path: Path) -> dict[str, object]:
         "provider_config": provider,
         "provider_config_sha256": _file_sha(provider),
         "output": tmp_path / "rescored.json",
+    }
+
+
+def _story_authority_fixture(tmp_path: Path) -> dict[str, object]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    scorecard = tmp_path / "stale-story-scorecard.json"
+    _write_json(scorecard, _story_stale_scorecard())
+    provider = tmp_path / "provider.json"
+    _write_json(
+        provider,
+        {
+            "schema_version": "manual-source-fact-rescore-provider.v1",
+            "provider": CPA_PROVIDER,
+            "model": CPA_MODEL,
+            "llm_config": {
+                "transport": CPA_TRANSPORT,
+                "command_template": CPA_COMMAND_TEMPLATE,
+                "timeout_seconds": CPA_CALLER_TIMEOUT_SECONDS,
+            },
+        },
+    )
+    reviewed = (
+        ROOT
+        / "assets/lidousha/reviewed_subtitle_baselines/"
+        "auto_223750_578_734.reviewed.srt"
+    )
+    authority = (
+        ROOT
+        / "assets/lidousha/authorities/"
+        "auto_223750_578_734.source-fact-rescore-authority.v1.json"
+    )
+    return {
+        "candidate_id": STORY_CANDIDATE_ID,
+        "reviewed_final_srt": reviewed,
+        "reviewed_final_srt_sha256": _file_sha(reviewed),
+        "corrected_hook": STORY_CORRECTED_HOOK,
+        "source_fact_receipt": None,
+        "source_fact_receipt_sha256": None,
+        "stale_scorecard": scorecard,
+        "stale_scorecard_sha256": _file_sha(scorecard),
+        "source_start_ms": 577_780,
+        "source_end_ms": 735_090,
+        "provider_config": provider,
+        "provider_config_sha256": _file_sha(provider),
+        "correction_authority": authority,
+        "correction_authority_sha256": _file_sha(authority),
+        "stale_hook": STORY_ORIGINAL_HOOK,
+        "output": tmp_path / "rescored-story.json",
     }
 
 
@@ -415,3 +511,65 @@ def test_rejects_receipt_srt_or_corrected_hook_mismatch_before_provider(tmp_path
             llm_call=provider,
         )
     assert calls == 0
+
+
+def test_committed_candidate_authority_mode_is_validation_only_by_default(
+    tmp_path: Path,
+) -> None:
+    fixture = _story_authority_fixture(tmp_path)
+    calls = 0
+
+    def provider(_prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        return _provider_payload()
+
+    preflight = run_manual_rescore(**fixture, llm_call=provider)
+
+    assert preflight["status"] == "VALIDATED_NO_PROVIDER_CALL"
+    bindings = preflight["input_bindings"]
+    assert bindings["input_mode"] == "candidate_correction_authority"
+    assert bindings["original_selection_hook"] == STORY_ORIGINAL_HOOK
+    assert bindings["corrected_hook"] == STORY_CORRECTED_HOOK
+    assert bindings["stale_scorecard_sha256"] == (
+        "sha256:b16649c47ce299821b0ab0b83ed7e168846beed282afaafc817631f340081e0a"
+    )
+    assert bindings["correction_authority_sha256"] == (
+        "sha256:c61f6094abfef6ec37da728931b16ccf2e6fd4b49c6bf9f2449540b73ea82a1d"
+    )
+    assert calls == 0
+    assert not fixture["output"].exists()
+
+
+def test_committed_candidate_authority_still_requires_double_execution_authority(
+    tmp_path: Path,
+) -> None:
+    fixture = _story_authority_fixture(tmp_path)
+    calls = 0
+
+    def provider(prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        assert STORY_CORRECTED_HOOK in prompt
+        return _provider_payload()
+
+    with pytest.raises(ManualScorecardRescoreError, match=EXECUTION_AUTHORITY_ENV):
+        run_manual_rescore(
+            **fixture,
+            execute_provider_call=True,
+            environ={},
+            llm_call=provider,
+        )
+    assert calls == 0
+
+    receipt = run_manual_rescore(
+        **fixture,
+        execute_provider_call=True,
+        environ={EXECUTION_AUTHORITY_ENV: EXECUTION_AUTHORITY_VALUE},
+        llm_call=provider,
+    )
+    assert calls == 1
+    assert receipt["input_bindings"]["input_mode"] == (
+        "candidate_correction_authority"
+    )
+    assert receipt["authority"]["publication_authority"] is False

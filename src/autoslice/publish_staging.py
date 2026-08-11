@@ -529,22 +529,16 @@ def _stage_publish_draft(
     manual_title_repair_authority_consumption = None
     if title_authority_error is None and source_fact_llm_call is not None:
         final_transcript, speaker_transcript = build_addressee_transcripts(record, cues)  # F12 受话人归属
-        context_prompt = (
-            str(story_contract.get("clip_context_prompt") or "")
-            if isinstance(story_contract, Mapping)
-            else ""
-        )
+        context_prompt = (str(story_contract.get("clip_context_prompt") or "")
+                          if isinstance(story_contract, Mapping) else "")
         source_fact_review = review_and_repair_source_facts(
             selection_hook=str(selection_hook or ""),
             title=staged_title,
             final_transcript=final_transcript,
             clip_context_prompt=context_prompt, speaker_transcript=speaker_transcript,
             llm_call=source_fact_llm_call,
-            selection_scorecard=(
-                story_contract.get("selection_scorecard")
-                if isinstance(story_contract, Mapping)
-                else None
-            ),
+            selection_scorecard=(story_contract.get("selection_scorecard")
+                                 if isinstance(story_contract, Mapping) else None),
             # Recovery-public and Ivan/manual titles are exact authorities.
             # CPA may KEEP them, but a proposed title rewrite needs a new
             # authority instead of silently spending cover budget on it.
@@ -554,6 +548,9 @@ def _stage_publish_draft(
                 or title_source == "ivan_manual_override"
             ),
             enforce_automatic_title_style=title_llm_call is not None,
+            candidate_id=candidate_id,
+            final_reviewed_srt_path=(Path(str(record["subtitle_path"]))
+                                     if record.get("subtitle_path") else None),
         )
         # Manual text remains immutable by default.  A checked-in authority
         # may unlock exactly one already-evidenced source-fact repair, bound

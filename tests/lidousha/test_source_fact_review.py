@@ -1,8 +1,10 @@
 import json
+from pathlib import Path
 
 from src.autoslice.publish_staging import _stage_publish_draft
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.source_fact_review import (
+    _finalize_receipt,
     _valid_changed_surface,
     review_and_repair_source_facts,
     source_fact_review_passes,
@@ -82,6 +84,8 @@ def test_adjacent_structured_chat_supports_beidian_keep() -> None:
     assert review["final_selection_hook"] == hook
     assert review["final_title"] == title
     assert len(review["passes"]) == 1
+    assert "entity_context" not in review
+    assert "entity_context_sha256" not in review["passes"][0]
 
 
 def test_source_fact_prompt_forbids_birthday_forwarding_role_drift() -> None:
@@ -987,6 +991,252 @@ def test_prompt_teaches_hard_meme_canon_semantics() -> None:
     assert "hard-meme-canon" in prompt
     assert "「直女」一律写作「侄女」" in prompt
     assert "不得把规范词面" in prompt or "永远不得把规范词面" in prompt
+
+
+def _story_entity_srt() -> Path:
+    return (
+        Path(__file__).resolve().parents[2]
+        / "assets/lidousha/reviewed_subtitle_baselines"
+        / "auto_223750_578_734.reviewed.srt"
+    )
+
+
+def test_candidate_entity_context_binds_srt_and_teaches_derived_spelling() -> None:
+    hook = "莉娅求小李‘就算你是狼也放过我’，结伴后小李突然连声道歉。"
+    title = "【李豆沙】莉娅求小李“就算你是狼也放过我”，结伴后小李突然连声道歉"
+    seen: dict[str, str] = {}
+
+    def cpa(prompt: str) -> str:
+        seen["prompt"] = prompt
+        return _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+        )
+
+    review = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript="莉亚 活着\n就算你是狼\n你放过我好吗\n对不起",
+        clip_context_prompt="",
+        llm_call=cpa,
+        candidate_id="auto_223750_578_734",
+        final_reviewed_srt_path=_story_entity_srt(),
+    )
+
+    assert source_fact_review_passes(review)
+    context = review["entity_context"]
+    assert context["schema_version"] == "source-fact-entity-context.v1"
+    assert context["final_reviewed_srt_sha256"] == (
+        "6d79fdab105d4c7b5edffec66fe526aa01839de342a7c96b8784f4d0100a8062"
+    )
+    assert review["passes"][0]["entity_context_sha256"] == (
+        context["context_sha256"]
+    )
+    prompt = seen["prompt"]
+    assert "「莉娅」↔「莉亚」 指同一实体" in prompt
+    assert "最终字幕可保留 reviewed_surface「莉亚」" in prompt
+    assert "derived title_cover 文案" in prompt
+    assert "必须写「莉娅」" in prompt
+    assert validate_source_fact_review(
+        review,
+        selection_hook=hook,
+        title=title,
+        final_transcript="莉亚 活着\n就算你是狼\n你放过我好吗\n对不起",
+        clip_context_prompt="",
+        candidate_id="auto_223750_578_734",
+        final_reviewed_srt_path=_story_entity_srt(),
+    )
+    # A context-bearing receipt cannot be downgraded to legacy validation.
+    assert not validate_source_fact_review(
+        review,
+        selection_hook=hook,
+        title=title,
+        final_transcript="莉亚 活着\n就算你是狼\n你放过我好吗\n对不起",
+        clip_context_prompt="",
+    )
+    tampered_body = json.loads(json.dumps(review, ensure_ascii=False))
+    tampered_body.pop("receipt_sha256")
+    tampered_body["entity_context"]["projection_sha256"] = "0" * 64
+    tampered = _finalize_receipt(tampered_body)
+    assert not validate_source_fact_review(
+        tampered,
+        selection_hook=hook,
+        title=title,
+        final_transcript="莉亚 活着\n就算你是狼\n你放过我好吗\n对不起",
+        clip_context_prompt="",
+        candidate_id="auto_223750_578_734",
+        final_reviewed_srt_path=_story_entity_srt(),
+    )
+
+
+def test_candidate_entity_input_gate_blocks_wrong_derived_spelling_before_cpa() -> None:
+    calls = 0
+
+    def cpa(_prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("CPA ran before the entity surface gate")
+
+    review = review_and_repair_source_facts(
+        selection_hook="莉亚求小李放过她。",
+        title="【李豆沙】莉亚求小李放过她，结伴后小李突然连声道歉",
+        final_transcript="莉亚 活着\n你放过我好吗",
+        clip_context_prompt="",
+        llm_call=cpa,
+        candidate_id="auto_223750_578_734",
+        final_reviewed_srt_path=_story_entity_srt(),
+    )
+
+    assert calls == 0
+    assert review["status"] == "FAILED"
+    assert review["reason_code"] == "SOURCE_FACT_INPUT_ENTITY_SURFACE_INVALID"
+    assert "expected=莉娅:observed=莉亚" in review["entity_surface_error"]
+
+
+def test_candidate_entity_response_gate_rejects_cpa_reversion_to_srt_spelling() -> None:
+    hook = "莉娅求小李放过她。"
+    title = "【李豆沙】莉娅求小李放过她，结伴后小李突然连声道歉"
+    wrong_title = "【李豆沙】莉亚求小李放过她，结伴后小李突然连声道歉"
+    calls = 0
+
+    def cpa(_prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        return _completion(
+            status="REPAIR",
+            final_hook=hook,
+            final_title=wrong_title,
+            supported_by=["final_transcript"],
+            changed_surfaces=[
+                {
+                    "artifact": "title",
+                    "before": "莉娅",
+                    "after": "莉亚",
+                    "reason": "错误地贴合字幕词面。",
+                    "evidence": ["莉亚 活着"],
+                }
+            ],
+        )
+
+    review = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript="莉亚 活着\n你放过我好吗",
+        clip_context_prompt="",
+        llm_call=cpa,
+        candidate_id="auto_223750_578_734",
+        final_reviewed_srt_path=_story_entity_srt(),
+    )
+
+    assert calls == 3
+    assert review["status"] == "FAILED"
+    assert review["reason_code"] == "CPA_ENTITY_SURFACE_RESPONSE_INVALID"
+    assert all(
+        row["entity_context_sha256"]
+        == review["entity_context"]["context_sha256"]
+        for row in review["passes"]
+    )
+
+
+def test_candidate_entity_context_rejects_final_srt_byte_drift(
+    tmp_path: Path,
+) -> None:
+    drifted = tmp_path / "final.reviewed.srt"
+    drifted.write_bytes(_story_entity_srt().read_bytes() + b"\n")
+    calls = 0
+
+    def cpa(_prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("CPA ran with stale reviewed SRT bytes")
+
+    review = review_and_repair_source_facts(
+        selection_hook="莉娅求小李放过她。",
+        title="【李豆沙】莉娅求小李放过她，结伴后小李突然连声道歉",
+        final_transcript="莉亚 活着\n你放过我好吗",
+        clip_context_prompt="",
+        llm_call=cpa,
+        candidate_id="auto_223750_578_734",
+        final_reviewed_srt_path=drifted,
+    )
+
+    assert calls == 0
+    assert review["status"] == "FAILED"
+    assert review["reason_code"] == "SOURCE_FACT_ENTITY_CONTEXT_INVALID"
+    assert "SOURCE_FACT_FINAL_REVIEWED_SRT_BINDING_MISMATCH" in (
+        review["entity_context_error"]
+    )
+
+
+def test_publish_staging_wires_exact_final_srt_into_entity_context(
+    tmp_path: Path,
+) -> None:
+    hook = "莉娅求小李‘就算你是狼也放过我’，结伴后小李突然连声道歉。"
+    title = "【李豆沙】莉娅求小李“就算你是狼也放过我”，结伴后小李突然连声道歉"
+    transcript = "莉亚 活着\n我想活着\n就算你是狼\n你放过我好吗\n对不起"
+    story = build_story_contract(
+        candidate_id="auto_223750_578_734",
+        selection_hook=hook,
+        transcript_text=transcript,
+        selection_scorecard=None,
+        session_relation_authority=None,
+    )
+    media = tmp_path / "auto_223750_578_734.recut.mp4"
+    media.write_bytes(b"video")
+
+    def cpa(prompt: str) -> str:
+        assert "entity_context_sha256:" in prompt
+        return _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+        )
+
+    def stage_cover(
+        _record: dict[str, object],
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        cover = tmp_path / "cover.png"
+        cover.write_bytes(b"cover")
+        return {
+            "status": "AI_COVER_READY",
+            "cover_path": str(cover),
+            "cover_generation": {
+                "status": "READY",
+                "rendered_lines": ["莉娅求小李放过我"],
+            },
+            "reason_codes": [],
+        }
+
+    staged = _stage_publish_draft(
+        {
+            "status": "MATERIALIZED",
+            "media_path": str(media),
+            "subtitle_path": str(_story_entity_srt()),
+            "story_contract": story,
+            "artifact_hashes": {},
+        },
+        candidate_id="auto_223750_578_734",
+        title=title,
+        cues=[SourceCue("cue-1", 0, 1_000, transcript, "zh", "speech", 1.0)],
+        run_ffmpeg=False,
+        title_llm_call=None,
+        selection_hook=hook,
+        source_fact_llm_call=cpa,
+        story_contract_rebuilder=lambda _hook: story,
+        stage_cover=stage_cover,
+    )
+
+    assert staged is not None
+    receipt = staged["story_contract"]["source_fact_review"]
+    assert receipt["status"] == "PASS"
+    assert receipt["entity_context"]["candidate_id"] == "auto_223750_578_734"
+    assert receipt["passes"][0]["entity_context_sha256"] == (
+        receipt["entity_context"]["context_sha256"]
+    )
 
 
 def test_judge_repair_reintroducing_banned_surface_is_recanonicalized() -> None:

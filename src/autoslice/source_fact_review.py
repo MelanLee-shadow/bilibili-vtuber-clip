@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping
 
 from src.autoslice.addressee_attribution import (
@@ -16,6 +18,12 @@ from src.autoslice.addressee_attribution import (
     build_addressee_transcripts as build_addressee_transcripts,
     evaluate_addressee_attribution,
 )
+from src.autoslice.candidate_entity_projection import (
+    CandidateEntityProjectionError,
+    FrozenCandidateEntityProjection,
+    load_candidate_entity_projection,
+)
+from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.llm_client import LlmCall, extract_json_object
 from src.autoslice.surface_canon import (
     canonicalize_hard_meme_surfaces,
@@ -26,6 +34,7 @@ from src.autoslice.title_policy import publish_title_policy_violations
 
 SCHEMA_VERSION = "lidousha-source-fact-review.v1"
 RESCORE_CANDIDATE_SCHEMA_VERSION = "source-fact-rescore-candidate.v1"
+ENTITY_CONTEXT_SCHEMA_VERSION = "source-fact-entity-context.v1"
 MAX_REVIEW_PASSES = 5
 # 程度升级词面：狍哥案（2026-08-07 §7）机器可复核部分——degree 槽只准逐字或
 # 降级，不得升级；升级词若不在 before 原文也不在任何 evidence 原文中出现，
@@ -38,6 +47,21 @@ _DEGREE_UPGRADE_WORDS = ("最", "所有", "永远", "绝对", "彻底", "唯一"
 # 失败（形状无效/调用异常），语义结果（KEEP/REPAIR）永不重掷；UNAVAILABLE
 # （没配 llm_call）不重试。每次重试都进回执披露。
 MAX_PROVIDER_RETRIES_PER_PASS = 2
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_CHANNEL_PROFILE = load_channel_profile(_REPO_ROOT)
+_CANDIDATE_RECUT_SUFFIX_RX = re.compile(r"r\d+$")
+
+
+@dataclass(frozen=True, slots=True)
+class _ResolvedEntityContext:
+    """Runtime projection plus its relocation-safe receipt representation."""
+
+    projection: FrozenCandidateEntityProjection
+    document: dict[str, object]
+
+    @property
+    def context_sha256(self) -> str:
+        return str(self.document["context_sha256"])
 
 
 def _sha256_text(value: str) -> str:
@@ -52,6 +76,175 @@ def _sha256_json(value: object) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _candidate_family(candidate_id: str) -> str:
+    value = str(candidate_id or "").strip()
+    if (
+        not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{2,127}", value)
+        or Path(value).name != value
+    ):
+        return ""
+    return _CANDIDATE_RECUT_SUFFIX_RX.sub("", value)
+
+
+def _load_source_fact_entity_context(
+    *,
+    candidate_id: str | None,
+    final_reviewed_srt_path: Path | None,
+) -> _ResolvedEntityContext | None:
+    """Resolve an optional candidate projection against this run's SRT bytes.
+
+    Absence of a checked-in projection preserves the legacy lane exactly.  Once
+    a projection exists, however, neither a missing final SRT nor a byte drift
+    may silently downgrade the candidate back to that legacy lane.
+    """
+
+    family = _candidate_family(str(candidate_id or ""))
+    if not family:
+        return None
+    projection_path = (
+        _CHANNEL_PROFILE.asset_root
+        / "candidate_entity_projections"
+        / f"{family}.entity-projection.v1.json"
+    )
+    if not (projection_path.exists() or projection_path.is_symlink()):
+        return None
+    if final_reviewed_srt_path is None:
+        raise CandidateEntityProjectionError(
+            "SOURCE_FACT_FINAL_REVIEWED_SRT_REQUIRED"
+        )
+    final_srt = Path(final_reviewed_srt_path)
+    if final_srt.is_symlink() or not final_srt.is_file():
+        raise CandidateEntityProjectionError(
+            "SOURCE_FACT_FINAL_REVIEWED_SRT_UNAVAILABLE"
+        )
+    reviewed_baseline = (
+        _CHANNEL_PROFILE.asset_directory("reviewed_subtitle_baselines")
+        / f"{family}.reviewed.srt"
+    )
+    projection = load_candidate_entity_projection(
+        projection_path=projection_path,
+        candidate_id=family,
+        reviewed_srt_path=reviewed_baseline,
+    )
+    observed_srt_sha256 = _sha256_file(final_srt)
+    if observed_srt_sha256 != projection.binding.reviewed_srt_sha256:
+        raise CandidateEntityProjectionError(
+            "SOURCE_FACT_FINAL_REVIEWED_SRT_BINDING_MISMATCH:"
+            f"expected={projection.binding.reviewed_srt_sha256}:"
+            f"actual={observed_srt_sha256}"
+        )
+
+    rules: list[dict[str, object]] = []
+    for identity in projection.identity_equivalences:
+        rules.append(
+            {
+                "entity_id": identity.entity_id,
+                "identity_equivalent_surfaces": list(
+                    identity.equivalent_surfaces
+                ),
+                "reviewed_surface": projection.projected_surface(
+                    entity_id=identity.entity_id,
+                    surface_type="reviewed",
+                ),
+                "title_cover_surface": projection.projected_surface(
+                    entity_id=identity.entity_id,
+                    surface_type="title_cover",
+                ),
+            }
+        )
+    body: dict[str, object] = {
+        "schema_version": ENTITY_CONTEXT_SCHEMA_VERSION,
+        "authority_scope": "IDENTITY_AND_SPELLING_ONLY_NO_EVENT_FACT_AUTHORITY",
+        "candidate_id": family,
+        "final_reviewed_srt_sha256": observed_srt_sha256,
+        "projection_sha256": projection.projection_sha256,
+        "candidate_binding": {
+            "source_recording_basename": (
+                projection.binding.source_recording_basename
+            ),
+            "source_sha256": projection.binding.source_sha256,
+            "absolute_source_start_ms": (
+                projection.binding.absolute_source_start_ms
+            ),
+            "absolute_source_end_ms": (
+                projection.binding.absolute_source_end_ms
+            ),
+        },
+        "identity_spelling_rules": rules,
+    }
+    return _ResolvedEntityContext(
+        projection=projection,
+        document={**body, "context_sha256": _sha256_json(body)},
+    )
+
+
+def _entity_context_prompt_block(
+    context: _ResolvedEntityContext | None,
+) -> str:
+    if context is None:
+        return ""
+    rules = context.document.get("identity_spelling_rules")
+    assert isinstance(rules, list)
+    lines = [
+        "候选实体词面约束（identity/spelling only，不授权任何新事件事实）：",
+        f"entity_context_sha256: {context.context_sha256}",
+    ]
+    for row in rules:
+        assert isinstance(row, Mapping)
+        equivalents = row.get("identity_equivalent_surfaces")
+        assert isinstance(equivalents, list)
+        joined = "↔".join(f"「{surface}」" for surface in equivalents)
+        lines.append(
+            f"- {row.get('entity_id')}: {joined} 指同一实体；最终字幕可保留"
+            f" reviewed_surface「{row.get('reviewed_surface')}」，但 selection_hook、"
+            f"投稿标题与封面属于 derived title_cover 文案，提到该实体时必须写"
+            f"「{row.get('title_cover_surface')}」。不得为了贴合字幕拼写把 derived "
+            "文案改成另一个 identity-equivalent surface。"
+        )
+    lines.append(
+        "上述 context 已绑定本轮 final reviewed SRT 原始 bytes、candidate、source "
+        "interval 与 projection；它只裁定同一实体及各表面拼写，不得作为剧情、"
+        "动作、因果或说话人事实的证据。"
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _entity_surface_error(
+    context: _ResolvedEntityContext | None,
+    *,
+    selection_hook: str,
+    title: str,
+) -> str | None:
+    if context is None:
+        return None
+    try:
+        context.projection.require_text_surfaces(
+            surface_type="title_cover",
+            text=selection_hook,
+        )
+        context.projection.require_text_surfaces(
+            surface_type="title_cover",
+            text=title,
+        )
+    except CandidateEntityProjectionError as exc:
+        return str(exc)
+    return None
+
+
+def _entity_receipt_fields(
+    context: _ResolvedEntityContext | None,
+) -> dict[str, object]:
+    return ({"entity_context": dict(context.document)} if context else {})
 
 
 def _finalize_receipt(receipt: dict[str, object]) -> dict[str, object]:
@@ -103,6 +296,7 @@ def _prompt(
     review_pass: int,
     title_policy_violations: list[str],
     speaker_transcript: str | None,
+    entity_context: _ResolvedEntityContext | None,
 ) -> str:
     return (
         "你是李豆沙切片派生文案的 source-fact 最终裁决者。你只有文字输入，"
@@ -113,7 +307,8 @@ def _prompt(
         "释义，是否能由最终字幕或同片 hash-bound 结构化弹幕/SC/上下文支持。"
         "允许不逐字的自然概括，但不允许把提议写成既成事实、把猜测写成断言，"
         "也不允许凭空把同音词换成另一个含义。\n"
-        "如果你修复 selection_hook，还必须核对原 selection_scorecard 的"
+        + _entity_context_prompt_block(entity_context)
+        + "如果你修复 selection_hook，还必须核对原 selection_scorecard 的"
         "tier_basis、tier_reason、维度和证据 cue 是否仍描述修复后的同一核心梗。"
         "若仍一致，selection_scorecard_review.status=COMPATIBLE；若核心梗已换，"
         "必须填 INCOMPATIBLE，流水线会停止而不是把旧评分卡带进新 StoryContract。"
@@ -339,6 +534,7 @@ def _single_review(
     review_pass: int,
     enforce_automatic_title_style: bool,
     speaker_transcript: str | None = None,
+    entity_context: _ResolvedEntityContext | None = None,
 ) -> dict[str, object]:
     title_policy_violations = publish_title_policy_violations(
         title,
@@ -353,6 +549,7 @@ def _single_review(
         review_pass=review_pass,
         title_policy_violations=title_policy_violations,
         speaker_transcript=speaker_transcript,
+        entity_context=entity_context,
     )
     base: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
@@ -369,6 +566,8 @@ def _single_review(
         "title_policy_violations": title_policy_violations,
         "request_sha256": _sha256_text(prompt),
     }
+    if entity_context is not None:
+        base["entity_context_sha256"] = entity_context.context_sha256
     if llm_call is None:
         return {
             **base,
@@ -393,6 +592,15 @@ def _single_review(
         final_hook, _ = canonicalize_hard_meme_surfaces(final_hook)
     if isinstance(final_title, str):
         final_title, _ = canonicalize_hard_meme_surfaces(final_title)
+    entity_surface_error = (
+        _entity_surface_error(
+            entity_context,
+            selection_hook=final_hook,
+            title=final_title,
+        )
+        if isinstance(final_hook, str) and isinstance(final_title, str)
+        else None
+    )
     supported_by = payload.get("supported_by")
     changes = payload.get("changed_surfaces")
     if isinstance(changes, list):
@@ -498,6 +706,7 @@ def _single_review(
         and len(summary.strip()) >= 4
         and scorecard_review_valid
         and addressee.valid
+        and entity_surface_error is None
         and (
             (
                 status == "KEEP"
@@ -520,7 +729,11 @@ def _single_review(
         "reason_code": (
             None
             if shape_valid
-            else (addressee.reason_code or "CPA_TEXT_REVIEW_INVALID")
+            else (
+                "CPA_ENTITY_SURFACE_RESPONSE_INVALID"
+                if entity_surface_error is not None
+                else (addressee.reason_code or "CPA_TEXT_REVIEW_INVALID")
+            )
         ),
         "final_selection_hook": (final_hook if isinstance(final_hook, str) else ""),
         "final_title": final_title if isinstance(final_title, str) else "",
@@ -547,6 +760,8 @@ def review_and_repair_source_facts(
     title_repair_allowed: bool = True,
     enforce_automatic_title_style: bool = False,
     speaker_transcript: str | None = None,
+    candidate_id: str | None = None,
+    final_reviewed_srt_path: Path | None = None,
 ) -> dict[str, object]:
     """Run a bounded, evidence-bound KEEP/REPAIR convergence review."""
 
@@ -555,6 +770,49 @@ def review_and_repair_source_facts(
     # 这里对手写 spec 等旁路输入兜底。
     selection_hook, _ = canonicalize_hard_meme_surfaces(selection_hook)
     title, _ = canonicalize_hard_meme_surfaces(title)
+    try:
+        entity_context = _load_source_fact_entity_context(
+            candidate_id=candidate_id,
+            final_reviewed_srt_path=final_reviewed_srt_path,
+        )
+    except (CandidateEntityProjectionError, OSError) as exc:
+        return _finalize_receipt(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "status": "FAILED",
+                "decision": "NONE",
+                "reason_code": "SOURCE_FACT_ENTITY_CONTEXT_INVALID",
+                "entity_context_error": str(exc),
+                "original_selection_hook": selection_hook,
+                "original_title": title,
+                "final_selection_hook": selection_hook,
+                "final_title": title,
+                "passes": [],
+                "provider_retries": [],
+            }
+        )
+    input_surface_error = _entity_surface_error(
+        entity_context,
+        selection_hook=selection_hook,
+        title=title,
+    )
+    if input_surface_error is not None:
+        return _finalize_receipt(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "status": "FAILED",
+                "decision": "NONE",
+                "reason_code": "SOURCE_FACT_INPUT_ENTITY_SURFACE_INVALID",
+                "entity_surface_error": input_surface_error,
+                "original_selection_hook": selection_hook,
+                "original_title": title,
+                "final_selection_hook": selection_hook,
+                "final_title": title,
+                "passes": [],
+                "provider_retries": [],
+                **_entity_receipt_fields(entity_context),
+            }
+        )
     current_hook = selection_hook
     current_title = title
     passes: list[dict[str, object]] = []
@@ -574,12 +832,14 @@ def review_and_repair_source_facts(
                 review_pass=review_pass,
                 enforce_automatic_title_style=enforce_automatic_title_style,
                 speaker_transcript=speaker_transcript,
+                entity_context=entity_context,
             )
             if (
                 review.get("status") != "FAILED"
                 or review.get("reason_code")
                 not in {
                     "CPA_TEXT_REVIEW_INVALID",
+                    "CPA_ENTITY_SURFACE_RESPONSE_INVALID",
                     "CPA_TEXT_REVIEW_CALL_FAILED",
                     # 自相矛盾的归属判项（WRONG_ADDRESSEE 却判 KEEP、或该判不判）
                     # 与形状无效同类：同一份输入重掷一次形状，不是重掷语义结论。
@@ -611,6 +871,7 @@ def review_and_repair_source_facts(
                     "final_title": current_title,
                     "passes": passes,
                     "provider_retries": provider_retries,
+                    **_entity_receipt_fields(entity_context),
                 }
             )
         if review.get("status") != "REPAIR":
@@ -626,6 +887,7 @@ def review_and_repair_source_facts(
                     "final_title": title,
                     "passes": passes,
                     "provider_retries": provider_retries,
+                    **_entity_receipt_fields(entity_context),
                 }
             )
 
@@ -644,6 +906,7 @@ def review_and_repair_source_facts(
                     "final_title": title,
                     "passes": passes,
                     "provider_retries": provider_retries,
+                    **_entity_receipt_fields(entity_context),
                 }
             )
         if (
@@ -671,6 +934,7 @@ def review_and_repair_source_facts(
                     "final_title": title,
                     "passes": passes,
                     "provider_retries": provider_retries,
+                    **_entity_receipt_fields(entity_context),
                     "rescore_candidate": {
                         "schema_version": RESCORE_CANDIDATE_SCHEMA_VERSION,
                         "repaired_selection_hook": repaired_hook,
@@ -704,6 +968,7 @@ def review_and_repair_source_facts(
                     "final_title": title,
                     "passes": passes,
                     "provider_retries": provider_retries,
+                    **_entity_receipt_fields(entity_context),
                 }
             )
         seen_surfaces.add(next_surfaces)
@@ -721,6 +986,7 @@ def review_and_repair_source_facts(
             "final_title": title,
             "passes": passes,
             "provider_retries": provider_retries,
+            **_entity_receipt_fields(entity_context),
         }
     )
 
@@ -785,7 +1051,76 @@ def authorize_manual_title_repair(
             "final_title": proposed_title,
             "passes": list(passes),
             "manual_title_repair_authority_consumption": dict(consumption),
+            **(
+                {"entity_context": dict(review["entity_context"])}
+                if isinstance(review.get("entity_context"), Mapping)
+                else {}
+            ),
         }
+    )
+
+
+def _validate_receipt_entity_context(
+    review: Mapping[str, object],
+    *,
+    candidate_id: str | None,
+    final_reviewed_srt_path: Path | None,
+) -> bool:
+    """Rebuild the projection context instead of trusting its receipt copy."""
+
+    if candidate_id is None and final_reviewed_srt_path is not None:
+        return False
+    try:
+        context = _load_source_fact_entity_context(
+            candidate_id=candidate_id,
+            final_reviewed_srt_path=final_reviewed_srt_path,
+        )
+    except (CandidateEntityProjectionError, OSError):
+        return False
+    passes = review.get("passes")
+    if not isinstance(passes, list):
+        return False
+    if context is None:
+        return bool(
+            "entity_context" not in review
+            and all(
+                isinstance(row, Mapping)
+                and "entity_context_sha256" not in row
+                for row in passes
+            )
+        )
+    if review.get("entity_context") != context.document:
+        return False
+    if any(
+        not isinstance(row, Mapping)
+        or row.get("entity_context_sha256") != context.context_sha256
+        for row in passes
+    ):
+        return False
+    surfaces: list[tuple[str, str]] = [
+        (
+            str(review.get("original_selection_hook") or ""),
+            str(review.get("original_title") or ""),
+        ),
+        (
+            str(review.get("final_selection_hook") or ""),
+            str(review.get("final_title") or ""),
+        ),
+    ]
+    for row in passes:
+        assert isinstance(row, Mapping)
+        hook = row.get("final_selection_hook")
+        title = row.get("final_title")
+        if isinstance(hook, str) and isinstance(title, str):
+            surfaces.append((hook, title))
+    return all(
+        _entity_surface_error(
+            context,
+            selection_hook=hook,
+            title=title,
+        )
+        is None
+        for hook, title in surfaces
     )
 
 
@@ -797,6 +1132,8 @@ def validate_source_fact_review(
     final_transcript: str,
     clip_context_prompt: str,
     selection_scorecard: object = None,
+    candidate_id: str | None = None,
+    final_reviewed_srt_path: Path | None = None,
 ) -> bool:
     """Recheck the persisted receipt without trusting selected top-level fields."""
 
@@ -807,6 +1144,12 @@ def validate_source_fact_review(
     if not isinstance(declared_receipt_sha256, str):
         return False
     if _finalize_receipt(receipt).get("receipt_sha256") != declared_receipt_sha256:
+        return False
+    if not _validate_receipt_entity_context(
+        review,
+        candidate_id=candidate_id,
+        final_reviewed_srt_path=final_reviewed_srt_path,
+    ):
         return False
     if review.get("final_selection_hook") != selection_hook or review.get("final_title") != title:
         return False
@@ -888,6 +1231,8 @@ def validate_source_fact_rescore_candidate_receipt(
     selection_hook: str,
     title: str,
     selection_scorecard: object = None,
+    candidate_id: str | None = None,
+    final_reviewed_srt_path: Path | None = None,
 ) -> bool:
     """Recheck a REPAIR_SCORECARD_STALE receipt's ``rescore_candidate`` block.
 
@@ -907,6 +1252,12 @@ def validate_source_fact_rescore_candidate_receipt(
     if not isinstance(declared_receipt_sha256, str):
         return False
     if _finalize_receipt(receipt).get("receipt_sha256") != declared_receipt_sha256:
+        return False
+    if not _validate_receipt_entity_context(
+        review,
+        candidate_id=candidate_id,
+        final_reviewed_srt_path=final_reviewed_srt_path,
+    ):
         return False
     if (
         review.get("schema_version") != SCHEMA_VERSION

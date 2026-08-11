@@ -11,6 +11,10 @@ make-manifest），于是 wsl 产的每条片都要人伺候。本脚本把前�
         --source /opt/bilive/autoslice/staging/2026-08-07/auto_220747_488_680/replacement_recuts \\
         --date 2026-08-07 --candidate auto_220747_488_680 --apply
 
+已在 committed publication registry 逐字放行的 exact failed pick 只能加
+``--adopt-failed-pick <同一 cid> --release-quote '<Ivan 逐字原话>'``。它不与
+``--allow-new-pick`` 共用，也不会替代 audit/QC/authorized-upload。
+
 不带 ``--apply`` 是 dry-run：解析根、验证定位符契约、列出要搬的字节、并在**持
 runner.lock 只读**的前提下预判 state 能不能绑——一个字节都不写。
 
@@ -56,6 +60,9 @@ from src.autoslice.runner_state_writeback import (  # noqa: E402
 
 DEFAULT_BASE = Path("/opt/bilive/autoslice")
 PACKAGE_AUDIT_NAME = "package_audit.json"
+PUBLICATION_REGISTRY_RELATIVE = Path(
+    "assets/lidousha/publication_registry.v1.json"
+)
 STEP_ORDER = (
     "PREFLIGHT",
     "COPY",
@@ -73,6 +80,17 @@ class GateResult:
     returncode: int
     stdout: str
     stderr: str
+
+
+@dataclass(frozen=True)
+class StateBindRollback:
+    """Exact byte pre/post-images needed to undo a gate-failed state bind."""
+
+    state_path: Path
+    runner_lock: Path
+    backup_path: Path
+    preimage_sha256: str
+    postimage_sha256: str
 
 
 class GateRunner:
@@ -149,8 +167,20 @@ def _read_state(state_path: Path) -> dict[str, Any]:
 
 
 def _backup_state(state_path: Path, stamp: str) -> Path:
-    backup = state_path.with_name(f"{state_path.name}.pre-import-{stamp}")
-    pi.atomic_write_bytes(backup, state_path.read_bytes())
+    payload = state_path.read_bytes()
+    digest = pi.sha256_bytes(payload)
+    backup = state_path.with_name(
+        f"{state_path.name}.pre-import-{stamp}-{digest[:12]}"
+    )
+    if backup.exists():
+        existing = pi.require_regular_file(backup, label="state preimage backup")
+        if existing.read_bytes() != payload:
+            raise pi.PackageImportError(
+                "STATE_BACKUP_COLLISION",
+                f"state backup path already contains different bytes: {backup}",
+            )
+        return backup
+    pi.atomic_write_bytes(backup, payload)
     return backup
 
 
@@ -171,6 +201,8 @@ def run_import(
     source_workspace_root: str | None,
     gate_runner: GateRunner,
     closure_projector: Callable[[Any], Any] = project_publication_closure,
+    adopt_failed_pick: str | None = None,
+    release_quote: str | None = None,
 ) -> tuple[dict[str, Any], int]:
     started_at = pi.now_utc()
     receipt = Receipt(
@@ -180,6 +212,12 @@ def run_import(
         base / "out" / date / candidate_id / "replacement_recuts"
     )
     try:
+        _validate_import_mode(
+            candidate_id=candidate_id,
+            allow_new_pick=allow_new_pick,
+            adopt_failed_pick=adopt_failed_pick,
+            release_quote=release_quote,
+        )
         plan = _step_preflight(
             receipt=receipt,
             source=source,
@@ -189,7 +227,7 @@ def run_import(
             source_repo_root=source_repo_root,
             source_workspace_root=source_workspace_root,
         )
-        _step_state_precheck(
+        failed_pick_authorization = _step_state_precheck(
             receipt=receipt,
             state_path=state_path,
             runner_lock=runner_lock,
@@ -197,6 +235,9 @@ def run_import(
             date=date,
             allow_new_pick=allow_new_pick,
             closure_projector=closure_projector,
+            registry_path=repo_root / PUBLICATION_REGISTRY_RELATIVE,
+            adopt_failed_pick=adopt_failed_pick,
+            release_quote=release_quote,
         )
         _step_copy(
             receipt=receipt,
@@ -229,7 +270,7 @@ def run_import(
                 0,
             )
 
-        bound = _step_state_bind(
+        bound, rollback = _step_state_bind(
             receipt=receipt,
             destination_package_root=destination_package_root,
             candidate_id=candidate_id,
@@ -238,35 +279,45 @@ def run_import(
             runner_lock=runner_lock,
             allow_new_pick=allow_new_pick,
             closure_projector=closure_projector,
+            registry_path=repo_root / PUBLICATION_REGISTRY_RELATIVE,
+            release_quote=release_quote,
+            failed_pick_authorization=failed_pick_authorization,
         )
-        title = _step_manifest(
-            receipt=receipt,
-            gate_runner=gate_runner,
-            destination_package_root=destination_package_root,
-            state_path=state_path,
-            deployed_commit_file=deployed_commit_file,
-            candidate_id=candidate_id,
-        )
-        package_audit_path = _step_audit(
-            receipt=receipt,
-            gate_runner=gate_runner,
-            destination_package_root=destination_package_root,
-        )
-        _step_title_cover_qc(
-            receipt=receipt,
-            gate_runner=gate_runner,
-            destination_package_root=destination_package_root,
-            candidate_id=candidate_id,
-            title=title,
-            same_stem_cover=bound.same_stem_cover_path,
-            skip_qc=skip_qc,
-        )
-        _step_make_manifest_hint(
-            receipt=receipt,
-            destination_package_root=destination_package_root,
-            package_audit_path=package_audit_path,
-            title=title,
-        )
+        try:
+            title = _step_manifest(
+                receipt=receipt,
+                gate_runner=gate_runner,
+                destination_package_root=destination_package_root,
+                state_path=state_path,
+                deployed_commit_file=deployed_commit_file,
+                candidate_id=candidate_id,
+            )
+            package_audit_path = _step_audit(
+                receipt=receipt,
+                gate_runner=gate_runner,
+                destination_package_root=destination_package_root,
+            )
+            _step_title_cover_qc(
+                receipt=receipt,
+                gate_runner=gate_runner,
+                destination_package_root=destination_package_root,
+                candidate_id=candidate_id,
+                title=title,
+                same_stem_cover=bound.same_stem_cover_path,
+                skip_qc=skip_qc,
+            )
+            _step_make_manifest_hint(
+                receipt=receipt,
+                destination_package_root=destination_package_root,
+                package_audit_path=package_audit_path,
+                title=title,
+            )
+        except BaseException as gate_error:
+            try:
+                _rollback_state_bind(receipt=receipt, token=rollback)
+            except pi.PackageImportError as rollback_error:
+                raise Refusal("STATE_BIND", rollback_error) from gate_error
+            raise
         status = (
             "REVIEW_READY"
             if not skip_qc
@@ -293,6 +344,38 @@ def run_import(
             "chain stopped without reaching upload",
         )
         return receipt.as_dict(status="REFUSED", finished_at=pi.now_utc()), 2
+
+
+def _validate_import_mode(
+    *,
+    candidate_id: str,
+    allow_new_pick: bool,
+    adopt_failed_pick: str | None,
+    release_quote: str | None,
+) -> None:
+    has_adoption = adopt_failed_pick is not None
+    has_quote = release_quote is not None and release_quote != ""
+    if has_adoption != has_quote:
+        raise _refuse(
+            "PREFLIGHT",
+            "FAILED_PICK_IMPORT_FLAGS_INCOMPLETE",
+            "--adopt-failed-pick and --release-quote must be supplied together",
+        )
+    if not has_adoption:
+        return
+    if adopt_failed_pick != candidate_id:
+        raise _refuse(
+            "PREFLIGHT",
+            "FAILED_PICK_IMPORT_CANDIDATE_MISMATCH",
+            f"--adopt-failed-pick={adopt_failed_pick!r} does not equal "
+            f"--candidate={candidate_id!r}",
+        )
+    if allow_new_pick:
+        raise _refuse(
+            "PREFLIGHT",
+            "FAILED_PICK_IMPORT_MODE_CONFLICT",
+            "--adopt-failed-pick cannot be combined with --allow-new-pick",
+        )
 
 
 def _step_preflight(
@@ -339,7 +422,10 @@ def _step_state_precheck(
     date: str,
     allow_new_pick: bool,
     closure_projector,
-) -> None:
+    registry_path: Path,
+    adopt_failed_pick: str | None,
+    release_quote: str | None,
+) -> pi.FailedPickImportAuthorization | None:
     """Answer "would the bind be accepted?" before moving any byte.
 
     Read-only, but still under ``runner.lock``: a tick that is mid-flight owns
@@ -349,12 +435,22 @@ def _step_state_precheck(
     try:
         with pi.exclusive_lock(runner_lock, label="runner.lock"):
             state = _read_state(state_path)
+            authorization = None
+            if adopt_failed_pick is not None:
+                assert release_quote is not None
+                authorization = pi.load_failed_pick_import_authorization(
+                    registry_path=registry_path,
+                    candidate_id=adopt_failed_pick,
+                    date=date,
+                    release_quote=release_quote,
+                )
             preconditions = pi.check_state_preconditions(
                 state,
                 candidate_id=candidate_id,
                 date=date,
                 allow_new_pick=allow_new_pick,
                 project_closure=closure_projector,
+                failed_pick_authorization=authorization,
             )
     except pi.PackageImportError as error:
         raise Refusal("PREFLIGHT", error) from error
@@ -365,7 +461,14 @@ def _step_state_precheck(
         batch_status=preconditions.batch_status,
         pick_row_present=preconditions.pick_index is not None,
         will_create_pick_row=preconditions.will_create_pick_row,
+        will_adopt_failed_pick=preconditions.will_adopt_failed_pick,
+        failed_pick_import_authority=(
+            authorization.receipt_binding()
+            if authorization is not None
+            else None
+        ),
     )
+    return authorization
 
 
 def _step_copy(
@@ -450,7 +553,10 @@ def _step_state_bind(
     runner_lock: Path,
     allow_new_pick: bool,
     closure_projector,
-) -> pi.BoundPackage:
+    registry_path: Path,
+    release_quote: str | None,
+    failed_pick_authorization: pi.FailedPickImportAuthorization | None,
+) -> tuple[pi.BoundPackage, StateBindRollback]:
     bound_at = pi.now_utc()
     stamp = bound_at.replace(":", "").replace("-", "")
     try:
@@ -461,6 +567,23 @@ def _step_state_bind(
         # 分钟才写回，不持锁的带外手术会被那次陈旧写回整体抹掉。
         with pi.exclusive_lock(runner_lock, label="runner.lock"):
             before_state = _read_state(state_path)
+            current_authorization = None
+            if failed_pick_authorization is not None:
+                assert release_quote is not None
+                current_authorization = (
+                    pi.load_failed_pick_import_authorization(
+                        registry_path=registry_path,
+                        candidate_id=candidate_id,
+                        date=date,
+                        release_quote=release_quote,
+                    )
+                )
+                if current_authorization != failed_pick_authorization:
+                    raise pi.PackageImportError(
+                        "FAILED_PICK_REGISTRY_DRIFT_AFTER_PREFLIGHT",
+                        "committed failed-pick release authority changed after "
+                        "preflight; re-run from a fresh dry run",
+                    )
             after_state, delta = pi.build_bound_state(
                 before_state,
                 package=package,
@@ -468,8 +591,15 @@ def _step_state_bind(
                 bound_at=bound_at,
                 allow_new_pick=allow_new_pick,
                 project_closure=closure_projector,
+                failed_pick_authorization=current_authorization,
             )
+            state_preimage_sha256 = pi.sha256_file(state_path)
             backup = _backup_state(state_path, stamp)
+            if pi.sha256_file(backup) != state_preimage_sha256:
+                raise pi.PackageImportError(
+                    "STATE_BACKUP_VERIFY_FAILED",
+                    "state preimage backup does not match the locked source bytes",
+                )
             try:
                 if after_state != before_state:
                     write_state(
@@ -478,45 +608,140 @@ def _step_state_bind(
                         updated_at=bound_at,
                         log=lambda message: print(message, file=sys.stderr),
                     )
-            except (OSError, RunnerStateWritebackError) as error:
-                raise pi.PackageImportError(
-                    "STATE_WRITE_FAILED",
-                    f"{type(error).__name__}: {error}",
-                    hint=f"restore {backup} over {state_path} while holding "
-                    "runner.lock before anything else touches the day",
-                ) from error
-            verified = _read_state(state_path)
+                verified = _read_state(state_path)
+                state_postimage_sha256 = pi.sha256_file(state_path)
+                if verified != after_state:
+                    raise pi.PackageImportError(
+                        "STATE_READBACK_FAILED",
+                        "the persisted state is not the exact computed postimage",
+                    )
+                row = next(
+                    (
+                        item
+                        for item in verified.get("picks") or []
+                        if isinstance(item, dict)
+                        and item.get("candidate_id") == candidate_id
+                    ),
+                    None,
+                )
+                if row is None or row.get("status") != "review_ready" or row.get("rc") != 0:
+                    raise pi.PackageImportError(
+                        "STATE_READBACK_FAILED",
+                        "the written state lacks the exact review_ready/rc=0 row",
+                    )
+                if delta["adopted_failed_pick"] and (
+                    verified.get("status") != "ready_unpublished_with_failures"
+                    or not isinstance(verified.get("publication_closure"), dict)
+                    or verified["publication_closure"].get("status")
+                    != "ready_unpublished_with_failures"
+                    or not isinstance(
+                        (row.get("external_package_import") or {}).get(
+                            "failed_pick_adoption"
+                        ),
+                        dict,
+                    )
+                    or row["external_package_import"]["failed_pick_adoption"].get(
+                        "status"
+                    )
+                    != "CONSUMED"
+                ):
+                    raise pi.PackageImportError(
+                        "FAILED_PICK_ADOPTION_READBACK_FAILED",
+                        "state readback lacks the exact batch/closure/consumption postimage",
+                    )
+            except BaseException as bind_error:
+                try:
+                    _restore_state_preimage_locked(
+                        state_path=state_path,
+                        backup_path=backup,
+                        preimage_sha256=state_preimage_sha256,
+                    )
+                except pi.PackageImportError as rollback_error:
+                    raise pi.PackageImportError(
+                        "STATE_BIND_ROLLBACK_FAILED",
+                        f"state bind failed and exact preimage restore also failed: {rollback_error}",
+                    ) from bind_error
+                if isinstance(bind_error, (OSError, RunnerStateWritebackError)):
+                    raise pi.PackageImportError(
+                        "STATE_WRITE_FAILED",
+                        f"{type(bind_error).__name__}: {bind_error}",
+                    ) from bind_error
+                raise
     except pi.PackageImportError as error:
         raise Refusal("STATE_BIND", error) from error
-    row = next(
-        (
-            item
-            for item in verified.get("picks") or []
-            if isinstance(item, dict) and item.get("candidate_id") == candidate_id
-        ),
-        None,
-    )
-    if row is None or row.get("status") != "review_ready" or row.get("rc") != 0:
-        raise _refuse(
-            "STATE_BIND",
-            "STATE_READBACK_FAILED",
-            "the written state does not carry a review_ready/rc=0 row for "
-            f"{candidate_id}",
-            hint=f"restore {backup} over {state_path} while holding runner.lock",
-        )
     receipt.add(
         "STATE_BIND",
         "PASS",
         state_path=str(state_path),
         state_backup_path=str(backup),
+        state_preimage_sha256="sha256:" + state_preimage_sha256,
+        state_postimage_sha256="sha256:" + state_postimage_sha256,
         created_pick_row=delta["created_pick_row"],
+        adopted_failed_pick=delta["adopted_failed_pick"],
+        failed_pick_import_authority=delta[
+            "failed_pick_import_authority"
+        ],
         removed_superseded_keys=delta["removed_superseded_keys"],
+        closure_before=delta["closure_before"],
+        closure_after=delta["closure_after"],
         cover_path=row.get("cover_path"),
         cover_sha256=row.get("cover_sha256"),
         video_sha256=row.get("video_sha256"),
         title=row.get("title"),
     )
-    return package
+    return package, StateBindRollback(
+        state_path=state_path,
+        runner_lock=runner_lock,
+        backup_path=backup,
+        preimage_sha256=state_preimage_sha256,
+        postimage_sha256=state_postimage_sha256,
+    )
+
+
+def _rollback_state_bind(*, receipt: Receipt, token: StateBindRollback) -> None:
+    """Restore exact state bytes when any post-bind review gate refuses."""
+
+    with pi.exclusive_lock(token.runner_lock, label="runner.lock"):
+        current_sha256 = pi.sha256_file(token.state_path)
+        if current_sha256 != token.postimage_sha256:
+            raise pi.PackageImportError(
+                "STATE_ROLLBACK_POSTIMAGE_DRIFT",
+                "state changed after import bind; automatic rollback refused",
+                hint=f"compare {token.backup_path} with {token.state_path} while "
+                "holding runner.lock before any further production",
+            )
+        _restore_state_preimage_locked(
+            state_path=token.state_path,
+            backup_path=token.backup_path,
+            preimage_sha256=token.preimage_sha256,
+        )
+    receipt.add(
+        "STATE_BIND",
+        "ROLLED_BACK_AFTER_GATE_FAILURE",
+        state_path=str(token.state_path),
+        state_backup_path=str(token.backup_path),
+        restored_sha256="sha256:" + token.preimage_sha256,
+    )
+
+
+def _restore_state_preimage_locked(
+    *, state_path: Path, backup_path: Path, preimage_sha256: str
+) -> None:
+    """Restore and verify exact bytes while the caller holds runner.lock."""
+
+    backup = pi.require_regular_file(backup_path, label="state preimage backup")
+    payload = backup.read_bytes()
+    if pi.sha256_bytes(payload) != preimage_sha256:
+        raise pi.PackageImportError(
+            "STATE_ROLLBACK_BACKUP_DRIFT",
+            f"state preimage backup changed: {backup}",
+        )
+    pi.atomic_write_bytes(state_path, payload)
+    if pi.sha256_file(state_path) != preimage_sha256:
+        raise pi.PackageImportError(
+            "STATE_ROLLBACK_VERIFY_FAILED",
+            "restored state bytes do not match the frozen preimage",
+        )
 
 
 def _step_manifest(
@@ -886,6 +1111,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         "(fields are read out of the package's frozen documents)",
     )
     parser.add_argument(
+        "--adopt-failed-pick",
+        metavar="CID",
+        help="one-shot adoption of the exact failed picks row authorized by "
+        "the committed publication registry; requires --release-quote, must "
+        "equal --candidate, and cannot be combined with --allow-new-pick",
+    )
+    parser.add_argument(
+        "--release-quote",
+        help="Ivan's verbatim release quote; only valid together with "
+        "--adopt-failed-pick and must exactly match the committed registry",
+    )
+    parser.add_argument(
         "--skip-qc",
         action="store_true",
         help="skip the real-CPA title+cover joint QC (it still gates upload)",
@@ -918,6 +1155,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         source_repo_root=args.source_repo_root,
         source_workspace_root=args.source_workspace_root,
         gate_runner=GateRunner(ROOT),
+        adopt_failed_pick=args.adopt_failed_pick,
+        release_quote=args.release_quote,
     )
     # 回执落包内（要求：每步结果 typed 存档）。包目录还不存在时——dry-run，或
     # PREFLIGHT 就被拒——不为了写回执去凭空创建产线目录：退回 stdout。

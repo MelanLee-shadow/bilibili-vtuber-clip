@@ -13,8 +13,7 @@ free。本模块是那条导入链的机械实现（``scripts/import_external_pa
    ``status=review_ready`` / ``rc=0`` / 封面名称+sha 双绑），调用方持
    ``runner.lock`` 后落盘。
 
-fail-closed：每个拒绝都是一个 :class:`PackageImportError`，带 typed ``code``
-和修法提示；没有"尽力而为地继续"这条路。
+fail-closed：拒绝统一为带 typed ``code`` 的 :class:`PackageImportError`。
 
 **血泪教训（2026-08-09 实事故）**：runner 的 tick 把 state 读进内存、跑完（可长
 达 90 分钟）才写回。任何不持 ``runner.lock`` 的带外 state 手术都会被陈旧写回整
@@ -37,6 +36,17 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterator, Mapping, Sequence
 
+from src.autoslice import failed_pick_import as _failed_pick
+from src.autoslice.failed_pick_import import (
+    FAILED_PICK_IMPORT_AUTHORITY_SCHEMA_VERSION,  # noqa: F401 - compatibility API
+    FAILED_PICK_IMPORT_CONSUMPTION_SCHEMA_VERSION,  # noqa: F401 - compatibility API
+    FAILED_PICK_IMPORT_SCOPE,  # noqa: F401 - compatibility API
+    _ACTIVE_FAILURE_PICK_KEYS,  # noqa: F401 - compatibility API
+    FailedPickImportAuthorization,
+    PackageImportError,
+    canonical_json_sha256,  # noqa: F401 - compatibility API
+    load_failed_pick_import_authorization,  # noqa: F401 - compatibility API
+)
 from src.autoslice.review_package_ass_audit import (
     uniform_host_fallback_declared,
 )
@@ -106,19 +116,6 @@ _DOCUMENT_COMMIT_ORDER = ("speaker", "publish", "record")
 
 _UNIFORM_STEM_SUFFIX = "burned-final-sapphire72"
 _SPEAKER_STEM_SUFFIX = "burned-final-speaker"
-
-
-class PackageImportError(RuntimeError):
-    """One typed, fail-closed refusal with an operator-actionable hint."""
-
-    def __init__(self, code: str, detail: str, *, hint: str = "") -> None:
-        super().__init__(f"{code}: {detail}")
-        self.code = code
-        self.detail = detail
-        self.hint = hint
-
-    def as_dict(self) -> dict[str, str]:
-        return {"code": self.code, "detail": self.detail, "hint": self.hint}
 
 
 def now_utc() -> str:
@@ -1741,8 +1738,6 @@ def _new_pick_row(package: BoundPackage, *, date: str) -> dict[str, Any]:
     return row
 
 
-
-
 @dataclass(frozen=True)
 class StatePreconditions:
     """What the state says about this candidate before anything is written."""
@@ -1750,6 +1745,8 @@ class StatePreconditions:
     batch_status: str
     pick_index: int | None
     will_create_pick_row: bool
+    will_adopt_failed_pick = False
+    failed_pick_authorization = None
 
 
 def check_state_preconditions(
@@ -1759,7 +1756,8 @@ def check_state_preconditions(
     date: str,
     allow_new_pick: bool,
     project_closure,
-) -> StatePreconditions:
+    failed_pick_authorization: FailedPickImportAuthorization | None = None,
+) -> StatePreconditions | _failed_pick.FailedPickAdoptionPlan:
     """Refuse every state shape the bind could not legally land on.
 
     Split out of :func:`build_bound_state` so a dry run can answer "would this
@@ -1768,6 +1766,13 @@ def check_state_preconditions(
     """
 
     batch_status = str(before_state.get("status") or "")
+    if failed_pick_authorization is not None:
+        return _failed_pick.plan_failed_pick_adoption(
+            before_state,
+            candidate_id=candidate_id, date=date,
+            allow_new_pick=allow_new_pick, project_closure=project_closure,
+            authorization=failed_pick_authorization,
+        )
     if batch_status not in REVIEWABLE_BATCH_STATUSES:
         raise PackageImportError(
             "BATCH_STATUS_NOT_REVIEWABLE",
@@ -1854,6 +1859,7 @@ def build_bound_state(
     bound_at: str,
     allow_new_pick: bool,
     project_closure,
+    failed_pick_authorization: FailedPickImportAuthorization | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Compute the post-image of one state bind.  Pure — the caller writes it.
 
@@ -1868,6 +1874,7 @@ def build_bound_state(
         date=date,
         allow_new_pick=allow_new_pick,
         project_closure=project_closure,
+        failed_pick_authorization=failed_pick_authorization,
     )
     after_state = copy.deepcopy(dict(before_state))
     picks = after_state["picks"]
@@ -1878,11 +1885,23 @@ def build_bound_state(
         row = picks[preconditions.pick_index]
     previous_import = row.get("external_package_import")
 
-    removed = sorted(key for key in _SUPERSEDED_PICK_KEYS if key in row)
+    removable = set(_SUPERSEDED_PICK_KEYS)
+    removable.update(
+        _failed_pick.failed_pick_cleanup_keys(preconditions.failed_pick_authorization)
+    )
+    removed = sorted(key for key in removable if key in row)
     for key in removed:
         row.pop(key, None)
     publish = package.publish
     boundary = package.record.get("boundary_audit") or {}
+    external_package_import = _failed_pick.project_failed_pick_provenance(
+        package=package,
+        schema_version=STATE_BINDING_SCHEMA_VERSION,
+        created_pick_row=preconditions.will_create_pick_row,
+        previous_import=previous_import,
+        authorization=preconditions.failed_pick_authorization,
+        consumed_at=bound_at,
+    )
     row.update(
         {
             "status": "review_ready",
@@ -1904,21 +1923,7 @@ def build_bound_state(
             "video_sha256": package.burned_video_sha256,
             "bundle_lifecycle": "CURRENT",
             "bundle_compliance": "COMPLIANT",
-            "external_package_import": {
-                "schema_version": STATE_BINDING_SCHEMA_VERSION,
-                "status": "VERIFIED_PACKAGE_BOUND",
-                "bound_at": bound_at,
-                "created_pick_row": preconditions.will_create_pick_row,
-                "record_path": str(package.record_path),
-                "publish_path": str(package.publish_path),
-                "burned_video_path": str(package.burned_path),
-                "burned_video_sha256": package.burned_video_sha256,
-                "cover_path": str(package.cover_path),
-                "cover_sha256": package.cover_sha256,
-                "same_stem_cover_path": str(package.same_stem_cover_path),
-                "package_relocation_journal_path": str(package.journal_path),
-                "package_relocation_journal_sha256": package.journal_sha256,
-            },
+            "external_package_import": external_package_import,
         }
     )
 
@@ -1962,6 +1967,11 @@ def build_bound_state(
         )
     if before_state.get("publication_closure") is not None:
         after_state["publication_closure"] = after_closure
+    _failed_pick.apply_failed_pick_transition(
+        before_state=before_state, after_state=after_state,
+        after_closure=after_closure, candidate_id=package.candidate_id,
+        authorization=preconditions.failed_pick_authorization,
+    )
     if str(after_closure.get("status") or "") and str(
         after_state.get("status") or ""
     ) not in REVIEWABLE_BATCH_STATUSES:
@@ -1978,7 +1988,11 @@ def build_bound_state(
         after_state["updated_at"] = bound_at
     return after_state, {
         "created_pick_row": preconditions.will_create_pick_row,
+        "adopted_failed_pick": preconditions.will_adopt_failed_pick,
         "removed_superseded_keys": removed,
+        "failed_pick_import_authority": _failed_pick.failed_pick_authority_receipt(
+            preconditions.failed_pick_authorization
+        ),
         "state_changed": changed,
         "closure_before": before_closure,
         "closure_after": after_closure,

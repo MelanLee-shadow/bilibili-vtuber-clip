@@ -103,3 +103,33 @@
   `auto_193450_5341_5459` 必须 Tier 2、有效分 50–60；前者必须稳定高于后者。
   这两项只是量尺 canary，不构成 recovery allowlist；exact 集合只能来自当前 v7 plan 的
   selection contract。
+
+## 修正 hook 后的独立 scorecard 重评分
+
+- 人工 source fact/专名修正若改变了 `selection_hook` 的叙事事实，原
+  scorecard 就是 stale；不得沿用旧分、手改算术字段，或只重跑标题/封面后将旧
+  scorecard 宣称为 current。该窄门由
+  `scripts/manual_source_fact_scorecard_rescore.py` 和
+  `scripts/bind_source_fact_scorecard_rescore.py` 共同执行。
+- 先在 `assets/lidousha/authorities/` 放置唯一、candidate-scoped 且已提交/已部署
+  验真的 `candidate-source-fact-rescore-authority.v1`。authority 必须 hash-bound 绑定
+  original/corrected hook、stale scorecard、人工审定的整份最终 SRT 与 cue 数、
+  源录像 identity/绝对区间及 Ivan 权威原话。其 scope 只能允许 scorecard
+  rescore；不得附带 provider 执行、runner state 修改或 publication manifest 权限。
+- `manual_source_fact_scorecard_rescore.py` 默认只做无 provider 副作用的全量 preflight。
+  correction-authority 模式的 `--correction-authority`/hash 与旧
+  `--source-fact-receipt`/hash 模式互斥，不得把两条证据链混用。真实调用必须
+  同时提供
+  `AUTOSLICE_MANUAL_RESCORE_EXECUTION_AUTHORITY=SOURCE_FACT_RESCORE_AUTHORIZED` 与
+  `--execute-provider-call`，并严格命中
+  `source_fact_rescore_provenance.py` 锁定的 provider/model/transport/timeout/
+  calibration contract。它以整份 reviewed SRT 的 `1..N` cues 重评，对输入文件前后
+  重验 hash，只用 create-only 输出 `source-fact-rescore-scorecard.v1` receipt；不改
+  旧 spec/source-fact receipt/state，也不授权发布。
+- binder 必须同时验证旧 spec、rescore receipt 和 committed authority 的精确
+  file hash，以及 candidate、corrected hook、stale-card hash、reviewed-SRT hash/
+  cue 数和 source identity/区间的一致性。它不在原地修改，而是 create-only 生成
+  含 `source_fact_scorecard_rescore_provenance` 的新 spec 与独立 rebind receipt；任一
+  输出已存在就拒绝覆盖。后续 producer/record/StoryContract/publish staging 必须
+  逐层保留并重算这一 provenance；发现 scorecard 已变但缺少有效 receipt、
+  authority 字节漂移或任一嵌入/独立 surface 不一致时必须在生产前拒绝。
