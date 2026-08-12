@@ -4,7 +4,7 @@
 #
 # - REFUSES a dirty working tree (production must be reproducible from a commit)
 # - streams committed runtime trees plus project authority/docs into staging
-#   (scripts/ src/ assets/ profiles/ .agent/ docs/ cleanup_manifests/
+#   (scripts/ src/ ops/ assets/ profiles/ .agent/ docs/ cleanup_manifests/
 #   AGENTS.md README.md; ignored files excluded)
 # - verifies the complete staged file list and SHA-256 manifest
 # - owns a remote deploy guard from initial observation through final cleanup
@@ -93,7 +93,7 @@ backup=$3
 old_commit=$4
 test -d "$backup"
 test -f "$backup/repo.manifest.old.json"
-for component in scripts src assets profiles .agent docs cleanup_manifests AGENTS.md README.md; do
+for component in scripts src ops assets profiles .agent docs cleanup_manifests AGENTS.md README.md; do
     if [ -e "$backup/$component" ]; then
         rm -rf "$stage/$component"
         if [ -e "$repo/$component" ]; then
@@ -126,6 +126,7 @@ restore_repository_file() {
 }
 restore_repository_file deployed_authority_manifest "$repo/DEPLOYED_AUTHORITY_MANIFEST.json"
 cp "$backup/DEPLOYED_COMMIT.old" "$repo/DEPLOYED_COMMIT"
+cmp -s "$backup/DEPLOYED_COMMIT.old" "$repo/DEPLOYED_COMMIT"
 
 restore_file() {
     label=$1
@@ -145,6 +146,103 @@ restore_file() {
 restore_file watchdog /opt/bilive/autoslice/free_mount_watchdog.sh
 restore_file upload_sentinel /opt/bilive/autoslice/upload_fatal_sentinel.sh
 restore_file uploader /opt/bilive/app/tmp_manual_upload/do_upload.sh
+restore_adapter_atomic() {
+    destination=/opt/bilive/recording/bililive_recorder_adapter.py
+    tmp=$destination.rollback.$$
+    if [ -f "$backup/external/recorder_adapter.present" ]; then
+        mode=$(stat -c '%a' "$backup/external/recorder_adapter.file")
+        install -m "$mode" "$backup/external/recorder_adapter.file" "$tmp"
+        cmp -s "$backup/external/recorder_adapter.file" "$tmp"
+        mv -f "$tmp" "$destination"
+        cmp -s "$backup/external/recorder_adapter.file" "$destination"
+    elif [ -f "$backup/external/recorder_adapter.absent" ]; then
+        rm -f "$destination"
+        test ! -e "$destination"
+    else
+        echo "missing recorder adapter rollback marker" >&2
+        return 1
+    fi
+}
+adapter_restart_safe() {
+    test "$(findmnt -T /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -n -o TARGET)" = "/root/clouddrive2/CloudNAS/CloudDrive"
+    case "$(findmnt -T /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -n -o FSTYPE)" in fuse*) ;; *) return 1 ;; esac
+    test "$(findmnt -T /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -n -o SOURCE)" = "CloudFS"
+    timeout 15 find /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -mindepth 1 -maxdepth 1 -print -quit >/dev/null
+    python3 - /opt/bilive/recording/status.json <<'PY_IDLE'
+import json
+import sys
+import time
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+age = time.time() - float(payload["generated_at_epoch"])
+assert 0 <= age <= 90
+assert payload.get("service_reachable") is True
+assert payload.get("streaming") is False
+assert payload.get("recording") is False
+assert payload.get("finalizing") is False
+PY_IDLE
+    test "$(docker inspect -f '{{.State.Status}}' bililive_recorder)" = running
+    test "$(docker inspect -f '{{.State.Status}}' bililive_adapter)" = running
+    test "$(docker inspect -f '{{index .Config.Cmd 0}}|{{index .Config.Cmd 1}}' bililive_adapter)" = 'python3|/state/bililive_recorder_adapter.py'
+    test "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Source}}|{{.Type}}|{{.RW}}{{end}}{{end}}' bililive_adapter)" = '/opt/bilive/recording|bind|true'
+    case "$(docker exec bililive_recorder stat -f -c %T /rec/Videos)" in fuse*) ;; *) return 1 ;; esac
+    case "$(docker exec bililive_adapter stat -f -c %T /adapter/Videos)" in fuse*) ;; *) return 1 ;; esac
+    docker exec bililive_adapter timeout 15 find /adapter/Videos -mindepth 1 -maxdepth 1 -print -quit >/dev/null
+    test "$(sha256sum /opt/bilive/recording/bililive_recorder_adapter.py | awk '{print $1}')" = "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py | awk '{print $1}')"
+    docker exec -i bililive_adapter python3 - <<'PY_LIVE_IDLE'
+from pathlib import Path
+import sys
+
+sys.path.insert(0, "/state")
+import bililive_recorder_adapter as adapter
+
+environment = adapter.load_env_file(Path("/run/secrets/brec_http_env"))
+room = adapter.query_room_status(
+    "http://bililive-recorder:2356/graphql",
+    22966160,
+    username=environment.get("BREC_HTTP_BASIC_USER", ""),
+    password=environment.get("BREC_HTTP_BASIC_PASS", ""),
+    timeout_seconds=5,
+)
+assert room.get("streaming") is False
+assert room.get("recording") is False
+PY_LIVE_IDLE
+}
+wait_adapter_runtime() {
+    restarted_after=$1
+    expected_sha=$2
+    require_clean=$3
+    for _attempt in $(seq 1 120); do
+        if [ "$(docker inspect -f '{{.State.Status}}' bililive_adapter 2>/dev/null || true)" = running ] && \
+           [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' bililive_adapter 2>/dev/null || true)" = healthy ] && \
+           [ "$(docker inspect -f '{{index .Config.Cmd 0}}|{{index .Config.Cmd 1}}' bililive_adapter 2>/dev/null || true)" = 'python3|/state/bililive_recorder_adapter.py' ] && \
+           [ "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Source}}|{{.Type}}|{{.RW}}{{end}}{{end}}' bililive_adapter 2>/dev/null || true)" = '/opt/bilive/recording|bind|true' ] && \
+           [ "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py 2>/dev/null | awk '{print $1}')" = "$expected_sha" ] && \
+           python3 - /opt/bilive/recording/status.json "$restarted_after" "$require_clean" <<'PY_FRESH'
+import json
+import sys
+import time
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+generated = float(payload["generated_at_epoch"])
+assert generated >= float(sys.argv[2])
+assert 0 <= time.time() - generated <= 90
+assert payload.get("service_reachable") is True
+assert payload.get("streaming") is False
+assert payload.get("recording") is False
+assert payload.get("finalizing") is False
+if sys.argv[3] == "1":
+    assert payload.get("error") is None
+PY_FRESH
+        then
+            docker exec bililive_adapter timeout 15 find /adapter/Videos -mindepth 1 -maxdepth 1 -print -quit >/dev/null
+            return 0
+        fi
+        sleep 5
+    done
+    return 1
+}
+restore_adapter_atomic
 if [ -f "$backup/external/crontab.present" ]; then
     crontab "$backup/external/crontab.file"
     crontab -l | cmp -s - "$backup/external/crontab.file"
@@ -154,6 +252,14 @@ elif [ -f "$backup/external/crontab.absent" ]; then
 else
     echo "missing crontab rollback marker" >&2
     exit 1
+fi
+if [ -f "$backup/external/recorder_adapter.restart-required" ]; then
+    adapter_restart_safe
+    restart_epoch=$(date +%s)
+    docker restart bililive_adapter >/dev/null
+    old_adapter_sha=$(sha256sum "$backup/external/recorder_adapter.file" | awk '{print $1}')
+    wait_adapter_runtime "$restart_epoch" "$old_adapter_sha" 0
+    cmp -s "$backup/external/recorder_adapter.file" /opt/bilive/recording/bililive_recorder_adapter.py
 fi
 
 test "$(awk 'NR==1 {print $1}' "$repo/DEPLOYED_COMMIT")" = "$old_commit"
@@ -171,6 +277,7 @@ actual = {}
 for component in (
     "scripts",
     "src",
+    "ops",
     "assets",
     "profiles",
     ".agent",
@@ -297,7 +404,7 @@ fi
 # archive uses COMMIT, never a mutable worktree or a HEAD that could advance.
 LOCAL_ARCHIVE_DIR=$(mktemp -d)
 git archive --format=tar "$COMMIT" \
-    scripts src assets profiles .agent docs cleanup_manifests AGENTS.md README.md \
+    scripts src ops assets profiles .agent docs cleanup_manifests AGENTS.md README.md \
     | (umask 022; tar -xf - -C "$LOCAL_ARCHIVE_DIR")
 LOCAL_MANIFEST=$(python3 - "$LOCAL_ARCHIVE_DIR" <<'LOCAL_MANIFEST_PY'
 import hashlib
@@ -312,6 +419,7 @@ manifest = {}
 for component in (
     "scripts",
     "src",
+    "ops",
     "assets",
     "profiles",
     ".agent",
@@ -355,7 +463,7 @@ STAGE_CREATED=1
 # enter staging. assets/ is intentionally replaced as a repo-owned tree; private
 # enrollment WAVs and the CAM++ model live outside repo/.
 git archive --format=tar "$COMMIT" \
-    scripts src assets profiles .agent docs cleanup_manifests AGENTS.md README.md \
+    scripts src ops assets profiles .agent docs cleanup_manifests AGENTS.md README.md \
     | ssh "$HOST" "umask 022; tar --no-same-permissions -xf - -C '$STAGE'"
 
 REMOTE_MANIFEST=$(ssh "$HOST" python3 - "$STAGE" <<'REMOTE_MANIFEST_PY'
@@ -371,6 +479,7 @@ manifest = {}
 for component in (
     "scripts",
     "src",
+    "ops",
     "assets",
     "profiles",
     ".agent",
@@ -574,6 +683,7 @@ manifest = {}
 for component in (
     "scripts",
     "src",
+    "ops",
     "assets",
     "profiles",
     ".agent",
@@ -609,7 +719,10 @@ capture_file() {
     label=$1
     source=$2
     if [ -e "$source" ]; then
+        test -f "$source"
+        test ! -L "$source"
         cp -p "$source" "$backup/external/$label.file"
+        cmp -s "$source" "$backup/external/$label.file"
         touch "$backup/external/$label.present"
     else
         touch "$backup/external/$label.absent"
@@ -618,6 +731,7 @@ capture_file() {
 capture_file watchdog /opt/bilive/autoslice/free_mount_watchdog.sh
 capture_file upload_sentinel /opt/bilive/autoslice/upload_fatal_sentinel.sh
 capture_file uploader /opt/bilive/app/tmp_manual_upload/do_upload.sh
+capture_file recorder_adapter /opt/bilive/recording/bililive_recorder_adapter.py
 if crontab -l > "$backup/external/crontab.file" 2>/dev/null; then
     touch "$backup/external/crontab.present"
 else
@@ -655,7 +769,7 @@ restore_repository_file() {
     fi
 }
 rollback() {
-    for component in scripts src assets profiles .agent docs cleanup_manifests AGENTS.md README.md; do
+    for component in scripts src ops assets profiles .agent docs cleanup_manifests AGENTS.md README.md; do
         if [ -e "$backup/$component" ]; then
             rm -rf "$stage/$component"
             if [ -e "$repo/$component" ]; then
@@ -670,7 +784,8 @@ rollback() {
     restore_repository_file \
         deployed_authority_manifest \
         "$repo/DEPLOYED_AUTHORITY_MANIFEST.json"
-    cp "$backup/DEPLOYED_COMMIT.old" "$repo/DEPLOYED_COMMIT"
+cp "$backup/DEPLOYED_COMMIT.old" "$repo/DEPLOYED_COMMIT"
+cmp -s "$backup/DEPLOYED_COMMIT.old" "$repo/DEPLOYED_COMMIT"
     restore_file watchdog /opt/bilive/autoslice/free_mount_watchdog.sh
     restore_file upload_sentinel /opt/bilive/autoslice/upload_fatal_sentinel.sh
     restore_file uploader /opt/bilive/app/tmp_manual_upload/do_upload.sh
@@ -686,7 +801,7 @@ trap 'rc=$?; trap - ERR; rollback; exit "$rc"' ERR
 trap 'trap - ERR HUP INT TERM; rollback; exit 130' INT
 trap 'trap - ERR HUP INT TERM; rollback; exit 143' TERM
 trap 'trap - ERR HUP INT TERM; rollback; exit 129' HUP
-for component in scripts src assets profiles .agent docs cleanup_manifests AGENTS.md README.md; do
+for component in scripts src ops assets profiles .agent docs cleanup_manifests AGENTS.md README.md; do
     if [ -e "$repo/$component" ]; then
         mv "$repo/$component" "$backup/$component"
     else
@@ -700,8 +815,10 @@ REMOTE_SWITCH
 
 # Install external entrypoints only from the already-switched committed tree.
 # Temp + rename avoids exposing a truncated executable to cron/manual callers.
-ssh "$HOST" bash -s <<'REMOTE_EXTERNAL_INSTALL'
+ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
+    "$BACKUP" <<'REMOTE_EXTERNAL_INSTALL'
 set -euo pipefail
+backup=$1
 tmp=
 cleanup_tmp() { [ -z "$tmp" ] || rm -f "$tmp"; }
 trap cleanup_tmp EXIT
@@ -716,8 +833,7 @@ install_atomic() {
     test ! -L "$source"
     mkdir -p "$(dirname "$destination")"
     tmp=$destination.deploy.$$
-    cp "$source" "$tmp"
-    chmod "$mode" "$tmp"
+    install -m "$mode" "$source" "$tmp"
     test "$(sha256sum "$source" | awk '{print $1}')" = "$(sha256sum "$tmp" | awk '{print $1}')"
     mv -f "$tmp" "$destination"
     tmp=
@@ -738,6 +854,107 @@ install_atomic \
     /opt/bilive/autoslice/repo/scripts/free_do_upload.sh \
     /opt/bilive/app/tmp_manual_upload/do_upload.sh \
     700
+adapter_restart_safe() {
+    test "$(findmnt -T /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -n -o TARGET)" = "/root/clouddrive2/CloudNAS/CloudDrive"
+    case "$(findmnt -T /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -n -o FSTYPE)" in fuse*) ;; *) return 1 ;; esac
+    test "$(findmnt -T /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -n -o SOURCE)" = "CloudFS"
+    timeout 15 find /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -mindepth 1 -maxdepth 1 -print -quit >/dev/null
+    python3 - /opt/bilive/recording/status.json <<'PY_IDLE'
+import json
+import sys
+import time
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+age = time.time() - float(payload["generated_at_epoch"])
+assert 0 <= age <= 90
+assert payload.get("service_reachable") is True
+assert payload.get("streaming") is False
+assert payload.get("recording") is False
+assert payload.get("finalizing") is False
+PY_IDLE
+    test "$(docker inspect -f '{{.State.Status}}' bililive_recorder)" = running
+    test "$(docker inspect -f '{{.State.Status}}' bililive_adapter)" = running
+    test "$(docker inspect -f '{{index .Config.Cmd 0}}|{{index .Config.Cmd 1}}' bililive_adapter)" = 'python3|/state/bililive_recorder_adapter.py'
+    test "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Source}}|{{.Type}}|{{.RW}}{{end}}{{end}}' bililive_adapter)" = '/opt/bilive/recording|bind|true'
+    case "$(docker exec bililive_recorder stat -f -c %T /rec/Videos)" in fuse*) ;; *) return 1 ;; esac
+    case "$(docker exec bililive_adapter stat -f -c %T /adapter/Videos)" in fuse*) ;; *) return 1 ;; esac
+    docker exec bililive_adapter timeout 15 find /adapter/Videos -mindepth 1 -maxdepth 1 -print -quit >/dev/null
+    test "$(sha256sum /opt/bilive/recording/bililive_recorder_adapter.py | awk '{print $1}')" = "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py | awk '{print $1}')"
+    docker exec -i bililive_adapter python3 - <<'PY_LIVE_IDLE'
+from pathlib import Path
+import sys
+
+sys.path.insert(0, "/state")
+import bililive_recorder_adapter as adapter
+
+environment = adapter.load_env_file(Path("/run/secrets/brec_http_env"))
+room = adapter.query_room_status(
+    "http://bililive-recorder:2356/graphql",
+    22966160,
+    username=environment.get("BREC_HTTP_BASIC_USER", ""),
+    password=environment.get("BREC_HTTP_BASIC_PASS", ""),
+    timeout_seconds=5,
+)
+assert room.get("streaming") is False
+assert room.get("recording") is False
+PY_LIVE_IDLE
+}
+wait_adapter_runtime() {
+    restarted_after=$1
+    expected_sha=$2
+    for _attempt in $(seq 1 120); do
+        if [ "$(docker inspect -f '{{.State.Status}}' bililive_adapter 2>/dev/null || true)" = running ] && \
+           [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' bililive_adapter 2>/dev/null || true)" = healthy ] && \
+           [ "$(docker inspect -f '{{index .Config.Cmd 0}}|{{index .Config.Cmd 1}}' bililive_adapter 2>/dev/null || true)" = 'python3|/state/bililive_recorder_adapter.py' ] && \
+           [ "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Source}}|{{.Type}}|{{.RW}}{{end}}{{end}}' bililive_adapter 2>/dev/null || true)" = '/opt/bilive/recording|bind|true' ] && \
+           [ "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py 2>/dev/null | awk '{print $1}')" = "$expected_sha" ] && \
+           python3 - /opt/bilive/recording/status.json "$restarted_after" <<'PY_FRESH'
+import json
+import sys
+import time
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+generated = float(payload["generated_at_epoch"])
+assert generated >= float(sys.argv[2])
+assert 0 <= time.time() - generated <= 90
+assert payload.get("service_reachable") is True
+assert payload.get("streaming") is False
+assert payload.get("recording") is False
+assert payload.get("finalizing") is False
+assert payload.get("error") is None
+PY_FRESH
+        then
+            docker exec bililive_adapter timeout 15 find /adapter/Videos -mindepth 1 -maxdepth 1 -print -quit >/dev/null
+            return 0
+        fi
+        sleep 5
+    done
+    return 1
+}
+test -f "$backup/external/recorder_adapter.present"
+adapter_restart_safe
+adapter_content_changed=0
+if ! cmp -s \
+    /opt/bilive/autoslice/repo/ops/recording/bililive_recorder_adapter.py \
+    /opt/bilive/recording/bililive_recorder_adapter.py; then
+    adapter_content_changed=1
+fi
+install_atomic \
+    /opt/bilive/autoslice/repo/ops/recording/bililive_recorder_adapter.py \
+    /opt/bilive/recording/bililive_recorder_adapter.py \
+    755
+new_adapter_sha=$(sha256sum /opt/bilive/autoslice/repo/ops/recording/bililive_recorder_adapter.py | awk '{print $1}')
+test "$new_adapter_sha" = "$(sha256sum /opt/bilive/recording/bililive_recorder_adapter.py | awk '{print $1}')"
+test "$new_adapter_sha" = "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py | awk '{print $1}')"
+if [ "$adapter_content_changed" -eq 1 ]; then
+    touch "$backup/external/recorder_adapter.restart-required"
+    adapter_restart_safe
+    restart_epoch=$(date +%s)
+    docker restart bililive_adapter >/dev/null
+    wait_adapter_runtime "$restart_epoch" "$new_adapter_sha"
+else
+    test "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' bililive_adapter)" = healthy
+fi
 watchdog_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/watchdog.lock /opt/bilive/autoslice/free_mount_watchdog.sh >> /opt/bilive/autoslice/logs/watchdog.log 2>&1'
 upload_fatal_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/upload-fatal-sentinel.lock /opt/bilive/autoslice/upload_fatal_sentinel.sh >> /opt/bilive/autoslice/logs/upload-fatal-sentinel.log 2>&1'
 timely_terms_cron='17 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/timely-terms.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_timely_terms.py --cache-dir /opt/bilive/autoslice/cache/timely-term-crawler --write /opt/bilive/autoslice/state/timely_terms.json'\'' >> /opt/bilive/autoslice/logs/timely-terms.log 2>&1'
@@ -804,6 +1021,7 @@ manifest = {}
 for component in (
     "scripts",
     "src",
+    "ops",
     "assets",
     "profiles",
     ".agent",

@@ -241,10 +241,10 @@ CANONICAL_REC_ROOT = Path(
     )
 )
 RECORDER_STATUS_PATH = Path(
-    os.environ.get(
-        "AUTOSLICE_RECORDER_STATUS_PATH",
-        "/opt/bilive/recording/status.json",
-    )
+    os.environ.get("AUTOSLICE_RECORDER_STATUS_PATH", "/opt/bilive/recording/status.json")
+)
+RECORDER_ADAPTER_STATE_PATH = Path(
+    os.environ.get("AUTOSLICE_RECORDER_ADAPTER_STATE_PATH", "/opt/bilive/recording/adapter-state.json")
 )
 RECORDER_STATUS_MAX_AGE_SECONDS = int(
     os.environ.get("AUTOSLICE_RECORDER_STATUS_MAX_AGE_SECONDS", "180")
@@ -1689,8 +1689,7 @@ def process_date(date: str) -> None:
                 "HLS segment(s) into hash-bound MP4"
             )
     source_inventory = audit_finalized_recording_inventory(
-        REC_ROOT / date,
-        room_id=ROOM,
+        REC_ROOT / date, room_id=ROOM, adapter_state_path=RECORDER_ADAPTER_STATE_PATH
     )
     previous_source_inventory = state.get("source_integrity")
     state["source_integrity"] = source_inventory

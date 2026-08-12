@@ -27,6 +27,7 @@ import math
 import os
 from pathlib import Path, PurePosixPath
 import re
+import stat
 import subprocess
 import sys
 import threading
@@ -41,8 +42,13 @@ import xml.etree.ElementTree as ET
 SCHEMA_VERSION = "bililive-recorder-adapter.v1"
 STATUS_SCHEMA_VERSION = "recorder-neutral-status.v1"
 STATE_SCHEMA_VERSION = "bililive-recorder-adapter-state.v1"
+SOURCE_DISPOSITION_SCHEMA_VERSION = "recording-connection-stub.v1"
+SOURCE_DISPOSITION_STATUS = "IGNORED_CONNECTION_STUB"
+SOURCE_DISPOSITION_REASON = "RECORDER_CONNECTION_STUB_NO_DECODABLE_VIDEO"
 BACKEND = "BililiveRecorder"
 QUALITY_PRIORITY = ("avc10000", "avc400", "avc250")
+CONNECTION_STUB_MAX_SIZE_BYTES = 5 * 1024 * 1024
+CONNECTION_STUB_MAX_DURATION_SECONDS, CONNECTION_STUB_MAX_SUCCESSOR_GAP_SECONDS = 10.0, 2.0
 FILENAME_RX_TEMPLATE = r"^{room}_(?P<stamp>20\d{{6}}-\d{{2}}-\d{{2}}-\d{{2}})\.flv$"
 GRAPHQL_ROOM_QUERY = """
 query AdapterRoomStatus($roomId: Int!) {
@@ -121,9 +127,9 @@ def atomic_write_bytes(path: Path, payload: bytes, *, mode: int = 0o644) -> None
 
 
 def atomic_write_json(path: Path, payload: dict[str, Any], *, mode: int = 0o644) -> None:
-    encoded = (
-        json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
-    ).encode("utf-8")
+    encoded = (json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode(
+        "utf-8"
+    )
     atomic_write_bytes(path, encoded, mode=mode)
 
 
@@ -133,6 +139,95 @@ def sha256_file(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+_FILE_FINGERPRINT_KEYS = (
+    "size_bytes",
+    "mtime_ns",
+    "ctime_ns",
+    "device",
+    "inode",
+    "mode",
+)
+
+
+def _stat_fingerprint(info: os.stat_result) -> dict[str, int]:
+    return {
+        "size_bytes": info.st_size,
+        "mtime_ns": info.st_mtime_ns,
+        "ctime_ns": info.st_ctime_ns,
+        "device": info.st_dev,
+        "inode": info.st_ino,
+        "mode": stat.S_IMODE(info.st_mode),
+    }
+
+
+def _regular_file_fingerprint(path: Path) -> dict[str, int]:
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise AdapterError(f"cannot stat evidence file {path.name}: {exc}") from exc
+    if not stat.S_ISREG(info.st_mode):
+        raise AdapterError(f"evidence path is not a regular non-symlink file: {path}")
+    return _stat_fingerprint(info)
+
+
+def _attest_regular_file(path: Path) -> dict[str, Any]:
+    """Hash one stable regular-file snapshot without following a leaf symlink."""
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise AdapterError(f"cannot open evidence file {path.name}: {exc}") from exc
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise AdapterError(f"evidence path is not a regular file: {path}")
+        digest = hashlib.sha256()
+        while block := os.read(descriptor, 1024 * 1024):
+            digest.update(block)
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    fingerprint = _stat_fingerprint(before)
+    if fingerprint != _stat_fingerprint(after):
+        raise AdapterError(f"evidence file changed while hashing: {path.name}")
+    return {**fingerprint, "sha256": digest.hexdigest()}
+
+
+def _binding_matches_fingerprint(binding: Any, path: Path) -> bool:
+    if not isinstance(binding, dict):
+        return False
+    try:
+        current = _regular_file_fingerprint(path)
+    except AdapterError:
+        return False
+    return all(binding.get(key) == current[key] for key in _FILE_FINGERPRINT_KEYS)
+
+
+def _canonical_json_sha256(payload: dict[str, Any]) -> str:
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _parse_webhook_datetime(value: Any, *, field: str) -> datetime:
+    raw = _validate_webhook_timestamp(value, field=field)
+    pattern = r"(?P<head>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?P<fraction>\.\d{1,7})?(?P<zone>Z|[+-]\d{2}:\d{2})"
+    match = re.fullmatch(pattern, raw)
+    if match is None:  # pragma: no cover - validation above owns this branch
+        raise AdapterError(f"webhook {field} is invalid")
+    fraction = match.group("fraction") or ""
+    if fraction:
+        fraction = "." + fraction[1:7].ljust(6, "0")
+    zone = "+00:00" if match.group("zone") == "Z" else match.group("zone")
+    return datetime.fromisoformat(f"{match.group('head')}{fraction}{zone}")
 
 
 def _webhook_record_relative_path(relative_path: str, *, room_id: int) -> str:
@@ -234,8 +329,7 @@ def append_webhook_event(
 ) -> None:
     validate_webhook_event(payload, room_id=room_id)
     encoded = (
-        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        + "\n"
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
     ).encode("utf-8")
     if len(encoded) > 256 * 1024:
         raise AdapterError("webhook event exceeds 256 KiB")
@@ -295,9 +389,7 @@ def reconcile_webhook_journal(
         try:
             payload = json.loads(line)
         except json.JSONDecodeError as exc:
-            raise AdapterError(
-                f"webhook journal line {line_number} is invalid JSON"
-            ) from exc
+            raise AdapterError(f"webhook journal line {line_number} is invalid JSON") from exc
         normalized = validate_webhook_event(payload, room_id=room_id)
         digest = hashlib.sha256(
             json.dumps(
@@ -437,9 +529,7 @@ def probe_cookie_health(
                 payload = json.loads(response.read().decode("utf-8", "replace"))
             data = payload.get("data") if isinstance(payload, dict) else None
             result["api_code"] = payload.get("code") if isinstance(payload, dict) else None
-            result["login_valid"] = bool(
-                isinstance(data, dict) and data.get("isLogin") is True
-            )
+            result["login_valid"] = bool(isinstance(data, dict) and data.get("isLogin") is True)
         except (OSError, urllib.error.URLError, ValueError) as exc:
             result["error"] = f"{type(exc).__name__}: {str(exc)[:200]}"
     state["cookie_health"] = result
@@ -460,7 +550,9 @@ def _run(
             timeout=timeout_seconds,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise AdapterError(f"command failed to run: {command[0]}: {type(exc).__name__}: {exc}") from exc
+        raise AdapterError(
+            f"command failed to run: {command[0]}: {type(exc).__name__}: {exc}"
+        ) from exc
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip()[-1200:]
         raise AdapterError(f"{command[0]} exited {completed.returncode}: {detail}")
@@ -563,6 +655,81 @@ def packet_scan(path: Path, *, ffmpeg_bin: str = "ffmpeg") -> None:
     )
 
 
+def _video_probe_json(path: Path, arguments: list[str], *, ffprobe_bin: str) -> dict[str, Any]:
+    completed = _run(
+        [
+            ffprobe_bin,
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            *arguments,
+            "-of",
+            "json",
+            str(path),
+        ],
+        timeout_seconds=120,
+    )
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise AdapterError(f"invalid video probe JSON for {path.name}") from exc
+    if not isinstance(payload, dict):
+        raise AdapterError(f"invalid video probe payload for {path.name}")
+    return payload
+
+
+def probe_connection_stub_video(
+    path: Path,
+    *,
+    ffprobe_bin: str = "ffprobe",
+) -> dict[str, Any]:
+    """Prove that a tiny FLV advertises H.264 but contains no video payload.
+
+    ``-count_frames`` alone is not sufficient for the incident shape: ffprobe
+    omits the count fields when the H.264 stream has no usable dimensions.
+    Explicit ``-show_frames`` and ``-show_packets`` scans make absence an
+    objective empty-list observation instead of treating a missing counter as
+    zero by assumption.
+    """
+    shape_payload = _video_probe_json(
+        path,
+        ["-show_entries", "format=duration,size:stream=codec_type,codec_name,width,height"],
+        ffprobe_bin=ffprobe_bin,
+    )
+    frame_payload = _video_probe_json(
+        path,
+        ["-show_frames", "-show_entries", "frame=media_type"],
+        ffprobe_bin=ffprobe_bin,
+    )
+    packet_payload = _video_probe_json(
+        path,
+        ["-show_packets", "-show_entries", "packet=codec_type"],
+        ffprobe_bin=ffprobe_bin,
+    )
+    try:
+        streams = shape_payload.get("streams") or []
+        media_format = shape_payload.get("format") or {}
+        video = next(row for row in streams if row.get("codec_type") == "video")
+        duration = float(media_format.get("duration") or 0)
+        size = int(media_format.get("size") or path.stat().st_size)
+        decoded_frames = frame_payload.get("frames") or []
+        video_packets = packet_payload.get("packets") or []
+    except (OSError, StopIteration, TypeError, ValueError) as exc:
+        raise AdapterError(f"invalid connection-stub probe result for {path.name}: {exc}") from exc
+    if not isinstance(decoded_frames, list) or not isinstance(video_packets, list):
+        raise AdapterError(f"invalid frame/packet probe result for {path.name}")
+    return {
+        "duration_seconds": duration,
+        "size_bytes": size,
+        "video_codec": str(video.get("codec_name") or ""),
+        "width": int(video.get("width") or 0),
+        "height": int(video.get("height") or 0),
+        "decoded_video_frames": len(decoded_frames),
+        "video_packets": len(video_packets),
+    }
+
+
 def _xml_record_info(root: ET.Element) -> dict[str, str]:
     node = root.find("BililiveRecorderRecordInfo")
     if node is None:
@@ -598,9 +765,7 @@ def xml_to_jsonl(xml_path: Path) -> tuple[bytes, dict[str, str], int]:
             continue
         raw_value = element.attrib.get("raw")
         if not raw_value:
-            raise AdapterError(
-                f"{xml_path.name} event <{element.tag}> lacks required raw evidence"
-            )
+            raise AdapterError(f"{xml_path.name} event <{element.tag}> lacks required raw evidence")
         try:
             raw: Any = json.loads(raw_value)
         except json.JSONDecodeError as exc:
@@ -864,6 +1029,518 @@ def finalize_recording(
     }
 
 
+def _webhook_file_binding(evidence: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: evidence.get(key)
+        for key in (
+            "status",
+            "session_id",
+            "opening_event_id",
+            "closing_event_id",
+            "file_open_time",
+            "file_close_time",
+            "file_size",
+            "duration",
+        )
+    }
+
+
+def build_connection_stub_disposition(
+    source_flv: Path,
+    *,
+    record_root: Path,
+    webhook_files: dict[str, Any],
+    finalized: dict[str, Any],
+    ffprobe_bin: str = "ffprobe",
+) -> dict[str, Any] | None:
+    """Return one fully bound typed ignore row, or ``None`` for normal media.
+
+    The classifier is intentionally narrow.  A file which misses any positive
+    predicate remains in the ordinary finalization lane; it is never ignored
+    merely because remuxing failed.
+    """
+
+    try:
+        relative = source_flv.relative_to(record_root).as_posix()
+        source_fingerprint = _regular_file_fingerprint(source_flv)
+    except (AdapterError, ValueError):
+        return None
+    if relative in finalized or source_flv.with_suffix(".mp4").exists():
+        return None
+    evidence = webhook_files.get(relative)
+    if not isinstance(evidence, dict) or evidence.get("status") != "CLOSED":
+        return None
+    try:
+        closed_size = int(evidence.get("file_size") or -1)
+        event_duration = float(evidence.get("duration") or 0)
+        opened_at = _parse_webhook_datetime(evidence.get("file_open_time"), field="FileOpenTime")
+        closed_at = _parse_webhook_datetime(evidence.get("file_close_time"), field="FileCloseTime")
+    except (AdapterError, TypeError, ValueError):
+        return None
+    wall_duration = (closed_at - opened_at).total_seconds()
+    if (
+        source_fingerprint["size_bytes"] != closed_size
+        or source_fingerprint["size_bytes"] >= CONNECTION_STUB_MAX_SIZE_BYTES
+        or event_duration <= 0
+        or event_duration >= CONNECTION_STUB_MAX_DURATION_SECONDS
+        or wall_duration < 0
+        or wall_duration >= CONNECTION_STUB_MAX_DURATION_SECONDS
+        or not evidence.get("opening_event_id")
+        or not evidence.get("closing_event_id")
+    ):
+        return None
+    session_id = str(evidence.get("session_id") or "")
+    if not session_id:
+        return None
+
+    openings: list[tuple[datetime, str, dict[str, Any]]] = []
+    for candidate_relative, candidate_evidence in webhook_files.items():
+        if not isinstance(candidate_evidence, dict) or not candidate_evidence.get(
+            "opening_event_id"
+        ):
+            continue
+        try:
+            candidate_opened = _parse_webhook_datetime(
+                candidate_evidence.get("file_open_time"), field="FileOpenTime"
+            )
+        except AdapterError:
+            return None
+        openings.append((candidate_opened, str(candidate_relative), candidate_evidence))
+    openings.sort(key=lambda item: (item[0], item[1]))
+    source_positions = [index for index, item in enumerate(openings) if item[1] == relative]
+    if len(source_positions) != 1:
+        return None
+    source_position = source_positions[0]
+    if any(
+        str(item[2].get("session_id") or "") == session_id for item in openings[:source_position]
+    ) or source_position + 1 >= len(openings):
+        return None
+    successor_opened, successor_relative, successor_evidence = openings[source_position + 1]
+    successor_gap = (successor_opened - closed_at).total_seconds()
+    if (
+        successor_gap < 0
+        or successor_gap > CONNECTION_STUB_MAX_SUCCESSOR_GAP_SECONDS
+        or successor_evidence.get("status") != "CLOSED"
+        or str(successor_evidence.get("session_id") or "") != session_id
+        or not successor_evidence.get("closing_event_id")
+    ):
+        return None
+    successor_path = PurePosixPath(successor_relative)
+    source_path = PurePosixPath(relative)
+    if (
+        successor_path.is_absolute()
+        or ".." in successor_path.parts
+        or len(successor_path.parts) != 2
+        or successor_path.parts[0] != source_path.parts[0]
+        or re.fullmatch(
+            FILENAME_RX_TEMPLATE.format(room=re.escape(source_flv.name.split("_", 1)[0])),
+            successor_path.parts[1],
+        )
+        is None
+    ):
+        return None
+
+    successor_source = record_root / successor_relative
+    successor_ledger = finalized.get(successor_relative)
+    if not isinstance(successor_ledger, dict):
+        return None
+    successor_target = successor_source.with_suffix(".mp4")
+    try:
+        successor_fingerprint = _regular_file_fingerprint(successor_source)
+        successor_target_attestation = _attest_regular_file(successor_target)
+        successor_event_size = int(successor_evidence.get("file_size") or -1)
+        ledger_source_size = int(successor_ledger.get("source_size") or -1)
+        ledger_source_mtime_ns = int(successor_ledger.get("source_mtime_ns") or -1)
+    except (AdapterError, OSError, TypeError, ValueError):
+        return None
+    expected_target = str(successor_ledger.get("target") or "")
+    expected_target_sha256 = str(successor_ledger.get("target_sha256") or "")
+    if (
+        successor_fingerprint["size_bytes"] != successor_event_size
+        or successor_fingerprint["size_bytes"] != ledger_source_size
+        or successor_fingerprint["mtime_ns"] != ledger_source_mtime_ns
+        or expected_target != str(successor_target)
+        or not expected_target_sha256
+        or successor_target_attestation["sha256"] != expected_target_sha256
+    ):
+        return None
+    try:
+        successor_media = probe_media(successor_target, ffprobe_bin=ffprobe_bin)
+    except AdapterError:
+        return None
+    if (
+        not _binding_matches_fingerprint(successor_target_attestation, successor_target)
+        or int(successor_media.get("width") or 0) <= 0
+        or int(successor_media.get("height") or 0) <= 0
+    ):
+        return None
+
+    xml_path = source_flv.with_suffix(".xml")
+    try:
+        source_attestation = _attest_regular_file(source_flv)
+        xml_attestation = _attest_regular_file(xml_path)
+        _jsonl, record_info, event_count = xml_to_jsonl(xml_path)
+        source_probe = probe_connection_stub_video(source_flv, ffprobe_bin=ffprobe_bin)
+    except (AdapterError, OSError):
+        return None
+    if (
+        event_count != 0
+        or record_info.get("roomid") != source_flv.name.split("_", 1)[0]
+        or source_probe.get("video_codec") != "h264"
+        or source_probe.get("width") != 0
+        or source_probe.get("height") != 0
+        or source_probe.get("decoded_video_frames") != 0
+        or source_probe.get("video_packets") != 0
+        or int(source_probe.get("size_bytes") or -1) != source_fingerprint["size_bytes"]
+        or float(source_probe.get("duration_seconds") or 0) <= 0
+        or float(source_probe.get("duration_seconds") or 0) >= CONNECTION_STUB_MAX_DURATION_SECONDS
+        or abs(float(source_probe["duration_seconds"]) - event_duration) > 0.001
+        or not _binding_matches_fingerprint(source_attestation, source_flv)
+        or not _binding_matches_fingerprint(xml_attestation, xml_path)
+    ):
+        return None
+
+    row: dict[str, Any] = {
+        "schema_version": SOURCE_DISPOSITION_SCHEMA_VERSION,
+        "status": SOURCE_DISPOSITION_STATUS,
+        "reason_code": SOURCE_DISPOSITION_REASON,
+        "source_relative_path": relative,
+        "source": {
+            "path": str(source_flv),
+            **source_attestation,
+        },
+        "xml": {
+            "path": str(xml_path),
+            **xml_attestation,
+            "official_bililiverecorder": True,
+            "event_count": event_count,
+            "record_info": record_info,
+        },
+        "webhook": _webhook_file_binding(evidence),
+        "decode": source_probe,
+        "session": {
+            "session_id": session_id,
+            "prior_same_session_openings": 0,
+            "successor_gap_seconds": successor_gap,
+            "successor_relative_path": successor_relative,
+            "successor_webhook": _webhook_file_binding(successor_evidence),
+            "successor_source": {
+                "path": str(successor_source),
+                **successor_fingerprint,
+            },
+            "successor_finalized_ledger": {
+                "source_size": ledger_source_size,
+                "source_mtime_ns": ledger_source_mtime_ns,
+                "target": expected_target,
+                "target_sha256": expected_target_sha256,
+                "finalized_at": successor_ledger.get("finalized_at"),
+            },
+            "successor_mp4": {
+                "path": str(successor_target),
+                **successor_target_attestation,
+                "media": successor_media,
+            },
+        },
+        "source_action": {"finalized": False, "delete_source": "never", "move_source": "never"},
+    }
+    row["canonical_integrity"] = {
+        "algorithm": "sha256",
+        "canonical_json_sha256": _canonical_json_sha256(row),
+    }
+    return row
+
+
+def validate_connection_stub_disposition(
+    source_flv: Path,
+    row: Any,
+    *,
+    record_root: Path,
+    webhook_files: dict[str, Any],
+    finalized: dict[str, Any],
+    ffprobe_bin: str = "ffprobe",
+) -> dict[str, Any]:
+    """Revalidate immutable identity without rereading historical media bytes.
+
+    Full SHA-256 and ffprobe attestation happens once when the row is created.
+    Recurring heartbeat validation compares canonical state, live webhook and
+    finalized-ledger projections, and exact regular-file fingerprints.  Any
+    stat/inode/ctime drift invalidates the row; the adapter never silently
+    re-signs it.
+    """
+
+    if not isinstance(row, dict):
+        raise AdapterError("source disposition row is malformed")
+    if set(row) != {
+        "schema_version",
+        "status",
+        "reason_code",
+        "source_relative_path",
+        "source",
+        "xml",
+        "webhook",
+        "decode",
+        "session",
+        "source_action",
+        "canonical_integrity",
+    }:
+        raise AdapterError("source disposition field set is invalid")
+    integrity = row.get("canonical_integrity")
+    unsigned = {key: value for key, value in row.items() if key != "canonical_integrity"}
+    if not isinstance(integrity, dict) or integrity != {
+        "algorithm": "sha256",
+        "canonical_json_sha256": _canonical_json_sha256(unsigned),
+    }:
+        raise AdapterError("source disposition canonical integrity mismatch")
+    del ffprobe_bin  # recurring validation deliberately performs no media probe
+    try:
+        relative = source_flv.relative_to(record_root).as_posix()
+    except ValueError as exc:
+        raise AdapterError("source disposition escaped recording root") from exc
+    if (
+        row.get("schema_version") != SOURCE_DISPOSITION_SCHEMA_VERSION
+        or row.get("status") != SOURCE_DISPOSITION_STATUS
+        or row.get("reason_code") != SOURCE_DISPOSITION_REASON
+        or row.get("source_relative_path") != relative
+        or row.get("source_action")
+        != {"finalized": False, "delete_source": "never", "move_source": "never"}
+        or relative in finalized
+        or source_flv.with_suffix(".mp4").exists()
+    ):
+        raise AdapterError("source disposition evidence drifted: identity/action invalid")
+
+    source = row.get("source")
+    xml = row.get("xml")
+    decode = row.get("decode")
+    session = row.get("session")
+    if not all(isinstance(value, dict) for value in (source, xml, decode, session)):
+        raise AdapterError("source disposition evidence is malformed")
+    fingerprint_keys = set(_FILE_FINGERPRINT_KEYS)
+    if (
+        set(source) != {"path", "sha256", *fingerprint_keys}
+        or set(xml)
+        != {
+            "path",
+            "sha256",
+            *fingerprint_keys,
+            "official_bililiverecorder",
+            "event_count",
+            "record_info",
+        }
+        or set(decode)
+        != {
+            "duration_seconds",
+            "size_bytes",
+            "video_codec",
+            "width",
+            "height",
+            "decoded_video_frames",
+            "video_packets",
+        }
+        or set(session)
+        != {
+            "session_id",
+            "prior_same_session_openings",
+            "successor_gap_seconds",
+            "successor_relative_path",
+            "successor_webhook",
+            "successor_source",
+            "successor_finalized_ledger",
+            "successor_mp4",
+        }
+    ):
+        raise AdapterError("source disposition nested field set is invalid")
+    xml_path = source_flv.with_suffix(".xml")
+    record_info = xml.get("record_info")
+    if (
+        source.get("path") != str(source_flv)
+        or xml.get("path") != str(xml_path)
+        or re.fullmatch(r"[0-9a-f]{64}", str(source.get("sha256") or "")) is None
+        or re.fullmatch(r"[0-9a-f]{64}", str(xml.get("sha256") or "")) is None
+        or not _binding_matches_fingerprint(source, source_flv)
+        or not _binding_matches_fingerprint(xml, xml_path)
+        or xml.get("official_bililiverecorder") is not True
+        or xml.get("event_count") != 0
+        or not isinstance(record_info, dict)
+        or record_info.get("roomid") != source_flv.name.split("_", 1)[0]
+    ):
+        raise AdapterError("source/XML immutable evidence drifted")
+
+    evidence = webhook_files.get(relative)
+    if not isinstance(evidence, dict) or row.get("webhook") != _webhook_file_binding(evidence):
+        raise AdapterError("source disposition webhook evidence drifted")
+    try:
+        opened_at = _parse_webhook_datetime(evidence.get("file_open_time"), field="FileOpenTime")
+        closed_at = _parse_webhook_datetime(evidence.get("file_close_time"), field="FileCloseTime")
+        event_duration = float(evidence.get("duration") or 0)
+        wall_duration = (closed_at - opened_at).total_seconds()
+    except (AdapterError, TypeError, ValueError) as exc:
+        raise AdapterError("source disposition webhook time evidence is invalid") from exc
+    session_id = str(evidence.get("session_id") or "")
+    if (
+        evidence.get("status") != "CLOSED"
+        or not evidence.get("opening_event_id")
+        or not evidence.get("closing_event_id")
+        or not session_id
+        or evidence.get("file_size") != source.get("size_bytes")
+        or int(source.get("size_bytes") or -1) >= CONNECTION_STUB_MAX_SIZE_BYTES
+        or not 0 < event_duration < CONNECTION_STUB_MAX_DURATION_SECONDS
+        or not 0 <= wall_duration < CONNECTION_STUB_MAX_DURATION_SECONDS
+        or decode.get("video_codec") != "h264"
+        or decode.get("width") != 0
+        or decode.get("height") != 0
+        or decode.get("decoded_video_frames") != 0
+        or decode.get("video_packets") != 0
+        or decode.get("size_bytes") != source.get("size_bytes")
+        or abs(float(decode.get("duration_seconds") or 0) - event_duration) > 0.001
+    ):
+        raise AdapterError("source disposition thresholds/decode evidence drifted")
+
+    openings: list[tuple[datetime, str, dict[str, Any]]] = []
+    try:
+        for candidate_relative, candidate in webhook_files.items():
+            if isinstance(candidate, dict) and candidate.get("opening_event_id"):
+                openings.append(
+                    (
+                        _parse_webhook_datetime(
+                            candidate.get("file_open_time"), field="FileOpenTime"
+                        ),
+                        str(candidate_relative),
+                        candidate,
+                    )
+                )
+    except AdapterError as exc:
+        raise AdapterError("same-session opening evidence is invalid") from exc
+    openings.sort(key=lambda item: (item[0], item[1]))
+    source_positions = [index for index, item in enumerate(openings) if item[1] == relative]
+    if len(source_positions) != 1:
+        raise AdapterError("source disposition opening evidence is not unique")
+    source_position = source_positions[0]
+    if any(
+        str(item[2].get("session_id") or "") == session_id for item in openings[:source_position]
+    ) or source_position + 1 >= len(openings):
+        raise AdapterError("source disposition is not the first same-session opening")
+    successor_opened, successor_relative, successor_evidence = openings[source_position + 1]
+    successor_path = PurePosixPath(successor_relative)
+    source_path = PurePosixPath(relative)
+    if (
+        successor_path.is_absolute()
+        or ".." in successor_path.parts
+        or len(successor_path.parts) != 2
+        or successor_path.parts[0] != source_path.parts[0]
+        or re.fullmatch(
+            FILENAME_RX_TEMPLATE.format(room=re.escape(source_flv.name.split("_", 1)[0])),
+            successor_path.parts[1],
+        )
+        is None
+    ):
+        raise AdapterError("same-session successor path is invalid")
+    successor_gap = (successor_opened - closed_at).total_seconds()
+    if (
+        not 0 <= successor_gap <= CONNECTION_STUB_MAX_SUCCESSOR_GAP_SECONDS
+        or successor_evidence.get("status") != "CLOSED"
+        or str(successor_evidence.get("session_id") or "") != session_id
+        or not successor_evidence.get("opening_event_id")
+        or not successor_evidence.get("closing_event_id")
+        or session.get("session_id") != session_id
+        or session.get("prior_same_session_openings") != 0
+        or session.get("successor_gap_seconds") != successor_gap
+        or session.get("successor_relative_path") != successor_relative
+        or session.get("successor_webhook") != _webhook_file_binding(successor_evidence)
+    ):
+        raise AdapterError("same-session successor evidence drifted")
+
+    successor_source = record_root / successor_relative
+    successor_mp4 = successor_source.with_suffix(".mp4")
+    ledger = finalized.get(successor_relative)
+    embedded_ledger = session.get("successor_finalized_ledger")
+    successor_source_binding = session.get("successor_source")
+    successor_mp4_binding = session.get("successor_mp4")
+    if not all(
+        isinstance(value, dict)
+        for value in (ledger, embedded_ledger, successor_source_binding, successor_mp4_binding)
+    ):
+        raise AdapterError("successor finalized evidence is malformed")
+    if set(successor_source_binding) != {"path", *fingerprint_keys} or set(
+        successor_mp4_binding
+    ) != {"path", "sha256", "media", *fingerprint_keys}:
+        raise AdapterError("successor file fingerprint field set is invalid")
+    expected_ledger = {
+        "source_size": ledger.get("source_size"),
+        "source_mtime_ns": ledger.get("source_mtime_ns"),
+        "target": ledger.get("target"),
+        "target_sha256": ledger.get("target_sha256"),
+        "finalized_at": ledger.get("finalized_at"),
+    }
+    media = successor_mp4_binding.get("media")
+    if (
+        embedded_ledger != expected_ledger
+        or successor_source_binding.get("path") != str(successor_source)
+        or successor_mp4_binding.get("path") != str(successor_mp4)
+        or ledger.get("target") != str(successor_mp4)
+        or successor_source_binding.get("size_bytes") != successor_evidence.get("file_size")
+        or ledger.get("source_size") != successor_source_binding.get("size_bytes")
+        or ledger.get("source_mtime_ns") != successor_source_binding.get("mtime_ns")
+        or successor_mp4_binding.get("sha256") != ledger.get("target_sha256")
+        or re.fullmatch(r"[0-9a-f]{64}", str(successor_mp4_binding.get("sha256") or "")) is None
+        or not _binding_matches_fingerprint(successor_source_binding, successor_source)
+        or not _binding_matches_fingerprint(successor_mp4_binding, successor_mp4)
+        or not isinstance(media, dict)
+        or media.get("size_bytes") != successor_mp4_binding.get("size_bytes")
+        or float(media.get("duration_seconds") or 0) <= 0
+        or not media.get("video_codec")
+        or not media.get("audio_codec")
+        or int(media.get("width") or 0) <= 0
+        or int(media.get("height") or 0) <= 0
+    ):
+        raise AdapterError("successor finalized ledger/media evidence drifted")
+    return row
+
+
+def revalidate_source_dispositions(
+    state: dict[str, Any],
+    *,
+    record_root: Path,
+    room_id: int,
+    ffprobe_bin: str = "ffprobe",
+) -> set[str]:
+    """Revalidate every persisted ignore row on every adapter iteration."""
+    dispositions = state.get("source_dispositions")
+    webhook_files = state.get("webhook_files") or {}
+    finalized = state.get("finalized")
+    if not isinstance(dispositions, dict) or not isinstance(finalized, dict):
+        raise AdapterError("adapter source disposition state is malformed")
+    if not dispositions:
+        return set()
+    if not isinstance(webhook_files, dict):
+        raise AdapterError("adapter source disposition webhook state is malformed")
+    filename_rx = re.compile(FILENAME_RX_TEMPLATE.format(room=re.escape(str(room_id))))
+    validated: set[str] = set()
+    for relative, row in dispositions.items():
+        path = PurePosixPath(str(relative))
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or len(path.parts) != 2
+            or not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", path.parts[0])
+            or not filename_rx.fullmatch(path.parts[1])
+        ):
+            raise AdapterError("source disposition path is invalid")
+        source = record_root / path.parts[0] / path.parts[1]
+        try:
+            validate_connection_stub_disposition(
+                source,
+                row,
+                record_root=record_root,
+                webhook_files=webhook_files,
+                finalized=finalized,
+                ffprobe_bin=ffprobe_bin,
+            )
+        except AdapterError as exc:
+            raise AdapterError(f"source disposition drift: {relative}: {exc}") from exc
+        validated.add(str(relative))
+    return validated
+
+
 def load_or_initialize_state(
     path: Path,
     *,
@@ -879,6 +1556,7 @@ def load_or_initialize_state(
                 managed_since_epoch if managed_since_epoch is not None else now_epoch
             ),
             "finalized": {},
+            "source_dispositions": {},
         }
         atomic_write_json(path, payload, mode=0o600)
         return payload
@@ -888,6 +1566,9 @@ def load_or_initialize_state(
         raise AdapterError("adapter state schema mismatch; refusing reset")
     if not isinstance(payload.get("finalized"), dict):
         raise AdapterError("adapter state finalized ledger is malformed")
+    dispositions = payload.setdefault("source_dispositions", {})
+    if not isinstance(dispositions, dict):
+        raise AdapterError("adapter state source dispositions ledger is malformed")
     try:
         float(payload["managed_since_epoch"])
     except (KeyError, TypeError, ValueError) as exc:
@@ -916,8 +1597,7 @@ def discover_managed_flvs(
     # deliberately conservative around timezone/midnight boundaries while
     # bounding CloudDrive metadata traversal to the migration window.
     managed_date_floor = (
-        datetime.fromtimestamp(managed_since_epoch, tz=timezone.utc).date()
-        - timedelta(days=1)
+        datetime.fromtimestamp(managed_since_epoch, tz=timezone.utc).date() - timedelta(days=1)
     ).isoformat()
     candidates: list[Path] = []
     try:
@@ -981,11 +1661,7 @@ def _newest_source_probe(
             if re.fullmatch(r"20\d{2}-\d{2}-\d{2}", path.name) and path.is_dir()
         )[-2:]
         sources = sorted(
-            (
-                source
-                for date_dir in date_dirs
-                for source in date_dir.glob(f"{room_id}_*.flv")
-            ),
+            (source for date_dir in date_dirs for source in date_dir.glob(f"{room_id}_*.flv")),
             key=lambda path: path.stat().st_mtime_ns,
             reverse=True,
         )
@@ -1055,11 +1731,7 @@ def build_status(
         effective_error = f"{len(finalize_errors)} closed recording(s) failed finalization"
     live_status = None if not service_reachable else int(bool(streaming or recording))
     public_cookie_health = (
-        {
-            key: value
-            for key, value in cookie_health.items()
-            if key != "cookie_sha256"
-        }
+        {key: value for key, value in cookie_health.items() if key != "cookie_sha256"}
         if isinstance(cookie_health, dict)
         else None
     )
@@ -1178,12 +1850,33 @@ def run_once(args: argparse.Namespace) -> int:
     try:
         last_room_status_epoch = float(state["last_room_status_epoch"])
         status_continuous = (
-            0 <= observed_epoch - last_room_status_epoch
-            <= args.status_continuity_max_gap_seconds
+            0 <= observed_epoch - last_room_status_epoch <= args.status_continuity_max_gap_seconds
         )
     except (KeyError, TypeError, ValueError):
         status_continuous = False
     state["last_room_status_epoch"] = observed_epoch
+
+    try:
+        validated_dispositions = revalidate_source_dispositions(
+            state,
+            record_root=args.record_root,
+            room_id=args.room,
+            ffprobe_bin=args.ffprobe,
+        )
+    except AdapterError as exc:
+        atomic_write_json(args.state_path, state, mode=0o600)
+        status = build_status(
+            room_id=args.room,
+            room=room,
+            now_epoch=time.time(),
+            record_root=args.record_root,
+            error=str(exc),
+            ffprobe_bin=args.ffprobe,
+            cookie_health=cookie_health,
+        )
+        atomic_write_json(args.status_path, status, mode=0o644)
+        print(json.dumps(status, ensure_ascii=False))
+        return 2
 
     active = bool(room.get("streaming") or room.get("recording"))
     finalized: list[dict[str, Any]] = []
@@ -1235,10 +1928,11 @@ def run_once(args: argparse.Namespace) -> int:
         args.record_root,
         room_id=args.room,
         managed_since_epoch=float(state["managed_since_epoch"]),
-        explicit_relative_paths=(
-            closed_files.keys() if isinstance(closed_files, dict) else ()
-        ),
+        explicit_relative_paths=(closed_files.keys() if isinstance(closed_files, dict) else ()),
     )
+    finalized_ledger = state["finalized"]
+    source_dispositions = state.setdefault("source_dispositions", {})
+    disposition_state_changed = False
     eligible: list[Path] = []
     for source in candidates:
         relative = str(source.relative_to(args.record_root))
@@ -1267,7 +1961,32 @@ def run_once(args: argparse.Namespace) -> int:
                 }
             )
             continue
+        existing_disposition = source_dispositions.get(relative)
+        if existing_disposition is not None:
+            if relative not in validated_dispositions:
+                finalize_errors.append(
+                    {
+                        "source": str(source),
+                        "error": "source disposition was not revalidated",
+                    }
+                )
+            continue
+        if relative not in finalized_ledger and not source.with_suffix(".mp4").exists():
+            disposition = build_connection_stub_disposition(
+                source,
+                record_root=args.record_root,
+                webhook_files=closed_files,
+                finalized=finalized_ledger,
+                ffprobe_bin=args.ffprobe,
+            )
+            if disposition is not None:
+                source_dispositions[relative] = disposition
+                disposition_state_changed = True
+                continue
         eligible.append(source)
+
+    if disposition_state_changed:
+        atomic_write_json(args.state_path, state, mode=0o600)
 
     if isinstance(closed_files, dict):
         for relative, evidence in closed_files.items():
@@ -1382,11 +2101,7 @@ def _make_webhook_handler(
             except (AdapterError, json.JSONDecodeError, OSError) as exc:
                 event_type = payload.get("EventType") if isinstance(payload, dict) else None
                 event_data = payload.get("EventData") if isinstance(payload, dict) else None
-                relative = (
-                    event_data.get("RelativePath")
-                    if isinstance(event_data, dict)
-                    else None
-                )
+                relative = event_data.get("RelativePath") if isinstance(event_data, dict) else None
                 event_timestamp = (
                     payload.get("EventTimestamp") if isinstance(payload, dict) else None
                 )
@@ -1472,9 +2187,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--record-root",
         type=Path,
-        default=Path(
-            "/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160"
-        ),
+        default=Path("/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160"),
     )
     parser.add_argument(
         "--status-path",

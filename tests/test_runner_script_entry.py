@@ -99,6 +99,50 @@ def test_deploy_owns_disabled_before_remote_wait_can_be_interrupted():
     assert ownership < staging
 
 
+def test_runner_passes_default_adapter_state_to_recording_inventory():
+    source = RUNNER.read_text(encoding="utf-8")
+
+    assert '"/opt/bilive/recording/adapter-state.json"' in source
+    assert "adapter_state_path=RECORDER_ADAPTER_STATE_PATH" in source
+
+
+def test_deploy_commits_and_transactionally_installs_recorder_adapter():
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    external = source.split("<<'REMOTE_EXTERNAL_INSTALL'\n", 1)[1].split(
+        "\nREMOTE_EXTERNAL_INSTALL", 1
+    )[0]
+    outer_rollback = source.split("<<'REMOTE_ROLLBACK'\n", 1)[1].split("\nREMOTE_ROLLBACK", 1)[0]
+
+    assert "scripts src ops assets profiles" in source
+    assert '"ops",' in source
+    assert (
+        "capture_file recorder_adapter /opt/bilive/recording/bililive_recorder_adapter.py"
+    ) in source
+    assert ("/opt/bilive/autoslice/repo/ops/recording/bililive_recorder_adapter.py") in external
+    assert 'install -m "$mode" "$source" "$tmp"' in external
+    assert 'cp "$source" "$tmp"' not in external
+    assert "adapter_restart_safe" in external
+    assert 'payload.get("streaming") is False' in external
+    assert 'payload.get("recording") is False' in external
+    assert 'payload.get("finalizing") is False' in external
+    assert "recorder_adapter.restart-required" in external
+    assert "docker restart bililive_adapter" in external
+    assert "sha256sum /opt/bilive/recording/bililive_recorder_adapter.py" in external
+    assert "docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py" in external
+    assert ".State.Health.Status" in external
+    assert "generated >= float(sys.argv[2])" in external
+    assert 'payload.get("error") is None' in external
+    assert "query_room_status" in external
+    assert "adapter_content_changed" in external
+    assert "timeout 15 find /adapter/Videos" in external
+    assert "restore_adapter_atomic" in outer_rollback
+    assert "docker restart bililive_adapter" in outer_rollback
+    assert outer_rollback.index('crontab "$backup/external/crontab.file"') < outer_rollback.index(
+        "docker restart bililive_adapter"
+    )
+    assert 'cmp -s "$backup/DEPLOYED_COMMIT.old" "$repo/DEPLOYED_COMMIT"' in (outer_rollback)
+
+
 def test_deploy_authority_manifest_is_canonical_and_exact_byte_bound(tmp_path):
     repo = tmp_path / "repo"
     registry = repo / "assets/lidousha/publication_registry.v1.json"

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime
+import hashlib
 import json
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import re
+import stat
 from typing import Sequence
 
 
@@ -52,7 +56,11 @@ class SourceIntegrityIssue:
     severity: str = "BLOCK"
 
     def to_manifest(self) -> dict[str, object]:
-        data: dict[str, object] = {"code": self.code, "message": self.message, "severity": self.severity}
+        data: dict[str, object] = {
+            "code": self.code,
+            "message": self.message,
+            "severity": self.severity,
+        }
         if self.range is not None:
             data["range"] = self.range.to_manifest()
         if self.segment_path is not None:
@@ -90,7 +98,10 @@ class SourceRangeLedger:
 
     def write_manifest(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(self.to_manifest(), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        path.write_text(
+            json.dumps(self.to_manifest(), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
 
 
 @dataclass(frozen=True)
@@ -133,12 +144,318 @@ class BilibiliReplayDownloadCommandPlan:
 
 _MIN_SEGMENT_DURATION_MS = 10_000
 _MIN_SEGMENT_SIZE_BYTES = 64 * 1024
+_CONNECTION_STUB_SCHEMA = "recording-connection-stub.v1"
+_CONNECTION_STUB_STATUS = "IGNORED_CONNECTION_STUB"
+_CONNECTION_STUB_REASON = "RECORDER_CONNECTION_STUB_NO_DECODABLE_VIDEO"
+_FILE_FINGERPRINT_KEYS = (
+    "size_bytes",
+    "mtime_ns",
+    "ctime_ns",
+    "device",
+    "inode",
+    "mode",
+)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _regular_file_fingerprint(path: Path) -> dict[str, int]:
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode):
+        raise OSError(f"not a regular non-symlink file: {path}")
+    return {
+        "size_bytes": info.st_size,
+        "mtime_ns": info.st_mtime_ns,
+        "ctime_ns": info.st_ctime_ns,
+        "device": info.st_dev,
+        "inode": info.st_ino,
+        "mode": stat.S_IMODE(info.st_mode),
+    }
+
+
+def _binding_matches_fingerprint(binding: dict[str, object], path: Path) -> bool:
+    try:
+        current = _regular_file_fingerprint(path)
+    except OSError:
+        return False
+    return all(binding.get(key) == current[key] for key in _FILE_FINGERPRINT_KEYS)
+
+
+def _canonical_json_sha256(payload: dict[str, object]) -> str:
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _parse_event_time(value: object) -> datetime:
+    raw = str(value or "")
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    head, separator, tail = raw.partition(".")
+    if separator and ("+" in tail or "-" in tail):
+        plus = tail.rfind("+")
+        minus = tail.rfind("-")
+        split = max(plus, minus)
+        fraction, zone = tail[:split], tail[split:]
+        raw = f"{head}.{fraction[:6].ljust(6, '0')}{zone}"
+    return datetime.fromisoformat(raw)
+
+
+def _webhook_binding(evidence: dict[str, object]) -> dict[str, object]:
+    return {
+        key: evidence.get(key)
+        for key in (
+            "status",
+            "session_id",
+            "opening_event_id",
+            "closing_event_id",
+            "file_open_time",
+            "file_close_time",
+            "file_size",
+            "duration",
+        )
+    }
+
+
+def _path_ends_with(value: object, relative: str) -> bool:
+    return str(value or "").replace("\\", "/").endswith("/" + relative)
+
+
+def _verify_connection_stub_disposition(
+    source_flv: Path,
+    *,
+    date_dir: Path,
+    adapter_state_path: Path | None,
+) -> tuple[bool, str]:
+    """Revalidate a typed adapter disposition against current bytes and state."""
+
+    if adapter_state_path is None:
+        return False, "adapter_state_path was not provided"
+    try:
+        state = json.loads(adapter_state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return False, f"adapter state is unreadable: {type(exc).__name__}"
+    if state.get("schema_version") != "bililive-recorder-adapter-state.v1":
+        return False, "adapter state schema mismatch"
+    dispositions = state.get("source_dispositions")
+    webhook_files = state.get("webhook_files")
+    finalized = state.get("finalized")
+    if not all(isinstance(item, dict) for item in (dispositions, webhook_files, finalized)):
+        return False, "adapter disposition/webhook/finalized ledgers are malformed"
+
+    relative = f"{date_dir.name}/{source_flv.name}"
+    row = dispositions.get(relative)
+    if row is None:
+        return False, "no typed source disposition exists for this FLV"
+    if not isinstance(row, dict):
+        return False, "typed source disposition row is malformed"
+    if (
+        row.get("schema_version") != _CONNECTION_STUB_SCHEMA
+        or row.get("status") != _CONNECTION_STUB_STATUS
+        or row.get("reason_code") != _CONNECTION_STUB_REASON
+        or row.get("source_relative_path") != relative
+    ):
+        return False, "typed source disposition identity is invalid"
+    integrity = row.get("canonical_integrity")
+    unsigned = {key: value for key, value in row.items() if key != "canonical_integrity"}
+    if not isinstance(integrity, dict) or integrity != {
+        "algorithm": "sha256",
+        "canonical_json_sha256": _canonical_json_sha256(unsigned),
+    }:
+        return False, "typed source disposition canonical integrity mismatch"
+    action = row.get("source_action")
+    if action != {
+        "finalized": False,
+        "delete_source": "never",
+        "move_source": "never",
+    }:
+        return False, "typed source disposition action contract is invalid"
+    if relative in finalized or source_flv.with_suffix(".mp4").exists():
+        return False, "ignored source unexpectedly entered the finalized lane"
+
+    source_binding = row.get("source")
+    xml_binding = row.get("xml")
+    decode = row.get("decode")
+    session = row.get("session")
+    if not all(isinstance(item, dict) for item in (source_binding, xml_binding, decode, session)):
+        return False, "typed source disposition evidence is malformed"
+    xml_path = source_flv.with_suffix(".xml")
+    xml_relative = str(Path(relative).with_suffix(".xml")).replace("\\", "/")
+    if not _path_ends_with(source_binding.get("path"), relative) or not _path_ends_with(
+        xml_binding.get("path"), xml_relative
+    ):
+        return False, "typed source/XML path binding is invalid"
+    try:
+        source_stat = _regular_file_fingerprint(source_flv)
+        _regular_file_fingerprint(xml_path)
+    except OSError as exc:
+        return False, f"ignored source/XML cannot be revalidated: {type(exc).__name__}"
+    record_info = xml_binding.get("record_info")
+    if (
+        not _binding_matches_fingerprint(source_binding, source_flv)
+        or not _binding_matches_fingerprint(xml_binding, xml_path)
+        or re.fullmatch(r"[0-9a-f]{64}", str(source_binding.get("sha256") or "")) is None
+        or re.fullmatch(r"[0-9a-f]{64}", str(xml_binding.get("sha256") or "")) is None
+        or not isinstance(record_info, dict)
+        or record_info.get("roomid") != source_flv.name.split("_", 1)[0]
+        or xml_binding.get("official_bililiverecorder") is not True
+        or xml_binding.get("event_count") != 0
+    ):
+        return False, "ignored source/XML fingerprint or zero-event evidence drifted"
+    if (
+        decode.get("video_codec") != "h264"
+        or decode.get("width") != 0
+        or decode.get("height") != 0
+        or decode.get("decoded_video_frames") != 0
+        or decode.get("video_packets") != 0
+        or decode.get("size_bytes") != source_stat["size_bytes"]
+    ):
+        return False, "ignored source decode evidence is invalid"
+
+    source_webhook = webhook_files.get(relative)
+    if not isinstance(source_webhook, dict) or row.get("webhook") != _webhook_binding(
+        source_webhook
+    ):
+        return False, "ignored source webhook evidence drifted"
+    try:
+        opened = _parse_event_time(source_webhook.get("file_open_time"))
+        closed = _parse_event_time(source_webhook.get("file_close_time"))
+        event_duration = float(source_webhook.get("duration") or 0)
+        wall_duration = (closed - opened).total_seconds()
+    except (TypeError, ValueError):
+        return False, "ignored source webhook time evidence is invalid"
+    session_id = str(source_webhook.get("session_id") or "")
+    if (
+        source_webhook.get("status") != "CLOSED"
+        or not source_webhook.get("opening_event_id")
+        or not source_webhook.get("closing_event_id")
+        or not session_id
+        or source_webhook.get("file_size") != source_stat["size_bytes"]
+        or source_stat["size_bytes"] >= 5 * 1024 * 1024
+        or not 0 < event_duration < 10
+        or not 0 <= wall_duration < 10
+        or abs(float(decode.get("duration_seconds") or 0) - event_duration) > 0.001
+    ):
+        return False, "ignored source thresholds or CLOSED evidence drifted"
+
+    openings: list[tuple[datetime, str, dict[str, object]]] = []
+    try:
+        for candidate_relative, candidate in webhook_files.items():
+            if isinstance(candidate, dict) and candidate.get("opening_event_id"):
+                openings.append(
+                    (
+                        _parse_event_time(candidate.get("file_open_time")),
+                        str(candidate_relative),
+                        candidate,
+                    )
+                )
+    except (TypeError, ValueError):
+        return False, "same-session opening evidence is invalid"
+    openings.sort(key=lambda item: (item[0], item[1]))
+    source_positions = [index for index, item in enumerate(openings) if item[1] == relative]
+    if len(source_positions) != 1:
+        return False, "ignored source opening evidence is not unique"
+    source_position = source_positions[0]
+    if any(
+        str(item[2].get("session_id") or "") == session_id for item in openings[:source_position]
+    ) or source_position + 1 >= len(openings):
+        return False, "ignored source is no longer the first same-session opening"
+    successor_opened, successor_relative, successor_webhook = openings[source_position + 1]
+    successor_relative_path = PurePosixPath(successor_relative)
+    if (
+        successor_relative_path.is_absolute()
+        or ".." in successor_relative_path.parts
+        or len(successor_relative_path.parts) != 2
+        or successor_relative_path.parts[0] != date_dir.name
+        or not successor_relative_path.parts[1].startswith(f"{source_flv.name.split('_', 1)[0]}_")
+        or successor_relative_path.suffix.lower() != ".flv"
+    ):
+        return False, "same-session successor path is invalid"
+    gap = (successor_opened - closed).total_seconds()
+    if (
+        not 0 <= gap <= 2
+        or successor_webhook.get("status") != "CLOSED"
+        or str(successor_webhook.get("session_id") or "") != session_id
+        or not successor_webhook.get("opening_event_id")
+        or not successor_webhook.get("closing_event_id")
+        or session.get("session_id") != session_id
+        or session.get("prior_same_session_openings") != 0
+        or session.get("successor_gap_seconds") != gap
+        or session.get("successor_relative_path") != successor_relative
+        or session.get("successor_webhook") != _webhook_binding(successor_webhook)
+    ):
+        return False, "same-session successor event/time binding drifted"
+
+    successor_source = date_dir.parent / successor_relative
+    successor_mp4 = successor_source.with_suffix(".mp4")
+    successor_ledger = finalized.get(successor_relative)
+    if not isinstance(successor_ledger, dict):
+        return False, "successor finalized ledger is missing"
+    embedded_ledger = session.get("successor_finalized_ledger")
+    embedded_source = session.get("successor_source")
+    embedded_mp4 = session.get("successor_mp4")
+    if not all(isinstance(item, dict) for item in (embedded_ledger, embedded_source, embedded_mp4)):
+        return False, "successor typed evidence is malformed"
+    expected_ledger = {
+        "source_size": successor_ledger.get("source_size"),
+        "source_mtime_ns": successor_ledger.get("source_mtime_ns"),
+        "target": successor_ledger.get("target"),
+        "target_sha256": successor_ledger.get("target_sha256"),
+        "finalized_at": successor_ledger.get("finalized_at"),
+    }
+    successor_mp4_relative = str(Path(successor_relative).with_suffix(".mp4")).replace("\\", "/")
+    if (
+        not _path_ends_with(embedded_source.get("path"), successor_relative)
+        or not _path_ends_with(embedded_mp4.get("path"), successor_mp4_relative)
+        or not _path_ends_with(successor_ledger.get("target"), successor_mp4_relative)
+    ):
+        return False, "successor source/MP4 path binding is invalid"
+    try:
+        successor_stat = _regular_file_fingerprint(successor_source)
+        successor_mp4_stat = _regular_file_fingerprint(successor_mp4)
+    except OSError as exc:
+        return False, f"successor source/MP4 cannot be read: {type(exc).__name__}"
+    if (
+        embedded_ledger != expected_ledger
+        or successor_stat["size_bytes"] != successor_webhook.get("file_size")
+        or not _binding_matches_fingerprint(embedded_source, successor_source)
+        or not _binding_matches_fingerprint(embedded_mp4, successor_mp4)
+        or successor_ledger.get("source_size") != successor_stat["size_bytes"]
+        or successor_ledger.get("source_mtime_ns") != successor_stat["mtime_ns"]
+        or embedded_mp4.get("sha256") != successor_ledger.get("target_sha256")
+        or re.fullmatch(r"[0-9a-f]{64}", str(embedded_mp4.get("sha256") or "")) is None
+    ):
+        return False, "successor finalized ledger or real MP4 drifted"
+    media = embedded_mp4.get("media")
+    if (
+        not isinstance(media, dict)
+        or float(media.get("duration_seconds") or 0) <= 0
+        or media.get("size_bytes") != successor_mp4_stat["size_bytes"]
+        or not media.get("video_codec")
+        or not media.get("audio_codec")
+        or int(media.get("width") or 0) <= 0
+        or int(media.get("height") or 0) <= 0
+    ):
+        return False, "successor finalized MP4 media evidence is invalid"
+    return True, "typed connection-stub disposition revalidated"
 
 
 def audit_finalized_recording_inventory(
     date_dir: Path,
     *,
     room_id: str,
+    adapter_state_path: Path | None = None,
 ) -> dict[str, object]:
     """Fail closed when recorder output never reached the runner's MP4 lane.
 
@@ -226,6 +543,25 @@ def audit_finalized_recording_inventory(
                 "session processing gate."
             )
         elif raw_media is not None:
+            if raw_media.suffix.lower() == ".flv":
+                disposition_ok, disposition_detail = _verify_connection_stub_disposition(
+                    raw_media,
+                    date_dir=date_dir,
+                    adapter_state_path=adapter_state_path,
+                )
+                if disposition_ok:
+                    issues.append(
+                        {
+                            "code": _CONNECTION_STUB_REASON,
+                            "severity": "WARN",
+                            "message": disposition_detail,
+                            "segment_stem": stem,
+                            "path": str(raw_media),
+                            "source_disposition_schema": _CONNECTION_STUB_SCHEMA,
+                            "source_disposition_status": _CONNECTION_STUB_STATUS,
+                        }
+                    )
+                    continue
             code = (
                 "CLOSED_FLV_WITHOUT_MP4"
                 if raw_media.suffix.lower() == ".flv"
@@ -246,13 +582,21 @@ def audit_finalized_recording_inventory(
                 "segment_stem": stem,
                 "path": str(playlist or raw_media),
                 "raw_media_path": str(raw_media) if raw_media is not None else None,
+                "source_disposition_error": (
+                    disposition_detail
+                    if raw_media is not None and raw_media.suffix.lower() == ".flv"
+                    else None
+                ),
             }
         )
 
+    blocking_issues = [
+        issue for issue in issues if str(issue.get("severity") or "BLOCK") == "BLOCK"
+    ]
     return {
         "schema_version": "recording-inventory-audit.v1",
-        "status": "BLOCKED" if issues else "PASS",
-        "can_select": not issues,
+        "status": "BLOCKED" if blocking_issues else "PASS",
+        "can_select": not blocking_issues,
         "room_id": room_id,
         "date_dir": str(date_dir),
         "consumer_segments": consumer_segments,
@@ -289,7 +633,9 @@ def build_source_range_ledger(
 
     observed_ranges: list[TimeRange] = []
     for segment in ordered:
-        observed = TimeRange(max(expected_start_ms, segment.start_ms), min(expected_end_ms, segment.end_ms))
+        observed = TimeRange(
+            max(expected_start_ms, segment.start_ms), min(expected_end_ms, segment.end_ms)
+        )
         if observed.duration_ms > 0:
             observed_ranges.append(observed)
 
@@ -298,18 +644,26 @@ def build_source_range_ledger(
     coverage_complete = not missing_ranges
 
     for segment in ordered:
-        observed = TimeRange(max(expected_start_ms, segment.start_ms), min(expected_end_ms, segment.end_ms))
+        observed = TimeRange(
+            max(expected_start_ms, segment.start_ms), min(expected_end_ms, segment.end_ms)
+        )
         if not segment.probed_ok:
             # An unprobeable file (e.g. raw fmp4 .m4s sidecar) is harmless only when a
             # probed sibling segment records the same interval; otherwise it may hold
             # unique content and must block.
-            has_probed_coverage = _has_redundant_probed_coverage(segment, ordered, max_gap_ms=max_gap_ms)
+            has_probed_coverage = _has_redundant_probed_coverage(
+                segment, ordered, max_gap_ms=max_gap_ms
+            )
             degraded_severity = "WARN" if has_probed_coverage else "BLOCK"
             issues.append(
                 SourceIntegrityIssue(
                     code="MEDIA_PROBE_FAILED",
                     message="Media segment could not be probed successfully."
-                    + (" Probed sibling coverage exists; treated as a redundant sidecar." if has_probed_coverage else ""),
+                    + (
+                        " Probed sibling coverage exists; treated as a redundant sidecar."
+                        if has_probed_coverage
+                        else ""
+                    ),
                     range=observed if observed.duration_ms else segment.range,
                     segment_path=segment.path,
                     severity=degraded_severity,
@@ -477,7 +831,10 @@ def plan_bilibili_replay_download_commands(
 
     commands: list[tuple[str, ...]] = []
     for item in compensation.download_ranges:
-        output_template = output_dir / f"{compensation.room_id}_{compensation.session_date}_{item.start_ms}_{item.end_ms}.%(ext)s"
+        output_template = (
+            output_dir
+            / f"{compensation.room_id}_{compensation.session_date}_{item.start_ms}_{item.end_ms}.%(ext)s"
+        )
         commands.append(
             (
                 str(tool_path),
@@ -544,7 +901,9 @@ def _redact_command(command: Sequence[str]) -> list[str]:
 
 def _merge_ranges(ranges: Sequence[TimeRange], *, max_gap_ms: int) -> list[TimeRange]:
     merged: list[TimeRange] = []
-    for item in sorted((r for r in ranges if r.duration_ms > 0), key=lambda r: (r.start_ms, r.end_ms)):
+    for item in sorted(
+        (r for r in ranges if r.duration_ms > 0), key=lambda r: (r.start_ms, r.end_ms)
+    ):
         if not merged or item.start_ms > merged[-1].end_ms + max_gap_ms:
             merged.append(item)
         else:
@@ -553,7 +912,9 @@ def _merge_ranges(ranges: Sequence[TimeRange], *, max_gap_ms: int) -> list[TimeR
     return merged
 
 
-def _missing_ranges(expected: TimeRange, observed: Sequence[TimeRange], *, max_gap_ms: int) -> list[TimeRange]:
+def _missing_ranges(
+    expected: TimeRange, observed: Sequence[TimeRange], *, max_gap_ms: int
+) -> list[TimeRange]:
     missing: list[TimeRange] = []
     cursor = expected.start_ms
     for item in observed:

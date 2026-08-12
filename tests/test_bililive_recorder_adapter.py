@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -60,6 +61,89 @@ def _xml(*, start_time: str = "2026-07-23T13:57:26.3170443+08:00") -> str:
     )
 
 
+def _zero_event_xml(*, start_time: str = "2026-08-12T20:29:51.0000000+08:00") -> str:
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        "<i>"
+        '<BililiveRecorder version="2.18.0"/>'
+        '<BililiveRecorderRecordInfo roomid="123456" name="主播" title="测试" '
+        f'start_time="{start_time}"/>'
+        "</i>\n"
+    )
+
+
+def _connection_stub_fixture(tmp_path: Path, monkeypatch):
+    date_dir = tmp_path / "2026-08-12"
+    date_dir.mkdir(parents=True)
+    stub = date_dir / "123456_20260812-20-29-51.flv"
+    successor = date_dir / "123456_20260812-20-29-54.flv"
+    successor_mp4 = successor.with_suffix(".mp4")
+    stub.write_bytes(b"first-connection-stub")
+    stub.with_suffix(".xml").write_text(_zero_event_xml(), encoding="utf-8")
+    successor.write_bytes(b"valid-successor-source")
+    successor_mp4.write_bytes(b"valid-successor-mp4")
+    session_id = "a9af9685-8991-4923-af3e-ef6067d1b9bb"
+    stub_relative = f"{date_dir.name}/{stub.name}"
+    successor_relative = f"{date_dir.name}/{successor.name}"
+    webhook_files = {
+        stub_relative: {
+            "status": "CLOSED",
+            "session_id": session_id,
+            "opening_event_id": "stub-opening",
+            "closing_event_id": "stub-closed",
+            "file_open_time": "2026-08-12T20:29:52.70775+08:00",
+            "file_close_time": "2026-08-12T20:29:53.1716935+08:00",
+            "file_size": stub.stat().st_size,
+            "duration": 3.03,
+        },
+        successor_relative: {
+            "status": "CLOSED",
+            "session_id": session_id,
+            "opening_event_id": "successor-opening",
+            "closing_event_id": "successor-closed",
+            "file_open_time": "2026-08-12T20:29:54.3497935+08:00",
+            "file_close_time": "2026-08-12T20:59:58.5961912+08:00",
+            "file_size": successor.stat().st_size,
+            "duration": 1804.164,
+        },
+    }
+    finalized = {
+        successor_relative: {
+            "source_size": successor.stat().st_size,
+            "source_mtime_ns": successor.stat().st_mtime_ns,
+            "target": str(successor_mp4),
+            "target_sha256": adapter.sha256_file(successor_mp4),
+            "finalized_at": "2026-08-12T15:45:21+00:00",
+        }
+    }
+    monkeypatch.setattr(
+        adapter,
+        "probe_connection_stub_video",
+        lambda *_args, **_kwargs: {
+            "duration_seconds": 3.03,
+            "size_bytes": stub.stat().st_size,
+            "video_codec": "h264",
+            "width": 0,
+            "height": 0,
+            "decoded_video_frames": 0,
+            "video_packets": 0,
+        },
+    )
+    monkeypatch.setattr(
+        adapter,
+        "probe_media",
+        lambda *_args, **_kwargs: {
+            "duration_seconds": 1804.164,
+            "size_bytes": successor_mp4.stat().st_size,
+            "video_codec": "h264",
+            "audio_codec": "aac",
+            "width": 1920,
+            "height": 1080,
+        },
+    )
+    return stub, successor, webhook_files, finalized
+
+
 def _args(tmp_path: Path) -> argparse.Namespace:
     return argparse.Namespace(
         room=123456,
@@ -83,10 +167,7 @@ def _args(tmp_path: Path) -> argparse.Namespace:
 
 
 def test_committed_config_prioritizes_1080p_avc_and_forces_ipv4() -> None:
-    path = (
-        Path(__file__).resolve().parents[1]
-        / "ops/recording/bililive_recorder.config.v3.json"
-    )
+    path = Path(__file__).resolve().parents[1] / "ops/recording/bililive_recorder.config.v3.json"
     payload = json.loads(path.read_text(encoding="utf-8"))
     global_config = payload["global"]
 
@@ -185,6 +266,467 @@ def test_webhook_journal_dedupes_and_preserves_closed_state_when_out_of_order(
     assert len(state["webhook_event_ids"]) == 2
 
 
+def test_connection_stub_disposition_binds_first_opening_and_finalized_successor(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+
+    assert row is not None
+    assert row["schema_version"] == "recording-connection-stub.v1"
+    assert row["status"] == "IGNORED_CONNECTION_STUB"
+    assert row["reason_code"] == "RECORDER_CONNECTION_STUB_NO_DECODABLE_VIDEO"
+    assert row["source"]["sha256"] == adapter.sha256_file(stub)
+    assert row["xml"]["event_count"] == 0
+    assert row["decode"]["decoded_video_frames"] == 0
+    assert row["decode"]["video_packets"] == 0
+    assert row["session"]["prior_same_session_openings"] == 0
+    assert row["session"]["successor_relative_path"].endswith(successor.name)
+    assert row["source_action"] == {
+        "finalized": False,
+        "delete_source": "never",
+        "move_source": "never",
+    }
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+
+
+def test_connection_stub_requires_no_prior_same_session_opening(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, _successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    webhook_files["2026-08-12/123456_20260812-20-29-50.flv"] = {
+        **webhook_files[next(iter(webhook_files))],
+        "opening_event_id": "earlier-opening",
+        "closing_event_id": "earlier-closed",
+        "file_open_time": "2026-08-12T20:29:50+08:00",
+        "file_close_time": "2026-08-12T20:29:51+08:00",
+    }
+
+    assert (
+        adapter.build_connection_stub_disposition(
+            stub,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+        )
+        is None
+    )
+
+
+def test_connection_stub_requires_successor_within_two_seconds(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    webhook_files[f"2026-08-12/{successor.name}"]["file_open_time"] = (
+        "2026-08-12T20:29:55.5000000+08:00"
+    )
+
+    assert (
+        adapter.build_connection_stub_disposition(
+            stub,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+        )
+        is None
+    )
+
+
+def test_connection_stub_requires_immediate_next_opening_to_share_session(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, _successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    webhook_files["2026-08-12/123456_20260812-20-29-53.flv"] = {
+        "status": "CLOSED",
+        "session_id": "different-session",
+        "opening_event_id": "other-opening",
+        "closing_event_id": "other-closed",
+        "file_open_time": "2026-08-12T20:29:54+08:00",
+        "file_close_time": "2026-08-12T20:29:54.1000000+08:00",
+        "file_size": 1,
+        "duration": 0.1,
+    }
+
+    assert (
+        adapter.build_connection_stub_disposition(
+            stub,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+        )
+        is None
+    )
+
+
+def test_connection_stub_requires_zero_event_official_xml(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, _successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    stub.with_suffix(".xml").write_text(_xml(), encoding="utf-8")
+
+    assert (
+        adapter.build_connection_stub_disposition(
+            stub,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+        )
+        is None
+    )
+
+
+def test_decodable_short_video_stays_in_normal_finalization_lane(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, _successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        adapter,
+        "probe_connection_stub_video",
+        lambda *_args, **_kwargs: {
+            "duration_seconds": 3.03,
+            "size_bytes": stub.stat().st_size,
+            "video_codec": "h264",
+            "width": 1920,
+            "height": 1080,
+            "decoded_video_frames": 75,
+            "video_packets": 75,
+        },
+    )
+
+    assert (
+        adapter.build_connection_stub_disposition(
+            stub,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+        )
+        is None
+    )
+
+
+def test_connection_stub_requires_real_successor_mp4_to_match_ledger(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    finalized[f"2026-08-12/{successor.name}"]["target_sha256"] = "0" * 64
+
+    assert (
+        adapter.build_connection_stub_disposition(
+            stub,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+        )
+        is None
+    )
+
+
+def test_connection_stub_successor_hash_read_error_stays_in_normal_fail_closed_lane(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, _successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    real_attest = adapter._attest_regular_file
+
+    def unreadable_successor(path: Path):
+        if path.suffix == ".mp4":
+            raise adapter.AdapterError("simulated read failure")
+        return real_attest(path)
+
+    monkeypatch.setattr(adapter, "_attest_regular_file", unreadable_successor)
+
+    assert (
+        adapter.build_connection_stub_disposition(
+            stub,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "broken_gate",
+    [
+        "source_not_closed",
+        "source_opening_id_missing",
+        "source_closing_id_missing",
+        "source_size_mismatch",
+        "source_duration_ten_seconds",
+        "source_wall_ten_seconds",
+        "successor_not_closed",
+        "successor_session_mismatch",
+        "successor_closing_id_missing",
+        "successor_ledger_stat_mismatch",
+    ],
+)
+def test_connection_stub_requires_every_event_session_time_and_stat_gate(
+    tmp_path: Path,
+    monkeypatch,
+    broken_gate: str,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    stub_relative = f"2026-08-12/{stub.name}"
+    successor_relative = f"2026-08-12/{successor.name}"
+    source_event = webhook_files[stub_relative]
+    successor_event = webhook_files[successor_relative]
+    if broken_gate == "source_not_closed":
+        source_event["status"] = "OPEN"
+    elif broken_gate == "source_opening_id_missing":
+        source_event["opening_event_id"] = None
+    elif broken_gate == "source_closing_id_missing":
+        source_event["closing_event_id"] = None
+    elif broken_gate == "source_size_mismatch":
+        source_event["file_size"] += 1
+    elif broken_gate == "source_duration_ten_seconds":
+        source_event["duration"] = 10.0
+    elif broken_gate == "source_wall_ten_seconds":
+        source_event["file_close_time"] = "2026-08-12T20:30:02.70775+08:00"
+    elif broken_gate == "successor_not_closed":
+        successor_event["status"] = "OPEN"
+    elif broken_gate == "successor_session_mismatch":
+        successor_event["session_id"] = "different-session"
+    elif broken_gate == "successor_closing_id_missing":
+        successor_event["closing_event_id"] = None
+    elif broken_gate == "successor_ledger_stat_mismatch":
+        finalized[successor_relative]["source_mtime_ns"] += 1
+
+    assert (
+        adapter.build_connection_stub_disposition(
+            stub,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("unexpected_final_lane", ["mp4", "ledger"])
+def test_connection_stub_disposition_drift_if_stub_enters_final_lane(
+    tmp_path: Path,
+    monkeypatch,
+    unexpected_final_lane: str,
+) -> None:
+    stub, _successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    relative = f"2026-08-12/{stub.name}"
+    if unexpected_final_lane == "mp4":
+        stub.with_suffix(".mp4").write_bytes(b"unexpected-finalization")
+    else:
+        finalized[relative] = {"unexpected": "finalization"}
+
+    with pytest.raises(adapter.AdapterError, match="evidence drifted"):
+        adapter.validate_connection_stub_disposition(
+            stub,
+            row,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+        )
+
+
+def test_connection_stub_disposition_drift_fails_closed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, _successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    stub.write_bytes(b"drifted-stub")
+
+    with pytest.raises(adapter.AdapterError, match="evidence drifted"):
+        adapter.validate_connection_stub_disposition(
+            stub,
+            row,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+        )
+
+
+def test_run_once_auto_records_and_revalidates_connection_stub_disposition(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    args = _args(tmp_path)
+    stub, _successor, webhook_files, finalized = _connection_stub_fixture(
+        args.record_root, monkeypatch
+    )
+    args.state_path.parent.mkdir(parents=True, exist_ok=True)
+    args.state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": adapter.STATE_SCHEMA_VERSION,
+                "managed_since_epoch": 0.0,
+                "finalized": finalized,
+                "webhook_files": webhook_files,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        adapter,
+        "query_room_status",
+        lambda *_args, **_kwargs: {
+            "streaming": False,
+            "recording": False,
+            "danmakuConnected": False,
+            "ioStats": {},
+            "recordingStats": {},
+        },
+    )
+    monkeypatch.setattr(
+        adapter,
+        "finalize_recording",
+        lambda *_args, **_kwargs: pytest.fail("typed stub must not finalize"),
+    )
+
+    assert adapter.run_once(args) == 0
+    first_state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    relative = f"2026-08-12/{stub.name}"
+    row = first_state["source_dispositions"][relative]
+    assert row["status"] == "IGNORED_CONNECTION_STUB"
+    assert relative not in first_state["finalized"]
+    assert not stub.with_suffix(".mp4").exists()
+
+    def unexpected_historical_media_read(*_args, **_kwargs):
+        pytest.fail("recurring disposition validation must be metadata-only")
+
+    monkeypatch.setattr(adapter, "sha256_file", unexpected_historical_media_read)
+    monkeypatch.setattr(adapter, "probe_media", unexpected_historical_media_read)
+    monkeypatch.setattr(adapter, "probe_connection_stub_video", unexpected_historical_media_read)
+    assert adapter.run_once(args) == 0
+    second_state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert second_state["source_dispositions"][relative] == row
+
+
+def test_run_once_disposition_same_size_byte_drift_is_an_error(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    args = _args(tmp_path)
+    stub, _successor, webhook_files, finalized = _connection_stub_fixture(
+        args.record_root, monkeypatch
+    )
+    args.state_path.parent.mkdir(parents=True, exist_ok=True)
+    args.state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": adapter.STATE_SCHEMA_VERSION,
+                "managed_since_epoch": 0.0,
+                "finalized": finalized,
+                "webhook_files": webhook_files,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        adapter,
+        "query_room_status",
+        lambda *_args, **_kwargs: {
+            "streaming": False,
+            "recording": False,
+            "danmakuConnected": False,
+            "ioStats": {},
+            "recordingStats": {},
+        },
+    )
+
+    assert adapter.run_once(args) == 0
+    original = stub.read_bytes()
+    original_stat = stub.stat()
+    stub.write_bytes(b"x" * len(original))
+    os.utime(stub, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+
+    assert adapter.run_once(args) == 2
+    status = json.loads(args.status_path.read_text(encoding="utf-8"))
+    assert "source disposition drift" in status["error"]
+    assert not stub.with_suffix(".mp4").exists()
+
+
+def test_existing_disposition_is_revalidated_even_while_room_is_active(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    args = _args(tmp_path)
+    stub, _successor, webhook_files, finalized = _connection_stub_fixture(
+        args.record_root, monkeypatch
+    )
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=args.record_root,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    relative = f"2026-08-12/{stub.name}"
+    args.state_path.parent.mkdir(parents=True, exist_ok=True)
+    args.state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": adapter.STATE_SCHEMA_VERSION,
+                "managed_since_epoch": 0.0,
+                "finalized": finalized,
+                "webhook_files": webhook_files,
+                "source_dispositions": {relative: row},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        adapter,
+        "query_room_status",
+        lambda *_args, **_kwargs: {
+            "streaming": True,
+            "recording": True,
+            "danmakuConnected": True,
+            "ioStats": {},
+            "recordingStats": {},
+        },
+    )
+    observed = []
+    monkeypatch.setattr(
+        adapter,
+        "validate_connection_stub_disposition",
+        lambda source, current, **_kwargs: observed.append((source, current)) or current,
+    )
+
+    assert adapter.run_once(args) == 0
+    assert observed == [(stub, row)]
+
+
 def test_run_once_never_finalizes_while_streaming(tmp_path: Path, monkeypatch) -> None:
     args = _args(tmp_path)
     args.record_root.mkdir(parents=True)
@@ -213,9 +755,7 @@ def test_run_once_never_finalizes_while_streaming(tmp_path: Path, monkeypatch) -
     assert status["finalizing"] is False
 
 
-def test_inactive_room_must_stay_inactive_before_finalization(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_inactive_room_must_stay_inactive_before_finalization(tmp_path: Path, monkeypatch) -> None:
     args = _args(tmp_path)
     args.inactive_grace_seconds = 180
     args.record_root.mkdir(parents=True)
@@ -279,9 +819,7 @@ def test_discovery_accepts_old_file_from_validated_webhook_ledger(
         tmp_path,
         room_id=123456,
         managed_since_epoch=official.stat().st_mtime + 60,
-        explicit_relative_paths=[
-            "2026-07-23/123456_20260723-11-00-00.flv"
-        ],
+        explicit_relative_paths=["2026-07-23/123456_20260723-11-00-00.flv"],
     )
 
     assert found == [official]
@@ -361,10 +899,7 @@ def test_run_once_finalizes_only_with_matching_fileclosed_evidence(
         "EventData": {
             "RoomId": 123456,
             "SessionId": "session-b",
-            "RelativePath": (
-                "Videos/123456/2026-07-23/"
-                "123456_20260723-13-57-26.flv"
-            ),
+            "RelativePath": ("Videos/123456/2026-07-23/123456_20260723-13-57-26.flv"),
             "FileSize": source.stat().st_size,
             "Duration": 1800.0,
             "FileOpenTime": "2026-07-23T13:57:26+08:00",

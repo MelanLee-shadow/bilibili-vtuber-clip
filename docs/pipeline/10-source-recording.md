@@ -81,6 +81,26 @@
 - 已有 MP4/JSONL/meta 禁止覆盖；同名内容不一致即 fail closed。原始 FLV/XML
   永不删除。活动文件、API 未知、XML 不完整、无音轨、重封装/探测失败都不得
   发布 MP4。
+- BililiveRecorder 首次连流可能先写一个只有 FLV header/0×0 H.264 stream 的
+  连接残片，再在同一 session 立即打开正常文件。只有 adapter
+  `adapter-state.json / source_dispositions` 中的 typed row 才能把这类原件从
+  remux 车道排除：row 必须是
+  `recording-connection-stub.v1 / IGNORED_CONNECTION_STUB /
+  RECORDER_CONNECTION_STUB_NO_DECODABLE_VIDEO`，并同时绑定 source/XML 的当前
+  stat+SHA-256、FileOpening/FileClosed ID 与时间、session、官方零事件 XML、
+  H.264 0×0 且 frame/packet 扫描均为空，以及同 session 的下一 opening。
+  被排除文件必须是该 session 第一 opening，size <5 MiB、event duration 与
+  open-close wall duration 均 <10 秒；下一 opening gap 必须在 0–2 秒内且已
+  CLOSED，其 source stat 必须匹配 finalized ledger，真实 MP4 SHA-256 必须匹配
+  ledger 且为可探测的正尺寸双流媒体。少任一项都不得 ignore，仍走普通
+  finalization 并 fail closed。
+- typed row 不进入 `finalized`，不生成同 stem MP4，也绝不删除/移动 FLV/XML。
+  创建 row 时只做一次 source/XML/后继 MP4 全字节 SHA-256 与媒体探测；row 另绑定
+  四个文件的 size/mtime/ctime/device/inode/mode 指纹。adapter 每轮只重验 canonical
+  row、当前 journal/finalized ledger 与这些不可变指纹，不得反复读取几百 MB 的历史
+  MP4；任一指纹、ledger 或事件漂移都恢复为 status error，且不得自动重签旧 row。
+  合法、可解码的短视频不满足 0×0+零 frame/packet 条件，仍按普通规则
+  finalization。
 - `scripts/free_session_autoslice.py` 只枚举封口后的
   `<ROOM>_*.mp4`；30 分钟段只是源容器，整场候选仍跨所有 segment 全局排序。
 
@@ -143,7 +163,11 @@
   未连接均须告警；受限重启只针对 `bililive_recorder`，不得复活 blrec。
 - 终态库存硬门：runner 在任何“无新段”提前返回前运行
   `recording-inventory-audit.v1`；发现已封口的源没有同 stem MP4，状态只能是
-  `source_incomplete`，不得进入 selection 或 `review_ready`。
+  `source_incomplete`，不得进入 selection 或 `review_ready`。inventory 默认读取
+  `/opt/bilive/recording/adapter-state.json`，并独立重验 typed connection-stub 的
+  canonical integrity、source/XML/后继 MP4 指纹、webhook/session/time/stat 与
+  successor finalized ledger/初始全字节 SHA 绑定。只有重验有效的 stub 记录 severity `WARN` 且整体仍
+  `PASS`；任何其他无 MP4 FLV 或 disposition 漂移仍是 severity `BLOCK`。
 - 对旧录制器遗留的 finalized HLS（同 stem `.m3u8` 有 `ENDLIST`、且只引用同
   stem `.m4s`，但缺 `.mp4`），runner 在库存审计前自动执行一次 no-clobber
   stream-copy 恢复：同文件系统 staging、双流 ffprobe、全包 packet scan、
@@ -160,3 +184,10 @@
 - 源完整性：视频流独立解码零损伤（`source_integrity.py`）；BLOCK≠ok、
   0 交付≠done。
 - 杀开关：`touch /opt/bilive/autoslice/DISABLED`。
+- 正式部署把 `ops/` 与 `scripts/src/assets/...` 一起纳入 committed tree manifest。
+  外部 `/opt/bilive/recording/bililive_recorder_adapter.py` 必须由
+  `scripts/deploy_free_autoslice.sh` 在 preimage/rollback 事务中从已切换的 commit
+  原子安装并做 SHA-256 readback；不得手工 `cp`。只有 recorder fresh-idle、
+  CloudFS host/container mount 都为绿时才能重启 `bililive_adapter`；安装后的任一
+  deploy 失败必须原子恢复 preimage 并在同样安全门下重启，无法证明时保留
+  `DISABLED` 与 deploy guard。
