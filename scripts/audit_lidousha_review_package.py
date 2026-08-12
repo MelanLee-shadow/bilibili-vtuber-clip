@@ -23,10 +23,6 @@ from src.autoslice.cover_generation import (  # noqa: E402
 from src.autoslice.cover_punch_semantics import (  # noqa: E402
     talk_cover_thumbnail_gate_violations,
 )
-from src.autoslice.cover_only_audit_scope import (  # noqa: E402
-    CoverOnlyAuditScopeError,
-    validate_scope as validate_cover_only_audit_scope,
-)
 from src.autoslice.cover_route_evidence import (  # noqa: E402
     validate_cover_route_decision,
     validate_rendered_text_pixel_evidence,
@@ -68,11 +64,13 @@ from src.autoslice.review_package_owner_audit import (  # noqa: E402
     audit_source_truth_owner_attestations,
 )
 from src.autoslice.review_package_portable_evidence import (  # noqa: E402
-    contained_package_artifact as _contained_package_artifact,
+    contained_package_artifact as _contained_package_artifact,  # noqa: F401 - compatibility export
     portable_item_artifact_path as _portable_item_artifact_path,
-    rebuild_package_speaker_evidence as _rebuild_audit_speaker_evidence,
     resolve_portable_primary_artifacts,
     resolve_review_item_evidence,
+)
+from src.autoslice.review_package_source_fact_audit import (  # noqa: E402
+    audit_story_source_fact_receipt,
 )
 from src.autoslice.review_package_title_audit import (  # noqa: E402
     audit_recovery_publication_surfaces,
@@ -80,14 +78,13 @@ from src.autoslice.review_package_title_audit import (  # noqa: E402
 )
 from src.autoslice.title_policy import (  # noqa: E402
     CHANNEL_PROFILE,
-    publish_title_policy_violations,
 )
 from src.autoslice.story_contract import (  # noqa: E402
     SCHEMA_VERSION as STORY_CONTRACT_SCHEMA,
     audit_story_artifact,
 )
-from src.autoslice.source_fact_review import (  # noqa: E402
-    validate_source_fact_review,
+from src.autoslice.publication_title_exception import (  # noqa: E402
+    candidate_title_policy_violations,
 )
 
 
@@ -252,6 +249,8 @@ def _audit_policy_fingerprint() -> str:
         ROOT / "src/autoslice/producer_boundary_owner_contract.py",
         ROOT / "src/autoslice/producer_boundary_resolution.py",
         ROOT / "src/autoslice/producer_boundary_review_stage.py",
+        ROOT / "src/autoslice/producer_source_boundary_review.py",
+        ROOT / "src/autoslice/reviewed_exact_source_interval.py",
         ROOT / "src/autoslice/producer_package_finalization.py",
         ROOT / "src/autoslice/source_subtitle_truth.py",
         ROOT / "src/autoslice/producer_text_finalization.py",
@@ -266,6 +265,10 @@ def _audit_policy_fingerprint() -> str:
         ROOT / "src/autoslice/title_policy.py",
         ROOT / "src/autoslice/selection_scorecard.py",
         ROOT / "src/autoslice/addressee_attribution.py",
+        ROOT / "src/autoslice/manual_title_keep_authority.py",
+        ROOT / "src/autoslice/deterministic_text_surface_resolution.py",
+        ROOT / "src/autoslice/publication_title_exception.py",
+        ROOT / "src/autoslice/review_package_source_fact_audit.py",
         ROOT / "src/autoslice/source_fact_review.py",
         ROOT / "src/autoslice/cover_only_audit_scope.py",
         ROOT / "src/autoslice/cover_route_evidence.py",
@@ -938,6 +941,44 @@ def _add_issue(
     issues.append(issue)
 
 
+def _item_title_policy_codes(
+    *,
+    title: str,
+    is_song: bool,
+    story_contract: object,
+) -> list[str]:
+    contract = story_contract if isinstance(story_contract, dict) else {}
+    return candidate_title_policy_violations(
+        candidate_id=str(contract.get("candidate_id") or ""),
+        title=title,
+        lane="song" if is_song else "talk",
+        source_fact_review=contract.get("source_fact_review"),
+    )
+
+
+def _audit_item_title_policy(
+    issues: list[dict[str, Any]],
+    *,
+    title: str,
+    is_song: bool,
+    story_contract: object,
+    stem: str,
+    path: Path,
+) -> None:
+    for code in _item_title_policy_codes(
+        title=title,
+        is_song=is_song,
+        story_contract=story_contract,
+    ):
+        _add_issue(
+            issues,
+            code.upper(),
+            stem=stem,
+            path=path,
+            detail=title,
+        )
+
+
 def _subtitle_visual_contract(
     manifest: dict[str, Any],
     issues: list[dict[str, Any]],
@@ -1115,123 +1156,25 @@ def _audit_item_story_contract(
             )
     artifact_title = publish_title or title_txt or str(item.get("title") or "")
     if story_contract_required and not is_song:
-        publish_staging = (
-            record.get("publish_staging") if isinstance(record.get("publish_staging"), dict) else {}
-        )
-        publish_document = (
-            _load_json(publish_path) if publish_path is not None and publish_path.is_file() else {}
-        )
-        source_fact_receipts = [
-            story_contract.get("source_fact_review"),
-            publish_staging.get("source_fact_review"),
-            publish_document.get("source_fact_review"),
-        ]
-        scope_reused = False
-        if all(value is None for value in source_fact_receipts):
-            raw_scope = item.get("cover_only_audit_scope")
-            try:
-                scope_path = (
-                    _contained_package_artifact(
-                        root,
-                        raw_scope,
-                        label="cover-only audit scope",
-                    )
-                    if raw_scope is not None
-                    else None
-                )
-            except ValueError:
-                scope_path = None
-            scope_payload = (
-                _load_json(scope_path) if scope_path is not None and scope_path.is_file() else {}
-            )
-            if raw_scope is not None:
-                try:
-                    if not scope_payload:
-                        raise CoverOnlyAuditScopeError(
-                            "cover-only audit scope is missing or unreadable"
-                        )
-                    validate_cover_only_audit_scope(
-                        scope_payload,
-                        package_root=root,
-                        item=item,
-                    )
-                except CoverOnlyAuditScopeError as exc:
-                    _add_issue(
-                        issues,
-                        "COVER_ONLY_AUDIT_SCOPE_INVALID",
-                        stem=stem,
-                        path=scope_path or record_path,
-                        detail=str(exc),
-                    )
-                else:
-                    scope_reused = True
-        rebuilt_speaker_evidence: dict[str, object] | None = None
-        speaker_evidence_error: str | None = None
-        if (
-            not scope_reused
-            and all(isinstance(value, dict) for value in source_fact_receipts)
-            and source_fact_receipts[0] == source_fact_receipts[1] == source_fact_receipts[2]
-        ):
-            try:
-                rebuilt_speaker_evidence = _rebuild_audit_speaker_evidence(
-                    root=root, item=item, record=record, subtitle_path=subtitle_path)
-            except (OSError, ValueError) as exc:
-                speaker_evidence_error = str(exc)
-                _add_issue(
-                    issues,
-                    "SOURCE_FACT_SPEAKER_EVIDENCE_REJECTED",
-                    stem=stem,
-                    path=record_path,
-                    detail=speaker_evidence_error,
-                )
-        if not scope_reused and any(not isinstance(value, dict) for value in source_fact_receipts):
-            _add_issue(
-                issues,
-                "SOURCE_FACT_REVIEW_MISSING",
-                stem=stem,
-                path=publish_path or record_path,
-            )
-        elif not scope_reused and not (
-            source_fact_receipts[0] == source_fact_receipts[1] == source_fact_receipts[2]
-        ):
-            _add_issue(
-                issues,
-                "SOURCE_FACT_REVIEW_BINDING_DRIFT",
-                stem=stem,
-                path=publish_path or record_path,
-            )
-        elif not scope_reused and speaker_evidence_error is not None:
-            _add_issue(issues, "SOURCE_FACT_REVIEW_INVALID", stem=stem, path=publish_path or record_path,
-                       detail="fresh speaker evidence could not validate the source-fact receipt")
-        elif not scope_reused and not validate_source_fact_review(
-            source_fact_receipts[0],
-            selection_hook=str(story_contract.get("selection_hook") or ""),
-            title=artifact_title,
+        for source_fact_issue in audit_story_source_fact_receipt(
+            root=root,
+            manifest=manifest,
+            item=item,
+            subtitle_path=subtitle_path,
+            publish_path=publish_path,
+            record_path=record_path,
+            record=record,
+            story_contract=story_contract,
+            artifact_title=artifact_title,
             final_transcript=transcript,
-            clip_context_prompt=str(story_contract.get("clip_context_prompt") or ""),
-            selection_scorecard=story_contract.get("selection_scorecard"),
-            candidate_id=str(story_contract.get("candidate_id") or ""),
-            final_reviewed_srt_path=subtitle_path,
-            speaker_evidence=rebuilt_speaker_evidence,
         ):
             _add_issue(
                 issues,
-                "SOURCE_FACT_REVIEW_INVALID",
+                source_fact_issue.code,
                 stem=stem,
-                path=publish_path or record_path,
+                path=source_fact_issue.path,
+                detail=source_fact_issue.detail,
             )
-        elif not scope_reused:
-            declared_receipt_sha256 = manifest.get("source_fact_review_sha256")
-            if (
-                declared_receipt_sha256 is not None
-                and declared_receipt_sha256 != source_fact_receipts[0].get("receipt_sha256")
-            ):
-                _add_issue(
-                    issues,
-                    "SOURCE_FACT_REVIEW_MANIFEST_BINDING_DRIFT",
-                    stem=stem,
-                    path=publish_path or record_path,
-                )
     title_story_audit = audit_story_artifact(
         artifact_title,
         story_contract=story_contract,
@@ -1543,30 +1486,29 @@ def _cover_attestations_by_candidate(
     return indexed
 
 
-def audit_package(root: str | Path) -> dict[str, Any]:
-    root = Path(root)
-    manifest_path = root / "review_manifest.json"
-    manifest = _load_json(manifest_path)
-    issues: list[dict[str, Any]] = []
-
-    try:
-        load_selected_selection_calibration_policy()
-    except SelectionCalibrationPolicyError as exc:
-        _add_issue(issues, "SELECTION_CALIBRATION_POLICY_INVALID", path=exc.path,
-                   detail=f"{exc.reason_code}: {exc.detail}")
-        if not manifest:
-            _add_issue(issues, "MANIFEST_MISSING_OR_INVALID", path=manifest_path)
-        return _audit_result(root, issues)
-
-    if not manifest:
-        _add_issue(issues, "MANIFEST_MISSING_OR_INVALID", path=manifest_path)
-        return _audit_result(root, issues)
-
-    max_visual_lines, max_visual_line_chars = _subtitle_visual_contract(manifest, issues, manifest_path)
-
+def _prepare_package_audit(
+    *,
+    root: Path,
+    manifest: dict[str, Any],
+    manifest_path: Path,
+    issues: list[dict[str, Any]],
+) -> tuple[
+    list[Any],
+    int,
+    int,
+    dict[str, Any],
+    bool,
+    bool,
+    dict[str, dict[str, Any]],
+]:
+    max_visual_lines, max_visual_line_chars = _subtitle_visual_contract(
+        manifest, issues, manifest_path
+    )
     status = str(manifest.get("status") or "")
     if status.startswith("invalid_review_draft"):
-        _add_issue(issues, "PACKAGE_MARKED_INVALID_REVIEW_DRAFT", detail=f"manifest.status is {status}")
+        _add_issue(
+            issues, "PACKAGE_MARKED_INVALID_REVIEW_DRAFT", detail=f"manifest.status is {status}"
+        )
 
     invalid_marker = root / "INVALID_REDO_REQUIRED.json"
     if invalid_marker.exists():
@@ -1575,7 +1517,9 @@ def audit_package(root: str | Path) -> dict[str, Any]:
             issues,
             "PACKAGE_MARKED_INVALID_REDO_REQUIRED",
             path=invalid_marker,
-            detail=str(marker.get("reason") or marker.get("status") or "package explicitly invalidated"),
+            detail=str(
+                marker.get("reason") or marker.get("status") or "package explicitly invalidated"
+            ),
         )
 
     items = manifest.get("items")
@@ -1594,8 +1538,12 @@ def audit_package(root: str | Path) -> dict[str, Any]:
             or declared_scope_candidates != item_scope_candidates
             or len(declared_scope_candidates) != len(set(declared_scope_candidates))
         ):
-            _add_issue(issues, "MANIFEST_COVER_ONLY_AUDIT_SCOPE_SET_MISMATCH", path=manifest_path,
-                       detail=f"declared={declared_scope_candidates!r}; items={item_scope_candidates!r}")
+            _add_issue(
+                issues,
+                "MANIFEST_COVER_ONLY_AUDIT_SCOPE_SET_MISMATCH",
+                path=manifest_path,
+                detail=f"declared={declared_scope_candidates!r}; items={item_scope_candidates!r}",
+            )
     (
         recovery_publication_authorities,
         publication_contract_required,
@@ -1626,21 +1574,76 @@ def audit_package(root: str | Path) -> dict[str, Any]:
                 detail=f"run_mode={manifest.get('run_mode')!r}",
             )
         elif run_mode == "MANUAL_PRODUCE_REVIEW":
-            # 手动车道没有 runner state 见证：准入条件是显式操作者署名
-            # （谁裁定、为什么），缺署名的 manual manifest 不是软门而是拒绝。
             attestation = manifest.get("manual_attestation")
             if not (
                 isinstance(attestation, dict)
                 and str(attestation.get("operator") or "").strip()
                 and str(attestation.get("note") or "").strip()
             ):
-                _add_issue(issues, "MANUAL_REVIEW_ATTESTATION_MISSING", path=manifest_path,
-                           detail="MANUAL_PRODUCE_REVIEW requires manual_attestation.operator/note")
+                _add_issue(
+                    issues,
+                    "MANUAL_REVIEW_ATTESTATION_MISSING",
+                    path=manifest_path,
+                    detail="MANUAL_PRODUCE_REVIEW requires manual_attestation.operator/note",
+                )
 
     attestations_by_candidate = _cover_attestations_by_candidate(
-        manifest=manifest, items=items, recovery_publication_authorities=recovery_publication_authorities,
+        manifest=manifest,
+        items=items,
+        recovery_publication_authorities=recovery_publication_authorities,
         publication_contract_required=publication_contract_required,
-        story_contract_required=story_contract_required, manifest_path=manifest_path, issues=issues)
+        story_contract_required=story_contract_required,
+        manifest_path=manifest_path,
+        issues=issues,
+    )
+    return (
+        items,
+        max_visual_lines,
+        max_visual_line_chars,
+        recovery_publication_authorities,
+        publication_contract_required,
+        story_contract_required,
+        attestations_by_candidate,
+    )
+
+
+def audit_package(root: str | Path) -> dict[str, Any]:
+    root = Path(root)
+    manifest_path = root / "review_manifest.json"
+    manifest = _load_json(manifest_path)
+    issues: list[dict[str, Any]] = []
+
+    try:
+        load_selected_selection_calibration_policy()
+    except SelectionCalibrationPolicyError as exc:
+        _add_issue(
+            issues,
+            "SELECTION_CALIBRATION_POLICY_INVALID",
+            path=exc.path,
+            detail=f"{exc.reason_code}: {exc.detail}",
+        )
+        if not manifest:
+            _add_issue(issues, "MANIFEST_MISSING_OR_INVALID", path=manifest_path)
+        return _audit_result(root, issues)
+
+    if not manifest:
+        _add_issue(issues, "MANIFEST_MISSING_OR_INVALID", path=manifest_path)
+        return _audit_result(root, issues)
+
+    (
+        items,
+        max_visual_lines,
+        max_visual_line_chars,
+        recovery_publication_authorities,
+        publication_contract_required,
+        story_contract_required,
+        attestations_by_candidate,
+    ) = _prepare_package_audit(
+        root=root,
+        manifest=manifest,
+        manifest_path=manifest_path,
+        issues=issues,
+    )
 
     for item in items:
         if not isinstance(item, dict):
@@ -1649,8 +1652,13 @@ def audit_package(root: str | Path) -> dict[str, Any]:
         if story_contract_required:
             portable, path_errors = resolve_portable_primary_artifacts(root, item)
             for label, detail in path_errors:
-                _add_issue(issues, "PACKAGE_ARTIFACT_NOT_CONTAINED", stem=stem, path=root,
-                           detail=f"{label}: {detail}")
+                _add_issue(
+                    issues,
+                    "PACKAGE_ARTIFACT_NOT_CONTAINED",
+                    stem=stem,
+                    path=root,
+                    detail=f"{label}: {detail}",
+                )
             subtitle_path, evidence_path = portable["subtitle"], portable["evidence"]
             publish_path, title_txt_path = portable["publish"], portable["title"]
         else:
@@ -1666,10 +1674,18 @@ def audit_package(root: str | Path) -> dict[str, Any]:
             if source_srt.endswith(".jingting.srt"):
                 _add_issue(issues, "SONG_USES_JINGTING_SRT", stem=stem, detail=source_srt)
             if not _has_alignment_evidence(root, item):
-                _add_issue(issues, "SONG_LYRIC_SOURCE_MISSING", stem=stem,
-                           detail="No external timed lyric source evidence found")
-                _add_issue(issues, "SONG_ALIGNMENT_REPORT_MISSING", stem=stem,
-                           detail="No first/last lyric anchor offset/tail report found")
+                _add_issue(
+                    issues,
+                    "SONG_LYRIC_SOURCE_MISSING",
+                    stem=stem,
+                    detail="No external timed lyric source evidence found",
+                )
+                _add_issue(
+                    issues,
+                    "SONG_ALIGNMENT_REPORT_MISSING",
+                    stem=stem,
+                    detail="No first/last lyric anchor offset/tail report found",
+                )
         if subtitle_path and subtitle_path.exists():
             if story_contract_required:
                 srt_release = validate_srt_file(subtitle_path)
@@ -1771,17 +1787,14 @@ def audit_package(root: str | Path) -> dict[str, Any]:
         item_title = str(item.get("title") or "")
         final_publish_title = publish_title or title_txt or item_title
         if story_contract_required or is_song:
-            for code in publish_title_policy_violations(
-                final_publish_title,
-                lane="song" if is_song else "talk",
-            ):
-                _add_issue(
-                    issues,
-                    code.upper(),
-                    stem=stem,
-                    path=publish_path or title_txt_path or manifest_path,
-                    detail=final_publish_title,
-                )
+            _audit_item_title_policy(
+                issues,
+                title=final_publish_title,
+                is_song=is_song,
+                story_contract=story_contract,
+                stem=stem,
+                path=publish_path or title_txt_path or manifest_path,
+            )
         publish_staging = (
             record.get("publish_staging") if isinstance(record.get("publish_staging"), dict) else {}
         )

@@ -173,9 +173,7 @@ def test_fully_labelled_truth_uses_typed_no_arbitration_disposition() -> None:
     assert receipt is not None
     proof = receipt["coverage"]["proof"]
     assert proof["arbitration_receipt_sha256"] is None
-    assert proof["arbitration_disposition"]["status"] == (
-        "NOT_REQUIRED_FULLY_LABELLED"
-    )
+    assert proof["arbitration_disposition"]["status"] == ("NOT_REQUIRED_FULLY_LABELLED")
 
 
 @pytest.mark.parametrize("field", ["truth_input_sha256", "automatic_labelled_srt_sha256"])
@@ -199,19 +197,13 @@ def test_fully_labelled_no_arbitration_disposition_is_hash_bound(field) -> None:
 @pytest.mark.parametrize(
     "mutate",
     [
+        pytest.param(lambda spec: spec.pop("subtitle_redelivery_baseline"), id="no_baseline"),
         pytest.param(
-            lambda spec: spec.pop("subtitle_redelivery_baseline"), id="no_baseline"
-        ),
-        pytest.param(
-            lambda spec: spec["subtitle_redelivery_baseline"].pop(
-                "truth_full_ownership"
-            ),
+            lambda spec: spec["subtitle_redelivery_baseline"].pop("truth_full_ownership"),
             id="no_pin",
         ),
         pytest.param(
-            lambda spec: spec["subtitle_redelivery_baseline"].update(
-                exact_interval_replay=False
-            ),
+            lambda spec: spec["subtitle_redelivery_baseline"].update(exact_interval_replay=False),
             id="not_exact_replay",
         ),
         pytest.param(
@@ -229,57 +221,57 @@ def test_fully_labelled_no_arbitration_disposition_is_hash_bound(field) -> None:
             id="text_override_present",
         ),
         pytest.param(
-            lambda spec: spec["subtitle_redelivery_baseline"][
-                "truth_full_ownership"
-            ].update(schema_version="truth-full-ownership-pin.v2"),
+            lambda spec: spec["subtitle_redelivery_baseline"]["truth_full_ownership"].update(
+                schema_version="truth-full-ownership-pin.v2"
+            ),
             id="pin_schema_drift",
         ),
         pytest.param(
-            lambda spec: spec["subtitle_redelivery_baseline"][
-                "truth_full_ownership"
-            ].update(baseline_sha256="99" * 32),
+            lambda spec: spec["subtitle_redelivery_baseline"]["truth_full_ownership"].update(
+                baseline_sha256="99" * 32
+            ),
             id="pin_baseline_sha_drift",
         ),
         pytest.param(
-            lambda spec: spec["subtitle_redelivery_baseline"][
-                "truth_full_ownership"
-            ].update(reviewed_override_count=2),
+            lambda spec: spec["subtitle_redelivery_baseline"]["truth_full_ownership"].update(
+                reviewed_override_count=2
+            ),
             id="coverage_gap",
         ),
         pytest.param(
-            lambda spec: spec["subtitle_redelivery_baseline"][
-                "truth_full_ownership"
-            ].update(machine_cues=[2, 2]),
+            lambda spec: spec["subtitle_redelivery_baseline"]["truth_full_ownership"].update(
+                machine_cues=[2, 2]
+            ),
             id="duplicate_machine_cue",
         ),
         pytest.param(
-            lambda spec: spec["subtitle_redelivery_baseline"][
-                "truth_full_ownership"
-            ].update(machine_cues=[2, 99]),
+            lambda spec: spec["subtitle_redelivery_baseline"]["truth_full_ownership"].update(
+                machine_cues=[2, 99]
+            ),
             id="machine_cue_out_of_range",
         ),
         pytest.param(
-            lambda spec: spec["subtitle_redelivery_baseline"][
-                "truth_full_ownership"
-            ].update(truth_input={"path": "reports/t.json", "sha256": "short"}),
+            lambda spec: spec["subtitle_redelivery_baseline"]["truth_full_ownership"].update(
+                truth_input={"path": "reports/t.json", "sha256": "short"}
+            ),
             id="truth_sha_invalid",
         ),
         pytest.param(
-            lambda spec: spec["subtitle_redelivery_baseline"][
-                "truth_full_ownership"
-            ].update(truth_input={"path": "", "sha256": TRUTH_SHA}),
+            lambda spec: spec["subtitle_redelivery_baseline"]["truth_full_ownership"].update(
+                truth_input={"path": "", "sha256": TRUTH_SHA}
+            ),
             id="truth_path_blank",
         ),
         pytest.param(
-            lambda spec: spec["subtitle_redelivery_baseline"][
-                "truth_full_ownership"
-            ].update(arbitration_receipt_sha256=""),
+            lambda spec: spec["subtitle_redelivery_baseline"]["truth_full_ownership"].update(
+                arbitration_receipt_sha256=""
+            ),
             id="arbitration_receipt_missing",
         ),
         pytest.param(
-            lambda spec: spec["subtitle_redelivery_baseline"][
-                "truth_full_ownership"
-            ].update(authority="  "),
+            lambda spec: spec["subtitle_redelivery_baseline"]["truth_full_ownership"].update(
+                authority="  "
+            ),
             id="pin_authority_blank",
         ),
     ],
@@ -298,9 +290,7 @@ def test_compiled_manifest_pin_is_accepted_through_the_registry(
     compiled = compile_delivery(**_fixture(tmp_path))
     root = tmp_path / "reviewed_subtitle_baselines"
     root.mkdir()
-    (root / f"{CANDIDATE}.reviewed.srt").write_text(
-        str(compiled["baseline_srt"]), encoding="utf-8"
-    )
+    (root / f"{CANDIDATE}.reviewed.srt").write_text(str(compiled["baseline_srt"]), encoding="utf-8")
     manifest = dict(compiled["baseline_manifest"])
     (root / f"{CANDIDATE}.subtitle-baseline.v1.json").write_text(
         json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
@@ -308,9 +298,7 @@ def test_compiled_manifest_pin_is_accepted_through_the_registry(
 
     loaded = load_candidate_reviewed_subtitle_baseline(root, CANDIDATE)
     assert loaded is not None
-    receipt = resolve_truth_full_ownership(
-        {"subtitle_redelivery_baseline": loaded.config}
-    )
+    receipt = resolve_truth_full_ownership({"subtitle_redelivery_baseline": loaded.config})
     assert receipt is not None
     coverage = receipt["coverage"]
     assert coverage["cue_count"] == 4
@@ -323,10 +311,7 @@ def test_v1_compiled_manifest_stays_on_the_full_chain(tmp_path: Path) -> None:
     fixture["baseline_schema_version"] = "subtitle-redelivery-baseline.v1"
     manifest = dict(compile_delivery(**fixture)["baseline_manifest"])
     manifest["path"] = "/tmp/whatever.srt"
-    assert (
-        resolve_truth_full_ownership({"subtitle_redelivery_baseline": manifest})
-        is None
-    )
+    assert resolve_truth_full_ownership({"subtitle_redelivery_baseline": manifest}) is None
 
 
 def _exploding_verifier(_request):
@@ -418,9 +403,7 @@ def test_skipped_final_review_audit_keeps_the_reviewer_contract_shape() -> None:
         (resolve_operator_text_full_ownership, _operator_text_owned_spec),
     ],
 )
-def test_exact_release_accepts_zero_mutation_full_ownership_skip(
-    resolver, spec_factory
-) -> None:
+def test_exact_release_accepts_zero_mutation_full_ownership_skip(resolver, spec_factory) -> None:
     ownership = resolver(spec_factory())
     assert ownership is not None
     correction = skipped_final_review_audit(
@@ -445,9 +428,7 @@ def test_exact_release_accepts_zero_mutation_full_ownership_skip(
         lambda audit: audit.update(applied_count=1),
         lambda audit: audit.update(findings=[{"routed": "disclosure"}]),
         lambda audit: audit["truth_full_ownership"].pop("coverage"),
-        lambda audit: audit["truth_full_ownership"]["coverage"].update(
-            cue_count=0
-        ),
+        lambda audit: audit["truth_full_ownership"]["coverage"].update(cue_count=0),
         lambda audit: audit["truth_full_ownership"]["coverage"].update(
             cue_count=1,
             reviewed_text_cue_count=True,
@@ -492,9 +473,7 @@ def test_truth_ownership_branch_skips_reviewer_without_touching_gates() -> None:
     tree = ast.parse(source)
     branch = None
     for node in ast.walk(tree):
-        if isinstance(node, ast.If) and "truth_ownership is not None" in ast.unparse(
-            node.test
-        ):
+        if isinstance(node, ast.If) and "truth_ownership is not None" in ast.unparse(node.test):
             branch = node
             break
     assert branch is not None, "F20 branch missing from run_text_pipeline"
@@ -527,9 +506,16 @@ def test_ownership_reaches_every_wired_skip_site() -> None:
     """接线金丝雀：判定值必须真的到达每个跳过点，否则快路径只是装饰。"""
 
     pipeline_source = inspect.getsource(pipeline.run_text_pipeline)
-    assert (
-        "truth_ownership = resolve_truth_full_ownership(spec) or "
-        "resolve_operator_text_full_ownership(spec)" in pipeline_source
+    pipeline_tree = ast.parse(pipeline_source)
+    ownership_assignments = [
+        node
+        for node in ast.walk(pipeline_tree)
+        if isinstance(node, ast.Assign)
+        and any(ast.unparse(target) == "truth_ownership" for target in node.targets)
+    ]
+    assert len(ownership_assignments) == 1
+    assert ast.unparse(ownership_assignments[0].value) == (
+        "resolve_truth_full_ownership(spec) or resolve_operator_text_full_ownership(spec)"
     )
     assert (
         _keyword_argument_names(pipeline_source, "_apply_entity_authority").get(

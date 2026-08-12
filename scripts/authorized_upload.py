@@ -8,6 +8,7 @@ can only append/edit an explicitly named existing BV; it cannot create one.
 ``repair-verify-live`` re-observes all four public/Creator surfaces after the
 transaction reaches VERIFIED and writes a create-only completed sidecar.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -48,6 +49,7 @@ from src.autoslice import same_bv_cover_repair as cover_repair_binding  # noqa: 
 from src.autoslice import cover_only_audit_scope  # noqa: E402
 from src.autoslice import same_bv_live_verification  # noqa: E402
 from src.autoslice.subtitle_validation import validate_srt_file  # noqa: E402
+from src.autoslice.publication_title_exception import upload_manifest_title_policy_violations  # noqa: E402
 from src.autoslice.same_bv_repair import (  # noqa: E402
     BilibiliRepairAdapter,
     PlanInvalid,
@@ -65,18 +67,13 @@ from src.autoslice.same_bv_repair_cli import (  # noqa: E402
     repair_reconcile_blocked,
     repair_verify_live,
 )
-from src.autoslice.title_policy import (  # noqa: E402
-    publish_title_policy_violations,
-)
 
 CookieSchemaError = member_api.CookieSchemaError
 _publication_block = publication_registry.manifest_upload_block_reason
 DEFAULT_BASE = Path(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice"))
 DEFAULT_LEDGER = DEFAULT_BASE / "reports" / "upload_ledger.jsonl"
 DEFAULT_REPAIR_LEDGER = DEFAULT_BASE / "reports" / "same_bv_repair_ledger.jsonl"
-DEFAULT_COVER_REPAIR_LEDGER = (
-    DEFAULT_BASE / "reports" / "same_bv_cover_repair_ledger.jsonl"
-)
+DEFAULT_COVER_REPAIR_LEDGER = DEFAULT_BASE / "reports" / "same_bv_cover_repair_ledger.jsonl"
 DEFAULT_UPLOAD_LOCK = DEFAULT_BASE / "upload.lock"
 DEFAULT_UPLOADER = "/opt/bilive/app/tmp_manual_upload/do_upload.sh"
 DEFAULT_COOKIE_JSON = Path("/opt/bilive/app/cookie.json")
@@ -121,6 +118,7 @@ def _reconcile_same_bv_cover_publication(**kwargs) -> dict:
             f"publication reconciliation filesystem failure: {exc}"
         ) from exc
 
+
 # Season (合集) policy — membership is part of the publish (Ivan 2026-07-20).
 # The LANE is a deterministic choke point on the frozen title: the song catalog
 # prefix/catalog form is enforced by the shared publish-title validator,
@@ -133,12 +131,13 @@ SEASON_ADD_ALREADY_IN = 20080  # episodes/add: already in the season (idempotent
 VIEW_API = "https://api.bilibili.com/x/web-interface/view?bvid={bvid}"
 TAGS_API = "https://api.bilibili.com/x/tag/archive/tags?bvid={bvid}"
 SEASONS_API = "https://member.bilibili.com/x2/creative/web/seasons?pn=1&ps=30"
-EPISODES_ADD_API = "https://member.bilibili.com/x2/creative/web/season/section/episodes/add?csrf={csrf}"
+EPISODES_ADD_API = (
+    "https://member.bilibili.com/x2/creative/web/season/section/episodes/add?csrf={csrf}"
+)
 SECTION_VIEW_API = "https://member.bilibili.com/x2/creative/web/season/section?id={section_id}"
 MEMBER_ARCHIVE_VIEW_API = "https://member.bilibili.com/x/vupre/web/archive/view?bvid={bvid}"
 CREATOR_ARCHIVES_API = (
-    "https://member.bilibili.com/x/web/archives"
-    "?pn={page}&ps=30&status=is_pubing,pubed,not_pubed"
+    "https://member.bilibili.com/x/web/archives?pn={page}&ps=30&status=is_pubing,pubed,not_pubed"
 )
 QUOTA_FREQUENCY_CODE = 21566
 ROLLING_UPLOAD_LIMIT = 10
@@ -325,10 +324,8 @@ def _strict_verified_song_package(
     delivery_authority = review.get("delivery_authority")
     if (
         review.get("schema_version") != VERIFIED_SONG_REVIEW_SCHEMA
-        or review.get("generated_by")
-        != "build_lidousha_song_review_manifest.v1"
-        or review.get("status")
-        != "finished_review_package_no_upload_pending_human_review"
+        or review.get("generated_by") != "build_lidousha_song_review_manifest.v1"
+        or review.get("status") != "finished_review_package_no_upload_pending_human_review"
         or review.get("classification") != "Song"
         or review.get("candidate_id") != candidate_id
         or review.get("story_contract_required") is not False
@@ -339,8 +336,7 @@ def _strict_verified_song_package(
         or not candidate_id
         or record.get("delivery_candidate_id") != candidate_id
         or not isinstance(delivery_authority, dict)
-        or delivery_authority.get("schema_version")
-        != VERIFIED_SONG_DELIVERY_SCHEMA
+        or delivery_authority.get("schema_version") != VERIFIED_SONG_DELIVERY_SCHEMA
         or delivery_authority.get("upload_enabled") is not False
         or audit.get("schema_version") != AUDIT_SCHEMA_VERSION
         or audit.get("policy_epoch") != AUDIT_POLICY_EPOCH
@@ -361,23 +357,15 @@ def _strict_verified_song_package(
         and isinstance(row.get("sha256"), str)
     }
     review_path = root / "review_manifest.json"
-    if (
-        not review_path.is_file()
-        or audited_hashes.get("review_manifest.json")
-        != sha256_file(review_path)
+    if not review_path.is_file() or audited_hashes.get("review_manifest.json") != sha256_file(
+        review_path
     ):
         return False
 
     resolved_paths: dict[str, Path] = {}
     for role, keys in VERIFIED_SONG_REVIEW_PATH_KEYS.items():
-        path = _resolved_manifest_item_path(
-            root, _first_item_value(review_item, keys)
-        )
-        if (
-            path is None
-            or not path.is_file()
-            or not _is_within(path, root)
-        ):
+        path = _resolved_manifest_item_path(root, _first_item_value(review_item, keys))
+        if path is None or not path.is_file() or not _is_within(path, root):
             return False
         relative = path.relative_to(root).as_posix()
         if audited_hashes.get(relative) != sha256_file(path):
@@ -397,26 +385,20 @@ def _strict_verified_song_package(
         or completion.get("lyrics_alignment_status") != "READY"
         or completion.get("host_vocal_status") != "READY"
         or completion.get("live_performance_status") != "READY"
-        or completion.get("live_performance_mode")
-        != "LIVE_STREAMER_SINGING"
-        or completion.get("joint_singing_decision")
-        != "VERIFIED_LIDOUSHA_SINGING"
-        or completion.get("subtitle_source")
-        != "external_lrc_global_shift"
+        or completion.get("live_performance_mode") != "LIVE_STREAMER_SINGING"
+        or completion.get("joint_singing_decision") != "VERIFIED_LIDOUSHA_SINGING"
+        or completion.get("subtitle_source") != "external_lrc_global_shift"
     ):
         return False
 
     completion_hashes = {
         "video": completion.get("burned_preview_sha256"),
-        "lyrics_alignment_report": completion.get(
-            "alignment_report_sha256"
-        ),
+        "lyrics_alignment_report": completion.get("alignment_report_sha256"),
         "host_vocal_proof": completion.get("host_vocal_proof_sha256"),
         "recut_manifest": completion.get("recut_manifest_sha256"),
     }
     if any(
-        _strip_sha_prefix(completion_hashes[role])
-        != sha256_file(resolved_paths[role])
+        _strip_sha_prefix(completion_hashes[role]) != sha256_file(resolved_paths[role])
         for role in completion_hashes
     ):
         return False
@@ -438,47 +420,29 @@ def _strict_verified_song_package(
         song_problems,
     )
     output_binding = recut.get("verified_output_binding")
-    output_artifacts = (
-        output_binding.get("artifacts")
-        if isinstance(output_binding, dict)
-        else None
-    )
-    output_proofs = (
-        output_binding.get("proofs")
-        if isinstance(output_binding, dict)
-        else None
-    )
+    output_artifacts = output_binding.get("artifacts") if isinstance(output_binding, dict) else None
+    output_proofs = output_binding.get("proofs") if isinstance(output_binding, dict) else None
     if (
         song_problems
-        or alignment.get("schema_version")
-        != "lyrics-alignment-report.v1"
+        or alignment.get("schema_version") != "lyrics-alignment-report.v1"
         or host_proof.get("schema_version") != "host-vocal-proof.v3"
         or host_proof.get("status") != "READY"
-        or host_proof.get("decision")
-        != "LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS"
+        or host_proof.get("decision") != "LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS"
         or recut.get("schema_version") != "materialized-recut.v2"
         or recut.get("status") != "MATERIALIZED"
         or recut.get("reason_codes") != []
-        or recut.get("subtitle_source")
-        != "external_lrc_global_shift"
+        or recut.get("subtitle_source") != "external_lrc_global_shift"
         or not isinstance(output_binding, dict)
-        or output_binding.get("schema_version")
-        != "verified-song-output-binding.v1"
+        or output_binding.get("schema_version") != "verified-song-output-binding.v1"
         or not isinstance(output_artifacts, dict)
         or not isinstance(output_proofs, dict)
-        or _strip_sha_prefix(
-            output_artifacts.get("burned_media_sha256")
-        )
+        or _strip_sha_prefix(output_artifacts.get("burned_media_sha256"))
         != sha256_file(resolved_paths["video"])
         or _strip_sha_prefix(output_artifacts.get("subtitle_sha256"))
         != sha256_file(resolved_paths["subtitle"])
-        or _strip_sha_prefix(
-            output_proofs.get("lyrics_alignment_report_sha256")
-        )
+        or _strip_sha_prefix(output_proofs.get("lyrics_alignment_report_sha256"))
         != sha256_file(resolved_paths["lyrics_alignment_report"])
-        or _strip_sha_prefix(
-            output_proofs.get("host_vocal_proof_sha256")
-        )
+        or _strip_sha_prefix(output_proofs.get("host_vocal_proof_sha256"))
         != sha256_file(resolved_paths["host_vocal_proof"])
     ):
         return False
@@ -490,8 +454,7 @@ def _strict_verified_song_package(
     delivery_artifacts = delivery.get("artifacts")
     if (
         delivery_problems
-        or delivery.get("schema_version")
-        != VERIFIED_SONG_DELIVERY_SCHEMA
+        or delivery.get("schema_version") != VERIFIED_SONG_DELIVERY_SCHEMA
         or delivery.get("status") != "DELIVERED_NO_UPLOAD"
         or delivery.get("candidate_id") != candidate_id
         or delivery.get("upload_enabled") is not False
@@ -508,9 +471,7 @@ def _strict_verified_song_package(
     for review_role, path in resolved_paths.items():
         if review_role == "delivery_manifest":
             continue
-        delivery_role = (
-            "active_record" if review_role == "record" else review_role
-        )
+        delivery_role = "active_record" if review_role == "record" else review_role
         entry = delivery_artifacts.get(delivery_role)
         actual = sha256_file(path)
         if (
@@ -657,16 +618,16 @@ def _validate_v3_package_attestation(
         current_audit = audit_package(root)
         if current_audit.get("passed") is not True:
             problems.append("canonical package auditor currently rejects the package")
-        if _audit_content_binding(audit) != _audit_content_binding(
-            current_audit
-        ):
+        if _audit_content_binding(audit) != _audit_content_binding(current_audit):
             problems.append(
                 "package audit is not the canonical current-policy result for the "
                 "current package input closure"
             )
 
     review_path = entries.get("review_manifest", (Path(), {}))[0]
-    review = _load_json_object(review_path, "review manifest", problems) if review_path.is_file() else {}
+    review = (
+        _load_json_object(review_path, "review manifest", problems) if review_path.is_file() else {}
+    )
     problems.extend(human_review.final_human_review_attestation_problems(manifest))
     review_item = _find_review_item(review, root, video)
     if review_item is None:
@@ -688,7 +649,9 @@ def _validate_v3_package_attestation(
         }
         for key, expected_path in expected_item_paths.items():
             if item_paths[key] != expected_path:
-                problems.append(f"review_manifest {key} does not match the reviewed same-stem artifact")
+                problems.append(
+                    f"review_manifest {key} does not match the reviewed same-stem artifact"
+                )
         if review_item.get("title") != manifest.get("title"):
             problems.append("review_manifest title does not match the upload title")
     problems.extend(
@@ -708,11 +671,11 @@ def _validate_v3_package_attestation(
                 for row in subtitle_verdict.get("errors") or []
                 if isinstance(row, dict)
             ]
-            problems.append(
-                "reviewed SRT fails release validation: " + ",".join(codes)
-            )
+            problems.append("reviewed SRT fails release validation: " + ",".join(codes))
         record = _load_json_object(record_path, "record", problems)
-        problems.extend(repair_binding.recovery_publication_package_problems(manifest, record, review_item))
+        problems.extend(
+            repair_binding.recovery_publication_package_problems(manifest, record, review_item)
+        )
         verified_song = bool(
             isinstance(review_item, dict)
             and _strict_verified_song_package(
@@ -752,11 +715,7 @@ def _title_cover_qc_required(manifest: dict) -> bool:
     """New-BV manifests need joint QC; exact same-BV uses its v2 review lane."""
 
     attestation = manifest.get("package_attestation")
-    final_review = (
-        attestation.get("final_human_review")
-        if isinstance(attestation, dict)
-        else None
-    )
+    final_review = attestation.get("final_human_review") if isinstance(attestation, dict) else None
     return not (
         isinstance(manifest.get("recovery_publication_authority"), dict)
         and isinstance(final_review, dict)
@@ -779,8 +738,7 @@ def _title_cover_qc_attestation_problems(
     if not isinstance(entry, dict):
         if must_exist:
             problems.append(
-                "new-BV manifest requires package_attestation.title_cover_qc "
-                "from --title-cover-qc"
+                "new-BV manifest requires package_attestation.title_cover_qc from --title-cover-qc"
             )
         return problems
 
@@ -805,9 +763,7 @@ def _title_cover_qc_attestation_problems(
             f"manifest={entry.get('bytes')!r} actual={actual_bytes}"
         )
 
-    receipt = _load_json_object(
-        receipt_path, "title+cover joint-QC receipt", problems
-    )
+    receipt = _load_json_object(receipt_path, "title+cover joint-QC receipt", problems)
     if not receipt:
         return problems
     if receipt.get("schema_version") != TITLE_COVER_QC_SCHEMA_VERSION:
@@ -834,17 +790,13 @@ def _title_cover_qc_attestation_problems(
     record_path = Path(str(record_entry.get("path") or ""))
     record_problems: list[str] = []
     record = (
-        _load_json_object(record_path, "record", record_problems)
-        if record_path.is_file()
-        else {}
+        _load_json_object(record_path, "record", record_problems) if record_path.is_file() else {}
     )
     problems.extend(record_problems)
     story_contract = record.get("story_contract")
     story_contract = story_contract if isinstance(story_contract, dict) else {}
     expected_candidate = str(
-        story_contract.get("candidate_id")
-        or record.get("delivery_candidate_id")
-        or ""
+        story_contract.get("candidate_id") or record.get("delivery_candidate_id") or ""
     )
     if not expected_candidate:
         problems.append("title+cover joint-QC cannot resolve candidate from record")
@@ -888,19 +840,10 @@ def _title_cover_qc_attestation_problems(
     }
     for key, expected in expected_bools.items():
         if not _strict_bool(verdict.get(key), expected):
-            problems.append(
-                f"title+cover joint-QC verdict.{key} must be "
-                f"{str(expected).lower()}"
-            )
+            problems.append(f"title+cover joint-QC verdict.{key} must be {str(expected).lower()}")
     line_count = verdict.get("physical_text_line_count")
-    if (
-        isinstance(line_count, bool)
-        or not isinstance(line_count, int)
-        or line_count not in (1, 2)
-    ):
-        problems.append(
-            "title+cover joint-QC verdict.physical_text_line_count must be 1 or 2"
-        )
+    if isinstance(line_count, bool) or not isinstance(line_count, int) or line_count not in (1, 2):
+        problems.append("title+cover joint-QC verdict.physical_text_line_count must be 1 or 2")
     if verdict.get("unrelated_or_misleading_elements") != []:
         problems.append(
             "title+cover joint-QC verdict.unrelated_or_misleading_elements must be empty"
@@ -955,9 +898,7 @@ def _attach_cover_only_audit_scope(
     item = _find_review_item(review_manifest, root, video)
     if item is None or item.get("cover_only_audit_scope") is None:
         return []
-    scope_path = _resolved_manifest_item_path(
-        root, item.get("cover_only_audit_scope")
-    )
+    scope_path = _resolved_manifest_item_path(root, item.get("cover_only_audit_scope"))
     if scope_path is None or scope_path.is_symlink() or not scope_path.is_file():
         return [f"cover-only audit scope missing or unsafe: {scope_path}"]
     try:
@@ -981,15 +922,13 @@ def _cover_only_audit_scope_attestation_problems(
         return ["manifest v3 has no package_attestation object"]
     entry = attestation.get("cover_only_audit_scope")
     item_declares = bool(
-        isinstance(review_item, dict)
-        and review_item.get("cover_only_audit_scope") is not None
+        isinstance(review_item, dict) and review_item.get("cover_only_audit_scope") is not None
     )
     if entry is None and not item_declares:
         return []
     if not isinstance(entry, dict) or not item_declares:
         return [
-            "package_attestation.cover_only_audit_scope and review item must "
-            "be declared together"
+            "package_attestation.cover_only_audit_scope and review item must be declared together"
         ]
     root = Path(str(attestation.get("package_root") or "")).resolve()
     path = Path(str(entry.get("path") or ""))
@@ -1007,16 +946,10 @@ def _cover_only_audit_scope_attestation_problems(
             f"actual={actual_sha[:12]} ({path})"
         )
     if entry.get("bytes") != path.stat().st_size:
-        problems.append(
-            "package_attestation.cover_only_audit_scope byte-size drift"
-        )
-    expected_path = _resolved_manifest_item_path(
-        root, review_item.get("cover_only_audit_scope")
-    )
+        problems.append("package_attestation.cover_only_audit_scope byte-size drift")
+    expected_path = _resolved_manifest_item_path(root, review_item.get("cover_only_audit_scope"))
     if expected_path != path.resolve():
-        problems.append(
-            "package_attestation.cover_only_audit_scope differs from review item"
-        )
+        problems.append("package_attestation.cover_only_audit_scope differs from review item")
     scope_problems: list[str] = []
     scope = _load_json_object(path, "cover-only audit scope", scope_problems)
     problems.extend(scope_problems)
@@ -1036,39 +969,24 @@ def _cover_only_audit_scope_attestation_problems(
                 "by": manifest_auth.get("by"),
                 "quote": manifest_auth.get("quote"),
             }:
-                problems.append(
-                    "cover-only audit scope authorization differs from manifest"
-                )
+                problems.append("cover-only audit scope authorization differs from manifest")
             frozen = normalized.get("frozen_noncover") or {}
             if (
                 frozen.get("title") != manifest.get("title")
                 or frozen.get("description") != manifest.get("description")
                 or frozen.get("tags") != manifest.get("tags")
-                or frozen.get("publish_policy")
-                != manifest.get("publish_policy")
+                or frozen.get("publish_policy") != manifest.get("publish_policy")
             ):
-                problems.append(
-                    "cover-only audit scope frozen metadata differs from manifest"
-                )
+                problems.append("cover-only audit scope frozen metadata differs from manifest")
             scope_video = frozen.get("video") or {}
             manifest_video = manifest.get("video") or {}
             current_package = normalized.get("current_package") or {}
             scope_cover = current_package.get("cover") or {}
             manifest_cover = manifest.get("cover") or {}
-            if any(
-                scope_video.get(key) != manifest_video.get(key)
-                for key in ("sha256", "bytes")
-            ):
-                problems.append(
-                    "cover-only audit scope video differs from manifest"
-                )
-            if any(
-                scope_cover.get(key) != manifest_cover.get(key)
-                for key in ("sha256", "bytes")
-            ):
-                problems.append(
-                    "cover-only audit scope cover differs from manifest"
-                )
+            if any(scope_video.get(key) != manifest_video.get(key) for key in ("sha256", "bytes")):
+                problems.append("cover-only audit scope video differs from manifest")
+            if any(scope_cover.get(key) != manifest_cover.get(key) for key in ("sha256", "bytes")):
+                problems.append("cover-only audit scope cover differs from manifest")
     return problems
 
 
@@ -1229,12 +1147,14 @@ def season_add_flow(
 
     seasons = http(SEASONS_API)
     season_id = section_id = None
-    for entry in ((seasons.get("data") or {}).get("seasons") or []):
+    for entry in (seasons.get("data") or {}).get("seasons") or []:
         season = entry.get("season") or {}
         if season.get("title") != expected_season:
             continue
-        sections = ((entry.get("sections") or {}).get("sections") or [])
-        chosen = next((s for s in sections if s.get("title") == "正片"), None) or (sections[0] if sections else None)
+        sections = (entry.get("sections") or {}).get("sections") or []
+        chosen = next((s for s in sections if s.get("title") == "正片"), None) or (
+            sections[0] if sections else None
+        )
         if chosen:
             season_id, section_id = season.get("id"), chosen.get("id")
         break
@@ -1244,8 +1164,7 @@ def season_add_flow(
         return result
     expected_ids = EXPECTED_SEASON_IDS.get(str(block.get("lane") or ""))
     if expected_ids and (
-        season_id != expected_ids["season_id"]
-        or section_id != expected_ids["section_id"]
+        season_id != expected_ids["season_id"] or section_id != expected_ids["section_id"]
     ):
         result["expected_season_id"] = expected_ids["season_id"]
         result["expected_section_id"] = expected_ids["section_id"]
@@ -1256,7 +1175,9 @@ def season_add_flow(
         EPISODES_ADD_API.format(csrf=csrf),
         data={
             "sectionId": section_id,
-            "episodes": [{"aid": aid, "cid": cid, "title": manifest.get("title"), "charging_pay": 0}],
+            "episodes": [
+                {"aid": aid, "cid": cid, "title": manifest.get("title"), "charging_pay": 0}
+            ],
         },
         is_json=True,
     )
@@ -1343,8 +1264,10 @@ def _section_ids(payload: object) -> set[int]:
         for key, value in payload.items():
             if key in {"section_id", "sectionId"} and isinstance(value, int):
                 ids.add(value)
-            elif key == "id" and isinstance(value, int) and (
-                "episodes" in payload or "season_id" in payload or "seasonId" in payload
+            elif (
+                key == "id"
+                and isinstance(value, int)
+                and ("episodes" in payload or "season_id" in payload or "seasonId" in payload)
             ):
                 ids.add(value)
             ids.update(_section_ids(value))
@@ -1479,9 +1402,7 @@ def public_verify_flow(
             aid = public_data.get("aid")
             episodes = _section_episode_rows(section)
             membership = [
-                row
-                for row in episodes
-                if row.get("aid") == aid or row.get("bvid") == bvid
+                row for row in episodes if row.get("aid") == aid or row.get("bvid") == bvid
             ]
             result["section_api"]["episode_match_count"] = len(membership)
             result["section_api"]["section_ids_seen"] = sorted(section_ids)
@@ -1557,7 +1478,9 @@ def _recent_creator_archive_count(http, since_epoch: float) -> int:
     return len(archives)
 
 
-def rolling_quota_guard(ledger: Path, *, http, now_epoch: float | None = None) -> tuple[dict, list[str]]:
+def rolling_quota_guard(
+    ledger: Path, *, http, now_epoch: float | None = None
+) -> tuple[dict, list[str]]:
     entries, problems = read_ledger(ledger)
     if problems:
         return {}, problems
@@ -1586,11 +1509,15 @@ def rolling_quota_guard(ledger: Path, *, http, now_epoch: float | None = None) -
     return evidence, []
 
 
-def _run_season_step(manifest: dict, manifest_path: Path, bvid: str | None, args: argparse.Namespace) -> int:
+def _run_season_step(
+    manifest: dict, manifest_path: Path, bvid: str | None, args: argparse.Namespace
+) -> int:
     """Shared by upload (post-success) and season-add.  0 = publicly in-season."""
     block, provenance = effective_season_block(manifest)
     if block is None:
-        print("season: manifest explicitly opts out (season=null) — archive stays outside collections")
+        print(
+            "season: manifest explicitly opts out (season=null) — archive stays outside collections"
+        )
         return 0
     if not bvid:
         print(
@@ -1638,9 +1565,7 @@ def _create_json_sidecar(path: Path, payload: dict) -> None:
     if path.exists() or path.is_symlink():
         raise RepairError(f"completed sidecar already exists: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(
-        f".{path.name}.tmp-{os.getpid()}-{time.time_ns()}"
-    )
+    temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}-{time.time_ns()}")
     body = (
         json.dumps(
             payload,
@@ -1662,9 +1587,7 @@ def _create_json_sidecar(path: Path, payload: dict) -> None:
             while view:
                 written = os.write(descriptor, view)
                 if written <= 0:
-                    raise OSError(
-                        "short write while creating completed sidecar"
-                    )
+                    raise OSError("short write while creating completed sidecar")
                 view = view[written:]
             os.fsync(descriptor)
         finally:
@@ -1672,9 +1595,7 @@ def _create_json_sidecar(path: Path, payload: dict) -> None:
         try:
             os.link(temporary, path)
         except FileExistsError as exc:
-            raise RepairError(
-                f"completed sidecar already exists: {path}"
-            ) from exc
+            raise RepairError(f"completed sidecar already exists: {path}") from exc
     finally:
         try:
             temporary.unlink()
@@ -1785,9 +1706,7 @@ def _run_postpublish_verification(
             manifest_path=manifest_path.resolve(),
             bvid=bvid,
             public_verify_path=public_path.resolve(),
-            season_verify_path=season_verify_sidecar_path(
-                manifest_path
-            ).resolve(),
+            season_verify_path=season_verify_sidecar_path(manifest_path).resolve(),
             uploaded_path=uploaded_path.resolve(),
             reconciled_at=str(uploaded["uploaded_at"]),
         )
@@ -1814,7 +1733,10 @@ def make_manifest(args: argparse.Namespace) -> int:
             print(f"REFUSE: missing artifact {path}", file=sys.stderr)
             return 2
     if not args.title.strip() or not args.quote.strip():
-        print("REFUSE: --title and --quote (Ivan's authorization words) are required non-empty", file=sys.stderr)
+        print(
+            "REFUSE: --title and --quote (Ivan's authorization words) are required non-empty",
+            file=sys.stderr,
+        )
         return 2
     audit_problems: list[str] = []
     audit = _load_json_object(package_audit, "package audit", audit_problems)
@@ -1850,11 +1772,7 @@ def make_manifest(args: argparse.Namespace) -> int:
     tags = [t.strip() for t in (args.tags or "").split(",") if t.strip()]
     tags_source = "cli" if tags else None
     upload_tags = record.get("upload_tags") or {}
-    record_tags = [
-        str(t).strip()
-        for t in (upload_tags.get("final_tags") or [])
-        if str(t).strip()
-    ]
+    record_tags = [str(t).strip() for t in (upload_tags.get("final_tags") or []) if str(t).strip()]
     if not tags:
         tags = record_tags
         tags_source = f"record.json:{upload_tags.get('engine') or '?'}"
@@ -1892,7 +1810,11 @@ def make_manifest(args: argparse.Namespace) -> int:
         "schema_version": "authorized-upload-manifest.v3",
         "artifact_id": video_sha[:12],
         "video": {"path": str(video.resolve()), "sha256": video_sha, "bytes": video.stat().st_size},
-        "cover": {"path": str(cover.resolve()), "sha256": sha256_file(cover), "bytes": cover.stat().st_size},
+        "cover": {
+            "path": str(cover.resolve()),
+            "sha256": sha256_file(cover),
+            "bytes": cover.stat().st_size,
+        },
         "title": args.title,
         "description": DEFAULT_DESCRIPTION,
         "publish_policy": {
@@ -1914,10 +1836,10 @@ def make_manifest(args: argparse.Namespace) -> int:
         "tags": tags,
         "tags_source": tags_source,
     }
-    package_problems = repair_binding.attach_package_recovery_publication_authority(manifest, record, review_manifest, video)
-    review_payload = _load_json_object(
-        review_manifest, "review manifest", package_problems
+    package_problems = repair_binding.attach_package_recovery_publication_authority(
+        manifest, record, review_manifest, video
     )
+    review_payload = _load_json_object(review_manifest, "review manifest", package_problems)
     if review_payload:
         package_problems.extend(
             _attach_cover_only_audit_scope(
@@ -1926,10 +1848,12 @@ def make_manifest(args: argparse.Namespace) -> int:
                 video,
             )
         )
-    package_problems.extend(human_review.attach_final_human_review(manifest, args.final_human_review, season_ids=EXPECTED_SEASON_IDS))
     package_problems.extend(
-        _attach_title_cover_qc(manifest, args.title_cover_qc)
+        human_review.attach_final_human_review(
+            manifest, args.final_human_review, season_ids=EXPECTED_SEASON_IDS
+        )
     )
+    package_problems.extend(_attach_title_cover_qc(manifest, args.title_cover_qc))
     package_problems.extend(_validate_v3_package_attestation(manifest, verify_hashes=True))
     # ``make-manifest`` is shared by new uploads and existing-BV repairs.  A
     # committed publication authority must block the ordinary ``upload`` lane,
@@ -1943,12 +1867,18 @@ def make_manifest(args: argparse.Namespace) -> int:
         return 2
     out = Path(args.out) if args.out else video.with_suffix(".upload_manifest.json")
     out.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({"manifest": str(out), "artifact_id": manifest["artifact_id"]}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {"manifest": str(out), "artifact_id": manifest["artifact_id"]}, ensure_ascii=False
+        )
+    )
     return 0
 
 
 def load_and_verify(
-    manifest_path: Path, *, ordinary_upload: bool = False,
+    manifest_path: Path,
+    *,
+    ordinary_upload: bool = False,
     frozen_plan_resume: bool = False,
 ) -> tuple[dict | None, list[str]]:
     """(manifest, problems) — problems non-empty means REFUSE."""
@@ -1965,14 +1895,14 @@ def load_and_verify(
         problems.append("manifest has no title")
     else:
         title_lane = derive_season_lane(title)
-        for code in publish_title_policy_violations(title, lane=title_lane):
+        title_policy_codes = upload_manifest_title_policy_violations(manifest, title, title_lane)
+        for code in title_policy_codes:
             problems.append(f"manifest publish title violates {code}")
     if "season" in manifest:
         problems.extend(validate_season_block(manifest["season"]))
-        if (
-            isinstance(manifest.get("season"), dict)
-            and manifest["season"].get("lane") != derive_season_lane(title)
-        ):
+        if isinstance(manifest.get("season"), dict) and manifest["season"].get(
+            "lane"
+        ) != derive_season_lane(title):
             problems.append("manifest season lane contradicts the frozen title")
     if "tags" in manifest:
         problems.extend(validate_tags(manifest["tags"]))
@@ -1989,9 +1919,11 @@ def load_and_verify(
             "source": EXPECTED_SOURCE,
         }:
             problems.append("manifest v3 publish_policy is invalid")
-        problems.extend(_validate_v3_package_attestation(
-            manifest, verify_hashes=True,
-            live_policy_recheck=not frozen_plan_resume))
+        problems.extend(
+            _validate_v3_package_attestation(
+                manifest, verify_hashes=True, live_policy_recheck=not frozen_plan_resume
+            )
+        )
     for kind in ("video", "cover"):
         entry = manifest.get(kind) or {}
         path = Path(entry.get("path") or "")
@@ -2070,7 +2002,9 @@ def ledger_guard(ledger: Path, video_sha256: str) -> tuple[str | None, dict | No
             continue
         if event == "UPLOAD_ATTEMPT_STARTED":
             if attempt_id in started or attempt_id in finished:
-                problems.append(f"upload ledger attempt {attempt_id} has a duplicate/out-of-order STARTED row")
+                problems.append(
+                    f"upload ledger attempt {attempt_id} has a duplicate/out-of-order STARTED row"
+                )
                 continue
             required_started = (
                 "artifact_id",
@@ -2080,13 +2014,18 @@ def ledger_guard(ledger: Path, video_sha256: str) -> tuple[str | None, dict | No
                 "manifest_sha256",
                 "uploader",
             )
-            if any(not isinstance(entry.get(key), str) or not entry.get(key) for key in required_started):
+            if any(
+                not isinstance(entry.get(key), str) or not entry.get(key)
+                for key in required_started
+            ):
                 problems.append(f"upload ledger attempt {attempt_id} has an incomplete STARTED row")
                 continue
             started[attempt_id] = entry
         elif event == "UPLOAD_ATTEMPT_FINISHED":
             if attempt_id not in started or attempt_id in finished:
-                problems.append(f"upload ledger attempt {attempt_id} has an unmatched/duplicate FINISHED row")
+                problems.append(
+                    f"upload ledger attempt {attempt_id} has an unmatched/duplicate FINISHED row"
+                )
                 continue
             finished.add(attempt_id)
             stable_keys = (
@@ -2105,11 +2044,12 @@ def ledger_guard(ledger: Path, video_sha256: str) -> tuple[str | None, dict | No
             changed = [
                 key
                 for key in stable_keys
-                if key in started[attempt_id]
-                and entry.get(key) != started[attempt_id].get(key)
+                if key in started[attempt_id] and entry.get(key) != started[attempt_id].get(key)
             ]
             if changed:
-                problems.append(f"upload ledger attempt {attempt_id} changed bound fields: {changed}")
+                problems.append(
+                    f"upload ledger attempt {attempt_id} changed bound fields: {changed}"
+                )
             if isinstance(entry.get("rc"), bool) or not isinstance(entry.get("rc"), int):
                 problems.append(f"upload ledger attempt {attempt_id} has no integer terminal rc")
             if entry.get("video_sha256") == video_sha256 and entry.get("rc") == 0:
@@ -2282,7 +2222,12 @@ def upload(args: argparse.Namespace) -> int:
             for problem in quota_problems:
                 print(f"REFUSE: {problem}", file=sys.stderr)
             return 8
-        cmd = [args.uploader, manifest["video"]["path"], manifest["cover"]["path"], manifest["title"]]
+        cmd = [
+            args.uploader,
+            manifest["video"]["path"],
+            manifest["cover"]["path"],
+            manifest["title"],
+        ]
         manifest_tags = manifest.get("tags") or []
         # v3 always has a reviewed, record-bound tag line.
         cmd.append(",".join(manifest_tags))
@@ -2320,7 +2265,9 @@ def upload(args: argparse.Namespace) -> int:
             },
         )
         print(f"uploading artifact {manifest['artifact_id']} via {args.uploader}", flush=True)
-        completed = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=3600, env=env)
+        completed = subprocess.run(
+            cmd, check=False, capture_output=True, text=True, timeout=3600, env=env
+        )
         output = (completed.stdout or "") + (completed.stderr or "")
         sys.stdout.write(output)
         bvid = None
@@ -2357,12 +2304,15 @@ def upload(args: argparse.Namespace) -> int:
     # passes.  Concurrent upload attempts therefore fail closed while this one
     # waits for transcode/season propagation.
     if args.skip_season:
-        post_rc, public_result = 6, {
-            "schema_version": "authorized-upload-public-verify.v2",
-            "status": "SKIPPED_BY_EMERGENCY_FLAG",
-            "bvid": bvid,
-            "verified_at": now(),
-        }
+        post_rc, public_result = (
+            6,
+            {
+                "schema_version": "authorized-upload-public-verify.v2",
+                "status": "SKIPPED_BY_EMERGENCY_FLAG",
+                "bvid": bvid,
+                "verified_at": now(),
+            },
+        )
         _write_json_sidecar(
             public_verify_sidecar_path(manifest_path),
             public_result,
@@ -2412,7 +2362,9 @@ def verify(args: argparse.Namespace) -> int:
         for p in problems:
             print(f"FAIL: {p}", file=sys.stderr)
         return 2
-    print(f"OK: artifact {manifest['artifact_id']} matches its manifest (video+cover hashes, title, authorization present)")
+    print(
+        f"OK: artifact {manifest['artifact_id']} matches its manifest (video+cover hashes, title, authorization present)"
+    )
     return 0
 
 
@@ -2479,9 +2431,7 @@ def season_add(args: argparse.Namespace) -> int:
                     "rc": 0,
                     "bvid": bvid,
                     "public_verify_status": result.get("status") if result else None,
-                    "public_verify_sha256": sha256_file(
-                        public_verify_sidecar_path(manifest_path)
-                    ),
+                    "public_verify_sha256": sha256_file(public_verify_sidecar_path(manifest_path)),
                 },
             )
         return rc
@@ -2512,7 +2462,9 @@ def _same_bv_adapter(
         _biliup_readonly_canary(biliup_cookie_json, bvid)
     http, _csrf = _build_season_http(cookie_json)
     return BilibiliRepairAdapter(
-        session=member_api.BiliSession(cookie_path=cookie_json, biliup_cookie_path=biliup_cookie_json),
+        session=member_api.BiliSession(
+            cookie_path=cookie_json, biliup_cookie_path=biliup_cookie_json
+        ),
         http=http,
         view_url=VIEW_API,
         tags_url=TAGS_API,
@@ -2540,7 +2492,9 @@ def repair_plan(args: argparse.Namespace) -> int:
     lock_path = Path(args.lock) if args.lock else DEFAULT_UPLOAD_LOCK
     with exclusive_upload_lock(lock_path):
         manifest, problems = load_and_verify(manifest_path)
-        problems.extend(repair_binding.repair_publication_target_problems(manifest or {}, args.bvid))
+        problems.extend(
+            repair_binding.repair_publication_target_problems(manifest or {}, args.bvid)
+        )
         if problems:
             for problem in problems:
                 print(f"REFUSE: {problem}", file=sys.stderr)
@@ -2566,9 +2520,7 @@ def repair_plan(args: argparse.Namespace) -> int:
             bvid=args.bvid,
             snapshot=snapshot,
             predecessor_completed_path=(
-                Path(args.predecessor_completed).resolve()
-                if args.predecessor_completed
-                else None
+                Path(args.predecessor_completed).resolve() if args.predecessor_completed else None
             ),
         )
         journal = Path(args.journal).resolve()
@@ -2580,9 +2532,7 @@ def repair_plan(args: argparse.Namespace) -> int:
             bvid=args.bvid,
             plan_id=str(plan["plan_id"]),
             predecessor_plan_id=(
-                str(predecessor_plan.get("plan_id"))
-                if predecessor_plan.get("plan_id")
-                else None
+                str(predecessor_plan.get("plan_id")) if predecessor_plan.get("plan_id") else None
             ),
             predecessor_verified_row_sha256=(
                 str(predecessor_row.get("row_sha256"))
@@ -2620,7 +2570,9 @@ def _load_repair_manifest(plan_path: Path) -> tuple[dict | None, dict | None, li
     manifest, problems = load_and_verify(manifest_path, frozen_plan_resume=True)
     if problems or manifest is None:
         return plan, manifest, problems
-    problems.extend(repair_binding.validate_plan_problems(plan, manifest=manifest, plan_path=plan_path))
+    problems.extend(
+        repair_binding.validate_plan_problems(plan, manifest=manifest, plan_path=plan_path)
+    )
     return plan, manifest, problems
 
 
@@ -2689,18 +2641,12 @@ def _load_cover_repair_manifest(
     except cover_repair_binding.CoverRepairError as exc:
         return None, None, [str(exc)]
     manifest_path = Path(str((plan.get("manifest") or {}).get("path") or ""))
-    manifest, problems = load_and_verify(
-        manifest_path, frozen_plan_resume=True
-    )
+    manifest, problems = load_and_verify(manifest_path, frozen_plan_resume=True)
     if manifest is None or problems:
         return plan, manifest, problems
-    problems.extend(
-        _title_cover_qc_attestation_problems(manifest, required=True)
-    )
+    problems.extend(_title_cover_qc_attestation_problems(manifest, required=True))
     try:
-        cover_repair_binding.validate_plan(
-            plan, manifest=manifest, plan_path=plan_path
-        )
+        cover_repair_binding.validate_plan(plan, manifest=manifest, plan_path=plan_path)
     except cover_repair_binding.CoverRepairError as exc:
         problems.append(str(exc))
     return plan, manifest, problems
@@ -2715,16 +2661,8 @@ def cover_repair_plan(args: argparse.Namespace) -> int:
     with exclusive_upload_lock(lock_path):
         manifest, problems = load_and_verify(manifest_path)
         if manifest is not None:
-            problems.extend(
-                repair_binding.repair_publication_target_problems(
-                    manifest, args.bvid
-                )
-            )
-            problems.extend(
-                _title_cover_qc_attestation_problems(
-                    manifest, required=True
-                )
-            )
+            problems.extend(repair_binding.repair_publication_target_problems(manifest, args.bvid))
+            problems.extend(_title_cover_qc_attestation_problems(manifest, required=True))
         if problems or manifest is None:
             for problem in problems:
                 print(f"REFUSE: {problem}", file=sys.stderr)
@@ -2744,9 +2682,7 @@ def cover_repair_plan(args: argparse.Namespace) -> int:
             bvid=args.bvid,
             snapshot=snapshot,
             predecessor_completed_path=(
-                Path(args.predecessor_completed).resolve()
-                if args.predecessor_completed
-                else None
+                Path(args.predecessor_completed).resolve() if args.predecessor_completed else None
             ),
         )
         if args.dry_run:
@@ -2780,9 +2716,7 @@ def cover_repair_status(args: argparse.Namespace) -> int:
         for problem in problems:
             print(f"REFUSE: {problem}", file=sys.stderr)
         return 2
-    result = cover_repair_binding.status(
-        plan_path=plan_path, journal=journal, manifest=manifest
-    )
+    result = cover_repair_binding.status(plan_path=plan_path, journal=journal, manifest=manifest)
     print(
         json.dumps(
             {
@@ -2866,9 +2800,7 @@ def cover_repair_verify_live(args: argparse.Namespace) -> int:
             reconciliation = _reconcile_same_bv_cover_publication(
                 completed_path=out,
                 manifest=manifest,
-                manifest_path=Path(
-                    str((completed.get("manifest") or {})["path"])
-                ),
+                manifest_path=Path(str((completed.get("manifest") or {})["path"])),
                 reconciled_at=str(completed["verified_at"]),
             )
         except publication_reconciliation.PublicationReconciliationError as exc:

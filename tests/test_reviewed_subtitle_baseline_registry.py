@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import src.autoslice.reviewed_subtitle_baseline_registry as baseline_registry
 from src.autoslice.reviewed_subtitle_baseline_registry import (
     ReviewedSubtitleBaselineRegistryError,
     load_candidate_reviewed_subtitle_baseline,
@@ -14,6 +15,10 @@ from src.autoslice.redelivery_boundary_projection import (
     PROJECTION_MODE_CONFIG_KEY,
 )
 from src.autoslice.subtitle_validation import validate_srt_file
+
+
+ROOT = Path(__file__).resolve().parents[1]
+EXACT_CANDIDATE = "auto_223750_578_734"
 
 
 def _write_asset(root: Path, candidate_id: str = "auto_1_2_3") -> tuple[Path, Path]:
@@ -49,6 +54,26 @@ def _write_asset(root: Path, candidate_id: str = "auto_1_2_3") -> tuple[Path, Pa
     return manifest, baseline
 
 
+def _write_exact_lidousha_assets(lidousha_root: Path) -> Path:
+    source_lidousha = ROOT / "assets/lidousha"
+    baseline_root = lidousha_root / "reviewed_subtitle_baselines"
+    authority_root = lidousha_root / "reviewed_exact_source_intervals"
+    baseline_root.mkdir(parents=True, exist_ok=True)
+    authority_root.mkdir(parents=True, exist_ok=True)
+    for name in (
+        f"{EXACT_CANDIDATE}.subtitle-baseline.v1.json",
+        f"{EXACT_CANDIDATE}.reviewed.srt",
+    ):
+        (baseline_root / name).write_bytes(
+            (source_lidousha / "reviewed_subtitle_baselines" / name).read_bytes()
+        )
+    authority_name = f"{EXACT_CANDIDATE}.reviewed-exact-source-interval.v1.json"
+    (authority_root / authority_name).write_bytes(
+        (source_lidousha / "reviewed_exact_source_intervals" / authority_name).read_bytes()
+    )
+    return baseline_root
+
+
 def test_absent_candidate_baseline_is_optional(tmp_path):
     assert load_candidate_reviewed_subtitle_baseline(tmp_path, "auto_1_2_3") is None
 
@@ -75,9 +100,7 @@ def test_loads_only_the_supported_opt_in_terminal_projection_mode(tmp_path):
     document[PROJECTION_MODE_CONFIG_KEY] = PROJECTION_MODE
     manifest.write_text(json.dumps(document), encoding="utf-8")
 
-    loaded = load_candidate_reviewed_subtitle_baseline(
-        tmp_path, "auto_1_2_3"
-    )
+    loaded = load_candidate_reviewed_subtitle_baseline(tmp_path, "auto_1_2_3")
 
     assert loaded is not None
     assert loaded.config[PROJECTION_MODE_CONFIG_KEY] == PROJECTION_MODE
@@ -136,12 +159,109 @@ def test_symlinked_baseline_fails_closed(tmp_path):
         load_candidate_reviewed_subtitle_baseline(tmp_path, "auto_1_2_3")
 
 
+def test_exact_authority_uses_canonical_paths_under_explicit_trusted_repo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = tmp_path / "trusted-repo"
+    baseline_root = _write_exact_lidousha_assets(repo_root / "assets/lidousha")
+    sealed_paths: list[Path] = []
+
+    def seal(**kwargs: object) -> None:
+        assert kwargs["repo_root"] == repo_root
+        sealed_paths.append(Path(kwargs["relative_path"]))
+
+    monkeypatch.setattr(
+        baseline_registry,
+        "require_repository_asset_authority",
+        seal,
+    )
+
+    loaded = load_candidate_reviewed_subtitle_baseline(
+        baseline_root,
+        EXACT_CANDIDATE,
+        repo_root=repo_root,
+    )
+
+    assert loaded is not None
+    assert loaded.exact_interval_authority is not None
+    assert sealed_paths == [
+        Path(
+            "assets/lidousha/reviewed_subtitle_baselines/"
+            f"{EXACT_CANDIDATE}.subtitle-baseline.v1.json"
+        ),
+        Path(
+            "assets/lidousha/reviewed_exact_source_intervals/"
+            f"{EXACT_CANDIDATE}.reviewed-exact-source-interval.v1.json"
+        ),
+    ]
+
+
+@pytest.mark.parametrize("target_location", ["outside", "inside"])
+def test_exact_authority_rejects_symlinked_lidousha_parent_even_if_target_is_repo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target_location: str,
+) -> None:
+    repo_root = tmp_path / "trusted-repo"
+    (repo_root / "assets").mkdir(parents=True)
+    if target_location == "outside":
+        target = tmp_path / "outside-assets/lidousha"
+    else:
+        target = repo_root / "relocated/lidousha"
+    _write_exact_lidousha_assets(target)
+    (repo_root / "assets/lidousha").symlink_to(
+        target,
+        target_is_directory=True,
+    )
+    monkeypatch.setattr(
+        baseline_registry,
+        "require_repository_asset_authority",
+        lambda **_kwargs: None,
+    )
+
+    with pytest.raises(
+        ReviewedSubtitleBaselineRegistryError,
+        match="parent symlink",
+    ):
+        load_candidate_reviewed_subtitle_baseline(
+            repo_root / "assets/lidousha/reviewed_subtitle_baselines",
+            EXACT_CANDIDATE,
+            repo_root=repo_root,
+        )
+
+
+def test_exact_authority_directory_symlink_is_normalized_to_registry_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = tmp_path / "trusted-repo"
+    lidousha_root = repo_root / "assets/lidousha"
+    baseline_root = _write_exact_lidousha_assets(lidousha_root)
+    canonical_authority_root = lidousha_root / "reviewed_exact_source_intervals"
+    outside_authority_root = tmp_path / "outside-exact-authority"
+    canonical_authority_root.rename(outside_authority_root)
+    canonical_authority_root.symlink_to(
+        outside_authority_root,
+        target_is_directory=True,
+    )
+    monkeypatch.setattr(
+        baseline_registry,
+        "require_repository_asset_authority",
+        lambda **_kwargs: None,
+    )
+
+    with pytest.raises(ReviewedSubtitleBaselineRegistryError, match="parent symlink"):
+        load_candidate_reviewed_subtitle_baseline(
+            baseline_root,
+            EXACT_CANDIDATE,
+            repo_root=repo_root,
+        )
+
+
 def test_committed_nancho_baseline_binds_new_truths_to_absolute_source_timeline():
     root = (
-        Path(__file__).resolve().parents[1]
-        / "assets"
-        / "lidousha"
-        / "reviewed_subtitle_baselines"
+        Path(__file__).resolve().parents[1] / "assets" / "lidousha" / "reviewed_subtitle_baselines"
     )
     loaded = load_candidate_reviewed_subtitle_baseline(
         root,
@@ -149,9 +269,7 @@ def test_committed_nancho_baseline_binds_new_truths_to_absolute_source_timeline(
     )
 
     assert loaded is not None
-    assert loaded.config["source_recording_basename"] == (
-        "22966160_20260722-19-34-50.mp4"
-    )
+    assert loaded.config["source_recording_basename"] == ("22966160_20260722-19-34-50.mp4")
     assert loaded.config["source_sha256"] == (
         "0eb2778dc53e5eabbccae089e5db92d3fb3662d90e1dd2ddbe7765436718989a"
     )
@@ -177,21 +295,20 @@ def test_committed_nancho_baseline_binds_new_truths_to_absolute_source_timeline(
         loaded.config["absolute_source_start_ms"] + response.end_ms,
     ) == (835_950, 836_510)
 
-    assert validate_srt_file(
-        loaded.baseline_path,
-        media_duration_ms=(
-            loaded.config["absolute_source_end_ms"]
-            - loaded.config["absolute_source_start_ms"]
-        ),
-    )["status"] == "PASS"
+    assert (
+        validate_srt_file(
+            loaded.baseline_path,
+            media_duration_ms=(
+                loaded.config["absolute_source_end_ms"] - loaded.config["absolute_source_start_ms"]
+            ),
+        )["status"]
+        == "PASS"
+    )
 
 
 def test_committed_chair_baseline_ends_at_fake_cry_before_next_superchat():
     root = (
-        Path(__file__).resolve().parents[1]
-        / "assets"
-        / "lidousha"
-        / "reviewed_subtitle_baselines"
+        Path(__file__).resolve().parents[1] / "assets" / "lidousha" / "reviewed_subtitle_baselines"
     )
     loaded = load_candidate_reviewed_subtitle_baseline(
         root,

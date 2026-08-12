@@ -1,0 +1,118 @@
+{
+  "schema_version": "operator-reviewed-exact-source-interval.v1",
+  "status": "ACTIVE",
+  "dispatch_mode": "reviewed_exact_source_interval_v1",
+  "policy_id": "reviewed-exact-source-interval-policy.v1",
+  "candidate_id": "auto_223750_578_734",
+  "semantic_spec": {
+    "identity": {
+      "candidate_id": "auto_223750_578_734",
+      "semantic_start_ms": 578030,
+      "semantic_end_ms": 734230,
+      "given_end_ms": 734230,
+      "given_end_mode": "semantic_lower_bound",
+      "given_end_authority_sha256": "sha256:b1740c15f9a3be3762b3ebf2f9e929d2f19d4d0600d78b4abfe8788678e1111c"
+    },
+    "identity_sha256": "sha256:d05c69821c27ced7e666f4ccc68f065e083129376403a98fd87ec29036ce92ad"
+  },
+  "source": {
+    "recording_basename": "22966160_20260807-22-37-50.mp4",
+    "source_sha256": "sha256:66e9ec0707fe8d7f38cf8a552e863dafbba34fb7eadaece496adb30d04b1ad1e",
+    "logical_timeline": {
+      "platform": "bilibili-live",
+      "room_id": "22966160",
+      "recording_start_local": "20260807T22:37:50"
+    },
+    "absolute_source_start_ms": 577780,
+    "absolute_source_end_ms": 735090
+  },
+  "reviewed_subtitle": {
+    "srt_sha256": "sha256:6d79fdab105d4c7b5edffec66fe526aa01839de342a7c96b8784f4d0100a8062",
+    "cue_count": 52,
+    "cue_manifest_sha256": "sha256:c6462e5dd18ca876c6cacb7f7121b6da7d9a92bfb193836de941a4b25906f598"
+  },
+  "speaker_truth": {
+    "truth_diff_repo_path": "assets/lidousha/reviewed_speaker_truth/auto_223750_578_734.truth-diff.v2.json",
+    "truth_diff_sha256": "sha256:aaa1cd5681b8bb1fee34ed347c6e5f2fa9166d480176cd2688a28cb7fa0fd434",
+    "override_sha256": "sha256:73986876f4d3137ba327f301954ffb5ad5dbafad190746f8417e5a7f412a0ea3",
+    "cue_count": 52,
+    "segment_count": 55,
+    "segment_manifest_sha256": "sha256:a009a25841221acbc0ba7c8161888ce4aef8b0db489f0920e769a3ccb9784d3e"
+  },
+  "terminal": {
+    "media_end_anchor_ms": 157310,
+    "last_cue_end_ms": 157250,
+    "tail_ms": 60,
+    "tail_policy": "inclusive_0_to_400_ms"
+  },
+  "selection": {
+    "selection_hook_sha256": "sha256:fc2c6240cde510e72cfb2edb208b36d8e1b636feeb27afb4fd9962943ec4c890",
+    "selection_scorecard_sha256": "sha256:0eb4eb5f7ea9b6a680643be3c8faf2444fa4e8335b8f2d961ce5ab6edc616059",
+    "correction_authority_file_sha256": "sha256:3ab972547b083f9d2bf4dae21ce5fbb3e647468ae03508db0df4e59fc7683c5a",
+    "correction_authority_sha256": "sha256:c61f6094abfef6ec37da728931b16ccf2e6fd4b49c6bf9f2449540b73ea82a1d",
+    "rescore_receipt_output_sha256": "sha256:3c38376f70300ab6052de063bd3ea74761e776e6e934640a9dbe5ea633574d84",
+    "selection_calibration_sha256": "sha256:0c75406af144878d6b15fa08a0f49316bec944d83a135822f1f30960a914cd67"
+  },
+  "frozen_semantic_verdict": {
+    "syntax_complete": true,
+    "story_closed": true,
+    "next_topic_separated": true,
+    "content_anchor_covered": true,
+    "source_review_sha256": "sha256:a707e1f0935786458dd13b5a30b9550ebc27c7147c1fe5e97a398e3fe32e232d",
+    "final_review_sha256": "sha256:17721fc3a9d44b3e38bee2c9f99e1e709b46e39e33b5f97801a50a1de5464be1",
+    "frozen_record_sha256": "sha256:8e2480479e4b89df1639191b78c923f37e3b5bb0ec62f54e0ba1bd401ab5c915",
+    "frozen_boundary_audit_sha256": "sha256:2e698c903e3b80dc5659fdb453adbbb602a4b78ba84d604feb0ba9ac0f69ff3c",
+    "frozen_story_contract_sha256": "sha256:77ac5033f8c440ea1372bcc5d74cbf6f2b853ace62bd8504d941544e13978661",
+    "closure_text_sha256": "sha256:ed74c131552312b140a1fe7d12fcd688e040eaf3e67fe5ac2b25fd30aaad012f"
+  },
+  "policy": {
+    "source_interval_semantics": "half_open",
+    "fresh_asr_role": "diagnostic_witness_only",
+    "failure_mode": "block_without_legacy_or_live_fallback",
+    "terminal_tail_min_ms": 0,
+    "terminal_tail_max_ms": 400,
+    "reviewed_subtitle_mode": "exact_bytes_and_canonical_cue_manifest",
+    "speaker_truth_mode": "independent_file_and_canonical_segments"
+  },
+  "authenticated_review_receipt": {
+    "schema_version": "authenticated-exact-audiovisual-review-receipt.v1",
+    "status": "AUTHENTICATED_REVIEWED_EXACT_AUDIOVISUAL_INTERVAL",
+    "rollout_id": "019fee5b-88f9-7b81-86fb-4c53b278e8ac",
+    "reviewed_media": {
+      "source_sha256": "sha256:66e9ec0707fe8d7f38cf8a552e863dafbba34fb7eadaece496adb30d04b1ad1e",
+      "absolute_source_start_ms": 577780,
+      "absolute_source_end_ms": 735090,
+      "readme_sha256": "sha256:d7f5e60923a16e67870d1bc4f4e1fede9b5f974a1e1e3e9436a482e74e0dcede",
+      "recut_provenance_sha256": "sha256:4188fc9e6d4336074ffd68e29dd88178dba759e496f70fc429c19d0f7c97d32b",
+      "recut_sha256": "sha256:b9b3e746ae9007b587bec02dbf4421250f6146e200163cf8fa5e29c542a977e3",
+      "burned_review_video_sha256": "sha256:47a5820dcfb7b370787545c936f40918921b597838e314bec72d8eaf6c748d29",
+      "source_piece_sha256": "sha256:53f1dc06643151e6b4595750b3ec2797dfa6f8d443483347c9c69bca026d9ed3",
+      "recut_duration_ms": 157317,
+      "delivery_question_semantic_range_ms": [578030, 734230],
+      "mechanical_reviewed_interval_authority": "recut_provenance_bytes"
+    },
+    "messages": [
+      {
+        "kind": "assistant_exact_media_delivery_and_boundary_question",
+        "message_id": "msg_06d8fa7a1e9eaa3e016a7b5e2f6bb88197a82d0742f63a3829",
+        "timestamp": "2026-08-11T17:39:29.943Z",
+        "text_sha256": "sha256:1210d900cf66a1ef1e94747ffec791b680fd6291818b01f0de3700ff326d27e0"
+      },
+      {
+        "kind": "ivan_exact_story_feedback_after_review",
+        "message_id": "msg_019ff23a-8b10-7823-bb12-22073d30edd5",
+        "timestamp": "2026-08-11T19:09:10.801Z",
+        "text_sha256": "sha256:fee5e901d7c6af25f0988d3331debcbd91a7cf189bae7d90eb06818b6d9e1bfc"
+      },
+      {
+        "kind": "ivan_release_after_applying_truth",
+        "message_id": "msg_019ff23c-004e-7860-bb6e-ab6d01b55857",
+        "timestamp": "2026-08-11T19:10:46.350Z",
+        "text_sha256": "sha256:47ee50f0c7e2eacc7b0d16d896cd05327bc8afebf01d33826dae8434b212c2ef"
+      }
+    ],
+    "evidence_disposition": "Ivan was shown the provenance-bound burned video and an explicit boundary question, then supplied exact story corrections and approved the two reviewed clips for release after applying his truth.",
+    "receipt_sha256": "sha256:cf5628817985bd65b33185fbaf20cfe1e53c463f432c0eb3fe308d1c4e3ce51f"
+  },
+  "authority_sha256": "sha256:1b497d518c6176261b1f03dbef34c5085f6ac49b50d3d9e7904fd4967375ac8c"
+}

@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 from .story_contract import audit_story_artifact
+from .publication_title_exception import candidate_title_policy_violations
 from .title_policy import (
     TitlePolicyError,
-    publish_title_policy_violations,
     validate_candidate_title_surface,
 )
 
@@ -32,6 +32,7 @@ def evaluate_candidate_title_gates(
     prior_authority_error: str | None,
     prior_authority_status: str,
     story_contract: Mapping[str, object] | None,
+    source_fact_review: Mapping[str, object] | None = None,
 ) -> TitleGateOutcome:
     """Apply candidate projection, shared title policy, and story policy in order."""
 
@@ -46,9 +47,11 @@ def evaluate_candidate_title_gates(
         authority_error = f"candidate_entity_projection_failed:{exc}"
         authority_status = "BLOCKED_ENTITY_SURFACE_PROJECTION"
 
-    common = publish_title_policy_violations(
-        title,
+    common = candidate_title_policy_violations(
+        candidate_id=candidate_id,
+        title=title,
         lane=lane,
+        source_fact_review=source_fact_review,
         enforce_automatic_style=enforce_automatic_style,
     )
     violations.extend(code for code in common if code not in violations)

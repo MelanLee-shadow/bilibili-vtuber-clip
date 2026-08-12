@@ -909,7 +909,7 @@ from src.autoslice.repository_asset_authority import (  # noqa: E402
 )
 
 registry = root / "assets/lidousha/publication_registry.v1.json"
-authority_dir = root / "assets/lidousha/authorities"
+authority_dir = root / "assets/lidousha"
 if registry.is_symlink() or not registry.is_file():
     raise SystemExit("publication registry authority is missing or unsafe")
 authority_paths = []
@@ -919,7 +919,7 @@ if authority_dir.exists():
     for candidate in authority_dir.rglob("*"):
         if candidate.is_symlink():
             raise SystemExit(f"authority asset tree contains symlink: {candidate}")
-        if candidate.is_file() and candidate.suffix == ".json":
+        if candidate.is_file() and candidate.suffix in {".json", ".srt"}:
             authority_paths.append(candidate)
 
 manifest = build_deployed_authority_manifest(
@@ -985,7 +985,7 @@ if actual_commit != expected_commit:
     raise SystemExit("deployed commit readback mismatch")
 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 registry = root / "assets/lidousha/publication_registry.v1.json"
-authority_dir = root / "assets/lidousha/authorities"
+authority_dir = root / "assets/lidousha"
 if registry.is_symlink() or not registry.is_file():
     raise SystemExit("publication registry authority is missing or unsafe")
 authority_paths = []
@@ -995,7 +995,7 @@ if authority_dir.exists():
     for candidate in authority_dir.rglob("*"):
         if candidate.is_symlink():
             raise SystemExit(f"authority asset tree contains symlink: {candidate}")
-        if candidate.is_file() and candidate.suffix == ".json":
+        if candidate.is_file() and candidate.suffix in {".json", ".srt"}:
             authority_paths.append(candidate)
 relative_paths = [
     path.relative_to(root)

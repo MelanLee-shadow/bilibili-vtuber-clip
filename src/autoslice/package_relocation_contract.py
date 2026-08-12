@@ -93,9 +93,7 @@ SPEAKER_PATH_KEYS = frozenset(
         "output_ass",
     }
 )
-SPEAKER_PATH_POINTERS: frozenset[JsonPointer] = frozenset(
-    {(key,) for key in SPEAKER_PATH_KEYS}
-)
+SPEAKER_PATH_POINTERS: frozenset[JsonPointer] = frozenset({(key,) for key in SPEAKER_PATH_KEYS})
 
 # Same-hash artifacts are still not interchangeable across physical roles.
 _RECORD_ROOT_ROLES: Mapping[JsonPointer, frozenset[str]] = {
@@ -132,6 +130,7 @@ _RECORD_FROZEN_PREFIXES: tuple[JsonPointer, ...] = (
     ("publish_staging", "source_fact_review"),
     ("publish_staging", "title_story_audit"),
     ("publish_staging", "manual_title_repair_authority_consumption"),
+    ("publish_staging", "manual_title_keep_authority_consumption"),
     ("publish_staging", "recovery_publication_authority"),
 )
 _PUBLISH_FROZEN_PREFIXES: tuple[JsonPointer, ...] = (
@@ -139,6 +138,7 @@ _PUBLISH_FROZEN_PREFIXES: tuple[JsonPointer, ...] = (
     ("source_fact_review",),
     ("title_story_audit",),
     ("manual_title_repair_authority_consumption",),
+    ("manual_title_keep_authority_consumption",),
     ("recovery_publication_authority",),
 )
 _SPEAKER_FROZEN_PREFIXES: tuple[JsonPointer, ...] = (
@@ -150,9 +150,7 @@ _SPEAKER_FROZEN_PREFIXES: tuple[JsonPointer, ...] = (
 
 
 def pointer_text(pointer: JsonPointer) -> str:
-    return "/" + "/".join(
-        value.replace("~", "~0").replace("/", "~1") for value in pointer
-    )
+    return "/" + "/".join(value.replace("~", "~0").replace("/", "~1") for value in pointer)
 
 
 def parse_pointer(value: object, *, label: str) -> JsonPointer:
@@ -178,26 +176,18 @@ def get_value(document: Mapping[str, Any], pointer: JsonPointer) -> object:
     return value
 
 
-def set_value(
-    document: dict[str, Any], pointer: JsonPointer, value: object
-) -> None:
+def set_value(document: dict[str, Any], pointer: JsonPointer, value: object) -> None:
     parent: object = document
     for key in pointer[:-1]:
         if not isinstance(parent, dict) or key not in parent:
-            raise PackageRelocationError(
-                f"missing relocation parent: {pointer_text(pointer)}"
-            )
+            raise PackageRelocationError(f"missing relocation parent: {pointer_text(pointer)}")
         parent = parent[key]
     if not isinstance(parent, dict) or pointer[-1] not in parent:
-        raise PackageRelocationError(
-            f"missing relocation pointer: {pointer_text(pointer)}"
-        )
+        raise PackageRelocationError(f"missing relocation pointer: {pointer_text(pointer)}")
     parent[pointer[-1]] = value
 
 
-def walk_strings(
-    value: object, pointer: JsonPointer = ()
-) -> Iterator[tuple[JsonPointer, str]]:
+def walk_strings(value: object, pointer: JsonPointer = ()) -> Iterator[tuple[JsonPointer, str]]:
     if isinstance(value, Mapping):
         for key, child in value.items():
             yield from walk_strings(child, (*pointer, str(key)))
@@ -232,9 +222,7 @@ def _is_frozen_pointer(kind: str, pointer: JsonPointer) -> bool:
     if kind == "record" and pointer[:1] == ("speaker_finalization",):
         nested = pointer[1:]
         if nested and not speaker_record_pointer(pointer):
-            return any(
-                _under(nested, prefix) for prefix in _SPEAKER_FROZEN_PREFIXES
-            )
+            return any(_under(nested, prefix) for prefix in _SPEAKER_FROZEN_PREFIXES)
     prefixes = {
         "record": _RECORD_FROZEN_PREFIXES,
         "publish": _PUBLISH_FROZEN_PREFIXES,
@@ -290,7 +278,7 @@ def match_root_role(
         )
         for side, root in sides:
             if value == root or value.startswith(root + "/"):
-                candidates.append((len(root), role, side, value[len(root):]))
+                candidates.append((len(root), role, side, value[len(root) :]))
     if not candidates:
         return None
     longest = max(row[0] for row in candidates)
@@ -311,14 +299,11 @@ def validate_path_root_role(
     if value is None:
         return None
     if not isinstance(value, str) or not value.startswith("/"):
-        raise PackageRelocationError(
-            f"path is not absolute at {pointer_text(pointer)}"
-        )
+        raise PackageRelocationError(f"path is not absolute at {pointer_text(pointer)}")
     matched = match_root_role(value, mappings=mappings)
     if matched is None:
         raise PackageRelocationError(
-            "path outside relocation roots (escapes trusted roots) at "
-            f"{pointer_text(pointer)}"
+            f"path outside relocation roots (escapes trusted roots) at {pointer_text(pointer)}"
         )
     role, _side, _suffix = matched
     allowed = _pointer_root_roles(kind, pointer)

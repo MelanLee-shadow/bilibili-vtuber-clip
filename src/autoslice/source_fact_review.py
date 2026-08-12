@@ -28,7 +28,26 @@ from src.autoslice.candidate_entity_projection import (
     load_candidate_entity_projection,
 )
 from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.deterministic_text_surface_resolution import (
+    CANDIDATE_ID as DETERMINISTIC_TEXT_NARROWING_CANDIDATE_ID,
+    CONSUMPTION_SCHEMA_VERSION as DETERMINISTIC_TEXT_NARROWING_CONSUMPTION_SCHEMA,
+    EXACT_COMBINED_SHA256 as DETERMINISTIC_TEXT_NARROWING_COMBINED_SHA256,
+    EXACT_HOOK as DETERMINISTIC_TEXT_NARROWING_HOOK,
+    EXACT_TITLE as DETERMINISTIC_TEXT_NARROWING_TITLE,
+    DeterministicTextSurfaceResolutionError,
+    consume_deterministic_text_surface_authority,
+    load_deterministic_text_surface_authority,
+)
 from src.autoslice.llm_client import LlmCall, extract_json_object
+from src.autoslice.manual_title_keep_authority import (
+    ACTION as MANUAL_TITLE_KEEP_ACTION,
+    FINDING_CLASS as MANUAL_TITLE_KEEP_FINDING_CLASS,
+    PASS_DECISION as MANUAL_TITLE_KEEP_PASS_DECISION,
+    ManualTitleKeepAuthorityError,
+    load_manual_title_keep_authority,
+    read_regular_no_symlink,
+    validate_manual_title_keep_authority,
+)
 from src.autoslice.surface_canon import (
     canonicalize_hard_meme_surfaces,
     hard_meme_surface_rules,
@@ -56,6 +75,7 @@ _CHANNEL_PROFILE = load_channel_profile(_REPO_ROOT)
 _CANDIDATE_RECUT_SUFFIX_RX = re.compile(r"r\d+$")
 _SHA256_VALUE_RX = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _SPEAKER_EVIDENCE_UNSET = object()
+DETERMINISTIC_TEXT_NARROWING_PASS_DECISION = "DETERMINISTIC_TEXT_NARROWING"
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,14 +225,6 @@ def _speaker_receipt_fields(
     }
 
 
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _candidate_family(candidate_id: str) -> str:
     value = str(candidate_id or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{2,127}", value) or Path(value).name != value:
@@ -245,8 +257,10 @@ def _load_source_fact_entity_context(
     if final_reviewed_srt_path is None:
         raise CandidateEntityProjectionError("SOURCE_FACT_FINAL_REVIEWED_SRT_REQUIRED")
     final_srt = Path(final_reviewed_srt_path)
-    if final_srt.is_symlink() or not final_srt.is_file():
-        raise CandidateEntityProjectionError("SOURCE_FACT_FINAL_REVIEWED_SRT_UNAVAILABLE")
+    try:
+        final_srt_bytes = read_regular_no_symlink(final_srt)
+    except ManualTitleKeepAuthorityError as exc:
+        raise CandidateEntityProjectionError("SOURCE_FACT_FINAL_REVIEWED_SRT_UNAVAILABLE") from exc
     reviewed_baseline = (
         _CHANNEL_PROFILE.asset_directory("reviewed_subtitle_baselines") / f"{family}.reviewed.srt"
     )
@@ -255,7 +269,7 @@ def _load_source_fact_entity_context(
         candidate_id=family,
         reviewed_srt_path=reviewed_baseline,
     )
-    observed_srt_sha256 = _sha256_file(final_srt)
+    observed_srt_sha256 = hashlib.sha256(final_srt_bytes).hexdigest()
     if observed_srt_sha256 != projection.binding.reviewed_srt_sha256:
         raise CandidateEntityProjectionError(
             "SOURCE_FACT_FINAL_REVIEWED_SRT_BINDING_MISMATCH:"
@@ -297,6 +311,26 @@ def _load_source_fact_entity_context(
         projection=projection,
         document={**body, "context_sha256": _sha256_json(body)},
     )
+
+
+def resolve_source_fact_entity_context(
+    *,
+    candidate_id: str,
+    final_reviewed_srt_path: Path,
+) -> dict[str, object]:
+    """Rebuild current projection context for a typed external binder.
+
+    KEEP replay is defined only for this projection-bearing candidate; missing
+    context therefore blocks instead of entering the ordinary legacy lane.
+    """
+
+    context = _load_source_fact_entity_context(
+        candidate_id=candidate_id,
+        final_reviewed_srt_path=final_reviewed_srt_path,
+    )
+    if context is None:
+        raise CandidateEntityProjectionError("MANUAL_TITLE_KEEP_CURRENT_ENTITY_CONTEXT_REQUIRED")
+    return dict(context.document)
 
 
 def _entity_context_prompt_block(
@@ -1129,11 +1163,32 @@ def review_and_repair_source_facts(
 
 
 def source_fact_review_passes(review: object) -> bool:
+    decision = review.get("decision") if isinstance(review, Mapping) else None
+    decision_shape_valid = (
+        decision in {"KEEP", "REPAIRED"}
+        or (
+            decision == MANUAL_TITLE_KEEP_PASS_DECISION
+            and isinstance(review.get("blocked_source_fact_review"), Mapping)
+            and isinstance(review.get("manual_title_keep_authority_consumption"), Mapping)
+            and review["manual_title_keep_authority_consumption"].get("status") == "CONSUMED"
+            and isinstance(review.get("recorded_dissent"), Mapping)
+            and review["recorded_dissent"].get("status") == "RECORDED_NON_BLOCKING"
+        )
+        or (
+            decision == DETERMINISTIC_TEXT_NARROWING_PASS_DECISION
+            and isinstance(review.get("blocked_source_fact_review"), Mapping)
+            and review["blocked_source_fact_review"].get("status") == "FAILED"
+            and isinstance(review.get("deterministic_text_surface_resolution"), Mapping)
+            and review["deterministic_text_surface_resolution"].get("status") == "VALID"
+            and review["deterministic_text_surface_resolution"].get("provider_call_required")
+            is False
+        )
+    )
     return bool(
         isinstance(review, Mapping)
         and review.get("schema_version") == SCHEMA_VERSION
         and review.get("status") == "PASS"
-        and review.get("decision") in {"KEEP", "REPAIRED"}
+        and decision_shape_valid
         and isinstance(review.get("final_selection_hook"), str)
         and bool(str(review.get("final_selection_hook")).strip())
         and isinstance(review.get("final_title"), str)
@@ -1203,6 +1258,353 @@ def authorize_manual_title_repair(
                 else {}
             ),
         }
+    )
+
+
+def authorize_manual_title_keep(
+    review: Mapping[str, object],
+    *,
+    consumption: Mapping[str, object],
+) -> dict[str, object]:
+    """Resolve exactly one compression-hedge dissent without mutating title bytes.
+
+    The complete FAILED receipt remains embedded and hash-bound.  This function
+    accepts no prose-only grant: the stable consumption must bind the exact
+    candidate, changed-surface fingerprint, immutable inputs, SRTs, and entity
+    context that produced the blocked adjudication.
+    """
+
+    passes = review.get("passes")
+    entity_context = review.get("entity_context")
+    speaker_evidence = review.get("speaker_evidence")
+    blocked_body = dict(review)
+    blocked_receipt_sha256 = blocked_body.pop("receipt_sha256", None)
+    if (
+        review.get("schema_version") != SCHEMA_VERSION
+        or review.get("status") != "FAILED"
+        or review.get("decision") != "REPAIR_REQUIRES_TITLE_AUTHORITY"
+        or review.get("reason_code") != "SOURCE_FACT_TITLE_AUTHORITY_REQUIRED"
+        or review.get("original_selection_hook") != review.get("final_selection_hook")
+        or review.get("original_title") != review.get("final_title")
+        or not isinstance(passes, list)
+        or len(passes) != 1
+        or not isinstance(passes[0], Mapping)
+        or not isinstance(entity_context, Mapping)
+        or not isinstance(speaker_evidence, Mapping)
+        or not isinstance(blocked_receipt_sha256, str)
+        or _finalize_receipt(blocked_body).get("receipt_sha256") != blocked_receipt_sha256
+        or consumption.get("status") != "CONSUMED"
+        or consumption.get("field") != "title"
+        or consumption.get("action") != MANUAL_TITLE_KEEP_ACTION
+        or consumption.get("finding_class") != MANUAL_TITLE_KEEP_FINDING_CLASS
+        or consumption.get("disputed_span") != "结伴后"
+        or consumption.get("record_dissent") is not True
+        or consumption.get("candidate_id") != entity_context.get("candidate_id")
+        or consumption.get("blocked_source_fact_receipt_sha256") != blocked_receipt_sha256
+        or consumption.get("approved_title_sha256")
+        != _sha256_text(str(review.get("original_title") or ""))
+        or consumption.get("final_transcript_sha256") != passes[0].get("final_transcript_sha256")
+        or consumption.get("clip_context_prompt_sha256")
+        != passes[0].get("clip_context_prompt_sha256")
+        or consumption.get("selection_scorecard_sha256")
+        != passes[0].get("selection_scorecard_sha256")
+        or consumption.get("entity_context_sha256") != entity_context.get("context_sha256")
+        or consumption.get("reviewed_speaker_srt_sha256")
+        != speaker_evidence.get("speaker_final_srt_sha256")
+    ):
+        raise ValueError("MANUAL_TITLE_KEEP_AUTHORITY_RECEIPT_INVALID")
+    changed = passes[0].get("changed_surfaces")
+    if (
+        passes[0].get("status") != "REPAIR"
+        or passes[0].get("final_selection_hook") != review.get("original_selection_hook")
+        or not isinstance(changed, list)
+        or len(changed) != 1
+        or not isinstance(changed[0], Mapping)
+        or changed[0].get("artifact") != "title"
+        or changed[0].get("before") != review.get("original_title")
+        or changed[0].get("after") != passes[0].get("final_title")
+        or consumption.get("finding_fingerprint_sha256") != _sha256_json(dict(changed[0]))
+    ):
+        raise ValueError("MANUAL_TITLE_KEEP_AUTHORITY_RECEIPT_INVALID")
+    blocked = json.loads(json.dumps(dict(review), ensure_ascii=False))
+    dissent = {
+        "schema_version": "source-fact-recorded-dissent.v1",
+        "status": "RECORDED_NON_BLOCKING",
+        "finding_class": MANUAL_TITLE_KEEP_FINDING_CLASS,
+        "field": "title",
+        "span": "结伴后",
+        "action": MANUAL_TITLE_KEEP_ACTION,
+        "proposed_title": changed[0]["after"],
+        "reason": changed[0]["reason"],
+        "evidence": list(changed[0]["evidence"]),
+        "blocked_source_fact_receipt_sha256": review["receipt_sha256"],
+        "finding_fingerprint_sha256": consumption["finding_fingerprint_sha256"],
+    }
+    return _finalize_receipt(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "status": "PASS",
+            "decision": MANUAL_TITLE_KEEP_PASS_DECISION,
+            "reason_code": "SOURCE_FACT_SUPPORTED_COMPRESSION_HEDGE_KEPT",
+            "original_selection_hook": review["original_selection_hook"],
+            "original_title": review["original_title"],
+            "final_selection_hook": review["original_selection_hook"],
+            "final_title": review["original_title"],
+            "passes": json.loads(json.dumps(passes, ensure_ascii=False)),
+            "provider_retries": json.loads(
+                json.dumps(review.get("provider_retries") or [], ensure_ascii=False)
+            ),
+            "entity_context": dict(entity_context),
+            "speaker_evidence": dict(speaker_evidence),
+            "speaker_evidence_sha256": review["speaker_evidence_sha256"],
+            "blocked_source_fact_review": blocked,
+            "manual_title_keep_authority_consumption": dict(consumption),
+            "recorded_dissent": dissent,
+        }
+    )
+
+
+def authorize_deterministic_text_narrowing(
+    consumption: Mapping[str, object],
+) -> dict[str, object]:
+    """Promote one sealed closed-plan replay without calling a provider.
+
+    The original failed provider attempt remains embedded byte-for-byte.  The
+    new PASS means only that a repository-sealed deterministic renderer
+    narrowed the reviewed text surface; it does not relabel the failed attempt
+    or turn Ivan's broad publication quote into free-form title authority.
+    """
+
+    blocked = consumption.get("original_source_fact_receipt")
+    body = dict(consumption)
+    declared_consumption_sha256 = body.pop("receipt_sha256", None)
+    if (
+        consumption.get("schema_version") != DETERMINISTIC_TEXT_NARROWING_CONSUMPTION_SCHEMA
+        or consumption.get("status") != "VALID"
+        or consumption.get("candidate_id") != DETERMINISTIC_TEXT_NARROWING_CANDIDATE_ID
+        or consumption.get("provider_call_required") is not False
+        or consumption.get("exact_surface_resolution") != "VALID"
+        or consumption.get("publication_fact_authority") != "RESOLVED_EXACT_SURFACE"
+        or not isinstance(declared_consumption_sha256, str)
+        or _sha256_json(body) != declared_consumption_sha256
+        or not isinstance(blocked, Mapping)
+        or blocked.get("schema_version") != SCHEMA_VERSION
+        or blocked.get("status") != "FAILED"
+        or blocked.get("decision") != "NONE"
+        or blocked.get("reason_code") != "CPA_TEXT_REVIEW_INVALID"
+        or consumption.get("original_source_fact_receipt_sha256") != blocked.get("receipt_sha256")
+        or consumption.get("original_source_fact_attempt") != "FAILED"
+        or consumption.get("original_source_fact_reason_code") != "CPA_TEXT_REVIEW_INVALID"
+        or not isinstance(consumption.get("title"), str)
+        or not str(consumption.get("title") or "").strip()
+        or not isinstance(consumption.get("selection_hook"), str)
+        or not str(consumption.get("selection_hook") or "").strip()
+    ):
+        raise ValueError("DETERMINISTIC_TEXT_NARROWING_RECEIPT_INVALID")
+    blocked_body = dict(blocked)
+    declared_blocked_sha256 = blocked_body.pop("receipt_sha256", None)
+    if (
+        not isinstance(declared_blocked_sha256, str)
+        or _sha256_json(blocked_body) != declared_blocked_sha256
+    ):
+        raise ValueError("DETERMINISTIC_TEXT_NARROWING_RECEIPT_INVALID")
+    passes = blocked.get("passes")
+    provider_retries = blocked.get("provider_retries")
+    entity_context = blocked.get("entity_context")
+    speaker_evidence = blocked.get("speaker_evidence")
+    speaker_evidence_sha256 = blocked.get("speaker_evidence_sha256")
+    if (
+        not isinstance(passes, list)
+        or not passes
+        or any(not isinstance(row, Mapping) for row in passes)
+        or not isinstance(provider_retries, list)
+        or not isinstance(entity_context, Mapping)
+        or not isinstance(speaker_evidence, Mapping)
+        or not isinstance(speaker_evidence_sha256, str)
+    ):
+        raise ValueError("DETERMINISTIC_TEXT_NARROWING_RECEIPT_INVALID")
+    return _finalize_receipt(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "status": "PASS",
+            "decision": DETERMINISTIC_TEXT_NARROWING_PASS_DECISION,
+            "reason_code": "SOURCE_FACT_DETERMINISTIC_TEXT_NARROWING",
+            "original_selection_hook": blocked["original_selection_hook"],
+            "original_title": blocked["original_title"],
+            "final_selection_hook": consumption["selection_hook"],
+            "final_title": consumption["title"],
+            "passes": json.loads(json.dumps(passes, ensure_ascii=False)),
+            "provider_retries": json.loads(json.dumps(provider_retries, ensure_ascii=False)),
+            "entity_context": dict(entity_context),
+            "speaker_evidence": dict(speaker_evidence),
+            "speaker_evidence_sha256": speaker_evidence_sha256,
+            "blocked_source_fact_review": json.loads(json.dumps(dict(blocked), ensure_ascii=False)),
+            "deterministic_text_surface_resolution": dict(consumption),
+        }
+    )
+
+
+def deterministic_text_narrowing_title_policy_exception_applies(
+    review: object,
+    *,
+    candidate_id: str,
+    title: str,
+) -> bool:
+    """Recognize only the exact sealed one-candidate 50-codepoint title.
+
+    This structural check is intentionally insufficient to approve a package
+    by itself.  Package builders/auditors must additionally call
+    ``validate_source_fact_review`` against current SRT, speaker evidence, and
+    story inputs.  It merely prevents the generic 49-character rule from
+    rejecting the exact candidate-specific adjudication before that deeper
+    replay can run.
+    """
+
+    if (
+        candidate_id != DETERMINISTIC_TEXT_NARROWING_CANDIDATE_ID
+        or title != DETERMINISTIC_TEXT_NARROWING_TITLE
+        or len(title) != 50
+        or not isinstance(review, Mapping)
+        or review.get("decision") != DETERMINISTIC_TEXT_NARROWING_PASS_DECISION
+        or review.get("final_title") != DETERMINISTIC_TEXT_NARROWING_TITLE
+        or review.get("final_selection_hook") != DETERMINISTIC_TEXT_NARROWING_HOOK
+    ):
+        return False
+    consumption = review.get("deterministic_text_surface_resolution")
+    if (
+        not isinstance(consumption, Mapping)
+        or consumption.get("title") != DETERMINISTIC_TEXT_NARROWING_TITLE
+        or consumption.get("selection_hook") != DETERMINISTIC_TEXT_NARROWING_HOOK
+        or consumption.get("title_sha256") != _sha256_text(DETERMINISTIC_TEXT_NARROWING_TITLE)
+        or consumption.get("selection_hook_sha256")
+        != _sha256_text(DETERMINISTIC_TEXT_NARROWING_HOOK)
+        or consumption.get("combined_surface_sha256")
+        != DETERMINISTIC_TEXT_NARROWING_COMBINED_SHA256
+    ):
+        return False
+    try:
+        expected = authorize_deterministic_text_narrowing(consumption)
+    except (TypeError, ValueError):
+        return False
+    return review == expected
+
+
+def _validate_manual_title_keep_receipt(
+    review: Mapping[str, object],
+    *,
+    selection_hook: str,
+    title: str,
+    final_transcript: str,
+    clip_context_prompt: str,
+    selection_scorecard: object,
+    candidate_id: str | None,
+    final_reviewed_srt_path: Path | None,
+    speaker_evidence: object,
+) -> bool:
+    """Reload repository authority; never trust the package's consumption copy."""
+
+    if (
+        not candidate_id
+        or final_reviewed_srt_path is None
+        or speaker_evidence is _SPEAKER_EVIDENCE_UNSET
+    ):
+        return False
+    try:
+        authority = load_manual_title_keep_authority(candidate_id)
+        if authority is None:
+            return False
+        consumption = validate_manual_title_keep_authority(
+            authority,
+            candidate_id=candidate_id,
+            title=title,
+            selection_hook=selection_hook,
+            final_transcript=final_transcript,
+            clip_context_prompt=clip_context_prompt,
+            selection_scorecard=selection_scorecard,
+            final_reviewed_srt_path=final_reviewed_srt_path,
+            speaker_evidence=speaker_evidence,
+            entity_context=resolve_source_fact_entity_context(
+                candidate_id=candidate_id,
+                final_reviewed_srt_path=final_reviewed_srt_path,
+            ),
+        )
+        blocked = review.get("blocked_source_fact_review")
+        if not isinstance(blocked, Mapping):
+            return False
+        expected = authorize_manual_title_keep(blocked, consumption=consumption)
+    except (
+        CandidateEntityProjectionError,
+        ManualTitleKeepAuthorityError,
+        OSError,
+        ValueError,
+    ):
+        return False
+    return review == expected
+
+
+def _validate_deterministic_text_narrowing_receipt(
+    review: Mapping[str, object],
+    *,
+    selection_hook: str,
+    title: str,
+    final_transcript: str,
+    clip_context_prompt: str,
+    selection_scorecard: object,
+    candidate_id: str | None,
+    final_reviewed_srt_path: Path | None,
+    speaker_evidence: object,
+) -> bool:
+    """Rebuild the sealed closed plan against current package/runtime bytes."""
+
+    if (
+        candidate_id != DETERMINISTIC_TEXT_NARROWING_CANDIDATE_ID
+        or final_reviewed_srt_path is None
+        or speaker_evidence is _SPEAKER_EVIDENCE_UNSET
+    ):
+        return False
+    try:
+        authority = load_deterministic_text_surface_authority(candidate_id)
+        if authority is None:
+            return False
+        entity_context = resolve_source_fact_entity_context(
+            candidate_id=candidate_id,
+            final_reviewed_srt_path=final_reviewed_srt_path,
+        )
+        binding = entity_context.get("candidate_binding")
+        if not isinstance(binding, Mapping):
+            return False
+        consumption = consume_deterministic_text_surface_authority(
+            authority,
+            candidate_id=candidate_id,
+            source_recording_basename=str(binding.get("source_recording_basename") or ""),
+            source_sha256=str(binding.get("source_sha256") or ""),
+            absolute_source_start_ms=int(binding.get("absolute_source_start_ms")),
+            absolute_source_end_ms=int(binding.get("absolute_source_end_ms")),
+            reviewed_srt_path=final_reviewed_srt_path,
+            speaker_evidence=speaker_evidence,
+            failed_source_fact_review=authority.failed_source_fact_receipt,
+            original_title=str(authority.failed_source_fact_receipt.get("original_title") or ""),
+            original_selection_hook=str(
+                authority.failed_source_fact_receipt.get("original_selection_hook") or ""
+            ),
+            final_transcript=final_transcript,
+            clip_context_prompt=clip_context_prompt,
+            selection_scorecard=selection_scorecard,
+            entity_context=entity_context,
+        )
+        expected = authorize_deterministic_text_narrowing(consumption)
+    except (
+        CandidateEntityProjectionError,
+        DeterministicTextSurfaceResolutionError,
+        OSError,
+        TypeError,
+        ValueError,
+    ):
+        return False
+    return bool(
+        review == expected
+        and review.get("final_selection_hook") == selection_hook
+        and review.get("final_title") == title
     )
 
 
@@ -1355,6 +1757,30 @@ def validate_source_fact_review(
         return False
     if _finalize_receipt(receipt).get("receipt_sha256") != declared_receipt_sha256:
         return False
+    if review.get("decision") == MANUAL_TITLE_KEEP_PASS_DECISION:
+        return _validate_manual_title_keep_receipt(
+            review,
+            selection_hook=selection_hook,
+            title=title,
+            final_transcript=final_transcript,
+            clip_context_prompt=clip_context_prompt,
+            selection_scorecard=selection_scorecard,
+            candidate_id=candidate_id,
+            final_reviewed_srt_path=final_reviewed_srt_path,
+            speaker_evidence=speaker_evidence,
+        )
+    if review.get("decision") == DETERMINISTIC_TEXT_NARROWING_PASS_DECISION:
+        return _validate_deterministic_text_narrowing_receipt(
+            review,
+            selection_hook=selection_hook,
+            title=title,
+            final_transcript=final_transcript,
+            clip_context_prompt=clip_context_prompt,
+            selection_scorecard=selection_scorecard,
+            candidate_id=candidate_id,
+            final_reviewed_srt_path=final_reviewed_srt_path,
+            speaker_evidence=speaker_evidence,
+        )
     if not _validate_receipt_entity_context(
         review,
         candidate_id=candidate_id,

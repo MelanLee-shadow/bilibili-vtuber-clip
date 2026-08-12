@@ -18,6 +18,9 @@ from src.autoslice.producer_boundary import (
     BOUNDARY_REPAIR_EXTEND_CAP_MS,
 )
 from src.autoslice.producer_media import _resolved_optional_path
+from src.autoslice.reviewed_exact_source_interval import (
+    RUNTIME_CONFIG_KEY as EXACT_INTERVAL_RUNTIME_CONFIG_KEY,
+)
 from src.autoslice.source_fact_rescore_provenance import (
     PROVENANCE_FIELD,
     SourceFactRescoreProvenanceError,
@@ -66,19 +69,25 @@ def parse_producer_args(
             "required = always run binary finalizer; auto = verified FAST_SOLO else binary fallback"
         ),
     )
-    parser.add_argument("--subtitle-text-overrides", type=Path, help="hash-bound human text decisions applied before speaker inference")
+    parser.add_argument(
+        "--subtitle-text-overrides",
+        type=Path,
+        help="hash-bound human text decisions applied before speaker inference",
+    )
     parser.add_argument(
         "--subtitle-regression",
         type=Path,
         help="candidate-scoped final subtitle truth gate evaluated before burn/delivery",
     )
-    parser.add_argument("--speaker-overrides", type=Path, help="hash-bound reviewed turn/split/overlap decisions applied after automatic speaker inference")
+    parser.add_argument(
+        "--speaker-overrides",
+        type=Path,
+        help="hash-bound reviewed turn/split/overlap decisions applied after automatic speaker inference",
+    )
     parser.add_argument(
         "--speaker-source-session-anchors",
         type=Path,
-        help=(
-            "hash-bound high-gate selected-host anchors from the same source recording"
-        ),
+        help=("hash-bound high-gate selected-host anchors from the same source recording"),
     )
     parser.add_argument(
         "--speaker-mixed-overlap-evidence",
@@ -88,7 +97,9 @@ def parse_producer_args(
     parser.add_argument(
         "--speaker-python",
         type=Path,
-        default=Path(os.environ.get("AUTOSLICE_SPEAKER_PYTHON", "/opt/bilive/autoslice/venv-diar/bin/python")),
+        default=Path(
+            os.environ.get("AUTOSLICE_SPEAKER_PYTHON", "/opt/bilive/autoslice/venv-diar/bin/python")
+        ),
     )
     parser.add_argument(
         "--correct",
@@ -160,8 +171,7 @@ def _validate_truth_input_schemas(
         schema_version = document.get("schema_version")
         if type(schema_version) is not int or schema_version not in {1, 2, 3}:
             raise ValueError(
-                "text override schema_version must be 1, 2, or 3; "
-                f"got {schema_version!r}"
+                f"text override schema_version must be 1, 2, or 3; got {schema_version!r}"
             )
 
     if subtitle_regression_path is not None:
@@ -180,6 +190,11 @@ def load_producer_request(
     profile_asset_file: Callable[[str], Path],
 ) -> ProducerRequest:
     spec = json.loads(args.spec.read_text(encoding="utf-8"))
+    if spec.get(EXACT_INTERVAL_RUNTIME_CONFIG_KEY) is not None:
+        raise ValueError(
+            "reviewed exact source interval runtime authority is internal; "
+            "the producer must compile it from the repository-sealed baseline reference"
+        )
     repair_cap_raw = spec.get("boundary_repair_extend_cap_ms", BOUNDARY_REPAIR_EXTEND_CAP_MS)
     if isinstance(repair_cap_raw, bool) or not isinstance(repair_cap_raw, int):
         raise ValueError("boundary_repair_extend_cap_ms must be an integer")
@@ -196,8 +211,7 @@ def load_producer_request(
         or not 0 <= tail_trim_cap_raw <= SEMANTIC_TAIL_TRIM_MAX_MS
     ):
         raise ValueError(
-            "semantic_tail_trim_cap_ms must stay within "
-            f"0..{SEMANTIC_TAIL_TRIM_MAX_MS}"
+            f"semantic_tail_trim_cap_ms must stay within 0..{SEMANTIC_TAIL_TRIM_MAX_MS}"
         )
     spec["semantic_tail_trim_cap_ms"] = tail_trim_cap_raw
     truth_mode = os.environ.get("AUTOSLICE_HUMAN_TRUTH_MODE", "delivery").strip().lower()
@@ -235,9 +249,7 @@ def load_producer_request(
                 repo_root=repo_root,
             )
         except SourceFactRescoreProvenanceError as exc:
-            raise ValueError(
-                f"SOURCE_FACT_SCORECARD_RESCORE_PROVENANCE_INVALID: {exc}"
-            ) from exc
+            raise ValueError(f"SOURCE_FACT_SCORECARD_RESCORE_PROVENANCE_INVALID: {exc}") from exc
         if rescore_provenance is not None:
             # Persist the normalized plain dict instead of an arbitrary Mapping
             # implementation supplied by a caller.

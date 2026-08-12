@@ -19,9 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "scripts" / "free_session_autoslice.py"
 RECOVERY_PLANNER = ROOT / "scripts" / "plan_recovery_review_rerun.py"
-RECOVERY_MANIFEST_BUILDER = (
-    ROOT / "scripts" / "build_lidousha_recovery_review_manifest.py"
-)
+RECOVERY_MANIFEST_BUILDER = ROOT / "scripts" / "build_lidousha_recovery_review_manifest.py"
 DEPLOY_SCRIPT = ROOT / "scripts" / "deploy_free_autoslice.sh"
 
 
@@ -48,8 +46,7 @@ def test_runner_runs_as_script_without_import_cycle():
         timeout=120,
     )
     assert result.returncode == 0, (
-        "runner --help failed as a script (cron invocation path):\n"
-        + result.stderr[-2000:]
+        "runner --help failed as a script (cron invocation path):\n" + result.stderr[-2000:]
     )
     # argparse prints the usage banner; a circular-import crash would not.
     assert "usage" in (result.stdout + result.stderr).lower()
@@ -92,8 +89,7 @@ def test_recovery_manifest_builder_bootstraps_repo_root_for_direct_execution():
 def test_deploy_owns_disabled_before_remote_wait_can_be_interrupted():
     source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     ownership = source.index(
-        "DISABLED_TOUCHED=1\n"
-        'ssh "$HOST" "touch \'$DISABLED\'; /usr/bin/flock -w 7200'
+        'DISABLED_TOUCHED=1\nssh "$HOST" "touch \'$DISABLED\'; /usr/bin/flock -w 7200'
     )
     staging = source.index(
         'ssh "$HOST" "test ! -e \'$STAGE\'',
@@ -108,12 +104,25 @@ def test_deploy_authority_manifest_is_canonical_and_exact_byte_bound(tmp_path):
     registry = repo / "assets/lidousha/publication_registry.v1.json"
     authority = repo / "assets/lidousha/authorities/story.json"
     nested_authority = repo / "assets/lidousha/authorities/nested/solo.json"
+    baseline_manifest = (
+        repo / "assets/lidousha/reviewed_subtitle_baselines/story.subtitle-baseline.v1.json"
+    )
+    reviewed_srt = repo / "assets/lidousha/reviewed_subtitle_baselines/story.reviewed.srt"
+    exact_interval = (
+        repo / "assets/lidousha/reviewed_exact_source_intervals/"
+        "story.reviewed-exact-source-interval.v1.json"
+    )
     registry.parent.mkdir(parents=True)
     authority.parent.mkdir(parents=True)
     nested_authority.parent.mkdir(parents=True)
+    baseline_manifest.parent.mkdir(parents=True)
+    exact_interval.parent.mkdir(parents=True)
     registry.write_bytes(b'{"registry":"truth"}\n')
     authority.write_bytes('{"name":"莉娅"}\n'.encode())
     nested_authority.write_bytes(b'{"candidate":"solo"}\n')
+    baseline_manifest.write_bytes(b'{"candidate":"story"}\n')
+    reviewed_srt.write_bytes(b"1\n00:00:00,000 --> 00:00:01,000\nstory\n")
+    exact_interval.write_bytes(b'{"interval":"reviewed"}\n')
     (authority.parent / "README.txt").write_text("not an authority document")
     commit = "a" * 40
     output = repo / ".manifest.tmp"
@@ -149,6 +158,14 @@ def test_deploy_authority_manifest_is_canonical_and_exact_byte_bound(tmp_path):
         "assets/lidousha/publication_registry.v1.json": registry,
         "assets/lidousha/authorities/story.json": authority,
         "assets/lidousha/authorities/nested/solo.json": nested_authority,
+        (
+            "assets/lidousha/reviewed_subtitle_baselines/story.subtitle-baseline.v1.json"
+        ): baseline_manifest,
+        ("assets/lidousha/reviewed_subtitle_baselines/story.reviewed.srt"): reviewed_srt,
+        (
+            "assets/lidousha/reviewed_exact_source_intervals/"
+            "story.reviewed-exact-source-interval.v1.json"
+        ): exact_interval,
     }
     assert set(manifest["entries"]) == set(expected_paths)
     for relative, path in expected_paths.items():
@@ -185,15 +202,11 @@ def test_deploy_authority_manifest_is_canonical_and_exact_byte_bound(tmp_path):
 
 def test_deploy_authority_identity_is_captured_and_restored_on_every_path(tmp_path):
     source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    outer_rollback = source.split("<<'REMOTE_ROLLBACK'\n", 1)[1].split(
-        "\nREMOTE_ROLLBACK", 1
+    outer_rollback = source.split("<<'REMOTE_ROLLBACK'\n", 1)[1].split("\nREMOTE_ROLLBACK", 1)[0]
+    remote_switch = source.split("<<'REMOTE_SWITCH'\n", 1)[1].split("\nREMOTE_SWITCH", 1)[0]
+    identity_seal = source.split("<<'REMOTE_SEAL_DEPLOYMENT_IDENTITY'\n", 1)[1].split(
+        "\nREMOTE_SEAL_DEPLOYMENT_IDENTITY", 1
     )[0]
-    remote_switch = source.split("<<'REMOTE_SWITCH'\n", 1)[1].split(
-        "\nREMOTE_SWITCH", 1
-    )[0]
-    identity_seal = source.split(
-        "<<'REMOTE_SEAL_DEPLOYMENT_IDENTITY'\n", 1
-    )[1].split("\nREMOTE_SEAL_DEPLOYMENT_IDENTITY", 1)[0]
 
     assert "capture_repository_file" in remote_switch
     assert "deployed_authority_manifest" in remote_switch
@@ -203,9 +216,7 @@ def test_deploy_authority_identity_is_captured_and_restored_on_every_path(tmp_pa
         assert 'rm -f "$destination"' in rollback_path
         assert 'cmp -s "$backup/repository/$label.file" "$destination"' in rollback_path
 
-    tree_verified = source.index(
-        'if [ "$LOCAL_MANIFEST" != "$REMOTE_DEPLOYED_MANIFEST" ]'
-    )
+    tree_verified = source.index('if [ "$LOCAL_MANIFEST" != "$REMOTE_DEPLOYED_MANIFEST" ]')
     seal_started = source.index("REMOTE_SEAL_DEPLOYMENT_IDENTITY", tree_verified)
     committed = source.index("COMMITTED=1", seal_started)
     assert tree_verified < seal_started < committed
@@ -214,12 +225,8 @@ def test_deploy_authority_identity_is_captured_and_restored_on_every_path(tmp_pa
     )
     assert identity_seal.count("PYTHONDONTWRITEBYTECODE=1 python3") == 2
 
-    for index, rollback_path in enumerate(
-        (outer_rollback, remote_switch, identity_seal)
-    ):
-        restore_function = _embedded_shell_function(
-            rollback_path, "restore_repository_file"
-        )
+    for index, rollback_path in enumerate((outer_rollback, remote_switch, identity_seal)):
+        restore_function = _embedded_shell_function(rollback_path, "restore_repository_file")
         harness = (
             "set -euo pipefail\n"
             "repo=$1\n"

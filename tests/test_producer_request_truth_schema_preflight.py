@@ -112,6 +112,24 @@ def test_subtitle_regression_preflight_accepts_its_schema(
     assert request.out_root.is_dir()
 
 
+def test_precompiled_exact_interval_runtime_authority_is_rejected_before_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_root = tmp_path / "output"
+    with pytest.raises(ValueError, match="runtime authority is internal"):
+        _load(
+            tmp_path,
+            monkeypatch,
+            spec_truth_inputs={
+                "reviewed_exact_source_interval_authority": {
+                    "schema_version": "operator-reviewed-exact-source-interval.v1"
+                }
+            },
+        )
+    assert not output_root.exists()
+
+
 @pytest.mark.parametrize(
     ("field", "payload", "message"),
     [

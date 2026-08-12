@@ -1,0 +1,1195 @@
+{
+  "approved_title": {
+    "sha256": "sha256:888c4f544b55214ce9e4070013ed2b7cba98aa521930b4d1769deb683a02bc4f",
+    "value": "【李豆沙】莉娅求小李“就算你是狼也放过我”，结伴后小李突然连声道歉"
+  },
+  "authority_sha256": "sha256:c693722fa41c1e13e56c011528e33e0b3f7d8193b161c12d771cdd50ad8cd4c1",
+  "blocked_source_fact": {
+    "action": "KEEP_EXACT_OPERATOR_APPROVED_VALUE",
+    "expected_changed_surface_count": 1,
+    "expected_unmatched_blocking_finding_count": 0,
+    "field": "title",
+    "finding_class": "SUPPORTED_COMPRESSION_HEDGE",
+    "finding_fingerprint_sha256": "sha256:d23a959e27081cb37315b1fabe7b752349bcdcf4174f74f74bae16746293e38c",
+    "proposed_title": "【李豆沙】莉娅求小李“就算你是狼也放过我”，答应一起走后小李突然连声道歉",
+    "proposed_title_sha256": "sha256:3ecec48205b9f31d59a4766df9c2cdae5c5351b03b38b776150a4204028b7b5f",
+    "receipt_sha256": "sha256:97c7d708551c547b6e9630f5c4a6b55d683971fc22667e6f708a2cd622a2d5fd",
+    "span": "结伴后"
+  },
+  "candidate_id": "auto_223750_578_734",
+  "displayed_machine_title_snapshot": {
+    "sha256": "sha256:7fa74276ea79db40119ac18fa2de998d8d1cfb8a7c0fb4fe5a49aa5420391c91",
+    "source": {
+      "artifact_id": "vtuber-reproduce/run/20260811-e4249d4/auto_223750_578_734.recut.publish.json",
+      "artifact_sha256": "sha256:6c6fee6d9df1d7ba8693ac48c44fc9da87db44a8c4f9eb37d41142ef379d68c2",
+      "json_pointer": "/source_fact_review/passes/0/changed_surfaces/1/after",
+      "source_fact_receipt_sha256": "sha256:8a42ee978768d4db17068989cdb990b8d00bc8ce05cdf8d26c0670b566b995ce"
+    },
+    "value": "【李豆沙】莉亚求小李“就算你是狼也放过我”，结伴后小李突然连声道歉"
+  },
+  "dissent": {
+    "disposition": "NON_BLOCKING_DISSENT_RECORDED",
+    "evidence": [
+      "final_transcript: 那我们一起走吗",
+      "final_transcript: 我们一起走吗",
+      "final_transcript: 好呀好呀好，我做任务",
+      "final_transcript: 对不起",
+      "final_transcript: 对不起，我对不起对不起对不起"
+    ],
+    "proposed_title": "【李豆沙】莉娅求小李“就算你是狼也放过我”，答应一起走后小李突然连声道歉",
+    "reason": "“结伴后”容易将提议并获口头答应升级为已经实际结伴；现有文字证据明确支持小李提议一起走、莉娅答应，随后小李连续道歉，但不足以确认二人已经开始结伴行动。改为“答应一起走后”可保留准确的事实模态。",
+    "record": true
+  },
+  "entity_transform_authority": {
+    "allowed_replacement_count": 1,
+    "entity_id": "ent_3c301b25eceb4b4eb0119a83034c1eb0",
+    "field": "title",
+    "from_surface": "莉亚",
+    "projection_file_sha256": "sha256:0a4c0ab2d2f46d4673d3f30134e0d395400822878abfd2fd7c99cf162f6070d4",
+    "projection_repo_path": "assets/lidousha/candidate_entity_projections/auto_223750_578_734.entity-projection.v1.json",
+    "projection_sha256": "sha256:f7b0b82a31e6bad541782a4731be2ad7510c39f38ed89e8c3d5227aad0d731da",
+    "to_surface": "莉娅"
+  },
+  "field": "title",
+  "ivan_authority": {
+    "publication_release": {
+      "quote": "说起来刚刚通过的这两个可以发布了，只要你根据我的人工真值改完后，可以直接去快车道发布，和你的通用车道修复并行进行",
+      "sha256": "sha256:4767d2f9be0431d8d7347eb9dd2d3a989f477fed2c16ce08f7de91eee92060cd"
+    },
+    "title_delta_approval": {
+      "quote": "完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题，这里还是有个问题是，南町nightin这一个人的专名被分成了NT和南町，这是不对的，应该就叫南町nightin作为一个人的专名，或者就单独的叫一次南町，nt之类的，并不是说NT和nt和南町是不同的人。另外一点是机器建议标题确实不错，但是机器建议标题似乎没有根据专名修订，例如这里应该是莉娅而不是莉亚。如果你能从我给的这些反馈中再找出一些通病来修复就最好了，有任何觉得有疑问或者需要SOTA的地方先问pro再执行。",
+      "sha256": "sha256:fcdcf69a6ab679ad27a49fb824a45ad1c801978a5ed445e8acdbf3d09a6be201"
+    }
+  },
+  "replay": {
+    "blocked_source_fact_review": {
+      "decision": "REPAIR_REQUIRES_TITLE_AUTHORITY",
+      "entity_context": {
+        "authority_scope": "IDENTITY_AND_SPELLING_ONLY_NO_EVENT_FACT_AUTHORITY",
+        "candidate_binding": {
+          "absolute_source_end_ms": 735090,
+          "absolute_source_start_ms": 577780,
+          "source_recording_basename": "22966160_20260807-22-37-50.mp4",
+          "source_sha256": "66e9ec0707fe8d7f38cf8a552e863dafbba34fb7eadaece496adb30d04b1ad1e"
+        },
+        "candidate_id": "auto_223750_578_734",
+        "context_sha256": "sha256:42ec67fb17ec7eed01cfb030f73000b08c9e8f669fa6e123dd9e2259d0c79c4c",
+        "final_reviewed_srt_sha256": "6d79fdab105d4c7b5edffec66fe526aa01839de342a7c96b8784f4d0100a8062",
+        "identity_spelling_rules": [
+          {
+            "entity_id": "ent_84bf79617fdc435e900f47202689c02b",
+            "identity_equivalent_surfaces": [
+              "南町Nightin",
+              "南町nightin",
+              "南町",
+              "NT",
+              "nt"
+            ],
+            "reviewed_surface": "南町nightin",
+            "title_cover_surface": "南町nightin"
+          },
+          {
+            "entity_id": "ent_3c301b25eceb4b4eb0119a83034c1eb0",
+            "identity_equivalent_surfaces": [
+              "莉娅",
+              "莉亚"
+            ],
+            "reviewed_surface": "莉亚",
+            "title_cover_surface": "莉娅"
+          }
+        ],
+        "projection_sha256": "f7b0b82a31e6bad541782a4731be2ad7510c39f38ed89e8c3d5227aad0d731da",
+        "schema_version": "source-fact-entity-context.v1"
+      },
+      "final_selection_hook": "莉娅求小李‘就算你是狼也放过我’，小李让她放心并提议一起走，莉娅答应后小李突然连声道歉。",
+      "final_title": "【李豆沙】莉娅求小李“就算你是狼也放过我”，结伴后小李突然连声道歉",
+      "original_selection_hook": "莉娅求小李‘就算你是狼也放过我’，小李让她放心并提议一起走，莉娅答应后小李突然连声道歉。",
+      "original_title": "【李豆沙】莉娅求小李“就算你是狼也放过我”，结伴后小李突然连声道歉",
+      "passes": [
+        {
+          "addressee_attribution": [
+            {
+              "actual_addressee": "李豆沙",
+              "actual_speaker": "莉娅（连线）",
+              "assertion": "莉娅求小李‘就算你是狼也放过我’",
+              "evidence": [
+                "speaker_transcript: 4.1 [李豆沙] 莉亚",
+                "speaker_transcript: 6 [连线] 就算你是狼",
+                "speaker_transcript: 7 [连线] 你放过我好吗",
+                "speaker_transcript: 9 [李豆沙] 好的好的，放心吧"
+              ],
+              "reason": "李豆沙先称呼莉亚，随后连线连续向对话中的李豆沙请求，即使对方是狼也放过自己；实体规范要求派生文案写作“莉娅”。",
+              "verdict": "SUPPORTED"
+            },
+            {
+              "actual_addressee": "莉娅（连线）",
+              "actual_speaker": "李豆沙",
+              "assertion": "小李让她放心并提议一起走",
+              "evidence": [
+                "speaker_transcript: 9 [李豆沙] 好的好的，放心吧",
+                "speaker_transcript: 10 [李豆沙] 那我们一起走吗",
+                "speaker_transcript: 11 [连线] 真的能放心吗",
+                "speaker_transcript: 12 [李豆沙] 我们一起走吗"
+              ],
+              "reason": "说话人标签显示“放心吧”以及两次同行提议均由李豆沙说出，并承接莉娅的请求。",
+              "verdict": "SUPPORTED"
+            },
+            {
+              "actual_addressee": "连续对话对象为莉娅（连线）",
+              "actual_speaker": "莉娅（连线）先答应；李豆沙随后道歉",
+              "assertion": "莉娅答应后小李突然连声道歉",
+              "evidence": [
+                "speaker_transcript: 13 [连线] 好呀好呀好，我做任务",
+                "speaker_transcript: 14 [李豆沙] 对不起",
+                "speaker_transcript: 15 [李豆沙] 对不起，我对不起对不起对不起"
+              ],
+              "reason": "连线答应后，文件顺序中紧接着是李豆沙一次道歉及连续多次道歉，人物和先后归属均受说话人序列支持。",
+              "verdict": "SUPPORTED"
+            },
+            {
+              "actual_addressee": "李豆沙",
+              "actual_speaker": "莉娅（连线）",
+              "assertion": "莉娅求小李“就算你是狼也放过我”",
+              "evidence": [
+                "speaker_transcript: 4.1 [李豆沙] 莉亚",
+                "speaker_transcript: 6 [连线] 就算你是狼",
+                "speaker_transcript: 7 [连线] 你放过我好吗",
+                "speaker_transcript: 9 [李豆沙] 好的好的，放心吧"
+              ],
+              "reason": "标题中的请求归属与连续对话结构一致；“也放过我”是对相邻两句请求的自然合并概括。",
+              "verdict": "SUPPORTED"
+            },
+            {
+              "actual_addressee": "连续对话对象为莉娅（连线）",
+              "actual_speaker": "李豆沙",
+              "assertion": "结伴后小李突然连声道歉",
+              "evidence": [
+                "speaker_transcript: 13 [连线] 好呀好呀好，我做任务",
+                "speaker_transcript: 14 [李豆沙] 对不起",
+                "speaker_transcript: 15 [李豆沙] 对不起，我对不起对不起对不起"
+              ],
+              "reason": "仅就道歉的说话人及对话归属而言，标签序列支持由李豆沙说出；其中“结伴后”的完成态属于独立的事实模态问题，已在标题修复中改为“答应一起走后”。",
+              "verdict": "SUPPORTED"
+            }
+          ],
+          "addressee_attribution_mode": "speaker_labelled",
+          "changed_surfaces": [
+            {
+              "after": "【李豆沙】莉娅求小李“就算你是狼也放过我”，答应一起走后小李突然连声道歉",
+              "artifact": "title",
+              "before": "【李豆沙】莉娅求小李“就算你是狼也放过我”，结伴后小李突然连声道歉",
+              "evidence": [
+                "final_transcript: 那我们一起走吗",
+                "final_transcript: 我们一起走吗",
+                "final_transcript: 好呀好呀好，我做任务",
+                "final_transcript: 对不起",
+                "final_transcript: 对不起，我对不起对不起对不起"
+              ],
+              "reason": "“结伴后”容易将提议并获口头答应升级为已经实际结伴；现有文字证据明确支持小李提议一起走、莉娅答应，随后小李连续道歉，但不足以确认二人已经开始结伴行动。改为“答应一起走后”可保留准确的事实模态。"
+            }
+          ],
+          "clip_context_prompt_sha256": "sha256:572c977fec852e8ca863f065e191c156e65a7906d2a683cf5cd3d90de9dd5e17",
+          "entity_context_sha256": "sha256:42ec67fb17ec7eed01cfb030f73000b08c9e8f669fa6e123dd9e2259d0c79c4c",
+          "final_selection_hook": "莉娅求小李‘就算你是狼也放过我’，小李让她放心并提议一起走，莉娅答应后小李突然连声道歉。",
+          "final_title": "【李豆沙】莉娅求小李“就算你是狼也放过我”，答应一起走后小李突然连声道歉",
+          "final_transcript_sha256": "sha256:20ec7e4f3d5413d35be6d7226c777ccd08928cac4d93f5cfa8246bf57681262e",
+          "reason_code": null,
+          "request_sha256": "sha256:50ba91cb28312457c70df71425524b501bf3d64569aa340dc3f308b0b32cfd53",
+          "response_sha256": "sha256:5105e8a7c8ace66743e7aea2f0eec6b8b43e9bf87b13d214df70eb6f7af13bee",
+          "review_pass": 1,
+          "schema_version": "lidousha-source-fact-review.v1",
+          "selection_hook_sha256": "sha256:1e3826d65b6b4d9a82380e4af237228efb8c887149b16a44de2821ccd01760f5",
+          "selection_scorecard_review": {
+            "reason": "selection_hook 未作修改；本轮仅修复标题中的完成态表述，因此无需重新核对 selection_scorecard 与修复后钩子的兼容性。",
+            "status": "NOT_NEEDED"
+          },
+          "selection_scorecard_sha256": "sha256:0eb4eb5f7ea9b6a680643be3c8faf2444fa4e8335b8f2d961ce5ab6edc616059",
+          "speaker_evidence_sha256": "sha256:0b586cf75a09997ae48f23ee004a8df26865d747b433fd2672b4235fba604879",
+          "speaker_transcript_sha256": "sha256:048ff10c837f1a9389eed9a0afb2a8be3408e92583c850a0f3032f6c75836e15",
+          "status": "REPAIR",
+          "summary": "selection_hook 的事件链、人物归属和先后关系均受最终字幕及说话人转写支持，未发现错误受话人。原标题“结伴后”可能把口头答应升级为已实际结伴，故改为证据明确支持的“答应一起走后”；频道前缀与核心反转均已保留。",
+          "supported_by": [
+            "final_transcript",
+            "structured_chat",
+            "speaker_transcript"
+          ],
+          "title_policy_mode": "baseline",
+          "title_policy_violations": [],
+          "title_sha256": "sha256:888c4f544b55214ce9e4070013ed2b7cba98aa521930b4d1769deb683a02bc4f"
+        }
+      ],
+      "provider_retries": [],
+      "reason_code": "SOURCE_FACT_TITLE_AUTHORITY_REQUIRED",
+      "receipt_sha256": "sha256:97c7d708551c547b6e9630f5c4a6b55d683971fc22667e6f708a2cd622a2d5fd",
+      "schema_version": "lidousha-source-fact-review.v1",
+      "speaker_evidence": {
+        "alignment": {
+          "groups": [
+            {
+              "end_ms": 2370,
+              "segments": [
+                {
+                  "end_ms": 2370,
+                  "rendered_id": "1",
+                  "segment_index": 1,
+                  "speaker": "连线",
+                  "start_ms": 250,
+                  "text": "我想活着诶"
+                }
+              ],
+              "source_index": 1,
+              "start_ms": 250,
+              "text": "我想活着诶"
+            },
+            {
+              "end_ms": 4730,
+              "segments": [
+                {
+                  "end_ms": 4730,
+                  "rendered_id": "2",
+                  "segment_index": 2,
+                  "speaker": "李豆沙",
+                  "start_ms": 2450,
+                  "text": "你好你好"
+                }
+              ],
+              "source_index": 2,
+              "start_ms": 2450,
+              "text": "你好你好"
+            },
+            {
+              "end_ms": 6500,
+              "segments": [
+                {
+                  "end_ms": 6500,
+                  "rendered_id": "3",
+                  "segment_index": 3,
+                  "speaker": "李豆沙",
+                  "start_ms": 4980,
+                  "text": "我们又在一起了"
+                }
+              ],
+              "source_index": 3,
+              "start_ms": 4980,
+              "text": "我们又在一起了"
+            },
+            {
+              "end_ms": 7720,
+              "segments": [
+                {
+                  "end_ms": 7110,
+                  "rendered_id": "4.1",
+                  "segment_index": 4,
+                  "speaker": "李豆沙",
+                  "start_ms": 6500,
+                  "text": "莉亚"
+                },
+                {
+                  "end_ms": 7720,
+                  "rendered_id": "4.2",
+                  "segment_index": 5,
+                  "speaker": "连线",
+                  "start_ms": 7110,
+                  "text": "活着"
+                }
+              ],
+              "source_index": 4,
+              "start_ms": 6500,
+              "text": "莉亚 活着"
+            },
+            {
+              "end_ms": 8660,
+              "segments": [
+                {
+                  "end_ms": 8660,
+                  "rendered_id": "5",
+                  "segment_index": 6,
+                  "speaker": "连线",
+                  "start_ms": 7720,
+                  "text": "我想活着"
+                }
+              ],
+              "source_index": 5,
+              "start_ms": 7720,
+              "text": "我想活着"
+            },
+            {
+              "end_ms": 9380,
+              "segments": [
+                {
+                  "end_ms": 9380,
+                  "rendered_id": "6",
+                  "segment_index": 7,
+                  "speaker": "连线",
+                  "start_ms": 8660,
+                  "text": "就算你是狼"
+                }
+              ],
+              "source_index": 6,
+              "start_ms": 8660,
+              "text": "就算你是狼"
+            },
+            {
+              "end_ms": 10260,
+              "segments": [
+                {
+                  "end_ms": 10260,
+                  "rendered_id": "7",
+                  "segment_index": 8,
+                  "speaker": "连线",
+                  "start_ms": 9380,
+                  "text": "你放过我好吗"
+                }
+              ],
+              "source_index": 7,
+              "start_ms": 9380,
+              "text": "你放过我好吗"
+            },
+            {
+              "end_ms": 11280,
+              "segments": [
+                {
+                  "end_ms": 11280,
+                  "rendered_id": "8",
+                  "segment_index": 9,
+                  "speaker": "连线",
+                  "start_ms": 10260,
+                  "text": "我想活着"
+                }
+              ],
+              "source_index": 8,
+              "start_ms": 10260,
+              "text": "我想活着"
+            },
+            {
+              "end_ms": 13100,
+              "segments": [
+                {
+                  "end_ms": 13100,
+                  "rendered_id": "9",
+                  "segment_index": 10,
+                  "speaker": "李豆沙",
+                  "start_ms": 11280,
+                  "text": "好的好的，放心吧"
+                }
+              ],
+              "source_index": 9,
+              "start_ms": 11280,
+              "text": "好的好的，放心吧"
+            },
+            {
+              "end_ms": 16330,
+              "segments": [
+                {
+                  "end_ms": 16330,
+                  "rendered_id": "10",
+                  "segment_index": 11,
+                  "speaker": "李豆沙",
+                  "start_ms": 14770,
+                  "text": "那我们一起走吗"
+                }
+              ],
+              "source_index": 10,
+              "start_ms": 14770,
+              "text": "那我们一起走吗"
+            },
+            {
+              "end_ms": 17430,
+              "segments": [
+                {
+                  "end_ms": 17430,
+                  "rendered_id": "11",
+                  "segment_index": 12,
+                  "speaker": "连线",
+                  "start_ms": 16330,
+                  "text": "真的能放心吗"
+                }
+              ],
+              "source_index": 11,
+              "start_ms": 16330,
+              "text": "真的能放心吗"
+            },
+            {
+              "end_ms": 18770,
+              "segments": [
+                {
+                  "end_ms": 18770,
+                  "rendered_id": "12",
+                  "segment_index": 13,
+                  "speaker": "李豆沙",
+                  "start_ms": 17430,
+                  "text": "我们一起走吗"
+                }
+              ],
+              "source_index": 12,
+              "start_ms": 17430,
+              "text": "我们一起走吗"
+            },
+            {
+              "end_ms": 22290,
+              "segments": [
+                {
+                  "end_ms": 22290,
+                  "rendered_id": "13",
+                  "segment_index": 14,
+                  "speaker": "连线",
+                  "start_ms": 19690,
+                  "text": "好呀好呀好，我做任务"
+                }
+              ],
+              "source_index": 13,
+              "start_ms": 19690,
+              "text": "好呀好呀好，我做任务"
+            },
+            {
+              "end_ms": 23369,
+              "segments": [
+                {
+                  "end_ms": 23369,
+                  "rendered_id": "14",
+                  "segment_index": 15,
+                  "speaker": "李豆沙",
+                  "start_ms": 22369,
+                  "text": "对不起"
+                }
+              ],
+              "source_index": 14,
+              "start_ms": 22369,
+              "text": "对不起"
+            },
+            {
+              "end_ms": 28070,
+              "segments": [
+                {
+                  "end_ms": 28070,
+                  "rendered_id": "15",
+                  "segment_index": 16,
+                  "speaker": "李豆沙",
+                  "start_ms": 25230,
+                  "text": "对不起，我对不起对不起对不起"
+                }
+              ],
+              "source_index": 15,
+              "start_ms": 25230,
+              "text": "对不起，我对不起对不起对不起"
+            },
+            {
+              "end_ms": 38730,
+              "segments": [
+                {
+                  "end_ms": 38730,
+                  "rendered_id": "16",
+                  "segment_index": 17,
+                  "speaker": "连线",
+                  "start_ms": 36010,
+                  "text": "你等会要写那个"
+                }
+              ],
+              "source_index": 16,
+              "start_ms": 36010,
+              "text": "你等会要写那个"
+            },
+            {
+              "end_ms": 42170,
+              "segments": [
+                {
+                  "end_ms": 40450,
+                  "rendered_id": "17.1",
+                  "segment_index": 18,
+                  "speaker": "连线",
+                  "start_ms": 38730,
+                  "text": "我比"
+                },
+                {
+                  "end_ms": 42170,
+                  "rendered_id": "17.2",
+                  "segment_index": 19,
+                  "speaker": "李豆沙",
+                  "start_ms": 40450,
+                  "text": "你好"
+                }
+              ],
+              "source_index": 17,
+              "start_ms": 38730,
+              "text": "我比你好"
+            },
+            {
+              "end_ms": 43370,
+              "segments": [
+                {
+                  "end_ms": 43370,
+                  "rendered_id": "18",
+                  "segment_index": 20,
+                  "speaker": "李豆沙",
+                  "start_ms": 42370,
+                  "text": "你好"
+                }
+              ],
+              "source_index": 18,
+              "start_ms": 42370,
+              "text": "你好"
+            },
+            {
+              "end_ms": 58370,
+              "segments": [
+                {
+                  "end_ms": 58370,
+                  "rendered_id": "19",
+                  "segment_index": 21,
+                  "speaker": "李豆沙",
+                  "start_ms": 57130,
+                  "text": "怎么没人了"
+                }
+              ],
+              "source_index": 19,
+              "start_ms": 57130,
+              "text": "怎么没人了"
+            },
+            {
+              "end_ms": 62690,
+              "segments": [
+                {
+                  "end_ms": 62690,
+                  "rendered_id": "20",
+                  "segment_index": 22,
+                  "speaker": "李豆沙",
+                  "start_ms": 61370,
+                  "text": "怎么没人了"
+                }
+              ],
+              "source_index": 20,
+              "start_ms": 61370,
+              "text": "怎么没人了"
+            },
+            {
+              "end_ms": 67710,
+              "segments": [
+                {
+                  "end_ms": 67710,
+                  "rendered_id": "21",
+                  "segment_index": 23,
+                  "speaker": "李豆沙",
+                  "start_ms": 66710,
+                  "text": "我去"
+                }
+              ],
+              "source_index": 21,
+              "start_ms": 66710,
+              "text": "我去"
+            },
+            {
+              "end_ms": 71390,
+              "segments": [
+                {
+                  "end_ms": 69088,
+                  "rendered_id": "22.1",
+                  "segment_index": 24,
+                  "speaker": "连线",
+                  "start_ms": 68430,
+                  "text": "这人"
+                },
+                {
+                  "end_ms": 71390,
+                  "rendered_id": "22.2",
+                  "segment_index": 25,
+                  "speaker": "李豆沙",
+                  "start_ms": 69088,
+                  "text": "有诶，有有有有"
+                }
+              ],
+              "source_index": 22,
+              "start_ms": 68430,
+              "text": "这人有诶，有有有有"
+            },
+            {
+              "end_ms": 76390,
+              "segments": [
+                {
+                  "end_ms": 76390,
+                  "rendered_id": "23",
+                  "segment_index": 26,
+                  "speaker": "李豆沙",
+                  "start_ms": 72150,
+                  "text": "没吃到没吃到没吃到没吃到"
+                }
+              ],
+              "source_index": 23,
+              "start_ms": 72150,
+              "text": "没吃到没吃到没吃到没吃到"
+            },
+            {
+              "end_ms": 87510,
+              "segments": [
+                {
+                  "end_ms": 87510,
+                  "rendered_id": "24",
+                  "segment_index": 27,
+                  "speaker": "连线",
+                  "start_ms": 82910,
+                  "text": "沙豆李，你还有何话说"
+                }
+              ],
+              "source_index": 24,
+              "start_ms": 82910,
+              "text": "沙豆李，你还有何话说"
+            },
+            {
+              "end_ms": 92240,
+              "segments": [
+                {
+                  "end_ms": 92240,
+                  "rendered_id": "25",
+                  "segment_index": 28,
+                  "speaker": "李豆沙",
+                  "start_ms": 90360,
+                  "text": "哦，不是我杀的"
+                }
+              ],
+              "source_index": 25,
+              "start_ms": 90360,
+              "text": "哦，不是我杀的"
+            },
+            {
+              "end_ms": 93860,
+              "segments": [
+                {
+                  "end_ms": 93860,
+                  "rendered_id": "26",
+                  "segment_index": 29,
+                  "speaker": "连线",
+                  "start_ms": 92240,
+                  "text": "我做了四个任务"
+                }
+              ],
+              "source_index": 26,
+              "start_ms": 92240,
+              "text": "我做了四个任务"
+            },
+            {
+              "end_ms": 96060,
+              "segments": [
+                {
+                  "end_ms": 96060,
+                  "rendered_id": "27",
+                  "segment_index": 30,
+                  "speaker": "连线",
+                  "start_ms": 93860,
+                  "text": "北柚香一直在守护我"
+                }
+              ],
+              "source_index": 27,
+              "start_ms": 93860,
+              "text": "北柚香一直在守护我"
+            },
+            {
+              "end_ms": 97120,
+              "segments": [
+                {
+                  "end_ms": 97120,
+                  "rendered_id": "28",
+                  "segment_index": 31,
+                  "speaker": "连线",
+                  "start_ms": 96060,
+                  "text": "门厅这个地方"
+                }
+              ],
+              "source_index": 28,
+              "start_ms": 96060,
+              "text": "门厅这个地方"
+            },
+            {
+              "end_ms": 100740,
+              "segments": [
+                {
+                  "end_ms": 100740,
+                  "rendered_id": "29",
+                  "segment_index": 32,
+                  "speaker": "连线",
+                  "start_ms": 97120,
+                  "text": "沙豆李在藏尸体"
+                }
+              ],
+              "source_index": 29,
+              "start_ms": 97120,
+              "text": "沙豆李在藏尸体"
+            },
+            {
+              "end_ms": 102340,
+              "segments": [
+                {
+                  "end_ms": 102340,
+                  "rendered_id": "30",
+                  "segment_index": 33,
+                  "speaker": "李豆沙",
+                  "start_ms": 100740,
+                  "text": "不是我"
+                }
+              ],
+              "source_index": 30,
+              "start_ms": 100740,
+              "text": "不是我"
+            },
+            {
+              "end_ms": 106500,
+              "segments": [
+                {
+                  "end_ms": 106500,
+                  "rendered_id": "31",
+                  "segment_index": 34,
+                  "speaker": "连线",
+                  "start_ms": 102420,
+                  "text": "她脚下有一个安晚awa的尸体"
+                }
+              ],
+              "source_index": 31,
+              "start_ms": 102420,
+              "text": "她脚下有一个安晚awa的尸体"
+            },
+            {
+              "end_ms": 109460,
+              "segments": [
+                {
+                  "end_ms": 109460,
+                  "rendered_id": "32",
+                  "segment_index": 35,
+                  "speaker": "连线",
+                  "start_ms": 106780,
+                  "text": "全票打飞沙豆李"
+                }
+              ],
+              "source_index": 32,
+              "start_ms": 106780,
+              "text": "全票打飞沙豆李"
+            },
+            {
+              "end_ms": 112950,
+              "segments": [
+                {
+                  "end_ms": 112950,
+                  "rendered_id": "33",
+                  "segment_index": 36,
+                  "speaker": "李豆沙",
+                  "start_ms": 109630,
+                  "text": "不是不是我"
+                }
+              ],
+              "source_index": 33,
+              "start_ms": 109630,
+              "text": "不是不是我"
+            },
+            {
+              "end_ms": 116630,
+              "segments": [
+                {
+                  "end_ms": 116630,
+                  "rendered_id": "34",
+                  "segment_index": 37,
+                  "speaker": "连线",
+                  "start_ms": 114150,
+                  "text": "呃，我这轮是跟南町nightin"
+                }
+              ],
+              "source_index": 34,
+              "start_ms": 114150,
+              "text": "呃，我这轮是跟南町nightin"
+            },
+            {
+              "end_ms": 119110,
+              "segments": [
+                {
+                  "end_ms": 119110,
+                  "rendered_id": "35",
+                  "segment_index": 38,
+                  "speaker": "连线",
+                  "start_ms": 116630,
+                  "text": "绝世猛1在一起"
+                }
+              ],
+              "source_index": 35,
+              "start_ms": 116630,
+              "text": "绝世猛1在一起"
+            },
+            {
+              "end_ms": 121790,
+              "segments": [
+                {
+                  "end_ms": 121790,
+                  "rendered_id": "36",
+                  "segment_index": 39,
+                  "speaker": "连线",
+                  "start_ms": 119110,
+                  "text": "然后南町没跟我们一起"
+                }
+              ],
+              "source_index": 36,
+              "start_ms": 119110,
+              "text": "然后南町没跟我们一起"
+            },
+            {
+              "end_ms": 123670,
+              "segments": [
+                {
+                  "end_ms": 123670,
+                  "rendered_id": "37",
+                  "segment_index": 40,
+                  "speaker": "连线",
+                  "start_ms": 121790,
+                  "text": "南町nightin往右走了"
+                }
+              ],
+              "source_index": 37,
+              "start_ms": 121790,
+              "text": "南町nightin往右走了"
+            },
+            {
+              "end_ms": 129130,
+              "segments": [
+                {
+                  "end_ms": 129130,
+                  "rendered_id": "38",
+                  "segment_index": 41,
+                  "speaker": "连线",
+                  "start_ms": 123690,
+                  "text": "然后我跟这个绝世猛1在书房做了两个任务"
+                }
+              ],
+              "source_index": 38,
+              "start_ms": 123690,
+              "text": "然后我跟这个绝世猛1在书房做了两个任务"
+            },
+            {
+              "end_ms": 133000,
+              "segments": [
+                {
+                  "end_ms": 133000,
+                  "rendered_id": "39",
+                  "segment_index": 42,
+                  "speaker": "连线",
+                  "start_ms": 129220,
+                  "text": "然后绝世猛1跟我一直走一起的"
+                }
+              ],
+              "source_index": 39,
+              "start_ms": 129220,
+              "text": "然后绝世猛1跟我一直走一起的"
+            },
+            {
+              "end_ms": 135700,
+              "segments": [
+                {
+                  "end_ms": 135700,
+                  "rendered_id": "40",
+                  "segment_index": 43,
+                  "speaker": "连线",
+                  "start_ms": 133000,
+                  "text": "我永远拥护这个绝世猛1啊"
+                }
+              ],
+              "source_index": 40,
+              "start_ms": 133000,
+              "text": "我永远拥护这个绝世猛1啊"
+            },
+            {
+              "end_ms": 138720,
+              "segments": [
+                {
+                  "end_ms": 138720,
+                  "rendered_id": "41",
+                  "segment_index": 44,
+                  "speaker": "连线",
+                  "start_ms": 136120,
+                  "text": "嗯，我们都是报着任务名做的"
+                }
+              ],
+              "source_index": 41,
+              "start_ms": 136120,
+              "text": "嗯，我们都是报着任务名做的"
+            },
+            {
+              "end_ms": 140100,
+              "segments": [
+                {
+                  "end_ms": 140100,
+                  "rendered_id": "42",
+                  "segment_index": 45,
+                  "speaker": "连线",
+                  "start_ms": 138720,
+                  "text": "做了两三个任务吧"
+                }
+              ],
+              "source_index": 42,
+              "start_ms": 138720,
+              "text": "做了两三个任务吧"
+            },
+            {
+              "end_ms": 142100,
+              "segments": [
+                {
+                  "end_ms": 142100,
+                  "rendered_id": "43",
+                  "segment_index": 46,
+                  "speaker": "连线",
+                  "start_ms": 140100,
+                  "text": "然后我，我们两个说一起走"
+                }
+              ],
+              "source_index": 43,
+              "start_ms": 140100,
+              "text": "然后我，我们两个说一起走"
+            },
+            {
+              "end_ms": 143240,
+              "segments": [
+                {
+                  "end_ms": 143240,
+                  "rendered_id": "44",
+                  "segment_index": 47,
+                  "speaker": "连线",
+                  "start_ms": 142100,
+                  "text": "结果走到"
+                }
+              ],
+              "source_index": 44,
+              "start_ms": 142100,
+              "text": "结果走到"
+            },
+            {
+              "end_ms": 145030,
+              "segments": [
+                {
+                  "end_ms": 145030,
+                  "rendered_id": "45",
+                  "segment_index": 48,
+                  "speaker": "连线",
+                  "start_ms": 143510,
+                  "text": "哎，走到哪儿啊"
+                }
+              ],
+              "source_index": 45,
+              "start_ms": 143510,
+              "text": "哎，走到哪儿啊"
+            },
+            {
+              "end_ms": 146630,
+              "segments": [
+                {
+                  "end_ms": 146630,
+                  "rendered_id": "46",
+                  "segment_index": 49,
+                  "speaker": "连线",
+                  "start_ms": 145190,
+                  "text": "工作室还是哪里"
+                }
+              ],
+              "source_index": 46,
+              "start_ms": 145190,
+              "text": "工作室还是哪里"
+            },
+            {
+              "end_ms": 148790,
+              "segments": [
+                {
+                  "end_ms": 148790,
+                  "rendered_id": "47",
+                  "segment_index": 50,
+                  "speaker": "连线",
+                  "start_ms": 146630,
+                  "text": "就通马桶那个任务的地方"
+                }
+              ],
+              "source_index": 47,
+              "start_ms": 146630,
+              "text": "就通马桶那个任务的地方"
+            },
+            {
+              "end_ms": 150330,
+              "segments": [
+                {
+                  "end_ms": 150330,
+                  "rendered_id": "48",
+                  "segment_index": 51,
+                  "speaker": "连线",
+                  "start_ms": 148850,
+                  "text": "让我拿马桶塞进去"
+                }
+              ],
+              "source_index": 48,
+              "start_ms": 148850,
+              "text": "让我拿马桶塞进去"
+            },
+            {
+              "end_ms": 151310,
+              "segments": [
+                {
+                  "end_ms": 151310,
+                  "rendered_id": "49",
+                  "segment_index": 52,
+                  "speaker": "连线",
+                  "start_ms": 150330,
+                  "text": "然后那里面一堆"
+                }
+              ],
+              "source_index": 49,
+              "start_ms": 150330,
+              "text": "然后那里面一堆"
+            },
+            {
+              "end_ms": 153110,
+              "segments": [
+                {
+                  "end_ms": 153110,
+                  "rendered_id": "50",
+                  "segment_index": 53,
+                  "speaker": "李豆沙",
+                  "start_ms": 151310,
+                  "text": "我还可以自爆呢"
+                }
+              ],
+              "source_index": 50,
+              "start_ms": 151310,
+              "text": "我还可以自爆呢"
+            },
+            {
+              "end_ms": 154210,
+              "segments": [
+                {
+                  "end_ms": 154210,
+                  "rendered_id": "51",
+                  "segment_index": 54,
+                  "speaker": "连线",
+                  "start_ms": 153110,
+                  "text": "一扭头就走"
+                }
+              ],
+              "source_index": 51,
+              "start_ms": 153110,
+              "text": "一扭头就走"
+            },
+            {
+              "end_ms": 157250,
+              "segments": [
+                {
+                  "end_ms": 157250,
+                  "rendered_id": "52",
+                  "segment_index": 55,
+                  "speaker": "李豆沙",
+                  "start_ms": 154210,
+                  "text": "我以为都能吃掉啊"
+                }
+              ],
+              "source_index": 52,
+              "start_ms": 154210,
+              "text": "我以为都能吃掉啊"
+            }
+          ],
+          "policy_ids": {
+            "alignment": "speaker_cue_subsegment_alignment/v1",
+            "text": "compact_ws/v1",
+            "timing": "half_open_integer_ms_exact/v1"
+          },
+          "schema_version": "speaker-cue-subsegment-alignment.v1",
+          "source_cue_count": 52,
+          "speaker_segment_count": 55
+        },
+        "alignment_sha256": "sha256:106ea20e964f5416dba02b2dad19259ed3b48238c460c69f891c39acb6f485e2",
+        "plain_srt_sha256": "sha256:6d79fdab105d4c7b5edffec66fe526aa01839de342a7c96b8784f4d0100a8062",
+        "policy_ids": {
+          "alignment": "speaker_cue_subsegment_alignment/v1",
+          "text": "compact_ws/v1",
+          "timing": "half_open_integer_ms_exact/v1"
+        },
+        "speaker_final_srt_sha256": "sha256:73271049e800ceb57395feccd831a91241a76e60271c0e0216ed84ca4ebe58a9",
+        "speaker_transcript": "1 [连线] 我想活着诶\n2 [李豆沙] 你好你好\n3 [李豆沙] 我们又在一起了\n4.1 [李豆沙] 莉亚\n4.2 [连线] 活着\n5 [连线] 我想活着\n6 [连线] 就算你是狼\n7 [连线] 你放过我好吗\n8 [连线] 我想活着\n9 [李豆沙] 好的好的，放心吧\n10 [李豆沙] 那我们一起走吗\n11 [连线] 真的能放心吗\n12 [李豆沙] 我们一起走吗\n13 [连线] 好呀好呀好，我做任务\n14 [李豆沙] 对不起\n15 [李豆沙] 对不起，我对不起对不起对不起\n16 [连线] 你等会要写那个\n17.1 [连线] 我比\n17.2 [李豆沙] 你好\n18 [李豆沙] 你好\n19 [李豆沙] 怎么没人了\n20 [李豆沙] 怎么没人了\n21 [李豆沙] 我去\n22.1 [连线] 这人\n22.2 [李豆沙] 有诶，有有有有\n23 [李豆沙] 没吃到没吃到没吃到没吃到\n24 [连线] 沙豆李，你还有何话说\n25 [李豆沙] 哦，不是我杀的\n26 [连线] 我做了四个任务\n27 [连线] 北柚香一直在守护我\n28 [连线] 门厅这个地方\n29 [连线] 沙豆李在藏尸体\n30 [李豆沙] 不是我\n31 [连线] 她脚下有一个安晚awa的尸体\n32 [连线] 全票打飞沙豆李\n33 [李豆沙] 不是不是我\n34 [连线] 呃，我这轮是跟南町nightin\n35 [连线] 绝世猛1在一起\n36 [连线] 然后南町没跟我们一起\n37 [连线] 南町nightin往右走了\n38 [连线] 然后我跟这个绝世猛1在书房做了两个任务\n39 [连线] 然后绝世猛1跟我一直走一起的\n40 [连线] 我永远拥护这个绝世猛1啊\n41 [连线] 嗯，我们都是报着任务名做的\n42 [连线] 做了两三个任务吧\n43 [连线] 然后我，我们两个说一起走\n44 [连线] 结果走到\n45 [连线] 哎，走到哪儿啊\n46 [连线] 工作室还是哪里\n47 [连线] 就通马桶那个任务的地方\n48 [连线] 让我拿马桶塞进去\n49 [连线] 然后那里面一堆\n50 [李豆沙] 我还可以自爆呢\n51 [连线] 一扭头就走\n52 [李豆沙] 我以为都能吃掉啊",
+        "speaker_transcript_sha256": "sha256:048ff10c837f1a9389eed9a0afb2a8be3408e92583c850a0f3032f6c75836e15",
+        "state": "PresentValid"
+      },
+      "speaker_evidence_sha256": "sha256:0b586cf75a09997ae48f23ee004a8df26865d747b433fd2672b4235fba604879",
+      "status": "FAILED"
+    },
+    "clip_context_prompt": "clip_context_sha256: sha256:8ffb8fbea7f26bfc82fded11e266114a9bfdad2c53cff84fd83d2229c214d5a1\ncandidate_id: auto_223750_578_734\nrecording_date: 2026-08-07\nselection_hook: 莉娅求小李‘就算你是狼也放过我’，小李让她放心并提议一起走，莉娅答应后小李突然连声道歉。\nsource_pieces: [{\"end_ms\":782230,\"recording_basename\":\"22966160_20260807-22-37-50.mp4\",\"source_media_sha256\":\"sha256:66e9ec0707fe8d7f38cf8a552e863dafbba34fb7eadaece496adb30d04b1ad1e\",\"start_ms\":568030}]\nsession_relation_authority: null\ntopic_resolution: {\"evidence\":[],\"graph_sha256\":\"f637e62bdf04c50ec9ea4fd2d8e88ab88c6489ed01178124cb06f259824c006f\",\"recording_date\":\"2026-08-07\",\"schema_version\":\"topic-resolution.v1\",\"scoped_entity_ids\":[],\"scoped_graph_context\":{\"entities\":[],\"graph_sha256\":\"f637e62bdf04c50ec9ea4fd2d8e88ab88c6489ed01178124cb06f259824c006f\",\"recording_date\":\"2026-08-07\",\"schema_version\":\"topic-scoped-context.v1\",\"status\":\"GRAPH_EXPIRED\",\"topics\":[],\"works\":[]},\"selected_topic_ids\":[],\"selected_work_ids\":[],\"status\":\"GRAPH_EXPIRED\"}\nsession_topic_authorities: []\n以下长期记忆只提供候选，绝不直接授权改字；同音字仍须画面/弹幕/SC/同片复现/声学或人工 source truth：\n- id=lidousha.idiolect.xiaodeba.r1; idiolect: surfaces=晓得吧; candidates=晓得吧\n整片初稿（用于回指、复现和后文调侃；不是文字 authority）：\n1\n00:00:00,720 --> 00:00:02,200\n小心，呆呆鸟\n2\n00:00:03,480 --> 00:00:06,120\n有三个啊\n3\n00:00:07,920 --> 00:00:08,800\n哦\n4\n00:00:10,000 --> 00:00:12,120\n我想活着诶\n5\n00:00:12,200 --> 00:00:14,480\n你好你好\n6\n00:00:14,730 --> 00:00:16,250\n我们又在一起了\n7\n00:00:16,250 --> 00:00:17,470\n莉亚，活着\n8\n00:00:17,470 --> 00:00:18,410\n我想活着\n9\n00:00:18,410 --> 00:00:19,130\n就算你是狼\n10\n00:00:19,130 --> 00:00:20,010\n你放过我好吗\n11\n00:00:20,010 --> 00:00:21,030\n我想活着\n12\n00:00:21,030 --> 00:00:22,850\n好的好的，放心吧\n13\n00:00:24,520 --> 00:00:26,080\n那我们一起走吗\n14\n00:00:26,080 --> 00:00:27,180\n真的能放心吗\n15\n00:00:27,180 --> 00:00:28,520\n我们一起走吗\n16\n00:00:29,440 --> 00:00:32,040\n好呀好呀好，我做任务\n17\n00:00:32,119 --> 00:00:33,080\n对不起\n18\n00:00:34,980 --> 00:00:37,820\n对不起，我对不起，对不起，对不起\n19\n00:00:45,760 --> 00:00:48,480\n你等会要写那个\n20\n00:00:48,480 --> 00:00:51,920\n我比你好\n21\n00:00:52,120 --> 00:00:53,000\n你好\n22\n00:01:06,880 --> 00:01:08,120\n怎么没人了\n23\n00:01:11,120 --> 00:01:12,440\n怎么没人了\n24\n00:01:16,460 --> 00:01:17,300\n我去\n25\n00:01:18,180 --> 00:01:21,140\n这人有诶，有有有有\n26\n00:01:21,900 --> 00:01:26,140\n啧，没吃到没吃到没吃到没吃到\n27\n00:01:32,660 --> 00:01:37,260\n沙德利，你还有何话说\n28\n00:01:40,110 --> 00:01:41,990\n哦，不是我杀的\n29\n00:01:41,990 --> 00:01:43,610\n我做了四个任务\n30\n00:01:43,610 --> 00:01:45,810\n北柚香一直在守护我们\n31\n00:01:45,810 --> 00:01:46,870\n听这个地方\n32\n00:01:46,870 --> 00:01:50,490\nSHAW 立在藏能吃尸体\n33\n00:01:50,490 --> 00:01:52,090\n不是我\n34\n00:01:52,170 --> 00:01:56,250\n她脚下有一个安稳阿瓦的尸体\n35\n00:01:56,530 --> 00:01:59,210\n全票打飞山\n36\n00:01:59,380 --> 00:02:02,700\nNO，不是不是我\n37\n00:02:03,900 --> 00:02:06,380\n呃，我这轮是跟NT\n38\n00:02:06,380 --> 00:02:08,860\nNT和爵士说我在一起\n39\n00:02:08,860 --> 00:02:11,540\n然后男三没跟我们一起\n40\n00:02:11,540 --> 00:02:13,420\n难听 NT 往右走了\n41\n00:02:13,440 --> 00:02:18,880\n然后我跟这个绝世猛1在书房做了两个任务\n42\n00:02:18,970 --> 00:02:22,770\n然后绝世猛1跟我一直走一起的\n43\n00:02:22,770 --> 00:02:25,450\n我永远拥护这个绝世猛1啊\n44\n00:02:25,870 --> 00:02:28,470\n嗯，我们都是报着任务名做的\n45\n00:02:28,470 --> 00:02:29,850\n做了两三个任务吧\n46\n00:02:29,850 --> 00:02:31,850\n然后我，我们两个说一起走\n47\n00:02:31,850 --> 00:02:32,990\n结果走到\n48\n00:02:33,260 --> 00:02:34,780\n哎，走到哪儿啊\n49\n00:02:34,940 --> 00:02:36,380\n工作室还是哪里\n50\n00:02:36,380 --> 00:02:38,540\n就通马桶那个任务的地方\n51\n00:02:38,600 --> 00:02:40,080\n让我拿马桶塞进\n52\n00:02:40,080 --> 00:02:41,060\n然后那里面一堆\n53\n00:02:41,060 --> 00:02:42,860\n我还可以自爆呢\n54\n00:02:42,860 --> 00:02:43,960\n一扭头就走\n55\n00:02:43,960 --> 00:02:47,000\n我以为都能吃掉啊\n56\n00:02:47,160 --> 00:02:49,240\n听听沙多利怎么说的\n57\n00:02:49,490 --> 00:02:51,450\n小萝莉也有角色吗\n58\n00:02:51,450 --> 00:02:52,450\n咳咳\n59\n00:02:54,010 --> 00:02:55,950\n我去，我一点信息都没有\n60\n00:02:55,950 --> 00:02:58,130\n当时路上一堆人，一堆人，一堆人\n61\n00:02:58,130 --> 00:02:59,970\n先看到了香香烧烤\n62\n00:02:59,970 --> 00:03:02,410\n后来看到了紫妍，看到了\n63\n00:03:04,070 --> 00:03:05,470\n哎呀，我看到啥都立了吗\n64\n00:03:05,470 --> 00:03:06,310\n忘了，反正好多人\n65\n00:03:06,310 --> 00:03:07,590\n好多人好多人，我没信心\n66\n00:03:07,590 --> 00:03:08,550\n你们这样吧\n67\n00:03:09,570 --> 00:03:11,650\n你不是说你都记住了吗\n68\n00:03:11,690 --> 00:03:12,890\n你是好人吗\n69\n00:03:12,890 --> 00:03:14,090\n你不是说你都记住了吗\n70\n00:03:14,090 --> 00:03:14,930\n你到底记没记住\n71\n00:03:14,930 --> 00:03:15,820\n你咋这样啊\n72\n00:03:15,820 --> 00:03:17,040\n你咋这样啊\n73\n00:03:17,040 --> 00:03:18,640\n你一点不为好人做事\n74\n00:03:18,640 --> 00:03:20,360\n你咋这样记住的\n75\n00:03:20,360 --> 00:03:21,760\n说好的都给信息的\n76\n00:03:21,760 --> 00:03:23,200\n咋什么都没有啊\n77\n00:03:23,310 --> 00:03:24,790\n老天，你真是好人吗\n78\n00:03:25,030 --> 00:03:27,840\n啊我，你不带笑\n79\n00:03:27,840 --> 00:03:28,920\n好人感觉啊\n80\n00:03:29,450 --> 00:03:32,850\n我瞎说了，瞎说了，瞎说了啊\n81\n00:03:32,850 --> 00:03:34,130\n我在这个院子这\n结构化弹幕/SC（保留 source binding）：\n- superchat @-73782ms event=18109088: 姐姐大人生日快乐！！！提前点一个那个那个૮ ・ﻌ・ა好喜欢大熊猫猛1帅姐温柔美女\n- danmaku @-29816ms event=: 杀一个吃一个\n- danmaku @-23564ms event=: [李豆沙_被吓到]\n- danmaku @-23564ms event=: 队友负责杀，你负责吃\n- danmaku @-22274ms event=: 跟狼合作，帮忙毁尸灭迹、\n- danmaku @-11841ms event=: 迅速找一个衣服穿\n- danmaku @-7926ms event=: 别人就不能滴度滴度了\n- danmaku @6373ms event=: 还在找小马\n- danmaku @8954ms event=: 不管了直接去刀马\n- danmaku @15430ms event=: 有袍\n- danmaku @15675ms event=: 想吃掉我的非人少女\n- danmaku @18048ms event=: 好，这把狼队友会玩\n- danmaku @24790ms event=: 哈哈哈\n- danmaku @29732ms event=: 放心吧\n- danmaku @31065ms event=: 《放心吧》\n- danmaku @32607ms event=: 想吃掉我的非人少熊\n- danmaku @35192ms event=: ？\n- danmaku @37574ms event=: 坏女人！\n- danmaku @38843ms event=: 你这个人太坏了\n- danmaku @39075ms event=: 转瞬即逝啊\n- danmaku @40143ms event=: 哈哈哈\n- danmaku @41444ms event=: 坏女人\n- danmaku @41685ms event=: ？\n- danmaku @42744ms event=: 笑死了\n- danmaku @42984ms event=: 太坏了\n- danmaku @44057ms event=: 哈哈哈哈\n- danmaku @45582ms event=: 你瞧你坏的\n- danmaku @46634ms event=: 坏铝人！！！\n- danmaku @46892ms event=: 你放心吧\n- danmaku @48197ms event=: [李豆沙_大笑]\n- danmaku @49243ms event=: 好坏！\n- danmaku @49243ms event=: 哈哈哈哈\n- danmaku @49495ms event=: 坏女人！\n- danmaku @49496ms event=: [李豆沙_只是熊猫]\n- danmaku @49496ms event=: 太坏了\n- danmaku @55756ms event=: 坏女人驾到，统统闪开，统统闪开\n- danmaku @55983ms event=: 求奈奈利亚的心理阴影\n- danmaku @58373ms event=: 坏死了李豆沙\n- danmaku @59883ms event=: “你放心吧”\n- danmaku @62482ms event=: 坏女人\n- danmaku @66173ms event=: 别单走，太可疑了\n- danmaku @70065ms event=: 交给我你就放心吧\n- danmaku @70281ms event=: 可以再出一🔪\n- danmaku @75253ms event=: 高僧预测单走被出\n- danmaku @76782ms event=: 坏坏坏\n- danmaku @85647ms event=: 哈哈哈\n- danmaku @87178ms event=: 问号\n- danmaku @88232ms event=: 你神了\n- danmaku @89544ms event=: 为什么不刀\n- danmaku @89783ms event=: 宝宝你猪猪的\n- danmaku @93446ms event=: 只能吃一次\n- danmaku @93676ms event=: 哈哈哈哈哈哈\n- danmaku @94747ms event=: 只能吃一次\n- danmaku @94983ms event=: 一局只能吃一次、\n- danmaku @96044ms event=: 只能吃一个啊姐姐\n- danmaku @97649ms event=: 吃不了了\n- danmaku @97650ms event=: [李豆沙_谁是猪]\n- danmaku @98710ms event=: 大姐你看看技能介绍吧你一轮只能吃一个\n- danmaku @98880ms event=: 每轮只能吃一次\n- danmaku @99944ms event=: 吃不了，一局吃一次\n- danmaku @99944ms event=: 只能吃一次啊\n- danmaku @101252ms event=: 哈哈哈哈哈\n- danmaku @102783ms event=: 有猪\n- danmaku @104081ms event=: 宝宝你看你坏的\n- danmaku @105401ms event=: 有猪\n- danmaku @106453ms event=: 李姐太搞笑了\n- danmaku @106453ms event=: 我不知道怎么报警\n- danmaku @107810ms event=: 有猪\n- danmaku @107982ms event=: 哪来的女菩\n- danmaku @111686ms event=: 1110111.\n- danmaku @111889ms event=: 有🐷\n- danmaku @120775ms event=: 哈哈哈\n- danmaku @122283ms event=: 有猪\n- danmaku @123581ms event=: 黑白小猪\n- danmaku @130086ms event=: [李豆沙_谁是猪]\n- danmaku @131384ms event=: 妈妈\n- danmaku @132492ms event=: [李豆沙_谁是猪]\n- danmaku @133981ms event=: ；；\n- danmaku @137878ms event=: 好窝囊一小猪\n- danmaku @138980ms event=: [李豆沙_谁是猪]\n- danmaku @140264ms event=: 小李又被不清楚游戏机制害了；；\n- danmaku @141553ms event=: 妈妈\n- danmaku @144160ms event=: 就说想报警但不知道怎么报警\n- danmaku @144160ms event=: 主包快发文字消息\n- danmaku @145751ms event=: [李豆沙_谁是猪]\n- danmaku @145752ms event=: 分号分号\n- danmaku @149603ms event=: 李姐你别这样\n- danmaku @154553ms event=: [李豆沙_谁是猪]\n- danmaku @155839ms event=: 没事，小李可以睡觉觉了~\n- danmaku @159772ms event=: 没看机制吗，一局只能吃一次（）\n- danmaku @159981ms event=: [李豆沙_谁是猪]\n- danmaku @161052ms event=: 主包快发是狼你就是铝铜\n- danmaku @163644ms event=: [李豆沙_谁是猪]\n- danmaku @167785ms event=: [李豆沙_宕机]\n- danmaku @175341ms event=: 小李只能吃一口哦\n- danmaku @176891ms event=: 小李会不会被奈奈莉娅记住一辈子\n- danmaku @180782ms event=: [李豆沙_得意]\n- danmaku @189883ms event=: 主包快发是狼你就是铝铜\n- danmaku @196177ms event=: 要不小李自爆睡觉吧（\n- danmaku @196414ms event=: [李豆沙_百合花]\n- danmaku @200058ms event=: 哈哈哈\n- danmaku @204191ms event=: 直接自爆\n- danmaku @205482ms event=: 姐你读题能不能仔细些",
+    "clip_context_prompt_sha256": "sha256:572c977fec852e8ca863f065e191c156e65a7906d2a683cf5cd3d90de9dd5e17",
+    "final_transcript": "我想活着诶\n你好你好\n我们又在一起了\n莉亚 活着\n我想活着\n就算你是狼\n你放过我好吗\n我想活着\n好的好的，放心吧\n那我们一起走吗\n真的能放心吗\n我们一起走吗\n好呀好呀好，我做任务\n对不起\n对不起，我对不起对不起对不起\n你等会要写那个\n我比你好\n你好\n怎么没人了\n怎么没人了\n我去\n这人有诶，有有有有\n没吃到没吃到没吃到没吃到\n沙豆李，你还有何话说\n哦，不是我杀的\n我做了四个任务\n北柚香一直在守护我\n门厅这个地方\n沙豆李在藏尸体\n不是我\n她脚下有一个安晚awa的尸体\n全票打飞沙豆李\n不是不是我\n呃，我这轮是跟南町nightin\n绝世猛1在一起\n然后南町没跟我们一起\n南町nightin往右走了\n然后我跟这个绝世猛1在书房做了两个任务\n然后绝世猛1跟我一直走一起的\n我永远拥护这个绝世猛1啊\n嗯，我们都是报着任务名做的\n做了两三个任务吧\n然后我，我们两个说一起走\n结果走到\n哎，走到哪儿啊\n工作室还是哪里\n就通马桶那个任务的地方\n让我拿马桶塞进去\n然后那里面一堆\n我还可以自爆呢\n一扭头就走\n我以为都能吃掉啊",
+    "final_transcript_sha256": "sha256:20ec7e4f3d5413d35be6d7226c777ccd08928cac4d93f5cfa8246bf57681262e",
+    "selection_scorecard": {
+      "dimensions": {
+        "audience_salience": 3,
+        "comedic_payoff": 4,
+        "lidousha_centrality": 4,
+        "persona_reversal": 4,
+        "relationship_interaction": 4,
+        "self_contained": 3,
+        "stance_intensity": 3
+      },
+      "effective_score": 88.0,
+      "fatigue_penalty": 0.0,
+      "raw_score": 90.0,
+      "reason_codes": [],
+      "requested_tier": 1,
+      "schema_version": "lidousha-selection-scorecard.v1",
+      "status": "VALID",
+      "tier": 1,
+      "tier_basis": "relationship_chain",
+      "tier_evidence_cues": [
+        6,
+        7,
+        9,
+        10,
+        12,
+        13,
+        14,
+        15
+      ],
+      "tier_reason": "莉娅先请求即使小李是狼也放过自己，小李回应让她放心并两次提议同行；莉娅答应后，小李立刻连续道歉，形成完整且带反转的双人关系互动链。",
+      "uncertainty_penalty": 2.0,
+      "weights": {
+        "audience_salience": 15,
+        "comedic_payoff": 10,
+        "lidousha_centrality": 25,
+        "persona_reversal": 10,
+        "relationship_interaction": 15,
+        "self_contained": 5,
+        "stance_intensity": 20
+      }
+    },
+    "selection_scorecard_sha256": "sha256:0eb4eb5f7ea9b6a680643be3c8faf2444fa4e8335b8f2d961ce5ab6edc616059"
+  },
+  "schema_version": "lidousha-manual-title-keep-authority.v1",
+  "scope": {
+    "candidate_scoped": true,
+    "finding_scoped": true,
+    "wildcard": false
+  },
+  "source_binding": {
+    "entity_context_sha256": "sha256:42ec67fb17ec7eed01cfb030f73000b08c9e8f669fa6e123dd9e2259d0c79c4c",
+    "exact_interval": {
+      "absolute_end_ms": 735090,
+      "absolute_start_ms": 577780
+    },
+    "reviewed_plain_srt": {
+      "repo_path": "assets/lidousha/reviewed_subtitle_baselines/auto_223750_578_734.reviewed.srt",
+      "sha256": "sha256:6d79fdab105d4c7b5edffec66fe526aa01839de342a7c96b8784f4d0100a8062"
+    },
+    "reviewed_speaker_srt": {
+      "cue_count": 55,
+      "sha256": "sha256:73271049e800ceb57395feccd831a91241a76e60271c0e0216ed84ca4ebe58a9"
+    },
+    "source_media": {
+      "basename": "22966160_20260807-22-37-50.mp4",
+      "sha256": "sha256:66e9ec0707fe8d7f38cf8a552e863dafbba34fb7eadaece496adb30d04b1ad1e"
+    },
+    "speaker_authority_assets": {
+      "automatic_baseline": {
+        "repo_path": "assets/lidousha/speaker_automatic_baselines/auto_223750_578_734.automatic-labelled.srt",
+        "sha256": "sha256:19131ea3b2740e286c1c506fedd94c08b36179655c1849091f75e9ac0dfc2838"
+      },
+      "override": {
+        "repo_path": "assets/lidousha/speaker_overrides/auto_223750_578_734.speaker.v1.json",
+        "sha256": "sha256:73986876f4d3137ba327f301954ffb5ad5dbafad190746f8417e5a7f412a0ea3"
+      },
+      "truth": {
+        "repo_path": "assets/lidousha/reviewed_speaker_truth/auto_223750_578_734.truth-diff.v2.json",
+        "sha256": "sha256:aaa1cd5681b8bb1fee34ed347c6e5f2fa9166d480176cd2688a28cb7fa0fd434"
+      }
+    }
+  }
+}

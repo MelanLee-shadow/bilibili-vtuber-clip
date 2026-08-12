@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import src.autoslice.reviewed_subtitle_baseline_registry as baseline_registry
 from scripts.apply_subtitle_text_overrides import parse_srt
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.reviewed_speaker_baseline import load_reviewed_speaker_baseline
@@ -25,6 +26,17 @@ SOLO = "auto_230125_1157_1229"
 STORY = "auto_223750_578_734"
 
 
+@pytest.fixture(autouse=True)
+def _allow_precommit_exact_interval_authority(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Repository sealing has dedicated tests; this file checks landed truth."""
+
+    monkeypatch.setattr(
+        baseline_registry,
+        "require_repository_asset_authority",
+        lambda **_kwargs: None,
+    )
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -36,10 +48,7 @@ def _json(path: Path) -> dict[str, object]:
 
 
 def _cue_texts(path: Path) -> list[str]:
-    return [
-        str(cue.text).strip()
-        for cue in parse_srt_cues(path.read_text(encoding="utf-8"))
-    ]
+    return [str(cue.text).strip() for cue in parse_srt_cues(path.read_text(encoding="utf-8"))]
 
 
 def test_solo_truth_is_exactly_the_five_operator_changes_and_text_only() -> None:
@@ -64,18 +73,11 @@ def test_solo_truth_is_exactly_the_five_operator_changes_and_text_only() -> None
     }
     assert baseline.read_bytes() == reviewed.read_bytes()
     assert "星汐" not in baseline.read_text(encoding="utf-8")
-    assert _sha256(baseline) == (
-        "c29cc5aed6b52cca7618a88b083b9b46e86320db5595bcaa5a4ef4c57499ca7b"
-    )
-    assert not (
-        ROOT / f"assets/lidousha/speaker_overrides/{SOLO}.speaker.v1.json"
-    ).exists()
+    assert _sha256(baseline) == ("c29cc5aed6b52cca7618a88b083b9b46e86320db5595bcaa5a4ef4c57499ca7b")
+    assert not (ROOT / f"assets/lidousha/speaker_overrides/{SOLO}.speaker.v1.json").exists()
 
     manifest = _json(BASELINES / f"{SOLO}.subtitle-baseline.v1.json")
-    assert (
-        manifest["source_recording_basename"]
-        == "22966160_20260808-23-01-25.mp4"
-    )
+    assert manifest["source_recording_basename"] == "22966160_20260808-23-01-25.mp4"
     assert manifest["source_sha256"] == (
         "6cf042681885d18ac4e3abb9548fe8ac3033f8b2e3365c44b6748fd3e4a324a3"
     )
@@ -87,13 +89,8 @@ def test_solo_truth_is_exactly_the_five_operator_changes_and_text_only() -> None
 
 def test_story_truth_is_full_labelled_and_hash_bound_without_machine_cues() -> None:
     truth = SPEAKER_TRUTH / f"{STORY}.truth-diff.v2.json"
-    override = _json(
-        ROOT / f"assets/lidousha/speaker_overrides/{STORY}.speaker.v1.json"
-    )
-    automatic = (
-        ROOT
-        / f"assets/lidousha/speaker_automatic_baselines/{STORY}.automatic-labelled.srt"
-    )
+    override = _json(ROOT / f"assets/lidousha/speaker_overrides/{STORY}.speaker.v1.json")
+    automatic = ROOT / f"assets/lidousha/speaker_automatic_baselines/{STORY}.automatic-labelled.srt"
     baseline = BASELINES / f"{STORY}.reviewed.srt"
     manifest = _json(BASELINES / f"{STORY}.subtitle-baseline.v1.json")
 
@@ -169,20 +166,8 @@ def test_explicit_operator_changes_have_required_source_interval_ledger_owners()
         )
     ]
     assert len(rows) == 15
-    assert (
-        sum(
-            str(row["truth_id"]).startswith("20260808-solo-230125")
-            for row in rows
-        )
-        == 5
-    )
-    assert (
-        sum(
-            str(row["truth_id"]).startswith("20260807-story-578734")
-            for row in rows
-        )
-        == 10
-    )
+    assert sum(str(row["truth_id"]).startswith("20260808-solo-230125") for row in rows) == 5
+    assert sum(str(row["truth_id"]).startswith("20260807-story-578734") for row in rows) == 10
     assert all(row["required"] is True for row in rows)
     assert all(row["decision_authority"] == "IVAN_OPERATOR_TRUTH" for row in rows)
     assert all(row["assertion_state"] == "VERIFIED_ACTIVE" for row in rows)

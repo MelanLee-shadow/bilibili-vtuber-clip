@@ -3,7 +3,11 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from src.autoslice import publish_staging
+from src.autoslice import source_fact_staging
+import src.autoslice.reviewed_subtitle_baseline_registry as baseline_registry
 from src.autoslice.publish_staging import _stage_publish_draft
 from src.autoslice.recovery_title_authority import (
     ROOT,
@@ -11,6 +15,17 @@ from src.autoslice.recovery_title_authority import (
     expected_recovery_publish_title,
 )
 from src.autoslice.source_fact_rescore_provenance import PROVENANCE_FIELD
+
+
+@pytest.fixture(autouse=True)
+def _allow_precommit_exact_interval_authority(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Repository sealing has dedicated tests; this file exercises staging."""
+
+    monkeypatch.setattr(
+        baseline_registry,
+        "require_repository_asset_authority",
+        lambda **_kwargs: None,
+    )
 
 
 def test_publish_staging_preserves_typed_same_bv_title_authority(
@@ -159,12 +174,12 @@ def test_publish_staging_passes_single_read_speaker_evidence_to_source_fact(
         }
 
     monkeypatch.setattr(
-        publish_staging,
+        source_fact_staging,
         "build_addressee_evidence",
         fake_build,
     )
     monkeypatch.setattr(
-        publish_staging,
+        source_fact_staging,
         "review_and_repair_source_facts",
         fake_review,
     )

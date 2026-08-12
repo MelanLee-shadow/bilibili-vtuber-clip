@@ -34,7 +34,6 @@ FUNCTION_DEBT_LEDGER = {
     # 2026-08-02 +20：run_mode 白名单纳入 MANUAL_PRODUCE_REVIEW 且强制
     # manual_attestation 署名（手动产线包进审计闭环；Ivan 8/2 /goal 授权，
     # 测试 test_manual_review_manifest.py + 二轮真实测试实锤此缺口）。
-    ("scripts/audit_lidousha_review_package.py", "audit_package"): 346,
     ("scripts/build_lidousha_recovery_review_manifest.py", "build_manifest"): 343,
     ("scripts/run_auto_review_shadow_pipeline.py", "_run_live_source"): 316,
     ("src/autoslice/cover_repair.py", "_roll_forward_prepared_cover_transactions"): 346,
@@ -49,7 +48,6 @@ FUNCTION_DEBT_LEDGER = {
     # coverage receipt 抽到模块级 helper，锁定本次边界修复的净拆解收益。
     # 2026-08-10 合并 ft-a8600994：以下两项按合并后**实测**行数记账,数字来自本次
     # merge(主线 F16/F17 接线与 ft 边界修复各自的净收益叠加),非凭空抬降。
-    ("src/autoslice/producer_boundary_resolution.py", "_repair_boundary"): 302,
     ("src/autoslice/producer_package_finalization.py", "_materialize_final_recut"): 314,
     # 2026-08-08 +3：owned_intervals 执法接线（Ivan 2026-08-08 配额上传波
     # 修复——zsm8 案：baseline 已应用的 cue 被 exact-final CPA 自愈无声改写；
@@ -77,7 +75,9 @@ FUNCTION_DEBT_LEDGER = {
     # 2026-07-31 +40：SC 发送者裁决对 v2 精确重放 redelivery 的 deferral
     # （jyl-r10 案：CPA 宕机/岔听下 UNRESOLVED，而该 cue 终局注定被基线盖回；
     # source_truth 同款 DEFERRED 惯例）。连续吃增长，下次动它先拆。
-    ("src/autoslice/producer_text_pipeline.py", "_finalize_text_evidence"): 345,
+    # 2026-08-11 净 -25：source boundary review 整体抽到
+    # producer_source_boundary_review.py；锁定本次拆解收益。
+    ("src/autoslice/producer_text_pipeline.py", "_finalize_text_evidence"): 320,
     # 2026-08-08 +6：会话内重述修复接线（Ivan 2026-08-08 当日指令，
     # docs/reviews/2026-08-08-restatement-repair-design.md §4）——同上，
     # 重活在 restatement_recall.py，这里只留调用点。
@@ -92,7 +92,8 @@ FUNCTION_DEBT_LEDGER = {
     # 完整性标记、封存/在途两态的读法全在 src/autoslice/final_review_carryover.py，
     # 本文件只有一处薄调用点（赋值 + 调用 + 出处注释）。
     # 测试 tests/test_final_review_carryover_hard_exit.py。
-    ("src/autoslice/producer_text_pipeline.py", "run_text_pipeline"): 347,
+    # 2026-08-11 净 -31：同一 source boundary router 抽取后的实测值。
+    ("src/autoslice/producer_text_pipeline.py", "run_text_pipeline"): 316,
     # 2026-07-31 +6：full-text contract 穿透形参与调用（Ivan 07-31 `/goal`
     # 「直接按照 fable 的 advise 继续，直至修复所有问题」授权；Fable 裁定 4
     # 点名「contract 不穿透 = 静默把唯一合法全文通道杀死」，必须补）。
@@ -117,7 +118,7 @@ FUNCTION_DEBT_LEDGER = {
     # 合并的快车道代码，现在就去合并 merge」）带入的 relocation/冻结包接线。数字为
     # 合并后实测,非估算。⚠️ 此项已连续吃增长且上方 8/1 注释写明「下次动这个函数
     # 必须先拆，不许再抬」——本次是合并带入而非新写功能,但欠账事实成立,须补拆解。
-    ("src/autoslice/publish_staging.py", "_stage_publish_draft"): 561,
+    ("src/autoslice/publish_staging.py", "_stage_publish_draft"): 560,
     # 2026-07-31 +3：同上，截图/polish 路径的 contract 穿透。
     # 2026-08-10 净 -6：同上——终检见证的 verifier-missing 分支与调用抽到
     # cover_scene_binding.run_final_host_identity_witness。
@@ -162,7 +163,7 @@ MODULE_DEBT_LEDGER = {
     # 审计器加入包审计 policy fingerprint，防实现漂移而指纹不变。
     # 2026-08-02 +6：简介第一行固定项目署名常量（Ivan 8/3 指令：默认带
     # 项目名+网址；OSS 同步为署名+env 频道行）。
-    "scripts/authorized_upload.py": 2_935,
+    "scripts/authorized_upload.py": 2_867,
     # 2026-08-01 新记：OSS 发布整备（Ivan 授权）把导出器扩成改名/patch/模板引擎；
     # 私库专用构建工具，导出时自剥离，不进 OSS 面。
     # 2026-08-02 +55：二轮测试修复（骨架逐键摘除治 governance:{} 必炸类、
@@ -314,7 +315,6 @@ MODULE_DEBT_LEDGER = {
     # +9 是 run_text_pipeline 里的薄调用点（见函数账本同日条目），+1 是 import。
     # 本体（谓词、原子落盘、完整性标记、封存/在途两态）全在
     # src/autoslice/final_review_carryover.py。
-    "src/autoslice/producer_text_pipeline.py": 2_128,
     # 2026-07-31 +12：contract 穿透接线（形参 + 4 个调用点）。
     # 2026-07-31 再 +17：封面路由 P1——witness 从「路由法官」降回「置信输入」，
     # 删掉无条件放行、几何否决移到关系分支之后、置信改为 几何 OR witness bbox。
@@ -438,9 +438,7 @@ def _active_runtime_files() -> list[Path]:
     return files
 
 
-def _ledger_problems(
-    actual: dict, ledger: dict, *, label: str, cap: int, render
-) -> list[str]:
+def _ledger_problems(actual: dict, ledger: dict, *, label: str, cap: int, render) -> list[str]:
     """Compare measured over-cap items against the frozen debt ledger.
 
     Both directions fail on purpose: growth is a regression, and shrinkage
@@ -499,16 +497,10 @@ def test_active_runtime_functions_stay_bounded() -> None:
 
 def test_active_runtime_modules_stay_bounded() -> None:
     actual = {
-        path.relative_to(ROOT).as_posix(): len(
-            path.read_text(encoding="utf-8").splitlines()
-        )
+        path.relative_to(ROOT).as_posix(): len(path.read_text(encoding="utf-8").splitlines())
         for path in _active_runtime_files()
     }
-    actual = {
-        path: count
-        for path, count in actual.items()
-        if count > MAX_ACTIVE_MODULE_LINES
-    }
+    actual = {path: count for path, count in actual.items() if count > MAX_ACTIVE_MODULE_LINES}
 
     problems = _ledger_problems(
         actual,
@@ -545,39 +537,55 @@ def test_dynamic_boundary_context_cap_is_wired_to_post_authority_review_only() -
     ``_apply_entity_authority`` call.  Unit tests of the two helpers stayed
     green, while the real producer entry point would have raised ``TypeError``.
     Boundary review must also stay out of ``_run_final_review`` because source
-    truth can still delete or renumber cues during finalization.
+    truth can still delete or renumber cues during finalization.  The extracted
+    source-boundary router now owns the one direct semantic-review call.
     """
 
-    path = ROOT / "src/autoslice/producer_text_pipeline.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    calls = {
-        node.func.id: {keyword.arg for keyword in node.keywords}
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id
-        in {
+    pipeline_path = ROOT / "src/autoslice/producer_text_pipeline.py"
+    pipeline_tree = ast.parse(
+        pipeline_path.read_text(encoding="utf-8"),
+        filename=str(pipeline_path),
+    )
+    pipeline_calls = {
+        name: [
+            node
+            for node in ast.walk(pipeline_tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == name
+        ]
+        for name in {
             "_apply_entity_authority",
             "_run_final_review",
             "review_final_boundary_semantics",
         }
     }
+    assert len(pipeline_calls["_apply_entity_authority"]) == 1
+    assert len(pipeline_calls["_run_final_review"]) == 1
+    assert pipeline_calls["review_final_boundary_semantics"] == []
+    for name in ("_apply_entity_authority", "_run_final_review"):
+        assert "boundary_max_forward_ms" not in {
+            keyword.arg for keyword in pipeline_calls[name][0].keywords
+        }
 
-    assert "boundary_max_forward_ms" not in calls["_apply_entity_authority"]
-    assert "boundary_max_forward_ms" not in calls["_run_final_review"]
-    assert (
-        "boundary_max_forward_ms"
-        in calls["review_final_boundary_semantics"]
-    )
+    review_path = ROOT / "src/autoslice/producer_source_boundary_review.py"
+    review_tree = ast.parse(review_path.read_text(encoding="utf-8"), filename=str(review_path))
+    review_calls = [
+        node
+        for node in ast.walk(review_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "review_final_boundary_semantics"
+    ]
+    assert len(review_calls) == 1
+    assert "boundary_max_forward_ms" in {keyword.arg for keyword in review_calls[0].keywords}
 
 
 def test_source_media_receives_the_request_spec_parent() -> None:
     path = ROOT / "scripts/produce_slice_package.py"
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     main = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "main"
+        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main"
     )
     calls = [
         node
@@ -587,11 +595,7 @@ def test_source_media_receives_the_request_spec_parent() -> None:
         and node.func.id == "prepare_source_media"
     ]
     assert len(calls) == 1
-    keyword = next(
-        value.value
-        for value in calls[0].keywords
-        if value.arg == "spec_parent"
-    )
+    keyword = next(value.value for value in calls[0].keywords if value.arg == "spec_parent")
     assert isinstance(keyword, ast.Attribute)
     assert keyword.attr == "parent"
     assert isinstance(keyword.value, ast.Attribute)
@@ -606,22 +610,17 @@ def test_final_text_result_cues_and_receipt_reach_the_same_boundary_resolver() -
     path = ROOT / "scripts/produce_slice_package.py"
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     main = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "main"
+        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main"
     )
     assignments = [
-        node
-        for node in ast.walk(main)
-        if isinstance(node, ast.Assign) and len(node.targets) == 1
+        node for node in ast.walk(main) if isinstance(node, ast.Assign) and len(node.targets) == 1
     ]
 
     def assignment_to(name: str) -> ast.Assign:
         matches = [
             node
             for node in assignments
-            if isinstance(node.targets[0], ast.Name)
-            and node.targets[0].id == name
+            if isinstance(node.targets[0], ast.Name) and node.targets[0].id == name
         ]
         assert len(matches) == 1
         return matches[0]
@@ -646,10 +645,7 @@ def test_final_text_result_cues_and_receipt_reach_the_same_boundary_resolver() -
         and node.func.id == "resolve_producer_boundary"
     ]
     assert len(resolver_calls) == 1
-    resolver_keywords = {
-        keyword.arg: keyword.value
-        for keyword in resolver_calls[0].keywords
-    }
+    resolver_keywords = {keyword.arg: keyword.value for keyword in resolver_calls[0].keywords}
     assert isinstance(resolver_keywords["cues"], ast.Name)
     assert resolver_keywords["cues"].id == "cues"
 
@@ -704,15 +700,11 @@ def test_full_text_cover_contract_reaches_every_renderer_call_site() -> None:
             if not isinstance(node, ast.Call):
                 continue
             name = (
-                node.func.id
-                if isinstance(node.func, ast.Name)
-                else getattr(node.func, "attr", "")
+                node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", "")
             )
             if name != callee:
                 continue
-            if "full_text_cover_contract" not in {
-                keyword.arg for keyword in node.keywords
-            }:
+            if "full_text_cover_contract" not in {keyword.arg for keyword in node.keywords}:
                 missing.append(f"{relative}:{node.lineno} {callee}")
 
     # 两个中转函数也必须把它继续往下传，否则形参收到了却不用。
@@ -730,8 +722,7 @@ def test_full_text_cover_contract_reaches_every_renderer_call_site() -> None:
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name)
                 and node.func.id == forwarder
-                and "full_text_cover_contract"
-                not in {keyword.arg for keyword in node.keywords}
+                and "full_text_cover_contract" not in {keyword.arg for keyword in node.keywords}
             ):
                 missing.append(f"{relative}:{node.lineno} {forwarder}")
 

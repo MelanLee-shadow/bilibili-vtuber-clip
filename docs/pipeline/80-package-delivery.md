@@ -107,6 +107,24 @@
   推荐 end、source final interval 与第一层回执完全一致。两层 grid/ordinal/坐标不同，不能要求
   SHA 相等；缺任一层、scope 错、把 source 回执复制成 final、witness 漂移或任一 endpoint
   binding 非 PASS 均拒发。
+- `reviewed_exact_source_interval_v1` 包必须在 frozen owner contract、source boundary review 与
+  boundary audit 三处携带逐字段相同、自哈希有效的 environment-independent authority；不得同时
+  出现普通 terminal projection。auditor 还须将它与 redelivery baseline audit 的 source
+  basename/SHA、reviewed SRT SHA、reviewed/current 半开区间、零 video tail extension、最终
+  media anchor 和 candidate 重新对齐。source 与 final 两层 semantic receipt 仍分别验证完整
+  cue grid、endpoint binding 与 source-separation witness；fresh-ASR diagnostic SHA 只作披露，
+  不参与 authority identity。缺 grant、双 grant、tamper、迁移后路径变化以外的身份漂移，或
+  exact replay 未物化到 authority 区间，均拒发且不得转普通 boundary lane。
+- exact-interval grant、激活它的 reviewed-baseline manifest 及其 SRT/JSON 依赖必须来自当前
+  Git HEAD 或 `DEPLOYED_AUTHORITY_MANIFEST` 封存的 canonical repo path；磁盘 spec 不得预注入
+  runtime authority，也不得引用临时/伪造 repo、parent symlink 或自哈希但未提交的副本。compiler
+  对同一次读取的 bytes 同时做 repository seal 与 schema/self-hash 验证；package auditor 再从
+  自己运行的可信 repo root 重载 active grant，与包内副本逐字段相等后才承认。
+- candidate-scoped manual-title KEEP 与 deterministic text narrowing 的 source-fact receipt 必须
+  在 story contract、record staging、publish draft 三面逐字相等，并由 builder/auditor 结合包内
+  最终 SRT、speaker evidence 与当前 deploy-sealed authority 重新验证。确定性 50 字标题例外只在
+  上述 receipt 深验通过时有效；authorized-upload 仍从 hash-bound record 重建同一判断，不能靠
+  手写 manifest、只改 receipt self-hash 或 package 外文件绕过。
 - source review、resolver、retry 与 boundary audit 还必须逐字段携带并验证同 SHA 的
   `talk-boundary-search-scope.v1`。`semantic_lower_bound` 中，人工下界/结构化 payoff 可移动
   semantic search origin，required owner 只抬 delivery floor，绝对 ceiling 固定为

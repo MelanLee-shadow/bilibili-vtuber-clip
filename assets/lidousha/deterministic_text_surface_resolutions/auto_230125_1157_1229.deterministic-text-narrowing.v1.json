@@ -1,0 +1,276 @@
+{
+  "schema_version": "lidousha-deterministic-text-narrowing.v1",
+  "candidate_id": "auto_230125_1157_1229",
+  "scope": {
+    "candidate_scoped": true,
+    "closed_plan": true,
+    "exact_surface_only": true,
+    "wildcard": false
+  },
+  "source_binding": {
+    "source_media": {
+      "basename": "22966160_20260808-23-01-25.mp4",
+      "sha256": "sha256:6cf042681885d18ac4e3abb9548fe8ac3033f8b2e3365c44b6748fd3e4a324a3"
+    },
+    "exact_interval": {
+      "start_ms": 1157280,
+      "end_ms": 1229510,
+      "semantics": "half_open"
+    },
+    "reviewed_srt": {
+      "repo_path": "assets/lidousha/reviewed_subtitle_baselines/auto_230125_1157_1229.reviewed.srt",
+      "sha256": "sha256:c29cc5aed6b52cca7618a88b083b9b46e86320db5595bcaa5a4ef4c57499ca7b"
+    },
+    "reviewed_srt_manifest": {
+      "repo_path": "assets/lidousha/reviewed_subtitle_baselines/auto_230125_1157_1229.subtitle-baseline.v1.json",
+      "sha256": "sha256:c42f09771793124a41539ab6551eec062d494ef4cdc3a38fdc48099148eaa7fe"
+    },
+    "immutable_artifact_snapshots": [
+      {
+        "logical_id": "vtuber-reproduce/run/20260811-6b160bf-fastlane3/solo/failed-publish.json",
+        "sha256": "sha256:6c6222987371babeaea15a1205c4ba2eb9ab0428cb643f869c9af3827097d9bc"
+      },
+      {
+        "logical_id": "vtuber-reproduce/run/20260811-6b160bf-fastlane3/solo/recut.mp4",
+        "sha256": "sha256:8642fd6100e5abb38064a3f1abbb0ed7c39df0d5671f3b077e9cd8848dd02ddc"
+      },
+      {
+        "logical_id": "vtuber-reproduce/run/20260811-6b160bf-fastlane3/solo/burned-final.mp4",
+        "sha256": "sha256:8ed09b467da6ebed4adcd7277af5d43266fc928b5fc7716572cd9d7f58d67c9d"
+      },
+      {
+        "logical_id": "vtuber-reproduce/run/20260811-6b160bf-fastlane3/solo/final.ass",
+        "sha256": "sha256:41bc363b6665fd6cac13c3d1285e45b8b2151b2810450e5a50a71e05701ad7dc"
+      },
+      {
+        "logical_id": "vtuber-reproduce/run/20260811-6b160bf-fastlane3/solo/recut-provenance.json",
+        "sha256": "sha256:4687f4ba57eb3f114e8b83b54e72575bb413dc572d44a08083c1a31ac56b31cd"
+      },
+      {
+        "logical_id": "vtuber-reproduce/run/20260811-6b160bf-fastlane3/solo/boundary-audit.json",
+        "sha256": "sha256:33791adb5dea4cc7730e71f22ef11439124551d22ca9a2c94528232aaaa8b8b5"
+      },
+      {
+        "logical_id": "vtuber-reproduce/run/20260811-6b160bf-fastlane3/solo/redelivery-baseline.json",
+        "sha256": "sha256:dc425666ead69a9e69960a135278dfec3889f97837652d6c7ee52c74e6db4034"
+      },
+      {
+        "logical_id": "vtuber-reproduce/run/20260811-6b160bf-fastlane3/solo/chat-authority.json",
+        "sha256": "sha256:7da16a2ad4a332f4fe7ce855c16de6ce06c03bb2edea8ac71d5145084e45e8eb"
+      },
+      {
+        "logical_id": "vtuber-reproduce/run/20260811-6b160bf-fastlane3/solo/review-flags.json",
+        "sha256": "sha256:16224c93308e476516caa9c1ffe23df6613b90dcea0c856e4660f285b6832c39"
+      }
+    ]
+  },
+  "entity_binding": {
+    "repo_path": "assets/lidousha/candidate_entity_projections/auto_230125_1157_1229.entity-projection.v1.json",
+    "file_sha256": "sha256:182d966900a3439765c293f94892da4675afc48b85ad023ff6e2f7450bdb8e6b",
+    "projection_sha256": "1cb31ffffe00e26cee9407a34f7267bd05f25f39081d0667ee0065e2fe9e6acd",
+    "entity_id": "ent_1ac8510680754aad873f02ba79444e02",
+    "equivalent_surfaces": [
+      "星汐Seki",
+      "星汐",
+      "xxsk"
+    ],
+    "required_surface_type": "title_cover",
+    "required_surface": "xxsk"
+  },
+  "uniform_host_authority": {
+    "speaker_mode": "uniform_host",
+    "evidence": {
+      "policy_ids": {
+        "absence": "speaker_mode_uniform_host/v1",
+        "alignment": "speaker_cue_subsegment_alignment/v1",
+        "text": "compact_ws/v1",
+        "timing": "half_open_integer_ms_exact/v1"
+      },
+      "reason": "speaker_mode_uniform_host",
+      "state": "AbsentAuthorized"
+    },
+    "evidence_sha256": "sha256:7ad0672052878d79d0ad5f24e41ee57a6a8c401596b8954beb078ca45b39c989",
+    "authority_policy": "speaker_mode_uniform_host/v1"
+  },
+  "human_authority": {
+    "reviewed_subtitle_entity_truth": {
+      "message_id": "msg_019ff23a-8b10-7823-bb12-22073d30edd5",
+      "timestamp": "2026-08-11T19:09:10.801Z",
+      "quote": "单人切片也很不错，唯一的一点就是0:16应该是\"我对xxsk说\"，以及字幕里所有的星汐换成xxsk，也就是说，在这里，应该用xxsk作为星汐seki的canonical的名字，就像lds作为李豆沙的昵称一样。其他没有提到的地方说明字幕是正确的，不用再provisional。",
+      "sha256": "sha256:93db72190d02d8bbefadf53598a95046b04ac6b013e758691e4fc138733708e6"
+    },
+    "clip_publication_release": {
+      "message_id": "msg_019ff23c-004e-7860-bb6e-ab6d01b55857",
+      "timestamp": "2026-08-11T19:10:46.350Z",
+      "quote": "说起来刚刚通过的这两个可以发布了，只要你根据我的人工真值改完后，可以直接去快车道发布，和你的通用车道修复并行进行",
+      "sha256": "sha256:4767d2f9be0431d8d7347eb9dd2d3a989f477fed2c16ce08f7de91eee92060cd"
+    },
+    "exact_surface_adjudication": {
+      "state": "ABSENT"
+    },
+    "visual_claim_authority": {
+      "state": "ABSENT"
+    }
+  },
+  "original_source_fact_attempt": {
+    "state": "FAILED",
+    "reason_code": "CPA_TEXT_REVIEW_INVALID",
+    "receipt_repo_path": "assets/lidousha/deterministic_text_surface_resolutions/auto_230125_1157_1229.failed-source-fact.v1.json",
+    "receipt_file_sha256": "sha256:74cfd6dc59d0b58b82e30de91a16c4c074a93c430783f5cceadb0d6a9755e067",
+    "receipt_sha256": "sha256:cb372aaab107a2c7f4f73a432bbb9b75512b78f878192c02e709c79c6c8a7585",
+    "request_sha256": "sha256:a05af8348e4cb2be5224230915886c88ef0199c74e1edd68db2890627eeaa47a",
+    "response_sha256": "sha256:61efe6154fcb068377b14c712c7563f90e533e124c04e6ba5bd35973c51f1dc4",
+    "failed_publish_snapshot": {
+      "logical_id": "vtuber-reproduce/run/20260811-6b160bf-fastlane3/solo/failed-publish.json",
+      "sha256": "sha256:6c6222987371babeaea15a1205c4ba2eb9ab0428cb643f869c9af3827097d9bc"
+    },
+    "retry_rule": "transport_failure_without_provider_response_bytes_only",
+    "later_keep_authority": "NON_AUTHORITATIVE"
+  },
+  "old_surfaces": {
+    "title": {
+      "value": "【李豆沙】弹幕问有没有跳《夜蝶》的对象，小李公主抱xxsk后反问“那你要负责吗”，被奶P赖上了",
+      "utf8_byte_length": 131,
+      "sha256": "sha256:58aa4914a0f99046429840516e52673c072aa9c7d074098e3f61f5c75b95cad0"
+    },
+    "hook": {
+      "value": "弹幕问有没有跳《夜蝶》的对象，小李讲自己公主抱xxsk后被对方一句‘你给了我你的第一次’钓到，立刻反问‘那你要负责吗’并成功截图赖上。",
+      "utf8_byte_length": 193,
+      "sha256": "sha256:1c498c539326ae86eba4be913a99c73b208e054db110d1b046dbeaef7b6f8262"
+    },
+    "combined_sha256": "sha256:ad6efaa95c1bcfbcbfac5b9cdc63c20dd62a5fe51bcfb3d76e01165169c0db88"
+  },
+  "exact_surface_resolution": {
+    "state": "VALID",
+    "publication_fact_authority": "RESOLVED_EXACT_SURFACE",
+    "title": {
+      "value": "【李豆沙】被问有没有跳《夜蝶》的对象，xxsk说“你给了我你的第一次”，李豆沙接着问“那你要负责吗”",
+      "utf8_byte_length": 142,
+      "unicode_codepoint_length": 50,
+      "current_global_policy_violations": [
+        "publish_title_length_out_of_bounds"
+      ],
+      "current_global_policy_disposition": "candidate_scoped_exact_surface_exception_required",
+      "sha256": "sha256:97bf7997892126ce9dfeed7d5e98a047a91b570513d6ad47c05fb7285afa9951"
+    },
+    "hook": {
+      "value": "李豆沙被问有没有跳《夜蝶》的对象后，讲到自己对xxsk说“我好容易就能抱起你”，又说“我确实这是我第一次这样抱别人”；xxsk说“你给了我你的第一次”，李豆沙接着问“那你要负责吗”，随后说“那我已经截图了”。",
+      "utf8_byte_length": 296,
+      "sha256": "sha256:c6b71718c9651c63ff97efbb1cfb341b7f3ddaec4222f1bad736b2ac58f844c6"
+    },
+    "combined_sha256": "sha256:1204e6b99d3c12f1cacbd111c3984bc84f146ff4ad24f764e9a84e4e321f1348"
+  },
+  "closed_surface_plan": {
+    "schema_version": "closed-reviewed-text-surface-plan.v1",
+    "title_nodes": [
+      {
+        "node_type": "channel_prefix",
+        "channel_id": "lidousha"
+      },
+      {
+        "node_type": "reviewed_question",
+        "cue_index": 1,
+        "form": "title_passive"
+      },
+      {
+        "node_type": "reported_utterance",
+        "context_cue_index": 15,
+        "utterance_cue_index": 16,
+        "speaker": "entity",
+        "speech_act": "say",
+        "order": "after_question"
+      },
+      {
+        "node_type": "reported_utterance",
+        "context_cue_index": 17,
+        "utterance_cue_index": 18,
+        "speaker": "host",
+        "speech_act": "ask",
+        "order": "next"
+      }
+    ],
+    "hook_nodes": [
+      {
+        "node_type": "reviewed_question",
+        "cue_index": 1,
+        "form": "hook_postposed"
+      },
+      {
+        "node_type": "addressed_utterance",
+        "address_cue_index": 4,
+        "utterance_cue_index": 6,
+        "speaker": "host",
+        "addressee": "entity",
+        "order": "after_question"
+      },
+      {
+        "node_type": "reported_utterance",
+        "context_cue_index": 11,
+        "utterance_cue_index": 12,
+        "speaker": "host",
+        "speech_act": "say",
+        "order": "also"
+      },
+      {
+        "node_type": "reported_utterance",
+        "context_cue_index": 15,
+        "utterance_cue_index": 16,
+        "speaker": "entity",
+        "speech_act": "say",
+        "order": "next"
+      },
+      {
+        "node_type": "reported_utterance",
+        "context_cue_index": 17,
+        "utterance_cue_index": 18,
+        "speaker": "host",
+        "speech_act": "ask",
+        "order": "next"
+      },
+      {
+        "node_type": "reported_utterance",
+        "context_cue_index": 29,
+        "utterance_cue_index": 30,
+        "speaker": "host",
+        "speech_act": "say",
+        "order": "subsequently"
+      }
+    ]
+  },
+  "policy_bundle": {
+    "schema_version": "deterministic-text-narrowing-policy.v1",
+    "candidate_scope": "auto_230125_1157_1229",
+    "allowed_node_types": [
+      "addressed_utterance",
+      "channel_prefix",
+      "reported_utterance",
+      "reviewed_question"
+    ],
+    "forbidden_node_capabilities": [
+      "causal_result",
+      "free_form_factual_literal",
+      "participant_bound_unresolved_role",
+      "unsupported_actor_or_addressee",
+      "visual_action"
+    ],
+    "surface_encoding": "utf-8-nfc-no-bom-no-surrounding-whitespace-no-trailing-newline",
+    "provider_replay": "never_after_response_bytes",
+    "provider_retry": "transport_failure_without_provider_response_bytes_only",
+    "identity_excludes": [
+      "absolute_path",
+      "hostname",
+      "inode",
+      "mount_point",
+      "mtime",
+      "wsl_identifier"
+    ],
+    "consultation": {
+      "thread_id": "6a7bd35c-3980-83ea-99b5-542a40d50cfa",
+      "visible_mode": "Pro",
+      "prompt_sha256": "sha256:99afa279a73f1e692468d7107e43e308afcbc9f0f3f0756dfc431d5a5d7c86a6",
+      "response_sha256": "sha256:5f86abef13add311336f4583e4d635f735d4d3919df77ff9eb80ad4aca984956"
+    }
+  },
+  "policy_sha256": "sha256:b76ee9b457d6ddfb42f4d0ed5cfcb4123265d7262f8ea01770fe13119d7f574f",
+  "authority_sha256": "sha256:9e16a30613da1041dcd5f4ceff0bc85929abffc105631447d4b6c7a400eb588b"
+}

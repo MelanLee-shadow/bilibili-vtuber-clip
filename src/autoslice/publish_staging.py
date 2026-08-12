@@ -82,13 +82,13 @@ from .cover_punch_semantics import (
     talk_cover_thumbnail_gate_violations,
     validate_full_text_cover_contract,
 )
-from .addressee_attribution import build_addressee_evidence
 from .llm_client import LlmCall, extract_json_object
 from .manual_title_repair_authority import (
     ManualTitleRepairAuthorityError,
     load_manual_title_repair_authority,
     validate_manual_title_repair_authority,
 )
+from .manual_title_keep_authority import PASS_DECISION as MANUAL_TITLE_KEEP_PASS_DECISION
 from .review_evidence import SourceCue
 from .recovery_title_authority import (
     RecoveryTitleAuthorityError,
@@ -96,10 +96,11 @@ from .recovery_title_authority import (
 )
 from .shadow_review import _sha256, _write_json_file
 from .source_fact_review import (
+    DETERMINISTIC_TEXT_NARROWING_PASS_DECISION,
     authorize_manual_title_repair,
-    review_and_repair_source_facts,
     source_fact_review_passes,
 )
+from .source_fact_staging import resolve_initial_source_fact_review
 from .source_fact_rescore_provenance import publish_staging_provenance_fields
 from .story_contract import cover_relation_prompt, cover_story_contract_binding
 from .title_policy import (
@@ -527,47 +528,28 @@ def _stage_publish_draft(
         else "talk"
     )
     staged_title = canonicalize_publish_title(staged_title, lane=explicit_lane)
-    source_fact_review = None
     manual_title_repair_authority_consumption = None
-    if title_authority_error is None and source_fact_llm_call is not None:
-        # F12 受话人归属：一次读取并冻结 plain transcript、speaker transcript
-        # 与其完整 raw-SRT/manifest/alignment provenance。Present-but-invalid
-        # speaker evidence raises before the provider call and must never fall
-        # back to the uniform-host/unverifiable lane.
-        final_transcript, speaker_evidence_result = build_addressee_evidence(record, cues)
-        speaker_transcript = speaker_evidence_result.transcript
-        context_prompt = (
-            str(story_contract.get("clip_context_prompt") or "")
-            if isinstance(story_contract, Mapping)
-            else ""
-        )
-        source_fact_review = review_and_repair_source_facts(
-            selection_hook=str(selection_hook or ""),
-            title=staged_title,
-            final_transcript=final_transcript,
-            clip_context_prompt=context_prompt,
-            speaker_transcript=speaker_transcript,
-            speaker_evidence=speaker_evidence_result.speaker_evidence,
-            llm_call=source_fact_llm_call,
-            selection_scorecard=(
-                story_contract.get("selection_scorecard")
-                if isinstance(story_contract, Mapping)
-                else None
-            ),
-            # Recovery-public and Ivan/manual titles are exact authorities.
-            # CPA may KEEP them, but a proposed title rewrite needs a new
-            # authority instead of silently spending cover budget on it.
-            title_repair_allowed=not (
-                normalized_recovery_publication_authority is not None
-                or title_authority_status == "RESOLVED_MANUAL"
-                or title_source == "ivan_manual_override"
-            ),
-            enforce_automatic_title_style=title_llm_call is not None,
-            candidate_id=candidate_id,
-            final_reviewed_srt_path=(
-                Path(str(record["subtitle_path"])) if record.get("subtitle_path") else None
-            ),
-        )
+    source_fact = resolve_initial_source_fact_review(
+        candidate_id=candidate_id,
+        title_source=title_source,
+        title=staged_title,
+        selection_hook=str(selection_hook or ""),
+        story_contract=story_contract,
+        record=record,
+        cues=cues,
+        source_fact_llm_call=source_fact_llm_call,
+        recovery_publication_authority=normalized_recovery_publication_authority,
+        title_authority_status=title_authority_status,
+        title_llm_enabled=title_llm_call is not None,
+        prior_authority_error=title_authority_error,
+    )
+    source_fact_review = source_fact.review
+    manual_title_keep_authority_consumption = source_fact.manual_title_keep_consumption
+    if source_fact.violation is not None:
+        title_policy_violations.append(source_fact.violation)
+    title_authority_error = source_fact.authority_error
+    title_authority_status = source_fact.authority_status
+    if source_fact_review is not None:
         # Manual text remains immutable by default.  A checked-in authority
         # may unlock exactly one already-evidenced source-fact repair, bound
         # to its candidate, blocked CPA receipt, original surfaces, and exact
@@ -614,13 +596,19 @@ def _stage_publish_draft(
                 # error is surfaced through its ordinary authority receipt.
                 manual_title_repair_authority_consumption = None
         if not source_fact_review_passes(source_fact_review):
-            reason = str(
-                source_fact_review.get("reason_code")
-                or source_fact_review.get("decision")
-                or "unknown"
+            reason = (
+                str(
+                    source_fact_review.get("reason_code")
+                    or source_fact_review.get("decision")
+                    or "unknown"
+                )
+                if isinstance(source_fact_review, Mapping)
+                else "MANUAL_TITLE_KEEP_AUTHORITY_INVALID"
             )
-            title_policy_violations.append("source_fact_review_failed")
-            title_authority_error = "source_fact_review_failed:" + reason
+            if "source_fact_review_failed" not in title_policy_violations:
+                title_policy_violations.append("source_fact_review_failed")
+            if title_authority_error is None:
+                title_authority_error = "source_fact_review_failed:" + reason
             title_authority_status = "BLOCKED_SOURCE_FACT_REVIEW"
         else:
             reviewed_hook = str(source_fact_review["final_selection_hook"])
@@ -663,6 +651,13 @@ def _stage_publish_draft(
                         if manual_title_repair_authority_consumption is not None
                         else "RESOLVED_CPA_SOURCE_FACT_REPAIR"
                     )
+                elif source_fact_review.get("decision") == MANUAL_TITLE_KEEP_PASS_DECISION:
+                    title_authority_status = MANUAL_TITLE_KEEP_PASS_DECISION
+                elif (
+                    source_fact_review.get("decision") == DETERMINISTIC_TEXT_NARROWING_PASS_DECISION
+                ):
+                    title_source += "+deterministic_text_narrowing"
+                    title_authority_status = "RESOLVED_DETERMINISTIC_TEXT_NARROWING"
     title_gate = evaluate_candidate_title_gates(
         candidate_id=candidate_id,
         title=staged_title,
@@ -672,6 +667,9 @@ def _stage_publish_draft(
         prior_authority_error=title_authority_error,
         prior_authority_status=title_authority_status,
         story_contract=story_contract if isinstance(story_contract, Mapping) else None,
+        source_fact_review=(
+            source_fact_review if isinstance(source_fact_review, Mapping) else None
+        ),
     )
     title_policy_violations = list(title_gate.violations)
     title_authority_error = title_gate.authority_error
@@ -900,6 +898,7 @@ def _stage_publish_draft(
         "cover_entity_projection_audit": cover_entity_projection_audit,
         "source_fact_review": source_fact_review,
         "manual_title_repair_authority_consumption": manual_title_repair_authority_consumption,
+        "manual_title_keep_authority_consumption": manual_title_keep_authority_consumption,
         "video_path": str(media_path),
         "cover_text": cover_text,
         "cover_path": cover_path_value,
@@ -928,6 +927,7 @@ def _stage_publish_draft(
         "cover_entity_projection_audit": cover_entity_projection_audit,
         "source_fact_review": source_fact_review,
         "manual_title_repair_authority_consumption": manual_title_repair_authority_consumption,
+        "manual_title_keep_authority_consumption": manual_title_keep_authority_consumption,
         "cover_status": cover_status,
         "cover_path": cover_path_value,
         "cover_text": cover_text,

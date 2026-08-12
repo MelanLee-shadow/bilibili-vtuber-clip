@@ -78,6 +78,7 @@ _BASELINE_MANIFEST_REQUIRED_FIELDS = {
 }
 _BASELINE_MANIFEST_OPTIONAL_FIELDS = {
     "operator_text_full_ownership",
+    "operator_reviewed_exact_source_interval",
     "terminal_projection_mode",
     "truth_full_ownership",
 }
@@ -145,9 +146,7 @@ class FrozenCandidateEntityProjection:
 
         self._identity(entity_id)
         if surface_type not in SURFACE_TYPES:
-            raise CandidateEntityProjectionError(
-                f"SURFACE_TYPE_UNKNOWN:{surface_type}"
-            )
+            raise CandidateEntityProjectionError(f"SURFACE_TYPE_UNKNOWN:{surface_type}")
         if surface_type == "mention":
             if cue_index is None or mention_id is None:
                 raise CandidateEntityProjectionError("MENTION_SCOPE_REQUIRED")
@@ -213,9 +212,7 @@ class FrozenCandidateEntityProjection:
         """
 
         if surface_type not in _SINGLETON_SURFACE_TYPES:
-            raise CandidateEntityProjectionError(
-                f"TEXT_SURFACE_TYPE_UNSUPPORTED:{surface_type}"
-            )
+            raise CandidateEntityProjectionError(f"TEXT_SURFACE_TYPE_UNSUPPORTED:{surface_type}")
         if not isinstance(text, str) or not text:
             raise CandidateEntityProjectionError("PROJECTED_TEXT_REQUIRED")
         for identity in self.identity_equivalences:
@@ -314,9 +311,7 @@ def _canonical_document_sha256(document: Mapping[str, object]) -> str:
 
 def _surface_spans(text: str, surface: str) -> tuple[tuple[int, int], ...]:
     if surface.isascii() and all(character.isalnum() or character == "_" for character in surface):
-        pattern = re.compile(
-            rf"(?<![A-Za-z0-9_]){re.escape(surface)}(?![A-Za-z0-9_])"
-        )
+        pattern = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(surface)}(?![A-Za-z0-9_])")
         return tuple((match.start(), match.end()) for match in pattern.finditer(text))
     spans: list[tuple[int, int]] = []
     start = 0
@@ -344,9 +339,7 @@ def load_candidate_entity_projection(
     expected_projection_name = f"{candidate_id}.entity-projection.v1.json"
     expected_srt_name = f"{candidate_id}.reviewed.srt"
     if projection_path.name != expected_projection_name:
-        raise CandidateEntityProjectionError(
-            "ENTITY_PROJECTION_FILENAME_CANDIDATE_MISMATCH"
-        )
+        raise CandidateEntityProjectionError("ENTITY_PROJECTION_FILENAME_CANDIDATE_MISMATCH")
     if reviewed_srt_path.name != expected_srt_name:
         raise CandidateEntityProjectionError(
             "ENTITY_PROJECTION_REVIEWED_SRT_FILENAME_CANDIDATE_MISMATCH"
@@ -363,9 +356,7 @@ def load_candidate_entity_projection(
     try:
         document = json.loads(projection_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise CandidateEntityProjectionError(
-            "ENTITY_PROJECTION_DOCUMENT_INVALID"
-        ) from exc
+        raise CandidateEntityProjectionError("ENTITY_PROJECTION_DOCUMENT_INVALID") from exc
     if not isinstance(document, Mapping):
         raise CandidateEntityProjectionError("ENTITY_PROJECTION_DOCUMENT_INVALID")
 
@@ -374,52 +365,34 @@ def load_candidate_entity_projection(
     try:
         manifest_document = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise CandidateEntityProjectionError(
-            "ENTITY_PROJECTION_BASELINE_MANIFEST_INVALID"
-        ) from exc
+        raise CandidateEntityProjectionError("ENTITY_PROJECTION_BASELINE_MANIFEST_INVALID") from exc
     if not isinstance(manifest_document, Mapping):
-        raise CandidateEntityProjectionError(
-            "ENTITY_PROJECTION_BASELINE_MANIFEST_INVALID"
-        )
+        raise CandidateEntityProjectionError("ENTITY_PROJECTION_BASELINE_MANIFEST_INVALID")
     manifest_fields = set(manifest_document)
     if (
         not _BASELINE_MANIFEST_REQUIRED_FIELDS.issubset(manifest_fields)
-        or manifest_fields
-        - _BASELINE_MANIFEST_REQUIRED_FIELDS
-        - _BASELINE_MANIFEST_OPTIONAL_FIELDS
+        or manifest_fields - _BASELINE_MANIFEST_REQUIRED_FIELDS - _BASELINE_MANIFEST_OPTIONAL_FIELDS
     ):
-        raise CandidateEntityProjectionError(
-            "ENTITY_PROJECTION_BASELINE_MANIFEST_FIELDS_INVALID"
-        )
+        raise CandidateEntityProjectionError("ENTITY_PROJECTION_BASELINE_MANIFEST_FIELDS_INVALID")
     if (
         manifest_document.get("schema_version") != "subtitle-redelivery-baseline.v2"
         or manifest_document.get("exact_interval_replay") is not True
     ):
-        raise CandidateEntityProjectionError(
-            "ENTITY_PROJECTION_BASELINE_MANIFEST_NOT_EXACT_V2"
-        )
+        raise CandidateEntityProjectionError("ENTITY_PROJECTION_BASELINE_MANIFEST_NOT_EXACT_V2")
     try:
         reviewed = load_candidate_reviewed_subtitle_baseline(
             baseline_root,
             candidate_id,
         )
     except ReviewedSubtitleBaselineRegistryError as exc:
-        raise CandidateEntityProjectionError(
-            "ENTITY_PROJECTION_BASELINE_MANIFEST_INVALID"
-        ) from exc
+        raise CandidateEntityProjectionError("ENTITY_PROJECTION_BASELINE_MANIFEST_INVALID") from exc
     if reviewed is None:
-        raise CandidateEntityProjectionError(
-            "ENTITY_PROJECTION_BASELINE_MANIFEST_UNAVAILABLE"
-        )
+        raise CandidateEntityProjectionError("ENTITY_PROJECTION_BASELINE_MANIFEST_UNAVAILABLE")
     if reviewed.baseline_path != reviewed_srt_path.resolve():
-        raise CandidateEntityProjectionError(
-            "ENTITY_PROJECTION_BASELINE_SRT_PATH_MISMATCH"
-        )
+        raise CandidateEntityProjectionError("ENTITY_PROJECTION_BASELINE_SRT_PATH_MISMATCH")
 
     reviewed_sha256 = str(reviewed.config.get("sha256") or "")
-    source_recording_basename = str(
-        reviewed.config.get("source_recording_basename") or ""
-    )
+    source_recording_basename = str(reviewed.config.get("source_recording_basename") or "")
     source_sha256 = str(reviewed.config.get("source_sha256") or "")
     absolute_source_start_ms = reviewed.config.get("absolute_source_start_ms")
     absolute_source_end_ms = reviewed.config.get("absolute_source_end_ms")
@@ -472,9 +445,7 @@ def freeze_candidate_entity_projection(
     )
     if not isinstance(candidate_id, str) or not _CANDIDATE_ID_RX.fullmatch(candidate_id):
         raise _schema_error("CANDIDATE_ID")
-    if not isinstance(reviewed_srt_sha256, str) or not _SHA256_RX.fullmatch(
-        reviewed_srt_sha256
-    ):
+    if not isinstance(reviewed_srt_sha256, str) or not _SHA256_RX.fullmatch(reviewed_srt_sha256):
         raise _schema_error("REVIEWED_SRT_SHA256")
     if candidate_id != expected_candidate_id:
         raise CandidateEntityProjectionError(
@@ -506,8 +477,7 @@ def freeze_candidate_entity_projection(
     )
     if source_sha256 != expected_source_hash:
         raise CandidateEntityProjectionError(
-            "SOURCE_SHA256_BINDING_MISMATCH:"
-            f"expected={expected_source_hash}:actual={source_sha256}"
+            f"SOURCE_SHA256_BINDING_MISMATCH:expected={expected_source_hash}:actual={source_sha256}"
         )
     expected_source_start_ms, expected_source_end_ms = _clean_interval(
         expected_absolute_source_start_ms,
@@ -600,16 +570,9 @@ def freeze_candidate_entity_projection(
         if surface_type == "mention":
             cue_index = row.get("cue_index")  # type: ignore[assignment]
             mention_id = row.get("mention_id")  # type: ignore[assignment]
-            if (
-                isinstance(cue_index, bool)
-                or not isinstance(cue_index, int)
-                or cue_index <= 0
-            ):
+            if isinstance(cue_index, bool) or not isinstance(cue_index, int) or cue_index <= 0:
                 raise _schema_error(f"PROJECTION_{index}_CUE_INDEX")
-            if (
-                not isinstance(mention_id, str)
-                or not re.fullmatch(r"m[1-9][0-9]*", mention_id)
-            ):
+            if not isinstance(mention_id, str) or not re.fullmatch(r"m[1-9][0-9]*", mention_id):
                 raise _schema_error(f"PROJECTION_{index}_MENTION_ID")
             mention_key = (entity_id, cue_index, mention_id)
             if mention_key in mention_keys:
@@ -637,7 +600,10 @@ def freeze_candidate_entity_projection(
             raise _schema_error(
                 f"ENTITY_SURFACE_TYPES_MISSING:{entity_id}:{','.join(sorted(missing))}"
             )
-        if any((entity_id, surface_type) not in singleton_keys for surface_type in _SINGLETON_SURFACE_TYPES):
+        if any(
+            (entity_id, surface_type) not in singleton_keys
+            for surface_type in _SINGLETON_SURFACE_TYPES
+        ):
             raise _schema_error(f"ENTITY_SINGLETON_SURFACE_MISSING:{entity_id}")
 
     return FrozenCandidateEntityProjection(

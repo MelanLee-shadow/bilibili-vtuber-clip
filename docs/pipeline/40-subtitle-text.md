@@ -18,6 +18,14 @@
 | 9 | `exact_delivery_correction_audit` | `producer_boundary_review_stage.py`、`boundary_semantic_review.py` | 从实际交付 SRT 重新解析 delivery-local grid，借 hash-bound source separation witness 复审并签发 `review_scope=final_delivery` 回执 |
 | 10 | `_run_exact_final_release_review` / `_run_exact_final_review_gate` | `final_review_auditor.py`、`final_review_contract.py`、`producer_package_finalization.py` | 对 materialize 后的**精确最终 SRT raw bytes**重新发现问题，签发并按原始字节 SHA 校验 `final-review-audit.v2` |
 
+候选具备有效 `operator-reviewed-exact-source-interval.v1` 时，第 7–9 阶段使用同一独占分支：
+第 7 阶段不把 fresh ASR grid 送给 frozen/live reviewer，而在 canonical reviewed SRT source
+timeline 上重放已绑定的 semantic verdict；第 8 阶段直接物化 authority 的半开 source interval，
+并恢复其 52-cue reviewed SRT 与独立 speaker segments；第 9 阶段仍从 materialize 后的最终 SRT
+重算 delivery grid/source witness。final exact review 与其余确定性字幕/说话人/包审计门不跳过。
+任一精确 authority 失败都在本候选内 fail closed，不得把 disposable ASR 文字、closure cue
+近似匹配或另一轮随机好网格提升为人工真值。
+
 语义修复引擎（专名/方言/语境不合适度）的设计与规则见
 [41-semantic-repair.md](41-semantic-repair.md)——那是本步的核心子权威。
 

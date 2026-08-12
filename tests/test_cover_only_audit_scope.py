@@ -7,6 +7,7 @@ import pytest
 
 from scripts import audit_lidousha_review_package as package_audit
 from src.autoslice import cover_only_audit_scope as scope_mod
+from src.autoslice import review_package_source_fact_audit as source_fact_audit
 from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
@@ -208,16 +209,14 @@ def test_scope_rejects_tag_set_drift(tmp_path, monkeypatch):
         )
 
 
-def test_canonical_source_fact_missing_accepts_only_valid_scope(
-    tmp_path, monkeypatch
-):
+def test_canonical_source_fact_missing_accepts_only_valid_scope(tmp_path, monkeypatch):
     scope_path = tmp_path / "scope.json"
     scope_path.write_text('{"fixture": true}\n', encoding="utf-8")
     publish_path = tmp_path / "clip.publish.json"
     publish_path.write_text("{}\n", encoding="utf-8")
     issues: list[dict] = []
     monkeypatch.setattr(
-        package_audit,
+        source_fact_audit,
         "validate_cover_only_audit_scope",
         lambda *_args, **_kwargs: {},
     )
@@ -243,14 +242,10 @@ def test_canonical_source_fact_missing_accepts_only_valid_scope(
         story_contract_required=True,
         is_song=False,
     )
-    assert "SOURCE_FACT_REVIEW_MISSING" not in {
-        row["code"] for row in issues
-    }
+    assert "SOURCE_FACT_REVIEW_MISSING" not in {row["code"] for row in issues}
 
 
-def test_canonical_source_fact_scope_cannot_read_external_absolute_path(
-    tmp_path, monkeypatch
-):
+def test_canonical_source_fact_scope_cannot_read_external_absolute_path(tmp_path, monkeypatch):
     package_root = tmp_path / "package"
     package_root.mkdir()
     external_scope = tmp_path / "external-scope.json"
@@ -259,7 +254,7 @@ def test_canonical_source_fact_scope_cannot_read_external_absolute_path(
     publish_path.write_text("{}\n", encoding="utf-8")
     issues: list[dict] = []
     monkeypatch.setattr(
-        package_audit,
+        source_fact_audit,
         "validate_cover_only_audit_scope",
         lambda *_args, **_kwargs: pytest.fail("external scope must not be validated"),
     )
@@ -290,14 +285,10 @@ def test_canonical_source_fact_scope_cannot_read_external_absolute_path(
     assert "COVER_ONLY_AUDIT_SCOPE_INVALID" in {row["code"] for row in issues}
 
 
-def test_canonical_scope_cannot_override_present_invalid_receipt(
-    tmp_path, monkeypatch
-):
+def test_canonical_scope_cannot_override_present_invalid_receipt(tmp_path, monkeypatch):
     receipt = {"status": "bad"}
     publish_path = tmp_path / "clip.publish.json"
-    publish_path.write_text(
-        json.dumps({"source_fact_review": receipt}), encoding="utf-8"
-    )
+    publish_path.write_text(json.dumps({"source_fact_review": receipt}), encoding="utf-8")
     issues: list[dict] = []
     scope_called = False
 
@@ -305,12 +296,8 @@ def test_canonical_scope_cannot_override_present_invalid_receipt(
         nonlocal scope_called
         scope_called = True
 
-    monkeypatch.setattr(
-        package_audit, "validate_cover_only_audit_scope", should_not_call
-    )
-    monkeypatch.setattr(
-        package_audit, "validate_source_fact_review", lambda *_a, **_k: False
-    )
+    monkeypatch.setattr(source_fact_audit, "validate_cover_only_audit_scope", should_not_call)
+    monkeypatch.setattr(source_fact_audit, "validate_source_fact_review", lambda *_a, **_k: False)
     package_audit._audit_item_story_contract(
         root=tmp_path,
         manifest={},

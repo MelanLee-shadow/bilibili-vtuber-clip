@@ -11,6 +11,11 @@
   "source_sha256": "66e9ec0707fe8d7f38cf8a552e863dafbba34fb7eadaece496adb30d04b1ad1e",
   "absolute_source_start_ms": 577780,
   "absolute_source_end_ms": 735090,
+  "operator_reviewed_exact_source_interval": {
+    "schema_version": "operator-reviewed-exact-source-interval-ref.v1",
+    "path": "assets/lidousha/reviewed_exact_source_intervals/auto_223750_578_734.reviewed-exact-source-interval.v1.json",
+    "sha256": "eec5be966fda493415e371dfce5a67d26ba364810125ea7c584f7b392d78590d"
+  },
   "truth_full_ownership": {
     "schema_version": "truth-full-ownership-pin.v1",
     "authority": "Ivan 2026-08-11 whole-SRT review: 完整故事那个切片我做了一些修改，主要是说话人不对，以及专名问题；其他没有提到的地方说明字幕是正确的。",

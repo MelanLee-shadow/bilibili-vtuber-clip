@@ -1,0 +1,160 @@
+{
+  "decision": "NONE",
+  "entity_context": {
+    "authority_scope": "IDENTITY_AND_SPELLING_ONLY_NO_EVENT_FACT_AUTHORITY",
+    "candidate_binding": {
+      "absolute_source_end_ms": 1229510,
+      "absolute_source_start_ms": 1157280,
+      "source_recording_basename": "22966160_20260808-23-01-25.mp4",
+      "source_sha256": "6cf042681885d18ac4e3abb9548fe8ac3033f8b2e3365c44b6748fd3e4a324a3"
+    },
+    "candidate_id": "auto_230125_1157_1229",
+    "context_sha256": "sha256:ff2c48eb2942f7de50ad537f161e9bdf9008b312683f763266f000eecfc874a5",
+    "final_reviewed_srt_sha256": "c29cc5aed6b52cca7618a88b083b9b46e86320db5595bcaa5a4ef4c57499ca7b",
+    "identity_spelling_rules": [
+      {
+        "entity_id": "ent_1ac8510680754aad873f02ba79444e02",
+        "identity_equivalent_surfaces": [
+          "星汐Seki",
+          "星汐",
+          "xxsk"
+        ],
+        "reviewed_surface": "xxsk",
+        "title_cover_surface": "xxsk"
+      }
+    ],
+    "projection_sha256": "1cb31ffffe00e26cee9407a34f7267bd05f25f39081d0667ee0065e2fe9e6acd",
+    "schema_version": "source-fact-entity-context.v1"
+  },
+  "final_selection_hook": "弹幕问有没有跳《夜蝶》的对象，小李讲自己公主抱xxsk后被对方一句‘你给了我你的第一次’钓到，立刻反问‘那你要负责吗’并成功截图赖上。",
+  "final_title": "【李豆沙】弹幕问有没有跳《夜蝶》的对象，小李公主抱xxsk后反问“那你要负责吗”，被奶P赖上了",
+  "original_selection_hook": "弹幕问有没有跳《夜蝶》的对象，小李讲自己公主抱xxsk后被对方一句‘你给了我你的第一次’钓到，立刻反问‘那你要负责吗’并成功截图赖上。",
+  "original_title": "【李豆沙】弹幕问有没有跳《夜蝶》的对象，小李公主抱xxsk后反问“那你要负责吗”，被奶P赖上了",
+  "passes": [
+    {
+      "addressee_attribution": [
+        {
+          "actual_addressee": "无法确认",
+          "actual_speaker": "叙述文本标为xxsk，但无可信说话人标签可独立核验",
+          "assertion": "xxsk说“你给了我你的第一次”",
+          "evidence": [
+            "final_transcript: 然后xxsk就说：啊 / 你给了我你的第一次"
+          ],
+          "reason": "字幕记录了叙述中的发言归属，但第二人称“你”的实际受话人没有说话人标签或受话人权威，因此只能判为不可核验。",
+          "verdict": "UNVERIFIABLE"
+        },
+        {
+          "actual_addressee": "无法确认",
+          "actual_speaker": "叙述文本使用“我说”，文案概括为小李，但无可信说话人标签可独立核验",
+          "assertion": "小李随即反问“那你要负责吗”",
+          "evidence": [
+            "final_transcript: 我说对啊 / 那你要负责吗"
+          ],
+          "reason": "原话及其顺序存在，但“你”具体指向谁没有受话人归属权威。",
+          "verdict": "UNVERIFIABLE"
+        },
+        {
+          "actual_addressee": "无法确认",
+          "actual_speaker": "叙述文本使用“我说”，文案概括为小李，但无可信说话人标签可独立核验",
+          "assertion": "小李抱起xxsk后反问“那你要负责吗”",
+          "evidence": [
+            "final_transcript: 我好容易就能抱起你",
+            "final_transcript: 我说对啊 / 那你要负责吗"
+          ],
+          "reason": "标题将反问置于与xxsk互动的上下文中，但无标签转写不能权威确认该问句的实际受话人。",
+          "verdict": "UNVERIFIABLE"
+        }
+      ],
+      "addressee_attribution_mode": "unverifiable_no_speaker_transcript",
+      "changed_surfaces": [
+        {
+          "after": "弹幕问有没有跳《夜蝶》的对象，小李讲自己抱起xxsk后，xxsk说“你给了我你的第一次”，小李随即反问“那你要负责吗”，还称自己已经截图；xxsk随后说“被奶P赖上了”。",
+          "artifact": "selection_hook",
+          "before": "弹幕问有没有跳《夜蝶》的对象，小李讲自己公主抱xxsk后被对方一句‘你给了我你的第一次’钓到，立刻反问‘那你要负责吗’并成功截图赖上。",
+          "evidence": [
+            "structured_chat: 主播有没有跳夜蝶的对象",
+            "final_transcript: 我好容易就能抱起你",
+            "final_transcript: 我确实这是我第一次这样抱别人",
+            "final_transcript: 然后xxsk就说：啊 / 你给了我你的第一次",
+            "final_transcript: 我说对啊 / 那你要负责吗",
+            "final_transcript: 那我已经截图了",
+            "final_transcript: 然后她就说，嗯 / 被奶P赖上了"
+          ],
+          "reason": "“公主抱”将有证据的抱起动作升级为未经支持的具体抱法；“钓到”增加了对方主动设钩及其效果的因果解释；“成功截图赖上”又把截图陈述和“被奶P赖上了”的后续原话合并成含混的既成结果。修复为字幕明确支持的连续对话与动作。"
+        },
+        {
+          "after": "【李豆沙】弹幕问有没有跳《夜蝶》的对象，小李抱起xxsk后反问“那你要负责吗”并称已截图",
+          "artifact": "title",
+          "before": "【李豆沙】弹幕问有没有跳《夜蝶》的对象，小李公主抱xxsk后反问“那你要负责吗”，被奶P赖上了",
+          "evidence": [
+            "structured_chat: 主播有没有跳夜蝶的对象",
+            "final_transcript: 我好容易就能抱起你",
+            "final_transcript: 这是我第一次这样抱别人",
+            "final_transcript: 我说对啊 / 那你要负责吗",
+            "final_transcript: 那我已经截图了",
+            "final_transcript: 然后她就说，嗯 / 被奶P赖上了"
+          ],
+          "reason": "“公主抱”缺少具体抱法证据；句末“被奶P赖上了”在当前语法中容易落到“小李”身上，但来源只是xxsk随后说出的原话，不能据此把被赖上的角色直接安到小李。改为明确受支持的抱起、反问和截图事实，并保留频道前缀。"
+        }
+      ],
+      "clip_context_prompt_sha256": "sha256:9444ce2aba45614b554f435fd70b2d2aa3f21e7f1f671e1fd15170e0ee33e0a3",
+      "entity_context_sha256": "sha256:ff2c48eb2942f7de50ad537f161e9bdf9008b312683f763266f000eecfc874a5",
+      "final_selection_hook": "弹幕问有没有跳《夜蝶》的对象，小李讲自己抱起xxsk后，xxsk说“你给了我你的第一次”，小李随即反问“那你要负责吗”，还称自己已经截图；xxsk随后说“被奶P赖上了”。",
+      "final_title": "【李豆沙】弹幕问有没有跳《夜蝶》的对象，小李抱起xxsk后反问“那你要负责吗”并称已截图",
+      "final_transcript_sha256": "sha256:62dfad49e4284fa6d866f4b1a0ea38e23255a4af93ba0307e29241e8f96aa047",
+      "reason_code": "CPA_TEXT_REVIEW_INVALID",
+      "request_sha256": "sha256:a05af8348e4cb2be5224230915886c88ef0199c74e1edd68db2890627eeaa47a",
+      "response_sha256": "sha256:61efe6154fcb068377b14c712c7563f90e533e124c04e6ba5bd35973c51f1dc4",
+      "review_pass": 1,
+      "schema_version": "lidousha-source-fact-review.v1",
+      "selection_hook_sha256": "sha256:1c498c539326ae86eba4be913a99c73b208e054db110d1b046dbeaef7b6f8262",
+      "selection_scorecard_review": {
+        "reason": "修复仅将未经支持的具体抱法降为字幕明确的“抱起”，并把“钓到”和“成功截图赖上”的因果化表达还原为连续对话。弹幕触发、抱人、“第一次—负责—截图—赖上”的关系互动链及笑点收束均未改变，原tier_basis、维度和证据cue仍对应同一核心梗。",
+        "status": "COMPATIBLE"
+      },
+      "selection_scorecard_sha256": "sha256:3a113c13988f72dfafdbe0a2dcc81ab16fd4cbb948fdd194d328d8e63f266685",
+      "speaker_evidence_sha256": "sha256:7ad0672052878d79d0ad5f24e41ee57a6a8c401596b8954beb078ca45b39c989",
+      "speaker_transcript_sha256": null,
+      "status": "FAILED",
+      "summary": "去除了未经证据授权的“公主抱”细分和“钓到”因果，并避免把“被奶P赖上了”错误地语法归到小李身上；修复后两份文案均只保留字幕和结构化弹幕支持的事实。",
+      "supported_by": [
+        "final_transcript",
+        "structured_chat"
+      ],
+      "title_policy_mode": "baseline",
+      "title_policy_violations": [],
+      "title_sha256": "sha256:58aa4914a0f99046429840516e52673c072aa9c7d074098e3f61f5c75b95cad0"
+    }
+  ],
+  "provider_retries": [
+    {
+      "attempt": 1,
+      "reason_code": "CPA_TEXT_REVIEW_INVALID",
+      "request_sha256": "sha256:a05af8348e4cb2be5224230915886c88ef0199c74e1edd68db2890627eeaa47a",
+      "response_sha256": "sha256:96a8ee1c9bd50918cfd5045a0a3d73d5cd161c5fa3c4813ff334f119152f92e9",
+      "review_pass": 1
+    },
+    {
+      "attempt": 2,
+      "reason_code": "CPA_TEXT_REVIEW_INVALID",
+      "request_sha256": "sha256:a05af8348e4cb2be5224230915886c88ef0199c74e1edd68db2890627eeaa47a",
+      "response_sha256": "sha256:ca5ad9e3decb70d536f2f54e41e447528bb138a69750a299249a57840e6aeecb",
+      "review_pass": 1
+    }
+  ],
+  "reason_code": "CPA_TEXT_REVIEW_INVALID",
+  "receipt_sha256": "sha256:cb372aaab107a2c7f4f73a432bbb9b75512b78f878192c02e709c79c6c8a7585",
+  "schema_version": "lidousha-source-fact-review.v1",
+  "speaker_evidence": {
+    "policy_ids": {
+      "absence": "speaker_mode_uniform_host/v1",
+      "alignment": "speaker_cue_subsegment_alignment/v1",
+      "text": "compact_ws/v1",
+      "timing": "half_open_integer_ms_exact/v1"
+    },
+    "reason": "speaker_mode_uniform_host",
+    "state": "AbsentAuthorized"
+  },
+  "speaker_evidence_sha256": "sha256:7ad0672052878d79d0ad5f24e41ee57a6a8c401596b8954beb078ca45b39c989",
+  "status": "FAILED"
+}

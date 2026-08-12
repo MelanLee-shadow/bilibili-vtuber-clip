@@ -75,6 +75,21 @@ baseline/区间/terminal timing 任一漂移、crossing 不唯一、间隙超过
 媒体 endpoint 或 exact replay 不一致，均 fail closed；不得复用 `pin_crossing_closure_cue`，
 也不得把这条车道推广给非 exact redelivery。
 
+上述 250ms terminal projection 仍是普通历史候选的窄兼容门，不是所有人工复核片的上限。
+候选 manifest 若唯一声明并通过
+`operator-reviewed-exact-source-interval.v1`，producer 必须改走独占的
+`reviewed_exact_source_interval_v1`：在实际 source bytes 验哈希后，同时验证 candidate、
+稳定 semantic spec、source logical timeline 与半开区间、reviewed SRT raw bytes/canonical cue
+manifest、独立 speaker truth raw bytes/canonical segments、selection hook/scorecard/rescore
+authority、冻结 semantic verdict、0..400ms（含端点）的 terminal tail，以及 Ivan 对这段**实际
+视听媒体**的 authenticated review receipt。路径、host、mount、mtime、inode、临时名和 fresh
+ASR grid/job 不进入 authority identity。验证成功时，唯一合法区间由 authority 直接给出；
+fresh ASR/VAD 只可写 diagnostic witness，不得调用普通 snap/refine/repair 或移动任一边界。
+验证失败、authority 缺失/重复、任一 bytes/spec/policy 漂移、cue/segment 越界、tail/anchor
+不一致或输出 source span 不足，立即阻断，禁止回落到上述 250ms 投影或 live semantic review。
+人类 source-bound next-topic 证据若在 approved end 前 1ms 已确认则构成硬矛盾；恰好从半开区间
+end 开始则已被排除，不构成矛盾。
+
 `content_boundary` 的恢复指纹必须覆盖完整的生产边界决策面：semantic reviewer、
 request/scope 构造、owner/resolver、final-review contract 与 talk-lane 分类，而不只是顶层
 producer/chunker。上述任一实现变化都必须在下一次 runner tick 唤醒既有 boundary failure；

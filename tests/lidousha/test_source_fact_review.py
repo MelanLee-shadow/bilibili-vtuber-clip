@@ -2,6 +2,9 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
+import src.autoslice.reviewed_subtitle_baseline_registry as baseline_registry
 from src.autoslice.publish_staging import _stage_publish_draft
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.source_fact_review import (
@@ -12,6 +15,17 @@ from src.autoslice.source_fact_review import (
     validate_source_fact_review,
 )
 from src.autoslice.story_contract import build_story_contract
+
+
+@pytest.fixture(autouse=True)
+def _allow_precommit_exact_interval_authority(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Repository sealing has dedicated tests; this file exercises source facts."""
+
+    monkeypatch.setattr(
+        baseline_registry,
+        "require_repository_asset_authority",
+        lambda **_kwargs: None,
+    )
 
 
 def _canonical_sha256(value: object) -> str:

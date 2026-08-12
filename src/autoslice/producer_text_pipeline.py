@@ -39,7 +39,8 @@ from src.autoslice.clip_context import (
 from src.autoslice.delivery_fast_path import (
     discover_priority_findings,
     pinned_replay_reviewed_text_ownership as _pinned_replay_reviewed_text_ownership,
-    resolve_operator_text_full_ownership, resolve_truth_full_ownership,
+    resolve_operator_text_full_ownership,
+    resolve_truth_full_ownership,
     skipped_final_review_audit,
     verify_transcript_entities,
 )
@@ -71,11 +72,9 @@ from src.autoslice.final_review_contract import (
     is_keep_current_disclosed,
 )
 from src.autoslice.review_priority_candidates import (
-    fidelity_review_candidates as _fidelity_review_candidates, review_priority_candidate_counts as _review_priority_candidate_counts,  # noqa: F401
+    fidelity_review_candidates as _fidelity_review_candidates,  # noqa: F401
+    review_priority_candidate_counts as _review_priority_candidate_counts,  # noqa: F401
     review_priority_candidates as _review_priority_candidates,
-)
-from src.autoslice.frozen_source_boundary_receipt import (
-    load_boundary_review_authorities,
 )
 from src.autoslice.final_source_language_owner import register_final_source_language_cpa_repairs
 from src.autoslice.jingting_chunker import parse_srt_cues
@@ -98,8 +97,12 @@ from src.autoslice.pronoun_consistency import (
 from src.autoslice import provider_failure as _pf
 from src.autoslice.producer_boundary_review_stage import (
     exact_delivery_correction_audit,
-    review_final_boundary_semantics,
+    review_final_boundary_semantics,  # noqa: F401 - compatibility export
 )
+from src.autoslice.frozen_source_boundary_receipt import (  # noqa: F401
+    load_boundary_review_authorities,
+)
+from src.autoslice.producer_source_boundary_review import review_source_boundary
 from src.autoslice.producer_boundary_owner_contract import (
     freeze_required_boundary_owner_contract,
     redelivery_baseline_boundary_owner as _redelivery_baseline_boundary_owner,
@@ -183,9 +186,7 @@ class TextPipelineResult:
     chat_authority_path: Path
     clip_context: dict
     clip_context_path: Path
-    review_exact_final_srt: Callable[
-        [str, Mapping[str, object], int, int], dict[str, object]
-    ]
+    review_exact_final_srt: Callable[[str, Mapping[str, object], int, int], dict[str, object]]
 
 
 @dataclass(frozen=True)
@@ -302,7 +303,9 @@ def _transcribe_draft(
             session_topic_authorities=session_topic_authorities,
         )
     else:
-        transcriber = adapters.build_agy_transcriber(host, danmaku_items=merged or None, window_start_ms=0)
+        transcriber = adapters.build_agy_transcriber(
+            host, danmaku_items=merged or None, window_start_ms=0
+        )
     vad = build_ssh_silero_vad_provider(host)
     spans = vad(padded, 0, padded_dur)
     srt_text = transcriber(padded, [(s.start_ms, s.end_ms) for s in spans])
@@ -365,6 +368,7 @@ def _build_entity_verification_context(
     audio_entity_verifier = None
     if witness_audio_locally_resolvable(padded, host=host):  # F21：音频窗可解析门，不再是 host 门
         from src.autoslice.entity_audio_verifier import build_local_audio_entity_verifier
+
         audio_entity_verifier = build_local_audio_entity_verifier(
             source_media=padded,
             output_dir=out_root,
@@ -458,25 +462,19 @@ def _build_entity_verification_context(
                         graph_sha256=graph_sha,
                     )
                     topic_resolution_audit = resolution.as_dict()
-                    topic_resolution_audit["scoped_graph_context"] = (
-                        build_scoped_topic_context(graph, resolution)
+                    topic_resolution_audit["scoped_graph_context"] = build_scoped_topic_context(
+                        graph, resolution
                     )
                     dynamic_groups = dynamic_referent_groups(graph, resolution, srt_text)
                 else:
                     topic_resolution_audit["status"] = "GRAPH_EXPIRED"
                     topic_resolution_audit["graph_sha256"] = graph_sha
-                    topic_resolution_audit["scoped_graph_context"][
-                        "status"
-                    ] = "GRAPH_EXPIRED"
-                    topic_resolution_audit["scoped_graph_context"][
-                        "graph_sha256"
-                    ] = graph_sha
+                    topic_resolution_audit["scoped_graph_context"]["status"] = "GRAPH_EXPIRED"
+                    topic_resolution_audit["scoped_graph_context"]["graph_sha256"] = graph_sha
             except (OSError, ValueError) as exc:
                 topic_resolution_audit["status"] = "GRAPH_INVALID"
                 topic_resolution_audit["error"] = f"{type(exc).__name__}: {exc}"
-                topic_resolution_audit["scoped_graph_context"][
-                    "status"
-                ] = "GRAPH_INVALID"
+                topic_resolution_audit["scoped_graph_context"]["status"] = "GRAPH_INVALID"
     topic_resolution_path = out_root / f"{cid}.topic-resolution.json"
     topic_resolution_path.write_text(
         json.dumps(topic_resolution_audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -522,12 +520,10 @@ def _apply_entity_authority(
         referent_groups=referent_groups,
         entity_verifier=verify_confusable_entity,
     )
-    chat_authority_audit[
-        "self_reference_absorption_audit"
-    ] = self_reference_absorption_audit
-    chat_authority_audit[
-        "session_topic_absorption_audits"
-    ] = list(session_topic_absorption_audits or [])
+    chat_authority_audit["self_reference_absorption_audit"] = self_reference_absorption_audit
+    chat_authority_audit["session_topic_absorption_audits"] = list(
+        session_topic_absorption_audits or []
+    )
     if draft_witness_path.is_file():
         srt_text, numeric_fact_audit = apply_numeric_fact_provenance_guard(
             draft_witness_path.read_text(encoding="utf-8", errors="replace"),
@@ -579,9 +575,7 @@ def _apply_entity_authority(
     # 音频仲裁引擎；positions 非空使它们天然进不了 chat 证据路径。
     opening_group = clip_opening_address_group(
         srt_text,
-        load_clip_opening_address_config(
-            adapters.profile_asset_file("clip_opening_address")
-        ),
+        load_clip_opening_address_config(adapters.profile_asset_file("clip_opening_address")),
     )
     repetition_groups = repetition_divergence_groups(srt_text)
     # 2026-07-19 欠账 #0/#5 落地：短语级重复分歧编译器（抱/帮案）+ 词表
@@ -596,9 +590,7 @@ def _apply_entity_authority(
     )
 
     phrase_divergence_groups = phrase_repetition_divergence_groups(srt_text)
-    phonetic_candidate_groups = glossary_phonetic_candidate_groups(
-        srt_text, referent_groups
-    )
+    phonetic_candidate_groups = glossary_phonetic_candidate_groups(srt_text, referent_groups)
     # AGY/CPA/词表已经完成专名语义定稿。无位置标记的静态/话题实体组只给
     # 结构化聊天匹配与终稿验证使用，绝不能再被黑帧 Gemini 按初始听写强制
     # 二选一。声学层只接明确声明为 transcript_only/clip_initial 的未决槽位，
@@ -616,9 +608,7 @@ def _apply_entity_authority(
         *([opening_group] if opening_group is not None else []),
         *repetition_groups,
     ]
-    cue_count = len(
-        [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
-    )
+    cue_count = len([cue for cue in parse_srt_cues(srt_text) if cue.text.strip()])
     ledger_excluded_cues: set[int] = set()
     for raw_index in source_truth_protected_cue_indexes:
         if (
@@ -626,9 +616,7 @@ def _apply_entity_authority(
             or not isinstance(raw_index, int)
             or not 1 <= raw_index <= cue_count
         ):
-            raise RuntimeError(
-                "SOURCE_TRUTH_PREVIEW_PROTECTED_CUE_INVALID"
-            )
+            raise RuntimeError("SOURCE_TRUTH_PREVIEW_PROTECTED_CUE_INVALID")
         ledger_excluded_cues.add(raw_index)
     srt_text, transcript_entity_audit = verify_transcript_entities(
         srt_text,
@@ -638,20 +626,17 @@ def _apply_entity_authority(
         truth_full_ownership=truth_full_ownership,
     )
     if ledger_excluded_cues:
-        transcript_entity_audit["ledger_excluded_cue_indexes"] = sorted(
+        transcript_entity_audit["ledger_excluded_cue_indexes"] = sorted(ledger_excluded_cues)
+        transcript_entity_audit["source_truth_preview_excluded_cue_indexes"] = sorted(
             ledger_excluded_cues
         )
-        transcript_entity_audit[
-            "source_truth_preview_excluded_cue_indexes"
-        ] = sorted(ledger_excluded_cues)
     chat_authority_audit["transcript_entity_audit"] = transcript_entity_audit
     chat_authority_audit["post_semantic_entity_policy"] = {
         "schema_version": "post-semantic-entity-policy.v1",
         "status": "SEMANTIC_TEXT_FINAL",
         "reason_code": "POST_SEMANTIC_ENTITY_AUDIO_OVERRIDE_DISABLED",
         "semantic_text_final_groups": [
-            [entity.canonical for entity in group.entities]
-            for group in semantic_text_final_groups
+            [entity.canonical for entity in group.entities] for group in semantic_text_final_groups
         ],
         "explicit_audio_groups": [
             [entity.canonical for entity in group.entities]
@@ -661,12 +646,10 @@ def _apply_entity_authority(
         + (1 if opening_group is not None else 0),
         # 披露专用（不进声学仲裁、零改写）：审片员与人工复核的注意力提示。
         "phrase_divergence_candidates_disclosure_only": [
-            [entity.canonical for entity in group.entities]
-            for group in phrase_divergence_groups
+            [entity.canonical for entity in group.entities] for group in phrase_divergence_groups
         ],
         "phonetic_candidates_disclosure_only": [
-            [entity.canonical for entity in group.entities]
-            for group in phonetic_candidate_groups
+            [entity.canonical for entity in group.entities] for group in phonetic_candidate_groups
         ],
     }
     chat_authority_audit["code_switch_surface_audit"] = code_switch_audit
@@ -698,9 +681,7 @@ def _apply_entity_authority(
                     "status": "SEMANTIC_AUTHORITY_PRESERVED",
                     "reason_code": "DRAFT_WITNESS_IS_NOT_POST_SEMANTIC_AUTHORITY",
                     "suspicious_cue_indexes": suspicious,
-                    "candidate_entities": [
-                        entity.canonical for entity in wd_group.entities
-                    ],
+                    "candidate_entities": [entity.canonical for entity in wd_group.entities],
                 }
             )
     chat_authority_audit["witness_disagreement_audits"] = wd_audits
@@ -711,9 +692,7 @@ def _apply_entity_authority(
         from src.autoslice.term_authority import protected_terms as _protected_terms
 
         draft_witness_text = draft_witness_path.read_text(encoding="utf-8", errors="replace")
-        for row in introduced_term_cues(
-            draft_witness_text, srt_text, _protected_terms()
-        ):
+        for row in introduced_term_cues(draft_witness_text, srt_text, _protected_terms()):
             introduced_term_audits.append(
                 {
                     "schema_version": "introduced-term-audit.v2",
@@ -747,7 +726,10 @@ def _run_final_review(
     priority_raw_findings: Sequence[Mapping[str, Any]] = (),
     screen_read_probe: Callable[[int, int], Mapping[str, object]] | None = None,
 ) -> tuple[str, dict]:
-    final_review_audit: dict[str, Any] = {"schema_version": "final-review-audit.v1", "status": "SKIPPED"}
+    final_review_audit: dict[str, Any] = {
+        "schema_version": "final-review-audit.v1",
+        "status": "SKIPPED",
+    }
     original_srt_text = srt_text
     staged_entity_repairs: list[dict[str, Any]] = []
     if os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") != "1":
@@ -758,9 +740,7 @@ def _run_final_review(
                 authoritative_chat=authoritative_chat,
             )
             candidate_context_text = (
-                clip_context_prompt_text(clip_context)
-                if isinstance(clip_context, Mapping)
-                else ""
+                clip_context_prompt_text(clip_context) if isinstance(clip_context, Mapping) else ""
             )
             # 终审结转并入（2026-07-25 六条死循环案）：上轮 exact 终审声学
             # 确证却无权落盘的修复，以 raw 行进同一个解析/校验循环（stale
@@ -783,13 +763,7 @@ def _run_final_review(
                 prioritize_extra_raw_findings=bool(priority_rows),
             )
             protected_review_cues = set(handled_entity_cues)
-            cue_count = len(
-                [
-                    cue
-                    for cue in parse_srt_cues(srt_text)
-                    if cue.text.strip()
-                ]
-            )
+            cue_count = len([cue for cue in parse_srt_cues(srt_text) if cue.text.strip()])
             source_truth_protected_cues: set[int] = set()
             for raw_index in source_truth_protected_cue_indexes:
                 if (
@@ -797,9 +771,7 @@ def _run_final_review(
                     or not isinstance(raw_index, int)
                     or not 1 <= raw_index <= cue_count
                 ):
-                    raise RuntimeError(
-                        "SOURCE_TRUTH_PREVIEW_PROTECTED_CUE_INVALID"
-                    )
+                    raise RuntimeError("SOURCE_TRUTH_PREVIEW_PROTECTED_CUE_INVALID")
                 source_truth_protected_cues.add(raw_index)
             protected_review_cues.update(source_truth_protected_cues)
             for row in chat_authority_audit.get("applied") or []:
@@ -833,9 +805,9 @@ def _run_final_review(
             adjudicable = [
                 row
                 for row in (final_review_audit.get("findings") or [])
-                if row.get("routed") == "disclosure"
-                and row.get("proposed_full_cue") is not None
+                if row.get("routed") == "disclosure" and row.get("proposed_full_cue") is not None
             ]
+
             def adjudicate(live_srt: str, finding: dict[str, Any]):
                 return adjudicate_context_finding(
                     live_srt,
@@ -855,13 +827,14 @@ def _run_final_review(
             ) = adjudicate_routed_findings(
                 srt_text,
                 adjudicable,
-                max_adjudications=MAX_CONTEXT_ADJUDICATIONS, adjudicate=adjudicate,
+                max_adjudications=MAX_CONTEXT_ADJUDICATIONS,
+                adjudicate=adjudicate,
                 original_srt_text=original_srt_text,
             )
             if newly_applied:
-                final_review_audit["applied_count"] = int(
-                    final_review_audit.get("applied_count") or 0
-                ) + newly_applied
+                final_review_audit["applied_count"] = (
+                    int(final_review_audit.get("applied_count") or 0) + newly_applied
+                )
                 final_review_audit["status"] = "APPLIED"
             final_review_audit["context_adjudication_count"] = adjudication_count
             final_review_audit["context_adjudication_budget"] = MAX_CONTEXT_ADJUDICATIONS
@@ -895,15 +868,11 @@ def _run_final_review(
             if staged_entity_repairs:
                 existing_repairs = chat_authority_audit.get("entity_repairs")
                 if existing_repairs is None:
-                    chat_authority_audit["entity_repairs"] = list(
-                        staged_entity_repairs
-                    )
+                    chat_authority_audit["entity_repairs"] = list(staged_entity_repairs)
                 elif isinstance(existing_repairs, list):
                     existing_repairs.extend(staged_entity_repairs)
                 else:
-                    raise TypeError(
-                        "CHAT_AUTHORITY_ENTITY_REPAIRS_CONTRACT_INVALID"
-                    )
+                    raise TypeError("CHAT_AUTHORITY_ENTITY_REPAIRS_CONTRACT_INVALID")
         except FinalReviewAuditError as exc:
             srt_text = original_srt_text
             final_review_audit = {
@@ -953,15 +922,9 @@ def _run_exact_final_release_review(
 ) -> dict[str, object]:
     """Review the exact post-authority bytes and issue a fail-closed receipt."""
 
-    reviewed_srt_sha256 = "sha256:" + hashlib.sha256(
-        srt_text.encode("utf-8")
-    ).hexdigest()
-    boundary_semantic_review = correction_audit.get(
-        "boundary_semantic_review"
-    )
-    correction_mutation_audit = audit_correction_mutation_authority(
-        correction_audit
-    )
+    reviewed_srt_sha256 = "sha256:" + hashlib.sha256(srt_text.encode("utf-8")).hexdigest()
+    boundary_semantic_review = correction_audit.get("boundary_semantic_review")
+    correction_mutation_audit = audit_correction_mutation_authority(correction_audit)
     base: dict[str, object] = {
         "schema_version": FINAL_REVIEW_SCHEMA_VERSION,
         "reviewed_srt_sha256": reviewed_srt_sha256,
@@ -977,15 +940,11 @@ def _run_exact_final_release_review(
         "correction_pass": dict(correction_audit),
         "correction_mutation_authority": correction_mutation_audit,
     }
-    boundary_receipt_replay = correction_audit.get(
-        "boundary_receipt_replay"
-    )
+    boundary_receipt_replay = correction_audit.get("boundary_receipt_replay")
     if isinstance(boundary_receipt_replay, Mapping):
         base["boundary_receipt_replay"] = dict(boundary_receipt_replay)
     if isinstance(acoustic_discovery_audit, Mapping):
-        base["candidate_blind_acoustic_discovery"] = dict(
-            acoustic_discovery_audit
-        )
+        base["candidate_blind_acoustic_discovery"] = dict(acoustic_discovery_audit)
     if os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") == "1":
         return {
             **base,
@@ -999,14 +958,12 @@ def _run_exact_final_release_review(
     try:
         review_glossary = adapters.review_glossary()
         candidate_context_text = clip_context_prompt_text(clip_context)
-        pronoun_findings, pronoun_audit = (
-            discover_candidate_pronoun_findings(
-                srt_text,
-                policy_text=review_glossary,
-                candidate_context_text=candidate_context_text,
-                llm_call=_build_final_review_llm_call(),
-                extract_json=extract_json_object,
-            )
+        pronoun_findings, pronoun_audit = discover_candidate_pronoun_findings(
+            srt_text,
+            policy_text=review_glossary,
+            candidate_context_text=candidate_context_text,
+            llm_call=_build_final_review_llm_call(),
+            extract_json=extract_json_object,
         )
         base["candidate_pronoun_consistency_audit"] = pronoun_audit
         priority_findings = [*pronoun_findings, *priority_raw_findings]
@@ -1061,50 +1018,40 @@ def _run_exact_final_release_review(
             "findings": [],
             "validated_finding_count": 0,
         }
-    authority_pending, authority_resolved = (
-        resolve_verified_source_truth_findings(
-            srt_text,
-            findings,
-            source_truth_audit=(
-                verified_authority_audit.get("source_subtitle_truth_audit")
-                if isinstance(verified_authority_audit, Mapping)
-                else None
-            ),
-            timeline_offset_ms=timeline_offset_ms,
-        )
+    authority_pending, authority_resolved = resolve_verified_source_truth_findings(
+        srt_text,
+        findings,
+        source_truth_audit=(
+            verified_authority_audit.get("source_subtitle_truth_audit")
+            if isinstance(verified_authority_audit, Mapping)
+            else None
+        ),
+        timeline_offset_ms=timeline_offset_ms,
     )
     exact_judge_llm_call = _build_final_review_llm_call()
-    acoustic_pending, acoustic_resolved = (
-        adjudicate_exact_release_findings(
-            srt_text,
-            authority_pending,
-            entity_verifier=verify_confusable_entity,
-            clip_context=clip_context,
-            source_media_timeline_offset_ms=timeline_offset_ms,
-            judge_llm_call=exact_judge_llm_call,
-            screen_read_probe=screen_read_probe,
-        )
+    acoustic_pending, acoustic_resolved = adjudicate_exact_release_findings(
+        srt_text,
+        authority_pending,
+        entity_verifier=verify_confusable_entity,
+        clip_context=clip_context,
+        source_media_timeline_offset_ms=timeline_offset_ms,
+        judge_llm_call=exact_judge_llm_call,
+        screen_read_probe=screen_read_probe,
     )
-    unresolved_findings, memo_resolved = (
-        resolve_findings_from_exact_final_convergence_memos(
-            srt_text,
-            acoustic_pending,
-            authority_audit=verified_authority_audit or {},
-        )
+    unresolved_findings, memo_resolved = resolve_findings_from_exact_final_convergence_memos(
+        srt_text,
+        acoustic_pending,
+        authority_audit=verified_authority_audit or {},
     )
-    unresolved_findings, convergence_resolved = (
-        converge_reconsidered_exact_final_findings(
-            srt_text,
-            unresolved_findings,
-            authority_audit=verified_authority_audit or {},
-            judge_llm_call=exact_judge_llm_call,
-        )
+    unresolved_findings, convergence_resolved = converge_reconsidered_exact_final_findings(
+        srt_text,
+        unresolved_findings,
+        authority_audit=verified_authority_audit or {},
+        judge_llm_call=exact_judge_llm_call,
     )
-    unresolved_findings, boundary_preserved = (
-        preserve_context_only_terminal_closure(
-            unresolved_findings,
-            boundary=base["boundary_semantic_review"],
-        )
+    unresolved_findings, boundary_preserved = preserve_context_only_terminal_closure(
+        unresolved_findings,
+        boundary=base["boundary_semantic_review"],
     )
     acoustic_resolved.extend(boundary_preserved)
     resolved_findings = [
@@ -1135,9 +1082,7 @@ def _run_exact_final_release_review(
                 for finding in unresolved_findings
                 for receipt in [
                     (
-                        finding.get(
-                            "exact_final_cpa_cycle_adjudication"
-                        )
+                        finding.get("exact_final_cpa_cycle_adjudication")
                         if isinstance(finding, Mapping)
                         else None
                     )
@@ -1153,9 +1098,7 @@ def _run_exact_final_release_review(
         )
         reason_codes.extend(cycle_reason_codes)
     if correction_mutation_audit.get("status") != "PASS":
-        reason_codes.append(
-            "FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID"
-        )
+        reason_codes.append("FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID")
     if not boundary_passed:
         reason_codes.append("FINAL_REVIEW_BOUNDARY_SEMANTIC_BLOCKED")
     passed = not reason_codes
@@ -1233,33 +1176,22 @@ def _defer_source_truth_failure_for_redelivery(
     )
     exact_v2_baseline_binding_valid = (
         _valid_redelivery_baseline_config(baseline_config)
-        and baseline_config.get("schema_version")
-        == "subtitle-redelivery-baseline.v2"
+        and baseline_config.get("schema_version") == "subtitle-redelivery-baseline.v2"
         and baseline_config.get("exact_interval_replay") is True
     )
     exact_mention_postconditions_pending = (
-        exact_v2_baseline_binding_valid
-        and recoverable_exact_mention_postconditions
+        exact_v2_baseline_binding_valid and recoverable_exact_mention_postconditions
     )
     exact_interval_replay_pending = (
         isinstance(baseline_config, Mapping)
-        and baseline_config.get("schema_version")
-        == "subtitle-redelivery-baseline.v2"
+        and baseline_config.get("schema_version") == "subtitle-redelivery-baseline.v2"
         and baseline_config.get("exact_interval_replay") is True
-        and (
-            recoverable_exact_cue_shape
-            or exact_mention_postconditions_pending
-        )
+        and (recoverable_exact_cue_shape or exact_mention_postconditions_pending)
     )
-    if (
-        baseline_config is None
-        or not (
-            recoverable_missing_substrings or exact_interval_replay_pending
-        )
+    if baseline_config is None or not (
+        recoverable_missing_substrings or exact_interval_replay_pending
     ):
-        raise SystemExit(
-            f"SOURCE_SUBTITLE_TRUTH_REQUIRED: {chat_authority_path}"
-        )
+        raise SystemExit(f"SOURCE_SUBTITLE_TRUTH_REQUIRED: {chat_authority_path}")
     source_truth_audit["pre_redelivery_status"] = "FAILED"
     source_truth_audit["status"] = "DEFERRED_TO_REDELIVERY_BASELINE"
     if exact_interval_replay_pending:
@@ -1272,9 +1204,7 @@ def _defer_source_truth_failure_for_redelivery(
             "and verify every source-truth rule"
         )
     else:
-        source_truth_audit["deferred_strategy"] = (
-            "reviewed_text_restore_then_reapply_source_truth"
-        )
+        source_truth_audit["deferred_strategy"] = "reviewed_text_restore_then_reapply_source_truth"
         source_truth_audit["deferred_reason"] = (
             "fresh text did not retain the reviewed correction target; "
             "restore hash-bound prior delivery before reapplying source truth"
@@ -1308,16 +1238,13 @@ def _apply_source_truth_and_resolve_deferred_foreign(
         durations=durations,
         ledger_path=ledger_path,
     )
-    if source_language_audit.get("status") != (
-        "DEFERRED_TO_SOURCE_SUBTITLE_TRUTH"
-    ):
+    if source_language_audit.get("status") != ("DEFERRED_TO_SOURCE_SUBTITLE_TRUTH"):
         return srt_text, source_truth_audit
     truth_rows = [
         row
         for key in ("applied", "satisfied")
         for row in (source_truth_audit.get(key) or [])
-        if isinstance(row, Mapping)
-        and row.get("required") is not False
+        if isinstance(row, Mapping) and row.get("required") is not False
     ]
     resolution = resolve_deferred_foreign_introductions(
         source_language_audit,
@@ -1328,12 +1255,8 @@ def _apply_source_truth_and_resolve_deferred_foreign(
     source_language_audit["deferred_resolution"] = resolution
     if resolution["status"] == "PASS":
         source_language_audit["status"] = "RESOLVED_BY_SOURCE_SUBTITLE_TRUTH"
-    elif _valid_redelivery_baseline_config(
-        spec.get("subtitle_redelivery_baseline")
-    ):
-        source_language_audit["source_truth_resolution_status"] = (
-            "NOT_RESOLVED_BEFORE_REDELIVERY"
-        )
+    elif _valid_redelivery_baseline_config(spec.get("subtitle_redelivery_baseline")):
+        source_language_audit["source_truth_resolution_status"] = "NOT_RESOLVED_BEFORE_REDELIVERY"
         source_language_audit["status"] = "DEFERRED_TO_REDELIVERY_BASELINE"
     else:
         source_language_audit["status"] = (
@@ -1347,11 +1270,7 @@ def _structured_chat_names(
 ) -> tuple[str, ...]:
     """Sender/gift names bound to this candidate's structured chat record."""
 
-    rows = (
-        clip_context.get("structured_chat")
-        if isinstance(clip_context, Mapping)
-        else None
-    )
+    rows = clip_context.get("structured_chat") if isinstance(clip_context, Mapping) else None
     if not isinstance(rows, list):
         return ()
     names: list[str] = []
@@ -1365,9 +1284,7 @@ def _structured_chat_names(
     return tuple(dict.fromkeys(names))
 
 
-def _post_truth_release_hygiene(
-    srt_text: str, chat_authority_audit: dict
-) -> str:
+def _post_truth_release_hygiene(srt_text: str, chat_authority_audit: dict) -> str:
     """Post-truth structural guards + release-grade sliver merges.
 
     标题守卫在每个文本权威后复跑（后来的拼接可绕过早期守卫）；发布级贴邻
@@ -1375,17 +1292,11 @@ def _post_truth_release_hygiene(
     出的包必须直接满足发布校验，质量债不留给发布链。
     """
 
-    srt_text, final_title_mark_balance_audit = apply_title_mark_balance_guard(
-        srt_text
-    )
-    chat_authority_audit["final_title_mark_balance_audit"] = (
-        final_title_mark_balance_audit
-    )
+    srt_text, final_title_mark_balance_audit = apply_title_mark_balance_guard(srt_text)
+    chat_authority_audit["final_title_mark_balance_audit"] = final_title_mark_balance_audit
     srt_text, release_grade_merge_rows = merge_release_grade_cues(srt_text)
     if release_grade_merge_rows:
-        chat_authority_audit["release_grade_cue_merges"] = (
-            release_grade_merge_rows
-        )
+        chat_authority_audit["release_grade_cue_merges"] = release_grade_merge_rows
     return srt_text
 
 
@@ -1457,44 +1368,42 @@ def _finalize_text_evidence(
         srt_text,
         structured_chat_names=_structured_chat_names(clip_context),
     )
-    chat_authority_audit[
-        "final_source_language_preservation_audit"
-    ] = final_source_language_audit
+    chat_authority_audit["final_source_language_preservation_audit"] = final_source_language_audit
     override_document: dict[str, Any] = {}
     if text_override_path is not None:
         try:
-            loaded_override = json.loads(
-                text_override_path.read_text(encoding="utf-8")
-            )
+            loaded_override = json.loads(text_override_path.read_text(encoding="utf-8"))
             if isinstance(loaded_override, dict):
                 override_document = loaded_override
         except (OSError, json.JSONDecodeError):
             pass
-    if (
-        str(final_source_language_audit["status"]).startswith(
-            "BLOCKED_UNPROVEN_FOREIGN_"
-        )
-        and unproven_foreign_introductions_covered_by_overrides(
-            final_source_language_audit,
-            override_document,
-        )
+    if str(final_source_language_audit["status"]).startswith(
+        "BLOCKED_UNPROVEN_FOREIGN_"
+    ) and unproven_foreign_introductions_covered_by_overrides(
+        final_source_language_audit,
+        override_document,
     ):
         final_source_language_audit["status"] = "DEFERRED_TO_BOUND_TEXT_OVERRIDE"
         final_source_language_audit["deferred_reason"] = (
-            "every un-witnessed foreign-language cue has a timeline-bound "
-            "reviewed repair"
+            "every un-witnessed foreign-language cue has a timeline-bound reviewed repair"
         )
     if padded is not None:
         # AGY listens candidate-blind; mismatches go to the text-only CPA judge.
         srt_text, final_source_language_audit = _adjudicate_final_source_language(
-            padded, srt_text, final_source_language_audit, out_root, cid,
+            padded,
+            srt_text,
+            final_source_language_audit,
+            out_root,
+            cid,
             chat_authority_audit,
         )
         chat_authority_audit["final_source_language_preservation_audit"] = (
             final_source_language_audit
         )
     source_truth_local_windows = ledger_local_windows(
-        spec=spec, durations=durations, ledger_path=source_truth_ledger_path,
+        spec=spec,
+        durations=durations,
+        ledger_path=source_truth_ledger_path,
     )
     defer_unproven_foreign_introductions_to_late_authority(
         final_source_language_audit,
@@ -1509,14 +1418,13 @@ def _finalize_text_evidence(
         source_truth_windows=source_truth_local_windows,
     )
     if (
-        foreign_script_audit["status"]
-        == "BLOCKED_MIXED_FOREIGN_SCRIPT_CLUSTER"
+        foreign_script_audit["status"] == "BLOCKED_MIXED_FOREIGN_SCRIPT_CLUSTER"
         and text_override_path is not None
     ):
         foreign_script_audit["status"] = "DEFERRED_TO_BOUND_TEXT_OVERRIDE"
-        foreign_script_audit[
-            "deferred_reason"
-        ] = "candidate has a hash-bound reviewed text override before delivery"
+        foreign_script_audit["deferred_reason"] = (
+            "candidate has a hash-bound reviewed text override before delivery"
+        )
     elif (
         foreign_script_audit["status"] == "BLOCKED_MIXED_CJK_LATIN_PHRASE"
         and text_override_path is not None
@@ -1554,12 +1462,8 @@ def _finalize_text_evidence(
     chat_authority_audit["foreign_script_consistency_audit"] = foreign_script_audit
     srt_text, title_mark_balance_audit = apply_title_mark_balance_guard(srt_text)
     chat_authority_audit["title_mark_balance_audit"] = title_mark_balance_audit
-    srt_text, impossible_punctuation_audit = apply_impossible_punctuation_guard(
-        srt_text
-    )
-    chat_authority_audit[
-        "impossible_punctuation_audit"
-    ] = impossible_punctuation_audit
+    srt_text, impossible_punctuation_audit = apply_impossible_punctuation_guard(srt_text)
+    chat_authority_audit["impossible_punctuation_audit"] = impossible_punctuation_audit
     srt_text, final_session_topic_absorption_audit = absorb_session_topic_entities(
         srt_text, session_topic_authorities
     )
@@ -1601,13 +1505,10 @@ def _finalize_text_evidence(
         json.dumps(chat_authority_audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    if (
-        str(final_source_language_audit["status"]).startswith("BLOCKED_")
-        or str(foreign_script_audit["status"]).startswith("BLOCKED_")
-    ):
-        raise SystemExit(
-            f"FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED: {chat_authority_path}"
-        )
+    if str(final_source_language_audit["status"]).startswith("BLOCKED_") or str(
+        foreign_script_audit["status"]
+    ).startswith("BLOCKED_"):
+        raise SystemExit(f"FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED: {chat_authority_path}")
     if song_name_candidates:
         srt_text, song_name_pin_audit, semantic_verification = verify_and_pin_song_names(
             srt_text,
@@ -1631,26 +1532,23 @@ def _finalize_text_evidence(
             )
     # 称呼串等价类：、包夹单字近音按成员词补全，与 hard canon 同级。
     from src.autoslice.surface_canon import repair_address_enumerations
+
     srt_text, address_enumeration_audit = repair_address_enumerations(srt_text)
     chat_authority_audit["address_enumeration_audit"] = address_enumeration_audit
     # Final meme canon runs after every mutable text stage; the later bound
     # human override independently re-runs it before speaker rendering.
     srt_text, hard_meme_surface_audit = normalize_hard_meme_surfaces(srt_text)
-    chat_authority_audit["final_hard_meme_surface_audit"] = (
-        hard_meme_surface_audit
-    )
+    chat_authority_audit["final_hard_meme_surface_audit"] = hard_meme_surface_audit
     # Explicit expected-value canon is a narrow, auditable zero-CPA lane.
     # It runs after every mutable model stage but before operator source truth,
     # so a rare source-bound exception can still override the statistical
     # default.
-    srt_text, expected_value_surface_audit = (
-        normalize_expected_value_surfaces(srt_text)
-    )
-    chat_authority_audit["final_expected_value_surface_audit"] = (
-        expected_value_surface_audit
-    )
+    srt_text, expected_value_surface_audit = normalize_expected_value_surfaces(srt_text)
+    chat_authority_audit["final_expected_value_surface_audit"] = expected_value_surface_audit
     srt_text, source_truth_audit = _apply_source_truth_and_resolve_deferred_foreign(
-        srt_text, spec=spec, durations=durations,
+        srt_text,
+        spec=spec,
+        durations=durations,
         ledger_path=source_truth_ledger_path,
         source_language_audit=final_source_language_audit,
     )
@@ -1665,20 +1563,15 @@ def _finalize_text_evidence(
         foreign_script_audit["post_truth_reaudit"] = post_truth_foreign
         if str(post_truth_foreign["status"]).startswith("BLOCKED_"):
             raise SystemExit(
-                "FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED_AFTER_TRUTH: "
-                f"{chat_authority_path}"
+                f"FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED_AFTER_TRUTH: {chat_authority_path}"
             )
         foreign_script_audit["status"] = "RESOLVED_BY_SOURCE_SUBTITLE_TRUTH"
     srt_text = _post_truth_release_hygiene(srt_text, chat_authority_audit)
     # Source/operator truth may restore an older romanized spelling. Native
     # Japanese script is a final presentation invariant, so re-assert it after
     # the last mutable truth/hygiene stage.
-    srt_text, japanese_native_script_audit = (
-        normalize_japanese_native_script_surfaces(srt_text)
-    )
-    chat_authority_audit["final_japanese_native_script_audit"] = (
-        japanese_native_script_audit
-    )
+    srt_text, japanese_native_script_audit = normalize_japanese_native_script_surfaces(srt_text)
+    chat_authority_audit["final_japanese_native_script_audit"] = japanese_native_script_audit
     # Ivan source-interval truth (authority #1) supersedes read-aloud exact
     # surfaces (authority #2) on the same cue: the guest may rephrase a danmaku
     # rather than read it verbatim (2026-07-19 HimeHina case, audio support 0).
@@ -1700,12 +1593,8 @@ def _finalize_text_evidence(
         + "\n",
         encoding="utf-8",
     )
-    if str(final_source_language_audit.get("status") or "").startswith(
-        "BLOCKED_"
-    ):
-        raise SystemExit(
-            f"FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED: {chat_authority_path}"
-        )
+    if str(final_source_language_audit.get("status") or "").startswith("BLOCKED_"):
+        raise SystemExit(f"FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED: {chat_authority_path}")
     if (
         chat_authority_audit["status"]
         in {"FAILED", "ENTITY_VERDICT_REQUIRED", "SC_SENDER_VERDICT_REQUIRED"}
@@ -1727,8 +1616,7 @@ def _finalize_text_evidence(
             sender_only
             and _valid_redelivery_baseline_config(baseline_config)
             and isinstance(baseline_config, Mapping)
-            and baseline_config.get("schema_version")
-            == "subtitle-redelivery-baseline.v2"
+            and baseline_config.get("schema_version") == "subtitle-redelivery-baseline.v2"
             and baseline_config.get("exact_interval_replay") is True
         ):
             chat_authority_audit["sc_sender_verdict_deferral"] = {
@@ -1751,9 +1639,7 @@ def _finalize_text_evidence(
                 encoding="utf-8",
             )
         else:
-            raise SystemExit(
-                f"CHAT_AUTHORITY_FINALIZATION_FAILED: {chat_authority_path}"
-            )
+            raise SystemExit(f"CHAT_AUTHORITY_FINALIZATION_FAILED: {chat_authority_path}")
     # In a hash-bound subtitle redelivery only, a missing substring target can
     # be restored from the reviewed baseline and the higher source truth then
     # reapplied.  Every other mode still stops here.
@@ -1812,13 +1698,11 @@ def run_text_pipeline(
         if str(spec.get("human_truth_mode") or "delivery") == "withheld"
         else adapters.profile_asset_file("subtitle_truth_ledger")
     )
-    _discarded_draft_truth_text, draft_source_truth_preview_audit = (
-        apply_source_subtitle_truth(
-            draft.srt_text,
-            spec=spec,
-            durations=durations,
-            ledger_path=source_truth_ledger_path,
-        )
+    _discarded_draft_truth_text, draft_source_truth_preview_audit = apply_source_subtitle_truth(
+        draft.srt_text,
+        spec=spec,
+        durations=durations,
+        ledger_path=source_truth_ledger_path,
     )
     draft_source_truth_preview = build_source_truth_preview_receipt(
         input_srt_text=draft.srt_text,
@@ -1844,9 +1728,7 @@ def run_text_pipeline(
         authoritative_chat=authoritative_chat,
         topic_resolution=entity_context.topic_resolution_audit,
         session_topic_authorities=draft.session_topic_authorities,
-        speech_memory_ledger_path=adapters.profile_asset_file(
-            "speech_memory_ledger"
-        ),
+        speech_memory_ledger_path=adapters.profile_asset_file("speech_memory_ledger"),
     )
     clip_context_path = out_root / f"{cid}.clip-context.json"
     write_clip_context(clip_context_path, clip_context)
@@ -1855,11 +1737,11 @@ def run_text_pipeline(
         durations=durations,
         ledger_path=source_truth_ledger_path,
     )
-    required_boundary_owners.extend(
-        _redelivery_baseline_boundary_owner(spec, durations)
-    )
+    required_boundary_owners.extend(_redelivery_baseline_boundary_owner(spec, durations))
     spec["required_boundary_owners"] = required_boundary_owners
-    truth_ownership = resolve_truth_full_ownership(spec) or resolve_operator_text_full_ownership(spec)
+    truth_ownership = resolve_truth_full_ownership(spec) or resolve_operator_text_full_ownership(
+        spec
+    )
     authority = _apply_entity_authority(
         srt_text=draft.srt_text,
         authoritative_chat=authoritative_chat,
@@ -1874,14 +1756,10 @@ def run_text_pipeline(
         # Deterministic preview projects required truth onto the exact draft
         # cue grid.  Raw discovery windows are used only for unresolved
         # required failures; optional rows never become protection owners.
-        source_truth_protected_cue_indexes=(
-            draft_source_truth_preview["protected_cue_indexes"]
-        ),
+        source_truth_protected_cue_indexes=(draft_source_truth_preview["protected_cue_indexes"]),
         truth_full_ownership=truth_ownership,
     )
-    authority.chat_authority_audit[
-        "source_truth_preview_receipts"
-    ] = {
+    authority.chat_authority_audit["source_truth_preview_receipts"] = {
         "pre_entity_arbitration": draft_source_truth_preview,
     }
     retained_chat_counts: dict[str, int] = {}
@@ -1898,9 +1776,7 @@ def run_text_pipeline(
                 "origin_epoch_ms": piece.get("chat_origin_epoch_ms"),
                 "timeline_offset_ms": piece.get("chat_timeline_offset_ms"),
                 "source_alias_id": piece.get("chat_source_alias_id"),
-                "canonical_recording_basename": piece.get(
-                    "chat_canonical_recording_basename"
-                ),
+                "canonical_recording_basename": piece.get("chat_canonical_recording_basename"),
             }
         )
     authority.chat_authority_audit["structured_chat_binding_audit"] = {
@@ -1914,22 +1790,20 @@ def run_text_pipeline(
             "binding failures raise before this audit"
         ),
     }
-    _discarded_review_truth_text, review_source_truth_preview_audit = (
-        apply_source_subtitle_truth(
-            authority.srt_text,
-            spec=spec,
-            durations=durations,
-            ledger_path=source_truth_ledger_path,
-        )
+    _discarded_review_truth_text, review_source_truth_preview_audit = apply_source_subtitle_truth(
+        authority.srt_text,
+        spec=spec,
+        durations=durations,
+        ledger_path=source_truth_ledger_path,
     )
     review_source_truth_preview = build_source_truth_preview_receipt(
         input_srt_text=authority.srt_text,
         source_truth_audit=review_source_truth_preview_audit,
         stage="pre_correction_review",
     )
-    authority.chat_authority_audit[
-        "source_truth_preview_receipts"
-    ]["pre_correction_review"] = review_source_truth_preview
+    authority.chat_authority_audit["source_truth_preview_receipts"]["pre_correction_review"] = (
+        review_source_truth_preview
+    )
     pinned_replay_ownership = _pinned_replay_reviewed_text_ownership(spec)
     if pinned_replay_ownership is not None:
         # 修复快路径（2026-08-02 提速②）：审片员产出注定被 v2 精确重放覆盖。
@@ -1998,51 +1872,37 @@ def run_text_pipeline(
             f"(cues {[row.get('cue_index') for row in still_unresolved]}); "
             "refusing to deliver known-suspect text — runner will retry"
         )
-    boundary_target_ms, boundary_search_scope = (
-        freeze_required_boundary_owner_contract(
-            spec=spec,
-            durations=durations,
-            chat_authority_audit=authority.chat_authority_audit,
-            required_boundary_owners=required_boundary_owners,
-        )
+    boundary_target_ms, boundary_search_scope = freeze_required_boundary_owner_contract(
+        spec=spec,
+        durations=durations,
+        chat_authority_audit=authority.chat_authority_audit,
+        required_boundary_owners=required_boundary_owners,
     )
-    frozen_boundary_receipt, frozen_source_review = load_boundary_review_authorities(
-        spec, candidate_id=cid, current_owner_contract=authority.chat_authority_audit.get("frozen_boundary_owner_contract")
-    )
-    source_boundary_replay: dict[str, object] = {}
-    final_review_audit["boundary_semantic_review"] = review_final_boundary_semantics(
+    (
+        frozen_boundary_receipt,
+        final_review_audit["boundary_semantic_review"],
+        source_boundary_replay,
+        exact_interval_replay,
+    ) = review_source_boundary(
+        spec=spec,
+        candidate_id=cid,
         cues=evidence.cues,
         boundary_target_ms=boundary_target_ms,
-        candidate_id=cid,
-        selection_hook=str(spec.get("selection_hook") or ""),
-        selection_scorecard=spec.get("selection_scorecard"),
-        structured_context=_final_review_structured_context(
-            selection_hook=str(spec.get("selection_hook") or ""),
-            authoritative_chat=authoritative_chat,
-        ),
-        candidate_context=clip_context_prompt_text(clip_context),
-        boundary_max_forward_ms=int(
-            boundary_search_scope["recommendation_forward_ms"]
-        ),
-        llm_call=_build_final_review_llm_call(),
-        extract_json=extract_json_object,
-        disabled=(
-            os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") == "1"
-        ),
         boundary_search_scope=boundary_search_scope,
+        current_owner_contract=authority.chat_authority_audit.get("frozen_boundary_owner_contract"),
+        authoritative_chat=authoritative_chat,
+        clip_context=clip_context,
         available_local_source_context_end_ms=sum(durations),
-        frozen_review=frozen_source_review,
-        replay_audit=source_boundary_replay,
     )
+    if exact_interval_replay is not None:
+        final_review_audit["reviewed_exact_source_interval_replay"] = exact_interval_replay
     if source_boundary_replay:
         # Ivan 2026-08-08 优化①边界重放 + wsl 重产 BLOCK 实证：披露冻结
         # authority，并在 current-bound derived receipt 内保留原 review canonical SHA。
         final_review_audit["boundary_receipt_replay"] = {
             "source_full_window": source_boundary_replay,
         }
-    persist_review_audit(
-        out_root / f"{cid}.review-flags.json", final_review_audit
-    )
+    persist_review_audit(out_root / f"{cid}.review-flags.json", final_review_audit)
     evidence.chat_authority_path.write_text(
         json.dumps(
             authority.chat_authority_audit,
@@ -2082,14 +1942,10 @@ def run_text_pipeline(
                 authoritative_chat=authoritative_chat,
             ),
             candidate_context=clip_context_prompt_text(clip_context),
-            boundary_max_forward_ms=int(
-                spec.get("boundary_repair_extend_cap_ms", 30_000)
-            ),
+            boundary_max_forward_ms=int(spec.get("boundary_repair_extend_cap_ms", 30_000)),
             llm_call=_build_final_review_llm_call(),
             extract_json=extract_json_object,
-            disabled=(
-                os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") == "1"
-            ),
+            disabled=(os.environ.get("AUTOSLICE_DISABLE_FINAL_REVIEW") == "1"),
             frozen_boundary_receipt=frozen_boundary_receipt,
         )
         exact_final_audit = _run_exact_final_release_review(
@@ -2111,10 +1967,9 @@ def run_text_pipeline(
         # 不等整个终审门跑完最多五轮自愈。取舍/原子落盘/完整性标记全在
         # src/autoslice/final_review_carryover.py，这里只有一处薄调用。
         # 测试 tests/test_final_review_carryover_hard_exit.py。
-        checkpoint_final_review_carryover(
-            carryover_path(out_root, cid), exact_final_audit
-        )
+        checkpoint_final_review_carryover(carryover_path(out_root, cid), exact_final_audit)
         return exact_final_audit
+
     return TextPipelineResult(
         srt_text=evidence.srt_text,
         cues=evidence.cues,
