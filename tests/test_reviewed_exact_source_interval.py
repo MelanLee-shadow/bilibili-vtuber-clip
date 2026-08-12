@@ -18,6 +18,7 @@ from src.autoslice.producer_boundary_review_stage import (
 from src.autoslice.review_package_boundary_validators import (
     semantic_boundary_review_is_valid,
 )
+from src.autoslice.review_package_boundary_contract import audit_boundary_contract
 from src.autoslice.review_package_owner_audit import (
     _terminal_projection_materialization_valid,
 )
@@ -233,6 +234,61 @@ def test_exact_final_review_replays_reviewed_grid_without_provider() -> None:
     assert semantic_boundary_review_is_valid(final_review, expected_scope="final_delivery")
     assert final_review["final_endpoint_binding"]["final_end_ms"] == 157310
     assert final_review["source_separation_witness"]["status"] == "PASS"
+    assert final_review["source_separation_witness"]["source_final_start_ms"] == 9750
+    assert final_review["source_separation_witness"]["source_final_end_ms"] == 167060
+
+    issues: list[dict[str, object]] = []
+
+    def add_issue(rows, code, **_kwargs):
+        rows.append({"code": code})
+
+    audit_boundary_contract(
+        issue_adder=add_issue,
+        issues=issues,
+        stem=CANDIDATE,
+        record_path=None,
+        subtitle_path=Path(spec["subtitle_redelivery_baseline"]["path"]),
+        exact_final_review={"boundary_semantic_review": final_review},
+        record={
+            "boundary_audit": {
+                "boundary_semantic_review": source_review,
+                "final_delivery_boundary_semantic_review": final_review,
+                "boundary_authority": (
+                    "operator_reviewed_exact_source_interval_plus_frozen_reviewed_timeline"
+                ),
+                "manual_end_mode": "reviewed_exact_source_interval_v1",
+                "final_start_ms": 9750,
+                "final_end_ms": 167060,
+                "snapped_sentence_end_ms": 167000,
+            }
+        },
+        story_contract={"boundary_semantic_review": final_review},
+        required=True,
+        is_song=False,
+    )
+    assert "BOUNDARY_SOURCE_SEPARATION_WITNESS_INVALID" not in {
+        issue["code"] for issue in issues
+    }
+
+    wrong_source_interval = review_exact_delivery_boundary_semantics(
+        cues=final_cues,
+        source_boundary_review=source_review,
+        source_final_start_ms=0,
+        source_final_end_ms=157310,
+        candidate_id=CANDIDATE,
+        selection_hook=spec["selection_hook"],
+        selection_scorecard=spec["selection_scorecard"],
+        structured_context="",
+        candidate_context="",
+        boundary_max_forward_ms=0,
+        llm_call=forbidden,
+        extract_json=forbidden,
+        disabled=True,
+    )
+    assert wrong_source_interval["status"] == "BLOCK"
+    assert wrong_source_interval["reason_codes"] == [
+        "REVIEWED_EXACT_SOURCE_INTERVAL_SOURCE_WITNESS_INTERVAL_INVALID"
+    ]
 
 
 def test_package_audit_accepts_exact_materialization_and_rejects_drift() -> None:

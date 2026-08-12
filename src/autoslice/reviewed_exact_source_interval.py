@@ -625,6 +625,8 @@ def _exact_review(
     final_end_ms: int,
     boundary_search_scope: Mapping[str, object],
     source_review: Mapping[str, object] | None = None,
+    source_witness_final_start_ms: int | None = None,
+    source_witness_final_end_ms: int | None = None,
 ) -> dict[str, object]:
     terminal = _mapping(authority.get("terminal"), code="TERMINAL_BINDING_INVALID")
     if not cues:
@@ -682,10 +684,23 @@ def _exact_review(
         RUNTIME_CONFIG_KEY: dict(authority),
     }
     if source_review is not None:
+        source_endpoint = source_review.get("final_endpoint_binding")
+        if (
+            not isinstance(source_endpoint, Mapping)
+            or source_endpoint.get("status") != "PASS"
+            or isinstance(source_witness_final_start_ms, bool)
+            or not isinstance(source_witness_final_start_ms, int)
+            or isinstance(source_witness_final_end_ms, bool)
+            or not isinstance(source_witness_final_end_ms, int)
+            or source_witness_final_end_ms <= source_witness_final_start_ms
+            or source_endpoint.get("final_start_ms") != source_witness_final_start_ms
+            or source_endpoint.get("final_end_ms") != source_witness_final_end_ms
+        ):
+            return _fail("SOURCE_WITNESS_INTERVAL_INVALID")
         review["source_separation_witness"] = _source_witness(
             source_review,
-            final_start_ms=final_start_ms,
-            final_end_ms=final_end_ms,
+            final_start_ms=source_witness_final_start_ms,
+            final_end_ms=source_witness_final_end_ms,
         )
     review, reasons = bind_final_semantic_endpoint(
         semantic_review=review,
@@ -771,6 +786,8 @@ def build_final_semantic_review(
         final_end_ms=source_final_end_ms - source_final_start_ms,
         boundary_search_scope=scope,
         source_review=source_review,
+        source_witness_final_start_ms=source_final_start_ms,
+        source_witness_final_end_ms=source_final_end_ms,
     )
 
 
@@ -806,7 +823,11 @@ def prepare_exact_delivery_review(
             authority=authority,
         )
     except ReviewedExactSourceIntervalError as exc:
-        review = _fail(str(exc))
+        review = {
+            "schema_version": "talk-boundary-semantic-review.v1",
+            "status": "BLOCK",
+            "reason_codes": [str(exc)],
+        }
     review.update(
         {
             "review_scope": "final_delivery",
