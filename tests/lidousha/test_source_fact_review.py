@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 import src.autoslice.reviewed_subtitle_baseline_registry as baseline_registry
+import src.autoslice.source_fact_staging as source_fact_staging
 from src.autoslice.publish_staging import _stage_publish_draft
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.source_fact_review import (
@@ -1387,7 +1388,13 @@ def test_candidate_entity_context_rejects_final_srt_byte_drift(
 
 def test_publish_staging_wires_exact_final_srt_into_entity_context(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        source_fact_staging,
+        "load_manual_title_keep_authority",
+        lambda _candidate_id: None,
+    )
     hook = "莉娅求小李‘就算你是狼也放过我’，结伴后小李突然连声道歉。"
     title = "【李豆沙】莉娅求小李“就算你是狼也放过我”，结伴后小李突然连声道歉"
     transcript = "莉亚 活着\n我想活着\n就算你是狼\n你放过我好吗\n对不起"

@@ -266,7 +266,13 @@ def test_reused_published_cover_carries_all_artifact_hashes(
 
 def test_candidate_projection_blocks_wrong_name_in_visible_cover_text(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        source_fact_staging,
+        "load_manual_title_keep_authority",
+        lambda _candidate_id: None,
+    )
     candidate_id = "auto_223750_578_734"
     media = tmp_path / f"{candidate_id}.recut.mp4"
     media.write_bytes(b"media")
