@@ -33,6 +33,9 @@ FINDING_CLASS = "SUPPORTED_COMPRESSION_HEDGE"
 ACTION = "KEEP_EXACT_OPERATOR_APPROVED_VALUE"
 PASS_DECISION = "PASS_WITH_RECORDED_DISSENT"
 TARGET_CANDIDATE_ID = "auto_223750_578_734"
+ADJUDICATION_CLIP_CONTEXT_PROMPT_SHA256 = (
+    "sha256:572c977fec852e8ca863f065e191c156e65a7906d2a683cf5cd3d90de9dd5e17"
+)
 _CANDIDATE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{2,127}\Z")
 _SHA_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _TOP_FIELDS = {
@@ -235,6 +238,10 @@ def _validate_blocked_receipt(
         raise ManualTitleKeepAuthorityError("MANUAL_TITLE_KEEP_FINAL_TRANSCRIPT_HASH_MISMATCH")
     if replay["clip_context_prompt_sha256"] != text_sha256(context):
         raise ManualTitleKeepAuthorityError("MANUAL_TITLE_KEEP_CLIP_CONTEXT_HASH_MISMATCH")
+    if replay["clip_context_prompt_sha256"] != ADJUDICATION_CLIP_CONTEXT_PROMPT_SHA256:
+        raise ManualTitleKeepAuthorityError(
+            "MANUAL_TITLE_KEEP_SEALED_ADJUDICATION_CONTEXT_MISMATCH"
+        )
     if replay["selection_scorecard_sha256"] != canonical_sha256(replay["selection_scorecard"]):
         raise ManualTitleKeepAuthorityError("MANUAL_TITLE_KEEP_SCORECARD_HASH_MISMATCH")
     review = replay["blocked_source_fact_review"]
@@ -294,6 +301,7 @@ def _validate_blocked_receipt(
     scorecard_review = review_pass.get("selection_scorecard_review")
     if (
         review_pass.get("status") != "REPAIR"
+        or review_pass.get("clip_context_prompt_sha256") != ADJUDICATION_CLIP_CONTEXT_PROMPT_SHA256
         or review_pass.get("final_selection_hook") != review.get("original_selection_hook")
         or review_pass.get("final_title") != proposed_title
         or not isinstance(changed, list)
@@ -574,7 +582,14 @@ def validate_manual_title_keep_authority(
     speaker_evidence: object,
     entity_context: object,
 ) -> dict[str, object]:
-    """Return stable consumption only for the exact live replay inputs."""
+    """Return consumption for exact truth plus diagnostic fresh context.
+
+    The repository-sealed replay prompt is the adjudication context that
+    produced the blocked receipt.  A newly generated clip-context prompt may
+    drift with the fresh ASR grid, so it is diagnostic-only: its hash and
+    equality-to-adjudication bit are preserved in the consumption/receipt, but
+    its bytes cannot move or invalidate the already reviewed KEEP decision.
+    """
 
     document = validate_manual_title_keep_authority_document(authority.document)
     approved = document["approved_title"]
@@ -590,10 +605,13 @@ def validate_manual_title_keep_authority(
         document["candidate_id"] != candidate_id
         or approved["value"] != title
         or replay["final_transcript"] != final_transcript
-        or replay["clip_context_prompt"] != clip_context_prompt
         or replay["selection_scorecard"] != selection_scorecard
     ):
         raise ManualTitleKeepAuthorityError("MANUAL_TITLE_KEEP_RUNTIME_BINDING_MISMATCH")
+    if not isinstance(clip_context_prompt, str):
+        raise ManualTitleKeepAuthorityError(
+            "MANUAL_TITLE_KEEP_RUNTIME_DIAGNOSTIC_CLIP_CONTEXT_PROMPT_INVALID"
+        )
     blocked_review = replay["blocked_source_fact_review"]
     assert isinstance(blocked_review, Mapping)
     if blocked_review.get("original_selection_hook") != selection_hook:
@@ -655,7 +673,13 @@ def validate_manual_title_keep_authority(
         "blocked_source_fact_receipt_sha256": blocked_meta["receipt_sha256"],
         "finding_fingerprint_sha256": blocked_meta["finding_fingerprint_sha256"],
         "final_transcript_sha256": replay["final_transcript_sha256"],
+        # This existing field remains the sealed adjudication input because
+        # source_fact_review binds it to the original blocked receipt.
         "clip_context_prompt_sha256": replay["clip_context_prompt_sha256"],
+        "diagnostic_clip_context_prompt_sha256": text_sha256(clip_context_prompt),
+        "diagnostic_clip_context_matches_adjudication": (
+            clip_context_prompt == replay["clip_context_prompt"]
+        ),
         "selection_scorecard_sha256": replay["selection_scorecard_sha256"],
         "reviewed_plain_srt_sha256": plain["sha256"],
         "reviewed_speaker_srt_sha256": speaker_binding["sha256"],

@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import base64
 import copy
 import hashlib
 import json
 import re
 import shutil
 import subprocess
-import zlib
 from pathlib import Path
 from typing import Mapping
 
@@ -17,6 +15,7 @@ import src.autoslice.publish_staging as publish_staging
 import src.autoslice.source_fact_review as source_fact_review
 import src.autoslice.source_fact_staging as source_fact_staging
 from src.autoslice.deterministic_text_surface_resolution import (
+    ADJUDICATION_PROMPT_FILENAME,
     ASSET_DIRECTORY,
     AUTHORITY_FILENAME,
     CANDIDATE_ID,
@@ -52,73 +51,13 @@ from src.autoslice.story_contract import build_story_contract
 ROOT = Path(__file__).resolve().parents[2]
 AUTHORITY_PATH = ROOT / ASSET_DIRECTORY / AUTHORITY_FILENAME
 FAILED_RECEIPT_PATH = ROOT / ASSET_DIRECTORY / FAILED_RECEIPT_FILENAME
+ADJUDICATION_PROMPT_RELATIVE = ASSET_DIRECTORY / ADJUDICATION_PROMPT_FILENAME
 SRT_RELATIVE = Path(f"assets/lidousha/reviewed_subtitle_baselines/{CANDIDATE_ID}.reviewed.srt")
 MANIFEST_RELATIVE = Path(
     f"assets/lidousha/reviewed_subtitle_baselines/{CANDIDATE_ID}.subtitle-baseline.v1.json"
 )
 ENTITY_RELATIVE = Path(
     f"assets/lidousha/candidate_entity_projections/{CANDIDATE_ID}.entity-projection.v1.json"
-)
-
-# Exact immutable WSL adjudication input, compressed only to keep this focused
-# test readable.  Decoded: 9,834 UTF-8 bytes from clip-context artifact
-# dba49c39f07ef961a1542d1ca84db55f2533bf78289ad3a078d6d38f89c76478.
-_FROZEN_CLIP_CONTEXT_PROMPT_B64 = (
-    "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"
 )
 
 _FROZEN_SELECTION_SCORECARD: dict[str, object] = {
@@ -172,11 +111,6 @@ def _rehash(document: dict[str, object]) -> None:
     document["authority_sha256"] = canonical_sha256(document)
 
 
-def _frozen_clip_context_prompt() -> str:
-    encoded = base64.b64decode(_FROZEN_CLIP_CONTEXT_PROMPT_B64)
-    return zlib.decompress(encoded).decode("utf-8")
-
-
 def _final_transcript(reviewed_srt_path: Path) -> str:
     text = reviewed_srt_path.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
     cues = []
@@ -207,6 +141,7 @@ def _sealed_repo(tmp_path: Path, name: str) -> Path:
     for relative in (
         ASSET_DIRECTORY / AUTHORITY_FILENAME,
         ASSET_DIRECTORY / FAILED_RECEIPT_FILENAME,
+        ASSET_DIRECTORY / ADJUDICATION_PROMPT_FILENAME,
         SRT_RELATIVE,
         MANIFEST_RELATIVE,
         ENTITY_RELATIVE,
@@ -266,7 +201,7 @@ def _consume(
         clip_context_prompt=(
             clip_context_prompt
             if clip_context_prompt is not None
-            else _frozen_clip_context_prompt()
+            else authority.adjudication_prompt
         ),
         selection_scorecard=(
             selection_scorecard
@@ -296,6 +231,8 @@ def test_exact_closed_plan_renders_frozen_bytes_without_provider_call(
         provider_must_not_run,
     )
     receipt = _consume(root)
+    authority = load_deterministic_text_surface_authority(CANDIDATE_ID, root=root)
+    assert authority is not None
 
     assert receipt["title"] == EXACT_TITLE
     assert len(receipt["title"]) == 50
@@ -328,6 +265,8 @@ def test_exact_closed_plan_renders_frozen_bytes_without_provider_call(
     assert receipt["clip_context_prompt_sha256"] == CLIP_CONTEXT_PROMPT_SHA256
     assert receipt["selection_scorecard_sha256"] == SELECTION_SCORECARD_SHA256
     assert receipt["entity_context_sha256"] == ENTITY_CONTEXT_SHA256
+    assert text_sha256(authority.adjudication_prompt) == CLIP_CONTEXT_PROMPT_SHA256
+    assert receipt["adjudication_prompt_repo_path"] == (ADJUDICATION_PROMPT_RELATIVE.as_posix())
 
 
 def test_title_length_exception_requires_the_exact_frozen_surface(
@@ -363,9 +302,17 @@ def test_title_length_exception_requires_the_exact_frozen_surface(
     )
 
 
+@pytest.mark.parametrize(
+    "context_prompt",
+    [
+        "fresh ASR diagnostic context variant A",
+        "fresh ASR diagnostic context variant B",
+    ],
+)
 def test_publish_staging_consumes_exact_plan_without_source_fact_provider(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    context_prompt: str,
 ) -> None:
     sealed_root = _sealed_repo(tmp_path, "sealed-staging")
     authority = load_deterministic_text_surface_authority(
@@ -377,7 +324,6 @@ def test_publish_staging_consumes_exact_plan_without_source_fact_provider(
     runtime_srt.parent.mkdir(parents=True)
     shutil.copy2(sealed_root / SRT_RELATIVE, runtime_srt)
     transcript = _final_transcript(runtime_srt)
-    context_prompt = _frozen_clip_context_prompt()
 
     def contract(hook: str) -> dict[str, object]:
         story = build_story_contract(
@@ -392,6 +338,11 @@ def test_publish_staging_consumes_exact_plan_without_source_fact_provider(
 
     monkeypatch.setattr(
         source_fact_staging,
+        "load_deterministic_text_surface_authority",
+        lambda candidate_id: authority if candidate_id == CANDIDATE_ID else None,
+    )
+    monkeypatch.setattr(
+        source_fact_review,
         "load_deterministic_text_surface_authority",
         lambda candidate_id: authority if candidate_id == CANDIDATE_ID else None,
     )
@@ -441,6 +392,21 @@ def test_publish_staging_consumes_exact_plan_without_source_fact_provider(
     assert source_fact["final_title"] == EXACT_TITLE
     assert source_fact["final_selection_hook"] == EXACT_HOOK
     assert source_fact["blocked_source_fact_review"] == _failed_receipt()
+    consumption = source_fact["deterministic_text_surface_resolution"]
+    assert consumption["clip_context_prompt_sha256"] == CLIP_CONTEXT_PROMPT_SHA256
+    assert consumption["diagnostic_clip_context_prompt_sha256"] == text_sha256(context_prompt)
+    assert consumption["diagnostic_clip_context_matches_adjudication"] is False
+    assert source_fact_review.validate_source_fact_review(
+        source_fact,
+        selection_hook=EXACT_HOOK,
+        title=EXACT_TITLE,
+        final_transcript=transcript,
+        clip_context_prompt=context_prompt,
+        selection_scorecard=copy.deepcopy(_FROZEN_SELECTION_SCORECARD),
+        candidate_id=CANDIDATE_ID,
+        final_reviewed_srt_path=runtime_srt,
+        speaker_evidence=copy.deepcopy(authority.document["uniform_host_authority"]["evidence"]),
+    )
     assert staged["publish_staging"]["title"] == EXACT_TITLE
     assert staged["publish_staging"]["title_authority_status"] == (
         "RESOLVED_DETERMINISTIC_TEXT_NARROWING"
@@ -486,13 +452,26 @@ def test_runtime_final_transcript_drift_blocks(tmp_path: Path) -> None:
         _consume(root, final_transcript=transcript)
 
 
-def test_runtime_clip_context_prompt_drift_blocks(tmp_path: Path) -> None:
-    root = _sealed_repo(tmp_path, "sealed-context-drift")
-    with pytest.raises(
-        DeterministicTextSurfaceResolutionError,
-        match="RUNTIME_CLIP_CONTEXT_PROMPT_MISMATCH",
-    ):
-        _consume(root, clip_context_prompt=_frozen_clip_context_prompt() + "\n漂移")
+def test_two_fresh_contexts_share_one_sealed_pass(tmp_path: Path) -> None:
+    root = _sealed_repo(tmp_path, "sealed-context-diagnostics")
+    first = _consume(root, clip_context_prompt="fresh ASR context one")
+    second = _consume(root, clip_context_prompt="fresh ASR context two")
+
+    first_review = source_fact_review.authorize_deterministic_text_narrowing(first)
+    second_review = source_fact_review.authorize_deterministic_text_narrowing(second)
+    for review in (first_review, second_review):
+        assert review["status"] == "PASS"
+        assert review["decision"] == "DETERMINISTIC_TEXT_NARROWING"
+        assert review["final_title"] == EXACT_TITLE
+        assert review["final_selection_hook"] == EXACT_HOOK
+        consumption = review["deterministic_text_surface_resolution"]
+        assert consumption["clip_context_prompt_sha256"] == CLIP_CONTEXT_PROMPT_SHA256
+        assert consumption["provider_call_required"] is False
+
+    assert (
+        first["diagnostic_clip_context_prompt_sha256"]
+        != second["diagnostic_clip_context_prompt_sha256"]
+    )
 
 
 def test_runtime_selection_scorecard_drift_blocks(tmp_path: Path) -> None:
@@ -724,6 +703,73 @@ def test_repository_seal_rejects_post_commit_byte_mutation(tmp_path: Path) -> No
     assert load_deterministic_text_surface_authority(CANDIDATE_ID, root=root) is not None
     path = root / ASSET_DIRECTORY / AUTHORITY_FILENAME
     path.write_bytes(path.read_bytes() + b"\n")
+    with pytest.raises(
+        DeterministicTextSurfaceResolutionError,
+        match="REPOSITORY_ASSET_UNSEALED",
+    ):
+        load_deterministic_text_surface_authority(CANDIDATE_ID, root=root)
+
+
+def test_missing_sealed_adjudication_prompt_blocks(tmp_path: Path) -> None:
+    root = _sealed_repo(tmp_path, "sealed-prompt-missing")
+    (root / ADJUDICATION_PROMPT_RELATIVE).unlink()
+    subprocess.run(["git", "-C", str(root), "add", "-u"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "user.name=tests",
+            "-c",
+            "user.email=tests@example.invalid",
+            "commit",
+            "-qm",
+            "remove adjudication prompt",
+        ],
+        check=True,
+    )
+
+    with pytest.raises(
+        DeterministicTextSurfaceResolutionError,
+        match="ASSET_UNREADABLE",
+    ):
+        load_deterministic_text_surface_authority(CANDIDATE_ID, root=root)
+
+
+def test_changed_sealed_adjudication_prompt_bytes_block(tmp_path: Path) -> None:
+    root = _sealed_repo(tmp_path, "sealed-prompt-changed")
+    path = root / ADJUDICATION_PROMPT_RELATIVE
+    path.write_bytes(path.read_bytes() + b"\n")
+    subprocess.run(["git", "-C", str(root), "add", str(path)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "user.name=tests",
+            "-c",
+            "user.email=tests@example.invalid",
+            "commit",
+            "-qm",
+            "change adjudication prompt bytes",
+        ],
+        check=True,
+    )
+
+    with pytest.raises(
+        DeterministicTextSurfaceResolutionError,
+        match="ADJUDICATION_PROMPT_FILE_HASH_MISMATCH",
+    ):
+        load_deterministic_text_surface_authority(CANDIDATE_ID, root=root)
+
+
+def test_unsealed_adjudication_prompt_bytes_block(tmp_path: Path) -> None:
+    root = _sealed_repo(tmp_path, "unsealed-prompt-changed")
+    path = root / ADJUDICATION_PROMPT_RELATIVE
+    path.write_bytes(path.read_bytes() + b"\n")
+
     with pytest.raises(
         DeterministicTextSurfaceResolutionError,
         match="REPOSITORY_ASSET_UNSEALED",

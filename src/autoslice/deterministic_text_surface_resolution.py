@@ -14,12 +14,15 @@ unresolved participant attribution.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import os
 import re
 import stat
 import unicodedata
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -42,9 +45,11 @@ SCHEMA_VERSION = "lidousha-deterministic-text-narrowing.v1"
 PLAN_SCHEMA_VERSION = "closed-reviewed-text-surface-plan.v1"
 POLICY_SCHEMA_VERSION = "deterministic-text-narrowing-policy.v1"
 CONSUMPTION_SCHEMA_VERSION = "deterministic-text-narrowing-consumption.v1"
+ADJUDICATION_PROMPT_SCHEMA_VERSION = "sealed-source-fact-adjudication-prompt.v1"
 ASSET_DIRECTORY = Path("assets/lidousha/deterministic_text_surface_resolutions")
 AUTHORITY_FILENAME = f"{CANDIDATE_ID}.deterministic-text-narrowing.v1.json"
 FAILED_RECEIPT_FILENAME = f"{CANDIDATE_ID}.failed-source-fact.v1.json"
+ADJUDICATION_PROMPT_FILENAME = f"{CANDIDATE_ID}.source-fact-adjudication-prompt.v1.json"
 
 SOURCE_BASENAME = "22966160_20260808-23-01-25.mp4"
 SOURCE_SHA256 = "sha256:6cf042681885d18ac4e3abb9548fe8ac3033f8b2e3365c44b6748fd3e4a324a3"
@@ -62,6 +67,10 @@ FINAL_TRANSCRIPT_SHA256 = "sha256:62dfad49e4284fa6d866f4b1a0ea38e23255a4af93ba03
 CLIP_CONTEXT_PROMPT_SHA256 = (
     "sha256:9444ce2aba45614b554f435fd70b2d2aa3f21e7f1f671e1fd15170e0ee33e0a3"
 )
+ADJUDICATION_PROMPT_FILE_SHA256 = (
+    "sha256:72ce76e9a274d1718360b2e450d958809d8dcdd62da2877c3b4af5dc3a0451ac"
+)
+ADJUDICATION_PROMPT_UTF8_BYTE_LENGTH = 9_834
 SELECTION_SCORECARD_SHA256 = (
     "sha256:3a113c13988f72dfafdbe0a2dcc81ab16fd4cbb948fdd194d328d8e63f266685"
 )
@@ -81,6 +90,7 @@ _SHA_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _TOP_FIELDS = {
     "schema_version",
     "candidate_id",
+    "adjudication_prompt_binding",
     "scope",
     "source_binding",
     "entity_binding",
@@ -290,11 +300,14 @@ class DeterministicTextSurfaceResolutionError(ValueError):
 class DeterministicTextSurfaceAuthorityV1:
     document: dict[str, object]
     failed_source_fact_receipt: dict[str, object]
+    adjudication_prompt: str
     repo_root: Path
     repo_path: Path
     file_sha256: str
     failed_receipt_repo_path: Path
     failed_receipt_file_sha256: str
+    adjudication_prompt_repo_path: Path
+    adjudication_prompt_file_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -466,17 +479,18 @@ def _validate_runtime_adjudication_inputs(
     *,
     failed_receipt: Mapping[str, object],
     final_transcript: object,
-    clip_context_prompt: object,
+    adjudication_prompt: object,
+    diagnostic_clip_context_prompt: object,
     selection_scorecard: object,
     entity_context: object,
-) -> dict[str, str]:
+) -> dict[str, object]:
     """Bind the live judge inputs to the immutable failed adjudication.
 
     The failed receipt stores hashes for the three potentially large inputs
-    and the complete relocation-safe entity context.  The deterministic lane
-    is valid only for those same live values; a surface-only replay against a
-    different transcript, context prompt, scorecard, or source/entity binding
-    would otherwise silently widen the Pro-approved exception.
+    and the complete relocation-safe entity context.  The original prompt is
+    replayed from a repository-sealed production asset; a newly generated ASR
+    context is diagnostic only and is persisted by hash.  Transcript,
+    scorecard, and source/entity bindings remain exact live gates.
     """
 
     passes = failed_receipt.get("passes")
@@ -490,11 +504,13 @@ def _validate_runtime_adjudication_inputs(
     ):
         raise _error("RUNTIME_FINAL_TRANSCRIPT_MISMATCH")
     if (
-        not isinstance(clip_context_prompt, str)
-        or text_sha256(clip_context_prompt) != review_pass.get("clip_context_prompt_sha256")
+        not isinstance(adjudication_prompt, str)
+        or text_sha256(adjudication_prompt) != review_pass.get("clip_context_prompt_sha256")
         or review_pass.get("clip_context_prompt_sha256") != CLIP_CONTEXT_PROMPT_SHA256
     ):
-        raise _error("RUNTIME_CLIP_CONTEXT_PROMPT_MISMATCH")
+        raise _error("SEALED_ADJUDICATION_PROMPT_MISMATCH")
+    if not isinstance(diagnostic_clip_context_prompt, str):
+        raise _error("RUNTIME_DIAGNOSTIC_CLIP_CONTEXT_PROMPT_INVALID")
     try:
         scorecard_sha256 = canonical_sha256(selection_scorecard)
     except (TypeError, ValueError) as exc:
@@ -533,6 +549,10 @@ def _validate_runtime_adjudication_inputs(
     return {
         "final_transcript_sha256": FINAL_TRANSCRIPT_SHA256,
         "clip_context_prompt_sha256": CLIP_CONTEXT_PROMPT_SHA256,
+        "diagnostic_clip_context_prompt_sha256": text_sha256(diagnostic_clip_context_prompt),
+        "diagnostic_clip_context_matches_adjudication": (
+            diagnostic_clip_context_prompt == adjudication_prompt
+        ),
         "selection_scorecard_sha256": SELECTION_SCORECARD_SHA256,
         "entity_context_sha256": ENTITY_CONTEXT_SHA256,
     }
@@ -564,6 +584,26 @@ def validate_deterministic_text_surface_document(
     document = _exact_mapping(value, fields=_TOP_FIELDS, label="authority")
     if document["schema_version"] != SCHEMA_VERSION or document["candidate_id"] != CANDIDATE_ID:
         raise _error("AUTHORITY_SCOPE_INVALID")
+    prompt_binding = _exact_mapping(
+        document["adjudication_prompt_binding"],
+        fields={
+            "schema_version",
+            "repo_path",
+            "file_sha256",
+            "prompt_sha256",
+            "utf8_byte_length",
+        },
+        label="adjudication_prompt_binding",
+    )
+    _clean_relative_path(prompt_binding["repo_path"], label="adjudication_prompt")
+    if prompt_binding != {
+        "schema_version": ADJUDICATION_PROMPT_SCHEMA_VERSION,
+        "repo_path": (ASSET_DIRECTORY / ADJUDICATION_PROMPT_FILENAME).as_posix(),
+        "file_sha256": ADJUDICATION_PROMPT_FILE_SHA256,
+        "prompt_sha256": CLIP_CONTEXT_PROMPT_SHA256,
+        "utf8_byte_length": ADJUDICATION_PROMPT_UTF8_BYTE_LENGTH,
+    }:
+        raise _error("ADJUDICATION_PROMPT_BINDING_MISMATCH")
     if document["scope"] != {
         "candidate_scoped": True,
         "closed_plan": True,
@@ -849,6 +889,49 @@ def _read_repository_sealed_asset(root: Path, relative: Path) -> bytes:
         raise _error("REPOSITORY_ASSET_UNSEALED") from exc
 
 
+def _decode_adjudication_prompt_asset(raw: bytes) -> str:
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise _error("ADJUDICATION_PROMPT_ASSET_UNREADABLE") from exc
+    asset = _exact_mapping(
+        value,
+        fields={
+            "candidate_id",
+            "compressed_base64",
+            "encoding",
+            "prompt_sha256",
+            "schema_version",
+            "utf8_byte_length",
+        },
+        label="adjudication_prompt_asset",
+    )
+    compressed_base64 = asset["compressed_base64"]
+    if (
+        asset["schema_version"] != ADJUDICATION_PROMPT_SCHEMA_VERSION
+        or asset["candidate_id"] != CANDIDATE_ID
+        or asset["encoding"] != "zlib+base64(utf-8)"
+        or asset["prompt_sha256"] != CLIP_CONTEXT_PROMPT_SHA256
+        or asset["utf8_byte_length"] != ADJUDICATION_PROMPT_UTF8_BYTE_LENGTH
+        or not isinstance(compressed_base64, str)
+    ):
+        raise _error("ADJUDICATION_PROMPT_ASSET_SCHEMA_INVALID")
+    try:
+        prompt_bytes = zlib.decompress(
+            base64.b64decode(compressed_base64.encode("ascii"), validate=True)
+        )
+        prompt = prompt_bytes.decode("utf-8")
+    except (UnicodeError, ValueError, binascii.Error, zlib.error) as exc:
+        raise _error("ADJUDICATION_PROMPT_ASSET_PAYLOAD_INVALID") from exc
+    if (
+        len(prompt_bytes) != ADJUDICATION_PROMPT_UTF8_BYTE_LENGTH
+        or bytes_sha256(prompt_bytes) != CLIP_CONTEXT_PROMPT_SHA256
+        or prompt.startswith("\ufeff")
+    ):
+        raise _error("ADJUDICATION_PROMPT_ASSET_BYTES_MISMATCH")
+    return prompt
+
+
 def load_deterministic_text_surface_authority(
     candidate_id: str,
     *,
@@ -893,6 +976,13 @@ def load_deterministic_text_surface_authority(
         document,
         failed_source_fact_receipt=failed_receipt,
     )
+    prompt_binding = validated["adjudication_prompt_binding"]
+    assert isinstance(prompt_binding, Mapping)
+    prompt_relative = _clean_relative_path(prompt_binding["repo_path"], label="adjudication_prompt")
+    prompt_raw = _read_repository_sealed_asset(resolved_root, prompt_relative)
+    if bytes_sha256(prompt_raw) != prompt_binding["file_sha256"]:
+        raise _error("ADJUDICATION_PROMPT_FILE_HASH_MISMATCH")
+    adjudication_prompt = _decode_adjudication_prompt_asset(prompt_raw)
     for binding_name, sha_key in (
         ("reviewed_srt", "sha256"),
         ("reviewed_srt_manifest", "sha256"),
@@ -916,11 +1006,14 @@ def load_deterministic_text_surface_authority(
     return DeterministicTextSurfaceAuthorityV1(
         document=validated,
         failed_source_fact_receipt=_validate_failed_receipt(failed_receipt),
+        adjudication_prompt=adjudication_prompt,
         repo_root=resolved_root,
         repo_path=relative,
         file_sha256=bytes_sha256(raw),
         failed_receipt_repo_path=receipt_relative,
         failed_receipt_file_sha256=bytes_sha256(receipt_raw),
+        adjudication_prompt_repo_path=prompt_relative,
+        adjudication_prompt_file_sha256=bytes_sha256(prompt_raw),
     )
 
 
@@ -1045,7 +1138,8 @@ def consume_deterministic_text_surface_authority(
     adjudication_inputs = _validate_runtime_adjudication_inputs(
         failed_receipt=authority.failed_source_fact_receipt,
         final_transcript=final_transcript,
-        clip_context_prompt=clip_context_prompt,
+        adjudication_prompt=authority.adjudication_prompt,
+        diagnostic_clip_context_prompt=clip_context_prompt,
         selection_scorecard=selection_scorecard,
         entity_context=entity_context,
     )
@@ -1076,6 +1170,9 @@ def consume_deterministic_text_surface_authority(
         "speaker_evidence_sha256": SPEAKER_EVIDENCE_SHA256,
         **adjudication_inputs,
         "policy_sha256": authority.document["policy_sha256"],
+        "adjudication_prompt_schema_version": ADJUDICATION_PROMPT_SCHEMA_VERSION,
+        "adjudication_prompt_repo_path": authority.adjudication_prompt_repo_path.as_posix(),
+        "adjudication_prompt_file_sha256": authority.adjudication_prompt_file_sha256,
         "authority_repo_path": authority.repo_path.as_posix(),
         "authority_file_sha256": authority.file_sha256,
         "authority_sha256": authority.document["authority_sha256"],

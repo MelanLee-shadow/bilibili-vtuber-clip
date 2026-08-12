@@ -21,15 +21,18 @@
   receipt 落入产物，不能成为通配的 CPA 改标题权。
 - CPA 只对人工标题提出了**未获授权的改写**时，可用
   `assets/lidousha/authorities/<candidate>.manual-title-keep-authority.v1.json` 做一次候选级
-  KEEP adjudication。它必须封存完整 FAILED receipt、原 title/hook、最终字幕、clip context、
-  scorecard、speaker/entity evidence、Ivan 的原题批准与发布授权；消费后写
+  KEEP adjudication。它必须封存完整 FAILED receipt、原 title/hook、最终字幕、当次裁决使用的
+  clip-context prompt、scorecard、speaker/entity evidence、Ivan 的原题批准与发布授权；消费后写
   `PASS_WITH_RECORDED_DISSENT`，保留模型异议而不重掷 provider。任一 current bytes/hash/surface
-  漂移都继续阻断，不能把这条门当成“人工标题永远正确”。
+  漂移都继续阻断，不能把这条门当成“人工标题永远正确”。fresh ASR 重建出的 clip-context
+  只作为 diagnostic 另记 SHA；它不得替换、伪装或否决已经封存并绑定原 FAILED receipt 的裁决
+  prompt。
 - 已完整人审字幕但 source-fact provider 只返回不可用形状时，只有 deploy-sealed
   `deterministic-text-narrowing.v1` 才可把候选的旧人工 title/hook 收窄为封存的唯一新 surface。
   authority 必须保存原 FAILED attempt、逐字渲染计划、字幕/entity/uniform-host/source 区间与
-  Ivan/Pro 证据；runtime 重建 transcript/context/scorecard/entity 后才可确定性消费，且不得再调
-  provider。当前唯一 50-codepoint 标题例外也只删除该 candidate、该 exact title/hook/receipt 的
+  Ivan/Pro 证据；runtime 重建 transcript/scorecard/entity，并从 Git/deploy-sealed 独立资产重放
+  原裁决 prompt 后才可确定性消费，且不得再调 provider。fresh ASR context 只另记 diagnostic SHA，
+  不进入裁决 identity。当前唯一 50-codepoint 标题例外也只删除该 candidate、该 exact title/hook/receipt 的
   `publish_title_length_out_of_bounds`；其他标题规则与其他候选仍按 12–49 字 fail closed。
 - 已发布 same-BV 的媒体恢复不得裸抄旧 record 的 `title`，也不得靠操作员逐条补几个可选
   evidence 参数。唯一入口是 deployable

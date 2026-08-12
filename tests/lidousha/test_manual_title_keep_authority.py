@@ -103,6 +103,58 @@ def test_exact_story_keep_authority_passes_without_title_mutation() -> None:
     assert resolved["manual_title_keep_authority_consumption"] == consumption
 
 
+def test_fresh_clip_context_is_diagnostic_only_and_hash_bound() -> None:
+    document = validate_manual_title_keep_authority_document(_document())
+    replay = document["replay"]
+    assert isinstance(replay, dict)
+    sealed_prompt = str(replay["clip_context_prompt"])
+    consumptions: list[dict[str, object]] = []
+    receipts: list[dict[str, object]] = []
+
+    for fresh_prompt in (
+        "fresh ASR grid A: 小心呆呆鸟",
+        "fresh ASR grid B: 南町，NT往右走了",
+    ):
+        consumption = validate_manual_title_keep_authority(
+            _bundle(document),
+            **{**_runtime(document), "clip_context_prompt": fresh_prompt},
+        )
+        resolved = authorize_manual_title_keep(
+            replay["blocked_source_fact_review"], consumption=consumption
+        )
+        assert source_fact_review_passes(resolved)
+        assert resolved["decision"] == "PASS_WITH_RECORDED_DISSENT"
+        assert consumption["clip_context_prompt_sha256"] == text_sha256(sealed_prompt)
+        assert consumption["diagnostic_clip_context_prompt_sha256"] == text_sha256(fresh_prompt)
+        assert consumption["diagnostic_clip_context_matches_adjudication"] is False
+        consumptions.append(consumption)
+        receipts.append(resolved)
+
+    assert (
+        consumptions[0]["diagnostic_clip_context_prompt_sha256"]
+        != consumptions[1]["diagnostic_clip_context_prompt_sha256"]
+    )
+    assert receipts[0]["receipt_sha256"] != receipts[1]["receipt_sha256"]
+
+
+@pytest.mark.parametrize("mutation", ["missing", "tampered"])
+def test_sealed_adjudication_clip_context_drift_fails_closed(mutation: str) -> None:
+    document = _document()
+    replay = document["replay"]
+    assert isinstance(replay, dict)
+    if mutation == "missing":
+        replay.pop("clip_context_prompt")
+        expected = "REPLAY_SCHEMA_INVALID"
+    else:
+        replay["clip_context_prompt"] = str(replay["clip_context_prompt"]) + "\n篡改"
+        replay["clip_context_prompt_sha256"] = text_sha256(str(replay["clip_context_prompt"]))
+        expected = "SEALED_ADJUDICATION_CONTEXT_MISMATCH"
+    _rehash(document)
+
+    with pytest.raises(ManualTitleKeepAuthorityError, match=expected):
+        validate_manual_title_keep_authority_document(document)
+
+
 def test_machine_proposal_is_distinct_and_unauthorized() -> None:
     document = _document()
     approved = document["approved_title"]
@@ -330,7 +382,7 @@ def test_plain_srt_byte_and_intermediate_symlink_drift_block(tmp_path: Path) -> 
         )
 
 
-def test_publish_staging_replays_without_calling_provider(
+def test_publish_staging_replays_two_fresh_contexts_without_calling_provider(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     document = _document()
@@ -374,35 +426,52 @@ def test_publish_staging_replays_without_calling_provider(
             "reason_codes": [],
         }
 
-    story = {
-        "schema_version": "lidousha-story-contract.v1",
-        "candidate_id": CANDIDATE_ID,
-        "selection_hook": blocked["original_selection_hook"],
-        "selection_scorecard": replay["selection_scorecard"],
-        "clip_context_prompt": replay["clip_context_prompt"],
-    }
-    staged = _stage_publish_draft(
-        {
-            "status": "MATERIALIZED",
-            "media_path": str(media),
-            "subtitle_path": str(SRT_PATH),
-            "story_contract": story,
-            "artifact_hashes": {},
-        },
-        candidate_id=CANDIDATE_ID,
-        title=str(document["approved_title"]["value"]),
-        cues=[SourceCue("cue-1", 0, 1_000, "ignored")],
-        run_ffmpeg=False,
-        title_llm_call=None,
-        selection_hook=str(blocked["original_selection_hook"]),
-        source_fact_llm_call=None,
-        stage_cover=stage_cover,
-    )
+    staged_rows: list[dict[str, object]] = []
+    for fresh_prompt in (
+        "fresh ASR grid A: 小心呆呆鸟",
+        "fresh ASR grid B: 南町，NT往右走了",
+    ):
+        story = {
+            "schema_version": "lidousha-story-contract.v1",
+            "candidate_id": CANDIDATE_ID,
+            "selection_hook": blocked["original_selection_hook"],
+            "selection_scorecard": replay["selection_scorecard"],
+            "clip_context_prompt": fresh_prompt,
+        }
+        staged = _stage_publish_draft(
+            {
+                "status": "MATERIALIZED",
+                "media_path": str(media),
+                "subtitle_path": str(SRT_PATH),
+                "story_contract": story,
+                "artifact_hashes": {},
+            },
+            candidate_id=CANDIDATE_ID,
+            title=str(document["approved_title"]["value"]),
+            cues=[SourceCue("cue-1", 0, 1_000, "ignored")],
+            run_ffmpeg=False,
+            title_llm_call=None,
+            selection_hook=str(blocked["original_selection_hook"]),
+            source_fact_llm_call=None,
+            stage_cover=stage_cover,
+        )
+        assert staged is not None
+        staged_rows.append(staged)
 
-    assert staged is not None
     assert provider_calls == 0
-    assert staged["publish_staging"]["title"] == document["approved_title"]["value"]
-    assert staged["publish_staging"]["title_authority_status"] == "PASS_WITH_RECORDED_DISSENT"
+    for fresh_prompt, staged in zip(
+        ("fresh ASR grid A: 小心呆呆鸟", "fresh ASR grid B: 南町，NT往右走了"),
+        staged_rows,
+        strict=True,
+    ):
+        assert staged["publish_staging"]["title"] == document["approved_title"]["value"]
+        assert staged["publish_staging"]["title_authority_status"] == "PASS_WITH_RECORDED_DISSENT"
+        receipt = staged["story_contract"]["source_fact_review"]
+        assert receipt["decision"] == "PASS_WITH_RECORDED_DISSENT"
+        consumption = receipt["manual_title_keep_authority_consumption"]
+        assert consumption["diagnostic_clip_context_prompt_sha256"] == text_sha256(fresh_prompt)
+        assert consumption["diagnostic_clip_context_matches_adjudication"] is False
     assert (
-        staged["story_contract"]["source_fact_review"]["decision"] == "PASS_WITH_RECORDED_DISSENT"
+        staged_rows[0]["story_contract"]["source_fact_review"]["receipt_sha256"]
+        != staged_rows[1]["story_contract"]["source_fact_review"]["receipt_sha256"]
     )

@@ -1,6 +1,13 @@
 {
   "schema_version": "lidousha-deterministic-text-narrowing.v1",
   "candidate_id": "auto_230125_1157_1229",
+  "adjudication_prompt_binding": {
+    "schema_version": "sealed-source-fact-adjudication-prompt.v1",
+    "repo_path": "assets/lidousha/deterministic_text_surface_resolutions/auto_230125_1157_1229.source-fact-adjudication-prompt.v1.json",
+    "file_sha256": "sha256:72ce76e9a274d1718360b2e450d958809d8dcdd62da2877c3b4af5dc3a0451ac",
+    "prompt_sha256": "sha256:9444ce2aba45614b554f435fd70b2d2aa3f21e7f1f671e1fd15170e0ee33e0a3",
+    "utf8_byte_length": 9834
+  },
   "scope": {
     "candidate_scoped": true,
     "closed_plan": true,
@@ -272,5 +279,5 @@
     }
   },
   "policy_sha256": "sha256:b76ee9b457d6ddfb42f4d0ed5cfcb4123265d7262f8ea01770fe13119d7f574f",
-  "authority_sha256": "sha256:9e16a30613da1041dcd5f4ceff0bc85929abffc105631447d4b6c7a400eb588b"
+  "authority_sha256": "sha256:40f3ddaf26592e225642d3eaa81e673df2fdbef15048b853383f1265829d9846"
 }
