@@ -49,6 +49,7 @@ BACKEND = "BililiveRecorder"
 QUALITY_PRIORITY = ("avc10000", "avc400", "avc250")
 CONNECTION_STUB_MAX_SIZE_BYTES = 5 * 1024 * 1024
 CONNECTION_STUB_MAX_DURATION_SECONDS, CONNECTION_STUB_MAX_SUCCESSOR_GAP_SECONDS = 10.0, 2.0
+CONNECTION_STUB_MAX_XML_EVENT_COUNT = 1
 FILENAME_RX_TEMPLATE = r"^{room}_(?P<stamp>20\d{{6}}-\d{{2}}-\d{{2}}-\d{{2}})\.flv$"
 GRAPHQL_ROOM_QUERY = """
 query AdapterRoomStatus($roomId: Int!) {
@@ -1140,6 +1141,33 @@ def build_connection_stub_disposition(
     ):
         return None
 
+    xml_path = source_flv.with_suffix(".xml")
+    try:
+        source_attestation = _attest_regular_file(source_flv)
+        xml_attestation = _attest_regular_file(xml_path)
+        _jsonl, record_info, event_count = xml_to_jsonl(xml_path)
+        source_probe = probe_connection_stub_video(source_flv, ffprobe_bin=ffprobe_bin)
+    except (AdapterError, OSError):
+        return None
+    if (
+        not isinstance(event_count, int)
+        or isinstance(event_count, bool)
+        or not 0 <= event_count <= CONNECTION_STUB_MAX_XML_EVENT_COUNT
+        or record_info.get("roomid") != source_flv.name.split("_", 1)[0]
+        or source_probe.get("video_codec") != "h264"
+        or source_probe.get("width") != 0
+        or source_probe.get("height") != 0
+        or source_probe.get("decoded_video_frames") != 0
+        or source_probe.get("video_packets") != 0
+        or int(source_probe.get("size_bytes") or -1) != source_fingerprint["size_bytes"]
+        or float(source_probe.get("duration_seconds") or 0) <= 0
+        or float(source_probe.get("duration_seconds") or 0) >= CONNECTION_STUB_MAX_DURATION_SECONDS
+        or abs(float(source_probe["duration_seconds"]) - event_duration) > 0.001
+        or not _binding_matches_fingerprint(source_attestation, source_flv)
+        or not _binding_matches_fingerprint(xml_attestation, xml_path)
+    ):
+        return None
+
     successor_source = record_root / successor_relative
     successor_ledger = finalized.get(successor_relative)
     if not isinstance(successor_ledger, dict):
@@ -1172,31 +1200,6 @@ def build_connection_stub_disposition(
         not _binding_matches_fingerprint(successor_target_attestation, successor_target)
         or int(successor_media.get("width") or 0) <= 0
         or int(successor_media.get("height") or 0) <= 0
-    ):
-        return None
-
-    xml_path = source_flv.with_suffix(".xml")
-    try:
-        source_attestation = _attest_regular_file(source_flv)
-        xml_attestation = _attest_regular_file(xml_path)
-        _jsonl, record_info, event_count = xml_to_jsonl(xml_path)
-        source_probe = probe_connection_stub_video(source_flv, ffprobe_bin=ffprobe_bin)
-    except (AdapterError, OSError):
-        return None
-    if (
-        event_count != 0
-        or record_info.get("roomid") != source_flv.name.split("_", 1)[0]
-        or source_probe.get("video_codec") != "h264"
-        or source_probe.get("width") != 0
-        or source_probe.get("height") != 0
-        or source_probe.get("decoded_video_frames") != 0
-        or source_probe.get("video_packets") != 0
-        or int(source_probe.get("size_bytes") or -1) != source_fingerprint["size_bytes"]
-        or float(source_probe.get("duration_seconds") or 0) <= 0
-        or float(source_probe.get("duration_seconds") or 0) >= CONNECTION_STUB_MAX_DURATION_SECONDS
-        or abs(float(source_probe["duration_seconds"]) - event_duration) > 0.001
-        or not _binding_matches_fingerprint(source_attestation, source_flv)
-        or not _binding_matches_fingerprint(xml_attestation, xml_path)
     ):
         return None
 
@@ -1359,7 +1362,9 @@ def validate_connection_stub_disposition(
         or not _binding_matches_fingerprint(source, source_flv)
         or not _binding_matches_fingerprint(xml, xml_path)
         or xml.get("official_bililiverecorder") is not True
-        or xml.get("event_count") != 0
+        or not isinstance(xml.get("event_count"), int)
+        or isinstance(xml.get("event_count"), bool)
+        or not 0 <= xml["event_count"] <= CONNECTION_STUB_MAX_XML_EVENT_COUNT
         or not isinstance(record_info, dict)
         or record_info.get("roomid") != source_flv.name.split("_", 1)[0]
     ):

@@ -147,6 +147,7 @@ _MIN_SEGMENT_SIZE_BYTES = 64 * 1024
 _CONNECTION_STUB_SCHEMA = "recording-connection-stub.v1"
 _CONNECTION_STUB_STATUS = "IGNORED_CONNECTION_STUB"
 _CONNECTION_STUB_REASON = "RECORDER_CONNECTION_STUB_NO_DECODABLE_VIDEO"
+_CONNECTION_STUB_MAX_XML_EVENT_COUNT = 1
 _FILE_FINGERPRINT_KEYS = (
     "size_bytes",
     "mtime_ns",
@@ -310,9 +311,11 @@ def _verify_connection_stub_disposition(
         or not isinstance(record_info, dict)
         or record_info.get("roomid") != source_flv.name.split("_", 1)[0]
         or xml_binding.get("official_bililiverecorder") is not True
-        or xml_binding.get("event_count") != 0
+        or not isinstance(xml_binding.get("event_count"), int)
+        or isinstance(xml_binding.get("event_count"), bool)
+        or not 0 <= xml_binding["event_count"] <= _CONNECTION_STUB_MAX_XML_EVENT_COUNT
     ):
-        return False, "ignored source/XML fingerprint or zero-event evidence drifted"
+        return False, "ignored source/XML fingerprint or bounded-event evidence drifted"
     if (
         decode.get("video_codec") != "h264"
         or decode.get("width") != 0

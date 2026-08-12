@@ -87,7 +87,8 @@
   remux 车道排除：row 必须是
   `recording-connection-stub.v1 / IGNORED_CONNECTION_STUB /
   RECORDER_CONNECTION_STUB_NO_DECODABLE_VIDEO`，并同时绑定 source/XML 的当前
-  stat+SHA-256、FileOpening/FileClosed ID 与时间、session、官方零事件 XML、
+  stat+SHA-256、FileOpening/FileClosed ID 与时间、session、官方 XML（最多一条
+  用户事件，XML 原字节及事件数均写入 typed row）、
   H.264 0×0 且 frame/packet 扫描均为空，以及同 session 的下一 opening。
   被排除文件必须是该 session 第一 opening，size <5 MiB、event duration 与
   open-close wall duration 均 <10 秒；下一 opening gap 必须在 0–2 秒内且已

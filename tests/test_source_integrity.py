@@ -21,7 +21,10 @@ def _typed_connection_stub(tmp_path, monkeypatch):
     stub.with_suffix(".xml").write_text(
         '<?xml version="1.0"?><i><BililiveRecorder version="2.18.0"/>'
         '<BililiveRecorderRecordInfo roomid="123456" name="主播" title="测试" '
-        'start_time="2026-08-12T20:29:51+08:00"/></i>',
+        'start_time="2026-08-12T20:29:51+08:00"/>'
+        '<d p="0.009,1,25,16777215,0,0,123,0" user="观众" '
+        'raw=\'[[0,1,25,16777215,1786537791],"你好",[123,"观众",0,0]]\'>'
+        "你好</d></i>",
         encoding="utf-8",
     )
     successor.write_bytes(b"successor-source")

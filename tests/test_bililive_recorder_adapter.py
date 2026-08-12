@@ -61,14 +61,26 @@ def _xml(*, start_time: str = "2026-07-23T13:57:26.3170443+08:00") -> str:
     )
 
 
-def _zero_event_xml(*, start_time: str = "2026-08-12T20:29:51.0000000+08:00") -> str:
+def _connection_stub_xml(
+    *,
+    start_time: str = "2026-08-12T20:29:51.0000000+08:00",
+    event_count: int = 1,
+) -> str:
+    from xml.sax.saxutils import quoteattr
+
+    events = []
+    for index in range(event_count):
+        raw = [[0, 1, 25, 16777215, 1786537791 + index], "你好", [123, "观众", 0, 0]]
+        events.append(
+            '<d p="0.009,1,25,16777215,0,0,123,0" user="观众" '
+            f"raw={quoteattr(json.dumps(raw, ensure_ascii=False))}>你好</d>"
+        )
     return (
         '<?xml version="1.0" encoding="utf-8"?>\n'
         "<i>"
         '<BililiveRecorder version="2.18.0"/>'
         '<BililiveRecorderRecordInfo roomid="123456" name="主播" title="测试" '
-        f'start_time="{start_time}"/>'
-        "</i>\n"
+        f'start_time="{start_time}"/>' + "".join(events) + "</i>\n"
     )
 
 
@@ -79,7 +91,7 @@ def _connection_stub_fixture(tmp_path: Path, monkeypatch):
     successor = date_dir / "123456_20260812-20-29-54.flv"
     successor_mp4 = successor.with_suffix(".mp4")
     stub.write_bytes(b"first-connection-stub")
-    stub.with_suffix(".xml").write_text(_zero_event_xml(), encoding="utf-8")
+    stub.with_suffix(".xml").write_text(_connection_stub_xml(), encoding="utf-8")
     successor.write_bytes(b"valid-successor-source")
     successor_mp4.write_bytes(b"valid-successor-mp4")
     session_id = "a9af9685-8991-4923-af3e-ef6067d1b9bb"
@@ -266,11 +278,16 @@ def test_webhook_journal_dedupes_and_preserves_closed_state_when_out_of_order(
     assert len(state["webhook_event_ids"]) == 2
 
 
+@pytest.mark.parametrize("event_count", [0, 1])
 def test_connection_stub_disposition_binds_first_opening_and_finalized_successor(
     tmp_path: Path,
     monkeypatch,
+    event_count: int,
 ) -> None:
     stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    stub.with_suffix(".xml").write_text(
+        _connection_stub_xml(event_count=event_count), encoding="utf-8"
+    )
 
     row = adapter.build_connection_stub_disposition(
         stub,
@@ -284,7 +301,7 @@ def test_connection_stub_disposition_binds_first_opening_and_finalized_successor
     assert row["status"] == "IGNORED_CONNECTION_STUB"
     assert row["reason_code"] == "RECORDER_CONNECTION_STUB_NO_DECODABLE_VIDEO"
     assert row["source"]["sha256"] == adapter.sha256_file(stub)
-    assert row["xml"]["event_count"] == 0
+    assert row["xml"]["event_count"] == event_count
     assert row["decode"]["decoded_video_frames"] == 0
     assert row["decode"]["video_packets"] == 0
     assert row["session"]["prior_same_session_openings"] == 0
@@ -300,6 +317,32 @@ def test_connection_stub_disposition_binds_first_opening_and_finalized_successor
         record_root=tmp_path,
         webhook_files=webhook_files,
         finalized=finalized,
+    )
+
+
+def test_connection_stub_rejects_more_than_one_orphan_xml_event(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    stub.with_suffix(".xml").write_text(_connection_stub_xml(event_count=2), encoding="utf-8")
+    original_attest = adapter._attest_regular_file
+
+    def refuse_expensive_successor_attestation(path: Path):
+        if path == successor.with_suffix(".mp4"):
+            pytest.fail("ineligible stub must reject before hashing successor MP4")
+        return original_attest(path)
+
+    monkeypatch.setattr(adapter, "_attest_regular_file", refuse_expensive_successor_attestation)
+
+    assert (
+        adapter.build_connection_stub_disposition(
+            stub,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+        )
+        is None
     )
 
 
