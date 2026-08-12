@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -25,10 +26,18 @@ import pytest
 
 import scripts.free_session_autoslice as runner
 from src.autoslice import speaker_guess, speaker_manual_review
+from src.autoslice.addressee_attribution import (
+    SpeakerEvidenceRejected,
+    SpeakerGuessReviewRequired,
+    rebuild_speaker_evidence,
+)
 from src.autoslice.producer_speaker import (
     SpeakerFinalizationAdapters,
     run_producer_speaker_finalization,
 )
+from src.autoslice.publish_staging import _stage_publish_draft
+from src.autoslice.review_evidence import SourceCue
+from src.autoslice.source_fact_staging import resolve_initial_source_fact_review
 from src.autoslice.speaker_common import (
     GUEST_SPEAKER,
     HOST_SPEAKER,
@@ -76,9 +85,7 @@ def _two_speaker_analysis(*, guessed: bool) -> dict:
     return {
         "mode": "multi_speaker",
         "multi_speaker_detected": True,
-        "host_anchor_scope": (
-            speaker_guess.GUESSED_HOST_ANCHOR_SCOPE if guessed else "clip"
-        ),
+        "host_anchor_scope": (speaker_guess.GUESSED_HOST_ANCHOR_SCOPE if guessed else "clip"),
         "host_anchor_cues": [1, 2],
         "clip_host_anchor_candidates": [] if guessed else [1, 2],
         "policy": {"host_session_seed_min": 0.62},
@@ -138,6 +145,255 @@ def _finalize(inputs: dict[str, Path], analyzer, **extra) -> dict:
     )
 
 
+def _guess_evidence_bundle(
+    tmp_path: Path,
+) -> tuple[
+    dict[str, Path],
+    dict[str, object],
+    list[SourceCue],
+    bytes,
+    bytes,
+]:
+    inputs = _fixture(tmp_path)
+    analyzer, _calls = _shortage_then_guess()
+    manifest = _finalize(inputs, analyzer, best_effort_guess=True)
+    speaker_srt_bytes = inputs["srt"].read_bytes()
+    manifest_bytes = inputs["manifest"].read_bytes()
+    plain_sha = hashlib.sha256(inputs["text_srt"].read_bytes()).hexdigest()
+    record: dict[str, object] = {
+        "speaker_mode": "auto",
+        "speaker_review_srt_path": str(inputs["srt"]),
+        "speaker_finalization_manifest_path": str(inputs["manifest"]),
+        "speaker_finalization_manifest_sha256": (
+            "sha256:" + hashlib.sha256(manifest_bytes).hexdigest()
+        ),
+        "speaker_finalization": manifest,
+        "artifact_hashes": {
+            "subtitle_sha256": "sha256:" + plain_sha,
+            "speaker_review_srt_sha256": (
+                "sha256:" + hashlib.sha256(speaker_srt_bytes).hexdigest()
+            ),
+        },
+    }
+    cues = [
+        SourceCue("1", 0, 2_000, "那我们开始了啊", "zh", "speech", 1.0),
+        SourceCue("2", 2_000, 4_000, "好耶我准备好了", "zh", "speech", 1.0),
+    ]
+    return inputs, record, cues, speaker_srt_bytes, manifest_bytes
+
+
+# --- source-fact speaker-evidence 边界 --------------------------------------
+
+
+def test_hash_bound_guess_is_review_only_not_addressee_evidence(
+    tmp_path: Path,
+) -> None:
+    _inputs, record, cues, speaker_srt_bytes, manifest_bytes = _guess_evidence_bundle(tmp_path)
+
+    with pytest.raises(SpeakerGuessReviewRequired) as error:
+        rebuild_speaker_evidence(
+            record,
+            cues,
+            speaker_srt_bytes=speaker_srt_bytes,
+            speaker_manifest_bytes=manifest_bytes,
+        )
+
+    assert error.value.code == "SPEAKER_GUESS_REQUIRES_HUMAN_REVIEW"
+
+
+def test_source_fact_provider_is_not_called_for_hash_bound_guess(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _inputs, record, cues, _speaker_srt_bytes, _manifest_bytes = _guess_evidence_bundle(tmp_path)
+    monkeypatch.setattr(
+        "src.autoslice.source_fact_staging.load_manual_title_keep_authority",
+        lambda _candidate_id: (_ for _ in ()).throw(
+            AssertionError("manual source-fact authority loaded for SPEAKER_GUESS")
+        ),
+    )
+    monkeypatch.setattr(
+        "src.autoslice.source_fact_staging.load_deterministic_text_surface_authority",
+        lambda _candidate_id: (_ for _ in ()).throw(
+            AssertionError("deterministic source-fact authority loaded for SPEAKER_GUESS")
+        ),
+    )
+    calls = 0
+
+    def source_fact_provider(_prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("source-fact provider ran on SPEAKER_GUESS")
+
+    resolution = resolve_initial_source_fact_review(
+        candidate_id="auto_220747_1271_1323",
+        title_source="fallback",
+        title="【李豆沙】测试标题",
+        selection_hook="测试 hook",
+        story_contract={},
+        record=record,
+        cues=cues,
+        source_fact_llm_call=source_fact_provider,
+        recovery_publication_authority=None,
+        title_authority_status="RESOLVED_FALLBACK",
+        title_llm_enabled=False,
+        prior_authority_error=None,
+    )
+
+    assert calls == 0
+    assert resolution.review is None
+    assert resolution.violation is None
+    assert resolution.authority_error is None
+    assert resolution.authority_status == "RESOLVED_FALLBACK"
+
+
+def test_publish_staging_routes_hash_bound_guess_to_review_without_source_fact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inputs, record, cues, _speaker_srt_bytes, _manifest_bytes = _guess_evidence_bundle(tmp_path)
+    record.update(
+        {
+            "status": "MATERIALIZED",
+            "media_path": str(inputs["media"]),
+            "subtitle_path": str(inputs["text_srt"]),
+        }
+    )
+    monkeypatch.setattr(
+        "src.autoslice.source_fact_staging.load_manual_title_keep_authority",
+        lambda _candidate_id: (_ for _ in ()).throw(
+            AssertionError("manual source-fact authority loaded for SPEAKER_GUESS")
+        ),
+    )
+    monkeypatch.setattr(
+        "src.autoslice.source_fact_staging.load_deterministic_text_surface_authority",
+        lambda _candidate_id: (_ for _ in ()).throw(
+            AssertionError("deterministic source-fact authority loaded for SPEAKER_GUESS")
+        ),
+    )
+    provider_calls = 0
+    cover_calls = 0
+
+    def source_fact_provider(_prompt: str) -> str:
+        nonlocal provider_calls
+        provider_calls += 1
+        raise AssertionError("source-fact provider ran on SPEAKER_GUESS")
+
+    def stage_cover(_record: dict[str, object], **_kwargs: object) -> dict[str, object]:
+        nonlocal cover_calls
+        cover_calls += 1
+        cover_path = tmp_path / "guess-review.cover.png"
+        cover_path.write_bytes(b"review cover")
+        return {
+            "status": "AI_COVER_READY",
+            "cover_path": str(cover_path),
+            "cover_generation": {"status": "READY"},
+            "reason_codes": [],
+        }
+
+    staged = _stage_publish_draft(
+        record,
+        candidate_id="auto_220747_1271_1323",
+        title="【李豆沙】猜测说话人等待人工复核",
+        cues=cues,
+        run_ffmpeg=False,
+        title_llm_call=None,
+        selection_hook="猜测说话人等待人工复核",
+        source_fact_llm_call=source_fact_provider,
+        stage_cover=stage_cover,
+    )
+
+    assert staged is not None
+    publish = staged["publish_staging"]
+    assert provider_calls == 0
+    assert cover_calls == 1
+    assert publish["source_fact_review"] is None
+    assert publish["status"] == "STAGED"
+    assert publish["title_authority_status"] != "BLOCKED_SOURCE_FACT_REVIEW"
+    assert "source_fact_review_failed" not in publish["title_policy_violations"]
+    assert publish["cover_status"] == "AI_COVER_READY"
+    assert publish["upload_enabled"] is False
+
+
+@pytest.mark.parametrize(
+    ("tamper", "detail"),
+    [
+        (
+            lambda receipt: receipt.__setitem__("upload_authorized", True),
+            "invalid upload_authorized",
+        ),
+        (
+            lambda receipt: receipt.__setitem__("rung_label", "错误层级"),
+            "rung label differs",
+        ),
+        (
+            lambda receipt: receipt.__setitem__("low_confidence_cue_count", 1),
+            "low-confidence counts are incoherent",
+        ),
+        (
+            lambda receipt: receipt["low_confidence_cues"][1].__setitem__("source_index", 1),
+            "cue indices are invalid or duplicated",
+        ),
+        (
+            lambda receipt: receipt.__setitem__("speaker_counts", {HOST_SPEAKER: 1}),
+            "speaker counts are incoherent",
+        ),
+    ],
+)
+def test_rebound_guess_with_tampered_receipt_is_rejected(
+    tmp_path: Path,
+    tamper,
+    detail: str,
+) -> None:
+    inputs, record, cues, speaker_srt_bytes, _manifest_bytes = _guess_evidence_bundle(tmp_path)
+    manifest = json.loads(inputs["manifest"].read_text(encoding="utf-8"))
+    tamper(manifest["speaker_guess"])
+    manifest_bytes = (
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    inputs["manifest"].write_bytes(manifest_bytes)
+    record["speaker_finalization"] = manifest
+    record["speaker_finalization_manifest_sha256"] = (
+        "sha256:" + hashlib.sha256(manifest_bytes).hexdigest()
+    )
+    provider_calls = 0
+
+    def source_fact_provider(_prompt: str) -> str:
+        nonlocal provider_calls
+        provider_calls += 1
+        raise AssertionError("source-fact provider ran on tampered SPEAKER_GUESS")
+
+    with pytest.raises(
+        SpeakerEvidenceRejected,
+        match=f"SPEAKER_GUESS_RECEIPT_INVALID: .*{detail}",
+    ):
+        rebuild_speaker_evidence(
+            record,
+            cues,
+            speaker_srt_bytes=speaker_srt_bytes,
+            speaker_manifest_bytes=manifest_bytes,
+        )
+    with pytest.raises(
+        SpeakerEvidenceRejected,
+        match=f"SPEAKER_GUESS_RECEIPT_INVALID: .*{detail}",
+    ):
+        resolve_initial_source_fact_review(
+            candidate_id="auto_220747_1271_1323",
+            title_source="fallback",
+            title="【李豆沙】测试标题",
+            selection_hook="测试 hook",
+            story_contract={},
+            record=record,
+            cues=cues,
+            source_fact_llm_call=source_fact_provider,
+            recovery_publication_authority=None,
+            title_authority_status="RESOLVED_FALLBACK",
+            title_llm_enabled=False,
+            prior_authority_error=None,
+        )
+    assert provider_calls == 0
+
+
 # --- (a) 证据不足仍有成品，且标注为猜 ---------------------------------------
 
 
@@ -188,7 +444,7 @@ def test_guess_is_a_real_two_speaker_separation_not_uniform_host(
 def test_guess_receipt_points_at_the_cues_that_need_correcting(
     tmp_path: Path,
 ) -> None:
-    """"哪几句没证据"必须逐句可定位，而不是整片一个"不可信"标记。"""
+    """ "哪几句没证据"必须逐句可定位，而不是整片一个"不可信"标记。"""
 
     inputs = _fixture(tmp_path)
     analyzer, _calls = _shortage_then_guess()
@@ -225,9 +481,7 @@ def test_unresolved_context_rung_delivers_instead_of_deleting_products(
     analysis = _two_speaker_analysis(guessed=False)
     analysis["context_unresolved_cues"] = [2]
 
-    manifest = _finalize(
-        inputs, lambda **_kwargs: analysis, best_effort_guess=True
-    )
+    manifest = _finalize(inputs, lambda **_kwargs: analysis, best_effort_guess=True)
 
     assert inputs["srt"].is_file() and inputs["ass"].is_file()
     assert manifest["status"] == speaker_guess.SPEAKER_GUESS_STATUS
@@ -332,18 +586,19 @@ def test_producer_refuses_an_unrequested_or_unreceipted_guess() -> None:
         "speaker_guess": {"rung": speaker_guess.RUNG_GUESSED_ANCHORS},
     }
     # 没主动要过降级却收到 guess = 篡改，拒收。
-    assert speaker_guess.finalizer_manifest_block_reason(
-        guessed, best_effort_guess=False
-    ) == "unrequested or unreceipted speaker guess"
-    # 要过降级 + 自带回执才收。
     assert (
-        speaker_guess.finalizer_manifest_block_reason(guessed, best_effort_guess=True)
-        is None
+        speaker_guess.finalizer_manifest_block_reason(guessed, best_effort_guess=False)
+        == "unrequested or unreceipted speaker guess"
     )
+    # 要过降级 + 自带回执才收。
+    assert speaker_guess.finalizer_manifest_block_reason(guessed, best_effort_guess=True) is None
     # guess 永远不许自称 production_ready。
-    assert speaker_guess.finalizer_manifest_block_reason(
-        {**guessed, "production_ready": True}, best_effort_guess=True
-    ) == "speaker guess must never claim production_ready"
+    assert (
+        speaker_guess.finalizer_manifest_block_reason(
+            {**guessed, "production_ready": True}, best_effort_guess=True
+        )
+        == "speaker guess must never claim production_ready"
+    )
     # READY 的判据一字未动。
     assert (
         speaker_guess.finalizer_manifest_block_reason(
@@ -351,9 +606,12 @@ def test_producer_refuses_an_unrequested_or_unreceipted_guess() -> None:
         )
         is None
     )
-    assert speaker_guess.finalizer_manifest_block_reason(
-        {"status": "BLOCKED", "reason": "no profile"}, best_effort_guess=True
-    ) == "no profile"
+    assert (
+        speaker_guess.finalizer_manifest_block_reason(
+            {"status": "BLOCKED", "reason": "no profile"}, best_effort_guess=True
+        )
+        == "no profile"
+    )
 
 
 # --- (d) 证据充分不被回落污染 -----------------------------------------------
@@ -401,9 +659,7 @@ def _delivered_result(guess_digest: dict | None) -> dict:
         "subtitle": "/opt/bilive/autoslice/delivery/2026-08-07/hook.srt",
         "speaker_subtitle": "/opt/bilive/autoslice/delivery/2026-08-07/hook.speaker.srt",
         "speaker_ass": "/opt/bilive/autoslice/delivery/2026-08-07/hook.speaker.ass",
-        "speaker_status": (
-            speaker_guess.SPEAKER_GUESS_STATUS if guess_digest else "OFF"
-        ),
+        "speaker_status": (speaker_guess.SPEAKER_GUESS_STATUS if guess_digest else "OFF"),
     }
     if guess_digest:
         summary["speaker_guess"] = guess_digest
@@ -420,9 +676,7 @@ def test_guessed_delivery_parks_and_is_not_auto_uploadable() -> None:
         }
     )
 
-    status = speaker_guess.delivered_talk_status(
-        result, candidate_id="auto_220747_1271_1323"
-    )
+    status = speaker_guess.delivered_talk_status(result, candidate_id="auto_220747_1271_1323")
 
     # fail-closed 判据：停泊态不在 DELIVERED_TALK_STATUSES 里 ⇒ 不可上传、
     # 不进 review_ready、进不了日审清单（后者要求 status == "review_ready"）。
@@ -432,9 +686,7 @@ def test_guessed_delivery_parks_and_is_not_auto_uploadable() -> None:
     assert speaker_manual_review.is_speaker_manual_review_hold(result)
     receipt = result["speaker_manual_review"]
     assert receipt["upload_authorized"] is False
-    assert receipt["disposition"] == (
-        "AWAITING_HUMAN_SPEAKER_CORRECTION_ON_GUESSED_DELIVERY"
-    )
+    assert receipt["disposition"] == ("AWAITING_HUMAN_SPEAKER_CORRECTION_ON_GUESSED_DELIVERY")
     # 成品路径写进 state：既是 Ivan 的审阅入口，也挡住容量清理误删。
     assert receipt["review_artifacts"]["burned_video"].endswith("hook.mp4")
     assert receipt["review_artifacts"]["speaker_ass"].endswith(".speaker.ass")
@@ -443,10 +695,11 @@ def test_guessed_delivery_parks_and_is_not_auto_uploadable() -> None:
     assert result["failure_kind"] == "speaker_evidence"
     assert result["failure_stage"] == "speaker_finalization"
     assert result["failure_recoverable"] is False
+    assert "retry_after_seconds" not in result
+    assert "next_retry_at_epoch" not in result
+    assert "next_retry_at" not in result
     assert result["failure_recovery_fingerprint"] == (
-        runner.talk_failure_recovery_fingerprint(
-            "speaker_evidence", "auto_220747_1271_1323"
-        )
+        runner.talk_failure_recovery_fingerprint("speaker_evidence", "auto_220747_1271_1323")
     )
 
 
@@ -520,9 +773,7 @@ def test_truncated_stdout_summary_still_parks_via_the_speaker_manifest(
 
     assert status in speaker_manual_review.SPEAKER_MANUAL_REVIEW_STATUSES
     assert status not in runner.DELIVERED_TALK_STATUSES
-    assert truncated["speaker_manual_review"]["speaker_guess"][
-        "low_confidence_cue_count"
-    ] == 9
+    assert truncated["speaker_manual_review"]["speaker_guess"]["low_confidence_cue_count"] == 9
 
 
 def test_backfill_policy_repark_keeps_the_guess_and_the_artifacts() -> None:
@@ -568,9 +819,7 @@ def test_non_guessed_delivery_still_reaches_review_ready() -> None:
 def test_summary_digest_only_fires_on_a_receipted_guess_manifest() -> None:
     assert speaker_guess.summary_digest(None) is None
     assert speaker_guess.summary_digest({"status": "READY"}) is None
-    assert speaker_guess.summary_digest(
-        {"status": speaker_guess.SPEAKER_GUESS_STATUS}
-    ) is None
+    assert speaker_guess.summary_digest({"status": speaker_guess.SPEAKER_GUESS_STATUS}) is None
     digest = speaker_guess.summary_digest(
         {
             "status": speaker_guess.SPEAKER_GUESS_STATUS,

@@ -6,7 +6,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.autoslice.addressee_attribution import build_addressee_evidence
+from src.autoslice.addressee_attribution import (
+    SpeakerGuessReviewRequired,
+    build_addressee_evidence,
+)
 from src.autoslice.deterministic_text_surface_resolution import (
     DeterministicTextSurfaceResolutionError,
     consume_deterministic_text_surface_authority,
@@ -19,6 +22,7 @@ from src.autoslice.manual_title_keep_authority import (
     load_manual_title_keep_authority,
     validate_manual_title_keep_authority,
 )
+from src.autoslice.speaker_guess import SPEAKER_GUESS_STATUS
 from src.autoslice.source_fact_review import (
     authorize_deterministic_text_narrowing,
     authorize_manual_title_keep,
@@ -76,6 +80,24 @@ def resolve_initial_source_fact_review(
             authority_status=title_authority_status,
             manual_title_keep_consumption=None,
         )
+    speaker_manifest = record.get("speaker_finalization")
+    if (
+        isinstance(speaker_manifest, Mapping)
+        and speaker_manifest.get("status") == SPEAKER_GUESS_STATUS
+    ):
+        try:
+            build_addressee_evidence(record, cues)
+        except SpeakerGuessReviewRequired:
+            # The guess is fully rebound before skipping the whole source-fact
+            # lane.  In particular, stale manual authorities cannot consume it
+            # and no provider sees guessed speaker turns as addressee evidence.
+            return InitialSourceFactResolution(
+                review=None,
+                violation=None,
+                authority_error=None,
+                authority_status=title_authority_status,
+                manual_title_keep_consumption=None,
+            )
     try:
         keep_authority = load_manual_title_keep_authority(candidate_id)
     except (ManualTitleKeepAuthorityError, OSError, ValueError) as exc:

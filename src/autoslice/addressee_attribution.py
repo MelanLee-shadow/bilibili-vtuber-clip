@@ -38,6 +38,11 @@ from src.autoslice.speaker_common import (
     HOST_SPEAKER,
     SPEAKER_FINALIZATION_SCHEMA,
 )
+from src.autoslice.speaker_guess import (
+    RUNG_LABELS as SPEAKER_GUESS_RUNG_LABELS,
+    SPEAKER_GUESS_SCHEMA,
+    SPEAKER_GUESS_STATUS,
+)
 
 SPEAKER_TRANSCRIPT_LABEL = "speaker_transcript"
 ADDRESSEE_VERDICTS = ("SUPPORTED", "WRONG_ADDRESSEE", "UNVERIFIABLE")
@@ -86,6 +91,15 @@ class SpeakerEvidenceRejected(ValueError):
         self.code = code
         self.detail = detail
         super().__init__(f"{code}: {detail}")
+
+
+class SpeakerGuessReviewRequired(SpeakerEvidenceRejected):
+    """A fully bound guess is review material, never addressee evidence."""
+
+    code = "SPEAKER_GUESS_REQUIRES_HUMAN_REVIEW"
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(self.code, detail)
 
 
 @dataclass(frozen=True)
@@ -327,6 +341,101 @@ def _manifest_document(value: bytes) -> dict[str, object]:
             "SPEAKER_MANIFEST_INVALID", "speaker-final manifest must be an object"
         )
     return decoded
+
+
+def _validate_speaker_guess_receipt(manifest: Mapping[str, object]) -> None:
+    """Accept only the producer's explicit, non-uploadable manual-review envelope."""
+
+    receipt = manifest.get("speaker_guess")
+    if not isinstance(receipt, Mapping):
+        raise SpeakerEvidenceRejected(
+            "SPEAKER_GUESS_RECEIPT_INVALID",
+            "speaker guess receipt is missing",
+        )
+    expected = {
+        "schema_version": SPEAKER_GUESS_SCHEMA,
+        "status": SPEAKER_GUESS_STATUS,
+        "speaker_authority": "GUESSED_NOT_EVIDENCE_BACKED",
+        "upload_authorized": False,
+        "review_authority": "HUMAN_OPERATOR",
+        "resolution": "SPEAKER_TURN_OVERRIDE_OR_EXPLICIT_REJECTION",
+        "thresholds_unchanged": True,
+    }
+    for receipt_field, expected_value in expected.items():
+        if receipt.get(receipt_field) != expected_value:
+            raise SpeakerEvidenceRejected(
+                "SPEAKER_GUESS_RECEIPT_INVALID",
+                f"speaker guess receipt has invalid {receipt_field}",
+            )
+    rung = receipt.get("rung")
+    if rung not in SPEAKER_GUESS_RUNG_LABELS:
+        raise SpeakerEvidenceRejected(
+            "SPEAKER_GUESS_RECEIPT_INVALID",
+            "speaker guess receipt has an unknown review rung",
+        )
+    if receipt.get("rung_label") != SPEAKER_GUESS_RUNG_LABELS[rung]:
+        raise SpeakerEvidenceRejected(
+            "SPEAKER_GUESS_RECEIPT_INVALID",
+            "speaker guess receipt rung label differs from its rung",
+        )
+    source_cue_count = receipt.get("source_cue_count")
+    low_confidence_cue_count = receipt.get("low_confidence_cue_count")
+    low_confidence_cues = receipt.get("low_confidence_cues")
+    low_confidence_cues_truncated = receipt.get("low_confidence_cues_truncated")
+    speaker_counts = receipt.get("speaker_counts")
+    if (
+        not isinstance(source_cue_count, int)
+        or isinstance(source_cue_count, bool)
+        or source_cue_count < 1
+        or not isinstance(low_confidence_cue_count, int)
+        or isinstance(low_confidence_cue_count, bool)
+        or low_confidence_cue_count < 0
+        or not isinstance(low_confidence_cues, list)
+        or not all(isinstance(row, Mapping) for row in low_confidence_cues)
+        or not isinstance(low_confidence_cues_truncated, bool)
+        or not isinstance(speaker_counts, Mapping)
+        or not speaker_counts
+    ):
+        raise SpeakerEvidenceRejected(
+            "SPEAKER_GUESS_RECEIPT_INVALID",
+            "speaker guess receipt cue disclosure is invalid",
+        )
+    if (
+        low_confidence_cue_count > source_cue_count
+        or low_confidence_cue_count < len(low_confidence_cues)
+        or low_confidence_cues_truncated != (low_confidence_cue_count > len(low_confidence_cues))
+    ):
+        raise SpeakerEvidenceRejected(
+            "SPEAKER_GUESS_RECEIPT_INVALID",
+            "speaker guess receipt low-confidence counts are incoherent",
+        )
+    if (
+        any(
+            not isinstance(speaker, str)
+            or not speaker
+            or not isinstance(count, int)
+            or isinstance(count, bool)
+            or count <= 0
+            for speaker, count in speaker_counts.items()
+        )
+        or sum(speaker_counts.values()) != source_cue_count
+    ):
+        raise SpeakerEvidenceRejected(
+            "SPEAKER_GUESS_RECEIPT_INVALID",
+            "speaker guess receipt speaker counts are incoherent",
+        )
+    disclosed_indices = [row.get("source_index") for row in low_confidence_cues]
+    if any(
+        not isinstance(index, int)
+        or isinstance(index, bool)
+        or index < 1
+        or index > source_cue_count
+        for index in disclosed_indices
+    ) or len(set(disclosed_indices)) != len(disclosed_indices):
+        raise SpeakerEvidenceRejected(
+            "SPEAKER_GUESS_RECEIPT_INVALID",
+            "speaker guess receipt cue indices are invalid or duplicated",
+        )
 
 
 def _hash_claims(record: Mapping[str, object]) -> Mapping[str, object]:
@@ -582,11 +691,21 @@ def rebuild_speaker_evidence(
             "SPEAKER_MANIFEST_EMBEDDED_MISMATCH",
             "standalone speaker-final manifest differs from embedded record manifest",
         )
-    if (
-        manifest.get("schema_version") != SPEAKER_FINALIZATION_SCHEMA
-        or manifest.get("status") != "READY"
-        or manifest.get("production_ready") is not True
-    ):
+    if manifest.get("schema_version") != SPEAKER_FINALIZATION_SCHEMA:
+        raise SpeakerEvidenceRejected(
+            "SPEAKER_MANIFEST_NOT_READY",
+            "speaker-final manifest is not the production-ready schema/state",
+        )
+    manifest_status = manifest.get("status")
+    is_speaker_guess = manifest_status == SPEAKER_GUESS_STATUS
+    if is_speaker_guess:
+        if manifest.get("production_ready") is not False:
+            raise SpeakerEvidenceRejected(
+                "SPEAKER_GUESS_RECEIPT_INVALID",
+                "speaker guess must never claim production_ready",
+            )
+        _validate_speaker_guess_receipt(manifest)
+    elif manifest_status != "READY" or manifest.get("production_ready") is not True:
         raise SpeakerEvidenceRejected(
             "SPEAKER_MANIFEST_NOT_READY",
             "speaker-final manifest is not the production-ready schema/state",
@@ -642,6 +761,14 @@ def rebuild_speaker_evidence(
             "SPEAKER_MANIFEST_COUNT_MISMATCH",
             "manifest source/output cue counts differ from exact artifacts",
         )
+    if is_speaker_guess:
+        guess_receipt = manifest["speaker_guess"]
+        assert isinstance(guess_receipt, Mapping)
+        if guess_receipt.get("source_cue_count") != source_count:
+            raise SpeakerEvidenceRejected(
+                "SPEAKER_GUESS_RECEIPT_INVALID",
+                "speaker guess receipt source cue count differs from manifest",
+            )
     raw_decisions = manifest.get("final_decisions")
     if not isinstance(raw_decisions, list) or not all(
         isinstance(row, Mapping) for row in raw_decisions
@@ -651,6 +778,10 @@ def rebuild_speaker_evidence(
         )
     decisions = [dict(row) for row in raw_decisions]
     alignment, transcript = _alignment_and_transcript(cue_rows, segments, decisions)
+    if is_speaker_guess:
+        raise SpeakerGuessReviewRequired(
+            "hash-bound SPEAKER_GUESS is reserved for human speaker correction"
+        )
     alignment_sha256 = _sha256_bytes(_canonical_json_bytes(alignment))
     transcript_sha256 = _sha256_text(transcript)
     evidence: dict[str, object] = {
