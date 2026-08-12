@@ -82,6 +82,7 @@ from .cover_punch_semantics import (
     talk_cover_thumbnail_gate_violations,
     validate_full_text_cover_contract,
 )
+from .addressee_attribution import build_addressee_evidence
 from .llm_client import LlmCall, extract_json_object
 from .manual_title_repair_authority import (
     ManualTitleRepairAuthorityError,
@@ -95,8 +96,9 @@ from .recovery_title_authority import (
 )
 from .shadow_review import _sha256, _write_json_file
 from .source_fact_review import (
-    authorize_manual_title_repair, build_addressee_transcripts,
-    review_and_repair_source_facts, source_fact_review_passes,
+    authorize_manual_title_repair,
+    review_and_repair_source_facts,
+    source_fact_review_passes,
 )
 from .source_fact_rescore_provenance import publish_staging_provenance_fields
 from .story_contract import cover_relation_prompt, cover_story_contract_binding
@@ -528,17 +530,30 @@ def _stage_publish_draft(
     source_fact_review = None
     manual_title_repair_authority_consumption = None
     if title_authority_error is None and source_fact_llm_call is not None:
-        final_transcript, speaker_transcript = build_addressee_transcripts(record, cues)  # F12 受话人归属
-        context_prompt = (str(story_contract.get("clip_context_prompt") or "")
-                          if isinstance(story_contract, Mapping) else "")
+        # F12 受话人归属：一次读取并冻结 plain transcript、speaker transcript
+        # 与其完整 raw-SRT/manifest/alignment provenance。Present-but-invalid
+        # speaker evidence raises before the provider call and must never fall
+        # back to the uniform-host/unverifiable lane.
+        final_transcript, speaker_evidence_result = build_addressee_evidence(record, cues)
+        speaker_transcript = speaker_evidence_result.transcript
+        context_prompt = (
+            str(story_contract.get("clip_context_prompt") or "")
+            if isinstance(story_contract, Mapping)
+            else ""
+        )
         source_fact_review = review_and_repair_source_facts(
             selection_hook=str(selection_hook or ""),
             title=staged_title,
             final_transcript=final_transcript,
-            clip_context_prompt=context_prompt, speaker_transcript=speaker_transcript,
+            clip_context_prompt=context_prompt,
+            speaker_transcript=speaker_transcript,
+            speaker_evidence=speaker_evidence_result.speaker_evidence,
             llm_call=source_fact_llm_call,
-            selection_scorecard=(story_contract.get("selection_scorecard")
-                                 if isinstance(story_contract, Mapping) else None),
+            selection_scorecard=(
+                story_contract.get("selection_scorecard")
+                if isinstance(story_contract, Mapping)
+                else None
+            ),
             # Recovery-public and Ivan/manual titles are exact authorities.
             # CPA may KEEP them, but a proposed title rewrite needs a new
             # authority instead of silently spending cover budget on it.
@@ -549,8 +564,9 @@ def _stage_publish_draft(
             ),
             enforce_automatic_title_style=title_llm_call is not None,
             candidate_id=candidate_id,
-            final_reviewed_srt_path=(Path(str(record["subtitle_path"]))
-                                     if record.get("subtitle_path") else None),
+            final_reviewed_srt_path=(
+                Path(str(record["subtitle_path"])) if record.get("subtitle_path") else None
+            ),
         )
         # Manual text remains immutable by default.  A checked-in authority
         # may unlock exactly one already-evidenced source-fact repair, bound
@@ -559,8 +575,7 @@ def _stage_publish_draft(
         if (
             not source_fact_review_passes(source_fact_review)
             and isinstance(source_fact_review, Mapping)
-            and source_fact_review.get("decision")
-            == "REPAIR_REQUIRES_TITLE_AUTHORITY"
+            and source_fact_review.get("decision") == "REPAIR_REQUIRES_TITLE_AUTHORITY"
             and title_source == "ivan_manual_override"
         ):
             try:
@@ -691,16 +706,12 @@ def _stage_publish_draft(
         reused_cover_path: Path | None = None
         covers_dir = media_path.parent / "covers"
         reuse_matches = (
-            sorted(covers_dir.glob(f"{candidate_id}.*.cover.png"))
-            if covers_dir.is_dir()
-            else []
+            sorted(covers_dir.glob(f"{candidate_id}.*.cover.png")) if covers_dir.is_dir() else []
         )
         if len(reuse_matches) == 1:
             reused_cover_path = reuse_matches[0]
         reused_sha = (
-            "sha256:" + _sha256(reused_cover_path)
-            if reused_cover_path is not None
-            else None
+            "sha256:" + _sha256(reused_cover_path) if reused_cover_path is not None else None
         )
         # 已发布封面的完整证据包结转（2026-08-01，1013 r14 案）：recovery review
         # manifest 要求 record 携带合法 cover-route-decision.v2 等封面回执，而这些
@@ -711,14 +722,10 @@ def _stage_publish_draft(
         carried_generation: dict[str, object] | None = None
         carry_drop_reason: str | None = None
         if reused_cover_path is not None and reused_sha is not None:
-            sidecar = reused_cover_path.with_name(
-                f"{candidate_id}.published-cover-generation.json"
-            )
+            sidecar = reused_cover_path.with_name(f"{candidate_id}.published-cover-generation.json")
             if sidecar.is_file():
                 try:
-                    published_generation = json.loads(
-                        sidecar.read_text(encoding="utf-8")
-                    )
+                    published_generation = json.loads(sidecar.read_text(encoding="utf-8"))
                 except (OSError, ValueError):
                     published_generation = None
                 # 只按 sha 相等决定是否进入结转流程；完整校验放在身份重打
@@ -726,10 +733,7 @@ def _stage_publish_draft(
                 # 代码永远不可达（r16 案：鸡生蛋）。
                 if (
                     isinstance(published_generation, dict)
-                    and str(
-                        published_generation.get("final_cover_sha256") or ""
-                    )
-                    == reused_sha
+                    and str(published_generation.get("final_cover_sha256") or "") == reused_sha
                 ):
                     carried_generation = dict(published_generation)
                 else:
@@ -753,9 +757,7 @@ def _stage_publish_draft(
             # （含 fresh 边界评审/clip-context sha），带旧的过来必然被审计判
             # STALE（r17 案）。
             if isinstance(story_contract, Mapping):
-                carried_generation["story_contract"] = (
-                    cover_story_contract_binding(story_contract)
-                )
+                carried_generation["story_contract"] = cover_story_contract_binding(story_contract)
             # 身份见证优先结转出版世代（v2 冻结条款，见
             # cover_host_identity_gate.PUBLISHED_CARRY_*）；仅当出版见证也
             # 过不了（形态残缺/哈希不符）才对同一份字节现场重打 CPA 见证。
@@ -765,29 +767,17 @@ def _stage_publish_draft(
             needs_identity = (
                 isinstance(carried_route, Mapping)
                 and carried_route.get("host_identity_required") is True
-                and not validate_final_host_identity_verification(
-                    carried_generation
-                )
+                and not validate_final_host_identity_verification(carried_generation)
             )
             if needs_identity:
                 identity_reference = (
-                    media_path.parent
-                    / "cover_refs"
-                    / f"{candidate_id}.cover-ref.png"
+                    media_path.parent / "cover_refs" / f"{candidate_id}.cover-ref.png"
                 )
-                fresh_base_url = (
-                    os.environ.get("CPA_BASE_URL", "").strip().rstrip("/")
-                )
+                fresh_base_url = os.environ.get("CPA_BASE_URL", "").strip().rstrip("/")
                 fresh_api_key = os.environ.get("CPA_API_KEY", "").strip()
-                if (
-                    identity_reference.is_file()
-                    and fresh_base_url
-                    and fresh_api_key
-                ):
+                if identity_reference.is_file() and fresh_base_url and fresh_api_key:
                     try:
-                        carried_generation[
-                            "final_host_identity_verification"
-                        ] = dict(
+                        carried_generation["final_host_identity_verification"] = dict(
                             verify_lidousha_final_host_identity(
                                 final_cover_path=reused_cover_path,
                                 final_cover_sha256=reused_sha,
@@ -797,21 +787,14 @@ def _stage_publish_draft(
                             )
                         )
                     except Exception as exc:
-                        carry_drop_reason = (
-                            "identity_refresh_error:"
-                            f"{type(exc).__name__}"
-                        )
+                        carry_drop_reason = f"identity_refresh_error:{type(exc).__name__}"
                         carried_generation = None
                 else:
-                    carry_drop_reason = (
-                        "identity_refresh_precondition_missing"
-                    )
+                    carry_drop_reason = "identity_refresh_precondition_missing"
                     carried_generation = None
             # 终门：结转 bundle 的完整路由校验（含身份）决定去留。
             if carried_generation is not None and not (
-                validate_cover_route_decision(
-                    carried_generation, allow_legacy_v1=False
-                )
+                validate_cover_route_decision(carried_generation, allow_legacy_v1=False)
             ):
                 carry_drop_reason = "carried_bundle_failed_route_validation"
                 carried_generation = None
@@ -828,8 +811,7 @@ def _stage_publish_draft(
             "status": "REUSED_COVER",
             "cover_path": (
                 str(reused_cover_path)
-                if carried_generation is not None
-                and reused_cover_path is not None
+                if carried_generation is not None and reused_cover_path is not None
                 else None
             ),
             **({"cover_sha256": reused_sha} if reused_sha else {}),
@@ -841,9 +823,7 @@ def _stage_publish_draft(
                     "status": "REUSED",
                     "note": "subtitle-only re-run: existing cover kept",
                     "reused_cover_path": (
-                        str(reused_cover_path)
-                        if reused_cover_path is not None
-                        else None
+                        str(reused_cover_path) if reused_cover_path is not None else None
                     ),
                     "reused_cover_candidates": len(reuse_matches),
                     **(
@@ -856,9 +836,7 @@ def _stage_publish_draft(
             "reason_codes": [],
         }
     else:
-        requested_full_text_cover_contract = record.get(
-            "full_text_cover_contract"
-        )
+        requested_full_text_cover_contract = record.get("full_text_cover_contract")
         full_text_cover_contract = (
             dict(requested_full_text_cover_contract)
             if validate_full_text_cover_contract(
@@ -897,7 +875,9 @@ def _stage_publish_draft(
     )
     cover_generation = cover_result["cover_generation"]
     raw_reason_codes = cover_result.get("reason_codes")
-    reason_codes = [str(value) for value in raw_reason_codes] if isinstance(raw_reason_codes, list) else []
+    reason_codes = (
+        [str(value) for value in raw_reason_codes] if isinstance(raw_reason_codes, list) else []
+    )
     artifact_hashes = {str(k): str(v) for k, v in dict(record.get("artifact_hashes") or {}).items()}
     for key in ("cover_sha256", "ai_background_sha256", "cover_reference_sha256"):
         value = cover_result.get(key)
@@ -1438,13 +1418,9 @@ def _stage_cpa_redraw_cover(
                 ai_background_path = retry_background
         if not validate_final_host_identity_verification(cover_generation):
             verification = cover_generation.get("final_host_identity_verification")
-            detail = (
-                "AI cover final pixels do not have a PASS host "
-                "identity verdict: "
-                + str(
-                    (verification if isinstance(verification, Mapping) else {}).get("reason_code")
-                    or "VERIFICATION_MISSING"
-                )
+            detail = "AI cover final pixels do not have a PASS host identity verdict: " + str(
+                (verification if isinstance(verification, Mapping) else {}).get("reason_code")
+                or "VERIFICATION_MISSING"
             )
             record_cover_route_execution(
                 cover_generation,
@@ -1516,9 +1492,7 @@ def _stage_cpa_redraw_cover(
     record_cover_route_execution(
         cover_generation,
         actual_treatment="cpa_redraw",
-        execution_status=(
-            "READY_DEGRADED" if demotion_detail else "READY"
-        ),
+        execution_status=("READY_DEGRADED" if demotion_detail else "READY"),
         image_generation_attempted=True,
         image_generation_used=True,
         detail=demotion_detail,
@@ -1563,8 +1537,8 @@ def _build_lidousha_cover_route(
     punch_semantic_status = str(
         punch_review.get("status") if isinstance(punch_review, Mapping) else ""
     ).strip()
-    thumbnail_text_requires_punch = (
-        punch_allowed and cover_text_requires_punch_for_thumbnail(cover_text)
+    thumbnail_text_requires_punch = punch_allowed and cover_text_requires_punch_for_thumbnail(
+        cover_text
     )
     treatment, treatment_reason = _decide_cover_treatment(
         cover_mode=cover_mode,
@@ -1600,9 +1574,7 @@ def _build_lidousha_cover_route(
             "cover_mode": cover_mode,
             "is_song": art_direction.is_song,
             "cover_punch_allowed": punch_allowed,
-            "full_text_cover_contract": (
-                full_text_cover_contract is not None
-            ),
+            "full_text_cover_contract": (full_text_cover_contract is not None),
             "frame_score": first_candidate.get("score"),
             "frame_emotion": first_candidate.get("emotion"),
             "subject_confident": (
@@ -1672,9 +1644,7 @@ def _stage_lidousha_ai_cover(
     image_edit: Callable[..., dict[str, object]] = _cover_call_cpa_image_edit,
     final_participant_verifier: (Callable[..., Mapping[str, object]] | None) = None,
     final_host_identity_verifier: (Callable[..., Mapping[str, object]] | None) = None,
-    source_composition_verifier: (
-        Callable[..., Mapping[str, object]] | None
-    ) = None,
+    source_composition_verifier: (Callable[..., Mapping[str, object]] | None) = None,
     enforce_final_host_identity: bool = False,
     punch_allowed: bool = False,
     full_text_cover_contract: Mapping[str, object] | None = None,
@@ -1696,9 +1666,7 @@ def _stage_lidousha_ai_cover(
         full_text_cover_contract,
         cover_text=cover_text,
     ):
-        cover_generation["full_text_cover_contract"] = dict(
-            full_text_cover_contract
-        )
+        cover_generation["full_text_cover_contract"] = dict(full_text_cover_contract)
     story_contract = materialized_recut.get("story_contract")
     if isinstance(story_contract, Mapping):
         cover_generation["story_contract"] = cover_story_contract_binding(story_contract)
@@ -1753,8 +1721,7 @@ def _stage_lidousha_ai_cover(
     source_composition_verification: Mapping[str, object] | None = None
     if enforce_final_host_identity:
         active_source_composition_verifier = (
-            source_composition_verifier
-            or verify_lidousha_source_composition
+            source_composition_verifier or verify_lidousha_source_composition
         )
         reference_sha256 = "sha256:" + _sha256(reference_path)
         source_composition_verification = run_source_composition_witness(
@@ -1771,9 +1738,7 @@ def _stage_lidousha_ai_cover(
             api_key=api_key,
             frame_selection=frame_selection,
         )
-        cover_generation["source_composition_verification"] = dict(
-            source_composition_verification
-        )
+        cover_generation["source_composition_verification"] = dict(source_composition_verification)
         if not validate_source_composition_verification(
             source_composition_verification,
             reference_sha256=reference_sha256,
@@ -1795,8 +1760,7 @@ def _stage_lidousha_ai_cover(
                 detail,
             )
         source_composition_path = (
-            evidence_dir
-            / f"{candidate_id}.cover-source-composition-verification.json"
+            evidence_dir / f"{candidate_id}.cover-source-composition-verification.json"
         )
         _write_json_file(
             source_composition_path,
@@ -1959,19 +1923,13 @@ def _stage_lidousha_ai_cover(
             full_text_cover_contract=full_text_cover_contract,
         )
         result = _enforce_final_talk_cover_thumbnail_gate(result)
-        if "SCREENSHOT_ROUTE_MATERIALIZATION_FAILED" not in (
-            result.get("reason_codes") or []
-        ):
+        if "SCREENSHOT_ROUTE_MATERIALIZATION_FAILED" not in (result.get("reason_codes") or []):
             return result
         screenshot_receipt = cover_generation.get("screenshot_direct")
-        demotion_detail = (
-            "demoted from "
-            f"{treatment}: "
-            + str(
-                (screenshot_receipt or {}).get("detail")
-                if isinstance(screenshot_receipt, Mapping)
-                else ""
-            )
+        demotion_detail = f"demoted from {treatment}: " + str(
+            (screenshot_receipt or {}).get("detail")
+            if isinstance(screenshot_receipt, Mapping)
+            else ""
         )
         cover_generation["route_demotion"] = {
             "schema_version": "cover-route-demotion.v1",
@@ -2068,7 +2026,8 @@ def _stage_lidousha_ai_cover(
         final_participant_verifier=final_participant_verifier,
         final_host_identity_verifier=final_host_identity_verifier,
         base_url=base_url,
-        api_key=api_key, full_text_cover_contract=full_text_cover_contract,
+        api_key=api_key,
+        full_text_cover_contract=full_text_cover_contract,
     )
     return _enforce_final_talk_cover_thumbnail_gate(result)
 
@@ -2153,16 +2112,9 @@ def _screenshot_base_and_crop(
         if isinstance(source_composition_verification, Mapping):
             if not isinstance(source_composition_receipt, Mapping):
                 raise ValueError("SOURCE_COMPOSITION_RECEIPT_MISSING")
-            receipt_path = Path(
-                str(source_composition_receipt.get("path") or "")
-            )
-            receipt_sha256 = str(
-                source_composition_receipt.get("sha256") or ""
-            )
-            if (
-                not receipt_path.is_file()
-                or "sha256:" + _sha256(receipt_path) != receipt_sha256
-            ):
+            receipt_path = Path(str(source_composition_receipt.get("path") or ""))
+            receipt_sha256 = str(source_composition_receipt.get("sha256") or "")
+            if not receipt_path.is_file() or "sha256:" + _sha256(receipt_path) != receipt_sha256:
                 raise ValueError("SOURCE_COMPOSITION_RECEIPT_HASH_MISMATCH")
             crop_evidence = extract_authority_source_crop_or_full_frame(
                 reference_path=reference_path,
@@ -2175,9 +2127,7 @@ def _screenshot_base_and_crop(
         else:
             confident = bool(frame_selection.get("subject_confident"))
             camera_window = (
-                frame_selection.get("camera_window_bbox_frac")
-                if not confident
-                else None
+                frame_selection.get("camera_window_bbox_frac") if not confident else None
             )
             crop_evidence = extract_zoomed_cover_frame(
                 media_path,
@@ -2186,18 +2136,14 @@ def _screenshot_base_and_crop(
                 zoom=1.32 if confident else 1.16,
                 anchor_x_frac=(
                     float(frame_selection["subject_anchor_x_frac"])
-                    if confident
-                    and frame_selection.get("subject_anchor_x_frac")
-                    is not None
+                    if confident and frame_selection.get("subject_anchor_x_frac") is not None
                     # 本频道版式皮套居中偏右、弹幕栏在左：右倾锚点让 1.16x 裁切
                     # 优先吃掉左侧弹幕栏。
                     else 0.58
                 ),
                 head_top_frac=(
                     float(frame_selection["subject_head_top_frac"])
-                    if confident
-                    and frame_selection.get("subject_head_top_frac")
-                    is not None
+                    if confident and frame_selection.get("subject_head_top_frac") is not None
                     else 0.0
                 ),
                 window_bbox_frac=camera_window,
@@ -2380,10 +2326,8 @@ def _stage_screenshot_direct_cover(
             )
             cover_generation["final_host_identity_verification"] = dict(host_identity_verification)
             if not validate_final_host_identity_verification(cover_generation):
-                detail = (
-                    "final cover pixels do not have a PASS "
-                    "host identity verdict: "
-                    + str(host_identity_verification.get("reason_code") or "VERIFICATION_MISSING")
+                detail = "final cover pixels do not have a PASS host identity verdict: " + str(
+                    host_identity_verification.get("reason_code") or "VERIFICATION_MISSING"
                 )
                 record_cover_route_execution(
                     cover_generation,
@@ -2662,12 +2606,8 @@ def _enforce_final_talk_cover_thumbnail_gate(
         generation,
         actual_treatment=None,
         execution_status="BLOCKED",
-        image_generation_attempted=(
-            generation.get("image_generation_attempted") is True
-        ),
-        image_generation_used=(
-            generation.get("image_generation_used") is True
-        ),
+        image_generation_attempted=(generation.get("image_generation_attempted") is True),
+        image_generation_used=(generation.get("image_generation_used") is True),
         detail=detail,
     )
     return _blocked_ai_cover_result(generation, violations, detail)

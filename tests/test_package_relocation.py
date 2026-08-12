@@ -9,9 +9,15 @@ from pathlib import Path
 
 import pytest
 
+from src.autoslice.addressee_attribution import rebuild_speaker_evidence
 from src.autoslice.package_relocation import (
     PackageRelocationError,
     relocate_slice_package,
+)
+from src.autoslice.review_evidence import SourceCue
+from src.autoslice.source_fact_review import (
+    review_and_repair_source_facts,
+    validate_source_fact_review,
 )
 
 
@@ -474,6 +480,162 @@ def test_relocation_commits_hash_bound_graph_and_is_idempotent(tmp_path: Path) -
     assert fixture.record_path.read_bytes() == stable["record"]
     assert fixture.speaker_path.read_bytes() == stable["speaker"]
     assert fixture.publish_path.read_bytes() == stable["publish"]
+
+
+def test_split_speaker_source_fact_identity_survives_real_relocation(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    segments = [
+        ("00:00:00,000", "00:00:00,500", "李豆沙", "he"),
+        ("00:00:00,500", "00:00:01,000", "连线", "llo"),
+    ]
+    speaker_srt = (
+        "\n\n".join(
+            f"{index}\n{start} --> {end}\n[{speaker}] {text}"
+            for index, (start, end, speaker, text) in enumerate(
+                segments, start=1
+            )
+        )
+        + "\n"
+    ).encode()
+    speaker_srt_sha256 = _write(
+        fixture.package / f"{CID}.recut.speaker-final.srt",
+        speaker_srt,
+    )
+    cues = [SourceCue("source-1", 0, 1_000, "hello")]
+
+    speaker = _load(fixture.speaker_path)
+    speaker.update(
+        {
+            "output_review_srt_sha256": speaker_srt_sha256,
+            "source_cue_count": 1,
+            "output_cue_count": 2,
+            "final_decisions": [
+                {
+                    "source_index": 1,
+                    "start": start,
+                    "end": end,
+                    "speaker": speaker_label,
+                    "text": text,
+                    "decision_source": "ivan_reviewed_truth",
+                    "layer": 0,
+                    "placement": "main",
+                }
+                for start, end, speaker_label, text in segments
+            ],
+        }
+    )
+    speaker_payload = _json_bytes(speaker)
+    fixture.speaker_path.write_bytes(speaker_payload)
+
+    record = _load(fixture.record_path)
+    record["speaker_finalization"] = speaker
+    record["speaker_finalization_manifest_sha256"] = (
+        "sha256:" + _digest(speaker_payload)
+    )
+    record["artifact_hashes"]["speaker_review_srt_sha256"] = (
+        "sha256:" + speaker_srt_sha256
+    )
+    before_evidence = rebuild_speaker_evidence(
+        record,
+        cues,
+        speaker_srt_bytes=speaker_srt,
+        speaker_manifest_bytes=speaker_payload,
+    )
+    assert before_evidence.transcript == "1.1 [李豆沙] he\n1.2 [连线] llo"
+
+    hook = "这段测试字幕内容完整。"
+    title = "【李豆沙】完整的测试字幕"
+    final_transcript = "hello"
+    source_fact_review = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript=final_transcript,
+        speaker_transcript=before_evidence.transcript,
+        speaker_evidence=before_evidence.speaker_evidence,
+        clip_context_prompt="",
+        llm_call=lambda _prompt: json.dumps(
+            {
+                "schema_version": "lidousha-source-fact-review.v1",
+                "status": "KEEP",
+                "final_selection_hook": hook,
+                "final_title": title,
+                "supported_by": ["final_transcript"],
+                "changed_surfaces": [],
+                "addressee_attribution": [],
+                "selection_scorecard_review": {
+                    "status": "NOT_NEEDED",
+                    "reason": "selection hook remains unchanged",
+                },
+                "summary": "字幕证据足以支持测试文案。",
+            },
+            ensure_ascii=False,
+        ),
+    )
+    validation = {
+        "selection_hook": hook,
+        "title": title,
+        "final_transcript": final_transcript,
+        "clip_context_prompt": "",
+        "speaker_evidence": before_evidence.speaker_evidence,
+    }
+    assert validate_source_fact_review(source_fact_review, **validation)
+
+    chat_path = fixture.evidence / f"{CID}.chat-authority.json"
+    chat = _load(chat_path)
+    chat["speaker_manifest_sha256"] = _digest(speaker_payload)
+    chat_payload = _json_bytes(chat)
+    chat_path.write_bytes(chat_payload)
+
+    publish = _load(fixture.publish_path)
+    publish["source_fact_review"] = source_fact_review
+    publish["artifact_hashes"].update(
+        {
+            "speaker_review_srt_sha256": "sha256:" + speaker_srt_sha256,
+            "chat_authority_audit_sha256": "sha256:" + _digest(chat_payload),
+        }
+    )
+    publish_payload = _json_bytes(publish)
+    fixture.publish_path.write_bytes(publish_payload)
+    record["publish_staging"]["source_fact_review"] = source_fact_review
+    record["artifact_hashes"] = {
+        **publish["artifact_hashes"],
+        "publish_draft_sha256": "sha256:" + _digest(publish_payload),
+    }
+    fixture.record_path.write_bytes(_json_bytes(record))
+
+    receipt = fixture.relocate()
+
+    relocated_record = _load(fixture.record_path)
+    relocated_speaker_payload = fixture.speaker_path.read_bytes()
+    after_evidence = rebuild_speaker_evidence(
+        relocated_record,
+        cues,
+        speaker_srt_bytes=speaker_srt,
+        speaker_manifest_bytes=relocated_speaker_payload,
+    )
+    assert after_evidence.speaker_evidence == before_evidence.speaker_evidence
+    assert (
+        after_evidence.speaker_evidence_sha256
+        == before_evidence.speaker_evidence_sha256
+    )
+    relocated_review = relocated_record["publish_staging"]["source_fact_review"]
+    assert relocated_review == source_fact_review
+    assert validate_source_fact_review(
+        relocated_review,
+        **{
+            **validation,
+            "speaker_evidence": after_evidence.speaker_evidence,
+        },
+    )
+    assert _load(fixture.publish_path)["source_fact_review"] == relocated_review
+    assert "/output_review_srt" in receipt["documents"]["speaker"][
+        "changed_pointers"
+    ]
+    assert "/speaker_finalization/output_review_srt" in receipt["documents"][
+        "record"
+    ]["changed_pointers"]
 
 
 def test_prepared_mixed_generation_recovers_forward(tmp_path: Path) -> None:

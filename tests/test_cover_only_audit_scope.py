@@ -248,6 +248,48 @@ def test_canonical_source_fact_missing_accepts_only_valid_scope(
     }
 
 
+def test_canonical_source_fact_scope_cannot_read_external_absolute_path(
+    tmp_path, monkeypatch
+):
+    package_root = tmp_path / "package"
+    package_root.mkdir()
+    external_scope = tmp_path / "external-scope.json"
+    external_scope.write_text('{"fixture": true}\n', encoding="utf-8")
+    publish_path = package_root / "clip.publish.json"
+    publish_path.write_text("{}\n", encoding="utf-8")
+    issues: list[dict] = []
+    monkeypatch.setattr(
+        package_audit,
+        "validate_cover_only_audit_scope",
+        lambda *_args, **_kwargs: pytest.fail("external scope must not be validated"),
+    )
+
+    package_audit._audit_item_story_contract(
+        root=package_root,
+        manifest={},
+        item={
+            "candidate_id": CANDIDATE,
+            "stem": "clip",
+            "cover_only_audit_scope": str(external_scope),
+        },
+        issues=issues,
+        stem="clip",
+        subtitle_path=None,
+        chat_authority={},
+        publish_path=publish_path,
+        title_txt_path=None,
+        publish_title=TITLE,
+        title_txt="",
+        record_path=package_root / "clip.record.json",
+        record={"publish_staging": {}},
+        story_contract={"schema_version": "fixture"},
+        story_contract_required=True,
+        is_song=False,
+    )
+
+    assert "COVER_ONLY_AUDIT_SCOPE_INVALID" in {row["code"] for row in issues}
+
+
 def test_canonical_scope_cannot_override_present_invalid_receipt(
     tmp_path, monkeypatch
 ):

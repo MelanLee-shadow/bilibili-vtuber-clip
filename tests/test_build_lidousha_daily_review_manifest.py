@@ -10,6 +10,7 @@ from scripts.build_lidousha_daily_review_manifest import (
     _sha256,
     _resolve_final_burn_artifacts,
     _resolve_final_cover,
+    _rebuild_package_speaker_evidence,
     _lane_manifest_contract_fields,
     _source_fact_manifest_fields,
     _sync_record_bound_candidate_artifacts,
@@ -18,6 +19,7 @@ from scripts.build_lidousha_daily_review_manifest import (
     build,
 )
 from src.autoslice.source_fact_review import review_and_repair_source_facts
+from src.autoslice.speaker_common import SPEAKER_FINALIZATION_SCHEMA
 from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
@@ -219,9 +221,7 @@ def test_resolve_final_cover_materializes_repaired_delivery_alias(
             "cover_sha256": "sha256:" + expected,
         },
         cover_generation={
-            "final_cover": str(
-                tmp_path / "generation" / "final.cover.png"
-            ),
+            "final_cover": str(tmp_path / "generation" / "final.cover.png"),
             "final_cover_sha256": "sha256:" + expected,
         },
     )
@@ -285,6 +285,7 @@ def test_source_fact_receipt_must_match_all_package_surfaces(
         encoding="utf-8",
     )
     record = {
+        "speaker_mode": "uniform_host",
         "story_contract": {
             "selection_hook": hook,
             "clip_context_prompt": context,
@@ -297,11 +298,24 @@ def test_source_fact_receipt_must_match_all_package_surfaces(
     }
     publish = {"title": title, "source_fact_review": receipt}
 
-    assert _validate_source_fact_receipts(
+    speaker_evidence, speaker_manifest = _rebuild_package_speaker_evidence(
+        package_root=tmp_path,
         record_doc=record,
-        publish_doc=publish,
         subtitle_path=subtitle,
-    ) == receipt["receipt_sha256"]
+        speaker_srt_path=None,
+    )
+    assert speaker_evidence["state"] == "AbsentAuthorized"
+    assert speaker_manifest is None
+
+    assert (
+        _validate_source_fact_receipts(
+            record_doc=record,
+            publish_doc=publish,
+            subtitle_path=subtitle,
+            speaker_evidence=speaker_evidence,
+        )
+        == receipt["receipt_sha256"]
+    )
 
     publish["source_fact_review"] = None
     with pytest.raises(DailyManifestError, match="receipt missing"):
@@ -309,7 +323,113 @@ def test_source_fact_receipt_must_match_all_package_surfaces(
             record_doc=record,
             publish_doc=publish,
             subtitle_path=subtitle,
+            speaker_evidence=speaker_evidence,
         )
+
+
+def test_package_speaker_evidence_rejects_present_invalid_bytes(
+    tmp_path: Path,
+) -> None:
+    subtitle = tmp_path / "candidate.srt"
+    subtitle.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n测试字幕\n",
+        encoding="utf-8",
+    )
+    speaker_srt = tmp_path / "candidate.speaker-final.srt"
+    speaker_srt.write_text("not an SRT\n", encoding="utf-8")
+    source_manifest = tmp_path / "source" / "candidate.speaker.json"
+    source_manifest.parent.mkdir()
+    source_manifest.write_text("{}\n", encoding="utf-8")
+    record = {
+        "speaker_mode": "required",
+        "speaker_review_srt_path": str(tmp_path / "outside.speaker.srt"),
+        "speaker_finalization_manifest_path": str(source_manifest),
+        "speaker_finalization_manifest_sha256": ("sha256:" + _sha256(source_manifest)),
+        "speaker_finalization": {},
+        "artifact_hashes": {
+            "speaker_review_srt_sha256": "sha256:" + _sha256(speaker_srt),
+        },
+    }
+
+    with pytest.raises(
+        DailyManifestError,
+        match="source-fact speaker evidence rejected",
+    ):
+        _rebuild_package_speaker_evidence(
+            package_root=tmp_path,
+            record_doc=record,
+            subtitle_path=subtitle,
+            speaker_srt_path=speaker_srt,
+        )
+
+
+def test_package_speaker_evidence_rebuilds_exact_package_bytes(
+    tmp_path: Path,
+) -> None:
+    package_root = tmp_path / "package"
+    package_root.mkdir()
+    subtitle = package_root / "candidate.srt"
+    subtitle.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n测试字幕\n",
+        encoding="utf-8",
+    )
+    speaker_srt = package_root / "candidate.speaker-final.srt"
+    speaker_srt.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n[李豆沙] 测试字幕\n",
+        encoding="utf-8",
+    )
+    plain_sha = _sha256(subtitle)
+    speaker_sha = _sha256(speaker_srt)
+    manifest = {
+        "schema_version": SPEAKER_FINALIZATION_SCHEMA,
+        "status": "READY",
+        "production_ready": True,
+        "text_final_srt_sha256": plain_sha,
+        "output_review_srt_sha256": speaker_sha,
+        "source_cue_count": 1,
+        "output_cue_count": 1,
+        "final_decisions": [
+            {
+                "source_index": 1,
+                "start": "00:00:00,000",
+                "end": "00:00:01,000",
+                "speaker": "李豆沙",
+                "text": "测试字幕",
+                "decision_source": "ivan_reviewed_truth",
+                "layer": 0,
+                "placement": "main",
+            }
+        ],
+    }
+    source_manifest = tmp_path / "producer" / "candidate.speaker-final.json"
+    source_manifest.parent.mkdir()
+    source_manifest.write_text(
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    record = {
+        "speaker_mode": "required",
+        "speaker_review_srt_path": "/producer/candidate.speaker-final.srt",
+        "speaker_finalization_manifest_path": str(source_manifest),
+        "speaker_finalization_manifest_sha256": ("sha256:" + _sha256(source_manifest)),
+        "speaker_finalization": manifest,
+        "artifact_hashes": {
+            "subtitle_sha256": "sha256:" + plain_sha,
+            "speaker_review_srt_sha256": "sha256:" + speaker_sha,
+        },
+    }
+
+    evidence, packaged_manifest = _rebuild_package_speaker_evidence(
+        package_root=package_root,
+        record_doc=record,
+        subtitle_path=subtitle,
+        speaker_srt_path=speaker_srt,
+    )
+
+    assert evidence["state"] == "PresentValid"
+    assert evidence["speaker_transcript"] == "1 [李豆沙] 测试字幕"
+    assert packaged_manifest == package_root / source_manifest.name
+    assert packaged_manifest.read_bytes() == source_manifest.read_bytes()
 
 
 def test_song_manifest_does_not_require_talk_source_fact_receipt(
@@ -321,18 +441,24 @@ def test_song_manifest_does_not_require_talk_source_fact_receipt(
         encoding="utf-8",
     )
 
-    assert _source_fact_manifest_fields(
-        lane="song",
-        record_doc={"classification": "song"},
-        publish_doc={"title": "【主播·歌】《测试歌曲》"},
-        subtitle_path=subtitle,
-    ) == {}
-    assert _lane_manifest_contract_fields(
-        lane="song",
-        record_doc={"classification": "song"},
-        publish_doc={"title": "【主播·歌】《测试歌曲》"},
-        subtitle_path=subtitle,
-    ) == {}
+    assert (
+        _source_fact_manifest_fields(
+            lane="song",
+            record_doc={"classification": "song"},
+            publish_doc={"title": "【主播·歌】《测试歌曲》"},
+            subtitle_path=subtitle,
+        )
+        == {}
+    )
+    assert (
+        _lane_manifest_contract_fields(
+            lane="song",
+            record_doc={"classification": "song"},
+            publish_doc={"title": "【主播·歌】《测试歌曲》"},
+            subtitle_path=subtitle,
+        )
+        == {}
+    )
 
 
 def test_resolve_final_burn_artifacts_uses_legacy_sapphire72_names_when_uniform(
@@ -378,9 +504,7 @@ def test_resolve_final_burn_artifacts_refuses_missing_speaker_family(
     (tmp_path / f"{stem}.burned-final-sapphire72.mp4").write_bytes(b"video")
 
     with pytest.raises(DailyManifestError, match="required package file missing"):
-        _resolve_final_burn_artifacts(
-            package_root=tmp_path, stem=stem, uniform_fallback=False
-        )
+        _resolve_final_burn_artifacts(package_root=tmp_path, stem=stem, uniform_fallback=False)
 
 
 def _build_daily_talk_package(
@@ -428,9 +552,7 @@ def _build_daily_talk_package(
         chat_authority_doc = {
             "final_text_srt_sha256": "1" * 64,
             "final_speaker_srt_sha256": "2" * 64,
-            "speaker_ass_path": str(
-                package_root / f"{stem}.speaker-final.ass"
-            ),
+            "speaker_ass_path": str(package_root / f"{stem}.speaker-final.ass"),
             "speaker_ass_sha256": "3" * 64,
         }
     else:
@@ -447,24 +569,15 @@ def _build_daily_talk_package(
     )
 
     if speaker_finalized:
-        (package_root / f"{stem}.burned-final-speaker.mp4").write_bytes(
-            b"speaker-burn-bytes"
-        )
-        (package_root / f"{stem}.speaker-final.ass").write_bytes(
-            b"[Events]\nspeaker-ass\n"
-        )
+        (package_root / f"{stem}.burned-final-speaker.mp4").write_bytes(b"speaker-burn-bytes")
+        (package_root / f"{stem}.speaker-final.ass").write_bytes(b"[Events]\nspeaker-ass\n")
         (package_root / f"{stem}.speaker-final.srt").write_text(
-            "1\n00:00:00,000 --> 00:00:01,000\n"
-            "[LDS] " + transcript_line + "\n",
+            "1\n00:00:00,000 --> 00:00:01,000\n[LDS] " + transcript_line + "\n",
             encoding="utf-8",
         )
     else:
-        (package_root / f"{stem}.burned-final-sapphire72.mp4").write_bytes(
-            b"uniform-burn-bytes"
-        )
-        (package_root / f"{stem}.final-sapphire72.ass").write_bytes(
-            b"[Events]\nuniform-ass\n"
-        )
+        (package_root / f"{stem}.burned-final-sapphire72.mp4").write_bytes(b"uniform-burn-bytes")
+        (package_root / f"{stem}.final-sapphire72.ass").write_bytes(b"[Events]\nuniform-ass\n")
 
     covers_dir = package_root / "covers"
     covers_dir.mkdir()
@@ -495,13 +608,13 @@ def _build_daily_talk_package(
 
     record_doc = {
         "classification": "talk",
+        # This synthetic fixture exercises burn-family/package naming only; it
+        # carries no producer speaker-final manifest, so source-fact authority
+        # is explicitly the authorized-absence lane in both naming variants.
+        "speaker_mode": "uniform_host",
         "artifact_hashes": {
-            "chat_authority_audit_sha256": (
-                "sha256:" + _sha256(chat_authority_source)
-            ),
-            "clip_context_file_sha256": (
-                "sha256:" + _sha256(clip_context_source)
-            ),
+            "chat_authority_audit_sha256": ("sha256:" + _sha256(chat_authority_source)),
+            "clip_context_file_sha256": ("sha256:" + _sha256(clip_context_source)),
         },
         "story_contract": {
             "selection_hook": hook,
@@ -538,9 +651,7 @@ def _build_daily_talk_package(
                         "status": "review_ready",
                         "rc": 0,
                         "cover_path": str(cover_path),
-                        "cover_sha256": (
-                            "sha256:" + _sha256(cover_path)
-                        ),
+                        "cover_sha256": ("sha256:" + _sha256(cover_path)),
                     }
                 ],
             },
@@ -558,8 +669,8 @@ def _build_daily_talk_package(
 def test_build_uniform_host_package_keeps_legacy_sapphire72_naming(
     tmp_path: Path,
 ) -> None:
-    package_root, state_path, deployed_commit_file, candidate_id = (
-        _build_daily_talk_package(tmp_path, speaker_finalized=False)
+    package_root, state_path, deployed_commit_file, candidate_id = _build_daily_talk_package(
+        tmp_path, speaker_finalized=False
     )
 
     manifest = build(package_root, state_path, deployed_commit_file, candidate_id)
@@ -575,8 +686,8 @@ def test_build_uniform_host_package_keeps_legacy_sapphire72_naming(
 def test_build_speaker_finalized_package_uses_speaker_artifact_family(
     tmp_path: Path,
 ) -> None:
-    package_root, state_path, deployed_commit_file, candidate_id = (
-        _build_daily_talk_package(tmp_path, speaker_finalized=True)
+    package_root, state_path, deployed_commit_file, candidate_id = _build_daily_talk_package(
+        tmp_path, speaker_finalized=True
     )
 
     manifest = build(package_root, state_path, deployed_commit_file, candidate_id)
@@ -588,16 +699,14 @@ def test_build_speaker_finalized_package_uses_speaker_artifact_family(
     assert item["speaker_srt"] == f"{stem}.speaker-final.srt"
     assert item["speaker_srt"] != item["subtitle_srt"]
     assert (package_root / item["speaker_srt"]).is_file()
-    assert item["speaker_srt_sha256"] == _sha256(
-        package_root / f"{stem}.speaker-final.srt"
-    )
+    assert item["speaker_srt_sha256"] == _sha256(package_root / f"{stem}.speaker-final.srt")
 
 
 def test_build_accepts_individually_green_pick_during_publication_closure(
     tmp_path: Path,
 ) -> None:
-    package_root, state_path, deployed_commit_file, candidate_id = (
-        _build_daily_talk_package(tmp_path, speaker_finalized=True)
+    package_root, state_path, deployed_commit_file, candidate_id = _build_daily_talk_package(
+        tmp_path, speaker_finalized=True
     )
     state = json.loads(state_path.read_text(encoding="utf-8"))
     state["status"] = "publication_in_progress"
@@ -614,8 +723,8 @@ def test_build_accepts_individually_green_pick_during_publication_closure(
 def test_build_uses_exact_packaged_title_mask_when_source_path_is_missing(
     tmp_path: Path,
 ) -> None:
-    package_root, state_path, deployed_commit_file, candidate_id = (
-        _build_daily_talk_package(tmp_path, speaker_finalized=True)
+    package_root, state_path, deployed_commit_file, candidate_id = _build_daily_talk_package(
+        tmp_path, speaker_finalized=True
     )
     publish_path = package_root / f"{candidate_id}.recut.publish.json"
     publish = json.loads(publish_path.read_text(encoding="utf-8"))
@@ -638,16 +747,14 @@ def test_build_uses_exact_packaged_title_mask_when_source_path_is_missing(
 def test_build_rejects_cover_parent_symlink_without_outside_write(
     tmp_path: Path,
 ) -> None:
-    package_root, state_path, deployed_commit_file, candidate_id = (
-        _build_daily_talk_package(tmp_path, speaker_finalized=True)
+    package_root, state_path, deployed_commit_file, candidate_id = _build_daily_talk_package(
+        tmp_path, speaker_finalized=True
     )
     outside = tmp_path / "outside"
     outside.mkdir()
     canary = outside / "pre-overlay.png"
     canary.write_bytes(b"outside canary")
-    (package_root / "covers_ai_original").symlink_to(
-        outside, target_is_directory=True
-    )
+    (package_root / "covers_ai_original").symlink_to(outside, target_is_directory=True)
 
     with pytest.raises(DailyManifestError, match="contains a symlink"):
         build(package_root, state_path, deployed_commit_file, candidate_id)
@@ -660,13 +767,11 @@ def test_build_rejects_cover_parent_symlink_without_outside_write(
 def test_build_rejects_title_mask_symlink_without_outside_write(
     tmp_path: Path,
 ) -> None:
-    package_root, state_path, deployed_commit_file, candidate_id = (
-        _build_daily_talk_package(tmp_path, speaker_finalized=True)
+    package_root, state_path, deployed_commit_file, candidate_id = _build_daily_talk_package(
+        tmp_path, speaker_finalized=True
     )
     publish = json.loads(
-        (package_root / f"{candidate_id}.recut.publish.json").read_text(
-            encoding="utf-8"
-        )
+        (package_root / f"{candidate_id}.recut.publish.json").read_text(encoding="utf-8")
     )
     generation = publish["cover_generation"]
     portable = package_root / "covers_ai_original"
@@ -688,8 +793,8 @@ def test_build_rejects_title_mask_symlink_without_outside_write(
 def test_build_rejects_same_stem_target_symlink_without_outside_write(
     tmp_path: Path,
 ) -> None:
-    package_root, state_path, deployed_commit_file, candidate_id = (
-        _build_daily_talk_package(tmp_path, speaker_finalized=True)
+    package_root, state_path, deployed_commit_file, candidate_id = _build_daily_talk_package(
+        tmp_path, speaker_finalized=True
     )
     upload_stem = f"{candidate_id}.recut.burned-final-speaker"
     outside = tmp_path / "outside-record.json"
@@ -771,17 +876,15 @@ def test_build_accepts_publication_closure_batch_statuses(
     unreviewable (2026-08-07 ``ready_unpublished_with_failures`` refusal).
     """
 
-    package_root, state_path, deployed_commit_file, candidate_id = (
-        _build_daily_talk_package(tmp_path, speaker_finalized=True)
+    package_root, state_path, deployed_commit_file, candidate_id = _build_daily_talk_package(
+        tmp_path, speaker_finalized=True
     )
     _rewrite_batch_status(state_path, batch_status)
 
     manifest = build(package_root, state_path, deployed_commit_file, candidate_id)
 
     assert manifest["batch_status"] == batch_status
-    assert manifest["items"][0]["video"] == (
-        f"{candidate_id}.recut.burned-final-speaker.mp4"
-    )
+    assert manifest["items"][0]["video"] == (f"{candidate_id}.recut.burned-final-speaker.mp4")
 
 
 @pytest.mark.parametrize(
@@ -791,8 +894,8 @@ def test_build_accepts_publication_closure_batch_statuses(
 def test_build_still_refuses_non_reviewable_batch_statuses(
     tmp_path: Path, batch_status: str
 ) -> None:
-    package_root, state_path, deployed_commit_file, candidate_id = (
-        _build_daily_talk_package(tmp_path, speaker_finalized=True)
+    package_root, state_path, deployed_commit_file, candidate_id = _build_daily_talk_package(
+        tmp_path, speaker_finalized=True
     )
     _rewrite_batch_status(state_path, batch_status)
 

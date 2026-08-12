@@ -31,12 +31,11 @@ MAX_ACTIVE_MODULE_LINES = 2_000
 
 # 2026-07-31 冻结基线：20 项。全部是欠账，不是许可。
 FUNCTION_DEBT_LEDGER = {
-    ("scripts/audit_lidousha_review_package.py", "_audit_item_story_contract"): 311,
     # 2026-08-02 +20：run_mode 白名单纳入 MANUAL_PRODUCE_REVIEW 且强制
     # manual_attestation 署名（手动产线包进审计闭环；Ivan 8/2 /goal 授权，
     # 测试 test_manual_review_manifest.py + 二轮真实测试实锤此缺口）。
-    ("scripts/audit_lidousha_review_package.py", "audit_package"): 349,
-    ("scripts/build_lidousha_recovery_review_manifest.py", "build_manifest"): 365,
+    ("scripts/audit_lidousha_review_package.py", "audit_package"): 346,
+    ("scripts/build_lidousha_recovery_review_manifest.py", "build_manifest"): 343,
     ("scripts/run_auto_review_shadow_pipeline.py", "_run_live_source"): 316,
     ("src/autoslice/cover_repair.py", "_roll_forward_prepared_cover_transactions"): 346,
     # 2026-08-08 净 -16：Ivan 8/8 真值法证 synthesis F7——删除无声学
@@ -99,14 +98,14 @@ FUNCTION_DEBT_LEDGER = {
     # 点名「contract 不穿透 = 静默把唯一合法全文通道杀死」，必须补）。
     # 2026-08-02 +9：显式降级执行位（demotion_detail 形参 + READY_DEGRADED
     # 记录）——Ivan 8/2 /goal「全都按你的想法进行修复」授权，封面路由 P1。
-    ("src/autoslice/publish_staging.py", "_stage_cpa_redraw_cover"): 424,
+    ("src/autoslice/publish_staging.py", "_stage_cpa_redraw_cover"): 418,
     # 2026-07-31 +2：同上，contract 穿透接线。
     # 2026-08-02 +29：截图物化失败→显式降级重绘（降级回执+细节留痕，重绘
     # 前置门照跑）——同上授权；测试 test_cover_route_demotion.py + shadow 用例。
     # 2026-08-10 净 -7：截图优先修复顺带还债——source-composition 见证的调用+
     # 异常包装整体抽到 src/autoslice/cover_scene_binding.py
     # （run_source_composition_witness），场景分叉的新增行零留在本函数。
-    ("src/autoslice/publish_staging.py", "_stage_lidousha_ai_cover"): 411,
+    ("src/autoslice/publish_staging.py", "_stage_lidousha_ai_cover"): 398,
     # 2026-07-31 +27：reuse 封面绑定（1013 jyl-r9 案——reuse 不绑 cover sha，
     # recovery manifest 必然 REFUSE；Ivan 常设修复授权链）。已连续吃增长，
     # 下次动这个函数必须先拆，不许再抬。
@@ -118,11 +117,11 @@ FUNCTION_DEBT_LEDGER = {
     # 合并的快车道代码，现在就去合并 merge」）带入的 relocation/冻结包接线。数字为
     # 合并后实测,非估算。⚠️ 此项已连续吃增长且上方 8/1 注释写明「下次动这个函数
     # 必须先拆，不许再抬」——本次是合并带入而非新写功能,但欠账事实成立,须补拆解。
-    ("src/autoslice/publish_staging.py", "_stage_publish_draft"): 583,
+    ("src/autoslice/publish_staging.py", "_stage_publish_draft"): 561,
     # 2026-07-31 +3：同上，截图/polish 路径的 contract 穿透。
     # 2026-08-10 净 -6：同上——终检见证的 verifier-missing 分支与调用抽到
     # cover_scene_binding.run_final_host_identity_witness。
-    ("src/autoslice/publish_staging.py", "_stage_screenshot_direct_cover"): 316,
+    ("src/autoslice/publish_staging.py", "_stage_screenshot_direct_cover"): 314,
     # 2026-08-08 +13：歌lane provider门修复（Ivan 2026-08-08「老毛病竟然还
     # 重新犯，你必须修复」）——JINGTING_PROVIDER_NOT_AGY 及同族此前未被识别
     # 为 transient，同一 attempt 里跟着的 SONG_*_MISSING/INVALID 级联码就会
@@ -334,7 +333,7 @@ MODULE_DEBT_LEDGER = {
     # cover_route_policy.py，本模块只留 import 别名与调用点。
     # 2026-08-10 +19：合并 ft-a8600994 快车道分支（Ivan 2026-08-10 逐字「这就是要合并的快车道代码，现在就去合并 merge」）带入的
     # relocation/冻结包接线（同 _stage_publish_draft 那一项）。合并后实测。
-    "src/autoslice/publish_staging.py": 2_718,
+    "src/autoslice/publish_staging.py": 2_658,
     "src/autoslice/same_bv_repair.py": 2_422,
     # 2026-08-10 新入账：合并 ft-a8600994（Ivan 2026-08-10 逐字「这就是要合并的快车道代码，现在就去合并 merge」）把 talk_lane 顶过
     # 2000 行入场线（ft 侧 +17 行 boundary 接线）。⚠️ 这是本次 merge 带入的新

@@ -11,6 +11,7 @@ from scripts.audit_lidousha_review_package import (
     _audit_policy_fingerprint,
     _audit_source_truth_owner_attestations,
     _audit_story_bound_cover,
+    _contained_package_artifact,
     audit_package,
 )
 from src.autoslice.boundary_semantic_review import (
@@ -52,15 +53,55 @@ from src.autoslice.story_contract import build_story_contract
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-COVER_FONT = (
-    REPO_ROOT / "assets/lidousha/fonts/ZCOOLKuaiLe-Regular.ttf"
-)
+COVER_FONT = REPO_ROOT / "assets/lidousha/fonts/ZCOOLKuaiLe-Regular.ttf"
+
+
+def test_contained_package_artifact_rejects_symlinked_parent(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "package"
+    root.mkdir()
+    real = root / "real"
+    real.mkdir()
+    (real / "speaker.json").write_text("{}\n", encoding="utf-8")
+    (root / "linked").symlink_to(real, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="not package-contained"):
+        _contained_package_artifact(
+            root,
+            "linked/speaker.json",
+            label="speaker finalization manifest",
+        )
+
+
+def test_contained_package_artifact_never_reads_existing_absolute_source(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "package"
+    root.mkdir()
+    external = tmp_path / "producer" / "speaker.json"
+    external.parent.mkdir()
+    external.write_text('{"source":"external"}\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="not package-contained"):
+        _contained_package_artifact(
+            root,
+            str(external),
+            label="speaker finalization manifest",
+        )
+
+    packaged = root / external.name
+    packaged.write_text('{"source":"package"}\n', encoding="utf-8")
+    assert _contained_package_artifact(
+        root,
+        str(external),
+        label="speaker finalization manifest",
+    ) == packaged
 
 
 def test_package_audit_rejects_814_shaped_full_title_thumbnail() -> None:
     cover_text = (
-        "SC称转发佐伯沙弥香生日信息能拿菲尔兹奖，"
-        "小李追问“我也磕原点组怎么没有”，难道磕错了？"
+        "SC称转发佐伯沙弥香生日信息能拿菲尔兹奖，小李追问“我也磕原点组怎么没有”，难道磕错了？"
     )
     issues: list[dict] = []
     _audit_story_bound_cover(
@@ -90,9 +131,7 @@ def test_package_audit_rejects_814_shaped_full_title_thumbnail() -> None:
                 },
             },
         },
-        story_contract={
-            "selection_hook": "转发生日信息能拿菲尔兹奖，小李追问为何自己没有。"
-        },
+        story_contract={"selection_hook": "转发生日信息能拿菲尔兹奖，小李追问为何自己没有。"},
         required=True,
     )
 
@@ -102,10 +141,7 @@ def test_package_audit_rejects_814_shaped_full_title_thumbnail() -> None:
 
 
 def test_package_audit_rejects_exact_964_manual_three_line_double_hook() -> None:
-    cover_text = (
-        "长沙人李豆沙亲自打假“长沙大香肠”，话还没说完，"
-        "弹幕又提议把技能叫“李姐拉拉”"
-    )
+    cover_text = "长沙人李豆沙亲自打假“长沙大香肠”，话还没说完，弹幕又提议把技能叫“李姐拉拉”"
     issues: list[dict] = []
     _audit_story_bound_cover(
         issues=issues,
@@ -131,9 +167,7 @@ def test_package_audit_rejects_exact_964_manual_three_line_double_hook() -> None
                 },
             },
         },
-        story_contract={
-            "selection_hook": "长沙人李豆沙打假长沙大香肠。"
-        },
+        story_contract={"selection_hook": "长沙人李豆沙打假长沙大香肠。"},
         required=True,
     )
 
@@ -201,16 +235,12 @@ def _source_truth_audit_fixture(
             if satisfied_rows
             else "NO_RELEVANT_INTERVAL"
         )
-    ledger = (
-        REPO_ROOT / "assets/lidousha/subtitle_truth_ledger.v1.json"
-    )
+    ledger = REPO_ROOT / "assets/lidousha/subtitle_truth_ledger.v1.json"
     return {
         "schema_version": "source-subtitle-truth-audit.v1",
         "status": status,
         "ledger_path": str(ledger),
-        "ledger_sha256": (
-            "sha256:" + hashlib.sha256(ledger.read_bytes()).hexdigest()
-        ),
+        "ledger_sha256": ("sha256:" + hashlib.sha256(ledger.read_bytes()).hexdigest()),
         "applied": applied_rows,
         "satisfied": satisfied_rows,
         "failures": failure_rows,
@@ -239,9 +269,7 @@ def test_optional_source_truth_does_not_require_final_owner_attestation():
         record={},
     )
 
-    assert "SOURCE_TRUTH_FINAL_OWNER_ATTESTATION_MISSING" not in {
-        issue["code"] for issue in issues
-    }
+    assert "SOURCE_TRUTH_FINAL_OWNER_ATTESTATION_MISSING" not in {issue["code"] for issue in issues}
 
     chat["source_subtitle_truth_audit"]["applied"][0]["required"] = True
     required_issues: list[dict] = []
@@ -313,13 +341,10 @@ def _owner_attestation_codes(
         row = dict(original)
         windows = row["local_windows"]
         fully_inside = all(
-            0 <= window["start_ms"]
-            and window["end_ms"] <= 4_000
-            for window in windows
+            0 <= window["start_ms"] and window["end_ms"] <= 4_000 for window in windows
         )
         fully_outside = all(
-            window["end_ms"] <= 0 or window["start_ms"] >= 4_000
-            for window in windows
+            window["end_ms"] <= 0 or window["start_ms"] >= 4_000 for window in windows
         )
         if fully_inside:
             final_delivery_rows += 1
@@ -340,9 +365,7 @@ def _owner_attestation_codes(
             }
         elif fully_outside:
             context_only_rows += 1
-            row["final_owner_scope"] = (
-                "CONTEXT_ONLY_OUTSIDE_FINAL_DELIVERY"
-            )
+            row["final_owner_scope"] = "CONTEXT_ONLY_OUTSIDE_FINAL_DELIVERY"
             row["final_owner_scope_reason"] = (
                 "ALL_EFFECTIVE_OWNER_WINDOWS_OUTSIDE_HALF_OPEN_FINAL_INTERVAL"
             )
@@ -372,21 +395,17 @@ def _owner_attestation_codes(
             "start_ms": 0,
             "end_ms": 4_000,
         },
-        "required_truth_row_count": (
-            final_delivery_rows + straddling_rows
-        ),
+        "required_truth_row_count": (final_delivery_rows + straddling_rows),
         "required_truth_ids": [
             str(row.get("truth_id") or "")
             for row in classified_truth_rows
-            if row.get("final_owner_scope")
-            in {"FINAL_DELIVERY", "STRADDLES_FINAL_DELIVERY"}
+            if row.get("final_owner_scope") in {"FINAL_DELIVERY", "STRADDLES_FINAL_DELIVERY"}
         ],
         "context_only_truth_row_count": context_only_rows,
         "context_only_truth_ids": [
             str(row.get("truth_id") or "")
             for row in classified_truth_rows
-            if row.get("final_owner_scope")
-            == "CONTEXT_ONLY_OUTSIDE_FINAL_DELIVERY"
+            if row.get("final_owner_scope") == "CONTEXT_ONLY_OUTSIDE_FINAL_DELIVERY"
         ],
         "context_only_truth_evidence": [
             {
@@ -396,8 +415,7 @@ def _owner_attestation_codes(
                 "final_owner_windows": row.get("final_owner_windows"),
             }
             for row in classified_truth_rows
-            if row.get("final_owner_scope")
-            == "CONTEXT_ONLY_OUTSIDE_FINAL_DELIVERY"
+            if row.get("final_owner_scope") == "CONTEXT_ONLY_OUTSIDE_FINAL_DELIVERY"
         ],
         "optional_truth_row_count": 0,
         "straddling_truth_row_count": straddling_rows,
@@ -416,12 +434,8 @@ def _owner_attestation_codes(
         "final_source_truth_owner_verification": truth_owner,
         "final_required_legacy_decision_count": 0,
         "final_required_source_truth_owner_count": required_windows,
-        "final_required_redelivery_baseline_owner_count": (
-            1 if baseline_applied else 0
-        ),
-        "final_required_decision_count": (
-            required_windows + (1 if baseline_applied else 0)
-        ),
+        "final_required_redelivery_baseline_owner_count": (1 if baseline_applied else 0),
+        "final_required_decision_count": (required_windows + (1 if baseline_applied else 0)),
         "frozen_boundary_owner_contract": frozen,
         "final_boundary_required_exclusion_count": 0,
     }
@@ -478,9 +492,7 @@ def _truth_row(
         "boundary_role": boundary_role,
         "source_start_ms": 100_000 + start_ms,
         "source_end_ms": 100_000 + end_ms,
-        "local_windows": [
-            {"start_ms": start_ms, "end_ms": end_ms}
-        ],
+        "local_windows": [{"start_ms": start_ms, "end_ms": end_ms}],
     }
 
 
@@ -506,9 +518,7 @@ def _story_owner(
         "owner_kind": owner_kind,
         "owner_id": owner_id,
         "required": True,
-        "local_windows": [
-            {"start_ms": start_ms, "end_ms": end_ms}
-        ],
+        "local_windows": [{"start_ms": start_ms, "end_ms": end_ms}],
     }
 
 
@@ -535,9 +545,7 @@ def test_candidate_scope_truth_requires_exact_frozen_owner():
         start_ms=1_000,
         end_ms=2_000,
     )
-    valid_frozen = _frozen_owner_fixture(
-        owners=[_truth_owner(story_truth)]
-    )
+    valid_frozen = _frozen_owner_fixture(owners=[_truth_owner(story_truth)])
     assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" not in (
         _owner_attestation_codes(
             truth_rows=[story_truth],
@@ -560,9 +568,7 @@ def test_context_or_straddling_truth_cannot_forge_boundary_owner():
         start_ms=6_000,
         end_ms=7_000,
     )
-    context_owner = _frozen_owner_fixture(
-        owners=[_truth_owner(context_truth)]
-    )
+    context_owner = _frozen_owner_fixture(owners=[_truth_owner(context_truth)])
     assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in (
         _owner_attestation_codes(
             truth_rows=[context_truth],
@@ -603,9 +609,7 @@ def test_owner_scope_lead_tolerance_matches_producer_arithmetic():
         "story_end_ms": scope["story_end_ms"],
     }
 
-    valid, story_start, _, _ = _candidate_owner_scope(
-        frozen=frozen, record={}
-    )
+    valid, story_start, _, _ = _candidate_owner_scope(frozen=frozen, record={})
     assert valid and story_start == 9_500
 
     inflated = dict(scope)
@@ -647,9 +651,7 @@ def test_ledger_progression_equivalence_gates_on_package_overlap(
             ),
             encoding="utf-8",
         )
-        return "sha256:" + hashlib.sha256(
-            ledger_path.read_bytes()
-        ).hexdigest()
+        return "sha256:" + hashlib.sha256(ledger_path.read_bytes()).hexdigest()
 
     def entry(truth_id: str, start: int, end: int, **extra) -> dict:
         return {
@@ -660,9 +662,7 @@ def test_ledger_progression_equivalence_gates_on_package_overlap(
             **extra,
         }
 
-    monkeypatch.setattr(
-        owner_audit, "SOURCE_TRUTH_LEDGER_PATH", ledger_path
-    )
+    monkeypatch.setattr(owner_audit, "SOURCE_TRUTH_LEDGER_PATH", ledger_path)
     recorded_sha = write_ledger([entry("seen-truth", 1_000, 2_000)])
     provenance = {
         "source_piece": {
@@ -695,9 +695,7 @@ def test_ledger_progression_equivalence_gates_on_package_overlap(
             entry("other-clip-truth", 50_000, 60_000),
         ]
     )
-    assert owner_audit._source_truth_audit_valid(
-        audit_base, provenance=provenance
-    )
+    assert owner_audit._source_truth_audit_valid(audit_base, provenance=provenance)
 
     # a new entry overlapping this package that the audit never saw -> stale
     write_ledger(
@@ -706,9 +704,7 @@ def test_ledger_progression_equivalence_gates_on_package_overlap(
             entry("new-overlapping-truth", 3_000, 4_000),
         ]
     )
-    assert not owner_audit._source_truth_audit_valid(
-        audit_base, provenance=provenance
-    )
+    assert not owner_audit._source_truth_audit_valid(audit_base, provenance=provenance)
 
     # superseded revisions of an overlapping entry do not force a rerun
     write_ledger(
@@ -722,9 +718,7 @@ def test_ledger_progression_equivalence_gates_on_package_overlap(
             ),
         ]
     )
-    assert owner_audit._source_truth_audit_valid(
-        audit_base, provenance=provenance
-    )
+    assert owner_audit._source_truth_audit_valid(audit_base, provenance=provenance)
 
     # without provenance the progression cannot be scoped -> stale
     write_ledger(
@@ -733,9 +727,7 @@ def test_ledger_progression_equivalence_gates_on_package_overlap(
             entry("other-clip-truth", 50_000, 60_000),
         ]
     )
-    assert not owner_audit._source_truth_audit_valid(
-        audit_base, provenance=None
-    )
+    assert not owner_audit._source_truth_audit_valid(audit_base, provenance=None)
 
 
 def test_reviewed_baseline_is_text_authority_not_boundary_owner():
@@ -754,9 +746,7 @@ def test_reviewed_baseline_is_text_authority_not_boundary_owner():
                 "owner_kind": "reviewed_redelivery_baseline",
                 "owner_id": "exact-reviewed-interval",
                 "required": True,
-                "local_windows": [
-                    {"start_ms": 0, "end_ms": 4_000}
-                ],
+                "local_windows": [{"start_ms": 0, "end_ms": 4_000}],
             }
         ]
     )
@@ -793,9 +783,7 @@ def test_story_owner_is_recomputed_from_candidate_scope_and_exact_window():
         frozen=valid_frozen,
         chat_rows_by_key={"applied": [row]},
     )
-    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" not in (
-        valid_codes
-    )
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" not in (valid_codes)
 
     hidden_required = dict(row)
     hidden_required["boundary_required"] = False
@@ -805,9 +793,7 @@ def test_story_owner_is_recomputed_from_candidate_scope_and_exact_window():
         frozen=_frozen_owner_fixture(),
         chat_rows_by_key={"applied": [hidden_required]},
     )
-    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in (
-        hidden_codes
-    )
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in (hidden_codes)
 
     shortened_frozen = _frozen_owner_fixture(
         owners=[
@@ -824,9 +810,7 @@ def test_story_owner_is_recomputed_from_candidate_scope_and_exact_window():
         frozen=shortened_frozen,
         chat_rows_by_key={"applied": [row]},
     )
-    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in (
-        shortened_codes
-    )
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in (shortened_codes)
 
 
 def test_narrow_story_owner_uses_its_typed_slot_without_exact_read_gate():
@@ -872,14 +856,17 @@ def test_exact_final_surface_owner_does_not_reopen_frozen_boundary_set():
             "status": "PASS",
         },
     }
-    repair_sha256 = "sha256:" + hashlib.sha256(
-        json.dumps(
-            repair,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
+    repair_sha256 = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(
+                repair,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+    )
     row = {
         "mode": "exact_final_cpa_self_heal",
         "decision_authority": "CPA_JUDGE",
@@ -889,18 +876,18 @@ def test_exact_final_surface_owner_does_not_reopen_frozen_boundary_set():
         "structured_exact_text": "新字",
         "timing_immutable": True,
         "boundary_required": False,
-        "boundary_owner_rejection": (
-            "POST_BOUNDARY_FREEZE_FINAL_SURFACE_OWNER"
-        ),
+        "boundary_owner_rejection": ("POST_BOUNDARY_FREEZE_FINAL_SURFACE_OWNER"),
         "exact_final_repair_sha256": repair_sha256,
     }
-    registrations = [{
-        "schema_version": "exact-final-cpa-surface-registration.v1",
-        "status": "REGISTERED",
-        "exact_final_repair_sha256": repair_sha256,
-        "owner_entity_repair_index": 0,
-        "superseded_entity_repair_indexes": [],
-    }]
+    registrations = [
+        {
+            "schema_version": "exact-final-cpa-surface-registration.v1",
+            "status": "REGISTERED",
+            "exact_final_repair_sha256": repair_sha256,
+            "owner_entity_repair_index": 0,
+            "superseded_entity_repair_indexes": [],
+        }
+    ]
     self_heal = {
         "schema_version": "exact-final-cpa-self-heal-audit.v1",
         "status": "PASS",
@@ -944,14 +931,17 @@ def test_exact_final_supersession_preserves_prior_frozen_boundary_owner():
             "status": "PASS",
         },
     }
-    repair_sha256 = "sha256:" + hashlib.sha256(
-        json.dumps(
-            repair,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
+    repair_sha256 = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(
+                repair,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+    )
     predecessor = {
         "mode": "final_review_context_adjudication",
         "matched_start_ms": 1_000,
@@ -963,12 +953,8 @@ def test_exact_final_supersession_preserves_prior_frozen_boundary_owner():
             "schema_version": "exact-final-cpa-supersession.v1",
             "status": "SUPERSEDED_BY_EXACT_FINAL_CPA",
             "exact_final_repair_sha256": repair_sha256,
-            "before_sha256": "sha256:" + hashlib.sha256(
-                b"\xe6\x97\xa7\xe5\xad\x97"
-            ).hexdigest(),
-            "after_sha256": "sha256:" + hashlib.sha256(
-                b"\xe6\x96\xb0\xe5\xad\x97"
-            ).hexdigest(),
+            "before_sha256": "sha256:" + hashlib.sha256(b"\xe6\x97\xa7\xe5\xad\x97").hexdigest(),
+            "after_sha256": "sha256:" + hashlib.sha256(b"\xe6\x96\xb0\xe5\xad\x97").hexdigest(),
             "timing_immutable": True,
         },
     }
@@ -981,9 +967,7 @@ def test_exact_final_supersession_preserves_prior_frozen_boundary_owner():
         "structured_exact_text": "新字",
         "timing_immutable": True,
         "boundary_required": False,
-        "boundary_owner_rejection": (
-            "POST_BOUNDARY_FREEZE_FINAL_SURFACE_OWNER"
-        ),
+        "boundary_owner_rejection": ("POST_BOUNDARY_FREEZE_FINAL_SURFACE_OWNER"),
         "exact_final_repair_sha256": repair_sha256,
     }
     registration = {
@@ -1038,9 +1022,7 @@ def test_exact_final_supersession_preserves_prior_frozen_boundary_owner():
             "matched_end_ms": 7_000,
             "owner_eligible": True,
             "boundary_required": False,
-            "boundary_owner_rejection": (
-                "OUTSIDE_IMMUTABLE_STORY_SCOPE"
-            ),
+            "boundary_owner_rejection": ("OUTSIDE_IMMUTABLE_STORY_SCOPE"),
         },
         {
             "finding_id": "straddling-read",
@@ -1048,9 +1030,7 @@ def test_exact_final_supersession_preserves_prior_frozen_boundary_owner():
             "matched_end_ms": 4_500,
             "owner_eligible": True,
             "boundary_required": False,
-            "boundary_owner_rejection": (
-                "STRADDLES_IMMUTABLE_STORY_SCOPE"
-            ),
+            "boundary_owner_rejection": ("STRADDLES_IMMUTABLE_STORY_SCOPE"),
         },
         {
             "finding_id": "unsupported-read",
@@ -1058,9 +1038,7 @@ def test_exact_final_supersession_preserves_prior_frozen_boundary_owner():
             "matched_end_ms": 2_000,
             "owner_eligible": False,
             "boundary_required": False,
-            "boundary_owner_rejection": (
-                "EXACT_READ_SUPPORT_NOT_OWNER_ELIGIBLE"
-            ),
+            "boundary_owner_rejection": ("EXACT_READ_SUPPORT_NOT_OWNER_ELIGIBLE"),
         },
     ],
 )
@@ -1070,9 +1048,7 @@ def test_noneligible_story_rows_require_typed_rejection(row: dict):
         frozen=_frozen_owner_fixture(),
         chat_rows_by_key={"applied": [row]},
     )
-    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" not in (
-        valid_codes
-    )
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" not in (valid_codes)
 
     missing_reason = dict(row)
     missing_reason.pop("boundary_owner_rejection")
@@ -1081,9 +1057,7 @@ def test_noneligible_story_rows_require_typed_rejection(row: dict):
         frozen=_frozen_owner_fixture(),
         chat_rows_by_key={"applied": [missing_reason]},
     )
-    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in (
-        invalid_codes
-    )
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in (invalid_codes)
 
 
 def test_retry_owner_scope_receipt_must_match_current_frozen_contract():
@@ -1092,13 +1066,9 @@ def test_retry_owner_scope_receipt_must_match_current_frozen_contract():
         "status": "PASS",
         "expected_contract_sha256": "sha256:" + "1" * 64,
         "owner_set_sha256": "sha256:" + "2" * 64,
-        "owner_eligibility_scope_sha256": frozen[
-            "owner_eligibility_scope"
-        ]["scope_sha256"],
+        "owner_eligibility_scope_sha256": frozen["owner_eligibility_scope"]["scope_sha256"],
     }
-    frozen["contract_sha256"] = (
-        frozen_boundary_owner_contract_sha256(frozen)
-    )
+    frozen["contract_sha256"] = frozen_boundary_owner_contract_sha256(frozen)
 
     assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in (
         _owner_attestation_codes(
@@ -1226,6 +1196,10 @@ def test_owner_scope_candidate_id_must_match_packaged_story_contract():
         "src/autoslice/producer_boundary_owner_contract.py",
         "src/autoslice/source_subtitle_truth.py",
         "src/autoslice/producer_text_finalization.py",
+        "src/autoslice/addressee_attribution.py",
+        "src/autoslice/review_package_portable_evidence.py",
+        "src/autoslice/candidate_entity_projection.py",
+        "src/autoslice/reviewed_subtitle_baseline_registry.py",
         "src/autoslice/review_package_owner_audit.py",
         "assets/lidousha/subtitle_truth_ledger.v1.json",
     ],
@@ -1275,9 +1249,7 @@ def _materialize_test_title(
                 "y": 20 + index * 190,
                 "font_size": font_size,
                 "segment_pad": 10,
-                "segments": [
-                    {"text": line_text, "fill": [255, 198, 41]}
-                ],
+                "segments": [{"text": line_text, "fill": [255, 198, 41]}],
                 "outlines": [
                     {"width": 10, "color": [18, 36, 79]},
                     {"width": 5, "color": [255, 255, 255]},
@@ -1318,29 +1290,20 @@ def _passing_boundary_review(
     closure_text: str | None = None,
 ) -> dict[str, object]:
     is_final_delivery = review_scope == "final_delivery"
-    request_sha256 = (
-        "sha256:" + ("b" if is_final_delivery else "d") * 64
-    )
-    grid_sha256 = (
-        cue_grid_digest
-        or "sha256:" + ("c" if is_final_delivery else "e") * 64
-    )
+    request_sha256 = "sha256:" + ("b" if is_final_delivery else "d") * 64
+    grid_sha256 = cue_grid_digest or "sha256:" + ("c" if is_final_delivery else "e") * 64
     source_separation_witness = None
     if is_final_delivery:
         assert source_review is not None
         source_endpoint = source_review["final_endpoint_binding"]
         assert isinstance(source_endpoint, dict)
         source_separation_witness = {
-            "schema_version": (
-                "talk-boundary-source-separation-witness.v1"
-            ),
+            "schema_version": ("talk-boundary-source-separation-witness.v1"),
             "status": "PASS",
             "source_review_sha256": semantic_review_sha256(source_review),
             "source_request_sha256": source_review["request_sha256"],
             "source_cue_grid_sha256": source_review["cue_grid_sha256"],
-            "source_recommended_end_ms": source_review[
-                "recommended_end_ms"
-            ],
+            "source_recommended_end_ms": source_review["recommended_end_ms"],
             "source_final_start_ms": source_endpoint["final_start_ms"],
             "source_final_end_ms": source_endpoint["final_end_ms"],
             "reason_codes": [],
@@ -1385,8 +1348,7 @@ def _passing_boundary_review(
             "semantic_cue_grid_sha256": grid_sha256,
             "final_cue_grid_sha256": grid_sha256,
             "closure_text_sha256": (
-                "sha256:"
-                + hashlib.sha256(closure_text.encode("utf-8")).hexdigest()
+                "sha256:" + hashlib.sha256(closure_text.encode("utf-8")).hexdigest()
                 if closure_text is not None
                 else "sha256:" + "f" * 64
             ),
@@ -1403,16 +1365,13 @@ def test_exact_source_pin_boundary_authority_survives_package_audit(
     exact_media_end_ms = 4_000
     subtitle = _write(
         tmp_path / f"{stem}.srt",
-        "1\n00:00:00,000 --> 00:00:03,600\n"
-        "就是刚认识暂时不太熟啊\n",
+        "1\n00:00:00,000 --> 00:00:03,600\n就是刚认识暂时不太熟啊\n",
     )
     source_review = _passing_boundary_review(
         stem,
         end_ms=closure_end_ms,
     )
-    source_review["final_endpoint_binding"]["final_end_ms"] = (
-        exact_media_end_ms
-    )
+    source_review["final_endpoint_binding"]["final_end_ms"] = exact_media_end_ms
     final_cues = parse_srt_cues(subtitle.read_text(encoding="utf-8"))
     final_review = _passing_boundary_review(
         stem,
@@ -1422,9 +1381,7 @@ def test_exact_source_pin_boundary_authority_survives_package_audit(
         cue_grid_digest=cue_grid_sha256(final_cues),
         closure_text=final_cues[-1].text,
     )
-    final_review["final_endpoint_binding"]["final_end_ms"] = (
-        exact_media_end_ms
-    )
+    final_review["final_endpoint_binding"]["final_end_ms"] = exact_media_end_ms
     issues: list[dict] = []
     human_authority = "Pro source cue 911 exact endpoint"
     record = {
@@ -1432,9 +1389,7 @@ def test_exact_source_pin_boundary_authority_survives_package_audit(
             "boundary_end_mode": "exact_source_pin",
         },
         "boundary_audit": {
-            "boundary_authority": (
-                "human_source_exact_pin_plus_semantic_review"
-            ),
+            "boundary_authority": ("human_source_exact_pin_plus_semantic_review"),
             "manual_end_authority": human_authority,
             "manual_end_mode": "exact_source_pin",
             "boundary_semantic_review": source_review,
@@ -1464,9 +1419,7 @@ def test_exact_source_pin_boundary_authority_survives_package_audit(
     }
 
     audit_boundary_contract(
-        issue_adder=lambda rows, code, **fields: rows.append(
-            {"code": code, **fields}
-        ),
+        issue_adder=lambda rows, code, **fields: rows.append({"code": code, **fields}),
         issues=issues,
         stem=stem,
         record_path=tmp_path / f"{stem}.record.json",
@@ -1483,17 +1436,11 @@ def test_exact_source_pin_boundary_authority_survives_package_audit(
         is_song=False,
     )
 
-    assert "HUMAN_BOUNDARY_AUTHORITY_DRIFT" not in {
-        issue["code"] for issue in issues
-    }
-    record["boundary_audit"]["manual_end_mode"] = (
-        "semantic_lower_bound"
-    )
+    assert "HUMAN_BOUNDARY_AUTHORITY_DRIFT" not in {issue["code"] for issue in issues}
+    record["boundary_audit"]["manual_end_mode"] = "semantic_lower_bound"
     drift_issues: list[dict] = []
     audit_boundary_contract(
-        issue_adder=lambda rows, code, **fields: rows.append(
-            {"code": code, **fields}
-        ),
+        issue_adder=lambda rows, code, **fields: rows.append({"code": code, **fields}),
         issues=drift_issues,
         stem=stem,
         record_path=tmp_path / f"{stem}.record.json",
@@ -1509,16 +1456,12 @@ def test_exact_source_pin_boundary_authority_survives_package_audit(
         required=True,
         is_song=False,
     )
-    assert "HUMAN_BOUNDARY_AUTHORITY_DRIFT" in {
-        issue["code"] for issue in drift_issues
-    }
+    assert "HUMAN_BOUNDARY_AUTHORITY_DRIFT" in {issue["code"] for issue in drift_issues}
     record["boundary_audit"]["manual_end_mode"] = "exact_source_pin"
     record["boundary_audit"]["final_end_ms"] = exact_media_end_ms + 200
     late_end_issues: list[dict] = []
     audit_boundary_contract(
-        issue_adder=lambda rows, code, **fields: rows.append(
-            {"code": code, **fields}
-        ),
+        issue_adder=lambda rows, code, **fields: rows.append({"code": code, **fields}),
         issues=late_end_issues,
         stem=stem,
         record_path=tmp_path / f"{stem}.record.json",
@@ -1534,9 +1477,7 @@ def test_exact_source_pin_boundary_authority_survives_package_audit(
         required=True,
         is_song=False,
     )
-    assert "BOUNDARY_DELIVERY_COVERAGE_INVALID" in {
-        issue["code"] for issue in late_end_issues
-    }
+    assert "BOUNDARY_DELIVERY_COVERAGE_INVALID" in {issue["code"] for issue in late_end_issues}
 
 
 # 2026-08-09 auto_200130_1722_1792「对食」快车道包的真实形状：Ivan 复核区间
@@ -1603,9 +1544,7 @@ def _terminal_projection_case(tmp_path: Path) -> dict[str, object]:
         "minimum_recommended_end_ms": _TP_REVIEWED_END_MS,
         "max_recommended_end_ms": _TP_REVIEWED_END_MS,
         "reviewed_exact_interval_projection": {
-            "schema_version": (
-                "reviewed-exact-interval-terminal-projection-scope.v1"
-            ),
+            "schema_version": ("reviewed-exact-interval-terminal-projection-scope.v1"),
             "authority_sha256": authority_sha256,
             "reviewed_endpoint_ms": _TP_REVIEWED_END_MS,
             "max_terminal_drift_ms": _TP_DRIFT_CAP_MS,
@@ -1634,9 +1573,7 @@ def _terminal_projection_case(tmp_path: Path) -> dict[str, object]:
     )
     record = {
         "boundary_audit": {
-            "boundary_authority": (
-                "correlated_semantic_review_plus_deterministic_guards"
-            ),
+            "boundary_authority": ("correlated_semantic_review_plus_deterministic_guards"),
             "boundary_semantic_review": source_review,
             "final_delivery_boundary_semantic_review": final_review,
             "final_start_ms": _TP_FINAL_START_MS,
@@ -1672,9 +1609,7 @@ def _terminal_projection_issue_codes(
     issues: list[dict] = []
     final_review = case["final_review"]
     audit_boundary_contract(
-        issue_adder=lambda rows, code, **fields: rows.append(
-            {"code": code, **fields}
-        ),
+        issue_adder=lambda rows, code, **fields: rows.append({"code": code, **fields}),
         issues=issues,
         stem=str(case["stem"]),
         record_path=tmp_path / f"{case['stem']}.record.json",
@@ -1795,7 +1730,10 @@ Dialogue: 0,0:00:52.56,0:01:22.54,Default,,0,0,0,,词曲 陈绮贞
 """,
     )
     _write(root / "publish" / f"{stem}.title.txt", "【李豆沙】唱着唱着突然卡住：像在KTV录的？\n")
-    _write(root / "publish" / f"{stem}.publish.json", json.dumps({"title": "唱着唱着突然卡住：像在KTV录的？"}, ensure_ascii=False))
+    _write(
+        root / "publish" / f"{stem}.publish.json",
+        json.dumps({"title": "唱着唱着突然卡住：像在KTV录的？"}, ensure_ascii=False),
+    )
     _write(
         root / "evidence" / f"{stem}.evidence.json",
         json.dumps(
@@ -1935,10 +1873,7 @@ def _current_talk_portable_evidence_package(
                     {
                         "stem": "current-talk-portable-evidence",
                         "classification": "Talk",
-                        **{
-                            key: path.relative_to(root).as_posix()
-                            for key, path in paths.items()
-                        },
+                        **{key: path.relative_to(root).as_posix() for key, path in paths.items()},
                     }
                 ],
             },
@@ -1976,9 +1911,7 @@ def test_current_talk_rejects_nonportable_mandatory_item_evidence(
 
     if invalid_shape == "parent_traversal":
         outside = tmp_path / f"outside-{item_key}.json"
-        outside.write_text(
-            paths[item_key].read_text(encoding="utf-8"), encoding="utf-8"
-        )
+        outside.write_text(paths[item_key].read_text(encoding="utf-8"), encoding="utf-8")
         manifest["items"][0][item_key] = f"../{outside.name}"
     elif invalid_shape == "terminal_symlink":
         link = root / f"linked-{item_key}.json"
@@ -1991,9 +1924,7 @@ def test_current_talk_rejects_nonportable_mandatory_item_evidence(
             linked_parent.relative_to(root) / paths[item_key].name
         ).as_posix()
 
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
-    )
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
 
     result = audit_package(root)
 
@@ -2010,9 +1941,7 @@ def test_current_talk_audited_inputs_bind_accepted_mandatory_evidence(
     codes = {issue["code"] for issue in result["issues"]}
     assert not codes.intersection(_MANDATORY_PORTABLE_ITEM_PATH_CODES.values())
     audited_paths = {row["path"] for row in result["audited_inputs"]}
-    assert {
-        path.relative_to(root).as_posix() for path in paths.values()
-    } <= audited_paths
+    assert {path.relative_to(root).as_posix() for path in paths.values()} <= audited_paths
 
 
 def test_audit_flags_ass_visual_line_count_and_length(tmp_path: Path):
@@ -2055,13 +1984,9 @@ def test_recovery_public_title_authority_is_bound_across_package_surfaces(
     candidate_id = "auto_193450_1475_1543"
     authority = build_recovery_publication_authorities(
         candidate_ids={candidate_id},
-        registry_path=(
-            REPO_ROOT
-            / "assets/lidousha/recovery_publication_authority.v1.json"
-        ),
+        registry_path=(REPO_ROOT / "assets/lidousha/recovery_publication_authority.v1.json"),
         expected_registry_sha256=(
-            "sha256:"
-            "0bbb26c63c30b1e30af13e33d5513c49aa10b98afa8730ee9761f59865317e30"
+            "sha256:0bbb26c63c30b1e30af13e33d5513c49aa10b98afa8730ee9761f59865317e30"
         ),
     )[candidate_id]
     title = expected_recovery_publish_title(authority)
@@ -2086,15 +2011,11 @@ def test_recovery_public_title_authority_is_bound_across_package_surfaces(
             "recovery_publication_authority": authority,
         },
         "artifact_hashes": {
-            "publish_draft_sha256": (
-                "sha256:" + hashlib.sha256(publish.read_bytes()).hexdigest()
-            )
+            "publish_draft_sha256": ("sha256:" + hashlib.sha256(publish.read_bytes()).hexdigest())
         },
     }
     record_path = root / f"{stem}.record.json"
-    record_path.write_text(
-        json.dumps(record, ensure_ascii=False), encoding="utf-8"
-    )
+    record_path.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
     manifest = {
         "status": "finished",
         "items": [
@@ -2109,28 +2030,15 @@ def test_recovery_public_title_authority_is_bound_across_package_surfaces(
         ],
     }
     manifest_path = root / "review_manifest.json"
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
-    )
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
 
-    clean_codes = {
-        issue["code"] for issue in audit_package(root)["issues"]
-    }
-    assert not any(
-        code.startswith("RECOVERY_PUBLICATION")
-        for code in clean_codes
-    )
+    clean_codes = {issue["code"] for issue in audit_package(root)["issues"]}
+    assert not any(code.startswith("RECOVERY_PUBLICATION") for code in clean_codes)
 
     del manifest["items"][0]["recovery_publication_authority"]
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
-    )
-    drift_codes = {
-        issue["code"] for issue in audit_package(root)["issues"]
-    }
-    assert "RECOVERY_PUBLICATION_AUTHORITY_SURFACE_MISSING" in (
-        drift_codes
-    )
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    drift_codes = {issue["code"] for issue in audit_package(root)["issues"]}
+    assert "RECOVERY_PUBLICATION_AUTHORITY_SURFACE_MISSING" in (drift_codes)
 
 
 def test_current_review_ass_is_portable_hash_bound_and_fail_closed(
@@ -2162,24 +2070,19 @@ def test_current_review_ass_is_portable_hash_bound_and_fail_closed(
                 "speaker_srt_sha256": "sha256:"
                 + hashlib.sha256(speaker_srt.read_bytes()).hexdigest(),
                 "ass_path": f"/missing/remote/{ass.name}",
-                "ass_sha256": "sha256:"
-                + hashlib.sha256(ass.read_bytes()).hexdigest(),
+                "ass_sha256": "sha256:" + hashlib.sha256(ass.read_bytes()).hexdigest(),
             }
         ],
     }
 
-    manifest_path.write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     remote_path_result = audit_package(root)
     assert "SUBTITLE_ASS_PATH_MISSING_OR_NONPORTABLE" in {
         issue["code"] for issue in remote_path_result["issues"]
     }
 
     manifest["items"][0]["ass_path"] = "missing.speaker.ass"
-    manifest_path.write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     missing_result = audit_package(root)
     assert "SUBTITLE_ASS_PATH_MISSING_OR_NONPORTABLE" in {
         issue["code"] for issue in missing_result["issues"]
@@ -2187,34 +2090,22 @@ def test_current_review_ass_is_portable_hash_bound_and_fail_closed(
 
     manifest["items"][0]["ass_path"] = ass.name
     del manifest["items"][0]["ass_sha256"]
-    manifest_path.write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     missing_hash_result = audit_package(root)
     assert "SUBTITLE_ASS_HASH_MISSING_OR_INVALID" in {
         issue["code"] for issue in missing_hash_result["issues"]
     }
 
     manifest["items"][0]["ass_sha256"] = "sha256:" + "0" * 64
-    manifest_path.write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     hash_result = audit_package(root)
-    assert "SUBTITLE_ASS_HASH_MISMATCH" in {
-        issue["code"] for issue in hash_result["issues"]
-    }
+    assert "SUBTITLE_ASS_HASH_MISMATCH" in {issue["code"] for issue in hash_result["issues"]}
 
     ass.write_text("[Events]\n", encoding="utf-8")
-    manifest["items"][0]["ass_sha256"] = (
-        "sha256:" + hashlib.sha256(ass.read_bytes()).hexdigest()
-    )
-    manifest_path.write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
+    manifest["items"][0]["ass_sha256"] = "sha256:" + hashlib.sha256(ass.read_bytes()).hexdigest()
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     dialogue_result = audit_package(root)
-    dialogue_codes = {
-        issue["code"] for issue in dialogue_result["issues"]
-    }
+    dialogue_codes = {issue["code"] for issue in dialogue_result["issues"]}
     assert "SUBTITLE_ASS_DIALOGUE_MISSING" in dialogue_codes
     assert "SUBTITLE_ASS_HASH_MISMATCH" not in dialogue_codes
 
@@ -2230,8 +2121,7 @@ def test_current_review_ass_rejects_package_internal_symlink(
     )
     target = _write(
         root / "real.speaker.ass",
-        "[Events]\n"
-        "Dialogue: 0,0:00:00.00,0:00:01.00,LDS,,0,0,0,,正常字幕\n",
+        "[Events]\nDialogue: 0,0:00:00.00,0:00:01.00,LDS,,0,0,0,,正常字幕\n",
     )
     linked = root / "linked.speaker.ass"
     linked.symlink_to(target.name)
@@ -2246,12 +2136,9 @@ def test_current_review_ass_rejects_package_internal_symlink(
                         "stem": "portable-talk",
                         "speaker_srt": speaker_srt.name,
                         "speaker_srt_sha256": "sha256:"
-                        + hashlib.sha256(
-                            speaker_srt.read_bytes()
-                        ).hexdigest(),
+                        + hashlib.sha256(speaker_srt.read_bytes()).hexdigest(),
                         "ass_path": linked.name,
-                        "ass_sha256": "sha256:"
-                        + hashlib.sha256(target.read_bytes()).hexdigest(),
+                        "ass_sha256": "sha256:" + hashlib.sha256(target.read_bytes()).hexdigest(),
                     }
                 ],
             }
@@ -2288,9 +2175,7 @@ def test_current_review_ass_replays_all_speaker_events_even_after_hash_rebinding
     def audit_with_rebound_hashes(ass_text: str):
         ass.write_text(ass_text, encoding="utf-8")
         ass_hash = "sha256:" + hashlib.sha256(ass.read_bytes()).hexdigest()
-        srt_hash = (
-            "sha256:" + hashlib.sha256(speaker_srt.read_bytes()).hexdigest()
-        )
+        srt_hash = "sha256:" + hashlib.sha256(speaker_srt.read_bytes()).hexdigest()
         return audit_review_package_ass(
             root=root,
             item={
@@ -2312,24 +2197,17 @@ def test_current_review_ass_replays_all_speaker_events_even_after_hash_rebinding
     assert audit_with_rebound_hashes(valid_events).issues == ()
 
     cases = {
-        "SUBTITLE_ASS_SPEAKER_SRT_TEXT_MISMATCH": valid_events.replace(
-            "第一句\n", "伪造文字\n", 1
-        ),
+        "SUBTITLE_ASS_SPEAKER_SRT_TEXT_MISMATCH": valid_events.replace("第一句\n", "伪造文字\n", 1),
         "SUBTITLE_ASS_SPEAKER_SRT_TIMELINE_MISMATCH": valid_events.replace(
             "0:00:01.00,0:00:02.00", "0:00:01.10,0:00:02.00"
         ),
         "SUBTITLE_ASS_SPEAKER_SRT_STYLE_MISMATCH": valid_events.replace(
             "0:00:02.00,GUEST", "0:00:02.00,LDS"
         ),
-        "SUBTITLE_ASS_SPEAKER_SRT_EVENT_COUNT_MISMATCH": (
-            valid_events.rsplit("Dialogue:", 1)[0]
-        ),
+        "SUBTITLE_ASS_SPEAKER_SRT_EVENT_COUNT_MISMATCH": (valid_events.rsplit("Dialogue:", 1)[0]),
     }
     for expected_code, tampered_ass in cases.items():
-        codes = {
-            issue.code
-            for issue in audit_with_rebound_hashes(tampered_ass).issues
-        }
+        codes = {issue.code for issue in audit_with_rebound_hashes(tampered_ass).issues}
         assert expected_code in codes
 
 
@@ -2340,8 +2218,7 @@ def _uniform_daily_package(tmp_path: Path):
     root.mkdir()
     srt = _write(
         root / "talk.recut.srt",
-        "1\n00:00:00,000 --> 00:00:01,000\n第一句\n\n"
-        "2\n00:00:01,000 --> 00:00:02,000\n第二句\n",
+        "1\n00:00:00,000 --> 00:00:01,000\n第一句\n\n2\n00:00:01,000 --> 00:00:02,000\n第二句\n",
     )
     ass = _write(
         root / "talk.final.ass",
@@ -2390,9 +2267,7 @@ def test_uniform_host_fallback_still_replays_event_parity(tmp_path: Path):
     tampered = ass.read_text(encoding="utf-8").replace("第二句\n", "伪造\n")
     ass.write_text(tampered, encoding="utf-8")
     item = dict(item)
-    item["ass_sha256"] = (
-        "sha256:" + hashlib.sha256(ass.read_bytes()).hexdigest()
-    )
+    item["ass_sha256"] = "sha256:" + hashlib.sha256(ass.read_bytes()).hexdigest()
     record = {"artifact_hashes": {"ass_sha256": item["ass_sha256"]}}
 
     result = audit_review_package_ass(
@@ -2405,9 +2280,7 @@ def test_uniform_host_fallback_still_replays_event_parity(tmp_path: Path):
         chat_authority=chat_authority,
     )
 
-    assert "SUBTITLE_ASS_SPEAKER_SRT_TEXT_MISMATCH" in {
-        issue.code for issue in result.issues
-    }
+    assert "SUBTITLE_ASS_SPEAKER_SRT_TEXT_MISMATCH" in {issue.code for issue in result.issues}
 
 
 def test_recovery_package_cannot_borrow_uniform_fallback(tmp_path: Path):
@@ -2448,9 +2321,7 @@ def test_uniform_fallback_requires_speaker_text_hash_identity(tmp_path: Path):
         chat_authority=chat_authority,
     )
 
-    assert "SUBTITLE_SPEAKER_SRT_INVALID" in {
-        issue.code for issue in result.issues
-    }
+    assert "SUBTITLE_SPEAKER_SRT_INVALID" in {issue.code for issue in result.issues}
 
 
 def test_audit_does_not_flag_ai_cover_dict_when_fallback_used_false(tmp_path: Path):
@@ -2465,7 +2336,9 @@ def test_audit_does_not_flag_ai_cover_dict_when_fallback_used_false(tmp_path: Pa
         "[Events]\nDialogue: 0,0:00:00.00,0:00:06.00,Default,,0,0,0,,却说不出你欣赏我哪一种表情\n",
     )
     title = "【李豆沙】豆沙歌，《旅行的意义》"
-    publish = _write(root / "publish" / f"{stem}.publish.json", json.dumps({"title": title}, ensure_ascii=False))
+    publish = _write(
+        root / "publish" / f"{stem}.publish.json", json.dumps({"title": title}, ensure_ascii=False)
+    )
     title_txt = _write(root / "publish" / f"{stem}.title.txt", title + "\n")
     evidence = _write(
         root / "evidence" / f"{stem}.evidence.json",
@@ -2539,8 +2412,7 @@ def test_audit_accepts_hashed_screenshot_cover_without_ai_evidence(tmp_path: Pat
         "reference_image": "/remote/cover_refs/talk.cover-ref.png",
         "reference_sha256": "sha256:" + "2" * 64,
         "final_cover": str(cover),
-        "final_cover_sha256": "sha256:"
-        + hashlib.sha256(cover.read_bytes()).hexdigest(),
+        "final_cover_sha256": "sha256:" + hashlib.sha256(cover.read_bytes()).hexdigest(),
         "rendered_lines": ["真实联动画面"],
         "route_decision": {
             "schema_version": "lidousha-cover-route-decision.v1",
@@ -2588,8 +2460,7 @@ def test_audit_accepts_cpa_redraw_safely_degraded_to_direct_screenshot(
         "reference_image": "/remote/cover_refs/talk.cover-ref.png",
         "reference_sha256": "sha256:" + "2" * 64,
         "final_cover": str(cover),
-        "final_cover_sha256": "sha256:"
-        + hashlib.sha256(cover.read_bytes()).hexdigest(),
+        "final_cover_sha256": "sha256:" + hashlib.sha256(cover.read_bytes()).hexdigest(),
         "rendered_lines": ["真实画面安全降级"],
     }
     generation["route_decision"] = build_cover_route_decision(
@@ -2664,8 +2535,7 @@ def test_audit_rejects_unbound_screenshot_frame_time(
         "reference_image": "/remote/cover_refs/talk.cover-ref.png",
         "reference_sha256": "sha256:" + "2" * 64,
         "final_cover": str(cover),
-        "final_cover_sha256": "sha256:"
-        + hashlib.sha256(cover.read_bytes()).hexdigest(),
+        "final_cover_sha256": "sha256:" + hashlib.sha256(cover.read_bytes()).hexdigest(),
         "rendered_lines": ["真实联动画面"],
         "route_decision": {
             "schema_version": "lidousha-cover-route-decision.v1",
@@ -2693,9 +2563,7 @@ def test_audit_rejects_unbound_screenshot_frame_time(
 
     result = audit_package(root)
 
-    assert "SCREENSHOT_COVER_EVIDENCE_MISSING" in {
-        issue["code"] for issue in result["issues"]
-    }
+    assert "SCREENSHOT_COVER_EVIDENCE_MISSING" in {issue["code"] for issue in result["issues"]}
 
 
 def test_audit_accepts_portable_delivered_cover_with_record_hash(tmp_path: Path):
@@ -2705,9 +2573,7 @@ def test_audit_accepts_portable_delivered_cover_with_record_hash(tmp_path: Path)
         root / "covers" / "human-readable-title.cover.png",
         "portable-screenshot-cover",
     )
-    final_hash = "sha256:" + hashlib.sha256(
-        delivered_cover.read_bytes()
-    ).hexdigest()
+    final_hash = "sha256:" + hashlib.sha256(delivered_cover.read_bytes()).hexdigest()
     generation = {
         "method": "screenshot_direct",
         "reference_selection": {"best_ms": 1_000},
@@ -2761,8 +2627,7 @@ def test_audit_rejects_portable_delivered_cover_with_wrong_bytes(tmp_path: Path)
         "reference_image": "/remote/cover_refs/auto.cover-ref.png",
         "reference_sha256": "sha256:" + "2" * 64,
         "final_cover": "/opt/runtime/covers/auto.screenshot-title.cover.png",
-        "final_cover_sha256": "sha256:"
-        + hashlib.sha256(b"expected-cover-bytes").hexdigest(),
+        "final_cover_sha256": "sha256:" + hashlib.sha256(b"expected-cover-bytes").hexdigest(),
         "rendered_lines": ["真实联动画面"],
         "route_decision": {
             "schema_version": "lidousha-cover-route-decision.v1",
@@ -2791,9 +2656,7 @@ def test_audit_rejects_portable_delivered_cover_with_wrong_bytes(tmp_path: Path)
     result = audit_package(root)
 
     assert result["passed"] is False
-    assert {issue["code"] for issue in result["issues"]} == {
-        "SCREENSHOT_COVER_EVIDENCE_MISSING"
-    }
+    assert {issue["code"] for issue in result["issues"]} == {"SCREENSHOT_COVER_EVIDENCE_MISSING"}
 
 
 def test_audit_rejects_cpa_model_defaults_without_materialized_ai(tmp_path: Path):
@@ -2823,9 +2686,7 @@ def test_audit_rejects_cpa_model_defaults_without_materialized_ai(tmp_path: Path
     result = audit_package(root)
 
     assert result["passed"] is False
-    assert {issue["code"] for issue in result["issues"]} == {
-        "AI_COVER_EVIDENCE_MISSING"
-    }
+    assert {issue["code"] for issue in result["issues"]} == {"AI_COVER_EVIDENCE_MISSING"}
 
 
 def test_audit_blocks_known_too_small_talk_cover_title(tmp_path: Path):
@@ -2881,9 +2742,7 @@ def test_audit_blocks_known_too_small_talk_cover_title(tmp_path: Path):
     result = audit_package(root)
 
     assert result["passed"] is False
-    assert {issue["code"] for issue in result["issues"]} == {
-        "COVER_TITLE_TOO_SMALL"
-    }
+    assert {issue["code"] for issue in result["issues"]} == {"COVER_TITLE_TOO_SMALL"}
 
 
 def test_audit_accepts_explicit_bounded_sapphire72_visual_contract(tmp_path: Path):
@@ -2897,8 +2756,7 @@ def test_audit_accepts_explicit_bounded_sapphire72_visual_contract(tmp_path: Pat
     )
     ass = _write(
         root / f"{stem}.ass",
-        "[Events]\n"
-        f"Dialogue: 0,0:00:00.00,0:00:06.00,Default,,0,0,0,,{line}\n",
+        f"[Events]\nDialogue: 0,0:00:00.00,0:00:06.00,Default,,0,0,0,,{line}\n",
     )
     cover = _write(root / "covers" / f"{stem}.cover.png", "cover")
     (root / "review_manifest.json").write_text(
@@ -2969,9 +2827,7 @@ def test_audit_rejects_visual_contract_looser_than_renderer(tmp_path: Path):
     result = audit_package(root)
 
     assert result["passed"] is False
-    assert {issue["code"] for issue in result["issues"]} == {
-        "SUBTITLE_VISUAL_CONTRACT_INVALID"
-    }
+    assert {issue["code"] for issue in result["issues"]} == {"SUBTITLE_VISUAL_CONTRACT_INVALID"}
 
 
 def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_alias(
@@ -2996,12 +2852,8 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         "MarginV, Effect, Text\n"
         f"Dialogue: 0,0:00:00.00,0:00:04.00,LDS,,0,0,0,,{transcript}\n",
     )
-    speaker_ass_sha256 = "sha256:" + hashlib.sha256(
-        speaker_ass.read_bytes()
-    ).hexdigest()
-    speaker_srt_sha256 = "sha256:" + hashlib.sha256(
-        speaker_srt.read_bytes()
-    ).hexdigest()
+    speaker_ass_sha256 = "sha256:" + hashlib.sha256(speaker_ass.read_bytes()).hexdigest()
+    speaker_srt_sha256 = "sha256:" + hashlib.sha256(speaker_srt.read_bytes()).hexdigest()
     scorecard = normalize_selection_scorecard(
         {
             "tier": 1,
@@ -3058,8 +2910,7 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         topic_resolution={"status": "NO_GRAPH"},
         session_topic_authorities=(),
         speech_memory_ledger_path=(
-            Path(__file__).resolve().parents[2]
-            / "assets/lidousha/speech_memory_ledger.v1.json"
+            Path(__file__).resolve().parents[2] / "assets/lidousha/speech_memory_ledger.v1.json"
         ),
     )
     clip_context_path = root / f"{stem}.clip-context.json"
@@ -3133,9 +2984,7 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         "selection_hook": contract["selection_hook"],
         "relation_state": contract["relation_state"],
         "participants": contract["participants"],
-        "cover_counterpart_reference_available": contract[
-            "cover_counterpart_reference_available"
-        ],
+        "cover_counterpart_reference_available": contract["cover_counterpart_reference_available"],
         "cover_reference_authority": contract["cover_reference_authority"],
         "source_media_sha256s": contract["source_media_sha256s"],
         "clip_context_binding": contract["clip_context_binding"],
@@ -3143,9 +2992,7 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         "human_boundary_authority": contract["human_boundary_authority"],
         "cover_fallback_mode": contract["cover_fallback_mode"],
     }
-    final_cover_sha256 = "sha256:" + hashlib.sha256(
-        cover.read_bytes()
-    ).hexdigest()
+    final_cover_sha256 = "sha256:" + hashlib.sha256(cover.read_bytes()).hexdigest()
     generation = {
         "title": "【李豆沙】南町当面追问最最最最喜欢",
         "cover_text": cover_text,
@@ -3162,28 +3009,21 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         "model": "gpt-image-2",
         "attempted_models": ["gpt-image-2"],
         "ai_background": str(ai_bg),
-        "ai_background_sha256": "sha256:"
-        + hashlib.sha256(ai_bg.read_bytes()).hexdigest(),
+        "ai_background_sha256": "sha256:" + hashlib.sha256(ai_bg.read_bytes()).hexdigest(),
         "pre_overlay_path": str(ai_bg),
-        "pre_overlay_sha256": rendered_text_pixels[
-            "pre_overlay_sha256"
-        ],
+        "pre_overlay_sha256": rendered_text_pixels["pre_overlay_sha256"],
         "overlay_position": rendered_text_pixels["overlay_position"],
         "text_backing": "outline",
         "scrim": False,
         "final_cover": str(cover),
         "final_cover_sha256": final_cover_sha256,
-        "reference_sha256": cover_reference_authority[
-            "reference_png_sha256"
-        ],
+        "reference_sha256": cover_reference_authority["reference_png_sha256"],
         "reference_authority": cover_reference_authority,
         "story_contract": cover_binding,
     }
     generation["route_decision"] = build_cover_route_decision(
         selected_treatment="cpa_redraw",
-        selected_rationale=(
-            "fixture redraw with independent final-pixel verification"
-        ),
+        selected_rationale=("fixture redraw with independent final-pixel verification"),
         story_contract=cover_binding,
         reference_authority=cover_reference_authority,
         decision_inputs={"cover_mode": "cpa"},
@@ -3191,9 +3031,7 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         cover_text=cover_text,
     )
     final_participant_verification = {
-        "schema_version": (
-            "lidousha-cover-final-participant-verification.v1"
-        ),
+        "schema_version": ("lidousha-cover-final-participant-verification.v1"),
         "status": "PASS",
         "authority": "fixture independent final-pixel review",
         "final_cover_sha256": final_cover_sha256,
@@ -3208,22 +3046,18 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         final_participant_verification=final_participant_verification,
     )
     chat_authority = root / f"{stem}.chat-authority.json"
-    final_srt_sha256 = "sha256:" + hashlib.sha256(
-        srt.read_text(encoding="utf-8").encode("utf-8")
-    ).hexdigest()
+    final_srt_sha256 = (
+        "sha256:" + hashlib.sha256(srt.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
+    )
     chat_authority.write_text(
         json.dumps(
-                {
-                    "schema_version": "fixture-chat-authority.v1",
-                    "status": "PASS",
-                    "source_subtitle_truth_audit": (
-                        _source_truth_audit_fixture()
-                    ),
-                    "speaker_ass_sha256": speaker_ass_sha256,
+            {
+                "schema_version": "fixture-chat-authority.v1",
+                "status": "PASS",
+                "source_subtitle_truth_audit": (_source_truth_audit_fixture()),
+                "speaker_ass_sha256": speaker_ass_sha256,
                 "final_speaker_srt_sha256": speaker_srt_sha256,
-                "frozen_boundary_owner_contract": (
-                    _frozen_owner_fixture(candidate_id=stem)
-                ),
+                "frozen_boundary_owner_contract": (_frozen_owner_fixture(candidate_id=stem)),
                 "final_boundary_required_exclusion_count": 0,
                 "final_review_audit": {
                     "schema_version": "final-review-audit.v2",
@@ -3235,9 +3069,7 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
                         "explicit_empty_findings": True,
                     },
                     "correction_mutation_authority": {
-                        "schema_version": (
-                            "subtitle-correction-mutation-audit.v1"
-                        ),
+                        "schema_version": ("subtitle-correction-mutation-audit.v1"),
                         "status": "PASS",
                         "applied_count": 0,
                         "validated_mutation_count": 0,
@@ -3254,6 +3086,7 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
     record.write_text(
         json.dumps(
             {
+                "speaker_mode": "uniform_host",
                 "story_contract": contract,
                 "boundary_audit": {
                     "boundary_authority": (
@@ -3262,9 +3095,7 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
                     "manual_end_authority": "fixture source-reviewed closure",
                     "manual_end_mode": "semantic_lower_bound",
                     "boundary_semantic_review": source_boundary_review,
-                    "final_delivery_boundary_semantic_review": (
-                        final_boundary_review
-                    ),
+                    "final_delivery_boundary_semantic_review": (final_boundary_review),
                     "final_start_ms": 0,
                     "snapped_sentence_end_ms": 4_000,
                     "final_end_ms": 4_000,
@@ -3291,13 +3122,9 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
                 "clip_context_payload_sha256": clip_context["context_sha256"],
                 "artifact_hashes": {
                     "clip_context_file_sha256": "sha256:"
-                    + hashlib.sha256(
-                        clip_context_path.read_bytes()
-                    ).hexdigest(),
+                    + hashlib.sha256(clip_context_path.read_bytes()).hexdigest(),
                     "chat_authority_audit_sha256": "sha256:"
-                    + hashlib.sha256(
-                        chat_authority.read_bytes()
-                    ).hexdigest(),
+                    + hashlib.sha256(chat_authority.read_bytes()).hexdigest(),
                     "subtitle_sha256": final_srt_sha256,
                     "ass_sha256": speaker_ass_sha256,
                 },
@@ -3312,33 +3139,25 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         ),
         encoding="utf-8",
     )
-    recorded_generation = json.loads(record.read_text(encoding="utf-8"))[
-        "publish_staging"
-    ]["cover_generation"]
+    recorded_generation = json.loads(record.read_text(encoding="utf-8"))["publish_staging"][
+        "cover_generation"
+    ]
     (root / "review_manifest.json").write_text(
         json.dumps(
-                {
-                    "date": "2026-07-22",
-                    "status": "finished_review_package_no_upload_pending_human_review",
+            {
+                "date": "2026-07-22",
+                "status": "finished_review_package_no_upload_pending_human_review",
                 "story_contract_required": True,
                 "run_mode": "RECOVERY_REVIEW",
                 "upload_allowed": False,
                 "cover_route_attestations": [
                     {
                         "candidate_id": stem,
-                        "reference_sha256": recorded_generation.get(
-                            "reference_sha256"
-                        ),
-                        "final_cover_sha256": recorded_generation.get(
-                            "final_cover_sha256"
-                        ),
+                        "reference_sha256": recorded_generation.get("reference_sha256"),
+                        "final_cover_sha256": recorded_generation.get("final_cover_sha256"),
                         "method": recorded_generation.get("method"),
-                        "route_decision": recorded_generation.get(
-                            "route_decision"
-                        ),
-                        "reference_authority": recorded_generation.get(
-                            "reference_authority"
-                        ),
+                        "route_decision": recorded_generation.get("route_decision"),
+                        "reference_authority": recorded_generation.get("reference_authority"),
                     }
                 ],
                 "items": [
@@ -3348,27 +3167,21 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
                         "title": publish_title,
                         "publish_json": publish.name,
                         "subtitle_srt": srt.name,
-                            "speaker_srt": speaker_srt.name,
-                            "speaker_srt_sha256": speaker_srt_sha256,
-                            "ass_path": speaker_ass.name,
-                            "ass_sha256": speaker_ass_sha256,
-                            "record": record.name,
-                            "chat_authority": chat_authority.name,
-                            "clip_context": clip_context_path.name,
-                            "cover": cover.relative_to(root).as_posix(),
-                            "cover_title_mask": Path(
-                                rendered_text_pixels["mask_path"]
-                            ).relative_to(root).as_posix(),
-                            "cover_pre_overlay": ai_bg.relative_to(
-                                root
-                            ).as_posix(),
-                            "cover_route_background": ai_bg.relative_to(
-                                root
-                            ).as_posix(),
-                            "source_ai_background": ai_bg.relative_to(
-                                root
-                            ).as_posix(),
-                            "ai_cover_generated": True,
+                        "speaker_srt": speaker_srt.name,
+                        "speaker_srt_sha256": speaker_srt_sha256,
+                        "ass_path": speaker_ass.name,
+                        "ass_sha256": speaker_ass_sha256,
+                        "record": record.name,
+                        "chat_authority": chat_authority.name,
+                        "clip_context": clip_context_path.name,
+                        "cover": cover.relative_to(root).as_posix(),
+                        "cover_title_mask": Path(rendered_text_pixels["mask_path"])
+                        .relative_to(root)
+                        .as_posix(),
+                        "cover_pre_overlay": ai_bg.relative_to(root).as_posix(),
+                        "cover_route_background": ai_bg.relative_to(root).as_posix(),
+                        "source_ai_background": ai_bg.relative_to(root).as_posix(),
+                        "ai_cover_generated": True,
                     }
                 ],
             },
@@ -3382,22 +3195,42 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         initial_audit["issues"], ensure_ascii=False, indent=2
     )
     portable_record_text = record.read_text(encoding="utf-8")
+    valid_speaker_srt = speaker_srt.read_bytes()
+    speaker_srt.write_bytes(b"present but malformed speaker evidence\n")
+    speaker_manifest = root / f"{stem}.speaker-finalization.json"
+    speaker_manifest.write_text("{}\n", encoding="utf-8")
+    invalid_speaker_record = json.loads(portable_record_text)
+    invalid_speaker_record["speaker_mode"] = "required"
+    invalid_speaker_record["speaker_review_srt_path"] = "/producer-only/" + speaker_srt.name
+    invalid_speaker_record["speaker_finalization_manifest_path"] = (
+        "/producer-only/" + speaker_manifest.name
+    )
+    invalid_speaker_record["speaker_finalization_manifest_sha256"] = (
+        "sha256:" + hashlib.sha256(speaker_manifest.read_bytes()).hexdigest()
+    )
+    invalid_speaker_record["speaker_finalization"] = {}
+    invalid_speaker_record["artifact_hashes"]["speaker_review_srt_sha256"] = (
+        "sha256:" + hashlib.sha256(speaker_srt.read_bytes()).hexdigest()
+    )
+    record.write_text(
+        json.dumps(invalid_speaker_record, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    invalid_speaker_audit = audit_package(root)
+    assert invalid_speaker_audit["passed"] is False
+    assert "SOURCE_FACT_SPEAKER_EVIDENCE_REJECTED" in {
+        row["code"] for row in invalid_speaker_audit["issues"]
+    }
+    record.write_text(portable_record_text, encoding="utf-8")
+    speaker_srt.write_bytes(valid_speaker_srt)
     stale_external_cover = tmp_path / "stale-external-cover.png"
     stale_external_background = tmp_path / "stale-external-background.png"
-    Image.new("RGB", (1920, 1080), (1, 2, 3)).save(
-        stale_external_cover
-    )
-    Image.new("RGB", (1920, 1080), (4, 5, 6)).save(
-        stale_external_background
-    )
+    Image.new("RGB", (1920, 1080), (1, 2, 3)).save(stale_external_cover)
+    Image.new("RGB", (1920, 1080), (4, 5, 6)).save(stale_external_background)
     portable_record = json.loads(portable_record_text)
-    portable_generation = portable_record["publish_staging"][
-        "cover_generation"
-    ]
+    portable_generation = portable_record["publish_staging"]["cover_generation"]
     portable_generation["final_cover"] = str(stale_external_cover)
-    portable_generation["ai_background"] = str(
-        stale_external_background
-    )
+    portable_generation["ai_background"] = str(stale_external_background)
     record.write_text(
         json.dumps(portable_record, ensure_ascii=False),
         encoding="utf-8",
@@ -3413,9 +3246,7 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
     tampered_chat = json.loads(valid_chat_authority)
     tampered_chat["final_review_audit"]["status"] = "AUDITOR_UNAVAILABLE"
     tampered_chat["final_review_audit"]["release_gate"] = "BLOCK"
-    tampered_chat["final_review_audit"]["discovery"] = {
-        "status": "AUDITOR_UNAVAILABLE"
-    }
+    tampered_chat["final_review_audit"]["discovery"] = {"status": "AUDITOR_UNAVAILABLE"}
     chat_authority.write_text(
         json.dumps(tampered_chat, ensure_ascii=False),
         encoding="utf-8",
@@ -3468,12 +3299,10 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         json.dumps(missing_owner_chat, ensure_ascii=False),
         encoding="utf-8",
     )
-    missing_owner_record = json.loads(
-        valid_record_before_final_review_tamper
+    missing_owner_record = json.loads(valid_record_before_final_review_tamper)
+    missing_owner_record["artifact_hashes"]["chat_authority_audit_sha256"] = (
+        "sha256:" + hashlib.sha256(chat_authority.read_bytes()).hexdigest()
     )
-    missing_owner_record["artifact_hashes"][
-        "chat_authority_audit_sha256"
-    ] = "sha256:" + hashlib.sha256(chat_authority.read_bytes()).hexdigest()
     record.write_text(
         json.dumps(missing_owner_record, ensure_ascii=False),
         encoding="utf-8",
@@ -3488,12 +3317,8 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         encoding="utf-8",
     )
 
-    prompt_tampered_record = json.loads(
-        valid_record_before_final_review_tamper
-    )
-    prompt_tampered_record["story_contract"]["clip_context_prompt"] += (
-        "\nforged prompt"
-    )
+    prompt_tampered_record = json.loads(valid_record_before_final_review_tamper)
+    prompt_tampered_record["story_contract"]["clip_context_prompt"] += "\nforged prompt"
     record.write_text(
         json.dumps(prompt_tampered_record, ensure_ascii=False),
         encoding="utf-8",
@@ -3513,9 +3338,7 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
     valid_srt_bytes = srt.read_bytes()
     srt.write_bytes(valid_srt_bytes.replace(b"\n", b"\r\n"))
     newline_drift_result = audit_package(root)
-    newline_drift_codes = {
-        issue["code"] for issue in newline_drift_result["issues"]
-    }
+    newline_drift_codes = {issue["code"] for issue in newline_drift_result["issues"]}
     assert "SUBTITLE_RECORD_HASH_MISMATCH" in newline_drift_codes
     assert "FINAL_REVIEW_SRT_BINDING_MISMATCH" in newline_drift_codes
     assert "STORY_CONTRACT_SUBTITLE_HASH_DRIFT" not in newline_drift_codes
@@ -3529,37 +3352,25 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
             b"00:00:03,900",
         )
     )
-    drifted_srt_sha256 = "sha256:" + hashlib.sha256(
-        srt.read_bytes()
-    ).hexdigest()
+    drifted_srt_sha256 = "sha256:" + hashlib.sha256(srt.read_bytes()).hexdigest()
     drifted_grid_chat = json.loads(valid_chat_authority)
-    drifted_grid_chat["final_review_audit"][
-        "reviewed_srt_sha256"
-    ] = drifted_srt_sha256
+    drifted_grid_chat["final_review_audit"]["reviewed_srt_sha256"] = drifted_srt_sha256
     chat_authority.write_text(
         json.dumps(drifted_grid_chat, ensure_ascii=False),
         encoding="utf-8",
     )
     drifted_grid_record = json.loads(valid_record)
-    drifted_grid_record["artifact_hashes"][
-        "subtitle_sha256"
-    ] = drifted_srt_sha256
-    drifted_grid_record["artifact_hashes"][
-        "chat_authority_audit_sha256"
-    ] = "sha256:" + hashlib.sha256(
-        chat_authority.read_bytes()
-    ).hexdigest()
+    drifted_grid_record["artifact_hashes"]["subtitle_sha256"] = drifted_srt_sha256
+    drifted_grid_record["artifact_hashes"]["chat_authority_audit_sha256"] = (
+        "sha256:" + hashlib.sha256(chat_authority.read_bytes()).hexdigest()
+    )
     record.write_text(
         json.dumps(drifted_grid_record, ensure_ascii=False),
         encoding="utf-8",
     )
     cue_grid_drift_result = audit_package(root)
-    cue_grid_drift_codes = {
-        issue["code"] for issue in cue_grid_drift_result["issues"]
-    }
-    assert "BOUNDARY_FINAL_DELIVERY_CUE_GRID_MISMATCH" in (
-        cue_grid_drift_codes
-    )
+    cue_grid_drift_codes = {issue["code"] for issue in cue_grid_drift_result["issues"]}
+    assert "BOUNDARY_FINAL_DELIVERY_CUE_GRID_MISMATCH" in (cue_grid_drift_codes)
     assert "SUBTITLE_RECORD_HASH_MISMATCH" not in cue_grid_drift_codes
     assert "FINAL_REVIEW_SRT_BINDING_MISMATCH" not in cue_grid_drift_codes
     srt.write_bytes(valid_srt_bytes)
@@ -3586,30 +3397,20 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         "sha256:" + hashlib.sha256(masked.tobytes()).hexdigest()
     )
     no_text_record = json.loads(valid_record)
-    no_text_generation = no_text_record["publish_staging"][
-        "cover_generation"
-    ]
-    no_text_generation["final_cover_sha256"] = no_text_pixels[
-        "final_cover_sha256"
-    ]
+    no_text_generation = no_text_record["publish_staging"]["cover_generation"]
+    no_text_generation["final_cover_sha256"] = no_text_pixels["final_cover_sha256"]
     no_text_generation["rendered_text_pixels"] = no_text_pixels
-    no_text_generation["final_participant_verification"][
+    no_text_generation["final_participant_verification"]["final_cover_sha256"] = no_text_pixels[
         "final_cover_sha256"
-    ] = no_text_pixels["final_cover_sha256"]
+    ]
     record.write_text(
         json.dumps(no_text_record, ensure_ascii=False),
         encoding="utf-8",
     )
     no_text_manifest = json.loads(valid_manifest)
-    no_text_attestation = no_text_manifest[
-        "cover_route_attestations"
-    ][0]
-    no_text_attestation["final_cover_sha256"] = no_text_pixels[
-        "final_cover_sha256"
-    ]
-    no_text_attestation["route_decision"] = no_text_generation[
-        "route_decision"
-    ]
+    no_text_attestation = no_text_manifest["cover_route_attestations"][0]
+    no_text_attestation["final_cover_sha256"] = no_text_pixels["final_cover_sha256"]
+    no_text_attestation["route_decision"] = no_text_generation["route_decision"]
     manifest_path.write_text(
         json.dumps(no_text_manifest, ensure_ascii=False),
         encoding="utf-8",
@@ -3629,9 +3430,7 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         encoding="utf-8",
     )
     missing_cover_result = audit_package(root)
-    missing_cover_codes = {
-        issue["code"] for issue in missing_cover_result["issues"]
-    }
+    missing_cover_codes = {issue["code"] for issue in missing_cover_result["issues"]}
     assert "MANIFEST_COVER_ATTESTATIONS_MISSING" in missing_cover_codes
     assert "MANIFEST_COVER_ATTESTATION_SET_MISMATCH" in missing_cover_codes
     assert "MANIFEST_COVER_ATTESTATION_MISSING" in missing_cover_codes
@@ -3652,9 +3451,7 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
     manifest_path.write_text(valid_manifest, encoding="utf-8")
 
     invalid_boundary_record = json.loads(valid_record)
-    invalid_boundary_record["story_contract"][
-        "boundary_semantic_review"
-    ] = None
+    invalid_boundary_record["story_contract"]["boundary_semantic_review"] = None
     invalid_boundary_record["boundary_audit"] = {
         "boundary_authority": "human_source_reviewed_end",
         "manual_end_authority": "fixture source-reviewed closure",
@@ -3664,23 +3461,17 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         encoding="utf-8",
     )
     boundary_result = audit_package(root)
-    boundary_codes = {
-        issue["code"] for issue in boundary_result["issues"]
-    }
+    boundary_codes = {issue["code"] for issue in boundary_result["issues"]}
     assert "BOUNDARY_SEMANTIC_REVIEW_NOT_PASS" in boundary_codes
     assert "HUMAN_BOUNDARY_AUTHORITY_DRIFT" in boundary_codes
     record.write_text(valid_record, encoding="utf-8")
 
     stale_grid_record = json.loads(valid_record)
-    stale_grid_review = stale_grid_record["story_contract"][
-        "boundary_semantic_review"
-    ]
-    stale_grid_review["final_endpoint_binding"][
-        "final_cue_grid_sha256"
-    ] = "sha256:" + "f" * 64
-    stale_grid_record["boundary_audit"][
-        "final_delivery_boundary_semantic_review"
-    ] = stale_grid_review
+    stale_grid_review = stale_grid_record["story_contract"]["boundary_semantic_review"]
+    stale_grid_review["final_endpoint_binding"]["final_cue_grid_sha256"] = "sha256:" + "f" * 64
+    stale_grid_record["boundary_audit"]["final_delivery_boundary_semantic_review"] = (
+        stale_grid_review
+    )
     record.write_text(
         json.dumps(stale_grid_record, ensure_ascii=False),
         encoding="utf-8",
@@ -3692,13 +3483,11 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
     record.write_text(valid_record, encoding="utf-8")
 
     wrong_final_scope = json.loads(valid_record)
-    wrong_final_scope_review = wrong_final_scope["story_contract"][
-        "boundary_semantic_review"
-    ]
+    wrong_final_scope_review = wrong_final_scope["story_contract"]["boundary_semantic_review"]
     wrong_final_scope_review["review_scope"] = "source_full_window"
-    wrong_final_scope["boundary_audit"][
-        "final_delivery_boundary_semantic_review"
-    ] = wrong_final_scope_review
+    wrong_final_scope["boundary_audit"]["final_delivery_boundary_semantic_review"] = (
+        wrong_final_scope_review
+    )
     record.write_text(
         json.dumps(wrong_final_scope, ensure_ascii=False),
         encoding="utf-8",
@@ -3710,19 +3499,15 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
     record.write_text(valid_record, encoding="utf-8")
 
     wrong_source_scope = json.loads(valid_record)
-    wrong_source_scope_review = wrong_source_scope["boundary_audit"][
-        "boundary_semantic_review"
-    ]
+    wrong_source_scope_review = wrong_source_scope["boundary_audit"]["boundary_semantic_review"]
     wrong_source_scope_review["review_scope"] = "final_delivery"
-    rebound_final_review = wrong_source_scope["story_contract"][
-        "boundary_semantic_review"
-    ]
-    rebound_final_review["source_separation_witness"][
-        "source_review_sha256"
-    ] = semantic_review_sha256(wrong_source_scope_review)
-    wrong_source_scope["boundary_audit"][
-        "final_delivery_boundary_semantic_review"
-    ] = rebound_final_review
+    rebound_final_review = wrong_source_scope["story_contract"]["boundary_semantic_review"]
+    rebound_final_review["source_separation_witness"]["source_review_sha256"] = (
+        semantic_review_sha256(wrong_source_scope_review)
+    )
+    wrong_source_scope["boundary_audit"]["final_delivery_boundary_semantic_review"] = (
+        rebound_final_review
+    )
     record.write_text(
         json.dumps(wrong_source_scope, ensure_ascii=False),
         encoding="utf-8",
@@ -3734,9 +3519,9 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
     record.write_text(valid_record, encoding="utf-8")
 
     final_review_binding_drift = json.loads(valid_record)
-    final_review_binding_drift["boundary_audit"][
-        "final_delivery_boundary_semantic_review"
-    ]["summary"] = "unbound audit copy"
+    final_review_binding_drift["boundary_audit"]["final_delivery_boundary_semantic_review"][
+        "summary"
+    ] = "unbound audit copy"
     record.write_text(
         json.dumps(final_review_binding_drift, ensure_ascii=False),
         encoding="utf-8",
@@ -3761,9 +3546,9 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
 
     for invalid_maximum_tail_pad_ms in (401, 400.0):
         invalid_tail_pad = json.loads(valid_record)
-        invalid_tail_pad["boundary_audit"]["tail_pad_coverage_bridge"][
-            "maximum_tail_pad_ms"
-        ] = invalid_maximum_tail_pad_ms
+        invalid_tail_pad["boundary_audit"]["tail_pad_coverage_bridge"]["maximum_tail_pad_ms"] = (
+            invalid_maximum_tail_pad_ms
+        )
         record.write_text(
             json.dumps(invalid_tail_pad, ensure_ascii=False),
             encoding="utf-8",
@@ -3779,9 +3564,7 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         (4_000.0, "NOT_NEEDED"),
     ):
         invalid_closure_lower_bound = json.loads(valid_record)
-        invalid_closure_lower_bound["boundary_audit"][
-            "tail_pad_coverage_bridge"
-        ].update(
+        invalid_closure_lower_bound["boundary_audit"]["tail_pad_coverage_bridge"].update(
             {
                 "status": bridge_status,
                 "closure_lower_bound_ms": invalid_closure_ms,
@@ -3798,15 +3581,13 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
     record.write_text(valid_record, encoding="utf-8")
 
     invalid_source_witness = json.loads(valid_record)
-    tampered_final_review = invalid_source_witness["story_contract"][
-        "boundary_semantic_review"
-    ]
-    tampered_final_review["source_separation_witness"][
-        "source_review_sha256"
-    ] = "sha256:" + "0" * 64
-    invalid_source_witness["boundary_audit"][
-        "final_delivery_boundary_semantic_review"
-    ] = tampered_final_review
+    tampered_final_review = invalid_source_witness["story_contract"]["boundary_semantic_review"]
+    tampered_final_review["source_separation_witness"]["source_review_sha256"] = (
+        "sha256:" + "0" * 64
+    )
+    invalid_source_witness["boundary_audit"]["final_delivery_boundary_semantic_review"] = (
+        tampered_final_review
+    )
     record.write_text(
         json.dumps(invalid_source_witness, ensure_ascii=False),
         encoding="utf-8",
@@ -3825,36 +3606,29 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
         ("source_final_end_ms", 4_000.0),
     ):
         invalid_source_binding = json.loads(valid_record)
-        rebound_review = invalid_source_binding["story_contract"][
-            "boundary_semantic_review"
-        ]
-        rebound_review["source_separation_witness"][
-            witness_field
-        ] = drifted_value
-        invalid_source_binding["boundary_audit"][
-            "final_delivery_boundary_semantic_review"
-        ] = rebound_review
+        rebound_review = invalid_source_binding["story_contract"]["boundary_semantic_review"]
+        rebound_review["source_separation_witness"][witness_field] = drifted_value
+        invalid_source_binding["boundary_audit"]["final_delivery_boundary_semantic_review"] = (
+            rebound_review
+        )
         record.write_text(
             json.dumps(invalid_source_binding, ensure_ascii=False),
             encoding="utf-8",
         )
         invalid_source_binding_result = audit_package(root)
         assert "BOUNDARY_SOURCE_SEPARATION_WITNESS_INVALID" in {
-            issue["code"]
-            for issue in invalid_source_binding_result["issues"]
+            issue["code"] for issue in invalid_source_binding_result["issues"]
         }
     record.write_text(valid_record, encoding="utf-8")
 
     invalid_delivery_local_endpoint = json.loads(valid_record)
-    nonlocal_final_review = invalid_delivery_local_endpoint[
-        "story_contract"
-    ]["boundary_semantic_review"]
-    nonlocal_final_review["final_endpoint_binding"][
-        "final_start_ms"
-    ] = 1
-    invalid_delivery_local_endpoint["boundary_audit"][
-        "final_delivery_boundary_semantic_review"
-    ] = nonlocal_final_review
+    nonlocal_final_review = invalid_delivery_local_endpoint["story_contract"][
+        "boundary_semantic_review"
+    ]
+    nonlocal_final_review["final_endpoint_binding"]["final_start_ms"] = 1
+    invalid_delivery_local_endpoint["boundary_audit"]["final_delivery_boundary_semantic_review"] = (
+        nonlocal_final_review
+    )
     record.write_text(
         json.dumps(invalid_delivery_local_endpoint, ensure_ascii=False),
         encoding="utf-8",
@@ -3866,33 +3640,21 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
     record.write_text(valid_record, encoding="utf-8")
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["cover_route_attestations"][0]["final_cover_sha256"] = (
-        "sha256:" + "0" * 64
-    )
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
-    )
+    manifest["cover_route_attestations"][0]["final_cover_sha256"] = "sha256:" + "0" * 64
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
     cover_result = audit_package(root)
     assert cover_result["passed"] is False
-    assert "MANIFEST_COVER_ATTESTATION_DRIFT" in {
-        issue["code"] for issue in cover_result["issues"]
-    }
-    manifest["cover_route_attestations"][0]["final_cover_sha256"] = (
-        recorded_generation["final_cover_sha256"]
-    )
+    assert "MANIFEST_COVER_ATTESTATION_DRIFT" in {issue["code"] for issue in cover_result["issues"]}
+    manifest["cover_route_attestations"][0]["final_cover_sha256"] = recorded_generation[
+        "final_cover_sha256"
+    ]
     manifest["items"][0]["title"] = "【李豆沙】旧标题"
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
-    )
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
     title_result = audit_package(root)
     assert title_result["passed"] is False
-    assert "MANIFEST_ITEM_TITLE_DRIFT" in {
-        issue["code"] for issue in title_result["issues"]
-    }
+    assert "MANIFEST_ITEM_TITLE_DRIFT" in {issue["code"] for issue in title_result["issues"]}
     manifest["items"][0]["title"] = "【李豆沙】南町当面追问最最最最喜欢"
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
-    )
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
 
     srt.write_text(
         "1\n00:00:00,000 --> 00:00:04,000\n大恩老师说非常亚撒西\n",
@@ -4098,10 +3860,7 @@ def test_legacy_retry_receipt_keeps_historical_package_auditable():
         "deterministic_owner_set_sha256": "sha256:" + "e" * 64,
     }
     assert (
-        _retry_verification_valid(
-            frozen=modern_contract_legacy_receipt, owner_scope=scope
-        )
-        is False
+        _retry_verification_valid(frozen=modern_contract_legacy_receipt, owner_scope=scope) is False
     )
 
 
@@ -4141,9 +3900,7 @@ def _projected_source_boundary_review(candidate_id: str) -> dict[str, object]:
             "evidence_cue_indexes": [1, 2],
             "boundary_search_scope": {
                 "reviewed_exact_interval_projection": {
-                    "schema_version": (
-                        "reviewed-exact-interval-terminal-projection-scope.v1"
-                    ),
+                    "schema_version": ("reviewed-exact-interval-terminal-projection-scope.v1"),
                     "authority_sha256": authority_sha256,
                     "reviewed_endpoint_ms": reviewed_end_ms,
                     "max_terminal_drift_ms": 250,
@@ -4186,9 +3943,7 @@ def test_reviewed_terminal_projection_bridge_survives_package_audit(
     )
     record = {
         "boundary_audit": {
-            "boundary_authority": (
-                "correlated_semantic_review_plus_deterministic_guards"
-            ),
+            "boundary_authority": ("correlated_semantic_review_plus_deterministic_guards"),
             "boundary_semantic_review": source_review,
             "final_delivery_boundary_semantic_review": final_review,
             "final_start_ms": 9_630,
@@ -4212,9 +3967,7 @@ def test_reviewed_terminal_projection_bridge_survives_package_audit(
     def run_audit() -> set[str]:
         issues: list[dict] = []
         audit_boundary_contract(
-            issue_adder=lambda rows, code, **fields: rows.append(
-                {"code": code, **fields}
-            ),
+            issue_adder=lambda rows, code, **fields: rows.append({"code": code, **fields}),
             issues=issues,
             stem=stem,
             record_path=tmp_path / f"{stem}.record.json",
@@ -4229,13 +3982,9 @@ def test_reviewed_terminal_projection_bridge_survives_package_audit(
 
     assert "BOUNDARY_DELIVERY_COVERAGE_INVALID" not in run_audit()
 
-    record["boundary_audit"]["tail_pad_coverage_bridge"][
-        "closure_lower_bound_ms"
-    ] = 67_760
+    record["boundary_audit"]["tail_pad_coverage_bridge"]["closure_lower_bound_ms"] = 67_760
     assert "BOUNDARY_DELIVERY_COVERAGE_INVALID" in run_audit()
 
-    record["boundary_audit"]["tail_pad_coverage_bridge"][
-        "closure_lower_bound_ms"
-    ] = 67_670
+    record["boundary_audit"]["tail_pad_coverage_bridge"]["closure_lower_bound_ms"] = 67_670
     source_review["evidence_cue_indexes"] = [1]
     assert "BOUNDARY_SEMANTIC_REVIEW_NOT_PASS" in run_audit()

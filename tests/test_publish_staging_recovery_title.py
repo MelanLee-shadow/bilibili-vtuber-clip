@@ -1,6 +1,7 @@
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from src.autoslice import publish_staging
 from src.autoslice.publish_staging import _stage_publish_draft
@@ -31,13 +32,9 @@ def test_publish_staging_preserves_typed_same_bv_title_authority(
     candidate_id = "auto_193450_1475_1543"
     authority = build_recovery_publication_authorities(
         candidate_ids={candidate_id},
-        registry_path=(
-            ROOT
-            / "assets/lidousha/recovery_publication_authority.v1.json"
-        ),
+        registry_path=(ROOT / "assets/lidousha/recovery_publication_authority.v1.json"),
         expected_registry_sha256=(
-            "sha256:"
-                "0bbb26c63c30b1e30af13e33d5513c49aa10b98afa8730ee9761f59865317e30"
+            "sha256:0bbb26c63c30b1e30af13e33d5513c49aa10b98afa8730ee9761f59865317e30"
         ),
     )[candidate_id]
     title = expected_recovery_publish_title(authority)
@@ -62,16 +59,10 @@ def test_publish_staging_preserves_typed_same_bv_title_authority(
     assert record is not None
     staging = record["publish_staging"]
     assert staging["title"] == title
-    assert staging["title_source"] == (
-        "recovery_verified_same_bv_public_title"
-    )
-    assert staging["title_authority_status"] == (
-        "RESOLVED_RECOVERY_PUBLIC"
-    )
+    assert staging["title_source"] == ("recovery_verified_same_bv_public_title")
+    assert staging["title_authority_status"] == ("RESOLVED_RECOVERY_PUBLIC")
     assert staging["recovery_publication_authority"] == authority
-    publish = json.loads(
-        Path(staging["publish_json_path"]).read_text(encoding="utf-8")
-    )
+    publish = json.loads(Path(staging["publish_json_path"]).read_text(encoding="utf-8"))
     assert publish["title"] == title
     assert publish["recovery_publication_authority"] == authority
     assert captured_cover[0]["title"] == title
@@ -116,11 +107,93 @@ def test_publish_staging_mirrors_source_fact_rescore_provenance(
 
     assert record is not None
     staging = record["publish_staging"]
-    publish = json.loads(
-        Path(staging["publish_json_path"]).read_text(encoding="utf-8")
-    )
+    publish = json.loads(Path(staging["publish_json_path"]).read_text(encoding="utf-8"))
     assert staging[PROVENANCE_FIELD] == provenance
     assert publish[PROVENANCE_FIELD] == provenance
+
+
+def test_publish_staging_passes_single_read_speaker_evidence_to_source_fact(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    media = tmp_path / "candidate.recut.mp4"
+    media.write_bytes(b"media")
+    cover = tmp_path / "cover.png"
+    cover.write_bytes(b"cover")
+    evidence = {
+        "state": "AbsentAuthorized",
+        "reason": "speaker_mode_uniform_host",
+        "policy_ids": {
+            "alignment": "speaker_cue_subsegment_alignment/v1",
+            "text": "compact_ws/v1",
+            "timing": "half_open_integer_ms_exact/v1",
+            "absence": "speaker_mode_uniform_host/v1",
+        },
+    }
+    build_calls: list[tuple[object, object]] = []
+    review_calls: list[dict[str, object]] = []
+
+    def fake_build(record, cues):
+        build_calls.append((record, cues))
+        return (
+            "1 原始字幕",
+            SimpleNamespace(transcript=None, speaker_evidence=evidence),
+        )
+
+    def fake_review(**kwargs):
+        review_calls.append(kwargs)
+        return {
+            "schema_version": "lidousha-source-fact-review.v1",
+            "status": "PASS",
+            "decision": "KEEP",
+            "final_selection_hook": kwargs["selection_hook"],
+            "final_title": kwargs["title"],
+        }
+
+    def fake_stage_cover(_record, **_kwargs):
+        return {
+            "status": "AI_COVER_READY",
+            "cover_path": str(cover),
+            "cover_generation": {"status": "READY"},
+            "reason_codes": [],
+        }
+
+    monkeypatch.setattr(
+        publish_staging,
+        "build_addressee_evidence",
+        fake_build,
+    )
+    monkeypatch.setattr(
+        publish_staging,
+        "review_and_repair_source_facts",
+        fake_review,
+    )
+
+    cues: list[object] = []
+    record = _stage_publish_draft(
+        {
+            "status": "MATERIALIZED",
+            "speaker_mode": "uniform_host",
+            "media_path": str(media),
+            "artifact_hashes": {},
+        },
+        candidate_id="candidate-speaker-evidence",
+        title="【李豆沙】测试标题正文足够长",
+        cues=cues,
+        run_ffmpeg=False,
+        title_llm_call=None,
+        selection_hook="原始字幕是一件可核验的具体事情。",
+        source_fact_llm_call=lambda _prompt: "unused",
+        stage_cover=fake_stage_cover,
+    )
+
+    assert record is not None
+    assert len(build_calls) == 1
+    assert build_calls[0][1] is cues
+    assert len(review_calls) == 1
+    assert review_calls[0]["final_transcript"] == "1 原始字幕"
+    assert review_calls[0]["speaker_transcript"] is None
+    assert review_calls[0]["speaker_evidence"] is evidence
 
 
 def test_reused_published_cover_carries_all_artifact_hashes(
@@ -216,9 +289,7 @@ def test_candidate_projection_blocks_wrong_name_in_visible_cover_text(
     assert staging["entity_projection_audit"]["status"] == "PASS"
     assert staging["cover_status"] == "BLOCKED_ENTITY_SURFACE_PROJECTION"
     assert staging["cover_path"] is None
-    assert staging["reason_codes"] == [
-        "COVER_ENTITY_SURFACE_PROJECTION_FAILED"
-    ]
+    assert staging["reason_codes"] == ["COVER_ENTITY_SURFACE_PROJECTION_FAILED"]
     failure = staging["cover_generation"]["entity_projection_audit"]
     assert failure["status"] == "FAIL"
     assert "expected=莉娅" in failure["detail"]

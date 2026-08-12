@@ -42,12 +42,18 @@ from src.autoslice.channel_profile import load_channel_profile  # noqa: E402
 from src.autoslice.review_package_ass_audit import (  # noqa: E402
     uniform_host_fallback_declared,
 )
+from src.autoslice.review_evidence import SourceCue  # noqa: E402
+from src.autoslice.addressee_attribution import (  # noqa: E402
+    SpeakerEvidenceRejected,
+    rebuild_speaker_evidence,
+)
 from src.autoslice.source_fact_review import (  # noqa: E402
     validate_source_fact_review,
 )
 
 
 CHANNEL_PROFILE = load_channel_profile(ROOT)
+_SPEAKER_EVIDENCE_UNSET = object()
 
 
 class DailyManifestError(RuntimeError):
@@ -88,9 +94,7 @@ def _package_path(
 
     root = package_root.resolve(strict=True)
     raw = Path(relative)
-    if raw.is_absolute() or not raw.parts or any(
-        part in {"", ".", ".."} for part in raw.parts
-    ):
+    if raw.is_absolute() or not raw.parts or any(part in {"", ".", ".."} for part in raw.parts):
         raise DailyManifestError(f"{label} is not a safe package-relative path: {raw}")
     cursor = root
     for index, part in enumerate(raw.parts):
@@ -99,9 +103,7 @@ def _package_path(
             raise DailyManifestError(f"{label} package path contains a symlink: {cursor}")
         if index < len(raw.parts) - 1:
             if cursor.exists() and not cursor.is_dir():
-                raise DailyManifestError(
-                    f"{label} package parent is not a directory: {cursor}"
-                )
+                raise DailyManifestError(f"{label} package parent is not a directory: {cursor}")
             if create_parents and not cursor.exists():
                 cursor.mkdir()
                 if cursor.is_symlink() or not cursor.is_dir():
@@ -122,9 +124,7 @@ def _regular_file(path: Path) -> bool:
         return False
 
 
-def _package_regular_file(
-    package_root: Path, relative: str | Path, *, label: str
-) -> Path | None:
+def _package_regular_file(package_root: Path, relative: str | Path, *, label: str) -> Path | None:
     path = _package_path(package_root, relative, label=label)
     return path if _regular_file(path) else None
 
@@ -190,9 +190,7 @@ def _atomic_project_bytes(
         # Recheck all components immediately before replacement.
         target = _package_path(package_root, relative, label=label)
         if target.exists() and not _regular_file(target):
-            raise DailyManifestError(
-                f"{label} package target changed to a non-regular file"
-            )
+            raise DailyManifestError(f"{label} package target changed to a non-regular file")
         os.replace(temporary, target)
         _fsync_directory(target.parent)
     except OSError as exc:
@@ -208,16 +206,27 @@ def _atomic_project_bytes(
     return verified
 
 
-def _story_transcript(path: Path) -> str:
+def _story_cues(path: Path) -> list[SourceCue]:
     try:
         cues = parse_srt_cues(path.read_bytes().decode("utf-8"))
     except (OSError, UnicodeDecodeError, ValueError) as exc:
-        raise DailyManifestError(
-            f"source-fact subtitle unreadable: {path}"
-        ) from exc
-    transcript = "\n".join(
-        cue.text.strip() for cue in cues if cue.text.strip()
-    )
+        raise DailyManifestError(f"source-fact subtitle unreadable: {path}") from exc
+    if not cues:
+        raise DailyManifestError("source-fact subtitle transcript is empty")
+    return [
+        SourceCue(
+            cue_id=str(cue.index),
+            source_start_ms=cue.start_ms,
+            source_end_ms=cue.end_ms,
+            text=cue.text,
+        )
+        for cue in cues
+    ]
+
+
+def _story_transcript(path: Path) -> str:
+    cues = _story_cues(path)
+    transcript = "\n".join(cue.text.strip() for cue in cues if cue.text.strip())
     if not transcript:
         raise DailyManifestError("source-fact subtitle transcript is empty")
     return transcript
@@ -228,6 +237,7 @@ def _validate_source_fact_receipts(
     record_doc: dict,
     publish_doc: dict,
     subtitle_path: Path,
+    speaker_evidence: object = _SPEAKER_EVIDENCE_UNSET,
 ) -> str:
     """Require one immutable source-fact receipt on all publish surfaces."""
 
@@ -243,42 +253,32 @@ def _validate_source_fact_receipts(
         publish_doc.get("source_fact_review"),
     ]
     if any(not isinstance(receipt, dict) for receipt in receipts):
-        raise DailyManifestError(
-            "source-fact review receipt missing from final package surfaces"
-        )
+        raise DailyManifestError("source-fact review receipt missing from final package surfaces")
     if not (receipts[0] == receipts[1] == receipts[2]):
-        raise DailyManifestError(
-            "source-fact review receipt drift across final package surfaces"
-        )
+        raise DailyManifestError("source-fact review receipt drift across final package surfaces")
     title = str(publish_doc.get("title") or "")
     if title != str(publish_staging.get("title") or ""):
-        raise DailyManifestError(
-            "source-fact reviewed title drift across publish surfaces"
-        )
-    if not validate_source_fact_review(
-        receipts[0],
-        selection_hook=str(story_contract.get("selection_hook") or ""),
-        title=title,
-        final_transcript=_story_transcript(subtitle_path),
-        clip_context_prompt=str(
-            story_contract.get("clip_context_prompt") or ""
-        ),
-        selection_scorecard=story_contract.get("selection_scorecard"),
-        candidate_id=str(story_contract.get("candidate_id") or ""),
-        final_reviewed_srt_path=subtitle_path,
-    ):
-        raise DailyManifestError(
-            "source-fact review receipt is invalid or stale"
-        )
+        raise DailyManifestError("source-fact reviewed title drift across publish surfaces")
+    validation_kwargs = {
+        "selection_hook": str(story_contract.get("selection_hook") or ""),
+        "title": title,
+        "final_transcript": _story_transcript(subtitle_path),
+        "clip_context_prompt": str(story_contract.get("clip_context_prompt") or ""),
+        "selection_scorecard": story_contract.get("selection_scorecard"),
+        "candidate_id": str(story_contract.get("candidate_id") or ""),
+        "final_reviewed_srt_path": subtitle_path,
+    }
+    if speaker_evidence is not _SPEAKER_EVIDENCE_UNSET:
+        validation_kwargs["speaker_evidence"] = speaker_evidence
+    if not validate_source_fact_review(receipts[0], **validation_kwargs):
+        raise DailyManifestError("source-fact review receipt is invalid or stale")
     return str(receipts[0]["receipt_sha256"])
 
 
 def _candidate_lane(record_doc: dict, publish_doc: dict) -> str:
     if str(record_doc.get("classification") or "").lower() == "song":
         return "song"
-    if str(publish_doc.get("title") or "").startswith(
-        CHANNEL_PROFILE.song_title_prefix
-    ):
+    if str(publish_doc.get("title") or "").startswith(CHANNEL_PROFILE.song_title_prefix):
         return "song"
     return "talk"
 
@@ -289,6 +289,7 @@ def _source_fact_manifest_fields(
     record_doc: dict,
     publish_doc: dict,
     subtitle_path: Path,
+    speaker_evidence: object = _SPEAKER_EVIDENCE_UNSET,
 ) -> dict[str, object]:
     """Talk uses the CPA fact gate; Song keeps its lyric-proof lane."""
 
@@ -300,6 +301,7 @@ def _source_fact_manifest_fields(
             record_doc=record_doc,
             publish_doc=publish_doc,
             subtitle_path=subtitle_path,
+            speaker_evidence=speaker_evidence,
         ),
     }
 
@@ -310,6 +312,7 @@ def _lane_manifest_contract_fields(
     record_doc: dict,
     publish_doc: dict,
     subtitle_path: Path,
+    speaker_evidence: object = _SPEAKER_EVIDENCE_UNSET,
 ) -> dict[str, object]:
     if lane == "song":
         return {}
@@ -320,6 +323,7 @@ def _lane_manifest_contract_fields(
             record_doc=record_doc,
             publish_doc=publish_doc,
             subtitle_path=subtitle_path,
+            speaker_evidence=speaker_evidence,
         ),
     }
 
@@ -353,9 +357,7 @@ def _sync_declared_artifact(
     payload = _read_regular_source(source, label=label)
     actual = _sha256_bytes(payload)
     if actual != expected:
-        raise DailyManifestError(
-            f"{label} sha drift: record={expected} actual={actual}"
-        )
+        raise DailyManifestError(f"{label} sha drift: record={expected} actual={actual}")
     projected = _atomic_project_bytes(
         package_root=root,
         relative=relative,
@@ -366,6 +368,95 @@ def _sync_declared_artifact(
         raise DailyManifestError(f"{label} package repair verification failed")
 
 
+def _rebuild_package_speaker_evidence(
+    *,
+    package_root: Path,
+    record_doc: dict,
+    subtitle_path: Path,
+    speaker_srt_path: Path | None,
+) -> tuple[dict[str, object], Path | None]:
+    """Rebuild only from package-local speaker bytes and reviewed cues.
+
+    The producer record may name an absolute source path, but it is used only
+    as a hash-bound import source during package assembly.  The evidence
+    builder always consumes the verified package projection.
+    """
+
+    raw_speaker_path = record_doc.get("speaker_review_srt_path")
+    raw_manifest_path = record_doc.get("speaker_finalization_manifest_path")
+    claims_speaker_evidence = any(
+        value is not None
+        for value in (
+            raw_speaker_path,
+            raw_manifest_path,
+            record_doc.get("speaker_finalization"),
+            record_doc.get("speaker_finalization_manifest_sha256"),
+        )
+    )
+    speaker_srt_bytes: bytes | None = None
+    manifest_bytes: bytes | None = None
+    packaged_manifest: Path | None = None
+    if claims_speaker_evidence:
+        if speaker_srt_path is None:
+            raise DailyManifestError(
+                "speaker evidence is claimed but package speaker SRT is missing"
+            )
+        try:
+            speaker_relative = speaker_srt_path.resolve(strict=True).relative_to(
+                package_root.resolve(strict=True)
+            )
+        except (OSError, ValueError) as exc:
+            raise DailyManifestError(
+                "speaker SRT is not a package-contained regular artifact"
+            ) from exc
+        packaged_speaker = _package_regular_file(
+            package_root,
+            speaker_relative,
+            label="speaker-final SRT",
+        )
+        if packaged_speaker is None:
+            raise DailyManifestError("speaker SRT is not a package-contained regular artifact")
+        if not isinstance(raw_manifest_path, str) or not raw_manifest_path:
+            raise DailyManifestError(
+                "speaker evidence is claimed but finalization manifest path is missing"
+            )
+        manifest_basename = _safe_component(
+            Path(raw_manifest_path).name,
+            label="speaker finalization manifest basename",
+        )
+        packaged_manifest = package_root / manifest_basename
+        _sync_declared_artifact(
+            package_root=package_root,
+            target=packaged_manifest,
+            source=Path(raw_manifest_path),
+            declared_sha256=str(record_doc.get("speaker_finalization_manifest_sha256") or ""),
+            label="speaker finalization manifest",
+        )
+        packaged_manifest = _package_regular_file(
+            package_root,
+            manifest_basename,
+            label="speaker finalization manifest",
+        )
+        if packaged_manifest is None:
+            raise DailyManifestError("speaker finalization manifest package projection is missing")
+        speaker_srt_bytes = packaged_speaker.read_bytes()
+        manifest_bytes = packaged_manifest.read_bytes()
+    try:
+        rebuilt = rebuild_speaker_evidence(
+            record_doc,
+            _story_cues(subtitle_path),
+            speaker_srt_bytes=speaker_srt_bytes,
+            speaker_manifest_bytes=manifest_bytes,
+        )
+    except SpeakerEvidenceRejected as exc:
+        raise DailyManifestError(
+            f"source-fact speaker evidence rejected: {exc.code}: {exc.detail}"
+        ) from exc
+    except OSError as exc:
+        raise DailyManifestError("source-fact package speaker evidence is unreadable") from exc
+    return dict(rebuilt.speaker_evidence), packaged_manifest
+
+
 def _resolve_final_cover(
     *,
     package_root: Path,
@@ -374,17 +465,11 @@ def _resolve_final_cover(
 ) -> str:
     """Resolve only the exact final cover declared by state and record."""
     declared = cover_generation.get("final_cover")
-    expected = str(
-        cover_generation.get("final_cover_sha256") or ""
-    ).removeprefix("sha256:")
+    expected = str(cover_generation.get("final_cover_sha256") or "").removeprefix("sha256:")
     pick_path = pick.get("cover_path")
-    pick_expected = str(pick.get("cover_sha256") or "").removeprefix(
-        "sha256:"
-    )
+    pick_expected = str(pick.get("cover_sha256") or "").removeprefix("sha256:")
     if not isinstance(declared, str) or not declared or not expected:
-        raise DailyManifestError(
-            "cover generation lacks final_cover/final_cover_sha256"
-        )
+        raise DailyManifestError("cover generation lacks final_cover/final_cover_sha256")
     if not isinstance(pick_path, str) or not pick_path or not pick_expected:
         raise DailyManifestError("state pick lacks cover_path/cover_sha256")
 
@@ -399,8 +484,7 @@ def _resolve_final_cover(
     pick_actual = _sha256_bytes(pick_payload)
     if pick_actual != pick_expected:
         raise DailyManifestError(
-            "state final cover sha drift: "
-            f"state={pick_expected} actual={pick_actual}"
+            f"state final cover sha drift: state={pick_expected} actual={pick_actual}"
         )
 
     # Cover repair writes a title-named delivery alias while keeping the
@@ -455,9 +539,7 @@ def _resolve_final_burn_artifacts(
     """
     if uniform_fallback:
         return (
-            _need_package_file(
-                package_root, f"{stem}.burned-final-sapphire72.mp4"
-            ),
+            _need_package_file(package_root, f"{stem}.burned-final-sapphire72.mp4"),
             _need_package_file(package_root, f"{stem}.final-sapphire72.ass"),
             None,
         )
@@ -500,8 +582,9 @@ def _sync_record_bound_candidate_artifacts(
     return resolved
 
 
-def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
-          candidate_id: str) -> dict:
+def build(
+    package_root: Path, state_path: Path, deployed_commit_file: Path, candidate_id: str
+) -> dict:
     candidate_id = _safe_component(candidate_id, label="candidate_id")
     package_root = package_root.resolve()
     if not package_root.is_dir():
@@ -528,12 +611,9 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
         "ready_unpublished",
         "ready_unpublished_with_failures",
     }:
-        raise DailyManifestError(
-            f"batch status not reviewable: {batch_status}"
-        )
+        raise DailyManifestError(f"batch status not reviewable: {batch_status}")
     pick = next(
-        (row for row in state.get("picks") or []
-         if row.get("candidate_id") == candidate_id),
+        (row for row in state.get("picks") or [] if row.get("candidate_id") == candidate_id),
         None,
     )
     if pick is None:
@@ -545,10 +625,9 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
     deployed_commit = deployed_commit_file.read_text(encoding="utf-8").split()[0]
 
     stem = f"{candidate_id}.recut"
+
     def need(name: str) -> Path:
-        path = _package_regular_file(
-            package_root, name, label="required package artifact"
-        )
+        path = _package_regular_file(package_root, name, label="required package artifact")
         if path is None:
             raise DailyManifestError(f"required package file missing: {name}")
         return path
@@ -566,12 +645,6 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
     record_doc = json.loads(record.read_text(encoding="utf-8"))
     subtitle = need(f"{stem}.srt")
     lane = _candidate_lane(record_doc, publish_doc)
-    lane_manifest_contract_fields = _lane_manifest_contract_fields(
-        lane=lane,
-        record_doc=record_doc,
-        publish_doc=publish_doc,
-        subtitle_path=subtitle,
-    )
     cover_rel = _resolve_final_cover(
         package_root=package_root,
         pick=pick,
@@ -589,9 +662,7 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
     )
     chat_name = portable_evidence["chat_authority"]
     clip_context_name = portable_evidence["clip_context"]
-    chat_path = _package_regular_file(
-        package_root, chat_name, label="chat authority"
-    )
+    chat_path = _package_regular_file(package_root, chat_name, label="chat authority")
     if chat_path is None:
         raise DailyManifestError("portable chat authority is missing")
     chat_authority_doc = json.loads(chat_path.read_text(encoding="utf-8"))
@@ -599,14 +670,35 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
     # 包不再产出旧 sapphire72 统一样式烧录；命名解析必须按同一份自证信号
     # 分岔，镜像 review_package_ass_audit.py 已用的判定，两条审计链才不会
     # 对同一包给出不同答案。
-    uniform_fallback = uniform_host_fallback_declared(
-        record_doc, chat_authority_doc
-    )
+    uniform_fallback = uniform_host_fallback_declared(record_doc, chat_authority_doc)
     burned, ass, speaker_srt_file = _resolve_final_burn_artifacts(
         package_root=package_root,
         stem=stem,
         uniform_fallback=uniform_fallback,
     )
+    packaged_speaker_manifest: Path | None = None
+    if lane == "song":
+        lane_manifest_contract_fields = _lane_manifest_contract_fields(
+            lane=lane,
+            record_doc=record_doc,
+            publish_doc=publish_doc,
+            subtitle_path=subtitle,
+        )
+    else:
+        speaker_evidence, packaged_speaker_manifest = _rebuild_package_speaker_evidence(
+            package_root=package_root,
+            record_doc=record_doc,
+            subtitle_path=subtitle,
+            speaker_srt_path=speaker_srt_file,
+        )
+        lane_manifest_contract_fields = _lane_manifest_contract_fields(
+            lane=lane,
+            record_doc=record_doc,
+            publish_doc=publish_doc,
+            subtitle_path=subtitle,
+            speaker_evidence=speaker_evidence,
+        )
+
     def cover_artifact(generation_key: str, sha_key: str) -> str:
         """Locate a package-internal cover artifact declared by generation.
 
@@ -617,21 +709,13 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
         verified.
         """
         declared = cover_generation.get(generation_key)
-        expected = str(cover_generation.get(sha_key) or "").removeprefix(
-            "sha256:"
-        )
+        expected = str(cover_generation.get(sha_key) or "").removeprefix("sha256:")
         if not isinstance(declared, str) or not declared or not expected:
-            raise DailyManifestError(
-                f"cover generation lacks {generation_key}/{sha_key}"
-            )
-        basename = _safe_component(
-            Path(declared).name, label=f"{generation_key} basename"
-        )
+            raise DailyManifestError(f"cover generation lacks {generation_key}/{sha_key}")
+        basename = _safe_component(Path(declared).name, label=f"{generation_key} basename")
         for parent in ("covers", "covers_ai_original", "cover_refs"):
             relative = f"{parent}/{basename}"
-            candidate_path = _package_regular_file(
-                package_root, relative, label=generation_key
-            )
+            candidate_path = _package_regular_file(package_root, relative, label=generation_key)
             if candidate_path is not None and _sha256(candidate_path) == expected:
                 return f"{parent}/{basename}"
         source = Path(declared)
@@ -639,8 +723,7 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
         actual = _sha256_bytes(payload)
         if actual != expected:
             raise DailyManifestError(
-                f"cover artifact source sha drift: "
-                f"{generation_key}={expected} actual={actual}"
+                f"cover artifact source sha drift: {generation_key}={expected} actual={actual}"
             )
         portable = _atomic_project_bytes(
             package_root=package_root,
@@ -649,42 +732,29 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
             label=f"cover artifact {generation_key}",
         )
         if _sha256(portable) != expected:
-            raise DailyManifestError(
-                f"cover artifact package hash drift: {generation_key}"
-            )
+            raise DailyManifestError(f"cover artifact package hash drift: {generation_key}")
         return f"covers_ai_original/{basename}"
 
     cover_pre_overlay = cover_artifact("pre_overlay_path", "pre_overlay_sha256")
-    cover_route_background = cover_artifact(
-        "ai_background", "ai_background_sha256"
-    )
+    cover_route_background = cover_artifact("ai_background", "ai_background_sha256")
     rendered_text_pixels = cover_generation.get("rendered_text_pixels")
     if not isinstance(rendered_text_pixels, dict):
         raise DailyManifestError("cover generation lacks rendered_text_pixels")
     mask_declared = rendered_text_pixels.get("mask_path")
-    mask_expected = str(
-        rendered_text_pixels.get("mask_sha256") or ""
-    ).removeprefix("sha256:")
+    mask_expected = str(rendered_text_pixels.get("mask_sha256") or "").removeprefix("sha256:")
     if not isinstance(mask_declared, str) or not mask_declared or not mask_expected:
-        raise DailyManifestError(
-            "cover generation lacks rendered text mask path/hash"
-        )
+        raise DailyManifestError("cover generation lacks rendered text mask path/hash")
     mask_source = Path(mask_declared)
     mask_name = _safe_component(mask_source.name, label="cover title mask basename")
     mask_rel = str(Path(cover_pre_overlay).parent / mask_name)
-    mask_path = _package_regular_file(
-        package_root, mask_rel, label="cover title mask"
-    )
+    mask_path = _package_regular_file(package_root, mask_rel, label="cover title mask")
     package_matches = bool(mask_path is not None and _sha256(mask_path) == mask_expected)
     if not package_matches:
-        mask_payload = _read_regular_source(
-            mask_source, label="cover title mask"
-        )
+        mask_payload = _read_regular_source(mask_source, label="cover title mask")
         mask_actual = _sha256_bytes(mask_payload)
         if mask_actual != mask_expected:
             raise DailyManifestError(
-                f"cover title mask source sha drift: "
-                f"record={mask_expected} actual={mask_actual}"
+                f"cover title mask source sha drift: record={mask_expected} actual={mask_actual}"
             )
         mask_path = _atomic_project_bytes(
             package_root=package_root,
@@ -738,13 +808,17 @@ def build(package_root: Path, state_path: Path, deployed_commit_file: Path,
         # speaker-finalized 包（uniform_fallback=False）没有这一同体前提，
         # 必须指向真正带 LDS/GUEST 标签的 speaker-final SRT，否则
         # review_package_ass_audit 的事件级 parity 复放会对着错误的文件跑。
-        "speaker_srt": (
-            f"{upload_stem}.srt"
-            if uniform_fallback
-            else speaker_srt_file.name
-        ),
-        "speaker_srt_sha256": _sha256(
-            subtitle if uniform_fallback else speaker_srt_file
+        "speaker_srt": (f"{upload_stem}.srt" if uniform_fallback else speaker_srt_file.name),
+        "speaker_srt_sha256": _sha256(subtitle if uniform_fallback else speaker_srt_file),
+        **(
+            {
+                "speaker_finalization_manifest": (packaged_speaker_manifest.name),
+                "speaker_finalization_manifest_sha256": (
+                    "sha256:" + _sha256(packaged_speaker_manifest)
+                ),
+            }
+            if packaged_speaker_manifest is not None
+            else {}
         ),
         "sha256": {
             "subtitle_srt": _sha256(subtitle),
@@ -798,8 +872,7 @@ def main() -> int:
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
     try:
-        manifest = build(args.package_root, args.state,
-                         args.deployed_commit_file, args.candidate)
+        manifest = build(args.package_root, args.state, args.deployed_commit_file, args.candidate)
     except DailyManifestError as exc:
         print(f"REFUSE: {exc}")
         return 2

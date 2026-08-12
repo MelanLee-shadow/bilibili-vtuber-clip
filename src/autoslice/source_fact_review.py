@@ -10,8 +10,12 @@ from pathlib import Path
 from typing import Mapping
 
 from src.autoslice.addressee_attribution import (
+    ABSENCE_POLICY_ID,
     ADDRESSEE_UNRESOLVED_REASON,
+    ALIGNMENT_POLICY_ID,
     SPEAKER_TRANSCRIPT_LABEL,
+    TEXT_PARTITION_POLICY_ID,
+    TIMING_POLICY_ID,
     addressee_prompt_block,
     # 有意从本模块转出：调用方要的是"这条产线的两份转写 + 复审"这一对，
     # 输入构造器和消费它的 review 函数留在同一个 import 面更难接错。
@@ -50,6 +54,8 @@ MAX_PROVIDER_RETRIES_PER_PASS = 2
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CHANNEL_PROFILE = load_channel_profile(_REPO_ROOT)
 _CANDIDATE_RECUT_SUFFIX_RX = re.compile(r"r\d+$")
+_SHA256_VALUE_RX = re.compile(r"sha256:[0-9a-f]{64}\Z")
+_SPEAKER_EVIDENCE_UNSET = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +84,127 @@ def _sha256_json(value: object) -> str:
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
+def _validated_speaker_evidence(
+    value: object,
+    *,
+    speaker_transcript: str | None,
+) -> tuple[dict[str, object], str] | None:
+    """Freeze and verify one canonical speaker-evidence document.
+
+    The alignment builder owns the evidence schema.  This boundary deliberately
+    rechecks its cryptographic self-bindings before allowing the document into
+    a source-fact receipt, so a caller cannot pair a trusted transcript with a
+    drifted alignment or raw speaker-final artifact.
+    """
+
+    if not isinstance(value, Mapping):
+        return None
+    try:
+        document = json.loads(
+            json.dumps(
+                dict(value),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(document, dict):
+        return None
+    policy_ids = document.get("policy_ids")
+    if not (
+        isinstance(policy_ids, dict)
+        and policy_ids
+        and all(
+            isinstance(key, str) and bool(key) and isinstance(policy_id, str) and bool(policy_id)
+            for key, policy_id in policy_ids.items()
+        )
+    ):
+        return None
+    state = document.get("state")
+    present_policy_ids = {
+        "alignment": ALIGNMENT_POLICY_ID,
+        "text": TEXT_PARTITION_POLICY_ID,
+        "timing": TIMING_POLICY_ID,
+    }
+    if state == "AbsentAuthorized":
+        if (
+            document.get("reason") != "speaker_mode_uniform_host"
+            or policy_ids
+            != {
+                **present_policy_ids,
+                "absence": ABSENCE_POLICY_ID,
+            }
+            or speaker_transcript is not None
+            or any(
+                key in document
+                for key in (
+                    "alignment",
+                    "alignment_sha256",
+                    "speaker_final_srt_sha256",
+                    "speaker_finalization_manifest_sha256",
+                    "speaker_transcript",
+                    "speaker_transcript_sha256",
+                )
+            )
+        ):
+            return None
+        return document, _sha256_json(document)
+    if state != "PresentValid" or not isinstance(speaker_transcript, str) or not speaker_transcript:
+        return None
+    # The path-rich speaker manifest is revalidated against the current record
+    # before this canonical evidence is derived, but its raw bytes legitimately
+    # change when WSL package paths are relocated onto free.  Persist only the
+    # relocation-invariant authority it proves: speaker SRT, alignment, and the
+    # exact transcript shown to the judge.
+    if "speaker_finalization_manifest_sha256" in document:
+        return None
+    if policy_ids != present_policy_ids:
+        return None
+    alignment = document.get("alignment")
+    if not isinstance(alignment, dict):
+        return None
+    if alignment.get("policy_ids") != present_policy_ids:
+        return None
+    if document.get("alignment_sha256") != _sha256_json(alignment):
+        return None
+    if document.get("speaker_transcript") != speaker_transcript or document.get(
+        "speaker_transcript_sha256"
+    ) != _sha256_text(speaker_transcript):
+        return None
+    required_hashes = (
+        "speaker_final_srt_sha256",
+        "alignment_sha256",
+        "speaker_transcript_sha256",
+    )
+    if any(
+        not isinstance(document.get(key), str)
+        or _SHA256_VALUE_RX.fullmatch(str(document.get(key))) is None
+        for key in required_hashes
+    ):
+        return None
+    plain_srt_sha256 = document.get("plain_srt_sha256")
+    if plain_srt_sha256 is not None and (
+        not isinstance(plain_srt_sha256, str)
+        or _SHA256_VALUE_RX.fullmatch(plain_srt_sha256) is None
+    ):
+        return None
+    return document, _sha256_json(document)
+
+
+def _speaker_receipt_fields(
+    speaker_evidence: dict[str, object] | None,
+    speaker_evidence_sha256: str | None,
+) -> dict[str, object]:
+    if speaker_evidence is None or speaker_evidence_sha256 is None:
+        return {}
+    return {
+        "speaker_evidence": dict(speaker_evidence),
+        "speaker_evidence_sha256": speaker_evidence_sha256,
+    }
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -88,10 +215,7 @@ def _sha256_file(path: Path) -> str:
 
 def _candidate_family(candidate_id: str) -> str:
     value = str(candidate_id or "").strip()
-    if (
-        not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{2,127}", value)
-        or Path(value).name != value
-    ):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{2,127}", value) or Path(value).name != value:
         return ""
     return _CANDIDATE_RECUT_SUFFIX_RX.sub("", value)
 
@@ -119,17 +243,12 @@ def _load_source_fact_entity_context(
     if not (projection_path.exists() or projection_path.is_symlink()):
         return None
     if final_reviewed_srt_path is None:
-        raise CandidateEntityProjectionError(
-            "SOURCE_FACT_FINAL_REVIEWED_SRT_REQUIRED"
-        )
+        raise CandidateEntityProjectionError("SOURCE_FACT_FINAL_REVIEWED_SRT_REQUIRED")
     final_srt = Path(final_reviewed_srt_path)
     if final_srt.is_symlink() or not final_srt.is_file():
-        raise CandidateEntityProjectionError(
-            "SOURCE_FACT_FINAL_REVIEWED_SRT_UNAVAILABLE"
-        )
+        raise CandidateEntityProjectionError("SOURCE_FACT_FINAL_REVIEWED_SRT_UNAVAILABLE")
     reviewed_baseline = (
-        _CHANNEL_PROFILE.asset_directory("reviewed_subtitle_baselines")
-        / f"{family}.reviewed.srt"
+        _CHANNEL_PROFILE.asset_directory("reviewed_subtitle_baselines") / f"{family}.reviewed.srt"
     )
     projection = load_candidate_entity_projection(
         projection_path=projection_path,
@@ -149,9 +268,7 @@ def _load_source_fact_entity_context(
         rules.append(
             {
                 "entity_id": identity.entity_id,
-                "identity_equivalent_surfaces": list(
-                    identity.equivalent_surfaces
-                ),
+                "identity_equivalent_surfaces": list(identity.equivalent_surfaces),
                 "reviewed_surface": projection.projected_surface(
                     entity_id=identity.entity_id,
                     surface_type="reviewed",
@@ -169,16 +286,10 @@ def _load_source_fact_entity_context(
         "final_reviewed_srt_sha256": observed_srt_sha256,
         "projection_sha256": projection.projection_sha256,
         "candidate_binding": {
-            "source_recording_basename": (
-                projection.binding.source_recording_basename
-            ),
+            "source_recording_basename": (projection.binding.source_recording_basename),
             "source_sha256": projection.binding.source_sha256,
-            "absolute_source_start_ms": (
-                projection.binding.absolute_source_start_ms
-            ),
-            "absolute_source_end_ms": (
-                projection.binding.absolute_source_end_ms
-            ),
+            "absolute_source_start_ms": (projection.binding.absolute_source_start_ms),
+            "absolute_source_end_ms": (projection.binding.absolute_source_end_ms),
         },
         "identity_spelling_rules": rules,
     }
@@ -244,7 +355,7 @@ def _entity_surface_error(
 def _entity_receipt_fields(
     context: _ResolvedEntityContext | None,
 ) -> dict[str, object]:
-    return ({"entity_context": dict(context.document)} if context else {})
+    return {"entity_context": dict(context.document)} if context else {}
 
 
 def _finalize_receipt(receipt: dict[str, object]) -> dict[str, object]:
@@ -274,9 +385,7 @@ def _hard_meme_canon_prompt_block() -> str:
     rules = hard_meme_surface_rules()
     if not rules:
         return ""
-    listing = "；".join(
-        f"「{rule.surface}」一律写作「{rule.canonical}」" for rule in rules
-    )
+    listing = "；".join(f"「{rule.surface}」一律写作「{rule.canonical}」" for rule in rules)
     return (
         "频道钦定梗词规范（hard-meme-canon，最终输出铁律）：" + listing + "。"
         "规范词面是同一个梗的钦定拼写，不是换词：最终字幕与两份文案里的规范"
@@ -302,8 +411,8 @@ def _prompt(
         "你是李豆沙切片派生文案的 source-fact 最终裁决者。你只有文字输入，"
         "不要声称听见音频或看见画面。一次联合裁决 selection_hook 与投稿标题，"
         "不是字幕改写任务。\n"
-        + _hard_meme_canon_prompt_block() +
-        "判断两份文案里的每个具体事件、对象、因果、身份、专名、事实模态和同音"
+        + _hard_meme_canon_prompt_block()
+        + "判断两份文案里的每个具体事件、对象、因果、身份、专名、事实模态和同音"
         "释义，是否能由最终字幕或同片 hash-bound 结构化弹幕/SC/上下文支持。"
         "允许不逐字的自然概括，但不允许把提议写成既成事实、把猜测写成断言，"
         "也不允许凭空把同音词换成另一个含义。\n"
@@ -453,18 +562,12 @@ def _evidence_row_is_bound(
         compact_value
         and compact_value
         in _compact(
-            final_transcript
-            + "\n"
-            + clip_context_prompt
-            + "\n"
-            + str(speaker_transcript or "")
+            final_transcript + "\n" + clip_context_prompt + "\n" + str(speaker_transcript or "")
         )
     )
 
 
-def _degree_upgrade_unsupported(
-    before: str, after: str, evidence: list[str]
-) -> bool:
+def _degree_upgrade_unsupported(before: str, after: str, evidence: list[str]) -> bool:
     """Reject a degree upgrade unless the upgraded word is itself quoted evidence.
 
     ``_evidence_row_is_bound`` already proves each evidence row is a literal
@@ -472,9 +575,7 @@ def _degree_upgrade_unsupported(
     word appears in that already-bound text, not whether the row is bound.
     """
 
-    added = [
-        word for word in _DEGREE_UPGRADE_WORDS if word in after and word not in before
-    ]
+    added = [word for word in _DEGREE_UPGRADE_WORDS if word in after and word not in before]
     if not added:
         return False
     return not any(any(word in row for word in added) for row in evidence)
@@ -534,6 +635,7 @@ def _single_review(
     review_pass: int,
     enforce_automatic_title_style: bool,
     speaker_transcript: str | None = None,
+    speaker_evidence_sha256: str | None = None,
     entity_context: _ResolvedEntityContext | None = None,
 ) -> dict[str, object]:
     title_policy_violations = publish_title_policy_violations(
@@ -568,6 +670,8 @@ def _single_review(
     }
     if entity_context is not None:
         base["entity_context_sha256"] = entity_context.context_sha256
+    if speaker_evidence_sha256 is not None:
+        base["speaker_evidence_sha256"] = speaker_evidence_sha256
     if llm_call is None:
         return {
             **base,
@@ -760,6 +864,7 @@ def review_and_repair_source_facts(
     title_repair_allowed: bool = True,
     enforce_automatic_title_style: bool = False,
     speaker_transcript: str | None = None,
+    speaker_evidence: Mapping[str, object] | None = None,
     candidate_id: str | None = None,
     final_reviewed_srt_path: Path | None = None,
 ) -> dict[str, object]:
@@ -770,6 +875,33 @@ def review_and_repair_source_facts(
     # 这里对手写 spec 等旁路输入兜底。
     selection_hook, _ = canonicalize_hard_meme_surfaces(selection_hook)
     title, _ = canonicalize_hard_meme_surfaces(title)
+    canonical_speaker_evidence: dict[str, object] | None = None
+    speaker_evidence_sha256: str | None = None
+    if speaker_evidence is not None:
+        validated_speaker_evidence = _validated_speaker_evidence(
+            speaker_evidence,
+            speaker_transcript=speaker_transcript,
+        )
+        if validated_speaker_evidence is None:
+            return _finalize_receipt(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "status": "FAILED",
+                    "decision": "NONE",
+                    "reason_code": "SOURCE_FACT_SPEAKER_EVIDENCE_INVALID",
+                    "original_selection_hook": selection_hook,
+                    "original_title": title,
+                    "final_selection_hook": selection_hook,
+                    "final_title": title,
+                    "passes": [],
+                    "provider_retries": [],
+                }
+            )
+        canonical_speaker_evidence, speaker_evidence_sha256 = validated_speaker_evidence
+    speaker_receipt_fields = _speaker_receipt_fields(
+        canonical_speaker_evidence,
+        speaker_evidence_sha256,
+    )
     try:
         entity_context = _load_source_fact_entity_context(
             candidate_id=candidate_id,
@@ -789,6 +921,7 @@ def review_and_repair_source_facts(
                 "final_title": title,
                 "passes": [],
                 "provider_retries": [],
+                **speaker_receipt_fields,
             }
         )
     input_surface_error = _entity_surface_error(
@@ -811,6 +944,7 @@ def review_and_repair_source_facts(
                 "passes": [],
                 "provider_retries": [],
                 **_entity_receipt_fields(entity_context),
+                **speaker_receipt_fields,
             }
         )
     current_hook = selection_hook
@@ -832,6 +966,7 @@ def review_and_repair_source_facts(
                 review_pass=review_pass,
                 enforce_automatic_title_style=enforce_automatic_title_style,
                 speaker_transcript=speaker_transcript,
+                speaker_evidence_sha256=speaker_evidence_sha256,
                 entity_context=entity_context,
             )
             if (
@@ -872,6 +1007,7 @@ def review_and_repair_source_facts(
                     "passes": passes,
                     "provider_retries": provider_retries,
                     **_entity_receipt_fields(entity_context),
+                    **speaker_receipt_fields,
                 }
             )
         if review.get("status") != "REPAIR":
@@ -888,6 +1024,7 @@ def review_and_repair_source_facts(
                     "passes": passes,
                     "provider_retries": provider_retries,
                     **_entity_receipt_fields(entity_context),
+                    **speaker_receipt_fields,
                 }
             )
 
@@ -907,6 +1044,7 @@ def review_and_repair_source_facts(
                     "passes": passes,
                     "provider_retries": provider_retries,
                     **_entity_receipt_fields(entity_context),
+                    **speaker_receipt_fields,
                 }
             )
         if (
@@ -935,20 +1073,17 @@ def review_and_repair_source_facts(
                     "passes": passes,
                     "provider_retries": provider_retries,
                     **_entity_receipt_fields(entity_context),
+                    **speaker_receipt_fields,
                     "rescore_candidate": {
                         "schema_version": RESCORE_CANDIDATE_SCHEMA_VERSION,
                         "repaired_selection_hook": repaired_hook,
                         "repaired_selection_hook_sha256": _sha256_text(repaired_hook),
                         "repaired_title": repaired_title,
                         "repaired_title_sha256": _sha256_text(repaired_title),
-                        "stale_selection_scorecard_sha256": _sha256_json(
-                            selection_scorecard
-                        ),
+                        "stale_selection_scorecard_sha256": _sha256_json(selection_scorecard),
                         "selection_scorecard_review": (
                             dict(review["selection_scorecard_review"])
-                            if isinstance(
-                                review.get("selection_scorecard_review"), Mapping
-                            )
+                            if isinstance(review.get("selection_scorecard_review"), Mapping)
                             else None
                         ),
                     },
@@ -969,6 +1104,7 @@ def review_and_repair_source_facts(
                     "passes": passes,
                     "provider_retries": provider_retries,
                     **_entity_receipt_fields(entity_context),
+                    **speaker_receipt_fields,
                 }
             )
         seen_surfaces.add(next_surfaces)
@@ -987,6 +1123,7 @@ def review_and_repair_source_facts(
             "passes": passes,
             "provider_retries": provider_retries,
             **_entity_receipt_fields(entity_context),
+            **speaker_receipt_fields,
         }
     )
 
@@ -1056,6 +1193,15 @@ def authorize_manual_title_repair(
                 if isinstance(review.get("entity_context"), Mapping)
                 else {}
             ),
+            **(
+                {
+                    "speaker_evidence": dict(review["speaker_evidence"]),
+                    "speaker_evidence_sha256": review["speaker_evidence_sha256"],
+                }
+                if isinstance(review.get("speaker_evidence"), Mapping)
+                and isinstance(review.get("speaker_evidence_sha256"), str)
+                else {}
+            ),
         }
     )
 
@@ -1084,16 +1230,13 @@ def _validate_receipt_entity_context(
         return bool(
             "entity_context" not in review
             and all(
-                isinstance(row, Mapping)
-                and "entity_context_sha256" not in row
-                for row in passes
+                isinstance(row, Mapping) and "entity_context_sha256" not in row for row in passes
             )
         )
     if review.get("entity_context") != context.document:
         return False
     if any(
-        not isinstance(row, Mapping)
-        or row.get("entity_context_sha256") != context.context_sha256
+        not isinstance(row, Mapping) or row.get("entity_context_sha256") != context.context_sha256
         for row in passes
     ):
         return False
@@ -1124,6 +1267,72 @@ def _validate_receipt_entity_context(
     )
 
 
+def _validate_receipt_speaker_evidence(
+    review: Mapping[str, object],
+    *,
+    speaker_evidence: object,
+) -> bool:
+    """Cross-link persisted pass hashes to freshly rebuilt package evidence.
+
+    Omitting ``speaker_evidence`` is the deliberate in-process legacy mode: it
+    accepts only receipts that predate the canonical evidence document and
+    leaves their historical byte contract unchanged.  Package builders and
+    auditors pass an explicit rebuilt document, which turns every nullable
+    speaker binding into a checked three-state assertion.
+    """
+
+    passes = review.get("passes")
+    if not isinstance(passes, list) or any(not isinstance(row, Mapping) for row in passes):
+        return False
+    top_level_fields_present = "speaker_evidence" in review or "speaker_evidence_sha256" in review
+    pass_evidence_fields_present = any(
+        "speaker_evidence_sha256" in row for row in passes if isinstance(row, Mapping)
+    )
+    if speaker_evidence is _SPEAKER_EVIDENCE_UNSET:
+        return not top_level_fields_present and not pass_evidence_fields_present
+    transcript = (
+        speaker_evidence.get("speaker_transcript")
+        if isinstance(speaker_evidence, Mapping) and speaker_evidence.get("state") == "PresentValid"
+        else None
+    )
+    if transcript is not None and not isinstance(transcript, str):
+        return False
+    validated = _validated_speaker_evidence(
+        speaker_evidence,
+        speaker_transcript=transcript,
+    )
+    if validated is None:
+        return False
+    document, evidence_sha256 = validated
+    expected_transcript_sha256 = (
+        document.get("speaker_transcript_sha256")
+        if document.get("state") == "PresentValid"
+        else None
+    )
+    if any(
+        row.get("speaker_transcript_sha256") != expected_transcript_sha256
+        for row in passes
+        if isinstance(row, Mapping)
+    ):
+        return False
+    if not top_level_fields_present and not pass_evidence_fields_present:
+        # Historical receipts bind only the transcript hash.  A package may
+        # keep using one only when its freshly rebuilt present/absent state
+        # reproduces that exact nullable hash across every pass.
+        return True
+    if not top_level_fields_present or not pass_evidence_fields_present:
+        return False
+    return bool(
+        review.get("speaker_evidence") == document
+        and review.get("speaker_evidence_sha256") == evidence_sha256
+        and all(
+            row.get("speaker_evidence_sha256") == evidence_sha256
+            for row in passes
+            if isinstance(row, Mapping)
+        )
+    )
+
+
 def validate_source_fact_review(
     review: object,
     *,
@@ -1134,6 +1343,7 @@ def validate_source_fact_review(
     selection_scorecard: object = None,
     candidate_id: str | None = None,
     final_reviewed_srt_path: Path | None = None,
+    speaker_evidence: object = _SPEAKER_EVIDENCE_UNSET,
 ) -> bool:
     """Recheck the persisted receipt without trusting selected top-level fields."""
 
@@ -1149,6 +1359,11 @@ def validate_source_fact_review(
         review,
         candidate_id=candidate_id,
         final_reviewed_srt_path=final_reviewed_srt_path,
+    ):
+        return False
+    if not _validate_receipt_speaker_evidence(
+        review,
+        speaker_evidence=speaker_evidence,
     ):
         return False
     if review.get("final_selection_hook") != selection_hook or review.get("final_title") != title:
@@ -1272,10 +1487,9 @@ def validate_source_fact_rescore_candidate_receipt(
     if not isinstance(passes, list) or not passes or not isinstance(passes[-1], Mapping):
         return False
     last_pass = passes[-1]
-    if (
-        last_pass.get("status") != "REPAIR"
-        or last_pass.get("selection_scorecard_sha256") != _sha256_json(selection_scorecard)
-    ):
+    if last_pass.get("status") != "REPAIR" or last_pass.get(
+        "selection_scorecard_sha256"
+    ) != _sha256_json(selection_scorecard):
         return False
     block = review.get("rescore_candidate")
     if not isinstance(block, Mapping):
@@ -1290,8 +1504,6 @@ def validate_source_fact_rescore_candidate_receipt(
         and isinstance(repaired_title, str)
         and block.get("repaired_title") == repaired_title
         and block.get("repaired_title_sha256") == _sha256_text(repaired_title)
-        and block.get("stale_selection_scorecard_sha256")
-        == _sha256_json(selection_scorecard)
-        and block.get("selection_scorecard_review")
-        == last_pass.get("selection_scorecard_review")
+        and block.get("stale_selection_scorecard_sha256") == _sha256_json(selection_scorecard)
+        and block.get("selection_scorecard_review") == last_pass.get("selection_scorecard_review")
     )

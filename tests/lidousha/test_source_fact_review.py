@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 
@@ -11,6 +12,58 @@ from src.autoslice.source_fact_review import (
     validate_source_fact_review,
 )
 from src.autoslice.story_contract import build_story_contract
+
+
+def _canonical_sha256(value: object) -> str:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _present_speaker_evidence(transcript: str) -> dict[str, object]:
+    policy_ids = {
+        "alignment": "speaker_cue_subsegment_alignment/v1",
+        "text": "compact_ws/v1",
+        "timing": "half_open_integer_ms_exact/v1",
+    }
+    alignment = {
+        "schema_version": "speaker-cue-subsegment-alignment.v1",
+        "policy_ids": policy_ids,
+        "rows": [
+            {
+                "cue_id": "1",
+                "segments": [{"segment_index": 1, "speaker": "李豆沙", "text": "测试字幕"}],
+            }
+        ],
+    }
+    return {
+        "state": "PresentValid",
+        "policy_ids": policy_ids,
+        "plain_srt_sha256": "sha256:" + "1" * 64,
+        "speaker_final_srt_sha256": "sha256:" + "2" * 64,
+        "alignment": alignment,
+        "alignment_sha256": _canonical_sha256(alignment),
+        "speaker_transcript": transcript,
+        "speaker_transcript_sha256": "sha256:"
+        + hashlib.sha256(transcript.encode("utf-8")).hexdigest(),
+    }
+
+
+def _absent_speaker_evidence() -> dict[str, object]:
+    return {
+        "state": "AbsentAuthorized",
+        "reason": "speaker_mode_uniform_host",
+        "policy_ids": {
+            "alignment": "speaker_cue_subsegment_alignment/v1",
+            "text": "compact_ws/v1",
+            "timing": "half_open_integer_ms_exact/v1",
+            "absence": "speaker_mode_uniform_host/v1",
+        },
+    }
 
 
 def _completion(
@@ -732,6 +785,156 @@ def test_persisted_receipt_rejects_bound_surface_tamper() -> None:
     )
 
 
+def test_persisted_receipt_rebuilds_exact_speaker_evidence_binding() -> None:
+    hook = "测试字幕形成完整事实。"
+    title = "【李豆沙】测试字幕形成完整事实"
+    final_transcript = "测试字幕"
+    speaker_transcript = "1 [李豆沙] 测试字幕"
+    evidence = _present_speaker_evidence(speaker_transcript)
+    review = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript=final_transcript,
+        speaker_transcript=speaker_transcript,
+        speaker_evidence=evidence,
+        clip_context_prompt="",
+        llm_call=lambda _prompt: _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+        ),
+    )
+
+    assert source_fact_review_passes(review)
+    assert review["speaker_evidence"] == evidence
+    assert review["passes"][0]["speaker_evidence_sha256"] == review["speaker_evidence_sha256"]
+    assert validate_source_fact_review(
+        review,
+        selection_hook=hook,
+        title=title,
+        final_transcript=final_transcript,
+        clip_context_prompt="",
+        speaker_evidence=evidence,
+    )
+    # New receipts may never be validated through the legacy unchecked mode.
+    assert not validate_source_fact_review(
+        review,
+        selection_hook=hook,
+        title=title,
+        final_transcript=final_transcript,
+        clip_context_prompt="",
+    )
+
+
+def test_persisted_receipt_rejects_rebuilt_speaker_evidence_mismatch() -> None:
+    hook = "测试字幕形成完整事实。"
+    title = "【李豆沙】测试字幕形成完整事实"
+    speaker_transcript = "1 [李豆沙] 测试字幕"
+    evidence = _present_speaker_evidence(speaker_transcript)
+    review = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript="测试字幕",
+        speaker_transcript=speaker_transcript,
+        speaker_evidence=evidence,
+        clip_context_prompt="",
+        llm_call=lambda _prompt: _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+        ),
+    )
+    drifted = json.loads(json.dumps(evidence, ensure_ascii=False))
+    drifted["speaker_final_srt_sha256"] = "sha256:" + "9" * 64
+
+    assert not validate_source_fact_review(
+        review,
+        selection_hook=hook,
+        title=title,
+        final_transcript="测试字幕",
+        clip_context_prompt="",
+        speaker_evidence=drifted,
+    )
+
+
+def test_persisted_receipt_rejects_inconsistent_or_missing_pass_binding() -> None:
+    hook = "测试字幕形成完整事实。"
+    title = "【李豆沙】测试字幕形成完整事实"
+    speaker_transcript = "1 [李豆沙] 测试字幕"
+    evidence = _present_speaker_evidence(speaker_transcript)
+    review = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript="测试字幕",
+        speaker_transcript=speaker_transcript,
+        speaker_evidence=evidence,
+        clip_context_prompt="",
+        llm_call=lambda _prompt: _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+        ),
+    )
+    inconsistent_body = json.loads(json.dumps(review, ensure_ascii=False))
+    inconsistent_body.pop("receipt_sha256")
+    inconsistent_body["passes"][0]["speaker_evidence_sha256"] = "sha256:" + "8" * 64
+    inconsistent = _finalize_receipt(inconsistent_body)
+    missing_body = json.loads(json.dumps(review, ensure_ascii=False))
+    missing_body.pop("receipt_sha256")
+    missing_body["passes"][0].pop("speaker_transcript_sha256")
+    missing = _finalize_receipt(missing_body)
+
+    for invalid in (inconsistent, missing):
+        assert not validate_source_fact_review(
+            invalid,
+            selection_hook=hook,
+            title=title,
+            final_transcript="测试字幕",
+            clip_context_prompt="",
+            speaker_evidence=evidence,
+        )
+
+
+def test_all_null_legacy_speaker_receipt_requires_authorized_absence_when_rebuilt() -> None:
+    hook = "测试字幕形成完整事实。"
+    title = "【李豆沙】测试字幕形成完整事实"
+    review = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript="测试字幕",
+        clip_context_prompt="",
+        llm_call=lambda _prompt: _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+        ),
+    )
+    common = {
+        "selection_hook": hook,
+        "title": title,
+        "final_transcript": "测试字幕",
+        "clip_context_prompt": "",
+    }
+
+    # Omitted evidence preserves direct legacy validation, while production's
+    # explicit rebuild accepts NULL only for the uniform-host absence state.
+    assert validate_source_fact_review(review, **common)
+    assert validate_source_fact_review(
+        review,
+        **common,
+        speaker_evidence=_absent_speaker_evidence(),
+    )
+    assert not validate_source_fact_review(
+        review,
+        **common,
+        speaker_evidence=_present_speaker_evidence("1 [李豆沙] 测试字幕"),
+    )
+
+
 def test_publish_choke_rebuilds_story_before_cover_after_joint_repair(
     tmp_path,
 ) -> None:
@@ -812,6 +1015,7 @@ def test_publish_choke_rebuilds_story_before_cover_after_joint_repair(
     staged = _stage_publish_draft(
         {
             "status": "MATERIALIZED",
+            "speaker_mode": "uniform_host",
             "media_path": str(media),
             "story_contract": contract(bad_hook),
             "artifact_hashes": {},
@@ -870,6 +1074,7 @@ def test_publish_choke_blocks_cover_when_joint_review_provider_fails(
     staged = _stage_publish_draft(
         {
             "status": "MATERIALIZED",
+            "speaker_mode": "uniform_host",
             "media_path": str(media),
             "story_contract": story,
             "artifact_hashes": {},
@@ -940,6 +1145,7 @@ def test_manual_exact_title_repair_requires_new_authority_before_cover(
     staged = _stage_publish_draft(
         {
             "status": "MATERIALIZED",
+            "speaker_mode": "uniform_host",
             "media_path": str(media),
             "story_contract": story,
             "artifact_hashes": {},
@@ -1031,9 +1237,7 @@ def test_candidate_entity_context_binds_srt_and_teaches_derived_spelling() -> No
     assert context["final_reviewed_srt_sha256"] == (
         "6d79fdab105d4c7b5edffec66fe526aa01839de342a7c96b8784f4d0100a8062"
     )
-    assert review["passes"][0]["entity_context_sha256"] == (
-        context["context_sha256"]
-    )
+    assert review["passes"][0]["entity_context_sha256"] == (context["context_sha256"])
     prompt = seen["prompt"]
     assert "「莉娅」↔「莉亚」 指同一实体" in prompt
     assert "最终字幕可保留 reviewed_surface「莉亚」" in prompt
@@ -1134,8 +1338,7 @@ def test_candidate_entity_response_gate_rejects_cpa_reversion_to_srt_spelling() 
     assert review["status"] == "FAILED"
     assert review["reason_code"] == "CPA_ENTITY_SURFACE_RESPONSE_INVALID"
     assert all(
-        row["entity_context_sha256"]
-        == review["entity_context"]["context_sha256"]
+        row["entity_context_sha256"] == review["entity_context"]["context_sha256"]
         for row in review["passes"]
     )
 
@@ -1165,9 +1368,7 @@ def test_candidate_entity_context_rejects_final_srt_byte_drift(
     assert calls == 0
     assert review["status"] == "FAILED"
     assert review["reason_code"] == "SOURCE_FACT_ENTITY_CONTEXT_INVALID"
-    assert "SOURCE_FACT_FINAL_REVIEWED_SRT_BINDING_MISMATCH" in (
-        review["entity_context_error"]
-    )
+    assert "SOURCE_FACT_FINAL_REVIEWED_SRT_BINDING_MISMATCH" in (review["entity_context_error"])
 
 
 def test_publish_staging_wires_exact_final_srt_into_entity_context(
@@ -1214,6 +1415,7 @@ def test_publish_staging_wires_exact_final_srt_into_entity_context(
     staged = _stage_publish_draft(
         {
             "status": "MATERIALIZED",
+            "speaker_mode": "uniform_host",
             "media_path": str(media),
             "subtitle_path": str(_story_entity_srt()),
             "story_contract": story,
@@ -1234,8 +1436,9 @@ def test_publish_staging_wires_exact_final_srt_into_entity_context(
     receipt = staged["story_contract"]["source_fact_review"]
     assert receipt["status"] == "PASS"
     assert receipt["entity_context"]["candidate_id"] == "auto_223750_578_734"
-    assert receipt["passes"][0]["entity_context_sha256"] == (
-        receipt["entity_context"]["context_sha256"]
+    assert (
+        receipt["passes"][0]["entity_context_sha256"]
+        == (receipt["entity_context"]["context_sha256"])
     )
 
 
