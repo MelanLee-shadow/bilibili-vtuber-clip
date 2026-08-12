@@ -209,6 +209,32 @@ def test_recording_inventory_accepts_typed_connection_stub_as_warn(
     ]
 
 
+def test_recording_inventory_accepts_historical_finalized_source_mtime(
+    tmp_path,
+    monkeypatch,
+):
+    date_dir, stub, _successor_mp4, state_path = _typed_connection_stub(tmp_path, monkeypatch)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    relative = f"{date_dir.name}/{stub.name}"
+    row = state["source_dispositions"][relative]
+    successor_relative = row["session"]["successor_relative_path"]
+    historical_mtime = state["finalized"][successor_relative]["source_mtime_ns"] - 1
+    state["finalized"][successor_relative]["source_mtime_ns"] = historical_mtime
+    row["session"]["successor_finalized_ledger"]["source_mtime_ns"] = historical_mtime
+    unsigned = {key: value for key, value in row.items() if key != "canonical_integrity"}
+    row["canonical_integrity"]["canonical_json_sha256"] = adapter._canonical_json_sha256(unsigned)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    audit = audit_finalized_recording_inventory(
+        date_dir,
+        room_id="123456",
+        adapter_state_path=state_path,
+    )
+
+    assert audit["status"] == "PASS"
+    assert audit["can_select"] is True
+
+
 def test_recording_inventory_blocks_same_size_successor_rewrite_with_restored_mtime(
     tmp_path,
     monkeypatch,

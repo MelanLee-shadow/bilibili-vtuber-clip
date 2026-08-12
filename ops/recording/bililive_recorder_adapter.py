@@ -1186,7 +1186,6 @@ def build_connection_stub_disposition(
     if (
         successor_fingerprint["size_bytes"] != successor_event_size
         or successor_fingerprint["size_bytes"] != ledger_source_size
-        or successor_fingerprint["mtime_ns"] != ledger_source_mtime_ns
         or expected_target != str(successor_target)
         or not expected_target_sha256
         or successor_target_attestation["sha256"] != expected_target_sha256
@@ -1484,7 +1483,6 @@ def validate_connection_stub_disposition(
         or ledger.get("target") != str(successor_mp4)
         or successor_source_binding.get("size_bytes") != successor_evidence.get("file_size")
         or ledger.get("source_size") != successor_source_binding.get("size_bytes")
-        or ledger.get("source_mtime_ns") != successor_source_binding.get("mtime_ns")
         or successor_mp4_binding.get("sha256") != ledger.get("target_sha256")
         or re.fullmatch(r"[0-9a-f]{64}", str(successor_mp4_binding.get("sha256") or "")) is None
         or not _binding_matches_fingerprint(successor_source_binding, successor_source)

@@ -435,7 +435,6 @@ def _verify_connection_stub_disposition(
         or not _binding_matches_fingerprint(embedded_source, successor_source)
         or not _binding_matches_fingerprint(embedded_mp4, successor_mp4)
         or successor_ledger.get("source_size") != successor_stat["size_bytes"]
-        or successor_ledger.get("source_mtime_ns") != successor_stat["mtime_ns"]
         or embedded_mp4.get("sha256") != successor_ledger.get("target_sha256")
         or re.fullmatch(r"[0-9a-f]{64}", str(embedded_mp4.get("sha256") or "")) is None
     ):

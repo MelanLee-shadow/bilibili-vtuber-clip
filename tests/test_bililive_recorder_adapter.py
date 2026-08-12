@@ -520,7 +520,7 @@ def test_connection_stub_successor_hash_read_error_stays_in_normal_fail_closed_l
         "successor_not_closed",
         "successor_session_mismatch",
         "successor_closing_id_missing",
-        "successor_ledger_stat_mismatch",
+        "successor_ledger_size_mismatch",
     ],
 )
 def test_connection_stub_requires_every_event_session_time_and_stat_gate(
@@ -551,8 +551,8 @@ def test_connection_stub_requires_every_event_session_time_and_stat_gate(
         successor_event["session_id"] = "different-session"
     elif broken_gate == "successor_closing_id_missing":
         successor_event["closing_event_id"] = None
-    elif broken_gate == "successor_ledger_stat_mismatch":
-        finalized[successor_relative]["source_mtime_ns"] += 1
+    elif broken_gate == "successor_ledger_size_mismatch":
+        finalized[successor_relative]["source_size"] += 1
 
     assert (
         adapter.build_connection_stub_disposition(
@@ -562,6 +562,35 @@ def test_connection_stub_requires_every_event_session_time_and_stat_gate(
             finalized=finalized,
         )
         is None
+    )
+
+
+def test_connection_stub_preserves_historical_ledger_mtime_after_cloudfs_settles(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    successor_relative = f"2026-08-12/{successor.name}"
+    finalized[successor_relative]["source_mtime_ns"] -= 1
+
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+
+    assert row is not None
+    assert (
+        row["session"]["successor_finalized_ledger"]["source_mtime_ns"]
+        != row["session"]["successor_source"]["mtime_ns"]
+    )
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
     )
 
 

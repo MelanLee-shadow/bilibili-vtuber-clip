@@ -92,14 +92,18 @@
   H.264 0×0 且 frame/packet 扫描均为空，以及同 session 的下一 opening。
   被排除文件必须是该 session 第一 opening，size <5 MiB、event duration 与
   open-close wall duration 均 <10 秒；下一 opening gap 必须在 0–2 秒内且已
-  CLOSED，其 source stat 必须匹配 finalized ledger，真实 MP4 SHA-256 必须匹配
-  ledger 且为可探测的正尺寸双流媒体。少任一项都不得 ignore，仍走普通
+  CLOSED，其 source size 必须匹配 webhook 与 finalized ledger，真实 MP4 SHA-256
+  必须匹配 ledger 且为可探测的正尺寸双流媒体。少任一项都不得 ignore，仍走普通
   finalization 并 fail closed。
 - typed row 不进入 `finalized`，不生成同 stem MP4，也绝不删除/移动 FLV/XML。
   创建 row 时只做一次 source/XML/后继 MP4 全字节 SHA-256 与媒体探测；row 另绑定
   四个文件的 size/mtime/ctime/device/inode/mode 指纹。adapter 每轮只重验 canonical
   row、当前 journal/finalized ledger 与这些不可变指纹，不得反复读取几百 MB 的历史
   MP4；任一指纹、ledger 或事件漂移都恢复为 status error，且不得自动重签旧 row。
+  CloudFS 可能在 finalized 后重写后继 FLV 的 mtime；row 因此分别保存 ledger 的
+  历史 mtime 与签发时当前 source fingerprint，并要求两者之后各自稳定，不要求这两个
+  跨时刻 mtime 相等。后继 source size、当前 fingerprint、MP4 当前 fingerprint 与
+  finalized target SHA 仍必须全部吻合。
   合法、可解码的短视频不满足 0×0+零 frame/packet 条件，仍按普通规则
   finalization。
 - `scripts/free_session_autoslice.py` 只枚举封口后的
