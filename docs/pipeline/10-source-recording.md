@@ -105,8 +105,10 @@
   PID start token 和重试上限约束的隔离子进程，重验 source/XML/后继 MP4 的历史 SHA-256。
   子进程 pending/timeout/error 均持久化并 fail closed，不阻塞 adapter 心跳；成功后写入
   `recording-source-fuse-identity-rebind.v1` canonical 链式回执；后续 adapter 只认最后
-  回执的 exact namespace mount identity，inventory 跨容器时只认其 namespace-portable
-  major:minor+FSTYPE+SOURCE 投影及 effective fingerprints。后继 FLV 的旧 row
+  回执的 effective fingerprints 与 namespace-portable major:minor+FSTYPE+SOURCE
+  投影；回执保留完整 namespace mount identity 供审计，但 Docker 重启单独改变
+  mount_id/mount_point 时不得重复重绑。inventory 跨容器也验证同一 portable 投影。
+  后继 FLV 的旧 row
   没有历史 SHA-256，因此回执必须明确记录 legacy promotion：只沿用 path、稳定 stat、
   webhook file size、finalized ledger source size 及后继 MP4 历史 SHA 交叉绑定，不能宣称
   后继 FLV 历史 hash 已匹配。本地文件系统 inode 漂移、跨 FUSE、mount identity 漂移而

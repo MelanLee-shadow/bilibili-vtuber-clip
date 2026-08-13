@@ -292,6 +292,18 @@ def _is_fuse_mount(identity: Any) -> bool:
     return filesystem_type == "fuse" or filesystem_type.startswith("fuse.")
 
 
+def _portable_mount_identity(identity: Any) -> dict[str, Any] | None:
+    """Project one FUSE identity across container mount namespaces."""
+
+    if not _is_fuse_mount(identity):
+        return None
+    return {
+        "major_minor": identity.get("major_minor"),
+        "filesystem_type": identity.get("filesystem_type"),
+        "mount_source": identity.get("mount_source"),
+    }
+
+
 def _shared_fuse_mount_identity(paths: Iterable[Path]) -> dict[str, Any] | None:
     identities = [_mount_identity_for_path(path) for path in paths]
     if not identities or not all(_is_fuse_mount(identity) for identity in identities):
@@ -435,14 +447,19 @@ def _prepare_disposition_identity_validation(
     )
     has_receipts = isinstance(identity_rebinds, list) and bool(identity_rebinds)
     current_mount = _shared_fuse_mount_identity(paths.values()) if has_receipts else None
-    if exact_fingerprints and (
-        not has_receipts or (current_mount is not None and current_mount == previous_mount)
-    ):
-        if has_receipts and current_mount is None:  # pragma: no cover - condition documents gate
+    if exact_fingerprints:
+        if not has_receipts:
+            return {"current": current, "pending_rebind": False}
+        if current_mount is None:
             raise AdapterError(
                 "source disposition FUSE rebind is no longer on one shared FUSE mount"
             )
-        return {"current": current, "pending_rebind": False}
+        if _portable_mount_identity(current_mount) == _portable_mount_identity(previous_mount):
+            # Docker assigns a namespace-local mount_id/mount_point on each
+            # container restart. Exact file identity plus the portable FUSE
+            # projection proves this is not another source remount.
+            return {"current": current, "pending_rebind": False}
+        raise AdapterError("source disposition FUSE mount changed without file identity drift")
     if any(
         effective[role].get(key) != current[role][key]
         for role in _DISPOSITION_FILE_ROLES
@@ -452,7 +469,9 @@ def _prepare_disposition_identity_validation(
     current_mount = current_mount or _shared_fuse_mount_identity(paths.values())
     if current_mount is None:
         raise AdapterError("source disposition device/inode drifted outside one shared FUSE mount")
-    if has_receipts and current_mount == previous_mount:
+    if has_receipts and _portable_mount_identity(current_mount) == _portable_mount_identity(
+        previous_mount
+    ):
         raise AdapterError("source disposition identity drifted within one FUSE mount epoch")
     if not isinstance(identity_rebinds, list):
         raise AdapterError("source disposition FUSE rebind lacks a durable receipt ledger")

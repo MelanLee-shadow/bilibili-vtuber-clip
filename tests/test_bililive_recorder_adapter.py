@@ -725,6 +725,17 @@ def test_connection_stub_fuse_remount_rebinds_once_then_stays_metadata_only(
         "_attest_regular_file",
         lambda _path: pytest.fail("a settled rebind must remain metadata-only"),
     )
+    container_restart_mount = {
+        **_fuse_mount_identity(stub),
+        "mount_id": 991,
+        "mount_point": "/new-container/Videos",
+        "root": "/live-streaming/22966160",
+    }
+    monkeypatch.setattr(
+        adapter,
+        "_mount_identity_for_path",
+        lambda _path: container_restart_mount,
+    )
     adapter.validate_connection_stub_disposition(
         stub,
         row,
@@ -734,6 +745,21 @@ def test_connection_stub_fuse_remount_rebinds_once_then_stays_metadata_only(
         identity_rebinds=rebinds,
     )
     assert len(rebinds) == 1
+
+    monkeypatch.setattr(
+        adapter,
+        "_mount_identity_for_path",
+        lambda _path: {**container_restart_mount, "major_minor": "0:68"},
+    )
+    with pytest.raises(adapter.AdapterError, match="mount changed without file identity drift"):
+        adapter.validate_connection_stub_disposition(
+            stub,
+            row,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+            identity_rebinds=rebinds,
+        )
 
 
 def test_connection_stub_local_inode_drift_still_fails_closed(
