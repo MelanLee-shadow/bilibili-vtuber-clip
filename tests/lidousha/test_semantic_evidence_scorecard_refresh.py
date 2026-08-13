@@ -357,22 +357,24 @@ def test_failed_pick_is_never_rewritten_in_place(tmp_path: Path) -> None:
     assert refresh.ROW_RECEIPT_KEY not in state["picks"][0]
 
 
-def test_v1_or_current_date_scope_cannot_enter_historical_refresh(tmp_path: Path) -> None:
+def test_v1_queued_talk_scope_refreshes_but_current_date_stays_out(tmp_path: Path) -> None:
     state = _two_candidate_state(tmp_path)
     state["operator_processing_scope"] = _grant(
         list(KNOWN_LOW_CANDIDATES), schema="operator-processing-scope-grant.v1"
     )
-    before = copy.deepcopy(state)
 
     assert (
         refresh.refresh_operator_scoped_chat_scorecards(
             "2026-08-09",
             state,
-            llm_call=lambda _prompt: pytest.fail("v1 does not authorize this lane"),
+            llm_call=_good_llm([]),
         )
-        == 0
+        == 2
     )
-    assert state == before
+    assert all(
+        row[refresh.ROW_RECEIPT_KEY]["status"] == "REFRESHED"
+        for row in state["talk_backlog"]
+    )
 
     current = _two_candidate_state(tmp_path)
     current["operator_processing_scope"]["recording_date"] = "2099-08-14"

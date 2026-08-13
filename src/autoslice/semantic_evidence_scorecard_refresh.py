@@ -1,8 +1,8 @@
 """Candidate-scoped refresh for stale semantic-chat selection scorecards.
 
 This lane deliberately does *not* rerun semantic discovery.  It only revisits
-an already recalled ``semantic_recall`` candidate when a valid historical v2
-operator-processing grant names that candidate and the row is still queued in
+an already recalled ``semantic_recall`` candidate when a valid historical
+Talk-only operator-processing grant names that candidate and the row is still queued in
 ``pending_talk`` or ``talk_backlog``.  Hook and source boundaries are immutable;
 only the deterministic selection scorecard is replaced.
 
@@ -27,8 +27,10 @@ from src.autoslice.llm_client import LlmCallError, extract_json_object
 from src.autoslice.operator_processing_scope import (
     FAILED_PICK_RECOVERY_GRANT_SCHEMA,
     FAILED_PICK_RECOVERY_INTENT,
+    GRANT_SCHEMA,
     STATE_KEY as OPERATOR_SCOPE_STATE_KEY,
     operator_scope_admission,
+    operator_talk_scope,
 )
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.runner_proxy import RunnerProxy
@@ -154,7 +156,7 @@ class PreparedRefresh:
     attempt_fingerprint: str
 
 
-def _historical_v2_scope(
+def _historical_talk_scope(
     date: str,
     state: Mapping[str, object],
     *,
@@ -164,18 +166,24 @@ def _historical_v2_scope(
     if date >= moment.astimezone(timezone.utc).date().isoformat():
         return None
     raw_grant = state.get(OPERATOR_SCOPE_STATE_KEY)
-    if (
-        not isinstance(raw_grant, Mapping)
-        or raw_grant.get("schema_version") != FAILED_PICK_RECOVERY_GRANT_SCHEMA
-        or raw_grant.get("intent") != FAILED_PICK_RECOVERY_INTENT
-    ):
+    if not isinstance(raw_grant, Mapping):
+        return None
+    schema = raw_grant.get("schema_version")
+    if schema == GRANT_SCHEMA:
+        if "intent" in raw_grant:
+            return None
+    elif schema == FAILED_PICK_RECOVERY_GRANT_SCHEMA:
+        if raw_grant.get("intent") != FAILED_PICK_RECOVERY_INTENT:
+            return None
+    else:
         return None
     admission = operator_scope_admission(state, date=date, now=moment)
+    frozen = operator_talk_scope(state, date=date, now=moment)
     if (
         not admission.admitted
         or not isinstance(admission.disclosure, Mapping)
-        or admission.disclosure.get("intent") != FAILED_PICK_RECOVERY_INTENT
         or not admission.grant_id
+        or frozen != admission.candidate_ids
     ):
         return None
     return Scope(
@@ -460,7 +468,7 @@ def operator_scoped_chat_refresh_needed(
 ) -> bool:
     """Pure work-flag probe, including quota-full named backlog rows."""
 
-    scope = _historical_v2_scope(date, state, now=now)
+    scope = _historical_talk_scope(date, state, now=now)
     if scope is None:
         return False
     rows, duplicates = _scoped_rows(state, scope)
@@ -887,7 +895,7 @@ def refresh_operator_scoped_chat_scorecards(
 ) -> int:
     """Refresh stale named queued cards, or return ``-N`` to block production."""
 
-    scope = _historical_v2_scope(date, state, now=now)
+    scope = _historical_talk_scope(date, state, now=now)
     if scope is None:
         return 0
     rows, duplicates = _scoped_rows(state, scope)
