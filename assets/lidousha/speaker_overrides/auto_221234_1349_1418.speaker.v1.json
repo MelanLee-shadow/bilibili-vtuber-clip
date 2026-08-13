@@ -1,0 +1,433 @@
+{
+  "schema_version": 1,
+  "source_media_sha256": "9e9032a3203025555ae4faf3cb6c35b1816984ede97287dc014af63e389e9bda",
+  "text_final_srt_sha256": "ca5e906e4a3b07ea93b68cfca380c1d56fdea6dd2e4663dcd8a0eeabcf0045b7",
+  "source_srt_sha256": "cb528b1e45272fb532f604a4cf7ef8c9c9b64faf7cf5e87aa7cfa27dffed4a72",
+  "candidate_id": "auto_221234_1349_1418",
+  "status": "ivan_reviewed_speaker_complete",
+  "reviewed_at": "2026-08-13",
+  "overlap_policy": "本次 authority 只接受 22 条完整单说话人 cue；不授权混说近似、字幕改字或上传。",
+  "notes": "Hash-bound speaker-only truth from Ivan's exact review. All 22 delivery cues are 李豆沙. Cue text/timing only prevent identity drift and are explicitly not subtitle-text authority; this document does not authorize upload.",
+  "operator_review_binding": {
+    "path": "assets/lidousha/reviewed_speaker_delivery_bindings/auto_221234_1349_1418.reviewed-delivery.v1.json",
+    "sha256": "aa4ad4e56926699cc5a2394170677a3dc78e3d67484bcde6e1c55418e13c735d"
+  },
+  "reviewed_speaker_baseline": {
+    "schema_version": "reviewed-speaker-baseline.v2",
+    "authority": "89221说话人这个是李豆沙，没问题。",
+    "truth_input": {
+      "path": "assets/lidousha/reviewed_speaker_truth/auto_221234_1349_1418.speaker-only.v1.json",
+      "sha256": "1d5df706bce109aeea4b932b5e5a2aa99b4c9ebb3cd28f93f30888e74f25faa1"
+    },
+    "automatic_input": {
+      "path": "assets/lidousha/speaker_automatic_baselines/auto_221234_1349_1418.automatic-labelled.srt",
+      "sha256": "cb528b1e45272fb532f604a4cf7ef8c9c9b64faf7cf5e87aa7cfa27dffed4a72"
+    },
+    "cue_count": 22,
+    "anchor_source_cues": [
+      7,
+      16,
+      1,
+      3
+    ],
+    "machine_cues": []
+  },
+  "overrides": [
+    {
+      "source_cue": 1,
+      "expect": {
+        "start": "00:00:00,250",
+        "end": "00:00:03,050",
+        "text": "弹幕断了吗"
+      },
+      "authority": "89221说话人这个是李豆沙，没问题。",
+      "note": "Ivan reviewed speaker-only truth; exact full-cue interval. Text is a drift guard, not subtitle-text authority.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "弹幕断了吗",
+          "start": "00:00:00,250",
+          "end": "00:00:03,050"
+        }
+      ]
+    },
+    {
+      "source_cue": 2,
+      "expect": {
+        "start": "00:00:03,170",
+        "end": "00:00:04,730",
+        "text": "弹幕断了吗"
+      },
+      "authority": "89221说话人这个是李豆沙，没问题。",
+      "note": "Ivan reviewed speaker-only truth; exact full-cue interval. Text is a drift guard, not subtitle-text authority.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "弹幕断了吗",
+          "start": "00:00:03,170",
+          "end": "00:00:04,730"
+        }
+      ]
+    },
+    {
+      "source_cue": 3,
+      "expect": {
+        "start": "00:00:05,730",
+        "end": "00:00:08,330",
+        "text": "弹幕断了吧"
+      },
+      "authority": "89221说话人这个是李豆沙，没问题。",
+      "note": "Ivan reviewed speaker-only truth; exact full-cue interval. Text is a drift guard, not subtitle-text authority.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "弹幕断了吧",
+          "start": "00:00:05,730",
+          "end": "00:00:08,330"
+        }
+      ]
+    },
+    {
+      "source_cue": 4,
+      "expect": {
+        "start": "00:00:14,130",
+        "end": "00:00:15,130",
+        "text": "豆豆"
+      },
+      "authority": "89221说话人这个是李豆沙，没问题。",
+      "note": "Ivan reviewed speaker-only truth; exact full-cue interval. Text is a drift guard, not subtitle-text authority.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "豆豆",
+          "start": "00:00:14,130",
+          "end": "00:00:15,130"
+        }
+      ]
+    },
+    {
+      "source_cue": 5,
+      "expect": {
+        "start": "00:00:15,290",
+        "end": "00:00:17,230",
+        "text": "我看不到了"
+      },
+      "authority": "89221说话人这个是李豆沙，没问题。",
+      "note": "Ivan reviewed speaker-only truth; exact full-cue interval. Text is a drift guard, not subtitle-text authority.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "我看不到了",
+          "start": "00:00:15,290",
+          "end": "00:00:17,230"
+        }
+      ]
+    },
+    {
+      "source_cue": 6,
+      "expect": {
+        "start": "00:00:17,230",
+        "end": "00:00:18,930",
+        "text": "看不到弹幕了"
+      },
+      "authority": "89221说话人这个是李豆沙，没问题。",
+      "note": "Ivan reviewed speaker-only truth; exact full-cue interval. Text is a drift guard, not subtitle-text authority.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "看不到弹幕了",
+          "start": "00:00:17,230",
+          "end": "00:00:18,930"
+        }
+      ]
+    },
+    {
+      "source_cue": 7,
+      "expect": {
+        "start": "00:00:21,790",
+        "end": "00:00:24,790",
+        "text": "弹幕怎么了"
+      },
+      "authority": "89221说话人这个是李豆沙，没问题。",
+      "note": "Ivan reviewed speaker-only truth; exact full-cue interval. Text is a drift guard, not subtitle-text authority.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "弹幕怎么了",
+          "start": "00:00:21,790",
+          "end": "00:00:24,790"
+        }
+      ]
+    },
+    {
+      "source_cue": 8,
+      "expect": {
+        "start": "00:00:26,270",
+        "end": "00:00:27,310",
+        "text": "小猫熊"
+      },
+      "authority": "89221说话人这个是李豆沙，没问题。",
+      "note": "Ivan reviewed speaker-only truth; exact full-cue interval. Text is a drift guard, not subtitle-text authority.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "小猫熊",
+          "start": "00:00:26,270",
+          "end": "00:00:27,310"
+        }
+      ]
+    },
+    {
+      "source_cue": 9,
+      "expect": {
+        "start": "00:00:31,870",
+        "end": "00:00:33,590",
+        "text": "它为什么不见了"
+      },
+      "authority": "89221说话人这个是李豆沙，没问题。",
+      "note": "Ivan reviewed speaker-only truth; exact full-cue interval. Text is a drift guard, not subtitle-text authority.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "它为什么不见了",
+          "start": "00:00:31,870",
+          "end": "00:00:33,590"
+        }
+      ]
+    },
+    {
+      "source_cue": 10,
+      "expect": {
+        "start": "00:00:34,350",
+        "end": "00:00:36,870",
+        "text": "正面趴着地上双手撑着脸"
+      },
+      "authority": "89221说话人这个是李豆沙，没问题。",
+      "note": "Ivan reviewed speaker-only truth; exact full-cue interval. Text is a drift guard, not subtitle-text authority.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "正面趴着地上双手撑着脸",
+          "start": "00:00:34,350",
+          "end": "00:00:36,870"
+        }
+      ]
+    },
+    {
+      "source_cue": 11,
+      "expect": {
+        "start": "00:00:36,870",
+        "end": "00:00:38,010",
+        "text": "然后小腿乱晃"
+      },
+      "authority": "89221说话人这个是李豆沙，没问题。",
+      "note": "Ivan reviewed speaker-only truth; exact full-cue interval. Text is a drift guard, not subtitle-text authority.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "然后小腿乱晃",
+          "start": "00:00:36,870",
+          "end": "00:00:38,010"
+        }
+      ]
+    },
+    {
+      "source_cue": 12,
+      "expect": {
+        "start": "00:00:38,010",
+        "end": "00:00:39,630",
+        "text": "这么有种撒娇感觉"
+      },
+      "authority": "89221说话人这个是李豆沙，没问题。",
+      "note": "Ivan reviewed speaker-only truth; exact full-cue interval. Text is a drift guard, not subtitle-text authority.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "这么有种撒娇感觉",
+          "start": "00:00:38,010",
+          "end": "00:00:39,630"
+        }
+      ]
+    },
+    {
+      "source_cue": 13,
+      "expect": {
+        "start": "00:00:39,630",
+        "end": "00:00:41,830",
+        "text": "但是你看不见我的脸啊"
+      },
+      "authority": "89221说话人这个是李豆沙，没问题。",
+      "note": "Ivan reviewed speaker-only truth; exact full-cue interval. Text is a drift guard, not subtitle-text authority.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "但是你看不见我的脸啊",
+          "start": "00:00:39,630",
+          "end": "00:00:41,830"
+        }
+      ]
+    },
+    {
+      "source_cue": 14,
+      "expect": {
+        "start": "00:00:42,240",
+        "end": "00:00:44,120",
+        "text": "我看一下。嗯"
+      },
+      "authority": "89221说话人这个是李豆沙，没问题。",
+      "note": "Ivan reviewed speaker-only truth; exact full-cue interval. Text is a drift guard, not subtitle-text authority.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "我看一下。嗯",
+          "start": "00:00:42,240",
+          "end": "00:00:44,120"
+        }
+      ]
+    },
+    {
+      "source_cue": 15,
+      "expect": {
+        "start": "00:00:53,390",
+        "end": "00:00:54,390",
+        "text": "嘿嘿"
+      },
+      "authority": "89221说话人这个是李豆沙，没问题。",
+      "note": "Ivan reviewed speaker-only truth; exact full-cue interval. Text is a drift guard, not subtitle-text authority.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "嘿嘿",
+          "start": "00:00:53,390",
+          "end": "00:00:54,390"
+        }
+      ]
+    },
+    {
+      "source_cue": 16,
+      "expect": {
+        "start": "00:00:54,670",
+        "end": "00:00:57,510",
+        "text": "谢谢L冧黎G的舰长"
+      },
+      "authority": "89221说话人这个是李豆沙，没问题。",
+      "note": "Ivan reviewed speaker-only truth; exact full-cue interval. Text is a drift guard, not subtitle-text authority.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "谢谢L冧黎G的舰长",
+          "start": "00:00:54,670",
+          "end": "00:00:57,510"
+        }
+      ]
+    },
+    {
+      "source_cue": 17,
+      "expect": {
+        "start": "00:00:57,510",
+        "end": "00:00:58,370",
+        "text": "谢谢你"
+      },
+      "authority": "89221说话人这个是李豆沙，没问题。",
+      "note": "Ivan reviewed speaker-only truth; exact full-cue interval. Text is a drift guard, not subtitle-text authority.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "谢谢你",
+          "start": "00:00:57,510",
+          "end": "00:00:58,370"
+        }
+      ]
+    },
+    {
+      "source_cue": 18,
+      "expect": {
+        "start": "00:00:58,370",
+        "end": "00:00:59,470",
+        "text": "华一上船"
+      },
+      "authority": "89221说话人这个是李豆沙，没问题。",
+      "note": "Ivan reviewed speaker-only truth; exact full-cue interval. Text is a drift guard, not subtitle-text authority.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "华一上船",
+          "start": "00:00:58,370",
+          "end": "00:00:59,470"
+        }
+      ]
+    },
+    {
+      "source_cue": 19,
+      "expect": {
+        "start": "00:01:00,900",
+        "end": "00:01:01,900",
+        "text": "这样吗"
+      },
+      "authority": "89221说话人这个是李豆沙，没问题。",
+      "note": "Ivan reviewed speaker-only truth; exact full-cue interval. Text is a drift guard, not subtitle-text authority.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "这样吗",
+          "start": "00:01:00,900",
+          "end": "00:01:01,900"
+        }
+      ]
+    },
+    {
+      "source_cue": 20,
+      "expect": {
+        "start": "00:01:02,660",
+        "end": "00:01:03,740",
+        "text": "这样吗"
+      },
+      "authority": "89221说话人这个是李豆沙，没问题。",
+      "note": "Ivan reviewed speaker-only truth; exact full-cue interval. Text is a drift guard, not subtitle-text authority.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "这样吗",
+          "start": "00:01:02,660",
+          "end": "00:01:03,740"
+        }
+      ]
+    },
+    {
+      "source_cue": 21,
+      "expect": {
+        "start": "00:01:05,100",
+        "end": "00:01:06,100",
+        "text": "这样吗"
+      },
+      "authority": "89221说话人这个是李豆沙，没问题。",
+      "note": "Ivan reviewed speaker-only truth; exact full-cue interval. Text is a drift guard, not subtitle-text authority.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "这样吗",
+          "start": "00:01:05,100",
+          "end": "00:01:06,100"
+        }
+      ]
+    },
+    {
+      "source_cue": 22,
+      "expect": {
+        "start": "00:01:08,020",
+        "end": "00:01:09,380",
+        "text": "嘿嘿嘿"
+      },
+      "authority": "89221说话人这个是李豆沙，没问题。",
+      "note": "Ivan reviewed speaker-only truth; exact full-cue interval. Text is a drift guard, not subtitle-text authority.",
+      "segments": [
+        {
+          "speaker": "李豆沙",
+          "text": "嘿嘿嘿",
+          "start": "00:01:08,020",
+          "end": "00:01:09,380"
+        }
+      ]
+    }
+  ]
+}

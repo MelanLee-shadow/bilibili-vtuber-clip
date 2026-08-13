@@ -839,8 +839,7 @@ from src.autoslice.candidate_selection import (  # noqa: E402
     refill_songs,
     prioritize,
 )
-from src.autoslice.operator_processing_scope import operator_scope_admission  # noqa: E402
-from src.autoslice import historical_failed_talk_scope  # noqa: E402
+from src.autoslice import historical_failed_talk_scope, operator_processing_scope as operator_scope  # noqa: E402
 from src.autoslice.exact_talk_recovery_scope import (
     suppress_exact_talk_recovery_song_work,
 )  # noqa: E402
@@ -999,10 +998,10 @@ def talk_failure_recovery_fingerprint(failure_kind: str | None, candidate_id: st
             profile_asset_file("voiceprint_profile"),
         )
     paths = [relative if isinstance(relative, Path) else REPO_ROOT / relative for relative in relatives]
-    if failure_kind in {"speaker_evidence", "runtime_prerequisite"}:
-        override = candidate_speaker_override_path(candidate_id)
-        if override is not None:
-            paths.append(override)
+    override = candidate_text_override_path(candidate_id) if failure_kind == "subtitle_authority" else (
+        candidate_speaker_override_path(candidate_id) if failure_kind in {"speaker_evidence", "runtime_prerequisite"} else None
+    )
+    paths.extend([override] if override is not None else [])
     hasher = hashlib.sha256()
     hasher.update(f"talk-failure-recovery.v1\0{failure_kind}\0".encode("utf-8"))
     for path in sorted(paths, key=lambda item: str(item)):
@@ -1423,7 +1422,7 @@ def list_dates() -> list[str]:
         # 第三条例外：运维显式点名（Ivan 2026-08-10 逐字「87 现在需要纳入处理
         # 范围」）。判据、出处校验与"干完就自动出圈"全在
         # src/autoslice/operator_processing_scope.py。
-        admission = operator_scope_admission(state, date=date)
+        admission = operator_scope.operator_scope_admission(state, date=date)
         if admission.log_line:
             log(f"list_dates: {date}: {admission.log_line}")
         if state.get("status") == "source_incomplete" or recovery_in_progress or admission.admitted:
@@ -1568,7 +1567,7 @@ def produce_batch(date: str, items: list[dict], produce_fn) -> list[dict]:
     )
 
 
-def _project_terminal_batch_state(state: dict) -> dict[str, object]:
+def _project_terminal_batch_state(state: dict, *, mutate_songs: bool = True) -> dict[str, object]:
     """Project one honest terminal status from closure, delivery, and retry state.
 
     Retry scheduling is metadata, not completion authority.  In particular, an
@@ -1577,14 +1576,6 @@ def _project_terminal_batch_state(state: dict) -> dict[str, object]:
     a future retry timestamp.
     """
 
-    for song in state.get("songs", []):
-        if isinstance(song, dict):
-            project_terminal_song_disposition(
-                song,
-                terminal_performer_rejection_codes=SONG_TERMINAL_PERFORMER_REJECTION_CODES,
-                infra_transient_reason_codes=SONG_INFRA_TRANSIENT_REASON_CODES,
-                song_infra_retry_cap=SONG_INFRA_RETRY_CAP,
-            )
     exact_closure = exact_talk_contract_closure(state)
     retry_epoch = scheduled_retry_epoch(state)
     return project_terminal_batch_state(
@@ -1597,6 +1588,7 @@ def _project_terminal_batch_state(state: dict) -> dict[str, object]:
         terminal_song_performer_rejection_codes=(SONG_TERMINAL_PERFORMER_REJECTION_CODES),
         song_infra_transient_reason_codes=SONG_INFRA_TRANSIENT_REASON_CODES,
         song_infra_retry_cap=SONG_INFRA_RETRY_CAP,
+        mutate_songs=mutate_songs,
     )
 
 
@@ -1620,12 +1612,16 @@ def process_date(date: str) -> None:
         log(f"{date}: publication reconciliation invalid — blocked fail-closed")
         return
     frozen_talk_candidate_ids = historical_failed_talk_scope.freeze(state, date=date)
+    song_preimage = operator_scope.snapshot_song_state_collections(state) if frozen_talk_candidate_ids is not None else None
+    def persist_state() -> None:
+        operator_scope.restore_song_state_collections(state, song_preimage)
+        write_state(date, state)
     runtime_err = runtime_health_error()
     if runtime_err:
         changed = state.get("runtime_error") != runtime_err or state.get("status") != "paused_runtime_invalid"
         state["status"] = "paused_runtime_invalid"
         state["runtime_error"] = runtime_err
-        write_state(date, state)
+        persist_state()
         if changed:
             write_alert("RUNTIME_INVALID", f"{date}: {runtime_err}")
         log(f"{date}: runtime invalid — batch deferred without consuming candidate retries: {runtime_err}")
@@ -1643,7 +1639,7 @@ def process_date(date: str) -> None:
         state.pop("source_recovery_error", None)
         if recovered_hls:
             state.setdefault("source_recoveries", []).extend(recovered_hls)
-            write_state(date, state)
+            persist_state()
             log(f"{date}: recovered {len(recovered_hls)} finalized legacy HLS segment(s) into hash-bound MP4")
     source_inventory = audit_finalized_recording_inventory(
         REC_ROOT / date, room_id=ROOM, adapter_state_path=RECORDER_ADAPTER_STATE_PATH
@@ -1653,7 +1649,7 @@ def process_date(date: str) -> None:
     if not source_inventory["can_select"]:
         changed = state.get("status") != "source_incomplete" or previous_source_inventory != source_inventory
         state["status"] = "source_incomplete"
-        write_state(date, state)
+        persist_state()
         write_reports(date, state)
         codes = sorted(
             {
@@ -1669,8 +1665,8 @@ def process_date(date: str) -> None:
             )
         log(f"{date}: source incomplete — selection blocked before early return ({','.join(codes)})")
         return
-    if annotate_state_sessions(date, state):
-        write_state(date, state)
+    if annotate_state_sessions(date, state, include_song_rows=frozen_talk_candidate_ids is None, talk_candidate_ids=frozen_talk_candidate_ids):
+        persist_state()
     automatic_maintenance = date >= AUTOMATIC_MAINTENANCE_NOT_BEFORE
     (
         recovered_song_deliveries,
@@ -1680,13 +1676,13 @@ def process_date(date: str) -> None:
         song_fingerprint_baseline_changed,
     ) = historical_failed_talk_scope.maintain(date, state, automatic_maintenance=automatic_maintenance, candidate_ids=frozen_talk_candidate_ids)
     if recovered_song_deliveries:
-        write_state(date, state)
+        persist_state()
         log(
             f"{date}: recovered {recovered_song_deliveries} verified song delivery "
             "package(s) without selector/ASR/LRC rerun"
         )
     if any((requeued_stale_talks, requeued_talks, requeued_songs)) or (song_fingerprint_baseline_changed):
-        write_state(date, state)
+        persist_state()
     if requeued_stale_talks or requeued_talks or requeued_songs:
         log(
             f"{date}: requeued {requeued_stale_talks} stale CURRENT talk package(s), "
@@ -1696,8 +1692,8 @@ def process_date(date: str) -> None:
         )
     has_new, has_pending, needs_cover = historical_failed_talk_scope.work_flags(date, state, automatic_maintenance=automatic_maintenance, candidate_ids=frozen_talk_candidate_ids)
     if not has_new and not has_pending and not needs_cover:
-        terminal = _project_terminal_batch_state(state)
-        write_state(date, state)
+        terminal = _project_terminal_batch_state(state, mutate_songs=frozen_talk_candidate_ids is None)
+        persist_state()
         write_reports(date, state)
         if recovered_song_deliveries:
             log(f"{date}: finalized {recovered_song_deliveries} recovered song package(s) without requiring CPA")
@@ -1708,36 +1704,39 @@ def process_date(date: str) -> None:
     # Recordings can wait — never produce garbage during a provider outage.
     if not cpa_healthy():
         state["status"] = "paused_cpa_down"
-        write_state(date, state)
+        persist_state()
         log(f"{date}: CPA chat lane down — batch deferred to a later tick")
         return
     log(f"processing {date}: new={has_new} pending={has_pending}")
     state.setdefault("picks", [])
     state.setdefault("songs", [])
     state["status"] = "processing"
-    write_state(date, state)
+    persist_state()
 
     historical_failed_talk_scope.discover(date, state, frozen_talk_candidate_ids)
-    suppress_exact_talk_recovery_song_work(state, phase="after_segment_discovery")
+    if frozen_talk_candidate_ids is None:
+        suppress_exact_talk_recovery_song_work(state, phase="after_segment_discovery")
     # Session sealing: transcription/recall above runs as segments appear, but
     # SELECTION waits until the inventory is stable so every candidate of the
     # session competes for the quota (late segments used to arrive after the
     # slots were spent).  Cover repairs for already-delivered clips still run.
     if (has_new or has_pending) and not session_sealed(date, state):
         state["status"] = "sealing"
-        write_state(date, state)
+        persist_state()
         log(f"{date}: segment inventory not stable yet — selection deferred to next tick (sealing)")
         return
     refresh_count = semantic_chat_refresh.refresh_operator_scoped_chat_scorecards(date, state)
     if refresh_count:
-        write_state(date, state)
+        persist_state()
     if refresh_count < 0:
+        operator_scope.restore_song_state_collections(state, song_preimage)
         log(f"{date}: semantic-chat scorecard refresh blocked; production deferred")
         return
     # Keep a structured, session-wide snapshot for the unlabelled evidence
     # sidecar before prioritize() reduces production to top-5 talk clips.
     capture_candidates = historical_failed_talk_scope.prioritize_and_capture(state, frozen_talk_candidate_ids)
-    suppress_exact_talk_recovery_song_work(state, phase="after_prioritize")
+    if frozen_talk_candidate_ids is None:
+        suppress_exact_talk_recovery_song_work(state, phase="after_prioritize")
     exact_contract_ids = set(_exact_talk_contract_ids(state))
     routing_claim = prepare_speaker_routing(date, state["pending_talk"], state=state)
     # Machine-evidence song-name pool for the talk lane's deterministic pin
@@ -1748,7 +1747,7 @@ def process_date(date: str) -> None:
         for item in state["pending_talk"]:
             if isinstance(item, dict):
                 item["song_name_candidates"] = song_name_candidates
-    write_state(date, state)
+    persist_state()
 
     # Phase C: produce talk picks CONCURRENTLY (they're independent; each is
     # network-bound on AGY/CPA/gpt-image-2).  title_failed picks (CPA title lane
@@ -1788,10 +1787,10 @@ def process_date(date: str) -> None:
                 result["bundle_compliance"] = "COVER_REQUIRED"
             state["picks"].append(result)
         state["pending_talk"] = retry + deferred_tail
-        write_state(date, state)
+        persist_state()
         if retry:  # some title lanes flaky → back off, resume the rest next tick
             state["status"] = "paused_cpa_down"
-            write_state(date, state)
+            persist_state()
             write_reports(date, state)
             log(f"{date}: {len(retry)} title(s) failed — will retry on a later tick")
             queue_collab_evidence_capture(
@@ -1800,7 +1799,7 @@ def process_date(date: str) -> None:
                 capture_candidates,
                 routing_claim=routing_claim,
             )
-            write_state(date, state)
+            persist_state()
             write_reports(date, state)
             return
         if deferred_tail:
@@ -1814,11 +1813,12 @@ def process_date(date: str) -> None:
             break
         if rejected:
             historical_failed_talk_scope.reprioritize(state, frozen_talk_candidate_ids)
-            write_state(date, state)
+            persist_state()
             continue
         break
 
-    suppress_exact_talk_recovery_song_work(state, phase="before_song_lane")
+    if frozen_talk_candidate_ids is None:
+        suppress_exact_talk_recovery_song_work(state, phase="before_song_lane")
     # Song lane with bounded backfill: a gate-BLOCKED song frees its slot for
     # the next backlog song (danmaku-desc) until the delivery budget is met,
     # the backlog runs dry, or SONG_ATTEMPT_CAP is hit.
@@ -1833,11 +1833,11 @@ def process_date(date: str) -> None:
             log(f"{date}: {len(state['pending_song'])} song item(s) deferred for deploy — resuming next tick")
             break
         refill_songs(state)
-        write_state(date, state)
+        persist_state()
 
     historical_failed_talk_scope.repair_covers(date, state, automatic_maintenance=automatic_maintenance, candidate_ids=frozen_talk_candidate_ids)
 
-    terminal = _project_terminal_batch_state(state)
+    terminal = _project_terminal_batch_state(state, mutate_songs=frozen_talk_candidate_ids is None)
     picks = terminal["picks"]
     songs = terminal["songs"]
     delivered_talk = terminal["delivered_talk"]
@@ -1846,7 +1846,7 @@ def process_date(date: str) -> None:
     blocked_songs = terminal["blocked_songs"]
     rejected_songs = terminal["rejected_songs"]
     failures = terminal["failures"]
-    write_state(date, state)
+    persist_state()
     write_reports(date, state)
     log(
         f"{date} batch finished [{state['status']}]: talk {len(delivered_talk)}/{len(picks)} delivered"
@@ -1862,7 +1862,7 @@ def process_date(date: str) -> None:
         capture_candidates,
         routing_claim=routing_claim,
     )
-    write_state(date, state)
+    persist_state()
     write_reports(date, state)
 
 

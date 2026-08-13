@@ -54,6 +54,7 @@ maintenance/requeue 判定。两者都不承诺候选一定坐上席，也不改
 
 from __future__ import annotations
 
+import copy
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -66,15 +67,19 @@ FAILED_PICK_RECOVERY_GRANT_SCHEMA = "operator-processing-scope-grant.v2"
 FAILED_PICK_RECOVERY_INTENT = "RECOVER_NAMED_FAILED_PICKS"
 HELD_CURRENT_RERENDER_GRANT_SCHEMA = "operator-processing-scope-grant.v3"
 HELD_CURRENT_RERENDER_INTENT = "RERENDER_NAMED_HELD_CURRENT_FOR_REVIEW"
+SPEAKER_HOLD_RECOVERY_GRANT_SCHEMA = "operator-processing-scope-grant.v4"
+SPEAKER_HOLD_RECOVERY_INTENT = "RECOVER_NAMED_SPEAKER_MANUAL_REVIEW_HOLD"
 DISCLOSURE_SCHEMA = "operator-processing-scope-disclosure.v1"
 FAILED_PICK_RECOVERY_DISCLOSURE_SCHEMA = "operator-processing-scope-disclosure.v2"
 HELD_CURRENT_RERENDER_DISCLOSURE_SCHEMA = "operator-processing-scope-disclosure.v3"
+SPEAKER_HOLD_RECOVERY_DISCLOSURE_SCHEMA = "operator-processing-scope-disclosure.v4"
 STATE_KEY = "operator_processing_scope"
 DISCLOSURE_KEY = "operator_processing_scope_disclosure"
 # 出处文本的下限沿用 talk_quota_authority._authority_text 的口径：短于 8 个字符的
 # "ok"/"yes" 不是出处。
 _MIN_AUTHORITY_TEXT = 8
 _DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_SHA256_RX = re.compile(r"^sha256:[0-9a-f]{64}$")
 _GRANT_FIELDS = frozenset(
     {
         "schema_version",
@@ -94,6 +99,16 @@ _AUTHORIZATION_FIELDS = frozenset({"quote", "timestamp"})
 # 候选还"排着队"的两个集合。其余 CANDIDATE_COLLECTIONS 成员（picks / 低信心分
 # 落选 / superseded …）都表示这条候选已经被处理过一轮，不再是本授权的未竟工作。
 _QUEUED_COLLECTIONS = ("pending_talk", "talk_backlog")
+SONG_STATE_COLLECTIONS = (
+    "pending_song",
+    "song_backlog",
+    "song_selection_backlog",
+    "songs",
+    "song_superseded_attempts",
+)
+_TERMINAL_TALK_STATUSES = frozenset(
+    {"ok", "review_ready", "quarantine", "candidate_rejected", "published"}
+)
 
 
 @dataclass(frozen=True)
@@ -175,6 +190,14 @@ def _validate_grant(block: object) -> tuple[dict[str, object] | None, str]:
             or block.get("upload_allowed") is not False
         ):
             return None, "SCHEMA_INVALID"
+    elif schema_version == SPEAKER_HOLD_RECOVERY_GRANT_SCHEMA:
+        expected_fields = _HELD_CURRENT_RERENDER_GRANT_FIELDS
+        intent = block.get("intent")
+        if (
+            intent != SPEAKER_HOLD_RECOVERY_INTENT
+            or block.get("upload_allowed") is not False
+        ):
+            return None, "SCHEMA_INVALID"
     else:
         return None, "SCHEMA_INVALID"
     if set(block) != expected_fields:
@@ -195,7 +218,10 @@ def _validate_grant(block: object) -> tuple[dict[str, object] | None, str]:
         if candidate_id is None or candidate_id in candidate_ids:
             return None, "SCHEMA_INVALID"
         candidate_ids.append(candidate_id)
-    if intent == HELD_CURRENT_RERENDER_INTENT and len(candidate_ids) != 1:
+    if intent in {
+        HELD_CURRENT_RERENDER_INTENT,
+        SPEAKER_HOLD_RECOVERY_INTENT,
+    } and len(candidate_ids) != 1:
         return None, "SCHEMA_INVALID"
     authorization = block.get("user_authorization")
     if (
@@ -312,6 +338,73 @@ def _held_current_rerender_outstanding(
     return True, inspection.reason_code
 
 
+def _speaker_hold_recovery_outstanding(
+    state: Mapping[str, object], candidate_id: str
+) -> tuple[bool | None, str]:
+    """Inspect one v4 target without granting a generic failed-pick revival."""
+
+    queued = [
+        row
+        for key in _QUEUED_COLLECTIONS
+        for row in (state.get(key) if isinstance(state.get(key), list) else [])
+        if isinstance(row, Mapping) and _row_candidate_id(row) == candidate_id
+    ]
+    picks = state.get("picks")
+    matches = [
+        row
+        for row in (picks if isinstance(picks, list) else [])
+        if isinstance(row, Mapping) and _row_candidate_id(row) == candidate_id
+    ]
+    if queued:
+        if len(queued) != 1 or matches:
+            return None, "SPEAKER_MANUAL_REVIEW_TARGET_AMBIGUOUS"
+        return True, "SPEAKER_MANUAL_REVIEW_RECOVERY_QUEUED"
+    if len(matches) != 1:
+        return None, "SPEAKER_MANUAL_REVIEW_TARGET_NOT_UNIQUE"
+    row = matches[0]
+    if row.get("status") in _TERMINAL_TALK_STATUSES:
+        return False, "SPEAKER_MANUAL_REVIEW_RECOVERY_TERMINAL"
+
+    from src.autoslice.speaker_manual_review import (
+        SPEAKER_MANUAL_REVIEW_SCHEMA,
+        SPEAKER_MANUAL_REVIEW_STATUSES,
+    )
+
+    receipt = row.get("speaker_manual_review")
+    if not (
+        row.get("status") in SPEAKER_MANUAL_REVIEW_STATUSES
+        and row.get("failure_kind") == "speaker_evidence"
+        and row.get("failure_recoverable") is False
+        and isinstance(receipt, Mapping)
+        and receipt.get("schema_version") == SPEAKER_MANUAL_REVIEW_SCHEMA
+        and receipt.get("status") == "PENDING_HUMAN_REVIEW"
+        and receipt.get("held_status") == row.get("status")
+        and receipt.get("upload_authorized") is False
+    ):
+        return None, "SPEAKER_MANUAL_REVIEW_HOLD_INVALID"
+    try:
+        from src.autoslice.runner_proxy import RunnerProxy
+
+        current = RunnerProxy().talk_failure_recovery_fingerprint(
+            "speaker_evidence", candidate_id
+        )
+    except Exception:  # noqa: BLE001 - authority calculation must fail closed
+        return None, "SPEAKER_RECOVERY_FINGERPRINT_UNAVAILABLE"
+    recorded = row.get("failure_recovery_fingerprint") or row.get(
+        "pipeline_fingerprint"
+    )
+    if not (
+        isinstance(recorded, str)
+        and _SHA256_RX.fullmatch(recorded)
+        and isinstance(current, str)
+        and _SHA256_RX.fullmatch(current)
+    ):
+        return None, "SPEAKER_RECOVERY_FINGERPRINT_INVALID"
+    if recorded == current:
+        return None, "SPEAKER_RECOVERY_FINGERPRINT_UNCHANGED"
+    return True, "SPEAKER_RECOVERY_FINGERPRINT_CHANGED"
+
+
 def operator_scope_admission(
     state: Mapping[str, object],
     *,
@@ -364,7 +457,7 @@ def operator_scope_admission(
         )
     moment = now or datetime.now(timezone.utc)
     if (
-        intent == HELD_CURRENT_RERENDER_INTENT
+        intent in {HELD_CURRENT_RERENDER_INTENT, SPEAKER_HOLD_RECOVERY_INTENT}
         and moment >= grant["expires_at"]  # type: ignore[operator]
     ):
         # Expiry is the hard backstop and must win before registry/source/chat
@@ -401,6 +494,20 @@ def operator_scope_admission(
                 detail=held_reason,
             )
         outstanding = candidate_ids if is_outstanding else ()
+    elif intent == SPEAKER_HOLD_RECOVERY_INTENT:
+        is_outstanding, speaker_reason = _speaker_hold_recovery_outstanding(
+            state, candidate_ids[0]
+        )
+        if is_outstanding is None:
+            return OperatorScopeAdmission(
+                False,
+                speaker_reason,
+                grant_id,
+                candidate_ids,
+                log_line=f"operator scope grant {grant_id} blocked ({speaker_reason})",
+                detail=speaker_reason,
+            )
+        outstanding = candidate_ids if is_outstanding else ()
     else:
         outstanding = tuple(
             cid for cid in candidate_ids if not _settled(state, cid, known, intent=intent)
@@ -434,6 +541,8 @@ def operator_scope_admission(
         "schema_version": (
             HELD_CURRENT_RERENDER_DISCLOSURE_SCHEMA
             if intent == HELD_CURRENT_RERENDER_INTENT
+            else SPEAKER_HOLD_RECOVERY_DISCLOSURE_SCHEMA
+            if intent == SPEAKER_HOLD_RECOVERY_INTENT
             else FAILED_PICK_RECOVERY_DISCLOSURE_SCHEMA
             if intent == FAILED_PICK_RECOVERY_INTENT
             else DISCLOSURE_SCHEMA
@@ -444,9 +553,13 @@ def operator_scope_admission(
         "outstanding_candidate_ids": list(outstanding),
         "quote": grant["quote"],
     }
-    if intent in {FAILED_PICK_RECOVERY_INTENT, HELD_CURRENT_RERENDER_INTENT}:
+    if intent in {
+        FAILED_PICK_RECOVERY_INTENT,
+        HELD_CURRENT_RERENDER_INTENT,
+        SPEAKER_HOLD_RECOVERY_INTENT,
+    }:
         disclosure["intent"] = intent
-    if intent == HELD_CURRENT_RERENDER_INTENT:
+    if intent in {HELD_CURRENT_RERENDER_INTENT, SPEAKER_HOLD_RECOVERY_INTENT}:
         disclosure["upload_allowed"] = False
     return OperatorScopeAdmission(
         True,
@@ -498,6 +611,12 @@ def operator_talk_scope(
             # A recognizable held-current grant must fail closed instead of
             # falling through to ordinary Talk/Song work on a latest-three day.
             return ()
+    elif schema_version == SPEAKER_HOLD_RECOVERY_GRANT_SCHEMA:
+        if (
+            block.get("intent") != SPEAKER_HOLD_RECOVERY_INTENT
+            or block.get("upload_allowed") is not False
+        ):
+            return ()
     else:
         return None
     admission = operator_scope_admission(state, date=date, now=moment)
@@ -507,13 +626,14 @@ def operator_talk_scope(
         or not isinstance(admission.disclosure, Mapping)
     ):
         if (
-            schema_version == HELD_CURRENT_RERENDER_GRANT_SCHEMA
+            schema_version
+            in {HELD_CURRENT_RERENDER_GRANT_SCHEMA, SPEAKER_HOLD_RECOVERY_GRANT_SCHEMA}
             and admission.reason_code not in {"CONVERGED", "EXPIRED"}
         ):
             return ()
         return None
     talk_ids = _ids_in(state, ("pending_talk", "talk_backlog", "picks"))
-    song_ids = _ids_in(state, ("pending_song", "song_backlog", "songs"))
+    song_ids = _ids_in(state, SONG_STATE_COLLECTIONS)
     if any(cid not in talk_ids or cid in song_ids for cid in admission.candidate_ids):
         # An admitted but mixed/non-Talk scope must not fall through to broad
         # ordinary processing.  Historical Song needs its own typed authority.
@@ -575,6 +695,8 @@ def hold_talk_outside_operator_scope(
             "schema_version": (
                 HELD_CURRENT_RERENDER_DISCLOSURE_SCHEMA
                 if intent == HELD_CURRENT_RERENDER_INTENT
+                else SPEAKER_HOLD_RECOVERY_DISCLOSURE_SCHEMA
+                if intent == SPEAKER_HOLD_RECOVERY_INTENT
                 else FAILED_PICK_RECOVERY_DISCLOSURE_SCHEMA
                 if intent == FAILED_PICK_RECOVERY_INTENT
                 else DISCLOSURE_SCHEMA
@@ -592,7 +714,7 @@ def hold_talk_outside_operator_scope(
         }
         if intent is not None:
             disclosure["intent"] = intent
-        if intent == HELD_CURRENT_RERENDER_INTENT:
+        if intent in {HELD_CURRENT_RERENDER_INTENT, SPEAKER_HOLD_RECOVERY_INTENT}:
             disclosure["upload_allowed"] = False
     pending = state.get("pending_talk")
     if not isinstance(pending, list):
@@ -627,3 +749,34 @@ def release_operator_scope_held_talk(state: dict, held: Sequence[dict]) -> None:
         if not (candidate_id := _row_candidate_id(item)) or candidate_id not in seen
     )
     state["talk_backlog"] = backlog
+
+
+def snapshot_song_state_collections(
+    state: Mapping[str, object],
+) -> dict[str, tuple[bool, object]]:
+    """Freeze the exact Song-lane preimage for one Talk-only tick."""
+
+    return {
+        key: (key in state, copy.deepcopy(state.get(key)))
+        for key in SONG_STATE_COLLECTIONS
+    }
+
+
+def restore_song_state_collections(
+    state: dict, snapshot: Mapping[str, tuple[bool, object]] | None
+) -> bool:
+    """Restore a frozen Song preimage while retaining unrelated Talk changes."""
+
+    if snapshot is None:
+        return False
+    changed = False
+    for key in SONG_STATE_COLLECTIONS:
+        present, value = snapshot[key]
+        if present:
+            if key not in state or state[key] != value:
+                changed = True
+            state[key] = copy.deepcopy(value)
+        else:
+            changed = changed or key in state
+            state.pop(key, None)
+    return changed

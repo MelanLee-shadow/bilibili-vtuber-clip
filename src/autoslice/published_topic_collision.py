@@ -42,6 +42,10 @@ STALE_REVIEW_STATUS = "HUMAN_TOPIC_DEDUP_REVIEW_AUTHORITY_STALE"
 REVIEW_STATE_FIELD = "published_topic_dedup_review"
 AUTHORITY_DIRECTORY = Path("assets/lidousha/published_topic_collision_authorities")
 AUTHORITY_SUFFIX = ".published-topic-collision-authority.v1.json"
+RESOLUTION_SCHEMA = "published-topic-dedup-resolution.v1"
+RESOLUTION_DECISION = "RELEASE_FOR_PRODUCTION"
+RESOLUTION_DIRECTORY = Path("assets/lidousha/published_topic_dedup_resolutions")
+RESOLUTION_SUFFIX = ".published-topic-dedup-resolution.v1.json"
 DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _CANDIDATE_ID_RE = re.compile(r"auto_[0-9]+_[0-9]+_[0-9]+\Z")
@@ -68,6 +72,23 @@ def authority_relative_path(candidate_id: str) -> Path:
     if _CANDIDATE_ID_RE.fullmatch(str(candidate_id or "")) is None:
         raise PublishedTopicCollisionError("candidate_id is invalid")
     return AUTHORITY_DIRECTORY / f"{candidate_id}{AUTHORITY_SUFFIX}"
+
+
+def resolution_relative_path(candidate_id: str) -> Path:
+    """Return the one candidate-scoped human resolution path.
+
+    The original collision authority is deliberately retained.  A resolution
+    is an additional, sealed statement that may release production only after
+    the original pair has been revalidated against current state.
+    """
+
+    if _CANDIDATE_ID_RE.fullmatch(str(candidate_id or "")) is None:
+        raise PublishedTopicCollisionError("candidate_id is invalid")
+    return RESOLUTION_DIRECTORY / f"{candidate_id}{RESOLUTION_SUFFIX}"
+
+
+def _raw_sha256(payload: bytes) -> str:
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
 def _candidate_id(row: Mapping[str, object]) -> str:
@@ -240,6 +261,97 @@ def validate_authority(
     }
 
 
+def validate_resolution(
+    value: object,
+    *,
+    candidate_row: Mapping[str, object],
+    published_row: Mapping[str, object],
+    validated_authority: Mapping[str, object],
+    authority_path: Path,
+    authority_bytes: bytes,
+) -> dict[str, object]:
+    """Validate a human production release without widening upload authority.
+
+    ``validated_authority`` is the result of :func:`validate_authority`, so it
+    already proves the live candidate, the published state row, registry row,
+    BVID and public title.  The resolution deliberately repeats those exact
+    bindings and pins both the original raw bytes and its self-seal; a stale
+    pair therefore cannot be released by merely retaining an old resolution.
+    """
+
+    if not isinstance(value, Mapping):
+        raise PublishedTopicCollisionError("resolution is not an object")
+    resolution = dict(value)
+    declared_sha = resolution.pop("resolution_sha256", None)
+    expected_keys = {
+        "schema_version",
+        "decision",
+        "asserted_by",
+        "asserted_at",
+        "authority_quote",
+        "candidate",
+        "published",
+        "original_authority_relative_path",
+        "original_authority_raw_sha256",
+        "original_authority_sha256",
+        "upload_authorized",
+    }
+    if (
+        set(resolution) != expected_keys
+        or resolution.get("schema_version") != RESOLUTION_SCHEMA
+        or resolution.get("decision") != RESOLUTION_DECISION
+        or resolution.get("upload_authorized") is not False
+        or canonical_sha256(resolution) != declared_sha
+    ):
+        raise PublishedTopicCollisionError("resolution envelope is invalid")
+    _require_text(resolution.get("asserted_by"), label="resolution asserted_by")
+    _require_text(resolution.get("asserted_at"), label="resolution asserted_at")
+    _require_text(resolution.get("authority_quote"), label="resolution authority quote")
+
+    candidate = _require_bound_candidate(
+        resolution.get("candidate"), candidate_row, label="resolution candidate"
+    )
+    published = _require_bound_candidate(
+        resolution.get("published"), published_row, label="resolution published candidate"
+    )
+    original_candidate = validated_authority.get("candidate")
+    original_published = validated_authority.get("published")
+    if not isinstance(original_candidate, Mapping) or not isinstance(original_published, Mapping):
+        raise PublishedTopicCollisionError("validated original authority is incomplete")
+    if dict(resolution["candidate"]) != dict(original_candidate) or candidate != dict(original_candidate):
+        raise PublishedTopicCollisionError("resolution candidate binding drifted")
+    # _require_bound_candidate intentionally checks the moving source fields;
+    # the original authority carries the additional registry/public fields.
+    required_published = {
+        key: original_published.get(key)
+        for key in (
+            "candidate_id",
+            "recording_date",
+            "scene_kind",
+            "hook",
+            "hook_sha256",
+            "selection_scorecard_sha256",
+            "registry_row_sha256",
+            "registry_status",
+            "bvid",
+            "public_title",
+            "public_title_sha256",
+        )
+    }
+    if dict(resolution["published"]) != required_published or any(
+        published.get(key) != required_published.get(key)
+        for key in ("candidate_id", "recording_date", "scene_kind", "hook", "hook_sha256", "selection_scorecard_sha256")
+    ):
+        raise PublishedTopicCollisionError("resolution published binding drifted")
+    if resolution.get("original_authority_relative_path") != authority_path.as_posix():
+        raise PublishedTopicCollisionError("resolution original authority path drifted")
+    if resolution.get("original_authority_raw_sha256") != _raw_sha256(authority_bytes):
+        raise PublishedTopicCollisionError("resolution original authority bytes drifted")
+    if resolution.get("original_authority_sha256") != validated_authority.get("authority_sha256"):
+        raise PublishedTopicCollisionError("resolution original authority self-seal drifted")
+    return {**resolution, "resolution_sha256": declared_sha}
+
+
 def _current_rows_by_id(state: Mapping[str, object]) -> dict[str, Mapping[str, object]]:
     rows: dict[str, Mapping[str, object]] = {}
     # A freshly requeued row is newer than the historical failed pick.  Read
@@ -268,6 +380,18 @@ def _held_candidates(state: Mapping[str, object]) -> dict[str, Mapping[str, obje
     return result
 
 
+def _prior_hold_records(state: Mapping[str, object]) -> dict[str, Mapping[str, object]]:
+    current = state.get(REVIEW_STATE_FIELD)
+    holds = current.get("holds") if isinstance(current, Mapping) else None
+    result: dict[str, Mapping[str, object]] = {}
+    if not isinstance(holds, list):
+        return result
+    for hold in holds:
+        if isinstance(hold, Mapping) and _candidate_id(hold):
+            result[_candidate_id(hold)] = hold
+    return result
+
+
 def _remove_from_queue(state: dict, candidate_id: str) -> None:
     for field in ("pending_talk", "talk_backlog"):
         values = state.get(field)
@@ -277,6 +401,47 @@ def _remove_from_queue(state: dict, candidate_id: str) -> None:
                 for row in values
                 if not (isinstance(row, Mapping) and _candidate_id(row) == candidate_id)
             ]
+
+
+def _queue_origin(state: Mapping[str, object], candidate_id: str) -> str | None:
+    """Return the unique queue currently owning a candidate, if any."""
+
+    origins = [
+        field
+        for field in ("pending_talk", "talk_backlog")
+        if any(
+            isinstance(row, Mapping) and _candidate_id(row) == candidate_id
+            for row in (state.get(field) or [])
+        )
+    ]
+    return origins[0] if len(origins) == 1 else None
+
+
+def _restore_resolved_hold(
+    state: dict,
+    *,
+    candidate_id: str,
+    prior_hold: Mapping[str, object] | None,
+) -> None:
+    """Put a validly released sticky hold back exactly where it was parked."""
+
+    if prior_hold is None:
+        return
+    for field in ("pending_talk", "talk_backlog"):
+        rows = state.get(field)
+        if isinstance(rows, list) and any(
+            isinstance(row, Mapping) and _candidate_id(row) == candidate_id for row in rows
+        ):
+            # Delivery recovery may already have restored an older sticky hold
+            # whose pre-v1 receipt predates ``queue_origin``.  The current
+            # queue row is stronger evidence than that legacy omission: keep
+            # it in place, but never infer an origin when no fresh row exists.
+            return
+    origin = prior_hold.get("queue_origin")
+    candidate = prior_hold.get("candidate")
+    if origin not in {"pending_talk", "talk_backlog"} or not isinstance(candidate, Mapping):
+        raise PublishedTopicCollisionError("resolved sticky hold has no valid queue origin")
+    state.setdefault(origin, []).append(dict(candidate))
 
 
 def hold_published_topic_collision_reviews(
@@ -295,6 +460,7 @@ def hold_published_topic_collision_reviews(
 
     rows = _current_rows_by_id(state)
     prior_held = _held_candidates(state)
+    prior_hold_records = _prior_hold_records(state)
     rows = {**prior_held, **rows}
 
     active_ids: set[str] = set(prior_held)
@@ -377,6 +543,33 @@ def hold_published_topic_collision_reviews(
                 published_row=published,
                 publication_registry=registry,
             )
+            resolution_relative = resolution_relative_path(candidate_id)
+            resolution_path = repo_root / resolution_relative
+            if resolution_path.exists():
+                resolution_bytes = resolution_path.read_bytes()
+                require_repository_asset_authority(
+                    repo_root=repo_root,
+                    relative_path=resolution_relative,
+                    observed_bytes=resolution_bytes,
+                )
+                resolution = json.loads(resolution_bytes.decode("utf-8"))
+                validate_resolution(
+                    resolution,
+                    candidate_row=candidate,
+                    published_row=published,
+                    validated_authority=validated,
+                    authority_path=relative,
+                    authority_bytes=observed,
+                )
+                _restore_resolved_hold(
+                    state,
+                    candidate_id=candidate_id,
+                    prior_hold=prior_hold_records.get(candidate_id),
+                )
+                # This statement only releases selection/production.  Its
+                # explicit upload_authorized=false is deliberately not
+                # translated into a publication or manifest permission.
+                continue
             evidence = {
                 "authority": {
                     "relative_path": repository_binding.relative_path,
@@ -406,6 +599,7 @@ def hold_published_topic_collision_reviews(
             reason_code = "PUBLISHED_TOPIC_REVIEW_AUTHORITY_STALE"
             evidence = {"error": f"{type(exc).__name__}: {exc}"}
 
+        origin = _queue_origin(state, candidate_id)
         _remove_from_queue(state, candidate_id)
         candidate_copy = dict(candidate)
         holds.append(
@@ -416,6 +610,7 @@ def hold_published_topic_collision_reviews(
                 "score_mutated": False,
                 "suppression_authorized": False,
                 "upload_authorized": False,
+                "queue_origin": origin,
                 "candidate": candidate_copy,
                 "evidence": evidence,
             }

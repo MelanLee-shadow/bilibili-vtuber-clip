@@ -147,18 +147,20 @@ def project_terminal_batch_state(
     terminal_song_performer_rejection_codes: Collection[object] = (),
     song_infra_transient_reason_codes: Collection[object] = (),
     song_infra_retry_cap: int | None = None,
+    mutate_songs: bool = True,
 ) -> dict[str, object]:
     picks = [row for row in state.get("picks", []) if isinstance(row, dict)]
     songs = [row for row in state.get("songs", []) if isinstance(row, dict)]
-    for row in songs:
-        project_terminal_song_disposition(
-            row,
-            terminal_performer_rejection_codes=(
-                terminal_song_performer_rejection_codes
-            ),
-            infra_transient_reason_codes=song_infra_transient_reason_codes,
-            song_infra_retry_cap=song_infra_retry_cap,
-        )
+    if mutate_songs:
+        for row in songs:
+            project_terminal_song_disposition(
+                row,
+                terminal_performer_rejection_codes=(
+                    terminal_song_performer_rejection_codes
+                ),
+                infra_transient_reason_codes=song_infra_transient_reason_codes,
+                song_infra_retry_cap=song_infra_retry_cap,
+            )
     delivered_talk = [
         row
         for row in picks

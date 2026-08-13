@@ -30,6 +30,10 @@ from src.autoslice.speaker_common import (
     SPEAKERS,
     SpeakerFinalizationError,
 )
+from src.autoslice.operator_reviewed_speaker_truth import (
+    SCHEMA_VERSION as SPEAKER_ONLY_TRUTH_SCHEMA,
+    validate_operator_reviewed_speaker_truth,
+)
 from src.autoslice.speaker_context import _reviewed_context_votes
 from src.autoslice.text_baseline_guard import (
     BASELINE_CONTAINS_SPEAKER_LABEL_PREFIX,
@@ -272,8 +276,15 @@ def _resolve_repo_input(
 def _resolve_truth_input(
     truth_input: Mapping[str, object],
     *,
+    review_binding_input: object,
     repo_root: Path,
     candidate_id: str,
+    cues: Sequence[object],
+    authority: str,
+    expected_source_media_sha256: str,
+    expected_text_final_srt_sha256: str,
+    expected_automatic_srt_sha256: str,
+    expected_source_recording: Mapping[str, object] | None,
 ) -> tuple[Path, str]:
     resolved, actual_sha = _resolve_repo_input(
         truth_input,
@@ -286,10 +297,44 @@ def _resolve_truth_input(
         raise SpeakerFinalizationError(
             "reviewed speaker truth input is invalid JSON"
         ) from exc
-    if not isinstance(truth, Mapping) or truth.get("schema") != TRUTH_SCHEMA:
+    if not isinstance(truth, Mapping):
         raise SpeakerFinalizationError("reviewed speaker truth schema is unsupported")
-    if truth.get("candidate_id") != candidate_id:
-        raise SpeakerFinalizationError("reviewed speaker truth candidate mismatch")
+    if truth.get("schema") == TRUTH_SCHEMA:
+        if truth.get("candidate_id") != candidate_id:
+            raise SpeakerFinalizationError("reviewed speaker truth candidate mismatch")
+    elif truth.get("schema_version") == SPEAKER_ONLY_TRUTH_SCHEMA:
+        if not isinstance(review_binding_input, Mapping):
+            raise SpeakerFinalizationError(
+                "operator-reviewed speaker delivery binding input is required"
+            )
+        review_path, _review_sha = _resolve_repo_input(
+            review_binding_input,
+            repo_root=repo_root,
+            label="operator-reviewed speaker delivery binding input",
+        )
+        try:
+            review_binding = json.loads(review_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise SpeakerFinalizationError(
+                "operator-reviewed speaker delivery binding input is invalid JSON"
+            ) from exc
+        if not isinstance(review_binding, Mapping):
+            raise SpeakerFinalizationError(
+                "operator-reviewed speaker delivery binding schema is unsupported"
+            )
+        validate_operator_reviewed_speaker_truth(
+            truth,
+            review_binding=review_binding,
+            candidate_id=candidate_id,
+            cues=cues,
+            authority=authority,
+            expected_source_media_sha256=expected_source_media_sha256,
+            expected_text_final_srt_sha256=expected_text_final_srt_sha256,
+            expected_automatic_srt_sha256=expected_automatic_srt_sha256,
+            expected_source_recording=expected_source_recording,
+        )
+    else:
+        raise SpeakerFinalizationError("reviewed speaker truth schema is unsupported")
     return resolved, actual_sha
 
 
@@ -373,6 +418,7 @@ def load_reviewed_speaker_baseline(
     candidate_id: str,
     cues: Sequence[object],
     repo_root: Path | None = None,
+    expected_source_recording: Mapping[str, object] | None = None,
 ) -> ReviewedSpeakerBaseline | None:
     """Validate the optional baseline envelope and return zero-based anchors.
 
@@ -427,8 +473,17 @@ def load_reviewed_speaker_baseline(
         raise SpeakerFinalizationError("reviewed speaker truth_input must be an object")
     truth_path, truth_sha = _resolve_truth_input(
         truth_input,
+        review_binding_input=document.get("operator_review_binding"),
         repo_root=repo_root or REPO_ROOT,
         candidate_id=candidate_id,
+        cues=cues,
+        authority=authority,
+        expected_source_media_sha256=str(document.get("source_media_sha256") or ""),
+        expected_text_final_srt_sha256=str(
+            document.get("text_final_srt_sha256") or ""
+        ),
+        expected_automatic_srt_sha256=str(document.get("source_srt_sha256") or ""),
+        expected_source_recording=expected_source_recording,
     )
     frozen_automatic: tuple[Cue, ...] | None = None
     automatic_path: Path | None = None
@@ -618,6 +673,7 @@ def load_speaker_override_state(
     media_path: Path,
     text_srt_path: Path,
     cue_count: int,
+    expected_source_recording: Mapping[str, object] | None = None,
 ) -> SpeakerOverrideState:
     """Validate one optional human override against current frozen inputs."""
 
@@ -665,6 +721,7 @@ def load_speaker_override_state(
             loaded,
             candidate_id=str(candidate_id),
             cues=parse_srt(text_srt_path),
+            expected_source_recording=expected_source_recording,
         ),
         expected_automatic_sha256=expected_automatic,
     )

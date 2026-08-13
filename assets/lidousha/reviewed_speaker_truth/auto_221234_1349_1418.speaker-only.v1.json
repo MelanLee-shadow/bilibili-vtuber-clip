@@ -1,0 +1,179 @@
+{
+  "schema_version": "operator-reviewed-speaker-truth.v1",
+  "candidate_id": "auto_221234_1349_1418",
+  "scope": "speaker_only",
+  "authority": "89221说话人这个是李豆沙，没问题。",
+  "reviewed_at": "2026-08-13",
+  "decision": "ALL_DELIVERY_CUES_HOST",
+  "subtitle_text_authorized": false,
+  "upload_authorized": false,
+  "reviewed_delivery_video_sha256": "9caf3b70c4329c19902221c719a26af5a05397f367cd4ae7c615e4c622644add",
+  "bindings": {
+    "source_media_sha256": "9e9032a3203025555ae4faf3cb6c35b1816984ede97287dc014af63e389e9bda",
+    "text_final_srt_sha256": "ca5e906e4a3b07ea93b68cfca380c1d56fdea6dd2e4663dcd8a0eeabcf0045b7",
+    "automatic_labelled_srt_sha256": "cb528b1e45272fb532f604a4cf7ef8c9c9b64faf7cf5e87aa7cfa27dffed4a72",
+    "cue_count": 22,
+    "source_recording": {
+      "basename": "22966160_20260809-22-12-34.mp4",
+      "sha256": "adb42519050b15438dce5b244e2bbccfa47e0cc80024feedd1b59ab1aafbdc56",
+      "absolute_start_ms": 1348880,
+      "absolute_end_ms": 1418660
+    }
+  },
+  "cues": [
+    {
+      "cue": 1,
+      "start": "00:00:00,250",
+      "end": "00:00:03,050",
+      "text": "弹幕断了吗",
+      "speaker": "李豆沙"
+    },
+    {
+      "cue": 2,
+      "start": "00:00:03,170",
+      "end": "00:00:04,730",
+      "text": "弹幕断了吗",
+      "speaker": "李豆沙"
+    },
+    {
+      "cue": 3,
+      "start": "00:00:05,730",
+      "end": "00:00:08,330",
+      "text": "弹幕断了吧",
+      "speaker": "李豆沙"
+    },
+    {
+      "cue": 4,
+      "start": "00:00:14,130",
+      "end": "00:00:15,130",
+      "text": "豆豆",
+      "speaker": "李豆沙"
+    },
+    {
+      "cue": 5,
+      "start": "00:00:15,290",
+      "end": "00:00:17,230",
+      "text": "我看不到了",
+      "speaker": "李豆沙"
+    },
+    {
+      "cue": 6,
+      "start": "00:00:17,230",
+      "end": "00:00:18,930",
+      "text": "看不到弹幕了",
+      "speaker": "李豆沙"
+    },
+    {
+      "cue": 7,
+      "start": "00:00:21,790",
+      "end": "00:00:24,790",
+      "text": "弹幕怎么了",
+      "speaker": "李豆沙"
+    },
+    {
+      "cue": 8,
+      "start": "00:00:26,270",
+      "end": "00:00:27,310",
+      "text": "小猫熊",
+      "speaker": "李豆沙"
+    },
+    {
+      "cue": 9,
+      "start": "00:00:31,870",
+      "end": "00:00:33,590",
+      "text": "它为什么不见了",
+      "speaker": "李豆沙"
+    },
+    {
+      "cue": 10,
+      "start": "00:00:34,350",
+      "end": "00:00:36,870",
+      "text": "正面趴着地上双手撑着脸",
+      "speaker": "李豆沙"
+    },
+    {
+      "cue": 11,
+      "start": "00:00:36,870",
+      "end": "00:00:38,010",
+      "text": "然后小腿乱晃",
+      "speaker": "李豆沙"
+    },
+    {
+      "cue": 12,
+      "start": "00:00:38,010",
+      "end": "00:00:39,630",
+      "text": "这么有种撒娇感觉",
+      "speaker": "李豆沙"
+    },
+    {
+      "cue": 13,
+      "start": "00:00:39,630",
+      "end": "00:00:41,830",
+      "text": "但是你看不见我的脸啊",
+      "speaker": "李豆沙"
+    },
+    {
+      "cue": 14,
+      "start": "00:00:42,240",
+      "end": "00:00:44,120",
+      "text": "我看一下。嗯",
+      "speaker": "李豆沙"
+    },
+    {
+      "cue": 15,
+      "start": "00:00:53,390",
+      "end": "00:00:54,390",
+      "text": "嘿嘿",
+      "speaker": "李豆沙"
+    },
+    {
+      "cue": 16,
+      "start": "00:00:54,670",
+      "end": "00:00:57,510",
+      "text": "谢谢L冧黎G的舰长",
+      "speaker": "李豆沙"
+    },
+    {
+      "cue": 17,
+      "start": "00:00:57,510",
+      "end": "00:00:58,370",
+      "text": "谢谢你",
+      "speaker": "李豆沙"
+    },
+    {
+      "cue": 18,
+      "start": "00:00:58,370",
+      "end": "00:00:59,470",
+      "text": "华一上船",
+      "speaker": "李豆沙"
+    },
+    {
+      "cue": 19,
+      "start": "00:01:00,900",
+      "end": "00:01:01,900",
+      "text": "这样吗",
+      "speaker": "李豆沙"
+    },
+    {
+      "cue": 20,
+      "start": "00:01:02,660",
+      "end": "00:01:03,740",
+      "text": "这样吗",
+      "speaker": "李豆沙"
+    },
+    {
+      "cue": 21,
+      "start": "00:01:05,100",
+      "end": "00:01:06,100",
+      "text": "这样吗",
+      "speaker": "李豆沙"
+    },
+    {
+      "cue": 22,
+      "start": "00:01:08,020",
+      "end": "00:01:09,380",
+      "text": "嘿嘿嘿",
+      "speaker": "李豆沙"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "schema_version": "operator-reviewed-speaker-delivery-binding.v1",
+  "candidate_id": "auto_221234_1349_1418",
+  "authority": "89221说话人这个是李豆沙，没问题。",
+  "reviewed_at": "2026-08-13",
+  "current_record_sha256": "7635ee9ff529a8ce9428950a51b75ee22f6e3b23a72e8f044ebd7981461e16a8",
+  "reviewed_delivery_video": {
+    "basename": "auto_221234_1349_1418.EXACT_CURRENT_DELIVERY.speaker-hold-review.mp4",
+    "sha256": "9caf3b70c4329c19902221c719a26af5a05397f367cd4ae7c615e4c622644add"
+  },
+  "source_media_sha256": "9e9032a3203025555ae4faf3cb6c35b1816984ede97287dc014af63e389e9bda",
+  "text_final_srt_sha256": "ca5e906e4a3b07ea93b68cfca380c1d56fdea6dd2e4663dcd8a0eeabcf0045b7",
+  "automatic_labelled_srt_sha256": "cb528b1e45272fb532f604a4cf7ef8c9c9b64faf7cf5e87aa7cfa27dffed4a72",
+  "source_recording": {
+    "basename": "22966160_20260809-22-12-34.mp4",
+    "sha256": "adb42519050b15438dce5b244e2bbccfa47e0cc80024feedd1b59ab1aafbdc56",
+    "absolute_start_ms": 1348880,
+    "absolute_end_ms": 1418660
+  },
+  "subtitle_text_authorized": false,
+  "upload_authorized": false
+}

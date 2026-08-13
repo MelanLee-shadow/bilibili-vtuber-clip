@@ -28,6 +28,7 @@ from src.autoslice.chat_event_timing import (
     send_time_ms as _send_time_ms,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice import subtitle_text_override_schema as text_override_schema
 from src.autoslice.surface_canon import (
     canonicalize_expected_value_surfaces as canonicalize_expected_value_surfaces,
     canonicalize_hard_meme_surfaces as canonicalize_hard_meme_surfaces,
@@ -706,11 +707,9 @@ def build_human_text_entity_verifier(
     source = Path(document_path)
     raw = source.read_bytes()
     payload = json.loads(raw)
-    if not isinstance(payload, dict) or payload.get("schema_version") not in {1, 2, 3}:
-        raise ValueError("text override schema_version must be 1, 2, or 3")
-    if payload.get("candidate_id") != candidate_id:
-        raise ValueError("text override candidate_id mismatch")
-    override_schema_version = int(payload["schema_version"])
+    override_schema_version = text_override_schema.validate_text_override_document_header(
+        payload, expected_candidate_id=candidate_id
+    )
     if override_schema_version == 1:
         binding = {
             "source_srt_sha256": str(payload.get("source_srt_sha256") or ""),
@@ -795,7 +794,7 @@ def reconcile_pending_text_overrides(
             "source_srt_sha256": source_hash,
             "text_final_srt_sha256": final_hash,
         }
-    elif override_schema_version in {2, 3}:
+    elif override_schema_version in {2, 3, 4}:
         manifest_binding = {
             "source_cue_witness_sha256": str(text_manifest.get("source_cue_witness_sha256") or ""),
             "decision_output_witness_sha256": str(
@@ -1136,17 +1135,16 @@ def _validated_entity_verdict(
         if not row.get("defer_to_text_override"):
             return None
         override_schema_version = int(row.get("override_schema_version") or 1)
-        binding_keys = {
-            1: ("source_srt_sha256", "text_final_srt_sha256"),
-            2: (
+        binding_keys = (
+            ("source_srt_sha256", "text_final_srt_sha256")
+            if override_schema_version == 1
+            else (
                 "source_cue_witness_sha256",
                 "decision_output_witness_sha256",
-            ),
-            3: (
-                "source_cue_witness_sha256",
-                "decision_output_witness_sha256",
-            ),
-        }.get(override_schema_version)
+            )
+            if override_schema_version in {2, 3, 4}
+            else None
+        )
         if binding_keys is None or not all(
             _valid_sha256(row.get(key)) for key in ("override_document_sha256", *binding_keys)
         ):

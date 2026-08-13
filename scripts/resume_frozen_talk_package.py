@@ -579,6 +579,7 @@ def _materialize_resume_transaction(
         ctx.paths["text_override"],
         text_srt,
         text_manifest_path,
+        expected_candidate_id=ctx.candidate_id,
     )
     if _sha256_file(text_srt) != _normalized_sha256(
         ctx.plan.get("expected_final_text_srt_sha256")

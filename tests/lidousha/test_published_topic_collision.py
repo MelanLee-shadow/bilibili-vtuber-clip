@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from copy import deepcopy
@@ -13,10 +14,13 @@ from src.autoslice.published_topic_collision import (
     PAIR_FINGERPRINT_KIND,
     REVIEW_STATE_FIELD,
     REVIEW_STATUS,
+    RESOLUTION_DECISION,
+    RESOLUTION_SCHEMA,
     STALE_REVIEW_STATUS,
     authority_relative_path,
     canonical_sha256,
     hold_published_topic_collision_reviews,
+    resolution_relative_path,
 )
 
 
@@ -191,7 +195,36 @@ def _git(root: Path, *args: str) -> None:
     )
 
 
-def _sealed_repo(tmp_path: Path, candidate_id: str, authority: dict) -> Path:
+def _resolution(candidate: dict, published: dict, authority: dict, registry: dict) -> dict:
+    resolution = {
+        "schema_version": RESOLUTION_SCHEMA,
+        "decision": RESOLUTION_DECISION,
+        "asserted_by": "Ivan",
+        "asserted_at": "2026-08-13T14:00:00Z",
+        "authority_quote": "806，1576内容没问题可以发。",
+        "candidate": _candidate_binding(candidate),
+        "published": {
+            **_candidate_binding(published),
+            "registry_row_sha256": canonical_sha256(registry["entries"][0]),
+            "registry_status": "published",
+            "bvid": BV,
+            "public_title": PUBLIC_TITLE,
+            "public_title_sha256": canonical_sha256(PUBLIC_TITLE),
+        },
+        "original_authority_relative_path": authority_relative_path(CANDIDATE).as_posix(),
+        "original_authority_raw_sha256": "",  # set after serializing authority bytes
+        "original_authority_sha256": authority["authority_sha256"],
+        "upload_authorized": False,
+    }
+    authority_bytes = (json.dumps(authority, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
+    resolution["original_authority_raw_sha256"] = "sha256:" + hashlib.sha256(authority_bytes).hexdigest()
+    resolution["resolution_sha256"] = canonical_sha256(resolution)
+    return resolution
+
+
+def _sealed_repo(
+    tmp_path: Path, candidate_id: str, authority: dict, resolution: dict | None = None
+) -> Path:
     root = tmp_path / "repo"
     path = root / authority_relative_path(candidate_id)
     path.parent.mkdir(parents=True)
@@ -199,6 +232,13 @@ def _sealed_repo(tmp_path: Path, candidate_id: str, authority: dict) -> Path:
         json.dumps(authority, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    if resolution is not None:
+        resolution_path = root / resolution_relative_path(candidate_id)
+        resolution_path.parent.mkdir(parents=True)
+        resolution_path.write_text(
+            json.dumps(resolution, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     _git(root, "init", "-q")
     _git(root, "config", "user.email", "test@example.invalid")
     _git(root, "config", "user.name", "Autoslice Test")
@@ -236,6 +276,153 @@ def test_469_vs_806_is_held_without_score_or_suppression_and_1576_passes(
     assert hold["evidence"]["published_candidate_id"] == PUBLISHED
     assert hold["evidence"]["published_bvid"] == BV
     assert hold["evidence"]["published_public_title"] == PUBLIC_TITLE
+
+
+def test_valid_resolution_releases_sticky_hold_to_its_original_queue_without_upload(
+    tmp_path: Path, rows: tuple[dict, dict, dict]
+) -> None:
+    candidate, published, distinct = rows
+    registry = _registry()
+    authority = _authority(candidate, published, registry)
+    root = _sealed_repo(tmp_path, CANDIDATE, authority)
+    state = {"picks": [published], "pending_talk": [candidate, distinct], "talk_backlog": []}
+    first = hold_published_topic_collision_reviews(
+        state, repo_root=root, publication_registry=registry
+    )
+    assert first[0]["queue_origin"] == "pending_talk"
+    resolution = _resolution(candidate, published, authority, registry)
+    path = root / resolution_relative_path(CANDIDATE)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(resolution, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    _git(root, "add", ".")
+    _git(root, "commit", "-qm", "seal resolution")
+
+    second = hold_published_topic_collision_reviews(
+        state, repo_root=root, publication_registry=registry
+    )
+
+    assert second == []
+    assert state[REVIEW_STATE_FIELD]["holds"] == []
+    assert [row["candidate_id"] for row in state["pending_talk"]] == [DISTINCT, CANDIDATE]
+    restored = state["pending_talk"][1]
+    assert restored["selection_scorecard"] == candidate["selection_scorecard"]
+    assert resolution["upload_authorized"] is False
+
+
+def test_resolution_accepts_legacy_hold_without_origin_only_after_fresh_requeue(
+    tmp_path: Path, rows: tuple[dict, dict, dict]
+) -> None:
+    candidate, published, _distinct = rows
+    registry = _registry()
+    authority = _authority(candidate, published, registry)
+    root = _sealed_repo(tmp_path, CANDIDATE, authority)
+    state = {"picks": [published], "pending_talk": [candidate], "talk_backlog": []}
+    first = hold_published_topic_collision_reviews(
+        state, repo_root=root, publication_registry=registry
+    )
+    legacy_hold = deepcopy(first[0])
+    legacy_hold.pop("queue_origin")
+    state[REVIEW_STATE_FIELD]["holds"] = [legacy_hold]
+
+    resolution = _resolution(candidate, published, authority, registry)
+    path = root / resolution_relative_path(CANDIDATE)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(resolution, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    _git(root, "add", ".")
+    _git(root, "commit", "-qm", "seal resolution")
+
+    # A current recovery row is authoritative enough to preserve in place;
+    # the old receipt's missing origin alone must not turn it stale.
+    state["pending_talk"] = [deepcopy(candidate)]
+    assert hold_published_topic_collision_reviews(
+        state, repo_root=root, publication_registry=registry
+    ) == []
+    assert [row["candidate_id"] for row in state["pending_talk"]] == [CANDIDATE]
+
+    # Without that fresh queue row, the same legacy omission is not enough to
+    # guess pending vs backlog and therefore stays fail-closed.
+    state[REVIEW_STATE_FIELD]["holds"] = [legacy_hold]
+    state["pending_talk"] = []
+    held = hold_published_topic_collision_reviews(
+        state, repo_root=root, publication_registry=registry
+    )
+    assert held[0]["disposition"] == STALE_REVIEW_STATUS
+    assert "no valid queue origin" in held[0]["evidence"]["error"]
+
+
+@pytest.mark.parametrize(
+    "drift",
+    ["candidate_hook", "registry", "resolution_bytes", "original_authority_bytes"],
+)
+def test_resolution_drift_keeps_the_candidate_in_a_sticky_hold(
+    tmp_path: Path, rows: tuple[dict, dict, dict], drift: str
+) -> None:
+    candidate, published, _distinct = rows
+    registry = _registry()
+    authority = _authority(candidate, published, registry)
+    resolution = _resolution(candidate, published, authority, registry)
+    root = _sealed_repo(tmp_path, CANDIDATE, authority, resolution)
+    state = {"picks": [published], "pending_talk": [candidate], "talk_backlog": []}
+
+    if drift == "candidate_hook":
+        changed = deepcopy(candidate)
+        changed["hook"] += "（漂移）"
+        state["pending_talk"] = [changed]
+    elif drift == "registry":
+        registry = deepcopy(registry)
+        registry["entries"][0]["note"] = "drift"
+    elif drift == "resolution_bytes":
+        path = root / resolution_relative_path(CANDIDATE)
+        path.write_text(path.read_text() + "\n")
+    else:
+        path = root / authority_relative_path(CANDIDATE)
+        path.write_text(path.read_text() + "\n")
+
+    holds = hold_published_topic_collision_reviews(
+        state, repo_root=root, publication_registry=registry
+    )
+    assert len(holds) == 1
+    assert holds[0]["disposition"] == STALE_REVIEW_STATUS
+    assert holds[0]["upload_authorized"] is False
+    assert state["pending_talk"] == []
+
+
+def test_resolution_for_806_does_not_capture_1576(
+    tmp_path: Path, rows: tuple[dict, dict, dict]
+) -> None:
+    candidate, published, distinct = rows
+    registry = _registry()
+    authority = _authority(candidate, published, registry)
+    resolution = _resolution(candidate, published, authority, registry)
+    root = _sealed_repo(tmp_path, CANDIDATE, authority, resolution)
+    state = {"picks": [published], "pending_talk": [candidate, distinct], "talk_backlog": []}
+
+    holds = hold_published_topic_collision_reviews(
+        state, repo_root=root, publication_registry=registry
+    )
+    assert holds == []
+    assert [row["candidate_id"] for row in state["pending_talk"]] == [CANDIDATE, DISTINCT]
+
+
+def test_resolution_cannot_grant_upload_even_when_it_is_sealed(
+    tmp_path: Path, rows: tuple[dict, dict, dict]
+) -> None:
+    candidate, published, _distinct = rows
+    registry = _registry()
+    authority = _authority(candidate, published, registry)
+    resolution = _resolution(candidate, published, authority, registry)
+    resolution["upload_authorized"] = True
+    resolution["resolution_sha256"] = canonical_sha256(
+        {key: value for key, value in resolution.items() if key != "resolution_sha256"}
+    )
+    root = _sealed_repo(tmp_path, CANDIDATE, authority, resolution)
+    state = {"picks": [published], "pending_talk": [candidate], "talk_backlog": []}
+
+    holds = hold_published_topic_collision_reviews(
+        state, repo_root=root, publication_registry=registry
+    )
+    assert holds[0]["disposition"] == STALE_REVIEW_STATUS
+    assert holds[0]["upload_authorized"] is False
 
 
 @pytest.mark.parametrize("drift", ["candidate_hook", "registry_row", "asset_bytes"])

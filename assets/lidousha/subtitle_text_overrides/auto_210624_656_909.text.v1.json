@@ -1,0 +1,33 @@
+{
+  "schema_version": 4,
+  "candidate_id": "auto_210624_656_909",
+  "source_cue_witness_sha256": "773fa31922988f729e65fe08194e49a79e3b18d555321d926ca7e74c8e20bad3",
+  "decision_output_witness_sha256": "2762e141036fd96cbde665239033cfcbd61ea567be65eb527f2344443a00e4f1",
+  "upload": false,
+  "overrides": [
+    {
+      "source_cue": 49,
+      "action": "replace",
+      "expect": {
+        "start": "00:01:46,770",
+        "end": "00:01:48,330",
+        "text": "我看一下脱口杯"
+      },
+      "text": "我看一下。",
+      "authority": "Ivan operator truth: 210那你说的是我看一下之后接的是日语， Tokubei joshite。",
+      "reason": "Remove the ASR phonetic hallucination only; the following Japanese begins in the next cue."
+    },
+    {
+      "source_cue": 50,
+      "action": "replace",
+      "expect": {
+        "start": "00:01:48,330",
+        "end": "00:01:52,880",
+        "text": "特別して 特別してー あー ちょー あ あ あ あ わたし"
+      },
+      "text": "特別して 特別してー あー ちょー あ あ あ あ わたし",
+      "authority": "Ivan operator truth: 210那你说的是我看一下之后接的是日语， Tokubei joshite。",
+      "reason": "Bind the already-correct Japanese cue byte-for-byte; do not merge it into the preceding Mandarin cue."
+    }
+  ]
+}

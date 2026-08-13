@@ -9,7 +9,7 @@ import re
 import shlex
 import subprocess
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping
 
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.jingting_chunker import parse_srt_cues
@@ -24,6 +24,9 @@ from src.autoslice.producer_media import (
     _validate_fast_transaction_outputs,
     _write_json_atomic,
     run,
+)
+from src.autoslice.operator_reviewed_speaker_truth import (
+    current_source_recording_binding,
 )
 from src.autoslice.producer_text_finalization import _format_srt_timestamp
 from src.autoslice.speaker_finalizer import (
@@ -207,6 +210,12 @@ def _rebase_remote_speaker_manifest(
     )
     return rebased
 
+def _source_binding_cli(binding: Mapping[str, object] | None) -> list[str]:
+    if binding is None:
+        return []
+    payload = json.dumps(dict(binding), separators=(",", ":"), sort_keys=True)
+    return ["--expected-source-recording-binding", payload]
+
 def run_speaker_finalizer(
     *,
     host: str,
@@ -226,6 +235,7 @@ def run_speaker_finalizer(
     profile_path: Path | None = None,
     model_dir: Path = Path("/opt/bilive/autoslice/models/campp"),
     best_effort_guess: bool = False,
+    expected_source_recording: Mapping[str, object] | None = None,
 ) -> dict:
     """Run the pinned speaker runtime locally on free or through a remote temp.
 
@@ -297,6 +307,7 @@ def run_speaker_finalizer(
             command.extend(["--mixed-overlap-evidence", str(mixed_overlap_evidence_path)])
         if speaker_session_context_path is not None:
             command.extend(["--speaker-session-context", str(speaker_session_context_path)])
+        command.extend(_source_binding_cli(expected_source_recording))
         command.extend(["--best-effort-guess"] if best_effort_guess else [])
         completed = subprocess.run(
             command, cwd=str(ROOT), check=False, capture_output=True, text=True, timeout=1800
@@ -365,6 +376,7 @@ def run_speaker_finalizer(
                 remote_command.extend(["--mixed-overlap-evidence", remote_mixed_overlap])
             if speaker_session_context_path is not None:
                 remote_command.extend(["--speaker-session-context", remote_speaker_context])
+            remote_command.extend(_source_binding_cli(expected_source_recording))
             remote_command.extend(["--best-effort-guess"] if best_effort_guess else [])
             shell_command = "cd /opt/bilive/autoslice/repo && " + " ".join(
                 shlex.quote(part) for part in remote_command
@@ -598,6 +610,11 @@ def run_producer_speaker_finalization(
     speaker_session_context_path = _bound_speaker_session_context_path(
         speaker_session_context_path, spec=spec
     )
+    expected_source_recording = current_source_recording_binding(
+        spec=spec,
+        absolute_start_ms=final_source_start_ms,
+        absolute_end_ms=final_source_end_ms,
+    )
 
     if speaker_mode == "uniform_host":
         raise ValueError(
@@ -787,6 +804,7 @@ def run_producer_speaker_finalization(
         speaker_python=speaker_python,
         # 只有 auto 档降级；required 是"必须有真证据"的严格档，语义不动。
         best_effort_guess=speaker_mode == "auto",
+        expected_source_recording=expected_source_recording,
     )
     manifest["speaker_routing"] = {
         "requested_mode": speaker_mode,

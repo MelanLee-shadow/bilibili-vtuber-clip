@@ -209,6 +209,7 @@ def main(argv=None) -> int:
             args.text_override,
             text_override_decision_output_path,
             text_override_manifest_path,
+            expected_candidate_id=args.cid,
         )
         if text_override_manifest.get("candidate_id") != args.cid:
             print("text override candidate_id mismatch", file=sys.stderr)

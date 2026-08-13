@@ -76,6 +76,11 @@
   published-topic review authority 绑定候选与已发布 registry 行、两边 hook/scorecard、
   BVID 和公开标题。它只能把候选移入 `HUMAN_TOPIC_DEDUP_REVIEW`，不得自动宣称重复、
   改分、删除或授权上传；任一绑定漂移时保持 stale review hold，不能静默放行。
+  若 Ivan 已完成同题人工审阅并决定继续生产，必须另有 deploy-sealed、candidate-scoped 的
+  `published-topic-dedup-resolution.v1`，同时绑定原 authority 的 raw bytes/self-seal 和同一
+  候选/已发稿/registry/public-title 事实；它只能解除该候选的 selection hold，且
+  `upload_authorized=false`。resolution、原 authority 或任一当前绑定漂移时仍保持 stale hold；
+  新投稿仍须单独通过当前 package audit、联合 QC 与 authorized-upload manifest。
 - 精确恢复契约持续压住普通 backlog，直到新的人工恢复计划显式替换；普通 backlog
   在报告里只能显示为 `OUTSIDE_EXACT_CONTRACT / INELIGIBLE`，不能伪装成当前候补。
 - 已由 committed publication registry 标为 `hold_pending_review` 的单条历史
@@ -85,6 +90,13 @@
   `upload_allowed=false`；tick 从入口冻结 Talk-only allowlist，确定性拒绝也不得中途恢复
   普通 Talk 补位、发现或任何 Song 工作。registry 未提交/未部署封印、hold 行不唯一、
   指纹未变、源/BCUT/chat 缺证或候选重复都 fail closed；到期则先于外部证据检查自动退出。
+- 单条历史说话人人工停泊件只能由严格
+  `operator-processing-scope-grant.v4 / RECOVER_NAMED_SPEAKER_MANUAL_REVIEW_HOLD`
+  恢复。grant 必须恰好点名一条并显式 `upload_allowed=false`；候选必须是唯一、严格
+  `speaker-manual-review-hold.v1 / PENDING_HUMAN_REVIEW`，且 `failure_kind=speaker_evidence`、
+  `failure_recoverable=false`。恢复指纹不变或计算失败一律 BLOCK；指纹漂移或已经进入
+  Talk 队列才保持 OUTSTANDING，只有最终交付/拒绝后 CONVERGED。scope 全程 Talk-only，
+  五个 Song 集合的入口快照必须逐项深等值保留。
 - `src/autoslice/candidate_selection.py::exact_talk_contract_closure` 是 exact 状态的共同
   判定器。终态验收要求：每个 contract ID 恰有一条 `rc=0 + CURRENT + COMPLIANT`
   delivery；没有 pending、failure、missing、重复/冲突记录或 outside-contract active pick。

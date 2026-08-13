@@ -82,12 +82,73 @@ def test_text_override_preflight_accepts_supported_schema_versions(
     schema_version: int,
 ) -> None:
     asset = tmp_path / "text-overrides.json"
-    asset.write_text(json.dumps({"schema_version": schema_version}), encoding="utf-8")
+    asset.write_text(
+        json.dumps(
+            {
+                "schema_version": schema_version,
+                "candidate_id": CANDIDATE_ID,
+            }
+        ),
+        encoding="utf-8",
+    )
 
     request = _load(tmp_path, monkeypatch, text_overrides=asset)
 
     assert request.text_override_path == asset
     assert request.out_root.is_dir()
+
+
+def test_candidate_local_no_upload_override_preflight_is_exact_and_bound(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asset = tmp_path / "text-overrides.json"
+    document = {
+        "schema_version": 4,
+        "candidate_id": CANDIDATE_ID,
+        "upload": False,
+        "source_cue_witness_sha256": "a" * 64,
+        "decision_output_witness_sha256": "b" * 64,
+        "overrides": [{}],
+    }
+    asset.write_text(json.dumps(document), encoding="utf-8")
+
+    request = _load(tmp_path, monkeypatch, text_overrides=asset)
+
+    assert request.text_override_path == asset
+
+    for mutation in (
+        {"candidate_id": "another_candidate"},
+        {"upload": True},
+        {"upload": None},
+        {"recording_basename": "decorative-and-unconsumed.mp4"},
+    ):
+        mutated = {**document, **mutation}
+        asset.write_text(json.dumps(mutated), encoding="utf-8")
+        with pytest.raises(ValueError):
+            _load(tmp_path, monkeypatch, text_overrides=asset)
+
+    missing_upload = dict(document)
+    missing_upload.pop("upload")
+    asset.write_text(json.dumps(missing_upload), encoding="utf-8")
+    with pytest.raises(ValueError, match="exact top-level fields"):
+        _load(tmp_path, monkeypatch, text_overrides=asset)
+
+
+def test_legacy_text_override_candidate_id_mismatch_fails_before_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asset = tmp_path / "text-overrides.json"
+    asset.write_text(
+        json.dumps({"schema_version": 3, "candidate_id": "another_candidate"}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="candidate_id mismatch"):
+        _load(tmp_path, monkeypatch, text_overrides=asset)
+
+    assert not (tmp_path / "output").exists()
 
 
 def test_subtitle_regression_preflight_accepts_its_schema(
@@ -136,7 +197,7 @@ def test_precompiled_exact_interval_runtime_authority_is_rejected_before_output(
         (
             "text_overrides",
             {"schema_version": "subtitle-redelivery-baseline.v1"},
-            "text override schema_version must be 1, 2, or 3",
+            "text override schema_version must be 1, 2, 3, or 4",
         ),
         (
             "subtitle_regression",
@@ -154,7 +215,7 @@ def test_precompiled_exact_interval_runtime_authority_is_rejected_before_output(
         (
             "text_overrides",
             {"schema_version": True},
-            "text override schema_version must be 1, 2, or 3",
+            "text override schema_version must be 1, 2, 3, or 4",
         ),
         (
             "subtitle_regression",

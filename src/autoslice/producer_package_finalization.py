@@ -645,13 +645,13 @@ def _materialize_final_recut(
             subtitle_path,
             text_manifest_path,
         )
-        if override_document.get("schema_version") == 3:
-            text_manifest = adapters.apply_text_override_document(
-                *text_manifest_args,
-                timeline_offset_ms=final_start,
-            )
-        else:
-            text_manifest = adapters.apply_text_override_document(*text_manifest_args)
+        text_manifest = adapters.apply_text_override_document(
+            *text_manifest_args,
+            expected_candidate_id=cid,
+            **(
+                {"timeline_offset_ms": final_start} if override_document.get("schema_version") in {3, 4} else {}
+            ),
+        )
     else:
         adapters.write_source_range_srt(sanitized, final_start, final_end, subtitle_path)
     redelivery_baseline_audit_path: Path | None = None

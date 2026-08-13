@@ -35,6 +35,8 @@ from src.autoslice.operator_processing_scope import (
     GRANT_SCHEMA,
     HELD_CURRENT_RERENDER_GRANT_SCHEMA,
     HELD_CURRENT_RERENDER_INTENT,
+    SPEAKER_HOLD_RECOVERY_GRANT_SCHEMA,
+    SPEAKER_HOLD_RECOVERY_INTENT,
     STATE_KEY,
     operator_scope_admission,
     operator_talk_scope,
@@ -67,6 +69,8 @@ _DIMENSIONS = {
     "self_contained": 4,
 }
 _FIELD_ABSENT = object()
+OLD_SPEAKER_RECOVERY = "sha256:" + "1" * 64
+NEW_SPEAKER_RECOVERY = "sha256:" + "2" * 64
 
 
 class _FrozenDateTime(datetime):
@@ -154,6 +158,48 @@ def _held_current_rerender_grant(**overrides) -> dict:
     )
     grant.update(overrides)
     return grant
+
+
+def _speaker_hold_recovery_grant(**overrides) -> dict:
+    grant = _grant(
+        schema_version=SPEAKER_HOLD_RECOVERY_GRANT_SCHEMA,
+        intent=SPEAKER_HOLD_RECOVERY_INTENT,
+        candidate_ids=[TIER1_IDS[0]],
+        grant_id="2026-08-07-recover-speaker-hold",
+        reason="人工已确认点名候选的说话人真值，只恢复该停泊件且禁止上传。",
+        upload_allowed=False,
+    )
+    grant.update(overrides)
+    return grant
+
+
+def _speaker_hold_state(grant: dict | None = None) -> dict:
+    status = "speaker_evidence_insufficient"
+    return {
+        "status": "no_delivery",
+        "upload_allowed": False,
+        "picks": [
+            {
+                "candidate_id": TIER1_IDS[0],
+                "status": status,
+                "failure_kind": "speaker_evidence",
+                "failure_recoverable": False,
+                "failure_recovery_fingerprint": OLD_SPEAKER_RECOVERY,
+                "speaker_manual_review": {
+                    "schema_version": "speaker-manual-review-hold.v1",
+                    "status": "PENDING_HUMAN_REVIEW",
+                    "held_status": status,
+                    "upload_authorized": False,
+                },
+            }
+        ],
+        "pending_talk": [],
+        "talk_backlog": [],
+        "pending_song": [],
+        "song_backlog": [],
+        "songs": [],
+        STATE_KEY: grant or _speaker_hold_recovery_grant(),
+    }
 
 
 def _state_with_held_current(grant: dict) -> dict:
@@ -598,6 +644,202 @@ def test_expired_held_current_scope_wins_before_any_registry_or_source_inspectio
     assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) is None
 
 
+def test_v4_admits_only_one_strict_speaker_hold_after_recovery_fingerprint_change(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda kind, cid: (
+            NEW_SPEAKER_RECOVERY
+            if (kind, cid) == ("speaker_evidence", TIER1_IDS[0])
+            else pytest.fail("v4 computed an unrelated recovery fingerprint")
+        ),
+    )
+    state = _speaker_hold_state()
+
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert admission.admitted is True
+    assert admission.candidate_ids == (TIER1_IDS[0],)
+    assert admission.disclosure == {
+        "schema_version": "operator-processing-scope-disclosure.v4",
+        "grant_id": "2026-08-07-recover-speaker-hold",
+        "recording_date": RECORDING_DATE,
+        "candidate_ids": [TIER1_IDS[0]],
+        "outstanding_candidate_ids": [TIER1_IDS[0]],
+        "quote": IVAN_QUOTE,
+        "intent": SPEAKER_HOLD_RECOVERY_INTENT,
+        "upload_allowed": False,
+    }
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == (
+        TIER1_IDS[0],
+    )
+
+
+def test_v4_unchanged_speaker_recovery_fingerprint_blocks_without_fallthrough(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda *_a: OLD_SPEAKER_RECOVERY,
+    )
+    state = _speaker_hold_state()
+
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert admission.admitted is False
+    assert admission.reason_code == "SPEAKER_RECOVERY_FINGERPRINT_UNCHANGED"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+
+def test_v4_missing_or_malformed_recorded_fingerprint_fails_closed(monkeypatch):
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda *_a: NEW_SPEAKER_RECOVERY,
+    )
+    for invalid in (None, "sha256:not-a-digest"):
+        state = _speaker_hold_state()
+        state["picks"][0]["failure_recovery_fingerprint"] = invalid
+        admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+        assert admission.reason_code == "SPEAKER_RECOVERY_FINGERPRINT_INVALID"
+        assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("status", "failed"),
+        ("failure_kind", "subtitle_authority"),
+        ("failure_recoverable", True),
+        ("speaker_manual_review", {"schema_version": "speaker-manual-review-hold.v1"}),
+    ],
+)
+def test_v4_rejects_every_non_strict_speaker_hold_shape(monkeypatch, field, value):
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda *_a: pytest.fail("invalid hold must fail before fingerprint calculation"),
+    )
+    state = _speaker_hold_state()
+    state["picks"][0][field] = value
+
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert admission.reason_code == "SPEAKER_MANUAL_REVIEW_HOLD_INVALID"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"upload_allowed": True},
+        {"intent": "RECOVER_ANY_MANUAL_HOLD"},
+        {"candidate_ids": [TIER1_IDS[0], TIER1_IDS[1]]},
+    ],
+)
+def test_v4_malformed_grants_freeze_recent_dates_instead_of_broad_fallthrough(
+    overrides,
+):
+    state = _speaker_hold_state(_speaker_hold_recovery_grant(**overrides))
+
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert admission.reason_code == "SCHEMA_INVALID"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+
+def test_v4_expiry_wins_before_fingerprint_and_conflicting_scope_is_empty(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda *_a: pytest.fail("expired v4 must not calculate a fingerprint"),
+    )
+    expired = _speaker_hold_state(
+        _speaker_hold_recovery_grant(expires_at="2026-08-10T15:00:00Z")
+    )
+    assert operator_scope_admission(
+        expired, date=RECORDING_DATE, now=NOW
+    ).reason_code == "EXPIRED"
+    assert operator_talk_scope(expired, date=RECORDING_DATE, now=NOW) is None
+
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda *_a: NEW_SPEAKER_RECOVERY,
+    )
+    conflicting = _speaker_hold_state()
+    conflicting["talk_selection_contract"] = {"schema_version": "conflict.v1"}
+    assert operator_scope_admission(
+        conflicting, date=RECORDING_DATE, now=NOW
+    ).admitted is True
+    assert operator_talk_scope(conflicting, date=RECORDING_DATE, now=NOW) == ()
+
+
+def test_v4_stays_outstanding_while_queued_then_converges_only_on_terminal(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda *_a: NEW_SPEAKER_RECOVERY,
+    )
+    state = _speaker_hold_state()
+    state["picks"] = []
+    state["pending_talk"] = [{"cid": TIER1_IDS[0]}]
+    queued = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+    assert queued.admitted is True
+    assert queued.outstanding_candidate_ids == (TIER1_IDS[0],)
+
+    state["pending_talk"] = []
+    state["picks"] = [{"candidate_id": TIER1_IDS[0], "status": "review_ready"}]
+    terminal = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+    assert terminal.reason_code == "CONVERGED"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) is None
+
+
+def test_v4_duplicate_target_and_fingerprint_error_both_fail_closed(monkeypatch):
+    state = _speaker_hold_state()
+    state["picks"].append(dict(state["picks"][0]))
+    assert operator_scope_admission(
+        state, date=RECORDING_DATE, now=NOW
+    ).reason_code == "SPEAKER_MANUAL_REVIEW_TARGET_NOT_UNIQUE"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+    state = _speaker_hold_state()
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda *_a: (_ for _ in ()).throw(ValueError("broken authority")),
+    )
+    assert operator_scope_admission(
+        state, date=RECORDING_DATE, now=NOW
+    ).reason_code == "SPEAKER_RECOVERY_FINGERPRINT_UNAVAILABLE"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+
+def test_v4_target_in_any_song_collection_is_never_reinterpreted_as_talk(monkeypatch):
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda *_a: NEW_SPEAKER_RECOVERY,
+    )
+    for collection in (
+        "pending_song",
+        "song_backlog",
+        "song_selection_backlog",
+        "songs",
+        "song_superseded_attempts",
+    ):
+        state = _speaker_hold_state()
+        state[collection] = [{"candidate_id": TIER1_IDS[0]}]
+        assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+
 def test_failed_pick_scope_reaches_process_date_maintenance(tmp_path, monkeypatch):
     """The old date gets far enough for existing maintenance to requeue it."""
 
@@ -980,7 +1222,7 @@ def test_process_date_held_current_rejection_never_dispatches_backfill_or_song(
     monkeypatch.setattr(
         runner,
         "_project_terminal_batch_state",
-        lambda value: {
+        lambda value, **_kwargs: {
             "picks": value["picks"],
             "songs": value["songs"],
             "delivered_talk": [],

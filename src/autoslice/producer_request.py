@@ -27,6 +27,9 @@ from src.autoslice.source_fact_rescore_provenance import (
     validate_rebound_spec_provenance,
 )
 from src.autoslice.subtitle_regression import load_subtitle_regression_document
+from src.autoslice.subtitle_text_override_schema import (
+    validate_text_override_document_header,
+)
 
 
 @dataclass(frozen=True)
@@ -168,11 +171,10 @@ def _validate_truth_input_schemas(
             text_override_path,
             label="text override",
         )
-        schema_version = document.get("schema_version")
-        if type(schema_version) is not int or schema_version not in {1, 2, 3}:
-            raise ValueError(
-                f"text override schema_version must be 1, 2, or 3; got {schema_version!r}"
-            )
+        validate_text_override_document_header(
+            document,
+            expected_candidate_id=candidate_id,
+        )
 
     if subtitle_regression_path is not None:
         # The existing regression loader is read-only and already owns this

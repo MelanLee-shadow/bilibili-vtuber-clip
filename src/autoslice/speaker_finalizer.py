@@ -14,10 +14,7 @@ The ML imports are lazy so ordinary unit tests do not need the production venv.
 
 from __future__ import annotations
 import argparse
-import hashlib
-import importlib.metadata
 import json
-import math
 import statistics
 import subprocess
 from dataclasses import asdict, dataclass
@@ -35,10 +32,10 @@ from scripts.apply_speaker_turn_overrides import (
 from scripts.apply_subtitle_text_overrides import TextCue, parse_srt
 from src.autoslice.campp_embed_once import (
     _build_embedding_similarity,
-    _campp_embedding,
+    _campp_embedding as _campp_embedding,
     _campp_runtime_fingerprint as _campp_runtime_fingerprint,
-    _campp_similarity_score,
-    _cosine_similarity,
+    _campp_similarity_score as _campp_similarity_score,
+    _cosine_similarity as _cosine_similarity,
     _embedding_binding_sha256 as _embedding_binding_sha256,
     _load_cached_embedding as _load_cached_embedding,
     _validate_campp_embedding as _validate_campp_embedding,
@@ -1238,7 +1235,6 @@ def _write_ready_speaker_delivery(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
     )
     return manifest
-
 def finalize_speaker_subtitles(
     *,
     media_path: Path,
@@ -1258,6 +1254,7 @@ def finalize_speaker_subtitles(
     analyzer: Callable[..., dict[str, object]] = _run_campplus_analysis,
     context_call: Callable[[str], str] | None = None,
     best_effort_guess: bool = False,
+    expected_source_recording: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     bound = _snapshot_speaker_inputs(
         media_path=media_path,
@@ -1273,6 +1270,7 @@ def finalize_speaker_subtitles(
         media_path=bound.media_path,
         text_srt_path=bound.text_srt_path,
         cue_count=len(bound.cues),
+        expected_source_recording=expected_source_recording,
     )
     override_document = override_state.document
     reviewed_votes = override_state.reviewed_votes
@@ -1533,7 +1531,6 @@ def finalize_fast_solo_subtitles(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
     )
     return manifest
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--media", type=Path, required=True)
@@ -1550,6 +1547,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source-session-anchors", type=Path)
     parser.add_argument("--mixed-overlap-evidence", type=Path)
     parser.add_argument("--speaker-session-context", type=Path)
+    parser.add_argument("--expected-source-recording-binding", type=json.loads)
     parser.add_argument("--no-context-judge", action="store_true")
     # 只有 producer 在 speaker_mode=auto 下才会传；required 永远不带这个开关。
     parser.add_argument("--best-effort-guess", action="store_true")
@@ -1576,6 +1574,7 @@ def main(argv: list[str] | None = None) -> int:
             speaker_session_context_path=args.speaker_session_context,
             context_call=context_call,
             best_effort_guess=args.best_effort_guess,
+            expected_source_recording=args.expected_source_recording_binding,
         )
     except Exception as exc:
         blocked = {
@@ -1594,7 +1593,5 @@ def main(argv: list[str] | None = None) -> int:
         return 4
     print(json.dumps({"status": manifest["status"], "manifest": str(args.output_manifest)}, ensure_ascii=False))
     return 0
-
-
 if __name__ == "__main__":
     raise SystemExit(main())

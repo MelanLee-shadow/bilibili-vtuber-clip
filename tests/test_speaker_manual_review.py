@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import copy
+
 import pytest
 
 import scripts.free_session_autoslice as runner
@@ -164,6 +166,30 @@ def test_parked_talk_keeps_the_batch_out_of_clean_review_ready(status):
     assert [row.get("candidate_id") for row in terminal["failures"]] == [
         "auto_213135_62_138"
     ]
+
+
+def test_talk_only_terminal_projection_does_not_terminalize_song_rows():
+    song = {
+        "candidate_id": "song_terminalizable",
+        "status": "blocked",
+        "rc": 0,
+        "reason_codes": ["SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS"],
+    }
+    state = {"picks": [_speaker_failure("speaker_evidence_insufficient")], "songs": [song]}
+    before = copy.deepcopy(state["songs"])
+
+    project_terminal_batch_state(
+        state,
+        delivered_talk_statuses=runner.DELIVERED_TALK_STATUSES,
+        talk_failure_statuses=TALK_RECOVERY_FAILURE_STATUSES,
+        cover_pending_status=runner.TALK_COVER_PENDING_STATUS,
+        exact_closure={"status": "NOT_APPLICABLE"},
+        retry_epoch=None,
+        mutate_songs=False,
+    )
+
+    assert state["songs"] == before
+    assert state["songs"][0]["status"] == "blocked"
 
 
 def test_publication_registry_is_not_written_by_the_hold():

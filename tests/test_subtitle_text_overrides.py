@@ -208,6 +208,52 @@ def test_cue_bound_override_ignores_unreviewed_punctuation_drift(tmp_path: Path)
     assert manifest["candidate_id"] == "cue_bound_test"
 
 
+def test_no_upload_override_consumer_rechecks_exact_candidate_id(tmp_path: Path) -> None:
+    source = tmp_path / "source.srt"
+    source.write_text(SOURCE, encoding="utf-8")
+    document = _cue_bound_document(source)
+    document["schema_version"] = 4
+    document.pop("source_cue_count")
+    document["upload"] = False
+    document["source_cue_witness_sha256"] = source_cue_witness_sha256(
+        parse_srt(source), document
+    )
+    document["decision_output_witness_sha256"] = decision_output_witness_sha256(
+        parse_srt(source), document
+    )
+    overrides = tmp_path / "overrides.json"
+    overrides.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="requires expected_candidate_id"):
+        apply_document(
+            source,
+            overrides,
+            tmp_path / "out.srt",
+            tmp_path / "manifest.json",
+        )
+    with pytest.raises(ValueError, match="candidate_id mismatch"):
+        apply_document(
+            source,
+            overrides,
+            tmp_path / "out.srt",
+            tmp_path / "manifest.json",
+            expected_candidate_id="another_candidate",
+        )
+
+    assert not (tmp_path / "out.srt").exists()
+    assert not (tmp_path / "manifest.json").exists()
+
+    manifest = apply_document(
+        source,
+        overrides,
+        tmp_path / "out.srt",
+        tmp_path / "manifest.json",
+        expected_candidate_id="cue_bound_test",
+    )
+    assert manifest["candidate_id"] == "cue_bound_test"
+    assert manifest["upload"] is False
+
+
 def test_cue_bound_override_rejects_reviewed_cue_or_count_drift(tmp_path: Path) -> None:
     source = tmp_path / "source.srt"
     source.write_text(SOURCE, encoding="utf-8")

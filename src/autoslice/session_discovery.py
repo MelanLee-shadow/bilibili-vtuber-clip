@@ -11,6 +11,7 @@ import json
 import os
 import re
 import subprocess
+from collections.abc import Collection
 from datetime import datetime
 from pathlib import Path
 
@@ -131,8 +132,14 @@ def recording_session_id(segment: Path, date: str) -> str:
     return f"live-{date.replace('-', '')}Tunknown"
 
 
-def annotate_state_sessions(date: str, state: dict) -> bool:
-    """Migrate date-level state rows onto recorder-defined live sessions."""
+def annotate_state_sessions(
+    date: str,
+    state: dict,
+    *,
+    include_song_rows: bool = True,
+    talk_candidate_ids: Collection[str] | None = None,
+) -> bool:
+    """Migrate rows onto live sessions without crossing a frozen Talk scope."""
 
     changed = False
     mapping = state.setdefault("segment_sessions", {})
@@ -194,20 +201,30 @@ def annotate_state_sessions(date: str, state: dict) -> bool:
         state["session_relation_authority"] = relation_summary
         changed = True
 
-    collections = (
+    talk_collections = (
         "picks",
-        "songs",
         "pending_talk",
-        "pending_song",
         "talk_backlog",
-        "song_backlog",
-        "song_superseded_attempts",
         "talk_superseded_attempts",
     )
+    collections = talk_collections
+    if include_song_rows:
+        collections += (
+            "songs",
+            "pending_song",
+            "song_backlog",
+            "song_superseded_attempts",
+        )
     for collection in collections:
         for row in state.get(collection, []):
             if not isinstance(row, dict):
                 continue
+            if talk_candidate_ids is not None and collection in talk_collections:
+                candidate_id = str(
+                    row.get("cid") or row.get("candidate_id") or ""
+                ).strip()
+                if candidate_id not in talk_candidate_ids:
+                    continue
             segment_value = row.get("segment_path") or row.get("segment")
             if not segment_value:
                 continue

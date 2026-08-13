@@ -563,6 +563,7 @@ def build_review_item(
             text_override_path,
             text_final,
             work_dir / "text-finalization.json",
+            expected_candidate_id=candidate_id,
         )
         if text_manifest.get("output_srt_sha256") != entry["text_final_srt_sha256"]:
             raise BatchSpeakerReviewError(

@@ -130,6 +130,14 @@ timeline 上重放已绑定的 semantic verdict；第 8 阶段直接物化 autho
   听到字母名（如 `N→恩`）不得以 grapheme 不同否决 `大N`。该窄门不提供 provenance，
   不适用于普通语义改写、未知专名或发音不等价候选。
 - 源真值支持 `replace_cue` / `replace_substring` / `drop_cue`；`drop_cue` 只允许删除被 source-timeline 真值半开区间完整包含的 cue（仅容忍 120ms 编码/SRT 边界漂移）。任何实质性跨界均记 `DROP_CUE_STRADDLES_TRUTH_INTERVAL` 并 fail closed，禁止按“有重叠”整条删除。
+- 操作员只确认某个候选的少数字幕文字、且明确没有授予上传权时，使用
+  `subtitle text override schema_version=4`。该版本顶层只允许
+  `schema_version/candidate_id/upload/source_cue_witness_sha256/decision_output_witness_sha256/overrides`
+  六个键，并强制 `upload=false`；不得放入没有运行时消费者的旧成品/源媒体装饰性哈希来制造
+  假绑定。producer 在创建输出目录前核对 candidate，最终边界重放时再次以当前 `cid` 核对；
+  cue source witness 与 decision witness 仍绑定被人工审定的精确时间、原文与输出。该候选资产
+  同时进入 `subtitle_authority` 失败恢复指纹，新增/修改只唤醒同一候选；withheld 模式完全隐藏
+  该资产，不得因人工真值字节变化唤醒盲测。
 - boundary semantic receipt 分两层。resolver 前的 `source_full_window` 回执只能绑定当时完整
   source grid，并用 endpoint 后 cue 证明下一话题；它不是最终交付字幕回执。resolver 与
   `_materialize_final_recut` 完成全部实际交付改写后，必须从精确最终 SRT 重新解析 grid 并签发
@@ -459,3 +467,14 @@ timeline 上重放已绑定的 semantic verdict；第 8 阶段直接物化 autho
   冻结基线继承显式 machine cue；fresh 与 frozen 的机器标签漂移写入
   `reviewed-machine-baseline-replay.v1` 披露，不得改变交付归属。冻结文件解析后重写的实际 SHA
   必须仍等于绑定 SHA，非 canonical 换行/字节形态直接拒发。
+  Ivan 只确认说话人、没有确认字幕文字时，truth input 必须使用
+  `operator-reviewed-speaker-truth.v1 / scope=speaker_only`，并同时声明
+  `subtitle_text_authorized=false`、`upload_authorized=false`。它仍须逐 cue 绑定当前时间、文字、
+  recut media/SRT/automatic-labelled SRT、源录播身份与绝对区间，但这些文字只作防漂移键，
+  不能据此生成 reviewed subtitle baseline、覆盖字幕或取得发布权限；任一 cue/hash/区间漂移
+  即拒绝整份 speaker authority。`operator_review_binding` 还必须指向仓库内 hash-bound 的
+  `operator-reviewed-speaker-delivery-binding.v1`：它封存人工实际观看的 exact delivery hash
+  与当时 current record hash；运行时将它与 truth 的 delivery hash、当前 recut/SRT/automatic
+  hashes 逐项比对。源录播 basename/hash/绝对区间则必须由 producer 当前已校验的单 piece
+  `spec` 与 final recut interval 注入；缺字段、多 piece、越界或任一漂移全部 fail closed。普通
+  load 不为此重哈希 CloudFS 大录像，使用的是 producer 先前已建立的 current source binding。
