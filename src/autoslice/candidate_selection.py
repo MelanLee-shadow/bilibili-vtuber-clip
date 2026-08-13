@@ -20,6 +20,9 @@ from src.autoslice.selection_scorecard import selection_rank_key, selection_scor
 from src.autoslice.publication_reconciliation import (
     publication_row_is_verified,
 )
+from src.autoslice.published_topic_collision import (
+    hold_published_topic_collision_reviews,
+)
 from src.autoslice.talk_quota_freeze import (
     freeze_admission_policy,
     frozen_admission,
@@ -85,10 +88,7 @@ def _exact_talk_contract_ids(state: dict) -> tuple[str, ...]:
         or contract.get("schema_version") != "talk-selection-contract.v1"
         or contract.get("mode") != "EXACT_CANDIDATE_SET_NO_BACKFILL"
         or not str(contract.get("authority") or "").strip()
-        or _SHA256_RX.fullmatch(
-            str(contract.get("source_state_sha256") or "")
-        )
-        is None
+        or _SHA256_RX.fullmatch(str(contract.get("source_state_sha256") or "")) is None
     ):
         raise ValueError("INVALID_EXACT_TALK_SELECTION_CONTRACT")
     values = contract.get("candidate_ids")
@@ -124,23 +124,19 @@ def exact_talk_contract_closure(state: dict) -> dict[str, object]:
         }
 
     picks = [row for row in state.get("picks", []) if isinstance(row, dict)]
-    pending = [
-        row for row in state.get("pending_talk", []) if isinstance(row, dict)
-    ]
+    pending = [row for row in state.get("pending_talk", []) if isinstance(row, dict)]
     contract_set = set(candidate_ids)
     rows: list[dict[str, object]] = []
     for candidate_id in candidate_ids:
         attempts = [
             row
             for row in picks
-            if str(row.get("candidate_id") or row.get("cid") or "")
-            == candidate_id
+            if str(row.get("candidate_id") or row.get("cid") or "") == candidate_id
         ]
         queued = [
             row
             for row in pending
-            if str(row.get("candidate_id") or row.get("cid") or "")
-            == candidate_id
+            if str(row.get("candidate_id") or row.get("cid") or "") == candidate_id
         ]
         if len(attempts) > 1 or len(queued) > 1 or (attempts and queued):
             disposition = "DUPLICATE_OR_CONFLICTING"
@@ -158,15 +154,11 @@ def exact_talk_contract_closure(state: dict) -> dict[str, object]:
             disposition = "MISSING"
         else:
             attempt = attempts[0]
-            if (
-                publication_row_is_verified(attempt)
-                or (
-                    attempt.get("status")
-                    in _runner.DELIVERED_TALK_STATUSES
-                    and attempt.get("bundle_lifecycle") == "CURRENT"
-                    and attempt.get("bundle_compliance") == "COMPLIANT"
-                    and attempt.get("rc") == 0
-                )
+            if publication_row_is_verified(attempt) or (
+                attempt.get("status") in _runner.DELIVERED_TALK_STATUSES
+                and attempt.get("bundle_lifecycle") == "CURRENT"
+                and attempt.get("bundle_compliance") == "COMPLIANT"
+                and attempt.get("rc") == 0
             ):
                 disposition = "CURRENT_COMPLIANT_DELIVERY"
             else:
@@ -196,15 +188,11 @@ def exact_talk_contract_closure(state: dict) -> dict[str, object]:
             str(row.get("candidate_id") or row.get("cid") or "")
             for row in picks
             if str(row.get("candidate_id") or row.get("cid") or "")
-            and str(row.get("candidate_id") or row.get("cid") or "")
-            not in contract_set
+            and str(row.get("candidate_id") or row.get("cid") or "") not in contract_set
         }
     )
     complete = (
-        all(
-            row["disposition"] == "CURRENT_COMPLIANT_DELIVERY"
-            for row in rows
-        )
+        all(row["disposition"] == "CURRENT_COMPLIANT_DELIVERY" for row in rows)
         and not outside_contract_attempt_ids
     )
     return {
@@ -277,8 +265,7 @@ def _talk_admission_for_policy(
     records = [
         item
         for item in state.get("picks", [])
-        if isinstance(item, dict)
-        and _talk_quota_policy(item).scope_key == policy.scope_key
+        if isinstance(item, dict) and _talk_quota_policy(item).scope_key == policy.scope_key
     ]
     produced = sum(
         1
@@ -287,9 +274,7 @@ def _talk_admission_for_policy(
         or publication_row_is_verified(item)
     )
     produced += sum(
-        1
-        for item in records
-        if item.get("status") == _runner.TALK_COVER_PENDING_STATUS
+        1 for item in records if item.get("status") == _runner.TALK_COVER_PENDING_STATUS
     )
     reserved_for_revival = sum(
         1
@@ -301,9 +286,7 @@ def _talk_admission_for_policy(
         < _runner.TALK_REPAIR_LIFETIME_RETRY_CAP
     )
     attempts_left = max(0, _runner.TALK_ATTEMPT_CAP - len(records))
-    slots = min(
-        max(0, policy.cap - produced - reserved_for_revival), attempts_left
-    )
+    slots = min(max(0, policy.cap - produced - reserved_for_revival), attempts_left)
     return slots, produced, reserved_for_revival, policy.extra_slot_min_score
 
 
@@ -320,8 +303,8 @@ def _admit_scope(
     stamped as they take their seat.
     """
 
-    slots, produced, reserved_for_revival, extra_slot_min_score = (
-        _talk_admission_for_policy(state, policy)
+    slots, produced, reserved_for_revival, extra_slot_min_score = _talk_admission_for_policy(
+        state, policy
     )
     keep = [item for item in ranked if frozen_admission(item, policy.scope_key)]
     fresh = [item for item in ranked if frozen_admission(item, policy.scope_key) is None]
@@ -369,17 +352,21 @@ def _admit_scope(
             continue
         _seat(item)
         deferred.remove(item)
-    return keep, deferred, _quota_disclosure_row(
-        policy,
-        slots=slots,
-        produced=produced,
-        reserved_for_revival=reserved_for_revival,
-        kept=len(keep),
-        # frozen = keep − seated_fresh，而 seated_fresh = fresh − deferred。
-        # 别改成「数 keep 里带章的」——新准入在本 tick 内就盖了章，那样数会把
-        # 刚落座的也算成冻结席（首个 tick 的正确值是 0）。
-        kept_on_frozen_seat=len(keep) - len(fresh) + len(deferred),
-        deferred=len(deferred),
+    return (
+        keep,
+        deferred,
+        _quota_disclosure_row(
+            policy,
+            slots=slots,
+            produced=produced,
+            reserved_for_revival=reserved_for_revival,
+            kept=len(keep),
+            # frozen = keep − seated_fresh，而 seated_fresh = fresh − deferred。
+            # 别改成「数 keep 里带章的」——新准入在本 tick 内就盖了章，那样数会把
+            # 刚落座的也算成冻结席（首个 tick 的正确值是 0）。
+            kept_on_frozen_seat=len(keep) - len(fresh) + len(deferred),
+            deferred=len(deferred),
+        ),
     )
 
 
@@ -455,9 +442,7 @@ def _assign_cover_diversity_slots(state: dict) -> None:
     backfill candidate to reuse the missing visual family.
     """
 
-    pending = [
-        item for item in state.get("pending_talk", []) if isinstance(item, dict)
-    ]
+    pending = [item for item in state.get("pending_talk", []) if isinstance(item, dict)]
     sessions = list(dict.fromkeys(_item_session_id(item) for item in pending))
     for session_id in sessions:
         used = {
@@ -473,9 +458,7 @@ def _assign_cover_diversity_slots(state: dict) -> None:
             and not isinstance(record.get("cover_diversity_slot"), bool)
             and int(record["cover_diversity_slot"]) >= 0
         }
-        session_pending = [
-            item for item in pending if _item_session_id(item) == session_id
-        ]
+        session_pending = [item for item in pending if _item_session_id(item) == session_id]
         for item in session_pending:
             existing = item.get("cover_diversity_slot")
             if (
@@ -486,7 +469,11 @@ def _assign_cover_diversity_slots(state: dict) -> None:
             ):
                 slot = existing
             else:
-                slot = next(value for value in range(len(used) + len(session_pending) + 1) if value not in used)
+                slot = next(
+                    value
+                    for value in range(len(used) + len(session_pending) + 1)
+                    if value not in used
+                )
             item["cover_diversity_slot"] = slot
             used.add(slot)
 
@@ -501,9 +488,7 @@ def backlog_has_eligible_session_work(state: dict) -> bool:
     ):
         return True
     song_sessions = {
-        _item_session_id(item)
-        for item in state.get("song_backlog", [])
-        if isinstance(item, dict)
+        _item_session_id(item) for item in state.get("song_backlog", []) if isinstance(item, dict)
     }
     for session_id in song_sessions:
         generation_attempts = sum(
@@ -599,12 +584,8 @@ def _canonicalize_persisted_song_quarantine_intervals(state: dict) -> None:
     for index, existing in enumerate(list(intervals)):
         if not isinstance(existing, dict):
             continue
-        anchor_start_ms = existing.get(
-            "original_anchor_start_ms", existing.get("start_ms")
-        )
-        anchor_end_ms = existing.get(
-            "original_anchor_end_ms", existing.get("end_ms")
-        )
+        anchor_start_ms = existing.get("original_anchor_start_ms", existing.get("start_ms"))
+        anchor_end_ms = existing.get("original_anchor_end_ms", existing.get("end_ms"))
         if (
             not isinstance(anchor_start_ms, int)
             or isinstance(anchor_start_ms, bool)
@@ -643,12 +624,8 @@ def _session_relative_ms(item: dict, local_ms: int) -> int | None:
     if session_match is None or segment_match is None:
         return None
     try:
-        session_start = datetime.strptime(
-            "".join(session_match.groups()), "%Y%m%d%H%M%S"
-        )
-        segment_start = datetime.strptime(
-            "".join(segment_match.groups()), "%Y%m%d%H%M%S"
-        )
+        session_start = datetime.strptime("".join(session_match.groups()), "%Y%m%d%H%M%S")
+        segment_start = datetime.strptime("".join(segment_match.groups()), "%Y%m%d%H%M%S")
     except ValueError:
         return None
     return int((segment_start - session_start).total_seconds() * 1000) + local_ms
@@ -664,10 +641,7 @@ def exclude_session_edge_bgm_candidates(state: dict) -> None:
 
     queue_names = ("pending_song", "song_backlog")
     queued = [
-        item
-        for name in queue_names
-        for item in state.get(name, [])
-        if isinstance(item, dict)
+        item for name in queue_names for item in state.get(name, []) if isinstance(item, dict)
     ]
     if not queued:
         return
@@ -695,25 +669,17 @@ def exclude_session_edge_bgm_candidates(state: dict) -> None:
                 )
     for item in queued:
         duration_ms = item.get("seg_dur_ms")
-        if (
-            not isinstance(duration_ms, int)
-            or isinstance(duration_ms, bool)
-            or duration_ms <= 0
-        ):
+        if not isinstance(duration_ms, int) or isinstance(duration_ms, bool) or duration_ms <= 0:
             continue
         relative_end = _session_relative_ms(item, duration_ms)
         if relative_end is not None:
             session_id = _item_session_id(item)
-            session_ends[session_id] = max(
-                session_ends.get(session_id, relative_end), relative_end
-            )
+            session_ends[session_id] = max(session_ends.get(session_id, relative_end), relative_end)
 
     excluded_ids: set[str] = set()
     excluded_rows = state.setdefault("song_edge_bgm_excluded", [])
     known_ids = {
-        str(row.get("candidate_id") or "")
-        for row in excluded_rows
-        if isinstance(row, dict)
+        str(row.get("candidate_id") or "") for row in excluded_rows if isinstance(row, dict)
     }
     for item in queued:
         candidate_id = str(item.get("cid") or item.get("candidate_id") or "")
@@ -732,16 +698,12 @@ def exclude_session_edge_bgm_candidates(state: dict) -> None:
         session_id = _item_session_id(item)
         session_end = session_ends.get(session_id)
         reason_code = None
-        if (
-            relative_start is not None
-            and relative_start <= _runner.SESSION_INTRO_BGM_MAX_OFFSET_MS
-        ):
+        if relative_start is not None and relative_start <= _runner.SESSION_INTRO_BGM_MAX_OFFSET_MS:
             reason_code = "SESSION_INTRO_BGM_BY_POSITION"
         elif (
             relative_end is not None
             and session_end is not None
-            and 0 <= session_end - relative_end
-            <= _runner.SESSION_OUTRO_BGM_MAX_REMAINING_MS
+            and 0 <= session_end - relative_end <= _runner.SESSION_OUTRO_BGM_MAX_REMAINING_MS
         ):
             reason_code = "SESSION_OUTRO_BGM_BY_POSITION"
         if reason_code is None:
@@ -753,9 +715,7 @@ def exclude_session_edge_bgm_candidates(state: dict) -> None:
                 {
                     "candidate_id": candidate_id,
                     "session_id": session_id,
-                    "segment_path": str(
-                        item.get("segment_path") or item.get("segment") or ""
-                    ),
+                    "segment_path": str(item.get("segment_path") or item.get("segment") or ""),
                     "anchor_start_ms": anchor_start_ms,
                     "anchor_end_ms": anchor_end_ms,
                     "session_relative_anchor_start_ms": relative_start,
@@ -781,16 +741,14 @@ def exclude_session_edge_bgm_candidates(state: dict) -> None:
             for item in state.get(name, [])
             if not (
                 isinstance(item, dict)
-                and str(item.get("cid") or item.get("candidate_id") or "")
-                in excluded_ids
+                and str(item.get("cid") or item.get("candidate_id") or "") in excluded_ids
             )
         ]
     state["song_quarantine_intervals"] = [
         interval
         for interval in state.get("song_quarantine_intervals", [])
         if not (
-            isinstance(interval, dict)
-            and str(interval.get("candidate_id") or "") in excluded_ids
+            isinstance(interval, dict) and str(interval.get("candidate_id") or "") in excluded_ids
         )
     ]
 
@@ -814,11 +772,13 @@ def quarantine_overlapping_talk_candidates(state: dict) -> None:
 
     _canonicalize_persisted_song_quarantine_intervals(state)
     for source in (state.get("pending_song", []), state.get("song_backlog", [])):
-        for item in (source if isinstance(source, list) else []):
+        for item in source if isinstance(source, list) else []:
             if isinstance(item, dict):
                 _runner._remember_song_quarantine_interval(state, item)
 
-    intervals = [item for item in state.get("song_quarantine_intervals", []) if isinstance(item, dict)]
+    intervals = [
+        item for item in state.get("song_quarantine_intervals", []) if isinstance(item, dict)
+    ]
     blocked = state.setdefault("song_overlap_blocked_talk", [])
     reconsidered = list(state.get("pending_talk", []))
     pending_ids = {
@@ -860,7 +820,8 @@ def quarantine_overlapping_talk_candidates(state: dict) -> None:
                 and not isinstance(interval.get("start_ms"), bool)
                 and isinstance(interval.get("end_ms"), int)
                 and not isinstance(interval.get("end_ms"), bool)
-                and max(talk_start, int(interval["start_ms"])) < min(talk_end, int(interval["end_ms"]))
+                and max(talk_start, int(interval["start_ms"]))
+                < min(talk_end, int(interval["end_ms"]))
             ),
             None,
         )
@@ -874,9 +835,7 @@ def quarantine_overlapping_talk_candidates(state: dict) -> None:
                     and str(tombstone.get("candidate_id") or "") == talk_id
                 ):
                     tombstone["status"] = "released"
-                    tombstone["release_reason_code"] = (
-                        "SONG_QUARANTINE_INTERVAL_REEVALUATED"
-                    )
+                    tombstone["release_reason_code"] = "SONG_QUARANTINE_INTERVAL_REEVALUATED"
             continue
         tombstone = {
             "candidate_id": str(talk.get("cid") or talk.get("candidate_id") or ""),
@@ -915,8 +874,6 @@ def quarantine_overlapping_talk_candidates(state: dict) -> None:
             "(门拦:与未验证/已阻断歌切区间重叠,不得走 talk 旁路)",
         )
     state["pending_talk"] = kept
-
-
 
 
 def _song_repair_retries_exhausted(item: dict) -> bool:
@@ -963,7 +920,9 @@ def refill_songs(state: dict) -> None:
         # fresher repair and no untried candidate claimed, so a genuine
         # long-running provider outage still recovers on its own.
         stale_repairs = [item for item in session_repairs if _song_repair_retries_exhausted(item)]
-        fresh_repairs = [item for item in session_repairs if not _song_repair_retries_exhausted(item)]
+        fresh_repairs = [
+            item for item in session_repairs if not _song_repair_retries_exhausted(item)
+        ]
         selected.extend(fresh_repairs[:delivery_slots])
         deferred.extend(fresh_repairs[delivery_slots:])
         ordinary_slots = max(0, delivery_slots - min(len(fresh_repairs), delivery_slots))
@@ -1016,12 +975,15 @@ def prioritize(state: dict) -> None:
     # boundary/speaker rejection can automatically free its slot.  They used
     # to survive only as report strings, making top-5 mean "try exactly five
     # and accept fewer on any content-level refusal".
-    prior_backlog = [
-        item for item in state.pop("talk_backlog", []) if isinstance(item, dict)
-    ]
+    prior_backlog = [item for item in state.pop("talk_backlog", []) if isinstance(item, dict)]
     state.setdefault("pending_talk", []).extend(prior_backlog)
     _runner.exclude_session_edge_bgm_candidates(state)
     _runner.quarantine_overlapping_talk_candidates(state)
+    # Cross-publication topic identity has no calibrated deterministic
+    # classifier yet.  Exact, committed human-review authorities therefore
+    # park their candidate before either pinned-repair or ordinary quota
+    # admission.  The hold changes neither score nor upload authority.
+    hold_published_topic_collision_reviews(state)
     # 运维范围授权点名了具体候选时，没被点名的这一轮不进准入池（只收窄，不动
     # 席位数/分数门/Tier 排序）；本函数收尾会整体覆写 talk_backlog，所以压下的
     # 行必须在那之后交回。本体在 src/autoslice/operator_processing_scope.py。
@@ -1034,23 +996,16 @@ def prioritize(state: dict) -> None:
         non_exact_backlog: list[dict] = []
         seen_exact: set[str] = set()
         for item in list(pending_talk) + list(state.get("talk_backlog", [])):
-            candidate_id = str(
-                item.get("cid") or item.get("candidate_id") or ""
-            )
+            candidate_id = str(item.get("cid") or item.get("candidate_id") or "")
             if candidate_id not in order:
                 non_exact_backlog.append(item)
                 continue
             if candidate_id in seen_exact:
-                raise ValueError(
-                    "DUPLICATE_EXACT_TALK_SELECTION_CANDIDATE:"
-                    f"{candidate_id}"
-                )
+                raise ValueError(f"DUPLICATE_EXACT_TALK_SELECTION_CANDIDATE:{candidate_id}")
             seen_exact.add(candidate_id)
             exact_pending.append(item)
         exact_pending.sort(
-            key=lambda item: order[
-                str(item.get("cid") or item.get("candidate_id") or "")
-            ]
+            key=lambda item: order[str(item.get("cid") or item.get("candidate_id") or "")]
         )
         state["pending_talk"] = exact_pending
         state["talk_backlog"] = non_exact_backlog
@@ -1066,9 +1021,7 @@ def prioritize(state: dict) -> None:
         for item in pending_talk
         if not item.get("selected_repair") and not _is_pinned_user_selection(item)
     ]
-    pinned_scopes = {
-        _talk_quota_policy(item).scope_key for item in pinned_selections
-    }
+    pinned_scopes = {_talk_quota_policy(item).scope_key for item in pinned_selections}
     below_threshold = [
         item
         for item in pending_talk
@@ -1098,9 +1051,7 @@ def prioritize(state: dict) -> None:
     keep: list[dict] = []
     deferred: list[dict] = []
     policies = {
-        policy.scope_key: policy
-        for item in pending_talk
-        for policy in (_talk_quota_policy(item),)
+        policy.scope_key: policy for item in pending_talk for policy in (_talk_quota_policy(item),)
     }
     disclosure: list[dict] = []
     for policy in policies.values():

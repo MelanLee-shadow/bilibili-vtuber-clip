@@ -414,7 +414,9 @@ def _build_entity_verification_context(
                 return verdict
         return cpa_read_aloud_verifier(request)
 
-    static_referent_groups = load_referent_groups(adapters.profile_asset_file("entity_confusables"))
+    static_referent_groups = load_referent_groups(
+        adapters.profile_asset_file("entity_confusables"), include_singletons=True
+    )
     dynamic_groups = []
     topic_resolution_audit: dict[str, object] = {
         "schema_version": "topic-resolution.v1",

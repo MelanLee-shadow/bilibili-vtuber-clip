@@ -67,6 +67,11 @@
 - 核心原则：标题围绕李豆沙本人；替换成任何别的主播还成立的标题就是失败。
 - 自动标题除共享门外，还受违禁词与 selection-hook 锚点约束；失败可做有界重写。
   人工正文不自动重写，但结构/长度不合规仍 fail closed 并要求修正文档 authority。
+- profile 中即使某个 canonical entity 只有一个 confusable group，也必须进入 producer 与
+  `term_authority` 的共享实体上下文；不得因默认过滤 singleton 而让 `南天` 一类已登记误听
+  在 transcript、hook、source-fact 与标题之间互相自证。登记只提供待裁决的 canonical/
+  surface 关系，仍须由音频/人工 authority 判定：`南町nightin` 等合法复合面保留，普通
+  false-positive 不机械替换；无法裁决时应阻断而不是生成自洽的错误标题。
 - 自动 talk 标题 prompt 必须从**完整最终 SRT**（不是 600 字节选）扫描 profile
   `important_content_ips`，以「内容提及的重要 IP」字段携带 canonical 名、命中次数与表面证据，
   publish draft/staging 同步保存该 signal。它只供选材：内容中心时自然使用，偶然一提时可省略；

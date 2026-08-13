@@ -18,11 +18,14 @@
   `operator_processing_scope`），字段集严格等值校验，必须携带 Ivan 逐字原话、
   授权时间、理由、针对哪一天、以及**被点名的候选 id**。任何字段缺失/多余/类型
   不对 → 整块失效（fail-closed，不是"部分生效"），reason_code 进日志。
-- **收敛即自动退出**：见 `_settled` —— 被点名的候选一旦"有了 picks 行且不再排队"，
-  它就算干完了；全部干完，这一天下一个 tick 自动离开窗口，**不需要人回来清理**。
+- **收敛即自动退出**：v1 见 `_settled` —— 被点名的候选一旦"有了 picks 行且不再
+  排队"，它就算干完了；全部干完，这一天下一个 tick 自动离开窗口，**不需要人回来
+  清理**。历史 failed pick 只有携带严格 v2 schema 和
+  `RECOVER_NAMED_FAILED_PICKS` 意图的逐字授权才保持未竟；这只让既有 maintenance
+  有机会判定 requeue，不直接改状态，也不绕过恢复、配额或上传门。
 - **硬性兜底 `expires_at`**：收敛判据依赖候选真的能被产出。万一它们因为配额/分数门
-  根本坐不上席（2026-08-07 就是这种情况，见下），光靠收敛会让老日期永远赖在窗口
-  里——既有注释点名过这个风险。所以 `expires_at` 是必填项，到点无条件失效。
+  根本坐不上席，光靠收敛会让老日期永远赖在窗口里。所以 `expires_at` 是必填项，
+  到点无条件失效。
 - **blast radius 只有被点名的那一天**：判据只读该日期自己的 state，窗口仍然是
   最新三天 + 既有两个例外 + 本通道点名的那一天。不是把窗口从 3 天改成 N 天。
 - **不放宽任何门**：本通道只回答"这一天要不要进 tick 的处理范围"。交付门、上传门、
@@ -37,18 +40,16 @@
 陈旧内存态面前存活。整备动作由 integrator 持 `runner.lock` 完成。反过来，做成
 仓内资产要牵动 profile、模板 profile 对齐、OSS 导出面，blast radius 反而更大。
 
-## 2026-08-07 的实测前提（写在这里免得下一个人重踩）
+## 历史日期的判定边界
 
-按 free 上 8/7 的真实 state：该场 quota scope 是 `game:live-20260807Tunknown`，
-`cap=10`、`extra_slot_min_score=85`，已 produced 5 席（3 published + 1 review_ready
-+ 1 media_ready_cover_pending），4 条 failed 行的 `talk_repair_retry_count` 都是
-6/7，早过 `TALK_REPAIR_LIFETIME_RETRY_CAP=3`，`reserved_for_revival=0`。于是新准入
-的第一个位次就是 6 > `MAX_TALK_PICKS=5`，**每一个**新候选都要过 85 分门；而
-`talk_backlog` 里最高分只有 82.75，四条 tier-1 是 75.5/72.25/70.5/69.5。
+不要把某次 live state 的席位数、published 数或 backlog 分数写死在本模块。v1 只让仍在
+queue 中的点名候选把历史日期带回 tick；v2 只让点名的 recoverable failed pick 进入既有
+maintenance/requeue 判定。两者都不承诺候选一定坐上席，也不改变
+`talk_quota_policy_authority.v1.json`、失败恢复 fingerprint、终态拒绝或人工 hold。
 
-**结论：光把 8/7 放进窗口，一条也坐不上席。** 要真的产出那四条，必须由 Ivan 在
-`assets/lidousha/talk_quota_policy_authority.v1.json` 里改 2026-08-07 那条的分数门
-（带他的逐字出处）——那是既有的、正确的配额通道，不在本模块的权限之内。
+因此 integrator 必须在写 grant 前现场读取该日期 state：点名候选若是终态拒绝、已发布、
+`failure_recoverable=false`，或需要另一种 typed recovery authority，本模块会收敛或拒绝，
+而不是把它伪造成可重跑项。
 """
 
 from __future__ import annotations
@@ -61,7 +62,10 @@ from datetime import datetime, timezone
 from src.autoslice.runner_state_writeback import CANDIDATE_COLLECTIONS
 
 GRANT_SCHEMA = "operator-processing-scope-grant.v1"
+FAILED_PICK_RECOVERY_GRANT_SCHEMA = "operator-processing-scope-grant.v2"
+FAILED_PICK_RECOVERY_INTENT = "RECOVER_NAMED_FAILED_PICKS"
 DISCLOSURE_SCHEMA = "operator-processing-scope-disclosure.v1"
+FAILED_PICK_RECOVERY_DISCLOSURE_SCHEMA = "operator-processing-scope-disclosure.v2"
 STATE_KEY = "operator_processing_scope"
 DISCLOSURE_KEY = "operator_processing_scope_disclosure"
 # 出处文本的下限沿用 talk_quota_authority._authority_text 的口径：短于 8 个字符的
@@ -79,6 +83,7 @@ _GRANT_FIELDS = frozenset(
         "expires_at",
     }
 )
+_FAILED_PICK_RECOVERY_GRANT_FIELDS = _GRANT_FIELDS | {"intent"}
 _AUTHORIZATION_FIELDS = frozenset({"quote", "timestamp"})
 # 候选还"排着队"的两个集合。其余 CANDIDATE_COLLECTIONS 成员（picks / 低信心分
 # 落选 / superseded …）都表示这条候选已经被处理过一轮，不再是本授权的未竟工作。
@@ -145,9 +150,20 @@ def _validate_grant(block: object) -> tuple[dict[str, object] | None, str]:
 
     if block is None:
         return None, "ABSENT"
-    if not isinstance(block, Mapping) or set(block) != _GRANT_FIELDS:
+    if not isinstance(block, Mapping):
         return None, "SCHEMA_INVALID"
-    if block.get("schema_version") != GRANT_SCHEMA:
+    schema_version = block.get("schema_version")
+    if schema_version == GRANT_SCHEMA:
+        expected_fields = _GRANT_FIELDS
+        intent = None
+    elif schema_version == FAILED_PICK_RECOVERY_GRANT_SCHEMA:
+        expected_fields = _FAILED_PICK_RECOVERY_GRANT_FIELDS
+        intent = block.get("intent")
+        if intent != FAILED_PICK_RECOVERY_INTENT:
+            return None, "SCHEMA_INVALID"
+    else:
+        return None, "SCHEMA_INVALID"
+    if set(block) != expected_fields:
         return None, "SCHEMA_INVALID"
     grant_id = _text(block.get("grant_id"))
     recording_date = _text(block.get("recording_date"))
@@ -179,10 +195,12 @@ def _validate_grant(block: object) -> tuple[dict[str, object] | None, str]:
         return None, "SCHEMA_INVALID"
     return (
         {
+            "schema_version": schema_version,
             "grant_id": grant_id,
             "recording_date": recording_date,
             "reason": reason,
             "candidate_ids": tuple(candidate_ids),
+            "intent": intent,
             "quote": str(authorization["quote"]).strip(),
             "authorized_at": _utc(authorization.get("timestamp")),
             "expires_at": expires_at,
@@ -191,7 +209,40 @@ def _validate_grant(block: object) -> tuple[dict[str, object] | None, str]:
     )
 
 
-def _settled(state: Mapping[str, object], candidate_id: str, known: set[str]) -> bool:
+def _named_recoverable_failed_pick(state: Mapping[str, object], candidate_id: str) -> bool:
+    """Return true only for one unambiguously typed current failed pick.
+
+    Missing/null ``failure_recoverable`` is the legacy "not explicitly terminal"
+    shape already understood by delivery recovery.  Other non-bool values fail
+    closed instead of gaining processing scope through truthiness.
+    """
+
+    rows = state.get("picks")
+    if not isinstance(rows, list):
+        return False
+    matches = [
+        row for row in rows if isinstance(row, Mapping) and _row_candidate_id(row) == candidate_id
+    ]
+    if len(matches) != 1:
+        return False
+    row = matches[0]
+    return bool(
+        row.get("status") == "failed"
+        and (
+            "failure_recoverable" not in row
+            or row.get("failure_recoverable") is None
+            or row.get("failure_recoverable") is True
+        )
+    )
+
+
+def _settled(
+    state: Mapping[str, object],
+    candidate_id: str,
+    known: set[str],
+    *,
+    intent: object,
+) -> bool:
     """这条候选的活干完了没有。
 
     干完 = **认识它** 且 **它已经不在队列里**。一条候选离开 `pending_talk` /
@@ -204,7 +255,13 @@ def _settled(state: Mapping[str, object], candidate_id: str, known: set[str]) ->
 
     if candidate_id not in known:
         return False
-    return candidate_id not in _ids_in(state, _QUEUED_COLLECTIONS)
+    if candidate_id in _ids_in(state, _QUEUED_COLLECTIONS):
+        return False
+    if intent == FAILED_PICK_RECOVERY_INTENT and _named_recoverable_failed_pick(
+        state, candidate_id
+    ):
+        return False
+    return True
 
 
 def operator_scope_admission(
@@ -230,6 +287,7 @@ def operator_scope_admission(
         )
     grant_id = str(grant["grant_id"])
     candidate_ids: tuple[str, ...] = grant["candidate_ids"]  # type: ignore[assignment]
+    intent = grant.get("intent")
     if date is not None and grant["recording_date"] != date:
         return OperatorScopeAdmission(
             False,
@@ -252,13 +310,12 @@ def operator_scope_admission(
             grant_id,
             candidate_ids,
             log_line=(
-                f"operator scope grant {grant_id} ignored (UNKNOWN_CANDIDATE: "
-                f"{','.join(unknown)})"
+                f"operator scope grant {grant_id} ignored (UNKNOWN_CANDIDATE: {','.join(unknown)})"
             ),
             detail=",".join(unknown),
         )
     outstanding = tuple(
-        cid for cid in candidate_ids if not _settled(state, cid, known)
+        cid for cid in candidate_ids if not _settled(state, cid, known, intent=intent)
     )
     moment = now or datetime.now(timezone.utc)
     if moment >= grant["expires_at"]:  # type: ignore[operator]
@@ -286,6 +343,20 @@ def operator_scope_admission(
                 "date leaves the processing window"
             ),
         )
+    disclosure = {
+        "schema_version": (
+            FAILED_PICK_RECOVERY_DISCLOSURE_SCHEMA
+            if intent == FAILED_PICK_RECOVERY_INTENT
+            else DISCLOSURE_SCHEMA
+        ),
+        "grant_id": grant_id,
+        "recording_date": grant["recording_date"],
+        "candidate_ids": list(candidate_ids),
+        "outstanding_candidate_ids": list(outstanding),
+        "quote": grant["quote"],
+    }
+    if intent == FAILED_PICK_RECOVERY_INTENT:
+        disclosure["intent"] = intent
     return OperatorScopeAdmission(
         True,
         "ADMITTED",
@@ -297,20 +368,11 @@ def operator_scope_admission(
             f"({len(outstanding)}/{len(candidate_ids)} candidate(s) outstanding: "
             f"{','.join(outstanding)})"
         ),
-        disclosure={
-            "schema_version": DISCLOSURE_SCHEMA,
-            "grant_id": grant_id,
-            "recording_date": grant["recording_date"],
-            "candidate_ids": list(candidate_ids),
-            "outstanding_candidate_ids": list(outstanding),
-            "quote": grant["quote"],
-        },
+        disclosure=disclosure,
     )
 
 
-def hold_talk_outside_operator_scope(
-    state: dict, *, now: datetime | None = None
-) -> list[dict]:
+def hold_talk_outside_operator_scope(state: dict, *, now: datetime | None = None) -> list[dict]:
     """把没被点名的话题候选压出本 tick 的准入池，返回被压下的行。
 
     Ivan 2026-08-10 逐字「**把 tier1 的 4 条做了**」——只放这一天进窗口是不够的：

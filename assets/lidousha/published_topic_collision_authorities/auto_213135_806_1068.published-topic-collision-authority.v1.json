@@ -1,0 +1,35 @@
+{
+  "asserted_at": "2026-08-13",
+  "asserted_by": "Ivan",
+  "authority_kind": "HUMAN_ASSERTED_REVIEW_REQUIRED",
+  "authority_quote": "event 你说的这个5年后这个切片不是已经上传了吗？",
+  "authority_sha256": "sha256:56764bea0366d7fdc944ff48a5bc669f13c49d0e04de622a3f9aac6803e212f0",
+  "candidate": {
+    "candidate_id": "auto_213135_806_1068",
+    "hook": "李豆沙坦白自己羡慕能全职做主播的人，也曾为没时间没钱而自责，但回头才发现她和观众已经相伴五年、一起走上了理想中的3D舞台。",
+    "hook_sha256": "sha256:ffc1d2c7fdf055e12a5e343e6920bcb7f8597eb2196bd6fe690ccc20cd6bf6b6",
+    "recording_date": "2026-08-08",
+    "scene_kind": "event",
+    "selection_scorecard_sha256": "sha256:5cd263fbf5d936fa4a6db372198d00a91f7a1792c44bfe7fd5d67a0ae2afa4fd"
+  },
+  "decision": "HUMAN_TOPIC_DEDUP_REVIEW",
+  "interpretation": "The question requires a human same-topic review before this candidate can occupy another Event seat. It is not a duplicate verdict and does not authorize suppression, score mutation, upload, or publication.",
+  "published": {
+    "bvid": "BV18Gu16NEcX",
+    "candidate_id": "auto_213135_469_710",
+    "hook": "第一次3D Live前她紧张得手抖，却在赴约的高铁上突然意识到：自己正走在实现五年前舞台愿望的路上。",
+    "hook_sha256": "sha256:06b58b39718724d98245ce64ea73848431fe406d8cc1a4f80c6a34face868fb7",
+    "public_title": "【李豆沙】第一次3D Live紧张到手抖，想起五年前看歌姬时的心情，自己好像正走在实现五年前舞台愿望的路上",
+    "public_title_sha256": "sha256:c798ba630b0ddd13a88f657a43f1cec61a39eb973d442d8f5aea66b0b5afa745",
+    "recording_date": "2026-08-08",
+    "registry_row_sha256": "sha256:016f2a0296f5a972767df756a7a7eebced47254441f80042cf85c7e8abe82e8f",
+    "registry_status": "published",
+    "scene_kind": "event",
+    "selection_scorecard_sha256": "sha256:67be8853c424975664d5d4710944ca77090f3ae037a6d3f0c2ac436c44bb2c89"
+  },
+  "schema_version": "published-topic-collision-authority.v1",
+  "score_mutation_authorized": false,
+  "suppression_authorized": false,
+  "topic_review_fingerprint_sha256": "sha256:b997d0f7878bdd16daa279f91d1a1e1a58ea71a37ce6435e23fd6aa18db98b48",
+  "upload_authorized": false
+}

@@ -204,7 +204,7 @@ MODULE_DEBT_LEDGER = {
     # 日志、把原来的两项 or 拆成三项）。出处校验、收敛即自动出圈、expires_at 兜底、
     # 候选级限定全在新模块 src/autoslice/operator_processing_scope.py。
     # 测试 tests/test_operator_processing_scope.py。
-    "scripts/free_session_autoslice.py": 2_092,
+    "scripts/free_session_autoslice.py": 2_035,
     # 2026-07-31 +122：封面文案链修复（分行权威等级 + 锁定模式 + 缩略图合同背带
     # + max_lines 按合同封顶）。新增逻辑已抽成 _talk_locked_split /
     # _assert_talk_thumbnail_contract 两个模块级函数，_overlay_lidousha_cover_title

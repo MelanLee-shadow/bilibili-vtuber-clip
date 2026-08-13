@@ -26,12 +26,20 @@ def _candidate_id(row: dict) -> str:
     return str(row.get("candidate_id") or row.get("cid") or "")
 
 
-def _current_compliant_delivery(row: dict) -> bool:
-    return publication_row_is_verified(row) or (
+def _historical_stable_review_package(row: Mapping[str, object]) -> bool:
+    """Return the persisted bundle lifecycle fact, not current audit truth."""
+
+    return bool(
         row.get("status") in _runner.DELIVERED_TALK_STATUSES
         and row.get("bundle_lifecycle") == "CURRENT"
         and row.get("bundle_compliance") == "COMPLIANT"
     )
+
+
+def _current_compliant_delivery(row: dict) -> bool:
+    """Compatibility predicate; CURRENT/COMPLIANT remains lifecycle-only."""
+
+    return publication_row_is_verified(row) or _historical_stable_review_package(row)
 
 
 def _current_talk_reserves(state: dict, attempts: list[dict]) -> list[dict]:
@@ -95,9 +103,7 @@ def _cover_route_projection(row: dict) -> dict[str, object]:
     generation = row.get("cover_generation")
     if not isinstance(generation, Mapping):
         publish_staging = (
-            row.get("publish_staging")
-            if isinstance(row.get("publish_staging"), Mapping)
-            else {}
+            row.get("publish_staging") if isinstance(row.get("publish_staging"), Mapping) else {}
         )
         generation = publish_staging.get("cover_generation")
     fallback = str(row.get("cover_status") or summary.get("cover_status") or "?")
@@ -186,31 +192,151 @@ def _session_game_line(date: str) -> str:
     except (OSError, ValueError, AttributeError):
         pass
     return (
-        f"- 游戏语境: **{status}**{detail}"
-        "（会话级候选闭集，只扩大候选与解释空间，不证明本句出现）"
+        f"- 游戏语境: **{status}**{detail}（会话级候选闭集，只扩大候选与解释空间，不证明本句出现）"
     )
 
 
 def _format_delivery_duration(pick: Mapping[str, object]) -> str:
     summary = pick.get("summary")
-    summary_duration = (
-        summary.get("duration_ms") if isinstance(summary, dict) else None
-    )
+    summary_duration = summary.get("duration_ms") if isinstance(summary, dict) else None
     effective_duration = pick.get("effective_duration_ms")
-    if isinstance(summary_duration, int) and not isinstance(
-        summary_duration, bool
-    ):
+    if isinstance(summary_duration, int) and not isinstance(summary_duration, bool):
         duration_ms = summary_duration
-    elif isinstance(effective_duration, int) and not isinstance(
-        effective_duration, bool
-    ):
+    elif isinstance(effective_duration, int) and not isinstance(effective_duration, bool):
         duration_ms = effective_duration
     else:
-        duration_ms = int(pick.get("end_ms") or 0) - int(
-            pick.get("start_ms") or 0
-        )
+        duration_ms = int(pick.get("end_ms") or 0) - int(pick.get("start_ms") or 0)
     secs = max(0, duration_ms // 1000)
     return f"{secs // 60}:{secs % 60:02d}"
+
+
+def _delivery_table_lines(
+    rows: list[dict],
+    *,
+    projection: str,
+    current_policy_audit: str,
+    empty_label: str,
+) -> list[str]:
+    lines = [
+        "| 口径 | 当前政策审计 | 成品 | 时长 | 标题 | 选片理由(hook) | 量化分 | 收束句 | 边界 | 封面实际路线 | 路由理由 |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for pick in rows:
+        summary = pick.get("summary") or {}
+        repairs = pick.get("boundary_repairs") or []
+        status_mark = f"（边界自修复×{len(repairs)}）" if repairs else ""
+        cover_route = _cover_route_projection(pick)
+        lines.append(
+            f"| {projection} | {current_policy_audit} "
+            f"| `{_runner.safe_name(pick.get('hook', ''), pick.get('candidate_id', '?'))}`{status_mark} "
+            f"| {_format_delivery_duration(pick)} "
+            f"| {pick.get('title') or '(未生成)'} "
+            f"| {pick.get('hook') or '(兜底lane无理由)'} "
+            f"| {_score_label(pick)} "
+            f"| {summary.get('closure_sentence') or '?'} "
+            f"| {summary.get('boundary_verdict') or '?'} "
+            f"| {_report_cell(cover_route['label'])} "
+            f"| {_report_cell(cover_route['reason'])} |"
+        )
+    if not rows:
+        lines.append(f"| — | — | — | — | （{empty_label}） | — | — | — | — | — | — |")
+    return lines
+
+
+def _supplemental_delivery_sections(
+    state: dict,
+    *,
+    picks: list[dict],
+    exact_ids: set[str],
+    display_deliveries: list[dict],
+    legacy_deliveries: list[dict],
+) -> list[str]:
+    lines: list[str] = []
+    if exact_ids:
+        closure = exact_talk_contract_closure(state)
+        lines += [
+            "",
+            "## 精确恢复运行时契约闭环（不替代当前政策审计）",
+            "",
+            f"- 运行时闭环状态: **{closure['status']}**；它只解释 state 的契约闭环，"
+            "不把历史 CURRENT + COMPLIANT 升级为当前政策审片包或上传许可。",
+            "",
+            "| candidate | 唯一处置 | 尝试 | 待处理 | 当前状态 | 历史包状态 | 当前政策审计 |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        by_id = {_candidate_id(pick): pick for pick in picks}
+        for row in closure["rows"]:
+            assert isinstance(row, dict)
+            candidate = by_id.get(str(row.get("candidate_id") or ""), {})
+            policy_status = (
+                "VERIFIED_PUBLICATION_FACT"
+                if publication_row_is_verified(candidate)
+                else "CURRENT_POLICY_AUDIT_UNKNOWN/NOT_REAUDITED"
+            )
+            lines.append(
+                f"| `{row.get('candidate_id')}` | {row.get('disposition')} | "
+                f"{row.get('attempt_count')} | {row.get('pending_count')} | "
+                f"{row.get('status') or '—'} | "
+                f"{row.get('bundle_lifecycle') or '—'} / "
+                f"{row.get('bundle_compliance') or '—'} | {policy_status} |"
+            )
+        outside = closure.get("outside_contract_attempt_ids") or []
+        if outside:
+            lines.append(
+                "- 阻塞：活跃 picks 混入契约外 candidate："
+                + "、".join(f"`{value}`" for value in outside)
+            )
+
+    if display_deliveries:
+        lines += [
+            "",
+            "## 封面路线审计（以实际执行证据为准）",
+            "",
+            "> 内部兼容状态 `AI_COVER_READY` 只表示封面文件已就绪，不表示使用了 AI。"
+            "以下结论只来自通过校验的 `lidousha-cover-route-decision.v2`；缺证时会显式显示 UNKNOWN。",
+            "",
+        ]
+        route_labels = {
+            "screenshot_direct": "截图直出",
+            "screenshot_polish": "截图轻调",
+            "cpa_redraw": "AI 重绘",
+            "UNKNOWN": "UNKNOWN",
+        }
+        for pick in display_deliveries:
+            cover_route = _cover_route_projection(pick)
+            lines.append(
+                f"- `{_candidate_id(pick) or '?'}`：**{_report_cell(cover_route['label'])}**；"
+                f"证据={cover_route['evidence_status']}；执行状态="
+                f"{_report_cell(cover_route['execution_status'])}；选中理由："
+                f"{_report_cell(cover_route['reason'])}"
+            )
+            for alternative in cover_route["alternatives"]:
+                assert isinstance(alternative, Mapping)
+                treatment = str(alternative.get("treatment") or "UNKNOWN")
+                lines.append(
+                    f"  - 决策时未选 {route_labels.get(treatment, treatment)}："
+                    f"{_report_cell(alternative.get('reason'))}"
+                )
+
+    if legacy_deliveries:
+        lines += [
+            "",
+            "## 旧版或包状态未知的未公开审片包（NOT_REAUDITED）",
+            "",
+            "| candidate | 原状态 | 生命周期 | 历史合规状态 | 当前政策审计 | 处置 |",
+            "|---|---|---|---|---|---|",
+        ]
+        for row in legacy_deliveries:
+            repairs = row.get("boundary_repairs") or []
+            repair_mark = f"（边界自修复×{len(repairs)}；历史）" if repairs else ""
+            lines.append(
+                f"| `{_candidate_id(row) or '?'}`{repair_mark} | {row.get('status') or '—'} | "
+                f"{row.get('bundle_lifecycle') or 'UNKNOWN'} | "
+                f"{row.get('bundle_compliance') or 'UNKNOWN'} | "
+                "CURRENT_POLICY_AUDIT_UNKNOWN/NOT_REAUDITED | "
+                "不得称为当前政策合规、current review-ready 或可发；需另行复审/重出 |"
+            )
+    return lines
 
 
 def write_reports(date: str, state: dict) -> None:
@@ -220,17 +346,24 @@ def write_reports(date: str, state: dict) -> None:
     picks = [row for row in state.get("picks", []) if isinstance(row, dict)]
     exact_ids = set(_exact_talk_contract_ids(state))
     songs = state.get("songs", [])
-    current_deliveries = [
+    published_deliveries = [
         row
         for row in picks
-        if _current_compliant_delivery(row)
+        if publication_row_is_verified(row) and (not exact_ids or _candidate_id(row) in exact_ids)
+    ]
+    historical_stable_packages = [
+        row
+        for row in picks
+        if not publication_row_is_verified(row)
+        and _historical_stable_review_package(row)
         and (not exact_ids or _candidate_id(row) in exact_ids)
     ]
-    stale_deliveries = [
+    display_deliveries = published_deliveries + historical_stable_packages
+    legacy_deliveries = [
         row
         for row in picks
         if row.get("status") in _runner.DELIVERED_TALK_STATUSES
-        and row not in current_deliveries
+        and row not in historical_stable_packages
     ]
     rejected_talk = [
         row
@@ -245,22 +378,19 @@ def write_reports(date: str, state: dict) -> None:
         # 狍哥案修复：status="failed" 的 selection_rescore 行是有界重评分
         # 车道的临时待重试态，不是拒绝——终态失败会走 status=candidate_rejected
         # + rejection_reason=selection_rescore_failed，仍正常出现在这张表里。
-        and not (
-            row.get("status") == "failed"
-            and row.get("failure_kind") == "selection_rescore"
-        )
+        and not (row.get("status") == "failed" and row.get("failure_kind") == "selection_rescore")
         and (not exact_ids or _candidate_id(row) in exact_ids)
     ]
     reserves = _current_talk_reserves(state, picks)
-    delivered_talk = len(current_deliveries)
-    repaired = sum(1 for p in current_deliveries if p.get("boundary_repairs"))
+    repaired = sum(
+        1
+        for p in picks
+        if (publication_row_is_verified(p) or p.get("status") in _runner.DELIVERED_TALK_STATUSES)
+        and p.get("boundary_repairs")
+    )
     unrepairable = sum(1 for p in picks if p.get("status") == "boundary_unrepairable")
     quarantined = sum(1 for p in picks if p.get("status") == "quarantine")  # legacy states only
-    delivered_songs = sum(
-        1
-        for s in songs
-        if s.get("delivered") or publication_row_is_verified(s)
-    )
+    delivered_songs = sum(1 for s in songs if s.get("delivered") or publication_row_is_verified(s))
     blocked_songs = sum(1 for s in songs if s.get("status") == "blocked")
     capture = (
         state.get("collab_evidence_capture")
@@ -283,9 +413,14 @@ def write_reports(date: str, state: dict) -> None:
         f"- 运行模式: **{state.get('run_mode', 'PRODUCTION')}** · "
         f"来源: **{state.get('source_authority', 'RECORDER')}** · "
         f"上传许可: **{'是' if state.get('upload_allowed') is True else '否'}**",
-        f"- 包口径: “谈话成品”只投影 CURRENT + COMPLIANT + 已交付；"
-        f"拒绝/候补/旧政策包互斥显示（旧包 {len(stale_deliveries)} 条）",
-        f"- 交付实况: 谈话 **{delivered_talk} 交付**{('（' + '，'.join(talk_notes) + '）') if talk_notes else ''} / "
+        "- 包口径: 已公开谈话只接受 reconciliation verified 的公开事实；"
+        "未公开行的 CURRENT + COMPLIANT 只表示历史 bundle 生命周期稳定。"
+        "现有 state 没有已验证的当前政策复审证据，故统一显示 "
+        "CURRENT_POLICY_AUDIT_UNKNOWN/NOT_REAUDITED",
+        f"- 交付实况: 谈话 **{len(published_deliveries)} 已公开事实 + "
+        f"{len(historical_stable_packages)} 历史稳定审片包 + "
+        f"{len(legacy_deliveries)} 旧版/包状态未知**"
+        f"{('（' + '，'.join(talk_notes) + '）') if talk_notes else ''} / "
         f"歌 **{delivered_songs} 交付** · {blocked_songs} 被完整性门拦截 · 共尝试 {len(songs)}",
         f"- 段: 完成 {len(state.get('segments_done', []))} / 死段 {len(state.get('segments_dead', {}))} / 待产出 talk {len(state.get('pending_talk', []))} + song {len(state.get('pending_song', []))}",
         f"- 联动证据旁路: **{capture.get('status', 'NOT_RUN')}**（NO_TRIGGER 仅表示开发旁路未触发，绝不等于非联动） · "
@@ -294,103 +429,37 @@ def write_reports(date: str, state: dict) -> None:
         f"- 会话关系权威: **{(state.get('session_relation_authority') or {}).get('state', 'UNKNOWN') if isinstance(state.get('session_relation_authority'), dict) else 'UNKNOWN'}**",
         _session_game_line(date),
         "",
-        "## 谈话成品（仅当前合规交付）",
+        "## 已公开谈话事实（reconciliation verified）",
         "",
-        "| 成品 | 时长 | 标题 | 选片理由(hook) | 量化分 | 收束句 | 边界 | 封面实际路线 | 路由理由 |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "> `VERIFIED_PUBLICATION_FACT` 只证明已经公开；不从公开结果反推当前包审计、人工复核或上传许可。",
+        "",
+        *_delivery_table_lines(
+            published_deliveries,
+            projection="VERIFIED_PUBLICATION_FACT",
+            current_policy_audit="NOT_INFERRED_FROM_PUBLICATION",
+            empty_label="无 reconciliation verified 的谈话公开事实",
+        ),
+        "",
+        "## 未公开历史稳定审片包（不代表当前政策合规或可发）",
+        "",
+        "> `CURRENT + COMPLIANT` 仅是既有 bundle 生命周期/稳定性记录；"
+        "未现场重跑当前 auditor，故只投影 `CURRENT_POLICY_AUDIT_UNKNOWN/NOT_REAUDITED`。",
+        "",
+        *_delivery_table_lines(
+            historical_stable_packages,
+            projection="HISTORICAL_BUNDLE_STABLE",
+            current_policy_audit="CURRENT_POLICY_AUDIT_UNKNOWN/NOT_REAUDITED",
+            empty_label="无历史稳定未公开审片包",
+        ),
     ]
-    for pick in current_deliveries:
-        s = pick.get("summary") or {}
-        repairs = pick.get("boundary_repairs") or []
-        status_mark = f"（边界自修复×{len(repairs)}）" if repairs else ""
-        cover_route = _cover_route_projection(pick)
-        lines.append(
-            f"| `{_runner.safe_name(pick.get('hook',''), pick.get('candidate_id','?'))}`{status_mark} "
-            f"| {_format_delivery_duration(pick)} "
-            f"| {pick.get('title') or '(未生成)'} "
-            f"| {pick.get('hook') or '(兜底lane无理由)'} "
-            f"| {_score_label(pick)} "
-            f"| {s.get('closure_sentence') or '?'} "
-            f"| {s.get('boundary_verdict') or '?'} "
-            f"| {_report_cell(cover_route['label'])} "
-            f"| {_report_cell(cover_route['reason'])} |"
-        )
-    if not current_deliveries:
-        lines.append("| — | — | （无当前合规交付） | — | — | — | — | — | — |")
 
-    if exact_ids:
-        closure = exact_talk_contract_closure(state)
-        lines += [
-            "",
-            "## 精确恢复契约闭环（发布真值）",
-            "",
-            f"- 闭环状态: **{closure['status']}**；只有 COMPLETE 才允许批次为 `review_ready`。",
-            "",
-            "| candidate | 唯一处置 | 尝试 | 待处理 | 当前状态 | 合规 |",
-            "|---|---|---|---|---|---|",
-        ]
-        for row in closure["rows"]:
-            assert isinstance(row, dict)
-            lines.append(
-                f"| `{row.get('candidate_id')}` | {row.get('disposition')} | "
-                f"{row.get('attempt_count')} | {row.get('pending_count')} | "
-                f"{row.get('status') or '—'} | "
-                f"{row.get('bundle_lifecycle') or '—'} / "
-                f"{row.get('bundle_compliance') or '—'} |"
-            )
-        outside = closure.get("outside_contract_attempt_ids") or []
-        if outside:
-            lines.append(
-                "- 阻塞：活跃 picks 混入契约外 candidate："
-                + "、".join(f"`{value}`" for value in outside)
-            )
-
-    if current_deliveries:
-        lines += [
-            "",
-            "## 封面路线审计（以实际执行证据为准）",
-            "",
-            "> 内部兼容状态 `AI_COVER_READY` 只表示封面文件已就绪，不表示使用了 AI。"
-            "以下结论只来自通过校验的 `lidousha-cover-route-decision.v2`；缺证时会显式显示 UNKNOWN。",
-            "",
-        ]
-        route_labels = {
-            "screenshot_direct": "截图直出",
-            "screenshot_polish": "截图轻调",
-            "cpa_redraw": "AI 重绘",
-            "UNKNOWN": "UNKNOWN",
-        }
-        for pick in current_deliveries:
-            cover_route = _cover_route_projection(pick)
-            lines.append(
-                f"- `{_candidate_id(pick) or '?'}`：**{_report_cell(cover_route['label'])}**；"
-                f"证据={cover_route['evidence_status']}；执行状态="
-                f"{_report_cell(cover_route['execution_status'])}；选中理由："
-                f"{_report_cell(cover_route['reason'])}"
-            )
-            for alternative in cover_route["alternatives"]:
-                assert isinstance(alternative, Mapping)
-                treatment = str(alternative.get("treatment") or "UNKNOWN")
-                lines.append(
-                    f"  - 决策时未选 {route_labels.get(treatment, treatment)}："
-                    f"{_report_cell(alternative.get('reason'))}"
-                )
-
-    if stale_deliveries:
-        lines += [
-            "",
-            "## 旧版或合规状态未知的包（失败关闭，不是成品）",
-            "",
-            "| candidate | 原状态 | 生命周期 | 合规状态 | 处置 |",
-            "|---|---|---|---|---|",
-        ]
-        for row in stale_deliveries:
-            lines.append(
-                f"| `{_candidate_id(row) or '?'}` | {row.get('status') or '—'} | "
-                f"{row.get('bundle_lifecycle') or 'UNKNOWN'} | "
-                f"{row.get('bundle_compliance') or 'UNKNOWN'} | "
-                "不进入成品；需在当前政策下重新审计/重出 |"
-            )
+    lines += _supplemental_delivery_sections(
+        state,
+        picks=picks,
+        exact_ids=exact_ids,
+        display_deliveries=display_deliveries,
+        legacy_deliveries=legacy_deliveries,
+    )
 
     if rejected_talk:
         lines += [
@@ -448,7 +517,11 @@ def write_reports(date: str, state: dict) -> None:
                 f"{int(row.get('start_ms') or 0) // 1000}-{int(row.get('end_ms') or 0) // 1000}s | "
                 f"{row.get('hook') or '—'} | {_score_label(row)} |"
             )
-    lines += ["", f"## 歌切（每场至多 {_runner.MAX_SONGS_PER_SESSION} 个、本日汇总；按弹幕量排序；已发布歌曲跳过；仅{_runner.PROFILE_DISPLAY_NAME}本人演唱且完整才切；背景音乐/原曲播放/SONG_PARTIAL 均不交付；被拦不占配额、备份自动回填）", ""]
+    lines += [
+        "",
+        f"## 歌切（每场至多 {_runner.MAX_SONGS_PER_SESSION} 个、本日汇总；按弹幕量排序；已发布歌曲跳过；仅{_runner.PROFILE_DISPLAY_NAME}本人演唱且完整才切；背景音乐/原曲播放/SONG_PARTIAL 均不交付；被拦不占配额、备份自动回填）",
+        "",
+    ]
     if songs:
         lines += ["| 歌 | 弹幕 | 门判定 | 原因码 | 标题 | 交付 |", "|---|---|---|---|---|---|"]
         for song in songs:
@@ -462,6 +535,7 @@ def write_reports(date: str, state: dict) -> None:
         lines.append("(本场未检出/未产出歌切)")
     backlog = state.get("song_backlog", [])
     if backlog:
+
         def fmt_backlog(b) -> str:
             if not isinstance(b, dict):
                 return str(b)  # legacy pre-v4 string entries
@@ -469,7 +543,10 @@ def write_reports(date: str, state: dict) -> None:
                 f"{Path(b['segment_path']).name} {b['anchor_start_ms'] // 1000}-{b['anchor_end_ms'] // 1000}s "
                 f"弹幕x{b.get('danmaku', 0)}: {b.get('hook') or b.get('preview', '')[:40]}"
             )
-        lines += ["", "## 歌切候选备份（按弹幕排序；门拦截后自动回填的来源）", ""] + [f"- {fmt_backlog(b)}" for b in backlog]
+
+        lines += ["", "## 歌切候选备份（按弹幕排序；门拦截后自动回填的来源）", ""] + [
+            f"- {fmt_backlog(b)}" for b in backlog
+        ]
     # ``not_selected`` is legacy append-only event prose.  It is deliberately
     # not projected: a reserve promoted after a rejection used to remain there
     # forever and appear simultaneously as product and loser.
@@ -480,9 +557,7 @@ def write_reports(date: str, state: dict) -> None:
         lines += ["", "> ⚠ CPA 链路不可用，批次已暂停；cron 每 10 分钟自动重试，恢复后从断点续产。"]
     if state.get("status") == "source_incomplete":
         source_integrity = (
-            state.get("source_integrity")
-            if isinstance(state.get("source_integrity"), dict)
-            else {}
+            state.get("source_integrity") if isinstance(state.get("source_integrity"), dict) else {}
         )
         issue_codes = [
             str(issue.get("code") or "SOURCE_INCOMPLETE")
@@ -495,7 +570,10 @@ def write_reports(date: str, state: dict) -> None:
             + ("原因码：" + "、".join(issue_codes) if issue_codes else "需检查录像段终态。"),
         ]
     if state.get("status") == "no_delivery":
-        lines += ["", "> ⚠ 本场 0 条交付（候选被门拦截/失败/耗尽）。这不是成功状态，需人工过目落选与拦截原因。"]
+        lines += [
+            "",
+            "> ⚠ 本场 0 条交付（候选被门拦截/失败/耗尽）。这不是成功状态，需人工过目落选与拦截原因。",
+        ]
     if state.get("status") == "recovery_incomplete":
         lines += [
             "",
@@ -508,7 +586,11 @@ def write_reports(date: str, state: dict) -> None:
     report.write_text(
         f"# autoslice runner 最新状态\n\n- 时间: {time.strftime('%Y-%m-%d %H:%M:%S %z')}\n"
         f"- 日期: {date}  状态: {state.get('status')}\n"
-        f"- 谈话: {delivered_talk} 交付(自修复 {repaired}, 不可修复 {unrepairable}) / {len(picks)} 尝试 (pending {len(state.get('pending_talk', []))})\n"
+        f"- 谈话: {len(published_deliveries)} 已公开事实 + "
+        f"{len(historical_stable_packages)} 历史稳定审片包 + "
+        f"{len(legacy_deliveries)} 旧版/包状态未知"
+        f"(自修复 {repaired}, 不可修复 {unrepairable}) / "
+        f"{len(picks)} 尝试 (pending {len(state.get('pending_talk', []))})\n"
         f"- 歌切: {delivered_songs} 交付 / {blocked_songs} 门拦 / {len(songs)} 尝试 (pending {len(state.get('pending_song', []))})\n"
         f"- 交付: {_runner.profile_delivery_root()}/{date}/ (Mac launchd 拉取)\n",
         encoding="utf-8",

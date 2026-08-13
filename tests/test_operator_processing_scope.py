@@ -29,6 +29,8 @@ from src.autoslice import talk_quota_authority
 from src.autoslice.candidate_selection import prioritize
 from src.autoslice.operator_processing_scope import (
     DISCLOSURE_KEY,
+    FAILED_PICK_RECOVERY_GRANT_SCHEMA,
+    FAILED_PICK_RECOVERY_INTENT,
     GRANT_SCHEMA,
     STATE_KEY,
     operator_scope_admission,
@@ -60,6 +62,7 @@ _DIMENSIONS = {
     "comedic_payoff": 4,
     "self_contained": 4,
 }
+_FIELD_ABSENT = object()
 
 
 class _FrozenDateTime(datetime):
@@ -124,6 +127,44 @@ def _grant(**overrides) -> dict:
     return grant
 
 
+def _failed_pick_recovery_grant(**overrides) -> dict:
+    grant = _grant(
+        schema_version=FAILED_PICK_RECOVERY_GRANT_SCHEMA,
+        intent=FAILED_PICK_RECOVERY_INTENT,
+        candidate_ids=[TIER1_IDS[0]],
+        grant_id="2026-08-07-recover-failed-tier1",
+        reason="8/7 的点名失败件需要进入 maintenance recovery，但不绕过任何恢复门。",
+    )
+    grant.update(overrides)
+    return grant
+
+
+def _state_with_failed_pick(
+    grant: dict,
+    *,
+    status: str = "failed",
+    failure_recoverable: object = True,
+) -> dict:
+    row = {
+        "candidate_id": TIER1_IDS[0],
+        "status": status,
+        "segment": f"{TIER1_IDS[0]}.mp4",
+        "start_ms": 100_000,
+        "end_ms": 190_000,
+    }
+    if failure_recoverable is not _FIELD_ABSENT:
+        row["failure_recoverable"] = failure_recoverable
+    return {
+        "status": "ready_unpublished_with_failures",
+        "picks": [row],
+        "songs": [],
+        "pending_talk": [],
+        "pending_song": [],
+        "talk_backlog": [],
+        STATE_KEY: grant,
+    }
+
+
 def _state_with_backlog(grant: dict | None, *, backlog_ids=TIER1_IDS) -> dict:
     state: dict = {
         "status": "ready_unpublished_with_failures",
@@ -131,9 +172,7 @@ def _state_with_backlog(grant: dict | None, *, backlog_ids=TIER1_IDS) -> dict:
         "songs": [],
         "pending_talk": [],
         "pending_song": [],
-        "talk_backlog": [
-            _candidate(cid, _NAMED_SCORES.get(cid, 86.0)) for cid in backlog_ids
-        ],
+        "talk_backlog": [_candidate(cid, _NAMED_SCORES.get(cid, 86.0)) for cid in backlog_ids],
     }
     if grant is not None:
         state[STATE_KEY] = grant
@@ -210,7 +249,7 @@ def test_grant_with_full_provenance_admits_only_that_date(tmp_path, monkeypatch)
         ),
         ("reason_missing", {"reason": ""}),
         ("grant_id_missing", {"grant_id": ""}),
-        ("schema_version_wrong", {"schema_version": "operator-processing-scope-grant.v2"}),
+        ("schema_version_wrong", {"schema_version": "operator-processing-scope-grant.v3"}),
         ("candidate_ids_empty", {"candidate_ids": []}),
         ("candidate_ids_not_a_list", {"candidate_ids": "auto_210739_1695_1804"}),
         ("candidate_ids_duplicated", {"candidate_ids": [TIER1_IDS[0], TIER1_IDS[0]]}),
@@ -249,18 +288,14 @@ def test_unknown_candidate_id_makes_the_grant_inert(tmp_path, monkeypatch):
     _window(tmp_path, monkeypatch, _state_with_backlog(grant))
 
     assert RECORDING_DATE not in runner.list_dates()
-    admission = operator_scope_admission(
-        _state_with_backlog(grant), date=RECORDING_DATE, now=NOW
-    )
+    admission = operator_scope_admission(_state_with_backlog(grant), date=RECORDING_DATE, now=NOW)
     assert admission.reason_code == "UNKNOWN_CANDIDATE"
 
 
 def test_grant_written_into_the_wrong_date_is_inert(tmp_path, monkeypatch):
     """块被复制到别的日子的 state 里 → 那边不生效（recording_date 必须自洽）。"""
 
-    admission = operator_scope_admission(
-        _state_with_backlog(_grant()), date="2026-08-09", now=NOW
-    )
+    admission = operator_scope_admission(_state_with_backlog(_grant()), date="2026-08-09", now=NOW)
 
     assert admission.admitted is False
     assert admission.reason_code == "DATE_MISMATCH"
@@ -286,9 +321,7 @@ def test_grant_converges_and_leaves_the_window_on_its_own(tmp_path, monkeypatch)
     )
 
     assert RECORDING_DATE not in runner.list_dates()
-    assert operator_scope_admission(done, date=RECORDING_DATE, now=NOW).reason_code == (
-        "CONVERGED"
-    )
+    assert operator_scope_admission(done, date=RECORDING_DATE, now=NOW).reason_code == ("CONVERGED")
 
 
 def test_requeued_candidate_reopens_the_grant_then_settles_again():
@@ -303,13 +336,159 @@ def test_requeued_candidate_reopens_the_grant_then_settles_again():
     assert operator_scope_admission(settled, now=NOW).admitted is False
 
     requeued = dict(settled)
-    requeued["picks"] = [
-        row for row in settled["picks"] if row["candidate_id"] != TIER1_IDS[0]
-    ]
+    requeued["picks"] = [row for row in settled["picks"] if row["candidate_id"] != TIER1_IDS[0]]
     requeued["pending_talk"] = [_candidate(TIER1_IDS[0], _NAMED_SCORES[TIER1_IDS[0]])]
     admission = operator_scope_admission(requeued, now=NOW)
     assert admission.admitted is True
     assert admission.outstanding_candidate_ids == (TIER1_IDS[0],)
+
+
+def test_v1_failed_pick_keeps_its_original_converged_semantics():
+    """v2 must not silently reinterpret any already-written v1 grant."""
+
+    state = _state_with_failed_pick(_grant(candidate_ids=[TIER1_IDS[0]]))
+
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert admission.admitted is False
+    assert admission.reason_code == "CONVERGED"
+
+
+@pytest.mark.parametrize(
+    "failure_recoverable",
+    [True, None, _FIELD_ABSENT],
+    ids=["typed_recoverable", "legacy_null", "legacy_field_absent"],
+)
+def test_failed_pick_recovery_intent_keeps_named_failure_outstanding(
+    failure_recoverable,
+):
+    state = _state_with_failed_pick(
+        _failed_pick_recovery_grant(),
+        failure_recoverable=failure_recoverable,
+    )
+
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert admission.admitted is True
+    assert admission.reason_code == "ADMITTED"
+    assert admission.outstanding_candidate_ids == (TIER1_IDS[0],)
+    assert admission.disclosure["intent"] == FAILED_PICK_RECOVERY_INTENT
+
+
+@pytest.mark.parametrize(
+    ("status", "failure_recoverable"),
+    [
+        ("failed", False),
+        ("failed", "true"),
+        ("failed", 0),
+        ("review_ready", True),
+        ("published", True),
+        ("candidate_rejected", True),
+    ],
+)
+def test_failed_pick_recovery_intent_does_not_reopen_terminal_or_untyped_rows(
+    status,
+    failure_recoverable,
+):
+    state = _state_with_failed_pick(
+        _failed_pick_recovery_grant(),
+        status=status,
+        failure_recoverable=failure_recoverable,
+    )
+
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert admission.admitted is False
+    assert admission.reason_code == "CONVERGED"
+
+
+@pytest.mark.parametrize(
+    "grant",
+    [
+        _grant(
+            schema_version=FAILED_PICK_RECOVERY_GRANT_SCHEMA,
+            candidate_ids=[TIER1_IDS[0]],
+        ),
+        _failed_pick_recovery_grant(intent="RECOVER_ANYTHING"),
+        _grant(intent=FAILED_PICK_RECOVERY_INTENT, candidate_ids=[TIER1_IDS[0]]),
+    ],
+    ids=["v2_missing_intent", "v2_unknown_intent", "v1_extra_intent"],
+)
+def test_failed_pick_recovery_intent_is_strictly_typed_and_fail_closed(grant):
+    admission = operator_scope_admission(
+        _state_with_failed_pick(grant), date=RECORDING_DATE, now=NOW
+    )
+
+    assert admission.admitted is False
+    assert admission.reason_code == "SCHEMA_INVALID"
+
+
+def test_failed_pick_recovery_intent_still_expires_hard():
+    state = _state_with_failed_pick(_failed_pick_recovery_grant(expires_at="2026-08-10T00:00:00Z"))
+
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert admission.admitted is False
+    assert admission.reason_code == "EXPIRED"
+    assert admission.outstanding_candidate_ids == (TIER1_IDS[0],)
+
+
+def test_failed_pick_recovery_intent_admits_aged_out_date_to_list_dates(tmp_path, monkeypatch):
+    state = _state_with_failed_pick(_failed_pick_recovery_grant())
+    _window(tmp_path, monkeypatch, state)
+
+    assert runner.list_dates() == [
+        RECORDING_DATE,
+        "2026-08-08",
+        "2026-08-09",
+        "2026-08-10",
+    ]
+
+
+def test_failed_pick_scope_reaches_process_date_maintenance(tmp_path, monkeypatch):
+    """The old date gets far enough for existing maintenance to requeue it."""
+
+    state = _state_with_failed_pick(_failed_pick_recovery_grant())
+    _window(tmp_path, monkeypatch, state)
+    assert RECORDING_DATE in runner.list_dates()
+
+    calls: list[tuple[str, str]] = []
+
+    def requeue(_date, value):
+        failed = value["picks"].pop()
+        calls.append((_date, failed["candidate_id"]))
+        value["pending_talk"].append(
+            {
+                "cid": failed["candidate_id"],
+                "segment_path": f"/recordings/{failed['segment']}",
+                "start_ms": failed["start_ms"],
+                "end_ms": failed["end_ms"],
+                "selected_repair": True,
+            }
+        )
+        return 0, 1, 0
+
+    monkeypatch.setattr(runner, "read_state", lambda _date: state)
+    monkeypatch.setattr(runner, "runtime_health_error", lambda: None)
+    monkeypatch.setattr(runner, "recover_finalized_legacy_hls", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        runner,
+        "audit_finalized_recording_inventory",
+        lambda *_a, **_k: {"can_select": True, "issues": []},
+    )
+    monkeypatch.setattr(runner, "annotate_state_sessions", lambda *_a, **_k: False)
+    monkeypatch.setattr(runner, "AUTOMATIC_MAINTENANCE_NOT_BEFORE", RECORDING_DATE)
+    monkeypatch.setattr(runner, "recover_bound_song_deliveries", lambda *_a, **_k: 0)
+    monkeypatch.setattr(runner, "requeue_recoverable_deliveries", requeue)
+    monkeypatch.setattr(runner, "song_pipeline_fingerprint", lambda: "sha256:test")
+    monkeypatch.setattr(runner, "write_state", lambda *_a, **_k: None)
+    monkeypatch.setattr(runner, "cpa_healthy", lambda: False)
+
+    runner.process_date(RECORDING_DATE)
+
+    assert calls == [(RECORDING_DATE, TIER1_IDS[0])]
+    assert [item["cid"] for item in state["pending_talk"]] == [TIER1_IDS[0]]
+    assert state["status"] == "paused_cpa_down"
 
 
 def test_expiry_is_the_hard_backstop_even_with_work_outstanding(tmp_path, monkeypatch):

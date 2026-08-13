@@ -22,7 +22,12 @@
      召回 prompt 从完整 cue 文本确定性列出命中的 canonical 名，首项为「战斗吧歌姬」。它只
      是 `audience_salience` / hook 选材信号，不自动授予 Tier/分数、不要求 hook 机械插词；
      偶然提及可忽略，最终 scorecard 仍由候选窗内证据和固定代码复算。
-2. 弹幕热度 hints：`danmaku_evidence.py`（爆发窗口，选题信号，不改文本）。
+2. 弹幕证据分两层：`danmaku_evidence.py` 的爆发窗口只作热度 hints；语义召回另从
+   当前 segment 的 XML 在每个 cue/shard 窗内构造有界 `request/question → reaction`
+   互动链。后者只允许明确提问、动作要求或长文本重复开启链，reaction 不能独立充当
+   trigger；打 call、唱歌欢呼和主播名应援不得仅凭重复量制造选题。证据必须携带
+   `algorithm_id + policy/source/evidence SHA-256`，并受链数、反应组数和文本长度硬帽；
+   XML 缺失或不可解析必须在 diagnostics 明示，不能退回“前三条弹幕样本”后自称完整。
 3. CPA 观众视角审查：每个候选无条件过 `scripts/cpa_semantic_qa_llm.py` 判官（`viewer_context_ok` 语境自足性 + 自动扩窗建议），失败即 BLOCK（`live_source_review.py::_merge_cpa_semantic_review_into_decision`）。
 4. 候选是内容锚点不是最终边界；边界由 [30-boundary.md](30-boundary.md) 决定。
 
@@ -67,6 +72,10 @@
   baseline rank、实际 slot、被越过的基线候选与人工 authority。用户说外部已有重复但
   没有 BV 时，可直接 `SUPPRESSED_BY_USER`，但重复 claim 只能是
   `USER_ASSERTED_UNVERIFIED`，不得伪装成已验证站外重复。
+- 用户指出某候选可能与已发布稿同题时，必须使用 deploy-sealed、candidate-scoped 的
+  published-topic review authority 绑定候选与已发布 registry 行、两边 hook/scorecard、
+  BVID 和公开标题。它只能把候选移入 `HUMAN_TOPIC_DEDUP_REVIEW`，不得自动宣称重复、
+  改分、删除或授权上传；任一绑定漂移时保持 stale review hold，不能静默放行。
 - 精确恢复契约持续压住普通 backlog，直到新的人工恢复计划显式替换；普通 backlog
   在报告里只能显示为 `OUTSIDE_EXACT_CONTRACT / INELIGIBLE`，不能伪装成当前候补。
 - `src/autoslice/candidate_selection.py::exact_talk_contract_closure` 是 exact 状态的共同
@@ -103,6 +112,21 @@
   `auto_193450_5341_5459` 必须 Tier 2、有效分 50–60；前者必须稳定高于后者。
   这两项只是量尺 canary，不构成 recovery allowlist；exact 集合只能来自当前 v7 plan 的
   selection contract。
+
+## 历史弹幕证据评分刷新
+
+- 语义弹幕 evidence policy 变化不会自动改写旧 `picks`：历史尝试的 scorecard 已绑定旧
+  story/package 证据，禁止原地换分。`segments_done` 也不能为了重评而清空，否则普通
+  discovery 会重复追加整场候选。
+- 只有 operator scope 点名且仍位于 `pending_talk` / `talk_backlog` 的候选，才可在生产前
+  进入 candidate-scoped evidence refresh。刷新必须以原 candidate interval、BCUT SRT、
+  XML、source identity 和未变 hook 重建证据与 scorecard，保存 old/new canonical hash、
+  provider request/response contract 及 typed receipt；输入、provider 或绑定失败时停在
+  prioritize/生产之前，不能沿用 stale card。
+- v2 `RECOVER_NAMED_FAILED_PICKS` 只负责让旧 failed pick 经过原 maintenance 后回到 queue；
+  它本身不重评分、不放宽配额、不授权上传。候选一旦回到 queue，仍须满足上面的刷新门。
+- 这条窄门只修复已知候选的历史评分，不保证找回旧 recall 从未生成的候选。后者需要
+  per-segment transactional rediscovery/reconciliation，不能把本门夸大成整场重新发现。
 
 ## 修正 hook 后的独立 scorecard 重评分
 

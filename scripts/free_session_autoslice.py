@@ -75,6 +75,7 @@ Deployment (free):
     deps   fonts-noto-cjk (subtitle rendering), ffmpeg, PIL, self-ssh key,
            /opt/bilive/autoslice/venv-diar + pinned CAM++ model/voiceprints
 """
+
 from __future__ import annotations
 
 import argparse
@@ -115,7 +116,12 @@ from src.autoslice.batch_terminal_state import (
     project_terminal_batch_state,
     project_terminal_song_disposition,
 )
-from src.autoslice import live_gate, publication_reconciliation, runner_state_writeback
+from src.autoslice import (
+    live_gate,
+    publication_reconciliation,
+    runner_state_writeback,
+    semantic_evidence_scorecard_refresh as semantic_chat_refresh,
+)
 from src.autoslice.live_gate import format_live_basis, live_signal_divergence
 from src.autoslice.selection_scorecard import (
     SelectionCalibrationPolicyError,
@@ -191,6 +197,8 @@ def session_relation_for_segment(
         recording_path=segment,
         source_sha256=source_sha256,
     )
+
+
 HOST_VOCAL_ABSENT_DECISION = CHANNEL_PROFILE.decision("host_vocal_absent")
 VERIFIED_HOST_SINGING_DECISION = CHANNEL_PROFILE.decision("verified_host_singing")
 HOST_NOT_SINGING_REASON = CHANNEL_PROFILE.decision("host_not_singing_reason")
@@ -222,9 +230,7 @@ SPEAKER_MODE = os.environ.get("AUTOSLICE_SPEAKER_MODE", "uniform_host")
 if SPEAKER_MODE not in {"uniform_host", "required", "auto"}:
     SPEAKER_MODE = "uniform_host"
 ROOM = os.environ.get("AUTOSLICE_ROOM", CHANNEL_PROFILE.room_id)
-_DEFAULT_REC_ROOT = Path(
-    f"/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/{ROOM}"
-)
+_DEFAULT_REC_ROOT = Path(f"/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/{ROOM}")
 REC_ROOT = Path(
     os.environ.get(
         "AUTOSLICE_REC_ROOT",
@@ -240,18 +246,12 @@ CANONICAL_REC_ROOT = Path(
         str(_DEFAULT_REC_ROOT),
     )
 )
-RECORDER_STATUS_PATH = Path(
-    os.environ.get("AUTOSLICE_RECORDER_STATUS_PATH", "/opt/bilive/recording/status.json")
-)
+RECORDER_STATUS_PATH = Path(os.environ.get("AUTOSLICE_RECORDER_STATUS_PATH", "/opt/bilive/recording/status.json"))
 RECORDER_ADAPTER_STATE_PATH = Path(
     os.environ.get("AUTOSLICE_RECORDER_ADAPTER_STATE_PATH", "/opt/bilive/recording/adapter-state.json")
 )
-RECORDER_STATUS_MAX_AGE_SECONDS = int(
-    os.environ.get("AUTOSLICE_RECORDER_STATUS_MAX_AGE_SECONDS", "180")
-)
-LIVE_WITHOUT_RECORDING_WARN_SECONDS = int(
-    os.environ.get("AUTOSLICE_LIVE_WITHOUT_RECORDING_WARN_SECONDS", "1800")
-)
+RECORDER_STATUS_MAX_AGE_SECONDS = int(os.environ.get("AUTOSLICE_RECORDER_STATUS_MAX_AGE_SECONDS", "180"))
+LIVE_WITHOUT_RECORDING_WARN_SECONDS = int(os.environ.get("AUTOSLICE_LIVE_WITHOUT_RECORDING_WARN_SECONDS", "1800"))
 BILIVE_ENV = Path("/opt/bilive/.env")
 CPA_ENV = BASE / "cpa.env"
 HOST_VOCAL_PYTHON = Path(os.environ.get("AUTOSLICE_HOST_VOCAL_PYTHON", str(BASE / "venv-diar/bin/python")))
@@ -288,7 +288,7 @@ MIN_TALK_EFFECTIVE_DURATION_MS = 45_000
 TALK_PER_SEGMENT_CAP = 2  # diversity guard on the GLOBAL confidence ranking; slack refills
 SONG_ATTEMPT_CAP = 6  # per-pipeline-generation song attempts for one live session
 SONG_LIFETIME_ATTEMPT_CAP = 18  # absolute session cap including superseded attempts;
-                                # permits two self-healing generations after the initial run
+# permits two self-healing generations after the initial run
 SONG_INFRA_RETRY_CAP = 6
 SONG_INFRA_RETRY_BASE_SECONDS = 15 * 60
 SONG_INFRA_RETRY_MAX_SECONDS = 6 * 60 * 60
@@ -297,9 +297,7 @@ TALK_REPAIR_LIFETIME_RETRY_CAP = 3  # all retries of one already-selected talk
 # every historical failure.  Ordinary cron maintenance begins at this horizon;
 # older dates remain available to explicit/manual recovery code paths without
 # being woken by a routine --once tick after unrelated pipeline changes.
-AUTOMATIC_MAINTENANCE_NOT_BEFORE = os.environ.get(
-    "AUTOSLICE_AUTOMATIC_MAINTENANCE_NOT_BEFORE", "2026-07-11"
-)
+AUTOMATIC_MAINTENANCE_NOT_BEFORE = os.environ.get("AUTOSLICE_AUTOMATIC_MAINTENANCE_NOT_BEFORE", "2026-07-11")
 SONG_TERMINAL_PERFORMER_REJECTION_CODES = frozenset(
     {
         "SONG_BACKGROUND_PLAYBACK_ONLY",
@@ -348,8 +346,8 @@ TITLE_MAX_ATTEMPTS = 3
 COVER_REPAIR_MAX_ATTEMPTS = 3  # one attempt per tick → retries spread ~10min apart
 COVER_REPAIR_LIFETIME_ATTEMPT_CAP = 9  # three bounded repair generations; never loop forever
 MAX_PARALLEL_PRODUCE = 5  # slices are independent; produce them concurrently (each is
-                          # network-bound on AGY/CPA/gpt-image-2, so a few in flight
-                          # cut wall-clock ~3x; bounded by free CPU + CPA concurrency)
+# network-bound on AGY/CPA/gpt-image-2, so a few in flight
+# cut wall-clock ~3x; bounded by free CPU + CPA concurrency)
 # Top-5 is a ceiling, not a promise to ship five weak events.  The 2026-07-16
 # 0.78-confidence 《夏雪冬花》 candidate was admitted only because the session
 # still had an empty seat; that is the same quota-pressure failure mode that
@@ -366,10 +364,10 @@ BOUNDARY_CONTEXT_RETRY_POST_MS = 90_000
 BOUNDARY_REPAIR_INITIAL_CAP_MS = 30_000
 BOUNDARY_REPAIR_RETRY_CAP_MS = 60_000
 SPEAKER_ROUTING_FINAL_TAIL_GUARD_MS = 1_000
-SONG_WINDOW_PRE_MS = 15_000   # window must stay SONG-dominated or the in-window
+SONG_WINDOW_PRE_MS = 15_000  # window must stay SONG-dominated or the in-window
 SONG_WINDOW_POST_MS = 20_000  # recall reclassifies it as talk (smoke-proven at
-                              # ±60/45s and ±180/150s); 15/20s matches the
-                              # validated 虫儿飞 run.
+# ±60/45s and ±180/150s); 15/20s matches the
+# validated 虫儿飞 run.
 # A recall window is still only an anchor.  If it identifies a song but cannot
 # prove both LRC ends, retry once with enough ORIGINAL source for a normal
 # full-length performance.  The old ±45s retry only repaired slightly clipped
@@ -385,7 +383,7 @@ SONG_TALK_QUARANTINE_GUARD_MS = 5_000
 SESSION_INTRO_BGM_MAX_OFFSET_MS = 180_000
 SESSION_OUTRO_BGM_MAX_REMAINING_MS = 240_000
 SONG_ANCHOR_TRIM_MIN_MS = 20_000  # only retry on the danmaku-dense core when the
-                                  # trim drops ≥20s of talk padding off an end
+# trim drops ≥20s of talk padding off an end
 DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # Read-only presentation modules must not invalidate media/content evidence or
 # wake recoverable production work. Their output is regenerated from state.
@@ -448,8 +446,7 @@ def pipeline_fingerprint() -> str:
     paths.extend(
         path
         for path in (autoslice_src.rglob("*.py") if autoslice_src.is_dir() else [])
-        if path.relative_to(REPO_ROOT).as_posix()
-        not in PIPELINE_FINGERPRINT_EXCLUSIONS
+        if path.relative_to(REPO_ROOT).as_posix() not in PIPELINE_FINGERPRINT_EXCLUSIONS
     )
 
     def path_label(path: Path) -> str:
@@ -484,9 +481,7 @@ def pipeline_fingerprint() -> str:
         hasher.update(f"provider-authority-unavailable:{type(exc).__name__}".encode())
     else:
         if authority is not None:
-            hasher.update(
-                json.dumps(authority, sort_keys=True, separators=(",", ":")).encode()
-            )
+            hasher.update(json.dumps(authority, sort_keys=True, separators=(",", ":")).encode())
     return "sha256:" + hasher.hexdigest()
 
 
@@ -586,20 +581,14 @@ def song_pipeline_fingerprint() -> str:
         "session_intro_bgm_max_offset_ms": SESSION_INTRO_BGM_MAX_OFFSET_MS,
         "session_outro_bgm_max_remaining_ms": SESSION_OUTRO_BGM_MAX_REMAINING_MS,
         "song_anchor_trim_min_ms": SONG_ANCHOR_TRIM_MIN_MS,
-        "song_terminal_performer_rejection_codes": sorted(
-            SONG_TERMINAL_PERFORMER_REJECTION_CODES
-        ),
-        "song_infra_transient_reason_codes": sorted(
-            SONG_INFRA_TRANSIENT_REASON_CODES
-        ),
+        "song_terminal_performer_rejection_codes": sorted(SONG_TERMINAL_PERFORMER_REJECTION_CODES),
+        "song_infra_transient_reason_codes": sorted(SONG_INFRA_TRANSIENT_REASON_CODES),
         "cpa_deep_command": CPA_CMD_DEEP,
         "cpa_title_command": CPA_CMD_TITLE,
         "cpa_standard_command": CPA_CMD_STANDARD,
         "cpa_structured_command": CPA_CMD_STRUCTURED,
     }
-    hasher.update(
-        json.dumps(policy, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    )
+    hasher.update(json.dumps(policy, sort_keys=True, separators=(",", ":")).encode("utf-8"))
     return "sha256:" + hasher.hexdigest()
 
 
@@ -834,7 +823,8 @@ from src.autoslice.delivery_recovery import (  # noqa: E402
     bind_song_delivery_recovery_authority,
     requeue_recoverable_deliveries,
     requeue_stale_current_recovery_talks,
-    requeue_recoverable_songs, requeue_recoverable_talks,
+    requeue_recoverable_songs,
+    requeue_recoverable_talks,
 )
 from src.autoslice.candidate_selection import (  # noqa: E402
     _exact_talk_contract_ids,
@@ -850,7 +840,10 @@ from src.autoslice.candidate_selection import (  # noqa: E402
     prioritize,
 )
 from src.autoslice.operator_processing_scope import operator_scope_admission  # noqa: E402
-from src.autoslice.exact_talk_recovery_scope import maintain_delivery_recovery_scope, suppress_exact_talk_recovery_song_work  # noqa: E402
+from src.autoslice.exact_talk_recovery_scope import (
+    maintain_delivery_recovery_scope,
+    suppress_exact_talk_recovery_song_work,
+)  # noqa: E402
 from src.autoslice.selection_rescore import split_produce_blocked_talk_items  # noqa: E402
 from src.autoslice.cover_repair import (  # noqa: E402
     COVER_TRANSACTION_SCHEMA_VERSION,
@@ -936,35 +929,23 @@ def _speaker_runner_context() -> _SpeakerRunnerContext:
 
 
 def _speaker_date_root(date: str) -> Path:
-    return _speaker_routing_session._speaker_date_root(
-        date, ctx=_speaker_runner_context()
-    )
+    return _speaker_routing_session._speaker_date_root(date, ctx=_speaker_runner_context())
 
 
 def _speaker_generation_root(date: str, pipeline: str) -> Path:
-    return _speaker_routing_session._speaker_generation_root(
-        date, pipeline, ctx=_speaker_runner_context()
-    )
+    return _speaker_routing_session._speaker_generation_root(date, pipeline, ctx=_speaker_runner_context())
 
 
 def _write_speaker_session_authority(path: Path, document: dict) -> str:
-    return _speaker_routing_session._write_speaker_session_authority(
-        path, document, ctx=_speaker_runner_context()
-    )
+    return _speaker_routing_session._write_speaker_session_authority(path, document, ctx=_speaker_runner_context())
 
 
-def prepare_speaker_routing(
-    date: str, items: list[dict], *, state: dict | None = None
-) -> dict | None:
-    return _speaker_routing_session.prepare_speaker_routing(
-        date, items, state=state, ctx=_speaker_runner_context()
-    )
+def prepare_speaker_routing(date: str, items: list[dict], *, state: dict | None = None) -> dict | None:
+    return _speaker_routing_session.prepare_speaker_routing(date, items, state=state, ctx=_speaker_runner_context())
 
 
 def _capture_state_from_result(result: dict) -> dict[str, object]:
-    return _speaker_routing_session._capture_state_from_result(
-        result, ctx=_speaker_runner_context()
-    )
+    return _speaker_routing_session._capture_state_from_result(result, ctx=_speaker_runner_context())
 
 
 def queue_collab_evidence_capture(
@@ -994,7 +975,9 @@ def talk_failure_recovery_fingerprint(failure_kind: str | None, candidate_id: st
     """
 
     scoped_failure_kinds = {
-        "content_boundary", "speaker_evidence", "runtime_prerequisite",
+        "content_boundary",
+        "speaker_evidence",
+        "runtime_prerequisite",
         "subtitle_authority",
     }
     if failure_kind not in scoped_failure_kinds:
@@ -1002,9 +985,7 @@ def talk_failure_recovery_fingerprint(failure_kind: str | None, candidate_id: st
     if failure_kind == "content_boundary":
         relatives = CONTENT_BOUNDARY_RECOVERY_RELATIVES
     elif failure_kind == "subtitle_authority":
-        relatives = subtitle_authority_recovery_relatives(
-            profile_asset_file("subtitle_truth_ledger")
-        )
+        relatives = subtitle_authority_recovery_relatives(profile_asset_file("subtitle_truth_ledger"))
     else:
         relatives = (
             "scripts/produce_slice_package.py",
@@ -1143,12 +1124,7 @@ def child_env() -> dict[str, str]:
         topic_graph = runtime_topic_graph
     else:
         topic_graph = committed_topic_graph
-    if (
-        truth_mode == "withheld"
-        and topic_graph is not None
-        and topic_graph.is_file()
-        and not topic_graph.is_symlink()
-    ):
+    if truth_mode == "withheld" and topic_graph is not None and topic_graph.is_file() and not topic_graph.is_symlink():
         # A blind graph must be generated from the exact blind timely snapshot
         # selected above.  This prevents a reviewed/committed graph from being
         # relabeled by path alone and makes the lineage auditable in the graph.
@@ -1159,8 +1135,7 @@ def child_env() -> dict[str, str]:
                 and timely_terms.is_file()
                 and not timely_terms.is_symlink()
                 and graph_payload.get("generator") == "scripts/crawl_topic_entity_graph.py"
-                and graph_payload.get("input_timely_terms_sha256")
-                == _sha256_regular_file(timely_terms)
+                and graph_payload.get("input_timely_terms_sha256") == _sha256_regular_file(timely_terms)
             )
         except (OSError, ValueError, AttributeError):
             graph_matches_blind_snapshot = False
@@ -1168,9 +1143,7 @@ def child_env() -> dict[str, str]:
             topic_graph = None
     if topic_graph is not None and topic_graph.is_file() and not topic_graph.is_symlink():
         env["LIDOUSHA_TOPIC_ENTITY_GRAPH"] = str(topic_graph.resolve())
-        env["LIDOUSHA_TOPIC_ENTITY_GRAPH_SHA256"] = (
-            "sha256:" + _sha256_regular_file(topic_graph)
-        )
+        env["LIDOUSHA_TOPIC_ENTITY_GRAPH_SHA256"] = "sha256:" + _sha256_regular_file(topic_graph)
         env.pop("LIDOUSHA_DISABLE_TOPIC_ENTITY_GRAPH", None)
     elif truth_mode == "withheld":
         env["LIDOUSHA_DISABLE_TOPIC_ENTITY_GRAPH"] = "1"
@@ -1196,7 +1169,8 @@ def child_env_for_date(recording_date: str) -> dict[str, str]:
         selectors=os.environ,
     )
     bind_session_theme_hints(
-        env, recording_date=recording_date,
+        env,
+        recording_date=recording_date,
         snapshot_path=BASE / "state" / "streamer_dynamics.json",
         state_root=BASE / "state",
         truth_mode=human_truth_mode(),
@@ -1223,7 +1197,12 @@ def cpa_healthy() -> bool:
         return False
     for model in ("gpt-5.6-sol", "gpt-5.5", "gpt-5.4"):
         body = json.dumps(
-            {"model": model, "input": "回复:OK", "reasoning": {"effort": "low"}, "max_output_tokens": 2000}
+            {
+                "model": model,
+                "input": "回复:OK",
+                "reasoning": {"effort": "low"},
+                "max_output_tokens": 2000,
+            }
         ).encode()
         req = urllib.request.Request(
             f"{base}/responses",
@@ -1252,7 +1231,9 @@ def recorder_live_status() -> bool | None:
     """True=active, False=sealed, None=unknown (src.autoslice.live_gate)."""
 
     return live_gate.read_recorder_live_status(
-        RECORDER_STATUS_PATH, room=ROOM, log=log,
+        RECORDER_STATUS_PATH,
+        room=ROOM,
+        log=log,
         max_age_seconds=RECORDER_STATUS_MAX_AGE_SECONDS,
     )
 
@@ -1260,9 +1241,7 @@ def recorder_live_status() -> bool | None:
 def live_hold_recheck() -> bool:
     """Positive-only mid-tick live gate (src.autoslice.live_gate)."""
 
-    return live_gate.positive_live_hold_recheck(
-        RECORDER_STATUS_PATH, recorder_live_status, _live_hold_active
-    )
+    return live_gate.positive_live_hold_recheck(RECORDER_STATUS_PATH, recorder_live_status, _live_hold_active)
 
 
 def live_determination_basis(live: bool | None) -> dict:
@@ -1293,9 +1272,7 @@ def _apply_runtime_publication_projection(date: str, state: dict) -> dict:
         write_state(date, state)
         return state
     if state.get("status") == "publication_reconciliation_blocked":
-        state["status"] = state.pop(
-            "prepublication_reconciliation_status", "no_delivery"
-        )
+        state["status"] = state.pop("prepublication_reconciliation_status", "no_delivery")
         state.pop("publication_reconciliation_error", None)
         changed = True
     if changed:
@@ -1314,14 +1291,10 @@ def _read_state_untracked(date: str) -> dict:
     path = state_path(date)
     bak = path.with_suffix(".json.bak")
     try:
-        return _apply_runtime_publication_projection(
-            date, json.loads(path.read_text(encoding="utf-8"))
-        )
+        return _apply_runtime_publication_projection(date, json.loads(path.read_text(encoding="utf-8")))
     except FileNotFoundError:
         try:  # crash window between the two os.replace()s in write_state
-            return _apply_runtime_publication_projection(
-                date, json.loads(bak.read_text(encoding="utf-8"))
-            )
+            return _apply_runtime_publication_projection(date, json.loads(bak.read_text(encoding="utf-8")))
         except (OSError, ValueError):
             return {}
     except OSError as exc:
@@ -1339,7 +1312,10 @@ def _read_state_untracked(date: str) -> dict:
             # Persist the blocked marker so EVERY subsequent read agrees — a
             # rename alone would make the next read see "new date" and happily
             # re-produce and re-deliver the whole batch.
-            blocked = {"status": "state_corrupt_blocked", "state_error": f"corrupt json, no usable .bak: {exc}"}
+            blocked = {
+                "status": "state_corrupt_blocked",
+                "state_error": f"corrupt json, no usable .bak: {exc}",
+            }
             path.write_text(json.dumps(blocked, ensure_ascii=False, indent=2), encoding="utf-8")
             return blocked
         log(f"state for {date} restored from .bak")
@@ -1377,9 +1353,7 @@ def source_health_error() -> str | None:
     the CloudDrive endpoint died and every layer above swallowed the OSError
     into 'no dates' — the control plane kept reporting green for hours."""
     try:
-        completed = subprocess.run(
-            ["ls", str(REC_ROOT)], check=False, capture_output=True, text=True, timeout=25
-        )
+        completed = subprocess.run(["ls", str(REC_ROOT)], check=False, capture_output=True, text=True, timeout=25)
     except subprocess.TimeoutExpired:
         return f"listing {REC_ROOT} timed out after 25s (hung mount?)"
     if completed.returncode != 0:
@@ -1418,10 +1392,7 @@ def runtime_health_error() -> str | None:
     try:
         load_selected_selection_calibration_policy()
     except SelectionCalibrationPolicyError as exc:
-        return (
-            "SELECTION_CALIBRATION_POLICY_INVALID: "
-            f"{exc.reason_code}: {exc.path}"
-        )
+        return f"SELECTION_CALIBRATION_POLICY_INVALID: {exc.reason_code}: {exc.path}"
     return None
 
 
@@ -1448,20 +1419,14 @@ def list_dates() -> list[str]:
             state = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        recovery_in_progress = historical_source_recovery_in_progress(
-            state, TALK_COVER_PENDING_STATUS
-        )
+        recovery_in_progress = historical_source_recovery_in_progress(state, TALK_COVER_PENDING_STATUS)
         # 第三条例外：运维显式点名（Ivan 2026-08-10 逐字「87 现在需要纳入处理
         # 范围」）。判据、出处校验与"干完就自动出圈"全在
         # src/autoslice/operator_processing_scope.py。
         admission = operator_scope_admission(state, date=date)
         if admission.log_line:
             log(f"list_dates: {date}: {admission.log_line}")
-        if (
-            state.get("status") == "source_incomplete"
-            or recovery_in_progress
-            or admission.admitted
-        ):
+        if state.get("status") == "source_incomplete" or recovery_in_progress or admission.admitted:
             selected.add(date)
     return sorted(selected)
 
@@ -1485,7 +1450,10 @@ def list_segments(date: str) -> list[Path]:
 def ffprobe_ms(path: Path) -> int:
     completed = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
-        check=False, capture_output=True, text=True, timeout=600,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=600,
     )
     try:
         return int(float(completed.stdout.strip()) * 1000)
@@ -1499,8 +1467,19 @@ def bcut_transcribe(segment: Path, date: str) -> Path | None:
         return cache
     cache.parent.mkdir(parents=True, exist_ok=True)
     completed = subprocess.run(
-        [sys.executable, str(REPO_ROOT / "scripts" / "free_asr_client.py"), str(segment), "--srt", str(cache)],
-        check=False, capture_output=True, text=True, timeout=900, cwd=str(REPO_ROOT), env=child_env(),
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "free_asr_client.py"),
+            str(segment),
+            "--srt",
+            str(cache),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=900,
+        cwd=str(REPO_ROOT),
+        env=child_env(),
     )
     if completed.returncode != 0 or not cache.is_file() or cache.stat().st_size == 0:
         log(f"BCUT transcribe FAILED for {segment.name}: {completed.stderr[-200:]}")
@@ -1565,9 +1544,8 @@ def resolve_structured_chat_binding(
 _DIAN_GE_RX = re.compile(r"^点歌\s*(.+)$")
 _TRAILING_PUNCT_RX = re.compile(r"[\s,.!?~～，。！？、·…\-_]+$")
 
-_SRT_TS_RX = re.compile(
-    r"(\d\d):(\d\d):(\d\d),(\d\d\d)\s*-->\s*(\d\d):(\d\d):(\d\d),(\d\d\d)"
-)
+_SRT_TS_RX = re.compile(r"(\d\d):(\d\d):(\d\d),(\d\d\d)\s*-->\s*(\d\d):(\d\d):(\d\d),(\d\d\d)")
+
 
 def produce_batch(date: str, items: list[dict], produce_fn) -> list[dict]:
     """Windowed concurrent production with deploy-yield (src.autoslice.produce_dispatch)."""
@@ -1588,26 +1566,6 @@ def produce_batch(date: str, items: list[dict], produce_fn) -> list[dict]:
         song_window_post_ms=SONG_WINDOW_POST_MS,
         live_hold_active_fn=live_hold_recheck,
     )
-
-def _date_work_flags(
-    date: str, state: dict, *, automatic_maintenance: bool
-) -> tuple[bool, bool, bool]:
-    done = set(state.get("segments_done", []))
-    dead = state.get("segments_dead", {})
-    has_new = any(
-        segment.stem not in done and segment.stem not in dead
-        for segment in list_segments(date)
-    )
-    has_pending = bool(
-        state.get("pending_talk")
-        or state.get("pending_song")
-        or backlog_has_eligible_session_work(state)
-    )
-    needs_cover = automatic_maintenance and any(
-        cover_repair_needed(date, record)
-        for record in state.get("picks", []) + state.get("songs", [])
-    )
-    return has_new, has_pending, needs_cover
 
 
 def _project_terminal_batch_state(state: dict) -> dict[str, object]:
@@ -1636,9 +1594,7 @@ def _project_terminal_batch_state(state: dict) -> dict[str, object]:
         cover_pending_status=TALK_COVER_PENDING_STATUS,
         exact_closure=exact_closure,
         retry_epoch=retry_epoch,
-        terminal_song_performer_rejection_codes=(
-            SONG_TERMINAL_PERFORMER_REJECTION_CODES
-        ),
+        terminal_song_performer_rejection_codes=(SONG_TERMINAL_PERFORMER_REJECTION_CODES),
         song_infra_transient_reason_codes=SONG_INFRA_TRANSIENT_REASON_CODES,
         song_infra_retry_cap=SONG_INFRA_RETRY_CAP,
     )
@@ -1650,7 +1606,10 @@ def process_date(date: str) -> None:
     state.setdefault("source_authority", "RECORDER")
     state.setdefault("upload_allowed", False)
     if state.get("status") == "state_corrupt_blocked":
-        write_alert("STATE_CORRUPT", f"{date}: {state.get('state_error', 'state file corrupt')} — date BLOCKED, needs human")
+        write_alert(
+            "STATE_CORRUPT",
+            f"{date}: {state.get('state_error', 'state file corrupt')} — date BLOCKED, needs human",
+        )
         log(f"{date}: state corrupt — blocked, not reprocessing (would re-deliver everything)")
         return
     if state.get("status") == "publication_reconciliation_blocked":
@@ -1684,20 +1643,14 @@ def process_date(date: str) -> None:
         if recovered_hls:
             state.setdefault("source_recoveries", []).extend(recovered_hls)
             write_state(date, state)
-            log(
-                f"{date}: recovered {len(recovered_hls)} finalized legacy "
-                "HLS segment(s) into hash-bound MP4"
-            )
+            log(f"{date}: recovered {len(recovered_hls)} finalized legacy HLS segment(s) into hash-bound MP4")
     source_inventory = audit_finalized_recording_inventory(
         REC_ROOT / date, room_id=ROOM, adapter_state_path=RECORDER_ADAPTER_STATE_PATH
     )
     previous_source_inventory = state.get("source_integrity")
     state["source_integrity"] = source_inventory
     if not source_inventory["can_select"]:
-        changed = (
-            state.get("status") != "source_incomplete"
-            or previous_source_inventory != source_inventory
-        )
+        changed = state.get("status") != "source_incomplete" or previous_source_inventory != source_inventory
         state["status"] = "source_incomplete"
         write_state(date, state)
         write_reports(date, state)
@@ -1713,10 +1666,7 @@ def process_date(date: str) -> None:
                 "SOURCE_INCOMPLETE",
                 f"{date}: source inventory blocks selection ({','.join(codes)})",
             )
-        log(
-            f"{date}: source incomplete — selection blocked before early return "
-            f"({','.join(codes)})"
-        )
+        log(f"{date}: source incomplete — selection blocked before early return ({','.join(codes)})")
         return
     if annotate_state_sessions(date, state):
         write_state(date, state)
@@ -1727,18 +1677,14 @@ def process_date(date: str) -> None:
         requeued_talks,
         requeued_songs,
         song_fingerprint_baseline_changed,
-    ) = maintain_delivery_recovery_scope(
-        date, state, automatic_maintenance=automatic_maintenance
-    )
+    ) = maintain_delivery_recovery_scope(date, state, automatic_maintenance=automatic_maintenance)
     if recovered_song_deliveries:
         write_state(date, state)
         log(
             f"{date}: recovered {recovered_song_deliveries} verified song delivery "
             "package(s) without selector/ASR/LRC rerun"
         )
-    if any((requeued_stale_talks, requeued_talks, requeued_songs)) or (
-        song_fingerprint_baseline_changed
-    ):
+    if any((requeued_stale_talks, requeued_talks, requeued_songs)) or (song_fingerprint_baseline_changed):
         write_state(date, state)
     if requeued_stale_talks or requeued_talks or requeued_songs:
         log(
@@ -1747,7 +1693,7 @@ def process_date(date: str) -> None:
             f"{requeued_songs} recoverable song BLOCK(s) for song pipeline "
             f"{song_pipeline_fingerprint()[:19]}…"
         )
-    has_new, has_pending, needs_cover = _date_work_flags(
+    has_new, has_pending, needs_cover = semantic_chat_refresh.runner_date_work_flags(
         date,
         state,
         automatic_maintenance=automatic_maintenance,
@@ -1757,15 +1703,9 @@ def process_date(date: str) -> None:
         write_state(date, state)
         write_reports(date, state)
         if recovered_song_deliveries:
-            log(
-                f"{date}: finalized {recovered_song_deliveries} recovered song "
-                "package(s) without requiring CPA"
-            )
+            log(f"{date}: finalized {recovered_song_deliveries} recovered song package(s) without requiring CPA")
         if terminal["retry_epoch"] is not None:
-            log(
-                f"{date}: terminal state {state['status']} with next retry at "
-                f"{state['next_retry_at']}"
-            )
+            log(f"{date}: terminal state {state['status']} with next retry at {state['next_retry_at']}")
         return
     # CPA gate: recall, reconcile, titles and covers all need the chat lane.
     # Recordings can wait — never produce garbage during a provider outage.
@@ -1791,17 +1731,19 @@ def process_date(date: str) -> None:
         write_state(date, state)
         log(f"{date}: segment inventory not stable yet — selection deferred to next tick (sealing)")
         return
+    refresh_count = semantic_chat_refresh.refresh_operator_scoped_chat_scorecards(date, state)
+    if refresh_count:
+        write_state(date, state)
+    if refresh_count < 0:
+        log(f"{date}: semantic-chat scorecard refresh blocked; production deferred")
+        return
     # Keep a structured, session-wide snapshot for the unlabelled evidence
     # sidecar before prioritize() reduces production to top-5 talk clips.
-    capture_candidates = [
-        dict(item) for item in state.get("pending_talk", []) if isinstance(item, dict)
-    ]
+    capture_candidates = [dict(item) for item in state.get("pending_talk", []) if isinstance(item, dict)]
     prioritize(state)
     suppress_exact_talk_recovery_song_work(state, phase="after_prioritize")
     exact_contract_ids = set(_exact_talk_contract_ids(state))
-    routing_claim = prepare_speaker_routing(
-        date, state["pending_talk"], state=state
-    )
+    routing_claim = prepare_speaker_routing(date, state["pending_talk"], state=state)
     # Machine-evidence song-name pool for the talk lane's deterministic pin
     # (Ivan 2026-07-13): the screen songlist keeps accruing across the whole
     # date, so this is recomputed fresh every tick, not just once at discovery.
@@ -1824,7 +1766,7 @@ def process_date(date: str) -> None:
         results = produce_batch(date, talk_items, produce_talk)
         # deploy-yield 只返回已开工项（输入序前缀）；未派发的尾巴必须留在
         # 队列里等下个 tick，否则候选无声蒸发（2026-07-27 850_940 批次案）。
-        deferred_tail = talk_items[len(results):] + rescore_blocked_items
+        deferred_tail = talk_items[len(results) :] + rescore_blocked_items
         retry: list[dict] = []
         rejected = 0
         recoverable_failure = False
@@ -1838,9 +1780,7 @@ def process_date(date: str) -> None:
                 result["status"] = "failed"
                 result["error"] = "title generation failed 3x"
             candidate_id = str(item.get("cid") or item.get("candidate_id") or "")
-            if apply_talk_backfill_rejection_policy(
-                result, exact_selected=candidate_id in exact_contract_ids
-            ):
+            if apply_talk_backfill_rejection_policy(result, exact_selected=candidate_id in exact_contract_ids):
                 rejected += 1
             if result.get("failure_recoverable") is True:
                 recoverable_failure = True
@@ -1869,10 +1809,7 @@ def process_date(date: str) -> None:
             return
         if deferred_tail:
             # 让位部署：本 tick 收官，尾巴已持久化在 pending_talk 等新代码。
-            log(
-                f"{date}: {len(deferred_tail)} talk item(s) deferred for "
-                "deploy — resuming next tick"
-            )
+            log(f"{date}: {len(deferred_tail)} talk item(s) deferred for deploy — resuming next tick")
             break
         if recoverable_failure:
             # The selected item is waiting on infrastructure.  Do not spend a
@@ -1894,13 +1831,10 @@ def process_date(date: str) -> None:
         song_results = produce_batch(date, song_items, produce_song)
         state["songs"].extend(song_results)
         # 同 talk：deploy-yield 未派发的歌尾巴留队，不许无声蒸发。
-        state["pending_song"] = song_items[len(song_results):]
+        state["pending_song"] = song_items[len(song_results) :]
         if state["pending_song"]:
             write_state(date, state)
-            log(
-                f"{date}: {len(state['pending_song'])} song item(s) deferred "
-                "for deploy — resuming next tick"
-            )
+            log(f"{date}: {len(state['pending_song'])} song item(s) deferred for deploy — resuming next tick")
             break
         refill_songs(state)
         write_state(date, state)
@@ -2004,9 +1938,7 @@ def tick() -> int:
         checked.append(f"{date}:{state.get('status', 'new')}")
         process_date(date)
     suffix = f" live_yield_deferred={' '.join(deferred)}" if deferred else ""
-    write_heartbeat(
-        f"live={live} source=ok dates={' '.join(checked) or '(none)'}{suffix}"
-    )
+    write_heartbeat(f"live={live} source=ok dates={' '.join(checked) or '(none)'}{suffix}")
     log(f"tick done: live={live} dates={' '.join(checked) or '(none)'}{suffix}")
     return 0
 
@@ -2014,8 +1946,17 @@ def tick() -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--once", action="store_true", help="single tick (cron entry point)")
-    parser.add_argument("--preclaim", nargs="+", metavar="DATE", help="mark dates as manually handled; runner will never touch them")
-    parser.add_argument("--smoke-segment", type=Path, help="end-to-end smoke: recall+produce ONE talk candidate from this segment into the smoke area")
+    parser.add_argument(
+        "--preclaim",
+        nargs="+",
+        metavar="DATE",
+        help="mark dates as manually handled; runner will never touch them",
+    )
+    parser.add_argument(
+        "--smoke-segment",
+        type=Path,
+        help="end-to-end smoke: recall+produce ONE talk candidate from this segment into the smoke area",
+    )
     args = parser.parse_args(argv)
     BASE.mkdir(parents=True, exist_ok=True)
     # Inject CPA credentials into OUR process too: the semantic-recall llm_call
@@ -2024,7 +1965,13 @@ def main(argv: list[str] | None = None) -> int:
     os.environ.update(load_env_file(CPA_ENV))
     if args.preclaim:
         for date in args.preclaim:
-            write_state(date, {"status": "manual_preclaim", "segments_done": [s.stem for s in list_segments(date)]})
+            write_state(
+                date,
+                {
+                    "status": "manual_preclaim",
+                    "segments_done": [s.stem for s in list_segments(date)],
+                },
+            )
             log(f"preclaimed {date}")
         return 0
     if args.smoke_segment:
@@ -2058,16 +2005,12 @@ def main(argv: list[str] | None = None) -> int:
                 "hook": meta.get("hook", ""),
                 "confidence": meta.get("confidence"),
                 "selection_scorecard": (
-                    dict(meta["selection_scorecard"])
-                    if isinstance(meta.get("selection_scorecard"), dict)
-                    else None
+                    dict(meta["selection_scorecard"]) if isinstance(meta.get("selection_scorecard"), dict) else None
                 ),
                 "lane": lane,
                 "bcut_srt_path": str(srt),
                 "filler_proposals": list(meta.get("filler_proposals") or []),
-                "filler_proposal_srt_sha256": meta.get(
-                    "filler_proposal_srt_sha256"
-                ),
+                "filler_proposal_srt_sha256": meta.get("filler_proposal_srt_sha256"),
                 "merge_gap_removals": list(meta.get("merge_gap_removals") or []),
             }
             result = produce_talk(date, item)
