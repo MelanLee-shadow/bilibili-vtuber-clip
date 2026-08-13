@@ -196,3 +196,10 @@
   CloudFS host/container mount 都为绿时才能重启 `bililive_adapter`；安装后的任一
   deploy 失败必须原子恢复 preimage 并在同样安全门下重启，无法证明时保留
   `DISABLED` 与 deploy guard。
+- adapter 外部字节未变化时，部署前状态必须 fresh、idle、
+  `service_reachable=true` 且 `error=null`。只有待安装 adapter 字节确实变化时，才允许
+  用单一修复例外越过旧 adapter 自己制造的错误：旧状态仍须 fresh/idle，且必须精确为
+  `service_reachable=false` 与 `error` 前缀 `source disposition drift:`；同时 recorder 与
+  adapter 运行、host/两容器 CloudFS、旧 host/container adapter SHA 以及独立 GraphQL
+  idle 查询必须全部通过。其他错误一律拒绝。新字节重启后仍须等到 fresh clean 状态、
+  新 SHA 与健康检查全绿；该例外不得成为普通 deploy 或 live-query bypass。

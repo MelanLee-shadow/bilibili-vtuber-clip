@@ -14,6 +14,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +36,28 @@ def _embedded_shell_function(block: str, name: str) -> str:
     start = block.index(f"{name}() {{")
     end = block.index("\n}", start) + len("\n}")
     return block[start:end]
+
+
+def _run_embedded_status_validator(
+    label: str,
+    tmp_path: Path,
+    payload: dict[str, object],
+    *extra_args: str,
+) -> subprocess.CompletedProcess[str]:
+    status_path = tmp_path / f"{label}.json"
+    status_path.write_text(json.dumps(payload), encoding="utf-8")
+    return subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            _embedded_deploy_python(label),
+            str(status_path),
+            *extra_args,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def test_runner_runs_as_script_without_import_cycle():
@@ -141,6 +164,133 @@ def test_deploy_commits_and_transactionally_installs_recorder_adapter():
         "docker restart bililive_adapter"
     )
     assert 'cmp -s "$backup/DEPLOYED_COMMIT.old" "$repo/DEPLOYED_COMMIT"' in (outer_rollback)
+
+
+def test_deploy_adapter_repair_exception_is_changed_bytes_only_and_preinstall():
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    external = source.split("<<'REMOTE_EXTERNAL_INSTALL'\n", 1)[1].split(
+        "\nREMOTE_EXTERNAL_INSTALL", 1
+    )[0]
+
+    changed = external.index("adapter_content_changed=0")
+    clean_or_repair = external.index('if [ "$adapter_content_changed" -eq 0 ]; then', changed)
+    clean_call = external.index('adapter_restart_safe "$old_adapter_sha"', clean_or_repair)
+    repair_call = external.index('adapter_repair_restart_safe "$old_adapter_sha"', clean_call)
+    install = external.index('install_atomic \\\n    "$new_adapter_source"', repair_call)
+    post_install_gate = external.index(
+        'adapter_restart_environment_safe "$new_adapter_sha"', install
+    )
+    restart = external.index("docker restart bililive_adapter", post_install_gate)
+    fresh_wait = external.index('wait_adapter_runtime "$restart_epoch" "$new_adapter_sha"', restart)
+
+    assert (
+        changed
+        < clean_or_repair
+        < clean_call
+        < repair_call
+        < install
+        < post_install_gate
+        < restart
+        < fresh_wait
+    )
+    assert "adapter_restart_safe" not in external[install:restart]
+    assert 'cmp -s "$backup/external/recorder_adapter.file" "$host_adapter_path"' in external
+    assert "docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py" in external
+    assert 'assert room.get("streaming") is False' in external
+    assert 'assert room.get("recording") is False' in external
+    assert 'assert payload.get("error") is None' in external
+    assert "restart_epoch=$(python3 -c 'import time; print(time.time())')" in external
+
+
+def test_deploy_clean_adapter_status_rejects_any_error(tmp_path):
+    now = time.time()
+    clean = {
+        "generated_at_epoch": now,
+        "service_reachable": True,
+        "streaming": False,
+        "recording": False,
+        "finalizing": False,
+        "error": None,
+    }
+    accepted = _run_embedded_status_validator("PY_CLEAN_ADAPTER_IDLE", tmp_path, clean)
+    assert accepted.returncode == 0, accepted.stderr
+
+    dirty = dict(clean)
+    dirty.update(
+        service_reachable=False,
+        error="source disposition drift: finalized source fingerprint changed",
+    )
+    rejected = _run_embedded_status_validator("PY_CLEAN_ADAPTER_IDLE", tmp_path, dirty)
+    assert rejected.returncode != 0
+
+
+def test_deploy_adapter_repair_status_accepts_only_exact_idle_defect(tmp_path):
+    now = time.time()
+    repairable = {
+        "generated_at_epoch": now,
+        "service_reachable": False,
+        "streaming": False,
+        "recording": False,
+        "finalizing": False,
+        "error": "source disposition drift: finalized source fingerprint changed",
+    }
+    accepted = _run_embedded_status_validator(
+        "PY_SUPPORTED_ADAPTER_REPAIR_IDLE", tmp_path, repairable
+    )
+    assert accepted.returncode == 0, accepted.stderr
+
+    rejected_payloads = []
+    for update in (
+        {"error": "source disposition drift"},
+        {"error": "SOURCE DISPOSITION DRIFT: mismatch"},
+        {"error": "graphql unavailable"},
+        {"error": None},
+        {"service_reachable": True},
+        {"streaming": True},
+        {"recording": True},
+        {"finalizing": True},
+        {"generated_at_epoch": now - 91},
+        {"generated_at_epoch": now + 1},
+    ):
+        payload = dict(repairable)
+        payload.update(update)
+        rejected_payloads.append(payload)
+
+    for payload in rejected_payloads:
+        rejected = _run_embedded_status_validator(
+            "PY_SUPPORTED_ADAPTER_REPAIR_IDLE",
+            tmp_path,
+            payload,
+        )
+        assert rejected.returncode != 0, payload
+
+
+def test_deploy_rollback_reaccepts_only_clean_or_exact_supported_preimage(tmp_path):
+    now = time.time()
+    repairable = {
+        "generated_at_epoch": now,
+        "service_reachable": False,
+        "streaming": False,
+        "recording": False,
+        "finalizing": False,
+        "error": "source disposition drift: finalized source fingerprint changed",
+    }
+    rollback = _run_embedded_status_validator(
+        "PY_ROLLBACK_FRESH", tmp_path, repairable, str(now - 1), "0"
+    )
+    assert rollback.returncode == 0, rollback.stderr
+
+    new_deploy = _run_embedded_status_validator(
+        "PY_ROLLBACK_FRESH", tmp_path, repairable, str(now - 1), "1"
+    )
+    assert new_deploy.returncode != 0
+
+    unknown = dict(repairable)
+    unknown["error"] = "graphql unavailable"
+    rejected = _run_embedded_status_validator(
+        "PY_ROLLBACK_FRESH", tmp_path, unknown, str(now - 1), "0"
+    )
+    assert rejected.returncode != 0
 
 
 def test_deploy_authority_manifest_is_canonical_and_exact_byte_bound(tmp_path):

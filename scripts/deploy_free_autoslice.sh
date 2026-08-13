@@ -163,12 +163,8 @@ restore_adapter_atomic() {
         return 1
     fi
 }
-adapter_restart_safe() {
-    test "$(findmnt -T /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -n -o TARGET)" = "/root/clouddrive2/CloudNAS/CloudDrive"
-    case "$(findmnt -T /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -n -o FSTYPE)" in fuse*) ;; *) return 1 ;; esac
-    test "$(findmnt -T /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -n -o SOURCE)" = "CloudFS"
-    timeout 15 find /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -mindepth 1 -maxdepth 1 -print -quit >/dev/null
-    python3 - /opt/bilive/recording/status.json <<'PY_IDLE'
+adapter_status_clean_idle() {
+    python3 - /opt/bilive/recording/status.json <<'PY_ROLLBACK_CLEAN_ADAPTER_IDLE'
 import json
 import sys
 import time
@@ -180,16 +176,42 @@ assert payload.get("service_reachable") is True
 assert payload.get("streaming") is False
 assert payload.get("recording") is False
 assert payload.get("finalizing") is False
-PY_IDLE
-    test "$(docker inspect -f '{{.State.Status}}' bililive_recorder)" = running
-    test "$(docker inspect -f '{{.State.Status}}' bililive_adapter)" = running
-    test "$(docker inspect -f '{{index .Config.Cmd 0}}|{{index .Config.Cmd 1}}' bililive_adapter)" = 'python3|/state/bililive_recorder_adapter.py'
-    test "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Source}}|{{.Type}}|{{.RW}}{{end}}{{end}}' bililive_adapter)" = '/opt/bilive/recording|bind|true'
+assert payload.get("error") is None
+PY_ROLLBACK_CLEAN_ADAPTER_IDLE
+}
+adapter_status_supported_repair_idle() {
+    python3 - /opt/bilive/recording/status.json <<'PY_ROLLBACK_SUPPORTED_ADAPTER_REPAIR_IDLE'
+import json
+import sys
+import time
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+age = time.time() - float(payload["generated_at_epoch"])
+error = payload.get("error")
+assert 0 <= age <= 90
+assert payload.get("service_reachable") is False
+assert payload.get("streaming") is False
+assert payload.get("recording") is False
+assert payload.get("finalizing") is False
+assert isinstance(error, str) and error.startswith("source disposition drift:")
+PY_ROLLBACK_SUPPORTED_ADAPTER_REPAIR_IDLE
+}
+adapter_restart_environment_safe() {
+    expected_adapter_sha=$1
+    test "$(findmnt -T /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -n -o TARGET)" = "/root/clouddrive2/CloudNAS/CloudDrive" || return 1
+    case "$(findmnt -T /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -n -o FSTYPE)" in fuse*) ;; *) return 1 ;; esac
+    test "$(findmnt -T /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -n -o SOURCE)" = "CloudFS" || return 1
+    timeout 15 find /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -mindepth 1 -maxdepth 1 -print -quit >/dev/null || return 1
+    test "$(docker inspect -f '{{.State.Status}}' bililive_recorder)" = running || return 1
+    test "$(docker inspect -f '{{.State.Status}}' bililive_adapter)" = running || return 1
+    test "$(docker inspect -f '{{index .Config.Cmd 0}}|{{index .Config.Cmd 1}}' bililive_adapter)" = 'python3|/state/bililive_recorder_adapter.py' || return 1
+    test "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Source}}|{{.Type}}|{{.RW}}{{end}}{{end}}' bililive_adapter)" = '/opt/bilive/recording|bind|true' || return 1
     case "$(docker exec bililive_recorder stat -f -c %T /rec/Videos)" in fuse*) ;; *) return 1 ;; esac
     case "$(docker exec bililive_adapter stat -f -c %T /adapter/Videos)" in fuse*) ;; *) return 1 ;; esac
-    docker exec bililive_adapter timeout 15 find /adapter/Videos -mindepth 1 -maxdepth 1 -print -quit >/dev/null
-    test "$(sha256sum /opt/bilive/recording/bililive_recorder_adapter.py | awk '{print $1}')" = "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py | awk '{print $1}')"
-    docker exec -i bililive_adapter python3 - <<'PY_LIVE_IDLE'
+    docker exec bililive_adapter timeout 15 find /adapter/Videos -mindepth 1 -maxdepth 1 -print -quit >/dev/null || return 1
+    test "$(sha256sum /opt/bilive/recording/bililive_recorder_adapter.py | awk '{print $1}')" = "$expected_adapter_sha" || return 1
+    test "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py | awk '{print $1}')" = "$expected_adapter_sha" || return 1
+    docker exec -i bililive_adapter python3 - <<'PY_ROLLBACK_LIVE_IDLE' || return 1
 from pathlib import Path
 import sys
 
@@ -206,7 +228,15 @@ room = adapter.query_room_status(
 )
 assert room.get("streaming") is False
 assert room.get("recording") is False
-PY_LIVE_IDLE
+PY_ROLLBACK_LIVE_IDLE
+}
+adapter_restart_safe() {
+    adapter_status_clean_idle || return 1
+    adapter_restart_environment_safe "$1"
+}
+adapter_repair_restart_safe() {
+    adapter_status_supported_repair_idle || return 1
+    adapter_restart_environment_safe "$1"
 }
 wait_adapter_runtime() {
     restarted_after=$1
@@ -217,23 +247,34 @@ wait_adapter_runtime() {
            [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' bililive_adapter 2>/dev/null || true)" = healthy ] && \
            [ "$(docker inspect -f '{{index .Config.Cmd 0}}|{{index .Config.Cmd 1}}' bililive_adapter 2>/dev/null || true)" = 'python3|/state/bililive_recorder_adapter.py' ] && \
            [ "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Source}}|{{.Type}}|{{.RW}}{{end}}{{end}}' bililive_adapter 2>/dev/null || true)" = '/opt/bilive/recording|bind|true' ] && \
+           [ "$(sha256sum /opt/bilive/recording/bililive_recorder_adapter.py 2>/dev/null | awk '{print $1}')" = "$expected_sha" ] && \
            [ "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py 2>/dev/null | awk '{print $1}')" = "$expected_sha" ] && \
-           python3 - /opt/bilive/recording/status.json "$restarted_after" "$require_clean" <<'PY_FRESH'
+           python3 - /opt/bilive/recording/status.json "$restarted_after" "$require_clean" <<'PY_ROLLBACK_FRESH'
 import json
 import sys
 import time
 
 payload = json.load(open(sys.argv[1], encoding="utf-8"))
 generated = float(payload["generated_at_epoch"])
+error = payload.get("error")
+require_clean = sys.argv[3] == "1"
 assert generated >= float(sys.argv[2])
 assert 0 <= time.time() - generated <= 90
-assert payload.get("service_reachable") is True
 assert payload.get("streaming") is False
 assert payload.get("recording") is False
 assert payload.get("finalizing") is False
-if sys.argv[3] == "1":
-    assert payload.get("error") is None
-PY_FRESH
+if require_clean:
+    assert payload.get("service_reachable") is True
+    assert error is None
+else:
+    clean = payload.get("service_reachable") is True and error is None
+    supported_preimage = (
+        payload.get("service_reachable") is False
+        and isinstance(error, str)
+        and error.startswith("source disposition drift:")
+    )
+    assert clean or supported_preimage
+PY_ROLLBACK_FRESH
         then
             docker exec bililive_adapter timeout 15 find /adapter/Videos -mindepth 1 -maxdepth 1 -print -quit >/dev/null
             return 0
@@ -254,10 +295,16 @@ else
     exit 1
 fi
 if [ -f "$backup/external/recorder_adapter.restart-required" ]; then
-    adapter_restart_safe
-    restart_epoch=$(date +%s)
-    docker restart bililive_adapter >/dev/null
+    test -f "$backup/external/recorder_adapter.file"
+    cmp -s "$backup/external/recorder_adapter.file" /opt/bilive/recording/bililive_recorder_adapter.py
     old_adapter_sha=$(sha256sum "$backup/external/recorder_adapter.file" | awk '{print $1}')
+    if adapter_restart_safe "$old_adapter_sha"; then
+        :
+    else
+        adapter_repair_restart_safe "$old_adapter_sha"
+    fi
+    restart_epoch=$(python3 -c 'import time; print(time.time())')
+    docker restart bililive_adapter >/dev/null
     wait_adapter_runtime "$restart_epoch" "$old_adapter_sha" 0
     cmp -s "$backup/external/recorder_adapter.file" /opt/bilive/recording/bililive_recorder_adapter.py
 fi
@@ -854,12 +901,8 @@ install_atomic \
     /opt/bilive/autoslice/repo/scripts/free_do_upload.sh \
     /opt/bilive/app/tmp_manual_upload/do_upload.sh \
     700
-adapter_restart_safe() {
-    test "$(findmnt -T /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -n -o TARGET)" = "/root/clouddrive2/CloudNAS/CloudDrive"
-    case "$(findmnt -T /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -n -o FSTYPE)" in fuse*) ;; *) return 1 ;; esac
-    test "$(findmnt -T /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -n -o SOURCE)" = "CloudFS"
-    timeout 15 find /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -mindepth 1 -maxdepth 1 -print -quit >/dev/null
-    python3 - /opt/bilive/recording/status.json <<'PY_IDLE'
+adapter_status_clean_idle() {
+    python3 - /opt/bilive/recording/status.json <<'PY_CLEAN_ADAPTER_IDLE'
 import json
 import sys
 import time
@@ -871,16 +914,42 @@ assert payload.get("service_reachable") is True
 assert payload.get("streaming") is False
 assert payload.get("recording") is False
 assert payload.get("finalizing") is False
-PY_IDLE
-    test "$(docker inspect -f '{{.State.Status}}' bililive_recorder)" = running
-    test "$(docker inspect -f '{{.State.Status}}' bililive_adapter)" = running
-    test "$(docker inspect -f '{{index .Config.Cmd 0}}|{{index .Config.Cmd 1}}' bililive_adapter)" = 'python3|/state/bililive_recorder_adapter.py'
-    test "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Source}}|{{.Type}}|{{.RW}}{{end}}{{end}}' bililive_adapter)" = '/opt/bilive/recording|bind|true'
+assert payload.get("error") is None
+PY_CLEAN_ADAPTER_IDLE
+}
+adapter_status_supported_repair_idle() {
+    python3 - /opt/bilive/recording/status.json <<'PY_SUPPORTED_ADAPTER_REPAIR_IDLE'
+import json
+import sys
+import time
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+age = time.time() - float(payload["generated_at_epoch"])
+error = payload.get("error")
+assert 0 <= age <= 90
+assert payload.get("service_reachable") is False
+assert payload.get("streaming") is False
+assert payload.get("recording") is False
+assert payload.get("finalizing") is False
+assert isinstance(error, str) and error.startswith("source disposition drift:")
+PY_SUPPORTED_ADAPTER_REPAIR_IDLE
+}
+adapter_restart_environment_safe() {
+    expected_adapter_sha=$1
+    test "$(findmnt -T /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -n -o TARGET)" = "/root/clouddrive2/CloudNAS/CloudDrive" || return 1
+    case "$(findmnt -T /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -n -o FSTYPE)" in fuse*) ;; *) return 1 ;; esac
+    test "$(findmnt -T /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -n -o SOURCE)" = "CloudFS" || return 1
+    timeout 15 find /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -mindepth 1 -maxdepth 1 -print -quit >/dev/null || return 1
+    test "$(docker inspect -f '{{.State.Status}}' bililive_recorder)" = running || return 1
+    test "$(docker inspect -f '{{.State.Status}}' bililive_adapter)" = running || return 1
+    test "$(docker inspect -f '{{index .Config.Cmd 0}}|{{index .Config.Cmd 1}}' bililive_adapter)" = 'python3|/state/bililive_recorder_adapter.py' || return 1
+    test "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Source}}|{{.Type}}|{{.RW}}{{end}}{{end}}' bililive_adapter)" = '/opt/bilive/recording|bind|true' || return 1
     case "$(docker exec bililive_recorder stat -f -c %T /rec/Videos)" in fuse*) ;; *) return 1 ;; esac
     case "$(docker exec bililive_adapter stat -f -c %T /adapter/Videos)" in fuse*) ;; *) return 1 ;; esac
-    docker exec bililive_adapter timeout 15 find /adapter/Videos -mindepth 1 -maxdepth 1 -print -quit >/dev/null
-    test "$(sha256sum /opt/bilive/recording/bililive_recorder_adapter.py | awk '{print $1}')" = "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py | awk '{print $1}')"
-    docker exec -i bililive_adapter python3 - <<'PY_LIVE_IDLE'
+    docker exec bililive_adapter timeout 15 find /adapter/Videos -mindepth 1 -maxdepth 1 -print -quit >/dev/null || return 1
+    test "$(sha256sum /opt/bilive/recording/bililive_recorder_adapter.py | awk '{print $1}')" = "$expected_adapter_sha" || return 1
+    test "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py | awk '{print $1}')" = "$expected_adapter_sha" || return 1
+    docker exec -i bililive_adapter python3 - <<'PY_LIVE_IDLE' || return 1
 from pathlib import Path
 import sys
 
@@ -899,6 +968,14 @@ assert room.get("streaming") is False
 assert room.get("recording") is False
 PY_LIVE_IDLE
 }
+adapter_restart_safe() {
+    adapter_status_clean_idle || return 1
+    adapter_restart_environment_safe "$1"
+}
+adapter_repair_restart_safe() {
+    adapter_status_supported_repair_idle || return 1
+    adapter_restart_environment_safe "$1"
+}
 wait_adapter_runtime() {
     restarted_after=$1
     expected_sha=$2
@@ -907,6 +984,7 @@ wait_adapter_runtime() {
            [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' bililive_adapter 2>/dev/null || true)" = healthy ] && \
            [ "$(docker inspect -f '{{index .Config.Cmd 0}}|{{index .Config.Cmd 1}}' bililive_adapter 2>/dev/null || true)" = 'python3|/state/bililive_recorder_adapter.py' ] && \
            [ "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Source}}|{{.Type}}|{{.RW}}{{end}}{{end}}' bililive_adapter 2>/dev/null || true)" = '/opt/bilive/recording|bind|true' ] && \
+           [ "$(sha256sum /opt/bilive/recording/bililive_recorder_adapter.py 2>/dev/null | awk '{print $1}')" = "$expected_sha" ] && \
            [ "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py 2>/dev/null | awk '{print $1}')" = "$expected_sha" ] && \
            python3 - /opt/bilive/recording/status.json "$restarted_after" <<'PY_FRESH'
 import json
@@ -931,25 +1009,45 @@ PY_FRESH
     done
     return 1
 }
+new_adapter_source=/opt/bilive/autoslice/repo/ops/recording/bililive_recorder_adapter.py
+host_adapter_path=/opt/bilive/recording/bililive_recorder_adapter.py
 test -f "$backup/external/recorder_adapter.present"
-adapter_restart_safe
+test -f "$backup/external/recorder_adapter.file"
+test -f "$new_adapter_source"
+test ! -L "$new_adapter_source"
+test -f "$host_adapter_path"
+test ! -L "$host_adapter_path"
+cmp -s "$backup/external/recorder_adapter.file" "$host_adapter_path"
 adapter_content_changed=0
-if ! cmp -s \
-    /opt/bilive/autoslice/repo/ops/recording/bililive_recorder_adapter.py \
-    /opt/bilive/recording/bililive_recorder_adapter.py; then
+if ! cmp -s "$new_adapter_source" "$host_adapter_path"; then
     adapter_content_changed=1
 fi
+old_adapter_sha=$(sha256sum "$host_adapter_path" | awk '{print $1}')
+test "$old_adapter_sha" = "$(sha256sum "$backup/external/recorder_adapter.file" | awk '{print $1}')"
+if [ "$adapter_content_changed" -eq 0 ]; then
+    adapter_restart_safe "$old_adapter_sha"
+elif adapter_restart_safe "$old_adapter_sha"; then
+    :
+else
+    # The only dirty preimage admitted here is the exact defect class that the
+    # changed adapter bytes are intended to repair. Every runtime/live/mount/hash
+    # gate still runs before any external byte is replaced.
+    adapter_repair_restart_safe "$old_adapter_sha"
+fi
 install_atomic \
-    /opt/bilive/autoslice/repo/ops/recording/bililive_recorder_adapter.py \
-    /opt/bilive/recording/bililive_recorder_adapter.py \
+    "$new_adapter_source" \
+    "$host_adapter_path" \
     755
-new_adapter_sha=$(sha256sum /opt/bilive/autoslice/repo/ops/recording/bililive_recorder_adapter.py | awk '{print $1}')
-test "$new_adapter_sha" = "$(sha256sum /opt/bilive/recording/bililive_recorder_adapter.py | awk '{print $1}')"
+new_adapter_sha=$(sha256sum "$new_adapter_source" | awk '{print $1}')
+test "$new_adapter_sha" = "$(sha256sum "$host_adapter_path" | awk '{print $1}')"
 test "$new_adapter_sha" = "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py | awk '{print $1}')"
 if [ "$adapter_content_changed" -eq 1 ]; then
+    # Close the install-to-restart race with a second direct idle query. This
+    # also imports the new bytes in a disposable process before the daemon is
+    # restarted; failure here rolls the file back while the old daemon remains.
+    adapter_restart_environment_safe "$new_adapter_sha"
     touch "$backup/external/recorder_adapter.restart-required"
-    adapter_restart_safe
-    restart_epoch=$(date +%s)
+    restart_epoch=$(python3 -c 'import time; print(time.time())')
     docker restart bililive_adapter >/dev/null
     wait_adapter_runtime "$restart_epoch" "$new_adapter_sha"
 else
