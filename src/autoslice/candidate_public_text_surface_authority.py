@@ -471,6 +471,147 @@ def consume_candidate_public_text_surface_authority(
     }
 
 
+def validated_candidate_public_text_result_hook(
+    authority: CandidatePublicTextSurfaceAuthority,
+    *,
+    candidate_id: str,
+    record: object,
+    publish: object,
+) -> str:
+    """Project the resolved hook only from the completed, mutually bound mirrors.
+
+    The queued hook remains the authority's input provenance.  A successful
+    package, however, has already rebuilt its story contract around the
+    resolved public surface.  State/report projection must consume that exact
+    result instead of replaying the queue input.  Any split-brain between the
+    record and publish mirrors blocks the projection rather than leaking the
+    superseded spelling back into a public-facing report.
+    """
+
+    if not isinstance(record, Mapping) or not isinstance(publish, Mapping):
+        raise CandidatePublicTextSurfaceAuthorityError(
+            "PUBLIC_TEXT_RESULT_DOCUMENT_INVALID"
+        )
+    story_contract = record.get("story_contract")
+    publish_staging = record.get("publish_staging")
+    if not isinstance(story_contract, Mapping) or not isinstance(
+        publish_staging, Mapping
+    ):
+        raise CandidatePublicTextSurfaceAuthorityError(
+            "PUBLIC_TEXT_RESULT_MIRROR_MISSING"
+        )
+    if (
+        candidate_id != authority.candidate_id
+        or publish.get("candidate_id") != candidate_id
+        or story_contract.get("candidate_id") != candidate_id
+        or story_contract.get("selection_hook")
+        != authority.resolved_selection_hook
+    ):
+        raise CandidatePublicTextSurfaceAuthorityError(
+            "PUBLIC_TEXT_RESULT_BINDING_MISMATCH"
+        )
+    expected = consume_candidate_public_text_surface_authority(
+        authority,
+        candidate_id=candidate_id,
+        selection_hook=authority.resolved_selection_hook,
+        story_contract=story_contract,
+    )
+    expected_source = (
+        "deterministic_candidate_public_surface_resolution+ivan_exact_substitution"
+    )
+    expected_status = "RESOLVED_PUBLIC_TEXT_SURFACE_AUTHORITY"
+    if not (
+        publish_staging.get("public_text_surface_authority_consumption")
+        == publish.get("public_text_surface_authority_consumption")
+        == expected
+        and publish_staging.get("title")
+        == publish.get("title")
+        == authority.resolved_title
+        and publish_staging.get("title_source")
+        == publish.get("title_source")
+        == expected_source
+        and publish_staging.get("title_authority_status")
+        == publish.get("title_authority_status")
+        == expected_status
+        and publish_staging.get("title_authority_error") is None
+        and publish.get("title_authority_error") is None
+        and publish_staging.get("upload_enabled") is False
+        and publish.get("upload_enabled") is False
+        and expected.get("upload_authorized") is False
+        and expected.get("registry_hold_released") is False
+    ):
+        raise CandidatePublicTextSurfaceAuthorityError(
+            "PUBLIC_TEXT_RESULT_MIRROR_DRIFT"
+        )
+    authority.require_artifact_text(
+        artifact_kind="publication", text=str(publish["title"])
+    )
+    return authority.resolved_selection_hook
+
+
+def candidate_public_text_result_projection(
+    *, work_dir: Path, publish_path: Path, publish: Mapping[str, object]
+) -> dict[str, object]:
+    """Return a state-safe projection while leaving ordinary candidates unchanged."""
+
+    candidate_id = work_dir.name
+    asset_root = CHANNEL_PROFILE.asset_root.relative_to(CHANNEL_PROFILE.repo_root)
+    authority_path = ROOT / asset_root / AUTHORITY_DIRECTORY / (
+        candidate_id + AUTHORITY_SUFFIX
+    )
+    if (
+        candidate_id not in AUTHORITY_REQUIRED_CANDIDATES
+        and not authority_path.exists()
+        and not authority_path.is_symlink()
+    ):
+        return {}
+    try:
+        authority = load_candidate_public_text_surface_authority(candidate_id)
+        if authority is None:
+            return {}
+        if publish_path.is_symlink() or not publish_path.is_file():
+            raise CandidatePublicTextSurfaceAuthorityError(
+                "PUBLIC_TEXT_RESULT_PUBLISH_FILE_INVALID"
+            )
+        record_path: Path | None = None
+        for suffix in (".recut.publish.json", ".publish.json"):
+            if publish_path.name.endswith(suffix):
+                record_path = publish_path.with_name(
+                    publish_path.name[: -len(suffix)] + ".record.json"
+                )
+                break
+        if record_path is None:
+            raise CandidatePublicTextSurfaceAuthorityError(
+                "PUBLIC_TEXT_RESULT_PUBLISH_NAME_INVALID"
+            )
+        if record_path.is_symlink() or not record_path.is_file():
+            raise CandidatePublicTextSurfaceAuthorityError(
+                "PUBLIC_TEXT_RESULT_RECORD_FILE_INVALID"
+            )
+        try:
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise CandidatePublicTextSurfaceAuthorityError(
+                "PUBLIC_TEXT_RESULT_RECORD_UNREADABLE"
+            ) from exc
+        hook = validated_candidate_public_text_result_hook(
+            authority,
+            candidate_id=candidate_id,
+            record=record,
+            publish=publish,
+        )
+    except CandidatePublicTextSurfaceAuthorityError as exc:
+        return {
+            "hook": "",
+            "title": None,
+            "title_authority_status": "UNRESOLVED_PUBLIC_TEXT_RESULT_PROJECTION",
+            "title_authority_error": (
+                f"candidate_public_text_result_projection_failed:{exc}"
+            ),
+        }
+    return {"hook": hook}
+
+
 def resolve_candidate_public_text_staging(
     *,
     candidate_id: str,

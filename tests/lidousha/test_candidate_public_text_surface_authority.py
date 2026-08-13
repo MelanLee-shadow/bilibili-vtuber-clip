@@ -601,6 +601,196 @@ def test_stage_publish_draft_rerenders_exact_surface_without_title_provider_or_u
     assert publish["upload_enabled"] is False
 
 
+def test_produce_talk_projects_resolved_public_hook_into_state_and_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The queued hook is input provenance, not the final public projection."""
+
+    date = "2026-08-07"
+    base = tmp_path / "autoslice"
+    repo = tmp_path / "repo"
+    (base / "logs").mkdir(parents=True)
+    repo.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "child_env_for_date", lambda _date: {})
+    monkeypatch.setattr(
+        runner,
+        "talk_pipeline_fingerprint",
+        lambda _candidate_id: "sha256:test",
+    )
+
+    authority = load_candidate_public_text_surface_authority(CID)
+    assert authority is not None
+    story_contract = _runtime_contract(NEW_HOOK)
+    receipt = consume_candidate_public_text_surface_authority(
+        authority,
+        candidate_id=CID,
+        selection_hook=NEW_HOOK,
+        story_contract=story_contract,
+    )
+    title_source = (
+        "deterministic_candidate_public_surface_resolution+ivan_exact_substitution"
+    )
+    publish_staging = {
+        "title": NEW_TITLE,
+        "title_source": title_source,
+        "title_authority_status": "RESOLVED_PUBLIC_TEXT_SURFACE_AUTHORITY",
+        "public_text_surface_authority_consumption": receipt,
+        "upload_enabled": False,
+        "cover_status": "AI_COVER_READY",
+        "cover_generation": {"rendered_lines": ["认南町为大哥"]},
+    }
+    tamper_publish_receipt = {"enabled": False}
+
+    class Completed:
+        returncode = 0
+
+    def fake_run(_command: object, **kwargs: object) -> Completed:
+        recuts = base / "out" / date / CID / "replacement_recuts"
+        recuts.mkdir(parents=True, exist_ok=True)
+        emitted_staging = dict(publish_staging)
+        if tamper_publish_receipt["enabled"]:
+            emitted_staging["public_text_surface_authority_consumption"] = {
+                **receipt,
+                "registry_hold_released": True,
+            }
+        publish = {
+            "candidate_id": CID,
+            **emitted_staging,
+            "artifact_hashes": {},
+        }
+        (recuts / f"{CID}.recut.publish.json").write_text(
+            json.dumps(publish, ensure_ascii=False), encoding="utf-8"
+        )
+        (recuts / f"{CID}.record.json").write_text(
+            json.dumps(
+                {
+                    "candidate_id": CID,
+                    "story_contract": story_contract,
+                    "publish_staging": publish_staging,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        sink = kwargs["stdout"]
+        sink.write('{"red_flags": [], "boundary_repairs": []}\n')
+        sink.flush()
+        return Completed()
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    from src.autoslice import speaker_guess
+
+    monkeypatch.setattr(
+        speaker_guess,
+        "finalize_delivered_talk_status",
+        lambda result, **_kwargs: result.update(status="review_ready"),
+    )
+
+    result = runner.produce_talk(
+        date,
+        {
+            "cid": CID,
+            "segment_path": "/recordings/22966160_20260807-21-07-39.mp4",
+            "seg_dur_ms": 2_000_000,
+            "start_ms": 1_142_160,
+            "end_ms": 1_437_390,
+            "hook": OLD_HOOK,
+        },
+    )
+
+    assert result["hook"] == NEW_HOOK
+    assert OLD_HOOK not in json.dumps(result, ensure_ascii=False)
+
+    report_result = dict(result)
+    report_result.update(
+        status="failed",
+        failure_kind="test_projection",
+        failure_stage="test_projection",
+    )
+    runner.write_reports(
+        date,
+        {
+            "status": "no_delivery",
+            "picks": [report_result],
+            "songs": [],
+            "pending_talk": [],
+            "pending_song": [],
+        },
+    )
+    summary = (repo / "lidousha" / date / "AUTOSLICE_SUMMARY.md").read_text(
+        encoding="utf-8"
+    )
+    assert NEW_HOOK in summary
+    assert OLD_HOOK not in summary
+
+    tamper_publish_receipt["enabled"] = True
+    blocked = runner.produce_talk(
+        date,
+        {
+            "cid": CID,
+            "segment_path": "/recordings/22966160_20260807-21-07-39.mp4",
+            "seg_dur_ms": 2_000_000,
+            "start_ms": 1_142_160,
+            "end_ms": 1_437_390,
+            "hook": OLD_HOOK,
+        },
+    )
+    assert blocked["status"] == "title_failed"
+    assert blocked["hook"] == ""
+    assert blocked["title_authority_status"] == (
+        "UNRESOLVED_PUBLIC_TEXT_RESULT_PROJECTION"
+    )
+    assert "PUBLIC_TEXT_RESULT_MIRROR_DRIFT" in blocked["title_authority_error"]
+    assert OLD_HOOK not in json.dumps(blocked, ensure_ascii=False)
+    assert not (base / "out" / date / CID / "replacement_recuts").exists()
+
+
+def test_read_publish_meta_without_candidate_authority_keeps_legacy_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Even a bad truth-mode setting must not introduce candidate-authority
+    # behavior on the absent-authority path; the legacy metadata projection is
+    # byte-for-byte independent of this optional choke point.
+    monkeypatch.setenv("AUTOSLICE_HUMAN_TRUTH_MODE", "invalid-for-ordinary")
+    work_dir = tmp_path / "auto_ordinary_100_200"
+    recuts = work_dir / "replacement_recuts"
+    recuts.mkdir(parents=True)
+    (recuts / "auto_ordinary_100_200.recut.publish.json").write_text(
+        json.dumps(
+            {
+                "candidate_id": "auto_ordinary_100_200",
+                "title": "【李豆沙】普通候选标题",
+                "title_source": "automatic",
+                "title_authority_status": "RESOLVED_AUTOMATIC",
+                "title_authority_error": None,
+                "cover_status": "AI_COVER_READY",
+                "cover_path": "/tmp/ordinary.cover.png",
+                "cover_generation": {"status": "READY"},
+                "artifact_hashes": {
+                    "cover_sha256": "a" * 64,
+                    "burned_video_sha256": "b" * 64,
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert runner.read_publish_meta(work_dir) == {
+        "title": "【李豆沙】普通候选标题",
+        "title_source": "automatic",
+        "title_authority_status": "RESOLVED_AUTOMATIC",
+        "title_authority_error": None,
+        "cover_status": "AI_COVER_READY",
+        "cover_path": "/tmp/ordinary.cover.png",
+        "cover_sha256": "a" * 64,
+        "cover_generation": {"status": "READY"},
+        "video_sha256": "b" * 64,
+    }
+
+
 def test_talk_fingerprint_scopes_authority_to_one_candidate_and_withholds_truth(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

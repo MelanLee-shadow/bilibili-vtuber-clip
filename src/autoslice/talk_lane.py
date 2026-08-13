@@ -22,6 +22,7 @@ from src.autoslice.boundary_semantic_review import (
     boundary_search_scope_is_valid,
     required_source_context_end_ms,
 )
+from src.autoslice.candidate_public_text_surface_authority import candidate_public_text_result_projection
 from src.autoslice.cross_segment_witness import (
     discover_cross_segment_witness_reserve as
     _discover_cross_segment_witness_reserve,
@@ -321,20 +322,19 @@ def read_publish_meta(work_dir: Path) -> dict:
     for publish in sorted(work_dir.glob("replacement_recuts/*.publish.json")):
         try:
             d = json.loads(publish.read_text(encoding="utf-8"))
-            hashes = d.get("artifact_hashes") if isinstance(d.get("artifact_hashes"), dict) else {}
-            return {
-                "title": d.get("title"),
-                "title_source": d.get("title_source"),
-                "title_authority_status": d.get("title_authority_status"),
-                "title_authority_error": d.get("title_authority_error"),
-                "cover_status": d.get("cover_status"),
-                "cover_path": d.get("cover_path"),
-                "cover_sha256": hashes.get("cover_sha256"),
-                "cover_generation": d.get("cover_generation"),
-                "video_sha256": hashes.get("burned_video_sha256") or hashes.get("video_sha256"),
-            }
         except (OSError, ValueError):
             continue
+        hashes = d.get("artifact_hashes") if isinstance(d.get("artifact_hashes"), dict) else {}
+        return {
+            "title": d.get("title"), "title_source": d.get("title_source"),
+            "title_authority_status": d.get("title_authority_status"), "title_authority_error": d.get("title_authority_error"),
+            "cover_status": d.get("cover_status"),
+            "cover_path": d.get("cover_path"),
+            "cover_sha256": hashes.get("cover_sha256"),
+            "cover_generation": d.get("cover_generation"),
+            "video_sha256": hashes.get("burned_video_sha256") or hashes.get("video_sha256"),
+            **candidate_public_text_result_projection(work_dir=work_dir, publish_path=publish, publish=d),
+        }
     return {}
 
 
