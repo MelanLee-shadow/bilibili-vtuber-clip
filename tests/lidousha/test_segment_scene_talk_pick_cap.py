@@ -401,6 +401,109 @@ def test_session_annotation_persists_scene_receipt_on_rows(
     assert state["picks"][0]["segment_scene_context"] == scene
 
 
+def test_failed_pick_requeue_preserves_scene_receipt_and_quota_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    date = "2026-08-08"
+    base = tmp_path / "autoslice"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    event_segment, event_scene = _scene(
+        date_dir,
+        clock="21-01-31",
+        width=1920,
+        height=1080,
+        title="三周年 3D Live",
+    )
+    talk_segment, talk_scene = _scene(
+        date_dir,
+        clock="23-01-25",
+        width=1080,
+        height=1920,
+        title="深夜杂谈",
+    )
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(
+        runner, "talk_pipeline_fingerprint", lambda _cid: "sha256:new"
+    )
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda _kind, _cid: "sha256:new-recovery",
+    )
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 900_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
+
+    def failed(
+        candidate_id: str, segment: Path, scene: dict[str, object]
+    ) -> dict[str, object]:
+        return {
+            "candidate_id": candidate_id,
+            "segment": segment.name,
+            "segment_scene_context": scene,
+            "session_id": COLLAPSED_SESSION,
+            "start_ms": 100_000,
+            "end_ms": 200_000,
+            "status": "failed",
+            "failure_kind": "runtime_prerequisite",
+            "failure_recoverable": True,
+            "failure_recovery_fingerprint": "sha256:old-recovery",
+            "pipeline_fingerprint": "sha256:old",
+            "hook": candidate_id,
+            "confidence": 0.99,
+            "selection_scorecard": _scorecard(90.0),
+        }
+
+    state = {
+        "pending_talk": [],
+        "picks": [
+            failed("event-retry", event_segment, event_scene),
+            failed("talk-retry", talk_segment, talk_scene),
+        ],
+    }
+    expected_scene_bytes = {
+        "event-retry": json.dumps(
+            event_scene, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode(),
+        "talk-retry": json.dumps(
+            talk_scene, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode(),
+    }
+
+    assert runner.requeue_recoverable_talks(date, state) == 2
+
+    pending = {row["cid"]: row for row in state["pending_talk"]}
+    policies = {
+        candidate_id: resolve_talk_quota_policy(row, state_root=base / "state")
+        for candidate_id, row in pending.items()
+    }
+    for candidate_id, row in pending.items():
+        assert (
+            json.dumps(
+                row["segment_scene_context"],
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+            == expected_scene_bytes[candidate_id]
+        )
+    assert (
+        policies["event-retry"].kind,
+        policies["event-retry"].cap,
+        policies["event-retry"].extra_slot_min_score,
+        policies["event-retry"].policy_source,
+    ) == ("event", 15, 85.0, "asset:2026-08-08-event-3dlive")
+    assert (
+        policies["talk-retry"].kind,
+        policies["talk-retry"].cap,
+        policies["talk-retry"].extra_slot_min_score,
+        policies["talk-retry"].policy_source,
+    ) == ("talk", 5, None, "asset:default_policy")
+
+
 def test_talk_spec_persists_hash_bound_segment_speaker_context(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

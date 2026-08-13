@@ -1664,7 +1664,6 @@ def requeue_recoverable_talks(date: str, state: dict, *, candidate_ids: Collecti
     one same-fingerprint retry; only positively classified infrastructure waits
     may continue on a timer. All retries share one per-candidate lifetime cap.
     """
-
     # Ivan 2026-08-10 裁定的迁移面：裁定之前化石化的说话人拒绝行先迁回停泊态，
     # 再进下面的常规恢复判定（本体在 src/autoslice/speaker_manual_review.py）。
     allowed = set(candidate_ids) if candidate_ids is not None else None
@@ -1829,6 +1828,7 @@ def requeue_recoverable_talks(date: str, state: dict, *, candidate_ids: Collecti
         item = {
             "cid": cid,
             "segment_path": str(segment),
+            "segment_scene_context": copy.deepcopy(record.get("segment_scene_context")),
             "seg_dur_ms": seg_dur,
             "start_ms": start_ms,
             "end_ms": min(seg_dur, end_ms) if seg_dur else end_ms,

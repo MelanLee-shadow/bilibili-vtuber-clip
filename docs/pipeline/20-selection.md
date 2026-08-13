@@ -156,6 +156,10 @@
   prioritize/生产之前，不能沿用 stale card。
 - v2 `RECOVER_NAMED_FAILED_PICKS` 只负责让旧 failed pick 经过原 maintenance 后回到 queue；
   它本身不重评分、不放宽配额、不授权上传。候选一旦回到 queue，仍须满足上面的刷新门。
+- failed pick 回到 queue 时必须逐字节保留 state annotation 已验证并绑定源 segment 的
+  `segment_scene_context`，不得重新猜 scene 或丢成空值；否则同 tick 的 8/8 Event 会错误
+  回落普通 Talk 配额。Event 身份保留后仍只按其日期资产执行 15 席与第 6–15 席 `>=85`
+  分数门；普通 Talk 继续按独立 scope 的默认 5 席，不从 Event 借配额。
 - v1（点名已排队候选）与 v2（点名可恢复失败件）都是 **Talk-only lane capability**：
   runner 在 tick 入口冻结点名 allowlist，只恢复、重评分、生产和修封面这些 Talk；
   同日既有 `pending_song` / `song_backlog` 原样保留，
