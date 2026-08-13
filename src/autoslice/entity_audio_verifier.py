@@ -21,7 +21,7 @@ import subprocess
 # 打在这个模块可见的 urllib 上；真正的请求在 agy_gemini_client 里发出，
 # 两边引用的是同一个 urllib.request 模块对象，所以 patch 依然生效。
 import urllib.request  # noqa: F401 - keeps the F21 urlopen monkeypatch seam
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import threading
 from typing import Any, Callable, Mapping
 
@@ -465,9 +465,11 @@ class _EntityProviderOutcome:
     accepted_key_tier: str | None
     paid_policy_stamp: Mapping[str, Any] | None
     provider_failures: list[dict[str, Any]]
+    served_from_cache: bool = False
 
 
-_ACOUSTIC_CACHE_SCHEMA = "witness-acoustic-cache.v3"
+_ACOUSTIC_CACHE_SCHEMA = "witness-acoustic-cache.v4"
+_CACHEABLE_WITNESS_PROVIDERS = frozenset({"agy", "gemini_api"})
 
 
 def _witness_cache_prompt_identity(
@@ -486,26 +488,46 @@ def _witness_cache_prompt_identity(
 def _witness_acoustic_cache_path(
     output_dir: Path,
     clip_sha256: str,
-    prompt_identity_sha256: str | None = None,
+    prompt_identity_sha256: str,
+    *,
+    provider: str = "agy",
+    model: str = ENTITY_AUDIO_MODEL,
 ) -> Path:
     """Global content-addressed cache entry for one witness audio clip.
 
     成本裁定（Ivan 2026-07-27，3 天 $40 案）：付费声学证人 88% 的消耗来自
     重产轮次对**同一段音频**的重复听写——witness 请求按设计不携带候选
     （纯听写），答案只由音频决定，request_sha 里的文本漂移不改变问题本身。
-    键=音频片 sha256，但 entry schema、prompt contract 与 prompt sha 也必须
-    精确匹配；中性音节提示漂移会 miss，等价 prompt 才可免调用。
+    键严格绑定音频片 sha256、完整 prompt sha、provider 和 model；中性
+    音节提示、问题 markers、provider 或 model 任一漂移都必须 miss。
     BASE 从候选包目录上溯（out/<date>/<cid> → BASE），主树与 V15
     恢复树各自命中自己的缓存。
     """
 
-    base = output_dir.parents[2] if len(output_dir.parents) >= 3 else output_dir
+    cache_identity = _json_sha256(
+        {
+            "schema_version": _ACOUSTIC_CACHE_SCHEMA,
+            "prompt_contract": WITNESS_PROMPT_CONTRACT,
+            "audio_clip_sha256": clip_sha256,
+            "prompt_identity_sha256": prompt_identity_sha256,
+            "provider": provider,
+            "model": model,
+        }
+    )
+    # Production packages are BASE/out/<date>/<candidate>.  Shallow test or
+    # one-off output directories must not escape upward into a shared parent,
+    # otherwise unrelated jobs with identical fixture bytes can cross-hit.
+    base = (
+        output_dir.parents[2]
+        if len(output_dir.parents) >= 3 and output_dir.parents[1].name == "out"
+        else output_dir
+    )
     return (
         base
         / "cache"
         / "witness-acoustic"
         / clip_sha256[:2]
-        / f"{clip_sha256}{'.' + prompt_identity_sha256 if prompt_identity_sha256 else ''}.json"
+        / f"{cache_identity}.json"
     )
 
 
@@ -514,6 +536,7 @@ def _serve_witness_acoustic_cache(
     output_dir: Path,
     clip_sha256: str,
     job_dir: Path,
+    expected_provider: str = "agy",
     expected_model: str,
     expected_prompt_identity_sha256: str,
 ) -> _EntityProviderOutcome | None:
@@ -523,36 +546,54 @@ def _serve_witness_acoustic_cache(
     下游照常重算全部 sha 与报告校验——缓存只省 provider 调用，不省验证。
     """
 
+    if (
+        expected_provider not in _CACHEABLE_WITNESS_PROVIDERS
+        or not re.fullmatch(r"[0-9a-f]{64}", clip_sha256)
+        or not re.fullmatch(r"[0-9a-f]{64}", expected_prompt_identity_sha256)
+        or not expected_model
+    ):
+        return None
     entry_path = _witness_acoustic_cache_path(
-        output_dir, clip_sha256, expected_prompt_identity_sha256
+        output_dir,
+        clip_sha256,
+        expected_prompt_identity_sha256,
+        provider=expected_provider,
+        model=expected_model,
     )
     try:
         entry = json.loads(entry_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        return None
+    if not isinstance(entry, Mapping):
         return None
     observed = entry.get("observed")
     if (
         entry.get("schema_version") != _ACOUSTIC_CACHE_SCHEMA
         or entry.get("prompt_contract") != WITNESS_PROMPT_CONTRACT
         or entry.get("audio_clip_sha256") != clip_sha256
-        or entry.get("provider") != "agy"
+        or entry.get("provider") != expected_provider
         or entry.get("model") != expected_model
         or entry.get("prompt_identity_sha256")
         != expected_prompt_identity_sha256
         or not isinstance(observed, dict)
+        or observed.get("schema_version") != WITNESS_SCHEMA
         or observed.get("status") != "OBSERVED"
+        or entry.get("observed_sha256") != _json_sha256(observed)
     ):
         return None
     prompt_src = entry_path.with_suffix(".prompt.json")
     response_src = entry_path.with_suffix(".response.json")
     if not prompt_src.is_file() or not response_src.is_file():
         return None
-    if _sha256(prompt_src) != entry.get("provider_prompt_sha256"):
+    if (
+        _sha256(prompt_src) != expected_prompt_identity_sha256
+        or entry.get("provider_prompt_sha256") != expected_prompt_identity_sha256
+    ):
         return None
     if _sha256(response_src) != entry.get("provider_response_sha256"):
         return None
     try:
-        response_observed = json.loads(
+        response_observed = extract_json_object(
             strip_markdown_fence(response_src.read_text(encoding="utf-8"))
         )
     except (OSError, TypeError, ValueError):
@@ -573,8 +614,13 @@ def _serve_witness_acoustic_cache(
         prompt_path=prompt_path,
         response_path=response_path,
         accepted_key_tier=entry.get("key_tier") or None,
-        paid_policy_stamp=None,
+        paid_policy_stamp=(
+            dict(entry["paid_policy_stamp"])
+            if isinstance(entry.get("paid_policy_stamp"), Mapping)
+            else None
+        ),
         provider_failures=[],
+        served_from_cache=True,
     )
 
 
@@ -586,24 +632,34 @@ def _store_witness_acoustic_cache(
     outcome: _EntityProviderOutcome,
     prompt_identity_sha256: str,
 ) -> None:
-    """Best-effort AGY-only write-through; absence must never fail production.
+    """Best-effort provider/model-isolated successful witness write-through."""
 
-    F21 已知残留（未修，待 Ivan 裁）：读写两面都写死 ``agy``，所以 AGY 缺席的
-    wsl 姿势下声学缓存恒不命中，重产轮会对同一段音频重复付费 Gemini——与
-    7/27 成本裁定「重试轮零重复请求」相抵。放开需要一条新裁定：既有单测
-    ``test_witness_acoustic_cache_replays_same_audio_without_provider`` 明令
-    「legacy Gemini API observation 不得当作 AGY 证据回放」，跨 provider 缓存
-    身份要先被定义，不能顺手放宽。
-    """
-
-    if outcome.provider != "agy":
+    if (
+        outcome.provider not in _CACHEABLE_WITNESS_PROVIDERS
+        or not outcome.model
+        or observed.get("schema_version") != WITNESS_SCHEMA
+        or observed.get("status") != "OBSERVED"
+        or not isinstance(outcome.observed, Mapping)
+        or dict(outcome.observed) != dict(observed)
+    ):
         return
 
     try:
         provider_prompt_sha256 = _sha256(outcome.prompt_path)
         provider_response_sha256 = _sha256(outcome.response_path)
+        if provider_prompt_sha256 != prompt_identity_sha256:
+            return
+        response_observed = extract_json_object(
+            strip_markdown_fence(outcome.response_path.read_text(encoding="utf-8"))
+        )
+        if response_observed != dict(observed):
+            return
         entry_path = _witness_acoustic_cache_path(
-            output_dir, clip_sha256, prompt_identity_sha256
+            output_dir,
+            clip_sha256,
+            prompt_identity_sha256,
+            provider=outcome.provider,
+            model=outcome.model,
         )
         entry_path.parent.mkdir(parents=True, exist_ok=True)
         entry_path.with_suffix(".prompt.json").write_bytes(
@@ -622,9 +678,15 @@ def _store_witness_acoustic_cache(
                     "provider_prompt_sha256": provider_prompt_sha256,
                     "provider_response_sha256": provider_response_sha256,
                     "observed": dict(observed),
+                    "observed_sha256": _json_sha256(dict(observed)),
                     "provider": outcome.provider,
                     "model": outcome.model,
                     "key_tier": outcome.accepted_key_tier,
+                    **(
+                        {"paid_policy_stamp": dict(outcome.paid_policy_stamp)}
+                        if outcome.paid_policy_stamp
+                        else {}
+                    ),
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -633,8 +695,32 @@ def _store_witness_acoustic_cache(
             + "\n",
             encoding="utf-8",
         )
-    except OSError:
+    except (OSError, TypeError, ValueError):
         pass
+
+
+def _replay_provider_witness_cache(
+    *,
+    audio_path: Path,
+    job_dir: Path,
+    prompt: str,
+    provider: str,
+    model: str,
+    provider_failures: list[dict[str, Any]],
+) -> _EntityProviderOutcome | None:
+    """Replay only the exact current provider/model question, preserving fresh routing."""
+
+    cached = _serve_witness_acoustic_cache(
+        output_dir=job_dir.parent.parent,
+        clip_sha256=_sha256(audio_path),
+        job_dir=job_dir,
+        expected_provider=provider,
+        expected_model=model,
+        expected_prompt_identity_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+    )
+    if cached is None:
+        return None
+    return replace(cached, provider_failures=list(provider_failures))
 
 
 def _observe_entity_audio(
@@ -693,6 +779,20 @@ def _observe_entity_audio(
     paid_policy_stamp: Mapping[str, Any] | None = None
     provider_failures: list[dict[str, Any]] = []
     response_path = job_dir / "verdict.raw.json"
+    cached_outcome = (
+        _replay_provider_witness_cache(
+            audio_path=audio_path,
+            job_dir=job_dir,
+            prompt=prompt,
+            provider="agy",
+            model=model,
+            provider_failures=provider_failures,
+        )
+        if witness_mode
+        else None
+    )
+    if cached_outcome is not None:
+        return cached_outcome
     if os.environ.get(ENTITY_AUDIO_DISABLE_AGY_ENV, "").strip() == "1":
         provider_failures.append(
             {
@@ -789,6 +889,23 @@ def _observe_entity_audio(
         api_audio_path = job_dir / "input.gemini-api.mp3"
         api_prompt_path = job_dir / "prompt.gemini-api.md"
         api_response_path = job_dir / "verdict.gemini-api.raw.json"
+        api_prompt = _witness_prompt(
+            recording_date=recording_date,
+            delivery_mode="gemini_api",
+            syllable_count_hint=request.get("syllable_count_hint"),
+            target_audio_start_ms=request.get("target_audio_start_ms"),
+            target_audio_end_ms=request.get("target_audio_end_ms"),
+        )
+        cached_outcome = _replay_provider_witness_cache(
+            audio_path=audio_path,
+            job_dir=job_dir,
+            prompt=api_prompt,
+            provider=provider,
+            model=model_used,
+            provider_failures=provider_failures,
+        )
+        if cached_outcome is not None:
+            return cached_outcome
         extract = subprocess.run(
             [
                 "ffmpeg",
@@ -820,12 +937,6 @@ def _observe_entity_audio(
                 }
             )
         else:
-            api_prompt = _witness_prompt(
-                recording_date=recording_date,
-                delivery_mode="gemini_api", syllable_count_hint=request.get("syllable_count_hint"),
-                target_audio_start_ms=request.get("target_audio_start_ms"),
-                target_audio_end_ms=request.get("target_audio_end_ms"),
-            )
             api_prompt_path.write_text(api_prompt, encoding="utf-8")
             observed, accepted_key_tier, paid_policy_stamp = (
                 _run_gemini_api_fallback(
@@ -1372,32 +1483,19 @@ def _verify_local_audio_request(
         return _uncertain(request, "ENTITY_AUDIO_CROP_FAILED", crop_error)
 
     acoustic_clip_sha = _sha256(audio_path) if witness_mode else None
-    acoustic_cache_hit = False
-    outcome = None
-    if acoustic_clip_sha is not None:
-        cached_outcome = _serve_witness_acoustic_cache(
-            output_dir=verifier.output_dir,
-            clip_sha256=acoustic_clip_sha,
-            job_dir=job_dir,
-            expected_model=verifier.model,
-            expected_prompt_identity_sha256=str(acoustic_prompt_identity or ""),
-        )
-        if cached_outcome is not None:
-            outcome = cached_outcome
-            acoustic_cache_hit = True
-    if outcome is None:
-        outcome = _observe_entity_audio(
-            request=span.observed_request,
-            candidates=candidates,
-            audio_path=audio_path,
-            job_dir=job_dir,
-            recording_date=verifier.recording_date,
-            timely_context=verifier.timely_context,
-            binary=verifier.binary,
-            model=verifier.model,
-            timeout=verifier.timeout,
-            agy_quota_circuit=verifier.agy_quota_circuit,
-        )
+    outcome = _observe_entity_audio(
+        request=span.observed_request,
+        candidates=candidates,
+        audio_path=audio_path,
+        job_dir=job_dir,
+        recording_date=verifier.recording_date,
+        timely_context=verifier.timely_context,
+        binary=verifier.binary,
+        model=verifier.model,
+        timeout=verifier.timeout,
+        agy_quota_circuit=verifier.agy_quota_circuit,
+    )
+    acoustic_cache_hit = outcome.served_from_cache
     observed = outcome.observed
     provider_failures = outcome.provider_failures
     if observed is None:
@@ -1456,7 +1554,7 @@ def _verify_local_audio_request(
                 clip_sha256=acoustic_clip_sha,
                 observed=observed,
                 outcome=outcome,
-                prompt_identity_sha256=str(acoustic_prompt_identity or ""),
+                prompt_identity_sha256=_sha256(outcome.prompt_path),
             )
         manifest = {
             "schema_version": "entity-audio-verdict-manifest.v1",
@@ -1483,7 +1581,7 @@ def _verify_local_audio_request(
             **(
                 {
                     "witness_prompt_contract": WITNESS_PROMPT_CONTRACT,
-                    "witness_prompt_identity_sha256": acoustic_prompt_identity,
+                    "witness_prompt_identity_sha256": _sha256(outcome.prompt_path),
                 }
                 if witness_mode
                 else {}

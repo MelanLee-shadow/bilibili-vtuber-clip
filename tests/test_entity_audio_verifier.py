@@ -927,7 +927,7 @@ def test_witness_acoustic_cache_replays_same_audio_without_provider(tmp_path, mo
         if not path.name.endswith((".prompt.json", ".response.json"))
     )
     cached = json.loads(cache_entry.read_text(encoding="utf-8"))
-    assert cached["schema_version"] == "witness-acoustic-cache.v3"
+    assert cached["schema_version"] == "witness-acoustic-cache.v4"
     assert cached["prompt_contract"] == verifier_module.WITNESS_PROMPT_CONTRACT
 
     # Same clip/hint but different target markers is a different question.
@@ -1089,7 +1089,7 @@ def test_witness_acoustic_cache_rejects_tampered_response_artifact(tmp_path):
         provider_failures=[],
     )
     clip_sha = "a" * 64
-    prompt_identity = "b" * 64
+    prompt_identity = verifier_module._sha256(prompt_path)
     verifier_module._store_witness_acoustic_cache(
         output_dir=output_dir,
         clip_sha256=clip_sha,
@@ -1113,6 +1113,198 @@ def test_witness_acoustic_cache_rejects_tampered_response_artifact(tmp_path):
         expected_model=verifier_module.ENTITY_AUDIO_MODEL,
         expected_prompt_identity_sha256=prompt_identity,
     ) is None
+
+
+def test_witness_acoustic_cache_isolates_provider_and_model(tmp_path):
+    output_dir = tmp_path / "base" / "out" / "2026-08-10" / "auto_identity"
+    job_dir = output_dir / "entity_verdicts" / "job"
+    job_dir.mkdir(parents=True)
+    prompt_path = job_dir / "prompt.gemini-api.md"
+    response_path = job_dir / "response.gemini-api.json"
+    prompt_path.write_text("exact candidate-blind Gemini prompt", encoding="utf-8")
+    observed = {
+        "schema_version": verifier_module.WITNESS_SCHEMA,
+        "status": "OBSERVED",
+        "target_audible": True,
+        "heard_pinyin": "hao piao liang o",
+        "uncertain_positions": [],
+        "syllable_count": 4,
+        "confidence": 0.94,
+        "reason": "clear",
+    }
+    response_path.write_text(
+        "provider preface\n" + json.dumps(observed), encoding="utf-8"
+    )
+    model = verifier_module.ENTITY_AUDIO_API_MODEL_DEFAULT
+    outcome = verifier_module._EntityProviderOutcome(
+        observed=observed,
+        provider="gemini_api",
+        model=model,
+        prompt_path=prompt_path,
+        response_path=response_path,
+        accepted_key_tier="free",
+        paid_policy_stamp=None,
+        provider_failures=[],
+    )
+    clip_sha = "c" * 64
+    prompt_identity = verifier_module._sha256(prompt_path)
+    verifier_module._store_witness_acoustic_cache(
+        output_dir=output_dir,
+        clip_sha256=clip_sha,
+        observed=observed,
+        outcome=outcome,
+        prompt_identity_sha256=prompt_identity,
+    )
+
+    exact = verifier_module._serve_witness_acoustic_cache(
+        output_dir=output_dir,
+        clip_sha256=clip_sha,
+        job_dir=job_dir,
+        expected_provider="gemini_api",
+        expected_model=model,
+        expected_prompt_identity_sha256=prompt_identity,
+    )
+    assert exact is not None
+    assert exact.provider == "gemini_api"
+    assert exact.model == model
+    assert exact.served_from_cache is True
+    assert verifier_module._serve_witness_acoustic_cache(
+        output_dir=output_dir,
+        clip_sha256=clip_sha,
+        job_dir=job_dir,
+        expected_provider="agy",
+        expected_model=verifier_module.ENTITY_AUDIO_MODEL,
+        expected_prompt_identity_sha256=prompt_identity,
+    ) is None
+    assert verifier_module._serve_witness_acoustic_cache(
+        output_dir=output_dir,
+        clip_sha256=clip_sha,
+        job_dir=job_dir,
+        expected_provider="gemini_api",
+        expected_model=f"{model}-different",
+        expected_prompt_identity_sha256=prompt_identity,
+    ) is None
+
+
+def test_witness_acoustic_cache_shallow_output_does_not_escape_to_shared_parent(
+    tmp_path,
+):
+    output_dir = tmp_path / "standalone-output"
+    entry_path = verifier_module._witness_acoustic_cache_path(
+        output_dir,
+        "a" * 64,
+        "b" * 64,
+        provider="gemini_api",
+        model=verifier_module.ENTITY_AUDIO_API_MODEL_DEFAULT,
+    )
+
+    assert entry_path.is_relative_to(output_dir)
+
+
+def test_witness_acoustic_cache_rejects_prompt_tamper_even_with_rewritten_hash(
+    tmp_path,
+):
+    output_dir = tmp_path / "base" / "out" / "2026-08-10" / "auto_prompt_tamper"
+    job_dir = output_dir / "entity_verdicts" / "job"
+    job_dir.mkdir(parents=True)
+    prompt_path = job_dir / "prompt.md"
+    response_path = job_dir / "response.json"
+    prompt_path.write_text("original exact prompt", encoding="utf-8")
+    observed = {
+        "schema_version": verifier_module.WITNESS_SCHEMA,
+        "status": "OBSERVED",
+        "target_audible": True,
+        "heard_pinyin": "yuan shi ting xie",
+        "uncertain_positions": [],
+        "syllable_count": 4,
+        "confidence": 0.95,
+        "reason": "clear",
+    }
+    response_path.write_text(json.dumps(observed), encoding="utf-8")
+    outcome = verifier_module._EntityProviderOutcome(
+        observed=observed,
+        provider="agy",
+        model=verifier_module.ENTITY_AUDIO_MODEL,
+        prompt_path=prompt_path,
+        response_path=response_path,
+        accepted_key_tier=None,
+        paid_policy_stamp=None,
+        provider_failures=[],
+    )
+    clip_sha = "d" * 64
+    prompt_identity = verifier_module._sha256(prompt_path)
+    verifier_module._store_witness_acoustic_cache(
+        output_dir=output_dir,
+        clip_sha256=clip_sha,
+        observed=observed,
+        outcome=outcome,
+        prompt_identity_sha256=prompt_identity,
+    )
+    entry_path = verifier_module._witness_acoustic_cache_path(
+        output_dir, clip_sha, prompt_identity
+    )
+    prompt_sidecar = entry_path.with_suffix(".prompt.json")
+    prompt_sidecar.write_text("tampered prompt", encoding="utf-8")
+    entry = json.loads(entry_path.read_text(encoding="utf-8"))
+    entry["provider_prompt_sha256"] = verifier_module._sha256(prompt_sidecar)
+    entry_path.write_text(json.dumps(entry), encoding="utf-8")
+
+    assert verifier_module._serve_witness_acoustic_cache(
+        output_dir=output_dir,
+        clip_sha256=clip_sha,
+        job_dir=job_dir,
+        expected_model=verifier_module.ENTITY_AUDIO_MODEL,
+        expected_prompt_identity_sha256=prompt_identity,
+    ) is None
+
+
+@pytest.mark.parametrize(
+    ("schema_version", "status"),
+    [
+        (verifier_module.WITNESS_SCHEMA, "UNCERTAIN"),
+        (verifier_module.WITNESS_SCHEMA, "INCONCLUSIVE"),
+        ("subtitle-span-acoustic-witness.invalid", "OBSERVED"),
+    ],
+)
+def test_witness_acoustic_cache_only_stores_observed_success_schema(
+    tmp_path, schema_version, status
+):
+    output_dir = tmp_path / "base" / "out" / "2026-08-10" / status.lower()
+    job_dir = output_dir / "entity_verdicts" / "job"
+    job_dir.mkdir(parents=True)
+    prompt_path = job_dir / "prompt.gemini-api.md"
+    response_path = job_dir / "response.gemini-api.json"
+    prompt_path.write_text("exact prompt", encoding="utf-8")
+    observed = {"schema_version": schema_version, "status": status}
+    response_path.write_text(json.dumps(observed), encoding="utf-8")
+    outcome = verifier_module._EntityProviderOutcome(
+        observed=observed,
+        provider="gemini_api",
+        model=verifier_module.ENTITY_AUDIO_API_MODEL_DEFAULT,
+        prompt_path=prompt_path,
+        response_path=response_path,
+        accepted_key_tier="free",
+        paid_policy_stamp=None,
+        provider_failures=[],
+    )
+    prompt_identity = verifier_module._sha256(prompt_path)
+    entry_path = verifier_module._witness_acoustic_cache_path(
+        output_dir,
+        "e" * 64,
+        prompt_identity,
+        provider="gemini_api",
+        model=verifier_module.ENTITY_AUDIO_API_MODEL_DEFAULT,
+    )
+
+    verifier_module._store_witness_acoustic_cache(
+        output_dir=output_dir,
+        clip_sha256="e" * 64,
+        observed=observed,
+        outcome=outcome,
+        prompt_identity_sha256=prompt_identity,
+    )
+
+    assert not entry_path.exists()
 
 
 def test_witness_acoustic_cache_never_stores_failures(tmp_path, monkeypatch):

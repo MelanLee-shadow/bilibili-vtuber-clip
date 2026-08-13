@@ -243,6 +243,81 @@ def test_explicit_env_switch_skips_agy_and_uses_gemini_key(tmp_path, monkeypatch
     }
 
 
+def test_gemini_fallback_success_cache_replays_exact_audio_prompt_provider_model(
+    tmp_path, monkeypatch
+):
+    """F21 成本门：同一问题的 Gemini 成功证词在重产轮不得再次付费。
+
+    request/evidence id 可以变化，但音频、候选盲 prompt、provider 与 model
+    必须完全相同；第二轮仍须重走裁剪和证词 schema 校验，只免 API 调用。
+    """
+
+    monkeypatch.setenv("GEMINI_API_KEY", "free-key-1")
+    monkeypatch.setenv(verifier_module.ENTITY_AUDIO_DISABLE_AGY_ENV, "1")
+    source = tmp_path / "base" / "recordings" / "source.mp4"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"media bytes")
+    api_calls: list[dict] = []
+
+    def fake_run(command, **kwargs):
+        assert command[0] == "ffmpeg", "disabled AGY must never be launched"
+        destination = Path(command[-1])
+        destination.write_bytes(
+            b"same gemini input mp3"
+            if destination.suffix == ".mp3"
+            else b"same cropped witness clip"
+        )
+        return _Completed()
+
+    def fake_api(**kwargs):
+        api_calls.append(kwargs)
+        return _observed_blind_witness()
+
+    monkeypatch.setattr(verifier_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(verifier_module, "_gemini_api_observe_witness", fake_api)
+    output_dir = tmp_path / "base" / "out" / "2026-08-10" / "auto_f21_cache"
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=output_dir,
+        recording_date="2026-08-10",
+        source_duration_ms=20_000,
+        agy_bin="agy-test",
+    )
+
+    first = verify(_witness_request(evidence_id="1" * 64))
+    second_request = _witness_request(evidence_id="2" * 64)
+    second = verify(second_request)
+
+    assert first["status"] == second["status"] == "OBSERVED"
+    assert first["provider"] == second["provider"] == "gemini_api"
+    assert first["model"] == second["model"] == (
+        verifier_module.ENTITY_AUDIO_API_MODEL_DEFAULT
+    )
+    assert len(api_calls) == 1
+    second_manifest = json.loads(
+        (
+            output_dir
+            / "entity_verdicts"
+            / second_request["request_sha256"][:20]
+            / "verdict.manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert second_manifest["acoustic_cache"] == {
+        "hit": True,
+        "clip_sha256": second["audio_clip_sha256"],
+    }
+
+    # Same audio/prompt under another model is a separate witness identity.
+    other_model = "gemini-3.6-flash-model-drift-canary"
+    monkeypatch.setenv(verifier_module.ENTITY_AUDIO_API_MODEL_ENV, other_model)
+    third = verify(_witness_request(evidence_id="3" * 64))
+    assert third["status"] == "OBSERVED"
+    assert third["provider"] == "gemini_api"
+    assert third["model"] == other_model
+    assert len(api_calls) == 2
+    assert api_calls[-1]["model"] == other_model
+
+
 def test_remote_host_with_local_padded_still_builds_the_audio_witness(
     tmp_path, monkeypatch
 ):
