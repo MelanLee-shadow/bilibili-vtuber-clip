@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
+
 from src.autoslice.candidate_selection import _exact_talk_contract_ids
 from src.autoslice.runner_proxy import RunnerProxy
 
@@ -57,7 +59,11 @@ def suppress_exact_talk_recovery_song_work(
 
 
 def maintain_delivery_recovery_scope(
-    date: str, state: dict, *, automatic_maintenance: bool
+    date: str,
+    state: dict,
+    *,
+    automatic_maintenance: bool,
+    talk_candidate_ids: Collection[str] | None = None,
 ) -> tuple[int, int, int, int, bool]:
     """Run talk/song maintenance without crossing an exact talk-only scope."""
 
@@ -68,12 +74,23 @@ def maintain_delivery_recovery_scope(
     song_baseline = state.get("song_pipeline_fingerprint_baseline")
     if not automatic_maintenance:
         return 0, 0, 0, 0, False
-    if exact_talk_recovery:
+    talk_only_recovery = talk_candidate_ids is not None
+    if exact_talk_recovery or talk_only_recovery:
         recovered_songs = 0
-        stale_talks = _runner.requeue_stale_current_recovery_talks(
-            date, state
+        stale_talks = (
+            _runner.requeue_stale_current_recovery_talks(date, state)
+            if exact_talk_recovery
+            else 0
         )
-        failed_talks = _runner.requeue_recoverable_talks(date, state)
+        failed_talks = (
+            _runner.requeue_recoverable_talks(
+                date,
+                state,
+                candidate_ids=set(talk_candidate_ids or ()),
+            )
+            if talk_only_recovery
+            else _runner.requeue_recoverable_talks(date, state)
+        )
         blocked_songs = 0
     else:
         recovered_songs = _runner.recover_bound_song_deliveries(date, state)

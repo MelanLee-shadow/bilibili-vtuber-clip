@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import stat
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -477,9 +477,32 @@ def operator_scoped_chat_refresh_needed(
 
 
 def runner_date_work_flags(
-    date: str, state: dict, *, automatic_maintenance: bool
+    date: str,
+    state: dict,
+    *,
+    automatic_maintenance: bool,
+    talk_candidate_ids: Collection[str] | None = None,
 ) -> tuple[bool, bool, bool]:
     """Runner work probe that keeps quota-full named refreshes reachable."""
+
+    if talk_candidate_ids is not None:
+        allowed = set(talk_candidate_ids)
+
+        def in_scope(row: object) -> bool:
+            return isinstance(row, Mapping) and str(
+                row.get("cid") or row.get("candidate_id") or ""
+            ) in allowed
+
+        has_pending = any(
+            in_scope(row)
+            for key in ("pending_talk", "talk_backlog")
+            for row in (state.get(key) if isinstance(state.get(key), list) else [])
+        ) or (bool(allowed) and operator_scoped_chat_refresh_needed(date, state))
+        needs_cover = automatic_maintenance and any(
+            in_scope(record) and _runner.cover_repair_needed(date, record)
+            for record in state.get("picks", [])
+        )
+        return False, has_pending, needs_cover
 
     done = set(state.get("segments_done", []))
     dead = state.get("segments_dead", {})

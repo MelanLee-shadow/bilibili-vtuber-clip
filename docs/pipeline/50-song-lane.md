@@ -4,6 +4,11 @@
 与 `.agent/skills/song-lyrics-timeline-aligner/SKILL.md` 只提供操作方法，不能覆盖本文件或
 当前 schema。
 
+`operator-processing-scope-grant.v1` 与 v2 `RECOVER_NAMED_FAILED_PICKS` 都只授权
+点名 Talk，不授权 Song。scope 激活时，原有 Song 队列必须字节等值保留，runner 不得
+恢复、发现、补位或生产任何 Song；未来恢复历史 Song 必须使用独立、显式的 typed
+Song authority。
+
 ## 要点（指针表）
 
 - 识别/去重：`song_lane.py`（视觉歌名 hint 优先于演唱 ASR；已发布歌按 normalized 标题+别名去重 `published_song_history.py`）。

@@ -19,7 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from pathlib import Path
 from typing import Mapping
 
@@ -477,7 +477,11 @@ def _apply_one_pending_rescore(
 
 
 def execute_pending_rescores(
-    date: str, state: dict, *, llm_call: Callable[[str], str] | None = None
+    date: str,
+    state: dict,
+    *,
+    llm_call: Callable[[str], str] | None = None,
+    candidate_ids: Collection[str] | None = None,
 ) -> int:
     """Run the bounded rescore lane over every ``rescore_pending`` item.
 
@@ -489,8 +493,16 @@ def execute_pending_rescores(
     pending = state.get("pending_talk")
     if not isinstance(pending, list):
         return 0
+    allowed = set(candidate_ids) if candidate_ids is not None else None
     targets = [
-        item for item in pending if isinstance(item, dict) and item.get("rescore_pending")
+        item
+        for item in pending
+        if isinstance(item, dict)
+        and item.get("rescore_pending")
+        and (
+            allowed is None
+            or str(item.get("cid") or item.get("candidate_id") or "") in allowed
+        )
     ]
     if not targets:
         return 0

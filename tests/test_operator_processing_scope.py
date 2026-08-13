@@ -454,7 +454,8 @@ def test_failed_pick_scope_reaches_process_date_maintenance(tmp_path, monkeypatc
 
     calls: list[tuple[str, str]] = []
 
-    def requeue(_date, value):
+    def requeue(_date, value, *, candidate_ids=None):
+        assert set(candidate_ids or ()) == {TIER1_IDS[0]}
         failed = value["picks"].pop()
         calls.append((_date, failed["candidate_id"]))
         value["pending_talk"].append(
@@ -466,7 +467,7 @@ def test_failed_pick_scope_reaches_process_date_maintenance(tmp_path, monkeypatc
                 "selected_repair": True,
             }
         )
-        return 0, 1, 0
+        return 1
 
     monkeypatch.setattr(runner, "read_state", lambda _date: state)
     monkeypatch.setattr(runner, "runtime_health_error", lambda: None)
@@ -478,8 +479,12 @@ def test_failed_pick_scope_reaches_process_date_maintenance(tmp_path, monkeypatc
     )
     monkeypatch.setattr(runner, "annotate_state_sessions", lambda *_a, **_k: False)
     monkeypatch.setattr(runner, "AUTOMATIC_MAINTENANCE_NOT_BEFORE", RECORDING_DATE)
-    monkeypatch.setattr(runner, "recover_bound_song_deliveries", lambda *_a, **_k: 0)
-    monkeypatch.setattr(runner, "requeue_recoverable_deliveries", requeue)
+    monkeypatch.setattr(
+        runner,
+        "recover_bound_song_deliveries",
+        lambda *_a, **_k: pytest.fail("v2 Talk recovery must not recover Song work"),
+    )
+    monkeypatch.setattr(runner, "requeue_recoverable_talks", requeue)
     monkeypatch.setattr(runner, "song_pipeline_fingerprint", lambda: "sha256:test")
     monkeypatch.setattr(runner, "write_state", lambda *_a, **_k: None)
     monkeypatch.setattr(runner, "cpa_healthy", lambda: False)

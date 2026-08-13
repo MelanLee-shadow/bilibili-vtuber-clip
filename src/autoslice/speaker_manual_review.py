@@ -137,7 +137,11 @@ def is_speaker_manual_review_hold(record: Mapping[str, object]) -> bool:
     )
 
 
-def restore_fossilized_speaker_holds(state: dict) -> int:
+def restore_fossilized_speaker_holds(
+    state: dict,
+    *,
+    candidate_ids: Collection[str] | None = None,
+) -> int:
     """把 Ivan 裁定之前化石化的说话人拒绝行迁回停泊态。
 
     只认这一种精确形状（与 ``_is_legacy_exact_backfill_rejection`` 同款窄识别）：
@@ -147,8 +151,11 @@ def restore_fossilized_speaker_holds(state: dict) -> int:
     """
 
     restored = 0
+    allowed = set(candidate_ids) if candidate_ids is not None else None
     for record in state.get("picks") or []:
         if not isinstance(record, dict):
+            continue
+        if allowed is not None and _candidate_id(record) not in allowed:
             continue
         held_status = record.get("rejected_status")
         if (

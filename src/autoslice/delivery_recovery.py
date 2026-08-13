@@ -14,7 +14,7 @@ import json
 import re
 import subprocess
 import time
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import NamedTuple
 
@@ -1657,21 +1657,18 @@ def bind_song_delivery_recovery_authority(
     return changed
 
 
-def requeue_recoverable_talks(date: str, state: dict) -> int:
+def requeue_recoverable_talks(date: str, state: dict, *, candidate_ids: Collection[str] | None = None) -> int:
     """Retry undelivered selected talks with bounded generation semantics.
 
-    Boundary failures wake on a relevant pipeline change.  A generic producer
-    failure additionally gets one same-fingerprint retry so a transient CPA or
-    worker crash cannot permanently lose an already-selected candidate.  Only
-    classifier-confirmed infrastructure waits (INFRASTRUCTURE_WAIT_FAILURE_KINDS)
-    may keep retrying on a timer beyond that; unknown failures stay bounded so a
-    deterministic defect cannot churn every tick forever.  All retries share one
-    per-candidate lifetime cap.
+    Boundary failures wake on a relevant pipeline change. Generic failures get
+    one same-fingerprint retry; only positively classified infrastructure waits
+    may continue on a timer. All retries share one per-candidate lifetime cap.
     """
 
     # Ivan 2026-08-10 裁定的迁移面：裁定之前化石化的说话人拒绝行先迁回停泊态，
     # 再进下面的常规恢复判定（本体在 src/autoslice/speaker_manual_review.py）。
-    restore_fossilized_speaker_holds(state)
+    allowed = set(candidate_ids) if candidate_ids is not None else None
+    restore_fossilized_speaker_holds(state, candidate_ids=allowed)
     existing_pending = {
         str(item.get("cid") or item.get("candidate_id") or "")
         for item in state.get("pending_talk", [])
@@ -1685,6 +1682,9 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
             kept.append(record)
             continue
         cid = str(record.get("candidate_id") or record.get("cid") or "")
+        if allowed is not None and cid not in allowed:
+            kept.append(record)
+            continue
         recoverable_status = record.get("status") in TALK_RECOVERY_FAILURE_STATUSES
         # Migration for exact-recovery runs produced before backfill
         # suppression existed: the selected terminal failure was mislabeled
@@ -1979,7 +1979,7 @@ def requeue_recoverable_talks(date: str, state: dict) -> int:
     # 闭环接线（Ivan 2026-08-07 狍哥案实施指令）：这是 exact-contract 和
     # 普通两条 requeue 路径共同经过的唯一收口——一次调用覆盖两条分支，
     # 不新增第二个调用点。重活在 selection_rescore.py。
-    selection_rescore.execute_pending_rescores(date, state)
+    selection_rescore.execute_pending_rescores(date, state, candidate_ids=allowed)
     return len(requeued)
 
 

@@ -125,6 +125,12 @@
   prioritize/生产之前，不能沿用 stale card。
 - v2 `RECOVER_NAMED_FAILED_PICKS` 只负责让旧 failed pick 经过原 maintenance 后回到 queue；
   它本身不重评分、不放宽配额、不授权上传。候选一旦回到 queue，仍须满足上面的刷新门。
+- v1（点名已排队候选）与 v2（点名可恢复失败件）都是 **Talk-only lane capability**：
+  runner 在 tick 入口冻结点名 allowlist，只恢复、重评分、生产和修封面这些 Talk；
+  同日既有 `pending_song` / `song_backlog` 原样保留，
+  不做 Song recovery、discovery、refill 或 production。即使点名 Talk 在本 tick 内被拒绝、
+  grant 随即变成 `CONVERGED`，也不能在同一 tick 回填未点名 Talk。Song 必须另有独立的
+  typed authority，不能借历史 Talk scope 搭车。
 - 这条窄门只修复已知候选的历史评分，不保证找回旧 recall 从未生成的候选。后者需要
   per-segment transactional rediscovery/reconciliation，不能把本门夸大成整场重新发现。
 

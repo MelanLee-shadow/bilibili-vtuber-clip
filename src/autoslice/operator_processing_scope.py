@@ -372,7 +372,62 @@ def operator_scope_admission(
     )
 
 
-def hold_talk_outside_operator_scope(state: dict, *, now: datetime | None = None) -> list[dict]:
+def operator_talk_scope(
+    state: Mapping[str, object],
+    *,
+    date: str,
+    now: datetime | None = None,
+) -> tuple[str, ...] | None:
+    """Freeze one admitted operator grant as a Talk-only allowlist.
+
+    v1 admits named queued Talk work; v2 admits named recoverable failed Talk
+    picks.  Neither is an authority to discover, refill, recover, or produce
+    Song work from the same date.  Callers must compute this once at tick entry
+    and retain the tuple for the whole tick.  Recomputing after a named
+    candidate reaches a terminal row could make the grant ``CONVERGED``
+    mid-tick and accidentally restore ordinary backfill.
+    """
+
+    moment = now or datetime.now(timezone.utc)
+    block = state.get(STATE_KEY)
+    if not isinstance(block, Mapping):
+        return None
+    schema_version = block.get("schema_version")
+    if schema_version == GRANT_SCHEMA:
+        if "intent" in block:
+            return None
+    elif schema_version == FAILED_PICK_RECOVERY_GRANT_SCHEMA:
+        if block.get("intent") != FAILED_PICK_RECOVERY_INTENT:
+            return None
+    else:
+        return None
+    admission = operator_scope_admission(state, date=date, now=moment)
+    if (
+        not admission.admitted
+        or not admission.candidate_ids
+        or not isinstance(admission.disclosure, Mapping)
+    ):
+        return None
+    talk_ids = _ids_in(state, ("pending_talk", "talk_backlog", "picks"))
+    song_ids = _ids_in(state, ("pending_song", "song_backlog", "songs"))
+    if any(cid not in talk_ids or cid in song_ids for cid in admission.candidate_ids):
+        # An admitted but mixed/non-Talk scope must not fall through to broad
+        # ordinary processing.  Historical Song needs its own typed authority.
+        return ()
+    if state.get("talk_selection_contract") is not None:
+        # Two independent exact-selection authorities must never be merged.
+        # An empty-but-active scope keeps the date Talk-only and performs no
+        # work until an operator removes the conflicting contract.
+        return ()
+    return admission.candidate_ids
+
+
+def hold_talk_outside_operator_scope(
+    state: dict,
+    *,
+    now: datetime | None = None,
+    frozen_candidate_ids: Sequence[str] | None = None,
+) -> list[dict]:
     """把没被点名的话题候选压出本 tick 的准入池，返回被压下的行。
 
     Ivan 2026-08-10 逐字「**把 tier1 的 4 条做了**」——只放这一天进窗口是不够的：
@@ -388,14 +443,43 @@ def hold_talk_outside_operator_scope(state: dict, *, now: datetime | None = None
     闭环校验，两个"只做这几条"的机制不许互相踩。
     """
 
-    admission = operator_scope_admission(state, now=now)
-    if not admission.admitted:
-        state.pop(DISCLOSURE_KEY, None)
-        return []
     if state.get("talk_selection_contract") is not None:
         state.pop(DISCLOSURE_KEY, None)
         return []
-    allowed = set(admission.candidate_ids)
+    if frozen_candidate_ids is None:
+        admission = operator_scope_admission(state, now=now)
+        if not admission.admitted:
+            state.pop(DISCLOSURE_KEY, None)
+            return []
+        allowed = set(admission.candidate_ids)
+        disclosure = dict(admission.disclosure or {})
+    else:
+        candidate_ids = tuple(frozen_candidate_ids)
+        if (
+            not candidate_ids
+            or len(candidate_ids) != len(set(candidate_ids))
+            or any(_text(value) != value for value in candidate_ids)
+        ):
+            raise ValueError("frozen operator Talk scope is invalid")
+        allowed = set(candidate_ids)
+        block = state.get(STATE_KEY)
+        if not isinstance(block, Mapping):
+            raise ValueError("frozen operator Talk scope lost its grant")
+        authorization = block.get("user_authorization")
+        disclosure = {
+            "schema_version": FAILED_PICK_RECOVERY_DISCLOSURE_SCHEMA,
+            "grant_id": block.get("grant_id"),
+            "recording_date": block.get("recording_date"),
+            "candidate_ids": list(candidate_ids),
+            "outstanding_candidate_ids": list(candidate_ids),
+            "quote": (
+                authorization.get("quote")
+                if isinstance(authorization, Mapping)
+                else None
+            ),
+            "intent": FAILED_PICK_RECOVERY_INTENT,
+            "scope_mode": "FROZEN_FOR_TICK_TALK_ONLY",
+        }
     pending = state.get("pending_talk")
     if not isinstance(pending, list):
         return []
@@ -409,7 +493,6 @@ def hold_talk_outside_operator_scope(state: dict, *, now: datetime | None = None
         else:
             keep.append(item)
     state["pending_talk"] = keep
-    disclosure = dict(admission.disclosure or {})
     disclosure["held_candidate_ids"] = [_row_candidate_id(item) for item in held]
     state[DISCLOSURE_KEY] = disclosure
     return held

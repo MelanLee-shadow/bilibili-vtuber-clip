@@ -10354,6 +10354,50 @@ def test_pipeline_change_requeues_old_selected_boundary_failure(tmp_path, monkey
     assert state["talk_superseded_attempts"][0]["session_id"] == "live-20260710T200000+0800"
 
 
+def test_historical_talk_scope_requeues_only_named_failed_pick(tmp_path, monkeypatch):
+    date = "2026-07-10"
+    rec_root = tmp_path / "recordings"
+    date_dir = rec_root / date
+    date_dir.mkdir(parents=True)
+    segment = date_dir / "22966160_20260710-21-20-05.mp4"
+    segment.write_bytes(b"media")
+    monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:new")
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 900_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
+
+    def failed(candidate_id: str) -> dict:
+        return {
+            "candidate_id": candidate_id,
+            "segment": segment.name,
+            "start_ms": 163_000,
+            "end_ms": 311_000,
+            "status": "boundary_unrepairable",
+            "pipeline_fingerprint": "sha256:old",
+            "hook": candidate_id,
+            "confidence": 0.94,
+            "session_id": "live-20260710T200000+0800",
+        }
+
+    state = {
+        "pending_talk": [],
+        "picks": [failed("auto_named"), failed("auto_neighbor")],
+    }
+    neighbor_preimage = dict(state["picks"][1])
+
+    assert runner.requeue_recoverable_talks(
+        date,
+        state,
+        candidate_ids={"auto_named"},
+    ) == 1
+    assert [row["cid"] for row in state["pending_talk"]] == ["auto_named"]
+    assert state["picks"] == [neighbor_preimage]
+    assert [row["candidate_id"] for row in state["talk_superseded_attempts"]] == [
+        "auto_named"
+    ]
+
+
 def test_requeue_recoverable_talk_preserves_state_when_mount_drops_mid_tick(
     tmp_path, monkeypatch
 ):

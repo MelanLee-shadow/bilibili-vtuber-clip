@@ -25,8 +25,6 @@ from __future__ import annotations
 import hashlib
 import json
 
-import pytest
-
 from src.autoslice import selection_rescore
 from src.autoslice.candidate_selection import exact_talk_contract_closure
 from src.autoslice.delivery_recovery import backfillable_talk_rejection
@@ -836,6 +834,31 @@ def test_scenario_3_rescore_success_high_score_reaches_pending_talk_top5(
     pending_ids = {item["cid"] for item in state["pending_talk"]}
     assert "rescored_1" in pending_ids
     assert len(state["pending_talk"]) == 5  # MAX_TALK_PICKS
+
+
+def test_candidate_scoped_rescore_does_not_mutate_neighbor(tmp_path, monkeypatch) -> None:
+    date = "2026-08-07"
+    monkeypatch.setattr(runner, "BASE", tmp_path)
+    for candidate_id in ("rescored_named", "rescored_neighbor"):
+        _write_recut_srt(
+            tmp_path,
+            date,
+            candidate_id,
+            ["有人提问", "她回应观众", "随后照做", "观众给出反应"],
+        )
+    named = _pending_rescore_item("rescored_named", repaired_hook="她回应观众")
+    neighbor = _pending_rescore_item("rescored_neighbor", repaired_hook="邻居候选")
+    state = {"picks": [], "pending_talk": [named, neighbor]}
+
+    assert selection_rescore.execute_pending_rescores(
+        date,
+        state,
+        candidate_ids={"rescored_named"},
+        llm_call=lambda _prompt: _rescore_payload(tier=2, all_dim=4),
+    ) == 1
+    assert named["rescore_pending"] is False
+    assert neighbor["rescore_pending"] is True
+    assert neighbor["selection_scorecard"] is None
 
 
 def test_scenario_4_rescore_success_low_score_falls_to_talk_backlog(

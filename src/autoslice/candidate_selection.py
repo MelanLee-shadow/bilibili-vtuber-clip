@@ -962,7 +962,12 @@ def refill_songs(state: dict) -> None:
     state["song_backlog"] = deferred + legacy
 
 
-def prioritize(state: dict) -> None:
+def prioritize(
+    state: dict,
+    *,
+    frozen_talk_candidate_ids: tuple[str, ...] | None = None,
+    allow_song_work: bool = True,
+) -> None:
     """Phase B: GLOBAL talk ranking by hard Tier and deterministic scorecard.
 
     Recall confidence is only a tertiary signal.  The semantic model extracts
@@ -987,7 +992,10 @@ def prioritize(state: dict) -> None:
     # 运维范围授权点名了具体候选时，没被点名的这一轮不进准入池（只收窄，不动
     # 席位数/分数门/Tier 排序）；本函数收尾会整体覆写 talk_backlog，所以压下的
     # 行必须在那之后交回。本体在 src/autoslice/operator_processing_scope.py。
-    operator_scope_held = hold_talk_outside_operator_scope(state)
+    operator_scope_held = hold_talk_outside_operator_scope(
+        state,
+        frozen_candidate_ids=frozen_talk_candidate_ids,
+    )
     pending_talk = state.get("pending_talk", [])
     exact_ids = _exact_talk_contract_ids(state)
     if exact_ids:
@@ -1107,4 +1115,5 @@ def prioritize(state: dict) -> None:
             f"政策出处{policy.policy_source},"
             f"confidence仅破同分,同段软上限{_runner.TALK_PER_SEGMENT_CAP})",
         )
-    _runner.refill_songs(state)
+    if allow_song_work:
+        _runner.refill_songs(state)

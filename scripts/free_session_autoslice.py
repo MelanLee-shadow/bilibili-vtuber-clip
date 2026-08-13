@@ -840,8 +840,8 @@ from src.autoslice.candidate_selection import (  # noqa: E402
     prioritize,
 )
 from src.autoslice.operator_processing_scope import operator_scope_admission  # noqa: E402
+from src.autoslice import historical_failed_talk_scope  # noqa: E402
 from src.autoslice.exact_talk_recovery_scope import (
-    maintain_delivery_recovery_scope,
     suppress_exact_talk_recovery_song_work,
 )  # noqa: E402
 from src.autoslice.selection_rescore import split_produce_blocked_talk_items  # noqa: E402
@@ -1619,6 +1619,7 @@ def process_date(date: str) -> None:
         )
         log(f"{date}: publication reconciliation invalid — blocked fail-closed")
         return
+    frozen_talk_candidate_ids = historical_failed_talk_scope.freeze(state, date=date)
     runtime_err = runtime_health_error()
     if runtime_err:
         changed = state.get("runtime_error") != runtime_err or state.get("status") != "paused_runtime_invalid"
@@ -1677,7 +1678,7 @@ def process_date(date: str) -> None:
         requeued_talks,
         requeued_songs,
         song_fingerprint_baseline_changed,
-    ) = maintain_delivery_recovery_scope(date, state, automatic_maintenance=automatic_maintenance)
+    ) = historical_failed_talk_scope.maintain(date, state, automatic_maintenance=automatic_maintenance, candidate_ids=frozen_talk_candidate_ids)
     if recovered_song_deliveries:
         write_state(date, state)
         log(
@@ -1693,11 +1694,7 @@ def process_date(date: str) -> None:
             f"{requeued_songs} recoverable song BLOCK(s) for song pipeline "
             f"{song_pipeline_fingerprint()[:19]}…"
         )
-    has_new, has_pending, needs_cover = semantic_chat_refresh.runner_date_work_flags(
-        date,
-        state,
-        automatic_maintenance=automatic_maintenance,
-    )
+    has_new, has_pending, needs_cover = historical_failed_talk_scope.work_flags(date, state, automatic_maintenance=automatic_maintenance, candidate_ids=frozen_talk_candidate_ids)
     if not has_new and not has_pending and not needs_cover:
         terminal = _project_terminal_batch_state(state)
         write_state(date, state)
@@ -1720,7 +1717,7 @@ def process_date(date: str) -> None:
     state["status"] = "processing"
     write_state(date, state)
 
-    discover_segments(date, state)
+    historical_failed_talk_scope.discover(date, state, frozen_talk_candidate_ids)
     suppress_exact_talk_recovery_song_work(state, phase="after_segment_discovery")
     # Session sealing: transcription/recall above runs as segments appear, but
     # SELECTION waits until the inventory is stable so every candidate of the
@@ -1739,8 +1736,7 @@ def process_date(date: str) -> None:
         return
     # Keep a structured, session-wide snapshot for the unlabelled evidence
     # sidecar before prioritize() reduces production to top-5 talk clips.
-    capture_candidates = [dict(item) for item in state.get("pending_talk", []) if isinstance(item, dict)]
-    prioritize(state)
+    capture_candidates = historical_failed_talk_scope.prioritize_and_capture(state, frozen_talk_candidate_ids)
     suppress_exact_talk_recovery_song_work(state, phase="after_prioritize")
     exact_contract_ids = set(_exact_talk_contract_ids(state))
     routing_claim = prepare_speaker_routing(date, state["pending_talk"], state=state)
@@ -1817,7 +1813,7 @@ def process_date(date: str) -> None:
             # the original resumes.
             break
         if rejected:
-            prioritize(state)
+            historical_failed_talk_scope.reprioritize(state, frozen_talk_candidate_ids)
             write_state(date, state)
             continue
         break
@@ -1826,7 +1822,7 @@ def process_date(date: str) -> None:
     # Song lane with bounded backfill: a gate-BLOCKED song frees its slot for
     # the next backlog song (danmaku-desc) until the delivery budget is met,
     # the backlog runs dry, or SONG_ATTEMPT_CAP is hit.
-    while state["pending_song"]:
+    while frozen_talk_candidate_ids is None and state["pending_song"]:
         song_items = list(state["pending_song"])
         song_results = produce_batch(date, song_items, produce_song)
         state["songs"].extend(song_results)
@@ -1839,8 +1835,7 @@ def process_date(date: str) -> None:
         refill_songs(state)
         write_state(date, state)
 
-    if automatic_maintenance:
-        repair_covers(date, state)
+    historical_failed_talk_scope.repair_covers(date, state, automatic_maintenance=automatic_maintenance, candidate_ids=frozen_talk_candidate_ids)
 
     terminal = _project_terminal_batch_state(state)
     picks = terminal["picks"]
