@@ -1077,6 +1077,12 @@ def addressee_prompt_block(speaker_transcript: str | None) -> str:
         "通过。现在必须额外产出 addressee_attribution 数组。\n"
         + authority
         + rule
-        + "assertion 必须从 selection_hook 或 title 里逐字复制该归属断言的片段；"
+        + "这里的 selection_hook/title 始终指本轮 prompt 输入、也就是当前待复审表面，"
+        "不是本轮新生成的 final_selection_hook/final_title。REPAIR 时每条 "
+        "addressee_attribution.assertion 仍只能逐字复制本轮输入的 selection_hook 或 title；"
+        "不得把只存在于新 final 文案里的归属断言提前填入本轮 addressee_attribution。"
+        "新 final 文案新增或改写的归属内容，本轮只在对应 changed_surfaces 的 "
+        "before/after/reason/evidence 中说明并绑定 source evidence；流水线会把新 final 文案"
+        "作为下一轮输入，下一轮再对它产出 addressee_attribution 并作 KEEP/REPAIR 裁决。"
         "文案里若确实没有任何归属断言，addressee_attribution 填空数组。\n"
     )

@@ -172,6 +172,17 @@
     少一个 mention、无合法投影或其他未决槽仍 fail closed。该规则只承认 operator truth，不把
     结构化聊天本身升级成文字真值，也不绕过两个已登记专名之间的 CPA 裁决。
 
+## 派生文案 source-fact 多轮复审（F12）
+
+- `source_fact_review` 的 `addressee_attribution` 永远裁定**本轮输入**的
+  `selection_hook/title`；validator 也只允许 `assertion` 逐字命中这两个当前待审表面。
+  `status=REPAIR` 时，新生成的 `final_selection_hook/final_title` 还不是本轮 F12 判项对象：
+  新文案的归属改动必须先在 `changed_surfaces.before/after/reason/evidence` 中绑定 source
+  evidence，不得把只存在于 `after` 的 assertion 提前塞进本轮 `addressee_attribution`。
+- 合法收敛顺序是：当前表面 `REPAIR` → 流水线把两份 final 文案作为下一轮输入 → 下一轮对
+  新当前表面重新产出 `addressee_attribution` → `KEEP` 或继续 `REPAIR`。validator 保持
+  fail closed，不因 provider 混淆 current/final 而放宽到任意 final surface。
+
 ## 谈话歌名歌词语义门（F19）
 
 - `song_name_semantic_verification.py` 是谈话歌名的歌词证据 owner；它不处理歌切边界或歌切

@@ -238,6 +238,128 @@ def test_wrong_addressee_repair_regenerates_the_hook_and_passes() -> None:
     assert review["passes"][0]["addressee_attribution"][0]["verdict"] == "WRONG_ADDRESSEE"
 
 
+def test_repair_attributes_current_surface_then_reviews_repaired_surface_on_keep() -> None:
+    """F12/115 canary: a REPAIR row must not jump ahead to its new copy."""
+
+    original_hook = (
+        "被弹幕叫成“可爱小猪熊”后她连环否认，却嘴瓢自证“我是可爱”，"
+        "随后又承认自己兴奋到紧张。"
+    )
+    original_title = (
+        "【李豆沙】被弹幕叫成“可爱小猪熊”后连环否认，小李却嘴瓢自证“我是可爱”"
+    )
+    repaired_hook = (
+        "被弹幕叫成“可爱小猪”后她连环否认，却嘴瓢自证“我是可爱”，"
+        "随后又说自己很兴奋、很紧张。"
+    )
+    repaired_title = (
+        "【李豆沙】被弹幕叫成“可爱小猪”后连环否认，嘴瓢自证“我是可爱”"
+    )
+    transcript = render_speaker_transcript(
+        [
+            (HOST_SPEAKER, "我不是可爱小猪"),
+            (HOST_SPEAKER, "我不是可爱小猪"),
+            (HOST_SPEAKER, "大家好，我是可爱"),
+            (HOST_SPEAKER, "我很，我很兴奋"),
+            (HOST_SPEAKER, "兴奋，我很紧张"),
+        ]
+    )
+    prompts: list[str] = []
+    current_surface_rule = (
+        "REPAIR 时每条 addressee_attribution.assertion 仍只能逐字复制本轮输入的"
+        " selection_hook 或 title"
+    )
+
+    def cpa(prompt: str) -> str:
+        prompts.append(prompt)
+        if f"selection_hook:\n{original_hook}\n" in prompt:
+            # This models the real 115 failure: without an explicit current-input
+            # rule the judge describes its newly generated copy in F12, while the
+            # validator is correctly still checking the surface under review.
+            assertion = (
+                "被弹幕叫成“可爱小猪熊”"
+                if current_surface_rule in prompt
+                else "被弹幕叫成“可爱小猪”"
+            )
+            return _completion(
+                status="REPAIR",
+                final_hook=repaired_hook,
+                final_title=repaired_title,
+                addressee_attribution=[
+                    {
+                        "assertion": assertion,
+                        "verdict": "UNVERIFIABLE",
+                        "reason": "说话人转写没有保留弹幕发送者标签，无法独立裁定受话关系。",
+                    }
+                ],
+                changed_surfaces=[
+                    {
+                        "artifact": "selection_hook",
+                        "before": original_hook,
+                        "after": repaired_hook,
+                        "reason": "收窄弹幕称呼并去掉无依据的情绪转折关系。",
+                        "evidence": [
+                            "我不是可爱小猪",
+                            "我很，我很兴奋",
+                            "兴奋，我很紧张",
+                        ],
+                    },
+                    {
+                        "artifact": "title",
+                        "before": original_title,
+                        "after": repaired_title,
+                        "reason": "标题同步改为有文字证据的弹幕称呼。",
+                        "evidence": ["我不是可爱小猪", "大家好，我是可爱"],
+                    },
+                ],
+                scorecard_review={
+                    "status": "COMPATIBLE",
+                    "reason": "修复后仍是连续否认和嘴瓢自证的同一核心梗。",
+                },
+            )
+        assert f"selection_hook:\n{repaired_hook}\n" in prompt
+        return _completion(
+            status="KEEP",
+            final_hook=repaired_hook,
+            final_title=repaired_title,
+            addressee_attribution=[
+                {
+                    "assertion": "被弹幕叫成“可爱小猪”",
+                    "verdict": "UNVERIFIABLE",
+                    "reason": "说话人转写没有保留弹幕发送者标签，无法独立裁定受话关系。",
+                }
+            ],
+        )
+
+    review = review_and_repair_source_facts(
+        selection_hook=original_hook,
+        title=original_title,
+        final_transcript=(
+            "我不是可爱小猪\n我不是可爱小猪\n大家好，我是可爱\n"
+            "我很，我很兴奋\n兴奋，我很紧张"
+        ),
+        clip_context_prompt=(
+            "- danmaku @-2545ms event=: 你是可爱小猪你是可爱小猪你是谁呀"
+        ),
+        selection_scorecard={"tier_reason": "连续否认后嘴瓢自证可爱。"},
+        llm_call=cpa,
+        speaker_transcript=transcript,
+    )
+
+    assert source_fact_review_passes(review)
+    assert review["decision"] == "REPAIRED"
+    assert review["final_selection_hook"] == repaired_hook
+    assert review["final_title"] == repaired_title
+    assert len(review["passes"]) == 2
+    assert review["passes"][0]["addressee_attribution"][0]["assertion"] == (
+        "被弹幕叫成“可爱小猪熊”"
+    )
+    assert review["passes"][1]["addressee_attribution"][0]["assertion"] == (
+        "被弹幕叫成“可爱小猪”"
+    )
+    assert len(prompts) == 2
+
+
 def test_supported_attribution_after_the_host_is_on_air_is_accepted() -> None:
     """反向对照：主角已在场时，连线对她说的话判 SUPPORTED 必须放行。"""
 
