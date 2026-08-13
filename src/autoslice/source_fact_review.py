@@ -27,6 +27,12 @@ from src.autoslice.candidate_entity_projection import (
     FrozenCandidateEntityProjection,
     load_candidate_entity_projection,
 )
+from src.autoslice.candidate_public_text_surface_authority import (
+    CandidatePublicTextSurfaceAuthority,
+    CandidatePublicTextSurfaceAuthorityError,
+    build_public_text_source_fact_context,
+    load_candidate_public_text_surface_authority,
+)
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.deterministic_text_surface_resolution import (
     CANDIDATE_ID as DETERMINISTIC_TEXT_NARROWING_CANDIDATE_ID,
@@ -82,7 +88,7 @@ DETERMINISTIC_TEXT_NARROWING_PASS_DECISION = "DETERMINISTIC_TEXT_NARROWING"
 class _ResolvedEntityContext:
     """Runtime projection plus its relocation-safe receipt representation."""
 
-    projection: FrozenCandidateEntityProjection
+    projection: FrozenCandidateEntityProjection | CandidatePublicTextSurfaceAuthority
     document: dict[str, object]
 
     @property
@@ -236,6 +242,7 @@ def _load_source_fact_entity_context(
     *,
     candidate_id: str | None,
     final_reviewed_srt_path: Path | None,
+    clip_context_prompt: str = "",
 ) -> _ResolvedEntityContext | None:
     """Resolve an optional candidate projection against this run's SRT bytes.
 
@@ -253,7 +260,16 @@ def _load_source_fact_entity_context(
         / f"{family}.entity-projection.v1.json"
     )
     if not (projection_path.exists() or projection_path.is_symlink()):
-        return None
+        authority = load_candidate_public_text_surface_authority(family, root=_REPO_ROOT)
+        if authority is None:
+            return None
+        return _ResolvedEntityContext(
+            projection=authority,
+            document=build_public_text_source_fact_context(
+                authority,
+                clip_context_prompt=clip_context_prompt,
+            ),
+        )
     if final_reviewed_srt_path is None:
         raise CandidateEntityProjectionError("SOURCE_FACT_FINAL_REVIEWED_SRT_REQUIRED")
     final_srt = Path(final_reviewed_srt_path)
@@ -340,6 +356,9 @@ def _entity_context_prompt_block(
         return ""
     rules = context.document.get("identity_spelling_rules")
     assert isinstance(rules, list)
+    public_only = context.document.get("authority_scope") == (
+        "GENERATED_PUBLIC_TEXT_ONLY_NO_SUBTITLE_OR_SPEAKER_REVIEW"
+    )
     lines = [
         "候选实体词面约束（identity/spelling only，不授权任何新事件事实）：",
         f"entity_context_sha256: {context.context_sha256}",
@@ -349,17 +368,26 @@ def _entity_context_prompt_block(
         equivalents = row.get("identity_equivalent_surfaces")
         assert isinstance(equivalents, list)
         joined = "↔".join(f"「{surface}」" for surface in equivalents)
+        subtitle_clause = (
+            "本 authority 不裁定也不修改最终字幕/说话人，"
+            if public_only
+            else f"最终字幕可保留 reviewed_surface「{row.get('reviewed_surface')}」，"
+        )
         lines.append(
-            f"- {row.get('entity_id')}: {joined} 指同一实体；最终字幕可保留"
-            f" reviewed_surface「{row.get('reviewed_surface')}」，但 selection_hook、"
+            f"- {row.get('entity_id')}: {joined} 指同一实体；{subtitle_clause}但 selection_hook、"
             f"投稿标题与封面属于 derived title_cover 文案，提到该实体时必须写"
             f"「{row.get('title_cover_surface')}」。不得为了贴合字幕拼写把 derived "
             "文案改成另一个 identity-equivalent surface。"
         )
     lines.append(
-        "上述 context 已绑定本轮 final reviewed SRT 原始 bytes、candidate、source "
-        "interval 与 projection；它只裁定同一实体及各表面拼写，不得作为剧情、"
-        "动作、因果或说话人事实的证据。"
+        (
+            "上述 context 已绑定 candidate、clip-context 与 source pieces；它只"
+            "裁定生成公共文案的专名拼写，不代表整份 SRT 或 speaker 已人工复审。"
+            if public_only
+            else "上述 context 已绑定本轮 final reviewed SRT 原始 bytes、candidate、source "
+            "interval 与 projection；它只裁定同一实体及各表面拼写，不得作为剧情、"
+            "动作、因果或说话人事实的证据。"
+        )
     )
     return "\n".join(lines) + "\n"
 
@@ -381,7 +409,7 @@ def _entity_surface_error(
             surface_type="title_cover",
             text=title,
         )
-    except CandidateEntityProjectionError as exc:
+    except (CandidateEntityProjectionError, CandidatePublicTextSurfaceAuthorityError) as exc:
         return str(exc)
     return None
 
@@ -940,8 +968,13 @@ def review_and_repair_source_facts(
         entity_context = _load_source_fact_entity_context(
             candidate_id=candidate_id,
             final_reviewed_srt_path=final_reviewed_srt_path,
+            clip_context_prompt=clip_context_prompt,
         )
-    except (CandidateEntityProjectionError, OSError) as exc:
+    except (
+        CandidateEntityProjectionError,
+        CandidatePublicTextSurfaceAuthorityError,
+        OSError,
+    ) as exc:
         return _finalize_receipt(
             {
                 "schema_version": SCHEMA_VERSION,
@@ -1613,6 +1646,7 @@ def _validate_receipt_entity_context(
     *,
     candidate_id: str | None,
     final_reviewed_srt_path: Path | None,
+    clip_context_prompt: str = "",
 ) -> bool:
     """Rebuild the projection context instead of trusting its receipt copy."""
 
@@ -1622,8 +1656,13 @@ def _validate_receipt_entity_context(
         context = _load_source_fact_entity_context(
             candidate_id=candidate_id,
             final_reviewed_srt_path=final_reviewed_srt_path,
+            clip_context_prompt=clip_context_prompt,
         )
-    except (CandidateEntityProjectionError, OSError):
+    except (
+        CandidateEntityProjectionError,
+        CandidatePublicTextSurfaceAuthorityError,
+        OSError,
+    ):
         return False
     passes = review.get("passes")
     if not isinstance(passes, list):
@@ -1785,6 +1824,7 @@ def validate_source_fact_review(
         review,
         candidate_id=candidate_id,
         final_reviewed_srt_path=final_reviewed_srt_path,
+        clip_context_prompt=clip_context_prompt,
     ):
         return False
     if not _validate_receipt_speaker_evidence(

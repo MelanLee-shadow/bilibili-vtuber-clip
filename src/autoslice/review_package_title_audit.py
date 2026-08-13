@@ -14,6 +14,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from src.autoslice.candidate_public_text_surface_authority import (
+    CandidatePublicTextSurfaceAuthorityError,
+    consume_candidate_public_text_surface_authority,
+    load_candidate_public_text_surface_authority,
+)
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
     validate_recovery_publication_authority,
@@ -39,15 +44,12 @@ def recovery_publication_authority_contract(
 ]:
     """Resolve the exact candidate map without trusting item self-report."""
 
-    authorities = manifest.get(
-        "recovery_publication_authorities_by_candidate"
-    )
+    authorities = manifest.get("recovery_publication_authorities_by_candidate")
     selection_contract = manifest.get("selection_contract")
     required = bool(
         manifest.get("run_mode") == "RECOVERY_REVIEW"
         and isinstance(selection_contract, dict)
-        and selection_contract.get("mode")
-        == "EXACT_CANDIDATE_SET_NO_BACKFILL"
+        and selection_contract.get("mode") == "EXACT_CANDIDATE_SET_NO_BACKFILL"
     )
     issues: list[ReviewPackageTitleIssue] = []
     if required and not isinstance(authorities, dict):
@@ -62,18 +64,14 @@ def recovery_publication_authority_contract(
     item_candidate_ids = {
         str(item.get("candidate_id") or "")
         for item in items
-        if isinstance(item, dict)
-        and str(item.get("candidate_id") or "")
+        if isinstance(item, dict) and str(item.get("candidate_id") or "")
     }
     if required and set(authorities) != item_candidate_ids:
         issues.append(
             ReviewPackageTitleIssue(
                 "RECOVERY_PUBLICATION_AUTHORITY_MAP_SET_MISMATCH",
                 None,
-                (
-                    f"authority={sorted(authorities)}; "
-                    f"items={sorted(item_candidate_ids)}"
-                ),
+                (f"authority={sorted(authorities)}; items={sorted(item_candidate_ids)}"),
             )
         )
     return authorities, required, tuple(issues)
@@ -111,9 +109,7 @@ def audit_recovery_title_authority(
 
     record_authority = record.get("recovery_publication_authority")
     item_authority = item.get("recovery_publication_authority")
-    staging_authority = publish_staging.get(
-        "recovery_publication_authority"
-    )
+    staging_authority = publish_staging.get("recovery_publication_authority")
     publish = _load_json(publish_path) if publish_path else {}
     publish_authority = publish.get("recovery_publication_authority")
     present = [
@@ -135,9 +131,7 @@ def audit_recovery_title_authority(
             ),
         )
     final_title = (
-        str(publish.get("title") or "")
-        or str(publish_staging.get("title") or "")
-        or item_title
+        str(publish.get("title") or "") or str(publish_staging.get("title") or "") or item_title
     )
     try:
         validated = validate_recovery_publication_authority(
@@ -174,8 +168,7 @@ def audit_recovery_title_authority(
         publish_path is None
         or not publish_path.is_file()
         or not isinstance(artifact_hashes, dict)
-        or artifact_hashes.get("publish_draft_sha256")
-        != "sha256:" + _sha256_file(publish_path)
+        or artifact_hashes.get("publish_draft_sha256") != "sha256:" + _sha256_file(publish_path)
     ):
         issues.append(
             ReviewPackageTitleIssue(
@@ -200,6 +193,14 @@ def audit_recovery_publication_surfaces(
 ) -> tuple[ReviewPackageTitleIssue, ...]:
     """Run the surface gate only for exact recovery or an introduced surface."""
 
+    public_issues = audit_candidate_public_text_surfaces(
+        candidate_id=item_candidate_id,
+        item_title=item_title,
+        publish_path=publish_path,
+        record_path=record_path,
+        record=record,
+        publish_staging=publish_staging,
+    )
     surface_present = any(
         value is not None
         for value in (
@@ -209,8 +210,8 @@ def audit_recovery_publication_surfaces(
         )
     )
     if not required and not surface_present:
-        return ()
-    return audit_recovery_title_authority(
+        return public_issues
+    recovery_issues = audit_recovery_title_authority(
         item=item,
         item_candidate_id=item_candidate_id,
         item_title=item_title,
@@ -218,8 +219,79 @@ def audit_recovery_publication_surfaces(
         record_path=record_path,
         record=record,
         publish_staging=publish_staging,
-        expected_authority=(
-            expected_authority
-            or item.get("recovery_publication_authority")
-        ),
+        expected_authority=(expected_authority or item.get("recovery_publication_authority")),
     )
+    return (*public_issues, *recovery_issues)
+
+
+def audit_candidate_public_text_surfaces(
+    *,
+    candidate_id: str,
+    item_title: str,
+    publish_path: Path | None,
+    record_path: Path | None,
+    record: dict[str, Any],
+    publish_staging: dict[str, Any],
+) -> tuple[ReviewPackageTitleIssue, ...]:
+    """Rebuild the exact public-text consumption across a current package."""
+
+    issue_path = record_path or publish_path
+    try:
+        authority = load_candidate_public_text_surface_authority(candidate_id)
+    except CandidatePublicTextSurfaceAuthorityError as exc:
+        return (
+            ReviewPackageTitleIssue(
+                "CANDIDATE_PUBLIC_TEXT_AUTHORITY_INVALID", issue_path, str(exc)
+            ),
+        )
+    if authority is None:
+        return ()
+    publish = _load_json(publish_path) if publish_path else {}
+    story_contract = record.get("story_contract")
+    try:
+        if not isinstance(story_contract, dict):
+            raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_STORY_CONTRACT_REQUIRED")
+        expected = consume_candidate_public_text_surface_authority(
+            authority,
+            candidate_id=candidate_id,
+            selection_hook=str(story_contract.get("selection_hook") or ""),
+            story_contract=story_contract,
+        )
+        for value in (
+            item_title,
+            str(publish_staging.get("title") or ""),
+            str(publish.get("title") or ""),
+        ):
+            authority.require_artifact_text(artifact_kind="publication", text=value)
+        generations = (
+            publish_staging.get("cover_generation"),
+            publish.get("cover_generation"),
+        )
+        for generation in generations:
+            lines = generation.get("rendered_lines") if isinstance(generation, dict) else None
+            if not (
+                isinstance(lines, list)
+                and lines
+                and all(isinstance(line, str) and line.strip() for line in lines)
+            ):
+                raise CandidatePublicTextSurfaceAuthorityError(
+                    "PUBLIC_TEXT_RENDERED_COVER_TEXT_REQUIRED"
+                )
+            authority.require_artifact_text(artifact_kind="cover", text="\n".join(lines))
+    except CandidatePublicTextSurfaceAuthorityError as exc:
+        return (
+            ReviewPackageTitleIssue("CANDIDATE_PUBLIC_TEXT_SURFACE_INVALID", issue_path, str(exc)),
+        )
+    staging_receipt = publish_staging.get("public_text_surface_authority_consumption")
+    publish_receipt = publish.get("public_text_surface_authority_consumption")
+    expected_source = "deterministic_candidate_public_surface_resolution+ivan_exact_substitution"
+    if not (
+        staging_receipt == publish_receipt == expected
+        and publish_staging.get("title_source") == publish.get("title_source") == expected_source
+        and publish_staging.get("upload_enabled") is False
+        and publish.get("upload_enabled") is False
+        and expected.get("upload_authorized") is False
+        and expected.get("registry_hold_released") is False
+    ):
+        return (ReviewPackageTitleIssue("CANDIDATE_PUBLIC_TEXT_CONSUMPTION_DRIFT", issue_path),)
+    return ()

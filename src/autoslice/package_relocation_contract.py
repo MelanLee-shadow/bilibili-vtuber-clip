@@ -131,6 +131,7 @@ _RECORD_FROZEN_PREFIXES: tuple[JsonPointer, ...] = (
     ("publish_staging", "title_story_audit"),
     ("publish_staging", "manual_title_repair_authority_consumption"),
     ("publish_staging", "manual_title_keep_authority_consumption"),
+    ("publish_staging", "public_text_surface_authority_consumption"),
     ("publish_staging", "recovery_publication_authority"),
 )
 _PUBLISH_FROZEN_PREFIXES: tuple[JsonPointer, ...] = (
@@ -139,6 +140,7 @@ _PUBLISH_FROZEN_PREFIXES: tuple[JsonPointer, ...] = (
     ("title_story_audit",),
     ("manual_title_repair_authority_consumption",),
     ("manual_title_keep_authority_consumption",),
+    ("public_text_surface_authority_consumption",),
     ("recovery_publication_authority",),
 )
 _SPEAKER_FROZEN_PREFIXES: tuple[JsonPointer, ...] = (

@@ -1,0 +1,65 @@
+{
+  "algorithm_id": "exact-candidate-generated-surface-resolution.v1",
+  "authority_sha256": "sha256:52c228afd1e34f29dd626bf3ea889e9482066785c72614b4a24f40f6a066d1ac",
+  "candidate_binding": {
+    "candidate_id": "auto_210739_1142_1436",
+    "clip_context_sha256": "sha256:8c1b85367bfba92302fdcd12aa1400811f34651ad9573f67208f6399a4dc474d",
+    "recording_date": "2026-08-07",
+    "selected_interval": {
+      "absolute_end_ms": 1437390,
+      "absolute_start_ms": 1142160
+    },
+    "clip_context_source_pieces": [
+      {
+        "end_ms": 1484990,
+        "recording_basename": "22966160_20260807-21-07-39.mp4",
+        "source_media_sha256": "sha256:8069353813e0cd12624b1cdcdd419356527098b353e08f71fa4bb64f5f6046c4",
+        "start_ms": 1132390
+      }
+    ]
+  },
+  "entity_surface_policy": {
+    "entity_id": "nancho",
+    "equivalent_surfaces": [
+      "南町",
+      "南天"
+    ],
+    "exact_substitution": {
+      "from": "南天",
+      "to": "南町"
+    },
+    "forbidden_public_surfaces": [
+      "南天"
+    ],
+    "required_public_surface": "南町"
+  },
+  "input_surface_binding": {
+    "selection_hook": "没人肯跟她抱团，她当场认南天为大哥宣誓效忠，结果亲眼看着大哥暴毙后立刻以小弟身份办起丧事。",
+    "selection_hook_sha256": "sha256:dd1ddd630148f5e9e7e447a2e78422b94663c4a49f1641bd28778089b32a72d7",
+    "superseded_title": "【李豆沙】想抱团却被拒绝，小李认南天为大哥：“你说啥就是啥”，目睹大哥死后小弟立马办起丧事",
+    "superseded_title_sha256": "sha256:95475b323c268ac4cd93b29b92ce4f94936013d35a14867c1db098e2f5fb1c4c"
+  },
+  "resolved_surfaces": {
+    "selection_hook": "没人肯跟她抱团，她当场认南町为大哥宣誓效忠，结果亲眼看着大哥暴毙后立刻以小弟身份办起丧事。",
+    "selection_hook_sha256": "sha256:3125d70c9a76cd5ad94c757a3b1ca203824cf00d1e57ad6fd867eb3a65a92706",
+    "title": "【李豆沙】想抱团却被拒绝，小李认南町为大哥：“你说啥就是啥”，目睹大哥死后小弟立马办起丧事",
+    "title_sha256": "sha256:80b5246ab026a50eac1618dad221d24418f0c25cf35be645f9e799cc33b51184"
+  },
+  "schema_version": "lidousha-candidate-public-text-surface-authority.v1",
+  "scope": {
+    "artifact_kinds": [
+      "selection_hook",
+      "title",
+      "cover",
+      "publication"
+    ],
+    "registry_hold_released": false,
+    "speaker_label_mutation_authorized": false,
+    "subtitle_text_mutation_authorized": false,
+    "upload_authorized": false
+  },
+  "user_authorization": {
+    "quote": "南天一看就是南町的错误听写，这为什么在标题里没有修正？",
+    "timestamp": "2026-08-13T05:08:11.192Z"
+  }
+}

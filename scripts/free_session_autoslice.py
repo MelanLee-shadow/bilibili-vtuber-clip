@@ -98,9 +98,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.suggest_upload_tags import generate_upload_tags
-from src.autoslice.candidate_truth_asset import (
-    resolve_candidate_truth_asset_path,
-)
+from src.autoslice.candidate_truth_asset import candidate_truth_fingerprint, resolve_candidate_truth_asset_path
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.runtime_candidate_asset import bind_runtime_candidate_asset
 from src.autoslice.game_context import bind_session_game_context
@@ -669,6 +667,17 @@ def candidate_entity_projection_path(candidate_id: str) -> Path | None:
     )
 
 
+def candidate_public_text_surface_authority_path(candidate_id: str) -> Path | None:
+    asset_root_relative = CHANNEL_PROFILE.asset_root.relative_to(CHANNEL_PROFILE.repo_root)
+    return resolve_candidate_truth_asset_path(
+        root=REPO_ROOT / asset_root_relative / "candidate_public_text_surface_authorities",
+        candidate_id=candidate_id,
+        suffix=".public-text-surface-authority.v1.json",
+        truth_is_available=human_truth_mode() != "withheld",
+        label="public text surface authority",
+    )
+
+
 def talk_pipeline_fingerprint(candidate_id: str) -> str:
     """Base code/config proof plus only this talk's optional truth assets."""
 
@@ -681,6 +690,7 @@ def talk_pipeline_fingerprint(candidate_id: str) -> str:
             candidate_subtitle_regression_path(candidate_id),
             candidate_speaker_override_path(candidate_id),
             candidate_entity_projection_path(candidate_id),
+            candidate_public_text_surface_authority_path(candidate_id),
         )
         if path is not None
     ]
@@ -689,23 +699,13 @@ def talk_pipeline_fingerprint(candidate_id: str) -> str:
     # Preserve the historical base fingerprint for the overwhelmingly common
     # no-override case.  Adding/removing this candidate's truth asset still
     # changes/reverts its fingerprint without waking every legacy talk once.
-    if not truth_assets:
-        if human_truth_mode() == "withheld":
-            hasher = hashlib.sha256()
-            hasher.update(b"talk-pipeline-fingerprint.v4\0")
-            hasher.update(base.encode("utf-8") + b"\0human_truth=withheld\0")
-            return "sha256:" + hasher.hexdigest()
-        return base
-    hasher = hashlib.sha256()
-    hasher.update(b"talk-pipeline-fingerprint.v5\0")
-    hasher.update(base.encode("utf-8") + b"\0")
-    hasher.update(str(candidate_id).encode("utf-8") + b"\0")
-    for path in sorted(truth_assets, key=lambda item: item.relative_to(REPO_ROOT).as_posix()):
-        relative = path.relative_to(REPO_ROOT).as_posix()
-        hasher.update(relative.encode("utf-8") + b"\0")
-        hasher.update(path.read_bytes())
-        hasher.update(b"\0")
-    return "sha256:" + hasher.hexdigest()
+    return candidate_truth_fingerprint(
+        base_fingerprint=base,
+        candidate_id=candidate_id,
+        asset_paths=truth_assets,
+        repo_root=REPO_ROOT,
+        truth_withheld=human_truth_mode() == "withheld",
+    )
 
 
 # ---- speaker routing / collab evidence capture (extracted 2026-07-14) ------

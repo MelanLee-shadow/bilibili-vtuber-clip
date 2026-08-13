@@ -9,7 +9,11 @@ from pathlib import Path
 from src.autoslice.source_fact_review import (
     deterministic_text_narrowing_title_policy_exception_applies,
 )
-from src.autoslice.title_policy import publish_title_policy_violations
+from src.autoslice.title_policy import (
+    TitlePolicyError,
+    publish_title_policy_violations,
+    validate_candidate_title_surface,
+)
 
 
 def candidate_title_policy_violations(
@@ -27,6 +31,10 @@ def candidate_title_policy_violations(
         lane=lane,
         enforce_automatic_style=enforce_automatic_style,
     )
+    try:
+        validate_candidate_title_surface(candidate_id, title)
+    except TitlePolicyError:
+        codes.append("candidate_public_or_reviewed_title_surface_conflict")
     if deterministic_text_narrowing_title_policy_exception_applies(
         source_fact_review,
         candidate_id=candidate_id,

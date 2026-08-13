@@ -14,6 +14,17 @@
   selection-hook/机器味重写；它不拥有绕过频道 archive envelope 的权限。talk 最终统一补
   `【李豆沙】`，song 统一成精确目录式；两者都验 12–49 字、外层空白与括号/引号栈。
 - `assets/lidousha/manual_title_overrides.v1.json` 存正文，不存一条可免检的“最终发布标题”。
+- 单个候选若只有**公共生成文案**中的逐字专名裁决，而没有整份字幕/说话人的完整人工复审，
+  只能使用
+  `assets/lidousha/candidate_public_text_surface_authorities/<candidate>.public-text-surface-authority.v1.json`。
+  它必须绑定 candidate、exact selected interval、带 padding 的 clip-context source pieces、source
+  SHA、clip-context SHA、原 selection hook、被替换的机器标题，以及用户只授权的 exact
+  substitution；冻结标题只能是该机器标题的最小字节替换，不得记成整题 Ivan 手定标题。
+  authority 仅约束 selection hook/title/cover/publication 的生成公共词面，不得修改或暗示已复审
+  subtitle/speaker，不得解除 publication registry hold，也不得授权上传。title、封面 rendered
+  lines、publish draft 与 package/current audit 必须消费并重验同一 authority/consumption；任一
+  source/context/surface/receipt 漂移即阻断。`AUTOSLICE_HUMAN_TRUTH_MODE=withheld` 时 loader、
+  prompt、staging、fingerprint 都不得读取或泄露该 authority，非法 truth mode 则 fail closed。
 - 手定标题的 source-fact 门发现事实错误时仍默认 fail closed。例外只能是
   `assets/lidousha/manual_title_repair_authorities/` 中的单 candidate authority：它必须同时
   绑定原 title/hook、阻断该次修复的 source-fact receipt SHA、精确修正后的 title/hook 与用户

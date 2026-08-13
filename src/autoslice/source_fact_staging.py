@@ -239,6 +239,7 @@ def resolve_initial_source_fact_review(
         title_repair_allowed=not (
             recovery_publication_authority is not None
             or title_authority_status == "RESOLVED_MANUAL"
+            or title_authority_status == "RESOLVED_PUBLIC_TEXT_SURFACE_AUTHORITY"
             or title_source == "ivan_manual_override"
         ),
         enforce_automatic_title_style=title_llm_enabled,

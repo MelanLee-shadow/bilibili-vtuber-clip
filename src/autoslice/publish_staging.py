@@ -20,6 +20,9 @@ from .candidate_entity_publish_gate import (
     enforce_candidate_cover_projection,
     evaluate_candidate_title_gates,
 )
+from .candidate_public_text_surface_authority import (
+    resolve_candidate_public_text_title_state,
+)
 from .content_ip_signal import important_content_ip_signal_from_srt
 from .cover_emote import (
     EmoteLibrary,
@@ -108,10 +111,12 @@ from .title_policy import (
     _TITLE_MAX_LEN,
     _TITLE_MIN_LEN,
     _ensure_lidousha_prefix,
+    build_automatic_talk_title_prompt,
     canonicalize_automatic_title_fillers,
     canonicalize_publish_title,
     canonicalize_song_catalog_title,
     manual_title_override,
+    publish_title_lane,
     _selection_hook_anchor_valid,
     _selection_hook_fallback_title,
     _selection_hook_first_clause,
@@ -417,15 +422,25 @@ def _stage_publish_draft(
     )
     title_source, title_authority_status, normalized_recovery_publication_authority = title_state
     story_contract = record.get("story_contract")
-    manual_override = manual_title_override(candidate_id)
-    if manual_override is not None:
-        staged_title = manual_override
-        title_source = "ivan_manual_override"
-        title_authority_status = "RESOLVED_MANUAL"
-        title_llm_call = None
+    candidate_title = resolve_candidate_public_text_title_state(
+        candidate_id=candidate_id,
+        title=staged_title,
+        selection_hook=str(selection_hook or ""),
+        story_contract=story_contract,
+        story_contract_rebuilder=story_contract_rebuilder,
+        title_source=title_source,
+        title_authority_status=title_authority_status,
+        title_llm_call=title_llm_call,
+        manual_title=manual_title_override(candidate_id),
+    )
+    staged_title, selection_hook, story_contract = candidate_title.title, candidate_title.selection_hook, candidate_title.story_contract
+    title_source, title_authority_status = candidate_title.title_source, candidate_title.title_authority_status
+    title_authority_error, title_llm_call = candidate_title.title_authority_error, candidate_title.title_llm_call
+    public_text_surface_authority_consumption = candidate_title.consumption
+    if public_text_surface_authority_consumption is not None:
+        record["story_contract"] = story_contract
     if title_llm_call is not None:
         selection_hook = str(selection_hook or "").strip()
-        selection_hook_clause = _selection_hook_first_clause(selection_hook)
         transcript_sample = _staged_transcript_sample(record, cues)
         important_ip_signal = important_content_ip_signal_from_srt(
             subtitle_path=record.get("subtitle_path"),
@@ -433,44 +448,17 @@ def _stage_publish_draft(
             title=selection_hook,
         )
         important_content_ips = important_ip_signal.as_receipt()
-        style_asset = profile_asset_text("title_style")
-        persona_asset = profile_asset_text("persona")
-        selection_hook_contract = ""
-        output_contract = '{"title": "标题"}'
-        clip_context_contract = ""
-        if isinstance(story_contract, Mapping):
-            context_prompt = str(story_contract.get("clip_context_prompt") or "").strip()
-            if context_prompt:
-                clip_context_contract = (
-                    "\n同一份 hash-bound 长程语境（用于整片回指、口癖和专名候选；"
-                    "它本身不授权改字幕）：\n" + context_prompt + "\n"
-                )
-        if selection_hook:
-            selection_hook_contract = (
-                f"\n选片主钩子（这是为什么选中本片，权威高于后续陪衬话题）: {selection_hook}\n"
-                f"标题必须保留第一分句的核心事件: {selection_hook_clause}\n"
-                "同时输出 selection_hook_anchor：从该第一分句原样复制的 2–12 字具体短语，"
-                f"避开‘{CHANNEL_PROFILE.display_name}/{CHANNEL_PROFILE.short_name}/主播/直播/弹幕/观众/自己/这个/那个/然后/时候/表演’等泛词；"
-                "该短语必须逐字出现在标题里。不得把片段后半段的陪衬话题偷换成主标题。\n"
-            )
-            output_contract = '{"title": "标题", "selection_hook_anchor": "第一分句中的具体短语"}'
-        base_prompt = (
-            f"为一条{CHANNEL_PROFILE.display_name}(B站虚拟主播)的直播切片起中文标题。\n"
-            f"最重要的原则：观众是因为'这是{CHANNEL_PROFILE.display_name}'才点进来的,不是因为内容——标题必须围绕{CHANNEL_PROFILE.display_name}本人"
-            "(她的反应、气质、口癖、梗、名字谐音),切片内容只是辅助素材。引人注目为先。\n"
-            f"\n{CHANNEL_PROFILE.display_name}特质:\n{persona_asset}\n"
-            f"\n标题风格规范与历史标题范例(严格模仿这个风格):\n{style_asset}\n"
-            f"\n本切片转写内容节选(辅助素材): {transcript_sample}\n"
-            f"{important_ip_signal.prompt_block}"
-            f"{selection_hook_contract}"
-            f"{clip_context_contract}"
-            f"硬性要求：含{CHANNEL_PROFILE.talk_title_prefix}前缀后 {_TITLE_MIN_LEN}–{_TITLE_MAX_LEN} 字"
-            "（Ivan 手定语料的主力带是 25–45 字的三拍叙事，不要为了凑短把梗压没；"
-            "只有梗足够硬的短爆点才走 20 字以下）；"
-            "禁用空洞夸张词(炸裂/震惊/天花板/绝了/犯规/太顶),"
-            "更不许用'X到犯规/炸裂/离谱'这种万能后缀——标题必须具体到这条切片里到底发生了什么"
-            "(描述性的'越看越离谱/越整越离谱'这类是可以的,禁的是空洞的'X到离谱'后缀)。\n"
-            f"只输出一个 JSON 对象：{output_contract}"
+        base_prompt = build_automatic_talk_title_prompt(
+            selection_hook=selection_hook,
+            transcript_sample=transcript_sample,
+            important_ip_prompt=important_ip_signal.prompt_block,
+            clip_context_prompt=(
+                str(story_contract.get("clip_context_prompt") or "").strip()
+                if isinstance(story_contract, Mapping)
+                else ""
+            ),
+            persona_asset=profile_asset_text("persona"),
+            style_asset=profile_asset_text("title_style"),
         )
         automatic = _resolve_automatic_title(
             base_prompt=base_prompt,
@@ -519,13 +507,11 @@ def _stage_publish_draft(
     # publish canonicalizer below applies to manual and automatic titles alike.
     if title_llm_call is not None:
         staged_title = canonicalize_song_catalog_title(staged_title)
-    explicit_lane = (
-        "song"
-        if (
-            staged_title.startswith(CHANNEL_PROFILE.song_title_prefix)
-            or str(record.get("classification") or "").lower() == "song"
-        )
-        else "talk"
+    explicit_lane = publish_title_lane(
+        staged_title,
+        explicit_lane=(
+            "song" if str(record.get("classification") or "").lower() == "song" else None
+        ),
     )
     staged_title = canonicalize_publish_title(staged_title, lane=explicit_lane)
     manual_title_repair_authority_consumption = None
@@ -613,13 +599,11 @@ def _stage_publish_draft(
         else:
             reviewed_hook = str(source_fact_review["final_selection_hook"])
             reviewed_title = str(source_fact_review["final_title"])
-            reviewed_lane = (
-                "song"
-                if (
-                    reviewed_title.startswith(CHANNEL_PROFILE.song_title_prefix)
-                    or str(record.get("classification") or "").lower() == "song"
-                )
-                else "talk"
+            reviewed_lane = publish_title_lane(
+                reviewed_title,
+                explicit_lane=(
+                    "song" if str(record.get("classification") or "").lower() == "song" else None
+                ),
             )
             if canonicalize_publish_title(reviewed_title, lane=reviewed_lane) != reviewed_title:
                 title_policy_violations.append("source_fact_repair_title_not_canonical")
@@ -899,6 +883,7 @@ def _stage_publish_draft(
         "source_fact_review": source_fact_review,
         "manual_title_repair_authority_consumption": manual_title_repair_authority_consumption,
         "manual_title_keep_authority_consumption": manual_title_keep_authority_consumption,
+        "public_text_surface_authority_consumption": public_text_surface_authority_consumption,
         "video_path": str(media_path),
         "cover_text": cover_text,
         "cover_path": cover_path_value,
@@ -928,6 +913,7 @@ def _stage_publish_draft(
         "source_fact_review": source_fact_review,
         "manual_title_repair_authority_consumption": manual_title_repair_authority_consumption,
         "manual_title_keep_authority_consumption": manual_title_keep_authority_consumption,
+        "public_text_surface_authority_consumption": public_text_surface_authority_consumption,
         "cover_status": cover_status,
         "cover_path": cover_path_value,
         "cover_text": cover_text,
