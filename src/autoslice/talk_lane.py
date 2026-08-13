@@ -13,8 +13,8 @@ import json
 import re
 import subprocess
 import sys
-import time
 from collections.abc import Mapping
+from datetime import datetime, timezone
 from pathlib import Path
 
 from src.autoslice.boundary_semantic_review import (
@@ -1536,20 +1536,20 @@ def _run_talk_producer_with_boundary_context_retry(
     retry_owner_contract_sha256: str | None = None
 
     def run_producer():
-        speaker_review_state = _runner._speaker_review_manifest_state(
-            out_root / candidate_id
-        )
+        speaker_review_state = _runner._speaker_review_manifest_state(out_root / candidate_id)
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        attempt_offset = log_path.stat().st_size if log_path.is_file() else 0
         with open(log_path, "a", encoding="utf-8") as sink:
+            event = {
+                "schema_version": "talk-producer-log-event.v1", "event": "ATTEMPT_START",
+                "at": datetime.now(timezone.utc).isoformat(), "date": date,
+                "candidate_id": candidate_id, "spec_path": str(spec_path),
+                "pipeline_fingerprint": _runner.talk_pipeline_fingerprint(candidate_id),
+            }
+            print(json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":")), file=sink, flush=True)
+            attempt_offset = sink.tell()
             completed = subprocess.run(
-                cmd,
-                check=False,
-                stdout=sink,
-                stderr=subprocess.STDOUT,
-                timeout=5400,
-                cwd=str(_runner.REPO_ROOT),
-                env=_runner.child_env_for_date(date),
+                cmd, check=False, stdout=sink, stderr=subprocess.STDOUT, timeout=5400,
+                cwd=str(_runner.REPO_ROOT), env=_runner.child_env_for_date(date),
             )
         with open(log_path, "rb") as source:
             source.seek(attempt_offset)

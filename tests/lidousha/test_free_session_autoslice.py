@@ -24,6 +24,7 @@ from src.autoslice.producer_boundary_owner_contract import (
 )
 from src.autoslice.talk_lane import (
     _bound_boundary_retry_source_end_ms,
+    _run_talk_producer_with_boundary_context_retry,
 )
 from src.autoslice.visual_song_discovery import VisualSongCandidate, VisualSongDiscoveryResult
 from src.autoslice.selection_scorecard import normalize_selection_scorecard
@@ -10301,6 +10302,73 @@ def test_stale_boundary_log_does_not_classify_new_transient_failure(tmp_path, mo
     )
     assert result["cover_route_regeneration_attempts"] == 3
     assert "speaker_review_manifest" not in result
+
+
+def test_talk_producer_flushes_bound_attempt_start_before_launch(
+    tmp_path, monkeypatch
+):
+    date = "2026-08-13"
+    candidate_id = "auto_attempt_marker"
+    log_path = tmp_path / "logs" / f"{date}_{candidate_id}.log"
+    log_path.parent.mkdir()
+    log_path.write_text(
+        "FINAL_REVIEW_RELEASE_BLOCKED: stale prior attempt\n",
+        encoding="utf-8",
+    )
+    spec_path = tmp_path / "out" / date / f"spec_{candidate_id}.json"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("{}\n", encoding="utf-8")
+    observed_event = {}
+
+    monkeypatch.setattr(
+        runner,
+        "_speaker_review_manifest_state",
+        lambda _work_dir: None,
+    )
+    monkeypatch.setattr(runner, "child_env_for_date", lambda _date: {})
+    monkeypatch.setattr(
+        runner,
+        "talk_pipeline_fingerprint",
+        lambda _candidate_id: "sha256:" + "a" * 64,
+    )
+
+    def fake_run(_command, **kwargs):
+        # Reopening the file from inside the launch seam proves the event was
+        # flushed before the producer was invoked, not merely buffered.
+        lines = log_path.read_text(encoding="utf-8").splitlines()
+        observed_event.update(json.loads(lines[-1]))
+        kwargs["stdout"].write("producer output\n")
+        kwargs["stdout"].flush()
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    completed, attempt_output, _speaker_state, retries, owner_sha256 = (
+        _run_talk_producer_with_boundary_context_retry(
+            date=date,
+            item={},
+            candidate_id=candidate_id,
+            spec={},
+            out_root=tmp_path / "out" / date,
+            spec_path=spec_path,
+            log_path=log_path,
+            cmd=["python3", "produce_slice_package.py"],
+        )
+    )
+
+    assert completed.returncode == 0
+    assert attempt_output == "producer output\n"
+    assert retries == 0
+    assert owner_sha256 is None
+    assert observed_event == {
+        "schema_version": "talk-producer-log-event.v1",
+        "event": "ATTEMPT_START",
+        "at": observed_event["at"],
+        "date": date,
+        "candidate_id": candidate_id,
+        "pipeline_fingerprint": "sha256:" + "a" * 64,
+        "spec_path": str(spec_path),
+    }
+    assert observed_event["at"].endswith("+00:00")
 
 
 def test_pipeline_change_requeues_old_selected_boundary_failure(tmp_path, monkeypatch):
