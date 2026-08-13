@@ -23,6 +23,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.isolated_source_read import (
+    IsolatedSourceReadError,
+    read_source_bytes_isolated,
+)
 from src.autoslice.llm_client import LlmCallError, extract_json_object
 from src.autoslice.operator_processing_scope import (
     FAILED_PICK_RECOVERY_GRANT_SCHEMA,
@@ -132,6 +136,23 @@ class RefreshPreparationError(RuntimeError):
         super().__init__(reason_code)
         self.reason_code = reason_code
         self.evidence = dict(evidence)
+
+
+def _chat_read_reason(error: IsolatedSourceReadError) -> str:
+    return {
+        "SOURCE_MISSING": "CHAT_SOURCE_UNAVAILABLE",
+        "SOURCE_NOT_REGULAR": "CHAT_SOURCE_UNAVAILABLE",
+        "SOURCE_TOO_LARGE": "CHAT_SOURCE_TOO_LARGE",
+        "SOURCE_UNREADABLE": "CHAT_SOURCE_UNAVAILABLE",
+        "SOURCE_DRIFT": "CHAT_SOURCE_DRIFT",
+        "SOURCE_READ_TIMEOUT": "CHAT_SOURCE_READ_TIMEOUT",
+        "SOURCE_READ_ALREADY_ACTIVE": "CHAT_SOURCE_READ_ALREADY_ACTIVE",
+        "SOURCE_READ_ORPHAN_LIMIT": "CHAT_SOURCE_READ_ORPHAN_LIMIT",
+        "SOURCE_READ_REGISTRY_LIMIT": "CHAT_SOURCE_READ_REGISTRY_LIMIT",
+        "LOCAL_SPOOL_FILESYSTEM_UNKNOWN": "CHAT_SOURCE_READ_LOCAL_SPOOL_INVALID",
+        "LOCAL_SPOOL_ON_FUSE": "CHAT_SOURCE_READ_LOCAL_SPOOL_INVALID",
+        "LOCAL_SPOOL_UNAVAILABLE": "CHAT_SOURCE_READ_LOCAL_SPOOL_INVALID",
+    }.get(error.reason_code, "CHAT_SOURCE_READ_FAILED")
 
 
 @dataclass(frozen=True)
@@ -330,30 +351,18 @@ def _prepare(
         ) from exc
     xml_path = Path(str(binding["xml_path"]))
     try:
-        xml_stat_before = _regular_stat(xml_path)
-    except OSError as exc:
+        xml_read = read_source_bytes_isolated(xml_path)
+    except IsolatedSourceReadError as exc:
         raise RefreshPreparationError(
-            "CHAT_SOURCE_UNAVAILABLE",
+            _chat_read_reason(exc),
             {
                 **base_evidence,
                 "source_media": source_stat,
                 "bcut_srt": bcut_binding,
-                "error_type": type(exc).__name__,
+                "isolated_read": exc.evidence,
             },
         ) from exc
-    chat_items, load_receipt = _load_hash_bound_semantic_chat(xml_path)
-    try:
-        xml_stat_after = _regular_stat(xml_path)
-    except OSError as exc:
-        raise RefreshPreparationError(
-            "CHAT_SOURCE_DRIFT",
-            {**base_evidence, "chat_load": load_receipt, "error_type": type(exc).__name__},
-        ) from exc
-    if xml_stat_before != xml_stat_after:
-        raise RefreshPreparationError(
-            "CHAT_SOURCE_DRIFT",
-            {**base_evidence, "chat_load": load_receipt},
-        )
+    chat_items, load_receipt = _load_hash_bound_semantic_chat(xml_path, source_read=xml_read)
     if load_receipt.get("status") != "LOADED":
         raise RefreshPreparationError(
             "CHAT_SOURCE_NOT_LOADED",
@@ -387,6 +396,7 @@ def _prepare(
         "source_media": source_stat,
         "bcut_srt": bcut_binding,
         "semantic_chat": chat_provenance,
+        "semantic_chat_source": xml_read.source_binding,
     }
     candidate_binding_sha256 = _canonical_sha256(binding)
     old_scorecard_sha256 = _canonical_sha256(row.get("selection_scorecard"))
@@ -456,6 +466,8 @@ def _semantic_provenance_is_current(scorecard: object, prepared: PreparedRefresh
         and evidence.get("source_media") == prepared.input_provenance["source_media"]
         and evidence.get("bcut_srt") == prepared.input_provenance["bcut_srt"]
         and evidence.get("semantic_chat") == prepared.input_provenance["semantic_chat"]
+        and evidence.get("semantic_chat_source")
+        == prepared.input_provenance["semantic_chat_source"]
         and evidence.get("candidate_binding_sha256") == prepared.candidate_binding_sha256
     )
 
@@ -576,34 +588,41 @@ candidate_id: {prepared.candidate_id}
 """
 
 
-def _input_still_matches(prepared: PreparedRefresh) -> bool:
+def _input_still_matches(
+    prepared: PreparedRefresh,
+) -> tuple[bool, str, dict[str, object]]:
+    evidence = dict(prepared.input_provenance)
     if _canonical_sha256(_raw_candidate_binding(prepared.row)) != prepared.candidate_binding_sha256:
-        return False
+        return False, "REFRESH_INPUT_BINDING_DRIFT", evidence
     if _canonical_sha256(prepared.row.get("selection_scorecard")) != prepared.old_scorecard_sha256:
-        return False
+        return False, "REFRESH_INPUT_BINDING_DRIFT", evidence
     provenance = prepared.input_provenance
     try:
         if (
             _regular_stat(Path(str(prepared.candidate_binding["segment_path"])))
             != provenance["source_media"]
         ):
-            return False
+            return False, "REFRESH_INPUT_BINDING_DRIFT", evidence
         bcut_payload, bcut_binding = _read_stable_bytes(
             Path(str(prepared.candidate_binding["bcut_srt_path"]))
         )
         if bcut_binding != provenance["bcut_srt"] or not bcut_payload:
-            return False
-        xml_payload, xml_binding = _read_stable_bytes(
-            Path(str(prepared.candidate_binding["xml_path"]))
-        )
+            return False, "REFRESH_INPUT_BINDING_DRIFT", evidence
     except (OSError, KeyError, TypeError):
-        return False
+        return False, "REFRESH_INPUT_BINDING_DRIFT", evidence
+    try:
+        xml_read = read_source_bytes_isolated(Path(str(prepared.candidate_binding["xml_path"])))
+    except IsolatedSourceReadError as exc:
+        evidence["semantic_chat_recheck"] = exc.evidence
+        return False, _chat_read_reason(exc), evidence
     semantic_chat = provenance.get("semantic_chat")
-    return bool(
+    matches = bool(
         isinstance(semantic_chat, Mapping)
-        and xml_binding.get("sha256") == semantic_chat.get("source_sha256")
-        and xml_payload
+        and xml_read.source_binding == provenance.get("semantic_chat_source")
+        and xml_read.source_binding.get("sha256") == semantic_chat.get("source_sha256")
+        and xml_read.payload
     )
+    return matches, "REFRESH_INPUT_BINDING_DRIFT", evidence
 
 
 def _attempts(row: Mapping[str, object]) -> list[dict[str, object]]:
@@ -731,15 +750,20 @@ def _refresh_one(
         )
         return False
     response_sha256 = _bytes_sha256(str(raw).encode("utf-8"))
-    if not _input_still_matches(prepared):
+    input_matches, mismatch_reason, mismatch_evidence = _input_still_matches(prepared)
+    if not input_matches:
         _record_failure(
             row,
             date=date,
             scope=scope,
-            reason_code="REFRESH_INPUT_BINDING_DRIFT",
+            reason_code=mismatch_reason,
             fingerprint=prepared.attempt_fingerprint,
-            evidence=prepared.input_provenance,
-            outcome="BINDING_DRIFT",
+            evidence=mismatch_evidence,
+            outcome=(
+                "BINDING_DRIFT"
+                if mismatch_reason == "REFRESH_INPUT_BINDING_DRIFT"
+                else "BINDING_RECHECK_UNAVAILABLE"
+            ),
             prompt_sha256=prompt_sha256,
             response_sha256=response_sha256,
         )

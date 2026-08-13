@@ -45,6 +45,11 @@ from src.autoslice.full_session_candidate_selector import (
     _overlaps_selected,
     _song_anchor_boundary,
 )
+from src.autoslice.isolated_source_read import (
+    IsolatedSourceRead,
+    IsolatedSourceReadError,
+    read_source_bytes_isolated,
+)
 from src.autoslice.llm_client import LlmCall, LlmCallError, extract_json_object
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.selection_scorecard import (
@@ -218,6 +223,8 @@ def _occurrence_label(summary: Mapping[str, object]) -> str:
 
 def _load_hash_bound_semantic_chat(
     xml_path: Path | str | None,
+    *,
+    source_read: IsolatedSourceRead | None = None,
 ) -> tuple[tuple[DanmakuItem, ...], dict[str, object]]:
     """Read/parse once so the item timeline and declared digest cannot drift."""
 
@@ -230,25 +237,27 @@ def _load_hash_bound_semantic_chat(
         }
     path = Path(xml_path)
     try:
-        payload = path.read_bytes()
-    except FileNotFoundError:
+        isolated = source_read or read_source_bytes_isolated(path)
+    except IsolatedSourceReadError as exc:
         return (), {
             "schema_version": SEMANTIC_CHAT_EVIDENCE_SCHEMA,
             "algorithm_id": SEMANTIC_CHAT_ALGORITHM_ID,
-            "status": "SOURCE_MISSING",
+            "status": exc.reason_code,
             "policy_sha256": SEMANTIC_CHAT_POLICY_SHA256,
             "source_path": str(path),
+            "isolated_read": exc.evidence,
         }
-    except OSError as exc:
+    expected_source_path = os.path.abspath(os.fspath(path))
+    if isolated.source_binding.get("path") != expected_source_path:
         return (), {
             "schema_version": SEMANTIC_CHAT_EVIDENCE_SCHEMA,
             "algorithm_id": SEMANTIC_CHAT_ALGORITHM_ID,
-            "status": "SOURCE_UNREADABLE",
+            "status": "SOURCE_BINDING_MISMATCH",
             "policy_sha256": SEMANTIC_CHAT_POLICY_SHA256,
             "source_path": str(path),
-            "error_type": type(exc).__name__,
         }
-    source_sha256 = "sha256:" + hashlib.sha256(payload).hexdigest()
+    payload = isolated.payload
+    source_sha256 = str(isolated.source_binding["sha256"])
     try:
         items = tuple(parse_blrec_danmaku_xml(payload.decode("utf-8", errors="replace")))
     except (UnicodeError, ValueError) as exc:

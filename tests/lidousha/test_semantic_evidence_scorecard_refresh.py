@@ -332,6 +332,70 @@ def test_missing_chat_source_blocks_before_provider_and_before_production(tmp_pa
     assert receipt["status"] == "RETRY_WAIT"
 
 
+def test_chat_read_timeout_is_typed_before_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = _two_candidate_state(tmp_path)
+    state["operator_processing_scope"] = _grant([KNOWN_LOW_CANDIDATES[0]])
+    state["talk_backlog"] = state["talk_backlog"][:1]
+
+    def timed_out(_path: Path):
+        raise refresh.IsolatedSourceReadError(
+            "SOURCE_READ_TIMEOUT",
+            {"reason_code": "SOURCE_READ_TIMEOUT", "source_key": "stable-key"},
+        )
+
+    monkeypatch.setattr(refresh, "read_source_bytes_isolated", timed_out)
+    assert (
+        refresh.refresh_operator_scoped_chat_scorecards(
+            "2026-08-09",
+            state,
+            llm_call=lambda _prompt: pytest.fail("timeout must block before provider"),
+        )
+        == -1
+    )
+    receipt = state["talk_backlog"][0][refresh.ROW_RECEIPT_KEY]
+    assert receipt["reason_code"] == "CHAT_SOURCE_READ_TIMEOUT"
+    assert receipt["status"] == "RETRY_WAIT"
+    assert receipt["input_provenance"]["isolated_read"]["source_key"] == "stable-key"
+
+
+def test_chat_recheck_timeout_after_provider_is_typed_and_keeps_old_card(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = _two_candidate_state(tmp_path)
+    state["operator_processing_scope"] = _grant([KNOWN_LOW_CANDIDATES[0]])
+    state["talk_backlog"] = state["talk_backlog"][:1]
+    row = state["talk_backlog"][0]
+    old_card = copy.deepcopy(row["selection_scorecard"])
+    original_read = refresh.read_source_bytes_isolated
+    first_read = original_read(Path(str(row["xml"])), spool_root=tmp_path / "seed-spool")
+    calls = 0
+
+    def timeout_on_recheck(_path: Path):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return first_read
+        raise refresh.IsolatedSourceReadError(
+            "SOURCE_READ_TIMEOUT",
+            {"reason_code": "SOURCE_READ_TIMEOUT", "source_key": "stable-key"},
+        )
+
+    monkeypatch.setattr(refresh, "read_source_bytes_isolated", timeout_on_recheck)
+    assert (
+        refresh.refresh_operator_scoped_chat_scorecards(
+            "2026-08-09", state, llm_call=_good_llm([])
+        )
+        == -1
+    )
+    assert calls == 2
+    assert row["selection_scorecard"] == old_card
+    receipt = row[refresh.ROW_RECEIPT_KEY]
+    assert receipt["reason_code"] == "CHAT_SOURCE_READ_TIMEOUT"
+    assert receipt["attempts"][-1]["outcome"] == "BINDING_RECHECK_UNAVAILABLE"
+
+
 def test_failed_pick_is_never_rewritten_in_place(tmp_path: Path) -> None:
     queued_state = _two_candidate_state(tmp_path)
     failed = queued_state["talk_backlog"][0]

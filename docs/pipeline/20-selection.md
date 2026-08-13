@@ -154,6 +154,11 @@
   XML、source identity 和未变 hook 重建证据与 scorecard，保存 old/new canonical hash、
   provider request/response contract 及 typed receipt；输入、provider 或绑定失败时停在
   prioritize/生产之前，不能沿用 stale card。
+- semantic discovery 与上述 refresh 都不得让长驻 runner 直接读取 CloudFS XML bytes：
+  数据读取必须在独立子进程完成，前后绑定 regular-file stat、大小（硬帽 128 MiB）与
+  SHA-256，再经本地非 FUSE spool 交回。单次读取 30 秒到期后父进程不得等待卡在内核的
+  child；同 source key 只保留一条活跃读取、全局最多四条，后续 tick 以 typed
+  timeout/active/limit receipt 停车，不重复堆 orphan。
 - v2 `RECOVER_NAMED_FAILED_PICKS` 只负责让旧 failed pick 经过原 maintenance 后回到 queue；
   它本身不重评分、不放宽配额、不授权上传。候选一旦回到 queue，仍须满足上面的刷新门。
 - failed pick 回到 queue 时必须逐字节保留 state annotation 已验证并绑定源 segment 的

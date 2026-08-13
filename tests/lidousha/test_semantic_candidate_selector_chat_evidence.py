@@ -214,19 +214,19 @@ def test_shards_share_one_xml_read_and_parse_but_bind_each_prompt(tmp_path, monk
     ).encode()
     xml_path.write_bytes(xml_bytes)
     counts = {"read": 0, "parse": 0}
-    original_read_bytes = Path.read_bytes
+    original_isolated_read = selector.read_source_bytes_isolated
     original_parse = selector.parse_blrec_danmaku_xml
 
-    def counted_read_bytes(path: Path) -> bytes:
+    def counted_isolated_read(path: Path):
         if path == xml_path:
             counts["read"] += 1
-        return original_read_bytes(path)
+        return original_isolated_read(path)
 
     def counted_parse(xml_text: str):
         counts["parse"] += 1
         return original_parse(xml_text)
 
-    monkeypatch.setattr(Path, "read_bytes", counted_read_bytes)
+    monkeypatch.setattr(selector, "read_source_bytes_isolated", counted_isolated_read)
     monkeypatch.setattr(selector, "parse_blrec_danmaku_xml", counted_parse)
     prompts: list[str] = []
 
@@ -251,6 +251,45 @@ def test_shards_share_one_xml_read_and_parse_but_bind_each_prompt(tmp_path, monk
     shard_receipts = [shard["semantic_chat_evidence"] for shard in diagnostics["shards"]]
     assert all(receipt["source_sha256"] == source_sha256 for receipt in shard_receipts)
     assert len({receipt["evidence_sha256"] for receipt in shard_receipts}) == 2
+
+
+def test_isolated_read_timeout_is_explicit_in_diagnostics(tmp_path, monkeypatch) -> None:
+    xml_path = tmp_path / "blocked.xml"
+    xml_path.write_text("<i />", encoding="utf-8")
+
+    def blocked(_path: Path):
+        raise selector.IsolatedSourceReadError(
+            "SOURCE_READ_TIMEOUT",
+            {"source_path": str(xml_path), "reason_code": "SOURCE_READ_TIMEOUT"},
+        )
+
+    monkeypatch.setattr(selector, "read_source_bytes_isolated", blocked)
+    _selected, diagnostics = select_semantic_session_candidates_covered(
+        _cues(0, 60_000),
+        llm_call=lambda _prompt: json.dumps({"candidates": []}),
+        max_candidates=5,
+        danmaku_xml=xml_path,
+    )
+
+    evidence = diagnostics["semantic_chat_evidence"]
+    assert evidence["status"] == "SOURCE_READ_TIMEOUT"
+    assert evidence["isolated_read"]["reason_code"] == "SOURCE_READ_TIMEOUT"
+
+
+def test_preloaded_chat_bytes_must_bind_the_declared_xml_path(tmp_path) -> None:
+    declared = tmp_path / "declared.xml"
+    other = tmp_path / "other.xml"
+    declared.write_text("<i />", encoding="utf-8")
+    other.write_text("<i />", encoding="utf-8")
+    wrong_read = selector.read_source_bytes_isolated(other, spool_root=tmp_path / "spool")
+
+    items, evidence = selector._load_hash_bound_semantic_chat(
+        declared,
+        source_read=wrong_read,
+    )
+
+    assert items == ()
+    assert evidence["status"] == "SOURCE_BINDING_MISMATCH"
 
 
 @pytest.mark.parametrize(
