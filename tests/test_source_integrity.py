@@ -1,6 +1,8 @@
 import json
 import os
 
+import pytest
+
 from ops.recording import bililive_recorder_adapter as adapter
 from src.autoslice import source_integrity
 from src.autoslice.source_integrity import (
@@ -105,6 +107,44 @@ def _typed_connection_stub(tmp_path, monkeypatch):
     state_path = tmp_path / "adapter-state.json"
     state_path.write_text(json.dumps(state), encoding="utf-8")
     return date_dir, stub, successor_mp4, state_path
+
+
+def _typed_timestamp_rebind(tmp_path, monkeypatch):
+    date_dir, stub, successor_mp4, state_path = _typed_connection_stub(tmp_path, monkeypatch)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    relative = f"{date_dir.name}/{stub.name}"
+    row = state["source_dispositions"][relative]
+    for binding in (row["session"]["successor_source"], row["session"]["successor_mp4"]):
+        binding["mtime_ns"] -= 1
+        binding["ctime_ns"] -= 1
+    unsigned = {key: value for key, value in row.items() if key != "canonical_integrity"}
+    row["canonical_integrity"]["canonical_json_sha256"] = adapter._canonical_json_sha256(unsigned)
+    receipt_mount = {
+        "mount_id": 77,
+        "major_minor": "0:67",
+        "root": "/",
+        "mount_point": "/adapter/Videos",
+        "filesystem_type": "fuse.cloudfs",
+        "mount_source": "CloudFS",
+    }
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", lambda _path: receipt_mount)
+    receipts: list[dict] = []
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=state["webhook_files"],
+        finalized=state["finalized"],
+        identity_rebinds=receipts,
+        identity_rebind_attestations={
+            "source": adapter._attest_regular_file(stub),
+            "xml": adapter._attest_regular_file(stub.with_suffix(".xml")),
+            "successor_mp4": adapter._attest_regular_file(successor_mp4),
+        },
+    )
+    state["source_disposition_identity_rebinds"] = {relative: receipts}
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    return date_dir, stub, successor_mp4, state_path, receipt_mount
 
 
 def test_recording_inventory_blocks_finalized_playlist_without_mp4(tmp_path):
@@ -276,6 +316,155 @@ def test_recording_inventory_accepts_persisted_fuse_identity_rebind(
     assert audit["status"] == "PASS"
     assert audit["consumer_segments"] == [str(successor_mp4)]
     assert audit["issues"][0]["severity"] == "WARN"
+
+
+def test_recording_inventory_accepts_portable_fuse_timestamp_rebind(
+    tmp_path,
+    monkeypatch,
+):
+    date_dir, stub, successor_mp4, state_path, receipt_mount = _typed_timestamp_rebind(
+        tmp_path, monkeypatch
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    relative = f"{date_dir.name}/{stub.name}"
+    row = state["source_dispositions"][relative]
+    successor = successor_mp4.with_suffix(".flv")
+    receipts = state["source_disposition_identity_rebinds"][relative]
+    inventory_mount = {
+        **receipt_mount,
+        "mount_id": 991,
+        "root": "/live-streaming/22966160",
+        "mount_point": "/runner/Videos",
+    }
+    monkeypatch.setattr(source_integrity, "_mount_identity_for_path", lambda _path: inventory_mount)
+
+    audit = audit_finalized_recording_inventory(
+        date_dir,
+        room_id="123456",
+        adapter_state_path=state_path,
+    )
+
+    assert audit["status"] == "PASS"
+    assert audit["consumer_segments"] == [str(successor_mp4)]
+    receipt = receipts[0]
+    assert receipt["schema_version"] == "recording-source-fuse-timestamp-rebind.v1"
+    assert receipt["current_bindings"]["successor_source"]["sha256"] is None
+    assert receipt["legacy_promotion"]["successor_source"] == {
+        "verification_basis": "LEGACY_NO_PRIOR_SHA256_WEBHOOK_FINALIZED_LEDGER_STABLE_STAT",
+        "historical_sha256_available": False,
+        "historical_sha256": None,
+        "path": receipt["previous_bindings"]["successor_source"]["path"],
+        "size_bytes": successor.stat().st_size,
+        "mode": receipt["previous_bindings"]["successor_source"]["mode"],
+        "webhook_file_size": state["webhook_files"][
+            row["session"]["successor_relative_path"]
+        ]["file_size"],
+        "finalized_ledger_source_size": state["finalized"][
+            row["session"]["successor_relative_path"]
+        ]["source_size"],
+        "successor_mp4_historical_sha256": state["finalized"][
+            row["session"]["successor_relative_path"]
+        ]["target_sha256"],
+    }
+
+
+@pytest.mark.parametrize("tamper", ["changed_fields", "legacy_hash_claim"])
+def test_recording_inventory_blocks_timestamp_rebind_receipt_tamper(
+    tmp_path,
+    monkeypatch,
+    tamper,
+):
+    date_dir, stub, successor_mp4, state_path, receipt_mount = _typed_timestamp_rebind(
+        tmp_path, monkeypatch
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    relative = f"{date_dir.name}/{stub.name}"
+    receipt = state["source_disposition_identity_rebinds"][relative][0]
+    if tamper == "changed_fields":
+        receipt["changed_fields"]["successor_source"] = ["mtime_ns"]
+    else:
+        receipt["current_bindings"]["successor_source"]["sha256"] = adapter.sha256_file(
+            successor_mp4.with_suffix(".flv")
+        )
+        receipt["legacy_promotion"]["successor_source"]["historical_sha256_available"] = True
+        receipt["legacy_promotion"]["successor_source"]["historical_sha256"] = receipt[
+            "current_bindings"
+        ]["successor_source"]["sha256"]
+    receipt["canonical_integrity"] = {
+        "algorithm": "sha256",
+        "canonical_json_sha256": adapter._canonical_json_sha256(
+            {key: value for key, value in receipt.items() if key != "canonical_integrity"}
+        ),
+    }
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.setattr(
+        source_integrity,
+        "_mount_identity_for_path",
+        lambda _path: {**receipt_mount, "mount_id": 991, "mount_point": "/runner/Videos"},
+    )
+
+    audit = audit_finalized_recording_inventory(
+        date_dir,
+        room_id="123456",
+        adapter_state_path=state_path,
+    )
+
+    assert audit["status"] == "BLOCKED"
+    assert "binding drifted" in audit["issues"][0]["source_disposition_error"]
+
+
+def test_recording_inventory_blocks_timestamp_drift_without_next_receipt(
+    tmp_path,
+    monkeypatch,
+):
+    date_dir, _stub, successor_mp4, state_path, receipt_mount = _typed_timestamp_rebind(
+        tmp_path, monkeypatch
+    )
+    for path in (successor_mp4.with_suffix(".flv"), successor_mp4):
+        current = path.stat()
+        os.utime(path, ns=(current.st_atime_ns, current.st_mtime_ns + 1_000_000_000))
+    monkeypatch.setattr(
+        source_integrity,
+        "_mount_identity_for_path",
+        lambda _path: {**receipt_mount, "mount_id": 991, "mount_point": "/runner/Videos"},
+    )
+
+    audit = audit_finalized_recording_inventory(
+        date_dir,
+        room_id="123456",
+        adapter_state_path=state_path,
+    )
+
+    assert audit["status"] == "BLOCKED"
+    assert "effective fingerprint drifted" in audit["issues"][0]["source_disposition_error"]
+
+
+def test_recording_inventory_blocks_timestamp_receipt_mount_drift(
+    tmp_path,
+    monkeypatch,
+):
+    date_dir, _stub, _successor_mp4, state_path, receipt_mount = _typed_timestamp_rebind(
+        tmp_path, monkeypatch
+    )
+    monkeypatch.setattr(
+        source_integrity,
+        "_mount_identity_for_path",
+        lambda _path: {
+            **receipt_mount,
+            "mount_id": 991,
+            "major_minor": "0:68",
+            "mount_point": "/runner/Videos",
+        },
+    )
+
+    audit = audit_finalized_recording_inventory(
+        date_dir,
+        room_id="123456",
+        adapter_state_path=state_path,
+    )
+
+    assert audit["status"] == "BLOCKED"
+    assert "mount identity drifted" in audit["issues"][0]["source_disposition_error"]
 
 
 def test_recording_inventory_blocks_rebind_on_different_fuse_device(

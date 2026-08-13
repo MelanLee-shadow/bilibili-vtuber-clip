@@ -111,8 +111,16 @@
   后继 FLV 的旧 row
   没有历史 SHA-256，因此回执必须明确记录 legacy promotion：只沿用 path、稳定 stat、
   webhook file size、finalized ledger source size 及后继 MP4 历史 SHA 交叉绑定，不能宣称
-  后继 FLV 历史 hash 已匹配。本地文件系统 inode 漂移、跨 FUSE、mount identity 漂移而
-  无新回执或任何非 device/inode 漂移一律继续 BLOCK。
+  后继 FLV 历史 hash 已匹配。另有且仅有一条 timestamp-only 恢复：后继 FLV 与 MP4
+  **两者**在同一当前 FUSE mount 上仅 `mtime_ns`/`ctime_ns` 漂移，source/XML 指纹不变，
+  四个 path 及 size/mode/device/inode 全不变时，复用同一 idle/deadline/PID-token/重试子进程，
+  对 source、XML、后继 MP4 三个有历史 SHA 的角色做全字节重验，并在子进程前后重验四个
+  当前指纹。成功只追加 canonical 链式
+  `recording-source-fuse-timestamp-rebind.v1 / FUSE_SUCCESSOR_MTIME_CTIME_REATTESTATION`
+  回执，逐角色记录 old/new metadata 与 exact changed fields；后继 FLV 仍保持无历史 hash，
+  且回执显式绑定 webhook/finalized source size 和后继 MP4 历史 SHA。inventory 跨 namespace
+  按 portable mount 投影验证该链。单边 timestamp 漂移、再次漂移而无新回执、本地文件系统、
+  跨 FUSE、mount 漂移或任何 size/mode/path/content/hash 漂移一律继续 BLOCK。
   CloudFS 可能在 finalized 后重写后继 FLV 的 mtime；row 因此分别保存 ledger 的
   历史 mtime 与签发时当前 source fingerprint，并要求两者之后各自稳定，不要求这两个
   跨时刻 mtime 相等。后继 source size、当前 fingerprint、MP4 当前 fingerprint 与

@@ -48,6 +48,10 @@ SOURCE_DISPOSITION_STATUS = "IGNORED_CONNECTION_STUB"
 SOURCE_DISPOSITION_REASON = "RECORDER_CONNECTION_STUB_NO_DECODABLE_VIDEO"
 SOURCE_DISPOSITION_REBIND_SCHEMA_VERSION = "recording-source-fuse-identity-rebind.v1"
 SOURCE_DISPOSITION_REBIND_POLICY = "FUSE_REMOUNT_DEVICE_INODE_REBIND"
+SOURCE_DISPOSITION_TIMESTAMP_REBIND_SCHEMA_VERSION = (
+    "recording-source-fuse-timestamp-rebind.v1"
+)
+SOURCE_DISPOSITION_TIMESTAMP_REBIND_POLICY = "FUSE_SUCCESSOR_MTIME_CTIME_REATTESTATION"
 SOURCE_DISPOSITION_REBIND_TASK_SCHEMA_VERSION = "recording-source-fuse-identity-rebind-task.v1"
 SOURCE_DISPOSITION_REBIND_HASH_RESULT_SCHEMA_VERSION = (
     "recording-source-fuse-identity-rebind-hash-result.v1"
@@ -109,7 +113,7 @@ class AdapterError(RuntimeError):
 
 
 class SourceDispositionIdentityRebindRequired(AdapterError):
-    """The row is valid except for one proven FUSE mount-epoch transition."""
+    """The row is valid except for one proven typed FUSE metadata transition."""
 
     def __init__(
         self,
@@ -182,6 +186,8 @@ _FILE_FINGERPRINT_KEYS = (
 )
 _FILE_STABLE_FINGERPRINT_KEYS = ("size_bytes", "mtime_ns", "ctime_ns", "mode")
 _DISPOSITION_FILE_ROLES = ("source", "xml", "successor_source", "successor_mp4")
+_TIMESTAMP_REBIND_ROLES = ("successor_source", "successor_mp4")
+_TIMESTAMP_REBIND_FIELDS = ("mtime_ns", "ctime_ns")
 _HISTORICAL_SHA_BASIS = "HISTORICAL_SHA256_MATCH"
 _LEGACY_SUCCESSOR_SOURCE_BASIS = "LEGACY_NO_PRIOR_SHA256_WEBHOOK_FINALIZED_LEDGER_STABLE_STAT"
 
@@ -325,6 +331,74 @@ def _disposition_binding_projection(binding: dict[str, Any]) -> dict[str, Any]:
     return projection
 
 
+def _changed_fingerprint_fields(
+    previous: dict[str, dict[str, Any]],
+    current: dict[str, dict[str, Any]],
+) -> dict[str, list[str]]:
+    return {
+        role: [
+            key
+            for key in _FILE_FINGERPRINT_KEYS
+            if previous[role].get(key) != current[role].get(key)
+        ]
+        for role in _DISPOSITION_FILE_ROLES
+        if any(
+            previous[role].get(key) != current[role].get(key)
+            for key in _FILE_FINGERPRINT_KEYS
+        )
+    }
+
+
+def _identity_rebind_legacy_contract() -> dict[str, Any]:
+    return {
+        "successor_source": {
+            "verification_basis": _LEGACY_SUCCESSOR_SOURCE_BASIS,
+            "historical_sha256_available": False,
+            "strict_bindings": [
+                "path",
+                "size_bytes",
+                "mtime_ns",
+                "ctime_ns",
+                "mode",
+                "webhook_file_size",
+                "finalized_ledger_source_size",
+                "successor_mp4_historical_sha256",
+            ],
+        }
+    }
+
+
+def _timestamp_rebind_legacy_contract(
+    row: dict[str, Any],
+    previous: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    successor = previous["successor_source"]
+    session = row.get("session") if isinstance(row.get("session"), dict) else {}
+    webhook = (
+        session.get("successor_webhook")
+        if isinstance(session.get("successor_webhook"), dict)
+        else {}
+    )
+    finalized = (
+        session.get("successor_finalized_ledger")
+        if isinstance(session.get("successor_finalized_ledger"), dict)
+        else {}
+    )
+    return {
+        "successor_source": {
+            "verification_basis": _LEGACY_SUCCESSOR_SOURCE_BASIS,
+            "historical_sha256_available": False,
+            "historical_sha256": None,
+            "path": successor.get("path"),
+            "size_bytes": successor.get("size_bytes"),
+            "mode": successor.get("mode"),
+            "webhook_file_size": webhook.get("file_size"),
+            "finalized_ledger_source_size": finalized.get("source_size"),
+            "successor_mp4_historical_sha256": previous["successor_mp4"].get("sha256"),
+        }
+    }
+
+
 def _receipt_sha256(receipt: dict[str, Any]) -> str:
     return str(receipt["canonical_integrity"]["canonical_json_sha256"])
 
@@ -349,7 +423,7 @@ def _validate_disposition_rebind_chain(
     )
     previous_receipt_sha256: str | None = None
     previous_mount: dict[str, Any] | None = None
-    receipt_fields = {
+    base_receipt_fields = {
         "schema_version",
         "policy",
         "source_disposition_canonical_sha256",
@@ -362,7 +436,20 @@ def _validate_disposition_rebind_chain(
         "canonical_integrity",
     }
     for receipt in receipts:
-        if not isinstance(receipt, dict) or set(receipt) != receipt_fields:
+        if not isinstance(receipt, dict):
+            raise AdapterError("source disposition identity rebind receipt is malformed")
+        is_identity_rebind = (
+            receipt.get("schema_version") == SOURCE_DISPOSITION_REBIND_SCHEMA_VERSION
+            and receipt.get("policy") == SOURCE_DISPOSITION_REBIND_POLICY
+        )
+        is_timestamp_rebind = (
+            receipt.get("schema_version") == SOURCE_DISPOSITION_TIMESTAMP_REBIND_SCHEMA_VERSION
+            and receipt.get("policy") == SOURCE_DISPOSITION_TIMESTAMP_REBIND_POLICY
+        )
+        expected_fields = base_receipt_fields | (
+            {"changed_fields"} if is_timestamp_rebind else set()
+        )
+        if (not is_identity_rebind and not is_timestamp_rebind) or set(receipt) != expected_fields:
             raise AdapterError("source disposition identity rebind receipt is malformed")
         integrity = receipt.get("canonical_integrity")
         unsigned = {key: value for key, value in receipt.items() if key != "canonical_integrity"}
@@ -373,28 +460,9 @@ def _validate_disposition_rebind_chain(
             raise AdapterError("source disposition identity rebind integrity mismatch")
         current = receipt.get("current_bindings")
         if (
-            receipt.get("schema_version") != SOURCE_DISPOSITION_REBIND_SCHEMA_VERSION
-            or receipt.get("policy") != SOURCE_DISPOSITION_REBIND_POLICY
-            or receipt.get("source_disposition_canonical_sha256") != disposition_sha256
+            receipt.get("source_disposition_canonical_sha256") != disposition_sha256
             or receipt.get("previous_receipt_canonical_sha256") != previous_receipt_sha256
             or receipt.get("previous_bindings") != previous
-            or receipt.get("legacy_promotion")
-            != {
-                "successor_source": {
-                    "verification_basis": _LEGACY_SUCCESSOR_SOURCE_BASIS,
-                    "historical_sha256_available": False,
-                    "strict_bindings": [
-                        "path",
-                        "size_bytes",
-                        "mtime_ns",
-                        "ctime_ns",
-                        "mode",
-                        "webhook_file_size",
-                        "finalized_ledger_source_size",
-                        "successor_mp4_historical_sha256",
-                    ],
-                }
-            }
             or not _is_fuse_mount(receipt.get("current_mount"))
             or not isinstance(current, dict)
             or set(current) != set(_DISPOSITION_FILE_ROLES)
@@ -413,12 +481,46 @@ def _validate_disposition_rebind_chain(
                     and re.fullmatch(r"[0-9a-f]{64}", str(binding.get("sha256") or "")) is None
                 )
                 or (prior.get("sha256") is None and binding.get("sha256") is not None)
-                or any(binding.get(key) != prior.get(key) for key in _FILE_STABLE_FINGERPRINT_KEYS)
                 or (
                     prior.get("sha256") is not None and binding.get("sha256") != prior.get("sha256")
                 )
             ):
                 raise AdapterError("source disposition identity rebind binding drifted")
+        changes = _changed_fingerprint_fields(previous, current)
+        if is_identity_rebind:
+            if (
+                receipt.get("legacy_promotion") != _identity_rebind_legacy_contract()
+                or not changes
+                or any(
+                    field not in {"device", "inode"}
+                    for fields in changes.values()
+                    for field in fields
+                )
+                or (
+                    previous_mount is not None
+                    and _portable_mount_identity(receipt.get("current_mount"))
+                    == _portable_mount_identity(previous_mount)
+                )
+            ):
+                raise AdapterError("source disposition identity rebind binding drifted")
+        else:
+            assert is_timestamp_rebind
+            if (
+                receipt.get("legacy_promotion") != _timestamp_rebind_legacy_contract(row, previous)
+                or receipt.get("changed_fields") != changes
+                or set(changes) != set(_TIMESTAMP_REBIND_ROLES)
+                or any(
+                    field not in _TIMESTAMP_REBIND_FIELDS
+                    for fields in changes.values()
+                    for field in fields
+                )
+                or (
+                    previous_mount is not None
+                    and _portable_mount_identity(receipt.get("current_mount"))
+                    != _portable_mount_identity(previous_mount)
+                )
+            ):
+                raise AdapterError("source disposition timestamp rebind binding drifted")
         previous = current
         previous_receipt_sha256 = _receipt_sha256(receipt)
         previous_mount = receipt["current_mount"]
@@ -460,6 +562,34 @@ def _prepare_disposition_identity_validation(
             # projection proves this is not another source remount.
             return {"current": current, "pending_rebind": False}
         raise AdapterError("source disposition FUSE mount changed without file identity drift")
+    changes = _changed_fingerprint_fields(effective, current)
+    timestamp_rebind = set(changes) == set(_TIMESTAMP_REBIND_ROLES) and all(
+        fields and all(field in _TIMESTAMP_REBIND_FIELDS for field in fields)
+        for fields in changes.values()
+    )
+    if timestamp_rebind:
+        current_mount = current_mount or _shared_fuse_mount_identity(paths.values())
+        if current_mount is None:
+            raise AdapterError(
+                "source disposition successor timestamp drifted outside one shared FUSE mount"
+            )
+        if has_receipts and _portable_mount_identity(current_mount) != _portable_mount_identity(
+            previous_mount
+        ):
+            raise AdapterError("source disposition timestamp drift crossed FUSE mount identity")
+        if not isinstance(identity_rebinds, list):
+            raise AdapterError("source disposition FUSE rebind lacks a durable receipt ledger")
+        return {
+            "current": current,
+            "effective": effective,
+            "previous_receipt_sha256": previous_receipt_sha256,
+            "previous_mount": previous_mount,
+            "current_mount": current_mount,
+            "changed_fields": changes,
+            "rebind_schema_version": SOURCE_DISPOSITION_TIMESTAMP_REBIND_SCHEMA_VERSION,
+            "rebind_policy": SOURCE_DISPOSITION_TIMESTAMP_REBIND_POLICY,
+            "pending_rebind": True,
+        }
     if any(
         effective[role].get(key) != current[role][key]
         for role in _DISPOSITION_FILE_ROLES
@@ -481,6 +611,9 @@ def _prepare_disposition_identity_validation(
         "previous_receipt_sha256": previous_receipt_sha256,
         "previous_mount": previous_mount,
         "current_mount": current_mount,
+        "changed_fields": changes,
+        "rebind_schema_version": SOURCE_DISPOSITION_REBIND_SCHEMA_VERSION,
+        "rebind_policy": SOURCE_DISPOSITION_REBIND_POLICY,
         "pending_rebind": True,
     }
 
@@ -495,6 +628,15 @@ def _finish_disposition_identity_rebind(
 ) -> None:
     if not validation.get("pending_rebind"):
         return
+    expected_hash_roles = {
+        role
+        for role in _DISPOSITION_FILE_ROLES
+        if validation["effective"][role].get("sha256") is not None
+    }
+    if set(attestations) != expected_hash_roles:
+        raise AdapterError("source disposition legacy rebind attestation is malformed")
+    if _shared_fuse_mount_identity(paths.values()) != validation["current_mount"]:
+        raise AdapterError("source disposition FUSE mount changed during identity rebind")
     current_bindings: dict[str, dict[str, Any]] = {}
     for role in _DISPOSITION_FILE_ROLES:
         expected_sha256 = validation["effective"][role].get("sha256")
@@ -523,34 +665,39 @@ def _finish_disposition_identity_rebind(
             "sha256": expected_sha256,
             "verification_basis": validation["effective"][role]["verification_basis"],
         }
+    observed_after = {
+        role: _regular_file_fingerprint(paths[role]) for role in _DISPOSITION_FILE_ROLES
+    }
+    if observed_after != validation["current"]:
+        raise AdapterError("source disposition file changed during FUSE identity rebind")
     if _shared_fuse_mount_identity(paths.values()) != validation["current_mount"]:
         raise AdapterError("source disposition FUSE mount changed during identity rebind")
+    if _changed_fingerprint_fields(validation["effective"], current_bindings) != validation.get(
+        "changed_fields"
+    ):
+        raise AdapterError("source disposition changed-field projection drifted during rebind")
+    timestamp_rebind = (
+        validation.get("rebind_schema_version")
+        == SOURCE_DISPOSITION_TIMESTAMP_REBIND_SCHEMA_VERSION
+        and validation.get("rebind_policy") == SOURCE_DISPOSITION_TIMESTAMP_REBIND_POLICY
+    )
     receipt: dict[str, Any] = {
-        "schema_version": SOURCE_DISPOSITION_REBIND_SCHEMA_VERSION,
-        "policy": SOURCE_DISPOSITION_REBIND_POLICY,
+        "schema_version": validation["rebind_schema_version"],
+        "policy": validation["rebind_policy"],
         "source_disposition_canonical_sha256": row["canonical_integrity"]["canonical_json_sha256"],
         "previous_receipt_canonical_sha256": validation["previous_receipt_sha256"],
         "rebound_at": datetime.now(timezone.utc).isoformat(),
         "current_mount": validation["current_mount"],
         "previous_bindings": validation["effective"],
         "current_bindings": current_bindings,
-        "legacy_promotion": {
-            "successor_source": {
-                "verification_basis": _LEGACY_SUCCESSOR_SOURCE_BASIS,
-                "historical_sha256_available": False,
-                "strict_bindings": [
-                    "path",
-                    "size_bytes",
-                    "mtime_ns",
-                    "ctime_ns",
-                    "mode",
-                    "webhook_file_size",
-                    "finalized_ledger_source_size",
-                    "successor_mp4_historical_sha256",
-                ],
-            }
-        },
+        "legacy_promotion": (
+            _timestamp_rebind_legacy_contract(row, validation["effective"])
+            if timestamp_rebind
+            else _identity_rebind_legacy_contract()
+        ),
     }
+    if timestamp_rebind:
+        receipt["changed_fields"] = validation["changed_fields"]
     receipt["canonical_integrity"] = {
         "algorithm": "sha256",
         "canonical_json_sha256": _canonical_json_sha256(receipt),
@@ -2087,9 +2234,11 @@ def validate_connection_stub_disposition(
     Full SHA-256 and ffprobe attestation happens once when the row is created.
     Recurring heartbeat validation compares canonical state, live webhook and
     finalized-ledger projections, and exact regular-file fingerprints. A
-    CloudFS remount may change only ``device``/``inode``; that one case requires
-    a shared live FUSE mount, a full-byte re-attestation, and a durable chained
-    rebind receipt. All local-filesystem or content/stat drift stays fatal.
+    CloudFS may either rebind ``device``/``inode`` across a remount or change
+    only both successor files' ``mtime_ns``/``ctime_ns`` metadata. Each narrow
+    case requires a shared live FUSE mount, full-byte historical-SHA
+    re-attestation, and its own durable chained receipt. All local-filesystem,
+    content, path, size, mode, or other mixed drift stays fatal.
     """
 
     if not isinstance(row, dict):

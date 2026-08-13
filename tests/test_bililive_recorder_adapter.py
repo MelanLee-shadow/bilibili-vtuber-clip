@@ -817,6 +817,396 @@ def test_connection_stub_fuse_rebind_refuses_non_identity_stat_drift(
         )
 
 
+def test_connection_stub_fuse_timestamp_rebinds_successor_metadata_only(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    for binding in (row["session"]["successor_source"], row["session"]["successor_mp4"]):
+        binding["mtime_ns"] -= 10
+        binding["ctime_ns"] -= 20
+    unsigned = {key: value for key, value in row.items() if key != "canonical_integrity"}
+    row["canonical_integrity"]["canonical_json_sha256"] = adapter._canonical_json_sha256(
+        unsigned
+    )
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", _fuse_mount_identity)
+    receipts: list[dict] = []
+
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+        identity_rebinds=receipts,
+        identity_rebind_attestations=_identity_rebind_attestations(stub, successor),
+    )
+
+    assert len(receipts) == 1
+    receipt = receipts[0]
+    assert receipt["schema_version"] == "recording-source-fuse-timestamp-rebind.v1"
+    assert receipt["policy"] == "FUSE_SUCCESSOR_MTIME_CTIME_REATTESTATION"
+    assert receipt["changed_fields"] == {
+        "successor_source": ["mtime_ns", "ctime_ns"],
+        "successor_mp4": ["mtime_ns", "ctime_ns"],
+    }
+    assert receipt["previous_bindings"]["successor_source"]["sha256"] is None
+    assert receipt["current_bindings"]["successor_source"]["sha256"] is None
+    assert (
+        receipt["current_bindings"]["successor_source"]["verification_basis"]
+        == adapter._LEGACY_SUCCESSOR_SOURCE_BASIS
+    )
+    for role in ("successor_source", "successor_mp4"):
+        assert receipt["previous_bindings"][role]["mtime_ns"] != receipt["current_bindings"][
+            role
+        ]["mtime_ns"]
+        assert receipt["previous_bindings"][role]["ctime_ns"] != receipt["current_bindings"][
+            role
+        ]["ctime_ns"]
+        for field in ("size_bytes", "device", "inode", "mode"):
+            assert receipt["previous_bindings"][role][field] == receipt["current_bindings"][
+                role
+            ][field]
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+        identity_rebinds=receipts,
+    )
+    assert len(receipts) == 1
+
+
+def test_connection_stub_fuse_timestamp_rebind_rehashes_historical_bytes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    successor_stat = successor.stat()
+    os.utime(
+        successor,
+        ns=(successor_stat.st_atime_ns, successor_stat.st_mtime_ns + 1_000_000_000),
+    )
+    successor_mp4 = successor.with_suffix(".mp4")
+    original = successor_mp4.read_bytes()
+    successor_mp4_stat = successor_mp4.stat()
+    successor_mp4.write_bytes(b"x" * len(original))
+    os.utime(
+        successor_mp4,
+        ns=(successor_mp4_stat.st_atime_ns, successor_mp4_stat.st_mtime_ns + 1_000_000_000),
+    )
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", _fuse_mount_identity)
+
+    with pytest.raises(adapter.AdapterError, match="full-byte hash drift"):
+        adapter.validate_connection_stub_disposition(
+            stub,
+            row,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+            identity_rebinds=[],
+            identity_rebind_attestations=_identity_rebind_attestations(stub, successor),
+        )
+
+
+def test_connection_stub_timestamp_rebind_refuses_post_hash_fingerprint_drift(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    for binding in (row["session"]["successor_source"], row["session"]["successor_mp4"]):
+        binding["mtime_ns"] -= 1
+        binding["ctime_ns"] -= 1
+    unsigned = {key: value for key, value in row.items() if key != "canonical_integrity"}
+    row["canonical_integrity"]["canonical_json_sha256"] = adapter._canonical_json_sha256(
+        unsigned
+    )
+    attestations = _identity_rebind_attestations(stub, successor)
+    real_fingerprint = adapter._regular_file_fingerprint
+    calls = 0
+
+    def fingerprint_with_post_hash_drift(path: Path) -> dict:
+        nonlocal calls
+        calls += 1
+        fingerprint = real_fingerprint(path)
+        if calls > len(adapter._DISPOSITION_FILE_ROLES) and path == successor.with_suffix(".mp4"):
+            fingerprint["mtime_ns"] += 1
+        return fingerprint
+
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", _fuse_mount_identity)
+    monkeypatch.setattr(adapter, "_regular_file_fingerprint", fingerprint_with_post_hash_drift)
+
+    with pytest.raises(adapter.AdapterError, match="file changed during"):
+        adapter.validate_connection_stub_disposition(
+            stub,
+            row,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+            identity_rebinds=[],
+            identity_rebind_attestations=attestations,
+        )
+
+
+@pytest.mark.parametrize("drift", ["size", "mode", "path"])
+def test_connection_stub_fuse_timestamp_rebind_refuses_other_successor_drift(
+    tmp_path: Path,
+    monkeypatch,
+    drift: str,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    for binding in (row["session"]["successor_source"], row["session"]["successor_mp4"]):
+        binding["mtime_ns"] -= 1
+        binding["ctime_ns"] -= 1
+    successor_binding = row["session"]["successor_source"]
+    if drift == "size":
+        successor_binding["size_bytes"] -= 1
+    elif drift == "mode":
+        successor_binding["mode"] ^= 0o100
+    else:
+        successor_binding["path"] += ".moved"
+    unsigned = {key: value for key, value in row.items() if key != "canonical_integrity"}
+    row["canonical_integrity"]["canonical_json_sha256"] = adapter._canonical_json_sha256(
+        unsigned
+    )
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", _fuse_mount_identity)
+
+    with pytest.raises(adapter.AdapterError, match="drifted"):
+        adapter.validate_connection_stub_disposition(
+            stub,
+            row,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+            identity_rebinds=[],
+            identity_rebind_attestations=_identity_rebind_attestations(stub, successor),
+        )
+
+
+@pytest.mark.parametrize("role", ["successor_source", "successor_mp4"])
+def test_connection_stub_fuse_timestamp_rebind_refuses_single_role_drift(
+    tmp_path: Path,
+    monkeypatch,
+    role: str,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    binding = row["session"][role]
+    binding["mtime_ns"] -= 1
+    binding["ctime_ns"] -= 1
+    unsigned = {key: value for key, value in row.items() if key != "canonical_integrity"}
+    row["canonical_integrity"]["canonical_json_sha256"] = adapter._canonical_json_sha256(
+        unsigned
+    )
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", _fuse_mount_identity)
+
+    with pytest.raises(adapter.AdapterError, match="non-identity fingerprint drift"):
+        adapter.validate_connection_stub_disposition(
+            stub,
+            row,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+            identity_rebinds=[],
+            identity_rebind_attestations=_identity_rebind_attestations(stub, successor),
+        )
+
+
+def test_connection_stub_timestamp_rebind_refuses_local_filesystem(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    for binding in (row["session"]["successor_source"], row["session"]["successor_mp4"]):
+        binding["mtime_ns"] -= 1
+        binding["ctime_ns"] -= 1
+    unsigned = {key: value for key, value in row.items() if key != "canonical_integrity"}
+    row["canonical_integrity"]["canonical_json_sha256"] = adapter._canonical_json_sha256(
+        unsigned
+    )
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", lambda _path: None)
+
+    with pytest.raises(adapter.AdapterError, match="outside one shared FUSE mount"):
+        adapter.validate_connection_stub_disposition(
+            stub,
+            row,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+            identity_rebinds=[],
+            identity_rebind_attestations=_identity_rebind_attestations(stub, successor),
+        )
+
+
+@pytest.mark.parametrize("second_mount", ["same", "different"])
+def test_connection_stub_timestamp_rebind_requires_a_new_receipt_for_later_drift(
+    tmp_path: Path,
+    monkeypatch,
+    second_mount: str,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    for binding in (row["session"]["successor_source"], row["session"]["successor_mp4"]):
+        binding["mtime_ns"] -= 1
+        binding["ctime_ns"] -= 1
+    unsigned = {key: value for key, value in row.items() if key != "canonical_integrity"}
+    row["canonical_integrity"]["canonical_json_sha256"] = adapter._canonical_json_sha256(
+        unsigned
+    )
+    mount = _fuse_mount_identity(stub)
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", lambda _path: mount)
+    receipts: list[dict] = []
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+        identity_rebinds=receipts,
+        identity_rebind_attestations=_identity_rebind_attestations(stub, successor),
+    )
+    for path in (successor, successor.with_suffix(".mp4")):
+        current = path.stat()
+        os.utime(path, ns=(current.st_atime_ns, current.st_mtime_ns + 1_000_000_000))
+    if second_mount == "different":
+        monkeypatch.setattr(
+            adapter,
+            "_mount_identity_for_path",
+            lambda _path: {**mount, "major_minor": "0:68", "mount_id": 78},
+        )
+
+    if second_mount == "same":
+        with pytest.raises(adapter.SourceDispositionIdentityRebindRequired):
+            adapter.validate_connection_stub_disposition(
+                stub,
+                row,
+                record_root=tmp_path,
+                webhook_files=webhook_files,
+                finalized=finalized,
+                identity_rebinds=receipts,
+            )
+    else:
+        with pytest.raises(adapter.AdapterError, match="crossed FUSE mount identity"):
+            adapter.validate_connection_stub_disposition(
+                stub,
+                row,
+                record_root=tmp_path,
+                webhook_files=webhook_files,
+                finalized=finalized,
+                identity_rebinds=receipts,
+            )
+    assert len(receipts) == 1
+
+
+@pytest.mark.parametrize("tamper", ["changed_fields", "legacy_hash_claim"])
+def test_connection_stub_timestamp_rebind_receipt_tamper_fails_closed(
+    tmp_path: Path,
+    monkeypatch,
+    tamper: str,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    for binding in (row["session"]["successor_source"], row["session"]["successor_mp4"]):
+        binding["mtime_ns"] -= 1
+        binding["ctime_ns"] -= 1
+    unsigned = {key: value for key, value in row.items() if key != "canonical_integrity"}
+    row["canonical_integrity"]["canonical_json_sha256"] = adapter._canonical_json_sha256(
+        unsigned
+    )
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", _fuse_mount_identity)
+    receipts: list[dict] = []
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+        identity_rebinds=receipts,
+        identity_rebind_attestations=_identity_rebind_attestations(stub, successor),
+    )
+    receipt = receipts[0]
+    if tamper == "changed_fields":
+        receipt["changed_fields"]["successor_source"] = ["mtime_ns"]
+    else:
+        receipt["current_bindings"]["successor_source"]["sha256"] = adapter.sha256_file(
+            successor
+        )
+        receipt["legacy_promotion"]["successor_source"]["historical_sha256_available"] = True
+        receipt["legacy_promotion"]["successor_source"]["historical_sha256"] = receipt[
+            "current_bindings"
+        ]["successor_source"]["sha256"]
+    receipt["canonical_integrity"] = {
+        "algorithm": "sha256",
+        "canonical_json_sha256": adapter._canonical_json_sha256(
+            {key: value for key, value in receipt.items() if key != "canonical_integrity"}
+        ),
+    }
+
+    with pytest.raises(adapter.AdapterError, match="binding drifted"):
+        adapter.validate_connection_stub_disposition(
+            stub,
+            row,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+            identity_rebinds=receipts,
+        )
+
+
 @pytest.mark.parametrize("binding_name", ["source", "xml", "successor_mp4"])
 def test_connection_stub_fuse_rebind_rehashes_every_historically_bound_file(
     tmp_path: Path,
@@ -1076,6 +1466,69 @@ def test_idle_revalidation_hashes_in_child_then_atomically_seals_receipt(
     assert (
         receipts[0]["legacy_promotion"]["successor_source"]["historical_sha256_available"] is False
     )
+
+
+def test_idle_timestamp_revalidation_reuses_bounded_child_task(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, _successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    for binding in (row["session"]["successor_source"], row["session"]["successor_mp4"]):
+        binding["mtime_ns"] -= 1
+        binding["ctime_ns"] -= 1
+    unsigned = {key: value for key, value in row.items() if key != "canonical_integrity"}
+    row["canonical_integrity"]["canonical_json_sha256"] = adapter._canonical_json_sha256(
+        unsigned
+    )
+    relative = f"2026-08-12/{stub.name}"
+    state = {
+        "source_dispositions": {relative: row},
+        "webhook_files": webhook_files,
+        "finalized": finalized,
+    }
+    spool = tmp_path / "local-spool"
+
+    def mount_identity(path: Path) -> dict[str, object] | None:
+        return None if str(path).startswith(str(spool)) else _fuse_mount_identity(path)
+
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", mount_identity)
+    with pytest.raises(adapter.AdapterError, match="hash is pending"):
+        adapter.revalidate_source_dispositions(
+            state,
+            record_root=tmp_path,
+            room_id=123456,
+            allow_identity_rebind_start=True,
+            identity_rebind_spool=spool,
+        )
+    task = state["source_disposition_identity_rebind_tasks"][relative]
+    assert task["hash_roles"] == ["source", "xml", "successor_mp4"]
+    assert task["deadline_epoch"] > task["started_at_epoch"]
+    result_path = adapter._identity_rebind_run_dir(spool, relative) / "result.json"
+    deadline = time.monotonic() + 5
+    while not result_path.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    child = adapter._IDENTITY_REBIND_CHILDREN[int(task["pid"])]
+    while child.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert child.returncode == 0
+
+    assert adapter.revalidate_source_dispositions(
+        state,
+        record_root=tmp_path,
+        room_id=123456,
+        allow_identity_rebind_start=True,
+        identity_rebind_spool=spool,
+    ) == {relative}
+    receipt = state["source_disposition_identity_rebinds"][relative][0]
+    assert receipt["schema_version"] == "recording-source-fuse-timestamp-rebind.v1"
+    assert relative not in state["source_disposition_identity_rebind_tasks"]
 
 
 def test_run_once_two_ticks_persist_pending_then_publish_sealed_rebind(

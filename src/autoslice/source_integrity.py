@@ -151,6 +151,8 @@ _CONNECTION_STUB_REASON = "RECORDER_CONNECTION_STUB_NO_DECODABLE_VIDEO"
 _CONNECTION_STUB_MAX_XML_EVENT_COUNT = 1
 _CONNECTION_STUB_REBIND_SCHEMA = "recording-source-fuse-identity-rebind.v1"
 _CONNECTION_STUB_REBIND_POLICY = "FUSE_REMOUNT_DEVICE_INODE_REBIND"
+_CONNECTION_STUB_TIMESTAMP_REBIND_SCHEMA = "recording-source-fuse-timestamp-rebind.v1"
+_CONNECTION_STUB_TIMESTAMP_REBIND_POLICY = "FUSE_SUCCESSOR_MTIME_CTIME_REATTESTATION"
 _FILE_FINGERPRINT_KEYS = (
     "size_bytes",
     "mtime_ns",
@@ -159,8 +161,9 @@ _FILE_FINGERPRINT_KEYS = (
     "inode",
     "mode",
 )
-_FILE_STABLE_FINGERPRINT_KEYS = ("size_bytes", "mtime_ns", "ctime_ns", "mode")
 _DISPOSITION_FILE_ROLES = ("source", "xml", "successor_source", "successor_mp4")
+_TIMESTAMP_REBIND_ROLES = ("successor_source", "successor_mp4")
+_TIMESTAMP_REBIND_FIELDS = ("mtime_ns", "ctime_ns")
 _HISTORICAL_SHA_BASIS = "HISTORICAL_SHA256_MATCH"
 _LEGACY_SUCCESSOR_SOURCE_BASIS = "LEGACY_NO_PRIOR_SHA256_WEBHOOK_FINALIZED_LEDGER_STABLE_STAT"
 
@@ -272,6 +275,74 @@ def _disposition_binding_projection(binding: dict[str, object]) -> dict[str, obj
     return projection
 
 
+def _changed_fingerprint_fields(
+    previous: dict[str, dict[str, object]],
+    current: dict[str, dict[str, object]],
+) -> dict[str, list[str]]:
+    return {
+        role: [
+            key
+            for key in _FILE_FINGERPRINT_KEYS
+            if previous[role].get(key) != current[role].get(key)
+        ]
+        for role in _DISPOSITION_FILE_ROLES
+        if any(
+            previous[role].get(key) != current[role].get(key)
+            for key in _FILE_FINGERPRINT_KEYS
+        )
+    }
+
+
+def _identity_rebind_legacy_contract() -> dict[str, object]:
+    return {
+        "successor_source": {
+            "verification_basis": _LEGACY_SUCCESSOR_SOURCE_BASIS,
+            "historical_sha256_available": False,
+            "strict_bindings": [
+                "path",
+                "size_bytes",
+                "mtime_ns",
+                "ctime_ns",
+                "mode",
+                "webhook_file_size",
+                "finalized_ledger_source_size",
+                "successor_mp4_historical_sha256",
+            ],
+        }
+    }
+
+
+def _timestamp_rebind_legacy_contract(
+    row: dict[str, object],
+    previous: dict[str, dict[str, object]],
+) -> dict[str, object]:
+    successor = previous["successor_source"]
+    session = row.get("session") if isinstance(row.get("session"), dict) else {}
+    webhook = (
+        session.get("successor_webhook")
+        if isinstance(session.get("successor_webhook"), dict)
+        else {}
+    )
+    finalized = (
+        session.get("successor_finalized_ledger")
+        if isinstance(session.get("successor_finalized_ledger"), dict)
+        else {}
+    )
+    return {
+        "successor_source": {
+            "verification_basis": _LEGACY_SUCCESSOR_SOURCE_BASIS,
+            "historical_sha256_available": False,
+            "historical_sha256": None,
+            "path": successor.get("path"),
+            "size_bytes": successor.get("size_bytes"),
+            "mode": successor.get("mode"),
+            "webhook_file_size": webhook.get("file_size"),
+            "finalized_ledger_source_size": finalized.get("source_size"),
+            "successor_mp4_historical_sha256": previous["successor_mp4"].get("sha256"),
+        }
+    }
+
+
 def _connection_stub_identity_matches(
     *,
     row: dict[str, object],
@@ -295,7 +366,7 @@ def _connection_stub_identity_matches(
     )
     previous_receipt_sha256: str | None = None
     previous_mount: dict[str, object] | None = None
-    receipt_fields = {
+    base_receipt_fields = {
         "schema_version",
         "policy",
         "source_disposition_canonical_sha256",
@@ -308,7 +379,20 @@ def _connection_stub_identity_matches(
         "canonical_integrity",
     }
     for receipt in receipts:
-        if not isinstance(receipt, dict) or set(receipt) != receipt_fields:
+        if not isinstance(receipt, dict):
+            return False, "source disposition identity rebind receipt is malformed"
+        is_identity_rebind = (
+            receipt.get("schema_version") == _CONNECTION_STUB_REBIND_SCHEMA
+            and receipt.get("policy") == _CONNECTION_STUB_REBIND_POLICY
+        )
+        is_timestamp_rebind = (
+            receipt.get("schema_version") == _CONNECTION_STUB_TIMESTAMP_REBIND_SCHEMA
+            and receipt.get("policy") == _CONNECTION_STUB_TIMESTAMP_REBIND_POLICY
+        )
+        expected_fields = base_receipt_fields | (
+            {"changed_fields"} if is_timestamp_rebind else set()
+        )
+        if (not is_identity_rebind and not is_timestamp_rebind) or set(receipt) != expected_fields:
             return False, "source disposition identity rebind receipt is malformed"
         integrity = receipt.get("canonical_integrity")
         unsigned = {key: value for key, value in receipt.items() if key != "canonical_integrity"}
@@ -319,28 +403,9 @@ def _connection_stub_identity_matches(
             return False, "source disposition identity rebind integrity mismatch"
         current = receipt.get("current_bindings")
         if (
-            receipt.get("schema_version") != _CONNECTION_STUB_REBIND_SCHEMA
-            or receipt.get("policy") != _CONNECTION_STUB_REBIND_POLICY
-            or receipt.get("source_disposition_canonical_sha256") != disposition_sha256
+            receipt.get("source_disposition_canonical_sha256") != disposition_sha256
             or receipt.get("previous_receipt_canonical_sha256") != previous_receipt_sha256
             or receipt.get("previous_bindings") != previous
-            or receipt.get("legacy_promotion")
-            != {
-                "successor_source": {
-                    "verification_basis": _LEGACY_SUCCESSOR_SOURCE_BASIS,
-                    "historical_sha256_available": False,
-                    "strict_bindings": [
-                        "path",
-                        "size_bytes",
-                        "mtime_ns",
-                        "ctime_ns",
-                        "mode",
-                        "webhook_file_size",
-                        "finalized_ledger_source_size",
-                        "successor_mp4_historical_sha256",
-                    ],
-                }
-            }
             or not _is_fuse_mount(receipt.get("current_mount"))
             or not isinstance(current, dict)
             or set(current) != set(_DISPOSITION_FILE_ROLES)
@@ -359,12 +424,46 @@ def _connection_stub_identity_matches(
                     and re.fullmatch(r"[0-9a-f]{64}", str(binding.get("sha256") or "")) is None
                 )
                 or (prior.get("sha256") is None and binding.get("sha256") is not None)
-                or any(binding.get(key) != prior.get(key) for key in _FILE_STABLE_FINGERPRINT_KEYS)
                 or (
                     prior.get("sha256") is not None and binding.get("sha256") != prior.get("sha256")
                 )
             ):
                 return False, "source disposition identity rebind binding drifted"
+        changes = _changed_fingerprint_fields(previous, current)
+        if is_identity_rebind:
+            if (
+                receipt.get("legacy_promotion") != _identity_rebind_legacy_contract()
+                or not changes
+                or any(
+                    field not in {"device", "inode"}
+                    for fields in changes.values()
+                    for field in fields
+                )
+                or (
+                    previous_mount is not None
+                    and _portable_mount_identity(receipt.get("current_mount"))
+                    == _portable_mount_identity(previous_mount)
+                )
+            ):
+                return False, "source disposition identity rebind binding drifted"
+        else:
+            assert is_timestamp_rebind
+            if (
+                receipt.get("legacy_promotion") != _timestamp_rebind_legacy_contract(row, previous)
+                or receipt.get("changed_fields") != changes
+                or set(changes) != set(_TIMESTAMP_REBIND_ROLES)
+                or any(
+                    field not in _TIMESTAMP_REBIND_FIELDS
+                    for fields in changes.values()
+                    for field in fields
+                )
+                or (
+                    previous_mount is not None
+                    and _portable_mount_identity(receipt.get("current_mount"))
+                    != _portable_mount_identity(previous_mount)
+                )
+            ):
+                return False, "source disposition timestamp rebind binding drifted"
         previous = current
         previous_receipt_sha256 = str(integrity["canonical_json_sha256"])
         previous_mount = receipt["current_mount"]
