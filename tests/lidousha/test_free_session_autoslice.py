@@ -8100,6 +8100,19 @@ def test_talk_failure_classifies_real_clip_anchor_shortage_as_speaker_evidence()
     assert classified["failure_recoverable"] is False
 
 
+def test_talk_failure_classifies_boundary_semantic_content_verdict_as_terminal():
+    classified = runner.classify_talk_failure(
+        "SystemExit: BOUNDARY_SEMANTIC_REVIEW_REQUIRED: "
+        '["CONTENT_ANCHOR_COVERED", "NEXT_TOPIC_NOT_SEPARATED", '
+        '"NEXT_TOPIC_SEPARATED_NOT_PROVEN", "STORY_CLOSED", '
+        '"TARGET_SYNTAX_COMPLETE"]'
+    )
+
+    assert classified["failure_kind"] == "content_boundary"
+    assert classified["failure_stage"] == "boundary_semantic_review"
+    assert classified["failure_recoverable"] is False
+
+
 @pytest.mark.parametrize(
     ("message", "kind", "stage", "recoverable"),
     [

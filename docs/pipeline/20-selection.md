@@ -81,6 +81,44 @@
   候选/已发稿/registry/public-title 事实；它只能解除该候选的 selection hold，且
   `upload_authorized=false`。resolution、原 authority 或任一当前绑定漂移时仍保持 stale hold；
   新投稿仍须单独通过当前 package audit、联合 QC 与 authorized-upload manifest。
+  若人工判断后，候选又经 `semantic-evidence-scorecard-refresh-receipt.v1 / REFRESHED`
+  合法更新 scorecard，旧 v1 resolution 保留作原始判断证据，不得改写；另加同候选的
+  `published-topic-dedup-resolution.v2`，把旧 authority scorecard 与当前 scorecard 通过该
+  refresh receipt 的 self-seal、old→new、候选窗口/路径、BCUT/XML/弹幕证据、provider
+  contract 和完整 input-provenance SHA 严格串起。v2 只准该候选恢复生产；receipt、hook、
+  窗口、日期、scene、源证据、authority、registry/BVID/public-title 任一漂移都继续 sticky
+  stale，且 `upload_authorized=false` 不变。
+- 已有上述 v2 resolution 的单条停泊候选，只能由严格
+  `operator-processing-scope-grant.v5 / RECOVER_NAMED_RESOLVED_TOPIC_DEDUP_HOLD`
+  恢复：grant 必须恰好点名一个 CID、`upload_allowed=false`，且硬到期必须先于任何
+  repository/receipt probe 生效。canonical probe 只有五态：`READY_TO_RELEASE` 才允许
+  maintenance 首次且仅首次移出原 hold，并原子写入 durable、`upload_authorized=false`
+  的 candidate-keyed release-marker ledger；ledger、entries 和每条 marker 都必须 exact-field
+  校验并 self-seal。之后只有目标 marker 与原 hold/queue origin、当前排队行、v2 resolution
+  raw bytes/self-seal、原 authority raw bytes/self-seal 及 refresh receipt old→new 全部精确
+  一致，才算 `RELEASED_QUEUED`；可恢复 pick/封面待补期间是
+  `RELEASED_RETRY_PENDING`，另有 `CONVERGED` 与 `BLOCKED`。任意普通队列行不能伪装成已释放；
+  marker、行或任一绑定
+  漂移都 `BLOCKED`，整块 scope fail closed 为空且不得再次 release；已有 entry 仍 active 时
+  不得并行 release 另一候选。点名候选进入严格绑定的当前 Talk 终态后才 `CONVERGED`；旧
+  terminal entry 必须留在 ledger 作历史证据，但不得阻塞同日之后另一候选的串行恢复。整个
+  tick 冻结这一 CID 的 Talk allowlist，未点名 Talk 必须
+  隔离并原样归还；`pending_song`、`song_backlog`、`song_selection_backlog`、`songs`、
+  `song_superseded_attempts` 五个 Song 集合也必须逐项深等值保留，不得借 v5 发现、补位、
+  恢复或生产。
+  marker 的 current-row head 必须绑定完整行 SHA，并按封闭状态机前进：session annotation
+  只准在同 collection 的当前行上改其专属字段；scorecard refresh、排序/说话人路由等只准在
+  各自字段白名单内写 self-sealed queue→queue rebound；真正生产必须在状态落盘前写 exact
+  queue→pick transition。未经该 transition 的同
+  CID/同窗口 pick（即使自称 recoverable）一律 `BLOCKED`。产出成为
+  `failure_recoverable=true` 的 typed failed pick 时属于 `RELEASED_RETRY_PENDING`，不是终态；
+  v5 不走会原地多次持久化 pick 的 cover-only repair，`media_ready_cover_pending` 必须由受控
+  重排/重产路径继续。
+  generic recovery 真把 failed pick 重排进 Talk 队列后，必须在同一事务追加 self-sealed
+  transition，绑定前一 head、完整 failed-pick SHA、新队列行 SHA 与该行的
+  `recovery_source_record_sha256`，再原子推进 head；转换不唯一、身份漂移或写 ledger 失败都回滚
+  并记 typed runtime block。只有严格身份相同且明确交付/拒绝/低分归档，或显式
+  `failure_recoverable=false` 的 typed failure，才可 `CONVERGED`。
 - 精确恢复契约持续压住普通 backlog，直到新的人工恢复计划显式替换；普通 backlog
   在报告里只能显示为 `OUTSIDE_EXACT_CONTRACT / INELIGIBLE`，不能伪装成当前候补。
 - 已由 committed publication registry 标为 `hold_pending_review` 的单条历史

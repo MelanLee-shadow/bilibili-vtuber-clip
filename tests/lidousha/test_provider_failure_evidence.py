@@ -567,16 +567,17 @@ def test_boundary_resolution_marker_transport_failure_waits(tmp_path: Path):
     assert classified["failure_recoverable"] is True
 
 
-def test_boundary_resolution_marker_content_verdict_stays_unchanged():
-    """反向门：真实的边界内容裁决维持原有归类，一个字不动。"""
+def test_boundary_resolution_marker_content_verdict_is_terminal_boundary():
+    """反向门：真实的边界内容裁决不得伪装成可重试 provider 故障。"""
 
     classified = talk_lane.classify_talk_failure(
         "SystemExit: BOUNDARY_SEMANTIC_REVIEW_REQUIRED: "
         '["SELECTOR_STORY_WITNESS_INSUFFICIENT", "STORY_PAYOFF_LANDED"]'
     )
 
-    assert classified["failure_kind"] == "producer_error"
-    assert classified["failure_stage"] == "unknown"
+    assert classified["failure_kind"] == "content_boundary"
+    assert classified["failure_stage"] == "boundary_semantic_review"
+    assert classified["failure_recoverable"] is False
 
 
 def test_last_marker_wins_in_an_append_only_log():

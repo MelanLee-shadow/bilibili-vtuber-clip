@@ -21,8 +21,8 @@
 - **收敛即自动退出**：v1 见 `_settled` —— 被点名的候选一旦"有了 picks 行且不再
   排队"，它就算干完了；全部干完，这一天下一个 tick 自动离开窗口，**不需要人回来
   清理**。历史 failed pick 只有携带严格 v2 schema 和
-  `RECOVER_NAMED_FAILED_PICKS` 意图的逐字授权才保持未竟；这只让既有 maintenance
-  有机会判定 requeue，不直接改状态，也不绕过恢复、配额或上传门。
+  `RECOVER_NAMED_FAILED_PICKS` 意图的逐字授权才保持未竟；v3-v5 则各自只恢复一种
+  点名的 typed Talk hold。这些通道都不绕过恢复、配额或上传门。
 - **硬性兜底 `expires_at`**：收敛判据依赖候选真的能被产出。万一它们因为配额/分数门
   根本坐不上席，光靠收敛会让老日期永远赖在窗口里。所以 `expires_at` 是必填项，
   到点无条件失效。
@@ -44,7 +44,8 @@
 
 不要把某次 live state 的席位数、published 数或 backlog 分数写死在本模块。v1 只让仍在
 queue 中的点名候选把历史日期带回 tick；v2 只让点名的 recoverable failed pick 进入既有
-maintenance/requeue 判定。两者都不承诺候选一定坐上席，也不改变
+maintenance/requeue 判定；v3-v5 只准入其各自严格验证过的单一 Talk 恢复形态。它们都不承诺
+候选一定坐上席，也不改变
 `talk_quota_policy_authority.v1.json`、失败恢复 fingerprint、终态拒绝或人工 hold。
 
 因此 integrator 必须在写 grant 前现场读取该日期 state：点名候选若是终态拒绝、已发布、
@@ -69,10 +70,13 @@ HELD_CURRENT_RERENDER_GRANT_SCHEMA = "operator-processing-scope-grant.v3"
 HELD_CURRENT_RERENDER_INTENT = "RERENDER_NAMED_HELD_CURRENT_FOR_REVIEW"
 SPEAKER_HOLD_RECOVERY_GRANT_SCHEMA = "operator-processing-scope-grant.v4"
 SPEAKER_HOLD_RECOVERY_INTENT = "RECOVER_NAMED_SPEAKER_MANUAL_REVIEW_HOLD"
+TOPIC_HOLD_RECOVERY_GRANT_SCHEMA = "operator-processing-scope-grant.v5"
+TOPIC_HOLD_RECOVERY_INTENT = "RECOVER_NAMED_RESOLVED_TOPIC_DEDUP_HOLD"
 DISCLOSURE_SCHEMA = "operator-processing-scope-disclosure.v1"
 FAILED_PICK_RECOVERY_DISCLOSURE_SCHEMA = "operator-processing-scope-disclosure.v2"
 HELD_CURRENT_RERENDER_DISCLOSURE_SCHEMA = "operator-processing-scope-disclosure.v3"
 SPEAKER_HOLD_RECOVERY_DISCLOSURE_SCHEMA = "operator-processing-scope-disclosure.v4"
+TOPIC_HOLD_RECOVERY_DISCLOSURE_SCHEMA = "operator-processing-scope-disclosure.v5"
 STATE_KEY = "operator_processing_scope"
 DISCLOSURE_KEY = "operator_processing_scope_disclosure"
 # 出处文本的下限沿用 talk_quota_authority._authority_text 的口径：短于 8 个字符的
@@ -198,6 +202,14 @@ def _validate_grant(block: object) -> tuple[dict[str, object] | None, str]:
             or block.get("upload_allowed") is not False
         ):
             return None, "SCHEMA_INVALID"
+    elif schema_version == TOPIC_HOLD_RECOVERY_GRANT_SCHEMA:
+        expected_fields = _HELD_CURRENT_RERENDER_GRANT_FIELDS
+        intent = block.get("intent")
+        if (
+            intent != TOPIC_HOLD_RECOVERY_INTENT
+            or block.get("upload_allowed") is not False
+        ):
+            return None, "SCHEMA_INVALID"
     else:
         return None, "SCHEMA_INVALID"
     if set(block) != expected_fields:
@@ -221,6 +233,7 @@ def _validate_grant(block: object) -> tuple[dict[str, object] | None, str]:
     if intent in {
         HELD_CURRENT_RERENDER_INTENT,
         SPEAKER_HOLD_RECOVERY_INTENT,
+        TOPIC_HOLD_RECOVERY_INTENT,
     } and len(candidate_ids) != 1:
         return None, "SCHEMA_INVALID"
     authorization = block.get("user_authorization")
@@ -405,6 +418,61 @@ def _speaker_hold_recovery_outstanding(
     return True, "SPEAKER_RECOVERY_FINGERPRINT_CHANGED"
 
 
+def _topic_hold_ids(state: Mapping[str, object]) -> set[str]:
+    """Return candidate ids from structurally recognizable nested topic holds."""
+
+    review = state.get("published_topic_dedup_review")
+    if not (
+        isinstance(review, Mapping)
+        and review.get("schema_version") == "published-topic-dedup-review-state.v1"
+    ):
+        return set()
+    holds = review.get("holds")
+    if not isinstance(holds, list):
+        return set()
+    found: set[str] = set()
+    for hold in holds:
+        if not isinstance(hold, Mapping):
+            continue
+        candidate_id = _row_candidate_id(hold)
+        candidate = hold.get("candidate")
+        if (
+            candidate_id
+            and isinstance(candidate, Mapping)
+            and _row_candidate_id(candidate) == candidate_id
+        ):
+            found.add(candidate_id)
+    return found
+
+
+def _topic_hold_recovery_outstanding(
+    state: Mapping[str, object], candidate_id: str
+) -> tuple[bool | None, str]:
+    """Inspect one v5 target through its canonical durable release authority."""
+
+    try:
+        from src.autoslice.published_topic_collision import (
+            RECOVERY_CONVERGED,
+            RECOVERY_READY_TO_RELEASE,
+            RECOVERY_RELEASED_QUEUED,
+            RECOVERY_RELEASED_RETRY_PENDING,
+            inspect_published_topic_resolution_recovery,
+        )
+
+        disposition = inspect_published_topic_resolution_recovery(state, candidate_id)
+    except Exception:  # noqa: BLE001 - authority probe must fail closed
+        return None, "TOPIC_DEDUP_RESOLUTION_PROBE_UNAVAILABLE"
+    if disposition == RECOVERY_READY_TO_RELEASE:
+        return True, "TOPIC_DEDUP_RESOLVED_HOLD_OUTSTANDING"
+    if disposition == RECOVERY_RELEASED_QUEUED:
+        return True, "TOPIC_DEDUP_RELEASED_QUEUE_OUTSTANDING"
+    if disposition == RECOVERY_RELEASED_RETRY_PENDING:
+        return True, "TOPIC_DEDUP_RELEASED_RETRY_OUTSTANDING"
+    if disposition == RECOVERY_CONVERGED:
+        return False, "TOPIC_DEDUP_RECOVERY_TERMINAL"
+    return None, "TOPIC_DEDUP_RECOVERY_BLOCKED"
+
+
 def operator_scope_admission(
     state: Mapping[str, object],
     *,
@@ -440,8 +508,31 @@ def operator_scope_admission(
                 f"grant is for {grant['recording_date']})"
             ),
         )
+    moment = now or datetime.now(timezone.utc)
+    if (
+        intent == TOPIC_HOLD_RECOVERY_INTENT
+        and moment >= grant["expires_at"]  # type: ignore[operator]
+    ):
+        # v5 may inspect repository-bound resolution bytes.  Its hard expiry
+        # must win before that probe performs any I/O.
+        return OperatorScopeAdmission(
+            False,
+            "EXPIRED",
+            grant_id,
+            candidate_ids,
+            candidate_ids,
+            log_line=(
+                f"operator scope grant {grant_id} EXPIRED at "
+                f"{grant['expires_at'].isoformat()} with "  # type: ignore[union-attr]
+                f"{len(candidate_ids)}/{len(candidate_ids)} candidate(s) unfinished"
+            ),
+        )
     known = _ids_in(state, CANDIDATE_COLLECTIONS)
-    unknown = tuple(cid for cid in candidate_ids if cid not in known)
+    unknown = (
+        ()
+        if intent == TOPIC_HOLD_RECOVERY_INTENT
+        else tuple(cid for cid in candidate_ids if cid not in known)
+    )
     if unknown:
         # 打错字/点名了别的日子的候选：整块不生效。否则一个永远不可能收敛的
         # id 会把这一天永久钉在窗口里——正是"老日期赖着"的那个洞。
@@ -455,7 +546,6 @@ def operator_scope_admission(
             ),
             detail=",".join(unknown),
         )
-    moment = now or datetime.now(timezone.utc)
     if (
         intent in {HELD_CURRENT_RERENDER_INTENT, SPEAKER_HOLD_RECOVERY_INTENT}
         and moment >= grant["expires_at"]  # type: ignore[operator]
@@ -508,6 +598,20 @@ def operator_scope_admission(
                 detail=speaker_reason,
             )
         outstanding = candidate_ids if is_outstanding else ()
+    elif intent == TOPIC_HOLD_RECOVERY_INTENT:
+        is_outstanding, topic_reason = _topic_hold_recovery_outstanding(
+            state, candidate_ids[0]
+        )
+        if is_outstanding is None:
+            return OperatorScopeAdmission(
+                False,
+                topic_reason,
+                grant_id,
+                candidate_ids,
+                log_line=f"operator scope grant {grant_id} blocked ({topic_reason})",
+                detail=topic_reason,
+            )
+        outstanding = candidate_ids if is_outstanding else ()
     else:
         outstanding = tuple(
             cid for cid in candidate_ids if not _settled(state, cid, known, intent=intent)
@@ -543,6 +647,8 @@ def operator_scope_admission(
             if intent == HELD_CURRENT_RERENDER_INTENT
             else SPEAKER_HOLD_RECOVERY_DISCLOSURE_SCHEMA
             if intent == SPEAKER_HOLD_RECOVERY_INTENT
+            else TOPIC_HOLD_RECOVERY_DISCLOSURE_SCHEMA
+            if intent == TOPIC_HOLD_RECOVERY_INTENT
             else FAILED_PICK_RECOVERY_DISCLOSURE_SCHEMA
             if intent == FAILED_PICK_RECOVERY_INTENT
             else DISCLOSURE_SCHEMA
@@ -557,9 +663,14 @@ def operator_scope_admission(
         FAILED_PICK_RECOVERY_INTENT,
         HELD_CURRENT_RERENDER_INTENT,
         SPEAKER_HOLD_RECOVERY_INTENT,
+        TOPIC_HOLD_RECOVERY_INTENT,
     }:
         disclosure["intent"] = intent
-    if intent in {HELD_CURRENT_RERENDER_INTENT, SPEAKER_HOLD_RECOVERY_INTENT}:
+    if intent in {
+        HELD_CURRENT_RERENDER_INTENT,
+        SPEAKER_HOLD_RECOVERY_INTENT,
+        TOPIC_HOLD_RECOVERY_INTENT,
+    }:
         disclosure["upload_allowed"] = False
     return OperatorScopeAdmission(
         True,
@@ -585,11 +696,12 @@ def operator_talk_scope(
     """Freeze one admitted operator grant as a Talk-only allowlist.
 
     v1 admits named queued Talk work; v2 admits named recoverable failed Talk
-    picks.  Neither is an authority to discover, refill, recover, or produce
-    Song work from the same date.  Callers must compute this once at tick entry
-    and retain the tuple for the whole tick.  Recomputing after a named
-    candidate reaches a terminal row could make the grant ``CONVERGED``
-    mid-tick and accidentally restore ordinary backfill.
+    picks; v3-v5 admit one narrowly typed Talk recovery each.  None is an
+    authority to discover, refill, recover, or produce Song work from the same
+    date.  Callers must compute this once at tick entry and retain the tuple for
+    the whole tick.  Recomputing after a named candidate reaches a terminal row
+    could make the grant ``CONVERGED`` mid-tick and accidentally restore
+    ordinary backfill.
     """
 
     moment = now or datetime.now(timezone.utc)
@@ -617,6 +729,12 @@ def operator_talk_scope(
             or block.get("upload_allowed") is not False
         ):
             return ()
+    elif schema_version == TOPIC_HOLD_RECOVERY_GRANT_SCHEMA:
+        if (
+            block.get("intent") != TOPIC_HOLD_RECOVERY_INTENT
+            or block.get("upload_allowed") is not False
+        ):
+            return ()
     else:
         return None
     admission = operator_scope_admission(state, date=date, now=moment)
@@ -627,12 +745,18 @@ def operator_talk_scope(
     ):
         if (
             schema_version
-            in {HELD_CURRENT_RERENDER_GRANT_SCHEMA, SPEAKER_HOLD_RECOVERY_GRANT_SCHEMA}
+            in {
+                HELD_CURRENT_RERENDER_GRANT_SCHEMA,
+                SPEAKER_HOLD_RECOVERY_GRANT_SCHEMA,
+                TOPIC_HOLD_RECOVERY_GRANT_SCHEMA,
+            }
             and admission.reason_code not in {"CONVERGED", "EXPIRED"}
         ):
             return ()
         return None
     talk_ids = _ids_in(state, ("pending_talk", "talk_backlog", "picks"))
+    if schema_version == TOPIC_HOLD_RECOVERY_GRANT_SCHEMA:
+        talk_ids.update(_topic_hold_ids(state))
     song_ids = _ids_in(state, SONG_STATE_COLLECTIONS)
     if any(cid not in talk_ids or cid in song_ids for cid in admission.candidate_ids):
         # An admitted but mixed/non-Talk scope must not fall through to broad
@@ -697,6 +821,8 @@ def hold_talk_outside_operator_scope(
                 if intent == HELD_CURRENT_RERENDER_INTENT
                 else SPEAKER_HOLD_RECOVERY_DISCLOSURE_SCHEMA
                 if intent == SPEAKER_HOLD_RECOVERY_INTENT
+                else TOPIC_HOLD_RECOVERY_DISCLOSURE_SCHEMA
+                if intent == TOPIC_HOLD_RECOVERY_INTENT
                 else FAILED_PICK_RECOVERY_DISCLOSURE_SCHEMA
                 if intent == FAILED_PICK_RECOVERY_INTENT
                 else DISCLOSURE_SCHEMA
@@ -714,7 +840,11 @@ def hold_talk_outside_operator_scope(
         }
         if intent is not None:
             disclosure["intent"] = intent
-        if intent in {HELD_CURRENT_RERENDER_INTENT, SPEAKER_HOLD_RECOVERY_INTENT}:
+        if intent in {
+            HELD_CURRENT_RERENDER_INTENT,
+            SPEAKER_HOLD_RECOVERY_INTENT,
+            TOPIC_HOLD_RECOVERY_INTENT,
+        }:
             disclosure["upload_allowed"] = False
     pending = state.get("pending_talk")
     if not isinstance(pending, list):

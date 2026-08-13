@@ -32,6 +32,9 @@ from src.autoslice.clip_context import MAX_PROMPT_CHARS
 
 SCHEMA_VERSION = "talk-boundary-semantic-review.v1"
 SEARCH_SCOPE_SCHEMA_VERSION = "talk-boundary-search-scope.v1"
+ENDPOINT_SELECTION_CONTRACT_VERSION = (
+    "talk-boundary-endpoint-selection-contract.v2"
+)
 MAX_FORWARD_MS = 30_000
 SEMANTIC_TAIL_TRIM_MAX_MS = 15_000
 CONTEXT_CUES_EACH_SIDE = 8
@@ -854,8 +857,10 @@ def _build_prompt(request: Mapping[str, object]) -> str:
 - 只能从 recommendation_cue_indexes 选择。若 boundary_search_scope.recommendation_backward_ms>0，目标 cue 只是自动/旧公开召回尾锚；当它已拖入新话题、未回答问题或不完整尾巴时，可在该有界窗口内回剪到**最晚一个**已经覆盖 selection_hook 全部内容锚点、故事闭环且后续换题可证的 cue，并必须回 content_anchor_covered=true。普通 semantic_lower_bound 超出该窗口不得提前删内容；published_recall_anchor 只允许这次有界回剪，不把旧公开终点伪装成已人工确认的下界；若 boundary_end_mode=exact_source_pin，可选择 source pin 前最多 delivery_tail_pad_ms 的完整语义句尾，最终媒体仍由 source pin 精确截止，不可选择 pin 之后才开始的 cue。
 - recommendation_relaxations 里列出的 cue 是经确定性证明后放行的有界例外：pin_crossing_closure_cue 是包含 pin 的收尾 cue（媒体仍精确截止在 pin）；silent_gap_closure_cue 是下限前最后一个收尾 cue，且它到下限之间没有任何语音；reviewed_exact_interval_terminal_projection 是 hash/source 绑定的 reviewed endpoint 在 fresh 网格上的终点投影，必须把其中 crossing_witness_cue_index 作为下一话题证据。语义合适才可选择。
 - 若 next_topic_separated=true，evidence_cue_indexes 必须包含推荐 cue 之后、证明已进入下一话题/SC/谢礼的 cue；缺了会被判 BOUNDARY_NEXT_TOPIC_WITNESS_MISSING。
+- review_scope=source_full_window 时，选点前必须把 recommendation_cue_indexes 全部比较完，并逐项检查 next_topic_witness_cue_indexes；后者是 endpoint 上限之外专门保留的换题见证，不是可以跳过的附录。next_topic_separated 不要求紧邻推荐 cue 的下一 cue 就换题：任何绑定请求中可见、位于推荐 cue 之后的明确新 SC、谢礼、另一话题或直播阶段切换都可作证，但必须在 evidence_cue_indexes 中实际引用。
 - 可以从目标 cue 向后寻找，最多 {request["max_forward_ms"]}ms；exact_source_pin 的该值为 0。
-- 若目标本身已闭环，即使后面无停顿继续说，也应选目标；若目标半句或包袱未落地，才向后选最早同时满足三项的 cue。
+- “目标内容已经讲完”不等于“此处已经形成安全切点”。若紧接目标的同话题提问、回应或收尾互动仍在继续，必须把 endpoint 向后推进到明确换题见证之前、仍在 recommendation_cue_indexes 内的**最晚一个完整收束 cue**；不得把问句留在片尾，也不得把回应切到片外。只有目标之后第一段可见内容已经明确属于另一话题时，目标才可直接充当收束点。
+- “进入尾声”等字面词不能由确定性关键词自动签发 PASS；仍须结合绑定 cue 的上下文判断它是否真是推荐 endpoint 之后的阶段/话题切换。source_full_window 内没有可见的 post-end 换题见证时，next_topic_separated 必须为 false，即使 syntax/story 已经完整；final_delivery 只可使用下一条所述的 bound source witness 例外。
 - 若请求带 PASS 的 terminal source separation witness，说明 source full-window 已证明 cut 后进入下一话题；此时 delivery 最后一条 cue 可用该 witness 证明 next_topic_separated，但 syntax/story 仍须按当前最终字幕重新判断。
 - 结构化弹幕/SC 可证明话题触发或切换；长期记忆只能帮助理解指代，不能单独证明边界。
 - 任一项无法证明就给 false，不要为了产片凑结论。
@@ -964,6 +969,14 @@ def _semantic_request(
 ) -> dict[str, object]:
     return {
         "schema_version": "talk-boundary-semantic-request.v1",
+        "endpoint_selection_contract_version": (
+            ENDPOINT_SELECTION_CONTRACT_VERSION
+        ),
+        "review_scope": (
+            "final_delivery"
+            if source_separation_witness is not None
+            else "source_full_window"
+        ),
         "candidate_id": candidate_id,
         "target_ms": target_ms,
         "target_cue_index": target_cue_index,

@@ -14,6 +14,8 @@ from src.autoslice.operator_processing_scope import (
     GRANT_SCHEMA,
     SPEAKER_HOLD_RECOVERY_GRANT_SCHEMA,
     SPEAKER_HOLD_RECOVERY_INTENT,
+    TOPIC_HOLD_RECOVERY_GRANT_SCHEMA,
+    TOPIC_HOLD_RECOVERY_INTENT,
     operator_scope_admission,
     operator_talk_scope,
 )
@@ -79,6 +81,44 @@ def _state() -> dict:
     }
 
 
+def _v5_state() -> dict:
+    state = _state()
+    state["operator_processing_scope"] = {
+        "schema_version": TOPIC_HOLD_RECOVERY_GRANT_SCHEMA,
+        "grant_id": "release-one-resolved-topic-hold",
+        "recording_date": DATE,
+        "reason": "刷新后的人工去重结论已绑定，只释放点名停泊件且不授权任何上传。",
+        "candidate_ids": [TARGET],
+        "user_authorization": {
+            "quote": "806，1576内容没问题可以发。",
+            "timestamp": "2026-08-13T18:00:00Z",
+        },
+        "expires_at": "2099-08-14T06:00:00Z",
+        "intent": TOPIC_HOLD_RECOVERY_INTENT,
+        "upload_allowed": False,
+    }
+    state["picks"] = [_failed(OTHER)]
+    state["published_topic_dedup_review"] = {
+        "schema_version": "published-topic-dedup-review-state.v1",
+        "holds": [
+            {
+                "candidate_id": TARGET,
+                "candidate": {
+                    "cid": TARGET,
+                    "segment_path": "/recordings/target.mp4",
+                    "start_ms": 10_000,
+                    "end_ms": 20_000,
+                    "hook": "target",
+                },
+                "queue_origin": "pending_talk",
+                "suppression_authorized": False,
+                "upload_authorized": False,
+            }
+        ],
+    }
+    return state
+
+
 def test_v2_scope_freezes_only_an_admitted_historical_failed_talk() -> None:
     state = _state()
     assert operator_talk_scope(state, date=DATE) == (TARGET,)
@@ -108,6 +148,522 @@ def test_operator_scope_cannot_reinterpret_a_song_as_talk_work() -> None:
     grant["candidate_ids"] = ["song_pending"]
 
     assert operator_talk_scope(state, date=DATE) is None
+
+
+def test_v5_first_release_writes_marker_and_second_queued_tick_skips_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice import published_topic_collision as topic_collision
+
+    state = _v5_state()
+    song_preimage = copy.deepcopy(
+        {
+            key: state[key]
+            for key in (
+                "pending_song",
+                "song_backlog",
+                "song_selection_backlog",
+                "songs",
+                "song_superseded_attempts",
+            )
+        }
+    )
+    order: list[str] = []
+
+    def inspect(value: dict, candidate_id: str) -> str:
+        order.append("inspect")
+        assert candidate_id == TARGET
+        if value.get("published_topic_resolution_recovery") is not None:
+            return "RELEASED_QUEUED"
+        return "READY_TO_RELEASE"
+
+    def release(value: dict, candidate_id: str) -> bool:
+        order.append("release")
+        assert candidate_id == TARGET
+        hold = value["published_topic_dedup_review"]["holds"].pop()
+        value["pending_talk"].append(copy.deepcopy(hold["candidate"]))
+        value["published_topic_resolution_recovery"] = {
+            "schema_version": "published-topic-resolution-recovery-marker.v1",
+            "candidate_id": TARGET,
+        }
+        return True
+
+    def generic(_date, value, *, automatic_maintenance, talk_candidate_ids):
+        order.append("generic")
+        assert automatic_maintenance is True
+        assert tuple(talk_candidate_ids) == (TARGET,)
+        assert [row["cid"] for row in value["pending_talk"]] == [TARGET]
+        return 0, 0, 0, 0, False
+
+    monkeypatch.setattr(
+        topic_collision,
+        "inspect_published_topic_resolution_recovery",
+        inspect,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        topic_collision,
+        "release_resolved_published_topic_hold",
+        release,
+    )
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "maintain_delivery_recovery_scope",
+        generic,
+    )
+
+    first = historical_failed_talk_scope.maintain(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        candidate_ids=(TARGET,),
+    )
+
+    assert first == (0, 0, 0, 0, False)
+    assert order == ["inspect", "release", "inspect", "generic"]
+    assert state["published_topic_resolution_recovery"] == {
+        "schema_version": "published-topic-resolution-recovery-marker.v1",
+        "candidate_id": TARGET,
+    }
+    assert state["published_topic_dedup_review"]["holds"] == []
+    assert {
+        key: state[key]
+        for key in (
+            "pending_song",
+            "song_backlog",
+            "song_selection_backlog",
+            "songs",
+            "song_superseded_attempts",
+        )
+    } == song_preimage
+    assert state["upload_allowed"] is False
+
+    order.clear()
+    second = historical_failed_talk_scope.maintain(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        candidate_ids=(TARGET,),
+    )
+
+    assert second == (0, 0, 0, 0, False)
+    assert order == ["inspect", "generic"]
+    assert "operator_processing_scope_runtime_block" not in state
+
+
+def test_v5_retry_pending_still_enters_generic_maintenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A typed recoverable pick is unfinished work, never a terminal release."""
+
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice import published_topic_collision as topic_collision
+
+    state = _v5_state()
+    state["published_topic_dedup_review"]["holds"] = []
+    state["pending_talk"] = []
+    state["picks"].append(
+        {
+            "candidate_id": TARGET,
+            "status": "failed",
+            "failure_recoverable": True,
+        }
+    )
+    state["published_topic_resolution_recovery"] = {
+        "schema_version": "published-topic-resolution-recovery-ledger.v1",
+        "entries": {TARGET: {"candidate_id": TARGET}},
+        "ledger_sha256": "test-seal",
+    }
+    order: list[str] = []
+    monkeypatch.setattr(
+        topic_collision,
+        "inspect_published_topic_resolution_recovery",
+        lambda *_a, **_k: "RELEASED_RETRY_PENDING",
+    )
+
+    def generic(_date, value, *, automatic_maintenance, talk_candidate_ids):
+        order.append("generic")
+        assert automatic_maintenance is True
+        assert tuple(talk_candidate_ids) == (TARGET,)
+        assert value["picks"][-1]["failure_recoverable"] is True
+        failed = value["picks"].pop()
+        value["pending_talk"].append(
+            {
+                "cid": TARGET,
+                "segment_path": "/recordings/target.mp4",
+                "start_ms": 10_000,
+                "end_ms": 20_000,
+                "hook": "target",
+                "selection_scorecard": {"schema_version": "test.v1"},
+                "recovery_source_record_sha256": "sha256:" + "a" * 64,
+                "test_failed_row": failed,
+            }
+        )
+        return 0, 0, 1, 0, False
+
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "maintain_delivery_recovery_scope",
+        generic,
+    )
+
+    def advance(value, candidate_id, **kwargs):
+        order.append("advance")
+        assert candidate_id == TARGET
+        assert kwargs["pre_state"]["picks"][-1]["failure_recoverable"] is True
+        assert kwargs["from_collection"] == "picks"
+        assert kwargs["from_row"]["candidate_id"] == TARGET
+        assert kwargs["to_collection"] == "pending_talk"
+        assert kwargs["to_row"] == value["pending_talk"][-1]
+        return True
+
+    monkeypatch.setattr(
+        topic_collision,
+        "advance_published_topic_resolution_recovery",
+        advance,
+    )
+
+    result = historical_failed_talk_scope.maintain(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        candidate_ids=(TARGET,),
+    )
+
+    assert result == (0, 0, 1, 0, False)
+    assert order == ["generic", "advance"]
+    assert "operator_processing_scope_runtime_block" not in state
+
+
+def test_v5_unsealed_generic_retry_transition_rolls_back_and_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice import published_topic_collision as topic_collision
+
+    state = _v5_state()
+    state["published_topic_dedup_review"]["holds"] = []
+    state["pending_talk"] = []
+    state["picks"].append(
+        {
+            "candidate_id": TARGET,
+            "status": "failed",
+            "failure_recoverable": True,
+        }
+    )
+    state["published_topic_resolution_recovery"] = {
+        "schema_version": "published-topic-resolution-recovery-ledger.v1",
+        "entries": {TARGET: {"candidate_id": TARGET}},
+        "ledger_sha256": "test-seal",
+    }
+    preimage = copy.deepcopy(state)
+    monkeypatch.setattr(
+        topic_collision,
+        "inspect_published_topic_resolution_recovery",
+        lambda *_a, **_k: "RELEASED_RETRY_PENDING",
+    )
+
+    def generic(_date, value, **_kwargs):
+        value["picks"].pop()
+        value["pending_talk"].append({"cid": TARGET, "unsealed": True})
+        return 0, 0, 1, 0, False
+
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "maintain_delivery_recovery_scope",
+        generic,
+    )
+    monkeypatch.setattr(
+        topic_collision,
+        "advance_published_topic_resolution_recovery",
+        lambda *_a, **_k: False,
+    )
+
+    result = historical_failed_talk_scope.maintain(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        candidate_ids=(TARGET,),
+    )
+
+    assert result == (0, 0, 0, 0, False)
+    assert {
+        key: value
+        for key, value in state.items()
+        if key != "operator_processing_scope_runtime_block"
+    } == preimage
+    assert state["operator_processing_scope_runtime_block"]["reason_code"] == (
+        "TOPIC_DEDUP_RETRY_TRANSITION_BLOCKED"
+    )
+
+
+def test_v5_session_annotation_rebound_failure_rolls_back_before_persist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice import published_topic_collision as topic_collision
+
+    state = _v5_state()
+    state["published_topic_resolution_recovery"] = {"sealed": "preimage"}
+    state["pending_talk"] = [
+        {
+            "cid": TARGET,
+            "segment_path": "/recordings/target.mp4",
+            "start_ms": 10_000,
+            "end_ms": 20_000,
+            "hook": "target",
+        }
+    ]
+    preimage = copy.deepcopy(state)
+
+    def annotate(_date, value, **_kwargs):
+        value["pending_talk"][0]["session_id"] = "unsealed-session"
+        return True
+
+    monkeypatch.setattr(runner, "annotate_state_sessions", annotate)
+    monkeypatch.setattr(
+        topic_collision,
+        "seal_published_topic_resolution_row_rebounds",
+        lambda *_a, **_k: False,
+        raising=False,
+    )
+
+    assert historical_failed_talk_scope.annotate_sessions(
+        DATE,
+        state,
+        include_song_rows=False,
+        candidate_ids=(TARGET,),
+    ) == -1
+    assert {
+        key: value
+        for key, value in state.items()
+        if key != "operator_processing_scope_runtime_block"
+    } == preimage
+    assert state["operator_processing_scope_runtime_block"]["reason_code"] == (
+        "TOPIC_DEDUP_SESSION_ANNOTATION_TRANSITION_BLOCKED"
+    )
+
+
+def test_v5_unsealed_producer_pick_is_rolled_back_to_exact_queue_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice import published_topic_collision as topic_collision
+
+    state = _v5_state()
+    state["published_topic_dedup_review"]["holds"] = []
+    state["published_topic_resolution_recovery"] = {"sealed": "preimage"}
+    queue_row = {
+        "cid": TARGET,
+        "segment_path": "/recordings/target.mp4",
+        "start_ms": 10_000,
+        "end_ms": 20_000,
+        "hook": "target",
+    }
+    state["pending_talk"] = [queue_row]
+    preimage = historical_failed_talk_scope.production_preimage(state, (TARGET,))
+    assert preimage is not None
+    state["pending_talk"] = []
+    state["picks"].append(
+        {
+            "candidate_id": TARGET,
+            "status": "failed",
+            "reason_codes": ["PRODUCE_UNEXPECTED_EXCEPTION"],
+        }
+    )
+    monkeypatch.setattr(
+        topic_collision,
+        "seal_published_topic_resolution_production_transition",
+        lambda *_a, **_k: False,
+        raising=False,
+    )
+
+    assert not historical_failed_talk_scope.seal_production_transition(
+        DATE, state, (TARGET,), preimage
+    )
+    assert state["pending_talk"] == [queue_row]
+    assert all(row.get("candidate_id") != TARGET for row in state["picks"])
+    assert state["operator_processing_scope_runtime_block"]["reason_code"] == (
+        "TOPIC_DEDUP_PRODUCTION_TRANSITION_BLOCKED"
+    )
+
+
+def test_v5_cover_pending_uses_full_producer_requeue_and_skips_in_place_repair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.autoslice import historical_failed_talk_scope
+
+    state = _v5_state()
+    state["published_topic_dedup_review"]["holds"] = []
+    state["picks"].append(
+        {
+            "candidate_id": TARGET,
+            "status": "media_ready_cover_pending",
+            "segment": "target.mp4",
+            "start_ms": 10_000,
+            "end_ms": 20_000,
+            "hook": "target",
+            "talk_repair_retry_count": 0,
+        }
+    )
+    queued = {
+        "cid": TARGET,
+        "segment_path": "/recordings/target.mp4",
+        "start_ms": 10_000,
+        "end_ms": 20_000,
+        "hook": "target",
+        "selected_repair": True,
+        "recovery_source_record_sha256": "sha256:" + "a" * 64,
+    }
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "_recovery_queue_item",
+        lambda *_a, **_k: copy.deepcopy(queued),
+    )
+
+    assert historical_failed_talk_scope._requeue_topic_cover_pending(
+        DATE, state, TARGET
+    ) == 1
+    assert state["pending_talk"] == [queued]
+    assert all(row.get("candidate_id") != TARGET for row in state["picks"])
+    monkeypatch.setattr(
+        runner,
+        "repair_covers",
+        lambda *_a, **_k: pytest.fail("v5 must not enter multi-persist cover repair"),
+    )
+    historical_failed_talk_scope.repair_covers(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        candidate_ids=(TARGET,),
+    )
+
+
+@pytest.mark.parametrize("failure_mode", ["false", "exception", "post_blocked"])
+def test_v5_failed_release_records_typed_block_rolls_back_and_runs_no_other_work(
+    monkeypatch: pytest.MonkeyPatch, failure_mode: str
+) -> None:
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice import published_topic_collision as topic_collision
+
+    state = _v5_state()
+    preimage = copy.deepcopy(state)
+
+    inspection_count = 0
+
+    def inspect(*_args, **_kwargs) -> str:
+        nonlocal inspection_count
+        inspection_count += 1
+        if failure_mode == "post_blocked" and inspection_count > 1:
+            return "BLOCKED"
+        return "READY_TO_RELEASE"
+
+    monkeypatch.setattr(
+        topic_collision,
+        "inspect_published_topic_resolution_recovery",
+        inspect,
+        raising=False,
+    )
+    def fail_after_partial_mutation(value: dict, _candidate_id: str) -> bool:
+        value["pending_talk"].append({"cid": "must_be_rolled_back"})
+        if failure_mode == "exception":
+            raise RuntimeError("repository authority became unavailable")
+        return failure_mode == "post_blocked"
+
+    monkeypatch.setattr(
+        topic_collision,
+        "release_resolved_published_topic_hold",
+        fail_after_partial_mutation,
+    )
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "maintain_delivery_recovery_scope",
+        lambda *_a, **_k: pytest.fail("failed v5 release must not enter generic maintenance"),
+    )
+
+    result = historical_failed_talk_scope.maintain(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        candidate_ids=(TARGET,),
+    )
+
+    assert result == (0, 0, 0, 0, False)
+    assert {
+        key: value
+        for key, value in state.items()
+        if key != "operator_processing_scope_runtime_block"
+    } == preimage
+    assert state["operator_processing_scope_runtime_block"] == {
+        "schema_version": "operator-processing-scope-runtime-block.v1",
+        "recording_date": DATE,
+        "candidate_ids": [TARGET],
+        "intent": TOPIC_HOLD_RECOVERY_INTENT,
+        "upload_allowed": False,
+        "reason_code": "TOPIC_DEDUP_HOLD_RELEASE_FAILED",
+    }
+    monkeypatch.setattr(
+        semantic_chat_refresh,
+        "runner_date_work_flags",
+        lambda *_a, **_k: pytest.fail("blocked v5 must not probe or run follow-on work"),
+    )
+    assert historical_failed_talk_scope.work_flags(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        candidate_ids=(TARGET,),
+    ) == (False, False, False)
+
+
+@pytest.mark.parametrize("drift", ["marker", "queued_row", "resolution"])
+def test_v5_drifted_queued_release_blocks_before_any_release_or_generic_work(
+    monkeypatch: pytest.MonkeyPatch, drift: str
+) -> None:
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice import published_topic_collision as topic_collision
+
+    state = _v5_state()
+    state["published_topic_dedup_review"]["holds"] = []
+    state["pending_talk"] = [{"cid": TARGET, "drift": drift}]
+    state["published_topic_resolution_recovery"] = {
+        "schema_version": "published-topic-resolution-recovery-marker.v1",
+        "drift": drift,
+    }
+    preimage = copy.deepcopy(state)
+    monkeypatch.setattr(
+        topic_collision,
+        "inspect_published_topic_resolution_recovery",
+        lambda *_a, **_k: "BLOCKED",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        topic_collision,
+        "release_resolved_published_topic_hold",
+        lambda *_a, **_k: pytest.fail("blocked queued v5 must not call one-shot release"),
+    )
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "maintain_delivery_recovery_scope",
+        lambda *_a, **_k: pytest.fail("blocked queued v5 must not enter generic maintenance"),
+    )
+
+    result = historical_failed_talk_scope.maintain(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        candidate_ids=(TARGET,),
+    )
+
+    assert result == (0, 0, 0, 0, False)
+    assert {
+        key: value
+        for key, value in state.items()
+        if key != "operator_processing_scope_runtime_block"
+    } == preimage
+    assert state["operator_processing_scope_runtime_block"]["reason_code"] == (
+        "TOPIC_DEDUP_RELEASE_STATE_BLOCKED"
+    )
 
 
 def test_frozen_talk_scope_ignores_pure_song_work(
@@ -320,6 +876,135 @@ def test_process_date_preserves_song_queues_and_never_backfills_after_rejection(
         )
     } == song_preimage
     assert state["upload_allowed"] is False
+
+
+def test_process_date_v5_seals_synthetic_pick_before_any_state_persist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real runner commit point cannot persist an unbound crash result."""
+
+    from src.autoslice import historical_failed_talk_scope
+
+    queue_row = {
+        "cid": TARGET,
+        "segment_path": "/recordings/target.mp4",
+        "start_ms": 10_000,
+        "end_ms": 20_000,
+        "hook": "target",
+        "selection_scorecard": {"schema_version": "test.v1"},
+    }
+    state = _v5_state()
+    state["published_topic_dedup_review"]["holds"] = []
+    state["published_topic_resolution_recovery"] = {"head": "queue"}
+    state["pending_talk"] = [queue_row]
+    persisted: list[dict] = []
+    calls: list[str] = []
+
+    monkeypatch.setattr(historical_failed_talk_scope, "freeze", lambda *_a, **_k: (TARGET,))
+    monkeypatch.setattr(
+        historical_failed_talk_scope, "annotate_sessions", lambda *_a, **_k: 0
+    )
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "maintain",
+        lambda *_a, **_k: (0, 0, 0, 0, False),
+    )
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "work_flags",
+        lambda *_a, **_k: (False, True, False),
+    )
+    monkeypatch.setattr(historical_failed_talk_scope, "discover", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "refresh_scorecards",
+        lambda *_a, **_k: 0,
+    )
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "prioritize_and_capture",
+        lambda *_a, **_k: [copy.deepcopy(queue_row)],
+    )
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "prepare_production_context",
+        lambda *_a, **_k: (True, None),
+    )
+
+    def capture_preimage(value, _ids):
+        calls.append("preimage")
+        return copy.deepcopy(value)
+
+    def seal(_date, value, _ids, preimage):
+        calls.append("seal")
+        assert preimage["pending_talk"] == [queue_row]
+        assert value["pending_talk"] == []
+        target = next(row for row in value["picks"] if row.get("candidate_id") == TARGET)
+        assert target["reason_codes"] == ["PRODUCE_UNEXPECTED_EXCEPTION"]
+        assert target["failure_recoverable"] is True
+        value["published_topic_resolution_recovery"] = {"head": "sealed-pick"}
+        return True
+
+    monkeypatch.setattr(historical_failed_talk_scope, "production_preimage", capture_preimage)
+    monkeypatch.setattr(historical_failed_talk_scope, "seal_production_transition", seal)
+    monkeypatch.setattr(historical_failed_talk_scope, "repair_covers", lambda *_a, **_k: None)
+    monkeypatch.setattr(runner, "read_state", lambda _date: state)
+    monkeypatch.setattr(runner, "runtime_health_error", lambda: None)
+    monkeypatch.setattr(runner, "recover_finalized_legacy_hls", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        runner,
+        "audit_finalized_recording_inventory",
+        lambda *_a, **_k: {"can_select": True, "issues": []},
+    )
+    monkeypatch.setattr(runner, "AUTOMATIC_MAINTENANCE_NOT_BEFORE", DATE)
+    monkeypatch.setattr(runner, "cpa_healthy", lambda: True)
+    monkeypatch.setattr(runner, "session_sealed", lambda *_a, **_k: True)
+    monkeypatch.setattr(runner, "split_produce_blocked_talk_items", lambda rows: (rows, []))
+    def crash_in_real_batch(_date, _item):
+        raise TimeoutError("synthetic producer crash")
+
+    monkeypatch.setattr(runner, "produce_talk", crash_in_real_batch)
+    monkeypatch.setattr(runner, "talk_pipeline_fingerprint", lambda _cid: "sha256:test")
+    monkeypatch.setattr(runner, "live_hold_recheck", lambda: False)
+    monkeypatch.setattr(runner, "apply_talk_backfill_rejection_policy", lambda *_a, **_k: False)
+
+    def write_state(_date, value):
+        target_picks = [
+            row
+            for row in value.get("picks", [])
+            if isinstance(row, dict) and row.get("candidate_id") == TARGET
+        ]
+        if target_picks:
+            assert value["published_topic_resolution_recovery"] == {
+                "head": "sealed-pick"
+            }
+        persisted.append(copy.deepcopy(value))
+
+    monkeypatch.setattr(runner, "write_state", write_state)
+    monkeypatch.setattr(runner, "write_reports", lambda *_a, **_k: None)
+    monkeypatch.setattr(runner, "queue_collab_evidence_capture", lambda *_a, **_k: None)
+    monkeypatch.setattr(runner, "log", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        runner,
+        "_project_terminal_batch_state",
+        lambda value, **_k: {
+            "picks": value["picks"],
+            "songs": value["songs"],
+            "delivered_talk": [],
+            "repaired": [],
+            "delivered_songs": [],
+            "blocked_songs": [],
+            "rejected_songs": [],
+            "failures": value["picks"],
+            "retry_epoch": None,
+        },
+    )
+
+    runner.process_date(DATE)
+
+    assert calls == ["preimage", "seal"]
+    assert persisted
+    assert state["published_topic_resolution_recovery"] == {"head": "sealed-pick"}
 
 
 def test_v4_real_annotation_and_terminal_projection_preserve_all_song_rows(

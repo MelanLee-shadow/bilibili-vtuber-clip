@@ -1039,18 +1039,18 @@ def classify_talk_failure(attempt_output: str) -> dict:
             if transient
             else ("content_boundary", "boundary_semantic_review", False)
         )
-    elif _provider_failure.marker_transport_unavailable(
-        tail, "BOUNDARY_SEMANTIC_REVIEW_REQUIRED"
-    ):
+    elif "BOUNDARY_SEMANTIC_REVIEW_REQUIRED" in tail:
         # 边界解析面（早于终审契约）：spec 里的边界复核非 PASS 就 SystemExit，
         # provider 打不通时它正是 BLOCK+UNAVAILABLE——所以 transport 故障其实
-        # 死在**这里**，走不到 FINAL_REVIEW_RELEASE_BLOCKED。此前这条 marker
-        # 在分类器里一个分支都没有，整条落 producer_error/unknown（只吃一次
-        # 重试）。详见 docs/reviews/2026-08-10-llm-retry-coverage.md §2.1。
+        # marker 本身是边界语义门的确定失败面：只有 reason_codes 命中 transport
+        # 故障时才可恢复；其余内容裁决不能再落 producer_error/unknown。
+        transient = _provider_failure.marker_transport_unavailable(
+            tail, "BOUNDARY_SEMANTIC_REVIEW_REQUIRED"
+        )
         kind, stage, recoverable = (
-            "provider_transient",
-            "boundary_semantic_review",
-            True,
+            ("provider_transient", "boundary_semantic_review", True)
+            if transient
+            else ("content_boundary", "boundary_semantic_review", False)
         )
     elif "BOUNDARY_UNREPAIRABLE" in tail:
         kind, stage, recoverable = "content_boundary", "boundary_resolution", False

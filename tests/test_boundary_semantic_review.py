@@ -225,6 +225,158 @@ def test_boundary_review_sees_long_forward_window_and_next_topic_witness():
     assert '"cue_index": 19' in seen_prompt
 
 
+def test_source_review_contract_scans_closing_exchange_before_transition():
+    """1576 regression: a content answer can be complete before the local
+    interaction is safe to cut.  The reviewer must scan the bounded closing
+    exchange and its dedicated post-cap witness instead of stopping on the
+    selector target merely because the original answer already landed.
+    """
+
+    cues = [
+        _cue(75, 0, 10_000, "目标故事已经讲完了"),
+        _cue(86, 20_000, 22_000, "所以你之后还会这样吗"),
+        _cue(87, 22_100, 26_000, "会呀，我之后也会继续的"),
+        _cue(91, 26_100, 39_000, "好，那这件事就聊到这里"),
+        _cue(92, 40_100, 41_500, "那么差不多要进入尾声了"),
+    ]
+    seen_request: dict = {}
+
+    def review(prompt: str) -> str:
+        request = json.loads(
+            prompt.split("绑定请求 JSON：\n", 1)[1].split(
+                "\n\n只输出 JSON：", 1
+            )[0]
+        )
+        seen_request.update(request)
+        has_fixed_contract = all(
+            fragment in prompt
+            for fragment in (
+                "紧接目标的同话题提问、回应或收尾互动",
+                "逐项检查 next_topic_witness_cue_indexes",
+                "不要求紧邻推荐 cue 的下一 cue 就换题",
+            )
+        )
+        payload = (
+            {
+                "syntax_complete": True,
+                "story_closed": True,
+                "next_topic_separated": True,
+                "content_anchor_covered": True,
+                "recommended_end_cue_index": 4,
+                "evidence_cue_indexes": [1, 2, 3, 4, 5],
+                "same_topic_continues_after_target": False,
+                "needs_more_context": False,
+                "reason_codes": ["LATEST_CLOSING_EXCHANGE_COMPLETE"],
+                "summary": "91 完成收尾互动，92 明确转入直播尾声。",
+            }
+            if has_fixed_contract
+            else {
+                "syntax_complete": True,
+                "story_closed": True,
+                "next_topic_separated": False,
+                "content_anchor_covered": True,
+                "recommended_end_cue_index": 1,
+                "evidence_cue_indexes": [1, 2, 3],
+                "same_topic_continues_after_target": False,
+                "needs_more_context": False,
+                "reason_codes": ["TARGET_CONTENT_ALREADY_COMPLETE"],
+                "summary": "旧契约在内容目标处停下，没有审完收尾互动。",
+            }
+        )
+        return json.dumps(payload, ensure_ascii=False)
+
+    result = review_talk_boundary_semantics(
+        cues=cues,
+        target_ms=10_000,
+        candidate_id="auto_210131_1576_1802",
+        selection_hook="目标故事与直播收尾互动",
+        selection_scorecard=_scorecard(),
+        structured_context="",
+        candidate_context="hash-bound context",
+        llm_call=review,
+        extract_json=_extract,
+        max_forward_ms=30_000,
+    )
+
+    assert seen_request["next_topic_witness_cue_indexes"] == [5]
+    assert seen_request["endpoint_selection_contract_version"] == (
+        "talk-boundary-endpoint-selection-contract.v2"
+    )
+    assert seen_request["review_scope"] == "source_full_window"
+    assert result["status"] == "PASS"
+    assert result["recommended_end_cue_index"] == 4
+    assert result["recommended_end_ms"] == 39_000
+    assert result["next_topic_witness_valid"] is True
+
+
+def test_closing_exchange_without_post_end_transition_remains_blocked():
+    response = json.dumps(
+        {
+            "syntax_complete": True,
+            "story_closed": True,
+            "next_topic_separated": False,
+            "content_anchor_covered": True,
+            "recommended_end_cue_index": 4,
+            "evidence_cue_indexes": [1, 2, 3, 4],
+            "same_topic_continues_after_target": False,
+            "needs_more_context": False,
+            "reason_codes": ["NO_POST_END_TRANSITION_WITNESS"],
+            "summary": "收尾互动已完整，但窗口内没有换题证据。",
+        },
+        ensure_ascii=False,
+    )
+
+    result = review_talk_boundary_semantics(
+        cues=[
+            _cue(1, 0, 10_000, "目标故事已经讲完了"),
+            _cue(2, 10_100, 12_000, "之后还会这样吗"),
+            _cue(3, 12_100, 16_000, "会呀，我之后也会继续的"),
+            _cue(4, 16_100, 19_000, "好，那就这样"),
+        ],
+        target_ms=10_000,
+        candidate_id="closing-without-transition",
+        selection_hook="目标故事与收尾互动",
+        selection_scorecard=_scorecard(),
+        structured_context="",
+        candidate_context="",
+        llm_call=lambda _prompt: response,
+        extract_json=_extract,
+    )
+
+    assert result["status"] == "BLOCK"
+    assert "NEXT_TOPIC_SEPARATED_NOT_PROVEN" in result["reason_codes"]
+
+
+def test_endpoint_contract_change_does_not_resample_provider_failures():
+    calls = 0
+
+    def unavailable(_prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("provider unavailable")
+
+    with pytest.raises(
+        BoundarySemanticReviewError,
+        match="BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:RuntimeError",
+    ):
+        review_talk_boundary_semantics(
+            cues=[
+                _cue(1, 0, 10_000, "目标故事"),
+                _cue(2, 10_100, 12_000, "下一话题"),
+            ],
+            target_ms=10_000,
+            candidate_id="provider-failure-single-call",
+            selection_hook="目标故事",
+            selection_scorecard=_scorecard(),
+            structured_context="",
+            candidate_context="",
+            llm_call=unavailable,
+            extract_json=_extract,
+        )
+
+    assert calls == 1
+
+
 def test_manual_lower_bound_moves_shared_scope_past_old_origin():
     """The shared cap is measured from an authorized lower bound, not from a
     stale selector endpoint."""
@@ -746,6 +898,7 @@ def test_final_delivery_terminal_cue_accepts_bound_source_separation_witness():
     assert seen_request["terminal_source_separation_witness"] == result[
         "source_separation_witness"
     ]
+    assert seen_request["review_scope"] == "final_delivery"
 
 
 def test_final_delivery_terminal_cue_rejects_interval_mismatched_source_witness():

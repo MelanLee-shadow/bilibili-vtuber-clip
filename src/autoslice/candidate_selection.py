@@ -8,6 +8,7 @@ stable in module and cron script execution modes.
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 
@@ -962,7 +963,159 @@ def refill_songs(state: dict) -> None:
     state["song_backlog"] = deferred + legacy
 
 
+def _talk_candidate_id(row: object) -> str:
+    if not isinstance(row, dict):
+        return ""
+    return str(row.get("cid") or row.get("candidate_id") or "")
+
+
+def scoped_pending_talk_items(
+    state: dict,
+    frozen_talk_candidate_ids: tuple[str, ...] | None,
+) -> list[dict]:
+    """Return the production-visible Talk queue for this tick.
+
+    A frozen operator tick retains unrelated rows in their original persistent
+    collections.  Consumers must therefore use this projection instead of
+    treating every persisted ``pending_talk`` row as dispatch authority.
+    """
+
+    pending = state.get("pending_talk", [])
+    if not isinstance(pending, list):
+        return []
+    if frozen_talk_candidate_ids is None:
+        return list(pending)
+    allowed = set(frozen_talk_candidate_ids)
+    return [
+        item
+        for item in pending
+        if isinstance(item, dict) and _talk_candidate_id(item) in allowed
+    ]
+
+
+def replace_scoped_pending_talk_items(
+    state: dict,
+    frozen_talk_candidate_ids: tuple[str, ...] | None,
+    replacements: list[dict],
+) -> None:
+    """Replace only the production-visible rows, retaining frozen neighbours."""
+
+    if frozen_talk_candidate_ids is None:
+        state["pending_talk"] = replacements
+        return
+    allowed = set(frozen_talk_candidate_ids)
+    if any(_talk_candidate_id(item) not in allowed for item in replacements):
+        raise ValueError("NON_TARGET_TALK_ENTERED_FROZEN_PENDING_REPLACEMENT")
+    pending = state.get("pending_talk", [])
+    if not isinstance(pending, list):
+        pending = []
+    restored: list[object] = []
+    inserted = False
+    for item in pending:
+        if _talk_candidate_id(item) in allowed:
+            if not inserted:
+                restored.extend(replacements)
+                inserted = True
+            continue
+        restored.append(item)
+    if not inserted:
+        restored[0:0] = replacements
+    state["pending_talk"] = restored
+
+
+def _detach_frozen_non_target_talk_rows(
+    state: dict,
+    frozen_talk_candidate_ids: tuple[str, ...] | None,
+) -> tuple[tuple[object, ...], tuple[object, ...]] | None:
+    """Remove non-target queues before any selection mutator can observe them."""
+
+    candidate_ids = tuple(frozen_talk_candidate_ids or ())
+    if (
+        frozen_talk_candidate_ids is None
+        or state.get("talk_selection_contract") is not None
+        or not candidate_ids
+        or len(candidate_ids) != len(set(candidate_ids))
+        or any(not isinstance(value, str) or not value for value in candidate_ids)
+    ):
+        return None
+    pending = state.get("pending_talk", [])
+    backlog = state.get("talk_backlog", [])
+    if not isinstance(pending, list) or not isinstance(backlog, list):
+        raise ValueError("frozen operator Talk queues must be lists")
+    allowed = set(candidate_ids)
+    pending_non_target = tuple(
+        deepcopy(item) for item in pending if _talk_candidate_id(item) not in allowed
+    )
+    backlog_non_target = tuple(
+        deepcopy(item) for item in backlog if _talk_candidate_id(item) not in allowed
+    )
+    state["pending_talk"] = [
+        item for item in pending if _talk_candidate_id(item) in allowed
+    ]
+    state["talk_backlog"] = [
+        item for item in backlog if _talk_candidate_id(item) in allowed
+    ]
+    return pending_non_target, backlog_non_target
+
+
+def _restore_frozen_non_target_talk_rows(
+    state: dict,
+    frozen_talk_candidate_ids: tuple[str, ...],
+    preimage: tuple[tuple[object, ...], tuple[object, ...]],
+) -> None:
+    """Restore exact queue bytes, collection membership, and relative order."""
+
+    allowed = set(frozen_talk_candidate_ids)
+    pending = state.get("pending_talk", [])
+    backlog = state.get("talk_backlog", [])
+    pending_rows = pending if isinstance(pending, list) else []
+    backlog_rows = backlog if isinstance(backlog, list) else []
+    target_pending = [
+        item
+        for item in pending_rows
+        if _talk_candidate_id(item) in allowed
+    ]
+    target_backlog = [
+        item
+        for item in backlog_rows
+        if _talk_candidate_id(item) in allowed
+    ]
+    pending_non_target, backlog_non_target = preimage
+    state["pending_talk"] = target_pending + [deepcopy(item) for item in pending_non_target]
+    state["talk_backlog"] = target_backlog + [deepcopy(item) for item in backlog_non_target]
+    disclosure = state.get("operator_processing_scope_disclosure")
+    if isinstance(disclosure, dict):
+        disclosure["held_candidate_ids"] = [
+            _talk_candidate_id(item)
+            for item in (*pending_non_target, *backlog_non_target)
+        ]
+
+
 def prioritize(
+    state: dict,
+    *,
+    frozen_talk_candidate_ids: tuple[str, ...] | None = None,
+    allow_song_work: bool = True,
+) -> None:
+    """Prioritize one batch while keeping a frozen scope topologically isolated."""
+
+    preimage = _detach_frozen_non_target_talk_rows(state, frozen_talk_candidate_ids)
+    try:
+        _prioritize_active_queues(
+            state,
+            frozen_talk_candidate_ids=frozen_talk_candidate_ids,
+            allow_song_work=allow_song_work,
+        )
+    finally:
+        if preimage is not None:
+            _restore_frozen_non_target_talk_rows(
+                state,
+                tuple(frozen_talk_candidate_ids or ()),
+                preimage,
+            )
+
+
+def _prioritize_active_queues(
     state: dict,
     *,
     frozen_talk_candidate_ids: tuple[str, ...] | None = None,

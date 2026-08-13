@@ -21,6 +21,17 @@ talk 成片的最终 end 必须同时成立：
 3. 故事/回答/包袱已经落地；
 4. 下一 cue 已被证明是下一条 SC、谢礼或另一话题，不能吞进本片。
 
+source-full-window 的 endpoint 选择使用
+`talk-boundary-endpoint-selection-contract.v2`。reviewer 必须比较完整的
+`recommendation_cue_indexes`，并逐项检查为上限之后保留的
+`next_topic_witness_cue_indexes`，不能因为 selector 目标所承诺的内容已经讲完就立刻停在目标
+cue。目标后若紧接同话题提问、回应或收尾互动，endpoint 必须推进到明确换题见证之前、仍在
+推荐集合内的最晚完整收束 cue；不得把问句留在片尾或把回应切到片外。换题见证不要求是推荐
+cue 的紧邻下一句，只要它在 hash-bound 可见 cue 中位于 endpoint 之后、语义上明确进入新
+SC、谢礼、另一话题或直播阶段，并由 `evidence_cue_indexes` 实际引用即可。没有 post-end
+见证仍须 BLOCK；“进入尾声”等字面词只供 CPA 作上下文判断，确定性代码不得靠关键词签发
+PASS。契约版本进入 request SHA，因此旧 endpoint 语义回执不能在 v2 下静默重放。
+
 普通 hash-bound 人工 end（`boundary_end_mode=semantic_lower_bound`，也包括未显式声明 mode
 的普通 `given_end_ms`）只表示“人工已确认至少要保留到这里”的**下界**，不是可绕过语义门的
 绝对截断点。它不得早于候选 `end_ms`，不得砍掉 content anchor，也不得覆盖一个更晚的语义

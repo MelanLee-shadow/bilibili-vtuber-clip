@@ -38,6 +38,8 @@ from src.autoslice.operator_processing_scope import (
     SPEAKER_HOLD_RECOVERY_GRANT_SCHEMA,
     SPEAKER_HOLD_RECOVERY_INTENT,
     STATE_KEY,
+    TOPIC_HOLD_RECOVERY_GRANT_SCHEMA,
+    TOPIC_HOLD_RECOVERY_INTENT,
     operator_scope_admission,
     operator_talk_scope,
 )
@@ -171,6 +173,48 @@ def _speaker_hold_recovery_grant(**overrides) -> dict:
     )
     grant.update(overrides)
     return grant
+
+
+def _topic_hold_recovery_grant(**overrides) -> dict:
+    grant = _grant(
+        schema_version=TOPIC_HOLD_RECOVERY_GRANT_SCHEMA,
+        intent=TOPIC_HOLD_RECOVERY_INTENT,
+        candidate_ids=[TIER1_IDS[0]],
+        grant_id="2026-08-07-recover-resolved-topic-hold",
+        reason="人工去重结论与刷新后的 scorecard 已绑定，只释放这一条停泊候选且禁止上传。",
+        upload_allowed=False,
+    )
+    grant.update(overrides)
+    return grant
+
+
+def _topic_hold_state(grant: dict | None = None) -> dict:
+    return {
+        "status": "no_delivery",
+        "upload_allowed": False,
+        "picks": [],
+        "pending_talk": [],
+        "talk_backlog": [],
+        "pending_song": [],
+        "song_backlog": [],
+        "songs": [],
+        "published_topic_dedup_review": {
+            "schema_version": "published-topic-dedup-review-state.v1",
+            "holds": [
+                {
+                    "candidate_id": TIER1_IDS[0],
+                    "candidate": {
+                        "cid": TIER1_IDS[0],
+                        "segment_path": f"/rec/{TIER1_IDS[0]}.mp4",
+                    },
+                    "queue_origin": "pending_talk",
+                    "suppression_authorized": False,
+                    "upload_authorized": False,
+                }
+            ],
+        },
+        STATE_KEY: grant or _topic_hold_recovery_grant(),
+    }
 
 
 def _speaker_hold_state(grant: dict | None = None) -> dict:
@@ -837,6 +881,270 @@ def test_v4_target_in_any_song_collection_is_never_reinterpreted_as_talk(monkeyp
     ):
         state = _speaker_hold_state()
         state[collection] = [{"candidate_id": TIER1_IDS[0]}]
+        assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+
+def test_v5_admits_one_resolved_nested_topic_hold_without_mutating_state(monkeypatch):
+    from src.autoslice import published_topic_collision as topic_collision
+
+    state = _topic_hold_state()
+    preimage = copy.deepcopy(state)
+    calls: list[str] = []
+
+    def probe(value, candidate_id, **_kwargs):
+        assert value == preimage
+        calls.append(candidate_id)
+        return "READY_TO_RELEASE"
+
+    monkeypatch.setattr(
+        topic_collision,
+        "inspect_published_topic_resolution_recovery",
+        probe,
+        raising=False,
+    )
+
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert admission.admitted is True
+    assert admission.candidate_ids == (TIER1_IDS[0],)
+    assert admission.disclosure == {
+        "schema_version": "operator-processing-scope-disclosure.v5",
+        "grant_id": "2026-08-07-recover-resolved-topic-hold",
+        "recording_date": RECORDING_DATE,
+        "candidate_ids": [TIER1_IDS[0]],
+        "outstanding_candidate_ids": [TIER1_IDS[0]],
+        "quote": IVAN_QUOTE,
+        "intent": TOPIC_HOLD_RECOVERY_INTENT,
+        "upload_allowed": False,
+    }
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == (
+        TIER1_IDS[0],
+    )
+    assert calls == [TIER1_IDS[0], TIER1_IDS[0]]
+    assert state == preimage
+
+
+def test_v5_arbitrary_queued_target_without_release_marker_is_blocked(monkeypatch):
+    from src.autoslice import published_topic_collision as topic_collision
+
+    state = _topic_hold_state()
+    state["published_topic_dedup_review"]["holds"] = []
+    state["pending_talk"] = [{"cid": TIER1_IDS[0]}]
+    monkeypatch.setattr(
+        topic_collision,
+        "inspect_published_topic_resolution_recovery",
+        lambda *_a, **_k: "BLOCKED",
+        raising=False,
+    )
+
+    blocked = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert blocked.admitted is False
+    assert blocked.reason_code == "TOPIC_DEDUP_RECOVERY_BLOCKED"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+
+def test_v5_valid_released_queue_and_retryable_failure_stay_outstanding_then_terminal_converges(
+    monkeypatch,
+):
+    from src.autoslice import published_topic_collision as topic_collision
+
+    disposition = {"value": "RELEASED_QUEUED"}
+    monkeypatch.setattr(
+        topic_collision,
+        "inspect_published_topic_resolution_recovery",
+        lambda *_a, **_k: disposition["value"],
+        raising=False,
+    )
+    state = _topic_hold_state()
+    state["published_topic_dedup_review"]["holds"] = []
+    state["pending_talk"] = [{"cid": TIER1_IDS[0]}]
+    state["published_topic_resolution_recovery"] = {
+        "schema_version": "published-topic-resolution-recovery-marker.v1"
+    }
+    queued = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+    assert queued.admitted is True
+    assert queued.outstanding_candidate_ids == (TIER1_IDS[0],)
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == (
+        TIER1_IDS[0],
+    )
+
+    state["pending_talk"] = []
+    state["picks"] = [
+        {
+            "candidate_id": TIER1_IDS[0],
+            "status": "failed",
+            "failure_recoverable": True,
+        }
+    ]
+    disposition["value"] = "RELEASED_RETRY_PENDING"
+    retry_pending = operator_scope_admission(
+        state, date=RECORDING_DATE, now=NOW
+    )
+    assert retry_pending.admitted is True
+    assert retry_pending.outstanding_candidate_ids == (TIER1_IDS[0],)
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == (
+        TIER1_IDS[0],
+    )
+
+    state["picks"] = [{"candidate_id": TIER1_IDS[0], "status": "review_ready"}]
+    disposition["value"] = "CONVERGED"
+    terminal = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+    assert terminal.reason_code == "CONVERGED"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) is None
+
+
+@pytest.mark.parametrize("drift", ["marker", "queued_row", "resolution"])
+def test_v5_drifted_durable_release_authority_blocks_queued_resume(
+    monkeypatch, drift
+):
+    from src.autoslice import published_topic_collision as topic_collision
+
+    state = _topic_hold_state()
+    state["published_topic_dedup_review"]["holds"] = []
+    state["pending_talk"] = [{"cid": TIER1_IDS[0], "drift": drift}]
+    state["published_topic_resolution_recovery"] = {
+        "schema_version": "published-topic-resolution-recovery-marker.v1",
+        "drift": drift,
+    }
+    monkeypatch.setattr(
+        topic_collision,
+        "inspect_published_topic_resolution_recovery",
+        lambda *_a, **_k: "BLOCKED",
+        raising=False,
+    )
+
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert admission.admitted is False
+    assert admission.reason_code == "TOPIC_DEDUP_RECOVERY_BLOCKED"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"upload_allowed": True},
+        {"intent": "RECOVER_ANY_TOPIC_HOLD"},
+        {"candidate_ids": [TIER1_IDS[0], TIER1_IDS[1]]},
+    ],
+)
+def test_v5_recognizable_malformed_grants_freeze_instead_of_falling_through(
+    overrides,
+):
+    state = _topic_hold_state(_topic_hold_recovery_grant(**overrides))
+
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert admission.reason_code == "SCHEMA_INVALID"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+
+def test_v5_expiry_wins_before_resolution_probe_io(monkeypatch):
+    from src.autoslice import published_topic_collision as topic_collision
+
+    monkeypatch.setattr(
+        topic_collision,
+        "inspect_published_topic_resolution_recovery",
+        lambda *_a, **_k: pytest.fail("expired v5 must not probe repository authority"),
+        raising=False,
+    )
+    state = _topic_hold_state(
+        _topic_hold_recovery_grant(expires_at="2026-08-10T15:00:00Z")
+    )
+
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert admission.reason_code == "EXPIRED"
+    assert admission.outstanding_candidate_ids == (TIER1_IDS[0],)
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) is None
+
+
+def test_v5_unresolved_or_malformed_nested_hold_blocks_all_recent_date_work(
+    monkeypatch,
+):
+    from src.autoslice import published_topic_collision as topic_collision
+
+    state = _topic_hold_state()
+    monkeypatch.setattr(
+        topic_collision,
+        "inspect_published_topic_resolution_recovery",
+        lambda *_a, **_k: "BLOCKED",
+        raising=False,
+    )
+    blocked = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+    assert blocked.reason_code == "TOPIC_DEDUP_RECOVERY_BLOCKED"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+    state["published_topic_dedup_review"]["holds"].append(
+        copy.deepcopy(state["published_topic_dedup_review"]["holds"][0])
+    )
+    malformed = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+    assert malformed.reason_code == "TOPIC_DEDUP_RECOVERY_BLOCKED"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+    state = _topic_hold_state()
+    monkeypatch.setattr(
+        topic_collision,
+        "inspect_published_topic_resolution_recovery",
+        lambda *_a, **_k: (_ for _ in ()).throw(OSError("authority unavailable")),
+        raising=False,
+    )
+    unavailable = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+    assert unavailable.reason_code == "TOPIC_DEDUP_RESOLUTION_PROBE_UNAVAILABLE"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("queue_origin", None),
+        ("suppression_authorized", True),
+        ("upload_authorized", True),
+        ("candidate", {"cid": TIER1_IDS[1]}),
+    ],
+)
+def test_v5_invalid_nested_hold_is_blocked_by_canonical_inspection(
+    monkeypatch, field, value
+):
+    from src.autoslice import published_topic_collision as topic_collision
+
+    monkeypatch.setattr(
+        topic_collision,
+        "inspect_published_topic_resolution_recovery",
+        lambda *_a, **_k: "BLOCKED",
+        raising=False,
+    )
+    state = _topic_hold_state()
+    state["published_topic_dedup_review"]["holds"][0][field] = value
+
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert admission.reason_code == "TOPIC_DEDUP_RECOVERY_BLOCKED"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+
+def test_v5_resolved_topic_hold_cannot_reinterpret_song_identity(monkeypatch):
+    from src.autoslice import published_topic_collision as topic_collision
+
+    monkeypatch.setattr(
+        topic_collision,
+        "inspect_published_topic_resolution_recovery",
+        lambda *_a, **_k: "READY_TO_RELEASE",
+        raising=False,
+    )
+    for collection in (
+        "pending_song",
+        "song_backlog",
+        "song_selection_backlog",
+        "songs",
+        "song_superseded_attempts",
+    ):
+        state = _topic_hold_state()
+        state[collection] = [{"candidate_id": TIER1_IDS[0]}]
+        assert operator_scope_admission(
+            state, date=RECORDING_DATE, now=NOW
+        ).admitted is True
         assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
 
 

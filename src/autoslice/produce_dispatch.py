@@ -184,6 +184,11 @@ def produce_batch_windowed(
                 "status": "failed",
                 "error": str(exc),
                 "reason_codes": ["PRODUCE_UNEXPECTED_EXCEPTION"],
+                **(
+                    {"failure_recoverable": True}
+                    if produce_fn is produce_talk_fn
+                    else {}
+                ),
                 "pipeline_fingerprint": (
                     talk_pipeline_fingerprint(str(item.get("cid") or ""))
                     if produce_fn is produce_talk_fn

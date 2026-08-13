@@ -837,7 +837,7 @@ from src.autoslice.candidate_selection import (  # noqa: E402
     quarantine_overlapping_talk_candidates,
     backlog_has_eligible_session_work,
     refill_songs,
-    prioritize,
+    prioritize, replace_scoped_pending_talk_items, scoped_pending_talk_items,
 )
 from src.autoslice import historical_failed_talk_scope, operator_processing_scope as operator_scope  # noqa: E402
 from src.autoslice.exact_talk_recovery_scope import (
@@ -1665,8 +1665,11 @@ def process_date(date: str) -> None:
             )
         log(f"{date}: source incomplete — selection blocked before early return ({','.join(codes)})")
         return
-    if annotate_state_sessions(date, state, include_song_rows=frozen_talk_candidate_ids is None, talk_candidate_ids=frozen_talk_candidate_ids):
+    session_changed = historical_failed_talk_scope.annotate_sessions(date, state, include_song_rows=frozen_talk_candidate_ids is None, candidate_ids=frozen_talk_candidate_ids)
+    if session_changed:
         persist_state()
+        if session_changed < 0:
+            return
     automatic_maintenance = date >= AUTOMATIC_MAINTENANCE_NOT_BEFORE
     (
         recovered_song_deliveries,
@@ -1712,7 +1715,6 @@ def process_date(date: str) -> None:
     state.setdefault("songs", [])
     state["status"] = "processing"
     persist_state()
-
     historical_failed_talk_scope.discover(date, state, frozen_talk_candidate_ids)
     if frozen_talk_candidate_ids is None:
         suppress_exact_talk_recovery_song_work(state, phase="after_segment_discovery")
@@ -1725,7 +1727,7 @@ def process_date(date: str) -> None:
         persist_state()
         log(f"{date}: segment inventory not stable yet — selection deferred to next tick (sealing)")
         return
-    refresh_count = semantic_chat_refresh.refresh_operator_scoped_chat_scorecards(date, state)
+    refresh_count = historical_failed_talk_scope.refresh_scorecards(date, state, frozen_talk_candidate_ids)
     if refresh_count:
         persist_state()
     if refresh_count < 0:
@@ -1734,30 +1736,28 @@ def process_date(date: str) -> None:
         return
     # Keep a structured, session-wide snapshot for the unlabelled evidence
     # sidecar before prioritize() reduces production to top-5 talk clips.
-    capture_candidates = historical_failed_talk_scope.prioritize_and_capture(state, frozen_talk_candidate_ids)
+    capture_candidates = historical_failed_talk_scope.prioritize_and_capture(date, state, frozen_talk_candidate_ids)
+    if capture_candidates is None:
+        persist_state()
+        return
     if frozen_talk_candidate_ids is None:
         suppress_exact_talk_recovery_song_work(state, phase="after_prioritize")
     exact_contract_ids = set(_exact_talk_contract_ids(state))
-    routing_claim = prepare_speaker_routing(date, state["pending_talk"], state=state)
-    # Machine-evidence song-name pool for the talk lane's deterministic pin
-    # (Ivan 2026-07-13): the screen songlist keeps accruing across the whole
-    # date, so this is recomputed fresh every tick, not just once at discovery.
-    song_name_candidates = collect_song_name_candidates(date, state)
-    if song_name_candidates:
-        for item in state["pending_talk"]:
-            if isinstance(item, dict):
-                item["song_name_candidates"] = song_name_candidates
+    prepare_ok, routing_claim = historical_failed_talk_scope.prepare_production_context(date, state, frozen_talk_candidate_ids)
+    if not prepare_ok:
+        persist_state()
+        return
     persist_state()
-
     # Phase C: produce talk picks CONCURRENTLY (they're independent; each is
     # network-bound on AGY/CPA/gpt-image-2).  title_failed picks (CPA title lane
     # flaky) stay pending and retry on a later tick — the succeeded ones are kept,
     # not re-done.  CPA was gated at entry; a mid-batch outage just fails a slice.
-    while state["pending_talk"]:
-        talk_items = list(state["pending_talk"])
+    while scoped_pending_talk_items(state, frozen_talk_candidate_ids):
+        talk_items = scoped_pending_talk_items(state, frozen_talk_candidate_ids)
         talk_items, rescore_blocked_items = split_produce_blocked_talk_items(talk_items)
         if rescore_blocked_items:
             log(f"{date}: {len(rescore_blocked_items)} talk item(s) held for pending source-fact rescore")
+        production_preimage = historical_failed_talk_scope.production_preimage(state, frozen_talk_candidate_ids)
         results = produce_batch(date, talk_items, produce_talk)
         # deploy-yield 只返回已开工项（输入序前缀）；未派发的尾巴必须留在
         # 队列里等下个 tick，否则候选无声蒸发（2026-07-27 850_940 批次案）。
@@ -1786,7 +1786,10 @@ def process_date(date: str) -> None:
                 result["bundle_lifecycle"] = "PENDING_COVER"
                 result["bundle_compliance"] = "COVER_REQUIRED"
             state["picks"].append(result)
-        state["pending_talk"] = retry + deferred_tail
+        replace_scoped_pending_talk_items(state, frozen_talk_candidate_ids, retry + deferred_tail)
+        if not historical_failed_talk_scope.seal_production_transition(date, state, frozen_talk_candidate_ids, production_preimage):
+            persist_state()
+            return
         persist_state()
         if retry:  # some title lanes flaky → back off, resume the rest next tick
             state["status"] = "paused_cpa_down"
@@ -1816,7 +1819,6 @@ def process_date(date: str) -> None:
             persist_state()
             continue
         break
-
     if frozen_talk_candidate_ids is None:
         suppress_exact_talk_recovery_song_work(state, phase="before_song_lane")
     # Song lane with bounded backfill: a gate-BLOCKED song frees its slot for
@@ -1834,9 +1836,7 @@ def process_date(date: str) -> None:
             break
         refill_songs(state)
         persist_state()
-
     historical_failed_talk_scope.repair_covers(date, state, automatic_maintenance=automatic_maintenance, candidate_ids=frozen_talk_candidate_ids)
-
     terminal = _project_terminal_batch_state(state, mutate_songs=frozen_talk_candidate_ids is None)
     picks = terminal["picks"]
     songs = terminal["songs"]

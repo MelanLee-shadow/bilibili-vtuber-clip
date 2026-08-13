@@ -1,0 +1,47 @@
+{
+  "asserted_at": "2026-08-13T18:50:13Z",
+  "asserted_by": "Ivan",
+  "authority_quote": "806，1576内容没问题可以发。",
+  "candidate": {
+    "candidate_id": "auto_213135_806_1068",
+    "hook": "李豆沙坦白自己羡慕能全职做主播的人，也曾为没时间没钱而自责，但回头才发现她和观众已经相伴五年、一起走上了理想中的3D舞台。",
+    "hook_sha256": "sha256:ffc1d2c7fdf055e12a5e343e6920bcb7f8597eb2196bd6fe690ccc20cd6bf6b6",
+    "recording_date": "2026-08-08",
+    "scene_kind": "event",
+    "selection_scorecard_sha256": "sha256:f8e9e348dc09f3140a2e7abcf47ceafdf433e879477757dd18c4098d9b88333a"
+  },
+  "decision": "RELEASE_FOR_PRODUCTION",
+  "original_authority_raw_sha256": "sha256:09d0d97b4f00be83f47f8e93ff23bf367093691eb29b510e53d039e8b12dca85",
+  "original_authority_relative_path": "assets/lidousha/published_topic_collision_authorities/auto_213135_806_1068.published-topic-collision-authority.v1.json",
+  "original_authority_sha256": "sha256:56764bea0366d7fdc944ff48a5bc669f13c49d0e04de622a3f9aac6803e212f0",
+  "published": {
+    "bvid": "BV18Gu16NEcX",
+    "candidate_id": "auto_213135_469_710",
+    "hook": "第一次3D Live前她紧张得手抖，却在赴约的高铁上突然意识到：自己正走在实现五年前舞台愿望的路上。",
+    "hook_sha256": "sha256:06b58b39718724d98245ce64ea73848431fe406d8cc1a4f80c6a34face868fb7",
+    "public_title": "【李豆沙】第一次3D Live紧张到手抖，想起五年前看歌姬时的心情，自己好像正走在实现五年前舞台愿望的路上",
+    "public_title_sha256": "sha256:c798ba630b0ddd13a88f657a43f1cec61a39eb973d442d8f5aea66b0b5afa745",
+    "recording_date": "2026-08-08",
+    "registry_row_sha256": "sha256:016f2a0296f5a972767df756a7a7eebced47254441f80042cf85c7e8abe82e8f",
+    "registry_status": "published",
+    "scene_kind": "event",
+    "selection_scorecard_sha256": "sha256:67be8853c424975664d5d4710944ca77090f3ae037a6d3f0c2ac436c44bb2c89"
+  },
+  "resolution_sha256": "sha256:b52413d4f112ed188211b8655e20889f25eaba7ca5575b61dde05b059cb9dd4e",
+  "schema_version": "published-topic-dedup-resolution.v2",
+  "scorecard_refresh": {
+    "candidate_binding_sha256": "sha256:a4527a2b40a7a222967faef71413e36e105130c5b08d7c3576e9f196bcf00b3b",
+    "candidate_id": "auto_213135_806_1068",
+    "input_provenance_sha256": "sha256:c5faf5278cf78044fc525328e4d8a4a4314d626ba12883cf03ca70c5fa818e07",
+    "new_selection_scorecard_sha256": "sha256:f8e9e348dc09f3140a2e7abcf47ceafdf433e879477757dd18c4098d9b88333a",
+    "old_selection_scorecard_sha256": "sha256:5cd263fbf5d936fa4a6db372198d00a91f7a1792c44bfe7fd5d67a0ae2afa4fd",
+    "provider_contract_sha256": "sha256:1fa451d58e262f7aa5ca7e59708fb2edf8d02f4df1d5a61ace32bcbd99b27be6",
+    "receipt_schema_version": "semantic-evidence-scorecard-refresh-receipt.v1",
+    "receipt_sha256": "sha256:26e0d7fb08624e411c3ca8981dd21401309e0b0f55d8cdf9431dd27851425729",
+    "recording_date": "2026-08-08",
+    "semantic_chat_evidence_sha256": "sha256:767aa721676e0e56409556d05b666a684a5b2d90adcb3eae3484f73bc9b7b676",
+    "semantic_chat_policy_sha256": "sha256:dcddbafbb37693f270adbab5ecb8d7ebbe3c79c9a8bd0d332aa13dcc61750044",
+    "semantic_chat_source_sha256": "sha256:f86aa60d02d1ced94de49685a0ee37a3004d8d40bcd36d212a94e57dd60d63fb"
+  },
+  "upload_authorized": false
+}
