@@ -3594,6 +3594,218 @@ def test_produce_batch_preserves_order_and_isolates_crashes():
     assert all(r["status"] == "ok" for i, r in enumerate(results) if i != 2)
     assert runner.produce_batch("2026-07-06", [], fake_produce) == []
 
+
+def test_produce_batch_serializes_shared_sources_and_overlaps_distinct(
+    tmp_path, monkeypatch
+):
+    """One CloudFS segment must never have two producers reading it at once."""
+
+    import threading
+
+    monkeypatch.setattr(runner, "BASE", tmp_path)
+    monkeypatch.setattr(runner, "MAX_PARALLEL_PRODUCE", 3)
+    release = threading.Event()
+    started = {cid: threading.Event() for cid in ("first", "distinct", "shared_piece")}
+    lock = threading.Lock()
+    active_by_source: dict[str, int] = {}
+    max_by_source: dict[str, int] = {}
+    active_total = 0
+    max_total = 0
+
+    def fake_produce(_date, item):
+        nonlocal active_total, max_total
+        with lock:
+            active_total += 1
+            max_total = max(max_total, active_total)
+            for source in item["_probe_sources"]:
+                active_by_source[source] = active_by_source.get(source, 0) + 1
+                max_by_source[source] = max(
+                    max_by_source.get(source, 0), active_by_source[source]
+                )
+        started[item["cid"]].set()
+        try:
+            assert release.wait(timeout=5)
+            return {"candidate_id": item["cid"], "status": "ok"}
+        finally:
+            with lock:
+                active_total -= 1
+                for source in item["_probe_sources"]:
+                    active_by_source[source] -= 1
+
+    items = [
+        {"cid": "first", "segment_path": "/rec/shared.mp4", "_probe_sources": ["shared"]},
+        {"cid": "distinct", "segment_path": "/rec/other.mp4", "_probe_sources": ["other"]},
+        {
+            "cid": "shared_piece",
+            "segment_path": "/rec/reserve.mp4",
+            "pieces": [
+                {"remote_media": "/rec/shared.mp4"},
+                {"remote_media": "/rec/reserve.mp4"},
+            ],
+            "_probe_sources": ["shared", "reserve"],
+        },
+    ]
+    outcome = []
+    errors = []
+
+    def dispatch():
+        try:
+            outcome.extend(runner.produce_batch("2026-08-11", items, fake_produce))
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            errors.append(exc)
+
+    thread = threading.Thread(target=dispatch, daemon=True)
+    thread.start()
+    try:
+        assert started["first"].wait(timeout=2)
+        assert started["distinct"].wait(timeout=2), "different sources lost parallelism"
+        assert not started["shared_piece"].wait(timeout=0.25)
+    finally:
+        release.set()
+        thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert not errors
+    assert started["shared_piece"].is_set()
+    assert max_total >= 2
+    assert max_by_source["shared"] == 1
+    assert [row["candidate_id"] for row in outcome] == [
+        "first", "distinct", "shared_piece"
+    ]
+
+
+def test_produce_batch_unknown_source_is_a_local_exclusive_barrier(
+    tmp_path, monkeypatch
+):
+    """Malformed source identity fails closed without serializing later known sources."""
+
+    import threading
+
+    monkeypatch.setattr(runner, "BASE", tmp_path)
+    monkeypatch.setattr(runner, "MAX_PARALLEL_PRODUCE", 2)
+    release_first = threading.Event()
+    release_unknown = threading.Event()
+    release_last = threading.Event()
+    started = {cid: threading.Event() for cid in ("a", "b", "unknown", "c", "d")}
+
+    def fake_produce(_date, item):
+        cid = item["cid"]
+        started[cid].set()
+        gate = (
+            release_first if cid in {"a", "b"}
+            else release_unknown if cid == "unknown"
+            else release_last
+        )
+        assert gate.wait(timeout=5)
+        return {"candidate_id": cid, "status": "ok"}
+
+    items = [
+        {"cid": "a", "segment_path": "/rec/a.mp4"},
+        {"cid": "b", "segment_path": "/rec/b.mp4"},
+        {"cid": "unknown", "segment_path": ""},
+        {"cid": "c", "segment_path": "/rec/c.mp4"},
+        {"cid": "d", "segment_path": "/rec/d.mp4"},
+    ]
+    outcome = []
+    thread = threading.Thread(
+        target=lambda: outcome.extend(
+            runner.produce_batch("2026-08-11", items, fake_produce)
+        ),
+        daemon=True,
+    )
+    thread.start()
+    try:
+        assert started["a"].wait(timeout=2)
+        assert started["b"].wait(timeout=2)
+        assert not started["unknown"].is_set()
+        release_first.set()
+        assert started["unknown"].wait(timeout=2)
+        assert not started["c"].is_set() and not started["d"].is_set()
+        release_unknown.set()
+        assert started["c"].wait(timeout=2)
+        assert started["d"].wait(timeout=2), "known sources stayed globally serialized"
+    finally:
+        release_first.set()
+        release_unknown.set()
+        release_last.set()
+        thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert [row["candidate_id"] for row in outcome] == ["a", "b", "unknown", "c", "d"]
+
+
+def test_produce_batch_shared_head_preserves_prefix_when_deploy_guard_arrives(
+    tmp_path, monkeypatch
+):
+    """A same-source head cannot be skipped, so deploy yield stays a true prefix."""
+
+    import threading
+
+    monkeypatch.setattr(runner, "BASE", tmp_path)
+    monkeypatch.setattr(runner, "MAX_PARALLEL_PRODUCE", 2)
+    release_first = threading.Event()
+    started = []
+
+    def fake_produce(_date, item):
+        started.append(item["cid"])
+        if item["cid"] == "first":
+            assert release_first.wait(timeout=5)
+            (tmp_path / "deploy.guard").mkdir()
+        return {"candidate_id": item["cid"], "status": "ok"}
+
+    items = [
+        {"cid": "first", "segment_path": "/rec/shared.mp4"},
+        {"cid": "blocked_head", "segment_path": "/rec/shared.mp4"},
+        {"cid": "later_distinct", "segment_path": "/rec/other.mp4"},
+    ]
+    outcome = []
+    thread = threading.Thread(
+        target=lambda: outcome.extend(
+            runner.produce_batch("2026-08-11", items, fake_produce)
+        ),
+        daemon=True,
+    )
+    thread.start()
+    try:
+        for _ in range(200):
+            if started:
+                break
+            time.sleep(0.01)
+        assert started == ["first"]
+    finally:
+        release_first.set()
+        thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert started == ["first"]
+    assert [row["candidate_id"] for row in outcome] == ["first"]
+
+
+def test_produce_batch_releases_shared_source_after_producer_crash(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "BASE", tmp_path)
+    monkeypatch.setattr(runner, "MAX_PARALLEL_PRODUCE", 2)
+    calls = []
+
+    def fake_produce(_date, item):
+        calls.append(item["cid"])
+        if item["cid"] == "crash":
+            raise RuntimeError("boom")
+        return {"candidate_id": item["cid"], "status": "ok"}
+
+    results = runner.produce_batch(
+        "2026-08-11",
+        [
+            {"cid": "crash", "segment_path": "/rec/shared.mp4"},
+            {"cid": "next", "segment_path": "/rec/shared.mp4"},
+        ],
+        fake_produce,
+    )
+
+    assert calls == ["crash", "next"]
+    assert [row["candidate_id"] for row in results] == ["crash", "next"]
+    assert results[0]["status"] == "failed"
+    assert results[1]["status"] == "ok"
+
 # ---------------------------------------------------------------------------
 # runner v4 (2026-07-09 external audit: "the control plane was lying")
 # ---------------------------------------------------------------------------

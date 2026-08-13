@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 import scripts.free_session_autoslice as runner
+from src.autoslice import operator_processing_scope as operator_scope_module
 from src.autoslice import talk_quota_authority
 from src.autoslice.candidate_selection import prioritize
 from src.autoslice.operator_processing_scope import (
@@ -59,6 +60,19 @@ _DIMENSIONS = {
     "comedic_payoff": 4,
     "self_contained": 4,
 }
+
+
+class _FrozenDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return NOW.replace(tzinfo=None) if tz is None else NOW.astimezone(tz)
+
+
+@pytest.fixture(autouse=True)
+def freeze_operator_scope_clock(monkeypatch):
+    """Keep integration paths on the same clock as explicit admission checks."""
+
+    monkeypatch.setattr(operator_scope_module, "datetime", _FrozenDateTime)
 
 
 def _scorecard(effective_score: float, *, tier: int = 2) -> dict:

@@ -9,6 +9,7 @@ monkeypatch 面（BASE/MAX_PARALLEL_PRODUCE 仍在 runner 全局）。
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Sequence
 from concurrent.futures import (
     FIRST_COMPLETED,
@@ -16,7 +17,7 @@ from concurrent.futures import (
     wait as _futures_wait,
 )
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 _FAILED_ITEM_PASSTHROUGH_KEYS = (
     "hook",
@@ -44,6 +45,99 @@ _FAILED_ITEM_PASSTHROUGH_KEYS = (
     "cover_route_regeneration_fingerprint",
     "cover_route_regeneration_attempts",
 )
+
+
+def _source_key(value: object) -> str | None:
+    """Identify a source lexically without touching a possibly-fragile FUSE."""
+    if not isinstance(value, (str, os.PathLike)):
+        return None
+    raw = os.fspath(value).strip()
+    if not raw:
+        return None
+    # Basename intentionally aliases legacy ``segment`` and absolute paths.
+    # A false collision only costs parallelism; a false split can break FUSE.
+    return os.path.basename(os.path.normpath(raw)) or None
+
+
+def _source_affinity(item: Mapping[str, object]) -> tuple[frozenset[str], bool]:
+    """Extract every declared source segment and whether identity is unknown.
+
+    Current runner queues use one ``segment_path``.  Recovery/spec-shaped work
+    may additionally declare multiple source pieces, so all such paths form a
+    conflict set.  A malformed *declared* source identity is fail-closed and
+    must run alone; a genuinely source-less generic work item remains
+    independent so it does not turn the whole dispatcher into a serial lane.
+    """
+
+    path_values: list[object] = []
+    declared = False
+    malformed = False
+    for field in (
+        "segment_path",
+        "segment",
+        "source_path",
+        "source_segment_path",
+        "source_media_path",
+        "remote_media",
+    ):
+        if field not in item:
+            continue
+        declared = True
+        path_values.append(item[field])
+    for field in (
+        "segment_paths",
+        "source_paths",
+        "source_segments",
+        "source_piece_segments",
+    ):
+        if field not in item:
+            continue
+        declared = True
+        values = item[field]
+        if not isinstance(values, Sequence) or isinstance(values, (str, bytes, bytearray)):
+            malformed = True
+        else:
+            path_values.extend(values)
+    for field in ("pieces", "source_pieces"):
+        if field not in item:
+            continue
+        declared = True
+        pieces = item[field]
+        if not isinstance(pieces, Sequence) or isinstance(pieces, (str, bytes, bytearray)):
+            malformed = True
+            continue
+        for piece in pieces:
+            if isinstance(piece, (str, os.PathLike)):
+                path_values.append(piece)
+                continue
+            if not isinstance(piece, Mapping):
+                malformed = True
+                continue
+            piece_paths = [
+                piece[path_field]
+                for path_field in (
+                    "remote_media",
+                    "segment_path",
+                    "segment",
+                    "source_path",
+                    "source_segment_path",
+                    "source_media_path",
+                    "media_path",
+                    "path",
+                )
+                if path_field in piece
+            ]
+            # A timing-only piece inherits the top-level segment path.  If no
+            # top-level source exists, however, its source identity is unknown.
+            if not piece_paths and not path_values:
+                malformed = True
+            path_values.extend(piece_paths)
+
+    keys = {_source_key(value) for value in path_values}
+    if None in keys:
+        keys.remove(None)
+        malformed = True
+    return frozenset(keys), bool(declared and (malformed or not keys))
 
 
 def produce_batch_windowed(
@@ -100,11 +194,7 @@ def produce_batch_windowed(
                     if produce_fn is produce_song_fn
                     else {}
                 ),
-                **{
-                    key: item[key]
-                    for key in _FAILED_ITEM_PASSTHROUGH_KEYS
-                    if key in item
-                },
+                **{key: item[key] for key in _FAILED_ITEM_PASSTHROUGH_KEYS if key in item},
             }
             if item.get("segment_path"):
                 result["segment"] = Path(str(item["segment_path"])).name
@@ -122,7 +212,9 @@ def produce_batch_windowed(
     deploy_guard = base / "deploy.guard"
     results_by_index: dict[int, dict] = {}
     queue = list(enumerate(items))
-    in_flight: dict[Any, int] = {}
+    in_flight: dict[Any, tuple[int, frozenset[str], bool]] = {}
+    active_source_keys: set[str] = set()
+    exclusive_source_active = False
     deploy_yield = False
     with ThreadPoolExecutor(max_workers=workers) as pool:
         while queue or in_flight:
@@ -147,15 +239,32 @@ def produce_batch_windowed(
                         f"{len(queue)} deferred to next tick"
                     )
                     break
-                index, item = queue.pop(0)
-                in_flight[pool.submit(_one, item)] = index
+                index, item = queue[0]
+                source_keys, source_unknown = _source_affinity(item)
+                if (
+                    exclusive_source_active
+                    or (source_unknown and bool(in_flight))
+                    or bool(active_source_keys.intersection(source_keys))
+                ):
+                    # Never skip a blocked head item.  The caller persists a
+                    # deploy/live yield as an input-prefix result; dispatching
+                    # a later item here could create an unrepresentable gap.
+                    break
+                queue.pop(0)
+                future = pool.submit(_one, item)
+                in_flight[future] = (index, source_keys, source_unknown)
+                active_source_keys.update(source_keys)
+                if source_unknown:
+                    exclusive_source_active = True
             if not in_flight:
                 break
-            done, _pending = _futures_wait(
-                in_flight, return_when=FIRST_COMPLETED
-            )
+            done, _pending = _futures_wait(in_flight, return_when=FIRST_COMPLETED)
             for future in done:
-                results_by_index[in_flight.pop(future)] = future.result()
+                index, source_keys, source_unknown = in_flight.pop(future)
+                active_source_keys.difference_update(source_keys)
+                if source_unknown:
+                    exclusive_source_active = False
+                results_by_index[index] = future.result()
     return [results_by_index[index] for index in sorted(results_by_index)]
 
 
