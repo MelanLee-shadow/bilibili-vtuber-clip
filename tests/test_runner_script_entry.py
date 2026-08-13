@@ -12,6 +12,7 @@ mode can never ship again.
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import time
@@ -176,11 +177,19 @@ def test_deploy_adapter_repair_exception_is_changed_bytes_only_and_preinstall():
     clean_or_repair = external.index('if [ "$adapter_content_changed" -eq 0 ]; then', changed)
     clean_call = external.index('adapter_restart_safe "$old_adapter_sha"', clean_or_repair)
     repair_call = external.index('adapter_repair_restart_safe "$old_adapter_sha"', clean_call)
-    install = external.index('install_atomic \\\n    "$new_adapter_source"', repair_call)
+    child_gate_before_install = external.index(
+        "adapter_identity_rebind_hash_child_absent", repair_call
+    )
+    install = external.index(
+        'install_atomic \\\n    "$new_adapter_source"', child_gate_before_install
+    )
     post_install_gate = external.index(
         'adapter_restart_environment_safe "$new_adapter_sha"', install
     )
     restart = external.index("docker restart bililive_adapter", post_install_gate)
+    child_gate_before_restart = external.rindex(
+        "adapter_identity_rebind_hash_child_absent", post_install_gate, restart
+    )
     fresh_wait = external.index('wait_adapter_runtime "$restart_epoch" "$new_adapter_sha"', restart)
 
     assert (
@@ -188,8 +197,10 @@ def test_deploy_adapter_repair_exception_is_changed_bytes_only_and_preinstall():
         < clean_or_repair
         < clean_call
         < repair_call
+        < child_gate_before_install
         < install
         < post_install_gate
+        < child_gate_before_restart
         < restart
         < fresh_wait
     )
@@ -200,6 +211,58 @@ def test_deploy_adapter_repair_exception_is_changed_bytes_only_and_preinstall():
     assert 'assert room.get("recording") is False' in external
     assert 'assert payload.get("error") is None' in external
     assert "restart_epoch=$(python3 -c 'import time; print(time.time())')" in external
+
+
+def test_deploy_adapter_hash_child_gate_is_strict_and_used_by_rollback(tmp_path):
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    external = source.split("<<'REMOTE_EXTERNAL_INSTALL'\n", 1)[1].split(
+        "\nREMOTE_EXTERNAL_INSTALL", 1
+    )[0]
+    rollback = source.split("<<'REMOTE_ROLLBACK'\n", 1)[1].split("\nREMOTE_ROLLBACK", 1)[0]
+    function = _embedded_shell_function(external, "adapter_identity_rebind_hash_child_absent")
+    rollback_function = _embedded_shell_function(
+        rollback, "adapter_identity_rebind_hash_child_absent"
+    )
+    assert rollback_function == function
+    fake_docker = tmp_path / "docker"
+    fake_docker.write_text(
+        "#!/bin/sh\n"
+        'test "${DOCKER_TOP_FAIL:-0}" != 1 || exit 1\n'
+        'printf "%s\\n" "${DOCKER_TOP_OUTPUT:-}"\n',
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+
+    def run_gate(output: str = "", *, fail: bool = False) -> subprocess.CompletedProcess[str]:
+        environment = os.environ.copy()
+        environment["PATH"] = f"{tmp_path}:{environment['PATH']}"
+        environment["DOCKER_TOP_OUTPUT"] = output
+        environment["DOCKER_TOP_FAIL"] = "1" if fail else "0"
+        return subprocess.run(
+            ["/bin/bash", "-c", f"set -euo pipefail\n{function}\n{function.split('()', 1)[0]}"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=environment,
+        )
+
+    assert run_gate("COMMAND\npython3 /state/bililive_recorder_adapter.py").returncode == 0
+    assert (
+        run_gate(
+            "COMMAND\npython3 /state/bililive_recorder_adapter.py "
+            "--identity-rebind-hash-child request.json"
+        ).returncode
+        != 0
+    )
+    assert run_gate().returncode != 0
+    assert run_gate("COMMAND", fail=True).returncode != 0
+    assert "docker top bililive_adapter -eo pid,args" in function
+
+    rollback_restart = rollback.index("docker restart bililive_adapter")
+    rollback_child_gate = rollback.rindex(
+        "adapter_identity_rebind_hash_child_absent", 0, rollback_restart
+    )
+    assert rollback_child_gate < rollback_restart
 
 
 def test_deploy_clean_adapter_status_rejects_any_error(tmp_path):
@@ -234,16 +297,31 @@ def test_deploy_adapter_repair_status_accepts_only_exact_idle_defect(tmp_path):
         "finalizing": False,
         "error": "source disposition drift: finalized source fingerprint changed",
     }
-    accepted = _run_embedded_status_validator(
-        "PY_SUPPORTED_ADAPTER_REPAIR_IDLE", tmp_path, repairable
-    )
-    assert accepted.returncode == 0, accepted.stderr
+    for label in (
+        "PY_SUPPORTED_ADAPTER_REPAIR_IDLE",
+        "PY_ROLLBACK_SUPPORTED_ADAPTER_REPAIR_IDLE",
+    ):
+        accepted = _run_embedded_status_validator(label, tmp_path, repairable)
+        assert accepted.returncode == 0, (label, accepted.stderr)
+
+        for exact_error in (
+            "source disposition identity rebind hash retry is pending",
+            "source disposition identity rebind hash retry exhausted",
+        ):
+            typed = dict(repairable)
+            typed["error"] = exact_error
+            accepted = _run_embedded_status_validator(label, tmp_path, typed)
+            assert accepted.returncode == 0, (label, exact_error, accepted.stderr)
 
     rejected_payloads = []
     for update in (
         {"error": "source disposition drift"},
         {"error": "SOURCE DISPOSITION DRIFT: mismatch"},
         {"error": "graphql unavailable"},
+        {"error": "source disposition identity rebind hash is pending"},
+        {"error": "source disposition identity rebind timed-out child is still pending"},
+        {"error": "source disposition identity rebind hash retry is pending: details"},
+        {"error": "source disposition identity rebind hash retry exhausted "},
         {"error": None},
         {"service_reachable": True},
         {"streaming": True},
@@ -256,13 +334,39 @@ def test_deploy_adapter_repair_status_accepts_only_exact_idle_defect(tmp_path):
         payload.update(update)
         rejected_payloads.append(payload)
 
-    for payload in rejected_payloads:
+    for label in (
+        "PY_SUPPORTED_ADAPTER_REPAIR_IDLE",
+        "PY_ROLLBACK_SUPPORTED_ADAPTER_REPAIR_IDLE",
+    ):
+        for payload in rejected_payloads:
+            rejected = _run_embedded_status_validator(label, tmp_path, payload)
+            assert rejected.returncode != 0, (label, payload)
+
+
+def test_deploy_fresh_post_restart_status_never_accepts_repair_preimage(tmp_path):
+    now = time.time()
+    clean = {
+        "generated_at_epoch": now,
+        "service_reachable": True,
+        "streaming": False,
+        "recording": False,
+        "finalizing": False,
+        "error": None,
+    }
+    accepted = _run_embedded_status_validator("PY_FRESH", tmp_path, clean, str(now - 1))
+    assert accepted.returncode == 0, accepted.stderr
+
+    for error in (
+        "source disposition drift: finalized source fingerprint changed",
+        "source disposition identity rebind hash retry is pending",
+        "source disposition identity rebind hash retry exhausted",
+    ):
+        repair_preimage = dict(clean)
+        repair_preimage.update(service_reachable=False, error=error)
         rejected = _run_embedded_status_validator(
-            "PY_SUPPORTED_ADAPTER_REPAIR_IDLE",
-            tmp_path,
-            payload,
+            "PY_FRESH", tmp_path, repair_preimage, str(now - 1)
         )
-        assert rejected.returncode != 0, payload
+        assert rejected.returncode != 0, error
 
 
 def test_deploy_rollback_reaccepts_only_clean_or_exact_supported_preimage(tmp_path):
@@ -280,17 +384,39 @@ def test_deploy_rollback_reaccepts_only_clean_or_exact_supported_preimage(tmp_pa
     )
     assert rollback.returncode == 0, rollback.stderr
 
+    for exact_error in (
+        "source disposition identity rebind hash retry is pending",
+        "source disposition identity rebind hash retry exhausted",
+    ):
+        typed = dict(repairable)
+        typed["error"] = exact_error
+        rollback = _run_embedded_status_validator(
+            "PY_ROLLBACK_FRESH", tmp_path, typed, str(now - 1), "0"
+        )
+        assert rollback.returncode == 0, (exact_error, rollback.stderr)
+
+        new_deploy = _run_embedded_status_validator(
+            "PY_ROLLBACK_FRESH", tmp_path, typed, str(now - 1), "1"
+        )
+        assert new_deploy.returncode != 0
+
     new_deploy = _run_embedded_status_validator(
         "PY_ROLLBACK_FRESH", tmp_path, repairable, str(now - 1), "1"
     )
     assert new_deploy.returncode != 0
 
-    unknown = dict(repairable)
-    unknown["error"] = "graphql unavailable"
-    rejected = _run_embedded_status_validator(
-        "PY_ROLLBACK_FRESH", tmp_path, unknown, str(now - 1), "0"
-    )
-    assert rejected.returncode != 0
+    for unknown_error in (
+        "graphql unavailable",
+        "source disposition identity rebind hash is pending",
+        "source disposition identity rebind timed-out child is still pending",
+        "source disposition identity rebind hash retry is pending: details",
+    ):
+        unknown = dict(repairable)
+        unknown["error"] = unknown_error
+        rejected = _run_embedded_status_validator(
+            "PY_ROLLBACK_FRESH", tmp_path, unknown, str(now - 1), "0"
+        )
+        assert rejected.returncode != 0, unknown_error
 
 
 def test_deploy_authority_manifest_is_canonical_and_exact_byte_bound(tmp_path):

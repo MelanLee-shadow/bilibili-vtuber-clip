@@ -212,7 +212,11 @@
 - adapter 外部字节未变化时，部署前状态必须 fresh、idle、
   `service_reachable=true` 且 `error=null`。只有待安装 adapter 字节确实变化时，才允许
   用单一修复例外越过旧 adapter 自己制造的错误：旧状态仍须 fresh/idle，且必须精确为
-  `service_reachable=false` 与 `error` 前缀 `source disposition drift:`；同时 recorder 与
+  `service_reachable=false`，且 `error` 为前缀 `source disposition drift:`，或精确等于
+  `source disposition identity rebind hash retry is pending` / `source disposition identity
+  rebind hash retry exhausted`；同时 recorder 与
   adapter 运行、host/两容器 CloudFS、旧 host/container adapter SHA 以及独立 GraphQL
-  idle 查询必须全部通过。其他错误一律拒绝。新字节重启后仍须等到 fresh clean 状态、
-  新 SHA 与健康检查全绿；该例外不得成为普通 deploy 或 live-query bypass。
+  idle 查询必须全部通过，且安装前、重启前及 rollback 重启前容器内不得存在仍活着的
+  `--identity-rebind-hash-child` 进程。普通 hash pending、timed-out child 等错误一律拒绝。
+  新字节重启后仍须等到 fresh clean 状态、新 SHA 与健康检查全绿；rollback 只可回到
+  clean 或同一精确 preimage。该例外不得成为普通 deploy 或 live-query bypass。

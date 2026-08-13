@@ -193,8 +193,21 @@ assert payload.get("service_reachable") is False
 assert payload.get("streaming") is False
 assert payload.get("recording") is False
 assert payload.get("finalizing") is False
-assert isinstance(error, str) and error.startswith("source disposition drift:")
+assert isinstance(error, str) and (
+    error.startswith("source disposition drift:")
+    or error
+    in {
+        "source disposition identity rebind hash retry is pending",
+        "source disposition identity rebind hash retry exhausted",
+    }
+)
 PY_ROLLBACK_SUPPORTED_ADAPTER_REPAIR_IDLE
+}
+adapter_identity_rebind_hash_child_absent() {
+    container_processes=$(docker top bililive_adapter -eo pid,args) || return 1
+    test -n "$container_processes" || return 1
+    ! printf '%s\n' "$container_processes" \
+        | grep -F -- '--identity-rebind-hash-child' >/dev/null
 }
 adapter_restart_environment_safe() {
     expected_adapter_sha=$1
@@ -271,7 +284,14 @@ else:
     supported_preimage = (
         payload.get("service_reachable") is False
         and isinstance(error, str)
-        and error.startswith("source disposition drift:")
+        and (
+            error.startswith("source disposition drift:")
+            or error
+            in {
+                "source disposition identity rebind hash retry is pending",
+                "source disposition identity rebind hash retry exhausted",
+            }
+        )
     )
     assert clean or supported_preimage
 PY_ROLLBACK_FRESH
@@ -303,6 +323,7 @@ if [ -f "$backup/external/recorder_adapter.restart-required" ]; then
     else
         adapter_repair_restart_safe "$old_adapter_sha"
     fi
+    adapter_identity_rebind_hash_child_absent
     restart_epoch=$(python3 -c 'import time; print(time.time())')
     docker restart bililive_adapter >/dev/null
     wait_adapter_runtime "$restart_epoch" "$old_adapter_sha" 0
@@ -931,8 +952,21 @@ assert payload.get("service_reachable") is False
 assert payload.get("streaming") is False
 assert payload.get("recording") is False
 assert payload.get("finalizing") is False
-assert isinstance(error, str) and error.startswith("source disposition drift:")
+assert isinstance(error, str) and (
+    error.startswith("source disposition drift:")
+    or error
+    in {
+        "source disposition identity rebind hash retry is pending",
+        "source disposition identity rebind hash retry exhausted",
+    }
+)
 PY_SUPPORTED_ADAPTER_REPAIR_IDLE
+}
+adapter_identity_rebind_hash_child_absent() {
+    container_processes=$(docker top bililive_adapter -eo pid,args) || return 1
+    test -n "$container_processes" || return 1
+    ! printf '%s\n' "$container_processes" \
+        | grep -F -- '--identity-rebind-hash-child' >/dev/null
 }
 adapter_restart_environment_safe() {
     expected_adapter_sha=$1
@@ -1034,6 +1068,7 @@ else
     # gate still runs before any external byte is replaced.
     adapter_repair_restart_safe "$old_adapter_sha"
 fi
+adapter_identity_rebind_hash_child_absent
 install_atomic \
     "$new_adapter_source" \
     "$host_adapter_path" \
@@ -1047,6 +1082,7 @@ if [ "$adapter_content_changed" -eq 1 ]; then
     # restarted; failure here rolls the file back while the old daemon remains.
     adapter_restart_environment_safe "$new_adapter_sha"
     touch "$backup/external/recorder_adapter.restart-required"
+    adapter_identity_rebind_hash_child_absent
     restart_epoch=$(python3 -c 'import time; print(time.time())')
     docker restart bililive_adapter >/dev/null
     wait_adapter_runtime "$restart_epoch" "$new_adapter_sha"
