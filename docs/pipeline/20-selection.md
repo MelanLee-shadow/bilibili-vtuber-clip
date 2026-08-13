@@ -120,6 +120,30 @@
   这两项只是量尺 canary，不构成 recovery allowlist；exact 集合只能来自当前 v7 plan 的
   selection contract。
 
+### selection metric v2 production shadow（不改 v1）
+
+- `src/autoslice/selection_metric_v2_shadow.py` 只在报告阶段生成独立
+  `SELECTION_METRIC_V2_SHADOW.json`，并在批次 Markdown 显示 v1/v2 对照；它不得写回
+  candidate row，也不在 `prioritize`、配额、发布或上传调用链上。v1 scorecard/Tier/
+  effective score 仍是唯一生产选片与排序口径。
+- v2 只有在 `selection_metric_v2_shadow_inputs` 中存在 candidate-scoped typed input，
+  且候选 ID/边界、有效 v1 scorecard、topic fingerprint 的 schema/policy/source hash，
+  以及当前 `host_occupancy` schema/estimator/threshold/config/attribution 全部匹配时才写
+  `AVAILABLE`。缺任何一项都写 `UNAVAILABLE + reason_codes`；不得从 hook、scene、名义
+  “单人场”、`event_key` 或旧 centrality 分猜 topic/说话人。
+- 当前 semantic recall 尚未把 topic claim 映射到最终 candidate，host occupancy 也尚无
+  production runner producer；因此 bridge policy 必须写
+  `production_input_producer_status=NOT_WIRED`，所有候选保持 `UNAVAILABLE`。手工填入外形像
+  schema/SHA 的 mapping 不得把它升级为 `AVAILABLE`；只有 topic 与 host producer 各自落地
+  source/runtime/boundary-bound receipt 并同步收紧 consumer 后，才能修订该状态。
+- topic fatigue 只在同一 session 的当前 Talk 候选都有 typed topic input 时计算；覆盖不全
+  必须 `SESSION_TOPIC_COVERAGE_INCOMPLETE`，不能把缺证候选当作不存在。所有 candidate、
+  scorecard、topic、host-occupancy 与 bridge policy 都写 canonical SHA-256 绑定。
+- production 尚无 hash-bound standalone proof atoms 时，shadow 只观察 broad path；不能把
+  v1 的 `level=4` 直接升级成已验证单轴 OR。v2 仍标 `provisional_calibration`，无论
+  AVAILABLE、GATED、PARKED 或 UNAVAILABLE，`decision_influence / selection_authorized /
+  quota_authorized / release_gate / upload_authorized` 都必须为 false。
+
 ## 历史弹幕证据评分刷新
 
 - 语义弹幕 evidence policy 变化不会自动改写旧 `picks`：历史尝试的 scorecard 已绑定旧

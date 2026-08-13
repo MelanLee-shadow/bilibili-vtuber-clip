@@ -16,6 +16,10 @@ from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.publication_reconciliation import (
     publication_row_is_verified,
 )
+from src.autoslice.selection_metric_v2_shadow import (
+    REPORT_FILENAME as SELECTION_METRIC_V2_SHADOW_REPORT,
+    build_shadow_snapshot,
+)
 from src.autoslice import speaker_manual_review, unreadable_cue_review
 
 
@@ -81,6 +85,73 @@ def _score_label(row: dict) -> str:
         return f"T{scorecard.get('tier')} / {scorecard.get('effective_score')}"
     confidence = row.get("confidence")
     return f"未量化 / conf={confidence if confidence is not None else '—'}"
+
+
+def _selection_metric_v2_shadow_section(
+    snapshot: Mapping[str, object],
+) -> list[str]:
+    """Render the detached comparison; it is never a selection/release gate."""
+
+    summary = snapshot.get("summary")
+    summary = summary if isinstance(summary, Mapping) else {}
+    lines = [
+        "",
+        "## 选片 v1 / v2 影子对照（仅观察）",
+        "",
+        "> v1 仍是唯一的选片、排序与配额口径。v2 未标定，只写独立侧车；"
+        "AVAILABLE/UNAVAILABLE 都不构成发布或上传门。",
+        "",
+        f"- 候选 {summary.get('candidate_count', 0)}："
+        f"v2 可算 {summary.get('available_count', 0)} / "
+        f"证据不足 {summary.get('unavailable_count', 0)}；"
+        f"侧车 `{SELECTION_METRIC_V2_SHADOW_REPORT}`",
+        "",
+        "| candidate | v1（生产口径） | v2（影子） | 证据状态 / 原因 | 绑定 |",
+        "|---|---|---|---|---|",
+    ]
+    rows = snapshot.get("candidates")
+    rendered = 0
+    for receipt in rows if isinstance(rows, list) else []:
+        if not isinstance(receipt, Mapping):
+            continue
+        rendered += 1
+        metric_v1 = receipt.get("metric_v1")
+        metric_v1 = metric_v1 if isinstance(metric_v1, Mapping) else {}
+        if metric_v1.get("status") == "VALID":
+            v1_label = f"T{metric_v1.get('tier')} / {metric_v1.get('effective_score')}"
+        else:
+            v1_label = "UNAVAILABLE"
+        metric_v2 = receipt.get("metric_v2")
+        if isinstance(metric_v2, Mapping):
+            quality = metric_v2.get("quality_score_v2")
+            path = metric_v2.get("winning_path_v2")
+            v2_label = (
+                f"{quality} / {path}"
+                if quality is not None
+                else str(metric_v2.get("status") or "AVAILABLE_NO_SCORE")
+            )
+        else:
+            v2_label = "UNAVAILABLE"
+        reasons = receipt.get("reason_codes")
+        reason_label = (
+            ",".join(str(value) for value in reasons)
+            if isinstance(reasons, list) and reasons
+            else "EVIDENCE_COMPLETE"
+        )
+        bindings = receipt.get("bindings")
+        bindings = bindings if isinstance(bindings, Mapping) else {}
+        scorecard_hash = str(bindings.get("selection_scorecard_sha256") or "—")
+        policy_hash = str(bindings.get("policy_sha256") or "—")
+        lines.append(
+            f"| `{_report_cell(receipt.get('candidate_id'))}` "
+            f"| {_report_cell(v1_label)} | {_report_cell(v2_label)} "
+            f"| {_report_cell(receipt.get('status'))}: {_report_cell(reason_label)} "
+            f"| scorecard={_report_cell(scorecard_hash[:20])}…; "
+            f"policy={_report_cell(policy_hash[:20])}… |"
+        )
+    if not rendered:
+        lines.append("| — | — | — | UNAVAILABLE：当前 state 无 Talk 候选 | — |")
+    return lines
 
 
 def _report_cell(value: object) -> str:
@@ -343,6 +414,21 @@ def write_reports(date: str, state: dict) -> None:
     delivery = _runner.profile_delivery_root() / date
     delivery.mkdir(parents=True, exist_ok=True)
 
+    # Shadow construction is read-only and detached from state.  Persisting it
+    # here gives every historical/current batch report a replayable comparison
+    # without placing v2 anywhere on the selector, quota, or release call path.
+    selection_metric_v2_shadow = build_shadow_snapshot(state)
+    (delivery / SELECTION_METRIC_V2_SHADOW_REPORT).write_text(
+        json.dumps(
+            selection_metric_v2_shadow,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
     picks = [row for row in state.get("picks", []) if isinstance(row, dict)]
     exact_ids = set(_exact_talk_contract_ids(state))
     songs = state.get("songs", [])
@@ -517,6 +603,7 @@ def write_reports(date: str, state: dict) -> None:
                 f"{int(row.get('start_ms') or 0) // 1000}-{int(row.get('end_ms') or 0) // 1000}s | "
                 f"{row.get('hook') or '—'} | {_score_label(row)} |"
             )
+    lines += _selection_metric_v2_shadow_section(selection_metric_v2_shadow)
     lines += [
         "",
         f"## 歌切（每场至多 {_runner.MAX_SONGS_PER_SESSION} 个、本日汇总；按弹幕量排序；已发布歌曲跳过；仅{_runner.PROFILE_DISPLAY_NAME}本人演唱且完整才切；背景音乐/原曲播放/SONG_PARTIAL 均不交付；被拦不占配额、备份自动回填）",
@@ -592,6 +679,10 @@ def write_reports(date: str, state: dict) -> None:
         f"(自修复 {repaired}, 不可修复 {unrepairable}) / "
         f"{len(picks)} 尝试 (pending {len(state.get('pending_talk', []))})\n"
         f"- 歌切: {delivered_songs} 交付 / {blocked_songs} 门拦 / {len(songs)} 尝试 (pending {len(state.get('pending_song', []))})\n"
+        f"- 选片影子: v1 生产口径 / v2 "
+        f"{selection_metric_v2_shadow['summary']['available_count']} 可算 + "
+        f"{selection_metric_v2_shadow['summary']['unavailable_count']} 证据不足；"
+        "不参与选片、配额、发布或上传门\n"
         f"- 交付: {_runner.profile_delivery_root()}/{date}/ (Mac launchd 拉取)\n",
         encoding="utf-8",
     )
