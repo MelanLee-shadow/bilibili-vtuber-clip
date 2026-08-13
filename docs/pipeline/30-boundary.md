@@ -21,6 +21,11 @@ talk 成片的最终 end 必须同时成立：
 3. 故事/回答/包袱已经落地；
 4. 下一 cue 已被证明是下一条 SC、谢礼或另一话题，不能吞进本片。
 
+selector 的相关语义证人只证明候选在进入边界步骤前已有自足故事承诺，不得把七维 metric
+里的「喜剧/情绪落点」窄化成所有题材都必须有笑点。`self_contained>=3` 仍是硬门；
+`comedic_payoff` 继续进入选片排序与回执诊断，但不参与边界 hard gate。边界 reviewer 自己的
+四命题不能挽救一个 selector 已判断不自足的候选。
+
 source-full-window 的 endpoint 选择使用
 `talk-boundary-endpoint-selection-contract.v2`。reviewer 必须比较完整的
 `recommendation_cue_indexes`，并逐项检查为上限之后保留的

@@ -572,7 +572,6 @@ def _scorecard_story_witness(scorecard: object) -> dict[str, object]:
         and isinstance(comedic_payoff, int)
         and not isinstance(comedic_payoff, bool)
         and self_contained >= 3
-        and comedic_payoff >= 3
     )
     return {
         # The current selector and boundary reviewer both use the CPA

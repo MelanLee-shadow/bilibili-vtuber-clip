@@ -142,6 +142,45 @@ def test_boundary_review_cannot_self_certify_a_weak_selector_story_witness():
     assert "SELECTOR_STORY_WITNESS_INSUFFICIENT" in review["reason_codes"]
 
 
+def test_boundary_review_accepts_self_contained_non_comedic_story_witness():
+    response = json.dumps(
+        {
+            "syntax_complete": True,
+            "story_closed": True,
+            "next_topic_separated": True,
+            "recommended_end_cue_index": 2,
+            "evidence_cue_indexes": [1, 2, 3],
+            "reason_codes": [],
+            "summary": "第二条收束个人立场，第三条已进入下一话题。",
+        },
+        ensure_ascii=False,
+    )
+    review = review_talk_boundary_semantics(
+        cues=[
+            _cue(1, 0, 9_000, "讲完整的个人经历"),
+            _cue(2, 9_100, 12_000, "以后也一起去看不同的舞台吧"),
+            _cue(3, 12_100, 15_000, "接下来的一首歌"),
+        ],
+        target_ms=9_000,
+        candidate_id="candidate",
+        selection_hook="个人立场与约定",
+        selection_scorecard=_scorecard(self_contained=4, comedic_payoff=1),
+        structured_context="topic transition @12100ms: 接下来的一首歌",
+        candidate_context="hash-bound context",
+        llm_call=lambda _prompt: response,
+        extract_json=_extract,
+    )
+
+    assert review["status"] == "PASS"
+    assert review["selector_story_witness"] == {
+        "independence_group": "cpa-gpt-5.6-semantic-family",
+        "status": "PASS",
+        "self_contained": 4,
+        "comedic_payoff": 1,
+    }
+    assert "SELECTOR_STORY_WITNESS_INSUFFICIENT" not in review["reason_codes"]
+
+
 def test_boundary_review_rejects_recommendation_beyond_forward_cap():
     response = json.dumps(
         {
