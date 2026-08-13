@@ -177,6 +177,11 @@
   归类为 `runtime_prerequisite/source_media_binding`；requeue 在源 `stat`/`ffprobe`
   上遇到 FUSE `OSError` 时保留原失败行并退出本次恢复，不得让整个 tick traceback
   或把暂时不可见的 chat path 误报成确定性的 binding missing。
+- 历史 Talk 恢复只为重建 `seg_dur_ms` 时，优先读取本地 adapter state：同一
+  `date/stem` 的 `FileClosed` 时长必须与 opening/closing event ledger、source size、
+  finalized target path/SHA 和封口时间全部闭合，才可直接携入队列而不重新打开冷
+  CloudFS MP4。两张账都没有该 stem 才允许旧录像走 `ffprobe` fallback；任一账已出现
+  但不完整、互相漂移或与记录中已有 source SHA 冲突时必须 fail closed，不得 fallback。
 - 活着的容器不等于健康录制。直播中两轮无字节增长、状态过期、弹幕/录制长期
   未连接均须告警；受限重启只针对 `bililive_recorder`，不得复活 blrec。
 - 终态库存硬门：runner 在任何“无新段”提前返回前运行

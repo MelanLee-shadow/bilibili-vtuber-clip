@@ -29,7 +29,7 @@ from src.autoslice.recovery_title_authority import (
     expected_recovery_publish_title,
     validate_recovery_publication_authority,
 )
-from src.autoslice import selection_rescore
+from src.autoslice import historical_recording_duration, selection_rescore
 from src.autoslice.selection_scorecard import apply_reviewed_selection_calibration
 from src.autoslice.speaker_manual_review import (
     SPEAKER_MANUAL_REVIEW_STATUSES,
@@ -676,7 +676,7 @@ def _recovery_queue_item(
         raise RecoveryReviewRerunError(
             f"RECOVERY_RERUN_BCUT_AUTHORITY_MISSING:{candidate_id}"
         )
-    seg_dur = _runner.ffprobe_ms(segment)
+    seg_dur = historical_recording_duration.resolve(_runner, date, segment, record)
     if not isinstance(seg_dur, int) or seg_dur <= 0 or end_ms > seg_dur:
         raise RecoveryReviewRerunError(
             f"RECOVERY_RERUN_SOURCE_DURATION_INVALID:{candidate_id}"
@@ -1770,7 +1770,7 @@ def requeue_recoverable_talks(date: str, state: dict, *, candidate_ids: Collecti
             kept.append(record)
             continue
         try:
-            seg_dur = _runner.ffprobe_ms(segment)
+            seg_dur = historical_recording_duration.resolve(_runner, date, segment, record)
         except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
             record["recovery_source_status"] = "SOURCE_RECORDING_ROOT_UNAVAILABLE"
             record["recovery_source_error"] = f"{type(exc).__name__}: {exc}"

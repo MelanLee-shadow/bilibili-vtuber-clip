@@ -1,4 +1,5 @@
 import copy
+import json
 from pathlib import Path
 
 import pytest
@@ -150,6 +151,60 @@ def _fixture(tmp_path: Path, monkeypatch):
     return date, state
 
 
+def _write_finalized_duration_authority(
+    runner: _Runner,
+    *,
+    date: str,
+    segment_name: str,
+    duration_seconds: float = 900.0,
+) -> None:
+    runner.RECORDER_ADAPTER_STATE_PATH = runner.BASE / "adapter-state.json"
+    source_relative = f"{date}/{Path(segment_name).with_suffix('.flv').name}"
+    opening_event_id = "11111111-1111-4111-8111-111111111111"
+    closing_event_id = "22222222-2222-4222-8222-222222222222"
+    runner.RECORDER_ADAPTER_STATE_PATH.write_text(
+        json.dumps(
+            {
+                "schema_version": "bililive-recorder-adapter-state.v1",
+                "webhook_event_ids": {
+                    opening_event_id: {
+                        "event_type": "FileOpening",
+                        "sha256": "1" * 64,
+                    },
+                    closing_event_id: {
+                        "event_type": "FileClosed",
+                        "sha256": "2" * 64,
+                    },
+                },
+                "webhook_files": {
+                    source_relative: {
+                        "status": "CLOSED",
+                        "session_id": "session-a",
+                        "opening_event_id": opening_event_id,
+                        "closing_event_id": closing_event_id,
+                        "file_open_time": "2026-07-22T12:00:00+00:00",
+                        "file_close_time": "2026-07-22T12:15:00+00:00",
+                        "file_size": 123_456,
+                        "duration": duration_seconds,
+                    }
+                },
+                "finalized": {
+                    source_relative: {
+                        "source_size": 123_456,
+                        "source_mtime_ns": 1_000_000_000,
+                        "target": (
+                            f"/adapter/Videos/room/{date}/{segment_name}"
+                        ),
+                        "target_sha256": "3" * 64,
+                        "finalized_at": "2026-07-22T12:16:00+00:00",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def _plan(date: str, state: dict):
     authority = _fake_publication_authority(
         "auto_current",
@@ -213,6 +268,153 @@ def _bind_exact_contract(state: dict, candidate_ids: list[str]) -> None:
         "given_end_authority": "Ivan-reviewed recovery fixture",
         "recovery_publication_authorities_by_candidate": authorities,
     }
+
+
+def test_explicit_recovery_uses_exact_finalized_duration_ledger_without_ffprobe(
+    tmp_path, monkeypatch
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+    runner = delivery_recovery._runner
+    segment_name = state["picks"][0]["segment"]
+    _write_finalized_duration_authority(
+        runner,
+        date=date,
+        segment_name=segment_name,
+        duration_seconds=901.234,
+    )
+
+    def forbidden_ffprobe(_segment: Path) -> int:
+        raise AssertionError(
+            "finalized adapter authority must avoid CloudFS ffprobe"
+        )
+
+    monkeypatch.setattr(runner, "ffprobe_ms", forbidden_ffprobe)
+
+    _plan(date, state)
+
+    assert state["pending_talk"][0]["seg_dur_ms"] == 901_234
+
+
+def test_failure_requeue_uses_exact_finalized_duration_ledger_without_ffprobe(
+    tmp_path, monkeypatch
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+    runner = delivery_recovery._runner
+    record = state["picks"][0]
+    record.update(
+        {
+            "status": "failed",
+            "failure_kind": "producer_error",
+            "failure_recoverable": False,
+            "failure_recovery_fingerprint": OLD,
+            "recovery_publication_authority": (
+                _fake_publication_authority(
+                    "auto_current",
+                    required_given_end_ms=125_000,
+                )
+            ),
+        }
+    )
+    _write_finalized_duration_authority(
+        runner,
+        date=date,
+        segment_name=record["segment"],
+        duration_seconds=901.234,
+    )
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda _failure_kind, _candidate_id: NEW,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        runner,
+        "TALK_REPAIR_LIFETIME_RETRY_CAP",
+        3,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        runner,
+        "ffprobe_ms",
+        lambda _segment: (_ for _ in ()).throw(
+            AssertionError(
+                "finalized adapter authority must avoid CloudFS ffprobe"
+            )
+        ),
+    )
+
+    assert delivery_recovery.requeue_recoverable_talks(date, state) == 1
+
+    assert state["pending_talk"][0]["seg_dur_ms"] == 901_234
+
+
+def test_explicit_recovery_fails_closed_on_finalized_duration_ledger_drift(
+    tmp_path, monkeypatch
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+    runner = delivery_recovery._runner
+    segment_name = state["picks"][0]["segment"]
+    _write_finalized_duration_authority(
+        runner,
+        date=date,
+        segment_name=segment_name,
+    )
+    adapter_state = json.loads(
+        runner.RECORDER_ADAPTER_STATE_PATH.read_text(encoding="utf-8")
+    )
+    finalized_row = next(iter(adapter_state["finalized"].values()))
+    finalized_row["source_size"] += 1
+    runner.RECORDER_ADAPTER_STATE_PATH.write_text(
+        json.dumps(adapter_state),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        runner,
+        "ffprobe_ms",
+        lambda _segment: (_ for _ in ()).throw(
+            AssertionError("drift must not fall through to CloudFS ffprobe")
+        ),
+    )
+    before = copy.deepcopy(state)
+
+    with pytest.raises(
+        delivery_recovery.RecoveryReviewRerunError,
+        match="RECOVERY_RERUN_SOURCE_DURATION_INVALID:auto_current",
+    ):
+        _plan(date, state)
+
+    assert state == before
+
+
+def test_explicit_recovery_falls_back_to_ffprobe_without_adapter_ledger(
+    tmp_path, monkeypatch
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+    runner = delivery_recovery._runner
+    calls = []
+    runner.RECORDER_ADAPTER_STATE_PATH = runner.BASE / "adapter-state.json"
+    runner.RECORDER_ADAPTER_STATE_PATH.write_text(
+        json.dumps(
+            {
+                "schema_version": "bililive-recorder-adapter-state.v1",
+                "webhook_event_ids": {},
+                "webhook_files": {},
+                "finalized": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def ffprobe(segment: Path) -> int:
+        calls.append(segment)
+        return 902_345
+
+    monkeypatch.setattr(runner, "ffprobe_ms", ffprobe)
+
+    _plan(date, state)
+
+    assert calls == [runner.REC_ROOT / date / "official.mp4"]
+    assert state["pending_talk"][0]["seg_dur_ms"] == 902_345
 
 
 def test_natural_recovery_tick_requeues_stale_current_success(
