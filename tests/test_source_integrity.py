@@ -2,6 +2,7 @@ import json
 import os
 
 from ops.recording import bililive_recorder_adapter as adapter
+from src.autoslice import source_integrity
 from src.autoslice.source_integrity import (
     MediaSegmentObservation,
     audit_finalized_recording_inventory,
@@ -207,6 +208,134 @@ def test_recording_inventory_accepts_typed_connection_stub_as_warn(
             "source_disposition_status": "IGNORED_CONNECTION_STUB",
         }
     ]
+
+
+def test_recording_inventory_accepts_persisted_fuse_identity_rebind(
+    tmp_path,
+    monkeypatch,
+):
+    date_dir, stub, successor_mp4, state_path = _typed_connection_stub(tmp_path, monkeypatch)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    relative = f"{date_dir.name}/{stub.name}"
+    row = state["source_dispositions"][relative]
+    bindings = (
+        row["source"],
+        row["xml"],
+        row["session"]["successor_source"],
+        row["session"]["successor_mp4"],
+    )
+    for binding in bindings:
+        binding["device"] += 1
+        binding["inode"] += 1
+    unsigned = {key: value for key, value in row.items() if key != "canonical_integrity"}
+    row["canonical_integrity"]["canonical_json_sha256"] = adapter._canonical_json_sha256(unsigned)
+    fuse_mount = {
+        "mount_id": 77,
+        "major_minor": "0:67",
+        "root": "/",
+        "mount_point": str(tmp_path),
+        "filesystem_type": "fuse.cloudfs",
+        "mount_source": "CloudFS",
+    }
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", lambda _path: fuse_mount)
+    receipts: list[dict] = []
+    successor = date_dir / row["session"]["successor_relative_path"].split("/", 1)[1]
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=state["webhook_files"],
+        finalized=state["finalized"],
+        identity_rebinds=receipts,
+        identity_rebind_attestations={
+            "source": adapter._attest_regular_file(stub),
+            "xml": adapter._attest_regular_file(stub.with_suffix(".xml")),
+            "successor_mp4": adapter._attest_regular_file(successor.with_suffix(".mp4")),
+        },
+    )
+    state["source_disposition_identity_rebinds"] = {relative: receipts}
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    inventory_mount = {
+        **fuse_mount,
+        "mount_id": 991,
+        "mount_point": "/runner/Videos",
+        "root": "/live-streaming/22966160",
+    }
+    monkeypatch.setattr(
+        source_integrity,
+        "_mount_identity_for_path",
+        lambda _path: inventory_mount,
+    )
+
+    audit = audit_finalized_recording_inventory(
+        date_dir,
+        room_id="123456",
+        adapter_state_path=state_path,
+    )
+
+    assert audit["status"] == "PASS"
+    assert audit["consumer_segments"] == [str(successor_mp4)]
+    assert audit["issues"][0]["severity"] == "WARN"
+
+
+def test_recording_inventory_blocks_rebind_on_different_fuse_device(
+    tmp_path,
+    monkeypatch,
+):
+    date_dir, stub, _successor_mp4, state_path = _typed_connection_stub(tmp_path, monkeypatch)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    relative = f"{date_dir.name}/{stub.name}"
+    row = state["source_dispositions"][relative]
+    for binding in (
+        row["source"],
+        row["xml"],
+        row["session"]["successor_source"],
+        row["session"]["successor_mp4"],
+    ):
+        binding["device"] += 1
+        binding["inode"] += 1
+    unsigned = {key: value for key, value in row.items() if key != "canonical_integrity"}
+    row["canonical_integrity"]["canonical_json_sha256"] = adapter._canonical_json_sha256(unsigned)
+    receipt_mount = {
+        "mount_id": 77,
+        "major_minor": "0:67",
+        "root": "/",
+        "mount_point": str(tmp_path),
+        "filesystem_type": "fuse.cloudfs",
+        "mount_source": "CloudFS",
+    }
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", lambda _path: receipt_mount)
+    successor = date_dir / row["session"]["successor_relative_path"].split("/", 1)[1]
+    receipts: list[dict] = []
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=state["webhook_files"],
+        finalized=state["finalized"],
+        identity_rebinds=receipts,
+        identity_rebind_attestations={
+            "source": adapter._attest_regular_file(stub),
+            "xml": adapter._attest_regular_file(stub.with_suffix(".xml")),
+            "successor_mp4": adapter._attest_regular_file(successor.with_suffix(".mp4")),
+        },
+    )
+    state["source_disposition_identity_rebinds"] = {relative: receipts}
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.setattr(
+        source_integrity,
+        "_mount_identity_for_path",
+        lambda _path: {**receipt_mount, "major_minor": "0:68", "mount_id": 88},
+    )
+
+    audit = audit_finalized_recording_inventory(
+        date_dir,
+        room_id="123456",
+        adapter_state_path=state_path,
+    )
+
+    assert audit["status"] == "BLOCKED"
+    assert "mount identity drifted" in audit["issues"][0]["source_disposition_error"]
 
 
 def test_recording_inventory_accepts_historical_finalized_source_mtime(

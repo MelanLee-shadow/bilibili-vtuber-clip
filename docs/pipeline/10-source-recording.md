@@ -99,7 +99,18 @@
   创建 row 时只做一次 source/XML/后继 MP4 全字节 SHA-256 与媒体探测；row 另绑定
   四个文件的 size/mtime/ctime/device/inode/mode 指纹。adapter 每轮只重验 canonical
   row、当前 journal/finalized ledger 与这些不可变指纹，不得反复读取几百 MB 的历史
-  MP4；任一指纹、ledger 或事件漂移都恢复为 status error，且不得自动重签旧 row。
+  MP4；任一内容、稳定 stat、ledger 或事件漂移都恢复为 status error，且不得自动重签
+  旧 row。CloudFS 重挂会重建 device/inode；只有四个 exact path 位于同一个当前 FUSE
+  mount、其余 stat/事件/ledger 全部不变时，adapter 才在 recorder idle 后启动受 deadline、
+  PID start token 和重试上限约束的隔离子进程，重验 source/XML/后继 MP4 的历史 SHA-256。
+  子进程 pending/timeout/error 均持久化并 fail closed，不阻塞 adapter 心跳；成功后写入
+  `recording-source-fuse-identity-rebind.v1` canonical 链式回执；后续 adapter 只认最后
+  回执的 exact namespace mount identity，inventory 跨容器时只认其 namespace-portable
+  major:minor+FSTYPE+SOURCE 投影及 effective fingerprints。后继 FLV 的旧 row
+  没有历史 SHA-256，因此回执必须明确记录 legacy promotion：只沿用 path、稳定 stat、
+  webhook file size、finalized ledger source size 及后继 MP4 历史 SHA 交叉绑定，不能宣称
+  后继 FLV 历史 hash 已匹配。本地文件系统 inode 漂移、跨 FUSE、mount identity 漂移而
+  无新回执或任何非 device/inode 漂移一律继续 BLOCK。
   CloudFS 可能在 finalized 后重写后继 FLV 的 mtime；row 因此分别保存 ledger 的
   历史 mtime 与签发时当前 source fingerprint，并要求两者之后各自稳定，不要求这两个
   跨时刻 mtime 相等。后继 source size、当前 fingerprint、MP4 当前 fingerprint 与

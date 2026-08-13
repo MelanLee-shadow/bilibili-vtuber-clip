@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 import re
@@ -148,6 +149,8 @@ _CONNECTION_STUB_SCHEMA = "recording-connection-stub.v1"
 _CONNECTION_STUB_STATUS = "IGNORED_CONNECTION_STUB"
 _CONNECTION_STUB_REASON = "RECORDER_CONNECTION_STUB_NO_DECODABLE_VIDEO"
 _CONNECTION_STUB_MAX_XML_EVENT_COUNT = 1
+_CONNECTION_STUB_REBIND_SCHEMA = "recording-source-fuse-identity-rebind.v1"
+_CONNECTION_STUB_REBIND_POLICY = "FUSE_REMOUNT_DEVICE_INODE_REBIND"
 _FILE_FINGERPRINT_KEYS = (
     "size_bytes",
     "mtime_ns",
@@ -156,6 +159,10 @@ _FILE_FINGERPRINT_KEYS = (
     "inode",
     "mode",
 )
+_FILE_STABLE_FINGERPRINT_KEYS = ("size_bytes", "mtime_ns", "ctime_ns", "mode")
+_DISPOSITION_FILE_ROLES = ("source", "xml", "successor_source", "successor_mp4")
+_HISTORICAL_SHA_BASIS = "HISTORICAL_SHA256_MATCH"
+_LEGACY_SUCCESSOR_SOURCE_BASIS = "LEGACY_NO_PRIOR_SHA256_WEBHOOK_FINALIZED_LEDGER_STABLE_STAT"
 
 
 def _sha256_file(path: Path) -> str:
@@ -186,6 +193,202 @@ def _binding_matches_fingerprint(binding: dict[str, object], path: Path) -> bool
     except OSError:
         return False
     return all(binding.get(key) == current[key] for key in _FILE_FINGERPRINT_KEYS)
+
+
+def _decode_mountinfo_field(value: str) -> str:
+    return re.sub(
+        r"\\([0-7]{3})",
+        lambda match: chr(int(match.group(1), 8)),
+        value,
+    )
+
+
+def _mount_identity_for_path(path: Path) -> dict[str, object] | None:
+    target = os.path.abspath(os.fspath(path))
+    best: tuple[int, dict[str, object]] | None = None
+    try:
+        lines = Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        fields = line.split()
+        try:
+            separator = fields.index("-")
+            mount_point = _decode_mountinfo_field(fields[4])
+            identity: dict[str, object] = {
+                "mount_id": int(fields[0]),
+                "major_minor": fields[2],
+                "root": _decode_mountinfo_field(fields[3]),
+                "mount_point": mount_point,
+                "filesystem_type": fields[separator + 1],
+                "mount_source": _decode_mountinfo_field(fields[separator + 2]),
+            }
+        except (IndexError, ValueError):
+            continue
+        boundary = mount_point.rstrip("/") + "/"
+        if target != mount_point and not target.startswith(boundary):
+            continue
+        candidate = (len(mount_point), identity)
+        if best is None or candidate[0] > best[0]:
+            best = candidate
+    return best[1] if best is not None else None
+
+
+def _is_fuse_mount(identity: object) -> bool:
+    if not isinstance(identity, dict):
+        return False
+    filesystem_type = str(identity.get("filesystem_type") or "").lower()
+    return filesystem_type == "fuse" or filesystem_type.startswith("fuse.")
+
+
+def _paths_share_fuse_mount(paths: Sequence[Path]) -> bool:
+    identities = [_mount_identity_for_path(path) for path in paths]
+    return bool(
+        identities
+        and all(_is_fuse_mount(identity) for identity in identities)
+        and all(identity == identities[0] for identity in identities[1:])
+    )
+
+
+def _portable_mount_identity(identity: object) -> dict[str, object] | None:
+    if not _is_fuse_mount(identity):
+        return None
+    assert isinstance(identity, dict)
+    return {
+        "major_minor": identity.get("major_minor"),
+        "filesystem_type": identity.get("filesystem_type"),
+        "mount_source": identity.get("mount_source"),
+    }
+
+
+def _disposition_binding_projection(binding: dict[str, object]) -> dict[str, object]:
+    projection = {"path": binding.get("path")}
+    projection.update({key: binding.get(key) for key in _FILE_FINGERPRINT_KEYS})
+    sha256 = binding.get("sha256")
+    projection["sha256"] = sha256
+    projection["verification_basis"] = (
+        _HISTORICAL_SHA_BASIS if sha256 is not None else _LEGACY_SUCCESSOR_SOURCE_BASIS
+    )
+    return projection
+
+
+def _connection_stub_identity_matches(
+    *,
+    row: dict[str, object],
+    bindings: dict[str, dict[str, object]],
+    paths: dict[str, Path],
+    relative_paths: dict[str, str],
+    identity_rebinds: object,
+) -> tuple[bool, str]:
+    if identity_rebinds is None:
+        receipts: list[object] = []
+    elif isinstance(identity_rebinds, list):
+        receipts = identity_rebinds
+    else:
+        return False, "source disposition identity rebind ledger is malformed"
+    previous = {
+        role: _disposition_binding_projection(bindings[role]) for role in _DISPOSITION_FILE_ROLES
+    }
+    disposition_sha256 = str(
+        (row.get("canonical_integrity") or {}).get("canonical_json_sha256")  # type: ignore[union-attr]
+        or ""
+    )
+    previous_receipt_sha256: str | None = None
+    previous_mount: dict[str, object] | None = None
+    receipt_fields = {
+        "schema_version",
+        "policy",
+        "source_disposition_canonical_sha256",
+        "previous_receipt_canonical_sha256",
+        "rebound_at",
+        "current_mount",
+        "previous_bindings",
+        "current_bindings",
+        "legacy_promotion",
+        "canonical_integrity",
+    }
+    for receipt in receipts:
+        if not isinstance(receipt, dict) or set(receipt) != receipt_fields:
+            return False, "source disposition identity rebind receipt is malformed"
+        integrity = receipt.get("canonical_integrity")
+        unsigned = {key: value for key, value in receipt.items() if key != "canonical_integrity"}
+        if not isinstance(integrity, dict) or integrity != {
+            "algorithm": "sha256",
+            "canonical_json_sha256": _canonical_json_sha256(unsigned),
+        }:
+            return False, "source disposition identity rebind integrity mismatch"
+        current = receipt.get("current_bindings")
+        if (
+            receipt.get("schema_version") != _CONNECTION_STUB_REBIND_SCHEMA
+            or receipt.get("policy") != _CONNECTION_STUB_REBIND_POLICY
+            or receipt.get("source_disposition_canonical_sha256") != disposition_sha256
+            or receipt.get("previous_receipt_canonical_sha256") != previous_receipt_sha256
+            or receipt.get("previous_bindings") != previous
+            or receipt.get("legacy_promotion")
+            != {
+                "successor_source": {
+                    "verification_basis": _LEGACY_SUCCESSOR_SOURCE_BASIS,
+                    "historical_sha256_available": False,
+                    "strict_bindings": [
+                        "path",
+                        "size_bytes",
+                        "mtime_ns",
+                        "ctime_ns",
+                        "mode",
+                        "webhook_file_size",
+                        "finalized_ledger_source_size",
+                        "successor_mp4_historical_sha256",
+                    ],
+                }
+            }
+            or not _is_fuse_mount(receipt.get("current_mount"))
+            or not isinstance(current, dict)
+            or set(current) != set(_DISPOSITION_FILE_ROLES)
+        ):
+            return False, "source disposition identity rebind chain drifted"
+        for role in _DISPOSITION_FILE_ROLES:
+            binding = current.get(role)
+            prior = previous[role]
+            if (
+                not isinstance(binding, dict)
+                or set(binding) != {"path", "sha256", "verification_basis", *_FILE_FINGERPRINT_KEYS}
+                or not _path_ends_with(binding.get("path"), relative_paths[role])
+                or binding.get("verification_basis") != prior.get("verification_basis")
+                or (
+                    prior.get("sha256") is not None
+                    and re.fullmatch(r"[0-9a-f]{64}", str(binding.get("sha256") or "")) is None
+                )
+                or (prior.get("sha256") is None and binding.get("sha256") is not None)
+                or any(binding.get(key) != prior.get(key) for key in _FILE_STABLE_FINGERPRINT_KEYS)
+                or (
+                    prior.get("sha256") is not None and binding.get("sha256") != prior.get("sha256")
+                )
+            ):
+                return False, "source disposition identity rebind binding drifted"
+        previous = current
+        previous_receipt_sha256 = str(integrity["canonical_json_sha256"])
+        previous_mount = receipt["current_mount"]
+    try:
+        current_fingerprints = {
+            role: _regular_file_fingerprint(paths[role]) for role in _DISPOSITION_FILE_ROLES
+        }
+    except OSError as exc:
+        return False, f"source disposition evidence cannot be statted: {type(exc).__name__}"
+    if not all(
+        previous[role].get(key) == current_fingerprints[role][key]
+        for role in _DISPOSITION_FILE_ROLES
+        for key in _FILE_FINGERPRINT_KEYS
+    ):
+        return False, "source disposition effective fingerprint drifted"
+    if receipts:
+        identities = [_mount_identity_for_path(path) for path in paths.values()]
+        if (
+            not _paths_share_fuse_mount(list(paths.values()))
+            or not identities
+            or _portable_mount_identity(identities[0]) != _portable_mount_identity(previous_mount)
+        ):
+            return False, "source disposition FUSE rebind mount identity drifted"
+    return True, "source disposition effective identity revalidated"
 
 
 def _canonical_json_sha256(payload: dict[str, object]) -> str:
@@ -250,9 +453,13 @@ def _verify_connection_stub_disposition(
     if state.get("schema_version") != "bililive-recorder-adapter-state.v1":
         return False, "adapter state schema mismatch"
     dispositions = state.get("source_dispositions")
+    identity_rebind_ledger = state.get("source_disposition_identity_rebinds") or {}
     webhook_files = state.get("webhook_files")
     finalized = state.get("finalized")
-    if not all(isinstance(item, dict) for item in (dispositions, webhook_files, finalized)):
+    if not all(
+        isinstance(item, dict)
+        for item in (dispositions, identity_rebind_ledger, webhook_files, finalized)
+    ):
         return False, "adapter disposition/webhook/finalized ledgers are malformed"
 
     relative = f"{date_dir.name}/{source_flv.name}"
@@ -303,10 +510,40 @@ def _verify_connection_stub_disposition(
     except OSError as exc:
         return False, f"ignored source/XML cannot be revalidated: {type(exc).__name__}"
     record_info = xml_binding.get("record_info")
+    early_successor_source = session.get("successor_source")
+    early_successor_mp4 = session.get("successor_mp4")
+    if not isinstance(early_successor_source, dict) or not isinstance(early_successor_mp4, dict):
+        return False, "successor typed evidence is malformed"
+    identity_ok, identity_detail = _connection_stub_identity_matches(
+        row=row,
+        bindings={
+            "source": source_binding,
+            "xml": xml_binding,
+            "successor_source": early_successor_source,
+            "successor_mp4": early_successor_mp4,
+        },
+        paths={
+            "source": source_flv,
+            "xml": xml_path,
+            "successor_source": date_dir.parent / str(session.get("successor_relative_path") or ""),
+            "successor_mp4": (
+                date_dir.parent / str(session.get("successor_relative_path") or "")
+            ).with_suffix(".mp4"),
+        },
+        relative_paths={
+            "source": relative,
+            "xml": xml_relative,
+            "successor_source": str(session.get("successor_relative_path") or ""),
+            "successor_mp4": str(
+                Path(str(session.get("successor_relative_path") or "")).with_suffix(".mp4")
+            ).replace("\\", "/"),
+        },
+        identity_rebinds=identity_rebind_ledger.get(relative),
+    )
+    if not identity_ok:
+        return False, identity_detail
     if (
-        not _binding_matches_fingerprint(source_binding, source_flv)
-        or not _binding_matches_fingerprint(xml_binding, xml_path)
-        or re.fullmatch(r"[0-9a-f]{64}", str(source_binding.get("sha256") or "")) is None
+        re.fullmatch(r"[0-9a-f]{64}", str(source_binding.get("sha256") or "")) is None
         or re.fullmatch(r"[0-9a-f]{64}", str(xml_binding.get("sha256") or "")) is None
         or not isinstance(record_info, dict)
         or record_info.get("roomid") != source_flv.name.split("_", 1)[0]
@@ -432,8 +669,6 @@ def _verify_connection_stub_disposition(
     if (
         embedded_ledger != expected_ledger
         or successor_stat["size_bytes"] != successor_webhook.get("file_size")
-        or not _binding_matches_fingerprint(embedded_source, successor_source)
-        or not _binding_matches_fingerprint(embedded_mp4, successor_mp4)
         or successor_ledger.get("source_size") != successor_stat["size_bytes"]
         or embedded_mp4.get("sha256") != successor_ledger.get("target_sha256")
         or re.fullmatch(r"[0-9a-f]{64}", str(embedded_mp4.get("sha256") or "")) is None
