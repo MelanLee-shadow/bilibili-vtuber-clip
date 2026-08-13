@@ -11628,6 +11628,34 @@ def test_talk_fingerprint_scopes_speaker_override_and_withholds_truth(tmp_path, 
     assert runner.talk_pipeline_fingerprint("auto_singleton") == withheld
 
 
+def test_talk_fingerprint_scopes_candidate_entity_projection(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:" + "a" * 64)
+    monkeypatch.delenv("AUTOSLICE_HUMAN_TRUTH_MODE", raising=False)
+    root = tmp_path / "assets/lidousha/candidate_entity_projections"
+    root.mkdir(parents=True)
+
+    target_before = runner.talk_pipeline_fingerprint("auto_target")
+    neighbor_before = runner.talk_pipeline_fingerprint("auto_neighbor")
+    projection = root / "auto_target.entity-projection.v1.json"
+    projection.write_text('{"schema_version":"candidate-entity-surface-projection.v1"}\n')
+
+    target_after = runner.talk_pipeline_fingerprint("auto_target")
+    assert target_after != target_before
+    assert runner.talk_pipeline_fingerprint("auto_neighbor") == neighbor_before
+    projection.write_text('{"schema_version":"candidate-entity-surface-projection.v2"}\n')
+    assert runner.talk_pipeline_fingerprint("auto_target") != target_after
+    projection.unlink()
+    assert runner.talk_pipeline_fingerprint("auto_target") == target_before
+
+    projection.write_text('{"human_truth":"withheld"}\n')
+    monkeypatch.setenv("AUTOSLICE_HUMAN_TRUTH_MODE", "withheld")
+    withheld = runner.talk_pipeline_fingerprint("auto_target")
+    projection.write_text('{"human_truth":"changed but still withheld"}\n')
+    assert runner.candidate_entity_projection_path("auto_target") is None
+    assert runner.talk_pipeline_fingerprint("auto_target") == withheld
+
+
 def test_talk_speaker_review_is_structured_and_not_boundary_retried(tmp_path, monkeypatch):
     date = "2026-07-10"
     cid = "auto_170019_580_757"

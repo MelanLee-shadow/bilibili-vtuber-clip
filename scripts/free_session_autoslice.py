@@ -98,6 +98,9 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.suggest_upload_tags import generate_upload_tags
+from src.autoslice.candidate_truth_asset import (
+    resolve_candidate_truth_asset_path,
+)
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.runtime_candidate_asset import bind_runtime_candidate_asset
 from src.autoslice.game_context import bind_session_game_context
@@ -604,37 +607,25 @@ def human_truth_mode() -> str:
 def candidate_text_override_path(candidate_id: str) -> Path | None:
     """Return the one canonical candidate override, rejecting path indirection."""
 
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", str(candidate_id or "")):
-        raise ValueError("unsafe candidate id for subtitle text override")
-    if human_truth_mode() == "withheld":
-        return None
-    root = profile_asset_directory("subtitle_text_overrides")
-    path = root / f"{candidate_id}.text.v1.json"
-    if not path.exists():
-        return None
-    if path.is_symlink() or not path.is_file():
-        raise ValueError("candidate subtitle text override must be a regular non-symlink file")
-    if path.resolve().parent != root.resolve():
-        raise ValueError("candidate subtitle text override escapes its canonical asset root")
-    return path
+    return resolve_candidate_truth_asset_path(
+        root=profile_asset_directory("subtitle_text_overrides"),
+        candidate_id=candidate_id,
+        suffix=".text.v1.json",
+        truth_is_available=human_truth_mode() != "withheld",
+        label="subtitle text override",
+    )
 
 
 def candidate_subtitle_regression_path(candidate_id: str) -> Path | None:
     """Return the one canonical candidate regression gate, without indirection."""
 
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", str(candidate_id or "")):
-        raise ValueError("unsafe candidate id for subtitle regression")
-    if human_truth_mode() == "withheld":
-        return None
-    root = profile_asset_directory("subtitle_regressions")
-    path = root / f"{candidate_id}.subtitle-regression.v1.json"
-    if not path.exists():
-        return None
-    if path.is_symlink() or not path.is_file():
-        raise ValueError("candidate subtitle regression must be a regular non-symlink file")
-    if path.resolve().parent != root.resolve():
-        raise ValueError("candidate subtitle regression escapes its canonical asset root")
-    return path
+    return resolve_candidate_truth_asset_path(
+        root=profile_asset_directory("subtitle_regressions"),
+        candidate_id=candidate_id,
+        suffix=".subtitle-regression.v1.json",
+        truth_is_available=human_truth_mode() != "withheld",
+        label="subtitle regression",
+    )
 
 
 def candidate_reviewed_subtitle_baseline(
@@ -655,19 +646,27 @@ def candidate_reviewed_subtitle_baseline(
 def candidate_speaker_override_path(candidate_id: str) -> Path | None:
     """Return the candidate's hash-bound speaker truth, withheld during blind tests."""
 
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", str(candidate_id or "")):
-        raise ValueError("unsafe candidate id for speaker override")
-    if human_truth_mode() == "withheld":
-        return None
-    root = profile_asset_directory("speaker_overrides")
-    path = root / f"{candidate_id}.speaker.v1.json"
-    if not path.exists():
-        return None
-    if path.is_symlink() or not path.is_file():
-        raise ValueError("candidate speaker override must be a regular non-symlink file")
-    if path.resolve().parent != root.resolve():
-        raise ValueError("candidate speaker override escapes its canonical asset root")
-    return path
+    return resolve_candidate_truth_asset_path(
+        root=profile_asset_directory("speaker_overrides"),
+        candidate_id=candidate_id,
+        suffix=".speaker.v1.json",
+        truth_is_available=human_truth_mode() != "withheld",
+        label="speaker override",
+    )
+
+
+def candidate_entity_projection_path(candidate_id: str) -> Path | None:
+    """Return this candidate's canonical entity surfaces without indirection."""
+
+    asset_root_relative = CHANNEL_PROFILE.asset_root.relative_to(CHANNEL_PROFILE.repo_root)
+    root = REPO_ROOT / asset_root_relative / "candidate_entity_projections"
+    return resolve_candidate_truth_asset_path(
+        root=root,
+        candidate_id=candidate_id,
+        suffix=".entity-projection.v1.json",
+        truth_is_available=human_truth_mode() != "withheld",
+        label="entity projection",
+    )
 
 
 def talk_pipeline_fingerprint(candidate_id: str) -> str:
@@ -681,6 +680,7 @@ def talk_pipeline_fingerprint(candidate_id: str) -> str:
             candidate_text_override_path(candidate_id),
             candidate_subtitle_regression_path(candidate_id),
             candidate_speaker_override_path(candidate_id),
+            candidate_entity_projection_path(candidate_id),
         )
         if path is not None
     ]
