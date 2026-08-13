@@ -1132,6 +1132,21 @@ def test_identity_rebind_local_json_refuses_symlink(tmp_path: Path) -> None:
         adapter._local_json(link)
 
 
+def test_identity_rebind_missing_result_remains_pending(tmp_path: Path) -> None:
+    relative = "2026-08-12/123456_20260812-20-29-51.flv"
+    run_dir = adapter._identity_rebind_run_dir(tmp_path, relative)
+    run_dir.mkdir(parents=True)
+
+    assert (
+        adapter._load_identity_rebind_hash_result(
+            relative=relative,
+            task={"token": "not-finished"},
+            spool_root=tmp_path,
+        )
+        is None
+    )
+
+
 def test_identity_rebind_linux_spool_refuses_unknown_mount(
     tmp_path: Path,
     monkeypatch,

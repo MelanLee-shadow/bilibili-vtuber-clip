@@ -52,7 +52,11 @@ SOURCE_DISPOSITION_REBIND_TASK_SCHEMA_VERSION = "recording-source-fuse-identity-
 SOURCE_DISPOSITION_REBIND_HASH_RESULT_SCHEMA_VERSION = (
     "recording-source-fuse-identity-rebind-hash-result.v1"
 )
-SOURCE_DISPOSITION_REBIND_HASH_TIMEOUT_SECONDS = 45.0
+# A real 531 MiB CloudFS successor took more than 100 seconds to become fully
+# readable during the 2026-08-13 remount repair.  The read runs in an isolated
+# child, so keep the heartbeat responsive while giving a healthy cold-cache
+# read a realistic bounded window.
+SOURCE_DISPOSITION_REBIND_HASH_TIMEOUT_SECONDS = 300.0
 SOURCE_DISPOSITION_REBIND_MAX_ATTEMPTS = 2
 BACKEND = "BililiveRecorder"
 QUALITY_PRIORITY = ("avc10000", "avc400", "avc250")
@@ -539,6 +543,10 @@ def _local_json(path: Path, *, maximum_bytes: int = 256 * 1024) -> dict[str, Any
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(path, flags)
+    except FileNotFoundError:
+        # Callers use absence as the normal "child is still working" state.
+        # Preserve that distinction while wrapping every other open failure.
+        raise
     except OSError as exc:
         raise AdapterError(f"cannot open local identity-rebind file: {path.name}") from exc
     try:
