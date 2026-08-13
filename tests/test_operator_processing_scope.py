@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,8 +33,11 @@ from src.autoslice.operator_processing_scope import (
     FAILED_PICK_RECOVERY_GRANT_SCHEMA,
     FAILED_PICK_RECOVERY_INTENT,
     GRANT_SCHEMA,
+    HELD_CURRENT_RERENDER_GRANT_SCHEMA,
+    HELD_CURRENT_RERENDER_INTENT,
     STATE_KEY,
     operator_scope_admission,
+    operator_talk_scope,
 )
 from src.autoslice.selection_scorecard import normalize_selection_scorecard
 
@@ -137,6 +141,41 @@ def _failed_pick_recovery_grant(**overrides) -> dict:
     )
     grant.update(overrides)
     return grant
+
+
+def _held_current_rerender_grant(**overrides) -> dict:
+    grant = _grant(
+        schema_version=HELD_CURRENT_RERENDER_GRANT_SCHEMA,
+        intent=HELD_CURRENT_RERENDER_INTENT,
+        candidate_ids=[TIER1_IDS[0]],
+        grant_id="2026-08-07-rerender-held-current",
+        reason="8/7 点名 held CURRENT 审片包因候选级流水线指纹变化需要无上传重出。",
+        upload_allowed=False,
+    )
+    grant.update(overrides)
+    return grant
+
+
+def _state_with_held_current(grant: dict) -> dict:
+    return {
+        "status": "ready_unpublished_with_failures",
+        "run_mode": "PRODUCTION",
+        "upload_allowed": False,
+        "picks": [
+            {
+                "candidate_id": TIER1_IDS[0],
+                "status": "review_ready",
+                "bundle_lifecycle": "CURRENT",
+                "bundle_compliance": "COMPLIANT",
+                "pipeline_fingerprint": "sha256:" + "1" * 64,
+            }
+        ],
+        "songs": [],
+        "pending_talk": [],
+        "pending_song": [],
+        "talk_backlog": [],
+        STATE_KEY: grant,
+    }
 
 
 def _state_with_failed_pick(
@@ -445,6 +484,120 @@ def test_failed_pick_recovery_intent_admits_aged_out_date_to_list_dates(tmp_path
     ]
 
 
+def test_held_current_rerender_intent_admits_exactly_one_no_upload_candidate(
+    monkeypatch,
+):
+    from src.autoslice import held_current_talk_rerender as held
+
+    monkeypatch.setattr(
+        held,
+        "inspect_named_held_current_talk_rerender",
+        lambda *_a, candidate_id, **_k: held.HeldCurrentTalkRerenderInspection(
+            held.OUTSTANDING_CURRENT,
+            "HELD_CURRENT_RERENDER_REQUIRED",
+            candidate_id,
+        ),
+    )
+    state = _state_with_held_current(_held_current_rerender_grant())
+
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert admission.admitted is True
+    assert admission.candidate_ids == (TIER1_IDS[0],)
+    assert admission.outstanding_candidate_ids == (TIER1_IDS[0],)
+    assert admission.disclosure == {
+        "schema_version": "operator-processing-scope-disclosure.v3",
+        "grant_id": "2026-08-07-rerender-held-current",
+        "recording_date": RECORDING_DATE,
+        "candidate_ids": [TIER1_IDS[0]],
+        "outstanding_candidate_ids": [TIER1_IDS[0]],
+        "quote": IVAN_QUOTE,
+        "intent": HELD_CURRENT_RERENDER_INTENT,
+        "upload_allowed": False,
+    }
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == (
+        TIER1_IDS[0],
+    )
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"upload_allowed": True},
+        {"upload_allowed": None},
+        {"candidate_ids": [TIER1_IDS[0], TIER1_IDS[1]]},
+        {"intent": "RERENDER_ANY_CURRENT"},
+    ],
+)
+def test_held_current_rerender_schema_is_strictly_single_candidate_no_upload(
+    overrides,
+):
+    state = _state_with_held_current(_held_current_rerender_grant(**overrides))
+
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert admission.admitted is False
+    assert admission.reason_code == "SCHEMA_INVALID"
+    # A recognizable v3 block freezes work instead of falling through to the
+    # ordinary Talk/Song lanes on a latest-three date.
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+
+def test_held_current_rerender_block_is_fail_closed_but_convergence_stands_down(
+    monkeypatch,
+):
+    from src.autoslice import held_current_talk_rerender as held
+
+    state = _state_with_held_current(_held_current_rerender_grant())
+    monkeypatch.setattr(
+        held,
+        "inspect_named_held_current_talk_rerender",
+        lambda *_a, candidate_id, **_k: held.HeldCurrentTalkRerenderInspection(
+            held.BLOCKED,
+            "HELD_CURRENT_REGISTRY_UNSEALED",
+            candidate_id,
+        ),
+    )
+    blocked = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+    assert blocked.reason_code == "HELD_CURRENT_REGISTRY_UNSEALED"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+    monkeypatch.setattr(
+        held,
+        "inspect_named_held_current_talk_rerender",
+        lambda *_a, candidate_id, **_k: held.HeldCurrentTalkRerenderInspection(
+            held.CONVERGED,
+            "HELD_CURRENT_PIPELINE_ALREADY_CURRENT",
+            candidate_id,
+        ),
+    )
+    converged = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+    assert converged.reason_code == "CONVERGED"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) is None
+
+
+def test_expired_held_current_scope_wins_before_any_registry_or_source_inspection(
+    monkeypatch,
+):
+    from src.autoslice import held_current_talk_rerender as held
+
+    state = _state_with_held_current(
+        _held_current_rerender_grant(expires_at="2026-08-10T15:00:00Z")
+    )
+    monkeypatch.setattr(
+        held,
+        "inspect_named_held_current_talk_rerender",
+        lambda *_a, **_k: pytest.fail("expired v3 must not inspect external authority"),
+    )
+
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert admission.admitted is False
+    assert admission.reason_code == "EXPIRED"
+    assert admission.outstanding_candidate_ids == (TIER1_IDS[0],)
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) is None
+
+
 def test_failed_pick_scope_reaches_process_date_maintenance(tmp_path, monkeypatch):
     """The old date gets far enough for existing maintenance to requeue it."""
 
@@ -660,3 +813,194 @@ def test_operator_filter_stands_down_for_an_exact_talk_contract(hermetic_quota):
 
     assert [item["cid"] for item in state["pending_talk"]] == ["auto_tier2_0"]
     assert DISCLOSURE_KEY not in state
+
+
+def test_frozen_held_current_scope_rejects_mid_tick_backfill_after_target_rejection(
+    hermetic_quota,
+):
+    """A deterministic target rejection cannot reopen ordinary Talk or Song work."""
+
+    from src.autoslice import historical_failed_talk_scope
+
+    reserve_ids = [f"auto_tier2_{index}" for index in range(4)]
+    state = {
+        "upload_allowed": False,
+        "picks": [
+            {
+                "candidate_id": TIER1_IDS[0],
+                "status": "candidate_rejected",
+            }
+        ],
+        "pending_talk": [],
+        "talk_backlog": [
+            _candidate(cid, _RESERVE_SCORES[cid]) for cid in reserve_ids
+        ],
+        "pending_song": [{"cid": "song_must_stay_parked"}],
+        "song_backlog": [{"cid": "song_backlog_must_stay_parked"}],
+        "songs": [],
+        STATE_KEY: _held_current_rerender_grant(),
+    }
+    song_preimage = (
+        list(state["pending_song"]),
+        list(state["song_backlog"]),
+    )
+
+    historical_failed_talk_scope.reprioritize(state, (TIER1_IDS[0],))
+
+    assert state["pending_talk"] == []
+    assert sorted(item["cid"] for item in state["talk_backlog"]) == reserve_ids
+    assert (state["pending_song"], state["song_backlog"]) == song_preimage
+    assert state[DISCLOSURE_KEY]["scope_mode"] == "FROZEN_FOR_TICK_TALK_ONLY"
+    assert state[DISCLOSURE_KEY]["intent"] == HELD_CURRENT_RERENDER_INTENT
+
+
+def test_process_date_held_current_rejection_never_dispatches_backfill_or_song(
+    hermetic_quota,
+    monkeypatch,
+):
+    """Full runner canary: frozen scope survives deterministic rejection mid-tick."""
+
+    from src.autoslice import held_current_talk_rerender as held
+    from src.autoslice import historical_failed_talk_scope
+
+    target = _candidate(TIER1_IDS[0], 86.0)
+    target.update(
+        {
+            "selected_repair": True,
+            "retry_reason": held.RETRY_REASON,
+            "operator_scope_grant_id": "2026-08-07-rerender-held-current",
+        }
+    )
+    reserve_ids = [f"auto_tier2_{index}" for index in range(4)]
+    state = {
+        "status": "ready_unpublished_with_failures",
+        "run_mode": "PRODUCTION",
+        "upload_allowed": False,
+        "picks": [],
+        "pending_talk": [target],
+        "talk_backlog": [
+            _candidate(cid, _RESERVE_SCORES[cid]) for cid in reserve_ids
+        ],
+        "talk_superseded_attempts": [
+            {
+                "candidate_id": TIER1_IDS[0],
+                "bundle_lifecycle": "SUPERSEDED",
+                "bundle_compliance": "STALE_PIPELINE",
+                "pipeline_fingerprint": "sha256:" + "1" * 64,
+                "superseded_by": "sha256:" + "2" * 64,
+                "retry_reason": held.RETRY_REASON,
+                "operator_scope_grant_id": "2026-08-07-rerender-held-current",
+            }
+        ],
+        "pending_song": [{"cid": "song_active_must_stay"}],
+        "song_backlog": [{"cid": "song_backlog_must_stay"}],
+        "song_selection_backlog": [{"cid": "song_selection_must_stay"}],
+        "songs": [],
+        STATE_KEY: _held_current_rerender_grant(),
+    }
+    song_preimage = copy.deepcopy(
+        (
+            state["pending_song"],
+            state["song_backlog"],
+            state["song_selection_backlog"],
+            state["songs"],
+        )
+    )
+    monkeypatch.setattr(
+        held,
+        "inspect_named_held_current_talk_rerender",
+        lambda *_a, candidate_id, **_k: held.HeldCurrentTalkRerenderInspection(
+            held.OUTSTANDING_QUEUED,
+            "HELD_CURRENT_RERENDER_QUEUED",
+            candidate_id,
+        ),
+    )
+    monkeypatch.setattr(runner, "read_state", lambda _date: state)
+    monkeypatch.setattr(runner, "write_state", lambda *_a, **_k: None)
+    monkeypatch.setattr(runner, "write_reports", lambda *_a, **_k: None)
+    monkeypatch.setattr(runner, "runtime_health_error", lambda: None)
+    monkeypatch.setattr(runner, "recover_finalized_legacy_hls", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        runner,
+        "audit_finalized_recording_inventory",
+        lambda *_a, **_k: {"can_select": True, "issues": []},
+    )
+    monkeypatch.setattr(runner, "annotate_state_sessions", lambda *_a, **_k: False)
+    monkeypatch.setattr(runner, "AUTOMATIC_MAINTENANCE_NOT_BEFORE", RECORDING_DATE)
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "maintain",
+        lambda *_a, **_k: (0, 0, 0, 0, False),
+    )
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "work_flags",
+        lambda *_a, **_k: (True, True, False),
+    )
+    monkeypatch.setattr(
+        runner,
+        "discover_segments",
+        lambda *_a, **_k: pytest.fail("held scope must not discover unnamed Talk"),
+    )
+    monkeypatch.setattr(runner, "session_sealed", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        runner.semantic_chat_refresh,
+        "refresh_operator_scoped_chat_scorecards",
+        lambda *_a, **_k: 0,
+    )
+    monkeypatch.setattr(runner, "cpa_healthy", lambda: True)
+    monkeypatch.setattr(runner, "prepare_speaker_routing", lambda *_a, **_k: None)
+    monkeypatch.setattr(runner, "collect_song_name_candidates", lambda *_a, **_k: [])
+    dispatched: list[str] = []
+
+    def reject_only_target(_date, items, _produce):
+        ids = [str(item.get("cid") or item.get("candidate_id") or "") for item in items]
+        assert ids == [TIER1_IDS[0]]
+        dispatched.extend(ids)
+        return [
+            {
+                "candidate_id": TIER1_IDS[0],
+                "status": "candidate_rejected",
+                "rejection_reason": "deterministic_canary_rejection",
+            }
+        ]
+
+    monkeypatch.setattr(runner, "produce_batch", reject_only_target)
+    monkeypatch.setattr(
+        runner,
+        "refill_songs",
+        lambda *_a, **_k: pytest.fail("held scope must not refill Song"),
+    )
+    monkeypatch.setattr(runner, "cover_repair_needed", lambda *_a, **_k: False)
+    monkeypatch.setattr(
+        runner,
+        "repair_covers",
+        lambda *_a, **_k: pytest.fail("held scope must not generate or repair covers"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_project_terminal_batch_state",
+        lambda value: {
+            "picks": value["picks"],
+            "songs": value["songs"],
+            "delivered_talk": [],
+            "repaired": [],
+            "delivered_songs": [],
+            "blocked_songs": [],
+            "rejected_songs": [],
+            "failures": [],
+        },
+    )
+    monkeypatch.setattr(runner, "queue_collab_evidence_capture", lambda *_a, **_k: None)
+
+    runner.process_date(RECORDING_DATE)
+
+    assert dispatched == [TIER1_IDS[0]]
+    assert state["pending_talk"] == []
+    assert sorted(item["cid"] for item in state["talk_backlog"]) == reserve_ids
+    assert (
+        state["pending_song"],
+        state["song_backlog"],
+        state["song_selection_backlog"],
+        state["songs"],
+    ) == song_preimage

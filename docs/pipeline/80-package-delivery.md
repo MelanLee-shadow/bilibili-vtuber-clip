@@ -207,6 +207,14 @@
   `CURRENT_POLICY_AUDIT_UNKNOWN/NOT_REAUDITED`。不得根据旧 `package_audit.passed=true`
   或 `review_ready` 猜出当前审计 PASS；上传 choke point 仍须重跑当前 auditor。
 - 已为 `CURRENT + COMPLIANT` 的历史审片包不会因宽流水线指纹变化被 cron 自动重做。确需全量重出时，只能在新的 `RECOVERY_REVIEW` base 运行 `scripts/plan_recovery_review_rerun.py`：普通 recovery base 要求源 state 字节 SHA-256、全部 CURRENT candidate allowlist、共同旧指纹和当前新指纹完全匹配。对 ordinary daily state 或有效 exact recovery state 中一个已发布候选的单片事故，则必须显式加 `--project-single-published-repair`，只允许一个 `--candidate-id`，禁止 suppression/replacement；历史 exact recovery 源只读兼容明确列出的 v5–v7 plan，plan 必须与 selection contract 完全一致并包含目标，投影出的新目标始终使用当前 v7。planner 把其他 active row 记录为 `SOURCE_STATE_UNCHANGED_OUTSIDE_REPAIR_TARGET` 后投影出隔离的 exact base，不得把未重跑的其他候选伪装成用户拒绝。若隔离 base 不复制多 GiB 的原录像，可同时用 `--target-recordings-root` 绑定现有 regular recording tree；该 root 中可见的日期目录必须恰好只有目标 date（可让该单个日期目录指向 canonical date），receipt 会冻结该路径，后续 runner 必须以同一 `AUTOSLICE_REC_ROOT` 运行。两种模式都要求 source/target 无 `AUTO_UPLOAD`；若 source 本身是 recovery base，其 `cpa.env` 可以是既有的外部权威 symlink，但 planner 必须先解析并验证最终目标是 regular file，再让 target 直接绑定该解析后的权威，禁止复制凭据或接受悬空/非普通文件目标；旧目标 record 完整降为 `SUPERSEDED + STALE_PIPELINE`，新项以 `selected_repair` 入队，随后仍由正常 runner 生成 CURRENT 成品。禁止把旧 `review_ready` 手改成 failed，也禁止在旧 base 原地覆盖。
+- 上一条的窄例外只适用于一条**未发布且仍被 registry hold** 的历史 Talk 审片件：
+  `operator-processing-scope-grant.v3 / RERENDER_NAMED_HELD_CURRENT_FOR_REVIEW`
+  必须逐 tick 重验 committed/deployed-sealed `hold_pending_review` 精确行、
+  `review_ready + CURRENT + COMPLIANT` 唯一 active row、候选级新旧 fingerprint 不同，
+  以及 exact source/BCUT/structured-chat 证据。全部预检成功后才能在同一内存事务中把旧行
+  归档为 `SUPERSEDED + STALE_PIPELINE` 并入队 `selected_repair`；不得携带或生成
+  `given_title`、`recovery_publication_authority`、publication authority 或上传权。
+  registry 与 Song 队列保持原字节/原行，任何中途漂移都显式阻断而不部分改 state。
 - `delivery_rerun_plan.schema_version` 必须精确为
   `recovery-review-talk-rerun-plan.v7`；v6 及以下只作历史证据，不可执行。planner 必须以
   `registry_repo_path + registry_sha256` 绑定

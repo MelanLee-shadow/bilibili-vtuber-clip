@@ -78,6 +78,13 @@
   改分、删除或授权上传；任一绑定漂移时保持 stale review hold，不能静默放行。
 - 精确恢复契约持续压住普通 backlog，直到新的人工恢复计划显式替换；普通 backlog
   在报告里只能显示为 `OUTSIDE_EXACT_CONTRACT / INELIGIBLE`，不能伪装成当前候补。
+- 已由 committed publication registry 标为 `hold_pending_review` 的单条历史
+  `review_ready + CURRENT + COMPLIANT` Talk，只有严格
+  `operator-processing-scope-grant.v3 / RERENDER_NAMED_HELD_CURRENT_FOR_REVIEW`
+  才能因候选级流水线指纹变化进入无上传审片重出。授权必须恰好点名一条并显式
+  `upload_allowed=false`；tick 从入口冻结 Talk-only allowlist，确定性拒绝也不得中途恢复
+  普通 Talk 补位、发现或任何 Song 工作。registry 未提交/未部署封印、hold 行不唯一、
+  指纹未变、源/BCUT/chat 缺证或候选重复都 fail closed；到期则先于外部证据检查自动退出。
 - `src/autoslice/candidate_selection.py::exact_talk_contract_closure` 是 exact 状态的共同
   判定器。终态验收要求：每个 contract ID 恰有一条 `rc=0 + CURRENT + COMPLIANT`
   delivery；没有 pending、failure、missing、重复/冲突记录或 outside-contract active pick。

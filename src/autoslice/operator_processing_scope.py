@@ -64,8 +64,11 @@ from src.autoslice.runner_state_writeback import CANDIDATE_COLLECTIONS
 GRANT_SCHEMA = "operator-processing-scope-grant.v1"
 FAILED_PICK_RECOVERY_GRANT_SCHEMA = "operator-processing-scope-grant.v2"
 FAILED_PICK_RECOVERY_INTENT = "RECOVER_NAMED_FAILED_PICKS"
+HELD_CURRENT_RERENDER_GRANT_SCHEMA = "operator-processing-scope-grant.v3"
+HELD_CURRENT_RERENDER_INTENT = "RERENDER_NAMED_HELD_CURRENT_FOR_REVIEW"
 DISCLOSURE_SCHEMA = "operator-processing-scope-disclosure.v1"
 FAILED_PICK_RECOVERY_DISCLOSURE_SCHEMA = "operator-processing-scope-disclosure.v2"
+HELD_CURRENT_RERENDER_DISCLOSURE_SCHEMA = "operator-processing-scope-disclosure.v3"
 STATE_KEY = "operator_processing_scope"
 DISCLOSURE_KEY = "operator_processing_scope_disclosure"
 # 出处文本的下限沿用 talk_quota_authority._authority_text 的口径：短于 8 个字符的
@@ -84,6 +87,9 @@ _GRANT_FIELDS = frozenset(
     }
 )
 _FAILED_PICK_RECOVERY_GRANT_FIELDS = _GRANT_FIELDS | {"intent"}
+_HELD_CURRENT_RERENDER_GRANT_FIELDS = _FAILED_PICK_RECOVERY_GRANT_FIELDS | {
+    "upload_allowed"
+}
 _AUTHORIZATION_FIELDS = frozenset({"quote", "timestamp"})
 # 候选还"排着队"的两个集合。其余 CANDIDATE_COLLECTIONS 成员（picks / 低信心分
 # 落选 / superseded …）都表示这条候选已经被处理过一轮，不再是本授权的未竟工作。
@@ -161,6 +167,14 @@ def _validate_grant(block: object) -> tuple[dict[str, object] | None, str]:
         intent = block.get("intent")
         if intent != FAILED_PICK_RECOVERY_INTENT:
             return None, "SCHEMA_INVALID"
+    elif schema_version == HELD_CURRENT_RERENDER_GRANT_SCHEMA:
+        expected_fields = _HELD_CURRENT_RERENDER_GRANT_FIELDS
+        intent = block.get("intent")
+        if (
+            intent != HELD_CURRENT_RERENDER_INTENT
+            or block.get("upload_allowed") is not False
+        ):
+            return None, "SCHEMA_INVALID"
     else:
         return None, "SCHEMA_INVALID"
     if set(block) != expected_fields:
@@ -181,6 +195,8 @@ def _validate_grant(block: object) -> tuple[dict[str, object] | None, str]:
         if candidate_id is None or candidate_id in candidate_ids:
             return None, "SCHEMA_INVALID"
         candidate_ids.append(candidate_id)
+    if intent == HELD_CURRENT_RERENDER_INTENT and len(candidate_ids) != 1:
+        return None, "SCHEMA_INVALID"
     authorization = block.get("user_authorization")
     if (
         not isinstance(authorization, Mapping)
@@ -204,6 +220,7 @@ def _validate_grant(block: object) -> tuple[dict[str, object] | None, str]:
             "quote": str(authorization["quote"]).strip(),
             "authorized_at": _utc(authorization.get("timestamp")),
             "expires_at": expires_at,
+            "upload_allowed": block.get("upload_allowed"),
         },
         "OK",
     )
@@ -264,6 +281,37 @@ def _settled(
     return True
 
 
+def _held_current_rerender_outstanding(
+    state: Mapping[str, object],
+    *,
+    date: str,
+    candidate_id: str,
+    grant_id: str,
+) -> tuple[bool | None, str]:
+    """Return outstanding/converged, or ``None`` with a fail-closed reason."""
+
+    # Local import avoids the runner -> historical scope -> operator scope ->
+    # delivery recovery import cycle.  Admission executes only after the runner
+    # has finished importing.
+    from src.autoslice.held_current_talk_rerender import (
+        BLOCKED,
+        CONVERGED,
+        inspect_named_held_current_talk_rerender,
+    )
+
+    inspection = inspect_named_held_current_talk_rerender(
+        date,
+        state,
+        candidate_id=candidate_id,
+        grant_id=grant_id,
+    )
+    if inspection.outcome == BLOCKED:
+        return None, inspection.reason_code
+    if inspection.outcome == CONVERGED:
+        return False, inspection.reason_code
+    return True, inspection.reason_code
+
+
 def operator_scope_admission(
     state: Mapping[str, object],
     *,
@@ -314,10 +362,49 @@ def operator_scope_admission(
             ),
             detail=",".join(unknown),
         )
-    outstanding = tuple(
-        cid for cid in candidate_ids if not _settled(state, cid, known, intent=intent)
-    )
     moment = now or datetime.now(timezone.utc)
+    if (
+        intent == HELD_CURRENT_RERENDER_INTENT
+        and moment >= grant["expires_at"]  # type: ignore[operator]
+    ):
+        # Expiry is the hard backstop and must win before registry/source/chat
+        # I/O.  Otherwise an unavailable prerequisite could keep a recognizable
+        # v3 scope fail-closed forever even after its authority expired.
+        return OperatorScopeAdmission(
+            False,
+            "EXPIRED",
+            grant_id,
+            candidate_ids,
+            candidate_ids,
+            log_line=(
+                f"operator scope grant {grant_id} EXPIRED at "
+                f"{grant['expires_at'].isoformat()} with "  # type: ignore[union-attr]
+                f"{len(candidate_ids)}/{len(candidate_ids)} candidate(s) unfinished"
+            ),
+        )
+    if intent == HELD_CURRENT_RERENDER_INTENT:
+        is_outstanding, held_reason = _held_current_rerender_outstanding(
+            state,
+            date=str(grant["recording_date"]),
+            candidate_id=candidate_ids[0],
+            grant_id=grant_id,
+        )
+        if is_outstanding is None:
+            return OperatorScopeAdmission(
+                False,
+                held_reason,
+                grant_id,
+                candidate_ids,
+                log_line=(
+                    f"operator scope grant {grant_id} blocked ({held_reason})"
+                ),
+                detail=held_reason,
+            )
+        outstanding = candidate_ids if is_outstanding else ()
+    else:
+        outstanding = tuple(
+            cid for cid in candidate_ids if not _settled(state, cid, known, intent=intent)
+        )
     if moment >= grant["expires_at"]:  # type: ignore[operator]
         return OperatorScopeAdmission(
             False,
@@ -345,7 +432,9 @@ def operator_scope_admission(
         )
     disclosure = {
         "schema_version": (
-            FAILED_PICK_RECOVERY_DISCLOSURE_SCHEMA
+            HELD_CURRENT_RERENDER_DISCLOSURE_SCHEMA
+            if intent == HELD_CURRENT_RERENDER_INTENT
+            else FAILED_PICK_RECOVERY_DISCLOSURE_SCHEMA
             if intent == FAILED_PICK_RECOVERY_INTENT
             else DISCLOSURE_SCHEMA
         ),
@@ -355,8 +444,10 @@ def operator_scope_admission(
         "outstanding_candidate_ids": list(outstanding),
         "quote": grant["quote"],
     }
-    if intent == FAILED_PICK_RECOVERY_INTENT:
+    if intent in {FAILED_PICK_RECOVERY_INTENT, HELD_CURRENT_RERENDER_INTENT}:
         disclosure["intent"] = intent
+    if intent == HELD_CURRENT_RERENDER_INTENT:
+        disclosure["upload_allowed"] = False
     return OperatorScopeAdmission(
         True,
         "ADMITTED",
@@ -399,6 +490,14 @@ def operator_talk_scope(
     elif schema_version == FAILED_PICK_RECOVERY_GRANT_SCHEMA:
         if block.get("intent") != FAILED_PICK_RECOVERY_INTENT:
             return None
+    elif schema_version == HELD_CURRENT_RERENDER_GRANT_SCHEMA:
+        if (
+            block.get("intent") != HELD_CURRENT_RERENDER_INTENT
+            or block.get("upload_allowed") is not False
+        ):
+            # A recognizable held-current grant must fail closed instead of
+            # falling through to ordinary Talk/Song work on a latest-three day.
+            return ()
     else:
         return None
     admission = operator_scope_admission(state, date=date, now=moment)
@@ -407,6 +506,11 @@ def operator_talk_scope(
         or not admission.candidate_ids
         or not isinstance(admission.disclosure, Mapping)
     ):
+        if (
+            schema_version == HELD_CURRENT_RERENDER_GRANT_SCHEMA
+            and admission.reason_code not in {"CONVERGED", "EXPIRED"}
+        ):
+            return ()
         return None
     talk_ids = _ids_in(state, ("pending_talk", "talk_backlog", "picks"))
     song_ids = _ids_in(state, ("pending_song", "song_backlog", "songs"))
@@ -466,8 +570,15 @@ def hold_talk_outside_operator_scope(
         if not isinstance(block, Mapping):
             raise ValueError("frozen operator Talk scope lost its grant")
         authorization = block.get("user_authorization")
+        intent = block.get("intent")
         disclosure = {
-            "schema_version": FAILED_PICK_RECOVERY_DISCLOSURE_SCHEMA,
+            "schema_version": (
+                HELD_CURRENT_RERENDER_DISCLOSURE_SCHEMA
+                if intent == HELD_CURRENT_RERENDER_INTENT
+                else FAILED_PICK_RECOVERY_DISCLOSURE_SCHEMA
+                if intent == FAILED_PICK_RECOVERY_INTENT
+                else DISCLOSURE_SCHEMA
+            ),
             "grant_id": block.get("grant_id"),
             "recording_date": block.get("recording_date"),
             "candidate_ids": list(candidate_ids),
@@ -477,9 +588,12 @@ def hold_talk_outside_operator_scope(
                 if isinstance(authorization, Mapping)
                 else None
             ),
-            "intent": FAILED_PICK_RECOVERY_INTENT,
             "scope_mode": "FROZEN_FOR_TICK_TALK_ONLY",
         }
+        if intent is not None:
+            disclosure["intent"] = intent
+        if intent == HELD_CURRENT_RERENDER_INTENT:
+            disclosure["upload_allowed"] = False
     pending = state.get("pending_talk")
     if not isinstance(pending, list):
         return []

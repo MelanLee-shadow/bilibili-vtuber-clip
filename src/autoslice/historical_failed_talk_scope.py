@@ -5,7 +5,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from src.autoslice.exact_talk_recovery_scope import maintain_delivery_recovery_scope
-from src.autoslice.operator_processing_scope import operator_talk_scope
+from src.autoslice.operator_processing_scope import (
+    HELD_CURRENT_RERENDER_INTENT,
+    STATE_KEY,
+    operator_talk_scope,
+)
 from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice import semantic_evidence_scorecard_refresh as semantic_chat_refresh
 
@@ -26,11 +30,48 @@ def maintain(
     automatic_maintenance: bool,
     candidate_ids: tuple[str, ...] | None,
 ) -> tuple[int, int, int, int, bool]:
-    return maintain_delivery_recovery_scope(
+    held_current_requeued = 0
+    block = state.get(STATE_KEY)
+    if (
+        automatic_maintenance
+        and candidate_ids
+        and isinstance(block, Mapping)
+        and block.get("intent") == HELD_CURRENT_RERENDER_INTENT
+    ):
+        from src.autoslice.held_current_talk_rerender import (
+            HeldCurrentTalkRerenderError,
+            requeue_named_held_current_talk_for_review,
+        )
+
+        try:
+            held_current_requeued = requeue_named_held_current_talk_for_review(
+                date,
+                state,
+                candidate_ids=candidate_ids,
+                grant_id=str(block.get("grant_id") or ""),
+            )
+        except HeldCurrentTalkRerenderError as exc:
+            state["operator_processing_scope_runtime_block"] = {
+                "schema_version": "operator-processing-scope-runtime-block.v1",
+                "recording_date": date,
+                "candidate_ids": list(candidate_ids),
+                "intent": HELD_CURRENT_RERENDER_INTENT,
+                "upload_allowed": False,
+                "reason_code": str(exc),
+            }
+    result = maintain_delivery_recovery_scope(
         date,
         state,
         automatic_maintenance=automatic_maintenance,
         talk_candidate_ids=candidate_ids,
+    )
+    recovered_songs, stale_talks, failed_talks, blocked_songs, baseline_changed = result
+    return (
+        recovered_songs,
+        stale_talks + held_current_requeued,
+        failed_talks,
+        blocked_songs,
+        baseline_changed,
     )
 
 
