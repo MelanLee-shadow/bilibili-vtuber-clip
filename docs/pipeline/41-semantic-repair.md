@@ -221,6 +221,14 @@
   model；AGY 与 Gemini API、不同 model 之间绝不交叉回放。只可缓存并重验 schema 合法的
   `OBSERVED` 成功原始听写，失败、`UNCERTAIN`/`INCONCLUSIVE` 不得写入；命中只免 provider
   调用，当前音频 SHA、prompt SHA、response SHA 与完整证词验证仍须重跑。
+  exact-final 的 `MAX_CONTEXT_ADJUDICATIONS` 是**新 provider 裁决调用帽**，不是 finding
+  列表位置帽。每条 finding 在消费帽前可做一次只读 cache probe；只有本轮已稳定 hash-bound
+  的 source 与当前 stat binding、source target/crop、audio、完整 provider-specific witness
+  prompt、response、provider/model
+  全部重验通过，且当前 check-request 精确绑定的 CPA judge cache 同时命中，才可写
+  `final-review-provider-budget-replay.v1`、以零 provider 调用越过已耗尽的帽。witness 或 judge
+  任一 miss，或 current/base/proposed/time/source/prompt/audio 身份任一漂移，都不得调用 provider
+  越帽，必须保持 `SKIPPED_BUDGET`；禁止以提高 cap 代替修复预算记账。
   correction pass 同一不可变 cue 时间窗有多笔 finding 时，第一笔 mutation 落定后必须把后续
   finding 在 live `base_text_sha256` 上重建并重新入裁决；编辑 span 已被前一笔改动覆盖或 cue 已
   删除时，才可终态写 `SUPERSEDED_BY_SAME_CUE_MUTATION` 及 typed reason。每笔原

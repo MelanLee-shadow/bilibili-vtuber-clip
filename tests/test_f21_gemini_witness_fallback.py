@@ -332,6 +332,7 @@ def test_remote_host_with_local_padded_still_builds_the_audio_witness(
     out_root = tmp_path / "out"
     out_root.mkdir()
     built: list[dict] = []
+    probed: list[dict] = []
 
     class _FakeVerifier:
         def __call__(self, request):
@@ -349,6 +350,10 @@ def test_remote_host_with_local_padded_still_builds_the_audio_witness(
                 "provider": "gemini_api",
                 "key_tier": "free",
             }
+
+        def probe_witness_cache(self, request):
+            probed.append(dict(request))
+            return {"served_from_cache": True, "request": dict(request)}
 
     monkeypatch.setattr(
         verifier_module,
@@ -370,9 +375,13 @@ def test_remote_host_with_local_padded_still_builds_the_audio_witness(
     )
 
     verdict = context.verify_confusable_entity(_witness_request(evidence_id="e" * 64))
+    probe_request = _witness_request(evidence_id="f" * 64)
+    cached = context.verify_confusable_entity.probe_witness_cache(probe_request)
 
     assert built, "远端 host + 本地 padded 时声学证人必须被构造并被调用"
     assert verdict["status"] == "OBSERVED"
+    assert probed == [probe_request]
+    assert cached["served_from_cache"] is True
 
 
 @pytest.mark.parametrize(

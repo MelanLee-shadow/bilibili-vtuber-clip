@@ -62,6 +62,9 @@ from src.autoslice.final_review_schema_retry import (
     schema_repair_new_finding_diagnostic,
     schema_repair_prompt,
 )
+from src.autoslice.final_review_provider_budget import (
+    ContextAdjudicationBudget,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import extract_json_object
 from src.autoslice.missing_proposal_bootstrap import (
@@ -2634,25 +2637,22 @@ def adjudicate_exact_release_findings(
 
     unresolved: list[dict[str, Any]] = []
     resolved: list[dict[str, Any]] = []
-    for index, finding in enumerate(findings):
+    budget = ContextAdjudicationBudget(
+        limit=MAX_CONTEXT_ADJUDICATIONS,
+        entity_verifier=entity_verifier,
+        clip_context=clip_context,
+        source_media_timeline_offset_ms=source_media_timeline_offset_ms,
+        judge_llm_call=judge_llm_call,
+        screen_read_probe=screen_read_probe,
+        adjudicate_context=adjudicate_context_finding,
+    )
+    for finding in findings:
         row = dict(finding)
-        if index >= MAX_CONTEXT_ADJUDICATIONS:
-            row["exact_release_adjudication"] = {
-                "schema_version": "subtitle-span-adjudication.v1",
-                "status": "SKIPPED_BUDGET",
-                "repaired": False,
-            }
+        adjudication = budget.adjudicate(srt_text, row)
+        if adjudication.get("status") == "SKIPPED_BUDGET":
+            row["exact_release_adjudication"] = adjudication
             unresolved.append(row)
             continue
-        _unused_output, adjudication = adjudicate_context_finding(
-            srt_text,
-            row,
-            entity_verifier=entity_verifier,
-            clip_context=clip_context,
-            source_media_timeline_offset_ms=source_media_timeline_offset_ms,
-            judge_llm_call=judge_llm_call,
-            screen_read_probe=screen_read_probe,
-        )
         rebuilt_finding = adjudication.get("rebuilt_finding")
         if isinstance(rebuilt_finding, Mapping):
             for key in (

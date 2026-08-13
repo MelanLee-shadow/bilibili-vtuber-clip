@@ -414,6 +414,14 @@ def _build_entity_verification_context(
                 return verdict
         return cpa_read_aloud_verifier(request)
 
+    cache_probe = getattr(cpa_read_aloud_verifier, "probe_witness_cache", None)
+    if callable(cache_probe):
+        # Exact-final's provider budget is enforced outside the verifier.  It
+        # needs the explicit no-provider probe to survive this human/CPA
+        # composition layer; the human verifier is never consulted by the
+        # metadata-only path.
+        setattr(verify_confusable_entity, "probe_witness_cache", cache_probe)
+
     static_referent_groups = load_referent_groups(
         adapters.profile_asset_file("entity_confusables"), include_singletons=True
     )

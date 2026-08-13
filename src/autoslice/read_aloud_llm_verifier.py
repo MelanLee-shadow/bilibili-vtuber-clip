@@ -498,4 +498,8 @@ used by the CPA judge.
             next_verifier=next_verifier,
         )
 
+    cache_probe = getattr(next_verifier, "probe_witness_cache", None)
+    if callable(cache_probe):
+        # Preserve exact-final's explicit no-provider witness replay seam.
+        setattr(verify, "probe_witness_cache", cache_probe)
     return verify

@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 # 保留 urllib.request 导入：F21 的 fallback 单测通过
 # ``monkeypatch.setattr(verifier_module.urllib.request, "urlopen", ...)``
@@ -1175,6 +1176,7 @@ class _LocalAudioVerifier:
     recording_date: str
     source_duration_ms: int
     source_sha256: str
+    source_stat_binding: tuple[int, int, int, int, int, int, int]
     binary: str
     model: str
     timeout: str
@@ -1185,6 +1187,20 @@ class _LocalAudioVerifier:
 
     def __call__(self, request: Mapping[str, Any]) -> Mapping[str, Any]:
         return _verify_local_audio_request(verifier=self, request=request)
+
+    def probe_witness_cache(
+        self, request: Mapping[str, Any]
+    ) -> Mapping[str, Any] | None:
+        """Replay a physically identical blind witness without provider I/O.
+
+        A miss is ``None``; this seam never crops, writes, or calls AGY/Gemini.
+        """
+
+        from src.autoslice.entity_witness_cache_probe import (
+            probe_cached_local_audio_witness,
+        )
+
+        return probe_cached_local_audio_witness(verifier=self, request=request)
 
 
 def _prepare_audio_span(
@@ -1680,7 +1696,11 @@ def build_local_audio_entity_verifier(
 
     source_media = source_media.resolve()
     output_dir = output_dir.resolve()
+    source_stat_before = _source_stat_binding(source_media)
     source_sha256 = _sha256(source_media)
+    source_stat_after = _source_stat_binding(source_media)
+    if source_stat_before != source_stat_after:
+        raise RuntimeError("source media stat binding drifted while hashing")
     binary = agy_gemini_client.resolve_local_agy_binary(agy_bin)
     try:
         as_of = dt.datetime.combine(
@@ -1697,8 +1717,24 @@ def build_local_audio_entity_verifier(
         recording_date=recording_date,
         source_duration_ms=source_duration_ms,
         source_sha256=source_sha256,
+        source_stat_binding=source_stat_after,
         binary=binary,
         model=model,
         timeout=timeout,
         timely_context=timely,
+    )
+
+
+def _source_stat_binding(path: Path) -> tuple[int, int, int, int, int, int, int]:
+    info = os.lstat(path)
+    if not stat.S_ISREG(info.st_mode):
+        raise RuntimeError("source media must be a regular non-symlink file")
+    return (
+        int(info.st_dev),
+        int(info.st_ino),
+        int(info.st_mode),
+        int(info.st_uid),
+        int(info.st_size),
+        int(info.st_mtime_ns),
+        int(info.st_ctime_ns),
     )
