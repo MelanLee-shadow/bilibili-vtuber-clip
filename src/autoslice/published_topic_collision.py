@@ -1269,7 +1269,26 @@ def _inspect_released_recovery_entry(
         if row.get("failure_recoverable") is True:
             return RECOVERY_RELEASED_RETRY_PENDING
         if row.get("failure_recoverable") is False:
-            return RECOVERY_CONVERGED
+            if row.get("failure_kind") != "content_boundary":
+                return RECOVERY_CONVERGED
+            recorded = row.get("failure_recovery_fingerprint")
+            if not isinstance(recorded, str) or _SHA256_RE.fullmatch(recorded) is None:
+                return RECOVERY_BLOCKED
+            try:
+                from src.autoslice.runner_proxy import RunnerProxy
+
+                current = RunnerProxy().talk_failure_recovery_fingerprint(
+                    row.get("failure_kind"), candidate_id
+                )
+            except Exception:  # noqa: BLE001 - recovery authority must fail closed
+                return RECOVERY_BLOCKED
+            if not isinstance(current, str) or _SHA256_RE.fullmatch(current) is None:
+                return RECOVERY_BLOCKED
+            return (
+                RECOVERY_CONVERGED
+                if current == recorded
+                else RECOVERY_RELEASED_RETRY_PENDING
+            )
         return RECOVERY_BLOCKED
     if status in _DELIVERED_TALK_STATUSES or status == "candidate_rejected":
         return RECOVERY_CONVERGED

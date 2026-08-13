@@ -39,6 +39,7 @@ from src.autoslice.published_topic_collision import (
     seal_published_topic_resolution_production_transition,
     seal_published_topic_resolution_row_rebounds,
 )
+from src.autoslice.runner_proxy import RunnerProxy
 
 
 CANDIDATE = "auto_213135_806_1068"
@@ -709,7 +710,9 @@ def test_resealed_refresh_contract_or_policy_tamper_stays_fail_closed(
 
 
 def test_refreshed_resolution_can_wake_and_restore_one_already_parked_candidate(
-    tmp_path: Path, rows: tuple[dict, dict, dict]
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     candidate, published, distinct = rows
     registry = _registry()
@@ -964,6 +967,7 @@ def test_refreshed_resolution_can_wake_and_restore_one_already_parked_candidate(
             "rc": 1,
             "failure_kind": "content_boundary",
             "failure_recoverable": False,
+            "failure_recovery_fingerprint": "sha256:" + "4" * 64,
         }
     )
     nonrecoverable["picks"].append(rejected_failure)
@@ -974,6 +978,12 @@ def test_refreshed_resolution_can_wake_and_restore_one_already_parked_candidate(
         repo_root=root,
         publication_registry=registry,
     )
+    monkeypatch.setattr(
+        RunnerProxy,
+        "talk_failure_recovery_fingerprint",
+        lambda _self, *_args: "sha256:" + "4" * 64,
+        raising=False,
+    )
     assert (
         inspect_published_topic_resolution_recovery(
             nonrecoverable,
@@ -982,6 +992,83 @@ def test_refreshed_resolution_can_wake_and_restore_one_already_parked_candidate(
             publication_registry=registry,
         )
         == RECOVERY_CONVERGED
+    )
+    monkeypatch.setattr(
+        RunnerProxy,
+        "talk_failure_recovery_fingerprint",
+        lambda _self, *_args: "sha256:" + "5" * 64,
+        raising=False,
+    )
+    assert (
+        inspect_published_topic_resolution_recovery(
+            nonrecoverable,
+            CANDIDATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == RECOVERY_RELEASED_RETRY_PENDING
+    )
+    for invalid in (None, "sha256:bad"):
+        invalid_fingerprint = deepcopy(state)
+        invalid_fingerprint["pending_talk"] = [distinct]
+        invalid_row = deepcopy(retry_row)
+        invalid_row.update(
+            {
+                "status": "failed",
+                "rc": 1,
+                "failure_kind": "content_boundary",
+                "failure_recoverable": False,
+                "failure_recovery_fingerprint": invalid,
+            }
+        )
+        invalid_fingerprint["picks"].append(invalid_row)
+        assert seal_published_topic_resolution_production_transition(
+            invalid_fingerprint,
+            CANDIDATE,
+            pre_state=state,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        assert (
+            inspect_published_topic_resolution_recovery(
+                invalid_fingerprint,
+                CANDIDATE,
+                repo_root=root,
+                publication_registry=registry,
+            )
+            == RECOVERY_BLOCKED
+        )
+    monkeypatch.setattr(
+        RunnerProxy,
+        "talk_failure_recovery_fingerprint",
+        lambda _self, *_args: "sha256:bad",
+        raising=False,
+    )
+    assert (
+        inspect_published_topic_resolution_recovery(
+            nonrecoverable,
+            CANDIDATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == RECOVERY_BLOCKED
+    )
+    monkeypatch.setattr(
+        RunnerProxy,
+        "talk_failure_recovery_fingerprint",
+        lambda _self, *_args: (_ for _ in ()).throw(
+            ValueError("fingerprint unavailable")
+        ),
+        raising=False,
+    )
+    assert (
+        inspect_published_topic_resolution_recovery(
+            nonrecoverable,
+            CANDIDATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == RECOVERY_BLOCKED
     )
     rejected = deepcopy(state)
     rejected["pending_talk"] = [distinct]

@@ -10,6 +10,7 @@ import pytest
 import scripts.free_session_autoslice as runner
 from src.autoslice import candidate_selection
 from src.autoslice import semantic_evidence_scorecard_refresh as semantic_chat_refresh
+from src.autoslice.exact_talk_recovery_scope import maintain_delivery_recovery_scope
 from src.autoslice.operator_processing_scope import (
     GRANT_SCHEMA,
     SPEAKER_HOLD_RECOVERY_GRANT_SCHEMA,
@@ -148,6 +149,176 @@ def test_operator_scope_cannot_reinterpret_a_song_as_talk_work() -> None:
     grant["candidate_ids"] = ["song_pending"]
 
     assert operator_talk_scope(state, date=DATE) is None
+
+
+def test_broad_maintenance_cannot_requeue_a_marker_bound_topic_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _state()
+    state["published_topic_resolution_recovery"] = {
+        "schema_version": "published-topic-resolution-recovery-ledger.v1",
+        "entries": {},
+        "ledger_sha256": "sha256:test-seal",
+    }
+    calls: list[set[str] | None] = []
+    from src.autoslice import published_topic_collision as topic_collision
+
+    monkeypatch.setattr(
+        topic_collision,
+        "_recovery_ledger_entries",
+        lambda _state: (TARGET,),
+    )
+    monkeypatch.setattr(
+        topic_collision,
+        "inspect_published_topic_resolution_recovery",
+        lambda _state, candidate_id: (
+            "RELEASED_RETRY_PENDING" if candidate_id == TARGET else "CONVERGED"
+        ),
+    )
+    monkeypatch.setattr(
+        runner,
+        "requeue_recoverable_talks",
+        lambda _date, _state, *, candidate_ids=None: calls.append(candidate_ids) or 0,
+    )
+    monkeypatch.setattr(
+        runner,
+        "requeue_stale_current_recovery_talks",
+        lambda *_a, **_k: 0,
+    )
+    monkeypatch.setattr(runner, "recover_bound_song_deliveries", lambda *_a: 0)
+    monkeypatch.setattr(runner, "requeue_recoverable_songs", lambda *_a: 0)
+
+    result = maintain_delivery_recovery_scope(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        talk_candidate_ids=None,
+    )
+
+    assert result == (0, 0, 0, 0, False)
+    assert calls == [{OTHER}]
+
+
+@pytest.mark.parametrize(
+    "malformed_ledger",
+    [
+        "not-an-object",
+        {
+            "schema_version": "published-topic-resolution-recovery-ledger.v1",
+            "entries": [],
+        },
+        {
+            "schema_version": "wrong-ledger-schema",
+            "entries": {},
+            "ledger_sha256": "sha256:" + "0" * 64,
+        },
+        {
+            "schema_version": "published-topic-resolution-recovery-ledger.v1",
+            "entries": {},
+            "ledger_sha256": "sha256:" + "0" * 64,
+        },
+        {
+            "schema_version": "published-topic-resolution-recovery-ledger.v1",
+            "entries": {"unsafe candidate id": {}},
+            "ledger_sha256": "sha256:" + "0" * 64,
+        },
+    ],
+)
+def test_broad_maintenance_blocks_all_talk_requeue_for_malformed_topic_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+    malformed_ledger: object,
+) -> None:
+    state = _state()
+    state["published_topic_resolution_recovery"] = malformed_ledger
+    calls: list[set[str] | None] = []
+    monkeypatch.setattr(
+        runner,
+        "requeue_recoverable_talks",
+        lambda _date, _state, *, candidate_ids=None: calls.append(candidate_ids) or 0,
+    )
+    monkeypatch.setattr(
+        runner,
+        "requeue_stale_current_recovery_talks",
+        lambda *_a, **_k: 0,
+    )
+    monkeypatch.setattr(runner, "recover_bound_song_deliveries", lambda *_a: 0)
+    monkeypatch.setattr(runner, "requeue_recoverable_songs", lambda *_a: 0)
+
+    maintain_delivery_recovery_scope(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        talk_candidate_ids=None,
+    )
+
+    assert calls == [set()]
+
+
+def test_exact_contract_cannot_run_stale_talk_requeue_with_malformed_topic_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _state()
+    state["run_mode"] = "RECOVERY_REVIEW"
+    state["talk_selection_contract"] = {
+        "schema_version": "talk-selection-contract.v1",
+        "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+        "candidate_ids": [TARGET],
+        "source_state_sha256": "sha256:" + "a" * 64,
+        "authority": "exact review-only recovery",
+    }
+    state["published_topic_resolution_recovery"] = {
+        "schema_version": "wrong-ledger-schema",
+        "entries": {},
+        "ledger_sha256": "sha256:" + "0" * 64,
+    }
+    monkeypatch.setattr(
+        runner,
+        "requeue_stale_current_recovery_talks",
+        lambda *_a, **_k: pytest.fail("malformed ledger must block stale Talk requeue"),
+    )
+    calls: list[set[str] | None] = []
+    monkeypatch.setattr(
+        runner,
+        "requeue_recoverable_talks",
+        lambda _date, _state, *, candidate_ids=None: calls.append(candidate_ids) or 0,
+    )
+
+    result = maintain_delivery_recovery_scope(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        talk_candidate_ids=None,
+    )
+
+    assert result == (0, 0, 0, 0, False)
+    assert calls == [set()]
+
+
+def test_v5_shape_cannot_bypass_malformed_topic_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _v5_state()
+    state["published_topic_resolution_recovery"] = {
+        "schema_version": "wrong-ledger-schema",
+        "entries": {},
+        "ledger_sha256": "sha256:" + "0" * 64,
+    }
+    calls: list[set[str] | None] = []
+    monkeypatch.setattr(
+        runner,
+        "requeue_recoverable_talks",
+        lambda _date, _state, *, candidate_ids=None: calls.append(candidate_ids) or 0,
+    )
+
+    result = maintain_delivery_recovery_scope(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        talk_candidate_ids=(TARGET,),
+    )
+
+    assert result == (0, 0, 0, 0, False)
+    assert calls == [set()]
 
 
 def test_v5_first_release_writes_marker_and_second_queued_tick_skips_release(
@@ -333,6 +504,92 @@ def test_v5_retry_pending_still_enters_generic_maintenance(
 
     assert result == (0, 0, 1, 0, False)
     assert order == ["generic", "advance"]
+    assert "operator_processing_scope_runtime_block" not in state
+
+
+def test_v5_changed_boundary_fingerprint_requeues_false_failure_and_advances_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A repaired boundary contract retries under v5 without falsifying recoverability."""
+
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice import published_topic_collision as topic_collision
+
+    state = _v5_state()
+    state["published_topic_dedup_review"]["holds"] = []
+    state["pending_talk"] = []
+    state["picks"].append(
+        {
+            "candidate_id": TARGET,
+            "status": "failed",
+            "failure_kind": "content_boundary",
+            "failure_recoverable": False,
+            "failure_recovery_fingerprint": "sha256:" + "1" * 64,
+        }
+    )
+    state["published_topic_resolution_recovery"] = {
+        "schema_version": "published-topic-resolution-recovery-ledger.v1",
+        "entries": {TARGET: {"candidate_id": TARGET}},
+        "ledger_sha256": "test-seal",
+    }
+    order: list[str] = []
+    monkeypatch.setattr(
+        topic_collision,
+        "inspect_published_topic_resolution_recovery",
+        lambda *_a, **_k: "RELEASED_RETRY_PENDING",
+    )
+
+    def generic(_date, value, *, automatic_maintenance, talk_candidate_ids):
+        order.append("generic")
+        assert automatic_maintenance is True
+        assert tuple(talk_candidate_ids) == (TARGET,)
+        failed = value["picks"].pop()
+        assert failed["failure_recoverable"] is False
+        value["pending_talk"].append(
+            {
+                "cid": TARGET,
+                "segment_path": "/recordings/target.mp4",
+                "start_ms": 10_000,
+                "end_ms": 20_000,
+                "hook": "target",
+                "recovery_source_record_sha256": "sha256:" + "a" * 64,
+            }
+        )
+        return 0, 0, 1, 0, False
+
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "maintain_delivery_recovery_scope",
+        generic,
+    )
+
+    def advance(value, candidate_id, **kwargs):
+        order.append("advance")
+        assert candidate_id == TARGET
+        assert kwargs["from_row"]["failure_recoverable"] is False
+        assert kwargs["from_row"]["failure_kind"] == "content_boundary"
+        assert kwargs["to_row"] == value["pending_talk"][-1]
+        value["published_topic_resolution_recovery"] = {"head": "sealed-retry"}
+        return True
+
+    monkeypatch.setattr(
+        topic_collision,
+        "advance_published_topic_resolution_recovery",
+        advance,
+    )
+
+    result = historical_failed_talk_scope.maintain(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        candidate_ids=(TARGET,),
+    )
+
+    assert result == (0, 0, 1, 0, False)
+    assert order == ["generic", "advance"]
+    assert state["published_topic_resolution_recovery"] == {
+        "head": "sealed-retry"
+    }
     assert "operator_processing_scope_runtime_block" not in state
 
 

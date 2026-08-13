@@ -11,6 +11,47 @@ from src.autoslice.runner_proxy import RunnerProxy
 _runner = RunnerProxy()
 
 
+def _marker_bound_topic_candidate_ids(state: dict) -> set[str] | None:
+    from src.autoslice.published_topic_collision import (
+        RECOVERY_BLOCKED,
+        RECOVERY_CONVERGED,
+        PublishedTopicCollisionError,
+        _recovery_ledger_entries,
+        inspect_published_topic_resolution_recovery,
+    )
+
+    try:
+        candidate_ids = tuple(_recovery_ledger_entries(state))
+    except PublishedTopicCollisionError:
+        return None
+    protected: set[str] = set()
+    for candidate_id in candidate_ids:
+        try:
+            disposition = inspect_published_topic_resolution_recovery(
+                state, candidate_id
+            )
+        except Exception:  # noqa: BLE001 - malformed lineage stays protected
+            disposition = RECOVERY_BLOCKED
+        if disposition != RECOVERY_CONVERGED:
+            protected.add(candidate_id)
+    return protected
+
+
+def _active_v5_topic_scope(
+    state: dict, candidate_ids: Collection[str] | None
+) -> bool:
+    values = tuple(candidate_ids or ())
+    block = state.get("operator_processing_scope")
+    return bool(
+        len(values) == 1
+        and isinstance(block, dict)
+        and block.get("schema_version") == "operator-processing-scope-grant.v5"
+        and block.get("intent") == "RECOVER_NAMED_RESOLVED_TOPIC_DEDUP_HOLD"
+        and block.get("candidate_ids") == list(values)
+        and block.get("upload_allowed") is False
+    )
+
+
 def suppress_exact_talk_recovery_song_work(
     state: dict, *, phase: str
 ) -> bool:
@@ -75,23 +116,62 @@ def maintain_delivery_recovery_scope(
     if not automatic_maintenance:
         return 0, 0, 0, 0, False
     talk_only_recovery = talk_candidate_ids is not None
+    marker_bound_ids = _marker_bound_topic_candidate_ids(state)
+    ledger_invalid = marker_bound_ids is None
+    if ledger_invalid:
+        # A malformed durable lineage is not equivalent to no lineage.  Keep
+        # broad maintenance from mutating any Talk row until the ledger is
+        # repaired under its typed authority.
+        marker_bound_ids = {
+            str(row.get("candidate_id") or row.get("cid") or "")
+            for row in (state.get("picks") or [])
+            if isinstance(row, dict)
+            and str(row.get("candidate_id") or row.get("cid") or "")
+        }
     if exact_talk_recovery or talk_only_recovery:
         recovered_songs = 0
         stale_talks = (
             _runner.requeue_stale_current_recovery_talks(date, state)
-            if exact_talk_recovery
+            if exact_talk_recovery and not ledger_invalid
             else 0
         )
+        allowed_talk_ids = (
+            set(talk_candidate_ids or ())
+            if talk_only_recovery
+            else set(_exact_talk_contract_ids(state))
+        )
+        if ledger_invalid:
+            allowed_talk_ids.clear()
+        elif not _active_v5_topic_scope(state, talk_candidate_ids):
+            allowed_talk_ids -= marker_bound_ids
         failed_talks = (
             _runner.requeue_recoverable_talks(
                 date,
                 state,
-                candidate_ids=set(talk_candidate_ids or ()),
+                candidate_ids=allowed_talk_ids,
             )
-            if talk_only_recovery
+            if talk_only_recovery or marker_bound_ids
             else _runner.requeue_recoverable_talks(date, state)
         )
         blocked_songs = 0
+    elif marker_bound_ids:
+        # A durable topic-release lineage may only advance under its strict v5
+        # single-CID scope.  Broad maintenance may still handle unrelated
+        # Talk/Song rows, but must exclude marker-bound picks because it cannot
+        # seal their failed-pick -> queue transition.
+        allowed_talk_ids = {
+            str(row.get("candidate_id") or row.get("cid") or "")
+            for row in (state.get("picks") or [])
+            if isinstance(row, dict)
+            and str(row.get("candidate_id") or row.get("cid") or "")
+            not in marker_bound_ids
+        }
+        recovered_songs = _runner.recover_bound_song_deliveries(date, state)
+        stale_talks = _runner.requeue_stale_current_recovery_talks(date, state)
+        failed_talks = _runner.requeue_recoverable_talks(
+            date, state, candidate_ids=allowed_talk_ids
+        )
+        blocked_songs = _runner.requeue_recoverable_songs(date, state)
     else:
         recovered_songs = _runner.recover_bound_song_deliveries(date, state)
         (

@@ -118,7 +118,11 @@
   transition，绑定前一 head、完整 failed-pick SHA、新队列行 SHA 与该行的
   `recovery_source_record_sha256`，再原子推进 head；转换不唯一、身份漂移或写 ledger 失败都回滚
   并记 typed runtime block。只有严格身份相同且明确交付/拒绝/低分归档，或显式
-  `failure_recoverable=false` 的 typed failure，才可 `CONVERGED`。
+  `failure_recoverable=false` 的 typed failure，才可 `CONVERGED`。唯一窄例外是 marker-bound
+  `content_boundary`：它必须携带合法且显式的 `failure_recovery_fingerprint`；与当前 scoped
+  recovery fingerprint 相同才 `CONVERGED`，相关边界实现变化导致 fingerprint 漂移时改为
+  `RELEASED_RETRY_PENDING`，缺失、格式错误或计算失败则 `BLOCKED`。该例外仍走 v5 的
+  failed-pick→queue lineage，不得借 v2 或手改 `failure_recoverable` 绕过 marker。
 - 精确恢复契约持续压住普通 backlog，直到新的人工恢复计划显式替换；普通 backlog
   在报告里只能显示为 `OUTSIDE_EXACT_CONTRACT / INELIGIBLE`，不能伪装成当前候补。
 - 已由 committed publication registry 标为 `hold_pending_review` 的单条历史

@@ -994,6 +994,41 @@ def test_v5_valid_released_queue_and_retryable_failure_stay_outstanding_then_ter
     assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) is None
 
 
+def test_v5_changed_boundary_fingerprint_keeps_false_failure_outstanding(
+    monkeypatch,
+):
+    from src.autoslice import published_topic_collision as topic_collision
+
+    state = _topic_hold_state()
+    state["published_topic_dedup_review"]["holds"] = []
+    state["picks"] = [
+        {
+            "candidate_id": TIER1_IDS[0],
+            "status": "failed",
+            "failure_kind": "content_boundary",
+            "failure_recoverable": False,
+            "failure_recovery_fingerprint": "sha256:" + "1" * 64,
+        }
+    ]
+    state["published_topic_resolution_recovery"] = {
+        "schema_version": "published-topic-resolution-recovery-ledger.v1"
+    }
+    monkeypatch.setattr(
+        topic_collision,
+        "inspect_published_topic_resolution_recovery",
+        lambda *_a, **_k: "RELEASED_RETRY_PENDING",
+    )
+
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert admission.admitted is True
+    assert admission.reason_code == "ADMITTED"
+    assert admission.outstanding_candidate_ids == (TIER1_IDS[0],)
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == (
+        TIER1_IDS[0],
+    )
+
+
 @pytest.mark.parametrize("drift", ["marker", "queued_row", "resolution"])
 def test_v5_drifted_durable_release_authority_blocks_queued_resume(
     monkeypatch, drift
