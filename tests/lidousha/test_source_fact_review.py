@@ -502,6 +502,95 @@ def test_repair_rejects_generic_context_label() -> None:
     assert review["passes"][0]["reason_code"] == "CPA_TEXT_REVIEW_INVALID"
 
 
+def test_live_shaped_chat_repair_requires_canonical_rows_and_can_converge() -> None:
+    bad_hook = "李豆沙正面断言弹幕已经挂了。"
+    bad_title = "【李豆沙】正面断言弹幕已经挂了"
+    fixed_hook = "李豆沙先看到“正面…”，后来问弹幕怎么挂了。"
+    fixed_title = "【李豆沙】先看到“正面…”，后来问弹幕怎么挂了"
+    context = "\n".join(
+        [
+            "- danmaku @3719ms event=: 正面...",
+            "- danmaku @25939ms event=: 弹幕怎么挂了",
+        ]
+    )
+
+    def repair_with(evidence: list[str]) -> str:
+        return _completion(
+            status="REPAIR",
+            final_hook=fixed_hook,
+            final_title=fixed_title,
+            supported_by=["structured_chat", "same_clip_context"],
+            changed_surfaces=[
+                {
+                    "artifact": "selection_hook",
+                    "before": "正面断言弹幕已经挂了",
+                    "after": "先看到“正面…”，后来问弹幕怎么挂了",
+                    "reason": "两条弹幕只支持先后出现的文字，不支持主播作出断言。",
+                    "evidence": evidence,
+                },
+                {
+                    "artifact": "title",
+                    "before": "正面断言弹幕已经挂了",
+                    "after": "先看到“正面…”，后来问弹幕怎么挂了",
+                    "reason": "标题改回两条同片弹幕逐字支持的事实模态。",
+                    "evidence": evidence,
+                },
+            ],
+        )
+
+    generic = review_and_repair_source_facts(
+        selection_hook=bad_hook,
+        title=bad_title,
+        final_transcript="正面\n弹幕怎么挂了",
+        clip_context_prompt=context,
+        llm_call=lambda _prompt: repair_with(
+            [
+                "structured_chat: 弹幕怎么挂了",
+                "same_clip_context: 正面...",
+            ]
+        ),
+    )
+
+    assert not source_fact_review_passes(generic)
+    assert generic["passes"][0]["reason_code"] == "CPA_TEXT_REVIEW_INVALID"
+
+    responses = iter(
+        [
+            repair_with(
+                [
+                    "danmaku @25939ms event=: 弹幕怎么挂了",
+                    "danmaku @3719ms event=: 正面...",
+                ]
+            ),
+            _completion(
+                status="KEEP",
+                final_hook=fixed_hook,
+                final_title=fixed_title,
+                supported_by=["structured_chat", "same_clip_context"],
+            ),
+        ]
+    )
+
+    def cpa(prompt: str) -> str:
+        assert "structured_chat、same_clip_context 只可出现在 supported_by" in prompt
+        assert "逐字复制完整 danmaku|superchat @<offset>ms event=<id>: 行" in prompt
+        assert "禁止使用 structured_chat: 或 same_clip_context: 泛化标签" in prompt
+        return next(responses)
+
+    canonical = review_and_repair_source_facts(
+        selection_hook=bad_hook,
+        title=bad_title,
+        final_transcript="正面\n弹幕怎么挂了",
+        clip_context_prompt=context,
+        llm_call=cpa,
+    )
+
+    assert source_fact_review_passes(canonical)
+    assert canonical["decision"] == "REPAIRED"
+    assert canonical["final_selection_hook"] == fixed_hook
+    assert canonical["final_title"] == fixed_title
+
+
 def test_repair_rejects_source_label_bound_only_in_other_corpus() -> None:
     review = review_and_repair_source_facts(
         selection_hook="熊猫头发明“李豆沙型侄女”。",
