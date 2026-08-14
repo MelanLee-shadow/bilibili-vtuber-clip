@@ -189,7 +189,10 @@
   handoff/内嵌 grant/receipt/hash 任一 malformed、pre-marker 非 `CONVERGED`、generic requeue 异常
   或 terminal seal 失败时，historical maintenance 必须恢复完整 preimage，写
   `SELECTED_FINAL_REVIEW_TOPIC_LINEAGE_HANDOFF_BLOCKED` v7 typed runtime block，并返回零工作量；
-  没有旧 marker 的普通 v7 路径保持 `ABSENT`，不得为它新建 marker。
+  没有旧 marker 的普通 v7 路径保持 `ABSENT`，不得为它新建 marker。已完整验证 terminal handoff
+  的 v7 队列在后续 scoped prioritize 不得再次进入 generic published-topic review；只有外层 ledger
+  自封、terminal marker 与当前 v7 receipt lineage 全部有效时才可跳过。无 marker、坏 ledger 或
+  非 terminal 的普通 v7 仍须执行 target-only topic review，不能借该 handoff 规则绕过真实碰撞。
   Runner 在 maintenance 前执行 session annotation；fresh v7 行尚无 receipt 时，只有 recovery
   inspector 仍为 `READY_TO_REQUEUE` 的同一 pick 可以按既有 session 白名单变更。若 handoff 为
   `READY`，须先把该 rebound self-seal 到旧 v5 marker 并复验仍为 `READY`；若 handoff 为

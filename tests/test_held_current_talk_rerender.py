@@ -44,7 +44,7 @@ def _grant() -> dict:
             "quote": "任何时候优先修复流水线；如果能给我 review 就 review。",
             "timestamp": "2026-08-13T11:00:00Z",
         },
-        "expires_at": "2026-08-14T11:00:00Z",
+        "expires_at": "2099-08-14T11:00:00Z",
         "intent": HELD_CURRENT_RERENDER_INTENT,
         "upload_allowed": False,
     }

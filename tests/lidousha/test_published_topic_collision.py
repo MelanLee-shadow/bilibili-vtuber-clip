@@ -2058,6 +2058,131 @@ def test_v5_marker_bound_retry_skips_duplicate_generic_topic_hold(
     )
 
 
+def test_v7_terminal_handoff_skips_duplicate_generic_topic_hold(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state, root, registry = _terminal_v5_to_v7_handoff_state(
+        tmp_path, rows, monkeypatch
+    )
+    marker_preimage = deepcopy(
+        state[RECOVERY_MARKER_FIELD]["entries"][CANDIDATE]
+    )
+    hold_calls: list[str] = []
+    _patch_frozen_retry_selection_dependencies(
+        monkeypatch,
+        root=root,
+        registry=registry,
+        hold_calls=hold_calls,
+    )
+
+    captured = historical_failed_talk_scope.prioritize_and_capture(
+        DATE, state, (CANDIDATE,)
+    )
+
+    assert captured is not None
+    assert [row["candidate_id"] for row in captured] == [CANDIDATE]
+    assert hold_calls == []
+    target_rows = [
+        (collection, row)
+        for collection in ("pending_talk", "talk_backlog")
+        for row in state[collection]
+        if row["candidate_id"] == CANDIDATE
+    ]
+    assert len(target_rows) == 1
+    assert target_rows[0][0] == "pending_talk"
+    assert state[REVIEW_STATE_FIELD]["holds"] == []
+    assert state[RECOVERY_MARKER_FIELD]["entries"][CANDIDATE] == marker_preimage
+    assert (
+        inspect_published_topic_resolution_recovery(
+            state,
+            CANDIDATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == RECOVERY_CONVERGED
+    )
+
+
+def test_v7_without_terminal_handoff_still_runs_scoped_topic_review(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state, root, registry = _terminal_v5_to_v7_handoff_state(
+        tmp_path, rows, monkeypatch
+    )
+    state.pop(RECOVERY_MARKER_FIELD)
+    hold_calls: list[str] = []
+    _patch_frozen_retry_selection_dependencies(
+        monkeypatch,
+        root=root,
+        registry=registry,
+        hold_calls=hold_calls,
+    )
+
+    historical_failed_talk_scope.reprioritize(state, (CANDIDATE,))
+
+    assert hold_calls == ["called"]
+
+
+@pytest.mark.parametrize("damage", ["ledger_seal", "embedded_grant"])
+def test_v7_terminal_handoff_topic_bypass_rejects_tamper(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+    damage: str,
+) -> None:
+    state, _root, _registry = _terminal_v5_to_v7_handoff_state(
+        tmp_path, rows, monkeypatch
+    )
+    ledger = state[RECOVERY_MARKER_FIELD]
+    if damage == "ledger_seal":
+        ledger["ledger_sha256"] = "sha256:" + "0" * 64
+    else:
+        marker = ledger["entries"][CANDIDATE]
+        transition = marker["transitions"][-1]
+        transition["operator_scope_grant_id"] = "different-v7-grant"
+        transition["transition_sha256"] = canonical_sha256(
+            {
+                key: value
+                for key, value in transition.items()
+                if key != "transition_sha256"
+            }
+        )
+        marker["marker_sha256"] = canonical_sha256(
+            {
+                key: value
+                for key, value in marker.items()
+                if key != "marker_sha256"
+            }
+        )
+        ledger["ledger_sha256"] = canonical_sha256(
+            {
+                key: value
+                for key, value in ledger.items()
+                if key != "ledger_sha256"
+            }
+        )
+    prioritize_kwargs: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        runner,
+        "prioritize",
+        lambda _state, **kwargs: prioritize_kwargs.append(kwargs),
+    )
+
+    historical_failed_talk_scope.reprioritize(state, (CANDIDATE,))
+
+    assert prioritize_kwargs == [
+        {
+            "frozen_talk_candidate_ids": (CANDIDATE,),
+            "allow_song_work": False,
+            "allow_published_topic_review": True,
+        }
+    ]
+
+
 @pytest.mark.parametrize("marker_damage", ["missing", "tampered"])
 def test_v5_generic_topic_bypass_still_fails_closed_on_invalid_marker(
     tmp_path: Path,

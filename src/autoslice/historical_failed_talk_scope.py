@@ -116,6 +116,30 @@ def _final_review_scope_candidate_ids(
     return values
 
 
+def _terminal_final_review_handoff_candidate_ids(
+    state: Mapping[str, object], candidate_ids: tuple[str, ...] | None
+) -> tuple[str, ...]:
+    """Recognize only a canonical terminal v5-to-v7 handoff."""
+
+    values = _final_review_scope_candidate_ids(state, candidate_ids)
+    if len(values) != 1:
+        return ()
+    from src.autoslice.published_topic_collision import _recovery_ledger_entries
+    from src.autoslice.published_topic_final_review_handoff import (
+        validate_terminal_handoff_state,
+    )
+
+    probe = deepcopy(dict(state))
+    try:
+        marker = _recovery_ledger_entries(probe).get(values[0])
+        terminal = isinstance(marker, Mapping) and validate_terminal_handoff_state(
+            probe, values[0], marker
+        )
+    except Exception:  # noqa: BLE001 - authority probes fail closed
+        return ()
+    return values if probe == dict(state) and terminal else ()
+
+
 def _target_talk_rows(
     state: Mapping[str, object], candidate_id: str
 ) -> list[tuple[str, dict]]:
@@ -1381,13 +1405,17 @@ def prioritize_and_capture(
 
 
 def reprioritize(state: dict, candidate_ids: tuple[str, ...] | None) -> None:
+    topic_review_already_terminal = bool(
+        _terminal_final_review_handoff_candidate_ids(state, candidate_ids)
+    )
     _runner.prioritize(
         state,
         frozen_talk_candidate_ids=candidate_ids,
         allow_song_work=candidate_ids is None,
         allow_published_topic_review=not bool(
             _topic_scope_candidate_ids(state, candidate_ids)
-        ),
+        )
+        and not topic_review_already_terminal,
     )
 
 
