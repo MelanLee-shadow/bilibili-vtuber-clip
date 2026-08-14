@@ -109,6 +109,11 @@
   strict v5 marker-bound tick 已由 canonical maintenance/admission 和每阶段的 seal/rollback
   约束，因此排序阶段跳过重复的 generic published-topic hold revalidation；默认普通候选及
   v1-v4 scope 仍必须运行 sticky hold，裸 v5 grant 不能替代合法 marker。
+  v1-v4 的 frozen Talk tick 调用 generic review 时必须传本轮 CID allowlist：registry 与
+  `picks/pending_talk/talk_backlog` 全量行仍作为只读验证上下文（目标可能引用其中的已发布行），
+  但 authority 探测、hold 创建/刷新/释放以及 queue remove/restore 只能触及点名 CID。既有
+  非目标 hold 的对象与相对顺序必须原样保留，非目标新 authority 也不得在该 tick 生成 hold；
+  unscoped `None` 保持全局检查，strict v5 继续完全跳过这条 generic revalidation。
   marker 的 current-row head 必须绑定完整行 SHA，并按封闭状态机前进：session annotation
   只准在同 collection 的当前行上改其专属字段；scorecard refresh、排序/说话人路由等只准在
   各自字段白名单内写 self-sealed queue→queue rebound；真正生产必须在状态落盘前写 exact
@@ -138,6 +143,56 @@
   inspector 才可把它视为可协调。historical maintenance 必须在 generic requeue 前事务删除
   这一条；没有真的形成 pick→queue 并追加 lineage、或任一步异常时，必须把 stale hold、pick
   与 ledger 一并恢复到删除前 preimage，不得留下半次解停泊。
+- 单条已选中的派生文案事实拒绝，只能由严格
+  `operator-processing-scope-grant.v6 / RECOVER_NAMED_SELECTED_SOURCE_FACT_REJECTION`
+  恢复。grant 必须恰好点名一个 CID、显式 `upload_allowed=false`，且到期判断先于 recovery
+  fingerprint 或其他 authority I/O；用户的说话人真值不能被重解释为 source-fact 或字幕授权。
+  首次准入只认唯一当前
+  `candidate_rejected + rejected_status=failed + rc=1 + selected_repair=true +`
+  `story_contract/source_fact_repair + failure_recoverable=false +`
+  `story_contract_unresolved_backfilled` 行，并要求合法 recorded/current story-contract recovery
+  fingerprint 已变化；不变则收敛，缺失、异常、重复或 Song 冲突一律 BLOCK。
+  真重排必须写 `selected-source-fact-recovery-receipt.v1`，逐字绑定 grant、原拒绝行、初始队列行、
+  recorded/current fingerprint 与 self-seal；之后只准按
+  rejection→queue→pick→queue 的有序 lineage 前进。session/scorecard/production/title 的队列
+  rebound 只能改各自既有白名单字段；任意 source/window/hook/辅助真值漂移不得借 rebound 通过。
+  producer 返回后 runner 仍会投影 backfill/bundle 字段，所以 queue→pick 只能在这些修改全部完成、
+  首次 state 持久化之前对**最终 pick 全行**统一封口；封口失败必须恢复精确 preimage 并写 typed
+  runtime block。已消费 pick 的后续代码漂移不能刷新这次授权；成功或确定性拒绝只有带合法
+  pick-head receipt 才 CONVERGED，可恢复基础设施失败保持 OUTSTANDING 并经 exact pick→queue
+  transition 续跑。`media_ready_cover_pending` 不得进入会多次原地落盘的 cover-only maintenance，
+  只能以同一 lineage 受控重排后走完整 producer。v6 全程 Talk-only，非目标 Talk 与五个 Song
+  集合必须逐 collection、顺序和行字节深等值保留。任何当前行或 superseded 历史已出现 v6
+  receipt 的 CID，在 grant 到期、缺失或验签失败时仍必须从 broad maintenance 排除；删掉当前
+  receipt 不能把它降格成普通可恢复失败，只有结构完整的 active v6 单 CID scope 可推进 lineage。
+- 单条已选中的 exact-final 拒绝及它随后产生的 provider-budget continuation，只能由严格
+  `operator-processing-scope-grant.v7 / RECOVER_NAMED_SELECTED_FINAL_REVIEW_REJECTION`
+  恢复。grant 必须恰好点名一个 CID、显式 `upload_allowed=false`；到期判断必须先于 recovery
+  fingerprint、provider token 或历史 ledger probe。首次准入只认唯一当前
+  `candidate_rejected + rejected_status=failed + rc=1 + selected_repair=true +`
+  `subtitle_authority/final_review_findings + failure_recoverable=false +`
+  `subtitle_authority_unresolved_backfilled` 行：合法 recorded/current subtitle-authority recovery
+  fingerprint 变化才 READY，不变 CONVERGED，缺失、异常、重复或 Song 冲突一律 BLOCK。旧 v2
+  对这类 `failure_recoverable=false` 拒绝保持 CONVERGED，不得追溯扩权。
+  首次重排必须写独立的 `selected-final-review-recovery-receipt.v1`，绑定 grant、原拒绝全行、
+  初始队列全行、recorded/current fingerprint 与 self-seal；之后只准
+  rejection→queue→pick→queue 有序前进。session annotation、scorecard refresh、prioritize 与
+  production prepare 每个会先落 state 的中间 seam，都必须在持久化前逐相位验证 queue rebound
+  只改声明白名单字段；非法漂移须恢复 preimage 并写 v7 typed runtime block。producer 返回后的
+  backfill/bundle projection 全部完成后，
+  runner 必须在首次 state 持久化前封印最终 pick 全行。合法未消费 provider-budget token 为
+  OUTSTANDING；第二次重排必须在同一 receipt lineage 内消费 candidate-level one-shot ledger，
+  不增加通用修复次数。成功或确定性终态只有合法 pick-head receipt 才 CONVERGED；基础设施失败、
+  未消费 token 与 `media_ready_cover_pending` 保持 OUTSTANDING。token、current/history ledger、
+  receipt 或状态形态任一冲突都 BLOCK；基础设施/确定性失败还必须命中现行分类器的明确
+  failure-kind + failure-stage 白名单，未知 kind、未知 stage 或互相矛盾的 success/provider claim
+  一律 BLOCK。已消费 receipt 不得因后续代码漂移刷新同一 grant。
+  cover pending 只能事务性 pick→queue 并重走完整 producer，禁止多次原地持久化的 cover repair。
+  v7 全程 Talk-only，非目标 Talk 与五个 Song 集合须保持逐 collection、顺序和行字节深等值；
+  当前或 superseded 历史出现 v7 receipt 的 CID，即使 grant 缺失、到期或验签失败也必须排除在
+  broad maintenance 外；grant 缺失、不可识别或与 receipt 不匹配时，整个 tick 的 Talk scope
+  必须冻结为空，不能让仍在 pending 的 receipt row 落回 broad prioritize/producer。不能通过删
+  当前 receipt 降格为普通可恢复失败。
 - 精确恢复契约持续压住普通 backlog，直到新的人工恢复计划显式替换；普通 backlog
   在报告里只能显示为 `OUTSIDE_EXACT_CONTRACT / INELIGIBLE`，不能伪装成当前候补。
 - 已由 committed publication registry 标为 `hold_pending_review` 的单条历史

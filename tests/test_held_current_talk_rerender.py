@@ -11,6 +11,10 @@ import pytest
 import scripts.free_session_autoslice as runner
 from src.autoslice import held_current_talk_rerender as held
 from src.autoslice import historical_failed_talk_scope
+from src.autoslice.final_review_provider_budget_retry import (
+    LEDGER_FIELD as FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD,
+    LEDGER_SCHEMA as FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_SCHEMA,
+)
 from src.autoslice.operator_processing_scope import (
     HELD_CURRENT_RERENDER_GRANT_SCHEMA,
     HELD_CURRENT_RERENDER_INTENT,
@@ -177,6 +181,73 @@ def test_transaction_supersedes_current_and_queues_exact_selected_repair(harness
         DATE, state, candidate_id=CID, grant_id=GRANT_ID
     )
     assert queued_check.outcome == held.OUTSTANDING_QUEUED
+
+
+def test_transaction_restores_provider_budget_ledger_to_queue_and_archive(
+    harness,
+):
+    state = harness["state"]
+    ledger = {
+        "schema_version": FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_SCHEMA,
+        "entries": [
+            {
+                "candidate_id": CID,
+                "retry_fingerprint": "sha256:" + "7" * 64,
+            }
+        ],
+    }
+    state["talk_superseded_attempts"] = [
+        {
+            "candidate_id": CID,
+            FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD: ledger,
+        }
+    ]
+
+    inspection = held.inspect_named_held_current_talk_rerender(
+        DATE, state, candidate_id=CID, grant_id=GRANT_ID
+    )
+
+    assert inspection.outcome == held.OUTSTANDING_CURRENT
+    assert inspection.queue_item is not None
+    assert inspection.archived_record is not None
+    assert inspection.queue_item[FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD] == ledger
+    assert inspection.archived_record[FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD] == ledger
+    assert inspection.queue_item[FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD] is not ledger
+    assert inspection.archived_record[FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD] is not ledger
+    assert (
+        inspection.archived_record[FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD]
+        is not inspection.queue_item[FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD]
+    )
+
+    assert held.requeue_named_held_current_talk_for_review(
+        DATE, state, candidate_ids=[CID], grant_id=GRANT_ID
+    ) == 1
+    assert state["pending_talk"][0][FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD] == ledger
+    assert state["talk_superseded_attempts"][-1][
+        FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD
+    ] == ledger
+
+
+def test_malformed_provider_budget_history_blocks_held_current_rerender(harness):
+    state = harness["state"]
+    state["talk_superseded_attempts"] = [
+        {
+            "candidate_id": CID,
+            FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD: {
+                "schema_version": FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_SCHEMA,
+                "entries": [{"candidate_id": CID}],
+            },
+        }
+    ]
+    preimage = copy.deepcopy(state)
+
+    inspection = held.inspect_named_held_current_talk_rerender(
+        DATE, state, candidate_id=CID, grant_id=GRANT_ID
+    )
+
+    assert inspection.outcome == held.BLOCKED
+    assert "RECOVERY_RERUN_PROVIDER_BUDGET_LEDGER_INVALID" in inspection.reason_code
+    assert state == preimage
 
 
 @pytest.mark.parametrize("fault", ["missing_bcut", "duplicate_active"])

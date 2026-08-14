@@ -5,6 +5,10 @@ from pathlib import Path
 import pytest
 
 from src.autoslice import delivery_recovery
+from src.autoslice.final_review_provider_budget_retry import (
+    LEDGER_FIELD as FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD,
+    LEDGER_SCHEMA as FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_SCHEMA,
+)
 from src.autoslice.recovery_title_authority import (
     ROOT,
     build_recovery_publication_authorities,
@@ -450,6 +454,44 @@ def test_natural_recovery_tick_requeues_stale_current_success(
     assert archived["bundle_compliance"] == "STALE_PIPELINE"
     assert archived["pipeline_fingerprint"] == OLD
     assert archived["superseded_by"] == NEW
+
+
+def test_natural_recovery_archives_provider_budget_ledger_restored_from_history(
+    tmp_path, monkeypatch
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+    record = state["picks"][0]
+    record["given_end_ms"] = 125_000
+    record["given_end_authority"] = "Ivan-reviewed semantic closure"
+    ledger = {
+        "schema_version": FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_SCHEMA,
+        "entries": [
+            {
+                "candidate_id": "auto_current",
+                "retry_fingerprint": "sha256:" + "7" * 64,
+            }
+        ],
+    }
+    state["talk_superseded_attempts"] = [
+        {
+            "candidate_id": "auto_current",
+            FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD: ledger,
+        }
+    ]
+    _bind_exact_contract(state, ["auto_current"])
+
+    assert delivery_recovery.requeue_stale_current_recovery_talks(date, state) == 1
+
+    queued = state["pending_talk"][0]
+    archived = state["talk_superseded_attempts"][-1]
+    assert queued[FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD] == ledger
+    assert archived[FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD] == ledger
+    assert queued[FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD] is not ledger
+    assert archived[FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD] is not ledger
+    assert (
+        archived[FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD]
+        is not queued[FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD]
+    )
 
 
 def test_natural_recovery_tick_rejects_legacy_exact_state_atomically(
@@ -965,6 +1007,40 @@ def test_current_delivery_moves_to_hash_bound_recovery_queue(
     assert state["delivery_rerun_plan"] == plan
 
 
+def test_explicit_recovery_archives_provider_budget_ledger_restored_from_history(
+    tmp_path, monkeypatch
+):
+    date, state = _fixture(tmp_path, monkeypatch)
+    ledger = {
+        "schema_version": FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_SCHEMA,
+        "entries": [
+            {
+                "candidate_id": "auto_current",
+                "retry_fingerprint": "sha256:" + "7" * 64,
+            }
+        ],
+    }
+    state["talk_superseded_attempts"] = [
+        {
+            "candidate_id": "auto_current",
+            FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD: ledger,
+        }
+    ]
+
+    _plan(date, state)
+
+    queued = state["pending_talk"][0]
+    archived = state["talk_superseded_attempts"][-1]
+    assert queued[FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD] == ledger
+    assert archived[FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD] == ledger
+    assert queued[FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD] is not ledger
+    assert archived[FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD] is not ledger
+    assert (
+        archived[FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD]
+        is not queued[FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD]
+    )
+
+
 def test_recovery_queue_preserves_hash_bound_structured_chat_binding(
     tmp_path, monkeypatch
 ):
@@ -1343,7 +1419,11 @@ def test_legacy_foreign_provider_rejection_is_reviveable():
         },
     }
 
-    assert delivery_recovery._is_provider_backfilled_foreign_rejection(record)
+    assert delivery_recovery.supplemental_recovery_candidate(
+        record,
+        candidate_id="legacy-provider-rejection",
+        exact_contract_ids=set(),
+    )
 
 
 @pytest.mark.parametrize(

@@ -13,7 +13,12 @@ def subtitle_authority_recovery_relatives(
     return (
         "scripts/produce_slice_package.py",
         "src/autoslice/delivery_recovery.py",
+        "src/autoslice/final_review_carryover_retry.py",
+        "src/autoslice/final_review_failure_compaction.py",
+        "src/autoslice/final_review_provider_budget_retry.py",
+        "src/autoslice/talk_delivery_recovery.py",
         "src/autoslice/talk_failure_recovery_policy.py",
+        "src/autoslice/talk_recovery_record_policy.py",
         "src/autoslice/producer_text_pipeline.py",
         "src/autoslice/producer_text_finalization.py",
         "src/autoslice/expected_value_canon_supersession.py",

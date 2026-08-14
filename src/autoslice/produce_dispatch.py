@@ -9,6 +9,7 @@ monkeypatch 面（BASE/MAX_PARALLEL_PRODUCE 仍在 runner 全局）。
 
 from __future__ import annotations
 
+import copy
 import os
 from collections.abc import Callable, Sequence
 from concurrent.futures import (
@@ -19,7 +20,16 @@ from concurrent.futures import (
 from pathlib import Path
 from typing import Any, Mapping
 
+from src.autoslice.final_review_provider_budget_retry import (
+    carry_validated_active_provider_budget_ledger,
+)
 from src.autoslice.semantic_scorecard_refresh_receipt import copied_refresh_receipt
+from src.autoslice.selected_source_fact_recovery import (
+    RECOVERY_RECEIPT_FIELD as SELECTED_SOURCE_FACT_RECOVERY_RECEIPT_FIELD,
+)
+from src.autoslice.selected_final_review_recovery import (
+    RECOVERY_RECEIPT_FIELD as SELECTED_FINAL_REVIEW_RECOVERY_RECEIPT_FIELD,
+)
 
 _FAILED_ITEM_PASSTHROUGH_KEYS = (
     "hook",
@@ -46,6 +56,7 @@ _FAILED_ITEM_PASSTHROUGH_KEYS = (
     "cover_diversity_slot",
     "cover_route_regeneration_fingerprint",
     "cover_route_regeneration_attempts",
+    "recovery_source_record_sha256",
 )
 
 
@@ -204,6 +215,11 @@ def produce_batch_windowed(
                 **{key: item[key] for key in _FAILED_ITEM_PASSTHROUGH_KEYS if key in item},
                 **copied_refresh_receipt(item),
             }
+            carry_validated_active_provider_budget_ledger(
+                item,
+                result,
+                candidate_id=str(item.get("cid") or item.get("candidate_id") or ""),
+            )
             if item.get("segment_path"):
                 result["segment"] = Path(str(item["segment_path"])).name
             anchor_start = item.get("anchor_start_ms")
@@ -211,6 +227,24 @@ def produce_batch_windowed(
             if isinstance(anchor_start, int) and isinstance(anchor_end, int):
                 result["start_ms"] = max(0, anchor_start - song_window_pre_ms)
                 result["end_ms"] = anchor_end + song_window_post_ms
+            source_fact_receipt = item.get(
+                SELECTED_SOURCE_FACT_RECOVERY_RECEIPT_FIELD
+            )
+            if isinstance(source_fact_receipt, Mapping):
+                # Runner-side backfill/bundle projection has not happened yet.
+                # Carry an independent queue receipt; the historical recovery
+                # commit seam advances it against the exact final pick before
+                # any state write.
+                result[SELECTED_SOURCE_FACT_RECOVERY_RECEIPT_FIELD] = (
+                    copy.deepcopy(dict(source_fact_receipt))
+                )
+            final_review_receipt = item.get(
+                SELECTED_FINAL_REVIEW_RECOVERY_RECEIPT_FIELD
+            )
+            if isinstance(final_review_receipt, Mapping):
+                result[SELECTED_FINAL_REVIEW_RECOVERY_RECEIPT_FIELD] = (
+                    copy.deepcopy(dict(final_review_receipt))
+                )
             return result
 
     if not items:

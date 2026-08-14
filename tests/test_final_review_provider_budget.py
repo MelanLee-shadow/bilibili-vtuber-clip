@@ -128,6 +128,86 @@ def test_exact_release_budget_counts_only_new_provider_adjudications(tmp_path, m
     assert replay["judge_cache_hit"] is True
 
 
+def test_second_pass_replays_twelve_cached_rows_then_adjudicates_remaining_four(
+    tmp_path, monkeypatch
+):
+    """The retry keeps cap=12 while cached rows consume no fresh budget."""
+
+    import src.autoslice.final_review_auditor as auditor
+
+    monkeypatch.setattr(auditor, "MAX_CONTEXT_ADJUDICATIONS", 12)
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path))
+    source = _srt(*(["一百五十秒"] * 16))
+    findings = [
+        {
+            **_finding(),
+            "cue_index": cue_index,
+        }
+        for cue_index in range(1, 17)
+    ]
+    cached_witnesses = {}
+    for finding in findings[:12]:
+        request = build_context_adjudication_request(source, finding)
+        witness_request = build_witness_request(request)
+        witness = {
+            **_witness(witness_request, "yi bai wu shi miao"),
+            "witness_protocol": "blind_pinyin",
+            "served_from_cache": True,
+        }
+        cached_witnesses[tuple(witness_request["cue_indexes"])] = witness
+        assert (
+            judge_word_choice(
+                llm_call=_judge("CURRENT"),
+                check_request=request,
+                witness=witness,
+            )["status"]
+            == "JUDGED"
+        )
+
+    class TwelveHitVerifier:
+        def __init__(self):
+            self.provider_calls = []
+
+        def __call__(self, request):
+            self.provider_calls.append(request)
+            return {
+                **_witness(request, "yi bai wu shi miao"),
+                "witness_protocol": "blind_pinyin",
+            }
+
+        def probe_witness_cache(self, request):
+            return cached_witnesses.get(tuple(request["cue_indexes"]))
+
+    verifier = TwelveHitVerifier()
+    judge_calls = []
+
+    def judge_provider(prompt):
+        judge_calls.append(prompt)
+        return json.dumps({"choice": "CURRENT", "reason": "fresh row"})
+
+    unresolved, resolved = adjudicate_exact_release_findings(
+        source,
+        findings,
+        entity_verifier=verifier,
+        judge_llm_call=judge_provider,
+    )
+
+    assert unresolved == []
+    assert len(resolved) == 16
+    assert len(verifier.provider_calls) == 4
+    assert len(judge_calls) == 4
+    assert all(
+        row["exact_release_adjudication"]["provider_budget_replay"]
+        ["provider_call_count"]
+        == 0
+        for row in resolved[:12]
+    )
+    assert all(
+        "provider_budget_replay" not in row["exact_release_adjudication"]
+        for row in resolved[12:]
+    )
+
+
 @pytest.mark.parametrize("drift", ("base", "proposed", "time"))
 def test_exact_release_cache_replay_rejects_current_input_drift(tmp_path, monkeypatch, drift):
     import src.autoslice.final_review_auditor as auditor

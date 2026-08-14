@@ -35,8 +35,12 @@ from src.autoslice.operator_processing_scope import (
     GRANT_SCHEMA,
     HELD_CURRENT_RERENDER_GRANT_SCHEMA,
     HELD_CURRENT_RERENDER_INTENT,
+    FINAL_REVIEW_RECOVERY_GRANT_SCHEMA,
+    FINAL_REVIEW_RECOVERY_INTENT,
     SPEAKER_HOLD_RECOVERY_GRANT_SCHEMA,
     SPEAKER_HOLD_RECOVERY_INTENT,
+    SOURCE_FACT_RECOVERY_GRANT_SCHEMA,
+    SOURCE_FACT_RECOVERY_INTENT,
     STATE_KEY,
     TOPIC_HOLD_RECOVERY_GRANT_SCHEMA,
     TOPIC_HOLD_RECOVERY_INTENT,
@@ -186,6 +190,75 @@ def _topic_hold_recovery_grant(**overrides) -> dict:
     )
     grant.update(overrides)
     return grant
+
+
+def _source_fact_recovery_grant(**overrides) -> dict:
+    grant = _grant(
+        schema_version=SOURCE_FACT_RECOVERY_GRANT_SCHEMA,
+        intent=SOURCE_FACT_RECOVERY_INTENT,
+        candidate_ids=[TIER1_IDS[0]],
+        grant_id="2026-08-09-recover-selected-source-fact",
+        reason="人工点名恢复 source-fact 修复阶段拒绝件，只重跑该候选且禁止上传。",
+        upload_allowed=False,
+    )
+    grant.update(overrides)
+    return grant
+
+
+def _source_fact_rejection_state(grant: dict | None = None) -> dict:
+    return {
+        "status": "no_delivery",
+        "upload_allowed": False,
+        "picks": [
+            {
+                "candidate_id": TIER1_IDS[0],
+                "status": "candidate_rejected",
+                "rejected_status": "failed",
+                "rc": 1,
+                "selected_repair": True,
+                "failure_kind": "story_contract",
+                "failure_stage": "source_fact_repair",
+                "failure_recoverable": False,
+                "rejection_reason": "story_contract_unresolved_backfilled",
+                "failure_recovery_fingerprint": OLD_SPEAKER_RECOVERY,
+            }
+        ],
+        "pending_talk": [],
+        "talk_backlog": [],
+        "pending_song": [],
+        "song_backlog": [],
+        "song_selection_backlog": [],
+        "songs": [],
+        "song_superseded_attempts": [],
+        STATE_KEY: grant or _source_fact_recovery_grant(),
+    }
+
+
+def _final_review_recovery_grant(**overrides) -> dict:
+    grant = _grant(
+        schema_version=FINAL_REVIEW_RECOVERY_GRANT_SCHEMA,
+        intent=FINAL_REVIEW_RECOVERY_INTENT,
+        candidate_ids=[TIER1_IDS[0]],
+        grant_id="2026-08-09-recover-selected-final-review",
+        reason="人工点名恢复 final-review 拒绝件及后续 provider-budget 重试，只跑该候选且禁止上传。",
+        upload_allowed=False,
+    )
+    grant.update(overrides)
+    return grant
+
+
+def _final_review_rejection_state(grant: dict | None = None) -> dict:
+    state = _source_fact_rejection_state(
+        grant or _final_review_recovery_grant()
+    )
+    state["picks"][0].update(
+        {
+            "failure_kind": "subtitle_authority",
+            "failure_stage": "final_review_findings",
+            "rejection_reason": "subtitle_authority_unresolved_backfilled",
+        }
+    )
+    return state
 
 
 def _topic_hold_state(grant: dict | None = None) -> dict:
@@ -1181,6 +1254,346 @@ def test_v5_resolved_topic_hold_cannot_reinterpret_song_identity(monkeypatch):
             state, date=RECORDING_DATE, now=NOW
         ).admitted is True
         assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+
+def test_v6_admits_only_exact_changed_selected_source_fact_rejection(monkeypatch):
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda kind, cid: (
+            NEW_SPEAKER_RECOVERY
+            if (kind, cid) == ("story_contract", TIER1_IDS[0])
+            else pytest.fail("v6 computed an unrelated recovery fingerprint")
+        ),
+    )
+    state = _source_fact_rejection_state()
+
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert admission.admitted is True
+    assert admission.candidate_ids == (TIER1_IDS[0],)
+    assert admission.disclosure == {
+        "schema_version": "operator-processing-scope-disclosure.v6",
+        "grant_id": "2026-08-09-recover-selected-source-fact",
+        "recording_date": RECORDING_DATE,
+        "candidate_ids": [TIER1_IDS[0]],
+        "outstanding_candidate_ids": [TIER1_IDS[0]],
+        "quote": IVAN_QUOTE,
+        "intent": SOURCE_FACT_RECOVERY_INTENT,
+        "upload_allowed": False,
+    }
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == (
+        TIER1_IDS[0],
+    )
+
+
+def test_v6_unchanged_source_fact_fingerprint_converges(monkeypatch):
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda *_a: OLD_SPEAKER_RECOVERY,
+    )
+    state = _source_fact_rejection_state()
+
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert admission.admitted is False
+    assert admission.reason_code == "CONVERGED"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) is None
+
+
+def test_v6_queue_is_outstanding_only_with_exact_typed_receipt(monkeypatch):
+    from src.autoslice.selected_source_fact_recovery import (
+        RECOVERY_RECEIPT_FIELD,
+        build_selected_source_fact_recovery_receipt,
+    )
+
+    state = _source_fact_rejection_state()
+    old_row = state["picks"].pop()
+    queued_row = {
+        "cid": TIER1_IDS[0],
+        "segment_path": "/recordings/221.mp4",
+        "selected_repair": True,
+    }
+    queued_row[RECOVERY_RECEIPT_FIELD] = build_selected_source_fact_recovery_receipt(
+        old_row=old_row,
+        queued_row=queued_row,
+        candidate_id=TIER1_IDS[0],
+        grant_id="2026-08-09-recover-selected-source-fact",
+        current_fingerprint=NEW_SPEAKER_RECOVERY,
+    )
+    state["pending_talk"] = [queued_row]
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda *_a: NEW_SPEAKER_RECOVERY,
+    )
+
+    assert operator_scope_admission(
+        state, date=RECORDING_DATE, now=NOW
+    ).admitted is True
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == (
+        TIER1_IDS[0],
+    )
+
+    state["pending_talk"][0][RECOVERY_RECEIPT_FIELD]["receipt_sha256"] = (
+        OLD_SPEAKER_RECOVERY
+    )
+    blocked = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+    assert blocked.reason_code == "SELECTED_SOURCE_FACT_RECOVERY_BLOCKED"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+
+def test_v6_unknown_leaf_disposition_fails_closed(monkeypatch):
+    from src.autoslice import selected_source_fact_recovery
+
+    monkeypatch.setattr(
+        selected_source_fact_recovery,
+        "inspect_selected_source_fact_recovery",
+        lambda *_a, **_k: selected_source_fact_recovery.SelectedSourceFactRecoveryInspection(
+            "FUTURE_UNKNOWN",
+            "FUTURE_UNKNOWN",
+        ),
+    )
+    state = _source_fact_rejection_state()
+
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert admission.admitted is False
+    assert admission.reason_code == (
+        "SELECTED_SOURCE_FACT_RECOVERY_UNKNOWN_DISPOSITION"
+    )
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"upload_allowed": True},
+        {"intent": "RECOVER_ANY_SOURCE_FACT_REJECTION"},
+        {"candidate_ids": [TIER1_IDS[0], TIER1_IDS[1]]},
+        {"speaker_truth_authority": "sha256:" + "3" * 64},
+    ],
+)
+def test_v6_recognizable_malformed_grants_freeze_without_fallthrough(overrides):
+    state = _source_fact_rejection_state(_source_fact_recovery_grant(**overrides))
+
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert admission.reason_code == "SCHEMA_INVALID"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+
+def test_v6_blocked_shape_and_song_conflict_freeze_without_fallthrough(monkeypatch):
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda *_a: pytest.fail("blocked v6 shape must fail before fingerprint I/O"),
+    )
+    malformed = _source_fact_rejection_state()
+    malformed["picks"][0]["failure_stage"] = "speaker_evidence"
+    blocked = operator_scope_admission(malformed, date=RECORDING_DATE, now=NOW)
+    assert blocked.admitted is False
+    assert blocked.reason_code == "SELECTED_SOURCE_FACT_RECOVERY_BLOCKED"
+    assert operator_talk_scope(malformed, date=RECORDING_DATE, now=NOW) == ()
+
+    song_conflict = _source_fact_rejection_state()
+    song_conflict["pending_song"] = [{"candidate_id": TIER1_IDS[0]}]
+    blocked = operator_scope_admission(song_conflict, date=RECORDING_DATE, now=NOW)
+    assert blocked.reason_code == "SELECTED_SOURCE_FACT_RECOVERY_BLOCKED"
+    assert operator_talk_scope(song_conflict, date=RECORDING_DATE, now=NOW) == ()
+
+
+def test_v6_expiry_wins_before_source_fact_fingerprint_io(monkeypatch):
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda *_a: pytest.fail("expired v6 must not calculate a fingerprint"),
+    )
+    expired = _source_fact_rejection_state(
+        _source_fact_recovery_grant(expires_at="2026-08-10T15:00:00Z")
+    )
+
+    admission = operator_scope_admission(expired, date=RECORDING_DATE, now=NOW)
+
+    assert admission.reason_code == "EXPIRED"
+    assert admission.outstanding_candidate_ids == (TIER1_IDS[0],)
+    assert operator_talk_scope(expired, date=RECORDING_DATE, now=NOW) is None
+
+
+def test_v2_cannot_reinterpret_selected_final_review_rejection(monkeypatch):
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda *_a: pytest.fail("v2 terminal rejection must not probe fingerprint"),
+    )
+    state = _final_review_rejection_state(
+        _grant(
+            schema_version=FAILED_PICK_RECOVERY_GRANT_SCHEMA,
+            intent=FAILED_PICK_RECOVERY_INTENT,
+            candidate_ids=[TIER1_IDS[0]],
+        )
+    )
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+    assert admission.reason_code == "CONVERGED"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) is None
+
+
+def test_v7_admits_only_exact_changed_selected_final_review_rejection(monkeypatch):
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda kind, cid: NEW_SPEAKER_RECOVERY
+        if (kind, cid) == ("subtitle_authority", TIER1_IDS[0])
+        else pytest.fail("v7 computed unrelated recovery fingerprint"),
+    )
+    state = _final_review_rejection_state()
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+    assert admission.admitted is True
+    assert admission.candidate_ids == (TIER1_IDS[0],)
+    assert admission.disclosure == {
+        "schema_version": "operator-processing-scope-disclosure.v7",
+        "grant_id": "2026-08-09-recover-selected-final-review",
+        "recording_date": RECORDING_DATE,
+        "candidate_ids": [TIER1_IDS[0]],
+        "outstanding_candidate_ids": [TIER1_IDS[0]],
+        "quote": IVAN_QUOTE,
+        "intent": FINAL_REVIEW_RECOVERY_INTENT,
+        "upload_allowed": False,
+    }
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == (
+        TIER1_IDS[0],
+    )
+
+
+def test_v7_same_fingerprint_converges_and_bad_shape_blocks(monkeypatch):
+    monkeypatch.setattr(
+        runner, "talk_failure_recovery_fingerprint", lambda *_a: OLD_SPEAKER_RECOVERY
+    )
+    state = _final_review_rejection_state()
+    assert operator_scope_admission(
+        state, date=RECORDING_DATE, now=NOW
+    ).reason_code == "CONVERGED"
+    bad = _final_review_rejection_state()
+    bad["picks"][0]["failure_stage"] = "source_fact_repair"
+    blocked = operator_scope_admission(bad, date=RECORDING_DATE, now=NOW)
+    assert blocked.reason_code == "SELECTED_FINAL_REVIEW_RECOVERY_BLOCKED"
+    assert operator_talk_scope(bad, date=RECORDING_DATE, now=NOW) == ()
+
+
+def test_v7_queue_requires_exact_grant_bound_self_sealed_receipt():
+    from src.autoslice.selected_final_review_recovery import (
+        RECOVERY_RECEIPT_FIELD,
+        build_selected_final_review_recovery_receipt,
+    )
+
+    state = _final_review_rejection_state()
+    old_row = state["picks"].pop()
+    queued = {
+        "cid": TIER1_IDS[0],
+        "segment_path": "/recordings/1576.mp4",
+        "selected_repair": True,
+    }
+    queued[RECOVERY_RECEIPT_FIELD] = (
+        build_selected_final_review_recovery_receipt(
+            old_row=old_row,
+            queued_row=queued,
+            candidate_id=TIER1_IDS[0],
+            grant_id="2026-08-09-recover-selected-final-review",
+            current_fingerprint=NEW_SPEAKER_RECOVERY,
+        )
+    )
+    state["pending_talk"] = [queued]
+    assert operator_scope_admission(
+        state, date=RECORDING_DATE, now=NOW
+    ).admitted is True
+    missing_grant = copy.deepcopy(state)
+    missing_grant.pop("operator_processing_scope")
+    assert operator_talk_scope(
+        missing_grant, date=RECORDING_DATE, now=NOW
+    ) == ()
+    wrong_grant_kind = copy.deepcopy(state)
+    wrong_grant_kind["operator_processing_scope"]["schema_version"] = (
+        "operator-processing-scope-grant.future"
+    )
+    assert operator_talk_scope(
+        wrong_grant_kind, date=RECORDING_DATE, now=NOW
+    ) == ()
+    queued[RECOVERY_RECEIPT_FIELD]["receipt_sha256"] = OLD_SPEAKER_RECOVERY
+    blocked = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+    assert blocked.reason_code == "SELECTED_FINAL_REVIEW_RECOVERY_BLOCKED"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"upload_allowed": True},
+        {"intent": "RECOVER_ANY_FINAL_REVIEW_REJECTION"},
+        {"candidate_ids": [TIER1_IDS[0], TIER1_IDS[1]]},
+        {"provider_budget_override": True},
+    ],
+)
+def test_v7_recognizable_malformed_grants_freeze_without_fallthrough(overrides):
+    state = _final_review_rejection_state(
+        _final_review_recovery_grant(**overrides)
+    )
+    assert operator_scope_admission(
+        state, date=RECORDING_DATE, now=NOW
+    ).reason_code == "SCHEMA_INVALID"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+
+def test_v7_expiry_wins_before_fingerprint_and_provider_ledger_io(monkeypatch):
+    from src.autoslice import selected_final_review_recovery
+
+    monkeypatch.setattr(
+        selected_final_review_recovery,
+        "inspect_selected_final_review_recovery",
+        lambda *_a, **_k: pytest.fail("expired v7 must not inspect recovery state"),
+    )
+    state = _final_review_rejection_state(
+        _final_review_recovery_grant(expires_at="2026-08-10T15:00:00Z")
+    )
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+    assert admission.reason_code == "EXPIRED"
+    assert admission.outstanding_candidate_ids == (TIER1_IDS[0],)
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) == ()
+
+
+def test_v7_song_conflict_and_duplicate_talk_rows_fail_closed(monkeypatch):
+    monkeypatch.setattr(
+        runner, "talk_failure_recovery_fingerprint", lambda *_a: NEW_SPEAKER_RECOVERY
+    )
+    song = _final_review_rejection_state()
+    song["pending_song"] = [{"candidate_id": TIER1_IDS[0]}]
+    assert operator_scope_admission(
+        song, date=RECORDING_DATE, now=NOW
+    ).reason_code == "SELECTED_FINAL_REVIEW_RECOVERY_BLOCKED"
+    assert operator_talk_scope(song, date=RECORDING_DATE, now=NOW) == ()
+    duplicate = _final_review_rejection_state()
+    duplicate["pending_talk"] = [{"cid": TIER1_IDS[0]}]
+    assert operator_scope_admission(
+        duplicate, date=RECORDING_DATE, now=NOW
+    ).reason_code == "SELECTED_FINAL_REVIEW_RECOVERY_BLOCKED"
+    assert operator_talk_scope(duplicate, date=RECORDING_DATE, now=NOW) == ()
+
+
+def test_old_v4_speaker_grant_cannot_reinterpret_current_source_fact_rejection(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda *_a: pytest.fail("terminal v4 row must converge before speaker authority I/O"),
+    )
+    state = _source_fact_rejection_state(_speaker_hold_recovery_grant())
+
+    admission = operator_scope_admission(state, date=RECORDING_DATE, now=NOW)
+
+    assert admission.admitted is False
+    assert admission.reason_code == "CONVERGED"
+    assert operator_talk_scope(state, date=RECORDING_DATE, now=NOW) is None
 
 
 def test_failed_pick_scope_reaches_process_date_maintenance(tmp_path, monkeypatch):

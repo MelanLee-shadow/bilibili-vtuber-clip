@@ -19,7 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from copy import deepcopy
 from pathlib import Path
 
@@ -58,6 +58,14 @@ from src.autoslice.published_topic_selected_rejection import (
     hold_mentions_candidate as _hold_mentions_candidate,
     is_selected_subtitle_authority_rejection as _is_selected_subtitle_authority_rejection,
     review_holds_are_valid as _selected_rejection_review_holds_are_valid,
+)
+from src.autoslice.published_topic_hold_scope import (
+    current_rows_by_id as _current_rows_by_id,
+    held_candidates as _held_candidates,
+    merge_scoped_holds as _merge_scoped_holds,
+    normalized_candidate_allowlist as _normalized_candidate_allowlist,
+    prior_hold_records as _prior_hold_records,
+    prior_holds_in_order as _prior_holds_in_order,
 )
 
 
@@ -727,46 +735,6 @@ def validate_resolution(
     if resolution.get("original_authority_sha256") != validated_authority.get("authority_sha256"):
         raise PublishedTopicCollisionError("resolution original authority self-seal drifted")
     return {**resolution, "resolution_sha256": declared_sha}
-
-
-def _current_rows_by_id(state: Mapping[str, object]) -> dict[str, Mapping[str, object]]:
-    rows: dict[str, Mapping[str, object]] = {}
-    # A freshly requeued row is newer than the historical failed pick.  Read
-    # picks first, then queues so a changed hook/scorecard is checked rather
-    # than shadowed by its old failure record.
-    for field in ("picks", "talk_backlog", "pending_talk"):
-        values = state.get(field)
-        if not isinstance(values, list):
-            continue
-        for row in values:
-            if isinstance(row, Mapping) and _candidate_id(row):
-                rows[_candidate_id(row)] = row
-    return rows
-
-
-def _held_candidates(state: Mapping[str, object]) -> dict[str, Mapping[str, object]]:
-    current = state.get(REVIEW_STATE_FIELD)
-    holds = current.get("holds") if isinstance(current, Mapping) else None
-    result: dict[str, Mapping[str, object]] = {}
-    if not isinstance(holds, list):
-        return result
-    for hold in holds:
-        candidate = hold.get("candidate") if isinstance(hold, Mapping) else None
-        if isinstance(candidate, Mapping) and _candidate_id(candidate):
-            result[_candidate_id(candidate)] = candidate
-    return result
-
-
-def _prior_hold_records(state: Mapping[str, object]) -> dict[str, Mapping[str, object]]:
-    current = state.get(REVIEW_STATE_FIELD)
-    holds = current.get("holds") if isinstance(current, Mapping) else None
-    result: dict[str, Mapping[str, object]] = {}
-    if not isinstance(holds, list):
-        return result
-    for hold in holds:
-        if isinstance(hold, Mapping) and _candidate_id(hold):
-            result[_candidate_id(hold)] = hold
-    return result
 
 
 def _remove_from_queue(state: dict, candidate_id: str) -> None:
@@ -1800,6 +1768,7 @@ def hold_published_topic_collision_reviews(
     *,
     repo_root: Path = DEFAULT_REPO_ROOT,
     publication_registry: Mapping[str, object] | None = None,
+    candidate_ids: Collection[str] | None = None,
 ) -> list[dict[str, object]]:
     """Park every candidate with an active pair-review authority.
 
@@ -1809,13 +1778,21 @@ def hold_published_topic_collision_reviews(
     release the candidate.
     """
 
+    allowed = _normalized_candidate_allowlist(candidate_ids)
+    prior_holds = _prior_holds_in_order(state)
     rows = _current_rows_by_id(state)
     prior_held = _held_candidates(state)
     prior_hold_records = _prior_hold_records(state)
     rows = {**prior_held, **rows}
 
-    active_ids: set[str] = set(prior_held)
+    active_ids = {
+        candidate_id
+        for candidate_id in prior_held
+        if allowed is None or candidate_id in allowed
+    }
     for candidate_id in rows:
+        if allowed is not None and candidate_id not in allowed:
+            continue
         try:
             relative = authority_relative_path(candidate_id)
             if repository_authority_expects_asset(repo_root=repo_root, relative_path=relative):
@@ -1825,11 +1802,18 @@ def hold_published_topic_collision_reviews(
                 active_ids.add(candidate_id)
 
     if not active_ids:
-        state[REVIEW_STATE_FIELD] = {
+        holds = _merge_scoped_holds(
+            prior_holds, [], candidate_ids=allowed
+        )
+        next_review = {
             "schema_version": REVIEW_STATE_SCHEMA,
-            "holds": [],
+            "holds": holds,
         }
-        return []
+        current_review = state.get(REVIEW_STATE_FIELD)
+        if allowed is not None and isinstance(current_review, Mapping):
+            next_review = {**dict(current_review), **next_review}
+        state[REVIEW_STATE_FIELD] = next_review
+        return holds
 
     registry = publication_registry
     registry_error: Exception | None = None
@@ -1990,8 +1974,15 @@ def hold_published_topic_collision_reviews(
             }
         )
 
-    state[REVIEW_STATE_FIELD] = {
+    holds = _merge_scoped_holds(
+        prior_holds, holds, candidate_ids=allowed
+    )
+    next_review = {
         "schema_version": REVIEW_STATE_SCHEMA,
         "holds": holds,
     }
+    current_review = state.get(REVIEW_STATE_FIELD)
+    if allowed is not None and isinstance(current_review, Mapping):
+        next_review = {**dict(current_review), **next_review}
+    state[REVIEW_STATE_FIELD] = next_review
     return holds

@@ -1100,13 +1100,24 @@ def prioritize(
 ) -> None:
     """Prioritize one batch while keeping a frozen scope topologically isolated."""
 
+    scoped_topic_review = bool(
+        allow_published_topic_review
+        and frozen_talk_candidate_ids is not None
+        and frozen_talk_candidate_ids
+    )
+    if scoped_topic_review:
+        hold_published_topic_collision_reviews(
+            state, candidate_ids=frozen_talk_candidate_ids
+        )
     preimage = _detach_frozen_non_target_talk_rows(state, frozen_talk_candidate_ids)
     try:
         _prioritize_active_queues(
             state,
             frozen_talk_candidate_ids=frozen_talk_candidate_ids,
             allow_song_work=allow_song_work,
-            allow_published_topic_review=allow_published_topic_review,
+            allow_published_topic_review=(
+                allow_published_topic_review and not scoped_topic_review
+            ),
         )
     finally:
         if preimage is not None:

@@ -370,6 +370,9 @@ def inspect_named_held_current_talk_rerender(
             given_end_ms=row.get("given_end_ms"),
             given_end_authority=row.get("given_end_authority"),
             recovery_publication_authority=None,
+            provider_budget_history=(
+                state.get("talk_superseded_attempts") or ()
+            ),
         )
         _require_exact_chat_binding(queue_item)
         queue_item["operator_scope_grant_id"] = grant_id
@@ -384,6 +387,9 @@ def inspect_named_held_current_talk_rerender(
         archive["recovery_source_record_sha256"] = queue_item[
             "recovery_source_record_sha256"
         ]
+        delivery_recovery._carry_recovered_provider_budget_ledger_to_archive(
+            queue_item, archive
+        )
         return HeldCurrentTalkRerenderInspection(
             OUTSTANDING_CURRENT,
             "HELD_CURRENT_RERENDER_REQUIRED",

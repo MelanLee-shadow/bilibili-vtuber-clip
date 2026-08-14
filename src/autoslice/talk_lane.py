@@ -8,6 +8,7 @@ executes the runner as __main__.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -31,6 +32,17 @@ from src.autoslice.foreign_source_failure_evidence import (
     foreign_source_gate_violation as _foreign_source_gate_violation,
     foreign_source_provider_transient as _foreign_source_provider_transient,
 )
+from src.autoslice.final_review_failure_compaction import (
+    compact_boundary_semantic_review as _compact_boundary_semantic_review,
+    compact_correction_mutation_authority as _compact_correction_mutation_authority,
+    compact_correction_pass as _compact_correction_pass,
+    compact_final_review_finding as _compact_final_review_finding,
+    final_review_contract_reason_code as _final_review_contract_reason_code,
+)
+from src.autoslice.final_review_provider_budget_retry import (
+    build_provider_budget_retry_evidence,
+    carry_validated_active_provider_budget_ledger,
+)
 from src.autoslice.producer_boundary_owner_contract import (
     validate_frozen_boundary_owner_contract,
 )
@@ -44,6 +56,12 @@ from src.autoslice.recovery_title_authority import (
     validate_recovery_publication_authority,
 )
 from src.autoslice.semantic_scorecard_refresh_receipt import copied_refresh_receipt
+from src.autoslice.selected_source_fact_recovery import (
+    RECOVERY_RECEIPT_FIELD as SELECTED_SOURCE_FACT_RECOVERY_RECEIPT_FIELD,
+)
+from src.autoslice.selected_final_review_recovery import (
+    RECOVERY_RECEIPT_FIELD as SELECTED_FINAL_REVIEW_RECOVERY_RECEIPT_FIELD,
+)
 from src.autoslice.selection_scorecard import selection_scorecard_is_valid
 from src.autoslice.talk_quota_freeze import FREEZE_FIELD as TALK_QUOTA_FREEZE_FIELD
 from src.autoslice.speaker_finalizer import (
@@ -455,177 +473,6 @@ def _final_review_candidate_id(path: Path) -> str:
     return path.stem
 
 
-def _compact_final_review_finding(row: object) -> dict[str, object] | None:
-    if not isinstance(row, dict):
-        return None
-    summary = {
-        key: row.get(key)
-        for key in (
-            "cue_index",
-            "kind",
-            "repair_class",
-            "suspect",
-            "suggestion",
-            "proposed_full_cue",
-            "suggestion_rejected_reason",
-            "why",
-            "force_acoustic",
-            "correlated_text_witness",
-            "base_text_sha256",
-            "candidate_memory_id",
-            "evidence_cue_ids",
-            "reported_scope_warnings",
-            "span_start_codepoint",
-            "span_end_codepoint",
-        )
-        if row.get(key) is not None
-    }
-    provenance = row.get("candidate_provenance")
-    if isinstance(provenance, dict):
-        summary["candidate_provenance"] = {
-            key: provenance.get(key)
-            for key in (
-                "schema_version",
-                "kind",
-                "scope",
-                "surface",
-                "memory_id",
-                "mutation_authorized",
-                "ledger_sha256",
-                "nearest_cue_distance",
-                "session_scope_id",
-                "source_srt_sha256",
-                "current_srt_sha256",
-                "occurrence_count",
-                "occurrence_cue_count",
-                "occurrence_positions",
-                "max_cue_distance",
-                "global_glossary_authorized",
-                "draft_fidelity_kept",
-                "kept_candidate",
-                "current_text_sha256",
-                "audit_sha256",
-                "kept_text_sha256",
-                "violation_reason_codes",
-            )
-            if provenance.get(key) is not None
-        }
-    fidelity_context = row.get("draft_fidelity_kept_provenance")
-    if isinstance(fidelity_context, dict):
-        summary["draft_fidelity_kept_provenance"] = {
-            key: fidelity_context.get(key)
-            for key in (
-                "schema_version", "kind", "scope", "cue_index", "surface",
-                "draft_fidelity_kept", "kept_candidate", "audit_sha256",
-                "source_srt_sha256", "kept_text_sha256", "current_text_sha256",
-                "violation_reason_codes", "mutation_authorized",
-            )
-            if fidelity_context.get(key) is not None
-        }
-    return summary
-
-
-def _compact_boundary_semantic_review(value: object) -> dict[str, object]:
-    if not isinstance(value, dict):
-        return {"status": "MISSING"}
-    return {
-        key: value.get(key)
-        for key in (
-            "schema_version",
-            "status",
-            "reason_codes",
-            "target_ms",
-            "recommended_end_ms",
-            "syntax_complete",
-            "story_closed",
-            "content_anchor_covered",
-            "next_topic_separated",
-            "summary",
-            "request_sha256",
-        )
-        if value.get(key) is not None
-    }
-
-
-def _final_review_contract_reason_code(attempt_output: str) -> str | None:
-    match = re.search(
-        r"FINAL_REVIEW_RELEASE_BLOCKED:\s*([A-Z0-9_]+)",
-        attempt_output,
-    )
-    return match.group(1) if match else None
-
-
-def _compact_correction_pass(value: object) -> dict[str, object]:
-    if not isinstance(value, Mapping):
-        return {"status": "MISSING"}
-    reason_codes = value.get("reason_codes")
-    if isinstance(reason_codes, str):
-        normalized_reason_codes = [reason_codes] if reason_codes else []
-    elif isinstance(reason_codes, list):
-        normalized_reason_codes = [
-            str(code) for code in reason_codes if str(code)
-        ]
-    else:
-        normalized_reason_codes = []
-    discovery = value.get("discovery")
-    return {
-        key: item
-        for key, item in {
-            "schema_version": value.get("schema_version"),
-            "status": value.get("status"),
-            "reason_codes": normalized_reason_codes,
-            "discovery": (
-                {
-                    field: discovery.get(field)
-                    for field in _provider_failure.DISCOVERY_EVIDENCE_FIELDS
-                    if discovery.get(field) is not None
-                }
-                if isinstance(discovery, Mapping)
-                else {"status": "MISSING"}
-            ),
-            "error_type": value.get("error_type"),
-            "applied_count": value.get("applied_count"),
-        }.items()
-        if item is not None
-    }
-
-
-def _compact_correction_mutation_authority(
-    value: object,
-) -> dict[str, object]:
-    if not isinstance(value, Mapping):
-        return {"status": "MISSING", "failures": []}
-    compact_failures: list[dict[str, object]] = []
-    for row in value.get("failures") or []:
-        if not isinstance(row, Mapping):
-            continue
-        compact_failures.append(
-            {
-                key: row.get(key)
-                for key in (
-                    "reason_code",
-                    "upstream_reason_codes",
-                    "cue_index",
-                    "routed",
-                )
-                if row.get(key) is not None
-            }
-        )
-    return {
-        key: item
-        for key, item in {
-            "schema_version": value.get("schema_version"),
-            "status": value.get("status"),
-            "applied_count": value.get("applied_count"),
-            "validated_mutation_count": value.get(
-                "validated_mutation_count"
-            ),
-            "failures": compact_failures,
-        }.items()
-        if item is not None
-    }
-
-
 def _final_review_failure_evidence(attempt_output: str) -> dict[str, object]:
     matches = _FINAL_REVIEW_ARTIFACT_RX.findall(attempt_output)
     artifact_path = Path(matches[-1].strip()) if matches else None
@@ -829,6 +676,35 @@ def _final_review_failure_evidence(attempt_output: str) -> dict[str, object]:
             ),
         }
     )
+    provider_budget_retry = (
+        build_provider_budget_retry_evidence(
+            audit,
+            candidate_id=candidate_name,
+            contract_reason_code=str(
+                evidence.get("contract_reason_code") or ""
+            ),
+            reviewed_srt_path=(
+                artifact_path.parent
+                / "replacement_recuts"
+                / f"{candidate_name}.recut.srt"
+            ),
+        )
+        if (
+            evidence.get("audit_surfaces_consistent") is True
+            and (
+                nested_carryover_count is None
+                or (
+                    isinstance(nested_carryover_count, int)
+                    and not isinstance(nested_carryover_count, bool)
+                    and nested_carryover_count == 0
+                )
+            )
+            and carryover_document is None
+        )
+        else None
+    )
+    if provider_budget_retry is not None:
+        evidence["provider_budget_retry"] = provider_budget_retry
     return evidence
 
 
@@ -932,6 +808,13 @@ def _classify_final_review_release(
         )
     if boundary_status != "PASS":
         return "final_review_contract", "final_review_contract", False, evidence
+    if isinstance(evidence.get("provider_budget_retry"), Mapping):
+        return (
+            "subtitle_authority",
+            "final_review_provider_budget",
+            True,
+            evidence,
+        )
     finding_count = evidence.get("validated_finding_count")
     if (
         isinstance(finding_count, int)
@@ -1327,7 +1210,9 @@ def _prepare_talk_filler_plan(item: dict) -> dict[str, object]:
     return filler_plan
 
 
-def _copy_cover_regeneration_receipt(item: dict, result: dict[str, object]) -> None:
+def _copy_cover_regeneration_receipt(
+    item: Mapping[str, object], result: dict[str, object]
+) -> None:
     for field in (
         "cover_route_regeneration_fingerprint",
         "cover_route_regeneration_attempts",
@@ -1704,6 +1589,104 @@ def _run_talk_producer_with_boundary_context_retry(
     )
 
 
+def _carry_selected_source_fact_recovery_result(
+    item: Mapping[str, object], result: dict[str, object]
+) -> dict[str, object]:
+    """Carry a queue receipt to the runner's final pre-persist commit seam."""
+
+    receipt = item.get(SELECTED_SOURCE_FACT_RECOVERY_RECEIPT_FIELD)
+    if not isinstance(receipt, Mapping):
+        return result
+    result.setdefault("selected_repair", bool(item.get("selected_repair")))
+    if item.get("recovery_source_record_sha256") is not None:
+        result.setdefault(
+            "recovery_source_record_sha256",
+            item["recovery_source_record_sha256"],
+        )
+    # Backfill and bundle projection still happen in the runner.  Carry an
+    # independent queue receipt here; historical recovery advances it against
+    # that exact final pick immediately before the first state persistence.
+    result[SELECTED_SOURCE_FACT_RECOVERY_RECEIPT_FIELD] = copy.deepcopy(
+        dict(receipt)
+    )
+    return result
+
+
+def _carry_selected_final_review_recovery_result(
+    item: Mapping[str, object], result: dict[str, object]
+) -> dict[str, object]:
+    """Carry a v7 queue receipt to the final pre-persist commit seam."""
+
+    receipt = item.get(SELECTED_FINAL_REVIEW_RECOVERY_RECEIPT_FIELD)
+    if not isinstance(receipt, Mapping):
+        return result
+    result.setdefault("selected_repair", bool(item.get("selected_repair")))
+    if item.get("recovery_source_record_sha256") is not None:
+        result.setdefault(
+            "recovery_source_record_sha256",
+            item["recovery_source_record_sha256"],
+        )
+    result[SELECTED_FINAL_REVIEW_RECOVERY_RECEIPT_FIELD] = copy.deepcopy(
+        dict(receipt)
+    )
+    return result
+
+
+def _carry_talk_recovery_result(
+    item: Mapping[str, object], result: dict[str, object]
+) -> dict[str, object]:
+    """Apply every recovery-ledger carry contract at one result seam."""
+
+    result = _carry_selected_source_fact_recovery_result(item, result)
+    result = _carry_selected_final_review_recovery_result(item, result)
+    return carry_validated_active_provider_budget_ledger(
+        item,
+        result,
+        candidate_id=str(item.get("cid") or item.get("candidate_id") or ""),
+    )
+
+
+def _provider_budget_ledger_preflight_rejection(
+    item: Mapping[str, object], *, candidate_id: str
+) -> dict[str, object] | None:
+    result = carry_validated_active_provider_budget_ledger(
+        item,
+        {
+            "candidate_id": candidate_id,
+            "segment": Path(str(item.get("segment_path") or "")).name,
+            "start_ms": item.get("start_ms"),
+            "end_ms": item.get("end_ms"),
+            "hook": item.get("hook", ""),
+            "confidence": item.get("confidence"),
+            "selection_scorecard": item.get("selection_scorecard"),
+            "session_relation_authority": item.get(
+                "session_relation_authority"
+            ),
+            "lane": item.get("lane", ""),
+            "rc": 0,
+        },
+        candidate_id=candidate_id,
+    )
+    if result.get("failure_stage") != "final_review_provider_budget_ledger":
+        return None
+    _copy_cover_regeneration_receipt(item, result)
+    result.update(copied_refresh_receipt(item))
+    return _carry_talk_recovery_result(item, result)
+
+
+def _canonicalized_talk_item(item: Mapping[str, object]) -> dict[str, object]:
+    normalized = dict(item)
+    normalized["hook"] = canonicalize_relation_summary(
+        str(normalized.get("hook") or ""),
+        session_relation_authority=normalized.get("session_relation_authority"),
+    )
+    normalized["selection_scorecard"] = canonicalize_story_scorecard(
+        normalized.get("selection_scorecard"),
+        session_relation_authority=normalized.get("session_relation_authority"),
+    )
+    return normalized
+
+
 def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     """Run produce_slice_package for one pending talk item (plain-dict spec).
 
@@ -1713,19 +1696,16 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     retried on a later resume.  ``reuse_cover`` keeps the existing delivered
     cover (subtitle-only re-run) and skips the ~90s AI cover step.
     """
-    item = dict(item)
-    item["hook"] = canonicalize_relation_summary(
-        str(item.get("hook") or ""),
-        session_relation_authority=item.get("session_relation_authority"),
-    )
-    item["selection_scorecard"] = canonicalize_story_scorecard(
-        item.get("selection_scorecard"),
-        session_relation_authority=item.get("session_relation_authority"),
-    )
+    item = _canonicalized_talk_item(item)
     cid = item["cid"]
+    ledger_rejection = _provider_budget_ledger_preflight_rejection(
+        item, candidate_id=str(cid)
+    )
+    if ledger_rejection is not None:
+        return ledger_rejection
     scorecard_rejection = _selection_scorecard_rejection(item)
     if scorecard_rejection is not None:
-        return scorecard_rejection
+        return _carry_talk_recovery_result(item, scorecard_rejection)
     filler_plan = _prepare_talk_filler_plan(item)
     # 合并候选的缝隙移除若被 plan 拒绝，绝不回退成整窗连续交付——那会把
     # 缝里的 8 分钟无关内容一起端出去（fail-closed，候选拒绝留审计）。
@@ -1736,7 +1716,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     )
     if filler_rejection is not None:
         filler_rejection.update(copied_refresh_receipt(item))
-        return filler_rejection
+        return _carry_talk_recovery_result(item, filler_rejection)
     effective_duration_ms = int(filler_plan["effective_duration_ms"])
     out_root = _runner.BASE / "out" / date
     delivery_name = _runner.safe_name(item.get("hook", ""), cid)
@@ -1887,10 +1867,12 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         # 分数门下拿到席位的」事后无从复算（2026-08-10 考据就卡在这里）。
         (TALK_QUOTA_FREEZE_FIELD, dict),
         ("final_review_carryover_consumed_fingerprints", list),
+        (SELECTED_SOURCE_FACT_RECOVERY_RECEIPT_FIELD, dict),
+        (SELECTED_FINAL_REVIEW_RECOVERY_RECEIPT_FIELD, dict),
         ("rescore_consumed_fingerprints", list),
     ):
         if isinstance(item.get(field), value_type):
-            result[field] = value_type(item[field])
+            result[field] = copy.deepcopy(item[field])
     # Classify only bytes written by this subprocess attempt.  The log is
     # append-only; a stale boundary marker followed by a transient CPA error
     # must not make the new attempt terminal again.
@@ -1938,7 +1920,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
 
                 shutil.rmtree(recuts, ignore_errors=True)
             result["status"] = "title_failed"
-            return result
+            return _carry_talk_recovery_result(item, result)
         if "SPEAKER_REVIEW_REQUIRED" in attempt_output:
             review_meta = _runner.read_speaker_review_meta(
                 out_root / cid,
@@ -1947,23 +1929,23 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
             if review_meta:
                 result.update(review_meta)
                 result["status"] = "speaker_review_required"
-                return result
+                return _carry_talk_recovery_result(item, result)
         if _runner._speaker_evidence_insufficient_failure(tail):
             result["status"] = "speaker_evidence_insufficient"
-            return result
+            return _carry_talk_recovery_result(item, result)
         if "TALK_EFFECTIVE_DURATION_NOT_OVER_45S_AFTER_BOUNDARY" in tail:
             result["status"] = "candidate_rejected"
             result["rejection_reason"] = "talk_effective_duration_too_short"
             result["reason_codes"] = [
                 "TALK_EFFECTIVE_DURATION_NOT_OVER_45S_AFTER_BOUNDARY"
             ]
-            return result
+            return _carry_talk_recovery_result(item, result)
         if "SOURCE_MEDIA_MISSING" in tail:
             # 终态且不复跑：源字节没了，`failed` 会被 requeue 成永久空转。
             result["status"] = "candidate_rejected"
             result["rejection_reason"] = "source_media_missing"
             result["reason_codes"] = ["SOURCE_MEDIA_MISSING"]
-            return result
+            return _carry_talk_recovery_result(item, result)
         # Boundary exhaustion is deterministic for this pipeline generation;
         # a later fingerprint change can earn a bounded retry.
         result["status"] = (
@@ -1974,7 +1956,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
             )
             else "failed"
         )
-        return result
+        return _carry_talk_recovery_result(item, result)
     if str(result.get("title_authority_status") or "").startswith("UNRESOLVED"):
         # No delivery with a cid title / cid-text cover — clean and retry later.
         delivered = _runner.profile_delivery_root() / date
@@ -1986,7 +1968,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
 
             shutil.rmtree(recuts, ignore_errors=True)
         result["status"] = "title_failed"
-        return result
+        return _carry_talk_recovery_result(item, result)
     # Boundary self-repair (Ivan 2026-07-10) replaced quarantine: a delivered
     # clip is clean by construction — red flags either got repaired (trail in
     # boundary_repairs) or the produce exited non-zero above (no delivery).
@@ -2000,4 +1982,4 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         work_dir=out_root / cid,
         cover_ready=_talk_cover_delivery_ready(date, result),
     )
-    return result
+    return _carry_talk_recovery_result(item, result)

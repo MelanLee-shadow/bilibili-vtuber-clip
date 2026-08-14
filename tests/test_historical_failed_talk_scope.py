@@ -11,8 +11,16 @@ import scripts.free_session_autoslice as runner
 from src.autoslice import candidate_selection
 from src.autoslice import semantic_evidence_scorecard_refresh as semantic_chat_refresh
 from src.autoslice.exact_talk_recovery_scope import maintain_delivery_recovery_scope
+from src.autoslice.final_review_provider_budget_retry import (
+    LEDGER_FIELD as FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD,
+    LEDGER_SCHEMA as FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_SCHEMA,
+)
 from src.autoslice.operator_processing_scope import (
+    FINAL_REVIEW_RECOVERY_GRANT_SCHEMA,
+    FINAL_REVIEW_RECOVERY_INTENT,
     GRANT_SCHEMA,
+    SOURCE_FACT_RECOVERY_GRANT_SCHEMA,
+    SOURCE_FACT_RECOVERY_INTENT,
     SPEAKER_HOLD_RECOVERY_GRANT_SCHEMA,
     SPEAKER_HOLD_RECOVERY_INTENT,
     TOPIC_HOLD_RECOVERY_GRANT_SCHEMA,
@@ -169,6 +177,137 @@ def _v5_selected_authority_rejection_state() -> dict:
     return state
 
 
+def _v6_grant() -> dict:
+    return {
+        "schema_version": SOURCE_FACT_RECOVERY_GRANT_SCHEMA,
+        "grant_id": "retry-one-selected-source-fact-rejection",
+        "recording_date": DATE,
+        "reason": "只重试点名的出处事实失败候选，不处理或发布其他候选。",
+        "candidate_ids": [TARGET],
+        "user_authorization": {
+            "quote": "继续，我连上网了",
+            "timestamp": "2026-08-13T22:00:00Z",
+        },
+        "expires_at": "2099-08-14T06:00:00Z",
+        "intent": SOURCE_FACT_RECOVERY_INTENT,
+        "upload_allowed": False,
+    }
+
+
+def _v6_rejection() -> dict:
+    return {
+        "candidate_id": TARGET,
+        "status": "candidate_rejected",
+        "rejected_status": "failed",
+        "selected_repair": True,
+        "rc": 1,
+        "failure_kind": "story_contract",
+        "failure_stage": "source_fact_repair",
+        "failure_recoverable": False,
+        "failure_recovery_fingerprint": "sha256:" + "1" * 64,
+        "rejection_reason": "story_contract_unresolved_backfilled",
+        "segment": f"{TARGET}.mp4",
+        "start_ms": 10_000,
+        "end_ms": 20_000,
+        "hook": TARGET,
+    }
+
+
+def _v6_queued_state() -> dict:
+    from src.autoslice.selected_source_fact_recovery import (
+        RECOVERY_RECEIPT_FIELD,
+        build_selected_source_fact_recovery_receipt,
+    )
+
+    queue_row = {
+        "cid": TARGET,
+        "segment_path": f"/recordings/{TARGET}.mp4",
+        "start_ms": 10_000,
+        "end_ms": 20_000,
+        "hook": TARGET,
+        "selected_repair": True,
+        "talk_repair_retry_count": 1,
+    }
+    receipt = build_selected_source_fact_recovery_receipt(
+        old_row=_v6_rejection(),
+        queued_row=queue_row,
+        candidate_id=TARGET,
+        grant_id=_v6_grant()["grant_id"],
+        current_fingerprint="sha256:" + "2" * 64,
+    )
+    queue_row[RECOVERY_RECEIPT_FIELD] = receipt
+    return {
+        "status": "no_delivery",
+        "upload_allowed": False,
+        "operator_processing_scope": _v6_grant(),
+        "picks": [_failed(OTHER)],
+        "pending_talk": [queue_row],
+        "talk_backlog": [],
+        "talk_below_confidence_threshold": [],
+        "pending_song": [copy.deepcopy(SONG)],
+        "song_backlog": [],
+        "song_selection_backlog": [],
+        "songs": [],
+        "song_superseded_attempts": [],
+    }
+
+
+def _v7_grant() -> dict:
+    grant = _v6_grant()
+    grant.update(
+        {
+            "schema_version": FINAL_REVIEW_RECOVERY_GRANT_SCHEMA,
+            "grant_id": "retry-one-selected-final-review-rejection",
+            "reason": "只重试点名的 final-review 失败及 provider-budget continuation。",
+            "intent": FINAL_REVIEW_RECOVERY_INTENT,
+        }
+    )
+    return grant
+
+
+def _v7_rejection() -> dict:
+    row = _v6_rejection()
+    row.update(
+        {
+            "failure_kind": "subtitle_authority",
+            "failure_stage": "final_review_findings",
+            "rejection_reason": "subtitle_authority_unresolved_backfilled",
+            "talk_repair_retry_count": 5,
+        }
+    )
+    return row
+
+
+def _v7_queued_state() -> dict:
+    from src.autoslice.selected_final_review_recovery import (
+        RECOVERY_RECEIPT_FIELD,
+        build_selected_final_review_recovery_receipt,
+    )
+
+    queue_row = {
+        "cid": TARGET,
+        "segment_path": f"/recordings/{TARGET}.mp4",
+        "start_ms": 10_000,
+        "end_ms": 20_000,
+        "hook": TARGET,
+        "selected_repair": True,
+        "talk_repair_retry_count": 6,
+    }
+    receipt = build_selected_final_review_recovery_receipt(
+        old_row=_v7_rejection(),
+        queued_row=queue_row,
+        candidate_id=TARGET,
+        grant_id=_v7_grant()["grant_id"],
+        current_fingerprint="sha256:" + "2" * 64,
+    )
+    queue_row[RECOVERY_RECEIPT_FIELD] = receipt
+    state = _v6_queued_state()
+    state["operator_processing_scope"] = _v7_grant()
+    state["pending_talk"] = [queue_row]
+    state["talk_superseded_attempts"] = []
+    return state
+
+
 def test_v2_scope_freezes_only_an_admitted_historical_failed_talk() -> None:
     state = _state()
     assert operator_talk_scope(state, date=DATE) == (TARGET,)
@@ -246,6 +385,123 @@ def test_broad_maintenance_cannot_requeue_a_marker_bound_topic_failure(
 
     assert result == (0, 0, 0, 0, False)
     assert calls == [{OTHER}]
+
+
+@pytest.mark.parametrize("receipt_location", ["current", "superseded"])
+def test_broad_maintenance_cannot_requeue_a_v6_bound_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    receipt_location: str,
+) -> None:
+    state = _state()
+    state.pop("operator_processing_scope")
+    receipt = {"schema_version": "selected-source-fact-recovery-receipt.v1"}
+    if receipt_location == "current":
+        state["picks"][0]["selected_source_fact_recovery"] = receipt
+    else:
+        # Even deletion/corruption of the current receipt cannot turn a
+        # previously sealed one-shot lineage into ordinary broad maintenance.
+        state["talk_superseded_attempts"] = [
+            {
+                "candidate_id": TARGET,
+                "selected_source_fact_recovery": receipt,
+            }
+        ]
+    calls: list[set[str] | None] = []
+    monkeypatch.setattr(
+        runner,
+        "requeue_recoverable_talks",
+        lambda _date, _state, *, candidate_ids=None: calls.append(candidate_ids)
+        or 0,
+    )
+    monkeypatch.setattr(
+        runner,
+        "requeue_stale_current_recovery_talks",
+        lambda *_a, **_k: 0,
+    )
+    monkeypatch.setattr(runner, "recover_bound_song_deliveries", lambda *_a: 0)
+    monkeypatch.setattr(runner, "requeue_recoverable_songs", lambda *_a: 0)
+
+    result = maintain_delivery_recovery_scope(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        talk_candidate_ids=None,
+    )
+
+    assert result == (0, 0, 0, 0, False)
+    assert calls == [{OTHER}]
+
+
+@pytest.mark.parametrize("receipt_location", ["current", "superseded"])
+def test_broad_maintenance_cannot_requeue_a_v7_bound_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    receipt_location: str,
+) -> None:
+    state = _state()
+    state.pop("operator_processing_scope")
+    receipt = {"schema_version": "selected-final-review-recovery-receipt.v1"}
+    if receipt_location == "current":
+        state["picks"][0]["selected_final_review_recovery"] = receipt
+    else:
+        state["talk_superseded_attempts"] = [
+            {
+                "candidate_id": TARGET,
+                "selected_final_review_recovery": receipt,
+            }
+        ]
+    calls: list[set[str] | None] = []
+    monkeypatch.setattr(
+        runner,
+        "requeue_recoverable_talks",
+        lambda _date, _state, *, candidate_ids=None: calls.append(candidate_ids)
+        or 0,
+    )
+    monkeypatch.setattr(
+        runner, "requeue_stale_current_recovery_talks", lambda *_a, **_k: 0
+    )
+    monkeypatch.setattr(runner, "recover_bound_song_deliveries", lambda *_a: 0)
+    monkeypatch.setattr(runner, "requeue_recoverable_songs", lambda *_a: 0)
+
+    result = maintain_delivery_recovery_scope(
+        DATE, state, automatic_maintenance=True, talk_candidate_ids=None
+    )
+    assert result == (0, 0, 0, 0, False)
+    assert calls == [{OTHER}]
+
+
+def test_null_superseded_v6_receipt_does_not_freeze_ordinary_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _state()
+    state.pop("operator_processing_scope")
+    state["talk_superseded_attempts"] = [
+        {
+            "candidate_id": TARGET,
+            "selected_source_fact_recovery": None,
+        }
+    ]
+    calls: list[str] = []
+    monkeypatch.setattr(
+        runner,
+        "requeue_recoverable_deliveries",
+        lambda _date, _state: calls.append("broad") or (0, 0, 0),
+    )
+    monkeypatch.setattr(
+        runner,
+        "requeue_stale_current_recovery_talks",
+        lambda *_a, **_k: 0,
+    )
+    monkeypatch.setattr(runner, "recover_bound_song_deliveries", lambda *_a: 0)
+    monkeypatch.setattr(runner, "requeue_recoverable_songs", lambda *_a: 0)
+
+    maintain_delivery_recovery_scope(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        talk_candidate_ids=None,
+    )
+
+    assert calls == ["broad"]
 
 
 @pytest.mark.parametrize(
@@ -896,6 +1152,381 @@ def test_v5_unsealed_producer_pick_is_rolled_back_to_exact_queue_input(
     )
 
 
+def test_v6_seals_exact_final_pick_after_runner_bundle_backfill() -> None:
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice.selected_source_fact_recovery import (
+        QUEUE_TO_PICK_TRANSITION,
+        RECOVERY_RECEIPT_FIELD,
+        validate_consumed_source_fact_recovery_receipt,
+    )
+
+    state = _v6_queued_state()
+    queue_row = state["pending_talk"][0]
+    original_receipt = copy.deepcopy(queue_row[RECOVERY_RECEIPT_FIELD])
+    preimage = historical_failed_talk_scope.production_preimage(state, (TARGET,))
+    assert preimage is not None
+
+    final_pick = {
+        "candidate_id": TARGET,
+        "status": "review_ready",
+        "selected_repair": True,
+        "title": "producer title",
+        RECOVERY_RECEIPT_FIELD: copy.deepcopy(original_receipt),
+    }
+    # These fields are written by the runner after the producer returns.  The
+    # receipt must bind this final persisted row, not the earlier result.
+    final_pick["bundle_lifecycle"] = "CURRENT"
+    final_pick["bundle_compliance"] = "COMPLIANT"
+    state["pending_talk"] = []
+    state["picks"].append(final_pick)
+
+    assert historical_failed_talk_scope.seal_production_transition(
+        DATE, state, (TARGET,), preimage
+    )
+    sealed = final_pick[RECOVERY_RECEIPT_FIELD]
+    assert sealed != original_receipt
+    assert sealed["transitions"][-1]["kind"] == QUEUE_TO_PICK_TRANSITION
+    assert sealed["current_row"] == {
+        key: value
+        for key, value in final_pick.items()
+        if key != RECOVERY_RECEIPT_FIELD
+    }
+    assert validate_consumed_source_fact_recovery_receipt(
+        sealed,
+        candidate_id=TARGET,
+        grant_id=_v6_grant()["grant_id"],
+        consumed_row=final_pick,
+    )
+
+
+def test_v7_seals_exact_final_pick_after_runner_bundle_backfill() -> None:
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice.selected_final_review_recovery import (
+        QUEUE_TO_PICK_TRANSITION,
+        RECOVERY_RECEIPT_FIELD,
+        validate_consumed_final_review_recovery_receipt,
+    )
+
+    state = _v7_queued_state()
+    queue_row = state["pending_talk"][0]
+    original_receipt = copy.deepcopy(queue_row[RECOVERY_RECEIPT_FIELD])
+    preimage = historical_failed_talk_scope.production_preimage(state, (TARGET,))
+    assert preimage is not None
+    final_pick = {
+        "candidate_id": TARGET,
+        "status": "review_ready",
+        "selected_repair": True,
+        "bundle_lifecycle": "CURRENT",
+        "bundle_compliance": "COMPLIANT",
+        RECOVERY_RECEIPT_FIELD: copy.deepcopy(original_receipt),
+    }
+    state["pending_talk"] = []
+    state["picks"].append(final_pick)
+
+    assert historical_failed_talk_scope.seal_production_transition(
+        DATE, state, (TARGET,), preimage
+    )
+    sealed = final_pick[RECOVERY_RECEIPT_FIELD]
+    assert sealed["transitions"][-1]["kind"] == QUEUE_TO_PICK_TRANSITION
+    assert sealed["current_row"]["bundle_lifecycle"] == "CURRENT"
+    assert validate_consumed_final_review_recovery_receipt(
+        sealed,
+        candidate_id=TARGET,
+        grant_id=_v7_grant()["grant_id"],
+        consumed_row=final_pick,
+    )
+
+
+def test_v7_queue_tamper_rolls_back_and_sets_typed_runtime_block() -> None:
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice.selected_final_review_recovery import RECOVERY_RECEIPT_FIELD
+
+    state = _v7_queued_state()
+    preimage = historical_failed_talk_scope.production_preimage(state, (TARGET,))
+    assert preimage is not None
+    state["pending_talk"][0][RECOVERY_RECEIPT_FIELD]["current_row"][
+        "hook"
+    ] = "tampered"
+    assert not historical_failed_talk_scope.seal_production_transition(
+        DATE, state, (TARGET,), preimage
+    )
+    assert {
+        key: value
+        for key, value in state.items()
+        if key != "operator_processing_scope_runtime_block"
+    } == preimage
+    runtime_block = state["operator_processing_scope_runtime_block"]
+    assert runtime_block["intent"] == FINAL_REVIEW_RECOVERY_INTENT
+    assert runtime_block["reason_code"] == (
+        "SELECTED_FINAL_REVIEW_RECOVERY_PRODUCTION_TRANSITION_BLOCKED"
+    )
+
+
+@pytest.mark.parametrize(
+    ("phase", "reason_code"),
+    [
+        ("annotation", "SELECTED_FINAL_REVIEW_RECOVERY_SESSION_ANNOTATION_BLOCKED"),
+        ("scorecard", "SELECTED_FINAL_REVIEW_RECOVERY_SCORECARD_REFRESH_BLOCKED"),
+        ("prioritize", "SELECTED_FINAL_REVIEW_RECOVERY_PRIORITIZE_BLOCKED"),
+        ("prepare", "SELECTED_FINAL_REVIEW_RECOVERY_PRODUCTION_PREPARE_BLOCKED"),
+    ],
+)
+def test_v7_intermediate_queue_tamper_rolls_back_before_persist(
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+    reason_code: str,
+) -> None:
+    from src.autoslice import historical_failed_talk_scope
+
+    state = _v7_queued_state()
+    preimage = copy.deepcopy(state)
+
+    def tamper(*_args, **_kwargs):
+        state["pending_talk"][0]["hook"] = "tampered"
+        return 1
+
+    if phase == "annotation":
+        monkeypatch.setattr(runner, "annotate_state_sessions", tamper)
+        result = historical_failed_talk_scope.annotate_sessions(
+            DATE, state, include_song_rows=False, candidate_ids=(TARGET,)
+        )
+        assert result == -1
+    elif phase == "scorecard":
+        monkeypatch.setattr(
+            semantic_chat_refresh,
+            "refresh_operator_scoped_chat_scorecards",
+            tamper,
+        )
+        assert historical_failed_talk_scope.refresh_scorecards(
+            DATE, state, (TARGET,)
+        ) == -1
+    elif phase == "prioritize":
+        monkeypatch.setattr(historical_failed_talk_scope, "reprioritize", tamper)
+        assert historical_failed_talk_scope.prioritize_and_capture(
+            DATE, state, (TARGET,)
+        ) is None
+    else:
+        monkeypatch.setattr(runner, "prepare_speaker_routing", tamper)
+        monkeypatch.setattr(runner, "collect_song_name_candidates", lambda *_a: [])
+        assert historical_failed_talk_scope.prepare_production_context(
+            DATE, state, (TARGET,)
+        ) == (False, None)
+
+    assert {
+        key: value
+        for key, value in state.items()
+        if key != "operator_processing_scope_runtime_block"
+    } == preimage
+    assert state["operator_processing_scope_runtime_block"] == {
+        "schema_version": "operator-processing-scope-runtime-block.v1",
+        "recording_date": DATE,
+        "candidate_ids": [TARGET],
+        "intent": FINAL_REVIEW_RECOVERY_INTENT,
+        "upload_allowed": False,
+        "reason_code": reason_code,
+    }
+
+
+def test_v7_intermediate_declared_queue_rebounds_remain_valid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice.selected_final_review_recovery import (
+        RECOVERY_RECEIPT_FIELD,
+        validate_selected_final_review_recovery_receipt,
+    )
+
+    state = _v7_queued_state()
+    row = state["pending_talk"][0]
+    receipt = copy.deepcopy(row[RECOVERY_RECEIPT_FIELD])
+
+    def annotate(*_args, **_kwargs):
+        row["session_id"] = "session-1576"
+        return 1
+
+    monkeypatch.setattr(runner, "annotate_state_sessions", annotate)
+    assert historical_failed_talk_scope.annotate_sessions(
+        DATE, state, include_song_rows=False, candidate_ids=(TARGET,)
+    ) == 1
+
+    def refresh(*_args, **_kwargs):
+        row["selection_scorecard"] = {"schema_version": "test.v1"}
+        return 1
+
+    monkeypatch.setattr(
+        semantic_chat_refresh, "refresh_operator_scoped_chat_scorecards", refresh
+    )
+    assert historical_failed_talk_scope.refresh_scorecards(
+        DATE, state, (TARGET,)
+    ) == 1
+
+    def prioritize(*_args, **_kwargs):
+        row["cover_diversity_slot"] = 2
+
+    monkeypatch.setattr(historical_failed_talk_scope, "reprioritize", prioritize)
+    assert historical_failed_talk_scope.prioritize_and_capture(
+        DATE, state, (TARGET,)
+    ) is not None
+
+    def prepare(*_args, **_kwargs):
+        row["speaker_routing_candidate"] = "豆沙"
+        return {"status": "prepared"}
+
+    monkeypatch.setattr(runner, "prepare_speaker_routing", prepare)
+    monkeypatch.setattr(runner, "collect_song_name_candidates", lambda *_a: [])
+    assert historical_failed_talk_scope.prepare_production_context(
+        DATE, state, (TARGET,)
+    )[0]
+    assert row[RECOVERY_RECEIPT_FIELD] == receipt
+    assert validate_selected_final_review_recovery_receipt(
+        receipt,
+        queued_row=row,
+        candidate_id=TARGET,
+        grant_id=_v7_grant()["grant_id"],
+        current_fingerprint="sha256:" + "2" * 64,
+        allow_queue_rebound=True,
+    )
+
+
+def test_missing_v7_grant_freezes_receipt_queue_before_broad_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.autoslice import historical_failed_talk_scope
+
+    state = _v7_queued_state()
+    state.pop("operator_processing_scope")
+    scope = historical_failed_talk_scope.freeze(state, date=DATE)
+    assert scope == ()
+    monkeypatch.setattr(
+        runner,
+        "cover_repair_needed",
+        lambda *_a: pytest.fail("empty v7 scope must not inspect broad covers"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "discover_segments",
+        lambda *_a: pytest.fail("empty v7 scope must not discover broad work"),
+    )
+    assert historical_failed_talk_scope.work_flags(
+        DATE, state, automatic_maintenance=True, candidate_ids=scope
+    ) == (False, False, False)
+    historical_failed_talk_scope.discover(DATE, state, scope)
+    assert runner.scoped_pending_talk_items(state, scope) == []
+
+
+def test_v6_seals_synthetic_recoverable_producer_failure() -> None:
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice.selected_source_fact_recovery import (
+        RECOVERY_RECEIPT_FIELD,
+        validate_consumed_source_fact_recovery_receipt,
+    )
+
+    state = _v6_queued_state()
+    receipt = copy.deepcopy(
+        state["pending_talk"][0][RECOVERY_RECEIPT_FIELD]
+    )
+    preimage = historical_failed_talk_scope.production_preimage(state, (TARGET,))
+    assert preimage is not None
+    failed = {
+        "candidate_id": TARGET,
+        "status": "failed",
+        "selected_repair": True,
+        "failure_kind": "provider_transient",
+        "failure_stage": "produce_dispatch",
+        "failure_recoverable": True,
+        "reason_codes": ["PRODUCE_UNEXPECTED_EXCEPTION"],
+        RECOVERY_RECEIPT_FIELD: receipt,
+    }
+    state["pending_talk"] = []
+    state["picks"].append(failed)
+
+    assert historical_failed_talk_scope.seal_production_transition(
+        DATE, state, (TARGET,), preimage
+    )
+    assert validate_consumed_source_fact_recovery_receipt(
+        failed[RECOVERY_RECEIPT_FIELD],
+        candidate_id=TARGET,
+        grant_id=_v6_grant()["grant_id"],
+        consumed_row=failed,
+    )
+
+
+def test_v6_seals_runner_backfilled_source_fact_rejection() -> None:
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice.selected_source_fact_recovery import RECOVERY_RECEIPT_FIELD
+
+    state = _v6_queued_state()
+    receipt = copy.deepcopy(
+        state["pending_talk"][0][RECOVERY_RECEIPT_FIELD]
+    )
+    preimage = historical_failed_talk_scope.production_preimage(state, (TARGET,))
+    assert preimage is not None
+    result = {
+        "candidate_id": TARGET,
+        "status": "failed",
+        "selected_repair": True,
+        RECOVERY_RECEIPT_FIELD: receipt,
+    }
+    # Model apply_talk_backfill_rejection_policy mutating the producer result
+    # before the historical scope's final commit seam.
+    result.update(
+        {
+            "status": "candidate_rejected",
+            "rejected_status": "failed",
+            "rc": 1,
+            "failure_kind": "story_contract",
+            "failure_stage": "source_fact_repair",
+            "failure_recoverable": False,
+            "rejection_reason": "story_contract_unresolved_backfilled",
+        }
+    )
+    state["pending_talk"] = []
+    state["picks"].append(result)
+
+    assert historical_failed_talk_scope.seal_production_transition(
+        DATE, state, (TARGET,), preimage
+    )
+    assert result[RECOVERY_RECEIPT_FIELD]["current_row"]["status"] == (
+        "candidate_rejected"
+    )
+    assert result[RECOVERY_RECEIPT_FIELD]["current_row"]["rejection_reason"] == (
+        "story_contract_unresolved_backfilled"
+    )
+
+
+def test_v6_allows_only_declared_queue_rebound_and_rolls_back_receipt_tamper() -> None:
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice.selected_source_fact_recovery import RECOVERY_RECEIPT_FIELD
+
+    state = _v6_queued_state()
+    preimage = historical_failed_talk_scope.production_preimage(state, (TARGET,))
+    assert preimage is not None
+    state["pending_talk"][0]["title_attempts"] = 1
+    assert historical_failed_talk_scope.seal_production_transition(
+        DATE, state, (TARGET,), preimage
+    )
+
+    preimage = historical_failed_talk_scope.production_preimage(state, (TARGET,))
+    assert preimage is not None
+    state["pending_talk"][0][RECOVERY_RECEIPT_FIELD]["current_row"][
+        "hook"
+    ] = "tampered"
+    assert not historical_failed_talk_scope.seal_production_transition(
+        DATE, state, (TARGET,), preimage
+    )
+    assert {
+        key: value
+        for key, value in state.items()
+        if key != "operator_processing_scope_runtime_block"
+    } == preimage
+    runtime_block = state["operator_processing_scope_runtime_block"]
+    assert runtime_block["intent"] == SOURCE_FACT_RECOVERY_INTENT
+    assert runtime_block["upload_allowed"] is False
+    assert runtime_block["reason_code"] == (
+        "SELECTED_SOURCE_FACT_RECOVERY_PRODUCTION_TRANSITION_BLOCKED"
+    )
+
+
 def test_v5_cover_pending_uses_full_producer_requeue_and_skips_in_place_repair(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -923,21 +1554,236 @@ def test_v5_cover_pending_uses_full_producer_requeue_and_skips_in_place_repair(
         "selected_repair": True,
         "recovery_source_record_sha256": "sha256:" + "a" * 64,
     }
+    provider_budget_history = [
+        {
+            "candidate_id": TARGET,
+            FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD: {
+                "schema_version": FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_SCHEMA,
+                "entries": [
+                    {
+                        "candidate_id": TARGET,
+                        "retry_fingerprint": "sha256:" + "b" * 64,
+                    }
+                ],
+            },
+        }
+    ]
+    state["talk_superseded_attempts"] = provider_budget_history
+    captured: dict[str, object] = {}
+
+    def queue_item(*_args, **kwargs):
+        captured.update(kwargs)
+        return copy.deepcopy(queued)
+
     monkeypatch.setattr(
         historical_failed_talk_scope,
         "_recovery_queue_item",
-        lambda *_a, **_k: copy.deepcopy(queued),
+        queue_item,
     )
 
     assert historical_failed_talk_scope._requeue_topic_cover_pending(
         DATE, state, TARGET
     ) == 1
+    assert captured["provider_budget_history"] is provider_budget_history
     assert state["pending_talk"] == [queued]
     assert all(row.get("candidate_id") != TARGET for row in state["picks"])
     monkeypatch.setattr(
         runner,
         "repair_covers",
         lambda *_a, **_k: pytest.fail("v5 must not enter multi-persist cover repair"),
+    )
+    historical_failed_talk_scope.repair_covers(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        candidate_ids=(TARGET,),
+    )
+
+
+def test_v7_cover_pending_requeues_transactionally_through_full_producer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice.selected_final_review_recovery import (
+        PICK_TO_QUEUE_TRANSITION,
+        QUEUE_TO_PICK_TRANSITION,
+        RECOVERY_RECEIPT_FIELD,
+        advance_selected_final_review_recovery_receipt,
+        validate_selected_final_review_recovery_receipt,
+    )
+
+    state = _v7_queued_state()
+    queue_row = state["pending_talk"].pop()
+    cover_pick = {
+        "candidate_id": TARGET,
+        "status": "media_ready_cover_pending",
+        "selected_repair": True,
+        "segment": f"{TARGET}.mp4",
+        "start_ms": 10_000,
+        "end_ms": 20_000,
+        "hook": TARGET,
+        # 1576 enters v7 from the historical count-5 rejection and its first
+        # fingerprint-driven retry is count 6.  Cover continuation must not be
+        # stranded behind the generic lifetime cap (currently 3).
+        "talk_repair_retry_count": 6,
+    }
+    receipt = advance_selected_final_review_recovery_receipt(
+        queue_row[RECOVERY_RECEIPT_FIELD],
+        from_row=queue_row,
+        to_row=cover_pick,
+        candidate_id=TARGET,
+        grant_id=_v7_grant()["grant_id"],
+        transition_kind=QUEUE_TO_PICK_TRANSITION,
+    )
+    cover_pick[RECOVERY_RECEIPT_FIELD] = receipt
+    state["picks"].append(cover_pick)
+    queued = {
+        "cid": TARGET,
+        "segment_path": f"/recordings/{TARGET}.mp4",
+        "start_ms": 10_000,
+        "end_ms": 20_000,
+        "hook": TARGET,
+        "selected_repair": True,
+        "talk_repair_retry_count": 7,
+        "retry_reason": "selected_final_review_cover_pending_full_producer_retry",
+    }
+
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "_recovery_queue_item",
+        lambda *_a, **_k: copy.deepcopy(queued),
+    )
+    assert historical_failed_talk_scope._requeue_final_review_cover_pending(
+        DATE, state, candidate_ids=(TARGET,)
+    ) == 1
+    rebound = state["pending_talk"][0]
+    next_receipt = rebound[RECOVERY_RECEIPT_FIELD]
+    assert next_receipt["transitions"][-1]["kind"] == PICK_TO_QUEUE_TRANSITION
+    assert validate_selected_final_review_recovery_receipt(
+        next_receipt,
+        queued_row=rebound,
+        candidate_id=TARGET,
+        grant_id=_v7_grant()["grant_id"],
+        current_fingerprint="sha256:" + "2" * 64,
+    )
+    monkeypatch.setattr(
+        runner,
+        "repair_covers",
+        lambda *_a, **_k: pytest.fail("v7 must not use multi-persist cover repair"),
+    )
+    historical_failed_talk_scope.repair_covers(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        candidate_ids=(TARGET,),
+    )
+
+
+def test_v6_cover_pending_requeues_transactionally_and_skips_in_place_repair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice.selected_source_fact_recovery import (
+        PICK_TO_QUEUE_TRANSITION,
+        QUEUE_TO_PICK_TRANSITION,
+        RECOVERY_RECEIPT_FIELD,
+        advance_selected_source_fact_recovery_receipt,
+        validate_selected_source_fact_recovery_receipt,
+    )
+
+    state = _v6_queued_state()
+    queue_row = state["pending_talk"].pop()
+    receipt = queue_row[RECOVERY_RECEIPT_FIELD]
+    cover_pick = {
+        "candidate_id": TARGET,
+        "status": "media_ready_cover_pending",
+        "selected_repair": True,
+        "segment": f"{TARGET}.mp4",
+        "start_ms": 10_000,
+        "end_ms": 20_000,
+        "hook": TARGET,
+        "talk_repair_retry_count": 1,
+    }
+    receipt = advance_selected_source_fact_recovery_receipt(
+        receipt,
+        from_row=queue_row,
+        to_row=cover_pick,
+        candidate_id=TARGET,
+        grant_id=_v6_grant()["grant_id"],
+        transition_kind=QUEUE_TO_PICK_TRANSITION,
+    )
+    cover_pick[RECOVERY_RECEIPT_FIELD] = receipt
+    state["picks"].append(cover_pick)
+    queued = {
+        "cid": TARGET,
+        "segment_path": f"/recordings/{TARGET}.mp4",
+        "start_ms": 10_000,
+        "end_ms": 20_000,
+        "hook": TARGET,
+        "selected_repair": True,
+        "talk_repair_retry_count": 2,
+        "retry_reason": "selected_source_fact_cover_pending_full_producer_retry",
+        "recovery_source_record_sha256": "sha256:" + "a" * 64,
+    }
+    provider_budget_history = [
+        {
+            "candidate_id": TARGET,
+            FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD: {
+                "schema_version": FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_SCHEMA,
+                "entries": [
+                    {
+                        "candidate_id": TARGET,
+                        "retry_fingerprint": "sha256:" + "b" * 64,
+                    }
+                ],
+            },
+        }
+    ]
+    state["talk_superseded_attempts"] = provider_budget_history
+    captured: dict[str, object] = {}
+
+    def queue_item(*_args, **kwargs):
+        captured.update(kwargs)
+        return copy.deepcopy(queued)
+
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "_recovery_queue_item",
+        queue_item,
+    )
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "maintain_delivery_recovery_scope",
+        lambda *_a, **_k: (0, 0, 0, 0, False),
+    )
+
+    assert historical_failed_talk_scope.freeze(state, date=DATE) == (TARGET,)
+    song_conflict = copy.deepcopy(state)
+    song_conflict["pending_song"] = [{"candidate_id": TARGET}]
+    assert historical_failed_talk_scope.freeze(song_conflict, date=DATE) == ()
+    assert historical_failed_talk_scope.maintain(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        candidate_ids=(TARGET,),
+    ) == (0, 0, 1, 0, False)
+    assert captured["provider_budget_history"] is provider_budget_history
+    assert all(row.get("candidate_id") != TARGET for row in state["picks"])
+    assert state["pending_talk"][0]["cid"] == TARGET
+    next_receipt = state["pending_talk"][0][RECOVERY_RECEIPT_FIELD]
+    assert next_receipt["transitions"][-1]["kind"] == PICK_TO_QUEUE_TRANSITION
+    assert validate_selected_source_fact_recovery_receipt(
+        next_receipt,
+        queued_row=state["pending_talk"][0],
+        candidate_id=TARGET,
+        grant_id=_v6_grant()["grant_id"],
+        current_fingerprint="sha256:" + "2" * 64,
+    )
+
+    monkeypatch.setattr(
+        runner,
+        "repair_covers",
+        lambda *_a, **_k: pytest.fail("v6 must not enter multi-persist cover repair"),
     )
     historical_failed_talk_scope.repair_covers(
         DATE,
@@ -1269,7 +2115,6 @@ def test_process_date_preserves_song_queues_and_never_backfills_after_rejection(
         ("requeue", (TARGET,)),
         ("prioritize", [TARGET]),
         ("produce", TARGET),
-        ("prioritize", []),
     ]
     assert state["talk_backlog"][0]["cid"] == "auto_reserve"
     assert OTHER in {row.get("candidate_id") for row in state["picks"]}

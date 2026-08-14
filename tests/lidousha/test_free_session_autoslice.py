@@ -1,4 +1,5 @@
 """Unit tests for the unattended runner's pure helpers (first-real-run lessons)."""
+import copy
 import json
 import hashlib
 import os
@@ -8379,6 +8380,112 @@ def test_v9_final_review_blocks_keep_deterministic_category_and_evidence(
     assert len(fingerprints) == len(cases)
 
 
+def test_exact_final_provider_budget_only_block_gets_dedicated_one_shot_retry(
+    tmp_path: Path,
+):
+    candidate_id = "auto_210131_1576_1802"
+    srt_text = "1\n00:00:00,000 --> 00:00:02,000\n预算重试\n"
+    reviewed_sha256 = "sha256:" + hashlib.sha256(
+        srt_text.encode("utf-8")
+    ).hexdigest()
+    audit = _final_review_failure_audit(
+        finding_count=4,
+        boundary_status="PASS",
+    )
+    audit.update(
+        {
+            "reviewed_srt_sha256": reviewed_sha256,
+            "discovery": {
+                "status": "COMPLETE",
+                "explicit_empty_findings": False,
+                "raw_validated_finding_count": 16,
+                "resolved_finding_count": 6,
+            },
+            "resolved_findings": [
+                {
+                    "cue_index": index + 5,
+                    "resolution": "provider-decided",
+                    "exact_release_adjudication": {
+                        "schema_version": "subtitle-span-adjudication.v1",
+                        "status": "OBSERVED",
+                        "repaired": False,
+                    },
+                }
+                for index in range(6)
+            ],
+            "unresolved_findings_disclosed": [
+                {
+                    "cue_index": index + 11,
+                    "resolution": "provider-disclosed",
+                    "exact_release_adjudication": {
+                        "schema_version": "subtitle-span-adjudication.v1",
+                        "status": "OBSERVED",
+                        "repaired": False,
+                    },
+                }
+                for index in range(6)
+            ],
+            "correction_mutation_authority": {
+                "schema_version": "subtitle-correction-mutation-audit.v1",
+                "status": "PASS",
+                "applied_count": 0,
+                "validated_mutation_count": 0,
+                "failures": [],
+            },
+        }
+    )
+    for finding in audit["findings"]:
+        finding["exact_release_adjudication"] = {
+            "schema_version": "subtitle-span-adjudication.v1",
+            "status": "SKIPPED_BUDGET",
+            "repaired": False,
+            "provider_adjudication_count": 12,
+            "provider_adjudication_budget": 12,
+        }
+    authority = _write_final_review_failure_surfaces(
+        tmp_path,
+        candidate_id,
+        audit,
+    )
+    recut = authority.parent / "replacement_recuts" / f"{candidate_id}.recut.srt"
+    recut.parent.mkdir()
+    recut.write_text(srt_text, encoding="utf-8")
+
+    classified = runner.classify_talk_failure(
+        "FINAL_REVIEW_RELEASE_BLOCKED: FINAL_REVIEW_UNRESOLVED_FINDINGS: "
+        f"{authority}"
+    )
+
+    assert classified["failure_kind"] == "subtitle_authority"
+    assert classified["failure_stage"] == "final_review_provider_budget"
+    assert classified["failure_recoverable"] is True
+    assert "carryover" not in classified["failure_evidence"]
+    retry = classified["failure_evidence"]["provider_budget_retry"]
+    assert retry["schema_version"] == "final-review-provider-budget-retry.v1"
+    assert retry["status"] == "ELIGIBLE"
+    assert retry["candidate_id"] == candidate_id
+    assert retry["active_finding_count"] == 4
+    assert retry["raw_validated_finding_count"] == 16
+    assert retry["resolved_finding_count"] == 6
+    assert retry["disclosed_finding_count"] == 6
+    assert len(retry["prior_adjudication_sha256s"]) == 12
+    assert retry["provider_adjudication_count"] == 12
+    assert retry["provider_adjudication_budget"] == 12
+    assert retry["reviewed_srt_sha256"] == reviewed_sha256
+    assert retry["retry_fingerprint"].startswith("sha256:")
+
+    # The one-shot authority requires both persisted audit surfaces to agree;
+    # a surviving single copy is evidence for the terminal finding, not retry.
+    authority.with_name(f"{candidate_id}.review-flags.json").unlink()
+    one_surface = runner.classify_talk_failure(
+        "FINAL_REVIEW_RELEASE_BLOCKED: FINAL_REVIEW_UNRESOLVED_FINDINGS: "
+        f"{authority}"
+    )
+    assert one_surface["failure_stage"] == "final_review_findings"
+    assert one_surface["failure_recoverable"] is False
+    assert "provider_budget_retry" not in one_surface["failure_evidence"]
+
+
 def test_final_review_discovery_unavailable_remains_retryable_with_evidence(
     tmp_path: Path,
 ):
@@ -10653,6 +10760,70 @@ def _requeue_gating_state(tmp_path, monkeypatch, *, failure_kind, transient_coun
     }
 
 
+def _provider_budget_only_classification(root: Path, candidate_id: str) -> dict:
+    srt_text = "1\n00:00:00,000 --> 00:00:02,000\n预算重试\n"
+    audit = _final_review_failure_audit(finding_count=2, boundary_status="PASS")
+    audit.update(
+        {
+            "reviewed_srt_sha256": "sha256:"
+            + hashlib.sha256(srt_text.encode("utf-8")).hexdigest(),
+            "discovery": {
+                "status": "COMPLETE",
+                "explicit_empty_findings": False,
+                "raw_validated_finding_count": 14,
+                "resolved_finding_count": 6,
+            },
+            "resolved_findings": [
+                {
+                    "cue_index": index + 3,
+                    "resolution": "provider-decided",
+                    "exact_release_adjudication": {
+                        "schema_version": "subtitle-span-adjudication.v1",
+                        "status": "OBSERVED",
+                        "repaired": False,
+                    },
+                }
+                for index in range(6)
+            ],
+            "unresolved_findings_disclosed": [
+                {
+                    "cue_index": index + 9,
+                    "resolution": "provider-disclosed",
+                    "exact_release_adjudication": {
+                        "schema_version": "subtitle-span-adjudication.v1",
+                        "status": "OBSERVED",
+                        "repaired": False,
+                    },
+                }
+                for index in range(6)
+            ],
+            "correction_mutation_authority": {
+                "schema_version": "subtitle-correction-mutation-audit.v1",
+                "status": "PASS",
+                "applied_count": 0,
+                "validated_mutation_count": 0,
+                "failures": [],
+            },
+        }
+    )
+    for finding in audit["findings"]:
+        finding["exact_release_adjudication"] = {
+            "schema_version": "subtitle-span-adjudication.v1",
+            "status": "SKIPPED_BUDGET",
+            "repaired": False,
+            "provider_adjudication_count": 12,
+            "provider_adjudication_budget": 12,
+        }
+    authority = _write_final_review_failure_surfaces(root, candidate_id, audit)
+    recut = authority.parent / "replacement_recuts" / f"{candidate_id}.recut.srt"
+    recut.parent.mkdir()
+    recut.write_text(srt_text, encoding="utf-8")
+    return runner.classify_talk_failure(
+        "FINAL_REVIEW_RELEASE_BLOCKED: FINAL_REVIEW_UNRESOLVED_FINDINGS: "
+        f"{authority}"
+    )
+
+
 def test_unknown_recoverable_failure_stops_after_bounded_transient_retry(
     tmp_path, monkeypatch
 ):
@@ -10666,6 +10837,70 @@ def test_unknown_recoverable_failure_stops_after_bounded_transient_retry(
 
     assert runner.requeue_recoverable_talks(date, state) == 0
     assert state["picks"][0]["status"] == "failed"
+    assert state["pending_talk"] == []
+
+
+def test_provider_budget_retry_bypasses_lifetime_cap_and_is_consumed_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate_id = "auto_210131_1576_1802"
+    date, state = _requeue_gating_state(
+        tmp_path,
+        monkeypatch,
+        failure_kind="subtitle_authority",
+        transient_count=3,
+    )
+    classified = _provider_budget_only_classification(
+        tmp_path / "failure-surfaces", candidate_id
+    )
+    record = state["picks"][0]
+    record.update(
+        classified,
+        candidate_id=candidate_id,
+        status="candidate_rejected",
+        selected_repair=True,
+        rejected_status="failed",
+        rejection_reason="subtitle_authority_unresolved_backfilled",
+        talk_repair_retry_count=5,
+        failure_recovery_fingerprint="sha256:same-recovery",
+        pipeline_fingerprint="sha256:same",
+    )
+    monkeypatch.setattr(runner, "TALK_REPAIR_LIFETIME_RETRY_CAP", 3)
+
+    assert runner.requeue_recoverable_talks(date, state) == 1
+    queued = state["pending_talk"][0]
+    assert queued["retry_reason"] == "final_review_provider_budget"
+    assert queued["talk_repair_retry_count"] == 5
+    ledger = queued["final_review_provider_budget_retry_ledger"]
+    assert ledger["schema_version"] == (
+        "final-review-provider-budget-retry-ledger.v1"
+    )
+    assert ledger["entries"] == [
+        {
+            "candidate_id": candidate_id,
+            "retry_fingerprint": classified["failure_evidence"]
+            ["provider_budget_retry"]["retry_fingerprint"],
+        }
+    ]
+    assert state["talk_superseded_attempts"][-1][
+        "final_review_provider_budget_retry_ledger"
+    ] == ledger
+
+    repeated = copy.deepcopy(queued)
+    repeated.update(
+        classified,
+        status="candidate_rejected",
+        selected_repair=True,
+        rejected_status="failed",
+        rejection_reason="subtitle_authority_unresolved_backfilled",
+    )
+    repeated["failure_recovery_fingerprint"] = "sha256:same-recovery"
+    repeated["pipeline_fingerprint"] = "sha256:same"
+    state["pending_talk"] = []
+    state["picks"] = [repeated]
+
+    assert runner.requeue_recoverable_talks(date, state) == 0
+    assert state["picks"] == [repeated]
     assert state["pending_talk"] == []
 
 
@@ -11249,8 +11484,17 @@ def test_content_boundary_recovery_fingerprint_tracks_semantic_trim_logic(
     "relative",
     [
         "src/autoslice/producer_source_media.py",
+        "src/autoslice/boundary_semantic_projection.py",
+        "src/autoslice/frozen_boundary_receipt.py",
+        "src/autoslice/frozen_source_boundary_receipt.py",
+        "src/autoslice/piece_roles.py",
+        "src/autoslice/producer_source_boundary_review.py",
         "src/autoslice/redelivery_boundary_projection.py",
+        "src/autoslice/redelivery_source_binding.py",
         "src/autoslice/redelivery_subtitle_baseline.py",
+        "src/autoslice/reviewed_exact_source_interval.py",
+        "src/autoslice/source_subtitle_truth.py",
+        "src/autoslice/talk_delivery_recovery.py",
     ],
 )
 def test_content_boundary_recovery_fingerprint_tracks_projection_seams(
@@ -11308,6 +11552,26 @@ def test_subtitle_authority_recovery_fingerprint_tracks_final_surface_verifier(
         (
             "src/autoslice/delivery_recovery.py",
             "selected exact-final authority failures may revive",
+        ),
+        (
+            "src/autoslice/talk_delivery_recovery.py",
+            "selected exact-final retry leaf may revive",
+        ),
+        (
+            "src/autoslice/final_review_carryover_retry.py",
+            "exact-final carryover retry policy may revive",
+        ),
+        (
+            "src/autoslice/final_review_failure_compaction.py",
+            "exact-final failure evidence may become typed and retryable",
+        ),
+        (
+            "src/autoslice/final_review_provider_budget_retry.py",
+            "bounded provider-budget continuation may revive",
+        ),
+        (
+            "src/autoslice/talk_recovery_record_policy.py",
+            "selected authority rejection policy may revive",
         ),
         (
             "src/autoslice/producer_text_finalization.py",

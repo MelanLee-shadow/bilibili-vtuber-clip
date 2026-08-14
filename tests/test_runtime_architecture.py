@@ -137,25 +137,6 @@ FUNCTION_DEBT_LEDGER = {
     # FULL_SOURCE_RETRY_FORENSIC_KEYS（音频命名权威也进这张表，否则真名会像
     # 修复前的标题一样被这层白名单埋掉）。本函数只减不增，账本按实际收紧。
     ("src/autoslice/song_lane.py", "produce_song"): 312,
-    # 2026-08-07 新记：同上狍哥案实施指令——rescore_retry 路线（fingerprint
-    # 计算、consumed 账本、hook/scorecard 交换）接入 requeue 主循环。重活在
-    # src/autoslice/selection_rescore.py，这里是状态机接线本身，行数属于
-    # requeue_recoverable_talks 而不是可再抽的独立函数。
-    # 2026-08-07 再 +4：Ivan 2026-08-07 狍哥案实施指令（闭环接线）——收口
-    # 调用 selection_rescore.execute_pending_rescores，唯一薄调用点覆盖
-    # exact-contract 与普通两条 requeue 分支。
-    # 2026-08-10 +2：配额冻结跨 requeue 存活的调用点（一行 `**` 展开 + 一行
-    # 注释）。Ivan 2026-08-10 逐字「追认。88改成15，85。日常还是5，并没有分数
-    # 限制。」授权的配额政策根治：cap/分数门改由按日期资产 + 准入冻结承载，
-    # 复活件丢掉冻结章就等于把回溯改写的洞重新打开。本体全在新模块
-    # src/autoslice/talk_quota_freeze.py，这里只有调用点。
-    # 2026-08-10 +3：Ivan 2026-08-10 逐字「说话人证据不足应该转人工审阅，不是
-    # 判死」——裁定之前化石化的说话人拒绝行必须先迁回停泊态再进常规恢复判定，
-    # 这里只有一行调用点 + 两行出处注释；识别与回执本体全在新模块
-    # src/autoslice/speaker_manual_review.py。测试
-    # tests/test_speaker_manual_review.py::
-    # test_fossilized_speaker_rejection_migrates_to_manual_review_hold。
-    ("src/autoslice/delivery_recovery.py", "requeue_recoverable_talks"): 324,
 }
 
 # 2026-07-31 冻结基线：12 项。同上，全部是欠账。
@@ -221,31 +202,6 @@ MODULE_DEBT_LEDGER = {
     # 2026-08-02 +166：bind_manual_package_cover——手动产线包封面回写（同一套
     # 校验/binding/原子写；Ivan 8/2 /goal 授权；测试 test_manual_cover_bind.py）。
     "src/autoslice/cover_repair.py": 2_217,
-    # 2026-08-07 +50：狍哥案实施指令（同上）——rescore_retry 路线（决策元组
-    # 新字段、fingerprint 消费账本、requeue item 的 hook/scorecard 交换）。
-    # 2026-08-07 再 +4：Ivan 2026-08-07 狍哥案实施指令（闭环接线）——同上
-    # 的收口调用点。
-    # 2026-08-10 +3：上面那个 +2 调用点，加一行 import。同一笔授权，同一本体。
-    # 2026-08-10 净 -1：F2 僵尸候选修复——歌 transient 的判定本体（含新的
-    # SONG_INFRA_RETRY_CAP 上限语义）抽到 batch_terminal_state
-    # .song_infra_transient_is_active，与 project_terminal_song_disposition
-    # 共用一套；这里只剩一个调用点。收紧到实际值以锁定收益。
-    # 2026-08-10 +19：Ivan 2026-08-10 逐字「说话人证据不足应该转人工审阅，不是
-    # 判死」——说话人失败改落停泊态而非 candidate_rejected 化石。本文件只有
-    # 三处接线（一段 import、backfill 政策里的停泊分支+出处注释、requeue 顶部
-    # 的迁移调用点）；停泊回执、化石迁移与报表本体全在新模块
-    # src/autoslice/speaker_manual_review.py。测试 tests/test_speaker_manual_review.py。
-    # 2026-08-10 +30：A1 终生修复预算按路线记账（Ivan 2026-08-10 逐字「就按 A1
-    # 走吧」「A1 要做」）——纯 infra 唤醒（CPA/挂载/配额）此前也无条件 +1
-    # talk_repair_retry_count，把真修复的额度烧光。新增一个模块级谓词
-    # _repair_budget_charge（判据照抄写回处 talk_transient_retry_count 已有的
-    # 路线判据，只把 transient 换成 infrastructure_retry），本体连 docstring
-    # 一起放在模块级**正是为了不再抬函数账本**：requeue_recoverable_talks 的
-    # 324 行一行未涨（原来的 `retry_count + 1` 换成等长的一行调用）。阈值、
-    # talk_transient_retry_count、fail-closed 门一字未动。测试
-    # tests/lidousha/test_free_session_autoslice.py::
-    # test_pure_infrastructure_wake_does_not_consume_talk_repair_budget 等五条。
-    "src/autoslice/delivery_recovery.py": 2_183,
     # 2026-08-07 +79：cue59「殉情」顶替真值「偶遇」实案（Ivan 2026-08-07
     # auto_203735_555_680 speaker-truth-diff 裁决 + 落地授权）——新增
     # _glossary_session_candidate_undecidable / _adjudicate_with_glossary_witness_guard
@@ -337,13 +293,6 @@ MODULE_DEBT_LEDGER = {
     # relocation/冻结包接线（同 _stage_publish_draft 那一项）。合并后实测。
     "src/autoslice/publish_staging.py": 2_644,
     "src/autoslice/same_bv_repair.py": 2_422,
-    # 2026-08-10 新入账：合并 ft-a8600994（Ivan 2026-08-10 逐字「这就是要合并的快车道代码，现在就去合并 merge」）把 talk_lane 顶过
-    # 2000 行入场线（ft 侧 +17 行 boundary 接线）。⚠️ 这是本次 merge 带入的新
-    # 欠账,不是新功能许可;超线仅 3 行,应优先拆回线下而不是长期挂账。
-    # 2026-08-10b：与主线(含 speaker_guess 那一波)合并后**实测 2_003**,
-    # 比 merge 分支上记的 2_004 少 1 行——按棘轮规矩收紧到实测值锁定收益,
-    # 不保留任何一侧的旧快照。
-    "src/autoslice/talk_lane.py": 2_003,
 }
 SCRIPT_EXCLUSIONS = {
     # Incident-specific forensic repair retained as historical evidence, not a
@@ -361,6 +310,9 @@ FOCUSED_MODULE_LINE_BUDGETS = {
     # Compatibility/public workflow facades must not absorb extracted domains.
     Path("src/autoslice/chat_authority.py"): 150,
     Path("src/autoslice/song_repair.py"): 1_200,
+    # v7 owns only one exact final-review rejection lineage.  Keep it below a
+    # small domain cap so provider/general recovery logic cannot accrete here.
+    Path("src/autoslice/selected_final_review_recovery.py"): 700,
     # 2026-08-07 +1：Ivan 2026-08-07 说话人默认连线裁定——ambiguous-cue 语义
     # 佐证接线（confidence 穿透 + 移除死掉的 neighbour smoothing 分支），净增
     # 只有 1 行；重活在新模块 src/autoslice/speaker_host_evidence.py。

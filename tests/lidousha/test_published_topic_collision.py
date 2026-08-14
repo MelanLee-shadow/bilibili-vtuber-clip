@@ -1055,12 +1055,13 @@ def _patch_frozen_retry_selection_dependencies(
         raising=False,
     )
 
-    def real_hold(value: dict) -> list[dict[str, object]]:
+    def real_hold(value: dict, **kwargs) -> list[dict[str, object]]:
         hold_calls.append("called")
         return hold_published_topic_collision_reviews(
             value,
             repo_root=root,
             publication_registry=registry,
+            **kwargs,
         )
 
     real_seal = seal_published_topic_resolution_row_rebounds
@@ -1266,6 +1267,86 @@ def test_469_vs_806_is_held_without_score_or_suppression_and_1576_passes(
     assert hold["evidence"]["published_candidate_id"] == PUBLISHED
     assert hold["evidence"]["published_bvid"] == BV
     assert hold["evidence"]["published_public_title"] == PUBLIC_TITLE
+
+
+def test_scoped_hold_mutates_only_target_and_preserves_non_target_hold_bytes(
+    tmp_path: Path, rows: tuple[dict, dict, dict]
+) -> None:
+    non_target, published, target = rows
+    registry = _registry()
+    non_target_authority = _authority(non_target, published, registry)
+    root = _sealed_repo(tmp_path, CANDIDATE, non_target_authority)
+    state = {
+        "picks": [deepcopy(published)],
+        "pending_talk": [deepcopy(non_target), deepcopy(target)],
+        "talk_backlog": [],
+    }
+    first = hold_published_topic_collision_reviews(
+        state, repo_root=root, publication_registry=registry
+    )
+    assert [hold["candidate_id"] for hold in first] == [CANDIDATE]
+    sentinel_id = "auto_existing_non_target_hold"
+    sentinel_hold = {
+        "candidate_id": sentinel_id,
+        "disposition": STALE_REVIEW_STATUS,
+        "reason_code": "PRESERVE_EXACTLY",
+        "candidate": {"candidate_id": sentinel_id, "opaque": [3, 1, 2]},
+        "evidence": {"opaque": {"order": ["b", "a"]}},
+    }
+    state[REVIEW_STATE_FIELD]["holds"].insert(0, sentinel_hold)
+    state[REVIEW_STATE_FIELD]["opaque_non_target_state"] = {
+        "order": ["second", "first"]
+    }
+    non_target_holds = deepcopy(state[REVIEW_STATE_FIELD]["holds"])
+    opaque_review_state = deepcopy(
+        state[REVIEW_STATE_FIELD]["opaque_non_target_state"]
+    )
+
+    target_authority = _authority(target, published, registry)
+    target_path = root / authority_relative_path(DISTINCT)
+    target_path.write_text(
+        json.dumps(target_authority, ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
+    ignored_id = "auto_200000_100_200"
+    ignored = {**deepcopy(target), "candidate_id": ignored_id, "hook": "ignored"}
+    state["pending_talk"].append(ignored)
+    ignored_path = root / authority_relative_path(ignored_id)
+    ignored_path.write_text(
+        json.dumps(
+            _authority(ignored, published, registry),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _git(root, "add", ".")
+    _git(root, "commit", "-qm", "seal target authority")
+
+    holds = hold_published_topic_collision_reviews(
+        state,
+        repo_root=root,
+        publication_registry=registry,
+        candidate_ids=(DISTINCT,),
+    )
+
+    assert holds[:2] == non_target_holds
+    assert [hold["candidate_id"] for hold in holds] == [
+        sentinel_id,
+        CANDIDATE,
+        DISTINCT,
+    ]
+    assert state[REVIEW_STATE_FIELD]["holds"][:2] == non_target_holds
+    assert (
+        state[REVIEW_STATE_FIELD]["opaque_non_target_state"]
+        == opaque_review_state
+    )
+    assert state["pending_talk"] == [ignored]
+    assert all(hold["candidate_id"] != ignored_id for hold in holds)
+    assert holds[2]["evidence"]["published_candidate_id"] == PUBLISHED
 
 
 def test_valid_resolution_releases_sticky_hold_to_its_original_queue_without_upload(

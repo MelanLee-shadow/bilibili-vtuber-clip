@@ -6,6 +6,10 @@ from collections.abc import Collection
 
 from src.autoslice.candidate_selection import _exact_talk_contract_ids
 from src.autoslice.runner_proxy import RunnerProxy
+from src.autoslice.selected_source_fact_recovery import RECOVERY_RECEIPT_FIELD
+from src.autoslice.selected_final_review_recovery import (
+    RECOVERY_RECEIPT_FIELD as FINAL_REVIEW_RECOVERY_RECEIPT_FIELD,
+)
 
 
 _runner = RunnerProxy()
@@ -47,6 +51,99 @@ def _active_v5_topic_scope(
         and isinstance(block, dict)
         and block.get("schema_version") == "operator-processing-scope-grant.v5"
         and block.get("intent") == "RECOVER_NAMED_RESOLVED_TOPIC_DEDUP_HOLD"
+        and block.get("candidate_ids") == list(values)
+        and block.get("upload_allowed") is False
+    )
+
+
+def _source_fact_bound_candidate_ids(state: dict) -> set[str]:
+    """Protect every durable v6 lineage from unscoped Talk maintenance.
+
+    The superseded archive remains a witness if the current row's receipt was
+    removed or corrupted.  Presence is enough here: malformed authority must
+    become *more* protected, never equivalent to an unbound generic failure.
+    """
+
+    protected: set[str] = set()
+    for collection in (
+        "pending_talk",
+        "talk_backlog",
+        "picks",
+        "talk_below_confidence_threshold",
+        "talk_superseded_attempts",
+    ):
+        rows = state.get(collection)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if (
+                not isinstance(row, dict)
+                or row.get(RECOVERY_RECEIPT_FIELD) is None
+            ):
+                continue
+            candidate_id = str(
+                row.get("candidate_id") or row.get("cid") or ""
+            ).strip()
+            if candidate_id:
+                protected.add(candidate_id)
+    return protected
+
+
+def _active_v6_source_fact_scope(
+    state: dict, candidate_ids: Collection[str] | None
+) -> bool:
+    values = tuple(candidate_ids or ())
+    block = state.get("operator_processing_scope")
+    return bool(
+        len(values) == 1
+        and isinstance(block, dict)
+        and block.get("schema_version") == "operator-processing-scope-grant.v6"
+        and block.get("intent")
+        == "RECOVER_NAMED_SELECTED_SOURCE_FACT_REJECTION"
+        and block.get("candidate_ids") == list(values)
+        and block.get("upload_allowed") is False
+    )
+
+
+def _final_review_bound_candidate_ids(state: dict) -> set[str]:
+    """Protect every durable v7 lineage from broad Talk maintenance."""
+
+    protected: set[str] = set()
+    for collection in (
+        "pending_talk",
+        "talk_backlog",
+        "picks",
+        "talk_below_confidence_threshold",
+        "talk_superseded_attempts",
+    ):
+        rows = state.get(collection)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if (
+                not isinstance(row, dict)
+                or row.get(FINAL_REVIEW_RECOVERY_RECEIPT_FIELD) is None
+            ):
+                continue
+            candidate_id = str(
+                row.get("candidate_id") or row.get("cid") or ""
+            ).strip()
+            if candidate_id:
+                protected.add(candidate_id)
+    return protected
+
+
+def _active_v7_final_review_scope(
+    state: dict, candidate_ids: Collection[str] | None
+) -> bool:
+    values = tuple(candidate_ids or ())
+    block = state.get("operator_processing_scope")
+    return bool(
+        len(values) == 1
+        and isinstance(block, dict)
+        and block.get("schema_version") == "operator-processing-scope-grant.v7"
+        and block.get("intent")
+        == "RECOVER_NAMED_SELECTED_FINAL_REVIEW_REJECTION"
         and block.get("candidate_ids") == list(values)
         and block.get("upload_allowed") is False
     )
@@ -117,6 +214,8 @@ def maintain_delivery_recovery_scope(
         return 0, 0, 0, 0, False
     talk_only_recovery = talk_candidate_ids is not None
     marker_bound_ids = _marker_bound_topic_candidate_ids(state)
+    source_fact_bound_ids = _source_fact_bound_candidate_ids(state)
+    final_review_bound_ids = _final_review_bound_candidate_ids(state)
     ledger_invalid = marker_bound_ids is None
     if ledger_invalid:
         # A malformed durable lineage is not equivalent to no lineage.  Keep
@@ -142,29 +241,41 @@ def maintain_delivery_recovery_scope(
         )
         if ledger_invalid:
             allowed_talk_ids.clear()
-        elif not _active_v5_topic_scope(state, talk_candidate_ids):
-            allowed_talk_ids -= marker_bound_ids
+        else:
+            if not _active_v5_topic_scope(state, talk_candidate_ids):
+                allowed_talk_ids -= marker_bound_ids
+            if not _active_v6_source_fact_scope(state, talk_candidate_ids):
+                allowed_talk_ids -= source_fact_bound_ids
+            if not _active_v7_final_review_scope(state, talk_candidate_ids):
+                allowed_talk_ids -= final_review_bound_ids
         failed_talks = (
             _runner.requeue_recoverable_talks(
                 date,
                 state,
                 candidate_ids=allowed_talk_ids,
             )
-            if talk_only_recovery or marker_bound_ids
+            if (
+                talk_only_recovery
+                or marker_bound_ids
+                or source_fact_bound_ids
+                or final_review_bound_ids
+            )
             else _runner.requeue_recoverable_talks(date, state)
         )
         blocked_songs = 0
-    elif marker_bound_ids:
-        # A durable topic-release lineage may only advance under its strict v5
-        # single-CID scope.  Broad maintenance may still handle unrelated
-        # Talk/Song rows, but must exclude marker-bound picks because it cannot
-        # seal their failed-pick -> queue transition.
+    elif marker_bound_ids or source_fact_bound_ids or final_review_bound_ids:
+        # Durable v5/v6 lineages may only advance under their strict single-CID
+        # scopes.  Broad maintenance may still handle unrelated Talk/Song rows,
+        # but cannot discard or advance either receipt shape.
+        protected_ids = (
+            marker_bound_ids | source_fact_bound_ids | final_review_bound_ids
+        )
         allowed_talk_ids = {
             str(row.get("candidate_id") or row.get("cid") or "")
             for row in (state.get("picks") or [])
             if isinstance(row, dict)
             and str(row.get("candidate_id") or row.get("cid") or "")
-            not in marker_bound_ids
+            not in protected_ids
         }
         recovered_songs = _runner.recover_bound_song_deliveries(date, state)
         stale_talks = _runner.requeue_stale_current_recovery_talks(date, state)

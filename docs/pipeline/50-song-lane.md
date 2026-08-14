@@ -6,11 +6,14 @@
 
 `operator-processing-scope-grant.v1`、v2 `RECOVER_NAMED_FAILED_PICKS`、v3 held-current
 重出、v4 `RECOVER_NAMED_SPEAKER_MANUAL_REVIEW_HOLD` 与 v5
-`RECOVER_NAMED_RESOLVED_TOPIC_DEDUP_HOLD` 都只授权点名 Talk，不授权 Song。
+`RECOVER_NAMED_RESOLVED_TOPIC_DEDUP_HOLD`、v6
+`RECOVER_NAMED_SELECTED_SOURCE_FACT_REJECTION` 与 v7
+`RECOVER_NAMED_SELECTED_FINAL_REVIEW_REJECTION` 都只授权点名 Talk，不授权 Song。
 scope 激活时，`pending_song`、`song_backlog`、`song_selection_backlog`、`songs`、
 `song_superseded_attempts` 必须逐项深等值保留；session annotation、终态投影与持久化都不得
 让 Song 漂移，runner 也不得恢复、发现、补位或生产任何 Song。未来恢复历史 Song 必须使用
-独立、显式的 typed Song authority。
+独立、显式的 typed Song authority。v7 receipt 已存在而 grant 缺失、不可识别或不匹配时，
+Talk scope 也必须冻结为空；不能借“grant 不生效”恢复 broad Talk/Song 工作。
 
 ## 要点（指针表）
 

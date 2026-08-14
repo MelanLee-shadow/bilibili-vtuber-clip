@@ -189,6 +189,11 @@
 - 合法收敛顺序是：当前表面 `REPAIR` → 流水线把两份 final 文案作为下一轮输入 → 下一轮对
   新当前表面重新产出 `addressee_attribution` → `KEEP` 或继续 `REPAIR`。validator 保持
   fail closed，不因 provider 混淆 current/final 而放宽到任意 final surface。
+- `changed_surfaces.evidence` 若引用结构化弹幕/SC，必须从当前 context 逐字复制完整的
+  `danmaku|superchat @<offset>ms event=<id>:` canonical 行；`structured_chat:` 与
+  `same_clip_context:` 这类概括标签只能出现在 `supported_by`，不能作为事实 citation。prompt
+  必须明写这套语法，parser/validator 继续拒绝泛化标签；不得因为 provider 连续返回同一种坏格式
+  就放宽 binding。说话人裁定也不取得 selection hook/title 的事实修复权。
 
 ## 谈话歌名歌词语义门（F19）
 
@@ -236,6 +241,32 @@
   `final-review-provider-budget-replay.v1`、以零 provider 调用越过已耗尽的帽。witness 或 judge
   任一 miss，或 current/base/proposed/time/source/prompt/audio 身份任一漂移，都不得调用 provider
   越帽，必须保持 `SKIPPED_BUDGET`；禁止以提高 cap 代替修复预算记账。
+  若一次 exact-final 已用满新 provider 帽，且**每个**当前未决 finding 都是字段完整、共同
+  count/budget 且 `count == budget` 的 `SKIPPED_BUDGET / repaired=false`，同时两份 audit
+  surface 一致，且 `raw_validated = resolved + unresolved_disclosed + active`、
+  `provider_count = resolved + unresolved_disclosed = budget` 两条等式闭合；correction mutation
+  PASS、boundary PASS、零 carryover 与当前 reviewed-SRT bytes/hash 也必须全部闭合，失败记录才可携带
+  `final-review-provider-budget-retry.v1` 并进入 `final_review_provider_budget` 专线。它只给该
+  candidate 一次、以 fingerprint 消费账本立即核销的机械重跑；可越过通用 lifetime cap，但
+  不增加该 cap、不冒充 repaired/carryover，也不消费通用修复次数。下一轮仍先严格双 cache
+  replay 已裁决行（零 provider 预算），再把原帽用于余下 finding。混合 reason/status、缺字段、
+  count/hash 漂移、坏账本或已消费 token 一律终止，且不得落回 changed/transient 通用重试。
+  已消费 ledger 必须以独立 copy 贯穿正常 producer、异常合成结果、generic 重排和
+  current/held/topic/cover 等专用重排；显式 ledger 若 malformed 或属于另一 CID，任何路线都必须
+  fail closed，不能把“字段存在但无效”当作“字段从未存在”而静默丢账本、重开一次性门。
+  同 CID 的 current 行与 `talk_superseded_attempts` 共同构成持久消费历史：current 丢字段时必须从
+  历史恢复唯一 canonical 已消费 ledger；任一当前/历史 malformed、foreign-CID、显式空值与已消费值
+  并存，或两个消费 fingerprint 冲突，都必须 fail closed，不能把 supersession 当作刷新一次性额度。
+  对已选中的 `final_review_findings` 确定性拒绝，provider-budget retry 之前还必须经过 v7
+  `selected-final-review-recovery-receipt.v1` 两阶段闭环：第一次仅因 scoped recovery fingerprint
+  漂移而由 count 5 重排到 count 6，并封印 rejection→queue；producer 若产出字段完整的
+  `final_review_provider_budget` failed/candidate_rejected 行，runner 在所有 backfill/bundle 投影后
+  封印 queue→pick。下一 tick 只有同一 grant-bound pick-head receipt、合法未消费 token 与
+  current+history 一次性账本同时通过，才可机械地 pick→queue；该次重排不再增加 count，并立即
+  写 consumed ledger。receipt 与 ledger 都须独立深拷贝进 active queue 和 superseded archive；
+  consumed ledger 的唯一 `{candidate_id,retry_fingerprint}` 还必须与当前合法 token 精确同一；任一
+  缺失、篡改、foreign-CID、fingerprint 冲突，或 success/cover 状态仍携带 provider-budget claim，
+  都不得落回普通 changed/transient retry。
   correction pass 同一不可变 cue 时间窗有多笔 finding 时，第一笔 mutation 落定后必须把后续
   finding 在 live `base_text_sha256` 上重建并重新入裁决；编辑 span 已被前一笔改动覆盖或 cue 已
   删除时，才可终态写 `SUPERSEDED_BY_SAME_CUE_MUTATION` 及 typed reason。每笔原

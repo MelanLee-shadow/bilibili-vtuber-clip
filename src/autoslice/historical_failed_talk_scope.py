@@ -11,11 +11,22 @@ from src.autoslice.delivery_recovery import (
 )
 from src.autoslice.exact_talk_recovery_scope import maintain_delivery_recovery_scope
 from src.autoslice.operator_processing_scope import (
+    FINAL_REVIEW_RECOVERY_GRANT_SCHEMA,
+    FINAL_REVIEW_RECOVERY_INTENT,
     HELD_CURRENT_RERENDER_INTENT,
+    SOURCE_FACT_RECOVERY_GRANT_SCHEMA,
+    SOURCE_FACT_RECOVERY_INTENT,
     STATE_KEY,
     TOPIC_HOLD_RECOVERY_GRANT_SCHEMA,
     TOPIC_HOLD_RECOVERY_INTENT,
     operator_talk_scope,
+)
+from src.autoslice.published_topic_recovery_lineage import (
+    RECOVERY_REBOUND_FIELDS,
+    RECOVERY_REBOUND_PRODUCTION_PREPARE,
+    RECOVERY_REBOUND_SEMANTIC_SCORECARD_REFRESH,
+    RECOVERY_REBOUND_SESSION_ANNOTATION,
+    top_level_changed_fields,
 )
 from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice import semantic_evidence_scorecard_refresh as semantic_chat_refresh
@@ -25,6 +36,13 @@ _runner = RunnerProxy()
 
 _RUNTIME_BLOCK_KEY = "operator_processing_scope_runtime_block"
 _RUNTIME_BLOCK_SCHEMA = "operator-processing-scope-runtime-block.v1"
+_ACTIVE_TALK_COLLECTIONS = (
+    "pending_talk",
+    "talk_backlog",
+    "picks",
+    "talk_below_confidence_threshold",
+)
+_QUEUED_TALK_COLLECTIONS = frozenset({"pending_talk", "talk_backlog"})
 
 
 def _topic_scope_candidate_ids(
@@ -44,6 +62,151 @@ def _topic_scope_candidate_ids(
     return values
 
 
+def _source_fact_scope_candidate_ids(
+    state: Mapping[str, object], candidate_ids: tuple[str, ...] | None
+) -> tuple[str, ...]:
+    """Recognize only the frozen structural envelope of one v6 grant."""
+
+    block = state.get(STATE_KEY)
+    values = tuple(candidate_ids or ())
+    if not (
+        len(values) == 1
+        and isinstance(block, Mapping)
+        and block.get("schema_version") == SOURCE_FACT_RECOVERY_GRANT_SCHEMA
+        and block.get("intent") == SOURCE_FACT_RECOVERY_INTENT
+        and block.get("candidate_ids") == list(values)
+        and block.get("upload_allowed") is False
+        and isinstance(block.get("grant_id"), str)
+        and str(block.get("grant_id")).strip() == block.get("grant_id")
+        and block.get("grant_id")
+    ):
+        return ()
+    return values
+
+
+def _final_review_scope_candidate_ids(
+    state: Mapping[str, object], candidate_ids: tuple[str, ...] | None
+) -> tuple[str, ...]:
+    """Recognize only the frozen structural envelope of one v7 grant."""
+
+    block = state.get(STATE_KEY)
+    values = tuple(candidate_ids or ())
+    if not (
+        len(values) == 1
+        and isinstance(block, Mapping)
+        and block.get("schema_version") == FINAL_REVIEW_RECOVERY_GRANT_SCHEMA
+        and block.get("intent") == FINAL_REVIEW_RECOVERY_INTENT
+        and block.get("candidate_ids") == list(values)
+        and block.get("upload_allowed") is False
+        and isinstance(block.get("grant_id"), str)
+        and str(block.get("grant_id")).strip() == block.get("grant_id")
+        and block.get("grant_id")
+    ):
+        return ()
+    return values
+
+
+def _target_talk_rows(
+    state: Mapping[str, object], candidate_id: str
+) -> list[tuple[str, dict]]:
+    return [
+        (collection, row)
+        for collection in _ACTIVE_TALK_COLLECTIONS
+        for row in (
+            state.get(collection)
+            if isinstance(state.get(collection), list)
+            else []
+        )
+        if isinstance(row, dict)
+        and str(row.get("candidate_id") or row.get("cid") or "").strip()
+        == candidate_id
+    ]
+
+
+def _source_fact_grant_id(state: Mapping[str, object]) -> str:
+    block = state.get(STATE_KEY)
+    return str(block.get("grant_id") or "") if isinstance(block, Mapping) else ""
+
+
+def _final_review_grant_id(state: Mapping[str, object]) -> str:
+    block = state.get(STATE_KEY)
+    return str(block.get("grant_id") or "") if isinstance(block, Mapping) else ""
+
+
+def _restore_source_fact_transition_block(
+    state: dict,
+    preimage: Mapping[str, object],
+    *,
+    date: str,
+    candidate_ids: tuple[str, ...],
+    reason_code: str,
+) -> None:
+    state.clear()
+    state.update(deepcopy(dict(preimage)))
+    state[_RUNTIME_BLOCK_KEY] = {
+        "schema_version": _RUNTIME_BLOCK_SCHEMA,
+        "recording_date": date,
+        "candidate_ids": list(candidate_ids),
+        "intent": SOURCE_FACT_RECOVERY_INTENT,
+        "upload_allowed": False,
+        "reason_code": reason_code,
+    }
+
+
+def _matching_source_fact_runtime_block(
+    state: Mapping[str, object],
+    *,
+    date: str,
+    candidate_ids: tuple[str, ...] | None,
+) -> bool:
+    block = state.get(_RUNTIME_BLOCK_KEY)
+    return bool(
+        isinstance(block, Mapping)
+        and block.get("schema_version") == _RUNTIME_BLOCK_SCHEMA
+        and block.get("recording_date") == date
+        and block.get("candidate_ids") == list(candidate_ids or ())
+        and block.get("intent") == SOURCE_FACT_RECOVERY_INTENT
+        and block.get("upload_allowed") is False
+    )
+
+
+def _restore_final_review_transition_block(
+    state: dict,
+    preimage: Mapping[str, object],
+    *,
+    date: str,
+    candidate_ids: tuple[str, ...],
+    reason_code: str,
+) -> None:
+    state.clear()
+    state.update(deepcopy(dict(preimage)))
+    state[_RUNTIME_BLOCK_KEY] = {
+        "schema_version": _RUNTIME_BLOCK_SCHEMA,
+        "recording_date": date,
+        "candidate_ids": list(candidate_ids),
+        "intent": FINAL_REVIEW_RECOVERY_INTENT,
+        "upload_allowed": False,
+        "reason_code": reason_code,
+    }
+
+
+def _matching_final_review_runtime_block(
+    state: Mapping[str, object],
+    *,
+    date: str,
+    candidate_ids: tuple[str, ...] | None,
+) -> bool:
+    block = state.get(_RUNTIME_BLOCK_KEY)
+    return bool(
+        isinstance(block, Mapping)
+        and block.get("schema_version") == _RUNTIME_BLOCK_SCHEMA
+        and block.get("recording_date") == date
+        and block.get("candidate_ids") == list(candidate_ids or ())
+        and block.get("intent") == FINAL_REVIEW_RECOVERY_INTENT
+        and block.get("upload_allowed") is False
+    )
+
+
 def _topic_transition_preimage(
     state: Mapping[str, object], candidate_ids: tuple[str, ...] | None
 ) -> dict | None:
@@ -52,6 +215,91 @@ def _topic_transition_preimage(
         if _topic_scope_candidate_ids(state, candidate_ids)
         else None
     )
+
+
+def _final_review_transition_preimage(
+    state: Mapping[str, object], candidate_ids: tuple[str, ...] | None
+) -> dict | None:
+    return (
+        deepcopy(dict(state))
+        if _final_review_scope_candidate_ids(state, candidate_ids)
+        else None
+    )
+
+
+def _seal_final_review_queue_rebound(
+    date: str,
+    state: dict,
+    *,
+    candidate_ids: tuple[str, ...] | None,
+    preimage: Mapping[str, object],
+    phase: str,
+    reason_code: str,
+) -> bool:
+    """Validate every v7 queue enrichment before the runner may persist it."""
+
+    from src.autoslice.selected_final_review_recovery import (
+        RECOVERY_RECEIPT_FIELD,
+        validate_selected_final_review_recovery_receipt,
+    )
+
+    values = _final_review_scope_candidate_ids(preimage, candidate_ids)
+    candidate_id = values[0] if len(values) == 1 else ""
+    before_rows = _target_talk_rows(preimage, candidate_id)
+    after_rows = _target_talk_rows(state, candidate_id)
+    transition_ok = False
+    if len(before_rows) == len(after_rows) == 1:
+        before_collection, before_row = before_rows[0]
+        after_collection, after_row = after_rows[0]
+        receipt = before_row.get(RECOVERY_RECEIPT_FIELD)
+        declared_current = (
+            receipt.get("current_failure_recovery_fingerprint")
+            if isinstance(receipt, Mapping)
+            else None
+        )
+        same_collection_required = phase != RECOVERY_REBOUND_PRODUCTION_PREPARE
+        collections_valid = bool(
+            before_collection in _QUEUED_TALK_COLLECTIONS
+            and after_collection in _QUEUED_TALK_COLLECTIONS
+            and (not same_collection_required or before_collection == after_collection)
+        )
+        try:
+            transition_ok = bool(
+                isinstance(declared_current, str)
+                and collections_valid
+                and after_row.get(RECOVERY_RECEIPT_FIELD) == receipt
+                and set(top_level_changed_fields(before_row, after_row)).issubset(
+                    RECOVERY_REBOUND_FIELDS[phase]
+                )
+                and validate_selected_final_review_recovery_receipt(
+                    receipt,
+                    queued_row=before_row,
+                    candidate_id=candidate_id,
+                    grant_id=_final_review_grant_id(preimage),
+                    current_fingerprint=declared_current,
+                    allow_queue_rebound=True,
+                )
+                and validate_selected_final_review_recovery_receipt(
+                    receipt,
+                    queued_row=after_row,
+                    candidate_id=candidate_id,
+                    grant_id=_final_review_grant_id(preimage),
+                    current_fingerprint=declared_current,
+                    allow_queue_rebound=True,
+                )
+            )
+        except Exception:  # noqa: BLE001 - rollback owns malformed rebound state
+            transition_ok = False
+    if transition_ok:
+        return True
+    _restore_final_review_transition_block(
+        state,
+        preimage,
+        date=date,
+        candidate_ids=values,
+        reason_code=reason_code,
+    )
+    return False
 
 
 def _restore_topic_transition_block(
@@ -84,12 +332,22 @@ def annotate_sessions(
     """Run session annotation and seal every changed v5 ledger row before persist."""
 
     preimage = _topic_transition_preimage(state, candidate_ids)
+    final_review_preimage = _final_review_transition_preimage(state, candidate_ids)
     changed = _runner.annotate_state_sessions(
         date,
         state,
         include_song_rows=include_song_rows,
         talk_candidate_ids=candidate_ids,
     )
+    if final_review_preimage is not None and not _seal_final_review_queue_rebound(
+        date,
+        state,
+        candidate_ids=candidate_ids,
+        preimage=final_review_preimage,
+        phase=RECOVERY_REBOUND_SESSION_ANNOTATION,
+        reason_code="SELECTED_FINAL_REVIEW_RECOVERY_SESSION_ANNOTATION_BLOCKED",
+    ):
+        return -1
     if preimage is None:
         return int(changed)
     from src.autoslice.published_topic_collision import (
@@ -122,7 +380,17 @@ def refresh_scorecards(
     """Refresh semantic cards behind a strict v5 queue-row rebound."""
 
     preimage = _topic_transition_preimage(state, candidate_ids)
+    final_review_preimage = _final_review_transition_preimage(state, candidate_ids)
     result = semantic_chat_refresh.refresh_operator_scoped_chat_scorecards(date, state)
+    if final_review_preimage is not None and not _seal_final_review_queue_rebound(
+        date,
+        state,
+        candidate_ids=candidate_ids,
+        preimage=final_review_preimage,
+        phase=RECOVERY_REBOUND_SEMANTIC_SCORECARD_REFRESH,
+        reason_code="SELECTED_FINAL_REVIEW_RECOVERY_SCORECARD_REFRESH_BLOCKED",
+    ):
+        return -1
     if preimage is None:
         return result
     from src.autoslice.published_topic_collision import (
@@ -186,12 +454,190 @@ def _requeue_topic_cover_pending(date: str, state: dict, candidate_id: str) -> i
             recovery_publication_authority=record.get(
                 "recovery_publication_authority"
             ),
+            provider_budget_history=(
+                state.get("talk_superseded_attempts") or ()
+            ),
         )
     except (OSError, TypeError, ValueError, RecoveryReviewRerunError):
         return 0
     state["picks"] = [row for row in picks if row is not record]
     pending.append(item)
     return 1
+
+
+def _requeue_receipt_bound_cover_pending(
+    date: str,
+    state: dict,
+    *,
+    candidate_ids: tuple[str, ...] | None,
+    final_review: bool,
+) -> int:
+    """Transactionally move one receipt-bound v6/v7 cover hold to Talk."""
+
+    values = (
+        _final_review_scope_candidate_ids(state, candidate_ids)
+        if final_review
+        else _source_fact_scope_candidate_ids(state, candidate_ids)
+    )
+    if len(values) != 1:
+        return 0
+    candidate_id = values[0]
+    rows = _target_talk_rows(state, candidate_id)
+    cover_rows = [
+        (collection, row)
+        for collection, row in rows
+        if row.get("status") == "media_ready_cover_pending"
+    ]
+    if not cover_rows:
+        return 0
+    preimage = deepcopy(dict(state))
+    reason_prefix = (
+        "SELECTED_FINAL_REVIEW_RECOVERY"
+        if final_review
+        else "SELECTED_SOURCE_FACT_RECOVERY"
+    )
+    restore_block = (
+        _restore_final_review_transition_block
+        if final_review
+        else _restore_source_fact_transition_block
+    )
+
+    def blocked() -> int:
+        restore_block(
+            state,
+            preimage,
+            date=date,
+            candidate_ids=values,
+            reason_code=f"{reason_prefix}_COVER_REQUEUE_BLOCKED",
+        )
+        return -1
+
+    pending = state.get("pending_talk")
+    picks = state.get("picks")
+    if not (
+        len(rows) == 1
+        and len(cover_rows) == 1
+        and cover_rows[0][0] == "picks"
+        and isinstance(pending, list)
+        and isinstance(picks, list)
+    ):
+        return blocked()
+    record = cover_rows[0][1]
+    if (
+        not final_review
+        and int(record.get("talk_repair_retry_count") or 0)
+        >= _runner.TALK_REPAIR_LIFETIME_RETRY_CAP
+    ):
+        return blocked()
+    if final_review:
+        from src.autoslice.selected_final_review_recovery import (
+            PICK_TO_QUEUE_TRANSITION,
+            RECOVERY_RECEIPT_FIELD,
+            advance_selected_final_review_recovery_receipt as advance_receipt,
+            validate_consumed_final_review_recovery_receipt as validate_consumed,
+            validate_selected_final_review_recovery_receipt as validate_queue,
+        )
+    else:
+        from src.autoslice.selected_source_fact_recovery import (
+            PICK_TO_QUEUE_TRANSITION,
+            RECOVERY_RECEIPT_FIELD,
+            advance_selected_source_fact_recovery_receipt as advance_receipt,
+            validate_consumed_source_fact_recovery_receipt as validate_consumed,
+            validate_selected_source_fact_recovery_receipt as validate_queue,
+        )
+
+    grant_id = (
+        _final_review_grant_id(preimage)
+        if final_review
+        else _source_fact_grant_id(preimage)
+    )
+    receipt = record.get(RECOVERY_RECEIPT_FIELD)
+    if not validate_consumed(
+        receipt,
+        candidate_id=candidate_id,
+        grant_id=grant_id,
+        consumed_row=record,
+    ):
+        return blocked()
+    try:
+        item = _recovery_queue_item(
+            date,
+            record,
+            candidate_id=candidate_id,
+            retry_reason=(
+                "selected_final_review_cover_pending_full_producer_retry"
+                if final_review
+                else "selected_source_fact_cover_pending_full_producer_retry"
+            ),
+            selected_repair=True,
+            given_end_ms=record.get("given_end_ms"),
+            given_end_authority=record.get("given_end_authority"),
+            recovery_publication_authority=record.get(
+                "recovery_publication_authority"
+            ),
+            provider_budget_history=(
+                state.get("talk_superseded_attempts") or ()
+            ),
+        )
+        carried_receipt = item.pop(RECOVERY_RECEIPT_FIELD, None)
+        if carried_receipt is not None and carried_receipt != receipt:
+            raise ValueError("cover requeue changed the source-fact receipt")
+        next_receipt = advance_receipt(
+            receipt,
+            from_row=record,
+            to_row=item,
+            candidate_id=candidate_id,
+            grant_id=grant_id,
+            transition_kind=PICK_TO_QUEUE_TRANSITION,
+        )
+        item[RECOVERY_RECEIPT_FIELD] = next_receipt
+        current_fingerprint = next_receipt.get(
+            "current_failure_recovery_fingerprint"
+        )
+        if not (
+            isinstance(current_fingerprint, str)
+            and validate_queue(
+                next_receipt,
+                queued_row=item,
+                candidate_id=candidate_id,
+                grant_id=grant_id,
+                current_fingerprint=current_fingerprint,
+            )
+        ):
+            raise ValueError("cover requeue receipt did not bind the queue row")
+    except Exception:  # noqa: BLE001 - this transition owns a full rollback
+        return blocked()
+    state["picks"] = [row for row in picks if row is not record]
+    pending.append(item)
+    return 1
+
+
+def _requeue_source_fact_cover_pending(
+    date: str,
+    state: dict,
+    *,
+    candidate_ids: tuple[str, ...] | None,
+) -> int:
+    return _requeue_receipt_bound_cover_pending(
+        date,
+        state,
+        candidate_ids=candidate_ids,
+        final_review=False,
+    )
+
+
+def _requeue_final_review_cover_pending(
+    date: str,
+    state: dict,
+    *,
+    candidate_ids: tuple[str, ...] | None,
+) -> int:
+    return _requeue_receipt_bound_cover_pending(
+        date,
+        state,
+        candidate_ids=candidate_ids,
+        final_review=True,
+    )
 
 
 def _remove_reconcilable_redundant_stale_hold(
@@ -222,6 +668,10 @@ def _remove_reconcilable_redundant_stale_hold(
 def freeze(state: Mapping[str, object], *, date: str) -> tuple[str, ...] | None:
     """Return the immutable Talk-only allowlist for this tick, if any."""
 
+    # Canonical admission already recognizes a receipt-bound cover-pending pick
+    # as OUTSTANDING.  Never reconstruct scope locally after an admission BLOCK:
+    # the block may be caused by a duplicate/Song conflict that this module must
+    # not bypass merely because the pick receipt itself remains valid.
     return operator_talk_scope(state, date=date)
 
 
@@ -232,11 +682,39 @@ def maintain(
     automatic_maintenance: bool,
     candidate_ids: tuple[str, ...] | None,
 ) -> tuple[int, int, int, int, bool]:
+    if _matching_source_fact_runtime_block(
+        state, date=date, candidate_ids=candidate_ids
+    ) or _matching_final_review_runtime_block(
+        state, date=date, candidate_ids=candidate_ids
+    ):
+        return 0, 0, 0, 0, False
     held_current_requeued = 0
     topic_cover_requeued = 0
+    source_fact_cover_requeued = 0
+    final_review_cover_requeued = 0
     topic_retry_preimage: dict | None = None
     topic_retry_expected_review_state: dict | None = None
     block = state.get(STATE_KEY)
+    if automatic_maintenance and _source_fact_scope_candidate_ids(
+        state, candidate_ids
+    ):
+        source_fact_cover_requeued = _requeue_source_fact_cover_pending(
+            date,
+            state,
+            candidate_ids=candidate_ids,
+        )
+        if source_fact_cover_requeued < 0:
+            return 0, 0, 0, 0, False
+    if automatic_maintenance and _final_review_scope_candidate_ids(
+        state, candidate_ids
+    ):
+        final_review_cover_requeued = _requeue_final_review_cover_pending(
+            date,
+            state,
+            candidate_ids=candidate_ids,
+        )
+        if final_review_cover_requeued < 0:
+            return 0, 0, 0, 0, False
     if (
         automatic_maintenance
         and len(candidate_ids or ()) == 1
@@ -450,7 +928,10 @@ def maintain(
     return (
         recovered_songs,
         stale_talks + held_current_requeued,
-        failed_talks + topic_cover_requeued,
+        failed_talks
+        + topic_cover_requeued
+        + source_fact_cover_requeued
+        + final_review_cover_requeued,
         blocked_songs,
         baseline_changed,
     )
@@ -467,7 +948,12 @@ def work_flags(
     if (
         isinstance(block, Mapping)
         and block.get("schema_version") == "operator-processing-scope-runtime-block.v1"
-        and block.get("intent") == TOPIC_HOLD_RECOVERY_INTENT
+        and block.get("intent")
+        in {
+            TOPIC_HOLD_RECOVERY_INTENT,
+            SOURCE_FACT_RECOVERY_INTENT,
+            FINAL_REVIEW_RECOVERY_INTENT,
+        }
         and block.get("recording_date") == date
         and block.get("candidate_ids") == list(candidate_ids or ())
         and block.get("upload_allowed") is False
@@ -502,7 +988,17 @@ def prioritize_and_capture(
         )
     ]
     preimage = _topic_transition_preimage(state, candidate_ids)
+    final_review_preimage = _final_review_transition_preimage(state, candidate_ids)
     reprioritize(state, candidate_ids)
+    if final_review_preimage is not None and not _seal_final_review_queue_rebound(
+        date,
+        state,
+        candidate_ids=candidate_ids,
+        preimage=final_review_preimage,
+        phase=RECOVERY_REBOUND_PRODUCTION_PREPARE,
+        reason_code="SELECTED_FINAL_REVIEW_RECOVERY_PRIORITIZE_BLOCKED",
+    ):
+        return None
     if preimage is not None:
         from src.autoslice.published_topic_collision import (
             seal_published_topic_resolution_row_rebounds,
@@ -545,6 +1041,7 @@ def prepare_production_context(
     """Attach deterministic routing/name inputs and seal the resulting queue row."""
 
     preimage = _topic_transition_preimage(state, candidate_ids)
+    final_review_preimage = _final_review_transition_preimage(state, candidate_ids)
     items = _runner.scoped_pending_talk_items(state, candidate_ids)
     routing_claim = _runner.prepare_speaker_routing(date, items, state=state)
     song_names = _runner.collect_song_name_candidates(date, state)
@@ -552,6 +1049,15 @@ def prepare_production_context(
         for item in _runner.scoped_pending_talk_items(state, candidate_ids):
             if isinstance(item, dict):
                 item["song_name_candidates"] = song_names
+    if final_review_preimage is not None and not _seal_final_review_queue_rebound(
+        date,
+        state,
+        candidate_ids=candidate_ids,
+        preimage=final_review_preimage,
+        phase=RECOVERY_REBOUND_PRODUCTION_PREPARE,
+        reason_code="SELECTED_FINAL_REVIEW_RECOVERY_PRODUCTION_PREPARE_BLOCKED",
+    ):
+        return False, None
     if preimage is None:
         return True, routing_claim
     from src.autoslice.published_topic_collision import (
@@ -579,9 +1085,16 @@ def prepare_production_context(
 def production_preimage(
     state: Mapping[str, object], candidate_ids: tuple[str, ...] | None
 ) -> dict | None:
-    """Capture the exact v5 input row immediately before producer dispatch."""
+    """Capture the exact v5-v7 input immediately before producer dispatch."""
 
-    return _topic_transition_preimage(state, candidate_ids)
+    return (
+        deepcopy(dict(state))
+        if (
+            _source_fact_scope_candidate_ids(state, candidate_ids)
+            or _final_review_scope_candidate_ids(state, candidate_ids)
+        )
+        else _topic_transition_preimage(state, candidate_ids)
+    )
 
 
 def seal_production_transition(
@@ -594,6 +1107,123 @@ def seal_production_transition(
 
     if preimage is None:
         return True
+    source_fact_values = _source_fact_scope_candidate_ids(preimage, candidate_ids)
+    final_review_values = _final_review_scope_candidate_ids(preimage, candidate_ids)
+    receipt_values = source_fact_values or final_review_values
+    if len(receipt_values) == 1:
+        final_review = bool(final_review_values)
+        if final_review:
+            from src.autoslice.selected_final_review_recovery import (
+                QUEUE_TO_PICK_TRANSITION,
+                RECOVERY_RECEIPT_FIELD,
+                advance_selected_final_review_recovery_receipt as advance_receipt,
+                validate_consumed_final_review_recovery_receipt as validate_consumed,
+                validate_selected_final_review_recovery_receipt as validate_queue,
+            )
+        else:
+            from src.autoslice.selected_source_fact_recovery import (
+                QUEUE_TO_PICK_TRANSITION,
+                RECOVERY_RECEIPT_FIELD,
+                advance_selected_source_fact_recovery_receipt as advance_receipt,
+                validate_consumed_source_fact_recovery_receipt as validate_consumed,
+                validate_selected_source_fact_recovery_receipt as validate_queue,
+            )
+
+        candidate_id = receipt_values[0]
+        grant_id = (
+            _final_review_grant_id(preimage)
+            if final_review
+            else _source_fact_grant_id(preimage)
+        )
+        before_rows = _target_talk_rows(preimage, candidate_id)
+        after_rows = _target_talk_rows(state, candidate_id)
+        transition_ok = False
+        if (
+            len(before_rows) == 1
+            and before_rows[0][0] in _QUEUED_TALK_COLLECTIONS
+            and len(after_rows) == 1
+        ):
+            before_row = before_rows[0][1]
+            receipt = before_row.get(RECOVERY_RECEIPT_FIELD)
+            declared_current = (
+                receipt.get("current_failure_recovery_fingerprint")
+                if isinstance(receipt, Mapping)
+                else None
+            )
+            before_valid = bool(
+                isinstance(declared_current, str)
+                and validate_queue(
+                    receipt,
+                    queued_row=before_row,
+                    candidate_id=candidate_id,
+                    grant_id=grant_id,
+                    current_fingerprint=declared_current,
+                    allow_queue_rebound=True,
+                )
+            )
+            after_collection, after_row = after_rows[0]
+            if (
+                before_valid
+                and after_collection in _QUEUED_TALK_COLLECTIONS
+            ):
+                transition_ok = bool(
+                    after_row.get(RECOVERY_RECEIPT_FIELD) == receipt
+                    and validate_queue(
+                        receipt,
+                        queued_row=after_row,
+                        candidate_id=candidate_id,
+                        grant_id=grant_id,
+                        current_fingerprint=str(declared_current),
+                        allow_queue_rebound=True,
+                    )
+                )
+            elif (
+                before_valid
+                and after_collection == "picks"
+                and after_row.get(RECOVERY_RECEIPT_FIELD) == receipt
+            ):
+                try:
+                    final_row = deepcopy(after_row)
+                    final_row.pop(RECOVERY_RECEIPT_FIELD, None)
+                    next_receipt = advance_receipt(
+                        receipt,
+                        from_row=before_row,
+                        to_row=final_row,
+                        candidate_id=candidate_id,
+                        grant_id=grant_id,
+                        transition_kind=QUEUE_TO_PICK_TRANSITION,
+                        allow_queue_rebound=True,
+                    )
+                    after_row[RECOVERY_RECEIPT_FIELD] = next_receipt
+                    transition_ok = (
+                        validate_consumed(
+                            next_receipt,
+                            candidate_id=candidate_id,
+                            grant_id=grant_id,
+                            consumed_row=after_row,
+                        )
+                    )
+                except Exception:  # noqa: BLE001 - rollback owns this commit point
+                    transition_ok = False
+        if transition_ok:
+            return True
+        restore_block = (
+            _restore_final_review_transition_block
+            if final_review
+            else _restore_source_fact_transition_block
+        )
+        restore_block(
+            state,
+            preimage,
+            date=date,
+            candidate_ids=receipt_values,
+            reason_code=(
+                "SELECTED_FINAL_REVIEW_RECOVERY_PRODUCTION_TRANSITION_BLOCKED"
+                if final_review
+                else "SELECTED_SOURCE_FACT_RECOVERY_PRODUCTION_TRANSITION_BLOCKED"
+            ),
+        )
+        return False
     from src.autoslice.published_topic_collision import (
         seal_published_topic_resolution_production_transition,
     )
@@ -624,8 +1254,12 @@ def repair_covers(
 ) -> None:
     if not automatic_maintenance:
         return
-    if _topic_scope_candidate_ids(state, candidate_ids):
-        # v5 binds every current row by full SHA.  Cover maintenance persists
+    if _topic_scope_candidate_ids(state, candidate_ids) or (
+        _source_fact_scope_candidate_ids(state, candidate_ids)
+    ) or (
+        _final_review_scope_candidate_ids(state, candidate_ids)
+    ):
+        # v5-v7 bind every current row by full SHA.  Cover maintenance persists
         # several in-place partial states internally, so the released candidate
         # must instead requeue through the sealed full-producer path next tick.
         return

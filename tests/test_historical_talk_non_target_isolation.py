@@ -88,10 +88,20 @@ def frozen_selection_guards(monkeypatch: pytest.MonkeyPatch) -> None:
         "quarantine_overlapping_talk_candidates",
         assert_only_targets,
     )
+    def assert_scoped_hold(state: dict, *, candidate_ids) -> None:
+        visible = {
+            row.get("cid") or row.get("candidate_id")
+            for key in ("pending_talk", "talk_backlog")
+            for row in state.get(key, [])
+            if isinstance(row, dict)
+        }
+        assert {NON_TARGET_550, NON_TARGET_714} <= visible
+        assert set(candidate_ids) <= {TARGET_806, TARGET_1576}
+
     monkeypatch.setattr(
         candidate_selection,
         "hold_published_topic_collision_reviews",
-        assert_only_targets,
+        assert_scoped_hold,
     )
     monkeypatch.setattr(
         candidate_selection._runner,
@@ -111,10 +121,17 @@ def test_frozen_prioritize_preserves_non_target_collection_order_and_bytes(
         _candidate(NON_TARGET_714, marker="backlog-first"),
         _candidate("auto_backlog_second", marker="backlog-second"),
     ]
+    song_collections = {
+        "songs": [{"candidate_id": "song_done", "opaque": [2, 1]}],
+        "pending_song": [{"cid": "song_pending", "opaque": {"z": 1}}],
+        "song_backlog": [{"cid": "song_backlog", "opaque": ["b", "a"]}],
+        "song_selection_backlog": [
+            {"cid": "song_selection", "opaque": {"keep": True}}
+        ],
+    }
     state = {
         "picks": [],
-        "songs": [],
-        "pending_song": [],
+        **copy.deepcopy(song_collections),
         "pending_talk": [
             _candidate(TARGET_806, selected=True),
             *copy.deepcopy(pending_non_targets),
@@ -128,6 +145,7 @@ def test_frozen_prioritize_preserves_non_target_collection_order_and_bytes(
     }
     pending_bytes = [_canonical(row) for row in pending_non_targets]
     backlog_bytes = [_canonical(row) for row in backlog_non_targets]
+    frozen_song_bytes = copy.deepcopy(song_collections)
 
     candidate_selection.prioritize(
         state,
@@ -155,6 +173,10 @@ def test_frozen_prioritize_preserves_non_target_collection_order_and_bytes(
     ]
     assert [_canonical(row) for row in restored_pending] == pending_bytes
     assert [_canonical(row) for row in restored_backlog] == backlog_bytes
+    assert {
+        key: state[key]
+        for key in frozen_song_bytes
+    } == frozen_song_bytes
 
 
 def test_process_date_routes_metadata_and_dispatch_only_to_frozen_target(
@@ -178,6 +200,7 @@ def test_process_date_routes_metadata_and_dispatch_only_to_frozen_target(
     backlog_bytes = _canonical(backlog_other)
     routed: list[list[str]] = []
     dispatched: list[list[str]] = []
+    reprioritized: list[tuple[str, ...] | None] = []
 
     monkeypatch.setattr(runner, "read_state", lambda _date: state)
     monkeypatch.setattr(runner, "write_state", lambda *_args, **_kwargs: None)
@@ -206,6 +229,17 @@ def test_process_date_routes_metadata_and_dispatch_only_to_frozen_target(
         runner.semantic_chat_refresh,
         "refresh_operator_scoped_chat_scorecards",
         lambda *_args, **_kwargs: 0,
+    )
+    original_reprioritize = historical_failed_talk_scope.reprioritize
+
+    def reprioritize(value: dict, candidate_ids: tuple[str, ...] | None) -> None:
+        reprioritized.append(candidate_ids)
+        original_reprioritize(value, candidate_ids)
+
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "reprioritize",
+        reprioritize,
     )
 
     def prepare(_date: str, items: list[dict], **_kwargs) -> None:
@@ -254,6 +288,7 @@ def test_process_date_routes_metadata_and_dispatch_only_to_frozen_target(
 
     assert routed == [[TARGET_806]]
     assert dispatched == [[TARGET_806]]
+    assert reprioritized == [(TARGET_806,)]
     assert [row["cid"] for row in state["pending_talk"]] == [NON_TARGET_550]
     assert [row["cid"] for row in state["talk_backlog"]] == [NON_TARGET_714]
     assert _canonical(state["pending_talk"][0]) == pending_bytes

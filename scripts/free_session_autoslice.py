@@ -1814,7 +1814,7 @@ def process_date(date: str) -> None:
             # second candidate merely to hide the outage or exceed top-5 when
             # the original resumes.
             break
-        if rejected:
+        if rejected and frozen_talk_candidate_ids is None:
             historical_failed_talk_scope.reprioritize(state, frozen_talk_candidate_ids)
             persist_state()
             continue
