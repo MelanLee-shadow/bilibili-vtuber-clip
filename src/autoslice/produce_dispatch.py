@@ -19,6 +19,8 @@ from concurrent.futures import (
 from pathlib import Path
 from typing import Any, Mapping
 
+from src.autoslice.semantic_scorecard_refresh_receipt import copied_refresh_receipt
+
 _FAILED_ITEM_PASSTHROUGH_KEYS = (
     "hook",
     "confidence",
@@ -200,6 +202,7 @@ def produce_batch_windowed(
                     else {}
                 ),
                 **{key: item[key] for key in _FAILED_ITEM_PASSTHROUGH_KEYS if key in item},
+                **copied_refresh_receipt(item),
             }
             if item.get("segment_path"):
                 result["segment"] = Path(str(item["segment_path"])).name

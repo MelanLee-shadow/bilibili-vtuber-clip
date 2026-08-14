@@ -30,6 +30,7 @@ from src.autoslice.recovery_title_authority import (
     validate_recovery_publication_authority,
 )
 from src.autoslice import historical_recording_duration, selection_rescore
+from src.autoslice.semantic_scorecard_refresh_receipt import copied_refresh_receipt
 from src.autoslice.selection_scorecard import apply_reviewed_selection_calibration
 from src.autoslice.speaker_manual_review import (
     SPEAKER_MANUAL_REVIEW_STATUSES,
@@ -38,7 +39,6 @@ from src.autoslice.speaker_manual_review import (
 )
 from src.autoslice import song_name_authority
 from src.autoslice.talk_quota_freeze import carry_frozen_admission
-
 
 _runner = RunnerProxy()
 
@@ -627,7 +627,6 @@ def _validated_recovery_publication(
 
 def _cover_route_regeneration_receipt(record: dict) -> dict[str, object]:
     """Carry the per-build screenshot regeneration budget through requeue."""
-
     fingerprint = record.get("cover_route_regeneration_fingerprint")
     attempts = int(record.get("cover_route_regeneration_attempts") or 0)
     if fingerprint is None and attempts == 0:
@@ -731,6 +730,7 @@ def _recovery_queue_item(
         "merge_gap_removals": list(record.get("merge_gap_removals") or []),
         "cover_diversity_slot": record.get("cover_diversity_slot"),
         **_cover_route_regeneration_receipt(record),
+        **copied_refresh_receipt(record),
         "recovery_source_record_sha256": _canonical_object_sha256(record),
     }
     if given_end_ms is not None:
@@ -1892,9 +1892,9 @@ def requeue_recoverable_talks(date: str, state: dict, *, candidate_ids: Collecti
             "filler_proposal_srt_sha256": record.get("filler_proposal_srt_sha256"),
             "merge_gap_removals": list(record.get("merge_gap_removals") or []),
             "cover_diversity_slot": record.get("cover_diversity_slot"),
-            # 配额冻结跨 requeue 存活（本体 src/autoslice/talk_quota_freeze.py）
             **carry_frozen_admission(record),
             **_cover_route_regeneration_receipt(record),
+            **copied_refresh_receipt(record),
             "recovery_source_record_sha256": _canonical_object_sha256(record),
         }
         # sanctioned-revival 审计块必须跨 requeue 存活（复活是治理事件，

@@ -43,6 +43,7 @@ from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
     validate_recovery_publication_authority,
 )
+from src.autoslice.semantic_scorecard_refresh_receipt import copied_refresh_receipt
 from src.autoslice.selection_scorecard import selection_scorecard_is_valid
 from src.autoslice.talk_quota_freeze import FREEZE_FIELD as TALK_QUOTA_FREEZE_FIELD
 from src.autoslice.speaker_finalizer import (
@@ -62,7 +63,6 @@ from src.autoslice.talk_filler import (
     build_talk_filler_plan,
     verify_automatic_filler_plan,
 )
-
 
 _runner = RunnerProxy()
 
@@ -1327,10 +1327,7 @@ def _prepare_talk_filler_plan(item: dict) -> dict[str, object]:
     return filler_plan
 
 
-def _copy_cover_regeneration_receipt(
-    item: dict,
-    result: dict[str, object],
-) -> None:
+def _copy_cover_regeneration_receipt(item: dict, result: dict[str, object]) -> None:
     for field in (
         "cover_route_regeneration_fingerprint",
         "cover_route_regeneration_attempts",
@@ -1388,6 +1385,7 @@ def _selection_scorecard_rejection(item: dict) -> dict[str, object] | None:
         "pipeline_fingerprint": _runner.talk_pipeline_fingerprint(cid),
     }
     _copy_cover_regeneration_receipt(item, result)
+    result.update(copied_refresh_receipt(item))
     return result
 
 
@@ -1737,6 +1735,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         filler_plan=filler_plan,
     )
     if filler_rejection is not None:
+        filler_rejection.update(copied_refresh_receipt(item))
         return filler_rejection
     effective_duration_ms = int(filler_plan["effective_duration_ms"])
     out_root = _runner.BASE / "out" / date
@@ -1870,6 +1869,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         "pipeline_fingerprint": _runner.talk_pipeline_fingerprint(cid),
     }
     _copy_cover_regeneration_receipt(item, result)
+    result.update(copied_refresh_receipt(item))
     if item.get("given_end_ms") is not None:
         result["given_end_ms"] = item["given_end_ms"]
         result["given_end_authority"] = item.get("given_end_authority")

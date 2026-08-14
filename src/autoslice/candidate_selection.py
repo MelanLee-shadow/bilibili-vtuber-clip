@@ -1096,6 +1096,7 @@ def prioritize(
     *,
     frozen_talk_candidate_ids: tuple[str, ...] | None = None,
     allow_song_work: bool = True,
+    allow_published_topic_review: bool = True,
 ) -> None:
     """Prioritize one batch while keeping a frozen scope topologically isolated."""
 
@@ -1105,6 +1106,7 @@ def prioritize(
             state,
             frozen_talk_candidate_ids=frozen_talk_candidate_ids,
             allow_song_work=allow_song_work,
+            allow_published_topic_review=allow_published_topic_review,
         )
     finally:
         if preimage is not None:
@@ -1120,6 +1122,7 @@ def _prioritize_active_queues(
     *,
     frozen_talk_candidate_ids: tuple[str, ...] | None = None,
     allow_song_work: bool = True,
+    allow_published_topic_review: bool = True,
 ) -> None:
     """Phase B: GLOBAL talk ranking by hard Tier and deterministic scorecard.
 
@@ -1141,7 +1144,8 @@ def _prioritize_active_queues(
     # classifier yet.  Exact, committed human-review authorities therefore
     # park their candidate before either pinned-repair or ordinary quota
     # admission.  The hold changes neither score nor upload authority.
-    hold_published_topic_collision_reviews(state)
+    if allow_published_topic_review:
+        hold_published_topic_collision_reviews(state)
     # 运维范围授权点名了具体候选时，没被点名的这一轮不进准入池（只收窄，不动
     # 席位数/分数门/Tier 排序）；本函数收尾会整体覆写 talk_backlog，所以压下的
     # 行必须在那之后交回。本体在 src/autoslice/operator_processing_scope.py。

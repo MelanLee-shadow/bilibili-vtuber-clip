@@ -50,13 +50,13 @@ from src.autoslice.semantic_candidate_selector import (
     _load_hash_bound_semantic_chat,
     _SCORECARD_RUBRIC_BLOCK,
 )
+from src.autoslice.semantic_scorecard_refresh_receipt import ROW_RECEIPT_KEY
 
 
 REFRESH_RECEIPT_SCHEMA = "semantic-evidence-scorecard-refresh-receipt.v1"
 REFRESH_RUN_SCHEMA = "semantic-evidence-scorecard-refresh-run.v1"
 REFRESH_PROMPT_SCHEMA = "semantic-evidence-scorecard-refresh-prompt.v1"
 REFRESH_STATE_KEY = "semantic_evidence_scorecard_refresh_run"
-ROW_RECEIPT_KEY = "semantic_evidence_scorecard_refresh"
 MAX_ATTEMPTS_PER_INPUT = 3
 MAX_ATTEMPT_HISTORY = 12
 MAX_CANDIDATES_PER_TICK = 2

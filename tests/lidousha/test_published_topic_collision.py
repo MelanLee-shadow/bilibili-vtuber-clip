@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+import scripts.free_session_autoslice as runner
+from src.autoslice import candidate_selection, historical_failed_talk_scope
 from src.autoslice.published_topic_collision import (
     AUTHORITY_KIND,
     AUTHORITY_SCHEMA,
@@ -39,7 +41,12 @@ from src.autoslice.published_topic_collision import (
     seal_published_topic_resolution_production_transition,
     seal_published_topic_resolution_row_rebounds,
 )
+from src.autoslice.operator_processing_scope import (
+    TOPIC_HOLD_RECOVERY_GRANT_SCHEMA,
+    TOPIC_HOLD_RECOVERY_INTENT,
+)
 from src.autoslice.runner_proxy import RunnerProxy
+from src.autoslice.talk_quota_policy import TalkQuotaPolicy
 
 
 CANDIDATE = "auto_213135_806_1068"
@@ -419,6 +426,357 @@ def _sealed_repo(
     _git(root, "add", ".")
     _git(root, "commit", "-qm", "seal authority")
     return root
+
+
+def _released_retry_state_without_refresh_receipt(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+) -> tuple[dict, Path, dict]:
+    """Build the exact live v5 shape: a sealed retry row lost its old receipt."""
+
+    candidate, published, distinct = rows
+    registry = _registry()
+    authority = _authority(candidate, published, registry)
+    refreshed = _refreshed_candidate(candidate)
+    resolution = _refreshed_resolution(
+        candidate, refreshed, published, authority, registry
+    )
+    root = _sealed_repo(tmp_path, CANDIDATE, authority)
+    state = {
+        "upload_allowed": False,
+        "picks": [deepcopy(published)],
+        "pending_talk": [deepcopy(refreshed), deepcopy(distinct)],
+        "talk_backlog": [],
+        "pending_song": [{"candidate_id": "song-pending"}],
+        "song_backlog": [{"candidate_id": "song-backlog"}],
+        "song_selection_backlog": [{"candidate_id": "song-selection"}],
+        "songs": [{"candidate_id": "song-old", "status": "blocked"}],
+        "song_superseded_attempts": [{"candidate_id": "song-superseded"}],
+    }
+    held = hold_published_topic_collision_reviews(
+        state, repo_root=root, publication_registry=registry
+    )
+    assert [row["candidate_id"] for row in held] == [CANDIDATE]
+
+    resolution_path = root / refreshed_resolution_relative_path(CANDIDATE)
+    resolution_path.parent.mkdir(parents=True, exist_ok=True)
+    resolution_path.write_text(
+        json.dumps(resolution, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _git(root, "add", ".")
+    _git(root, "commit", "-qm", "seal refreshed resolution")
+    assert release_resolved_published_topic_hold(
+        state,
+        CANDIDATE,
+        repo_root=root,
+        publication_registry=registry,
+    )
+
+    production_preimage = deepcopy(state)
+    released = next(
+        row for row in state["pending_talk"] if row["candidate_id"] == CANDIDATE
+    )
+    state["pending_talk"] = [
+        row for row in state["pending_talk"] if row["candidate_id"] != CANDIDATE
+    ]
+    failed = deepcopy(released)
+    failed.pop("semantic_evidence_scorecard_refresh")
+    failed.update(
+        {
+            "status": "failed",
+            "rc": 1,
+            "failure_kind": "provider_transient",
+            "failure_recoverable": True,
+        }
+    )
+    state["picks"].append(failed)
+    assert seal_published_topic_resolution_production_transition(
+        state,
+        CANDIDATE,
+        pre_state=production_preimage,
+        repo_root=root,
+        publication_registry=registry,
+    )
+
+    retry_preimage = deepcopy(state)
+    retry_row = deepcopy(failed)
+    for field in ("status", "rc", "failure_kind", "failure_recoverable"):
+        retry_row.pop(field)
+    retry_row.update(
+        {
+            "selected_repair": True,
+            "retry_reason": "transient_infrastructure_failure",
+            "talk_repair_retry_count": 1,
+            "talk_transient_retry_count": 1,
+            "recovery_source_record_sha256": canonical_sha256(failed),
+        }
+    )
+    state["picks"].remove(failed)
+    state["pending_talk"].append(retry_row)
+    assert advance_published_topic_resolution_recovery(
+        state,
+        CANDIDATE,
+        pre_state=retry_preimage,
+        from_collection="picks",
+        from_row=failed,
+        to_collection="pending_talk",
+        to_row=retry_row,
+        repo_root=root,
+        publication_registry=registry,
+    )
+    assert "semantic_evidence_scorecard_refresh" not in retry_row
+    assert (
+        inspect_published_topic_resolution_recovery(
+            state,
+            CANDIDATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == RECOVERY_RELEASED_QUEUED
+    )
+    state["operator_processing_scope"] = {
+        "schema_version": TOPIC_HOLD_RECOVERY_GRANT_SCHEMA,
+        "grant_id": "retry-one-resolved-topic-hold",
+        "recording_date": DATE,
+        "reason": "只恢复已由 canonical ledger 约束的单个 topic hold。",
+        "candidate_ids": [CANDIDATE],
+        "user_authorization": {
+            "quote": "806，1576内容没问题可以发。",
+            "timestamp": "2026-08-13T18:00:00Z",
+        },
+        "expires_at": "2099-08-14T06:00:00Z",
+        "intent": TOPIC_HOLD_RECOVERY_INTENT,
+        "upload_allowed": False,
+    }
+    return state, root, registry
+
+
+def _patch_frozen_retry_selection_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    root: Path,
+    registry: dict,
+    hold_calls: list[str],
+) -> None:
+    policy = TalkQuotaPolicy(
+        kind="talk",
+        scope_key="talk:live-20260808Tunknown",
+        cap=5,
+        extra_slot_min_score=None,
+        recording_date=DATE,
+    )
+    monkeypatch.setattr(candidate_selection, "_talk_quota_policy", lambda _row: policy)
+    monkeypatch.setattr(
+        runner,
+        "exclude_session_edge_bgm_candidates",
+        lambda _state: None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        runner,
+        "quarantine_overlapping_talk_candidates",
+        lambda _state: None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        candidate_selection,
+        "_assign_cover_diversity_slots",
+        lambda _state: None,
+    )
+    monkeypatch.setattr(
+        runner,
+        "refill_songs",
+        lambda _state: None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        runner,
+        "prioritize",
+        candidate_selection.prioritize,
+        raising=False,
+    )
+
+    def real_hold(value: dict) -> list[dict[str, object]]:
+        hold_calls.append("called")
+        return hold_published_topic_collision_reviews(
+            value,
+            repo_root=root,
+            publication_registry=registry,
+        )
+
+    real_seal = seal_published_topic_resolution_row_rebounds
+
+    def real_scoped_seal(value: dict, **kwargs) -> bool:
+        return real_seal(
+            value,
+            **kwargs,
+            repo_root=root,
+            publication_registry=registry,
+        )
+
+    monkeypatch.setattr(
+        candidate_selection,
+        "hold_published_topic_collision_reviews",
+        real_hold,
+    )
+    monkeypatch.setattr(
+        "src.autoslice.published_topic_collision."
+        "seal_published_topic_resolution_row_rebounds",
+        real_scoped_seal,
+    )
+
+
+def test_v5_marker_bound_retry_skips_duplicate_generic_topic_hold(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state, root, registry = _released_retry_state_without_refresh_receipt(
+        tmp_path, rows
+    )
+    hold_calls: list[str] = []
+    _patch_frozen_retry_selection_dependencies(
+        monkeypatch,
+        root=root,
+        registry=registry,
+        hold_calls=hold_calls,
+    )
+    non_target_preimage = deepcopy(
+        next(
+            row
+            for row in state["pending_talk"]
+            if row["candidate_id"] == DISTINCT
+        )
+    )
+    song_preimage = deepcopy(
+        {
+            key: state[key]
+            for key in (
+                "pending_song",
+                "song_backlog",
+                "song_selection_backlog",
+                "songs",
+                "song_superseded_attempts",
+            )
+        }
+    )
+
+    captured = historical_failed_talk_scope.prioritize_and_capture(
+        DATE, state, (CANDIDATE,)
+    )
+
+    assert captured is not None
+    assert [row["candidate_id"] for row in captured] == [CANDIDATE]
+    assert hold_calls == []
+    target_rows = [
+        (collection, row)
+        for collection in ("pending_talk", "talk_backlog")
+        for row in state[collection]
+        if row["candidate_id"] == CANDIDATE
+    ]
+    assert len(target_rows) == 1
+    assert target_rows[0][0] == "pending_talk"
+    assert "semantic_evidence_scorecard_refresh" not in target_rows[0][1]
+    assert state[REVIEW_STATE_FIELD]["holds"] == []
+    assert next(
+        row for row in state["pending_talk"] if row["candidate_id"] == DISTINCT
+    ) == non_target_preimage
+    assert {key: state[key] for key in song_preimage} == song_preimage
+    assert (
+        inspect_published_topic_resolution_recovery(
+            state,
+            CANDIDATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == RECOVERY_RELEASED_QUEUED
+    )
+
+
+@pytest.mark.parametrize("marker_damage", ["missing", "tampered"])
+def test_v5_generic_topic_bypass_still_fails_closed_on_invalid_marker(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+    marker_damage: str,
+) -> None:
+    state, root, registry = _released_retry_state_without_refresh_receipt(
+        tmp_path, rows
+    )
+    if marker_damage == "missing":
+        state.pop(RECOVERY_MARKER_FIELD)
+    else:
+        state[RECOVERY_MARKER_FIELD]["ledger_sha256"] = "sha256:" + "0" * 64
+    preimage = deepcopy(state)
+    hold_calls: list[str] = []
+    _patch_frozen_retry_selection_dependencies(
+        monkeypatch,
+        root=root,
+        registry=registry,
+        hold_calls=hold_calls,
+    )
+
+    assert (
+        historical_failed_talk_scope.prioritize_and_capture(
+            DATE, state, (CANDIDATE,)
+        )
+        is None
+    )
+    assert hold_calls == []
+    assert {
+        key: value
+        for key, value in state.items()
+        if key != "operator_processing_scope_runtime_block"
+    } == preimage
+    assert state["operator_processing_scope_runtime_block"]["reason_code"] == (
+        "TOPIC_DEDUP_PRIORITIZE_TRANSITION_BLOCKED"
+    )
+
+
+def test_ordinary_unmarked_candidate_still_enters_sticky_stale_topic_hold(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate, published, _distinct = rows
+    registry = _registry()
+    authority = _authority(candidate, published, registry)
+    refreshed = _refreshed_candidate(candidate)
+    resolution = _refreshed_resolution(
+        candidate, refreshed, published, authority, registry
+    )
+    root = _sealed_repo(tmp_path, CANDIDATE, authority, resolution)
+    no_receipt = deepcopy(refreshed)
+    no_receipt.pop("semantic_evidence_scorecard_refresh")
+    state = {
+        "picks": [deepcopy(published)],
+        "pending_talk": [no_receipt],
+        "talk_backlog": [],
+        "pending_song": [],
+        "songs": [],
+    }
+    hold_calls: list[str] = []
+    _patch_frozen_retry_selection_dependencies(
+        monkeypatch,
+        root=root,
+        registry=registry,
+        hold_calls=hold_calls,
+    )
+
+    candidate_selection.prioritize(state)
+
+    assert hold_calls == ["called"]
+    assert all(
+        row.get("candidate_id") != CANDIDATE
+        for row in state["pending_talk"] + state["talk_backlog"]
+    )
+    hold = next(
+        row
+        for row in state[REVIEW_STATE_FIELD]["holds"]
+        if row["candidate_id"] == CANDIDATE
+    )
+    assert hold["disposition"] == STALE_REVIEW_STATUS
 
 
 def test_469_vs_806_is_held_without_score_or_suppression_and_1576_passes(

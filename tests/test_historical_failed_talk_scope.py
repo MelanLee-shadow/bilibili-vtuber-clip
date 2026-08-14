@@ -1025,6 +1025,7 @@ def test_process_date_preserves_song_queues_and_never_backfills_after_rejection(
         assert kwargs == {
             "frozen_talk_candidate_ids": (TARGET,),
             "allow_song_work": False,
+            "allow_published_topic_review": True,
         }
         pool = list(value.get("pending_talk", [])) + list(value.get("talk_backlog", []))
         value["pending_talk"] = [

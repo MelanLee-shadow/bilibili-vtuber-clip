@@ -456,6 +456,9 @@ def reprioritize(state: dict, candidate_ids: tuple[str, ...] | None) -> None:
         state,
         frozen_talk_candidate_ids=candidate_ids,
         allow_song_work=candidate_ids is None,
+        allow_published_topic_review=not bool(
+            _topic_scope_candidate_ids(state, candidate_ids)
+        ),
     )
 
 

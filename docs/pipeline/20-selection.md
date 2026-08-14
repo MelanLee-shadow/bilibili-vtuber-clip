@@ -106,6 +106,9 @@
   隔离并原样归还；`pending_song`、`song_backlog`、`song_selection_backlog`、`songs`、
   `song_superseded_attempts` 五个 Song 集合也必须逐项深等值保留，不得借 v5 发现、补位、
   恢复或生产。
+  strict v5 marker-bound tick 已由 canonical maintenance/admission 和每阶段的 seal/rollback
+  约束，因此排序阶段跳过重复的 generic published-topic hold revalidation；默认普通候选及
+  v1-v4 scope 仍必须运行 sticky hold，裸 v5 grant 不能替代合法 marker。
   marker 的 current-row head 必须绑定完整行 SHA，并按封闭状态机前进：session annotation
   只准在同 collection 的当前行上改其专属字段；scorecard refresh、排序/说话人路由等只准在
   各自字段白名单内写 self-sealed queue→queue rebound；真正生产必须在状态落盘前写 exact
