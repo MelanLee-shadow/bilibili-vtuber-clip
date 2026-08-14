@@ -254,6 +254,7 @@ def _audit_policy_fingerprint() -> str:
         ROOT / "src/autoslice/producer_package_finalization.py",
         ROOT / "src/autoslice/source_subtitle_truth.py",
         ROOT / "src/autoslice/producer_text_finalization.py",
+        ROOT / "src/autoslice/expected_value_canon_supersession.py",
         ROOT / "src/autoslice/producer_text_pipeline.py",
         ROOT / "src/autoslice/pronoun_consistency.py",
         ROOT / "src/autoslice/review_package_boundary_contract.py",

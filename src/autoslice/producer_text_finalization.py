@@ -15,6 +15,9 @@ from .chat_authority import (
     normalize_srt_payload_window,
 )
 from .chat_evidence import normalize_srt_owner_payload_window
+from .expected_value_canon_supersession import (
+    expected_value_canon_supersession_receipt,
+)
 from .jingting_chunker import parse_srt_cues
 from .redelivery_subtitle_baseline import MIN_ALIGNMENT_OVERLAP_MS
 from .source_subtitle_truth import (
@@ -1550,6 +1553,37 @@ def _exact_final_cpa_retires_decision_row(
     return True
 
 
+def _final_authority_decision_rows(audit: dict) -> list[tuple[str, dict, str]]:
+    rows: list[tuple[str, dict, str]] = []
+    rows.extend(
+        ("exact_read", row, str(row.get("exact_text") or ""))
+        for row in audit.get("applied") or []
+        # A later hash-bound reviewed text decision owns a corrected homophone
+        # in the same cue.  The superseded chat proposal remains in the audit,
+        # but its old spelling is no longer a final-surface requirement.
+        if not row.get("reconciliation")
+    )
+    rows.extend(
+        ("sc_sender", row, _sc_sender_final_surface(row))
+        for row in audit.get("sender_repairs") or []
+    )
+    rows.extend(
+        ("gift_name", row, str(row.get("after") or ""))
+        for row in audit.get("gift_repairs") or []
+    )
+    rows.extend(
+        ("reply_coreference", row, str(row.get("after") or ""))
+        for row in audit.get("coreference_repairs") or []
+    )
+    rows.extend(
+        ("entity_repair", row, _entity_repair_final_surface(row))
+        for row in audit.get("entity_repairs") or []
+        # 已被和解回退的行（矛盾裁定/未注册实体）不再要求其结果存活于终稿。
+        if not row.get("reconciliation")
+    )
+    return rows
+
+
 def verify_chat_authority_final_surfaces(
     audit: dict,
     *,
@@ -1628,37 +1662,7 @@ def verify_chat_authority_final_surfaces(
         )
         return False
 
-    decision_rows: list[tuple[str, dict, str]] = []
-    decision_rows.extend(
-        ("exact_read", row, str(row.get("exact_text") or ""))
-        for row in audit.get("applied") or []
-        # A later hash-bound reviewed text decision owns a corrected homophone
-        # in the same cue.  The superseded chat proposal remains in the audit,
-        # but its old spelling is no longer a final-surface requirement.
-        if not row.get("reconciliation")
-    )
-    decision_rows.extend(
-        ("sc_sender", row, _sc_sender_final_surface(row))
-        for row in audit.get("sender_repairs") or []
-    )
-    decision_rows.extend(
-        ("gift_name", row, str(row.get("after") or ""))
-        for row in audit.get("gift_repairs") or []
-    )
-    decision_rows.extend(
-        ("reply_coreference", row, str(row.get("after") or ""))
-        for row in audit.get("coreference_repairs") or []
-    )
-    decision_rows.extend(
-        (
-            "entity_repair",
-            row,
-            _entity_repair_final_surface(row),
-        )
-        for row in audit.get("entity_repairs") or []
-        # 已被和解回退的行（矛盾裁定/未注册实体）不再要求其结果存活于终稿。
-        if not row.get("reconciliation")
-    )
+    decision_rows = _final_authority_decision_rows(audit)
     if any(
         row.get("reconciliation_status") != "APPLIED_AND_HASH_VERIFIED"
         for row in audit.get("pending_text_overrides") or []
@@ -1669,11 +1673,13 @@ def verify_chat_authority_final_surfaces(
     superseded_by_truth = 0
     superseded_by_redelivery = 0
     superseded_by_exact_final_cpa = 0
+    superseded_by_expected_value_canon = 0
     required_rows: list[dict] = []
     for kind, row, expected_text in decision_rows:
         matched_start = int(row["matched_start_ms"])
         matched_end = int(row["matched_end_ms"])
         row["final_verification_kind"] = kind
+        row.pop("expected_value_canon_supersession", None)
         if (
             kind == "entity_repair"
             and row.get("mode") == "final_review_context_adjudication"
@@ -1689,6 +1695,24 @@ def verify_chat_authority_final_surfaces(
                 "SUPERSEDED_BY_EXACT_FINAL_CPA"
             )
             superseded_by_exact_final_cpa += 1
+            continue
+        canon_supersession = (
+            expected_value_canon_supersession_receipt(
+                row,
+                audit=audit,
+                final_text_srt=final_text_srt,
+                final_speaker_srt=final_speaker_srt,
+                delivery_start_ms=delivery_start_ms,
+            )
+            if kind == "entity_repair"
+            else None
+        )
+        if canon_supersession is not None:
+            row["final_verification_scope"] = "SUPERSEDED_BY_EXPECTED_VALUE_CANON"
+            row["expected_value_canon_supersession"] = canon_supersession
+            row.pop("survived_final_text_srt", None)
+            row.pop("survived_final_speaker_srt", None)
+            superseded_by_expected_value_canon += 1
             continue
         # 同轴直比（2026-07-20 kmx r4 案）：决策行 matched_* 与 ledger 的
         # local_windows 都锚在产线 spec（padded）时间轴上；换算到交付轴再比
@@ -1869,12 +1893,16 @@ def verify_chat_authority_final_surfaces(
     audit["final_superseded_by_exact_final_cpa_count"] = (
         superseded_by_exact_final_cpa
     )
+    audit["final_superseded_by_expected_value_canon_count"] = (
+        superseded_by_expected_value_canon
+    )
     audit["final_outside_delivery_count"] = (
         len(decision_rows)
         - len(required_rows)
         - superseded_by_truth
         - superseded_by_redelivery
         - superseded_by_exact_final_cpa
+        - superseded_by_expected_value_canon
     )
     audit["final_boundary_required_exclusion_count"] = sum(
         row.get("final_verification_scope")

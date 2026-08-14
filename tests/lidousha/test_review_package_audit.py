@@ -1196,6 +1196,7 @@ def test_owner_scope_candidate_id_must_match_packaged_story_contract():
         "src/autoslice/producer_boundary_owner_contract.py",
         "src/autoslice/source_subtitle_truth.py",
         "src/autoslice/producer_text_finalization.py",
+        "src/autoslice/expected_value_canon_supersession.py",
         "src/autoslice/addressee_attribution.py",
         "src/autoslice/review_package_portable_evidence.py",
         "src/autoslice/candidate_entity_projection.py",

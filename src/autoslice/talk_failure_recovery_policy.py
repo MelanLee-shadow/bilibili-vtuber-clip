@@ -16,6 +16,7 @@ def subtitle_authority_recovery_relatives(
         "src/autoslice/talk_failure_recovery_policy.py",
         "src/autoslice/producer_text_pipeline.py",
         "src/autoslice/producer_text_finalization.py",
+        "src/autoslice/expected_value_canon_supersession.py",
         "src/autoslice/producer_package_finalization.py",
         "src/autoslice/final_review_auditor.py",
         "src/autoslice/pronoun_consistency.py",

@@ -11314,6 +11314,10 @@ def test_subtitle_authority_recovery_fingerprint_tracks_final_surface_verifier(
             "exact authorized deletion verifier fix",
         ),
         (
+            "src/autoslice/expected_value_canon_supersession.py",
+            "expected-value canon supersedes one pronunciation-only owner",
+        ),
+        (
             "src/autoslice/final_review_contract.py",
             "CPA keep-current receipt shape fix",
         ),

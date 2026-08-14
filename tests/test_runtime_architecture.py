@@ -71,7 +71,9 @@ FUNCTION_DEBT_LEDGER = {
     # 新增逻辑的重量已推给 src/autoslice/selection_rescore.py，这里只留
     # 薄调用点。测试 tests/test_selection_rescore.py。
     ("src/autoslice/producer_package_finalization.py", "_stage_record"): 322,
-    ("src/autoslice/producer_text_finalization.py", "verify_chat_authority_final_surfaces"): 335,
+    # 2026-08-13 净 -6：决策行收集抽成薄 helper，为 expected-value canon
+    # typed supersession 接线腾出空间；锁定本次拆解后的更低上限。
+    ("src/autoslice/producer_text_finalization.py", "verify_chat_authority_final_surfaces"): 329,
     # 2026-07-31 +40：SC 发送者裁决对 v2 精确重放 redelivery 的 deferral
     # （jyl-r10 案：CPA 宕机/岔听下 UNRESOLVED，而该 cue 终局注定被基线盖回；
     # source_truth 同款 DEFERRED 惯例）。连续吃增长，下次动它先拆。

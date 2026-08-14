@@ -156,6 +156,13 @@
     双登记冲突时保留原字，写 `registered_name_conflict=true / CPA_REQUIRED` 收据。correction
     pass 必须在 protected-term 披露分支之前识别该收据，并把 CURRENT/PROPOSED 交声学见证和
     CPA 闭集裁决；“受保护”只能禁止机械覆盖，不能阻止 CPA 作出最终选择。
+    候选盲声学证人只约束发音，不能取得同音字正字权威；因此当 correction 明载
+    `orthography_authority=BLOCK`、拼音候选打平，且低置信证人的全部音节均 uncertain 时，晚期
+    expected-value canon 若确定性地把 CPA `PROPOSED` 精确改回 profile canonical，终稿验证器
+    不要求旧 CPA 词面继续存活。该退位只接受 `final-review-audit.v2` 内层 mutation PASS、
+    `expected-value-surface-audit.v1` 的单次规则复算、hard→expected 输入 hash 链、最终 SRT 自身
+    hash、同一 cue/不可变时窗与终稿 text/speaker 精确词面全部闭合，并写
+    `expected-value-canon-entity-supersession.v1`；任一缺失或额外变化均 fail closed。
 12. **晚期 source truth 只接受 operator 直改**：`subtitle_truth_ledger.v1.json` 的
     `source-subtitle-truth-governance.v2` 边界之后，每行必须有
     revision/state/evidence/authority/decision_authority；`VERIFIED_ACTIVE` 只允许
