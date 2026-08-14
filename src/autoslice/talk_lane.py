@@ -815,6 +815,13 @@ def _classify_final_review_release(
             True,
             evidence,
         )
+    if "FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED" in reason_codes:
+        return (
+            "provider_transient",
+            "final_review_adjudication",
+            True,
+            evidence,
+        )
     finding_count = evidence.get("validated_finding_count")
     if (
         isinstance(finding_count, int)

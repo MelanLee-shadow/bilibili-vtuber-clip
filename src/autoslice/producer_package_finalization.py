@@ -957,7 +957,8 @@ def _resolve_deferred_foreign_introductions_after_redelivery(
 
 def _apply_exact_final_cpa_repairs(
     srt_text: str,
-    audit: Mapping[str, object],
+    audit: Mapping[str, object], *,
+    clip_context: Mapping[str, object] | None = None,
 ) -> tuple[str, list[dict[str, object]]]:
     """Apply only exact-final findings already authorized by CPA.
 
@@ -982,11 +983,11 @@ def _apply_exact_final_cpa_repairs(
         if not isinstance(finding, Mapping):
             continue
         cue_index = finding.get("cue_index")
-        proposed = adjudicated_proposed_full_cue(finding)
-        adjudication = finding.get("exact_release_adjudication")
-        cycle_adjudication = finding.get(
-            "exact_final_cpa_cycle_adjudication"
+        proposed = adjudicated_proposed_full_cue(
+            finding, srt_text=srt_text, clip_context=clip_context
         )
+        adjudication = finding.get("exact_release_adjudication")
+        cycle_adjudication = finding.get("exact_final_cpa_cycle_adjudication")
         if (
             isinstance(cue_index, bool)
             or not isinstance(cue_index, int)
@@ -1126,8 +1127,8 @@ def _apply_exact_final_cpa_repairs(
 
 
 def _replayable_exact_final_carryover_findings(
-    srt_text: str,
-    path: Path,
+    srt_text: str, path: Path, *,
+    clip_context: Mapping[str, object] | None = None,
 ) -> list[dict[str, object]]:
     """Remap a prior exact CPA decision onto identical current cue bytes/time."""
 
@@ -1141,12 +1142,10 @@ def _replayable_exact_final_carryover_findings(
         base_sha256 = str(row.get("base_text_sha256") or "")
         matches = by_sha256.get(base_sha256, [])
         adjudication = row.get("exact_release_adjudication")
-        request = (
-            adjudication.get("request")
-            if isinstance(adjudication, Mapping)
-            else None
+        request = adjudication.get("request") if isinstance(adjudication, Mapping) else None
+        proposed = adjudicated_proposed_full_cue(
+            row, srt_text=srt_text, clip_context=clip_context
         )
-        proposed = adjudicated_proposed_full_cue(row)
         if (
             len(matches) != 1
             or proposed is None
@@ -1480,6 +1479,7 @@ def _run_exact_final_review_gate(
     chat_authority_audit: dict,
     chat_authority_path: Path,
     adapters: ProducerFinalizationAdapters,
+    clip_context: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Review and bind the actual post-boundary, post-authority SRT bytes."""
 
@@ -1565,8 +1565,7 @@ def _run_exact_final_review_gate(
         )
         if pass_index == 0:
             replayable = _replayable_exact_final_carryover_findings(
-                final_text,
-                carryover_file,
+                final_text, carryover_file, clip_context=clip_context
             )
             replayable_carryover_base_sha256.update(
                 str(row.get("base_text_sha256") or "")
@@ -1588,7 +1587,7 @@ def _run_exact_final_review_gate(
             )
         except FinalReviewContractError as exc:
             repaired_text, repairs = _apply_exact_final_cpa_repairs(
-                final_text, audit
+                final_text, audit, clip_context=clip_context
             )
             repaired_base_sha256 = {
                 str(repair.get("before_sha256") or "").removeprefix(
@@ -2695,6 +2694,7 @@ def finalize_producer_package(
         chat_authority_audit=chat_authority_audit,
         chat_authority_path=chat_authority_path,
         adapters=adapters,
+        clip_context=spec.get("clip_context") if isinstance(spec.get("clip_context"), Mapping) else {},
     )
     final_delivery_boundary_review = exact_final_review.get(
         "boundary_semantic_review"

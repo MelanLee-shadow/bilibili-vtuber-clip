@@ -308,6 +308,206 @@ def _v7_queued_state() -> dict:
     return state
 
 
+def _v7_fresh_rejection_state() -> dict:
+    state = _state()
+    state["operator_processing_scope"] = _v7_grant()
+    state["picks"] = [_v7_rejection(), _failed(OTHER)]
+    state["pending_talk"] = []
+    state["talk_below_confidence_threshold"] = []
+    state["talk_superseded_attempts"] = []
+    return state
+
+
+def test_v7_no_marker_handoff_absent_preserves_ordinary_maintenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice import published_topic_final_review_handoff as handoff
+
+    state = _v7_fresh_rejection_state()
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda kind, candidate_id: "sha256:" + "2" * 64
+        if (kind, candidate_id) == ("subtitle_authority", TARGET)
+        else None,
+    )
+    assert handoff.inspect_initial_final_review_handoff(
+        state,
+        candidate_id=TARGET,
+        recording_date=DATE,
+    ) == handoff.HANDOFF_ABSENT
+
+    def generic(_date, value, **_kwargs):
+        value["ordinary_v7_maintenance_ran"] = True
+        return 1, 2, 3, 4, True
+
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "maintain_delivery_recovery_scope",
+        generic,
+    )
+    monkeypatch.setattr(
+        handoff,
+        "seal_published_topic_final_review_handoff",
+        lambda *_a, **_k: pytest.fail("ABSENT must not enter terminal handoff"),
+    )
+
+    assert historical_failed_talk_scope.maintain(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        candidate_ids=(TARGET,),
+    ) == (1, 2, 3, 4, True)
+    assert state["ordinary_v7_maintenance_ran"] is True
+    assert "published_topic_resolution_recovery" not in state
+    assert "operator_processing_scope_runtime_block" not in state
+
+
+@pytest.mark.parametrize(
+    "failure_mode",
+    [
+        "inspect_blocked",
+        "inspect_mutates",
+        "generic_error",
+        "seal_false",
+        "seal_error",
+        "top_level_upload",
+        "scope_drift",
+    ],
+)
+def test_v7_terminal_handoff_failure_restores_full_preimage_and_typed_block(
+    monkeypatch: pytest.MonkeyPatch,
+    failure_mode: str,
+) -> None:
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice import published_topic_final_review_handoff as handoff
+
+    state = _v7_fresh_rejection_state()
+    state["published_topic_resolution_recovery"] = {"old_v5_marker": "sealed"}
+    preimage = copy.deepcopy(state)
+    calls: list[str] = []
+
+    def inspect(value, **_kwargs):
+        calls.append("inspect")
+        if failure_mode == "inspect_mutates":
+            value["probe_mutation"] = True
+        return (
+            handoff.HANDOFF_BLOCKED
+            if failure_mode == "inspect_blocked"
+            else handoff.HANDOFF_READY
+        )
+
+    def generic(_date, value, **_kwargs):
+        calls.append("generic")
+        value["generic_partial_mutation"] = True
+        if failure_mode == "top_level_upload":
+            value["upload_allowed"] = True
+        elif failure_mode == "scope_drift":
+            value["operator_processing_scope"] = _grant()
+        if failure_mode == "generic_error":
+            raise RuntimeError("generic requeue failed after mutation")
+        return 0, 0, 1, 0, False
+
+    def seal(value, _candidate_id, **kwargs):
+        calls.append("seal")
+        assert kwargs["pre_state"] == preimage
+        value["terminal_partial_mutation"] = True
+        if failure_mode == "seal_error":
+            raise RuntimeError("terminal seal failed after mutation")
+        return failure_mode not in {"seal_false", "top_level_upload", "scope_drift"}
+
+    monkeypatch.setattr(handoff, "inspect_initial_final_review_handoff", inspect)
+    monkeypatch.setattr(handoff, "seal_published_topic_final_review_handoff", seal)
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "maintain_delivery_recovery_scope",
+        generic,
+    )
+
+    result = historical_failed_talk_scope.maintain(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        candidate_ids=(TARGET,),
+    )
+
+    assert result == (0, 0, 0, 0, False)
+    assert {
+        key: value
+        for key, value in state.items()
+        if key != "operator_processing_scope_runtime_block"
+    } == preimage
+    assert state["operator_processing_scope_runtime_block"] == {
+        "schema_version": "operator-processing-scope-runtime-block.v1",
+        "recording_date": DATE,
+        "candidate_ids": [TARGET],
+        "intent": FINAL_REVIEW_RECOVERY_INTENT,
+        "upload_allowed": False,
+        "reason_code": "SELECTED_FINAL_REVIEW_TOPIC_LINEAGE_HANDOFF_BLOCKED",
+    }
+    assert calls == {
+        "inspect_blocked": ["inspect"],
+        "inspect_mutates": ["inspect"],
+        "generic_error": ["inspect", "generic"],
+        "seal_false": ["inspect", "generic", "seal"],
+        "seal_error": ["inspect", "generic", "seal"],
+        "top_level_upload": ["inspect", "generic", "seal"],
+        "scope_drift": ["inspect", "generic", "seal"],
+    }[failure_mode]
+
+
+def test_v7_terminal_handoff_seals_after_generic_requeue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice import published_topic_final_review_handoff as handoff
+
+    state = _v7_fresh_rejection_state()
+    state["published_topic_resolution_recovery"] = {"old_v5_marker": "sealed"}
+    preimage = copy.deepcopy(state)
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        handoff,
+        "inspect_initial_final_review_handoff",
+        lambda *_a, **_k: calls.append("inspect") or handoff.HANDOFF_READY,
+    )
+
+    def generic(_date, value, **_kwargs):
+        calls.append("generic")
+        value["picks"] = [
+            row for row in value["picks"] if row.get("candidate_id") != TARGET
+        ]
+        value["pending_talk"].append({"cid": TARGET, "initial_v7_receipt": True})
+        return 0, 0, 1, 0, False
+
+    def seal(value, candidate_id, **kwargs):
+        calls.append("seal")
+        assert candidate_id == TARGET
+        assert kwargs["pre_state"] == preimage
+        assert value["pending_talk"][-1]["cid"] == TARGET
+        value["published_topic_resolution_recovery"] = {"terminal": "sealed"}
+        return True
+
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "maintain_delivery_recovery_scope",
+        generic,
+    )
+    monkeypatch.setattr(handoff, "seal_published_topic_final_review_handoff", seal)
+
+    assert historical_failed_talk_scope.maintain(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        candidate_ids=(TARGET,),
+    ) == (0, 0, 1, 0, False)
+    assert calls == ["inspect", "generic", "seal"]
+    assert state["published_topic_resolution_recovery"] == {"terminal": "sealed"}
+    assert "operator_processing_scope_runtime_block" not in state
+
+
 def test_v2_scope_freezes_only_an_admitted_historical_failed_talk() -> None:
     state = _state()
     assert operator_talk_scope(state, date=DATE) == (TARGET,)

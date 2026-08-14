@@ -59,10 +59,9 @@ from src.autoslice.final_review_auditor import (
     FinalReviewAuditError,
     MAX_CONTEXT_ADJUDICATIONS,
     _final_review_structured_context,
-    adjudicate_context_finding,
-    adjudicate_exact_release_findings,
-    audit_correction_mutation_authority,
-    audit_final_subtitles,
+    adjudicate_context_finding, adjudicate_exact_release_findings,
+    audit_correction_mutation_authority, audit_final_subtitles,
+    exact_source_transcript_infra_reason_codes,
     persist_review_audit,
     resolve_verified_source_truth_findings,
     route_findings,
@@ -414,13 +413,14 @@ def _build_entity_verification_context(
                 return verdict
         return cpa_read_aloud_verifier(request)
 
-    cache_probe = getattr(cpa_read_aloud_verifier, "probe_witness_cache", None)
-    if callable(cache_probe):
-        # Exact-final's provider budget is enforced outside the verifier.  It
-        # needs the explicit no-provider probe to survive this human/CPA
-        # composition layer; the human verifier is never consulted by the
-        # metadata-only path.
-        setattr(verify_confusable_entity, "probe_witness_cache", cache_probe)
+    # Preserve exact-final's provider/cache seams through human/CPA composition.
+    for seam in (
+        "probe_witness_cache", "exact_source_transcript",
+        "probe_exact_source_transcript_cache",
+    ):
+        callback = getattr(cpa_read_aloud_verifier, seam, None)
+        if callable(callback):
+            setattr(verify_confusable_entity, seam, callback)
 
     static_referent_groups = load_referent_groups(
         adapters.profile_asset_file("entity_confusables"), include_singletons=True
@@ -1083,7 +1083,7 @@ def _run_exact_final_release_review(
         isinstance(base["boundary_semantic_review"], Mapping)
         and base["boundary_semantic_review"].get("status") == "PASS"
     )
-    reason_codes: list[str] = []
+    reason_codes = exact_source_transcript_infra_reason_codes(unresolved_findings, srt_text=srt_text, clip_context=clip_context)
     if unresolved_findings:
         reason_codes.append("FINAL_REVIEW_UNRESOLVED_FINDINGS")
         cycle_reason_codes = sorted(

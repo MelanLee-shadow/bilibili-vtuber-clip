@@ -333,6 +333,8 @@ def test_remote_host_with_local_padded_still_builds_the_audio_witness(
     out_root.mkdir()
     built: list[dict] = []
     probed: list[dict] = []
+    exact_built: list[dict] = []
+    exact_probed: list[dict] = []
 
     class _FakeVerifier:
         def __call__(self, request):
@@ -353,6 +355,14 @@ def test_remote_host_with_local_padded_still_builds_the_audio_witness(
 
         def probe_witness_cache(self, request):
             probed.append(dict(request))
+            return {"served_from_cache": True, "request": dict(request)}
+
+        def exact_source_transcript(self, request):
+            exact_built.append(dict(request))
+            return {"status": "OBSERVED", "request": dict(request)}
+
+        def probe_exact_source_transcript_cache(self, request):
+            exact_probed.append(dict(request))
             return {"served_from_cache": True, "request": dict(request)}
 
     monkeypatch.setattr(
@@ -377,11 +387,21 @@ def test_remote_host_with_local_padded_still_builds_the_audio_witness(
     verdict = context.verify_confusable_entity(_witness_request(evidence_id="e" * 64))
     probe_request = _witness_request(evidence_id="f" * 64)
     cached = context.verify_confusable_entity.probe_witness_cache(probe_request)
+    exact_request = {"schema_version": "exact-final-source-transcript-request.v2"}
+    exact = context.verify_confusable_entity.exact_source_transcript(exact_request)
+    exact_cached = (
+        context.verify_confusable_entity.probe_exact_source_transcript_cache(
+            exact_request
+        )
+    )
 
     assert built, "远端 host + 本地 padded 时声学证人必须被构造并被调用"
     assert verdict["status"] == "OBSERVED"
     assert probed == [probe_request]
     assert cached["served_from_cache"] is True
+    assert exact_built == [exact_request] and exact["status"] == "OBSERVED"
+    assert exact_probed == [exact_request]
+    assert exact_cached["served_from_cache"] is True
 
 
 @pytest.mark.parametrize(

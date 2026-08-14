@@ -675,6 +675,98 @@ def freeze(state: Mapping[str, object], *, date: str) -> tuple[str, ...] | None:
     return operator_talk_scope(state, date=date)
 
 
+_FINAL_REVIEW_HANDOFF_BLOCK = "SELECTED_FINAL_REVIEW_TOPIC_LINEAGE_HANDOFF_BLOCKED"
+
+
+def _block_final_review_handoff(
+    date: str,
+    state: dict,
+    *,
+    preimage: Mapping[str, object],
+    candidate_ids: tuple[str, ...],
+) -> None:
+    _restore_final_review_transition_block(
+        state,
+        preimage,
+        date=date,
+        candidate_ids=candidate_ids,
+        reason_code=_FINAL_REVIEW_HANDOFF_BLOCK,
+    )
+
+
+def _prepare_final_review_handoff(
+    date: str,
+    state: dict,
+    *,
+    automatic_maintenance: bool,
+    candidate_ids: tuple[str, ...] | None,
+) -> tuple[dict | None, tuple[str, ...], bool]:
+    """Capture the transaction preimage only for a fresh, valid v7 handoff."""
+
+    values = _final_review_scope_candidate_ids(state, candidate_ids)
+    if not automatic_maintenance or len(values) != 1:
+        return None, values, True
+    from src.autoslice.published_topic_final_review_handoff import (
+        HANDOFF_ABSENT,
+        HANDOFF_READY,
+        inspect_initial_final_review_handoff,
+    )
+
+    preimage = deepcopy(dict(state))
+    try:
+        disposition = inspect_initial_final_review_handoff(
+            state,
+            candidate_id=values[0],
+            recording_date=date,
+        )
+    except Exception:  # noqa: BLE001 - this pure authority probe fails closed
+        disposition = None
+    if dict(state) != preimage or disposition not in {HANDOFF_ABSENT, HANDOFF_READY}:
+        _block_final_review_handoff(
+            date,
+            state,
+            preimage=preimage,
+            candidate_ids=values,
+        )
+        return None, values, False
+    return (preimage if disposition == HANDOFF_READY else None), values, True
+
+
+def _seal_final_review_handoff(
+    date: str,
+    state: dict,
+    *,
+    preimage: Mapping[str, object] | None,
+    candidate_ids: tuple[str, ...],
+) -> bool:
+    """Commit the terminal marker or restore the full transaction preimage."""
+
+    if preimage is None:
+        return True
+    from src.autoslice.published_topic_final_review_handoff import (
+        seal_published_topic_final_review_handoff,
+    )
+
+    try:
+        sealed = seal_published_topic_final_review_handoff(
+            state,
+            candidate_ids[0],
+            pre_state=preimage,
+            recording_date=date,
+        )
+    except Exception:  # noqa: BLE001 - full preimage is the transaction owner
+        sealed = False
+    if sealed:
+        return True
+    _block_final_review_handoff(
+        date,
+        state,
+        preimage=preimage,
+        candidate_ids=candidate_ids,
+    )
+    return False
+
+
 def maintain(
     date: str,
     state: dict,
@@ -687,6 +779,18 @@ def maintain(
     ) or _matching_final_review_runtime_block(
         state, date=date, candidate_ids=candidate_ids
     ):
+        return 0, 0, 0, 0, False
+    (
+        final_review_handoff_preimage,
+        final_review_values,
+        final_review_handoff_ready,
+    ) = _prepare_final_review_handoff(
+        date,
+        state,
+        automatic_maintenance=automatic_maintenance,
+        candidate_ids=candidate_ids,
+    )
+    if not final_review_handoff_ready:
         return 0, 0, 0, 0, False
     held_current_requeued = 0
     topic_cover_requeued = 0
@@ -708,12 +812,22 @@ def maintain(
     if automatic_maintenance and _final_review_scope_candidate_ids(
         state, candidate_ids
     ):
-        final_review_cover_requeued = _requeue_final_review_cover_pending(
-            date,
-            state,
-            candidate_ids=candidate_ids,
-        )
+        try:
+            final_review_cover_requeued = _requeue_final_review_cover_pending(
+                date, state, candidate_ids=candidate_ids
+            )
+        except Exception:  # noqa: BLE001 - handoff owns every post-probe failure
+            if final_review_handoff_preimage is None:
+                raise
+            final_review_cover_requeued = -1
         if final_review_cover_requeued < 0:
+            if final_review_handoff_preimage is not None:
+                _block_final_review_handoff(
+                    date,
+                    state,
+                    preimage=final_review_handoff_preimage,
+                    candidate_ids=final_review_values,
+                )
             return 0, 0, 0, 0, False
     if (
         automatic_maintenance
@@ -848,7 +962,15 @@ def maintain(
             automatic_maintenance=automatic_maintenance,
             talk_candidate_ids=candidate_ids,
         )
-    except Exception:  # noqa: BLE001 - v5 transition must not persist half a retry
+    except Exception:  # noqa: BLE001 - typed transition owns full rollback
+        if final_review_handoff_preimage is not None:
+            _block_final_review_handoff(
+                date,
+                state,
+                preimage=final_review_handoff_preimage,
+                candidate_ids=final_review_values,
+            )
+            return 0, 0, 0, 0, False
         if topic_retry_preimage is None:
             raise
         _restore_topic_transition_block(
@@ -858,6 +980,13 @@ def maintain(
             candidate_ids=tuple(candidate_ids or ()),
             reason_code="TOPIC_DEDUP_RETRY_TRANSITION_BLOCKED",
         )
+        return 0, 0, 0, 0, False
+    if not _seal_final_review_handoff(
+        date,
+        state,
+        preimage=final_review_handoff_preimage,
+        candidate_ids=final_review_values,
+    ):
         return 0, 0, 0, 0, False
     if topic_retry_preimage is not None:
         candidate_id = tuple(candidate_ids or ())[0]

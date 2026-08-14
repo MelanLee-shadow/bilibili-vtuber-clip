@@ -324,3 +324,187 @@ def test_exhausted_budget_never_calls_on_partial_cache_hit(tmp_path, monkeypatch
     assert unresolved[0]["exact_release_adjudication"]["status"] == ("SKIPPED_BUDGET")
     assert verifier.provider_calls == 0
     assert judge_calls == []
+
+
+def _prepare_exact_triple_cache(tmp_path, *, store_second_judge=True):
+    from src.autoslice.acoustic_witness_adjudication import build_witness_request
+    from src.autoslice.exact_source_transcript_contract import (
+        _canonical_sha256,
+        build_exact_source_transcript_request,
+        seal_exact_source_transcript_observation,
+    )
+    from src.autoslice.exact_source_transcript_provider import (
+        rebuild_candidate_from_exact_source_transcript,
+    )
+    from src.autoslice.final_review_auditor import _derive_single_span_edit
+
+    source = _srt("难听难听，对吧")
+    finding = {
+        "cue_index": 1,
+        "suspect": "难听难听",
+        "suggestion": "南町nightin",
+        "proposed_full_cue": "南町nightin，对吧",
+        "repair_class": "phonetic",
+    }
+    clip_context = {
+        "schema_version": "clip-context.v1",
+        "candidate_id": "auto_213135_806_1068",
+        "context_sha256": "sha256:" + "d" * 64,
+        "whole_clip_draft_srt_sha256": "sha256:" + "e" * 64,
+    }
+    initial = build_context_adjudication_request(
+        source, finding, clip_context=clip_context
+    )
+    witness_request = build_witness_request(initial)
+    timeline = {
+        "schema_version": "subtitle-audio-timeline-binding.v1",
+        "source_media_timeline_offset_ms": 0,
+        "delivery_local": {
+            "target_start_ms": 5_000,
+            "target_end_ms": 9_000,
+            "context_start_ms": 4_500,
+            "context_end_ms": 9_500,
+        },
+        "source_media": {
+            "target_start_ms": 5_000,
+            "target_end_ms": 9_000,
+            "crop_start_ms": 4_600,
+            "crop_end_ms": 9_400,
+        },
+    }
+    witness = {
+        **_witness(witness_request, "yao jiu jiu tian dui ba"),
+        "witness_protocol": "blind_pinyin",
+        "served_from_cache": True,
+        "source_media_sha256": "a" * 64,
+        "audio_clip_sha256": "b" * 64,
+        "prompt_sha256": "1" * 64,
+        "response_sha256": "2" * 64,
+        "audio_start_ms": 4_600,
+        "audio_end_ms": 9_400,
+        "timeline_binding": timeline,
+    }
+    assert judge_word_choice(
+        llm_call=_judge("NEITHER"), check_request=initial, witness=witness
+    )["status"] == "JUDGED"
+    physical = build_exact_source_transcript_request(witness_request)
+    observation = seal_exact_source_transcript_observation(
+        request=physical,
+        exact_transcript="nineteen nineteen，对吧",
+        audible_language="mixed",
+        source_media_sha256="a" * 64,
+        audio_clip_sha256="b" * 64,
+        provider="agy",
+        model="Gemini 3.6 Flash (High)",
+        response_sha256="c" * 64,
+        timeline_binding=timeline,
+    )
+    cached_observation = dict(observation)
+    cached_observation["served_from_cache"] = True
+    cached_observation.pop("observation_sha256")
+    cached_observation["observation_sha256"] = _canonical_sha256(
+        cached_observation
+    )
+    rebuilt, _handoff = rebuild_candidate_from_exact_source_transcript(
+        finding=finding,
+        initial_check_request=initial,
+        witness_request=witness_request,
+        witness=witness,
+        srt_text=source,
+        clip_context=clip_context,
+        provider=lambda _request: cached_observation,
+        derive_single_span_edit=_derive_single_span_edit,
+    )
+    assert rebuilt is not None
+    if store_second_judge:
+        rebuilt_request = build_context_adjudication_request(
+            source, rebuilt, clip_context=clip_context
+        )
+        assert judge_word_choice(
+            llm_call=_judge("PROPOSED"),
+            check_request=rebuilt_request,
+            witness=witness,
+        )["status"] == "JUDGED"
+    return source, finding, clip_context, witness, cached_observation
+
+
+def test_exhausted_budget_replays_exact_source_triple_cache(tmp_path, monkeypatch):
+    import src.autoslice.final_review_auditor as auditor
+
+    monkeypatch.setattr(auditor, "MAX_CONTEXT_ADJUDICATIONS", 0)
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path))
+    source, finding, clip_context, witness, exact_observation = (
+        _prepare_exact_triple_cache(tmp_path)
+    )
+
+    class TripleCacheVerifier:
+        def __call__(self, _request):
+            raise AssertionError("budget-exhausted witness provider ran")
+
+        def probe_witness_cache(self, _request):
+            return witness
+
+        def exact_source_transcript(self, _request):
+            raise AssertionError("budget-exhausted exact provider ran")
+
+        def probe_exact_source_transcript_cache(self, _request):
+            return exact_observation
+
+    unresolved, resolved = adjudicate_exact_release_findings(
+        source,
+        [finding],
+        entity_verifier=TripleCacheVerifier(),
+        clip_context=clip_context,
+        judge_llm_call=lambda _prompt: (_ for _ in ()).throw(
+            AssertionError("budget-exhausted CPA provider ran")
+        ),
+    )
+
+    assert resolved == [] and len(unresolved) == 1
+    adjudication = unresolved[0]["exact_release_adjudication"]
+    assert adjudication["repaired"] is True
+    replay = adjudication["provider_budget_replay"]
+    assert replay["provider_call_count"] == 0
+    assert replay["witness_cache_hit"] is True
+    assert replay["exact_source_transcript_cache_hit"] is True
+    assert replay["judge_cache_hit"] is True
+
+
+@pytest.mark.parametrize("missing", ("exact", "second_judge"))
+def test_exact_triple_cache_partial_hit_never_crosses_exhausted_budget(
+    tmp_path, monkeypatch, missing
+):
+    import src.autoslice.final_review_auditor as auditor
+
+    monkeypatch.setattr(auditor, "MAX_CONTEXT_ADJUDICATIONS", 0)
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path))
+    source, finding, clip_context, witness, exact_observation = (
+        _prepare_exact_triple_cache(
+            tmp_path, store_second_judge=missing != "second_judge"
+        )
+    )
+
+    class PartialTripleVerifier:
+        def __call__(self, _request):
+            raise AssertionError("budget-exhausted witness provider ran")
+
+        def probe_witness_cache(self, _request):
+            return witness
+
+        def exact_source_transcript(self, _request):
+            raise AssertionError("budget-exhausted exact provider ran")
+
+        def probe_exact_source_transcript_cache(self, _request):
+            return None if missing == "exact" else exact_observation
+
+    unresolved, resolved = adjudicate_exact_release_findings(
+        source,
+        [finding],
+        entity_verifier=PartialTripleVerifier(),
+        clip_context=clip_context,
+        judge_llm_call=lambda _prompt: (_ for _ in ()).throw(
+            AssertionError("budget-exhausted CPA provider ran")
+        ),
+    )
+    assert resolved == []
+    assert unresolved[0]["exact_release_adjudication"]["status"] == "SKIPPED_BUDGET"

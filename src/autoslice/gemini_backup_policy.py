@@ -36,6 +36,14 @@ DEV_EXCEPTION_ENV = "GEMINI_PAID_BACKUP_DEV_EXCEPTION"
 MIN_FREE_CHAIN_STRIKES = 3
 PAID_KEY_TIER = "paid_backup"
 FREE_KEY_TIER = "free"
+CANDIDATE_BLIND_AUDIO_WITNESS_PURPOSE = "candidate_blind_audio_witness"
+CANDIDATE_BLIND_EXACT_TRANSCRIPT_PURPOSE = (
+    "candidate_blind_exact_source_transcript"
+)
+_PAID_STAMP_KEYS = {
+    "key_tier", "mode", "item_key", "free_chain_strikes",
+    "calls_today_before", "daily_cap", "recorded_at", "purpose",
+}
 
 
 def validate_key_acceptance_metadata(
@@ -78,6 +86,41 @@ def validate_key_acceptance_metadata(
             return "paid Gemini backup acceptance violates the usage gate"
         return None
     return "Gemini API audio failover key tier is unknown"
+
+
+def valid_paid_policy_stamp(
+    stamp: object, *, expected_purpose: str, expected_item_key: str
+) -> bool:
+    """Validate one secret-free paid-use proof against its exact call identity."""
+
+    if not isinstance(stamp, Mapping) or set(stamp) != _PAID_STAMP_KEYS:
+        return False
+    strikes = stamp.get("free_chain_strikes")
+    calls_before = stamp.get("calls_today_before")
+    cap = stamp.get("daily_cap")
+    try:
+        recorded_at = dt.datetime.fromisoformat(str(stamp.get("recorded_at") or ""))
+    except ValueError:
+        return False
+    return bool(
+        stamp.get("key_tier") == PAID_KEY_TIER
+        and stamp.get("purpose") == expected_purpose
+        and stamp.get("item_key") == _safe_item_name(expected_item_key)
+        and stamp.get("mode") in {"dev_exception", "strict"}
+        and isinstance(strikes, int) and not isinstance(strikes, bool) and strikes >= 0
+        and (stamp.get("mode") == "dev_exception" or strikes >= MIN_FREE_CHAIN_STRIKES)
+        and isinstance(calls_before, int)
+        and not isinstance(calls_before, bool)
+        and calls_before >= 0
+        and (
+            cap is None
+            or (
+                isinstance(cap, int) and not isinstance(cap, bool)
+                and cap > calls_before >= 0
+            )
+        )
+        and recorded_at.tzinfo is not None
+    )
 
 
 def _ledger_root() -> Path:

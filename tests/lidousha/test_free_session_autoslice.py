@@ -8527,6 +8527,35 @@ def test_final_review_discovery_unavailable_remains_retryable_with_evidence(
     ]
 
 
+def test_exact_transcript_infra_marker_routes_before_generic_findings(
+    tmp_path: Path,
+):
+    audit = _final_review_failure_audit(
+        finding_count=1,
+        boundary_status="PASS",
+    )
+    audit["reason_codes"].insert(
+        0,
+        "FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED",
+    )
+    authority = _write_final_review_failure_surfaces(
+        tmp_path,
+        "auto_exact_transcript_transport",
+        audit,
+    )
+
+    classified = runner.classify_talk_failure(
+        "FINAL_REVIEW_RELEASE_BLOCKED: "
+        "FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED: "
+        f"{authority}"
+    )
+
+    assert classified["failure_kind"] == "provider_transient"
+    assert classified["failure_stage"] == "final_review_adjudication"
+    assert classified["failure_recoverable"] is True
+    assert classified["failure_evidence"]["validated_finding_count"] == 1
+
+
 def test_correction_discovery_unavailable_is_bounded_retryable_before_findings(
     tmp_path: Path,
 ):
@@ -11584,6 +11613,58 @@ def test_subtitle_authority_recovery_fingerprint_tracks_final_surface_verifier(
         (
             "src/autoslice/final_review_contract.py",
             "CPA keep-current receipt shape fix",
+        ),
+        (
+            "src/autoslice/exact_source_transcript_contract.py",
+            "exact transcript request and receipt binding fix",
+        ),
+        (
+            "src/autoslice/exact_source_transcript_provider.py",
+            "exact transcript proposal or typed provider failure fix",
+        ),
+        (
+            "src/autoslice/exact_source_transcript_provider_policy.py",
+            "exact transcript provider route and paid gate proof fix",
+        ),
+        (
+            "src/autoslice/exact_source_transcript_runtime.py",
+            "exact transcript cache and artifact replay fix",
+        ),
+        (
+            "src/autoslice/exact_source_transcript_authority.py",
+            "exact transcript mutation authority revalidation fix",
+        ),
+        (
+            "src/autoslice/final_review_carryover.py",
+            "exact transcript checkpoint receipt replay fix",
+        ),
+        (
+            "src/autoslice/entity_audio_verifier.py",
+            "target-marked exact transcript provider fix",
+        ),
+        (
+            "src/autoslice/read_aloud_llm_verifier.py",
+            "exact transcript object-method seam fix",
+        ),
+        (
+            "src/autoslice/final_review_provider_budget.py",
+            "exact transcript triple-cache continuation fix",
+        ),
+        (
+            "src/autoslice/agy_gemini_client.py",
+            "exact transcript AGY transport ladder fix",
+        ),
+        (
+            "src/autoslice/gemini_backup_policy.py",
+            "exact transcript quota and backup routing fix",
+        ),
+        (
+            "src/autoslice/llm_client.py",
+            "exact transcript provider response parsing fix",
+        ),
+        (
+            "scripts/gemini_slice_jingting.py",
+            "exact transcript provider transport helper fix",
         ),
     ):
         verifier = tmp_path / relative

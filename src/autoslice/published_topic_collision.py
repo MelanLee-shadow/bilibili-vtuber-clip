@@ -1,17 +1,6 @@
-"""Human-bound review holds for candidates that may repeat a published topic.
-
-This is deliberately *not* a fuzzy duplicate detector.  The current selector's
-``event_key`` is local to one semantic-recall call and selection-metric v2 only
-consumes an opaque caller-provided ``topic_fingerprint``; neither is a safe
-cross-publication identity.  A candidate is therefore parked only when the
-active repository contains a committed/deployed, candidate-scoped authority
-which says that the exact candidate/published pair requires human review.
-
-The authority does not lower a score, delete a candidate, or declare the two
-clips duplicates.  It binds the current hooks, scorecards, scene/date, the
-committed publication-registry row, public title and BVID.  Any drift leaves
-the candidate parked with a stale-authority reason rather than silently
-returning it to production.
+"""Strict repository-authorized holds for possible published-topic collisions.
+Only exact candidate-scoped authority can park or release a candidate; this is
+not a fuzzy duplicate detector, and any bound-source drift remains fail closed.
 """
 
 from __future__ import annotations
@@ -52,6 +41,10 @@ from src.autoslice.published_topic_recovery_lineage import (
     recovery_row_binding_is_valid as _recovery_row_binding_is_valid,
     top_level_changed_fields as _top_level_changed_fields,
     validated_transition_next_binding,
+)
+from src.autoslice.published_topic_final_review_handoff import (
+    terminal_handoff_transition,
+    validate_terminal_handoff_state,
 )
 from src.autoslice.published_topic_selected_rejection import (
     failure_recovery_fingerprint_disposition as _failure_recovery_fingerprint_disposition,
@@ -1191,6 +1184,8 @@ def _marker_is_valid(
     ):
         return False, queued, current
     target_rows = [*queued, *current]
+    if terminal_handoff_transition(marker) is not None:
+        return validate_terminal_handoff_state(state, candidate_id, marker), queued, current
     current_binding = marker.get("current_row_binding")
     if (
         len(target_rows) != 1
@@ -1229,6 +1224,8 @@ def _inspect_released_recovery_entry(
     )
     if not valid or (queued and current):
         return RECOVERY_BLOCKED
+    if terminal_handoff_transition(marker) is not None:
+        return RECOVERY_CONVERGED
     if queued:
         return (
             RECOVERY_RELEASED_QUEUED
@@ -1448,6 +1445,10 @@ def seal_published_topic_resolution_row_rebounds(
         before_collection, before_row = before
         after_collection, after_row = after
         if before_collection == after_collection and dict(before_row) == dict(after_row):
+            if terminal_handoff_transition(marker) is not None and not (
+                validate_terminal_handoff_state(state, candidate_id, marker)
+            ):
+                return False
             continue
         changed_fields = _top_level_changed_fields(before_row, after_row)
         if not set(changed_fields).issubset(_RECOVERY_REBOUND_FIELDS[phase]):
@@ -1473,6 +1474,17 @@ def seal_published_topic_resolution_row_rebounds(
             _recovery_identity_binding(after_row)
         ):
             return False
+        if terminal_handoff_transition(marker) is not None:
+            post_valid, _queued, _current = _marker_is_valid(
+                state,
+                candidate_id,
+                marker,
+                repo_root=repo_root,
+                publication_registry=publication_registry,
+            )
+            if not post_valid:
+                return False
+            continue
         next_binding = {
             "collection": after_collection,
             "row_sha256": canonical_sha256(after_row),

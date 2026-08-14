@@ -39,7 +39,9 @@ FUNCTION_DEBT_LEDGER = {
     ("src/autoslice/cover_repair.py", "_roll_forward_prepared_cover_transactions"): 346,
     # 2026-08-08 净 -16：Ivan 8/8 真值法证 synthesis F7——删除无声学
     # context-only 直改分支，统一落回候选盲声学见证路径并锁定拆解收益。
-    ("src/autoslice/final_review_auditor.py", "adjudicate_context_finding"): 748,
+    # 2026-08-14 净 -33：文字第三候选重建与 exact-source transcript receipt
+    # 构造抽到 focused leaves；本函数只保留编排与既有 CPA/mutation audit。
+    ("src/autoslice/final_review_auditor.py", "adjudicate_context_finding"): 715,
     # 2026-08-08 +12:Ivan 8/8 真值法证 F1 回声环修复(synthesis)——
     # 只接入登记误听面分类、弱 provenance 与声学路由；分类器在新小模块。
     # 2026-08-09 净 -1：F16/F17 trusted priority provenance 接线压成薄调用。
@@ -229,7 +231,9 @@ MODULE_DEBT_LEDGER = {
     # 2026-08-09 净 -77：Ivan F16/F17 指令要求新逻辑放新模块；结构化闭集
     # 证据与 chat window renderer 抽到 closed_set_evidence.py，god-file 只留
     # 可信 provenance、request 接线，锁定本轮债务偿还。
-    "src/autoslice/final_review_auditor.py": 3_211,
+    # 2026-08-14 净 -146：closed-set proposal rebuild 与 exact-source transcript
+    # contract/provider/authority 分拆到 focused leaves，锁定此次提取收益。
+    "src/autoslice/final_review_auditor.py": 3_064,
     "src/autoslice/live_source_review.py": 2_035,
     # 2026-08-07 +18：狍哥案实施指令（同上）——marker 选择改判
     # SOURCE_FACT_REPAIRED_RESCORE_REQUIRED + 写 pending sidecar。

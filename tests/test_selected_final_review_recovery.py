@@ -306,6 +306,36 @@ def test_receipt_self_seals_queue_pick_queue_and_rejects_tamper():
     )
 
 
+def test_evolved_v7_receipt_reconstructs_one_immutable_initial_prefix():
+    from src.autoslice.published_topic_final_review_handoff import (
+        reconstruct_initial_final_review_receipt,
+    )
+
+    queue = _queue()
+    initial = build_selected_final_review_recovery_receipt(
+        old_row=_rejection(),
+        queued_row=queue,
+        candidate_id=CID,
+        grant_id=GRANT_ID,
+        current_fingerprint=NEW,
+    )
+    pick = {"candidate_id": CID, "status": "review_ready", "selected_repair": True}
+    evolved = advance_selected_final_review_recovery_receipt(
+        initial,
+        from_row={**queue, RECOVERY_RECEIPT_FIELD: initial},
+        to_row=pick,
+        candidate_id=CID,
+        grant_id=GRANT_ID,
+        transition_kind=QUEUE_TO_PICK_TRANSITION,
+    )
+
+    assert reconstruct_initial_final_review_receipt(initial) == initial
+    assert reconstruct_initial_final_review_receipt(evolved) == initial
+    tampered = copy.deepcopy(evolved)
+    tampered["transitions"][0]["to_row_sha256"] = "sha256:" + "f" * 64
+    assert reconstruct_initial_final_review_receipt(tampered) is None
+
+
 @pytest.mark.parametrize("status", ["failed", "candidate_rejected"])
 def test_provider_budget_token_is_outstanding_then_consumed_terminal(status):
     provider = {

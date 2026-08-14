@@ -5,6 +5,11 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping
 
+from src.autoslice.published_topic_final_review_handoff import (
+    HANDOFF_TRANSITION_KIND,
+    validate_handoff_transition_structure,
+)
+
 
 RECOVERY_TRANSITION_SCHEMA = "published-topic-resolution-recovery-transition.v2"
 RECOVERY_ROW_REBOUND_TRANSITION = "CURRENT_ROW_REBOUND"
@@ -154,6 +159,10 @@ def validated_transition_next_binding(
             and transition.get("failed_pick_sha256") == expected_previous.get("row_sha256")
         ):
             return None
+    elif kind == HANDOFF_TRANSITION_KIND:
+        return validate_handoff_transition_structure(
+            transition, index=index, expected_previous=expected_previous
+        )
     else:
         return None
     return next_binding

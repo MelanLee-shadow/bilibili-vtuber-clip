@@ -27,6 +27,10 @@ from src.autoslice.acoustic_witness_adjudication import (
 from src.autoslice.final_review_contract import (
     correction_carryover_consumed,
 )
+from src.autoslice.exact_source_transcript_authority import (
+    exact_source_transcript_candidate_marked,
+    valid_exact_source_transcript_adjudication_handoff,
+)
 
 SCHEMA_VERSION = "final-review-carryover.v1"
 # 硬退出侧车（Ivan 2026-08-10 15:05Z 交棒清单第 7 项「硬退出丢 carryover
@@ -157,6 +161,10 @@ def _deduplicated_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def adjudicated_proposed_full_cue(
     finding: Mapping[str, Any],
+    *,
+    srt_text: str | None = None,
+    expected_srt_sha256: object = None,
+    clip_context: Mapping[str, object] | None = None,
 ) -> str | None:
     """Return the exact CPA-authorized target cue, including normalized gaps.
 
@@ -169,13 +177,48 @@ def adjudicated_proposed_full_cue(
     """
 
     direct = finding.get("proposed_full_cue")
-    if isinstance(direct, str) and direct.strip():
-        return direct
     adjudication = finding.get("exact_release_adjudication")
+    request = (
+        adjudication.get("request")
+        if isinstance(adjudication, Mapping)
+        else None
+    )
+    candidate_provenance = finding.get("candidate_provenance")
+    exact_source_transcript_candidate = (
+        exact_source_transcript_candidate_marked(
+            adjudication=(
+                adjudication
+                if isinstance(adjudication, Mapping)
+                else None
+            ),
+            request=request if isinstance(request, Mapping) else None,
+            candidate_provenance=(
+                candidate_provenance
+                if isinstance(candidate_provenance, Mapping)
+                else None
+            ),
+        )
+    )
+    if exact_source_transcript_candidate:
+        if not isinstance(adjudication, Mapping) or not (
+            valid_exact_source_transcript_adjudication_handoff(
+                adjudication,
+                srt_text=srt_text,
+                expected_srt_sha256=expected_srt_sha256,
+                candidate_provenance=(
+                    candidate_provenance
+                    if isinstance(candidate_provenance, Mapping)
+                    else None
+                ),
+                clip_context=clip_context,
+            )
+        ):
+            return None
+    elif isinstance(direct, str) and direct.strip():
+        return direct
     if not isinstance(adjudication, Mapping):
         return None
     mutation = adjudication.get("mutation_authority")
-    request = adjudication.get("request")
     witness_judge = adjudication.get("witness_judge")
     judge = (
         witness_judge.get("judge")
@@ -211,6 +254,11 @@ def adjudicated_proposed_full_cue(
         and isinstance(proposed, str)
         and isinstance(current, str)
         and proposed != current
+        and (
+            not exact_source_transcript_candidate
+            or direct is None
+            or direct == proposed
+        )
     ):
         return None
     if proposed == "":
@@ -259,7 +307,22 @@ def _confirmed_exact_final_rows(
         ):
             continue
         row = {key: finding.get(key) for key in _ROW_KEYS if key in finding}
-        proposed_full_cue = adjudicated_proposed_full_cue(finding)
+        proposed_full_cue = adjudicated_proposed_full_cue(
+            finding,
+            expected_srt_sha256=audit.get("reviewed_srt_sha256"),
+        )
+        request = adjudication.get("request")
+        provenance = finding.get("candidate_provenance")
+        if proposed_full_cue is None and (
+            exact_source_transcript_candidate_marked(
+                adjudication=adjudication,
+                request=request if isinstance(request, Mapping) else None,
+                candidate_provenance=(
+                    provenance if isinstance(provenance, Mapping) else None
+                ),
+            )
+        ):
+            continue
         if proposed_full_cue is not None:
             row["proposed_full_cue"] = proposed_full_cue
         # Normalized final-review findings expose the deterministic edit as
@@ -273,7 +336,6 @@ def _confirmed_exact_final_rows(
         # the same issue forever.
         if "replacement" not in row and finding.get("suggestion") is not None:
             row["replacement"] = finding.get("suggestion")
-        provenance = finding.get("candidate_provenance")
         if (
             "source_surface" not in row
             and isinstance(provenance, Mapping)

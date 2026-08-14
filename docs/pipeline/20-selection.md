@@ -174,6 +174,22 @@
   `subtitle_authority_unresolved_backfilled` 行：合法 recorded/current subtitle-authority recovery
   fingerprint 变化才 READY，不变 CONVERGED，缺失、异常、重复或 Song 冲突一律 BLOCK。旧 v2
   对这类 `failure_recoverable=false` 拒绝保持 CONVERGED，不得追溯扩权。
+  若该唯一初始拒绝同时是合法 v5 marker 的 current pick head，historical maintenance 只允许
+  一次性 terminal lineage handoff：旧 marker 必须 exact-valid 且 inspector 为 `CONVERGED`，
+  current-row head 必须绑定同一拒绝 pick 的完整行 SHA；现有 v7 重排还必须只产生一条合法的
+  initial `selected-final-review-recovery-receipt.v1` queue row。事务随后追加并 self-seal
+  `HANDOFF_TO_SELECTED_FINAL_REVIEW_RECOVERY` terminal transition，完整内嵌 canonical v7 grant
+  及其 SHA、initial v7 receipt 及其 SHA，并闭合 old/queue row SHA、recorded/current
+  fingerprint、CID、日期、grant/intent 与 `upload=false`。handoff 后旧 marker 只作为历史
+  `CONVERGED` 证据，不再占用 marker-bound v5 allowlist，也不得继续随行双写；后续 queue→pick→
+  queue/provider-budget continuation 只推进同一 v7 receipt lineage。持久校验必须从 terminal
+  handoff 内嵌 grant 重建历史 authority，不依赖当前 operator scope 仍点名该 CID；当前四个 Talk
+  集合仍须恰一目标、五个 Song 集合须零目标、不得有目标 hold，且 current receipt 与所有非空
+  superseded 同-lineage receipt 必须共享同一 immutable initial prefix。current receipt 缺失或坏、
+  handoff/内嵌 grant/receipt/hash 任一 malformed、pre-marker 非 `CONVERGED`、generic requeue 异常
+  或 terminal seal 失败时，historical maintenance 必须恢复完整 preimage，写
+  `SELECTED_FINAL_REVIEW_TOPIC_LINEAGE_HANDOFF_BLOCKED` v7 typed runtime block，并返回零工作量；
+  没有旧 marker 的普通 v7 路径保持 `ABSENT`，不得因此改变既有行为。
   首次重排必须写独立的 `selected-final-review-recovery-receipt.v1`，绑定 grant、原拒绝全行、
   初始队列全行、recorded/current fingerprint 与 self-seal；之后只准
   rejection→queue→pick→queue 有序前进。session annotation、scorecard refresh、prioritize 与

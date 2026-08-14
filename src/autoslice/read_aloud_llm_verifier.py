@@ -498,8 +498,13 @@ used by the CPA judge.
             next_verifier=next_verifier,
         )
 
-    cache_probe = getattr(next_verifier, "probe_witness_cache", None)
-    if callable(cache_probe):
-        # Preserve exact-final's explicit no-provider witness replay seam.
-        setattr(verify, "probe_witness_cache", cache_probe)
+    # Preserve exact-final's object-method provider/cache seams through CPA.
+    for seam in (
+        "probe_witness_cache",
+        "exact_source_transcript",
+        "probe_exact_source_transcript_cache",
+    ):
+        callback = getattr(next_verifier, seam, None)
+        if callable(callback):
+            setattr(verify, seam, callback)
     return verify

@@ -35,6 +35,26 @@
      `NEITHER`，流水线用同一个候选盲音频几何让 CPA 提案层生成一个
      有界第三候选，再由独立闭集裁决确认；提案层无 mutation authority，第二次仍非
      `PROPOSED` 就保持 fail closed。
+     exact-final 有可用全文听写能力时，第三候选优先来自**同一个精确 target crop** 的
+     candidate-blind 全文听写：物理请求只含 cue/time/offset 几何，prompt 只给 crop 内
+     target start/end marker，不得含 CURRENT、旧 PROPOSED、candidate/run/final SRT 或
+     `syllable_count_hint`，marker 外的垫片语音只作上下文、不得并入听写。v2 handoff 必须同时
+     绑定 padded source SHA、exact audio SHA、target/crop/timeline、prompt/response、provider/
+     model/algorithm、原 check request 与 blind-pinyin parent witness、input/final SRT、candidate/
+     context/run，以及被拒旧提案；全文听写仍只是一枚新的 `PROPOSED`，必须由第二次 CPA 明选，
+     再经过既有 mutation audit 才能落字。CPA 不可用、选 `NEITHER`/`CURRENT`、旧 v1 宽窗
+     （含 806 旧 17.680–23.680s 见证）、stale run/SRT/cue、缺 receipt 或任何重封篡改均不得改字。
+     成功观察还须封存 AGY/free/paid 的完整 provider route；Gemini 必须携带 configured key count、
+     accepted ordinal/tier，paid 成功另须把 exact 专用 purpose、音频 content hash 与合法 gate stamp
+     逐项绑定。exact cache 按 provider+model 分路：正常执行只可先探 AGY，AGY 本轮失败/熔断后才可
+     探 Gemini；cache-only budget replay 可按同一顺序只读探两路，旧 generic manifest 不得抢占 AGY。
+     package 同轮自愈与 carryover/checkpoint 重放都须重新验证顶层/request 内完整 handoff、当前
+     SRT、witness source/audio/timeline；只剩 generic CPA 字段或 receipt hash 不足以授权 mutation。
+     capability 未配置时沿用原有文字第三候选重建；只有能力确实发起后发生 typed transport/
+     quota/timeout 才追加 `FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED`，按
+     `provider_transient / final_review_adjudication` 有界重试。disabled/circuit-open/paid-skipped、
+     schema/invalid-output/semantic/tamper 都不能冒充 transient；若既有文字重建也未闭合，
+     则保持原 BLOCK。
      外语词面候选不得在 CPA 之前被拉丁字符门一刀切掉：若同一个拉丁词面由终审在至少两个
      不同 cue 中逐 cue 提议，或该词面逐字命中带 source SHA 的同窗结构化弹幕，则可作为
      `latin-lexical-candidate-support.v1` 候选进入 CPA 闭集。前者只是跨 cue 召回，后者是
@@ -109,13 +129,14 @@
    `CORRECTION_DISCOVERY_INCOMPLETE` 的 provider transient 错分成 terminal contract。
    其他共享字段不一致或未知附加字段仍按 contract corruption fail closed。
 5. **生产音频 AGY 优先，例外必须候选盲、hash-bound 且无裁决权**：CPA 与普通文字模型绝不
-   接收音频。candidate-aware 实体二选一仍只交 AGY；允许直连 Gemini API 的只有三条显式专线：
-   上文外语原声 span、`entity_audio_verifier.py` 的候选盲拼音 witness，以及
+   接收音频。candidate-aware 实体二选一仍只交 AGY；允许直连 Gemini API 的只有四条显式专线：
+   上文外语原声 span、`entity_audio_verifier.py` 的候选盲拼音 witness、exact-final 同一 target-marker
+   几何的候选盲全文 transcript，以及
    [50-song-lane.md](50-song-lane.md) 中 AGY typed failure 后的完整音轨 + canonical LRC 观察。
-   三者都必须保存 exact audio hash、模型/提示词和 provider failure provenance，并继续通过各自
+   四者都必须保存 exact audio hash、模型/提示词和 provider failure provenance，并继续通过各自
    的后续门；Gemini 只有 evidence authority，不能落字或决定交付，CPA 保留文字/语义终裁。
    同一 producer run 内，AGY CLI 首次明确返回 `AGY_QUOTA_EXHAUSTED` 后必须打开 run-local
-   熔断：后续候选盲拼音 witness 不再逐 cue 重试 AGY，保留 `attempted=false` 的 typed provenance
+   熔断：后续候选盲拼音 witness 与 exact target transcript 不再逐 cue 重试 AGY，保留 `attempted=false` 的 typed provenance
    并直接进入既有 Gemini API 后备；candidate-aware 请求仍按原合同 fail closed。普通非零退出、
    timeout、无效回执、单次 429/rate-limit 都不得打开该熔断；下一 producer run 重新从 AGY 闭路开始。
    先复用身份完整匹配的 AGY 成功缓存；仍无证据但文字闭集已完整时，
@@ -342,7 +363,7 @@
 | 见证人规则 | `subtitle_fidelity.py`（通用 mutation 的候选/fidelity 门；同音/近音正字法另须 `final_review_auditor.py` 的 typed textual authority receipt） |
 | 终审审片员 | `pronoun_consistency.py`（候选级代词逐项完整性回执，只发现不改字）+ `final_review_auditor.py`（发现器；同音/近音候选、typed mutation receipt、声学仲裁路由与插入契约）+ `deferred_same_cue_resolution.py`（同窗 fresh-base 复审、typed supersession 与 owner chain） |
 | 最终字节放行 | `final_review_contract.py`（验 `final-review-audit.v2` 的精确 SRT hash、完整 discovery、零 finding、correction mutation audit 与 final boundary endpoint binding） |
-| 声学证人/裁决 | `entity_audio_verifier.py`（AGY 为首选高可信候选盲黑帧证人；AGY 明确失败时仅对候选盲拼音请求开放 hash-bound Gemini API 后备；AGY/Gemini 只复用各自 provider+model 隔离的 `OBSERVED` 成功缓存）+ `acoustic_pinyin.py` / `acoustic_witness_protocol.py`（公共拼音贴合与 blind/legacy 协议）+ `read_aloud_llm_verifier.py` / `acoustic_witness_adjudication.py`（CPA 仅看文字闭集并最终选边，任何音频 provider 都无落字权）+ `exact_final_witness_authority.py`（历史收敛见证强绑定与 package 再验） |
+| 声学证人/裁决 | `entity_audio_verifier.py`（AGY 为首选高可信候选盲黑帧证人；AGY 明确失败后只对候选盲拼音与 candidate-blind exact target transcript 开放各自 hash-bound Gemini API 后备；AGY/Gemini 只复用 provider+model 隔离的 `OBSERVED` 成功缓存）+ `exact_source_transcript_contract.py` / `exact_source_transcript_provider.py` / `exact_source_transcript_provider_policy.py` / `exact_source_transcript_runtime.py` / `exact_source_transcript_authority.py`（exact target-marked 全文第三候选、独立 paid purpose/ledger gate、typed provider/cache receipt 与 mutation-bound 再验）+ `acoustic_pinyin.py` / `acoustic_witness_protocol.py`（公共拼音贴合与 blind/legacy 协议）+ `read_aloud_llm_verifier.py` / `acoustic_witness_adjudication.py`（CPA 仅看文字闭集并最终选边，任何音频 provider 都无落字权）+ `exact_final_witness_authority.py`（历史收敛见证强绑定与 package 再验） |
 | 源真值 ledger | `source_subtitle_truth.py` + `subtitle_truth_ledger.v1.json`（Ivan 审定钉子，唯一不受 provider 故障影响的通道；已审定完整口播必须用 `replace_cue`，不能假设 ASR 仍保留待替换误词；整 cue 静音幻听用严格包含语义的 `drop_cue`，跨界即冲突停用；官方回放等替代源只能用 ledger 内显式 alias，且候选 piece 必须同时精确绑定替代源 SHA-256 与审定时间轴偏移，文件名相似不继承真值） |
 | 梗词铁律 | `surface_canon.py`（直女→侄女等 hard canon） |
 

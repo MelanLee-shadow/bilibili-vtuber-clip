@@ -2067,6 +2067,359 @@ def test_exact_final_self_heal_uses_cpa_request_target_after_span_rejection():
     assert receipts[0]["after"] == proposed
 
 
+def _exact_source_transcript_self_heal_fixture():
+    from src.autoslice.acoustic_witness_adjudication import (
+        build_witness_request,
+    )
+    from src.autoslice.exact_source_transcript_contract import (
+        build_exact_source_transcript_request,
+        seal_exact_source_transcript_observation,
+    )
+    from src.autoslice.exact_source_transcript_provider import (
+        rebuild_candidate_from_exact_source_transcript,
+    )
+    from src.autoslice.final_review_auditor import (
+        _derive_single_span_edit,
+        build_context_adjudication_request,
+    )
+
+    current = "难听难听，对吧"
+    proposed = "nineteen nineteen，对吧"
+    srt_text = (
+        "1\n00:00:05,000 --> 00:00:09,000\n"
+        f"{current}\n"
+    )
+    clip_context = {
+        "schema_version": "clip-context.v1",
+        "candidate_id": "auto_213135_806_1068",
+        "context_sha256": "sha256:" + "d" * 64,
+        "whole_clip_draft_srt_sha256": "sha256:" + "e" * 64,
+    }
+    initial_finding = {
+        "cue_index": 1,
+        "suspect": "难听难听",
+        "suggestion": "南町nightin",
+        "proposed_full_cue": "南町nightin，对吧",
+        "repair_class": "phonetic",
+    }
+    initial_request = build_context_adjudication_request(
+        srt_text,
+        initial_finding,
+        clip_context=clip_context,
+    )
+    witness_request = build_witness_request(initial_request)
+    timeline = {
+        "schema_version": "subtitle-audio-timeline-binding.v1",
+        "source_media_timeline_offset_ms": 0,
+        "delivery_local": {
+            "target_start_ms": 5_000,
+            "target_end_ms": 9_000,
+            "context_start_ms": 4_500,
+            "context_end_ms": 9_500,
+        },
+        "source_media": {
+            "target_start_ms": 5_000,
+            "target_end_ms": 9_000,
+            "crop_start_ms": 4_600,
+            "crop_end_ms": 9_400,
+        },
+    }
+    witness = {
+        "schema_version": "subtitle-span-acoustic-witness.v1",
+        "witness_protocol": "blind_pinyin",
+        "request_sha256": witness_request["request_sha256"],
+        "status": "OBSERVED",
+        "target_audible": True,
+        "heard_pinyin": "nan ting nan ting dui ba",
+        "uncertain_positions": [],
+        "syllable_count": 6,
+        "confidence": 0.9,
+        "source_media_sha256": "a" * 64,
+        "audio_clip_sha256": "b" * 64,
+        "audio_start_ms": 4_600,
+        "audio_end_ms": 9_400,
+        "timeline_binding": timeline,
+    }
+    physical_request = build_exact_source_transcript_request(
+        witness_request
+    )
+    observation = seal_exact_source_transcript_observation(
+        request=physical_request,
+        exact_transcript=proposed,
+        audible_language="mixed",
+        source_media_sha256="a" * 64,
+        audio_clip_sha256="b" * 64,
+        provider="agy",
+        model="Gemini 3.6 Flash (High)",
+        response_sha256="c" * 64,
+        timeline_binding=timeline,
+    )
+    rebuilt_finding, handoff = rebuild_candidate_from_exact_source_transcript(
+        finding=initial_finding,
+        initial_check_request=initial_request,
+        witness_request=witness_request,
+        witness=witness,
+        srt_text=srt_text,
+        clip_context=clip_context,
+        provider=lambda _request: observation,
+        derive_single_span_edit=_derive_single_span_edit,
+    )
+    assert rebuilt_finding is not None
+    request = build_context_adjudication_request(
+        srt_text,
+        rebuilt_finding,
+        clip_context=clip_context,
+    )
+    base_sha256 = hashlib.sha256(current.encode("utf-8")).hexdigest()
+    finding = {
+        **rebuilt_finding,
+        "base_text_sha256": base_sha256,
+        "exact_release_adjudication": {
+            "schema_version": "subtitle-span-adjudication.v1",
+            "status": "OBSERVED",
+            "decision_authority": "CPA_JUDGE",
+            "repaired": True,
+            "timing_immutable": True,
+            "mutation_authority": {
+                "schema_version": (
+                    "subtitle-correction-mutation-authority.v1"
+                ),
+                "status": "PASS",
+            },
+            "request": request,
+            "verdict": witness,
+            "witness_judge": {
+                "judge": {
+                    "status": "JUDGED",
+                    "choice": "PROPOSED",
+                }
+            },
+            "exact_source_transcript_handoff": handoff,
+        },
+    }
+    return srt_text, finding, clip_context
+
+
+def test_exact_source_transcript_same_pass_apply_requires_full_handoff():
+    from copy import deepcopy
+
+    from src.autoslice import producer_package_finalization as finalization
+
+    srt_text, finding, clip_context = (
+        _exact_source_transcript_self_heal_fixture()
+    )
+    repaired, receipts = finalization._apply_exact_final_cpa_repairs(
+        srt_text,
+        {"findings": [finding]},
+        clip_context=clip_context,
+    )
+    assert "nineteen nineteen，对吧" in repaired
+    assert len(receipts) == 1
+
+    stripped = deepcopy(finding)
+    stripped["exact_release_adjudication"].pop(
+        "exact_source_transcript_handoff"
+    )
+    unchanged, receipts = finalization._apply_exact_final_cpa_repairs(
+        srt_text,
+        {"findings": [stripped]},
+        clip_context=clip_context,
+    )
+    assert unchanged == srt_text
+    assert receipts == []
+
+    unchanged, receipts = finalization._apply_exact_final_cpa_repairs(
+        srt_text,
+        {"findings": [finding]},
+        clip_context={},
+    )
+    assert unchanged == srt_text
+    assert receipts == []
+
+    tampered = deepcopy(finding)
+    adjudication = tampered["exact_release_adjudication"]
+    adjudication["exact_source_transcript_handoff"]["receipt_sha256"] = (
+        "sha256:" + "f" * 64
+    )
+    adjudication["request"]["exact_source_transcript_handoff"][
+        "receipt_sha256"
+    ] = "sha256:" + "f" * 64
+    unchanged, receipts = finalization._apply_exact_final_cpa_repairs(
+        srt_text,
+        {"findings": [tampered]},
+        clip_context=clip_context,
+    )
+    assert unchanged == srt_text
+    assert receipts == []
+
+    drifted_context = {**clip_context, "context_sha256": "sha256:" + "f" * 64}
+    unchanged, receipts = finalization._apply_exact_final_cpa_repairs(
+        srt_text,
+        {"findings": [finding]},
+        clip_context=drifted_context,
+    )
+    assert unchanged == srt_text
+    assert receipts == []
+
+
+def test_exact_source_transcript_checkpoint_and_replay_keep_strict_receipt(
+    tmp_path: Path,
+):
+    from copy import deepcopy
+
+    from src.autoslice import producer_package_finalization as finalization
+    from src.autoslice.final_review_carryover import (
+        carryover_path,
+        checkpoint_final_review_carryover,
+        load_replayable_final_review_carryover,
+        persist_final_review_carryover,
+    )
+
+    srt_text, finding, clip_context = (
+        _exact_source_transcript_self_heal_fixture()
+    )
+    reviewed_sha256 = "sha256:" + hashlib.sha256(
+        srt_text.encode("utf-8")
+    ).hexdigest()
+    audit = {
+        "schema_version": "final-review-audit.v2",
+        "reviewed_srt_sha256": reviewed_sha256,
+        "findings": [finding],
+    }
+    path = carryover_path(tmp_path, "auto_213135_806_1068")
+    assert checkpoint_final_review_carryover(path, audit) == 1
+    checkpoint_rows = load_replayable_final_review_carryover(path)
+    assert checkpoint_rows[0]["exact_release_adjudication"][
+        "exact_source_transcript_handoff"
+    ]["receipt_sha256"]
+
+    assert persist_final_review_carryover(path, audit) == 1
+    replayed = finalization._replayable_exact_final_carryover_findings(
+        srt_text,
+        path,
+        clip_context=clip_context,
+    )
+    assert len(replayed) == 1
+
+    drifted_srt = srt_text + (
+        "\n2\n00:00:10,000 --> 00:00:11,000\n新增上下文\n"
+    )
+    assert finalization._replayable_exact_final_carryover_findings(
+        drifted_srt,
+        path,
+        clip_context=clip_context,
+    ) == []
+
+    drifted_context = {**clip_context, "context_sha256": "sha256:" + "f" * 64}
+    assert finalization._replayable_exact_final_carryover_findings(
+        srt_text,
+        path,
+        clip_context=drifted_context,
+    ) == []
+    assert finalization._replayable_exact_final_carryover_findings(
+        srt_text,
+        path,
+        clip_context={},
+    ) == []
+
+    tampered = deepcopy(finding)
+    tampered["exact_release_adjudication"].pop(
+        "exact_source_transcript_handoff"
+    )
+    tampered_path = carryover_path(tmp_path, "tampered")
+    assert checkpoint_final_review_carryover(
+        tampered_path,
+        {**audit, "findings": [tampered]},
+    ) == 0
+    assert load_replayable_final_review_carryover(tampered_path) == []
+
+
+def test_exact_source_transcript_checkpoint_reenters_correction_with_receipt(
+    tmp_path: Path,
+):
+    from src.autoslice.final_review_auditor import (
+        adjudicate_context_finding,
+        audit_final_subtitles,
+    )
+    from src.autoslice.final_review_carryover import (
+        carryover_path,
+        checkpoint_final_review_carryover,
+        load_replayable_final_review_carryover,
+    )
+
+    srt_text, finding, clip_context = (
+        _exact_source_transcript_self_heal_fixture()
+    )
+    path = carryover_path(tmp_path, "auto_213135_806_1068")
+    assert checkpoint_final_review_carryover(
+        path,
+        {
+            "schema_version": "final-review-audit.v2",
+            "reviewed_srt_sha256": "sha256:"
+            + hashlib.sha256(srt_text.encode("utf-8")).hexdigest(),
+            "findings": [finding],
+        },
+    ) == 1
+    normalized = audit_final_subtitles(
+        srt_text,
+        llm_call=lambda _prompt: '{"findings":[]}',
+        extract_json=json.loads,
+        candidate_context=clip_context,
+        extra_raw_findings=load_replayable_final_review_carryover(
+            path
+        ),
+        prioritize_extra_raw_findings=True,
+    )
+    assert len(normalized) == 1
+    assert normalized[0]["candidate_provenance"]["kind"] == (
+        "bounded_exact_source_audio_transcript"
+    )
+    assert normalized[0]["exact_release_adjudication"][
+        "exact_source_transcript_handoff"
+    ]["receipt_sha256"]
+
+    handoff = finding["exact_release_adjudication"][
+        "exact_source_transcript_handoff"
+    ]
+
+    def fresh_witness(request):
+        return {
+            "schema_version": "subtitle-span-acoustic-witness.v1",
+            "witness_protocol": "blind_pinyin",
+            "request_sha256": request["request_sha256"],
+            "status": "OBSERVED",
+            "target_audible": True,
+            "heard_pinyin": "nan ting nan ting dui ba",
+            "uncertain_positions": [],
+            "syllable_count": 6,
+            "confidence": 0.9,
+            "source_media_sha256": handoff["source_media_sha256"],
+            "audio_clip_sha256": handoff["audio_clip_sha256"],
+            "audio_start_ms": handoff["timeline_binding"][
+                "source_media"
+            ]["crop_start_ms"],
+            "audio_end_ms": handoff["timeline_binding"][
+                "source_media"
+            ]["crop_end_ms"],
+            "timeline_binding": handoff["timeline_binding"],
+        }
+
+    repaired, adjudication = adjudicate_context_finding(
+        srt_text,
+        normalized[0],
+        entity_verifier=fresh_witness,
+        judge_llm_call=lambda _prompt: json.dumps(
+            {"choice": "PROPOSED"}
+        ),
+        clip_context=clip_context,
+    )
+    assert "nineteen nineteen，对吧" in repaired
+    assert adjudication["mutation_authority"]["status"] == "PASS"
+    assert adjudication["witness_judge"]["witness_conflict_gate"][
+        "exact_source_transcript_handoff"
+    ] is True
+
+
 def test_exact_final_typed_drop_removes_cue_renumbers_and_registers_owner():
     current = "咳咳"
     base_sha256 = hashlib.sha256(current.encode("utf-8")).hexdigest()

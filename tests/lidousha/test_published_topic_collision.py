@@ -42,8 +42,22 @@ from src.autoslice.published_topic_collision import (
     seal_published_topic_resolution_row_rebounds,
 )
 from src.autoslice.operator_processing_scope import (
+    FINAL_REVIEW_RECOVERY_GRANT_SCHEMA,
+    FINAL_REVIEW_RECOVERY_INTENT,
     TOPIC_HOLD_RECOVERY_GRANT_SCHEMA,
     TOPIC_HOLD_RECOVERY_INTENT,
+    operator_talk_scope,
+)
+from src.autoslice.published_topic_final_review_handoff import (
+    HANDOFF_TRANSITION_KIND,
+    seal_published_topic_final_review_handoff,
+)
+from src.autoslice.selected_final_review_recovery import (
+    PICK_TO_QUEUE_TRANSITION,
+    QUEUE_TO_PICK_TRANSITION,
+    RECOVERY_RECEIPT_FIELD as FINAL_REVIEW_RECEIPT_FIELD,
+    advance_selected_final_review_recovery_receipt,
+    build_selected_final_review_recovery_receipt,
 )
 from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.talk_quota_policy import TalkQuotaPolicy
@@ -667,6 +681,516 @@ def _annotated_selected_authority_rejection_with_stale_hold(
         candidate_ids=(CANDIDATE,),
     ) == 1
     return state, root, registry, rejected_preimage
+
+
+def _v7_grant(candidate_id: str = CANDIDATE) -> dict:
+    return {
+        "schema_version": FINAL_REVIEW_RECOVERY_GRANT_SCHEMA,
+        "grant_id": f"recover-{candidate_id}-final-review",
+        "recording_date": DATE,
+        "reason": "只重试点名的 final-review 失败及 provider-budget continuation。",
+        "candidate_ids": [candidate_id],
+        "user_authorization": {
+            "quote": "806，1576内容没问题可以发。",
+            "timestamp": "2026-08-13T20:17:34Z",
+        },
+        "expires_at": "2099-08-14T04:00:00Z",
+        "intent": FINAL_REVIEW_RECOVERY_INTENT,
+        "upload_allowed": False,
+    }
+
+
+def _initial_v5_to_v7_handoff_state(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+) -> tuple[dict, dict, Path, dict]:
+    state, root, registry, rejected = (
+        _selected_authority_rejection_with_redundant_stale_hold(
+            tmp_path,
+            rows,
+            rejection_overrides={
+                "failure_stage": "final_review_findings",
+                "talk_repair_retry_count": 5,
+            },
+        )
+    )
+    state[REVIEW_STATE_FIELD]["holds"] = []
+    state["operator_processing_scope"] = _v7_grant()
+    state.setdefault("talk_below_confidence_threshold", [])
+    state.setdefault("talk_superseded_attempts", [])
+    queue = deepcopy(rejected)
+    for key in (
+        "status",
+        "rejected_status",
+        "rc",
+        "failure_kind",
+        "failure_stage",
+        "failure_recoverable",
+        "failure_recovery_fingerprint",
+        "rejection_reason",
+    ):
+        queue.pop(key, None)
+    queue.update(
+        {
+            "talk_repair_retry_count": 6,
+            "retry_reason": "pipeline_fingerprint_changed",
+            "recovery_source_record_sha256": canonical_sha256(rejected),
+        }
+    )
+    receipt = build_selected_final_review_recovery_receipt(
+        old_row=rejected,
+        queued_row=queue,
+        candidate_id=CANDIDATE,
+        grant_id=_v7_grant()["grant_id"],
+        current_fingerprint="sha256:" + "2" * 64,
+    )
+    queue[FINAL_REVIEW_RECEIPT_FIELD] = receipt
+    post = deepcopy(state)
+    post["picks"] = [
+        row for row in post["picks"] if row.get("candidate_id") != CANDIDATE
+    ]
+    post["pending_talk"].append(queue)
+    post["talk_superseded_attempts"].append(
+        {
+            "candidate_id": CANDIDATE,
+            FINAL_REVIEW_RECEIPT_FIELD: deepcopy(receipt),
+        }
+    )
+    return state, post, root, registry
+
+
+def _terminal_v5_to_v7_handoff_state(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[dict, Path, dict]:
+    pre, state, root, registry = _initial_v5_to_v7_handoff_state(tmp_path, rows)
+    monkeypatch.setattr(
+        RunnerProxy,
+        "talk_failure_recovery_fingerprint",
+        lambda _self, kind, candidate_id: "sha256:" + "2" * 64
+        if (kind, candidate_id) == ("subtitle_authority", CANDIDATE)
+        else pytest.fail("unrelated recovery fingerprint requested"),
+        raising=False,
+    )
+    assert (
+        inspect_published_topic_resolution_recovery(
+            pre,
+            CANDIDATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == RECOVERY_CONVERGED
+    )
+    assert seal_published_topic_final_review_handoff(
+        state,
+        CANDIDATE,
+        pre_state=pre,
+        recording_date=DATE,
+        repo_root=root,
+        publication_registry=registry,
+    )
+    return state, root, registry
+
+
+def test_v5_terminal_handoff_converges_without_permanent_double_write(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.autoslice import exact_talk_recovery_scope
+    from src.autoslice import published_topic_collision as topic_collision
+
+    state, root, registry = _terminal_v5_to_v7_handoff_state(
+        tmp_path, rows, monkeypatch
+    )
+    marker = state[RECOVERY_MARKER_FIELD]["entries"][CANDIDATE]
+    frozen_marker = deepcopy(marker)
+    assert marker["transitions"][-1]["transition_kind"] == HANDOFF_TRANSITION_KIND
+    assert (
+        inspect_published_topic_resolution_recovery(
+            state,
+            CANDIDATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == RECOVERY_CONVERGED
+    )
+    persisted = json.loads(json.dumps(state, ensure_ascii=False, sort_keys=True))
+    assert (
+        inspect_published_topic_resolution_recovery(
+            persisted,
+            CANDIDATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == RECOVERY_CONVERGED
+    )
+
+    original_inspect = inspect_published_topic_resolution_recovery
+    monkeypatch.setattr(
+        topic_collision,
+        "inspect_published_topic_resolution_recovery",
+        lambda value, candidate_id, **_kwargs: original_inspect(
+            value,
+            candidate_id,
+            repo_root=root,
+            publication_registry=registry,
+        ),
+    )
+    assert exact_talk_recovery_scope._marker_bound_topic_candidate_ids(state) == set()
+    assert operator_talk_scope(state, date=DATE) == (CANDIDATE,)
+
+    rebound_preimage = deepcopy(state)
+    target = next(
+        row for row in state["pending_talk"] if row["candidate_id"] == CANDIDATE
+    )
+    target["session_id"] = "session-after-terminal-handoff"
+    assert seal_published_topic_resolution_row_rebounds(
+        state,
+        pre_state=rebound_preimage,
+        phase=RECOVERY_REBOUND_SESSION_ANNOTATION,
+        candidate_ids=(CANDIDATE,),
+        repo_root=root,
+        publication_registry=registry,
+    )
+    assert state[RECOVERY_MARKER_FIELD]["entries"][CANDIDATE] == frozen_marker
+
+    state["operator_processing_scope"] = _v7_grant(DISTINCT)
+    assert (
+        original_inspect(
+            state,
+            CANDIDATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == RECOVERY_CONVERGED
+    )
+
+
+def test_terminal_handoff_accepts_linear_queue_pick_queue_continuation(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state, root, registry = _terminal_v5_to_v7_handoff_state(
+        tmp_path, rows, monkeypatch
+    )
+    queue = next(
+        row for row in state["pending_talk"] if row["candidate_id"] == CANDIDATE
+    )
+    initial = queue[FINAL_REVIEW_RECEIPT_FIELD]
+    pick_body = {
+        key: deepcopy(value)
+        for key, value in queue.items()
+        if key != FINAL_REVIEW_RECEIPT_FIELD
+    }
+    pick_body.update(
+        {
+            "status": "failed",
+            "failure_kind": "provider_transient",
+            "failure_stage": "external_provider",
+            "failure_recoverable": True,
+        }
+    )
+    pick_receipt = advance_selected_final_review_recovery_receipt(
+        initial,
+        from_row=queue,
+        to_row=pick_body,
+        candidate_id=CANDIDATE,
+        grant_id=_v7_grant()["grant_id"],
+        transition_kind=QUEUE_TO_PICK_TRANSITION,
+        allow_queue_rebound=True,
+    )
+    pick = {**pick_body, FINAL_REVIEW_RECEIPT_FIELD: pick_receipt}
+    state["pending_talk"] = [
+        row for row in state["pending_talk"] if row is not queue
+    ]
+    state["picks"].append(pick)
+    assert (
+        inspect_published_topic_resolution_recovery(
+            state,
+            CANDIDATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == RECOVERY_CONVERGED
+    )
+
+    next_queue_body = {
+        key: deepcopy(value)
+        for key, value in queue.items()
+        if key != FINAL_REVIEW_RECEIPT_FIELD
+    }
+    next_queue_body["retry_reason"] = "final_review_provider_budget"
+    queue_receipt = advance_selected_final_review_recovery_receipt(
+        pick_receipt,
+        from_row=pick,
+        to_row=next_queue_body,
+        candidate_id=CANDIDATE,
+        grant_id=_v7_grant()["grant_id"],
+        transition_kind=PICK_TO_QUEUE_TRANSITION,
+    )
+    next_queue = {
+        **next_queue_body,
+        FINAL_REVIEW_RECEIPT_FIELD: queue_receipt,
+    }
+    state["picks"] = [row for row in state["picks"] if row is not pick]
+    state["pending_talk"].append(next_queue)
+    state["talk_superseded_attempts"].append(
+        {
+            "candidate_id": CANDIDATE,
+            FINAL_REVIEW_RECEIPT_FIELD: deepcopy(queue_receipt),
+        }
+    )
+    assert (
+        inspect_published_topic_resolution_recovery(
+            state,
+            CANDIDATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == RECOVERY_CONVERGED
+    )
+
+
+@pytest.mark.parametrize(
+    "drift",
+    [
+        "marker",
+        "grant",
+        "grant_hash",
+        "receipt_hash",
+        "receipt_old",
+        "receipt_queue",
+        "receipt_fingerprint",
+        "receipt_first_transition",
+        "candidate_id",
+        "recording_date",
+        "intent",
+        "upload",
+        "state_upload",
+        "current_history_fork",
+        "current_receipt_missing",
+        "target_hold",
+        "song_target",
+    ],
+)
+def test_terminal_handoff_tamper_matrix_fails_closed(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+) -> None:
+    state, root, registry = _terminal_v5_to_v7_handoff_state(
+        tmp_path, rows, monkeypatch
+    )
+    ledger = state[RECOVERY_MARKER_FIELD]
+    marker = ledger["entries"][CANDIDATE]
+    transition = marker["transitions"][-1]
+    embedded = transition["initial_recovery_receipt"]
+    current = next(
+        row for row in state["pending_talk"] if row["candidate_id"] == CANDIDATE
+    )
+    if drift == "marker":
+        marker["marker_sha256"] = "sha256:" + "f" * 64
+    elif drift == "grant":
+        transition["operator_scope_grant"]["grant_id"] = "other-grant"
+    elif drift == "grant_hash":
+        transition["operator_scope_grant_sha256"] = "sha256:" + "f" * 64
+    elif drift == "receipt_hash":
+        transition["initial_recovery_receipt_sha256"] = "sha256:" + "f" * 64
+    elif drift == "receipt_old":
+        embedded["old_row_sha256"] = "sha256:" + "f" * 64
+    elif drift == "receipt_queue":
+        embedded["initial_queue_row_sha256"] = "sha256:" + "f" * 64
+    elif drift == "receipt_fingerprint":
+        embedded["current_failure_recovery_fingerprint"] = "sha256:" + "f" * 64
+    elif drift == "receipt_first_transition":
+        embedded["transitions"][0]["kind"] = "QUEUE_TO_PICK"
+    elif drift == "candidate_id":
+        transition["candidate_id"] = DISTINCT
+    elif drift == "recording_date":
+        transition["recording_date"] = "2026-08-09"
+    elif drift == "intent":
+        transition["operator_scope_intent"] = "RECOVER_EVERYTHING"
+    elif drift == "upload":
+        transition["upload_authorized"] = True
+    elif drift == "state_upload":
+        state["upload_allowed"] = True
+    elif drift == "current_history_fork":
+        fork_body = deepcopy(embedded["initial_queue_row"])
+        fork_body["hook"] += " fork"
+        fork = build_selected_final_review_recovery_receipt(
+            old_row=embedded["old_row"],
+            queued_row=fork_body,
+            candidate_id=CANDIDATE,
+            grant_id=_v7_grant()["grant_id"],
+            current_fingerprint="sha256:" + "2" * 64,
+        )
+        state["talk_superseded_attempts"].append(
+            {"candidate_id": CANDIDATE, FINAL_REVIEW_RECEIPT_FIELD: fork}
+        )
+    elif drift == "current_receipt_missing":
+        current.pop(FINAL_REVIEW_RECEIPT_FIELD)
+    elif drift == "target_hold":
+        state[REVIEW_STATE_FIELD]["holds"].append(
+            {"candidate_id": CANDIDATE, "candidate": deepcopy(current)}
+        )
+    else:
+        state["pending_song"].append({"candidate_id": CANDIDATE})
+
+    receipt_semantic_drift = {
+        "receipt_old",
+        "receipt_queue",
+        "receipt_fingerprint",
+        "receipt_first_transition",
+    }
+    if drift in receipt_semantic_drift:
+        embedded["receipt_sha256"] = canonical_sha256(
+            {
+                key: value
+                for key, value in embedded.items()
+                if key != "receipt_sha256"
+            }
+        )
+        transition["initial_recovery_receipt_sha256"] = canonical_sha256(embedded)
+    if drift == "grant":
+        transition["operator_scope_grant_sha256"] = canonical_sha256(
+            transition["operator_scope_grant"]
+        )
+    sealed_transition_drift = {
+        "grant",
+        "grant_hash",
+        "receipt_hash",
+        *receipt_semantic_drift,
+        "candidate_id",
+        "recording_date",
+        "intent",
+        "upload",
+    }
+    if drift in sealed_transition_drift:
+        transition["transition_sha256"] = canonical_sha256(
+            {
+                key: value
+                for key, value in transition.items()
+                if key != "transition_sha256"
+            }
+        )
+        marker["marker_sha256"] = canonical_sha256(
+            {key: value for key, value in marker.items() if key != "marker_sha256"}
+        )
+    if drift == "marker" or drift in sealed_transition_drift:
+        ledger["ledger_sha256"] = canonical_sha256(
+            {key: value for key, value in ledger.items() if key != "ledger_sha256"}
+        )
+
+    before = deepcopy(state)
+    assert (
+        inspect_published_topic_resolution_recovery(
+            state,
+            CANDIDATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == RECOVERY_BLOCKED
+    )
+    assert state == before
+    assert not seal_published_topic_resolution_row_rebounds(
+        state,
+        pre_state=deepcopy(state),
+        phase=RECOVERY_REBOUND_SESSION_ANNOTATION,
+        candidate_ids=(CANDIDATE,),
+        repo_root=root,
+        publication_registry=registry,
+    )
+    assert state == before
+
+
+def test_nonconverged_v5_head_cannot_be_handed_to_v7(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pre, state, root, registry = _initial_v5_to_v7_handoff_state(tmp_path, rows)
+    target = next(
+        row for row in pre["picks"] if row["candidate_id"] == CANDIDATE
+    )
+    pre[REVIEW_STATE_FIELD]["holds"].append(
+        {"candidate_id": CANDIDATE, "candidate": deepcopy(target)}
+    )
+    state[REVIEW_STATE_FIELD] = deepcopy(pre[REVIEW_STATE_FIELD])
+    monkeypatch.setattr(
+        RunnerProxy,
+        "talk_failure_recovery_fingerprint",
+        lambda *_args: "sha256:" + "2" * 64,
+        raising=False,
+    )
+    before = deepcopy(state)
+    assert not seal_published_topic_final_review_handoff(
+        state,
+        CANDIDATE,
+        pre_state=pre,
+        recording_date=DATE,
+        repo_root=root,
+        publication_registry=registry,
+    )
+    assert state == before
+
+
+@pytest.mark.parametrize(
+    "drift",
+    [
+        "pre_upload",
+        "post_upload",
+        "post_scope",
+        "non_target_talk",
+        "non_target_history",
+        "non_target_song",
+    ],
+)
+def test_terminal_handoff_seal_rejects_state_envelope_drift(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+) -> None:
+    pre, state, root, registry = _initial_v5_to_v7_handoff_state(tmp_path, rows)
+    monkeypatch.setattr(
+        RunnerProxy,
+        "talk_failure_recovery_fingerprint",
+        lambda *_args: "sha256:" + "2" * 64,
+        raising=False,
+    )
+    if drift == "pre_upload":
+        pre["upload_allowed"] = True
+    elif drift == "post_upload":
+        state["upload_allowed"] = True
+    elif drift == "post_scope":
+        state["operator_processing_scope"] = _v7_grant(DISTINCT)
+    elif drift == "non_target_talk":
+        next(
+            row
+            for row in state["picks"]
+            if row.get("candidate_id") != CANDIDATE
+        )["hook"] = "unrelated talk drift"
+    elif drift == "non_target_history":
+        state["talk_superseded_attempts"].append(
+            {"candidate_id": DISTINCT, "status": "unrelated history drift"}
+        )
+    else:
+        state["pending_song"].append({"candidate_id": "song_unrelated_drift"})
+    before = deepcopy(state)
+
+    assert not seal_published_topic_final_review_handoff(
+        state,
+        CANDIDATE,
+        pre_state=pre,
+        recording_date=DATE,
+        repo_root=root,
+        publication_registry=registry,
+    )
+    assert state == before
 
 
 @pytest.mark.parametrize(

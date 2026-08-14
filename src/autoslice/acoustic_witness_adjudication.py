@@ -30,7 +30,7 @@ from typing import Any, Callable, Mapping
 from src.autoslice.acoustic_pinyin import (
     candidate_pinyin_similarities,
     neutral_syllable_count_hint,
-    pinyin_compatibility,
+    pinyin_compatibility as pinyin_compatibility,
 )
 from src.autoslice.acoustic_witness_availability import (
     AUDIO_VERIFIER_UNAVAILABLE,
@@ -45,6 +45,9 @@ from src.autoslice.candidate_support import (
     orthography_ambiguous,
     registered_misheard_direction,
     structured_text_support,
+)
+from src.autoslice.exact_source_transcript_contract import (
+    valid_exact_source_transcript_handoff,
 )
 from src.autoslice.closed_set_evidence import (
     session_recurrence_acoustic_gate,
@@ -1065,6 +1068,15 @@ def adjudicate_with_witness(
                 replacement=replacement,
                 proposed_cue=str(check_request.get("proposed_cue") or ""),
                 clip_context=clip_context,
+            ),
+            "exact_source_transcript_handoff": (
+                isinstance(check_request.get("exact_source_transcript_handoff"), Mapping)
+                and valid_exact_source_transcript_handoff(
+                    check_request["exact_source_transcript_handoff"],
+                    check_request=check_request,
+                    witness=witness,
+                    clip_context=clip_context,
+                )
             ),
         }
         supported = any(support.values())

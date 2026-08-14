@@ -1799,6 +1799,131 @@ def test_exact_final_release_review_forwards_recut_offset_to_audio_adjudication(
     assert captured["findings"] == [finding]
 
 
+def test_exact_transcript_transport_failure_adds_only_typed_infra_marker(
+    monkeypatch,
+):
+    from copy import deepcopy
+
+    from src.autoslice.acoustic_witness_adjudication import build_witness_request
+    from src.autoslice.exact_source_transcript_contract import (
+        build_exact_source_transcript_request,
+    )
+    from src.autoslice.exact_source_transcript_provider import (
+        seal_exact_source_transcript_provider_failure,
+        seal_exact_source_transcript_provider_unavailable_audit,
+    )
+    from src.autoslice.final_review_auditor import (
+        build_context_adjudication_request,
+    )
+
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    monkeypatch.setattr(
+        pipeline,
+        "_build_final_review_llm_call",
+        lambda: lambda _prompt: "{}",
+    )
+    finding = {
+        "cue_index": 1,
+        "kind": "context",
+        "suspect": "难听难听",
+        "suggestion": "南町nightin",
+        "proposed_full_cue": "南町nightin，对吧",
+        "base_text_sha256": hashlib.sha256(
+            "难听难听，对吧".encode("utf-8")
+        ).hexdigest(),
+    }
+    monkeypatch.setattr(
+        pipeline,
+        "audit_final_subtitles",
+        lambda *_args, **_kwargs: [finding],
+    )
+    source = _srt("难听难听，对吧")
+    clip_context = {
+        "schema_version": "clip-context.v1",
+        "candidate_id": "auto_213135_806_1068",
+        "context_sha256": "sha256:" + "d" * 64,
+        "whole_clip_draft_srt_sha256": "sha256:" + "e" * 64,
+    }
+    check_request = build_context_adjudication_request(
+        source, finding, clip_context=clip_context
+    )
+    witness_request = build_witness_request(check_request)
+    witness = {
+        "schema_version": "subtitle-span-acoustic-witness.v1",
+        "witness_protocol": "blind_pinyin",
+        "request_sha256": witness_request["request_sha256"],
+        "status": "OBSERVED",
+        "target_audible": True,
+        "heard_pinyin": "nan ting nan ting dui ba",
+    }
+    physical = build_exact_source_transcript_request(witness_request)
+    failure = seal_exact_source_transcript_provider_failure(
+        request=physical,
+        provider_failures=[
+            {
+                "provider": "agy",
+                "category": "AGY_TIMEOUT",
+                "attempted": True,
+            }
+        ],
+    )
+    typed_handoff = seal_exact_source_transcript_provider_unavailable_audit(
+        physical_request=physical,
+        provider_failure=failure,
+        initial_check_request=check_request,
+        witness_request=witness_request,
+        witness=witness,
+        srt_text=source,
+        clip_context=clip_context,
+    )
+    returned_handoff = typed_handoff
+
+    def fake_adjudicate(_srt_text, findings, **_kwargs):
+        row = dict(list(findings)[0])
+        row["exact_release_adjudication"] = {
+            "request": check_request,
+            "verdict": witness,
+            "exact_source_transcript_handoff": returned_handoff,
+        }
+        return [row], []
+
+    monkeypatch.setattr(
+        pipeline,
+        "adjudicate_exact_release_findings",
+        fake_adjudicate,
+    )
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=source,
+        correction_audit=_correction_pass(),
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="",
+        clip_context=clip_context,
+    )
+    assert receipt["release_gate"] == "BLOCK"
+    assert receipt["reason_codes"][:2] == [
+        "FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED",
+        "FINAL_REVIEW_UNRESOLVED_FINDINGS",
+    ]
+
+    returned_handoff = deepcopy(typed_handoff)
+    returned_handoff["provider_failure"]["provider_failures"][0][
+        "category"
+    ] = "AGY_INVALID_OUTPUT"
+    invalid = pipeline._run_exact_final_release_review(
+        srt_text=source,
+        correction_audit=_correction_pass(),
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="",
+        clip_context=clip_context,
+    )
+    assert invalid["release_gate"] == "BLOCK"
+    assert "FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED" not in invalid[
+        "reason_codes"
+    ]
+
+
 def test_exact_release_context_only_cpa_cannot_reopen_bound_terminal_closure(
     monkeypatch,
 ):
