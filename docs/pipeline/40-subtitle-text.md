@@ -247,6 +247,11 @@ timeline 上重放已绑定的 semantic verdict；第 8 阶段直接物化 autho
   authority 的旧录播可显式 `structured_chat_required=false`。`GUARD_BUY` 是独立 `guard`
   证据，按 username/uid/guard level 装载，并使用 300 秒上舰答谢因果窗；多事件无法唯一对应时
   保留原字幕而非猜名。
+- producer 装载显式 JSONL/XML 时，每个源只能通过 `read_source_bytes_isolated` 读取一次；SHA、
+  原路径和解析都绑定该次返回的同一份字节，JSONL/XML parser 只能消费内存字节，不得再打开
+  CloudFS 原路径。隔离读超时、并发孤儿上限、本地 spool 失效或 source binding 不一致必须以
+  typed `StructuredChatEvidenceError` 在 screen probe、ffmpeg、AGY/其他转写 provider 之前阻断；
+  禁止超时后退化成无聊天证据继续生产。
 - 结构化 SC 跨 cue 对齐时，只有 SC 从开头到当前 internal gap 的**完整规范化前缀**逐字包含
   在上一 cue，才可声明该前缀由上一 cue ownership 并从当前 span 去重。`0.8` fuzzy coverage
   只能辅助判断 gap 是否曾读过，不能替代完整前缀 exact containment；少了 `不/不是/没` 等

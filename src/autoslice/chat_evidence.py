@@ -217,9 +217,7 @@ def normalize_srt_owner_payload_window(
         if overlap_ms < min_overlap_ms:
             continue
         if majority_ratio is not None:
-            basis = min(
-                max(1, cue.end_ms - cue.start_ms), max(1, end_ms - start_ms)
-            )
+            basis = min(max(1, cue.end_ms - cue.start_ms), max(1, end_ms - start_ms))
             if overlap_ms < basis * majority_ratio:
                 continue
         text = _SPEAKER_LABEL.sub("", cue.text) if strip_speaker_labels else cue.text
@@ -280,7 +278,9 @@ def sanitize_chat_display_text(text: str, *, max_chars: int = 500) -> str:
     return value[:max_chars].strip()
 
 
-def load_referent_groups(path: str | Path, *, include_singletons: bool = False) -> list[ReferentGroup]:
+def load_referent_groups(
+    path: str | Path, *, include_singletons: bool = False
+) -> list[ReferentGroup]:
     """Load confusable groups; optionally expose singleton surface registries."""
 
     try:
@@ -1076,9 +1076,7 @@ def _validated_read_aloud_verdict(
     if row.get("canonical_entity") not in allowed:
         return None
     confidence = row.get("confidence")
-    if isinstance(confidence, bool) or not isinstance(
-        confidence, (int, float)
-    ):
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
         return None
     if row.get("authority_kind") == "cpa_witness_adjudication":
         if not valid_cpa_witness_adjudication(row):
@@ -1160,15 +1158,18 @@ def load_chat_jsonl(
     path: str | Path,
     *,
     recording_start_ms: int | None = None,
+    source_bytes: bytes | None = None,
 ) -> list[ChatEvidence]:
     """Load exact danmaku, SC, gift, and guard evidence from recorder JSONL."""
     source = Path(path)
-    if not source.is_file():
-        return []
+    if source_bytes is None:
+        if not source.is_file():
+            return []
+        source_bytes = source.read_bytes()
     parsed: list[tuple[int, str, str, str, str, bool]] = []
-    source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    source_sha256 = hashlib.sha256(source_bytes).hexdigest()
     earliest: int | None = None
-    for raw_line in source.read_text(encoding="utf-8", errors="replace").splitlines():
+    for raw_line in source_bytes.decode("utf-8", errors="replace").splitlines():
         try:
             payload = json.loads(raw_line)
         except (TypeError, ValueError):

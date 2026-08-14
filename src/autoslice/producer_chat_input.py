@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from dataclasses import replace
 from pathlib import Path
+from typing import Mapping
 
 from .chat_authority import ChatEvidence, load_chat_jsonl, recording_start_epoch_ms
 from .danmaku_evidence import load_danmaku_xml
+from .isolated_source_read import IsolatedSourceReadError, read_source_bytes_isolated
 
 
 DANMAKU_PRE_CONTEXT_MS = 30_000
@@ -26,6 +29,16 @@ GUARD_PRE_CONTEXT_MS = 300_000
 class StructuredChatEvidenceError(RuntimeError):
     """A declared structured-chat binding is missing, drifted, or unreadable."""
 
+    def __init__(
+        self,
+        reason_code: str,
+        *,
+        evidence: Mapping[str, object] | None = None,
+    ) -> None:
+        super().__init__(reason_code)
+        self.reason_code = reason_code
+        self.evidence = dict(evidence or {})
+
 
 _CHAT_SHA256_RX = re.compile(r"(?:sha256:)?([0-9a-f]{64})")
 
@@ -42,6 +55,40 @@ def _structured_chat_parent_unavailable(path: Path) -> bool:
         return True
 
 
+def _isolated_source_payload(
+    path: Path,
+    *,
+    reason_prefix: str,
+) -> tuple[bytes, str]:
+    try:
+        isolated = read_source_bytes_isolated(path)
+    except IsolatedSourceReadError as exc:
+        raise StructuredChatEvidenceError(
+            f"{reason_prefix}_{exc.reason_code}",
+            evidence={"source_path": str(path), "isolated_read": exc.evidence},
+        ) from exc
+    payload = isolated.payload
+    digest = hashlib.sha256(payload).hexdigest()
+    expected_path = os.path.abspath(os.fspath(path))
+    if (
+        isolated.source_binding.get("path") != expected_path
+        or isolated.source_binding.get("sha256") != f"sha256:{digest}"
+    ):
+        raise StructuredChatEvidenceError(
+            f"{reason_prefix}_SOURCE_BINDING_INVALID",
+            evidence={
+                "source_path": str(path),
+                "source_binding": isolated.source_binding,
+            },
+        )
+    return payload, digest
+
+
+def _isolated_failure_reason(error: StructuredChatEvidenceError) -> str:
+    isolated_read = error.evidence.get("isolated_read")
+    return str(isolated_read.get("reason_code")) if isinstance(isolated_read, Mapping) else ""
+
+
 def _validated_chat_integer(
     piece: dict,
     field: str,
@@ -52,18 +99,10 @@ def _validated_chat_integer(
     value = piece.get(field)
     if value is None:
         if required:
-            raise StructuredChatEvidenceError(
-                f"STRUCTURED_CHAT_BINDING_{field.upper()}_MISSING"
-            )
+            raise StructuredChatEvidenceError(f"STRUCTURED_CHAT_BINDING_{field.upper()}_MISSING")
         return None
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, int)
-        or (positive and value <= 0)
-    ):
-        raise StructuredChatEvidenceError(
-            f"STRUCTURED_CHAT_BINDING_{field.upper()}_INVALID"
-        )
+    if isinstance(value, bool) or not isinstance(value, int) or (positive and value <= 0):
+        raise StructuredChatEvidenceError(f"STRUCTURED_CHAT_BINDING_{field.upper()}_INVALID")
     return value
 
 
@@ -92,143 +131,136 @@ def _piece_chat_evidence(piece: dict) -> list[ChatEvidence]:
 
     required_value = piece.get("structured_chat_required")
     if required_value is not None and not isinstance(required_value, bool):
-        raise StructuredChatEvidenceError(
-            "STRUCTURED_CHAT_BINDING_REQUIRED_FLAG_INVALID"
-        )
+        raise StructuredChatEvidenceError("STRUCTURED_CHAT_BINDING_REQUIRED_FLAG_INVALID")
     structured_chat_required = required_value is True
 
     xml_value = piece.get("danmaku_xml_local")
     xml_path = Path(str(xml_value)) if xml_value else None
-    declared_jsonl_value = piece.get("chat_jsonl_local") or piece.get(
-        "superchat_jsonl_local"
-    )
+    declared_jsonl_value = piece.get("chat_jsonl_local") or piece.get("superchat_jsonl_local")
     explicit_jsonl = bool(declared_jsonl_value)
     if not declared_jsonl_value:
         if structured_chat_required:
-            raise StructuredChatEvidenceError(
-                "STRUCTURED_CHAT_BINDING_PATH_MISSING"
-            )
-        declared_jsonl_value = str(
-            Path(piece["remote_media"]).with_suffix(".jsonl")
-        )
+            raise StructuredChatEvidenceError("STRUCTURED_CHAT_BINDING_PATH_MISSING")
+        declared_jsonl_value = str(Path(piece["remote_media"]).with_suffix(".jsonl"))
     jsonl_path = Path(str(declared_jsonl_value))
 
-    if jsonl_path.is_symlink():
-        raise StructuredChatEvidenceError(
-            "STRUCTURED_CHAT_BINDING_PATH_NOT_REGULAR"
+    try:
+        jsonl_payload, actual_sha256 = _isolated_source_payload(
+            jsonl_path,
+            reason_prefix="STRUCTURED_CHAT_BINDING",
         )
-    if not jsonl_path.is_file():
-        if explicit_jsonl or structured_chat_required:
-            if _structured_chat_parent_unavailable(jsonl_path):
+    except StructuredChatEvidenceError as exc:
+        isolated_reason = _isolated_failure_reason(exc)
+        if isolated_reason == "SOURCE_MISSING":
+            if explicit_jsonl or structured_chat_required:
+                if _structured_chat_parent_unavailable(jsonl_path):
+                    raise StructuredChatEvidenceError(
+                        f"SOURCE_RECORDING_ROOT_UNAVAILABLE: structured chat {jsonl_path}",
+                        evidence=exc.evidence,
+                    ) from exc
                 raise StructuredChatEvidenceError(
-                    f"SOURCE_RECORDING_ROOT_UNAVAILABLE: structured chat {jsonl_path}"
-                )
+                    "STRUCTURED_CHAT_BINDING_PATH_MISSING",
+                    evidence=exc.evidence,
+                ) from exc
+            jsonl_payload = b""
+            actual_sha256 = hashlib.sha256(jsonl_payload).hexdigest()
+        elif isolated_reason == "SOURCE_NOT_REGULAR":
             raise StructuredChatEvidenceError(
-                "STRUCTURED_CHAT_BINDING_PATH_MISSING"
-            )
+                "STRUCTURED_CHAT_BINDING_PATH_NOT_REGULAR",
+                evidence=exc.evidence,
+            ) from exc
+        elif isolated_reason == "SOURCE_UNREADABLE":
+            raise StructuredChatEvidenceError(
+                "STRUCTURED_CHAT_BINDING_PATH_UNREADABLE",
+                evidence=exc.evidence,
+            ) from exc
+        else:
+            raise
+
+    if not jsonl_payload:
+        if explicit_jsonl or structured_chat_required:
+            raise StructuredChatEvidenceError("STRUCTURED_CHAT_BINDING_PATH_EMPTY")
         jsonl_items: list[ChatEvidence] = []
     else:
-        try:
-            jsonl_size = jsonl_path.stat().st_size
-        except OSError as exc:
-            raise StructuredChatEvidenceError(
-                "STRUCTURED_CHAT_BINDING_PATH_UNREADABLE"
-            ) from exc
-        if jsonl_size <= 0:
-            if explicit_jsonl or structured_chat_required:
-                raise StructuredChatEvidenceError(
-                    "STRUCTURED_CHAT_BINDING_PATH_EMPTY"
-                )
-            jsonl_items = []
-        else:
-            expected_sha256 = _declared_chat_sha256(
-                piece.get("chat_jsonl_sha256")
-            )
-            if piece.get("chat_jsonl_sha256") is not None and expected_sha256 is None:
-                raise StructuredChatEvidenceError(
-                    "STRUCTURED_CHAT_BINDING_SHA256_INVALID"
-                )
-            if structured_chat_required and expected_sha256 is None:
-                raise StructuredChatEvidenceError(
-                    "STRUCTURED_CHAT_BINDING_SHA256_MISSING"
-                )
-            try:
-                actual_sha256 = hashlib.sha256(jsonl_path.read_bytes()).hexdigest()
-            except OSError as exc:
-                raise StructuredChatEvidenceError(
-                    "STRUCTURED_CHAT_BINDING_PATH_UNREADABLE"
-                ) from exc
-            if (
-                expected_sha256 is not None
-                and actual_sha256 != expected_sha256
-            ):
-                raise StructuredChatEvidenceError(
-                    "STRUCTURED_CHAT_BINDING_SHA256_MISMATCH"
-                )
+        expected_sha256 = _declared_chat_sha256(piece.get("chat_jsonl_sha256"))
+        if piece.get("chat_jsonl_sha256") is not None and expected_sha256 is None:
+            raise StructuredChatEvidenceError("STRUCTURED_CHAT_BINDING_SHA256_INVALID")
+        if structured_chat_required and expected_sha256 is None:
+            raise StructuredChatEvidenceError("STRUCTURED_CHAT_BINDING_SHA256_MISSING")
+        if expected_sha256 is not None and actual_sha256 != expected_sha256:
+            raise StructuredChatEvidenceError("STRUCTURED_CHAT_BINDING_SHA256_MISMATCH")
 
-            declared_origin = _validated_chat_integer(
-                piece,
-                "chat_origin_epoch_ms",
-                required=structured_chat_required,
-                positive=True,
+        declared_origin = _validated_chat_integer(
+            piece,
+            "chat_origin_epoch_ms",
+            required=structured_chat_required,
+            positive=True,
+        )
+        origin_epoch_ms = (
+            declared_origin if declared_origin is not None else recording_start_epoch_ms(jsonl_path)
+        )
+        if structured_chat_required and origin_epoch_ms is None:
+            raise StructuredChatEvidenceError(
+                "STRUCTURED_CHAT_BINDING_CHAT_ORIGIN_EPOCH_MS_MISSING"
             )
-            origin_epoch_ms = (
-                declared_origin
-                if declared_origin is not None
-                else recording_start_epoch_ms(jsonl_path)
+        timeline_offset_ms = _validated_chat_integer(
+            piece,
+            "chat_timeline_offset_ms",
+            required=structured_chat_required,
+        )
+        if timeline_offset_ms is None:
+            timeline_offset_ms = 0
+        try:
+            loaded_items = load_chat_jsonl(
+                jsonl_path,
+                recording_start_ms=origin_epoch_ms,
+                source_bytes=jsonl_payload,
             )
-            if structured_chat_required and origin_epoch_ms is None:
-                raise StructuredChatEvidenceError(
-                    "STRUCTURED_CHAT_BINDING_CHAT_ORIGIN_EPOCH_MS_MISSING"
-                )
-            timeline_offset_ms = _validated_chat_integer(
-                piece,
-                "chat_timeline_offset_ms",
-                required=structured_chat_required,
+        except (OSError, TypeError, ValueError) as exc:
+            raise StructuredChatEvidenceError("STRUCTURED_CHAT_BINDING_PARSE_FAILED") from exc
+        jsonl_items = [
+            replace(
+                item,
+                offset_ms=item.offset_ms + timeline_offset_ms,
             )
-            if timeline_offset_ms is None:
-                timeline_offset_ms = 0
-            try:
-                loaded_items = load_chat_jsonl(
-                    jsonl_path,
-                    recording_start_ms=origin_epoch_ms,
-                )
-            except (OSError, TypeError, ValueError) as exc:
-                raise StructuredChatEvidenceError(
-                    "STRUCTURED_CHAT_BINDING_PARSE_FAILED"
-                ) from exc
-            jsonl_items = [
-                replace(
-                    item,
-                    offset_ms=item.offset_ms + timeline_offset_ms,
-                )
-                for item in loaded_items
-            ]
-            if (explicit_jsonl or structured_chat_required) and not jsonl_items:
-                raise StructuredChatEvidenceError(
-                    "STRUCTURED_CHAT_BINDING_NO_PARSEABLE_EVENTS"
-                )
+            for item in loaded_items
+        ]
+        if (explicit_jsonl or structured_chat_required) and not jsonl_items:
+            raise StructuredChatEvidenceError("STRUCTURED_CHAT_BINDING_NO_PARSEABLE_EVENTS")
 
     evidence: list[ChatEvidence] = []
-    xml_healthy = bool(xml_path and xml_path.is_file() and xml_path.stat().st_size > 0)
-    if xml_healthy and xml_path is not None:
+    xml_payload: bytes | None = None
+    xml_sha256 = ""
+    if xml_path is not None:
+        try:
+            xml_payload, xml_sha256 = _isolated_source_payload(
+                xml_path,
+                reason_prefix="DANMAKU_XML",
+            )
+        except StructuredChatEvidenceError as exc:
+            if _isolated_failure_reason(exc) != "SOURCE_MISSING":
+                raise
+    if xml_payload:
+        try:
+            xml_items = load_danmaku_xml(xml_path, source_bytes=xml_payload)
+        except (TypeError, ValueError) as exc:
+            raise StructuredChatEvidenceError(
+                "DANMAKU_XML_PARSE_FAILED",
+                evidence={"source_path": str(xml_path)},
+            ) from exc
         evidence.extend(
             ChatEvidence(
                 "danmaku",
                 item.offset_ms,
                 item.text,
                 source=str(xml_path),
-                source_sha256=hashlib.sha256(xml_path.read_bytes()).hexdigest(),
+                source_sha256=xml_sha256,
             )
-            for item in load_danmaku_xml(xml_path)
+            for item in xml_items
         )
     else:
         evidence.extend(item for item in jsonl_items if item.kind == "danmaku")
-    evidence.extend(
-        item
-        for item in jsonl_items
-        if item.kind in {"superchat", "gift", "guard"}
-    )
+    evidence.extend(item for item in jsonl_items if item.kind in {"superchat", "gift", "guard"})
     return evidence
 
 

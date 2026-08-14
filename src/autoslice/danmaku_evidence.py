@@ -103,8 +103,9 @@ def parse_blrec_danmaku_xml(xml_text: str) -> list[DanmakuItem]:
     return items
 
 
-def load_danmaku_xml(path: Path) -> list[DanmakuItem]:
-    return parse_blrec_danmaku_xml(path.read_text(encoding="utf-8", errors="replace"))
+def load_danmaku_xml(path: Path, *, source_bytes: bytes | None = None) -> list[DanmakuItem]:
+    payload = path.read_bytes() if source_bytes is None else source_bytes
+    return parse_blrec_danmaku_xml(payload.decode("utf-8", errors="replace"))
 
 
 def find_danmaku_bursts(
