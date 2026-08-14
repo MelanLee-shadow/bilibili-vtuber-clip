@@ -177,7 +177,7 @@ def _matching_correction_finding(
     applied_count = correction.get("applied_count")
     if not (
         correction.get("schema_version") == "final-review-audit.v1"
-        and correction.get("status") == "APPLIED"
+        and correction.get("status") in {"APPLIED", "PARTIAL"}
         and isinstance(applied_count, int)
         and not isinstance(applied_count, bool)
         and applied_count > 0

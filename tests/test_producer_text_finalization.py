@@ -494,6 +494,27 @@ def test_806_expected_value_canon_typed_supersession_retires_entity_surface() ->
     assert audit["final_superseded_by_expected_value_canon_count"] == 1
 
 
+def test_806_expected_value_canon_supersession_accepts_clean_partial_correction() -> None:
+    audit, final, owner, _before_cpa, _after_cpa = _expected_value_806_fixture()
+
+    correction_pass = audit["final_review_audit"]["correction_pass"]
+    correction_pass["status"] = "PARTIAL"
+
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=9_780,
+        delivery_end_ms=25_000,
+    )
+    assert owner["final_verification_scope"] == (
+        "SUPERSEDED_BY_EXPECTED_VALUE_CANON"
+    )
+    assert owner["expected_value_canon_supersession"]["status"] == (
+        "SUPERSEDED_BY_EXPECTED_VALUE_CANON"
+    )
+
+
 @pytest.mark.parametrize(
     "broken_contract",
     (
@@ -505,6 +526,7 @@ def test_806_expected_value_canon_typed_supersession_retires_entity_surface() ->
         "malformed_correction_audit",
         "missing_correction_pass",
         "malformed_correction_pass",
+        "unsupported_correction_status",
         "mismatched_declared_mutation",
         "missing_mutation_authority",
         "blocked_mutation_authority",
@@ -564,6 +586,8 @@ def test_expected_value_canon_supersession_fails_closed(
         review_audit.pop("correction_pass")
     elif broken_contract == "malformed_correction_pass":
         correction_pass["schema_version"] = "invalid"
+    elif broken_contract == "unsupported_correction_status":
+        correction_pass["status"] = "BLOCKED"
     elif broken_contract == "mismatched_declared_mutation":
         review_audit["correction_mutation_authority"][
             "validated_mutation_count"
