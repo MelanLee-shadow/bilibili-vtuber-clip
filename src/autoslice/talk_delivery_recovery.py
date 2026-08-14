@@ -416,6 +416,16 @@ def requeue_recoverable_talks(
     final_review_scope = runtime._active_selected_final_review_recovery_scope(
         date, state, candidate_ids
     )
+    from src.autoslice.selected_final_review_terminal_regrant import (
+        RECOVERY_RECEIPT_FIELD as TERMINAL_REGRANT_RECEIPT_FIELD,
+        active_selected_final_review_terminal_regrant_scope,
+        build_selected_final_review_terminal_regrant_receipt,
+        is_selected_final_review_terminal_rejection,
+    )
+
+    terminal_regrant_scope = active_selected_final_review_terminal_regrant_scope(
+        date, state, candidate_ids
+    )
     runtime.restore_fossilized_speaker_holds(state, candidate_ids=allowed)
     existing_pending = {
         str(item.get("cid") or item.get("candidate_id") or "")
@@ -467,10 +477,16 @@ def requeue_recoverable_talks(
                 Mapping,
             )
         )
+        selected_terminal_regrant_retry = bool(
+            terminal_regrant_scope is not None
+            and cid == terminal_regrant_scope[0]
+            and is_selected_final_review_terminal_rejection(record)
+        )
         if not (
             recoverable_status
             or selected_source_fact_retry
             or selected_final_review_retry
+            or selected_terminal_regrant_retry
             or runtime.supplemental_recovery_candidate(
                 record,
                 candidate_id=cid,
@@ -501,6 +517,32 @@ def requeue_recoverable_talks(
             kept.append(record)
             continue
         item = prepared.item
+        if selected_terminal_regrant_retry:
+            parent_receipt = record.get(
+                runtime.SELECTED_FINAL_REVIEW_RECOVERY_RECEIPT_FIELD
+            )
+            grant = state.get("operator_processing_scope")
+            try:
+                if not isinstance(parent_receipt, Mapping) or not isinstance(
+                    grant, Mapping
+                ):
+                    raise ValueError("terminal regrant parent authority is missing")
+                item[runtime.SELECTED_FINAL_REVIEW_RECOVERY_RECEIPT_FIELD] = (
+                    copy.deepcopy(parent_receipt)
+                )
+                item["retry_reason"] = "selected_final_review_terminal_regrant"
+                item[TERMINAL_REGRANT_RECEIPT_FIELD] = (
+                    build_selected_final_review_terminal_regrant_receipt(
+                        state=state,
+                        old_row=record,
+                        queued_row=item,
+                        candidate_id=cid,
+                        grant=grant,
+                    )
+                )
+            except (TypeError, ValueError):
+                kept.append(record)
+                continue
         requeued.append(item)
         existing_pending.add(cid)
         archived = {
@@ -540,6 +582,10 @@ def requeue_recoverable_talks(
             ),
             "session_id": runtime._recording_session_id(record),
         }
+        if isinstance(item.get(TERMINAL_REGRANT_RECEIPT_FIELD), Mapping):
+            archived[TERMINAL_REGRANT_RECEIPT_FIELD] = copy.deepcopy(
+                item[TERMINAL_REGRANT_RECEIPT_FIELD]
+            )
         if (
             item.get(runtime.FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD)
             is not None

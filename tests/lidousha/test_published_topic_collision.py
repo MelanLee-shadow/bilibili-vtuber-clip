@@ -44,6 +44,8 @@ from src.autoslice.published_topic_collision import (
 from src.autoslice.operator_processing_scope import (
     FINAL_REVIEW_RECOVERY_GRANT_SCHEMA,
     FINAL_REVIEW_RECOVERY_INTENT,
+    FINAL_REVIEW_TERMINAL_REGRANT_INTENT,
+    FINAL_REVIEW_TERMINAL_REGRANT_SCHEMA,
     TOPIC_HOLD_RECOVERY_GRANT_SCHEMA,
     TOPIC_HOLD_RECOVERY_INTENT,
     operator_talk_scope,
@@ -60,6 +62,10 @@ from src.autoslice.selected_final_review_recovery import (
     RECOVERY_RECEIPT_FIELD as FINAL_REVIEW_RECEIPT_FIELD,
     advance_selected_final_review_recovery_receipt,
     build_selected_final_review_recovery_receipt,
+)
+from src.autoslice.selected_final_review_terminal_regrant import (
+    RECOVERY_RECEIPT_FIELD as TERMINAL_REGRANT_RECEIPT_FIELD,
+    build_selected_final_review_terminal_regrant_receipt,
 )
 from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.talk_quota_policy import TalkQuotaPolicy
@@ -981,6 +987,134 @@ def test_v5_terminal_handoff_converges_without_permanent_double_write(
     state["operator_processing_scope"] = _v7_grant(DISTINCT)
     assert (
         original_inspect(
+            state,
+            CANDIDATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == RECOVERY_CONVERGED
+    )
+
+
+def test_v8_descendant_keeps_terminal_v5_marker_byte_exact(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.autoslice.selected_final_review_terminal_regrant import (
+        canonical_sha256 as regrant_sha256,
+    )
+
+    state, root, registry = _terminal_v5_to_v7_handoff_state(
+        tmp_path, rows, monkeypatch
+    )
+    marker = deepcopy(state[RECOVERY_MARKER_FIELD]["entries"][CANDIDATE])
+    queue = next(
+        row for row in state["pending_talk"] if row["candidate_id"] == CANDIDATE
+    )
+    parent_body = {
+        key: deepcopy(value)
+        for key, value in queue.items()
+        if key != FINAL_REVIEW_RECEIPT_FIELD
+    }
+    parent_body.update(
+        {
+            "status": "candidate_rejected",
+            "rejected_status": "failed",
+            "rc": 1,
+            "selected_repair": True,
+            "failure_kind": "subtitle_authority",
+            "failure_stage": "chat_authority_final_artifact",
+            "failure_recoverable": False,
+            "rejection_reason": "subtitle_authority_unresolved_backfilled",
+            "failure_recovery_fingerprint": "sha256:" + "2" * 64,
+        }
+    )
+    parent_receipt = advance_selected_final_review_recovery_receipt(
+        queue[FINAL_REVIEW_RECEIPT_FIELD],
+        from_row=queue,
+        to_row=parent_body,
+        candidate_id=CANDIDATE,
+        grant_id=_v7_grant()["grant_id"],
+        transition_kind=QUEUE_TO_PICK_TRANSITION,
+        allow_queue_rebound=True,
+    )
+    parent = {**parent_body, FINAL_REVIEW_RECEIPT_FIELD: parent_receipt}
+    state["pending_talk"] = [
+        row for row in state["pending_talk"] if row is not queue
+    ]
+    state["picks"].append(parent)
+    grant = {
+        "schema_version": FINAL_REVIEW_TERMINAL_REGRANT_SCHEMA,
+        "grant_id": "recover-806-terminal-v8",
+        "recording_date": DATE,
+        "reason": "one new no-upload final-artifact verification attempt",
+        "candidate_ids": [CANDIDATE],
+        "user_authorization": {
+            "quote": "继续执行这一次新的806终稿验证。",
+            "timestamp": "2026-08-14T15:00:00Z",
+        },
+        "expires_at": "2026-08-14T20:00:00Z",
+        "intent": FINAL_REVIEW_TERMINAL_REGRANT_INTENT,
+        "upload_allowed": False,
+        "attempt_limit": 1,
+        "predecessor": {
+            "prior_operator_scope_grant_id": _v7_grant()["grant_id"],
+            "parent_recovery_receipt_sha256": regrant_sha256(parent_receipt),
+            "terminal_row_sha256": regrant_sha256(parent),
+            "terminal_marker_sha256": regrant_sha256(marker),
+            "recorded_failure_recovery_fingerprint": "sha256:" + "2" * 64,
+            "current_failure_recovery_fingerprint": "sha256:" + "3" * 64,
+        },
+    }
+    state["operator_processing_scope"] = grant
+    monkeypatch.setattr(
+        RunnerProxy,
+        "talk_failure_recovery_fingerprint",
+        lambda _self, kind, candidate_id: (
+            "sha256:" + "3" * 64
+            if (kind, candidate_id) == ("subtitle_authority", CANDIDATE)
+            else pytest.fail("unrelated recovery fingerprint requested")
+        ),
+        raising=False,
+    )
+    v8_queue = {
+        key: deepcopy(value)
+        for key, value in parent.items()
+        if key
+        not in {
+            "status",
+            "rejected_status",
+            "rc",
+            "failure_kind",
+            "failure_stage",
+            "failure_recoverable",
+            "failure_recovery_fingerprint",
+            "rejection_reason",
+        }
+    }
+    receipt = build_selected_final_review_terminal_regrant_receipt(
+        state=state,
+        old_row=parent,
+        queued_row=v8_queue,
+        candidate_id=CANDIDATE,
+        grant=grant,
+    )
+    state["picks"] = [row for row in state["picks"] if row is not parent]
+    state["pending_talk"].append(
+        {**v8_queue, TERMINAL_REGRANT_RECEIPT_FIELD: receipt}
+    )
+    state["talk_superseded_attempts"].append(
+        {
+            "candidate_id": CANDIDATE,
+            FINAL_REVIEW_RECEIPT_FIELD: deepcopy(parent_receipt),
+            TERMINAL_REGRANT_RECEIPT_FIELD: deepcopy(receipt),
+        }
+    )
+
+    assert state[RECOVERY_MARKER_FIELD]["entries"][CANDIDATE] == marker
+    assert (
+        inspect_published_topic_resolution_recovery(
             state,
             CANDIDATE,
             repo_root=root,

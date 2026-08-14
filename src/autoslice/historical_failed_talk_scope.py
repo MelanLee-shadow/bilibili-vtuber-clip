@@ -13,6 +13,7 @@ from src.autoslice.exact_talk_recovery_scope import maintain_delivery_recovery_s
 from src.autoslice.operator_processing_scope import (
     FINAL_REVIEW_RECOVERY_GRANT_SCHEMA,
     FINAL_REVIEW_RECOVERY_INTENT,
+    FINAL_REVIEW_TERMINAL_REGRANT_INTENT,
     HELD_CURRENT_RERENDER_INTENT,
     SOURCE_FACT_RECOVERY_GRANT_SCHEMA,
     SOURCE_FACT_RECOVERY_INTENT,
@@ -31,6 +32,9 @@ from src.autoslice.published_topic_recovery_lineage import (
 )
 from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice import semantic_evidence_scorecard_refresh as semantic_chat_refresh
+from src.autoslice import (
+    selected_final_review_terminal_regrant_runtime as terminal_regrant_runtime,
+)
 
 
 _runner = RunnerProxy()
@@ -121,7 +125,9 @@ def _terminal_final_review_handoff_candidate_ids(
 ) -> tuple[str, ...]:
     """Recognize only a canonical terminal v5-to-v7 handoff."""
 
-    values = _final_review_scope_candidate_ids(state, candidate_ids)
+    values = _final_review_scope_candidate_ids(
+        state, candidate_ids
+    ) or terminal_regrant_runtime.scope_candidate_ids(state, candidate_ids)
     if len(values) != 1:
         return ()
     from src.autoslice.published_topic_collision import _recovery_ledger_entries
@@ -140,20 +146,13 @@ def _terminal_final_review_handoff_candidate_ids(
     return values if probe == dict(state) and terminal else ()
 
 
-def _target_talk_rows(
-    state: Mapping[str, object], candidate_id: str
-) -> list[tuple[str, dict]]:
+def _target_talk_rows(state: Mapping[str, object], candidate_id: str) -> list[tuple[str, dict]]:
     return [
         (collection, row)
         for collection in _ACTIVE_TALK_COLLECTIONS
-        for row in (
-            state.get(collection)
-            if isinstance(state.get(collection), list)
-            else []
-        )
+        for row in (state.get(collection) if isinstance(state.get(collection), list) else [])
         if isinstance(row, dict)
-        and str(row.get("candidate_id") or row.get("cid") or "").strip()
-        == candidate_id
+        and str(row.get("candidate_id") or row.get("cid") or "").strip() == candidate_id
     ]
 
 
@@ -244,20 +243,14 @@ def _matching_final_review_runtime_block(
 def _topic_transition_preimage(
     state: Mapping[str, object], candidate_ids: tuple[str, ...] | None
 ) -> dict | None:
-    return (
-        deepcopy(dict(state))
-        if _topic_scope_candidate_ids(state, candidate_ids)
-        else None
-    )
+    return deepcopy(dict(state)) if _topic_scope_candidate_ids(state, candidate_ids) else None
 
 
 def _final_review_transition_preimage(
     state: Mapping[str, object], candidate_ids: tuple[str, ...] | None
 ) -> dict | None:
     return (
-        deepcopy(dict(state))
-        if _final_review_scope_candidate_ids(state, candidate_ids)
-        else None
+        deepcopy(dict(state)) if _final_review_scope_candidate_ids(state, candidate_ids) else None
     )
 
 
@@ -418,8 +411,7 @@ def _no_marker_initial_annotation_is_valid(
         )
         and state.get("upload_allowed") is False
         and state.get(STATE_KEY) == preimage.get(STATE_KEY)
-        and state.get("talk_superseded_attempts")
-        == preimage.get("talk_superseded_attempts")
+        and state.get("talk_superseded_attempts") == preimage.get("talk_superseded_attempts")
         and all(
             state.get(collection) == preimage.get(collection)
             for collection in SONG_STATE_COLLECTIONS
@@ -431,8 +423,7 @@ def _no_marker_initial_annotation_is_valid(
         for row in preimage.get("picks", [])
         if not (
             isinstance(row, Mapping)
-            and str(row.get("candidate_id") or row.get("cid") or "").strip()
-            == candidate_id
+            and str(row.get("candidate_id") or row.get("cid") or "").strip() == candidate_id
         )
     ]
     after_non_target = [
@@ -440,8 +431,7 @@ def _no_marker_initial_annotation_is_valid(
         for row in state.get("picks", [])
         if not (
             isinstance(row, Mapping)
-            and str(row.get("candidate_id") or row.get("cid") or "").strip()
-            == candidate_id
+            and str(row.get("candidate_id") or row.get("cid") or "").strip() == candidate_id
         )
     ]
     return bool(
@@ -467,13 +457,16 @@ def _seal_initial_final_review_session_annotation(
 
     values = _final_review_scope_candidate_ids(preimage, candidate_ids)
     transition_ok = False
-    if len(values) == 1 and _initial_final_review_handoff_outcome(
-        preimage, date=date, candidate_ids=values
-    ) == handoff_outcome:
+    if (
+        len(values) == 1
+        and _initial_final_review_handoff_outcome(preimage, date=date, candidate_ids=values)
+        == handoff_outcome
+    ):
         from src.autoslice.published_topic_final_review_handoff import (
             HANDOFF_ABSENT,
             HANDOFF_READY,
         )
+
         try:
             if handoff_outcome == HANDOFF_READY:
                 from src.autoslice.published_topic_collision import (
@@ -546,6 +539,7 @@ def annotate_sessions(
 
     preimage = _topic_transition_preimage(state, candidate_ids)
     final_review_preimage = _final_review_transition_preimage(state, candidate_ids)
+    terminal_regrant_preimage = terminal_regrant_runtime.transition_preimage(state, candidate_ids)
     initial_final_review_handoff = (
         _initial_final_review_handoff_outcome(
             final_review_preimage,
@@ -563,19 +557,27 @@ def annotate_sessions(
             talk_candidate_ids=candidate_ids,
         )
     except Exception:
+        if terminal_regrant_preimage is not None:
+            values = terminal_regrant_runtime.scope_candidate_ids(
+                terminal_regrant_preimage, candidate_ids
+            )
+            terminal_regrant_runtime.restore_transition_block(
+                state,
+                terminal_regrant_preimage,
+                date=date,
+                candidate_ids=values,
+                reason_code=("SELECTED_FINAL_REVIEW_TERMINAL_REGRANT_SESSION_ANNOTATION_BLOCKED"),
+            )
+            return -1
         if final_review_preimage is None:
             raise
-        values = _final_review_scope_candidate_ids(
-            final_review_preimage, candidate_ids
-        )
+        values = _final_review_scope_candidate_ids(final_review_preimage, candidate_ids)
         _restore_final_review_transition_block(
             state,
             final_review_preimage,
             date=date,
             candidate_ids=values,
-            reason_code=(
-                "SELECTED_FINAL_REVIEW_RECOVERY_SESSION_ANNOTATION_BLOCKED"
-            ),
+            reason_code=("SELECTED_FINAL_REVIEW_RECOVERY_SESSION_ANNOTATION_BLOCKED"),
         )
         return -1
     if final_review_preimage is not None:
@@ -594,13 +596,20 @@ def annotate_sessions(
                 candidate_ids=candidate_ids,
                 preimage=final_review_preimage,
                 phase=RECOVERY_REBOUND_SESSION_ANNOTATION,
-                reason_code=(
-                    "SELECTED_FINAL_REVIEW_RECOVERY_SESSION_ANNOTATION_BLOCKED"
-                ),
+                reason_code=("SELECTED_FINAL_REVIEW_RECOVERY_SESSION_ANNOTATION_BLOCKED"),
             )
         )
         if not final_review_valid:
             return -1
+    if terminal_regrant_preimage is not None and not (
+        terminal_regrant_runtime.seal_session_annotation(
+            date,
+            state,
+            candidate_ids=candidate_ids,
+            preimage=terminal_regrant_preimage,
+        )
+    ):
+        return -1
     if preimage is None:
         return int(changed)
     from src.autoslice.published_topic_collision import (
@@ -634,7 +643,23 @@ def refresh_scorecards(
 
     preimage = _topic_transition_preimage(state, candidate_ids)
     final_review_preimage = _final_review_transition_preimage(state, candidate_ids)
-    result = semantic_chat_refresh.refresh_operator_scoped_chat_scorecards(date, state)
+    terminal_regrant_preimage = terminal_regrant_runtime.transition_preimage(state, candidate_ids)
+    try:
+        result = semantic_chat_refresh.refresh_operator_scoped_chat_scorecards(date, state)
+    except Exception:
+        if terminal_regrant_preimage is None:
+            raise
+        values = terminal_regrant_runtime.scope_candidate_ids(
+            terminal_regrant_preimage, candidate_ids
+        )
+        terminal_regrant_runtime.restore_transition_block(
+            state,
+            terminal_regrant_preimage,
+            date=date,
+            candidate_ids=values,
+            reason_code="SELECTED_FINAL_REVIEW_TERMINAL_REGRANT_SCORECARD_REFRESH_BLOCKED",
+        )
+        return -1
     if final_review_preimage is not None and not _seal_final_review_queue_rebound(
         date,
         state,
@@ -642,6 +667,17 @@ def refresh_scorecards(
         preimage=final_review_preimage,
         phase=RECOVERY_REBOUND_SEMANTIC_SCORECARD_REFRESH,
         reason_code="SELECTED_FINAL_REVIEW_RECOVERY_SCORECARD_REFRESH_BLOCKED",
+    ):
+        return -1
+    if terminal_regrant_preimage is not None and not (
+        terminal_regrant_runtime.seal_queue_rebound(
+            date,
+            state,
+            candidate_ids=candidate_ids,
+            preimage=terminal_regrant_preimage,
+            phase=RECOVERY_REBOUND_SEMANTIC_SCORECARD_REFRESH,
+            reason_code=("SELECTED_FINAL_REVIEW_TERMINAL_REGRANT_SCORECARD_REFRESH_BLOCKED"),
+        )
     ):
         return -1
     if preimage is None:
@@ -686,8 +722,7 @@ def _requeue_topic_cover_pending(date: str, state: dict, candidate_id: str) -> i
         or matches[0].get("status") != "media_ready_cover_pending"
         or any(
             isinstance(row, Mapping)
-            and str(row.get("candidate_id") or row.get("cid") or "")
-            == candidate_id
+            and str(row.get("candidate_id") or row.get("cid") or "") == candidate_id
             for row in pending
         )
         or int(matches[0].get("talk_repair_retry_count") or 0)
@@ -704,12 +739,8 @@ def _requeue_topic_cover_pending(date: str, state: dict, candidate_id: str) -> i
             selected_repair=True,
             given_end_ms=record.get("given_end_ms"),
             given_end_authority=record.get("given_end_authority"),
-            recovery_publication_authority=record.get(
-                "recovery_publication_authority"
-            ),
-            provider_budget_history=(
-                state.get("talk_superseded_attempts") or ()
-            ),
+            recovery_publication_authority=record.get("recovery_publication_authority"),
+            provider_budget_history=(state.get("talk_superseded_attempts") or ()),
         )
     except (OSError, TypeError, ValueError, RecoveryReviewRerunError):
         return 0
@@ -745,9 +776,7 @@ def _requeue_receipt_bound_cover_pending(
         return 0
     preimage = deepcopy(dict(state))
     reason_prefix = (
-        "SELECTED_FINAL_REVIEW_RECOVERY"
-        if final_review
-        else "SELECTED_SOURCE_FACT_RECOVERY"
+        "SELECTED_FINAL_REVIEW_RECOVERY" if final_review else "SELECTED_SOURCE_FACT_RECOVERY"
     )
     restore_block = (
         _restore_final_review_transition_block
@@ -799,11 +828,7 @@ def _requeue_receipt_bound_cover_pending(
             validate_selected_source_fact_recovery_receipt as validate_queue,
         )
 
-    grant_id = (
-        _final_review_grant_id(preimage)
-        if final_review
-        else _source_fact_grant_id(preimage)
-    )
+    grant_id = _final_review_grant_id(preimage) if final_review else _source_fact_grant_id(preimage)
     receipt = record.get(RECOVERY_RECEIPT_FIELD)
     if not validate_consumed(
         receipt,
@@ -825,12 +850,8 @@ def _requeue_receipt_bound_cover_pending(
             selected_repair=True,
             given_end_ms=record.get("given_end_ms"),
             given_end_authority=record.get("given_end_authority"),
-            recovery_publication_authority=record.get(
-                "recovery_publication_authority"
-            ),
-            provider_budget_history=(
-                state.get("talk_superseded_attempts") or ()
-            ),
+            recovery_publication_authority=record.get("recovery_publication_authority"),
+            provider_budget_history=(state.get("talk_superseded_attempts") or ()),
         )
         carried_receipt = item.pop(RECOVERY_RECEIPT_FIELD, None)
         if carried_receipt is not None and carried_receipt != receipt:
@@ -844,9 +865,7 @@ def _requeue_receipt_bound_cover_pending(
             transition_kind=PICK_TO_QUEUE_TRANSITION,
         )
         item[RECOVERY_RECEIPT_FIELD] = next_receipt
-        current_fingerprint = next_receipt.get(
-            "current_failure_recovery_fingerprint"
-        )
+        current_fingerprint = next_receipt.get("current_failure_recovery_fingerprint")
         if not (
             isinstance(current_fingerprint, str)
             and validate_queue(
@@ -893,9 +912,7 @@ def _requeue_final_review_cover_pending(
     )
 
 
-def _remove_reconcilable_redundant_stale_hold(
-    state: dict, candidate_id: str
-) -> dict | None:
+def _remove_reconcilable_redundant_stale_hold(state: dict, candidate_id: str) -> dict | None:
     """Remove only the exact stale hold copied from a sealed rejection head."""
 
     from src.autoslice.published_topic_collision import REVIEW_STATE_FIELD
@@ -1029,10 +1046,12 @@ def maintain(
 ) -> tuple[int, int, int, int, bool]:
     if _matching_source_fact_runtime_block(
         state, date=date, candidate_ids=candidate_ids
-    ) or _matching_final_review_runtime_block(
-        state, date=date, candidate_ids=candidate_ids
-    ):
+    ) or _matching_final_review_runtime_block(state, date=date, candidate_ids=candidate_ids):
         return 0, 0, 0, 0, False
+    if terminal_result := terminal_regrant_runtime.maintain_if_active(
+        date, state, automatic_maintenance, candidate_ids, maintain_delivery_recovery_scope
+    ):
+        return terminal_result
     (
         final_review_handoff_preimage,
         final_review_values,
@@ -1052,9 +1071,7 @@ def maintain(
     topic_retry_preimage: dict | None = None
     topic_retry_expected_review_state: dict | None = None
     block = state.get(STATE_KEY)
-    if automatic_maintenance and _source_fact_scope_candidate_ids(
-        state, candidate_ids
-    ):
+    if automatic_maintenance and _source_fact_scope_candidate_ids(state, candidate_ids):
         source_fact_cover_requeued = _requeue_source_fact_cover_pending(
             date,
             state,
@@ -1062,9 +1079,7 @@ def maintain(
         )
         if source_fact_cover_requeued < 0:
             return 0, 0, 0, 0, False
-    if automatic_maintenance and _final_review_scope_candidate_ids(
-        state, candidate_ids
-    ):
+    if automatic_maintenance and _final_review_scope_candidate_ids(state, candidate_ids):
         try:
             final_review_cover_requeued = _requeue_final_review_cover_pending(
                 date, state, candidate_ids=candidate_ids
@@ -1104,9 +1119,7 @@ def maintain(
         preimage = deepcopy(dict(state))
         candidate_id = tuple(candidate_ids or ())[0]
         try:
-            disposition = inspect_published_topic_resolution_recovery(
-                state, candidate_id
-            )
+            disposition = inspect_published_topic_resolution_recovery(state, candidate_id)
         except Exception:  # noqa: BLE001 - runtime authority must fail closed
             disposition = RECOVERY_BLOCKED
         if dict(state) != preimage:
@@ -1117,9 +1130,7 @@ def maintain(
             try:
                 released = release_resolved_published_topic_hold(state, candidate_id)
                 released_state = deepcopy(dict(state))
-                post_release = inspect_published_topic_resolution_recovery(
-                    state, candidate_id
-                )
+                post_release = inspect_published_topic_resolution_recovery(state, candidate_id)
                 if dict(state) != released_state:
                     post_release = RECOVERY_BLOCKED
             except Exception:  # noqa: BLE001 - release must be transactional here
@@ -1151,10 +1162,8 @@ def maintain(
         if disposition == RECOVERY_RELEASED_RETRY_PENDING:
             topic_retry_preimage = deepcopy(dict(state))
             try:
-                topic_retry_expected_review_state = (
-                    _remove_reconcilable_redundant_stale_hold(
-                        state, candidate_id
-                    )
+                topic_retry_expected_review_state = _remove_reconcilable_redundant_stale_hold(
+                    state, candidate_id
                 )
                 if topic_retry_expected_review_state is not None:
                     post_reconcile_preimage = deepcopy(dict(state))
@@ -1166,8 +1175,7 @@ def maintain(
                         or post_reconcile != RECOVERY_RELEASED_RETRY_PENDING
                     ):
                         raise ValueError(
-                            "redundant stale hold reconciliation did not preserve "
-                            "retry authority"
+                            "redundant stale hold reconciliation did not preserve retry authority"
                         )
             except Exception:  # noqa: BLE001 - reconciliation is transactional
                 _restore_topic_transition_block(
@@ -1178,9 +1186,7 @@ def maintain(
                     reason_code="TOPIC_DEDUP_STALE_HOLD_RECONCILIATION_BLOCKED",
                 )
                 return 0, 0, 0, 0, False
-            topic_cover_requeued = _requeue_topic_cover_pending(
-                date, state, candidate_id
-            )
+            topic_cover_requeued = _requeue_topic_cover_pending(date, state, candidate_id)
     if (
         automatic_maintenance
         and candidate_ids
@@ -1254,13 +1260,10 @@ def maintain(
                     "talk_below_confidence_threshold",
                 )
                 for row in (
-                    value.get(collection)
-                    if isinstance(value.get(collection), list)
-                    else []
+                    value.get(collection) if isinstance(value.get(collection), list) else []
                 )
                 if isinstance(row, Mapping)
-                and str(row.get("cid") or row.get("candidate_id") or "")
-                == candidate_id
+                and str(row.get("cid") or row.get("candidate_id") or "") == candidate_id
             ]
 
         before_rows = target_rows(topic_retry_preimage)
@@ -1268,8 +1271,7 @@ def maintain(
         transition_ok = False
         review_state_unchanged = (
             topic_retry_expected_review_state is None
-            or state.get("published_topic_dedup_review")
-            == topic_retry_expected_review_state
+            or state.get("published_topic_dedup_review") == topic_retry_expected_review_state
         )
         if before_rows == after_rows and topic_retry_expected_review_state is None:
             # Cooldown/fingerprint/budget policy legitimately kept the exact
@@ -1335,6 +1337,7 @@ def work_flags(
             TOPIC_HOLD_RECOVERY_INTENT,
             SOURCE_FACT_RECOVERY_INTENT,
             FINAL_REVIEW_RECOVERY_INTENT,
+            FINAL_REVIEW_TERMINAL_REGRANT_INTENT,
         }
         and block.get("recording_date") == date
         and block.get("candidate_ids") == list(candidate_ids or ())
@@ -1364,14 +1367,27 @@ def prioritize_and_capture(
         dict(item)
         for item in state.get("pending_talk", [])
         if isinstance(item, dict)
-        and (
-            allowed is None
-            or str(item.get("cid") or item.get("candidate_id") or "") in allowed
-        )
+        and (allowed is None or str(item.get("cid") or item.get("candidate_id") or "") in allowed)
     ]
     preimage = _topic_transition_preimage(state, candidate_ids)
     final_review_preimage = _final_review_transition_preimage(state, candidate_ids)
-    reprioritize(state, candidate_ids)
+    terminal_regrant_preimage = terminal_regrant_runtime.transition_preimage(state, candidate_ids)
+    try:
+        reprioritize(state, candidate_ids)
+    except Exception:
+        if terminal_regrant_preimage is None:
+            raise
+        values = terminal_regrant_runtime.scope_candidate_ids(
+            terminal_regrant_preimage, candidate_ids
+        )
+        terminal_regrant_runtime.restore_transition_block(
+            state,
+            terminal_regrant_preimage,
+            date=date,
+            candidate_ids=values,
+            reason_code="SELECTED_FINAL_REVIEW_TERMINAL_REGRANT_PRIORITIZE_BLOCKED",
+        )
+        return None
     if final_review_preimage is not None and not _seal_final_review_queue_rebound(
         date,
         state,
@@ -1379,6 +1395,17 @@ def prioritize_and_capture(
         preimage=final_review_preimage,
         phase=RECOVERY_REBOUND_PRODUCTION_PREPARE,
         reason_code="SELECTED_FINAL_REVIEW_RECOVERY_PRIORITIZE_BLOCKED",
+    ):
+        return None
+    if terminal_regrant_preimage is not None and not (
+        terminal_regrant_runtime.seal_queue_rebound(
+            date,
+            state,
+            candidate_ids=candidate_ids,
+            preimage=terminal_regrant_preimage,
+            phase=RECOVERY_REBOUND_PRODUCTION_PREPARE,
+            reason_code="SELECTED_FINAL_REVIEW_TERMINAL_REGRANT_PRIORITIZE_BLOCKED",
+        )
     ):
         return None
     if preimage is not None:
@@ -1412,9 +1439,7 @@ def reprioritize(state: dict, candidate_ids: tuple[str, ...] | None) -> None:
         state,
         frozen_talk_candidate_ids=candidate_ids,
         allow_song_work=candidate_ids is None,
-        allow_published_topic_review=not bool(
-            _topic_scope_candidate_ids(state, candidate_ids)
-        )
+        allow_published_topic_review=not bool(_topic_scope_candidate_ids(state, candidate_ids))
         and not topic_review_already_terminal,
     )
 
@@ -1428,13 +1453,29 @@ def prepare_production_context(
 
     preimage = _topic_transition_preimage(state, candidate_ids)
     final_review_preimage = _final_review_transition_preimage(state, candidate_ids)
-    items = _runner.scoped_pending_talk_items(state, candidate_ids)
-    routing_claim = _runner.prepare_speaker_routing(date, items, state=state)
-    song_names = _runner.collect_song_name_candidates(date, state)
-    if song_names:
-        for item in _runner.scoped_pending_talk_items(state, candidate_ids):
-            if isinstance(item, dict):
-                item["song_name_candidates"] = song_names
+    terminal_regrant_preimage = terminal_regrant_runtime.transition_preimage(state, candidate_ids)
+    try:
+        items = _runner.scoped_pending_talk_items(state, candidate_ids)
+        routing_claim = _runner.prepare_speaker_routing(date, items, state=state)
+        song_names = _runner.collect_song_name_candidates(date, state)
+        if song_names:
+            for item in _runner.scoped_pending_talk_items(state, candidate_ids):
+                if isinstance(item, dict):
+                    item["song_name_candidates"] = song_names
+    except Exception:
+        if terminal_regrant_preimage is None:
+            raise
+        values = terminal_regrant_runtime.scope_candidate_ids(
+            terminal_regrant_preimage, candidate_ids
+        )
+        terminal_regrant_runtime.restore_transition_block(
+            state,
+            terminal_regrant_preimage,
+            date=date,
+            candidate_ids=values,
+            reason_code=("SELECTED_FINAL_REVIEW_TERMINAL_REGRANT_PRODUCTION_PREPARE_BLOCKED"),
+        )
+        return False, None
     if final_review_preimage is not None and not _seal_final_review_queue_rebound(
         date,
         state,
@@ -1442,6 +1483,17 @@ def prepare_production_context(
         preimage=final_review_preimage,
         phase=RECOVERY_REBOUND_PRODUCTION_PREPARE,
         reason_code="SELECTED_FINAL_REVIEW_RECOVERY_PRODUCTION_PREPARE_BLOCKED",
+    ):
+        return False, None
+    if terminal_regrant_preimage is not None and not (
+        terminal_regrant_runtime.seal_queue_rebound(
+            date,
+            state,
+            candidate_ids=candidate_ids,
+            preimage=terminal_regrant_preimage,
+            phase=RECOVERY_REBOUND_PRODUCTION_PREPARE,
+            reason_code=("SELECTED_FINAL_REVIEW_TERMINAL_REGRANT_PRODUCTION_PREPARE_BLOCKED"),
+        )
     ):
         return False, None
     if preimage is None:
@@ -1471,13 +1523,14 @@ def prepare_production_context(
 def production_preimage(
     state: Mapping[str, object], candidate_ids: tuple[str, ...] | None
 ) -> dict | None:
-    """Capture the exact v5-v7 input immediately before producer dispatch."""
+    """Capture the exact v5-v8 input immediately before producer dispatch."""
 
     return (
         deepcopy(dict(state))
         if (
             _source_fact_scope_candidate_ids(state, candidate_ids)
             or _final_review_scope_candidate_ids(state, candidate_ids)
+            or terminal_regrant_runtime.scope_candidate_ids(state, candidate_ids)
         )
         else _topic_transition_preimage(state, candidate_ids)
     )
@@ -1493,6 +1546,14 @@ def seal_production_transition(
 
     if preimage is None:
         return True
+    terminal_regrant_values = terminal_regrant_runtime.scope_candidate_ids(preimage, candidate_ids)
+    if terminal_regrant_values:
+        return terminal_regrant_runtime.seal_production_transition(
+            date,
+            state,
+            candidate_ids=candidate_ids,
+            preimage=preimage,
+        )
     source_fact_values = _source_fact_scope_candidate_ids(preimage, candidate_ids)
     final_review_values = _final_review_scope_candidate_ids(preimage, candidate_ids)
     receipt_values = source_fact_values or final_review_values
@@ -1517,9 +1578,7 @@ def seal_production_transition(
 
         candidate_id = receipt_values[0]
         grant_id = (
-            _final_review_grant_id(preimage)
-            if final_review
-            else _source_fact_grant_id(preimage)
+            _final_review_grant_id(preimage) if final_review else _source_fact_grant_id(preimage)
         )
         before_rows = _target_talk_rows(preimage, candidate_id)
         after_rows = _target_talk_rows(state, candidate_id)
@@ -1548,10 +1607,7 @@ def seal_production_transition(
                 )
             )
             after_collection, after_row = after_rows[0]
-            if (
-                before_valid
-                and after_collection in _QUEUED_TALK_COLLECTIONS
-            ):
+            if before_valid and after_collection in _QUEUED_TALK_COLLECTIONS:
                 transition_ok = bool(
                     after_row.get(RECOVERY_RECEIPT_FIELD) == receipt
                     and validate_queue(
@@ -1581,13 +1637,11 @@ def seal_production_transition(
                         allow_queue_rebound=True,
                     )
                     after_row[RECOVERY_RECEIPT_FIELD] = next_receipt
-                    transition_ok = (
-                        validate_consumed(
-                            next_receipt,
-                            candidate_id=candidate_id,
-                            grant_id=grant_id,
-                            consumed_row=after_row,
-                        )
+                    transition_ok = validate_consumed(
+                        next_receipt,
+                        candidate_id=candidate_id,
+                        grant_id=grant_id,
+                        consumed_row=after_row,
                     )
                 except Exception:  # noqa: BLE001 - rollback owns this commit point
                     transition_ok = False
@@ -1640,12 +1694,13 @@ def repair_covers(
 ) -> None:
     if not automatic_maintenance:
         return
-    if _topic_scope_candidate_ids(state, candidate_ids) or (
-        _source_fact_scope_candidate_ids(state, candidate_ids)
-    ) or (
-        _final_review_scope_candidate_ids(state, candidate_ids)
+    if (
+        _topic_scope_candidate_ids(state, candidate_ids)
+        or (_source_fact_scope_candidate_ids(state, candidate_ids))
+        or (_final_review_scope_candidate_ids(state, candidate_ids))
+        or (terminal_regrant_runtime.scope_candidate_ids(state, candidate_ids))
     ):
-        # v5-v7 bind every current row by full SHA.  Cover maintenance persists
+        # v5-v8 bind every current row by full SHA.  Cover maintenance persists
         # several in-place partial states internally, so the released candidate
         # must instead requeue through the sealed full-producer path next tick.
         return

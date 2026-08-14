@@ -347,7 +347,7 @@ def _receipt_transitions_are_prefix(
     )
 
 
-def validate_terminal_handoff_state(
+def _validate_terminal_handoff_state_v7(
     state: Mapping[str, object], candidate_id: str, marker: Mapping[str, object]
 ) -> bool:
     """Validate the historical handoff solely from its embedded v7 authority."""
@@ -441,6 +441,38 @@ def validate_terminal_handoff_state(
         ):
             return False
     return True
+
+
+def validate_terminal_handoff_state(
+    state: Mapping[str, object], candidate_id: str, marker: Mapping[str, object]
+) -> bool:
+    """Validate the original v7 head or one marker-preserving v8 descendant."""
+
+    from src.autoslice.selected_final_review_terminal_regrant import (
+        RECOVERY_RECEIPT_FIELD as TERMINAL_REGRANT_RECEIPT_FIELD,
+        validate_terminal_regrant_descendant_state,
+    )
+
+    current_rows = _target_rows(state, _ACTIVE_TALK_COLLECTIONS, candidate_id)
+    history = (
+        state.get("talk_superseded_attempts")
+        if isinstance(state.get("talk_superseded_attempts"), list)
+        else []
+    )
+    has_v8_evidence = any(
+        isinstance(row, Mapping)
+        and _candidate_id(row) == candidate_id
+        and row.get(TERMINAL_REGRANT_RECEIPT_FIELD) is not None
+        for row in [*(row for _collection, row in current_rows), *history]
+    )
+    if has_v8_evidence:
+        return validate_terminal_regrant_descendant_state(
+            state,
+            candidate_id,
+            marker,
+            parent_validator=_validate_terminal_handoff_state_v7,
+        )
+    return _validate_terminal_handoff_state_v7(state, candidate_id, marker)
 
 
 def build_terminal_handoff_marker(

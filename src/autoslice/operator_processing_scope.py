@@ -76,6 +76,8 @@ SOURCE_FACT_RECOVERY_GRANT_SCHEMA = "operator-processing-scope-grant.v6"
 SOURCE_FACT_RECOVERY_INTENT = "RECOVER_NAMED_SELECTED_SOURCE_FACT_REJECTION"
 FINAL_REVIEW_RECOVERY_GRANT_SCHEMA = "operator-processing-scope-grant.v7"
 FINAL_REVIEW_RECOVERY_INTENT = "RECOVER_NAMED_SELECTED_FINAL_REVIEW_REJECTION"
+FINAL_REVIEW_TERMINAL_REGRANT_SCHEMA = "operator-processing-scope-grant.v8"
+FINAL_REVIEW_TERMINAL_REGRANT_INTENT = "REGRANT_NAMED_SELECTED_FINAL_REVIEW_TERMINAL_REJECTION"
 DISCLOSURE_SCHEMA = "operator-processing-scope-disclosure.v1"
 FAILED_PICK_RECOVERY_DISCLOSURE_SCHEMA = "operator-processing-scope-disclosure.v2"
 HELD_CURRENT_RERENDER_DISCLOSURE_SCHEMA = "operator-processing-scope-disclosure.v3"
@@ -83,6 +85,7 @@ SPEAKER_HOLD_RECOVERY_DISCLOSURE_SCHEMA = "operator-processing-scope-disclosure.
 TOPIC_HOLD_RECOVERY_DISCLOSURE_SCHEMA = "operator-processing-scope-disclosure.v5"
 SOURCE_FACT_RECOVERY_DISCLOSURE_SCHEMA = "operator-processing-scope-disclosure.v6"
 FINAL_REVIEW_RECOVERY_DISCLOSURE_SCHEMA = "operator-processing-scope-disclosure.v7"
+FINAL_REVIEW_TERMINAL_REGRANT_DISCLOSURE_SCHEMA = "operator-processing-scope-disclosure.v8"
 STATE_KEY = "operator_processing_scope"
 DISCLOSURE_KEY = "operator_processing_scope_disclosure"
 # 出处文本的下限沿用 talk_quota_authority._authority_text 的口径：短于 8 个字符的
@@ -102,8 +105,10 @@ _GRANT_FIELDS = frozenset(
     }
 )
 _FAILED_PICK_RECOVERY_GRANT_FIELDS = _GRANT_FIELDS | {"intent"}
-_HELD_CURRENT_RERENDER_GRANT_FIELDS = _FAILED_PICK_RECOVERY_GRANT_FIELDS | {
-    "upload_allowed"
+_HELD_CURRENT_RERENDER_GRANT_FIELDS = _FAILED_PICK_RECOVERY_GRANT_FIELDS | {"upload_allowed"}
+_FINAL_REVIEW_TERMINAL_REGRANT_FIELDS = _HELD_CURRENT_RERENDER_GRANT_FIELDS | {
+    "attempt_limit",
+    "predecessor",
 }
 _AUTHORIZATION_FIELDS = frozenset({"quote", "timestamp"})
 # 候选还"排着队"的两个集合。其余 CANDIDATE_COLLECTIONS 成员（picks / 低信心分
@@ -163,13 +168,47 @@ def _ids_in(state: Mapping[str, object], keys: Sequence[str]) -> set[str]:
 
 def _has_final_review_recovery_receipt(state: Mapping[str, object]) -> bool:
     return any(
-        isinstance(row, Mapping)
-        and row.get("selected_final_review_recovery") is not None
+        isinstance(row, Mapping) and row.get("selected_final_review_recovery") is not None
         for key in _FINAL_REVIEW_RECEIPT_COLLECTIONS
-        for row in (
-            state.get(key) if isinstance(state.get(key), list) else []
-        )
+        for row in (state.get(key) if isinstance(state.get(key), list) else [])
     )
+
+
+def _has_final_review_terminal_regrant_receipt(
+    state: Mapping[str, object],
+) -> bool:
+    return any(
+        isinstance(row, Mapping) and row.get("selected_final_review_terminal_regrant") is not None
+        for key in _FINAL_REVIEW_RECEIPT_COLLECTIONS
+        for row in (state.get(key) if isinstance(state.get(key), list) else [])
+    )
+
+
+def _active_final_review_terminal_regrant_receipt_ids(
+    state: Mapping[str, object],
+) -> set[str] | None:
+    """Return current v8 CIDs; malformed/foreign-headed rows fail closed."""
+
+    found: set[str] = set()
+    for key in _FINAL_REVIEW_RECEIPT_COLLECTIONS[:-1]:
+        rows = state.get(key)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            receipt = row.get("selected_final_review_terminal_regrant")
+            if receipt is None:
+                continue
+            candidate_id = _row_candidate_id(row)
+            if not (
+                candidate_id
+                and isinstance(receipt, Mapping)
+                and receipt.get("candidate_id") == candidate_id
+            ):
+                return None
+            found.add(candidate_id)
+    return found
 
 
 def _text(value: object, *, minimum: int = 1) -> str | None:
@@ -213,40 +252,33 @@ def _validate_grant(block: object) -> tuple[dict[str, object] | None, str]:
     elif schema_version == HELD_CURRENT_RERENDER_GRANT_SCHEMA:
         expected_fields = _HELD_CURRENT_RERENDER_GRANT_FIELDS
         intent = block.get("intent")
-        if (
-            intent != HELD_CURRENT_RERENDER_INTENT
-            or block.get("upload_allowed") is not False
-        ):
+        if intent != HELD_CURRENT_RERENDER_INTENT or block.get("upload_allowed") is not False:
             return None, "SCHEMA_INVALID"
     elif schema_version == SPEAKER_HOLD_RECOVERY_GRANT_SCHEMA:
         expected_fields = _HELD_CURRENT_RERENDER_GRANT_FIELDS
         intent = block.get("intent")
-        if (
-            intent != SPEAKER_HOLD_RECOVERY_INTENT
-            or block.get("upload_allowed") is not False
-        ):
+        if intent != SPEAKER_HOLD_RECOVERY_INTENT or block.get("upload_allowed") is not False:
             return None, "SCHEMA_INVALID"
     elif schema_version == TOPIC_HOLD_RECOVERY_GRANT_SCHEMA:
         expected_fields = _HELD_CURRENT_RERENDER_GRANT_FIELDS
         intent = block.get("intent")
-        if (
-            intent != TOPIC_HOLD_RECOVERY_INTENT
-            or block.get("upload_allowed") is not False
-        ):
+        if intent != TOPIC_HOLD_RECOVERY_INTENT or block.get("upload_allowed") is not False:
             return None, "SCHEMA_INVALID"
     elif schema_version == SOURCE_FACT_RECOVERY_GRANT_SCHEMA:
         expected_fields = _HELD_CURRENT_RERENDER_GRANT_FIELDS
         intent = block.get("intent")
-        if (
-            intent != SOURCE_FACT_RECOVERY_INTENT
-            or block.get("upload_allowed") is not False
-        ):
+        if intent != SOURCE_FACT_RECOVERY_INTENT or block.get("upload_allowed") is not False:
             return None, "SCHEMA_INVALID"
     elif schema_version == FINAL_REVIEW_RECOVERY_GRANT_SCHEMA:
         expected_fields = _HELD_CURRENT_RERENDER_GRANT_FIELDS
         intent = block.get("intent")
+        if intent != FINAL_REVIEW_RECOVERY_INTENT or block.get("upload_allowed") is not False:
+            return None, "SCHEMA_INVALID"
+    elif schema_version == FINAL_REVIEW_TERMINAL_REGRANT_SCHEMA:
+        expected_fields = _FINAL_REVIEW_TERMINAL_REGRANT_FIELDS
+        intent = block.get("intent")
         if (
-            intent != FINAL_REVIEW_RECOVERY_INTENT
+            intent != FINAL_REVIEW_TERMINAL_REGRANT_INTENT
             or block.get("upload_allowed") is not False
         ):
             return None, "SCHEMA_INVALID"
@@ -270,13 +302,18 @@ def _validate_grant(block: object) -> tuple[dict[str, object] | None, str]:
         if candidate_id is None or candidate_id in candidate_ids:
             return None, "SCHEMA_INVALID"
         candidate_ids.append(candidate_id)
-    if intent in {
-        HELD_CURRENT_RERENDER_INTENT,
-        SPEAKER_HOLD_RECOVERY_INTENT,
-        TOPIC_HOLD_RECOVERY_INTENT,
-        SOURCE_FACT_RECOVERY_INTENT,
-        FINAL_REVIEW_RECOVERY_INTENT,
-    } and len(candidate_ids) != 1:
+    if (
+        intent
+        in {
+            HELD_CURRENT_RERENDER_INTENT,
+            SPEAKER_HOLD_RECOVERY_INTENT,
+            TOPIC_HOLD_RECOVERY_INTENT,
+            SOURCE_FACT_RECOVERY_INTENT,
+            FINAL_REVIEW_RECOVERY_INTENT,
+            FINAL_REVIEW_TERMINAL_REGRANT_INTENT,
+        }
+        and len(candidate_ids) != 1
+    ):
         return None, "SCHEMA_INVALID"
     authorization = block.get("user_authorization")
     if (
@@ -290,6 +327,17 @@ def _validate_grant(block: object) -> tuple[dict[str, object] | None, str]:
     expires_at = _utc(block.get("expires_at"))
     if expires_at is None:
         return None, "SCHEMA_INVALID"
+    if schema_version == FINAL_REVIEW_TERMINAL_REGRANT_SCHEMA:
+        from src.autoslice.selected_final_review_terminal_regrant import (
+            valid_terminal_regrant_grant,
+        )
+
+        if not valid_terminal_regrant_grant(
+            block,
+            candidate_id=candidate_ids[0],
+            recording_date=recording_date,
+        ):
+            return None, "SCHEMA_INVALID"
     return (
         {
             "schema_version": schema_version,
@@ -302,6 +350,8 @@ def _validate_grant(block: object) -> tuple[dict[str, object] | None, str]:
             "authorized_at": _utc(authorization.get("timestamp")),
             "expires_at": expires_at,
             "upload_allowed": block.get("upload_allowed"),
+            "attempt_limit": block.get("attempt_limit"),
+            "predecessor": copy.deepcopy(block.get("predecessor")),
         },
         "OK",
     )
@@ -440,14 +490,10 @@ def _speaker_hold_recovery_outstanding(
     try:
         from src.autoslice.runner_proxy import RunnerProxy
 
-        current = RunnerProxy().talk_failure_recovery_fingerprint(
-            "speaker_evidence", candidate_id
-        )
+        current = RunnerProxy().talk_failure_recovery_fingerprint("speaker_evidence", candidate_id)
     except Exception:  # noqa: BLE001 - authority calculation must fail closed
         return None, "SPEAKER_RECOVERY_FINGERPRINT_UNAVAILABLE"
-    recorded = row.get("failure_recovery_fingerprint") or row.get(
-        "pipeline_fingerprint"
-    )
+    recorded = row.get("failure_recovery_fingerprint") or row.get("pipeline_fingerprint")
     if not (
         isinstance(recorded, str)
         and _SHA256_RX.fullmatch(recorded)
@@ -565,6 +611,34 @@ def _final_review_recovery_outstanding(
     return None, "SELECTED_FINAL_REVIEW_RECOVERY_UNKNOWN_DISPOSITION"
 
 
+def _final_review_terminal_regrant_outstanding(
+    state: Mapping[str, object], *, candidate_id: str
+) -> tuple[bool | None, str]:
+    """Inspect one fresh v8 authority over a consumed terminal v7 receipt."""
+
+    from src.autoslice.selected_final_review_terminal_regrant import (
+        BLOCKED,
+        CONVERGED,
+        OUTSTANDING,
+        READY_TO_REQUEUE,
+        inspect_selected_final_review_terminal_regrant,
+    )
+
+    block = state.get(STATE_KEY)
+    if not isinstance(block, Mapping):
+        return None, "SELECTED_FINAL_REVIEW_TERMINAL_REGRANT_BLOCKED"
+    inspection = inspect_selected_final_review_terminal_regrant(
+        state, candidate_id=candidate_id, grant=block
+    )
+    if inspection.outcome == BLOCKED:
+        return None, inspection.reason_code
+    if inspection.outcome == CONVERGED:
+        return False, inspection.reason_code
+    if inspection.outcome in {READY_TO_REQUEUE, OUTSTANDING}:
+        return True, inspection.reason_code
+    return None, "SELECTED_FINAL_REVIEW_TERMINAL_REGRANT_UNKNOWN_DISPOSITION"
+
+
 def operator_scope_admission(
     state: Mapping[str, object],
     *,
@@ -601,11 +675,16 @@ def operator_scope_admission(
             ),
         )
     moment = now or datetime.now(timezone.utc)
-    if intent in {
-        TOPIC_HOLD_RECOVERY_INTENT,
-        SOURCE_FACT_RECOVERY_INTENT,
-        FINAL_REVIEW_RECOVERY_INTENT,
-    } and moment >= grant["expires_at"]:  # type: ignore[operator]
+    if (
+        intent
+        in {
+            TOPIC_HOLD_RECOVERY_INTENT,
+            SOURCE_FACT_RECOVERY_INTENT,
+            FINAL_REVIEW_RECOVERY_INTENT,
+            FINAL_REVIEW_TERMINAL_REGRANT_INTENT,
+        }
+        and moment >= grant["expires_at"]
+    ):  # type: ignore[operator]
         # v5 may inspect repository-bound resolution bytes and v6 computes a
         # live recovery fingerprint.  Expiry wins before either performs I/O.
         return OperatorScopeAdmission(
@@ -671,16 +750,12 @@ def operator_scope_admission(
                 held_reason,
                 grant_id,
                 candidate_ids,
-                log_line=(
-                    f"operator scope grant {grant_id} blocked ({held_reason})"
-                ),
+                log_line=(f"operator scope grant {grant_id} blocked ({held_reason})"),
                 detail=held_reason,
             )
         outstanding = candidate_ids if is_outstanding else ()
     elif intent == SPEAKER_HOLD_RECOVERY_INTENT:
-        is_outstanding, speaker_reason = _speaker_hold_recovery_outstanding(
-            state, candidate_ids[0]
-        )
+        is_outstanding, speaker_reason = _speaker_hold_recovery_outstanding(state, candidate_ids[0])
         if is_outstanding is None:
             return OperatorScopeAdmission(
                 False,
@@ -692,9 +767,7 @@ def operator_scope_admission(
             )
         outstanding = candidate_ids if is_outstanding else ()
     elif intent == TOPIC_HOLD_RECOVERY_INTENT:
-        is_outstanding, topic_reason = _topic_hold_recovery_outstanding(
-            state, candidate_ids[0]
-        )
+        is_outstanding, topic_reason = _topic_hold_recovery_outstanding(state, candidate_ids[0])
         if is_outstanding is None:
             return OperatorScopeAdmission(
                 False,
@@ -717,9 +790,7 @@ def operator_scope_admission(
                 source_fact_reason,
                 grant_id,
                 candidate_ids,
-                log_line=(
-                    f"operator scope grant {grant_id} blocked ({source_fact_reason})"
-                ),
+                log_line=(f"operator scope grant {grant_id} blocked ({source_fact_reason})"),
                 detail=source_fact_reason,
             )
         outstanding = candidate_ids if is_outstanding else ()
@@ -735,10 +806,22 @@ def operator_scope_admission(
                 final_review_reason,
                 grant_id,
                 candidate_ids,
-                log_line=(
-                    f"operator scope grant {grant_id} blocked ({final_review_reason})"
-                ),
+                log_line=(f"operator scope grant {grant_id} blocked ({final_review_reason})"),
                 detail=final_review_reason,
+            )
+        outstanding = candidate_ids if is_outstanding else ()
+    elif intent == FINAL_REVIEW_TERMINAL_REGRANT_INTENT:
+        is_outstanding, terminal_regrant_reason = _final_review_terminal_regrant_outstanding(
+            state, candidate_id=candidate_ids[0]
+        )
+        if is_outstanding is None:
+            return OperatorScopeAdmission(
+                False,
+                terminal_regrant_reason,
+                grant_id,
+                candidate_ids,
+                log_line=(f"operator scope grant {grant_id} blocked ({terminal_regrant_reason})"),
+                detail=terminal_regrant_reason,
             )
         outstanding = candidate_ids if is_outstanding else ()
     else:
@@ -782,6 +865,8 @@ def operator_scope_admission(
             if intent == SOURCE_FACT_RECOVERY_INTENT
             else FINAL_REVIEW_RECOVERY_DISCLOSURE_SCHEMA
             if intent == FINAL_REVIEW_RECOVERY_INTENT
+            else FINAL_REVIEW_TERMINAL_REGRANT_DISCLOSURE_SCHEMA
+            if intent == FINAL_REVIEW_TERMINAL_REGRANT_INTENT
             else FAILED_PICK_RECOVERY_DISCLOSURE_SCHEMA
             if intent == FAILED_PICK_RECOVERY_INTENT
             else DISCLOSURE_SCHEMA
@@ -799,6 +884,7 @@ def operator_scope_admission(
         TOPIC_HOLD_RECOVERY_INTENT,
         SOURCE_FACT_RECOVERY_INTENT,
         FINAL_REVIEW_RECOVERY_INTENT,
+        FINAL_REVIEW_TERMINAL_REGRANT_INTENT,
     }:
         disclosure["intent"] = intent
     if intent in {
@@ -807,6 +893,7 @@ def operator_scope_admission(
         TOPIC_HOLD_RECOVERY_INTENT,
         SOURCE_FACT_RECOVERY_INTENT,
         FINAL_REVIEW_RECOVERY_INTENT,
+        FINAL_REVIEW_TERMINAL_REGRANT_INTENT,
     }:
         disclosure["upload_allowed"] = False
     return OperatorScopeAdmission(
@@ -843,13 +930,34 @@ def operator_talk_scope(
 
     moment = now or datetime.now(timezone.utc)
     block = state.get(STATE_KEY)
+    if (
+        isinstance(block, Mapping)
+        and block.get("schema_version") == FINAL_REVIEW_TERMINAL_REGRANT_SCHEMA
+    ):
+        active_v8_ids = _active_final_review_terminal_regrant_receipt_ids(state)
+        raw_ids = block.get("candidate_ids")
+        if (
+            active_v8_ids is None
+            or not isinstance(raw_ids, list)
+            or not active_v8_ids.issubset({value for value in raw_ids if isinstance(value, str)})
+        ):
+            return ()
     if _has_final_review_recovery_receipt(state) and not (
         isinstance(block, Mapping)
-        and block.get("schema_version") == FINAL_REVIEW_RECOVERY_GRANT_SCHEMA
+        and block.get("schema_version")
+        in {
+            FINAL_REVIEW_RECOVERY_GRANT_SCHEMA,
+            FINAL_REVIEW_TERMINAL_REGRANT_SCHEMA,
+        }
     ):
         # A durable v7 lineage is itself a fail-closed capability marker.  Its
         # queue may not fall through into broad Talk production after the grant
         # is deleted, replaced, or becomes unrecognizable.
+        return ()
+    if _has_final_review_terminal_regrant_receipt(state) and not (
+        isinstance(block, Mapping)
+        and block.get("schema_version") == FINAL_REVIEW_TERMINAL_REGRANT_SCHEMA
+    ):
         return ()
     if not isinstance(block, Mapping):
         return None
@@ -892,6 +1000,12 @@ def operator_talk_scope(
             or block.get("upload_allowed") is not False
         ):
             return ()
+    elif schema_version == FINAL_REVIEW_TERMINAL_REGRANT_SCHEMA:
+        if (
+            block.get("intent") != FINAL_REVIEW_TERMINAL_REGRANT_INTENT
+            or block.get("upload_allowed") is not False
+        ):
+            return ()
     else:
         return None
     admission = operator_scope_admission(state, date=date, now=moment)
@@ -910,15 +1024,16 @@ def operator_talk_scope(
             # or Song work on a date that is otherwise still in the live window.
             return ()
         if (
-            schema_version
-            in {
-                HELD_CURRENT_RERENDER_GRANT_SCHEMA,
-                SPEAKER_HOLD_RECOVERY_GRANT_SCHEMA,
-                TOPIC_HOLD_RECOVERY_GRANT_SCHEMA,
-                SOURCE_FACT_RECOVERY_GRANT_SCHEMA,
-            }
-            and admission.reason_code not in {"CONVERGED", "EXPIRED"}
+            schema_version == FINAL_REVIEW_TERMINAL_REGRANT_SCHEMA
+            and admission.reason_code != "CONVERGED"
         ):
+            return ()
+        if schema_version in {
+            HELD_CURRENT_RERENDER_GRANT_SCHEMA,
+            SPEAKER_HOLD_RECOVERY_GRANT_SCHEMA,
+            TOPIC_HOLD_RECOVERY_GRANT_SCHEMA,
+            SOURCE_FACT_RECOVERY_GRANT_SCHEMA,
+        } and admission.reason_code not in {"CONVERGED", "EXPIRED"}:
             return ()
         return None
     talk_ids = _ids_in(state, ("pending_talk", "talk_backlog", "picks"))
@@ -994,6 +1109,8 @@ def hold_talk_outside_operator_scope(
                 if intent == SOURCE_FACT_RECOVERY_INTENT
                 else FINAL_REVIEW_RECOVERY_DISCLOSURE_SCHEMA
                 if intent == FINAL_REVIEW_RECOVERY_INTENT
+                else FINAL_REVIEW_TERMINAL_REGRANT_DISCLOSURE_SCHEMA
+                if intent == FINAL_REVIEW_TERMINAL_REGRANT_INTENT
                 else FAILED_PICK_RECOVERY_DISCLOSURE_SCHEMA
                 if intent == FAILED_PICK_RECOVERY_INTENT
                 else DISCLOSURE_SCHEMA
@@ -1002,11 +1119,7 @@ def hold_talk_outside_operator_scope(
             "recording_date": block.get("recording_date"),
             "candidate_ids": list(candidate_ids),
             "outstanding_candidate_ids": list(candidate_ids),
-            "quote": (
-                authorization.get("quote")
-                if isinstance(authorization, Mapping)
-                else None
-            ),
+            "quote": (authorization.get("quote") if isinstance(authorization, Mapping) else None),
             "scope_mode": "FROZEN_FOR_TICK_TALK_ONLY",
         }
         if intent is not None:
@@ -1017,6 +1130,7 @@ def hold_talk_outside_operator_scope(
             TOPIC_HOLD_RECOVERY_INTENT,
             SOURCE_FACT_RECOVERY_INTENT,
             FINAL_REVIEW_RECOVERY_INTENT,
+            FINAL_REVIEW_TERMINAL_REGRANT_INTENT,
         }:
             disclosure["upload_allowed"] = False
     pending = state.get("pending_talk")
@@ -1059,10 +1173,7 @@ def snapshot_song_state_collections(
 ) -> dict[str, tuple[bool, object]]:
     """Freeze the exact Song-lane preimage for one Talk-only tick."""
 
-    return {
-        key: (key in state, copy.deepcopy(state.get(key)))
-        for key in SONG_STATE_COLLECTIONS
-    }
+    return {key: (key in state, copy.deepcopy(state.get(key))) for key in SONG_STATE_COLLECTIONS}
 
 
 def restore_song_state_collections(

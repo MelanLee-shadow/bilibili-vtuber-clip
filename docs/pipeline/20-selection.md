@@ -220,6 +220,34 @@
   broad maintenance 外；grant 缺失、不可识别或与 receipt 不匹配时，整个 tick 的 Talk scope
   必须冻结为空，不能让仍在 pending 的 receipt row 落回 broad prioritize/producer。不能通过删
   当前 receipt 降格为普通可恢复失败。
+- 已消费 v7 的确定性 `subtitle_authority/chat_authority_final_artifact` terminal pick 不能续期旧
+  grant、覆盖旧 receipt 或退回 v5。只有一个全新的
+  `operator-processing-scope-grant.v8 /
+  REGRANT_NAMED_SELECTED_FINAL_REVIEW_TERMINAL_REJECTION` 可以再授权一次 producer dispatch。
+  v8 必须恰好点名一个 CID、`attempt_limit=1`、显式 `upload_allowed=false`，有效期不得超过六小时；
+  它的 `user_authorization` 必须来自**晚于旧 v5→v7 terminal marker 内嵌授权的另一条真实用户
+  事件**，不得复用旧 quote/timestamp 或由 wrapper 推造。到期判断仍先于 marker、fingerprint、
+  provider ledger 等任何 I/O。
+  predecessor 必须逐字绑定旧 v7 grant ID、已消费 parent v7 receipt SHA、terminal pick 全行 SHA、
+  冻结 marker SHA，以及 recorded/current subtitle-authority recovery fingerprint；新旧 fingerprint
+  只有真实漂移时才 READY，不变即 CONVERGED，任一缺失、异常或反向绑定都 BLOCK。初始 terminal
+  pick 必须是唯一 active Talk、不得出现在任何 Song collection，且 current/history provider-budget
+  ledger 必须为 ABSENT，不能把旧 token 或已消费预算夹带进新的重跑。
+  真重排写并行的 `selected-final-review-terminal-regrant-receipt.v1`，但旧 v7 receipt 和 terminal
+  marker 必须保持原字节。新 receipt 只允许
+  `V7_TERMINAL_PICK_TO_V8_QUEUE → V8_QUEUE_TO_PICK` 两步：session、scorecard、prioritize、production
+  prepare 的 queue rebound 只准使用既有逐相位白名单；producer 的任何 pick 结果（成功、确定性
+  拒绝、基础设施失败、title/可读性门或 cover pending）都会消费这一次 v8，不存在 v8
+  pick→queue/provider-budget continuation。若还需再跑，必须获得另一条新用户授权并设计下一代
+  typed authority，不能刷新本 receipt。
+  旧 published-topic marker 只由 validator 把合法 v8 descendant 解释为历史 `CONVERGED`，不得
+  追加 transition 或随 v8 双写；当前 v8 receipt 丢失而历史仍留 evidence 时必须 BLOCK，不能
+  fallback 到旧 v7 terminal row。初始 pick→queue、每个中间持久化和最终 queue→pick 都是完整
+  preimage 事务；receipt/grant/marker、collection head、非目标 Talk、五个 Song 集合、顶层
+  `upload_allowed` 或 provider ledger 任一漂移都须回滚并写 v8 typed runtime block。当前或历史
+  出现 v8 receipt 的 CID 在 grant 缺失、过期或验签失败时继续从 broad maintenance 排除；另一个
+  CID 的完整历史 receipt 不得阻塞之后的串行恢复，但任何 foreign active v8 epoch 必须冻结当前
+  Talk scope。
 - 精确恢复契约持续压住普通 backlog，直到新的人工恢复计划显式替换；普通 backlog
   在报告里只能显示为 `OUTSIDE_EXACT_CONTRACT / INELIGIBLE`，不能伪装成当前候补。
 - 已由 committed publication registry 标为 `hold_pending_review` 的单条历史

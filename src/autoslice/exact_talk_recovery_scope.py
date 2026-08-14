@@ -10,6 +10,9 @@ from src.autoslice.selected_source_fact_recovery import RECOVERY_RECEIPT_FIELD
 from src.autoslice.selected_final_review_recovery import (
     RECOVERY_RECEIPT_FIELD as FINAL_REVIEW_RECOVERY_RECEIPT_FIELD,
 )
+from src.autoslice.selected_final_review_terminal_regrant import (
+    RECOVERY_RECEIPT_FIELD as FINAL_REVIEW_TERMINAL_REGRANT_RECEIPT_FIELD,
+)
 
 
 _runner = RunnerProxy()
@@ -149,6 +152,47 @@ def _active_v7_final_review_scope(
     )
 
 
+def _terminal_regrant_bound_candidate_ids(state: dict) -> set[str]:
+    """Protect every durable v8 lineage from broad Talk maintenance."""
+
+    protected: set[str] = set()
+    for collection in (
+        "pending_talk",
+        "talk_backlog",
+        "picks",
+        "talk_below_confidence_threshold",
+        "talk_superseded_attempts",
+    ):
+        for row in state.get(collection) or ():
+            if (
+                isinstance(row, dict)
+                and row.get(FINAL_REVIEW_TERMINAL_REGRANT_RECEIPT_FIELD)
+                is not None
+            ):
+                candidate_id = str(
+                    row.get("candidate_id") or row.get("cid") or ""
+                ).strip()
+                if candidate_id:
+                    protected.add(candidate_id)
+    return protected
+
+
+def _active_v8_terminal_regrant_scope(
+    state: dict, candidate_ids: Collection[str] | None
+) -> bool:
+    values = tuple(candidate_ids or ())
+    block = state.get("operator_processing_scope")
+    return bool(
+        len(values) == 1
+        and isinstance(block, dict)
+        and block.get("schema_version") == "operator-processing-scope-grant.v8"
+        and block.get("intent")
+        == "REGRANT_NAMED_SELECTED_FINAL_REVIEW_TERMINAL_REJECTION"
+        and block.get("candidate_ids") == list(values)
+        and block.get("upload_allowed") is False
+    )
+
+
 def suppress_exact_talk_recovery_song_work(
     state: dict, *, phase: str
 ) -> bool:
@@ -216,6 +260,7 @@ def maintain_delivery_recovery_scope(
     marker_bound_ids = _marker_bound_topic_candidate_ids(state)
     source_fact_bound_ids = _source_fact_bound_candidate_ids(state)
     final_review_bound_ids = _final_review_bound_candidate_ids(state)
+    terminal_regrant_bound_ids = _terminal_regrant_bound_candidate_ids(state)
     ledger_invalid = marker_bound_ids is None
     if ledger_invalid:
         # A malformed durable lineage is not equivalent to no lineage.  Keep
@@ -248,6 +293,8 @@ def maintain_delivery_recovery_scope(
                 allowed_talk_ids -= source_fact_bound_ids
             if not _active_v7_final_review_scope(state, talk_candidate_ids):
                 allowed_talk_ids -= final_review_bound_ids
+            if not _active_v8_terminal_regrant_scope(state, talk_candidate_ids):
+                allowed_talk_ids -= terminal_regrant_bound_ids
         failed_talks = (
             _runner.requeue_recoverable_talks(
                 date,
@@ -259,16 +306,25 @@ def maintain_delivery_recovery_scope(
                 or marker_bound_ids
                 or source_fact_bound_ids
                 or final_review_bound_ids
+                or terminal_regrant_bound_ids
             )
             else _runner.requeue_recoverable_talks(date, state)
         )
         blocked_songs = 0
-    elif marker_bound_ids or source_fact_bound_ids or final_review_bound_ids:
+    elif (
+        marker_bound_ids
+        or source_fact_bound_ids
+        or final_review_bound_ids
+        or terminal_regrant_bound_ids
+    ):
         # Durable v5/v6 lineages may only advance under their strict single-CID
         # scopes.  Broad maintenance may still handle unrelated Talk/Song rows,
         # but cannot discard or advance either receipt shape.
         protected_ids = (
-            marker_bound_ids | source_fact_bound_ids | final_review_bound_ids
+            marker_bound_ids
+            | source_fact_bound_ids
+            | final_review_bound_ids
+            | terminal_regrant_bound_ids
         )
         allowed_talk_ids = {
             str(row.get("candidate_id") or row.get("cid") or "")

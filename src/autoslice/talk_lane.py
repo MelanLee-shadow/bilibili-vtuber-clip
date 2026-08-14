@@ -62,6 +62,9 @@ from src.autoslice.selected_source_fact_recovery import (
 from src.autoslice.selected_final_review_recovery import (
     RECOVERY_RECEIPT_FIELD as SELECTED_FINAL_REVIEW_RECOVERY_RECEIPT_FIELD,
 )
+from src.autoslice.selected_final_review_terminal_regrant import (
+    RECOVERY_RECEIPT_FIELD as FINAL_REVIEW_TERMINAL_REGRANT_RECEIPT_FIELD,
+)
 from src.autoslice.selection_scorecard import selection_scorecard_is_valid
 from src.autoslice.talk_quota_freeze import FREEZE_FIELD as TALK_QUOTA_FREEZE_FIELD
 from src.autoslice.speaker_finalizer import (
@@ -1646,6 +1649,8 @@ def _carry_talk_recovery_result(
 
     result = _carry_selected_source_fact_recovery_result(item, result)
     result = _carry_selected_final_review_recovery_result(item, result)
+    if isinstance(terminal := item.get(FINAL_REVIEW_TERMINAL_REGRANT_RECEIPT_FIELD), Mapping):
+        result[FINAL_REVIEW_TERMINAL_REGRANT_RECEIPT_FIELD] = copy.deepcopy(terminal)
     return carry_validated_active_provider_budget_ledger(
         item,
         result,

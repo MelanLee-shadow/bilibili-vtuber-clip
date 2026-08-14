@@ -30,6 +30,9 @@ from src.autoslice.selected_source_fact_recovery import (
 from src.autoslice.selected_final_review_recovery import (
     RECOVERY_RECEIPT_FIELD as SELECTED_FINAL_REVIEW_RECOVERY_RECEIPT_FIELD,
 )
+from src.autoslice.selected_final_review_terminal_regrant import (
+    RECOVERY_RECEIPT_FIELD as FINAL_REVIEW_TERMINAL_REGRANT_RECEIPT_FIELD,
+)
 
 _FAILED_ITEM_PASSTHROUGH_KEYS = (
     "hook",
@@ -244,6 +247,11 @@ def produce_batch_windowed(
             if isinstance(final_review_receipt, Mapping):
                 result[SELECTED_FINAL_REVIEW_RECOVERY_RECEIPT_FIELD] = (
                     copy.deepcopy(dict(final_review_receipt))
+                )
+            terminal_regrant = item.get(FINAL_REVIEW_TERMINAL_REGRANT_RECEIPT_FIELD)
+            if isinstance(terminal_regrant, Mapping):
+                result[FINAL_REVIEW_TERMINAL_REGRANT_RECEIPT_FIELD] = copy.deepcopy(
+                    dict(terminal_regrant)
                 )
             return result
 
