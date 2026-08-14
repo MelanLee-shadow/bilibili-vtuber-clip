@@ -552,6 +552,464 @@ def _released_retry_state_without_refresh_receipt(
     return state, root, registry
 
 
+def _selected_authority_rejection_with_redundant_stale_hold(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    *,
+    rejection_overrides: dict[str, object] | None = None,
+) -> tuple[dict, Path, dict, dict]:
+    """Build the observed 806 v5 marker head plus its generic stale re-hold."""
+
+    state, root, registry = _released_retry_state_without_refresh_receipt(
+        tmp_path, rows
+    )
+    production_preimage = deepcopy(state)
+    rejected = next(
+        row
+        for row in state["pending_talk"]
+        if row["candidate_id"] == CANDIDATE
+    )
+    state["pending_talk"] = [
+        row
+        for row in state["pending_talk"]
+        if row["candidate_id"] != CANDIDATE
+    ]
+    rejected.update(
+        {
+            "status": "candidate_rejected",
+            "rejected_status": "failed",
+            "selected_repair": True,
+            "rc": 1,
+            "failure_kind": "subtitle_authority",
+            "failure_stage": "chat_authority_final_artifact",
+            "failure_recoverable": False,
+            "failure_recovery_fingerprint": "sha256:" + "1" * 64,
+            "rejection_reason": "subtitle_authority_unresolved_backfilled",
+            **(rejection_overrides or {}),
+        }
+    )
+    state["picks"].append(rejected)
+    assert seal_published_topic_resolution_production_transition(
+        state,
+        CANDIDATE,
+        pre_state=production_preimage,
+        repo_root=root,
+        publication_registry=registry,
+    )
+    holds = hold_published_topic_collision_reviews(
+        state,
+        repo_root=root,
+        publication_registry=registry,
+    )
+    assert len(holds) == 1
+    assert holds[0] == {
+        "candidate_id": CANDIDATE,
+        "disposition": STALE_REVIEW_STATUS,
+        "reason_code": "PUBLISHED_TOPIC_REVIEW_AUTHORITY_STALE",
+        "score_mutated": False,
+        "suppression_authorized": False,
+        "upload_authorized": False,
+        "queue_origin": None,
+        "candidate": rejected,
+        "evidence": {
+            "error": (
+                "PublishedTopicCollisionError: current scorecard refresh "
+                "receipt is missing"
+            )
+        },
+    }
+    return state, root, registry, rejected
+
+
+@pytest.mark.parametrize(
+    ("current_fingerprint", "expected"),
+    [
+        ("sha256:" + "2" * 64, RECOVERY_RELEASED_RETRY_PENDING),
+        ("sha256:" + "1" * 64, RECOVERY_CONVERGED),
+        ("sha256:bad", RECOVERY_BLOCKED),
+    ],
+)
+def test_v5_selected_subtitle_authority_rejection_uses_exact_recovery_fingerprint(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+    current_fingerprint: str,
+    expected: str,
+) -> None:
+    state, root, registry, _rejected = (
+        _selected_authority_rejection_with_redundant_stale_hold(tmp_path, rows)
+    )
+    preimage = deepcopy(state)
+    monkeypatch.setattr(
+        RunnerProxy,
+        "talk_failure_recovery_fingerprint",
+        lambda _self, kind, candidate_id: (
+            current_fingerprint
+            if (kind, candidate_id) == ("subtitle_authority", CANDIDATE)
+            else pytest.fail("fingerprint probe widened beyond the exact target")
+        ),
+        raising=False,
+    )
+
+    assert (
+        inspect_published_topic_resolution_recovery(
+            state,
+            CANDIDATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == expected
+    )
+    assert state == preimage
+
+
+def test_v5_selected_subtitle_authority_rejection_blocks_fingerprint_errors(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state, root, registry, _rejected = (
+        _selected_authority_rejection_with_redundant_stale_hold(tmp_path, rows)
+    )
+    preimage = deepcopy(state)
+    monkeypatch.setattr(
+        RunnerProxy,
+        "talk_failure_recovery_fingerprint",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("current fingerprint failed")),
+        raising=False,
+    )
+
+    assert (
+        inspect_published_topic_resolution_recovery(
+            state,
+            CANDIDATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == RECOVERY_BLOCKED
+    )
+    assert state == preimage
+
+
+def test_v5_selected_subtitle_authority_rejection_ignores_unrelated_holds(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state, root, registry, _rejected = (
+        _selected_authority_rejection_with_redundant_stale_hold(tmp_path, rows)
+    )
+    state[REVIEW_STATE_FIELD]["holds"].append(
+        {"candidate_id": DISTINCT, "candidate": {"candidate_id": DISTINCT}}
+    )
+    preimage = deepcopy(state)
+    monkeypatch.setattr(
+        RunnerProxy,
+        "talk_failure_recovery_fingerprint",
+        lambda _self, _kind, _candidate_id: "sha256:" + "2" * 64,
+        raising=False,
+    )
+
+    assert (
+        inspect_published_topic_resolution_recovery(
+            state,
+            CANDIDATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == RECOVERY_RELEASED_RETRY_PENDING
+    )
+    assert state == preimage
+
+
+@pytest.mark.parametrize("recorded", [None, "sha256:bad"])
+def test_v5_selected_subtitle_authority_rejection_blocks_malformed_recorded_fingerprint(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+    recorded: object,
+) -> None:
+    state, root, registry, _rejected = (
+        _selected_authority_rejection_with_redundant_stale_hold(
+            tmp_path,
+            rows,
+            rejection_overrides={"failure_recovery_fingerprint": recorded},
+        )
+    )
+    preimage = deepcopy(state)
+    monkeypatch.setattr(
+        RunnerProxy,
+        "talk_failure_recovery_fingerprint",
+        lambda *_args: pytest.fail("malformed recorded fingerprint must short-circuit"),
+        raising=False,
+    )
+
+    assert (
+        inspect_published_topic_resolution_recovery(
+            state,
+            CANDIDATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == RECOVERY_BLOCKED
+    )
+    assert state == preimage
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("rejected_status", "boundary_unrepairable"),
+        ("selected_repair", False),
+        ("rc", 0),
+        ("failure_kind", "content_boundary"),
+        ("failure_kind", "speaker_evidence"),
+        ("failure_stage", "chat_authority_finalization"),
+        ("failure_stage", "final_review_findings"),
+        ("failure_stage", "speaker_finalization"),
+        ("failure_recoverable", True),
+        ("rejection_reason", "story_contract_unresolved_backfilled"),
+    ],
+)
+def test_v5_selected_subtitle_authority_rejection_shape_does_not_widen(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: object,
+) -> None:
+    state, root, registry, _rejected = (
+        _selected_authority_rejection_with_redundant_stale_hold(
+            tmp_path, rows, rejection_overrides={field: value}
+        )
+    )
+    preimage = deepcopy(state)
+    monkeypatch.setattr(
+        RunnerProxy,
+        "talk_failure_recovery_fingerprint",
+        lambda *_args: pytest.fail("non-exact rejection must not probe fingerprint"),
+        raising=False,
+    )
+
+    assert (
+        inspect_published_topic_resolution_recovery(
+            state,
+            CANDIDATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == RECOVERY_BLOCKED
+    )
+    assert state == preimage
+
+
+@pytest.mark.parametrize(
+    "drift",
+    [
+        "candidate",
+        "candidate_identity",
+        "score_flag",
+        "suppression_flag",
+        "upload_flag",
+        "queue_origin",
+        "evidence",
+        "marker_head_hash",
+        "review_schema",
+        "review_extra",
+        "missing_holds",
+        "extra_field",
+        "missing_field",
+        "duplicate",
+    ],
+)
+def test_v5_selected_subtitle_authority_rejection_blocks_stale_hold_drift(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+) -> None:
+    state, root, registry, _rejected = (
+        _selected_authority_rejection_with_redundant_stale_hold(tmp_path, rows)
+    )
+    holds = state[REVIEW_STATE_FIELD]["holds"]
+    hold = holds[0]
+    if drift == "candidate":
+        hold["candidate"]["hook"] += "（漂移）"
+    elif drift == "candidate_identity":
+        hold["candidate_id"] = DISTINCT
+    elif drift == "score_flag":
+        hold["score_mutated"] = True
+    elif drift == "suppression_flag":
+        hold["suppression_authorized"] = True
+    elif drift == "upload_flag":
+        hold["upload_authorized"] = True
+    elif drift == "queue_origin":
+        hold["queue_origin"] = "pending_talk"
+    elif drift == "evidence":
+        hold["evidence"]["error"] += "（漂移）"
+    elif drift == "marker_head_hash":
+        marker = state[RECOVERY_MARKER_FIELD]["entries"][CANDIDATE]
+        marker["current_row_binding"]["row_sha256"] = "sha256:" + "9" * 64
+        marker["marker_sha256"] = canonical_sha256(
+            {key: value for key, value in marker.items() if key != "marker_sha256"}
+        )
+        ledger = state[RECOVERY_MARKER_FIELD]
+        ledger["ledger_sha256"] = canonical_sha256(
+            {key: value for key, value in ledger.items() if key != "ledger_sha256"}
+        )
+    elif drift == "review_schema":
+        state[REVIEW_STATE_FIELD]["schema_version"] = "tampered-review-state.v1"
+    elif drift == "review_extra":
+        state[REVIEW_STATE_FIELD]["unsealed"] = True
+    elif drift == "missing_holds":
+        state[REVIEW_STATE_FIELD].pop("holds")
+    elif drift == "extra_field":
+        hold["unsealed"] = True
+    elif drift == "missing_field":
+        hold.pop("score_mutated")
+    else:
+        holds.append(deepcopy(hold))
+    preimage = deepcopy(state)
+    monkeypatch.setattr(
+        RunnerProxy,
+        "talk_failure_recovery_fingerprint",
+        lambda *_args: pytest.fail("drifted hold must block before fingerprint probe"),
+        raising=False,
+    )
+
+    assert (
+        inspect_published_topic_resolution_recovery(
+            state,
+            CANDIDATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == RECOVERY_BLOCKED
+    )
+    assert state == preimage
+
+
+def test_v5_selected_subtitle_authority_stale_rehold_is_removed_then_requeued_with_lineage(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.autoslice import published_topic_collision as topic_collision
+
+    state, root, registry, rejected = (
+        _selected_authority_rejection_with_redundant_stale_hold(tmp_path, rows)
+    )
+    song_preimage = deepcopy(
+        {
+            key: state[key]
+            for key in (
+                "pending_song",
+                "song_backlog",
+                "song_selection_backlog",
+                "songs",
+                "song_superseded_attempts",
+            )
+        }
+    )
+    original_inspect = inspect_published_topic_resolution_recovery
+    original_advance = advance_published_topic_resolution_recovery
+
+    def inspect_scoped(value: dict, candidate_id: str) -> str:
+        return original_inspect(
+            value,
+            candidate_id,
+            repo_root=root,
+            publication_registry=registry,
+        )
+
+    def advance_scoped(value: dict, candidate_id: str, **kwargs) -> bool:
+        return original_advance(
+            value,
+            candidate_id,
+            **kwargs,
+            repo_root=root,
+            publication_registry=registry,
+        )
+
+    monkeypatch.setattr(
+        topic_collision,
+        "inspect_published_topic_resolution_recovery",
+        inspect_scoped,
+    )
+    monkeypatch.setattr(
+        topic_collision,
+        "advance_published_topic_resolution_recovery",
+        advance_scoped,
+    )
+    monkeypatch.setattr(
+        RunnerProxy,
+        "talk_failure_recovery_fingerprint",
+        lambda _self, kind, candidate_id: (
+            "sha256:" + "2" * 64
+            if (kind, candidate_id) == ("subtitle_authority", CANDIDATE)
+            else pytest.fail("fingerprint probe widened beyond the exact target")
+        ),
+        raising=False,
+    )
+
+    def generic_requeue(
+        _date: str,
+        value: dict,
+        *,
+        automatic_maintenance: bool,
+        talk_candidate_ids: tuple[str, ...],
+    ) -> tuple[int, int, int, int, bool]:
+        assert automatic_maintenance is True
+        assert tuple(talk_candidate_ids) == (CANDIDATE,)
+        assert value[REVIEW_STATE_FIELD]["holds"] == []
+        failed = next(
+            row for row in value["picks"] if row.get("candidate_id") == CANDIDATE
+        )
+        value["picks"].remove(failed)
+        queued = deepcopy(failed)
+        queued["recovery_source_record_sha256"] = canonical_sha256(failed)
+        value["pending_talk"].append(queued)
+        return 0, 0, 1, 0, False
+
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "maintain_delivery_recovery_scope",
+        generic_requeue,
+    )
+
+    result = historical_failed_talk_scope.maintain(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        candidate_ids=(CANDIDATE,),
+    )
+
+    assert result == (0, 0, 1, 0, False)
+    assert state[REVIEW_STATE_FIELD]["holds"] == []
+    assert not any(
+        row.get("candidate_id") == CANDIDATE for row in state["picks"]
+    )
+    queued = next(
+        row
+        for row in state["pending_talk"]
+        if row.get("candidate_id") == CANDIDATE
+    )
+    assert queued["recovery_source_record_sha256"] == canonical_sha256(rejected)
+    marker = state[RECOVERY_MARKER_FIELD]["entries"][CANDIDATE]
+    assert marker["current_row_binding"] == {
+        "collection": "pending_talk",
+        "row_sha256": canonical_sha256(queued),
+    }
+    assert marker["transitions"][-1]["transition_kind"] == (
+        "RECOVERABLE_FAILED_PICK_REQUEUED"
+    )
+    assert marker["transitions"][-1]["failed_pick_sha256"] == canonical_sha256(
+        rejected
+    )
+    assert inspect_scoped(state, CANDIDATE) == RECOVERY_RELEASED_QUEUED
+    assert {key: state[key] for key in song_preimage} == song_preimage
+
+
 def _patch_frozen_retry_selection_dependencies(
     monkeypatch: pytest.MonkeyPatch,
     *,

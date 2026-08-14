@@ -121,11 +121,23 @@
   transition，绑定前一 head、完整 failed-pick SHA、新队列行 SHA 与该行的
   `recovery_source_record_sha256`，再原子推进 head；转换不唯一、身份漂移或写 ledger 失败都回滚
   并记 typed runtime block。只有严格身份相同且明确交付/拒绝/低分归档，或显式
-  `failure_recoverable=false` 的 typed failure，才可 `CONVERGED`。唯一窄例外是 marker-bound
+  `failure_recoverable=false` 的 typed failure，才可 `CONVERGED`。第一条窄例外是 marker-bound
   `content_boundary`：它必须携带合法且显式的 `failure_recovery_fingerprint`；与当前 scoped
   recovery fingerprint 相同才 `CONVERGED`，相关边界实现变化导致 fingerprint 漂移时改为
   `RELEASED_RETRY_PENDING`，缺失、格式错误或计算失败则 `BLOCKED`。该例外仍走 v5 的
   failed-pick→queue lineage，不得借 v2 或手改 `failure_recoverable` 绕过 marker。
+  第二条窄例外只认 marker head 上完整的 selected subtitle-authority 拒绝形态：
+  `candidate_rejected + rejected_status=failed + selected_repair=true + rc=1 +`
+  `failure_kind=subtitle_authority + failure_stage=chat_authority_final_artifact +`
+  `failure_recoverable=false + rejection_reason=subtitle_authority_unresolved_backfilled`。
+  它同样只由合法 recovery fingerprint 决定：相同为 `CONVERGED`，变化为
+  `RELEASED_RETRY_PENDING`，缺失、格式错误或计算失败为 `BLOCKED`；不得扩到其他 subtitle
+  stage、speaker 或普通拒绝。若 generic published-topic 检查同时留下了唯一冗余 stale hold，
+  只有该 hold 的 candidate 与 marker head 全行相等、`queue_origin=null`、score/suppression/
+  upload 三个权限位全为 false，且 evidence 精确说明 current refresh receipt missing 时，纯
+  inspector 才可把它视为可协调。historical maintenance 必须在 generic requeue 前事务删除
+  这一条；没有真的形成 pick→queue 并追加 lineage、或任一步异常时，必须把 stale hold、pick
+  与 ledger 一并恢复到删除前 preimage，不得留下半次解停泊。
 - 精确恢复契约持续压住普通 backlog，直到新的人工恢复计划显式替换；普通 backlog
   在报告里只能显示为 `OUTSIDE_EXACT_CONTRACT / INELIGIBLE`，不能伪装成当前候补。
 - 已由 committed publication registry 标为 `hold_pending_review` 的单条历史

@@ -120,6 +120,55 @@ def _v5_state() -> dict:
     return state
 
 
+def _v5_selected_authority_rejection_state() -> dict:
+    state = _v5_state()
+    rejected = {
+        "candidate_id": TARGET,
+        "status": "candidate_rejected",
+        "rejected_status": "failed",
+        "selected_repair": True,
+        "rc": 1,
+        "failure_kind": "subtitle_authority",
+        "failure_stage": "chat_authority_final_artifact",
+        "failure_recoverable": False,
+        "failure_recovery_fingerprint": "sha256:" + "1" * 64,
+        "rejection_reason": "subtitle_authority_unresolved_backfilled",
+        "segment": f"{TARGET}.mp4",
+        "start_ms": 10_000,
+        "end_ms": 20_000,
+        "hook": TARGET,
+        "selection_scorecard": {"schema_version": "test-scorecard.v1"},
+    }
+    state["picks"].append(rejected)
+    state["published_topic_dedup_review"] = {
+        "schema_version": "published-topic-dedup-review-state.v1",
+        "holds": [
+            {
+                "candidate_id": TARGET,
+                "disposition": "HUMAN_TOPIC_DEDUP_REVIEW_AUTHORITY_STALE",
+                "reason_code": "PUBLISHED_TOPIC_REVIEW_AUTHORITY_STALE",
+                "score_mutated": False,
+                "suppression_authorized": False,
+                "upload_authorized": False,
+                "queue_origin": None,
+                "candidate": copy.deepcopy(rejected),
+                "evidence": {
+                    "error": (
+                        "PublishedTopicCollisionError: current scorecard refresh "
+                        "receipt is missing"
+                    )
+                },
+            }
+        ],
+    }
+    state["published_topic_resolution_recovery"] = {
+        "schema_version": "published-topic-resolution-recovery-ledger.v1",
+        "entries": {TARGET: {"candidate_id": TARGET}},
+        "ledger_sha256": "test-seal",
+    }
+    return state
+
+
 def test_v2_scope_freezes_only_an_admitted_historical_failed_talk() -> None:
     state = _state()
     assert operator_talk_scope(state, date=DATE) == (TARGET,)
@@ -650,6 +699,107 @@ def test_v5_unsealed_generic_retry_transition_rolls_back_and_blocks(
         for key, value in state.items()
         if key != "operator_processing_scope_runtime_block"
     } == preimage
+    assert state["operator_processing_scope_runtime_block"]["reason_code"] == (
+        "TOPIC_DEDUP_RETRY_TRANSITION_BLOCKED"
+    )
+
+
+@pytest.mark.parametrize(
+    "failure_phase",
+    [
+        "generic_error",
+        "no_move",
+        "review_mutation",
+        "advance_false",
+        "advance_error",
+    ],
+)
+def test_v5_redundant_stale_hold_removal_rolls_back_with_failed_requeue_or_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+    failure_phase: str,
+) -> None:
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice import published_topic_collision as topic_collision
+
+    state = _v5_selected_authority_rejection_state()
+    preimage = copy.deepcopy(state)
+    order: list[str] = []
+    monkeypatch.setattr(
+        topic_collision,
+        "inspect_published_topic_resolution_recovery",
+        lambda *_a, **_k: "RELEASED_RETRY_PENDING",
+    )
+
+    def generic(_date, value, **_kwargs):
+        order.append("generic")
+        assert value["published_topic_dedup_review"]["holds"] == []
+        if failure_phase == "generic_error":
+            value["picks"].pop()
+            raise RuntimeError("generic recovery failed after mutation")
+        if failure_phase == "no_move":
+            return 0, 0, 0, 0, False
+        failed = next(
+            row
+            for row in value["picks"]
+            if row.get("candidate_id") == TARGET
+        )
+        value["picks"].remove(failed)
+        value["pending_talk"].append(
+            {
+                "cid": TARGET,
+                "segment": failed["segment"],
+                "start_ms": failed["start_ms"],
+                "end_ms": failed["end_ms"],
+                "hook": failed["hook"],
+                "selection_scorecard": copy.deepcopy(
+                    failed["selection_scorecard"]
+                ),
+                "recovery_source_record_sha256": "sha256:" + "a" * 64,
+            }
+        )
+        if failure_phase == "review_mutation":
+            value["published_topic_dedup_review"]["unsealed"] = True
+        return 0, 0, 1, 0, False
+
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "maintain_delivery_recovery_scope",
+        generic,
+    )
+
+    def advance(*_args, **_kwargs):
+        order.append("advance")
+        if failure_phase == "advance_error":
+            raise RuntimeError("lineage seal failed")
+        return False
+
+    monkeypatch.setattr(
+        topic_collision,
+        "advance_published_topic_resolution_recovery",
+        advance,
+    )
+
+    result = historical_failed_talk_scope.maintain(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        candidate_ids=(TARGET,),
+    )
+
+    assert result == (0, 0, 0, 0, False)
+    assert order == (
+        ["generic"]
+        if failure_phase in {"generic_error", "no_move", "review_mutation"}
+        else ["generic", "advance"]
+    )
+    assert {
+        key: value
+        for key, value in state.items()
+        if key != "operator_processing_scope_runtime_block"
+    } == preimage
+    assert state["published_topic_dedup_review"]["holds"] == preimage[
+        "published_topic_dedup_review"
+    ]["holds"]
     assert state["operator_processing_scope_runtime_block"]["reason_code"] == (
         "TOPIC_DEDUP_RETRY_TRANSITION_BLOCKED"
     )

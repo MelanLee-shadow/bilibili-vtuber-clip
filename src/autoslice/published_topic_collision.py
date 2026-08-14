@@ -53,6 +53,12 @@ from src.autoslice.published_topic_recovery_lineage import (
     top_level_changed_fields as _top_level_changed_fields,
     validated_transition_next_binding,
 )
+from src.autoslice.published_topic_selected_rejection import (
+    failure_recovery_fingerprint_disposition as _failure_recovery_fingerprint_disposition,
+    hold_mentions_candidate as _hold_mentions_candidate,
+    is_selected_subtitle_authority_rejection as _is_selected_subtitle_authority_rejection,
+    review_holds_are_valid as _selected_rejection_review_holds_are_valid,
+)
 
 
 AUTHORITY_SCHEMA = "published-topic-collision-authority.v1"
@@ -1241,11 +1247,11 @@ def _inspect_released_recovery_entry(
 
     review_state = state.get(REVIEW_STATE_FIELD)
     holds = review_state.get("holds") if isinstance(review_state, Mapping) else None
-    if not isinstance(holds, list) or any(
-        isinstance(hold, Mapping) and _candidate_id(hold) == candidate_id
-        for hold in holds
-    ):
+    if not isinstance(holds, list):
         return RECOVERY_BLOCKED
+    target_holds = [
+        hold for hold in holds if _hold_mentions_candidate(hold, candidate_id)
+    ]
     valid, queued, current = _marker_is_valid(
         state,
         candidate_id,
@@ -1256,10 +1262,21 @@ def _inspect_released_recovery_entry(
     if not valid or (queued and current):
         return RECOVERY_BLOCKED
     if queued:
-        return RECOVERY_RELEASED_QUEUED if len(queued) == 1 else RECOVERY_BLOCKED
+        return (
+            RECOVERY_RELEASED_QUEUED
+            if len(queued) == 1 and not target_holds
+            else RECOVERY_BLOCKED
+        )
     if len(current) != 1:
         return RECOVERY_BLOCKED
     collection, row = current[0]
+    selected_authority_rejection = _is_selected_subtitle_authority_rejection(row)
+    if selected_authority_rejection and not (
+        _selected_rejection_review_holds_are_valid(state, candidate_id)
+    ):
+        return RECOVERY_BLOCKED
+    if not selected_authority_rejection and target_holds:
+        return RECOVERY_BLOCKED
     if collection == "talk_below_confidence_threshold":
         return RECOVERY_CONVERGED
     status = str(row.get("status") or "")
@@ -1271,25 +1288,12 @@ def _inspect_released_recovery_entry(
         if row.get("failure_recoverable") is False:
             if row.get("failure_kind") != "content_boundary":
                 return RECOVERY_CONVERGED
-            recorded = row.get("failure_recovery_fingerprint")
-            if not isinstance(recorded, str) or _SHA256_RE.fullmatch(recorded) is None:
-                return RECOVERY_BLOCKED
-            try:
-                from src.autoslice.runner_proxy import RunnerProxy
-
-                current = RunnerProxy().talk_failure_recovery_fingerprint(
-                    row.get("failure_kind"), candidate_id
-                )
-            except Exception:  # noqa: BLE001 - recovery authority must fail closed
-                return RECOVERY_BLOCKED
-            if not isinstance(current, str) or _SHA256_RE.fullmatch(current) is None:
-                return RECOVERY_BLOCKED
-            return (
-                RECOVERY_CONVERGED
-                if current == recorded
-                else RECOVERY_RELEASED_RETRY_PENDING
+            return _failure_recovery_fingerprint_disposition(
+                row, candidate_id
             )
         return RECOVERY_BLOCKED
+    if selected_authority_rejection:
+        return _failure_recovery_fingerprint_disposition(row, candidate_id)
     if status in _DELIVERED_TALK_STATUSES or status == "candidate_rejected":
         return RECOVERY_CONVERGED
     return RECOVERY_BLOCKED

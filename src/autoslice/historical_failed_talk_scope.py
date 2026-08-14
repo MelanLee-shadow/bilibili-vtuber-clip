@@ -194,6 +194,31 @@ def _requeue_topic_cover_pending(date: str, state: dict, candidate_id: str) -> i
     return 1
 
 
+def _remove_reconcilable_redundant_stale_hold(
+    state: dict, candidate_id: str
+) -> dict | None:
+    """Remove only the exact stale hold copied from a sealed rejection head."""
+
+    from src.autoslice.published_topic_collision import REVIEW_STATE_FIELD
+    from src.autoslice.published_topic_selected_rejection import (
+        reconcilable_redundant_stale_hold_index,
+    )
+
+    index = reconcilable_redundant_stale_hold_index(state, candidate_id)
+    if index is None:
+        return None
+    current = state.get(REVIEW_STATE_FIELD)
+    holds = current.get("holds") if isinstance(current, Mapping) else None
+    if not isinstance(holds, list) or not (0 <= index < len(holds)):
+        return None
+    next_review = deepcopy(dict(current))
+    next_holds = deepcopy(holds)
+    del next_holds[index]
+    next_review["holds"] = next_holds
+    state[REVIEW_STATE_FIELD] = next_review
+    return deepcopy(next_review)
+
+
 def freeze(state: Mapping[str, object], *, date: str) -> tuple[str, ...] | None:
     """Return the immutable Talk-only allowlist for this tick, if any."""
 
@@ -210,6 +235,7 @@ def maintain(
     held_current_requeued = 0
     topic_cover_requeued = 0
     topic_retry_preimage: dict | None = None
+    topic_retry_expected_review_state: dict | None = None
     block = state.get(STATE_KEY)
     if (
         automatic_maintenance
@@ -279,6 +305,34 @@ def maintain(
         state.pop("operator_processing_scope_runtime_block", None)
         if disposition == RECOVERY_RELEASED_RETRY_PENDING:
             topic_retry_preimage = deepcopy(dict(state))
+            try:
+                topic_retry_expected_review_state = (
+                    _remove_reconcilable_redundant_stale_hold(
+                        state, candidate_id
+                    )
+                )
+                if topic_retry_expected_review_state is not None:
+                    post_reconcile_preimage = deepcopy(dict(state))
+                    post_reconcile = inspect_published_topic_resolution_recovery(
+                        state, candidate_id
+                    )
+                    if (
+                        dict(state) != post_reconcile_preimage
+                        or post_reconcile != RECOVERY_RELEASED_RETRY_PENDING
+                    ):
+                        raise ValueError(
+                            "redundant stale hold reconciliation did not preserve "
+                            "retry authority"
+                        )
+            except Exception:  # noqa: BLE001 - reconciliation is transactional
+                _restore_topic_transition_block(
+                    state,
+                    topic_retry_preimage,
+                    date=date,
+                    candidate_ids=tuple(candidate_ids or ()),
+                    reason_code="TOPIC_DEDUP_STALE_HOLD_RECONCILIATION_BLOCKED",
+                )
+                return 0, 0, 0, 0, False
             topic_cover_requeued = _requeue_topic_cover_pending(
                 date, state, candidate_id
             )
@@ -309,12 +363,24 @@ def maintain(
                 "upload_allowed": False,
                 "reason_code": str(exc),
             }
-    result = maintain_delivery_recovery_scope(
-        date,
-        state,
-        automatic_maintenance=automatic_maintenance,
-        talk_candidate_ids=candidate_ids,
-    )
+    try:
+        result = maintain_delivery_recovery_scope(
+            date,
+            state,
+            automatic_maintenance=automatic_maintenance,
+            talk_candidate_ids=candidate_ids,
+        )
+    except Exception:  # noqa: BLE001 - v5 transition must not persist half a retry
+        if topic_retry_preimage is None:
+            raise
+        _restore_topic_transition_block(
+            state,
+            topic_retry_preimage,
+            date=date,
+            candidate_ids=tuple(candidate_ids or ()),
+            reason_code="TOPIC_DEDUP_RETRY_TRANSITION_BLOCKED",
+        )
+        return 0, 0, 0, 0, False
     if topic_retry_preimage is not None:
         candidate_id = tuple(candidate_ids or ())[0]
 
@@ -340,25 +406,34 @@ def maintain(
         before_rows = target_rows(topic_retry_preimage)
         after_rows = target_rows(state)
         transition_ok = False
-        if before_rows == after_rows:
+        review_state_unchanged = (
+            topic_retry_expected_review_state is None
+            or state.get("published_topic_dedup_review")
+            == topic_retry_expected_review_state
+        )
+        if before_rows == after_rows and topic_retry_expected_review_state is None:
             # Cooldown/fingerprint/budget policy legitimately kept the exact
             # failed pick in place; it remains OUTSTANDING for a later tick.
             transition_ok = True
         elif (
-            len(before_rows) == 1
+            review_state_unchanged
+            and len(before_rows) == 1
             and before_rows[0][0] == "picks"
             and len(after_rows) == 1
             and after_rows[0][0] in {"pending_talk", "talk_backlog"}
         ):
-            transition_ok = advance_published_topic_resolution_recovery(
-                state,
-                candidate_id,
-                pre_state=topic_retry_preimage,
-                from_collection=before_rows[0][0],
-                from_row=before_rows[0][1],
-                to_collection=after_rows[0][0],
-                to_row=after_rows[0][1],
-            )
+            try:
+                transition_ok = advance_published_topic_resolution_recovery(
+                    state,
+                    candidate_id,
+                    pre_state=topic_retry_preimage,
+                    from_collection=before_rows[0][0],
+                    from_row=before_rows[0][1],
+                    to_collection=after_rows[0][0],
+                    to_row=after_rows[0][1],
+                )
+            except Exception:  # noqa: BLE001 - rollback owns every failed seal
+                transition_ok = False
         if not transition_ok:
             state.clear()
             state.update(topic_retry_preimage)
