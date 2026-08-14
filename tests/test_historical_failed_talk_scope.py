@@ -1527,6 +1527,220 @@ def test_v7_intermediate_queue_tamper_rolls_back_before_persist(
     }
 
 
+def test_v7_initial_handoff_annotation_seal_failure_restores_full_preimage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice import published_topic_collision as topic_collision
+    from src.autoslice import published_topic_final_review_handoff as handoff
+
+    state = _v7_fresh_rejection_state()
+    state["picks"][0]["session_relation_authority"] = None
+    preimage = copy.deepcopy(state)
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda kind, candidate_id: "sha256:" + "2" * 64
+        if (kind, candidate_id) == ("subtitle_authority", TARGET)
+        else None,
+    )
+
+    def annotate(*_args, **_kwargs):
+        state["picks"][0].pop("session_relation_authority")
+        return 1
+
+    monkeypatch.setattr(runner, "annotate_state_sessions", annotate)
+    monkeypatch.setattr(
+        handoff,
+        "inspect_initial_final_review_handoff",
+        lambda *_a, **_k: handoff.HANDOFF_READY,
+    )
+    monkeypatch.setattr(
+        topic_collision,
+        "seal_published_topic_resolution_row_rebounds",
+        lambda *_a, **_k: False,
+    )
+
+    assert historical_failed_talk_scope.annotate_sessions(
+        DATE,
+        state,
+        include_song_rows=False,
+        candidate_ids=(TARGET,),
+    ) == -1
+    assert {
+        key: value
+        for key, value in state.items()
+        if key != "operator_processing_scope_runtime_block"
+    } == preimage
+    assert state["operator_processing_scope_runtime_block"] == {
+        "schema_version": "operator-processing-scope-runtime-block.v1",
+        "recording_date": DATE,
+        "candidate_ids": [TARGET],
+        "intent": FINAL_REVIEW_RECOVERY_INTENT,
+        "upload_allowed": False,
+        "reason_code": "SELECTED_FINAL_REVIEW_RECOVERY_SESSION_ANNOTATION_BLOCKED",
+    }
+
+
+def test_v7_no_marker_initial_session_annotation_stays_absent_and_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.autoslice import historical_failed_talk_scope
+    from src.autoslice import published_topic_final_review_handoff as handoff
+    from src.autoslice.selected_final_review_recovery import (
+        READY_TO_REQUEUE,
+        inspect_selected_final_review_recovery,
+    )
+
+    state = _v7_fresh_rejection_state()
+    state["picks"][0]["session_relation_authority"] = None
+    other_before = copy.deepcopy(state["picks"][1])
+    songs_before = {
+        key: copy.deepcopy(state[key])
+        for key in (
+            "pending_song",
+            "song_backlog",
+            "song_selection_backlog",
+            "songs",
+            "song_superseded_attempts",
+        )
+    }
+
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda kind, candidate_id: "sha256:" + "2" * 64
+        if (kind, candidate_id) == ("subtitle_authority", TARGET)
+        else None,
+    )
+
+    def annotate(_date, value, **kwargs):
+        assert kwargs == {
+            "include_song_rows": False,
+            "talk_candidate_ids": (TARGET,),
+        }
+        value["picks"][0].pop("session_relation_authority")
+        value["segment_sessions"] = {"target": "session-target"}
+        value["recording_sessions"] = ["session-target"]
+        return 1
+
+    monkeypatch.setattr(runner, "annotate_state_sessions", annotate)
+    assert handoff.inspect_initial_final_review_handoff(
+        state,
+        candidate_id=TARGET,
+        recording_date=DATE,
+    ) == handoff.HANDOFF_ABSENT
+
+    assert historical_failed_talk_scope.annotate_sessions(
+        DATE,
+        state,
+        include_song_rows=False,
+        candidate_ids=(TARGET,),
+    ) == 1
+
+    assert "session_relation_authority" not in state["picks"][0]
+    assert state["picks"][1] == other_before
+    assert {key: state[key] for key in songs_before} == songs_before
+    assert "published_topic_resolution_recovery" not in state
+    assert "operator_processing_scope_runtime_block" not in state
+    assert handoff.inspect_initial_final_review_handoff(
+        state,
+        candidate_id=TARGET,
+        recording_date=DATE,
+    ) == handoff.HANDOFF_ABSENT
+    assert inspect_selected_final_review_recovery(
+        state,
+        candidate_id=TARGET,
+        grant_id=_v7_grant()["grant_id"],
+    ).outcome == READY_TO_REQUEUE
+
+
+@pytest.mark.parametrize("drift_target", [False, True])
+def test_v7_no_marker_initial_annotation_row_drift_rolls_back(
+    monkeypatch: pytest.MonkeyPatch,
+    drift_target: bool,
+) -> None:
+    from src.autoslice import historical_failed_talk_scope
+
+    state = _v7_fresh_rejection_state()
+    state["picks"][0]["session_relation_authority"] = None
+    preimage = copy.deepcopy(state)
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda kind, candidate_id: "sha256:" + "2" * 64
+        if (kind, candidate_id) == ("subtitle_authority", TARGET)
+        else None,
+    )
+
+    def annotate(*_args, **_kwargs):
+        state["picks"][0].pop("session_relation_authority")
+        state["picks"][0 if drift_target else 1]["hook"] = (
+            "unauthorized-row-drift"
+        )
+        return 1
+
+    monkeypatch.setattr(runner, "annotate_state_sessions", annotate)
+
+    assert historical_failed_talk_scope.annotate_sessions(
+        DATE,
+        state,
+        include_song_rows=False,
+        candidate_ids=(TARGET,),
+    ) == -1
+    assert {
+        key: value
+        for key, value in state.items()
+        if key != "operator_processing_scope_runtime_block"
+    } == preimage
+    assert state["operator_processing_scope_runtime_block"] == {
+        "schema_version": "operator-processing-scope-runtime-block.v1",
+        "recording_date": DATE,
+        "candidate_ids": [TARGET],
+        "intent": FINAL_REVIEW_RECOVERY_INTENT,
+        "upload_allowed": False,
+        "reason_code": "SELECTED_FINAL_REVIEW_RECOVERY_SESSION_ANNOTATION_BLOCKED",
+    }
+
+
+def test_v7_no_marker_initial_annotation_exception_rolls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.autoslice import historical_failed_talk_scope
+
+    state = _v7_fresh_rejection_state()
+    state["picks"][0]["session_relation_authority"] = None
+    preimage = copy.deepcopy(state)
+    monkeypatch.setattr(
+        runner,
+        "talk_failure_recovery_fingerprint",
+        lambda kind, candidate_id: "sha256:" + "2" * 64
+        if (kind, candidate_id) == ("subtitle_authority", TARGET)
+        else None,
+    )
+
+    def annotate(*_args, **_kwargs):
+        state["picks"][0].pop("session_relation_authority")
+        raise RuntimeError("session discovery failed after mutation")
+
+    monkeypatch.setattr(runner, "annotate_state_sessions", annotate)
+
+    assert historical_failed_talk_scope.annotate_sessions(
+        DATE,
+        state,
+        include_song_rows=False,
+        candidate_ids=(TARGET,),
+    ) == -1
+    assert {
+        key: value
+        for key, value in state.items()
+        if key != "operator_processing_scope_runtime_block"
+    } == preimage
+    assert state["operator_processing_scope_runtime_block"]["reason_code"] == (
+        "SELECTED_FINAL_REVIEW_RECOVERY_SESSION_ANNOTATION_BLOCKED"
+    )
+
+
 def test_v7_intermediate_declared_queue_rebounds_remain_valid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

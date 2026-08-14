@@ -49,7 +49,9 @@ from src.autoslice.operator_processing_scope import (
     operator_talk_scope,
 )
 from src.autoslice.published_topic_final_review_handoff import (
+    HANDOFF_READY,
     HANDOFF_TRANSITION_KIND,
+    inspect_initial_final_review_handoff,
     seal_published_topic_final_review_handoff,
 )
 from src.autoslice.selected_final_review_recovery import (
@@ -757,6 +759,126 @@ def _initial_v5_to_v7_handoff_state(
         }
     )
     return state, post, root, registry
+
+
+def test_v7_initial_handoff_session_annotation_reseals_v5_pick_head(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The live 806 null cleanup must be sealed before its one-way handoff."""
+
+    from src.autoslice import published_topic_collision as topic_collision
+    from src.autoslice import published_topic_final_review_handoff as handoff
+
+    state, root, registry, rejected = (
+        _selected_authority_rejection_with_redundant_stale_hold(
+            tmp_path,
+            rows,
+            rejection_overrides={
+                "failure_stage": "final_review_findings",
+                "talk_repair_retry_count": 5,
+                "session_relation_authority": None,
+            },
+        )
+    )
+    state[REVIEW_STATE_FIELD]["holds"] = []
+    state["operator_processing_scope"] = _v7_grant()
+    state.setdefault("talk_below_confidence_threshold", [])
+    state.setdefault("talk_superseded_attempts", [])
+    segment_stem = Path(rejected["segment_path"]).stem
+    state["segment_sessions"] = {segment_stem: rejected["session_id"]}
+    state["segment_relation_authorities"] = {}
+    state["segment_scene_contexts"] = {
+        segment_stem: deepcopy(rejected["segment_scene_context"])
+    }
+    marker_before = deepcopy(
+        state[RECOVERY_MARKER_FIELD]["entries"][CANDIDATE]
+    )
+
+    monkeypatch.setattr(
+        RunnerProxy,
+        "talk_failure_recovery_fingerprint",
+        lambda _self, kind, candidate_id: "sha256:" + "2" * 64
+        if (kind, candidate_id) == ("subtitle_authority", CANDIDATE)
+        else pytest.fail("unrelated recovery fingerprint requested"),
+        raising=False,
+    )
+    original_seal = seal_published_topic_resolution_row_rebounds
+
+    def seal_scoped(value: dict, **kwargs) -> bool:
+        return original_seal(
+            value,
+            **kwargs,
+            repo_root=root,
+            publication_registry=registry,
+        )
+
+    original_inspect = inspect_initial_final_review_handoff
+
+    def inspect_scoped(value: dict, **kwargs) -> str:
+        return original_inspect(
+            value,
+            **kwargs,
+            repo_root=root,
+            publication_registry=registry,
+        )
+
+    monkeypatch.setattr(runner, "list_segments", lambda _date: [])
+    monkeypatch.setattr(
+        topic_collision,
+        "seal_published_topic_resolution_row_rebounds",
+        seal_scoped,
+    )
+    monkeypatch.setattr(
+        handoff,
+        "inspect_initial_final_review_handoff",
+        inspect_scoped,
+    )
+    assert (
+        inspect_initial_final_review_handoff(
+            state,
+            candidate_id=CANDIDATE,
+            recording_date=DATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == HANDOFF_READY
+    )
+
+    assert historical_failed_talk_scope.annotate_sessions(
+        DATE,
+        state,
+        include_song_rows=False,
+        candidate_ids=(CANDIDATE,),
+    ) == 1
+
+    rebound = next(
+        row for row in state["picks"] if row.get("candidate_id") == CANDIDATE
+    )
+    assert "session_relation_authority" not in rebound
+    marker_after = state[RECOVERY_MARKER_FIELD]["entries"][CANDIDATE]
+    assert marker_after != marker_before
+    assert marker_after["transitions"][-1]["transition_kind"] == (
+        "CURRENT_ROW_REBOUND"
+    )
+    assert marker_after["transitions"][-1]["transition_phase"] == (
+        "SESSION_ANNOTATION"
+    )
+    assert marker_after["transitions"][-1]["changed_fields"] == [
+        "session_relation_authority"
+    ]
+    assert (
+        inspect_initial_final_review_handoff(
+            state,
+            candidate_id=CANDIDATE,
+            recording_date=DATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == HANDOFF_READY
+    )
+    assert "operator_processing_scope_runtime_block" not in state
 
 
 def _terminal_v5_to_v7_handoff_state(

@@ -16,6 +16,7 @@ from src.autoslice.operator_processing_scope import (
     HELD_CURRENT_RERENDER_INTENT,
     SOURCE_FACT_RECOVERY_GRANT_SCHEMA,
     SOURCE_FACT_RECOVERY_INTENT,
+    SONG_STATE_COLLECTIONS,
     STATE_KEY,
     TOPIC_HOLD_RECOVERY_GRANT_SCHEMA,
     TOPIC_HOLD_RECOVERY_INTENT,
@@ -43,6 +44,15 @@ _ACTIVE_TALK_COLLECTIONS = (
     "talk_below_confidence_threshold",
 )
 _QUEUED_TALK_COLLECTIONS = frozenset({"pending_talk", "talk_backlog"})
+_SESSION_ANNOTATION_STATE_FIELDS = frozenset(
+    {
+        "recording_sessions",
+        "segment_relation_authorities",
+        "segment_scene_contexts",
+        "segment_sessions",
+        "session_relation_authority",
+    }
+)
 
 
 def _topic_scope_candidate_ids(
@@ -302,6 +312,185 @@ def _seal_final_review_queue_rebound(
     return False
 
 
+def _initial_final_review_handoff_outcome(
+    state: Mapping[str, object],
+    *,
+    date: str,
+    candidate_ids: tuple[str, ...] | None,
+) -> str | None:
+    """Classify a pure, recovery-ready pre-receipt v7 rejection."""
+
+    values = _final_review_scope_candidate_ids(state, candidate_ids)
+    if len(values) != 1:
+        return None
+    from src.autoslice.published_topic_final_review_handoff import (
+        HANDOFF_ABSENT,
+        HANDOFF_READY,
+        inspect_initial_final_review_handoff,
+    )
+    from src.autoslice.selected_final_review_recovery import (
+        READY_TO_REQUEUE,
+        inspect_selected_final_review_recovery,
+    )
+
+    probe = deepcopy(dict(state))
+    try:
+        inspection = inspect_selected_final_review_recovery(
+            probe,
+            candidate_id=values[0],
+            grant_id=_final_review_grant_id(probe),
+        )
+        outcome = inspect_initial_final_review_handoff(
+            probe,
+            candidate_id=values[0],
+            recording_date=date,
+        )
+    except Exception:  # noqa: BLE001 - caller's rollback owns invalid authority
+        return None
+    return (
+        outcome
+        if (
+            probe == state
+            and inspection.outcome == READY_TO_REQUEUE
+            and outcome in {HANDOFF_ABSENT, HANDOFF_READY}
+        )
+        else None
+    )
+
+
+def _no_marker_initial_annotation_is_valid(
+    state: Mapping[str, object],
+    *,
+    date: str,
+    candidate_ids: tuple[str, ...],
+    preimage: Mapping[str, object],
+) -> bool:
+    """Validate one pre-receipt pick rebound without inventing a v5 marker."""
+
+    from src.autoslice.published_topic_final_review_handoff import HANDOFF_ABSENT
+    from src.autoslice.selected_final_review_recovery import (
+        RECOVERY_RECEIPT_FIELD,
+        is_selected_final_review_rejection,
+    )
+
+    candidate_id = candidate_ids[0]
+    before_rows = _target_talk_rows(preimage, candidate_id)
+    after_rows = _target_talk_rows(state, candidate_id)
+    if len(before_rows) != 1 or len(after_rows) != 1:
+        return False
+    before_collection, before_row = before_rows[0]
+    after_collection, after_row = after_rows[0]
+    if not (
+        before_collection == after_collection == "picks"
+        and RECOVERY_RECEIPT_FIELD not in before_row
+        and RECOVERY_RECEIPT_FIELD not in after_row
+        and is_selected_final_review_rejection(before_row)
+        and is_selected_final_review_rejection(after_row)
+        and set(top_level_changed_fields(before_row, after_row)).issubset(
+            RECOVERY_REBOUND_FIELDS[RECOVERY_REBOUND_SESSION_ANNOTATION]
+        )
+        and set(top_level_changed_fields(preimage, state)).issubset(
+            {*_SESSION_ANNOTATION_STATE_FIELDS, before_collection}
+        )
+        and state.get("upload_allowed") is False
+        and state.get(STATE_KEY) == preimage.get(STATE_KEY)
+        and state.get("talk_superseded_attempts")
+        == preimage.get("talk_superseded_attempts")
+        and all(
+            state.get(collection) == preimage.get(collection)
+            for collection in SONG_STATE_COLLECTIONS
+        )
+    ):
+        return False
+    before_non_target = [
+        row
+        for row in preimage.get("picks", [])
+        if not (
+            isinstance(row, Mapping)
+            and str(row.get("candidate_id") or row.get("cid") or "").strip()
+            == candidate_id
+        )
+    ]
+    after_non_target = [
+        row
+        for row in state.get("picks", [])
+        if not (
+            isinstance(row, Mapping)
+            and str(row.get("candidate_id") or row.get("cid") or "").strip()
+            == candidate_id
+        )
+    ]
+    return bool(
+        before_non_target == after_non_target
+        and _initial_final_review_handoff_outcome(
+            state,
+            date=date,
+            candidate_ids=candidate_ids,
+        )
+        == HANDOFF_ABSENT
+    )
+
+
+def _seal_initial_final_review_session_annotation(
+    date: str,
+    state: dict,
+    *,
+    candidate_ids: tuple[str, ...] | None,
+    preimage: Mapping[str, object],
+    handoff_outcome: str,
+) -> bool:
+    """Validate the allowed pick rebound before creating the first v7 receipt."""
+
+    values = _final_review_scope_candidate_ids(preimage, candidate_ids)
+    transition_ok = False
+    if len(values) == 1 and _initial_final_review_handoff_outcome(
+        preimage, date=date, candidate_ids=values
+    ) == handoff_outcome:
+        from src.autoslice.published_topic_final_review_handoff import (
+            HANDOFF_ABSENT,
+            HANDOFF_READY,
+        )
+        try:
+            if handoff_outcome == HANDOFF_READY:
+                from src.autoslice.published_topic_collision import (
+                    seal_published_topic_resolution_row_rebounds,
+                )
+
+                transition_ok = bool(
+                    seal_published_topic_resolution_row_rebounds(
+                        state,
+                        pre_state=preimage,
+                        phase=RECOVERY_REBOUND_SESSION_ANNOTATION,
+                        candidate_ids=values,
+                    )
+                    and _initial_final_review_handoff_outcome(
+                        state,
+                        date=date,
+                        candidate_ids=values,
+                    )
+                    == HANDOFF_READY
+                )
+            elif handoff_outcome == HANDOFF_ABSENT:
+                transition_ok = _no_marker_initial_annotation_is_valid(
+                    state,
+                    date=date,
+                    candidate_ids=values,
+                    preimage=preimage,
+                )
+        except Exception:  # noqa: BLE001 - restore the whole annotation preimage
+            transition_ok = False
+    if transition_ok:
+        return True
+    _restore_final_review_transition_block(
+        state,
+        preimage,
+        date=date,
+        candidate_ids=values,
+        reason_code="SELECTED_FINAL_REVIEW_RECOVERY_SESSION_ANNOTATION_BLOCKED",
+    )
+    return False
+
+
 def _restore_topic_transition_block(
     state: dict,
     preimage: Mapping[str, object],
@@ -333,21 +522,61 @@ def annotate_sessions(
 
     preimage = _topic_transition_preimage(state, candidate_ids)
     final_review_preimage = _final_review_transition_preimage(state, candidate_ids)
-    changed = _runner.annotate_state_sessions(
-        date,
-        state,
-        include_song_rows=include_song_rows,
-        talk_candidate_ids=candidate_ids,
+    initial_final_review_handoff = (
+        _initial_final_review_handoff_outcome(
+            final_review_preimage,
+            date=date,
+            candidate_ids=candidate_ids,
+        )
+        if final_review_preimage is not None
+        else None
     )
-    if final_review_preimage is not None and not _seal_final_review_queue_rebound(
-        date,
-        state,
-        candidate_ids=candidate_ids,
-        preimage=final_review_preimage,
-        phase=RECOVERY_REBOUND_SESSION_ANNOTATION,
-        reason_code="SELECTED_FINAL_REVIEW_RECOVERY_SESSION_ANNOTATION_BLOCKED",
-    ):
+    try:
+        changed = _runner.annotate_state_sessions(
+            date,
+            state,
+            include_song_rows=include_song_rows,
+            talk_candidate_ids=candidate_ids,
+        )
+    except Exception:
+        if final_review_preimage is None:
+            raise
+        values = _final_review_scope_candidate_ids(
+            final_review_preimage, candidate_ids
+        )
+        _restore_final_review_transition_block(
+            state,
+            final_review_preimage,
+            date=date,
+            candidate_ids=values,
+            reason_code=(
+                "SELECTED_FINAL_REVIEW_RECOVERY_SESSION_ANNOTATION_BLOCKED"
+            ),
+        )
         return -1
+    if final_review_preimage is not None:
+        final_review_valid = (
+            _seal_initial_final_review_session_annotation(
+                date,
+                state,
+                candidate_ids=candidate_ids,
+                preimage=final_review_preimage,
+                handoff_outcome=initial_final_review_handoff,
+            )
+            if initial_final_review_handoff is not None
+            else _seal_final_review_queue_rebound(
+                date,
+                state,
+                candidate_ids=candidate_ids,
+                preimage=final_review_preimage,
+                phase=RECOVERY_REBOUND_SESSION_ANNOTATION,
+                reason_code=(
+                    "SELECTED_FINAL_REVIEW_RECOVERY_SESSION_ANNOTATION_BLOCKED"
+                ),
+            )
+        )
+        if not final_review_valid:
+            return -1
     if preimage is None:
         return int(changed)
     from src.autoslice.published_topic_collision import (

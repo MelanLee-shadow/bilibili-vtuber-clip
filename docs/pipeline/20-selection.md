@@ -189,7 +189,15 @@
   handoff/内嵌 grant/receipt/hash 任一 malformed、pre-marker 非 `CONVERGED`、generic requeue 异常
   或 terminal seal 失败时，historical maintenance 必须恢复完整 preimage，写
   `SELECTED_FINAL_REVIEW_TOPIC_LINEAGE_HANDOFF_BLOCKED` v7 typed runtime block，并返回零工作量；
-  没有旧 marker 的普通 v7 路径保持 `ABSENT`，不得因此改变既有行为。
+  没有旧 marker 的普通 v7 路径保持 `ABSENT`，不得为它新建 marker。
+  Runner 在 maintenance 前执行 session annotation；fresh v7 行尚无 receipt 时，只有 recovery
+  inspector 仍为 `READY_TO_REQUEUE` 的同一 pick 可以按既有 session 白名单变更。若 handoff 为
+  `READY`，须先把该 rebound self-seal 到旧 v5 marker 并复验仍为 `READY`；若 handoff 为
+  `ABSENT`，则须保持无 marker、同一 picks collection、grant/upload/provider ledger、非目标 Talk
+  与五个 Song 集合逐字不变，并复验仍为 `ABSENT + READY_TO_REQUEUE`。任一越界变更、sealer 或
+  复验失败都恢复 annotation 前完整 preimage，并写
+  `SELECTED_FINAL_REVIEW_RECOVERY_SESSION_ANNOTATION_BLOCKED`，不得拿 queue-rebound receipt
+  规则放行一条尚未入队的 pick。
   首次重排必须写独立的 `selected-final-review-recovery-receipt.v1`，绑定 grant、原拒绝全行、
   初始队列全行、recorded/current fingerprint 与 self-seal；之后只准
   rejection→queue→pick→queue 有序前进。session annotation、scorecard refresh、prioritize 与
