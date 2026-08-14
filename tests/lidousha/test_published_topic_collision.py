@@ -621,6 +621,54 @@ def _selected_authority_rejection_with_redundant_stale_hold(
     return state, root, registry, rejected
 
 
+def _annotated_selected_authority_rejection_with_stale_hold(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[dict, Path, dict, dict]:
+    """Apply the real scoped session annotation to the observed stale re-hold."""
+
+    from src.autoslice import published_topic_collision as topic_collision
+
+    state, root, registry, rejected = (
+        _selected_authority_rejection_with_redundant_stale_hold(
+            tmp_path,
+            rows,
+            rejection_overrides={"session_relation_authority": None},
+        )
+    )
+    rejected_preimage = deepcopy(rejected)
+    segment_stem = Path(rejected["segment_path"]).stem
+    state["segment_sessions"] = {segment_stem: rejected["session_id"]}
+    state["segment_relation_authorities"] = {}
+    state["segment_scene_contexts"] = {
+        segment_stem: deepcopy(rejected["segment_scene_context"])
+    }
+    original_seal = seal_published_topic_resolution_row_rebounds
+
+    def seal_scoped(value: dict, **kwargs) -> bool:
+        return original_seal(
+            value,
+            **kwargs,
+            repo_root=root,
+            publication_registry=registry,
+        )
+
+    monkeypatch.setattr(runner, "list_segments", lambda _date: [])
+    monkeypatch.setattr(
+        topic_collision,
+        "seal_published_topic_resolution_row_rebounds",
+        seal_scoped,
+    )
+    assert historical_failed_talk_scope.annotate_sessions(
+        DATE,
+        state,
+        include_song_rows=False,
+        candidate_ids=(CANDIDATE,),
+    ) == 1
+    return state, root, registry, rejected_preimage
+
+
 @pytest.mark.parametrize(
     ("current_fingerprint", "expected"),
     [
@@ -896,8 +944,13 @@ def test_v5_selected_subtitle_authority_stale_rehold_is_removed_then_requeued_wi
 ) -> None:
     from src.autoslice import published_topic_collision as topic_collision
 
-    state, root, registry, rejected = (
-        _selected_authority_rejection_with_redundant_stale_hold(tmp_path, rows)
+    state, root, registry, rejected_preimage = (
+        _annotated_selected_authority_rejection_with_stale_hold(
+            tmp_path, rows, monkeypatch
+        )
+    )
+    annotated_preimage = deepcopy(
+        next(row for row in state["picks"] if row.get("candidate_id") == CANDIDATE)
     )
     song_preimage = deepcopy(
         {
@@ -911,6 +964,19 @@ def test_v5_selected_subtitle_authority_stale_rehold_is_removed_then_requeued_wi
             )
         }
     )
+    non_target_preimage = {
+        collection: [
+            deepcopy(row)
+            for row in state.get(collection, [])
+            if (row.get("candidate_id") or row.get("cid")) != CANDIDATE
+        ]
+        for collection in (
+            "pending_talk",
+            "talk_backlog",
+            "picks",
+            "talk_below_confidence_threshold",
+        )
+    }
     original_inspect = inspect_published_topic_resolution_recovery
     original_advance = advance_published_topic_resolution_recovery
 
@@ -951,6 +1017,19 @@ def test_v5_selected_subtitle_authority_stale_rehold_is_removed_then_requeued_wi
         ),
         raising=False,
     )
+    assert "session_relation_authority" not in annotated_preimage
+    assert state[REVIEW_STATE_FIELD]["holds"][0]["candidate"] == rejected_preimage
+    annotation = state[RECOVERY_MARKER_FIELD]["entries"][CANDIDATE]["transitions"][-1]
+    assert annotation["transition_kind"] == "CURRENT_ROW_REBOUND"
+    assert annotation["transition_phase"] == "SESSION_ANNOTATION"
+    assert annotation["changed_fields"] == ["session_relation_authority"]
+    assert annotation["previous_row_binding"]["row_sha256"] == canonical_sha256(
+        rejected_preimage
+    )
+    assert annotation["next_row_binding"]["row_sha256"] == canonical_sha256(
+        annotated_preimage
+    )
+    assert inspect_scoped(state, CANDIDATE) == RECOVERY_RELEASED_RETRY_PENDING
 
     def generic_requeue(
         _date: str,
@@ -994,20 +1073,200 @@ def test_v5_selected_subtitle_authority_stale_rehold_is_removed_then_requeued_wi
         for row in state["pending_talk"]
         if row.get("candidate_id") == CANDIDATE
     )
-    assert queued["recovery_source_record_sha256"] == canonical_sha256(rejected)
+    assert queued["recovery_source_record_sha256"] == canonical_sha256(
+        annotated_preimage
+    )
     marker = state[RECOVERY_MARKER_FIELD]["entries"][CANDIDATE]
     assert marker["current_row_binding"] == {
         "collection": "pending_talk",
         "row_sha256": canonical_sha256(queued),
     }
-    assert marker["transitions"][-1]["transition_kind"] == (
-        "RECOVERABLE_FAILED_PICK_REQUEUED"
-    )
+    assert [item["transition_kind"] for item in marker["transitions"][-2:]] == [
+        "CURRENT_ROW_REBOUND",
+        "RECOVERABLE_FAILED_PICK_REQUEUED",
+    ]
     assert marker["transitions"][-1]["failed_pick_sha256"] == canonical_sha256(
-        rejected
+        annotated_preimage
     )
     assert inspect_scoped(state, CANDIDATE) == RECOVERY_RELEASED_QUEUED
     assert {key: state[key] for key in song_preimage} == song_preimage
+    assert {
+        collection: [
+            row
+            for row in state.get(collection, [])
+            if (row.get("candidate_id") or row.get("cid")) != CANDIDATE
+        ]
+        for collection in non_target_preimage
+    } == non_target_preimage
+
+
+def test_v5_annotated_stale_hold_blocks_resealed_changed_field_claim(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A valid self-seal cannot substitute for the exact old/new row diff."""
+
+    state, root, registry, _rejected = (
+        _annotated_selected_authority_rejection_with_stale_hold(
+            tmp_path, rows, monkeypatch
+        )
+    )
+    ledger = state[RECOVERY_MARKER_FIELD]
+    marker = ledger["entries"][CANDIDATE]
+    transition = marker["transitions"][-1]
+    transition["changed_fields"] = ["session_id"]
+    transition["transition_sha256"] = canonical_sha256(
+        {
+            key: value
+            for key, value in transition.items()
+            if key != "transition_sha256"
+        }
+    )
+    marker["marker_sha256"] = canonical_sha256(
+        {key: value for key, value in marker.items() if key != "marker_sha256"}
+    )
+    ledger["ledger_sha256"] = canonical_sha256(
+        {key: value for key, value in ledger.items() if key != "ledger_sha256"}
+    )
+    preimage = deepcopy(state)
+    monkeypatch.setattr(
+        RunnerProxy,
+        "talk_failure_recovery_fingerprint",
+        lambda *_args: pytest.fail("nonexact rebound must block before fingerprint"),
+        raising=False,
+    )
+
+    assert (
+        inspect_published_topic_resolution_recovery(
+            state,
+            CANDIDATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == RECOVERY_BLOCKED
+    )
+    assert state == preimage
+
+
+def test_v5_annotated_stale_hold_blocks_when_it_is_two_rebounds_old(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the immediately previous annotation head may explain a stale hold."""
+
+    state, root, registry, _rejected = (
+        _annotated_selected_authority_rejection_with_stale_hold(
+            tmp_path, rows, monkeypatch
+        )
+    )
+    rebound_preimage = deepcopy(state)
+    current = next(
+        row for row in state["picks"] if row.get("candidate_id") == CANDIDATE
+    )
+    current["session_id"] = "live-20260808Treannotated"
+    assert seal_published_topic_resolution_row_rebounds(
+        state,
+        pre_state=rebound_preimage,
+        phase=RECOVERY_REBOUND_SESSION_ANNOTATION,
+        repo_root=root,
+        publication_registry=registry,
+    )
+    preimage = deepcopy(state)
+    monkeypatch.setattr(
+        RunnerProxy,
+        "talk_failure_recovery_fingerprint",
+        lambda *_args: pytest.fail("non-immediate hold must block before fingerprint"),
+        raising=False,
+    )
+
+    assert (
+        inspect_published_topic_resolution_recovery(
+            state,
+            CANDIDATE,
+            repo_root=root,
+            publication_registry=registry,
+        )
+        == RECOVERY_BLOCKED
+    )
+    assert state == preimage
+
+
+def test_v5_annotated_stale_hold_reconciliation_rolls_back_with_failed_requeue(
+    tmp_path: Path,
+    rows: tuple[dict, dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Removing the proven old hold remains atomic with retry and lineage."""
+
+    from src.autoslice import published_topic_collision as topic_collision
+
+    state, root, registry, _rejected = (
+        _annotated_selected_authority_rejection_with_stale_hold(
+            tmp_path, rows, monkeypatch
+        )
+    )
+    preimage = deepcopy(state)
+
+    def inspect_scoped(value: dict, candidate_id: str) -> str:
+        return inspect_published_topic_resolution_recovery(
+            value,
+            candidate_id,
+            repo_root=root,
+            publication_registry=registry,
+        )
+
+    monkeypatch.setattr(
+        topic_collision,
+        "inspect_published_topic_resolution_recovery",
+        inspect_scoped,
+    )
+    monkeypatch.setattr(
+        RunnerProxy,
+        "talk_failure_recovery_fingerprint",
+        lambda _self, kind, candidate_id: (
+            "sha256:" + "2" * 64
+            if (kind, candidate_id) == ("subtitle_authority", CANDIDATE)
+            else pytest.fail("fingerprint probe widened beyond the exact target")
+        ),
+        raising=False,
+    )
+
+    def failed_requeue(
+        _date: str, value: dict, **_kwargs
+    ) -> tuple[int, int, int, int, bool]:
+        assert value[REVIEW_STATE_FIELD]["holds"] == []
+        value["picks"] = [
+            row
+            for row in value["picks"]
+            if row.get("candidate_id") != CANDIDATE
+        ]
+        raise RuntimeError("retry failed after mutating the pick")
+
+    monkeypatch.setattr(
+        historical_failed_talk_scope,
+        "maintain_delivery_recovery_scope",
+        failed_requeue,
+    )
+
+    assert historical_failed_talk_scope.maintain(
+        DATE,
+        state,
+        automatic_maintenance=True,
+        candidate_ids=(CANDIDATE,),
+    ) == (0, 0, 0, 0, False)
+    assert {
+        key: value
+        for key, value in state.items()
+        if key != "operator_processing_scope_runtime_block"
+    } == preimage
+    assert state[REVIEW_STATE_FIELD]["holds"] == preimage[REVIEW_STATE_FIELD][
+        "holds"
+    ]
+    assert state["operator_processing_scope_runtime_block"]["reason_code"] == (
+        "TOPIC_DEDUP_RETRY_TRANSITION_BLOCKED"
+    )
 
 
 def _patch_frozen_retry_selection_dependencies(

@@ -2,14 +2,27 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Mapping
 
+from src.autoslice.published_topic_recovery_lineage import (
+    RECOVERY_REBOUND_FIELDS,
+    RECOVERY_REBOUND_SESSION_ANNOTATION,
+    RECOVERY_ROW_REBOUND_TRANSITION,
+    recovery_row_binding_is_valid,
+    top_level_changed_fields,
+    validated_transition_next_binding,
+)
 from src.autoslice.runner_proxy import RunnerProxy
 
 
 REVIEW_STATE_FIELD = "published_topic_dedup_review"
 REVIEW_STATE_SCHEMA = "published-topic-dedup-review-state.v1"
+RECOVERY_MARKER_FIELD = "published_topic_resolution_recovery"
+RECOVERY_MARKER_SCHEMA = "published-topic-resolution-recovery-marker.v2"
+RECOVERY_LEDGER_SCHEMA = "published-topic-resolution-recovery-ledger.v1"
 STALE_REVIEW_STATUS = "HUMAN_TOPIC_DEDUP_REVIEW_AUTHORITY_STALE"
 RECOVERY_RELEASED_RETRY_PENDING = "RELEASED_RETRY_PENDING"
 RECOVERY_CONVERGED = "CONVERGED"
@@ -34,10 +47,38 @@ _STALE_HOLD_KEYS = frozenset(
         "evidence",
     }
 )
+_RECOVERY_MARKER_KEYS = frozenset(
+    {
+        "schema_version",
+        "candidate_id",
+        "queue_origin",
+        "upload_authorized",
+        "original_hold",
+        "original_hold_sha256",
+        "restored_candidate_sha256",
+        "resolution",
+        "original_authority",
+        "scorecard_refresh",
+        "current_row_binding",
+        "transitions",
+        "marker_sha256",
+    }
+)
 
 
 def _candidate_id(row: Mapping[str, object]) -> str:
     return str(row.get("candidate_id") or row.get("cid") or "")
+
+
+def _canonical_sha256(value: object) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
 def is_selected_subtitle_authority_rejection(
@@ -109,6 +150,101 @@ def _one_target_row(
     return rows[0] if len(rows) == 1 else None
 
 
+def _sealed_session_annotation_previous_head(
+    state: Mapping[str, object],
+    *,
+    candidate_id: str,
+    collection: str,
+    previous_row: Mapping[str, object],
+    current_row: Mapping[str, object],
+) -> bool:
+    """Accept only an exact previous head sealed by the final annotation rebound."""
+
+    ledger = state.get(RECOVERY_MARKER_FIELD)
+    try:
+        if not isinstance(ledger, Mapping):
+            return False
+        ledger_body = {
+            key: value for key, value in ledger.items() if key != "ledger_sha256"
+        }
+        entries = ledger.get("entries")
+        if not (
+            set(ledger) == {"schema_version", "entries", "ledger_sha256"}
+            and ledger.get("schema_version") == RECOVERY_LEDGER_SCHEMA
+            and isinstance(entries, Mapping)
+            and ledger.get("ledger_sha256") == _canonical_sha256(ledger_body)
+        ):
+            return False
+        marker = entries.get(candidate_id)
+        if not isinstance(marker, Mapping):
+            return False
+        marker_body = {
+            key: value for key, value in marker.items() if key != "marker_sha256"
+        }
+        transitions = marker.get("transitions")
+        if not (
+            set(marker) == _RECOVERY_MARKER_KEYS
+            and marker.get("schema_version") == RECOVERY_MARKER_SCHEMA
+            and marker.get("candidate_id") == candidate_id
+            and marker.get("queue_origin") in {"pending_talk", "talk_backlog"}
+            and marker.get("upload_authorized") is False
+            and marker.get("marker_sha256") == _canonical_sha256(marker_body)
+            and isinstance(transitions, list)
+            and transitions
+        ):
+            return False
+        expected_previous: dict[str, object] = {
+            "collection": marker.get("queue_origin"),
+            "row_sha256": marker.get("restored_candidate_sha256"),
+        }
+        if not recovery_row_binding_is_valid(expected_previous):
+            return False
+        for index, transition in enumerate(transitions):
+            next_binding = validated_transition_next_binding(
+                transition,
+                index=index,
+                expected_previous=expected_previous,
+                canonical_sha256=_canonical_sha256,
+            )
+            if next_binding is None:
+                return False
+            expected_previous = next_binding
+        current_binding = marker.get("current_row_binding")
+        last_transition = transitions[-1]
+        changed_fields = top_level_changed_fields(previous_row, current_row)
+        return bool(
+            isinstance(current_binding, Mapping)
+            and dict(current_binding) == expected_previous
+            and last_transition.get("transition_kind")
+            == RECOVERY_ROW_REBOUND_TRANSITION
+            and last_transition.get("transition_phase")
+            == RECOVERY_REBOUND_SESSION_ANNOTATION
+            and last_transition.get("changed_fields") == changed_fields
+            and changed_fields
+            and set(changed_fields).issubset(
+                RECOVERY_REBOUND_FIELDS[RECOVERY_REBOUND_SESSION_ANNOTATION]
+            )
+            and last_transition.get("previous_row_binding")
+            == {
+                "collection": collection,
+                "row_sha256": _canonical_sha256(previous_row),
+            }
+            and last_transition.get("next_row_binding")
+            == {
+                "collection": collection,
+                "row_sha256": _canonical_sha256(current_row),
+            }
+            and dict(current_binding) == last_transition.get("next_row_binding")
+            and collection == "picks"
+            and _candidate_id(previous_row) == candidate_id
+            and _candidate_id(current_row) == candidate_id
+            and is_selected_subtitle_authority_rejection(previous_row)
+            and is_selected_subtitle_authority_rejection(current_row)
+        )
+    except (TypeError, ValueError):
+        return False
+
+
 def reconcilable_redundant_stale_hold_index(
     state: Mapping[str, object], candidate_id: str
 ) -> int | None:
@@ -135,13 +271,27 @@ def reconcilable_redundant_stale_hold_index(
     if len(matches) != 1:
         return None
     index = matches[0]
-    return (
-        index
-        if _is_exact_redundant_stale_hold(
-            holds[index], candidate_id=candidate_id, marker_head=target[1]
+    hold = holds[index]
+    if _is_exact_redundant_stale_hold(
+        hold, candidate_id=candidate_id, marker_head=target[1]
+    ):
+        return index
+    previous_row = hold.get("candidate") if isinstance(hold, Mapping) else None
+    if not (
+        isinstance(previous_row, Mapping)
+        and _is_exact_redundant_stale_hold(
+            hold, candidate_id=candidate_id, marker_head=previous_row
         )
-        else None
-    )
+        and _sealed_session_annotation_previous_head(
+            state,
+            candidate_id=candidate_id,
+            collection=target[0],
+            previous_row=previous_row,
+            current_row=target[1],
+        )
+    ):
+        return None
+    return index
 
 
 def review_holds_are_valid(
