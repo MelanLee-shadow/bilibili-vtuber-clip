@@ -1,5 +1,78 @@
 # Current handoff
 
+## ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-15 05:05Z 通宵 scoped 单日出货（有在跑的后台进程）
+
+### 目标
+
+Ivan 8/15 04:39Z 睡前令：让切片继续走流水线、尽量多出货、需要审查的攒到早上一起说。
+不碰 DISABLED 总开关，用单日 scoped run 出新场次；今晚不发布任何东西。
+
+### 已完成
+
+- 查明 runner 自 8/14 13:47Z 暂停的原因是**部署仪式**不是事故：
+  `repo/DEPLOYED_COMMIT` = `44ed6c6a72f46b30ff8e7c2a13aa95117c117633  deployed 2026-08-14T13:48:23Z`，
+  比 DISABLED 晚一分钟。free 上部署的 commit 等于本机 HEAD，**今晚不需要部署**。
+- 证明今晚没有发布面：`free_session_autoslice.py` 无任何 B 站上传入口；
+  Mac `com.ivan.lidousha-autoslice-pull` 只是 rsync 拉取。
+- 四条老候选分诊完毕（读 state picks 行，非猜）：三条 `failure_recoverable=false` 终态，
+  一条 `auto_210624_656_909` 可恢复。详见
+  `docs/reviews/2026-08-15-overnight-pipeline-report.md`。
+- 写了可复用的单日 scoped 仪式脚本 `free:/tmp/scoped_run_date.sh`
+  （flock runner.lock → 校验 DEPLOYED_COMMIT → 把 DISABLED 挪成 `DISABLED.scoped-<tag>`
+  → `process_date(<date>)` → trap EXIT 无条件放回 DISABLED）。
+
+### 产出
+
+- **8/13 出成品 2 条**，在 `free:/opt/bilive/autoslice/repo/lidousha/2026-08-13/`（Mac launchd 会拉）：
+  `auto_203011_328_389`（61.3s，说话人 READY）与
+  `auto_203011_1312_1366`（76.2s，SPEAKER_GUESS）。均 `record.status = MATERIALIZED`，
+  完整审片包（mp4/srt/speaker.srt/speaker.ass/cover.png/publish.json）。
+- 8/13 共跑 5 轮、试到 7 席，最终 `talk 1/7 delivered`（口径上 SPEAKER_GUESS 那条不计入 delivered）。
+  歌切 6 attempts 全部 `candidate_rejected`（缺正向 LRC 边界证明）。
+- 修掉一个真 bug：scoped 仪式绕过 `main()` → 漏 cpa.env 注入 → **语义召回静默降级成关键词兜底**。
+  修后同批源从「25 候选 0 走召回」变成「32 候选 5/6 段走召回」。
+
+### 进行中（后台进程）
+
+**没有。** 五轮 scoped run 全部收工：exit 全 0，`scoped_run_date.sh` 进程数 = 0，
+**DISABLED 五次全部正确放回**（每轮 `ls` 核对，无 `DISABLED.scoped-*` 残留）。
+runner 仍是暂停态，机器干净。
+
+### 另一件收工才发现的事（重要）
+
+**Mac 的 `com.ivan.lidousha-autoslice-pull` launchd job 一直在失败**：
+plist 的 ProgramArguments 少了必填的 `--host`，每 30 分钟报一次
+`error: the following arguments are required: --host`，
+`/tmp/lidousha-autoslice-pull.log` 里累计 **153 次**，`LastExitStatus = 512`。
+本机 `lidousha/` 最新日期目录停在 `2026-08-07`——**8/08 之后的成品就没自动同步过来**。
+已手动 `pull --days 3 --host free` 补拉成功（该脚本纯 rsync，无 upload 面），
+8/13、8/14、reports 均已落本机。**plist 未改**（持久化配置，需 Ivan 决定）。
+
+### 阻塞（都要 Ivan 拍板，本会话一件没动）
+
+1. **8/14 整天被一个 116K 连接残桩卡死**：`22966160_20260814-11-30-25.flv` 缺
+   identity rebind → `source disposition effective fingerprint drifted` →
+   `CLOSED_FLV_WITHOUT_MP4` → `source_incomplete`。
+   根因是 **adapter worker 崩在 8/12 另一个残桩上**（去 stat 一个残桩本就不会有的 mp4，
+   errno 131），扫不到 8/14 就写不出 rebind。`docker ps` 却显示 adapter `healthy`。
+   修 adapter（重启，或让它对 `recording-connection-stub.v1` 跳过 mp4 扫描）应可解锁整天。
+   **8/14 素材一字节没丢**，5 段正片 mp4 齐全。
+2. **磁盘 96%（剩 16G，地板 8G）**：`out/2026-08-08` 一天 77G，其中 **67G 是 5 条被拒歌切的重试残骸**。
+   删任何 `out/` 媒体前必须先跑 `scripts/scan_state_dangling_media_refs.py`。
+3. **三条 8/08–8/09 终态拒绝候选**不能由机器自行开授权重跑
+   （`operator_processing_scope.py` 明令不得把终态伪造成可重跑项）。
+4. **两条 one-shot 裁决预算恢复**（8/08 `auto_210131_1576_1802`、8/13 `auto_230029_121_313`）ledger 仍 `ABSENT`。
+5. 历史两笔 rescue 因磁盘地板被跳过，原始录播字节可能已丢
+   （7/28 `20260722-20-05-11.mp4`、8/09 `20260809-19-06-17.flv`）。
+
+### 下一步
+
+1. 先修 adapter → 重跑 8/14（投入产出比最高，5 段 2.5 小时素材）。
+2. 磁盘腾空间（先扫悬空引用再删）。
+3. 仓内改进已开 2 个 task chip：cpa.env 注入上游化 + `source_fact_review` 裸 except 吞异常。
+4. **恢复 runner 与否是 Ivan 的决定**，本会话不擅自撤 DISABLED。
+5. 完整报告：`docs/reviews/2026-08-15-overnight-pipeline-report.md`。
+
 ## ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-11 10:13Z exact aggregate verifier heartbeat
 
 - 已实现 exact 10+5 unlabeled holdout aggregate verifier，并让 run-one/finalizer 共用 run-level
