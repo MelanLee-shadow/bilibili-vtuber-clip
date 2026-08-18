@@ -297,19 +297,31 @@ def test_deploy_adapter_repair_status_accepts_only_exact_idle_defect(tmp_path):
         "finalizing": False,
         "error": "source disposition drift: finalized source fingerprint changed",
     }
+
+    def _fresh_repairable(error=None):
+        # The validator enforces a 90s freshness window on generated_at_epoch.
+        # ~28 subprocess spawns run in this test; under load that can exceed
+        # 90s of wall-clock time, so every accept-path payload must carry an
+        # epoch computed right before its own subprocess call rather than
+        # reusing the epoch captured once at the top of the test.
+        payload = dict(repairable)
+        payload["generated_at_epoch"] = time.time()
+        if error is not None:
+            payload["error"] = error
+        return payload
+
     for label in (
         "PY_SUPPORTED_ADAPTER_REPAIR_IDLE",
         "PY_ROLLBACK_SUPPORTED_ADAPTER_REPAIR_IDLE",
     ):
-        accepted = _run_embedded_status_validator(label, tmp_path, repairable)
+        accepted = _run_embedded_status_validator(label, tmp_path, _fresh_repairable())
         assert accepted.returncode == 0, (label, accepted.stderr)
 
         for exact_error in (
             "source disposition identity rebind hash retry is pending",
             "source disposition identity rebind hash retry exhausted",
         ):
-            typed = dict(repairable)
-            typed["error"] = exact_error
+            typed = _fresh_repairable(exact_error)
             accepted = _run_embedded_status_validator(label, tmp_path, typed)
             assert accepted.returncode == 0, (label, exact_error, accepted.stderr)
 
@@ -328,7 +340,12 @@ def test_deploy_adapter_repair_status_accepts_only_exact_idle_defect(tmp_path):
         {"recording": True},
         {"finalizing": True},
         {"generated_at_epoch": now - 91},
-        {"generated_at_epoch": now + 1},
+        # A future timestamp must be rejected regardless of how far in the
+        # future it is (the validator asserts `0 <= age`, so any positive
+        # offset fails identically). Use a large offset (1h) instead of +1s
+        # so the assertion can never be defeated by wall-clock drift during
+        # this test's ~28 subprocess spawns racing past the +1s mark.
+        {"generated_at_epoch": now + 3600},
     ):
         payload = dict(repairable)
         payload.update(update)
