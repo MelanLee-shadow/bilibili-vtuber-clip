@@ -1126,20 +1126,57 @@ def test_failed_pick_adoption_dry_run_has_zero_target_writes(
     assert not list(fixture.state_path.parent.glob("*.pre-import-*"))
 
 
-def test_committed_solo_failed_pick_release_is_exactly_bound() -> None:
+def test_committed_consumed_failed_pick_release_refuses_reauthorization() -> None:
+    """auto_230125_1157_1229's committed row was released_for_upload and its
+    one-shot failed-pick authority was consumed by the 2026-08-12 fast-track
+    upload (BV1uKuC6hE9j); the row is now status=published (see the
+    "Promote 8/12 fast-track uploads into committed publication registry"
+    commit).  A published row must never reopen failed-pick adoption -- this
+    pins that the committed registry now refuses it outright, rather than
+    pinning the exact authority shape of an authority that no longer grants
+    anything."""
+
     registry_path = (
         Path(__file__).resolve().parents[1]
         / cli.PUBLICATION_REGISTRY_RELATIVE
     )
+    with pytest.raises(pi.PackageImportError) as excinfo:
+        pi.load_failed_pick_import_authorization(
+            registry_path=registry_path,
+            candidate_id="auto_230125_1157_1229",
+            date="2026-08-08",
+            release_quote=RELEASE_QUOTE,
+        )
+    assert excinfo.value.code == "FAILED_PICK_NOT_RELEASED"
+    assert "published" in excinfo.value.detail
+
+
+def test_fixture_registry_failed_pick_release_is_exactly_bound(
+    tmp_path: Path,
+) -> None:
+    """The exact-binding contract (candidate/date scoping, actor, quote,
+    row-hash binding) belongs to this test's own synthetic registry fixture,
+    not to the committed asset's time-varying status -- once a candidate's
+    committed row is promoted to published, its authority is spent and no
+    longer exercises this shape (see the sibling
+    ``test_committed_consumed_failed_pick_release_refuses_reauthorization``)."""
+
+    fixture = _build_external_package(tmp_path)
+    _before_state, entry, registry_path = _configure_authorized_failed_pick(
+        fixture
+    )
+
     authorization = pi.load_failed_pick_import_authorization(
         registry_path=registry_path,
-        candidate_id="auto_230125_1157_1229",
-        date="2026-08-08",
+        candidate_id=CANDIDATE,
+        date=DATE,
         release_quote=RELEASE_QUOTE,
     )
     assert authorization.released_by == "Ivan"
     assert authorization.state_row_canonical_sha256 == (
-        "66e4d8a48a60d015e5dae3f5fd1de92a02b78c78299e945d983115f8e399a12a"
+        entry["failed_pick_import_authority"][
+            "state_row_canonical_sha256"
+        ].removeprefix("sha256:")
     )
     assert authorization.authority["required_pick_state"] == {
         "status": "failed",
