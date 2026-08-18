@@ -1,5 +1,46 @@
 # Current handoff
 
+## ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-18 23:5xZ 双阻塞修复 + 逐日恢复启动
+
+### 目标
+Ivan 8/18 令：修活体阻塞（runner 全停 + CPA）、登记补录、从 8/09 逐日恢复（审阅≠当天闭环）、
+上游化 sonnet 工作模式裁定。新工作模式：主会话思考/审查（全读权），新代码实现派 sonnet worker。
+
+### 已完成
+- **阻塞1 修复**：free runner 自 8/18 19:40Z 起因 8/15 残桩 disposition 指纹漂移每 tick 全跳。
+  根因=当天 18:00Z CD2 线程手术重启后队列重传把残桩 successor flv 重新落云（mtime 变、字节同尺寸），
+  单角色稳定字段漂移进不了任何 rebind 白名单。修法=停 adapter→删漂移行→重启，行由 webhook 证据
+  +当前指纹重建（backup: free:/opt/bilive/recording/adapter-state.json.bak-20260819T-blocker1）。
+  22:30Z tick 已恢复完整运行（当时 room LIVE 正常让路）。⚠️ 我第二刀多删了 4 条有合法回执的行
+  （对照了原始绑定而非回执后有效绑定）——无害，全部自动重建，但下次先算 effective bindings。
+- **阻塞2 定性（不可自修）**：CPA chat lane down = **sudocode 余额耗尽**（剩 ¥0.020248，
+  单请求预扣 ¥0.052，403 中文报错）+ 3 个 ChatGPT OAuth 全部 status=error（限额）。
+  CLIProxyAPI 服务本身 active；8/16 config 改版把 sudocode 从 codex-api-key 搬进
+  openai-compatibility（正常）。**需 Ivan 充值 sudocode 或等 OAuth 重置**；gemini 不走 CPA，无关。
+- **登记补录**（commit bd19b8c）：夜蝶 auto_230125_1157_1229 翻 published BV1uKuC6hE9j、
+  莉娅狼 auto_223750_578_734 补行 BV1BtuC6LEaf——两条 8/12 快车道上传只写了 runtime overlay，
+  committed 资产漏账（上传闸门经 merge 实际无洞）。测试重绑 5cd54d5（sonnet worker 首单，主会话审查合入）。
+- **8/09 恢复 grant 已装**：`2026-08-09-ivan-day-recovery-20260818T2340Z`（v1，5 条可恢复候选，
+  expires 8/22，_validate_grant=OK，state 备份 .bak-grant-20260818）。带 Ivan 逐字授权语。
+- **iCloud 回滚事故修复**：工作树 12 个文件被 iCloud 回滚到 HEAD 前版本（冲突副本=HEAD 逐字节验证
+  12/12），已 checkout 恢复+删副本。⚠️ 仓库在 iCloud 同步范围内是持续风险面。
+- 工作模式裁定已上游化 agent-toolkit global/claude/CLAUDE.md 并 sync（CHECK OK）。
+- Review 清单 16 条（13 talk+3 song）已发 Ivan（lidousha/review-only/REVIEW-QUEUE-20260818.md）。
+
+### 进行中
+- 全量测试后台跑（绿后从干净临时 worktree 跑 scripts/deploy_free_autoslice.sh 部署 5cd54d5）。
+- 8/09 恢复等两个闸：她下播 + CPA 余额；cron tick 即重试环，无需人守。
+
+### 阻塞（要 Ivan）
+1. **sudocode 充值**（CPA chat lane 唯一解；不充则 8/09 恢复和一切新产出都 defer）。
+2. Review 清单 16 条的过/不过。
+3. 8/07 补位推荐：auto_213743_1018_1295（89.0 分）需授权重跑（同款 grant 我可铸）。
+4. oci3 切主选项 A/B/C（另一会话的迁移文档等拍板）；autoslice 上 oci3 是独立项目要不要立项。
+
+### 下一步
+1. 部署 → 验证 DEPLOYED_COMMIT。2. CPA 恢复后盯 8/09 首轮 requeue。3. 逐日推进 8/10→8/12。
+4. oci3 侧 adapter 也有一条 8/18 19-00-28 缺文件错（其 status.json 自用，暂不影响 free；切主前要清）。
+
 ## ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-15 05:05Z 通宵 scoped 单日出货（有在跑的后台进程）
 
 ### 目标
