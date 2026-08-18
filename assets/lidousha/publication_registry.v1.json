@@ -1,345 +1,385 @@
 {
-  "schema_version": "publication-registry.v1",
-  "notes": "候选↔BV 出版登记：published 候选禁止再走新投稿（修复只允许 authorized_upload.py repair-* 的原 BV 修复链）；hold_pending_review 候选在 Ivan 放行前禁止任何上传。2026-07-27 建立（BV1ec3A6bEWF 事故：7/24 争议搁置件被当新切片上传）。",
-  "entries": [
-    {
-      "candidate_id": "auto_193450_1573_1672",
-      "recording_date": "2026-07-22",
-      "status": "published",
-      "bvid": "BV1DAg46HEXE",
-      "note": "v8-final；1573 置换链另有 same-bv repair 台账"
+ "schema_version": "publication-registry.v1",
+ "notes": "候选↔BV 出版登记：published 候选禁止再走新投稿（修复只允许 authorized_upload.py repair-* 的原 BV 修复链）；hold_pending_review 候选在 Ivan 放行前禁止任何上传。2026-07-27 建立（BV1ec3A6bEWF 事故：7/24 争议搁置件被当新切片上传）。",
+ "entries": [
+  {
+   "candidate_id": "auto_193450_1573_1672",
+   "recording_date": "2026-07-22",
+   "status": "published",
+   "bvid": "BV1DAg46HEXE",
+   "note": "v8-final；1573 置换链另有 same-bv repair 台账"
+  },
+  {
+   "candidate_id": "auto_193450_3573_3665",
+   "recording_date": "2026-07-22",
+   "status": "published",
+   "bvid": "BV1Mug46EEQz",
+   "note": "v8-final"
+  },
+  {
+   "candidate_id": "auto_193450_1475_1543",
+   "recording_date": "2026-07-22",
+   "status": "published",
+   "bvid": "BV1acg46XEjx",
+   "note": "v8-final"
+  },
+  {
+   "candidate_id": "auto_193450_672_945",
+   "recording_date": "2026-07-22",
+   "status": "published",
+   "bvid": "BV1tTg46UE3y",
+   "note": "v8-final"
+  },
+  {
+   "candidate_id": "auto_193450_1863_2056",
+   "recording_date": "2026-07-22",
+   "status": "published",
+   "bvid": "BV1xgg462Env",
+   "note": "v8-final"
+  },
+  {
+   "candidate_id": "auto_193129_424_535",
+   "recording_date": "2026-07-24",
+   "status": "published",
+   "bvid": "BV1E93L6rErV",
+   "note": "daily-fourpack"
+  },
+  {
+   "candidate_id": "auto_193129_537_702",
+   "recording_date": "2026-07-24",
+   "status": "published",
+   "bvid": "BV1Eo3L6zEdU",
+   "note": "daily-fourpack"
+  },
+  {
+   "candidate_id": "auto_183122_607_723",
+   "recording_date": "2026-07-24",
+   "status": "published",
+   "bvid": "BV1Eo3L6zECt",
+   "note": "daily-fourpack"
+  },
+  {
+   "candidate_id": "auto_190124_199_480",
+   "recording_date": "2026-07-24",
+   "status": "published",
+   "bvid": "BV1jw3j6KE17",
+   "note": "daily-fourpack"
+  },
+  {
+   "candidate_id": "auto_200133_44_293",
+   "recording_date": "2026-07-24",
+   "status": "published",
+   "bvid": "BV1TsgZ6BEE2",
+   "note": "2026-07-24-revived"
+  },
+  {
+   "candidate_id": "auto_193129_850_940",
+   "recording_date": "2026-07-24",
+   "status": "published",
+   "bvid": "BV1ec3A6bEWF",
+   "note": "2026-07-27 误当新切片上传的 7/24 争议搁置件；后续只允许 authorized_upload.py repair-* 修复本 BV，禁止再投新稿"
+  },
+  {
+   "candidate_id": "auto_183122_1209_1410",
+   "recording_date": "2026-07-24",
+   "status": "published",
+   "bvid": "BV1AD366DEd9",
+   "note": "2026-07-28 新稿发布；后续修复只允许 authorized_upload.py repair-* 的原 BV 修复链"
+  },
+  {
+   "candidate_id": "auto_195000_1493_1579",
+   "recording_date": "2026-07-25",
+   "status": "published",
+   "bvid": "BV1zzgd6JEHe",
+   "note": "rescued-first；沙豆李字幕置换待 registry 修复通道"
+  },
+  {
+   "candidate_id": "auto_192000_909_1014",
+   "recording_date": "2026-07-25",
+   "status": "published",
+   "bvid": "BV1s7326qEc9",
+   "note": "2026-07-29 新稿发布；合理真值固定为粉丝团灯牌，后续只允许 authorized_upload.py repair-* 的原 BV 修复链"
+  },
+  {
+   "candidate_id": "auto_195000_742_887",
+   "recording_date": "2026-07-25",
+   "status": "published",
+   "bvid": "BV13k3c6XEBb",
+   "note": "2026-07-25-revived"
+  },
+  {
+   "candidate_id": "auto_202004_553_831",
+   "recording_date": "2026-07-25",
+   "status": "published",
+   "bvid": "BV1Wa3r6QELe",
+   "note": "2026-07-28 authorized upload；public/Creator/section verified"
+  },
+  {
+   "candidate_id": "auto_192000_243_371",
+   "recording_date": "2026-07-25",
+   "status": "published",
+   "bvid": "BV1Wh3r6pEQo",
+   "note": "2026-07-28 authorized upload；public/Creator/section verified"
+  },
+  {
+   "candidate_id": "auto_202004_1160_1262",
+   "recording_date": "2026-07-25",
+   "status": "published",
+   "bvid": "BV1h73r6wE5H",
+   "note": "2026-07-28 authorized upload；public/Creator/section verified"
+  },
+  {
+   "candidate_id": "song_192000_1321",
+   "recording_date": "2026-07-25",
+   "status": "published",
+   "bvid": "BV1BJGc6aEWf",
+   "note": "2026-07-31 authorized upload；public/Creator/section verified"
+  },
+  {
+   "candidate_id": "auto_224211_80_141",
+   "recording_date": "2026-07-29",
+   "status": "published",
+   "bvid": "BV1ngGc6BEBS",
+   "note": "2026-07-31 authorized upload；public/Creator/section verified"
+  },
+  {
+   "candidate_id": "auto_155948_424_522",
+   "recording_date": "2026-07-26",
+   "status": "published",
+   "bvid": "BV1d73P6iErL",
+   "note": "2026-07-26-revived"
+  },
+  {
+   "candidate_id": "auto_145940_1533_1619",
+   "recording_date": "2026-07-26",
+   "status": "published",
+   "bvid": "BV1ELGc6NEC5",
+   "note": "2026-07-31 authorized upload；public/Creator/section verified"
+  },
+  {
+   "candidate_id": "auto_142942_1329_1380",
+   "recording_date": "2026-07-26",
+   "status": "published",
+   "bvid": "BV1pn326vEm1",
+   "note": "2026-07-31 authorized upload；public/Creator/section verified"
+  },
+  {
+   "candidate_id": "auto_155948_327_424",
+   "recording_date": "2026-07-26",
+   "status": "published",
+   "bvid": "BV1WJ326KEpc",
+   "note": "2026-07-31 authorized upload；public/Creator/section verified"
+  },
+  {
+   "candidate_id": "auto_142942_496_618",
+   "recording_date": "2026-07-26",
+   "status": "published",
+   "bvid": "BV1zk386LEjC",
+   "note": "2026-07-31 authorized upload；public/Creator/section verified"
+  },
+  {
+   "candidate_id": "auto_224211_181_480",
+   "recording_date": "2026-07-29",
+   "status": "published",
+   "bvid": "BV1EpGA6MExh",
+   "note": "2026-07-31 authorized upload；public/Creator/section verified"
+  },
+  {
+   "candidate_id": "auto_225056_1013_1116",
+   "recording_date": "2026-07-29",
+   "status": "published",
+   "bvid": "BV154GA6vEyD",
+   "note": "2026-07-31 authorized upload；public/Creator/section verified；2026-08-01 same-BV 字幕修复置换(4 cue：久远澪老师×2/柏拉图/栽赃给)，CID 40468153258→40496401196，证据 reports/authorized_uploads/2026-07-31-1013-jiuyuanling-source/",
+   "publication_reconciliation": {
+    "authority": {
+     "bytes": 4357,
+     "path": "reports/authorized_uploads/2026-07-31-1013-jiuyuanling-source/same-bv-repair-completed.json",
+     "sha256": "1e684dec357bd1bdd52ab6f63dd19e2865c33670b2c50859f05d3389ab370fa3"
     },
-    {
-      "candidate_id": "auto_193450_3573_3665",
-      "recording_date": "2026-07-22",
-      "status": "published",
-      "bvid": "BV1Mug46EEQz",
-      "note": "v8-final"
+    "reconciled_at": "2026-08-01T07:19:06+0000",
+    "schema_version": "publication-reconciliation.v1",
+    "status": "VERIFIED_SAME_BV"
+   }
+  },
+  {
+   "candidate_id": "auto_225056_235_339",
+   "recording_date": "2026-07-29",
+   "status": "published",
+   "bvid": "BV1UfGw69EMG",
+   "note": "2026-07-31 authorized upload；public/Creator/section verified"
+  },
+  {
+   "candidate_id": "auto_225056_814_887",
+   "recording_date": "2026-07-29",
+   "status": "published",
+   "bvid": "BV1FBGw6uE6i",
+   "note": "2026-07-31 authorized upload；CPA title-cover joint QC + public/Creator/section/cover-byte verified"
+  },
+  {
+   "candidate_id": "auto_152944_964_1091",
+   "recording_date": "2026-07-26",
+   "status": "published",
+   "bvid": "BV16HGN62E9z",
+   "note": "2026-07-31 authorized upload；CPA title-cover joint QC + public/Creator/section/cover-byte verified"
+  },
+  {
+   "candidate_id": "auto_152944_1411_1463",
+   "recording_date": "2026-07-26",
+   "status": "published",
+   "bvid": "BV1ScGN6cE47",
+   "note": "2026-07-31 authorized upload；CPA title-cover joint QC + public/Creator/section/cover-byte verified"
+  },
+  {
+   "candidate_id": "auto_210739_1142_1436",
+   "recording_date": "2026-08-07",
+   "status": "hold_pending_review",
+   "note": "Ivan 2026-08-08 裁定：非李豆沙主角（抱团叙事主线在他人），T1/86.5 高分仍不可作为频道成品发布；仅作流水线优化材料（42 处文字+8 处说话人订正已收割入 reports/ivan_truth_harvest/2026-08-07）。放行需 Ivan 明示。"
+  },
+  {
+   "candidate_id": "auto_225942_411_1073",
+   "recording_date": "2026-07-18",
+   "status": "published",
+   "bvid": "BV19qK16KE97",
+   "note": "kmx专属称呼串(姐姐妈妈宝宝老公主人)。7/20 与五件套其余一起发布;曾短暂门拦复审后放行,登记补录于 2026-08-08(Ivan 指认+creator archive 回读核实,开放浏览)。"
+  },
+  {
+   "candidate_id": "auto_235936_527_695",
+   "recording_date": "2026-07-18",
+   "status": "published",
+   "bvid": "BV1SUKm6iELn",
+   "note": "和成天下槟榔梗/七星老头烟(发布题:都怪你kmx…老李头私下烟酒槟榔都来的)。7/20 发布;登记补录于 2026-08-08(Ivan 指认+creator archive 回读核实,开放浏览)。"
+  },
+  {
+   "candidate_id": "auto_200736_298_383",
+   "recording_date": "2026-08-07",
+   "status": "published",
+   "bvid": "BV1JLuj6zEdM",
+   "note": "受骗片:首个 wsl 订正重产成品(Ivan 44句真值注入+验收 PASS);标题=Ivan 手定(受话人归属纠错案,F12 立项源);封面=IVAN_EXPLICIT a02 双行(坏女人小李/今天就是要骗女主播);2026-08-09 上传,artifact 6613ab8f7ca3。"
+  },
+  {
+   "candidate_id": "auto_213135_469_710",
+   "recording_date": "2026-08-08",
+   "status": "published",
+   "bvid": "BV18Gu16NEcX",
+   "note": "8/8 批 review_ready 权宜上传(Ivan 8/9 引语:「并且今天要执行权宜上传。只要出片就可以上传，之后我再进行审查。」);speaker-mode 包;QC v2(身份参照修正=墨镜可选)PASS;v1 彩票回执留证 reports/authorized_uploads/2026-08-09-88-batch-provisional/;2026-08-09 上传,artifact 161436692468,VERIFIED_PUBLIC。 2026-08-09 追加:Ivan 手定标题线上替换(歌姬入题)+tag 加 战斗吧歌姬(manual_title_overrides 已登记);CID 未动。 2026-08-10 封面改截图(3D Live 舞台真帧 61e8895f,cover-only edit,CID/标题未动);证据 2026-08-10-screenshot-cover-swaps/。"
+  },
+  {
+   "candidate_id": "auto_230125_960_1072",
+   "recording_date": "2026-08-08",
+   "status": "published",
+   "bvid": "BV1Bau16nEyq",
+   "note": "8/8 批 review_ready 权宜上传(同上引语);speaker-mode 包;QC v2 PASS;2026-08-09 上传,artifact e6577c25464f,VERIFIED_PUBLIC。 2026-08-09 追加:字幕歌名订正同BV置换(LoveLive!→ラブコード×3,CID 40743275821→40746484284,VERIFIED_FRESH_LIVE;tags 审计刷新 唱跳/自信→可爱/帅气;证据 2026-08-09-960-lovecode-source/)。 2026-08-09 r3:字幕[李豆沙]前缀烧字事故修复置换(标签只走颜色样式,Ivan 指令;CID 40746484284→40755790146,VERIFIED_FRESH_LIVE,线上帧亲验;证据 r3/)。"
+  },
+  {
+   "candidate_id": "auto_200130_1323_1603",
+   "recording_date": "2026-08-08",
+   "status": "published",
+   "bvid": "BV1hquD6pE7X",
+   "note": "8/8 快车道人工真值包(多嘉宾 speaker 拒件,Ivan A/B 真值消费);Codex-F 断供前完成上传 2026-08-09T19:26Z,aid=117067168679822,CID=40760773025,VERIFIED_PUBLIC;QC v2 PASS/audit 0 blocking;integrator 上传后硬门复验(159cue/无标签字面/无括号注记/解码零错)。已知待置换:标题封面质量批评(Ivan 8/10)+(跃起) cue104/128 缺失→ 同BV置换制备中(yueqi-r1,新标题+公主抱名场面封面)。披露:上传链跑在 Codex-F 违禁自部署代际 74f8e795 上,回执经复验有效;证据 2026-08-09-200130-fasttrack/。 2026-08-10 三合一同BV置换完成:CID 40760773025→40765099962,(跃起)回填 cue104/128、封面改公主抱截图裁切(v4D 31809a32,自矛盾witness机制首用)、标题改手定稿;合集分P显示标题待补同步(API -400,POLL_ONLY);证据 2026-08-10-1323-yueqi/。"
+  },
+  {
+   "candidate_id": "auto_220747_488_680",
+   "recording_date": "2026-08-07",
+   "status": "published",
+   "bvid": "BV1hfuS6EENb",
+   "note": "8/7 换身份:wsl unblock 处方重产(98/98 逐字==,假标双零)→87finish 链→be88e54 部署后 integrator 收尾上传 2026-08-09T21:59:42Z,VERIFIED via reconcile;QC rerun2 PASS/audit 0 blocking;证据 2026-08-10-87-finish/。 2026-08-10 封面改游戏截图(鹅鸭杀画面+小窗 8313fec8,Ivan 8/9 游戏封面裁定首个公开面实证,cover-only edit);证据 2026-08-10-screenshot-cover-swaps/。"
+  },
+  {
+   "candidate_id": "auto_203735_555_680",
+   "recording_date": "2026-08-07",
+   "status": "published",
+   "bvid": "BV1houS6SEF3",
+   "note": "8/7 真善美:wsl unblock 处方重产(61/61 逐字==,假标双零;override=rebind.87finish 086ba4ee,含 cue24 truth-replay 披露→F11)→上传 2026-08-09T22:03:20Z;QC rerun2 PASS/audit 0 blocking;证据 2026-08-10-87-finish/。"
+  },
+  {
+   "candidate_id": "auto_200130_1722_1792",
+   "recording_date": "2026-08-08",
+   "status": "published",
+   "bvid": "BV13zuX6fEwh",
+   "note": "8/8 快车道第二条(多嘉宾 speaker 拒件,Ivan A/B 真值消费):F 断供接力链(边界 floor pin a8600994+speaker v2 部署+terminal-projection 验收面 df4afed);交付字幕与 Ivan 基线逐字节(0efb9995);标题两轮手术至中性归属定稿(F12 立法适用,回执 76cd2374);audit passed/QC PASS;上传 2026-08-09T22:49Z aid=117067973921757 CID=40762673619;证据 2026-08-10-1722-fasttrack/。"
+  },
+  {
+   "candidate_id": "auto_223750_913_1322",
+   "recording_date": "2026-08-07",
+   "status": "hold_pending_review",
+   "note": "Ivan 2026-08-10 逐字：「先这么做，贪生怕死这个不要上传」。背景：Ivan 2026-08-08 逐字「贪生怕死那个是因为根本没有分人声所以我没有审阅」与「贪生怕死这个也需要改成说话人分离的版本，不过你先别改，先等根因修复之后再说」。2026-08-10 扫全部 4573 个 jsonl 复核：Ivan 从未对本候选说过「因为不是主角所以不传」——那条「非李豆沙主角」裁定属 auto_210739_1142_1436（本表上一条 hold），勿混。放行需 Ivan 明示。"
+  },
+  {
+   "candidate_id": "song_210131_1210",
+   "recording_date": "2026-08-08",
+   "status": "hold_pending_review",
+   "note": "《心型病毒 (Live)》歌切。Ivan 2026-08-10 裁定「当然以 wsl 成品为准，这三个地方都是同一套代码」——不让 free 重产，改用 wsl 已完成的评审包（已抢救至 free incoming/song_210131_1210-r1，sha256 逐文件核验一致，package_audit passed=true/0 blocking）。该包自称 upload_allowed=false / finished_review_package_no_upload_pending_human_review，等 Ivan 审阅。本条同时是跨主机导入的封面闸口：该包封面血统在 wsl，free 复算不出 _initial_cover_proof_valid，若无阻断行 repair_covers 会花图片额度重画一张已定稿封面并覆盖交付根。放行需 Ivan 明示（改 released_for_upload）。"
+  },
+  {
+   "candidate_id": "auto_230125_1157_1229",
+   "recording_date": "2026-08-08",
+   "status": "published",
+   "released_by": "Ivan",
+   "released_at": "2026-08-11",
+   "release_quote": "说起来刚刚通过的这两个可以发布了，只要你根据我的人工真值改完后，可以直接去快车道发布，和你的通用车道修复并行进行",
+   "failed_pick_import_authority": {
+    "schema_version": "failed-pick-import-authority.v1",
+    "scope": "ADOPT_FAILED_PICK_FOR_EXTERNAL_PACKAGE_IMPORT_ONLY",
+    "candidate_id": "auto_230125_1157_1229",
+    "recording_date": "2026-08-08",
+    "state_row_canonical_sha256": "sha256:66e4d8a48a60d015e5dae3f5fd1de92a02b78c78299e945d983115f8e399a12a",
+    "required_pick_state": {
+     "status": "failed",
+     "rc": 1,
+     "failure_kind": "subtitle_authority",
+     "failure_stage": "final_review_findings",
+     "selected_repair": true
     },
-    {
-      "candidate_id": "auto_193450_1475_1543",
-      "recording_date": "2026-07-22",
-      "status": "published",
-      "bvid": "BV1acg46XEjx",
-      "note": "v8-final"
+    "required_batch_state": {
+     "status": "published_with_failures",
+     "publication_closure_status": "published_with_failures"
     },
-    {
-      "candidate_id": "auto_193450_672_945",
-      "recording_date": "2026-07-22",
-      "status": "published",
-      "bvid": "BV1tTg46UE3y",
-      "note": "v8-final"
-    },
-    {
-      "candidate_id": "auto_193450_1863_2056",
-      "recording_date": "2026-07-22",
-      "status": "published",
-      "bvid": "BV1xgg462Env",
-      "note": "v8-final"
-    },
-    {
-      "candidate_id": "auto_193129_424_535",
-      "recording_date": "2026-07-24",
-      "status": "published",
-      "bvid": "BV1E93L6rErV",
-      "note": "daily-fourpack"
-    },
-    {
-      "candidate_id": "auto_193129_537_702",
-      "recording_date": "2026-07-24",
-      "status": "published",
-      "bvid": "BV1Eo3L6zEdU",
-      "note": "daily-fourpack"
-    },
-    {
-      "candidate_id": "auto_183122_607_723",
-      "recording_date": "2026-07-24",
-      "status": "published",
-      "bvid": "BV1Eo3L6zECt",
-      "note": "daily-fourpack"
-    },
-    {
-      "candidate_id": "auto_190124_199_480",
-      "recording_date": "2026-07-24",
-      "status": "published",
-      "bvid": "BV1jw3j6KE17",
-      "note": "daily-fourpack"
-    },
-    {
-      "candidate_id": "auto_200133_44_293",
-      "recording_date": "2026-07-24",
-      "status": "published",
-      "bvid": "BV1TsgZ6BEE2",
-      "note": "2026-07-24-revived"
-    },
-    {
-      "candidate_id": "auto_193129_850_940",
-      "recording_date": "2026-07-24",
-      "status": "published",
-      "bvid": "BV1ec3A6bEWF",
-      "note": "2026-07-27 误当新切片上传的 7/24 争议搁置件；后续只允许 authorized_upload.py repair-* 修复本 BV，禁止再投新稿"
-    },
-    {
-      "candidate_id": "auto_183122_1209_1410",
-      "recording_date": "2026-07-24",
-      "status": "published",
-      "bvid": "BV1AD366DEd9",
-      "note": "2026-07-28 新稿发布；后续修复只允许 authorized_upload.py repair-* 的原 BV 修复链"
-    },
-    {
-      "candidate_id": "auto_195000_1493_1579",
-      "recording_date": "2026-07-25",
-      "status": "published",
-      "bvid": "BV1zzgd6JEHe",
-      "note": "rescued-first；沙豆李字幕置换待 registry 修复通道"
-    },
-    {
-      "candidate_id": "auto_192000_909_1014",
-      "recording_date": "2026-07-25",
-      "status": "published",
-      "bvid": "BV1s7326qEc9",
-      "note": "2026-07-29 新稿发布；合理真值固定为粉丝团灯牌，后续只允许 authorized_upload.py repair-* 的原 BV 修复链"
-    },
-    {
-      "candidate_id": "auto_195000_742_887",
-      "recording_date": "2026-07-25",
-      "status": "published",
-      "bvid": "BV13k3c6XEBb",
-      "note": "2026-07-25-revived"
-    },
-    {
-      "candidate_id": "auto_202004_553_831",
-      "recording_date": "2026-07-25",
-      "status": "published",
-      "bvid": "BV1Wa3r6QELe",
-      "note": "2026-07-28 authorized upload；public/Creator/section verified"
-    },
-    {
-      "candidate_id": "auto_192000_243_371",
-      "recording_date": "2026-07-25",
-      "status": "published",
-      "bvid": "BV1Wh3r6pEQo",
-      "note": "2026-07-28 authorized upload；public/Creator/section verified"
-    },
-    {
-      "candidate_id": "auto_202004_1160_1262",
-      "recording_date": "2026-07-25",
-      "status": "published",
-      "bvid": "BV1h73r6wE5H",
-      "note": "2026-07-28 authorized upload；public/Creator/section verified"
-    },
-    {
-      "candidate_id": "song_192000_1321",
-      "recording_date": "2026-07-25",
-      "status": "published",
-      "bvid": "BV1BJGc6aEWf",
-      "note": "2026-07-31 authorized upload；public/Creator/section verified"
-    },
-    {
-      "candidate_id": "auto_224211_80_141",
-      "recording_date": "2026-07-29",
-      "status": "published",
-      "bvid": "BV1ngGc6BEBS",
-      "note": "2026-07-31 authorized upload；public/Creator/section verified"
-    },
-    {
-      "candidate_id": "auto_155948_424_522",
-      "recording_date": "2026-07-26",
-      "status": "published",
-      "bvid": "BV1d73P6iErL",
-      "note": "2026-07-26-revived"
-    },
-    {
-      "candidate_id": "auto_145940_1533_1619",
-      "recording_date": "2026-07-26",
-      "status": "published",
-      "bvid": "BV1ELGc6NEC5",
-      "note": "2026-07-31 authorized upload；public/Creator/section verified"
-    },
-    {
-      "candidate_id": "auto_142942_1329_1380",
-      "recording_date": "2026-07-26",
-      "status": "published",
-      "bvid": "BV1pn326vEm1",
-      "note": "2026-07-31 authorized upload；public/Creator/section verified"
-    },
-    {
-      "candidate_id": "auto_155948_327_424",
-      "recording_date": "2026-07-26",
-      "status": "published",
-      "bvid": "BV1WJ326KEpc",
-      "note": "2026-07-31 authorized upload；public/Creator/section verified"
-    },
-    {
-      "candidate_id": "auto_142942_496_618",
-      "recording_date": "2026-07-26",
-      "status": "published",
-      "bvid": "BV1zk386LEjC",
-      "note": "2026-07-31 authorized upload；public/Creator/section verified"
-    },
-    {
-      "candidate_id": "auto_224211_181_480",
-      "recording_date": "2026-07-29",
-      "status": "published",
-      "bvid": "BV1EpGA6MExh",
-      "note": "2026-07-31 authorized upload；public/Creator/section verified"
-    },
-    {
-      "candidate_id": "auto_225056_1013_1116",
-      "recording_date": "2026-07-29",
-      "status": "published",
-      "bvid": "BV154GA6vEyD",
-      "note": "2026-07-31 authorized upload；public/Creator/section verified；2026-08-01 same-BV 字幕修复置换(4 cue：久远澪老师×2/柏拉图/栽赃给)，CID 40468153258→40496401196，证据 reports/authorized_uploads/2026-07-31-1013-jiuyuanling-source/",
-      "publication_reconciliation": {
-        "authority": {
-          "bytes": 4357,
-          "path": "reports/authorized_uploads/2026-07-31-1013-jiuyuanling-source/same-bv-repair-completed.json",
-          "sha256": "1e684dec357bd1bdd52ab6f63dd19e2865c33670b2c50859f05d3389ab370fa3"
-        },
-        "reconciled_at": "2026-08-01T07:19:06+0000",
-        "schema_version": "publication-reconciliation.v1",
-        "status": "VERIFIED_SAME_BV"
-      }
-    },
-    {
-      "candidate_id": "auto_225056_235_339",
-      "recording_date": "2026-07-29",
-      "status": "published",
-      "bvid": "BV1UfGw69EMG",
-      "note": "2026-07-31 authorized upload；public/Creator/section verified"
-    },
-    {
-      "candidate_id": "auto_225056_814_887",
-      "recording_date": "2026-07-29",
-      "status": "published",
-      "bvid": "BV1FBGw6uE6i",
-      "note": "2026-07-31 authorized upload；CPA title-cover joint QC + public/Creator/section/cover-byte verified"
-    },
-    {
-      "candidate_id": "auto_152944_964_1091",
-      "recording_date": "2026-07-26",
-      "status": "published",
-      "bvid": "BV16HGN62E9z",
-      "note": "2026-07-31 authorized upload；CPA title-cover joint QC + public/Creator/section/cover-byte verified"
-    },
-    {
-      "candidate_id": "auto_152944_1411_1463",
-      "recording_date": "2026-07-26",
-      "status": "published",
-      "bvid": "BV1ScGN6cE47",
-      "note": "2026-07-31 authorized upload；CPA title-cover joint QC + public/Creator/section/cover-byte verified"
-    },
-    {
-      "candidate_id": "auto_210739_1142_1436",
-      "recording_date": "2026-08-07",
-      "status": "hold_pending_review",
-      "note": "Ivan 2026-08-08 裁定：非李豆沙主角（抱团叙事主线在他人），T1/86.5 高分仍不可作为频道成品发布；仅作流水线优化材料（42 处文字+8 处说话人订正已收割入 reports/ivan_truth_harvest/2026-08-07）。放行需 Ivan 明示。"
-    },
-    {
-      "candidate_id": "auto_225942_411_1073",
-      "recording_date": "2026-07-18",
-      "status": "published",
-      "bvid": "BV19qK16KE97",
-      "note": "kmx专属称呼串(姐姐妈妈宝宝老公主人)。7/20 与五件套其余一起发布;曾短暂门拦复审后放行,登记补录于 2026-08-08(Ivan 指认+creator archive 回读核实,开放浏览)。"
-    },
-    {
-      "candidate_id": "auto_235936_527_695",
-      "recording_date": "2026-07-18",
-      "status": "published",
-      "bvid": "BV1SUKm6iELn",
-      "note": "和成天下槟榔梗/七星老头烟(发布题:都怪你kmx…老李头私下烟酒槟榔都来的)。7/20 发布;登记补录于 2026-08-08(Ivan 指认+creator archive 回读核实,开放浏览)。"
-    },
-    {
-      "candidate_id": "auto_200736_298_383",
-      "recording_date": "2026-08-07",
-      "status": "published",
-      "bvid": "BV1JLuj6zEdM",
-      "note": "受骗片:首个 wsl 订正重产成品(Ivan 44句真值注入+验收 PASS);标题=Ivan 手定(受话人归属纠错案,F12 立项源);封面=IVAN_EXPLICIT a02 双行(坏女人小李/今天就是要骗女主播);2026-08-09 上传,artifact 6613ab8f7ca3。"
-    },
-    {
-      "candidate_id": "auto_213135_469_710",
-      "recording_date": "2026-08-08",
-      "status": "published",
-      "bvid": "BV18Gu16NEcX",
-      "note": "8/8 批 review_ready 权宜上传(Ivan 8/9 引语:「并且今天要执行权宜上传。只要出片就可以上传，之后我再进行审查。」);speaker-mode 包;QC v2(身份参照修正=墨镜可选)PASS;v1 彩票回执留证 reports/authorized_uploads/2026-08-09-88-batch-provisional/;2026-08-09 上传,artifact 161436692468,VERIFIED_PUBLIC。 2026-08-09 追加:Ivan 手定标题线上替换(歌姬入题)+tag 加 战斗吧歌姬(manual_title_overrides 已登记);CID 未动。 2026-08-10 封面改截图(3D Live 舞台真帧 61e8895f,cover-only edit,CID/标题未动);证据 2026-08-10-screenshot-cover-swaps/。"
-    },
-    {
-      "candidate_id": "auto_230125_960_1072",
-      "recording_date": "2026-08-08",
-      "status": "published",
-      "bvid": "BV1Bau16nEyq",
-      "note": "8/8 批 review_ready 权宜上传(同上引语);speaker-mode 包;QC v2 PASS;2026-08-09 上传,artifact e6577c25464f,VERIFIED_PUBLIC。 2026-08-09 追加:字幕歌名订正同BV置换(LoveLive!→ラブコード×3,CID 40743275821→40746484284,VERIFIED_FRESH_LIVE;tags 审计刷新 唱跳/自信→可爱/帅气;证据 2026-08-09-960-lovecode-source/)。 2026-08-09 r3:字幕[李豆沙]前缀烧字事故修复置换(标签只走颜色样式,Ivan 指令;CID 40746484284→40755790146,VERIFIED_FRESH_LIVE,线上帧亲验;证据 r3/)。"
-    },
-    {
-      "candidate_id": "auto_200130_1323_1603",
-      "recording_date": "2026-08-08",
-      "status": "published",
-      "bvid": "BV1hquD6pE7X",
-      "note": "8/8 快车道人工真值包(多嘉宾 speaker 拒件,Ivan A/B 真值消费);Codex-F 断供前完成上传 2026-08-09T19:26Z,aid=117067168679822,CID=40760773025,VERIFIED_PUBLIC;QC v2 PASS/audit 0 blocking;integrator 上传后硬门复验(159cue/无标签字面/无括号注记/解码零错)。已知待置换:标题封面质量批评(Ivan 8/10)+(跃起) cue104/128 缺失→ 同BV置换制备中(yueqi-r1,新标题+公主抱名场面封面)。披露:上传链跑在 Codex-F 违禁自部署代际 74f8e795 上,回执经复验有效;证据 2026-08-09-200130-fasttrack/。 2026-08-10 三合一同BV置换完成:CID 40760773025→40765099962,(跃起)回填 cue104/128、封面改公主抱截图裁切(v4D 31809a32,自矛盾witness机制首用)、标题改手定稿;合集分P显示标题待补同步(API -400,POLL_ONLY);证据 2026-08-10-1323-yueqi/。"
-    },
-    {
-      "candidate_id": "auto_220747_488_680",
-      "recording_date": "2026-08-07",
-      "status": "published",
-      "bvid": "BV1hfuS6EENb",
-      "note": "8/7 换身份:wsl unblock 处方重产(98/98 逐字==,假标双零)→87finish 链→be88e54 部署后 integrator 收尾上传 2026-08-09T21:59:42Z,VERIFIED via reconcile;QC rerun2 PASS/audit 0 blocking;证据 2026-08-10-87-finish/。 2026-08-10 封面改游戏截图(鹅鸭杀画面+小窗 8313fec8,Ivan 8/9 游戏封面裁定首个公开面实证,cover-only edit);证据 2026-08-10-screenshot-cover-swaps/。"
-    },
-    {
-      "candidate_id": "auto_203735_555_680",
-      "recording_date": "2026-08-07",
-      "status": "published",
-      "bvid": "BV1houS6SEF3",
-      "note": "8/7 真善美:wsl unblock 处方重产(61/61 逐字==,假标双零;override=rebind.87finish 086ba4ee,含 cue24 truth-replay 披露→F11)→上传 2026-08-09T22:03:20Z;QC rerun2 PASS/audit 0 blocking;证据 2026-08-10-87-finish/。"
-    },
-    {
-      "candidate_id": "auto_200130_1722_1792",
-      "recording_date": "2026-08-08",
-      "status": "published",
-      "bvid": "BV13zuX6fEwh",
-      "note": "8/8 快车道第二条(多嘉宾 speaker 拒件,Ivan A/B 真值消费):F 断供接力链(边界 floor pin a8600994+speaker v2 部署+terminal-projection 验收面 df4afed);交付字幕与 Ivan 基线逐字节(0efb9995);标题两轮手术至中性归属定稿(F12 立法适用,回执 76cd2374);audit passed/QC PASS;上传 2026-08-09T22:49Z aid=117067973921757 CID=40762673619;证据 2026-08-10-1722-fasttrack/。"
-    },
-    {
-      "candidate_id": "auto_223750_913_1322",
-      "recording_date": "2026-08-07",
-      "status": "hold_pending_review",
-      "note": "Ivan 2026-08-10 逐字：「先这么做，贪生怕死这个不要上传」。背景：Ivan 2026-08-08 逐字「贪生怕死那个是因为根本没有分人声所以我没有审阅」与「贪生怕死这个也需要改成说话人分离的版本，不过你先别改，先等根因修复之后再说」。2026-08-10 扫全部 4573 个 jsonl 复核：Ivan 从未对本候选说过「因为不是主角所以不传」——那条「非李豆沙主角」裁定属 auto_210739_1142_1436（本表上一条 hold），勿混。放行需 Ivan 明示。"
-    },
-    {
-      "candidate_id": "song_210131_1210",
-      "recording_date": "2026-08-08",
-      "status": "hold_pending_review",
-      "note": "《心型病毒 (Live)》歌切。Ivan 2026-08-10 裁定「当然以 wsl 成品为准，这三个地方都是同一套代码」——不让 free 重产，改用 wsl 已完成的评审包（已抢救至 free incoming/song_210131_1210-r1，sha256 逐文件核验一致，package_audit passed=true/0 blocking）。该包自称 upload_allowed=false / finished_review_package_no_upload_pending_human_review，等 Ivan 审阅。本条同时是跨主机导入的封面闸口：该包封面血统在 wsl，free 复算不出 _initial_cover_proof_valid，若无阻断行 repair_covers 会花图片额度重画一张已定稿封面并覆盖交付根。放行需 Ivan 明示（改 released_for_upload）。"
-    },
-    {
-      "candidate_id": "auto_230125_1157_1229",
-      "recording_date": "2026-08-08",
-      "status": "released_for_upload",
-      "released_by": "Ivan",
-      "released_at": "2026-08-11",
-      "release_quote": "说起来刚刚通过的这两个可以发布了，只要你根据我的人工真值改完后，可以直接去快车道发布，和你的通用车道修复并行进行",
-      "failed_pick_import_authority": {
-        "schema_version": "failed-pick-import-authority.v1",
-        "scope": "ADOPT_FAILED_PICK_FOR_EXTERNAL_PACKAGE_IMPORT_ONLY",
-        "candidate_id": "auto_230125_1157_1229",
-        "recording_date": "2026-08-08",
-        "state_row_canonical_sha256": "sha256:66e4d8a48a60d015e5dae3f5fd1de92a02b78c78299e945d983115f8e399a12a",
-        "required_pick_state": {
-          "status": "failed",
-          "rc": 1,
-          "failure_kind": "subtitle_authority",
-          "failure_stage": "final_review_findings",
-          "selected_repair": true
-        },
-        "required_batch_state": {
-          "status": "published_with_failures",
-          "publication_closure_status": "published_with_failures"
-        },
-        "authorized_transition": {
-          "status": "ready_unpublished_with_failures",
-          "publication_closure_status": "ready_unpublished_with_failures"
-        }
-      },
-      "note": "Ivan 2026-08-11 已审 solo 成品并逐字授权按人工真值修正后进入快车道。顶层 released_for_upload 因而有意开放本候选的 publication-registry 上传闸门；内嵌 scope 只授权 import_external_package 的一次性 failed-pick 收编，不旁路 package audit、标题封面联合质检或 authorized_upload，也不授权其他 candidate/state preimage。"
+    "authorized_transition": {
+     "status": "ready_unpublished_with_failures",
+     "publication_closure_status": "ready_unpublished_with_failures"
     }
-  ]
+   },
+   "note": "Ivan 2026-08-11 已审 solo 成品并逐字授权按人工真值修正后进入快车道。顶层 released_for_upload 因而有意开放本候选的 publication-registry 上传闸门；内嵌 scope 只授权 import_external_package 的一次性 failed-pick 收编，不旁路 package audit、标题封面联合质检或 authorized_upload，也不授权其他 candidate/state preimage。 2026-08-12T04:30:39Z 已按本放行经快车道上传为 BV1uKuC6hE9j（upload ledger line 226，manifest sha256 d4cc06fb…，reconciliation VERIFIED_PUBLIC）；本次 2026-08-19 将 runtime overlay 事实提升入 committed 登记（此前仅 runtime 层有该 published 行）。",
+   "bvid": "BV1uKuC6hE9j",
+   "publication_reconciliation": {
+    "aid": 117080624012791,
+    "authority": {
+     "bytes": 10685,
+     "path": "/opt/bilive/autoslice/out/2026-08-08/auto_230125_1157_1229/replacement_recuts/auto_230125_1157_1229.recut.burned-final-sapphire72.publication_reconciliation.json",
+     "sha256": "a87a50c3f4b7cc51a167a59f5e158c779e17c796e42f766e81545a2501360827"
+    },
+    "bvid": "BV1uKuC6hE9j",
+    "candidate_id": "auto_230125_1157_1229",
+    "cid": 40832272235,
+    "reconciled_at": "2026-08-12T04:30:39+0000",
+    "recording_date": "2026-08-08",
+    "schema_version": "publication-reconciliation.v1",
+    "status": "VERIFIED_PUBLIC",
+    "title": "【李豆沙】被问有没有跳《夜蝶》的对象，xxsk说“你给了我你的第一次”，李豆沙接着问“那你要负责吗”"
+   }
+  },
+  {
+   "candidate_id": "auto_223750_578_734",
+   "recording_date": "2026-08-07",
+   "status": "published",
+   "bvid": "BV1BtuC6LEaf",
+   "publication_reconciliation": {
+    "aid": 117080724605600,
+    "authority": {
+     "bytes": 10327,
+     "path": "/opt/bilive/autoslice/out/2026-08-07/auto_223750_578_734/replacement_recuts/auto_223750_578_734.recut.burned-final-speaker.publication_reconciliation.json",
+     "sha256": "aa2f35e68e690d0fff5eea6ab93d137461de1844429cc9dd71ba06dc48323914"
+    },
+    "bvid": "BV1BtuC6LEaf",
+    "candidate_id": "auto_223750_578_734",
+    "cid": 40832797438,
+    "reconciled_at": "2026-08-12T04:54:47+0000",
+    "recording_date": "2026-08-07",
+    "schema_version": "publication-reconciliation.v1",
+    "status": "VERIFIED_PUBLIC",
+    "title": "【李豆沙】莉娅求小李“就算你是狼也放过我”，结伴后小李突然连声道歉"
+   },
+   "note": "2026-08-12T04:54:47Z 快车道 speaker 版重切上传（upload ledger line 228，manifest sha256 b89e35cb…，reconciliation VERIFIED_PUBLIC，2026-08-18 公开面 fresh 复核 code=0/state=0）。2026-08-19 补录：该行此前只存在于 runtime overlay，committed 登记漏行，本次提升为持久授权事实；后续修复只允许 authorized_upload.py repair-* 的原 BV 修复链。"
+  }
+ ]
 }
