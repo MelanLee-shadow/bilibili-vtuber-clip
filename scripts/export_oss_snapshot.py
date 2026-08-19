@@ -373,7 +373,12 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "    # 2026-08-02 +55：二轮测试修复（骨架逐键摘除治 governance:{} 必炸类、\n"
         "    # prompt 注入类模板全占位化、tag prompt JSON 契约）——维护者 8/2 /goal 授权；\n"
         "    # 测试 test_template_skeletons.py。\n"
-        '    "scripts/export_oss_snapshot.py": 2_268,\n',
+        "    # 2026-08-19 +449：8/18 公开库更新授权下的两周演进对齐。其中 TEMPLATE_DIRS\n"
+        "    # 补 10 个候选级资产目录是**堵真实泄漏**（8/7 后新增的审阅真值类目录从未\n"
+        "    # 登记，首版导出把真实审片批注原样带出，未 push 即截获）；另含姓名词干\n"
+        "    # 剥离机制、HANDOFF 词界扫描收窄、6 处 patch 漂移对齐。私库专用构建工具，\n"
+        "    # 导出时自剥离，不进 OSS 面。\n"
+        '    "scripts/export_oss_snapshot.py": 2_722,\n',
         "",
     ),
     # --- 债务棘轮：被剥离脚本的例外条目同步移除 ---

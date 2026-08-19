@@ -162,13 +162,12 @@ MODULE_DEBT_LEDGER = {
     # 2026-08-02 +55：二轮测试修复（骨架逐键摘除治 governance:{} 必炸类、
     # prompt 注入类模板全占位化、tag prompt JSON 契约）——Ivan 8/2 /goal 授权；
     # 测试 test_template_skeletons.py。
-    # 2026-08-19 +449：Ivan 8/18「更新一下我的 github 项目」授权的两周演进对齐。
-    # 其中 TEMPLATE_DIRS 补 10 个候选级资产目录是**堵真实泄漏**（8/7 后新增的
-    # reviewed_speaker_truth 等目录从未登记，首版导出把 Ivan 真实审片批注原样
-    # 带出，未 push 即截获）；另含 PII_NAME_STEMS 姓名词干剥离（片头 render
-    # manifest 里的 ivan_confirmed_phrase 类字段）、HANDOFF 词界扫描收窄、
-    # 6 处 patch 漂移对齐。私库专用构建工具，导出时自剥离，不进 OSS 面。
-    "scripts/export_oss_snapshot.py": 2_717,
+    # 2026-08-19 +449：8/18 公开库更新授权下的两周演进对齐。其中 TEMPLATE_DIRS
+    # 补 10 个候选级资产目录是**堵真实泄漏**（8/7 后新增的审阅真值类目录从未
+    # 登记，首版导出把真实审片批注原样带出，未 push 即截获）；另含姓名词干
+    # 剥离机制、HANDOFF 词界扫描收窄、6 处 patch 漂移对齐。私库专用构建工具，
+    # 导出时自剥离，不进 OSS 面。
+    "scripts/export_oss_snapshot.py": 2_722,
     # 2026-08-02 +15：--smoke-segment 有界 backfill（帽 3）——Ivan 8/2 /goal
     # 「全都按你的想法进行修复，当然都要配测试」授权；测试 test_smoke_backfill.py。
     # 2026-08-02 再 +3：child_env 加 PYTHONUNBUFFERED（二轮实测：候选日志因子
