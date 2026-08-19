@@ -577,7 +577,22 @@ def _evidence_row_is_bound(
     )
     if source_label:
         quoted_text = source_label.group(1)
-        return bool(_compact(quoted_text) and _compact(quoted_text) in _compact(final_transcript))
+        if _compact(quoted_text) and _compact(quoted_text) in _compact(final_transcript):
+            return True
+        # ``final_transcript`` (unlike ``speaker_transcript``) carries no line
+        # numbers — see ``build_addressee_evidence``/``build_addressee_transcripts``,
+        # which join bare cue text.  When there is no numbered speaker
+        # transcript to anchor citations to (uniform_host's authorized
+        # absence, ``ABSENCE_POLICY_ID``), the judge sometimes invents a
+        # leading "N " / "N.M " index out of habit before quoting a real
+        # line.  Tolerate stripping exactly one such invented prefix — the
+        # remaining quoted text must still be an exact, literal substring of
+        # ``final_transcript``; this does not relax what counts as evidence,
+        # only the citation-label formatting around it.
+        unnumbered = re.sub(r"\A\s*\d+(?:\.\d+)?\s+", "", quoted_text, count=1)
+        if unnumbered != quoted_text and _compact(unnumbered):
+            return bool(_compact(unnumbered) in _compact(final_transcript))
+        return False
     speaker_label = re.fullmatch(
         rf"\s*{re.escape(SPEAKER_TRANSCRIPT_LABEL)}\s*:\s*(.+?)\s*",
         value,
