@@ -585,13 +585,22 @@ def _evidence_row_is_bound(
         # transcript to anchor citations to (uniform_host's authorized
         # absence, ``ABSENCE_POLICY_ID``), the judge sometimes invents a
         # leading "N " / "N.M " index out of habit before quoting a real
-        # line.  Tolerate stripping exactly one such invented prefix — the
-        # remaining quoted text must still be an exact, literal substring of
-        # ``final_transcript``; this does not relax what counts as evidence,
-        # only the citation-label formatting around it.
-        unnumbered = re.sub(r"\A\s*\d+(?:\.\d+)?\s+", "", quoted_text, count=1)
-        if unnumbered != quoted_text and _compact(unnumbered):
-            return bool(_compact(unnumbered) in _compact(final_transcript))
+        # line, or — 8/19 production (七夕 auto_113022_354_496) — quotes an
+        # entire SRT block it fabricated: "N HH:MM:SS,mmm --> HH:MM:SS,mmm\n
+        # <text>".  Tolerate stripping at most one such invented index token
+        # and/or one invented SRT timestamp line — the remaining quoted text
+        # must still be an exact, literal substring of ``final_transcript``;
+        # this does not relax what counts as evidence, only the
+        # citation-label/locator shell around it.
+        stripped = re.sub(r"\A\s*\d+(?:\.\d+)?\s+", "", quoted_text, count=1)
+        stripped = re.sub(
+            r"\A\s*\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}\s*\n?",
+            "",
+            stripped,
+            count=1,
+        )
+        if stripped != quoted_text and _compact(stripped):
+            return bool(_compact(stripped) in _compact(final_transcript))
         return False
     speaker_label = re.fullmatch(
         rf"\s*{re.escape(SPEAKER_TRANSCRIPT_LABEL)}\s*:\s*(.+?)\s*",

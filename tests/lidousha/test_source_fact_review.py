@@ -254,6 +254,92 @@ def test_uniform_host_final_transcript_citation_tolerates_invented_line_number()
     )
 
 
+def test_uniform_host_final_transcript_citation_tolerates_invented_srt_block() -> None:
+    """8/19 生产实证（七夕 auto_113022_354_496）：判官不止编行号，还编了
+
+    整块 SRT（序号 + 时间戳行 + 文字行）来引用 final_transcript。剥掉这层
+    定位外壳后，剩余文字仍必须逐字命中 final_transcript——用生产实测原文
+    做 fixture，防止未来再退化成这种回归。
+    """
+
+    final_transcript = "\n".join(
+        [
+            "然后后天是七夕",
+            "我周三就是七夕那天",
+            "我准备中午唱甜甜甜",
+        ]
+    )
+    row = {
+        "artifact": "selection_hook",
+        "before": "李豆沙公布七夕安排：中午用甜歌把观众甜腻，晚上再用苦情歌唱到大家集体封号，完成一套七夕PUA。",
+        "after": "李豆沙公布七夕安排：中午用甜歌把观众甜腻，晚上再用苦情歌唱到大家集体分号分号，完成一套七夕PUA。",
+        "reason": "“封号”把“分号分号”的同音梗改成了无证据的账号封禁含义，应恢复为规范词面。",
+        "evidence": [
+            "final_transcript: 19 00:00:38,870 --> 00:00:45,000\n"
+            "我周三就是七夕那天\n我准备中午唱甜甜甜",
+            "final_transcript: 12 00:00:22,320 --> 00:00:24,250\n然后后天是七夕",
+        ],
+    }
+
+    assert _valid_changed_surface(
+        row,
+        before_surface=row["before"],
+        after_surface=row["after"],
+        final_transcript=final_transcript,
+        clip_context_prompt="",
+        speaker_transcript=None,
+    )
+
+
+def test_srt_block_shell_without_index_still_binds() -> None:
+    """时间戳行前没有序号也要能剥壳——判官不总是先编个序号。"""
+
+    row = {
+        "artifact": "selection_hook",
+        "before": "占位",
+        "after": "占位改动",
+        "reason": "占位理由",
+        "evidence": [
+            "final_transcript: 00:00:22,320 --> 00:00:24,250\n然后后天是七夕",
+        ],
+    }
+
+    assert _valid_changed_surface(
+        row,
+        before_surface="占位",
+        after_surface="占位改动",
+        final_transcript="然后后天是七夕",
+        clip_context_prompt="",
+        speaker_transcript=None,
+    )
+
+
+def test_srt_block_shell_cannot_rescue_an_unbound_quote() -> None:
+    """负向金丝雀：壳剥干净了，但引用文字在 final_transcript 里根本不存在
+
+    ——必须继续判不绑定，证明剥壳没有放宽真正的证据门槛。
+    """
+
+    row = {
+        "artifact": "selection_hook",
+        "before": "占位",
+        "after": "占位改动",
+        "reason": "占位理由",
+        "evidence": [
+            "final_transcript: 5 00:00:10,000 --> 00:00:12,000\n没说过的话",
+        ],
+    }
+
+    assert not _valid_changed_surface(
+        row,
+        before_surface="占位",
+        after_surface="占位改动",
+        final_transcript="七夕唱甜歌",
+        clip_context_prompt="",
+        speaker_transcript=None,
+    )
+
+
 def test_invented_line_number_cannot_rescue_an_unbound_quote() -> None:
     """剥前缀只豁免编号本身；被引用的实际文字仍必须逐字出现在
 
