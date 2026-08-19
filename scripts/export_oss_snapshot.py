@@ -219,11 +219,23 @@ RENAME_STEMS: tuple[tuple[str, str], ...] = (
     ("_LIDOUSHA_TITLE_PREFIX", "_TITLE_PREFIX"),
     ("_lidousha_fontsdir", "_profile_fontsdir"),
     ("lidousha_phonetic_ratio", "host_phonetic_ratio"),
-    # 维护者本人姓名嵌在 snake_case token 中间时，_sanitize_text 的词边界替换够不
-    # 到（前后紧邻 "_" 属词内字符）；stem 重写补这个缺口。schema 串
-    # "ivan-speaker-truth-diff.v2" 用 "-" 分隔不受影响，已由 _sanitize_text 独立
-    # 覆盖，勿重复在此处理。
+)
+
+# 维护者本人姓名嵌在 snake_case token 中间时（前后紧邻 "_" 属词内字符），
+# _sanitize_text 的词边界替换够不到；这组 PII stem 单独维护，且**不受**
+# REWRITE_SKIP_PREFIXES 的 assets/ 豁免——姓名泄露不是"资产字节权威"要保护
+# 的频道品牌词，敏感度更高，必须无差别全树命中（含 assets/**）。schema 串
+# "ivan-speaker-truth-diff.v2" 用 "-" 分隔不受影响，已由 _sanitize_text 独立
+# 覆盖，勿重复在此处理。四种邻接形态各给一条，按 token 长度降序应用。
+PII_NAME_STEMS: tuple[tuple[str, str], ...] = (
     ("harvest_ivan_truth", "harvest_human_review_truth"),
+    ("ivan_truth_diff", "human_truth_diff"),
+    ("_ivan_", "_reviewer_"),
+    ("_IVAN_", "_REVIEWER_"),
+    ("ivan_", "reviewer_"),
+    ("IVAN_", "REVIEWER_"),
+    ("_ivan", "_reviewer"),
+    ("_IVAN", "_REVIEWER"),
 )
 
 # 不参与 stem 重写的路径前缀（资产字节权威；profile manifest 例外参与）。
@@ -1704,21 +1716,32 @@ def _rename_tokens() -> list[tuple[str, str]]:
     return sorted(RENAME_STEMS, key=lambda pair: len(pair[0]), reverse=True)
 
 
+def _pii_name_tokens() -> list[tuple[str, str]]:
+    return sorted(PII_NAME_STEMS, key=lambda pair: len(pair[0]), reverse=True)
+
+
 def _rewrite_relpath(rel: str) -> str:
-    if any(rel.startswith(prefix) for prefix in REWRITE_SKIP_PREFIXES):
-        return rel
+    skip_channel_stems = any(rel.startswith(prefix) for prefix in REWRITE_SKIP_PREFIXES)
     out = rel
-    for old, new in _rename_tokens():
+    if not skip_channel_stems:
+        for old, new in _rename_tokens():
+            out = out.replace(old, new)
+    # PII 姓名 stem 无差别全树命中，不受 assets/ 豁免。
+    for old, new in _pii_name_tokens():
         out = out.replace(old, new)
     return out
 
 
 def _rewrite_content(rel: str, text: str) -> str:
-    if any(rel.startswith(prefix) for prefix in REWRITE_SKIP_PREFIXES):
-        # 资产字节权威不动；profile manifest 例外（工具指针要跟随重命名）。
-        if not (rel.startswith("profiles/") and rel.endswith("profile.json")):
-            return text
-    for old, new in _rename_tokens():
+    skip_channel_stems = any(rel.startswith(prefix) for prefix in REWRITE_SKIP_PREFIXES)
+    if skip_channel_stems and not (rel.startswith("profiles/") and rel.endswith("profile.json")):
+        # 资产字节权威不动（频道品牌词跳过）；profile manifest 例外（工具指针
+        # 要跟随重命名）。PII 姓名 stem 仍无差别应用，见下。
+        pass
+    else:
+        for old, new in _rename_tokens():
+            text = text.replace(old, new)
+    for old, new in _pii_name_tokens():
         text = text.replace(old, new)
     return text
 
