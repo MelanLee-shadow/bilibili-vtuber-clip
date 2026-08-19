@@ -217,6 +217,165 @@ def test_changed_surface_evidence_can_bind_exact_speaker_transcript_rows() -> No
     )
 
 
+def test_uniform_host_final_transcript_citation_tolerates_invented_line_number() -> None:
+    """8/17-8/19 生产实证（七夕/图书馆/8-09 candidate）：uniform_host 下没有
+
+    带编号的 speaker_transcript 可以锚定，判官会在引用 final_transcript
+    时习惯性带上自己编的行号（如 "final_transcript: 18 我周三就是七夕
+    那天"），而 final_transcript 本身（build_addressee_evidence）逐字
+    不带编号。这里必须剥掉一层判官自造的编号前缀再比对，但被引用的实际
+    文字仍必须逐字命中 final_transcript——不放宽真正的证据门槛。
+    """
+
+    row = {
+        "artifact": "selection_hook",
+        "before": "李豆沙公布七夕安排：中午用甜歌把观众甜腻，晚上再用苦情歌唱到大家集体封号，完成一套七夕PUA。",
+        "after": "李豆沙公布七夕安排：中午用甜歌把观众甜腻，晚上再用苦情歌唱到大家集体分号分号，完成一套七夕PUA。",
+        "reason": "“封号”把“分号分号”的同音梗改成了无证据的账号封禁含义，应恢复为规范词面。",
+        "evidence": [
+            "final_transcript: 18 我周三就是七夕那天",
+            "final_transcript: 19 我准备中午唱甜甜甜",
+        ],
+    }
+    final_transcript = "\n".join(
+        [
+            "我周三就是七夕那天",
+            "我准备中午唱甜甜甜",
+        ]
+    )
+
+    assert _valid_changed_surface(
+        row,
+        before_surface=row["before"],
+        after_surface=row["after"],
+        final_transcript=final_transcript,
+        clip_context_prompt="",
+        speaker_transcript=None,
+    )
+
+
+def test_invented_line_number_cannot_rescue_an_unbound_quote() -> None:
+    """剥前缀只豁免编号本身；被引用的实际文字仍必须逐字出现在
+
+    final_transcript 里。判官编了号也编了字面就必须照旧拒绝。
+    """
+
+    row = {
+        "artifact": "selection_hook",
+        "before": "李豆沙提到七夕唱甜歌。",
+        "after": "李豆沙提到七夕唱情歌大合唱。",
+        "reason": "编号剥离不能凭空造出没说过的话。",
+        "evidence": ["final_transcript: 3 七夕唱情歌大合唱"],
+    }
+
+    assert not _valid_changed_surface(
+        row,
+        before_surface=row["before"],
+        after_surface=row["after"],
+        final_transcript="七夕唱甜歌",
+        clip_context_prompt="",
+        speaker_transcript=None,
+    )
+
+
+def test_exact_unnumbered_final_transcript_quote_still_binds_first() -> None:
+    """回归：既有的逐字未编号引用（auto/required 模式的历史形状）必须
+
+    继续原样通过，不受新剥前缀分支影响。
+    """
+
+    row = {
+        "artifact": "title",
+        "before": "熊猫头发明“李豆沙型侄女”",
+        "after": "李豆沙聊起“李豆沙型侄女”",
+        "reason": "字幕逐字支持李豆沙本人聊起该称谓。",
+        "evidence": ["final_transcript: 有点像那个李豆沙型侄女"],
+    }
+
+    assert _valid_changed_surface(
+        row,
+        before_surface=row["before"],
+        after_surface=row["after"],
+        final_transcript="有点像那个李豆沙型侄女",
+        clip_context_prompt="",
+        speaker_transcript=None,
+    )
+
+
+def test_uniform_host_repair_with_invented_line_numbers_converges_end_to_end() -> None:
+    """端到端复现：uniform_host（speaker_transcript=None）+ 判官编号引用
+
+    final_transcript 必须能收敛到 REPAIRED，而不是卡死在
+    CPA_TEXT_REVIEW_INVALID（8/17-8/19 生产阻塞的最小复现）。
+    """
+
+    bad_hook = "李豆沙公布七夕安排：中午用甜歌把观众甜腻，晚上再用苦情歌唱到大家集体封号。"
+    fixed_hook = "李豆沙公布七夕安排：中午用甜歌把观众甜腻，晚上再用苦情歌唱到大家集体分号分号。"
+    bad_title = "【李豆沙】公布七夕安排：中午甜甜甜把人甜腻，晚上苦苦苦让大家封号封号"
+    fixed_title = "【李豆沙】公布七夕安排：中午甜甜甜把人甜腻，晚上苦苦苦让大家分号分号"
+    final_transcript = "\n".join(
+        [
+            "我周三就是七夕那天",
+            "我准备中午唱甜甜甜",
+            "晚上唱苦苦苦",
+            "就是所有人都必须分号分号的这种",
+        ]
+    )
+    responses = iter(
+        [
+            _completion(
+                status="REPAIR",
+                final_hook=fixed_hook,
+                final_title=fixed_title,
+                supported_by=["final_transcript"],
+                changed_surfaces=[
+                    {
+                        "artifact": "selection_hook",
+                        "before": bad_hook,
+                        "after": fixed_hook,
+                        "reason": "封号是无据的同音升级，恢复为字幕原词分号分号。",
+                        "evidence": [
+                            "final_transcript: 18 我周三就是七夕那天",
+                            "final_transcript: 21 就是所有人都必须分号分号的这种",
+                        ],
+                    },
+                    {
+                        "artifact": "title",
+                        "before": bad_title,
+                        "after": fixed_title,
+                        "reason": "标题同一处同音升级同步回正。",
+                        "evidence": [
+                            "final_transcript: 21 就是所有人都必须分号分号的这种",
+                        ],
+                    },
+                ],
+                addressee_attribution=[],
+            ),
+            _completion(
+                status="KEEP",
+                final_hook=fixed_hook,
+                final_title=fixed_title,
+                supported_by=["final_transcript"],
+            ),
+        ]
+    )
+
+    review = review_and_repair_source_facts(
+        selection_hook=bad_hook,
+        title=bad_title,
+        final_transcript=final_transcript,
+        clip_context_prompt="",
+        speaker_transcript=None,
+        speaker_evidence=_absent_speaker_evidence(),
+        llm_call=lambda _prompt: next(responses),
+    )
+
+    assert source_fact_review_passes(review)
+    assert review["decision"] == "REPAIRED"
+    assert review["final_selection_hook"] == fixed_hook
+    assert review["final_title"] == fixed_title
+
+
 def test_title_policy_violation_must_be_repaired_before_keep() -> None:
     hook = (
         "SC说今天是佐伯沙弥香的生日，转发这条信息能拿菲尔兹奖，李豆沙追问自己也磕原点组怎么没有。"
