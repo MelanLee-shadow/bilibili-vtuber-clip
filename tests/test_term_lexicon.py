@@ -62,7 +62,7 @@ def test_normalize_text_treats_kimo_as_developer_alias_not_display_text(tmp_path
     assert normalize_text("喵星人被骗到了", lexicon=lexicon, variant="display") == "meow被骗到了"
 
 
-def test_normalize_text_handles_phrase_alias_from_ivan_edited_subtitle(tmp_path):
+def test_normalize_text_handles_phrase_alias_from_reviewer_edited_subtitle(tmp_path):
     lexicon_path = tmp_path / "term_lexicon.json"
     lexicon_path.write_text(
         json.dumps(

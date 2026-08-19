@@ -18,6 +18,18 @@ from src.autoslice.producer_boundary import (
     BOUNDARY_REPAIR_EXTEND_CAP_MS,
 )
 from src.autoslice.producer_media import _resolved_optional_path
+from src.autoslice.reviewed_exact_source_interval import (
+    RUNTIME_CONFIG_KEY as EXACT_INTERVAL_RUNTIME_CONFIG_KEY,
+)
+from src.autoslice.source_fact_rescore_provenance import (
+    PROVENANCE_FIELD,
+    SourceFactRescoreProvenanceError,
+    validate_rebound_spec_provenance,
+)
+from src.autoslice.subtitle_regression import load_subtitle_regression_document
+from src.autoslice.subtitle_text_override_schema import (
+    validate_text_override_document_header,
+)
 
 
 @dataclass(frozen=True)
@@ -60,19 +72,25 @@ def parse_producer_args(
             "required = always run binary finalizer; auto = verified FAST_SOLO else binary fallback"
         ),
     )
-    parser.add_argument("--subtitle-text-overrides", type=Path, help="hash-bound human text decisions applied before speaker inference")
+    parser.add_argument(
+        "--subtitle-text-overrides",
+        type=Path,
+        help="hash-bound human text decisions applied before speaker inference",
+    )
     parser.add_argument(
         "--subtitle-regression",
         type=Path,
         help="candidate-scoped final subtitle truth gate evaluated before burn/delivery",
     )
-    parser.add_argument("--speaker-overrides", type=Path, help="hash-bound reviewed turn/split/overlap decisions applied after automatic speaker inference")
+    parser.add_argument(
+        "--speaker-overrides",
+        type=Path,
+        help="hash-bound reviewed turn/split/overlap decisions applied after automatic speaker inference",
+    )
     parser.add_argument(
         "--speaker-source-session-anchors",
         type=Path,
-        help=(
-            "hash-bound high-gate selected-host anchors from the same source recording"
-        ),
+        help=("hash-bound high-gate selected-host anchors from the same source recording"),
     )
     parser.add_argument(
         "--speaker-mixed-overlap-evidence",
@@ -82,7 +100,9 @@ def parse_producer_args(
     parser.add_argument(
         "--speaker-python",
         type=Path,
-        default=Path(os.environ.get("AUTOSLICE_SPEAKER_PYTHON", "/opt/bilive/autoslice/venv-diar/bin/python")),
+        default=Path(
+            os.environ.get("AUTOSLICE_SPEAKER_PYTHON", "/opt/bilive/autoslice/venv-diar/bin/python")
+        ),
     )
     parser.add_argument(
         "--correct",
@@ -102,6 +122,69 @@ def parse_producer_args(
     )
     return parser.parse_args(argv)
 
+
+def _load_truth_schema_document(path: Path, *, label: str) -> dict:
+    """Read one producer truth input without accepting path indirection."""
+
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"{label} must be a regular non-symlink file: {path}")
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise ValueError(f"cannot read {label}: {path}: {exc}") from exc
+    try:
+        document = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid {label} JSON: {path}: {exc}") from exc
+    if not isinstance(document, dict):
+        raise ValueError(f"{label} document must be a JSON object: {path}")
+    return document
+
+
+def _truth_input_paths(
+    cli_path: Path | None,
+    spec_value: object,
+    *,
+    relative_to: Path,
+) -> tuple[Path | None, Path | None]:
+    """Keep the declared path for symlink checks and the existing runtime path."""
+
+    if cli_path is not None:
+        return cli_path, cli_path
+    resolved = _resolved_optional_path(spec_value, relative_to=relative_to)
+    if resolved is None:
+        return None, None
+    declared = Path(spec_value)  # _resolved_optional_path proved this path-like.
+    if not declared.is_absolute():
+        declared = relative_to / declared
+    return declared, resolved
+
+
+def _validate_truth_input_schemas(
+    *,
+    candidate_id: str,
+    text_override_path: Path | None,
+    subtitle_regression_path: Path | None,
+) -> None:
+    if text_override_path is not None:
+        document = _load_truth_schema_document(
+            text_override_path,
+            label="text override",
+        )
+        validate_text_override_document_header(
+            document,
+            expected_candidate_id=candidate_id,
+        )
+
+    if subtitle_regression_path is not None:
+        # The existing regression loader is read-only and already owns this
+        # asset's schema, candidate binding, and structural validation.
+        load_subtitle_regression_document(
+            subtitle_regression_path,
+            candidate_id=candidate_id,
+        )
+
+
 def load_producer_request(
     args: argparse.Namespace,
     *,
@@ -109,6 +192,11 @@ def load_producer_request(
     profile_asset_file: Callable[[str], Path],
 ) -> ProducerRequest:
     spec = json.loads(args.spec.read_text(encoding="utf-8"))
+    if spec.get(EXACT_INTERVAL_RUNTIME_CONFIG_KEY) is not None:
+        raise ValueError(
+            "reviewed exact source interval runtime authority is internal; "
+            "the producer must compile it from the repository-sealed baseline reference"
+        )
     repair_cap_raw = spec.get("boundary_repair_extend_cap_ms", BOUNDARY_REPAIR_EXTEND_CAP_MS)
     if isinstance(repair_cap_raw, bool) or not isinstance(repair_cap_raw, int):
         raise ValueError("boundary_repair_extend_cap_ms must be an integer")
@@ -125,8 +213,7 @@ def load_producer_request(
         or not 0 <= tail_trim_cap_raw <= SEMANTIC_TAIL_TRIM_MAX_MS
     ):
         raise ValueError(
-            "semantic_tail_trim_cap_ms must stay within "
-            f"0..{SEMANTIC_TAIL_TRIM_MAX_MS}"
+            f"semantic_tail_trim_cap_ms must stay within 0..{SEMANTIC_TAIL_TRIM_MAX_MS}"
         )
     spec["semantic_tail_trim_cap_ms"] = tail_trim_cap_raw
     truth_mode = os.environ.get("AUTOSLICE_HUMAN_TRUTH_MODE", "delivery").strip().lower()
@@ -149,6 +236,7 @@ def load_producer_request(
                     spec.get("subtitle_redelivery_baseline"),
                 ),
                 ("spec.speaker_overrides", spec.get("speaker_overrides")),
+                (f"spec.{PROVENANCE_FIELD}", spec.get(PROVENANCE_FIELD)),
             )
             if value is not None
         ]
@@ -156,6 +244,34 @@ def load_producer_request(
             raise ValueError(
                 "blind subtitle generation refuses human-truth inputs: " + ", ".join(leaked_inputs)
             )
+    if truth_mode == "delivery":
+        try:
+            rescore_provenance = validate_rebound_spec_provenance(
+                spec,
+                repo_root=repo_root,
+            )
+        except SourceFactRescoreProvenanceError as exc:
+            raise ValueError(f"SOURCE_FACT_SCORECARD_RESCORE_PROVENANCE_INVALID: {exc}") from exc
+        if rescore_provenance is not None:
+            # Persist the normalized plain dict instead of an arbitrary Mapping
+            # implementation supplied by a caller.
+            spec[PROVENANCE_FIELD] = rescore_provenance
+    cid = spec["candidate_id"]
+    text_override_preflight_path, text_override_path = _truth_input_paths(
+        args.subtitle_text_overrides,
+        spec.get("subtitle_text_overrides"),
+        relative_to=args.spec.parent,
+    )
+    subtitle_regression_preflight_path, subtitle_regression_path = _truth_input_paths(
+        args.subtitle_regression,
+        spec.get("subtitle_regression"),
+        relative_to=args.spec.parent,
+    )
+    _validate_truth_input_schemas(
+        candidate_id=cid,
+        text_override_path=text_override_preflight_path,
+        subtitle_regression_path=subtitle_regression_preflight_path,
+    )
     try:
         branding_intro = require_branding_intro(
             repo_root,
@@ -170,16 +286,9 @@ def load_producer_request(
         os.environ["AUTOSLICE_TERM_AS_OF"] = spec["date"]
         os.environ["LIDOUSHA_TERM_AS_OF"] = spec["date"]
 
-    cid = spec["candidate_id"]
     out_root = Path(spec["output_root"]) / cid
     out_root.mkdir(parents=True, exist_ok=True)
     host = args.ssh_host
-    text_override_path = args.subtitle_text_overrides or _resolved_optional_path(
-        spec.get("subtitle_text_overrides"), relative_to=args.spec.parent
-    )
-    subtitle_regression_path = args.subtitle_regression or _resolved_optional_path(
-        spec.get("subtitle_regression"), relative_to=args.spec.parent
-    )
     return ProducerRequest(
         spec=spec,
         boundary_repair_extend_cap_ms=boundary_repair_extend_cap_ms,

@@ -4,14 +4,12 @@ Verified delivery bug: a talk clip's first cue shipped as
 ``下一首歌是爱拉拉爱`` when she actually said 下一首歌是《爱啦啦》 — machine
 evidence (the on-screen songlist panel + an earlier ``点歌 爱啦啦`` danmaku)
 existed, but the talk-lane subtitle-correction path had zero song-name
-context.  The LLM correction lanes now get a ``song_name_candidates`` list as
-PROMPT CONTEXT (see ``song_name_candidates_prompt_block``), but a prompt is
-advisory, not proof.  This module is the deterministic belt: any cue where the
-host signals a song mention (下一首/点歌/想唱/...) gets its trailing mention
-span fuzzy-matched against the machine-evidence candidate list and, on a
-strong match, rewritten to 《candidate title》.  ASR text alone is NEVER
-trusted to invent a song title with no candidate backing it — a cue with no
-intent phrase, or whose best candidate match is weak, is left untouched.
+context.  The correction lanes get ``song_name_candidates`` as advisory prompt
+context, but this mutator accepts only a hash-bound
+``song-name-semantic-verification.v1`` with a unique lyric-context winner.  A
+song-intent cue must also have a strong surface match to some member of the
+closed candidate set; this lets lyric semantics correct a franchise-like
+mishearing without turning an unrelated tail into a song title.
 """
 
 from __future__ import annotations
@@ -19,16 +17,20 @@ from __future__ import annotations
 import hashlib
 import re
 from difflib import SequenceMatcher
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from src.autoslice.jingting_chunker import SrtCue, parse_srt_cues
+from src.autoslice.song_name_semantic_verification import (
+    clean_song_name_candidates,
+    validate_song_name_semantic_verification,
+)
 
 # 下一首歌还没想好 must NOT trigger a replacement (no candidate can fuzzy-match
 # "还没想好"), but the intent phrase itself is intentionally broad — the
 # similarity threshold below is what keeps this pass fail-closed, not a
 # narrower regex.
 SONG_MENTION_INTENT_RX = re.compile(r"(下一首|点歌|想唱|接下来唱|唱一首|唱个)")
-_ALREADY_TITLED_RX = re.compile(r"[《》]")
+_TITLED_NAME_RX = re.compile(r"《([^《》]+)》")
 # A cue's trailing mention span stops at the first clause boundary so a long
 # run-on cue can't have unrelated later content swept into the replacement;
 # the similarity threshold is the second, stronger guard against that.
@@ -117,19 +119,17 @@ def pin_song_names_in_srt(
     srt_text: str,
     *,
     candidates: Sequence[str],
+    semantic_verification: Mapping[str, object] | None = None,
 ) -> tuple[str, dict[str, object]]:
     """Deterministically pin a talk cue's song mention from machine evidence.
 
-    Only cues matching ``SONG_MENTION_INTENT_RX`` are ever touched — a plain
-    chatter cue with no intent phrase is always a no-op.  At most one
-    replacement is applied per cue, and only when the best candidate match
-    clears ``MIN_REPLACE_RATIO``.
+    Only cues matching ``SONG_MENTION_INTENT_RX`` are touched.  At most one
+    replacement is applied per cue; a unique lyric-semantic winner and a
+    closed-set surface match clearing ``MIN_REPLACE_RATIO`` are both required.
     """
 
-    cleaned_candidates = [
-        str(c).strip() for c in candidates if isinstance(c, str) and str(c).strip()
-    ]
-    cleaned_candidates = [c for c in cleaned_candidates if len(c) >= MIN_CANDIDATE_LEN]
+    cleaned_candidates = clean_song_name_candidates(candidates)
+    all_cleaned_candidates = list(cleaned_candidates)
     input_sha256 = hashlib.sha256(srt_text.encode("utf-8")).hexdigest()
     audit: dict[str, object] = {
         "schema_version": SONG_NAME_PIN_AUDIT_SCHEMA_VERSION,
@@ -137,16 +137,55 @@ def pin_song_names_in_srt(
         "output_srt_sha256": input_sha256,
         "candidates_considered": len(cleaned_candidates),
         "min_replace_ratio": MIN_REPLACE_RATIO,
+        "semantic_gate_status": "NOT_APPLICABLE",
+        "semantic_verification_sha256": None,
+        "semantic_candidates": [],
         "replacements": [],
     }
     if not cleaned_candidates:
         return srt_text, audit
+    if semantic_verification is None:
+        audit["semantic_gate_status"] = "BLOCKED_MISSING_VERIFICATION"
+        return srt_text, audit
+    receipt = validate_song_name_semantic_verification(
+        semantic_verification,
+        srt_text=srt_text,
+        candidates=cleaned_candidates,
+    )
+    semantic_rows = {
+        str(row["candidate"]): row
+        for row in receipt["candidate_results"]
+        if isinstance(row, Mapping)
+    }
+    audit["semantic_verification_sha256"] = receipt["receipt_sha256"]
+    audit["semantic_candidates"] = [
+        {
+            "candidate": candidate,
+            "verdict": semantic_rows[candidate]["verdict"],
+            "semantic_score": semantic_rows[candidate]["semantic_score"],
+            "reason_code": semantic_rows[candidate]["reason_code"],
+        }
+        for candidate in cleaned_candidates
+    ]
+    preferred_candidate = receipt.get("preferred_candidate")
+    if not isinstance(preferred_candidate, str):
+        audit["semantic_gate_status"] = "BLOCKED_NO_UNIQUE_MATCH"
+        return srt_text, audit
+    preferred_row = semantic_rows.get(preferred_candidate)
+    if preferred_row is None or preferred_row.get("verdict") != "MATCH":
+        audit["semantic_gate_status"] = "BLOCKED_INVALID_PREFERRED_MATCH"
+        return srt_text, audit
+    cleaned_candidates = [preferred_candidate]
+    audit["semantic_gate_status"] = "VERIFIED_UNIQUE_MATCH"
 
     cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
     if not cues:
         return srt_text, audit
 
     folded_candidates = [(candidate, fold_for_similarity(candidate)) for candidate in cleaned_candidates]
+    all_folded_candidates = [
+        (candidate, fold_for_similarity(candidate)) for candidate in all_cleaned_candidates
+    ]
     texts = [cue.text for cue in cues]
     for cue_offset, cue in enumerate(cues):
         text = texts[cue_offset]
@@ -157,19 +196,84 @@ def pin_song_names_in_srt(
         tail = text[tail_start:]
         if not tail.strip():
             continue
+        titled_match = _TITLED_NAME_RX.search(tail)
         clause_break = _CLAUSE_BREAK_RX.search(tail)
         clause_end = clause_break.start() if clause_break else len(tail)
         clause = tail[:clause_end]
-        if not clause.strip() or _ALREADY_TITLED_RX.search(clause):
-            continue  # nothing left to pin, or already annotated
+        if not clause.strip():
+            continue
+        if titled_match is not None:
+            current_name = titled_match.group(1).strip()
+            if fold_for_similarity(current_name) == fold_for_similarity(preferred_candidate):
+                continue
+            ranked_surfaces = sorted(
+                (
+                    SequenceMatcher(
+                        None,
+                        fold_for_similarity(current_name),
+                        fold_for_similarity(candidate),
+                    ).ratio(),
+                    candidate,
+                )
+                for candidate in all_cleaned_candidates
+            )
+            surface_ratio, surface_candidate = ranked_surfaces[-1]
+            semantic_score = float(preferred_row.get("semantic_score") or 0.0)
+            if surface_ratio < MIN_REPLACE_RATIO or semantic_score < 0.8:
+                continue
+            span_start = tail_start + titled_match.start(1)
+            span_end = tail_start + titled_match.end(1)
+            new_text = f"{text[:span_start]}{preferred_candidate}{text[span_end:]}"
+            texts[cue_offset] = new_text
+            audit["replacements"].append(
+                {
+                    "cue_index": cue_offset + 1,
+                    "start_ms": cue.start_ms,
+                    "end_ms": cue.end_ms,
+                    "before": text,
+                    "after": new_text,
+                    "matched_span": current_name,
+                    "candidate": preferred_candidate,
+                    "ratio": round(
+                        SequenceMatcher(
+                            None,
+                            fold_for_similarity(current_name),
+                            fold_for_similarity(preferred_candidate),
+                        ).ratio(),
+                        4,
+                    ),
+                    "surface_candidate": surface_candidate,
+                    "surface_ratio": round(surface_ratio, 4),
+                    "semantic_verdict": preferred_row["verdict"],
+                    "semantic_score": semantic_score,
+                    "decision_surface": "lyrics_semantic_override",
+                    "combined_confidence": round(
+                        min(1.0, max(surface_ratio, semantic_score) + 0.1 * semantic_score),
+                        4,
+                    ),
+                }
+            )
+            continue
         best: tuple[str, int, float] | None = None
         for candidate, candidate_folded in folded_candidates:
             start, ratio = _best_suffix_match(clause, candidate_folded)
             if best is None or ratio > best[2]:
                 best = (candidate, start, ratio)
-        if best is None or best[2] < MIN_REPLACE_RATIO:
+        surface_best: tuple[str, int, float] | None = None
+        for surface_candidate, candidate_folded in all_folded_candidates:
+            surface_start, surface_ratio = _best_suffix_match(clause, candidate_folded)
+            if surface_best is None or surface_ratio > surface_best[2]:
+                surface_best = (surface_candidate, surface_start, surface_ratio)
+        semantic_score = float(preferred_row.get("semantic_score") or 0.0)
+        surface_ratio = surface_best[2] if surface_best is not None else 0.0
+        if best is None or (
+            best[2] < MIN_REPLACE_RATIO
+            and (semantic_score < 0.8 or surface_ratio < MIN_REPLACE_RATIO)
+        ):
             continue
         candidate, start, ratio = best
+        if ratio < MIN_REPLACE_RATIO and surface_best is not None:
+            start = surface_best[1]
         span_start = tail_start + start
         span_end = tail_start + clause_end
         matched_span = text[span_start:span_end]
@@ -187,6 +291,16 @@ def pin_song_names_in_srt(
                 "matched_span": matched_span,
                 "candidate": candidate,
                 "ratio": round(ratio, 4),
+                "surface_candidate": surface_best[0] if surface_best is not None else candidate,
+                "surface_ratio": round(surface_ratio, 4),
+                "semantic_verdict": preferred_row["verdict"],
+                "semantic_score": semantic_score,
+                "decision_surface": (
+                    "fuzzy_name_plus_lyrics" if ratio >= MIN_REPLACE_RATIO else "lyrics_semantic_override"
+                ),
+                "combined_confidence": round(
+                    min(1.0, max(ratio, semantic_score) + 0.1 * semantic_score), 4
+                ),
             }
         )
 

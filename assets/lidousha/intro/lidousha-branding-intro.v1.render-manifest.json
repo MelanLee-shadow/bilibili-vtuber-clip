@@ -35,11 +35,11 @@
       "source_media_path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-dual-order-20260718/sources/source-context-480000-495000.avatar-clean.mp4",
       "source_media_sha256": "b1142433095aea4fc0fe346388b2a62e8b7651426b11b086f858b99016c7e8da",
       "source_utterance_text": "李豆沙一直是零",
-      "speaker_authority": "ivan_confirmed_phrase",
+      "speaker_authority": "reviewer_confirmed_phrase",
       "speaker_confidence": 1.0,
       "speaker_evidence": [
         {
-          "authority": "ivan_confirmation",
+          "authority": "reviewer_confirmation",
           "coverage_ranges_ms": [
             [
               2230,
@@ -52,14 +52,14 @@
       ],
       "text": "李豆沙一直是零",
       "transcript_authorities": [
-        "bcut+ivan_exact_text+zero_tail_4100",
-        "jianying+ivan_exact_text+zero_tail_4100"
+        "bcut+reviewer_exact_text+zero_tail_4100",
+        "jianying+reviewer_exact_text+zero_tail_4100"
       ],
       "utterance_id": "solo-20260716-210002-zero-tail-4100-avatar-clean-selected-z1:u00001",
       "verification_evidence": {
         "evidence": [
           {
-            "authority": "bcut+ivan_exact_text+zero_tail_4100",
+            "authority": "bcut+reviewer_exact_text+zero_tail_4100",
             "observed_interval_ms": [
               2230,
               4100
@@ -75,7 +75,7 @@
             "utterance_index": 0
           },
           {
-            "authority": "jianying+ivan_exact_text+zero_tail_4100",
+            "authority": "jianying+reviewer_exact_text+zero_tail_4100",
             "observed_interval_ms": [
               2230,
               4100
@@ -95,8 +95,8 @@
         "observed_text": "李豆沙一直是零",
         "status": "VERIFIED",
         "transcript_authorities": [
-          "bcut+ivan_exact_text+zero_tail_4100",
-          "jianying+ivan_exact_text+zero_tail_4100"
+          "bcut+reviewer_exact_text+zero_tail_4100",
+          "jianying+reviewer_exact_text+zero_tail_4100"
         ],
         "transcript_confidence": 0.99
       }
@@ -119,11 +119,11 @@
       "source_media_path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-final-with-budui-20260718/sources/budui-context-1274000-1277000.mp4",
       "source_media_sha256": "9db18449722ef1cab119524fec13846e2966763e97af10896d99d93c7a330bde",
       "source_utterance_text": "还没看我们明天不对",
-      "speaker_authority": "ivan_confirmed_solo_session",
+      "speaker_authority": "reviewer_confirmed_solo_session",
       "speaker_confidence": 1.0,
       "speaker_evidence": [
         {
-          "authority": "ivan_confirmed_solo_session",
+          "authority": "reviewer_confirmed_solo_session",
           "path": "/opt/bilive/autoslice/cache/huozi-luanshua/solo-session-human-authority.md",
           "sha256": "295b5fe1ab4fdaf20556bf951f1b9861f2e7ab7b6fbb806064a429c6a82ecccc"
         }
@@ -197,11 +197,11 @@
       "source_media_path": "/opt/bilive/autoslice/cache/huozi-luanshua/intro-dual-order-20260718/sources/source-context-480000-495000.avatar-clean.mp4",
       "source_media_sha256": "b1142433095aea4fc0fe346388b2a62e8b7651426b11b086f858b99016c7e8da",
       "source_utterance_text": "李豆沙一直是为爱做一",
-      "speaker_authority": "ivan_confirmed_phrase",
+      "speaker_authority": "reviewer_confirmed_phrase",
       "speaker_confidence": 1.0,
       "speaker_evidence": [
         {
-          "authority": "ivan_confirmation",
+          "authority": "reviewer_confirmation",
           "coverage_ranges_ms": [
             [
               9630,
@@ -214,14 +214,14 @@
       ],
       "text": "李豆沙一直是为爱做一",
       "transcript_authorities": [
-        "bcut+ivan_exact_text+zero_tail_4100",
-        "jianying+ivan_exact_text+zero_tail_4100"
+        "bcut+reviewer_exact_text+zero_tail_4100",
+        "jianying+reviewer_exact_text+zero_tail_4100"
       ],
       "utterance_id": "solo-20260716-210002-zero-tail-4100-avatar-clean-selected-z1:u00002",
       "verification_evidence": {
         "evidence": [
           {
-            "authority": "bcut+ivan_exact_text+zero_tail_4100",
+            "authority": "bcut+reviewer_exact_text+zero_tail_4100",
             "observed_interval_ms": [
               9630,
               12420
@@ -237,7 +237,7 @@
             "utterance_index": 1
           },
           {
-            "authority": "jianying+ivan_exact_text+zero_tail_4100",
+            "authority": "jianying+reviewer_exact_text+zero_tail_4100",
             "observed_interval_ms": [
               9630,
               12420
@@ -257,8 +257,8 @@
         "observed_text": "李豆沙一直是为爱做一",
         "status": "VERIFIED",
         "transcript_authorities": [
-          "bcut+ivan_exact_text+zero_tail_4100",
-          "jianying+ivan_exact_text+zero_tail_4100"
+          "bcut+reviewer_exact_text+zero_tail_4100",
+          "jianying+reviewer_exact_text+zero_tail_4100"
         ],
         "transcript_confidence": 0.99
       }

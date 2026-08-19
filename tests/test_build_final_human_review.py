@@ -14,6 +14,10 @@ import pytest
 
 from scripts import build_final_human_review as builder
 from src.autoslice import final_human_review as human_review
+from src.autoslice.cover_route_evidence import (
+    build_cover_route_decision,
+    record_cover_route_execution,
+)
 
 
 CANDIDATE_ID = "auto_193450_1000_1020"
@@ -497,6 +501,231 @@ def test_template_accepts_hash_closed_host_only_cpa_redraw_cover(
             },
         }
     ]
+
+
+def _carried_published_degraded_cover_generation(
+    *, story_contract: dict[str, object], cover_sha256: str
+) -> dict[str, object]:
+    rendered_lines = ["小李解释偶像曲", "再一次爱上我吧"]
+    route = build_cover_route_decision(
+        selected_treatment="screenshot_polish",
+        selected_rationale="usable source moment needed bounded cleanup",
+        story_contract=story_contract,
+        reference_authority=None,
+        decision_inputs={
+            "cover_mode": "auto",
+            "host_identity_required": True,
+        },
+        title=TITLE,
+        cover_text="小李解释偶像曲里那句再一次爱上我吧",
+    )
+    generation: dict[str, object] = {
+        "carried_forward_from_published_record": True,
+        "cover_origin": "AI_REDRAW",
+        "cover_text": "小李解释偶像曲里那句再一次爱上我吧",
+        "final_cover_sha256": cover_sha256,
+        "final_host_identity_verification": {
+            "schema_version": (
+                "lidousha-cover-final-host-identity-verification.v2"
+            ),
+            "authority": (
+                "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_COMPARISON"
+            ),
+            "status": "PASS",
+            "final_cover_sha256": cover_sha256,
+            "comparison_sha256": "sha256:" + "b" * 64,
+            "witness": {"provider": "cpa", "image_sha256": "b" * 64},
+        },
+        "image_gen_model": "cpa",
+        "method": "images.edit",
+        "model": "gpt-image-2",
+        "rendered_lines": rendered_lines,
+        "rendered_text_pixels": {
+            "status": "PASS",
+            "rendered_text": "".join(rendered_lines),
+            "final_cover_sha256": cover_sha256,
+        },
+        "reused_cover_candidates": 1,
+        "route_decision": route,
+        "screenshot_direct": {
+            "detail": "SOURCE_COMPOSITION_CROP_NOT_AUTHORIZED",
+            "reason_code": "SCREENSHOT_ROUTE_MATERIALIZATION_FAILED",
+            "status": "BLOCKED",
+        },
+        "story_contract": copy.deepcopy(story_contract),
+        "status": "REUSED",
+        "title": TITLE,
+    }
+    record_cover_route_execution(
+        generation,
+        actual_treatment="cpa_redraw",
+        execution_status="READY_DEGRADED",
+        image_generation_attempted=True,
+        image_generation_used=True,
+        detail=(
+            "demoted from screenshot_polish: "
+            "ValueError: SOURCE_COMPOSITION_CROP_NOT_AUTHORIZED"
+        ),
+    )
+    return generation
+
+
+def test_template_accepts_valid_carried_published_degraded_cover_route(
+    receipt_package: dict[str, object],
+) -> None:
+    record_path = receipt_package["paths"]["record"]
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    cover_sha256 = _sha256(receipt_package["paths"]["cover"])
+    record["story_contract"].update(
+        {
+            "cover_reference_authority": None,
+            "cover_counterpart_reference_available": False,
+            "relation_claim_allowed": False,
+            "cover_fallback_mode": "HOST_ONLY_GENERIC",
+            "participants": [],
+            "relation_state": "UNKNOWN",
+            "schema_version": "lidousha-story-contract.v1",
+            "source_media_sha256s": ["sha256:" + "d" * 64],
+            "clip_context_binding": {
+                "schema_version": "lidousha-clip-context.v1",
+                "context_sha256": "sha256:" + "e" * 64,
+            },
+        }
+    )
+    record["artifact_hashes"] = {"cover_sha256": cover_sha256}
+    record["publish_staging"]["cover_generation"] = (
+        _carried_published_degraded_cover_generation(
+            story_contract=record["story_contract"],
+            cover_sha256=cover_sha256,
+        )
+    )
+    _write_json(record_path, record)
+
+    evidence = builder.build_evidence_template(
+        package_root=receipt_package["root"],
+        package_audit_path=receipt_package["audit_path"],
+    )
+
+    assert evidence["items"][0]["cover_story_claims"] == [
+        {
+            "claim": "封面文字呈现“小李解释偶像曲 / 再一次爱上我吧”",
+            "presentation": "COVER_TEXT",
+            "observation": {
+                "anchor": "FINAL_COVER/COVER_TEXT",
+                "detail": "<REQUIRED_POST_REVIEW_VISIBLE_COVER_DETAIL>",
+            },
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda generation: generation.pop(
+            "carried_forward_from_published_record"
+        ),
+        lambda generation: generation.update({"status": "AI_COVER_READY"}),
+        lambda generation: generation.update({"reused_cover_candidates": True}),
+        lambda generation: generation.update({"reused_cover_candidates": 0}),
+        lambda generation: generation.update({"reused_cover_candidates": 2}),
+        lambda generation: generation["screenshot_direct"].pop(
+            "reason_code"
+        ),
+        lambda generation: generation["route_decision"].update(
+            {"execution_detail": ""}
+        ),
+        lambda generation: generation["route_decision"].update(
+            {"selected_treatment": "screenshot_direct"}
+        ),
+        lambda generation: generation["route_decision"].update(
+            {"host_identity_required": False}
+        ),
+        lambda generation: generation["final_host_identity_verification"].update(
+            {"status": "FAIL"}
+        ),
+        lambda generation: generation["final_host_identity_verification"].update(
+            {"final_cover_sha256": "sha256:" + "c" * 64}
+        ),
+        lambda generation: generation["story_contract"].update(
+            {"selection_hook": "stale cover-only story binding"}
+        ),
+    ],
+)
+def test_template_refuses_unbound_or_incomplete_degraded_cover_route(
+    receipt_package: dict[str, object], mutation: object
+) -> None:
+    record_path = receipt_package["paths"]["record"]
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    cover_sha256 = _sha256(receipt_package["paths"]["cover"])
+    record["story_contract"].update(
+        {
+            "cover_reference_authority": None,
+            "cover_counterpart_reference_available": False,
+            "relation_claim_allowed": False,
+            "cover_fallback_mode": "HOST_ONLY_GENERIC",
+            "participants": [],
+            "relation_state": "UNKNOWN",
+            "schema_version": "lidousha-story-contract.v1",
+            "source_media_sha256s": ["sha256:" + "d" * 64],
+            "clip_context_binding": {
+                "schema_version": "lidousha-clip-context.v1",
+                "context_sha256": "sha256:" + "e" * 64,
+            },
+        }
+    )
+    record["artifact_hashes"] = {"cover_sha256": cover_sha256}
+    generation = _carried_published_degraded_cover_generation(
+        story_contract=record["story_contract"],
+        cover_sha256=cover_sha256,
+    )
+    mutation(generation)
+    record["publish_staging"]["cover_generation"] = generation
+    _write_json(record_path, record)
+
+    with pytest.raises(builder.FinalHumanReviewBuildError):
+        builder.build_evidence_template(
+            package_root=receipt_package["root"],
+            package_audit_path=receipt_package["audit_path"],
+        )
+
+
+def test_template_refuses_top_level_and_staging_degraded_generation_drift(
+    receipt_package: dict[str, object],
+) -> None:
+    record_path = receipt_package["paths"]["record"]
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    cover_sha256 = _sha256(receipt_package["paths"]["cover"])
+    record["story_contract"].update(
+        {
+            "cover_reference_authority": None,
+            "cover_counterpart_reference_available": False,
+            "relation_claim_allowed": False,
+            "cover_fallback_mode": "HOST_ONLY_GENERIC",
+            "participants": [],
+            "relation_state": "UNKNOWN",
+            "schema_version": "lidousha-story-contract.v1",
+            "source_media_sha256s": ["sha256:" + "d" * 64],
+            "clip_context_binding": {
+                "schema_version": "lidousha-clip-context.v1",
+                "context_sha256": "sha256:" + "e" * 64,
+            },
+        }
+    )
+    record["artifact_hashes"] = {"cover_sha256": cover_sha256}
+    generation = _carried_published_degraded_cover_generation(
+        story_contract=record["story_contract"],
+        cover_sha256=cover_sha256,
+    )
+    record["publish_staging"]["cover_generation"] = generation
+    record["cover_generation"] = copy.deepcopy(generation)
+    record["cover_generation"]["reused_cover_candidates"] = 2
+    _write_json(record_path, record)
+
+    with pytest.raises(builder.FinalHumanReviewBuildError):
+        builder.build_evidence_template(
+            package_root=receipt_package["root"],
+            package_audit_path=receipt_package["audit_path"],
+        )
 
 
 @pytest.mark.parametrize(

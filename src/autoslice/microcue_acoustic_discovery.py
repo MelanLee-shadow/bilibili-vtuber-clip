@@ -20,20 +20,21 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from difflib import SequenceMatcher
 from typing import Any, Callable, Mapping
 
+from src.autoslice.acoustic_pinyin import (
+    heard_pinyin_tokens,
+    pinyin_similarity,
+    text_pinyin_tokens,
+)
 from src.autoslice.acoustic_witness_adjudication import (
     build_witness_request,
     valid_witness_evidence,
 )
+from src.autoslice.acoustic_witness_availability import (
+    unavailable_acoustic_witness,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues
-
-try:  # production dependency; absence makes the discovery lane unavailable
-    from pypinyin import lazy_pinyin as _lazy_pinyin
-except Exception:  # pragma: no cover - environment dependent
-    _lazy_pinyin = None
-
 
 SCHEMA_VERSION = "microcue-candidate-blind-acoustic-discovery.v1"
 MAX_DURATION_MS = 1_300
@@ -70,28 +71,6 @@ def _eligible(text: str, duration_ms: int) -> bool:
     )
 
 
-def _current_pinyin(text: str) -> list[str]:
-    if _lazy_pinyin is None:
-        return []
-    return [
-        re.sub(r"[^a-zvü]", "", str(token).casefold())
-        for token in _lazy_pinyin(text)
-        if re.sub(r"[^a-zvü]", "", str(token).casefold())
-    ]
-
-
-def _heard_pinyin(value: object) -> list[str]:
-    return [token for token in str(value or "").casefold().split() if token != "?"]
-
-
-def _pinyin_similarity(current: list[str], heard: list[str]) -> float:
-    if not current or not heard:
-        return 0.0
-    # Character-level comparison is deliberately tolerant of one extra/missing
-    # syllable while still exposing multi-syllable substitutions.
-    return SequenceMatcher(None, " ".join(current), " ".join(heard)).ratio()
-
-
 def discover_microcue_findings(
     srt_text: str,
     *,
@@ -112,7 +91,7 @@ def discover_microcue_findings(
         "eligible": [],
         "findings": [],
     }
-    if entity_verifier is None or _lazy_pinyin is None:
+    if entity_verifier is None or text_pinyin_tokens("测试") is None:
         receipt["reason_code"] = "MICROCUE_AUDIO_DISCOVERY_UNAVAILABLE"
         return [], receipt
 
@@ -150,7 +129,15 @@ def discover_microcue_findings(
         }
         witness_request = build_witness_request(check_request)
         try:
-            witness = dict(entity_verifier(witness_request))
+            raw_witness = entity_verifier(witness_request)
+            # F21：``dict(None)`` 会抛 TypeError 并被下面记成
+            # MICROCUE_AUDIO_VERIFIER_ERROR，把「根本没有证人」伪装成
+            # 「证人炸了」。非 Mapping（含 None）一律走 typed 不可用尾巴。
+            witness = (
+                dict(raw_witness)
+                if isinstance(raw_witness, Mapping)
+                else unavailable_acoustic_witness(witness_request)
+            )
         except Exception as exc:
             witness = {
                 "schema_version": "subtitle-span-acoustic-witness.v1",
@@ -163,9 +150,17 @@ def discover_microcue_findings(
             witness, request_sha256=str(witness_request["request_sha256"])
         )
         confidence = witness.get("confidence")
-        current_tokens = _current_pinyin(cue.text)
-        heard_tokens = _heard_pinyin(witness.get("heard_pinyin"))
-        similarity = _pinyin_similarity(current_tokens, heard_tokens)
+        current_tokens = text_pinyin_tokens(cue.text) or []
+        heard_tokens = [
+            token
+            for token in heard_pinyin_tokens(witness.get("heard_pinyin"))
+            if token != "?"
+        ]
+        similarity = pinyin_similarity(
+            current_tokens,
+            heard_tokens,
+            character_level=True,
+        )
         observed = bool(
             valid
             and witness.get("status") == "OBSERVED"

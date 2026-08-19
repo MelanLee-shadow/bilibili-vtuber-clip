@@ -11,6 +11,10 @@ from __future__ import annotations
 import re
 from typing import Mapping
 
+from src.autoslice.cover_source_composition import (
+    TALK_SCENE,
+    source_composition_scene_kind,
+)
 from src.autoslice.cover_title_rendering import (
     FEED_SAFE_X0,
     FEED_SAFE_X1,
@@ -541,8 +545,72 @@ def build_no_crop_participant_verification(
     }
 
 
+def _per_frame_rejection_evidence(
+    source_composition_verification: object,
+    decision_inputs: Mapping[str, object],
+) -> str:
+    """Render this frame's real judging basis for the rejected-route rows.
+
+    治 C9：`rejected_reason` 此前 100% 由 selected_treatment 查表拼出，同一条路线
+    在每条切片上说的都是同一句话，于是从证据包里**答不出**「为什么这一帧不能截」。
+    70-cover.md 要求逐项记录接受/拒绝理由且不得以「默认/自动选择」充数——模板串
+    形式上满足、实质上不满足。这里把真实判据（见证 verdict 的 reason 原文、场景
+    类型、分数、情绪命中、主体几何置信）前置，模板串降为后缀。
+    """
+
+    parts: list[str] = []
+    scene = source_composition_scene_kind(source_composition_verification)
+    if scene != TALK_SCENE:
+        parts.append(f"scene={scene}")
+    # 竖屏源是**路线判据**，不是画面质量差评。模板串会说「证据不够强」，那对一张
+    # 完全合格但太高的帧是错的归因，所以真实判据必须前置（维护者）。
+    if decision_inputs.get("vertical_source_redraw") is True:
+        ratio = decision_inputs.get("source_frame_aspect_ratio")
+        parts.append(
+            "vertical_source_redraw=true (维护者 2026-08-10 裁定：竖屏源不适合截图，"
+            f"按裁定走重绘，非降级); source_frame_aspect_ratio={ratio}"
+        )
+    score = decision_inputs.get("frame_score")
+    if score is not None:
+        parts.append(f"frame_score={score}")
+    if decision_inputs.get("frame_emotion"):
+        parts.append("frame_emotion=hit")
+    subject_confident = decision_inputs.get("subject_confident")
+    if subject_confident is not None:
+        parts.append(f"motion_subject_confident={bool(subject_confident)}")
+    dispersion = decision_inputs.get("motion_dispersion_frac")
+    if dispersion is not None:
+        parts.append(f"motion_dispersion_frac={dispersion}")
+    verdict = (
+        source_composition_verification.get("verdict")
+        if isinstance(source_composition_verification, Mapping)
+        else None
+    )
+    if isinstance(verdict, Mapping):
+        for field in _WITNESS_EVIDENCE_FIELDS:
+            if isinstance(verdict.get(field), bool):
+                parts.append(f"{field}={verdict[field]}")
+        reason = str(verdict.get("reason") or "").strip()
+        if reason:
+            # 原文保留：见证怎么说的就怎么记，不做转述。
+            parts.append(f'witness_reason="{reason}"')
+    return "; ".join(parts)
+
+
+_WITNESS_EVIDENCE_FIELDS = (
+    "source_face_complete",
+    "faithful_crop_can_make_dominant",
+    "source_carries_story_reaction",
+    "host_window_visible",
+    "frame_is_interesting",
+    "cpa_redraw_recommended",
+)
+
+
 def _alternatives(
-    selected_treatment: str, selected_rationale: str
+    selected_treatment: str,
+    selected_rationale: str,
+    per_frame_evidence: str = "",
 ) -> list[dict[str, object]]:
     selected_explanations = {
         "screenshot_direct": (
@@ -599,18 +667,23 @@ def _alternatives(
                     "status": "SELECTED",
                     "rationale": selected_rationale,
                     "rejected_reason": None,
+                    "per_frame_evidence": per_frame_evidence or None,
                 }
             )
             continue
+        # 真实逐帧判据在前，查表模板降为后缀（C9）。
+        prefix = f"{per_frame_evidence}; " if per_frame_evidence else ""
         rows.append(
             {
                 "treatment": treatment,
                 "status": "REJECTED",
                 "rationale": selected_explanations[treatment],
                 "rejected_reason": (
-                    rejected_explanations[selected_treatment][treatment]
+                    prefix
+                    + rejected_explanations[selected_treatment][treatment]
                     + f"; selected evidence: {selected_rationale}"
                 ),
+                "per_frame_evidence": per_frame_evidence or None,
             }
         )
     return rows
@@ -625,13 +698,20 @@ def build_cover_route_decision(
     decision_inputs: Mapping[str, object],
     title: str = "",
     cover_text: str = "",
+    source_composition_verification: object = None,
 ) -> dict[str, object]:
     if selected_treatment not in ROUTE_TREATMENTS:
         raise ValueError(f"unsupported cover treatment: {selected_treatment}")
     rationale = str(selected_rationale or "").strip()
     if not rationale:
         raise ValueError("cover route rationale must not be empty")
-    alternatives = _alternatives(selected_treatment, rationale)
+    alternatives = _alternatives(
+        selected_treatment,
+        rationale,
+        _per_frame_rejection_evidence(
+            source_composition_verification, decision_inputs
+        ),
+    )
     generation_planned = selected_treatment in {
         "screenshot_polish",
         "cpa_redraw",

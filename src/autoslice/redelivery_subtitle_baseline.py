@@ -25,6 +25,15 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from src.autoslice.jingting_chunker import SrtCue, parse_srt_cues
+from src.autoslice.redelivery_boundary_projection import (
+    AUTHORITY_CONFIG_KEY,
+    RedeliveryBoundaryProjectionError,
+    projection_materialization_receipt,
+)
+from src.autoslice.text_baseline_guard import (
+    BASELINE_CONTAINS_SPEAKER_LABEL_PREFIX,
+    contains_speaker_label_prefix,
+)
 
 
 SCHEMA_VERSION = "subtitle-redelivery-baseline.v1"
@@ -954,6 +963,19 @@ def _replay_exact_v2_interval(
     video_tail_extension_ms = (
         timeline.current_end_ms - timeline.baseline_end_ms
     )
+    projection_receipt: dict[str, object] | None = None
+    if config.get(AUTHORITY_CONFIG_KEY) is not None:
+        try:
+            projection_receipt = projection_materialization_receipt(
+                config=config,
+                baseline_cues=baseline,
+                current_source_start_ms=timeline.current_start_ms,
+                current_source_end_ms=timeline.current_end_ms,
+                application_strategy="exact_reviewed_interval_replay",
+                video_tail_extension_ms=video_tail_extension_ms,
+            )
+        except RedeliveryBoundaryProjectionError as exc:
+            return _fail(current_srt, audit, str(exc))
     if not replay or (
         timeline.current_start_ms != timeline.baseline_start_ms
         or not (
@@ -1052,6 +1074,8 @@ def _replay_exact_v2_interval(
             "output_sha256": _sha256_bytes(output.encode("utf-8")),
         }
     )
+    if projection_receipt is not None:
+        audit["terminal_projection_materialization"] = projection_receipt
     return output, audit
 
 
@@ -1198,6 +1222,12 @@ def apply_redelivery_subtitle_baseline(
         audit["failures"].append({"reason_code": "REDELIVERY_BASELINE_UTF8_INVALID"})
         audit["output_sha256"] = audit["current_input_sha256"]
         return current_srt, audit
+    if contains_speaker_label_prefix(baseline_srt):
+        return _fail(
+            current_srt,
+            audit,
+            BASELINE_CONTAINS_SPEAKER_LABEL_PREFIX,
+        )
     current = parse_srt_cues(current_srt)
     baseline = parse_srt_cues(baseline_srt)
     if not current or not baseline:

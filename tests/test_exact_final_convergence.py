@@ -6,7 +6,13 @@ from copy import deepcopy
 
 import pytest
 
+from src.autoslice.acoustic_witness_adjudication import build_witness_request
+from src.autoslice.exact_final_witness_authority import (
+    build_acoustic_witness_binding,
+    valid_convergence_mutation_authority,
+)
 from src.autoslice.exact_final_convergence import (
+    _compact_current_evidence,
     collect_exact_final_convergence_memos,
     converge_reconsidered_exact_final_findings,
     rebind_exact_final_convergence_memos,
@@ -19,6 +25,17 @@ from src.autoslice.producer_package_finalization import (
 
 def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _json_sha(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
 
 
 def _srt(cue_text: str, *, neighbor: str = "我试下这个") -> str:
@@ -67,9 +84,64 @@ def _authority(before: str, after: str) -> dict:
     }
 
 
-def _reconsidered_finding(current: str, proposed: str) -> dict:
+def _bound_request(
+    current: str,
+    proposed: str,
+    *,
+    cue_index: int,
+    start_ms: int,
+    end_ms: int,
+    salt: str,
+) -> dict:
+    request = {
+        "schema_version": "subtitle-span-acoustic-check-request.v1",
+        "evidence_id": _sha("evidence-" + salt),
+        "kind": "subtitle_span_acoustic_check",
+        "cue_indexes": [cue_index],
+        "base_text_sha256": _sha(current),
+        "matched_start_ms": start_ms,
+        "matched_end_ms": end_ms,
+        "context_start_ms": max(0, start_ms - 500),
+        "context_end_ms": end_ms + 500,
+        "source_media_timeline_offset_ms": 0,
+        "matched_audio_text": current,
+        "suspect": current,
+        "replacement": proposed,
+        "current_cue": current,
+        "proposed_cue": proposed,
+        "context_before": "",
+        "context_after": "",
+        "candidate_entities": [],
+        "repair_class": "phonetic",
+        "candidate_provenance": None,
+        "orthography_authority": None,
+        "evidence_cue_ids": [],
+        "reason": "synthetic convergence fixture",
+    }
+    request["request_sha256"] = _json_sha(request)
+    return request
+
+
+def _reconsidered_finding(
+    current: str,
+    proposed: str,
+    *,
+    cue_index: int = 2,
+    start_ms: int = 1_100,
+    end_ms: int = 2_100,
+    salt: str = "default",
+) -> dict:
+    request = _bound_request(
+        current,
+        proposed,
+        cue_index=cue_index,
+        start_ms=start_ms,
+        end_ms=end_ms,
+        salt=salt,
+    )
+    witness_request = build_witness_request(request)
     return {
-        "cue_index": 2,
+        "cue_index": cue_index,
         "base_text_sha256": _sha(current),
         "proposed_full_cue": proposed,
         "suspect": current,
@@ -87,33 +159,66 @@ def _reconsidered_finding(current: str, proposed: str) -> dict:
                 "status": "PASS",
                 "basis": "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION",
             },
-            "request": {
-                "schema_version": "subtitle-span-acoustic-check-request.v1",
-                "request_sha256": "e" * 64,
-                "base_text_sha256": _sha(current),
-                "current_cue": current,
-                "proposed_cue": proposed,
-                "matched_start_ms": 1_100,
-                "matched_end_ms": 2_100,
-            },
+            "request": request,
             "verdict": {
                 "schema_version": "subtitle-span-acoustic-witness.v1",
+                "witness_protocol": "blind_pinyin",
                 "status": "OBSERVED",
                 "target_audible": True,
                 "heard_pinyin": "san er",
-                "request_sha256": "f" * 64,
+                "uncertain_positions": [],
+                "syllable_count": 2,
+                "confidence": 0.95,
+                "request_sha256": witness_request["request_sha256"],
+                "source_media_sha256": _sha("media-" + salt),
+                "audio_clip_sha256": _sha("audio-" + salt),
+                "prompt_sha256": _sha("witness-prompt-" + salt),
+                "response_sha256": _sha("witness-response-" + salt),
             },
             "witness_judge": {
+                "candidate_pinyin_similarity": {
+                    "current": 0.25,
+                    "proposed": 1.0,
+                },
                 "judge": {
                     "schema_version": "acoustic-witness-adjudication.v1",
                     "status": "JUDGED",
                     "choice": "PROPOSED",
+                    "decision_contract": "current-proposed-neither.v1",
+                    "choice_set": ["CURRENT", "NEITHER", "PROPOSED"],
+                    "candidate_pinyin_similarity": {
+                        "current": 0.25,
+                        "proposed": 1.0,
+                    },
                     "reason": "本轮二元闭集选择 proposed",
                     "prompt_sha256": "1" * 64,
                     "completion_sha256": "2" * 64,
+                    "check_request_sha256": request["request_sha256"],
                 }
             },
         },
+    }
+
+
+def test_double_candidate_scores_survive_compaction_and_repair_receipt() -> None:
+    current = "三二"
+    proposed = "方案二"
+    finding = _reconsidered_finding(current, proposed)
+    adjudication = finding["exact_release_adjudication"]
+
+    compact = _compact_current_evidence(finding, adjudication)
+    assert compact["candidate_pinyin_similarity"] == {
+        "current": 0.25,
+        "proposed": 1.0,
+    }
+    repaired, receipts = _apply_exact_final_cpa_repairs(
+        _srt(current),
+        {"findings": [finding]},
+    )
+    assert proposed in repaired
+    assert receipts[0]["candidate_pinyin_similarity"] == {
+        "current": 0.25,
+        "proposed": 1.0,
     }
 
 
@@ -177,6 +282,8 @@ def test_history_aware_cpa_can_apply_proposed_then_memo_closes_repeat() -> None:
     )
     memo = adjudication["exact_final_cpa_cycle_memo"]
     assert memo["final_text"] == proposed
+    assert memo["acoustic_witness_gate"]["status"] == "PASS"
+    assert memo["acoustic_witness_gate"]["source"] == "FRESH_OBSERVED"
 
     promoted = collect_exact_final_convergence_memos(
         {"findings": unresolved, "resolved_findings": []}
@@ -198,6 +305,369 @@ def test_history_aware_cpa_can_apply_proposed_then_memo_closes_repeat() -> None:
     assert len(memo_resolved) == 1
     assert memo_resolved[0]["resolution"] == (
         "CPA_EXACT_FINAL_CYCLE_MEMO_LOCKED_FINAL_TEXT"
+    )
+
+
+def test_history_convergence_without_observed_witness_is_disclosure_only() -> None:
+    current = "三二"
+    proposed = "方案二"
+    finding = _reconsidered_finding(current, proposed)
+    finding["exact_release_adjudication"].pop("verdict")
+
+    unresolved, resolved = converge_reconsidered_exact_final_findings(
+        _srt(current),
+        [finding],
+        authority_audit=_authority("旧文本", current),
+        judge_llm_call=lambda _prompt: json.dumps(
+            {"choice": "PROPOSED", "reason": "history alone prefers proposed"},
+            ensure_ascii=False,
+        ),
+    )
+
+    assert resolved == []
+    assert len(unresolved) == 1
+    row = unresolved[0]
+    adjudication = row["exact_release_adjudication"]
+    assert row["repair_class"] == "disclosure_only"
+    assert adjudication["repaired"] is False
+    assert adjudication["reason_code"] == (
+        "HISTORY_CONVERGENCE_ACOUSTIC_WITNESS_REQUIRED"
+    )
+    assert adjudication["policy_branch"] == (
+        "HISTORY_CONVERGENCE_DOWNGRADED_TO_DISCLOSURE_ONLY"
+    )
+    assert adjudication["mutation_authority"]["status"] == "NOT_APPLIED"
+    unchanged, repairs = _apply_exact_final_cpa_repairs(
+        _srt(current),
+        {"findings": unresolved},
+    )
+    assert unchanged == _srt(current)
+    assert repairs == []
+
+
+def test_package_rejects_forged_history_convergence_without_gate() -> None:
+    current = "三二"
+    proposed = "方案二"
+    finding = _reconsidered_finding(current, proposed)
+    adjudication = finding["exact_release_adjudication"]
+    adjudication["policy_branch"] = "CPA_HISTORY_CONVERGENCE_APPLY_PROPOSED"
+
+    unchanged, repairs = _apply_exact_final_cpa_repairs(
+        _srt(current),
+        {"findings": [finding]},
+    )
+
+    assert unchanged == _srt(current)
+    assert repairs == []
+
+
+def test_package_rejects_convergence_relabelled_as_ordinary_mutation() -> None:
+    current = "三二"
+    proposed = "方案二"
+    unresolved, resolved = converge_reconsidered_exact_final_findings(
+        _srt(current),
+        [_reconsidered_finding(current, proposed)],
+        authority_audit=_authority("旧文本", current),
+        judge_llm_call=lambda _prompt: json.dumps(
+            {"choice": "PROPOSED", "reason": "fresh blind evidence wins"}
+        ),
+    )
+    assert resolved == []
+    assert len(unresolved) == 1
+    forged = deepcopy(unresolved[0])
+    adjudication = forged["exact_release_adjudication"]
+    assert "exact_final_cpa_convergence_memo" in adjudication
+    adjudication.pop("history_convergence_acoustic_witness")
+    adjudication["policy_branch"] = "WITNESS_JUDGE_APPLY_PROPOSED"
+    adjudication["mutation_authority"]["basis"] = (
+        "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION"
+    )
+
+    unchanged, repairs = _apply_exact_final_cpa_repairs(
+        _srt(current),
+        {"findings": [forged]},
+    )
+
+    assert unchanged == _srt(current)
+    assert repairs == []
+
+
+def test_forged_blind_witness_cannot_authorize_history_convergence() -> None:
+    current = "三二"
+    proposed = "方案二"
+    finding = _reconsidered_finding(current, proposed)
+    adjudication = finding["exact_release_adjudication"]
+    witness = adjudication["verdict"]
+    for key in (
+        "heard_pinyin",
+        "uncertain_positions",
+        "syllable_count",
+        "confidence",
+    ):
+        witness.pop(key)
+    witness["proposed_cue"] = proposed
+    adjudication["witness_judge"]["judge"]["schema_version"] = "fake.v1"
+
+    unresolved, resolved = converge_reconsidered_exact_final_findings(
+        _srt(current),
+        [finding],
+        authority_audit=_authority("旧文本", current),
+        judge_llm_call=lambda _prompt: json.dumps(
+            {"choice": "PROPOSED", "reason": "forged evidence says so"}
+        ),
+    )
+
+    assert resolved == []
+    assert len(unresolved) == 1
+    gated = unresolved[0]["exact_release_adjudication"]
+    assert gated["policy_branch"] == (
+        "HISTORY_CONVERGENCE_DOWNGRADED_TO_DISCLOSURE_ONLY"
+    )
+    assert gated["reason_code"] == (
+        "HISTORY_CONVERGENCE_ACOUSTIC_WITNESS_REQUIRED"
+    )
+    unchanged, repairs = _apply_exact_final_cpa_repairs(
+        _srt(current), {"findings": unresolved}
+    )
+    assert unchanged == _srt(current)
+    assert repairs == []
+
+
+@pytest.mark.parametrize("hidden_text", ["方案二", "﨑", "𠀀"])
+def test_candidate_text_hidden_in_witness_reason_fails_closed(
+    hidden_text: str,
+) -> None:
+    current = "三二"
+    proposed = "方案二"
+    finding = _reconsidered_finding(current, proposed)
+    finding["exact_release_adjudication"]["verdict"]["reason"] = hidden_text
+
+    unresolved, resolved = converge_reconsidered_exact_final_findings(
+        _srt(current),
+        [finding],
+        authority_audit=_authority("旧文本", current),
+        judge_llm_call=lambda _prompt: json.dumps(
+            {"choice": "PROPOSED", "reason": "candidate leak is forbidden"}
+        ),
+    )
+
+    assert resolved == []
+    adjudication = unresolved[0]["exact_release_adjudication"]
+    assert adjudication["policy_branch"] == (
+        "HISTORY_CONVERGENCE_DOWNGRADED_TO_DISCLOSURE_ONLY"
+    )
+    unchanged, repairs = _apply_exact_final_cpa_repairs(
+        _srt(current), {"findings": unresolved}
+    )
+    assert unchanged == _srt(current)
+    assert repairs == []
+
+
+def test_malformed_convergence_types_fail_closed_without_exception() -> None:
+    current = "三二"
+    proposed = "方案二"
+    unresolved, _resolved = converge_reconsidered_exact_final_findings(
+        _srt(current),
+        [_reconsidered_finding(current, proposed)],
+        authority_audit=_authority("旧文本", current),
+        judge_llm_call=lambda _prompt: json.dumps(
+            {"choice": "PROPOSED", "reason": "valid fixture"}
+        ),
+    )
+    adjudication = deepcopy(unresolved[0]["exact_release_adjudication"])
+    adjudication["policy_branch"] = []
+    adjudication["mutation_authority"]["basis"] = []
+    adjudication["witness_judge"]["witness_status"] = []
+
+    assert valid_convergence_mutation_authority(
+        adjudication,
+        proposed=proposed,
+        window=(1_100, 2_100),
+    ) is False
+
+    source = _reconsidered_finding(current, proposed)[
+        "exact_release_adjudication"
+    ]
+    bad_judge = deepcopy(source["witness_judge"]["judge"])
+    bad_judge["choice_set"] = [{"unhashable": True}]
+    assert build_acoustic_witness_binding(
+        check_request=source["request"],
+        witness=source["verdict"],
+        judge=bad_judge,
+    ) is None
+
+
+def test_history_convergence_reuses_proposed_bound_observed_witness() -> None:
+    current = "三二"
+    proposed = "方案二"
+    authority = _authority(proposed, current)
+    first = authority["exact_final_cpa_self_heal"]["passes"][0]["repairs"][0]
+    prior = deepcopy(first)
+    historical_request = _bound_request(
+        "旧方案",
+        proposed,
+        cue_index=2,
+        start_ms=1_100,
+        end_ms=2_100,
+        salt="historical",
+    )
+    historical_witness_request = build_witness_request(historical_request)
+    historical_witness = {
+        "schema_version": "subtitle-span-acoustic-witness.v1",
+        "witness_protocol": "blind_pinyin",
+        "status": "OBSERVED",
+        "target_audible": True,
+        "heard_pinyin": "fang an er",
+        "uncertain_positions": [],
+        "syllable_count": 3,
+        "confidence": 0.95,
+        "request_sha256": historical_witness_request["request_sha256"],
+        "source_media_sha256": _sha("historical-media"),
+        "audio_clip_sha256": _sha("historical-audio"),
+        "prompt_sha256": _sha("historical-witness-prompt"),
+        "response_sha256": _sha("historical-witness-response"),
+    }
+    historical_judge = {
+        "schema_version": "acoustic-witness-adjudication.v1",
+        "status": "JUDGED",
+        "choice": "PROPOSED",
+        "decision_contract": "current-proposed-neither.v1",
+        "choice_set": ["CURRENT", "NEITHER", "PROPOSED"],
+        "reason": "historical blind witness supports proposed",
+        "candidate_pinyin_similarity": {
+            "current": 0.25,
+            "proposed": 1.0,
+        },
+        "check_request_sha256": historical_request["request_sha256"],
+        "prompt_sha256": _sha("historical-prompt"),
+        "completion_sha256": _sha("historical-completion"),
+    }
+    binding = build_acoustic_witness_binding(
+        check_request=historical_request,
+        witness=historical_witness,
+        judge=historical_judge,
+    )
+    assert binding is not None
+    prior.update(
+        before="旧方案",
+        after=proposed,
+        before_sha256="sha256:" + _sha("旧方案"),
+        after_sha256="sha256:" + _sha(proposed),
+        request_sha256="sha256:" + historical_request["request_sha256"],
+        acoustic_witness=historical_witness,
+        acoustic_witness_binding=binding,
+    )
+    authority["exact_final_cpa_self_heal"]["passes"][0]["repairs"] = [
+        prior,
+        first,
+    ]
+    finding = _reconsidered_finding(current, proposed)
+    finding["exact_release_adjudication"].pop("verdict")
+
+    unresolved, resolved = converge_reconsidered_exact_final_findings(
+        _srt(current),
+        [finding],
+        authority_audit=authority,
+        judge_llm_call=lambda _prompt: json.dumps(
+            {
+                "choice_id": "TEXT_" + _sha(proposed),
+                "reason": "bound witness can be reused",
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    assert resolved == []
+    gate = unresolved[0]["exact_release_adjudication"][
+        "history_convergence_acoustic_witness"
+    ]
+    assert gate["status"] == "PASS"
+    assert gate["source"] == "HISTORY_OBSERVED_REUSE"
+    assert gate["witness_protocol"] == "blind_pinyin"
+    repaired, receipts = _apply_exact_final_cpa_repairs(
+        _srt(current),
+        {"findings": unresolved},
+    )
+    assert proposed in repaired
+    assert receipts[0]["acoustic_witness_binding"] == binding
+
+    malformed = deepcopy(unresolved[0])
+    malformed_adjudication = malformed["exact_release_adjudication"]
+    malformed_gate = deepcopy(
+        malformed_adjudication["history_convergence_acoustic_witness"]
+    )
+    malformed_gate["source"] = []
+    malformed_gate.pop("gate_sha256")
+    malformed_gate["gate_sha256"] = "sha256:" + _json_sha(malformed_gate)
+    malformed_adjudication["history_convergence_acoustic_witness"] = deepcopy(
+        malformed_gate
+    )
+    malformed_adjudication["exact_final_cpa_cycle_memo"][
+        "acoustic_witness_gate"
+    ] = deepcopy(malformed_gate)
+    unchanged, malformed_receipts = _apply_exact_final_cpa_repairs(
+        _srt(current),
+        {"findings": [malformed]},
+    )
+    assert unchanged == _srt(current)
+    assert malformed_receipts == []
+
+
+def test_digest_only_legacy_history_witness_is_not_reused() -> None:
+    current = "三二"
+    proposed = "方案二"
+    authority = _authority(proposed, current)
+    first = authority["exact_final_cpa_self_heal"]["passes"][0]["repairs"][0]
+    prior = deepcopy(first)
+    prior.update(
+        before="旧方案",
+        after=proposed,
+        before_sha256="sha256:" + _sha("旧方案"),
+        after_sha256="sha256:" + _sha(proposed),
+        acoustic_witness={
+            "schema_version": "subtitle-span-acoustic-witness.v1",
+            "status": "OBSERVED",
+            "target_audible": True,
+            "request_sha256": "8" * 64,
+        },
+        acoustic_witness_binding={
+            "schema_version": "subtitle-repair-acoustic-witness-binding.v1",
+            "status": "PASS",
+            "check_request_sha256": "sha256:" + "9" * 64,
+            "witness_request_sha256": "sha256:" + "8" * 64,
+            "proposed_text_sha256": "sha256:" + _sha(proposed),
+            "matched_start_ms": 1_100,
+            "matched_end_ms": 2_100,
+        },
+    )
+    authority["exact_final_cpa_self_heal"]["passes"][0]["repairs"] = [
+        prior,
+        first,
+    ]
+    finding = _reconsidered_finding(current, proposed)
+    finding["exact_release_adjudication"].pop("verdict")
+
+    unresolved, resolved = converge_reconsidered_exact_final_findings(
+        _srt(current),
+        [finding],
+        authority_audit=authority,
+        judge_llm_call=lambda _prompt: json.dumps(
+            {
+                "choice_id": "TEXT_" + _sha(proposed),
+                "reason": "legacy digest-only evidence is insufficient",
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    assert resolved == []
+    adjudication = unresolved[0]["exact_release_adjudication"]
+    assert adjudication["repaired"] is False
+    assert adjudication["reason_code"] == (
+        "HISTORY_CONVERGENCE_ACOUSTIC_WITNESS_REQUIRED"
+    )
+    assert adjudication["history_convergence_acoustic_witness"]["status"] == (
+        "BLOCK"
     )
 
 
@@ -380,24 +850,143 @@ def _finding(
     proposed: str,
     salt: str,
 ) -> dict:
-    row = deepcopy(_reconsidered_finding(current, proposed))
-    row["cue_index"] = cue_index
-    row["base_text_sha256"] = _sha(current)
-    adjudication = row["exact_release_adjudication"]
-    request = adjudication["request"]
-    request.update(
-        request_sha256=_sha("request-" + salt),
-        base_text_sha256=_sha(current),
-        current_cue=current,
-        proposed_cue=proposed,
-        matched_start_ms=start_ms,
-        matched_end_ms=end_ms,
+    row = _reconsidered_finding(
+        current,
+        proposed,
+        cue_index=cue_index,
+        start_ms=start_ms,
+        end_ms=end_ms,
+        salt=salt,
     )
+    adjudication = row["exact_release_adjudication"]
     adjudication["verdict"].update(
         audio_clip_sha256=_sha("audio-" + salt),
-        heard_pinyin=f"814-{cue_index}-{salt}",
+        heard_pinyin="he cheng yin",
+        syllable_count=3,
     )
     return row
+
+
+def _legal_drop_finding(
+    *, current: str, start_ms: int, end_ms: int
+) -> dict:
+    base_sha = _sha(current)
+    request_sha = "f" * 64
+    witness_sha = "a" * 64
+    prompt_sha = "b" * 64
+    completion_sha = "c" * 64
+    return {
+        "cue_index": 1,
+        "base_text_sha256": base_sha,
+        "proposed_full_cue": "",
+        "suggestion": "",
+        "repair_class": "acoustic_drop_cue",
+        "exact_release_adjudication": {
+            "schema_version": "subtitle-span-adjudication.v1",
+            "status": "OBSERVED",
+            "decision_authority": "CPA_JUDGE",
+            "witness_authority": "EVIDENCE_ONLY",
+            "repaired": True,
+            "timing_immutable": True,
+            "policy_branch": "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE",
+            "mutation_authority": {
+                "schema_version": "subtitle-correction-mutation-authority.v1",
+                "status": "PASS",
+                "basis": "CPA_EXPLICIT_INAUDIBLE_DROP",
+            },
+            "request": {
+                "schema_version": "subtitle-span-acoustic-check-request.v1",
+                "request_sha256": request_sha,
+                "base_text_sha256": base_sha,
+                "current_cue": current,
+                "proposed_cue": "",
+                "repair_class": "acoustic_drop_cue",
+                "matched_start_ms": start_ms,
+                "matched_end_ms": end_ms,
+            },
+            "verdict": {
+                "schema_version": "subtitle-span-acoustic-witness.v1",
+                "status": "OBSERVED",
+                "request_sha256": witness_sha,
+                "target_audible": False,
+            },
+            "witness_judge": {
+                "witness_status": "OBSERVED",
+                "decision_authority": "CPA_JUDGE",
+                "witness_authority": "EVIDENCE_ONLY",
+                "selected_action": "DROP_CUE",
+                "selected_repair_class": "acoustic_drop_cue",
+                "selected_target_cue": "",
+                "judge": {
+                    "schema_version": "acoustic-witness-adjudication.v1",
+                    "status": "JUDGED",
+                    "choice": "DROP",
+                    "prompt_sha256": prompt_sha,
+                    "completion_sha256": completion_sha,
+                    "check_request_sha256": request_sha,
+                    "decision_contract": "inaudible-current-proposed-drop.v1",
+                    "choice_set": ["CURRENT", "DROP", "PROPOSED"],
+                },
+            },
+            "drop_authority": {
+                "schema_version": "subtitle-cpa-inaudible-drop-authority.v1",
+                "status": "PASS",
+                "decision_authority": "CPA_JUDGE",
+                "choice": "DROP",
+                "decision_contract": "inaudible-current-proposed-drop.v1",
+                "original_request_sha256": "sha256:" + request_sha,
+                "effective_drop_request_sha256": "sha256:" + request_sha,
+                "original_witness_request_sha256": "sha256:" + witness_sha,
+                "effective_witness_request_sha256": "sha256:" + witness_sha,
+                "judge_prompt_sha256": "sha256:" + prompt_sha,
+                "judge_completion_sha256": "sha256:" + completion_sha,
+                "target_audible": False,
+                "timing_immutable": True,
+            },
+        },
+    }
+
+
+def test_cycle_selected_legal_drop_remains_applicable() -> None:
+    current = "咳咳"
+    start_ms, end_ms = 250, 810
+    srt = _srt_814(current, "下一句")
+    drop = _legal_drop_finding(
+        current=current, start_ms=start_ms, end_ms=end_ms
+    )
+    competing = _finding(
+        cue_index=1,
+        start_ms=start_ms,
+        end_ms=end_ms,
+        current=current,
+        proposed="咳一下",
+        salt="cycle-drop-competitor",
+    )
+
+    unresolved, resolved = converge_reconsidered_exact_final_findings(
+        srt,
+        [drop, competing],
+        authority_audit={},
+        judge_llm_call=lambda _prompt: json.dumps(
+            {"choice_id": "DROP", "reason": "target interval is silent"}
+        ),
+    )
+
+    assert len(unresolved) == 1
+    assert len(resolved) == 1
+    selected = unresolved[0]
+    adjudication = selected["exact_release_adjudication"]
+    assert selected["proposed_full_cue"] == ""
+    assert adjudication["policy_branch"] == (
+        "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE"
+    )
+    assert adjudication["exact_final_cpa_cycle_memo"]["final_text"] == ""
+    repaired, receipts = _apply_exact_final_cpa_repairs(
+        srt, {"findings": unresolved}
+    )
+    assert current not in repaired
+    assert len(receipts) == 1
+    assert receipts[0]["action"] == "DROP_CUE"
 
 
 def _authority_814() -> dict:
@@ -730,6 +1319,7 @@ def test_same_pass_competing_proposals_are_one_order_invariant_closed_set() -> N
 _TYPED_WITNESS_CONTENT = {
     "target_audible": True,
     "heard_pinyin": "xie xie",
+    "syllable_count": 2,
     "confidence": 0.92,
     "model": "agy-audio-v1",
     "completion_sha256": "sha256:" + _sha("heard-xie-xie"),

@@ -46,6 +46,9 @@ from scripts.session_autoslice import (  # noqa: E402
     write_state,
 )
 from scripts.run_auto_review_shadow_pipeline import _cover_text  # noqa: E402
+from src.autoslice.publication_registry import (  # noqa: E402
+    cover_maintenance_block_reason,
+)
 
 
 PLAN_SCHEMA = "reviewed-cover-repair-plan.v1"
@@ -526,10 +529,26 @@ def run(plan_path: Path) -> dict[str, Any]:
     plan, plan_sha256 = load_plan(plan_path)
     date = str(plan["date"])
     _assert_ledger(plan)
-    state = read_state(date)
-    records = _record_map(state)
     repair_rows = {str(row["candidate_id"]): row for row in plan["repair_candidates"]}
     repair_ids = set(repair_rows)
+    publication_blocks = [
+        reason
+        for candidate_id in sorted(repair_ids)
+        if (
+            reason := cover_maintenance_block_reason(
+                candidate_id,
+                recording_date=date,
+            )
+        )
+        is not None
+    ]
+    if publication_blocks:
+        raise ReviewedCoverRepairError(
+            "reviewed cover repair publication preflight refused before "
+            "invalidation: " + "; ".join(publication_blocks)
+        )
+    state = read_state(date)
+    records = _record_map(state)
     missing = repair_ids - set(records)
     if missing:
         raise ReviewedCoverRepairError(f"selected repair candidates are missing: {sorted(missing)}")

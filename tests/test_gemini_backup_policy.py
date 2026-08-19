@@ -92,6 +92,34 @@ def test_dev_exception_bypasses_strike_wait_not_ordering(
     assert stamp["daily_cap"] is None
 
 
+def test_exact_transcript_paid_stamp_binds_purpose_item_and_gate(
+    sandbox: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GEMINI_KEY_BACKUP", "paid-secret")
+    monkeypatch.setenv("GEMINI_PAID_BACKUP_DEV_EXCEPTION", "1")
+    item_key = "a" * 64
+    stamp = policy.record_paid_use(
+        item_key, purpose=policy.CANDIDATE_BLIND_EXACT_TRANSCRIPT_PURPOSE
+    )
+    assert policy.valid_paid_policy_stamp(
+        stamp,
+        expected_purpose=policy.CANDIDATE_BLIND_EXACT_TRANSCRIPT_PURPOSE,
+        expected_item_key=item_key,
+    )
+    for field, value in (
+        ("purpose", "candidate_blind_audio_witness"),
+        ("item_key", "b" * 64),
+        ("key_tier", "free"),
+    ):
+        tampered = dict(stamp)
+        tampered[field] = value
+        assert not policy.valid_paid_policy_stamp(
+            tampered,
+            expected_purpose=policy.CANDIDATE_BLIND_EXACT_TRANSCRIPT_PURPOSE,
+            expected_item_key=item_key,
+        )
+
+
 def test_ledger_and_stamp_never_contain_key_value(
     sandbox: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

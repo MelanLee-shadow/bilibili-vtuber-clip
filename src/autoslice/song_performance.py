@@ -46,6 +46,10 @@ from src.autoslice.song_common import (
     normalize_lyric_text,
     validate_audio_lrc_execution_metadata,
 )
+from src.autoslice.post_song_talk_witness import (
+    validate_post_song_transition_pair,
+    witness_post_song_talk_start,
+)
 from src.autoslice.song_instrumental_proof import prove_long_instrumental_spans
 from src.autoslice.song_lrc_provider import parse_lrc_text
 from src.autoslice.song_alignment import (
@@ -288,14 +292,12 @@ def derive_live_arrangement_completeness(
             f"claimed={claimed_classification} derived={derived_classification}"
         )
 
-    if transition_kind == "HOST_TALK":
-        if not _is_int(post_song_talk_start_ms) or transition_ms != post_song_talk_start_ms:
-            raise ValueError("live arrangement host-talk transition is not bound to post_song_talk_start_ms")
-    elif transition_kind == "INSTRUMENTAL_OUTRO_END":
-        if post_song_talk_start_ms is not None or not _is_int(transition_ms):
-            raise ValueError("live arrangement instrumental-outro transition is invalid")
-    else:
-        raise ValueError("live arrangement has no proven post-song transition")
+    validate_post_song_transition_pair(
+        transition_kind=transition_kind,
+        transition_ms=transition_ms,
+        post_song_talk_start_ms=post_song_talk_start_ms,
+        source_duration_ms=source_duration_ms,
+    )
     assert _is_int(transition_ms)
     if not last_end_ms <= transition_ms <= source_duration_ms:
         raise ValueError("live arrangement post-song transition is outside the actual ending boundary")
@@ -764,6 +766,18 @@ def _finalize_audio_lrc_selection(
     last_lyric_end_ms = int(alignment[-1]["cue_end_ms"])
     clip_end_ms = int(arrangement_completeness["post_song_transition_ms"])
     instrumental_spot_end_ms = clip_end_ms
+    # The only *independent* check this pair ever gets.  It lives here, not in
+    # derive_live_arrangement_completeness, because that function also re-derives
+    # stored inventory in song_completion/live_source_review where no fresh-ASR
+    # transcript exists; adding the dependency there would retroactively break
+    # every published proof.  Here the fresh transcript is already in scope.
+    witness_post_song_talk_start(
+        post_song_talk_start_ms=payload.get("post_song_talk_start_ms"),
+        asr_cues=asr_anchor_cues,
+        require_witness=(
+            arrangement_completeness["post_song_transition_kind"] != "HOST_TALK"
+        ),
+    )
 
     spot_checks = payload.get("spot_checks")
     required_spots = {"first_line", "chorus", "repeated_section", "longest_instrumental_gap", "tail"}

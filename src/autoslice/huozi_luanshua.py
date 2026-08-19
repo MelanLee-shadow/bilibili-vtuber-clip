@@ -34,25 +34,25 @@ DEFAULT_MIN_TRANSCRIPT_AUTHORITIES = 2
 # ceiling instead of letting an anomalously long token dominate selection.
 TERMINAL_SINGLE_FULLNESS_REWARD_CAP_MS = 420
 ALLOWED_SPEAKER_AUTHORITIES = {
-    "ivan_confirmed_solo_session",
-    "ivan_confirmed_phrase",
+    "reviewer_confirmed_solo_session",
+    "reviewer_confirmed_phrase",
     "human_reviewed_lidousha",
     "verified_lidousha_voiceprint",
 }
 PHRASE_SCOPED_SPEAKER_AUTHORITIES = {
-    "ivan_confirmed_phrase",
+    "reviewer_confirmed_phrase",
     "human_reviewed_lidousha",
     "verified_lidousha_voiceprint",
 }
 HUMAN_SPEAKER_AUTHORITIES = {
-    "ivan_confirmed_phrase",
+    "reviewer_confirmed_phrase",
     "human_reviewed_lidousha",
 }
 HUMAN_EVIDENCE_AUTHORITIES = {
     "human",
     "human_review",
-    "ivan_confirmation",
-    "ivan_confirmed_phrase",
+    "reviewer_confirmation",
+    "reviewer_confirmed_phrase",
 }
 
 _TEXT_CHAR_RX = re.compile(r"[0-9A-Za-z\u3400-\u9fff]")

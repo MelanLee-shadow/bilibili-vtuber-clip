@@ -209,6 +209,61 @@ def test_registered_entity_conflict_also_uses_blind_witness_then_cpa():
     assert len(audio_calls) == 1
 
 
+def test_fresh_read_aloud_rejects_explicit_legacy_sighted_witness():
+    def sighted_witness(request):
+        witness = _audio_witness_stub()(request)
+        witness["witness_protocol"] = "legacy_sighted"
+        return witness
+
+    verify = verifier_module.build_cpa_read_aloud_verifier(
+        lambda _prompt: json.dumps(
+            {
+                "ranking": [
+                    {"canonical": "歪了是什么颜色", "p": 0.8},
+                    {"canonical": "外套是什么颜色", "p": 0.2},
+                ],
+                "choice": "歪了是什么颜色",
+                "reason": "legacy evidence is not acoustic authority",
+            },
+            ensure_ascii=False,
+        ),
+        next_verifier=sighted_witness,
+    )
+
+    verdict = verify(_request())
+
+    assert verdict["witness_status"] == "UNCERTAIN"
+    assert verdict["witness_protocol"] == "legacy_sighted"
+    assert verdict["acoustic_evidence_used"] is False
+
+
+def test_read_aloud_rejects_observed_witness_without_audibility_bit():
+    def malformed_witness(request):
+        witness = _audio_witness_stub()(request)
+        witness.pop("target_audible")
+        return witness
+
+    verify = verifier_module.build_cpa_read_aloud_verifier(
+        lambda _prompt: json.dumps(
+            {
+                "ranking": [
+                    {"canonical": "歪了是什么颜色", "p": 0.8},
+                    {"canonical": "外套是什么颜色", "p": 0.2},
+                ],
+                "choice": "歪了是什么颜色",
+                "reason": "malformed evidence is ignored",
+            },
+            ensure_ascii=False,
+        ),
+        next_verifier=malformed_witness,
+    )
+
+    verdict = verify(_request())
+
+    assert verdict["witness_status"] == "UNCERTAIN"
+    assert verdict["acoustic_evidence_used"] is False
+
+
 def test_transcript_entity_closed_set_uses_cpa_context_only_without_audio():
     prompts = []
     request = {

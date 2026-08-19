@@ -8,6 +8,9 @@ from typing import Any
 from src.autoslice.boundary_semantic_review import (
     PIN_CROSSING_TOLERANCE_MS,
 )
+from src.autoslice.redelivery_boundary_projection import (
+    stored_projection_endpoint_is_valid,
+)
 
 
 _SHA256_RX = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -27,11 +30,11 @@ def semantic_endpoint_snapped_is_valid(review: object) -> bool:
         return False
     recommended_end_ms = review.get("recommended_end_ms")
     snapped_end_ms = endpoint.get("final_snapped_end_ms")
-    if not is_boundary_int(recommended_end_ms) or not is_boundary_int(
-        snapped_end_ms
-    ):
+    if not is_boundary_int(recommended_end_ms) or not is_boundary_int(snapped_end_ms):
         return False
     if snapped_end_ms == recommended_end_ms:
+        return True
+    if stored_projection_endpoint_is_valid(review, endpoint):
         return True
     scope = review.get("boundary_search_scope")
     relaxations = review.get("recommendation_relaxations")
@@ -47,13 +50,11 @@ def semantic_endpoint_snapped_is_valid(review: object) -> bool:
     overrun_ms = snapped_end_ms - recommended_end_ms
     return bool(
         relaxation.get("kind") == "pin_crossing_closure_cue"
-        and relaxation.get("cue_index")
-        == review.get("recommended_end_cue_index")
+        and relaxation.get("cue_index") == review.get("recommended_end_cue_index")
         and relaxation.get("cue_end_ms") == snapped_end_ms
         and relaxation.get("pin_ms") == recommended_end_ms
         and relaxation.get("overrun_ms") == overrun_ms
-        and relaxation.get("tolerance_ms")
-        == PIN_CROSSING_TOLERANCE_MS
+        and relaxation.get("tolerance_ms") == PIN_CROSSING_TOLERANCE_MS
         and 0 < overrun_ms <= PIN_CROSSING_TOLERANCE_MS
         and endpoint.get("final_end_ms") == recommended_end_ms
     )
@@ -79,17 +80,11 @@ def semantic_recommendation_is_materialized(
     recommended_end_ms = review.get("recommended_end_ms")
     if not is_boundary_int(recommended_end_ms):
         return False
-    if (
-        endpoint.get("final_snapped_end_ms")
-        != snapped_sentence_end_ms
-    ):
+    if endpoint.get("final_snapped_end_ms") != snapped_sentence_end_ms:
         return False
     if snapped_sentence_end_ms == recommended_end_ms:
         return final_end_ms >= snapped_sentence_end_ms
-    return bool(
-        semantic_endpoint_snapped_is_valid(review)
-        and final_end_ms == recommended_end_ms
-    )
+    return bool(semantic_endpoint_snapped_is_valid(review) and final_end_ms == recommended_end_ms)
 
 
 def semantic_boundary_review_is_valid(
@@ -103,8 +98,7 @@ def semantic_boundary_review_is_valid(
     reviewed_grid = str(review.get("cue_grid_sha256") or "")
     evidence = review.get("evidence_cue_indexes")
     return bool(
-        review.get("schema_version")
-        == "talk-boundary-semantic-review.v1"
+        review.get("schema_version") == "talk-boundary-semantic-review.v1"
         and review.get("status") == "PASS"
         and review.get("review_scope") == expected_scope
         and all(
@@ -118,22 +112,16 @@ def semantic_boundary_review_is_valid(
             )
         )
         and is_boundary_int(review.get("recommended_end_ms"))
-        and is_boundary_int(
-            review.get("recommended_end_cue_index")
-        )
+        and is_boundary_int(review.get("recommended_end_cue_index"))
         and isinstance(evidence, list)
         and bool(evidence)
         and all(is_boundary_int(value) for value in evidence)
         and isinstance(review.get("selector_story_witness"), dict)
         and review["selector_story_witness"].get("status") == "PASS"
-        and _SHA256_RX.fullmatch(
-            str(review.get("request_sha256") or "")
-        )
-        is not None
+        and _SHA256_RX.fullmatch(str(review.get("request_sha256") or "")) is not None
         and _SHA256_RX.fullmatch(reviewed_grid) is not None
         and isinstance(endpoint, dict)
-        and endpoint.get("schema_version")
-        == "talk-boundary-final-endpoint-binding.v1"
+        and endpoint.get("schema_version") == "talk-boundary-final-endpoint-binding.v1"
         and endpoint.get("status") == "PASS"
         and endpoint.get("reason_codes") == []
         and all(
@@ -147,22 +135,14 @@ def semantic_boundary_review_is_valid(
                 "final_end_ms",
             )
         )
-        and endpoint.get("semantic_request_sha256")
-        == review.get("request_sha256")
-        and endpoint.get("recommended_end_cue_index")
-        == review.get("recommended_end_cue_index")
-        and endpoint.get("recommended_end_ms")
-        == review.get("recommended_end_ms")
-        and endpoint.get("final_closure_cue_index")
-        == review.get("recommended_end_cue_index")
+        and endpoint.get("semantic_request_sha256") == review.get("request_sha256")
+        and endpoint.get("recommended_end_cue_index") == review.get("recommended_end_cue_index")
+        and endpoint.get("recommended_end_ms") == review.get("recommended_end_ms")
+        and endpoint.get("final_closure_cue_index") == review.get("recommended_end_cue_index")
         and semantic_endpoint_snapped_is_valid(review)
-        and endpoint.get("semantic_cue_grid_sha256")
-        == reviewed_grid
+        and endpoint.get("semantic_cue_grid_sha256") == reviewed_grid
         and endpoint.get("final_cue_grid_sha256") == reviewed_grid
-        and _SHA256_RX.fullmatch(
-            str(endpoint.get("closure_text_sha256") or "")
-        )
-        is not None
+        and _SHA256_RX.fullmatch(str(endpoint.get("closure_text_sha256") or "")) is not None
     )
 
 
@@ -172,6 +152,12 @@ def expected_boundary_authority(
     *,
     human_authority: str,
 ) -> tuple[str, bool]:
+    exact_authority = audit.get("reviewed_exact_source_interval_authority")
+    if isinstance(exact_authority, dict):
+        return (
+            "operator_reviewed_exact_source_interval_plus_frozen_reviewed_timeline",
+            audit.get("manual_end_mode") == "reviewed_exact_source_interval_v1",
+        )
     if not human_authority:
         return (
             "correlated_semantic_review_plus_deterministic_guards",
@@ -179,9 +165,7 @@ def expected_boundary_authority(
         )
     publication = record.get("recovery_publication_authority")
     publication_mode = (
-        publication.get("boundary_end_mode")
-        if isinstance(publication, dict)
-        else None
+        publication.get("boundary_end_mode") if isinstance(publication, dict) else None
     )
     expected_mode = (
         publication_mode
@@ -194,12 +178,8 @@ def expected_boundary_authority(
         else "semantic_lower_bound"
     )
     expected_authority = {
-        "exact_source_pin": (
-            "human_source_exact_pin_plus_semantic_review"
-        ),
-        "published_recall_anchor": (
-            "published_source_recall_anchor_plus_semantic_review"
-        ),
+        "exact_source_pin": ("human_source_exact_pin_plus_semantic_review"),
+        "published_recall_anchor": ("published_source_recall_anchor_plus_semantic_review"),
     }.get(
         expected_mode,
         "human_source_reviewed_lower_bound_plus_semantic_review",

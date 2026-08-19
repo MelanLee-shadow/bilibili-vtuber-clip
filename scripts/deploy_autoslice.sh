@@ -4,13 +4,14 @@
 #
 # - REFUSES a dirty working tree (production must be reproducible from a commit)
 # - streams committed runtime trees plus project authority/docs into staging
-#   (scripts/ src/ assets/ profiles/ .agent/ docs/ cleanup_manifests/
+#   (scripts/ src/ ops/ assets/ profiles/ .agent/ docs/ cleanup_manifests/
 #   AGENTS.md README.md; ignored files excluded)
 # - verifies the complete staged file list and SHA-256 manifest
 # - owns a remote deploy guard from initial observation through final cleanup
 # - pauses new runs, waits for runner.lock, then swaps every managed component with rollback
 # - verifies rollback against a full path/type/mode/SHA-256 manifest
-# - stamps DEPLOYED_COMMIT only after every runtime/external-file check succeeds
+# - seals DEPLOYED_COMMIT plus a commit-bound authority-asset manifest only
+#   after every runtime/external-file and complete-tree check succeeds
 # - installs the mount watchdog + its cron line (idempotent)
 # - installs the guarded do_upload.sh (refuses bare invocation)
 # - md5-verifies the runner after push (sync lesson: never swallow errors)
@@ -92,7 +93,7 @@ backup=$3
 old_commit=$4
 test -d "$backup"
 test -f "$backup/repo.manifest.old.json"
-for component in scripts src assets profiles .agent docs cleanup_manifests AGENTS.md README.md; do
+for component in scripts src ops assets profiles .agent docs cleanup_manifests AGENTS.md README.md; do
     if [ -e "$backup/$component" ]; then
         rm -rf "$stage/$component"
         if [ -e "$repo/$component" ]; then
@@ -105,7 +106,27 @@ for component in scripts src assets profiles .agent docs cleanup_manifests AGENT
     fi
 done
 test -f "$backup/DEPLOYED_COMMIT.old"
+
+restore_repository_file() {
+    label=$1
+    destination=$2
+    if [ -f "$backup/repository/$label.present" ]; then
+        tmp=$destination.rollback.$$
+        cp -p "$backup/repository/$label.file" "$tmp"
+        cmp -s "$backup/repository/$label.file" "$tmp"
+        mv -f "$tmp" "$destination"
+        cmp -s "$backup/repository/$label.file" "$destination"
+    elif [ -f "$backup/repository/$label.absent" ]; then
+        rm -f "$destination"
+        test ! -e "$destination"
+    else
+        echo "missing repository rollback marker: $label" >&2
+        return 1
+    fi
+}
+restore_repository_file deployed_authority_manifest "$repo/DEPLOYED_AUTHORITY_MANIFEST.json"
 cp "$backup/DEPLOYED_COMMIT.old" "$repo/DEPLOYED_COMMIT"
+cmp -s "$backup/DEPLOYED_COMMIT.old" "$repo/DEPLOYED_COMMIT"
 
 restore_file() {
     label=$1
@@ -125,6 +146,164 @@ restore_file() {
 restore_file watchdog /opt/bilive/autoslice/mount_watchdog.sh
 restore_file upload_sentinel /opt/bilive/autoslice/upload_fatal_sentinel.sh
 restore_file uploader /opt/bilive/app/tmp_manual_upload/do_upload.sh
+restore_adapter_atomic() {
+    destination=/opt/bilive/recording/bililive_recorder_adapter.py
+    tmp=$destination.rollback.$$
+    if [ -f "$backup/external/recorder_adapter.present" ]; then
+        mode=$(stat -c '%a' "$backup/external/recorder_adapter.file")
+        install -m "$mode" "$backup/external/recorder_adapter.file" "$tmp"
+        cmp -s "$backup/external/recorder_adapter.file" "$tmp"
+        mv -f "$tmp" "$destination"
+        cmp -s "$backup/external/recorder_adapter.file" "$destination"
+    elif [ -f "$backup/external/recorder_adapter.absent" ]; then
+        rm -f "$destination"
+        test ! -e "$destination"
+    else
+        echo "missing recorder adapter rollback marker" >&2
+        return 1
+    fi
+}
+adapter_status_clean_idle() {
+    python3 - /opt/bilive/recording/status.json <<'PY_ROLLBACK_CLEAN_ADAPTER_IDLE'
+import json
+import sys
+import time
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+age = time.time() - float(payload["generated_at_epoch"])
+assert 0 <= age <= 90
+assert payload.get("service_reachable") is True
+assert payload.get("streaming") is False
+assert payload.get("recording") is False
+assert payload.get("finalizing") is False
+assert payload.get("error") is None
+PY_ROLLBACK_CLEAN_ADAPTER_IDLE
+}
+adapter_status_supported_repair_idle() {
+    python3 - /opt/bilive/recording/status.json <<'PY_ROLLBACK_SUPPORTED_ADAPTER_REPAIR_IDLE'
+import json
+import sys
+import time
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+age = time.time() - float(payload["generated_at_epoch"])
+error = payload.get("error")
+assert 0 <= age <= 90
+assert payload.get("service_reachable") is False
+assert payload.get("streaming") is False
+assert payload.get("recording") is False
+assert payload.get("finalizing") is False
+assert isinstance(error, str) and (
+    error.startswith("source disposition drift:")
+    or error
+    in {
+        "source disposition identity rebind hash retry is pending",
+        "source disposition identity rebind hash retry exhausted",
+    }
+)
+PY_ROLLBACK_SUPPORTED_ADAPTER_REPAIR_IDLE
+}
+adapter_identity_rebind_hash_child_absent() {
+    container_processes=$(docker top bililive_adapter -eo pid,args) || return 1
+    test -n "$container_processes" || return 1
+    ! printf '%s\n' "$container_processes" \
+        | grep -F -- '--identity-rebind-hash-child' >/dev/null
+}
+adapter_restart_environment_safe() {
+    expected_adapter_sha=$1
+    test "$(findmnt -T /path/to/cloud-drive/live-streaming -n -o TARGET)" = "/path/to/cloud-drive" || return 1
+    case "$(findmnt -T /path/to/cloud-drive/live-streaming -n -o FSTYPE)" in fuse*) ;; *) return 1 ;; esac
+    test "$(findmnt -T /path/to/cloud-drive/live-streaming -n -o SOURCE)" = "CloudFS" || return 1
+    timeout 15 find /path/to/cloud-drive/live-streaming -mindepth 1 -maxdepth 1 -print -quit >/dev/null || return 1
+    test "$(docker inspect -f '{{.State.Status}}' bililive_recorder)" = running || return 1
+    test "$(docker inspect -f '{{.State.Status}}' bililive_adapter)" = running || return 1
+    test "$(docker inspect -f '{{index .Config.Cmd 0}}|{{index .Config.Cmd 1}}' bililive_adapter)" = 'python3|/state/bililive_recorder_adapter.py' || return 1
+    test "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Source}}|{{.Type}}|{{.RW}}{{end}}{{end}}' bililive_adapter)" = '/opt/bilive/recording|bind|true' || return 1
+    case "$(docker exec bililive_recorder stat -f -c %T /rec/Videos)" in fuse*) ;; *) return 1 ;; esac
+    case "$(docker exec bililive_adapter stat -f -c %T /adapter/Videos)" in fuse*) ;; *) return 1 ;; esac
+    docker exec bililive_adapter timeout 15 find /adapter/Videos -mindepth 1 -maxdepth 1 -print -quit >/dev/null || return 1
+    test "$(sha256sum /opt/bilive/recording/bililive_recorder_adapter.py | awk '{print $1}')" = "$expected_adapter_sha" || return 1
+    test "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py | awk '{print $1}')" = "$expected_adapter_sha" || return 1
+    docker exec -i bililive_adapter python3 - <<'PY_ROLLBACK_LIVE_IDLE' || return 1
+from pathlib import Path
+import sys
+
+sys.path.insert(0, "/state")
+import bililive_recorder_adapter as adapter
+
+environment = adapter.load_env_file(Path("/run/secrets/brec_http_env"))
+room = adapter.query_room_status(
+    "http://bililive-recorder:2356/graphql",
+    22966160,
+    username=environment.get("BREC_HTTP_BASIC_USER", ""),
+    password=environment.get("BREC_HTTP_BASIC_PASS", ""),
+    timeout_seconds=5,
+)
+assert room.get("streaming") is False
+assert room.get("recording") is False
+PY_ROLLBACK_LIVE_IDLE
+}
+adapter_restart_safe() {
+    adapter_status_clean_idle || return 1
+    adapter_restart_environment_safe "$1"
+}
+adapter_repair_restart_safe() {
+    adapter_status_supported_repair_idle || return 1
+    adapter_restart_environment_safe "$1"
+}
+wait_adapter_runtime() {
+    restarted_after=$1
+    expected_sha=$2
+    require_clean=$3
+    for _attempt in $(seq 1 120); do
+        if [ "$(docker inspect -f '{{.State.Status}}' bililive_adapter 2>/dev/null || true)" = running ] && \
+           [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' bililive_adapter 2>/dev/null || true)" = healthy ] && \
+           [ "$(docker inspect -f '{{index .Config.Cmd 0}}|{{index .Config.Cmd 1}}' bililive_adapter 2>/dev/null || true)" = 'python3|/state/bililive_recorder_adapter.py' ] && \
+           [ "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Source}}|{{.Type}}|{{.RW}}{{end}}{{end}}' bililive_adapter 2>/dev/null || true)" = '/opt/bilive/recording|bind|true' ] && \
+           [ "$(sha256sum /opt/bilive/recording/bililive_recorder_adapter.py 2>/dev/null | awk '{print $1}')" = "$expected_sha" ] && \
+           [ "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py 2>/dev/null | awk '{print $1}')" = "$expected_sha" ] && \
+           python3 - /opt/bilive/recording/status.json "$restarted_after" "$require_clean" <<'PY_ROLLBACK_FRESH'
+import json
+import sys
+import time
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+generated = float(payload["generated_at_epoch"])
+error = payload.get("error")
+require_clean = sys.argv[3] == "1"
+assert generated >= float(sys.argv[2])
+assert 0 <= time.time() - generated <= 90
+assert payload.get("streaming") is False
+assert payload.get("recording") is False
+assert payload.get("finalizing") is False
+if require_clean:
+    assert payload.get("service_reachable") is True
+    assert error is None
+else:
+    clean = payload.get("service_reachable") is True and error is None
+    supported_preimage = (
+        payload.get("service_reachable") is False
+        and isinstance(error, str)
+        and (
+            error.startswith("source disposition drift:")
+            or error
+            in {
+                "source disposition identity rebind hash retry is pending",
+                "source disposition identity rebind hash retry exhausted",
+            }
+        )
+    )
+    assert clean or supported_preimage
+PY_ROLLBACK_FRESH
+        then
+            docker exec bililive_adapter timeout 15 find /adapter/Videos -mindepth 1 -maxdepth 1 -print -quit >/dev/null
+            return 0
+        fi
+        sleep 5
+    done
+    return 1
+}
+restore_adapter_atomic
 if [ -f "$backup/external/crontab.present" ]; then
     crontab "$backup/external/crontab.file"
     crontab -l | cmp -s - "$backup/external/crontab.file"
@@ -134,6 +313,21 @@ elif [ -f "$backup/external/crontab.absent" ]; then
 else
     echo "missing crontab rollback marker" >&2
     exit 1
+fi
+if [ -f "$backup/external/recorder_adapter.restart-required" ]; then
+    test -f "$backup/external/recorder_adapter.file"
+    cmp -s "$backup/external/recorder_adapter.file" /opt/bilive/recording/bililive_recorder_adapter.py
+    old_adapter_sha=$(sha256sum "$backup/external/recorder_adapter.file" | awk '{print $1}')
+    if adapter_restart_safe "$old_adapter_sha"; then
+        :
+    else
+        adapter_repair_restart_safe "$old_adapter_sha"
+    fi
+    adapter_identity_rebind_hash_child_absent
+    restart_epoch=$(python3 -c 'import time; print(time.time())')
+    docker restart bililive_adapter >/dev/null
+    wait_adapter_runtime "$restart_epoch" "$old_adapter_sha" 0
+    cmp -s "$backup/external/recorder_adapter.file" /opt/bilive/recording/bililive_recorder_adapter.py
 fi
 
 test "$(awk 'NR==1 {print $1}' "$repo/DEPLOYED_COMMIT")" = "$old_commit"
@@ -151,6 +345,7 @@ actual = {}
 for component in (
     "scripts",
     "src",
+    "ops",
     "assets",
     "profiles",
     ".agent",
@@ -277,7 +472,7 @@ fi
 # archive uses COMMIT, never a mutable worktree or a HEAD that could advance.
 LOCAL_ARCHIVE_DIR=$(mktemp -d)
 git archive --format=tar "$COMMIT" \
-    scripts src assets profiles .agent docs cleanup_manifests AGENTS.md README.md \
+    scripts src ops assets profiles .agent docs cleanup_manifests AGENTS.md README.md \
     | (umask 022; tar -xf - -C "$LOCAL_ARCHIVE_DIR")
 LOCAL_MANIFEST=$(python3 - "$LOCAL_ARCHIVE_DIR" <<'LOCAL_MANIFEST_PY'
 import hashlib
@@ -292,6 +487,7 @@ manifest = {}
 for component in (
     "scripts",
     "src",
+    "ops",
     "assets",
     "profiles",
     ".agent",
@@ -335,7 +531,7 @@ STAGE_CREATED=1
 # enter staging. assets/ is intentionally replaced as a repo-owned tree; private
 # enrollment WAVs and the CAM++ model live outside repo/.
 git archive --format=tar "$COMMIT" \
-    scripts src assets profiles .agent docs cleanup_manifests AGENTS.md README.md \
+    scripts src ops assets profiles .agent docs cleanup_manifests AGENTS.md README.md \
     | ssh "$HOST" "umask 022; tar --no-same-permissions -xf - -C '$STAGE'"
 
 REMOTE_MANIFEST=$(ssh "$HOST" python3 - "$STAGE" <<'REMOTE_MANIFEST_PY'
@@ -351,6 +547,7 @@ manifest = {}
 for component in (
     "scripts",
     "src",
+    "ops",
     "assets",
     "profiles",
     ".agent",
@@ -524,6 +721,23 @@ backup=$3
 umask 077
 mkdir -p "$backup"
 cp "$repo/DEPLOYED_COMMIT" "$backup/DEPLOYED_COMMIT.old"
+mkdir -p "$backup/repository"
+capture_repository_file() {
+    label=$1
+    source=$2
+    if [ -e "$source" ]; then
+        test -f "$source"
+        test ! -L "$source"
+        cp -p "$source" "$backup/repository/$label.file"
+        cmp -s "$source" "$backup/repository/$label.file"
+        touch "$backup/repository/$label.present"
+    else
+        touch "$backup/repository/$label.absent"
+    fi
+}
+capture_repository_file \
+    deployed_authority_manifest \
+    "$repo/DEPLOYED_AUTHORITY_MANIFEST.json"
 python3 - "$repo" "$backup/repo.manifest.old.json" <<'PY'
 import hashlib
 import json
@@ -537,6 +751,7 @@ manifest = {}
 for component in (
     "scripts",
     "src",
+    "ops",
     "assets",
     "profiles",
     ".agent",
@@ -572,7 +787,10 @@ capture_file() {
     label=$1
     source=$2
     if [ -e "$source" ]; then
+        test -f "$source"
+        test ! -L "$source"
         cp -p "$source" "$backup/external/$label.file"
+        cmp -s "$source" "$backup/external/$label.file"
         touch "$backup/external/$label.present"
     else
         touch "$backup/external/$label.absent"
@@ -581,6 +799,7 @@ capture_file() {
 capture_file watchdog /opt/bilive/autoslice/mount_watchdog.sh
 capture_file upload_sentinel /opt/bilive/autoslice/upload_fatal_sentinel.sh
 capture_file uploader /opt/bilive/app/tmp_manual_upload/do_upload.sh
+capture_file recorder_adapter /opt/bilive/recording/bililive_recorder_adapter.py
 if crontab -l > "$backup/external/crontab.file" 2>/dev/null; then
     touch "$backup/external/crontab.present"
 else
@@ -601,8 +820,24 @@ restore_file() {
         return 1
     fi
 }
+restore_repository_file() {
+    label=$1
+    destination=$2
+    if [ -f "$backup/repository/$label.present" ]; then
+        tmp=$destination.rollback.$$
+        cp -p "$backup/repository/$label.file" "$tmp"
+        cmp -s "$backup/repository/$label.file" "$tmp"
+        mv -f "$tmp" "$destination"
+        cmp -s "$backup/repository/$label.file" "$destination"
+    elif [ -f "$backup/repository/$label.absent" ]; then
+        rm -f "$destination"
+        test ! -e "$destination"
+    else
+        return 1
+    fi
+}
 rollback() {
-    for component in scripts src assets profiles .agent docs cleanup_manifests AGENTS.md README.md; do
+    for component in scripts src ops assets profiles .agent docs cleanup_manifests AGENTS.md README.md; do
         if [ -e "$backup/$component" ]; then
             rm -rf "$stage/$component"
             if [ -e "$repo/$component" ]; then
@@ -614,7 +849,11 @@ rollback() {
             rm -rf "$repo/$component"  # tree added by the deploy: rollback removes it
         fi
     done
-    cp "$backup/DEPLOYED_COMMIT.old" "$repo/DEPLOYED_COMMIT"
+    restore_repository_file \
+        deployed_authority_manifest \
+        "$repo/DEPLOYED_AUTHORITY_MANIFEST.json"
+cp "$backup/DEPLOYED_COMMIT.old" "$repo/DEPLOYED_COMMIT"
+cmp -s "$backup/DEPLOYED_COMMIT.old" "$repo/DEPLOYED_COMMIT"
     restore_file watchdog /opt/bilive/autoslice/mount_watchdog.sh
     restore_file upload_sentinel /opt/bilive/autoslice/upload_fatal_sentinel.sh
     restore_file uploader /opt/bilive/app/tmp_manual_upload/do_upload.sh
@@ -630,7 +869,7 @@ trap 'rc=$?; trap - ERR; rollback; exit "$rc"' ERR
 trap 'trap - ERR HUP INT TERM; rollback; exit 130' INT
 trap 'trap - ERR HUP INT TERM; rollback; exit 143' TERM
 trap 'trap - ERR HUP INT TERM; rollback; exit 129' HUP
-for component in scripts src assets profiles .agent docs cleanup_manifests AGENTS.md README.md; do
+for component in scripts src ops assets profiles .agent docs cleanup_manifests AGENTS.md README.md; do
     if [ -e "$repo/$component" ]; then
         mv "$repo/$component" "$backup/$component"
     else
@@ -644,8 +883,10 @@ REMOTE_SWITCH
 
 # Install external entrypoints only from the already-switched committed tree.
 # Temp + rename avoids exposing a truncated executable to cron/manual callers.
-ssh "$HOST" bash -s <<'REMOTE_EXTERNAL_INSTALL'
+ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
+    "$BACKUP" <<'REMOTE_EXTERNAL_INSTALL'
 set -euo pipefail
+backup=$1
 tmp=
 cleanup_tmp() { [ -z "$tmp" ] || rm -f "$tmp"; }
 trap cleanup_tmp EXIT
@@ -660,8 +901,7 @@ install_atomic() {
     test ! -L "$source"
     mkdir -p "$(dirname "$destination")"
     tmp=$destination.deploy.$$
-    cp "$source" "$tmp"
-    chmod "$mode" "$tmp"
+    install -m "$mode" "$source" "$tmp"
     test "$(sha256sum "$source" | awk '{print $1}')" = "$(sha256sum "$tmp" | awk '{print $1}')"
     mv -f "$tmp" "$destination"
     tmp=
@@ -682,6 +922,173 @@ install_atomic \
     /opt/bilive/autoslice/repo/scripts/do_upload.sh \
     /opt/bilive/app/tmp_manual_upload/do_upload.sh \
     700
+adapter_status_clean_idle() {
+    python3 - /opt/bilive/recording/status.json <<'PY_CLEAN_ADAPTER_IDLE'
+import json
+import sys
+import time
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+age = time.time() - float(payload["generated_at_epoch"])
+assert 0 <= age <= 90
+assert payload.get("service_reachable") is True
+assert payload.get("streaming") is False
+assert payload.get("recording") is False
+assert payload.get("finalizing") is False
+assert payload.get("error") is None
+PY_CLEAN_ADAPTER_IDLE
+}
+adapter_status_supported_repair_idle() {
+    python3 - /opt/bilive/recording/status.json <<'PY_SUPPORTED_ADAPTER_REPAIR_IDLE'
+import json
+import sys
+import time
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+age = time.time() - float(payload["generated_at_epoch"])
+error = payload.get("error")
+assert 0 <= age <= 90
+assert payload.get("service_reachable") is False
+assert payload.get("streaming") is False
+assert payload.get("recording") is False
+assert payload.get("finalizing") is False
+assert isinstance(error, str) and (
+    error.startswith("source disposition drift:")
+    or error
+    in {
+        "source disposition identity rebind hash retry is pending",
+        "source disposition identity rebind hash retry exhausted",
+    }
+)
+PY_SUPPORTED_ADAPTER_REPAIR_IDLE
+}
+adapter_identity_rebind_hash_child_absent() {
+    container_processes=$(docker top bililive_adapter -eo pid,args) || return 1
+    test -n "$container_processes" || return 1
+    ! printf '%s\n' "$container_processes" \
+        | grep -F -- '--identity-rebind-hash-child' >/dev/null
+}
+adapter_restart_environment_safe() {
+    expected_adapter_sha=$1
+    test "$(findmnt -T /path/to/cloud-drive/live-streaming -n -o TARGET)" = "/path/to/cloud-drive" || return 1
+    case "$(findmnt -T /path/to/cloud-drive/live-streaming -n -o FSTYPE)" in fuse*) ;; *) return 1 ;; esac
+    test "$(findmnt -T /path/to/cloud-drive/live-streaming -n -o SOURCE)" = "CloudFS" || return 1
+    timeout 15 find /path/to/cloud-drive/live-streaming -mindepth 1 -maxdepth 1 -print -quit >/dev/null || return 1
+    test "$(docker inspect -f '{{.State.Status}}' bililive_recorder)" = running || return 1
+    test "$(docker inspect -f '{{.State.Status}}' bililive_adapter)" = running || return 1
+    test "$(docker inspect -f '{{index .Config.Cmd 0}}|{{index .Config.Cmd 1}}' bililive_adapter)" = 'python3|/state/bililive_recorder_adapter.py' || return 1
+    test "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Source}}|{{.Type}}|{{.RW}}{{end}}{{end}}' bililive_adapter)" = '/opt/bilive/recording|bind|true' || return 1
+    case "$(docker exec bililive_recorder stat -f -c %T /rec/Videos)" in fuse*) ;; *) return 1 ;; esac
+    case "$(docker exec bililive_adapter stat -f -c %T /adapter/Videos)" in fuse*) ;; *) return 1 ;; esac
+    docker exec bililive_adapter timeout 15 find /adapter/Videos -mindepth 1 -maxdepth 1 -print -quit >/dev/null || return 1
+    test "$(sha256sum /opt/bilive/recording/bililive_recorder_adapter.py | awk '{print $1}')" = "$expected_adapter_sha" || return 1
+    test "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py | awk '{print $1}')" = "$expected_adapter_sha" || return 1
+    docker exec -i bililive_adapter python3 - <<'PY_LIVE_IDLE' || return 1
+from pathlib import Path
+import sys
+
+sys.path.insert(0, "/state")
+import bililive_recorder_adapter as adapter
+
+environment = adapter.load_env_file(Path("/run/secrets/brec_http_env"))
+room = adapter.query_room_status(
+    "http://bililive-recorder:2356/graphql",
+    22966160,
+    username=environment.get("BREC_HTTP_BASIC_USER", ""),
+    password=environment.get("BREC_HTTP_BASIC_PASS", ""),
+    timeout_seconds=5,
+)
+assert room.get("streaming") is False
+assert room.get("recording") is False
+PY_LIVE_IDLE
+}
+adapter_restart_safe() {
+    adapter_status_clean_idle || return 1
+    adapter_restart_environment_safe "$1"
+}
+adapter_repair_restart_safe() {
+    adapter_status_supported_repair_idle || return 1
+    adapter_restart_environment_safe "$1"
+}
+wait_adapter_runtime() {
+    restarted_after=$1
+    expected_sha=$2
+    for _attempt in $(seq 1 120); do
+        if [ "$(docker inspect -f '{{.State.Status}}' bililive_adapter 2>/dev/null || true)" = running ] && \
+           [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' bililive_adapter 2>/dev/null || true)" = healthy ] && \
+           [ "$(docker inspect -f '{{index .Config.Cmd 0}}|{{index .Config.Cmd 1}}' bililive_adapter 2>/dev/null || true)" = 'python3|/state/bililive_recorder_adapter.py' ] && \
+           [ "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Source}}|{{.Type}}|{{.RW}}{{end}}{{end}}' bililive_adapter 2>/dev/null || true)" = '/opt/bilive/recording|bind|true' ] && \
+           [ "$(sha256sum /opt/bilive/recording/bililive_recorder_adapter.py 2>/dev/null | awk '{print $1}')" = "$expected_sha" ] && \
+           [ "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py 2>/dev/null | awk '{print $1}')" = "$expected_sha" ] && \
+           python3 - /opt/bilive/recording/status.json "$restarted_after" <<'PY_FRESH'
+import json
+import sys
+import time
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+generated = float(payload["generated_at_epoch"])
+assert generated >= float(sys.argv[2])
+assert 0 <= time.time() - generated <= 90
+assert payload.get("service_reachable") is True
+assert payload.get("streaming") is False
+assert payload.get("recording") is False
+assert payload.get("finalizing") is False
+assert payload.get("error") is None
+PY_FRESH
+        then
+            docker exec bililive_adapter timeout 15 find /adapter/Videos -mindepth 1 -maxdepth 1 -print -quit >/dev/null
+            return 0
+        fi
+        sleep 5
+    done
+    return 1
+}
+new_adapter_source=/opt/bilive/autoslice/repo/ops/recording/bililive_recorder_adapter.py
+host_adapter_path=/opt/bilive/recording/bililive_recorder_adapter.py
+test -f "$backup/external/recorder_adapter.present"
+test -f "$backup/external/recorder_adapter.file"
+test -f "$new_adapter_source"
+test ! -L "$new_adapter_source"
+test -f "$host_adapter_path"
+test ! -L "$host_adapter_path"
+cmp -s "$backup/external/recorder_adapter.file" "$host_adapter_path"
+adapter_content_changed=0
+if ! cmp -s "$new_adapter_source" "$host_adapter_path"; then
+    adapter_content_changed=1
+fi
+old_adapter_sha=$(sha256sum "$host_adapter_path" | awk '{print $1}')
+test "$old_adapter_sha" = "$(sha256sum "$backup/external/recorder_adapter.file" | awk '{print $1}')"
+if [ "$adapter_content_changed" -eq 0 ]; then
+    adapter_restart_safe "$old_adapter_sha"
+elif adapter_restart_safe "$old_adapter_sha"; then
+    :
+else
+    # The only dirty preimage admitted here is the exact defect class that the
+    # changed adapter bytes are intended to repair. Every runtime/live/mount/hash
+    # gate still runs before any external byte is replaced.
+    adapter_repair_restart_safe "$old_adapter_sha"
+fi
+adapter_identity_rebind_hash_child_absent
+install_atomic \
+    "$new_adapter_source" \
+    "$host_adapter_path" \
+    755
+new_adapter_sha=$(sha256sum "$new_adapter_source" | awk '{print $1}')
+test "$new_adapter_sha" = "$(sha256sum "$host_adapter_path" | awk '{print $1}')"
+test "$new_adapter_sha" = "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py | awk '{print $1}')"
+if [ "$adapter_content_changed" -eq 1 ]; then
+    # Close the install-to-restart race with a second direct idle query. This
+    # also imports the new bytes in a disposable process before the daemon is
+    # restarted; failure here rolls the file back while the old daemon remains.
+    adapter_restart_environment_safe "$new_adapter_sha"
+    touch "$backup/external/recorder_adapter.restart-required"
+    adapter_identity_rebind_hash_child_absent
+    restart_epoch=$(python3 -c 'import time; print(time.time())')
+    docker restart bililive_adapter >/dev/null
+    wait_adapter_runtime "$restart_epoch" "$new_adapter_sha"
+else
+    test "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' bililive_adapter)" = healthy
+fi
 watchdog_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/watchdog.lock /opt/bilive/autoslice/mount_watchdog.sh >> /opt/bilive/autoslice/logs/watchdog.log 2>&1'
 upload_fatal_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/upload-fatal-sentinel.lock /opt/bilive/autoslice/upload_fatal_sentinel.sh >> /opt/bilive/autoslice/logs/upload-fatal-sentinel.log 2>&1'
 timely_terms_cron='17 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/timely-terms.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_timely_terms.py --cache-dir /opt/bilive/autoslice/cache/timely-term-crawler --write /opt/bilive/autoslice/state/timely_terms.json'\'' >> /opt/bilive/autoslice/logs/timely-terms.log 2>&1'
@@ -689,6 +1096,7 @@ streamer_registry_cron='7 6 * * 0 /usr/bin/flock -n /opt/bilive/autoslice/stream
 psplive_roster_cron='12 6 * * 0 /usr/bin/flock -n /opt/bilive/autoslice/psplive-roster.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_psplive_roster.py --cache-dir /opt/bilive/autoslice/cache/psplive-roster-crawler --write /opt/bilive/autoslice/state/psplive_roster.json'\'' >> /opt/bilive/autoslice/logs/psplive-roster.log 2>&1'
 community_names_cron='27 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/community-names.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && set -a && source /opt/bilive/autoslice/cpa.env && set +a && python3 scripts/crawl_community_names.py --registry /opt/bilive/autoslice/state/streamer_registry.json --cache-dir /opt/bilive/autoslice/cache/community-name-crawler --state /opt/bilive/autoslice/state/community_name_state.json --write /opt/bilive/autoslice/state/community_names.json'\'' >> /opt/bilive/autoslice/logs/community-names.log 2>&1'
 topic_entity_cron='37 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/topic-entity.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_topic_entity_graph.py --timely-terms /opt/bilive/autoslice/state/timely_terms.json --cache-dir /opt/bilive/autoslice/cache/topic-entity-crawler --write /opt/bilive/autoslice/state/topic_entity_graph.json'\'' >> /opt/bilive/autoslice/logs/topic-entity.log 2>&1'
+streamer_dynamics_cron='47 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/streamer-dynamics.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_streamer_dynamics.py --cache-dir /opt/bilive/autoslice/cache/streamer-dynamics-crawler --write /opt/bilive/autoslice/state/streamer_dynamics.json'\'' >> /opt/bilive/autoslice/logs/streamer-dynamics.log 2>&1'
 existing_crontab=$(crontab -l 2>/dev/null || true)
 {
     printf '%s\n' "$existing_crontab" \
@@ -698,7 +1106,8 @@ existing_crontab=$(crontab -l 2>/dev/null || true)
         | grep -Fv 'scripts/crawl_streamer_registry.py' \
         | grep -Fv 'scripts/crawl_psplive_roster.py' \
         | grep -Fv 'scripts/crawl_community_names.py' \
-        | grep -Fv 'scripts/crawl_topic_entity_graph.py' || true
+        | grep -Fv 'scripts/crawl_topic_entity_graph.py' \
+        | grep -Fv 'scripts/crawl_streamer_dynamics.py' || true
     printf '%s\n' "$watchdog_cron"
     printf '%s\n' "$upload_fatal_cron"
     printf '%s\n' "$streamer_registry_cron"
@@ -706,6 +1115,7 @@ existing_crontab=$(crontab -l 2>/dev/null || true)
     printf '%s\n' "$timely_terms_cron"
     printf '%s\n' "$community_names_cron"
     printf '%s\n' "$topic_entity_cron"
+    printf '%s\n' "$streamer_dynamics_cron"
 } | crontab -
 crontab -l | grep -Fxq "$watchdog_cron"
 test "$(crontab -l | grep -Fxc "$watchdog_cron")" -eq 1
@@ -721,6 +1131,8 @@ crontab -l | grep -Fxq "$community_names_cron"
 test "$(crontab -l | grep -Fxc "$community_names_cron")" -eq 1
 crontab -l | grep -Fxq "$topic_entity_cron"
 test "$(crontab -l | grep -Fxc "$topic_entity_cron")" -eq 1
+crontab -l | grep -Fxq "$streamer_dynamics_cron"
+test "$(crontab -l | grep -Fxc "$streamer_dynamics_cron")" -eq 1
 REMOTE_EXTERNAL_INSTALL
 
 # verify: the deployed runner is byte-identical to the committed one
@@ -743,6 +1155,7 @@ manifest = {}
 for component in (
     "scripts",
     "src",
+    "ops",
     "assets",
     "profiles",
     ".agent",
@@ -777,7 +1190,197 @@ if [ "$LOCAL_MANIFEST" != "$REMOTE_DEPLOYED_MANIFEST" ]; then
     echo "DEPLOY VERIFY FAILED: switched production tree differs from committed tree" >&2
     exit 3
 fi
-ssh "$HOST" "printf '%s  deployed %s\n' '$COMMIT' '$(date -u +%Y-%m-%dT%H:%M:%SZ)' > '$REMOTE_REPO/DEPLOYED_COMMIT'"
+
+# The complete deployed tree has now matched the frozen git archive. Seal the
+# small set of security-sensitive authority assets from those exact deployed
+# bytes. The manifest is installed before DEPLOYED_COMMIT, so a crash between
+# the two atomic renames fails closed (commit mismatch); both files are restored
+# from the rollback tree on every local or remote failure path.
+ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
+    "$REMOTE_REPO" "$BACKUP" "$COMMIT" <<'REMOTE_SEAL_DEPLOYMENT_IDENTITY'
+set -euo pipefail
+repo=$1
+backup=$2
+commit=$3
+manifest_path=$repo/DEPLOYED_AUTHORITY_MANIFEST.json
+commit_path=$repo/DEPLOYED_COMMIT
+umask 022
+
+manifest_tmp=$(mktemp "$repo/.DEPLOYED_AUTHORITY_MANIFEST.json.deploy.XXXXXX")
+commit_tmp=$(mktemp "$repo/.DEPLOYED_COMMIT.deploy.XXXXXX")
+chmod 644 "$manifest_tmp" "$commit_tmp"
+cleanup_tmp() {
+    [ -z "${manifest_tmp:-}" ] || rm -f "$manifest_tmp"
+    [ -z "${commit_tmp:-}" ] || rm -f "$commit_tmp"
+}
+restore_repository_file() {
+    label=$1
+    destination=$2
+    if [ -f "$backup/repository/$label.present" ]; then
+        tmp=$destination.rollback.$$
+        cp -p "$backup/repository/$label.file" "$tmp"
+        cmp -s "$backup/repository/$label.file" "$tmp"
+        mv -f "$tmp" "$destination"
+        cmp -s "$backup/repository/$label.file" "$destination"
+    elif [ -f "$backup/repository/$label.absent" ]; then
+        rm -f "$destination"
+        test ! -e "$destination"
+    else
+        echo "missing repository rollback marker: $label" >&2
+        return 1
+    fi
+}
+restore_identity() {
+    cleanup_tmp
+    restore_repository_file deployed_authority_manifest "$manifest_path"
+    cp "$backup/DEPLOYED_COMMIT.old" "$commit_path"
+    cmp -s "$backup/DEPLOYED_COMMIT.old" "$commit_path"
+}
+trap 'rc=$?; trap - ERR; restore_identity; exit "$rc"' ERR
+trap 'trap - ERR HUP INT TERM; restore_identity; exit 129' HUP
+trap 'trap - ERR HUP INT TERM; restore_identity; exit 130' INT
+trap 'trap - ERR HUP INT TERM; restore_identity; exit 143' TERM
+
+PYTHONDONTWRITEBYTECODE=1 python3 - \
+    "$repo" "$commit" "$manifest_tmp" <<'REMOTE_AUTHORITY_MANIFEST_PY'
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+commit = sys.argv[2]
+output = Path(sys.argv[3])
+if re.fullmatch(r"[0-9a-f]{40}", commit) is None:
+    raise SystemExit("invalid deployed commit for authority manifest")
+sys.path.insert(0, str(root))
+
+from src.autoslice.repository_asset_authority import (  # noqa: E402
+    build_deployed_authority_manifest,
+)
+
+registry = root / "assets/lidousha/publication_registry.v1.json"
+authority_dir = root / "assets/lidousha"
+if registry.is_symlink() or not registry.is_file():
+    raise SystemExit("publication registry authority is missing or unsafe")
+authority_paths = []
+if authority_dir.exists():
+    if authority_dir.is_symlink() or not authority_dir.is_dir():
+        raise SystemExit("authority asset directory is unsafe")
+    for candidate in authority_dir.rglob("*"):
+        if candidate.is_symlink():
+            raise SystemExit(f"authority asset tree contains symlink: {candidate}")
+        if candidate.is_file() and candidate.suffix in {".json", ".srt"}:
+            authority_paths.append(candidate)
+
+manifest = build_deployed_authority_manifest(
+    repo_root=root,
+    deployed_commit=commit,
+    relative_paths=[
+        path.relative_to(root)
+        for path in (registry, *sorted(authority_paths))
+    ],
+)
+serialized = (
+    json.dumps(
+        manifest,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    + "\n"
+).encode("utf-8")
+with output.open("wb") as handle:
+    handle.write(serialized)
+    handle.flush()
+    os.fsync(handle.fileno())
+REMOTE_AUTHORITY_MANIFEST_PY
+printf '%s  deployed %s\n' "$commit" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$commit_tmp"
+python3 - "$commit_tmp" <<'REMOTE_FSYNC_COMMIT_STAMP_PY'
+import os
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    os.fsync(handle.fileno())
+REMOTE_FSYNC_COMMIT_STAMP_PY
+
+# Install manifest first: until the commit stamp moves, readers reject the new
+# manifest rather than accepting an authority document under the old identity.
+mv -f "$manifest_tmp" "$manifest_path"
+manifest_tmp=
+mv -f "$commit_tmp" "$commit_path"
+commit_tmp=
+
+PYTHONDONTWRITEBYTECODE=1 python3 - \
+    "$repo" "$commit" <<'REMOTE_VERIFY_DEPLOYMENT_IDENTITY_PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+expected_commit = sys.argv[2]
+sys.path.insert(0, str(root))
+
+from src.autoslice.repository_asset_authority import (  # noqa: E402
+    DEPLOYED_AUTHORITY_MANIFEST_SCHEMA,
+    build_deployed_authority_manifest,
+    require_repository_asset_authority,
+)
+
+commit_path = root / "DEPLOYED_COMMIT"
+manifest_path = root / "DEPLOYED_AUTHORITY_MANIFEST.json"
+actual_commit = commit_path.read_text(encoding="utf-8").split(maxsplit=1)[0]
+if actual_commit != expected_commit:
+    raise SystemExit("deployed commit readback mismatch")
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+registry = root / "assets/lidousha/publication_registry.v1.json"
+authority_dir = root / "assets/lidousha"
+if registry.is_symlink() or not registry.is_file():
+    raise SystemExit("publication registry authority is missing or unsafe")
+authority_paths = []
+if authority_dir.exists():
+    if authority_dir.is_symlink() or not authority_dir.is_dir():
+        raise SystemExit("authority asset directory is unsafe")
+    for candidate in authority_dir.rglob("*"):
+        if candidate.is_symlink():
+            raise SystemExit(f"authority asset tree contains symlink: {candidate}")
+        if candidate.is_file() and candidate.suffix in {".json", ".srt"}:
+            authority_paths.append(candidate)
+relative_paths = [
+    path.relative_to(root)
+    for path in (registry, *sorted(authority_paths))
+]
+expected_manifest = build_deployed_authority_manifest(
+    repo_root=root,
+    deployed_commit=actual_commit,
+    relative_paths=relative_paths,
+)
+if manifest != expected_manifest:
+    raise SystemExit("deployed authority manifest readback mismatch")
+if manifest.get("schema_version") != DEPLOYED_AUTHORITY_MANIFEST_SCHEMA:
+    raise SystemExit("deployed authority manifest schema mismatch")
+for relative in relative_paths:
+    path = root / relative
+    authority = require_repository_asset_authority(
+        repo_root=root,
+        relative_path=relative,
+        observed_bytes=path.read_bytes(),
+    )
+    if authority.commit != actual_commit or authority.mode != "DEPLOYED_MANIFEST":
+        raise SystemExit(f"deployed authority loader rejected identity: {relative}")
+directory_fd = os.open(root, os.O_RDONLY)
+try:
+    os.fsync(directory_fd)
+finally:
+    os.close(directory_fd)
+REMOTE_VERIFY_DEPLOYMENT_IDENTITY_PY
+
+trap - ERR HUP INT TERM
+cleanup_tmp
+REMOTE_SEAL_DEPLOYMENT_IDENTITY
 COMMITTED=1
 ssh "$HOST" "rm -rf '$BACKUP'" || echo "WARN: deployed successfully but rollback-tree cleanup failed" >&2
 echo "deployed $COMMIT to $HOST (runner md5 verified)"

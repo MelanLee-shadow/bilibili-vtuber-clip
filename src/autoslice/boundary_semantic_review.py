@@ -17,11 +17,24 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
+from src.autoslice.frozen_boundary_receipt import (
+    FrozenBoundaryReview,
+    frozen_review_payload,
+)
+from src.autoslice.redelivery_boundary_projection import (
+    RedeliveryBoundaryProjectionError,
+    terminal_projection_relaxation,
+    validate_projection_scope,
+)
+
 from src.autoslice.clip_context import MAX_PROMPT_CHARS
 
 
 SCHEMA_VERSION = "talk-boundary-semantic-review.v1"
 SEARCH_SCOPE_SCHEMA_VERSION = "talk-boundary-search-scope.v1"
+ENDPOINT_SELECTION_CONTRACT_VERSION = (
+    "talk-boundary-endpoint-selection-contract.v2"
+)
 MAX_FORWARD_MS = 30_000
 SEMANTIC_TAIL_TRIM_MAX_MS = 15_000
 CONTEXT_CUES_EACH_SIDE = 8
@@ -63,6 +76,55 @@ def _optional_int_ms(name: str, value: object) -> int | None:
     if value is None:
         return None
     return _required_int_ms(name, value)
+
+
+def _bounded_delivery_geometry(
+    *,
+    semantic_target_ms: int,
+    manual_lower_bound_ms: int | None,
+    published_recall_anchor_ms: int | None,
+    structured_payoff_ms: int | None,
+    required_owner_end_ms: int | None,
+    boundary_end_mode: str,
+    semantic_tail_trim_cap_ms: int,
+) -> tuple[int, int]:
+    """Return search origin and delivery floor for a non-pin scope.
+
+    Keeping the calculation in one helper lets the reviewed-tail payoff clamp
+    ask the exact counterfactual it governs: where would delivery land if the
+    payoff detection hypothesis were absent?
+    """
+
+    search_origin_ms = max(
+        [
+            semantic_target_ms,
+            *(
+                value
+                for value in (
+                    manual_lower_bound_ms,
+                    published_recall_anchor_ms,
+                    structured_payoff_ms,
+                )
+                if value is not None
+            ),
+        ]
+    )
+    tail_trim_floor_ms = search_origin_ms
+    if (
+        boundary_end_mode
+        in {"semantic_lower_bound", "published_recall_anchor"}
+        and manual_lower_bound_ms is None
+        and semantic_tail_trim_cap_ms > 0
+    ):
+        tail_trim_floor_ms = max(
+            0, search_origin_ms - semantic_tail_trim_cap_ms
+        )
+    return search_origin_ms, max(
+        tail_trim_floor_ms,
+        required_owner_end_ms or 0,
+        structured_payoff_ms or 0,
+        manual_lower_bound_ms or 0,
+    )
 
 
 def boundary_search_scope_sha256(scope: Mapping[str, object]) -> str:
@@ -110,6 +172,9 @@ def boundary_search_scope_is_valid(scope: object) -> bool:
             semantic_tail_trim_cap_ms=scope.get(
                 "semantic_tail_trim_cap_ms", 0
             ),
+            reviewed_exact_interval_projection=scope.get(
+                "reviewed_exact_interval_projection"
+            ),
         )
     except BoundarySemanticReviewError:
         return False
@@ -122,6 +187,7 @@ def boundary_search_scope_is_valid(scope: object) -> bool:
             "semantic_tail_trim_cap_ms",
             "recommendation_backward_ms",
             "published_recall_anchor_ms",
+            "reviewed_exact_interval_projection",
         )
         if key not in observed
     ]
@@ -150,6 +216,7 @@ def build_boundary_search_scope(
     published_recall_anchor_ms: int | None = None,
     baseline_tail_cap_ms: int | None = None,
     semantic_tail_trim_cap_ms: int = 0,
+    reviewed_exact_interval_projection: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Build the one scope shared by source review, resolver, and retry.
 
@@ -200,6 +267,27 @@ def build_boundary_search_scope(
         raise BoundarySemanticReviewError(
             "BOUNDARY_SEARCH_SCOPE_SEMANTIC_TAIL_TRIM_CAP_MS_INVALID"
         )
+    baseline_tail_cap = _optional_int_ms(
+        "baseline_tail_cap_ms", baseline_tail_cap_ms
+    )
+    try:
+        terminal_projection = (
+            validate_projection_scope(reviewed_exact_interval_projection)
+            if reviewed_exact_interval_projection is not None
+            else None
+        )
+    except RedeliveryBoundaryProjectionError as exc:
+        raise BoundarySemanticReviewError(
+            "BOUNDARY_SEARCH_SCOPE_REVIEWED_EXACT_INTERVAL_PROJECTION_INVALID"
+        ) from exc
+    if terminal_projection is not None and (
+        baseline_tail_cap is None
+        or terminal_projection["reviewed_endpoint_ms"] != baseline_tail_cap
+        or boundary_end_mode == "exact_source_pin"
+    ):
+        raise BoundarySemanticReviewError(
+            "BOUNDARY_SEARCH_SCOPE_REVIEWED_EXACT_INTERVAL_PROJECTION_INVALID"
+        )
     if boundary_end_mode not in {
         "semantic_lower_bound",
         "published_recall_anchor",
@@ -218,31 +306,30 @@ def build_boundary_search_scope(
 
     # r13 尾锚的补全：structured payoff 是
     # 检测假设，不是复核权威。redelivery 尾锚在、其余锚（语义/手动/owner）
-    # 全部落在 baseline 之内、唯独 payoff 越界时，假设让位于已复核终点——
-    # 钳制并披露（评审仍在已发布终点裁收尾；评审判收不住才是真冲突）。
-    # 任一复核锚越界仍走 BOUNDARY_REQUIRED_OWNER_EXCLUDED 硬拦。
+    # 全部可在 baseline 之内交付、唯独 payoff 越界时，假设让位于已复核终点
+    # ——钳制并披露（评审仍在已发布终点裁收尾；评审判收不住才是真冲突）。
+    # “可交付”复用同一条 bounded semantic-tail trim 计算；manual/owner 真越界
+    # 或回剪帽仍够不到 baseline 时，照旧走 REQUIRED_OWNER_EXCLUDED 硬拦。
     structured_payoff_clamped_from_ms: int | None = None
     structured_payoff_effective = structured_payoff
     if (
         boundary_end_mode != "exact_source_pin"
-        and baseline_tail_cap_ms is not None
+        and baseline_tail_cap is not None
         and structured_payoff is not None
-        and structured_payoff
-        > _required_int_ms("baseline_tail_cap_ms", baseline_tail_cap_ms)
-        and semantic_target <= baseline_tail_cap_ms
-        and (
-            manual_lower_bound is None
-            or manual_lower_bound <= baseline_tail_cap_ms
-        )
-        and (
-            required_owner_end is None
-            or required_owner_end <= baseline_tail_cap_ms
-        )
+        and structured_payoff > baseline_tail_cap
+        and _bounded_delivery_geometry(
+            semantic_target_ms=semantic_target,
+            manual_lower_bound_ms=manual_lower_bound,
+            published_recall_anchor_ms=published_recall_anchor,
+            structured_payoff_ms=None,
+            required_owner_end_ms=required_owner_end,
+            boundary_end_mode=boundary_end_mode,
+            semantic_tail_trim_cap_ms=semantic_tail_trim_cap,
+        )[1]
+        <= baseline_tail_cap
     ):
         structured_payoff_clamped_from_ms = structured_payoff
-        structured_payoff_effective = _required_int_ms(
-            "baseline_tail_cap_ms", baseline_tail_cap_ms
-        )
+        structured_payoff_effective = baseline_tail_cap
 
     exact_source_pin = (
         manual_lower_bound
@@ -276,42 +363,24 @@ def build_boundary_search_scope(
                     "BOUNDARY_EXACT_SOURCE_PIN_PAYOFF_CONFLICT"
                 )
         search_origin_ms = exact_source_pin
+        delivery_lower_bound_ms = max(
+            search_origin_ms,
+            required_owner_end or 0,
+            structured_payoff_effective or 0,
+            manual_lower_bound or 0,
+        )
     else:
-        search_origin_ms = max(
-            [
-                semantic_target,
-                *(
-                    value
-                    for value in (
-                        manual_lower_bound,
-                        published_recall_anchor,
-                        structured_payoff_effective,
-                    )
-                    if value is not None
-                ),
-            ]
+        search_origin_ms, delivery_lower_bound_ms = (
+            _bounded_delivery_geometry(
+                semantic_target_ms=semantic_target,
+                manual_lower_bound_ms=manual_lower_bound,
+                published_recall_anchor_ms=published_recall_anchor,
+                structured_payoff_ms=structured_payoff_effective,
+                required_owner_end_ms=required_owner_end,
+                boundary_end_mode=boundary_end_mode,
+                semantic_tail_trim_cap_ms=semantic_tail_trim_cap,
+            )
         )
-    # Automatic candidate end is a recall/search anchor, not a human-reviewed
-    # immutable endpoint.  A bounded CPA source review may trim a short tail
-    # that has already entered a new/open topic, but never below a manual end,
-    # structured payoff, or required owner.  Exact pins keep their dedicated
-    # pre-pin closure rule and do not use this lane.
-    tail_trim_floor_ms = search_origin_ms
-    if (
-        boundary_end_mode
-        in {"semantic_lower_bound", "published_recall_anchor"}
-        and manual_lower_bound is None
-        and semantic_tail_trim_cap > 0
-    ):
-        tail_trim_floor_ms = max(
-            0, search_origin_ms - semantic_tail_trim_cap
-        )
-    delivery_lower_bound_ms = max(
-        tail_trim_floor_ms,
-        required_owner_end or 0,
-        structured_payoff_effective or 0,
-        manual_lower_bound or 0,
-    )
     max_recommended_end_ms = (
         exact_source_pin
         if exact_source_pin is not None
@@ -326,12 +395,10 @@ def build_boundary_search_scope(
     # BLOCK）；pin 模式的终点已被更强权威定死，尾锚无增量约束。
     if (
         boundary_end_mode != "exact_source_pin"
-        and baseline_tail_cap_ms is not None
-        and baseline_tail_cap_ms < max_recommended_end_ms
+        and baseline_tail_cap is not None
+        and baseline_tail_cap < max_recommended_end_ms
     ):
-        max_recommended_end_ms = _required_int_ms(
-            "baseline_tail_cap_ms", baseline_tail_cap_ms
-        )
+        max_recommended_end_ms = baseline_tail_cap
     if delivery_lower_bound_ms > max_recommended_end_ms:
         reasons.append("BOUNDARY_REQUIRED_OWNER_EXCLUDED")
     recommendation_forward_ms = max(
@@ -351,6 +418,28 @@ def build_boundary_search_scope(
             last_piece_start
             + required_local_source_context_end_ms
             - prior_piece_duration
+        )
+
+    # 精确复核区间重播：
+    # reviewed_exact_interval_projection 在场 = 交付必须逐字节重播 维护者 已复核
+    # 的那一段源区间，语义回剪车道在这个模式下没有裁量权——终点只能是复核终点。
+    # 旧写法把下限留在 bounded semantic-tail trim 的 delivery_lower_bound 上，
+    # 于是只有「structured payoff 恰好被尾锚钳制」时下限才等于终点，projection
+    # 才够得着（terminal_projection_relaxation 要求 min==cap==endpoint）；没有
+    # payoff 的复核重播（本案 payoff=None，下限 65570 vs 终点 67760）会让评审
+    # 选中终点前 90ms 的机器闭合 cue，成片短 90ms，随后被 redelivery baseline
+    # 的 REDELIVERY_BASELINE_CUE_CUT_BY_NEW_BOUNDARY 硬拦——机制在、接线断。
+    # 钉死下限后：栅格上恰好有 cue 收在复核终点则正常入选；没有则 positions 空、
+    # 由 projection 以「闭合 cue + 跨越终点的下一话题 cue」证据桥接（漂移帽
+    # 250ms 内），两者都不成立才 fail-closed——比事后被 baseline 门拦更早、更准。
+    reviewed_endpoint_floor_ms: int | None = None
+    if (
+        terminal_projection is not None
+        and max_recommended_end_ms
+        == int(terminal_projection["reviewed_endpoint_ms"])
+    ):
+        reviewed_endpoint_floor_ms = int(
+            terminal_projection["reviewed_endpoint_ms"]
         )
 
     core: dict[str, object] = {
@@ -373,19 +462,23 @@ def build_boundary_search_scope(
         "repair_cap_ms": repair_cap,
         "semantic_tail_trim_cap_ms": semantic_tail_trim_cap,
         # 尾锚参与 sha 与重建验证；旧产物无此键=旧行为，向后兼容。
-        "baseline_tail_cap_ms": baseline_tail_cap_ms,
+        "baseline_tail_cap_ms": baseline_tail_cap,
         # payoff 钳制披露：非 None 即「假设让位于已复核 baseline 终点」。
         "structured_payoff_clamped_from_ms": structured_payoff_clamped_from_ms,
         "max_recommended_end_ms": max_recommended_end_ms,
         "recommendation_forward_ms": recommendation_forward_ms,
         "recommendation_backward_ms": recommendation_backward_ms,
         "minimum_recommended_end_ms": (
-            max(0, delivery_lower_bound_ms - DELIVERY_TAIL_PAD_MS)
-            if exact_source_pin is not None
+            reviewed_endpoint_floor_ms
+            if reviewed_endpoint_floor_ms is not None
             else (
-                delivery_lower_bound_ms
-                if recommendation_backward_ms
-                else search_origin_ms
+                max(0, delivery_lower_bound_ms - DELIVERY_TAIL_PAD_MS)
+                if exact_source_pin is not None
+                else (
+                    delivery_lower_bound_ms
+                    if recommendation_backward_ms
+                    else search_origin_ms
+                )
             )
         ),
         "delivery_tail_pad_ms": DELIVERY_TAIL_PAD_MS,
@@ -400,6 +493,8 @@ def build_boundary_search_scope(
         ),
         "reason_codes": sorted(set(reasons)),
     }
+    if terminal_projection is not None:
+        core["reviewed_exact_interval_projection"] = terminal_projection
     return {
         **core,
         "scope_sha256": boundary_search_scope_sha256(core),
@@ -477,7 +572,6 @@ def _scorecard_story_witness(scorecard: object) -> dict[str, object]:
         and isinstance(comedic_payoff, int)
         and not isinstance(comedic_payoff, bool)
         and self_contained >= 3
-        and comedic_payoff >= 3
     )
     return {
         # The current selector and boundary reviewer both use the CPA
@@ -539,6 +633,11 @@ def recommendation_eligibility(
       ``minimum`` contains no cue start and is at most
       ``SEMANTIC_FLOOR_SILENT_GAP_MS``. The former keeps its delivery floor;
       the latter already exposes a bounded backward review window.
+    - A source-bound exact reviewed interval may project the unique cue just
+      before its endpoint when the immediately following next-topic cue
+      crosses that endpoint by no more than the stricter reviewed-timing drift
+      bound. The reviewer still judges the fresh closure text and must cite the
+      crossing cue as next-topic evidence.
     """
 
     minimum_end_ms = int(scope["minimum_recommended_end_ms"])
@@ -614,6 +713,46 @@ def recommendation_eligibility(
                         "tolerance_ms": SEMANTIC_FLOOR_SILENT_GAP_MS,
                     }
                 )
+        projection_scope = scope.get(
+            "reviewed_exact_interval_projection"
+        )
+        if not positions and projection_scope is not None:
+            try:
+                projection = terminal_projection_relaxation(
+                    rows,
+                    projection_scope=projection_scope,
+                    minimum_end_ms=minimum_end_ms,
+                    cap_end_ms=cap_end_ms,
+                    cue_grid_sha256=_canonical_sha256(
+                        {
+                            "schema_version": "talk-boundary-cue-grid.v1",
+                            "cues": [dict(row) for row in rows],
+                        }
+                    ),
+                )
+            except RedeliveryBoundaryProjectionError as exc:
+                raise BoundarySemanticReviewError(
+                    "BOUNDARY_REVIEWED_EXACT_INTERVAL_PROJECTION_INVALID"
+                ) from exc
+            if projection is not None:
+                position = next(
+                    (
+                        ordinal
+                        for ordinal, row in enumerate(rows)
+                        if int(row["cue_index"])
+                        == int(projection["cue_index"])
+                    ),
+                    None,
+                )
+                if position is None:
+                    raise BoundarySemanticReviewError(
+                        "BOUNDARY_REVIEWED_EXACT_INTERVAL_PROJECTION_INVALID"
+                    )
+                positions.append(position)
+                effective_end_ms[int(projection["cue_index"])] = int(
+                    projection["reviewed_endpoint_ms"]
+                )
+                relaxations.append(projection)
     positions.sort()
     return {
         "positions": positions,
@@ -713,11 +852,14 @@ def _build_prompt(request: Mapping[str, object]) -> str:
 
 约束：
 - 只可从给出的 cue_index 中选 recommended_end_cue_index；不得改写字幕。
+- evidence_cue_indexes 的每个索引也只可从绑定请求 JSON 的 cues[*].cue_index 中选择；structured_context 和 candidate_context 只帮助理解语义，绝不可从中引用 cue 索引。
 - 只能从 recommendation_cue_indexes 选择。若 boundary_search_scope.recommendation_backward_ms>0，目标 cue 只是自动/旧公开召回尾锚；当它已拖入新话题、未回答问题或不完整尾巴时，可在该有界窗口内回剪到**最晚一个**已经覆盖 selection_hook 全部内容锚点、故事闭环且后续换题可证的 cue，并必须回 content_anchor_covered=true。普通 semantic_lower_bound 超出该窗口不得提前删内容；published_recall_anchor 只允许这次有界回剪，不把旧公开终点伪装成已人工确认的下界；若 boundary_end_mode=exact_source_pin，可选择 source pin 前最多 delivery_tail_pad_ms 的完整语义句尾，最终媒体仍由 source pin 精确截止，不可选择 pin 之后才开始的 cue。
-- recommendation_relaxations 里列出的 cue 是经确定性证明后放行的有界例外：pin_crossing_closure_cue 是包含 pin 的收尾 cue（媒体仍精确截止在 pin）；silent_gap_closure_cue 是下限前最后一个收尾 cue，且它到下限之间没有任何语音。语义合适就正常选择它们。
+- recommendation_relaxations 里列出的 cue 是经确定性证明后放行的有界例外：pin_crossing_closure_cue 是包含 pin 的收尾 cue（媒体仍精确截止在 pin）；silent_gap_closure_cue 是下限前最后一个收尾 cue，且它到下限之间没有任何语音；reviewed_exact_interval_terminal_projection 是 hash/source 绑定的 reviewed endpoint 在 fresh 网格上的终点投影，必须把其中 crossing_witness_cue_index 作为下一话题证据。语义合适才可选择。
 - 若 next_topic_separated=true，evidence_cue_indexes 必须包含推荐 cue 之后、证明已进入下一话题/SC/谢礼的 cue；缺了会被判 BOUNDARY_NEXT_TOPIC_WITNESS_MISSING。
+- review_scope=source_full_window 时，选点前必须把 recommendation_cue_indexes 全部比较完，并逐项检查 next_topic_witness_cue_indexes；后者是 endpoint 上限之外专门保留的换题见证，不是可以跳过的附录。next_topic_separated 不要求紧邻推荐 cue 的下一 cue 就换题：任何绑定请求中可见、位于推荐 cue 之后的明确新 SC、谢礼、另一话题或直播阶段切换都可作证，但必须在 evidence_cue_indexes 中实际引用。
 - 可以从目标 cue 向后寻找，最多 {request["max_forward_ms"]}ms；exact_source_pin 的该值为 0。
-- 若目标本身已闭环，即使后面无停顿继续说，也应选目标；若目标半句或包袱未落地，才向后选最早同时满足三项的 cue。
+- “目标内容已经讲完”不等于“此处已经形成安全切点”。若紧接目标的同话题提问、回应或收尾互动仍在继续，必须把 endpoint 向后推进到明确换题见证之前、仍在 recommendation_cue_indexes 内的**最晚一个完整收束 cue**；不得把问句留在片尾，也不得把回应切到片外。只有目标之后第一段可见内容已经明确属于另一话题时，目标才可直接充当收束点。
+- “进入尾声”等字面词不能由确定性关键词自动签发 PASS；仍须结合绑定 cue 的上下文判断它是否真是推荐 endpoint 之后的阶段/话题切换。source_full_window 内没有可见的 post-end 换题见证时，next_topic_separated 必须为 false，即使 syntax/story 已经完整；final_delivery 只可使用下一条所述的 bound source witness 例外。
 - 若请求带 PASS 的 terminal source separation witness，说明 source full-window 已证明 cut 后进入下一话题；此时 delivery 最后一条 cue 可用该 witness 证明 next_topic_separated，但 syntax/story 仍须按当前最终字幕重新判断。
 - 结构化弹幕/SC 可证明话题触发或切换；长期记忆只能帮助理解指代，不能单独证明边界。
 - 任一项无法证明就给 false，不要为了产片凑结论。
@@ -780,6 +922,145 @@ def _semantic_review_passes(
     )
 
 
+def _semantic_payload_for_request(
+    request: Mapping[str, object],
+    current_cue_grid_sha256: str,
+    *,
+    frozen_review: FrozenBoundaryReview | None,
+    replay_audit: dict[str, object] | None,
+    llm_call: Callable[[str], str],
+    extract_json: Callable[[str], Any],
+) -> object:
+    frozen_payload = frozen_review_payload(
+        frozen_review,
+        request=request,
+        cue_grid_sha256=current_cue_grid_sha256,
+    )
+    if frozen_payload is not None:
+        payload, carry = frozen_payload
+        if replay_audit is not None:
+            replay_audit.update(carry)
+        return payload
+    try:
+        return extract_json(llm_call(_build_prompt(request)))
+    except Exception as exc:
+        raise BoundarySemanticReviewError(
+            f"BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:{type(exc).__name__}"
+        ) from exc
+
+
+def _semantic_request(
+    *,
+    candidate_id: str,
+    target_ms: int,
+    target_cue_index: int,
+    selection_hook: str,
+    selector_story_witness: object,
+    visible_rows: list[dict[str, object]],
+    structured_context: str,
+    candidate_context: str,
+    max_forward_ms: int,
+    scope: Mapping[str, object],
+    recommendation_indexes: list[int],
+    recommendation_relaxations: list[dict[str, object]],
+    next_topic_witness_rows: Sequence[Mapping[str, object]],
+    source_separation_witness: Mapping[str, object] | None,
+) -> dict[str, object]:
+    return {
+        "schema_version": "talk-boundary-semantic-request.v1",
+        "endpoint_selection_contract_version": (
+            ENDPOINT_SELECTION_CONTRACT_VERSION
+        ),
+        "review_scope": (
+            "final_delivery"
+            if source_separation_witness is not None
+            else "source_full_window"
+        ),
+        "candidate_id": candidate_id,
+        "target_ms": target_ms,
+        "target_cue_index": target_cue_index,
+        "selection_hook": selection_hook,
+        "selector_story_witness": selector_story_witness,
+        "cues": visible_rows,
+        "structured_context": structured_context[:12_000],
+        "candidate_context": candidate_context,
+        "max_forward_ms": max_forward_ms,
+        "boundary_search_scope": scope,
+        "recommendation_cue_indexes": recommendation_indexes,
+        "recommendation_relaxations": recommendation_relaxations,
+        "next_topic_witness_cue_indexes": [
+            int(row["cue_index"]) for row in next_topic_witness_rows
+        ],
+        "terminal_source_separation_witness": source_separation_witness,
+    }
+
+
+def _frozen_decision_binding(
+    replay_audit: Mapping[str, object] | None,
+) -> dict[str, object]:
+    return (
+        {"frozen_decision_binding": dict(replay_audit)}
+        if replay_audit
+        else {}
+    )
+
+
+def _next_topic_witness_assessment(
+    *,
+    booleans: Mapping[str, bool],
+    recommendation_valid: bool,
+    recommended_index: int | None,
+    rows: Sequence[Mapping[str, object]],
+    evidence_indexes: Sequence[int],
+    source_separation_witness: Mapping[str, object] | None,
+    recommendation_relaxations: Sequence[Mapping[str, object]],
+) -> tuple[bool, Mapping[str, object] | None]:
+    row_positions = {
+        int(row["cue_index"]): position
+        for position, row in enumerate(rows)
+    }
+    recommended_position = (
+        row_positions.get(recommended_index)
+        if recommended_index is not None
+        else None
+    )
+    valid = bool(
+        not booleans["next_topic_separated"]
+        or (
+            recommendation_valid
+            and recommended_position is not None
+            and (
+                any(
+                    row_positions.get(index, -1) > recommended_position
+                    for index in evidence_indexes
+                )
+                or (
+                    isinstance(source_separation_witness, Mapping)
+                    and source_separation_witness.get("status") == "PASS"
+                    and recommended_position == len(rows) - 1
+                )
+            )
+        )
+    )
+    selected_projection = next(
+        (
+            row
+            for row in recommendation_relaxations
+            if row.get("kind")
+            == "reviewed_exact_interval_terminal_projection"
+            and row.get("cue_index") == recommended_index
+        ),
+        None,
+    )
+    if (
+        selected_projection is not None
+        and selected_projection.get("crossing_witness_cue_index")
+        not in evidence_indexes
+    ):
+        valid = False
+    return valid, selected_projection
+
+
 def review_talk_boundary_semantics(
     *,
     cues: Sequence[object],
@@ -796,6 +1077,8 @@ def review_talk_boundary_semantics(
     source_final_start_ms: int | None = None,
     source_final_end_ms: int | None = None,
     boundary_search_scope: Mapping[str, object] | None = None,
+    frozen_review: FrozenBoundaryReview | None = None,
+    replay_audit: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Return a validated, cue-grid-bound semantic boundary decision."""
 
@@ -878,35 +1161,32 @@ def review_talk_boundary_semantics(
         source_final_start_ms=source_final_start_ms,
         source_final_end_ms=source_final_end_ms,
     )
-    request = {
-        "schema_version": "talk-boundary-semantic-request.v1",
-        "candidate_id": candidate_id,
-        "target_ms": target_ms,
-        "target_cue_index": rows[target_pos]["cue_index"],
-        "selection_hook": selection_hook,
-        "selector_story_witness": _scorecard_story_witness(selection_scorecard),
-        "cues": visible_rows,
-        "structured_context": structured_context[:12_000],
-        "candidate_context": candidate_context,
-        "max_forward_ms": max_forward_ms,
-        "boundary_search_scope": scope,
-        "recommendation_cue_indexes": recommendation_indexes,
-        "recommendation_relaxations": recommendation_relaxations,
-        "next_topic_witness_cue_indexes": [
-            int(row["cue_index"])
-            for row in rows[recommendation_hi:witness_hi]
-        ],
-        "terminal_source_separation_witness": (
-            source_separation_witness
-        ),
-    }
+    request = _semantic_request(
+        candidate_id=candidate_id,
+        target_ms=target_ms,
+        target_cue_index=int(rows[target_pos]["cue_index"]),
+        selection_hook=selection_hook,
+        selector_story_witness=_scorecard_story_witness(selection_scorecard),
+        visible_rows=visible_rows,
+        structured_context=structured_context,
+        candidate_context=candidate_context,
+        max_forward_ms=max_forward_ms,
+        scope=scope,
+        recommendation_indexes=recommendation_indexes,
+        recommendation_relaxations=recommendation_relaxations,
+        next_topic_witness_rows=rows[recommendation_hi:witness_hi],
+        source_separation_witness=source_separation_witness,
+    )
     request_sha256 = _canonical_sha256(request)
-    try:
-        payload = extract_json(llm_call(_build_prompt(request)))
-    except Exception as exc:
-        raise BoundarySemanticReviewError(
-            f"BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:{type(exc).__name__}"
-        ) from exc
+    current_cue_grid_sha256 = cue_grid_sha256(cues)
+    payload = _semantic_payload_for_request(
+        request,
+        current_cue_grid_sha256,
+        frozen_review=frozen_review,
+        replay_audit=replay_audit,
+        llm_call=llm_call,
+        extract_json=extract_json,
+    )
     if not isinstance(payload, Mapping):
         raise BoundarySemanticReviewError("BOUNDARY_SEMANTIC_REVIEW_NOT_OBJECT")
 
@@ -953,31 +1233,15 @@ def review_talk_boundary_semantics(
         if index in by_index
         and int(by_index[index]["end_ms"]) > target_end
     ]
-    row_positions = {
-        int(row["cue_index"]): position
-        for position, row in enumerate(rows)
-    }
-    recommended_position = (
-        row_positions.get(recommended_index)
-        if recommended_index is not None
-        else None
-    )
-    next_topic_witness_valid = bool(
-        not booleans["next_topic_separated"]
-        or (
-            recommendation_valid
-            and recommended_position is not None
-            and (
-                any(
-                    row_positions.get(index, -1) > recommended_position
-                    for index in evidence_indexes
-                )
-                or (
-                    isinstance(source_separation_witness, Mapping)
-                    and source_separation_witness.get("status") == "PASS"
-                    and recommended_position == len(rows) - 1
-                )
-            )
+    next_topic_witness_valid, selected_projection = (
+        _next_topic_witness_assessment(
+            booleans=booleans,
+            recommendation_valid=recommendation_valid,
+            recommended_index=recommended_index,
+            rows=rows,
+            evidence_indexes=evidence_indexes,
+            source_separation_witness=source_separation_witness,
+            recommendation_relaxations=recommendation_relaxations,
         )
     )
     same_topic_reported = payload.get(
@@ -1030,6 +1294,10 @@ def review_talk_boundary_semantics(
         reason_codes.append("BOUNDARY_EVIDENCE_CUES_INVALID")
     if not next_topic_witness_valid:
         reason_codes.append("BOUNDARY_NEXT_TOPIC_WITNESS_MISSING")
+        if selected_projection is not None:
+            reason_codes.append(
+                "BOUNDARY_REVIEWED_PROJECTION_WITNESS_MISSING"
+            )
     if not content_anchor_covered:
         reason_codes.append("CONTENT_ANCHOR_COVERED_NOT_PROVEN")
     if needs_more_context:
@@ -1048,7 +1316,7 @@ def review_talk_boundary_semantics(
         ),
         "candidate_id": candidate_id,
         "request_sha256": request_sha256,
-        "cue_grid_sha256": cue_grid_sha256(cues),
+        "cue_grid_sha256": current_cue_grid_sha256,
         "target_ms": target_ms,
         "target_cue_index": rows[target_pos]["cue_index"],
         "max_forward_ms": max_forward_ms,
@@ -1070,6 +1338,7 @@ def review_talk_boundary_semantics(
         "evidence_cue_indexes": evidence_indexes,
         "next_topic_witness_valid": next_topic_witness_valid,
         "source_separation_witness": source_separation_witness,
+        **_frozen_decision_binding(replay_audit),
         "same_topic_continues_after_target": (
             same_topic_continues_after_target
         ),

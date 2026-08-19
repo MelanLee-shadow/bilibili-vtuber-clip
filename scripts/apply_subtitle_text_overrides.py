@@ -23,6 +23,11 @@ from src.autoslice.chat_authority import (
     canonicalize_hard_meme_surfaces,
     canonicalize_japanese_native_script_surfaces,
 )
+from src.autoslice.subtitle_text_override_schema import (
+    NO_UPLOAD_TEXT_OVERRIDE_SCHEMA_VERSION,
+    TEXT_OVERRIDE_SCHEMA_VERSIONS,
+    validate_text_override_document_header,
+)
 
 
 SRT_BLOCK_RE = re.compile(
@@ -225,9 +230,10 @@ def _override_map(
     *,
     timeline_offset_ms: int = 0,
 ) -> dict[int, dict[str, Any]]:
-    schema_version = document.get("schema_version")
-    if schema_version not in {1, 2, 3}:
-        raise ValueError("text override schema_version must be 1, 2, or 3")
+    schema_version = validate_text_override_document_header(
+        document,
+        expected_candidate_id=None,
+    )
     raw = document.get("overrides")
     if not isinstance(raw, list):
         raise ValueError("text overrides must be a list")
@@ -236,7 +242,7 @@ def _override_map(
         if not isinstance(override, dict):
             raise ValueError("each text override must be an object")
         declared_source_index = int(override.get("source_cue", 0))
-        if schema_version == 3:
+        if schema_version in {3, NO_UPLOAD_TEXT_OVERRIDE_SCHEMA_VERSION}:
             action = str(override.get("action", "replace"))
             if action in {"replace_substring", "replace_pattern"}:
                 locator = override.get("locator")
@@ -362,7 +368,10 @@ def source_cue_witness_sha256(
         )
         return str(primary) if actual in match_values else actual
 
-    timeline_bound = document.get("schema_version") == 3
+    timeline_bound = document.get("schema_version") in {
+        3,
+        NO_UPLOAD_TEXT_OVERRIDE_SCHEMA_VERSION,
+    }
     if timeline_bound:
         for source_index, override in by_index.items():
             _expect(
@@ -455,7 +464,10 @@ def decision_output_witness_sha256(
     by_index = _override_map(
         cues, document, timeline_offset_ms=timeline_offset_ms
     )
-    timeline_bound = document.get("schema_version") == 3
+    timeline_bound = document.get("schema_version") in {
+        3,
+        NO_UPLOAD_TEXT_OVERRIDE_SCHEMA_VERSION,
+    }
     if timeline_bound:
         reviewed_outputs = []
         for source_index, override in sorted(by_index.items()):
@@ -727,15 +739,29 @@ def apply_document(
     manifest_path: Path,
     *,
     timeline_offset_ms: int = 0,
+    expected_candidate_id: str | None = None,
 ) -> dict[str, Any]:
     document = json.loads(document_path.read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        raise ValueError("text override document must be a JSON object")
+    schema_version = validate_text_override_document_header(
+        document,
+        expected_candidate_id=expected_candidate_id,
+    )
+    if (
+        schema_version == NO_UPLOAD_TEXT_OVERRIDE_SCHEMA_VERSION
+        and expected_candidate_id is None
+    ):
+        raise ValueError("no-upload text override schema v4 requires expected_candidate_id")
     actual_source_hash = sha256_file(source)
     source_cues = parse_srt(source)
-    schema_version = document.get("schema_version")
     if timeline_offset_ms < 0:
         raise ValueError("timeline_offset_ms must be non-negative")
-    if timeline_offset_ms and schema_version != 3:
-        raise ValueError("timeline_offset_ms is supported only for schema_version 3")
+    if timeline_offset_ms and schema_version not in {
+        3,
+        NO_UPLOAD_TEXT_OVERRIDE_SCHEMA_VERSION,
+    }:
+        raise ValueError("timeline_offset_ms is supported only for schema_version 3 or 4")
     witness_manifest: dict[str, Any] = {}
     if schema_version == 1:
         expected_source_hash = str(document.get("source_srt_sha256", ""))
@@ -743,7 +769,7 @@ def apply_document(
             raise ValueError(
                 f"source SRT hash mismatch: override expects {expected_source_hash!r}, got {actual_source_hash!r}"
             )
-    elif schema_version in {2, 3}:
+    elif schema_version in {2, 3, NO_UPLOAD_TEXT_OVERRIDE_SCHEMA_VERSION}:
         candidate_id = str(document.get("candidate_id", "")).strip()
         if not candidate_id:
             raise ValueError("cue-bound text override has no candidate_id")
@@ -780,9 +806,16 @@ def apply_document(
             "candidate_id": candidate_id,
             "source_cue_witness_sha256": actual_source_witness,
             "decision_output_witness_sha256": actual_decision_witness,
+            **(
+                {"upload": False}
+                if schema_version == NO_UPLOAD_TEXT_OVERRIDE_SCHEMA_VERSION
+                else {}
+            ),
         }
     else:
-        raise ValueError("text override schema_version must be 1, 2, or 3")
+        raise ValueError(
+            f"text override schema_version must be one of {sorted(TEXT_OVERRIDE_SCHEMA_VERSIONS)}"
+        )
     output_cues, decisions = apply_overrides(
         source_cues,
         document,
@@ -820,8 +853,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--overrides", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--candidate-id")
     args = parser.parse_args(argv)
-    manifest = apply_document(args.source, args.overrides, args.output, args.manifest)
+    manifest = apply_document(
+        args.source,
+        args.overrides,
+        args.output,
+        args.manifest,
+        expected_candidate_id=args.candidate_id,
+    )
     print(json.dumps(manifest, ensure_ascii=False))
     return 0
 

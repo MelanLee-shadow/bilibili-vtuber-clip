@@ -11,10 +11,11 @@ fallback witness only when CPA vision is unavailable.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping, MutableMapping, NamedTuple, Sequence
 
 from PIL import Image, ImageDraw, ImageOps
 
@@ -45,6 +46,131 @@ UNAVAILABLE_REASON_CODES = frozenset(
         "HOST_IDENTITY_VERIFIER_MISSING",
     }
 )
+# 自不一致 **不是** 见证缺席。它绝不进 UNAVAILABLE_REASON_CODES：那个集合会让
+# publish_staging 的 `_keep_source_pixels_when_identity_witness_is_down` 把重绘
+# 降级成源截图像素。一条互相打架的回答说明见证**到场了**，只是不可信；把它当
+# 缺席等于给自己开一条"矛盾即降级发原图"的侧门。
+SELF_INCONSISTENT_REASON_CODE = "FINAL_HOST_IDENTITY_WITNESS_SELF_INCONSISTENT"
+
+# 维护者 逐字裁定（本机制的唯一授权来源）。
+REVIEWER_SELF_INCONSISTENT_RULING = (
+    "维护者 2026-08-10 逐字裁定：「只要自相矛盾，当然就认为这个完全没有否决权，"
+    "完全不可信就完事了。」"
+)
+# 先例：7/27 BV1ec3A6bEWF 事故轮已立同名机制（R-裁定-06「自不一致的测量没有
+# 否决权」，当时给的是出版登记/听写门）。本次是 维护者 亲口把它扩到封面身份门。
+SELF_INCONSISTENT_PRECEDENT = (
+    "R-裁定-06 自不一致的测量没有否决权（2026-07-27 刘若莎案 / BV1ec3A6bEWF）"
+)
+SELF_INCONSISTENT_SCHEMA_VERSION = (
+    "lidousha-cover-host-identity-self-inconsistent-witness.v1"
+)
+SELF_INCONSISTENT_DISREGARDED_STATUS = "SELF_INCONSISTENT_WITNESS_DISREGARDED"
+SELF_INCONSISTENT_REFUSED_STATUS = "SELF_INCONSISTENT_DISREGARD_REFUSED"
+# 承接证据只认这一族回执，且只认本模块知道怎么逐条重放的世代。维护者 的裁定写的
+# 是 `lidousha-title-cover-joint-qc.*`；新增一个世代必须同时补它的重放规则，
+# 否则未知世代按 fail-closed 拒绝，而不是靠前缀通配放行。
+JOINT_QC_SCHEMA_VERSIONS = frozenset({"lidousha-title-cover-joint-qc.v1"})
+JOINT_QC_WITNESS_SCHEMA_VERSION = "cpa-frame-witness.v1"
+
+
+class _Contradiction(NamedTuple):
+    """One enumerated pair of assertions that cannot both hold in one answer."""
+
+    name: str
+    fields: tuple[str, ...]
+    why: str
+    holds: Callable[[Mapping[str, object]], bool]
+
+
+def _protagonist_is_host_and_other_participant(verdict: Mapping[str, object]) -> bool:
+    """主角同时"是李豆沙"和"是另一位参与者"，且自称零冲突特征。
+
+    互斥理由：见证问卷把 `primary_subject_matches_other_source_participant`
+    定义为"右图主角其实延续的是左图**其他**参与者，而不是李豆沙"。它与
+    `primary_subject_is_lidousha` 是同一命题的正反两面——A 与 ¬A。第三个合取项
+    `identity_conflicts == []` 是 维护者 的护栏：见证一旦列出了冲突特征，那是
+    **明确否定**（"我看到她带着别人的特征"），是可读的反对意见，必须保留完整
+    否决权；只有连一条冲突都举不出来、却仍勾上反面断言时，才是纯粹的自相矛盾。
+    第四个合取项 `source_lidousha_located is True` 同理：源图定位失败是身份轴上
+    的明确否定，不是矛盾，照样有否决权。
+
+    这正是 1323 打歌服置换封面 v4D 的形状：同一份回答里
+    `primary_subject_is_lidousha: true` + `identity_conflicts: []` + 文字描述
+    明确认出李豆沙，却又 `primary_subject_matches_other_source_participant: true`。
+    """
+
+    return (
+        verdict.get("source_lidousha_located") is True
+        and verdict.get("primary_subject_is_lidousha") is True
+        and verdict.get("primary_subject_matches_other_source_participant") is True
+        and isinstance(verdict.get("identity_conflicts"), list)
+        and not verdict["identity_conflicts"]
+    )
+
+
+# 全 schema 扫描结论：`_QUESTION` 契约里只有身份轴存在严格的 A ∧ ¬A 对。
+# 逐条记下被考虑并**排除**的候选，免得后人以为是漏扫：
+#
+# * `source_lidousha_located=False` ∧ `primary_subject_is_lidousha=True`
+#   —— 跨轴张力，不是同一命题的正反面。"我在左图找不到她"与"右图主角是她"可以
+#   同时成立（凭外形认人而非凭源图延续），而且前者本身就是身份轴上的明确否定。
+#   纳入它等于把"源图定位失败"洗成可放行，正面击穿反混种设计。
+# * `primary_subject_is_lidousha=False` ∧ `..._matches_other_source_participant=False`
+#   —— 不互斥：主角可以既不是她也不是任何源图参与者（凭空捏的人）。而且这是
+#   明确否定，维护者 的护栏 4 直接禁止本机制放行它。
+# * `composition_conflicts` 非空 ∧ 六个构图布尔全绿
+#   —— 构图布尔是分项判断，conflicts 是自由文本清单；列出"字略挤"之类的次要
+#   意见并不构成对任一布尔的反面断言。且构图轴没有一对互为否定的字段，纳入它
+#   只会把"机器说构图有问题"洗掉，属于扩权。
+# * `excessive_dead_space=True` ∧ `primary_subject_is_visually_dominant=True`
+#   —— 大留白与主体显眼可以并存（干净文字区就是刻意留白，问卷明说这合理）。
+# * `thumbnail_has_clear_click_hook=True` ∧ `primary_subject_carries_story_reaction=False`
+#   —— 钩子可以由文案/场景承担而非表情，不是同一命题。
+_SELF_CONTRADICTIONS: tuple[_Contradiction, ...] = (
+    _Contradiction(
+        name="PROTAGONIST_IS_HOST_AND_OTHER_PARTICIPANT",
+        fields=(
+            "source_lidousha_located",
+            "primary_subject_is_lidousha",
+            "primary_subject_matches_other_source_participant",
+            "identity_conflicts",
+        ),
+        why=(
+            "同一份回答同时断言主角是李豆沙、且主角其实是另一位源图参与者，"
+            "还自称零冲突特征——A 与 ¬A 不能同真"
+        ),
+        holds=_protagonist_is_host_and_other_participant,
+    ),
+)
+
+
+def host_identity_verdict_contradictions(
+    verdict: object,
+) -> list[dict[str, object]]:
+    """Enumerate same-answer mutually exclusive assertions in one verdict.
+
+    只认**同一份回答内部**的互斥；跨回答/跨轮的分歧不是自相矛盾，走各自的门。
+    """
+
+    if not isinstance(verdict, Mapping):
+        return []
+    found: list[dict[str, object]] = []
+    for contradiction in _SELF_CONTRADICTIONS:
+        if not contradiction.holds(verdict):
+            continue
+        found.append(
+            {
+                "name": contradiction.name,
+                "fields": list(contradiction.fields),
+                "asserted": {
+                    field: copy.deepcopy(verdict.get(field))
+                    for field in contradiction.fields
+                },
+                "why": contradiction.why,
+            }
+        )
+    return found
 
 
 def _sha256(path: Path) -> str:
@@ -73,13 +199,41 @@ _BOOLEAN_VERDICT_FIELDS = (
 )
 
 
-def _identity_answer_valid(answer: str) -> bool:
+# 游戏场终检字段（维护者 02:20）。身份底线由「小窗里可见 + 小窗里是她」
+# 承担，取代「她必须是画面最大最显眼的主角」；`primary_subject_is_visually_dominant`
+# 仍然照问、照落盘，但降为**披露项**，不再是 PASS 前置。反垃圾三项一条不少：
+# 空面板/加载页（7/22 案）由 `frame_is_interesting` + `excessive_dead_space` 拦，
+# 无意义装饰压过内容由 `meaningless_dominant_decoration` 拦。
+_GAME_BOOLEAN_VERDICT_FIELDS = (
+    "source_lidousha_located",
+    "host_window_visible_in_final",
+    "host_window_identity_matches",
+    "primary_subject_is_visually_dominant",
+    "frame_is_interesting",
+    "excessive_dead_space",
+    "meaningless_dominant_decoration",
+    "thumbnail_has_clear_click_hook",
+)
+
+_SCENE_VERDICT_FIELDS = {
+    "talk": _BOOLEAN_VERDICT_FIELDS,
+    "game": _GAME_BOOLEAN_VERDICT_FIELDS,
+}
+
+
+def _normalize_scene_kind(value: object) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in _SCENE_VERDICT_FIELDS else "talk"
+
+
+def _identity_answer_valid(answer: str, *, scene_kind: str = "talk") -> bool:
     try:
         verdict = _extract_json_object(answer)
     except (ValueError, json.JSONDecodeError):
         return False
+    fields = _SCENE_VERDICT_FIELDS[_normalize_scene_kind(scene_kind)]
     return bool(
-        all(isinstance(verdict.get(key), bool) for key in _BOOLEAN_VERDICT_FIELDS)
+        all(isinstance(verdict.get(key), bool) for key in fields)
         and isinstance(verdict.get("identity_conflicts"), list)
         and isinstance(verdict.get("composition_conflicts"), list)
         and all(
@@ -148,6 +302,162 @@ _QUESTION = (
 )
 
 
+# 游戏截图封面的终检问卷（维护者 02:20 逐字裁定的落地面）：
+# 「如果是截图封面的话，当然不要求李豆沙在画面里占主要部分，毕竟是游戏截图，
+# 只要截图足够有趣就行，主体肯定会会是游戏。」
+# 因此身份轴改问小窗，构图轴改问"这张游戏画面是否值得点"。**没有放松的是**：
+# 小窗里必须确实是她（多人场冒名仍然拦）、画面不能是空面板/加载页（7/22 案）、
+# 不得有无意义装饰压过内容、必须有明确点击钩子。
+_GAME_QUESTION = (
+    "左侧是同一切片的 SOURCE REFERENCE，右侧是待发布 FINAL COVER。"
+    "本条是**游戏直播截图封面**：画面主体本来就是游戏，"
+    f"不要求{CHANNEL_PROFILE.display_name}占据画面主要部分，也不要因为她小就判失败。"
+    f"请先在左图用可见名牌、服装和外形定位{CHANNEL_PROFILE.display_name}；若名牌可见，必须以名牌为准。"
+    f"{CHANNEL_PROFILE.display_name}是{CHANNEL_PROFILE.cover_identity.gate_appearance_zh}。特别注意：不要把左图其他人物"
+    f"{CHANNEL_PROFILE.cover_identity.gate_rival_note_zh}误认成{CHANNEL_PROFILE.display_name}；给别的角色"
+    f"{CHANNEL_PROFILE.cover_identity.gate_imitation_zh}也不算身份正确。"
+    f"然后判断右图里她的面捕小窗/立绘是否仍然可见（host_window_visible_in_final），"
+    f"以及那个小窗里的人是否确实是{CHANNEL_PROFILE.display_name}本人而不是别的参与者"
+    "（host_window_identity_matches）；小窗被裁掉、被文字完全盖住、糊到认不出或换成了"
+    "别人，这两项就为 false。primary_subject_is_visually_dominant 仍然如实回答，"
+    "但它只是披露，不影响本场景的通过判断。"
+    "构图上判断这张游戏画面本身是否承载一个看得出来的事件（frame_is_interesting："
+    "战况、结算、道具、失误、名场面或可读的关键 UI 文字）；空面板、加载页、菜单、"
+    "纯色过渡、什么都没发生的静止画面一律 false。专门留给已渲染标题的干净文字区是"
+    "合理留白，但标题以外不得有大片死空白、无意义纯色红条/色块或装饰噪声压过内容。"
+    "陌生观众只看右图时应立即看到一个明确点击钩子。不确定就 FAIL。只输出 JSON："
+    '{"source_lidousha_located":true|false,'
+    '"host_window_visible_in_final":true|false,'
+    '"host_window_identity_matches":true|false,'
+    '"primary_subject_is_visually_dominant":true|false,'
+    '"frame_is_interesting":true|false,'
+    '"excessive_dead_space":true|false,'
+    '"meaningless_dominant_decoration":true|false,'
+    '"thumbnail_has_clear_click_hook":true|false,'
+    '"primary_subject_identity":"简短身份",'
+    '"identity_conflicts":["冲突特征"],'
+    '"composition_conflicts":["小窗被裁/小窗换人/死空白/无意义装饰/空面板等"],'
+    '"reason":"简短中文说明"}'
+)
+
+_SCENE_QUESTION = {"talk": _QUESTION, "game": _GAME_QUESTION}
+
+
+def _pending_self_inconsistency_disclosure(
+    *,
+    verdict: Mapping[str, object],
+    witness_answer: str,
+    contradictions: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    """Typed disclosure for a contradiction with no successor evidence yet."""
+
+    return {
+        "schema_version": SELF_INCONSISTENT_SCHEMA_VERSION,
+        "status": SELF_INCONSISTENT_REFUSED_STATUS,
+        "reason_code": "CORROBORATING_EVIDENCE_MISSING",
+        "authority": REVIEWER_SELF_INCONSISTENT_RULING,
+        "precedent": SELF_INCONSISTENT_PRECEDENT,
+        "contradictions": copy.deepcopy(list(contradictions)),
+        # 原文保留：矛盾的回答本身是证物，不得改写或删除。
+        "disregarded_verdict": copy.deepcopy(dict(verdict)),
+        "disregarded_witness_answer": witness_answer,
+    }
+
+
+def _joint_qc_corroboration_problems(
+    receipt: object,
+    *,
+    final_cover_sha256: str,
+) -> list[str]:
+    """Replay every bond of a title+cover joint-QC receipt, purely.
+
+    这是 `scripts/authorized_upload.py` 的 title+cover QC 门的同款重放（本模块
+    自带一份，不从 scripts/ 导入）。必须自带：同 BV 置换的 manifest 门把该回执
+    列为**可选**，所以在 1323 这类 same-BV 场景里，本 validator 是这份承接证据
+    唯一的执法点，不能指望上传时再查。
+    """
+
+    problems: list[str] = []
+    if not isinstance(receipt, Mapping):
+        return ["joint-QC receipt is not an object"]
+    if receipt.get("schema_version") not in JOINT_QC_SCHEMA_VERSIONS:
+        problems.append("joint-QC schema_version is not a replayable generation")
+    expected_cover_sha = str(final_cover_sha256 or "")
+    if not expected_cover_sha.startswith("sha256:"):
+        problems.append("final cover sha256 is not a sha256: digest")
+    if receipt.get("cover_sha256") != expected_cover_sha:
+        problems.append("joint-QC cover_sha256 does not bind the final cover bytes")
+    title = receipt.get("title")
+    if not isinstance(title, str) or not title.strip():
+        problems.append("joint-QC title is empty")
+    elif receipt.get("title_sha256") != "sha256:" + hashlib.sha256(
+        title.encode("utf-8")
+    ).hexdigest():
+        problems.append("joint-QC title_sha256 does not bind its own title")
+    if receipt.get("selected_provider") != "cpa":
+        problems.append("joint-QC selected_provider must be cpa")
+    preferred_provider = receipt.get("preferred_provider")
+    if preferred_provider is not None and preferred_provider != "cpa":
+        problems.append("joint-QC preferred_provider must be cpa")
+
+    witness = receipt.get("witness")
+    if not isinstance(witness, Mapping):
+        problems.append("joint-QC has no CPA witness object")
+        witness = {}
+    else:
+        if witness.get("schema_version") != JOINT_QC_WITNESS_SCHEMA_VERSION:
+            problems.append("joint-QC witness schema_version is invalid")
+        if witness.get("provider") != "cpa":
+            problems.append("joint-QC witness provider must be cpa")
+        if witness.get("status") != "OBSERVED":
+            problems.append("joint-QC CPA witness was not OBSERVED")
+        if not str(witness.get("model") or "").strip():
+            problems.append("joint-QC CPA witness has no model")
+        if witness.get("image_path") != receipt.get("cover_path"):
+            problems.append("joint-QC witness image_path is not the receipt cover")
+        witness_sha = str(witness.get("image_sha256") or "")
+        if not witness_sha.startswith("sha256:"):
+            witness_sha = "sha256:" + witness_sha if witness_sha else ""
+        if witness_sha != expected_cover_sha:
+            problems.append("joint-QC witness image_sha256 is not the final cover")
+
+    verdict = receipt.get("verdict")
+    if not isinstance(verdict, Mapping):
+        problems.append("joint-QC has no verdict object")
+        verdict = {}
+    for key, expected in (
+        ("lidousha_primary", True),
+        ("thumbnail_readable", True),
+        ("single_clear_hook", True),
+        ("text_overcrowded", False),
+        ("title_cover_aligned", True),
+        ("pass", True),
+    ):
+        if verdict.get(key) is not expected:
+            problems.append(f"joint-QC verdict.{key} must be {str(expected).lower()}")
+    line_count = verdict.get("physical_text_line_count")
+    if isinstance(line_count, bool) or not isinstance(line_count, int) or line_count not in (1, 2):
+        problems.append("joint-QC verdict.physical_text_line_count must be 1 or 2")
+    if verdict.get("unrelated_or_misleading_elements") != []:
+        problems.append("joint-QC verdict.unrelated_or_misleading_elements must be empty")
+    if not str(verdict.get("reason") or "").strip():
+        problems.append("joint-QC verdict.reason must be non-empty")
+
+    answer = witness.get("answer") if isinstance(witness, Mapping) else None
+    try:
+        answer_verdict = json.loads(answer) if isinstance(answer, str) else None
+    except ValueError:
+        answer_verdict = None
+    if answer_verdict != (dict(verdict) if isinstance(verdict, Mapping) else verdict):
+        problems.append("joint-QC verdict is not the exact parsed CPA witness answer")
+
+    if receipt.get("status") != "PASS":
+        problems.append("joint-QC status must be PASS")
+    if receipt.get("pass") is not True:
+        problems.append("joint-QC top-level pass must be true")
+    return problems
+
+
 def verify_final_host_identity(
     *,
     final_cover_path: Path,
@@ -155,9 +465,11 @@ def verify_final_host_identity(
     reference_path: Path,
     base_url: str = "",
     api_key: str = "",
+    scene_kind: str = "talk",
 ) -> dict[str, object]:
     """Return a fail-closed CPA-primary verdict bound to source/final bytes."""
 
+    scene = _normalize_scene_kind(scene_kind)
     final_cover_path = Path(final_cover_path)
     reference_path = Path(reference_path)
     verification: dict[str, object] = {
@@ -166,6 +478,9 @@ def verify_final_host_identity(
         "final_cover_path": str(final_cover_path),
         "reference_path": str(reference_path),
     }
+    if scene != "talk":
+        # talk 回执逐字节保持既有形状（保真钉）。
+        verification["scene_kind"] = scene
     try:
         actual_final_sha = _sha256(final_cover_path)
         reference_sha = _sha256(reference_path)
@@ -208,10 +523,16 @@ def verify_final_host_identity(
     comparison_sha = _sha256(comparison_path)
     witness = image_vision_probe(
         comparison_path,
-        _QUESTION,
+        _SCENE_QUESTION[scene],
         api_base=base_url,
         api_key=api_key,
-        answer_validator=_identity_answer_valid,
+        answer_validator=(
+            _identity_answer_valid
+            if scene == "talk"
+            else lambda answer: _identity_answer_valid(
+                answer, scene_kind=scene
+            )
+        ),
     )
     verification.update(
         comparison_path=str(comparison_path),
@@ -242,32 +563,73 @@ def verify_final_host_identity(
         )
         return verification
     verification["verdict"] = verdict
+    contradictions = host_identity_verdict_contradictions(verdict)
+    if contradictions:
+        # 自不一致 → 这份 verdict 整体不可信：既不能否决，也不能当通过证据。
+        # 默认仍然 fail-closed（本函数不认识承接证据），只把矛盾 typed 披露出来；
+        # 是否放行由 `disregard_self_inconsistent_host_identity_witness` 显式挂上
+        # 第三方证据后再由 validator 判定。
+        verification.update(
+            status="FAIL",
+            reason_code=SELF_INCONSISTENT_REASON_CODE,
+            detail=(
+                "host identity witness contradicts itself in one answer: "
+                + ", ".join(str(item["name"]) for item in contradictions)
+            ),
+            self_inconsistent_witness=_pending_self_inconsistency_disclosure(
+                verdict=verdict,
+                witness_answer=str(witness.get("answer") or ""),
+                contradictions=contradictions,
+            ),
+        )
+        return verification
     identity_conflicts = verdict.get("identity_conflicts")
     composition_conflicts = verdict.get("composition_conflicts")
-    identity_passed = bool(
-        verdict.get("source_lidousha_located") is True
-        and verdict.get("primary_subject_is_lidousha") is True
-        and verdict.get("primary_subject_matches_other_source_participant")
-        is False
-        and isinstance(identity_conflicts, list)
-        and not identity_conflicts
-    )
-    composition_passed = bool(
-        verdict.get("primary_subject_is_visually_dominant") is True
-        and verdict.get("primary_subject_face_is_large_and_clear") is True
-        and verdict.get("primary_subject_carries_story_reaction") is True
-        and verdict.get("excessive_dead_space") is False
-        and verdict.get("meaningless_dominant_decoration") is False
-        and verdict.get("thumbnail_has_clear_click_hook") is True
-        and isinstance(composition_conflicts, list)
-        and not composition_conflicts
-    )
+    if scene == "game":
+        identity_passed = bool(
+            verdict.get("source_lidousha_located") is True
+            and verdict.get("host_window_visible_in_final") is True
+            and verdict.get("host_window_identity_matches") is True
+            and isinstance(identity_conflicts, list)
+            and not identity_conflicts
+        )
+        composition_passed = bool(
+            verdict.get("frame_is_interesting") is True
+            and verdict.get("excessive_dead_space") is False
+            and verdict.get("meaningless_dominant_decoration") is False
+            and verdict.get("thumbnail_has_clear_click_hook") is True
+            and isinstance(composition_conflicts, list)
+            and not composition_conflicts
+        )
+    else:
+        identity_passed = bool(
+            verdict.get("source_lidousha_located") is True
+            and verdict.get("primary_subject_is_lidousha") is True
+            and verdict.get("primary_subject_matches_other_source_participant")
+            is False
+            and isinstance(identity_conflicts, list)
+            and not identity_conflicts
+        )
+        composition_passed = bool(
+            verdict.get("primary_subject_is_visually_dominant") is True
+            and verdict.get("primary_subject_face_is_large_and_clear") is True
+            and verdict.get("primary_subject_carries_story_reaction") is True
+            and verdict.get("excessive_dead_space") is False
+            and verdict.get("meaningless_dominant_decoration") is False
+            and verdict.get("thumbnail_has_clear_click_hook") is True
+            and isinstance(composition_conflicts, list)
+            and not composition_conflicts
+        )
     if identity_passed and composition_passed:
         verification["status"] = "PASS"
     elif identity_passed:
         verification.update(
             status="FAIL",
-            reason_code="FINAL_COVER_SUBJECT_PROMINENCE_FAILED",
+            reason_code=(
+                "FINAL_COVER_GAME_SCENE_COMPOSITION_FAILED"
+                if scene == "game"
+                else "FINAL_COVER_SUBJECT_PROMINENCE_FAILED"
+            ),
             detail=str(
                 verdict.get("reason")
                 or composition_conflicts
@@ -285,6 +647,205 @@ def verify_final_host_identity(
             ),
         )
     return verification
+
+
+def disregard_self_inconsistent_host_identity_witness(
+    cover_generation: MutableMapping[str, object],
+    *,
+    joint_qc_receipt_path: Path | str,
+) -> dict[str, object]:
+    """Attach the successor evidence that carries a disregarded witness's job.
+
+    维护者 亲裁：自相矛盾的见证「完全没有否决权、完全不可信」。它既不
+    否决也不放行，门的结论改由其余独立证据承担——同包的 title+cover 联合 QC
+    回执。两者都缺就仍然 fail-closed。
+
+    这是 integrator 的**显式**一步：不接进 publish_staging，也不接进 runner。
+    生成时刻根本没有联合 QC 回执，自动挂载只会变成"矛盾即自动放行"。
+
+    磁盘 I/O 在这里做（读回执、核对成品封面真实字节）；`validate_final_host_
+    identity_verification` 保持纯函数，对内嵌副本逐条重放同样的绑定。
+    """
+
+    verification = cover_generation.get("final_host_identity_verification")
+    receipt_path = Path(joint_qc_receipt_path)
+
+    def _refuse(reason_code: str, detail: object) -> dict[str, object]:
+        base: dict[str, object]
+        if isinstance(verification, Mapping) and isinstance(
+            verification.get("self_inconsistent_witness"), Mapping
+        ):
+            base = copy.deepcopy(dict(verification["self_inconsistent_witness"]))
+        else:
+            base = {
+                "schema_version": SELF_INCONSISTENT_SCHEMA_VERSION,
+                "authority": REVIEWER_SELF_INCONSISTENT_RULING,
+                "precedent": SELF_INCONSISTENT_PRECEDENT,
+                "contradictions": [],
+            }
+        base.update(
+            status=SELF_INCONSISTENT_REFUSED_STATUS,
+            reason_code=reason_code,
+            detail=detail,
+            corroborating_receipt_path=str(receipt_path),
+        )
+        if isinstance(verification, MutableMapping):
+            verification["self_inconsistent_witness"] = base
+        return base
+
+    if not isinstance(verification, Mapping):
+        return _refuse("IDENTITY_VERIFICATION_MISSING", "no verification receipt")
+    contradictions = host_identity_verdict_contradictions(verification.get("verdict"))
+    if not contradictions:
+        # 没有确凿矛盾就没有可豁免的东西。明确否定（identity_conflicts 非空、
+        # 或 primary_subject_is_lidousha=False）走这条分支被拒——它们保留完整
+        # 否决权，本机制不得替它们开门。
+        return _refuse(
+            "SELF_INCONSISTENCY_ABSENT",
+            "verdict is not self-inconsistent; its verdict keeps full veto power",
+        )
+    if verification.get("reason_code") != SELF_INCONSISTENT_REASON_CODE:
+        return _refuse(
+            "IDENTITY_VERIFICATION_REASON_CODE_MISMATCH",
+            str(verification.get("reason_code") or ""),
+        )
+    witness = verification.get("witness")
+    try:
+        parsed_answer = (
+            dict(_extract_json_object(str(witness.get("answer") or "")))
+            if isinstance(witness, Mapping)
+            else None
+        )
+    except (ValueError, json.JSONDecodeError):
+        parsed_answer = None
+    if parsed_answer != dict(verification.get("verdict") or {}):
+        # 防伪造：改写 verdict 就能把一条"明确否定"装成"自相矛盾"。verdict 必须
+        # 仍是见证回答的逐字解析结果。validator 也独立再查一遍。
+        return _refuse(
+            "VERDICT_IS_NOT_THE_PARSED_WITNESS_ANSWER",
+            "preserved verdict diverges from the witness answer verbatim",
+        )
+
+    final_cover_sha256 = str(cover_generation.get("final_cover_sha256") or "")
+    try:
+        actual_cover_sha = _sha256(Path(str(cover_generation.get("final_cover") or "")))
+        receipt_bytes = receipt_path.read_bytes()
+    except OSError as exc:
+        return _refuse("CORROBORATING_INPUT_UNREADABLE", f"{type(exc).__name__}: {exc}")
+    if actual_cover_sha != final_cover_sha256:
+        return _refuse(
+            "FINAL_COVER_BYTES_DRIFTED",
+            f"declared {final_cover_sha256}, on disk {actual_cover_sha}",
+        )
+    try:
+        receipt = json.loads(receipt_bytes.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as exc:
+        return _refuse("CORROBORATING_RECEIPT_UNPARSEABLE", f"{type(exc).__name__}: {exc}")
+    problems = _joint_qc_corroboration_problems(
+        receipt, final_cover_sha256=actual_cover_sha
+    )
+    if problems:
+        return _refuse("CORROBORATING_RECEIPT_UNBOUND", problems)
+
+    disclosure = copy.deepcopy(dict(verification["self_inconsistent_witness"])) if isinstance(
+        verification.get("self_inconsistent_witness"), Mapping
+    ) else _pending_self_inconsistency_disclosure(
+        verdict=dict(verification.get("verdict") or {}),
+        witness_answer=str(
+            (verification.get("witness") or {}).get("answer")
+            if isinstance(verification.get("witness"), Mapping)
+            else ""
+        ),
+        contradictions=contradictions,
+    )
+    disclosure.update(
+        status=SELF_INCONSISTENT_DISREGARDED_STATUS,
+        reason_code=None,
+        detail=None,
+        contradictions=copy.deepcopy(contradictions),
+        corroborating_evidence={
+            "kind": "title_cover_joint_qc",
+            "receipt_path": str(receipt_path),
+            "receipt_sha256": "sha256:" + hashlib.sha256(receipt_bytes).hexdigest(),
+            "schema_version": receipt.get("schema_version"),
+            "cover_sha256": receipt.get("cover_sha256"),
+            "receipt": copy.deepcopy(receipt),
+        },
+    )
+    if isinstance(verification, MutableMapping):
+        verification["self_inconsistent_witness"] = disclosure
+    return disclosure
+
+
+def _self_inconsistent_disregard_valid(
+    verification: Mapping[str, object],
+    *,
+    final_cover_sha256: str,
+) -> bool:
+    """Pure replay of the disregard branch: contradiction + successor evidence."""
+
+    # 本豁免只对**当前 v3 世代**的见证成立，绝不搭冻结出版结转（v2）那条线：
+    # ①矛盾对的互斥性是从 v3 `_QUESTION` 的字段定义推出来的，v2 世代从没承诺
+    # 过同一套语义；②结转条款的全部理由是"发布时点那份见证 PASS 过，对这串
+    # 字节是既成证据"——一份结转过来的 FAIL/自不一致回执什么都没证成，让它进
+    # 豁免通道等于把机制扩到 维护者 没裁过的世代上。
+    if (
+        verification.get("schema_version") != SCHEMA_VERSION
+        or verification.get("authority") != AUTHORITY
+    ):
+        return False
+    if verification.get("status") != "FAIL":
+        return False
+    if verification.get("reason_code") != SELF_INCONSISTENT_REASON_CODE:
+        return False
+    verdict = verification.get("verdict")
+    if not isinstance(verdict, Mapping):
+        return False
+    # 矛盾判定永远从**保留的原文 verdict** 现算，绝不信披露里的任何布尔标记。
+    contradictions = host_identity_verdict_contradictions(verdict)
+    if not contradictions:
+        return False
+    # verdict 必须仍是见证回答的逐字解析结果，否则可以靠改写 verdict 把一条
+    # "明确否定"伪装成"自相矛盾"再走本分支放行。
+    witness = verification.get("witness")
+    if not isinstance(witness, Mapping):
+        return False
+    try:
+        parsed_answer = dict(_extract_json_object(str(witness.get("answer") or "")))
+    except (ValueError, json.JSONDecodeError):
+        return False
+    if parsed_answer != dict(verdict):
+        return False
+    disclosure = verification.get("self_inconsistent_witness")
+    if not isinstance(disclosure, Mapping):
+        return False
+    if disclosure.get("schema_version") != SELF_INCONSISTENT_SCHEMA_VERSION:
+        return False
+    if disclosure.get("status") != SELF_INCONSISTENT_DISREGARDED_STATUS:
+        return False
+    if disclosure.get("authority") != REVIEWER_SELF_INCONSISTENT_RULING:
+        return False
+    if list(disclosure.get("contradictions") or []) != contradictions:
+        return False
+    if dict(disclosure.get("disregarded_verdict") or {}) != dict(verdict):
+        return False
+    evidence = disclosure.get("corroborating_evidence")
+    if not isinstance(evidence, Mapping) or evidence.get("kind") != "title_cover_joint_qc":
+        return False
+    if not str(evidence.get("receipt_path") or "").strip():
+        return False
+    if not str(evidence.get("receipt_sha256") or "").startswith("sha256:"):
+        return False
+    receipt = evidence.get("receipt")
+    if not isinstance(receipt, Mapping):
+        return False
+    if evidence.get("schema_version") != receipt.get("schema_version"):
+        return False
+    if evidence.get("cover_sha256") != receipt.get("cover_sha256"):
+        return False
+    return not _joint_qc_corroboration_problems(
+        receipt, final_cover_sha256=final_cover_sha256
+    )
 
 
 def validate_final_host_identity_verification(
@@ -329,9 +890,20 @@ def validate_final_host_identity_verification(
         == PUBLISHED_CARRY_SCHEMA_VERSION
         and verification.get("authority") == PUBLISHED_CARRY_AUTHORITY
     )
+    # 结论面二选一：①见证自己给出 PASS；②见证自相矛盾被整体作废，结论由
+    # 第三方承接证据承担（维护者 亲裁）。除这一项外，其余每条合取
+    # ——世代锁、成品字节绑定、对比图哈希绑定、provider 路由——一律照旧。
+    # 否则一份"矛盾形状"但根本没打过见证的回执就能只凭联合 QC 放行，正是
+    # 维护者 禁的"没有 witness 也能过"的侧门。
+    verdict_lane_valid = verification.get(
+        "status"
+    ) == "PASS" or _self_inconsistent_disregard_valid(
+        verification,
+        final_cover_sha256=str(cover_generation.get("final_cover_sha256") or ""),
+    )
     return bool(
         generation_pin_valid
-        and verification.get("status") == "PASS"
+        and verdict_lane_valid
         and verification.get("final_cover_sha256")
         == cover_generation.get("final_cover_sha256")
         and comparison_sha.startswith("sha256:")

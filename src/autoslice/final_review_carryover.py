@@ -14,7 +14,9 @@ route→adjudicate→apply 链——无特权：闭集声学仲裁、stale 守�
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -25,8 +27,19 @@ from src.autoslice.acoustic_witness_adjudication import (
 from src.autoslice.final_review_contract import (
     correction_carryover_consumed,
 )
+from src.autoslice.exact_source_transcript_authority import (
+    exact_source_transcript_candidate_marked,
+    valid_exact_source_transcript_adjudication_handoff,
+)
 
 SCHEMA_VERSION = "final-review-carryover.v1"
+# 硬退出侧车（维护者 15:05Z 交棒清单第 7 项「硬退出丢 carryover
+# (超时/崩溃跳过侧车落盘)」）：exact 终审的确证行只在**整轮结束**时才落盘，
+# 中间被 SIGKILL（runner `subprocess.run(timeout=5400)` 超时即 kill）或被非
+# `SystemExit` 异常打断，这一轮算出来的行就没了。checkpoint 是同一批行的
+# 「算出来就写」副本，与封存件同源同谓词、同样零特权。
+CHECKPOINT_SCHEMA_VERSION = "final-review-carryover-checkpoint.v1"
+INTEGRITY_SCHEMA_VERSION = "final-review-carryover-integrity.v1"
 _ROW_KEYS = (
     "cue",
     "base_text_sha256",
@@ -34,6 +47,8 @@ _ROW_KEYS = (
     "proposed_full_cue",
     "repair_class",
     "source_surface",
+    "candidate_provenance",
+    "draft_fidelity_kept_provenance",
     "candidate_memory_id",
     "evidence_cue_ids",
     "suspect",
@@ -47,8 +62,109 @@ def carryover_path(out_root: Path, cid: str) -> Path:
     return out_root / f"{cid}.final-review-carryover.json"
 
 
+def carryover_checkpoint_path(path: Path) -> Path:
+    """The in-flight sibling of a sealed carryover sidecar."""
+
+    return path.with_suffix(".checkpoint.json")
+
+
+def _rows_digest(rows: list[dict[str, Any]]) -> str:
+    payload = json.dumps(
+        rows, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _write_carryover_atomic(
+    path: Path, rows: list[dict[str, Any]], *, schema_version: str
+) -> None:
+    """Replace ``path`` in one step, never leaving a half-written sidecar.
+
+    ``Path.write_text`` truncates in place: a producer killed mid-write used to
+    destroy the **previous** round's still-unconsumed rows and leave bytes that
+    no longer parse.  Write a sibling temp file, fsync it, then ``os.replace``
+    — a reader sees either the whole old file or the whole new one.  The
+    integrity block is the second half of the same guarantee for any path that
+    does not go through this function (a truncated copy, an interrupted
+    transfer): a payload whose count/digest disagree with its rows is treated
+    as absent rather than consumed as a complete round.
+    """
+
+    payload = {
+        "schema_version": schema_version,
+        "findings": rows,
+        "integrity": {
+            "schema_version": INTEGRITY_SCHEMA_VERSION,
+            "finding_count": len(rows),
+            "findings_sha256": _rows_digest(rows),
+        },
+    }
+    text = (
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    )
+    temporary = path.with_name(f"{path.name}.tmp")
+    try:
+        with open(temporary, "w", encoding="utf-8") as sink:
+            sink.write(text)
+            sink.flush()
+            os.fsync(sink.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        # A SIGKILL still strands the temp file (the next write reuses the same
+        # name); an ordinary failure should not.
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def _load_carryover_rows(path: Path, *, schema_version: str) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if (
+        not isinstance(payload, Mapping)
+        or payload.get("schema_version") != schema_version
+    ):
+        return []
+    rows = [
+        dict(raw) for raw in payload.get("findings") or [] if isinstance(raw, Mapping)
+    ]
+    integrity = payload.get("integrity")
+    if integrity is None:
+        # Sidecars written before the marker existed (production still holds
+        # several) stay readable; they were sealed by the same predicate.
+        return rows
+    if not (
+        isinstance(integrity, Mapping)
+        and integrity.get("schema_version") == INTEGRITY_SCHEMA_VERSION
+        and integrity.get("finding_count") == len(rows)
+        and integrity.get("findings_sha256") == _rows_digest(rows)
+    ):
+        return []
+    return rows
+
+
+def _row_key(row: Mapping[str, Any]) -> tuple[object, object, object]:
+    return (
+        row.get("base_text_sha256") or row.get("cue"),
+        row.get("suspect"),
+        row.get("proposed_full_cue"),
+    )
+
+
+def _deduplicated_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduplicated: dict[tuple[object, object, object], dict[str, Any]] = {}
+    for row in rows:
+        deduplicated[_row_key(row)] = row
+    return list(deduplicated.values())
+
+
 def adjudicated_proposed_full_cue(
     finding: Mapping[str, Any],
+    *,
+    srt_text: str | None = None,
+    expected_srt_sha256: object = None,
+    clip_context: Mapping[str, object] | None = None,
 ) -> str | None:
     """Return the exact CPA-authorized target cue, including normalized gaps.
 
@@ -61,13 +177,48 @@ def adjudicated_proposed_full_cue(
     """
 
     direct = finding.get("proposed_full_cue")
-    if isinstance(direct, str) and direct.strip():
-        return direct
     adjudication = finding.get("exact_release_adjudication")
+    request = (
+        adjudication.get("request")
+        if isinstance(adjudication, Mapping)
+        else None
+    )
+    candidate_provenance = finding.get("candidate_provenance")
+    exact_source_transcript_candidate = (
+        exact_source_transcript_candidate_marked(
+            adjudication=(
+                adjudication
+                if isinstance(adjudication, Mapping)
+                else None
+            ),
+            request=request if isinstance(request, Mapping) else None,
+            candidate_provenance=(
+                candidate_provenance
+                if isinstance(candidate_provenance, Mapping)
+                else None
+            ),
+        )
+    )
+    if exact_source_transcript_candidate:
+        if not isinstance(adjudication, Mapping) or not (
+            valid_exact_source_transcript_adjudication_handoff(
+                adjudication,
+                srt_text=srt_text,
+                expected_srt_sha256=expected_srt_sha256,
+                candidate_provenance=(
+                    candidate_provenance
+                    if isinstance(candidate_provenance, Mapping)
+                    else None
+                ),
+                clip_context=clip_context,
+            )
+        ):
+            return None
+    elif isinstance(direct, str) and direct.strip():
+        return direct
     if not isinstance(adjudication, Mapping):
         return None
     mutation = adjudication.get("mutation_authority")
-    request = adjudication.get("request")
     witness_judge = adjudication.get("witness_judge")
     judge = (
         witness_judge.get("judge")
@@ -103,6 +254,11 @@ def adjudicated_proposed_full_cue(
         and isinstance(proposed, str)
         and isinstance(current, str)
         and proposed != current
+        and (
+            not exact_source_transcript_candidate
+            or direct is None
+            or direct == proposed
+        )
     ):
         return None
     if proposed == "":
@@ -128,6 +284,106 @@ def adjudicated_proposed_full_cue(
         ):
             return None
     return proposed
+
+
+def _confirmed_exact_final_rows(
+    audit: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Rows for exact-final findings the acoustic/judge chain已确证该改。
+
+    Single predicate shared by the end-of-round seal and the in-flight
+    checkpoint: a checkpoint must never be able to carry a row the sealed write
+    would have refused.
+    """
+
+    rows: list[dict[str, Any]] = []
+    for finding in audit.get("findings") or []:
+        if not isinstance(finding, Mapping):
+            continue
+        adjudication = finding.get("exact_release_adjudication")
+        if not (
+            isinstance(adjudication, Mapping)
+            and adjudication.get("repaired") is True
+        ):
+            continue
+        row = {key: finding.get(key) for key in _ROW_KEYS if key in finding}
+        proposed_full_cue = adjudicated_proposed_full_cue(
+            finding,
+            expected_srt_sha256=audit.get("reviewed_srt_sha256"),
+        )
+        request = adjudication.get("request")
+        provenance = finding.get("candidate_provenance")
+        if proposed_full_cue is None and (
+            exact_source_transcript_candidate_marked(
+                adjudication=adjudication,
+                request=request if isinstance(request, Mapping) else None,
+                candidate_provenance=(
+                    provenance if isinstance(provenance, Mapping) else None
+                ),
+            )
+        ):
+            continue
+        if proposed_full_cue is not None:
+            row["proposed_full_cue"] = proposed_full_cue
+        # Normalized final-review findings expose the deterministic edit as
+        # ``suggestion`` and the textual spelling witness as
+        # ``candidate_provenance``.  The raw schema consumed by the next
+        # correction pass calls those fields ``replacement`` and
+        # ``source_surface``.  Preserve that translation explicitly,
+        # especially for zero-length glossary insertions such as
+        # 粉丝灯牌 -> 粉丝团灯牌; otherwise the next pass rejects the carried
+        # row as ENTITY_SOURCE_SURFACE_INVALID and the exact reviewer finds
+        # the same issue forever.
+        if "replacement" not in row and finding.get("suggestion") is not None:
+            row["replacement"] = finding.get("suggestion")
+        if (
+            "source_surface" not in row
+            and isinstance(provenance, Mapping)
+            and isinstance(provenance.get("surface"), str)
+            and str(provenance["surface"]).strip()
+        ):
+            row["source_surface"] = str(provenance["surface"]).strip()
+        row["cue"] = finding.get("cue_index") or finding.get("cue")
+        row["why"] = (
+            f"[终审结转] {finding.get('why') or ''} "
+            "（上轮 exact 终审已声学确证该修复，本轮由 correction pass 正式落盘）"
+        ).strip()
+        rows.append(row)
+    return rows
+
+
+def checkpoint_final_review_carryover(
+    path: Path, audit: Mapping[str, Any]
+) -> int:
+    """Write this exact-final pass's confirmed rows before the round ends.
+
+    The sealed sidecar is only written once the whole exact-final gate reaches
+    a verdict — after up to five more self-heal passes, each another full
+    acoustic/LLM scan.  A producer killed in that window (the runner's
+    ``subprocess.run(timeout=5400)`` sends SIGKILL, which no ``finally`` and no
+    signal handler can survive) used to lose everything this round confirmed.
+
+    Deliberately additive-only: it never rewrites and never deletes the sealed
+    file, so an interrupted round can only ever *add* replay candidates.  The
+    rows carry no privilege — the next correction pass routes, adjudicates and
+    stale-guards them exactly like a fresh LLM finding.
+    """
+
+    checkpoint = carryover_checkpoint_path(path)
+    rows = _deduplicated_rows(
+        [
+            *_load_carryover_rows(
+                checkpoint, schema_version=CHECKPOINT_SCHEMA_VERSION
+            ),
+            *_confirmed_exact_final_rows(audit),
+        ]
+    )
+    if not rows:
+        return 0
+    _write_carryover_atomic(
+        checkpoint, rows, schema_version=CHECKPOINT_SCHEMA_VERSION
+    )
+    return len(rows)
 
 
 def persist_final_review_carryover(path: Path, audit: Mapping[str, Any]) -> int:
@@ -174,44 +430,7 @@ def persist_final_review_carryover(path: Path, audit: Mapping[str, Any]) -> int:
         }
         if row:
             rows.append(row)
-    for finding in audit.get("findings") or []:
-        if not isinstance(finding, Mapping):
-            continue
-        adjudication = finding.get("exact_release_adjudication")
-        if not (
-            isinstance(adjudication, Mapping)
-            and adjudication.get("repaired") is True
-        ):
-            continue
-        row = {key: finding.get(key) for key in _ROW_KEYS if key in finding}
-        proposed_full_cue = adjudicated_proposed_full_cue(finding)
-        if proposed_full_cue is not None:
-            row["proposed_full_cue"] = proposed_full_cue
-        # Normalized final-review findings expose the deterministic edit as
-        # ``suggestion`` and the textual spelling witness as
-        # ``candidate_provenance``.  The raw schema consumed by the next
-        # correction pass calls those fields ``replacement`` and
-        # ``source_surface``.  Preserve that translation explicitly,
-        # especially for zero-length glossary insertions such as
-        # 粉丝灯牌 -> 粉丝团灯牌; otherwise the next pass rejects the carried
-        # row as ENTITY_SOURCE_SURFACE_INVALID and the exact reviewer finds
-        # the same issue forever.
-        if "replacement" not in row and finding.get("suggestion") is not None:
-            row["replacement"] = finding.get("suggestion")
-        provenance = finding.get("candidate_provenance")
-        if (
-            "source_surface" not in row
-            and isinstance(provenance, Mapping)
-            and isinstance(provenance.get("surface"), str)
-            and str(provenance["surface"]).strip()
-        ):
-            row["source_surface"] = str(provenance["surface"]).strip()
-        row["cue"] = finding.get("cue_index") or finding.get("cue")
-        row["why"] = (
-            f"[终审结转] {finding.get('why') or ''} "
-            "（上轮 exact 终审已声学确证该修复，本轮由 correction pass 正式落盘）"
-        ).strip()
-        rows.append(row)
+    rows.extend(_confirmed_exact_final_rows(audit))
     correction_pass = audit.get("correction_pass")
     correction_discovery = (
         correction_pass.get("discovery")
@@ -246,41 +465,44 @@ def persist_final_review_carryover(path: Path, audit: Mapping[str, Any]) -> int:
         if not rows:
             return len(prior_rows)
         rows = [*prior_rows, *rows]
-    deduplicated: dict[tuple[object, object, object], dict[str, Any]] = {}
-    for row in rows:
-        key = (
-            row.get("base_text_sha256") or row.get("cue"),
-            row.get("suspect"),
-            row.get("proposed_full_cue"),
-        )
-        deduplicated[key] = row
-    rows = list(deduplicated.values())
+    rows = _deduplicated_rows(rows)
     if not rows:
+        # Nothing outstanding: the in-flight checkpoint of this same round is
+        # now superseded by the clean verdict and must not outlive it.
         path.unlink(missing_ok=True)
+        carryover_checkpoint_path(path).unlink(missing_ok=True)
         return 0
-    path.write_text(
-        json.dumps(
-            {"schema_version": SCHEMA_VERSION, "findings": rows},
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    _write_carryover_atomic(path, rows, schema_version=SCHEMA_VERSION)
     return len(rows)
 
 
 def load_final_review_carryover(path: Path) -> list[dict[str, Any]]:
-    """Load prior-round confirmed findings; malformed/absent → [] (fail-open)."""
+    """Load sealed prior-round findings; malformed/absent → [] (fail-open).
 
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    if (
-        not isinstance(payload, Mapping)
-        or payload.get("schema_version") != SCHEMA_VERSION
-    ):
-        return []
-    return [dict(raw) for raw in payload.get("findings") or [] if isinstance(raw, Mapping)]
+    Sealed-only on purpose.  The same-run exact-final replay
+    (``producer_package_finalization._replayable_exact_final_carryover_findings``)
+    reads through here and must keep seeing only rows a completed round sealed;
+    the checkpoint is a next-round replay candidate, never a same-run authority.
+    """
+
+    return _load_carryover_rows(path, schema_version=SCHEMA_VERSION)
+
+
+def load_replayable_final_review_carryover(path: Path) -> list[dict[str, Any]]:
+    """Sealed rows plus anything a hard-exited round only got as far as checkpointing.
+
+    Consumed by the next round's correction pass, which is the one place that
+    is allowed to see both.  Sealed rows win on a collision: a completed round
+    outranks an interrupted one.
+    """
+
+    sealed = _load_carryover_rows(path, schema_version=SCHEMA_VERSION)
+    checkpointed = _load_carryover_rows(
+        carryover_checkpoint_path(path),
+        schema_version=CHECKPOINT_SCHEMA_VERSION,
+    )
+    sealed_keys = {_row_key(row) for row in sealed}
+    return [
+        *sealed,
+        *(row for row in checkpointed if _row_key(row) not in sealed_keys),
+    ]

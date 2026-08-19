@@ -14,8 +14,10 @@ from src.autoslice.piece_roles import (
     content_only,
     is_reserve_piece,
     last_content_piece_index,
+    single_content_piece_index,
 )
 from src.autoslice.producer_boundary_owner_contract import (
+    _redelivery_baseline_tail_rel_ms,
     freeze_required_boundary_owner_contract,
 )
 from src.autoslice.source_subtitle_truth import candidate_boundary_owner_scope
@@ -66,6 +68,65 @@ def test_content_only_filters_reserve_from_parallel_sequence():
 def test_content_only_rejects_length_mismatch():
     with pytest.raises(ValueError):
         content_only([{"start_ms": 0, "end_ms": 1_000}], [1_000, 2_000])
+
+
+def test_single_content_piece_index_accepts_only_trailing_reserves():
+    assert single_content_piece_index(
+        [{"start_ms": 0, "end_ms": 1_000}, RESERVE_PIECE]
+    ) == 0
+
+
+@pytest.mark.parametrize(
+    "pieces",
+    [
+        [],
+        [RESERVE_PIECE],
+        [
+            {"start_ms": 0, "end_ms": 1_000},
+            {"start_ms": 2_000, "end_ms": 3_000},
+        ],
+        [RESERVE_PIECE, {"start_ms": 0, "end_ms": 1_000}],
+    ],
+)
+def test_single_content_piece_index_rejects_ambiguous_content_binding(pieces):
+    with pytest.raises(ValueError):
+        single_content_piece_index(pieces)
+
+
+def test_redelivery_baseline_tail_requires_single_content_piece_binding():
+    config = {
+        "schema_version": "subtitle-redelivery-baseline.v2",
+        "absolute_source_end_ms": 105_000,
+    }
+    content = {"start_ms": 100_000, "end_ms": 110_000}
+    spec = {
+        "pieces": [content, RESERVE_PIECE, RESERVE_PIECE],
+        "subtitle_redelivery_baseline": config,
+    }
+    assert _redelivery_baseline_tail_rel_ms(
+        spec,
+        last_piece_start_ms=100_000,
+        prior_piece_duration_ms=0,
+    ) == 5_000
+
+    spec["pieces"] = [content, {"start_ms": 110_000, "end_ms": 120_000}]
+    assert (
+        _redelivery_baseline_tail_rel_ms(
+            spec,
+            last_piece_start_ms=110_000,
+            prior_piece_duration_ms=10_000,
+        )
+        is None
+    )
+    spec["pieces"] = [RESERVE_PIECE, content]
+    assert (
+        _redelivery_baseline_tail_rel_ms(
+            spec,
+            last_piece_start_ms=100_000,
+            prior_piece_duration_ms=88_000,
+        )
+        is None
+    )
 
 
 def _base_spec(*, extra_pieces=None):
@@ -123,6 +184,57 @@ def test_freeze_required_boundary_owner_contract_ignores_trailing_reserve_piece(
         "frozen_boundary_owner_contract"
     ]["boundary_review_target_ms"]
     assert with_reserve_target == without_reserve_target
+
+
+def test_payoff_outside_story_yields_only_to_reachable_reviewed_tail():
+    """Synthetic 1722 shape: the chat row stays outside the immutable story
+    owner set, while its payoff hypothesis can yield to a reachable reviewed
+    v2 tail cap.  The trailing reserve remains source witness only.
+    """
+
+    content = {"start_ms": 0, "end_ms": 90_000}
+    spec = {
+        "candidate_id": "candidate-payoff-tail",
+        "semantic_start_ms": 0,
+        "semantic_end_ms": 80_570,
+        "boundary_repair_extend_cap_ms": 30_000,
+        "semantic_tail_trim_cap_ms": 15_000,
+        "pieces": [content, RESERVE_PIECE],
+        "subtitle_redelivery_baseline": {
+            "schema_version": "subtitle-redelivery-baseline.v2",
+            "absolute_source_start_ms": 0,
+            "absolute_source_end_ms": 67_760,
+        },
+    }
+    payoff = {
+        "kind": "danmaku",
+        "finding_id": "later-payoff-hypothesis",
+        "source_offset_ms": 80_000,
+        "matched_start_ms": 82_000,
+        "matched_end_ms": 84_240,
+        "owner_eligible": True,
+    }
+    audit: dict[str, object] = {"applied": [payoff]}
+
+    freeze_required_boundary_owner_contract(
+        spec=spec,
+        durations=[90_000, 88_000],
+        chat_authority_audit=audit,
+        required_boundary_owners=[],
+    )
+
+    assert payoff["boundary_required"] is False
+    assert payoff["boundary_owner_rejection"] == (
+        "OUTSIDE_IMMUTABLE_STORY_SCOPE"
+    )
+    frozen = audit["frozen_boundary_owner_contract"]
+    assert frozen["required_owner_count"] == 0
+    scope = frozen["boundary_search_scope"]
+    assert scope["status"] == "PASS"
+    assert scope["structured_payoff_ms"] == 84_240
+    assert scope["structured_payoff_clamped_from_ms"] == 84_240
+    assert scope["delivery_lower_bound_ms"] == 67_760
+    assert scope["max_recommended_end_ms"] == 67_760
 
 
 def test_available_local_source_context_end_ms_counts_the_reserve_piece():

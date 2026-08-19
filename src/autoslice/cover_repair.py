@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 
 from src.autoslice.runner_proxy import RunnerProxy
+from src.autoslice import cover_repair_route_lineage as _route_lineage
 from src.autoslice.cover_route_evidence import (
     build_cover_route_decision,
     record_cover_route_execution,
@@ -40,7 +41,7 @@ from src.autoslice.verified_io import (
     _read_json_object,
     _document_video_hash,
 )
-from src.autoslice.song_delivery import SongDeliveryError, song_portable_cover_replay_specs
+from src.autoslice.song_delivery import SongDeliveryError, cover_generation_is_song, song_portable_cover_replay_specs
 
 
 _runner = RunnerProxy()
@@ -152,6 +153,7 @@ def _enrich_repaired_cover_generation(
     generation_path: Path,
     documents: list[tuple[Path, dict]],
     title: str,
+    prior_generation: object = None,
 ) -> tuple[dict, Path]:
     """Bind generic cover repair to the active story and route authority.
 
@@ -163,7 +165,7 @@ def _enrich_repaired_cover_generation(
 
     story_contract = _active_story_contract(documents)
     if story_contract is None:
-        if bool(generation.get("is_song")):
+        if cover_generation_is_song(generation):
             enriched = copy.deepcopy(generation)
             cover_text = str(enriched.get("cover_text") or title)
             enriched["cover_origin"] = "AI_REDRAW"
@@ -206,15 +208,16 @@ def _enrich_repaired_cover_generation(
     enriched["story_contract"] = story_contract
     enriched["cover_origin"] = "AI_REDRAW"
     enriched["reference_authority"] = (
-        copy.deepcopy(reference_authority)
-        if isinstance(reference_authority, dict)
-        else None
+        copy.deepcopy(reference_authority) if isinstance(reference_authority, dict) else None
     )
+    # 截图像素还在盘上的情形已被 preflight 拦去 repair_screenshot_cover.py；
+    # 到这里只剩"像素已丢"，重绘是唯一出路，被顶替的路线 typed 披露。
+    displaced = _route_lineage.record_screenshot_route_displacement(enriched, prior_generation)
     enriched["route_decision"] = build_cover_route_decision(
         selected_treatment="cpa_redraw",
         selected_rationale=(
             "cover-only repair replaced a missing or invalid cover under the "
-            "active title and StoryContract authority"
+            "active title and StoryContract authority" + displaced
         ),
         story_contract=story_contract,
         reference_authority=reference_authority,
@@ -222,8 +225,8 @@ def _enrich_repaired_cover_generation(
         cover_text=cover_text,
         decision_inputs={
             "cover_mode": "repair",
-            "is_song": bool(enriched.get("is_song")),
-            "cover_punch_allowed": not bool(enriched.get("is_song")),
+            "is_song": cover_generation_is_song(enriched),
+            "cover_punch_allowed": not cover_generation_is_song(enriched),
             "full_text_cover_contract": False,
             "frame_score": None,
             "frame_emotion": None,
@@ -1183,10 +1186,9 @@ def _bind_repaired_cover(
         generation_path=generation_path,
         documents=documents,
         title=title,
+        prior_generation=rec.get("cover_generation"),
     )
-    generation_sha256 = (
-        "sha256:" + _runner._sha256_regular_file(generation_path)
-    )
+    generation_sha256 = "sha256:" + _runner._sha256_regular_file(generation_path)
     song_manifest = _active_song_delivery_manifest(
         rec,
         candidate_id=cid,
@@ -2196,14 +2198,12 @@ def _cover_authority_preflight(date: str, rec: dict, mp4: Path) -> None:
                 f"convert a blocked title into a review-ready package: {path}"
             )
     story_contract = _active_story_contract(documents)
-    if (
-        story_contract is not None
-        and relationship_visual_safety_required(story_contract)
-    ):
+    if story_contract is not None and relationship_visual_safety_required(story_contract):
         raise ValueError(
             "COVER_RELATIONSHIP_REFERENCE_UNRESOLVED: generic cover repair "
             "cannot prove every participant in a relationship story"
         )
+    _route_lineage.refuse_recoverable_screenshot_route(rec)
     manifest = _active_song_delivery_manifest(
         rec,
         candidate_id=candidate_id,

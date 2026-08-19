@@ -12,16 +12,29 @@ import copy
 import hashlib
 import json
 import re
-import subprocess
+import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import NamedTuple
 
 from src.autoslice.candidate_selection import _exact_talk_contract_ids
+from src.autoslice.final_review_carryover_retry import (
+    unconsumed_final_review_carryover as _unconsumed_final_review_carryover,
+)
+from src.autoslice.final_review_provider_budget_retry import (
+    LEDGER_FIELD as FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD,
+    LEDGER_STATE_EMPTY as FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_EMPTY,
+    LEDGER_STATE_INVALID as FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_INVALID,
+    consumed_provider_budget_retry_ledger,
+    preserved_provider_budget_retry_ledger,
+    provider_budget_retry_claimed,
+    resolve_provider_budget_retry_ledger_history,
+    unconsumed_provider_budget_retry,
+)
 from src.autoslice.batch_terminal_state import (
-    SONG_DETERMINISTIC_PROOF_REJECTION_CODES,
     project_terminal_song_disposition,
+    song_infra_transient_is_active,
 )
 from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.recovery_title_authority import (
@@ -29,10 +42,55 @@ from src.autoslice.recovery_title_authority import (
     expected_recovery_publish_title,
     validate_recovery_publication_authority,
 )
+from src.autoslice import historical_recording_duration, selection_rescore
+from src.autoslice.semantic_scorecard_refresh_receipt import copied_refresh_receipt
+from src.autoslice.selected_source_fact_recovery import (
+    PICK_TO_QUEUE_TRANSITION,
+    RECOVERY_RECEIPT_FIELD as SELECTED_SOURCE_FACT_RECOVERY_RECEIPT_FIELD,
+    advance_selected_source_fact_recovery_receipt,
+    build_selected_source_fact_recovery_receipt,
+    is_selected_source_fact_rejection,
+)
+from src.autoslice.selected_final_review_recovery import (
+    PICK_TO_QUEUE_TRANSITION as FINAL_REVIEW_PICK_TO_QUEUE_TRANSITION,
+    RECOVERY_RECEIPT_FIELD as SELECTED_FINAL_REVIEW_RECOVERY_RECEIPT_FIELD,
+    advance_selected_final_review_recovery_receipt,
+    build_selected_final_review_recovery_receipt,
+    is_selected_final_review_rejection,
+    active_selected_final_review_recovery_scope,
+)
 from src.autoslice.selection_scorecard import apply_reviewed_selection_calibration
-
+from src.autoslice.speaker_manual_review import (
+    SPEAKER_MANUAL_REVIEW_STATUSES,
+    park_for_manual_review,
+    restore_fossilized_speaker_holds,
+)
+from src.autoslice import song_name_authority
+from src.autoslice.talk_quota_freeze import carry_frozen_admission
+from src.autoslice.talk_recovery_record_policy import (
+    supplemental_recovery_candidate,
+)
 
 _runner = RunnerProxy()
+
+# The focused Talk requeue leaf resolves these through this live module object
+# so existing runner/test monkeypatch seams remain authoritative after extraction.
+_TALK_DELIVERY_RECOVERY_RUNTIME_EXPORTS = (
+    PICK_TO_QUEUE_TRANSITION,
+    SELECTED_SOURCE_FACT_RECOVERY_RECEIPT_FIELD,
+    advance_selected_source_fact_recovery_receipt,
+    build_selected_source_fact_recovery_receipt,
+    is_selected_source_fact_rejection,
+    restore_fossilized_speaker_holds,
+    carry_frozen_admission,
+    supplemental_recovery_candidate,
+    preserved_provider_budget_retry_ledger,
+    FINAL_REVIEW_PICK_TO_QUEUE_TRANSITION,
+    SELECTED_FINAL_REVIEW_RECOVERY_RECEIPT_FIELD,
+    advance_selected_final_review_recovery_receipt,
+    build_selected_final_review_recovery_receipt,
+    is_selected_final_review_rejection,
+)
 
 _PIPELINE_FINGERPRINT_RX = re.compile(r"sha256:[0-9a-f]{64}")
 _SAFE_CANDIDATE_ID_RX = re.compile(r"[A-Za-z0-9_-]{1,96}")
@@ -61,7 +119,6 @@ INFRASTRUCTURE_WAIT_FAILURE_KINDS = frozenset(
 )
 
 SANCTIONED_REVIVAL_RETRY_SCHEMA = "sanctioned-revival-retry.v1"
-FINAL_REVIEW_CARRYOVER_RETRY_CAP = 8
 CONTENT_BOUNDARY_RECOVERY_RELATIVES = (
     "scripts/produce_slice_package.py",
     "src/autoslice/jingting_chunker.py",
@@ -69,14 +126,26 @@ CONTENT_BOUNDARY_RECOVERY_RELATIVES = (
     "src/autoslice/boundary_endpoint_binding.py",
     "src/autoslice/boundary_resolver.py",
     "src/autoslice/boundary_semantic_review.py",
+    "src/autoslice/boundary_semantic_projection.py",
     "src/autoslice/boundary_source_context_coverage.py",
     "src/autoslice/final_review_contract.py",
+    "src/autoslice/frozen_boundary_receipt.py",
+    "src/autoslice/frozen_source_boundary_receipt.py",
+    "src/autoslice/piece_roles.py",
     "src/autoslice/producer_boundary.py",
     "src/autoslice/producer_boundary_owner_contract.py",
     "src/autoslice/producer_boundary_resolution.py",
     "src/autoslice/producer_boundary_review_stage.py",
+    "src/autoslice/producer_source_boundary_review.py",
+    "src/autoslice/producer_source_media.py",
     "src/autoslice/producer_request.py",
     "src/autoslice/producer_text_pipeline.py",
+    "src/autoslice/redelivery_boundary_projection.py",
+    "src/autoslice/redelivery_source_binding.py",
+    "src/autoslice/redelivery_subtitle_baseline.py",
+    "src/autoslice/reviewed_exact_source_interval.py",
+    "src/autoslice/source_subtitle_truth.py",
+    "src/autoslice/talk_delivery_recovery.py",
     "src/autoslice/talk_lane.py",
 )
 
@@ -91,7 +160,10 @@ class _TalkRetryDecision(NamedTuple):
     sanctioned_revival_retry: dict[str, object] | None
     carryover_fingerprint: str | None
     carryover_retry: bool
+    provider_budget_ledger: dict[str, object] | None
     sanctioned_retry: bool
+    rescore_fingerprint: str | None
+    rescore_retry: bool
 
 
 def _pending_sanctioned_revival_retry(
@@ -127,35 +199,13 @@ def _pending_sanctioned_revival_retry(
     return dict(marker)
 
 
-def _unconsumed_final_review_carryover(
-    record: Mapping[str, object],
-) -> str | None:
-    fingerprint = record.get("failure_fingerprint")
-    consumed = record.get("final_review_carryover_consumed_fingerprints")
-    consumed_fingerprints = (
-        [value for value in consumed if isinstance(value, str)]
-        if isinstance(consumed, list)
-        else []
-    )
-    if (
-        record.get("status") != "failed"
-        or record.get("failure_recoverable") is not True
-        or record.get("failure_stage") != "final_review_carryover"
-        or not isinstance(fingerprint, str)
-        or _PIPELINE_FINGERPRINT_RX.fullmatch(fingerprint) is None
-        or fingerprint in consumed_fingerprints
-        or len(consumed_fingerprints) >= FINAL_REVIEW_CARRYOVER_RETRY_CAP
-    ):
-        return None
-    return fingerprint
-
-
 def _talk_retry_decision(
     record: Mapping[str, object],
     *,
     cid: str,
     existing_pending: set[str],
     current_recovery: str,
+    provider_budget_history: Collection[object] = (),
 ) -> _TalkRetryDecision | None:
     """Return the bounded retry route, or ``None`` when this tick must keep it."""
 
@@ -203,11 +253,53 @@ def _talk_retry_decision(
     sanctioned_revival_retry = _pending_sanctioned_revival_retry(record)
     carryover_fingerprint = _unconsumed_final_review_carryover(record)
     carryover_retry = carryover_fingerprint is not None
+    provider_budget_retry = unconsumed_provider_budget_retry(
+        record,
+        candidate_id=cid,
+        history_records=provider_budget_history,
+    )
+    provider_budget_ledger = (
+        consumed_provider_budget_retry_ledger(
+            record,
+            candidate_id=cid,
+            retry=provider_budget_retry,
+            history_records=provider_budget_history,
+        )
+        if provider_budget_retry is not None
+        else None
+    )
+    ledger_state, _ = resolve_provider_budget_retry_ledger_history(
+        record,
+        candidate_id=cid,
+        history_records=provider_budget_history,
+    )
+    if (
+        ledger_state
+        in {
+            FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_EMPTY,
+            FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_INVALID,
+        }
+        and provider_budget_ledger is None
+    ):
+        # An explicit ledger is authority, not optional decoration.  A bad or
+        # foreign-CID value must not disappear through an unrelated generic
+        # changed/transient retry.  The only non-preserved form accepted here
+        # is a structurally valid empty ledger being consumed by this route.
+        return None
+    if provider_budget_retry_claimed(record) and provider_budget_ledger is None:
+        return None
     sanctioned_retry = sanctioned_revival_retry is not None
+    # 狍哥案修复：selection_rescore 有自己的有界一次性预算
+    # （sha256(failure_fingerprint + repaired_hook_sha256)，CAP=2），独立于
+    # 通用 transient/lifetime 重试计数——同一 fingerprint 只吃一次，与
+    # final_review_carryover 同款账本模式（rescore_consumed_fingerprints）。
+    rescore_fingerprint = selection_rescore.unconsumed_rescore_fingerprint(record)
+    rescore_retry = rescore_fingerprint is not None
     if (
         infrastructure_waiting
         and not sanctioned_retry
         and not carryover_retry
+        and provider_budget_retry is None
     ):
         # Deploy fingerprint drift must not bypass an infrastructure cooldown.
         return None
@@ -220,6 +312,8 @@ def _talk_retry_decision(
             or cover_route_retry
             or sanctioned_retry
             or carryover_retry
+            or provider_budget_retry is not None
+            or rescore_retry
         )
         or (
             retry_count >= _runner.TALK_REPAIR_LIFETIME_RETRY_CAP
@@ -228,6 +322,8 @@ def _talk_retry_decision(
             and not cover_route_retry
             and not sanctioned_retry
             and not carryover_retry
+            and provider_budget_retry is None
+            and not rescore_retry
         )
     ):
         return None
@@ -241,8 +337,43 @@ def _talk_retry_decision(
         sanctioned_revival_retry,
         carryover_fingerprint,
         carryover_retry,
+        provider_budget_ledger,
         sanctioned_retry,
+        rescore_fingerprint,
+        rescore_retry,
     )
+
+
+def _repair_budget_charge(
+    decision: _TalkRetryDecision, *, provider_budget_retry: bool = False
+) -> int:
+    """这次 requeue 要不要吃掉一格终生修复预算。
+
+    ``TALK_REPAIR_LIFETIME_RETRY_CAP`` 计的是"真修复尝试"，可此前 requeue 无条件
+    ``+1``：于是纯基础设施抖动（CPA 挂了、挂载掉了、配额窗口没开）光靠定时唤醒就
+    能把额度烧光，等真修复部署下来时预算已经被噪声吃完（A1，维护者 逐字
+    「就按 A1 走吧」「A1 要做」）。
+
+    判据照抄写回处 ``talk_transient_retry_count`` 已有的那串路线判据（同一组标志
+    位），只把 ``transient`` 换成 ``infrastructure_retry``——等价于"当且仅当本次
+    ``retry_reason`` 解析成 ``transient_infrastructure_failure`` 才不收费"。
+
+    两个刻意保留的性质：``changed`` 在 ``retry_reason`` 阶梯上压着
+    ``infrastructure_retry``，所以"infra 失败 + 相关部署落地"那一次仍算真修复、
+    照常收费；``talk_transient_retry_count`` 一字未动，infra 退避曲线
+    （``infra_retry_policy``）读的仍是它。存量计数不追溯重算，单调不回退。
+    """
+
+    if (
+        decision.infrastructure_retry
+        and not decision.changed
+        and not decision.cover_route_retry
+        and not decision.sanctioned_retry
+        and not decision.carryover_retry
+        and not decision.rescore_retry
+    ) or provider_budget_retry:
+        return 0
+    return 1
 
 
 def historical_source_recovery_in_progress(
@@ -275,7 +406,14 @@ class RecoveryReviewRerunError(ValueError):
 
 
 def backfillable_talk_rejection(result: dict) -> tuple[str, str] | None:
-    """Return the persisted rejection status/reason when a reserve may replace it."""
+    """Return the persisted rejection status/reason when a reserve may replace it.
+
+    ``failure_kind == "selection_rescore"`` is deliberately its own kind, not
+    a member of the ``{"subtitle_authority", "story_contract"}`` set below —
+    that keeps the bounded rescore lane out of ``candidate_rejected +
+    story_contract_unresolved_backfilled`` without touching either real
+    terminal kind's semantics (狍哥案修复,).
+    """
 
     status = result.get("status")
     if status in {
@@ -334,6 +472,13 @@ def apply_talk_backfill_rejection_policy(
     if backfill_rejection is None:
         return result.get("status") == "candidate_rejected"
     rejected_status, rejection_reason = backfill_rejection
+    # 维护者：「说话人证据不足应该转人工审阅，不是判死」——说话人分离
+    # 是刚开的功能（生产 8/7 才翻到 AUTOSLICE_SPEAKER_MODE=auto），不许拿它的
+    # 不成熟去毙内容。处置与下面 exact 分支的既有范式同款：保留候选自己的说话
+    # 人状态，不铸 candidate_rejected 化石；exact/普通两条路都盖同一份停泊回执。
+    speaker_hold = rejected_status in SPEAKER_MANUAL_REVIEW_STATUSES
+    if speaker_hold:
+        park_for_manual_review(result, reason=rejection_reason)
     if exact_selected:
         result["backfill_suppressed_by_exact_contract"] = {
             "schema_version": "exact-selection-backfill-suppression.v1",
@@ -341,70 +486,14 @@ def apply_talk_backfill_rejection_policy(
             "reason": rejection_reason,
         }
         return False
+    if speaker_hold:
+        # 仍返回 True——席位照常让给候补（35fc448「Fix speaker evidence reserve
+        # backfill」的既有裁定）。停泊只改"判死 vs 等人看"，不改配额。
+        return True
     result["rejected_status"] = rejected_status
     result["status"] = "candidate_rejected"
     result["rejection_reason"] = rejection_reason
     return True
-
-
-def _is_legacy_exact_backfill_rejection(record: dict) -> bool:
-    """Recognize only records emitted by the pre-suppression backfill policy."""
-
-    status = record.get("rejected_status")
-    reason = record.get("rejection_reason")
-    if status == "boundary_unrepairable":
-        return reason == "unsafe_boundary_backfilled"
-    if status in {"speaker_review_required", "speaker_evidence_insufficient"}:
-        return reason == "speaker_identity_unresolved_backfilled"
-    if status != "failed":
-        return False
-    return (record.get("failure_kind"), reason) in {
-        ("subtitle_authority", "subtitle_authority_unresolved_backfilled"),
-        ("story_contract", "story_contract_unresolved_backfilled"),
-    }
-
-
-def _is_provider_backfilled_foreign_rejection(record: dict) -> bool:
-    """Revive legacy rows whose only missing authority was a dead provider."""
-
-    if not (
-        record.get("status") == "candidate_rejected"
-        and record.get("rejected_status") == "failed"
-        and record.get("failure_kind") == "subtitle_authority"
-        and record.get("failure_stage") == "foreign_source_transcription"
-        and record.get("rejection_reason")
-        == "subtitle_authority_unresolved_backfilled"
-    ):
-        return False
-    violation = record.get("gate_violation")
-    if not isinstance(violation, dict):
-        return False
-    unresolved = violation.get("unresolved_findings")
-    rows = violation.get("witness_rows")
-    if not isinstance(unresolved, list) or not unresolved or not isinstance(rows, list):
-        return False
-    unresolved_indexes = {
-        row.get("cue_index") for row in unresolved if isinstance(row, dict)
-    }
-    relevant = [
-        row
-        for row in rows
-        if isinstance(row, dict) and row.get("cue_index") in unresolved_indexes
-    ]
-    provider_markers = (
-        "AGY_FOREIGN_WITNESS_",
-        "WITNESS_PROVIDERS_FAILED",
-        "WITNESS_AUDIO_EXTRACTION_FAILED",
-        "HTTPERROR",
-        "QUOTA",
-        "TIMED OUT",
-        "TIMEOUT",
-        "SUBPROCESS",
-    )
-    return bool(relevant) and all(
-        any(marker in str(row.get("failure") or "").upper() for marker in provider_markers)
-        for row in relevant
-    )
 
 
 def _canonical_object_sha256(value: object) -> str:
@@ -559,7 +648,6 @@ def _validated_recovery_publication(
 
 def _cover_route_regeneration_receipt(record: dict) -> dict[str, object]:
     """Carry the per-build screenshot regeneration budget through requeue."""
-
     fingerprint = record.get("cover_route_regeneration_fingerprint")
     attempts = int(record.get("cover_route_regeneration_attempts") or 0)
     if fingerprint is None and attempts == 0:
@@ -580,7 +668,23 @@ def _recovery_queue_item(
     given_end_ms: int | None,
     given_end_authority: str | None,
     recovery_publication_authority: object,
+    provider_budget_history: Collection[object] = (),
 ) -> dict:
+    ledger_state, provider_budget_ledger = (
+        resolve_provider_budget_retry_ledger_history(
+            record,
+            candidate_id=candidate_id,
+            history_records=provider_budget_history,
+        )
+    )
+    if ledger_state in {
+        FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_EMPTY,
+        FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_INVALID,
+    }:
+        raise RecoveryReviewRerunError(
+            "RECOVERY_RERUN_PROVIDER_BUDGET_LEDGER_INVALID:"
+            f"{candidate_id}"
+        )
     segment_name = Path(
         str(record.get("segment") or record.get("segment_path") or "")
     ).name
@@ -608,7 +712,7 @@ def _recovery_queue_item(
         raise RecoveryReviewRerunError(
             f"RECOVERY_RERUN_BCUT_AUTHORITY_MISSING:{candidate_id}"
         )
-    seg_dur = _runner.ffprobe_ms(segment)
+    seg_dur = historical_recording_duration.resolve(_runner, date, segment, record)
     if not isinstance(seg_dur, int) or seg_dur <= 0 or end_ms > seg_dur:
         raise RecoveryReviewRerunError(
             f"RECOVERY_RERUN_SOURCE_DURATION_INVALID:{candidate_id}"
@@ -663,6 +767,7 @@ def _recovery_queue_item(
         "merge_gap_removals": list(record.get("merge_gap_removals") or []),
         "cover_diversity_slot": record.get("cover_diversity_slot"),
         **_cover_route_regeneration_receipt(record),
+        **copied_refresh_receipt(record),
         "recovery_source_record_sha256": _canonical_object_sha256(record),
     }
     if given_end_ms is not None:
@@ -673,7 +778,25 @@ def _recovery_queue_item(
         item["recovery_publication_authority"] = (
             normalized_publication_authority
         )
+    if provider_budget_ledger is not None:
+        item[FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD] = (
+            provider_budget_ledger
+        )
     return item
+
+
+def _carry_recovered_provider_budget_ledger_to_archive(
+    queue_item: Mapping[str, object], archive: dict[str, object]
+) -> None:
+    """Archive the queue-normalized ledger, never the stale active preimage."""
+
+    ledger = queue_item.get(FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD)
+    if isinstance(ledger, Mapping):
+        archive[FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD] = copy.deepcopy(
+            dict(ledger)
+        )
+    else:
+        archive.pop(FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD, None)
 
 
 def _resolve_new_fingerprint_authority(
@@ -916,6 +1039,7 @@ def plan_current_talk_recovery_rerun(
             ),
         )
     )
+    provider_budget_history = state.get("talk_superseded_attempts") or ()
     picks = state.get("picks")
     if not isinstance(picks, list):
         raise RecoveryReviewRerunError("RECOVERY_RERUN_PICKS_INVALID")
@@ -980,26 +1104,27 @@ def plan_current_talk_recovery_rerun(
                 f"RECOVERY_RERUN_NEW_FINGERPRINT_MISMATCH:{cid}"
             )
 
-        queue.append(
-            _recovery_queue_item(
-                date,
-                record,
-                candidate_id=cid,
-                retry_reason="explicit_recovery_review_pipeline_rerun",
-                selected_repair=True,
-                given_end_ms=boundary_overrides.get(cid),
-                given_end_authority=given_end_authority,
-                recovery_publication_authority=(
-                    recovery_publication_authorities.get(cid)
-                ),
-            )
+        queue_item = _recovery_queue_item(
+            date,
+            record,
+            candidate_id=cid,
+            retry_reason="explicit_recovery_review_pipeline_rerun",
+            selected_repair=True,
+            given_end_ms=boundary_overrides.get(cid),
+            given_end_authority=given_end_authority,
+            recovery_publication_authority=(
+                recovery_publication_authorities.get(cid)
+            ),
+            provider_budget_history=provider_budget_history,
         )
+        queue.append(queue_item)
         archived = copy.deepcopy(record)
         archived["bundle_lifecycle"] = "SUPERSEDED"
         archived["bundle_compliance"] = "STALE_PIPELINE"
         archived["superseded_by"] = expected_new
         archived["retry_reason"] = "explicit_recovery_review_pipeline_rerun"
         archived["source_state_sha256"] = expected_source_state_sha256
+        _carry_recovered_provider_budget_ledger_to_archive(queue_item, archived)
         superseded.append(archived)
 
     ranked_backlog = sorted(
@@ -1065,6 +1190,7 @@ def plan_current_talk_recovery_rerun(
             recovery_publication_authority=(
                 recovery_publication_authorities.get(cid)
             ),
+            provider_budget_history=provider_budget_history,
         )
         queue_item["selection_override"] = selection_override
         queue.append(queue_item)
@@ -1077,7 +1203,7 @@ def plan_current_talk_recovery_rerun(
         archived["bundle_compliance"] = "USER_SUPPRESSED"
         archived["disposition"] = "EXCLUDE_FROM_DELIVERY"
         archived["reason_codes"] = [
-            "IVAN_SUPPRESSED_ALREADY_UPLOADED_ELSEWHERE_UNVERIFIED"
+            "REVIEWER_SUPPRESSED_ALREADY_UPLOADED_ELSEWHERE_UNVERIFIED"
         ]
         archived["suppression_authority"] = suppression_authority
         archived["source_state_sha256"] = expected_source_state_sha256
@@ -1169,6 +1295,7 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
                 infra_transient_reason_codes=(
                     _runner.SONG_INFRA_TRANSIENT_REASON_CODES
                 ),
+                song_infra_retry_cap=_runner.SONG_INFRA_RETRY_CAP,
             )
         if (
             not isinstance(record, dict)
@@ -1201,20 +1328,18 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
             migrated_legacy_fingerprint = True
         changed = recorded_song_fingerprint != current
         retry_count = int(record.get("transient_retry_count") or 0)
-        # Prefer the explicitly classified transient emitted by song_lane.
-        # Older records did not have that field, so retain the reason-code
-        # fallback unless the attempt reached an audio/LRC proof result.
-        explicit_transient = str(record.get("transient_failure_code") or "")
-        if explicit_transient:
-            infra_transient = (
-                explicit_transient in _runner.SONG_INFRA_TRANSIENT_REASON_CODES
-            )
-        else:
-            infra_transient = bool(
-                reasons & _runner.SONG_INFRA_TRANSIENT_REASON_CODES
-            ) and not bool(
-                reasons & SONG_DETERMINISTIC_PROOF_REJECTION_CODES
-            )
+        # Prefer the explicitly classified transient emitted by song_lane, but
+        # past SONG_INFRA_RETRY_CAP stop letting it outrank a deterministic
+        # content verdict — that unbounded veto is what kept 's
+        # song_200130_1012 holding the session's only delivery slot forever.
+        # Older records have no typed field and keep the reason-code fallback.
+        infra_transient = song_infra_transient_is_active(
+            record=record,
+            reason_codes=reasons,
+            infra_transient_reason_codes=_runner.SONG_INFRA_TRANSIENT_REASON_CODES,
+            retry_cap=_runner.SONG_INFRA_RETRY_CAP,
+            fallback_to_reason_codes=True,
+        )
         next_retry_at = record.get("next_retry_at_epoch")
         infra_retry_due = (
             infra_transient
@@ -1275,10 +1400,10 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
             # Visual title evidence is a first-class song identity hint.  A
             # retry that drops it is weaker than the failed attempt and can
             # repeat the same LRC ambiguity forever (for example 群青 variants
-            # or a wide frame window that attached the next song title).
+            # or a wide frame window that attached the next song title).  维护者
+            # 2026-08-10 起同理带走音频已证出的命名权威：不带＝每次重试都退回 BCUT 错名重检索。
             "lane": record.get("discovery_lane") or record.get("lane"),
-            "title_hint": record.get("title_hint"),
-            "visual_song_evidence": record.get("visual_song_evidence"),
+            **song_name_authority.carry_song_identity_evidence(record),
             "transient_retry_count": retry_count + (1 if transient else 0),
             "selected_repair": True,
             "retry_reason": (
@@ -1539,10 +1664,9 @@ def bind_song_delivery_recovery_authority(
         completion,
     ):
         raise _runner.SongDeliveryError("song recovery backfill proof chain is not delivery-ready")
-    job = summary_record.get("source_context_job")
-    boundary = job.get("song_boundary") if isinstance(job, dict) else None
-    canonical_song_title = boundary.get("song_title") if isinstance(boundary, dict) else None
-    title = _runner.verified_song_fallback_title(canonical_song_title, state_record.get("hook"))
+    # 命名权威只认听音频那条链（维护者）；hook 是 BCUT 中文 ASR 的派生物，不是名字。
+    verified_name = song_name_authority.extract_audio_song_name_authority(summary_record) or {}
+    title = _runner.verified_song_fallback_title(verified_name.get("song_title"))
     if title is None:
         raise _runner.SongDeliveryError("song recovery backfill has no canonical LRC-bound title")
     source_candidate_id = str(summary_record.get("candidate_id") or "")
@@ -1591,291 +1715,77 @@ def bind_song_delivery_recovery_authority(
     return changed
 
 
-def requeue_recoverable_talks(date: str, state: dict) -> int:
-    """Retry undelivered selected talks with bounded generation semantics.
+def _active_selected_source_fact_recovery_scope(
+    date: str,
+    state: Mapping[str, object],
+    candidate_ids: Collection[str] | None,
+) -> tuple[str, str] | None:
+    """Return the exact v6 CID/grant only after canonical admission."""
 
-    Boundary failures wake on a relevant pipeline change.  A generic producer
-    failure additionally gets one same-fingerprint retry so a transient CPA or
-    worker crash cannot permanently lose an already-selected candidate.  Only
-    classifier-confirmed infrastructure waits (INFRASTRUCTURE_WAIT_FAILURE_KINDS)
-    may keep retrying on a timer beyond that; unknown failures stay bounded so a
-    deterministic defect cannot churn every tick forever.  All retries share one
-    per-candidate lifetime cap.
-    """
+    if candidate_ids is None or isinstance(candidate_ids, (str, bytes)):
+        return None
+    values = tuple(candidate_ids)
+    if len(values) != 1 or not isinstance(values[0], str):
+        return None
+    try:
+        from src.autoslice.operator_processing_scope import (
+            SOURCE_FACT_RECOVERY_GRANT_SCHEMA,
+            SOURCE_FACT_RECOVERY_INTENT,
+            STATE_KEY,
+            operator_scope_admission,
+            operator_talk_scope,
+        )
 
-    existing_pending = {
-        str(item.get("cid") or item.get("candidate_id") or "")
-        for item in state.get("pending_talk", [])
-        if isinstance(item, dict)
-    }
-    exact_contract_ids = set(_exact_talk_contract_ids(state))
-    kept: list[dict] = []
-    requeued: list[dict] = []
-    for record in state.get("picks", []):
-        if not isinstance(record, dict):
-            kept.append(record)
-            continue
-        cid = str(record.get("candidate_id") or record.get("cid") or "")
-        recoverable_status = record.get("status") in TALK_RECOVERY_FAILURE_STATUSES
-        # Migration for exact-recovery runs produced before backfill
-        # suppression existed: the selected terminal failure was mislabeled
-        # candidate_rejected even though the contract forbade replacement.
-        legacy_exact_rejection = (
-            record.get("status") == "candidate_rejected"
-            and cid in exact_contract_ids
-            and _is_legacy_exact_backfill_rejection(record)
-        )
-        selected_authority_rejection = (
-            record.get("status") == "candidate_rejected"
-            and record.get("selected_repair") is True
-            and record.get("failure_kind") == "subtitle_authority"
-            and record.get("failure_stage") in {
-                "chat_authority_finalization",
-                "chat_authority_final_artifact",
-                "final_review_findings",
-                "foreign_source_transcription",
-            }
-            and record.get("rejection_reason")
-            == "subtitle_authority_unresolved_backfilled"
-        )
-        provider_backfilled_foreign_rejection = (
-            _is_provider_backfilled_foreign_rejection(record)
-        )
-        if not (
-            recoverable_status
-            or legacy_exact_rejection
-            or selected_authority_rejection
-            or provider_backfilled_foreign_rejection
-        ):
-            kept.append(record)
-            continue
-        try:
-            current = _runner.talk_pipeline_fingerprint(cid)
-            current_recovery = _runner.talk_failure_recovery_fingerprint(
-                record.get("failure_kind"), cid
-            )
-        except ValueError:
-            kept.append(record)
-            continue
-        decision = _talk_retry_decision(
-            record,
-            cid=cid,
-            existing_pending=existing_pending,
-            current_recovery=current_recovery,
-        )
-        if decision is None:
-            kept.append(record)
-            continue
-        (
-            retry_count,
-            transient_count,
-            changed,
-            infrastructure_retry,
-            transient,
-            cover_route_retry,
-            sanctioned_revival_retry,
-            carryover_fingerprint,
-            carryover_retry,
-            sanctioned_retry,
-        ) = decision
-        segment_name = Path(str(record.get("segment") or record.get("segment_path") or "")).name
-        segment = _runner.REC_ROOT / date / segment_name
-        start_ms, end_ms = record.get("start_ms"), record.get("end_ms")
-        try:
-            segment_is_file = segment.is_file()
-        except OSError as exc:
-            record["recovery_source_status"] = "SOURCE_RECORDING_ROOT_UNAVAILABLE"
-            record["recovery_source_error"] = f"{type(exc).__name__}: {exc}"
-            kept.append(record)
-            continue
-        if (
-            not segment_name
-            or not segment_is_file
-            or isinstance(start_ms, bool)
-            or not isinstance(start_ms, int)
-            or isinstance(end_ms, bool)
-            or not isinstance(end_ms, int)
-            or start_ms >= end_ms
-        ):
-            kept.append(record)
-            continue
-        try:
-            seg_dur = _runner.ffprobe_ms(segment)
-        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
-            record["recovery_source_status"] = "SOURCE_RECORDING_ROOT_UNAVAILABLE"
-            record["recovery_source_error"] = f"{type(exc).__name__}: {exc}"
-            kept.append(record)
-            continue
-        if (
-            isinstance(seg_dur, bool)
-            or not isinstance(seg_dur, int)
-            or seg_dur <= 0
-            or end_ms > seg_dur
-        ):
-            kept.append(record)
-            continue
-        try:
-            given_end_ms, given_end_authority = _validated_given_end_boundary(
-                candidate_id=cid,
-                start_ms=start_ms,
-                end_ms=end_ms,
-                seg_dur_ms=seg_dur,
-                given_end_ms=record.get("given_end_ms"),
-                given_end_authority=record.get("given_end_authority"),
-            )
-        except RecoveryReviewRerunError:
-            kept.append(record)
-            continue
-        try:
-            given_title, publication_authority = (
-                _validated_recovery_publication(
-                    candidate_id=cid,
-                    recovery_publication_authority=record.get(
-                        "recovery_publication_authority"
-                    ),
-                )
-            )
-        except RecoveryReviewRerunError:
-            kept.append(record)
-            continue
-        if (
-            record.get("given_title") is not None
-            and given_title != record.get("given_title")
-        ):
-            kept.append(record)
-            continue
-        try:
-            chat_binding = _structured_chat_binding_for_record(
-                segment,
-                record,
-                candidate_id=cid,
-            )
-        except RecoveryReviewRerunError as exc:
-            record["recovery_chat_binding_status"] = "BLOCKED"
-            record["recovery_chat_binding_error"] = str(exc)
-            kept.append(record)
-            continue
-        item = {
-            "cid": cid,
-            "segment_path": str(segment),
-            "seg_dur_ms": seg_dur,
-            "start_ms": start_ms,
-            "end_ms": min(seg_dur, end_ms) if seg_dur else end_ms,
-            "xml": str(xml) if (xml := _runner.find_danmaku_xml(segment)) else None,
-            **chat_binding,
-            "hook": record.get("hook", ""),
-            "confidence": record.get("confidence"),
-            "selection_scorecard": apply_reviewed_selection_calibration(
-                cid,
-                record.get("selection_scorecard"),
-            ),
-            "session_relation_authority": record.get("session_relation_authority"),
-            "lane": record.get("lane", ""),
-            "preview": record.get("preview", ""),
-            "selected_repair": True,
-            "talk_repair_retry_count": retry_count + 1,
-            "talk_transient_retry_count": transient_count
-            + (
-                1
-                if transient
-                and not changed
-                and not cover_route_retry
-                and not sanctioned_retry
-                and not carryover_retry
-                else 0
-            ),
-            "retry_reason": (
-                "sanctioned_candidate_revival"
-                if sanctioned_retry
-                else "final_review_carryover"
-                if carryover_retry
-                else "cover_route_regeneration"
-                if cover_route_retry
-                else "pipeline_fingerprint_changed"
-                if changed
-                else "transient_infrastructure_failure"
-                if infrastructure_retry
-                else "transient_produce_failure"
-            ),
-            "bcut_srt_path": str(_runner.BASE / "cache" / date / f"{segment.stem}.bcut.srt"),
-            "session_id": _recording_session_id(record),
-            # 恢复跳切/微剪计划：requeue 丢失 merge_gap_removals
-            # 会让合并候选退化成整窗 sweep 被 fail-closed 守卫拒绝。
-            "filler_proposals": list(record.get("filler_proposals") or []),
-            "filler_proposal_srt_sha256": record.get("filler_proposal_srt_sha256"),
-            "merge_gap_removals": list(record.get("merge_gap_removals") or []),
-            "cover_diversity_slot": record.get("cover_diversity_slot"),
-            **_cover_route_regeneration_receipt(record),
-            "recovery_source_record_sha256": _canonical_object_sha256(record),
-        }
-        # sanctioned-revival 审计块必须跨 requeue 存活（复活是治理事件，
-        # 丢块等于抹掉“谁在何据下解冻化石态”的证据链）。
-        if record.get("revivals"):
-            item["revivals"] = list(record["revivals"])
-        if sanctioned_revival_retry is not None:
-            item["sanctioned_revival_retry"] = {
-                **sanctioned_revival_retry,
-                "status": "QUEUED",
-                "queued_at": time.strftime(
-                    "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
-                ),
-            }
-        consumed_carryovers = [
-            value
-            for value in (
-                record.get(
-                    "final_review_carryover_consumed_fingerprints"
-                )
-                or []
-            )
-            if isinstance(value, str)
-        ]
-        if carryover_fingerprint is not None:
-            consumed_carryovers.append(carryover_fingerprint)
-        if consumed_carryovers:
-            item["final_review_carryover_consumed_fingerprints"] = (
-                list(dict.fromkeys(consumed_carryovers))
-            )
-        if given_end_ms is not None:
-            item["given_end_ms"] = given_end_ms
-            item["given_end_authority"] = given_end_authority
-        if given_title is not None:
-            item["given_title"] = given_title
-            item["recovery_publication_authority"] = (
-                publication_authority
-            )
-        requeued.append(item)
-        existing_pending.add(cid)
-        state.setdefault("talk_superseded_attempts", []).append(
-            {
-                "candidate_id": cid,
-                "status": record.get("status"),
-                "pipeline_fingerprint": record.get("pipeline_fingerprint"),
-                "superseded_by": current,
-                "failure_recovery_fingerprint": record.get(
-                    "failure_recovery_fingerprint"
-                ),
-                "superseded_recovery_fingerprint": current_recovery,
-                "talk_repair_retry_count": retry_count,
-                "talk_transient_retry_count": transient_count,
-                "retry_reason": item["retry_reason"],
-                "failure_kind": record.get("failure_kind"),
-                "failure_stage": record.get("failure_stage"),
-                "failure_fingerprint": record.get("failure_fingerprint"),
-                "sanctioned_revival_retry": (
-                    item.get("sanctioned_revival_retry")
-                ),
-                "final_review_carryover_consumed_fingerprints": (
-                    item.get(
-                        "final_review_carryover_consumed_fingerprints"
-                    )
-                ),
-                "session_id": _recording_session_id(record),
-            }
-        )
-    state["picks"] = kept
-    state.setdefault("pending_talk", []).extend(requeued)
-    return len(requeued)
+        block = state.get(STATE_KEY)
+        admission = operator_scope_admission(state, date=date)
+        talk_scope = operator_talk_scope(state, date=date)
+    except Exception:  # noqa: BLE001 - typed recovery must fail closed
+        return None
+    if not (
+        isinstance(block, Mapping)
+        and block.get("schema_version") == SOURCE_FACT_RECOVERY_GRANT_SCHEMA
+        and block.get("intent") == SOURCE_FACT_RECOVERY_INTENT
+        and block.get("upload_allowed") is False
+        and block.get("candidate_ids") == list(values)
+        and admission.admitted
+        and admission.candidate_ids == values
+        and admission.outstanding_candidate_ids == values
+        and talk_scope == values
+        and isinstance(admission.grant_id, str)
+        and admission.grant_id
+    ):
+        return None
+    return values[0], admission.grant_id
+
+
+def _active_selected_final_review_recovery_scope(
+    date: str,
+    state: Mapping[str, object],
+    candidate_ids: Collection[str] | None,
+) -> tuple[str, str] | None:
+    return active_selected_final_review_recovery_scope(
+        date, state, candidate_ids
+    )
+
+
+def requeue_recoverable_talks(
+    date: str,
+    state: dict,
+    *,
+    candidate_ids: Collection[str] | None = None,
+) -> int:
+    """Retry undelivered selected talks through the focused leaf module."""
+
+    from src.autoslice.talk_delivery_recovery import (
+        requeue_recoverable_talks as _requeue_recoverable_talks,
+    )
+
+    return _requeue_recoverable_talks(
+        sys.modules[__name__],
+        date,
+        state,
+        candidate_ids=candidate_ids,
+    )
 
 
 def requeue_stale_current_recovery_talks(date: str, state: dict) -> int:
@@ -2014,6 +1924,9 @@ def requeue_stale_current_recovery_talks(date: str, state: dict) -> int:
                 recovery_publication_authority=record.get(
                     "recovery_publication_authority"
                 ),
+                provider_budget_history=(
+                    state.get("talk_superseded_attempts") or ()
+                ),
             )
         except RecoveryReviewRerunError as exc:
             if "CHAT_AUTHORITY_MISSING" not in str(exc):
@@ -2045,6 +1958,7 @@ def requeue_stale_current_recovery_talks(date: str, state: dict) -> int:
         archived["recovery_source_record_sha256"] = item[
             "recovery_source_record_sha256"
         ]
+        _carry_recovered_provider_budget_ledger_to_archive(item, archived)
         queue.append(item)
         archives.append(archived)
         stale_ids.add(cid)

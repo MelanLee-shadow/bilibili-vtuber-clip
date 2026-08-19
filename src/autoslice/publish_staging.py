@@ -1,7 +1,6 @@
 """Fail-closed title, AI-cover, and publish-draft staging.
 
-This module can prepare local evidence only. Every emitted publish document keeps
-``upload_enabled`` false and remains downstream of the release decision gate.
+Prepares local evidence only; every document keeps upload disabled behind the release gate.
 """
 
 from __future__ import annotations
@@ -17,6 +16,14 @@ from typing import Callable, Mapping, NamedTuple, Sequence
 from .auto_review import DecisionAction, ReviewDecision
 from .channel_profile import load_channel_profile
 from .chat_authority import canonicalize_hard_surfaces
+from .candidate_entity_publish_gate import (
+    enforce_candidate_cover_projection,
+    evaluate_candidate_title_gates,
+)
+from .candidate_public_text_surface_authority import (
+    resolve_candidate_public_text_title_state,
+)
+from .content_ip_signal import important_content_ip_signal_from_srt
 from .cover_emote import (
     EmoteLibrary,
     compose_companion_reference,
@@ -49,12 +56,15 @@ from .cover_route_evidence import (
     story_participant_ids,
     validate_final_participant_verification,
 )
+from .cover_scene_binding import run_final_host_identity_witness, run_source_composition_witness
+from .cover_route_policy import decide_cover_treatment as _decide_cover_treatment
 from .cover_source_composition import (
-    extract_authority_source_crop,
+    extract_authority_source_crop_or_full_frame,
+    read_source_frame_size,
     source_composition_recommends_redraw,
-    source_composition_supports_subject,
     validate_source_composition_verification,
     verify_source_composition,
+    vertical_source_decision_inputs,
 )
 from .cover_host_identity_gate import (
     final_host_identity_witness_unavailable,
@@ -81,6 +91,7 @@ from .manual_title_repair_authority import (
     load_manual_title_repair_authority,
     validate_manual_title_repair_authority,
 )
+from .manual_title_keep_authority import PASS_DECISION as MANUAL_TITLE_KEEP_PASS_DECISION
 from .review_evidence import SourceCue
 from .recovery_title_authority import (
     RecoveryTitleAuthorityError,
@@ -88,25 +99,24 @@ from .recovery_title_authority import (
 )
 from .shadow_review import _sha256, _write_json_file
 from .source_fact_review import (
+    DETERMINISTIC_TEXT_NARROWING_PASS_DECISION,
     authorize_manual_title_repair,
-    review_and_repair_source_facts,
     source_fact_review_passes,
 )
-from .story_contract import (
-    audit_story_artifact,
-    cover_relation_prompt,
-    cover_story_contract_binding,
-)
+from .source_fact_staging import resolve_initial_source_fact_review
+from .source_fact_rescore_provenance import publish_staging_provenance_fields
+from .story_contract import cover_relation_prompt, cover_story_contract_binding
 from .title_policy import (
     _TITLE_MAX_ATTEMPTS,
     _TITLE_MAX_LEN,
     _TITLE_MIN_LEN,
     _ensure_title_prefix,
+    build_automatic_talk_title_prompt,
     canonicalize_automatic_title_fillers,
     canonicalize_publish_title,
     canonicalize_song_catalog_title,
     manual_title_override,
-    publish_title_policy_violations,
+    publish_title_lane,
     _selection_hook_anchor_valid,
     _selection_hook_fallback_title,
     _selection_hook_first_clause,
@@ -364,8 +374,8 @@ def _recovery_publication_staging_state(
         )
     except RecoveryTitleAuthorityError as exc:
         raise ValueError(f"recovery publication authority invalid: {exc}") from exc
-    if authority["title_mode"] == "ivan_manual_override":
-        return ("ivan_manual_override", "RESOLVED_MANUAL", authority)
+    if authority["title_mode"] == "reviewer_manual_override":
+        return ("reviewer_manual_override", "RESOLVED_MANUAL", authority)
     return (
         "recovery_verified_same_bv_public_title",
         "RESOLVED_RECOVERY_PUBLIC",
@@ -400,10 +410,8 @@ def _stage_publish_draft(
     record = dict(materialized_recut)
     media_path = Path(str(record["media_path"]))
     publish_json_path = media_path.with_suffix(".publish.json")
-    # 维护者's manual title owns its body. It does not bypass the shared archive
-    # envelope: every title receives the channel prefix and the same structural
-    # postcondition before cover generation or delivery.
     staged_title = title
+    important_content_ips: list[dict[str, object]] = []
     title_policy_violations: list[str] = []
     title_authority_error: str | None = None
     title_state = _recovery_publication_staging_state(
@@ -414,55 +422,43 @@ def _stage_publish_draft(
     )
     title_source, title_authority_status, normalized_recovery_publication_authority = title_state
     story_contract = record.get("story_contract")
-    # 维护者 手定标题正文按 candidate 注入：命中后 LLM 不再改正文，但共享
-    # publication envelope / structure gate 仍在后面运行。
-    manual_override = manual_title_override(candidate_id)
-    if manual_override is not None:
-        staged_title = manual_override
-        title_source = "ivan_manual_override"
-        title_authority_status = "RESOLVED_MANUAL"
-        title_llm_call = None
+    candidate_title = resolve_candidate_public_text_title_state(
+        candidate_id=candidate_id,
+        title=staged_title,
+        selection_hook=str(selection_hook or ""),
+        story_contract=story_contract,
+        story_contract_rebuilder=story_contract_rebuilder,
+        title_source=title_source,
+        title_authority_status=title_authority_status,
+        title_llm_call=title_llm_call,
+        manual_title=manual_title_override(candidate_id),
+    )
+    staged_title, selection_hook, story_contract = candidate_title.title, candidate_title.selection_hook, candidate_title.story_contract
+    title_source, title_authority_status = candidate_title.title_source, candidate_title.title_authority_status
+    title_authority_error, title_llm_call = candidate_title.title_authority_error, candidate_title.title_llm_call
+    public_text_surface_authority_consumption = candidate_title.consumption
+    if public_text_surface_authority_consumption is not None:
+        record["story_contract"] = story_contract
     if title_llm_call is not None:
         selection_hook = str(selection_hook or "").strip()
-        selection_hook_clause = _selection_hook_first_clause(selection_hook)
         transcript_sample = _staged_transcript_sample(record, cues)
-        style_asset = profile_asset_text("title_style")
-        persona_asset = profile_asset_text("persona")
-        selection_hook_contract = ""
-        output_contract = '{"title": "标题"}'
-        clip_context_contract = ""
-        if isinstance(story_contract, Mapping):
-            context_prompt = str(story_contract.get("clip_context_prompt") or "").strip()
-            if context_prompt:
-                clip_context_contract = (
-                    "\n同一份 hash-bound 长程语境（用于整片回指、口癖和专名候选；"
-                    "它本身不授权改字幕）：\n" + context_prompt + "\n"
-                )
-        if selection_hook:
-            selection_hook_contract = (
-                f"\n选片主钩子（这是为什么选中本片，权威高于后续陪衬话题）: {selection_hook}\n"
-                f"标题必须保留第一分句的核心事件: {selection_hook_clause}\n"
-                "同时输出 selection_hook_anchor：从该第一分句原样复制的 2–12 字具体短语，"
-                f"避开‘{CHANNEL_PROFILE.display_name}/{CHANNEL_PROFILE.short_name}/主播/直播/弹幕/观众/自己/这个/那个/然后/时候/表演’等泛词；"
-                "该短语必须逐字出现在标题里。不得把片段后半段的陪衬话题偷换成主标题。\n"
-            )
-            output_contract = '{"title": "标题", "selection_hook_anchor": "第一分句中的具体短语"}'
-        base_prompt = (
-            f"为一条{CHANNEL_PROFILE.display_name}(B站虚拟主播)的直播切片起中文标题。\n"
-            f"最重要的原则：观众是因为'这是{CHANNEL_PROFILE.display_name}'才点进来的,不是因为内容——标题必须围绕{CHANNEL_PROFILE.display_name}本人"
-            "(她的反应、气质、口癖、梗、名字谐音),切片内容只是辅助素材。引人注目为先。\n"
-            f"\n{CHANNEL_PROFILE.display_name}特质:\n{persona_asset}\n"
-            f"\n标题风格规范与历史标题范例(严格模仿这个风格):\n{style_asset}\n"
-            f"\n本切片转写内容节选(辅助素材): {transcript_sample}\n"
-            f"{selection_hook_contract}"
-            f"{clip_context_contract}"
-            f"硬性要求：含{CHANNEL_PROFILE.talk_title_prefix}前缀后 {_TITLE_MIN_LEN}–{_TITLE_MAX_LEN} 字"
-            "（维护者 手定语料的主力带是 25–45 字的三拍叙事，不要为了凑短把梗压没；"
-            "只有梗足够硬的短爆点才走 20 字以下）；"
-            "禁用空洞夸张词(炸裂/震惊/天花板/绝了/犯规/太顶),"
-            "更不许用'X到犯规/炸裂/离谱'这种万能后缀——标题必须具体到这条切片里到底发生了什么"
-            "(描述性的'越看越离谱/越整越离谱'这类是可以的,禁的是空洞的'X到离谱'后缀)。\n"
-            f"只输出一个 JSON 对象：{output_contract}"
+        important_ip_signal = important_content_ip_signal_from_srt(
+            subtitle_path=record.get("subtitle_path"),
+            fallback_body="\n".join(cue.text for cue in cues),
+            title=selection_hook,
+        )
+        important_content_ips = important_ip_signal.as_receipt()
+        base_prompt = build_automatic_talk_title_prompt(
+            selection_hook=selection_hook,
+            transcript_sample=transcript_sample,
+            important_ip_prompt=important_ip_signal.prompt_block,
+            clip_context_prompt=(
+                str(story_contract.get("clip_context_prompt") or "").strip()
+                if isinstance(story_contract, Mapping)
+                else ""
+            ),
+            persona_asset=profile_asset_text("persona"),
+            style_asset=profile_asset_text("title_style"),
         )
         automatic = _resolve_automatic_title(
             base_prompt=base_prompt,
@@ -478,12 +474,7 @@ def _stage_publish_draft(
         if automatic.title_authority_status is not None:
             title_authority_status = automatic.title_authority_status
 
-        # Keep the shared publication choke point authoritative even if a
-        # recovery attempt reaches it with an older/blocked automatic-title
-        # result.  This is deliberately narrower than regenerating a title:
-        # only profile-declared disposable filler words may change, and the
-        # cleaned title must independently retain an exact phrase from the
-        # authoritative selection hook before the prior block is cleared.
+        # Shared publication choke point: only declared filler cleanup is allowed.
         choke_repaired_title = canonicalize_automatic_title_fillers(staged_title)
         choke_hook_valid = not selection_hook or _selection_hook_has_inferable_anchor(
             selection_hook=selection_hook,
@@ -516,45 +507,35 @@ def _stage_publish_draft(
     # publish canonicalizer below applies to manual and automatic titles alike.
     if title_llm_call is not None:
         staged_title = canonicalize_song_catalog_title(staged_title)
-    explicit_lane = (
-        "song"
-        if (
-            staged_title.startswith(CHANNEL_PROFILE.song_title_prefix)
-            or str(record.get("classification") or "").lower() == "song"
-        )
-        else "talk"
+    explicit_lane = publish_title_lane(
+        staged_title,
+        explicit_lane=(
+            "song" if str(record.get("classification") or "").lower() == "song" else None
+        ),
     )
     staged_title = canonicalize_publish_title(staged_title, lane=explicit_lane)
-    source_fact_review = None
     manual_title_repair_authority_consumption = None
-    if title_authority_error is None and source_fact_llm_call is not None:
-        final_transcript = "\n".join(cue.text.strip() for cue in cues if cue.text.strip())
-        context_prompt = (
-            str(story_contract.get("clip_context_prompt") or "")
-            if isinstance(story_contract, Mapping)
-            else ""
-        )
-        source_fact_review = review_and_repair_source_facts(
-            selection_hook=str(selection_hook or ""),
-            title=staged_title,
-            final_transcript=final_transcript,
-            clip_context_prompt=context_prompt,
-            llm_call=source_fact_llm_call,
-            selection_scorecard=(
-                story_contract.get("selection_scorecard")
-                if isinstance(story_contract, Mapping)
-                else None
-            ),
-            # Recovery-public and 维护者/manual titles are exact authorities.
-            # CPA may KEEP them, but a proposed title rewrite needs a new
-            # authority instead of silently spending cover budget on it.
-            title_repair_allowed=not (
-                normalized_recovery_publication_authority is not None
-                or title_authority_status == "RESOLVED_MANUAL"
-                or title_source == "ivan_manual_override"
-            ),
-            enforce_automatic_title_style=title_llm_call is not None,
-        )
+    source_fact = resolve_initial_source_fact_review(
+        candidate_id=candidate_id,
+        title_source=title_source,
+        title=staged_title,
+        selection_hook=str(selection_hook or ""),
+        story_contract=story_contract,
+        record=record,
+        cues=cues,
+        source_fact_llm_call=source_fact_llm_call,
+        recovery_publication_authority=normalized_recovery_publication_authority,
+        title_authority_status=title_authority_status,
+        title_llm_enabled=title_llm_call is not None,
+        prior_authority_error=title_authority_error,
+    )
+    source_fact_review = source_fact.review
+    manual_title_keep_authority_consumption = source_fact.manual_title_keep_consumption
+    if source_fact.violation is not None:
+        title_policy_violations.append(source_fact.violation)
+    title_authority_error = source_fact.authority_error
+    title_authority_status = source_fact.authority_status
+    if source_fact_review is not None:
         # Manual text remains immutable by default.  A checked-in authority
         # may unlock exactly one already-evidenced source-fact repair, bound
         # to its candidate, blocked CPA receipt, original surfaces, and exact
@@ -562,9 +543,8 @@ def _stage_publish_draft(
         if (
             not source_fact_review_passes(source_fact_review)
             and isinstance(source_fact_review, Mapping)
-            and source_fact_review.get("decision")
-            == "REPAIR_REQUIRES_TITLE_AUTHORITY"
-            and title_source == "ivan_manual_override"
+            and source_fact_review.get("decision") == "REPAIR_REQUIRES_TITLE_AUTHORITY"
+            and title_source == "reviewer_manual_override"
         ):
             try:
                 authority = load_manual_title_repair_authority(candidate_id)
@@ -602,24 +582,28 @@ def _stage_publish_draft(
                 # error is surfaced through its ordinary authority receipt.
                 manual_title_repair_authority_consumption = None
         if not source_fact_review_passes(source_fact_review):
-            reason = str(
-                source_fact_review.get("reason_code")
-                or source_fact_review.get("decision")
-                or "unknown"
+            reason = (
+                str(
+                    source_fact_review.get("reason_code")
+                    or source_fact_review.get("decision")
+                    or "unknown"
+                )
+                if isinstance(source_fact_review, Mapping)
+                else "MANUAL_TITLE_KEEP_AUTHORITY_INVALID"
             )
-            title_policy_violations.append("source_fact_review_failed")
-            title_authority_error = "source_fact_review_failed:" + reason
+            if "source_fact_review_failed" not in title_policy_violations:
+                title_policy_violations.append("source_fact_review_failed")
+            if title_authority_error is None:
+                title_authority_error = "source_fact_review_failed:" + reason
             title_authority_status = "BLOCKED_SOURCE_FACT_REVIEW"
         else:
             reviewed_hook = str(source_fact_review["final_selection_hook"])
             reviewed_title = str(source_fact_review["final_title"])
-            reviewed_lane = (
-                "song"
-                if (
-                    reviewed_title.startswith(CHANNEL_PROFILE.song_title_prefix)
-                    or str(record.get("classification") or "").lower() == "song"
-                )
-                else "talk"
+            reviewed_lane = publish_title_lane(
+                reviewed_title,
+                explicit_lane=(
+                    "song" if str(record.get("classification") or "").lower() == "song" else None
+                ),
             )
             if canonicalize_publish_title(reviewed_title, lane=reviewed_lane) != reviewed_title:
                 title_policy_violations.append("source_fact_repair_title_not_canonical")
@@ -651,41 +635,31 @@ def _stage_publish_draft(
                         if manual_title_repair_authority_consumption is not None
                         else "RESOLVED_CPA_SOURCE_FACT_REPAIR"
                     )
-    common_title_violations = publish_title_policy_violations(
-        staged_title,
+                elif source_fact_review.get("decision") == MANUAL_TITLE_KEEP_PASS_DECISION:
+                    title_authority_status = MANUAL_TITLE_KEEP_PASS_DECISION
+                elif (
+                    source_fact_review.get("decision") == DETERMINISTIC_TEXT_NARROWING_PASS_DECISION
+                ):
+                    title_source += "+deterministic_text_narrowing"
+                    title_authority_status = "RESOLVED_DETERMINISTIC_TEXT_NARROWING"
+    title_gate = evaluate_candidate_title_gates(
+        candidate_id=candidate_id,
+        title=staged_title,
         lane=explicit_lane,
         enforce_automatic_style=title_llm_call is not None,
+        prior_violations=title_policy_violations,
+        prior_authority_error=title_authority_error,
+        prior_authority_status=title_authority_status,
+        story_contract=story_contract if isinstance(story_contract, Mapping) else None,
+        source_fact_review=(
+            source_fact_review if isinstance(source_fact_review, Mapping) else None
+        ),
     )
-    title_policy_violations.extend(
-        code for code in common_title_violations if code not in title_policy_violations
-    )
-    source_fact_blocked = title_authority_status == "BLOCKED_SOURCE_FACT_REVIEW"
-    if common_title_violations and not source_fact_blocked:
-        title_authority_error = "publish_title_policy_violation:" + ",".join(
-            common_title_violations
-        )
-        title_authority_status = "BLOCKED_PUBLISH_TITLE_POLICY"
-    title_story_audit = None
-    if isinstance(story_contract, dict):
-        title_story_audit = audit_story_artifact(
-            staged_title,
-            story_contract=story_contract,
-            artifact_kind="title",
-        )
-        if title_story_audit["status"] != "PASS":
-            story_codes = sorted(
-                {
-                    str(row.get("reason_code") or "STORY_CONTRACT_TITLE_FAILED")
-                    for row in title_story_audit["violations"]
-                    if isinstance(row, dict)
-                }
-            )
-            title_policy_violations.extend(
-                code for code in story_codes if code not in title_policy_violations
-            )
-            if not source_fact_blocked:
-                title_authority_error = "story_contract_violation:" + ",".join(story_codes)
-                title_authority_status = "BLOCKED_STORY_CONTRACT"
+    title_policy_violations = list(title_gate.violations)
+    title_authority_error = title_gate.authority_error
+    title_authority_status = title_gate.authority_status
+    title_story_audit = title_gate.story_audit
+    entity_projection_audit = title_gate.entity_projection_audit
     cover_text = _cover_text(staged_title)
     if title_authority_error is not None:
         # A candidate id / job fallback is not publish-title authority.  Fail
@@ -714,16 +688,12 @@ def _stage_publish_draft(
         reused_cover_path: Path | None = None
         covers_dir = media_path.parent / "covers"
         reuse_matches = (
-            sorted(covers_dir.glob(f"{candidate_id}.*.cover.png"))
-            if covers_dir.is_dir()
-            else []
+            sorted(covers_dir.glob(f"{candidate_id}.*.cover.png")) if covers_dir.is_dir() else []
         )
         if len(reuse_matches) == 1:
             reused_cover_path = reuse_matches[0]
         reused_sha = (
-            "sha256:" + _sha256(reused_cover_path)
-            if reused_cover_path is not None
-            else None
+            "sha256:" + _sha256(reused_cover_path) if reused_cover_path is not None else None
         )
         # 已发布封面的完整证据包结转：recovery review
         # manifest 要求 record 携带合法 cover-route-decision.v2 等封面回执，而这些
@@ -734,14 +704,10 @@ def _stage_publish_draft(
         carried_generation: dict[str, object] | None = None
         carry_drop_reason: str | None = None
         if reused_cover_path is not None and reused_sha is not None:
-            sidecar = reused_cover_path.with_name(
-                f"{candidate_id}.published-cover-generation.json"
-            )
+            sidecar = reused_cover_path.with_name(f"{candidate_id}.published-cover-generation.json")
             if sidecar.is_file():
                 try:
-                    published_generation = json.loads(
-                        sidecar.read_text(encoding="utf-8")
-                    )
+                    published_generation = json.loads(sidecar.read_text(encoding="utf-8"))
                 except (OSError, ValueError):
                     published_generation = None
                 # 只按 sha 相等决定是否进入结转流程；完整校验放在身份重打
@@ -749,10 +715,7 @@ def _stage_publish_draft(
                 # 代码永远不可达（r16 案：鸡生蛋）。
                 if (
                     isinstance(published_generation, dict)
-                    and str(
-                        published_generation.get("final_cover_sha256") or ""
-                    )
-                    == reused_sha
+                    and str(published_generation.get("final_cover_sha256") or "") == reused_sha
                 ):
                     carried_generation = dict(published_generation)
                 else:
@@ -776,9 +739,7 @@ def _stage_publish_draft(
             # （含 fresh 边界评审/clip-context sha），带旧的过来必然被审计判
             # STALE（r17 案）。
             if isinstance(story_contract, Mapping):
-                carried_generation["story_contract"] = (
-                    cover_story_contract_binding(story_contract)
-                )
+                carried_generation["story_contract"] = cover_story_contract_binding(story_contract)
             # 身份见证优先结转出版世代（v2 冻结条款，见
             # cover_host_identity_gate.PUBLISHED_CARRY_*）；仅当出版见证也
             # 过不了（形态残缺/哈希不符）才对同一份字节现场重打 CPA 见证。
@@ -788,29 +749,17 @@ def _stage_publish_draft(
             needs_identity = (
                 isinstance(carried_route, Mapping)
                 and carried_route.get("host_identity_required") is True
-                and not validate_final_host_identity_verification(
-                    carried_generation
-                )
+                and not validate_final_host_identity_verification(carried_generation)
             )
             if needs_identity:
                 identity_reference = (
-                    media_path.parent
-                    / "cover_refs"
-                    / f"{candidate_id}.cover-ref.png"
+                    media_path.parent / "cover_refs" / f"{candidate_id}.cover-ref.png"
                 )
-                fresh_base_url = (
-                    os.environ.get("CPA_BASE_URL", "").strip().rstrip("/")
-                )
+                fresh_base_url = os.environ.get("CPA_BASE_URL", "").strip().rstrip("/")
                 fresh_api_key = os.environ.get("CPA_API_KEY", "").strip()
-                if (
-                    identity_reference.is_file()
-                    and fresh_base_url
-                    and fresh_api_key
-                ):
+                if identity_reference.is_file() and fresh_base_url and fresh_api_key:
                     try:
-                        carried_generation[
-                            "final_host_identity_verification"
-                        ] = dict(
+                        carried_generation["final_host_identity_verification"] = dict(
                             verify_final_host_identity(
                                 final_cover_path=reused_cover_path,
                                 final_cover_sha256=reused_sha,
@@ -820,28 +769,35 @@ def _stage_publish_draft(
                             )
                         )
                     except Exception as exc:
-                        carry_drop_reason = (
-                            "identity_refresh_error:"
-                            f"{type(exc).__name__}"
-                        )
+                        carry_drop_reason = f"identity_refresh_error:{type(exc).__name__}"
                         carried_generation = None
                 else:
-                    carry_drop_reason = (
-                        "identity_refresh_precondition_missing"
-                    )
+                    carry_drop_reason = "identity_refresh_precondition_missing"
                     carried_generation = None
             # 终门：结转 bundle 的完整路由校验（含身份）决定去留。
             if carried_generation is not None and not (
-                validate_cover_route_decision(
-                    carried_generation, allow_legacy_v1=False
-                )
+                validate_cover_route_decision(carried_generation, allow_legacy_v1=False)
             ):
                 carry_drop_reason = "carried_bundle_failed_route_validation"
                 carried_generation = None
+        carried_artifact_hashes: dict[str, str] = {}
+        if carried_generation is not None:
+            for result_key, generation_key in (
+                ("ai_background_sha256", "ai_background_sha256"),
+                ("cover_reference_sha256", "reference_sha256"),
+            ):
+                value = carried_generation.get(generation_key)
+                if isinstance(value, str) and value:
+                    carried_artifact_hashes[result_key] = value
         cover_result = {
             "status": "REUSED_COVER",
-            "cover_path": None,
+            "cover_path": (
+                str(reused_cover_path)
+                if carried_generation is not None and reused_cover_path is not None
+                else None
+            ),
             **({"cover_sha256": reused_sha} if reused_sha else {}),
+            **carried_artifact_hashes,
             "cover_generation": (
                 carried_generation
                 if carried_generation is not None
@@ -849,9 +805,7 @@ def _stage_publish_draft(
                     "status": "REUSED",
                     "note": "subtitle-only re-run: existing cover kept",
                     "reused_cover_path": (
-                        str(reused_cover_path)
-                        if reused_cover_path is not None
-                        else None
+                        str(reused_cover_path) if reused_cover_path is not None else None
                     ),
                     "reused_cover_candidates": len(reuse_matches),
                     **(
@@ -864,9 +818,7 @@ def _stage_publish_draft(
             "reason_codes": [],
         }
     else:
-        requested_full_text_cover_contract = record.get(
-            "full_text_cover_contract"
-        )
+        requested_full_text_cover_contract = record.get("full_text_cover_contract")
         full_text_cover_contract = (
             dict(requested_full_text_cover_contract)
             if validate_full_text_cover_contract(
@@ -892,8 +844,17 @@ def _stage_publish_draft(
             full_text_cover_contract=full_text_cover_contract,
             diversity_slot=cover_diversity_slot,
         )
+    cover_result, cover_entity_projection_audit = enforce_candidate_cover_projection(
+        candidate_id=candidate_id,
+        cover_result=cover_result,
+        projection_required=entity_projection_audit is not None,
+    )
     cover_status = str(cover_result["status"])
-    cover_path_value = cover_result.get("cover_path") if cover_status == "AI_COVER_READY" else None
+    cover_path_value = (
+        cover_result.get("cover_path")
+        if cover_status in {"AI_COVER_READY", "REUSED_COVER"}
+        else None
+    )
     cover_generation = cover_result["cover_generation"]
     raw_reason_codes = cover_result.get("reason_codes")
     reason_codes = (
@@ -915,9 +876,14 @@ def _stage_publish_draft(
         "recovery_publication_authority": normalized_recovery_publication_authority,
         "title_authority_error": title_authority_error,
         "title_policy_violations": title_policy_violations,
+        "important_content_ips": important_content_ips,
         "title_story_audit": title_story_audit,
+        "entity_projection_audit": entity_projection_audit,
+        "cover_entity_projection_audit": cover_entity_projection_audit,
         "source_fact_review": source_fact_review,
         "manual_title_repair_authority_consumption": manual_title_repair_authority_consumption,
+        "manual_title_keep_authority_consumption": manual_title_keep_authority_consumption,
+        "public_text_surface_authority_consumption": public_text_surface_authority_consumption,
         "video_path": str(media_path),
         "cover_text": cover_text,
         "cover_path": cover_path_value,
@@ -925,6 +891,7 @@ def _stage_publish_draft(
         "cover_generation": cover_generation,
         "reason_codes": reason_codes,
         "artifact_hashes": artifact_hashes,
+        **publish_staging_provenance_fields(record),
     }
     publish_json_path.write_text(
         json.dumps(publish_draft, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -939,9 +906,14 @@ def _stage_publish_draft(
         "recovery_publication_authority": normalized_recovery_publication_authority,
         "title_authority_error": title_authority_error,
         "title_policy_violations": title_policy_violations,
+        "important_content_ips": important_content_ips,
         "title_story_audit": title_story_audit,
+        "entity_projection_audit": entity_projection_audit,
+        "cover_entity_projection_audit": cover_entity_projection_audit,
         "source_fact_review": source_fact_review,
         "manual_title_repair_authority_consumption": manual_title_repair_authority_consumption,
+        "manual_title_keep_authority_consumption": manual_title_keep_authority_consumption,
+        "public_text_surface_authority_consumption": public_text_surface_authority_consumption,
         "cover_status": cover_status,
         "cover_path": cover_path_value,
         "cover_text": cover_text,
@@ -949,6 +921,7 @@ def _stage_publish_draft(
         "reason_codes": reason_codes,
         "publish_json_path": str(publish_json_path),
         "upload_enabled": False,
+        **publish_staging_provenance_fields(record),
     }
     return record
 
@@ -1069,6 +1042,9 @@ def _prepare_lidousha_cover_reference(
                 completed.stderr[-500:] or "reference frame extraction failed",
             ),
         )
+    # 竖屏判据量的是**已抽出的参考帧本身**，不是选帧回执：override / hash-bound
+    # 重放手工拼的 frame_selection 里没有几何，而重放正是竖版事故的现场。
+    cover_generation["reference_frame_size"] = read_source_frame_size(reference_path)
     if reference_authority is not None:
         actual_reference_sha256 = "sha256:" + _sha256(reference_path)
         expected_reference_sha256 = str(reference_authority["reference_png_sha256"])
@@ -1428,13 +1404,9 @@ def _stage_cpa_redraw_cover(
                 ai_background_path = retry_background
         if not validate_final_host_identity_verification(cover_generation):
             verification = cover_generation.get("final_host_identity_verification")
-            detail = (
-                "AI cover final pixels do not have a PASS host "
-                "identity verdict: "
-                + str(
-                    (verification if isinstance(verification, Mapping) else {}).get("reason_code")
-                    or "VERIFICATION_MISSING"
-                )
+            detail = "AI cover final pixels do not have a PASS host identity verdict: " + str(
+                (verification if isinstance(verification, Mapping) else {}).get("reason_code")
+                or "VERIFICATION_MISSING"
             )
             record_cover_route_execution(
                 cover_generation,
@@ -1506,9 +1478,7 @@ def _stage_cpa_redraw_cover(
     record_cover_route_execution(
         cover_generation,
         actual_treatment="cpa_redraw",
-        execution_status=(
-            "READY_DEGRADED" if demotion_detail else "READY"
-        ),
+        execution_status=("READY_DEGRADED" if demotion_detail else "READY"),
         image_generation_attempted=True,
         image_generation_used=True,
         detail=demotion_detail,
@@ -1542,6 +1512,7 @@ def _build_lidousha_cover_route(
 ) -> tuple[str, dict[str, object]]:
     """Build the semantic-first route record before any cover materialization."""
 
+    source_frame_size = cover_generation.get("reference_frame_size")
     required_participant_ids = story_participant_ids(story_contract)
     visible_participant_ids = source_visible_participant_ids(reference_authority)
     relationship_source_verified = bool(
@@ -1552,8 +1523,8 @@ def _build_lidousha_cover_route(
     punch_semantic_status = str(
         punch_review.get("status") if isinstance(punch_review, Mapping) else ""
     ).strip()
-    thumbnail_text_requires_punch = (
-        punch_allowed and cover_text_requires_punch_for_thumbnail(cover_text)
+    thumbnail_text_requires_punch = punch_allowed and cover_text_requires_punch_for_thumbnail(
+        cover_text
     )
     treatment, treatment_reason = _decide_cover_treatment(
         cover_mode=cover_mode,
@@ -1566,6 +1537,7 @@ def _build_lidousha_cover_route(
         thumbnail_text_requires_punch=thumbnail_text_requires_punch,
         punch_semantic_status=punch_semantic_status,
         source_composition_verification=source_composition_verification,
+        source_frame_size=source_frame_size,
     )
     cover_generation["cover_treatment"] = {
         "treatment": treatment,
@@ -1588,9 +1560,7 @@ def _build_lidousha_cover_route(
             "cover_mode": cover_mode,
             "is_song": art_direction.is_song,
             "cover_punch_allowed": punch_allowed,
-            "full_text_cover_contract": (
-                full_text_cover_contract is not None
-            ),
+            "full_text_cover_contract": (full_text_cover_contract is not None),
             "frame_score": first_candidate.get("score"),
             "frame_emotion": first_candidate.get("emotion"),
             "subject_confident": (
@@ -1604,6 +1574,7 @@ def _build_lidousha_cover_route(
                 else None
             ),
             "verified_stream_frame": verified_stream_frame,
+            **vertical_source_decision_inputs(source_frame_size),
             "thumbnail_text_requires_punch": thumbnail_text_requires_punch,
             "punch_semantic_status": punch_semantic_status,
             "reference_authority_id": (
@@ -1628,13 +1599,13 @@ def _build_lidousha_cover_route(
                 else None
             ),
             "source_composition_redraw_recommended": (
-                source_composition_recommends_redraw(
-                    source_composition_verification
-                )
+                source_composition_recommends_redraw(source_composition_verification)
                 if isinstance(source_composition_verification, Mapping)
                 else None
             ),
         },
+        # C9：拒绝理由必须带这一帧的真实判据（见证原文+分数+场景），不是模板。
+        source_composition_verification=source_composition_verification,
     )
     cover_generation["route_decision"] = route
     record_cover_route_execution(
@@ -1659,9 +1630,7 @@ def _stage_ai_cover(
     image_edit: Callable[..., dict[str, object]] = _cover_call_cpa_image_edit,
     final_participant_verifier: (Callable[..., Mapping[str, object]] | None) = None,
     final_host_identity_verifier: (Callable[..., Mapping[str, object]] | None) = None,
-    source_composition_verifier: (
-        Callable[..., Mapping[str, object]] | None
-    ) = None,
+    source_composition_verifier: (Callable[..., Mapping[str, object]] | None) = None,
     enforce_final_host_identity: bool = False,
     punch_allowed: bool = False,
     full_text_cover_contract: Mapping[str, object] | None = None,
@@ -1683,9 +1652,7 @@ def _stage_ai_cover(
         full_text_cover_contract,
         cover_text=cover_text,
     ):
-        cover_generation["full_text_cover_contract"] = dict(
-            full_text_cover_contract
-        )
+        cover_generation["full_text_cover_contract"] = dict(full_text_cover_contract)
     story_contract = materialized_recut.get("story_contract")
     if isinstance(story_contract, Mapping):
         cover_generation["story_contract"] = cover_story_contract_binding(story_contract)
@@ -1740,34 +1707,24 @@ def _stage_ai_cover(
     source_composition_verification: Mapping[str, object] | None = None
     if enforce_final_host_identity:
         active_source_composition_verifier = (
-            source_composition_verifier
-            or verify_source_composition
+            source_composition_verifier or verify_source_composition
         )
         reference_sha256 = "sha256:" + _sha256(reference_path)
-        try:
-            source_composition_verification = dict(
-                active_source_composition_verifier(
-                    reference_path=reference_path,
-                    reference_sha256=reference_sha256,
-                    story_hook=(
-                        str(story_contract.get("selection_hook") or "")
-                        if isinstance(story_contract, Mapping)
-                        else ""
-                    ),
-                    title=title,
-                    base_url=base_url,
-                    api_key=api_key,
-                )
-            )
-        except Exception as exc:
-            source_composition_verification = {
-                "status": "FAIL",
-                "reason_code": "SOURCE_COMPOSITION_VERIFIER_EXCEPTION",
-                "detail": f"{type(exc).__name__}: {exc}",
-            }
-        cover_generation["source_composition_verification"] = dict(
-            source_composition_verification
+        source_composition_verification = run_source_composition_witness(
+            active_source_composition_verifier,
+            reference_path=reference_path,
+            reference_sha256=reference_sha256,
+            story_hook=(
+                str(story_contract.get("selection_hook") or "")
+                if isinstance(story_contract, Mapping)
+                else ""
+            ),
+            title=title,
+            base_url=base_url,
+            api_key=api_key,
+            frame_selection=frame_selection,
         )
+        cover_generation["source_composition_verification"] = dict(source_composition_verification)
         if not validate_source_composition_verification(
             source_composition_verification,
             reference_sha256=reference_sha256,
@@ -1789,8 +1746,7 @@ def _stage_ai_cover(
                 detail,
             )
         source_composition_path = (
-            evidence_dir
-            / f"{candidate_id}.cover-source-composition-verification.json"
+            evidence_dir / f"{candidate_id}.cover-source-composition-verification.json"
         )
         _write_json_file(
             source_composition_path,
@@ -1953,19 +1909,13 @@ def _stage_ai_cover(
             full_text_cover_contract=full_text_cover_contract,
         )
         result = _enforce_final_talk_cover_thumbnail_gate(result)
-        if "SCREENSHOT_ROUTE_MATERIALIZATION_FAILED" not in (
-            result.get("reason_codes") or []
-        ):
+        if "SCREENSHOT_ROUTE_MATERIALIZATION_FAILED" not in (result.get("reason_codes") or []):
             return result
         screenshot_receipt = cover_generation.get("screenshot_direct")
-        demotion_detail = (
-            "demoted from "
-            f"{treatment}: "
-            + str(
-                (screenshot_receipt or {}).get("detail")
-                if isinstance(screenshot_receipt, Mapping)
-                else ""
-            )
+        demotion_detail = f"demoted from {treatment}: " + str(
+            (screenshot_receipt or {}).get("detail")
+            if isinstance(screenshot_receipt, Mapping)
+            else ""
         )
         cover_generation["route_demotion"] = {
             "schema_version": "cover-route-demotion.v1",
@@ -2063,6 +2013,7 @@ def _stage_ai_cover(
         final_host_identity_verifier=final_host_identity_verifier,
         base_url=base_url,
         api_key=api_key,
+        full_text_cover_contract=full_text_cover_contract,
     )
     return _enforce_final_talk_cover_thumbnail_gate(result)
 
@@ -2099,155 +2050,6 @@ def _cover_reference_command(
         "1",
         str(reference_path),
     ]
-
-
-_COVER_TREATMENT_SCORE_HI = 4.5
-_COVER_TREATMENT_SCORE_LO = 2.6
-_COVER_SUBJECT_MAX_MOTION_DISPERSION = 0.50
-
-
-def _decide_cover_treatment(
-    *,
-    cover_mode: str,
-    is_song: bool,
-    punch_allowed: bool,
-    frame_selection: Mapping[str, object] | None,
-    verified_stream_frame: bool = False,
-    relationship_visual_required: bool = False,
-    relationship_source_verified: bool = False,
-    thumbnail_text_requires_punch: bool = False,
-    punch_semantic_status: str = "",
-    source_composition_verification: Mapping[str, object] | None = None,
-) -> tuple[str, str]:
-    """每条切片选封面路线（维护者：哪些适合全图 CPA 重做、哪些适合截图）。
-
-    判据=表现力选帧最高分（"这条片有没有值得原样示人的真名场面"）：
-    - 歌切 / 选帧失败 → cpa_redraw（唱歌净美学 / 无帧可用）
-    - 强名场面（≥4.5，或 ≥3.2 且命中情绪字幕段）→ screenshot_direct：真表情就是
-      封面，重绘反而丢梗
-    - 中等瞬间（≥2.6）→ screenshot_polish：保真帧构图，CPA 只清杂物修画质
-    - 更低 → cpa_redraw：没有好瞬间，插画重做的承载力更强
-    阈值标定自 /19 十七条本地成片修掉片头假峰后的分数分布
-    （强：5.1-9.1；中：2.8-3.9；弱：1.9-2.1）。
-    """
-
-    if cover_mode == "cpa":
-        return "cpa_redraw", "mode=cpa (forced)"
-    if is_song:
-        return "cpa_redraw", "song keeps the clean CPA aesthetic"
-    if relationship_visual_required:
-        if cover_mode == "polish":
-            return "screenshot_polish", "mode=polish (forced)"
-        if relationship_source_verified:
-            return (
-                "screenshot_direct",
-                "hash-bound source frame verifies all required participants",
-            )
-        return (
-            "screenshot_direct",
-            "relationship hook requires source-verified participants before composition scoring",
-        )
-    if verified_stream_frame:
-        return (
-            "screenshot_direct",
-            "hash-bound source frame verifies all required participants",
-        )
-    # **几何否决**排在关系分支之后（witness 的提问是单人框架——只定位
-    # 李豆沙、问"她能否裁成大主体"——双人同框里她天然不独占画面，
-    # faithful_crop_can_make_dominant 很容易 false，与 70-cover.md 的
-    # 「双人联动即使运动分数不高也可优先保留真实互动」直接冲突）。
-    if source_composition_recommends_redraw(source_composition_verification):
-        return (
-            "cpa_redraw",
-            "CPA source-composition witness reports the face is cut or cannot "
-            "become the dominant subject",
-        )
-    # witness 不再无条件替换路由。此前它是 Mapping 就直接 return，导致下方整套
-    # 标定阈值（4.5 / 2.6 / 0.50 弥散 / camera window）在有 witness 时**完全不可达**
-    # ——维护者 拍板的名场面分路由被整体退役，封面路线退化成一次 CPA 二值
-    # 判断。现在它降级为**置信输入**（见下方 subject_confident 的合成），
-    # 标定分数恢复决定权。
-    if frame_selection is None:
-        return "cpa_redraw", "frame selection unavailable"
-    candidates = frame_selection.get("candidates") or []
-    best = float(candidates[0]["score"]) if candidates else 0.0
-    emotional = bool(candidates and candidates[0].get("emotion"))
-    # A narrow local motion box is not sufficient proof of a usable cover
-    # subject when the rest of the scene is moving across most of the canvas.
-    # The game-UI miss reported a plausible local box but a 0.6033
-    # accumulated-motion footprint; screenshot polish consequently preserved a
-    # mostly empty game panel with tiny avatars in one corner.  Prefer the CPA
-    # big-face redraw whenever global motion is that dispersed.  Missing legacy
-    # evidence remains compatible with the earlier subject-confidence gate.
-    raw_dispersion = frame_selection.get("motion_dispersion_frac")
-    try:
-        motion_dispersion = float(raw_dispersion) if raw_dispersion is not None else None
-    except (TypeError, ValueError):
-        motion_dispersion = None
-    # 置信 = 运动几何置信 **或** CPA witness 给出的合法主体证据。
-    #
-    # 几何置信在 Live2D 皮套画面上不可靠：7/24-7/29 实测 23 条有效样本里
-    # `subject_confident` 探测器自己给 False 的有 16 条（70%），弥散帽 0.50 又把
-    # 22 个实测值里的 9 个（41%）挡在外面——那个帽是 一次游戏 UI 事故
-    # （实测 0.6033）往下取的 n=1 标定，落在生产分布正中间，不是在切病态尾巴。
-    # 结果 11 条切片在分数最高 9.0027 的情况下没进任何截图分支就被判重绘
-    # （auto_202004_553_831：flag True、disp 0.5271，超帽 0.027）。
-    #
-    # 弥散帽保留但**只约束运动几何这个来源**（它 7/22 的原始射程）；witness 在场时
-    # 合法点集由 CPA 视觉给定，不适用该帽。放宽路由不放宽验收——下游
-    # polish_face_verification v2 与 FINAL_COVER_SUBJECT_PROMINENCE_FAILED
-    # 仍会拒掉真正不合格的成品。
-    geometry_confident = frame_selection.get("subject_confident") is True and (
-        motion_dispersion is None or motion_dispersion <= _COVER_SUBJECT_MAX_MOTION_DISPERSION
-    )
-    subject_confident = geometry_confident or source_composition_supports_subject(
-        source_composition_verification
-    )
-    thumbnail_punch_unavailable = (
-        thumbnail_text_requires_punch
-        and punch_semantic_status in {"FAILED", "NOT_APPLICABLE"}
-    )
-    forced_subject_unverified = (
-        cover_mode in {"screenshot", "polish"} and not subject_confident
-    )
-    if thumbnail_punch_unavailable and forced_subject_unverified:
-        return (
-            "cpa_redraw",
-            (
-                f"mode={cover_mode} preference cannot authorize an unverified "
-                "cover subject; thumbnail punch unavailable and full title is "
-                "not a readable 1-2 line hook"
-            ),
-        )
-    if thumbnail_punch_unavailable:
-        return (
-            "cpa_redraw",
-            "thumbnail punch unavailable; full title is not a readable 1-2 line hook",
-        )
-    if forced_subject_unverified:
-        return (
-            "cpa_redraw",
-            f"mode={cover_mode} preference cannot authorize an unverified cover subject",
-        )
-    if cover_mode == "screenshot":
-        return "screenshot_direct", "mode=screenshot (forced)"
-    if cover_mode == "polish":
-        return "screenshot_polish", "mode=polish (forced)"
-    if subject_confident and (best >= _COVER_TREATMENT_SCORE_HI or (emotional and best >= 3.2)):
-        return "screenshot_direct", f"strong real moment (score={best:.2f})"
-    if subject_confident and best >= _COVER_TREATMENT_SCORE_LO:
-        return "screenshot_polish", f"usable moment + CPA touch-up (score={best:.2f})"
-    if best >= _COVER_TREATMENT_SCORE_LO:
-        # 游戏场小窗回归（维护者：截图修图优先于重绘）：全局运动
-        # 弥散但探测到位置固定的立绘小窗时，裁窗放大做截图底走 polish，
-        # 真名场面不再被"无自信主体"一票否决；无窗才落重绘。
-        if frame_selection.get("camera_window_bbox_frac"):
-            return (
-                "screenshot_polish",
-                f"camera window crop + CPA touch-up (score={best:.2f})",
-            )
-        return "cpa_redraw", f"motion without confident cover subject (score={best:.2f})"
-    return "cpa_redraw", f"no strong real moment (score={best:.2f})"
 
 
 def _screenshot_base_and_crop(
@@ -2296,18 +2098,11 @@ def _screenshot_base_and_crop(
         if isinstance(source_composition_verification, Mapping):
             if not isinstance(source_composition_receipt, Mapping):
                 raise ValueError("SOURCE_COMPOSITION_RECEIPT_MISSING")
-            receipt_path = Path(
-                str(source_composition_receipt.get("path") or "")
-            )
-            receipt_sha256 = str(
-                source_composition_receipt.get("sha256") or ""
-            )
-            if (
-                not receipt_path.is_file()
-                or "sha256:" + _sha256(receipt_path) != receipt_sha256
-            ):
+            receipt_path = Path(str(source_composition_receipt.get("path") or ""))
+            receipt_sha256 = str(source_composition_receipt.get("sha256") or "")
+            if not receipt_path.is_file() or "sha256:" + _sha256(receipt_path) != receipt_sha256:
                 raise ValueError("SOURCE_COMPOSITION_RECEIPT_HASH_MISMATCH")
-            crop_evidence = extract_authority_source_crop(
+            crop_evidence = extract_authority_source_crop_or_full_frame(
                 reference_path=reference_path,
                 output_path=screenshot_base,
                 frame_ms=int(frame_selection["best_ms"]),
@@ -2318,9 +2113,7 @@ def _screenshot_base_and_crop(
         else:
             confident = bool(frame_selection.get("subject_confident"))
             camera_window = (
-                frame_selection.get("camera_window_bbox_frac")
-                if not confident
-                else None
+                frame_selection.get("camera_window_bbox_frac") if not confident else None
             )
             crop_evidence = extract_zoomed_cover_frame(
                 media_path,
@@ -2329,18 +2122,14 @@ def _screenshot_base_and_crop(
                 zoom=1.32 if confident else 1.16,
                 anchor_x_frac=(
                     float(frame_selection["subject_anchor_x_frac"])
-                    if confident
-                    and frame_selection.get("subject_anchor_x_frac")
-                    is not None
+                    if confident and frame_selection.get("subject_anchor_x_frac") is not None
                     # 本频道版式皮套居中偏右、弹幕栏在左：右倾锚点让 1.16x 裁切
                     # 优先吃掉左侧弹幕栏。
                     else 0.58
                 ),
                 head_top_frac=(
                     float(frame_selection["subject_head_top_frac"])
-                    if confident
-                    and frame_selection.get("subject_head_top_frac")
-                    is not None
+                    if confident and frame_selection.get("subject_head_top_frac") is not None
                     else 0.0
                 ),
                 window_bbox_frac=camera_window,
@@ -2512,27 +2301,19 @@ def _stage_screenshot_direct_cover(
             }
         )
         if isinstance(route, Mapping) and route.get("host_identity_required") is True:
-            if final_host_identity_verifier is None:
-                host_identity_verification: Mapping[str, object] = {
-                    "status": "FAIL",
-                    "reason_code": "HOST_IDENTITY_VERIFIER_MISSING",
-                }
-            else:
-                host_identity_verification = dict(
-                    final_host_identity_verifier(
-                        final_cover_path=final_cover_path,
-                        final_cover_sha256=cover_generation["final_cover_sha256"],
-                        reference_path=reference_path,
-                        base_url=base_url,
-                        api_key=api_key,
-                    )
-                )
+            host_identity_verification = run_final_host_identity_witness(
+                final_host_identity_verifier,
+                final_cover_path=final_cover_path,
+                final_cover_sha256=cover_generation["final_cover_sha256"],
+                reference_path=reference_path,
+                base_url=base_url,
+                api_key=api_key,
+                cover_generation=cover_generation,
+            )
             cover_generation["final_host_identity_verification"] = dict(host_identity_verification)
             if not validate_final_host_identity_verification(cover_generation):
-                detail = (
-                    "final cover pixels do not have a PASS "
-                    "host identity verdict: "
-                    + str(host_identity_verification.get("reason_code") or "VERIFICATION_MISSING")
+                detail = "final cover pixels do not have a PASS host identity verdict: " + str(
+                    host_identity_verification.get("reason_code") or "VERIFICATION_MISSING"
                 )
                 record_cover_route_execution(
                     cover_generation,
@@ -2689,6 +2470,7 @@ def _degrade_unavailable_redraw_identity_to_direct(
     final_host_identity_verifier: Callable[..., Mapping[str, object]] | None,
     base_url: str,
     api_key: str,
+    full_text_cover_contract: Mapping[str, object] | None,
 ) -> dict[str, object]:
     """Keep source pixels when the independent redraw identity witness is down."""
 
@@ -2810,12 +2592,8 @@ def _enforce_final_talk_cover_thumbnail_gate(
         generation,
         actual_treatment=None,
         execution_status="BLOCKED",
-        image_generation_attempted=(
-            generation.get("image_generation_attempted") is True
-        ),
-        image_generation_used=(
-            generation.get("image_generation_used") is True
-        ),
+        image_generation_attempted=(generation.get("image_generation_attempted") is True),
+        image_generation_used=(generation.get("image_generation_used") is True),
         detail=detail,
     )
     return _blocked_ai_cover_result(generation, violations, detail)

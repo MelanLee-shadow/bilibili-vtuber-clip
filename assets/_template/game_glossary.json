@@ -1,0 +1,35 @@
+{
+  "schema_version": "vtuber-slice.game-glossary.v1",
+  "occurrence_policy": "GAME_TERM_EXISTS_NOT_CUE_OCCURRENCE_OR_MUTATION_AUTHORITY",
+  "games": [
+    {
+      "game_id": "example-game",
+      "canonical": "示例游戏",
+      "aliases": [
+        "Example Game"
+      ],
+      "sources": [
+        {
+          "publisher": "replace with an authoritative role/terminology page",
+          "url": "https://example.com/replace-me",
+          "note": "cite where every surface below comes from"
+        }
+      ],
+      "detection_surfaces": [
+        "示例角色甲",
+        "示例角色乙",
+        "示例角色丙"
+      ],
+      "terms": [
+        {
+          "surface": "示例角色甲",
+          "kind": "role"
+        },
+        {
+          "surface": "示例机制词",
+          "kind": "mechanic"
+        }
+      ]
+    }
+  ]
+}

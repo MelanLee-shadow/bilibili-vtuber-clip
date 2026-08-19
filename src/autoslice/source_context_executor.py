@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
+from src.autoslice.auto_review import GEMINI_API_FALLBACK_PROVIDER
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.term_lexicon import load_discovered_term_lexicon, normalize_text
 
@@ -107,6 +109,87 @@ def build_ffmpeg_context_clip_command(
     ]
 
 
+def _context_clip_cache_dir(source_video_path: Path, output_dir: Path) -> Path | None:
+    """Where to keep one copy of a context clip for every attempt to share.
+
+    Beside the source, but only when source and output sit on one filesystem.
+    That is exactly the hardlink precondition, and it also keeps the cache off
+    the recordings mount: talk sources are read straight from the CloudFS FUSE
+    mount, where a cache directory would be both wrong and painfully slow.
+    """
+    try:
+        if source_video_path.stat().st_dev != output_dir.stat().st_dev:
+            return None
+    except OSError:
+        return None
+    return source_video_path.parent / ".context_clip_cache"
+
+
+def _context_clip_cache_key(
+    *,
+    source_sha256: str,
+    context_start_ms: int,
+    context_duration_ms: int,
+    command: Sequence[str],
+    output_media_path: Path,
+) -> str:
+    """Identity of the clip, not of the attempt that asked for it.
+
+    The output path is the one command element that differs between attempts,
+    so it is masked out; everything else that could change the bytes is in.
+    """
+    masked = ["<output>" if part == str(output_media_path) else part for part in command]
+    payload = json.dumps(
+        {
+            "source_sha256": source_sha256,
+            "context_start_ms": context_start_ms,
+            "context_duration_ms": context_duration_ms,
+            "command": masked,
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _link_cached_context_clip(
+    cache_dir: Path | None, cache_key: str, context_media_path: Path
+) -> bool:
+    """Serve this attempt from a previous identical encode. True when served."""
+    if cache_dir is None:
+        return False
+    cached = cache_dir / f"{cache_key}.mp4"
+    try:
+        if not cached.is_file() or cached.stat().st_size <= 0:
+            return False
+        if context_media_path.exists():
+            context_media_path.unlink()
+        os.link(cached, context_media_path)
+    except OSError:
+        return False
+    return True
+
+
+def _publish_cached_context_clip(
+    cache_dir: Path | None, cache_key: str, context_media_path: Path
+) -> None:
+    """Offer a freshly produced clip to later attempts.
+
+    Only ever called after ffmpeg returned 0, so a cached entry is always a
+    complete clip — a crash mid-encode leaves the partial file at the output
+    path and never reaches the cache. A concurrent attempt winning the race is
+    a hit, not an error.
+    """
+    if cache_dir is None:
+        return
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        os.link(context_media_path, cache_dir / f"{cache_key}.mp4")
+    except FileExistsError:
+        return
+    except OSError:
+        return
+
+
 def execute_source_context_job(
     job_manifest: Mapping[str, object],
     *,
@@ -164,8 +247,22 @@ def execute_source_context_job(
             context_start_ms=context_start_ms,
             context_duration_ms=context_duration_ms,
         )
-        completed = subprocess.run(cmd, check=False, capture_output=True, text=True)
-        if completed.returncode != 0:
+        cache_dir = _context_clip_cache_dir(source_video_path, output_dir)
+        cache_key = _context_clip_cache_key(
+            source_sha256=source_sha256,
+            context_start_ms=context_start_ms,
+            context_duration_ms=context_duration_ms,
+            command=cmd,
+            output_media_path=context_media_path,
+        )
+        completed = (
+            None
+            if _link_cached_context_clip(cache_dir, cache_key, context_media_path)
+            else subprocess.run(cmd, check=False, capture_output=True, text=True)
+        )
+        if completed is not None and completed.returncode == 0:
+            _publish_cached_context_clip(cache_dir, cache_key, context_media_path)
+        if completed is not None and completed.returncode != 0:
             _write_review_required(
                 review_required_path,
                 release_ready=False,
@@ -453,6 +550,19 @@ def _agy_reason_codes(
 ) -> tuple[str, ...]:
     if not refinement_required and result.provider == "source_draft_context":
         return ()
+    if result.provider == GEMINI_API_FALLBACK_PROVIDER:
+        # 维护者（项目 memory）：AGY 订阅 / 免费 3key / 付费 backup 是
+        # 同一个 Gemini 模型的配额顺序，「按 provider 层拒证据的门 = 过度限制」；
+        # 处方是「任一层证据有效 + 按层钉模型串」。所以兜底本身不是拒绝理由,
+        # 但它必须如实说明用了哪一层、跑的哪个模型、AGY 那条腿怎么退出的。
+        reasons = []
+        if result.provider_fallback_used is not True:
+            reasons.append("JINGTING_PROVIDER_FALLBACK_UNKNOWN")
+        if not result.model:
+            reasons.append("JINGTING_MODEL_MISSING")
+        if result.agy_rc is None:
+            reasons.append("AGY_FAILED")
+        return tuple(dict.fromkeys(reasons))
     reasons: list[str] = []
     if result.provider != "agy":
         reasons.append("JINGTING_PROVIDER_NOT_AGY")

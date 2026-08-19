@@ -25,6 +25,8 @@ from .final_human_review_evidence import (
     FinalHumanReviewEvidenceError,
 )
 from .final_human_review_evidence import validate_bound_review_evidence
+from .cover_route_evidence import validate_cover_route_decision
+from .story_contract import cover_story_contract_binding_matches
 
 
 # 终审回执 schema 是包内持久证据词汇（旧包哈希兼容），保留 lidousha- 拼写。
@@ -805,7 +807,7 @@ def _publication_target(
         # 3573/672 case (维护者-planned prefix repair): the live title was a
         # manual override missing the 【李豆沙】 prefix; the repair publishes
         # the canonicalized form. Only that exact relationship may differ.
-        if authority.get("title_mode") != "ivan_manual_override":
+        if authority.get("title_mode") != "reviewer_manual_override":
             return False
         if not isinstance(observed, str) or not observed:
             return False
@@ -1009,6 +1011,47 @@ def _cover_story_claim_authority(
             )
         )
     )
+    route_execution_ok = bool(
+        isinstance(generation, Mapping)
+        and isinstance(route, Mapping)
+        and (
+            (
+                route.get("execution_status") == "READY"
+                and route.get("selected_treatment")
+                == route.get("actual_treatment")
+            )
+            or (
+                # A subtitle-only same-BV recovery may carry the already
+                # published cover byte-for-byte.  Historical v2 routes can
+                # legitimately record a screenshot materialization failure
+                # followed by an explicit READY_DEGRADED redraw.  The shared
+                # route validator verifies that the BLOCKED receipt, execution
+                # detail, actual treatment, generation provenance, and (when
+                # required) final host-identity witness all agree.  Keep this
+                # exception narrow: a fresh/non-carried cover still needs the
+                # ordinary READY + selected==actual closure above.
+                generation.get("carried_forward_from_published_record") is True
+                and generation.get("status") == "REUSED"
+                and type(generation.get("reused_cover_candidates")) is int
+                and generation.get("reused_cover_candidates") == 1
+                and route.get("execution_status") == "READY_DEGRADED"
+                and route.get("selected_treatment") == "screenshot_polish"
+                and route.get("actual_treatment") == "cpa_redraw"
+                and route.get("host_identity_required") is True
+                and isinstance(generation.get("story_contract"), Mapping)
+                and cover_story_contract_binding_matches(
+                    story_contract, generation["story_contract"]
+                )
+                and (
+                    record.get("cover_generation") is None
+                    or record.get("cover_generation") == generation
+                )
+                and validate_cover_route_decision(
+                    generation, allow_legacy_v1=False
+                )
+            )
+        )
+    )
     if (
         story_contract.get("cover_counterpart_reference_available") is not False
         or story_contract.get("relation_claim_allowed") is not False
@@ -1016,9 +1059,8 @@ def _cover_story_claim_authority(
         not in {"HOST_ONLY_GENERIC", "HOST_ONLY_RELATION_EXPLICIT"}
         or not isinstance(generation, Mapping)
         or not isinstance(route, Mapping)
-        or route.get("execution_status") != "READY"
+        or not route_execution_ok
         or not host_only_render_ok
-        or route.get("selected_treatment") != route.get("actual_treatment")
         or route.get("relationship_visual_required") is not False
         or route.get("required_participant_ids") != []
         or route.get("source_visible_participant_ids") != []

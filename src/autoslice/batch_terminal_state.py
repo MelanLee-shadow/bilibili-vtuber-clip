@@ -21,11 +21,58 @@ SONG_DETERMINISTIC_PROOF_REJECTION_CODES = frozenset(
 )
 
 
+def song_infra_transient_is_active(
+    *,
+    record: Mapping[str, object],
+    reason_codes: Collection[object],
+    infra_transient_reason_codes: Collection[object],
+    retry_cap: int | None = None,
+    fallback_to_reason_codes: bool = False,
+) -> bool:
+    """Whether this song attempt still counts as a waitable provider transient.
+
+    An explicitly typed transient emitted by ``song_lane`` normally outranks
+    stale/partial negative reasons (``4af4a88``).  That veto was
+    unbounded, and combined with the song lane's JINGTING provenance false
+    positives it produced an immortal candidate: ``refill_songs`` gives
+    ``selected_repair`` items first claim on ``song_delivery_budget`` (one per
+    live session), so 's ``song_200130_1012`` sat at
+    ``transient_retry_count=4`` holding the only slot while the other eight
+    candidates of that session never got a single attempt.
+
+    Past ``retry_cap`` the veto lapses, but **only** against a coexisting
+    deterministic content rejection.  A record carrying nothing but a genuine
+    infrastructure code keeps waiting however high the counter climbs — a
+    provider outage never becomes a content failure by sitting in the queue
+    (``test_rate_limited_song_retry_cap_is_terminal_for_same_pipeline``).
+    """
+
+    infra_codes = {str(code) for code in infra_transient_reason_codes}
+    reasons = {str(code) for code in reason_codes or ()}
+    explicit = str(record.get("transient_failure_code") or "")
+    if not explicit:
+        # Pre-``4af4a88`` records have no typed field.  Only the requeue caller
+        # opts into the reason-code fallback; terminal projection deliberately
+        # honours the typed field alone, so an untyped record with a confirmed
+        # non-host performance still terminalizes exactly as it did before.
+        return fallback_to_reason_codes and bool(reasons & infra_codes) and not (
+            reasons & SONG_DETERMINISTIC_PROOF_REJECTION_CODES
+        )
+    if explicit not in infra_codes:
+        return False
+    if retry_cap is None:
+        return True
+    retries = record.get("transient_retry_count")
+    exhausted = not isinstance(retries, bool) and int(retries or 0) >= int(retry_cap)
+    return not (exhausted and reasons & SONG_DETERMINISTIC_PROOF_REJECTION_CODES)
+
+
 def project_terminal_song_disposition(
     record: dict,
     *,
     terminal_performer_rejection_codes: Collection[object] = (),
     infra_transient_reason_codes: Collection[object] = (),
+    song_infra_retry_cap: int | None = None,
 ) -> bool:
     """Project a completed negative song proof into a durable terminal receipt.
 
@@ -60,10 +107,12 @@ def project_terminal_song_disposition(
     if proof_rejections and rc != 0:
         return False
 
-    explicit_transient = str(record.get("transient_failure_code") or "")
-    if explicit_transient and explicit_transient in {
-        str(code) for code in infra_transient_reason_codes
-    }:
+    if song_infra_transient_is_active(
+        record=record,
+        reason_codes=reasons,
+        infra_transient_reason_codes=infra_transient_reason_codes,
+        retry_cap=song_infra_retry_cap,
+    ):
         return False
 
     decisive_reasons = sorted(proof_rejections | performer_rejections)
@@ -97,17 +146,21 @@ def project_terminal_batch_state(
     retry_epoch: int | None,
     terminal_song_performer_rejection_codes: Collection[object] = (),
     song_infra_transient_reason_codes: Collection[object] = (),
+    song_infra_retry_cap: int | None = None,
+    mutate_songs: bool = True,
 ) -> dict[str, object]:
     picks = [row for row in state.get("picks", []) if isinstance(row, dict)]
     songs = [row for row in state.get("songs", []) if isinstance(row, dict)]
-    for row in songs:
-        project_terminal_song_disposition(
-            row,
-            terminal_performer_rejection_codes=(
-                terminal_song_performer_rejection_codes
-            ),
-            infra_transient_reason_codes=song_infra_transient_reason_codes,
-        )
+    if mutate_songs:
+        for row in songs:
+            project_terminal_song_disposition(
+                row,
+                terminal_performer_rejection_codes=(
+                    terminal_song_performer_rejection_codes
+                ),
+                infra_transient_reason_codes=song_infra_transient_reason_codes,
+                song_infra_retry_cap=song_infra_retry_cap,
+            )
     delivered_talk = [
         row
         for row in picks
@@ -127,8 +180,18 @@ def project_terminal_batch_state(
     failures = [
         row
         for row in picks + songs
-        if row.get("status") in talk_failure_statuses
-        or row.get("status") in {"candidate_rejected", cover_pending_status}
+        if (
+            row.get("status") in talk_failure_statuses
+            or row.get("status") in {"candidate_rejected", cover_pending_status}
+        )
+        # 狍哥案修复：有界重评分车道的 status="failed" 行计入
+        # retry_wait（复用既有 next_retry_at_epoch/scheduled_talk_retry_epoch
+        # 机制），不算 failure、不冒充 review_ready_with_failures。真终态失败
+        # 走 status=candidate_rejected，仍照常计入。
+        and not (
+            row.get("status") == "failed"
+            and row.get("failure_kind") == "selection_rescore"
+        )
     ]
 
     exact_status = str(exact_closure.get("status") or "")

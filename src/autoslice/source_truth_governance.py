@@ -61,7 +61,7 @@ def validate_ledger_governance(
             )
         if (
             entry.get("assertion_state") == "VERIFIED_ACTIVE"
-            and entry.get("decision_authority") != "IVAN_OPERATOR_TRUTH"
+            and entry.get("decision_authority") != "REVIEWER_OPERATOR_TRUTH"
         ):
             raise RuntimeError(
                 "SOURCE_SUBTITLE_TRUTH_DIRECT_MUTATION_AUTHORITY_FORBIDDEN:"

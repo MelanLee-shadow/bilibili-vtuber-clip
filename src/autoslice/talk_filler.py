@@ -370,7 +370,7 @@ def _authorize_reviewed_removals(
                 "removed_cues": list(row.get("removed_cues") or []),
                 "left_retained_context": row.get("left_retained_context"),
                 "right_retained_context": row.get("right_retained_context"),
-                "authority": str(row.get("authority") or "ivan_reviewed"),
+                "authority": str(row.get("authority") or "reviewer_reviewed"),
                 "authorization_kind": "reviewed",
             }
         )

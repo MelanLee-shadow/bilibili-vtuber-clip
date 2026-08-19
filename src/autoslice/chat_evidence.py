@@ -28,6 +28,7 @@ from src.autoslice.chat_event_timing import (
     send_time_ms as _send_time_ms,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice import subtitle_text_override_schema as text_override_schema
 from src.autoslice.surface_canon import (
     canonicalize_expected_value_surfaces as canonicalize_expected_value_surfaces,
     canonicalize_hard_meme_surfaces as canonicalize_hard_meme_surfaces,
@@ -216,9 +217,7 @@ def normalize_srt_owner_payload_window(
         if overlap_ms < min_overlap_ms:
             continue
         if majority_ratio is not None:
-            basis = min(
-                max(1, cue.end_ms - cue.start_ms), max(1, end_ms - start_ms)
-            )
+            basis = min(max(1, cue.end_ms - cue.start_ms), max(1, end_ms - start_ms))
             if overlap_ms < basis * majority_ratio:
                 continue
         text = _SPEAKER_LABEL.sub("", cue.text) if strip_speaker_labels else cue.text
@@ -279,8 +278,10 @@ def sanitize_chat_display_text(text: str, *, max_chars: int = 500) -> str:
     return value[:max_chars].strip()
 
 
-def load_referent_groups(path: str | Path) -> list[ReferentGroup]:
-    """Load canonical/surface-aware mutually-confusable entity groups."""
+def load_referent_groups(
+    path: str | Path, *, include_singletons: bool = False
+) -> list[ReferentGroup]:
+    """Load confusable groups; optionally expose singleton surface registries."""
 
     try:
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -328,7 +329,7 @@ def load_referent_groups(path: str | Path) -> list[ReferentGroup]:
             )
             parsed.append(ReferentEntity(canonical, tuple(surfaces), readings))
         canonicals = {entity.canonical.lower() for entity in parsed}
-        if len(parsed) >= 2 and len(canonicals) == len(parsed):
+        if len(parsed) >= (1 if include_singletons else 2) and len(canonicals) == len(parsed):
             raw_keep = row.get("uncertain_keep_canonicals") or []
             keep = tuple(
                 dict.fromkeys(
@@ -706,11 +707,9 @@ def build_human_text_entity_verifier(
     source = Path(document_path)
     raw = source.read_bytes()
     payload = json.loads(raw)
-    if not isinstance(payload, dict) or payload.get("schema_version") not in {1, 2, 3}:
-        raise ValueError("text override schema_version must be 1, 2, or 3")
-    if payload.get("candidate_id") != candidate_id:
-        raise ValueError("text override candidate_id mismatch")
-    override_schema_version = int(payload["schema_version"])
+    override_schema_version = text_override_schema.validate_text_override_document_header(
+        payload, expected_candidate_id=candidate_id
+    )
     if override_schema_version == 1:
         binding = {
             "source_srt_sha256": str(payload.get("source_srt_sha256") or ""),
@@ -750,7 +749,7 @@ def build_human_text_entity_verifier(
             "request_sha256": request.get("request_sha256"),
             "status": "RESOLVED",
             "canonical_entity": row["canonical_entity"],
-            "authority_kind": "ivan_text_override",
+            "authority_kind": "reviewer_text_override",
             "defer_to_text_override": True,
             "candidate_id": candidate_id,
             "override_document_sha256": document_hash,
@@ -795,7 +794,7 @@ def reconcile_pending_text_overrides(
             "source_srt_sha256": source_hash,
             "text_final_srt_sha256": final_hash,
         }
-    elif override_schema_version in {2, 3}:
+    elif override_schema_version in {2, 3, 4}:
         manifest_binding = {
             "source_cue_witness_sha256": str(text_manifest.get("source_cue_witness_sha256") or ""),
             "decision_output_witness_sha256": str(
@@ -826,7 +825,7 @@ def reconcile_pending_text_overrides(
 
         nonlocal rebound_document
         if (
-            verdict.get("authority_kind") != "ivan_text_override"
+            verdict.get("authority_kind") != "reviewer_text_override"
             or verdict.get("defer_to_text_override") is not True
             or not _valid_sha256(document_hash)
             or not _valid_sha256(source_hash)
@@ -1077,9 +1076,7 @@ def _validated_read_aloud_verdict(
     if row.get("canonical_entity") not in allowed:
         return None
     confidence = row.get("confidence")
-    if isinstance(confidence, bool) or not isinstance(
-        confidence, (int, float)
-    ):
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
         return None
     if row.get("authority_kind") == "cpa_witness_adjudication":
         if not valid_cpa_witness_adjudication(row):
@@ -1132,21 +1129,20 @@ def _validated_entity_verdict(
     }:
         if not valid_cpa_witness_adjudication(row):
             return None
-    elif authority_kind == "ivan_text_override":
+    elif authority_kind == "reviewer_text_override":
         if not row.get("defer_to_text_override"):
             return None
         override_schema_version = int(row.get("override_schema_version") or 1)
-        binding_keys = {
-            1: ("source_srt_sha256", "text_final_srt_sha256"),
-            2: (
+        binding_keys = (
+            ("source_srt_sha256", "text_final_srt_sha256")
+            if override_schema_version == 1
+            else (
                 "source_cue_witness_sha256",
                 "decision_output_witness_sha256",
-            ),
-            3: (
-                "source_cue_witness_sha256",
-                "decision_output_witness_sha256",
-            ),
-        }.get(override_schema_version)
+            )
+            if override_schema_version in {2, 3, 4}
+            else None
+        )
         if binding_keys is None or not all(
             _valid_sha256(row.get(key)) for key in ("override_document_sha256", *binding_keys)
         ):
@@ -1162,15 +1158,18 @@ def load_chat_jsonl(
     path: str | Path,
     *,
     recording_start_ms: int | None = None,
+    source_bytes: bytes | None = None,
 ) -> list[ChatEvidence]:
     """Load exact danmaku, SC, gift, and guard evidence from recorder JSONL."""
     source = Path(path)
-    if not source.is_file():
-        return []
+    if source_bytes is None:
+        if not source.is_file():
+            return []
+        source_bytes = source.read_bytes()
     parsed: list[tuple[int, str, str, str, str, bool]] = []
-    source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    source_sha256 = hashlib.sha256(source_bytes).hexdigest()
     earliest: int | None = None
-    for raw_line in source.read_text(encoding="utf-8", errors="replace").splitlines():
+    for raw_line in source_bytes.decode("utf-8", errors="replace").splitlines():
         try:
             payload = json.loads(raw_line)
         except (TypeError, ValueError):

@@ -307,11 +307,11 @@ def validate_audio_lrc_execution_metadata(
 ) -> str | None:
     """Validate the provider lane without weakening the shared v5 proof.
 
-    ``gemini_api`` is accepted only as an explicit AGY failover.  It does not
-    inherit AGY's sandbox claim, and it must preserve a bounded, machine-known
-    AGY failure category.  This helper intentionally validates execution
-    provenance only; audio/LRC hashes, v5 rows, live performance and live
-    arrangement are all recomputed by the existing proof validators.
+    ``gemini_api`` is accepted only as an explicit AGY failover: bounded failure
+    category, no inherited sandbox claim.  ``agy_rc`` says *why AGY could not be
+    used*, so every exit shape it carries is a legal trigger and none of them may
+    retroactively invalidate the failover's output.  Execution provenance only:
+    hashes, v5 rows and live performance are recomputed by the proof validators.
     """
 
     if provider == AGY_AUDIO_LRC_PROVIDER:
@@ -330,10 +330,10 @@ def validate_audio_lrc_execution_metadata(
             or provider_fallback_used is not True
             or agy_failure_category not in AGY_AUDIO_LRC_FALLBACK_FAILURE_CATEGORIES
             or sandbox is not False
-            or (
-                agy_rc is not None
-                and (isinstance(agy_rc, bool) or not isinstance(agy_rc, int) or agy_rc < 0)
-            )
+            or isinstance(agy_rc, bool)
+            or not isinstance(agy_rc, (int, type(None)))
+            # F1 负数退出=被信号杀死(-9=SIGKILL,即 AGY OOM)、0=AGY 干净退出但输出不可用(AGY_EMPTY_OUTPUT 系列),两者都是合法 failover 触发——被杀本身就是触发条件,不能反过来成为否定 failover 产物的理由(维护者T23:28 逐字: AGY 与 Gemini API 同为 gemini 模型,只差调用顺序)。取代旧 `agy_rc < 0` 的防伪是类别一致性: AGY_FAILED_RC 只由 _classify_agy_nonzero 在非零退出时铸造,配 rc==0 即伪造。见 tests/test_song_repair.py::test_gemini_audio_lrc_failover_accepts_every_way_agy_can_fail 与同处的离线重放。
+            or (agy_failure_category == "AGY_FAILED_RC" and agy_rc == 0)
         ):
             return "audio aligner Gemini API failover metadata is invalid"
         return None

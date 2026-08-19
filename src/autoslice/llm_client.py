@@ -195,8 +195,12 @@ def _call_command(prompt: str, config: LlmConfig) -> str:
             # TimeoutExpired crashed an 11-min clip's produce run .
             raise LlmCallError(f"llm command timed out after {config.timeout_seconds:.0f}s") from exc
         if completed.returncode != 0:
+            # 维护者 工程优化②授权：桥接脚本（llm_via_cpa.sh）在多个
+            # 供应商模型间失败转移时，stderr 是逐模型多行级联；旧的 400 字符
+            # 尾截断只留最后一个模型的信息，早期模型的失败证据永久丢失
+            # （真善美 zsm4 三模型均 400 事故排障时才发现）。留够整条级联。
             raise LlmCallError(
-                f"llm command failed rc={completed.returncode}: {completed.stderr.strip()[-400:]}"
+                f"llm command failed rc={completed.returncode}: {completed.stderr.strip()[-4000:]}"
             )
         if not completion_file.is_file():
             raise LlmCallError("llm command did not write the completion file")

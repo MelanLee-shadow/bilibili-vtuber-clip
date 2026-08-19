@@ -1,0 +1,80 @@
+{
+  "schema_version": "speaker-scmc-spec.v0",
+  "purpose": "DEVELOPMENT_SCORE_ONLY_NOT_PREDICTION_OR_RELEASE_AUTHORITY",
+  "authority": {
+    "decision_record": "internal design note: centrality-cue-speaker-shadow/pro-consult-overnight-decision.md",
+    "production_integration_authorized": false,
+    "deployment_authorized": false,
+    "threshold_selection_authorized": false
+  },
+  "embedding": {
+    "extractor": "CAM++",
+    "normalization": "L2",
+    "dimension": 192
+  },
+  "duration_strata_ms": {
+    "SHORT": {
+      "minimum_inclusive": 300,
+      "maximum_inclusive": 1499
+    },
+    "LONG": {
+      "minimum_inclusive": 1500,
+      "maximum_inclusive": null
+    }
+  },
+  "host_bank": {
+    "minimum_independent_sessions_per_stratum": 3,
+    "minimum_clear_reviewed_host_clips_per_session_stratum": 3,
+    "session_support": "minimum_of_centroid_cosine_and_actual_medoid_cosine",
+    "cross_session_support": "strict_majority_order_statistic",
+    "medoid_tie_break": [
+      "canonical_pcm_sha256",
+      "cue_start_sample"
+    ]
+  },
+  "other_veto_bank": {
+    "minimum_clear_reviewed_other_clips_per_stratum": 12,
+    "representatives_per_stratum": 8,
+    "selection": "deterministic_greedy_facility_location",
+    "authority": "VETO_ONLY_NEVER_PROMOTES_HOST",
+    "holdout_material_allowed": false
+  },
+  "thresholds": {
+    "state": "NULL",
+    "per_duration_tuple": [
+      "tau_other",
+      "tau_host",
+      "delta_host"
+    ],
+    "constraint": "tau_other < tau_host and delta_host > 0",
+    "hard_labels_emitted": false
+  },
+  "cue_policy": {
+    "under_300_ms": "UNKNOWN",
+    "short": "whole_view_only",
+    "long": "whole_view_plus_strict_majority_disjoint_speech_cells_and_zero_opposite_cells",
+    "mixed": "UNKNOWN",
+    "bank_minimum_failure": "UNKNOWN",
+    "conflict": "UNKNOWN"
+  },
+  "leakage_policy": {
+    "same_session_default": "REJECT",
+    "same_session_diagnostic": "FIXED_CONTIGUOUS_BLOCK_CROSSFIT_ONLY",
+    "duplicate_or_reencoded_pcm": "REJECT",
+    "evaluated_or_adjacent_audio_in_bank": "REJECT_BEFORE_SCORING",
+    "holdout_in_other_veto": "REJECT",
+    "post_truth_threshold_or_bank_change": "DEMOTE_HOLDOUT_TO_DEVELOPMENT"
+  },
+  "acceptance": {
+    "required_locked_cross_session_holdouts": 2,
+    "per_candidate_and_pooled": {
+      "false_host": 0,
+      "host_precision": 1.0,
+      "minimum_host_recall": 0.85,
+      "minimum_classified_coverage": 0.85,
+      "maximum_clear_unknown_share": 0.15,
+      "minimum_verified_accuracy": 0.95,
+      "mixed_hard_labels": 0
+    }
+  }
+}

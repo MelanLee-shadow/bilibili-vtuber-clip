@@ -23,15 +23,17 @@ from src.autoslice.speaker_common import (
     SINGLETON_NONLEXICAL_RESIDUALS,
     SPEAKERS,
     SpeakerFinalizationError,
+    SpeakerIdentityIndeterminate,
     milliseconds as _ms,
 )
+from src.autoslice.speaker_host_evidence import resolve_ambiguous_cue_speaker
 
 def _two_means(values: Sequence[float]) -> tuple[float, float, float]:
     if len(values) < 2:
-        raise SpeakerFinalizationError("not enough cue margins for two-speaker clustering")
+        raise SpeakerIdentityIndeterminate("not enough cue margins for two-speaker clustering")
     low, high = min(values), max(values)
     if low == high:
-        raise SpeakerFinalizationError("speaker margin distribution has no separation")
+        raise SpeakerIdentityIndeterminate("speaker margin distribution has no separation")
     for _ in range(40):
         high_side = [value for value in values if abs(value - high) < abs(value - low)]
         low_side = [value for value in values if abs(value - high) >= abs(value - low)]
@@ -53,35 +55,40 @@ def resolve_ambiguous_labels(
     margins: Sequence[float],
     threshold: float,
     context_votes: Mapping[int, str] | None = None,
+    *,
+    band: float,
+    policy: Mapping[str, object],
+    context_confidences: Mapping[int, float] | None = None,
 ) -> tuple[list[str], list[str]]:
-    """Resolve ambiguous cue labels and record the evidence source.
+    """Resolve ambiguous cue labels under the asymmetric host-evidence policy.
 
-    ``context_votes`` uses zero-based cue indices.  Missing votes fall back to
-    matching neighbours when possible, then to the acoustic side of the
-    threshold.  This is the best-effort policy for short interjections; it
-    never silently claims that fallback evidence was a confident voiceprint.
+    Default is GUEST (维护者).  HOST requires a confident acoustic
+    margin or a semantic vote on the HOST-leaning half of the narrow band with
+    sufficient confidence; see ``speaker_host_evidence.resolve_ambiguous_cue_
+    speaker``.  The whole-clip context judge can never assign HOST on its own
+    outside that half-band -- it only ever confirms GUEST or is ignored.
+    ``context_votes``/``context_confidences`` use zero-based cue indices.
     """
 
     if len(labels) != len(margins):
         raise ValueError("labels and margins must have equal length")
+    votes = context_votes or {}
+    confidences = context_confidences or {}
     result = list(labels)
     sources = ["campp_audio" if label is not None else "unresolved" for label in labels]
-    votes = context_votes or {}
-    for index, vote in votes.items():
-        if 0 <= index < len(result) and result[index] is None and vote in SPEAKERS:
-            result[index] = vote
-            sources[index] = "whole_clip_context"
     for index, label in enumerate(result):
         if label is not None:
             continue
-        previous = next((result[j] for j in range(index - 1, -1, -1) if result[j]), None)
-        following = next((result[j] for j in range(index + 1, len(result)) if result[j]), None)
-        if previous is not None and previous == following:
-            result[index] = previous
-            sources[index] = "neighbour_context_fallback"
-        else:
-            result[index] = HOST_SPEAKER if margins[index] >= threshold else GUEST_SPEAKER
-            sources[index] = "acoustic_threshold_fallback"
+        decision = resolve_ambiguous_cue_speaker(
+            margin=margins[index],
+            threshold=threshold,
+            band=band,
+            policy=policy,
+            context_speaker=votes.get(index),
+            context_confidence=confidences.get(index),
+        )
+        result[index] = decision.speaker
+        sources[index] = decision.decision_source
     return [str(label) for label in result], sources
 
 
@@ -249,14 +256,13 @@ def _resolve_singleton_outlier(
             and not all(gates.values())
         ):
             reason_codes.append("CONTEXT_ACOUSTIC_CONFLICT")
+    # 维护者: semantics alone must never assign HOST.  A context
+    # vote of HOST without automatic_host_ready (acoustic gates + confidence)
+    # is corroboration that failed, not evidence -- it falls through to the
+    # GUEST default just like every other unresolved case, it does not adopt
+    # the LLM's HOST guess.
     singleton_speaker = (
-        str(reviewed)
-        if reviewed_ready
-        else HOST_SPEAKER
-        if automatic_host_ready
-        else str((context_decision or {}).get("speaker"))
-        if (context_decision or {}).get("speaker") in SPEAKERS
-        else GUEST_SPEAKER
+        str(reviewed) if reviewed_ready else HOST_SPEAKER if automatic_host_ready else GUEST_SPEAKER
     )
     singleton_source = (
         "accepted_context_baseline"
@@ -311,6 +317,9 @@ def _context_prompt(cues: Sequence[TextCue], labels: Sequence[str | None], ambig
         f"对话中作为名字出现的精确词 {CHANNEL_PROFILE.speaker_identity_aliases[-1]} 是{HOST_SPEAKER}的自称之一，不是第四位说话人或{GUEST_SPEAKER}嘉宾；"
         "不要修改文字，不要把相邻两个人的连续短句合成同一说话人。"
         "单个声纹离群点不能独立建立嘉宾簇；若上下文仍可能是真实嘉宾、证据冲突或无法确定，返回 REVIEW。\n"
+        f"你的判断只在声学证据处于临界带时才会被采纳为{HOST_SPEAKER}；声学证据缺席或明显偏向"
+        f"{GUEST_SPEAKER}时，即使你判断为{HOST_SPEAKER}也不会被采纳，默认仍是{GUEST_SPEAKER}——"
+        "语义只能佐证，不能单独定案，请如实给出你的判断和置信度而不必迎合这条规则。\n"
         f"待定行号（1-based）：{[index + 1 for index in ambiguous]}\n\n"
         + "\n".join(rows)
         + f'\n\n只输出 JSON：{{"labels":[{{"n":1,"speaker":"{HOST_SPEAKER}","confidence":0.95,'

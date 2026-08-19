@@ -27,6 +27,8 @@ import math
 import os
 from pathlib import Path, PurePosixPath
 import re
+import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -41,8 +43,30 @@ import xml.etree.ElementTree as ET
 SCHEMA_VERSION = "bililive-recorder-adapter.v1"
 STATUS_SCHEMA_VERSION = "recorder-neutral-status.v1"
 STATE_SCHEMA_VERSION = "bililive-recorder-adapter-state.v1"
+SOURCE_DISPOSITION_SCHEMA_VERSION = "recording-connection-stub.v1"
+SOURCE_DISPOSITION_STATUS = "IGNORED_CONNECTION_STUB"
+SOURCE_DISPOSITION_REASON = "RECORDER_CONNECTION_STUB_NO_DECODABLE_VIDEO"
+SOURCE_DISPOSITION_REBIND_SCHEMA_VERSION = "recording-source-fuse-identity-rebind.v1"
+SOURCE_DISPOSITION_REBIND_POLICY = "FUSE_REMOUNT_DEVICE_INODE_REBIND"
+SOURCE_DISPOSITION_TIMESTAMP_REBIND_SCHEMA_VERSION = (
+    "recording-source-fuse-timestamp-rebind.v1"
+)
+SOURCE_DISPOSITION_TIMESTAMP_REBIND_POLICY = "FUSE_SUCCESSOR_MTIME_CTIME_REATTESTATION"
+SOURCE_DISPOSITION_REBIND_TASK_SCHEMA_VERSION = "recording-source-fuse-identity-rebind-task.v1"
+SOURCE_DISPOSITION_REBIND_HASH_RESULT_SCHEMA_VERSION = (
+    "recording-source-fuse-identity-rebind-hash-result.v1"
+)
+# A real 531 MiB CloudFS successor took more than 100 seconds to become fully
+# readable during the remount repair.  The read runs in an isolated
+# child, so keep the heartbeat responsive while giving a healthy cold-cache
+# read a realistic bounded window.
+SOURCE_DISPOSITION_REBIND_HASH_TIMEOUT_SECONDS = 300.0
+SOURCE_DISPOSITION_REBIND_MAX_ATTEMPTS = 2
 BACKEND = "BililiveRecorder"
 QUALITY_PRIORITY = ("avc10000", "avc400", "avc250")
+CONNECTION_STUB_MAX_SIZE_BYTES = 5 * 1024 * 1024
+CONNECTION_STUB_MAX_DURATION_SECONDS, CONNECTION_STUB_MAX_SUCCESSOR_GAP_SECONDS = 10.0, 2.0
+CONNECTION_STUB_MAX_XML_EVENT_COUNT = 1
 FILENAME_RX_TEMPLATE = r"^{room}_(?P<stamp>20\d{{6}}-\d{{2}}-\d{{2}}-\d{{2}})\.flv$"
 GRAPHQL_ROOM_QUERY = """
 query AdapterRoomStatus($roomId: Int!) {
@@ -88,6 +112,23 @@ class AdapterError(RuntimeError):
     """A fail-closed adapter error safe to surface in status/log output."""
 
 
+class SourceDispositionIdentityRebindRequired(AdapterError):
+    """The row is valid except for one proven typed FUSE metadata transition."""
+
+    def __init__(
+        self,
+        *,
+        validation: dict[str, Any],
+        paths: dict[str, Path],
+    ) -> None:
+        super().__init__("source disposition FUSE identity rebind is required")
+        self.validation = validation
+        self.paths = paths
+
+
+_IDENTITY_REBIND_CHILDREN: dict[int, subprocess.Popen[bytes]] = {}
+
+
 def load_env_file(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     try:
@@ -121,9 +162,9 @@ def atomic_write_bytes(path: Path, payload: bytes, *, mode: int = 0o644) -> None
 
 
 def atomic_write_json(path: Path, payload: dict[str, Any], *, mode: int = 0o644) -> None:
-    encoded = (
-        json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
-    ).encode("utf-8")
+    encoded = (json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode(
+        "utf-8"
+    )
     atomic_write_bytes(path, encoded, mode=mode)
 
 
@@ -133,6 +174,1027 @@ def sha256_file(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+_FILE_FINGERPRINT_KEYS = (
+    "size_bytes",
+    "mtime_ns",
+    "ctime_ns",
+    "device",
+    "inode",
+    "mode",
+)
+_FILE_STABLE_FINGERPRINT_KEYS = ("size_bytes", "mtime_ns", "ctime_ns", "mode")
+_DISPOSITION_FILE_ROLES = ("source", "xml", "successor_source", "successor_mp4")
+_TIMESTAMP_REBIND_ROLES = ("successor_source", "successor_mp4")
+_TIMESTAMP_REBIND_FIELDS = ("mtime_ns", "ctime_ns")
+_HISTORICAL_SHA_BASIS = "HISTORICAL_SHA256_MATCH"
+_LEGACY_SUCCESSOR_SOURCE_BASIS = "LEGACY_NO_PRIOR_SHA256_WEBHOOK_FINALIZED_LEDGER_STABLE_STAT"
+
+
+def _stat_fingerprint(info: os.stat_result) -> dict[str, int]:
+    return {
+        "size_bytes": info.st_size,
+        "mtime_ns": info.st_mtime_ns,
+        "ctime_ns": info.st_ctime_ns,
+        "device": info.st_dev,
+        "inode": info.st_ino,
+        "mode": stat.S_IMODE(info.st_mode),
+    }
+
+
+def _regular_file_fingerprint(path: Path) -> dict[str, int]:
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise AdapterError(f"cannot stat evidence file {path.name}: {exc}") from exc
+    if not stat.S_ISREG(info.st_mode):
+        raise AdapterError(f"evidence path is not a regular non-symlink file: {path}")
+    return _stat_fingerprint(info)
+
+
+def _attest_regular_file(path: Path) -> dict[str, Any]:
+    """Hash one stable regular-file snapshot without following a leaf symlink."""
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise AdapterError(f"cannot open evidence file {path.name}: {exc}") from exc
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise AdapterError(f"evidence path is not a regular file: {path}")
+        digest = hashlib.sha256()
+        while block := os.read(descriptor, 1024 * 1024):
+            digest.update(block)
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    fingerprint = _stat_fingerprint(before)
+    if fingerprint != _stat_fingerprint(after):
+        raise AdapterError(f"evidence file changed while hashing: {path.name}")
+    return {**fingerprint, "sha256": digest.hexdigest()}
+
+
+def _binding_matches_fingerprint(binding: Any, path: Path) -> bool:
+    if not isinstance(binding, dict):
+        return False
+    try:
+        current = _regular_file_fingerprint(path)
+    except AdapterError:
+        return False
+    return all(binding.get(key) == current[key] for key in _FILE_FINGERPRINT_KEYS)
+
+
+def _decode_mountinfo_field(value: str) -> str:
+    return re.sub(
+        r"\\([0-7]{3})",
+        lambda match: chr(int(match.group(1), 8)),
+        value,
+    )
+
+
+def _mount_identity_for_path(path: Path) -> dict[str, Any] | None:
+    """Return the owning Linux mount without invoking a process or touching bytes."""
+
+    target = os.path.abspath(os.fspath(path))
+    best: tuple[int, dict[str, Any]] | None = None
+    try:
+        lines = Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        fields = line.split()
+        try:
+            separator = fields.index("-")
+            mount_point = _decode_mountinfo_field(fields[4])
+            mount_id = int(fields[0])
+            filesystem_type = fields[separator + 1]
+            mount_source = _decode_mountinfo_field(fields[separator + 2])
+        except (IndexError, ValueError):
+            continue
+        boundary = mount_point.rstrip("/") + "/"
+        if target != mount_point and not target.startswith(boundary):
+            continue
+        identity = {
+            "mount_id": mount_id,
+            "major_minor": fields[2],
+            "root": _decode_mountinfo_field(fields[3]),
+            "mount_point": mount_point,
+            "filesystem_type": filesystem_type,
+            "mount_source": mount_source,
+        }
+        candidate = (len(mount_point), identity)
+        if best is None or candidate[0] > best[0]:
+            best = candidate
+    return best[1] if best is not None else None
+
+
+def _is_fuse_mount(identity: Any) -> bool:
+    if not isinstance(identity, dict):
+        return False
+    filesystem_type = str(identity.get("filesystem_type") or "").lower()
+    return filesystem_type == "fuse" or filesystem_type.startswith("fuse.")
+
+
+def _portable_mount_identity(identity: Any) -> dict[str, Any] | None:
+    """Project one FUSE identity across container mount namespaces."""
+
+    if not _is_fuse_mount(identity):
+        return None
+    return {
+        "major_minor": identity.get("major_minor"),
+        "filesystem_type": identity.get("filesystem_type"),
+        "mount_source": identity.get("mount_source"),
+    }
+
+
+def _shared_fuse_mount_identity(paths: Iterable[Path]) -> dict[str, Any] | None:
+    identities = [_mount_identity_for_path(path) for path in paths]
+    if not identities or not all(_is_fuse_mount(identity) for identity in identities):
+        return None
+    first = identities[0]
+    if any(identity != first for identity in identities[1:]):
+        return None
+    return first
+
+
+def _disposition_binding_projection(binding: dict[str, Any]) -> dict[str, Any]:
+    projection = {"path": binding.get("path")}
+    projection.update({key: binding.get(key) for key in _FILE_FINGERPRINT_KEYS})
+    sha256 = binding.get("sha256")
+    projection["sha256"] = sha256
+    projection["verification_basis"] = (
+        _HISTORICAL_SHA_BASIS if sha256 is not None else _LEGACY_SUCCESSOR_SOURCE_BASIS
+    )
+    return projection
+
+
+def _changed_fingerprint_fields(
+    previous: dict[str, dict[str, Any]],
+    current: dict[str, dict[str, Any]],
+) -> dict[str, list[str]]:
+    return {
+        role: [
+            key
+            for key in _FILE_FINGERPRINT_KEYS
+            if previous[role].get(key) != current[role].get(key)
+        ]
+        for role in _DISPOSITION_FILE_ROLES
+        if any(
+            previous[role].get(key) != current[role].get(key)
+            for key in _FILE_FINGERPRINT_KEYS
+        )
+    }
+
+
+def _identity_rebind_legacy_contract() -> dict[str, Any]:
+    return {
+        "successor_source": {
+            "verification_basis": _LEGACY_SUCCESSOR_SOURCE_BASIS,
+            "historical_sha256_available": False,
+            "strict_bindings": [
+                "path",
+                "size_bytes",
+                "mtime_ns",
+                "ctime_ns",
+                "mode",
+                "webhook_file_size",
+                "finalized_ledger_source_size",
+                "successor_mp4_historical_sha256",
+            ],
+        }
+    }
+
+
+def _timestamp_rebind_legacy_contract(
+    row: dict[str, Any],
+    previous: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    successor = previous["successor_source"]
+    session = row.get("session") if isinstance(row.get("session"), dict) else {}
+    webhook = (
+        session.get("successor_webhook")
+        if isinstance(session.get("successor_webhook"), dict)
+        else {}
+    )
+    finalized = (
+        session.get("successor_finalized_ledger")
+        if isinstance(session.get("successor_finalized_ledger"), dict)
+        else {}
+    )
+    return {
+        "successor_source": {
+            "verification_basis": _LEGACY_SUCCESSOR_SOURCE_BASIS,
+            "historical_sha256_available": False,
+            "historical_sha256": None,
+            "path": successor.get("path"),
+            "size_bytes": successor.get("size_bytes"),
+            "mode": successor.get("mode"),
+            "webhook_file_size": webhook.get("file_size"),
+            "finalized_ledger_source_size": finalized.get("source_size"),
+            "successor_mp4_historical_sha256": previous["successor_mp4"].get("sha256"),
+        }
+    }
+
+
+def _receipt_sha256(receipt: dict[str, Any]) -> str:
+    return str(receipt["canonical_integrity"]["canonical_json_sha256"])
+
+
+def _validate_disposition_rebind_chain(
+    *,
+    row: dict[str, Any],
+    bindings: dict[str, dict[str, Any]],
+    identity_rebinds: Any,
+) -> tuple[dict[str, dict[str, Any]], str | None, dict[str, Any] | None]:
+    if identity_rebinds is None:
+        receipts: list[Any] = []
+    elif isinstance(identity_rebinds, list):
+        receipts = identity_rebinds
+    else:
+        raise AdapterError("source disposition identity rebind ledger is malformed")
+    previous = {
+        role: _disposition_binding_projection(bindings[role]) for role in _DISPOSITION_FILE_ROLES
+    }
+    disposition_sha256 = str(
+        (row.get("canonical_integrity") or {}).get("canonical_json_sha256") or ""
+    )
+    previous_receipt_sha256: str | None = None
+    previous_mount: dict[str, Any] | None = None
+    base_receipt_fields = {
+        "schema_version",
+        "policy",
+        "source_disposition_canonical_sha256",
+        "previous_receipt_canonical_sha256",
+        "rebound_at",
+        "current_mount",
+        "previous_bindings",
+        "current_bindings",
+        "legacy_promotion",
+        "canonical_integrity",
+    }
+    for receipt in receipts:
+        if not isinstance(receipt, dict):
+            raise AdapterError("source disposition identity rebind receipt is malformed")
+        is_identity_rebind = (
+            receipt.get("schema_version") == SOURCE_DISPOSITION_REBIND_SCHEMA_VERSION
+            and receipt.get("policy") == SOURCE_DISPOSITION_REBIND_POLICY
+        )
+        is_timestamp_rebind = (
+            receipt.get("schema_version") == SOURCE_DISPOSITION_TIMESTAMP_REBIND_SCHEMA_VERSION
+            and receipt.get("policy") == SOURCE_DISPOSITION_TIMESTAMP_REBIND_POLICY
+        )
+        expected_fields = base_receipt_fields | (
+            {"changed_fields"} if is_timestamp_rebind else set()
+        )
+        if (not is_identity_rebind and not is_timestamp_rebind) or set(receipt) != expected_fields:
+            raise AdapterError("source disposition identity rebind receipt is malformed")
+        integrity = receipt.get("canonical_integrity")
+        unsigned = {key: value for key, value in receipt.items() if key != "canonical_integrity"}
+        if not isinstance(integrity, dict) or integrity != {
+            "algorithm": "sha256",
+            "canonical_json_sha256": _canonical_json_sha256(unsigned),
+        }:
+            raise AdapterError("source disposition identity rebind integrity mismatch")
+        current = receipt.get("current_bindings")
+        if (
+            receipt.get("source_disposition_canonical_sha256") != disposition_sha256
+            or receipt.get("previous_receipt_canonical_sha256") != previous_receipt_sha256
+            or receipt.get("previous_bindings") != previous
+            or not _is_fuse_mount(receipt.get("current_mount"))
+            or not isinstance(current, dict)
+            or set(current) != set(_DISPOSITION_FILE_ROLES)
+        ):
+            raise AdapterError("source disposition identity rebind chain drifted")
+        for role in _DISPOSITION_FILE_ROLES:
+            binding = current.get(role)
+            prior = previous[role]
+            if (
+                not isinstance(binding, dict)
+                or set(binding) != {"path", "sha256", "verification_basis", *_FILE_FINGERPRINT_KEYS}
+                or binding.get("path") != bindings[role].get("path")
+                or binding.get("verification_basis") != prior.get("verification_basis")
+                or (
+                    prior.get("sha256") is not None
+                    and re.fullmatch(r"[0-9a-f]{64}", str(binding.get("sha256") or "")) is None
+                )
+                or (prior.get("sha256") is None and binding.get("sha256") is not None)
+                or (
+                    prior.get("sha256") is not None and binding.get("sha256") != prior.get("sha256")
+                )
+            ):
+                raise AdapterError("source disposition identity rebind binding drifted")
+        changes = _changed_fingerprint_fields(previous, current)
+        if is_identity_rebind:
+            if (
+                receipt.get("legacy_promotion") != _identity_rebind_legacy_contract()
+                or not changes
+                or any(
+                    field not in {"device", "inode"}
+                    for fields in changes.values()
+                    for field in fields
+                )
+                or (
+                    previous_mount is not None
+                    and _portable_mount_identity(receipt.get("current_mount"))
+                    == _portable_mount_identity(previous_mount)
+                )
+            ):
+                raise AdapterError("source disposition identity rebind binding drifted")
+        else:
+            assert is_timestamp_rebind
+            if (
+                receipt.get("legacy_promotion") != _timestamp_rebind_legacy_contract(row, previous)
+                or receipt.get("changed_fields") != changes
+                or set(changes) != set(_TIMESTAMP_REBIND_ROLES)
+                or any(
+                    field not in _TIMESTAMP_REBIND_FIELDS
+                    for fields in changes.values()
+                    for field in fields
+                )
+                or (
+                    previous_mount is not None
+                    and _portable_mount_identity(receipt.get("current_mount"))
+                    != _portable_mount_identity(previous_mount)
+                )
+            ):
+                raise AdapterError("source disposition timestamp rebind binding drifted")
+        previous = current
+        previous_receipt_sha256 = _receipt_sha256(receipt)
+        previous_mount = receipt["current_mount"]
+    return previous, previous_receipt_sha256, previous_mount
+
+
+def _prepare_disposition_identity_validation(
+    *,
+    row: dict[str, Any],
+    bindings: dict[str, dict[str, Any]],
+    paths: dict[str, Path],
+    identity_rebinds: Any,
+) -> dict[str, Any]:
+    effective, previous_receipt_sha256, previous_mount = _validate_disposition_rebind_chain(
+        row=row,
+        bindings=bindings,
+        identity_rebinds=identity_rebinds,
+    )
+    try:
+        current = {role: _regular_file_fingerprint(paths[role]) for role in _DISPOSITION_FILE_ROLES}
+    except AdapterError:
+        raise
+    exact_fingerprints = all(
+        all(effective[role].get(key) == current[role][key] for key in _FILE_FINGERPRINT_KEYS)
+        for role in _DISPOSITION_FILE_ROLES
+    )
+    has_receipts = isinstance(identity_rebinds, list) and bool(identity_rebinds)
+    current_mount = _shared_fuse_mount_identity(paths.values()) if has_receipts else None
+    if exact_fingerprints:
+        if not has_receipts:
+            return {"current": current, "pending_rebind": False}
+        if current_mount is None:
+            raise AdapterError(
+                "source disposition FUSE rebind is no longer on one shared FUSE mount"
+            )
+        if _portable_mount_identity(current_mount) == _portable_mount_identity(previous_mount):
+            # Docker assigns a namespace-local mount_id/mount_point on each
+            # container restart. Exact file identity plus the portable FUSE
+            # projection proves this is not another source remount.
+            return {"current": current, "pending_rebind": False}
+        raise AdapterError("source disposition FUSE mount changed without file identity drift")
+    changes = _changed_fingerprint_fields(effective, current)
+    timestamp_rebind = set(changes) == set(_TIMESTAMP_REBIND_ROLES) and all(
+        fields and all(field in _TIMESTAMP_REBIND_FIELDS for field in fields)
+        for fields in changes.values()
+    )
+    if timestamp_rebind:
+        current_mount = current_mount or _shared_fuse_mount_identity(paths.values())
+        if current_mount is None:
+            raise AdapterError(
+                "source disposition successor timestamp drifted outside one shared FUSE mount"
+            )
+        if has_receipts and _portable_mount_identity(current_mount) != _portable_mount_identity(
+            previous_mount
+        ):
+            raise AdapterError("source disposition timestamp drift crossed FUSE mount identity")
+        if not isinstance(identity_rebinds, list):
+            raise AdapterError("source disposition FUSE rebind lacks a durable receipt ledger")
+        return {
+            "current": current,
+            "effective": effective,
+            "previous_receipt_sha256": previous_receipt_sha256,
+            "previous_mount": previous_mount,
+            "current_mount": current_mount,
+            "changed_fields": changes,
+            "rebind_schema_version": SOURCE_DISPOSITION_TIMESTAMP_REBIND_SCHEMA_VERSION,
+            "rebind_policy": SOURCE_DISPOSITION_TIMESTAMP_REBIND_POLICY,
+            "pending_rebind": True,
+        }
+    if any(
+        effective[role].get(key) != current[role][key]
+        for role in _DISPOSITION_FILE_ROLES
+        for key in _FILE_STABLE_FINGERPRINT_KEYS
+    ):
+        raise AdapterError("source disposition non-identity fingerprint drifted")
+    current_mount = current_mount or _shared_fuse_mount_identity(paths.values())
+    if current_mount is None:
+        raise AdapterError("source disposition device/inode drifted outside one shared FUSE mount")
+    if has_receipts and _portable_mount_identity(current_mount) == _portable_mount_identity(
+        previous_mount
+    ):
+        raise AdapterError("source disposition identity drifted within one FUSE mount epoch")
+    if not isinstance(identity_rebinds, list):
+        raise AdapterError("source disposition FUSE rebind lacks a durable receipt ledger")
+    return {
+        "current": current,
+        "effective": effective,
+        "previous_receipt_sha256": previous_receipt_sha256,
+        "previous_mount": previous_mount,
+        "current_mount": current_mount,
+        "changed_fields": changes,
+        "rebind_schema_version": SOURCE_DISPOSITION_REBIND_SCHEMA_VERSION,
+        "rebind_policy": SOURCE_DISPOSITION_REBIND_POLICY,
+        "pending_rebind": True,
+    }
+
+
+def _finish_disposition_identity_rebind(
+    *,
+    row: dict[str, Any],
+    paths: dict[str, Path],
+    validation: dict[str, Any],
+    identity_rebinds: list[dict[str, Any]],
+    attestations: dict[str, dict[str, Any]],
+) -> None:
+    if not validation.get("pending_rebind"):
+        return
+    expected_hash_roles = {
+        role
+        for role in _DISPOSITION_FILE_ROLES
+        if validation["effective"][role].get("sha256") is not None
+    }
+    if set(attestations) != expected_hash_roles:
+        raise AdapterError("source disposition legacy rebind attestation is malformed")
+    if _shared_fuse_mount_identity(paths.values()) != validation["current_mount"]:
+        raise AdapterError("source disposition FUSE mount changed during identity rebind")
+    current_bindings: dict[str, dict[str, Any]] = {}
+    for role in _DISPOSITION_FILE_ROLES:
+        expected_sha256 = validation["effective"][role].get("sha256")
+        if expected_sha256 is None:
+            if role != "successor_source" or role in attestations:
+                raise AdapterError("source disposition legacy rebind attestation is malformed")
+            current = validation["current"][role]
+        else:
+            attestation = attestations.get(role)
+            if not isinstance(attestation, dict) or set(attestation) != {
+                "sha256",
+                *_FILE_FINGERPRINT_KEYS,
+            }:
+                raise AdapterError("source disposition FUSE rebind attestation is malformed")
+            if any(
+                attestation.get(key) != validation["current"][role][key]
+                for key in _FILE_FINGERPRINT_KEYS
+            ):
+                raise AdapterError("source disposition file changed during FUSE identity rebind")
+            if attestation["sha256"] != expected_sha256:
+                raise AdapterError("source disposition full-byte hash drifted during FUSE rebind")
+            current = attestation
+        current_bindings[role] = {
+            "path": str(paths[role]),
+            **{key: current[key] for key in _FILE_FINGERPRINT_KEYS},
+            "sha256": expected_sha256,
+            "verification_basis": validation["effective"][role]["verification_basis"],
+        }
+    observed_after = {
+        role: _regular_file_fingerprint(paths[role]) for role in _DISPOSITION_FILE_ROLES
+    }
+    if observed_after != validation["current"]:
+        raise AdapterError("source disposition file changed during FUSE identity rebind")
+    if _shared_fuse_mount_identity(paths.values()) != validation["current_mount"]:
+        raise AdapterError("source disposition FUSE mount changed during identity rebind")
+    if _changed_fingerprint_fields(validation["effective"], current_bindings) != validation.get(
+        "changed_fields"
+    ):
+        raise AdapterError("source disposition changed-field projection drifted during rebind")
+    timestamp_rebind = (
+        validation.get("rebind_schema_version")
+        == SOURCE_DISPOSITION_TIMESTAMP_REBIND_SCHEMA_VERSION
+        and validation.get("rebind_policy") == SOURCE_DISPOSITION_TIMESTAMP_REBIND_POLICY
+    )
+    receipt: dict[str, Any] = {
+        "schema_version": validation["rebind_schema_version"],
+        "policy": validation["rebind_policy"],
+        "source_disposition_canonical_sha256": row["canonical_integrity"]["canonical_json_sha256"],
+        "previous_receipt_canonical_sha256": validation["previous_receipt_sha256"],
+        "rebound_at": datetime.now(timezone.utc).isoformat(),
+        "current_mount": validation["current_mount"],
+        "previous_bindings": validation["effective"],
+        "current_bindings": current_bindings,
+        "legacy_promotion": (
+            _timestamp_rebind_legacy_contract(row, validation["effective"])
+            if timestamp_rebind
+            else _identity_rebind_legacy_contract()
+        ),
+    }
+    if timestamp_rebind:
+        receipt["changed_fields"] = validation["changed_fields"]
+    receipt["canonical_integrity"] = {
+        "algorithm": "sha256",
+        "canonical_json_sha256": _canonical_json_sha256(receipt),
+    }
+    identity_rebinds.append(receipt)
+
+
+def _local_json(path: Path, *, maximum_bytes: int = 256 * 1024) -> dict[str, Any]:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except FileNotFoundError:
+        # Callers use absence as the normal "child is still working" state.
+        # Preserve that distinction while wrapping every other open failure.
+        raise
+    except OSError as exc:
+        raise AdapterError(f"cannot open local identity-rebind file: {path.name}") from exc
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.geteuid()
+            or before.st_size > maximum_bytes
+        ):
+            raise AdapterError(f"invalid local identity-rebind file: {path.name}")
+        chunks: list[bytes] = []
+        size = 0
+        while block := os.read(descriptor, min(64 * 1024, maximum_bytes + 1 - size)):
+            chunks.append(block)
+            size += len(block)
+            if size > maximum_bytes:
+                raise AdapterError(f"oversized local identity-rebind file: {path.name}")
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    stable_fields = (
+        "st_dev",
+        "st_ino",
+        "st_mode",
+        "st_uid",
+        "st_size",
+        "st_mtime_ns",
+        "st_ctime_ns",
+    )
+    if size != before.st_size or any(
+        getattr(before, field) != getattr(after, field) for field in stable_fields
+    ):
+        raise AdapterError(f"local identity-rebind file drifted: {path.name}")
+    payload = b"".join(chunks)
+    try:
+        document = json.loads(payload)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise AdapterError(f"invalid local identity-rebind JSON: {path.name}") from exc
+    if not isinstance(document, dict):
+        raise AdapterError(f"invalid local identity-rebind document: {path.name}")
+    return document
+
+
+def _ensure_identity_rebind_spool(path: Path) -> None:
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid():
+        raise AdapterError("identity-rebind spool is not a private local directory")
+    if stat.S_IMODE(info.st_mode) != 0o700:
+        path.chmod(0o700)
+    identity = _mount_identity_for_path(path)
+    if sys.platform.startswith("linux") and identity is None:
+        raise AdapterError("identity-rebind spool filesystem identity is unknown")
+    if _is_fuse_mount(identity):
+        raise AdapterError("identity-rebind spool must not be on FUSE")
+
+
+def _identity_rebind_spool_key(relative: str) -> str:
+    return hashlib.sha256(relative.encode("utf-8")).hexdigest()
+
+
+def _identity_rebind_run_dir(spool_root: Path, relative: str) -> Path:
+    return spool_root / _identity_rebind_spool_key(relative)
+
+
+def _clear_identity_rebind_run_dir(run_dir: Path) -> None:
+    if not run_dir.exists():
+        return
+    info = run_dir.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid():
+        raise AdapterError("identity-rebind run path is unsafe")
+    allowed = {"request.json", "result.json", "result.tmp"}
+    entries = list(run_dir.iterdir())
+    if any(entry.name not in allowed or entry.is_symlink() or entry.is_dir() for entry in entries):
+        raise AdapterError("identity-rebind run directory has unexpected content")
+    for entry in entries:
+        entry.unlink()
+    run_dir.rmdir()
+
+
+def _pid_start_ticks(pid: int) -> str | None:
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        tail = raw[raw.rindex(")") + 2 :].split()
+        if tail[0] == "Z":
+            return None
+        return tail[19]
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def _process_matches(pid: Any, start_ticks: Any) -> bool:
+    try:
+        parsed_pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    observed = _pid_start_ticks(parsed_pid)
+    return observed is not None and observed == str(start_ticks or "")
+
+
+def _kill_identity_rebind_child(pid: Any, start_ticks: Any) -> None:
+    try:
+        parsed_pid = int(pid)
+    except (TypeError, ValueError):
+        return
+    tracked = _IDENTITY_REBIND_CHILDREN.get(parsed_pid)
+    if tracked is not None:
+        if tracked.poll() is not None:
+            _IDENTITY_REBIND_CHILDREN.pop(parsed_pid, None)
+            return
+    elif not _process_matches(parsed_pid, start_ticks):
+        return
+    try:
+        os.killpg(parsed_pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def _identity_rebind_child_alive(task: dict[str, Any]) -> bool:
+    try:
+        pid = int(task.get("pid") or 0)
+    except (TypeError, ValueError):
+        return False
+    child = _IDENTITY_REBIND_CHILDREN.get(pid)
+    if child is not None:
+        if child.poll() is None:
+            return True
+        _IDENTITY_REBIND_CHILDREN.pop(pid, None)
+        return False
+    return _process_matches(pid, task.get("pid_start_ticks"))
+
+
+def _seal_identity_rebind_task(task: dict[str, Any]) -> None:
+    task.pop("canonical_integrity", None)
+    task["canonical_integrity"] = {
+        "algorithm": "sha256",
+        "canonical_json_sha256": _canonical_json_sha256(task),
+    }
+
+
+def _validate_identity_rebind_task(task: Any) -> dict[str, Any]:
+    if not isinstance(task, dict):
+        raise AdapterError("source disposition identity rebind task is malformed")
+    integrity = task.get("canonical_integrity")
+    unsigned = {key: value for key, value in task.items() if key != "canonical_integrity"}
+    if not isinstance(integrity, dict) or integrity != {
+        "algorithm": "sha256",
+        "canonical_json_sha256": _canonical_json_sha256(unsigned),
+    }:
+        raise AdapterError("source disposition identity rebind task integrity mismatch")
+    if task.get("schema_version") != SOURCE_DISPOSITION_REBIND_TASK_SCHEMA_VERSION:
+        raise AdapterError("source disposition identity rebind task schema mismatch")
+    return task
+
+
+def _identity_rebind_task_base(
+    *,
+    relative: str,
+    row: dict[str, Any],
+    validation: dict[str, Any],
+    paths: dict[str, Path],
+    attempt: int,
+) -> dict[str, Any]:
+    return {
+        "schema_version": SOURCE_DISPOSITION_REBIND_TASK_SCHEMA_VERSION,
+        "source_relative_path": relative,
+        "source_disposition_canonical_sha256": row["canonical_integrity"]["canonical_json_sha256"],
+        "attempt": attempt,
+        "detected_mount": validation["current_mount"],
+        "expected_fingerprints": validation["current"],
+        "paths": {role: str(paths[role]) for role in _DISPOSITION_FILE_ROLES},
+        "hash_roles": [
+            role
+            for role in _DISPOSITION_FILE_ROLES
+            if validation["effective"][role].get("sha256") is not None
+        ],
+        "legacy_successor_source_basis": _LEGACY_SUCCESSOR_SOURCE_BASIS,
+    }
+
+
+def _waiting_identity_rebind_task(
+    *,
+    relative: str,
+    row: dict[str, Any],
+    validation: dict[str, Any],
+    paths: dict[str, Path],
+) -> dict[str, Any]:
+    task = {
+        **_identity_rebind_task_base(
+            relative=relative,
+            row=row,
+            validation=validation,
+            paths=paths,
+            attempt=0,
+        ),
+        "status": "WAITING_FOR_IDLE",
+        "token": None,
+        "pid": None,
+        "pid_start_ticks": None,
+        "started_at_epoch": None,
+        "deadline_epoch": None,
+        "last_error": None,
+    }
+    _seal_identity_rebind_task(task)
+    return task
+
+
+def _launch_identity_rebind_hash_task(
+    *,
+    relative: str,
+    row: dict[str, Any],
+    validation: dict[str, Any],
+    paths: dict[str, Path],
+    spool_root: Path,
+    attempt: int,
+) -> dict[str, Any]:
+    _ensure_identity_rebind_spool(spool_root)
+    run_dir = _identity_rebind_run_dir(spool_root, relative)
+    _clear_identity_rebind_run_dir(run_dir)
+    run_dir.mkdir(mode=0o700)
+    token = uuid.uuid4().hex
+    base = _identity_rebind_task_base(
+        relative=relative,
+        row=row,
+        validation=validation,
+        paths=paths,
+        attempt=attempt,
+    )
+    request = {
+        "schema_version": SOURCE_DISPOSITION_REBIND_HASH_RESULT_SCHEMA_VERSION,
+        "token": token,
+        "paths": base["paths"],
+        "hash_roles": base["hash_roles"],
+        "expected_fingerprints": base["expected_fingerprints"],
+    }
+    atomic_write_json(run_dir / "request.json", request, mode=0o600)
+    try:
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--identity-rebind-hash-child",
+                str(run_dir / "request.json"),
+                str(run_dir / "result.json"),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        _clear_identity_rebind_run_dir(run_dir)
+        raise AdapterError(f"cannot start source disposition identity rebind child: {exc}") from exc
+    start_ticks = _pid_start_ticks(process.pid)
+    if start_ticks is None and not sys.platform.startswith("linux"):
+        start_ticks = f"tracked:{process.pid}"
+    if start_ticks is None:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        raise AdapterError("cannot bind source disposition identity rebind child PID")
+    _IDENTITY_REBIND_CHILDREN[process.pid] = process
+    started = time.time()
+    task = {
+        **base,
+        "status": "PENDING_HASH",
+        "token": token,
+        "pid": process.pid,
+        "pid_start_ticks": start_ticks,
+        "started_at_epoch": started,
+        "deadline_epoch": started + SOURCE_DISPOSITION_REBIND_HASH_TIMEOUT_SECONDS,
+        "last_error": None,
+    }
+    _seal_identity_rebind_task(task)
+    return task
+
+
+def _identity_rebind_hash_child(request_path: Path, result_path: Path) -> int:
+    try:
+        request = _local_json(request_path)
+        token = str(request.get("token") or "")
+        paths = request.get("paths")
+        hash_roles = request.get("hash_roles")
+        expected = request.get("expected_fingerprints")
+        if (
+            request.get("schema_version") != SOURCE_DISPOSITION_REBIND_HASH_RESULT_SCHEMA_VERSION
+            or not token
+            or not isinstance(paths, dict)
+            or not isinstance(hash_roles, list)
+            or not isinstance(expected, dict)
+            or any(role not in _DISPOSITION_FILE_ROLES for role in hash_roles)
+        ):
+            raise AdapterError("identity-rebind hash request is malformed")
+        attestations: dict[str, dict[str, Any]] = {}
+        for role in hash_roles:
+            path = Path(str(paths[role]))
+            attestation = _attest_regular_file(path)
+            if any(
+                attestation.get(key) != expected[role].get(key) for key in _FILE_FINGERPRINT_KEYS
+            ):
+                raise AdapterError("identity-rebind source changed while hashing")
+            attestations[role] = {
+                **{key: attestation[key] for key in _FILE_FINGERPRINT_KEYS},
+                "sha256": attestation["sha256"],
+            }
+        result = {
+            "schema_version": SOURCE_DISPOSITION_REBIND_HASH_RESULT_SCHEMA_VERSION,
+            "status": "OK",
+            "token": token,
+            "attestations": attestations,
+        }
+        return_code = 0
+    except (AdapterError, OSError, KeyError, TypeError, ValueError) as exc:
+        result = {
+            "schema_version": SOURCE_DISPOSITION_REBIND_HASH_RESULT_SCHEMA_VERSION,
+            "status": "ERROR",
+            "token": str(locals().get("token") or ""),
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:500],
+        }
+        return_code = 2
+    atomic_write_json(result_path, result, mode=0o600)
+    return return_code
+
+
+def _load_identity_rebind_hash_result(
+    *,
+    relative: str,
+    task: dict[str, Any],
+    spool_root: Path,
+) -> dict[str, dict[str, Any]] | None:
+    result_path = _identity_rebind_run_dir(spool_root, relative) / "result.json"
+    try:
+        result = _local_json(result_path)
+    except FileNotFoundError:
+        return None
+    if result.get(
+        "schema_version"
+    ) != SOURCE_DISPOSITION_REBIND_HASH_RESULT_SCHEMA_VERSION or result.get("token") != task.get(
+        "token"
+    ):
+        raise AdapterError("source disposition identity rebind result binding mismatch")
+    if result.get("status") != "OK":
+        raise AdapterError(
+            "source disposition identity rebind hash failed: "
+            f"{str(result.get('error_type') or 'unknown')[:80]}"
+        )
+    attestations = result.get("attestations")
+    if not isinstance(attestations, dict) or set(attestations) != set(task["hash_roles"]):
+        raise AdapterError("source disposition identity rebind attestations are malformed")
+    return attestations
+
+
+def _advance_identity_rebind_task(
+    *,
+    relative: str,
+    row: dict[str, Any],
+    validation: dict[str, Any],
+    paths: dict[str, Path],
+    task_ledger: dict[str, Any],
+    spool_root: Path,
+    allow_start: bool,
+) -> dict[str, dict[str, Any]]:
+    task = task_ledger.get(relative)
+    if task is None:
+        if not allow_start:
+            task_ledger[relative] = _waiting_identity_rebind_task(
+                relative=relative,
+                row=row,
+                validation=validation,
+                paths=paths,
+            )
+            raise AdapterError("source disposition identity rebind is waiting for recorder idle")
+        task = _launch_identity_rebind_hash_task(
+            relative=relative,
+            row=row,
+            validation=validation,
+            paths=paths,
+            spool_root=spool_root,
+            attempt=1,
+        )
+        task_ledger[relative] = task
+        raise AdapterError("source disposition identity rebind hash is pending")
+    task = _validate_identity_rebind_task(task)
+    expected_base = _identity_rebind_task_base(
+        relative=relative,
+        row=row,
+        validation=validation,
+        paths=paths,
+        attempt=int(task.get("attempt") or 0),
+    )
+    if any(task.get(key) != value for key, value in expected_base.items() if key != "attempt"):
+        _kill_identity_rebind_child(task.get("pid"), task.get("pid_start_ticks"))
+        raise AdapterError("source disposition identity rebind task drifted from current mount")
+    if task.get("status") == "WAITING_FOR_IDLE":
+        if not allow_start:
+            raise AdapterError("source disposition identity rebind is waiting for recorder idle")
+        task = _launch_identity_rebind_hash_task(
+            relative=relative,
+            row=row,
+            validation=validation,
+            paths=paths,
+            spool_root=spool_root,
+            attempt=1,
+        )
+        task_ledger[relative] = task
+        raise AdapterError("source disposition identity rebind hash is pending")
+    child_alive = _identity_rebind_child_alive(task)
+    attestations = _load_identity_rebind_hash_result(
+        relative=relative,
+        task=task,
+        spool_root=spool_root,
+    )
+    if attestations is not None:
+        if child_alive:
+            raise AdapterError(
+                "source disposition identity rebind result is sealed; child exit is pending"
+            )
+        return attestations
+    if child_alive:
+        if time.time() >= float(task.get("deadline_epoch") or 0):
+            _kill_identity_rebind_child(task.get("pid"), task.get("pid_start_ticks"))
+            task["status"] = "TIMEOUT_ORPHAN_PENDING"
+            task["last_error"] = "IDENTITY_REBIND_HASH_TIMEOUT"
+            _seal_identity_rebind_task(task)
+        raise AdapterError(
+            "source disposition identity rebind hash is pending"
+            if task.get("status") == "PENDING_HASH"
+            else "source disposition identity rebind timed-out child is still pending"
+        )
+    attempt = int(task.get("attempt") or 0)
+    if not allow_start:
+        task["status"] = "WAITING_FOR_IDLE"
+        task["pid"] = None
+        task["pid_start_ticks"] = None
+        task["started_at_epoch"] = None
+        task["deadline_epoch"] = None
+        _seal_identity_rebind_task(task)
+        raise AdapterError("source disposition identity rebind is waiting for recorder idle")
+    if attempt >= SOURCE_DISPOSITION_REBIND_MAX_ATTEMPTS:
+        task["status"] = "ERROR"
+        task["last_error"] = "IDENTITY_REBIND_HASH_RETRY_EXHAUSTED"
+        _seal_identity_rebind_task(task)
+        raise AdapterError("source disposition identity rebind hash retry exhausted")
+    run_dir = _identity_rebind_run_dir(spool_root, relative)
+    _clear_identity_rebind_run_dir(run_dir)
+    task = _launch_identity_rebind_hash_task(
+        relative=relative,
+        row=row,
+        validation=validation,
+        paths=paths,
+        spool_root=spool_root,
+        attempt=attempt + 1,
+    )
+    task_ledger[relative] = task
+    raise AdapterError("source disposition identity rebind hash retry is pending")
+
+
+def _canonical_json_sha256(payload: dict[str, Any]) -> str:
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _parse_webhook_datetime(value: Any, *, field: str) -> datetime:
+    raw = _validate_webhook_timestamp(value, field=field)
+    pattern = r"(?P<head>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?P<fraction>\.\d{1,7})?(?P<zone>Z|[+-]\d{2}:\d{2})"
+    match = re.fullmatch(pattern, raw)
+    if match is None:  # pragma: no cover - validation above owns this branch
+        raise AdapterError(f"webhook {field} is invalid")
+    fraction = match.group("fraction") or ""
+    if fraction:
+        fraction = "." + fraction[1:7].ljust(6, "0")
+    zone = "+00:00" if match.group("zone") == "Z" else match.group("zone")
+    return datetime.fromisoformat(f"{match.group('head')}{fraction}{zone}")
 
 
 def _webhook_record_relative_path(relative_path: str, *, room_id: int) -> str:
@@ -234,8 +1296,7 @@ def append_webhook_event(
 ) -> None:
     validate_webhook_event(payload, room_id=room_id)
     encoded = (
-        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        + "\n"
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
     ).encode("utf-8")
     if len(encoded) > 256 * 1024:
         raise AdapterError("webhook event exceeds 256 KiB")
@@ -295,9 +1356,7 @@ def reconcile_webhook_journal(
         try:
             payload = json.loads(line)
         except json.JSONDecodeError as exc:
-            raise AdapterError(
-                f"webhook journal line {line_number} is invalid JSON"
-            ) from exc
+            raise AdapterError(f"webhook journal line {line_number} is invalid JSON") from exc
         normalized = validate_webhook_event(payload, room_id=room_id)
         digest = hashlib.sha256(
             json.dumps(
@@ -437,9 +1496,7 @@ def probe_cookie_health(
                 payload = json.loads(response.read().decode("utf-8", "replace"))
             data = payload.get("data") if isinstance(payload, dict) else None
             result["api_code"] = payload.get("code") if isinstance(payload, dict) else None
-            result["login_valid"] = bool(
-                isinstance(data, dict) and data.get("isLogin") is True
-            )
+            result["login_valid"] = bool(isinstance(data, dict) and data.get("isLogin") is True)
         except (OSError, urllib.error.URLError, ValueError) as exc:
             result["error"] = f"{type(exc).__name__}: {str(exc)[:200]}"
     state["cookie_health"] = result
@@ -460,7 +1517,9 @@ def _run(
             timeout=timeout_seconds,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise AdapterError(f"command failed to run: {command[0]}: {type(exc).__name__}: {exc}") from exc
+        raise AdapterError(
+            f"command failed to run: {command[0]}: {type(exc).__name__}: {exc}"
+        ) from exc
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip()[-1200:]
         raise AdapterError(f"{command[0]} exited {completed.returncode}: {detail}")
@@ -563,6 +1622,81 @@ def packet_scan(path: Path, *, ffmpeg_bin: str = "ffmpeg") -> None:
     )
 
 
+def _video_probe_json(path: Path, arguments: list[str], *, ffprobe_bin: str) -> dict[str, Any]:
+    completed = _run(
+        [
+            ffprobe_bin,
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            *arguments,
+            "-of",
+            "json",
+            str(path),
+        ],
+        timeout_seconds=120,
+    )
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise AdapterError(f"invalid video probe JSON for {path.name}") from exc
+    if not isinstance(payload, dict):
+        raise AdapterError(f"invalid video probe payload for {path.name}")
+    return payload
+
+
+def probe_connection_stub_video(
+    path: Path,
+    *,
+    ffprobe_bin: str = "ffprobe",
+) -> dict[str, Any]:
+    """Prove that a tiny FLV advertises H.264 but contains no video payload.
+
+    ``-count_frames`` alone is not sufficient for the incident shape: ffprobe
+    omits the count fields when the H.264 stream has no usable dimensions.
+    Explicit ``-show_frames`` and ``-show_packets`` scans make absence an
+    objective empty-list observation instead of treating a missing counter as
+    zero by assumption.
+    """
+    shape_payload = _video_probe_json(
+        path,
+        ["-show_entries", "format=duration,size:stream=codec_type,codec_name,width,height"],
+        ffprobe_bin=ffprobe_bin,
+    )
+    frame_payload = _video_probe_json(
+        path,
+        ["-show_frames", "-show_entries", "frame=media_type"],
+        ffprobe_bin=ffprobe_bin,
+    )
+    packet_payload = _video_probe_json(
+        path,
+        ["-show_packets", "-show_entries", "packet=codec_type"],
+        ffprobe_bin=ffprobe_bin,
+    )
+    try:
+        streams = shape_payload.get("streams") or []
+        media_format = shape_payload.get("format") or {}
+        video = next(row for row in streams if row.get("codec_type") == "video")
+        duration = float(media_format.get("duration") or 0)
+        size = int(media_format.get("size") or path.stat().st_size)
+        decoded_frames = frame_payload.get("frames") or []
+        video_packets = packet_payload.get("packets") or []
+    except (OSError, StopIteration, TypeError, ValueError) as exc:
+        raise AdapterError(f"invalid connection-stub probe result for {path.name}: {exc}") from exc
+    if not isinstance(decoded_frames, list) or not isinstance(video_packets, list):
+        raise AdapterError(f"invalid frame/packet probe result for {path.name}")
+    return {
+        "duration_seconds": duration,
+        "size_bytes": size,
+        "video_codec": str(video.get("codec_name") or ""),
+        "width": int(video.get("width") or 0),
+        "height": int(video.get("height") or 0),
+        "decoded_video_frames": len(decoded_frames),
+        "video_packets": len(video_packets),
+    }
+
+
 def _xml_record_info(root: ET.Element) -> dict[str, str]:
     node = root.find("BililiveRecorderRecordInfo")
     if node is None:
@@ -598,9 +1732,7 @@ def xml_to_jsonl(xml_path: Path) -> tuple[bytes, dict[str, str], int]:
             continue
         raw_value = element.attrib.get("raw")
         if not raw_value:
-            raise AdapterError(
-                f"{xml_path.name} event <{element.tag}> lacks required raw evidence"
-            )
+            raise AdapterError(f"{xml_path.name} event <{element.tag}> lacks required raw evidence")
         try:
             raw: Any = json.loads(raw_value)
         except json.JSONDecodeError as exc:
@@ -864,6 +1996,615 @@ def finalize_recording(
     }
 
 
+def _webhook_file_binding(evidence: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: evidence.get(key)
+        for key in (
+            "status",
+            "session_id",
+            "opening_event_id",
+            "closing_event_id",
+            "file_open_time",
+            "file_close_time",
+            "file_size",
+            "duration",
+        )
+    }
+
+
+def build_connection_stub_disposition(
+    source_flv: Path,
+    *,
+    record_root: Path,
+    webhook_files: dict[str, Any],
+    finalized: dict[str, Any],
+    ffprobe_bin: str = "ffprobe",
+) -> dict[str, Any] | None:
+    """Return one fully bound typed ignore row, or ``None`` for normal media.
+
+    The classifier is intentionally narrow.  A file which misses any positive
+    predicate remains in the ordinary finalization lane; it is never ignored
+    merely because remuxing failed.
+    """
+
+    try:
+        relative = source_flv.relative_to(record_root).as_posix()
+        source_fingerprint = _regular_file_fingerprint(source_flv)
+    except (AdapterError, ValueError):
+        return None
+    if relative in finalized or source_flv.with_suffix(".mp4").exists():
+        return None
+    evidence = webhook_files.get(relative)
+    if not isinstance(evidence, dict) or evidence.get("status") != "CLOSED":
+        return None
+    try:
+        closed_size = int(evidence.get("file_size") or -1)
+        event_duration = float(evidence.get("duration") or 0)
+        opened_at = _parse_webhook_datetime(evidence.get("file_open_time"), field="FileOpenTime")
+        closed_at = _parse_webhook_datetime(evidence.get("file_close_time"), field="FileCloseTime")
+    except (AdapterError, TypeError, ValueError):
+        return None
+    wall_duration = (closed_at - opened_at).total_seconds()
+    if (
+        source_fingerprint["size_bytes"] != closed_size
+        or source_fingerprint["size_bytes"] >= CONNECTION_STUB_MAX_SIZE_BYTES
+        or event_duration <= 0
+        or event_duration >= CONNECTION_STUB_MAX_DURATION_SECONDS
+        or wall_duration < 0
+        or wall_duration >= CONNECTION_STUB_MAX_DURATION_SECONDS
+        or not evidence.get("opening_event_id")
+        or not evidence.get("closing_event_id")
+    ):
+        return None
+    session_id = str(evidence.get("session_id") or "")
+    if not session_id:
+        return None
+
+    openings: list[tuple[datetime, str, dict[str, Any]]] = []
+    for candidate_relative, candidate_evidence in webhook_files.items():
+        if not isinstance(candidate_evidence, dict) or not candidate_evidence.get(
+            "opening_event_id"
+        ):
+            continue
+        try:
+            candidate_opened = _parse_webhook_datetime(
+                candidate_evidence.get("file_open_time"), field="FileOpenTime"
+            )
+        except AdapterError:
+            return None
+        openings.append((candidate_opened, str(candidate_relative), candidate_evidence))
+    openings.sort(key=lambda item: (item[0], item[1]))
+    source_positions = [index for index, item in enumerate(openings) if item[1] == relative]
+    if len(source_positions) != 1:
+        return None
+    source_position = source_positions[0]
+    if any(
+        str(item[2].get("session_id") or "") == session_id for item in openings[:source_position]
+    ) or source_position + 1 >= len(openings):
+        return None
+    successor_opened, successor_relative, successor_evidence = openings[source_position + 1]
+    successor_gap = (successor_opened - closed_at).total_seconds()
+    if (
+        successor_gap < 0
+        or successor_gap > CONNECTION_STUB_MAX_SUCCESSOR_GAP_SECONDS
+        or successor_evidence.get("status") != "CLOSED"
+        or str(successor_evidence.get("session_id") or "") != session_id
+        or not successor_evidence.get("closing_event_id")
+    ):
+        return None
+    successor_path = PurePosixPath(successor_relative)
+    source_path = PurePosixPath(relative)
+    if (
+        successor_path.is_absolute()
+        or ".." in successor_path.parts
+        or len(successor_path.parts) != 2
+        or successor_path.parts[0] != source_path.parts[0]
+        or re.fullmatch(
+            FILENAME_RX_TEMPLATE.format(room=re.escape(source_flv.name.split("_", 1)[0])),
+            successor_path.parts[1],
+        )
+        is None
+    ):
+        return None
+
+    xml_path = source_flv.with_suffix(".xml")
+    try:
+        source_attestation = _attest_regular_file(source_flv)
+        xml_attestation = _attest_regular_file(xml_path)
+        _jsonl, record_info, event_count = xml_to_jsonl(xml_path)
+        source_probe = probe_connection_stub_video(source_flv, ffprobe_bin=ffprobe_bin)
+    except (AdapterError, OSError):
+        return None
+    if (
+        not isinstance(event_count, int)
+        or isinstance(event_count, bool)
+        or not 0 <= event_count <= CONNECTION_STUB_MAX_XML_EVENT_COUNT
+        or record_info.get("roomid") != source_flv.name.split("_", 1)[0]
+        or source_probe.get("video_codec") != "h264"
+        or source_probe.get("width") != 0
+        or source_probe.get("height") != 0
+        or source_probe.get("decoded_video_frames") != 0
+        or source_probe.get("video_packets") != 0
+        or int(source_probe.get("size_bytes") or -1) != source_fingerprint["size_bytes"]
+        or float(source_probe.get("duration_seconds") or 0) <= 0
+        or float(source_probe.get("duration_seconds") or 0) >= CONNECTION_STUB_MAX_DURATION_SECONDS
+        or abs(float(source_probe["duration_seconds"]) - event_duration) > 0.001
+        or not _binding_matches_fingerprint(source_attestation, source_flv)
+        or not _binding_matches_fingerprint(xml_attestation, xml_path)
+    ):
+        return None
+
+    successor_source = record_root / successor_relative
+    successor_ledger = finalized.get(successor_relative)
+    if not isinstance(successor_ledger, dict):
+        return None
+    successor_target = successor_source.with_suffix(".mp4")
+    try:
+        successor_fingerprint = _regular_file_fingerprint(successor_source)
+        successor_target_attestation = _attest_regular_file(successor_target)
+        successor_event_size = int(successor_evidence.get("file_size") or -1)
+        ledger_source_size = int(successor_ledger.get("source_size") or -1)
+        ledger_source_mtime_ns = int(successor_ledger.get("source_mtime_ns") or -1)
+    except (AdapterError, OSError, TypeError, ValueError):
+        return None
+    expected_target = str(successor_ledger.get("target") or "")
+    expected_target_sha256 = str(successor_ledger.get("target_sha256") or "")
+    if (
+        successor_fingerprint["size_bytes"] != successor_event_size
+        or successor_fingerprint["size_bytes"] != ledger_source_size
+        or expected_target != str(successor_target)
+        or not expected_target_sha256
+        or successor_target_attestation["sha256"] != expected_target_sha256
+    ):
+        return None
+    try:
+        successor_media = probe_media(successor_target, ffprobe_bin=ffprobe_bin)
+    except AdapterError:
+        return None
+    if (
+        not _binding_matches_fingerprint(successor_target_attestation, successor_target)
+        or int(successor_media.get("width") or 0) <= 0
+        or int(successor_media.get("height") or 0) <= 0
+    ):
+        return None
+
+    row: dict[str, Any] = {
+        "schema_version": SOURCE_DISPOSITION_SCHEMA_VERSION,
+        "status": SOURCE_DISPOSITION_STATUS,
+        "reason_code": SOURCE_DISPOSITION_REASON,
+        "source_relative_path": relative,
+        "source": {
+            "path": str(source_flv),
+            **source_attestation,
+        },
+        "xml": {
+            "path": str(xml_path),
+            **xml_attestation,
+            "official_bililiverecorder": True,
+            "event_count": event_count,
+            "record_info": record_info,
+        },
+        "webhook": _webhook_file_binding(evidence),
+        "decode": source_probe,
+        "session": {
+            "session_id": session_id,
+            "prior_same_session_openings": 0,
+            "successor_gap_seconds": successor_gap,
+            "successor_relative_path": successor_relative,
+            "successor_webhook": _webhook_file_binding(successor_evidence),
+            "successor_source": {
+                "path": str(successor_source),
+                **successor_fingerprint,
+            },
+            "successor_finalized_ledger": {
+                "source_size": ledger_source_size,
+                "source_mtime_ns": ledger_source_mtime_ns,
+                "target": expected_target,
+                "target_sha256": expected_target_sha256,
+                "finalized_at": successor_ledger.get("finalized_at"),
+            },
+            "successor_mp4": {
+                "path": str(successor_target),
+                **successor_target_attestation,
+                "media": successor_media,
+            },
+        },
+        "source_action": {"finalized": False, "delete_source": "never", "move_source": "never"},
+    }
+    row["canonical_integrity"] = {
+        "algorithm": "sha256",
+        "canonical_json_sha256": _canonical_json_sha256(row),
+    }
+    return row
+
+
+def validate_connection_stub_disposition(
+    source_flv: Path,
+    row: Any,
+    *,
+    record_root: Path,
+    webhook_files: dict[str, Any],
+    finalized: dict[str, Any],
+    ffprobe_bin: str = "ffprobe",
+    identity_rebinds: list[dict[str, Any]] | None = None,
+    identity_rebind_attestations: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Revalidate immutable identity without rereading historical media bytes.
+
+    Full SHA-256 and ffprobe attestation happens once when the row is created.
+    Recurring heartbeat validation compares canonical state, live webhook and
+    finalized-ledger projections, and exact regular-file fingerprints. A
+    CloudFS may either rebind ``device``/``inode`` across a remount or change
+    only both successor files' ``mtime_ns``/``ctime_ns`` metadata. Each narrow
+    case requires a shared live FUSE mount, full-byte historical-SHA
+    re-attestation, and its own durable chained receipt. All local-filesystem,
+    content, path, size, mode, or other mixed drift stays fatal.
+    """
+
+    if not isinstance(row, dict):
+        raise AdapterError("source disposition row is malformed")
+    if set(row) != {
+        "schema_version",
+        "status",
+        "reason_code",
+        "source_relative_path",
+        "source",
+        "xml",
+        "webhook",
+        "decode",
+        "session",
+        "source_action",
+        "canonical_integrity",
+    }:
+        raise AdapterError("source disposition field set is invalid")
+    integrity = row.get("canonical_integrity")
+    unsigned = {key: value for key, value in row.items() if key != "canonical_integrity"}
+    if not isinstance(integrity, dict) or integrity != {
+        "algorithm": "sha256",
+        "canonical_json_sha256": _canonical_json_sha256(unsigned),
+    }:
+        raise AdapterError("source disposition canonical integrity mismatch")
+    del ffprobe_bin  # recurring validation deliberately performs no media probe
+    try:
+        relative = source_flv.relative_to(record_root).as_posix()
+    except ValueError as exc:
+        raise AdapterError("source disposition escaped recording root") from exc
+    if (
+        row.get("schema_version") != SOURCE_DISPOSITION_SCHEMA_VERSION
+        or row.get("status") != SOURCE_DISPOSITION_STATUS
+        or row.get("reason_code") != SOURCE_DISPOSITION_REASON
+        or row.get("source_relative_path") != relative
+        or row.get("source_action")
+        != {"finalized": False, "delete_source": "never", "move_source": "never"}
+        or relative in finalized
+        or source_flv.with_suffix(".mp4").exists()
+    ):
+        raise AdapterError("source disposition evidence drifted: identity/action invalid")
+
+    source = row.get("source")
+    xml = row.get("xml")
+    decode = row.get("decode")
+    session = row.get("session")
+    if not all(isinstance(value, dict) for value in (source, xml, decode, session)):
+        raise AdapterError("source disposition evidence is malformed")
+    fingerprint_keys = set(_FILE_FINGERPRINT_KEYS)
+    if (
+        set(source) != {"path", "sha256", *fingerprint_keys}
+        or set(xml)
+        != {
+            "path",
+            "sha256",
+            *fingerprint_keys,
+            "official_bililiverecorder",
+            "event_count",
+            "record_info",
+        }
+        or set(decode)
+        != {
+            "duration_seconds",
+            "size_bytes",
+            "video_codec",
+            "width",
+            "height",
+            "decoded_video_frames",
+            "video_packets",
+        }
+        or set(session)
+        != {
+            "session_id",
+            "prior_same_session_openings",
+            "successor_gap_seconds",
+            "successor_relative_path",
+            "successor_webhook",
+            "successor_source",
+            "successor_finalized_ledger",
+            "successor_mp4",
+        }
+    ):
+        raise AdapterError("source disposition nested field set is invalid")
+    xml_path = source_flv.with_suffix(".xml")
+    record_info = xml.get("record_info")
+    if (
+        source.get("path") != str(source_flv)
+        or xml.get("path") != str(xml_path)
+        or re.fullmatch(r"[0-9a-f]{64}", str(source.get("sha256") or "")) is None
+        or re.fullmatch(r"[0-9a-f]{64}", str(xml.get("sha256") or "")) is None
+        or xml.get("official_bililiverecorder") is not True
+        or not isinstance(xml.get("event_count"), int)
+        or isinstance(xml.get("event_count"), bool)
+        or not 0 <= xml["event_count"] <= CONNECTION_STUB_MAX_XML_EVENT_COUNT
+        or not isinstance(record_info, dict)
+        or record_info.get("roomid") != source_flv.name.split("_", 1)[0]
+    ):
+        raise AdapterError("source/XML immutable evidence drifted")
+
+    evidence = webhook_files.get(relative)
+    if not isinstance(evidence, dict) or row.get("webhook") != _webhook_file_binding(evidence):
+        raise AdapterError("source disposition webhook evidence drifted")
+    try:
+        opened_at = _parse_webhook_datetime(evidence.get("file_open_time"), field="FileOpenTime")
+        closed_at = _parse_webhook_datetime(evidence.get("file_close_time"), field="FileCloseTime")
+        event_duration = float(evidence.get("duration") or 0)
+        wall_duration = (closed_at - opened_at).total_seconds()
+    except (AdapterError, TypeError, ValueError) as exc:
+        raise AdapterError("source disposition webhook time evidence is invalid") from exc
+    session_id = str(evidence.get("session_id") or "")
+    if (
+        evidence.get("status") != "CLOSED"
+        or not evidence.get("opening_event_id")
+        or not evidence.get("closing_event_id")
+        or not session_id
+        or evidence.get("file_size") != source.get("size_bytes")
+        or int(source.get("size_bytes") or -1) >= CONNECTION_STUB_MAX_SIZE_BYTES
+        or not 0 < event_duration < CONNECTION_STUB_MAX_DURATION_SECONDS
+        or not 0 <= wall_duration < CONNECTION_STUB_MAX_DURATION_SECONDS
+        or decode.get("video_codec") != "h264"
+        or decode.get("width") != 0
+        or decode.get("height") != 0
+        or decode.get("decoded_video_frames") != 0
+        or decode.get("video_packets") != 0
+        or decode.get("size_bytes") != source.get("size_bytes")
+        or abs(float(decode.get("duration_seconds") or 0) - event_duration) > 0.001
+    ):
+        raise AdapterError("source disposition thresholds/decode evidence drifted")
+
+    openings: list[tuple[datetime, str, dict[str, Any]]] = []
+    try:
+        for candidate_relative, candidate in webhook_files.items():
+            if isinstance(candidate, dict) and candidate.get("opening_event_id"):
+                openings.append(
+                    (
+                        _parse_webhook_datetime(
+                            candidate.get("file_open_time"), field="FileOpenTime"
+                        ),
+                        str(candidate_relative),
+                        candidate,
+                    )
+                )
+    except AdapterError as exc:
+        raise AdapterError("same-session opening evidence is invalid") from exc
+    openings.sort(key=lambda item: (item[0], item[1]))
+    source_positions = [index for index, item in enumerate(openings) if item[1] == relative]
+    if len(source_positions) != 1:
+        raise AdapterError("source disposition opening evidence is not unique")
+    source_position = source_positions[0]
+    if any(
+        str(item[2].get("session_id") or "") == session_id for item in openings[:source_position]
+    ) or source_position + 1 >= len(openings):
+        raise AdapterError("source disposition is not the first same-session opening")
+    successor_opened, successor_relative, successor_evidence = openings[source_position + 1]
+    successor_path = PurePosixPath(successor_relative)
+    source_path = PurePosixPath(relative)
+    if (
+        successor_path.is_absolute()
+        or ".." in successor_path.parts
+        or len(successor_path.parts) != 2
+        or successor_path.parts[0] != source_path.parts[0]
+        or re.fullmatch(
+            FILENAME_RX_TEMPLATE.format(room=re.escape(source_flv.name.split("_", 1)[0])),
+            successor_path.parts[1],
+        )
+        is None
+    ):
+        raise AdapterError("same-session successor path is invalid")
+    successor_gap = (successor_opened - closed_at).total_seconds()
+    if (
+        not 0 <= successor_gap <= CONNECTION_STUB_MAX_SUCCESSOR_GAP_SECONDS
+        or successor_evidence.get("status") != "CLOSED"
+        or str(successor_evidence.get("session_id") or "") != session_id
+        or not successor_evidence.get("opening_event_id")
+        or not successor_evidence.get("closing_event_id")
+        or session.get("session_id") != session_id
+        or session.get("prior_same_session_openings") != 0
+        or session.get("successor_gap_seconds") != successor_gap
+        or session.get("successor_relative_path") != successor_relative
+        or session.get("successor_webhook") != _webhook_file_binding(successor_evidence)
+    ):
+        raise AdapterError("same-session successor evidence drifted")
+
+    successor_source = record_root / successor_relative
+    successor_mp4 = successor_source.with_suffix(".mp4")
+    ledger = finalized.get(successor_relative)
+    embedded_ledger = session.get("successor_finalized_ledger")
+    successor_source_binding = session.get("successor_source")
+    successor_mp4_binding = session.get("successor_mp4")
+    if not all(
+        isinstance(value, dict)
+        for value in (ledger, embedded_ledger, successor_source_binding, successor_mp4_binding)
+    ):
+        raise AdapterError("successor finalized evidence is malformed")
+    if set(successor_source_binding) != {"path", *fingerprint_keys} or set(
+        successor_mp4_binding
+    ) != {"path", "sha256", "media", *fingerprint_keys}:
+        raise AdapterError("successor file fingerprint field set is invalid")
+    disposition_bindings = {
+        "source": source,
+        "xml": xml,
+        "successor_source": successor_source_binding,
+        "successor_mp4": successor_mp4_binding,
+    }
+    disposition_paths = {
+        "source": source_flv,
+        "xml": xml_path,
+        "successor_source": successor_source,
+        "successor_mp4": successor_mp4,
+    }
+    identity_validation = _prepare_disposition_identity_validation(
+        row=row,
+        bindings=disposition_bindings,
+        paths=disposition_paths,
+        identity_rebinds=identity_rebinds,
+    )
+    expected_ledger = {
+        "source_size": ledger.get("source_size"),
+        "source_mtime_ns": ledger.get("source_mtime_ns"),
+        "target": ledger.get("target"),
+        "target_sha256": ledger.get("target_sha256"),
+        "finalized_at": ledger.get("finalized_at"),
+    }
+    media = successor_mp4_binding.get("media")
+    if (
+        embedded_ledger != expected_ledger
+        or successor_source_binding.get("path") != str(successor_source)
+        or successor_mp4_binding.get("path") != str(successor_mp4)
+        or ledger.get("target") != str(successor_mp4)
+        or successor_source_binding.get("size_bytes") != successor_evidence.get("file_size")
+        or ledger.get("source_size") != successor_source_binding.get("size_bytes")
+        or successor_mp4_binding.get("sha256") != ledger.get("target_sha256")
+        or re.fullmatch(r"[0-9a-f]{64}", str(successor_mp4_binding.get("sha256") or "")) is None
+        or not isinstance(media, dict)
+        or media.get("size_bytes") != successor_mp4_binding.get("size_bytes")
+        or float(media.get("duration_seconds") or 0) <= 0
+        or not media.get("video_codec")
+        or not media.get("audio_codec")
+        or int(media.get("width") or 0) <= 0
+        or int(media.get("height") or 0) <= 0
+    ):
+        raise AdapterError("successor finalized ledger/media evidence drifted")
+    if identity_validation.get("pending_rebind"):
+        if not isinstance(identity_rebinds, list):  # pragma: no cover - prepare owns this gate
+            raise AdapterError("source disposition FUSE rebind lacks a durable receipt ledger")
+        if identity_rebind_attestations is None:
+            raise SourceDispositionIdentityRebindRequired(
+                validation=identity_validation,
+                paths=disposition_paths,
+            )
+        _finish_disposition_identity_rebind(
+            row=row,
+            paths=disposition_paths,
+            validation=identity_validation,
+            identity_rebinds=identity_rebinds,
+            attestations=identity_rebind_attestations,
+        )
+    return row
+
+
+def revalidate_source_dispositions(
+    state: dict[str, Any],
+    *,
+    record_root: Path,
+    room_id: int,
+    ffprobe_bin: str = "ffprobe",
+    allow_identity_rebind_start: bool = False,
+    identity_rebind_spool: Path | None = None,
+) -> set[str]:
+    """Revalidate every persisted ignore row on every adapter iteration."""
+    dispositions = state.get("source_dispositions")
+    identity_rebind_ledger = state.setdefault("source_disposition_identity_rebinds", {})
+    identity_rebind_tasks = state.setdefault("source_disposition_identity_rebind_tasks", {})
+    webhook_files = state.get("webhook_files") or {}
+    finalized = state.get("finalized")
+    if (
+        not isinstance(dispositions, dict)
+        or not isinstance(identity_rebind_ledger, dict)
+        or not isinstance(identity_rebind_tasks, dict)
+        or not isinstance(finalized, dict)
+    ):
+        raise AdapterError("adapter source disposition state is malformed")
+    if any(relative not in dispositions for relative in identity_rebind_ledger):
+        raise AdapterError("adapter source disposition identity rebind ledger has an orphan row")
+    if any(relative not in dispositions for relative in identity_rebind_tasks):
+        raise AdapterError(
+            "adapter source disposition identity rebind task ledger has an orphan row"
+        )
+    if not dispositions:
+        return set()
+    if not isinstance(webhook_files, dict):
+        raise AdapterError("adapter source disposition webhook state is malformed")
+    filename_rx = re.compile(FILENAME_RX_TEMPLATE.format(room=re.escape(str(room_id))))
+    validated: set[str] = set()
+    for relative, row in dispositions.items():
+        path = PurePosixPath(str(relative))
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or len(path.parts) != 2
+            or not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", path.parts[0])
+            or not filename_rx.fullmatch(path.parts[1])
+        ):
+            raise AdapterError("source disposition path is invalid")
+        source = record_root / path.parts[0] / path.parts[1]
+        existing_rebinds = identity_rebind_ledger.get(str(relative))
+        if existing_rebinds is None:
+            identity_rebinds: list[dict[str, Any]] = []
+        elif isinstance(existing_rebinds, list):
+            identity_rebinds = existing_rebinds
+        else:
+            raise AdapterError("source disposition identity rebind ledger row is malformed")
+        try:
+            validate_connection_stub_disposition(
+                source,
+                row,
+                record_root=record_root,
+                webhook_files=webhook_files,
+                finalized=finalized,
+                ffprobe_bin=ffprobe_bin,
+                identity_rebinds=identity_rebinds,
+            )
+        except SourceDispositionIdentityRebindRequired as required:
+            if identity_rebind_spool is None:
+                raise AdapterError("source disposition identity rebind spool is unavailable")
+            attestations = _advance_identity_rebind_task(
+                relative=str(relative),
+                row=row,
+                validation=required.validation,
+                paths=required.paths,
+                task_ledger=identity_rebind_tasks,
+                spool_root=identity_rebind_spool,
+                allow_start=allow_identity_rebind_start,
+            )
+            validate_connection_stub_disposition(
+                source,
+                row,
+                record_root=record_root,
+                webhook_files=webhook_files,
+                finalized=finalized,
+                ffprobe_bin=ffprobe_bin,
+                identity_rebinds=identity_rebinds,
+                identity_rebind_attestations=attestations,
+            )
+        except AdapterError as exc:
+            raise AdapterError(f"source disposition drift: {relative}: {exc}") from exc
+        if identity_rebinds and existing_rebinds is None:
+            identity_rebind_ledger[str(relative)] = identity_rebinds
+        task = identity_rebind_tasks.get(str(relative))
+        if task is not None:
+            task = _validate_identity_rebind_task(task)
+            if _identity_rebind_child_alive(task):
+                raise AdapterError(
+                    f"source disposition drift: {relative}: "
+                    "completed identity rebind child exit is pending"
+                )
+            if identity_rebind_spool is None:
+                raise AdapterError("source disposition identity rebind spool is unavailable")
+            _clear_identity_rebind_run_dir(
+                _identity_rebind_run_dir(identity_rebind_spool, str(relative))
+            )
+            del identity_rebind_tasks[str(relative)]
+        validated.add(str(relative))
+    return validated
+
+
 def load_or_initialize_state(
     path: Path,
     *,
@@ -879,6 +2620,9 @@ def load_or_initialize_state(
                 managed_since_epoch if managed_since_epoch is not None else now_epoch
             ),
             "finalized": {},
+            "source_dispositions": {},
+            "source_disposition_identity_rebinds": {},
+            "source_disposition_identity_rebind_tasks": {},
         }
         atomic_write_json(path, payload, mode=0o600)
         return payload
@@ -888,6 +2632,17 @@ def load_or_initialize_state(
         raise AdapterError("adapter state schema mismatch; refusing reset")
     if not isinstance(payload.get("finalized"), dict):
         raise AdapterError("adapter state finalized ledger is malformed")
+    dispositions = payload.setdefault("source_dispositions", {})
+    if not isinstance(dispositions, dict):
+        raise AdapterError("adapter state source dispositions ledger is malformed")
+    identity_rebinds = payload.setdefault("source_disposition_identity_rebinds", {})
+    if not isinstance(identity_rebinds, dict):
+        raise AdapterError("adapter state source disposition identity rebind ledger is malformed")
+    identity_rebind_tasks = payload.setdefault("source_disposition_identity_rebind_tasks", {})
+    if not isinstance(identity_rebind_tasks, dict):
+        raise AdapterError(
+            "adapter state source disposition identity rebind task ledger is malformed"
+        )
     try:
         float(payload["managed_since_epoch"])
     except (KeyError, TypeError, ValueError) as exc:
@@ -916,8 +2671,7 @@ def discover_managed_flvs(
     # deliberately conservative around timezone/midnight boundaries while
     # bounding CloudDrive metadata traversal to the migration window.
     managed_date_floor = (
-        datetime.fromtimestamp(managed_since_epoch, tz=timezone.utc).date()
-        - timedelta(days=1)
+        datetime.fromtimestamp(managed_since_epoch, tz=timezone.utc).date() - timedelta(days=1)
     ).isoformat()
     candidates: list[Path] = []
     try:
@@ -981,11 +2735,7 @@ def _newest_source_probe(
             if re.fullmatch(r"20\d{2}-\d{2}-\d{2}", path.name) and path.is_dir()
         )[-2:]
         sources = sorted(
-            (
-                source
-                for date_dir in date_dirs
-                for source in date_dir.glob(f"{room_id}_*.flv")
-            ),
+            (source for date_dir in date_dirs for source in date_dir.glob(f"{room_id}_*.flv")),
             key=lambda path: path.stat().st_mtime_ns,
             reverse=True,
         )
@@ -1055,11 +2805,7 @@ def build_status(
         effective_error = f"{len(finalize_errors)} closed recording(s) failed finalization"
     live_status = None if not service_reachable else int(bool(streaming or recording))
     public_cookie_health = (
-        {
-            key: value
-            for key, value in cookie_health.items()
-            if key != "cookie_sha256"
-        }
+        {key: value for key, value in cookie_health.items() if key != "cookie_sha256"}
         if isinstance(cookie_health, dict)
         else None
     )
@@ -1178,12 +2924,35 @@ def run_once(args: argparse.Namespace) -> int:
     try:
         last_room_status_epoch = float(state["last_room_status_epoch"])
         status_continuous = (
-            0 <= observed_epoch - last_room_status_epoch
-            <= args.status_continuity_max_gap_seconds
+            0 <= observed_epoch - last_room_status_epoch <= args.status_continuity_max_gap_seconds
         )
     except (KeyError, TypeError, ValueError):
         status_continuous = False
     state["last_room_status_epoch"] = observed_epoch
+
+    try:
+        validated_dispositions = revalidate_source_dispositions(
+            state,
+            record_root=args.record_root,
+            room_id=args.room,
+            ffprobe_bin=args.ffprobe,
+            allow_identity_rebind_start=not bool(room.get("streaming") or room.get("recording")),
+            identity_rebind_spool=args.state_path.parent / ".source-disposition-identity-rebind",
+        )
+    except AdapterError as exc:
+        atomic_write_json(args.state_path, state, mode=0o600)
+        status = build_status(
+            room_id=args.room,
+            room=room,
+            now_epoch=time.time(),
+            record_root=args.record_root,
+            error=str(exc),
+            ffprobe_bin=args.ffprobe,
+            cookie_health=cookie_health,
+        )
+        atomic_write_json(args.status_path, status, mode=0o644)
+        print(json.dumps(status, ensure_ascii=False))
+        return 2
 
     active = bool(room.get("streaming") or room.get("recording"))
     finalized: list[dict[str, Any]] = []
@@ -1235,10 +3004,11 @@ def run_once(args: argparse.Namespace) -> int:
         args.record_root,
         room_id=args.room,
         managed_since_epoch=float(state["managed_since_epoch"]),
-        explicit_relative_paths=(
-            closed_files.keys() if isinstance(closed_files, dict) else ()
-        ),
+        explicit_relative_paths=(closed_files.keys() if isinstance(closed_files, dict) else ()),
     )
+    finalized_ledger = state["finalized"]
+    source_dispositions = state.setdefault("source_dispositions", {})
+    disposition_state_changed = False
     eligible: list[Path] = []
     for source in candidates:
         relative = str(source.relative_to(args.record_root))
@@ -1267,7 +3037,32 @@ def run_once(args: argparse.Namespace) -> int:
                 }
             )
             continue
+        existing_disposition = source_dispositions.get(relative)
+        if existing_disposition is not None:
+            if relative not in validated_dispositions:
+                finalize_errors.append(
+                    {
+                        "source": str(source),
+                        "error": "source disposition was not revalidated",
+                    }
+                )
+            continue
+        if relative not in finalized_ledger and not source.with_suffix(".mp4").exists():
+            disposition = build_connection_stub_disposition(
+                source,
+                record_root=args.record_root,
+                webhook_files=closed_files,
+                finalized=finalized_ledger,
+                ffprobe_bin=args.ffprobe,
+            )
+            if disposition is not None:
+                source_dispositions[relative] = disposition
+                disposition_state_changed = True
+                continue
         eligible.append(source)
+
+    if disposition_state_changed:
+        atomic_write_json(args.state_path, state, mode=0o600)
 
     if isinstance(closed_files, dict):
         for relative, evidence in closed_files.items():
@@ -1382,11 +3177,7 @@ def _make_webhook_handler(
             except (AdapterError, json.JSONDecodeError, OSError) as exc:
                 event_type = payload.get("EventType") if isinstance(payload, dict) else None
                 event_data = payload.get("EventData") if isinstance(payload, dict) else None
-                relative = (
-                    event_data.get("RelativePath")
-                    if isinstance(event_data, dict)
-                    else None
-                )
+                relative = event_data.get("RelativePath") if isinstance(event_data, dict) else None
                 event_timestamp = (
                     payload.get("EventTimestamp") if isinstance(payload, dict) else None
                 )
@@ -1472,9 +3263,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--record-root",
         type=Path,
-        default=Path(
-            "/path/to/cloud-drive/live-streaming/22966160"
-        ),
+        default=Path("/path/to/cloud-drive/live-streaming/22966160"),
     )
     parser.add_argument(
         "--status-path",
@@ -1538,7 +3327,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
+    effective_argv = list(sys.argv[1:] if argv is None else argv)
+    if len(effective_argv) == 3 and effective_argv[0] == "--identity-rebind-hash-child":
+        return _identity_rebind_hash_child(
+            Path(effective_argv[1]),
+            Path(effective_argv[2]),
+        )
+    args = parse_args(effective_argv)
     return serve_adapter(args) if args.serve else run_once(args)
 
 

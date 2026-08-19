@@ -3,9 +3,29 @@
 本文件是歌切步骤的**分步权威**。`.agent/skills/song-lyrics-timeline-aligner/SKILL.md`
 只提供操作方法，不能覆盖本文件或当前 schema。
 
+`operator-processing-scope-grant.v1`、v2 `RECOVER_NAMED_FAILED_PICKS`、v3 held-current
+重出、v4 `RECOVER_NAMED_SPEAKER_MANUAL_REVIEW_HOLD` 与 v5
+`RECOVER_NAMED_RESOLVED_TOPIC_DEDUP_HOLD`、v6
+`RECOVER_NAMED_SELECTED_SOURCE_FACT_REJECTION` 与 v7
+`RECOVER_NAMED_SELECTED_FINAL_REVIEW_REJECTION` 都只授权点名 Talk，不授权 Song。
+scope 激活时，`pending_song`、`song_backlog`、`song_selection_backlog`、`songs`、
+`song_superseded_attempts` 必须逐项深等值保留；session annotation、终态投影与持久化都不得
+让 Song 漂移，runner 也不得恢复、发现、补位或生产任何 Song。未来恢复历史 Song 必须使用
+独立、显式的 typed Song authority。v7 receipt 已存在而 grant 缺失、不可识别或不匹配时，
+Talk scope 也必须冻结为空；不能借“grant 不生效”恢复 broad Talk/Song 工作。
+
 ## 要点（指针表）
 
 - 识别/去重：`song_lane.py`（视觉歌名 hint 优先于演唱 ASR；已发布歌按 normalized 标题+别名去重 `published_song_history.py`）。
+- 歌名命名权威：`song_name_authority.py`。窗口一旦进歌 lane，命名权就归**听音频那条链**
+  （`agy_audio_lrc` 观察 × canonical LRC 全局位移证明，判别＝alignment model 带
+  `-agy-audio-lrc-global-shift-v1` 后缀，与 `song_completion` 的 `evidence_source` 交叉校验同源）。
+  画面 OCR 歌名与 BCUT 中文 ASR / hook 引号标题一律只是**候选提示**（`song_title_candidates`，
+  带来源标签），任何环节都不得把它们升格成名字。音频证成即写 `song_name_authority`（含
+  `source_ref`/provider/model/`matched_line_ratio`/报告 sha），**与交付授权解耦**——host-vocal
+  判否只说明可能不是本人在唱，不影响「这是哪首歌」已经被证过；音频未证成时**没有权威名**，
+  维持既有保守处置，不回落到提示名。重试跨 tick 带走已证权威并用它领队 LRC 检索，错名不再
+  占 `preferred_title_hints`；无权威时第一趟召回顺序与阈值一字不变。
 - 边界：`live_source_review.py` song_boundary（首尾演唱、≥7 行且 ≥80% 演唱、戏剧对白块四重限制）。
 - 本人演唱证明：`agy-audio-lrc-observation.v5` 与 `host-vocal-proof.v3` 在同一
   source/LRC evidence 上做联合门；CAM++ 只从明确演唱行取样。memory/日期化 review

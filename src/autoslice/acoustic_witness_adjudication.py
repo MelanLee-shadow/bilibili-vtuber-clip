@@ -10,8 +10,8 @@ poor for discourse reasoning. This module splits the roles:
   no hanzi allowed out;
 - word choice is reasoned by the CPA judge (gpt-5.6-sol) from the CLOSED
   candidate set with wide subtitle context;
-- code — not any model — enforces that the judged choice stays compatible
-  with the witnessed pinyin. Every layer fails toward keeping current text.
+- code — not any model — enforces that a pinyin-incompatible PROPOSED carries
+  registered or independently bound support. Every layer fails toward CURRENT.
 
 No acoustic/text witness may choose the delivered text.  A non-operator
 mutation must carry a CPA ``PROPOSED`` verdict; witness confidence and typed
@@ -21,28 +21,107 @@ authorities.
 
 from __future__ import annotations
 
-import difflib
 import hashlib
 import json
 import os
-import re
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from src.autoslice.acoustic_pinyin import (
+    candidate_pinyin_similarities,
+    neutral_syllable_count_hint,
+    pinyin_compatibility as pinyin_compatibility,
+)
+from src.autoslice.acoustic_witness_availability import (
+    AUDIO_VERIFIER_UNAVAILABLE,
+)
+from src.autoslice.acoustic_witness_protocol import (
+    BLIND_PINYIN_PROTOCOL,
+    LEGACY_SIGHTED_PROTOCOL,
+    supported_witness_protocol,
+    witness_protocol,
+)
+from src.autoslice.candidate_support import (
+    orthography_ambiguous,
+    registered_misheard_direction,
+    structured_text_support,
+)
+from src.autoslice.exact_source_transcript_contract import (
+    valid_exact_source_transcript_handoff,
+)
+from src.autoslice.closed_set_evidence import (
+    session_recurrence_acoustic_gate,
+)
 from src.autoslice.llm_client import extract_json_object
-
-try:  # 生产已装（song_name_pin/T1 同款可选依赖）；缺失时拼音校验不可用 → fail closed
-    from pypinyin import lazy_pinyin as _lazy_pinyin
-except Exception:  # pragma: no cover - environment-dependent
-    _lazy_pinyin = None
-
 
 WITNESS_REQUEST_SCHEMA = "subtitle-span-acoustic-witness-request.v1"
 ADJUDICATION_SCHEMA = "acoustic-witness-adjudication.v1"
 INAUDIBLE_DECISION_CONTRACT = "inaudible-current-proposed-drop.v1"
+WITNESS_CONFLICT_UNSUPPORTED_PROPOSED = (
+    "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
+)
 
 # Retained as a diagnostic threshold; CPA, not the witness, owns the decision.
 MIN_CHOICE_COMPATIBILITY = 0.55
+
+# 维护者 工程优化②授权：judge 供应商瞬断自动重试，不再整轮报废
+# （真善美 zsm4 三模型均短暂 400 事故）。同一 judge_word_choice 调用内，一次
+# provider-shaped 失败（HTTP 4xx/5xx/超时/连接类）允许一次同轮重试；语义性
+# 失败（JSON 解析、非法 choice）不重试——那是模型已应答，不是供应商抖动。
+JUDGE_MAX_PROVIDER_RETRIES = 1
+_JUDGE_CALL_PROVIDER_MARKERS = (
+    "HTTPERROR",
+    "TIMEOUT",
+    "TIMED OUT",
+    "CONNECTION",
+    "SUBPROCESS",
+    "RESET",
+    " 400",
+    " 401",
+    " 403",
+    " 404",
+    " 408",
+    " 409",
+    " 425",
+    " 429",
+    " 500",
+    " 502",
+    " 503",
+    " 504",
+)
+
+
+def _judge_call_provider_transient(message: str) -> bool:
+    upper = message.upper()
+    return any(marker in upper for marker in _JUDGE_CALL_PROVIDER_MARKERS)
+
+
+def _judge_error_cascade(
+    messages: list[str], *, cap_per_entry: int = 300, max_entries: int = 32
+) -> list[str]:
+    """Preserve each attempt's own error instead of one doubly-truncated tail.
+
+    ``llm_via_cpa.sh`` fans a single judge call out across up to three CPA
+    models before failing; the underlying exception text is multi-line (one
+    line per model/attempt — a full exhaustion is ~9 curl errors + 3
+    "trying next model" + 1 "failed on all models" ≈ 13 lines).  Flattening
+    that into a single ``str[:300]`` (as the old ``error`` field did on top
+    of ``_call_command``'s own ``stderr[-400:]`` cut) threw away exactly the
+    early-model evidence a human needs to see which providers were down.
+    With the same-run retry above, an exhausted retry concatenates two such
+    cascades (~26 lines); ``max_entries`` must clear that or the retry's own
+    error history gets truncated the same way item 3 was fixing one level
+    down. This keeps one capped entry per line/attempt instead.
+    """
+
+    cascade: list[str] = []
+    for message in messages:
+        for line in message.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            cascade.append(line[:cap_per_entry])
+    return cascade[:max_entries]
 
 
 def valid_cpa_witness_adjudication(verdict: Mapping[str, Any]) -> bool:
@@ -401,6 +480,7 @@ def build_witness_request(check_request: Mapping[str, Any]) -> dict[str, Any]:
 
     request: dict[str, Any] = {
         "schema_version": WITNESS_REQUEST_SCHEMA,
+        "witness_protocol": BLIND_PINYIN_PROTOCOL,
         "kind": "subtitle_span_acoustic_witness",
         "evidence_id": str(check_request.get("evidence_id") or ""),
         "cue_indexes": list(check_request.get("cue_indexes") or []),
@@ -412,6 +492,12 @@ def build_witness_request(check_request: Mapping[str, Any]) -> dict[str, Any]:
             check_request["source_media_timeline_offset_ms"]
         ),
     }
+    syllable_hint = neutral_syllable_count_hint(
+        str(check_request.get("current_cue") or ""),
+        str(check_request.get("proposed_cue") or ""),
+    )
+    if syllable_hint is not None:
+        request["syllable_count_hint"] = syllable_hint
     request["request_sha256"] = hashlib.sha256(
         json.dumps(
             request, ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -429,6 +515,7 @@ def valid_witness_evidence(
     return bool(
         witness.get("schema_version") == "subtitle-span-acoustic-witness.v1"
         and witness.get("request_sha256") == request_sha256
+        and supported_witness_protocol(witness)
         and status in {"OBSERVED", "UNCERTAIN"}
         and (status == "UNCERTAIN" or isinstance(witness.get("target_audible"), bool))
         and not any(
@@ -445,61 +532,7 @@ def valid_witness_evidence(
     )
 
 
-def _pinyin_tokens(text: str) -> list[str] | None:
-    if _lazy_pinyin is None:
-        return None
-    tokens = [
-        token.strip().lower()
-        for token in _lazy_pinyin(text)
-        if token and token.strip()
-    ]
-    # non-hanzi spans (latin letters, digits) come back verbatim; keep them
-    # as single tokens so KO/N-style spellings still participate.
-    return [re.sub(r"\s+", "", token) for token in tokens if token]
-
-
-def pinyin_compatibility(
-    candidate_text: str,
-    *,
-    heard_pinyin: str,
-    uncertain_positions: list[int] | tuple[int, ...] = (),
-) -> float | None:
-    """Token-level similarity between a candidate's pinyin and the dictation.
-
-    ``?`` witness tokens and tokens listed in ``uncertain_positions`` are
-    wildcards: they match whatever the candidate has at the aligned position
-    (the witness itself declared no knowledge there). Returns None when the
-    pinyin backend is unavailable — callers must fail closed on None.
-    """
-
-    candidate = _pinyin_tokens(candidate_text)
-    if candidate is None:
-        return None
-    heard = [token for token in heard_pinyin.strip().lower().split() if token]
-    uncertain = {
-        int(value)
-        for value in uncertain_positions
-        if isinstance(value, int) and not isinstance(value, bool)
-    }
-    if not candidate or not heard:
-        return 0.0
-    normalized_heard = list(heard)
-    matcher = difflib.SequenceMatcher(None, normalized_heard, candidate)
-    matched = sum(block.size for block in matcher.get_matching_blocks())
-    # grant wildcard credit for unmatched witness positions declared unsure
-    unmatched_wild = 0
-    matched_positions: set[int] = set()
-    for block in matcher.get_matching_blocks():
-        matched_positions.update(range(block.a, block.a + block.size))
-    for index, token in enumerate(normalized_heard):
-        if index in matched_positions:
-            continue
-        if token == "?" or index in uncertain:
-            unmatched_wild += 1
-    effective = matched + min(unmatched_wild, max(0, len(candidate) - matched))
-    return (2.0 * effective) / (len(candidate) + len(heard))
-
-
+# 维护者「贴音优先、证据兜底」裁定（卡1结案，synthesis 文档）。
 _JUDGE_PROMPT = """# 字幕选字裁决（闭集）
 
 你是字幕修复的最终选字法官。一名听写证人已经把目标区间的音节按拼音记录如下；
@@ -507,22 +540,23 @@ _JUDGE_PROMPT = """# 字幕选字裁决（闭集）
 「拼音证据 + 语境」的候选。铁律：
 
 1. {choice_rule}
-2. 拼音证据是高可信辅助，不拥有最终裁决权。先判断这串拼音是否真的覆盖目标
+2. 依据 维护者 2026-08-08 裁定，裁决必须优先在与证人听写拼音相容的候选内选择；PROPOSED 与听写明显不相容且无独立结构化证据时选择 CURRENT。
+3. 拼音证据是高可信辅助，不单独拥有最终裁决权。先判断这串拼音是否真的覆盖目标
    整句；若它明显只听到邻句、半句或错位片段，必须在理由中披露错位，并由你
    结合完整语境在闭集内定夺，不能因为 AGY 与两个候选都不齐就机械选 NEITHER。
-3. 语境（前后句、弹幕、平行句）在拼音无法区分候选、听写证据被标记为
+4. 语境（前后句、弹幕、平行句）在拼音无法区分候选、听写证据被标记为
    受污染/不可用、或拼音与两个候选都显示窗口错位时，可以在闭集内定夺。
    只有两个候选本身都不完整/不通顺，确实需要第三个候选时才选 NEITHER。
-4. 目标区间外出现过相同词语，本身不证明目标区间内说了它；但相邻句对同一
+5. 目标区间外出现过相同词语，本身不证明目标区间内说了它；但相邻句对同一
    词的重复、呼应或应答，可作为闭集内选择的佐证——仍绝不引入闭集外新字。
-5. 真实的中英/中日混杂是存在的（维护者 2026-07-26）：外语候选若在语境中
+6. 真实的中英/中日混杂是存在的（维护者 2026-07-26）：外语候选若在语境中
    **语义通顺**，应正常参与裁决、可以当选；只有当外语读法在语境里根本
    不通顺、而拼音证据又与中文候选相容时，才判定为中文被拉丁化误转写、
    选择中文候选。分辨的根本理由是语义，不是文字系统。
-6. 「绑定文字证据」只证明候选的规范写法，不单独证明目标区间说了它。若
+7. 「绑定文字证据」只证明候选的规范写法，不单独证明目标区间说了它。若
    拼音/语篇确认目标指向该实体或原文，必须采用其规范写法；AGY、ASR、
    glossary、roster、弹幕、OCR 都只是证据，最终闭集选择仍由你作出。
-7. 证人状态为 UNCERTAIN 时表示 AGY 本轮没有提供可用听音；这不剥夺你的
+8. 证人状态为 UNCERTAIN 时表示 AGY 本轮没有提供可用听音；这不剥夺你的
    最终裁决权。必须忽略缺失的拼音、仅根据闭集、完整语境和绑定文字证据
    排序 CURRENT / PROPOSED / NEITHER，不得因为 AGY 不可用而拒绝裁决。
 
@@ -534,6 +568,10 @@ _JUDGE_PROMPT = """# 字幕选字裁决（闭集）
 - 音节数: {syllable_count}
 - 不确定位置: {uncertain_positions}
 - 证人置信: {confidence}
+
+## 代码计算的双候选拼音贴合（由盲听 heard_pinyin 得出）
+- CURRENT: {current_pinyin_similarity}
+- PROPOSED: {proposed_pinyin_similarity}
 
 ## 闭集候选
 - CURRENT（现字幕整句）: {current_cue}
@@ -550,6 +588,9 @@ _JUDGE_PROMPT = """# 字幕选字裁决（闭集）
 
 ## 绑定文字证据（证据，不是先行裁决）
 {text_evidence}
+
+## 三路结构化保真证据（均为候选证据，不单独授权改字）
+{closed_set_structured_evidence}
 
 {structured_chat_block}
 按概率排序并**必须选概率最高者**（维护者 2026-07-27：不许拿不准就保持原样——
@@ -596,6 +637,18 @@ def judge_word_choice(
 ) -> dict[str, Any]:
     """Ask the CPA judge to pick from the closed set; never trusts free text."""
 
+    similarities = (
+        candidate_pinyin_similarities(
+            current_text=str(check_request.get("current_cue") or ""),
+            proposed_text=str(check_request.get("proposed_cue") or ""),
+            heard_pinyin=str(witness.get("heard_pinyin") or ""),
+            uncertain_positions=list(witness.get("uncertain_positions") or []),
+        )
+        if witness_protocol(witness) == BLIND_PINYIN_PROTOCOL
+        and witness.get("status") == "OBSERVED"
+        and witness.get("target_audible") is True
+        else {"current": None, "proposed": None}
+    )
     inaudible_three_way = bool(
         witness.get("status") == "OBSERVED"
         and witness.get("target_audible") is False
@@ -644,6 +697,8 @@ def judge_word_choice(
         syllable_count=witness.get("syllable_count"),
         uncertain_positions=witness.get("uncertain_positions"),
         confidence=witness.get("confidence"),
+        current_pinyin_similarity=similarities["current"],
+        proposed_pinyin_similarity=similarities["proposed"],
         current_cue=str(check_request.get("current_cue") or ""),
         proposed_cue=(
             str(check_request.get("proposed_cue") or "")
@@ -669,6 +724,11 @@ def judge_word_choice(
                 ),
                 "reviewer_reason": check_request.get("reason"),
             },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        closed_set_structured_evidence=json.dumps(
+            check_request.get("closed_set_structured_evidence") or {},
             ensure_ascii=False,
             sort_keys=True,
         ),
@@ -701,16 +761,44 @@ def judge_word_choice(
                 return served
         except (OSError, ValueError):
             pass
+    call_errors: list[str] = []
+    completion: str | None = None
+    for call_attempt in range(JUDGE_MAX_PROVIDER_RETRIES + 1):
+        try:
+            completion = llm_call(prompt)
+            break
+        except Exception as exc:
+            message = f"{type(exc).__name__}: {exc}"
+            call_errors.append(message)
+            if (
+                call_attempt < JUDGE_MAX_PROVIDER_RETRIES
+                and _judge_call_provider_transient(message)
+            ):
+                continue
+            return {
+                "schema_version": ADJUDICATION_SCHEMA,
+                "status": "JUDGE_UNAVAILABLE",
+                "choice": "UNCERTAIN",
+                "reason_code": "JUDGE_CALL_FAILED",
+                "error": message[:300],
+                "error_cascade": _judge_error_cascade(call_errors),
+                "provider_retry_attempted": call_attempt > 0,
+                "prompt_sha256": prompt_sha256,
+                "decision_contract": decision_contract,
+                "choice_set": sorted(allowed_choices),
+            }
     try:
-        completion = llm_call(prompt)
-        payload = extract_json_object(completion)
+        payload = extract_json_object(completion or "")
     except Exception as exc:
+        message = f"{type(exc).__name__}: {exc}"
         return {
             "schema_version": ADJUDICATION_SCHEMA,
             "status": "JUDGE_UNAVAILABLE",
             "choice": "UNCERTAIN",
             "reason_code": "JUDGE_CALL_FAILED",
-            "error": f"{type(exc).__name__}: {exc}"[:300],
+            "error": message[:300],
+            "error_cascade": _judge_error_cascade(call_errors + [message]),
+            "provider_retry_attempted": len(call_errors) > 0,
             "prompt_sha256": prompt_sha256,
             "decision_contract": decision_contract,
             "choice_set": sorted(allowed_choices),
@@ -749,6 +837,7 @@ def judge_word_choice(
             "prompt_sha256": prompt_sha256,
             "decision_contract": decision_contract,
             "choice_set": sorted(allowed_choices),
+            "provider_retry_attempted": bool(call_errors),
         }
     verdict = {
         "schema_version": ADJUDICATION_SCHEMA,
@@ -765,6 +854,15 @@ def judge_word_choice(
         "check_request_sha256": str(
             check_request.get("request_sha256") or ""
         ).removeprefix("sha256:"),
+        # 维护者 工程优化②授权：MAX_PROVIDER_RETRIES_PER_PASS 同款
+        # house pattern（source_fact_review.py）——"每次重试都进回执披露"；
+        # 一个二次尝试才拿到的 JUDGED 终态不得看起来和首次成功一模一样，
+        # 尤其它还会被写入 judge-verdict-cache 原样回放。
+        "provider_retry_attempted": bool(call_errors),
+        "candidate_pinyin_similarity": similarities,
+        "closed_set_structured_evidence": check_request.get(
+            "closed_set_structured_evidence"
+        ),
     }
     if cache_path is not None:
         # 只缓存 JUDGED 终态；写失败绝不影响生产（与声学缓存同约定）。
@@ -793,6 +891,7 @@ def adjudicate_with_witness(
     witness: Mapping[str, Any],
     llm_call: Callable[[str], str] | None,
     structured_chat_context: str = "",
+    clip_context: Mapping[str, object] | None = None,
 ) -> tuple[bool, str, dict[str, Any]]:
     """Fuse optional AGY evidence with CPA-owned closed-set word choice."""
 
@@ -802,12 +901,17 @@ def adjudicate_with_witness(
         "witness_status": witness.get("status"),
         "decision_authority": "CPA_JUDGE",
         "witness_authority": "EVIDENCE_ONLY",
+        "witness_protocol": witness_protocol(witness),
+        "closed_set_structured_evidence": check_request.get(
+            "closed_set_structured_evidence"
+        ),
     }
     witness_status = witness.get("status") if isinstance(witness, Mapping) else None
     witness_valid = (
         isinstance(witness, Mapping)
         and witness.get("schema_version") == "subtitle-span-acoustic-witness.v1"
         and witness_status in {"OBSERVED", "UNCERTAIN"}
+        and supported_witness_protocol(witness)
         and (
             witness_status == "UNCERTAIN"
             or isinstance(witness.get("target_audible"), bool)
@@ -815,6 +919,16 @@ def adjudicate_with_witness(
     )
     if not witness_valid:
         return False, "WITNESS_UNAVAILABLE_KEEP_CURRENT", audit
+    if (
+        witness_status == "OBSERVED"
+        and witness_protocol(witness) == LEGACY_SIGHTED_PROTOCOL
+    ):
+        return False, "LEGACY_SIGHTED_WITNESS_NOT_REUSABLE", audit
+    recurrence_gate = session_recurrence_acoustic_gate(check_request, witness)
+    if recurrence_gate is not None:
+        audit["session_transcript_recurrence_acoustic_gate"] = recurrence_gate
+        if recurrence_gate["status"] != "PASS":
+            return False, str(recurrence_gate["reason_code"]), audit
     if llm_call is None:
         return False, "JUDGE_UNAVAILABLE_KEEP_CURRENT", audit
 
@@ -826,9 +940,10 @@ def adjudicate_with_witness(
     )
     audit["judge"] = verdict
     if witness_status == "UNCERTAIN":
-        audit["witness_unavailable_reason"] = str(
+        witness_unavailable_reason = str(
             witness.get("reason_code") or witness.get("detail") or "UNKNOWN"
         )
+        audit["witness_unavailable_reason"] = witness_unavailable_reason
         if verdict.get("choice") == "NEITHER":
             return False, "JUDGE_REJECTS_CLOSED_SET", audit
         if verdict.get("choice") != "PROPOSED":
@@ -838,6 +953,20 @@ def adjudicate_with_witness(
                 else "JUDGE_UNCERTAIN_KEEP_CURRENT"
             )
             return False, branch, audit
+        # F21 张力封口（维护者 立项时点名，默认关死待复裁）：
+        # 无声学改字路 ``CPA_JUDGE_APPLY_PROPOSED_WITHOUT_AUDIO_WITNESS`` 是
+        # 7/25 起就存在的既有出口，语义是「provider 真的被调用过、真的失败了，
+        # 语境证据仍可定夺」。F21 新开的 ``AUDIO_VERIFIER_UNAVAILABLE`` 是另一
+        # 回事：证人链**从未听过**这段音频（host 门降级 / 根本没有 provider）。
+        # 让这类证词继承既有改字权，等于让「接线缺陷」自动升级成「声学豁免」，
+        # 与 8/8 F7 方向直接冲突。默认只许 KEEP_CURRENT + 披露，等 维护者 复裁。
+        if witness_unavailable_reason == AUDIO_VERIFIER_UNAVAILABLE:
+            audit["acoustic_witness_never_attempted"] = True
+            return (
+                False,
+                "WITNESS_NEVER_ATTEMPTED_KEEP_CURRENT_DISCLOSED",
+                audit,
+            )
         return True, "CPA_JUDGE_APPLY_PROPOSED_WITHOUT_AUDIO_WITNESS", audit
     if not witness["target_audible"]:
         choice = verdict.get("choice")
@@ -891,16 +1020,15 @@ def adjudicate_with_witness(
         return False, "JUDGE_UNCERTAIN_KEEP_CURRENT", audit
     heard = str(witness.get("heard_pinyin") or "")
     uncertain = list(witness.get("uncertain_positions") or [])
-    compat_proposed = pinyin_compatibility(
-        str(check_request.get("proposed_cue") or ""),
+    similarities = candidate_pinyin_similarities(
+        current_text=str(check_request.get("current_cue") or ""),
+        proposed_text=str(check_request.get("proposed_cue") or ""),
         heard_pinyin=heard,
         uncertain_positions=uncertain,
     )
-    compat_current = pinyin_compatibility(
-        str(check_request.get("current_cue") or ""),
-        heard_pinyin=heard,
-        uncertain_positions=uncertain,
-    )
+    compat_current = similarities["current"]
+    compat_proposed = similarities["proposed"]
+    audit["candidate_pinyin_similarity"] = similarities
     audit["pinyin_compatibility"] = {
         "proposed": compat_proposed,
         "current": compat_current,
@@ -922,8 +1050,43 @@ def adjudicate_with_witness(
     )
     audit["witness_diagnostic_conflict"] = witness_conflict
     if witness_conflict:
-        # CPA already received the witness, closed candidate set and context.
-        # AGY pinyin remains a diagnostic, including for deletion proposals,
-        # but cannot overturn CPA's explicit PROPOSED choice.
+        # 维护者 卡1结案：贴音优先；背离耳朵必须有第三方结构化证据。
+        suspect = str(check_request.get("suspect") or "")
+        replacement = str(check_request.get("replacement") or "")
+        support = {
+            "orthography_ambiguous": orthography_ambiguous(
+                current_cue=str(check_request.get("current_cue") or ""),
+                proposed_cue=str(check_request.get("proposed_cue") or ""),
+                suspect=suspect,
+                replacement=replacement,
+            ),
+            "registered_direction": registered_misheard_direction(
+                suspect=suspect, replacement=replacement
+            ),
+            "structured_text_support": structured_text_support(
+                candidate_provenance=check_request.get("candidate_provenance"),
+                replacement=replacement,
+                proposed_cue=str(check_request.get("proposed_cue") or ""),
+                clip_context=clip_context,
+            ),
+            "exact_source_transcript_handoff": (
+                isinstance(check_request.get("exact_source_transcript_handoff"), Mapping)
+                and valid_exact_source_transcript_handoff(
+                    check_request["exact_source_transcript_handoff"],
+                    check_request=check_request,
+                    witness=witness,
+                    clip_context=clip_context,
+                )
+            ),
+        }
+        supported = any(support.values())
+        audit["witness_conflict_gate"] = {
+            "schema_version": "witness-conflict-proposed-support.v1",
+            "status": "PASS" if supported else "BLOCK",
+            **support,
+            "reason_code": None if supported else WITNESS_CONFLICT_UNSUPPORTED_PROPOSED,
+        }
+        if not supported:
+            return False, WITNESS_CONFLICT_UNSUPPORTED_PROPOSED, audit
         return True, "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT", audit
     return True, "WITNESS_JUDGE_APPLY_PROPOSED", audit

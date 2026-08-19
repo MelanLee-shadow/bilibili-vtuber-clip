@@ -1,5 +1,6 @@
 {
   "schema_version": "lidousha-manual-title-overrides.v1",
   "comment": "维护者 手定标题正文按 candidate 注入：正文不送 LLM 改写，也不套自动标题的 selection-hook/机器味重写；最终发布仍统一经过频道前缀、12–48 字与标点结构门。candidate_id 匹配忽略 rN 重切后缀——重切不改内容主题，标题跟内容走。",
-  "overrides": []
+  "overrides": [],
+  "entries": []
 }

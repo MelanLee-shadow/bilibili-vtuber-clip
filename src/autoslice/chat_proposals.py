@@ -304,12 +304,12 @@ def _resolve_chat_entity_proposal(
 
     resolved = {**base_row, "request": request, "verdict": verdict}
     discovery.entity_verdicts.append(resolved)
-    if verdict["authority_kind"] == "ivan_text_override":
+    if verdict["authority_kind"] == "reviewer_text_override":
         discovery.pending_text_overrides.append(resolved)
         discovery.superseded_chat_proposals.append(
             {
                 **base_row,
-                "reason_code": "EXACT_CHAT_SUPERSEDED_BY_IVAN_TEXT_OVERRIDE",
+                "reason_code": "EXACT_CHAT_SUPERSEDED_BY_REVIEWER_TEXT_OVERRIDE",
                 "structured_chat_canonical": chat_canonical,
                 "resolved_canonical": verdict["canonical_entity"],
             }

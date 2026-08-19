@@ -1,6 +1,7 @@
 import hashlib
 import json
 from pathlib import Path
+import urllib.error
 
 import pytest
 
@@ -72,6 +73,521 @@ def _context_request(*, source_media_timeline_offset_ms=0):
         }
     )
     return _seal_request(request)
+
+
+def _exact_transcript_request():
+    return _seal_request(
+        {
+            "schema_version": "exact-final-source-transcript-request.v2",
+            "kind": "exact_final_source_transcript",
+            "cue_indexes": [1],
+            "matched_start_ms": 2_000,
+            "matched_end_ms": 4_000,
+            "context_start_ms": 500,
+            "context_end_ms": 7_500,
+            "source_media_timeline_offset_ms": 1_000,
+        }
+    )
+
+
+def _clear_gemini_keys(monkeypatch):
+    for name in (
+        "GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3",
+        "GEMINI_KEY_BACKUP",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_exact_source_transcript_uses_target_markers_and_read_only_cache(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"exact source bytes")
+    commands = []
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        if command[0] == "ffmpeg":
+            Path(command[-1]).write_bytes(b"deterministic exact target audio")
+            return _Completed()
+        Path(kwargs["cwd"], "verdict.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "exact-final-source-transcript-provider-report.v1",
+                    "status": "OBSERVED",
+                    "target_audible": True,
+                    "audible_language": "mixed",
+                    "exact_transcript": "nineteen nineteen，对吧",
+                    "reason": "target markers are clear",
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return _Completed()
+
+    monkeypatch.setattr(verifier_module.subprocess, "run", fake_run)
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-08-14",
+        source_duration_ms=10_000,
+        agy_bin="agy-test",
+    )
+    request = _exact_transcript_request()
+    observed = verify.exact_source_transcript(request)
+
+    assert observed["status"] == "OBSERVED"
+    assert observed["exact_transcript"] == "nineteen nineteen，对吧"
+    assert observed["mutation_authorized"] is False
+    assert observed["provider_route"]["provider"] == "agy"
+    assert observed["provider_route"]["provider_failures"] == []
+    assert observed["timeline_binding"]["source_media"] == {
+        "target_start_ms": 3_000,
+        "target_end_ms": 5_000,
+        "crop_start_ms": 2_600,
+        "crop_end_ms": 5_400,
+    }
+    job_dir = tmp_path / "out/entity_verdicts" / request["request_sha256"][:20]
+    prompt = (job_dir / "prompt.md").read_text(encoding="utf-8")
+    assert "begins at 400 ms" in prompt and "ends\nat 2400 ms" in prompt
+    assert "syllable" not in prompt.casefold()
+    assert "难听难听" not in prompt and "nineteen nineteen" not in prompt
+
+    monkeypatch.setattr(
+        verifier_module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("cache probe called ffmpeg/provider")
+        ),
+    )
+    from src.autoslice import exact_source_transcript_runtime as exact_runtime
+
+    runtime_file_sha256 = exact_runtime._file_sha256
+
+    def no_source_rescan(path):
+        if Path(path).resolve() == source.resolve():
+            raise AssertionError("cache probe rescanned the bound source")
+        return runtime_file_sha256(path)
+
+    monkeypatch.setattr(exact_runtime, "_file_sha256", no_source_rescan)
+    cached = verify.probe_exact_source_transcript_cache(request)
+    assert cached["served_from_cache"] is True
+    assert cached["audio_clip_sha256"] == observed["audio_clip_sha256"]
+    assert verify.exact_source_transcript(request)["served_from_cache"] is True
+
+    (job_dir / "input.mp4").write_bytes(b"tampered audio")
+    assert verify.probe_exact_source_transcript_cache(request) is None
+    (job_dir / "input.mp4").write_bytes(b"deterministic exact target audio")
+    source.write_bytes(b"stat drift after verifier construction")
+    assert verify.probe_exact_source_transcript_cache(request) is None
+
+
+def test_exact_source_transcript_free_fallback_persists_route_and_cache(
+    tmp_path, monkeypatch
+):
+    _clear_gemini_keys(monkeypatch)
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path / "base"))
+    monkeypatch.setenv("GEMINI_API_KEY", "free-key")
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"exact source bytes")
+
+    def fake_run(command, **_kwargs):
+        if command[0] == "ffmpeg":
+            Path(command[-1]).write_bytes(b"exact fallback audio")
+            return _Completed()
+        return _Completed(returncode=1, stderr="agy transport timeout")
+
+    report = json.dumps(
+        {
+            "schema_version": "exact-final-source-transcript-provider-report.v1",
+            "status": "OBSERVED",
+            "target_audible": True,
+            "audible_language": "mixed",
+            "exact_transcript": "nineteen nineteen，对吧",
+            "reason": "target markers are clear",
+        },
+        ensure_ascii=False,
+    )
+    monkeypatch.setattr(verifier_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        verifier_module,
+        "_gemini_api_observe_witness",
+        lambda **_kwargs: report,
+    )
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-08-14",
+        source_duration_ms=10_000,
+        agy_bin="agy-test",
+    )
+    request = _exact_transcript_request()
+    observed = verify.exact_source_transcript(request)
+    route = observed["provider_route"]
+    assert route["provider"] == "gemini_api"
+    assert route["accepted_key_tier"] == "free"
+    assert route["accepted_key_ordinal"] == 1
+    assert route["configured_key_count"] == 1
+    assert route["paid_backup_policy"] is None
+    assert route["purpose"] == "candidate_blind_exact_source_transcript"
+    assert route["provider_failures"][0]["provider"] == "agy"
+    assert route["provider_failures"][0]["attempted"] is True
+
+    job_dir = tmp_path / "out/entity_verdicts" / request["request_sha256"][:20]
+    manifest_path = next(job_dir.glob("verdict.gemini_api.*.manifest.json"))
+    manifest = json.loads(
+        manifest_path.read_text(encoding="utf-8")
+    )
+    assert manifest["provider_route"] == route
+    monkeypatch.setattr(
+        verifier_module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("valid exact cache called provider")
+        ),
+    )
+    cached = verify.probe_exact_source_transcript_cache(request)
+    assert cached["served_from_cache"] is True
+    assert cached["provider_route"] == route
+
+    calls = []
+
+    def replay_after_agy_failure(command, **_kwargs):
+        calls.append(command[0])
+        if command[0] == "ffmpeg":
+            Path(command[-1]).write_bytes(b"exact fallback audio")
+            return _Completed()
+        return _Completed(returncode=1, stderr="fresh agy transport timeout")
+
+    monkeypatch.setattr(verifier_module.subprocess, "run", replay_after_agy_failure)
+    monkeypatch.setattr(
+        verifier_module,
+        "_gemini_api_observe_witness",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("provider-isolated Gemini cache called live Gemini")
+        ),
+    )
+    replayed = verify.exact_source_transcript(request)
+    assert calls == ["ffmpeg", "agy-test"]
+    assert replayed["provider"] == "gemini_api"
+    assert replayed["served_from_cache"] is True
+    assert replayed["provider_route"]["provider_failures"][0]["attempted"] is True
+
+
+def test_exact_source_transcript_paid_fallback_uses_exact_purpose(
+    tmp_path, monkeypatch
+):
+    _clear_gemini_keys(monkeypatch)
+    base = tmp_path / "base"
+    monkeypatch.setenv("AUTOSLICE_BASE", str(base))
+    monkeypatch.setenv("GEMINI_API_KEY", "free-key")
+    monkeypatch.setenv("GEMINI_KEY_BACKUP", "paid-key")
+    monkeypatch.setenv("GEMINI_PAID_BACKUP_DEV_EXCEPTION", "1")
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"exact source bytes")
+
+    def fake_run(command, **_kwargs):
+        if command[0] == "ffmpeg":
+            Path(command[-1]).write_bytes(b"exact paid fallback audio")
+            return _Completed()
+        return _Completed(returncode=1, stderr="agy transport timeout")
+
+    report = json.dumps(
+        {
+            "schema_version": "exact-final-source-transcript-provider-report.v1",
+            "status": "OBSERVED",
+            "target_audible": True,
+            "audible_language": "mixed",
+            "exact_transcript": "nineteen nineteen，对吧",
+            "reason": "target markers are clear",
+        },
+        ensure_ascii=False,
+    )
+
+    def gemini_observe(*, key, **_kwargs):
+        if key == "free-key":
+            raise urllib.error.HTTPError("https://example.invalid", 429, "quota", {}, None)
+        return report
+
+    monkeypatch.setattr(verifier_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        verifier_module, "_gemini_api_observe_witness", gemini_observe
+    )
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-08-14",
+        source_duration_ms=10_000,
+        agy_bin="agy-test",
+    )
+    request = _exact_transcript_request()
+    observed = verify.exact_source_transcript(request)
+    assert observed["provider"] == "gemini_api"
+    assert observed["provider_route"]["accepted_key_tier"] == "paid_backup"
+    assert observed["provider_route"]["accepted_key_ordinal"] == 2
+    assert observed["provider_route"]["configured_key_count"] == 1
+    failures = observed["provider_route"]["provider_failures"]
+    assert failures[0]["provider"] == "agy"
+    assert [row["provider"] for row in failures[1:]] == ["gemini_api"] * 3
+    assert [row["attempt_round"] for row in failures[1:]] == [1, 2, 3]
+    usage = next((base / "state/gemini-paid-backup").glob("usage-*.jsonl"))
+    stamp = json.loads(usage.read_text(encoding="utf-8").splitlines()[0])
+    assert stamp["purpose"] == "candidate_blind_exact_source_transcript"
+    assert stamp["item_key"] == observed["audio_clip_sha256"]
+    assert observed["provider_route"]["paid_backup_policy"] == stamp
+    cached = verify.probe_exact_source_transcript_cache(request)
+    assert cached["served_from_cache"] is True
+    assert cached["provider_route"]["paid_backup_policy"] == stamp
+
+    manifest_path = next(
+        (tmp_path / "out/entity_verdicts").glob(
+            "*/verdict.gemini_api.*.manifest.json"
+        )
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    def canonical_sha(value):
+        return hashlib.sha256(
+            json.dumps(
+                value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+        ).hexdigest()
+
+    route = dict(manifest["provider_route"])
+    route["purpose"] = "candidate_blind_audio_witness"
+    route.pop("receipt_sha256")
+    route["receipt_sha256"] = canonical_sha(route)
+    tampered_observation = dict(manifest["observation"])
+    tampered_observation["provider_route"] = route
+    tampered_observation.pop("observation_sha256")
+    tampered_observation["observation_sha256"] = canonical_sha(tampered_observation)
+    manifest["provider_route"] = route
+    manifest["observation"] = tampered_observation
+    manifest["observation_sha256"] = canonical_sha(tampered_observation)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert verify.probe_exact_source_transcript_cache(request) is None
+
+
+def test_exact_source_transcript_clears_stale_agy_verdict_before_rc_zero(
+    tmp_path, monkeypatch
+):
+    _clear_gemini_keys(monkeypatch)
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"exact source bytes")
+    request = _exact_transcript_request()
+    job_dir = tmp_path / "out/entity_verdicts" / request["request_sha256"][:20]
+    job_dir.mkdir(parents=True)
+    stale = job_dir / "verdict.json"
+    stale.write_text(
+        json.dumps(
+            {
+                "schema_version": "exact-final-source-transcript-provider-report.v1",
+                "status": "OBSERVED",
+                "target_audible": True,
+                "audible_language": "mixed",
+                "exact_transcript": "stale unrelated transcript",
+                "reason": "old job output",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_run(command, **_kwargs):
+        if command[0] == "ffmpeg":
+            Path(command[-1]).write_bytes(b"fresh exact audio")
+            return _Completed()
+        return _Completed(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(verifier_module.subprocess, "run", fake_run)
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-08-14",
+        source_duration_ms=10_000,
+        agy_bin="agy-test",
+    )
+    receipt = verify.exact_source_transcript(request)
+    assert receipt["status"] != "OBSERVED"
+    assert not stale.exists()
+
+
+def test_exact_source_transcript_stale_cleanup_failure_is_not_capability_absence(
+    tmp_path, monkeypatch
+):
+    _clear_gemini_keys(monkeypatch)
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"exact source bytes")
+    original_unlink = Path.unlink
+
+    def fail_verdict_cleanup(path, *args, **kwargs):
+        if path.name == "verdict.json":
+            raise OSError("cannot safely clear stale provider output")
+        return original_unlink(path, *args, **kwargs)
+
+    def fake_run(command, **_kwargs):
+        assert command[0] == "ffmpeg"
+        Path(command[-1]).write_bytes(b"fresh exact audio")
+        return _Completed()
+
+    monkeypatch.setattr(Path, "unlink", fail_verdict_cleanup)
+    monkeypatch.setattr(verifier_module.subprocess, "run", fake_run)
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-08-14",
+        source_duration_ms=10_000,
+        agy_bin="agy-test",
+    )
+    receipt = verify.exact_source_transcript(_exact_transcript_request())
+    assert receipt["status"] == "INVALID"
+    assert receipt["reason_code"] == "EXACT_SOURCE_TRANSCRIPT_PROVIDER_RESULT_INVALID"
+
+
+def test_exact_source_transcript_gemini_cache_never_preempts_healthy_agy(
+    tmp_path, monkeypatch
+):
+    _clear_gemini_keys(monkeypatch)
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path / "base"))
+    monkeypatch.setenv("GEMINI_API_KEY", "free-key")
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"exact source bytes")
+    provider_runs = 0
+
+    def fallback_run(command, **_kwargs):
+        nonlocal provider_runs
+        if command[0] == "ffmpeg":
+            Path(command[-1]).write_bytes(b"provider-isolated exact audio")
+            return _Completed()
+        provider_runs += 1
+        return _Completed(returncode=1, stderr="agy transport timeout")
+
+    report = json.dumps(
+        {
+            "schema_version": "exact-final-source-transcript-provider-report.v1",
+            "status": "OBSERVED",
+            "target_audible": True,
+            "audible_language": "mixed",
+            "exact_transcript": "old Gemini cache",
+            "reason": "fallback observation",
+        }
+    )
+    monkeypatch.setattr(verifier_module.subprocess, "run", fallback_run)
+    monkeypatch.setattr(
+        verifier_module, "_gemini_api_observe_witness", lambda **_kwargs: report
+    )
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-08-14",
+        source_duration_ms=10_000,
+        agy_bin="agy-test",
+    )
+    request = _exact_transcript_request()
+    assert verify.exact_source_transcript(request)["provider"] == "gemini_api"
+    assert provider_runs == 1
+
+    def healthy_agy_run(command, **kwargs):
+        nonlocal provider_runs
+        if command[0] == "ffmpeg":
+            Path(command[-1]).write_bytes(b"provider-isolated exact audio")
+            return _Completed()
+        provider_runs += 1
+        Path(kwargs["cwd"], "verdict.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "exact-final-source-transcript-provider-report.v1",
+                    "status": "OBSERVED",
+                    "target_audible": True,
+                    "audible_language": "mixed",
+                    "exact_transcript": "fresh AGY observation",
+                    "reason": "preferred provider recovered",
+                }
+            ),
+            encoding="utf-8",
+        )
+        return _Completed()
+
+    monkeypatch.setattr(verifier_module.subprocess, "run", healthy_agy_run)
+    observed = verify.exact_source_transcript(request)
+    assert provider_runs == 2
+    assert observed["provider"] == "agy"
+    assert observed["exact_transcript"] == "fresh AGY observation"
+
+
+@pytest.mark.parametrize(
+    ("agy_result", "expected_status", "expected_reason", "transient"),
+    [
+        (
+            _Completed(returncode=1, stderr="provider timed out"),
+            "UNCERTAIN",
+            "EXACT_SOURCE_TRANSCRIPT_PROVIDER_FAILED",
+            True,
+        ),
+        (
+            _Completed(returncode=0, stdout="not-json"),
+            "INVALID",
+            "EXACT_SOURCE_TRANSCRIPT_PROVIDER_RESULT_INVALID",
+            False,
+        ),
+    ],
+)
+def test_exact_source_transcript_provider_failure_is_typed_only_for_transport(
+    tmp_path, monkeypatch, agy_result, expected_status, expected_reason, transient
+):
+    _clear_gemini_keys(monkeypatch)
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+
+    def fake_run(command, **_kwargs):
+        if command[0] == "ffmpeg":
+            Path(command[-1]).write_bytes(b"audio")
+            return _Completed()
+        return agy_result
+
+    monkeypatch.setattr(verifier_module.subprocess, "run", fake_run)
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-08-14",
+        source_duration_ms=10_000,
+        agy_bin="agy-test",
+    )
+    receipt = verify.exact_source_transcript(_exact_transcript_request())
+
+    assert receipt["status"] == expected_status
+    assert receipt["reason_code"] == expected_reason
+    assert (receipt.get("retry_class") == "provider_transient") is transient
+    if transient:
+        assert all(row["attempted"] is True for row in receipt["provider_failures"])
+
+
+def test_exact_source_transcript_absent_capability_preserves_old_rebuild_signal(
+    tmp_path, monkeypatch
+):
+    _clear_gemini_keys(monkeypatch)
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+
+    def fake_run(command, **_kwargs):
+        if command[0] == "ffmpeg":
+            Path(command[-1]).write_bytes(b"audio")
+            return _Completed()
+        raise FileNotFoundError("agy absent")
+
+    monkeypatch.setattr(verifier_module.subprocess, "run", fake_run)
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-08-14",
+        source_duration_ms=10_000,
+        agy_bin="agy-missing",
+    )
+    receipt = verify.exact_source_transcript(_exact_transcript_request())
+
+    assert receipt["status"] == "NOT_CONFIGURED"
+    assert receipt["provider_attempted"] is False
+    assert receipt["mutation_authorized"] is False
 
 
 def test_audio_verifier_uses_black_frame_clip_and_neutral_prompt(tmp_path, monkeypatch):
@@ -533,7 +1049,13 @@ def test_agy_quota_opens_run_circuit_and_later_cues_go_directly_to_api(
 
 @pytest.mark.parametrize(
     "first_failure",
-    ("ordinary_error", "rate_limited", "timeout", "invalid_verdict"),
+    (
+        "ordinary_error",
+        "rate_limited",
+        "server_error",
+        "timeout",
+        "invalid_verdict",
+    ),
 )
 def test_agy_run_circuit_ignores_non_quota_failures(
     tmp_path, monkeypatch, first_failure
@@ -557,6 +1079,8 @@ def test_agy_run_circuit_ignores_non_quota_failures(
                 return _Completed(returncode=1, stderr="temporary backend crash")
             if first_failure == "rate_limited":
                 return _Completed(returncode=1, stderr="HTTP 429 rate limit; retry later")
+            if first_failure == "server_error":
+                return _Completed(returncode=1, stderr="HTTP 503 backend unavailable")
             if first_failure == "timeout":
                 raise verifier_module.subprocess.TimeoutExpired(command, timeout=1)
             Path(kwargs["cwd"], "verdict.json").write_text("not-json", encoding="utf-8")
@@ -680,6 +1204,145 @@ def test_candidate_blind_witness_uses_direct_api_after_agy_quota(
     assert "好爽哦" not in prompt_text
 
 
+@pytest.mark.parametrize(
+    ("failure", "category", "error_type", "http_status"),
+    [
+        ("429", "GEMINI_API_QUOTA_EXHAUSTED", "HTTPError", 429),
+        ("503", "GEMINI_API_SERVER_ERROR", "HTTPError", 503),
+        ("timeout", "GEMINI_API_TIMEOUT", "TimeoutError", None),
+    ],
+)
+def test_blind_witness_retries_next_free_provider_in_same_round_after_transient(
+    tmp_path, monkeypatch, failure, category, error_type, http_status
+):
+    monkeypatch.setenv("GEMINI_API_KEY", "free-key-1")
+    monkeypatch.setenv("GEMINI_API_KEY_2", "free-key-2")
+    monkeypatch.delenv("GEMINI_API_KEY_3", raising=False)
+    monkeypatch.delenv("GEMINI_KEY_BACKUP", raising=False)
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path / "base"))
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+    monkeypatch.setattr(verifier_module.subprocess, "run", _agy_quota_run)
+    calls = []
+
+    def fake_api(**kwargs):
+        calls.append(kwargs["key"])
+        if kwargs["key"] == "free-key-1":
+            if failure == "timeout":
+                raise TimeoutError("provider timed out")
+            raise urllib.error.HTTPError(
+                "https://example.invalid", int(failure), "transient", None, None
+            )
+        return _observed_blind_witness()
+
+    monkeypatch.setattr(
+        verifier_module, "_gemini_api_observe_witness", fake_api
+    )
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-08-09",
+        source_duration_ms=10_000,
+        agy_bin="agy-test",
+    )
+    request = _blind_witness_request(evidence_id="8" * 64, start_ms=2_000)
+
+    verdict = verify(request)
+
+    assert verdict["status"] == "OBSERVED"
+    assert calls == ["free-key-1", "free-key-2"]
+    manifest = json.loads(
+        (
+            tmp_path
+            / "out/entity_verdicts"
+            / request["request_sha256"][:20]
+            / "verdict.manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    expected_failure = {
+        "provider": "gemini_api",
+        "key_tier": "free",
+        "key_ordinal": 1,
+        "attempt_round": 1,
+        "model": manifest["model"],
+        "category": category,
+        "error_type": error_type,
+    }
+    if http_status is not None:
+        expected_failure["http_status"] = http_status
+    assert manifest["provider_failures"][1] == expected_failure
+
+
+def test_blind_witness_429_rounds_record_real_strikes_before_paid_retry(
+    tmp_path, monkeypatch
+):
+    for ordinal in (1, 2, 3):
+        name = "GEMINI_API_KEY" if ordinal == 1 else f"GEMINI_API_KEY_{ordinal}"
+        monkeypatch.setenv(name, f"free-key-{ordinal}")
+    monkeypatch.setenv("GEMINI_KEY_BACKUP", "paid-key")
+    monkeypatch.delenv("GEMINI_PAID_BACKUP_DEV_EXCEPTION", raising=False)
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path / "base"))
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+    monkeypatch.setattr(verifier_module.subprocess, "run", _agy_quota_run)
+    calls = []
+
+    def fake_api(**kwargs):
+        calls.append(kwargs["key"])
+        if kwargs["key"] != "paid-key":
+            raise urllib.error.HTTPError(
+                "https://example.invalid", 429, "quota", None, None
+            )
+        return _observed_blind_witness()
+
+    monkeypatch.setattr(
+        verifier_module, "_gemini_api_observe_witness", fake_api
+    )
+    verify = verifier_module.build_local_audio_entity_verifier(
+        source_media=source,
+        output_dir=tmp_path / "out",
+        recording_date="2026-08-09",
+        source_duration_ms=10_000,
+        agy_bin="agy-test",
+    )
+    request = _blind_witness_request(evidence_id="9" * 64, start_ms=2_000)
+
+    verdict = verify(request)
+
+    assert verdict["status"] == "OBSERVED"
+    assert calls == [
+        "free-key-1",
+        "free-key-2",
+        "free-key-3",
+    ] * 3 + ["paid-key"]
+    manifest = json.loads(
+        (
+            tmp_path
+            / "out/entity_verdicts"
+            / request["request_sha256"][:20]
+            / "verdict.manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert manifest["key_tier"] == "paid_backup"
+    assert manifest["paid_backup_policy"]["free_chain_strikes"] >= 3
+    api_failures = [
+        row
+        for row in manifest["provider_failures"]
+        if row["provider"] == "gemini_api"
+    ]
+    assert [row["attempt_round"] for row in api_failures] == [
+        1,
+        1,
+        1,
+        2,
+        2,
+        2,
+        3,
+        3,
+        3,
+    ]
+
+
 def test_witness_acoustic_cache_replays_same_audio_without_provider(tmp_path, monkeypatch):
     """成本裁定（维护者，3 天 $40 案）：同一段音频的纯听写答案
     与请求文本/几何标识无关——第二次（哪怕 request_sha 不同）必须直接
@@ -721,7 +1384,7 @@ def test_witness_acoustic_cache_replays_same_audio_without_provider(tmp_path, mo
 
     monkeypatch.setattr(verifier_module.subprocess, "run", fake_run)
 
-    def check_request(evidence, start):
+    def check_request(evidence, start, text="你好"):
         return {
             "evidence_id": evidence,
             "cue_indexes": [3],
@@ -730,6 +1393,8 @@ def test_witness_acoustic_cache_replays_same_audio_without_provider(tmp_path, mo
             "context_start_ms": start - 1_000,
             "context_end_ms": start + 2_500,
             "source_media_timeline_offset_ms": 0,
+            "current_cue": text,
+            "proposed_cue": text,
         }
 
     output_dir = tmp_path / "base" / "out" / "2026-07-25" / "auto_x"
@@ -741,7 +1406,8 @@ def test_witness_acoustic_cache_replays_same_audio_without_provider(tmp_path, mo
         agy_bin="agy-test",
     )
 
-    first = verify(build_witness_request(check_request("e" * 64, 10_000)))
+    first_request = build_witness_request(check_request("e" * 64, 10_000))
+    first = verify(first_request)
     assert first["status"] == "OBSERVED"
     assert first["heard_pinyin"] == "hai mei you ge zhai ne"
     assert len(agy_calls) == 1
@@ -750,8 +1416,21 @@ def test_witness_acoustic_cache_replays_same_audio_without_provider(tmp_path, mo
     assert "zhe ge shi he tian yi de lian dong o" not in prompt
     assert "e.g." not in prompt
 
-    # 不同 evidence/几何 → 不同 request_sha，但音频字节相同 → 缓存命中
-    second = verify(build_witness_request(check_request("f" * 64, 10_040)))
+    # The per-request manifest must not bypass the prompt contract gate.
+    manifest_path = first_job / "verdict.manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["witness_prompt_contract"] == (
+        verifier_module.WITNESS_PROMPT_CONTRACT
+    )
+    manifest.pop("witness_prompt_contract")
+    manifest["verdict"]["heard_pinyin"] = "stale manifest answer"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    replayed = verify(first_request)
+    assert replayed["heard_pinyin"] == "hai mei you ge zhai ne"
+    assert len(agy_calls) == 1
+
+    # 不同 evidence → 不同 request_sha，问题/音频字节相同 → 缓存命中
+    second = verify(build_witness_request(check_request("f" * 64, 10_000)))
     assert second["status"] == "OBSERVED"
     assert second["heard_pinyin"] == "hai mei you ge zhai ne"
     assert len(agy_calls) == 1  # 零新 provider 调用
@@ -763,17 +1442,31 @@ def test_witness_acoustic_cache_replays_same_audio_without_provider(tmp_path, mo
         if not path.name.endswith((".prompt.json", ".response.json"))
     )
     cached = json.loads(cache_entry.read_text(encoding="utf-8"))
-    assert cached["schema_version"] == "witness-acoustic-cache.v2"
+    assert cached["schema_version"] == "witness-acoustic-cache.v4"
     assert cached["prompt_contract"] == verifier_module.WITNESS_PROMPT_CONTRACT
+
+    # Same clip/hint but different target markers is a different question.
+    geometry_drift = verify(
+        build_witness_request(check_request("i" * 64, 10_040))
+    )
+    assert geometry_drift["status"] == "OBSERVED"
+    assert len(agy_calls) == 2
+
+    # Same clip under a different neutral length hint is a different prompt.
+    changed_hint = verify(
+        build_witness_request(check_request("h" * 64, 10_000, "你好吗"))
+    )
+    assert changed_hint["status"] == "OBSERVED"
+    assert len(agy_calls) == 3
 
     # A legacy Gemini API observation must not be replayed as AGY evidence.
     cached["provider"] = "gemini_api"
     cached["model"] = "gemini-3.6-flash"
     cache_entry.write_text(json.dumps(cached), encoding="utf-8")
-    third = verify(build_witness_request(check_request("g" * 64, 10_080)))
+    third = verify(build_witness_request(check_request("g" * 64, 10_000)))
     assert third["status"] == "OBSERVED"
     assert third["provider"] == "agy"
-    assert len(agy_calls) == 2
+    assert len(agy_calls) == 4
 
 
 def test_witness_rejects_legacy_prompt_copy_and_does_not_cache_it(
@@ -847,8 +1540,9 @@ def test_witness_acoustic_cache_rejects_pre_contract_v1_entry(tmp_path):
     job_dir = output_dir / "entity_verdicts" / "job"
     job_dir.mkdir(parents=True)
     clip_sha = "a" * 64
+    prompt_identity = "b" * 64
     entry_path = verifier_module._witness_acoustic_cache_path(
-        output_dir, clip_sha
+        output_dir, clip_sha, prompt_identity
     )
     entry_path.parent.mkdir(parents=True)
     entry_path.write_text(
@@ -875,9 +1569,257 @@ def test_witness_acoustic_cache_rejects_pre_contract_v1_entry(tmp_path):
             clip_sha256=clip_sha,
             job_dir=job_dir,
             expected_model=verifier_module.ENTITY_AUDIO_MODEL,
+            expected_prompt_identity_sha256=prompt_identity,
         )
         is None
     )
+
+
+def test_witness_acoustic_cache_rejects_tampered_response_artifact(tmp_path):
+    output_dir = tmp_path / "base" / "out" / "2026-08-09" / "auto_tamper"
+    job_dir = output_dir / "entity_verdicts" / "job"
+    job_dir.mkdir(parents=True)
+    prompt_path = job_dir / "prompt.md"
+    response_path = job_dir / "response.json"
+    prompt_path.write_text("candidate-free prompt", encoding="utf-8")
+    observed = {
+        "schema_version": verifier_module.WITNESS_SCHEMA,
+        "status": "OBSERVED",
+        "target_audible": True,
+        "heard_pinyin": "yuan shi ting xie",
+        "uncertain_positions": [],
+        "syllable_count": 4,
+        "confidence": 0.95,
+        "reason": "clear",
+    }
+    response_path.write_text(json.dumps(observed), encoding="utf-8")
+    outcome = verifier_module._EntityProviderOutcome(
+        observed=observed,
+        provider="agy",
+        model=verifier_module.ENTITY_AUDIO_MODEL,
+        prompt_path=prompt_path,
+        response_path=response_path,
+        accepted_key_tier=None,
+        paid_policy_stamp=None,
+        provider_failures=[],
+    )
+    clip_sha = "a" * 64
+    prompt_identity = verifier_module._sha256(prompt_path)
+    verifier_module._store_witness_acoustic_cache(
+        output_dir=output_dir,
+        clip_sha256=clip_sha,
+        observed=observed,
+        outcome=outcome,
+        prompt_identity_sha256=prompt_identity,
+    )
+    entry_path = verifier_module._witness_acoustic_cache_path(
+        output_dir, clip_sha, prompt_identity
+    )
+    response_sidecar = entry_path.with_suffix(".response.json")
+    response_sidecar.write_text('{"heard_pinyin":"tampered"}', encoding="utf-8")
+    entry = json.loads(entry_path.read_text(encoding="utf-8"))
+    entry["provider_response_sha256"] = verifier_module._sha256(response_sidecar)
+    entry_path.write_text(json.dumps(entry), encoding="utf-8")
+
+    assert verifier_module._serve_witness_acoustic_cache(
+        output_dir=output_dir,
+        clip_sha256=clip_sha,
+        job_dir=job_dir,
+        expected_model=verifier_module.ENTITY_AUDIO_MODEL,
+        expected_prompt_identity_sha256=prompt_identity,
+    ) is None
+
+
+def test_witness_acoustic_cache_isolates_provider_and_model(tmp_path):
+    output_dir = tmp_path / "base" / "out" / "2026-08-10" / "auto_identity"
+    job_dir = output_dir / "entity_verdicts" / "job"
+    job_dir.mkdir(parents=True)
+    prompt_path = job_dir / "prompt.gemini-api.md"
+    response_path = job_dir / "response.gemini-api.json"
+    prompt_path.write_text("exact candidate-blind Gemini prompt", encoding="utf-8")
+    observed = {
+        "schema_version": verifier_module.WITNESS_SCHEMA,
+        "status": "OBSERVED",
+        "target_audible": True,
+        "heard_pinyin": "hao piao liang o",
+        "uncertain_positions": [],
+        "syllable_count": 4,
+        "confidence": 0.94,
+        "reason": "clear",
+    }
+    response_path.write_text(
+        "provider preface\n" + json.dumps(observed), encoding="utf-8"
+    )
+    model = verifier_module.ENTITY_AUDIO_API_MODEL_DEFAULT
+    outcome = verifier_module._EntityProviderOutcome(
+        observed=observed,
+        provider="gemini_api",
+        model=model,
+        prompt_path=prompt_path,
+        response_path=response_path,
+        accepted_key_tier="free",
+        paid_policy_stamp=None,
+        provider_failures=[],
+    )
+    clip_sha = "c" * 64
+    prompt_identity = verifier_module._sha256(prompt_path)
+    verifier_module._store_witness_acoustic_cache(
+        output_dir=output_dir,
+        clip_sha256=clip_sha,
+        observed=observed,
+        outcome=outcome,
+        prompt_identity_sha256=prompt_identity,
+    )
+
+    exact = verifier_module._serve_witness_acoustic_cache(
+        output_dir=output_dir,
+        clip_sha256=clip_sha,
+        job_dir=job_dir,
+        expected_provider="gemini_api",
+        expected_model=model,
+        expected_prompt_identity_sha256=prompt_identity,
+    )
+    assert exact is not None
+    assert exact.provider == "gemini_api"
+    assert exact.model == model
+    assert exact.served_from_cache is True
+    assert verifier_module._serve_witness_acoustic_cache(
+        output_dir=output_dir,
+        clip_sha256=clip_sha,
+        job_dir=job_dir,
+        expected_provider="agy",
+        expected_model=verifier_module.ENTITY_AUDIO_MODEL,
+        expected_prompt_identity_sha256=prompt_identity,
+    ) is None
+    assert verifier_module._serve_witness_acoustic_cache(
+        output_dir=output_dir,
+        clip_sha256=clip_sha,
+        job_dir=job_dir,
+        expected_provider="gemini_api",
+        expected_model=f"{model}-different",
+        expected_prompt_identity_sha256=prompt_identity,
+    ) is None
+
+
+def test_witness_acoustic_cache_shallow_output_does_not_escape_to_shared_parent(
+    tmp_path,
+):
+    output_dir = tmp_path / "standalone-output"
+    entry_path = verifier_module._witness_acoustic_cache_path(
+        output_dir,
+        "a" * 64,
+        "b" * 64,
+        provider="gemini_api",
+        model=verifier_module.ENTITY_AUDIO_API_MODEL_DEFAULT,
+    )
+
+    assert entry_path.is_relative_to(output_dir)
+
+
+def test_witness_acoustic_cache_rejects_prompt_tamper_even_with_rewritten_hash(
+    tmp_path,
+):
+    output_dir = tmp_path / "base" / "out" / "2026-08-10" / "auto_prompt_tamper"
+    job_dir = output_dir / "entity_verdicts" / "job"
+    job_dir.mkdir(parents=True)
+    prompt_path = job_dir / "prompt.md"
+    response_path = job_dir / "response.json"
+    prompt_path.write_text("original exact prompt", encoding="utf-8")
+    observed = {
+        "schema_version": verifier_module.WITNESS_SCHEMA,
+        "status": "OBSERVED",
+        "target_audible": True,
+        "heard_pinyin": "yuan shi ting xie",
+        "uncertain_positions": [],
+        "syllable_count": 4,
+        "confidence": 0.95,
+        "reason": "clear",
+    }
+    response_path.write_text(json.dumps(observed), encoding="utf-8")
+    outcome = verifier_module._EntityProviderOutcome(
+        observed=observed,
+        provider="agy",
+        model=verifier_module.ENTITY_AUDIO_MODEL,
+        prompt_path=prompt_path,
+        response_path=response_path,
+        accepted_key_tier=None,
+        paid_policy_stamp=None,
+        provider_failures=[],
+    )
+    clip_sha = "d" * 64
+    prompt_identity = verifier_module._sha256(prompt_path)
+    verifier_module._store_witness_acoustic_cache(
+        output_dir=output_dir,
+        clip_sha256=clip_sha,
+        observed=observed,
+        outcome=outcome,
+        prompt_identity_sha256=prompt_identity,
+    )
+    entry_path = verifier_module._witness_acoustic_cache_path(
+        output_dir, clip_sha, prompt_identity
+    )
+    prompt_sidecar = entry_path.with_suffix(".prompt.json")
+    prompt_sidecar.write_text("tampered prompt", encoding="utf-8")
+    entry = json.loads(entry_path.read_text(encoding="utf-8"))
+    entry["provider_prompt_sha256"] = verifier_module._sha256(prompt_sidecar)
+    entry_path.write_text(json.dumps(entry), encoding="utf-8")
+
+    assert verifier_module._serve_witness_acoustic_cache(
+        output_dir=output_dir,
+        clip_sha256=clip_sha,
+        job_dir=job_dir,
+        expected_model=verifier_module.ENTITY_AUDIO_MODEL,
+        expected_prompt_identity_sha256=prompt_identity,
+    ) is None
+
+
+@pytest.mark.parametrize(
+    ("schema_version", "status"),
+    [
+        (verifier_module.WITNESS_SCHEMA, "UNCERTAIN"),
+        (verifier_module.WITNESS_SCHEMA, "INCONCLUSIVE"),
+        ("subtitle-span-acoustic-witness.invalid", "OBSERVED"),
+    ],
+)
+def test_witness_acoustic_cache_only_stores_observed_success_schema(
+    tmp_path, schema_version, status
+):
+    output_dir = tmp_path / "base" / "out" / "2026-08-10" / status.lower()
+    job_dir = output_dir / "entity_verdicts" / "job"
+    job_dir.mkdir(parents=True)
+    prompt_path = job_dir / "prompt.gemini-api.md"
+    response_path = job_dir / "response.gemini-api.json"
+    prompt_path.write_text("exact prompt", encoding="utf-8")
+    observed = {"schema_version": schema_version, "status": status}
+    response_path.write_text(json.dumps(observed), encoding="utf-8")
+    outcome = verifier_module._EntityProviderOutcome(
+        observed=observed,
+        provider="gemini_api",
+        model=verifier_module.ENTITY_AUDIO_API_MODEL_DEFAULT,
+        prompt_path=prompt_path,
+        response_path=response_path,
+        accepted_key_tier="free",
+        paid_policy_stamp=None,
+        provider_failures=[],
+    )
+    prompt_identity = verifier_module._sha256(prompt_path)
+    entry_path = verifier_module._witness_acoustic_cache_path(
+        output_dir,
+        "e" * 64,
+        prompt_identity,
+        provider="gemini_api",
+        model=verifier_module.ENTITY_AUDIO_API_MODEL_DEFAULT,
+    )
+
+    verifier_module._store_witness_acoustic_cache(
+        output_dir=output_dir,
+        clip_sha256="e" * 64,
+        observed=observed,
+        outcome=outcome,
+        prompt_identity_sha256=prompt_identity,
+    )
+
+    assert not entry_path.exists()
 
 
 def test_witness_acoustic_cache_never_stores_failures(tmp_path, monkeypatch):

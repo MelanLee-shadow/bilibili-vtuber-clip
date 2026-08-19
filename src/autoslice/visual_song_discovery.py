@@ -10,6 +10,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
+from src.autoslice import agy_gemini_client
+
 
 VISUAL_SONG_SCHEMA_VERSION = "visual-song-inventory.v1"
 VISUAL_SONG_PROMPT_VERSION = "lidousha-numbered-song-list.v1"
@@ -353,6 +355,52 @@ def _run_agy_once(
         raise RuntimeError(f"AGY visual song discovery failed rc={completed.returncode}: {completed.stderr[-300:]}")
 
 
+def _run_gemini_vision_once(
+    job_dir: Path, sheets: Sequence[Path], *, duration_ms: int
+) -> None:
+    """Same contact sheets, same answer file — Gemini instead of local AGY.
+
+    这条 lane 此前**零兜底**，AGY 不在的机器上视觉召回整条死掉
+    （只是 fail-open 成"没有候选"，看起来像这场没有歌）。现在缺席即降级。
+    """
+
+    prompt = (
+        job_dir / "prompt.md"
+    ).read_text(encoding="utf-8") + (
+        "\nThe contact sheets are attached to this request in the listed order; "
+        "there is no local filesystem. Reply with the visual_songs.json object "
+        "itself, JSON only.\n"
+    )
+    model = agy_gemini_client.gemini_vision_model()
+    parts = [(path.read_bytes(), "image/jpeg") for path in sheets]
+    item_key = hashlib.sha256(
+        b"".join(payload for payload, _mime in parts)
+    ).hexdigest()
+
+    def observe(key: str) -> str:
+        raw = agy_gemini_client.generate_content(
+            prompt=prompt,
+            key=key,
+            model=model,
+            inline_parts=parts,
+            timeout_seconds=300,
+        ).strip()
+        if not raw:
+            raise ValueError("empty Gemini visual-song response")
+        # Parse before accepting so a malformed answer rolls to the next key.
+        parse_visual_song_response(raw, duration_ms=duration_ms)
+        return raw
+
+    outcome = agy_gemini_client.run_gemini_key_ladder(
+        item_key=item_key,
+        observe=observe,
+        purpose="visual_song_discovery",
+    )
+    if not outcome.accepted:
+        raise RuntimeError("GEMINI_VISUAL_SONG_DISCOVERY_FAILED")
+    (job_dir / "visual_songs.json").write_text(outcome.observed, encoding="utf-8")
+
+
 def discover_visual_songs(
     media_path: Path,
     cache_dir: Path,
@@ -403,9 +451,16 @@ def discover_visual_songs(
                 # damaged cache only after a new validated AGY result exists.
                 pass
 
-        executable = agy_bin or Path(os.environ.get("AUTOSLICE_AGY_BIN", "/root/.local/bin/agy"))
-        if not executable.is_file():
-            raise FileNotFoundError(f"AGY executable unavailable: {executable}")
+        # 路径解析统一走 agy_gemini_client（兼容旧名 AUTOSLICE_AGY_BIN，不再
+        # 写死 /root/...）。解析不到 = 正常降级，不是错误。
+        executable = Path(
+            agy_gemini_client.resolve_local_agy_binary(
+                agy_bin, env_names=("AUTOSLICE_AGY_BIN", "AGY_BIN")
+            )
+        )
+        agy_present = agy_gemini_client.local_agy_available(
+            agy_bin, env_names=("AUTOSLICE_AGY_BIN", "AGY_BIN")
+        )
         with tempfile.TemporaryDirectory(prefix="visual_song_") as tmp:
             job_dir = Path(tmp)
             sheets = build_contact_sheets(
@@ -418,10 +473,21 @@ def discover_visual_songs(
             (job_dir / "prompt.md").write_text(
                 _prompt([path.name for path in sheets], duration_ms), encoding="utf-8"
             )
-            _run_agy_once(job_dir, config=selected, agy_bin=executable, command_runner=command_runner)
+            if agy_present:
+                try:
+                    _run_agy_once(
+                        job_dir,
+                        config=selected,
+                        agy_bin=executable,
+                        command_runner=command_runner,
+                    )
+                except Exception:
+                    _run_gemini_vision_once(job_dir, sheets, duration_ms=duration_ms)
+            else:
+                _run_gemini_vision_once(job_dir, sheets, duration_ms=duration_ms)
             output = job_dir / "visual_songs.json"
             if not output.is_file():
-                raise RuntimeError("AGY returned success without visual_songs.json")
+                raise RuntimeError("visual song provider returned success without visual_songs.json")
             candidates = parse_visual_song_response(output.read_text(encoding="utf-8"), duration_ms=duration_ms)
 
         cache_payload = {

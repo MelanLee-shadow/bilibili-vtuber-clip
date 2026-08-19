@@ -1050,7 +1050,7 @@ def unproven_foreign_introductions_covered_by_overrides(
 
     A model may legitimately recover Japanese that the first ASR missed, but a
     correction model may also hallucinate Japanese from similar-sounding
-    Chinese.  Only an exact timeline-bound schema-v3 override can release an
+    Chinese.  Only an exact timeline-bound schema-v3/v4 override can release an
     introduced foreign passage, including a single isolated cue.
     """
 
@@ -1059,7 +1059,7 @@ def unproven_foreign_introductions_covered_by_overrides(
     if (
         not isinstance(findings, list)
         or not findings
-        or document.get("schema_version") != 3
+        or document.get("schema_version") not in {3, 4}
         or not isinstance(overrides, list)
     ):
         return False
@@ -1668,7 +1668,7 @@ def mixed_cjk_latin_findings_covered_by_overrides(
     """Prove every mixed-language finding has an exact, timeline-bound repair.
 
     A configured override file alone is not enough: each blocked cue must be
-    covered by a schema-v3 decision whose projected output removes the anomaly.
+    covered by a schema-v3/v4 decision whose projected output removes the anomaly.
     This lets the automatic lane fail closed while still allowing a reviewed
     local substring repair to run after LLM sentence resegmentation.
     """
@@ -1678,7 +1678,7 @@ def mixed_cjk_latin_findings_covered_by_overrides(
     if (
         not isinstance(findings, list)
         or not findings
-        or document.get("schema_version") != 3
+        or document.get("schema_version") not in {3, 4}
         or not isinstance(overrides, list)
     ):
         return False

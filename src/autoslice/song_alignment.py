@@ -14,6 +14,7 @@ import unicodedata
 
 from src.autoslice.llm_client import LlmCall, extract_json_object
 from src.autoslice.review_evidence import SourceCue
+from src.autoslice.song_script_family import group_is_cross_script_for_chinese_asr
 from src.autoslice.song_common import (
     MAX_AUDIO_LRC_VARIANT_ATTEMPTS,
     SHIFT_TOLERANCE_MS,
@@ -150,8 +151,21 @@ def _build_lyric_queries(
     return list(dict.fromkeys(q for q in queries if q))
 
 
-def generate_llm_song_queries(window: Sequence[SourceCue], llm_call: LlmCall, *, max_lines: int = 18) -> list[str]:
-    """Ask an LLM to recognize the song(s) behind garbled ASR lyrics."""
+def generate_llm_song_queries(window: Sequence[SourceCue], llm_call: LlmCall, *, max_lines: int = 120) -> list[str]:
+    """Ask an LLM to recognize the song(s) behind garbled ASR lyrics.
+
+    ``max_lines`` 18 -> 120 ：这是**输入采样帽**，不是内容门 ——
+    LRC 召回/歧义/对齐阈值（0.20 / 0.08 / 0.55）一字未动。权威的 ``_full``
+    复证窗按 SONG_PROOF_RETRY_PRE/POST_MS 开成 2 分钟前摇 + 6 分钟后摇，常态
+    200+ cue；18 行帽把 那条 214-cue 窗抽成 1/12，整段演唱只剩 3
+    条同音错字，模型照 prompt 指示正确返回空数组 —— 4/6 条 ``_full`` attempt
+    的「no usable song guesses」全来自这里，短窗反而认得出（forensics 取证
+    留存于内部设计文档，此处只记结论）。
+
+    integrator 手工合并注记：F3 跨字系改动与本采样帽改动来自两个
+    并行 writer，后者的工作副本早于前者落盘，整份取用会**静默回退**本帽到 18。
+    两处改的是不同的行、意图互补，故此处保留 120，其余 F3 改动原样保留。
+    """
 
     lines = [cue.text.strip().replace("\n", " ") for cue in window if cue.text.strip()]
     if len(lines) > max_lines:
@@ -851,12 +865,18 @@ def _group_audio_lrc_candidates(
     groups = [[entries[index] for index in members] for members in group_indices]
     if not groups:
         raise ValueError("no canonical LRC identity is available for audio alignment")
+    # songlane 修复：精确标题命中（视觉歌名/hook 引号标题喂进 preferred_title_hints）
+    # 不再要求 min_recall_ratio 通用地板（song_230754_1118 案：3% 卡 20% 地板终态弃选）。
+    # F3：残留的"非零"要求对跨字系歌仍是死路——中文 ASR 对日/韩歌词恰好 0.0，
+    # 三条（花の塔 / 日文候选 / 少女レイ 全 0%）都被 4-19% 的中文同音噪声顶掉。
+    # 跨字系候选 ratio 不含信息，放行进音频验证（音频仍是裁判，不是放行交付）；中文候选的
+    # 非零门原样保留。同款闸门在下方 preferred_top 分支复用，否则放行会在下一道门被撤销。
     exact_title_groups = sorted(
         (
             group
             for group in groups
-            if max(item[0] for item in group) >= min_recall_ratio
-            and any(_lrc_title_is_exact_hint(item[1], preferred_title_hints) for item in group)
+            if any(_lrc_title_is_exact_hint(item[1], preferred_title_hints) for item in group)
+            and (max(item[0] for item in group) > 0.0 or group_is_cross_script_for_chinese_asr(group))
         ),
         key=lambda group: (
             max(item[0] for item in group),
@@ -869,10 +889,10 @@ def _group_audio_lrc_candidates(
         runner_exact_ratio = max(item[0] for item in exact_title_groups[1])
         # A catalog can contain unrelated songs with the same display title.
         # Keep those identities disconnected, but do not let a barely passing
-        # title homonym veto a much stronger ASR-backed identity.  Near ties
-        # still fail closed before any expensive audio model can be prompted
-        # with an arbitrary lyric sheet.
-        if best_exact_ratio - runner_exact_ratio < min_margin:
+        # title homonym veto a much stronger ASR-backed identity.  Near ties fail
+        # closed — except at ratio 0.0, where by F3's own premise the ASR margin
+        # measures nothing; those go to the bounded variant loop and audio decides.
+        if best_exact_ratio > 0.0 and best_exact_ratio - runner_exact_ratio < min_margin:
             raise ValueError(
                 "ambiguous exact-title LRC identity: multiple disconnected songs "
                 "match the explicit title hint without a sufficient ASR margin"
@@ -1068,9 +1088,28 @@ def _choose_audio_lrc_candidate(
             raise ValueError(
                 f"curated LRC identity has only {top_ratio:.0%} ASR recall; refusing to force it onto audio"
             )
-    elif top_ratio < min_recall_ratio or (
-        not preferred_top and top_ratio - second_ratio < min_margin
-    ):
+    elif preferred_top:
+        # An exact title-hint match already cleared the floor-free admission and
+        # the homonym margin check above; re-imposing min_recall_ratio here would
+        # just restore the very floor exact_title_groups deliberately dropped.
+        # F3 中文歌零关联仍是"没有证据"，照拒；跨字系歌 0.0 恰恰是
+        # *正确*命中对中文 ASR 的得分，在这里拒等于把上面的放行原地撤销。
+        if top_ratio <= 0.0 and not group_is_cross_script_for_chinese_asr(top_entries):
+            raise ValueError(
+                "exact-title LRC identity has zero ASR correlation; refusing to force it onto audio"
+            )
+    elif top_ratio > 0.0 and second_ratio <= 0.0:
+        # song_230754_1118 案：唯一有任何 ASR 关联的候选（其余全部
+        # discovered LRC 均 0%），仅因为演唱段 ASR 严重乱码（长音/旋律拉伸是
+        # BCUT 常见失效模式，"一起长大 (live)" 与 hook 引号标题只差一个
+        # provider 装饰后缀，够不上 exact_title_groups 的字面相等）就被通用
+        # 20% 地板拦死，从未真正调用过 AGY 音频验证。该地板的设计目的是防止
+        # 在多个同样弱、真正互相竞争的候选之间瞎选一个喂给 AGY（见函数
+        # docstring）；当没有第二个候选携带任何证据时不存在"在候选之间选错"
+        # 的风险，真正的身份判定仍然留给下游 AGY 音频 + host-vocal + 现场
+        # 演出证明。
+        pass
+    elif top_ratio < min_recall_ratio or top_ratio - second_ratio < min_margin:
         raise ValueError(
             "ambiguous low-ASR LRC identity: "
             f"best={top_ratio:.0%}, runner-up={second_ratio:.0%}, "

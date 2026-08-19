@@ -42,6 +42,15 @@ from src.autoslice.acoustic_witness_adjudication import (
     WITNESS_REQUEST_SCHEMA,
     build_witness_request,
     pinyin_compatibility,
+    valid_witness_evidence,
+)
+from src.autoslice.acoustic_witness_availability import (
+    unavailable_acoustic_witness,
+)
+from src.autoslice.acoustic_witness_protocol import (
+    BLIND_PINYIN_PROTOCOL,
+    bind_blind_witness_protocol,
+    witness_protocol,
 )
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.llm_client import extract_json_object
@@ -237,7 +246,9 @@ def _closed_choice_with_witness(
         observed = (
             next_verifier(witness_request)
             if next_verifier is not None
-            else None
+            # F21：无声学 provider 也必须交出 schema 合法的 typed 证词，
+            # 让法官在「明确知道本轮没有听音」的前提下继续闭集裁决。
+            else unavailable_acoustic_witness(witness_request)
         )
     except Exception as exc:
         observed = {
@@ -247,22 +258,16 @@ def _closed_choice_with_witness(
             "reason_code": "WITNESS_PROVIDER_ERROR",
             "error": f"{type(exc).__name__}: {exc}"[:300],
         }
-    witness = dict(observed) if isinstance(observed, Mapping) else {}
+    witness = bind_blind_witness_protocol(
+        observed if isinstance(observed, Mapping) else {},
+        witness_request=witness_request,
+    )
     witness_valid = bool(
-        witness.get("schema_version") == _WITNESS_VERDICT_SCHEMA
-        and witness.get("request_sha256") == witness_request["request_sha256"]
-        and witness.get("status") in {"OBSERVED", "UNCERTAIN"}
-        and not any(
-            key in witness
-            for key in (
-                "candidate_id",
-                "canonical_entity",
-                "proposed_cue",
-                "rewritten_text",
-                "current_fit",
-                "proposed_fit",
-            )
+        valid_witness_evidence(
+            witness,
+            request_sha256=witness_request["request_sha256"],
         )
+        and witness_protocol(witness) == BLIND_PINYIN_PROTOCOL
     )
     if not witness_valid:
         witness = {
@@ -351,6 +356,7 @@ def _closed_choice_with_witness(
         "decision_authority": "CPA_JUDGE",
         "witness_authority": "EVIDENCE_ONLY",
         "witness_status": witness.get("status"),
+        "witness_protocol": witness_protocol(witness),
         "acoustic_evidence_used": not context_only,
         "witness_target_audible": witness.get("target_audible"),
         "witness_request_sha256": witness_request["request_sha256"],
@@ -394,12 +400,11 @@ used by the CPA judge.
     """
 
     def _defer(request: Mapping[str, Any]) -> Any:
-        if (
-            request.get("schema_version") == WITNESS_REQUEST_SCHEMA
-            and next_verifier is not None
-        ):
+        if request.get("schema_version") != WITNESS_REQUEST_SCHEMA:
+            return None
+        if next_verifier is not None:
             return next_verifier(request)
-        return None
+        return unavailable_acoustic_witness(request)
 
     def verify(request: Mapping[str, Any]) -> Any:
         schema = request.get("schema_version")
@@ -493,4 +498,13 @@ used by the CPA judge.
             next_verifier=next_verifier,
         )
 
+    # Preserve exact-final's object-method provider/cache seams through CPA.
+    for seam in (
+        "probe_witness_cache",
+        "exact_source_transcript",
+        "probe_exact_source_transcript_cache",
+    ):
+        callback = getattr(next_verifier, seam, None)
+        if callable(callback):
+            setattr(verify, seam, callback)
     return verify

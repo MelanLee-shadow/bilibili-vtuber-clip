@@ -98,7 +98,7 @@ _PUBLICATION_AUTHORITY_FIELDS = frozenset(
     }
 )
 _PUBLICATION_TITLE_MODES = frozenset(
-    {"verified_public_exact", "ivan_manual_override"}
+    {"verified_public_exact", "reviewer_manual_override"}
 )
 _BOUNDARY_END_MODES = frozenset(
     {
@@ -466,7 +466,7 @@ def expected_recovery_publish_title(
     """Resolve the only permitted final title from a validated authority."""
 
     title = str(authority["observed_public_title"])
-    if authority["title_mode"] == "ivan_manual_override":
+    if authority["title_mode"] == "reviewer_manual_override":
         return canonicalize_publish_title(title, lane="talk")
     return title
 

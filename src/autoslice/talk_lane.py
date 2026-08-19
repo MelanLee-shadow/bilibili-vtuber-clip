@@ -8,13 +8,14 @@ executes the runner as __main__.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
 import subprocess
 import sys
-import time
 from collections.abc import Mapping
+from datetime import datetime, timezone
 from pathlib import Path
 
 from src.autoslice.boundary_semantic_review import (
@@ -22,6 +23,7 @@ from src.autoslice.boundary_semantic_review import (
     boundary_search_scope_is_valid,
     required_source_context_end_ms,
 )
+from src.autoslice.candidate_public_text_surface_authority import candidate_public_text_result_projection
 from src.autoslice.cross_segment_witness import (
     discover_cross_segment_witness_reserve as
     _discover_cross_segment_witness_reserve,
@@ -30,18 +32,48 @@ from src.autoslice.foreign_source_failure_evidence import (
     foreign_source_gate_violation as _foreign_source_gate_violation,
     foreign_source_provider_transient as _foreign_source_provider_transient,
 )
+from src.autoslice.final_review_failure_compaction import (
+    compact_boundary_semantic_review as _compact_boundary_semantic_review,
+    compact_correction_mutation_authority as _compact_correction_mutation_authority,
+    compact_correction_pass as _compact_correction_pass,
+    compact_final_review_finding as _compact_final_review_finding,
+    final_review_contract_reason_code as _final_review_contract_reason_code,
+)
+from src.autoslice.final_review_provider_budget_retry import (
+    build_provider_budget_retry_evidence,
+    carry_validated_active_provider_budget_ledger,
+)
 from src.autoslice.producer_boundary_owner_contract import (
     validate_frozen_boundary_owner_contract,
+)
+from src.autoslice import provider_failure as _provider_failure
+from src.autoslice.infra_retry_policy import (
+    talk_infra_retry_schedule as _talk_infra_retry_schedule,
 )
 from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
     validate_recovery_publication_authority,
 )
+from src.autoslice.semantic_scorecard_refresh_receipt import copied_refresh_receipt
+from src.autoslice.selected_source_fact_recovery import (
+    RECOVERY_RECEIPT_FIELD as SELECTED_SOURCE_FACT_RECOVERY_RECEIPT_FIELD,
+)
+from src.autoslice.selected_final_review_recovery import (
+    RECOVERY_RECEIPT_FIELD as SELECTED_FINAL_REVIEW_RECOVERY_RECEIPT_FIELD,
+)
+from src.autoslice.selected_final_review_terminal_regrant import (
+    RECOVERY_RECEIPT_FIELD as FINAL_REVIEW_TERMINAL_REGRANT_RECEIPT_FIELD,
+)
 from src.autoslice.selection_scorecard import selection_scorecard_is_valid
+from src.autoslice.talk_quota_freeze import FREEZE_FIELD as TALK_QUOTA_FREEZE_FIELD
 from src.autoslice.speaker_finalizer import (
     SpeakerFinalizationError,
     validate_speaker_review_manifest_document,
+)
+from src.autoslice.speaker_solo_prior import (
+    build_speaker_session_context,
+    write_speaker_session_context,
 )
 from src.autoslice.story_contract import (
     canonicalize_relation_summary,
@@ -53,8 +85,28 @@ from src.autoslice.talk_filler import (
     verify_automatic_filler_plan,
 )
 
-
 _runner = RunnerProxy()
+
+
+def _persist_speaker_session_context(
+    *, item: Mapping[str, object], pieces: list[dict], out_root: Path
+) -> str | None:
+    document = build_speaker_session_context(
+        candidate_id=str(item.get("cid") or ""),
+        session_id=str(item.get("session_id") or ""),
+        segment_path=str(item.get("segment_path") or ""),
+        start_ms=int(item["start_ms"]),
+        end_ms=int(item["end_ms"]),
+        segment_scene_context=item.get("segment_scene_context"),
+        session_relation_authority=item.get("session_relation_authority"),
+        source_piece_count=len(pieces),
+        source_piece_segments=[str(piece["remote_media"]) for piece in pieces],
+    )
+    if document is None:
+        return None
+    path = out_root / f"{item['cid']}.speaker-session-context.json"
+    write_speaker_session_context(path, document)
+    return str(path)
 
 def _bound_boundary_retry_source_end_ms(
     *,
@@ -111,14 +163,14 @@ def danmaku_hints(xml_path: Path | None) -> str | None:
     if xml_path is None:
         return None
     try:
-        from src.autoslice.danmaku_evidence import find_danmaku_bursts, load_danmaku_xml
-
+        from src.autoslice.danmaku_evidence import DANMAKU_HINT_MAX_BURSTS, find_danmaku_bursts, load_danmaku_xml
+        # 名额（含为什么必须显式传 max_bursts）与时序呈现的依据都在那个常量的注释里。
         items = load_danmaku_xml(xml_path)
-        bursts = find_danmaku_bursts(items)
+        bursts = find_danmaku_bursts(items, max_bursts=DANMAKU_HINT_MAX_BURSTS)
     except Exception:  # noqa: BLE001 — hints are optional enrichment
         return None
     lines = []
-    for burst in bursts[:6]:
+    for burst in sorted(bursts[:DANMAKU_HINT_MAX_BURSTS], key=lambda b: (b.start_ms, b.end_ms)):
         sample = " / ".join(burst.sample_texts[:3])
         lines.append(f"{burst.start_ms // 60000:02d}:{burst.start_ms // 1000 % 60:02d} x{burst.count}: {sample}")
     return "弹幕突发时段(观众密集反应，强候选提示):\n" + "\n".join(lines) if lines else None
@@ -190,7 +242,7 @@ def last_json_block(text: str) -> dict:
     return {}
 
 
-def recall_candidates(srt_path: Path, hints: str | None) -> tuple[list, str, dict]:
+def recall_candidates(srt_path: Path, hints: str | None, danmaku_xml: Path | None = None) -> tuple[list, str, dict]:
     """(candidates, lane, extras) — semantic lane first, deterministic fallback.
 
     extras maps candidate_id → hook/confidence plus the deterministic
@@ -220,7 +272,7 @@ def recall_candidates(srt_path: Path, hints: str | None) -> tuple[list, str, dic
     )
     try:
         candidates, diag = select_semantic_session_candidates_covered(
-            cues, llm_call=llm, max_candidates=_runner.PER_SEGMENT_CANDIDATES, danmaku_hints=hints
+            cues, llm_call=llm, max_candidates=_runner.PER_SEGMENT_CANDIDATES, danmaku_hints=hints, danmaku_xml=danmaku_xml
         )
         hooks = diag.get("hooks") or {}
         scorecards = diag.get("scorecards") or {}
@@ -291,20 +343,19 @@ def read_publish_meta(work_dir: Path) -> dict:
     for publish in sorted(work_dir.glob("replacement_recuts/*.publish.json")):
         try:
             d = json.loads(publish.read_text(encoding="utf-8"))
-            hashes = d.get("artifact_hashes") if isinstance(d.get("artifact_hashes"), dict) else {}
-            return {
-                "title": d.get("title"),
-                "title_source": d.get("title_source"),
-                "title_authority_status": d.get("title_authority_status"),
-                "title_authority_error": d.get("title_authority_error"),
-                "cover_status": d.get("cover_status"),
-                "cover_path": d.get("cover_path"),
-                "cover_sha256": hashes.get("cover_sha256"),
-                "cover_generation": d.get("cover_generation"),
-                "video_sha256": hashes.get("burned_video_sha256") or hashes.get("video_sha256"),
-            }
         except (OSError, ValueError):
             continue
+        hashes = d.get("artifact_hashes") if isinstance(d.get("artifact_hashes"), dict) else {}
+        return {
+            "title": d.get("title"), "title_source": d.get("title_source"),
+            "title_authority_status": d.get("title_authority_status"), "title_authority_error": d.get("title_authority_error"),
+            "cover_status": d.get("cover_status"),
+            "cover_path": d.get("cover_path"),
+            "cover_sha256": hashes.get("cover_sha256"),
+            "cover_generation": d.get("cover_generation"),
+            "video_sha256": hashes.get("burned_video_sha256") or hashes.get("video_sha256"),
+            **candidate_public_text_result_projection(work_dir=work_dir, publish_path=publish, publish=d),
+        }
     return {}
 
 
@@ -423,149 +474,6 @@ def _final_review_candidate_id(path: Path) -> str:
         if path.name.endswith(suffix):
             return path.name[: -len(suffix)]
     return path.stem
-
-
-def _compact_final_review_finding(row: object) -> dict[str, object] | None:
-    if not isinstance(row, dict):
-        return None
-    summary = {
-        key: row.get(key)
-        for key in (
-            "cue_index",
-            "kind",
-            "repair_class",
-            "suspect",
-            "suggestion",
-            "proposed_full_cue",
-            "suggestion_rejected_reason",
-            "why",
-            "force_acoustic",
-            "correlated_text_witness",
-            "base_text_sha256",
-            "candidate_memory_id",
-            "evidence_cue_ids",
-            "reported_scope_warnings",
-            "span_start_codepoint",
-            "span_end_codepoint",
-        )
-        if row.get(key) is not None
-    }
-    provenance = row.get("candidate_provenance")
-    if isinstance(provenance, dict):
-        summary["candidate_provenance"] = {
-            key: provenance.get(key)
-            for key in (
-                "kind",
-                "surface",
-                "memory_id",
-                "mutation_authorized",
-                "ledger_sha256",
-                "nearest_cue_distance",
-            )
-            if provenance.get(key) is not None
-        }
-    return summary
-
-
-def _compact_boundary_semantic_review(value: object) -> dict[str, object]:
-    if not isinstance(value, dict):
-        return {"status": "MISSING"}
-    return {
-        key: value.get(key)
-        for key in (
-            "schema_version",
-            "status",
-            "reason_codes",
-            "target_ms",
-            "recommended_end_ms",
-            "syntax_complete",
-            "story_closed",
-            "content_anchor_covered",
-            "next_topic_separated",
-            "summary",
-            "request_sha256",
-        )
-        if value.get(key) is not None
-    }
-
-
-def _final_review_contract_reason_code(attempt_output: str) -> str | None:
-    match = re.search(
-        r"FINAL_REVIEW_RELEASE_BLOCKED:\s*([A-Z0-9_]+)",
-        attempt_output,
-    )
-    return match.group(1) if match else None
-
-
-def _compact_correction_pass(value: object) -> dict[str, object]:
-    if not isinstance(value, Mapping):
-        return {"status": "MISSING"}
-    reason_codes = value.get("reason_codes")
-    if isinstance(reason_codes, str):
-        normalized_reason_codes = [reason_codes] if reason_codes else []
-    elif isinstance(reason_codes, list):
-        normalized_reason_codes = [
-            str(code) for code in reason_codes if str(code)
-        ]
-    else:
-        normalized_reason_codes = []
-    discovery = value.get("discovery")
-    return {
-        key: item
-        for key, item in {
-            "schema_version": value.get("schema_version"),
-            "status": value.get("status"),
-            "reason_codes": normalized_reason_codes,
-            "discovery": (
-                {
-                    field: discovery.get(field)
-                    for field in ("status", "detail")
-                    if discovery.get(field) is not None
-                }
-                if isinstance(discovery, Mapping)
-                else {"status": "MISSING"}
-            ),
-            "error_type": value.get("error_type"),
-            "applied_count": value.get("applied_count"),
-        }.items()
-        if item is not None
-    }
-
-
-def _compact_correction_mutation_authority(
-    value: object,
-) -> dict[str, object]:
-    if not isinstance(value, Mapping):
-        return {"status": "MISSING", "failures": []}
-    compact_failures: list[dict[str, object]] = []
-    for row in value.get("failures") or []:
-        if not isinstance(row, Mapping):
-            continue
-        compact_failures.append(
-            {
-                key: row.get(key)
-                for key in (
-                    "reason_code",
-                    "upstream_reason_codes",
-                    "cue_index",
-                    "routed",
-                )
-                if row.get(key) is not None
-            }
-        )
-    return {
-        key: item
-        for key, item in {
-            "schema_version": value.get("schema_version"),
-            "status": value.get("status"),
-            "applied_count": value.get("applied_count"),
-            "validated_mutation_count": value.get(
-                "validated_mutation_count"
-            ),
-            "failures": compact_failures,
-        }.items()
-        if item is not None
-    }
 
 
 def _final_review_failure_evidence(attempt_output: str) -> dict[str, object]:
@@ -771,6 +679,35 @@ def _final_review_failure_evidence(attempt_output: str) -> dict[str, object]:
             ),
         }
     )
+    provider_budget_retry = (
+        build_provider_budget_retry_evidence(
+            audit,
+            candidate_id=candidate_name,
+            contract_reason_code=str(
+                evidence.get("contract_reason_code") or ""
+            ),
+            reviewed_srt_path=(
+                artifact_path.parent
+                / "replacement_recuts"
+                / f"{candidate_name}.recut.srt"
+            ),
+        )
+        if (
+            evidence.get("audit_surfaces_consistent") is True
+            and (
+                nested_carryover_count is None
+                or (
+                    isinstance(nested_carryover_count, int)
+                    and not isinstance(nested_carryover_count, bool)
+                    and nested_carryover_count == 0
+                )
+            )
+            and carryover_document is None
+        )
+        else None
+    )
+    if provider_budget_retry is not None:
+        evidence["provider_budget_retry"] = provider_budget_retry
     return evidence
 
 
@@ -851,6 +788,21 @@ def _classify_final_review_release(
         boundary_status == "BLOCK"
         or "FINAL_REVIEW_BOUNDARY_SEMANTIC_BLOCKED" in reason_codes
     ):
+        # 维护者 #9：一个 CPA 请求失败不该让整条候选判死。provider
+        # 打不通时边界复核同样落 status=BLOCK，reason 是
+        # BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:<Exc>——那是"没人给出裁决"，
+        # 不是"裁决为不合格"。只有 transport 类异常名改道；TypeError 之流仍
+        # 终态（确定性缺陷进无界等待车道 = 每 tick 空转，delivery_recovery 明
+        # 文警告过）。内容门一个字没放松：BLOCK 依旧拒绝交付。
+        if isinstance(boundary, dict) and _provider_failure.transport_unavailable_reason(
+            boundary.get("reason_codes")
+        ):
+            return (
+                "provider_transient",
+                "final_review_boundary_semantic",
+                True,
+                evidence,
+            )
         return (
             "content_boundary",
             "final_review_boundary_semantic",
@@ -859,6 +811,20 @@ def _classify_final_review_release(
         )
     if boundary_status != "PASS":
         return "final_review_contract", "final_review_contract", False, evidence
+    if isinstance(evidence.get("provider_budget_retry"), Mapping):
+        return (
+            "subtitle_authority",
+            "final_review_provider_budget",
+            True,
+            evidence,
+        )
+    if "FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED" in reason_codes:
+        return (
+            "provider_transient",
+            "final_review_adjudication",
+            True,
+            evidence,
+        )
     finding_count = evidence.get("validated_finding_count")
     if (
         isinstance(finding_count, int)
@@ -931,7 +897,7 @@ def _normalize_failure_fingerprint_value(value: object) -> object:
         return {
             str(key): _normalize_failure_fingerprint_value(nested)
             for key, nested in value.items()
-            if key != "surface_files"
+            if key not in _provider_failure.FINGERPRINT_VOLATILE_KEYS
         }
     if isinstance(value, list):
         return [_normalize_failure_fingerprint_value(item) for item in value]
@@ -957,12 +923,28 @@ def classify_talk_failure(attempt_output: str) -> dict:
     elif "TALK_EFFECTIVE_DURATION_NOT_OVER_45S_AFTER_BOUNDARY" in tail:
         kind, stage, recoverable = "content_duration", "boundary_resolution", False
     elif "BOUNDARY_CONTEXT_EXHAUSTED" in tail:
-        kind, stage, recoverable = (
-            "content_boundary",
-            "boundary_semantic_review",
-            False,
-        )
         failure_evidence = _boundary_context_failure_evidence(tail)
+        transient = _provider_failure.transport_unavailable_reason(
+            failure_evidence.get("reason_codes")
+        )
+        kind, stage, recoverable = (
+            ("provider_transient", "boundary_semantic_review", True)
+            if transient
+            else ("content_boundary", "boundary_semantic_review", False)
+        )
+    elif "BOUNDARY_SEMANTIC_REVIEW_REQUIRED" in tail:
+        # 边界解析面（早于终审契约）：spec 里的边界复核非 PASS 就 SystemExit，
+        # provider 打不通时它正是 BLOCK+UNAVAILABLE——所以 transport 故障其实
+        # marker 本身是边界语义门的确定失败面：只有 reason_codes 命中 transport
+        # 故障时才可恢复；其余内容裁决不能再落 producer_error/unknown。
+        transient = _provider_failure.marker_transport_unavailable(
+            tail, "BOUNDARY_SEMANTIC_REVIEW_REQUIRED"
+        )
+        kind, stage, recoverable = (
+            ("provider_transient", "boundary_semantic_review", True)
+            if transient
+            else ("content_boundary", "boundary_semantic_review", False)
+        )
     elif "BOUNDARY_UNREPAIRABLE" in tail:
         kind, stage, recoverable = "content_boundary", "boundary_resolution", False
     elif "voiceprint_profile.v1.json" in tail and (
@@ -1029,14 +1011,19 @@ def classify_talk_failure(attempt_output: str) -> dict:
             "chat_authority_final_artifact",
             False,
         )
-    elif "REDELIVERY_SUBTITLE_BASELINE_FAILED" in tail:
-        # Reviewed-redelivery text/timing equivalence is a deterministic
-        # authority gate.  Classify it explicitly instead of laundering a
-        # concrete baseline defect into producer_error/unknown and retrying the
-        # identical fingerprint forever.
+    elif (
+        "REDELIVERY_SUBTITLE_BASELINE_FAILED" in tail
+        or "REDELIVERY_TERMINAL_PROJECTION_" in tail
+    ):
+        # Reviewed-redelivery text/timing and terminal projection equivalence
+        # are deterministic authority gates, not retryable producer defects.
         kind, stage, recoverable = (
             "subtitle_authority",
-            "redelivery_subtitle_baseline",
+            (
+                "redelivery_terminal_projection"
+                if "REDELIVERY_TERMINAL_PROJECTION_" in tail
+                else "redelivery_subtitle_baseline"
+            ),
             False,
         )
     elif "STORY_CONTRACT_INPUT_INVALID" in tail:
@@ -1049,6 +1036,24 @@ def classify_talk_failure(attempt_output: str) -> dict:
         kind, stage, recoverable = (
             "story_contract",
             "title_fact_consistency",
+            False,
+        )
+    elif "SOURCE_FACT_REPAIRED_RESCORE_REQUIRED" in tail:
+        # 狍哥案修复：hook 已修正、旧卡 INCOMPATIBLE，进有界
+        # 重评分车道而不是终态 story_contract 拒绝——recoverable=True 是
+        # 状态机的核心，backfillable_talk_rejection 只判 story_contract。
+        kind, stage, recoverable = (
+            "selection_rescore",
+            "source_fact_repair",
+            True,
+        )
+    elif "SOURCE_FACT_REVIEW_UNRESOLVED" in tail:
+        # 语义污染修复的另一半：REPAIR_CYCLE/TITLE_AUTHORITY 等非"真耗尽"
+        # 分支不再字面写 EXHAUSTED，但仍是同一条终态语义——只重命名 marker，
+        # 不改变可恢复性。
+        kind, stage, recoverable = (
+            "story_contract",
+            "source_fact_repair",
             False,
         )
     elif "SOURCE_FACT_REPAIR_EXHAUSTED" in tail:
@@ -1106,6 +1111,13 @@ def classify_talk_failure(attempt_output: str) -> dict:
     }
     if failure_evidence is not None:
         result["failure_evidence"] = failure_evidence
+    # provider_transient 把「配额窗口关了」「上游服务抖了」「请求被
+    # 拒了」三件事混成一个词，运维看不出该等还是该换 key。这里只加一层信息性
+    # 标签（不改 failure_kind / 可恢复性 / 重试语义），从保真的 provider 文本
+    # 里解析：quota=429/usage_limit，service=408/5xx/超时/空补全，rejected=其它 4xx。
+    result.update(
+        _provider_failure.provider_failure_label(failure_evidence, tail)
+    )
     if "FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED" in tail:
         violation = _foreign_source_gate_violation(tail)
         if violation is not None:
@@ -1209,8 +1221,7 @@ def _prepare_talk_filler_plan(item: dict) -> dict[str, object]:
 
 
 def _copy_cover_regeneration_receipt(
-    item: dict,
-    result: dict[str, object],
+    item: Mapping[str, object], result: dict[str, object]
 ) -> None:
     for field in (
         "cover_route_regeneration_fingerprint",
@@ -1269,6 +1280,7 @@ def _selection_scorecard_rejection(item: dict) -> dict[str, object] | None:
         "pipeline_fingerprint": _runner.talk_pipeline_fingerprint(cid),
     }
     _copy_cover_regeneration_receipt(item, result)
+    result.update(copied_refresh_receipt(item))
     return result
 
 
@@ -1417,20 +1429,20 @@ def _run_talk_producer_with_boundary_context_retry(
     retry_owner_contract_sha256: str | None = None
 
     def run_producer():
-        speaker_review_state = _runner._speaker_review_manifest_state(
-            out_root / candidate_id
-        )
+        speaker_review_state = _runner._speaker_review_manifest_state(out_root / candidate_id)
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        attempt_offset = log_path.stat().st_size if log_path.is_file() else 0
         with open(log_path, "a", encoding="utf-8") as sink:
+            event = {
+                "schema_version": "talk-producer-log-event.v1", "event": "ATTEMPT_START",
+                "at": datetime.now(timezone.utc).isoformat(), "date": date,
+                "candidate_id": candidate_id, "spec_path": str(spec_path),
+                "pipeline_fingerprint": _runner.talk_pipeline_fingerprint(candidate_id),
+            }
+            print(json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":")), file=sink, flush=True)
+            attempt_offset = sink.tell()
             completed = subprocess.run(
-                cmd,
-                check=False,
-                stdout=sink,
-                stderr=subprocess.STDOUT,
-                timeout=5400,
-                cwd=str(_runner.REPO_ROOT),
-                env=_runner.child_env_for_date(date),
+                cmd, check=False, stdout=sink, stderr=subprocess.STDOUT, timeout=5400,
+                cwd=str(_runner.REPO_ROOT), env=_runner.child_env_for_date(date),
             )
         with open(log_path, "rb") as source:
             source.seek(attempt_offset)
@@ -1587,6 +1599,106 @@ def _run_talk_producer_with_boundary_context_retry(
     )
 
 
+def _carry_selected_source_fact_recovery_result(
+    item: Mapping[str, object], result: dict[str, object]
+) -> dict[str, object]:
+    """Carry a queue receipt to the runner's final pre-persist commit seam."""
+
+    receipt = item.get(SELECTED_SOURCE_FACT_RECOVERY_RECEIPT_FIELD)
+    if not isinstance(receipt, Mapping):
+        return result
+    result.setdefault("selected_repair", bool(item.get("selected_repair")))
+    if item.get("recovery_source_record_sha256") is not None:
+        result.setdefault(
+            "recovery_source_record_sha256",
+            item["recovery_source_record_sha256"],
+        )
+    # Backfill and bundle projection still happen in the runner.  Carry an
+    # independent queue receipt here; historical recovery advances it against
+    # that exact final pick immediately before the first state persistence.
+    result[SELECTED_SOURCE_FACT_RECOVERY_RECEIPT_FIELD] = copy.deepcopy(
+        dict(receipt)
+    )
+    return result
+
+
+def _carry_selected_final_review_recovery_result(
+    item: Mapping[str, object], result: dict[str, object]
+) -> dict[str, object]:
+    """Carry a v7 queue receipt to the final pre-persist commit seam."""
+
+    receipt = item.get(SELECTED_FINAL_REVIEW_RECOVERY_RECEIPT_FIELD)
+    if not isinstance(receipt, Mapping):
+        return result
+    result.setdefault("selected_repair", bool(item.get("selected_repair")))
+    if item.get("recovery_source_record_sha256") is not None:
+        result.setdefault(
+            "recovery_source_record_sha256",
+            item["recovery_source_record_sha256"],
+        )
+    result[SELECTED_FINAL_REVIEW_RECOVERY_RECEIPT_FIELD] = copy.deepcopy(
+        dict(receipt)
+    )
+    return result
+
+
+def _carry_talk_recovery_result(
+    item: Mapping[str, object], result: dict[str, object]
+) -> dict[str, object]:
+    """Apply every recovery-ledger carry contract at one result seam."""
+
+    result = _carry_selected_source_fact_recovery_result(item, result)
+    result = _carry_selected_final_review_recovery_result(item, result)
+    if isinstance(terminal := item.get(FINAL_REVIEW_TERMINAL_REGRANT_RECEIPT_FIELD), Mapping):
+        result[FINAL_REVIEW_TERMINAL_REGRANT_RECEIPT_FIELD] = copy.deepcopy(terminal)
+    return carry_validated_active_provider_budget_ledger(
+        item,
+        result,
+        candidate_id=str(item.get("cid") or item.get("candidate_id") or ""),
+    )
+
+
+def _provider_budget_ledger_preflight_rejection(
+    item: Mapping[str, object], *, candidate_id: str
+) -> dict[str, object] | None:
+    result = carry_validated_active_provider_budget_ledger(
+        item,
+        {
+            "candidate_id": candidate_id,
+            "segment": Path(str(item.get("segment_path") or "")).name,
+            "start_ms": item.get("start_ms"),
+            "end_ms": item.get("end_ms"),
+            "hook": item.get("hook", ""),
+            "confidence": item.get("confidence"),
+            "selection_scorecard": item.get("selection_scorecard"),
+            "session_relation_authority": item.get(
+                "session_relation_authority"
+            ),
+            "lane": item.get("lane", ""),
+            "rc": 0,
+        },
+        candidate_id=candidate_id,
+    )
+    if result.get("failure_stage") != "final_review_provider_budget_ledger":
+        return None
+    _copy_cover_regeneration_receipt(item, result)
+    result.update(copied_refresh_receipt(item))
+    return _carry_talk_recovery_result(item, result)
+
+
+def _canonicalized_talk_item(item: Mapping[str, object]) -> dict[str, object]:
+    normalized = dict(item)
+    normalized["hook"] = canonicalize_relation_summary(
+        str(normalized.get("hook") or ""),
+        session_relation_authority=normalized.get("session_relation_authority"),
+    )
+    normalized["selection_scorecard"] = canonicalize_story_scorecard(
+        normalized.get("selection_scorecard"),
+        session_relation_authority=normalized.get("session_relation_authority"),
+    )
+    return normalized
+
+
 def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     """Run produce_slice_package for one pending talk item (plain-dict spec).
 
@@ -1596,19 +1708,16 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     retried on a later resume.  ``reuse_cover`` keeps the existing delivered
     cover (subtitle-only re-run) and skips the ~90s AI cover step.
     """
-    item = dict(item)
-    item["hook"] = canonicalize_relation_summary(
-        str(item.get("hook") or ""),
-        session_relation_authority=item.get("session_relation_authority"),
-    )
-    item["selection_scorecard"] = canonicalize_story_scorecard(
-        item.get("selection_scorecard"),
-        session_relation_authority=item.get("session_relation_authority"),
-    )
+    item = _canonicalized_talk_item(item)
     cid = item["cid"]
+    ledger_rejection = _provider_budget_ledger_preflight_rejection(
+        item, candidate_id=str(cid)
+    )
+    if ledger_rejection is not None:
+        return ledger_rejection
     scorecard_rejection = _selection_scorecard_rejection(item)
     if scorecard_rejection is not None:
-        return scorecard_rejection
+        return _carry_talk_recovery_result(item, scorecard_rejection)
     filler_plan = _prepare_talk_filler_plan(item)
     # 合并候选的缝隙移除若被 plan 拒绝，绝不回退成整窗连续交付——那会把
     # 缝里的 8 分钟无关内容一起端出去（fail-closed，候选拒绝留审计）。
@@ -1618,7 +1727,8 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         filler_plan=filler_plan,
     )
     if filler_rejection is not None:
-        return filler_rejection
+        filler_rejection.update(copied_refresh_receipt(item))
+        return _carry_talk_recovery_result(item, filler_rejection)
     effective_duration_ms = int(filler_plan["effective_duration_ms"])
     out_root = _runner.BASE / "out" / date
     delivery_name = _runner.safe_name(item.get("hook", ""), cid)
@@ -1680,6 +1790,14 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         if item.get(routing_key) is not None:
             spec[routing_key] = item[routing_key]
     out_root.mkdir(parents=True, exist_ok=True)
+    speaker_session_context = _persist_speaker_session_context(
+        item=item, pieces=pieces, out_root=out_root
+    )
+    if speaker_session_context is not None:
+        spec["speaker_session_context"] = speaker_session_context
+        spec["speaker_session_context_sha256"] = (
+            "sha256:" + hashlib.sha256(Path(speaker_session_context).read_bytes()).hexdigest()
+        )
     spec_path = out_root / f"spec_{cid}.json"
     spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
     filler_plan_path = out_root / f"{cid}.filler-plan.json"
@@ -1715,6 +1833,8 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     )
     result = {
         "candidate_id": cid, "segment": Path(item["segment_path"]).name,
+        "segment_path": item["segment_path"], "session_id": item.get("session_id"),
+        "segment_scene_context": item.get("segment_scene_context"),
         "start_ms": item["start_ms"], "end_ms": item["end_ms"],
         "hook": item.get("hook", ""), "confidence": item.get("confidence"),
         "selection_scorecard": item.get("selection_scorecard"),
@@ -1741,6 +1861,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         "pipeline_fingerprint": _runner.talk_pipeline_fingerprint(cid),
     }
     _copy_cover_regeneration_receipt(item, result)
+    result.update(copied_refresh_receipt(item))
     if item.get("given_end_ms") is not None:
         result["given_end_ms"] = item["given_end_ms"]
         result["given_end_authority"] = item.get("given_end_authority")
@@ -1752,9 +1873,18 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     # 复活审计块贯穿 requeue item → 新 pick，缺一环即断链
     if item.get("revivals"):
         result["revivals"] = list(item["revivals"])
-    for field, value_type in (("sanctioned_revival_retry", dict), ("final_review_carryover_consumed_fingerprints", list)):
+    for field, value_type in (
+        ("sanctioned_revival_retry", dict),
+        # 准入时冻结的配额政策随 pick 落盘：没有它，「这条当初是在哪套 cap/
+        # 分数门下拿到席位的」事后无从复算（考据就卡在这里）。
+        (TALK_QUOTA_FREEZE_FIELD, dict),
+        ("final_review_carryover_consumed_fingerprints", list),
+        (SELECTED_SOURCE_FACT_RECOVERY_RECEIPT_FIELD, dict),
+        (SELECTED_FINAL_REVIEW_RECOVERY_RECEIPT_FIELD, dict),
+        ("rescore_consumed_fingerprints", list),
+    ):
         if isinstance(item.get(field), value_type):
-            result[field] = value_type(item[field])
+            result[field] = copy.deepcopy(item[field])
     # Classify only bytes written by this subprocess attempt.  The log is
     # append-only; a stale boundary marker followed by a transient CPA error
     # must not make the new attempt terminal again.
@@ -1763,13 +1893,29 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     result.update(_runner.read_publish_meta(out_root / cid))
     if completed.returncode != 0:
         result.update(_runner.classify_talk_failure(attempt_output))
+        if result.get("failure_provider_class"):
+            # 运维要的一句话：该等（quota/service）还是该查请求（rejected）。
+            _runner.log(
+                f"{cid}: provider failure class="
+                f"{result['failure_provider_class']} status="
+                f"{result['failure_provider_status_codes']}"
+            )
         result["failure_recovery_fingerprint"] = _runner.talk_failure_recovery_fingerprint(str(result["failure_kind"]), cid)
         if result["failure_recoverable"]:
-            retry_epoch = int(time.time()) + _runner.SONG_INFRA_RETRY_BASE_SECONDS
-            result["next_retry_at_epoch"] = retry_epoch
-            result["next_retry_at"] = time.strftime(
-                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(retry_epoch)
+            result.update(_talk_infra_retry_schedule(result))
+        if result["failure_kind"] == "selection_rescore":
+            # 狍哥案修复：从 finalization 侧写的 sidecar 读回修正 hook/title，
+            # 绑定这次失败的 fingerprint，落 PENDING source-fact-rescore.v1
+            # 回执供 delivery_recovery 有界重评分车道消费。
+            from src.autoslice import selection_rescore
+
+            receipt = selection_rescore.attach_pending_rescore_receipt(
+                out_root / cid,
+                candidate_id=cid,
+                failure_fingerprint=str(result["failure_fingerprint"]),
             )
+            if receipt is not None:
+                result["source_fact_rescore"] = receipt
         if (
             "TITLE_AUTHORITY_UNRESOLVED" in tail
             and str(result.get("title_authority_status") or "").startswith("UNRESOLVED")
@@ -1786,7 +1932,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
 
                 shutil.rmtree(recuts, ignore_errors=True)
             result["status"] = "title_failed"
-            return result
+            return _carry_talk_recovery_result(item, result)
         if "SPEAKER_REVIEW_REQUIRED" in attempt_output:
             review_meta = _runner.read_speaker_review_meta(
                 out_root / cid,
@@ -1795,23 +1941,23 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
             if review_meta:
                 result.update(review_meta)
                 result["status"] = "speaker_review_required"
-                return result
+                return _carry_talk_recovery_result(item, result)
         if _runner._speaker_evidence_insufficient_failure(tail):
             result["status"] = "speaker_evidence_insufficient"
-            return result
+            return _carry_talk_recovery_result(item, result)
         if "TALK_EFFECTIVE_DURATION_NOT_OVER_45S_AFTER_BOUNDARY" in tail:
             result["status"] = "candidate_rejected"
             result["rejection_reason"] = "talk_effective_duration_too_short"
             result["reason_codes"] = [
                 "TALK_EFFECTIVE_DURATION_NOT_OVER_45S_AFTER_BOUNDARY"
             ]
-            return result
+            return _carry_talk_recovery_result(item, result)
         if "SOURCE_MEDIA_MISSING" in tail:
             # 终态且不复跑：源字节没了，`failed` 会被 requeue 成永久空转。
             result["status"] = "candidate_rejected"
             result["rejection_reason"] = "source_media_missing"
             result["reason_codes"] = ["SOURCE_MEDIA_MISSING"]
-            return result
+            return _carry_talk_recovery_result(item, result)
         # Boundary exhaustion is deterministic for this pipeline generation;
         # a later fingerprint change can earn a bounded retry.
         result["status"] = (
@@ -1822,7 +1968,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
             )
             else "failed"
         )
-        return result
+        return _carry_talk_recovery_result(item, result)
     if str(result.get("title_authority_status") or "").startswith("UNRESOLVED"):
         # No delivery with a cid title / cid-text cover — clean and retry later.
         delivered = _runner.profile_delivery_root() / date
@@ -1834,19 +1980,18 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
 
             shutil.rmtree(recuts, ignore_errors=True)
         result["status"] = "title_failed"
-        return result
+        return _carry_talk_recovery_result(item, result)
     # Boundary self-repair (维护者) replaced quarantine: a delivered
     # clip is clean by construction — red flags either got repaired (trail in
     # boundary_repairs) or the produce exited non-zero above (no delivery).
     summary = result.get("summary") or {}
     result["red_flags"] = list(summary.get("red_flags") or [])
     result["boundary_repairs"] = list(summary.get("boundary_repairs") or [])
-    if not _talk_cover_delivery_ready(date, result):
-        result["status"] = _runner.TALK_COVER_PENDING_STATUS
-        result["cover_integrity_status"] = "INVALID_OR_MISSING_INITIAL_COVER"
-        result["cover_pending_reason_codes"] = [
-            "TALK_DELIVERY_COVER_PROOF_REQUIRED"
-        ]
-        return result
-    result["status"] = "review_ready"
-    return result
+    from src.autoslice import speaker_guess  # 出处与理由见该模块 docstring
+    speaker_guess.finalize_delivered_talk_status(
+        result,
+        candidate_id=cid,
+        work_dir=out_root / cid,
+        cover_ready=_talk_cover_delivery_ready(date, result),
+    )
+    return _carry_talk_recovery_result(item, result)

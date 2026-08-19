@@ -59,7 +59,7 @@ SHA256_RE = re.compile(r"(?:sha256:)?([0-9a-f]{64})\Z")
 HISTORICAL_CHAT_AUTHORITY_STATUS = "NOT_EVALUATED_RETROSPECTIVE"
 TEXT_AUTHORITY_MODES = {
     "historical_published_final",
-    "historical_published_final_plus_ivan_override",
+    "historical_published_final_plus_reviewer_override",
 }
 REQUIRED_ARTIFACTS = {
     "video",
@@ -253,7 +253,7 @@ def validate_plan(document: object) -> dict[str, Any]:
                 "the human decision must be the operational subtitle text override"
             )
         expects_override = (
-            text_authority_mode == "historical_published_final_plus_ivan_override"
+            text_authority_mode == "historical_published_final_plus_reviewer_override"
         )
         if bool(text_override_path) != expects_override:
             raise BatchSpeakerReviewError(
@@ -563,6 +563,7 @@ def build_review_item(
             text_override_path,
             text_final,
             work_dir / "text-finalization.json",
+            expected_candidate_id=candidate_id,
         )
         if text_manifest.get("output_srt_sha256") != entry["text_final_srt_sha256"]:
             raise BatchSpeakerReviewError(

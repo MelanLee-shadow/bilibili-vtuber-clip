@@ -33,6 +33,11 @@ from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
     validate_recovery_publication_authority,
 )
+from scripts.build_daily_review_manifest import (  # noqa: E402
+    DailyManifestError,
+    _rebuild_package_speaker_evidence,
+    _validate_source_fact_receipts,
+)
 
 
 MANIFEST_SCHEMA = "lidousha-review-package.v1"
@@ -99,14 +104,10 @@ def _project_optional_audit(
     if audit is None and declared_path is None:
         return "NOT_CONFIGURED", None
     if not isinstance(audit, dict) or not str(declared_path or "").strip():
-        raise ManifestBuildError(
-            f"optional audit record binding is incomplete: {audit_key}"
-        )
+        raise ManifestBuildError(f"optional audit record binding is incomplete: {audit_key}")
     artifact = _required_file(package_root, f"{stem}.{suffix}")
     if _load_json(artifact) != audit:
-        raise ManifestBuildError(
-            f"optional audit payload differs from record: {audit_key}"
-        )
+        raise ManifestBuildError(f"optional audit payload differs from record: {audit_key}")
     return "CONFIGURED", artifact
 
 
@@ -114,17 +115,11 @@ def _record_generation(record: dict[str, Any]) -> dict[str, Any]:
     generation = record.get("cover_generation")
     if not isinstance(generation, dict):
         staging = record.get("publish_staging")
-        generation = (
-            staging.get("cover_generation")
-            if isinstance(staging, dict)
-            else None
-        )
+        generation = staging.get("cover_generation") if isinstance(staging, dict) else None
     if not isinstance(generation, dict) or not validate_cover_route_decision(
         generation, allow_legacy_v1=False
     ):
-        raise ManifestBuildError(
-            "record has no valid lidousha-cover-route-decision.v2"
-        )
+        raise ManifestBuildError("record has no valid lidousha-cover-route-decision.v2")
     return generation
 
 
@@ -169,9 +164,7 @@ def _sync_cover_title_replay_artifacts(
     )
     projected: list[Path] = []
     for target, declared_source, declared_sha, label in specs:
-        if target.is_file() and not target.is_symlink() and _matches_sha256(
-            target, declared_sha
-        ):
+        if target.is_file() and not target.is_symlink() and _matches_sha256(target, declared_sha):
             projected.append(target)
             continue
         if target.is_symlink():
@@ -183,11 +176,7 @@ def _sync_cover_title_replay_artifacts(
                 f"cover {label} portable copy drifted without a declared source"
             )
         source = Path(declared_source)
-        if (
-            source.is_symlink()
-            or not source.is_file()
-            or not _matches_sha256(source, declared_sha)
-        ):
+        if source.is_symlink() or not source.is_file() or not _matches_sha256(source, declared_sha):
             raise ManifestBuildError(
                 f"cover {label} declared source is missing or hash-drifted: {source}"
             )
@@ -220,11 +209,7 @@ def _sync_cover_title_replay_artifacts(
 
 def _record_title(record: dict[str, Any]) -> str:
     staging = record.get("publish_staging")
-    title = (
-        str(staging.get("title") or "").strip()
-        if isinstance(staging, dict)
-        else ""
-    )
+    title = str(staging.get("title") or "").strip() if isinstance(staging, dict) else ""
     if not title:
         raise ManifestBuildError("record publish_staging.title is missing")
     return title
@@ -271,18 +256,12 @@ def _verify_artifact_hashes(
         raise ManifestBuildError(f"subtitle hash drift: {subtitle}")
     if artifact_hashes.get("ass_sha256") != _sha256(speaker_ass):
         raise ManifestBuildError(f"speaker ASS hash drift: {speaker_ass}")
-    if not _matches_sha256(
-        speaker_srt, chat_authority.get("final_speaker_srt_sha256")
-    ):
-        raise ManifestBuildError(
-            f"speaker SRT differs from chat authority: {speaker_srt}"
-        )
+    if not _matches_sha256(speaker_srt, chat_authority.get("final_speaker_srt_sha256")):
+        raise ManifestBuildError(f"speaker SRT differs from chat authority: {speaker_srt}")
     if not uniform_host and not _matches_sha256(
         speaker_ass, chat_authority.get("speaker_ass_sha256")
     ):
-        raise ManifestBuildError(
-            f"speaker ASS differs from chat authority: {speaker_ass}"
-        )
+        raise ManifestBuildError(f"speaker ASS differs from chat authority: {speaker_ass}")
 
 
 def _cover_route_summary(generation: dict[str, Any]) -> dict[str, Any]:
@@ -295,16 +274,10 @@ def _cover_route_summary(generation: dict[str, Any]) -> dict[str, Any]:
         "selected_rationale": route.get("selected_rationale"),
         "rejected_alternatives": route.get("rejected_alternatives"),
         "image_generation_planned": route.get("image_generation_planned"),
-        "image_generation_attempted": route.get(
-            "image_generation_attempted"
-        ),
+        "image_generation_attempted": route.get("image_generation_attempted"),
         "image_generation_used": route.get("image_generation_used"),
-        "source_visible_participant_ids": route.get(
-            "source_visible_participant_ids"
-        ),
-        "final_visible_participant_ids": route.get(
-            "final_visible_participant_ids"
-        ),
+        "source_visible_participant_ids": route.get("source_visible_participant_ids"),
+        "final_visible_participant_ids": route.get("final_visible_participant_ids"),
     }
 
 
@@ -361,26 +334,19 @@ def _normalized_release_authorities(
             )
     rerun_plan = state.get("delivery_rerun_plan")
     publication_authorities = (
-        rerun_plan.get(
-            "recovery_publication_authorities_by_candidate"
-        )
+        rerun_plan.get("recovery_publication_authorities_by_candidate")
         if isinstance(rerun_plan, dict)
         else None
     )
     if (
         not isinstance(rerun_plan, dict)
-        or rerun_plan.get("schema_version")
-        != "recovery-review-talk-rerun-plan.v7"
+        or rerun_plan.get("schema_version") != "recovery-review-talk-rerun-plan.v7"
         or not isinstance(publication_authorities, dict)
         or set(publication_authorities) != set(candidate_ids)
     ):
-        raise ManifestBuildError(
-            "exact recovery publication authority map is missing"
-        )
-    normalized_publication_authorities: dict[
-        str, dict[str, object]
-    ] = {}
-    for candidate_id in (release_scope or candidate_ids):
+        raise ManifestBuildError("exact recovery publication authority map is missing")
+    normalized_publication_authorities: dict[str, dict[str, object]] = {}
+    for candidate_id in release_scope or candidate_ids:
         try:
             normalized_publication_authorities[candidate_id] = (
                 validate_recovery_publication_authority(
@@ -390,8 +356,7 @@ def _normalized_release_authorities(
             )
         except RecoveryTitleAuthorityError as exc:
             raise ManifestBuildError(
-                "recovery publication authority invalid: "
-                f"{candidate_id}: {exc}"
+                f"recovery publication authority invalid: {candidate_id}: {exc}"
             ) from exc
 
     return normalized_publication_authorities
@@ -418,9 +383,7 @@ def build_manifest(
         # unlocks per-candidate freezing while the batch is still incomplete;
         # every scoped candidate must itself be a delivered compliant pick.
         if not (release_scope and state.get("status") == "recovery_incomplete"):
-            raise ManifestBuildError(
-                f"state is not review_ready: {state.get('status')}"
-            )
+            raise ManifestBuildError(f"state is not review_ready: {state.get('status')}")
     if state.get("run_mode") != "RECOVERY_REVIEW":
         raise ManifestBuildError(f"state is not RECOVERY_REVIEW: {state.get('run_mode')}")
     if state.get("upload_allowed") is not False:
@@ -453,9 +416,7 @@ def build_manifest(
                 f"cover-only audit scope must be inside package root: {scope_path}"
             ) from exc
         if not scope_path.is_file() or scope_path.is_symlink():
-            raise ManifestBuildError(
-                f"cover-only audit scope missing or unsafe: {scope_path}"
-            )
+            raise ManifestBuildError(f"cover-only audit scope missing or unsafe: {scope_path}")
         payload = _load_json(scope_path)
         scope_candidate = str(payload.get("candidate_id") or "")
         if (
@@ -463,8 +424,7 @@ def build_manifest(
             or scope_candidate in scope_payloads
         ):
             raise ManifestBuildError(
-                "cover-only audit scope candidate is unknown or duplicated: "
-                f"{scope_candidate!r}"
+                f"cover-only audit scope candidate is unknown or duplicated: {scope_candidate!r}"
             )
         scope_payloads[scope_candidate] = (scope_path, payload)
     picks = state.get("picks")
@@ -483,10 +443,8 @@ def build_manifest(
         if isinstance(row, dict) and row.get("candidate_id")
     }
     if set(picks_by_id) != set(candidate_ids):
-        raise ManifestBuildError(
-            "final picks do not exactly match the no-backfill contract"
-        )
-    for candidate_id in (release_scope or candidate_ids):
+        raise ManifestBuildError("final picks do not exactly match the no-backfill contract")
+    for candidate_id in release_scope or candidate_ids:
         pick = picks_by_id[candidate_id]
         if (
             pick.get("status") not in DELIVERED_STATUSES
@@ -514,7 +472,7 @@ def build_manifest(
 
     items: list[dict[str, Any]] = []
     attestations: list[dict[str, Any]] = []
-    for candidate_id in (release_scope or candidate_ids):
+    for candidate_id in release_scope or candidate_ids:
         stem, record_path, record = records_by_id[candidate_id]
         video = _required_file(package_root, f"{stem}.mp4")
         cover = _required_file(package_root, f"{stem}.cover.png")
@@ -528,9 +486,7 @@ def build_manifest(
             audit_path_key="subtitle_regression_audit_path",
             suffix="subtitle-regression.json",
         )
-        chat_authority = _required_file(
-            package_root, f"{stem}.chat-authority.json"
-        )
+        chat_authority = _required_file(package_root, f"{stem}.chat-authority.json")
         chat_authority_payload = _load_json(chat_authority)
         # uniform_host 政策（ee29e08，b19dfae daily 同规）：单说话人包没有独立
         # speaker 工件——chat authority 自证 final_speaker_srt_sha256 == 正文
@@ -538,23 +494,15 @@ def build_manifest(
         # 终 ASS（record.artifact_hashes.ass_sha256 仍逐字节校验）。带真
         # speaker 工件的历史 recovery 包走原严格路径。
         uniform_host = bool(
-            _matches_sha256(
-                subtitle, chat_authority_payload.get("final_speaker_srt_sha256")
-            )
+            _matches_sha256(subtitle, chat_authority_payload.get("final_speaker_srt_sha256"))
             and not chat_authority_payload.get("speaker_ass_sha256")
         )
         if uniform_host:
             speaker_srt = subtitle
-            speaker_ass = _required_file(
-                package_root, f"{stem}.final-sapphire72.ass"
-            )
+            speaker_ass = _required_file(package_root, f"{stem}.final-sapphire72.ass")
         else:
-            speaker_srt = _required_file(
-                package_root, f"{stem}.speaker.srt"
-            )
-            speaker_ass = _required_file(
-                package_root, f"{stem}.speaker.ass"
-            )
+            speaker_srt = _required_file(package_root, f"{stem}.speaker.srt")
+            speaker_ass = _required_file(package_root, f"{stem}.speaker.ass")
         publish = _required_file(package_root, f"{stem}.publish.json")
         publish_payload = _load_json(publish)
         _verify_artifact_hashes(
@@ -567,6 +515,7 @@ def build_manifest(
             chat_authority=chat_authority_payload,
             uniform_host=uniform_host,
         )
+        packaged_speaker_manifest: Path | None = None
         generation = _record_generation(record)
         (
             cover_title_mask,
@@ -578,42 +527,30 @@ def build_manifest(
             generation=generation,
         )
         if generation.get("final_cover_sha256") != _sha256(cover):
-            raise ManifestBuildError(
-                f"cover_generation final hash drift: {candidate_id}"
-            )
+            raise ManifestBuildError(f"cover_generation final hash drift: {candidate_id}")
         rendered_text_pixels = generation.get("rendered_text_pixels")
         if (
             not isinstance(rendered_text_pixels, dict)
-            or rendered_text_pixels.get("mask_sha256")
-            != _sha256(cover_title_mask)
-            or rendered_text_pixels.get("pre_overlay_sha256")
-            != _sha256(cover_pre_overlay)
-            or generation.get("pre_overlay_sha256")
-            != _sha256(cover_pre_overlay)
-            or generation.get("ai_background_sha256")
-            != _sha256(cover_route_background)
+            or rendered_text_pixels.get("mask_sha256") != _sha256(cover_title_mask)
+            or rendered_text_pixels.get("pre_overlay_sha256") != _sha256(cover_pre_overlay)
+            or generation.get("pre_overlay_sha256") != _sha256(cover_pre_overlay)
+            or generation.get("ai_background_sha256") != _sha256(cover_route_background)
         ):
-            raise ManifestBuildError(
-                f"cover title replay artifact hash drift: {candidate_id}"
-            )
+            raise ManifestBuildError(f"cover title replay artifact hash drift: {candidate_id}")
         title = _record_title(record)
         try:
-            recovery_publication_authority = (
-                validate_recovery_publication_authority(
-                    record.get("recovery_publication_authority"),
-                    candidate_id=candidate_id,
-                    expected_final_title=title,
-                )
+            recovery_publication_authority = validate_recovery_publication_authority(
+                record.get("recovery_publication_authority"),
+                candidate_id=candidate_id,
+                expected_final_title=title,
             )
         except RecoveryTitleAuthorityError as exc:
             raise ManifestBuildError(
-                f"recovery publication authority invalid: "
-                f"{candidate_id}: {exc}"
+                f"recovery publication authority invalid: {candidate_id}: {exc}"
             ) from exc
         publish_staging = record.get("publish_staging")
         if (
-            recovery_publication_authority
-            != normalized_publication_authorities[candidate_id]
+            recovery_publication_authority != normalized_publication_authorities[candidate_id]
             or not isinstance(publish_staging, dict)
             or publish_staging.get("recovery_publication_authority")
             != recovery_publication_authority
@@ -621,18 +558,29 @@ def build_manifest(
             != recovery_publication_authority
             or publish_payload.get("title") != title
         ):
-            raise ManifestBuildError(
-                f"recovery publication binding drift: {candidate_id}"
-            )
+            raise ManifestBuildError(f"recovery publication binding drift: {candidate_id}")
         artifact_hashes = record.get("artifact_hashes")
-        if (
-            not isinstance(artifact_hashes, dict)
-            or artifact_hashes.get("publish_draft_sha256")
-            != _sha256(publish)
-        ):
-            raise ManifestBuildError(
-                f"publish draft hash drift: {candidate_id}"
+        if not isinstance(artifact_hashes, dict) or artifact_hashes.get(
+            "publish_draft_sha256"
+        ) != _sha256(publish):
+            raise ManifestBuildError(f"publish draft hash drift: {candidate_id}")
+        try:
+            speaker_evidence, packaged_speaker_manifest = _rebuild_package_speaker_evidence(
+                package_root=package_root,
+                record_doc=record,
+                subtitle_path=subtitle,
+                speaker_srt_path=(None if uniform_host else speaker_srt),
             )
+            _validate_source_fact_receipts(
+                record_doc=record,
+                publish_doc=publish_payload,
+                subtitle_path=subtitle,
+                speaker_evidence=speaker_evidence,
+            )
+        except DailyManifestError as exc:
+            raise ManifestBuildError(
+                f"speaker/source-fact package evidence invalid: {candidate_id}: {exc}"
+            ) from exc
         burned_preview = record.get("burned_preview")
         burned_ass_path = (
             Path(str(burned_preview.get("ass_path") or ""))
@@ -640,9 +588,7 @@ def build_manifest(
             else Path()
         )
         if not burned_ass_path.is_file():
-            raise ManifestBuildError(
-                f"record ASS path missing: {burned_ass_path}"
-            )
+            raise ManifestBuildError(f"record ASS path missing: {burned_ass_path}")
         if _sha256(burned_ass_path) != _sha256(speaker_ass):
             raise ManifestBuildError(
                 f"packaged speaker ASS differs from burned ASS: {candidate_id}"
@@ -665,13 +611,19 @@ def build_manifest(
             "chat_authority": chat_authority.name,
             "speaker_srt": speaker_srt.name,
             "speaker_srt_sha256": _sha256(speaker_srt),
+            **(
+                {
+                    "speaker_finalization_manifest": (packaged_speaker_manifest.name),
+                    "speaker_finalization_manifest_sha256": _sha256(packaged_speaker_manifest),
+                }
+                if packaged_speaker_manifest is not None
+                else {}
+            ),
             "ass_path": speaker_ass.name,
             "ass_sha256": _sha256(speaker_ass),
             "cover_route_summary": _cover_route_summary(generation),
         }
-        item["recovery_publication_authority"] = (
-            recovery_publication_authority
-        )
+        item["recovery_publication_authority"] = recovery_publication_authority
         if regression is not None:
             item["subtitle_regression_audit"] = regression.name
         baseline_status, baseline = _project_optional_audit(
@@ -688,9 +640,7 @@ def build_manifest(
         scope_entry = scope_payloads.get(candidate_id)
         if scope_entry is not None:
             scope_path, scope_payload = scope_entry
-            item["cover_only_audit_scope"] = scope_path.relative_to(
-                package_root
-            ).as_posix()
+            item["cover_only_audit_scope"] = scope_path.relative_to(package_root).as_posix()
             try:
                 validate_cover_only_audit_scope(
                     scope_payload,
@@ -716,8 +666,7 @@ def build_manifest(
 
     return {
         "schema_version": MANIFEST_SCHEMA,
-        "created_at": created_at
-        or datetime.now(timezone.utc).isoformat(),
+        "created_at": created_at or datetime.now(timezone.utc).isoformat(),
         "generated_by": "build_recovery_review_manifest.v1",
         "date": _resolve_manifest_date(state, package_root, records_by_id),
         "status": "finished_review_package_no_upload_pending_human_review",
@@ -731,9 +680,7 @@ def build_manifest(
         },
         "deployed_commit": commit,
         "selection_contract": contract,
-        "recovery_publication_authorities_by_candidate": (
-            normalized_publication_authorities
-        ),
+        "recovery_publication_authorities_by_candidate": (normalized_publication_authorities),
         "exact_candidate_ids": list(candidate_ids),
         **(
             {
@@ -752,11 +699,7 @@ def build_manifest(
         "counts": {"items": len(items), "talk": len(items), "song": 0},
         "cover_route_attestations": attestations,
         **(
-            {
-                "cover_only_audit_scope_candidate_ids": sorted(
-                    scope_payloads
-                )
-            }
+            {"cover_only_audit_scope_candidate_ids": sorted(scope_payloads)}
             if scope_payloads
             else {}
         ),
@@ -793,10 +736,7 @@ def main() -> int:
         action="append",
         type=Path,
         default=None,
-        help=(
-            "explicit predecessor-bound cover-only audit scope inside the "
-            "package (repeatable)"
-        ),
+        help=("explicit predecessor-bound cover-only audit scope inside the package (repeatable)"),
     )
     args = parser.parse_args()
     try:

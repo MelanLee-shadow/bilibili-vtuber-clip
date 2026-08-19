@@ -49,8 +49,19 @@ def _fixture(tmp_path: Path) -> dict:
         "subtitle": (
             "1\n00:00:00,000 --> 00:00:02,000\n不能停止我对你的爱\n"
         ).encode(),
-        "lyrics_alignment_report": b"alignment",
-        "host_vocal_proof": b"host-vocal",
+        # 两份歌切证人按生产形状写真 JSON：跨主机导入器会按 schema/decision
+        # 逐条重验它们，占位字节会让"证据链同等严格"这条断言失去意义。
+        "lyrics_alignment_report": json.dumps(
+            {"schema_version": "lyrics-alignment-report.v1"}, sort_keys=True
+        ).encode(),
+        "host_vocal_proof": json.dumps(
+            {
+                "schema_version": "host-vocal-proof.v3",
+                "status": "READY",
+                "decision": "LIDOUSHA_VOCAL_PRESENT_ON_LYRIC_CHECKPOINTS",
+            },
+            sort_keys=True,
+        ).encode(),
         "cover": b"cover",
         "cover_title_mask": b"mask",
         "cover_pre_overlay": b"pre-overlay",

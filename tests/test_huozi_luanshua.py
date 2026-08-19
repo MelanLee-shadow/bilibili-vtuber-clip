@@ -64,7 +64,7 @@ def _source_manifest(tmp_path, utterances, **overrides):
         "asr_json_path": str(asr),
         "speaker": "lidousha",
         "speaker_confidence": 1.0,
-        "speaker_authority": "ivan_confirmed_solo_session",
+        "speaker_authority": "reviewer_confirmed_solo_session",
         "transcript_confidence": 0.95,
         "transcript_authorities": ["bcut_word_timestamps", "second_asr"],
         "transcript_evidence": [
@@ -210,13 +210,13 @@ def test_phrase_confirmation_cannot_promote_context_beyond_confirmed_fragment(tm
         speaker_confidence=0.0,
         speaker_authority="unreviewed_collab_session",
         speaker_evidence=[
-            {"authority": "ivan_confirmation", "path": str(confirmation)},
+            {"authority": "reviewer_confirmation", "path": str(confirmation)},
         ],
         trusted_ranges_ms=[
             {
                 "start_ms": 2_800,
                 "end_ms": 3_900,
-                "speaker_authority": "ivan_confirmed_phrase",
+                "speaker_authority": "reviewer_confirmed_phrase",
                 "speaker_confidence": 1.0,
             }
         ],
@@ -242,13 +242,13 @@ def test_phrase_confirmation_accepts_exactly_confirmed_fragment(tmp_path):
         speaker_confidence=0.0,
         speaker_authority="unreviewed_collab_session",
         speaker_evidence=[
-            {"authority": "ivan_confirmation", "path": str(confirmation)},
+            {"authority": "reviewer_confirmation", "path": str(confirmation)},
         ],
         trusted_ranges_ms=[
             {
                 "start_ms": 2_800,
                 "end_ms": 3_900,
-                "speaker_authority": "ivan_confirmed_phrase",
+                "speaker_authority": "reviewer_confirmed_phrase",
                 "speaker_confidence": 1.0,
             }
         ],
@@ -541,8 +541,8 @@ def test_render_gate_rejects_phrase_evidence_that_does_not_cover_piece(tmp_path)
     plan = plan_text("不对", _corpus(tmp_path, ["不对"]))
     verified = apply_verification(plan, _verification_for(plan))
     piece = verified["pieces"][0]
-    piece["speaker_authority"] = "ivan_confirmed_phrase"
-    piece["speaker_evidence"][0]["authority"] = "ivan_confirmation"
+    piece["speaker_authority"] = "reviewer_confirmed_phrase"
+    piece["speaker_evidence"][0]["authority"] = "reviewer_confirmation"
     piece["speaker_evidence"][0]["coverage_ranges_ms"] = [[0, 120]]
     unsigned = dict(verified)
     unsigned.pop("verified_plan_sha256")

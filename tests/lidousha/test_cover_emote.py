@@ -46,7 +46,7 @@ def _full_text_contract() -> dict[str, object]:
     return {
         "schema_version": "lidousha-full-text-cover-contract.v1",
         "status": "AUTHORIZED",
-        "authority": "IVAN_EXPLICIT",
+        "authority": "REVIEWER_EXPLICIT",
         "scope": "FULL_TEXT_COVER",
         "cover_text_sha256": "sha256:"
         + hashlib.sha256(TALK_TEXT.encode("utf-8")).hexdigest(),

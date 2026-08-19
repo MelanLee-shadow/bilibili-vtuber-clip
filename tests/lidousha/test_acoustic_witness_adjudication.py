@@ -11,7 +11,9 @@ from src.autoslice.acoustic_witness_adjudication import (
     build_witness_request,
     judge_word_choice,
     pinyin_compatibility,
+    valid_witness_evidence,
 )
+from src.autoslice.acoustic_pinyin import neutral_syllable_count_hint
 from src.autoslice.entity_audio_verifier import (
     _verify_local_audio_request,
     _witness_prompt,
@@ -41,6 +43,7 @@ CHECK_REQUEST = {
 def _witness(heard: str, *, audible: bool = True, uncertain=()):
     return {
         "schema_version": "subtitle-span-acoustic-witness.v1",
+        "witness_protocol": "blind_pinyin",
         "status": "OBSERVED",
         "target_audible": audible,
         "heard_pinyin": heard,
@@ -58,6 +61,16 @@ def test_witness_request_strips_every_textual_channel():
         assert leak not in serialized
     assert request["matched_start_ms"] == 10_000
     assert request["source_media_timeline_offset_ms"] == 9_730
+    assert request["witness_protocol"] == "blind_pinyin"
+    assert request["syllable_count_hint"] == 6
+
+
+def test_neutral_syllable_hint_ignores_punctuation_without_biasing_length():
+    assert neutral_syllable_count_hint("你好！", "你好吗") is None
+    assert neutral_syllable_count_hint("你好！", "你好。") == 2
+    assert neutral_syllable_count_hint("你好2", "你好2") is None
+    unequal = dict(CHECK_REQUEST, current_cue="你好！", proposed_cue="你好吗")
+    assert "syllable_count_hint" not in build_witness_request(unequal)
 
 
 def test_witness_prompt_never_contains_candidates_or_hanzi_context():
@@ -100,6 +113,89 @@ def test_pinyin_wildcards_cover_declared_uncertainty():
     assert score == 1.0
 
 
+def test_legacy_sighted_witness_stays_valid_but_is_not_recomputed():
+    request = build_witness_request(CHECK_REQUEST)
+    legacy = _witness("hai mei you ge zhai ne")
+    legacy.pop("witness_protocol")
+    legacy["request_sha256"] = request["request_sha256"]
+
+    assert valid_witness_evidence(
+        legacy, request_sha256=request["request_sha256"]
+    ) is True
+    repaired, branch, audit = adjudicate_with_witness(
+        check_request=CHECK_REQUEST,
+        witness=legacy,
+        llm_call=lambda _prompt: json.dumps({"choice": "PROPOSED"}),
+    )
+
+    assert repaired is False
+    assert branch == "LEGACY_SIGHTED_WITNESS_NOT_REUSABLE"
+    assert audit["witness_protocol"] == "legacy_sighted"
+    assert "candidate_pinyin_similarity" not in audit
+
+
+def test_unknown_witness_protocol_fails_closed_before_judge():
+    witness = _witness("hai mei you ge zhai ne")
+    witness["witness_protocol"] = "future_untrusted_protocol"
+    called = False
+
+    def judge(_prompt):
+        nonlocal called
+        called = True
+        return json.dumps({"choice": "PROPOSED"})
+
+    repaired, branch, _audit = adjudicate_with_witness(
+        check_request=CHECK_REQUEST,
+        witness=witness,
+        llm_call=judge,
+    )
+
+    assert repaired is False
+    assert branch == "WITNESS_UNAVAILABLE_KEEP_CURRENT"
+    assert called is False
+
+
+def test_blind_protocol_canary_rejects_sycophantic_proposal_mismatch():
+    """A sighted echo would confirm PROPOSED; blind audio matches CURRENT."""
+
+    audio_pinyin = "hai mei you ge za ne"
+
+    def compliant_witness(request):
+        return (
+            "hai mei you ge zhai ne"
+            if "proposed_cue" in request
+            else audio_pinyin
+        )
+
+    proposed_echo = compliant_witness(CHECK_REQUEST)
+    assert pinyin_compatibility(
+        CHECK_REQUEST["proposed_cue"], heard_pinyin=proposed_echo
+    ) == 1.0
+    blind_request = build_witness_request(CHECK_REQUEST)
+    assert compliant_witness(blind_request) == audio_pinyin
+
+    prompts = []
+    repaired, branch, audit = adjudicate_with_witness(
+        check_request=CHECK_REQUEST,
+        witness=_witness(compliant_witness(blind_request)),
+        llm_call=lambda prompt: prompts.append(prompt)
+        or json.dumps(
+            {
+                "choice": "PROPOSED",
+                "reason": "semantic proposal looks fluent",
+            }
+        ),
+    )
+
+    assert repaired is False
+    assert branch == "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
+    assert audit["witness_protocol"] == "blind_pinyin"
+    assert audit["candidate_pinyin_similarity"]["current"] > audit[
+        "candidate_pinyin_similarity"
+    ]["proposed"]
+    assert "代码计算的双候选拼音贴合" in prompts[0]
+
+
 def test_judge_out_of_set_answer_is_a_refusal():
     verdict = judge_word_choice(
         llm_call=lambda prompt: json.dumps(
@@ -126,6 +222,84 @@ def test_judge_call_failure_fails_closed():
     assert branch == "JUDGE_UNCERTAIN_KEEP_CURRENT"
 
 
+def test_judge_call_retries_once_on_provider_transient_error_then_succeeds():
+    """维护者 工程优化②：真善美 zsm4 三模型均短暂 400 报废整轮候选
+    的事故——同轮内单次 provider-shaped 失败必须能自愈重试，不立刻判死。"""
+
+    attempts = {"n": 0}
+
+    def flaky(_prompt):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise RuntimeError("HTTPError: 400 Bad Request")
+        return json.dumps({"choice": "PROPOSED", "reason": "recovered"})
+
+    verdict = judge_word_choice(
+        llm_call=flaky,
+        check_request=CHECK_REQUEST,
+        witness=_witness("hai mei you ge zhai ne"),
+    )
+
+    assert attempts["n"] == 2
+    assert verdict["status"] == "JUDGED"
+    assert verdict["choice"] == "PROPOSED"
+    # source_fact_review.py house pattern: "每次重试都进回执披露" — a JUDGED
+    # verdict reached only after a provider-transient retry must not look
+    # identical to a clean first-try success, especially since it is what
+    # gets written into the judge-verdict-cache and replayed verbatim.
+    assert verdict["provider_retry_attempted"] is True
+
+
+def test_judge_call_does_not_retry_semantic_out_of_set_refusal():
+    """Retries are for provider-layer failures only; a model that answered
+    with an out-of-set choice already responded — retrying would be re-rolling
+    a semantic result, which 维护者's ruling forbids."""
+
+    attempts = {"n": 0}
+
+    def out_of_set(_prompt):
+        attempts["n"] += 1
+        return json.dumps({"choice": "还没有歌坛呢", "reason": "invented"})
+
+    verdict = judge_word_choice(
+        llm_call=out_of_set,
+        check_request=CHECK_REQUEST,
+        witness=_witness("hai mei you ge zhai ne"),
+    )
+
+    assert attempts["n"] == 1
+    assert verdict["reason_code"] == "JUDGE_CHOICE_OUT_OF_SET"
+
+
+def test_judge_call_exhausts_retry_and_preserves_full_error_cascade():
+    """Double-truncation regression: llm_client's stderr[-400:] plus the old
+    flat error[:300] threw away exactly which earlier models failed. Every
+    attempt's error must survive in ``error_cascade``, not just the tail."""
+
+    attempts = {"n": 0}
+
+    def always_fails(_prompt):
+        attempts["n"] += 1
+        raise RuntimeError(f"HTTPError: 400 Bad Request on gpt-5.6-sol attempt {attempts['n']}")
+
+    verdict = judge_word_choice(
+        llm_call=always_fails,
+        check_request=CHECK_REQUEST,
+        witness=_witness("hai mei you ge zhai ne"),
+    )
+
+    assert attempts["n"] == 2
+    assert verdict["status"] == "JUDGE_UNAVAILABLE"
+    assert verdict["reason_code"] == "JUDGE_CALL_FAILED"
+    assert verdict["provider_retry_attempted"] is True
+    cascade = verdict["error_cascade"]
+    assert len(cascade) == 2
+    assert "attempt 1" in cascade[0]
+    assert "attempt 2" in cascade[1]
+    # The old single-string field must still be present (additive schema).
+    assert "error" in verdict and isinstance(verdict["error"], str)
+
+
 def test_judge_can_reject_a_malformed_closed_set_without_mutating_text():
     repaired, branch, audit = adjudicate_with_witness(
         check_request=CHECK_REQUEST,
@@ -149,21 +323,22 @@ def test_judge_can_reject_a_malformed_closed_set_without_mutating_text():
     assert audit["judge"]["choice"] == "NEITHER"
 
 
-def test_judged_proposed_owns_decision_when_pinyin_witness_disagrees():
-    # CPA sees the dictation and still says PROPOSED; the witness cannot veto.
+def test_judged_proposed_needs_support_when_pinyin_witness_disagrees():
+    # 维护者：CPA 仍终裁，但无第三方结构化证据不得背离耳朵。
     repaired, branch, audit = adjudicate_with_witness(
         check_request=CHECK_REQUEST,
         witness=_witness("hai mei you ge za ne"),
         llm_call=lambda prompt: json.dumps({"choice": "PROPOSED"}),
     )
-    assert repaired is True
-    assert branch == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
+    assert repaired is False
+    assert branch == "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
     assert audit["witness_diagnostic_conflict"] is True
+    assert audit["witness_conflict_gate"]["status"] == "BLOCK"
     compat = audit["pinyin_compatibility"]
     assert compat["current"] > compat["proposed"]
 
 
-def test_850_cpa_choice_is_not_overturned_by_equal_low_pinyin_scores():
+def test_equal_low_pinyin_scores_need_structured_support_to_apply():
     request = {
         **CHECK_REQUEST,
         "current_cue": "请问什么打不过这 NPC",
@@ -179,8 +354,8 @@ def test_850_cpa_choice_is_not_overturned_by_equal_low_pinyin_scores():
         llm_call=lambda _prompt: json.dumps({"choice": "PROPOSED"}),
     )
 
-    assert repaired is True
-    assert branch == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
+    assert repaired is False
+    assert branch == "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
     assert audit["pinyin_compatibility"]["current"] == audit[
         "pinyin_compatibility"
     ]["proposed"]
@@ -235,10 +410,10 @@ def test_judge_verdict_cache_round_trip(tmp_path, monkeypatch):
     assert calls["n"] == 5
 
 
-def test_self_inconsistent_witness_cannot_veto_judge_choice():
+def test_self_inconsistent_witness_still_needs_third_party_support():
     """刘若莎案：听写自称 14 音节却写出对不上
-    的拼音串（self_count_mismatch），其拼音门仍把 judge 排序选中的「李豆沙」
-    压回「刘若莎」发布。自不一致的测量没有否决权——judge 的选择生效。"""
+    的拼音串（self_count_mismatch）。8/8 裁定补足边界：证人并非最终票，
+    但 CPA 背离它仍需第三方结构化证据，不能只凭语义重投一次。"""
 
     witness = {**_witness("hai mei you ge za ne"), "self_count_mismatch": True}
     repaired, branch, _ = adjudicate_with_witness(
@@ -246,10 +421,10 @@ def test_self_inconsistent_witness_cannot_veto_judge_choice():
         witness=witness,
         llm_call=lambda prompt: json.dumps({"choice": "PROPOSED"}),
     )
-    assert repaired is True
-    assert branch == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
+    assert repaired is False
+    assert branch == "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
 
-    # 删除类同样由看过证据的 CPA 拍板；AGY 自一致也不等于最终票。
+    # 删除类亦不得靠无结构化证据的语义裁决背离耳朵。
     request = {
         **CHECK_REQUEST,
         "current_cue": "我草，乱说的啊",
@@ -264,8 +439,8 @@ def test_self_inconsistent_witness_cannot_veto_judge_choice():
                  "self_count_mismatch": True},
         llm_call=lambda prompt: json.dumps({"choice": "PROPOSED"}),
     )
-    assert kept is True
-    assert branch == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
+    assert kept is False
+    assert branch == "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
 
 
 def test_judged_proposed_with_agreeing_pinyin_applies():
@@ -449,14 +624,14 @@ def test_acoustic_delete_demands_clear_pinyin_win():
     )
     assert repaired is True and branch == "WITNESS_JUDGE_APPLY_PROPOSED"
 
-    # Even conflicting pinyin cannot override CPA's explicit closed-set choice.
+    # A conflicting witness plus no independent support keeps CURRENT.
     repaired, branch, _ = adjudicate_with_witness(
         check_request=request,
         witness=_witness("wo cao luan shuo de a"),
         llm_call=lambda prompt: json.dumps({"choice": "PROPOSED"}),
     )
-    assert repaired is True
-    assert branch == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
+    assert repaired is False
+    assert branch == "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
 
 
 def test_judge_prompt_carries_witness_and_closed_set():

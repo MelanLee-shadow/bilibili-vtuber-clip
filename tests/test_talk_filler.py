@@ -30,19 +30,19 @@ def test_reviewed_july18_talk05_plan_reproduces_all_three_jumps():
                 "start_ms": 559_670,
                 "end_ms": 569_730,
                 "reason": "gift_thanks",
-                "authority": "ivan_reviewed_2026-07-18",
+                "authority": "reviewer_reviewed_2026-07-18",
             },
             {
                 "start_ms": 603_170,
                 "end_ms": 611_530,
                 "reason": "gift_thanks",
-                "authority": "ivan_reviewed_2026-07-18",
+                "authority": "reviewer_reviewed_2026-07-18",
             },
             {
                 "start_ms": 638_270,
                 "end_ms": 650_250,
                 "reason": "gift_thanks",
-                "authority": "ivan_reviewed_2026-07-18",
+                "authority": "reviewer_reviewed_2026-07-18",
             },
         ],
     )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -16,6 +17,13 @@ def _executable(path: Path, text: str) -> Path:
     return path
 
 
+def _proc_locks_key(path: Path) -> str:
+    """Reproduce the kernel's ``%02x:%02x:%lu`` MAJ:MIN:INODE key for a file."""
+    info = path.stat()
+    dev_hex = format(info.st_dev, "x").rjust(4, "0")
+    return f"{dev_hex[:-2]}:{dev_hex[-2:]}:{info.st_ino}"
+
+
 def _run_watchdog(
     tmp_path: Path,
     *,
@@ -23,9 +31,57 @@ def _run_watchdog(
     permanently_non_fuse: str = "",
     fallback_file: bool = False,
     probe_only: bool = False,
+    heartbeat_age_s: int | None = None,
+    disabled: bool = False,
+    lock_holder_cmd: str = "",
+    stall_after_s: int = 3600,
 ) -> tuple[subprocess.CompletedProcess[str], str, Path]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
+    base = tmp_path / "autoslice"
+    (base / "reports").mkdir(parents=True)
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    proc_locks = proc_root / "locks"
+    proc_locks.write_text("", encoding="utf-8")
+    if heartbeat_age_s is not None:
+        heartbeat = base / "reports" / "heartbeat.txt"
+        heartbeat.write_text("live=True source=ok\n", encoding="utf-8")
+        stamp = heartbeat.stat().st_mtime - heartbeat_age_s
+        os.utime(heartbeat, (stamp, stamp))
+    if disabled:
+        (base / "DISABLED").touch()
+    if lock_holder_cmd:
+        lock = base / "runner.lock"
+        lock.touch()
+        holder = proc_root / "424242"
+        holder.mkdir()
+        (holder / "cmdline").write_bytes(
+            b"\0".join(part.encode() for part in lock_holder_cmd.split(" ")) + b"\0"
+        )
+        proc_locks.write_text(
+            "1: POSIX  ADVISORY  READ 11 00:01:99 0 EOF\n"
+            f"2: FLOCK  ADVISORY  WRITE 424242 {_proc_locks_key(lock)} 0 EOF\n",
+            encoding="utf-8",
+        )
+    _executable(
+        fake_bin / "fake-stat",
+        """#!/usr/bin/env python3
+import os
+import sys
+
+args = sys.argv[1:]
+if args[0] != "-c":
+    sys.exit(2)
+fmt, path = args[1], args[2]
+info = os.stat(path)
+print(
+    fmt.replace("%Y", str(int(info.st_mtime)))
+    .replace("%D", format(info.st_dev, "x"))
+    .replace("%i", str(info.st_ino))
+)
+""",
+    )
     mount = tmp_path / "mount"
     probe_dir = mount / "live-streaming"
     probe_dir.mkdir(parents=True)
@@ -148,7 +204,11 @@ exit 1
         "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
         "AUTOSLICE_WATCHDOG_MOUNT": str(mount),
         "AUTOSLICE_WATCHDOG_PROBE_DIR": str(probe_dir),
-        "AUTOSLICE_WATCHDOG_BASE": str(tmp_path / "autoslice"),
+        "AUTOSLICE_WATCHDOG_BASE": str(base),
+        "AUTOSLICE_WATCHDOG_STAT_BIN": str(fake_bin / "fake-stat"),
+        "AUTOSLICE_WATCHDOG_PROC_LOCKS": str(proc_locks),
+        "AUTOSLICE_WATCHDOG_PROC_ROOT": str(proc_root),
+        "AUTOSLICE_WATCHDOG_STALL_AFTER_S": str(stall_after_s),
         "AUTOSLICE_WATCHDOG_COOLDOWN_S": "0",
         "AUTOSLICE_WATCHDOG_MOUNT_RETRIES": "2",
         "AUTOSLICE_WATCHDOG_RECORDER_RETRIES": "2",
@@ -241,3 +301,106 @@ def test_watchdog_fails_closed_when_a_consumer_sees_non_fuse_storage(
     assert completed.returncode == 1
     assert "one or more consumers do not see a FUSE recording path" in completed.stdout
     assert f"exec {failed_consumer} stat -f -c %T" in calls
+
+
+def _stall_alert(tmp_path: Path) -> Path:
+    return tmp_path / "autoslice" / "reports" / "ALERT_RUNNER_STALLED.txt"
+
+
+def test_watchdog_alerts_on_starved_runner_and_names_the_lock_holder(tmp_path):
+    """根因面：runner.lock 被外部进程占住七小时，每个 cron tick 都被
+    `flock -n` 静默弹回——没有日志、没有心跳、没有告警。心跳年龄是饥饿时唯一
+    还能说话的信号，而 /proc/locks 能把凶手的 pid/cmdline 当场记下来。"""
+
+    completed, _, _ = _run_watchdog(
+        tmp_path,
+        mount_real=True,
+        heartbeat_age_s=7 * 3600,
+        lock_holder_cmd="/usr/bin/python3 rogue_deploy_step.py",
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    alert = _stall_alert(tmp_path).read_text(encoding="utf-8")
+    assert "runner STALLED" in alert
+    # 心跳年龄由 watchdog 在**运行时**重新计算（now - mtime），而 mtime 是在
+    # fixture 里按 now-25200 钉的：两个 now 之间只要跨过一次整秒边界，报出来
+    # 的就是 25201s。原先断言字面量 "25200s old"，因此是一条按秒竞态的 flaky
+    # 用例——它在 的部署门上真的红过一次，挡下了一次全绿的部署。
+    # 改为断言"报了年龄且量级正确"，保留原意（饥饿时心跳年龄是唯一信号），
+    # 去掉竞态。
+    stall_age = re.search(r"heartbeat (\d+)s old", alert)
+    assert stall_age is not None, alert
+    assert 7 * 3600 <= int(stall_age.group(1)) <= 7 * 3600 + 30, alert
+    assert "pid=424242" in alert
+    assert "rogue_deploy_step.py" in alert
+    assert "NEEDS HUMAN" in alert
+
+
+def test_watchdog_stall_alert_still_fires_when_no_holder_is_identifiable(tmp_path):
+    completed, _, _ = _run_watchdog(
+        tmp_path,
+        mount_real=True,
+        heartbeat_age_s=7200,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    alert = _stall_alert(tmp_path).read_text(encoding="utf-8")
+    assert "runner STALLED" in alert
+    assert "cron itself may be dead" in alert
+
+
+def test_watchdog_stays_quiet_while_the_runner_is_deliberately_paused(tmp_path):
+    """部署/人工停拍会立 DISABLED——那不是饥饿，报警会变成狼来了。"""
+
+    completed, _, _ = _run_watchdog(
+        tmp_path,
+        mount_real=True,
+        heartbeat_age_s=7 * 3600,
+        disabled=True,
+        lock_holder_cmd="/usr/bin/python3 rogue_deploy_step.py",
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert not _stall_alert(tmp_path).exists()
+
+
+def test_watchdog_stays_quiet_on_a_fresh_heartbeat(tmp_path):
+    completed, _, _ = _run_watchdog(
+        tmp_path,
+        mount_real=True,
+        heartbeat_age_s=120,
+        lock_holder_cmd="/usr/bin/python3 legitimate_tick.py",
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert not _stall_alert(tmp_path).exists()
+
+
+def test_watchdog_probe_only_never_touches_the_stall_lane(tmp_path):
+    """--probe-only 是 record-health cron 的轻探针；它不该产生告警副作用。"""
+
+    completed, _, _ = _run_watchdog(
+        tmp_path,
+        mount_real=True,
+        probe_only=True,
+        heartbeat_age_s=7 * 3600,
+    )
+
+    assert completed.returncode == 0
+    assert not _stall_alert(tmp_path).exists()
+
+
+def test_watchdog_does_not_cry_wolf_over_the_runners_own_marathon_tick(tmp_path):
+    """心跳只在 tick 结束时写，而健康的马拉松批次能跑两小时（8/9 实况
+    09:40→11:42）。锁在 runner 自己手里 = 在干活，不是饥饿。"""
+
+    completed, _, _ = _run_watchdog(
+        tmp_path,
+        mount_real=True,
+        heartbeat_age_s=2 * 3600,
+        lock_holder_cmd="/usr/bin/python3 scripts/session_autoslice.py --once",
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "working, not starved" in completed.stdout
+    assert not _stall_alert(tmp_path).exists()

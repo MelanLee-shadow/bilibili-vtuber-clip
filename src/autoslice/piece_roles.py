@@ -39,6 +39,28 @@ def last_content_piece_index(pieces: Sequence[Mapping[str, object]]) -> int:
     raise ValueError("PIECES_HAVE_NO_CONTENT_PIECE")
 
 
+def single_content_piece_index(
+    pieces: Sequence[Mapping[str, object]],
+) -> int:
+    """Index of the sole content piece when every later piece is reserve.
+
+    Exact single-recording authorities may bind a delivery backed by one
+    content piece even when the boundary reviewer appended cross-recording
+    witness reserve.  A real second content piece remains ambiguous, and a
+    reserve before content violates the append-only reserve contract.
+    """
+
+    content_indexes = [
+        index for index, piece in enumerate(pieces) if not is_reserve_piece(piece)
+    ]
+    if len(content_indexes) != 1:
+        raise ValueError("PIECES_REQUIRE_EXACTLY_ONE_CONTENT_PIECE")
+    content_index = content_indexes[0]
+    if content_index != 0:
+        raise ValueError("BOUNDARY_WITNESS_RESERVE_MUST_TRAIL_CONTENT")
+    return content_index
+
+
 def content_only(
     pieces: Sequence[Mapping[str, object]],
     parallel: Sequence[object],

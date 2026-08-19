@@ -13,12 +13,31 @@ from src.autoslice.acoustic_witness_adjudication import (
     valid_inaudible_drop_repair,
     valid_inaudible_override_repair,
 )
+from src.autoslice.boundary_semantic_review import (
+    boundary_search_scope_is_valid,
+)
+from src.autoslice.channel_profile import (
+    load_channel_profile as _load_channel_profile,
+)
 from src.autoslice.producer_boundary_owner_contract import (
     validate_frozen_boundary_owner_contract,
+)
+from src.autoslice.redelivery_boundary_projection import (
+    AUTHORITY_CONFIG_KEY,
+    MATERIALIZATION_SCHEMA_VERSION,
+    RedeliveryBoundaryProjectionError,
+    projection_scope_binding,
+    validate_terminal_projection_authority,
 )
 from src.autoslice.source_subtitle_truth import (
     BOUNDARY_OWNER_LEAD_TOLERANCE_MS,
     source_truth_owner_windows,
+)
+from src.autoslice.reviewed_exact_source_interval import (
+    FROZEN_CONTRACT_KEY as EXACT_INTERVAL_FROZEN_CONTRACT_KEY,
+    RUNTIME_CONFIG_KEY as EXACT_INTERVAL_RUNTIME_CONFIG_KEY,
+    ReviewedExactSourceIntervalError,
+    validate_runtime_authority as validate_exact_interval_authority,
 )
 
 
@@ -36,11 +55,9 @@ SOURCE_TRUTH_SUCCESS_STATUSES = {
     "APPLIED",
     "ALREADY_SATISFIED",
 }
-from src.autoslice.channel_profile import load_channel_profile as _load_channel_profile
-
-SOURCE_TRUTH_LEDGER_PATH = _load_channel_profile(
-    Path(__file__).resolve().parents[2]
-).asset_file("subtitle_truth_ledger")
+SOURCE_TRUTH_LEDGER_PATH = _load_channel_profile(Path(__file__).resolve().parents[2]).asset_file(
+    "subtitle_truth_ledger"
+)
 
 
 def _strict_int(value: object) -> bool:
@@ -52,9 +69,7 @@ def _strict_nonnegative_int(value: object) -> bool:
 
 
 def _is_sha256(value: object) -> bool:
-    return isinstance(value, str) and bool(
-        re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", value)
-    )
+    return isinstance(value, str) and bool(re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", value))
 
 
 def _normalized_windows(
@@ -74,9 +89,7 @@ def _normalized_windows(
             or int(end_ms) <= int(start_ms)
         ):
             return None
-        normalized.append(
-            {"start_ms": int(start_ms), "end_ms": int(end_ms)}
-        )
+        normalized.append({"start_ms": int(start_ms), "end_ms": int(end_ms)})
     return sorted(
         normalized,
         key=lambda window: (window["start_ms"], window["end_ms"]),
@@ -161,9 +174,7 @@ def _context_only_row_valid(
         and isinstance(row_windows, list)
         and all(
             isinstance(window, Mapping)
-            and str(window.get("delivery_relation") or "").startswith(
-                "OUTSIDE_"
-            )
+            and str(window.get("delivery_relation") or "").startswith("OUTSIDE_")
             for window in row_windows
         )
         and all(
@@ -192,9 +203,7 @@ def _package_source_pieces(provenance: object) -> list[tuple[str, int, int]]:
         end = final_recut.get("absolute_source_end_ms")
         rows = raw if isinstance(raw, list) else [raw]
         first = rows[0] if rows else None
-        source_path = (
-            first.get("source_path") if isinstance(first, Mapping) else None
-        )
+        source_path = first.get("source_path") if isinstance(first, Mapping) else None
         if (
             _strict_int(start)
             and _strict_int(end)
@@ -250,9 +259,7 @@ def _ledger_progression_equivalent(
     try:
         import json as _json
 
-        document = _json.loads(
-            SOURCE_TRUTH_LEDGER_PATH.read_text(encoding="utf-8")
-        )
+        document = _json.loads(SOURCE_TRUTH_LEDGER_PATH.read_text(encoding="utf-8"))
         entries = document.get("entries")
         aliases_raw = document.get("source_aliases") or []
         if not isinstance(entries, list) or not isinstance(aliases_raw, list):
@@ -286,8 +293,7 @@ def _ledger_progression_equivalent(
                 if entry_name not in (piece_name, canonical_piece):
                     continue
                 if (
-                    max(int(entry_start), piece_start)
-                    < min(int(entry_end), piece_end)
+                    max(int(entry_start), piece_start) < min(int(entry_end), piece_end)
                     and str(entry.get("truth_id") or "") not in known
                 ):
                     return False
@@ -309,8 +315,7 @@ def _source_truth_audit_valid(
     status = truth_audit.get("status")
     try:
         ledger_sha256 = (
-            "sha256:"
-            + hashlib.sha256(SOURCE_TRUTH_LEDGER_PATH.read_bytes()).hexdigest()
+            "sha256:" + hashlib.sha256(SOURCE_TRUTH_LEDGER_PATH.read_bytes()).hexdigest()
         )
     except OSError:
         return False
@@ -323,9 +328,7 @@ def _source_truth_audit_valid(
         if not (
             isinstance(recorded, str)
             and recorded.startswith("sha256:")
-            and _ledger_progression_equivalent(
-                truth_audit, provenance=provenance
-            )
+            and _ledger_progression_equivalent(truth_audit, provenance=provenance)
         ):
             return False
     if not (
@@ -335,8 +338,7 @@ def _source_truth_audit_valid(
         and isinstance(satisfied, list)
         and failures == []
         and isinstance(truth_audit.get("ledger_path"), str)
-        and Path(str(truth_audit["ledger_path"])).name
-        == SOURCE_TRUTH_LEDGER_PATH.name
+        and Path(str(truth_audit["ledger_path"])).name == SOURCE_TRUTH_LEDGER_PATH.name
     ):
         return False
     if not all(
@@ -344,8 +346,7 @@ def _source_truth_audit_valid(
         and isinstance(row.get("truth_id"), str)
         and bool(row.get("truth_id"))
         and isinstance(row.get("required"), bool)
-        and row.get("boundary_role")
-        in {"story_content", "next_topic_witness"}
+        and row.get("boundary_role") in {"story_content", "next_topic_witness"}
         and _normalized_windows(row.get("local_windows")) is not None
         for row in [*applied, *satisfied]
     ):
@@ -387,10 +388,7 @@ def _final_truth_owner_receipt_valid(
         and _strict_nonnegative_int(delivery_start)
         and _strict_nonnegative_int(delivery_end)
         and int(delivery_end) > int(delivery_start)
-        and all(
-            _strict_nonnegative_int(truth_owner.get(key))
-            for key in count_keys
-        )
+        and all(_strict_nonnegative_int(truth_owner.get(key)) for key in count_keys)
     ):
         return False
 
@@ -417,22 +415,15 @@ def _final_truth_owner_receipt_valid(
             )
             rows_valid = rows_valid and valid
             final_delivery_windows += window_count
-        elif (
-            row.get("final_owner_scope")
-            == "CONTEXT_ONLY_OUTSIDE_FINAL_DELIVERY"
-        ):
+        elif row.get("final_owner_scope") == "CONTEXT_ONLY_OUTSIDE_FINAL_DELIVERY":
             context_only_rows += 1
             context_only_truth_ids.append(str(row.get("truth_id") or ""))
             context_only_truth_evidence.append(
                 {
                     "truth_id": str(row.get("truth_id") or ""),
-                    "boundary_role": str(
-                        row.get("boundary_role") or ""
-                    ),
+                    "boundary_role": str(row.get("boundary_role") or ""),
                     "final_owner_scope": row.get("final_owner_scope"),
-                    "final_owner_windows": row.get(
-                        "final_owner_windows"
-                    ),
+                    "final_owner_windows": row.get("final_owner_windows"),
                 }
             )
             rows_valid = rows_valid and _context_only_row_valid(
@@ -445,20 +436,14 @@ def _final_truth_owner_receipt_valid(
             rows_valid = False
     return bool(
         rows_valid
-        and truth_owner.get("required_truth_row_count")
-        == final_delivery_rows
+        and truth_owner.get("required_truth_row_count") == final_delivery_rows
         and truth_owner.get("required_truth_ids") == required_truth_ids
-        and truth_owner.get("context_only_truth_row_count")
-        == context_only_rows
-        and truth_owner.get("context_only_truth_ids")
-        == context_only_truth_ids
-        and truth_owner.get("context_only_truth_evidence")
-        == context_only_truth_evidence
-        and truth_owner.get("optional_truth_row_count")
-        == optional_truth_row_count
+        and truth_owner.get("context_only_truth_row_count") == context_only_rows
+        and truth_owner.get("context_only_truth_ids") == context_only_truth_ids
+        and truth_owner.get("context_only_truth_evidence") == context_only_truth_evidence
+        and truth_owner.get("optional_truth_row_count") == optional_truth_row_count
         and truth_owner.get("straddling_truth_row_count") == 0
-        and truth_owner.get("required_window_count")
-        == final_delivery_windows
+        and truth_owner.get("required_window_count") == final_delivery_windows
         and final_delivery_rows + context_only_rows == len(truth_rows)
     )
 
@@ -468,11 +453,7 @@ def _candidate_owner_scope(
     frozen: object,
     record: Mapping[str, object],
 ) -> tuple[bool, int, int, Mapping[str, object] | None]:
-    owner_scope = (
-        frozen.get("owner_eligibility_scope")
-        if isinstance(frozen, Mapping)
-        else None
-    )
+    owner_scope = frozen.get("owner_eligibility_scope") if isinstance(frozen, Mapping) else None
     if not isinstance(owner_scope, Mapping):
         return False, -1, -1, None
     fields = {
@@ -488,21 +469,13 @@ def _candidate_owner_scope(
             "prior_piece_duration_ms",
         )
     }
-    required_values = [
-        value
-        for key, value in fields.items()
-        if key != "given_source_end_ms"
-    ]
+    required_values = [value for key, value in fields.items() if key != "given_source_end_ms"]
     if not (
-        owner_scope.get("schema_version")
-        == "candidate-boundary-owner-scope.v1"
+        owner_scope.get("schema_version") == "candidate-boundary-owner-scope.v1"
         and isinstance(owner_scope.get("candidate_id"), str)
         and bool(str(owner_scope.get("candidate_id") or ""))
         and all(_strict_int(value) for value in required_values)
-        and (
-            fields["given_source_end_ms"] is None
-            or _strict_int(fields["given_source_end_ms"])
-        )
+        and (fields["given_source_end_ms"] is None or _strict_int(fields["given_source_end_ms"]))
     ):
         return False, -1, -1, owner_scope
     story_start = int(fields["story_start_ms"])
@@ -585,14 +558,11 @@ def _source_truth_owner_set_valid(
             continue
         seen_ids.add(truth_id)
         fully_inside = all(
-            story_start <= window["start_ms"]
-            and window["end_ms"] <= story_end
+            story_start <= window["start_ms"] and window["end_ms"] <= story_end
             for window in windows
         )
         overlaps = any(
-            min(window["end_ms"], story_end)
-            - max(window["start_ms"], story_start)
-            > 0
+            min(window["end_ms"], story_end) - max(window["start_ms"], story_start) > 0
             for window in windows
         )
         if role == "next_topic_witness":
@@ -604,15 +574,12 @@ def _source_truth_owner_set_valid(
         if not fully_inside:
             continue
         expected_ids.add(truth_id)
-        owner = frozen_owner_by_key.get(
-            ("source_subtitle_truth", truth_id)
-        )
+        owner = frozen_owner_by_key.get(("source_subtitle_truth", truth_id))
         if not (
             isinstance(owner, Mapping)
             and owner.get("required") is True
             and isinstance(owner_scope, Mapping)
-            and owner.get("owner_scope_sha256")
-            == owner_scope.get("scope_sha256")
+            and owner.get("owner_scope_sha256") == owner_scope.get("scope_sha256")
             and owner.get("source_start_ms") == row.get("source_start_ms")
             and owner.get("source_end_ms") == row.get("source_end_ms")
             and _normalized_windows(owner.get("local_windows")) == windows
@@ -655,8 +622,7 @@ def _story_owner_set_valid(
                 if (
                     owner_kind == "entity_repair"
                     and isinstance(reconciliation, Mapping)
-                    and reconciliation.get("schema_version")
-                    == "exact-final-cpa-supersession.v1"
+                    and reconciliation.get("schema_version") == "exact-final-cpa-supersession.v1"
                 ):
                     valid = valid and (
                         _exact_final_superseded_boundary_owner_valid(
@@ -667,20 +633,14 @@ def _story_owner_set_valid(
                     )
                 else:
                     continue
-            if (
-                owner_kind == "entity_repair"
-                and row.get("mode") == "exact_final_cpa_self_heal"
-            ):
+            if owner_kind == "entity_repair" and row.get("mode") == "exact_final_cpa_self_heal":
                 valid = valid and _post_boundary_freeze_surface_owner_valid(
                     row=row,
                     row_index=ordinal - 1,
                     chat_authority=chat_authority,
                 )
                 continue
-            if (
-                owner_kind == "exact_read"
-                and row.get("owner_eligible") is not True
-            ):
+            if owner_kind == "exact_read" and row.get("owner_eligible") is not True:
                 valid = valid and bool(
                     row.get("boundary_required") is False
                     and row.get("boundary_owner_rejection")
@@ -689,29 +649,20 @@ def _story_owner_set_valid(
                 continue
             start = row.get("matched_start_ms")
             end = row.get("matched_end_ms")
-            if (
-                not _strict_nonnegative_int(start)
-                or not _strict_int(end)
-                or int(end) <= int(start)
-            ):
+            if not _strict_nonnegative_int(start) or not _strict_int(end) or int(end) <= int(start):
                 valid = valid and row.get("boundary_required") is not True
                 continue
-            overlap_ms = (
-                min(int(end), story_end)
-                - max(int(start), story_start)
-            )
+            overlap_ms = min(int(end), story_end) - max(int(start), story_start)
             if overlap_ms <= 0:
                 valid = valid and bool(
                     row.get("boundary_required") is False
-                    and row.get("boundary_owner_rejection")
-                    == "OUTSIDE_IMMUTABLE_STORY_SCOPE"
+                    and row.get("boundary_owner_rejection") == "OUTSIDE_IMMUTABLE_STORY_SCOPE"
                 )
                 continue
             if not story_start <= int(start) < int(end) <= story_end:
                 valid = valid and bool(
                     row.get("boundary_required") is False
-                    and row.get("boundary_owner_rejection")
-                    == "STRADDLES_IMMUTABLE_STORY_SCOPE"
+                    and row.get("boundary_owner_rejection") == "STRADDLES_IMMUTABLE_STORY_SCOPE"
                 )
                 continue
             owner_id = str(
@@ -720,9 +671,7 @@ def _story_owner_set_valid(
                 or f"{owner_kind}:{ordinal}:{start}:{end}"
             )
             owner_key = (owner_kind, owner_id)
-            expected_windows = [
-                {"start_ms": int(start), "end_ms": int(end)}
-            ]
+            expected_windows = [{"start_ms": int(start), "end_ms": int(end)}]
             if owner_key in expected:
                 valid = False
             expected[owner_key] = expected_windows
@@ -732,8 +681,7 @@ def _story_owner_set_valid(
                 and row.get("boundary_owner_id") == owner_id
                 and isinstance(owner, Mapping)
                 and owner.get("required") is True
-                and _normalized_windows(owner.get("local_windows"))
-                == expected_windows
+                and _normalized_windows(owner.get("local_windows")) == expected_windows
             )
     story_kinds = {kind for kind, _ in STORY_OWNER_GROUPS}
     frozen = {
@@ -757,8 +705,7 @@ def _exact_final_superseded_boundary_owner_valid(
         return False
     repair_sha256 = reconciliation.get("exact_final_repair_sha256")
     if not (
-        reconciliation.get("schema_version")
-        == "exact-final-cpa-supersession.v1"
+        reconciliation.get("schema_version") == "exact-final-cpa-supersession.v1"
         and reconciliation.get("status") == "SUPERSEDED_BY_EXACT_FINAL_CPA"
         and reconciliation.get("timing_immutable") is True
         and _is_sha256(repair_sha256)
@@ -767,9 +714,7 @@ def _exact_final_superseded_boundary_owner_valid(
     ):
         return False
 
-    registrations = chat_authority.get(
-        "exact_final_cpa_surface_registrations"
-    )
+    registrations = chat_authority.get("exact_final_cpa_surface_registrations")
     entity_rows = chat_authority.get("entity_repairs")
     if not isinstance(registrations, list) or not isinstance(entity_rows, list):
         return False
@@ -777,8 +722,7 @@ def _exact_final_superseded_boundary_owner_valid(
         registration
         for registration in registrations
         if isinstance(registration, Mapping)
-        and registration.get("schema_version")
-        == "exact-final-cpa-surface-registration.v1"
+        and registration.get("schema_version") == "exact-final-cpa-surface-registration.v1"
         and registration.get("status") == "REGISTERED"
         and registration.get("exact_final_repair_sha256") == repair_sha256
         and isinstance(registration.get("superseded_entity_repair_indexes"), list)
@@ -805,9 +749,7 @@ def _exact_final_superseded_boundary_owner_valid(
             else predecessor_after
         )
     successor_text = (
-        successor.get("structured_exact_text")
-        if isinstance(successor, Mapping)
-        else None
+        successor.get("structured_exact_text") if isinstance(successor, Mapping) else None
     )
     successor_is_typed_drop = bool(
         isinstance(successor, Mapping)
@@ -821,11 +763,9 @@ def _exact_final_superseded_boundary_owner_valid(
         and isinstance(successor_text, str)
         and (successor_text or successor_is_typed_drop)
         and reconciliation.get("before_sha256")
-        == "sha256:"
-        + hashlib.sha256(predecessor_text.encode("utf-8")).hexdigest()
+        == "sha256:" + hashlib.sha256(predecessor_text.encode("utf-8")).hexdigest()
         and reconciliation.get("after_sha256")
-        == "sha256:"
-        + hashlib.sha256(successor_text.encode("utf-8")).hexdigest()
+        == "sha256:" + hashlib.sha256(successor_text.encode("utf-8")).hexdigest()
         and successor.get("matched_start_ms") == row.get("matched_start_ms")
         and successor.get("matched_end_ms") == row.get("matched_end_ms")
         and successor.get("exact_final_repair_sha256") == repair_sha256
@@ -865,31 +805,23 @@ def _post_boundary_freeze_surface_owner_valid(
         row.get("decision_authority") == "CPA_JUDGE"
         and row.get("timing_immutable") is True
         and row.get("boundary_required") is False
-        and row.get("boundary_owner_rejection")
-        == "POST_BOUNDARY_FREEZE_FINAL_SURFACE_OWNER"
+        and row.get("boundary_owner_rejection") == "POST_BOUNDARY_FREEZE_FINAL_SURFACE_OWNER"
         and _is_sha256(repair_sha256)
         and isinstance(mutation, Mapping)
-        and mutation.get("schema_version")
-        == "subtitle-correction-mutation-authority.v1"
+        and mutation.get("schema_version") == "subtitle-correction-mutation-authority.v1"
         and mutation.get("status") == "PASS"
-        and (
-            not inaudible_nonempty
-            or valid_inaudible_override_repair(row)
-        )
+        and (not inaudible_nonempty or valid_inaudible_override_repair(row))
     ):
         return False
 
-    registrations = chat_authority.get(
-        "exact_final_cpa_surface_registrations"
-    )
+    registrations = chat_authority.get("exact_final_cpa_surface_registrations")
     if not isinstance(registrations, list):
         return False
     matching_registrations = [
         registration
         for registration in registrations
         if isinstance(registration, Mapping)
-        and registration.get("schema_version")
-        == "exact-final-cpa-surface-registration.v1"
+        and registration.get("schema_version") == "exact-final-cpa-surface-registration.v1"
         and registration.get("status") == "REGISTERED"
         and registration.get("owner_entity_repair_index") == row_index
         and registration.get("exact_final_repair_sha256") == repair_sha256
@@ -901,8 +833,7 @@ def _post_boundary_freeze_surface_owner_valid(
     passes = self_heal.get("passes") if isinstance(self_heal, Mapping) else None
     if not (
         isinstance(self_heal, Mapping)
-        and self_heal.get("schema_version")
-        == "exact-final-cpa-self-heal-audit.v1"
+        and self_heal.get("schema_version") == "exact-final-cpa-self-heal-audit.v1"
         and self_heal.get("status") == "PASS"
         and isinstance(passes, list)
     ):
@@ -915,14 +846,17 @@ def _post_boundary_freeze_surface_owner_valid(
         for repair in repairs:
             if not isinstance(repair, Mapping):
                 return False
-            digest = "sha256:" + hashlib.sha256(
-                json.dumps(
-                    repair,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode("utf-8")
-            ).hexdigest()
+            digest = (
+                "sha256:"
+                + hashlib.sha256(
+                    json.dumps(
+                        repair,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
+            )
             if digest == repair_sha256:
                 matching_receipts.append(repair)
     return len(matching_receipts) == 1
@@ -941,8 +875,7 @@ def _retry_verification_valid(
         and receipt.get("status") == "PASS"
         and _is_sha256(receipt.get("expected_contract_sha256"))
         and isinstance(owner_scope, Mapping)
-        and receipt.get("owner_eligibility_scope_sha256")
-        == owner_scope.get("scope_sha256")
+        and receipt.get("owner_eligibility_scope_sha256") == owner_scope.get("scope_sha256")
     ):
         return False
     if frozen.get("deterministic_owner_set_sha256") is None:
@@ -965,9 +898,7 @@ def _frozen_owner_contract_valid(
     chat_authority: Mapping[str, object],
     record: Mapping[str, object],
 ) -> tuple[bool, list[object] | None]:
-    owners = (
-        frozen.get("owners") if isinstance(frozen, Mapping) else None
-    )
+    owners = frozen.get("owners") if isinstance(frozen, Mapping) else None
     owner_keys = [
         (
             str(owner.get("owner_kind") or ""),
@@ -984,8 +915,8 @@ def _frozen_owner_contract_valid(
         for owner in (owners or [])
         if isinstance(owner, Mapping)
     }
-    scope_valid, story_start, story_end, owner_scope = (
-        _candidate_owner_scope(frozen=frozen, record=record)
+    scope_valid, story_start, story_end, owner_scope = _candidate_owner_scope(
+        frozen=frozen, record=record
     )
     try:
         validate_frozen_boundary_owner_contract(frozen)
@@ -1049,17 +980,11 @@ def _boundary_attestation_valid(
 ) -> bool:
     if not isinstance(boundary_audit, Mapping):
         return False
-    owner_verification = boundary_audit.get(
-        "required_boundary_owner_verification"
-    )
-    coverage_verification = boundary_audit.get(
-        "delivery_coverage_verification"
-    )
+    owner_verification = boundary_audit.get("required_boundary_owner_verification")
+    coverage_verification = boundary_audit.get("delivery_coverage_verification")
     return bool(
-        boundary_audit.get("frozen_required_boundary_owner_count")
-        == len(frozen_owners or [])
-        and boundary_audit.get("frozen_required_boundary_owners")
-        == frozen_owners
+        boundary_audit.get("frozen_required_boundary_owner_count") == len(frozen_owners or [])
+        and boundary_audit.get("frozen_required_boundary_owners") == frozen_owners
         and isinstance(owner_verification, Mapping)
         and owner_verification.get("status") == "PASS"
         and owner_verification.get("failures") == []
@@ -1067,14 +992,9 @@ def _boundary_attestation_valid(
         and coverage_verification.get("status") == "PASS"
         and coverage_verification.get("failure") is None
         and _strict_nonnegative_int(
-            chat_authority.get(
-                "final_boundary_required_exclusion_count", 0
-            )
+            chat_authority.get("final_boundary_required_exclusion_count", 0)
         )
-        and chat_authority.get(
-            "final_boundary_required_exclusion_count", 0
-        )
-        == 0
+        and chat_authority.get("final_boundary_required_exclusion_count", 0) == 0
     )
 
 
@@ -1093,43 +1013,234 @@ def _final_decision_coverage_valid(
         "final_required_redelivery_baseline_owner_count",
         "final_required_decision_count",
     )
-    if not all(
-        _strict_nonnegative_int(chat_authority.get(key))
-        for key in keys
-    ):
+    if not all(_strict_nonnegative_int(chat_authority.get(key)) for key in keys):
         return False
-    truth_owner = chat_authority.get(
-        "final_source_truth_owner_verification"
-    )
+    truth_owner = chat_authority.get("final_source_truth_owner_verification")
     source_count = (
-        truth_owner.get("required_window_count")
-        if isinstance(truth_owner, Mapping)
-        else None
+        truth_owner.get("required_window_count") if isinstance(truth_owner, Mapping) else None
     )
     baseline_count = (
         baseline_owner.get("required_mapping_count")
         if isinstance(baseline_audit, Mapping)
-        and baseline_audit.get("status")
-        in {"APPLIED", "ALREADY_SATISFIED"}
+        and baseline_audit.get("status") in {"APPLIED", "ALREADY_SATISFIED"}
         and isinstance(baseline_owner, Mapping)
         else 0
     )
-    legacy_count = int(
-        chat_authority["final_required_legacy_decision_count"]
-    )
+    legacy_count = int(chat_authority["final_required_legacy_decision_count"])
     return bool(
         _strict_nonnegative_int(source_count)
         and _strict_nonnegative_int(baseline_count)
-        and chat_authority.get(
-            "final_required_source_truth_owner_count"
-        )
-        == source_count
-        and chat_authority.get(
-            "final_required_redelivery_baseline_owner_count"
-        )
-        == baseline_count
+        and chat_authority.get("final_required_source_truth_owner_count") == source_count
+        and chat_authority.get("final_required_redelivery_baseline_owner_count") == baseline_count
         and chat_authority.get("final_required_decision_count")
         == legacy_count + int(source_count) + int(baseline_count)
+    )
+
+
+def _terminal_projection_materialization_valid(
+    *,
+    frozen: object,
+    baseline_audit: object,
+    source_review: object,
+) -> bool:
+    exact_raw = (
+        frozen.get(EXACT_INTERVAL_FROZEN_CONTRACT_KEY) if isinstance(frozen, Mapping) else None
+    )
+    if exact_raw is not None:
+        # This is the mutually exclusive P0 authority branch.  Its package
+        # materialization is checked directly; an ordinary terminal
+        # projection appearing beside it is ambiguity and therefore invalid.
+        if isinstance(frozen, Mapping) and frozen.get(AUTHORITY_CONFIG_KEY) is not None:
+            return False
+        try:
+            exact = validate_exact_interval_authority(exact_raw)
+        except ReviewedExactSourceIntervalError:
+            return False
+        try:
+            from src.autoslice.reviewed_subtitle_baseline_registry import (
+                ReviewedSubtitleBaselineRegistryError,
+                load_candidate_reviewed_subtitle_baseline,
+            )
+
+            profile = _load_channel_profile(Path(__file__).resolve().parents[2])
+            registered = load_candidate_reviewed_subtitle_baseline(
+                profile.asset_directory("reviewed_subtitle_baselines"),
+                str(exact.get("candidate_id") or ""),
+                repo_root=Path(__file__).resolve().parents[2],
+            )
+        except ReviewedSubtitleBaselineRegistryError:
+            return False
+        if (
+            registered is None
+            or registered.exact_interval_authority is None
+            or exact != registered.exact_interval_authority
+        ):
+            return False
+        source = exact["source"]
+        subtitle = exact["reviewed_subtitle"]
+        terminal = exact["terminal"]
+        exact_source_review = (
+            source_review.get(EXACT_INTERVAL_RUNTIME_CONFIG_KEY)
+            if isinstance(source_review, Mapping)
+            else None
+        )
+        binding = (
+            source_review.get("reviewed_exact_source_interval_binding")
+            if isinstance(source_review, Mapping)
+            else None
+        )
+        endpoint = (
+            source_review.get("final_endpoint_binding")
+            if isinstance(source_review, Mapping)
+            else None
+        )
+        source_identity = (
+            baseline_audit.get("source_recording_identity")
+            if isinstance(baseline_audit, Mapping)
+            else None
+        )
+        current_interval = (
+            baseline_audit.get("current_source_interval")
+            if isinstance(baseline_audit, Mapping)
+            else None
+        )
+        reviewed_coverage = (
+            baseline_audit.get("reviewed_coverage") if isinstance(baseline_audit, Mapping) else None
+        )
+        source_sha = str(source["source_sha256"]).removeprefix("sha256:")
+        srt_sha = str(subtitle["srt_sha256"]).removeprefix("sha256:")
+        return bool(
+            exact_source_review == exact
+            and isinstance(binding, Mapping)
+            and binding.get("authority_sha256") == exact["authority_sha256"]
+            and binding.get("fresh_asr_role") == "diagnostic_witness_only"
+            and isinstance(baseline_audit, Mapping)
+            and baseline_audit.get("status") in {"APPLIED", "ALREADY_SATISFIED"}
+            and baseline_audit.get("application_strategy") == "exact_reviewed_interval_replay"
+            and baseline_audit.get("baseline_sha256") == srt_sha
+            and baseline_audit.get("expected_baseline_sha256") == srt_sha
+            and baseline_audit.get("video_tail_extension_ms", 0) == 0
+            and isinstance(source_identity, Mapping)
+            and source_identity.get("expected_basename") == source["recording_basename"]
+            and source_identity.get("current_basename") == source["recording_basename"]
+            and source_identity.get("expected_sha256") == source_sha
+            and source_identity.get("current_sha256") == source_sha
+            and isinstance(current_interval, Mapping)
+            and current_interval.get("absolute_source_start_ms")
+            == source["absolute_source_start_ms"]
+            and current_interval.get("absolute_source_end_ms") == source["absolute_source_end_ms"]
+            and isinstance(reviewed_coverage, Mapping)
+            and reviewed_coverage == current_interval
+            and source_review.get("candidate_id") == exact["candidate_id"]
+            and source_review.get("status") == "PASS"
+            and isinstance(endpoint, Mapping)
+            and _strict_nonnegative_int(endpoint.get("final_start_ms"))
+            and _strict_nonnegative_int(endpoint.get("final_end_ms"))
+            and int(endpoint["final_end_ms"]) - int(endpoint["final_start_ms"])
+            == terminal["media_end_anchor_ms"]
+        )
+    authority_raw = frozen.get(AUTHORITY_CONFIG_KEY) if isinstance(frozen, Mapping) else None
+    frozen_scope = frozen.get("boundary_search_scope") if isinstance(frozen, Mapping) else None
+    projection_scope = (
+        frozen_scope.get("reviewed_exact_interval_projection")
+        if isinstance(frozen_scope, Mapping)
+        else None
+    )
+    selected = (
+        source_review.get("selected_terminal_projection_binding")
+        if isinstance(source_review, Mapping)
+        else None
+    )
+    source_scope = (
+        source_review.get("boundary_search_scope") if isinstance(source_review, Mapping) else None
+    )
+    if authority_raw is None and projection_scope is None and selected is None:
+        return True
+    if authority_raw is None or projection_scope is None:
+        return False
+    try:
+        authority = validate_terminal_projection_authority(authority_raw)
+        expected_scope = projection_scope_binding(authority)
+    except RedeliveryBoundaryProjectionError:
+        return False
+    owner_scope = frozen.get("owner_eligibility_scope") if isinstance(frozen, Mapping) else None
+    source_identity = (
+        baseline_audit.get("source_recording_identity")
+        if isinstance(baseline_audit, Mapping)
+        else None
+    )
+    reviewed_coverage = (
+        baseline_audit.get("reviewed_coverage") if isinstance(baseline_audit, Mapping) else None
+    )
+    current_interval = (
+        baseline_audit.get("current_source_interval")
+        if isinstance(baseline_audit, Mapping)
+        else None
+    )
+    source_sha256 = str(authority["source_sha256"]).removeprefix("sha256:")
+    baseline_sha256 = str(authority["baseline_srt_sha256"]).removeprefix("sha256:")
+    tail_ms = (
+        baseline_audit.get("video_tail_extension_ms")
+        if isinstance(baseline_audit, Mapping)
+        else None
+    )
+    common_valid = bool(
+        isinstance(baseline_audit, Mapping)
+        and baseline_audit.get("status") in {"APPLIED", "ALREADY_SATISFIED"}
+        and baseline_audit.get("application_strategy") == "exact_reviewed_interval_replay"
+        and _strict_nonnegative_int(tail_ms)
+        and tail_ms <= 400
+        and baseline_audit.get("baseline_sha256") == baseline_sha256
+        and baseline_audit.get("expected_baseline_sha256") == baseline_sha256
+        and baseline_audit.get("authority") == authority["authority"]
+        and isinstance(source_identity, Mapping)
+        and source_identity.get("expected_basename") == authority["source_recording_basename"]
+        and source_identity.get("current_basename") == authority["source_recording_basename"]
+        and source_identity.get("expected_sha256") == source_sha256
+        and source_identity.get("current_sha256") == source_sha256
+        and isinstance(reviewed_coverage, Mapping)
+        and reviewed_coverage.get("absolute_source_start_ms")
+        == authority["absolute_source_start_ms"]
+        and reviewed_coverage.get("absolute_source_end_ms") == authority["absolute_source_end_ms"]
+        and isinstance(current_interval, Mapping)
+        and current_interval.get("absolute_source_start_ms")
+        == authority["absolute_source_start_ms"]
+        and current_interval.get("absolute_source_end_ms")
+        == authority["absolute_source_end_ms"] + tail_ms
+        and isinstance(owner_scope, Mapping)
+        and owner_scope.get("candidate_id") == authority["candidate_id"]
+        and isinstance(source_review, Mapping)
+        and source_review.get("candidate_id") == authority["candidate_id"]
+        and boundary_search_scope_is_valid(frozen_scope)
+        and boundary_search_scope_is_valid(source_scope)
+        and source_scope == frozen_scope
+    )
+    if not common_valid:
+        return False
+    if selected is None:
+        return bool(
+            projection_scope == expected_scope
+            and isinstance(source_scope, Mapping)
+            and source_scope.get("reviewed_exact_interval_projection") == expected_scope
+            and (baseline_audit.get("terminal_projection_materialization") is None)
+        )
+    if not isinstance(baseline_audit, Mapping):
+        return False
+    receipt = baseline_audit.get("terminal_projection_materialization")
+    return bool(
+        projection_scope == expected_scope
+        and isinstance(source_scope, Mapping)
+        and source_scope.get("reviewed_exact_interval_projection") == expected_scope
+        and isinstance(receipt, Mapping)
+        and receipt.get("schema_version") == MATERIALIZATION_SCHEMA_VERSION
+        and receipt.get("status") == "PASS"
+        and receipt.get("authority_sha256") == authority["authority_sha256"]
+        and receipt.get("application_strategy") == "exact_reviewed_interval_replay"
+        and receipt.get("absolute_source_start_ms") == authority["absolute_source_start_ms"]
+        and receipt.get("absolute_source_end_ms") == authority["absolute_source_end_ms"]
+        and receipt.get("video_tail_extension_ms") == 0
+        and baseline_audit.get("video_tail_extension_ms") == 0
+        and current_interval == reviewed_coverage
     )
 
 
@@ -1147,9 +1258,7 @@ def audit_source_truth_owner_attestations(
     """Audit final text ownership separately from boundary ownership."""
 
     truth_audit_raw = chat_authority.get("source_subtitle_truth_audit")
-    truth_audit = (
-        truth_audit_raw if isinstance(truth_audit_raw, dict) else {}
-    )
+    truth_audit = truth_audit_raw if isinstance(truth_audit_raw, dict) else {}
     if not _source_truth_audit_valid(truth_audit_raw, provenance=provenance):
         issue_adder(
             issues,
@@ -1170,9 +1279,7 @@ def audit_source_truth_owner_attestations(
         if isinstance(row, dict) and row.get("required") is False
     ]
     if not _final_truth_owner_receipt_valid(
-        truth_owner=chat_authority.get(
-            "final_source_truth_owner_verification"
-        ),
+        truth_owner=chat_authority.get("final_source_truth_owner_verification"),
         truth_rows=truth_rows,
         optional_truth_row_count=len(optional_rows),
     ):
@@ -1183,21 +1290,15 @@ def audit_source_truth_owner_attestations(
             path=chat_authority_path,
         )
 
-    baseline_audit = chat_authority.get(
-        "redelivery_subtitle_baseline_audit"
-    )
-    baseline_owner = chat_authority.get(
-        "final_redelivery_baseline_owner_verification"
-    )
+    baseline_audit = chat_authority.get("redelivery_subtitle_baseline_audit")
+    baseline_owner = chat_authority.get("final_redelivery_baseline_owner_verification")
     if (
         isinstance(baseline_audit, dict)
-        and baseline_audit.get("status")
-        in {"APPLIED", "ALREADY_SATISFIED"}
+        and baseline_audit.get("status") in {"APPLIED", "ALREADY_SATISFIED"}
         and (
             not isinstance(baseline_owner, dict)
             or baseline_owner.get("status") != "PASS"
-            or int(baseline_owner.get("required_mapping_count") or 0)
-            <= 0
+            or int(baseline_owner.get("required_mapping_count") or 0) <= 0
         )
     ):
         issue_adder(
@@ -1220,6 +1321,23 @@ def audit_source_truth_owner_attestations(
         )
 
     frozen = chat_authority.get("frozen_boundary_owner_contract")
+    boundary_audit = record.get("boundary_audit")
+    source_review = (
+        boundary_audit.get("boundary_semantic_review")
+        if isinstance(boundary_audit, Mapping)
+        else None
+    )
+    if not _terminal_projection_materialization_valid(
+        frozen=frozen,
+        baseline_audit=baseline_audit,
+        source_review=source_review,
+    ):
+        issue_adder(
+            issues,
+            "REDELIVERY_TERMINAL_PROJECTION_MATERIALIZATION_INVALID",
+            stem=stem,
+            path=chat_authority_path,
+        )
     frozen_valid, frozen_owners = _frozen_owner_contract_valid(
         frozen=frozen,
         truth_rows=truth_rows,

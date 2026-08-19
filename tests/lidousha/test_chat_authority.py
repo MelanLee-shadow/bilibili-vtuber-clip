@@ -2228,7 +2228,7 @@ def test_audio_forced_choice_rejects_exact_chat_and_repairs_only_entity_slot():
     assert audit["status"] == "APPLIED_AND_VERIFIED"
 
 
-def test_hash_bound_ivan_override_supersedes_chat_and_survives_final_verifier(tmp_path):
+def test_hash_bound_reviewer_override_supersedes_chat_and_survives_final_verifier(tmp_path):
     source = _srt("还没看", "怎么有人说有母鸡卡的风险")
     final = source.replace("母鸡卡", "梦限大")
     evidence = ChatEvidence("danmaku", 0, "还没看，怎么有人说有母鸡卡的风险")
@@ -2310,7 +2310,7 @@ def test_hash_bound_ivan_override_supersedes_chat_and_survives_final_verifier(tm
 
 
 @pytest.mark.parametrize("override_schema_version", [2, 3])
-def test_cue_bound_ivan_override_supersedes_chat_and_reconciles_witnesses(
+def test_cue_bound_reviewer_override_supersedes_chat_and_reconciles_witnesses(
     tmp_path, override_schema_version
 ):
     source = _srt("还没看", "怎么有人说有母鸡卡的风险")
@@ -2392,7 +2392,7 @@ def test_cue_bound_ivan_override_supersedes_chat_and_reconciles_witnesses(
     )
 
 
-def test_hash_bound_ivan_entity_verdict_can_reuse_exact_chat_scaffold(tmp_path):
+def test_hash_bound_reviewer_entity_verdict_can_reuse_exact_chat_scaffold(tmp_path):
     source = _srt("还没看", "怎么有人说是Mujica的风险")
     final = _srt("还没看", "怎么有人说有梦限大的风险")
     evidence = ChatEvidence("danmaku", 0, "还没看，怎么有人说有母鸡卡的风险")
@@ -2492,7 +2492,7 @@ def test_hash_bound_ivan_entity_verdict_can_reuse_exact_chat_scaffold(tmp_path):
     )
     audit["pending_text_overrides"][0]["verdict"].update(
         {
-            "authority_kind": "ivan_text_override",
+            "authority_kind": "reviewer_text_override",
             "defer_to_text_override": True,
             "candidate_id": "auto_test",
             "override_document_sha256": "0" * 64,

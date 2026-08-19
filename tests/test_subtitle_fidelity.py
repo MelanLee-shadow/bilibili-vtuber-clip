@@ -750,6 +750,8 @@ def test_unproven_foreign_cluster_defers_only_for_exact_reviewed_repairs():
     }
 
     assert unproven_foreign_introductions_covered_by_overrides(audit, document)
+    document["schema_version"] = 4
+    assert unproven_foreign_introductions_covered_by_overrides(audit, document)
     document["overrides"].pop()
     assert not unproven_foreign_introductions_covered_by_overrides(audit, document)
 
@@ -901,6 +903,8 @@ def test_mixed_cjk_latin_block_defers_only_for_exact_timeline_bound_repair():
         ],
     }
 
+    assert mixed_cjk_latin_findings_covered_by_overrides(audit, covering)
+    covering["schema_version"] = 4
     assert mixed_cjk_latin_findings_covered_by_overrides(audit, covering)
     assert not mixed_cjk_latin_findings_covered_by_overrides(audit, unrelated)
 

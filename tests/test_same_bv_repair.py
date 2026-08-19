@@ -1257,8 +1257,18 @@ def test_production_adapter_rebinds_exact_live_episode_identity():
     section_payload = {
         "code": 0,
         "data": {
-            "id": 9110001,
+            "section": {"id": 9110001, "seasonId": 8110001, "Episodes": None},
             "episodes": [
+                {
+                    "id": 210909971,
+                    "title": "别人第一条",
+                    "aid": 41,
+                    "bvid": "BV1other0001",
+                    "cid": 1001,
+                    "seasonId": 8110001,
+                    "sectionId": 9110001,
+                    "order": 1,
+                },
                 {
                     "id": 210909973,
                     "title": "旧标题",
@@ -1267,8 +1277,18 @@ def test_production_adapter_rebinds_exact_live_episode_identity():
                     "cid": NEW_CID,
                     "seasonId": 8110001,
                     "sectionId": 9110001,
-                    "order": 68,
-                }
+                    "order": 2,
+                },
+                {
+                    "id": 210909977,
+                    "title": "别人第三条",
+                    "aid": 43,
+                    "bvid": "BV1other0003",
+                    "cid": 1003,
+                    "seasonId": 8110001,
+                    "sectionId": 9110001,
+                    "order": 3,
+                },
             ],
         },
     }
@@ -1295,9 +1315,84 @@ def test_production_adapter_rebinds_exact_live_episode_identity():
         "cid": NEW_CID,
         "season_id": 8110001,
         "section_id": 9110001,
-        "order": 68,
-        "page_cids": [NEW_CID],
+        "order": 2,
+        "section_episode_ids": [210909971, 210909973, 210909977],
     }
+
+
+def _section_title_sync_session():
+    class Session:
+        def __init__(self):
+            self.edit_kwargs = None
+
+        def archive_view(self, bvid):
+            return {
+                "archive": {"bvid": BVID, "aid": 42, "title": FINAL_TITLE},
+                "videos": [{"cid": NEW_CID}],
+            }
+
+        def season_episode_edit(self, **kwargs):
+            self.edit_kwargs = kwargs
+            return {"code": 0}
+
+    return Session()
+
+
+def _section_row(index, *, episode_id, order, mine=False):
+    return {
+        "id": episode_id,
+        "title": "旧标题" if mine else f"别人第{index}条",
+        "aid": 42 if mine else 100 + index,
+        "bvid": BVID if mine else f"BV1other{index:04d}",
+        "cid": NEW_CID if mine else 1000 + index,
+        "seasonId": 8110001,
+        "sectionId": 9110001,
+        "order": order,
+    }
+
+
+@pytest.mark.parametrize(
+    "episodes",
+    [
+        # order 不是 1..n 位次（真实节里 order 恒等于位次；不等即读回不可信）
+        [
+            _section_row(1, episode_id=1, order=1),
+            _section_row(2, episode_id=2, order=7, mine=True),
+        ],
+        # 缺 episode id
+        [
+            {"title": "别人", "aid": 41, "cid": 1001, "order": 1},
+            _section_row(2, episode_id=2, order=2, mine=True),
+        ],
+        # 重复 episode id
+        [
+            _section_row(1, episode_id=5, order=1),
+            _section_row(2, episode_id=5, order=2, mine=True),
+        ],
+    ],
+)
+def test_section_title_sync_fails_closed_on_unusable_section_order(episodes):
+    session = _section_title_sync_session()
+    adapter = same_bv.BilibiliRepairAdapter(
+        session=session,
+        http=lambda url: {
+            "code": 0,
+            "data": {"section": {"id": 9110001}, "episodes": episodes},
+        },
+        view_url="https://example.test/view?bvid={bvid}",
+        tags_url="https://example.test/tags?bvid={bvid}",
+        section_url="https://example.test/section/{section_id}",
+    )
+
+    with pytest.raises(RuntimeError):
+        adapter.sync_section_title(
+            BVID,
+            9110001,
+            expected_current_title="旧标题",
+            target_title=FINAL_TITLE,
+        )
+
+    assert session.edit_kwargs is None
 
 
 def test_verified_terminal_is_idempotent_even_if_adapter_would_fail(tmp_path):

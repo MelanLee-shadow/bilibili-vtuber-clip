@@ -47,7 +47,7 @@ def _operator_replace(entry: Mapping[str, object]) -> bool:
         entry.get("knowledge_type") == "SOURCE_INTERVAL_TRUTH"
         and entry.get("action") == "replace_cue"
         and assertion_state(entry) == "VERIFIED_ACTIVE"
-        and entry.get("decision_authority") == "IVAN_OPERATOR_TRUTH"
+        and entry.get("decision_authority") == "REVIEWER_OPERATOR_TRUTH"
         and entry.get("required") is not False
         and str(entry.get("text") or "")
     )

@@ -324,13 +324,13 @@ def main(argv: list[str] | None = None) -> int:
         cid=cid,
         out_root=out_root,
         host=host,
+        spec_parent=args.spec.parent,
     )
     durations = source_media.durations
     padded = source_media.padded
     padded_dur = source_media.padded_duration_ms
     padded_provenance_path = source_media.padded_provenance_path
     piece_provenance_rows = source_media.piece_provenance_rows
-
     # 2. Danmaku + on-screen SUPER_CHATs merged onto the concat timeline.
     text_result = run_text_pipeline(
         spec=spec,

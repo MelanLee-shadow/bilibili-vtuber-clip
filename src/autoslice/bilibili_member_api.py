@@ -310,15 +310,24 @@ class BiliSession:
         season_id: int,
         section_id: int,
         order: int,
-        page_cids: Sequence[int],
+        section_episode_ids: Sequence[int],
     ) -> Mapping[str, Any]:
         """Edit one existing collection episode without removing membership.
 
-        The Creator endpoint expects the exact collection-episode identity,
-        its current order, and the archive page order in one JSON object.
-        Callers must obtain all identities from a fresh exact-section read and
-        must preserve the current order; this helper deliberately cannot move
-        an episode between sections or reorder either the episode or its pages.
+        契约来源 = 创作中心前端自身（抓取 bundle
+        ``creativecenter-v3.9825/3543.a015bef9.js`` 反编译，见
+        （内部设计文档留存）：
+
+        - ``sorts`` 是**整节**的顺序表，元素为
+          ``{"id": <合集内单集 id>, "sort": <1 起的位次>}``；
+          ``id`` 是 ``season/section`` 返回的 ``episodes[].id``，
+          **不是分 P 的 cid**（旧实现传 cid，且只传一条 → -400 参数错误）。
+        - ``order`` 是本条在该顺序表中的 1 起位次（前端取列表下标+1；
+          线上 ``episodes[].order`` 实测恒等于 1..n 的位次）。
+
+        因此调用方必须传入**一次 fresh exact-section 读回的全节 episode id
+        列表，顺序原样不动**——原样回传即“不改顺序”的写法。任何裁剪、排序或
+        用别的 id 都会真的重排整节。
         """
 
         positive_ints = {
@@ -337,19 +346,24 @@ class BiliSession:
         if not isinstance(title, str) or not title.strip():
             raise ValueError("season episode edit title must be non-empty")
         if (
-            not isinstance(page_cids, Sequence)
-            or isinstance(page_cids, (str, bytes))
-            or not page_cids
+            not isinstance(section_episode_ids, Sequence)
+            or isinstance(section_episode_ids, (str, bytes))
+            or not section_episode_ids
             or any(
                 isinstance(value, bool) or not isinstance(value, int) or value <= 0
-                for value in page_cids
+                for value in section_episode_ids
             )
-            or len(set(page_cids)) != len(page_cids)
-            or cid not in page_cids
+            or len(set(section_episode_ids)) != len(section_episode_ids)
+            or episode_id not in section_episode_ids
         ):
             raise ValueError(
-                "season episode edit page_cids must be unique positive ints "
-                "and include the episode cid"
+                "season episode edit section_episode_ids must be unique positive "
+                "ints and include the edited episode id"
+            )
+        if order != list(section_episode_ids).index(episode_id) + 1:
+            raise ValueError(
+                "season episode edit order must be the 1-based position of the "
+                "edited episode inside section_episode_ids"
             )
         response = self.post_json(
             f"{SEASON_EPISODE_EDIT}?csrf={urllib.parse.quote(self.csrf)}",
@@ -361,8 +375,8 @@ class BiliSession:
                 "seasonId": season_id,
                 "sectionId": section_id,
                 "sorts": [
-                    {"id": page_cid, "sort": index}
-                    for index, page_cid in enumerate(page_cids, start=1)
+                    {"id": row_episode_id, "sort": index}
+                    for index, row_episode_id in enumerate(section_episode_ids, start=1)
                 ],
                 "order": order,
             },

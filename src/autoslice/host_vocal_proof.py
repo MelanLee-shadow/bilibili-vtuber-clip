@@ -5,10 +5,17 @@ prove that the configured host is the person singing it: a background track alig
 same LRC just as well.  This module adds an independent, fail-closed CAM++
 speaker-verification gate over seven lyric-spanning checkpoints.
 
-Importing the module intentionally needs only the Python standard library.
-``modelscope`` (and its transitive numerical dependencies) is imported lazily
-by the CLI after all hash bindings have been checked.  This lets the ordinary
-autoslice process verify proof claims without loading an ML runtime.
+Importing the module intentionally needs no ML runtime: only the standard
+library and pure-Python siblings.  ``modelscope`` (and its transitive numerical
+dependencies) is imported lazily by the CLI after all hash bindings have been
+checked.  This lets the ordinary autoslice process verify proof claims without
+loading an ML runtime.
+
+Generation scores every pair through the shared embed-once path in
+``campp_embed_once``: ModelScope re-embeds both inputs on every pairwise call,
+and its pair score is just the rounded cosine of the two per-clip embeddings,
+so embedding each distinct wav once is bit-identical and drops the anchor
+search from O(windows x references) forward passes to O(windows).
 """
 
 from __future__ import annotations
@@ -26,7 +33,9 @@ import wave
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from src.autoslice.campp_embed_once import _build_embedding_similarity
 from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.speaker_common import SpeakerFinalizationError
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -46,7 +55,7 @@ CHECKPOINT_WINDOW_MS = 4_000
 MIN_LYRIC_CUE_MS = 2_500
 SESSION_HOST_ANCHOR_WINDOW_MS = 8_000
 SESSION_HOST_ANCHOR_SEARCH_STEP_MS = 4_000
-SESSION_HOST_ANCHOR_SEARCH_HORIZON_MS = 48_000
+SESSION_HOST_ANCHOR_SEARCH_SCOPE = "post_song_speech_to_source_end_excluding_lyric_span"
 MIN_SESSION_HOST_ANCHOR_MS = 3_000
 MIN_SESSION_ENROLL_MEDIAN = 0.50
 MIN_SESSION_LYRIC_SCORE = 0.22
@@ -173,7 +182,7 @@ def _canonical_policy() -> dict[str, object]:
         "minimum_lyric_cue_ms": MIN_LYRIC_CUE_MS,
         "session_host_anchor_window_ms": SESSION_HOST_ANCHOR_WINDOW_MS,
         "session_host_anchor_search_step_ms": SESSION_HOST_ANCHOR_SEARCH_STEP_MS,
-        "session_host_anchor_search_horizon_ms": SESSION_HOST_ANCHOR_SEARCH_HORIZON_MS,
+        "session_host_anchor_search_scope": SESSION_HOST_ANCHOR_SEARCH_SCOPE,
         "minimum_session_host_anchor_ms": MIN_SESSION_HOST_ANCHOR_MS,
         "minimum_session_enroll_median": MIN_SESSION_ENROLL_MEDIAN,
         "minimum_session_lyric_score": MIN_SESSION_LYRIC_SCORE,
@@ -190,7 +199,7 @@ def _legacy_reference_profile_policy() -> dict[str, object]:
 
     policy = _canonical_policy()
     policy.pop("session_host_anchor_search_step_ms")
-    policy.pop("session_host_anchor_search_horizon_ms")
+    policy.pop("session_host_anchor_search_scope")
     policy["minimum_session_lyric_score"] = 0.31
     return policy
 
@@ -369,7 +378,28 @@ def _session_host_anchor_position(alignment: Mapping[str, object]) -> tuple[int,
 def _session_host_anchor_positions(
     alignment: Mapping[str, object],
 ) -> tuple[tuple[int, int], ...]:
-    """Search post-song speech instead of assuming its first 8s are clean."""
+    """Search every post-song window, not a fixed horizon after the song.
+
+    The anchor exists to supply one verified sample of the host *speaking* in
+    this session, so the singing checkpoints can be judged against a
+    same-domain reference instead of only against spoken enrollment.  The
+    previous search stopped a fixed 48s after ``post_song_talk_start_ms``,
+    which silently assumed that offset lands on host speech.  In a medley or
+    3D-live setlist it can instead land inside the *next* song, and the real
+    post-show talk then sits far beyond any fixed horizon: the search exhausts
+    itself on singing, no window clears ``MIN_SESSION_ENROLL_MEDIAN``, the
+    bridge stays closed, and a genuine host performance is rejected.  Scanning
+    to the end of the source removes that assumption without moving a single
+    threshold - every returned window still has to clear 0.50 against
+    enrollment on its own.
+
+    Windows overlapping the proven lyric span are excluded.  An anchor drawn
+    from the song under proof would verify the performance with the
+    performance and hand every remaining checkpoint a free bridge, which is
+    precisely the playback/background-vocal hole this gate exists to close.
+    The span comes from the hash-bound alignment report, not from a second
+    boundary source.
+    """
 
     first_start_ms, first_end_ms = _session_host_anchor_position(alignment)
     artifacts = alignment.get("audio_alignment_artifacts")
@@ -377,15 +407,19 @@ def _session_host_anchor_positions(
     source_duration_ms = _require_int(
         artifacts, "source_duration_ms", label="audio_alignment_artifacts"
     )
-    latest_start_ms = min(
-        source_duration_ms - MIN_SESSION_HOST_ANCHOR_MS,
-        first_start_ms + SESSION_HOST_ANCHOR_SEARCH_HORIZON_MS,
+    lyric_start_ms = _require_int(
+        alignment, "first_lyric_start_ms", label="lyrics_alignment_report"
     )
+    lyric_end_ms = _require_int(
+        alignment, "last_lyric_end_ms", label="lyrics_alignment_report"
+    )
+    latest_start_ms = source_duration_ms - MIN_SESSION_HOST_ANCHOR_MS
     positions: list[tuple[int, int]] = []
     start_ms = first_start_ms
     while start_ms <= latest_start_ms:
         end_ms = min(start_ms + SESSION_HOST_ANCHOR_WINDOW_MS, source_duration_ms)
-        if end_ms - start_ms >= MIN_SESSION_HOST_ANCHOR_MS:
+        overlaps_lyrics = start_ms < lyric_end_ms and end_ms > lyric_start_ms
+        if end_ms - start_ms >= MIN_SESSION_HOST_ANCHOR_MS and not overlaps_lyrics:
             positions.append((start_ms, end_ms))
         start_ms += SESSION_HOST_ANCHOR_SEARCH_STEP_MS
     return tuple(positions) or ((first_start_ms, first_end_ms),)
@@ -564,18 +598,59 @@ def _extract_checkpoint(source_media: Path, *, start_ms: int, expected_duration_
         )
 
 
-def _extract_score(result: object) -> float:
-    value: object = result
-    if isinstance(result, Mapping):
-        for key in ("score", "similarity", "scores"):
-            if key in result:
-                value = result[key]
-                break
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-        if len(value) != 1:
-            raise HostVocalProofError("CAM++ returned an ambiguous score sequence")
-        value = value[0]
-    return _require_similarity_score(value, label="CAM++ score")
+EMBEDDING_CACHE_DIRECTORY_NAME = "campp-embeddings"
+
+
+def _embedding_cache_dir(output_path: Path, override: Path | None) -> Path:
+    """Resolve the persistent CAM++ embedding cache root for one proof run.
+
+    A proof is generated inside a per-attempt directory, so a cache rooted at
+    the proof would be thrown away between retries - exactly the rounds the
+    cost order  exists to make free.  The default therefore climbs
+    to the deployment base that owns ``out/`` and reuses its ``cache/`` tree,
+    the same shape ``cache/witness-acoustic`` already uses.  A run outside that
+    layout keeps its cache beside the proof rather than guessing.
+    """
+
+    if override is not None:
+        return override.resolve()
+    for ancestor in output_path.parents:
+        if ancestor.name == "out" and ancestor.parent != ancestor:
+            return ancestor.parent / "cache" / EMBEDDING_CACHE_DIRECTORY_NAME
+    return output_path.parent / EMBEDDING_CACHE_DIRECTORY_NAME
+
+
+def _bind_pair_scorer(verifier: object, *, model_hash: str, cache_dir: Path):
+    """Bind a pair scorer that embeds each distinct wav exactly once.
+
+    ModelScope re-embeds both inputs on every pairwise call, so the enrollment
+    references alone were re-embedded ``3 x (windows + checkpoints)`` times per
+    proof - 168s of reference audio per 8s window scored.  Its pairwise score
+    is the cosine of the two per-clip embeddings rounded to five decimals, so
+    embedding once and scoring the cached vectors through the pipeline's own
+    ``compute_cos_similarity`` reproduces the pairwise score bit for bit
+    (verified 39/39 against the deployed proof, max abs diff 0.0).
+
+    Cheaper arithmetic only: every window is still extracted, hashed, scored
+    against all three references, and judged by the untouched thresholds.
+    """
+
+    similarity = _build_embedding_similarity(
+        verifier=verifier, model_hash=model_hash, work_dir=cache_dir
+    )
+
+    def score(left: Path, right: Path, *, label: str) -> float:
+        try:
+            value = similarity(left, right)
+        except SpeakerFinalizationError as exc:
+            raise HostVocalProofError(f"CAM++ {label} inference failed: {exc}") from exc
+        except Exception as exc:  # pragma: no cover - exercised on the production ML runtime
+            raise HostVocalProofError(
+                f"CAM++ {label} inference failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        return round(_require_similarity_score(value, label=f"CAM++ {label} score"), 8)
+
+    return score
 
 
 def _load_campplus_pipeline(model_dir: Path):
@@ -601,6 +676,7 @@ def generate_host_vocal_proof(
     reference_dir: Path,
     model_dir: Path,
     output_path: Path,
+    embedding_cache_dir: Path | None = None,
 ) -> dict[str, str]:
     """Generate a proof artifact and return its small hash-bound claim."""
 
@@ -664,6 +740,11 @@ def generate_host_vocal_proof(
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     speaker_verifier = _load_campplus_pipeline(model_dir)
+    score_pair = _bind_pair_scorer(
+        speaker_verifier,
+        model_hash=actual_model_sha,
+        cache_dir=_embedding_cache_dir(output_path, embedding_cache_dir),
+    )
     session_anchor_candidates: list[dict[str, object]] = []
     selected_session_anchor: dict[str, object] | None = None
     for anchor_index, (session_anchor_start_ms, session_anchor_end_ms) in enumerate(
@@ -680,18 +761,14 @@ def generate_host_vocal_proof(
         )
         session_reference_scores: list[dict[str, object]] = []
         for reference in references:
-            try:
-                raw_result = speaker_verifier(
-                    [reference["path"], str(session_anchor_path)]
-                )
-            except Exception as exc:  # pragma: no cover - production ML runtime
-                raise HostVocalProofError(
-                    f"CAM++ session-host anchor inference failed: {type(exc).__name__}: {exc}"
-                ) from exc
             session_reference_scores.append(
                 {
                     "reference_id": reference["id"],
-                    "score": round(_extract_score(raw_result), 8),
+                    "score": score_pair(
+                        Path(reference["path"]),
+                        session_anchor_path,
+                        label="session-host anchor",
+                    ),
                 }
             )
         session_enroll_median = round(
@@ -734,23 +811,22 @@ def generate_host_vocal_proof(
         )
         scores: list[dict[str, object]] = []
         for reference in references:
-            try:
-                raw_result = speaker_verifier([reference["path"], str(checkpoint_path)])
-            except Exception as exc:  # pragma: no cover - exercised on the production ML runtime
-                raise HostVocalProofError(
-                    f"CAM++ inference failed for checkpoint {index + 1}/{reference['id']}: {type(exc).__name__}: {exc}"
-                ) from exc
-            score = round(_extract_score(raw_result), 8)
-            scores.append({"reference_id": reference["id"], "score": score})
-        median_score = round(float(statistics.median(row["score"] for row in scores)), 8)
-        try:
-            session_anchor_score = round(
-                _extract_score(speaker_verifier([str(session_anchor_path), str(checkpoint_path)])), 8
+            scores.append(
+                {
+                    "reference_id": reference["id"],
+                    "score": score_pair(
+                        Path(reference["path"]),
+                        checkpoint_path,
+                        label=f"checkpoint {index + 1}/{reference['id']}",
+                    ),
+                }
             )
-        except Exception as exc:  # pragma: no cover - production ML runtime
-            raise HostVocalProofError(
-                f"CAM++ session-anchor inference failed for checkpoint {index + 1}: {type(exc).__name__}: {exc}"
-            ) from exc
+        median_score = round(float(statistics.median(row["score"] for row in scores)), 8)
+        session_anchor_score = score_pair(
+            session_anchor_path,
+            checkpoint_path,
+            label=f"session-anchor checkpoint {index + 1}",
+        )
         checkpoints.append(
             {
                 "index": index,
@@ -1132,6 +1208,15 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reference-dir", type=Path, required=True)
     parser.add_argument("--model-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--embedding-cache-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Persistent CAM++ embedding cache root. Defaults to <base>/cache/"
+            f"{EMBEDDING_CACHE_DIRECTORY_NAME} beside the out/ tree that holds --output."
+        ),
+    )
     return parser
 
 
@@ -1146,6 +1231,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             reference_dir=args.reference_dir,
             model_dir=args.model_dir,
             output_path=args.output,
+            embedding_cache_dir=args.embedding_cache_dir,
         )
     except (HostVocalProofError, OSError) as exc:
         print(f"host-vocal proof failed closed: {exc}", file=sys.stderr)

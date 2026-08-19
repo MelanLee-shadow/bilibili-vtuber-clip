@@ -81,6 +81,52 @@
 - 已有 MP4/JSONL/meta 禁止覆盖；同名内容不一致即 fail closed。原始 FLV/XML
   永不删除。活动文件、API 未知、XML 不完整、无音轨、重封装/探测失败都不得
   发布 MP4。
+- BililiveRecorder 首次连流可能先写一个只有 FLV header/0×0 H.264 stream 的
+  连接残片，再在同一 session 立即打开正常文件。只有 adapter
+  `adapter-state.json / source_dispositions` 中的 typed row 才能把这类原件从
+  remux 车道排除：row 必须是
+  `recording-connection-stub.v1 / IGNORED_CONNECTION_STUB /
+  RECORDER_CONNECTION_STUB_NO_DECODABLE_VIDEO`，并同时绑定 source/XML 的当前
+  stat+SHA-256、FileOpening/FileClosed ID 与时间、session、官方 XML（最多一条
+  用户事件，XML 原字节及事件数均写入 typed row）、
+  H.264 0×0 且 frame/packet 扫描均为空，以及同 session 的下一 opening。
+  被排除文件必须是该 session 第一 opening，size <5 MiB、event duration 与
+  open-close wall duration 均 <10 秒；下一 opening gap 必须在 0–2 秒内且已
+  CLOSED，其 source size 必须匹配 webhook 与 finalized ledger，真实 MP4 SHA-256
+  必须匹配 ledger 且为可探测的正尺寸双流媒体。少任一项都不得 ignore，仍走普通
+  finalization 并 fail closed。
+- typed row 不进入 `finalized`，不生成同 stem MP4，也绝不删除/移动 FLV/XML。
+  创建 row 时只做一次 source/XML/后继 MP4 全字节 SHA-256 与媒体探测；row 另绑定
+  四个文件的 size/mtime/ctime/device/inode/mode 指纹。adapter 每轮只重验 canonical
+  row、当前 journal/finalized ledger 与这些不可变指纹，不得反复读取几百 MB 的历史
+  MP4；任一内容、稳定 stat、ledger 或事件漂移都恢复为 status error，且不得自动重签
+  旧 row。CloudFS 重挂会重建 device/inode；只有四个 exact path 位于同一个当前 FUSE
+  mount、其余 stat/事件/ledger 全部不变时，adapter 才在 recorder idle 后启动受 deadline、
+  PID start token 和重试上限约束的隔离子进程，重验 source/XML/后继 MP4 的历史 SHA-256。
+  子进程 pending/timeout/error 均持久化并 fail closed，不阻塞 adapter 心跳；成功后写入
+  `recording-source-fuse-identity-rebind.v1` canonical 链式回执；后续 adapter 只认最后
+  回执的 effective fingerprints 与 namespace-portable major:minor+FSTYPE+SOURCE
+  投影；回执保留完整 namespace mount identity 供审计，但 Docker 重启单独改变
+  mount_id/mount_point 时不得重复重绑。inventory 跨容器也验证同一 portable 投影。
+  后继 FLV 的旧 row
+  没有历史 SHA-256，因此回执必须明确记录 legacy promotion：只沿用 path、稳定 stat、
+  webhook file size、finalized ledger source size 及后继 MP4 历史 SHA 交叉绑定，不能宣称
+  后继 FLV 历史 hash 已匹配。另有且仅有一条 timestamp-only 恢复：后继 FLV 与 MP4
+  **两者**在同一当前 FUSE mount 上仅 `mtime_ns`/`ctime_ns` 漂移，source/XML 指纹不变，
+  四个 path 及 size/mode/device/inode 全不变时，复用同一 idle/deadline/PID-token/重试子进程，
+  对 source、XML、后继 MP4 三个有历史 SHA 的角色做全字节重验，并在子进程前后重验四个
+  当前指纹。成功只追加 canonical 链式
+  `recording-source-fuse-timestamp-rebind.v1 / FUSE_SUCCESSOR_MTIME_CTIME_REATTESTATION`
+  回执，逐角色记录 old/new metadata 与 exact changed fields；后继 FLV 仍保持无历史 hash，
+  且回执显式绑定 webhook/finalized source size 和后继 MP4 历史 SHA。inventory 跨 namespace
+  按 portable mount 投影验证该链。单边 timestamp 漂移、再次漂移而无新回执、本地文件系统、
+  跨 FUSE、mount 漂移或任何 size/mode/path/content/hash 漂移一律继续 BLOCK。
+  CloudFS 可能在 finalized 后重写后继 FLV 的 mtime；row 因此分别保存 ledger 的
+  历史 mtime 与签发时当前 source fingerprint，并要求两者之后各自稳定，不要求这两个
+  跨时刻 mtime 相等。后继 source size、当前 fingerprint、MP4 当前 fingerprint 与
+  finalized target SHA 仍必须全部吻合。
+  合法、可解码的短视频不满足 0×0+零 frame/packet 条件，仍按普通规则
+  finalization。
 - `scripts/session_autoslice.py` 只枚举封口后的
   `<ROOM>_*.mp4`；30 分钟段只是源容器，整场候选仍跨所有 segment 全局排序。
 
@@ -138,11 +184,20 @@
   归类为 `runtime_prerequisite/source_media_binding`；requeue 在源 `stat`/`ffprobe`
   上遇到 FUSE `OSError` 时保留原失败行并退出本次恢复，不得让整个 tick traceback
   或把暂时不可见的 chat path 误报成确定性的 binding missing。
+- 历史 Talk 恢复只为重建 `seg_dur_ms` 时，优先读取本地 adapter state：同一
+  `date/stem` 的 `FileClosed` 时长必须与 opening/closing event ledger、source size、
+  finalized target path/SHA 和封口时间全部闭合，才可直接携入队列而不重新打开冷
+  CloudFS MP4。两张账都没有该 stem 才允许旧录像走 `ffprobe` fallback；任一账已出现
+  但不完整、互相漂移或与记录中已有 source SHA 冲突时必须 fail closed，不得 fallback。
 - 活着的容器不等于健康录制。直播中两轮无字节增长、状态过期、弹幕/录制长期
   未连接均须告警；受限重启只针对 `bililive_recorder`，不得复活 blrec。
 - 终态库存硬门：runner 在任何“无新段”提前返回前运行
   `recording-inventory-audit.v1`；发现已封口的源没有同 stem MP4，状态只能是
-  `source_incomplete`，不得进入 selection 或 `review_ready`。
+  `source_incomplete`，不得进入 selection 或 `review_ready`。inventory 默认读取
+  `/opt/bilive/recording/adapter-state.json`，并独立重验 typed connection-stub 的
+  canonical integrity、source/XML/后继 MP4 指纹、webhook/session/time/stat 与
+  successor finalized ledger/初始全字节 SHA 绑定。只有重验有效的 stub 记录 severity `WARN` 且整体仍
+  `PASS`；任何其他无 MP4 FLV 或 disposition 漂移仍是 severity `BLOCK`。
 - 对旧录制器遗留的 finalized HLS（同 stem `.m3u8` 有 `ENDLIST`、且只引用同
   stem `.m4s`，但缺 `.mp4`），runner 在库存审计前自动执行一次 no-clobber
   stream-copy 恢复：同文件系统 staging、双流 ffprobe、全包 packet scan、
@@ -159,3 +214,21 @@
 - 源完整性：视频流独立解码零损伤（`source_integrity.py`）；BLOCK≠ok、
   0 交付≠done。
 - 杀开关：`touch /opt/bilive/autoslice/DISABLED`。
+- 正式部署把 `ops/` 与 `scripts/src/assets/...` 一起纳入 committed tree manifest。
+  外部 `/opt/bilive/recording/bililive_recorder_adapter.py` 必须由
+  `scripts/deploy_autoslice.sh` 在 preimage/rollback 事务中从已切换的 commit
+  原子安装并做 SHA-256 readback；不得手工 `cp`。只有 recorder fresh-idle、
+  CloudFS host/container mount 都为绿时才能重启 `bililive_adapter`；安装后的任一
+  deploy 失败必须原子恢复 preimage 并在同样安全门下重启，无法证明时保留
+  `DISABLED` 与 deploy guard。
+- adapter 外部字节未变化时，部署前状态必须 fresh、idle、
+  `service_reachable=true` 且 `error=null`。只有待安装 adapter 字节确实变化时，才允许
+  用单一修复例外越过旧 adapter 自己制造的错误：旧状态仍须 fresh/idle，且必须精确为
+  `service_reachable=false`，且 `error` 为前缀 `source disposition drift:`，或精确等于
+  `source disposition identity rebind hash retry is pending` / `source disposition identity
+  rebind hash retry exhausted`；同时 recorder 与
+  adapter 运行、host/两容器 CloudFS、旧 host/container adapter SHA 以及独立 GraphQL
+  idle 查询必须全部通过，且安装前、重启前及 rollback 重启前容器内不得存在仍活着的
+  `--identity-rebind-hash-child` 进程。普通 hash pending、timed-out child 等错误一律拒绝。
+  新字节重启后仍须等到 fresh clean 状态、新 SHA 与健康检查全绿；rollback 只可回到
+  clean 或同一精确 preimage。该例外不得成为普通 deploy 或 live-query bypass。

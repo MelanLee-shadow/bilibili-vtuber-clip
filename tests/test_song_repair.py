@@ -2,6 +2,7 @@ import base64
 import io
 import json
 import hashlib
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -10,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 import src.autoslice.song_repair as song_repair
+import src.autoslice.song_performance as song_performance
 import src.autoslice.agy_lrc_alignment as agy_lrc_alignment
 from src.autoslice.agy_lrc_alignment import _prompt as build_agy_audio_lrc_prompt
 from src.autoslice.review_evidence import SourceCue
@@ -84,8 +86,13 @@ def test_gemini_audio_lrc_failover_metadata_is_approved_only_after_typed_agy_fai
         {"provider_fallback_used": False},
         {"agy_failure_category": "UNKNOWN"},
         {"sandbox": True},
-        {"agy_rc": -1},
         {"agy_rc": True},
+        {"agy_rc": "-9"},
+        {"agy_rc": -9.0},
+        # AGY_FAILED_RC is minted only by _classify_agy_nonzero, which never
+        # runs on a clean exit.  Claiming it with rc=0 is forged metadata and
+        # is the coherence rule that replaced the old blanket ``agy_rc < 0``.
+        {"agy_rc": 0, "agy_failure_category": "AGY_FAILED_RC"},
     ],
 )
 def test_gemini_audio_lrc_failover_rejects_invalid_provenance(overrides):
@@ -101,6 +108,134 @@ def test_gemini_audio_lrc_failover_rejects_invalid_provenance(overrides):
 
     assert song_repair.validate_audio_lrc_execution_metadata(**metadata) == (
         "audio aligner Gemini API failover metadata is invalid"
+    )
+
+
+@pytest.mark.parametrize(
+    ("agy_rc", "agy_failure_category"),
+    [
+        # production shape: AGY SIGKILLed by the OOM killer.
+        (-9, "AGY_FAILED_RC"),
+        (-15, "AGY_FAILED_RC"),
+        (-9, "AGY_TIMEOUT"),
+        # AGY exited cleanly but emitted unusable output.
+        (0, "AGY_EMPTY_OUTPUT"),
+        (0, "AGY_INVALID_OUTPUT"),
+        (0, "AGY_LRC_INDEX_INVALID"),
+        # Ordinary nonzero exit, and AGY never started at all.
+        (1, "AGY_FAILED_RC"),
+        (None, "AGY_UNAVAILABLE"),
+    ],
+)
+def test_gemini_audio_lrc_failover_accepts_every_way_agy_can_fail(agy_rc, agy_failure_category):
+    """维护者T23:28: AGY and the Gemini API are the same model in a
+    fixed call order, so how AGY died cannot invalidate what Gemini produced."""
+
+    assert (
+        song_repair.validate_audio_lrc_execution_metadata(
+            provider="gemini_api",
+            model="gemini-3.6-flash",
+            agy_rc=agy_rc,
+            provider_fallback_used=True,
+            agy_failure_category=agy_failure_category,
+            sandbox=False,
+        )
+        is None
+    )
+
+
+def test_agy_sigkill_is_not_misclassified_as_a_timeout():
+    """An OOM-killed AGY flushes its buffers; stray timeout wording in that
+    output must not relabel the kill and hide the memory-pressure signal."""
+
+    assert (
+        agy_lrc_alignment._classify_agy_nonzero(
+            returncode=-9,
+            stdout="waiting for model response...\nrequest timed out once, retrying\n",
+            stderr="",
+        )
+        == "AGY_FAILED_RC"
+    )
+    # Ordinary (positive) exits keep their existing diagnostic classification.
+    assert (
+        agy_lrc_alignment._classify_agy_nonzero(
+            returncode=1, stdout="", stderr="request timed out"
+        )
+        == "AGY_TIMEOUT"
+    )
+    assert (
+        agy_lrc_alignment._classify_agy_nonzero(
+            returncode=1, stdout="", stderr="429 quota exceeded"
+        )
+        == "AGY_QUOTA_EXHAUSTED"
+    )
+
+
+_F1_FIXTURES = Path(__file__).resolve().parent / "lidousha" / "fixtures"
+
+
+def _load_f1_replay_fixture(name: str) -> dict:
+    return json.loads((_F1_FIXTURES / name).read_text(encoding="utf-8"))
+
+
+def test_replay_2026_08_08_gemini_failover_evidence_is_no_longer_discarded():
+    """Offline replay of the real discarded artifact — zero new API calls.
+
+    ``song_210131_1210``  is the one candidate of the two nights
+    that held complete, independently corroborated positive evidence.  AGY was
+    OOM-killed (``agy_rc=-9``), the Gemini API leg took over and returned a
+    full 28-row bundle, and ``song_common.py:335`` rejected the whole thing as
+    "audio aligner Gemini API failover metadata is invalid".  Reverting the F1
+    fix turns this test red.
+
+    Truth-blind: only shapes and verdict fields are asserted.  Lyric strings in
+    the fixture are positional placeholders.
+    """
+
+    manifest = _load_f1_replay_fixture(
+        "song_210131_1210_gemini_failover_run_manifest_20260808.json"
+    )
+    # The captured provenance is exactly the shape the gate used to reject.
+    assert manifest["provider"] == "gemini_api"
+    assert manifest["provider_fallback_used"] is True
+    assert manifest["agy_failure_category"] == "AGY_FAILED_RC"
+    assert manifest["sandbox"] is False
+    assert manifest["agy_rc"] < 0
+
+    assert (
+        song_repair.validate_audio_lrc_execution_metadata(
+            provider=manifest["provider"],
+            model=manifest["model"],
+            agy_rc=manifest["agy_rc"],
+            provider_fallback_used=manifest["provider_fallback_used"],
+            agy_failure_category=manifest["agy_failure_category"],
+            sandbox=manifest["sandbox"],
+        )
+        is None
+    )
+
+    # And what that rejection was throwing away really was a READY live
+    # performance, so the rescue is not merely procedural.
+    alignment = _load_f1_replay_fixture(
+        "song_210131_1210_gemini_failover_alignment_20260808.json"
+    )
+    rows = alignment["observations"]
+    assert len(rows) == 28
+    assert all(row["heard"] is True for row in rows)
+    assert {row["lidousha_role"] for row in rows} == {"SINGING_THIS_LYRIC"}
+    assert alignment["live_arrangement"]["classification"] == "FULL_STUDIO_SEQUENCE"
+    assert alignment["live_arrangement"]["observed_live_song_opening"] is True
+    assert alignment["live_arrangement"]["observed_live_song_ending"] is True
+
+    assert (
+        song_performance.validate_live_performance_observation(
+            alignment["live_performance"],
+            first_lyric_start_ms=min(int(row["live_start_ms"]) for row in rows),
+            last_lyric_end_ms=max(int(row["live_end_ms"]) for row in rows),
+            observations=rows,
+            require_ready=True,
+        )
+        is None
     )
 
 
@@ -124,6 +259,10 @@ def test_agy_audio_lrc_v5_prompt_marks_media_enum_instructions_untrusted():
     assert "COMPLETE_LIVE_ARRANGEMENT" in prompt
     assert "at least 70% canonical" in prompt
     assert "studio-repeat omission alone must" in prompt
+    # 联唱契约：歌间间隙不是歌后说话，两个毫秒可以不相等。
+    assert "A gap between two songs is not post-song talk" in prompt
+    assert "every medley or setlist where another song follows" in prompt
+    assert "never move the talk back into the gap" in prompt
 
 
 def test_default_profile_keeps_the_pre_profile_audio_lrc_prompt_byte_identical():
@@ -135,8 +274,12 @@ def test_default_profile_keeps_the_pre_profile_audio_lrc_prompt_byte_identical()
         duration_ms=90_000,
     )
 
+    # 重新钉：requirement 5/7 明确区分「歌后说话」与「歌间间隙」
+    # （心型病毒联唱案，见 src/autoslice/post_song_talk_witness.py 的模块说明）。
+    # 这个钉子守的是「换 channel profile 不许悄悄改 prompt」，不是「prompt 永不变」；
+    # 蓄意改动照旧连同哈希一起改（先例 1d43398）。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "155132160ebb2909e98df39e28ce5f8bbf0312eede8e616c8f224fa7be383097"
+        "739dce86e6f64ac9341b0f57425fb4a1d5a31dc1d77faae0d6b513808d9762ff"
     )
     assert "live_start_ms <= tail < live_end_ms" in prompt
     assert "voiceprint gate; that speaker-similarity gate is not a singing classifier" in prompt
@@ -192,6 +335,89 @@ def test_agy_adapter_preserves_provider_echo_and_writes_canonical_projection(tmp
     assert manifest["canonicalization"]["strategy"] == AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY
     assert manifest["artifacts"]["provider_raw_output_sha256"] == run.provider_raw_output_sha256
     assert manifest["artifacts"]["output_sha256"] == run.output_sha256
+
+
+def test_agy_job_hardlinks_media_instead_of_copying_it(tmp_path, monkeypatch):
+    """Retries must share one file, not stage a byte copy each.
+
+    Before this, every attempt (and every AGY variant inside it) copy2'd the
+    whole song window: held twelve 1.27 GiB copies of one window.
+    Also pins that staging must not chmod the link — mode lives on the shared
+    inode, so locking the job copy to 0600 would lock the source too.
+    """
+    lrc = _japanese_lrc()
+    media = tmp_path / "source.mp4"
+    media.write_bytes(b"fake-media")
+    os.chmod(media, 0o644)
+    fake_agy = tmp_path / "agy"
+    fake_agy.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv("AGY_BIN", str(fake_agy))
+    monkeypatch.setattr(agy_lrc_alignment, "_duration_ms", lambda _path: 100_000)
+
+    def fake_run(_command, *, cwd, **_kwargs):
+        Path(cwd, "alignment.json").write_text(
+            json.dumps(
+                _valid_audio_lrc_api_payload(
+                    Path(cwd, "prompt.md").read_text(encoding="utf-8"), lrc
+                ),
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(agy_lrc_alignment.subprocess, "run", fake_run)
+    jobs = tmp_path / "jobs"
+    agy_lrc_alignment.run_agy_audio_lrc_alignment(media, lrc, "linkcheck", jobs)
+    agy_lrc_alignment.run_agy_audio_lrc_alignment(media, lrc, "linkcheck", jobs)
+
+    staged = sorted(jobs.glob("*/input.mp4"))
+    assert len(staged) == 2, "each run stages its own job dir"
+    source_inode = media.stat().st_ino
+    for path in staged:
+        assert path.stat().st_ino == source_inode, f"{path} is a copy, not a link"
+    assert media.stat().st_mode & 0o777 == 0o644, "staging must not chmod the shared inode"
+
+
+def test_agy_job_falls_back_to_copy_when_hardlink_is_unavailable(tmp_path, monkeypatch):
+    """Cross-device job dirs still work — copy, and keep the integrity check."""
+    lrc = _japanese_lrc()
+    media = tmp_path / "source.mp4"
+    media.write_bytes(b"fake-media")
+    fake_agy = tmp_path / "agy"
+    fake_agy.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv("AGY_BIN", str(fake_agy))
+    monkeypatch.setattr(agy_lrc_alignment, "_duration_ms", lambda _path: 100_000)
+
+    def deny_link(*_args, **_kwargs):
+        raise OSError(18, "Invalid cross-device link")
+
+    monkeypatch.setattr(agy_lrc_alignment.os, "link", deny_link)
+
+    def fake_run(_command, *, cwd, **_kwargs):
+        Path(cwd, "alignment.json").write_text(
+            json.dumps(
+                _valid_audio_lrc_api_payload(
+                    Path(cwd, "prompt.md").read_text(encoding="utf-8"), lrc
+                ),
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(agy_lrc_alignment.subprocess, "run", fake_run)
+    run = agy_lrc_alignment.run_agy_audio_lrc_alignment(
+        media, lrc, "copyfallback", tmp_path / "jobs"
+    )
+
+    staged = Path(str(run.media_path)) if hasattr(run, "media_path") else None
+    copies = sorted((tmp_path / "jobs").glob("*/input.mp4"))
+    assert len(copies) == 1
+    assert copies[0].stat().st_ino != media.stat().st_ino, "fallback must be a real copy"
+    assert copies[0].read_bytes() == media.read_bytes()
+    assert copies[0].stat().st_mode & 0o777 == 0o600
+    assert staged is None or Path(staged).exists()
 
 
 def _valid_audio_lrc_api_payload(prompt: str, lrc: LrcResult) -> dict[str, object]:
@@ -1164,6 +1390,281 @@ def test_audio_identity_keeps_near_tied_exact_title_homonyms_ambiguous():
             min_margin=0.08,
             preferred_title_hints=("Same Name",),
         )
+
+
+def test_audio_identity_accepts_sole_nonzero_candidate_below_general_recall_floor():
+    """song_230754_1118 案：演唱段落 ASR 严重乱码（旋律拉长音常见
+    BCUT 失效模式），provider 搜出的 8 个 LRC 候选里只有《一起长大 (live)》
+    命中任何一句（3%），其余全部 0%；旧代码仍按通用 20% 地板把它判成
+    SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS 终态弃选，从未真正调用过 AGY 音频
+    验证。地板本意是防止在多个同样弱、真正互相竞争的候选间瞎选一个喂给
+    AGY；没有第二个候选携带任何证据时不存在"选错候选"的风险，必须放行
+    交给下游 AGY 音频 + host-vocal + 现场演出证明去做真正的身份判定。"""
+    canonical = _japanese_lrc()
+    canonical = LrcResult(
+        provider="netease",
+        song_title="一起长大 (live)",
+        artist="李豆沙",
+        source_ref="netease://song/29932202",
+        lines=canonical.lines,
+    )
+    unrelated_zero = LrcResult(
+        provider="netease",
+        song_title="拉多加",
+        artist="unrelated artist",
+        source_ref="netease://song/2045009171",
+        lines=tuple(LrcLine(index * 5_000, f"unrelated lyric {index}") for index in range(34)),
+    )
+
+    chosen = _choose_audio_lrc_candidate(
+        [(0.03, canonical, []), (0.0, unrelated_zero, [])],
+        pinned_lrc_results=(),
+        min_recall_ratio=0.20,
+        min_margin=0.08,
+    )
+
+    assert chosen.source_ref == canonical.source_ref
+
+
+def test_audio_identity_still_rejects_low_recall_with_a_second_nonzero_competitor():
+    """出现第二个非零候选时通用地板未被削弱：这才是地板真正要防的"多个
+    同样弱的候选里瞎选一个"场景，必须继续拒绝进音频验证。"""
+    canonical = _japanese_lrc()
+    canonical = LrcResult(
+        provider="netease",
+        song_title="一起长大 (live)",
+        artist="李豆沙",
+        source_ref="netease://song/29932202",
+        lines=canonical.lines,
+    )
+    weak_competitor = LrcResult(
+        provider="netease",
+        song_title="拉多加",
+        artist="unrelated artist",
+        source_ref="netease://song/2045009171",
+        lines=tuple(LrcLine(index * 5_000, f"unrelated lyric {index}") for index in range(34)),
+    )
+
+    with pytest.raises(ValueError, match="ambiguous low-ASR LRC identity"):
+        _choose_audio_lrc_candidate(
+            [(0.03, canonical, []), (0.02, weak_competitor, [])],
+            pinned_lrc_results=(),
+            min_recall_ratio=0.20,
+            min_margin=0.08,
+        )
+
+
+def test_audio_identity_still_rejects_low_recall_alone_without_hint():
+    """没有 hint、也没有"唯一非零候选"豁免适用时（这里单候选本身就满足
+    sole-nonzero 条件，故改用两个都非零的候选验证纯低 recall 仍拒绝）。"""
+    canonical = _japanese_lrc()
+    canonical = LrcResult(
+        provider="netease",
+        song_title="一起长大 (live)",
+        artist="李豆沙",
+        source_ref="netease://song/29932202",
+        lines=canonical.lines,
+    )
+    other = LrcResult(
+        provider="netease",
+        song_title="拉多加",
+        artist="unrelated artist",
+        source_ref="netease://song/2045009171",
+        lines=tuple(LrcLine(index * 5_000, f"unrelated lyric {index}") for index in range(34)),
+    )
+
+    with pytest.raises(ValueError, match="ambiguous low-ASR LRC identity"):
+        _choose_audio_lrc_candidate(
+            [(0.03, canonical, []), (0.03, other, [])],
+            pinned_lrc_results=(),
+            min_recall_ratio=0.20,
+            min_margin=0.08,
+        )
+
+
+def test_audio_identity_still_rejects_zero_recall_exact_title_hint():
+    """精确标题命中但零 ASR 关联（纯捏造/完全不相关）仍必须拒绝，不能空口
+    白牙把任意 LRC 塞给 AGY：零 recall 连 exact_title_groups 的非零地板都进
+    不去，退回通用地板判词，而不是被 hint 直接放行。"""
+    canonical = _japanese_lrc()
+    canonical = LrcResult(
+        provider="netease",
+        song_title="一起长大 (live)",
+        artist="李豆沙",
+        source_ref="netease://song/29932202",
+        lines=canonical.lines,
+    )
+
+    with pytest.raises(ValueError, match="ambiguous low-ASR LRC identity"):
+        _choose_audio_lrc_candidate(
+            [(0.0, canonical, [])],
+            pinned_lrc_results=(),
+            min_recall_ratio=0.20,
+            min_margin=0.08,
+            preferred_title_hints=("一起长大",),
+        )
+
+
+def _f3_cross_script_lrc(title: str, source_ref: str, texts: list[str]) -> LrcResult:
+    return LrcResult(
+        provider="netease",
+        song_title=title,
+        artist=None,
+        source_ref=source_ref,
+        lines=tuple(LrcLine(index * 5_000, text) for index, text in enumerate(texts)),
+    )
+
+
+_F3_JA_LINES = [
+    "さよなら 涙のかけら",
+    "ここから始まる物語",
+    "君と見た夢の続きを",
+    "私は覚えている",
+    "風がやさしく吹いて",
+    "あの日の約束を",
+    "ずっと忘れないよ",
+    "いつかまた会えるなら",
+    "その時は笑って",
+    "きっと言えるはずだから",
+]
+_F3_KO_LINES = [
+    "그대의 이름을 부르면",
+    "마음이 조금 따뜻해져",
+    "오늘도 걸어가는 길에",
+    "작은 빛이 스며들어",
+    "잊지 않을 거야 우리",
+    "함께한 모든 순간을",
+    "다시 만날 그날까지",
+    "노래를 부를게",
+]
+# Either gate is an acceptable rejection: the point of the negative canaries is
+# that a Chinese-body sheet with zero ASR correlation never reaches audio, not
+# which of the two floors turns it away.
+_F3_REJECTED = "zero ASR correlation|ambiguous low-ASR LRC identity"
+
+_F3_ZH_NOISE = _f3_cross_script_lrc(
+    "乌鲁木齐九月",
+    "netease://song/1859212009",
+    [f"中文同音噪声底噪第{index}行你爱唱的那首歌" for index in range(12)],
+)
+
+
+@pytest.mark.parametrize(
+    ("title", "source_ref", "texts"),
+    [
+        ("花の塔", "netease://song/1956534872", _F3_JA_LINES),
+        ("마리아 (Maria)", "netease://song/1234567", _F3_KO_LINES),
+    ],
+)
+def test_audio_identity_lets_a_cross_script_title_hit_reach_audio_at_zero_recall(
+    title, source_ref, texts
+):
+    """F3：中文 ASR 对日/韩歌词恰好 0.0，那不是"没有证据"，是"这把尺子量不了"。
+    `song_200130_1012` 的正主 `花の塔` 0% 就是这样被 19% 的中文同音
+    噪声《乌鲁木齐九月》顶掉的。0.0 的跨字系精确标题命中必须进得了音频验证——
+    进去之后由音频裁决，不是直接放行交付。"""
+
+    canonical = _f3_cross_script_lrc(title, source_ref, texts)
+
+    chosen = _choose_audio_lrc_candidate(
+        [(0.0, canonical, []), (0.19, _F3_ZH_NOISE, [])],
+        pinned_lrc_results=(),
+        min_recall_ratio=0.20,
+        min_margin=0.08,
+        preferred_title_hints=(title,),
+    )
+
+    assert chosen.source_ref == source_ref
+
+
+def test_audio_identity_does_not_let_a_chinese_zero_recall_hint_through_the_cross_script_gate():
+    """负向金丝雀：闸门只对跨字系开。中文歌词 + 0% + 精确标题命中仍然是
+    "没有证据"，不得因为 F3 被放宽成"任何 0% 都放行"。"""
+
+    chinese_hit = _f3_cross_script_lrc(
+        "一起长大",
+        "netease://song/29932202",
+        [f"完全无关的中文歌词第{index}行" for index in range(12)],
+    )
+
+    with pytest.raises(ValueError, match=_F3_REJECTED):
+        _choose_audio_lrc_candidate(
+            [(0.0, chinese_hit, [])],
+            pinned_lrc_results=(),
+            min_recall_ratio=0.20,
+            min_margin=0.08,
+            preferred_title_hints=("一起长大",),
+        )
+
+
+def test_audio_identity_does_not_open_the_gate_on_a_single_borrowed_kana():
+    """`の` 这类被中文歌名借用的假名不得解锁跨字系闸门。"""
+
+    borrowed = _f3_cross_script_lrc(
+        "夏の风",
+        "netease://song/999",
+        [f"这是一首中文歌的第{index}行歌词内容很长很中文" for index in range(11)] + ["夏の风"],
+    )
+
+    with pytest.raises(ValueError, match=_F3_REJECTED):
+        _choose_audio_lrc_candidate(
+            [(0.0, borrowed, [])],
+            pinned_lrc_results=(),
+            min_recall_ratio=0.20,
+            min_margin=0.08,
+            preferred_title_hints=("夏の风",),
+        )
+
+
+def test_audio_identity_sends_tied_zero_ratio_cross_script_homonyms_to_audio_not_ambiguity():
+    """两个 0.0 的跨字系同名候选之间，ASR margin 按 F3 自己的前提就是没有信息，
+    不能拿它判 AMBIGUOUS——交给下游有界 variant 循环让音频裁决。"""
+
+    first = _f3_cross_script_lrc("花の塔", "netease://song/1956534872", _F3_JA_LINES)
+    second = _f3_cross_script_lrc(
+        "花の塔", "netease://song/1968782163", [f"{line}。" for line in reversed(_F3_JA_LINES)]
+    )
+
+    chosen = _choose_audio_lrc_candidate(
+        [(0.0, first, []), (0.0, second, [])],
+        pinned_lrc_results=(),
+        min_recall_ratio=0.20,
+        min_margin=0.08,
+        preferred_title_hints=("花の塔",),
+    )
+
+    assert chosen.source_ref in {first.source_ref, second.source_ref}
+
+
+def test_audio_identity_accepts_literal_exact_title_hint_below_general_recall_floor():
+    """字面精确命中 hint（provider 标题无装饰后缀）+ 低于地板但非零 recall
+    的候选：exact_title_groups 的非零地板放行，走 preferred_top 分支，不
+    再要求达到通用 20%。"""
+    canonical = _japanese_lrc()
+    canonical = LrcResult(
+        provider="netease",
+        song_title="一起长大",
+        artist="李豆沙",
+        source_ref="netease://song/29932202",
+        lines=canonical.lines,
+    )
+    weak_other_title = LrcResult(
+        provider="netease",
+        song_title="拉多加",
+        artist="unrelated artist",
+        source_ref="netease://song/2045009171",
+        lines=tuple(LrcLine(index * 5_000, f"unrelated lyric {index}") for index in range(34)),
+    )
+
+    chosen = _choose_audio_lrc_candidate(
+        [(0.05, canonical, []), (0.10, weak_other_title, [])],
+        pinned_lrc_results=(),
+        min_recall_ratio=0.20,
+        min_margin=0.08,
+        preferred_title_hints=("一起长大",),
+    )
+
+    assert chosen.source_ref == canonical.source_ref
 
 
 def test_audio_identity_collapses_same_title_with_different_line_splitting():

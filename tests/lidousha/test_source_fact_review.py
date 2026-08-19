@@ -1,13 +1,84 @@
+import hashlib
 import json
+from pathlib import Path
 
+import pytest
+
+import src.autoslice.reviewed_subtitle_baseline_registry as baseline_registry
+import src.autoslice.source_fact_staging as source_fact_staging
 from src.autoslice.publish_staging import _stage_publish_draft
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.source_fact_review import (
+    _finalize_receipt,
+    _valid_changed_surface,
     review_and_repair_source_facts,
     source_fact_review_passes,
     validate_source_fact_review,
 )
 from src.autoslice.story_contract import build_story_contract
+
+
+@pytest.fixture(autouse=True)
+def _allow_precommit_exact_interval_authority(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Repository sealing has dedicated tests; this file exercises source facts."""
+
+    monkeypatch.setattr(
+        baseline_registry,
+        "require_repository_asset_authority",
+        lambda **_kwargs: None,
+    )
+
+
+def _canonical_sha256(value: object) -> str:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _present_speaker_evidence(transcript: str) -> dict[str, object]:
+    policy_ids = {
+        "alignment": "speaker_cue_subsegment_alignment/v1",
+        "text": "compact_ws/v1",
+        "timing": "half_open_integer_ms_exact/v1",
+    }
+    alignment = {
+        "schema_version": "speaker-cue-subsegment-alignment.v1",
+        "policy_ids": policy_ids,
+        "rows": [
+            {
+                "cue_id": "1",
+                "segments": [{"segment_index": 1, "speaker": "李豆沙", "text": "测试字幕"}],
+            }
+        ],
+    }
+    return {
+        "state": "PresentValid",
+        "policy_ids": policy_ids,
+        "plain_srt_sha256": "sha256:" + "1" * 64,
+        "speaker_final_srt_sha256": "sha256:" + "2" * 64,
+        "alignment": alignment,
+        "alignment_sha256": _canonical_sha256(alignment),
+        "speaker_transcript": transcript,
+        "speaker_transcript_sha256": "sha256:"
+        + hashlib.sha256(transcript.encode("utf-8")).hexdigest(),
+    }
+
+
+def _absent_speaker_evidence() -> dict[str, object]:
+    return {
+        "state": "AbsentAuthorized",
+        "reason": "speaker_mode_uniform_host",
+        "policy_ids": {
+            "alignment": "speaker_cue_subsegment_alignment/v1",
+            "text": "compact_ws/v1",
+            "timing": "half_open_integer_ms_exact/v1",
+            "absence": "speaker_mode_uniform_host/v1",
+        },
+    }
 
 
 def _completion(
@@ -18,6 +89,7 @@ def _completion(
     supported_by: list[str],
     changed_surfaces: list[dict[str, object]] | None = None,
     selection_scorecard_review: dict[str, str] | None = None,
+    addressee_attribution: list[dict[str, object]] | None = None,
 ) -> str:
     return json.dumps(
         {
@@ -27,6 +99,9 @@ def _completion(
             "final_title": final_title,
             "supported_by": supported_by,
             "changed_surfaces": changed_surfaces or [],
+            # F12：受话人归属判项在每份新回应里都必须存在（缺键=形状无效）。
+            # 这些历史用例都没有说话人转写，判项按 UNVERIFIABLE 车道留空。
+            "addressee_attribution": addressee_attribution or [],
             "selection_scorecard_review": (
                 selection_scorecard_review
                 or {
@@ -77,6 +152,8 @@ def test_adjacent_structured_chat_supports_beidian_keep() -> None:
     assert review["final_selection_hook"] == hook
     assert review["final_title"] == title
     assert len(review["passes"]) == 1
+    assert "entity_context" not in review
+    assert "entity_context_sha256" not in review["passes"][0]
 
 
 def test_source_fact_prompt_forbids_birthday_forwarding_role_drift() -> None:
@@ -99,6 +176,44 @@ def test_source_fact_prompt_forbids_birthday_forwarding_role_drift() -> None:
         final_transcript="今天是她的生日\n转发这条信息能得奖",
         clip_context_prompt="",
         llm_call=cpa,
+    )
+
+
+def test_changed_surface_evidence_can_bind_exact_speaker_transcript_rows() -> None:
+    row = {
+        "artifact": "title",
+        "before": "小李求莉亚放过自己",
+        "after": "莉亚求小李放过自己",
+        "reason": "说话人标签证明求饶者是连线一方。",
+        "evidence": [
+            "speaker_transcript: 5 [连线] 我想活着",
+            "speaker_transcript: 7 [连线] 你放过我好吗",
+        ],
+    }
+    speaker_transcript = "\n".join(
+        [
+            "4 [李豆沙] 莉亚，活着",
+            "5 [连线] 我想活着",
+            "7 [连线] 你放过我好吗",
+        ]
+    )
+
+    assert _valid_changed_surface(
+        row,
+        before_surface="【李豆沙】小李求莉亚放过自己",
+        after_surface="【李豆沙】莉亚求小李放过自己",
+        final_transcript="莉亚，活着\n我想活着\n你放过我好吗",
+        clip_context_prompt="",
+        speaker_transcript=speaker_transcript,
+    )
+
+    assert not _valid_changed_surface(
+        {**row, "evidence": ["speaker_transcript: 5 [李豆沙] 我想活着"]},
+        before_surface="【李豆沙】小李求莉亚放过自己",
+        after_surface="【李豆沙】莉亚求小李放过自己",
+        final_transcript="莉亚，活着\n我想活着\n你放过我好吗",
+        clip_context_prompt="",
+        speaker_transcript=speaker_transcript,
     )
 
 
@@ -385,6 +500,95 @@ def test_repair_rejects_generic_context_label() -> None:
 
     assert not source_fact_review_passes(review)
     assert review["passes"][0]["reason_code"] == "CPA_TEXT_REVIEW_INVALID"
+
+
+def test_live_shaped_chat_repair_requires_canonical_rows_and_can_converge() -> None:
+    bad_hook = "李豆沙正面断言弹幕已经挂了。"
+    bad_title = "【李豆沙】正面断言弹幕已经挂了"
+    fixed_hook = "李豆沙先看到“正面…”，后来问弹幕怎么挂了。"
+    fixed_title = "【李豆沙】先看到“正面…”，后来问弹幕怎么挂了"
+    context = "\n".join(
+        [
+            "- danmaku @3719ms event=: 正面...",
+            "- danmaku @25939ms event=: 弹幕怎么挂了",
+        ]
+    )
+
+    def repair_with(evidence: list[str]) -> str:
+        return _completion(
+            status="REPAIR",
+            final_hook=fixed_hook,
+            final_title=fixed_title,
+            supported_by=["structured_chat", "same_clip_context"],
+            changed_surfaces=[
+                {
+                    "artifact": "selection_hook",
+                    "before": "正面断言弹幕已经挂了",
+                    "after": "先看到“正面…”，后来问弹幕怎么挂了",
+                    "reason": "两条弹幕只支持先后出现的文字，不支持主播作出断言。",
+                    "evidence": evidence,
+                },
+                {
+                    "artifact": "title",
+                    "before": "正面断言弹幕已经挂了",
+                    "after": "先看到“正面…”，后来问弹幕怎么挂了",
+                    "reason": "标题改回两条同片弹幕逐字支持的事实模态。",
+                    "evidence": evidence,
+                },
+            ],
+        )
+
+    generic = review_and_repair_source_facts(
+        selection_hook=bad_hook,
+        title=bad_title,
+        final_transcript="正面\n弹幕怎么挂了",
+        clip_context_prompt=context,
+        llm_call=lambda _prompt: repair_with(
+            [
+                "structured_chat: 弹幕怎么挂了",
+                "same_clip_context: 正面...",
+            ]
+        ),
+    )
+
+    assert not source_fact_review_passes(generic)
+    assert generic["passes"][0]["reason_code"] == "CPA_TEXT_REVIEW_INVALID"
+
+    responses = iter(
+        [
+            repair_with(
+                [
+                    "danmaku @25939ms event=: 弹幕怎么挂了",
+                    "danmaku @3719ms event=: 正面...",
+                ]
+            ),
+            _completion(
+                status="KEEP",
+                final_hook=fixed_hook,
+                final_title=fixed_title,
+                supported_by=["structured_chat", "same_clip_context"],
+            ),
+        ]
+    )
+
+    def cpa(prompt: str) -> str:
+        assert "structured_chat、same_clip_context 只可出现在 supported_by" in prompt
+        assert "逐字复制完整 danmaku|superchat @<offset>ms event=<id>: 行" in prompt
+        assert "禁止使用 structured_chat: 或 same_clip_context: 泛化标签" in prompt
+        return next(responses)
+
+    canonical = review_and_repair_source_facts(
+        selection_hook=bad_hook,
+        title=bad_title,
+        final_transcript="正面\n弹幕怎么挂了",
+        clip_context_prompt=context,
+        llm_call=cpa,
+    )
+
+    assert source_fact_review_passes(canonical)
+    assert canonical["decision"] == "REPAIRED"
+    assert canonical["final_selection_hook"] == fixed_hook
+    assert canonical["final_title"] == fixed_title
 
 
 def test_repair_rejects_source_label_bound_only_in_other_corpus() -> None:
@@ -685,6 +889,156 @@ def test_persisted_receipt_rejects_bound_surface_tamper() -> None:
     )
 
 
+def test_persisted_receipt_rebuilds_exact_speaker_evidence_binding() -> None:
+    hook = "测试字幕形成完整事实。"
+    title = "【李豆沙】测试字幕形成完整事实"
+    final_transcript = "测试字幕"
+    speaker_transcript = "1 [李豆沙] 测试字幕"
+    evidence = _present_speaker_evidence(speaker_transcript)
+    review = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript=final_transcript,
+        speaker_transcript=speaker_transcript,
+        speaker_evidence=evidence,
+        clip_context_prompt="",
+        llm_call=lambda _prompt: _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+        ),
+    )
+
+    assert source_fact_review_passes(review)
+    assert review["speaker_evidence"] == evidence
+    assert review["passes"][0]["speaker_evidence_sha256"] == review["speaker_evidence_sha256"]
+    assert validate_source_fact_review(
+        review,
+        selection_hook=hook,
+        title=title,
+        final_transcript=final_transcript,
+        clip_context_prompt="",
+        speaker_evidence=evidence,
+    )
+    # New receipts may never be validated through the legacy unchecked mode.
+    assert not validate_source_fact_review(
+        review,
+        selection_hook=hook,
+        title=title,
+        final_transcript=final_transcript,
+        clip_context_prompt="",
+    )
+
+
+def test_persisted_receipt_rejects_rebuilt_speaker_evidence_mismatch() -> None:
+    hook = "测试字幕形成完整事实。"
+    title = "【李豆沙】测试字幕形成完整事实"
+    speaker_transcript = "1 [李豆沙] 测试字幕"
+    evidence = _present_speaker_evidence(speaker_transcript)
+    review = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript="测试字幕",
+        speaker_transcript=speaker_transcript,
+        speaker_evidence=evidence,
+        clip_context_prompt="",
+        llm_call=lambda _prompt: _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+        ),
+    )
+    drifted = json.loads(json.dumps(evidence, ensure_ascii=False))
+    drifted["speaker_final_srt_sha256"] = "sha256:" + "9" * 64
+
+    assert not validate_source_fact_review(
+        review,
+        selection_hook=hook,
+        title=title,
+        final_transcript="测试字幕",
+        clip_context_prompt="",
+        speaker_evidence=drifted,
+    )
+
+
+def test_persisted_receipt_rejects_inconsistent_or_missing_pass_binding() -> None:
+    hook = "测试字幕形成完整事实。"
+    title = "【李豆沙】测试字幕形成完整事实"
+    speaker_transcript = "1 [李豆沙] 测试字幕"
+    evidence = _present_speaker_evidence(speaker_transcript)
+    review = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript="测试字幕",
+        speaker_transcript=speaker_transcript,
+        speaker_evidence=evidence,
+        clip_context_prompt="",
+        llm_call=lambda _prompt: _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+        ),
+    )
+    inconsistent_body = json.loads(json.dumps(review, ensure_ascii=False))
+    inconsistent_body.pop("receipt_sha256")
+    inconsistent_body["passes"][0]["speaker_evidence_sha256"] = "sha256:" + "8" * 64
+    inconsistent = _finalize_receipt(inconsistent_body)
+    missing_body = json.loads(json.dumps(review, ensure_ascii=False))
+    missing_body.pop("receipt_sha256")
+    missing_body["passes"][0].pop("speaker_transcript_sha256")
+    missing = _finalize_receipt(missing_body)
+
+    for invalid in (inconsistent, missing):
+        assert not validate_source_fact_review(
+            invalid,
+            selection_hook=hook,
+            title=title,
+            final_transcript="测试字幕",
+            clip_context_prompt="",
+            speaker_evidence=evidence,
+        )
+
+
+def test_all_null_legacy_speaker_receipt_requires_authorized_absence_when_rebuilt() -> None:
+    hook = "测试字幕形成完整事实。"
+    title = "【李豆沙】测试字幕形成完整事实"
+    review = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript="测试字幕",
+        clip_context_prompt="",
+        llm_call=lambda _prompt: _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+        ),
+    )
+    common = {
+        "selection_hook": hook,
+        "title": title,
+        "final_transcript": "测试字幕",
+        "clip_context_prompt": "",
+    }
+
+    # Omitted evidence preserves direct legacy validation, while production's
+    # explicit rebuild accepts NULL only for the uniform-host absence state.
+    assert validate_source_fact_review(review, **common)
+    assert validate_source_fact_review(
+        review,
+        **common,
+        speaker_evidence=_absent_speaker_evidence(),
+    )
+    assert not validate_source_fact_review(
+        review,
+        **common,
+        speaker_evidence=_present_speaker_evidence("1 [李豆沙] 测试字幕"),
+    )
+
+
 def test_publish_choke_rebuilds_story_before_cover_after_joint_repair(
     tmp_path,
 ) -> None:
@@ -765,6 +1119,7 @@ def test_publish_choke_rebuilds_story_before_cover_after_joint_repair(
     staged = _stage_publish_draft(
         {
             "status": "MATERIALIZED",
+            "speaker_mode": "uniform_host",
             "media_path": str(media),
             "story_contract": contract(bad_hook),
             "artifact_hashes": {},
@@ -823,6 +1178,7 @@ def test_publish_choke_blocks_cover_when_joint_review_provider_fails(
     staged = _stage_publish_draft(
         {
             "status": "MATERIALIZED",
+            "speaker_mode": "uniform_host",
             "media_path": str(media),
             "story_contract": story,
             "artifact_hashes": {},
@@ -893,6 +1249,7 @@ def test_manual_exact_title_repair_requires_new_authority_before_cover(
     staged = _stage_publish_draft(
         {
             "status": "MATERIALIZED",
+            "speaker_mode": "uniform_host",
             "media_path": str(media),
             "story_contract": story,
             "artifact_hashes": {},
@@ -944,6 +1301,24 @@ def test_prompt_teaches_hard_meme_canon_semantics() -> None:
     assert "hard-meme-canon" in prompt
     assert "「直女」一律写作「侄女」" in prompt
     assert "不得把规范词面" in prompt or "永远不得把规范词面" in prompt
+
+
+def _story_entity_srt() -> Path:
+    return (
+        Path(__file__).resolve().parents[2]
+        / "assets/lidousha/reviewed_subtitle_baselines"
+        / "auto_223750_578_734.reviewed.srt"
+    )
+
+
+
+
+
+
+
+
+
+
 
 
 def test_judge_repair_reintroducing_banned_surface_is_recanonicalized() -> None:

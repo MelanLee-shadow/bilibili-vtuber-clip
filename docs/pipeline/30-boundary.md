@@ -21,6 +21,22 @@ talk 成片的最终 end 必须同时成立：
 3. 故事/回答/包袱已经落地；
 4. 下一 cue 已被证明是下一条 SC、谢礼或另一话题，不能吞进本片。
 
+selector 的相关语义证人只证明候选在进入边界步骤前已有自足故事承诺，不得把七维 metric
+里的「喜剧/情绪落点」窄化成所有题材都必须有笑点。`self_contained>=3` 仍是硬门；
+`comedic_payoff` 继续进入选片排序与回执诊断，但不参与边界 hard gate。边界 reviewer 自己的
+四命题不能挽救一个 selector 已判断不自足的候选。
+
+source-full-window 的 endpoint 选择使用
+`talk-boundary-endpoint-selection-contract.v2`。reviewer 必须比较完整的
+`recommendation_cue_indexes`，并逐项检查为上限之后保留的
+`next_topic_witness_cue_indexes`，不能因为 selector 目标所承诺的内容已经讲完就立刻停在目标
+cue。目标后若紧接同话题提问、回应或收尾互动，endpoint 必须推进到明确换题见证之前、仍在
+推荐集合内的最晚完整收束 cue；不得把问句留在片尾或把回应切到片外。换题见证不要求是推荐
+cue 的紧邻下一句，只要它在 hash-bound 可见 cue 中位于 endpoint 之后、语义上明确进入新
+SC、谢礼、另一话题或直播阶段，并由 `evidence_cue_indexes` 实际引用即可。没有 post-end
+见证仍须 BLOCK；“进入尾声”等字面词只供 CPA 作上下文判断，确定性代码不得靠关键词签发
+PASS。契约版本进入 request SHA，因此旧 endpoint 语义回执不能在 v2 下静默重放。
+
 普通 hash-bound 人工 end（`boundary_end_mode=semantic_lower_bound`，也包括未显式声明 mode
 的普通 `given_end_ms`）只表示“人工已确认至少要保留到这里”的**下界**，不是可绕过语义门的
 绝对截断点。它不得早于候选 `end_ms`，不得砍掉 content anchor，也不得覆盖一个更晚的语义
@@ -51,9 +67,44 @@ cue、required owner/structured payoff 越过 pin、grid/index 漂移或最终
 source-full-window CPA 可在最多 15 秒的 `semantic_tail_trim_cap_ms` 内向前回剪，但只能选
 **最晚一个**同时满足四命题的 cue，并须显式确认 `content_anchor_covered=true`；后续 cue
 必须能证明是新话题、未回答的新问题或不完整尾巴。manual lower bound、structured payoff、
-required owner 与 exact pin 均不得被这条窄门跨过。最终 scope 必须披露
+required owner 与 exact pin 均不得被这条窄门跨过。唯一例外是 v2 reviewed baseline 的
+终点帽：若去掉 structured-payoff **检测假设**后，按同一回剪帽计算出的交付下界以及
+manual/required-owner 均不越过该终点，payoff 可钳制到 reviewed 终点并以
+`structured_payoff_clamped_from_ms` 披露；回剪帽够不到、manual/owner 越界或没有 reviewed
+终点帽时仍硬拦，普通首投的 payoff 保护不变。最终 scope 必须披露
 `recommendation_backward_ms`，resolver 复算同一 SHA 后才可采用；final-delivery 层仍只审
 实际成片最后 cue，不能在成片落地后凭文本结论偷偷再剪。
+
+v2 `exact_interval_replay=true` 的已审区间还有一个独立、比普通 timing absorption 更窄的
+`reviewed_exact_interval_terminal_projection`。它只在 source piece 已实际取回并验哈希后由
+producer 现场签发，caller 不得在 spec 里自带：签名同时绑定 reviewed SRT 原始字节 SHA、
+authority、baseline 最后一 cue 恰好结束于区间时长、唯一 content source 的 basename/实际
+SHA 和绝对 source 区间。只有 scope 的 `minimum_recommended_end_ms` 与
+`max_recommended_end_ms` 都等于该 reviewed endpoint、普通 cue 与纯静音桥均无可选项时，
+fresh grid 才可把 endpoint 前不超过 250ms 的**紧邻上一条 closure cue**列为 recommendation；
+紧随其后的唯一 cue 必须从该 closure end 起步并跨过 endpoint。跨界 cue 只作下一话题 witness，
+CPA 必须审 fresh closure 文本并在 evidence 中引用该 witness；baseline 文本不签发任何故事
+闭环结论。resolver 必须从当前完整 grid 和当前 source-bound authority 重算同一投影，snap 到
+上一条 closure cue，再把最终媒体 end 精确锁回 reviewed endpoint；字幕物化必须是无 tail
+extension 的 exact reviewed interval replay，之后仍跑正常 final-delivery 语义重审。source/
+baseline/区间/terminal timing 任一漂移、crossing 不唯一、间隙超过 250ms、缺 witness、最终
+媒体 endpoint 或 exact replay 不一致，均 fail closed；不得复用 `pin_crossing_closure_cue`，
+也不得把这条车道推广给非 exact redelivery。
+
+上述 250ms terminal projection 仍是普通历史候选的窄兼容门，不是所有人工复核片的上限。
+候选 manifest 若唯一声明并通过
+`operator-reviewed-exact-source-interval.v1`，producer 必须改走独占的
+`reviewed_exact_source_interval_v1`：在实际 source bytes 验哈希后，同时验证 candidate、
+稳定 semantic spec、source logical timeline 与半开区间、reviewed SRT raw bytes/canonical cue
+manifest、独立 speaker truth raw bytes/canonical segments、selection hook/scorecard/rescore
+authority、冻结 semantic verdict、0..400ms（含端点）的 terminal tail，以及 维护者 对这段**实际
+视听媒体**的 authenticated review receipt。路径、host、mount、mtime、inode、临时名和 fresh
+ASR grid/job 不进入 authority identity。验证成功时，唯一合法区间由 authority 直接给出；
+fresh ASR/VAD 只可写 diagnostic witness，不得调用普通 snap/refine/repair 或移动任一边界。
+验证失败、authority 缺失/重复、任一 bytes/spec/policy 漂移、cue/segment 越界、tail/anchor
+不一致或输出 source span 不足，立即阻断，禁止回落到上述 250ms 投影或 live semantic review。
+人类 source-bound next-topic 证据若在 approved end 前 1ms 已确认则构成硬矛盾；恰好从半开区间
+end 开始则已被排除，不构成矛盾。
 
 `content_boundary` 的恢复指纹必须覆盖完整的生产边界决策面：semantic reviewer、
 request/scope 构造、owner/resolver、final-review contract 与 talk-lane 分类，而不只是顶层
@@ -166,6 +217,34 @@ SHA、source review/request/grid SHA 全部一致，delivery 仍推荐唯一最�
 `boundary_semantic_review` 是同一份 `final_delivery` 回执。source grid、snap 或 interval
 变化会使 source 回执及其下游 witness 失效；materialize 后 SRT 的任何字节/cue 变化会使
 final-delivery 回执与 exact-final 放行回执失效，均须从相应层重新评审，不能只重绑 hash。
+
+唯一窄例外是 维护者 2026-08-08 优化①边界重放 + wsl 重产 BLOCK 实证所批准的
+`talk-boundary-frozen-receipt-ref.v1`。该引用只能随
+`subtitle_redelivery_baseline` 出现在 redelivery spec；loader 必须先核对 pristine
+`record.json` 原始字节 SHA、candidate、冻结 source/final 两份 PASS 及其 source witness
+互绑、两层 request/grid/scope/endpoint binding。request/grid 完全相等时可作普通精确缓存；
+若 source fresh-ASR grid 漂移，则只有 v2 `exact_interval_replay=true`，且当前 baseline
+原始字节 SHA、单一源录像 basename/SHA、绝对 source interval、selection hook/scorecard、
+冻结终端 closure 文本/毫秒及最终 transcript/grid 全部与 pristine record 一致时，才可把
+历史 PASS **verdict** 投影到当前 request。当前 grid 上的 recommendation/evidence ordinal、
+scope 与 closure 仍须唯一通过现有确定性校验。source 层另允许一个更窄的 fresh-ASR owner
+单调放宽：仅限普通 `semantic_lower_bound`、没有 manual/given-end、published recall 或
+structured payoff，冻结 `delivery_lower_bound_ms` 确由旧 `required_owner_end_ms` 形成，
+当前 owner 缺失或更早，并且变化只表现为 delivery/minimum floor 向前、backward allowance
+按同一毫秒差扩大；scope 其余字段必须逐项相等，双方 scope 都须通过 canonical 重建校验，
+不能只信自声明哈希。冻结 owner contract 还必须来自 record 的
+`artifact_hashes.chat_authority_audit_sha256` 逐字节绑定文件；当前 contract 由本轮 owner freeze
+现场传入。两份 contract 都须通过 schema/contract hash 校验、candidate owner-eligibility scope
+相同、`deterministic_owner_set_sha256` 相同，且差集 owner kind 只能来自已列举的 per-attempt
+story/chat ASR 类型；任何 `source_subtitle_truth` 消失都拒绝。该例外不回填历史 owner，最终
+closure 仍须在当前 grid 唯一命中；新/更晚 owner、人工下界或任一无关 scope 漂移一律 fresh。
+final-delivery 层不使用该放宽，scope 仍须精确相等。生成的是带
+`frozen_decision_binding` 的 current-bound derived receipt，不冒充旧 LLM 审过当前 request。
+final-delivery 层还必须逐原始字节命中冻结 `artifact_hashes.subtitle_sha256`，并保持 source
+witness 的推荐 end/最终 interval 不漂。两层均在 `boundary_receipt_replay` 披露 frozen/current
+request 与 grid SHA、record 路径/SHA、`llm_call_skipped=true`。任一字段、文件字节、终端
+closure 或最终 SRT 不符即丢弃冻结件，走原 fresh reviewer；无 baseline/无引用的普通新产
+不得读取该路径，行为与本例外上线前完全相同。
 
 若 exact-final 的 CPA 在 AGY 无有效听音（`UNCERTAIN`）时仅靠文字闭集提出修改，普通 cue
 仍按 CPA 结果处理；但它不得把已由 PASS 的 final-delivery 回执及 source-separation witness

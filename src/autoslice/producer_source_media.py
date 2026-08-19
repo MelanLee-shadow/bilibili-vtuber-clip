@@ -16,6 +16,15 @@ from src.autoslice.producer_media import (
     run,
 )
 from src.autoslice.recut_materialization import _accurate_reencode_recut_command
+from src.autoslice.redelivery_boundary_projection import (
+    AUTHORITY_CONFIG_KEY,
+    build_terminal_projection_authority,
+)
+from src.autoslice.reviewed_exact_source_interval import (
+    RUNTIME_CONFIG_KEY as EXACT_INTERVAL_RUNTIME_CONFIG_KEY,
+    ReviewedExactSourceIntervalError,
+    compile_authority_from_spec as compile_exact_interval_authority,
+)
 from src.autoslice.shadow_review import _sha256
 
 
@@ -36,8 +45,7 @@ def _bind_piece_source_media_sha256(
     declared = piece.get("source_media_sha256")
     if declared is not None and declared != binding:
         raise RuntimeError(
-            "SOURCE_MEDIA_DECLARED_SHA256_MISMATCH: "
-            f"declared={declared!r} actual={binding}"
+            f"SOURCE_MEDIA_DECLARED_SHA256_MISMATCH: declared={declared!r} actual={binding}"
         )
     piece["source_media_sha256"] = binding
     return binding
@@ -111,6 +119,7 @@ def prepare_source_media(
     cid: str,
     out_root: Path,
     host: str,
+    spec_parent: Path | None = None,
 ) -> PreparedSourceMedia:
     piece_paths: list[Path] = []
     piece_provenance_rows: list[dict] = []
@@ -145,9 +154,7 @@ def prepare_source_media(
                 )
                 continue
         try:
-            source_path, source_sha256 = _source_media_sha256(
-                host, Path(piece["remote_media"])
-            )
+            source_path, source_sha256 = _source_media_sha256(host, Path(piece["remote_media"]))
         except (OSError, RuntimeError) as exc:
             cache_allowed = False
             if _source_root_is_unavailable(exc):
@@ -163,9 +170,7 @@ def prepare_source_media(
             piece_provenance_rows.append(
                 {
                     **cached_piece,
-                    "source_revalidation_status": (
-                        "HASH_BOUND_CACHE_SOURCE_ROOT_UNAVAILABLE"
-                    ),
+                    "source_revalidation_status": ("HASH_BOUND_CACHE_SOURCE_ROOT_UNAVAILABLE"),
                 }
             )
             continue
@@ -209,18 +214,13 @@ def prepare_source_media(
                 {**expected_piece, "output_sha256": _sha256(local)},
             )
         piece_paths.append(local)
-        piece_provenance_rows.append(
-            json.loads(piece_provenance_path.read_text(encoding="utf-8"))
-        )
+        piece_provenance_rows.append(json.loads(piece_provenance_path.read_text(encoding="utf-8")))
     durations = [ffprobe_duration_ms(p) for p in piece_paths]
 
     padded = out_root / f"padded_{spec['pieces'][0]['start_ms']}_{spec['pieces'][-1]['end_ms']}.mp4"
     padded_provenance_path = padded.with_suffix(".provenance.json")
     expected_padded = {
-        "inputs": [
-            {"path": str(path.resolve()), "sha256": _sha256(path)}
-            for path in piece_paths
-        ],
+        "inputs": [{"path": str(path.resolve()), "sha256": _sha256(path)} for path in piece_paths],
         "output_path": str(padded.resolve()),
     }
     padded_cache_valid = _valid_cached_provenance(
@@ -236,15 +236,55 @@ def prepare_source_media(
             run(["cp", str(piece_paths[0]), str(padded)])
     elif not padded.exists():
         concat_list = out_root / "concat.txt"
-        concat_list.write_text("".join(f"file '{p.resolve()}'\n" for p in piece_paths), encoding="utf-8")
-        run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0",
-             "-i", str(concat_list), "-c", "copy", str(padded)])
+        concat_list.write_text(
+            "".join(f"file '{p.resolve()}'\n" for p in piece_paths), encoding="utf-8"
+        )
+        run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_list),
+                "-c",
+                "copy",
+                str(padded),
+            ]
+        )
     if not padded_cache_valid:
         _write_json_atomic(
             padded_provenance_path,
             {**expected_padded, "output_sha256": _sha256(padded)},
         )
     padded_dur = ffprobe_duration_ms(padded)
+    try:
+        exact_interval_authority = compile_exact_interval_authority(
+            spec=spec,
+            piece_provenance_rows=piece_provenance_rows,
+        )
+    except ReviewedExactSourceIntervalError as exc:
+        # A declared exact authority is exclusive.  Never let a malformed or
+        # stale grant fall through to the fresh-grid terminal projection.
+        raise RuntimeError(str(exc)) from exc
+    if exact_interval_authority is not None:
+        spec[EXACT_INTERVAL_RUNTIME_CONFIG_KEY] = exact_interval_authority
+        baseline = spec.get("subtitle_redelivery_baseline")
+        if isinstance(baseline, dict):
+            baseline.pop(AUTHORITY_CONFIG_KEY, None)
+    else:
+        terminal_projection = build_terminal_projection_authority(
+            spec=spec,
+            piece_provenance_rows=piece_provenance_rows,
+            spec_parent=spec_parent or Path.cwd(),
+        )
+        if terminal_projection is not None:
+            spec["subtitle_redelivery_baseline"][AUTHORITY_CONFIG_KEY] = terminal_projection
     return PreparedSourceMedia(
         durations=durations,
         padded=padded,

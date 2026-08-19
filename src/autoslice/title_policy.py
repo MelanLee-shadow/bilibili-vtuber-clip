@@ -7,6 +7,14 @@ import re
 from pathlib import Path
 from typing import Mapping
 
+from src.autoslice.candidate_entity_projection import (
+    CandidateEntityProjectionError,
+    load_candidate_entity_projection,
+)
+from src.autoslice.candidate_public_text_surface_authority import (
+    CandidatePublicTextSurfaceAuthorityError,
+    load_candidate_public_text_surface_authority,
+)
 from src.autoslice.channel_profile import load_channel_profile
 
 
@@ -46,9 +54,7 @@ def _load_title_policy() -> Mapping[str, object]:
             f"unknown={sorted(set(payload) - expected)}"
         )
     if payload.get("schema_version") != TITLE_POLICY_SCHEMA:
-        raise TitlePolicyError(
-            f"unsupported title policy schema {payload.get('schema_version')!r}"
-        )
+        raise TitlePolicyError(f"unsupported title policy schema {payload.get('schema_version')!r}")
     return payload
 
 
@@ -82,9 +88,7 @@ _TITLE_BANNED_REGEXES = tuple(
 # further patterns without forcing the shadow runner to know about them.
 _TITLE_BANNED_MIAO_RE = _TITLE_BANNED_REGEXES[0]
 _TITLE_BANNED_SUFFIX_RE = re.compile(
-    "到(?:"
-    + "|".join(_TITLE_BANNED_HYPE_WORDS + _TITLE_SUFFIX_ONLY_HYPE_WORDS)
-    + ")"
+    "到(?:" + "|".join(_TITLE_BANNED_HYPE_WORDS + _TITLE_SUFFIX_ONLY_HYPE_WORDS) + ")"
 )
 _TITLE_MIN_LEN = _positive_int(_POLICY, "min_length")
 _TITLE_MAX_LEN = _positive_int(_POLICY, "max_length")
@@ -129,6 +133,88 @@ def _candidate_family(candidate_id: str) -> str:
     """auto_225942_698_931r2 与 auto_225942_698_931 是同一内容家族。"""
 
     return _CANDIDATE_RECUT_SUFFIX_RX.sub("", str(candidate_id or "").strip())
+
+
+def validate_candidate_title_surface(
+    candidate_id: str,
+    title: str,
+    *,
+    artifact_kind: str = "title",
+) -> dict[str, object] | None:
+    """Enforce an optional candidate's reviewed or public-text-only surface.
+
+    The full projection is bound to exact reviewed-SRT bytes.  The narrower
+    public-text authority instead binds one exact candidate/source/context and
+    explicitly grants no subtitle or speaker review.  Either form is optional
+    for legacy candidates and fail-closed once present; identity-equivalent
+    aliases never become interchangeable title spellings.
+    """
+
+    if artifact_kind not in {"title", "cover"}:
+        raise TitlePolicyError(
+            f"unsupported candidate entity projection artifact {artifact_kind!r}"
+        )
+    family = _candidate_family(candidate_id)
+    if not family:
+        return None
+    projection_path = (
+        CHANNEL_PROFILE.asset_root
+        / "candidate_entity_projections"
+        / f"{family}.entity-projection.v1.json"
+    )
+    try:
+        public_authority = load_candidate_public_text_surface_authority(family, root=REPO_ROOT)
+    except CandidatePublicTextSurfaceAuthorityError as exc:
+        raise TitlePolicyError(f"candidate public text surface failed for {family}: {exc}") from exc
+    if projection_path.exists() and public_authority is not None:
+        raise TitlePolicyError("candidate entity title authorities are ambiguous")
+    if not projection_path.exists():
+        if public_authority is None:
+            return None
+        try:
+            public_authority.require_artifact_text(
+                artifact_kind=artifact_kind,
+                text=title,
+            )
+        except CandidatePublicTextSurfaceAuthorityError as exc:
+            raise TitlePolicyError(
+                f"candidate public text surface failed for {family}: {exc}"
+            ) from exc
+        return {
+            "schema_version": "candidate-public-text-surface-audit.v1",
+            "status": "PASS",
+            "candidate_id": family,
+            "authority_sha256": public_authority.authority_sha256,
+            "authority_scope": "GENERATED_PUBLIC_TEXT_ONLY_NO_SUBTITLE_OR_SPEAKER_REVIEW",
+            "surface_type": "title_cover",
+            "artifact_kind": artifact_kind,
+        }
+    reviewed_srt_path = (
+        CHANNEL_PROFILE.asset_directory("reviewed_subtitle_baselines") / f"{family}.reviewed.srt"
+    )
+    try:
+        projection = load_candidate_entity_projection(
+            projection_path=projection_path,
+            candidate_id=family,
+            reviewed_srt_path=reviewed_srt_path,
+        )
+        projection.require_text_surfaces(
+            surface_type="title_cover",
+            text=title,
+        )
+    except CandidateEntityProjectionError as exc:
+        raise TitlePolicyError(
+            f"candidate entity title projection failed for {family}: {exc}"
+        ) from exc
+    return {
+        "schema_version": "candidate-entity-surface-audit.v1",
+        "status": "PASS",
+        "candidate_id": family,
+        "reviewed_srt_sha256": projection.binding.reviewed_srt_sha256,
+        "projection_sha256": projection.projection_sha256,
+        "surface_type": "title_cover",
+        "artifact_kind": artifact_kind,
+    }
 
 
 def manual_title_override(candidate_id: str) -> str | None:
@@ -206,6 +292,52 @@ def canonicalize_automatic_title_fillers(title: str) -> str:
     return repaired
 
 
+def build_automatic_talk_title_prompt(
+    *,
+    selection_hook: str,
+    transcript_sample: str,
+    important_ip_prompt: str,
+    clip_context_prompt: str,
+    persona_asset: str,
+    style_asset: str,
+) -> str:
+    """Build the bounded Talk title prompt from profile-owned policy assets."""
+
+    hook_contract = ""
+    output_contract = '{"title": "标题"}'
+    if selection_hook:
+        hook_contract = (
+            f"\n选片主钩子（这是为什么选中本片，权威高于后续陪衬话题）: {selection_hook}\n"
+            f"标题必须保留第一分句的核心事件: {_selection_hook_first_clause(selection_hook)}\n"
+            "同时输出 selection_hook_anchor：从该第一分句原样复制的 2–12 字具体短语，"
+            f"避开‘{CHANNEL_PROFILE.display_name}/{CHANNEL_PROFILE.short_name}/主播/直播/弹幕/观众/自己/这个/那个/然后/时候/表演’等泛词；"
+            "该短语必须逐字出现在标题里。不得把片段后半段的陪衬话题偷换成主标题。\n"
+        )
+        output_contract = '{"title": "标题", "selection_hook_anchor": "第一分句中的具体短语"}'
+    context_contract = (
+        "\n同一份 hash-bound 长程语境（用于整片回指、口癖和专名候选；"
+        "它本身不授权改字幕）：\n" + clip_context_prompt + "\n"
+        if clip_context_prompt
+        else ""
+    )
+    return (
+        f"为一条{CHANNEL_PROFILE.display_name}(B站虚拟主播)的直播切片起中文标题。\n"
+        f"最重要的原则：观众是因为'这是{CHANNEL_PROFILE.display_name}'才点进来的,不是因为内容——标题必须围绕{CHANNEL_PROFILE.display_name}本人"
+        "(她的反应、气质、口癖、梗、名字谐音),切片内容只是辅助素材。引人注目为先。\n"
+        f"\n{CHANNEL_PROFILE.display_name}特质:\n{persona_asset}\n"
+        f"\n标题风格规范与历史标题范例(严格模仿这个风格):\n{style_asset}\n"
+        f"\n本切片转写内容节选(辅助素材): {transcript_sample}\n"
+        f"{important_ip_prompt}{hook_contract}{context_contract}"
+        f"硬性要求：含{CHANNEL_PROFILE.talk_title_prefix}前缀后 {_TITLE_MIN_LEN}–{_TITLE_MAX_LEN} 字"
+        "（维护者 手定语料的主力带是 25–45 字的三拍叙事，不要为了凑短把梗压没；"
+        "只有梗足够硬的短爆点才走 20 字以下）；"
+        "禁用空洞夸张词(炸裂/震惊/天花板/绝了/犯规/太顶),"
+        "更不许用'X到犯规/炸裂/离谱'这种万能后缀——标题必须具体到这条切片里到底发生了什么"
+        "(描述性的'越看越离谱/越整越离谱'这类是可以的,禁的是空洞的'X到离谱'后缀)。\n"
+        f"只输出一个 JSON 对象：{output_contract}"
+    )
+
+
 def publish_title_lane(title: str, *, explicit_lane: str | None = None) -> str:
     """Return the deterministic talk/song lane for one publish title."""
 
@@ -214,9 +346,7 @@ def publish_title_lane(title: str, *, explicit_lane: str | None = None) -> str:
     if explicit_lane is not None:
         return explicit_lane
     return (
-        "song"
-        if str(title or "").strip().startswith(CHANNEL_PROFILE.song_title_prefix)
-        else "talk"
+        "song" if str(title or "").strip().startswith(CHANNEL_PROFILE.song_title_prefix) else "talk"
     )
 
 
@@ -238,7 +368,7 @@ def canonicalize_song_catalog_title(title: str) -> str:
     prefix = CHANNEL_PROFILE.song_title_prefix
     if not stripped.startswith(prefix):
         return stripped
-    match = _SONG_NAME_IN_TITLE_RX.search(stripped[len(prefix):])
+    match = _SONG_NAME_IN_TITLE_RX.search(stripped[len(prefix) :])
     if match is None:
         return stripped
     return f"{prefix}《{match.group(1)}》"
@@ -322,9 +452,7 @@ def _selection_hook_first_clause(selection_hook: str | None) -> str:
     )[0].strip()
 
 
-def _selection_hook_anchor_valid(
-    *, anchor: object, selection_hook: str, title: str
-) -> bool:
+def _selection_hook_anchor_valid(*, anchor: object, selection_hook: str, title: str) -> bool:
     """Require an automatic title to retain a concrete main-event phrase."""
 
     if not isinstance(anchor, str):
@@ -332,9 +460,7 @@ def _selection_hook_anchor_valid(
     anchor = anchor.strip()
     first_clause = _selection_hook_first_clause(selection_hook)
     title_body = str(title).removeprefix(_TITLE_PREFIX).strip()
-    title_lead_clause = re.split(
-        r"[，,。.!！?？；;：:\n…]", title_body, maxsplit=1
-    )[0].strip()
+    title_lead_clause = re.split(r"[，,。.!！?？；;：:\n…]", title_body, maxsplit=1)[0].strip()
     meaningful = _SELECTION_HOOK_MEANINGLESS_RE.sub("", anchor).strip()
     return bool(
         2 <= len(anchor) <= 12
@@ -352,21 +478,13 @@ def _selection_hook_fallback_title(selection_hook: str | None) -> str | None:
     raw = str(selection_hook or "").strip().rstrip("。；; ")
     if not raw:
         return None
-    clauses = [
-        part.strip()
-        for part in re.split(r"[，,。；;：:\n…]", raw)
-        if part.strip()
-    ]
+    clauses = [part.strip() for part in re.split(r"[，,。；;：:\n…]", raw) if part.strip()]
     if not clauses:
         return None
-    first = clauses[0].replace(
-        CHANNEL_PROFILE.display_name, CHANNEL_PROFILE.short_name
-    )
+    first = clauses[0].replace(CHANNEL_PROFILE.display_name, CHANNEL_PROFILE.short_name)
     body = first
     if len(clauses) > 1:
-        second = clauses[1].replace(
-            CHANNEL_PROFILE.display_name, CHANNEL_PROFILE.short_name
-        )
+        second = clauses[1].replace(CHANNEL_PROFILE.display_name, CHANNEL_PROFILE.short_name)
         if second.startswith("她"):
             second = "结果" + second[1:]
         candidate = f"{first}，{second}"

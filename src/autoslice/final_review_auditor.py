@@ -18,12 +18,10 @@
 一秒识别的胡话在交付前暴露出来；非 operator/mechanical/expected-value
 改写必须再经 CPA 定夺，并把请求、候选和判决完整留痕。
 """
-
 from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -43,6 +41,19 @@ from src.autoslice.acoustic_witness_adjudication import (
     valid_inaudible_witness_override,
     valid_witness_evidence,
 )
+from src.autoslice.acoustic_witness_protocol import bind_blind_witness_protocol
+from src.autoslice.candidate_support import (
+    bound_structured_chat_surface as _bound_structured_chat_surface,
+    orthography_ambiguous as _candidate_orthography_ambiguous,
+    orthography_pronunciation_key as _orthography_pronunciation_key,
+)
+from src.autoslice.closed_set_evidence import (
+    closed_set_structured_evidence,
+    current_draft_fidelity_context,
+    evidence_cue_ids as _evidence_cue_ids,
+    structured_chat_lines_for_finding as _structured_chat_lines_for_finding,
+    validated_priority_candidate_provenance,
+)
 from src.autoslice.glossary_expected_value import glossary_expected_value_gate
 from src.autoslice.final_review_schema_retry import (
     detailed_invalid_finding_diagnostics,
@@ -51,8 +62,19 @@ from src.autoslice.final_review_schema_retry import (
     schema_repair_new_finding_diagnostic,
     schema_repair_prompt,
 )
+from src.autoslice.final_review_provider_budget import (
+    ContextAdjudicationBudget,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues
-from src.autoslice.llm_client import extract_json_object
+from src.autoslice.closed_set_proposal_rebuild import rebuild_candidate_after_neither
+from src.autoslice.exact_source_transcript_contract import valid_exact_source_transcript_handoff
+from src.autoslice.exact_source_transcript_provider import (
+    rebuild_candidate_from_exact_source_transcript,
+    valid_exact_source_transcript_provider_unavailable_finding,
+)
+from src.autoslice.exact_source_transcript_authority import (
+    priority_exact_source_transcript_candidate,
+)
 from src.autoslice.missing_proposal_bootstrap import (
     prepare_missing_proposal_candidate,
 )
@@ -64,15 +86,18 @@ from src.autoslice.source_subtitle_truth import (
 from src.autoslice.subtitle_fidelity import (
     _homophone_equal,
 )
+from src.autoslice.transcript_echo import confusable_transcript_echo
+from src.autoslice.truth_ownership_mutation_audit import (
+    audit_zero_mutation_correction_skip,
+)
 
 MAX_FINDINGS = 24
 MAX_CONTEXT_ADJUDICATIONS = 12
 MAX_EDIT_SPAN_CODEPOINTS = 24
 MAX_EDIT_LENGTH_DELTA = 8
-_PROPOSAL_REBUILD_SCHEMA = "subtitle-closed-set-proposal-rebuild.v1"
-_PROPOSAL_REBUILD_CACHE_SCHEMA = "proposal-rebuild-cache.v1"
 _INAUDIBLE_DROP_PROMOTION_SCHEMA = "subtitle-inaudible-drop-promotion.v1"
 _INAUDIBLE_DROP_AUTHORITY_SCHEMA = "subtitle-cpa-inaudible-drop-authority.v1"
+_TRUSTED_PRIORITY_CANDIDATE = object()
 _AUTO_REPAIR_CLASSES = frozenset(
     {
         "phonetic",
@@ -116,57 +141,6 @@ def _pinyin_similarity(a: str, b: str) -> float:
     return SequenceMatcher(
         None, " ".join(_lazy_pinyin(a)), " ".join(_lazy_pinyin(b))
     ).ratio()
-
-
-# Spoken Mandarin letter names.  This table is not an entity dictionary: it is
-# used only to compare the pronunciation of an already source-backed proposal
-# with the current cue.  In particular, 南町's canonical nickname ``大N`` is
-# normally spoken ``大恩``; an acoustic model must not veto the canonical
-# grapheme merely because it reports the spoken letter name.
-_LATIN_LETTER_PRONUNCIATION = {
-    "a": "ei", "b": "bi", "c": "xi", "d": "di", "e": "yi",
-    "f": "ai fu", "g": "ji", "h": "ei chi", "i": "ai", "j": "jie",
-    "k": "kei", "l": "ai le", "m": "ai mu", "n": "en", "o": "ou",
-    "p": "pi", "q": "kiu", "r": "a er", "s": "ai si", "t": "ti",
-    "u": "you", "v": "wei", "w": "da bu liu", "x": "ai ke si",
-    "y": "wai", "z": "zei",
-}
-
-
-def _orthography_pronunciation_key(text: str) -> tuple[str, ...]:
-    """Return a conservative toneless pronunciation key.
-
-    Punctuation is ignored and adjacent duplicate syllables are collapsed so
-    a harmless oral restart (``大大恩``) can compare equal to canonical
-    ``大N``.  This key is never sufficient provenance for a repair; the caller
-    additionally requires a source-backed entity candidate.
-    """
-
-    if not text or _lazy_pinyin is None:
-        return ()
-    tokens: list[str] = []
-    han_buffer: list[str] = []
-
-    def flush_han() -> None:
-        if han_buffer:
-            tokens.extend(str(value).casefold() for value in _lazy_pinyin("".join(han_buffer)))
-            han_buffer.clear()
-
-    for char in text:
-        if char.isascii() and char.isalpha():
-            flush_han()
-            tokens.extend(_LATIN_LETTER_PRONUNCIATION[char.casefold()].split())
-        elif char.isalnum():
-            han_buffer.append(char)
-        else:
-            flush_han()
-    flush_han()
-    collapsed: list[str] = []
-    for token in tokens:
-        normalized = re.sub(r"[^a-z0-9üv]", "", token.casefold())
-        if normalized and (not collapsed or collapsed[-1] != normalized):
-            collapsed.append(normalized)
-    return tuple(collapsed)
 
 
 _BOUND_ORTHOGRAPHY_PROVENANCE_KINDS = frozenset(
@@ -226,36 +200,6 @@ def _latin_proposal_cue_support(
             if token not in current_folded:
                 support.setdefault(token, set()).add(cue_index)
     return {token: frozenset(indexes) for token, indexes in support.items()}
-
-
-def _bound_structured_chat_surface(
-    candidate_context: Mapping[str, object] | None,
-    surface: str,
-) -> dict[str, object] | None:
-    """Return a source-bound chat witness for an exact ASCII lexical token."""
-
-    if not isinstance(candidate_context, Mapping) or not surface:
-        return None
-    rows = candidate_context.get("structured_chat")
-    if not isinstance(rows, list):
-        return None
-    pattern = re.compile(
-        rf"(?<![A-Za-z0-9_]){re.escape(surface)}(?![A-Za-z0-9_])",
-        re.IGNORECASE,
-    )
-    for row in rows:
-        if not isinstance(row, Mapping):
-            continue
-        source_sha256 = str(row.get("source_sha256") or "")
-        text = str(row.get("text") or row.get("message") or "")
-        if re.fullmatch(r"[0-9a-f]{64}", source_sha256) and pattern.search(text):
-            return {
-                "kind": "structured_chat_bound",
-                "surface": surface,
-                "source_sha256": source_sha256,
-                "source_event_id": str(row.get("source_event_id") or "") or None,
-            }
-    return None
 
 
 def _latin_candidate_support_for_edit(
@@ -324,40 +268,12 @@ def _orthography_ambiguous(
 ) -> bool:
     """Whether audio cannot determine the changed written surface."""
 
-    if _declared_respell_edit(current_cue, proposed_cue):
-        return True
-    suspect = str(finding.get("suspect") or "")
-    suggestion = str(finding.get("suggestion") or "")
-    if (
-        suspect
-        and suggestion
-        and _homophone_equal(suspect, suggestion)
-    ):
-        return True
-    current_key = _orthography_pronunciation_key(current_cue)
-    proposed_key = _orthography_pronunciation_key(proposed_cue)
-    return bool(current_key and current_key == proposed_key)
-
-
-def _declared_respell_edit(current_cue: str, proposed_cue: str) -> bool:
-    """Return whether this exact edit is a committed spelling rule.
-
-    A pinyin witness can prove the target was spoken, but cannot overturn a
-    registered proper-name grapheme direction such as 林墨 -> 礼墨.
-    """
-
-    try:
-        from src.autoslice.term_authority import respell_pairs
-
-        return any(
-            surface
-            and canonical
-            and surface in current_cue
-            and current_cue.replace(surface, canonical, 1) == proposed_cue
-            for surface, canonical in respell_pairs()
-        )
-    except Exception:
-        return False
+    return _candidate_orthography_ambiguous(
+        current_cue=current_cue,
+        proposed_cue=proposed_cue,
+        suspect=str(finding.get("suspect") or ""),
+        replacement=str(finding.get("suggestion") or ""),
+    )
 
 
 def _strict_homophone_tie(
@@ -761,6 +677,7 @@ def _merged_raw_findings(
         suspect = str(row.get("suspect") or "")
         if suspect and suspect not in cues[cue_index - 1].text:
             continue
+        row["_trusted_priority_candidate"] = _TRUSTED_PRIORITY_CANDIDATE
         merged.append(dict(row))
         seen.add(key)
     if prioritize_extra:
@@ -772,6 +689,32 @@ def _merged_raw_findings(
                 seen.add(key)
             merged.append(row)
     return merged
+
+
+def _speech_memory_context(
+    candidate_context: Mapping[str, object] | None,
+) -> tuple[str, dict[str, Mapping[str, Any]]]:
+    speech_memory = (
+        candidate_context.get("speech_memory")
+        if isinstance(candidate_context, Mapping)
+        else None
+    )
+    ledger_sha256 = (
+        str(speech_memory.get("ledger_sha256") or "")
+        if isinstance(speech_memory, Mapping)
+        else ""
+    )
+    entries = {
+        str(entry.get("memory_id")): entry
+        for entry in (
+            speech_memory.get("entries")
+            if isinstance(speech_memory, Mapping)
+            and isinstance(speech_memory.get("entries"), list)
+            else []
+        )
+        if isinstance(entry, Mapping) and str(entry.get("memory_id") or "")
+    }
+    return ledger_sha256, entries
 
 
 @retry_invalid_finding_schema_once
@@ -804,9 +747,7 @@ def audit_final_subtitles(
     )
     if _schema_repair_retry:
         prompt = schema_repair_prompt(prompt, _schema_repair_detail)
-    raw = _request_final_review_findings(
-        prompt, llm_call=llm_call, extract_json=extract_json
-    )
+    raw = _request_final_review_findings(prompt, llm_call=llm_call, extract_json=extract_json)
     raw = _merged_raw_findings(
         raw,
         extra_raw_findings,
@@ -819,26 +760,9 @@ def audit_final_subtitles(
         if _schema_repair_retry
         else None
     )
-    speech_memory = (
-        candidate_context.get("speech_memory")
-        if isinstance(candidate_context, Mapping)
-        else None
+    memory_ledger_sha256, memory_entries = _speech_memory_context(
+        candidate_context
     )
-    memory_ledger_sha256 = (
-        str(speech_memory.get("ledger_sha256") or "")
-        if isinstance(speech_memory, Mapping)
-        else ""
-    )
-    memory_entries = {
-        str(entry.get("memory_id")): entry
-        for entry in (
-            speech_memory.get("entries")
-            if isinstance(speech_memory, Mapping)
-            and isinstance(speech_memory.get("entries"), list)
-            else []
-        )
-        if isinstance(entry, Mapping) and str(entry.get("memory_id") or "")
-    }
     findings: list[dict[str, Any]] = []
     invalid_rows: list[dict[str, Any]] = []
     for row in raw:
@@ -902,6 +826,16 @@ def audit_final_subtitles(
         proposed_raw = row.get("proposed_full_cue")
         proposed_supplied = isinstance(proposed_raw, str)
         proposed = str(proposed_raw).strip() if isinstance(proposed_raw, str) else ""
+        priority = priority_exact_source_transcript_candidate(
+            row, cue_index, base_text, proposed, srt_text, candidate_context,
+            row.get("_trusted_priority_candidate") is _TRUSTED_PRIORITY_CANDIDATE,
+        )
+        (
+            priority_exact_marked,
+            priority_exact_valid,
+            priority_adjudication,
+            priority_provenance,
+        ) = priority
         derived_suspect = ""
         derived_replacement = ""
         contract_error: str | None = None
@@ -930,7 +864,10 @@ def audit_final_subtitles(
                 in {"source_backed_entity", "spoken_unit"},
                 allow_deletion=repair_class
                 in {"spoken_unit", "acoustic_delete", "acoustic_drop_cue"},
+                allow_script_width_delta=priority_exact_valid,
             )
+            if priority_exact_marked and not priority_exact_valid:
+                contract_error = "EXACT_SOURCE_TRANSCRIPT_HANDOFF_INVALID"
             # The full cue owns the bounded edit; advisory spans cannot veto it.
             if not contract_error and reported_suspect and reported_suspect != derived_suspect:
                 scope_warnings.append("REPORTED_SUSPECT_SCOPE_MISMATCH")
@@ -1014,6 +951,7 @@ def audit_final_subtitles(
                 and repair_class != "source_backed_entity"
                 and re.search(r"[A-Za-z]", derived_replacement)
                 and latin_candidate_support is None
+                and not priority_exact_valid
             ):
                 contract_error = "LATIN_SCRIPT_REPAIR_REQUIRES_SOURCE_PROVENANCE"
             if not contract_error and candidate_memory_id:
@@ -1032,11 +970,19 @@ def audit_final_subtitles(
                     contract_error = "SPEECH_MEMORY_CANDIDATE_INVALID"
                 else:
                     memory_candidate_valid = True
-        provenance: dict[str, Any] | None = None
-        if proposed_supplied and not contract_error and source_surface:
+        provenance = dict(priority_provenance) if priority_exact_valid else validated_priority_candidate_provenance(row, proposed_cue=proposed, current_cue=base_text, cue_index=cue_index, current_srt_sha256="sha256:" + hashlib.sha256(srt_text.encode("utf-8")).hexdigest(), cue_count=len(cues), trusted_priority=row.get("_trusted_priority_candidate") is _TRUSTED_PRIORITY_CANDIDATE)
+        draft_fidelity_context = current_draft_fidelity_context(raw, current_cue=base_text, cue_index=cue_index, trusted_sentinel=_TRUSTED_PRIORITY_CANDIDATE)
+        if provenance is None and proposed_supplied and not contract_error and source_surface:
             # Resolve the candidate's textual provenance without authorizing it.
             other_cues = "\n".join(
                 cue.text for index, cue in enumerate(cues, start=1) if index != cue_index
+            )
+            # 维护者 8/8 真值法证 F1：登记误听面不得靠同源转写
+            # 或 glossary prose 回声自证；绑定弹幕/SC 仍是独立结构化证据。
+            echo_suspected = confusable_transcript_echo(source_surface)
+            unbound_text_hit = any(
+                source_surface.casefold() in text.casefold()
+                for text in (glossary_text, structured_context_text, other_cues)
             )
             if source_surface not in proposed:
                 if repair_class == "source_backed_entity":
@@ -1047,6 +993,8 @@ def audit_final_subtitles(
                 candidate_context, source_surface
             )) is not None:
                 provenance = bound_chat
+            elif echo_suspected is not None and unbound_text_hit:
+                provenance = echo_suspected
             elif source_surface.casefold() in glossary_text.casefold():
                 provenance = {
                     "kind": (
@@ -1092,17 +1040,17 @@ def audit_final_subtitles(
                 "ledger_sha256": memory_ledger_sha256,
                 "mutation_authorized": False,
             }
-        # Another cue from the same transcript is recall context, not authority.
-        # Let it propose a
-        # closed candidate, then require the acoustic lane; otherwise one ASR
-        # spelling can circularly certify the same error elsewhere in the
-        # clip.  Glossary and structured-chat witnesses retain their existing
-        # authority because they have separate lineages.
+        # Same-transcript recall can only nominate a closed candidate.  A
+        # registered misheard surface is even weaker: it may not claim a
+        # correlated text witness, and carries its canonical/legal alternatives.
         transcript_context_candidate = bool(
             isinstance(provenance, Mapping)
             and provenance.get("kind") == "transcript_context"
         )
-
+        transcript_echo_candidate = bool(
+            isinstance(provenance, Mapping)
+            and provenance.get("kind") == "transcript_echo_suspected"
+        )
         suspect = derived_suspect if proposed_supplied else reported_suspect
         suggestion = (
             derived_replacement if proposed_supplied and not contract_error else None
@@ -1118,14 +1066,9 @@ def audit_final_subtitles(
                 }
             )
             continue
-        evidence_cue_ids: list[int] = []
-        for value in row.get("evidence_cue_ids") or []:
-            try:
-                evidence_index = int(value)
-            except (TypeError, ValueError):
-                continue
-            if 1 <= evidence_index <= len(cues) and evidence_index != cue_index:
-                evidence_cue_ids.append(evidence_index)
+        evidence_cue_ids = _evidence_cue_ids(
+            row, cue_count=len(cues), target_cue_index=cue_index
+        )
         finding = {
             "cue_index": cue_index,
             "suspect": suspect,
@@ -1136,15 +1079,26 @@ def audit_final_subtitles(
             "repair_class": repair_class,
             "evidence_cue_ids": evidence_cue_ids,
             "candidate_provenance": provenance,
+            "draft_fidelity_kept_provenance": draft_fidelity_context,
             "candidate_memory_id": candidate_memory_id or None,
             "force_acoustic": (
-                memory_candidate_valid or transcript_context_candidate
+                memory_candidate_valid
+                or transcript_context_candidate
+                or transcript_echo_candidate
+                or priority_exact_valid
+                or (
+                    isinstance(provenance, Mapping)
+                    and provenance.get("kind")
+                    in {"draft_fidelity_kept", "session_transcript_recurrence"}
+                )
             ),
             "correlated_text_witness": transcript_context_candidate,
             "span_start_codepoint": span_start if proposed_supplied else None,
             "span_end_codepoint": span_end if proposed_supplied else None,
             "why": str(row.get("why") or "")[:120],
         }
+        if priority_exact_valid:
+            finding["exact_release_adjudication"] = dict(priority_adjudication)
         if latin_candidate_support is not None:
             finding["latin_candidate_support"] = latin_candidate_support
         carryover_replay_remap = row.get("_carryover_replay_remap")
@@ -1395,6 +1349,7 @@ def _derive_single_span_edit(
     *,
     allow_insertion: bool = False,
     allow_deletion: bool = False,
+    allow_script_width_delta: bool = False,
 ) -> tuple[str, str, int, int, str | None]:
     """Derive the one minimal outer changed interval from two full cues.
 
@@ -1437,7 +1392,10 @@ def _derive_single_span_edit(
         or len(replacement) > MAX_EDIT_SPAN_CODEPOINTS
     ):
         return suspect, replacement, prefix_len, base_end, "EDIT_SPAN_TOO_LARGE"
-    if abs(len(replacement) - len(suspect)) > MAX_EDIT_LENGTH_DELTA:
+    if (
+        not allow_script_width_delta
+        and abs(len(replacement) - len(suspect)) > MAX_EDIT_LENGTH_DELTA
+    ):
         return suspect, replacement, prefix_len, base_end, "EDIT_LENGTH_DELTA_TOO_LARGE"
     return suspect, replacement, prefix_len, base_end, None
 
@@ -1579,6 +1537,12 @@ def build_context_adjudication_request(
         "candidate_provenance": finding.get("candidate_provenance"),
         "orthography_authority": _orthography_text_authority(finding),
         "evidence_cue_ids": list(finding.get("evidence_cue_ids") or []),
+        "closed_set_structured_evidence": closed_set_structured_evidence(
+            srt_text,
+            finding,
+            proposed_cue=proposed,
+            clip_context=clip_context,
+        ),
         "reason": str(finding.get("why") or "")[:120],
     }
     if isinstance(clip_context, Mapping):
@@ -1596,152 +1560,28 @@ def build_context_adjudication_request(
             ),
             "mutation_authorized": False,
         }
+    exact_handoff = finding.get("_exact_source_transcript_handoff")
+    if exact_handoff is None:
+        prior_adjudication = finding.get("exact_release_adjudication")
+        if isinstance(prior_adjudication, Mapping):
+            exact_handoff = prior_adjudication.get(
+                "exact_source_transcript_handoff"
+            )
+    if exact_handoff is not None:
+        if not isinstance(exact_handoff, Mapping) or not valid_exact_source_transcript_handoff(
+            exact_handoff,
+            srt_text=srt_text,
+            check_request=request,
+            clip_context=clip_context,
+        ):
+            raise ValueError("EXACT_SOURCE_TRANSCRIPT_HANDOFF_INVALID")
+        request["exact_source_transcript_handoff"] = dict(exact_handoff)
     request["request_sha256"] = hashlib.sha256(
         json.dumps(
             request, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
     ).hexdigest()
     return request
-
-
-def _structured_chat_lines(
-    clip_context: Mapping[str, object] | None,
-    *,
-    target_start_ms: int | None = None,
-    target_end_ms: int | None = None,
-) -> str:
-    """Platform-recorded chat/SC lines for the judge (context, not authority)."""
-
-    if not isinstance(clip_context, Mapping):
-        return ""
-    rows = clip_context.get("structured_chat")
-    if not isinstance(rows, list):
-        return ""
-    selected_rows = rows
-    if (
-        isinstance(target_start_ms, int)
-        and isinstance(target_end_ms, int)
-        and target_end_ms >= target_start_ms
-    ):
-        timed_rows = [
-            row
-            for row in rows
-            if isinstance(row, Mapping)
-            and isinstance(row.get("offset_ms"), (int, float))
-            and not isinstance(row.get("offset_ms"), bool)
-        ]
-        timed_rows.sort(key=lambda row: float(row["offset_ms"]))
-        window_start = target_start_ms - 30_000
-        window_end = target_end_ms + 30_000
-        selected_rows = [
-            row
-            for row in timed_rows
-            if window_start <= float(row["offset_ms"]) <= window_end
-        ]
-        if not selected_rows and timed_rows:
-            target_mid = (target_start_ms + target_end_ms) / 2
-            nearest_index = min(
-                range(len(timed_rows)),
-                key=lambda index: abs(
-                    float(timed_rows[index]["offset_ms"]) - target_mid
-                ),
-            )
-            selected_rows = timed_rows[
-                max(0, nearest_index - 5) : nearest_index + 6
-            ]
-        elif len(selected_rows) > 20:
-            target_mid = (target_start_ms + target_end_ms) / 2
-            selected_rows = sorted(
-                selected_rows,
-                key=lambda row: abs(float(row["offset_ms"]) - target_mid),
-            )[:20]
-            selected_rows.sort(key=lambda row: float(row["offset_ms"]))
-    lines: list[str] = []
-    for row in selected_rows[:20]:
-        if not isinstance(row, Mapping):
-            continue
-        sender = str(row.get("sender") or "").strip()
-        text = str(row.get("text") or row.get("message") or "").strip()
-        if text or sender:
-            offset = row.get("offset_ms")
-            kind = str(row.get("kind") or "chat")
-            prefix = (
-                f"[{float(offset) / 1000:+.3f}s][{kind}] "
-                if isinstance(offset, (int, float))
-                and not isinstance(offset, bool)
-                else f"[{kind}] "
-            )
-            lines.append(f"- {prefix}{sender}: {text}"[:240])
-    return "\n".join(lines)
-
-
-def _structured_chat_lines_for_finding(
-    srt_text: str,
-    finding: Mapping[str, Any],
-    clip_context: Mapping[str, object] | None,
-) -> str:
-    try:
-        cue_index = int(finding.get("cue_index") or 0)
-    except (TypeError, ValueError):
-        cue_index = 0
-    cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
-    if not 1 <= cue_index <= len(cues):
-        return _structured_chat_lines(clip_context)
-    cue = cues[cue_index - 1]
-    return _structured_chat_lines(
-        clip_context,
-        target_start_ms=cue.start_ms,
-        target_end_ms=cue.end_ms,
-    )
-
-
-_PROPOSAL_REBUILD_PROMPT = """# 字幕坏闭集重建（只提案，不裁决）
-
-上一位 CPA 法官已经明确判定 CURRENT 和 REJECTED_PROPOSED 都不是目标区间的
-完整原话（NEITHER）。你现在只负责重建一个第三候选；你不是音频模型，也没有
-直接听过音频。AGY 拼音只是高可信辅助，可能只覆盖半句、邻句或错位窗口。
-
-约束：
-1. 只改目标 cue，不得合并、拆分或改时间轴；输出必须是单行完整字幕。
-2. 尽量做最小修改，保留口语、专名、数字和中英混说；不得润色或概括。
-3. 可以用前后 cue 修复跨 cue 误切，但本候选只能给出目标 cue 应保留的文字。
-4. 若拼音、语法和语境足以确认说的是日语，普通日语词句必须写成假名/惯用日文，
-   不得写罗马音或中文谐音；真正英语和已登记的官方拉丁专名保持原样。
-5. 新候选必须同时不同于 CURRENT 和 REJECTED_PROPOSED；若证据仍不足以给出
-   一个有界第三候选，返回 UNRESOLVED。不要声称自己听过音频。
-
-## AGY 拼音辅助（未见候选）
-{witness}
-
-## 被拒闭集
-- CURRENT: {current}
-- REJECTED_PROPOSED: {rejected}
-
-## 同片语境（转写上下文，不是逐字真值）
-前文:
-{before}
-目标 cue: <待重建>
-后文:
-{after}
-
-## 原审片发现与文字候选出处
-{finding_evidence}
-
-只回 JSON（无 markdown、无其他文字）：
-{{"status":"PROPOSED"或"UNRESOLVED","proposed_cue":"单行完整第三候选；UNRESOLVED 时为空","reason":"一句话说明拼音覆盖与语境依据"}}
-"""
-
-def _proposal_rebuild_cache_path(prompt_sha256: str) -> Path | None:
-    base = os.environ.get("AUTOSLICE_BASE")
-    if not base:
-        return None
-    return (
-        Path(base)
-        / "cache"
-        / "proposal-rebuilds"
-        / prompt_sha256[:2]
-        / f"{prompt_sha256}.json"
-    )
 
 
 def _rebuild_candidate_after_neither(
@@ -1751,207 +1591,73 @@ def _rebuild_candidate_after_neither(
     witness: Mapping[str, Any],
     llm_call: Callable[[str], str] | None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    """Ask CPA's proposal layer for one bounded third candidate.
+    return rebuild_candidate_after_neither(
+        finding=finding,
+        request=request,
+        witness=witness,
+        llm_call=llm_call,
+        derive_single_span_edit=_derive_single_span_edit,
+    )
 
-    This function never authorizes a mutation.  Its candidate must still go
-    through the ordinary CURRENT/PROPOSED CPA judge and typed mutation audit.
-    """
 
-    audit: dict[str, Any] = {
-        "schema_version": _PROPOSAL_REBUILD_SCHEMA,
-        "status": "UNAVAILABLE",
-        "decision_authority": "CPA_PROPOSAL_ONLY",
-        "mutation_authorized": False,
+def _prepare_rebuilt_candidate_request(
+    *,
+    srt_text: str,
+    rebuilt_finding: Mapping[str, Any],
+    proposal_rebuild_audit: dict[str, Any],
+    clip_context: Mapping[str, object] | None,
+    source_media_timeline_offset_ms: int,
+    witness_request: Mapping[str, Any],
+    witness: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Rebind a third candidate while proving the audio window is unchanged."""
+
+    try:
+        rebuilt_request = build_context_adjudication_request(
+            srt_text,
+            rebuilt_finding,
+            clip_context=clip_context,
+            source_media_timeline_offset_ms=source_media_timeline_offset_ms,
+        )
+    except (TypeError, ValueError) as exc:
+        proposal_rebuild_audit.update(status="INVALID", reason_code=str(exc))
+        return None
+    rebuilt_witness_request = build_witness_request(rebuilt_request)
+    geometry_keys = (
+        "kind", "cue_indexes", "matched_start_ms", "matched_end_ms",
+        "context_start_ms", "context_end_ms", "source_media_timeline_offset_ms",
+    )
+    if any(
+        rebuilt_witness_request.get(key) != witness_request.get(key)
+        for key in geometry_keys
+    ):
+        proposal_rebuild_audit.update(
+            status="INVALID", reason_code="PROPOSAL_REBUILD_CHANGED_WITNESS_WINDOW"
+        )
+        return None
+    geometry_sha256 = hashlib.sha256(
+        json.dumps(
+            {key: witness_request.get(key) for key in geometry_keys},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    proposal_rebuild_audit["witness_reuse"] = {
+        "schema_version": "candidate-free-witness-reuse.v1",
+        "status": "PASS",
+        "basis": "IDENTICAL_AUDIO_GEOMETRY",
+        "geometry_sha256": "sha256:" + geometry_sha256,
+        "original_witness_request_sha256": "sha256:"
+        + str(witness_request.get("request_sha256") or "").removeprefix("sha256:"),
+        "reused_witness_request_sha256": "sha256:"
+        + str(witness.get("request_sha256") or "").removeprefix("sha256:"),
+        "rebuilt_witness_request_sha256": "sha256:"
+        + str(rebuilt_witness_request.get("request_sha256") or "").removeprefix(
+            "sha256:"
+        ),
     }
-    if llm_call is None:
-        audit["reason_code"] = "PROPOSAL_REBUILD_LLM_UNAVAILABLE"
-        return None, audit
-    current = str(request.get("current_cue") or "")
-    rejected = str(request.get("proposed_cue") or "")
-    original_repair_class = str(finding.get("repair_class") or "")
-    audible_acoustic_drop_rebuild = bool(
-        original_repair_class == "acoustic_drop_cue"
-        and rejected == ""
-        and witness.get("schema_version")
-        == "subtitle-span-acoustic-witness.v1"
-        and witness.get("status") == "OBSERVED"
-        and witness.get("target_audible") is True
-    )
-    audit.update(
-        original_repair_class=original_repair_class,
-        rejected_candidates=[current, rejected],
-    )
-    if (
-        original_repair_class == "acoustic_drop_cue"
-        and not audible_acoustic_drop_rebuild
-    ):
-        audit["reason_code"] = (
-            "PROPOSAL_REBUILD_ACOUSTIC_DROP_REQUIRES_AUDIBLE_TARGET"
-        )
-        return None, audit
-    prompt = _PROPOSAL_REBUILD_PROMPT.format(
-        witness=json.dumps(
-            {
-                "target_audible": witness.get("target_audible"),
-                "heard_pinyin": witness.get("heard_pinyin"),
-                "syllable_count": witness.get("syllable_count"),
-                "uncertain_positions": witness.get("uncertain_positions"),
-                "confidence": witness.get("confidence"),
-                "self_count_mismatch": witness.get("self_count_mismatch"),
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-        ),
-        current=current,
-        rejected=rejected,
-        before=str(request.get("context_before") or "（无）"),
-        after=str(request.get("context_after") or "（无）"),
-        finding_evidence=json.dumps(
-            {
-                "repair_class": finding.get("repair_class"),
-                "reviewer_reason": finding.get("why"),
-                "candidate_provenance": finding.get("candidate_provenance"),
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-        ),
-    )
-    prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
-    audit["prompt_sha256"] = "sha256:" + prompt_sha256
-    cache_path = _proposal_rebuild_cache_path(prompt_sha256)
-    payload: Mapping[str, Any] | None = None
-    completion_sha256: str | None = None
-    served_from_cache = False
-    if cache_path is not None:
-        try:
-            cached = json.loads(cache_path.read_text(encoding="utf-8"))
-            if (
-                isinstance(cached, Mapping)
-                and cached.get("schema_version")
-                == _PROPOSAL_REBUILD_CACHE_SCHEMA
-                and cached.get("prompt_sha256") == prompt_sha256
-                and isinstance(cached.get("payload"), Mapping)
-                and isinstance(cached.get("completion_sha256"), str)
-            ):
-                payload = cached["payload"]
-                completion_sha256 = str(cached["completion_sha256"])
-                served_from_cache = True
-        except (OSError, ValueError):
-            pass
-    if payload is None:
-        try:
-            completion = llm_call(prompt)
-            completion_sha256 = hashlib.sha256(
-                completion.encode("utf-8")
-            ).hexdigest()
-            payload = extract_json_object(completion)
-        except Exception as exc:
-            audit.update(
-                reason_code="PROPOSAL_REBUILD_PROVIDER_OR_JSON_UNAVAILABLE",
-                error_type=type(exc).__name__,
-            )
-            return None, audit
-    audit["completion_sha256"] = "sha256:" + str(completion_sha256)
-    if served_from_cache:
-        audit["served_from_cache"] = True
-    status = str(payload.get("status") or "")
-    proposed = payload.get("proposed_cue")
-    reason = str(payload.get("reason") or "")[:240]
-    if status != "PROPOSED":
-        audit.update(status="UNRESOLVED", reason=reason)
-        return None, audit
-    if (
-        not isinstance(proposed, str)
-        or proposed != proposed.strip()
-        or not proposed
-        or proposed in {"", current, rejected}
-        or "\n" in proposed
-        or "\r" in proposed
-        or "-->" in proposed
-        or len(proposed) > 96
-        or any(ord(char) < 32 for char in proposed)
-    ):
-        audit.update(
-            status="INVALID",
-            reason_code="PROPOSAL_REBUILD_TEXT_CONTRACT_INVALID",
-            reason=reason,
-        )
-        return None, audit
-    suspect, replacement, start, end, error = _derive_single_span_edit(
-        current,
-        proposed,
-        allow_insertion=True,
-        allow_deletion=True,
-    )
-    if error is not None:
-        audit.update(
-            status="INVALID",
-            reason_code=error,
-            reason=reason,
-        )
-        return None, audit
-    rebuilt = dict(finding)
-    rebuilt.update(
-        suspect=suspect,
-        suggestion=replacement,
-        span_start_codepoint=start,
-        span_end_codepoint=end,
-        proposed_full_cue=proposed,
-        base_text_sha256=hashlib.sha256(current.encode("utf-8")).hexdigest(),
-        why=(
-            f"[CPA 坏闭集重建] {reason or finding.get('why') or ''}"
-        )[:240],
-    )
-    if audible_acoustic_drop_rebuild:
-        # The empty proposal has been acoustically disproven.  The rebuilt
-        # non-empty candidate is an ordinary bounded spoken-unit candidate;
-        # it must never retain acoustic_drop_cue authority or an implicit
-        # right to delete the cue.
-        rebuilt["repair_class"] = "spoken_unit"
-        rebuilt["candidate_provenance"] = None
-        rebuilt["candidate_memory_id"] = None
-    provenance = rebuilt.get("candidate_provenance")
-    surface = (
-        str(provenance.get("surface") or "").strip()
-        if isinstance(provenance, Mapping)
-        else ""
-    )
-    if surface and surface.casefold() not in proposed.casefold():
-        rebuilt["candidate_provenance"] = None
-        rebuilt["candidate_memory_id"] = None
-    audit.update(
-        status="PROPOSED",
-        proposed_cue=proposed,
-        proposed_cue_sha256="sha256:"
-        + hashlib.sha256(proposed.encode("utf-8")).hexdigest(),
-        suspect=suspect,
-        suggestion=replacement,
-        span_start_codepoint=start,
-        span_end_codepoint=end,
-        reason=reason,
-        rebuilt_repair_class=str(rebuilt.get("repair_class") or ""),
-    )
-    if cache_path is not None and not served_from_cache:
-        try:
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            cache_path.write_text(
-                json.dumps(
-                    {
-                        "schema_version": _PROPOSAL_REBUILD_CACHE_SCHEMA,
-                        "prompt_sha256": prompt_sha256,
-                        "completion_sha256": completion_sha256,
-                        "payload": dict(payload),
-                    },
-                    ensure_ascii=False,
-                    indent=1,
-                    sort_keys=True,
-                )
-                + "\n",
-                encoding="utf-8",
-            )
-        except OSError:
-            pass
-    return rebuilt, audit
+    return rebuilt_request
 
 
 def _promote_inaudible_target_to_drop_cue(
@@ -2039,6 +1745,9 @@ def adjudicate_context_finding(
     source_media_timeline_offset_ms: int = 0,
     judge_llm_call: Callable[[str], str] | None = None,
     screen_read_probe: Callable[[int, int], Mapping[str, Any]] | None = None,
+    exact_source_transcript_provider: (
+        Callable[[Mapping[str, Any]], Mapping[str, Any] | None] | None
+    ) = None,
 ) -> tuple[str, dict[str, Any]]:
     """Fuse a reviewer proposal with witnessed pinyin + CPA word choice.
 
@@ -2047,7 +1756,6 @@ def adjudicate_context_finding(
     CPA judge from the closed set; code enforces pinyin compatibility of the
     judged choice. The mutation-authority receipt contract is unchanged.
     """
-
     structured_chat_context = _structured_chat_lines_for_finding(
         srt_text,
         finding,
@@ -2085,6 +1793,7 @@ def adjudicate_context_finding(
             "context_sha256": str(
                 convergence.get("context_sha256") or ""
             ).removeprefix("sha256:"),
+            "closed_set_structured_evidence": convergence.get("closed_set_structured_evidence"),
             "decision": "KEEP_EXISTING",
             "timing_immutable": True,
         }
@@ -2174,83 +1883,6 @@ def adjudicate_context_finding(
                 separators=(",", ":"),
             ).encode("utf-8")
         ).hexdigest()
-        cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
-        cue_index = int(finding["cue_index"])
-        live_cue = cues[cue_index - 1]
-        if hashlib.sha256(live_cue.text.encode("utf-8")).hexdigest() != request[
-            "base_text_sha256"
-        ]:
-            return srt_text, {
-                "schema_version": "subtitle-span-adjudication.v1",
-                "status": "UNCERTAIN",
-                "repaired": False,
-                "reason_code": "STALE_BASE",
-                "policy_branch": "STALE_BASE_KEEP_CURRENT",
-                "proposal_bootstrap": proposal_bootstrap_audit,
-                "cpa_missing_proposal_convergence": dict(convergence),
-                "decision_authority": "CPA_JUDGE",
-                "witness_authority": "EVIDENCE_ONLY",
-            }
-        texts = [cue.text for cue in cues]
-        texts[cue_index - 1] = str(request["proposed_cue"])
-        retained = [
-            (cue, text)
-            for cue, text in zip(cues, texts)
-            if text.strip()
-        ]
-        output = "\n".join(
-            f"{index}\n{_ms(cue.start_ms)} --> {_ms(cue.end_ms)}\n{text}\n"
-            for index, (cue, text) in enumerate(retained, start=1)
-        )
-        return output, {
-            "schema_version": "subtitle-span-adjudication.v1",
-            "status": "OBSERVED",
-            "repaired": True,
-            "policy_branch": (
-                "CPA_CONTEXT_ONLY_REPLACE_WITH_EXACT_TEXT"
-            ),
-            "timing_immutable": True,
-            "request": request,
-            "verdict": {
-                "schema_version": "subtitle-span-acoustic-witness.v1",
-                "status": "NOT_REQUIRED",
-                "target_audible": None,
-                "reason_code": "CPA_CONTEXT_ONLY_FINAL_CONVERGENCE",
-            },
-            "witness_judge": {
-                "witness_status": "NOT_REQUIRED",
-                "judge": {
-                    "schema_version": "subtitle-cpa-context-judge.v1",
-                    "status": "JUDGED",
-                    "choice": "PROPOSED",
-                    "reason": convergence.get("reason"),
-                    "prompt_sha256": convergence.get("prompt_sha256"),
-                    "completion_sha256": convergence.get(
-                        "completion_sha256"
-                    ),
-                },
-            },
-            "proposal_bootstrap": proposal_bootstrap_audit,
-            "cpa_missing_proposal_convergence": dict(convergence),
-            "rebuilt_finding": dict(finding),
-            "orthography_equivalence": {"matched": False},
-            "orthography_ambiguous": False,
-            "orthography_authority": {
-                "schema_version": "subtitle-orthography-authority.v1",
-                "status": "NOT_REQUIRED",
-            },
-            "decision_authority": "CPA_JUDGE",
-            "witness_authority": "EVIDENCE_ONLY",
-            "mutation_authority": {
-                "schema_version": (
-                    "subtitle-correction-mutation-authority.v1"
-                ),
-                "status": "PASS",
-                "basis": (
-                    "CPA_CONTEXT_ONLY_EXACT_TEXT_FINAL_CONVERGENCE"
-                ),
-            },
-        }
     def _fetch_witness(
         check_request: Mapping[str, Any],
     ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -2269,12 +1901,68 @@ def adjudicate_context_finding(
                 "reason_code": "CONTEXT_VERIFIER_ERROR",
                 "error": f"{type(exc).__name__}: {exc}",
             }
-        return (
-            dict(observed) if isinstance(observed, Mapping) else {},
-            request_for_witness,
-        )
+        return bind_blind_witness_protocol(
+            observed if isinstance(observed, Mapping) else {},
+            witness_request=request_for_witness,
+        ), request_for_witness
 
     verdict, witness_request = _fetch_witness(request)
+    convergence_rewrite = bool(
+        isinstance(convergence, Mapping)
+        and convergence.get("status") == "RESOLVED"
+        and convergence.get("decision") == "REPLACE_WITH_EXACT_TEXT"
+    )
+    witness_observed = bool(
+        valid_witness_evidence(
+            verdict,
+            request_sha256=witness_request["request_sha256"],
+        )
+        and verdict.get("status") == "OBSERVED"
+    )
+    if convergence_rewrite and not witness_observed:
+        if not verdict:
+            verdict = {
+                "schema_version": "subtitle-span-acoustic-witness.v1",
+                "request_sha256": witness_request["request_sha256"],
+                "status": "UNCERTAIN",
+                "reason_code": "CONTEXT_VERIFIER_UNAVAILABLE",
+            }
+        downgraded = dict(finding)
+        downgraded["repair_class"] = "disclosure_only"
+        provenance = downgraded.get("candidate_provenance")
+        if isinstance(provenance, Mapping):
+            downgraded["candidate_provenance"] = {
+                **provenance,
+                "mutation_authorized": False,
+            }
+        downgraded["why"] = (
+            "[语境改写缺声学证人，降为 disclosure_only] "
+            + str(downgraded.get("why") or "")
+        )[:240]
+        return srt_text, {
+            "schema_version": "subtitle-span-adjudication.v1",
+            "status": "UNCERTAIN",
+            "repaired": False,
+            "reason_code": "CONTEXT_REWRITE_ACOUSTIC_WITNESS_REQUIRED",
+            "policy_branch": (
+                "CONTEXT_REWRITE_DOWNGRADED_TO_DISCLOSURE_ONLY"
+            ),
+            "timing_immutable": True,
+            "request": request,
+            "verdict": verdict,
+            "proposal_bootstrap": proposal_bootstrap_audit,
+            "cpa_missing_proposal_convergence": dict(convergence),
+            "rebuilt_finding": downgraded,
+            "decision_authority": "CPA_PROPOSAL_ONLY",
+            "witness_authority": "ACOUSTIC_WITNESS_REQUIRED",
+            "mutation_authority": {
+                "schema_version": (
+                    "subtitle-correction-mutation-authority.v1"
+                ),
+                "status": "NOT_APPLIED",
+                "basis": "ACOUSTIC_WITNESS_NOT_OBSERVED",
+            },
+        }
     screen_read_audit: dict[str, Any] | None = None
     # 证据升级通道（维护者 424_522 1:24「战斗回合用尽」案 + 同日
     # 扩展令）：触发器 = 听不清（弱证词）∪ 语境不通（审片员立了 finding
@@ -2309,6 +1997,7 @@ def adjudicate_context_finding(
     policy_branch = "INVALID_OR_UNCERTAIN_KEEP_CURRENT"
     decision_finding: Mapping[str, Any] = finding
     proposal_rebuild_audit: dict[str, Any] | None = None
+    exact_source_transcript_handoff: dict[str, Any] | None = None
     inaudible_drop_promotion_audit: dict[str, Any] | None = None
     inaudible_drop_authority: dict[str, Any] | None = None
     rebuilt_finding: dict[str, Any] | None = bootstrap_finding
@@ -2329,7 +2018,7 @@ def adjudicate_context_finding(
             check_request=request,
             witness=verdict,
             llm_call=judge_llm_call,
-            structured_chat_context=structured_chat_context,
+            structured_chat_context=structured_chat_context, clip_context=clip_context,
         )
         if repaired and policy_branch == "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE":
             original_request = request
@@ -2489,142 +2178,96 @@ def adjudicate_context_finding(
             initial_request_repair_class != "acoustic_drop_cue"
             or audible_acoustic_drop_neither
         ):
-            rebuilt_finding, proposal_rebuild_audit = (
-                _rebuild_candidate_after_neither(
+            if exact_source_transcript_provider is not None:
+                (
+                    rebuilt_finding,
+                    exact_source_transcript_handoff,
+                ) = rebuild_candidate_from_exact_source_transcript(
                     finding=decision_finding,
-                    request=request,
+                    initial_check_request=request,
+                    witness_request=witness_request,
                     witness=verdict,
-                    llm_call=judge_llm_call,
+                    srt_text=srt_text,
+                    clip_context=clip_context,
+                    provider=exact_source_transcript_provider,
+                    derive_single_span_edit=_derive_single_span_edit,
                 )
-            )
-            if rebuilt_finding is not None:
-                try:
-                    rebuilt_request = build_context_adjudication_request(
-                        srt_text,
-                        rebuilt_finding,
-                        clip_context=clip_context,
-                        source_media_timeline_offset_ms=(
-                            source_media_timeline_offset_ms
+                if rebuilt_finding is not None:
+                    proposal_rebuild_audit = {
+                        "schema_version": (
+                            "exact-source-transcript-consumption.v1"
                         ),
-                    )
-                except (TypeError, ValueError) as exc:
-                    proposal_rebuild_audit.update(
-                        status="INVALID",
-                        reason_code=str(exc),
-                    )
-                    rebuilt_finding = None
-                else:
-                    rebuilt_witness_request = build_witness_request(
-                        rebuilt_request
-                    )
-                    witness_geometry_keys = (
-                        "kind",
-                        "cue_indexes",
-                        "matched_start_ms",
-                        "matched_end_ms",
-                        "context_start_ms",
-                        "context_end_ms",
-                        "source_media_timeline_offset_ms",
-                    )
-                    witness_geometry_unchanged = all(
-                        rebuilt_witness_request.get(key)
-                        == witness_request.get(key)
-                        for key in witness_geometry_keys
-                    )
-                    if not witness_geometry_unchanged:
-                        proposal_rebuild_audit.update(
-                            status="INVALID",
-                            reason_code=(
-                                "PROPOSAL_REBUILD_CHANGED_WITNESS_WINDOW"
-                            ),
-                        )
-                        rebuilt_finding = None
-                    else:
-                        geometry_payload = {
-                            key: witness_request.get(key)
-                            for key in witness_geometry_keys
-                        }
-                        geometry_sha256 = hashlib.sha256(
-                            json.dumps(
-                                geometry_payload,
-                                ensure_ascii=False,
-                                sort_keys=True,
-                                separators=(",", ":"),
-                            ).encode("utf-8")
-                        ).hexdigest()
-                        proposal_rebuild_audit["witness_reuse"] = {
-                            "schema_version": (
-                                "candidate-free-witness-reuse.v1"
-                            ),
-                            "status": "PASS",
-                            "basis": "IDENTICAL_AUDIO_GEOMETRY",
-                            "geometry_sha256": (
-                                "sha256:" + geometry_sha256
-                            ),
-                            "original_witness_request_sha256": (
-                                "sha256:"
-                                + str(
-                                    witness_request.get("request_sha256")
-                                    or ""
-                                )
-                            ),
-                            "reused_witness_request_sha256": (
-                                "sha256:"
-                                + str(
-                                    verdict.get("request_sha256") or ""
-                                ).removeprefix("sha256:")
-                            ),
-                            "rebuilt_witness_request_sha256": (
-                                "sha256:"
-                                + str(
-                                    rebuilt_witness_request.get(
-                                        "request_sha256"
-                                    )
-                                    or ""
-                                )
-                            ),
-                        }
-                        request = rebuilt_request
-                        decision_finding = rebuilt_finding
-                        orthography_ambiguous = _orthography_ambiguous(
-                            current_cue=str(
-                                request.get("current_cue") or ""
-                            ),
-                            proposed_cue=str(
-                                request.get("proposed_cue") or ""
-                            ),
-                            finding=decision_finding,
-                        )
-                        orthography_authority = (
-                            _orthography_text_authority(
-                                decision_finding
+                        "status": "PROPOSED",
+                        "mutation_authorized": False,
+                    }
+                if rebuilt_finding is None:
+                    if exact_source_transcript_handoff.get("status") == (
+                        "CAPABILITY_UNAVAILABLE"
+                    ):
+                        rebuilt_finding, proposal_rebuild_audit = (
+                            _rebuild_candidate_after_neither(
+                                finding=decision_finding,
+                                request=request,
+                                witness=verdict,
+                                llm_call=judge_llm_call,
                             )
                         )
-                        (
-                            orthography_equivalent,
-                            orthography_audit,
-                        ) = _source_backed_orthography_equivalent(
-                            request,
-                            decision_finding,
+                    else:
+                        policy_branch = (
+                            "EXACT_SOURCE_TRANSCRIPT_PROVIDER_UNAVAILABLE"
+                            if exact_source_transcript_handoff.get("status")
+                            == "PROVIDER_UNAVAILABLE"
+                            else "EXACT_SOURCE_TRANSCRIPT_HANDOFF_INVALID"
                         )
-                        strict_tie = _strict_homophone_tie(
-                            decision_finding,
-                            request,
+            else:
+                rebuilt_finding, proposal_rebuild_audit = (
+                    _rebuild_candidate_after_neither(
+                        finding=decision_finding,
+                        request=request,
+                        witness=verdict,
+                        llm_call=judge_llm_call,
+                    )
+                )
+            if rebuilt_finding is not None:
+                rebuilt_request = _prepare_rebuilt_candidate_request(
+                    srt_text=srt_text,
+                    rebuilt_finding=rebuilt_finding,
+                    proposal_rebuild_audit=proposal_rebuild_audit,
+                    clip_context=clip_context,
+                    source_media_timeline_offset_ms=source_media_timeline_offset_ms,
+                    witness_request=witness_request,
+                    witness=verdict,
+                )
+                if rebuilt_request is None:
+                    rebuilt_finding = None
+                else:
+                    request = rebuilt_request
+                    decision_finding = rebuilt_finding
+                    orthography_ambiguous = _orthography_ambiguous(
+                        current_cue=str(request.get("current_cue") or ""),
+                        proposed_cue=str(request.get("proposed_cue") or ""),
+                        finding=decision_finding,
+                    )
+                    orthography_authority = _orthography_text_authority(
+                        decision_finding
+                    )
+                    orthography_equivalent, orthography_audit = (
+                        _source_backed_orthography_equivalent(
+                            request, decision_finding
                         )
-                        (
-                            repaired,
-                            policy_branch,
-                            witness_judge_audit,
-                        ) = adjudicate_with_witness(
+                    )
+                    strict_tie = _strict_homophone_tie(decision_finding, request)
+                    repaired, policy_branch, witness_judge_audit = (
+                        adjudicate_with_witness(
                             check_request=request,
                             witness=verdict,
                             llm_call=judge_llm_call,
                             structured_chat_context=structured_chat_context,
+                            clip_context=clip_context,
                         )
-                        if policy_branch == "JUDGE_REJECTS_CLOSED_SET":
-                            policy_branch = (
-                                "PROPOSAL_REBUILD_EXHAUSTED"
-                            )
+                    )
+                    if policy_branch == "JUDGE_REJECTS_CLOSED_SET":
+                        policy_branch = "PROPOSAL_REBUILD_EXHAUSTED"
         if (
             repaired
             and policy_branch
@@ -2757,6 +2400,15 @@ def adjudicate_context_finding(
         ),
         **(
             {
+                "exact_source_transcript_handoff": (
+                    exact_source_transcript_handoff
+                )
+            }
+            if exact_source_transcript_handoff is not None
+            else {}
+        ),
+        **(
+            {
                 "inaudible_drop_promotion": (
                     inaudible_drop_promotion_audit
                 )
@@ -2772,6 +2424,11 @@ def adjudicate_context_finding(
         **(
             {"proposal_bootstrap": proposal_bootstrap_audit}
             if proposal_bootstrap_audit is not None
+            else {}
+        ),
+        **(
+            {"cpa_missing_proposal_convergence": dict(convergence)}
+            if isinstance(convergence, Mapping)
             else {}
         ),
         **(
@@ -2818,25 +2475,22 @@ def adjudicate_exact_release_findings(
 
     unresolved: list[dict[str, Any]] = []
     resolved: list[dict[str, Any]] = []
-    for index, finding in enumerate(findings):
+    budget = ContextAdjudicationBudget(
+        limit=MAX_CONTEXT_ADJUDICATIONS,
+        entity_verifier=entity_verifier,
+        clip_context=clip_context,
+        source_media_timeline_offset_ms=source_media_timeline_offset_ms,
+        judge_llm_call=judge_llm_call,
+        screen_read_probe=screen_read_probe,
+        adjudicate_context=adjudicate_context_finding,
+    )
+    for finding in findings:
         row = dict(finding)
-        if index >= MAX_CONTEXT_ADJUDICATIONS:
-            row["exact_release_adjudication"] = {
-                "schema_version": "subtitle-span-adjudication.v1",
-                "status": "SKIPPED_BUDGET",
-                "repaired": False,
-            }
+        adjudication = budget.adjudicate(srt_text, row)
+        if adjudication.get("status") == "SKIPPED_BUDGET":
+            row["exact_release_adjudication"] = adjudication
             unresolved.append(row)
             continue
-        _unused_output, adjudication = adjudicate_context_finding(
-            srt_text,
-            row,
-            entity_verifier=entity_verifier,
-            clip_context=clip_context,
-            source_media_timeline_offset_ms=source_media_timeline_offset_ms,
-            judge_llm_call=judge_llm_call,
-            screen_read_probe=screen_read_probe,
-        )
         rebuilt_finding = adjudication.get("rebuilt_finding")
         if isinstance(rebuilt_finding, Mapping):
             for key in (
@@ -2934,43 +2588,22 @@ def adjudicate_exact_release_findings(
     return unresolved, resolved
 
 
-def _pinned_replay_zero_mutation_receipt(
-    correction_audit: Mapping[str, object],
+def exact_source_transcript_infra_reason_codes(
+    findings: Iterable[Mapping[str, Any]],
     *,
-    findings: object,
-    applied_count: object,
-) -> dict[str, object]:
-    """修复快路径（提速②）的零变更授权回执。
+    srt_text: str,
+    clip_context: Mapping[str, object] | None,
+) -> list[str]:
+    """Project only strictly typed exact-transcript transport failures."""
 
-    审片员在钉死重放模式下被披露性跳过——零变更即零待授权变更，但披露块
-    必须形状完整且确无发现，否则按未披露跳过 BLOCK（fail-closed）。
-    """
-
-    ownership = correction_audit.get("pinned_replay_ownership")
-    if (
-        isinstance(ownership, Mapping)
-        and ownership.get("exact_interval_replay") is True
-        and bool(str(ownership.get("baseline_sha256") or "").strip())
-        and bool(
-            str(ownership.get("publication_authority_sha256") or "").strip()
-        )
-        and (findings is None or findings == [])
-    ):
-        return {
-            "schema_version": "subtitle-correction-mutation-audit.v1",
-            "status": "PASS",
-            "applied_count": 0,
-            "validated_mutation_count": 0,
-            "failures": [],
-            "pinned_replay_skip": dict(ownership),
-        }
-    return {
-        "schema_version": "subtitle-correction-mutation-audit.v1",
-        "status": "BLOCK",
-        "applied_count": applied_count,
-        "validated_mutation_count": 0,
-        "failures": [{"reason_code": "PINNED_REPLAY_SKIP_UNDISCLOSED"}],
-    }
+    for finding in findings:
+        if valid_exact_source_transcript_provider_unavailable_finding(
+            finding,
+            srt_text=srt_text,
+            clip_context=clip_context,
+        ):
+            return ["FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED"]
+    return []
 
 
 def audit_correction_mutation_authority(
@@ -3006,10 +2639,9 @@ def audit_correction_mutation_authority(
                 }
             ],
         }
-    if correction_status == "SKIPPED_PINNED_REPLAY":
-        return _pinned_replay_zero_mutation_receipt(
-            correction_audit, findings=findings, applied_count=applied_count
-        )
+    skip_receipt = audit_zero_mutation_correction_skip(correction_audit)
+    if skip_receipt is not None:
+        return skip_receipt
     if correction_status not in _COMPLETED_CORRECTION_STATUSES:
         return {
             "schema_version": "subtitle-correction-mutation-audit.v1",
@@ -3042,24 +2674,23 @@ def audit_correction_mutation_authority(
             applied_rows.append((row, row.get("mutation_authority")))
             continue
         if routed in {"homophone_fix", "witnessed_near_homophone_fix"}:
-            failures.append(
-                {
-                    "reason_code": "NON_CPA_MUTATION_ROUTE_FORBIDDEN",
-                    "cue_index": row.get("cue_index"),
-                    "routed": routed,
-                }
-            )
+            failures.append({
+                "reason_code": "NON_CPA_MUTATION_ROUTE_FORBIDDEN", "cue_index": row.get("cue_index"), "routed": routed,
+            })
             applied_rows.append((row, row.get("orthography_authority")))
             continue
         adjudication = row.get("context_audio_adjudication")
-        if (
-            routed == "context_audio_adjudicated_fix"
+        if routed == "same_cue_unresolved" or (
+            isinstance(adjudication, Mapping)
+            and adjudication.get("status") == "SAME_CUE_REENTRY_UNRESOLVED"
+        ):
+            failures.append({"reason_code": "CORRECTION_SAME_CUE_REENTRY_UNRESOLVED", "cue_index": row.get("cue_index")})
+            continue
+        if (routed in ("context_audio_adjudicated_fix", "same_cue_readjudicated_fix")
             and isinstance(adjudication, Mapping)
             and adjudication.get("repaired") is True
         ):
-            applied_rows.append(
-                (row, adjudication.get("mutation_authority"))
-            )
+            applied_rows.append((row, adjudication.get("mutation_authority")))
     if (
         isinstance(applied_count, bool)
         or not isinstance(applied_count, int)
@@ -3121,7 +2752,7 @@ def audit_correction_mutation_authority(
             )
         elif routed in {"homophone_fix", "witnessed_near_homophone_fix"}:
             receipt_valid = False
-        elif routed == "context_audio_adjudicated_fix":
+        elif routed in ("context_audio_adjudicated_fix", "same_cue_readjudicated_fix"):
             adjudication = row.get("context_audio_adjudication")
             orthography_ambiguous = (
                 adjudication.get("orthography_ambiguous")

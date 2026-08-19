@@ -31,10 +31,9 @@ def canonical_pair_sources() -> list[tuple[str, str]]:
         from src.autoslice.chat_authority import load_referent_groups
 
         pairs.extend(
-            (rule.surface, rule.canonical)
-            for rule in CHANNEL_PROFILE.canonical_surface_rules
+            (rule.surface, rule.canonical) for rule in CHANNEL_PROFILE.canonical_surface_rules
         )
-        for group in load_referent_groups(_ASSET_CONFUSABLES):
+        for group in load_referent_groups(_ASSET_CONFUSABLES, include_singletons=True):
             for entity in group.entities:
                 for surface in entity.surfaces:
                     if surface != entity.canonical:
@@ -93,10 +92,7 @@ def expected_value_surface_rules() -> tuple[CanonicalSurfaceRule, ...]:
             CanonicalSurfaceRule(
                 surface=surface,
                 canonical=canonical,
-                authority=(
-                    f"{CHANNEL_PROFILE.profile_id}-glossary-"
-                    "expected-value-canon.v1"
-                ),
+                authority=(f"{CHANNEL_PROFILE.profile_id}-glossary-expected-value-canon.v1"),
             )
             for surface, canonical in load_glossary_expected_value_pairs(
                 CHANNEL_PROFILE.asset_file("glossary")
@@ -113,10 +109,7 @@ def expected_value_surface_rules() -> tuple[CanonicalSurfaceRule, ...]:
 def expected_value_respell_pairs() -> frozenset[tuple[str, str]]:
     """Known wrong surfaces allowed to bypass CPA on expected-value grounds."""
 
-    return frozenset(
-        (rule.surface, rule.canonical)
-        for rule in expected_value_surface_rules()
-    )
+    return frozenset((rule.surface, rule.canonical) for rule in expected_value_surface_rules())
 
 
 def exact_cue_canons() -> frozenset[str]:
@@ -125,9 +118,7 @@ def exact_cue_canons() -> frozenset[str]:
     try:
         from scripts.profile_glossary_terms import load_glossary_exact_cues
 
-        return frozenset(
-            load_glossary_exact_cues(CHANNEL_PROFILE.asset_file("glossary"))
-        )
+        return frozenset(load_glossary_exact_cues(CHANNEL_PROFILE.asset_file("glossary")))
     except Exception:
         return frozenset()
 
@@ -142,14 +133,12 @@ def registered_terms() -> frozenset[str]:
     """
 
     terms: set[str] = {
-        rule.canonical
-        for rule in CHANNEL_PROFILE.canonical_surface_rules
-        if rule.canonical
+        rule.canonical for rule in CHANNEL_PROFILE.canonical_surface_rules if rule.canonical
     }
     try:
         from src.autoslice.chat_authority import load_referent_groups
 
-        for group in load_referent_groups(_ASSET_CONFUSABLES):
+        for group in load_referent_groups(_ASSET_CONFUSABLES, include_singletons=True):
             for entity in group.entities:
                 if entity.canonical:
                     terms.add(entity.canonical)
@@ -158,11 +147,7 @@ def registered_terms() -> frozenset[str]:
     try:
         from scripts.profile_glossary_terms import load_glossary_terms
 
-        terms.update(
-            load_glossary_terms(
-                CHANNEL_PROFILE.asset_file("glossary")
-            ).canon
-        )
+        terms.update(load_glossary_terms(CHANNEL_PROFILE.asset_file("glossary")).canon)
     except Exception:
         pass
     try:
@@ -192,7 +177,7 @@ def protected_terms() -> frozenset[str]:
     try:
         from src.autoslice.chat_authority import load_referent_groups
 
-        for group in load_referent_groups(_ASSET_CONFUSABLES):
+        for group in load_referent_groups(_ASSET_CONFUSABLES, include_singletons=True):
             for entity in group.entities:
                 terms.add(entity.canonical)
     except Exception:
@@ -200,11 +185,7 @@ def protected_terms() -> frozenset[str]:
     try:
         from scripts.profile_glossary_terms import load_glossary_terms
 
-        terms.update(
-            load_glossary_terms(
-                CHANNEL_PROFILE.asset_file("glossary")
-            ).canon
-        )
+        terms.update(load_glossary_terms(CHANNEL_PROFILE.asset_file("glossary")).canon)
     except Exception:
         pass
     return frozenset(t for t in terms if t and len(t) >= 2)
@@ -223,7 +204,7 @@ def foreign_insert_entities() -> list[tuple[str, tuple[str, ...]]]:
         from src.autoslice.chat_authority import load_referent_groups
 
         kana = _re.compile(r"[぀-ヿ]")
-        for group in load_referent_groups(_ASSET_CONFUSABLES):
+        for group in load_referent_groups(_ASSET_CONFUSABLES, include_singletons=True):
             for entity in group.entities:
                 if kana.search(entity.canonical) and entity.readings:
                     out.append((entity.canonical, tuple(entity.readings)))

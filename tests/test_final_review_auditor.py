@@ -1227,7 +1227,7 @@ def test_missing_candidate_second_cpa_can_keep_existing_without_agy():
     assert "下班休息" in calls[1]
 
 
-def test_missing_candidate_second_cpa_exact_text_self_heals_without_agy():
+def test_missing_candidate_second_cpa_exact_text_self_heals_with_acoustic_witness():
     source = _srt("今天可以吗", "今天能多啵啵嘛", "好不好")
 
     def cpa(prompt):
@@ -1240,12 +1240,17 @@ def test_missing_candidate_second_cpa_exact_text_self_heals_without_agy():
                 },
                 ensure_ascii=False,
             )
+        if "# 字幕缺失候选最终收敛" in prompt:
+            return json.dumps(
+                {
+                    "decision": "REPLACE_WITH_EXACT_TEXT",
+                    "replacement_text": "今天能多抱抱嘛",
+                    "reason": "相邻语境是在请求抱抱",
+                },
+                ensure_ascii=False,
+            )
         return json.dumps(
-            {
-                "decision": "REPLACE_WITH_EXACT_TEXT",
-                "replacement_text": "今天能多抱抱嘛",
-                "reason": "相邻语境是在请求抱抱",
-            },
+            {"choice": "PROPOSED", "reason": "盲听与文字候选一致"},
             ensure_ascii=False,
         )
 
@@ -1261,8 +1266,8 @@ def test_missing_candidate_second_cpa_exact_text_self_heals_without_agy():
                 "why": "语境用词可疑",
             }
         ],
-        entity_verifier=lambda request: pytest.fail(
-            f"AGY must not decide exact-text convergence: {request}"
+        entity_verifier=lambda request: _witness(
+            request, "jin tian neng duo bao bao ma"
         ),
         judge_llm_call=cpa,
     )
@@ -1274,18 +1279,18 @@ def test_missing_candidate_second_cpa_exact_text_self_heals_without_agy():
     assert adjudication["repaired"] is True
     assert (
         adjudication["policy_branch"]
-        == "CPA_CONTEXT_ONLY_REPLACE_WITH_EXACT_TEXT"
+        in {
+            "WITNESS_JUDGE_APPLY_PROPOSED",
+            "CPA_SEMANTIC_ORTHOGRAPHY_TIEBREAK_APPLY_PROPOSED",
+        }
     )
     binding = adjudication["request"]["cpa_convergence_binding"]
     assert binding["final_srt_sha256"] == (
         "sha256:" + hashlib.sha256(source.encode("utf-8")).hexdigest()
     )
     assert binding["context_sha256"].startswith("sha256:")
-    assert adjudication["mutation_authority"] == {
-        "schema_version": "subtitle-correction-mutation-authority.v1",
-        "status": "PASS",
-        "basis": "CPA_CONTEXT_ONLY_EXACT_TEXT_FINAL_CONVERGENCE",
-    }
+    assert adjudication["verdict"]["status"] == "OBSERVED"
+    assert adjudication["mutation_authority"]["status"] == "PASS"
     from src.autoslice.producer_package_finalization import (
         _apply_exact_final_cpa_repairs,
     )
@@ -1312,12 +1317,17 @@ def test_exact_text_convergence_allows_shared_prefix_inside_wide_suspect():
                 },
                 ensure_ascii=False,
             )
+        if "# 字幕缺失候选最终收敛" in prompt:
+            return json.dumps(
+                {
+                    "decision": "REPLACE_WITH_EXACT_TEXT",
+                    "replacement_text": "我上次",
+                    "reason": "保留共享主语我，替换其后的误听片段",
+                },
+                ensure_ascii=False,
+            )
         return json.dumps(
-            {
-                "decision": "REPLACE_WITH_EXACT_TEXT",
-                "replacement_text": "我上次",
-                "reason": "保留共享主语我，替换其后的误听片段",
-            },
+            {"choice": "PROPOSED", "reason": "盲听支持文字候选"},
             ensure_ascii=False,
         )
 
@@ -1330,9 +1340,7 @@ def test_exact_text_convergence_allows_shared_prefix_inside_wide_suspect():
             "proposed_full_cue": None,
             "repair_class": "phonetic",
         },
-        entity_verifier=lambda request: pytest.fail(
-            f"AGY must not decide exact-text convergence: {request}"
-        ),
+        entity_verifier=lambda request: _witness(request, "wo shang ci"),
         judge_llm_call=cpa,
     )
 
@@ -1359,15 +1367,19 @@ def test_exact_text_convergence_handles_repeated_narrow_suspect():
             "repair_class": "phonetic",
             "why": "审片员只标出重复出现的单字",
         },
-        entity_verifier=lambda request: pytest.fail(
-            f"AGY must not decide exact-text convergence: {request}"
+        entity_verifier=lambda request: _witness(
+            request, "zhi nv bu shi zi nv"
         ),
-        judge_llm_call=lambda _prompt: json.dumps(
-            {
-                "decision": "REPLACE_WITH_EXACT_TEXT",
-                "replacement_text": "直女不是子女",
-                "reason": "完整 cue 语境支持后一处是子女",
-            },
+        judge_llm_call=lambda prompt: json.dumps(
+            (
+                {
+                    "decision": "REPLACE_WITH_EXACT_TEXT",
+                    "replacement_text": "直女不是子女",
+                    "reason": "完整 cue 语境支持后一处是子女",
+                }
+                if "# 字幕缺失候选最终收敛" in prompt
+                else {"choice": "PROPOSED", "reason": "盲听支持文字候选"}
+            ),
             ensure_ascii=False,
         ),
     )
@@ -1476,7 +1488,7 @@ def test_exact_release_self_heals_a_bootstrapped_missing_candidate():
     assert repairs[0]["decision_authority"] == "CPA_JUDGE"
 
 
-def test_missing_candidate_allows_bounded_full_cue_garbage_replacement():
+def test_missing_candidate_without_structured_support_keeps_current_on_conflict():
     source = _srt(
         "那咱算不算？咱",
         "烦 嗯 烦死人了下 はい りっちゃん",
@@ -1511,8 +1523,12 @@ def test_missing_candidate_allows_bounded_full_cue_garbage_replacement():
         judge_llm_call=cpa,
     )
 
-    assert "嗯，咱有点像あたし" in output
-    assert audit["repaired"] is True
+    assert output == source
+    assert audit["repaired"] is False
+    assert audit["policy_branch"] == (
+        "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
+    )
+    assert audit["witness_judge"]["witness_conflict_gate"]["status"] == "BLOCK"
     assert audit["proposal_bootstrap"]["bounded_full_cue_repair"] is True
     assert audit["proposal_bootstrap"]["mutation_authorized"] is False
     assert audit["rebuilt_finding"]["span_start_codepoint"] == 0
@@ -1579,6 +1595,147 @@ def test_source_backed_letter_name_spelling_survives_acoustic_grapheme_veto():
         "CPA_JUDGE_WITH_TEXT_AUTHORITY_APPLY_PROPOSED"
     )
     assert audit["orthography_equivalence"]["matched"] is True
+
+
+def test_glossary_candidate_cannot_win_bare_witness_conflict_on_semantics_alone():
+    """auto_203735_555_680 cue59 实案回归：候选「殉情」来自
+    game-glossary 注入（鹅鸭杀恋人机制词），拼音证人只听到前句尾字「懂吗」
+    与错位片段，核心候选词拼音与真值「偶遇」明显不容；CPA judge 仍以
+    「语境更通顺」为由选中 PROPOSED（生产实况 p=0.96），把真实听写（AGY
+    refine 与 fidelity guard 双双给出「偶遇」）顶替成误听「殉情」。此案没有
+    任何 declared respell / strict homophone / ascii 发音键等正向文字证据
+    （``orthography_ambiguous`` 应为 False），F3 通用门必须记无支持并保留
+    原字幕，不得让语义合理性单独盖过拼音冲突。"""
+
+    source = _srt("你知道我要偶遇啊！偶遇")
+    finding = {
+        "cue_index": 1,
+        "suspect": "偶遇啊！偶遇",
+        "suggestion": "殉情啊！殉情",
+        "proposed_full_cue": "你知道我要殉情啊！殉情",
+        "repair_class": "source_backed_entity",
+        "candidate_provenance": {
+            "kind": "glossary",
+            "surface": "殉情",
+        },
+        "why": "鹅鸭杀恋人机制词，语境呼应死亡后果",
+    }
+
+    def short_misaligned_witness(request):
+        # 生产实况：证人只覆盖前句尾字「懂吗」加错位片段，未听清目标差异段。
+        return _witness(request, "dong ma ni")
+
+    output, audit = adjudicate_context_finding(
+        source,
+        finding,
+        entity_verifier=short_misaligned_witness,
+        judge_llm_call=_judge("PROPOSED"),
+    )
+
+    assert "偶遇" in output
+    assert "殉情" not in output
+    assert audit["repaired"] is False
+    assert audit["policy_branch"] == (
+        "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
+    )
+    assert audit["orthography_ambiguous"] is False
+
+
+def test_glossary_candidate_with_registered_misheard_direction_wins_witness_conflict():
+    """维护者 回归修正正向金丝雀之一：kmx 类误听面方向历史合法胜出案例。
+
+    ``停放熊 -> kmx`` 是 ``assets/lidousha/glossary.txt`` 登记的已知 kmx 误听
+    面，但只登记在 ``expected_value_respell_pairs()``（不在
+    ``respell_pairs()``，两者来源不同），所以 ``orthography_ambiguous``
+    （只查 ``respell_pairs()`` 的 ``_declared_respell_edit``）对这一对必然是
+    False。84e3603 首版守卫只要 ``candidate_provenance.kind == "glossary"``
+    就拦截，会连带把这类历史上应当胜出的登记误听方向也拦掉——这正是
+    维护者 指出的回归风险。此用例证明收窄后的 ``registered_direction`` 检查
+    （同时查 ``respell_pairs()`` 与 ``expected_value_respell_pairs()``）放行
+    了它；回退到收窄前的守卫代码，本用例会转为失败（错误地拦截）。"""
+
+    source = _srt("你听到停放熊在门口叫了吗")
+    finding = {
+        "cue_index": 1,
+        "suspect": "停放熊",
+        "suggestion": "kmx",
+        "proposed_full_cue": "你听到kmx在门口叫了吗",
+        "repair_class": "source_backed_entity",
+        "candidate_provenance": {
+            "kind": "glossary",
+            "surface": "kmx",
+        },
+        "why": "kmx 常见误听面",
+    }
+
+    def short_misaligned_witness(request):
+        return _witness(request, "dong ma ni")
+
+    output, audit = adjudicate_context_finding(
+        source,
+        finding,
+        entity_verifier=short_misaligned_witness,
+        judge_llm_call=_judge("PROPOSED"),
+    )
+
+    assert "kmx" in output
+    assert "停放熊" not in output
+    assert audit["repaired"] is True
+    assert audit["orthography_ambiguous"] is False
+    assert audit["policy_branch"] == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
+
+
+def test_glossary_candidate_with_bound_structured_chat_support_wins_witness_conflict():
+    """维护者 回归修正正向金丝雀之二：独立结构化文字支持胜出案例。
+
+    与上面 cue59 负向金丝雀同一事实模式（候选「殉情」、同一错位证人、同一
+    judge PROPOSED），唯一变量是这次候选替换词面「殉情」被一条 sha256 绑定
+    的弹幕/SC 独立佐证（``clip_context.structured_chat``）——这正是 维护者
+    描述的「历史上耳朵持续听错、词表/独立文字证据佐证的候选正确胜出」场景
+    的机制对照组。收窄后的 ``structured_text_support`` 检查放行；回退到
+    收窄前的守卫代码（不接收 ``clip_context``），本用例会转为失败（错误地
+    拦截），证明这不是巧合通过。"""
+
+    source = _srt("你知道我要偶遇啊！偶遇")
+    finding = {
+        "cue_index": 1,
+        "suspect": "偶遇啊！偶遇",
+        "suggestion": "殉情啊！殉情",
+        "proposed_full_cue": "你知道我要殉情啊！殉情",
+        "repair_class": "source_backed_entity",
+        "candidate_provenance": {
+            "kind": "glossary",
+            "surface": "殉情",
+        },
+        "why": "鹅鸭杀恋人机制词，弹幕独立确认",
+    }
+    clip_context = {
+        "structured_chat": [
+            {
+                "kind": "danmaku",
+                "text": "啊啊啊两人要殉情了吗",
+                "source_event_id": "event-59",
+                "source_sha256": "b" * 64,
+            }
+        ]
+    }
+
+    def short_misaligned_witness(request):
+        return _witness(request, "dong ma ni")
+
+    output, audit = adjudicate_context_finding(
+        source,
+        finding,
+        entity_verifier=short_misaligned_witness,
+        clip_context=clip_context,
+        judge_llm_call=_judge("PROPOSED"),
+    )
+
+    assert "殉情" in output
+    assert "偶遇" not in output
+    assert audit["repaired"] is True
+    assert audit["orthography_ambiguous"] is False
+    assert audit["policy_branch"] == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
 
 
 def test_cpa_can_use_distinguishing_pinyin_without_text_authority():
@@ -2359,6 +2516,887 @@ def test_audible_acoustic_drop_current_choice_does_not_rebuild():
     assert len(calls) == 1
 
 
+def test_exact_source_transcript_is_candidate_blind_third_candidate_only():
+    """806 regression: a same-window full transcript repairs a bad closed set.
+
+    The audio provider sees geometry only.  Its text remains a proposed third
+    candidate until a fresh CPA choice selects it.
+    """
+
+    from src.autoslice.exact_source_transcript_contract import (
+        seal_exact_source_transcript_observation,
+    )
+
+    source = _srt("难听难听，对吧")
+    calls: list[str] = []
+    transcript_requests: list[dict] = []
+    source_sha = "a" * 64
+    audio_sha = "b" * 64
+
+    def witness(request):
+        return {
+            **_witness(request, "yao jiu jiu tian dui ba"),
+            "source_media_sha256": source_sha,
+            "audio_clip_sha256": audio_sha,
+            "audio_start_ms": 4_600,
+            "audio_end_ms": 9_400,
+            "timeline_binding": {
+                "schema_version": "subtitle-audio-timeline-binding.v1",
+                "source_media_timeline_offset_ms": 0,
+                "delivery_local": {
+                    "target_start_ms": 5_000,
+                    "target_end_ms": 9_000,
+                    "context_start_ms": 4_500,
+                    "context_end_ms": 9_500,
+                },
+                "source_media": {
+                    "target_start_ms": 5_000,
+                    "target_end_ms": 9_000,
+                    "crop_start_ms": 4_600,
+                    "crop_end_ms": 9_400,
+                },
+            },
+        }
+
+    def exact_transcript(request):
+        transcript_requests.append(dict(request))
+        assert set(request) == {
+            "schema_version",
+            "kind",
+            "cue_indexes",
+            "matched_start_ms",
+            "matched_end_ms",
+            "context_start_ms",
+            "context_end_ms",
+            "source_media_timeline_offset_ms",
+            "request_sha256",
+        }
+        forbidden = {
+            "syllable_count_hint",
+            "candidate_entities",
+            "current_cue",
+            "proposed_cue",
+            "matched_audio_text",
+            "context_before",
+            "context_after",
+            "suspect",
+            "replacement",
+            "candidate_id",
+            "final_srt_sha256",
+        }
+        assert forbidden.isdisjoint(request)
+        return seal_exact_source_transcript_observation(
+            request=request,
+            exact_transcript="nineteen nineteen，对吧",
+            audible_language="mixed",
+            source_media_sha256=source_sha,
+            audio_clip_sha256=audio_sha,
+            provider="agy",
+            model="Gemini 3.6 Flash (High)",
+            response_sha256="c" * 64,
+            timeline_binding={
+                "schema_version": "subtitle-audio-timeline-binding.v1",
+                "source_media_timeline_offset_ms": 0,
+                "delivery_local": {
+                    "target_start_ms": 5_000,
+                    "target_end_ms": 9_000,
+                    "context_start_ms": 4_500,
+                    "context_end_ms": 9_500,
+                },
+                "source_media": {
+                    "target_start_ms": 5_000,
+                    "target_end_ms": 9_000,
+                    "crop_start_ms": 4_600,
+                    "crop_end_ms": 9_400,
+                },
+            },
+        )
+
+    def cpa(prompt):
+        calls.append(prompt)
+        if len(calls) == 1:
+            return json.dumps({"choice": "NEITHER", "reason": "bad closed set"})
+        assert "nineteen nineteen，对吧" in prompt
+        return json.dumps({"choice": "PROPOSED", "reason": "exact transcript"})
+
+    output, audit = adjudicate_context_finding(
+        source,
+        {
+            "cue_index": 1,
+            "suspect": "难听难听",
+            "suggestion": "南町nightin",
+            "proposed_full_cue": "南町nightin，对吧",
+            "repair_class": "phonetic",
+            "why": "exact-final finding",
+        },
+        entity_verifier=witness,
+        judge_llm_call=cpa,
+        exact_source_transcript_provider=exact_transcript,
+        clip_context={
+            "schema_version": "clip-context.v1",
+            "candidate_id": "auto_213135_806_1068",
+            "context_sha256": "sha256:" + "d" * 64,
+            "whole_clip_draft_srt_sha256": "sha256:" + "e" * 64,
+            "pieces": [{"source_media_sha256": source_sha}],
+        },
+    )
+
+    assert "nineteen nineteen，对吧" in output
+    assert len(transcript_requests) == 1
+    assert len(calls) == 2
+    assert audit["repaired"] is True
+    handoff = audit["exact_source_transcript_handoff"]
+    assert handoff["status"] == "PROPOSED"
+    assert handoff["decision_authority"] == "NONE"
+    assert handoff["mutation_authorized"] is False
+    assert handoff["candidate_id"] == "auto_213135_806_1068"
+    assert handoff["final_srt_sha256"] == (
+        "sha256:" + hashlib.sha256(source.encode()).hexdigest()
+    )
+    assert audit["mutation_authority"]["status"] == "PASS"
+
+
+def test_exact_source_transcript_uses_real_806_geometry_and_source_identity():
+    from src.autoslice.exact_source_transcript_contract import (
+        seal_exact_source_transcript_observation,
+    )
+
+    source = (
+        "1\n00:00:00,250 --> 00:00:03,570\n"
+        "其实我真的非常非常羡慕，嗯\n\n"
+        "2\n00:00:04,010 --> 00:00:06,529\n"
+        "就是在公司的大家\n\n"
+        "3\n00:00:06,529 --> 00:00:12,040\n"
+        "就礼墨拉布里二叔、七宝\n\n"
+        "4\n00:00:12,040 --> 00:00:13,920\n"
+        "难听难听，对吧\n\n"
+        "5\n00:00:13,960 --> 00:00:15,840\n"
+        "很，很羡慕\n"
+    )
+    source_sha = (
+        "7a818c1c5a2775eeb866a2a15b4413e65daa209f635da561e34d4ae5711f2442"
+    )
+    audio_sha = (
+        "8a7e16e8dd115b98fbe61d4815a60c40a55cf8b873d0926405ce8b513d157a65"
+    )
+    timeline = {
+        "schema_version": "subtitle-audio-timeline-binding.v1",
+        "source_media_timeline_offset_ms": 9_780,
+        "delivery_local": {
+            "target_start_ms": 12_040,
+            "target_end_ms": 13_920,
+            "context_start_ms": 6_029,
+            "context_end_ms": 16_340,
+        },
+        "source_media": {
+            "target_start_ms": 21_820,
+            "target_end_ms": 23_700,
+            "crop_start_ms": 21_400,
+            "crop_end_ms": 24_100,
+        },
+    }
+    physical_requests = []
+
+    def witness(request):
+        assert request["cue_indexes"] == [4]
+        assert request["matched_start_ms"] == 12_040
+        assert request["matched_end_ms"] == 13_920
+        assert request["source_media_timeline_offset_ms"] == 9_780
+        return {
+            **_witness(request, "yi jiu jiu ling nian dui ba"),
+            "witness_protocol": "blind_pinyin",
+            "source_media_sha256": source_sha,
+            "audio_clip_sha256": audio_sha,
+            "audio_start_ms": 21_400,
+            "audio_end_ms": 24_100,
+            "timeline_binding": timeline,
+        }
+
+    def exact_transcript(request):
+        physical_requests.append(dict(request))
+        assert request["matched_start_ms"] == 12_040
+        assert request["matched_end_ms"] == 13_920
+        assert request["source_media_timeline_offset_ms"] == 9_780
+        assert "syllable_count_hint" not in request
+        return seal_exact_source_transcript_observation(
+            request=request,
+            exact_transcript="1919，对吧",
+            audible_language="mixed",
+            source_media_sha256=source_sha,
+            audio_clip_sha256=audio_sha,
+            provider="agy",
+            model="Gemini 3.6 Flash (High)",
+            response_sha256="c" * 64,
+            timeline_binding=timeline,
+        )
+
+    choices = iter(("NEITHER", "PROPOSED"))
+    output, audit = adjudicate_context_finding(
+        source,
+        {
+            "cue_index": 4,
+            "suspect": "难听难听",
+            "suggestion": "南町nightin",
+            "proposed_full_cue": "南町nightin，对吧",
+            "repair_class": "phonetic",
+        },
+        entity_verifier=witness,
+        judge_llm_call=lambda _prompt: json.dumps(
+            {"choice": next(choices)}
+        ),
+        exact_source_transcript_provider=exact_transcript,
+        source_media_timeline_offset_ms=9_780,
+        clip_context={
+            "schema_version": "clip-context.v1",
+            "candidate_id": "auto_213135_806_1068",
+            "context_sha256": (
+                "sha256:5d116d54cab6d27d4729e60ddc5276a28c79c0442467a306bfb61b1539334dc1"
+            ),
+            "whole_clip_draft_srt_sha256": (
+                "sha256:7c079c76db402173af936f68f62b0ada87625bdea6a48705f4e882ff46c59c39"
+            ),
+            "pieces": [
+                {
+                    "source_media_sha256": (
+                        "sha256:c05d0de47bfb643ceafa40a58bc928611c9773c9421d71374c847b47ee8789a1"
+                    )
+                }
+            ],
+        },
+    )
+
+    assert len(physical_requests) == 1
+    assert "1919，对吧" in output
+    handoff = audit["exact_source_transcript_handoff"]
+    assert handoff["source_media_sha256"] == "sha256:" + source_sha
+    assert handoff["timeline_binding"] == timeline
+    assert handoff["source_media_sha256"] != (
+        "sha256:c05d0de47bfb643ceafa40a58bc928611c9773c9421d71374c847b47ee8789a1"
+    )
+
+    broad = json.loads(json.dumps(timeline))
+    broad["source_media"]["crop_start_ms"] = 17_680
+    broad["source_media"]["crop_end_ms"] = 23_680
+    with pytest.raises(
+        ValueError,
+        match="EXACT_SOURCE_TRANSCRIPT_OBSERVATION_INVALID",
+    ):
+        seal_exact_source_transcript_observation(
+            request=physical_requests[0],
+            exact_transcript="1919，对吧",
+            audible_language="mixed",
+            source_media_sha256=source_sha,
+            audio_clip_sha256=audio_sha,
+            provider="agy",
+            model="Gemini 3.6 Flash (High)",
+            response_sha256="c" * 64,
+            timeline_binding=broad,
+        )
+
+
+def _exact_handoff_fixture():
+    from src.autoslice.acoustic_witness_adjudication import build_witness_request
+    from src.autoslice.exact_source_transcript_contract import (
+        build_exact_source_transcript_request,
+        seal_exact_source_transcript_observation,
+    )
+    from src.autoslice.exact_source_transcript_provider import (
+        rebuild_candidate_from_exact_source_transcript,
+    )
+    from src.autoslice.final_review_auditor import _derive_single_span_edit
+
+    source = _srt("难听难听，对吧")
+    clip_context = {
+        "schema_version": "clip-context.v1",
+        "candidate_id": "auto_213135_806_1068",
+        "context_sha256": "sha256:" + "d" * 64,
+        "whole_clip_draft_srt_sha256": "sha256:" + "e" * 64,
+    }
+    finding = {
+        "cue_index": 1,
+        "suspect": "难听难听",
+        "suggestion": "南町nightin",
+        "proposed_full_cue": "南町nightin，对吧",
+        "repair_class": "phonetic",
+    }
+    initial = build_context_adjudication_request(
+        source, finding, clip_context=clip_context
+    )
+    witness_request = build_witness_request(initial)
+    timeline = {
+        "schema_version": "subtitle-audio-timeline-binding.v1",
+        "source_media_timeline_offset_ms": 0,
+        "delivery_local": {
+            "target_start_ms": 5_000,
+            "target_end_ms": 9_000,
+            "context_start_ms": 4_500,
+            "context_end_ms": 9_500,
+        },
+        "source_media": {
+            "target_start_ms": 5_000,
+            "target_end_ms": 9_000,
+            "crop_start_ms": 4_600,
+            "crop_end_ms": 9_400,
+        },
+    }
+    witness = {
+        **_witness(witness_request, "yao jiu jiu tian dui ba"),
+        "witness_protocol": "blind_pinyin",
+        "source_media_sha256": "a" * 64,
+        "audio_clip_sha256": "b" * 64,
+        "audio_start_ms": 4_600,
+        "audio_end_ms": 9_400,
+        "timeline_binding": timeline,
+    }
+    physical = build_exact_source_transcript_request(witness_request)
+    observation = seal_exact_source_transcript_observation(
+        request=physical,
+        exact_transcript="nineteen nineteen，对吧",
+        audible_language="mixed",
+        source_media_sha256="a" * 64,
+        audio_clip_sha256="b" * 64,
+        provider="agy",
+        model="Gemini 3.6 Flash (High)",
+        response_sha256="c" * 64,
+        timeline_binding=timeline,
+    )
+    rebuilt, handoff = rebuild_candidate_from_exact_source_transcript(
+        finding=finding,
+        initial_check_request=initial,
+        witness_request=witness_request,
+        witness=witness,
+        srt_text=source,
+        clip_context=clip_context,
+        provider=lambda _request: observation,
+        derive_single_span_edit=_derive_single_span_edit,
+    )
+    assert rebuilt is not None
+    rebuilt_request = build_context_adjudication_request(
+        source, rebuilt, clip_context=clip_context
+    )
+    return source, clip_context, witness, rebuilt_request, handoff
+
+
+def _reseal_exact_handoff(handoff):
+    from src.autoslice.exact_source_transcript_contract import _canonical_sha256
+
+    handoff.pop("receipt_sha256", None)
+    handoff["receipt_sha256"] = "sha256:" + _canonical_sha256(handoff)
+    return handoff
+
+
+@pytest.mark.parametrize(
+    "drift",
+    (
+        "current", "rejected", "final_srt", "candidate", "run", "v1",
+        "receipt_missing", "observation_missing",
+    ),
+)
+def test_exact_source_handoff_rejects_resealed_stale_or_unbound_receipts(drift):
+    import copy
+
+    from src.autoslice.exact_source_transcript_contract import (
+        _canonical_sha256,
+        _text_sha256,
+        valid_exact_source_transcript_handoff,
+    )
+
+    source, clip_context, witness, rebuilt_request, original = _exact_handoff_fixture()
+    handoff = copy.deepcopy(original)
+    if drift in {"current", "rejected"}:
+        field = "current_cue" if drift == "current" else "proposed_cue"
+        handoff["input_request"][field] = "fully resealed stale input"
+        unsigned = {
+            key: value
+            for key, value in handoff["input_request"].items()
+            if key != "request_sha256"
+        }
+        request_sha = _canonical_sha256(unsigned)
+        handoff["input_request"]["request_sha256"] = request_sha
+        handoff["input_request_sha256"] = "sha256:" + request_sha
+        hash_field = (
+            "current_cue_sha256" if drift == "current" else "rejected_proposed_sha256"
+        )
+        handoff[hash_field] = "sha256:" + _text_sha256(
+            handoff["input_request"][field]
+        )
+        run_payload = {
+            "candidate_id": handoff["candidate_id"],
+            "clip_context_sha256": handoff["clip_context_sha256"].removeprefix("sha256:"),
+            "whole_clip_draft_srt_sha256": handoff[
+                "whole_clip_draft_srt_sha256"
+            ].removeprefix("sha256:"),
+            "input_request_sha256": request_sha,
+            "parent_witness_request_sha256": handoff[
+                "parent_witness_request_sha256"
+            ].removeprefix("sha256:"),
+            "final_srt_sha256": handoff["final_srt_sha256"].removeprefix("sha256:"),
+        }
+        handoff["run_binding_sha256"] = "sha256:" + _canonical_sha256(run_payload)
+    elif drift == "final_srt":
+        stale_sha = _text_sha256(source + "stale")
+        handoff["input_srt_sha256"] = "sha256:" + stale_sha
+        handoff["final_srt_sha256"] = "sha256:" + stale_sha
+        run_payload = {
+            "candidate_id": handoff["candidate_id"],
+            "clip_context_sha256": handoff["clip_context_sha256"].removeprefix("sha256:"),
+            "whole_clip_draft_srt_sha256": handoff[
+                "whole_clip_draft_srt_sha256"
+            ].removeprefix("sha256:"),
+            "input_request_sha256": handoff["input_request_sha256"].removeprefix("sha256:"),
+            "parent_witness_request_sha256": handoff[
+                "parent_witness_request_sha256"
+            ].removeprefix("sha256:"),
+            "final_srt_sha256": stale_sha,
+        }
+        handoff["run_binding_sha256"] = "sha256:" + _canonical_sha256(run_payload)
+    elif drift == "candidate":
+        handoff["candidate_id"] = "stale_candidate"
+        handoff["run_binding_sha256"] = "sha256:" + _canonical_sha256(
+            {
+                "candidate_id": handoff["candidate_id"],
+                "clip_context_sha256": handoff["clip_context_sha256"].removeprefix("sha256:"),
+                "whole_clip_draft_srt_sha256": handoff[
+                    "whole_clip_draft_srt_sha256"
+                ].removeprefix("sha256:"),
+                "input_request_sha256": handoff["input_request_sha256"].removeprefix("sha256:"),
+                "parent_witness_request_sha256": handoff[
+                    "parent_witness_request_sha256"
+                ].removeprefix("sha256:"),
+                "final_srt_sha256": handoff["final_srt_sha256"].removeprefix("sha256:"),
+            }
+        )
+    elif drift == "run":
+        handoff["run_binding_sha256"] = "sha256:" + "f" * 64
+    elif drift == "v1":
+        handoff["schema_version"] = "exact-final-source-transcript-handoff.v1"
+    elif drift == "receipt_missing":
+        handoff.pop("receipt_sha256")
+        assert not valid_exact_source_transcript_handoff(
+            handoff,
+            srt_text=source,
+            check_request=rebuilt_request,
+            witness=witness,
+            clip_context=clip_context,
+        )
+        return
+    else:
+        handoff.pop("provider_observation")
+    _reseal_exact_handoff(handoff)
+
+    assert not valid_exact_source_transcript_handoff(
+        handoff,
+        srt_text=source,
+        check_request=rebuilt_request,
+        witness=witness,
+        clip_context=clip_context,
+    )
+
+
+def test_witness_conflict_support_requires_the_strict_exact_source_handoff():
+    import copy
+
+    from src.autoslice.acoustic_witness_adjudication import adjudicate_with_witness
+
+    _source, clip_context, witness, request, handoff = _exact_handoff_fixture()
+    repaired, branch, audit = adjudicate_with_witness(
+        check_request=request,
+        witness=witness,
+        llm_call=lambda _prompt: json.dumps({"choice": "PROPOSED"}),
+        clip_context=clip_context,
+    )
+    assert repaired is True
+    assert audit["witness_conflict_gate"]["exact_source_transcript_handoff"] is True
+
+    invalid_request = copy.deepcopy(request)
+    invalid_handoff = copy.deepcopy(handoff)
+    invalid_handoff.pop("receipt_sha256")
+    invalid_request["exact_source_transcript_handoff"] = invalid_handoff
+    repaired, branch, audit = adjudicate_with_witness(
+        check_request=invalid_request,
+        witness=witness,
+        llm_call=lambda _prompt: json.dumps({"choice": "PROPOSED"}),
+        clip_context=clip_context,
+    )
+    assert repaired is False
+    assert branch == "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
+    assert audit["witness_conflict_gate"]["exact_source_transcript_handoff"] is False
+
+
+@pytest.mark.parametrize(
+    "drift",
+    (
+        "arbitrary_request",
+        "uncertain",
+        "inaudible",
+        "legacy_protocol",
+        "candidate_injection",
+        "unsealed_check_request",
+    ),
+)
+def test_exact_source_handoff_reentry_requires_canonical_fresh_witness(drift):
+    import copy
+
+    from src.autoslice.acoustic_witness_adjudication import (
+        build_witness_request,
+    )
+    from src.autoslice.exact_source_transcript_contract import (
+        valid_exact_source_transcript_handoff,
+    )
+
+    source, clip_context, witness, rebuilt_request, handoff = (
+        _exact_handoff_fixture()
+    )
+    reentry_request = build_witness_request(rebuilt_request)
+    assert reentry_request["request_sha256"] != handoff[
+        "parent_witness_request_sha256"
+    ].removeprefix("sha256:")
+    fresh_witness = copy.deepcopy(witness)
+    fresh_witness["request_sha256"] = reentry_request["request_sha256"]
+    assert valid_exact_source_transcript_handoff(
+        handoff,
+        srt_text=source,
+        check_request=rebuilt_request,
+        witness=fresh_witness,
+        clip_context=clip_context,
+    )
+
+    if drift == "arbitrary_request":
+        fresh_witness["request_sha256"] = "f" * 64
+    elif drift == "uncertain":
+        fresh_witness["status"] = "UNCERTAIN"
+    elif drift == "inaudible":
+        fresh_witness["target_audible"] = False
+    elif drift == "legacy_protocol":
+        fresh_witness.pop("witness_protocol")
+    elif drift == "candidate_injection":
+        fresh_witness["proposed_cue"] = "provider-priming candidate"
+    else:
+        rebuilt_request["request_sha256"] = "f" * 64
+
+    assert not valid_exact_source_transcript_handoff(
+        handoff,
+        srt_text=source,
+        check_request=rebuilt_request,
+        witness=fresh_witness,
+        clip_context=clip_context,
+    )
+
+
+@pytest.mark.parametrize(
+    "drift",
+    ("bad_protocol", "bad_request", "bad_status"),
+)
+def test_exact_source_handoff_rejects_resealed_bad_parent_witness(drift):
+    import copy
+
+    from src.autoslice.exact_source_transcript_contract import (
+        _canonical_sha256,
+        build_exact_source_transcript_handoff,
+        valid_exact_source_transcript_handoff,
+    )
+
+    source, clip_context, original_witness, _request, original = (
+        _exact_handoff_fixture()
+    )
+    handoff = copy.deepcopy(original)
+    witness_request = handoff["parent_witness_request"]
+    witness = copy.deepcopy(original_witness)
+    if drift == "bad_protocol":
+        witness["witness_protocol"] = "legacy_sighted"
+    elif drift == "bad_request":
+        witness_request["candidate_entities"] = ["priming candidate"]
+        witness["candidate_entities"] = ["priming candidate"]
+    else:
+        witness["status"] = "UNCERTAIN"
+    witness_request.pop("request_sha256")
+    witness_request_sha256 = _canonical_sha256(witness_request)
+    witness_request["request_sha256"] = witness_request_sha256
+    witness["request_sha256"] = witness_request_sha256
+    handoff["parent_witness_request_sha256"] = (
+        "sha256:" + witness_request_sha256
+    )
+    handoff["parent_witness_observation_sha256"] = (
+        "sha256:" + _canonical_sha256(witness)
+    )
+    run_payload = {
+        "candidate_id": handoff["candidate_id"],
+        "clip_context_sha256": handoff["clip_context_sha256"].removeprefix(
+            "sha256:"
+        ),
+        "whole_clip_draft_srt_sha256": handoff[
+            "whole_clip_draft_srt_sha256"
+        ].removeprefix("sha256:"),
+        "input_request_sha256": handoff["input_request_sha256"].removeprefix(
+            "sha256:"
+        ),
+        "parent_witness_request_sha256": witness_request_sha256,
+        "final_srt_sha256": handoff["final_srt_sha256"].removeprefix(
+            "sha256:"
+        ),
+    }
+    handoff["run_binding_sha256"] = (
+        "sha256:" + _canonical_sha256(run_payload)
+    )
+    _reseal_exact_handoff(handoff)
+
+    assert not valid_exact_source_transcript_handoff(
+        handoff,
+        srt_text=source,
+        witness=witness,
+        clip_context=clip_context,
+    )
+    with pytest.raises(
+        ValueError,
+        match="EXACT_SOURCE_TRANSCRIPT_HANDOFF_BINDING_INVALID",
+    ):
+        build_exact_source_transcript_handoff(
+            observation=handoff["provider_observation"],
+            physical_request=handoff["physical_request"],
+            initial_check_request=handoff["input_request"],
+            witness_request=witness_request,
+            witness=witness,
+            srt_text=source,
+            clip_context=clip_context,
+        )
+
+
+def test_exact_provider_failure_receipt_requires_real_typed_attempt():
+    import copy
+
+    from src.autoslice.exact_source_transcript_contract import _canonical_sha256
+    from src.autoslice.exact_source_transcript_provider import (
+        seal_exact_source_transcript_provider_failure,
+        valid_exact_source_transcript_provider_failure,
+    )
+
+    _source, _context, _witness_row, _request, handoff = _exact_handoff_fixture()
+    physical = handoff["physical_request"]
+    receipt = seal_exact_source_transcript_provider_failure(
+        request=physical,
+        provider_failures=[
+            {"provider": "agy", "category": "AGY_TIMEOUT", "attempted": True}
+        ],
+    )
+    assert valid_exact_source_transcript_provider_failure(receipt, request=physical)
+    assert not valid_exact_source_transcript_provider_failure({}, request=physical)
+
+    not_attempted = copy.deepcopy(receipt)
+    not_attempted["provider_failures"][0]["attempted"] = False
+    not_attempted.pop("failure_receipt_sha256")
+    not_attempted["failure_receipt_sha256"] = _canonical_sha256(not_attempted)
+    assert not valid_exact_source_transcript_provider_failure(
+        not_attempted, request=physical
+    )
+    with pytest.raises(ValueError):
+        seal_exact_source_transcript_provider_failure(
+            request=physical,
+            provider_failures=[
+                {
+                    "provider": "agy",
+                    "category": "AGY_INVALID_OUTPUT",
+                    "attempted": True,
+                }
+            ],
+        )
+
+
+@pytest.mark.parametrize("http_status", (400, 401, 403, 404, 422))
+def test_exact_provider_failure_rejects_deterministic_gemini_4xx(http_status):
+    from src.autoslice.exact_source_transcript_provider import (
+        seal_exact_source_transcript_provider_failure,
+    )
+
+    _source, _context, _witness_row, _request, handoff = _exact_handoff_fixture()
+    with pytest.raises(ValueError):
+        seal_exact_source_transcript_provider_failure(
+            request=handoff["physical_request"],
+            provider_failures=[
+                {
+                    "provider": "gemini_api",
+                    "category": "GEMINI_API_REQUEST_FAILED",
+                    "attempted": True,
+                    "http_status": http_status,
+                }
+            ],
+        )
+
+
+@pytest.mark.parametrize("error_type", ("ValueError", "RuntimeError"))
+def test_exact_provider_failure_rejects_nontransport_without_http_status(error_type):
+    from src.autoslice.exact_source_transcript_provider import (
+        seal_exact_source_transcript_provider_failure,
+    )
+
+    _source, _context, _witness_row, _request, handoff = _exact_handoff_fixture()
+    with pytest.raises(ValueError):
+        seal_exact_source_transcript_provider_failure(
+            request=handoff["physical_request"],
+            provider_failures=[
+                {
+                    "provider": "gemini_api",
+                    "category": "GEMINI_API_REQUEST_FAILED",
+                    "attempted": True,
+                    "error_type": error_type,
+                }
+            ],
+        )
+
+
+def test_exact_provider_failure_accepts_no_status_url_transport_error():
+    from src.autoslice.exact_source_transcript_provider import (
+        seal_exact_source_transcript_provider_failure,
+    )
+
+    _source, _context, _witness_row, _request, handoff = _exact_handoff_fixture()
+    receipt = seal_exact_source_transcript_provider_failure(
+        request=handoff["physical_request"],
+        provider_failures=[
+            {
+                "provider": "gemini_api",
+                "category": "GEMINI_API_REQUEST_FAILED",
+                "attempted": True,
+                "error_type": "URLError",
+            }
+        ],
+    )
+    assert receipt["retry_class"] == "provider_transient"
+
+
+def test_exact_provider_failure_infra_marker_rejects_same_geometry_stale_check():
+    import copy
+
+    from src.autoslice.exact_source_transcript_contract import _canonical_sha256
+    from src.autoslice.exact_source_transcript_provider import (
+        rebuild_candidate_from_exact_source_transcript,
+        seal_exact_source_transcript_provider_failure,
+    )
+    from src.autoslice.final_review_auditor import (
+        exact_source_transcript_infra_reason_codes,
+    )
+
+    source, clip_context, witness, _rebuilt_request, proposed_handoff = (
+        _exact_handoff_fixture()
+    )
+    initial_request = proposed_handoff["input_request"]
+    witness_request = proposed_handoff["parent_witness_request"]
+    physical_request = proposed_handoff["physical_request"]
+    failure = seal_exact_source_transcript_provider_failure(
+        request=physical_request,
+        provider_failures=[
+            {"provider": "agy", "category": "AGY_TIMEOUT", "attempted": True}
+        ],
+    )
+    finding = {
+        "cue_index": 1,
+        "suspect": initial_request["suspect"],
+        "suggestion": initial_request["replacement"],
+        "proposed_full_cue": initial_request["proposed_cue"],
+        "base_text_sha256": initial_request["base_text_sha256"],
+        "repair_class": initial_request["repair_class"],
+    }
+    rebuilt, unavailable = rebuild_candidate_from_exact_source_transcript(
+        finding=finding,
+        initial_check_request=initial_request,
+        witness_request=witness_request,
+        witness=witness,
+        srt_text=source,
+        clip_context=clip_context,
+        provider=lambda _request: failure,
+        derive_single_span_edit=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("failure path must not derive a candidate")
+        ),
+    )
+    assert rebuilt is None
+    row = {
+        **finding,
+        "exact_release_adjudication": {
+            "request": initial_request,
+            "verdict": witness,
+            "exact_source_transcript_handoff": unavailable,
+        },
+    }
+    marker = ["FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED"]
+    assert exact_source_transcript_infra_reason_codes(
+        [row], srt_text=source, clip_context=clip_context
+    ) == marker
+
+    stale = copy.deepcopy(row)
+    stale_request = stale["exact_release_adjudication"]["request"]
+    stale_request["replacement"] = "foreign same-geometry candidate"
+    stale_request["proposed_cue"] = "foreign same-geometry candidate，对吧"
+    stale_request["request_sha256"] = _canonical_sha256(
+        {key: value for key, value in stale_request.items() if key != "request_sha256"}
+    )
+    assert exact_source_transcript_infra_reason_codes(
+        [stale], srt_text=source, clip_context=clip_context
+    ) == []
+
+    stale = copy.deepcopy(row)
+    stale["proposed_full_cue"] = "foreign same-geometry candidate，对吧"
+    assert exact_source_transcript_infra_reason_codes(
+        [stale], srt_text=source, clip_context=clip_context
+    ) == []
+    assert exact_source_transcript_infra_reason_codes(
+        [row], srt_text=source + "\nstale SRT\n", clip_context=clip_context
+    ) == []
+    stale_context = {
+        **clip_context,
+        "context_sha256": "sha256:" + "f" * 64,
+    }
+    assert exact_source_transcript_infra_reason_codes(
+        [row], srt_text=source, clip_context=stale_context
+    ) == []
+    stale = copy.deepcopy(row)
+    stale["exact_release_adjudication"]["verdict"]["heard_pinyin"] = (
+        "foreign same-geometry witness"
+    )
+    assert exact_source_transcript_infra_reason_codes(
+        [stale], srt_text=source, clip_context=clip_context
+    ) == []
+
+
+def test_exact_source_handoff_rejects_broad_foreign_geometry_even_if_resealed():
+    import copy
+
+    from src.autoslice.exact_source_transcript_contract import (
+        _canonical_sha256,
+        exact_source_transcript_prompt,
+        valid_exact_source_transcript_handoff,
+    )
+
+    source, clip_context, witness, rebuilt_request, original = _exact_handoff_fixture()
+    handoff = copy.deepcopy(original)
+    observation = handoff["provider_observation"]
+    broad = copy.deepcopy(observation["timeline_binding"])
+    broad["source_media"]["crop_start_ms"] = 1_000
+    broad["source_media"]["crop_end_ms"] = 13_000
+    observation["timeline_binding"] = broad
+    observation["audio_start_ms"] = 1_000
+    observation["audio_end_ms"] = 13_000
+    observation["prompt_sha256"] = hashlib.sha256(
+        exact_source_transcript_prompt(
+            request=handoff["physical_request"], timeline_binding=broad
+        ).encode()
+    ).hexdigest()
+    observation.pop("observation_sha256")
+    observation["observation_sha256"] = _canonical_sha256(observation)
+    handoff["timeline_binding"] = broad
+    handoff["prompt_sha256"] = "sha256:" + observation["prompt_sha256"]
+    handoff["provider_observation_sha256"] = (
+        "sha256:" + observation["observation_sha256"]
+    )
+    _reseal_exact_handoff(handoff)
+
+    assert not valid_exact_source_transcript_handoff(
+        handoff,
+        srt_text=source,
+        check_request=rebuilt_request,
+        witness=witness,
+        clip_context=clip_context,
+    )
+
+
 @pytest.mark.parametrize(
     ("current", "rejected", "rebuilt"),
     (("原句", "", ""), ("原句", "", "原句"), ("原句", "旧提案", "旧提案")),
@@ -2803,7 +3841,11 @@ def test_semantic_trigger_prefers_danmaku_pool_before_frames():
         judge_llm_call=_judge("PROPOSED"),
         clip_context={
             "structured_chat": [
-                {"sender": "观众A", "text": "魔涯号营来啦"},
+                {
+                    "sender": "观众A",
+                    "text": "魔涯号营来啦",
+                    "source_sha256": "a" * 64,
+                },
                 {"sender": "观众B", "text": "今天天气不错"},
             ]
         },

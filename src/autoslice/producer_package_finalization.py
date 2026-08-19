@@ -32,6 +32,10 @@ from src.autoslice.exact_final_convergence import (
     collect_exact_final_convergence_memos,
     rebind_exact_final_convergence_memos,
 )
+from src.autoslice.exact_final_witness_authority import (
+    build_self_heal_repair_receipt,
+    valid_convergence_mutation_authority,
+)
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.cover_reference_authority import (
     load_candidate_cover_reference,
@@ -68,24 +72,43 @@ from src.autoslice.producer_media import (
     _validated_burned_artifact,
     _write_json_atomic,
 )
+from src.autoslice.redelivery_source_binding import (
+    RedeliverySourceBindingError,
+    final_recut_absolute_source_interval,
+    resolve_v2_redelivery_source_binding,
+)
+# Exact projection replay is activated only by the resolver-selected grant.
+from src.autoslice.redelivery_boundary_projection import materialization_spec_for_selected_projection
 from src.autoslice.producer_text_finalization import (
     _render_cues_to_srt,
     verify_chat_authority_final_surfaces,
 )
-from src.autoslice.redelivery_subtitle_baseline import (
-    apply_redelivery_subtitle_baseline,
+from src.autoslice.redelivery_baseline_ownership import (
+    suppress_baseline_owned_self_heal_findings,
 )
+from src.autoslice.redelivery_subtitle_baseline import apply_redelivery_subtitle_baseline
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
     validate_recovery_publication_authority,
 )
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.shadow_review import _sha256
+from src.autoslice.unreadable_cue_drop_stage import (
+    seal_unreadable_cue_drops,
+    stage_unreadable_cue_drop_pass,
+)
 from src.autoslice.source_subtitle_truth import (
     apply_source_subtitle_truth,
     source_truth_owner_windows,
 )
 from src.autoslice.source_fact_review import source_fact_review_passes
+from src.autoslice.source_fact_rescore_provenance import (
+    SourceFactRescoreProvenanceError,
+    bind_finalization_provenance,
+    bind_publish_staging_provenance,
+    bind_story_contract_provenance,
+)
+from src.autoslice import selection_rescore, speaker_guess
 from src.autoslice.surface_canon import (
     canonicalize_japanese_native_script_surfaces,
     normalize_japanese_native_script_surfaces,
@@ -105,10 +128,8 @@ from src.autoslice.story_contract import (
 )
 from src.autoslice.clip_context import validate_clip_context
 
-
 ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(ROOT)
-
 
 def _snapshot_file_bytes(
     paths: list[Path],
@@ -117,7 +138,6 @@ def _snapshot_file_bytes(
         path: path.read_bytes() if path.exists() else None
         for path in dict.fromkeys(paths)
     }
-
 
 def _write_bytes_atomic(path: Path, payload: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -136,7 +156,6 @@ def _write_bytes_atomic(path: Path, payload: bytes) -> None:
     finally:
         temporary.unlink(missing_ok=True)
 
-
 def _restore_file_bytes(
     snapshots: Mapping[Path, bytes | None],
 ) -> None:
@@ -145,7 +164,6 @@ def _restore_file_bytes(
             path.unlink(missing_ok=True)
         else:
             _write_bytes_atomic(path, payload)
-
 
 def _json_bytes(document: Mapping[str, object]) -> bytes:
     return (
@@ -158,7 +176,6 @@ def _json_bytes(document: Mapping[str, object]) -> bytes:
         + "\n"
     ).encode("utf-8")
 
-
 @dataclass(frozen=True)
 class ProducerFinalizationOptions:
     spec: Path
@@ -170,7 +187,6 @@ class ProducerFinalizationOptions:
     speaker_mixed_overlap_evidence: Path | None
     speaker_python: Path
     reuse_cover: bool
-
 
 @dataclass(frozen=True)
 class ProducerFinalizationAdapters:
@@ -185,7 +201,6 @@ class ProducerFinalizationAdapters:
     delivery_root: Callable[[], Path]
     run_exact_final_review: Callable[..., dict] | None = None
 
-
 @dataclass(frozen=True)
 class FinalRecutArtifacts:
     recut_dir: Path
@@ -196,14 +211,12 @@ class FinalRecutArtifacts:
     redelivery_baseline_audit_path: Path | None = None
     redelivery_baseline_audit: dict | None = None
 
-
 @dataclass(frozen=True)
 class SpeakerArtifacts:
     manifest: dict | None
     review_srt: Path | None
     ass: Path | None
     manifest_path: Path | None
-
 
 @dataclass(frozen=True)
 class AuthorityArtifacts:
@@ -575,6 +588,22 @@ def _materialize_final_recut(
     spec_parent: Path | None = None,
     chat_authority_audit: dict | None = None,
 ) -> FinalRecutArtifacts:
+    baseline_config = spec.get("subtitle_redelivery_baseline")
+    try:
+        v2_source_binding = resolve_v2_redelivery_source_binding(
+            spec=spec,
+            piece_provenance_rows=piece_provenance_rows,
+            final_start=final_start,
+            final_end=final_end,
+        )
+    except RedeliverySourceBindingError as exc:
+        raise SystemExit(str(exc)) from exc
+    absolute_source_start_ms, absolute_source_end_ms = final_recut_absolute_source_interval(
+        spec,
+        final_start=final_start,
+        final_end=final_end,
+        v2_binding=v2_source_binding,
+    )
     recut_dir = out_root / "replacement_recuts"
     recut_dir.mkdir(exist_ok=True)
     media_path = recut_dir / f"{cid}.recut.mp4"
@@ -595,16 +624,8 @@ def _materialize_final_recut(
                 "source_sha256": _sha256(padded),
                 "start_ms": final_start,
                 "end_ms": final_end,
-                "absolute_source_start_ms": (
-                    int(spec["pieces"][0]["start_ms"]) + final_start
-                    if len(spec["pieces"]) == 1
-                    else None
-                ),
-                "absolute_source_end_ms": (
-                    int(spec["pieces"][0]["start_ms"]) + final_end
-                    if len(spec["pieces"]) == 1
-                    else None
-                ),
+                "absolute_source_start_ms": absolute_source_start_ms,
+                "absolute_source_end_ms": absolute_source_end_ms,
                 "output_path": str(media_path.resolve()),
                 "output_sha256": _sha256(media_path),
             },
@@ -624,18 +645,17 @@ def _materialize_final_recut(
             subtitle_path,
             text_manifest_path,
         )
-        if override_document.get("schema_version") == 3:
-            text_manifest = adapters.apply_text_override_document(
-                *text_manifest_args,
-                timeline_offset_ms=final_start,
-            )
-        else:
-            text_manifest = adapters.apply_text_override_document(*text_manifest_args)
+        text_manifest = adapters.apply_text_override_document(
+            *text_manifest_args,
+            expected_candidate_id=cid,
+            **(
+                {"timeline_offset_ms": final_start} if override_document.get("schema_version") in {3, 4} else {}
+            ),
+        )
     else:
         adapters.write_source_range_srt(sanitized, final_start, final_end, subtitle_path)
     redelivery_baseline_audit_path: Path | None = None
     redelivery_baseline_audit: dict | None = None
-    baseline_config = spec.get("subtitle_redelivery_baseline")
     if baseline_config is not None:
         if text_override_path is not None:
             raise SystemExit(
@@ -677,24 +697,11 @@ def _materialize_final_recut(
         current_source_end_ms: int | None = None
         current_source_recording_basename: str | None = None
         current_source_sha256: str | None = None
-        if baseline_config.get("schema_version") == "subtitle-redelivery-baseline.v2":
-            if len(spec.get("pieces") or []) != 1 or len(piece_provenance_rows) != 1:
-                raise SystemExit(
-                    "REDELIVERY_BASELINE_V2_REQUIRES_ONE_BOUND_SOURCE_PIECE"
-                )
-            piece = spec["pieces"][0]
-            provenance = piece_provenance_rows[0]
-            source_path = str(provenance.get("source_path") or "").strip()
-            source_sha256 = str(provenance.get("source_sha256") or "").strip()
-            if not source_path or not source_sha256:
-                raise SystemExit(
-                    "REDELIVERY_BASELINE_V2_SOURCE_PROVENANCE_MISSING"
-                )
-            piece_start_ms = int(piece["start_ms"])
-            current_source_start_ms = piece_start_ms + final_start
-            current_source_end_ms = piece_start_ms + final_end
-            current_source_recording_basename = Path(source_path).name
-            current_source_sha256 = source_sha256
+        if v2_source_binding is not None:
+            current_source_start_ms = v2_source_binding.absolute_source_start_ms
+            current_source_end_ms = v2_source_binding.absolute_source_end_ms
+            current_source_recording_basename = v2_source_binding.source_recording_basename
+            current_source_sha256 = v2_source_binding.source_sha256
         output_text, redelivery_baseline_audit = (
             apply_redelivery_subtitle_baseline(
                 current_text,
@@ -950,7 +957,8 @@ def _resolve_deferred_foreign_introductions_after_redelivery(
 
 def _apply_exact_final_cpa_repairs(
     srt_text: str,
-    audit: Mapping[str, object],
+    audit: Mapping[str, object], *,
+    clip_context: Mapping[str, object] | None = None,
 ) -> tuple[str, list[dict[str, object]]]:
     """Apply only exact-final findings already authorized by CPA.
 
@@ -975,11 +983,11 @@ def _apply_exact_final_cpa_repairs(
         if not isinstance(finding, Mapping):
             continue
         cue_index = finding.get("cue_index")
-        proposed = adjudicated_proposed_full_cue(finding)
-        adjudication = finding.get("exact_release_adjudication")
-        cycle_adjudication = finding.get(
-            "exact_final_cpa_cycle_adjudication"
+        proposed = adjudicated_proposed_full_cue(
+            finding, srt_text=srt_text, clip_context=clip_context
         )
+        adjudication = finding.get("exact_release_adjudication")
+        cycle_adjudication = finding.get("exact_final_cpa_cycle_adjudication")
         if (
             isinstance(cue_index, bool)
             or not isinstance(cue_index, int)
@@ -1071,6 +1079,11 @@ def _apply_exact_final_cpa_repairs(
                 inaudible_nonempty
                 and not inaudible_override_valid
             )
+            or not valid_convergence_mutation_authority(
+                adjudication,
+                proposed=proposed,
+                window=(current.start_ms, current.end_ms),
+            )
         ):
             continue
         cues[cue_index - 1] = type(current)(
@@ -1080,70 +1093,20 @@ def _apply_exact_final_cpa_repairs(
             text=proposed,
         )
         repairs.append(
-            {
-                "schema_version": "exact-final-cpa-self-heal.v1",
-                "cue_index": cue_index,
-                "matched_start_ms": current.start_ms,
-                "matched_end_ms": current.end_ms,
-                "before": current.text,
-                "after": proposed,
-                "before_sha256": "sha256:" + current_sha256,
-                "after_sha256": "sha256:"
-                + hashlib.sha256(proposed.encode("utf-8")).hexdigest(),
-                "finding_sha256": "sha256:"
-                + hashlib.sha256(
-                    json.dumps(
-                        finding,
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                ).hexdigest(),
-                "request_sha256": "sha256:" + request_sha256,
-                "decision_authority": "CPA_JUDGE",
-                "action": "DROP_CUE" if is_drop else "REPLACE_CUE_TEXT",
-                "repair_class": request.get("repair_class"),
-                "policy_branch": adjudication.get("policy_branch"),
-                "acoustic_witness": (
-                    {
-                        key: adjudication["verdict"].get(key)
-                        for key in (
-                            "schema_version",
-                            "status",
-                            "request_sha256",
-                            "target_audible",
+            build_self_heal_repair_receipt(
+                finding=finding,
+                cue_index=cue_index,
+                current_text=current.text,
+                proposed=proposed,
+                matched_start_ms=current.start_ms,
+                matched_end_ms=current.end_ms,
+                adjudication=adjudication,
+                judge=judge,
+                mutation=mutation,
+                request_sha256=request_sha256,
+                is_drop=is_drop,
+                inaudible_override_valid=inaudible_override_valid,
                         )
-                    }
-                    if isinstance(adjudication.get("verdict"), Mapping)
-                    else None
-                ),
-                "judge": dict(judge),
-                "drop_authority": (
-                    dict(adjudication["drop_authority"])
-                    if is_drop
-                    and isinstance(
-                        adjudication.get("drop_authority"), Mapping
-                    )
-                    else None
-                ),
-                "inaudible_witness_override": (
-                    dict(
-                        witness_judge[
-                            "inaudible_witness_override"
-                        ]
-                    )
-                    if inaudible_override_valid
-                    and isinstance(
-                        witness_judge.get(
-                            "inaudible_witness_override"
-                        ),
-                        Mapping,
-                    )
-                    else None
-                ),
-                "mutation_authority": dict(mutation),
-                "timing_immutable": True,
-            }
         )
     if not repairs:
         return srt_text, []
@@ -1164,8 +1127,8 @@ def _apply_exact_final_cpa_repairs(
 
 
 def _replayable_exact_final_carryover_findings(
-    srt_text: str,
-    path: Path,
+    srt_text: str, path: Path, *,
+    clip_context: Mapping[str, object] | None = None,
 ) -> list[dict[str, object]]:
     """Remap a prior exact CPA decision onto identical current cue bytes/time."""
 
@@ -1179,12 +1142,10 @@ def _replayable_exact_final_carryover_findings(
         base_sha256 = str(row.get("base_text_sha256") or "")
         matches = by_sha256.get(base_sha256, [])
         adjudication = row.get("exact_release_adjudication")
-        request = (
-            adjudication.get("request")
-            if isinstance(adjudication, Mapping)
-            else None
+        request = adjudication.get("request") if isinstance(adjudication, Mapping) else None
+        proposed = adjudicated_proposed_full_cue(
+            row, srt_text=srt_text, clip_context=clip_context
         )
-        proposed = adjudicated_proposed_full_cue(row)
         if (
             len(matches) != 1
             or proposed is None
@@ -1518,6 +1479,7 @@ def _run_exact_final_review_gate(
     chat_authority_audit: dict,
     chat_authority_path: Path,
     adapters: ProducerFinalizationAdapters,
+    clip_context: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Review and bind the actual post-boundary, post-authority SRT bytes."""
 
@@ -1525,6 +1487,7 @@ def _run_exact_final_review_gate(
     if reviewer is None:
         raise SystemExit("FINAL_REVIEW_EXACT_FINALIZER_MISSING")
     self_heal_passes: list[dict[str, object]] = []
+    unreadable_drop_passes: list[dict[str, object]] = []
     carryover_file = carryover_path(out_root, cid)
     replayable_carryover_base_sha256: set[str] = set()
     consumed_carryover_repairs: dict[str, Mapping[str, object]] = {}
@@ -1602,14 +1565,16 @@ def _run_exact_final_review_gate(
         )
         if pass_index == 0:
             replayable = _replayable_exact_final_carryover_findings(
-                final_text,
-                carryover_file,
+                final_text, carryover_file, clip_context=clip_context
             )
             replayable_carryover_base_sha256.update(
                 str(row.get("base_text_sha256") or "")
                 for row in replayable
             )
             audit = _overlay_exact_carryover_findings(audit, replayable)
+        suppress_baseline_owned_self_heal_findings(
+            final_text, audit, recut.redelivery_baseline_audit
+        )
         chat_authority_audit["final_review_audit"] = audit
         persist_review_audit(review_audit_path, audit)
         expected_srt_sha256 = "sha256:" + hashlib.sha256(
@@ -1622,7 +1587,7 @@ def _run_exact_final_review_gate(
             )
         except FinalReviewContractError as exc:
             repaired_text, repairs = _apply_exact_final_cpa_repairs(
-                final_text, audit
+                final_text, audit, clip_context=clip_context
             )
             repaired_base_sha256 = {
                 str(repair.get("before_sha256") or "").removeprefix(
@@ -1775,6 +1740,30 @@ def _run_exact_final_review_gate(
                         )
                     raise
                 continue
+            # 「耳朵说这段音频物理上不可读」的死锁（维护者 裁定）：删掉
+            # 那条 cue 的字幕、照常出成品、落人工审阅停泊态，而不是把整条候选
+            # 拦死。判据/守卫/授权/事务全在 unreadable_cue_drop_stage，这里只留
+            # 调用点；排在 CPA 自愈之后是刻意的——删字幕有损，永远是最后手段。
+            next_drop_passes = stage_unreadable_cue_drop_pass(
+                reason_code=exc.reason_code,
+                cpa_repairs=repairs,
+                pass_budget_left=pass_index < max_review_passes - 1,
+                final_text=final_text,
+                audit=audit,
+                expected_srt_sha256=expected_srt_sha256,
+                passes=unreadable_drop_passes,
+                recut=recut,
+                chat_authority_audit=chat_authority_audit,
+                chat_authority_path=chat_authority_path,
+                review_audit_path=review_audit_path,
+                snapshots=(
+                    file_bytes_before_pass, chat_authority_before_pass,
+                    baseline_before_pass,
+                ),
+            )
+            if next_drop_passes is not None:
+                unreadable_drop_passes = next_drop_passes
+                continue
             # 终审结转仍是无法在当前 exact-final pass 安全落盘时的后备。
             carryover_count = persist_final_review_carryover(
                 carryover_file, audit
@@ -1836,6 +1825,16 @@ def _run_exact_final_review_gate(
                         + "\n",
                         encoding="utf-8",
                     )
+        if unreadable_drop_passes:
+            seal_unreadable_cue_drops(
+                cid=cid,
+                passes=unreadable_drop_passes,
+                expected_srt_sha256=expected_srt_sha256,
+                audit=audit,
+                chat_authority_audit=chat_authority_audit,
+                recut=recut,
+                review_audit_path=review_audit_path,
+            )
         chat_authority_path.write_text(
             json.dumps(
                 chat_authority_audit,
@@ -1887,6 +1886,15 @@ def _finalize_speaker(
                 relative_to=options.spec.parent,
             )
         )
+        speaker_session_context_path = _resolved_optional_path(
+            spec.get("speaker_session_context"), relative_to=options.spec.parent
+        )
+        if not (  # downstream binds every current piece to this context source
+            speaker_session_context_path
+            and speaker_session_context_path.is_file()
+            and not speaker_session_context_path.is_symlink()
+        ):
+            speaker_session_context_path = None
         speaker_manifest = adapters.run_speaker_finalization(
             speaker_mode=options.speaker_mode,
             host=host,
@@ -1900,6 +1908,7 @@ def _finalize_speaker(
             override_path=speaker_override_path,
             source_session_anchor_path=source_session_anchor_path,
             mixed_overlap_evidence_path=mixed_overlap_evidence_path,
+            speaker_session_context_path=speaker_session_context_path,
             speaker_python=options.speaker_python,
             spec=spec,
             spec_parent=options.spec.parent,
@@ -2218,10 +2227,10 @@ def _stage_record(
     title_llm = None
     if not given_title:
         title_llm = build_llm_call(
-            LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' high", timeout_seconds=180.0)
+            LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' high", timeout_seconds=600.0)
         )
     art_direction_llm = None if options.reuse_cover else build_llm_call(
-        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-luna gpt-5.5 gpt-5.4' medium", timeout_seconds=180.0)
+        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-luna gpt-5.5 gpt-5.4' medium", timeout_seconds=600.0)
     )
     source_fact_llm = build_llm_call(
         LlmConfig(
@@ -2230,7 +2239,7 @@ def _stage_record(
                 "bash scripts/llm_via_cpa.sh {prompt_file} "
                 "{completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' high"
             ),
-            timeout_seconds=180.0,
+            timeout_seconds=600.0,
         )
     )
     final_title_cues = [
@@ -2267,12 +2276,9 @@ def _stage_record(
                 if isinstance(piece, Mapping) and piece.get("source_media_sha256")
             ],
         )
-    cover_reference_authority = load_candidate_cover_reference(
-        cid,
-        ledger_path=CHANNEL_PROFILE.asset_file(
-            "cover_reference_overrides", repo_root=ROOT
-        ),
-    )
+    cover_reference_authority = load_candidate_cover_reference(cid, ledger_path=CHANNEL_PROFILE.asset_file(
+        "cover_reference_overrides", repo_root=ROOT
+    ))
     story_selection_hook = canonicalize_relation_summary(
         str(spec.get("selection_hook") or ""),
         session_relation_authority=spec.get("session_relation_authority"),
@@ -2283,66 +2289,54 @@ def _stage_record(
         session_relation_authority=spec.get("session_relation_authority"),
         transcript_text=transcript_text,
     )
-
-    def build_story_contract_for_hook(
-        reviewed_hook: str,
-    ) -> dict[str, object]:
+    rescore_provenance = None
+    def build_story_contract_for_hook(reviewed_hook: str) -> dict[str, object]:
         contract = build_story_contract(
             candidate_id=cid,
             selection_hook=reviewed_hook,
             transcript_text=transcript_text,
             selection_scorecard=story_selection_scorecard,
-            session_relation_authority=spec.get(
-                "session_relation_authority"
-            ),
+            session_relation_authority=spec.get("session_relation_authority"),
             cover_reference_authority=cover_reference_authority,
             source_media_sha256s=[
                 str(piece.get("source_media_sha256"))
                 for piece in (spec.get("pieces") or [])
-                if isinstance(piece, Mapping)
-                and piece.get("source_media_sha256")
+                if isinstance(piece, Mapping) and piece.get("source_media_sha256")
             ],
             clip_context=spec.get("clip_context"),
             recording_date=str(spec.get("date") or ""),
-            boundary_semantic_review=spec.get(
-                "boundary_semantic_review"
-            ),
-            human_boundary_authority=str(
-                spec.get("given_end_authority") or ""
-            ),
+            boundary_semantic_review=spec.get("boundary_semantic_review"),
+            human_boundary_authority=str(spec.get("given_end_authority") or ""),
         )
         contract["input_audits"] = [
-            audit_story_artifact(
-                reviewed_hook,
-                story_contract=contract,
-                artifact_kind="selection_hook",
-            ),
-            audit_story_artifact(
-                transcript_text,
-                story_contract=contract,
-                artifact_kind="subtitle",
-            ),
+            audit_story_artifact(reviewed_hook, story_contract=contract,
+                                 artifact_kind="selection_hook"),
+            audit_story_artifact(transcript_text, story_contract=contract,
+                                 artifact_kind="subtitle"),
         ]
+        bind_story_contract_provenance(contract, rescore_provenance)
         return contract
 
-    story_contract = build_story_contract_for_hook(
-        story_selection_hook
-    )
+    story_contract = build_story_contract_for_hook(story_selection_hook)
     record["selection_scorecard"] = story_selection_scorecard
+    try:
+        rescore_provenance = bind_finalization_provenance(
+            spec=spec, record=record, story_contract=story_contract,
+            selection_hook=story_selection_hook,
+            selection_scorecard=story_selection_scorecard,
+        )
+    except SourceFactRescoreProvenanceError as exc:
+        raise SystemExit(str(exc)) from exc
     record["session_relation_authority"] = spec.get("session_relation_authority")
     record["story_contract"] = story_contract
     if normalized_recovery_publication_authority is not None:
-        record["recovery_publication_authority"] = (
-            normalized_recovery_publication_authority
-        )
+        record["recovery_publication_authority"] = normalized_recovery_publication_authority
     if clip_context_path is not None:
         record["clip_context_path"] = str(clip_context_path)
-        record["clip_context_payload_sha256"] = clip_context.get(
-            "context_sha256"
+        record["clip_context_payload_sha256"] = clip_context.get("context_sha256")
+        record.setdefault("artifact_hashes", {})["clip_context_file_sha256"] = (
+            "sha256:" + _sha256(clip_context_path)
         )
-        record.setdefault("artifact_hashes", {})[
-            "clip_context_file_sha256"
-        ] = "sha256:" + _sha256(clip_context_path)
     record = adapters.stage_publish_draft(
         record,
         candidate_id=cid,
@@ -2356,10 +2350,12 @@ def _stage_record(
         skip_cover=options.reuse_cover,
         selection_hook=story_selection_hook,
         cover_diversity_slot=spec.get("cover_diversity_slot"),
-        recovery_publication_authority=(
-            normalized_recovery_publication_authority
-        ),
+        recovery_publication_authority=normalized_recovery_publication_authority,
     )
+    try:
+        bind_publish_staging_provenance(record, rescore_provenance)
+    except SourceFactRescoreProvenanceError as exc:
+        raise SystemExit(str(exc)) from exc
     staging = record.get("publish_staging") or {}
     source_fact_review = staging.get("source_fact_review")
     if (
@@ -2375,15 +2371,20 @@ def _stage_record(
             if isinstance(source_fact_review, Mapping)
             else "missing_receipt"
         )
-        marker = (
-            "SOURCE_FACT_REVIEW_INFRA_UNRESOLVED"
-            if reason
-            in {
-                "CPA_TEXT_REVIEW_UNAVAILABLE",
-                "CPA_TEXT_REVIEW_CALL_FAILED",
-            }
-            else "SOURCE_FACT_REPAIR_EXHAUSTED"
+        # 狍哥案修复：
+        # marker 分类本身是纯函数，抽到 selection_rescore.py 独立可测；
+        # RESCORE_REQUIRED 一支还要落 pending sidecar，留在这个薄调用点。
+        marker = selection_rescore.classify_source_fact_review_marker(
+            source_fact_review
         )
+        if marker == "SOURCE_FACT_REPAIRED_RESCORE_REQUIRED" and isinstance(
+            source_fact_review, Mapping
+        ):
+            selection_rescore.write_pending_rescore_sidecar(
+                recut_dir,
+                candidate_id=cid,
+                source_fact_review=source_fact_review,
+            )
         raise SystemExit(f"{marker}: {reason}")
     raw_final_story_contract = record.get("story_contract")
     if not isinstance(raw_final_story_contract, Mapping):
@@ -2622,6 +2623,7 @@ def _deliver_staged_record(
             "speaker_subtitle": str(delivery / f"{name}.speaker.srt") if speaker_review_srt else None,
             "speaker_ass": str(delivery / f"{name}.speaker.ass") if speaker_ass else None,
             "speaker_status": speaker_manifest.get("status") if speaker_manifest else "OFF",
+            "speaker_guess": speaker_guess.summary_digest(speaker_manifest),
             "subtitle_regression_status": (
                 subtitle_regression_audit.get("status")
                 if subtitle_regression_audit is not None
@@ -2668,7 +2670,7 @@ def finalize_producer_package(
     talk_filler_audit_path: Path | None = None,
 ) -> int:
     recut = _materialize_final_recut(
-        spec=spec,
+        spec=materialization_spec_for_selected_projection(spec, audit),
         cid=cid,
         out_root=out_root,
         padded=padded,
@@ -2692,6 +2694,7 @@ def finalize_producer_package(
         chat_authority_audit=chat_authority_audit,
         chat_authority_path=chat_authority_path,
         adapters=adapters,
+        clip_context=spec.get("clip_context") if isinstance(spec.get("clip_context"), Mapping) else {},
     )
     final_delivery_boundary_review = exact_final_review.get(
         "boundary_semantic_review"
@@ -2704,6 +2707,11 @@ def finalize_producer_package(
     audit["final_delivery_boundary_semantic_review"] = dict(
         final_delivery_boundary_review
     )
+    boundary_receipt_replay = exact_final_review.get(
+        "boundary_receipt_replay"
+    )
+    if isinstance(boundary_receipt_replay, Mapping):
+        audit["boundary_receipt_replay"] = dict(boundary_receipt_replay)
     speaker = _finalize_speaker(
         options=options,
         spec=spec,

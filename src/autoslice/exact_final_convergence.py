@@ -21,6 +21,10 @@ from typing import Any, Callable, Iterable, Mapping
 from src.autoslice.acoustic_witness_adjudication import (
     valid_inaudible_drop_authority,
 )
+from src.autoslice.exact_final_witness_authority import (
+    convergence_witness_gate,
+    downgrade_convergence_finding,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import extract_json_object
 
@@ -255,6 +259,13 @@ def _compact_current_evidence(
     verdict = adjudication.get("verdict")
     witness_judge = adjudication.get("witness_judge")
     judge = witness_judge.get("judge") if isinstance(witness_judge, Mapping) else None
+    similarities = (
+        witness_judge.get("candidate_pinyin_similarity")
+        if isinstance(witness_judge, Mapping)
+        else None
+    )
+    if not isinstance(similarities, Mapping) and isinstance(judge, Mapping):
+        similarities = judge.get("candidate_pinyin_similarity")
     return {
         "finding_base_text_sha256": finding.get("base_text_sha256"),
         "finding_proposed_full_cue": finding.get("proposed_full_cue"),
@@ -270,6 +281,7 @@ def _compact_current_evidence(
                 key: verdict.get(key)
                 for key in (
                     "status",
+                    "witness_protocol",
                     "target_audible",
                     "heard_pinyin",
                     "confidence",
@@ -280,6 +292,9 @@ def _compact_current_evidence(
             }
             if isinstance(verdict, Mapping)
             else None
+        ),
+        "candidate_pinyin_similarity": (
+            dict(similarities) if isinstance(similarities, Mapping) else None
         ),
         "binary_judge": (
             {
@@ -409,6 +424,8 @@ _EVIDENCE_CONTENT_ANCHOR_KEYS = frozenset(
         "audio_sha256",
         "target_audible",
         "heard_pinyin",
+        "witness_protocol",
+        "candidate_pinyin_similarity",
         "current_fit",
         "proposed_fit",
         "confidence",
@@ -425,6 +442,8 @@ _EVIDENCE_CONTENT_KEYS = frozenset(
         "audio_sha256",
         "target_audible",
         "heard_pinyin",
+        "witness_protocol",
+        "candidate_pinyin_similarity",
         "current_fit",
         "proposed_fit",
         "confidence",
@@ -735,6 +754,19 @@ def _converge_one(
     reason = str(payload.get("reason") or "")[:240]
     if choice not in {"CURRENT", "PROPOSED"} or not reason:
         return None
+    acoustic_gate = None
+    if choice == "PROPOSED":
+        acoustic_gate = convergence_witness_gate(
+            proposed=proposed,
+            window=(cue.start_ms, cue.end_ms),
+            findings=[finding],
+            history=history,
+        )
+        if acoustic_gate.get("status") != "PASS":
+            return downgrade_convergence_finding(
+                finding,
+                gate=acoustic_gate,
+            ), False
     final_text = current if choice == "CURRENT" else proposed
     bound_context_sha256, _before, _after = _local_context_binding(
         srt_text,
@@ -770,6 +802,8 @@ def _converge_one(
     }
     if served_from_cache:
         memo["served_from_cache"] = True
+    if acoustic_gate is not None:
+        memo["acoustic_witness_gate"] = acoustic_gate
     row = dict(finding)
     final_adjudication = dict(adjudication)
     final_adjudication["pre_convergence_adjudication"] = {
@@ -802,6 +836,9 @@ def _converge_one(
         )
         row["resolution"] = "CPA_HISTORY_CONVERGENCE_KEEP_CURRENT"
     else:
+        final_adjudication["history_convergence_acoustic_witness"] = (
+            acoustic_gate
+        )
         final_adjudication.update(
             repaired=True,
             policy_branch="CPA_HISTORY_CONVERGENCE_APPLY_PROPOSED",
@@ -1153,6 +1190,10 @@ def _apply_cycle_choice(
             ],
             "exact_final_cpa_cycle_memo": dict(memo),
         }
+        if memo.get("acoustic_witness_gate") is not None:
+            final_adjudication[
+                "history_convergence_acoustic_witness"
+            ] = memo["acoustic_witness_gate"]
         selected.update(
             cue_index=cue_index,
             base_text_sha256=_text_sha256(current),
@@ -1401,6 +1442,26 @@ def _converge_cycle_group(
         completion_sha256=completion_sha256,
         served_from_cache=served_from_cache,
     )
+    if selected_text and selected_text != current:
+        acoustic_gate = convergence_witness_gate(
+            proposed=selected_text,
+            window=window,
+            findings=findings,
+            history=history,
+        )
+        memo["acoustic_witness_gate"] = acoustic_gate
+        if acoustic_gate.get("status") != "PASS":
+            downgraded: list[dict[str, Any]] = []
+            for finding in findings:
+                row = downgrade_convergence_finding(
+                    finding,
+                    gate=acoustic_gate,
+                )
+                row["exact_release_adjudication"][
+                    "exact_final_cpa_cycle_memo"
+                ] = dict(memo)
+                downgraded.append(row)
+            return downgraded, []
     return _apply_cycle_choice(
         findings=findings,
         current=current,

@@ -195,6 +195,15 @@ def _compose_screenshot_cover_with_face_gate(
         isinstance(crop_evidence, Mapping)
         and crop_evidence.get("camera_window_crop")
     )
+    # 游戏截图（维护者：主体本来就是游戏）与关系型 no-crop 证明一样，
+    # 整幅进卡：fit_crop 会把她的面捕小窗从边角切掉，正好毁掉唯一的身份证据。
+    preserve_full_frame = bool(
+        relationship_visual_required
+        or (
+            isinstance(crop_evidence, Mapping)
+            and crop_evidence.get("full_frame_preserved") is True
+        )
+    )
     poster_path = ai_dir / f"{candidate_id}.screenshot-poster.png"
     final_cover_path = covers_dir / f"{candidate_id}.screenshot-title.cover.png"
     face_verification: dict[str, object] | None = None
@@ -203,10 +212,10 @@ def _compose_screenshot_cover_with_face_gate(
             poster_source,
             poster_path,
             art_direction=art_direction,
-            preserve_full_frame=relationship_visual_required,
+            preserve_full_frame=preserve_full_frame,
             source_ai_modified=method == "screenshot_polish",
             face_safe_contain=(
-                face_safe_contain and not relationship_visual_required
+                face_safe_contain and not preserve_full_frame
             ),
         )
         # talk 无梗字时整句上封面的唯一合法通道是 hash 绑定的
@@ -230,7 +239,7 @@ def _compose_screenshot_cover_with_face_gate(
         if (
             face_verification.get("reason_code") == "FACE_INCOMPLETE"
             and not face_safe_contain
-            and not relationship_visual_required
+            and not preserve_full_frame
         ):
             # 修复优先于 fail-close：换整脸 contain 卡重排一次再终判。
             face_safe_contain = True

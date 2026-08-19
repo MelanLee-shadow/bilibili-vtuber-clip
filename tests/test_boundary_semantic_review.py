@@ -31,6 +31,17 @@ def _extract(value: str) -> dict:
     return json.loads(value)
 
 
+def _projection_scope(*, endpoint_ms: int = 67_760) -> dict[str, object]:
+    return {
+        "schema_version": (
+            "reviewed-exact-interval-terminal-projection-scope.v1"
+        ),
+        "authority_sha256": "sha256:" + "d" * 64,
+        "reviewed_endpoint_ms": endpoint_ms,
+        "max_terminal_drift_ms": 250,
+    }
+
+
 def _source_window_review(
     *,
     final_start_ms: int = 10_000,
@@ -131,6 +142,45 @@ def test_boundary_review_cannot_self_certify_a_weak_selector_story_witness():
     assert "SELECTOR_STORY_WITNESS_INSUFFICIENT" in review["reason_codes"]
 
 
+def test_boundary_review_accepts_self_contained_non_comedic_story_witness():
+    response = json.dumps(
+        {
+            "syntax_complete": True,
+            "story_closed": True,
+            "next_topic_separated": True,
+            "recommended_end_cue_index": 2,
+            "evidence_cue_indexes": [1, 2, 3],
+            "reason_codes": [],
+            "summary": "第二条收束个人立场，第三条已进入下一话题。",
+        },
+        ensure_ascii=False,
+    )
+    review = review_talk_boundary_semantics(
+        cues=[
+            _cue(1, 0, 9_000, "讲完整的个人经历"),
+            _cue(2, 9_100, 12_000, "以后也一起去看不同的舞台吧"),
+            _cue(3, 12_100, 15_000, "接下来的一首歌"),
+        ],
+        target_ms=9_000,
+        candidate_id="candidate",
+        selection_hook="个人立场与约定",
+        selection_scorecard=_scorecard(self_contained=4, comedic_payoff=1),
+        structured_context="topic transition @12100ms: 接下来的一首歌",
+        candidate_context="hash-bound context",
+        llm_call=lambda _prompt: response,
+        extract_json=_extract,
+    )
+
+    assert review["status"] == "PASS"
+    assert review["selector_story_witness"] == {
+        "independence_group": "cpa-gpt-5.6-semantic-family",
+        "status": "PASS",
+        "self_contained": 4,
+        "comedic_payoff": 1,
+    }
+    assert "SELECTOR_STORY_WITNESS_INSUFFICIENT" not in review["reason_codes"]
+
+
 def test_boundary_review_rejects_recommendation_beyond_forward_cap():
     response = json.dumps(
         {
@@ -212,6 +262,158 @@ def test_boundary_review_sees_long_forward_window_and_next_topic_witness():
     assert result["max_forward_ms"] == 60_000
     assert '"cue_index": 18' in seen_prompt
     assert '"cue_index": 19' in seen_prompt
+
+
+def test_source_review_contract_scans_closing_exchange_before_transition():
+    """1576 regression: a content answer can be complete before the local
+    interaction is safe to cut.  The reviewer must scan the bounded closing
+    exchange and its dedicated post-cap witness instead of stopping on the
+    selector target merely because the original answer already landed.
+    """
+
+    cues = [
+        _cue(75, 0, 10_000, "目标故事已经讲完了"),
+        _cue(86, 20_000, 22_000, "所以你之后还会这样吗"),
+        _cue(87, 22_100, 26_000, "会呀，我之后也会继续的"),
+        _cue(91, 26_100, 39_000, "好，那这件事就聊到这里"),
+        _cue(92, 40_100, 41_500, "那么差不多要进入尾声了"),
+    ]
+    seen_request: dict = {}
+
+    def review(prompt: str) -> str:
+        request = json.loads(
+            prompt.split("绑定请求 JSON：\n", 1)[1].split(
+                "\n\n只输出 JSON：", 1
+            )[0]
+        )
+        seen_request.update(request)
+        has_fixed_contract = all(
+            fragment in prompt
+            for fragment in (
+                "紧接目标的同话题提问、回应或收尾互动",
+                "逐项检查 next_topic_witness_cue_indexes",
+                "不要求紧邻推荐 cue 的下一 cue 就换题",
+            )
+        )
+        payload = (
+            {
+                "syntax_complete": True,
+                "story_closed": True,
+                "next_topic_separated": True,
+                "content_anchor_covered": True,
+                "recommended_end_cue_index": 4,
+                "evidence_cue_indexes": [1, 2, 3, 4, 5],
+                "same_topic_continues_after_target": False,
+                "needs_more_context": False,
+                "reason_codes": ["LATEST_CLOSING_EXCHANGE_COMPLETE"],
+                "summary": "91 完成收尾互动，92 明确转入直播尾声。",
+            }
+            if has_fixed_contract
+            else {
+                "syntax_complete": True,
+                "story_closed": True,
+                "next_topic_separated": False,
+                "content_anchor_covered": True,
+                "recommended_end_cue_index": 1,
+                "evidence_cue_indexes": [1, 2, 3],
+                "same_topic_continues_after_target": False,
+                "needs_more_context": False,
+                "reason_codes": ["TARGET_CONTENT_ALREADY_COMPLETE"],
+                "summary": "旧契约在内容目标处停下，没有审完收尾互动。",
+            }
+        )
+        return json.dumps(payload, ensure_ascii=False)
+
+    result = review_talk_boundary_semantics(
+        cues=cues,
+        target_ms=10_000,
+        candidate_id="auto_210131_1576_1802",
+        selection_hook="目标故事与直播收尾互动",
+        selection_scorecard=_scorecard(),
+        structured_context="",
+        candidate_context="hash-bound context",
+        llm_call=review,
+        extract_json=_extract,
+        max_forward_ms=30_000,
+    )
+
+    assert seen_request["next_topic_witness_cue_indexes"] == [5]
+    assert seen_request["endpoint_selection_contract_version"] == (
+        "talk-boundary-endpoint-selection-contract.v2"
+    )
+    assert seen_request["review_scope"] == "source_full_window"
+    assert result["status"] == "PASS"
+    assert result["recommended_end_cue_index"] == 4
+    assert result["recommended_end_ms"] == 39_000
+    assert result["next_topic_witness_valid"] is True
+
+
+def test_closing_exchange_without_post_end_transition_remains_blocked():
+    response = json.dumps(
+        {
+            "syntax_complete": True,
+            "story_closed": True,
+            "next_topic_separated": False,
+            "content_anchor_covered": True,
+            "recommended_end_cue_index": 4,
+            "evidence_cue_indexes": [1, 2, 3, 4],
+            "same_topic_continues_after_target": False,
+            "needs_more_context": False,
+            "reason_codes": ["NO_POST_END_TRANSITION_WITNESS"],
+            "summary": "收尾互动已完整，但窗口内没有换题证据。",
+        },
+        ensure_ascii=False,
+    )
+
+    result = review_talk_boundary_semantics(
+        cues=[
+            _cue(1, 0, 10_000, "目标故事已经讲完了"),
+            _cue(2, 10_100, 12_000, "之后还会这样吗"),
+            _cue(3, 12_100, 16_000, "会呀，我之后也会继续的"),
+            _cue(4, 16_100, 19_000, "好，那就这样"),
+        ],
+        target_ms=10_000,
+        candidate_id="closing-without-transition",
+        selection_hook="目标故事与收尾互动",
+        selection_scorecard=_scorecard(),
+        structured_context="",
+        candidate_context="",
+        llm_call=lambda _prompt: response,
+        extract_json=_extract,
+    )
+
+    assert result["status"] == "BLOCK"
+    assert "NEXT_TOPIC_SEPARATED_NOT_PROVEN" in result["reason_codes"]
+
+
+def test_endpoint_contract_change_does_not_resample_provider_failures():
+    calls = 0
+
+    def unavailable(_prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("provider unavailable")
+
+    with pytest.raises(
+        BoundarySemanticReviewError,
+        match="BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:RuntimeError",
+    ):
+        review_talk_boundary_semantics(
+            cues=[
+                _cue(1, 0, 10_000, "目标故事"),
+                _cue(2, 10_100, 12_000, "下一话题"),
+            ],
+            target_ms=10_000,
+            candidate_id="provider-failure-single-call",
+            selection_hook="目标故事",
+            selection_scorecard=_scorecard(),
+            structured_context="",
+            candidate_context="",
+            llm_call=unavailable,
+            extract_json=_extract,
+        )
+
+    assert calls == 1
 
 
 def test_manual_lower_bound_moves_shared_scope_past_old_origin():
@@ -583,6 +785,13 @@ def test_boundary_review_rejects_evidence_cue_not_shown_to_reviewer():
         ensure_ascii=False,
     )
 
+    seen_prompt = ""
+
+    def review(prompt: str) -> str:
+        nonlocal seen_prompt
+        seen_prompt = prompt
+        return response
+
     result = review_talk_boundary_semantics(
         cues=cues,
         target_ms=2_000,
@@ -591,13 +800,18 @@ def test_boundary_review_rejects_evidence_cue_not_shown_to_reviewer():
         selection_scorecard=_scorecard(),
         structured_context="",
         candidate_context="",
-        llm_call=lambda _prompt: response,
+        llm_call=review,
         extract_json=_extract,
         max_forward_ms=10_000,
     )
 
     assert result["status"] == "BLOCK"
     assert "BOUNDARY_EVIDENCE_CUES_INVALID" in result["reason_codes"]
+    assert (
+        "evidence_cue_indexes 的每个索引也只可从绑定请求 JSON 的 "
+        "cues[*].cue_index 中选择"
+    ) in seen_prompt
+    assert "绝不可从中引用 cue 索引" in seen_prompt
 
 
 def test_boundary_review_requires_evidence_after_recommended_endpoint():
@@ -723,6 +937,7 @@ def test_final_delivery_terminal_cue_accepts_bound_source_separation_witness():
     assert seen_request["terminal_source_separation_witness"] == result[
         "source_separation_witness"
     ]
+    assert seen_request["review_scope"] == "final_delivery"
 
 
 def test_final_delivery_terminal_cue_rejects_interval_mismatched_source_witness():
@@ -1044,6 +1259,295 @@ def test_structured_payoff_hypothesis_yields_to_baseline_tail_cap():
     )
     assert "BOUNDARY_REQUIRED_OWNER_EXCLUDED" in hard_blocked["reason_codes"]
     assert hard_blocked["structured_payoff_clamped_from_ms"] is None
+
+
+def test_structured_payoff_yields_when_bounded_trim_reaches_reviewed_tail():
+    """A payoff detection hypothesis must not strand a reviewed v2 endpoint
+    when the same configured semantic-tail trim reaches that endpoint.
+
+    The 1722-shaped values are synthetic: no harvested worksheet truth is a
+    test oracle.  Manual/owner conflicts and ordinary no-baseline production
+    remain hard floors.
+    """
+
+    from src.autoslice.boundary_semantic_review import (
+        boundary_search_scope_is_valid,
+        build_boundary_search_scope,
+    )
+
+    kwargs = {
+        "semantic_target_ms": 80_570,
+        "repair_cap_ms": 30_000,
+        "structured_payoff_ms": 84_240,
+        "required_owner_end_ms": 27_510,
+        "semantic_tail_trim_cap_ms": 15_000,
+    }
+    clamped = build_boundary_search_scope(
+        **kwargs,
+        baseline_tail_cap_ms=67_760,
+    )
+    assert clamped["status"] == "PASS"
+    assert clamped["reason_codes"] == []
+    assert clamped["structured_payoff_ms"] == 84_240
+    assert clamped["structured_payoff_clamped_from_ms"] == 84_240
+    assert clamped["semantic_search_origin_ms"] == 80_570
+    assert clamped["delivery_lower_bound_ms"] == 67_760
+    assert clamped["max_recommended_end_ms"] == 67_760
+    assert clamped["recommendation_backward_ms"] == 12_810
+    assert boundary_search_scope_is_valid(clamped)
+
+    below_trim_floor = build_boundary_search_scope(
+        **kwargs,
+        baseline_tail_cap_ms=65_569,
+    )
+    assert below_trim_floor["status"] == "BLOCK"
+    assert below_trim_floor["structured_payoff_clamped_from_ms"] is None
+    assert "BOUNDARY_REQUIRED_OWNER_EXCLUDED" in below_trim_floor["reason_codes"]
+
+    owner_conflict = build_boundary_search_scope(
+        **{**kwargs, "required_owner_end_ms": 67_761},
+        baseline_tail_cap_ms=67_760,
+    )
+    assert owner_conflict["status"] == "BLOCK"
+    assert owner_conflict["structured_payoff_clamped_from_ms"] is None
+
+    manual_conflict = build_boundary_search_scope(
+        **kwargs,
+        manual_lower_bound_ms=90_000,
+        baseline_tail_cap_ms=67_760,
+    )
+    assert manual_conflict["status"] == "BLOCK"
+    assert manual_conflict["structured_payoff_clamped_from_ms"] is None
+
+    ordinary_production = build_boundary_search_scope(**kwargs)
+    assert ordinary_production["status"] == "PASS"
+    assert ordinary_production["structured_payoff_clamped_from_ms"] is None
+    assert ordinary_production["delivery_lower_bound_ms"] == 84_240
+
+
+def test_reviewed_exact_interval_tail_bridge_exposes_crossing_grid_closure():
+    """Synthetic exact-replay timing jitter: the reviewed endpoint is 90ms
+    after the true closure cue, inside a fresh ASR cue for the next topic.
+    Only an explicit reviewed-interval bridge may expose the closure cue, and
+    the semantic reviewer must still prove closure and next-topic separation.
+    """
+
+    scope = build_boundary_search_scope(
+        semantic_target_ms=80_570,
+        repair_cap_ms=30_000,
+        structured_payoff_ms=84_240,
+        required_owner_end_ms=27_510,
+        baseline_tail_cap_ms=67_760,
+        semantic_tail_trim_cap_ms=15_000,
+        reviewed_exact_interval_projection=_projection_scope(),
+    )
+    cues = [
+        _cue(1, 60_000, 65_000, "前情收束"),
+        _cue(2, 65_000, 67_670, "你站这来"),
+        _cue(3, 67_670, 69_210, "我站哪儿有什么区别吗"),
+        _cue(4, 75_550, 80_570, "你要看我们三个的表演"),
+    ]
+    response = json.dumps(
+        {
+            "syntax_complete": True,
+            "story_closed": True,
+            "next_topic_separated": True,
+            "content_anchor_covered": True,
+            "recommended_end_cue_index": 2,
+            "evidence_cue_indexes": [1, 2, 3, 4],
+            "same_topic_continues_after_target": False,
+            "needs_more_context": False,
+            "reason_codes": [],
+            "summary": "第二句闭合，第三句起已转入站位和表演新话题。",
+        },
+        ensure_ascii=False,
+    )
+
+    review = review_talk_boundary_semantics(
+        cues=cues,
+        target_ms=80_570,
+        candidate_id="candidate-reviewed-tail-bridge",
+        selection_hook="关系梗在站位话题前闭合",
+        selection_scorecard=_scorecard(),
+        structured_context="hash-bound exact reviewed interval",
+        candidate_context="synthetic fixture",
+        llm_call=lambda _prompt: response,
+        extract_json=_extract,
+        max_forward_ms=0,
+        boundary_search_scope=scope,
+    )
+
+    assert review["status"] == "PASS"
+    assert review["recommended_end_cue_index"] == 2
+    assert review["recommended_end_ms"] == 67_760
+    assert review["recommendation_relaxations"] == [
+        {
+            "kind": "reviewed_exact_interval_terminal_projection",
+            "cue_index": 2,
+            "cue_start_ms": 65_000,
+            "cue_end_ms": 67_670,
+            "cue_text_sha256": "sha256:" + (
+                "ba1b84c3f97fafeced908827fa7a71444984e02f16d07a9d9da166c3bf753077"
+            ),
+            "reviewed_endpoint_ms": 67_760,
+            "terminal_drift_ms": 90,
+            "max_terminal_drift_ms": 250,
+            "crossing_witness_cue_index": 3,
+            "crossing_witness_start_ms": 67_670,
+            "crossing_witness_end_ms": 69_210,
+            "crossing_witness_text_sha256": "sha256:" + (
+                "259f90b6a1d69ba3b7212c01f168c550bfd13311c3a0e41a8c9c8f06c0fec0bb"
+            ),
+            "authority_sha256": "sha256:" + "d" * 64,
+            "cue_grid_sha256": cue_grid_sha256(cues),
+        }
+    ]
+
+
+def test_reviewed_exact_interval_pins_floor_without_structured_payoff():
+    """Production shape of the 对食 fast track (auto_200130_1722_1792).
+
+    The reviewed exact interval ends 90ms after the fresh closure cue, but no
+    structured payoff exists to clamp the delivery floor onto the tail anchor.
+    Before the floor was pinned, ``minimum_recommended_end_ms`` stayed on the
+    bounded semantic-tail-trim lower bound (65_570), the closure cue at 67_670
+    became an ordinary in-window candidate, and the projection never ran - the
+    delivery came out 90ms short and only died later at the redelivery baseline
+    gate.  An exact-interval replay has no trim discretion: the floor is the
+    reviewed endpoint, so the bridge is reachable in this shape too.
+    """
+
+    kwargs = {
+        "semantic_target_ms": 80_570,
+        "repair_cap_ms": 60_000,
+        "required_owner_end_ms": 27_510,
+        "baseline_tail_cap_ms": 67_760,
+        "semantic_tail_trim_cap_ms": 15_000,
+    }
+
+    trim_lane = build_boundary_search_scope(**kwargs)
+    assert trim_lane["status"] == "PASS"
+    assert trim_lane["delivery_lower_bound_ms"] == 65_570
+    assert trim_lane["max_recommended_end_ms"] == 67_760
+    # Untouched without the exact-interval grant: the trim lane keeps its floor.
+    assert trim_lane["minimum_recommended_end_ms"] == 65_570
+
+    scope = build_boundary_search_scope(
+        **kwargs,
+        reviewed_exact_interval_projection=_projection_scope(),
+    )
+    assert scope["status"] == "PASS"
+    # The delivery floor disclosure is unchanged; only the review window pins.
+    assert scope["delivery_lower_bound_ms"] == 65_570
+    assert scope["minimum_recommended_end_ms"] == 67_760
+    assert scope["max_recommended_end_ms"] == 67_760
+    assert boundary_search_scope_is_valid(scope)
+
+    cues = [
+        _cue(1, 61_360, 64_319, "你是猜的那个，我是猜的那个"),
+        _cue(2, 64_440, 67_670, "嗯，你你你背，你站这来"),
+        _cue(3, 67_670, 69_210, "我站哪儿有什么区别吗"),
+        _cue(4, 69_210, 71_610, "你站这来，你要看我们三个的表演"),
+    ]
+    response = json.dumps(
+        {
+            "syntax_complete": True,
+            "story_closed": True,
+            "next_topic_separated": True,
+            "content_anchor_covered": True,
+            "recommended_end_cue_index": 2,
+            "evidence_cue_indexes": [1, 2, 3, 4],
+            "same_topic_continues_after_target": False,
+            "needs_more_context": False,
+            "reason_codes": [],
+            "summary": "第二句收在站位指令，第三句起转入站位争论新话题。",
+        },
+        ensure_ascii=False,
+    )
+
+    review = review_talk_boundary_semantics(
+        cues=cues,
+        target_ms=80_570,
+        candidate_id="auto_200130_1722_1792",
+        selection_hook="对食梗在站位话题前闭合",
+        selection_scorecard=_scorecard(),
+        structured_context="hash-bound exact reviewed interval",
+        candidate_context="synthetic fixture",
+        llm_call=lambda _prompt: response,
+        extract_json=_extract,
+        max_forward_ms=0,
+        boundary_search_scope=scope,
+    )
+
+    assert review["status"] == "PASS"
+    assert review["recommended_end_cue_index"] == 2
+    assert review["recommended_end_ms"] == 67_760
+    relaxation = review["recommendation_relaxations"][0]
+    assert relaxation["kind"] == (
+        "reviewed_exact_interval_terminal_projection"
+    )
+    assert relaxation["cue_index"] == 2
+    assert relaxation["cue_end_ms"] == 67_670
+    assert relaxation["reviewed_endpoint_ms"] == 67_760
+    assert relaxation["terminal_drift_ms"] == 90
+    assert relaxation["crossing_witness_cue_index"] == 3
+
+
+def test_ordinary_scope_keeps_legacy_shape_without_projection_null_field():
+    scope = build_boundary_search_scope(
+        semantic_target_ms=80_570,
+        repair_cap_ms=30_000,
+        baseline_tail_cap_ms=95_000,
+    )
+
+    assert "reviewed_exact_interval_projection" not in scope
+    assert boundary_search_scope_is_valid(scope)
+
+
+def test_reviewed_tail_bridge_is_fail_closed_without_exact_bounded_grant():
+    cues = [
+        _cue(1, 65_000, 67_670, "故事闭合"),
+        _cue(2, 67_670, 69_210, "下一话题跨过旧终点"),
+    ]
+    rows = [
+        {
+            "cue_index": index,
+            "start_ms": cue.start_ms,
+            "end_ms": cue.end_ms,
+            "text": cue.text,
+        }
+        for index, cue in enumerate(cues, start=1)
+    ]
+    base_kwargs = {
+        "semantic_target_ms": 80_570,
+        "repair_cap_ms": 30_000,
+        "structured_payoff_ms": 84_240,
+        "baseline_tail_cap_ms": 67_760,
+        "semantic_tail_trim_cap_ms": 15_000,
+    }
+
+    without_grant = build_boundary_search_scope(**base_kwargs)
+    from src.autoslice.boundary_semantic_review import recommendation_eligibility
+
+    assert recommendation_eligibility(rows, without_grant)["cue_indexes"] == []
+
+    with pytest.raises(
+        BoundarySemanticReviewError,
+        match="REVIEWED_EXACT_INTERVAL_PROJECTION_INVALID",
+    ):
+        build_boundary_search_scope(
+            semantic_target_ms=80_570,
+            repair_cap_ms=30_000,
+            reviewed_exact_interval_projection=_projection_scope(),
+        )
+
+    too_wide = build_boundary_search_scope(
+        **{**base_kwargs, "baseline_tail_cap_ms": 68_071},
+        reviewed_exact_interval_projection=_projection_scope(
+            endpoint_ms=68_071
+        ),
+    )
+    assert recommendation_eligibility(rows, too_wide)["cue_indexes"] == []
 
 
 def test_exact_pin_payoff_hypothesis_yields_to_the_published_endpoint():

@@ -46,7 +46,7 @@ def _drive_smoke(monkeypatch, tmp_path, produce_results):
     monkeypatch.setattr(
         runner,
         "recall_candidates",
-        lambda srt_text, hints: (candidates, "semantic", {}),
+        lambda srt_text, hints, danmaku_xml=None: (candidates, "semantic", {}),
     )
     monkeypatch.setattr(runner, "ffprobe_ms", lambda seg: 1_200_000)
     monkeypatch.setattr(runner, "produce_talk", fake_produce)

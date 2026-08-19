@@ -9,7 +9,20 @@ from collections.abc import Mapping, Sequence
 from src.autoslice.boundary_semantic_review import (
     build_boundary_search_scope,
 )
-from src.autoslice.piece_roles import last_content_piece_index
+from src.autoslice.piece_roles import (
+    last_content_piece_index,
+    single_content_piece_index,
+)
+from src.autoslice.redelivery_boundary_projection import (
+    AUTHORITY_CONFIG_KEY,
+    RedeliveryBoundaryProjectionError,
+    projection_scope_from_spec,
+)
+from src.autoslice.reviewed_exact_source_interval import (
+    FROZEN_CONTRACT_KEY as EXACT_INTERVAL_FROZEN_CONTRACT_KEY,
+    authority_from_spec as exact_interval_authority_from_spec,
+    exact_boundary_search_scope,
+)
 from src.autoslice.source_subtitle_truth import (
     candidate_boundary_owner_scope,
 )
@@ -38,9 +51,7 @@ def _normalized_owner_set(
         normalized_windows: list[dict[str, int]] = []
         for window in windows:
             if not isinstance(window, Mapping):
-                raise RuntimeError(
-                    "BOUNDARY_REQUIRED_OWNER_CONTRACT_INVALID"
-                )
+                raise RuntimeError("BOUNDARY_REQUIRED_OWNER_CONTRACT_INVALID")
             start = window.get("start_ms")
             end = window.get("end_ms")
             if (
@@ -50,12 +61,8 @@ def _normalized_owner_set(
                 or not isinstance(end, int)
                 or start >= end
             ):
-                raise RuntimeError(
-                    "BOUNDARY_REQUIRED_OWNER_CONTRACT_INVALID"
-                )
-            normalized_windows.append(
-                {"start_ms": start, "end_ms": end}
-            )
+                raise RuntimeError("BOUNDARY_REQUIRED_OWNER_CONTRACT_INVALID")
+            normalized_windows.append({"start_ms": start, "end_ms": end})
         normalized.append(
             {
                 "owner_kind": str(owner.get("owner_kind") or ""),
@@ -89,11 +96,7 @@ def frozen_boundary_owner_contract_sha256(
     """Hash one frozen contract without its self-referential digest."""
 
     return _canonical_sha256(
-        {
-            str(key): value
-            for key, value in contract.items()
-            if key != "contract_sha256"
-        }
+        {str(key): value for key, value in contract.items() if key != "contract_sha256"}
     )
 
 
@@ -114,8 +117,7 @@ def _deterministic_owner_subset(
             owner
             for owner in owners
             if isinstance(owner, Mapping)
-            and str(owner.get("owner_kind") or "")
-            in _DETERMINISTIC_OWNER_KINDS
+            and str(owner.get("owner_kind") or "") in _DETERMINISTIC_OWNER_KINDS
         ]
     )
 
@@ -136,16 +138,11 @@ def validate_frozen_boundary_owner_contract(
     owners = contract.get("owners")
     owner_scope = contract.get("owner_eligibility_scope")
     try:
-        normalized_owners = (
-            _normalized_owner_set(owners)
-            if isinstance(owners, list)
-            else None
-        )
+        normalized_owners = _normalized_owner_set(owners) if isinstance(owners, list) else None
     except RuntimeError as exc:
         raise RuntimeError("BOUNDARY_RETRY_OWNER_SET_DRIFT") from exc
     if (
-        contract.get("schema_version")
-        != "frozen-boundary-owner-contract.v1"
+        contract.get("schema_version") != "frozen-boundary-owner-contract.v1"
         or contract.get("status") != "FROZEN"
         or not isinstance(owners, list)
         or not isinstance(owner_scope, Mapping)
@@ -157,8 +154,7 @@ def validate_frozen_boundary_owner_contract(
             or not owner["local_windows"]
             for owner in (normalized_owners or [])
         )
-        or contract.get("owner_set_sha256")
-        != _canonical_sha256(normalized_owners)
+        or contract.get("owner_set_sha256") != _canonical_sha256(normalized_owners)
         # Contracts frozen before the deterministic subset existed carry no
         # such digest.  They are immutable evidence validated under the older
         # (strictly narrower) whole-set rule and must stay auditable; only a
@@ -170,14 +166,9 @@ def validate_frozen_boundary_owner_contract(
         )
         or owner_scope.get("scope_sha256")
         != _canonical_sha256(
-            {
-                str(key): value
-                for key, value in owner_scope.items()
-                if key != "scope_sha256"
-            }
+            {str(key): value for key, value in owner_scope.items() if key != "scope_sha256"}
         )
-        or contract.get("contract_sha256")
-        != frozen_boundary_owner_contract_sha256(contract)
+        or contract.get("contract_sha256") != frozen_boundary_owner_contract_sha256(contract)
     ):
         raise RuntimeError("BOUNDARY_RETRY_OWNER_SET_DRIFT")
     return dict(contract)
@@ -223,9 +214,7 @@ def freeze_story_chat_boundary_owners(
             # support gate. Narrow slot repairs keep their own typed contracts.
             if kind == "exact_read" and row.get("owner_eligible") is not True:
                 row["boundary_required"] = False
-                row["boundary_owner_rejection"] = (
-                    "EXACT_READ_SUPPORT_NOT_OWNER_ELIGIBLE"
-                )
+                row["boundary_owner_rejection"] = "EXACT_READ_SUPPORT_NOT_OWNER_ELIGIBLE"
                 continue
             start = row.get("matched_start_ms")
             end = row.get("matched_end_ms")
@@ -237,25 +226,17 @@ def freeze_story_chat_boundary_owners(
                 or end <= start
             ):
                 continue
-            overlap_ms = (
-                min(end, story_end_ms) - max(start, story_start_ms)
-            )
+            overlap_ms = min(end, story_end_ms) - max(start, story_start_ms)
             if overlap_ms <= 0:
                 row["boundary_required"] = False
-                row["boundary_owner_rejection"] = (
-                    "OUTSIDE_IMMUTABLE_STORY_SCOPE"
-                )
+                row["boundary_owner_rejection"] = "OUTSIDE_IMMUTABLE_STORY_SCOPE"
                 continue
             if not story_start_ms <= start < end <= story_end_ms:
                 row["boundary_required"] = False
-                row["boundary_owner_rejection"] = (
-                    "STRADDLES_IMMUTABLE_STORY_SCOPE"
-                )
+                row["boundary_owner_rejection"] = "STRADDLES_IMMUTABLE_STORY_SCOPE"
                 continue
             owner_id = str(
-                row.get("finding_id")
-                or row.get("verdict_id")
-                or f"{kind}:{ordinal}:{start}:{end}"
+                row.get("finding_id") or row.get("verdict_id") or f"{kind}:{ordinal}:{start}:{end}"
             )
             row["boundary_required"] = True
             row["boundary_owner_id"] = owner_id
@@ -264,9 +245,7 @@ def freeze_story_chat_boundary_owners(
                     "owner_kind": kind,
                     "owner_id": owner_id,
                     "required": True,
-                    "local_windows": [
-                        {"start_ms": start, "end_ms": end}
-                    ],
+                    "local_windows": [{"start_ms": start, "end_ms": end}],
                 }
             )
     return contracts
@@ -288,6 +267,14 @@ def _redelivery_baseline_tail_rel_ms(
     end = config.get("absolute_source_end_ms")
     if isinstance(end, bool) or not isinstance(end, int):
         return None
+    pieces = spec.get("pieces") or []
+    try:
+        content_index = single_content_piece_index(pieces)
+        content_start_ms = int(pieces[content_index]["start_ms"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if content_start_ms != last_piece_start_ms or prior_piece_duration_ms != 0:
+        return None
     return prior_piece_duration_ms + (int(end) - last_piece_start_ms)
 
 
@@ -308,37 +295,27 @@ def freeze_required_boundary_owner_contract(
         int(spec["semantic_end_ms"]) - last_piece_start_ms
     )
     given_end_rel_ms = (
-        prior_piece_duration_ms
-        + int(spec["given_end_ms"])
-        - last_piece_start_ms
+        prior_piece_duration_ms + int(spec["given_end_ms"]) - last_piece_start_ms
         if spec.get("given_end_ms") is not None
         else None
     )
-    boundary_end_mode = str(
-        spec.get("given_end_mode") or "semantic_lower_bound"
-    )
+    boundary_end_mode = str(spec.get("given_end_mode") or "semantic_lower_bound")
     manual_lower_bound_ms = (
-        None
-        if boundary_end_mode == "published_recall_anchor"
-        else given_end_rel_ms
+        None if boundary_end_mode == "published_recall_anchor" else given_end_rel_ms
     )
     published_recall_anchor_ms = (
-        given_end_rel_ms
-        if boundary_end_mode == "published_recall_anchor"
-        else None
+        given_end_rel_ms if boundary_end_mode == "published_recall_anchor" else None
     )
     structured_payoff_ms = max(
         (
             int(row["matched_end_ms"])
             for row in chat_authority_audit.get("applied") or []
             if row.get("kind") in {"danmaku", "superchat"}
-            and int(row.get("source_offset_ms") or 0)
-            <= semantic_target_ms + 1_000
+            and int(row.get("source_offset_ms") or 0) <= semantic_target_ms + 1_000
             and semantic_target_ms
             < int(row.get("matched_end_ms") or 0)
             <= semantic_target_ms + 15_000
-            and int(row.get("matched_start_ms") or 0)
-            <= semantic_target_ms + 5_000
+            and int(row.get("matched_start_ms") or 0) <= semantic_target_ms + 5_000
         ),
         default=None,
     )
@@ -347,9 +324,7 @@ def freeze_required_boundary_owner_contract(
         durations=durations,
     )
     story_start_ms = int(owner_eligibility_scope["story_start_ms"])
-    immutable_story_end_ms = int(
-        owner_eligibility_scope["story_end_ms"]
-    )
+    immutable_story_end_ms = int(owner_eligibility_scope["story_end_ms"])
     required_boundary_owners.extend(
         freeze_story_chat_boundary_owners(
             chat_authority_audit,
@@ -366,27 +341,40 @@ def freeze_required_boundary_owner_contract(
         ),
         default=None,
     )
-    boundary_search_scope = build_boundary_search_scope(
-        semantic_target_ms=semantic_target_ms,
-        manual_lower_bound_ms=manual_lower_bound_ms,
-        structured_payoff_ms=structured_payoff_ms,
-        required_owner_end_ms=required_owner_tail_ms,
-        repair_cap_ms=int(
-            spec.get("boundary_repair_extend_cap_ms", 30_000)
-        ),
-        last_piece_start_ms=last_piece_start_ms,
-        prior_piece_duration_ms=prior_piece_duration_ms,
-        boundary_end_mode=boundary_end_mode,
-        published_recall_anchor_ms=published_recall_anchor_ms,
-        baseline_tail_cap_ms=_redelivery_baseline_tail_rel_ms(
-            spec,
+    exact_interval_authority = exact_interval_authority_from_spec(spec)
+    terminal_projection_scope = None
+    if exact_interval_authority is not None:
+        # Exclusive exact replay owns the complete interval.  Its fixed scope
+        # is derived only from the reviewed source timeline and frozen owners;
+        # the disposable ASR grid cannot move review_target_ms.
+        boundary_search_scope = exact_boundary_search_scope(
+            spec=spec,
+            authority=exact_interval_authority,
+            required_owner_end_ms=required_owner_tail_ms,
+        )
+    else:
+        try:
+            terminal_projection_scope = projection_scope_from_spec(spec)
+        except RedeliveryBoundaryProjectionError as exc:
+            raise RuntimeError(str(exc)) from exc
+        boundary_search_scope = build_boundary_search_scope(
+            semantic_target_ms=semantic_target_ms,
+            manual_lower_bound_ms=manual_lower_bound_ms,
+            structured_payoff_ms=structured_payoff_ms,
+            required_owner_end_ms=required_owner_tail_ms,
+            repair_cap_ms=int(spec.get("boundary_repair_extend_cap_ms", 30_000)),
             last_piece_start_ms=last_piece_start_ms,
             prior_piece_duration_ms=prior_piece_duration_ms,
-        ),
-        semantic_tail_trim_cap_ms=int(
-            spec.get("semantic_tail_trim_cap_ms", 0)
-        ),
-    )
+            boundary_end_mode=boundary_end_mode,
+            published_recall_anchor_ms=published_recall_anchor_ms,
+            baseline_tail_cap_ms=_redelivery_baseline_tail_rel_ms(
+                spec,
+                last_piece_start_ms=last_piece_start_ms,
+                prior_piece_duration_ms=prior_piece_duration_ms,
+            ),
+            semantic_tail_trim_cap_ms=int(spec.get("semantic_tail_trim_cap_ms", 0)),
+            reviewed_exact_interval_projection=terminal_projection_scope,
+        )
     spec["boundary_search_scope"] = boundary_search_scope
     boundary_target_ms = int(boundary_search_scope["review_target_ms"])
     frozen_contract: dict[str, object] = {
@@ -399,24 +387,21 @@ def freeze_required_boundary_owner_contract(
         "required_owner_count": len(required_boundary_owners),
         "owners": required_boundary_owners,
         "owner_eligibility_scope": owner_eligibility_scope,
-        "owner_set_sha256": _canonical_sha256(
-            _normalized_owner_set(required_boundary_owners)
-        ),
-        "deterministic_owner_set_sha256": deterministic_owner_set_sha256(
-            required_boundary_owners
-        ),
+        "owner_set_sha256": _canonical_sha256(_normalized_owner_set(required_boundary_owners)),
+        "deterministic_owner_set_sha256": deterministic_owner_set_sha256(required_boundary_owners),
         "boundary_search_scope": boundary_search_scope,
     }
-    frozen_contract["contract_sha256"] = (
-        frozen_boundary_owner_contract_sha256(frozen_contract)
-    )
-    expected_retry_contract = spec.get(
-        "boundary_retry_frozen_owner_contract"
-    )
-    if expected_retry_contract is not None:
-        expected = validate_frozen_boundary_owner_contract(
-            expected_retry_contract
+    if exact_interval_authority is not None:
+        frozen_contract[EXACT_INTERVAL_FROZEN_CONTRACT_KEY] = exact_interval_authority
+    baseline_config = spec.get("subtitle_redelivery_baseline")
+    if terminal_projection_scope is not None and isinstance(baseline_config, Mapping):
+        frozen_contract["reviewed_exact_interval_terminal_projection"] = baseline_config.get(
+            AUTHORITY_CONFIG_KEY
         )
+    frozen_contract["contract_sha256"] = frozen_boundary_owner_contract_sha256(frozen_contract)
+    expected_retry_contract = spec.get("boundary_retry_frozen_owner_contract")
+    if expected_retry_contract is not None:
+        expected = validate_frozen_boundary_owner_contract(expected_retry_contract)
         # A widened-context retry re-derives the transcript, so ASR-matched
         # story-chat owner geometry may not reproduce bit-for-bit.  What must
         # not drift: the immutable candidate scope and every committed-truth
@@ -425,36 +410,20 @@ def freeze_required_boundary_owner_contract(
         if (
             expected.get("deterministic_owner_set_sha256")
             != frozen_contract["deterministic_owner_set_sha256"]
-            or (
-                expected.get("owner_eligibility_scope") or {}
-            ).get("scope_sha256")
+            or (expected.get("owner_eligibility_scope") or {}).get("scope_sha256")
             != owner_eligibility_scope["scope_sha256"]
         ):
             raise RuntimeError("BOUNDARY_RETRY_OWNER_SET_DRIFT")
         frozen_contract["boundary_retry_owner_contract_verification"] = {
             "status": "PASS",
-            "expected_contract_sha256": expected[
-                "contract_sha256"
-            ],
-            "deterministic_owner_set_sha256": frozen_contract[
-                "deterministic_owner_set_sha256"
-            ],
-            "first_attempt_owner_set_sha256": expected.get(
-                "owner_set_sha256"
-            ),
-            "retry_owner_set_sha256": frozen_contract[
-                "owner_set_sha256"
-            ],
-            "owner_eligibility_scope_sha256": (
-                owner_eligibility_scope["scope_sha256"]
-            ),
+            "expected_contract_sha256": expected["contract_sha256"],
+            "deterministic_owner_set_sha256": frozen_contract["deterministic_owner_set_sha256"],
+            "first_attempt_owner_set_sha256": expected.get("owner_set_sha256"),
+            "retry_owner_set_sha256": frozen_contract["owner_set_sha256"],
+            "owner_eligibility_scope_sha256": (owner_eligibility_scope["scope_sha256"]),
             "asr_derived_owner_binding": "per_attempt",
         }
         # The verification receipt is part of the new attempt's contract.
-        frozen_contract["contract_sha256"] = (
-            frozen_boundary_owner_contract_sha256(frozen_contract)
-        )
-    chat_authority_audit["frozen_boundary_owner_contract"] = (
-        frozen_contract
-    )
+        frozen_contract["contract_sha256"] = frozen_boundary_owner_contract_sha256(frozen_contract)
+    chat_authority_audit["frozen_boundary_owner_contract"] = frozen_contract
     return boundary_target_ms, boundary_search_scope

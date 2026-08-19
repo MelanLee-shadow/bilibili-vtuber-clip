@@ -25,6 +25,24 @@
   连同 `speaker_srt_sha256`、`ass_sha256` 放进 package。两条路径都只能指向 package-relative
   regular file；绝对路径、越界、缺文件以及路径任一层 symlink 都拒绝。song lane 不进入这条
   talk speaker gate。
+- 已在一个 host 完整冻结、随后复制到另一 host 的 talk 包，只能用
+  `scripts/relocate_slice_package.py` 投影运行时 locator。调用方必须显式给出且物理核对
+  source/destination package、candidate evidence root 与 deployed repo root；更具体的 package
+  root 映射优先于 candidate root。工具只可改 record/publish/speaker 中明列的 locator 与由此
+  必须更新的 standalone hash，禁止改分析、标题、封面、决策或其他 provenance。chat/context
+  原始字节必须保持不变；chat 内 speaker hash 绑定迁移前 manifest，journal 显式证明
+  before→after speaker 谱系。迁移前后都要重验 record/publish 全镜像、全部已声明 artifact
+  hash、regular/non-symlink 路径和 embedded/standalone speaker 图；严格 journal 只接受固定
+  document/evidence 集、allowed changed pointers 与
+  `chat → context → pre-relocation speaker/publish/record → speaker → publish → record`
+  提交顺序，并以 fsync/原子替换向前恢复。三份迁移前 JSON 原字节必须先作为 package 内
+  preimage 固化；speaker preimage 还须等于 chat 内绑定的迁移前 manifest hash，恢复或
+  `COMMITTED` 重放必须从这些 preimage 重新计算完整投影、changed pointers 与 after hash，
+  不信 journal 自报。locator 另按字段绑定物理 root role：媒体/字幕/烧录/封面与 recut audit
+  只能在 package，最终 filler audit 只能在 candidate，voiceprint profile 只能在 deployed
+  repo；允许 candidate/repo 双来源的 speaker authority 也必须保留 preimage 的原 root，
+  同 hash 副本不得跨 root 重绑。candidate evidence root 必须物理等于 package parent。
+  禁止手改 JSON 路径、伪造 journal，或为凑审计器改产物名。
 - reviewed baseline 执行 exact interval replay 时，必须在 mapping 中 hash-bound 保留每个
   重叠输入 cue 的 replay 前文本、时间和 current cue index。最终权威若撤回较早的
   correction/owner，只有从这些去重后的 pre-replay cue 能重建出旧文本、且 replay 后文本
@@ -44,7 +62,7 @@
   package、same-BV、人审或上传门。
 - governed late source truth 是唯一允许在 expected-value choke point 之后覆盖词面的 lane，
   并且只接受
-  `decision_authority=IVAN_OPERATOR_TRUTH` 的 `VERIFIED_ACTIVE` 行；除可重算的
+  `decision_authority=REVIEWER_OPERATOR_TRUTH` 的 `VERIFIED_ACTIVE` 行；除可重算的
   glossary expected-value canon 外，CPA/AGY/ASR/词表/structured event 只能作为
   `PROPOSED` 候选证据。package auditor 必须拒绝缺该字段或由
   非 operator authority 自升 active 的新行，防止旧机器 ledger 覆盖已经正确的 CPA 结果。
@@ -89,6 +107,24 @@
   推荐 end、source final interval 与第一层回执完全一致。两层 grid/ordinal/坐标不同，不能要求
   SHA 相等；缺任一层、scope 错、把 source 回执复制成 final、witness 漂移或任一 endpoint
   binding 非 PASS 均拒发。
+- `reviewed_exact_source_interval_v1` 包必须在 frozen owner contract、source boundary review 与
+  boundary audit 三处携带逐字段相同、自哈希有效的 environment-independent authority；不得同时
+  出现普通 terminal projection。auditor 还须将它与 redelivery baseline audit 的 source
+  basename/SHA、reviewed SRT SHA、reviewed/current 半开区间、零 video tail extension、最终
+  media anchor 和 candidate 重新对齐。source 与 final 两层 semantic receipt 仍分别验证完整
+  cue grid、endpoint binding 与 source-separation witness；fresh-ASR diagnostic SHA 只作披露，
+  不参与 authority identity。缺 grant、双 grant、tamper、迁移后路径变化以外的身份漂移，或
+  exact replay 未物化到 authority 区间，均拒发且不得转普通 boundary lane。
+- exact-interval grant、激活它的 reviewed-baseline manifest 及其 SRT/JSON 依赖必须来自当前
+  Git HEAD 或 `DEPLOYED_AUTHORITY_MANIFEST` 封存的 canonical repo path；磁盘 spec 不得预注入
+  runtime authority，也不得引用临时/伪造 repo、parent symlink 或自哈希但未提交的副本。compiler
+  对同一次读取的 bytes 同时做 repository seal 与 schema/self-hash 验证；package auditor 再从
+  自己运行的可信 repo root 重载 active grant，与包内副本逐字段相等后才承认。
+- candidate-scoped manual-title KEEP 与 deterministic text narrowing 的 source-fact receipt 必须
+  在 story contract、record staging、publish draft 三面逐字相等，并由 builder/auditor 结合包内
+  最终 SRT、speaker evidence 与当前 deploy-sealed authority 重新验证。确定性 50 字标题例外只在
+  上述 receipt 深验通过时有效；authorized-upload 仍从 hash-bound record 重建同一判断，不能靠
+  手写 manifest、只改 receipt self-hash 或 package 外文件绕过。
 - source review、resolver、retry 与 boundary audit 还必须逐字段携带并验证同 SHA 的
   `talk-boundary-search-scope.v1`。`semantic_lower_bound` 中，人工下界/结构化 payoff 可移动
   semantic search origin，required owner 只抬 delivery floor，绝对 ceiling 固定为
@@ -165,7 +201,20 @@
 - 汇总表时长必须优先使用 producer 最终 record 打印进 summary 的 `duration_ms`（边界自修复后的内容时长），其次才是 candidate 的 `effective_duration_ms`；原始选片锚点 `end_ms-start_ms` 只作旧状态兜底，不能把已延长的 5:00 成片仍显示成 4:32。
 - 汇总中的封面路线必须从校验通过的 `lidousha-cover-route-decision.v2` 投影实际执行路线、是否调用/采用 AI、选中理由和两个未选路线的拒绝理由。内部兼容状态 `AI_COVER_READY` 仅表示封面 artifact 已就绪，绝不能被报告解释成 AI 生图；缺少有效 v2 证据时必须显示 UNKNOWN/缺证。
 - `reporting.py` 是从既有 state/record 生成只读审片报告的投影层，不属于会改变选片、字幕、边界、标题、封面或媒体 bytes 的 proof closure；内容与歌切流水线指纹都必须排除它。报告变化直接重写报告，不得唤醒成片重制或无关失败重试。
+- 报告中的 lifecycle 与“按当前政策可审/可发”必须分开。已有 public reconciliation 的行
+  可标 `VERIFIED_PUBLICATION_FACT`；未公开的 `CURRENT + COMPLIANT` 只说明历史 bundle
+  稳定，若本次没有现场重跑 canonical auditor，必须显示
+  `CURRENT_POLICY_AUDIT_UNKNOWN/NOT_REAUDITED`。不得根据旧 `package_audit.passed=true`
+  或 `review_ready` 猜出当前审计 PASS；上传 choke point 仍须重跑当前 auditor。
 - 已为 `CURRENT + COMPLIANT` 的历史审片包不会因宽流水线指纹变化被 cron 自动重做。确需全量重出时，只能在新的 `RECOVERY_REVIEW` base 运行 `scripts/plan_recovery_review_rerun.py`：普通 recovery base 要求源 state 字节 SHA-256、全部 CURRENT candidate allowlist、共同旧指纹和当前新指纹完全匹配。对 ordinary daily state 或有效 exact recovery state 中一个已发布候选的单片事故，则必须显式加 `--project-single-published-repair`，只允许一个 `--candidate-id`，禁止 suppression/replacement；历史 exact recovery 源只读兼容明确列出的 v5–v7 plan，plan 必须与 selection contract 完全一致并包含目标，投影出的新目标始终使用当前 v7。planner 把其他 active row 记录为 `SOURCE_STATE_UNCHANGED_OUTSIDE_REPAIR_TARGET` 后投影出隔离的 exact base，不得把未重跑的其他候选伪装成用户拒绝。若隔离 base 不复制多 GiB 的原录像，可同时用 `--target-recordings-root` 绑定现有 regular recording tree；该 root 中可见的日期目录必须恰好只有目标 date（可让该单个日期目录指向 canonical date），receipt 会冻结该路径，后续 runner 必须以同一 `AUTOSLICE_REC_ROOT` 运行。两种模式都要求 source/target 无 `AUTO_UPLOAD`；若 source 本身是 recovery base，其 `cpa.env` 可以是既有的外部权威 symlink，但 planner 必须先解析并验证最终目标是 regular file，再让 target 直接绑定该解析后的权威，禁止复制凭据或接受悬空/非普通文件目标；旧目标 record 完整降为 `SUPERSEDED + STALE_PIPELINE`，新项以 `selected_repair` 入队，随后仍由正常 runner 生成 CURRENT 成品。禁止把旧 `review_ready` 手改成 failed，也禁止在旧 base 原地覆盖。
+- 上一条的窄例外只适用于一条**未发布且仍被 registry hold** 的历史 Talk 审片件：
+  `operator-processing-scope-grant.v3 / RERENDER_NAMED_HELD_CURRENT_FOR_REVIEW`
+  必须逐 tick 重验 committed/deployed-sealed `hold_pending_review` 精确行、
+  `review_ready + CURRENT + COMPLIANT` 唯一 active row、候选级新旧 fingerprint 不同，
+  以及 exact source/BCUT/structured-chat 证据。全部预检成功后才能在同一内存事务中把旧行
+  归档为 `SUPERSEDED + STALE_PIPELINE` 并入队 `selected_repair`；不得携带或生成
+  `given_title`、`recovery_publication_authority`、publication authority 或上传权。
+  registry 与 Song 队列保持原字节/原行，任何中途漂移都显式阻断而不部分改 state。
 - `delivery_rerun_plan.schema_version` 必须精确为
   `recovery-review-talk-rerun-plan.v7`；v6 及以下只作历史证据，不可执行。planner 必须以
   `registry_repo_path + registry_sha256` 绑定
@@ -234,7 +283,61 @@
   普通 production 的 `candidate_rejected` 仍是终态，不能借此复活。
 - authorized uploader 在任何副作用前重跑**当前** canonical package auditor、严格 SRT 与共享
   标题门，并要求重跑结果与 manifest 绑定的 v2 audit 完全一致；它不信任旧 audit 自报。
+- **外部主机（wsl/Mac）产出的包只能经 `scripts/import_external_package.py` 进入交付链。**
+  它们用同一份 repo、同一套 produce，包是完整的；卡的是跨主机导入——凭据、
+  `publication_registry` 和 upload 读的 state 只在 free。该工具按序做：源包定位符契约校验
+  → 逐文件 sha256 前后比对的字节搬运 → `slice-package-relocation.v2` 事务化路径规整 →
+  持 `runner.lock` 的 state 绑定 → manifest → package audit → 标题+封面联合质检，
+  typed 回执落 `<pkg>/<cid>.external-import-receipt.json`；不带 `--apply` 为 dry-run。
+  用法：`python3 scripts/import_external_package.py --source <外部包的
+  replacement_recuts 目录> --date <date> --candidate <cid> [--allow-new-pick] --apply`
+  （跨主机传输不在工具内，先 rsync/scp 到 free 的暂存目录；暂存目录与目标目录必须不同）。
+  硬边界：只走 talk 车道；只接受 pick 行缺失（需 `--allow-new-pick`）或已是
+  `review_ready`+`rc=0` 的重绑。普通 `candidate_rejected`/`failed` 仍必须先过
+  `scripts/revive_rejected_candidates.py`；唯一例外是下述 registry-authorized exact failed-pick
+  adoption。批级状态不在 manifest builder 白名单内时直接
+  typed 拒绝而不修状态；**不做 `authorized_upload make-manifest`**，上传授权仍只走
+  [90-publish.md](90-publish.md)。路径投影只动
+  `package_relocation_contract.py` 白名单里的运行期定位符，冻结证据（`story_contract`、
+  `cover_generation`、`boundary_audit`、`analysis` 等）逐字节保留产出主机的值；改写后的
+  publish/speaker 哈希由 record 的 `artifact_hashes.publish_draft_sha256` 与
+  `speaker_finalization_manifest_sha256` 重新绑定，chat-authority 里产出主机的
+  `speaker_manifest_sha256` 不改写，只在事务日志记 `speaker_manifest_lineage`。
+- 已经存在于 state 中的 failed pick，仅当当前部署仓库的
+  `assets/lidousha/publication_registry.v1.json` 中有唯一匹配行，才可通过专用
+  模式接纳：`--adopt-failed-pick <cid> --release-quote '<维护者 逐字原话>'`。
+  两个 flag 必须同时出现，`--adopt-failed-pick` 必须精确等于
+  `--candidate`，不得与 `--allow-new-pick` 共用；quote 必须与 registry 字节级
+  一致。registry 顶层行的 `status=released_for_upload`、`released_by=维护者`
+  与该 quote 是 维护者 已明确授权发布的表示，因此它**有意打开 registry
+  upload gate**；不得把它误写成“不授权上传”。但内嵌
+  `failed-pick-import-authority.v1` 的 scope 仍只是
+  `ADOPT_FAILED_PICK_FOR_EXTERNAL_PACKAGE_IMPORT_ONLY`：它只授权这一次 state adoption，
+  不可代替 current package audit、标题+封面联合 QC、authorized-upload manifest/
+  uploader 的任何闸门。
+- failed-pick authority 必须绑定 exact candidate/date、整条失败 pick 的 canonical
+  preimage SHA、允许的失败字段形状、批次/发布闭环的前状态和唯一后状态。
+  importer 在 copy 前持 `runner.lock` 重读 state 和 registry 做预检，bind 时再读一次
+  registry 防止预检后漂移。任一 row SHA/字段、queue/publication membership、
+  batch/closure 或 registry 字节不同都拒绝，不得按“大概是同一条失败”放宽。
+  成功时仅清除白名单内的 active failure/retry 标记，保留历史证据和其他 state
+  字段，并在 `external_package_import.failed_pick_adoption` 写入
+  `failed-pick-import-consumption.v1 / CONSUMED`。该 consumption 与前状态 hash 使授权
+  一次性：已消费、已发布、row 已漂移或批次已迁移后不得再次接纳。
+- state bind 的 rollback 也是该快车道的强制契约，而不是人工补救。bind 前必须在
+  lock 内固化并 hash-验证 exact state preimage backup；写入、读回、
+  `review_ready/rc=0`、failed-pick consumption 或 batch/closure 后状态任一失败，必须在
+  同一 lock 内恢复并重验 exact preimage bytes 后才返回拒绝。bind 成功后的
+  manifest、package audit 或 title+cover QC 任一失败，也必须持 lock 回滚；
+  只有当前 state SHA 仍精确等于固化的 postimage 时才能自动覆盖，否则为避免
+  抹掉并发更改而 fail closed。后置闸门失败回执必须显式记
+  `ROLLED_BACK_AFTER_GATE_FAILURE`。已复制/迁移的 package 字节可作 staged 证据保留，
+  但 state 回滚后不得将它报告为已绑定、review-ready 或可上传。
 - 新 BV 与 exact same-BV repair 的两条发布 lane、权限边界、正式 receipt schema、live
   验收和执行顺序只读 [90-publish.md](90-publish.md)。打包步骤不得复制、放宽或自行推导发布
   准入，也不得把 package audit、pending-human manifest 或任意旧版/手写 receipt 当成授权。
-- tag 按成品字幕出（`upload_tag_policy.py`，维护者拍板）。
+- tag 按成品字幕重算（`upload_tag_policy.py` + `scripts/suggest_upload_tags.py`）。profile
+  `upload-tag-policy.v2` 固定 4 个 base 位与最多 6 个 dynamic 位，总上限 10；专名（含
+  `important_content_ips` 白名单中的高显著 IP/节目名）只由确定性 owner 从标题/最终 SRT 命中，
+  trigger 标点/别名只作表面，输出 canonical 正主名。LLM 仍只提通用内容词，不能发明或重复
+  专名；最终 6 个 dynamic 位按人工补充 → 确定性专名/IP → LLM 内容词的既有优先级竞争。

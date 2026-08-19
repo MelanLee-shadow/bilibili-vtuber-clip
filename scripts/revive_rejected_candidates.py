@@ -43,6 +43,11 @@ from src.autoslice.selection_scorecard import (  # noqa: E402
 
 REVIVABLE_STATUSES = ("candidate_rejected", "review_ready")
 SANCTIONED_REVIVAL_RETRY_SCHEMA = "sanctioned-revival-retry.v1"
+SONG_REVIVAL_SCHEMA = "song-candidate-revival.v1"
+# ``requeue_recoverable_songs`` 只在 song_pipeline_fingerprint 变化时给一条
+# blocked 记录新的尝试预算。复活必须显式声明「上游已修，这条的旧指纹作废」，
+# 因此写入一个绝不可能等于任何真实指纹的哨兵值，而不是伪造一个假指纹。
+SONG_REVIVAL_FINGERPRINT_PREFIX = "sanctioned-revival:"
 
 
 def _atomic_write(path: Path, payload: dict) -> None:
@@ -59,6 +64,93 @@ def _atomic_write(path: Path, payload: dict) -> None:
         raise
 
 
+def _revive_songs(
+    *,
+    state: dict,
+    wanted: list[str],
+    reason: str,
+    fix_commit: str,
+    apply: bool,
+) -> int:
+    """复活 state["songs"] 里的 candidate_rejected 歌切行。
+
+    与 talk 的差别（不是同一套机制，不能复用 picks 分支）：
+    - 记录在 ``state["songs"]``，不在 ``state["picks"]``；
+    - 终态由 ``project_terminal_song_disposition`` 铸造，附
+      ``song_terminal_disposition`` 收据，必须一并撤销，否则下一 tick 立刻
+      重新铸造回 candidate_rejected；
+    - 重新入队走 ``requeue_recoverable_songs``（需要 status ∈ {blocked,failed}
+      且 song_pipeline_fingerprint 发生变化），不走 talk 的
+      ``failure_recoverable`` + ``sanctioned_revival_retry`` 通道。
+    """
+
+    songs = [row for row in state.get("songs", []) if isinstance(row, dict)]
+    by_id = {
+        str(row.get("candidate_id") or ""): row
+        for row in songs
+        if str(row.get("candidate_id") or "") in wanted
+    }
+    missing = [cid for cid in wanted if cid not in by_id]
+    if missing:
+        print(f"REFUSE: song candidates not in state['songs']: {missing}", file=sys.stderr)
+        return 2
+
+    for cid in wanted:
+        row = by_id[cid]
+        if row.get("status") != "candidate_rejected":
+            print(
+                f"REFUSE: {cid} status={row.get('status')!r} is not candidate_rejected",
+                file=sys.stderr,
+            )
+            return 2
+        if row.get("delivered"):
+            print(f"REFUSE: {cid} is already delivered", file=sys.stderr)
+            return 2
+
+    for cid in wanted:
+        row = by_id[cid]
+        disposition = row.get("song_terminal_disposition") or {}
+        revival = {
+            "schema_version": SONG_REVIVAL_SCHEMA,
+            "revived_at": _dt.datetime.now(_dt.timezone.utc).isoformat(
+                timespec="seconds"
+            ),
+            "operator": "claude-root-session",
+            "reason": reason,
+            "expected_fix_commit": fix_commit,
+            "previous_status": row.get("status"),
+            "previous_terminal_disposition": dict(disposition) if disposition else None,
+            "previous_reason_codes": list(row.get("reason_codes") or []),
+            "previous_song_pipeline_fingerprint": row.get("song_pipeline_fingerprint"),
+        }
+        print(f"revive song {cid}: candidate_rejected -> blocked")
+        print(f"  was: {disposition.get('reason_codes')}")
+        print(f"  withdrawing {len(revival['previous_reason_codes'])} stale reason code(s)")
+        if apply:
+            row["status"] = "blocked"
+            row.pop("song_terminal_disposition", None)
+            row.pop("decision", None)
+            # 必须清空 reason_codes，否则复活当场作废：
+            # requeue_recoverable_songs（delivery_recovery.py:1180-1192）在检查
+            # status 之前先调用 project_terminal_song_disposition，后者只看
+            # status ∈ {blocked,failed} + rc==0 + reason_codes 里还有
+            # SONG_DETERMINISTIC_PROOF_REJECTION_CODES，就会立刻把这行重新铸成
+            # candidate_rejected —— 实测复活后第一次 tick 就被打回。
+            # 旧判据不是被抹掉，是被"撤回"：完整原文保存在 song_revivals 审计块
+            # 的 previous_reason_codes 里，等这次新的尝试自己重新给出判据。
+            row["reason_codes"] = []
+            row["song_pipeline_fingerprint"] = (
+                SONG_REVIVAL_FINGERPRINT_PREFIX + fix_commit
+            )
+            row.setdefault("song_revivals", []).append(revival)
+
+    if apply:
+        print(f"APPLIED: {len(wanted)} song candidate(s) revived")
+    else:
+        print(f"DRY-RUN: {len(wanted)} song candidate(s) would be revived (pass --apply)")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state", required=True, type=Path)
@@ -66,6 +158,14 @@ def main() -> int:
     parser.add_argument("--reason", required=True)
     parser.add_argument("--fix-commit", required=True)
     parser.add_argument("--runner-lock", type=Path, default=None)
+    parser.add_argument(
+        "--lane",
+        choices=("talk", "song"),
+        default="talk",
+        help="talk 复活 state['picks']（默认，历史行为）；song 复活 "
+        "state['songs'] 里被 project_terminal_song_disposition 铸成 "
+        "candidate_rejected 的歌切行",
+    )
     parser.add_argument("--apply", action="store_true")
     parser.add_argument(
         "--resume-unqueued-revival",
@@ -154,8 +254,29 @@ def main() -> int:
     fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
 
     state = json.loads(args.state.read_text(encoding="utf-8"))
-    picks = state.get("picks") or []
     wanted = list(dict.fromkeys(args.candidate))
+
+    if args.lane == "song":
+        if args.restore_selection_scorecard_from_spec is not None or args.force_redo:
+            print(
+                "REFUSE: --restore-selection-scorecard-from-spec/--force-redo are "
+                "talk-lane only",
+                file=sys.stderr,
+            )
+            return 2
+        rc = _revive_songs(
+            state=state,
+            wanted=wanted,
+            reason=args.reason,
+            fix_commit=args.fix_commit,
+            apply=args.apply,
+        )
+        if rc == 0 and args.apply:
+            _atomic_write(args.state, state)
+            print(f"APPLIED to {args.state}")
+        return rc
+
+    picks = state.get("picks") or []
     by_id = {}
     for row in picks:
         cid = str(row.get("candidate_id") or "")

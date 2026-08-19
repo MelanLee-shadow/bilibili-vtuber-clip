@@ -8,33 +8,26 @@ from pathlib import Path
 
 from src.autoslice.boundary_semantic_review import PIN_CROSSING_TOLERANCE_MS, cue_grid_sha256
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.redelivery_boundary_projection import (
+    projection_endpoint_binding_is_valid,
+)
 
 
-def final_delivery_review_matches_srt(
-    review: object,
-    subtitle_path: Path | None,
-) -> bool:
+def final_delivery_review_matches_srt(review: object, subtitle_path: Path | None) -> bool:
     """Recompute the delivery grid and terminal cue from package bytes."""
 
     if not isinstance(review, Mapping) or subtitle_path is None:
         return False
     try:
-        cues = [
-            cue
-            for cue in parse_srt_cues(
-                subtitle_path.read_bytes().decode("utf-8", errors="strict")
-            )
-            if cue.text.strip()
-        ]
+        text = subtitle_path.read_bytes().decode("utf-8", errors="strict")
+        cues = [cue for cue in parse_srt_cues(text) if cue.text.strip()]
     except (OSError, UnicodeError, ValueError):
         return False
     endpoint = review.get("final_endpoint_binding")
     if not cues or not isinstance(endpoint, Mapping):
         return False
     closure = cues[-1]
-    closure_sha256 = "sha256:" + hashlib.sha256(
-        closure.text.encode("utf-8")
-    ).hexdigest()
+    closure_sha256 = "sha256:" + hashlib.sha256(closure.text.encode("utf-8")).hexdigest()
     return bool(
         review.get("cue_grid_sha256") == cue_grid_sha256(cues)
         and review.get("recommended_end_cue_index") == len(cues)
@@ -66,9 +59,7 @@ def bind_final_semantic_endpoint(
         for position, cue in enumerate(semantic_cues, start=1)
         if int(getattr(cue, "end_ms")) == int(snapped_end_ms)
     ]
-    closure_index = (
-        closure_positions[0] if len(closure_positions) == 1 else None
-    )
+    closure_index = closure_positions[0] if len(closure_positions) == 1 else None
     final_grid_sha256 = cue_grid_sha256(semantic_cues)
     reasons: list[str] = []
     if review.get("status") != "PASS":
@@ -77,6 +68,14 @@ def bind_final_semantic_endpoint(
         reasons.append("BOUNDARY_SEMANTIC_CUE_GRID_MISMATCH")
     pin = review.get("recommended_end_ms")
     endpoint_ms_bound = pin == snapped_end_ms
+    if not endpoint_ms_bound:
+        endpoint_ms_bound = projection_endpoint_binding_is_valid(
+            review=review,
+            cues=semantic_cues,
+            closure_index=closure_index,
+            snapped_end_ms=snapped_end_ms,
+            final_end_ms=final_end_ms,
+        )
     if not endpoint_ms_bound and closure_index is not None:
         # Pin-crossing closure: the reviewed effective end is the source pin
         # inside the closure cue — recompute containment from the grid, never

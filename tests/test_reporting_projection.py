@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 import src.autoslice.reporting as reporting
@@ -23,6 +24,15 @@ class _Runner:
     @staticmethod
     def safe_name(text: str, fallback: str) -> str:
         return text or fallback
+
+
+def _file_binding(path: Path) -> dict[str, object]:
+    body = path.read_bytes()
+    return {
+        "path": str(path),
+        "sha256": hashlib.sha256(body).hexdigest(),
+        "bytes": len(body),
+    }
 
 
 def _screenshot_direct_generation() -> dict[str, object]:
@@ -190,20 +200,14 @@ def test_report_projects_products_rejects_and_reserves_exclusively(
     }
 
     reporting.write_reports("2026-07-22", state)
-    summary = (
-        tmp_path / "delivery/2026-07-22/AUTOSLICE_SUMMARY.md"
-    ).read_text(encoding="utf-8")
+    summary = (tmp_path / "delivery/2026-07-22/AUTOSLICE_SUMMARY.md").read_text(encoding="utf-8")
     products = summary.split("## 候选门禁拒绝", 1)[0]
-    rejects = summary.split("## 候选门禁拒绝", 1)[1].split(
-        "## 当前谈话候补", 1
-    )[0]
+    rejects = summary.split("## 候选门禁拒绝", 1)[1].split("## 当前谈话候补", 1)[0]
     reserves = summary.split("## 当前谈话候补", 1)[1]
 
     assert "被拒绝" not in products
     assert "candidate_rejected" not in products
-    assert "缺失包口径的旧交付" not in products.split(
-        "## 旧版或合规状态未知的包", 1
-    )[0]
+    assert "缺失包口径的旧交付" not in products.split("## 旧版或包状态未知的未公开审片包", 1)[0]
     assert "legacy-delivered" in summary
     assert "UNKNOWN" in summary
     assert "look and Rollie" in rejects
@@ -241,22 +245,72 @@ def test_report_does_not_infer_ai_route_from_legacy_ready_status(
     }
 
     reporting.write_reports("2026-07-22", state)
-    summary = (
-        tmp_path / "delivery/2026-07-22/AUTOSLICE_SUMMARY.md"
-    ).read_text(encoding="utf-8")
+    summary = (tmp_path / "delivery/2026-07-22/AUTOSLICE_SUMMARY.md").read_text(encoding="utf-8")
 
     assert "旧就绪状态：AI_COVER_READY" in summary
     assert "不能据此判断是否使用 AI" in summary
     assert "证据=MISSING_OR_INVALID" in summary
 
 
+def test_historical_current_bundle_is_not_reaudited_but_verified_publication_remains_fact(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(reporting, "_runner", _Runner(tmp_path))
+    authority = tmp_path / "publication-authority.json"
+    authority.write_text('{"status":"VERIFIED_PUBLIC"}\n', encoding="utf-8")
+    state = {
+        "status": "review_ready",
+        "picks": [
+            {
+                "candidate_id": "historical-current",
+                "status": "review_ready",
+                "bundle_lifecycle": "CURRENT",
+                "bundle_compliance": "COMPLIANT",
+                "hook": "历史 CURRENT 旧审片包",
+            },
+            {
+                "candidate_id": "bare-pass",
+                "status": "review_ready",
+                "bundle_lifecycle": "CURRENT",
+                "bundle_compliance": "COMPLIANT",
+                "package_audit": {"passed": True},
+                "hook": "只有 passed true",
+            },
+            {
+                "candidate_id": "published",
+                "status": "published",
+                "bvid": "BV1verified",
+                "hook": "已经公开",
+                "publication_reconciliation": {
+                    "schema_version": "publication-reconciliation.v1",
+                    "status": "VERIFIED_PUBLIC",
+                    "candidate_id": "published",
+                    "bvid": "BV1verified",
+                    "authority": _file_binding(authority),
+                },
+            },
+        ],
+        "songs": [],
+    }
+
+    reporting.write_reports("2026-08-07", state)
+    summary = (tmp_path / "delivery/2026-08-07/AUTOSLICE_SUMMARY.md").read_text(encoding="utf-8")
+    published, historical = summary.split("## 未公开历史稳定审片包", 1)
+
+    assert "VERIFIED_PUBLICATION_FACT | NOT_INFERRED_FROM_PUBLICATION | `已经公开`" in published
+    assert "历史 CURRENT 旧审片包" not in published
+    assert "只有 passed true" not in published
+    assert "`历史 CURRENT 旧审片包`" in historical
+    assert "`只有 passed true`" in historical
+    assert historical.count("CURRENT_POLICY_AUDIT_UNKNOWN/NOT_REAUDITED") >= 3
+    assert "CURRENT_POLICY_AUDIT_PASS" not in summary
+
+
 def test_cover_route_projection_reports_degraded_and_ai_actual_routes() -> None:
     degraded = reporting._cover_route_projection(
         {"cover_generation": _screenshot_polish_degraded_generation()}
     )
-    redraw = reporting._cover_route_projection(
-        {"cover_generation": _ai_redraw_generation()}
-    )
+    redraw = reporting._cover_route_projection({"cover_generation": _ai_redraw_generation()})
 
     assert degraded["evidence_status"] == "VALID_V2"
     assert degraded["label"] == "截图直出（原选截图轻调；AI已调用但未用于最终图）"

@@ -144,6 +144,23 @@ def _judge(surface, bvids, kind="alias_of"):
     )
 
 
+def _assert_raw_identifier_absent(value, raw_identifier):
+    """Ignore opaque digest collisions while rejecting a persisted raw id."""
+
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key.endswith("_sha256"):
+                continue
+            _assert_raw_identifier_absent(item, raw_identifier)
+    elif isinstance(value, list):
+        for item in value:
+            _assert_raw_identifier_absent(item, raw_identifier)
+    elif isinstance(value, str):
+        assert str(raw_identifier) not in value
+    else:
+        assert value != raw_identifier
+
+
 def test_comment_page_includes_inline_children_within_one_bounded_request():
     payload = _reply_payload([(1901, "2026-08-01", "根评论")])
     child = _reply_payload([(1902, "2026-08-01", "楼中楼里的鼠鼠")])["data"][
@@ -181,11 +198,16 @@ def test_comment_only_name_is_discovered_and_accepted_by_independent_commenters(
             _reply_payload([(2003, "2026-08-02", "今天也是鼠鼠"), (2004, "2026-08-02", "喜欢鼠鼠")]),
         ]
     )
+    state = empty_state()
+    # This fixed salt makes the opaque commenter hash contain the digits
+    # ``2001``.  A whole-JSON substring assertion would therefore be flaky even
+    # though the raw commenter id is not persisted.
+    state["comment_hash_salt"] = "0" * 61 + "27a"
     result = crawl(
         client=client,
         registry=_registry(),
         config=_config(comments=2),
-        state=empty_state(),
+        state=state,
         now=NOW,
         llm_call=lambda _: _judge("鼠鼠", ["BV1000000001", "BV1000000002"]),
         forced_entities=["花礼Harei"],
@@ -208,7 +230,12 @@ def test_comment_only_name_is_discovered_and_accepted_by_independent_commenters(
     assert "must-not-persist" not in persisted
     assert '"commenter_mid"' not in persisted
     assert '"rpid"' not in persisted
-    assert "2001" not in persisted
+    assert any(
+        "2001" in witness["commenter_key_sha256"]
+        for evidence in mapping["evidence"]
+        for witness in evidence.get("comment_witnesses", [])
+    )
+    _assert_raw_identifier_absent(json.loads(persisted), 2001)
 
 
 def test_official_video_comments_strengthen_target_context_without_becoming_official_self_evidence():

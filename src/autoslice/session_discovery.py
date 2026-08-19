@@ -11,10 +11,12 @@ import json
 import os
 import re
 import subprocess
+from collections.abc import Collection
 from datetime import datetime
 from pathlib import Path
 
 from src.autoslice.runner_proxy import RunnerProxy
+from src.autoslice.segment_scene_context import resolve_segment_scene_context
 from src.autoslice.story_contract import canonicalize_relation_summary
 
 
@@ -130,8 +132,14 @@ def recording_session_id(segment: Path, date: str) -> str:
     return f"live-{date.replace('-', '')}Tunknown"
 
 
-def annotate_state_sessions(date: str, state: dict) -> bool:
-    """Migrate date-level state rows onto recorder-defined live sessions."""
+def annotate_state_sessions(
+    date: str,
+    state: dict,
+    *,
+    include_song_rows: bool = True,
+    talk_candidate_ids: Collection[str] | None = None,
+) -> bool:
+    """Migrate rows onto live sessions without crossing a frozen Talk scope."""
 
     changed = False
     mapping = state.setdefault("segment_sessions", {})
@@ -144,10 +152,23 @@ def annotate_state_sessions(date: str, state: dict) -> bool:
         relation_mapping = {}
         state["segment_relation_authorities"] = relation_mapping
         changed = True
+    scene_mapping = state.setdefault("segment_scene_contexts", {})
+    if not isinstance(scene_mapping, dict):
+        scene_mapping = {}
+        state["segment_scene_contexts"] = scene_mapping
+        changed = True
     for segment in _runner.list_segments(date):
         if not mapping.get(segment.stem):
             session_id = recording_session_id(segment, date)
             mapping[segment.stem] = session_id
+            changed = True
+        scene = resolve_segment_scene_context(
+            segment,
+            xml_path=_runner.find_danmaku_xml(segment),
+            cached=scene_mapping.get(segment.stem),
+        )
+        if scene_mapping.get(segment.stem) != scene:
+            scene_mapping[segment.stem] = scene
             changed = True
         relation = _session_relation_for_state(date, segment, state)
         if relation is not None and relation_mapping.get(segment.stem) != relation:
@@ -180,24 +201,48 @@ def annotate_state_sessions(date: str, state: dict) -> bool:
         state["session_relation_authority"] = relation_summary
         changed = True
 
-    collections = (
+    talk_collections = (
         "picks",
-        "songs",
         "pending_talk",
-        "pending_song",
         "talk_backlog",
-        "song_backlog",
-        "song_superseded_attempts",
         "talk_superseded_attempts",
     )
+    collections = talk_collections
+    if include_song_rows:
+        collections += (
+            "songs",
+            "pending_song",
+            "song_backlog",
+            "song_superseded_attempts",
+        )
     for collection in collections:
         for row in state.get(collection, []):
             if not isinstance(row, dict):
                 continue
+            if talk_candidate_ids is not None and collection in talk_collections:
+                candidate_id = str(
+                    row.get("cid") or row.get("candidate_id") or ""
+                ).strip()
+                if candidate_id not in talk_candidate_ids:
+                    continue
             segment_value = row.get("segment_path") or row.get("segment")
             if not segment_value:
                 continue
             segment_path = Path(str(segment_value))
+            scene = scene_mapping.get(segment_path.stem)
+            if scene is None and segment_path.is_file():
+                scene = resolve_segment_scene_context(
+                    segment_path,
+                    xml_path=_runner.find_danmaku_xml(segment_path),
+                )
+                scene_mapping[segment_path.stem] = scene
+                changed = True
+            if isinstance(scene, dict) and row.get("segment_scene_context") != scene:
+                row["segment_scene_context"] = scene
+                changed = True
+            elif scene is None and "segment_scene_context" in row:
+                del row["segment_scene_context"]
+                changed = True
             relation = relation_mapping.get(segment_path.stem)
             if isinstance(relation, dict) and row.get(
                 "session_relation_authority"
@@ -432,6 +477,14 @@ def discover_segments(date: str, state: dict) -> None:
                 _runner.log(f"segment {segment.name}: BCUT failed {attempts[stem]}x → dead")
             continue
         xml = _runner.find_danmaku_xml(segment)
+        scene_mapping = state.setdefault("segment_scene_contexts", {})
+        if not isinstance(scene_mapping, dict):
+            scene_mapping = {}
+            state["segment_scene_contexts"] = scene_mapping
+        segment_scene = resolve_segment_scene_context(
+            segment, xml_path=xml, cached=scene_mapping.get(stem)
+        )
+        scene_mapping[stem] = segment_scene
         verified_source_sha256 = _verified_state_source_sha256(state, segment)
         try:
             chat_binding = _runner.resolve_structured_chat_binding(
@@ -451,7 +504,7 @@ def discover_segments(date: str, state: dict) -> None:
         failures = state.get("structured_chat_binding_failures")
         if isinstance(failures, dict):
             failures.pop(stem, None)
-        candidates, lane, extras = _runner.recall_candidates(srt, _runner.danmaku_hints(xml))
+        candidates, lane, extras = _runner.recall_candidates(srt, _runner.danmaku_hints(xml), xml)
         seg_dur = _runner.ffprobe_ms(segment)
         segment_durations_ms[stem] = seg_dur
         visual_result = _runner.discover_visual_songs(
@@ -541,6 +594,7 @@ def discover_segments(date: str, state: dict) -> None:
                 "preview": cand.text_preview[:80],
                 "bcut_srt_path": str(srt),
                 "session_id": session_id,
+                "segment_scene_context": segment_scene,
                 "session_relation_authority": session_relation,
                 "filler_proposals": list(meta.get("filler_proposals") or []),
                 "filler_proposal_srt_sha256": meta.get(

@@ -12,7 +12,8 @@ manifest，谁裁定的、为什么，写清楚）。上传授权不因此扩大
 
 手动包的平铺命名（与 runner 的 <cid>.recut.* 不同）：
   <stem>.mp4（烧录成品）/ .publish.json / .record.json / .srt /
-  .final-sapphire72.ass / .chat-authority.json / .clip-context.json /
+  单人车道 .final-sapphire72.ass，或说话人车道 .speaker.srt +
+  .speaker.ass / .chat-authority.json / .clip-context.json /
   .cover.png + .cover.pre-overlay.png / .cover.ai-bg.png / .cover.title-mask.png
 """
 
@@ -32,13 +33,22 @@ from scripts.build_daily_review_manifest import (  # noqa: E402
     DailyManifestError,
     _candidate_lane,
     _lane_manifest_contract_fields,
+    _package_regular_file,
+    _rebuild_package_speaker_evidence,
     _sha256,
+)
+from src.autoslice.review_package_ass_audit import (  # noqa: E402
+    uniform_host_fallback_declared,
 )
 
 
 def _need(package_root: Path, name: str) -> Path:
-    path = package_root / name
-    if not path.is_file():
+    path = _package_regular_file(
+        package_root,
+        name,
+        label="required package artifact",
+    )
+    if path is None:
         raise DailyManifestError(f"required package file missing: {name}")
     return path
 
@@ -68,9 +78,7 @@ def _verified_cover_artifact(
     return flat_name
 
 
-def build_manual(
-    package_root: Path, *, operator: str, note: str
-) -> dict:
+def build_manual(package_root: Path, *, operator: str, note: str) -> dict:
     package_root = package_root.resolve()
     if not package_root.is_dir():
         raise DailyManifestError(f"package root missing: {package_root}")
@@ -113,8 +121,18 @@ def build_manual(
     record = _need(package_root, f"{stem}.record.json")
     record_doc = json.loads(record.read_text(encoding="utf-8"))
     subtitle = _need(package_root, f"{stem}.srt")
-    ass = _need(package_root, f"{stem}.final-sapphire72.ass")
     chat_authority = _need(package_root, f"{stem}.chat-authority.json")
+    try:
+        chat_authority_doc = json.loads(chat_authority.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise DailyManifestError("package chat authority is unreadable or invalid") from exc
+    uniform_fallback = uniform_host_fallback_declared(record_doc, chat_authority_doc)
+    if uniform_fallback:
+        ass = _need(package_root, f"{stem}.final-sapphire72.ass")
+        speaker_srt = subtitle
+    else:
+        ass = _need(package_root, f"{stem}.speaker.ass")
+        speaker_srt = _need(package_root, f"{stem}.speaker.srt")
     clip_context = _need(package_root, f"{stem}.clip-context.json")
     # manifest.date 是 auditor 对 clip-context 日期绑定的比对面：从包内
     # hash-bound 的 clip-context 原样取（不发明值），缺失即拒。
@@ -123,21 +141,36 @@ def build_manual(
     if not recording_date:
         raise DailyManifestError("package clip context lacks recording_date")
     cover = _need(package_root, f"{stem}.cover.png")
-    declared_cover_sha = str(
-        cover_generation.get("final_cover_sha256") or ""
-    ).removeprefix("sha256:")
+    declared_cover_sha = str(cover_generation.get("final_cover_sha256") or "").removeprefix(
+        "sha256:"
+    )
     if declared_cover_sha and _sha256(cover) != declared_cover_sha:
-        raise DailyManifestError(
-            "package cover bytes do not match generation final_cover_sha256"
-        )
+        raise DailyManifestError("package cover bytes do not match generation final_cover_sha256")
 
     lane = _candidate_lane(record_doc, publish_doc)
-    lane_manifest_contract_fields = _lane_manifest_contract_fields(
-        lane=lane,
-        record_doc=record_doc,
-        publish_doc=publish_doc,
-        subtitle_path=subtitle,
-    )
+    packaged_speaker_manifest: Path | None = None
+    if lane == "talk":
+        speaker_evidence, packaged_speaker_manifest = _rebuild_package_speaker_evidence(
+            package_root=package_root,
+            record_doc=record_doc,
+            subtitle_path=subtitle,
+            speaker_srt_path=(None if uniform_fallback else speaker_srt),
+        )
+        lane_manifest_contract_fields = _lane_manifest_contract_fields(
+            lane=lane,
+            record_doc=record_doc,
+            publish_doc=publish_doc,
+            subtitle_path=subtitle,
+            speaker_evidence=speaker_evidence,
+        )
+    else:
+        # Song remains on its independent lyric/alignment evidence lane.
+        lane_manifest_contract_fields = _lane_manifest_contract_fields(
+            lane=lane,
+            record_doc=record_doc,
+            publish_doc=publish_doc,
+            subtitle_path=subtitle,
+        )
     cover_pre_overlay = _verified_cover_artifact(
         package_root,
         flat_name=f"{stem}.cover.pre-overlay.png",
@@ -183,8 +216,18 @@ def build_manual(
         "clip_context": clip_context.name,
         "ass_path": ass.name,
         "ass_sha256": _sha256(ass),
-        "speaker_srt": subtitle.name,
-        "speaker_srt_sha256": _sha256(subtitle),
+        "speaker_srt": speaker_srt.name,
+        "speaker_srt_sha256": _sha256(speaker_srt),
+        **(
+            {
+                "speaker_finalization_manifest": packaged_speaker_manifest.name,
+                "speaker_finalization_manifest_sha256": (
+                    "sha256:" + _sha256(packaged_speaker_manifest)
+                ),
+            }
+            if packaged_speaker_manifest is not None
+            else {}
+        ),
         "sha256": {
             "subtitle_srt": _sha256(subtitle),
             "publish_json": _sha256(publish),
@@ -233,15 +276,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("package_root", type=Path)
     parser.add_argument("--operator", required=True, help="裁定人（写进 manifest）")
-    parser.add_argument(
-        "--note", required=True, help="一句话：为什么这个手动包可以进入评审"
-    )
+    parser.add_argument("--note", required=True, help="一句话：为什么这个手动包可以进入评审")
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
     try:
-        manifest = build_manual(
-            args.package_root, operator=args.operator, note=args.note
-        )
+        manifest = build_manual(args.package_root, operator=args.operator, note=args.note)
     except DailyManifestError as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
         return 1
@@ -250,7 +289,16 @@ def main() -> int:
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    print(json.dumps({"manifest": str(out), "candidate_id": manifest["candidate_id"], "status": manifest["status"]}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "manifest": str(out),
+                "candidate_id": manifest["candidate_id"],
+                "status": manifest["status"],
+            },
+            ensure_ascii=False,
+        )
+    )
     return 0
 
 
