@@ -5,15 +5,15 @@
 
 ## 一句话现状
 
-**歌切已发出去（泡沫 BV1Cn8E6iEf8 已确认公开，星猫上传中）；七夕卡在一道由「翻回 uniform_host」
-引出的系统性门缺口上，根因已定位、修复在验证，门一通就出包上传。**
+**两首歌已发布（泡沫 BV1Cn8E6iEf8、星猫 BV1pW8E6eEq5）；七夕的系统性死因已根修并合入（35fc95a），
+等她下播即可部署→重产→上传。**
 
 ## 已发布
 
 | 成品 | BV | 时间 | 备注 |
 |---|---|---|---|
 | 《泡沫 Bubble》歌切（8/17） | **BV1Cn8E6iEf8** | 2026-08-19 06:47Z | 审计 PASS + CPA 视觉 QC 全绿 + 出版对账完成 |
-| 《Bonus:快乐星猫》歌切（8/15） | 上传执行中 | — | 审计/QC/manifest 全部就绪 |
+| 《Bonus:快乐星猫》歌切（8/15） | **BV1pW8E6eEq5** | 2026-08-19 06:54Z | 同上；为它拆掉了 8/15 的整批误判阻塞 |
 
 《园游会》（8/14）：批次 refresh 处 RETRY_WAIT 良性暂态，等其两条待产候选产出即自愈解锁，
 **不做手术**（与 8/15 的非自愈误判不同）。
@@ -32,7 +32,14 @@
   于是恒判无效 → 标题权威 BLOCKED → 候选终态拒。仓内本来就有
   `addressee_attribution.ABSENCE_POLICY_ID = "speaker_mode_uniform_host/v1"` 缺席策略，
   **只是没接到 source_fact_review 这条链上**。
-- 状态：worker 修复中（严格不放宽 auto/required 多人合同，保留负向金丝雀）。
+- ⚠️ **上述假设被 worker 用生产回执推翻**——受话人缺席策略链条完全正常（`AbsentAuthorized /
+  reason=speaker_mode_uniform_host` 实测在案）。**真凶**：uniform_host 下没有带行号的
+  speaker_transcript 可锚定，CPA 判者引用**无行号的** `final_transcript` 时按习惯**自造行号**
+  （如 `"final_transcript: 18 我周三就是七夕那天"`），而 `_evidence_row_is_bound` 要求整段引文
+  逐字是原文子串 → 绑定必败 → `changed_surfaces_valid` False → shape 无效 → 落到通用兜底报出
+  **误导性的** `CPA_TEXT_REVIEW_INVALID`。8/10–8/16 的 auto 模式回执引用均无行号，实证了模式相关性。
+- 修复：**35fc95a** 已合入——先逐字匹配，失败才剥**一个**行号前缀且剩余仍须逐字命中；
+  auto/required 的编号引用合同与缺席授权零改动（负向金丝雀在案）；554 测试绿。
 - 影响面：七夕、图书馆、8/09 全批、以及后续所有 uniform_host 产出。
 
 ### 2. 语义评分卡刷新把「排队等重产」误判成「输入不可用」并整批 BLOCK（不自愈）
