@@ -234,19 +234,19 @@ def _best_text_split(authority: str, cue_texts: Sequence[str]) -> list[str]:
     return list(solve(0, 0)[1])
 
 
-_EMOTE_PLACEHOLDER_RUN = re.compile(r"[；;]{2,}")
-
-
 def _strip_unrenderable_for_subtitle(text: str) -> str:
-    """SC/弹幕原文里的表情符号在字幕字体下渲染成乱码（伊依 SC 实案：
-    平台把 emote 记成「；；」占位、颜文字用生僻区字符）。拼进字幕前剥离：
-    ①两个以上连续分号的 emote 占位串→顿号化为一个停顿；②Symbol/emoji/私有区
-    及 BMP 外非 CJK 字符丢弃。证据匹配仍用原文（本函数只作用于写入字幕的文本）。"""
+    """SC/弹幕原文里的颜文字用生僻区字符渲染成乱码。
+    拼进字幕前剥离 Symbol/emoji/私有区及 BMP 外非 CJK 字符。证据匹配仍用原文
+    （本函数只作用于写入字幕的文本）。
+
+    「；；」不在剥离范围内：维护者 审片裁定新增专名——「；；」（读
+    "分号分号"）是模拟哭哭表情梗，SC/弹幕带它时必须保真进字幕，不能被当成
+    占位乱码顿号化或丢弃（此前版本会折叠成逗号，属于「弹幕不修正」要拦的改写）。
+    """
     import unicodedata
 
-    cleaned = _EMOTE_PLACEHOLDER_RUN.sub("，", text)
     out_chars: list[str] = []
-    for char in cleaned:
+    for char in text:
         code = ord(char)
         if code > 0xFFFF and not (0x20000 <= code <= 0x2FA1F):  # 保留 CJK 扩展
             continue

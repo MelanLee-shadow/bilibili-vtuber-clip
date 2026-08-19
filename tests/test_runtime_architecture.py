@@ -65,7 +65,15 @@ FUNCTION_DEBT_LEDGER = {
     # 新模块 src/autoslice/unreadable_span_policy.py 与
     # src/autoslice/unreadable_cue_drop_stage.py，这里只留 stage/seal 两处薄调用
     # 点 + 一条 rationale 注释。测试 tests/test_unreadable_cue_drop.py。
-    ("src/autoslice/producer_package_finalization.py", "_run_exact_final_review_gate"): 378,
+    # +5：owned_intervals 执法第二个权威源接线（维护者
+    # 审片裁定 #2「弹幕不修正」——主包/主播案：chat authority 已落笔的逐字
+    # danmaku cue 被后续 self-heal 当成 ASR 错字重判）。新增逻辑全部推给新
+    # 模块 src/autoslice/chat_authority_ownership.py，这里只留 5 行调用点
+    # （2 行 rationale 注释 + 3 行调用），与 owned_intervals 首个权威源
+    # （baseline）同一模式。测试
+    # tests/test_producer_package_finalization.py::
+    # test_exact_final_review_gate_suppresses_chat_authority_owned_finding。
+    ("src/autoslice/producer_package_finalization.py", "_run_exact_final_review_gate"): 383,
     # +17：狍哥案实施指令（维护者「你把狍哥案解决了」，
     # 内部设计文档留存）——
     # SOURCE_FACT_REPAIRED_HOOK_SCORECARD_STALE 不再落 EXHAUSTED，改写
@@ -248,7 +256,12 @@ MODULE_DEBT_LEDGER = {
     # _run_exact_final_review_gate 那条）。新增逻辑的重量全在两个新模块
     # （unreadable_span_policy.py / unreadable_cue_drop_stage.py，未计入本模块
     # 行数），本模块只涨了 stage/seal 两处调用点、import 与 rationale 注释。
-    "src/autoslice/producer_package_finalization.py": 2_773,
+    # +10：owned_intervals 执法第二个权威源接线（维护者
+    # 审片裁定 #2「弹幕不修正」，主包/主播案；见上面
+    # _run_exact_final_review_gate 那条同案说明）。新增逻辑的重量全在新模块
+    # src/autoslice/chat_authority_ownership.py（未计入本模块行数），本模块
+    # 只涨了 5 行 import/rationale + 5 行调用点。
+    "src/autoslice/producer_package_finalization.py": 2_783,
     # +40：同上（SC 发送者 deferral）。
     # +7：会话内重述修复接线（维护者 当日指令，
     # 内部设计文档留存 §4）——会话内

@@ -111,14 +111,36 @@ def resolve_package_inputs(
     generated_path = Path(generated_raw)
     if not generated_path.is_absolute():
         generated_path = package_root / generated_path
-    generated_path = strict_regular(
-        generated_path, label="publish final cover", root=package_root
-    )
-    generated_sha = hashlib.sha256(generated_path.read_bytes()).hexdigest()
+    generated_path = generated_path.absolute()
     same_stem_sha = hashlib.sha256(cover_path.read_bytes()).hexdigest()
     declared_sha = str(generation.get("final_cover_sha256") or "").removeprefix(
         "sha256:"
     )
+    # Song review packages are copied wholesale from the delivery location
+    # into an independent package root (build_song_review_manifest.py);
+    # publish.json's cover_generation.final_cover is copied byte-for-byte and
+    # still names the pre-copy delivery path, which lives outside this
+    # package root and may not even exist any more.  Detect that lexically
+    # (no filesystem access outside the package) before ever touching the
+    # path, and fall back to the package's own same-stem cover -- already
+    # proven a real in-package regular file above -- only if its actual bytes
+    # hash matches the frozen cover-generation hash recorded in publish.json.
+    # Talk packages keep the video/publish/cover co-located, so their
+    # final_cover always resolves inside the package root and this branch is
+    # never taken for them.
+    lexical_generated = Path(os.path.normpath(str(generated_path)))
+    if not lexical_generated.is_relative_to(package_root):
+        if not declared_sha or same_stem_sha != declared_sha:
+            raise ValueError(
+                "publish final cover escapes package root and the package's "
+                "same-stem cover does not match the frozen cover generation "
+                "hash"
+            )
+        return record, publish, cover_path
+    generated_path = strict_regular(
+        generated_path, label="publish final cover", root=package_root
+    )
+    generated_sha = hashlib.sha256(generated_path.read_bytes()).hexdigest()
     if not declared_sha or generated_sha != declared_sha or same_stem_sha != declared_sha:
         raise ValueError("same-stem cover differs from frozen cover generation")
     return record, publish, cover_path

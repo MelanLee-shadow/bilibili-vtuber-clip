@@ -2820,12 +2820,15 @@ def test_sc_read_with_mid_read_interjection_is_preserved():
     assert audit["status"] == "APPLIED_AND_VERIFIED", audit["status"]
 
 
-def test_sc_emote_placeholders_are_stripped_from_subtitle_splice():
-    """SC 原文的表情占位（；；串）和生僻区颜文字不进字幕。"""
+def test_sc_emote_placeholders_survive_subtitle_splice_generic_glyphs_still_stripped():
+    """维护者 审片裁定新增专名「；；」（读"分号分号"）：模拟哭哭表情，
+    李豆沙直播间专属梗，SC/弹幕带它不能忽略——必须逐字进字幕，不再被当成
+    占位乱码顿号化/丢弃（此前版本会折叠成逗号，属于「弹幕不修正」铁律要拦
+    的改写）。生僻区颜文字仍然真的渲染不出来，继续剥离。"""
     from src.autoslice.chat_authority import _strip_unrenderable_for_subtitle
 
     assert _strip_unrenderable_for_subtitle("李姐；；动车被取消了；；我想回家；；") == (
-        "李姐，动车被取消了，我想回家"
+        "李姐；；动车被取消了；；我想回家；；"
     )
     assert _strip_unrenderable_for_subtitle("把你关在房间里ᗜ𖥦ᗜ") == "把你关在房间里"
 
@@ -2837,7 +2840,7 @@ def test_sc_emote_placeholders_are_stripped_from_subtitle_splice():
         support_srt_texts=[source],
     )
     joined = "".join(cue.text for cue in parse_srt_cues(output))
-    assert "；；" not in joined, joined
+    assert "；；" in joined, joined
 
 
 def test_sender_anchored_sc_near_miss_goes_to_audio_arbitration():

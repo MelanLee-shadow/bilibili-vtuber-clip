@@ -53,6 +53,7 @@ from src.autoslice.acoustic_witness_protocol import (
     witness_protocol,
 )
 from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.chat_evidence import normalize_chat_text
 from src.autoslice.llm_client import extract_json_object
 
 READ_ALOUD_REQUEST_SCHEMA = "chat-read-aloud-verification-request.v1"
@@ -97,6 +98,10 @@ def _prompt(danmu: str, asr: str, ctx_before: str, ctx_after: str) -> str:
         "- 弹幕是问句(以 吗/呢/吧/？ 结尾)是\"她在念这条弹幕\"的**强信号,但不是决定性**——"
         "还要看这条弹幕与(哪怕被听错的)ASR 是否在语义/字面上呼应、放进上下文是否自然。\n"
         "- 若明显是在念这条弹幕(即使 ASR 把关键词听成了近音的错字)→ is_read_aloud=true。\n"
+        "- 弹幕原文里的梗写/刻意错写/表情符号(如\"主包\"这类主播昵称梗、\"；；\"哭哭表情)"
+        "不是待纠正的错字；ASR 把它听成了\"更常见\"的写法(如\"主播\")本身就是结构性听错的证据,"
+        "反而支持 is_read_aloud=true,不能反过来当作\"弹幕对不上\"的理由。\n"
+        "- 她直接回应/接梗某条弹幕(哪怕没有逐字念出内容)也是判断方向的提示,不代表要照念。\n"
         "- 若她其实在说别的、这条弹幕只是恰好相关或她在回应而非照念 → is_read_aloud=false。\n"
         "- 拿不准就 is_read_aloud=false、confidence 给低。\n\n"
         "只输出一个 JSON,不要多余文字:\n"
@@ -197,6 +202,8 @@ _CLOSED_CHOICE_PROMPT = """# 字幕闭集裁决
 3. 平台弹幕/SC 是高价值文字证据，但不自动证明主播逐字念了它。
 4. AGY/ASR/拼音只是证人；即使与语境冲突，最终仍由你在看见全部证据后裁决。
 5. 必须给全部候选排序，并选择概率最高者；不得因为不确定而默认 CURRENT。
+6. 候选里的弹幕/SC 原文可能带梗写、刻意错写或表情符号；这不是待"纠正"为
+   规范写法的错字，判定她确实在念该条弹幕时必须选弹幕原文本身。
 
 ## 音频证人（未见候选）
 {witness}
@@ -460,7 +467,7 @@ used by the CPA judge.
         confidence = _coerce_confidence(data.get("confidence"))
         if data.get("is_read_aloud") is True and confidence >= min_confidence:
             reason = str(data.get("reason") or "")[:300]
-            return {
+            bare_confirm = {
                 "schema_version": VERDICT_SCHEMA,
                 "request_sha256": request.get("request_sha256"),
                 "status": "RESOLVED",
@@ -473,6 +480,23 @@ used by the CPA judge.
                 "completion_sha256": "sha256:"
                 + hashlib.sha256(completion.encode()).hexdigest(),
             }
+            if normalize_chat_text(asr) == normalize_chat_text(danmu):
+                return bare_confirm
+            # 维护者 审片裁定 #2「弹幕不修正」（主包/主播案）：一个
+            # 纯文字的高置信度确认不足以让 whole_line_exact_copy_gate 把这个
+            # cue 判给弹幕原文——它只认音频见证+CPA 闭集裁决或独立转录，否则
+            # confirmed 的原文会被判 owner_eligible=False 白白丢弃，ASR 的
+            # 结构性听错反而留存（这正是主包给→主播给案的成因）。danmu 与
+            # ASR 不同的高置信度确认因此多走一轮候选盲拼音见证+闭集裁决，
+            # 补齐能真正落笔的证据链；无音频 provider 时退回纯语境闭集裁决，
+            # 与既有弱置信度分支同一条路，不放宽任何门槛；闭集裁决失败才
+            # 退回纯文字确认，保住至少不丢已有召回。
+            closed = _closed_choice_with_witness(
+                request=request,
+                llm_call=llm_call,
+                next_verifier=next_verifier,
+            )
+            return closed if closed is not None else bare_confirm
         if data.get("is_read_aloud") is False and confidence >= min_confidence:
             return {
                 "schema_version": VERDICT_SCHEMA,
