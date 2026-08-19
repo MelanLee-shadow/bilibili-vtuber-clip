@@ -184,6 +184,30 @@ def _fuse_mount_identity(_path: Path) -> dict[str, object]:
     }
 
 
+def _local_spool_mount_identity(_path: Path) -> dict[str, object]:
+    """A deterministic non-FUSE local-disk identity for the rebind spool.
+
+    Real production spool directories always resolve to a concrete mount
+    (ext4, tmpfs, APFS, ...) distinct from the FUSE-mounted record root; the
+    host's live mountinfo table is never consulted in tests. Returning a
+    fixed identity here (instead of ``None``) keeps these tests independent
+    of the actual filesystem mounted under the pytest tmp dir and exercises
+    the same code path on every platform, including the Linux-only
+    fail-closed branch in ``_ensure_identity_rebind_spool`` (see
+    ``test_identity_rebind_linux_spool_refuses_unknown_mount`` for the
+    dedicated negative canary covering the ``identity is None`` contract).
+    """
+
+    return {
+        "mount_id": 21,
+        "major_minor": "8:1",
+        "root": "/",
+        "mount_point": "/",
+        "filesystem_type": "ext4",
+        "mount_source": "/dev/sda1",
+    }
+
+
 def _identity_rebind_attestations(stub: Path, successor: Path) -> dict[str, dict]:
     paths = {
         "source": stub,
@@ -1429,7 +1453,11 @@ def test_idle_revalidation_hashes_in_child_then_atomically_seals_receipt(
     spool = tmp_path / "local-spool"
 
     def mount_identity(path: Path) -> dict[str, object] | None:
-        return None if str(path).startswith(str(spool)) else _fuse_mount_identity(path)
+        return (
+            _local_spool_mount_identity(path)
+            if str(path).startswith(str(spool))
+            else _fuse_mount_identity(path)
+        )
 
     monkeypatch.setattr(adapter, "_mount_identity_for_path", mount_identity)
     with pytest.raises(adapter.AdapterError, match="hash is pending"):
@@ -1496,7 +1524,11 @@ def test_idle_timestamp_revalidation_reuses_bounded_child_task(
     spool = tmp_path / "local-spool"
 
     def mount_identity(path: Path) -> dict[str, object] | None:
-        return None if str(path).startswith(str(spool)) else _fuse_mount_identity(path)
+        return (
+            _local_spool_mount_identity(path)
+            if str(path).startswith(str(spool))
+            else _fuse_mount_identity(path)
+        )
 
     monkeypatch.setattr(adapter, "_mount_identity_for_path", mount_identity)
     with pytest.raises(adapter.AdapterError, match="hash is pending"):
@@ -1564,7 +1596,11 @@ def test_run_once_two_ticks_persist_pending_then_publish_sealed_rebind(
     spool = args.state_path.parent / ".source-disposition-identity-rebind"
 
     def mount_identity(path: Path) -> dict[str, object] | None:
-        return None if str(path).startswith(str(spool)) else _fuse_mount_identity(path)
+        return (
+            _local_spool_mount_identity(path)
+            if str(path).startswith(str(spool))
+            else _fuse_mount_identity(path)
+        )
 
     monkeypatch.setattr(adapter, "_mount_identity_for_path", mount_identity)
     monkeypatch.setattr(
