@@ -33,16 +33,16 @@ def test_final_review_builder_keeps_medium_effort(monkeypatch):
     assert config.timeout_seconds == 600.0
 
 
-def test_pronoun_audit_builder_drops_to_low_effort_same_model_chain(monkeypatch):
+def test_pronoun_audit_builder_uses_terra_head_and_low_effort(monkeypatch):
     config = _captured_config(monkeypatch, transport.build_pronoun_audit_llm_call)
 
     assert config.transport == "command"
-    assert "'gpt-5.6-sol gpt-5.5 gpt-5.4'" in config.command_template
+    assert "'gpt-5.6-terra gpt-5.5 gpt-5.4'" in config.command_template
     assert config.command_template.split()[-2] == "low"
     assert config.timeout_seconds == 600.0
 
 
-def test_pronoun_audit_and_final_review_share_everything_but_effort(monkeypatch):
+def test_pronoun_audit_differs_from_final_review_only_in_model_head_and_effort(monkeypatch):
     final_review_config = _captured_config(
         monkeypatch, transport.build_final_review_llm_call
     )
@@ -52,5 +52,5 @@ def test_pronoun_audit_and_final_review_share_everything_but_effort(monkeypatch)
 
     assert final_review_config.command_template.replace(
         "medium", "low"
-    ) == pronoun_config.command_template
+    ).replace("gpt-5.6-sol", "gpt-5.6-terra") == pronoun_config.command_template
     assert final_review_config.timeout_seconds == pronoun_config.timeout_seconds

@@ -38,7 +38,7 @@ def build_pronoun_audit_llm_call() -> Callable[[str], str]:
             transport="command",
             command_template=(
                 "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} "
-                "'gpt-5.6-sol gpt-5.5 gpt-5.4' low 1"
+                "'gpt-5.6-terra gpt-5.5 gpt-5.4' low 1"
             ),
             timeout_seconds=600.0,
         )
