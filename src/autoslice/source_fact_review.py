@@ -579,19 +579,15 @@ def _evidence_row_is_bound(
         quoted_text = source_label.group(1)
         if _compact(quoted_text) and _compact(quoted_text) in _compact(final_transcript):
             return True
-        # ``final_transcript`` (unlike ``speaker_transcript``) carries no line
-        # numbers — see ``build_addressee_evidence``/``build_addressee_transcripts``,
-        # which join bare cue text.  When there is no numbered speaker
-        # transcript to anchor citations to (uniform_host's authorized
-        # absence, ``ABSENCE_POLICY_ID``), the judge sometimes invents a
-        # leading "N " / "N.M " index out of habit before quoting a real
-        # line, or — 8/19 production (七夕 auto_113022_354_496) — quotes an
-        # entire SRT block it fabricated: "N HH:MM:SS,mmm --> HH:MM:SS,mmm\n
-        # <text>".  Tolerate stripping at most one such invented index token
-        # and/or one invented SRT timestamp line — the remaining quoted text
-        # must still be an exact, literal substring of ``final_transcript``;
-        # this does not relax what counts as evidence, only the
-        # citation-label/locator shell around it.
+        # ``final_transcript`` joins bare cue text — no line numbers (unlike
+        # ``speaker_transcript``; see ``build_addressee_evidence``).  With no
+        # numbered transcript to anchor to (uniform_host authorized absence,
+        # ``ABSENCE_POLICY_ID``) the judge invents locators: a leading "N "
+        # index, or a whole fabricated SRT block (8/19 production, 七夕
+        # auto_113022_354_496).  Strip at most one invented index and one
+        # invented timestamp line; the remainder must still be an exact
+        # literal substring — this relaxes the citation shell, never what
+        # counts as evidence.
         stripped = re.sub(r"\A\s*\d+(?:\.\d+)?\s+", "", quoted_text, count=1)
         stripped = re.sub(
             r"\A\s*\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}\s*\n?",
