@@ -88,6 +88,20 @@ STRIP_PREFIXES = (
     "tests/test_timely_terms.py",  # 运营态耦合测试
     "tests/test_title_policy.py",  # 运营态耦合测试
     "tests/test_upload_tag_policy.py",  # 运营态耦合测试
+    "tests/lidousha/test_fast_lane_human_truth_20260811.py",  # 读 docs/reviews/evidence/ 真实夹具，随其剥离
+    # v4.10：dated landing/truth 整文件——本体就是验证某次真实 TEMPLATE_DIRS
+    # 剥离资产（reviewed truth/speaker override/exact-source 等）的落地事实，
+    # 与 test_repair_false_green_20260709.py 同类，非通用回归。
+    "tests/lidousha/test_20260809_210624_japanese_truth.py",
+    "tests/test_bind_source_fact_scorecard_rescore.py",
+    "tests/test_producer_request_rescore_provenance.py",
+    "tests/test_reviewed_exact_source_interval.py",
+    "tests/test_reviewed_subtitle_baseline_20260807_landing.py",
+    # v4.10b：追加 TEMPLATE_DIRS 后这三个文件几乎/全部剩余用例也读同类真值资产，
+    # 单函数摘除已不划算——超半数失败，整文件按同一惯例剥离。
+    "tests/lidousha/test_manual_title_keep_authority.py",
+    "tests/lidousha/test_speaker_truth_20260809_landing.py",
+    "tests/lidousha/test_candidate_public_text_surface_authority.py",
     "ops/recording/blrec_live_watchdog.py",
     "ops/recording/patch_autoslice_runner_recorder_status.py",  # blrec 迁移遗物
     "cleanup_manifests/",          # 运营清理台账
@@ -135,7 +149,19 @@ TEMPLATE_DIRS = (
     "assets/lidousha/cover_repair_plans/",
     "assets/lidousha/talk_recoveries/",
     "assets/lidousha/voiceprint_profile.v1.json",  # 生物特征，绝不发布
+    # v4.10：8/7 起新增的候选级真值/权威资产目录（同类运营状态，此前漏收）。
+    "assets/lidousha/authorities/",
+    "assets/lidousha/candidate_entity_projections/",
+    "assets/lidousha/candidate_public_text_surface_authorities/",
+    "assets/lidousha/deterministic_text_surface_resolutions/",
+    "assets/lidousha/published_topic_collision_authorities/",
+    "assets/lidousha/published_topic_dedup_resolutions/",
+    "assets/lidousha/reviewed_exact_source_intervals/",
+    "assets/lidousha/reviewed_speaker_delivery_bindings/",
+    "assets/lidousha/reviewed_speaker_truth/",
+    "assets/lidousha/speaker_automatic_baselines/",
 )
+
 # ---------------------------------------------------------------------------
 # v4：流程面去频道名/去私有主机名。精确 token 全树重写（文件名 + 文本内容），
 # 长 token 优先避免子串误伤。assets/** 不重写（资产字节权威）；profiles/**
@@ -193,6 +219,11 @@ RENAME_STEMS: tuple[tuple[str, str], ...] = (
     ("_LIDOUSHA_TITLE_PREFIX", "_TITLE_PREFIX"),
     ("_lidousha_fontsdir", "_profile_fontsdir"),
     ("lidousha_phonetic_ratio", "host_phonetic_ratio"),
+    # 维护者本人姓名嵌在 snake_case token 中间时，_sanitize_text 的词边界替换够不
+    # 到（前后紧邻 "_" 属词内字符）；stem 重写补这个缺口。schema 串
+    # "ivan-speaker-truth-diff.v2" 用 "-" 分隔不受影响，已由 _sanitize_text 独立
+    # 覆盖，勿重复在此处理。
+    ("harvest_ivan_truth", "harvest_human_review_truth"),
 )
 
 # 不参与 stem 重写的路径前缀（资产字节权威；profile manifest 例外参与）。
@@ -316,11 +347,11 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         '"workflow": ".agent/skills/huozi-luanshua/SKILL.md",',
     ),
     # --- 债务棘轮：authorized_upload 简介外化+项目署名+合集ID强制配置化，账本
-    #     同步为 2945 并在此说明（升行数=显式改账本，符合棘轮纪律）---
+    #     同步为 2877 并在此说明（升行数=显式改账本，符合棘轮纪律）---
     (
         "tests/test_runtime_architecture.py",
-        '"scripts/authorized_upload.py": 2_935,',
-        '"scripts/authorized_upload.py": 2_945,',
+        '"scripts/authorized_upload.py": 2_867,',
+        '"scripts/authorized_upload.py": 2_877,',
     ),
     # --- 债务棘轮：导出器自身的账本行随文件剥离一并移除（私库保留该行） ---
     (
@@ -340,6 +371,38 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "    # production runtime entry point.\n"
         '    Path("scripts/repair_false_green_20260709.py"),\n',
         "",
+    ),
+    # --- 死引用：账本注释里的 docs/reviews/ 与 docs/HANDOFF.md 出处（两者都不
+    #     随 OSS 分发；决策事实保留，路径去掉）---
+    (
+        "tests/test_runtime_architecture.py",
+        "    # docs/reviews/2026-08-07-source-fact-rescore-design.md）——",
+        "    # 内部设计文档留存）——",
+    ),
+    (
+        "tests/test_runtime_architecture.py",
+        "    # docs/reviews/2026-08-08-restatement-repair-design.md §4）——同上，",
+        "    # 内部设计文档留存 §4）——同上，",
+    ),
+    (
+        "tests/test_runtime_architecture.py",
+        "    # docs/reviews/2026-08-08-restatement-repair-design.md §4）——会话内",
+        "    # 内部设计文档留存 §4）——会话内",
+    ),
+    (
+        "tests/test_runtime_architecture.py",
+        "，docs/HANDOFF.md:80）——\n    # review_exact_final_srt",
+        "，内部交接记录）——\n    # review_exact_final_srt",
+    ),
+    (
+        "tests/test_runtime_architecture.py",
+        "，docs/HANDOFF.md:80）——\n    # +9 是 run_text_pipeline",
+        "，内部交接记录）——\n    # +9 是 run_text_pipeline",
+    ),
+    (
+        "tests/test_runtime_architecture.py",
+        "    # docs/HANDOFF.md ⭐⭐⭐⭐「维护者 三问的答案」）——两条后置所有权判定、",
+        "    # 交接记录「三问的答案」）——两条后置所有权判定、",
     ),
     # --- docs/pipeline/README.md：死概念引用（HANDOFF 不随 OSS 分发） ---
     (
@@ -757,8 +820,8 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "docs/pipeline/70-cover.md",
-        "  初始 v2 `selected_treatment` 就必须是 `cpa_redraw`（7/26 1411 角落小人案），最终 v3",
-        "  初始 v2 `selected_treatment` 就必须是 `cpa_redraw`，最终 v3",
+        "  `selected_treatment` 就必须是 `cpa_redraw`（7/26 1411 角落小人案）；最终 v3",
+        "  `selected_treatment` 就必须是 `cpa_redraw`；最终 v3",
     ),
     (
         "docs/pipeline/70-cover.md",
@@ -990,13 +1053,13 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
     #      +3 行、函数 +2 行），显式改账本 ----
     (
         "tests/test_runtime_architecture.py",
-        '    ("src/autoslice/final_review_auditor.py", "audit_final_subtitles"): 407,',
-        '    ("src/autoslice/final_review_auditor.py", "audit_final_subtitles"): 409,',
+        '    ("src/autoslice/final_review_auditor.py", "audit_final_subtitles"): 418,',
+        '    ("src/autoslice/final_review_auditor.py", "audit_final_subtitles"): 420,',
     ),
     (
         "tests/test_runtime_architecture.py",
-        '    "src/autoslice/final_review_auditor.py": 3_433,',
-        '    "src/autoslice/final_review_auditor.py": 3_436,',
+        '    "src/autoslice/final_review_auditor.py": 3_064,',
+        '    "src/autoslice/final_review_auditor.py": 3_067,',
     ),
     # ---- v4.5：合集 ID 账号专属，强制部署方自填（Ivan：绝不默认给我的合集） ----
     (
@@ -1028,10 +1091,8 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "scripts/authorized_upload.py",
-        "    package_problems.extend(human_review.attach_final_human_review("
-        "manifest, args.final_human_review, season_ids=EXPECTED_SEASON_IDS))",
-        "    package_problems.extend(human_review.attach_final_human_review("
-        "manifest, args.final_human_review, season_ids=expected_season_ids()))",
+        "            manifest, args.final_human_review, season_ids=EXPECTED_SEASON_IDS\n",
+        "            manifest, args.final_human_review, season_ids=expected_season_ids()\n",
     ),
     (
         "tests/lidousha/test_authorized_upload_season.py",
@@ -1062,11 +1123,6 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "docs/pipeline/20-selection.md",
         "关键词只兜底（维护者 2026-07-03）。",
         "关键词只兜底（维护者拍板）。",
-    ),
-    (
-        "docs/pipeline/80-package-delivery.md",
-        "- tag 按成品字幕出（`upload_tag_policy.py`，维护者 2026-07-13）。",
-        "- tag 按成品字幕出（`upload_tag_policy.py`，维护者拍板）。",
     ),
     (
         "docs/pipeline/70-cover.md",
@@ -1103,6 +1159,346 @@ PATCHES: tuple[tuple[str, str, str], ...] = (
         "> 当前高层结构图（背景阅读；入口见 AGENTS.md）。本文件不定义准入、schema、\n"
         "> 阈值或状态机；现行规则只读",
     ),
+    # ---- v4.9：新增文档漂移触发的私有出处/域名清理（真泄漏与死链两类） ----
+    # --- PII：真实私有域名（CPA 上游示例网址）---
+    (
+        "scripts/llm_via_cpa.sh",
+        "https://cpa.aierlma.top/v1/responses",
+        "https://cpa.example.com/v1/responses",
+    ),
+    # --- 死引用：harvest_human_review_truth 文档头部的私库交接出处 ---
+    (
+        "scripts/harvest_human_review_truth.py",
+        "(HANDOFF 2026-08-08, 标注收割节):",
+        "（标注收割节）：",
+    ),
+    # --- 死引用：docs/reviews/ 出处散落在多个模块 docstring/注释里 ---
+    (
+        "scripts/probe_mishear_mining.py",
+        "(see docs/reviews/2026-08-07-zsm-mishear-forensics.md); keep >= 0.5.",
+        "(see the mishear-forensics design note); keep >= 0.5.",
+    ),
+    (
+        "src/autoslice/talk_quota_authority.py",
+        "（考据 `docs/reviews/2026-08-10-talk-pick-quota-forensics.md`）。",
+        "（考据内部设计文档留存）。",
+    ),
+    (
+        "src/autoslice/speaker_overlap_evidence.py",
+        "诊断（2026-08-09，出处 docs/reviews/2026-08-08-forensics-200736-203735.md §3.2",
+        "诊断（出处内部取证文档 §3.2",
+    ),
+    (
+        "src/autoslice/selection_metric_v2.py",
+        "ChatGPT Pro 2026-08-10 的结论（`docs/reviews/2026-08-10-or-gate-metric-and-",
+        "ChatGPT Pro 的结论（内部设计文档留存·or-gate-metric-and-",
+    ),
+    (
+        "src/autoslice/song_alignment.py",
+        "    的「no usable song guesses」全来自这里，短窗反而认得出。详见\n"
+        "    docs/reviews/2026-08-10-song-lane-forensics.md。\n",
+        "    的「no usable song guesses」全来自这里，短窗反而认得出（forensics 取证\n"
+        "    留存于内部设计文档，此处只记结论）。\n",
+    ),
+    (
+        "src/autoslice/source_fact_review.py",
+        "# 狍哥案修复（2026-08-07，docs/reviews/2026-08-07-",
+        "# 狍哥案修复（内部设计文档留存·2026-08-07-",
+    ),
+    (
+        "src/autoslice/bilibili_member_api.py",
+        "``docs/reviews/2026-08-10-season-episode-edit-contract.md``）：",
+        "（内部设计文档留存）：",
+    ),
+    (
+        "src/autoslice/host_occupancy.py",
+        "ChatGPT Pro 2026-08-10 的方案（`docs/reviews/evidence/2026-08-10-chatgpt-pro-",
+        "ChatGPT Pro 的方案（内部证据留存·chatgpt-pro-",
+    ),
+    (
+        "src/autoslice/host_occupancy.py",
+        "（`docs/reviews/2026-08-10-维护者-blind-review-tier1-ground-truth.md`）。",
+        "（内部盲评真值文档留存）。",
+    ),
+    (
+        "src/autoslice/danmaku_evidence.py",
+        "被切在包袱之前（`docs/reviews/2026-08-10-维护者-blind-review-",
+        "被切在包袱之前（内部盲评真值文档留存·2026-08-10-",
+    ),
+    (
+        "src/autoslice/addressee_attribution.py",
+        "docs/reviews/2026-08-08-truth-harvest-forensics-synthesis.md「8/8 深夜追加:F12」）：",
+        "内部取证综述文档留存「深夜追加:F12」）：",
+    ),
+    (
+        "src/autoslice/selection_rescore.py",
+        "``docs/reviews/2026-08-07-source-fact-rescore-design.md`` §2-§5.  When",
+        "the internal source-fact rescore design note §2-§5.  When",
+    ),
+    (
+        "assets/lidousha/talk_quota_policy_authority.v1.json",
+        "设立起因：2026-08-08 commit 4af4a88 把 维护者 的按日裁定",
+        "设立起因：维护者的按日裁定",
+    ),
+    (
+        "assets/lidousha/talk_quota_policy_authority.v1.json",
+        "（考据 docs/reviews/2026-08-10-talk-pick-quota-forensics.md）",
+        "（考据内部取证文档留存）",
+    ),
+    (
+        "assets/lidousha/speaker_scmc_v0_spec.json",
+        '"decision_record": "docs/reviews/evidence/2026-08-11-centrality-cue-speaker-shadow/pro-consult-overnight-decis',
+        '"decision_record": "internal design note: centrality-cue-speaker-shadow/pro-consult-overnight-decis',
+    ),
+    (
+        "tests/lidousha/test_addressee_attribution.py",
+        "维护者 2026-08-08 纠错（docs/reviews/2026-08-08-truth-harvest-forensics-synthesis.md",
+        "维护者纠错（内部取证综述文档留存",
+    ),
+    (
+        "tests/lidousha/test_host_occupancy.py",
+        "设计权威：`docs/reviews/evidence/2026-08-10-chatgpt-pro-ordering-and-rubric.txt`",
+        "设计权威：内部证据留存（chatgpt-pro-ordering-and-rubric）",
+    ),
+    (
+        "tests/lidousha/test_host_occupancy.py",
+        "（维护者 已批准）+ `docs/reviews/2026-08-10-维护者-blind-review-tier1-ground-truth.md`",
+        "（维护者已批准）+ 内部盲评真值文档留存",
+    ),
+    (
+        "tests/lidousha/test_talk_quota_policy_freeze.py",
+        "事故（考据 `docs/reviews/2026-08-10-talk-pick-quota-forensics.md`）：维护者 的",
+        "事故（考据内部设计文档留存）：维护者的",
+    ),
+    (
+        "tests/lidousha/test_selection_metric_v2.py",
+        "设计权威：`docs/reviews/2026-08-10-or-gate-metric-and-function-split.md`",
+        "设计权威：内部设计文档留存（or-gate-metric-and-function-split）",
+    ),
+    (
+        "tests/lidousha/test_selection_metric_v2.py",
+        "真值权威：`docs/reviews/2026-08-10-维护者-blind-review-tier1-ground-truth.md`",
+        "真值权威：内部盲评真值文档留存",
+    ),
+    # --- 死引用：其余测试文件头部的 docs/reviews/ 出处 ---
+    (
+        "tests/test_danmaku_evidence.py",
+        "它就是 `auto_223750_578_654` 被切在包袱之前的实证成因\n"
+        "    （docs/reviews/2026-08-10-维护者-blind-review-tier1-ground-truth.md）。\n",
+        "它就是 `auto_223750_578_654` 被切在包袱之前的实证成因\n"
+        "    （内部盲评真值文档留存）。\n",
+    ),
+    (
+        "tests/test_cover_screenshot_first_canaries.py",
+        "设计稿：``docs/reviews/2026-08-10-cover-route-screenshot-first-forensics.md`` D 节。",
+        "设计稿：内部设计文档留存（cover-route-screenshot-first-forensics）D 节。",
+    ),
+    (
+        "tests/test_jingting_provenance_lanes.py",
+        "任何已观测到的生产故障。见 docs/reviews/2026-08-10-song-lane-forensics.md。",
+        "任何已观测到的生产故障。见内部取证文档留存（song-lane-forensics）。",
+    ),
+    (
+        "tests/test_selection_rescore.py",
+        "Mirrors ``docs/reviews/2026-08-07-source-fact-rescore-design.md`` §6's test",
+        "Mirrors the internal source-fact rescore design note's §6 test",
+    ),
+    # ---- v4.10：单函数剔除——个别测试直接读 TEMPLATE_DIRS 剥离的真值资产
+    #      （候选级 reviewed truth/speaker override 等运营数据），同文件其余
+    #      用例是通用回归，不整文件剥离；每条 old 为函数全文精确匹配，未来
+    #      该函数漂移会让导出直接报错，不会静默失配。----
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        'def test_exact_closed_plan_renders_frozen_bytes_without_provider_call(\n    tmp_path: Path,\n    monkeypatch: pytest.MonkeyPatch,\n) -> None:\n    root = _sealed_repo(tmp_path, "sealed-a")\n\n    def provider_must_not_run(*_args: object, **_kwargs: object) -> object:\n        raise AssertionError("source-fact provider was called")\n\n    monkeypatch.setattr(\n        source_fact_review,\n        "review_and_repair_source_facts",\n        provider_must_not_run,\n    )\n    receipt = _consume(root)\n    authority = load_deterministic_text_surface_authority(CANDIDATE_ID, root=root)\n    assert authority is not None\n\n    assert receipt["title"] == EXACT_TITLE\n    assert len(receipt["title"]) == 50\n    authority_document = json.loads(\n        (root / ASSET_DIRECTORY / AUTHORITY_FILENAME).read_text(encoding="utf-8")\n    )\n    assert (\n        authority_document["exact_surface_resolution"]["title"]["current_global_policy_disposition"]\n        == "candidate_scoped_exact_surface_exception_required"\n    )\n    assert authority_document["exact_surface_resolution"]["title"][\n        "current_global_policy_violations"\n    ] == ["publish_title_length_out_of_bounds"]\n    assert receipt["selection_hook"] == EXACT_HOOK\n    assert receipt["title_sha256"] == (\n        "sha256:97bf7997892126ce9dfeed7d5e98a047a91b570513d6ad47c05fb7285afa9951"\n    )\n    assert receipt["selection_hook_sha256"] == (\n        "sha256:c6b71718c9651c63ff97efbb1cfb341b7f3ddaec4222f1bad736b2ac58f844c6"\n    )\n    assert receipt["combined_surface_sha256"] == EXACT_COMBINED_SHA256\n    assert receipt["provider_call_required"] is False\n    assert receipt["original_source_fact_attempt"] == "FAILED"\n    assert receipt["exact_surface_resolution"] == "VALID"\n    assert receipt["publication_fact_authority"] == "RESOLVED_EXACT_SURFACE"\n    assert receipt["original_source_fact_receipt"] == _failed_receipt()\n    assert receipt["original_source_fact_receipt"]["status"] == "FAILED"\n    assert receipt["original_source_fact_receipt_sha256"] == (FAILED_SOURCE_FACT_RECEIPT_SHA256)\n    assert receipt["final_transcript_sha256"] == FINAL_TRANSCRIPT_SHA256\n    assert receipt["clip_context_prompt_sha256"] == CLIP_CONTEXT_PROMPT_SHA256\n    assert receipt["selection_scorecard_sha256"] == SELECTION_SCORECARD_SHA256\n    assert receipt["entity_context_sha256"] == ENTITY_CONTEXT_SHA256\n    assert text_sha256(authority.adjudication_prompt) == CLIP_CONTEXT_PROMPT_SHA256\n    assert receipt["adjudication_prompt_repo_path"] == (ADJUDICATION_PROMPT_RELATIVE.as_posix())\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        'def test_title_length_exception_requires_the_exact_frozen_surface(\n    tmp_path: Path,\n) -> None:\n    root = _sealed_repo(tmp_path, "sealed-title-exception")\n    consumption = _consume(root)\n    review = source_fact_review.authorize_deterministic_text_narrowing(consumption)\n\n    assert source_fact_review.deterministic_text_narrowing_title_policy_exception_applies(\n        review,\n        candidate_id=CANDIDATE_ID,\n        title=EXACT_TITLE,\n    )\n\n    tampered = copy.deepcopy(consumption)\n    tampered_title = EXACT_TITLE[:-1] + "呀"\n    assert len(tampered_title) == len(EXACT_TITLE) == 50\n    tampered["title"] = tampered_title\n    tampered["title_sha256"] = text_sha256(tampered_title)\n    tampered["combined_surface_sha256"] = combined_surface_sha256(\n        tampered_title,\n        EXACT_HOOK,\n    )\n    tampered.pop("receipt_sha256")\n    tampered["receipt_sha256"] = canonical_sha256(tampered)\n    self_consistent_review = source_fact_review.authorize_deterministic_text_narrowing(tampered)\n\n    assert not source_fact_review.deterministic_text_narrowing_title_policy_exception_applies(\n        self_consistent_review,\n        candidate_id=CANDIDATE_ID,\n        title=tampered_title,\n    )\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        '@pytest.mark.parametrize(\n    "context_prompt",\n    [\n        "fresh ASR diagnostic context variant A",\n        "fresh ASR diagnostic context variant B",\n    ],\n)\ndef test_publish_staging_consumes_exact_plan_without_source_fact_provider(\n    tmp_path: Path,\n    monkeypatch: pytest.MonkeyPatch,\n    context_prompt: str,\n) -> None:\n    sealed_root = _sealed_repo(tmp_path, "sealed-staging")\n    authority = load_deterministic_text_surface_authority(\n        CANDIDATE_ID,\n        root=sealed_root,\n    )\n    assert authority is not None\n    runtime_srt = tmp_path / "package" / f"{CANDIDATE_ID}.recut.srt"\n    runtime_srt.parent.mkdir(parents=True)\n    shutil.copy2(sealed_root / SRT_RELATIVE, runtime_srt)\n    transcript = _final_transcript(runtime_srt)\n\n    def contract(hook: str) -> dict[str, object]:\n        story = build_story_contract(\n            candidate_id=CANDIDATE_ID,\n            selection_hook=hook,\n            transcript_text=transcript,\n            selection_scorecard=copy.deepcopy(_FROZEN_SELECTION_SCORECARD),\n            session_relation_authority=None,\n        )\n        story["clip_context_prompt"] = context_prompt\n        return story\n\n    monkeypatch.setattr(\n        source_fact_staging,\n        "load_deterministic_text_surface_authority",\n        lambda candidate_id: authority if candidate_id == CANDIDATE_ID else None,\n    )\n    monkeypatch.setattr(\n        source_fact_review,\n        "load_deterministic_text_surface_authority",\n        lambda candidate_id: authority if candidate_id == CANDIDATE_ID else None,\n    )\n\n    def provider_must_not_run(_prompt: str) -> str:\n        raise AssertionError("source-fact provider was called")\n\n    cover = tmp_path / "package" / f"{CANDIDATE_ID}.cover.png"\n\n    def stage_cover(_record: object, **_kwargs: object) -> dict[str, object]:\n        cover.write_bytes(b"cover")\n        return {\n            "status": "AI_COVER_READY",\n            "cover_path": str(cover),\n            "cover_generation": {\n                "status": "READY",\n                "rendered_lines": ["xxsk说你给了我第一次"],\n            },\n            "reason_codes": [],\n        }\n\n    media = tmp_path / "package" / f"{CANDIDATE_ID}.recut.mp4"\n    media.write_bytes(b"media")\n    staged = publish_staging._stage_publish_draft(\n        {\n            "status": "MATERIALIZED",\n            "speaker_mode": "uniform_host",\n            "media_path": str(media),\n            "subtitle_path": str(runtime_srt),\n            "story_contract": contract(OLD_HOOK),\n            "artifact_hashes": {},\n        },\n        candidate_id=CANDIDATE_ID,\n        title=OLD_TITLE,\n        cues=_source_cues(runtime_srt),\n        run_ffmpeg=False,\n        title_llm_call=None,\n        selection_hook=OLD_HOOK,\n        source_fact_llm_call=provider_must_not_run,\n        story_contract_rebuilder=contract,\n        stage_cover=stage_cover,\n    )\n\n    assert staged is not None\n    source_fact = staged["story_contract"]["source_fact_review"]\n    assert source_fact["decision"] == "DETERMINISTIC_TEXT_NARROWING"\n    assert source_fact["final_title"] == EXACT_TITLE\n    assert source_fact["final_selection_hook"] == EXACT_HOOK\n    assert source_fact["blocked_source_fact_review"] == _failed_receipt()\n    consumption = source_fact["deterministic_text_surface_resolution"]\n    assert consumption["clip_context_prompt_sha256"] == CLIP_CONTEXT_PROMPT_SHA256\n    assert consumption["diagnostic_clip_context_prompt_sha256"] == text_sha256(context_prompt)\n    assert consumption["diagnostic_clip_context_matches_adjudication"] is False\n    assert source_fact_review.validate_source_fact_review(\n        source_fact,\n        selection_hook=EXACT_HOOK,\n        title=EXACT_TITLE,\n        final_transcript=transcript,\n        clip_context_prompt=context_prompt,\n        selection_scorecard=copy.deepcopy(_FROZEN_SELECTION_SCORECARD),\n        candidate_id=CANDIDATE_ID,\n        final_reviewed_srt_path=runtime_srt,\n        speaker_evidence=copy.deepcopy(authority.document["uniform_host_authority"]["evidence"]),\n    )\n    assert staged["publish_staging"]["title"] == EXACT_TITLE\n    assert staged["publish_staging"]["title_authority_status"] == (\n        "RESOLVED_DETERMINISTIC_TEXT_NARROWING"\n    )\n    assert staged["publish_staging"]["cover_status"] == "AI_COVER_READY"\n    assert (\n        "publish_title_length_out_of_bounds"\n        not in staged["publish_staging"]["title_policy_violations"]\n    )\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        'def test_differently_named_relocated_runtime_srt_replays_repository_projection(\n    tmp_path: Path,\n) -> None:\n    root = _sealed_repo(tmp_path, "sealed-relocated-runtime")\n    runtime_srt = tmp_path / "package" / "renamed-final-reviewed.srt"\n    runtime_srt.parent.mkdir(parents=True)\n    shutil.copy2(root / SRT_RELATIVE, runtime_srt)\n\n    assert _consume(root, reviewed_srt_path=runtime_srt) == _consume(root)\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        'def test_differently_named_relocated_runtime_srt_byte_drift_blocks(tmp_path: Path) -> None:\n    root = _sealed_repo(tmp_path, "sealed-relocated-runtime-drift")\n    runtime_srt = tmp_path / "package" / "renamed-final-reviewed.srt"\n    runtime_srt.parent.mkdir(parents=True)\n    runtime_srt.write_bytes((root / SRT_RELATIVE).read_bytes() + b"\\n")\n\n    with pytest.raises(\n        DeterministicTextSurfaceResolutionError,\n        match="REVIEWED_SRT_RUNTIME_HASH_MISMATCH",\n    ):\n        _consume(root, reviewed_srt_path=runtime_srt)\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        'def test_runtime_final_transcript_drift_blocks(tmp_path: Path) -> None:\n    root = _sealed_repo(tmp_path, "sealed-transcript-drift")\n    transcript = _final_transcript(root / SRT_RELATIVE) + "\\n漂移"\n    with pytest.raises(\n        DeterministicTextSurfaceResolutionError,\n        match="RUNTIME_FINAL_TRANSCRIPT_MISMATCH",\n    ):\n        _consume(root, final_transcript=transcript)\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        'def test_two_fresh_contexts_share_one_sealed_pass(tmp_path: Path) -> None:\n    root = _sealed_repo(tmp_path, "sealed-context-diagnostics")\n    first = _consume(root, clip_context_prompt="fresh ASR context one")\n    second = _consume(root, clip_context_prompt="fresh ASR context two")\n\n    first_review = source_fact_review.authorize_deterministic_text_narrowing(first)\n    second_review = source_fact_review.authorize_deterministic_text_narrowing(second)\n    for review in (first_review, second_review):\n        assert review["status"] == "PASS"\n        assert review["decision"] == "DETERMINISTIC_TEXT_NARROWING"\n        assert review["final_title"] == EXACT_TITLE\n        assert review["final_selection_hook"] == EXACT_HOOK\n        consumption = review["deterministic_text_surface_resolution"]\n        assert consumption["clip_context_prompt_sha256"] == CLIP_CONTEXT_PROMPT_SHA256\n        assert consumption["provider_call_required"] is False\n\n    assert (\n        first["diagnostic_clip_context_prompt_sha256"]\n        != second["diagnostic_clip_context_prompt_sha256"]\n    )\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        'def test_runtime_selection_scorecard_drift_blocks(tmp_path: Path) -> None:\n    root = _sealed_repo(tmp_path, "sealed-scorecard-drift")\n    scorecard = copy.deepcopy(_FROZEN_SELECTION_SCORECARD)\n    scorecard["effective_score"] = 91.6\n    with pytest.raises(\n        DeterministicTextSurfaceResolutionError,\n        match="RUNTIME_SELECTION_SCORECARD_MISMATCH",\n    ):\n        _consume(root, selection_scorecard=scorecard)\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        'def test_runtime_entity_context_drift_blocks(tmp_path: Path) -> None:\n    root = _sealed_repo(tmp_path, "sealed-entity-context-drift")\n    authority = load_deterministic_text_surface_authority(CANDIDATE_ID, root=root)\n    assert authority is not None\n    entity_context = copy.deepcopy(authority.failed_source_fact_receipt["entity_context"])\n    assert isinstance(entity_context, Mapping)\n    entity_context["final_reviewed_srt_sha256"] = "0" * 64\n    with pytest.raises(\n        DeterministicTextSurfaceResolutionError,\n        match="RUNTIME_ENTITY_CONTEXT_MISMATCH",\n    ):\n        _consume(root, entity_context=entity_context)\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        'def test_repository_seal_rejects_post_commit_byte_mutation(tmp_path: Path) -> None:\n    root = _sealed_repo(tmp_path, "sealed-mutation")\n    assert load_deterministic_text_surface_authority(CANDIDATE_ID, root=root) is not None\n    path = root / ASSET_DIRECTORY / AUTHORITY_FILENAME\n    path.write_bytes(path.read_bytes() + b"\\n")\n    with pytest.raises(\n        DeterministicTextSurfaceResolutionError,\n        match="REPOSITORY_ASSET_UNSEALED",\n    ):\n        load_deterministic_text_surface_authority(CANDIDATE_ID, root=root)\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        'def test_missing_sealed_adjudication_prompt_blocks(tmp_path: Path) -> None:\n    root = _sealed_repo(tmp_path, "sealed-prompt-missing")\n    (root / ADJUDICATION_PROMPT_RELATIVE).unlink()\n    subprocess.run(["git", "-C", str(root), "add", "-u"], check=True)\n    subprocess.run(\n        [\n            "git",\n            "-C",\n            str(root),\n            "-c",\n            "user.name=tests",\n            "-c",\n            "user.email=tests@example.invalid",\n            "commit",\n            "-qm",\n            "remove adjudication prompt",\n        ],\n        check=True,\n    )\n\n    with pytest.raises(\n        DeterministicTextSurfaceResolutionError,\n        match="ASSET_UNREADABLE",\n    ):\n        load_deterministic_text_surface_authority(CANDIDATE_ID, root=root)\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        'def test_changed_sealed_adjudication_prompt_bytes_block(tmp_path: Path) -> None:\n    root = _sealed_repo(tmp_path, "sealed-prompt-changed")\n    path = root / ADJUDICATION_PROMPT_RELATIVE\n    path.write_bytes(path.read_bytes() + b"\\n")\n    subprocess.run(["git", "-C", str(root), "add", str(path)], check=True)\n    subprocess.run(\n        [\n            "git",\n            "-C",\n            str(root),\n            "-c",\n            "user.name=tests",\n            "-c",\n            "user.email=tests@example.invalid",\n            "commit",\n            "-qm",\n            "change adjudication prompt bytes",\n        ],\n        check=True,\n    )\n\n    with pytest.raises(\n        DeterministicTextSurfaceResolutionError,\n        match="ADJUDICATION_PROMPT_FILE_HASH_MISMATCH",\n    ):\n        load_deterministic_text_surface_authority(CANDIDATE_ID, root=root)\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        'def test_unsealed_adjudication_prompt_bytes_block(tmp_path: Path) -> None:\n    root = _sealed_repo(tmp_path, "unsealed-prompt-changed")\n    path = root / ADJUDICATION_PROMPT_RELATIVE\n    path.write_bytes(path.read_bytes() + b"\\n")\n\n    with pytest.raises(\n        DeterministicTextSurfaceResolutionError,\n        match="REPOSITORY_ASSET_UNSEALED",\n    ):\n        load_deterministic_text_surface_authority(CANDIDATE_ID, root=root)\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        'def test_wsl_to_free_root_relocation_preserves_authority_identity(tmp_path: Path) -> None:\n    wsl_root = _sealed_repo(tmp_path, "wsl-root")\n    free_root = _sealed_repo(tmp_path, "free-root")\n    wsl_receipt = _consume(wsl_root)\n    free_receipt = _consume(free_root)\n\n    assert wsl_receipt == free_receipt\n    serialized = json.dumps(wsl_receipt, ensure_ascii=False, sort_keys=True)\n    assert str(wsl_root) not in serialized\n    assert str(free_root) not in serialized\n    assert "ROG-EYE" not in serialized\n    assert wsl_receipt["entity_projection_sha256"] == ENTITY_PROJECTION_SHA256\n    assert hashlib.sha256(EXACT_TITLE.encode("utf-8")).hexdigest() == (\n        "97bf7997892126ce9dfeed7d5e98a047a91b570513d6ad47c05fb7285afa9951"\n    )\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_published_topic_collision.py',
+        'def test_806_refreshed_resolution_asset_pins_the_observed_live_receipt() -> None:\n    path = REPO_ROOT / refreshed_resolution_relative_path(CANDIDATE)\n    resolution = json.loads(path.read_text(encoding="utf-8"))\n    declared = resolution.pop("resolution_sha256")\n\n    assert declared == canonical_sha256(resolution)\n    assert resolution["schema_version"] == REFRESHED_RESOLUTION_SCHEMA\n    assert resolution["candidate"]["selection_scorecard_sha256"] == (\n        "sha256:f8e9e348dc09f3140a2e7abcf47ceafdf433e879477757dd18c4098d9b88333a"\n    )\n    assert resolution["scorecard_refresh"] == {\n        "candidate_binding_sha256": (\n            "sha256:a4527a2b40a7a222967faef71413e36e105130c5b08d7c3576e9f196bcf00b3b"\n        ),\n        "candidate_id": CANDIDATE,\n        "input_provenance_sha256": (\n            "sha256:c5faf5278cf78044fc525328e4d8a4a4314d626ba12883cf03ca70c5fa818e07"\n        ),\n        "new_selection_scorecard_sha256": (\n            "sha256:f8e9e348dc09f3140a2e7abcf47ceafdf433e879477757dd18c4098d9b88333a"\n        ),\n        "old_selection_scorecard_sha256": (\n            "sha256:5cd263fbf5d936fa4a6db372198d00a91f7a1792c44bfe7fd5d67a0ae2afa4fd"\n        ),\n        "provider_contract_sha256": (\n            "sha256:1fa451d58e262f7aa5ca7e59708fb2edf8d02f4df1d5a61ace32bcbd99b27be6"\n        ),\n        "receipt_schema_version": "semantic-evidence-scorecard-refresh-receipt.v1",\n        "receipt_sha256": (\n            "sha256:26e0d7fb08624e411c3ca8981dd21401309e0b0f55d8cdf9431dd27851425729"\n        ),\n        "recording_date": DATE,\n        "semantic_chat_evidence_sha256": (\n            "sha256:767aa721676e0e56409556d05b666a684a5b2d90adcb3eae3484f73bc9b7b676"\n        ),\n        "semantic_chat_policy_sha256": (\n            "sha256:dcddbafbb37693f270adbab5ecb8d7ebbe3c79c9a8bd0d332aa13dcc61750044"\n        ),\n        "semantic_chat_source_sha256": (\n            "sha256:f86aa60d02d1ced94de49685a0ee37a3004d8d40bcd36d212a94e57dd60d63fb"\n        ),\n    }\n    assert resolution["upload_authorized"] is False\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_reviewed_voiceprint_enrollment.py',
+        'def test_7_22_reviewed_truth_yields_only_four_exact_host_cues() -> None:\n    override = REPO_ROOT / "assets/lidousha/speaker_overrides/auto_200511_61_138.speaker.v1.json"\n    payload = json.loads(override.read_text(encoding="utf-8"))\n    selected, excluded = enrollment._select_reviewed_host_rows(payload, minimum_clip_ms=700)\n    assert [row["source_cue"] for row in selected] == [4, 5, 27, 32]\n    assert sum(int(row["duration_ms"]) for row in selected) == 4_860\n    assert excluded["mixed_or_multisegment"] == 7\n    cue_five = next(row for row in selected if row["source_cue"] == 5)\n    assert cue_five["binding_text_sha256"] != cue_five["reviewed_text_sha256"]\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_reviewed_voiceprint_enrollment.py',
+        '@pytest.mark.parametrize(\n    ("candidate_id", "expected_count", "expected_duration_ms", "expected_short"),\n    [\n        ("auto_200130_1323_1603", 33, 69_029, 2),\n        ("auto_200130_1722_1792", 11, 17_960, 0),\n    ],\n)\ndef test_8_8_truth_yields_bound_development_samples_not_holdout(\n    candidate_id: str,\n    expected_count: int,\n    expected_duration_ms: int,\n    expected_short: int,\n) -> None:\n    override = REPO_ROOT / "assets/lidousha/speaker_overrides" / f"{candidate_id}.speaker.v1.json"\n    payload = json.loads(override.read_text(encoding="utf-8"))\n    selected, excluded = enrollment._select_reviewed_host_rows(payload, minimum_clip_ms=700)\n    assert len(selected) == expected_count\n    assert sum(int(row["duration_ms"]) for row in selected) == expected_duration_ms\n    assert excluded["below_minimum_duration"] == expected_short\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_speaker_host_evidence.py',
+        'def test_current_v2_61_truth_replay_keeps_lineage_explicit_and_false_host_zero() -> None:\n    """Current v2 truth is measured separately from the invalidated v1 truth.\n\n    The acoustic extract retains the same candidate/cue coordinate, but its\n    historical truth partner had a different source hash.  Assert that mismatch\n    here so a future edit cannot accidentally describe this as one lineage.\n    """\n\n    legacy_truth = json.loads(TRUTH_PATH.read_text(encoding="utf-8"))\n    current_truth_document = json.loads(CURRENT_61_TRUTH_PATH.read_text(encoding="utf-8"))\n    current_override = json.loads(\n        (OVERRIDES / "auto_203735_555_680.speaker.v1.json").read_text(encoding="utf-8")\n    )\n    assert legacy_truth["source_machine_sha256"] != current_truth_document[\n        "source_machine_sha256"\n    ]\n    assert current_truth_document["source_machine_sha256"] == current_override[\n        "source_srt_sha256"\n    ]\n    assert current_truth_document["summary"] == {\n        "cues": 61,\n        "text_changed": 0,\n        "label_changed": 6,\n        "mixed": 5,\n        "marked": 6,\n    }\n\n    decisions, threshold, band = _load_decisions()\n    correct, non_mixed_total, false_host, false_guest = _measure_replay(\n        _load_truth(CURRENT_61_TRUTH_PATH), decisions, threshold, band\n    )\n    assert false_host == []\n    assert false_guest == [24, 40]\n    assert non_mixed_total == 56\n    assert correct == 54\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_speaker_host_evidence.py',
+        'def test_cross_session_40_replay_has_zero_whole_cue_false_host() -> None:\n    """The 40-cue truth is differential; unchanged worksheet rows are truth.\n\n    Seven multi-segment overrides are excluded from this whole-cue metric.  It\n    intentionally says nothing about segment-level mixed-speaker accuracy.\n    """\n\n    machine_document = json.loads(\n        CROSS_SESSION_DECISIONS_PATH.read_text(encoding="utf-8")\n    )\n    override_document = json.loads(\n        (OVERRIDES / "auto_200511_61_138.speaker.v1.json").read_text(encoding="utf-8")\n    )\n    assert machine_document["automatic_labelled_srt_sha256"] == override_document[\n        "source_srt_sha256"\n    ]\n    decisions, threshold, band = _load_decisions(CROSS_SESSION_DECISIONS_PATH)\n    overrides = {row["source_cue"]: row for row in override_document["overrides"]}\n    truth = {}\n    for cue, machine_row in decisions.items():\n        override = overrides.get(cue)\n        if override is None:\n            truth[cue] = {\n                "mixed": False,\n                "truth_segments": [{"label": machine_row["speaker"]}],\n            }\n            continue\n        truth[cue] = {\n            "mixed": len(override["segments"]) > 1,\n            "truth_segments": [\n                {"label": segment["speaker"]} for segment in override["segments"]\n            ],\n        }\n\n    correct, non_mixed_total, false_host, false_guest = _measure_replay(\n        truth, decisions, threshold, band\n    )\n    assert false_host == []\n    assert false_guest == [5, 27, 30]\n    assert non_mixed_total == 33\n    assert correct == 30\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_speaker_host_evidence.py',
+        'def test_forensic_12_case_slice_reports_overlap_and_zero_false_host() -> None:\n    """F4/F6 hard cases: six non-mixed decisions plus six mixed exclusions.\n\n    The 200736 values are the evidence table in the 2026-08-08 forensic report;\n    203735 reuses the exact committed machine-decision extract.  This is a\n    separately reported stress slice, not 12 new rows added to the 61 corpus.\n    """\n\n    evidence_200736 = {\n        10: (0.391, "whole_clip_context_guest_confirmed", GUEST_SPEAKER),\n        17: (0.161, "guest_default_ambiguity", GUEST_SPEAKER),\n        18: (-0.085, "guest_default_ambiguity", GUEST_SPEAKER),\n        23: (0.1167, "campp_semantic_corroborated", HOST_SPEAKER),\n        34: (0.416, "whole_clip_context_guest_confirmed", GUEST_SPEAKER),\n        35: (0.403, "whole_clip_context_guest_confirmed", GUEST_SPEAKER),\n    }\n    decisions_203735, threshold_203735, band = _load_decisions()\n    candidates = {\n        "auto_200736_298_383": (\n            OVERRIDES / "auto_200736_298_383.speaker.v1.json",\n            0.15825,\n            {\n                cue: {\n                    "source_index": cue,\n                    "margin": margin,\n                    "decision_source": source,\n                    "speaker": speaker,\n                }\n                for cue, (margin, source, speaker) in evidence_200736.items()\n            },\n        ),\n        "auto_203735_555_680": (\n            OVERRIDES / "auto_203735_555_680.speaker.v1.json",\n            threshold_203735,\n            {cue: decisions_203735[cue] for cue in (30, 31, 40, 41, 44, 59)},\n        ),\n    }\n\n    false_host = []\n    false_guest = []\n    mixed = []\n    correct = 0\n    observed = {}\n    for candidate_id, (override_path, threshold, evidence) in candidates.items():\n        overrides = json.loads(override_path.read_text(encoding="utf-8"))["overrides"]\n        truth = {row["source_cue"]: row for row in overrides}\n        assert set(evidence) == set(truth)\n        for cue, evidence_row in evidence.items():\n            truth_row = truth[cue]\n            if len(truth_row["segments"]) > 1:\n                mixed.append((candidate_id, cue))\n                continue\n            speaker, source = _replay_cue(\n                margin=evidence_row["margin"],\n                threshold=threshold,\n                band=band,\n                historical_row=evidence_row,\n            )\n            observed[(candidate_id, cue)] = (speaker, source)\n            truth_label = truth_row["segments"][0]["speaker"]\n            if speaker == truth_label:\n                correct += 1\n            elif speaker == HOST_SPEAKER and truth_label == GUEST_SPEAKER:\n                false_host.append((candidate_id, cue))\n            elif speaker == GUEST_SPEAKER and truth_label == HOST_SPEAKER:\n                false_guest.append((candidate_id, cue))\n\n    assert len(mixed) == 6\n    assert false_host == []\n    assert false_guest == [\n        ("auto_200736_298_383", 18),\n        ("auto_203735_555_680", 40),\n    ]\n    assert correct == 4\n    assert observed[("auto_200736_298_383", 23)] == (\n        GUEST_SPEAKER,\n        "guest_default_ambiguity",\n    )\n    for cue in (10, 34, 35):\n        assert observed[("auto_200736_298_383", cue)] == (\n            HOST_SPEAKER,\n            "campp_audio",\n        )\n',
+        "",
+    ),
+    (
+        'tests/test_import_external_package.py',
+        'def test_committed_consumed_failed_pick_release_refuses_reauthorization() -> None:\n    """auto_230125_1157_1229\'s committed row was released_for_upload and its\n    one-shot failed-pick authority was consumed by the 2026-08-12 fast-track\n    upload (BV1uKuC6hE9j); the row is now status=published (see the\n    "Promote 8/12 fast-track uploads into committed publication registry"\n    commit).  A published row must never reopen failed-pick adoption -- this\n    pins that the committed registry now refuses it outright, rather than\n    pinning the exact authority shape of an authority that no longer grants\n    anything."""\n\n    registry_path = (\n        Path(__file__).resolve().parents[1]\n        / cli.PUBLICATION_REGISTRY_RELATIVE\n    )\n    with pytest.raises(pi.PackageImportError) as excinfo:\n        pi.load_failed_pick_import_authorization(\n            registry_path=registry_path,\n            candidate_id="auto_230125_1157_1229",\n            date="2026-08-08",\n            release_quote=RELEASE_QUOTE,\n        )\n    assert excinfo.value.code == "FAILED_PICK_NOT_RELEASED"\n    assert "published" in excinfo.value.detail\n',
+        "",
+    ),
+    (
+        'tests/test_manual_source_fact_scorecard_rescore.py',
+        'def test_committed_candidate_authority_mode_is_validation_only_by_default(\n    tmp_path: Path,\n) -> None:\n    fixture = _story_authority_fixture(tmp_path)\n    calls = 0\n\n    def provider(_prompt: str) -> str:\n        nonlocal calls\n        calls += 1\n        return _provider_payload()\n\n    preflight = run_manual_rescore(**fixture, llm_call=provider)\n\n    assert preflight["status"] == "VALIDATED_NO_PROVIDER_CALL"\n    bindings = preflight["input_bindings"]\n    assert bindings["input_mode"] == "candidate_correction_authority"\n    assert bindings["original_selection_hook"] == STORY_ORIGINAL_HOOK\n    assert bindings["corrected_hook"] == STORY_CORRECTED_HOOK\n    assert bindings["stale_scorecard_sha256"] == (\n        "sha256:b16649c47ce299821b0ab0b83ed7e168846beed282afaafc817631f340081e0a"\n    )\n    assert bindings["correction_authority_sha256"] == (\n        "sha256:c61f6094abfef6ec37da728931b16ccf2e6fd4b49c6bf9f2449540b73ea82a1d"\n    )\n    assert calls == 0\n    assert not fixture["output"].exists()\n',
+        "",
+    ),
+    (
+        'tests/test_manual_source_fact_scorecard_rescore.py',
+        'def test_committed_candidate_authority_still_requires_double_execution_authority(\n    tmp_path: Path,\n) -> None:\n    fixture = _story_authority_fixture(tmp_path)\n    calls = 0\n\n    def provider(prompt: str) -> str:\n        nonlocal calls\n        calls += 1\n        assert STORY_CORRECTED_HOOK in prompt\n        return _provider_payload()\n\n    with pytest.raises(ManualScorecardRescoreError, match=EXECUTION_AUTHORITY_ENV):\n        run_manual_rescore(\n            **fixture,\n            execute_provider_call=True,\n            environ={},\n            llm_call=provider,\n        )\n    assert calls == 0\n\n    receipt = run_manual_rescore(\n        **fixture,\n        execute_provider_call=True,\n        environ={EXECUTION_AUTHORITY_ENV: EXECUTION_AUTHORITY_VALUE},\n        llm_call=provider,\n    )\n    assert calls == 1\n    assert receipt["input_bindings"]["input_mode"] == (\n        "candidate_correction_authority"\n    )\n    assert receipt["authority"]["publication_authority"] is False\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_source_fact_review.py',
+        'def test_candidate_entity_context_binds_srt_and_teaches_derived_spelling() -> None:\n    hook = "莉娅求小李‘就算你是狼也放过我’，结伴后小李突然连声道歉。"\n    title = "【李豆沙】莉娅求小李“就算你是狼也放过我”，结伴后小李突然连声道歉"\n    seen: dict[str, str] = {}\n\n    def cpa(prompt: str) -> str:\n        seen["prompt"] = prompt\n        return _completion(\n            status="KEEP",\n            final_hook=hook,\n            final_title=title,\n            supported_by=["final_transcript"],\n        )\n\n    review = review_and_repair_source_facts(\n        selection_hook=hook,\n        title=title,\n        final_transcript="莉亚 活着\\n就算你是狼\\n你放过我好吗\\n对不起",\n        clip_context_prompt="",\n        llm_call=cpa,\n        candidate_id="auto_223750_578_734",\n        final_reviewed_srt_path=_story_entity_srt(),\n    )\n\n    assert source_fact_review_passes(review)\n    context = review["entity_context"]\n    assert context["schema_version"] == "source-fact-entity-context.v1"\n    assert context["final_reviewed_srt_sha256"] == (\n        "6d79fdab105d4c7b5edffec66fe526aa01839de342a7c96b8784f4d0100a8062"\n    )\n    assert review["passes"][0]["entity_context_sha256"] == (context["context_sha256"])\n    prompt = seen["prompt"]\n    assert "「莉娅」↔「莉亚」 指同一实体" in prompt\n    assert "最终字幕可保留 reviewed_surface「莉亚」" in prompt\n    assert "derived title_cover 文案" in prompt\n    assert "必须写「莉娅」" in prompt\n    assert validate_source_fact_review(\n        review,\n        selection_hook=hook,\n        title=title,\n        final_transcript="莉亚 活着\\n就算你是狼\\n你放过我好吗\\n对不起",\n        clip_context_prompt="",\n        candidate_id="auto_223750_578_734",\n        final_reviewed_srt_path=_story_entity_srt(),\n    )\n    # A context-bearing receipt cannot be downgraded to legacy validation.\n    assert not validate_source_fact_review(\n        review,\n        selection_hook=hook,\n        title=title,\n        final_transcript="莉亚 活着\\n就算你是狼\\n你放过我好吗\\n对不起",\n        clip_context_prompt="",\n    )\n    tampered_body = json.loads(json.dumps(review, ensure_ascii=False))\n    tampered_body.pop("receipt_sha256")\n    tampered_body["entity_context"]["projection_sha256"] = "0" * 64\n    tampered = _finalize_receipt(tampered_body)\n    assert not validate_source_fact_review(\n        tampered,\n        selection_hook=hook,\n        title=title,\n        final_transcript="莉亚 活着\\n就算你是狼\\n你放过我好吗\\n对不起",\n        clip_context_prompt="",\n        candidate_id="auto_223750_578_734",\n        final_reviewed_srt_path=_story_entity_srt(),\n    )\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_source_fact_review.py',
+        'def test_candidate_entity_input_gate_blocks_wrong_derived_spelling_before_cpa() -> None:\n    calls = 0\n\n    def cpa(_prompt: str) -> str:\n        nonlocal calls\n        calls += 1\n        raise AssertionError("CPA ran before the entity surface gate")\n\n    review = review_and_repair_source_facts(\n        selection_hook="莉亚求小李放过她。",\n        title="【李豆沙】莉亚求小李放过她，结伴后小李突然连声道歉",\n        final_transcript="莉亚 活着\\n你放过我好吗",\n        clip_context_prompt="",\n        llm_call=cpa,\n        candidate_id="auto_223750_578_734",\n        final_reviewed_srt_path=_story_entity_srt(),\n    )\n\n    assert calls == 0\n    assert review["status"] == "FAILED"\n    assert review["reason_code"] == "SOURCE_FACT_INPUT_ENTITY_SURFACE_INVALID"\n    assert "expected=莉娅:observed=莉亚" in review["entity_surface_error"]\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_source_fact_review.py',
+        'def test_candidate_entity_response_gate_rejects_cpa_reversion_to_srt_spelling() -> None:\n    hook = "莉娅求小李放过她。"\n    title = "【李豆沙】莉娅求小李放过她，结伴后小李突然连声道歉"\n    wrong_title = "【李豆沙】莉亚求小李放过她，结伴后小李突然连声道歉"\n    calls = 0\n\n    def cpa(_prompt: str) -> str:\n        nonlocal calls\n        calls += 1\n        return _completion(\n            status="REPAIR",\n            final_hook=hook,\n            final_title=wrong_title,\n            supported_by=["final_transcript"],\n            changed_surfaces=[\n                {\n                    "artifact": "title",\n                    "before": "莉娅",\n                    "after": "莉亚",\n                    "reason": "错误地贴合字幕词面。",\n                    "evidence": ["莉亚 活着"],\n                }\n            ],\n        )\n\n    review = review_and_repair_source_facts(\n        selection_hook=hook,\n        title=title,\n        final_transcript="莉亚 活着\\n你放过我好吗",\n        clip_context_prompt="",\n        llm_call=cpa,\n        candidate_id="auto_223750_578_734",\n        final_reviewed_srt_path=_story_entity_srt(),\n    )\n\n    assert calls == 3\n    assert review["status"] == "FAILED"\n    assert review["reason_code"] == "CPA_ENTITY_SURFACE_RESPONSE_INVALID"\n    assert all(\n        row["entity_context_sha256"] == review["entity_context"]["context_sha256"]\n        for row in review["passes"]\n    )\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_source_fact_review.py',
+        'def test_candidate_entity_context_rejects_final_srt_byte_drift(\n    tmp_path: Path,\n) -> None:\n    drifted = tmp_path / "final.reviewed.srt"\n    drifted.write_bytes(_story_entity_srt().read_bytes() + b"\\n")\n    calls = 0\n\n    def cpa(_prompt: str) -> str:\n        nonlocal calls\n        calls += 1\n        raise AssertionError("CPA ran with stale reviewed SRT bytes")\n\n    review = review_and_repair_source_facts(\n        selection_hook="莉娅求小李放过她。",\n        title="【李豆沙】莉娅求小李放过她，结伴后小李突然连声道歉",\n        final_transcript="莉亚 活着\\n你放过我好吗",\n        clip_context_prompt="",\n        llm_call=cpa,\n        candidate_id="auto_223750_578_734",\n        final_reviewed_srt_path=drifted,\n    )\n\n    assert calls == 0\n    assert review["status"] == "FAILED"\n    assert review["reason_code"] == "SOURCE_FACT_ENTITY_CONTEXT_INVALID"\n    assert "SOURCE_FACT_FINAL_REVIEWED_SRT_BINDING_MISMATCH" in (review["entity_context_error"])\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_source_fact_review.py',
+        'def test_publish_staging_wires_exact_final_srt_into_entity_context(\n    tmp_path: Path,\n    monkeypatch: pytest.MonkeyPatch,\n) -> None:\n    monkeypatch.setattr(\n        source_fact_staging,\n        "load_manual_title_keep_authority",\n        lambda _candidate_id: None,\n    )\n    hook = "莉娅求小李‘就算你是狼也放过我’，结伴后小李突然连声道歉。"\n    title = "【李豆沙】莉娅求小李“就算你是狼也放过我”，结伴后小李突然连声道歉"\n    transcript = "莉亚 活着\\n我想活着\\n就算你是狼\\n你放过我好吗\\n对不起"\n    story = build_story_contract(\n        candidate_id="auto_223750_578_734",\n        selection_hook=hook,\n        transcript_text=transcript,\n        selection_scorecard=None,\n        session_relation_authority=None,\n    )\n    media = tmp_path / "auto_223750_578_734.recut.mp4"\n    media.write_bytes(b"video")\n\n    def cpa(prompt: str) -> str:\n        assert "entity_context_sha256:" in prompt\n        return _completion(\n            status="KEEP",\n            final_hook=hook,\n            final_title=title,\n            supported_by=["final_transcript"],\n        )\n\n    def stage_cover(\n        _record: dict[str, object],\n        **_kwargs: object,\n    ) -> dict[str, object]:\n        cover = tmp_path / "cover.png"\n        cover.write_bytes(b"cover")\n        return {\n            "status": "AI_COVER_READY",\n            "cover_path": str(cover),\n            "cover_generation": {\n                "status": "READY",\n                "rendered_lines": ["莉娅求小李放过我"],\n            },\n            "reason_codes": [],\n        }\n\n    staged = _stage_publish_draft(\n        {\n            "status": "MATERIALIZED",\n            "speaker_mode": "uniform_host",\n            "media_path": str(media),\n            "subtitle_path": str(_story_entity_srt()),\n            "story_contract": story,\n            "artifact_hashes": {},\n        },\n        candidate_id="auto_223750_578_734",\n        title=title,\n        cues=[SourceCue("cue-1", 0, 1_000, transcript, "zh", "speech", 1.0)],\n        run_ffmpeg=False,\n        title_llm_call=None,\n        selection_hook=hook,\n        source_fact_llm_call=cpa,\n        story_contract_rebuilder=lambda _hook: story,\n        stage_cover=stage_cover,\n    )\n\n    assert staged is not None\n    receipt = staged["story_contract"]["source_fact_review"]\n    assert receipt["status"] == "PASS"\n    assert receipt["entity_context"]["candidate_id"] == "auto_223750_578_734"\n    assert (\n        receipt["passes"][0]["entity_context_sha256"]\n        == (receipt["entity_context"]["context_sha256"])\n    )\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_addressee_attribution.py',
+        'def test_real_story_candidate_52_to_55_alignment_is_accepted(tmp_path: Path) -> None:\n    root = Path(__file__).resolve().parents[2]\n    override = json.loads(\n        (root / "assets/lidousha/speaker_overrides/auto_223750_578_734.speaker.v1.json").read_text(\n            encoding="utf-8"\n        )\n    )\n    cues: list[SourceCue] = []\n    segments: list[tuple[int, int, int, str, str]] = []\n    for row in override["overrides"]:\n        source_index = row["source_cue"]\n        expect = row["expect"]\n        cues.append(\n            SourceCue(\n                f"story_{source_index:04d}",\n                _ms(expect["start"]),\n                _ms(expect["end"]),\n                expect["text"],\n            )\n        )\n        for segment in row["segments"]:\n            segments.append(\n                (\n                    source_index,\n                    _ms(segment["start"]),\n                    _ms(segment["end"]),\n                    segment["speaker"],\n                    segment["text"],\n                )\n            )\n    assert len(cues) == 52\n    assert len(segments) == 55\n    record, srt_bytes, manifest_bytes = _speaker_bundle(\n        tmp_path, cues, segments, stem="auto_223750_578_734"\n    )\n    result = rebuild_speaker_evidence(\n        record,\n        cues,\n        speaker_srt_bytes=srt_bytes,\n        speaker_manifest_bytes=manifest_bytes,\n    )\n    assert result.state is SpeakerEvidenceState.PRESENT_VALID\n    assert "4.1 [李豆沙] 莉亚" in result.transcript\n    assert "4.2 [连线] 活着" in result.transcript\n    assert "17.1 [连线] 我比" in result.transcript\n    assert "17.2 [李豆沙] 你好" in result.transcript\n    assert "22.1 [连线] 这人" in result.transcript\n    assert "22.2 [李豆沙] 有诶，有有有有" in result.transcript\n    assert len(result.transcript.splitlines()) == 55\n',
+        "",
+    ),
+    # ---- v4.10b：追加 TEMPLATE_DIRS 后 test_deterministic_text_surface_resolution.py
+    #      又冒出的一批单函数摘除（同批理由：直接读新剥离的候选级真值资产）----
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        'def test_failed_receipt_snapshot_is_exact_wsl_artifact_object() -> None:\n    receipt = _failed_receipt()\n    body = dict(receipt)\n    declared = body.pop("receipt_sha256")\n    assert declared == canonical_sha256(body) == FAILED_SOURCE_FACT_RECEIPT_SHA256\n    assert receipt["reason_code"] == "CPA_TEXT_REVIEW_INVALID"\n    assert receipt["status"] == "FAILED"\n    assert receipt["decision"] == "NONE"\n    assert receipt["speaker_evidence_sha256"] == SPEAKER_EVIDENCE_SHA256\n    assert [row["response_sha256"] for row in receipt["provider_retries"]] == [\n        "sha256:96a8ee1c9bd50918cfd5045a0a3d73d5cd161c5fa3c4813ff334f119152f92e9",\n        "sha256:ca5ad9e3decb70d536f2f54e41e447528bb138a69750a299249a57840e6aeecb",\n    ]\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        '@pytest.mark.parametrize(\n    ("mutation", "error"),\n    [\n        (\n            lambda d: d["source_binding"]["source_media"].__setitem__(\n                "sha256", "sha256:" + "0" * 64\n            ),\n            "SOURCE_BINDING_MISMATCH",\n        ),\n        (\n            lambda d: d["source_binding"]["exact_interval"].__setitem__(\n                "end_ms", SOURCE_END_MS + 1\n            ),\n            "SOURCE_BINDING_MISMATCH",\n        ),\n        (\n            lambda d: d["source_binding"]["reviewed_srt"].__setitem__(\n                "sha256", "sha256:" + "1" * 64\n            ),\n            "REVIEWED_SRT_BINDING_MISMATCH",\n        ),\n        (\n            lambda d: d["entity_binding"].__setitem__("projection_sha256", "0" * 64),\n            "ENTITY_BINDING_MISMATCH",\n        ),\n        (\n            lambda d: d["entity_binding"].__setitem__("required_surface", "星汐"),\n            "ENTITY_BINDING_MISMATCH",\n        ),\n        (\n            lambda d: d["uniform_host_authority"].__setitem__("speaker_mode", "required"),\n            "UNIFORM_HOST_AUTHORITY_MISMATCH",\n        ),\n        (\n            lambda d: d["source_binding"]["immutable_artifact_snapshots"][0].__setitem__(\n                "sha256", "sha256:" + "2" * 64\n            ),\n            "IMMUTABLE_ARTIFACT_SNAPSHOT",\n        ),\n    ],\n)\ndef test_source_entity_speaker_and_artifact_drift_fail_even_if_rehashed(\n    mutation,\n    error: str,\n) -> None:\n    document = _document()\n    mutation(document)\n    _rehash(document)\n    with pytest.raises(DeterministicTextSurfaceResolutionError, match=error):\n        validate_deterministic_text_surface_document(\n            document,\n            failed_source_fact_receipt=_failed_receipt(),\n        )\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        '@pytest.mark.parametrize(\n    "replacement",\n    [\n        EXACT_TITLE.replace("“", "‘", 1),\n        EXACT_TITLE.replace("，", ",", 1),\n        EXACT_TITLE.replace("xxsk", "XXSK", 1),\n        EXACT_TITLE + " ",\n        EXACT_TITLE + "\\n",\n    ],\n)\ndef test_any_exact_title_byte_drift_fails_after_consistent_rehash(replacement: str) -> None:\n    document = _document()\n    title = document["exact_surface_resolution"]["title"]\n    title["value"] = replacement\n    title["utf8_byte_length"] = len(replacement.encode("utf-8"))\n    title["sha256"] = text_sha256(replacement)\n    document["exact_surface_resolution"]["combined_sha256"] = combined_surface_sha256(\n        replacement,\n        EXACT_HOOK,\n    )\n    _rehash(document)\n    with pytest.raises(DeterministicTextSurfaceResolutionError, match="EXACT_TITLE_BYTES"):\n        validate_deterministic_text_surface_document(\n            document,\n            failed_source_fact_receipt=_failed_receipt(),\n        )\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        '@pytest.mark.parametrize(\n    "forbidden",\n    ["公主抱", "钓到", "成功", "xxsk说“被奶P赖上了”"],\n)\ndef test_visual_causal_and_participant_bound_role_claims_cannot_enter_hook(\n    forbidden: str,\n) -> None:\n    document = _document()\n    changed = EXACT_HOOK + forbidden\n    hook = document["exact_surface_resolution"]["hook"]\n    hook["value"] = changed\n    hook["utf8_byte_length"] = len(changed.encode("utf-8"))\n    hook["sha256"] = text_sha256(changed)\n    document["exact_surface_resolution"]["combined_sha256"] = combined_surface_sha256(\n        EXACT_TITLE,\n        changed,\n    )\n    _rehash(document)\n    with pytest.raises(DeterministicTextSurfaceResolutionError, match="EXACT_HOOK_BYTES"):\n        validate_deterministic_text_surface_document(\n            document,\n            failed_source_fact_receipt=_failed_receipt(),\n        )\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        'def test_unknown_or_free_form_plan_node_is_schema_failure() -> None:\n    document = _document()\n    document["closed_surface_plan"]["hook_nodes"].append(\n        {"node_type": "free_form_factual_literal", "value": "任意事实"}\n    )\n    _rehash(document)\n    with pytest.raises(\n        DeterministicTextSurfaceResolutionError,\n        match="CLOSED_SURFACE_PLAN_MISMATCH",\n    ):\n        validate_deterministic_text_surface_document(\n            document,\n            failed_source_fact_receipt=_failed_receipt(),\n        )\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        'def test_quote_speaker_and_order_swap_is_rejected() -> None:\n    document = _document()\n    title_nodes = document["closed_surface_plan"]["title_nodes"]\n    title_nodes[2]["speaker"] = "host"\n    title_nodes[3]["speaker"] = "entity"\n    _rehash(document)\n    with pytest.raises(\n        DeterministicTextSurfaceResolutionError,\n        match="CLOSED_SURFACE_PLAN_MISMATCH",\n    ):\n        validate_deterministic_text_surface_document(\n            document,\n            failed_source_fact_receipt=_failed_receipt(),\n        )\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        'def test_failed_source_fact_cannot_be_deleted_rewritten_or_marked_pass() -> None:\n    receipt = _failed_receipt()\n    receipt["status"] = "PASS"\n    body = dict(receipt)\n    body.pop("receipt_sha256")\n    receipt["receipt_sha256"] = canonical_sha256(body)\n    with pytest.raises(\n        DeterministicTextSurfaceResolutionError,\n        match="FAILED_SOURCE_FACT_RECEIPT_HASH_MISMATCH",\n    ):\n        validate_deterministic_text_surface_document(\n            _document(),\n            failed_source_fact_receipt=receipt,\n        )\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        'def test_clip_release_quote_cannot_become_exact_title_wildcard() -> None:\n    document = _document()\n    document["human_authority"]["clip_publication_release"]["exact_title_wildcard"] = True\n    _rehash(document)\n    with pytest.raises(\n        DeterministicTextSurfaceResolutionError,\n        match="CLIP_PUBLICATION_RELEASE_SCHEMA_INVALID",\n    ):\n        validate_deterministic_text_surface_document(\n            document,\n            failed_source_fact_receipt=_failed_receipt(),\n        )\n',
+        "",
+    ),
+    (
+        'tests/lidousha/test_deterministic_text_surface_resolution.py',
+        'def test_unknown_authority_field_is_rejected() -> None:\n    document = _document()\n    document["hostname"] = "ROG-EYE"\n    _rehash(document)\n    with pytest.raises(\n        DeterministicTextSurfaceResolutionError,\n        match="AUTHORITY_SCHEMA_INVALID",\n    ):\n        validate_deterministic_text_surface_document(\n            document,\n            failed_source_fact_receipt=_failed_receipt(),\n        )\n',
+        "",
+    ),
 )
 
 # ---------------------------------------------------------------------------
@@ -1121,7 +1517,11 @@ FORBIDDEN_PATTERNS = (
     r"docs/spark",
     r"docs/reviews/",
     r"docs/workflows/",
-    r"(?-i:HANDOFF)",  # 全大写才算私库交接文档引用；"Handoff" 是普通英文词
+    # 全大写才算私库交接文档引用；"Handoff" 是普通英文词。词边界排除
+    # HANDOFF_READY/HANDOFF_SCHEMA/_HANDOFF_FIELDS 这类持久 schema/状态常量
+    # （HANDOFF 前后紧邻 "_" 属同一 snake_case token，不是对 docs/HANDOFF.md
+    # 的散文引用）——与 lidousha-* schema 词汇同类，保留不动。
+    r"(?-i:(?<![A-Za-z0-9_])HANDOFF(?![A-Za-z0-9_]))",
 )
 
 FORBIDDEN_ALLOWLIST_SUFFIXES = (".ttf",)
@@ -1818,6 +2218,32 @@ _TEMPLATE_ASSET_JSON = {
         "policy": {},
         "rotation": {},
         "intros": [],
+    },
+    # game_context.validate_game_glossary() 要求 1..8 个 games 条目；通用
+    # "empty_entries" 骨架清空到 0 条会炸校验，故手写一条中性示例（结构与
+    # assets/lidousha/game_glossary.v1.json 一致，值全部占位）。
+    "game_glossary": {
+        "schema_version": "vtuber-slice.game-glossary.v1",
+        "occurrence_policy": "GAME_TERM_EXISTS_NOT_CUE_OCCURRENCE_OR_MUTATION_AUTHORITY",
+        "games": [
+            {
+                "game_id": "example-game",
+                "canonical": "示例游戏",
+                "aliases": ["Example Game"],
+                "sources": [
+                    {
+                        "publisher": "replace with an authoritative role/terminology page",
+                        "url": "https://example.com/replace-me",
+                        "note": "cite where every surface below comes from",
+                    }
+                ],
+                "detection_surfaces": ["示例角色甲", "示例角色乙", "示例角色丙"],
+                "terms": [
+                    {"surface": "示例角色甲", "kind": "role"},
+                    {"surface": "示例机制词", "kind": "mechanic"},
+                ],
+            }
+        ],
     },
 }
 
