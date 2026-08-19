@@ -1,0 +1,23 @@
+{
+  "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
+  "candidate_id": "auto_113022_354_496",
+  "schema_version": "subtitle-redelivery-baseline.v2",
+  "mode": "preserve_text_outside_source_truth",
+  "exact_interval_replay": true,
+  "path": "auto_113022_354_496.reviewed.srt",
+  "sha256": "9050edefa6e533777cd5dab709be8774075c4a1bdbc8d3de062987d16c385ed4",
+  "authority": "Ivan 2026-08-19 审片裁定#19(docs/reviews/2026-08-19-ivan-review-batch-rulings.md): 0:14《ぶらどらぶ》(Gemini 3.6 听写确认 VLAD LOVE, Ivan 报告 brasuki 日语); 2:39 播的有点压抑了(Ivan 逐字); cue59 播的 误附修正。时效性强优先修复上传。",
+  "source_recording_basename": "22966160_20260817-11-30-22.mp4",
+  "source_sha256": "212eb59bee50dda1601a3f30e3c7b9a307715058fb472646ddcfa200615c6a97",
+  "absolute_source_start_ms": 354420,
+  "absolute_source_end_ms": 512310,
+  "operator_text_full_ownership": {
+    "schema_version": "operator-reviewed-text-full-ownership-pin.v1",
+    "authority": "Ivan 2026-08-19 审片裁定#19(docs/reviews/2026-08-19-ivan-review-batch-rulings.md): 0:14《ぶらどらぶ》(Gemini 3.6 听写确认 VLAD LOVE, Ivan 报告 brasuki 日语); 2:39 播的有点压抑了(Ivan 逐字); cue59 播的 误附修正。时效性强优先修复上传。",
+    "baseline_sha256": "9050edefa6e533777cd5dab709be8774075c4a1bdbc8d3de062987d16c385ed4",
+    "source_srt_sha256": "80921974f929ebe8c6c9a4897bddfeb2acb907938a19b7ddf3f3fc0f09fc0843",
+    "cue_count": 62,
+    "changed_cue_count": 3,
+    "speaker_authority": "NOT_CLAIMED_TEXT_ONLY"
+  }
+}
