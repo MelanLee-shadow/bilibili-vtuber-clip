@@ -86,6 +86,11 @@ from src.autoslice.producer_text_finalization import (
 from src.autoslice.redelivery_baseline_ownership import (
     suppress_baseline_owned_self_heal_findings,
 )
+# Ivan 2026-08-19 ruling #2「弹幕不修正」（主包/主播案）——同一 owned-interval
+# 缺口，第二个不同权威源；本体见 chat_authority_ownership.py，这里只留调用点。
+from src.autoslice.chat_authority_ownership import (
+    suppress_chat_authority_owned_self_heal_findings,
+)
 from src.autoslice.redelivery_subtitle_baseline import apply_redelivery_subtitle_baseline
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
@@ -1574,6 +1579,11 @@ def _run_exact_final_review_gate(
             audit = _overlay_exact_carryover_findings(audit, replayable)
         suppress_baseline_owned_self_heal_findings(
             final_text, audit, recut.redelivery_baseline_audit
+        )
+        # 2026-08-19 主包/主播案：danmaku 逐字读音一旦被 chat authority 判定并
+        # 落笔，同一窗口不得再被本轮 self-heal 当成普通 ASR 错字重判。
+        suppress_chat_authority_owned_self_heal_findings(
+            final_text, audit, chat_authority_before_pass, final_start
         )
         chat_authority_audit["final_review_audit"] = audit
         persist_review_audit(review_audit_path, audit)

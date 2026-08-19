@@ -596,3 +596,162 @@ def test_cpa_witness_judge_can_keep_current_without_audio_final_authority():
     assert audit["read_aloud_arbitrations"][0]["outcome"] == (
         "current_confirmed_by_cpa_with_blind_audio_witness"
     )
+
+
+# --------------------------------------------------------------------------- #
+# 2026-08-19 Ivan 审片裁定 #2「弹幕不修正」（主包/主播案）regression coverage
+# --------------------------------------------------------------------------- #
+_MEME_DANMU = "主包给我讲讲这是怎么回事"
+_MEME_ASR = "主播给我讲讲这是怎么回事"
+
+
+def test_confident_meme_spelling_near_miss_previously_lost_ownership_without_witness():
+    """Root-cause lock: a confident text-only ``is_read_aloud`` verdict on a
+    near-miss must NOT by itself count as evidence strong enough to own the
+    cue (``whole_line_exact_copy_gate`` requires witness/independent-transcript
+    corroboration). This is the confidence-inversion gap that let ASR's
+    「主播给」survive over danmaku's「主包给」when no audio provider fires the
+    fallthrough — the invariant the fix in ``verify()`` must not relax."""
+
+    source = _srt(_MEME_ASR, "完整收束")
+    verify = verifier_module.build_cpa_read_aloud_verifier(
+        lambda _p: json.dumps(
+            {"is_read_aloud": True, "confidence": 0.97, "reason": "紧邻弹幕逐字回声"},
+            ensure_ascii=False,
+        )
+    )
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("danmaku", 0, _MEME_DANMU)],
+        entity_verifier=verify,
+    )
+
+    assert parse_srt_cues(output)[0].text == _MEME_ASR
+    assert _MEME_DANMU not in output
+    assert audit["applied"] == []
+
+
+def test_confident_meme_spelling_near_miss_wins_ownership_via_closed_set_witness():
+    """2026-08-19 主包/主播案 fix: the same confident verdict now falls
+    through to the candidate-blind witness + CPA closed-set judge, which CAN
+    satisfy ``whole_line_exact_copy_gate`` and let the danmaku meme spelling
+    (「主包给」, a common livestream nickname misspelling for 主播) win over
+    ASR's "corrected"-looking 「主播给」."""
+
+    calls = []
+
+    def llm_call(prompt):
+        calls.append(prompt)
+        if len(calls) == 1:
+            return json.dumps(
+                {"is_read_aloud": True, "confidence": 0.97, "reason": "紧邻弹幕逐字回声"},
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {
+                "ranking": [
+                    {"canonical": _MEME_DANMU, "p": 0.82},
+                    {"canonical": _MEME_ASR, "p": 0.18},
+                ],
+                "choice": _MEME_DANMU,
+                "reason": "拼音与弹幕原文一致；主播是常见ASR过度规范化误写",
+            },
+            ensure_ascii=False,
+        )
+
+    verify = verifier_module.build_cpa_read_aloud_verifier(
+        llm_call,
+        next_verifier=_audio_witness_stub(
+            heard="zhu bao gei wo jiang jiang zhe shi zen me hui shi"
+        ),
+    )
+    source = _srt(_MEME_ASR, "完整收束")
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("danmaku", 0, _MEME_DANMU)],
+        entity_verifier=verify,
+    )
+
+    assert parse_srt_cues(output)[0].text == _MEME_DANMU
+    row = audit["applied"][0]
+    assert row["exact_text"] == _MEME_DANMU
+    assert row["read_aloud_verdict"]["authority_kind"] == "cpa_witness_adjudication"
+    assert row["read_aloud_verdict"]["canonical_entity"] == _MEME_DANMU
+    assert row["read_aloud_verdict"]["decision_authority"] == "CPA_JUDGE"
+    arbitration = audit["read_aloud_arbitrations"][0]
+    assert arbitration["outcome"] == (
+        "authority_confirmed_by_cpa_with_blind_audio_witness"
+    )
+    assert len(calls) == 2
+
+
+def test_prompt_and_closed_choice_rules_flag_meme_spelling_and_emote_as_not_typos():
+    """Locks the 2026-08-19 prompt-hint fix: the judge must be told a meme
+    spelling (主包) or the「；；」emote is not a typo to "correct" away."""
+
+    prompts = []
+    verify = verifier_module.build_cpa_read_aloud_verifier(
+        lambda p: (prompts.append(p), json.dumps({"is_read_aloud": False, "confidence": 0.99}))[1]
+    )
+    verify(_request())
+    assert "主包" in prompts[0]
+    assert "；；" in prompts[0]
+    assert "不是待纠正的错字" in prompts[0]
+
+    closed_prompts = []
+
+    def closed_llm_call(p):
+        closed_prompts.append(p)
+        return json.dumps(
+            {
+                "ranking": [
+                    {"canonical": "外套是什么颜色", "p": 0.6},
+                    {"canonical": "歪了是什么颜色", "p": 0.4},
+                ],
+                "choice": "外套是什么颜色",
+                "reason": "占位",
+            },
+            ensure_ascii=False,
+        )
+
+    verify2 = verifier_module.build_cpa_read_aloud_verifier(closed_llm_call)
+    verify2(
+        _request(
+            schema_version="chat-entity-verification-request.v1",
+            exact_text="外套是什么颜色",
+        )
+    )
+    assert "梗写" in closed_prompts[0]
+    assert "不是待" in closed_prompts[0]
+
+
+def test_completeness_heuristic_extends_partial_read_to_full_danmu_boundary():
+    """2026-08-19 Ivan 审片裁定「念弹幕大多念完整」heuristic: documents that
+    the existing ascending-cue-count search (``find_best_read_aloud_candidate``)
+    already extends a match across cue boundaries to the full danmaku instead
+    of settling for a shorter partial span — here the second cue alone has a
+    structural ASR mishearing (懂→瞳) that only a full two-cue read recovers,
+    and a corroborating independent transcript is enough to win ownership
+    (no interruption evidence exists, so the read-aloud contract must copy
+    the full two-cue danmaku, not truncate it or leave the typo behind)."""
+
+    danmu = "谢谢老板的解释，我现在完全懂了这个梗的意思"
+    source = _srt("谢谢老板的解释，", "我现在完全瞳了这个梗的意思")
+    support = _srt("谢谢老板的解释，", "我现在完全懂了这个梗的意思")
+
+    output, audit = apply_authoritative_chat_evidence(
+        source,
+        [ChatEvidence("danmaku", 0, danmu)],
+        support_srt_texts=[support],
+        entity_verifier=lambda _request: None,
+    )
+
+    texts = [cue.text for cue in parse_srt_cues(output)]
+    assert "".join(texts) == danmu
+    assert audit["applied"], audit
+    row = audit["applied"][0]
+    assert row["cue_indexes"] == [1, 2]
+    assert row["owner_eligible"] is True
+    assert row["exact_text"] == danmu

@@ -1903,6 +1903,218 @@ def test_exact_final_review_gate_suppresses_baseline_owned_finding(
     assert "final_verification_failure" not in chat_authority_audit
 
 
+def test_exact_final_review_gate_suppresses_chat_authority_owned_finding(
+    tmp_path: Path,
+) -> None:
+    """2026-08-11 主包/主播 shape (Ivan 2026-08-19 审片裁定 #2「弹幕不修正」):
+    a cue whose text chat authority already applied verbatim from matched
+    danmaku evidence (「主包给…」, a livestream meme spelling of 主播) must
+    survive self-heal untouched — a general-text self-heal judge, unaware the
+    span is chat-verbatim-owned, must not be allowed to "correct" the meme
+    spelling back to 主播.
+
+    Uses a **nonzero** ``final_start`` (chat authority's ``matched_start_ms``/
+    ``matched_end_ms`` are in the full-session/global timeline, like every
+    other such field in this repo; ``final_text``'s cues are delivery-local)
+    to catch the offset-rebase bug this suppression must not have.
+    """
+
+    danmu_text = "主包给我讲讲这是怎么回事"
+    self_heal_proposed_cue = "主播给我讲讲这是怎么回事"
+    danmu_sha256 = hashlib.sha256(danmu_text.encode("utf-8")).hexdigest()
+    delivery_start_ms = 200_000
+    delivery_end_ms = 202_400
+
+    subtitle = tmp_path / "candidate.recut.srt"
+    subtitle.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n"
+        + danmu_text
+        + "\n\n2\n00:00:01,100 --> 00:00:02,000\n完整收束\n",
+        encoding="utf-8",
+    )
+    chat_path = tmp_path / "candidate.chat-authority.json"
+    calls: list[str] = []
+
+    def boundary_receipt() -> dict:
+        return {
+            "schema_version": "talk-boundary-semantic-review.v1",
+            "status": "PASS",
+            "review_scope": "final_delivery",
+            "reason_codes": [],
+            "request_sha256": "sha256:" + "d" * 64,
+            "cue_grid_sha256": "sha256:" + "e" * 64,
+            "source_separation_witness": {
+                "schema_version": (
+                    "talk-boundary-source-separation-witness.v1"
+                ),
+                "status": "PASS",
+                "source_review_sha256": "sha256:" + "a" * 64,
+                "source_request_sha256": "sha256:" + "b" * 64,
+                "source_cue_grid_sha256": "sha256:" + "c" * 64,
+                "source_final_start_ms": 0,
+                "source_final_end_ms": 2_400,
+                "reason_codes": [],
+            },
+            "final_endpoint_binding": {
+                "schema_version": (
+                    "talk-boundary-final-endpoint-binding.v1"
+                ),
+                "status": "PASS",
+                "recommended_end_cue_index": 2,
+                "recommended_end_ms": 2_000,
+                "final_closure_cue_index": 2,
+                "final_snapped_end_ms": 2_000,
+                "final_end_ms": 2_400,
+                "semantic_cue_grid_sha256": "sha256:" + "e" * 64,
+                "final_cue_grid_sha256": "sha256:" + "e" * 64,
+                "reason_codes": [],
+            },
+        }
+
+    def mutation_audit() -> dict:
+        return {
+            "schema_version": "subtitle-correction-mutation-audit.v1",
+            "status": "PASS",
+            "applied_count": 0,
+            "validated_mutation_count": 0,
+            "failures": [],
+        }
+
+    def exact_review(
+        text,
+        _authority,
+        _timeline_offset_ms,
+        _source_final_end_ms,
+    ):
+        calls.append(text)
+        return {
+            "schema_version": "final-review-audit.v2",
+            "reviewed_srt_sha256": (
+                "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+            ),
+            "boundary_semantic_review": boundary_receipt(),
+            "correction_mutation_authority": mutation_audit(),
+            "correction_pass": {"findings": []},
+            "status": "FLAGGED",
+            "release_gate": "BLOCK",
+            "reason_codes": ["FINAL_REVIEW_UNRESOLVED_FINDINGS"],
+            "discovery": {
+                "status": "COMPLETE",
+                "explicit_empty_findings": False,
+            },
+            "findings": [
+                {
+                    "cue_index": 1,
+                    "base_text_sha256": danmu_sha256,
+                    "proposed_full_cue": self_heal_proposed_cue,
+                    "exact_release_adjudication": {
+                        "schema_version": (
+                            "subtitle-span-adjudication.v1"
+                        ),
+                        "status": "OBSERVED",
+                        "decision_authority": "CPA_JUDGE",
+                        "repaired": True,
+                        "timing_immutable": True,
+                        "mutation_authority": {
+                            "schema_version": (
+                                "subtitle-correction-mutation-authority.v1"
+                            ),
+                            "status": "PASS",
+                        },
+                        "request": {
+                            "schema_version": (
+                                "subtitle-span-acoustic-check-request.v1"
+                            ),
+                            "request_sha256": "f" * 64,
+                            "base_text_sha256": danmu_sha256,
+                            "current_cue": danmu_text,
+                            "proposed_cue": self_heal_proposed_cue,
+                        },
+                        "witness_judge": {
+                            "judge": {
+                                "status": "JUDGED",
+                                "choice": "PROPOSED",
+                            }
+                        },
+                    },
+                }
+            ],
+            "validated_finding_count": 1,
+        }
+
+    def unused(*_args, **_kwargs):
+        raise AssertionError("unrelated adapter called")
+
+    adapters = finalization.ProducerFinalizationAdapters(
+        accurate_recut_command=unused,
+        run_command=unused,
+        write_source_range_srt=unused,
+        apply_text_override_document=unused,
+        run_speaker_finalization=unused,
+        burn_preview_subtitles=unused,
+        stage_publish_draft=unused,
+        generate_upload_tags=unused,
+        delivery_root=unused,
+        run_exact_final_review=exact_review,
+    )
+    # matched_start_ms/matched_end_ms are global-timeline, like every other
+    # chat-authority matched window; delivery_start_ms offsets them into the
+    # delivered clip's local SRT time (cue1 is at local 0-1_000ms).
+    chat_authority_audit: dict[str, object] = {
+        "applied": [
+            {
+                "evidence_id": "danmu-1",
+                "kind": "danmaku",
+                "exact_text": danmu_text,
+                "cue_indexes": [1],
+                "matched_start_ms": delivery_start_ms,
+                "matched_end_ms": delivery_start_ms + 1_000,
+                "mode": "exact_span",
+            }
+        ],
+    }
+
+    result = finalization._run_exact_final_review_gate(
+        cid="candidate",
+        out_root=tmp_path,
+        final_start=delivery_start_ms,
+        final_end=delivery_end_ms,
+        recut=finalization.FinalRecutArtifacts(
+            recut_dir=tmp_path,
+            media_path=tmp_path / "candidate.recut.mp4",
+            subtitle_path=subtitle,
+            text_manifest_path=None,
+            text_manifest=None,
+            redelivery_baseline_audit_path=None,
+            redelivery_baseline_audit=None,
+        ),
+        chat_authority_audit=chat_authority_audit,
+        chat_authority_path=chat_path,
+        adapters=adapters,
+    )
+
+    assert result["status"] == "CLEAN"
+    assert result["release_gate"] == "PASS"
+    assert result["findings"] == []
+    # Never retried/repaired: suppression clears the gate on the first pass.
+    assert len(calls) == 1
+    assert danmu_text in subtitle.read_text(encoding="utf-8")
+    assert self_heal_proposed_cue not in subtitle.read_text(encoding="utf-8")
+    suppressed = result["chat_authority_owned_findings_suppressed"]
+    assert len(suppressed) == 1
+    assert suppressed[0]["reason_code"] == (
+        "CHAT_AUTHORITY_OWNED_CUE_SELF_HEAL_SUPPRESSED"
+    )
+    assert suppressed[0]["cue_index"] == 1
+    # Rebased into delivery-local ms (global 200_000-201_000 minus the
+    # 200_000ms delivery start): must equal the recut SRT's own cue1 window.
+    assert suppressed[0]["owned_interval"] == {
+        "start_ms": 0,
+        "end_ms": 1_000,
+    }
+    assert "exact_final_cpa_self_heal" not in chat_authority_audit
+
+
 def test_exact_final_self_heal_registration_failure_rolls_back_all_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
