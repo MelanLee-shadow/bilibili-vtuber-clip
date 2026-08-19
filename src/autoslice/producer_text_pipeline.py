@@ -53,6 +53,9 @@ from src.autoslice.exact_final_convergence import (
     converge_reconsidered_exact_final_findings,
     resolve_findings_from_exact_final_convergence_memos,
 )
+from src.autoslice.context_adjudication_witness_prewarm import (
+    prewarm_context_adjudication_witnesses,
+)
 from src.autoslice.danmaku_evidence import DanmakuItem
 from src.autoslice.deferred_same_cue_resolution import adjudicate_routed_findings
 from src.autoslice.final_review_auditor import (
@@ -829,6 +832,15 @@ def _run_final_review(
                     screen_read_probe=screen_read_probe,
                 )
 
+            # 提速接线（Ivan 2026-08-19）：理由与不变量见
+            # context_adjudication_witness_prewarm 模块 docstring。
+            prewarm_receipt = prewarm_context_adjudication_witnesses(
+                srt_text, adjudicable,
+                entity_verifier=verify_confusable_entity,
+                max_adjudications=MAX_CONTEXT_ADJUDICATIONS,
+                original_srt_text=original_srt_text, clip_context=clip_context,
+            )
+
             (
                 srt_text,
                 adjudication_count,
@@ -849,6 +861,7 @@ def _run_final_review(
                 final_review_audit["status"] = "APPLIED"
             final_review_audit["context_adjudication_count"] = adjudication_count
             final_review_audit["context_adjudication_budget"] = MAX_CONTEXT_ADJUDICATIONS
+            final_review_audit["context_adjudication_witness_prewarm"] = prewarm_receipt
             final_review_audit["priority_raw_finding_count"] = len(priority_rows)
             final_review_audit.update(_review_priority_candidate_counts(priority_raw_findings))
             if partial:

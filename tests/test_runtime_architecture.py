@@ -168,6 +168,15 @@ MODULE_DEBT_LEDGER = {
     # 剥离机制、HANDOFF 词界扫描收窄、6 处 patch 漂移对齐。私库专用构建工具，
     # 导出时自剥离，不进 OSS 面。
     "scripts/export_oss_snapshot.py": 2_722,
+    # 2026-08-19 新记（Ivan 2026-08-19 逐字「立刻开工」授权的切片提速）：上下文裁决
+    # 证人预热接线。重活全在新模块 src/autoslice/context_adjudication_witness_prewarm.py
+    # （只读复演准入算术、有界并发、失败静默、串行循环零改动），这里只有 import +
+    # 调用 + 回执落盘共 11 行；但本文件本就贴着 2000 入场线，接线即越线。
+    # ⚠️ 欠账：本文件需要真正的拆解（既有 _run_final_review 等大函数已在函数账本里），
+    # 不是靠删注释凑行数。下次再动它必须先拆。测试
+    # tests/test_context_adjudication_witness_prewarm.py。
+    "src/autoslice/producer_text_pipeline.py": 2_007,
+
     # 2026-08-02 +15：--smoke-segment 有界 backfill（帽 3）——Ivan 8/2 /goal
     # 「全都按你的想法进行修复，当然都要配测试」授权；测试 test_smoke_backfill.py。
     # 2026-08-02 再 +3：child_env 加 PYTHONUNBUFFERED（二轮实测：候选日志因子

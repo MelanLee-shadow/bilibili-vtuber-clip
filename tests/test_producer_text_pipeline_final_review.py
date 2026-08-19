@@ -1219,6 +1219,60 @@ def _witness_verdict(request, heard, *, audible=True):
     }
 
 
+def _memoizing_witness_observer(build_verdict):
+    """Wrap a request->verdict builder with a geometry-keyed cache.
+
+    Production ``entity_verifier`` has *two* on-disk cache layers
+    (``entity_audio_verifier.py``): an exact ``request_sha256`` manifest
+    replay, and a broader *acoustic* cache keyed only by
+    ``(audio_clip_sha256, prompt_identity_sha256, provider, model)`` --
+    i.e. by the rendered black-frame audio + witness prompt, not by the
+    request's ``evidence_id``/``request_sha256``. That second layer exists
+    precisely because ``evidence_id`` embeds a whole-document ``srt_text``
+    hash (final_review_auditor.py ~1492), so *any* earlier mutation in the
+    same review pass drifts every later finding's ``request_sha256`` even
+    when its own cue audio is unchanged -- "文本漂移不改变问题本身"
+    (``_witness_acoustic_cache_path`` docstring). The acoustic cache still
+    re-verifies/re-binds the response to each request's own hash; it only
+    ever saves the provider round-trip.
+
+    The context-adjudication witness prewarm
+    (``context_adjudication_witness_prewarm.py``) relies on that acoustic
+    layer for everything after the very first admitted finding in a batch.
+    A bare list-appending test double has neither cache layer and would
+    double-count every prewarmed request as a second "AGY call". This
+    helper approximates the acoustic layer with a synthetic geometry key
+    (audio-window timing + syllable hint stand in for
+    ``audio_clip_sha256``/``prompt_identity_sha256`` -- there is no real
+    audio in these tests); ``build_verdict`` still runs on every call (no
+    verification is skipped), but ``requests`` records only the first call
+    per geometry, i.e. what a real disk-cache-backed verifier would
+    actually spend on AGY.
+    """
+
+    requests = []
+    seen_geometries = set()
+
+    def _geometry_key(request):
+        return (
+            request.get("matched_start_ms"),
+            request.get("matched_end_ms"),
+            request.get("context_start_ms"),
+            request.get("context_end_ms"),
+            request.get("source_media_timeline_offset_ms"),
+            request.get("syllable_count_hint"),
+        )
+
+    def observe(request):
+        key = _geometry_key(request)
+        if key not in seen_geometries:
+            seen_geometries.add(key)
+            requests.append(request)
+        return build_verdict(request)
+
+    return observe, requests
+
+
 def _judge_json(choice):
     return json.dumps({"choice": choice, "reason": "test judge"})
 
@@ -2260,12 +2314,11 @@ def test_final_review_adjudicates_all_bounded_findings_and_skips_protected_cue(m
         "_build_final_review_llm_call",
         lambda: _split_llm(json.dumps({"findings": findings}, ensure_ascii=False), "PROPOSED"),
     )
-    requests = []
-
-    def choose_proposed(request):
-        requests.append(request)
-        index = str(request["cue_indexes"][0])
-        return _witness_verdict(request, f"hao ci {index} liu zai zhe li")
+    choose_proposed, requests = _memoizing_witness_observer(
+        lambda request: _witness_verdict(
+            request, f"hao ci {request['cue_indexes'][0]} liu zai zhe li"
+        )
+    )
 
     output, audit = pipeline._run_final_review(
         srt_text=_srt(*source_texts),
@@ -2453,11 +2506,9 @@ def test_final_review_reenters_deferred_same_cue_after_first_mutation(monkeypatc
         "_build_final_review_llm_call",
         lambda: _split_llm(json.dumps({"findings": findings}, ensure_ascii=False), "PROPOSED"),
     )
-    requests = []
-
-    def observe(request):
-        requests.append(request)
-        return _witness_verdict(request, "hao jia he hao yi")
+    observe, requests = _memoizing_witness_observer(
+        lambda request: _witness_verdict(request, "hao jia he hao yi")
+    )
 
     chat_audit = {"applied": []}
     output, audit = pipeline._run_final_review(
@@ -2468,7 +2519,16 @@ def test_final_review_reenters_deferred_same_cue_after_first_mutation(monkeypatc
         adapters=_adapters(),
     )
 
-    assert len(requests) == 2
+    # Both findings target the same cue window and both candidate pairs have
+    # equal Han syllable counts ("坏甲和坏乙"/"好甲和坏乙" and "好甲和坏乙"/
+    # "坏甲和好乙" are each 5 syllables), so ``neutral_syllable_count_hint``
+    # is the same 5 for both -- same window + same hint means production's
+    # acoustic cache (keyed on audio + prompt, not on the drifted
+    # ``request_sha256``/``evidence_id``) genuinely absorbs the second,
+    # rebased request as a single underlying AGY spend. See
+    # ``_memoizing_witness_observer`` and ``_witness_acoustic_cache_path``'s
+    # docstring in entity_audio_verifier.py.
+    assert len(requests) == 1
     assert "好甲和好乙" in output
     second = audit["findings"][1]
     assert second["routed"] == "same_cue_readjudicated_fix"
@@ -2536,11 +2596,9 @@ def test_overlapping_same_cue_finding_gets_typed_supersession(monkeypatch):
             "PROPOSED",
         ),
     )
-    requests = []
-
-    def observe(request):
-        requests.append(request)
-        return _witness_verdict(request, "hao ci liu zai zhe li")
+    observe, requests = _memoizing_witness_observer(
+        lambda request: _witness_verdict(request, "hao ci liu zai zhe li")
+    )
 
     output, audit = pipeline._run_final_review(
         srt_text=_srt("坏词留在这里"),
@@ -2938,11 +2996,9 @@ def test_final_review_marks_findings_beyond_audio_budget(monkeypatch):
         "_build_final_review_llm_call",
         lambda: _split_llm(json.dumps({"findings": findings}, ensure_ascii=False), "PROPOSED"),
     )
-    requests = []
-
-    def observe(request):
-        requests.append(request)
-        return _witness_verdict(request, "hao jia he huai yi")
+    observe, requests = _memoizing_witness_observer(
+        lambda request: _witness_verdict(request, "hao jia he huai yi")
+    )
 
     _, audit = pipeline._run_final_review(
         srt_text=_srt(*source_texts),
@@ -2993,11 +3049,9 @@ def test_audio_budget_rejects_whole_same_cue_group_before_any_mutation(monkeypat
         "_build_final_review_llm_call",
         lambda: _split_llm(json.dumps({"findings": findings}, ensure_ascii=False), "CURRENT"),
     )
-    requests = []
-
-    def observe(request):
-        requests.append(request)
-        return _witness_verdict(request, "huai ci liu zai zhe li")
+    observe, requests = _memoizing_witness_observer(
+        lambda request: _witness_verdict(request, "huai ci liu zai zhe li")
+    )
 
     output, audit = pipeline._run_final_review(
         srt_text=_srt(*source_texts),
