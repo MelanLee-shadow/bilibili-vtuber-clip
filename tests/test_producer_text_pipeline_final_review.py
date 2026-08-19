@@ -765,6 +765,70 @@ def test_exact_delivery_does_not_project_source_pass_after_closure_text_drift():
     assert "correlated_source_projection" not in review
 
 
+def test_pronoun_audit_uses_its_own_builder_not_the_final_review_one(
+    monkeypatch,
+):
+    """2026-08-19: the candidate-level pronoun audit (closed 4-token set,
+    rerun every exact-final/self-heal round) must not share the A-class
+    entity/boundary judge builder.  It has its own low-effort transport;
+    audit_final_subtitles still goes through _build_final_review_llm_call
+    unchanged."""
+
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+
+    final_review_calls: list[str] = []
+    pronoun_calls: list[str] = []
+
+    def final_review_llm(prompt: str) -> str:
+        final_review_calls.append(prompt)
+        return json.dumps({"findings": []})
+
+    def pronoun_llm(prompt: str) -> str:
+        pronoun_calls.append(prompt)
+        return json.dumps(
+            {
+                "decisions": [
+                    {
+                        "occurrence_id": "cue-1-occurrence-1",
+                        "action": "KEEP_CURRENT",
+                        "current_token": "他",
+                        "replacement_token": "他",
+                        "reason": "全文已知男性",
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr(
+        pipeline, "_build_final_review_llm_call", lambda: final_review_llm
+    )
+    monkeypatch.setattr(
+        pipeline, "_build_pronoun_audit_llm_call", lambda: pronoun_llm
+    )
+
+    srt = _srt("他今天很开心", "第二句", "第三句")
+
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=srt,
+        correction_audit=_correction_pass(),
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="完整回指",
+        clip_context={},
+    )
+
+    assert pronoun_calls, "pronoun-audit builder must be invoked for an occurrence-bearing candidate"
+    pronoun_audit = receipt["candidate_pronoun_consistency_audit"]
+    assert pronoun_audit["status"] == "PASS"
+    assert pronoun_audit["decision_count"] == 1
+    assert receipt["status"] == "CLEAN"
+    assert receipt["release_gate"] == "PASS"
+    validate_final_review_release(
+        receipt,
+        expected_srt_sha256=receipt["reviewed_srt_sha256"],
+    )
+
+
 def test_exact_final_release_review_binds_explicit_clean_response(
     monkeypatch,
 ):

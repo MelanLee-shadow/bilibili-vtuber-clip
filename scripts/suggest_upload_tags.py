@@ -68,7 +68,7 @@ _THEME_ALLOWED = set(_UPLOAD_TAG_POLICY.theme_allowed)
 _BANNED_CONTENT_TAGS = set(_UPLOAD_TAG_POLICY.banned_content_tags)
 CONTENT_PROMPT = _UPLOAD_TAG_POLICY.content_prompt_template
 
-CPA_COMMAND = f"bash {ROOT}/scripts/llm_via_cpa.sh {{prompt_file}} {{completion_file}} 'gpt-5.6-sol gpt-5.5 gpt-5.4' medium"
+CPA_COMMAND = f"bash {ROOT}/scripts/llm_via_cpa.sh {{prompt_file}} {{completion_file}} 'gpt-5.6-sol gpt-5.5 gpt-5.4' low"
 
 _KNOWN_PROPER_SURFACES: tuple[str, ...] = tuple(
     sorted(

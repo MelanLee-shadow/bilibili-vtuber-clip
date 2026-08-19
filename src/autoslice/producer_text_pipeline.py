@@ -88,6 +88,7 @@ from src.autoslice.producer_chat_input import (
 )
 from src.autoslice.producer_final_review_transport import (
     build_final_review_llm_call as _build_final_review_llm_call,
+    build_pronoun_audit_llm_call as _build_pronoun_audit_llm_call,
 )
 from src.autoslice.pronoun_consistency import (
     CandidatePronounAuditError,
@@ -972,7 +973,7 @@ def _run_exact_final_release_review(
             srt_text,
             policy_text=review_glossary,
             candidate_context_text=candidate_context_text,
-            llm_call=_build_final_review_llm_call(),
+            llm_call=_build_pronoun_audit_llm_call(),
             extract_json=extract_json_object,
         )
         base["candidate_pronoun_consistency_audit"] = pronoun_audit

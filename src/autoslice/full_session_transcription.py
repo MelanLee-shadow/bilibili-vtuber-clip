@@ -875,6 +875,19 @@ def _build_aggregate_asr_transcriber(
         # inside the bridge's per-call 180s curl window, fallback 5.5 → 5.4.
         LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' medium", timeout_seconds=600.0)
     )
+    # 2026-08-19 (Ivan): _cpa_pronoun_ta_pass is its own dedicated config, not
+    # a reuse of cpa_llm_call above.  It is a closed 4-token
+    # (TA/他/她/它) classification over a short occurrence list, not the
+    # dual-source (BCUT+AGY) reconcile that justified `medium` for
+    # cpa_llm_call — so effort drops to `low`.  Model chain and 600s timeout
+    # are unchanged: the 600s budget is sized off llm_via_cpa.sh's own
+    # worst-case retry/deadline math (DEADLINE_SECONDS=400 + one in-flight
+    # curl --max-time 180 ≈ 580s), which is independent of prompt size, so
+    # shrinking it here would not track this pass's actually-smaller prompt
+    # and risks starving a legitimate retry cascade.
+    pronoun_llm_call = build_llm_call(
+        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' low", timeout_seconds=600.0)
+    )
     topic_context_state = {"value": ""}
     session_topic_context = ""
     if session_topic_authorities:
@@ -1046,7 +1059,7 @@ def _build_aggregate_asr_transcriber(
         # Dedicated whole-clip final pronoun pass (TA/他/她/它 in either
         # direction); a discourse task the general correction cannot reliably
         # do inline. Later hash-bound human text decisions are final authority.
-        return _cpa_pronoun_ta_pass(corrected, cpa_llm_call=cpa_llm_call)
+        return _cpa_pronoun_ta_pass(corrected, cpa_llm_call=pronoun_llm_call)
 
     return transcriber
 

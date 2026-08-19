@@ -116,3 +116,44 @@ def test_title_only_mode_scans_title(tmp_path):
     out = st.generate_upload_tags(f"{CHANNEL_PROFILE.talk_title_prefix}侄女卖姬太舒适了", None, use_llm=False)
     assert out["status"] == "OK"
     assert "侄女" in out["final_tags"]
+
+
+def test_cpa_command_effort_is_low_same_model_chain():
+    """2026-08-19 (Ivan): tag suggestion is a non-load-bearing content layer
+    (unknown_songs-style fuzzy world-knowledge pick, discarded by downstream
+    validation on a bad guess) -- no other config shares this constant, so
+    dropping medium -> low is zero-blast-radius.  Pin the model chain too so
+    a future edit can't silently widen it while touching effort."""
+
+    assert "'gpt-5.6-sol gpt-5.5 gpt-5.4'" in st.CPA_COMMAND
+    assert st.CPA_COMMAND.split()[-1] == "low"
+
+
+def test_generate_upload_tags_default_transport_wires_the_low_effort_command(
+    tmp_path, monkeypatch
+):
+    """With llm_call=None, generate_upload_tags must build its call from the
+    real CPA_COMMAND (not a stand-in), and still degrade to a valid OK_NO_LLM
+    schema (fail-safe pipeline contract untouched by the effort change).  The
+    hermetic pytest guard blocks the real `llm_via_cpa.sh` transport, so a
+    successful degrade here also proves CPA_COMMAND -- not some other
+    template -- is what actually got dispatched."""
+
+    captured = {}
+    real_build_llm_call = st.build_llm_call
+
+    def _capture_and_delegate(config):
+        captured["config"] = config
+        return real_build_llm_call(config)
+
+    monkeypatch.setattr(st, "build_llm_call", _capture_and_delegate)
+
+    srt = _srt(tmp_path, ["我是直女"])
+    out = st.generate_upload_tags(
+        f"{CHANNEL_PROFILE.talk_title_prefix}标题", srt, timeout=5.0
+    )
+
+    assert captured["config"].command_template == st.CPA_COMMAND
+    assert out["status"] == "OK_NO_LLM"
+    assert "侄女" in out["final_tags"]  # 专名层不受内容层降级影响
+    assert any("TEST_HERMETIC_LLM_BLOCKED" in w for w in out["warnings"])

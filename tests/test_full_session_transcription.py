@@ -346,3 +346,62 @@ def test_failed_rerun_replaces_stale_agy_artifacts_with_v2_none_manifest(
     assert manifest["witness_tier"] == "none"
     assert manifest["attestation_bound"] is False
     assert manifest["provider_request_id"] is None
+
+
+def test_pronoun_pass_gets_its_own_low_effort_config_not_the_reconcile_one(
+    monkeypatch,
+):
+    """2026-08-19: _cpa_pronoun_ta_pass must no longer share cpa_llm_call
+    (the dual-source BCUT+AGY reconcile config) with the reconcile stages.
+    It gets its own command_template with effort dropped medium -> low, same
+    approved model chain."""
+
+    captured_configs: list = []
+
+    def _capture(config):
+        captured_configs.append(config)
+        return lambda _prompt: "{}"
+
+    monkeypatch.setattr(llm_client, "build_llm_call", _capture)
+    monkeypatch.setattr(
+        transcription,
+        "_build_ssh_agy_runner",
+        lambda *_args, **_kwargs: (lambda *_a, **_k: None),
+    )
+
+    transcription._build_aggregate_asr_transcriber(host="free", correct="bcut_agy_cpa")
+
+    command_configs = [c for c in captured_configs if c.transport == "command"]
+    assert len(command_configs) == 2
+
+    reconcile_cfg, pronoun_cfg = command_configs
+    assert "gpt-5.6-sol gpt-5.5 gpt-5.4" in reconcile_cfg.command_template
+    assert reconcile_cfg.command_template.strip().endswith("medium")
+
+    assert "gpt-5.6-sol gpt-5.5 gpt-5.4" in pronoun_cfg.command_template
+    assert pronoun_cfg.command_template.strip().endswith("low")
+    # Model chain must be byte-identical between the two configs; only the
+    # trailing effort token differs.
+    assert reconcile_cfg.command_template.replace("medium", "low") == (
+        pronoun_cfg.command_template
+    )
+    assert pronoun_cfg.timeout_seconds == 600.0
+
+
+def test_cpa_pronoun_ta_pass_still_validates_minimal_legal_rewrite():
+    """Downgrading effort must not change the accepted completion shape."""
+
+    srt = (
+        "1\n00:00:00,000 --> 00:00:01,000\nTA说今天很开心\n\n"
+        "2\n00:00:01,000 --> 00:00:02,000\n然后她走了\n"
+    )
+
+    def stub(_prompt: str) -> str:
+        return json.dumps(
+            {"rewrites": [{"n": 1, "occurrence": 1, "from": "TA", "to": "她"}]}
+        )
+
+    out = transcription._cpa_pronoun_ta_pass(srt, cpa_llm_call=stub)
+
+    assert "她说今天很开心" in out
+    assert "TA说今天很开心" not in out
