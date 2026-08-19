@@ -1,5 +1,40 @@
 # Current handoff
 
+## ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-19 03:2xZ 审片战役执行波（后台自动推进中）
+
+### 目标
+Ivan 8/19 批量审片裁定（权威=docs/reviews/2026-08-19-ivan-review-batch-rulings.md，16 规则+16 条裁定+12 问）
+全面执行：七夕最优先上传、三首歌免修上传、13 条 uniform_host 重做、规则固化、OSS 更新。
+
+### 已完成（本波）
+- sudocode 充值确认 CPA 复活（gpt-5.6-sol 200）。裁定入库 a622af1。
+- **speaker 模式翻回 uniform_host**（cron env，8/07 起 auto 期的 guest 混入/停泊潮根源关闭）。
+- 13 条 review_ready 全部经新通道（scripts/requeue_review_ready_for_speaker_rerender.py，c193c44 部署）
+  翻回可恢复失败 + 4 张 v2 grant（8/11/13/14/15）；8/17 在窗口免 grant。tick 已实证 admits。
+- 3 条终态复活（七夕/图书馆/考试写解）；kmx脑控(8/14 130040_201_255)是 failed 终态，revive 脚本
+  只收 candidate_rejected——**需小扩展**（待办）。
+- **七夕订正三处**（0:14《ぶらどらぶ》VLAD LOVE=Gemini 听写确认、2:39 播的有点压抑了、cue59 播的剥离）
+  已物化为 reviewed baseline（6f49e89，deploy4 已上生产 02:53Z）。七夕在 8/17 pending 队列，
+  **下一轮批次将以 baseline 重产**；哨兵后台盯 review_ready（bkvj...）。
+- **弹幕保真修复合入 16ec5f5**（置信度反转/「；；」保真/owned-interval 防回改；全量 5385 绿）
+  ——**尚未部署**（deploy5 排在七夕出包后，避免 guard 挡它的产程）。
+- 歌链：三首歌 state sidecar 缓存刷新（7→10 角色）；泡沫 review 包审计 PASS；
+  QC 歌包布局适配 2fb180d（合入未部署）。星猫(8/15)/园游会(8/14)被批次
+  scorecard_refresh_blocked/paused 状态挡 builder——**该暂停族群蔓延中，需诊断**。
+- **OSS 公开库已推送 ed445b6**（MelanLee-shadow；worker 截获一次真泄漏：10 个新资产目录
+  未进 TEMPLATE_DIRS，未 push 即修复；导出器终版 124aafe；公开树 3879/0/1 + 泄漏扫描 0）。
+- 8/09 老件重产被内容门再杀（story_contract/content_boundary）=门校准病实锤，暂停空转。
+
+### 进行中（后台）
+- 03:00Z tick 顺日期清扫（重做波多在封面/收尾阶段滚动）；七夕哨兵；deploy-wt 在 scratchpad。
+
+### 下一步（顺序）
+1. 七夕 review_ready → make-manifest(+包内 QC 回执) → authorized_upload upload → verify。
+2. deploy5（16ec5f5+2fb180d+124aafe）→ 泡沫 QC→manifest→upload。
+3. scorecard_refresh 暂停族诊断 → 星猫/园游会解锁上传。
+4. 任务 #11-16：订正批+12 问归因、规则固化 worker 波、kmx脑控 revive 扩展、
+   gemini-3.7 金丝雀、crawler 热点、oci3 bootstrap（Ivan 已定长期全量迁 oci3 弃 free）。
+
 ## ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-18 23:5xZ 双阻塞修复 + 逐日恢复启动
 
 ### 目标
