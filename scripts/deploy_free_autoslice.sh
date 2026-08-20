@@ -102,35 +102,48 @@ archive = subprocess.check_output([
     "scripts", "src", "ops", "assets", "profiles", ".agent", "docs", "cleanup_manifests",
     "AGENTS.md", "README.md",
 ])
-expected_files = []
+expected_members = []
 with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as bundle:
     for member in bundle:
         if member.isdir():
-            continue
-        assert member.isfile(), f"unexpected archive member: {member.name}"
-        expected_files.append((member.name, member.mode & ~0o077, member.size, bundle.extractfile(member).read()))
+            expected_members.append(("dir", member.name.rstrip("/"), member.mode & ~0o022, None))
+        else:
+            assert member.isfile(), f"unexpected archive member: {member.name}"
+            expected_members.append(
+                ("file", member.name, member.mode & ~0o022, bundle.extractfile(member).read())
+            )
 seen = []
 partial = None
-for name, mode, size, content in expected_files:
+stopped = False
+for kind, name, mode, content in expected_members:
+    if stopped:
+        break
+    if kind == "dir":
+        entry = entries.get(name)
+        assert entry is not None and entry.get("type") == "dir", name
+        continue
     entry = actual_files.get(name)
     if entry is None:
+        stopped = True
         break
-    assert entry.get("mode") == mode, (name, entry.get("mode"), mode)
     actual_size = entry.get("size")
-    assert isinstance(actual_size, int) and 0 < actual_size <= size
-    if actual_size == size:
+    assert isinstance(actual_size, int) and 0 < actual_size <= len(content)
+    if actual_size == len(content):
+        assert entry.get("mode") == mode, (name, entry.get("mode"), mode)
         assert entry.get("sha256") == hashlib.sha256(content).hexdigest(), name
         seen.append(name)
         continue
     assert partial is None
+    # GNU tar creates an interrupted member under its temporary 0600 mode;
+    # completed members have already had --no-same-permissions plus umask 022.
+    assert entry.get("mode") == 0o600, (name, entry.get("mode"), 0o600)
     assert entry.get("sha256") == hashlib.sha256(content[:actual_size]).hexdigest(), name
     partial = {"path": name, "size": actual_size, "sha256": entry["sha256"]}
     seen.append(name)
-    break
+    stopped = True
 assert set(actual_files) == set(seen)
+expected_files = [(name, mode, content) for kind, name, mode, content in expected_members if kind == "file"]
 assert seen == [item[0] for item in expected_files[:len(seen)]]
-if partial is not None:
-    assert len(seen) < len(expected_files)
 allowed_dirs = {""}
 for name in seen:
     parts = name.split("/")[:-1]
@@ -138,7 +151,16 @@ for name in seen:
         allowed_dirs.add("/".join(parts[:index]))
 actual_dirs = {path for path, entry in entries.items() if entry.get("type") == "dir"}
 assert actual_dirs == allowed_dirs
-assert all(entries[path].get("mode") == 0o700 for path in actual_dirs if path)
+active_ancestors = set()
+if partial is not None:
+    parts = partial["path"].split("/")[:-1]
+    for index in range(1, len(parts) + 1):
+        active_ancestors.add("/".join(parts[:index]))
+for path in actual_dirs:
+    if not path:
+        continue
+    expected_mode = 0o700 if path in active_ancestors else 0o755
+    assert entries[path].get("mode") == expected_mode, (path, entries[path].get("mode"), expected_mode)
 print(json.dumps({"tree_sha256": inventory["tree_sha256"], "partial": partial},
                  ensure_ascii=False, sort_keys=True, separators=(",", ":")))
 PY_LOCAL_PREBACKUP_STAGE

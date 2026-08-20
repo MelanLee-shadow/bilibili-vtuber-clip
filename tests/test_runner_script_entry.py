@@ -1439,7 +1439,7 @@ def test_prebackup_stage_guard_recovery_requires_bound_stage_and_old_authority(t
     assert "assert partial is None" in source
 
 
-def test_prebackup_stage_prefix_verifier_allows_one_exact_partial_member_only():
+def test_prebackup_stage_prefix_verifier_models_gnu_tar_interruption_modes():
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     archive = subprocess.check_output(
         [
@@ -1461,32 +1461,57 @@ def test_prebackup_stage_prefix_verifier_allows_one_exact_partial_member_only():
         cwd=ROOT,
     )
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as bundle:
-        members = [member for member in bundle if member.isfile()]
-        first = members[0]
-        second = members[1]
-        first_bytes = bundle.extractfile(first).read()
-        second_bytes = bundle.extractfile(second).read()
-    partial_size = min(len(first_bytes) - 1, max(1, len(first_bytes) // 2))
+        files = [
+            (member.name, member.mode, bundle.extractfile(member).read())
+            for member in bundle
+            if member.isfile()
+        ]
+    partial_index = next(
+        index
+        for index, (name, mode, content) in enumerate(files)
+        if index
+        and len(name.split("/")) >= 3
+        and len(content) > 1
+        and any(previous_mode & 0o111 for _, previous_mode, _ in files[:index])
+        and any(not (previous_mode & 0o111) for _, previous_mode, _ in files[:index])
+    )
+    completed = files[:partial_index]
+    partial_name, partial_archive_mode, partial_bytes = files[partial_index]
+    next_name, next_archive_mode, next_bytes = files[partial_index + 1]
+    partial_size = min(len(partial_bytes) - 1, max(1, len(partial_bytes) // 2))
     assert partial_size > 0
 
-    def inventory(*, first_sha: str, first_mode: int, include_second: bool = False, extra: bool = False):
+    def inventory(*, partial_sha: str, partial_mode: int = 0o600, following: bool = False, extra: bool = False):
         entries: dict[str, dict[str, object]] = {"": {"type": "dir", "mode": 0o755}}
-        for name in (first.name, *( [second.name] if include_second else [])):
+        active_ancestors = set()
+        for name, _, _ in (*completed, (partial_name, partial_archive_mode, partial_bytes)):
             parts = name.split("/")[:-1]
             for index in range(1, len(parts) + 1):
-                entries["/".join(parts[:index])] = {"type": "dir", "mode": 0o700}
-        entries[first.name] = {
-            "type": "file",
-            "mode": first_mode,
-            "size": partial_size,
-            "sha256": first_sha,
-        }
-        if include_second:
-            entries[second.name] = {
+                path = "/".join(parts[:index])
+                entries[path] = {"type": "dir", "mode": 0o755}
+        for index in range(1, len(partial_name.split("/"))):
+            active_ancestors.add("/".join(partial_name.split("/")[:index]))
+        for path in active_ancestors:
+            entries[path]["mode"] = 0o700
+        for name, mode, content in completed:
+            entries[name] = {
                 "type": "file",
-                "mode": second.mode & ~0o077,
-                "size": len(second_bytes),
-                "sha256": hashlib.sha256(second_bytes).hexdigest(),
+                "mode": mode & ~0o022,
+                "size": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+        entries[partial_name] = {
+            "type": "file",
+            "mode": partial_mode,
+            "size": partial_size,
+            "sha256": partial_sha,
+        }
+        if following:
+            entries[next_name] = {
+                "type": "file",
+                "mode": next_archive_mode & ~0o022,
+                "size": len(next_bytes),
+                "sha256": hashlib.sha256(next_bytes).hexdigest(),
             }
         if extra:
             entries["unknown"] = {
@@ -1513,32 +1538,28 @@ def test_prebackup_stage_prefix_verifier_allows_one_exact_partial_member_only():
             check=False,
         )
 
-    good = inventory(
-        first_sha=hashlib.sha256(first_bytes[:partial_size]).hexdigest(),
-        first_mode=first.mode & ~0o077,
-    )
+    good = inventory(partial_sha=hashlib.sha256(partial_bytes[:partial_size]).hexdigest())
     assert run(good).returncode == 0
-    assert run(inventory(first_sha="0" * 64, first_mode=first.mode & ~0o077)).returncode != 0
-    assert run(
-        inventory(
-            first_sha=hashlib.sha256(first_bytes[:partial_size]).hexdigest(),
-            first_mode=0o600 if (first.mode & ~0o077) != 0o600 else 0o700,
-        )
-    ).returncode != 0
-    assert run(
-        inventory(
-            first_sha=hashlib.sha256(first_bytes[:partial_size]).hexdigest(),
-            first_mode=first.mode & ~0o077,
-            include_second=True,
-        )
-    ).returncode != 0
-    assert run(
-        inventory(
-            first_sha=hashlib.sha256(first_bytes[:partial_size]).hexdigest(),
-            first_mode=first.mode & ~0o077,
-            extra=True,
-        )
-    ).returncode != 0
+    assert any(entry["type"] == "file" and entry["mode"] == 0o644 for entry in good["entries"].values())
+    assert any(entry["type"] == "file" and entry["mode"] == 0o755 for entry in good["entries"].values())
+    active_ancestor = partial_name.rsplit("/", 1)[0]
+    completed_directory = next(path for path, entry in good["entries"].items()
+                               if path and entry["type"] == "dir" and path != active_ancestor
+                               and entry["mode"] == 0o755)
+
+    def changed(payload: dict[str, object], path: str, key: str, value: object):
+        changed_payload = json.loads(json.dumps(payload))
+        changed_payload["entries"][path][key] = value
+        return changed_payload
+
+    assert run(inventory(partial_sha="0" * 64)).returncode != 0
+    assert run(inventory(partial_sha=good["entries"][partial_name]["sha256"], partial_mode=0o644)).returncode != 0
+    completed_file = completed[0][0]
+    assert run(changed(good, completed_file, "mode", 0o600)).returncode != 0
+    assert run(changed(good, completed_directory, "mode", 0o700)).returncode != 0
+    assert run(changed(good, active_ancestor, "mode", 0o755)).returncode != 0
+    assert run(inventory(partial_sha=good["entries"][partial_name]["sha256"], following=True)).returncode != 0
+    assert run(inventory(partial_sha=good["entries"][partial_name]["sha256"], extra=True)).returncode != 0
 
 
 def test_deploy_authority_manifest_is_canonical_and_exact_byte_bound(tmp_path):
