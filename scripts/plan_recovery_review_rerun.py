@@ -288,6 +288,14 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--preserve-published-cover",
+        action="store_true",
+        help=(
+            "only with --project-single-published-repair: copy the deploy-sealed "
+            "existing public cover evidence into the isolated target; never generate one"
+        ),
+    )
+    parser.add_argument(
         "--suppress-candidate-id",
         action="append",
         default=[],
@@ -579,6 +587,8 @@ def main(argv: list[str] | None = None) -> int:
             "--project-single-published-repair requires a valid "
             "--expected-source-bcut-sha256"
         )
+    if args.preserve_published_cover and not args.project_single_published_repair:
+        raise SystemExit("--preserve-published-cover requires --project-single-published-repair")
     for label, value in (
         ("source state", args.expected_source_state_sha256),
         ("old pipeline", args.expected_old_fingerprint),
@@ -702,7 +712,25 @@ def main(argv: list[str] | None = None) -> int:
             source_state_sha256=args.expected_source_state_sha256,
             delivered_statuses=runner.DELIVERED_TALK_STATUSES,
         )
+    created_cover_authority = None
     try:
+        if args.preserve_published_cover:
+            from src.autoslice.published_cover_carry import (
+                PublishedCoverCarryError,
+                materialized_marker,
+                validate_source_cover_carry,
+            )
+            try:
+                entry = validate_source_cover_carry(
+                    repo_root=repo_root, state_bytes=source_bytes,
+                    state=json.loads(source_bytes), candidate_id=args.candidate_ids[0], date=args.date,
+                )
+                marker, created_cover_authority = materialized_marker(
+                    entry=entry, target_base=target_base, date=args.date,
+                    candidate_id=args.candidate_ids[0], create=_atomic_create,
+                )
+            except PublishedCoverCarryError as exc:
+                raise SystemExit(str(exc)) from exc
         if args.project_single_published_repair:
             created_bcut_authority = _copy_single_published_bcut_authority(
                 source_base=source_base,
@@ -747,10 +775,16 @@ def main(argv: list[str] | None = None) -> int:
             recovery_publication_authorities_by_candidate=(
                 recovery_publication_authorities
             ),
+            published_cover_carries_by_candidate=(
+                {args.candidate_ids[0]: marker} if args.preserve_published_cover else None
+            ),
         )
         if runner.BASE.resolve() != target_base:
             raise SystemExit("runner did not bind the target recovery base")
     except RecoveryReviewRerunError as exc:
+        if created_cover_authority is not None:
+            for path, identity in reversed(created_cover_authority):
+                _rollback_created_bcut_authority(target_path=path, identity=identity)
         if created_bcut_authority is not None:
             binding, identity = created_bcut_authority
             _rollback_created_bcut_authority(
@@ -758,6 +792,9 @@ def main(argv: list[str] | None = None) -> int:
             )
         raise SystemExit(str(exc)) from exc
     except BaseException:
+        if created_cover_authority is not None:
+            for path, identity in reversed(created_cover_authority):
+                _rollback_created_bcut_authority(target_path=path, identity=identity)
         if created_bcut_authority is not None:
             binding, identity = created_bcut_authority
             _rollback_created_bcut_authority(
@@ -812,6 +849,9 @@ def main(argv: list[str] | None = None) -> int:
             _rollback_created_bcut_authority(
                 target_path=Path(str(binding["target_path"])), identity=identity
             )
+        if created_cover_authority is not None and not target_state_created:
+            for path, identity in reversed(created_cover_authority):
+                _rollback_created_bcut_authority(target_path=path, identity=identity)
         raise
     print(json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True))
     return 0

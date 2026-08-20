@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from src.autoslice.candidate_selection import _exact_talk_contract_ids
+from src.autoslice.published_cover_carry import queue_marker_is_valid, queue_plan_projection
 from src.autoslice.final_review_carryover_retry import (
     unconsumed_final_review_carryover as _unconsumed_final_review_carryover,
 )
@@ -343,7 +344,6 @@ def _talk_retry_decision(
         rescore_retry,
     )
 
-
 def _repair_budget_charge(
     decision: _TalkRetryDecision, *, provider_budget_retry: bool = False
 ) -> int:
@@ -363,7 +363,6 @@ def _repair_budget_charge(
     照常收费；``talk_transient_retry_count`` 一字未动，infra 退避曲线
     （``infra_retry_policy``）读的仍是它。存量计数不追溯重算，单调不回退。
     """
-
     if (
         decision.infrastructure_retry
         and not decision.changed
@@ -657,7 +656,6 @@ def _cover_route_regeneration_receipt(record: dict) -> dict[str, object]:
         "cover_route_regeneration_attempts": attempts,
     }
 
-
 def _recovery_queue_item(
     date: str,
     record: dict,
@@ -668,6 +666,7 @@ def _recovery_queue_item(
     given_end_ms: int | None,
     given_end_authority: str | None,
     recovery_publication_authority: object,
+    published_cover_carry: object = None,
     provider_budget_history: Collection[object] = (),
 ) -> dict:
     ledger_state, provider_budget_ledger = (
@@ -677,6 +676,8 @@ def _recovery_queue_item(
             history_records=provider_budget_history,
         )
     )
+    if published_cover_carry is not None and not queue_marker_is_valid(published_cover_carry, base=_runner.BASE, date=date, candidate_id=candidate_id):
+        raise RecoveryReviewRerunError(f"RECOVERY_RERUN_PUBLISHED_COVER_CARRY_INVALID:{candidate_id}")
     if ledger_state in {
         FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_EMPTY,
         FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_INVALID,
@@ -782,6 +783,10 @@ def _recovery_queue_item(
         item[FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD] = (
             provider_budget_ledger
         )
+    if published_cover_carry is not None:
+        item["published_cover_carry"] = copy.deepcopy(published_cover_carry)
+        item["published_cover_carry_required"] = True
+        item["reuse_cover"] = True
     return item
 
 
@@ -886,9 +891,9 @@ def _recovery_rerun_plan(
         "recovery_publication_authorities_by_candidate": dict(
             sorted(recovery_publication_authorities.items())
         ),
+        "published_cover_carries_by_candidate": queue_plan_projection(queue),
         "queued_count": len(queue),
     }
-
 
 def _validated_recovery_plan_overrides(
     *,
@@ -978,6 +983,7 @@ def plan_current_talk_recovery_rerun(
     recovery_publication_authorities_by_candidate: (
         dict[str, dict[str, object]] | None
     ) = None,
+    published_cover_carries_by_candidate: dict[str, dict[str, object]] | None = None,
 ) -> dict:
     """Plan an explicit, hash-bound CURRENT-talk rerun outside cron.
 
@@ -1039,6 +1045,9 @@ def plan_current_talk_recovery_rerun(
             ),
         )
     )
+    published_cover_carries = dict(published_cover_carries_by_candidate or {})
+    if published_cover_carries and set(published_cover_carries) != requested_set:
+        raise RecoveryReviewRerunError("RECOVERY_RERUN_PUBLISHED_COVER_CARRY_SCOPE_INVALID")
     provider_budget_history = state.get("talk_superseded_attempts") or ()
     picks = state.get("picks")
     if not isinstance(picks, list):
@@ -1059,7 +1068,6 @@ def plan_current_talk_recovery_rerun(
         raise RecoveryReviewRerunError(
             "RECOVERY_RERUN_ALLOWLIST_MUST_EQUAL_ALL_CURRENT_DELIVERIES"
         )
-
     by_id = {
         _candidate_id(row): row for row in current_deliveries
     }
@@ -1068,7 +1076,6 @@ def plan_current_talk_recovery_rerun(
             raise RecoveryReviewRerunError(
                 f"RECOVERY_RERUN_OLD_FINGERPRINT_MISMATCH:{cid}"
             )
-
     backlog = state.get("talk_backlog") or []
     if not isinstance(backlog, list):
         raise RecoveryReviewRerunError("RECOVERY_RERUN_TALK_BACKLOG_INVALID")
@@ -1087,7 +1094,6 @@ def plan_current_talk_recovery_rerun(
         raise RecoveryReviewRerunError(
             "RECOVERY_RERUN_REPLACEMENT_NOT_IN_BACKLOG"
         )
-
     queue: list[dict] = []
     superseded: list[dict] = []
     for cid in requested:
@@ -1115,6 +1121,7 @@ def plan_current_talk_recovery_rerun(
             recovery_publication_authority=(
                 recovery_publication_authorities.get(cid)
             ),
+            published_cover_carry=published_cover_carries.get(cid),
             provider_budget_history=provider_budget_history,
         )
         queue.append(queue_item)
@@ -1126,7 +1133,6 @@ def plan_current_talk_recovery_rerun(
         archived["source_state_sha256"] = expected_source_state_sha256
         _carry_recovered_provider_budget_ledger_to_archive(queue_item, archived)
         superseded.append(archived)
-
     ranked_backlog = sorted(
         (
             row
@@ -1766,7 +1772,6 @@ def _active_selected_final_review_recovery_scope(
     return active_selected_final_review_recovery_scope(
         date, state, candidate_ids
     )
-
 
 def requeue_recoverable_talks(
     date: str,

@@ -4218,6 +4218,19 @@ def test_produce_batch_forwards_persisted_reuse_cover_for_talk_repairs(monkeypat
     assert [row["candidate_id"] for row in results] == ["repair", "fresh"]
 
 
+def test_produce_batch_rejects_required_published_carry_before_talk(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(runner, "produce_talk", lambda *_a, **_kw: calls.append(1))
+    results = runner.produce_batch(
+        "2026-08-17",
+        [{"cid": "repair", "reuse_cover": True, "published_cover_carry_required": True}],
+        runner.produce_talk,
+    )
+    assert calls == []
+    assert results[0]["status"] == "failed"
+    assert "PUBLISHED_COVER_CARRY_MARKER_INVALID" in results[0]["error"]
+
+
 def test_recoverable_failed_pick_reserves_its_seat_from_backfill():
     """Ivan 2026-07-13 对账铁律：可恢复失败的原选手先复活，候补不许趁基础设施
     故障上位（7/11 实况：2 条 failed 席被当空席→候补顶上→复活后一天超发 7 条）。

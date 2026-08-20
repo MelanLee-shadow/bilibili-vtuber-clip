@@ -1,0 +1,29 @@
+{
+  "schema_version": "daily-same-bv-published-cover-carry-authority.v1",
+  "authority": "One isolated same-BV subtitle repair may carry only the already public Qixi cover byte-for-byte. This never authorizes a new cover, publication, or subtitle truth change.",
+  "entries": [
+    {
+      "candidate_id": "auto_113022_354_496",
+      "recording_date": "2026-08-17",
+      "source_state_sha256": "sha256:0b87be44f3fb1f95e2e6142166c6dc39d253659bb06eb2b6e412970fa27cc02d",
+      "published_identity": {
+        "bvid": "BV1Ud8F6fECS",
+        "aid": 117126140527747,
+        "published_cid": 41087534673,
+        "title": "【李豆沙】李豆沙公布七夕安排，中午甜甜甜晚上苦苦苦，一套PUA直播要让kmx集体分号！",
+        "public_verify_repo_path": "reports/authorized_uploads/2026-08-20-qixi-auto_113022_354_496/auto_113022_354_496.public_verify.json",
+        "public_verify_sha256": "sha256:df7fde9f84518c4411db564b4aa09458a68fb37f92bdaeda66e37b69be6c1c37"
+      },
+      "cover_generation_sha256": "sha256:d41aff172110dfc06805ffddc59dbe919eb7ec106211f9a86e8475b7a6342a1a",
+      "artifacts": {
+        "cover": {"source_path": "/opt/bilive/autoslice/out/2026-08-17/auto_113022_354_496/replacement_recuts/covers/auto_113022_354_496.screenshot-title.cover.png", "sha256": "sha256:8cacaafc502a31474f93e6472c945f8527dee23b5fdb39df27d672ee08f4d4e0", "bytes": 1349090},
+        "pre_overlay": {"source_path": "/opt/bilive/autoslice/out/2026-08-17/auto_113022_354_496/replacement_recuts/covers/auto_113022_354_496.screenshot-title.cover.pre-overlay.png", "sha256": "sha256:5e875c2b49fed7c248f40fb7431ff6243cd56d3d27b1b77d73f6fa1882232d99", "bytes": 1347580},
+        "title_mask": {"source_path": "/opt/bilive/autoslice/out/2026-08-17/auto_113022_354_496/replacement_recuts/covers/auto_113022_354_496.screenshot-title.cover.title-mask.png", "sha256": "sha256:bf1ba6e1e49092343cc73e169d7f88ccb798939e25ba4f2af80c6eae16c1077b", "bytes": 34568},
+        "route_background": {"source_path": "/opt/bilive/autoslice/out/2026-08-17/auto_113022_354_496/replacement_recuts/covers_ai_original/auto_113022_354_496.screenshot-poster.png", "sha256": "sha256:5e875c2b49fed7c248f40fb7431ff6243cd56d3d27b1b77d73f6fa1882232d99", "bytes": 1347580},
+        "reference": {"source_path": "/opt/bilive/autoslice/out/2026-08-17/auto_113022_354_496/replacement_recuts/cover_refs/auto_113022_354_496.cover-ref.png", "sha256": "sha256:901e14fbe5c77ac513d9a3106bedeec88c5c57656119be64b19d1a3458c9fa18", "bytes": 2213394},
+        "host_witness": {"source_path": "/opt/bilive/autoslice/out/2026-08-17/auto_113022_354_496/replacement_recuts/covers/auto_113022_354_496.screenshot-title.cover.host-identity-witness.png", "sha256": "sha256:5249c287fea31ebe6b1641cab7d62f4631ff1dddf598750fa9da35d394cdf5b2", "bytes": 938924},
+        "source_composition_receipt": {"source_path": "/opt/bilive/autoslice/out/2026-08-17/auto_113022_354_496/replacement_recuts/evidence/auto_113022_354_496.cover-source-composition-verification.json", "sha256": "sha256:c59995c688b5edf023997cac574f8d2b70bf6c0717deb2edc116088fddf44838", "bytes": 4150}
+      }
+    }
+  ]
+}

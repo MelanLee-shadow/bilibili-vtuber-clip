@@ -264,6 +264,160 @@ def test_reused_published_cover_carries_all_artifact_hashes(
     assert hashes["cover_reference_sha256"] == reference_sha256
 
 
+def test_strict_published_carry_never_refreshes_identity_provider(tmp_path: Path, monkeypatch) -> None:
+    candidate_id = "candidate"
+    media = tmp_path / f"{candidate_id}.recut.mp4"
+    media.write_bytes(b"media")
+    covers = tmp_path / "covers"
+    covers.mkdir()
+    cover = covers / f"{candidate_id}.carried.cover.png"
+    cover.write_bytes(b"8c-public-cover")
+    sha = "sha256:" + hashlib.sha256(cover.read_bytes()).hexdigest()
+    (covers / f"{candidate_id}.published-cover-generation.json").write_text(
+        json.dumps({"final_cover_sha256": sha, "published_cover_carry_strict": True,
+                    "route_decision": {"host_identity_required": True}}), encoding="utf-8"
+    )
+    calls = []
+    monkeypatch.setattr(publish_staging, "validate_final_host_identity_verification", lambda _g: False)
+    monkeypatch.setattr(publish_staging, "verify_lidousha_final_host_identity", lambda **_kw: calls.append(1))
+    record = _stage_publish_draft({"status": "MATERIALIZED", "media_path": str(media), "artifact_hashes": {}}, candidate_id=candidate_id, title="【李豆沙】测试标题正文足够长", cues=[], run_ffmpeg=False, title_llm_call=None, skip_cover=True)
+    assert record is not None
+    assert calls == []
+    assert record["publish_staging"]["cover_path"] is None
+
+
+def test_valid_strict_published_carry_releases_exact_public_cover_without_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate_id = "candidate"
+    media = tmp_path / f"{candidate_id}.recut.mp4"
+    media.write_bytes(b"media")
+    covers = tmp_path / "covers"
+    covers.mkdir()
+    cover = covers / f"{candidate_id}.carried.cover.png"
+    public_bytes = b"8c-public-cover"
+    cover.write_bytes(public_bytes)
+    public_sha = "sha256:" + hashlib.sha256(public_bytes).hexdigest()
+    (covers / f"{candidate_id}.published-cover-generation.json").write_text(
+        json.dumps(
+            {
+                "final_cover": str(cover),
+                "final_cover_sha256": public_sha,
+                "published_cover_carry_strict": True,
+                "route_decision": {"host_identity_required": True},
+                "final_host_identity_verification": {"status": "PASS"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    provider_calls: list[object] = []
+    monkeypatch.setattr(
+        publish_staging,
+        "verify_lidousha_final_host_identity",
+        lambda **kwargs: provider_calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        publish_staging,
+        "validate_final_host_identity_verification",
+        lambda _generation: True,
+    )
+    monkeypatch.setattr(
+        publish_staging,
+        "validate_cover_route_decision",
+        lambda *_args, **_kwargs: True,
+    )
+
+    record = _stage_publish_draft(
+        {"status": "MATERIALIZED", "media_path": str(media), "artifact_hashes": {}},
+        candidate_id=candidate_id,
+        title="【李豆沙】测试标题正文足够长",
+        cues=[],
+        run_ffmpeg=False,
+        title_llm_call=None,
+        skip_cover=True,
+    )
+
+    assert record is not None
+    assert provider_calls == []
+    staging = record["publish_staging"]
+    assert staging["cover_status"] == "REUSED_COVER"
+    assert staging["cover_path"] == str(cover)
+    assert staging["cover_generation"]["final_cover_sha256"] == public_sha
+    assert record["artifact_hashes"]["cover_sha256"] == public_sha
+
+
+@pytest.mark.parametrize("fault", ["missing", "json", "sha", "route", "diagnostic_9a6"])
+def test_strict_published_carry_faults_never_call_provider_or_release_cover(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    """The strict lane may only consume its materialized, validated carry.
+
+    These are deliberately staging-level canaries: a broken sidecar must not
+    silently retry CPA and turn a subtitle repair into a new-cover decision.
+    """
+
+    candidate_id = "candidate"
+    media = tmp_path / f"{candidate_id}.recut.mp4"
+    media.write_bytes(b"media")
+    covers = tmp_path / "covers"
+    covers.mkdir()
+    cover = covers / f"{candidate_id}.carried.cover.png"
+    cover.write_bytes(b"8c-public-cover")
+    public_sha = "sha256:" + hashlib.sha256(cover.read_bytes()).hexdigest()
+    sidecar = covers / f"{candidate_id}.published-cover-generation.json"
+    if fault == "missing":
+        pass
+    elif fault == "json":
+        sidecar.write_text("not-json", encoding="utf-8")
+    else:
+        final_sha = public_sha if fault not in {"sha", "diagnostic_9a6"} else (
+            "sha256:9a6a67b207825fbee4b367cf6dae50fa969798440c6b5e4ae522c15e9e51d5eb"
+        )
+        sidecar.write_text(
+            json.dumps(
+                {
+                    "final_cover_sha256": final_sha,
+                    "published_cover_carry_strict": True,
+                    "route_decision": {"host_identity_required": True},
+                }
+            ),
+            encoding="utf-8",
+        )
+    calls: list[object] = []
+    monkeypatch.setattr(
+        publish_staging,
+        "verify_lidousha_final_host_identity",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        publish_staging,
+        "validate_final_host_identity_verification",
+        lambda _generation: fault != "route",
+    )
+    monkeypatch.setattr(
+        publish_staging,
+        "validate_cover_route_decision",
+        lambda *_args, **_kwargs: fault != "route",
+    )
+
+    record = _stage_publish_draft(
+        {"status": "MATERIALIZED", "media_path": str(media), "artifact_hashes": {}},
+        candidate_id=candidate_id,
+        title="【李豆沙】测试标题正文足够长",
+        cues=[],
+        run_ffmpeg=False,
+        title_llm_call=None,
+        skip_cover=True,
+    )
+
+    assert record is not None
+    assert calls == []
+    staging = record["publish_staging"]
+    assert staging["cover_status"] == "REUSED_COVER"
+    assert staging["cover_path"] is None
+    assert staging["cover_generation"].get("final_cover_sha256") != public_sha
+
+
 def test_candidate_projection_blocks_wrong_name_in_visible_cover_text(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

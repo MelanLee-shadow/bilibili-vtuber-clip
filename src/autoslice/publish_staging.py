@@ -153,7 +153,6 @@ def _selection_hook_has_inferable_anchor(*, selection_hook: str, title: str) -> 
     invalidate a mechanically cleaned title when the title itself still
     contains a concrete phrase from the authoritative first hook clause.
     """
-
     first_clause = _selection_hook_first_clause(selection_hook)
     for width in range(min(12, len(first_clause)), 1, -1):
         for start in range(0, len(first_clause) - width + 1):
@@ -382,7 +381,6 @@ def _recovery_publication_staging_state(
         authority,
     )
 
-
 def _stage_publish_draft(
     materialized_recut: dict[str, object] | None,
     *,
@@ -473,7 +471,6 @@ def _stage_publish_draft(
         title_policy_violations = automatic.title_policy_violations
         if automatic.title_authority_status is not None:
             title_authority_status = automatic.title_authority_status
-
         # Shared publication choke point: only declared filler cleanup is allowed.
         choke_repaired_title = canonicalize_automatic_title_fillers(staged_title)
         choke_hook_valid = not selection_hook or _selection_hook_has_inferable_anchor(
@@ -495,7 +492,6 @@ def _stage_publish_draft(
             title_authority_status = "RESOLVED_DETERMINISTIC_FILLER_REMOVAL"
             title_authority_error = None
             title_policy_violations = []
-
     # Automatic titles receive deterministic surface canon. A human title body
     # is not silently rewritten; only the channel-owned publish envelope below
     # may be added.
@@ -751,9 +747,12 @@ def _stage_publish_draft(
                 and carried_route.get("host_identity_required") is True
                 and not validate_final_host_identity_verification(carried_generation)
             )
-            if needs_identity:
+            if needs_identity and carried_generation.get("published_cover_carry_strict") is True:
+                carry_drop_reason = "strict_published_carry_identity_invalid"
+                carried_generation = None
+            if needs_identity and carried_generation is not None:
                 identity_reference = (
-                    media_path.parent / "cover_refs" / f"{candidate_id}.cover-ref.png"
+                        media_path.parent / "cover_refs" / f"{candidate_id}.cover-ref.png"
                 )
                 fresh_base_url = os.environ.get("CPA_BASE_URL", "").strip().rstrip("/")
                 fresh_api_key = os.environ.get("CPA_API_KEY", "").strip()
@@ -865,7 +864,6 @@ def _stage_publish_draft(
         value = cover_result.get(key)
         if isinstance(value, str) and value:
             artifact_hashes[key] = value
-
     publish_draft = {
         "schema_version": "shadow-publish-draft.v1",
         "candidate_id": candidate_id,
@@ -1493,7 +1491,6 @@ def _stage_cpa_redraw_cover(
         "ai_background_sha256": "sha256:" + _sha256(ai_background_path),
         "cover_reference_sha256": "sha256:" + _sha256(reference_path),
     }
-
 
 def _build_lidousha_cover_route(
     *,
@@ -2642,3 +2639,6 @@ def _staged_transcript_sample(record: Mapping[str, object], cues: Sequence[Sourc
         except OSError:
             pass
     return " ".join(cue.text.strip() for cue in cues if cue.text.strip())[:600]
+
+
+# End of staging helpers.

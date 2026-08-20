@@ -183,11 +183,19 @@ def produce_batch_windowed(
 
     def _one(item: dict) -> dict:
         try:
-            produce_kwargs = (
-                {"reuse_cover": True}
-                if produce_fn is produce_talk_fn and item.get("reuse_cover")
-                else {}
-            )
+            produce_kwargs = {}
+            if produce_fn is produce_talk_fn and item.get("published_cover_carry_required") is True:
+                carry = item.get("published_cover_carry")
+                from src.autoslice.published_cover_carry import validate_materialized_marker
+                if not validate_materialized_marker(
+                    carry, base=base, date=date, candidate_id=str(item.get("cid") or "")
+                ):
+                    raise ValueError("PUBLISHED_COVER_CARRY_MARKER_INVALID")
+                produce_kwargs = {"reuse_cover": True}
+            elif produce_fn is produce_talk_fn and item.get("reuse_cover"):
+                # Historical bare reuse remains supported only when it never
+                # asserted this stricter, typed published-carry policy.
+                produce_kwargs = {"reuse_cover": True}
             result = produce_fn(date, item, **produce_kwargs)
             if item.get("session_id"):
                 result.setdefault("session_id", item["session_id"])

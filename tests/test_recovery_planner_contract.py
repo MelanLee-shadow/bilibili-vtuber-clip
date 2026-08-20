@@ -1,5 +1,6 @@
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 from scripts import plan_recovery_review_rerun as planner
 from scripts import free_session_autoslice as runner
 import src.autoslice.delivery_recovery as delivery_recovery
+import src.autoslice.published_cover_carry as published_cover_carry
 from src.autoslice.delivery_recovery import (
     RecoveryReviewRerunError,
     plan_current_talk_recovery_rerun,
@@ -315,29 +317,13 @@ def _qixi_single_published_main_fixture(
     )
     return (
         [
-            "--source-base",
-            str(source_base),
-            "--target-base",
-            str(target_base),
-            "--target-recordings-root",
-            str(recording_root),
-            "--project-single-published-repair",
-            "--expected-source-bcut-sha256",
-            source_bcut_sha256,
-            "--date",
-            date,
-            "--expected-source-state-sha256",
-            source_state_sha256,
-            "--expected-old-fingerprint",
-            OLD_FINGERPRINT,
-            "--expected-new-fingerprint",
-            NEW_FINGERPRINT,
-            "--candidate-id",
-            candidate_id,
-            "--publication-authority-asset",
-            str(QIXI_SAME_BV_ASSET),
-            "--expected-publication-authority-sha256",
-            QIXI_SAME_BV_ASSET_SHA256,
+            "--source-base", str(source_base), "--target-base", str(target_base),
+            "--target-recordings-root", str(recording_root), "--project-single-published-repair",
+            "--expected-source-bcut-sha256", source_bcut_sha256,
+            "--date", date, "--expected-source-state-sha256", source_state_sha256,
+            "--expected-old-fingerprint", OLD_FINGERPRINT, "--expected-new-fingerprint", NEW_FINGERPRINT,
+            "--candidate-id", candidate_id, "--publication-authority-asset", str(QIXI_SAME_BV_ASSET),
+            "--expected-publication-authority-sha256", QIXI_SAME_BV_ASSET_SHA256,
         ],
         source_state,
         target_base,
@@ -345,6 +331,175 @@ def _qixi_single_published_main_fixture(
     )
 
 
+def _sealed_qixi_cover_carry_main_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[list[str], Path, Path, str]:
+    """A clean temporary Git authority, not an uncommitted test override.
+
+    The real carry asset is deliberately only usable after its own commit.  This
+    fixture keeps that property while testing planner/main end-to-end with tiny
+    synthetic bytes: the authority asset itself is committed to a fresh Git
+    repository and its state/public/cover graph is fully hash bound.
+    """
+
+    date = "2026-08-17"
+    candidate_id = "auto_113022_354_496"
+    title = "【李豆沙】李豆沙公布七夕安排，中午甜甜甜晚上苦苦苦，一套PUA直播要让kmx集体分号！"
+    repo_root = tmp_path / "sealed-repo"
+    (repo_root / "assets/lidousha").mkdir(parents=True)
+    (repo_root / "scripts").mkdir()
+    (repo_root / "reports/authorized_uploads/qixi").mkdir(parents=True)
+    source_base = tmp_path / "source"
+    target_base = tmp_path / "target"
+    recording_root = tmp_path / "recordings"
+    (source_base / "state").mkdir(parents=True)
+    (source_base / "cache" / date).mkdir(parents=True)
+    (source_base / "cpa.env").write_text("CPA_API_KEY=test\n", encoding="utf-8")
+    source_bcut = source_base / "cache" / date / "official.bcut.srt"
+    source_bcut.write_text("1\n00:00:00,000 --> 00:00:01,000\n字幕\n", encoding="utf-8")
+    source_artifacts = tmp_path / "public-source-artifacts"
+    source_artifacts.mkdir()
+    payloads = {
+        "cover": b"8c-public-cover-fixture",
+        "pre_overlay": b"pre-overlay",
+        "title_mask": b"title-mask",
+        "route_background": b"route-background",
+        "reference": b"reference",
+        "host_witness": b"host-witness",
+        "source_composition_receipt": b"composition-receipt",
+    }
+    paths = {}
+    for name, payload in payloads.items():
+        path = source_artifacts / f"{name}.bin"
+        path.write_bytes(payload)
+        paths[name] = path
+    def digest(payload: bytes) -> str:
+        return "sha256:" + hashlib.sha256(payload).hexdigest()
+    bindings = {
+        name: {
+            "source_path": str(paths[name]),
+            "sha256": digest(payload),
+            "bytes": len(payload),
+        }
+        for name, payload in payloads.items()
+    }
+    generation = {
+        "final_cover": str(paths["cover"]),
+        "final_cover_sha256": bindings["cover"]["sha256"],
+        "pre_overlay_path": str(paths["pre_overlay"]),
+        "pre_overlay_sha256": bindings["pre_overlay"]["sha256"],
+        "rendered_text_pixels": {
+            "mask_path": str(paths["title_mask"]),
+            "mask_sha256": bindings["title_mask"]["sha256"],
+        },
+        "screenshot_graphic_poster": {
+            "output_path": str(paths["route_background"]),
+            "output_sha256": bindings["route_background"]["sha256"],
+        },
+        "ai_background": str(paths["route_background"]),
+        "ai_background_sha256": bindings["route_background"]["sha256"],
+        "reference_image": str(paths["reference"]),
+        "reference_sha256": bindings["reference"]["sha256"],
+        "final_host_identity_verification": {
+            "comparison_path": str(paths["host_witness"]),
+            "comparison_sha256": bindings["host_witness"]["sha256"],
+        },
+        "source_composition_receipt": {
+            "path": str(paths["source_composition_receipt"]),
+            "sha256": bindings["source_composition_receipt"]["sha256"],
+        },
+        "route_decision": {"host_identity_required": True},
+    }
+    target = _record(candidate_id, start_ms=354_630, end_ms=496_420, status="published")
+    target.update(
+        {
+            "prepublication_status": "review_ready",
+            "bvid": "BV1Ud8F6fECS",
+            "aid": 117126140527747,
+            "published_cid": 41087534673,
+            "title": title,
+            "cover_path": str(paths["cover"]),
+            "cover_sha256": bindings["cover"]["sha256"],
+            "cover_generation": generation,
+        }
+    )
+    state = {
+        "date": date,
+        "run_mode": "DAILY",
+        "upload_allowed": False,
+        "picks": [target],
+        "pending_talk": [],
+        "talk_backlog": [],
+        "talk_superseded_attempts": [],
+    }
+    source_state = source_base / "state" / f"{date}.json"
+    source_state.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    source_sha = digest(source_state.read_bytes())
+    public_verify = {
+        "schema_version": "authorized-upload-public-verify.v2",
+        "status": "VERIFIED_PUBLIC",
+        "bvid": target["bvid"],
+        "manifest_title": title,
+        "public_view": {"aid": target["aid"], "cid": target["published_cid"], "title": title},
+        "member_archive": {"bvid": target["bvid"], "aid": target["aid"], "title": title},
+        "expected": {"title": title},
+        "section_api": {"episode_titles": [title]},
+    }
+    public_verify_path = repo_root / "reports/authorized_uploads/qixi/public.json"
+    public_verify_path.write_text(json.dumps(public_verify, ensure_ascii=False), encoding="utf-8")
+    authority = {
+        "schema_version": "daily-same-bv-published-cover-carry-authority.v1",
+        "authority": "fixture",
+        "entries": [{
+            "candidate_id": candidate_id,
+            "recording_date": date,
+            "source_state_sha256": source_sha,
+            "published_identity": {
+                "bvid": target["bvid"], "aid": target["aid"], "published_cid": target["published_cid"],
+                "title": title, "public_verify_repo_path": "reports/authorized_uploads/qixi/public.json",
+                "public_verify_sha256": digest(public_verify_path.read_bytes()),
+            },
+            "cover_generation_sha256": digest(json.dumps(generation, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()),
+            "artifacts": bindings,
+        }],
+    }
+    authority_path = repo_root / "assets/lidousha/daily_same_bv_published_cover_carry_authority.v1.json"
+    authority_path.write_text(json.dumps(authority, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    for command in (("git", "init", "-q", str(repo_root)), ("git", "-C", str(repo_root), "add", "."),
+                    ("git", "-C", str(repo_root), "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "sealed carry fixture")):
+        subprocess.run(command, check=True)
+    assert subprocess.run(("git", "-C", str(repo_root), "status", "--porcelain"), check=True, capture_output=True).stdout == b""
+    target_base.mkdir()
+    (target_base / "repo").symlink_to(repo_root, target_is_directory=True)
+    (recording_root / date).mkdir(parents=True)
+    (recording_root / date / "official.mp4").write_bytes(b"official-media")
+    monkeypatch.setattr(planner, "__file__", str(repo_root / "scripts/plan_recovery_review_rerun.py"))
+    monkeypatch.setattr(runner, "BASE", target_base)
+    monkeypatch.setattr(runner, "REC_ROOT", recording_root)
+    monkeypatch.setattr(runner, "talk_pipeline_fingerprint", lambda _cid: NEW_FINGERPRINT)
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _segment: 1_800_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _segment: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _segment: None)
+    monkeypatch.setattr(runner, "resolve_structured_chat_binding", lambda *_args, **_kwargs: {"chat_jsonl": None, "structured_chat_required": False, "chat_binding_status": "OPTIONAL_ABSENT"})
+    monkeypatch.setattr(published_cover_carry, "validate_cover_route_decision", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(published_cover_carry, "validate_final_host_identity_verification", lambda *_args, **_kwargs: True)
+    real_load = planner._load_recovery_publication_contract
+    publication = real_load(queued_candidate_ids={candidate_id}, publication_asset=QIXI_SAME_BV_ASSET, expected_publication_authority_sha256=QIXI_SAME_BV_ASSET_SHA256, repo_root=ROOT)
+    monkeypatch.setattr(planner, "_load_recovery_publication_contract", lambda **_kwargs: publication)
+    return (
+        [
+            "--source-base", str(source_base), "--target-base", str(target_base),
+            "--target-recordings-root", str(recording_root), "--project-single-published-repair",
+            "--preserve-published-cover", "--expected-source-bcut-sha256", digest(source_bcut.read_bytes()),
+            "--date", date, "--expected-source-state-sha256", source_sha,
+            "--expected-old-fingerprint", OLD_FINGERPRINT, "--expected-new-fingerprint", NEW_FINGERPRINT,
+            "--candidate-id", candidate_id, "--publication-authority-asset", str(QIXI_SAME_BV_ASSET),
+            "--expected-publication-authority-sha256", QIXI_SAME_BV_ASSET_SHA256,
+        ],
+        target_base,
+        source_state,
+        bindings["cover"]["sha256"],
+    )
 def test_v10_contract_binds_exact_five_candidates_and_reviewed_ends():
     authorities, ends, end_authority = _load(CANDIDATE_IDS)
 
@@ -1391,3 +1546,119 @@ def test_single_published_main_rejects_wrong_authority_before_writing(
 
     assert not (target_base / "state" / f"{DATE}.json").exists()
     assert not (target_base / "cache" / DATE / "official.bcut.srt").exists()
+
+
+def test_qixi_published_cover_carry_main_uses_only_sealed_fixture_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args, target_base, source_state, public_cover_sha = _sealed_qixi_cover_carry_main_fixture(
+        tmp_path, monkeypatch
+    )
+
+    assert planner.main(args) == 0
+
+    state = json.loads((target_base / "state" / "2026-08-17.json").read_text(encoding="utf-8"))
+    receipt = json.loads(
+        (target_base / "reports/recovery-review-rerun-plan-2026-08-17.json").read_text(encoding="utf-8")
+    )
+    item = state["pending_talk"]
+    assert len(item) == 1
+    marker = item[0]["published_cover_carry"]
+    assert item[0]["published_cover_carry_required"] is True
+    assert item[0]["reuse_cover"] is True
+    assert marker["cover_sha256"] == public_cover_sha
+    assert Path(marker["cover_path"]).read_bytes() == b"8c-public-cover-fixture"
+    assert receipt["published_cover_carries_by_candidate"] == {
+        "auto_113022_354_496": {
+            "recording_date": "2026-08-17",
+            "cover_sha256": public_cover_sha,
+            "generation_sha256": marker["generation_sha256"],
+        }
+    }
+    assert source_state.exists()  # source authority is read-only throughout.
+
+
+@pytest.mark.parametrize("mutation", ["source", "public", "artifact", "symlink", "target_exists"])
+def test_qixi_published_cover_carry_rejects_before_state_when_authority_graph_drifts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    args, target_base, source_state, _public_cover_sha = _sealed_qixi_cover_carry_main_fixture(
+        tmp_path, monkeypatch
+    )
+    if mutation == "source":
+        source_state.write_bytes(source_state.read_bytes() + b" ")
+    elif mutation == "public":
+        repo_root = (target_base / "repo").resolve()
+        (repo_root / "reports/authorized_uploads/qixi/public.json").write_text("{}", encoding="utf-8")
+    elif mutation == "artifact":
+        (tmp_path / "public-source-artifacts/cover.bin").write_bytes(b"not-8c")
+    elif mutation == "symlink":
+        artifact = tmp_path / "public-source-artifacts/reference.bin"
+        replacement = tmp_path / "replacement.bin"
+        replacement.write_bytes(artifact.read_bytes())
+        artifact.unlink()
+        artifact.symlink_to(replacement)
+    else:
+        target = target_base / "out/2026-08-17/auto_113022_354_496/replacement_recuts/covers/auto_113022_354_496.published-carry.cover.png"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"preexisting")
+
+    with pytest.raises(SystemExit):
+        planner.main(args)
+
+    assert not (target_base / "state/2026-08-17.json").exists()
+    assert not (target_base / "reports/recovery-review-rerun-plan-2026-08-17.json").exists()
+    assert not (target_base / "cache/2026-08-17/official.bcut.srt").exists()
+    if mutation != "target_exists":
+        assert not (target_base / "out/2026-08-17/auto_113022_354_496/replacement_recuts/covers/auto_113022_354_496.published-carry.cover.png").exists()
+
+
+def test_qixi_published_cover_carry_plan_failure_rolls_back_all_owned_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args, target_base, _source_state, _public_cover_sha = _sealed_qixi_cover_carry_main_fixture(
+        tmp_path, monkeypatch
+    )
+    monkeypatch.setattr(
+        delivery_recovery,
+        "plan_current_talk_recovery_rerun",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RecoveryReviewRerunError("INJECTED_PLAN_FAILURE")),
+    )
+
+    with pytest.raises(SystemExit, match="INJECTED_PLAN_FAILURE"):
+        planner.main(args)
+
+    package = target_base / "out/2026-08-17/auto_113022_354_496/replacement_recuts"
+    # mkdir parents are harmless and are not invocation-owned files; every
+    # create-only evidence file and the sidecar must be gone.
+    assert not [path for path in package.rglob("*") if path.is_file() or path.is_symlink()]
+    assert not (target_base / "cache/2026-08-17/official.bcut.srt").exists()
+    assert not (target_base / "state/2026-08-17.json").exists()
+
+
+def test_qixi_published_cover_carry_receipt_failure_never_leaves_a_consumable_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args, target_base, _source_state, _public_cover_sha = _sealed_qixi_cover_carry_main_fixture(
+        tmp_path, monkeypatch
+    )
+    atomic_create = planner._atomic_create
+
+    def fail_receipt(path: Path, payload: bytes) -> None:
+        if path.parent.name == "reports":
+            raise OSError("INJECTED_RECEIPT_FAILURE")
+        atomic_create(path, payload)
+
+    monkeypatch.setattr(planner, "_atomic_create", fail_receipt)
+    with pytest.raises(OSError, match="INJECTED_RECEIPT_FAILURE"):
+        planner.main(args)
+
+    # State is the commit point.  Its typed marker is valid and exact even when
+    # operator reporting fails afterwards; a later invocation sees the state
+    # and refuses to overwrite it instead of creating a second plan.
+    state = json.loads((target_base / "state/2026-08-17.json").read_text(encoding="utf-8"))
+    marker = state["pending_talk"][0]["published_cover_carry"]
+    assert published_cover_carry.validate_materialized_marker(
+        marker, base=target_base, date="2026-08-17", candidate_id="auto_113022_354_496"
+    )
+    assert not (target_base / "reports/recovery-review-rerun-plan-2026-08-17.json").exists()
