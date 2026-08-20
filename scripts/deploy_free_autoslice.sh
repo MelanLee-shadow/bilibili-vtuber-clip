@@ -141,13 +141,26 @@ live_status = json.load(open(live_status_path, encoding="utf-8"))
 
 def state_material(value):
     assert isinstance(value, dict)
-    return {key: item for key, item in value.items() if key != "last_room_status_epoch"}
+    material = {key: item for key, item in value.items() if key != "last_room_status_epoch"}
+    cookie_health = material.get("cookie_health")
+    assert isinstance(cookie_health, dict)
+    material["cookie_health"] = {
+        key: item for key, item in cookie_health.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
+    return material
 
 def status_projection(value):
     assert isinstance(value, dict)
     projected = json.loads(json.dumps(value))
     projected.pop("generated_at", None)
     projected.pop("generated_at_epoch", None)
+    cookie_status = projected.get("bilibili_cookie")
+    assert isinstance(cookie_status, dict)
+    projected["bilibili_cookie"] = {
+        key: item for key, item in cookie_status.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
     errors = projected.get("finalize_errors")
     if isinstance(errors, list):
         for entry in errors:
@@ -396,6 +409,12 @@ def status_projection(value):
     projected = json.loads(json.dumps(value))
     projected.pop("generated_at", None)
     projected.pop("generated_at_epoch", None)
+    cookie_status = projected.get("bilibili_cookie")
+    assert isinstance(cookie_status, dict)
+    projected["bilibili_cookie"] = {
+        key: item for key, item in cookie_status.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
     errors = projected.get("finalize_errors")
     if isinstance(errors, list):
         for entry in errors:
@@ -710,13 +729,26 @@ receipt = json.load(open(receipt_path, encoding="utf-8"))
 
 def state_material(value):
     assert isinstance(value, dict)
-    return {key: item for key, item in value.items() if key != "last_room_status_epoch"}
+    material = {key: item for key, item in value.items() if key != "last_room_status_epoch"}
+    cookie_health = material.get("cookie_health")
+    assert isinstance(cookie_health, dict)
+    material["cookie_health"] = {
+        key: item for key, item in cookie_health.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
+    return material
 
 def status_projection(value):
     assert isinstance(value, dict)
     projected = json.loads(json.dumps(value))
     projected.pop("generated_at", None)
     projected.pop("generated_at_epoch", None)
+    cookie_status = projected.get("bilibili_cookie")
+    assert isinstance(cookie_status, dict)
+    projected["bilibili_cookie"] = {
+        key: item for key, item in cookie_status.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
     errors = projected.get("finalize_errors")
     if isinstance(errors, list):
         for entry in errors:
@@ -1321,6 +1353,12 @@ def status_projection(value):
     projected = json.loads(json.dumps(value))
     projected.pop("generated_at", None)
     projected.pop("generated_at_epoch", None)
+    cookie_status = projected.get("bilibili_cookie")
+    assert isinstance(cookie_status, dict)
+    projected["bilibili_cookie"] = {
+        key: item for key, item in cookie_status.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
     errors = projected.get("finalize_errors")
     if isinstance(errors, list):
         import re
@@ -1635,13 +1673,26 @@ receipt = json.loads(receipt_raw)
 
 def state_material(payload):
     assert isinstance(payload, dict)
-    return {key: value for key, value in payload.items() if key != "last_room_status_epoch"}
+    material = {key: value for key, value in payload.items() if key != "last_room_status_epoch"}
+    cookie_health = material.get("cookie_health")
+    assert isinstance(cookie_health, dict)
+    material["cookie_health"] = {
+        key: value for key, value in cookie_health.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
+    return material
 
 def status_projection(payload):
     assert isinstance(payload, dict)
     projected = json.loads(json.dumps(payload))
     projected.pop("generated_at", None)
     projected.pop("generated_at_epoch", None)
+    cookie_status = projected.get("bilibili_cookie")
+    assert isinstance(cookie_status, dict)
+    projected["bilibili_cookie"] = {
+        key: value for key, value in cookie_status.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
     errors = projected.get("finalize_errors")
     if isinstance(errors, list):
         import re
@@ -1746,13 +1797,26 @@ assert receipt.get("adapter_state_sha256") == hashlib.sha256(state_raw).hexdiges
 
 def state_material(value):
     assert isinstance(value, dict)
-    return {key: item for key, item in value.items() if key != "last_room_status_epoch"}
+    material = {key: item for key, item in value.items() if key != "last_room_status_epoch"}
+    cookie_health = material.get("cookie_health")
+    assert isinstance(cookie_health, dict)
+    material["cookie_health"] = {
+        key: item for key, item in cookie_health.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
+    return material
 
 def status_projection(value):
     assert isinstance(value, dict)
     projected = json.loads(json.dumps(value))
     projected.pop("generated_at", None)
     projected.pop("generated_at_epoch", None)
+    cookie_status = projected.get("bilibili_cookie")
+    assert isinstance(cookie_status, dict)
+    projected["bilibili_cookie"] = {
+        key: item for key, item in cookie_status.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
     errors = projected.get("finalize_errors")
     if isinstance(errors, list):
         for entry in errors:

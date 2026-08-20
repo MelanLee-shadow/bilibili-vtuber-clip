@@ -391,6 +391,7 @@ def test_connection_stub_bootstrap_receipt_is_create_only_and_leaves_state_untou
     state = {
         "schema_version": adapter.STATE_SCHEMA_VERSION,
         "managed_since_epoch": 1.0,
+        "cookie_health": {"checked_at": "2026-08-20T19:08:54+00:00", "checked_at_epoch": 1.0},
         "finalized": finalized,
         "source_dispositions": {},
         "webhook_files": webhook_files,
@@ -398,6 +399,12 @@ def test_connection_stub_bootstrap_receipt_is_create_only_and_leaves_state_untou
     state_path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
     status_path = tmp_path / "status.json"
     status = {
+        "generated_at": "2026-08-20T19:08:54+00:00",
+        "generated_at_epoch": 1.0,
+        "bilibili_cookie": {
+            "checked_at": "2026-08-20T19:08:54+00:00",
+            "checked_at_epoch": 1.0,
+        },
         "service_reachable": True,
         "streaming": False,
         "recording": False,
@@ -425,7 +432,12 @@ def test_connection_stub_bootstrap_receipt_is_create_only_and_leaves_state_untou
     assert status_path.read_bytes() == status_before
     assert receipt["source_relative_paths"] == [relative]
     assert receipt["rows"][relative]["status"] == "IGNORED_CONNECTION_STUB"
-    assert receipt["adapter_state_material_sha256"] == adapter._canonical_json_sha256(state)
+    assert receipt["adapter_state_material_sha256"] == adapter._canonical_json_sha256(
+        {
+            **{key: value for key, value in state.items() if key != "last_room_status_epoch"},
+            "cookie_health": {},
+        }
+    )
     assert (tmp_path / "receipts" / ("a" * 40 + ".json")).stat().st_mode & 0o777 == 0o600
     assert adapter.prepare_connection_stub_bootstrap(
         record_root=tmp_path,

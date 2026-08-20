@@ -68,13 +68,28 @@ def _canonical_sha256(payload: object) -> str:
 
 
 def _bootstrap_state_material(payload: dict[str, object]) -> dict[str, object]:
-    return {key: value for key, value in payload.items() if key != "last_room_status_epoch"}
+    material = {key: value for key, value in payload.items() if key != "last_room_status_epoch"}
+    cookie_health = material.get("cookie_health")
+    assert isinstance(cookie_health, dict)
+    material["cookie_health"] = {
+        key: value
+        for key, value in cookie_health.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
+    return material
 
 
 def _bootstrap_status_projection(payload: dict[str, object]) -> dict[str, object]:
     projected = json.loads(json.dumps(payload))
     projected.pop("generated_at", None)
     projected.pop("generated_at_epoch", None)
+    cookie_status = projected.get("bilibili_cookie")
+    assert isinstance(cookie_status, dict)
+    projected["bilibili_cookie"] = {
+        key: value
+        for key, value in cookie_status.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
     errors = projected.get("finalize_errors")
     if isinstance(errors, list):
         for entry in errors:
@@ -633,6 +648,13 @@ def test_bootstrap_rollback_marker_is_the_only_state_restore_authority(tmp_path)
         "2026-08-20/22966160_20260820-21-56-14.flv",
     ]
     status_payload = {
+        "generated_at": "2026-08-20T19:08:54+00:00",
+        "generated_at_epoch": 1.0,
+        "bilibili_cookie": {
+            "checked_at": "2026-08-20T19:08:54+00:00",
+            "checked_at_epoch": 1.0,
+            "authenticated": True,
+        },
         "service_reachable": True,
         "streaming": False,
         "recording": False,
@@ -646,17 +668,7 @@ def test_bootstrap_rollback_marker_is_the_only_state_restore_authority(tmp_path)
     def write_bound_preimage() -> None:
         state_preimage.write_bytes(b"bound-state\n")
         status_preimage.write_text(json.dumps(status_payload), encoding="utf-8")
-        projection = {
-            key: status_payload.get(key)
-            for key in (
-                "service_reachable",
-                "streaming",
-                "recording",
-                "finalizing",
-                "error",
-                "finalize_errors",
-            )
-        }
+        projection = _bootstrap_status_projection(status_payload)
         receipt_payload = {
             "schema_version": "recording-connection-stub-bootstrap.v1",
             "receipt_id": receipt_id,
@@ -917,6 +929,11 @@ def test_bootstrap_marker_activation_accepts_only_known_heartbeats(tmp_path):
     pre_state: dict[str, object] = {
         "schema_version": "recording-adapter-state.v1",
         "last_room_status_epoch": 1.0,
+        "cookie_health": {
+            "checked_at": "2026-08-20T19:08:54+00:00",
+            "checked_at_epoch": 1.0,
+            "authenticated": True,
+        },
         "webhook_files": {},
         "finalized": {},
         "source_dispositions": {},
@@ -925,6 +942,11 @@ def test_bootstrap_marker_activation_accepts_only_known_heartbeats(tmp_path):
         "generated_at": "2026-08-20T19:08:54+00:00",
         "generated_at_epoch": 1.0,
         "backend": "bililive-recorder",
+        "bilibili_cookie": {
+            "checked_at": "2026-08-20T19:08:54+00:00",
+            "checked_at_epoch": 1.0,
+            "authenticated": True,
+        },
         "service_reachable": True,
         "streaming": False,
         "recording": False,
@@ -980,11 +1002,24 @@ def test_bootstrap_marker_activation_accepts_only_known_heartbeats(tmp_path):
             check=False,
         )
 
-    heartbeat_state = dict(pre_state, last_room_status_epoch=2.0)
+    heartbeat_state = dict(
+        pre_state,
+        last_room_status_epoch=2.0,
+        cookie_health={
+            "checked_at": "2026-08-20T19:16:54+00:00",
+            "checked_at_epoch": 2.0,
+            "authenticated": True,
+        },
+    )
     heartbeat_status = dict(
         pre_status,
         generated_at="2026-08-20T19:16:54+00:00",
         generated_at_epoch=2.0,
+        bilibili_cookie={
+            "checked_at": "2026-08-20T19:16:54+00:00",
+            "checked_at_epoch": 2.0,
+            "authenticated": True,
+        },
     )
     heartbeat_status["finalize_errors"] = [
         dict(entry, error="ffmpeg failed at 0xfeed42")
@@ -1030,6 +1065,30 @@ def test_bootstrap_marker_activation_accepts_only_known_heartbeats(tmp_path):
             heartbeat_state,
             dict(heartbeat_status, backend="other-backend"),
         ),
+        (
+            "cookie-status-drift",
+            heartbeat_state,
+            dict(
+                heartbeat_status,
+                bilibili_cookie={
+                    "checked_at": "2026-08-20T19:16:54+00:00",
+                    "checked_at_epoch": 2.0,
+                    "authenticated": False,
+                },
+            ),
+        ),
+        (
+            "cookie-health-drift",
+            dict(
+                heartbeat_state,
+                cookie_health={
+                    "checked_at": "2026-08-20T19:16:54+00:00",
+                    "checked_at_epoch": 2.0,
+                    "authenticated": False,
+                },
+            ),
+            heartbeat_status,
+        ),
     ):
         marker.unlink(missing_ok=True)
         result = activate_with(state, status)
@@ -1050,7 +1109,14 @@ def test_exact_pre_marker_guard_recovery_is_heartbeat_tolerant_and_fail_closed(t
     verifier_end = rollback.index('\nif [ -f "$backup/external/crontab.present" ]', verifier_start)
     outer_verifier = rollback[verifier_start:verifier_end]
 
-    def build(root: Path, *, semantic_drift: bool, top_level_drift: bool = False):
+    def build(
+        root: Path,
+        *,
+        semantic_drift: bool,
+        top_level_drift: bool = False,
+        cookie_status_drift: bool = False,
+        cookie_health_drift: bool = False,
+    ):
         base = root / "autoslice"
         recording = root / "recording"
         uploader = root / "uploader"
@@ -1092,6 +1158,11 @@ def test_exact_pre_marker_guard_recovery_is_heartbeat_tolerant_and_fail_closed(t
         pre_state: dict[str, object] = {
             "schema_version": "recording-adapter-state.v1",
             "last_room_status_epoch": 1.0,
+            "cookie_health": {
+                "checked_at": "2026-08-20T19:08:54+00:00",
+                "checked_at_epoch": 1.0,
+                "authenticated": True,
+            },
             "webhook_files": {},
             "finalized": {},
             "source_dispositions": {},
@@ -1100,6 +1171,11 @@ def test_exact_pre_marker_guard_recovery_is_heartbeat_tolerant_and_fail_closed(t
             "generated_at": "2026-08-20T19:08:54+00:00",
             "generated_at_epoch": 1.0,
             "backend": "bililive-recorder",
+            "bilibili_cookie": {
+                "checked_at": "2026-08-20T19:08:54+00:00",
+                "checked_at_epoch": 1.0,
+                "authenticated": True,
+            },
             "service_reachable": True,
             "streaming": False,
             "recording": False,
@@ -1146,11 +1222,24 @@ def test_exact_pre_marker_guard_recovery_is_heartbeat_tolerant_and_fail_closed(t
             "canonical_json_sha256": _canonical_sha256(receipt),
         }
         (receipts / f"{commit}.json").write_text(json.dumps(receipt), encoding="utf-8")
-        live_state = dict(pre_state, last_room_status_epoch=2.0)
+        live_state = dict(
+            pre_state,
+            last_room_status_epoch=2.0,
+            cookie_health={
+                "checked_at": "2026-08-20T19:16:54+00:00",
+                "checked_at_epoch": 2.0,
+                "authenticated": True,
+            },
+        )
         live_status = dict(
             pre_status,
             generated_at="2026-08-20T19:16:54+00:00",
             generated_at_epoch=2.0,
+            bilibili_cookie={
+                "checked_at": "2026-08-20T19:16:54+00:00",
+                "checked_at_epoch": 2.0,
+                "authenticated": True,
+            },
         )
         live_status["finalize_errors"] = [
             dict(entry, error="ffmpeg failed at 0xfeed42")
@@ -1160,6 +1249,14 @@ def test_exact_pre_marker_guard_recovery_is_heartbeat_tolerant_and_fail_closed(t
             live_status["error"] = "1 closed recording(s) failed finalization"
         if top_level_drift:
             live_status["backend"] = "other-backend"
+        if cookie_status_drift:
+            live_status["bilibili_cookie"] = dict(
+                live_status["bilibili_cookie"], authenticated=False  # type: ignore[arg-type,index]
+            )
+        if cookie_health_drift:
+            live_state["cookie_health"] = dict(
+                live_state["cookie_health"], authenticated=False  # type: ignore[arg-type,index]
+            )
         (recording / "adapter-state.json").write_text(json.dumps(live_state), encoding="utf-8")
         (recording / "status.json").write_text(json.dumps(live_status), encoding="utf-8")
         verifier = subprocess.run(
@@ -1201,6 +1298,20 @@ def test_exact_pre_marker_guard_recovery_is_heartbeat_tolerant_and_fail_closed(t
     assert not (tmp_path / "accepted" / "autoslice" / f"repo.rollback-{commit}").exists()
 
     rejected, guard, outer = build(tmp_path / "drift", semantic_drift=True)
+    assert outer.returncode != 0
+    assert rejected.returncode != 0
+    assert guard.is_dir()
+
+    rejected, guard, outer = build(
+        tmp_path / "cookie-status-drift", semantic_drift=False, cookie_status_drift=True
+    )
+    assert outer.returncode != 0
+    assert rejected.returncode != 0
+    assert guard.is_dir()
+
+    rejected, guard, outer = build(
+        tmp_path / "cookie-health-drift", semantic_drift=False, cookie_health_drift=True
+    )
     assert outer.returncode != 0
     assert rejected.returncode != 0
     assert guard.is_dir()

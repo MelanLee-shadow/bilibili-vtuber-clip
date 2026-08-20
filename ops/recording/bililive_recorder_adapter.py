@@ -2298,6 +2298,14 @@ def prepare_connection_stub_bootstrap(
     state_material = {
         key: value for key, value in state.items() if key != "last_room_status_epoch"
     }
+    cookie_health = state_material.get("cookie_health")
+    if not isinstance(cookie_health, dict):
+        raise AdapterError("connection-stub bootstrap cookie health is malformed")
+    state_material["cookie_health"] = {
+        key: value
+        for key, value in cookie_health.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
     # A fresh status changes its timestamp and ffmpeg happens to put unstable
     # process addresses in the two retained finalization diagnostics.  Preserve
     # every other byte-level JSON value, normalising only those proven
@@ -2306,6 +2314,14 @@ def prepare_connection_stub_bootstrap(
     status_preimage = json.loads(json.dumps(status))
     status_preimage.pop("generated_at", None)
     status_preimage.pop("generated_at_epoch", None)
+    cookie_status = status_preimage.get("bilibili_cookie")
+    if not isinstance(cookie_status, dict):
+        raise AdapterError("connection-stub bootstrap cookie status is malformed")
+    status_preimage["bilibili_cookie"] = {
+        key: value
+        for key, value in cookie_status.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
     errors = status_preimage.get("finalize_errors")
     if isinstance(errors, list):
         for entry in errors:
