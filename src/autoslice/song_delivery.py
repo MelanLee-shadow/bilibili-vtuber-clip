@@ -26,6 +26,13 @@ from pathlib import Path
 from typing import Callable
 
 from src.autoslice.runner_proxy import RunnerProxy
+from src.autoslice.cover_route_evidence import (
+    validate_cover_route_decision,
+    validate_rendered_text_pixel_evidence,
+)
+from src.autoslice.cover_host_identity_gate import (
+    validate_final_host_identity_verification,
+)
 from src.autoslice.verified_io import (
     _matches_sha256,
     _normalized_sha256,
@@ -109,6 +116,53 @@ def cover_generation_is_song(generation: dict) -> bool:
     return generation.get("is_song") is True
 
 
+def final_song_cover_is_verified(record: dict) -> bool:
+    """Recompute the current final-cover fact for a materialized Song.
+
+    ``cover_release_gate`` belongs to the earlier selector/deferred-cover
+    decision.  A false value there is expected for the legitimate
+    ``SONG_FULL_BOUNDARY_READY`` deferred path and must never be projected as
+    a verdict on the later final cover.  Conversely, the presence of a
+    deferred-cover marker is not enough to close a cover fact: the final bytes,
+    their recorded hash, the route/identity receipt and the rendered-title
+    pixels all have to validate again.
+    """
+
+    recut = record.get("materialized_recut")
+    if not isinstance(recut, dict):
+        return False
+    staging = recut.get("publish_staging")
+    hashes = recut.get("artifact_hashes")
+    if not isinstance(staging, dict) or not isinstance(hashes, dict):
+        return False
+    cover_path = staging.get("cover_path")
+    cover_sha256 = hashes.get("cover_sha256")
+    generation = staging.get("cover_generation")
+    final_cover_path = generation.get("final_cover") if isinstance(generation, dict) else None
+    if (
+        staging.get("status") != "STAGED"
+        or staging.get("upload_enabled") is not False
+        or staging.get("cover_status") not in {"AI_COVER_READY", "REPAIRED_AI_COVER"}
+        or not isinstance(cover_path, str)
+        or not isinstance(cover_sha256, str)
+        or not isinstance(generation, dict)
+        or generation.get("status") not in {"AI_COVER_READY", "REPAIRED_AI_COVER"}
+        or not isinstance(final_cover_path, str)
+        or generation.get("final_cover_sha256") != cover_sha256
+        or not _matches_sha256(Path(cover_path), cover_sha256)
+        or not _matches_sha256(Path(final_cover_path), cover_sha256)
+        or not validate_cover_route_decision(generation, allow_legacy_v1=False)
+        or not validate_final_host_identity_verification(generation)
+        or not validate_rendered_text_pixel_evidence(generation)
+    ):
+        return False
+    pixels = generation.get("rendered_text_pixels")
+    return bool(
+        isinstance(pixels, dict)
+        and pixels.get("final_cover_sha256") == cover_sha256
+    )
+
+
 def song_delivery_artifacts(record: dict) -> dict:
     """Best-known materialized artifacts for a song record, with sha256 hashes
     whenever the pipeline recorded them (hash hygiene stays; SEMANTIC gating
@@ -137,7 +191,10 @@ def song_delivery_artifacts(record: dict) -> dict:
             out["recut_manifest_sha256"] = str(recut["manifest_sha256"])
     gate = recut.get("cover_release_gate")
     if isinstance(gate, dict):
-        out["cover_release_gate_satisfied"] = gate.get("satisfied")
+        # Keep the selector gate path as provenance, but project its
+        # satisfaction from today's final-cover evidence rather than from the
+        # historical deferred-cover decision.
+        out["cover_release_gate_satisfied"] = final_song_cover_is_verified(record)
         out["release_gate_path"] = str(gate.get("path") or "")
         gate_hashes = gate.get("artifact_hashes")
         if isinstance(gate_hashes, dict) and gate_hashes.get("burned_video_sha256"):

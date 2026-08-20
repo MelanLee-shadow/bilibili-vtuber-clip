@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 import scripts.free_session_autoslice as runner
+from src.autoslice import song_delivery
 import src.autoslice.live_gate as live_gate
 import src.autoslice.speaker_session_router as speaker_router
 from src.autoslice.boundary_semantic_review import (
@@ -5062,7 +5063,9 @@ def test_song_delivery_artifacts_extraction_with_hashes():
         "cover_sha256": "sha256:" + "b" * 64,
         "title": "【李豆沙】本次歌切",
         "release_gate_path": "/current/gate.json",
-        "cover_release_gate_satisfied": True,
+        # A historical selector gate is not a final-cover verdict.  Its true
+        # bit cannot stand in for route/identity/pixel/hash evidence.
+        "cover_release_gate_satisfied": False,
     }
 
 
@@ -5082,6 +5085,69 @@ def test_song_delivery_artifacts_video_survives_unsatisfied_cover_gate():
     assert artifacts["video_path"] == "/current/video.mp4"
     assert artifacts["cover_release_gate_satisfied"] is False
     assert runner.song_delivery_artifacts({}) == {}
+
+
+def test_song_delivery_projects_cover_gate_only_from_final_cover_evidence(
+    tmp_path, monkeypatch
+):
+    """Deferred cover provenance does not close the final-cover fact by itself."""
+    cover = tmp_path / "cover.png"
+    cover.write_bytes(b"final-cover")
+    cover_sha = "sha256:" + hashlib.sha256(cover.read_bytes()).hexdigest()
+    record = {
+        "materialized_recut": {
+            "cover_release_gate": {"satisfied": False, "path": "/old/gate.json"},
+            "artifact_hashes": {"cover_sha256": cover_sha},
+            "publish_staging": {
+                "status": "STAGED",
+                "upload_enabled": False,
+                "cover_status": "AI_COVER_READY",
+                "cover_path": str(cover),
+                "cover_generation": {
+                    "status": "AI_COVER_READY",
+                    "final_cover": str(cover),
+                    "final_cover_sha256": cover_sha,
+                    "rendered_text_pixels": {"final_cover_sha256": cover_sha},
+                },
+            },
+        }
+    }
+    monkeypatch.setattr(song_delivery, "validate_cover_route_decision", lambda *_a, **_k: True)
+    monkeypatch.setattr(song_delivery, "validate_final_host_identity_verification", lambda *_a, **_k: True)
+    monkeypatch.setattr(song_delivery, "validate_rendered_text_pixel_evidence", lambda *_a, **_k: True)
+
+    assert runner.song_delivery_artifacts(record)["cover_release_gate_satisfied"] is True
+    cover.write_bytes(b"drifted-cover")
+    assert runner.song_delivery_artifacts(record)["cover_release_gate_satisfied"] is False
+
+
+def test_song_delivery_refuses_cover_without_final_host_identity(tmp_path, monkeypatch):
+    cover = tmp_path / "cover.png"
+    cover.write_bytes(b"final-cover")
+    cover_sha = "sha256:" + hashlib.sha256(cover.read_bytes()).hexdigest()
+    record = {
+        "materialized_recut": {
+            "cover_release_gate": {"satisfied": False},
+            "artifact_hashes": {"cover_sha256": cover_sha},
+            "publish_staging": {
+                "status": "STAGED",
+                "upload_enabled": False,
+                "cover_status": "AI_COVER_READY",
+                "cover_path": str(cover),
+                "cover_generation": {
+                    "status": "AI_COVER_READY",
+                    "final_cover": str(cover),
+                    "final_cover_sha256": cover_sha,
+                    "rendered_text_pixels": {"final_cover_sha256": cover_sha},
+                },
+            },
+        }
+    }
+    monkeypatch.setattr(song_delivery, "validate_cover_route_decision", lambda *_a, **_k: True)
+    monkeypatch.setattr(song_delivery, "validate_final_host_identity_verification", lambda *_a, **_k: False)
+    monkeypatch.setattr(song_delivery, "validate_rendered_text_pixel_evidence", lambda *_a, **_k: True)
+
+    assert runner.song_delivery_artifacts(record)["cover_release_gate_satisfied"] is False
 
 
 def test_song_delivery_rule_final_requires_positive_completion_proof(tmp_path):
