@@ -11,11 +11,13 @@ mode can never ship again.
 """
 
 import hashlib
+import io
 import json
 import os
 import subprocess
 import sys
 import time
+import tarfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1323,6 +1325,220 @@ def test_exact_pre_marker_guard_recovery_is_heartbeat_tolerant_and_fail_closed(t
     assert outer.returncode != 0
     assert rejected.returncode != 0
     assert guard.is_dir()
+
+
+def test_prebackup_stage_guard_recovery_requires_bound_stage_and_old_authority(tmp_path):
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    receiver = source.split("<<'REMOTE_PREBACKUP_GUARD_RECOVERY'\n", 1)[1].split(
+        "\nREMOTE_PREBACKUP_GUARD_RECOVERY", 1
+    )[0]
+    owner_commit = "c" * 40
+    old_commit = "d" * 40
+    owner = f"{owner_commit}-20260820T200852Z-16337"
+
+    def stage_tree_sha(stage: Path) -> str:
+        entries: dict[str, dict[str, object]] = {
+            "": {"type": "dir", "mode": stage.stat().st_mode & 0o777}
+        }
+        for path in sorted(stage.rglob("*")):
+            relative = path.relative_to(stage).as_posix()
+            mode = path.lstat().st_mode & 0o777
+            if path.is_dir():
+                entries[relative] = {"type": "dir", "mode": mode}
+            else:
+                entries[relative] = {
+                    "type": "file",
+                    "mode": mode,
+                    "size": path.stat().st_size,
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                }
+        return _canonical_sha256(entries)
+
+    def build(root: Path, *, external_drift: bool = False, backup: bool = False):
+        base = root / "autoslice"
+        repo = base / "repo"
+        stage = base / f"repo.deploy-{owner_commit}"
+        guard = base / "deploy.guard"
+        recording = root / "recording"
+        uploader = root / "uploader"
+        repo.mkdir(parents=True)
+        stage.mkdir()
+        stage.chmod(0o755)
+        (stage / ".agent").mkdir(mode=0o700)
+        (stage / ".agent/partial.txt").write_bytes(b"partial")
+        (stage / ".agent/partial.txt").chmod(0o600)
+        guard.mkdir()
+        (guard / "owner").write_text(owner + "\n", encoding="utf-8")
+        (repo / "DEPLOYED_COMMIT").write_text(old_commit + " deployed\n", encoding="utf-8")
+        registry = repo / "assets/lidousha/publication_registry.v1.json"
+        registry.parent.mkdir(parents=True)
+        registry.write_text("{}", encoding="utf-8")
+        module = repo / "src/autoslice/repository_asset_authority.py"
+        module.parent.mkdir(parents=True)
+        (repo / "src/__init__.py").touch()
+        (repo / "src/autoslice/__init__.py").touch()
+        module.write_text(
+            "def build_deployed_authority_manifest(*, repo_root, deployed_commit, relative_paths):\n"
+            "    return {'commit': deployed_commit, 'paths': sorted(path.as_posix() for path in relative_paths)}\n",
+            encoding="utf-8",
+        )
+        (repo / "DEPLOYED_AUTHORITY_MANIFEST.json").write_text(
+            json.dumps(
+                {
+                    "commit": old_commit,
+                    "paths": [
+                        "assets/lidousha/publication_registry.v1.json",
+                        "assets/lidousha/publication_registry.v1.json",
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        targets = {
+            "scripts/free_mount_watchdog.sh": base / "free_mount_watchdog.sh",
+            "scripts/clouddrive_upload_fatal_sentinel.sh": base / "upload_fatal_sentinel.sh",
+            "scripts/free_do_upload.sh": uploader,
+            "ops/recording/bililive_recorder_adapter.py": recording / "bililive_recorder_adapter.py",
+        }
+        for relative, destination in targets.items():
+            source_path = repo / relative
+            source_path.parent.mkdir(parents=True, exist_ok=True)
+            source_path.write_bytes(relative.encode())
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(b"drift" if external_drift and "adapter" in relative else relative.encode())
+        if backup:
+            (base / f"repo.rollback-{owner_commit}").mkdir()
+        transformed = receiver.replace("/opt/bilive/autoslice", str(base)).replace(
+            "/opt/bilive/recording", str(recording)
+        ).replace("/opt/bilive/app/tmp_manual_upload/do_upload.sh", str(uploader))
+        result = subprocess.run(
+            ["bash", "-c", transformed, "prebackup-recovery", str(base), owner, stage_tree_sha(stage)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result, stage, guard
+
+    accepted, stage, guard = build(tmp_path / "accepted")
+    assert accepted.returncode == 0, accepted.stderr
+    assert not stage.exists()
+    assert not guard.exists()
+
+    rejected, stage, guard = build(tmp_path / "external-drift", external_drift=True)
+    assert rejected.returncode != 0
+    assert stage.is_dir() and guard.is_dir()
+
+    rejected, stage, guard = build(tmp_path / "backup-present", backup=True)
+    assert rejected.returncode != 0
+    assert stage.is_dir() and guard.is_dir()
+
+    assert "git archive" in source
+    assert "unexpected archive member" in source
+    assert "assert set(actual_files) == set(seen)" in source
+    assert "assert seen == [item[0] for item in expected_files[:len(seen)]]" in source
+    assert "assert partial is None" in source
+
+
+def test_prebackup_stage_prefix_verifier_allows_one_exact_partial_member_only():
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    archive = subprocess.check_output(
+        [
+            "git",
+            "archive",
+            "--format=tar",
+            commit,
+            "scripts",
+            "src",
+            "ops",
+            "assets",
+            "profiles",
+            ".agent",
+            "docs",
+            "cleanup_manifests",
+            "AGENTS.md",
+            "README.md",
+        ],
+        cwd=ROOT,
+    )
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as bundle:
+        members = [member for member in bundle if member.isfile()]
+        first = members[0]
+        second = members[1]
+        first_bytes = bundle.extractfile(first).read()
+        second_bytes = bundle.extractfile(second).read()
+    partial_size = min(len(first_bytes) - 1, max(1, len(first_bytes) // 2))
+    assert partial_size > 0
+
+    def inventory(*, first_sha: str, first_mode: int, include_second: bool = False, extra: bool = False):
+        entries: dict[str, dict[str, object]] = {"": {"type": "dir", "mode": 0o755}}
+        for name in (first.name, *( [second.name] if include_second else [])):
+            parts = name.split("/")[:-1]
+            for index in range(1, len(parts) + 1):
+                entries["/".join(parts[:index])] = {"type": "dir", "mode": 0o700}
+        entries[first.name] = {
+            "type": "file",
+            "mode": first_mode,
+            "size": partial_size,
+            "sha256": first_sha,
+        }
+        if include_second:
+            entries[second.name] = {
+                "type": "file",
+                "mode": second.mode & ~0o077,
+                "size": len(second_bytes),
+                "sha256": hashlib.sha256(second_bytes).hexdigest(),
+            }
+        if extra:
+            entries["unknown"] = {
+                "type": "file",
+                "mode": 0o600,
+                "size": 1,
+                "sha256": hashlib.sha256(b"x").hexdigest(),
+            }
+        return {
+            "schema_version": "deploy-prebackup-stage-inventory.v1",
+            "entries": entries,
+            "tree_sha256": "0" * 64,
+        }
+
+    verifier = _embedded_deploy_python("PY_LOCAL_PREBACKUP_STAGE")
+    owner = f"{commit}-20260820T200852Z-16337"
+
+    def run(payload: dict[str, object]):
+        return subprocess.run(
+            [sys.executable, "-c", verifier, owner, json.dumps(payload)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    good = inventory(
+        first_sha=hashlib.sha256(first_bytes[:partial_size]).hexdigest(),
+        first_mode=first.mode & ~0o077,
+    )
+    assert run(good).returncode == 0
+    assert run(inventory(first_sha="0" * 64, first_mode=first.mode & ~0o077)).returncode != 0
+    assert run(
+        inventory(
+            first_sha=hashlib.sha256(first_bytes[:partial_size]).hexdigest(),
+            first_mode=0o600 if (first.mode & ~0o077) != 0o600 else 0o700,
+        )
+    ).returncode != 0
+    assert run(
+        inventory(
+            first_sha=hashlib.sha256(first_bytes[:partial_size]).hexdigest(),
+            first_mode=first.mode & ~0o077,
+            include_second=True,
+        )
+    ).returncode != 0
+    assert run(
+        inventory(
+            first_sha=hashlib.sha256(first_bytes[:partial_size]).hexdigest(),
+            first_mode=first.mode & ~0o077,
+            extra=True,
+        )
+    ).returncode != 0
 
 
 def test_deploy_authority_manifest_is_canonical_and_exact_byte_bound(tmp_path):

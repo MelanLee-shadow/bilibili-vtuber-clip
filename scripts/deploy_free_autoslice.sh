@@ -27,6 +27,211 @@ if [ "${1:-}" = "--recover-deploy-guard" ]; then
         echo "usage: $0 --recover-deploy-guard <exact-owner> [host]" >&2
         exit 2
     fi
+    RECOVERY_STAGE_PROBE=$(ssh "$RECOVERY_HOST" bash -s -- /opt/bilive/autoslice "$RECOVERY_OWNER" <<'REMOTE_PREBACKUP_STAGE_PROBE'
+set -euo pipefail
+base=$1
+owner=$2
+commit=${owner%%-*}
+guard=$base/deploy.guard
+backup=$base/repo.rollback-$commit
+stage=$base/repo.deploy-$commit
+test -d "$guard" && test ! -L "$guard"
+test -f "$guard/owner" && test ! -L "$guard/owner"
+test "$(cat "$guard/owner")" = "$owner"
+test "$(find "$guard" -mindepth 1 -maxdepth 1 -exec printf . \; | wc -c)" -eq 1
+if [ -e "$backup" ] || [ -L "$backup" ]; then
+    printf '%s\n' backup-present
+    exit 0
+fi
+test -d "$stage"
+test ! -L "$stage"
+python3 - "$stage" <<'PY_PREBACKUP_STAGE_INVENTORY'
+import hashlib
+import json
+import os
+import stat
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+entries = {"": {"type": "dir", "mode": stat.S_IMODE(root.stat().st_mode)}}
+for path in sorted(root.rglob("*")):
+    relative = path.relative_to(root).as_posix()
+    info = path.lstat()
+    mode = stat.S_IMODE(info.st_mode)
+    if path.is_symlink():
+        raise SystemExit(f"unsafe staging symlink: {relative}")
+    if path.is_dir():
+        entries[relative] = {"type": "dir", "mode": mode}
+    elif path.is_file():
+        entries[relative] = {
+            "type": "file",
+            "mode": mode,
+            "size": info.st_size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+    else:
+        raise SystemExit(f"unsafe staging entry: {relative}")
+canonical = json.dumps(entries, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+print(json.dumps({"schema_version": "deploy-prebackup-stage-inventory.v1", "entries": entries,
+                  "tree_sha256": hashlib.sha256(canonical).hexdigest()},
+                 ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+PY_PREBACKUP_STAGE_INVENTORY
+REMOTE_PREBACKUP_STAGE_PROBE
+)
+    if [ "$RECOVERY_STAGE_PROBE" != backup-present ]; then
+        RECOVERY_STAGE_ANALYSIS=$(python3 - "$RECOVERY_OWNER" "$RECOVERY_STAGE_PROBE" <<'PY_LOCAL_PREBACKUP_STAGE'
+import hashlib
+import io
+import json
+import subprocess
+import sys
+import tarfile
+
+owner, raw = sys.argv[1:]
+commit = owner.split("-", 1)[0]
+inventory = json.loads(raw)
+assert inventory.get("schema_version") == "deploy-prebackup-stage-inventory.v1"
+entries = inventory.get("entries")
+assert isinstance(entries, dict)
+assert entries.get("") == {"type": "dir", "mode": 0o755}
+actual_files = {path: entry for path, entry in entries.items() if path and entry.get("type") == "file"}
+assert all(entry.get("type") in {"file", "dir"} for entry in entries.values())
+archive = subprocess.check_output([
+    "git", "archive", "--format=tar", commit,
+    "scripts", "src", "ops", "assets", "profiles", ".agent", "docs", "cleanup_manifests",
+    "AGENTS.md", "README.md",
+])
+expected_files = []
+with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as bundle:
+    for member in bundle:
+        if member.isdir():
+            continue
+        assert member.isfile(), f"unexpected archive member: {member.name}"
+        expected_files.append((member.name, member.mode & ~0o077, member.size, bundle.extractfile(member).read()))
+seen = []
+partial = None
+for name, mode, size, content in expected_files:
+    entry = actual_files.get(name)
+    if entry is None:
+        break
+    assert entry.get("mode") == mode, (name, entry.get("mode"), mode)
+    actual_size = entry.get("size")
+    assert isinstance(actual_size, int) and 0 < actual_size <= size
+    if actual_size == size:
+        assert entry.get("sha256") == hashlib.sha256(content).hexdigest(), name
+        seen.append(name)
+        continue
+    assert partial is None
+    assert entry.get("sha256") == hashlib.sha256(content[:actual_size]).hexdigest(), name
+    partial = {"path": name, "size": actual_size, "sha256": entry["sha256"]}
+    seen.append(name)
+    break
+assert set(actual_files) == set(seen)
+assert seen == [item[0] for item in expected_files[:len(seen)]]
+if partial is not None:
+    assert len(seen) < len(expected_files)
+allowed_dirs = {""}
+for name in seen:
+    parts = name.split("/")[:-1]
+    for index in range(1, len(parts) + 1):
+        allowed_dirs.add("/".join(parts[:index]))
+actual_dirs = {path for path, entry in entries.items() if entry.get("type") == "dir"}
+assert actual_dirs == allowed_dirs
+assert all(entries[path].get("mode") == 0o700 for path in actual_dirs if path)
+print(json.dumps({"tree_sha256": inventory["tree_sha256"], "partial": partial},
+                 ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+PY_LOCAL_PREBACKUP_STAGE
+)
+        RECOVERY_STAGE_TREE_SHA=$(python3 - "$RECOVERY_STAGE_ANALYSIS" <<'PY_TREE_SHA'
+import json
+import sys
+payload = json.loads(sys.argv[1])
+value = payload.get("tree_sha256")
+assert isinstance(value, str) and len(value) == 64
+print(value)
+PY_TREE_SHA
+)
+        ssh "$RECOVERY_HOST" bash -s -- /opt/bilive/autoslice "$RECOVERY_OWNER" "$RECOVERY_STAGE_TREE_SHA" <<'REMOTE_PREBACKUP_GUARD_RECOVERY'
+set -euo pipefail
+base=$1
+owner=$2
+expected_tree_sha=$3
+commit=${owner%%-*}
+repo=$base/repo
+backup=$base/repo.rollback-$commit
+stage=$base/repo.deploy-$commit
+guard=$base/deploy.guard
+test -d "$guard" && test ! -L "$guard"
+test -f "$guard/owner" && test ! -L "$guard/owner"
+test "$(cat "$guard/owner")" = "$owner"
+test "$(find "$guard" -mindepth 1 -maxdepth 1 -exec printf . \; | wc -c)" -eq 1
+test ! -e "$backup"
+test ! -L "$backup"
+test -d "$stage" && test ! -L "$stage"
+python3 - "$repo" "$stage" "$expected_tree_sha" <<'PY_PREBACKUP_RECOVER'
+import hashlib
+import json
+import os
+import stat
+import sys
+from pathlib import Path
+
+repo = Path(sys.argv[1])
+stage = Path(sys.argv[2])
+expected_tree = sys.argv[3]
+entries = {"": {"type": "dir", "mode": stat.S_IMODE(stage.stat().st_mode)}}
+for path in sorted(stage.rglob("*")):
+    relative = path.relative_to(stage).as_posix()
+    info = path.lstat()
+    mode = stat.S_IMODE(info.st_mode)
+    if path.is_symlink():
+        raise SystemExit(f"unsafe staging symlink: {relative}")
+    if path.is_dir():
+        entries[relative] = {"type": "dir", "mode": mode}
+    elif path.is_file():
+        entries[relative] = {"type": "file", "mode": mode, "size": info.st_size,
+                             "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    else:
+        raise SystemExit(f"unsafe staging entry: {relative}")
+actual_tree = hashlib.sha256(json.dumps(entries, ensure_ascii=False, sort_keys=True,
+                                        separators=(",", ":")).encode()).hexdigest()
+assert actual_tree == expected_tree
+commit = (repo / "DEPLOYED_COMMIT").read_text(encoding="utf-8").split(maxsplit=1)[0]
+assert __import__("re").fullmatch(r"[0-9a-f]{40}", commit)
+sys.path.insert(0, str(repo))
+from src.autoslice.repository_asset_authority import build_deployed_authority_manifest
+manifest = json.loads((repo / "DEPLOYED_AUTHORITY_MANIFEST.json").read_text(encoding="utf-8"))
+registry = repo / "assets/lidousha/publication_registry.v1.json"
+authority_dir = repo / "assets/lidousha"
+assert registry.is_file() and not registry.is_symlink()
+assert authority_dir.is_dir() and not authority_dir.is_symlink()
+paths = [registry]
+for candidate in authority_dir.rglob("*"):
+    assert not candidate.is_symlink()
+    if candidate.is_file() and candidate.suffix in {".json", ".srt"}:
+        paths.append(candidate)
+expected_manifest = build_deployed_authority_manifest(
+    repo_root=repo, deployed_commit=commit, relative_paths=[path.relative_to(repo) for path in paths]
+)
+assert manifest == expected_manifest
+for source, destination in (
+    (repo / "scripts/free_mount_watchdog.sh", Path("/opt/bilive/autoslice/free_mount_watchdog.sh")),
+    (repo / "scripts/clouddrive_upload_fatal_sentinel.sh", Path("/opt/bilive/autoslice/upload_fatal_sentinel.sh")),
+    (repo / "scripts/free_do_upload.sh", Path("/opt/bilive/app/tmp_manual_upload/do_upload.sh")),
+    (repo / "ops/recording/bililive_recorder_adapter.py", Path("/opt/bilive/recording/bililive_recorder_adapter.py")),
+):
+    assert source.is_file() and not source.is_symlink()
+    assert destination.is_file() and not destination.is_symlink()
+    assert hashlib.sha256(source.read_bytes()).digest() == hashlib.sha256(destination.read_bytes()).digest()
+PY_PREBACKUP_RECOVER
+rm -rf -- "$stage"
+test "$(cat "$guard/owner")" = "$owner"
+rm -f "$guard/owner"
+rmdir "$guard"
+REMOTE_PREBACKUP_GUARD_RECOVERY
+        exit $?
+    fi
     ssh "$RECOVERY_HOST" bash -s -- /opt/bilive/autoslice "$RECOVERY_OWNER" <<'REMOTE_GUARD_RECOVERY'
 set -euo pipefail
 base=$1

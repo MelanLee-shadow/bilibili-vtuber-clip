@@ -254,3 +254,9 @@
   用 `scripts/deploy_free_autoslice.sh --recover-deploy-guard <exact-owner> [host]` 走同一 exact-owner、
   old-manifest、旧外部 adapter、preimage/receipt 绑定验证后清理；普通 stale guard、缺失/链接/漂移
   preimage 或不同错误一律拒绝，禁止手工删除 guard。
+  若 SSH 在 archive streaming 时中断、guard 已创建但 `repo.rollback-<commit>` 尚未存在，则同一
+  recovery CLI 只接受 exact owner 的 pre-backup stage：旧 repo 的 deployed authority manifest 与四个
+  外部入口字节必须仍闭合，stage 必须是无链接的 committed `git archive` 连续前缀（root `0755`、archive
+  子目录 `0700`、完整成员哈希/模式精确；最多一个非空的最后 blob prefix，且字节必须等于该 commit blob
+  的同长度前缀），不能有后续成员或额外项。验证时以 canonical stage-tree SHA 重新绑定 cleanup，随后只删
+  此 stage 与 exact owner guard；出现 backup、repo/外部漂移、未知项、链接或第二个/错误 partial 都拒绝。
