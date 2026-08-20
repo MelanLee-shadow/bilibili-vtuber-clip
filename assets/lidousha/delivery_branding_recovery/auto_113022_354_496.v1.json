@@ -1,0 +1,20 @@
+{
+  "schema_version": "delivery-branding-recovery-authority.v1",
+  "candidate_id": "auto_113022_354_496",
+  "authority": "Ivan's 2026-08-20 explicit exhaustive instruction that the reported corrections are the complete change set and all other surfaces remain unchanged. The Z2 choice and rendered 6183ms offset are an explicit recovery decision based on the pre-correction package readback; the stale review manifest proves only the prior package video/subtitle/record hashes and does not claim to contain an intro selection.",
+  "prior_burned_video_sha256": "sha256:e758a9003a2a7732b69fe7aef6f0af05b8405161790f305d6a025ae9e5cded8b",
+  "prior_subtitle_sha256": "sha256:6d31db628be8bd06371b9a3ef2598baab7a0e57d6aa8b5974942128561087abf",
+  "prior_record_sha256": "sha256:5ea7203d868cad75d4abc73375baedf97c7cfe998edf2a7b9ec1592d487528f7",
+  "intro_id": "huozi-lidousha-kmx-baobao-guankou-z2-v1",
+  "intro_media_sha256": "sha256:d37f4c358cc5d2515bca5a6fbc54bb5a10d7d2b8a36008777842def3d502ac29",
+  "intro_offset_ms": 6183,
+  "prior_package_authority_path": "/opt/bilive/autoslice/out/2026-08-17/auto_113022_354_496/replacement_recuts/review_manifest.json",
+  "prior_package_authority_sha256": "sha256:4458e3a69230cb6ff7facdb61cfe393ede70ae6091988a0e8f5d3e43f76b9c44",
+  "operator_freeze_authority_path": "/opt/bilive/autoslice/repo/assets/lidousha/final_media_review_contracts.v1.json",
+  "operator_freeze_authority_sha256": "sha256:70518ea46237d1f1cdf3d3599690e94da71d4d460d62a9002ee7f1983f236d85",
+  "incident_correction_manifest_path": "/opt/bilive/autoslice/out/2026-08-17/auto_113022_354_496/replacement_recuts/auto_113022_354_496.human-text-correction.json",
+  "incident_correction_manifest_sha256": "sha256:7a4488387967c6a3f4795550e7a4c067fa1eed3ff6cd9f23e0e7f3474eabaebb",
+  "incident_before_srt_sha256": "sha256:6d31db628be8bd06371b9a3ef2598baab7a0e57d6aa8b5974942128561087abf",
+  "incident_after_srt_sha256": "sha256:562bdb4536cb9989864f7f6e51f8eb79da42fcfa06f14ae8c612e0680fa4109e",
+  "incident_new_burned_video_sha256": "sha256:75378075ed7a4d244102a91840addb2698ef775c13b3e70d6e2a448942851b0e"
+}
