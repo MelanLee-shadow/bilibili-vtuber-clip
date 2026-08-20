@@ -46,6 +46,10 @@ from src.autoslice.final_review_provider_budget_retry import (
 from src.autoslice.producer_boundary_owner_contract import (
     validate_frozen_boundary_owner_contract,
 )
+from src.autoslice.published_cover_carry import (
+    finalize_talk_delivery_status,
+    required_result_carry_projection,
+)
 from src.autoslice import provider_failure as _provider_failure
 from src.autoslice.infra_retry_policy import (
     talk_infra_retry_schedule as _talk_infra_retry_schedule,
@@ -357,21 +361,6 @@ def read_publish_meta(work_dir: Path) -> dict:
             **candidate_public_text_result_projection(work_dir=work_dir, publish_path=publish, publish=d),
         }
     return {}
-
-
-def _talk_cover_delivery_ready(date: str, result: dict) -> bool:
-    """Prove the copied talk package has a route-bound cover, not just video."""
-
-    if result.get("cover_status") != "AI_COVER_READY":
-        return False
-    paths = _runner.delivered_paths(date, result)
-    if paths is None:
-        return False
-    mp4, cover = paths
-    return bool(
-        cover.is_file()
-        and _runner._initial_cover_proof_valid(date, result, mp4, cover)
-    )
 
 
 def _speaker_review_manifest_state(work_dir: Path) -> dict[str, tuple[int, int, int, int]]:
@@ -1710,6 +1699,12 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     """
     item = _canonicalized_talk_item(item)
     cid = item["cid"]
+    carry_projection, carry_failure = required_result_carry_projection(
+        item, base=_runner.BASE, date=date, candidate_id=str(cid)
+    )
+    if carry_failure is not None:
+        return carry_failure
+    published_cover_carry = carry_projection.get("published_cover_carry")
     ledger_rejection = _provider_budget_ledger_preflight_rejection(
         item, candidate_id=str(cid)
     )
@@ -1859,6 +1854,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         "talk_filler_removal_count": len(filler_plan.get("removals") or []),
         "talk_filler_plan_path": str(filler_plan_path),
         "pipeline_fingerprint": _runner.talk_pipeline_fingerprint(cid),
+        **carry_projection,
     }
     _copy_cover_regeneration_receipt(item, result)
     result.update(copied_refresh_receipt(item))
@@ -1987,11 +1983,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     summary = result.get("summary") or {}
     result["red_flags"] = list(summary.get("red_flags") or [])
     result["boundary_repairs"] = list(summary.get("boundary_repairs") or [])
-    from src.autoslice import speaker_guess  # 出处与理由见该模块 docstring
-    speaker_guess.finalize_delivered_talk_status(
-        result,
-        candidate_id=cid,
-        work_dir=out_root / cid,
-        cover_ready=_talk_cover_delivery_ready(date, result),
+    finalize_talk_delivery_status(
+        result, cid, out_root / cid, published_cover_carry, _runner, date
     )
     return _carry_talk_recovery_result(item, result)

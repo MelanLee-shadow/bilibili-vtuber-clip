@@ -355,6 +355,162 @@ def validate_materialized_marker(marker: object, *, base: Path, date: str, candi
         return False
 
 
+def strict_result_carry_is_valid(
+    marker: object,
+    *,
+    result: Mapping[str, object],
+    base: Path,
+    date: str,
+    candidate_id: str,
+) -> bool:
+    """Prove a produced result still consumes the exact strict carry marker.
+
+    ``REUSED_COVER`` is deliberately not a generally valid delivery status.
+    It becomes one only for this typed, post-production revalidation seam:
+    the queue marker must still validate from disk and the result must bind
+    the published byte, generation and path back to that same marker.
+    """
+
+    if not validate_materialized_marker(
+        marker, base=base, date=date, candidate_id=candidate_id
+    ):
+        return False
+    if not isinstance(marker, Mapping):  # for type checkers; validator checked it.
+        return False
+    generation = result.get("cover_generation")
+    try:
+        cover_path = Path(str(result.get("cover_path") or "")).resolve(strict=True)
+        marker_cover_path = Path(str(marker.get("cover_path") or "")).resolve(
+            strict=True
+        )
+        generated_cover_path = Path(
+            str(generation.get("final_cover") or "")
+        ).resolve(strict=True) if isinstance(generation, Mapping) else None
+        reused_cover_path = Path(
+            str(generation.get("reused_cover_path") or "")
+        ).resolve(strict=True) if isinstance(generation, Mapping) else None
+    except OSError:
+        return False
+    return bool(
+        result.get("published_cover_carry_required") is True
+        and result.get("published_cover_carry") == marker
+        and result.get("cover_status") == "REUSED_COVER"
+        and result.get("cover_sha256") == marker.get("cover_sha256")
+        and cover_path == marker_cover_path
+        and isinstance(generation, Mapping)
+        and generation.get("published_cover_carry_strict") is True
+        and generation.get("final_cover_sha256") == marker.get("cover_sha256")
+        and generated_cover_path == marker_cover_path
+        and reused_cover_path == marker_cover_path
+    )
+
+
+def accepted_result_cover_status(
+    result: Mapping[str, object],
+    *,
+    marker: object,
+    base: Path,
+    date: str,
+    candidate_id: str,
+) -> str | None:
+    """Return the only delivery statuses accepted for this result."""
+
+    status = result.get("cover_status")
+    if status == "AI_COVER_READY":
+        return status
+    if status == "REUSED_COVER" and strict_result_carry_is_valid(
+        marker, result=result, base=base, date=date, candidate_id=candidate_id
+    ):
+        return status
+    return None
+
+
+def accepted_record_cover_status(
+    record: Mapping[str, object], *, base: Path, date: str
+) -> str | None:
+    """Record-shaped adapter for cover proof and maintenance callers."""
+
+    return accepted_result_cover_status(
+        record,
+        marker=record.get("published_cover_carry"),
+        base=base,
+        date=date,
+        candidate_id=str(record.get("candidate_id") or ""),
+    )
+
+
+def required_result_carry_projection(
+    item: Mapping[str, object], *, base: Path, date: str, candidate_id: str
+) -> tuple[dict[str, object], dict[str, object] | None]:
+    """Preflight a required marker and build its immutable result projection."""
+
+    if item.get("published_cover_carry_required") is not True:
+        return {}, None
+    marker = item.get("published_cover_carry")
+    if validate_materialized_marker(marker, base=base, date=date, candidate_id=candidate_id):
+        return {
+            "published_cover_carry_required": True,
+            "published_cover_carry": json.loads(json.dumps(marker)),
+        }, None
+    return {}, {
+        "candidate_id": candidate_id,
+        "rc": -1,
+        "status": "failed",
+        "failure_kind": "published_cover_carry",
+        "failure_stage": "published_cover_carry_preflight",
+        "failure_recoverable": False,
+        "reason_codes": ["PUBLISHED_COVER_CARRY_MARKER_INVALID"],
+    }
+
+
+def result_cover_delivery_ready(
+    *,
+    result: Mapping[str, object],
+    marker: object,
+    base: Path,
+    date: str,
+    candidate_id: str,
+    delivered_paths,
+    initial_cover_proof_valid,
+) -> bool:
+    """Apply status, byte-path and initial-cover proof at one final seam."""
+
+    if accepted_result_cover_status(
+        result, marker=marker, base=base, date=date, candidate_id=candidate_id
+    ) is None:
+        return False
+    paths = delivered_paths(date, dict(result))
+    return bool(
+        paths is not None
+        and paths[1].is_file()
+        and initial_cover_proof_valid(date, dict(result), *paths)
+    )
+
+
+def finalize_talk_delivery_status(
+    result: dict[str, object], candidate_id: str, work_dir: Path, marker: object,
+    runner, date: str,
+) -> None:
+    """Keep talk lane's terminal call thin while retaining strict proof."""
+
+    from src.autoslice import speaker_guess
+
+    speaker_guess.finalize_delivered_talk_status(
+        result,
+        candidate_id=candidate_id,
+        work_dir=work_dir,
+        cover_ready=result_cover_delivery_ready(
+            result=result,
+            marker=marker,
+            base=runner.BASE,
+            date=date,
+            candidate_id=candidate_id,
+            delivered_paths=runner.delivered_paths,
+            initial_cover_proof_valid=runner._initial_cover_proof_valid,
+        ),
+    )
+
+
 def queue_marker_is_valid(marker: object, *, base: Path, date: str, candidate_id: str) -> bool:
     """Small recovery seam: queue code cannot downgrade a typed carry."""
     return validate_materialized_marker(marker, base=base, date=date, candidate_id=candidate_id)

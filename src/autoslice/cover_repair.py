@@ -1940,13 +1940,16 @@ def _recover_committed_cover_binding(date: str, rec: dict, mp4: Path, cover: Pat
 
 
 def _initial_cover_proof_valid(date: str, rec: dict, mp4: Path, cover: Path) -> bool:
+    from src.autoslice.published_cover_carry import accepted_record_cover_status
     expected_cover = rec.get("cover_sha256")
     expected_video = rec.get("video_sha256") or rec.get("delivered_sha256")
     generation = rec.get("cover_generation")
+    accepted_cover_status = accepted_record_cover_status(rec, base=_runner.BASE, date=date)
     if (
         not isinstance(expected_cover, str)
         or not isinstance(expected_video, str)
         or not isinstance(generation, dict)
+        or accepted_cover_status is None
         or not _matches_sha256(cover, expected_cover)
         or not _matches_sha256(mp4, expected_video)
         or generation.get("title") != rec.get("title")
@@ -2044,7 +2047,8 @@ def _initial_cover_proof_valid(date: str, rec: dict, mp4: Path, cover: Path) -> 
             return False
         if (
             hashes.get("cover_sha256") != expected_cover
-            or publish_view.get("cover_status") != "AI_COVER_READY"
+            or publish_view.get("cover_status")
+            != accepted_cover_status
             or publish_view.get("upload_enabled") is not False
             or published_source_cover != source_cover
             or publish_view.get("cover_generation") != generation
@@ -2104,10 +2108,7 @@ def _refresh_cover_repair_budget(rec: dict, fingerprint: str) -> bool:
 
 
 def cover_repair_needed(date: str, rec: dict) -> bool:
-    # Delivered = passed the delivery gate (for songs: is-song + complete, see
-    # song_delivery_ok) — every delivered clip deserves a cover, regardless of
-    # what the ADVISORY semantic judge said (Ivan 2026-07-10).  Blocked/failed
-    # records have no delivery and never get covers.
+    # Every delivered clip deserves a cover; blocked/failed rows never do.
     candidate_id = str(rec.get("candidate_id") or "")
     if cover_maintenance_block_reason(
         candidate_id,
@@ -2132,17 +2133,16 @@ def cover_repair_needed(date: str, rec: dict) -> bool:
         return True
     if status == "REPAIRED_AI_COVER":
         return not _cover_binding_valid(date, rec, mp4, cover)
-    if status == "AI_COVER_READY":
+    if status in {"AI_COVER_READY", "REUSED_COVER"}:
         return not _initial_cover_proof_valid(date, rec, mp4, cover)
     # A bare PNG or an unknown status has no current title/video/hash authority.
     return True
 
 
 def _cover_repair_eligible(rec: dict) -> bool:
-    """Budget limits paid generation attempts, never integrity detection.
-    ``cover_repair_needed`` must stay fail-closed even after exhaustion so a
-    later title/media/document drift remains loud in state and reports."""
-
+    """Limit generation attempts, not fail-closed integrity detection.
+    Exhaustion must not hide later title, media, or document drift.
+    """
     return (
         int(rec.get("cover_repair_attempts") or 0) < _runner.COVER_REPAIR_MAX_ATTEMPTS
         and int(rec.get("cover_repair_lifetime_attempts") or 0)
