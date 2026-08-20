@@ -14,7 +14,7 @@ from src.autoslice.source_integrity import (
 )
 
 
-def _typed_connection_stub(tmp_path, monkeypatch):
+def _typed_connection_stub(tmp_path, monkeypatch, *, successor_open_time=None):
     date_dir = tmp_path / "2026-08-12"
     date_dir.mkdir()
     stub = date_dir / "123456_20260812-20-29-51.flv"
@@ -51,7 +51,7 @@ def _typed_connection_stub(tmp_path, monkeypatch):
             "session_id": session_id,
             "opening_event_id": "open-b",
             "closing_event_id": "close-b",
-            "file_open_time": "2026-08-12T20:29:54.3497935+08:00",
+            "file_open_time": successor_open_time or "2026-08-12T20:29:54.3497935+08:00",
             "file_close_time": "2026-08-12T20:59:58.5961912+08:00",
             "file_size": successor.stat().st_size,
             "duration": 1804.164,
@@ -107,6 +107,33 @@ def _typed_connection_stub(tmp_path, monkeypatch):
     state_path = tmp_path / "adapter-state.json"
     state_path.write_text(json.dumps(state), encoding="utf-8")
     return date_dir, stub, successor_mp4, state_path
+
+
+def test_inventory_revalidates_three_second_connection_stub_handoff(tmp_path, monkeypatch):
+    date_dir, stub, _successor_mp4, state_path = _typed_connection_stub(
+        tmp_path,
+        monkeypatch,
+        successor_open_time="2026-08-12T20:29:55.5000000+08:00",
+    )
+
+    result = audit_finalized_recording_inventory(
+        date_dir,
+        room_id="123456",
+        adapter_state_path=state_path,
+    )
+
+    assert result["status"] == "PASS"
+    assert result["issues"] == [
+        {
+            "severity": "WARN",
+            "code": "RECORDER_CONNECTION_STUB_NO_DECODABLE_VIDEO",
+            "message": "typed connection-stub disposition revalidated",
+            "segment_stem": stub.stem,
+            "path": str(stub),
+            "source_disposition_schema": "recording-connection-stub.v1",
+            "source_disposition_status": "IGNORED_CONNECTION_STUB",
+        }
+    ]
 
 
 def _typed_timestamp_rebind(tmp_path, monkeypatch):

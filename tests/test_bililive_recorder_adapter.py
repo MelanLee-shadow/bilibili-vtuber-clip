@@ -431,13 +431,40 @@ def test_connection_stub_requires_no_prior_same_session_opening(
     )
 
 
-def test_connection_stub_requires_successor_within_two_seconds(
+def test_connection_stub_accepts_recorder_handoff_within_three_seconds(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
     webhook_files[f"2026-08-12/{successor.name}"]["file_open_time"] = (
         "2026-08-12T20:29:55.5000000+08:00"
+    )
+
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+
+    assert row is not None
+    assert row["session"]["successor_gap_seconds"] == pytest.approx(2.3283065)
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+
+
+def test_connection_stub_requires_successor_within_three_seconds(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    webhook_files[f"2026-08-12/{successor.name}"]["file_open_time"] = (
+        "2026-08-12T20:29:56.5000000+08:00"
     )
 
     assert (

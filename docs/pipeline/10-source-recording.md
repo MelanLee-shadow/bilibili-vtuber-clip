@@ -91,7 +91,7 @@
   用户事件，XML 原字节及事件数均写入 typed row）、
   H.264 0×0 且 frame/packet 扫描均为空，以及同 session 的下一 opening。
   被排除文件必须是该 session 第一 opening，size <5 MiB、event duration 与
-  open-close wall duration 均 <10 秒；下一 opening gap 必须在 0–2 秒内且已
+  open-close wall duration 均 <10 秒；下一 opening gap 必须在 0–3 秒内且已
   CLOSED，其 source size 必须匹配 webhook 与 finalized ledger，真实 MP4 SHA-256
   必须匹配 ledger 且为可探测的正尺寸双流媒体。少任一项都不得 ignore，仍走普通
   finalization 并 fail closed。

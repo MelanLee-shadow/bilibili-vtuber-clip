@@ -149,6 +149,7 @@ _CONNECTION_STUB_SCHEMA = "recording-connection-stub.v1"
 _CONNECTION_STUB_STATUS = "IGNORED_CONNECTION_STUB"
 _CONNECTION_STUB_REASON = "RECORDER_CONNECTION_STUB_NO_DECODABLE_VIDEO"
 _CONNECTION_STUB_MAX_XML_EVENT_COUNT = 1
+_CONNECTION_STUB_MAX_SUCCESSOR_GAP_SECONDS = 3
 _CONNECTION_STUB_REBIND_SCHEMA = "recording-source-fuse-identity-rebind.v1"
 _CONNECTION_STUB_REBIND_POLICY = "FUSE_REMOUNT_DEVICE_INODE_REBIND"
 _CONNECTION_STUB_TIMESTAMP_REBIND_SCHEMA = "recording-source-fuse-timestamp-rebind.v1"
@@ -723,7 +724,7 @@ def _verify_connection_stub_disposition(
         return False, "same-session successor path is invalid"
     gap = (successor_opened - closed).total_seconds()
     if (
-        not 0 <= gap <= 2
+        not 0 <= gap <= _CONNECTION_STUB_MAX_SUCCESSOR_GAP_SECONDS
         or successor_webhook.get("status") != "CLOSED"
         or str(successor_webhook.get("session_id") or "") != session_id
         or not successor_webhook.get("opening_event_id")
