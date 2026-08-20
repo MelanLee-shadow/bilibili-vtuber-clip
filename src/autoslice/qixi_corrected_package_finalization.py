@@ -776,6 +776,49 @@ def _assert_planned_locator_closure(
                 )
 
 
+def _without_superseded_r2_burned_preview(
+    *,
+    record: Mapping[str, Any],
+    publish: Mapping[str, Any],
+    authority: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Remove only the sealed r2 Z1 carrier before locator projection.
+
+    The r2 record is evidence for text/semantic/boundary surfaces, while its
+    entire Z1 ``burned_preview`` is intentionally superseded by the sealed Z2
+    source subtree below.  Validate the outgoing carrier against r2's sealed
+    publish identity first; no other frozen evidence is exempt from locator
+    validation.
+    """
+
+    r2_burned = record.get("burned_preview")
+    publish_hashes = publish.get("artifact_hashes")
+    drift = authority.get("source_drift")
+    if (
+        not isinstance(r2_burned, Mapping)
+        or not isinstance(publish_hashes, Mapping)
+        or not isinstance(drift, Mapping)
+    ):
+        raise QixiCorrectedPackageError("r2 burned-preview supersession evidence is missing")
+    r2_publish_burned = _normal_sha(
+        publish_hashes.get("burned_video_sha256"),
+        label="r2 publish burned hash",
+    )
+    r2_record_burned = _normal_sha(
+        r2_burned.get("burned_sha256"),
+        label="r2 burned-preview hash",
+    )
+    sealed_r2_burned = _normal_sha(
+        drift.get("r2_publish_burned_video_sha256"),
+        label="sealed r2 publish burned hash",
+    )
+    if r2_record_burned != r2_publish_burned or r2_publish_burned != sealed_r2_burned:
+        raise QixiCorrectedPackageError("r2 burned-preview supersession hash differs")
+    projected = dict(record)
+    projected.pop("burned_preview")
+    return projected
+
+
 def _project_documents(
     *,
     authority: Mapping[str, Any],
@@ -795,6 +838,14 @@ def _project_documents(
     source_record = _load_object(artifacts["source_record"][0], label="Z2 source record")
     source_publish = _load_object(artifacts["source_publish"][0], label="Z2 source publish")
     chat = _load_object(artifacts["chat_authority"][0], label="fresh chat authority")
+    # The sealed r2 burn is Z1 and its frozen branding paths need not exist in
+    # the current evidence workspace.  Its complete carrier is replaced below
+    # by the sealed Z2 source subtree, but only after the exact r2 hash check.
+    record = _without_superseded_r2_burned_preview(
+        record=record,
+        publish=publish,
+        authority=authority,
+    )
     try:
         record = project_uniform_host_locators(
             record,

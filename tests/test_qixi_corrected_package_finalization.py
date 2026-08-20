@@ -148,7 +148,17 @@ def _inputs(tmp_path: Path) -> tuple[dict, dict, Path, Path]:
         "duration_ms": 1000,
         "boundary_audit": {"final_start_ms": 0},
         "artifact_hashes": {**r2_hashes, "publish_draft_sha256": "sha256:" + "b" * 64},
-        "burned_preview": {"status": "BURNED"},
+        # This is the sealed r2/Z1 carrier.  Its historical branding path is
+        # intentionally outside the evidence workspace, and may be removed
+        # only after its burn hash proves it is the r2 carrier superseded by
+        # source Z2's whole burned_preview subtree.
+        "burned_preview": {
+            "status": "BURNED",
+            "burned_sha256": r2_hashes["burned_video_sha256"],
+            "branding_intro": {
+                "intro_media_path": "/obsolete-r2-z1-stage/intro.mp4",
+            },
+        },
         "publish_staging": {"title": TITLE, "source_fact_review": source_fact},
     }
     publish = {
@@ -280,7 +290,7 @@ def _inputs(tmp_path: Path) -> tuple[dict, dict, Path, Path]:
     ), release, evidence
 
 
-def test_project_uses_final_not_staging_paths_and_rebinds_z2_burn(
+def test_project_supersedes_sealed_r2_z1_burned_preview_before_locator_projection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     authority, artifacts, _release, _evidence = _inputs(tmp_path)
@@ -304,6 +314,8 @@ def test_project_uses_final_not_staging_paths_and_rebinds_z2_burn(
         evidence_workspace_root=str(_evidence.parent),
     )
     assert record["burned_preview"]["burned_sha256"] == artifacts["video"][1]
+    assert record["burned_preview"]["branding_intro"] == {"intro_id": "z2"}
+    assert "/obsolete-r2-z1-stage" not in json.dumps(record, ensure_ascii=False)
     assert record["subtitle_path"].startswith(str(target))
     assert publish["video_path"].startswith(str(target))
     assert chat["burn_binding"]["burned_media_path"].startswith(str(target))
@@ -312,6 +324,60 @@ def test_project_uses_final_not_staging_paths_and_rebinds_z2_burn(
     assert record["recovery_publication_authority"] == authority["recovery_publication_authority"]
     assert publish["cover_status"] == "AI_COVER_READY"
     assert publish["cover_generation"]["final_cover"].startswith(str(target))
+
+
+def test_r2_burned_preview_supersession_rejects_mismatched_r2_hash() -> None:
+    record = {"burned_preview": {"burned_sha256": "sha256:" + "a" * 64}}
+    publish = {"artifact_hashes": {"burned_video_sha256": "sha256:" + "b" * 64}}
+    authority = {
+        "source_drift": {"r2_publish_burned_video_sha256": "sha256:" + "b" * 64}
+    }
+    with pytest.raises(finalization.QixiCorrectedPackageError, match="supersession hash differs"):
+        finalization._without_superseded_r2_burned_preview(
+            record=record,
+            publish=publish,
+            authority=authority,
+        )
+
+
+def test_non_superseded_r2_outside_path_remains_a_strict_locator_failure(
+    tmp_path: Path,
+) -> None:
+    authority, artifacts, release, evidence = _inputs(tmp_path)
+    record_path, _sha256, _bytes, target, role = artifacts["record"]
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record["story_contract"]["unrelated_historical_path"] = "/outside-r2-evidence/forbidden.json"
+    record_path.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+    changed_artifacts = dict(artifacts)
+    changed_artifacts["record"] = (
+        record_path,
+        _sha(record_path),
+        record_path.stat().st_size,
+        target,
+        role,
+    )
+    target_root = tmp_path / "final-package"
+    with pytest.raises(
+        finalization.QixiCorrectedPackageError,
+        match="fresh evidence locator contract failed: record: frozen path escapes source workspace",
+    ):
+        finalization._project_documents(
+            authority=authority,
+            artifacts=changed_artifacts,
+            candidate_root=target_root,
+            release_mappings=(
+                (str(release), str(target_root / "replacement_recuts")),
+                (str(release.parent), str(target_root)),
+                (str(Path.cwd()), str(Path.cwd())),
+            ),
+            release_workspace_root=str(release.parent),
+            evidence_mappings=(
+                (str(evidence), str(target_root / "replacement_recuts")),
+                (str(evidence.parent), str(target_root)),
+                (str(Path.cwd()), str(Path.cwd())),
+            ),
+            evidence_workspace_root=str(evidence.parent),
+        )
 
 
 def test_symlinked_source_artifact_is_refused(tmp_path: Path) -> None:
