@@ -85,12 +85,13 @@ cleanup() {
     if [ "$COMMITTED" -ne 1 ]; then
         if [ "$SWITCHED" -eq 1 ]; then
             if ! ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
-                "$REMOTE_REPO" "$STAGE" "$BACKUP" "$OLD_COMMIT" <<'REMOTE_ROLLBACK'
+                "$REMOTE_REPO" "$STAGE" "$BACKUP" "$OLD_COMMIT" "$COMMIT" <<'REMOTE_ROLLBACK'
 set -euo pipefail
 repo=$1
 stage=$2
 backup=$3
 old_commit=$4
+new_commit=$5
 test -d "$backup"
 test -f "$backup/repo.manifest.old.json"
 for component in scripts src ops assets profiles .agent docs cleanup_manifests AGENTS.md README.md; do
@@ -146,6 +147,83 @@ restore_file() {
 restore_file watchdog /opt/bilive/autoslice/free_mount_watchdog.sh
 restore_file upload_sentinel /opt/bilive/autoslice/upload_fatal_sentinel.sh
 restore_file uploader /opt/bilive/app/tmp_manual_upload/do_upload.sh
+connection_stub_bootstrap_restored=0
+restore_connection_stub_bootstrap_preimage() {
+    marker=$backup/external/connection_stub_bootstrap.marker
+    state_preimage=$backup/external/connection_stub_bootstrap_preimage/adapter-state.json
+    status_preimage=$backup/external/connection_stub_bootstrap_preimage/status.json
+    receipt=/opt/bilive/recording/connection-stub-bootstrap-receipts/$new_commit.json
+    if [ ! -e "$marker" ]; then
+        return 0
+    fi
+    for path in "$marker" "$state_preimage" "$status_preimage" "$receipt"; do
+        test -f "$path"
+        test ! -L "$path"
+    done
+    python3 - "$marker" "$state_preimage" "$status_preimage" "$receipt" "$new_commit" <<'PY_BOOTSTRAP_ROLLBACK_MARKER'
+import hashlib
+import json
+import sys
+
+marker_path, state_path, status_path, receipt_path, expected_id = sys.argv[1:]
+marker = json.load(open(marker_path, encoding="utf-8"))
+receipt = json.load(open(receipt_path, encoding="utf-8"))
+state_raw = open(state_path, "rb").read()
+status_raw = open(status_path, "rb").read()
+status = json.loads(status_raw)
+projection = {
+    key: status.get(key)
+    for key in (
+        "service_reachable", "streaming", "recording", "finalizing", "error", "finalize_errors"
+    )
+}
+marker_payload = dict(marker)
+marker_integrity = marker_payload.pop("canonical_integrity", None)
+receipt_payload = dict(receipt)
+receipt_integrity = receipt_payload.pop("canonical_integrity", None)
+paths = receipt.get("source_relative_paths")
+expected_paths = [
+    "2026-08-20/22966160_20260820-21-00-20.flv",
+    "2026-08-20/22966160_20260820-21-56-14.flv",
+]
+expected_sources = {"/adapter/Videos/22966160/" + path for path in expected_paths}
+assert marker.get("schema_version") == "recording-connection-stub-bootstrap-rollback-marker.v1"
+assert marker.get("receipt_id") == expected_id == receipt.get("receipt_id")
+assert marker.get("receipt_path") == receipt_path
+assert marker.get("receipt_sha256") == hashlib.sha256(open(receipt_path, "rb").read()).hexdigest()
+assert marker.get("state_sha256") == hashlib.sha256(state_raw).hexdigest() == receipt.get("adapter_state_sha256")
+assert marker.get("status_sha256") == hashlib.sha256(status_raw).hexdigest()
+assert marker.get("status_projection_sha256") == hashlib.sha256(
+    json.dumps(projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest() == receipt.get("adapter_status_preimage_sha256")
+assert isinstance(marker_integrity, dict) and marker_integrity.get("algorithm") == "sha256"
+assert marker_integrity.get("canonical_json_sha256") == hashlib.sha256(
+    json.dumps(marker_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+assert isinstance(receipt_integrity, dict) and receipt_integrity.get("algorithm") == "sha256"
+assert receipt_integrity.get("canonical_json_sha256") == hashlib.sha256(
+    json.dumps(receipt_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+assert paths == expected_paths
+assert status.get("error") == "2 closed recording(s) failed finalization"
+errors = status.get("finalize_errors")
+assert isinstance(errors, list) and len(errors) == len(expected_paths)
+assert {entry.get("source") for entry in errors if isinstance(entry, dict)} == expected_sources
+PY_BOOTSTRAP_ROLLBACK_MARKER
+    for pair in \
+        "$state_preimage:/opt/bilive/recording/adapter-state.json" \
+        "$status_preimage:/opt/bilive/recording/status.json"; do
+        source=${pair%%:*}
+        destination=${pair#*:}
+        tmp=$destination.rollback.$$
+        cp -p "$source" "$tmp"
+        cmp -s "$source" "$tmp"
+        mv -f "$tmp" "$destination"
+        cmp -s "$source" "$destination"
+    done
+    connection_stub_bootstrap_restored=1
+}
+restore_connection_stub_bootstrap_preimage
 restore_adapter_atomic() {
     destination=/opt/bilive/recording/bililive_recorder_adapter.py
     tmp=$destination.rollback.$$
@@ -255,6 +333,8 @@ wait_adapter_runtime() {
     restarted_after=$1
     expected_sha=$2
     require_clean=$3
+    bootstrap_receipt=${4:-}
+    bootstrap_marker=${5:-}
     for _attempt in $(seq 1 120); do
         if [ "$(docker inspect -f '{{.State.Status}}' bililive_adapter 2>/dev/null || true)" = running ] && \
            [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' bililive_adapter 2>/dev/null || true)" = healthy ] && \
@@ -262,7 +342,7 @@ wait_adapter_runtime() {
            [ "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Source}}|{{.Type}}|{{.RW}}{{end}}{{end}}' bililive_adapter 2>/dev/null || true)" = '/opt/bilive/recording|bind|true' ] && \
            [ "$(sha256sum /opt/bilive/recording/bililive_recorder_adapter.py 2>/dev/null | awk '{print $1}')" = "$expected_sha" ] && \
            [ "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py 2>/dev/null | awk '{print $1}')" = "$expected_sha" ] && \
-           python3 - /opt/bilive/recording/status.json "$restarted_after" "$require_clean" <<'PY_ROLLBACK_FRESH'
+           python3 - /opt/bilive/recording/status.json "$restarted_after" "$require_clean" "$bootstrap_receipt" "$bootstrap_marker" "$backup/external/connection_stub_bootstrap_preimage/adapter-state.json" "$backup/external/connection_stub_bootstrap_preimage/status.json" <<'PY_ROLLBACK_FRESH'
 import json
 import sys
 import time
@@ -271,6 +351,9 @@ payload = json.load(open(sys.argv[1], encoding="utf-8"))
 generated = float(payload["generated_at_epoch"])
 error = payload.get("error")
 require_clean = sys.argv[3] == "1"
+receipt_path = marker_path = state_preimage = status_preimage = None
+if len(sys.argv) == 8:
+    receipt_path, marker_path, state_preimage, status_preimage = map(__import__("pathlib").Path, sys.argv[4:])
 assert generated >= float(sys.argv[2])
 assert 0 <= time.time() - generated <= 90
 assert payload.get("streaming") is False
@@ -293,7 +376,75 @@ else:
             }
         )
     )
-    assert clean or supported_preimage
+    bootstrap_preimage = False
+    if (
+        receipt_path is not None
+        and marker_path.is_file()
+        and receipt_path.is_file()
+        and state_preimage.is_file()
+        and status_preimage.is_file()
+        and not marker_path.is_symlink()
+        and not receipt_path.is_symlink()
+        and not state_preimage.is_symlink()
+        and not status_preimage.is_symlink()
+    ):
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        original = json.loads(status_preimage.read_text(encoding="utf-8"))
+        paths = receipt.get("source_relative_paths")
+        expected = {"/adapter/Videos/22966160/" + path for path in paths or []}
+        original_projection = {
+            key: original.get(key)
+            for key in (
+                "service_reachable",
+                "streaming",
+                "recording",
+                "finalizing",
+                "error",
+                "finalize_errors",
+            )
+        }
+        receipt_payload = dict(receipt)
+        integrity = receipt_payload.pop("canonical_integrity", None)
+        marker_payload = dict(marker)
+        marker_integrity = marker_payload.pop("canonical_integrity", None)
+        bootstrap_preimage = (
+            receipt.get("schema_version") == "recording-connection-stub-bootstrap.v1"
+            and receipt.get("receipt_id") == receipt_path.stem
+            and marker.get("schema_version") == "recording-connection-stub-bootstrap-rollback-marker.v1"
+            and marker.get("receipt_id") == receipt_path.stem
+            and marker.get("receipt_path") == str(receipt_path)
+            and marker.get("receipt_sha256") == __import__("hashlib").sha256(receipt_path.read_bytes()).hexdigest()
+            and isinstance(integrity, dict)
+            and integrity.get("algorithm") == "sha256"
+            and integrity.get("canonical_json_sha256")
+            == __import__("hashlib").sha256(
+                json.dumps(receipt_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            and isinstance(marker_integrity, dict)
+            and marker_integrity.get("algorithm") == "sha256"
+            and marker_integrity.get("canonical_json_sha256")
+            == __import__("hashlib").sha256(
+                json.dumps(marker_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            and receipt.get("adapter_state_sha256") == __import__("hashlib").sha256(state_preimage.read_bytes()).hexdigest()
+            and marker.get("state_sha256") == __import__("hashlib").sha256(state_preimage.read_bytes()).hexdigest()
+            and marker.get("status_sha256") == __import__("hashlib").sha256(status_preimage.read_bytes()).hexdigest()
+            and receipt.get("adapter_status_preimage_sha256")
+            == __import__("hashlib").sha256(
+                json.dumps(original_projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            and marker.get("status_projection_sha256")
+            == __import__("hashlib").sha256(
+                json.dumps(original_projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            and isinstance(paths, list) and len(paths) == 2
+            and payload.get("service_reachable") is True
+            and error == original.get("error") == f"{len(paths)} closed recording(s) failed finalization"
+            and payload.get("finalize_errors") == original.get("finalize_errors")
+            and {entry.get("source") for entry in payload.get("finalize_errors", []) if isinstance(entry, dict)} == expected
+        )
+    assert clean or supported_preimage or bootstrap_preimage
 PY_ROLLBACK_FRESH
         then
             docker exec bililive_adapter timeout 15 find /adapter/Videos -mindepth 1 -maxdepth 1 -print -quit >/dev/null
@@ -320,13 +471,17 @@ if [ -f "$backup/external/recorder_adapter.restart-required" ]; then
     old_adapter_sha=$(sha256sum "$backup/external/recorder_adapter.file" | awk '{print $1}')
     if adapter_restart_safe "$old_adapter_sha"; then
         :
+    elif adapter_repair_restart_safe "$old_adapter_sha"; then
+        :
+    elif [ "$connection_stub_bootstrap_restored" -eq 1 ]; then
+        adapter_restart_environment_safe "$old_adapter_sha"
     else
-        adapter_repair_restart_safe "$old_adapter_sha"
+        return 1
     fi
     adapter_identity_rebind_hash_child_absent
     restart_epoch=$(python3 -c 'import time; print(time.time())')
     docker restart bililive_adapter >/dev/null
-    wait_adapter_runtime "$restart_epoch" "$old_adapter_sha" 0
+    wait_adapter_runtime "$restart_epoch" "$old_adapter_sha" 0 "/opt/bilive/recording/connection-stub-bootstrap-receipts/$new_commit.json" "$backup/external/connection_stub_bootstrap.marker"
     cmp -s "$backup/external/recorder_adapter.file" /opt/bilive/recording/bililive_recorder_adapter.py
 fi
 
@@ -713,11 +868,12 @@ REMOTE_VALIDATE
 # back a partial component swap before releasing runner.lock.
 SWITCHED=1
 ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
-    "$REMOTE_REPO" "$STAGE" "$BACKUP" <<'REMOTE_SWITCH'
+    "$REMOTE_REPO" "$STAGE" "$BACKUP" "$COMMIT" <<'REMOTE_SWITCH'
 set -euo pipefail
 repo=$1
 stage=$2
 backup=$3
+commit=$4
 umask 077
 mkdir -p "$backup"
 cp "$repo/DEPLOYED_COMMIT" "$backup/DEPLOYED_COMMIT.old"
@@ -820,6 +976,80 @@ restore_file() {
         return 1
     fi
 }
+restore_connection_stub_bootstrap_preimage() {
+    marker=$backup/external/connection_stub_bootstrap.marker
+    state_preimage=$backup/external/connection_stub_bootstrap_preimage/adapter-state.json
+    status_preimage=$backup/external/connection_stub_bootstrap_preimage/status.json
+    receipt=/opt/bilive/recording/connection-stub-bootstrap-receipts/$commit.json
+    if [ ! -e "$marker" ]; then
+        return 0
+    fi
+    for path in "$marker" "$state_preimage" "$status_preimage" "$receipt"; do
+        test -f "$path"
+        test ! -L "$path"
+    done
+    python3 - "$marker" "$state_preimage" "$status_preimage" "$receipt" "$commit" <<'PY_BOOTSTRAP_ROLLBACK_MARKER'
+import hashlib
+import json
+import sys
+
+marker_path, state_path, status_path, receipt_path, expected_id = sys.argv[1:]
+marker = json.load(open(marker_path, encoding="utf-8"))
+receipt = json.load(open(receipt_path, encoding="utf-8"))
+state_raw = open(state_path, "rb").read()
+status_raw = open(status_path, "rb").read()
+status = json.loads(status_raw)
+projection = {
+    key: status.get(key)
+    for key in (
+        "service_reachable", "streaming", "recording", "finalizing", "error", "finalize_errors"
+    )
+}
+marker_payload = dict(marker)
+marker_integrity = marker_payload.pop("canonical_integrity", None)
+receipt_payload = dict(receipt)
+receipt_integrity = receipt_payload.pop("canonical_integrity", None)
+paths = receipt.get("source_relative_paths")
+expected_paths = [
+    "2026-08-20/22966160_20260820-21-00-20.flv",
+    "2026-08-20/22966160_20260820-21-56-14.flv",
+]
+expected_sources = {"/adapter/Videos/22966160/" + path for path in expected_paths}
+assert marker.get("schema_version") == "recording-connection-stub-bootstrap-rollback-marker.v1"
+assert marker.get("receipt_id") == expected_id == receipt.get("receipt_id")
+assert marker.get("receipt_path") == receipt_path
+assert marker.get("receipt_sha256") == hashlib.sha256(open(receipt_path, "rb").read()).hexdigest()
+assert marker.get("state_sha256") == hashlib.sha256(state_raw).hexdigest() == receipt.get("adapter_state_sha256")
+assert marker.get("status_sha256") == hashlib.sha256(status_raw).hexdigest()
+assert marker.get("status_projection_sha256") == hashlib.sha256(
+    json.dumps(projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest() == receipt.get("adapter_status_preimage_sha256")
+assert isinstance(marker_integrity, dict) and marker_integrity.get("algorithm") == "sha256"
+assert marker_integrity.get("canonical_json_sha256") == hashlib.sha256(
+    json.dumps(marker_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+assert isinstance(receipt_integrity, dict) and receipt_integrity.get("algorithm") == "sha256"
+assert receipt_integrity.get("canonical_json_sha256") == hashlib.sha256(
+    json.dumps(receipt_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+assert paths == expected_paths
+assert status.get("error") == "2 closed recording(s) failed finalization"
+errors = status.get("finalize_errors")
+assert isinstance(errors, list) and len(errors) == len(expected_paths)
+assert {entry.get("source") for entry in errors if isinstance(entry, dict)} == expected_sources
+PY_BOOTSTRAP_ROLLBACK_MARKER
+    for pair in \
+        "$state_preimage:/opt/bilive/recording/adapter-state.json" \
+        "$status_preimage:/opt/bilive/recording/status.json"; do
+        source=${pair%%:*}
+        destination=${pair#*:}
+        tmp=$destination.rollback.$$
+        cp -p "$source" "$tmp"
+        cmp -s "$source" "$tmp"
+        mv -f "$tmp" "$destination"
+        cmp -s "$source" "$destination"
+    done
+}
 restore_repository_file() {
     label=$1
     destination=$2
@@ -857,6 +1087,7 @@ cmp -s "$backup/DEPLOYED_COMMIT.old" "$repo/DEPLOYED_COMMIT"
     restore_file watchdog /opt/bilive/autoslice/free_mount_watchdog.sh
     restore_file upload_sentinel /opt/bilive/autoslice/upload_fatal_sentinel.sh
     restore_file uploader /opt/bilive/app/tmp_manual_upload/do_upload.sh
+    restore_connection_stub_bootstrap_preimage
     if [ -f "$backup/external/crontab.present" ]; then
         crontab "$backup/external/crontab.file"
     elif [ -f "$backup/external/crontab.absent" ]; then
@@ -884,9 +1115,10 @@ REMOTE_SWITCH
 # Install external entrypoints only from the already-switched committed tree.
 # Temp + rename avoids exposing a truncated executable to cron/manual callers.
 ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
-    "$BACKUP" <<'REMOTE_EXTERNAL_INSTALL'
+    "$BACKUP" "$COMMIT" <<'REMOTE_EXTERNAL_INSTALL'
 set -euo pipefail
 backup=$1
+commit=$2
 tmp=
 cleanup_tmp() { [ -z "$tmp" ] || rm -f "$tmp"; }
 trap cleanup_tmp EXIT
@@ -1010,6 +1242,212 @@ adapter_repair_restart_safe() {
     adapter_status_supported_repair_idle || return 1
     adapter_restart_environment_safe "$1"
 }
+capture_connection_stub_bootstrap_preimage() {
+    stage=/opt/bilive/recording/.connection-stub-bootstrap-preimage-$commit
+    preimage=$backup/external/connection_stub_bootstrap_preimage
+    marker=$backup/external/connection_stub_bootstrap.marker
+    test ! -e "$stage"
+    test ! -e "$preimage"
+    test ! -e "$marker"
+    mkdir -m 700 "$stage" "$preimage"
+    for label in adapter-state.json status.json; do
+        source=/opt/bilive/recording/$label
+        if ! test -f "$source" || ! test ! -L "$source" || \
+            ! cp -p "$source" "$stage/$label" || ! cmp -s "$source" "$stage/$label" || \
+            ! cp -p "$stage/$label" "$preimage/$label" || ! cmp -s "$stage/$label" "$preimage/$label" || \
+            ! chmod 600 "$preimage/$label"; then
+            discard_connection_stub_bootstrap_staging
+            return 1
+        fi
+    done
+}
+discard_connection_stub_bootstrap_staging() {
+    stage=/opt/bilive/recording/.connection-stub-bootstrap-preimage-$commit
+    if [ ! -e "$stage" ]; then
+        return 0
+    fi
+    test -d "$stage"
+    test ! -L "$stage"
+    for label in adapter-state.json status.json; do
+        if [ -e "$stage/$label" ]; then
+            test -f "$stage/$label"
+            test ! -L "$stage/$label"
+            rm -f "$stage/$label"
+        fi
+    done
+    rmdir "$stage"
+}
+activate_connection_stub_bootstrap_marker() {
+    marker=$backup/external/connection_stub_bootstrap.marker
+    preimage=$backup/external/connection_stub_bootstrap_preimage
+    receipt=/opt/bilive/recording/connection-stub-bootstrap-receipts/$commit.json
+    test ! -e "$marker"
+    for path in \
+        "$preimage/adapter-state.json" \
+        "$preimage/status.json" \
+        /opt/bilive/recording/adapter-state.json \
+        /opt/bilive/recording/status.json \
+        "$receipt"; do
+        test -f "$path"
+        test ! -L "$path"
+    done
+    cmp -s "$preimage/adapter-state.json" /opt/bilive/recording/adapter-state.json
+    cmp -s "$preimage/status.json" /opt/bilive/recording/status.json
+    python3 - "$marker" "$preimage/adapter-state.json" "$preimage/status.json" "$receipt" "$commit" <<'PY_BOOTSTRAP_ACTIVATE_MARKER'
+import hashlib
+import json
+import os
+import sys
+
+marker_path, state_path, status_path, receipt_path, receipt_id = sys.argv[1:]
+state_raw = open(state_path, "rb").read()
+status_raw = open(status_path, "rb").read()
+status = json.loads(status_raw)
+receipt_raw = open(receipt_path, "rb").read()
+receipt = json.loads(receipt_raw)
+projection = {
+    key: status.get(key)
+    for key in (
+        "service_reachable", "streaming", "recording", "finalizing", "error", "finalize_errors"
+    )
+}
+expected_paths = [
+    "2026-08-20/22966160_20260820-21-00-20.flv",
+    "2026-08-20/22966160_20260820-21-56-14.flv",
+]
+expected_sources = {"/adapter/Videos/22966160/" + path for path in expected_paths}
+assert receipt.get("schema_version") == "recording-connection-stub-bootstrap.v1"
+assert receipt.get("receipt_id") == receipt_id
+assert receipt.get("adapter_state_sha256") == hashlib.sha256(state_raw).hexdigest()
+assert receipt.get("adapter_status_preimage_sha256") == hashlib.sha256(
+    json.dumps(projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+assert receipt.get("source_relative_paths") == expected_paths
+assert status.get("error") == "2 closed recording(s) failed finalization"
+errors = status.get("finalize_errors")
+assert isinstance(errors, list) and len(errors) == len(expected_paths)
+assert {entry.get("source") for entry in errors if isinstance(entry, dict)} == expected_sources
+marker = {
+    "schema_version": "recording-connection-stub-bootstrap-rollback-marker.v1",
+    "receipt_id": receipt_id,
+    "receipt_path": receipt_path,
+    "receipt_sha256": hashlib.sha256(receipt_raw).hexdigest(),
+    "state_sha256": hashlib.sha256(state_raw).hexdigest(),
+    "status_sha256": hashlib.sha256(status_raw).hexdigest(),
+    "status_projection_sha256": hashlib.sha256(
+        json.dumps(projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest(),
+}
+marker["canonical_integrity"] = {
+    "algorithm": "sha256",
+    "canonical_json_sha256": hashlib.sha256(
+        json.dumps(marker, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest(),
+}
+encoded = (json.dumps(marker, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode()
+fd = os.open(marker_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+with os.fdopen(fd, "wb") as handle:
+    handle.write(encoded)
+    handle.flush()
+    os.fsync(handle.fileno())
+PY_BOOTSTRAP_ACTIVATE_MARKER
+}
+adapter_connection_stub_bootstrap_safe() {
+    old_sha=$1
+    new_sha=$2
+    receipt=/opt/bilive/recording/connection-stub-bootstrap-receipts/$commit.json
+    adapter_restart_environment_safe "$old_sha" || return 1
+    capture_connection_stub_bootstrap_preimage || return 1
+    if ! docker exec -i bililive_adapter timeout 360 python3 - \
+        --prepare-connection-stub-bootstrap \
+        --record-root /adapter/Videos/22966160 \
+        --state-path /state/.connection-stub-bootstrap-preimage-$commit/adapter-state.json \
+        --bootstrap-receipt-root /state/connection-stub-bootstrap-receipts \
+        --bootstrap-receipt-id "$commit" \
+        --bootstrap-candidate-adapter-sha256 "$new_sha" \
+        --bootstrap-installed-adapter-path /state/bililive_recorder_adapter.py \
+        --bootstrap-status-path /state/.connection-stub-bootstrap-preimage-$commit/status.json \
+        --bootstrap-source-relative 2026-08-20/22966160_20260820-21-00-20.flv \
+        --bootstrap-source-relative 2026-08-20/22966160_20260820-21-56-14.flv \
+        < "$new_adapter_source" >/dev/null
+    then
+        discard_connection_stub_bootstrap_staging
+        return 1
+    fi
+    if ! python3 - "$backup/external/connection_stub_bootstrap_preimage/adapter-state.json" "$backup/external/connection_stub_bootstrap_preimage/status.json" "$receipt" "$new_sha" "$old_sha" <<'PY_BOOTSTRAP_PREIMAGE'
+import json
+import sys
+import hashlib
+state_raw = open(sys.argv[1], "rb").read()
+payload = json.load(open(sys.argv[2], encoding="utf-8"))
+receipt = json.load(open(sys.argv[3], encoding="utf-8"))
+new_sha, old_sha = sys.argv[4:]
+paths = receipt.get("source_relative_paths")
+rows = receipt.get("rows")
+receipt_payload = dict(receipt)
+integrity = receipt_payload.pop("canonical_integrity", None)
+assert receipt.get("schema_version") == "recording-connection-stub-bootstrap.v1"
+assert receipt.get("candidate_adapter_sha256") == new_sha
+assert receipt.get("installed_adapter_sha256") == old_sha
+assert receipt.get("adapter_state_sha256") == hashlib.sha256(state_raw).hexdigest()
+assert isinstance(integrity, dict) and integrity.get("algorithm") == "sha256"
+assert integrity.get("canonical_json_sha256") == hashlib.sha256(
+    json.dumps(receipt_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+assert isinstance(paths, list) and len(paths) == 2 and paths == sorted(paths)
+assert isinstance(rows, dict) and sorted(rows) == paths
+assert all(row.get("source_relative_path") == path for path, row in rows.items())
+assert payload.get("service_reachable") is True
+assert payload.get("streaming") is False
+assert payload.get("recording") is False
+assert payload.get("finalizing") is False
+errors = payload.get("finalize_errors")
+assert isinstance(errors, list) and len(errors) == len(paths)
+expected = {"/adapter/Videos/22966160/" + path for path in paths}
+assert {entry.get("source") for entry in errors if isinstance(entry, dict)} == expected
+assert payload.get("error") == f"{len(paths)} closed recording(s) failed finalization"
+projection = {
+    key: payload.get(key)
+    for key in (
+        "service_reachable", "streaming", "recording", "finalizing", "error", "finalize_errors"
+    )
+}
+assert receipt.get("adapter_status_preimage_sha256") == hashlib.sha256(
+    json.dumps(projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+PY_BOOTSTRAP_PREIMAGE
+    then
+        discard_connection_stub_bootstrap_staging
+        return 1
+    fi
+    discard_connection_stub_bootstrap_staging
+}
+adapter_connection_stub_bootstrap_postcondition() {
+    receipt=/opt/bilive/recording/connection-stub-bootstrap-receipts/$commit.json
+    python3 - "$receipt" /opt/bilive/recording/adapter-state.json <<'PY_BOOTSTRAP_POSTCONDITION'
+import hashlib
+import json
+import sys
+
+receipt = json.load(open(sys.argv[1], encoding="utf-8"))
+state = json.load(open(sys.argv[2], encoding="utf-8"))
+receipt_payload = dict(receipt)
+integrity = receipt_payload.pop("canonical_integrity", None)
+assert receipt.get("schema_version") == "recording-connection-stub-bootstrap.v1"
+assert receipt.get("receipt_id") == __import__("pathlib").Path(sys.argv[1]).stem
+assert isinstance(integrity, dict) and integrity.get("algorithm") == "sha256"
+assert integrity.get("canonical_json_sha256") == hashlib.sha256(
+    json.dumps(receipt_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+paths = receipt.get("source_relative_paths")
+rows = receipt.get("rows")
+dispositions = state.get("source_dispositions")
+assert isinstance(paths, list) and len(paths) == 2
+assert isinstance(rows, dict) and sorted(rows) == paths
+assert isinstance(dispositions, dict)
+assert all(dispositions.get(path) == rows[path] for path in paths)
+PY_BOOTSTRAP_POSTCONDITION
+}
 wait_adapter_runtime() {
     restarted_after=$1
     expected_sha=$2
@@ -1057,15 +1495,16 @@ if ! cmp -s "$new_adapter_source" "$host_adapter_path"; then
     adapter_content_changed=1
 fi
 old_adapter_sha=$(sha256sum "$host_adapter_path" | awk '{print $1}')
+new_adapter_sha=$(sha256sum "$new_adapter_source" | awk '{print $1}')
+connection_stub_bootstrap=0
 test "$old_adapter_sha" = "$(sha256sum "$backup/external/recorder_adapter.file" | awk '{print $1}')"
 if [ "$adapter_content_changed" -eq 0 ]; then
     adapter_restart_safe "$old_adapter_sha"
 elif adapter_restart_safe "$old_adapter_sha"; then
     :
+elif adapter_connection_stub_bootstrap_safe "$old_adapter_sha" "$new_adapter_sha"; then
+    connection_stub_bootstrap=1
 else
-    # The only dirty preimage admitted here is the exact defect class that the
-    # changed adapter bytes are intended to repair. Every runtime/live/mount/hash
-    # gate still runs before any external byte is replaced.
     adapter_repair_restart_safe "$old_adapter_sha"
 fi
 adapter_identity_rebind_hash_child_absent
@@ -1073,7 +1512,6 @@ install_atomic \
     "$new_adapter_source" \
     "$host_adapter_path" \
     755
-new_adapter_sha=$(sha256sum "$new_adapter_source" | awk '{print $1}')
 test "$new_adapter_sha" = "$(sha256sum "$host_adapter_path" | awk '{print $1}')"
 test "$new_adapter_sha" = "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py | awk '{print $1}')"
 if [ "$adapter_content_changed" -eq 1 ]; then
@@ -1083,9 +1521,15 @@ if [ "$adapter_content_changed" -eq 1 ]; then
     adapter_restart_environment_safe "$new_adapter_sha"
     touch "$backup/external/recorder_adapter.restart-required"
     adapter_identity_rebind_hash_child_absent
+    if [ "$connection_stub_bootstrap" -eq 1 ]; then
+        activate_connection_stub_bootstrap_marker
+    fi
     restart_epoch=$(python3 -c 'import time; print(time.time())')
     docker restart bililive_adapter >/dev/null
     wait_adapter_runtime "$restart_epoch" "$new_adapter_sha"
+    if [ "$connection_stub_bootstrap" -eq 1 ]; then
+        adapter_connection_stub_bootstrap_postcondition
+    fi
 else
     test "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' bililive_adapter)" = healthy
 fi

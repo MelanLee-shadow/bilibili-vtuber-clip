@@ -233,3 +233,13 @@
   `--identity-rebind-hash-child` 进程。普通 hash pending、timed-out child 等错误一律拒绝。
   新字节重启后仍须等到 fresh clean 状态、新 SHA 与健康检查全绿；rollback 只可回到
   clean 或同一精确 preimage。该例外不得成为普通 deploy 或 live-query bypass。
+- 若旧 adapter 因严格 connection-stub gap 上限而留下 closed-finalization 错误，唯一
+  bootstrap 例外是候选 adapter 在**不写 state/status/media**的 disposable container 中以
+  `--prepare-connection-stub-bootstrap` 为每条显式 relative path 生成 O_EXCL receipt。receipt
+  必须绑定候选/已安装 adapter SHA、当前 adapter-state SHA、原始 finalization-status projection
+  SHA 和完整 typed rows；部署只接受
+  `finalize_errors` source 集合与 receipt 精确相等的 fresh idle preimage。原子安装并重启后
+  只能由新 daemon 自己写 dispositions 与 `error=null`，然后重验 receipt rows；不得手写
+  status/state 或把任意 finalization error 归为 bootstrap。rollback 只有在 transaction-owned
+  marker 证明新 daemon 已可能写入 receipt rows 时，才会在启动旧 adapter 前原子还原与 receipt
+  byte/projection 绑定的 state/status preimage；普通 deploy rollback 绝不回写这两份运行态文件。

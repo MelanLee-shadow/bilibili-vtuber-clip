@@ -56,6 +56,7 @@ SOURCE_DISPOSITION_REBIND_TASK_SCHEMA_VERSION = "recording-source-fuse-identity-
 SOURCE_DISPOSITION_REBIND_HASH_RESULT_SCHEMA_VERSION = (
     "recording-source-fuse-identity-rebind-hash-result.v1"
 )
+CONNECTION_STUB_BOOTSTRAP_RECEIPT_SCHEMA_VERSION = "recording-connection-stub-bootstrap.v1"
 # A real 531 MiB CloudFS successor took more than 100 seconds to become fully
 # readable during the 2026-08-13 remount repair.  The read runs in an isolated
 # child, so keep the heartbeat responsive while giving a healthy cold-cache
@@ -2218,6 +2219,128 @@ def build_connection_stub_disposition(
     return row
 
 
+def prepare_connection_stub_bootstrap(
+    *,
+    record_root: Path,
+    state_path: Path,
+    receipt_root: Path,
+    receipt_id: str,
+    source_relatives: list[str],
+    candidate_adapter_sha256: str,
+    installed_adapter_path: Path,
+    status_path: Path,
+    ffprobe_bin: str = "ffprobe",
+) -> dict[str, Any]:
+    """Create-or-revalidate a narrow, candidate-bound bootstrap receipt.
+
+    This deliberately never writes adapter state or status. The old daemon
+    cannot validate a three-second row, so only the freshly installed adapter
+    may persist one after the deploy transaction switches bytes.
+    """
+
+    if re.fullmatch(r"[0-9a-f]{40}", receipt_id) is None:
+        raise AdapterError("connection-stub bootstrap receipt id is invalid")
+    if re.fullmatch(r"[0-9a-f]{64}", candidate_adapter_sha256) is None:
+        raise AdapterError("connection-stub bootstrap candidate SHA is invalid")
+    if not source_relatives or len(source_relatives) != len(set(source_relatives)):
+        raise AdapterError("connection-stub bootstrap sources must be non-empty and unique")
+    try:
+        state_raw = state_path.read_bytes()
+        state = json.loads(state_raw)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise AdapterError("connection-stub bootstrap state is unreadable") from exc
+    if not isinstance(state, dict) or state.get("schema_version") != STATE_SCHEMA_VERSION:
+        raise AdapterError("connection-stub bootstrap state schema mismatch")
+    try:
+        status = json.loads(status_path.read_bytes())
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise AdapterError("connection-stub bootstrap status is unreadable") from exc
+    if not isinstance(status, dict):
+        raise AdapterError("connection-stub bootstrap status is malformed")
+    webhook_files = state.get("webhook_files")
+    finalized = state.get("finalized")
+    dispositions = state.get("source_dispositions")
+    if not all(isinstance(value, dict) for value in (webhook_files, finalized, dispositions)):
+        raise AdapterError("connection-stub bootstrap ledgers are malformed")
+    rows: dict[str, dict[str, Any]] = {}
+    for relative in sorted(source_relatives):
+        path = PurePosixPath(relative)
+        if path.is_absolute() or ".." in path.parts or len(path.parts) != 2:
+            raise AdapterError("connection-stub bootstrap source path is unsafe")
+        if relative in dispositions:
+            raise AdapterError("connection-stub bootstrap source already has a disposition")
+        row = build_connection_stub_disposition(
+            record_root / path,
+            record_root=record_root,
+            webhook_files=webhook_files,
+            finalized=finalized,
+            ffprobe_bin=ffprobe_bin,
+        )
+        if row is None:
+            raise AdapterError(f"connection-stub bootstrap source is not eligible: {relative}")
+        rows[relative] = row
+    expected_sources = {str(record_root / PurePosixPath(relative)) for relative in source_relatives}
+    status_errors = status.get("finalize_errors")
+    if not (
+        status.get("service_reachable") is True
+        and status.get("streaming") is False
+        and status.get("recording") is False
+        and status.get("finalizing") is False
+        and status.get("error") == f"{len(source_relatives)} closed recording(s) failed finalization"
+        and isinstance(status_errors, list)
+        and len(status_errors) == len(source_relatives)
+        and {entry.get("source") for entry in status_errors if isinstance(entry, dict)} == expected_sources
+    ):
+        raise AdapterError("connection-stub bootstrap status does not exactly bind eligible sources")
+    status_preimage = {
+        key: status.get(key)
+        for key in (
+            "service_reachable",
+            "streaming",
+            "recording",
+            "finalizing",
+            "error",
+            "finalize_errors",
+        )
+    }
+    receipt = {
+        "schema_version": CONNECTION_STUB_BOOTSTRAP_RECEIPT_SCHEMA_VERSION,
+        "receipt_id": receipt_id,
+        "candidate_adapter_sha256": candidate_adapter_sha256,
+        "installed_adapter_sha256": sha256_file(installed_adapter_path),
+        "adapter_state_sha256": hashlib.sha256(state_raw).hexdigest(),
+        "adapter_status_preimage_sha256": _canonical_json_sha256(status_preimage),
+        "source_relative_paths": sorted(source_relatives),
+        "rows": rows,
+    }
+    receipt["canonical_integrity"] = {
+        "algorithm": "sha256",
+        "canonical_json_sha256": _canonical_json_sha256(receipt),
+    }
+    _ensure_identity_rebind_spool(receipt_root)
+    destination = receipt_root / f"{receipt_id}.json"
+    encoded = (json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    try:
+        descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    except FileExistsError:
+        existing = _local_json(destination)
+        if existing != receipt:
+            raise AdapterError("connection-stub bootstrap receipt already exists with different evidence")
+        return receipt
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except Exception:
+        try:
+            destination.unlink()
+        except OSError:
+            pass
+        raise
+    return receipt
+
+
 def validate_connection_stub_disposition(
     source_flv: Path,
     row: Any,
@@ -3254,6 +3377,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="serve Webhook v2 and periodically reconcile/finalize",
     )
+    mode.add_argument(
+        "--prepare-connection-stub-bootstrap",
+        action="store_true",
+        help="create-only candidate receipt; never writes adapter state or status",
+    )
     parser.add_argument("--room", type=int, default=22966160)
     parser.add_argument(
         "--endpoint",
@@ -3312,6 +3440,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--webhook-bind", default="127.0.0.1")
     parser.add_argument("--webhook-port", type=int, default=18080)
     parser.add_argument("--poll-interval", type=float, default=60.0)
+    parser.add_argument("--bootstrap-receipt-root", type=Path)
+    parser.add_argument("--bootstrap-receipt-id")
+    parser.add_argument("--bootstrap-source-relative", action="append", default=[])
+    parser.add_argument("--bootstrap-candidate-adapter-sha256")
+    parser.add_argument("--bootstrap-installed-adapter-path", type=Path)
+    parser.add_argument("--bootstrap-status-path", type=Path)
     args = parser.parse_args(argv)
     if args.max_finalize < 1:
         parser.error("--max-finalize must be positive")
@@ -3323,6 +3457,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--webhook-port is out of range")
     if args.poll_interval < 5:
         parser.error("--poll-interval must be at least 5 seconds")
+    if args.prepare_connection_stub_bootstrap and not all(
+        (
+            args.bootstrap_receipt_root,
+            args.bootstrap_receipt_id,
+            args.bootstrap_source_relative,
+            args.bootstrap_candidate_adapter_sha256,
+            args.bootstrap_installed_adapter_path,
+            args.bootstrap_status_path,
+        )
+    ):
+        parser.error("bootstrap receipt arguments are required")
     return args
 
 
@@ -3334,6 +3479,20 @@ def main(argv: list[str] | None = None) -> int:
             Path(effective_argv[2]),
         )
     args = parse_args(effective_argv)
+    if args.prepare_connection_stub_bootstrap:
+        receipt = prepare_connection_stub_bootstrap(
+            record_root=args.record_root,
+            state_path=args.state_path,
+            receipt_root=args.bootstrap_receipt_root,
+            receipt_id=args.bootstrap_receipt_id,
+            source_relatives=args.bootstrap_source_relative,
+            candidate_adapter_sha256=args.bootstrap_candidate_adapter_sha256,
+            installed_adapter_path=args.bootstrap_installed_adapter_path,
+            status_path=args.bootstrap_status_path,
+            ffprobe_bin=args.ffprobe,
+        )
+        print(json.dumps(receipt, ensure_ascii=False, sort_keys=True))
+        return 0
     return serve_adapter(args) if args.serve else run_once(args)
 
 

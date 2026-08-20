@@ -381,6 +381,76 @@ def test_connection_stub_disposition_binds_first_opening_and_finalized_successor
     )
 
 
+def test_connection_stub_bootstrap_receipt_is_create_only_and_leaves_state_untouched(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, _successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    relative = f"{stub.parent.name}/{stub.name}"
+    state_path = tmp_path / "adapter-state.json"
+    state = {
+        "schema_version": adapter.STATE_SCHEMA_VERSION,
+        "managed_since_epoch": 1.0,
+        "finalized": finalized,
+        "source_dispositions": {},
+        "webhook_files": webhook_files,
+    }
+    state_path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    status_path = tmp_path / "status.json"
+    status = {
+        "service_reachable": True,
+        "streaming": False,
+        "recording": False,
+        "finalizing": False,
+        "error": "1 closed recording(s) failed finalization",
+        "finalize_errors": [{"source": str(stub)}],
+    }
+    status_path.write_text(json.dumps(status, ensure_ascii=False), encoding="utf-8")
+    before = state_path.read_bytes()
+    status_before = status_path.read_bytes()
+    candidate = adapter.sha256_file(Path(adapter.__file__))
+
+    receipt = adapter.prepare_connection_stub_bootstrap(
+        record_root=tmp_path,
+        state_path=state_path,
+        receipt_root=tmp_path / "receipts",
+        receipt_id="a" * 40,
+        source_relatives=[relative],
+        candidate_adapter_sha256=candidate,
+        installed_adapter_path=Path(adapter.__file__),
+        status_path=status_path,
+    )
+
+    assert state_path.read_bytes() == before
+    assert status_path.read_bytes() == status_before
+    assert receipt["source_relative_paths"] == [relative]
+    assert receipt["rows"][relative]["status"] == "IGNORED_CONNECTION_STUB"
+    assert (tmp_path / "receipts" / ("a" * 40 + ".json")).stat().st_mode & 0o777 == 0o600
+    assert adapter.prepare_connection_stub_bootstrap(
+        record_root=tmp_path,
+        state_path=state_path,
+        receipt_root=tmp_path / "receipts",
+        receipt_id="a" * 40,
+        source_relatives=[relative],
+        candidate_adapter_sha256=candidate,
+        installed_adapter_path=Path(adapter.__file__),
+        status_path=status_path,
+    ) == receipt
+    state["webhook_files"][relative]["duration"] = 4.0
+    state_path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(adapter.AdapterError, match="source is not eligible"):
+        adapter.prepare_connection_stub_bootstrap(
+            record_root=tmp_path,
+            state_path=state_path,
+            receipt_root=tmp_path / "receipts",
+            receipt_id="a" * 40,
+            source_relatives=[relative],
+            candidate_adapter_sha256=candidate,
+            installed_adapter_path=Path(adapter.__file__),
+            status_path=status_path,
+        )
+
+
 def test_connection_stub_rejects_more_than_one_orphan_xml_event(
     tmp_path: Path,
     monkeypatch,

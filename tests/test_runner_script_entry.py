@@ -190,6 +190,9 @@ def test_deploy_adapter_repair_exception_is_changed_bytes_only_and_preinstall():
     child_gate_before_restart = external.rindex(
         "adapter_identity_rebind_hash_child_absent", post_install_gate, restart
     )
+    bootstrap_marker_activation = external.rindex(
+        "activate_connection_stub_bootstrap_marker", post_install_gate, restart
+    )
     fresh_wait = external.index('wait_adapter_runtime "$restart_epoch" "$new_adapter_sha"', restart)
 
     assert (
@@ -201,6 +204,7 @@ def test_deploy_adapter_repair_exception_is_changed_bytes_only_and_preinstall():
         < install
         < post_install_gate
         < child_gate_before_restart
+        < bootstrap_marker_activation
         < restart
         < fresh_wait
     )
@@ -211,6 +215,37 @@ def test_deploy_adapter_repair_exception_is_changed_bytes_only_and_preinstall():
     assert 'assert room.get("recording") is False' in external
     assert 'assert payload.get("error") is None' in external
     assert "restart_epoch=$(python3 -c 'import time; print(time.time())')" in external
+
+
+def test_deploy_connection_stub_bootstrap_is_receipt_bound_and_exact():
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    external = source.split("<<'REMOTE_EXTERNAL_INSTALL'\n", 1)[1].split(
+        "\nREMOTE_EXTERNAL_INSTALL", 1
+    )[0]
+    outer_rollback = source.split("<<'REMOTE_ROLLBACK'\n", 1)[1].split(
+        "\nREMOTE_ROLLBACK", 1
+    )[0]
+    switch = source.split("<<'REMOTE_SWITCH'\n", 1)[1].split("\nREMOTE_SWITCH", 1)[0]
+
+    assert '"$BACKUP" "$COMMIT" <<\'REMOTE_EXTERNAL_INSTALL\'' in source
+    assert "adapter_connection_stub_bootstrap_safe" in external
+    assert "adapter_connection_stub_bootstrap_postcondition" in external
+    assert "--prepare-connection-stub-bootstrap" in external
+    assert "--bootstrap-receipt-root /state/connection-stub-bootstrap-receipts" in external
+    assert "2026-08-20/22966160_20260820-21-00-20.flv" in external
+    assert "2026-08-20/22966160_20260820-21-56-14.flv" in external
+    assert 'assert isinstance(paths, list) and len(paths) == 2' in external
+    assert 'payload.get("error") == f"{len(paths)} closed recording(s) failed finalization"' in external
+    assert "capture_connection_stub_bootstrap_preimage" in external
+    assert "activate_connection_stub_bootstrap_marker" in external
+    assert "restore_connection_stub_bootstrap_preimage" in source
+    assert "restore_connection_stub_bootstrap_preimage" in outer_rollback
+    assert "restore_connection_stub_bootstrap_preimage" in switch
+    assert "capture_file recorder_adapter_state" not in source
+    assert "capture_file recorder_adapter_status" not in source
+    assert "restore_file recorder_adapter_state" not in source
+    assert "restore_file recorder_adapter_status" not in source
+    assert "assert all(dispositions.get(path) == rows[path] for path in paths)" in external
 
 
 def test_deploy_adapter_hash_child_gate_is_strict_and_used_by_rollback(tmp_path):
@@ -434,6 +469,406 @@ def test_deploy_rollback_reaccepts_only_clean_or_exact_supported_preimage(tmp_pa
             "PY_ROLLBACK_FRESH", tmp_path, unknown, str(now - 1), "0"
         )
         assert rejected.returncode != 0, unknown_error
+
+
+def test_deploy_rollback_connection_stub_receipt_binds_preimages_and_status(tmp_path):
+    now = time.time()
+    paths = [
+        "2026-08-20/22966160_20260820-21-00-20.flv",
+        "2026-08-20/22966160_20260820-21-56-14.flv",
+    ]
+    sources = [f"/adapter/Videos/22966160/{path}" for path in paths]
+    payload = {
+        "generated_at_epoch": now,
+        "service_reachable": True,
+        "streaming": False,
+        "recording": False,
+        "finalizing": False,
+        "error": "2 closed recording(s) failed finalization",
+        "finalize_errors": [{"source": source} for source in sources],
+    }
+    state_preimage = tmp_path / "adapter-state.json"
+    state_preimage.write_text('{"schema_version":"recording-adapter-state.v1"}\n', encoding="utf-8")
+    status_preimage = tmp_path / "status-preimage.json"
+    status_preimage.write_text(json.dumps(payload), encoding="utf-8")
+    receipt_path = tmp_path / ("a" * 40 + ".json")
+    marker_path = tmp_path / "connection-stub-bootstrap.marker"
+
+    def write_receipt() -> None:
+        projection = {
+            key: payload.get(key)
+            for key in (
+                "service_reachable",
+                "streaming",
+                "recording",
+                "finalizing",
+                "error",
+                "finalize_errors",
+            )
+        }
+        receipt = {
+            "schema_version": "recording-connection-stub-bootstrap.v1",
+            "receipt_id": receipt_path.stem,
+            "adapter_state_sha256": hashlib.sha256(state_preimage.read_bytes()).hexdigest(),
+            "adapter_status_preimage_sha256": hashlib.sha256(
+                json.dumps(projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest(),
+            "source_relative_paths": paths,
+            "rows": {path: {"source_relative_path": path} for path in paths},
+        }
+        receipt["canonical_integrity"] = {
+            "algorithm": "sha256",
+            "canonical_json_sha256": hashlib.sha256(
+                json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest(),
+        }
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+        marker = {
+            "schema_version": "recording-connection-stub-bootstrap-rollback-marker.v1",
+            "receipt_id": receipt_path.stem,
+            "receipt_path": str(receipt_path),
+            "receipt_sha256": hashlib.sha256(receipt_path.read_bytes()).hexdigest(),
+            "state_sha256": hashlib.sha256(state_preimage.read_bytes()).hexdigest(),
+            "status_sha256": hashlib.sha256(status_preimage.read_bytes()).hexdigest(),
+            "status_projection_sha256": receipt["adapter_status_preimage_sha256"],
+        }
+        marker["canonical_integrity"] = {
+            "algorithm": "sha256",
+            "canonical_json_sha256": hashlib.sha256(
+                json.dumps(marker, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest(),
+        }
+        marker_path.write_text(json.dumps(marker), encoding="utf-8")
+
+    write_receipt()
+    accepted = _run_embedded_status_validator(
+        "PY_ROLLBACK_FRESH",
+        tmp_path,
+        payload,
+        str(now - 1),
+        "0",
+        str(receipt_path),
+        str(marker_path),
+        str(state_preimage),
+        str(status_preimage),
+    )
+    assert accepted.returncode == 0, accepted.stderr
+
+    receipt_path.write_text("{}", encoding="utf-8")
+    assert _run_embedded_status_validator(
+        "PY_ROLLBACK_FRESH", tmp_path, payload, str(now - 1), "0", str(receipt_path), str(marker_path), str(state_preimage), str(status_preimage)
+    ).returncode != 0
+    write_receipt()
+
+    state_preimage.write_text("changed", encoding="utf-8")
+    assert _run_embedded_status_validator(
+        "PY_ROLLBACK_FRESH", tmp_path, payload, str(now - 1), "0", str(receipt_path), str(marker_path), str(state_preimage), str(status_preimage)
+    ).returncode != 0
+    state_preimage.write_text('{"schema_version":"recording-adapter-state.v1"}\n', encoding="utf-8")
+    write_receipt()
+
+    changed_status = dict(payload)
+    changed_status["finalize_errors"] = []
+    status_preimage.write_text(json.dumps(changed_status), encoding="utf-8")
+    assert _run_embedded_status_validator(
+        "PY_ROLLBACK_FRESH", tmp_path, payload, str(now - 1), "0", str(receipt_path), str(marker_path), str(state_preimage), str(status_preimage)
+    ).returncode != 0
+    status_preimage.write_text(json.dumps(payload), encoding="utf-8")
+    write_receipt()
+
+    changed_runtime = dict(payload)
+    changed_runtime["error"] = "other finalization error"
+    assert _run_embedded_status_validator(
+        "PY_ROLLBACK_FRESH", tmp_path, changed_runtime, str(now - 1), "0", str(receipt_path), str(marker_path), str(state_preimage), str(status_preimage)
+    ).returncode != 0
+
+
+def test_bootstrap_rollback_marker_is_the_only_state_restore_authority(tmp_path):
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    rollback = source.split("<<'REMOTE_ROLLBACK'\n", 1)[1].split("\nREMOTE_ROLLBACK", 1)[0]
+    restore_start = rollback.index("restore_connection_stub_bootstrap_preimage() {")
+    restore_end = rollback.index(
+        "\nrestore_connection_stub_bootstrap_preimage\nrestore_adapter_atomic", restore_start
+    )
+    restore = rollback[restore_start:restore_end]
+    recording = tmp_path / "recording"
+    backup = tmp_path / "backup"
+    receipt_id = "b" * 40
+    recording.mkdir()
+    (recording / "connection-stub-bootstrap-receipts").mkdir()
+    preimage = backup / "external/connection_stub_bootstrap_preimage"
+    preimage.mkdir(parents=True)
+    live_state = recording / "adapter-state.json"
+    live_status = recording / "status.json"
+    state_preimage = preimage / "adapter-state.json"
+    status_preimage = preimage / "status.json"
+    marker = backup / "external/connection_stub_bootstrap.marker"
+    receipt = recording / f"connection-stub-bootstrap-receipts/{receipt_id}.json"
+    paths = [
+        "2026-08-20/22966160_20260820-21-00-20.flv",
+        "2026-08-20/22966160_20260820-21-56-14.flv",
+    ]
+    status_payload = {
+        "service_reachable": True,
+        "streaming": False,
+        "recording": False,
+        "finalizing": False,
+        "error": "2 closed recording(s) failed finalization",
+        "finalize_errors": [
+            {"source": f"/adapter/Videos/22966160/{path}"} for path in paths
+        ],
+    }
+
+    def write_bound_preimage() -> None:
+        state_preimage.write_bytes(b"bound-state\n")
+        status_preimage.write_text(json.dumps(status_payload), encoding="utf-8")
+        projection = {
+            key: status_payload.get(key)
+            for key in (
+                "service_reachable",
+                "streaming",
+                "recording",
+                "finalizing",
+                "error",
+                "finalize_errors",
+            )
+        }
+        receipt_payload = {
+            "schema_version": "recording-connection-stub-bootstrap.v1",
+            "receipt_id": receipt_id,
+            "adapter_state_sha256": hashlib.sha256(state_preimage.read_bytes()).hexdigest(),
+            "adapter_status_preimage_sha256": hashlib.sha256(
+                json.dumps(projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest(),
+            "source_relative_paths": paths,
+        }
+        receipt_payload["canonical_integrity"] = {
+            "algorithm": "sha256",
+            "canonical_json_sha256": hashlib.sha256(
+                json.dumps(
+                    receipt_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                ).encode()
+            ).hexdigest(),
+        }
+        receipt.write_text(json.dumps(receipt_payload), encoding="utf-8")
+        marker_payload = {
+            "schema_version": "recording-connection-stub-bootstrap-rollback-marker.v1",
+            "receipt_id": receipt_id,
+            "receipt_path": str(receipt),
+            "receipt_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest(),
+            "state_sha256": hashlib.sha256(state_preimage.read_bytes()).hexdigest(),
+            "status_sha256": hashlib.sha256(status_preimage.read_bytes()).hexdigest(),
+            "status_projection_sha256": receipt_payload["adapter_status_preimage_sha256"],
+        }
+        marker_payload["canonical_integrity"] = {
+            "algorithm": "sha256",
+            "canonical_json_sha256": hashlib.sha256(
+                json.dumps(
+                    marker_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                ).encode()
+            ).hexdigest(),
+        }
+        marker.write_text(json.dumps(marker_payload), encoding="utf-8")
+
+    script = "\n".join(
+        (
+            "set -eu",
+            "backup=$1",
+            "new_commit=$2",
+            restore.replace("/opt/bilive/recording", str(recording)),
+            "restore_connection_stub_bootstrap_preimage",
+        )
+    )
+
+    def run_restore() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", "-c", script, "bootstrap-rollback", str(backup), receipt_id],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    live_state.write_bytes(b"intervening-state\n")
+    live_status.write_bytes(b"intervening-status\n")
+    normal = run_restore()
+    assert normal.returncode == 0, normal.stderr
+    assert live_state.read_bytes() == b"intervening-state\n"
+    assert live_status.read_bytes() == b"intervening-status\n"
+
+    write_bound_preimage()
+    restored = run_restore()
+    assert restored.returncode == 0, restored.stderr
+    assert live_state.read_bytes() == state_preimage.read_bytes()
+    assert live_status.read_bytes() == status_preimage.read_bytes()
+
+    live_state.write_bytes(b"must-not-rewind\n")
+    live_status.write_bytes(b"must-not-rewind\n")
+    marker.write_text("{}", encoding="utf-8")
+    assert run_restore().returncode != 0
+    assert live_state.read_bytes() == b"must-not-rewind\n"
+    assert live_status.read_bytes() == b"must-not-rewind\n"
+
+    write_bound_preimage()
+    state_preimage.unlink()
+    assert run_restore().returncode != 0
+
+    write_bound_preimage()
+    marker_target = tmp_path / "marker-target.json"
+    marker_target.write_bytes(marker.read_bytes())
+    marker.unlink()
+    marker.symlink_to(marker_target)
+    assert run_restore().returncode != 0
+
+
+def test_connection_stub_bootstrap_preinstall_refuses_preimage_drift(tmp_path):
+    paths = [
+        "2026-08-20/22966160_20260820-21-00-20.flv",
+        "2026-08-20/22966160_20260820-21-56-14.flv",
+    ]
+    state_path = tmp_path / "adapter-state.json"
+    state_path.write_bytes(b"captured-state\n")
+    status_path = tmp_path / "status.json"
+    status = {
+        "service_reachable": True,
+        "streaming": False,
+        "recording": False,
+        "finalizing": False,
+        "error": "2 closed recording(s) failed finalization",
+        "finalize_errors": [
+            {"source": f"/adapter/Videos/22966160/{path}"} for path in paths
+        ],
+    }
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+    projection = {
+        key: status.get(key)
+        for key in (
+            "service_reachable",
+            "streaming",
+            "recording",
+            "finalizing",
+            "error",
+            "finalize_errors",
+        )
+    }
+    receipt_path = tmp_path / "receipt.json"
+    receipt = {
+        "schema_version": "recording-connection-stub-bootstrap.v1",
+        "receipt_id": "a" * 40,
+        "candidate_adapter_sha256": "b" * 64,
+        "installed_adapter_sha256": "c" * 64,
+        "adapter_state_sha256": "0" * 64,
+        "adapter_status_preimage_sha256": hashlib.sha256(
+            json.dumps(projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "source_relative_paths": paths,
+        "rows": {path: {"source_relative_path": path} for path in paths},
+    }
+    receipt["canonical_integrity"] = {
+        "algorithm": "sha256",
+        "canonical_json_sha256": hashlib.sha256(
+            json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+    }
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            _embedded_deploy_python("PY_BOOTSTRAP_PREIMAGE"),
+            str(state_path),
+            str(status_path),
+            str(receipt_path),
+            "b" * 64,
+            "c" * 64,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+
+
+def test_bootstrap_marker_activation_refuses_live_drift_without_mutation(tmp_path):
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    external = source.split("<<'REMOTE_EXTERNAL_INSTALL'\n", 1)[1].split(
+        "\nREMOTE_EXTERNAL_INSTALL", 1
+    )[0]
+    start = external.index("activate_connection_stub_bootstrap_marker() {")
+    end = external.index("\nadapter_connection_stub_bootstrap_safe", start)
+    activate = external[start:end]
+    recording = tmp_path / "recording"
+    backup = tmp_path / "backup"
+    receipt_id = "d" * 40
+    recording.mkdir()
+    receipts = recording / "connection-stub-bootstrap-receipts"
+    receipts.mkdir()
+    preimage = backup / "external/connection_stub_bootstrap_preimage"
+    preimage.mkdir(parents=True)
+    state_preimage = preimage / "adapter-state.json"
+    status_preimage = preimage / "status.json"
+    state_preimage.write_bytes(b"captured-state\n")
+    status = {
+        "service_reachable": True,
+        "streaming": False,
+        "recording": False,
+        "finalizing": False,
+        "error": "2 closed recording(s) failed finalization",
+        "finalize_errors": [
+            {"source": "/adapter/Videos/22966160/2026-08-20/22966160_20260820-21-00-20.flv"},
+            {"source": "/adapter/Videos/22966160/2026-08-20/22966160_20260820-21-56-14.flv"},
+        ],
+    }
+    status_preimage.write_text(json.dumps(status), encoding="utf-8")
+    projection = {
+        key: status.get(key)
+        for key in (
+            "service_reachable",
+            "streaming",
+            "recording",
+            "finalizing",
+            "error",
+            "finalize_errors",
+        )
+    }
+    receipt = receipts / f"{receipt_id}.json"
+    receipt.write_text(
+        json.dumps(
+            {
+                "schema_version": "recording-connection-stub-bootstrap.v1",
+                "receipt_id": receipt_id,
+                "adapter_state_sha256": hashlib.sha256(state_preimage.read_bytes()).hexdigest(),
+                "adapter_status_preimage_sha256": hashlib.sha256(
+                    json.dumps(projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest(),
+                "source_relative_paths": [
+                    "2026-08-20/22966160_20260820-21-00-20.flv",
+                    "2026-08-20/22966160_20260820-21-56-14.flv",
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (recording / "adapter-state.json").write_bytes(b"old-daemon-wrote-state\n")
+    (recording / "status.json").write_bytes(b"old-daemon-wrote-status\n")
+    script = "\n".join(
+        (
+            "set -eu",
+            "backup=$1",
+            "commit=$2",
+            activate.replace("/opt/bilive/recording", str(recording)),
+            "activate_connection_stub_bootstrap_marker",
+        )
+    )
+    result = subprocess.run(
+        ["bash", "-c", script, "bootstrap-activate", str(backup), receipt_id],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert not (backup / "external/connection_stub_bootstrap.marker").exists()
+    assert (recording / "adapter-state.json").read_bytes() == b"old-daemon-wrote-state\n"
+    assert (recording / "status.json").read_bytes() == b"old-daemon-wrote-status\n"
 
 
 def test_deploy_authority_manifest_is_canonical_and_exact_byte_bound(tmp_path):
