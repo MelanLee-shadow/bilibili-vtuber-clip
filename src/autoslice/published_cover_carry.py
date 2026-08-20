@@ -73,8 +73,52 @@ def _entry(*, repo_root: Path, candidate_id: str) -> dict[str, object]:
     return entry
 
 
+def _source_relative_regular(
+    *, source_base: Path, relative_value: object, label: str
+) -> bytes:
+    """Read a canonical regular file below the runtime recovery source.
+
+    The carry authority is repository-sealed, but its public verification
+    receipt is runtime evidence.  Keep that boundary explicit: a receipt may
+    only be named relative to the exact recovery source base, with no symlink
+    in any path component and no resolution outside that base.
+    """
+
+    if not isinstance(relative_value, str) or not relative_value:
+        raise PublishedCoverCarryError(f"{label}_PATH_INVALID")
+    relative = Path(relative_value)
+    if (
+        relative.is_absolute()
+        or not relative.parts
+        or "." in relative.parts
+        or ".." in relative.parts
+        or relative.as_posix() != relative_value
+    ):
+        raise PublishedCoverCarryError(f"{label}_PATH_INVALID")
+    try:
+        if source_base.is_symlink() or not source_base.is_dir():
+            raise OSError("source base is not a regular directory")
+        source_root = source_base.resolve(strict=True)
+        cursor = source_base
+        for part in relative.parts:
+            cursor = cursor / part
+            if cursor.is_symlink():
+                raise OSError("source receipt path contains a symlink")
+        resolved = cursor.resolve(strict=True)
+        resolved.relative_to(source_root)
+    except (OSError, ValueError) as exc:
+        raise PublishedCoverCarryError(f"{label}_PATH_INVALID") from exc
+    return _regular(resolved, label=label)
+
+
 def validate_source_cover_carry(
-    *, repo_root: Path, state_bytes: bytes, state: Mapping[str, object], candidate_id: str, date: str
+    *,
+    repo_root: Path,
+    source_base: Path,
+    state_bytes: bytes,
+    state: Mapping[str, object],
+    candidate_id: str,
+    date: str,
 ) -> dict[str, object]:
     """Validate the source's public identity and original cover evidence."""
 
@@ -87,7 +131,7 @@ def validate_source_cover_carry(
         raise PublishedCoverCarryError("PUBLISHED_COVER_CARRY_PICK_MISMATCH")
     record = rows[0]
     required = entry.get("published_identity")
-    if not isinstance(required, dict) or set(required) != {"bvid", "aid", "published_cid", "title", "public_verify_repo_path", "public_verify_sha256"}:
+    if not isinstance(required, dict) or set(required) != {"bvid", "aid", "published_cid", "title", "public_verify_source_relative_path", "public_verify_sha256"}:
         raise PublishedCoverCarryError("PUBLISHED_COVER_CARRY_PUBLIC_IDENTITY_INVALID")
     if not isinstance(required, dict) or any(record.get(key) != required.get(key) for key in ("bvid", "aid", "published_cid", "title")):
         raise PublishedCoverCarryError("PUBLISHED_COVER_CARRY_PUBLIC_IDENTITY_MISMATCH")
@@ -99,20 +143,11 @@ def validate_source_cover_carry(
         and record.get("rc") == 0
     ):
         raise PublishedCoverCarryError("PUBLISHED_COVER_CARRY_PICK_INELIGIBLE")
-    relative_verify = Path(str(required.get("public_verify_repo_path") or ""))
-    if relative_verify.is_absolute() or ".." in relative_verify.parts:
-        raise PublishedCoverCarryError("PUBLISHED_COVER_CARRY_PUBLIC_VERIFY_PATH_INVALID")
-    verify_path = repo_root / relative_verify
-    try:
-        cursor = repo_root
-        for part in relative_verify.parts:
-            cursor /= part
-            if cursor.is_symlink():
-                raise OSError("symlink component")
-        verify_path.resolve(strict=True).relative_to(repo_root.resolve(strict=True))
-    except OSError as exc:
-        raise PublishedCoverCarryError("PUBLISHED_COVER_CARRY_PUBLIC_VERIFY_PATH_INVALID") from exc
-    verify_bytes = _regular(verify_path, label="PUBLISHED_COVER_CARRY_PUBLIC_VERIFY")
+    verify_bytes = _source_relative_regular(
+        source_base=source_base,
+        relative_value=required.get("public_verify_source_relative_path"),
+        label="PUBLISHED_COVER_CARRY_PUBLIC_VERIFY",
+    )
     if required.get("public_verify_sha256") != _sha(verify_bytes):
         raise PublishedCoverCarryError("PUBLISHED_COVER_CARRY_PUBLIC_VERIFY_HASH_MISMATCH")
     try:

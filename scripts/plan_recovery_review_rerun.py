@@ -722,7 +722,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             try:
                 entry = validate_source_cover_carry(
-                    repo_root=repo_root, state_bytes=source_bytes,
+                    repo_root=repo_root, source_base=source_base, state_bytes=source_bytes,
                     state=json.loads(source_bytes), candidate_id=args.candidate_ids[0], date=args.date,
                 )
                 marker, created_cover_authority = materialized_marker(

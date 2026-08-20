@@ -332,7 +332,10 @@ def _qixi_single_published_main_fixture(
 
 
 def _sealed_qixi_cover_carry_main_fixture(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    public_verify_source_relative_path: str = "reports/authorized_uploads/qixi/public.json",
 ) -> tuple[list[str], Path, Path, str]:
     """A clean temporary Git authority, not an uncommitted test override.
 
@@ -348,11 +351,11 @@ def _sealed_qixi_cover_carry_main_fixture(
     repo_root = tmp_path / "sealed-repo"
     (repo_root / "assets/lidousha").mkdir(parents=True)
     (repo_root / "scripts").mkdir()
-    (repo_root / "reports/authorized_uploads/qixi").mkdir(parents=True)
     source_base = tmp_path / "source"
     target_base = tmp_path / "target"
     recording_root = tmp_path / "recordings"
     (source_base / "state").mkdir(parents=True)
+    (source_base / "reports/authorized_uploads/qixi").mkdir(parents=True)
     (source_base / "cache" / date).mkdir(parents=True)
     (source_base / "cpa.env").write_text("CPA_API_KEY=test\n", encoding="utf-8")
     source_bcut = source_base / "cache" / date / "official.bcut.srt"
@@ -445,7 +448,8 @@ def _sealed_qixi_cover_carry_main_fixture(
         "expected": {"title": title},
         "section_api": {"episode_titles": [title]},
     }
-    public_verify_path = repo_root / "reports/authorized_uploads/qixi/public.json"
+    public_verify_path = source_base / public_verify_source_relative_path
+    public_verify_path.parent.mkdir(parents=True, exist_ok=True)
     public_verify_path.write_text(json.dumps(public_verify, ensure_ascii=False), encoding="utf-8")
     authority = {
         "schema_version": "daily-same-bv-published-cover-carry-authority.v1",
@@ -456,7 +460,7 @@ def _sealed_qixi_cover_carry_main_fixture(
             "source_state_sha256": source_sha,
             "published_identity": {
                 "bvid": target["bvid"], "aid": target["aid"], "published_cid": target["published_cid"],
-                "title": title, "public_verify_repo_path": "reports/authorized_uploads/qixi/public.json",
+                "title": title, "public_verify_source_relative_path": public_verify_source_relative_path,
                 "public_verify_sha256": digest(public_verify_path.read_bytes()),
             },
             "cover_generation_sha256": digest(json.dumps(generation, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()),
@@ -1568,6 +1572,7 @@ def test_qixi_published_cover_carry_main_uses_only_sealed_fixture_bytes(
     assert item[0]["reuse_cover"] is True
     assert marker["cover_sha256"] == public_cover_sha
     assert Path(marker["cover_path"]).read_bytes() == b"8c-public-cover-fixture"
+    assert not (target_base / "repo/reports/authorized_uploads/qixi/public.json").exists()
     assert receipt["published_cover_carries_by_candidate"] == {
         "auto_113022_354_496": {
             "recording_date": "2026-08-17",
@@ -1578,18 +1583,36 @@ def test_qixi_published_cover_carry_main_uses_only_sealed_fixture_bytes(
     assert source_state.exists()  # source authority is read-only throughout.
 
 
-@pytest.mark.parametrize("mutation", ["source", "public", "artifact", "symlink", "target_exists"])
+@pytest.mark.parametrize(
+    "mutation",
+    ["source", "public_hash", "public_missing", "public_symlink", "public_escape", "artifact", "symlink", "target_exists"],
+)
 def test_qixi_published_cover_carry_rejects_before_state_when_authority_graph_drifts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
 ) -> None:
     args, target_base, source_state, _public_cover_sha = _sealed_qixi_cover_carry_main_fixture(
-        tmp_path, monkeypatch
+        tmp_path,
+        monkeypatch,
+        public_verify_source_relative_path=(
+            "../outside/public.json" if mutation == "public_escape" else "reports/authorized_uploads/qixi/public.json"
+        ),
+    )
+    public_path = source_state.parent.parent / (
+        "../outside/public.json"
+        if mutation == "public_escape"
+        else "reports/authorized_uploads/qixi/public.json"
     )
     if mutation == "source":
         source_state.write_bytes(source_state.read_bytes() + b" ")
-    elif mutation == "public":
-        repo_root = (target_base / "repo").resolve()
-        (repo_root / "reports/authorized_uploads/qixi/public.json").write_text("{}", encoding="utf-8")
+    elif mutation == "public_hash":
+        public_path.write_text("{}", encoding="utf-8")
+    elif mutation == "public_missing":
+        public_path.unlink()
+    elif mutation == "public_symlink":
+        replacement = tmp_path / "replacement-public.json"
+        replacement.write_bytes(public_path.read_bytes())
+        public_path.unlink()
+        public_path.symlink_to(replacement)
     elif mutation == "artifact":
         (tmp_path / "public-source-artifacts/cover.bin").write_bytes(b"not-8c")
     elif mutation == "symlink":
@@ -1598,7 +1621,7 @@ def test_qixi_published_cover_carry_rejects_before_state_when_authority_graph_dr
         replacement.write_bytes(artifact.read_bytes())
         artifact.unlink()
         artifact.symlink_to(replacement)
-    else:
+    elif mutation == "target_exists":
         target = target_base / "out/2026-08-17/auto_113022_354_496/replacement_recuts/covers/auto_113022_354_496.published-carry.cover.png"
         target.parent.mkdir(parents=True)
         target.write_bytes(b"preexisting")

@@ -357,7 +357,9 @@
   准入，也不得把 package audit、pending-human manifest 或任意旧版/手写 receipt 当成授权。
 - 已发布 same-BV 的字幕修复如显式使用 `--project-single-published-repair
   --preserve-published-cover`，只能消费候选专属、部署封存的
-  `daily_same_bv_published_cover_carry_authority.v1`。planner 在 state 写入前验证原
+  `daily_same_bv_published_cover_carry_authority.v1`。该 sealed asset 只固定候选、哈希和
+  runtime receipt 的 canonical `public_verify_source_relative_path`；receipt 从本次
+  `source_base` 读取，不从 deploy repo 拼接。planner 在 state 写入前验证原
   public identity、原 state、v2 route/host identity 和每个封面证据字节，再 create-only
   复制到隔离目标并写 typed marker。任何漂移、多个封面或 sidecar/marker 非法均拒绝；严格
   carry 不得调用 CPA 或生成新封面。无该显式 lane 时历史 `reuse_cover` 行为不因此放宽。
