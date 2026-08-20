@@ -462,6 +462,10 @@ def _validate_v2_successor_chain(
     """Bind the existing Z2 recovery receipt before it can seed another reburn."""
 
     successor_path = Path(str(authority["successor_correction_manifest_path"]))
+    if successor_path != incident_path:
+        raise DeliveryBrandingAuthorityError(
+            "recovery v2 incident and successor paths must name the same overwritten receipt"
+        )
     successor_sha = _required_prefixed_sha256(
         authority.get("successor_correction_manifest_sha256"),
         label="recovery successor_correction_manifest_sha256",
@@ -633,19 +637,6 @@ def _load_recovery_branding_authority(
         authority.get("incident_correction_manifest_sha256"),
         label="recovery incident_correction_manifest_sha256",
     )
-    incident = _read_regular_json(incident_path, label="recovery incident correction manifest")
-    if "sha256:" + _sha256(incident_path) != incident_sha:
-        raise DeliveryBrandingAuthorityError("recovery incident correction manifest hash drifted")
-    if incident.get("candidate_id") != candidate_id:
-        raise DeliveryBrandingAuthorityError("incident correction manifest candidate_id drifted")
-    if (
-        "sha256:" + str(incident.get("before_srt_sha256") or "") != before_srt
-        or "sha256:" + str(incident.get("after_srt_sha256") or "") != after_srt
-        or "sha256:" + str(incident.get("burned_media_sha256") or "") != new_burned
-    ):
-        raise DeliveryBrandingAuthorityError(
-            "incident correction manifest does not match the recovery chain"
-        )
     prior_binding = {
         "status": "PREPENDED",
         "intro_id": authority["intro_id"],
@@ -665,6 +656,19 @@ def _load_recovery_branding_authority(
             prior_binding=prior_binding,
         )
     else:
+        incident = _read_regular_json(incident_path, label="recovery incident correction manifest")
+        if "sha256:" + _sha256(incident_path) != incident_sha:
+            raise DeliveryBrandingAuthorityError("recovery incident correction manifest hash drifted")
+        if incident.get("candidate_id") != candidate_id:
+            raise DeliveryBrandingAuthorityError("incident correction manifest candidate_id drifted")
+        if (
+            "sha256:" + str(incident.get("before_srt_sha256") or "") != before_srt
+            or "sha256:" + str(incident.get("after_srt_sha256") or "") != after_srt
+            or "sha256:" + str(incident.get("burned_media_sha256") or "") != new_burned
+        ):
+            raise DeliveryBrandingAuthorityError(
+                "incident correction manifest does not match the recovery chain"
+            )
         current_hashes = working_record.get("artifact_hashes")
         if not isinstance(current_hashes, Mapping):
             raise DeliveryBrandingAuthorityError("current correction record lacks artifact_hashes")

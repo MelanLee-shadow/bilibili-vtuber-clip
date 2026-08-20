@@ -517,6 +517,29 @@ def test_recovery_authority_can_restore_z2_from_explicit_incident_chain(
     )
     monkeypatch.setattr(correction, "_burn_preview_subtitles", fake_burn)
     monkeypatch.setenv("AUTOSLICE_SPEAKER_MODE", "uniform_host")
+    original_record = record_path.read_bytes()
+    drifted = json.loads(original_record)
+    drifted["artifact_hashes"]["subtitle_sha256"] = "sha256:" + "0" * 64
+    record_path.write_text(json.dumps(drifted), encoding="utf-8")
+    preflight_bytes = {
+        path: path.read_bytes() for path in (delivery, subtitle, record_path)
+    }
+    with pytest.raises(
+        correction.DeliveryBrandingAuthorityError,
+        match="current correction record is not the documented incident successor",
+    ):
+        correction._existing_delivery_branding_context(
+            delivery=delivery,
+            working_record_path=record_path,
+            candidate_id=cid,
+            authority_record_path=None,
+            authority_publish_path=None,
+            recovery_authority_path=recovery,
+            branding_intro=None,
+        )
+    assert {path: path.read_bytes() for path in preflight_bytes} == preflight_bytes
+    assert observed_contexts == []
+    record_path.write_bytes(original_record)
     assert correction.main(
         [
             "--cid", cid, "--date", date, "--delivery", str(delivery),
@@ -575,9 +598,11 @@ def _qixi_v2_successor_fixture(
     predecessor = tmp_path / "assets/lidousha/delivery_branding_recovery/auto_113022_354_496.v1.json"
     predecessor.parent.mkdir(parents=True)
     predecessor.write_text("{}", encoding="utf-8")
-    old_incident = tmp_path / "old-correction.json"
-    old_incident.write_text("{}", encoding="utf-8")
     successor = tmp_path / "current-correction.json"
+    # The canonical correction path was overwritten by the Z2 successor.  Its
+    # old hash survives only in the successor's sealed predecessor binding.
+    old_incident = successor
+    old_incident.write_text("{}", encoding="utf-8")
     record = tmp_path / "current.record.json"
     binding = {
         "status": "PREPENDED", "intro_id": "z2", "intro_media_sha256": "sha256:" + "d" * 64,
@@ -638,6 +663,7 @@ def test_v2_recovery_replays_the_current_z2_successor_shape(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     authority, old_incident, record, binding = _qixi_v2_successor_fixture(tmp_path, monkeypatch)
+    assert old_incident == Path(str(authority["successor_correction_manifest_path"]))
     path, sha = correction._validate_v2_successor_chain(
         authority=authority, working_record_path=record, candidate_id="auto_113022_354_496",
         incident_path=old_incident, incident_sha=str(authority["incident_correction_manifest_sha256"]),
@@ -648,7 +674,10 @@ def test_v2_recovery_replays_the_current_z2_successor_shape(
 
 
 @pytest.mark.parametrize(
-    "tamper", ["missing", "receipt", "record", "embedded_freeze", "current_freeze"]
+    "tamper", [
+        "missing", "receipt", "record", "embedded_freeze", "current_freeze",
+        "wrong_path", "embedded_incident_sha", "missing_embedded_incident_sha",
+    ]
 )
 def test_v2_recovery_requires_the_current_z2_successor_before_reburn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tamper: str
@@ -671,6 +700,19 @@ def test_v2_recovery_requires_the_current_z2_successor_before_reburn(
         payload = json.loads(successor.read_text(encoding="utf-8"))
         payload["delivery_branding_authority"]["branding_intro"]["intro_offset_ms"] = 1
         successor.write_text(json.dumps(payload), encoding="utf-8")
+    elif tamper == "wrong_path":
+        old_incident = tmp_path / "wrong-incident.json"
+        old_incident.write_text("{}", encoding="utf-8")
+    elif tamper in {"embedded_incident_sha", "missing_embedded_incident_sha"}:
+        successor = Path(str(authority["successor_correction_manifest_path"]))
+        payload = json.loads(successor.read_text(encoding="utf-8"))
+        if tamper == "embedded_incident_sha":
+            payload["delivery_branding_authority"]["incident_correction_manifest_sha256"] = "sha256:" + "f" * 64
+        else:
+            payload["delivery_branding_authority"].pop("incident_correction_manifest_sha256")
+        successor.write_text(json.dumps(payload), encoding="utf-8")
+        authority["successor_correction_manifest_sha256"] = "sha256:" + _sha256(successor)
+        authority["successor_correction_manifest_bytes"] = successor.stat().st_size
     elif tamper == "embedded_freeze":
         successor = Path(str(authority["successor_correction_manifest_path"]))
         payload = json.loads(successor.read_text(encoding="utf-8"))
