@@ -6,6 +6,10 @@ import pytest
 
 from scripts import plan_recovery_review_rerun as planner
 from scripts import free_session_autoslice as runner
+from src.autoslice.delivery_recovery import (
+    RecoveryReviewRerunError,
+    plan_current_talk_recovery_rerun,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +34,12 @@ DAILY_1493_ASSET_SHA256 = (
 JAPANESE_PRONOUN_ASSET = (
     ROOT
     / "assets/lidousha/recovery_publication_authority_2026-07-30_japanese_pronoun.v1.json"
+)
+QIXI_SAME_BV_ASSET = (
+    ROOT / "assets/lidousha/daily_same_bv_publication_authority.v1.json"
+)
+QIXI_SAME_BV_ASSET_SHA256 = (
+    "sha256:88fd8a35607f9d2e46999bd5fcc7044e2c547e08edf5aa711c9e32965828f3b4"
 )
 CANDIDATE_IDS = {
     "auto_193450_3573_3665",
@@ -225,6 +235,12 @@ def _planner_fixture(
     return args, target_base, source_state
 
 
+def _without_suppression_or_replacement_options(args: list[str]) -> list[str]:
+    return args[: args.index("--suppress-candidate-id")] + args[
+        args.index("--publication-authority-asset") :
+    ]
+
+
 def test_v10_contract_binds_exact_five_candidates_and_reviewed_ends():
     authorities, ends, end_authority = _load(CANDIDATE_IDS)
 
@@ -262,6 +278,34 @@ def test_single_published_850_contract_binds_existing_bv_and_exact_end():
     assert authority["boundary_end_mode"] == "exact_source_pin"
     assert authority["bvid"] == "BV1ec3A6bEWF"
     assert authority["cid"] == 40_357_990_267
+
+
+@pytest.mark.parametrize(
+    ("publication_asset", "expected_sha256", "match"),
+    [
+        (
+            ASSET,
+            ASSET_SHA256,
+            "RECOVERY_PUBLICATION_CANDIDATE_MISSING",
+        ),
+        (
+            QIXI_SAME_BV_ASSET,
+            "sha256:" + "0" * 64,
+            "RECOVERY_PUBLICATION_REGISTRY_SHA_MISMATCH",
+        ),
+    ],
+    ids=["missing-qixi-entry", "wrong-dedicated-registry-hash"],
+)
+def test_qixi_single_published_contract_rejects_missing_or_wrong_authority(
+    publication_asset: Path, expected_sha256: str, match: str
+):
+    with pytest.raises(SystemExit, match=match):
+        planner._load_recovery_publication_contract(
+            queued_candidate_ids={"auto_113022_354_496"},
+            publication_asset=publication_asset,
+            expected_publication_authority_sha256=expected_sha256,
+            repo_root=ROOT,
+        )
 
 
 def test_single_published_1493_contract_binds_existing_bv_and_exact_end():
@@ -369,6 +413,116 @@ def test_single_published_projection_isolates_target_without_suppressing_others(
     assert projection["excluded_rows_disposition"] == (
         "SOURCE_STATE_UNCHANGED_OUTSIDE_REPAIR_TARGET"
     )
+
+
+def test_single_published_projection_accepts_published_review_ready_source():
+    target = _record(
+        "auto_113022_354_496",
+        start_ms=354_630,
+        end_ms=496_420,
+        status="published",
+    )
+    target["prepublication_status"] = "review_ready"
+    state = {
+        "run_mode": "DAILY",
+        "upload_allowed": False,
+        "picks": [target],
+        "pending_talk": [],
+    }
+
+    projected = planner._project_single_published_repair_state(
+        state,
+        candidate_id="auto_113022_354_496",
+        source_state_sha256="sha256:" + "a" * 64,
+        delivered_statuses=runner.DELIVERED_TALK_STATUSES,
+    )
+
+    assert state["picks"][0]["status"] == "published"
+    assert projected["picks"][0]["status"] == "review_ready"
+    assert projected["picks"][0]["prepublication_status"] == "review_ready"
+    assert projected["single_published_repair_projection"]["source_target_status"] == (
+        "published"
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "match"),
+    [
+        ("prepublication_status", "candidate_rejected", "prepublication_status"),
+        ("rc", 1, "CURRENT\\+COMPLIANT"),
+        ("bundle_lifecycle", "SUPERSEDED", "CURRENT\\+COMPLIANT"),
+        ("bundle_compliance", "STALE_PIPELINE", "CURRENT\\+COMPLIANT"),
+    ],
+)
+def test_single_published_projection_rejects_unqualified_published_source(
+    field: str, value: object, match: str
+):
+    target = _record(
+        "auto_113022_354_496",
+        start_ms=354_630,
+        end_ms=496_420,
+        status="published",
+    )
+    target["prepublication_status"] = "review_ready"
+    target[field] = value
+    state = {
+        "run_mode": "DAILY",
+        "upload_allowed": False,
+        "picks": [target],
+        "pending_talk": [],
+    }
+
+    with pytest.raises(SystemExit, match=match):
+        planner._project_single_published_repair_state(
+            state,
+            candidate_id="auto_113022_354_496",
+            source_state_sha256="sha256:" + "a" * 64,
+            delivered_statuses=runner.DELIVERED_TALK_STATUSES,
+        )
+
+    assert state["picks"][0]["status"] == "published"
+
+
+def test_normal_recovery_path_rejects_published_qixi_without_isolation():
+    authorities, given_ends, given_authority = (
+        planner._load_recovery_publication_contract(
+            queued_candidate_ids={"auto_113022_354_496"},
+            publication_asset=QIXI_SAME_BV_ASSET,
+            expected_publication_authority_sha256=QIXI_SAME_BV_ASSET_SHA256,
+            repo_root=ROOT,
+        )
+    )
+    published = _record(
+        "auto_113022_354_496",
+        start_ms=354_630,
+        end_ms=496_420,
+        status="published",
+    )
+    published["prepublication_status"] = "review_ready"
+    state = {
+        "run_mode": "RECOVERY_REVIEW",
+        "upload_allowed": False,
+        "picks": [published],
+        "pending_talk": [],
+        "talk_backlog": [],
+        "talk_superseded_attempts": [],
+    }
+
+    with pytest.raises(
+        RecoveryReviewRerunError,
+        match="RECOVERY_RERUN_ALLOWLIST_MUST_EQUAL_ALL_CURRENT_DELIVERIES",
+    ):
+        plan_current_talk_recovery_rerun(
+            "2026-08-17",
+            state,
+            candidate_ids=["auto_113022_354_496"],
+            expected_source_state_sha256="sha256:" + "a" * 64,
+            expected_old_fingerprint=OLD_FINGERPRINT,
+            expected_new_fingerprint=NEW_FINGERPRINT,
+            given_end_ms_by_candidate=given_ends,
+            given_end_authority=given_authority,
+            recovery_publication_authorities_by_candidate=authorities,
+        )
 
 
 def test_single_published_projection_rejects_candidate_already_pending():
@@ -614,11 +768,43 @@ def test_v10_planner_main_missing_candidate_creates_no_target_state(
     ).exists()
 
 
+@pytest.mark.parametrize(
+    (
+        "date,candidate_id,start_ms,end_ms,status,publication_asset,publication_sha256"
+    ),
+    [
+        (
+            "2026-07-24",
+            "auto_193129_850_940",
+            850_020,
+            940_490,
+            "review_ready",
+            DAILY_850_ASSET,
+            DAILY_850_ASSET_SHA256,
+        ),
+        (
+            "2026-08-17",
+            "auto_113022_354_496",
+            354_630,
+            496_420,
+            "published",
+            QIXI_SAME_BV_ASSET,
+            QIXI_SAME_BV_ASSET_SHA256,
+        ),
+    ],
+    ids=["historical-delivered", "qixi-published"],
+)
 def test_single_published_projection_main_uses_external_recording_tree(
-    tmp_path, monkeypatch
+    tmp_path,
+    monkeypatch,
+    date: str,
+    candidate_id: str,
+    start_ms: int,
+    end_ms: int,
+    status: str,
+    publication_asset: Path,
+    publication_sha256: str,
 ):
-    date = "2026-07-24"
-    candidate_id = "auto_193129_850_940"
     source_base = tmp_path / "source"
     target_base = tmp_path / "target"
     recording_root = tmp_path / "canonical-recordings"
@@ -637,9 +823,12 @@ def test_single_published_projection_main_uses_external_recording_tree(
     )
     target = _record(
         candidate_id,
-        start_ms=850_020,
-        end_ms=940_490,
+        start_ms=start_ms,
+        end_ms=end_ms,
+        status=status,
     )
+    if status == "published":
+        target["prepublication_status"] = "review_ready"
     other = _record(
         "auto_183122_1209_1410",
         start_ms=1_209_000,
@@ -706,9 +895,9 @@ def test_single_published_projection_main_uses_external_recording_tree(
                 "--candidate-id",
                 candidate_id,
                 "--publication-authority-asset",
-                str(DAILY_850_ASSET),
+                str(publication_asset),
                 "--expected-publication-authority-sha256",
-                DAILY_850_ASSET_SHA256,
+                publication_sha256,
             ]
         )
         == 0
@@ -737,6 +926,9 @@ def test_single_published_projection_main_uses_external_recording_tree(
     assert target_state["single_published_repair_projection"][
         "excluded_pick_candidate_ids"
     ] == ["auto_183122_1209_1410"]
+    assert target_state["single_published_repair_projection"][
+        "source_target_status"
+    ] == status
     assert receipt["target_recordings_root"] == str(recording_root)
     assert receipt["external_cpa_env"] == {
         "schema_version": "recovery-external-cpa-env-binding.v1",
@@ -831,3 +1023,60 @@ def test_single_published_projection_rejects_multi_date_recording_root(
         match="target recordings root must expose only",
     ):
         planner.main(args)
+
+
+def test_single_published_main_rejects_multiple_candidates_before_projection(
+    tmp_path, monkeypatch
+):
+    args, target_base, _source_state = _planner_fixture(
+        tmp_path,
+        monkeypatch,
+        requested_candidate_ids=[
+            "auto_193450_3573_3665",
+            "auto_193450_672_945",
+        ],
+    )
+    args = _without_suppression_or_replacement_options(args)
+    args.extend(
+        [
+            "--project-single-published-repair",
+            "--target-recordings-root",
+            str(target_base / "recordings"),
+        ]
+    )
+
+    with pytest.raises(
+        SystemExit,
+        match="requires exactly one --candidate-id",
+    ):
+        planner.main(args)
+
+    assert not (target_base / "state" / f"{DATE}.json").exists()
+
+
+def test_single_published_main_rejects_wrong_authority_before_writing(
+    tmp_path, monkeypatch
+):
+    args, target_base, _source_state = _planner_fixture(
+        tmp_path,
+        monkeypatch,
+        requested_candidate_ids=["auto_193450_3573_3665"],
+    )
+    args = _without_suppression_or_replacement_options(args)
+    authority_hash_index = args.index("--expected-publication-authority-sha256") + 1
+    args[authority_hash_index] = "sha256:" + "0" * 64
+    args.extend(
+        [
+            "--project-single-published-repair",
+            "--target-recordings-root",
+            str(target_base / "recordings"),
+        ]
+    )
+
+    with pytest.raises(
+        SystemExit,
+        match="RECOVERY_PUBLICATION_REGISTRY_SHA_MISMATCH",
+    ):
+        planner.main(args)
+
+    assert not (target_base / "state" / f"{DATE}.json").exists()

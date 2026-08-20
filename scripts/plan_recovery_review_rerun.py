@@ -274,18 +274,36 @@ def _project_single_published_repair_state(
     if not isinstance(picks, list) or not isinstance(pending, list):
         raise SystemExit("single published repair source talk state is invalid")
 
-    matching = [
+    candidate_rows = [
         row
         for row in picks
         if isinstance(row, dict)
         and str(row.get("candidate_id") or row.get("cid") or "")
         == candidate_id
-        and row.get("status") in delivered_statuses
-        and row.get("bundle_lifecycle") == "CURRENT"
-        and row.get("bundle_compliance") == "COMPLIANT"
-        and row.get("rc") == 0
     ]
-    if len(matching) != 1:
+    if len(candidate_rows) != 1:
+        raise SystemExit(
+            "single published repair requires exactly one CURRENT+COMPLIANT "
+            f"delivery: {candidate_id}"
+        )
+    target = candidate_rows[0]
+    target_status = target.get("status")
+    if target_status == "published":
+        if target.get("prepublication_status") != "review_ready":
+            raise SystemExit(
+                "single published repair requires published source "
+                "prepublication_status=review_ready"
+            )
+    elif target_status not in delivered_statuses:
+        raise SystemExit(
+            "single published repair requires exactly one CURRENT+COMPLIANT "
+            f"delivery: {candidate_id}"
+        )
+    if (
+        target.get("bundle_lifecycle") != "CURRENT"
+        or target.get("bundle_compliance") != "COMPLIANT"
+        or target.get("rc") != 0
+    ):
         raise SystemExit(
             "single published repair requires exactly one CURRENT+COMPLIANT "
             f"delivery: {candidate_id}"
@@ -317,7 +335,14 @@ def _project_single_published_repair_state(
     projected["run_mode"] = "RECOVERY_REVIEW"
     projected["upload_allowed"] = False
     projected["status"] = "single_published_repair_projected"
-    projected["picks"] = [copy.deepcopy(matching[0])]
+    projected_target = copy.deepcopy(target)
+    # `published` is deliberately not a global delivered state.  Only this
+    # explicit no-upload isolation may turn an already-published source row
+    # back into a review-ready recovery input after proving its prepublication
+    # gate; ordinary reruns still see `published` as ineligible.
+    if target_status == "published":
+        projected_target["status"] = "review_ready"
+    projected["picks"] = [projected_target]
     projected["pending_talk"] = []
     projected["talk_backlog"] = []
     projected["talk_superseded_attempts"] = [
@@ -350,6 +375,7 @@ def _project_single_published_repair_state(
         "source_run_mode": state.get("run_mode"),
         "source_state_kind": source_state_kind,
         "source_talk_selection_contract_sha256": source_contract_sha256,
+        "source_target_status": target_status,
         "excluded_pick_candidate_ids": excluded_pick_ids,
         "excluded_pending_candidate_ids": pending_ids,
         "excluded_rows_disposition": "SOURCE_STATE_UNCHANGED_OUTSIDE_REPAIR_TARGET",

@@ -332,3 +332,28 @@ def test_publication_authority_rejects_wrong_registry_hash():
             registry_path=PUBLICATION_ASSET,
             expected_registry_sha256="sha256:" + "0" * 64,
         )
+
+
+def test_dedicated_daily_same_bv_registry_replays_only_qixi_public_receipt():
+    candidate_id = "auto_113022_354_496"
+    registry_path = ROOT / "assets/lidousha/daily_same_bv_publication_authority.v1.json"
+    authorities = build_recovery_publication_authorities(
+        candidate_ids={candidate_id},
+        registry_path=registry_path,
+        expected_registry_sha256=(
+            "sha256:88fd8a35607f9d2e46999bd5fcc7044e2c547e08edf5aa711c9e32965828f3b4"
+        ),
+        require_exact_candidate_set=True,
+    )
+
+    assert set(authorities) == {candidate_id}
+    authority = authorities[candidate_id]
+    assert authority["boundary_end_mode"] == "semantic_lower_bound"
+    assert authority["required_given_end_ms"] == 496_420
+    assert authority["source_public_verify_schema_version"] == (
+        "authorized-upload-public-verify.v2"
+    )
+    assert authority["source_public_verify_status"] == "VERIFIED_PUBLIC"
+    assert authority["source_public_verify_sha256"] == (
+        "sha256:df7fde9f84518c4411db564b4aa09458a68fb37f92bdaeda66e37b69be6c1c37"
+    )

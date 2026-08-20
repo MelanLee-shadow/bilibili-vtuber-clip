@@ -1,0 +1,20 @@
+{
+  "schema_version": "lidousha-recovery-publication-authority.v1",
+  "authority": "Ivan 2026-08-20: this one-entry authority permits the existing --project-single-published-repair isolation for the Qixi same-BV subtitle repair while preserving its independently verified public BV identity and title. required_given_end_ms=496420 is only the original daily state pick semantic_lower_bound endpoint, not an exact-source pin; operator release truth and diagnostic-lane separation remain governed by the existing 013 assets.",
+  "entries": [
+    {
+      "candidate_id": "auto_113022_354_496",
+      "title_mode": "verified_public_exact",
+      "observed_public_title": "【李豆沙】李豆沙公布七夕安排，中午甜甜甜晚上苦苦苦，一套PUA直播要让kmx集体分号！",
+      "required_given_end_ms": 496420,
+      "boundary_end_mode": "semantic_lower_bound",
+      "bvid": "BV1Ud8F6fECS",
+      "aid": 117126140527747,
+      "cid": 41087534673,
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-08-20-qixi-auto_113022_354_496/auto_113022_354_496.public_verify.json",
+      "source_public_verify_sha256": "sha256:df7fde9f84518c4411db564b4aa09458a68fb37f92bdaeda66e37b69be6c1c37",
+      "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+      "source_public_verify_status": "VERIFIED_PUBLIC"
+    }
+  ]
+}
