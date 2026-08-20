@@ -129,6 +129,49 @@ def _copy_delivery_file(source: Path, destination: Path) -> str:
     return "COPIED"
 
 
+def _preflight_correction_delivery(
+    *,
+    delivery: Path,
+    srt_path: Path,
+    record_path: Path,
+    recut_dir: Path,
+    candidate_id: str,
+) -> tuple[Path, Path, Path, Path]:
+    """Validate planned delivery aliases before the correction writes package state."""
+
+    speaker_srt = srt_path.with_suffix(".speaker-final.srt")
+    speaker_ass = srt_path.with_suffix(".speaker-final.ass")
+    speaker_manifest_path = srt_path.with_suffix(".speaker-final.json")
+    correction_manifest_path = recut_dir / f"{candidate_id}.human-text-correction.json"
+    _preflight_delivery_targets(
+        [
+            delivery,
+            delivery.with_suffix(".srt"),
+            delivery.with_suffix(".human-text-correction.json"),
+            delivery.with_suffix(".record.json"),
+            # Uniform-host removes stale speaker copies, so those endpoints
+            # must be proven safe even when it will not produce new ones.
+            delivery.with_suffix(".speaker.srt"),
+            delivery.with_suffix(".speaker.ass"),
+            delivery.with_suffix(".speaker.json"),
+        ]
+    )
+    _preflight_existing_delivery_copies(
+        [
+            (srt_path, delivery.with_suffix(".srt")),
+            (record_path, delivery.with_suffix(".record.json")),
+            (
+                correction_manifest_path,
+                delivery.with_suffix(".human-text-correction.json"),
+            ),
+            (speaker_srt, delivery.with_suffix(".speaker.srt")),
+            (speaker_ass, delivery.with_suffix(".speaker.ass")),
+            (speaker_manifest_path, delivery.with_suffix(".speaker.json")),
+        ]
+    )
+    return speaker_srt, speaker_ass, speaker_manifest_path, correction_manifest_path
+
+
 def _srt_blocks(text: str):
     return [b for b in text.replace("\r\n", "\n").strip().split("\n\n") if b.strip()]
 
@@ -334,35 +377,18 @@ def main(argv=None) -> int:
     speaker_mode = os.environ.get("AUTOSLICE_SPEAKER_MODE", "uniform_host")
     if speaker_mode not in ("uniform_host", "required", "auto"):
         speaker_mode = "uniform_host"
-    planned_delivery_targets = [
-        args.delivery,
-        args.delivery.with_suffix(".srt"),
-        args.delivery.with_suffix(".human-text-correction.json"),
-        args.delivery.with_suffix(".record.json"),
-        # Validate these even in uniform-host mode: that branch removes stale
-        # copies and must never unlink a symlink or special file.
-        args.delivery.with_suffix(".speaker.srt"),
-        args.delivery.with_suffix(".speaker.ass"),
-        args.delivery.with_suffix(".speaker.json"),
-    ]
-    speaker_srt = srt_path.with_suffix(".speaker-final.srt")
-    speaker_ass = srt_path.with_suffix(".speaker-final.ass")
-    speaker_manifest_path = srt_path.with_suffix(".speaker-final.json")
-    correction_manifest_path = recut_dir / f"{args.cid}.human-text-correction.json"
     try:
-        _preflight_delivery_targets(planned_delivery_targets)
-        _preflight_existing_delivery_copies(
-            [
-                (srt_path, args.delivery.with_suffix(".srt")),
-                (record_path, args.delivery.with_suffix(".record.json")),
-                (
-                    correction_manifest_path,
-                    args.delivery.with_suffix(".human-text-correction.json"),
-                ),
-                (speaker_srt, args.delivery.with_suffix(".speaker.srt")),
-                (speaker_ass, args.delivery.with_suffix(".speaker.ass")),
-                (speaker_manifest_path, args.delivery.with_suffix(".speaker.json")),
-            ]
+        (
+            speaker_srt,
+            speaker_ass,
+            speaker_manifest_path,
+            correction_manifest_path,
+        ) = _preflight_correction_delivery(
+            delivery=args.delivery,
+            srt_path=srt_path,
+            record_path=record_path,
+            recut_dir=recut_dir,
+            candidate_id=args.cid,
         )
     except DeliveryCopyError as exc:
         print(f"DELIVERY_PREFLIGHT_FAILED: {exc}", file=sys.stderr)
