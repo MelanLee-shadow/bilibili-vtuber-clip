@@ -1,0 +1,34 @@
+{
+    "schema_version": "qixi-delivery-record-ass-binding-recovery.v1",
+    "candidate_id": "auto_113022_354_496",
+    "package_root": "/opt/bilive/autoslice/out/2026-08-17/auto_113022_354_496/replacement_recuts",
+  "receipt_path": "/opt/bilive/autoslice/out/2026-08-17/auto_113022_354_496/replacement_recuts/auto_113022_354_496.record-ass-binding-recovery.v1.json",
+  "predecessor_v2_evidence": {"relative_path": "assets/lidousha/delivery_branding_recovery/auto_113022_354_496.v1.json", "authority_sha256": "sha256:5480a87a50bb24a32766263e207cccc7fef060fb658e90d41128e67faa7cb9e7", "successor_correction_manifest_sha256": "sha256:c74288f61034fd3ef3059208ac9002243c5166a76900a1c1ff22cf8b9f37411e", "successor_record_sha256": "sha256:7c74bd9cd034cacd3d93cdd40a30f7feb23b046da437cb75361d94bd9dc60fdf", "successor_burned_video_sha256": "sha256:0d21a8fe9aa4e9d6345e624415012bfcaed1486b5f48b85c6b760ed0aa45aae8"},
+  "primary_record": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_113022_354_496/replacement_recuts/auto_113022_354_496.record.json", "sha256": "sha256:6cb7f319e86f9cfd54feaef6e5ad8dc70cc811b041232478ade61769816415e4", "bytes": 158579},
+  "mirror_record": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_113022_354_496/replacement_recuts/auto_113022_354_496.recut.burned-final-sapphire72.record.json", "sha256": "sha256:6cb7f319e86f9cfd54feaef6e5ad8dc70cc811b041232478ade61769816415e4", "bytes": 158579},
+  "artifacts": {
+    "subtitle": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_113022_354_496/replacement_recuts/auto_113022_354_496.recut.srt", "sha256": "sha256:0b712412cb2dcccb0c61dcadd0764cd37487d4c2ee4453e69824e029309052d9", "bytes": 3406},
+    "main": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_113022_354_496/replacement_recuts/auto_113022_354_496.recut.mp4", "sha256": "sha256:82a1e28278b2f630e97b2541e0d1ee8b0596d9f4090a1d242967cb603c7b7683", "bytes": 77312949},
+    "burned": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_113022_354_496/replacement_recuts/auto_113022_354_496.recut.burned-final-sapphire72.mp4", "sha256": "sha256:8539f49ecba77d12c69b51e3177f12e67d9ae39debebc762a997757e54cc488a", "bytes": 78452463},
+    "ass": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_113022_354_496/replacement_recuts/auto_113022_354_496.recut.final-sapphire72.ass", "sha256": "sha256:7755dbca6d9348bf1a50b7f2ae0b009e4c84ccd8f697db1ace5e33be605db4a2", "bytes": 4838},
+    "correction": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_113022_354_496/replacement_recuts/auto_113022_354_496.human-text-correction.json", "sha256": "sha256:90acd9e60617d6c2872b37b2f9329f022644270c3ada6353595f0bf8d937c90c", "bytes": 3558},
+    "cover": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_113022_354_496/replacement_recuts/covers/auto_113022_354_496.screenshot-title.cover.png", "sha256": "sha256:8cacaafc502a31474f93e6472c945f8527dee23b5fdb39df27d672ee08f4d4e0", "bytes": 1349090},
+    "publish": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_113022_354_496/replacement_recuts/auto_113022_354_496.recut.publish.json", "sha256": "sha256:ed1f3b8bba7323f8157d47fdd6890766dbc79b95992a86fe7ffb8b105efcc35e", "bytes": 48799}
+  },
+  "record_invariants": {
+    "subtitle_ass_path": null,
+    "subtitle_style": "lidousha-final-sapphire72",
+    "speaker_mode": "uniform_host",
+    "human_text_correction_manifest_path": "/opt/bilive/autoslice/out/2026-08-17/auto_113022_354_496/replacement_recuts/auto_113022_354_496.human-text-correction.json",
+    "human_text_correction_manifest_sha256": "sha256:90acd9e60617d6c2872b37b2f9329f022644270c3ada6353595f0bf8d937c90c",
+    "artifact_hashes": {"ai_background_sha256": "sha256:5e875c2b49fed7c248f40fb7431ff6243cd56d3d27b1b77d73f6fa1882232d99", "ass_sha256": "sha256:4888ef233595489e11d175dda25dc310d244a76458334993ad579e3f3e558842", "burned_video_sha256": "sha256:8539f49ecba77d12c69b51e3177f12e67d9ae39debebc762a997757e54cc488a", "chat_authority_audit_sha256": "sha256:aa277c52dc39c6d3f842b5cc5aac473d5548a15207582103e06abaef176b3eaa", "clip_context_file_sha256": "sha256:4b17efff1528a13788175539e83d6fdcb9c75f9288826427db2b190664953187", "cover_reference_sha256": "sha256:901e14fbe5c77ac513d9a3106bedeec88c5c57656119be64b19d1a3458c9fa18", "cover_sha256": "sha256:8cacaafc502a31474f93e6472c945f8527dee23b5fdb39df27d672ee08f4d4e0", "publish_draft_sha256": "sha256:ed1f3b8bba7323f8157d47fdd6890766dbc79b95992a86fe7ffb8b105efcc35e", "redelivery_baseline_audit_sha256": "sha256:9e019fedd1e432bb971ab7d9bab37c50dfb609dbc2b09903f98c3e4586e16955", "subtitle_sha256": "sha256:0b712412cb2dcccb0c61dcadd0764cd37487d4c2ee4453e69824e029309052d9", "video_sha256": "sha256:82a1e28278b2f630e97b2541e0d1ee8b0596d9f4090a1d242967cb603c7b7683"},
+    "burned_preview_sha256": "sha256:468169470cf362b9569cf7618ddacf13782822d74cff6c67d2b0e9c93d0a0038",
+    "boundary_audit_sha256": "sha256:63c09c935e66dbeaaf2b0577dcd18be2dd0a8e6638f00fd21fb7cffd85080739",
+    "publish_staging_sha256": "sha256:2e46f86d00e3b633313d7e9ff57764a854b6eef803d6fbfbc32af3639348a1af",
+    "story_contract_sha256": "sha256:74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+    "title": "【李豆沙】李豆沙公布七夕安排，中午甜甜甜晚上苦苦苦，一套PUA直播要让kmx集体分号！",
+    "cover_path": "/opt/bilive/autoslice/out/2026-08-17/auto_113022_354_496/replacement_recuts/covers/auto_113022_354_496.screenshot-title.cover.png",
+    "cover_status": "AI_COVER_READY"
+  },
+  "correction_invariants": {"schema_version": "human-subtitle-correction.v2", "candidate_id": "auto_113022_354_496", "after_srt_sha256": "sha256:0b712412cb2dcccb0c61dcadd0764cd37487d4c2ee4453e69824e029309052d9", "burned_media_sha256": "sha256:8539f49ecba77d12c69b51e3177f12e67d9ae39debebc762a997757e54cc488a", "upload_enabled": false, "branding_intro": {"status": "PREPENDED", "intro_id": "huozi-lidousha-kmx-baobao-guankou-z2-v1", "intro_media_sha256": "sha256:d37f4c358cc5d2515bca5a6fbc54bb5a10d7d2b8a36008777842def3d502ac29", "intro_offset_ms": 6183}, "authority_sha256": "sha256:5480a87a50bb24a32766263e207cccc7fef060fb658e90d41128e67faa7cb9e7", "authority_repository_seal": {"mode": "DEPLOYED_MANIFEST", "deployed_commit": "28f915f39e43b2e8bea4fb7077f1456137e4d016", "relative_path": "assets/lidousha/delivery_branding_recovery/auto_113022_354_496.v1.json", "sha256": "sha256:5480a87a50bb24a32766263e207cccc7fef060fb658e90d41128e67faa7cb9e7"}}
+}
