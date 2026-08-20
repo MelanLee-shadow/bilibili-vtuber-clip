@@ -243,7 +243,7 @@
   status/state 或把任意 finalization error 归为 bootstrap。rollback 只有在 transaction-owned
   marker 证明新 daemon 已可能写入 receipt rows 时，才会在启动旧 adapter 前原子还原与 receipt
   byte/projection 绑定的 state/status preimage；普通 deploy rollback 绝不回写这两份运行态文件。
-  receipt 建立后旧 daemon 仍会更新 `last_room_status_epoch`、`generated_at_epoch`，且失败诊断中
+  receipt 建立后旧 daemon 仍会更新 `last_room_status_epoch`、`generated_at`、`generated_at_epoch`，且失败诊断中
   仅 ffmpeg 的 `0xHEX` 进程地址是已知瞬态值；激活前因此只允许这三类逐字面投影差异，状态的
   其他任意字段、state 的其他任意 key、两条 exact source、error 文本/计数与 typed rows 都必须仍与
   preimage/receipt 相等。不得以正则或“任意 finalization error”放宽该门。若外部安装在 marker

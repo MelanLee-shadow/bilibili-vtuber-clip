@@ -146,6 +146,7 @@ def state_material(value):
 def status_projection(value):
     assert isinstance(value, dict)
     projected = json.loads(json.dumps(value))
+    projected.pop("generated_at", None)
     projected.pop("generated_at_epoch", None)
     errors = projected.get("finalize_errors")
     if isinstance(errors, list):
@@ -393,6 +394,7 @@ status_raw = open(status_path, "rb").read()
 status = json.loads(status_raw)
 def status_projection(value):
     projected = json.loads(json.dumps(value))
+    projected.pop("generated_at", None)
     projected.pop("generated_at_epoch", None)
     errors = projected.get("finalize_errors")
     if isinstance(errors, list):
@@ -713,6 +715,7 @@ def state_material(value):
 def status_projection(value):
     assert isinstance(value, dict)
     projected = json.loads(json.dumps(value))
+    projected.pop("generated_at", None)
     projected.pop("generated_at_epoch", None)
     errors = projected.get("finalize_errors")
     if isinstance(errors, list):
@@ -1316,6 +1319,7 @@ status_raw = open(status_path, "rb").read()
 status = json.loads(status_raw)
 def status_projection(value):
     projected = json.loads(json.dumps(value))
+    projected.pop("generated_at", None)
     projected.pop("generated_at_epoch", None)
     errors = projected.get("finalize_errors")
     if isinstance(errors, list):
@@ -1636,6 +1640,7 @@ def state_material(payload):
 def status_projection(payload):
     assert isinstance(payload, dict)
     projected = json.loads(json.dumps(payload))
+    projected.pop("generated_at", None)
     projected.pop("generated_at_epoch", None)
     errors = projected.get("finalize_errors")
     if isinstance(errors, list):
@@ -1746,6 +1751,7 @@ def state_material(value):
 def status_projection(value):
     assert isinstance(value, dict)
     projected = json.loads(json.dumps(value))
+    projected.pop("generated_at", None)
     projected.pop("generated_at_epoch", None)
     errors = projected.get("finalize_errors")
     if isinstance(errors, list):

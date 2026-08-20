@@ -2304,6 +2304,7 @@ def prepare_connection_stub_bootstrap(
     # heartbeat/process-local fields; this is deliberately not a generic
     # finalization-error waiver.
     status_preimage = json.loads(json.dumps(status))
+    status_preimage.pop("generated_at", None)
     status_preimage.pop("generated_at_epoch", None)
     errors = status_preimage.get("finalize_errors")
     if isinstance(errors, list):

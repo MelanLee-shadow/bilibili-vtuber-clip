@@ -73,6 +73,7 @@ def _bootstrap_state_material(payload: dict[str, object]) -> dict[str, object]:
 
 def _bootstrap_status_projection(payload: dict[str, object]) -> dict[str, object]:
     projected = json.loads(json.dumps(payload))
+    projected.pop("generated_at", None)
     projected.pop("generated_at_epoch", None)
     errors = projected.get("finalize_errors")
     if isinstance(errors, list):
@@ -921,7 +922,9 @@ def test_bootstrap_marker_activation_accepts_only_known_heartbeats(tmp_path):
         "source_dispositions": {},
     }
     pre_status: dict[str, object] = {
+        "generated_at": "2026-08-20T19:08:54+00:00",
         "generated_at_epoch": 1.0,
+        "backend": "bililive-recorder",
         "service_reachable": True,
         "streaming": False,
         "recording": False,
@@ -978,7 +981,11 @@ def test_bootstrap_marker_activation_accepts_only_known_heartbeats(tmp_path):
         )
 
     heartbeat_state = dict(pre_state, last_room_status_epoch=2.0)
-    heartbeat_status = dict(pre_status, generated_at_epoch=2.0)
+    heartbeat_status = dict(
+        pre_status,
+        generated_at="2026-08-20T19:16:54+00:00",
+        generated_at_epoch=2.0,
+    )
     heartbeat_status["finalize_errors"] = [
         dict(entry, error="ffmpeg failed at 0xfeed42")
         for entry in pre_status["finalize_errors"]  # type: ignore[index]
@@ -1018,6 +1025,11 @@ def test_bootstrap_marker_activation_accepts_only_known_heartbeats(tmp_path):
                 ],
             ),
         ),
+        (
+            "top-level-drift",
+            heartbeat_state,
+            dict(heartbeat_status, backend="other-backend"),
+        ),
     ):
         marker.unlink(missing_ok=True)
         result = activate_with(state, status)
@@ -1038,7 +1050,7 @@ def test_exact_pre_marker_guard_recovery_is_heartbeat_tolerant_and_fail_closed(t
     verifier_end = rollback.index('\nif [ -f "$backup/external/crontab.present" ]', verifier_start)
     outer_verifier = rollback[verifier_start:verifier_end]
 
-    def build(root: Path, *, semantic_drift: bool):
+    def build(root: Path, *, semantic_drift: bool, top_level_drift: bool = False):
         base = root / "autoslice"
         recording = root / "recording"
         uploader = root / "uploader"
@@ -1085,7 +1097,9 @@ def test_exact_pre_marker_guard_recovery_is_heartbeat_tolerant_and_fail_closed(t
             "source_dispositions": {},
         }
         pre_status: dict[str, object] = {
+            "generated_at": "2026-08-20T19:08:54+00:00",
             "generated_at_epoch": 1.0,
+            "backend": "bililive-recorder",
             "service_reachable": True,
             "streaming": False,
             "recording": False,
@@ -1133,13 +1147,19 @@ def test_exact_pre_marker_guard_recovery_is_heartbeat_tolerant_and_fail_closed(t
         }
         (receipts / f"{commit}.json").write_text(json.dumps(receipt), encoding="utf-8")
         live_state = dict(pre_state, last_room_status_epoch=2.0)
-        live_status = dict(pre_status, generated_at_epoch=2.0)
+        live_status = dict(
+            pre_status,
+            generated_at="2026-08-20T19:16:54+00:00",
+            generated_at_epoch=2.0,
+        )
         live_status["finalize_errors"] = [
             dict(entry, error="ffmpeg failed at 0xfeed42")
             for entry in pre_status["finalize_errors"]  # type: ignore[index]
         ]
         if semantic_drift:
             live_status["error"] = "1 closed recording(s) failed finalization"
+        if top_level_drift:
+            live_status["backend"] = "other-backend"
         (recording / "adapter-state.json").write_text(json.dumps(live_state), encoding="utf-8")
         (recording / "status.json").write_text(json.dumps(live_status), encoding="utf-8")
         verifier = subprocess.run(
@@ -1185,6 +1205,13 @@ def test_exact_pre_marker_guard_recovery_is_heartbeat_tolerant_and_fail_closed(t
     assert rejected.returncode != 0
     assert guard.is_dir()
     assert (guard / "owner").read_text(encoding="utf-8").strip() == owner
+
+    rejected, guard, outer = build(
+        tmp_path / "top-level-drift", semantic_drift=False, top_level_drift=True
+    )
+    assert outer.returncode != 0
+    assert rejected.returncode != 0
+    assert guard.is_dir()
 
 
 def test_deploy_authority_manifest_is_canonical_and_exact_byte_bound(tmp_path):
