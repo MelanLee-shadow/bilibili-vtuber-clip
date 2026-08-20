@@ -126,7 +126,12 @@ def _inputs(tmp_path: Path) -> tuple[dict, dict, Path, Path]:
                 "candidate_id": CID, "upload_enabled": False,
                 "after_srt_sha256": hashlib.sha256(subtitle).hexdigest(),
                 "burned_media_sha256": hashlib.sha256(b"z2-video").hexdigest(),
-                "delivery_branding_authority": {"branding_intro": {"intro_id": "z2"}},
+                "delivery_branding_authority": {"branding_intro": {
+                    "intro_id": "z2",
+                    "intro_media_sha256": "sha256:" + "f" * 64,
+                    "intro_offset_ms": 6183,
+                    "status": "VERIFIED",
+                }},
             }).encode(),
         ),
         "cover": _write(release, "cover.png", b"cover"),
@@ -169,7 +174,23 @@ def _inputs(tmp_path: Path) -> tuple[dict, dict, Path, Path]:
     }
     source_burned = {
         "ass_path": str(release / "z2.ass"),
-        "branding_intro": {"intro_id": "z2"},
+        # Source carries its complete provenance.  Correction carries only a
+        # strict summary, including a normalized spelling of this bare SHA.
+        "branding_intro": {
+            "fallback_attempts": [],
+            "intro_id": "z2",
+            "intro_media_path": str(release / "intro.mp4"),
+            "intro_media_sha256": "f" * 64,
+            "intro_offset_ms": 6183,
+            "main_duration_ms_before": 1000,
+            "main_sha256_before": "e" * 64,
+            "method": "fixture",
+            "policy_manifest_path": str(release / "policy.json"),
+            "policy_manifest_sha256": "d" * 64,
+            "rotation": 0,
+            "status": "VERIFIED",
+            "verification": {"status": "PASS"},
+        },
         "burned_sha256": _sha(release / "z2.mp4"),
         "command": ["ffmpeg", str(release / "z2.mp4")],
         "path": str(release / "z2.mp4"),
@@ -314,7 +335,11 @@ def test_project_supersedes_sealed_r2_z1_burned_preview_before_locator_projectio
         evidence_workspace_root=str(_evidence.parent),
     )
     assert record["burned_preview"]["burned_sha256"] == artifacts["video"][1]
-    assert record["burned_preview"]["branding_intro"] == {"intro_id": "z2"}
+    assert record["burned_preview"]["branding_intro"]["intro_id"] == "z2"
+    assert record["burned_preview"]["branding_intro"]["intro_media_sha256"] == "f" * 64
+    assert record["burned_preview"]["branding_intro"]["intro_media_path"] == str(
+        _release / "intro.mp4"
+    )
     assert "/obsolete-r2-z1-stage" not in json.dumps(record, ensure_ascii=False)
     assert record["subtitle_path"].startswith(str(target))
     assert publish["video_path"].startswith(str(target))
@@ -337,6 +362,87 @@ def test_r2_burned_preview_supersession_rejects_mismatched_r2_hash() -> None:
             record=record,
             publish=publish,
             authority=authority,
+        )
+
+
+def _source_burned_branding_summary_inputs() -> tuple[dict, dict]:
+    source_burned = {
+        "branding_intro": {
+            "fallback_attempts": [],
+            "intro_id": "z2",
+            "intro_media_path": "/sealed/source/intro.mp4",
+            "intro_media_sha256": "a" * 64,
+            "intro_offset_ms": 6183,
+            "status": "VERIFIED",
+            "verification": {"status": "PASS"},
+        }
+    }
+    correction = {
+        "intro_id": "z2",
+        "intro_media_sha256": "sha256:" + "a" * 64,
+        "intro_offset_ms": 6183,
+        "status": "VERIFIED",
+    }
+    return source_burned, correction
+
+
+def test_source_burned_branding_summary_accepts_full_source_and_normalized_sha() -> None:
+    source_burned, correction = _source_burned_branding_summary_inputs()
+    finalization._validate_source_burned_branding_summary(
+        source_burned=source_burned,
+        correction_branding=correction,
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("intro_id", "another-intro"),
+        ("intro_media_sha256", "b" * 64),
+        ("intro_offset_ms", 6184),
+        ("status", "FAILED"),
+    ],
+)
+def test_source_burned_branding_summary_rejects_each_value_mismatch(
+    field: str, value: object
+) -> None:
+    source_burned, correction = _source_burned_branding_summary_inputs()
+    correction[field] = value
+    with pytest.raises(finalization.QixiCorrectedPackageError, match="branding summary differs"):
+        finalization._validate_source_burned_branding_summary(
+            source_burned=source_burned,
+            correction_branding=correction,
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("intro_id", 6183),
+        ("intro_media_sha256", 6183),
+        ("intro_offset_ms", True),
+        ("status", 6183),
+    ],
+)
+def test_source_burned_branding_summary_rejects_correction_value_types(
+    field: str, value: object
+) -> None:
+    source_burned, correction = _source_burned_branding_summary_inputs()
+    correction[field] = value
+    with pytest.raises(finalization.QixiCorrectedPackageError):
+        finalization._validate_source_burned_branding_summary(
+            source_burned=source_burned,
+            correction_branding=correction,
+        )
+
+
+def test_source_burned_branding_summary_rejects_extra_correction_key() -> None:
+    source_burned, correction = _source_burned_branding_summary_inputs()
+    correction["unapproved"] = "extra"
+    with pytest.raises(finalization.QixiCorrectedPackageError, match="summary schema differs"):
+        finalization._validate_source_burned_branding_summary(
+            source_burned=source_burned,
+            correction_branding=correction,
         )
 
 

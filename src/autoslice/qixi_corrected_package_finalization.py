@@ -46,6 +46,9 @@ RECEIPT_FILENAME = "qixi-corrected-package-finalization.json"
 AUTHORITY_RELATIVE_PATH = Path("assets/lidousha/qixi_corrected_package_finalization_authority.v1.json")
 _SHA_LEN = 64
 _NON_MATERIALIZED = frozenset({"source_record", "source_publish"})
+_BRANDING_SUMMARY_KEYS = frozenset(
+    {"intro_id", "intro_media_sha256", "intro_offset_ms", "status"}
+)
 
 
 class QixiCorrectedPackageError(ValueError):
@@ -819,6 +822,54 @@ def _without_superseded_r2_burned_preview(
     return projected
 
 
+def _validate_source_burned_branding_summary(
+    *,
+    source_burned: Mapping[str, Any],
+    correction_branding: object,
+) -> None:
+    """Match correction's strict four-field summary to source's full proof."""
+
+    source_branding = source_burned.get("branding_intro")
+    if not isinstance(source_branding, Mapping) or not isinstance(correction_branding, Mapping):
+        raise QixiCorrectedPackageError("source Z2 burned branding summary is missing")
+    if set(correction_branding) != _BRANDING_SUMMARY_KEYS or not _BRANDING_SUMMARY_KEYS.issubset(
+        source_branding
+    ):
+        raise QixiCorrectedPackageError("source Z2 burned branding summary schema differs")
+    for key in ("intro_id", "status"):
+        source_value = source_branding.get(key)
+        correction_value = correction_branding.get(key)
+        if (
+            not isinstance(source_value, str)
+            or not isinstance(correction_value, str)
+            or source_value != correction_value
+        ):
+            raise QixiCorrectedPackageError(
+                f"source Z2 burned branding summary differs: {key}"
+            )
+    source_offset = source_branding.get("intro_offset_ms")
+    correction_offset = correction_branding.get("intro_offset_ms")
+    if (
+        isinstance(source_offset, bool)
+        or not isinstance(source_offset, int)
+        or isinstance(correction_offset, bool)
+        or not isinstance(correction_offset, int)
+        or source_offset != correction_offset
+    ):
+        raise QixiCorrectedPackageError(
+            "source Z2 burned branding summary differs: intro_offset_ms"
+        )
+    if _normal_sha(
+        source_branding.get("intro_media_sha256"), label="source Z2 branding intro media"
+    ) != _normal_sha(
+        correction_branding.get("intro_media_sha256"),
+        label="correction branding intro media",
+    ):
+        raise QixiCorrectedPackageError(
+            "source Z2 burned branding summary differs: intro_media_sha256"
+        )
+
+
 def _project_documents(
     *,
     authority: Mapping[str, Any],
@@ -982,11 +1033,13 @@ def _project_documents(
     correction_branding = correction.get("delivery_branding_authority")
     if (
         not isinstance(correction_branding, Mapping)
-        or not isinstance(correction_branding.get("branding_intro"), Mapping)
-        or source_burned.get("branding_intro") != correction_branding["branding_intro"]
         or _canonical_sha(source_burned) != drift["source_burned_preview_sha256"]
     ):
         raise QixiCorrectedPackageError("source Z2 burned branding differs from correction receipt")
+    _validate_source_burned_branding_summary(
+        source_burned=source_burned,
+        correction_branding=correction_branding.get("branding_intro"),
+    )
     try:
         burned_carrier = project_uniform_host_locators(
             {"burned_preview": dict(source_burned)},
