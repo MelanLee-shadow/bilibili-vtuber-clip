@@ -86,6 +86,10 @@ from src.autoslice.story_contract import (  # noqa: E402
 from src.autoslice.publication_title_exception import (  # noqa: E402
     candidate_title_policy_violations,
 )
+from src.autoslice.qixi_corrected_package_finalization import (  # noqa: E402
+    QixiCorrectedPackageError,
+    validate_manifest_bound_applied_receipt,
+)
 
 
 DEFAULT_MAX_VISUAL_LINES = 2
@@ -944,6 +948,67 @@ def _add_issue(
     issues.append(issue)
 
 
+def _audit_manual_corrected_same_bv_receipt(
+    *,
+    root: Path,
+    item: Mapping[str, Any],
+    issues: list[dict[str, Any]],
+    stem: str,
+    qixi_repo_root: Path | None,
+) -> None:
+    try:
+        if not validate_manifest_bound_applied_receipt(
+            item,
+            candidate_id=str(item.get("candidate_id") or ""),
+            package_root=root,
+            repo_root=qixi_repo_root,
+        ):
+            return
+    except (OSError, UnicodeError, ValueError, QixiCorrectedPackageError) as exc:
+        _add_issue(
+            issues,
+            "MANUAL_CORRECTED_SAME_BV_RECEIPT_INVALID",
+            stem=stem,
+            detail=str(exc),
+        )
+
+
+def _audit_item_recovery_publication_and_qixi_receipt(
+    *,
+    root: Path,
+    item: Mapping[str, Any],
+    issues: list[dict[str, Any]],
+    stem: str,
+    item_candidate_id: str, item_title: str,
+    publish_path: Path | None, record_path: Path | None,
+    record: Mapping[str, Any] | None, publish_staging: Mapping[str, Any] | None,
+    recovery_publication_authorities: Mapping[str, Any], publication_contract_required: bool,
+    qixi_repo_root: Path | None,
+) -> None:
+    for authority_issue in audit_recovery_publication_surfaces(
+        item=item,
+        item_candidate_id=item_candidate_id,
+        item_title=item_title,
+        publish_path=publish_path,
+        record_path=record_path,
+        record=record,
+        publish_staging=publish_staging,
+        expected_authority=recovery_publication_authorities.get(item_candidate_id),
+        required=publication_contract_required,
+    ):
+        _add_issue(
+            issues,
+            authority_issue.code,
+            stem=stem,
+            path=authority_issue.path,
+            detail=authority_issue.detail,
+        )
+    _audit_manual_corrected_same_bv_receipt(
+        root=root, item=item, issues=issues, stem=stem,
+        qixi_repo_root=qixi_repo_root,
+    )
+
+
 def _item_title_policy_codes(
     *,
     title: str,
@@ -1610,7 +1675,9 @@ def _prepare_package_audit(
     )
 
 
-def audit_package(root: str | Path) -> dict[str, Any]:
+def audit_package(
+    root: str | Path, *, qixi_repo_root: Path | None = None
+) -> dict[str, Any]:
     root = Path(root)
     manifest_path = root / "review_manifest.json"
     manifest = _load_json(manifest_path)
@@ -1837,24 +1904,21 @@ def audit_package(root: str | Path) -> dict[str, Any]:
             else ""
         )
         item_candidate_id = str(item.get("candidate_id") or "")
-        for authority_issue in audit_recovery_publication_surfaces(
+        _audit_item_recovery_publication_and_qixi_receipt(
+            root=root,
             item=item,
+            issues=issues,
+            stem=stem,
             item_candidate_id=item_candidate_id,
             item_title=item_title,
             publish_path=publish_path,
             record_path=record_path,
             record=record,
             publish_staging=publish_staging,
-            expected_authority=recovery_publication_authorities.get(item_candidate_id),
-            required=publication_contract_required,
-        ):
-            _add_issue(
-                issues,
-                authority_issue.code,
-                stem=stem,
-                path=authority_issue.path,
-                detail=authority_issue.detail,
-            )
+            recovery_publication_authorities=recovery_publication_authorities,
+            publication_contract_required=publication_contract_required,
+            qixi_repo_root=qixi_repo_root,
+        )
         if item_candidate_id and story_candidate_id and item_candidate_id != story_candidate_id:
             _add_issue(
                 issues,

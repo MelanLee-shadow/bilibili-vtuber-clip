@@ -660,6 +660,69 @@ def _fixture(
     return manifest, receipt, attestation
 
 
+def test_final_human_replays_typed_manual_same_bv_receipt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, receipt, attestation = _fixture(tmp_path)
+    item = manifest["items"][0]
+    candidate_id = item["candidate_id"]
+    inner = {
+        "schema_version": "manual-corrected-same-bv.v1",
+        "candidate_id": candidate_id,
+        "recovery_publication_authority": item["recovery_publication_authority"],
+        "approved_burned_video_sha256": "sha256:" + "1" * 64,
+        "approved_subtitle_sha256": "sha256:" + "2" * 64,
+        "approved_cover_sha256": "sha256:" + "3" * 64,
+    }
+    outer = {"manual_corrected_same_bv": inner}
+    receipt_path = tmp_path / "qixi-corrected-package-finalization.json"
+    _write_json(receipt_path, outer)
+    item.update(
+        {
+            "manual_corrected_same_bv": inner,
+            "manual_corrected_same_bv_receipt": receipt_path.name,
+            "manual_corrected_same_bv_receipt_sha256": _sha256(receipt_path),
+        }
+    )
+    review_path = tmp_path / "review_manifest.json"
+    evidence_path = tmp_path / "verification" / "final-human-review-evidence.v2.json"
+    _write_json(review_path, manifest)
+    receipt["package_evidence"]["review_manifest"]["sha256"] = _sha256(review_path)
+    attestation["review_manifest"].update(
+        {"sha256": _raw_sha256(review_path), "bytes": review_path.stat().st_size}
+    )
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    evidence["bindings"]["review_manifest"]["sha256"] = _sha256(review_path)
+    _write_json(evidence_path, evidence)
+    receipt["package_evidence"]["review_evidence"].update(
+        {"sha256": _sha256(evidence_path), "bytes": evidence_path.stat().st_size}
+    )
+
+    def replay(item, *, candidate_id, package_root, repo_root=None):
+        if "manual_corrected_same_bv" not in item:
+            return False
+        assert package_root == tmp_path
+        assert candidate_id == item["candidate_id"]
+        assert item["manual_corrected_same_bv"] == inner
+        if json.loads(
+            (package_root / item["manual_corrected_same_bv_receipt"]).read_text(
+                encoding="utf-8"
+            )
+        ) != outer:
+            raise fhr.QixiCorrectedPackageError("fixture receipt drift")
+        return True
+
+    monkeypatch.setattr(fhr, "validate_manifest_bound_applied_receipt", replay)
+    validate_final_human_review(receipt, tmp_path, manifest, attestation)
+
+    receipt_path.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(
+        FinalHumanReviewError,
+        match="FINAL_HUMAN_REVIEW_MANUAL_CORRECTED_RECEIPT_INVALID",
+    ):
+        validate_final_human_review(receipt, tmp_path, manifest, attestation)
+
+
 def _assert_reason(
     root: Path,
     receipt: object,

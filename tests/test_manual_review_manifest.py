@@ -6,11 +6,14 @@ from pathlib import Path
 
 import pytest
 
+import scripts.build_manual_review_manifest as manual_review_manifest
+
 from scripts.build_manual_review_manifest import DailyManifestError, build_manual
 from src.autoslice.addressee_attribution import rebuild_speaker_evidence
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.speaker_common import SPEAKER_FINALIZATION_SCHEMA
 from src.autoslice.source_fact_review import review_and_repair_source_facts
+from src.autoslice.recovery_title_authority import build_recovery_publication_authorities
 
 TITLE = "【李豆沙】手动包审计闭环用例标题够长了"
 HOOK = "小李当场语塞三秒，弹幕全体起立。"
@@ -23,6 +26,7 @@ def _sha(path: Path) -> str:
 
 def _receipt(
     *,
+    title: str = TITLE,
     speaker_evidence: dict[str, object] | None = None,
     speaker_transcript: str | None = None,
 ) -> dict:
@@ -32,7 +36,7 @@ def _receipt(
                 "schema_version": "lidousha-source-fact-review.v1",
                 "status": "KEEP",
                 "final_selection_hook": HOOK,
-                "final_title": TITLE,
+                "final_title": title,
                 "supported_by": ["final_transcript"],
                 "changed_surfaces": [],
                 # F12：判项必填；无说话人转写 -> UNVERIFIABLE 车道，留空数组。
@@ -48,7 +52,7 @@ def _receipt(
 
     review = review_and_repair_source_facts(
         selection_hook=HOOK,
-        title=TITLE,
+        title=title,
         final_transcript=TRANSCRIPT,
         clip_context_prompt="",
         llm_call=cpa,
@@ -59,7 +63,13 @@ def _receipt(
     return review
 
 
-def _package(tmp_path: Path, *, speaker_finalized: bool = False) -> Path:
+def _package(
+    tmp_path: Path,
+    *,
+    speaker_finalized: bool = False,
+    candidate_id: str = "manual_cand_9",
+    title: str = TITLE,
+) -> Path:
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     stem = "手动闭环用例"
@@ -156,6 +166,7 @@ def _package(tmp_path: Path, *, speaker_finalized: bool = False) -> Path:
             "speaker_ass_sha256": None,
         }
     receipt = _receipt(
+        title=title,
         speaker_evidence=speaker_evidence,
         speaker_transcript=speaker_transcript,
     )
@@ -193,11 +204,11 @@ def _package(tmp_path: Path, *, speaker_finalized: bool = False) -> Path:
     record_doc = {
         "schema_version": "delivery-record.v1",
         "classification": "talk",
-        "candidate_id": "manual_cand_9",
+        "candidate_id": candidate_id,
         **speaker_record_fields,
         "story_contract": story_contract,
         "publish_staging": {
-            "title": TITLE,
+            "title": title,
             "upload_enabled": False,
             "source_fact_review": receipt,
         },
@@ -213,8 +224,8 @@ def _package(tmp_path: Path, *, speaker_finalized: bool = False) -> Path:
     }
     publish_doc = {
         "schema_version": "shadow-publish-draft.v1",
-        "candidate_id": "manual_cand_9",
-        "title": TITLE,
+        "candidate_id": candidate_id,
+        "title": title,
         "upload_enabled": False,
         "cover_status": "AI_COVER_READY",
         "cover_generation": cover_generation,
@@ -410,3 +421,140 @@ def test_cover_bytes_must_match_generation_hash(tmp_path: Path) -> None:
     cover.write_bytes(b"tampered-cover")
     with pytest.raises(DailyManifestError, match="final_cover_sha256"):
         build_manual(pkg, operator="op", note="x")
+
+
+def test_manual_manifest_refuses_partial_same_bv_authority_surface(
+    tmp_path: Path,
+) -> None:
+    pkg = _package(tmp_path)
+    record_path = next(pkg.glob("*.record.json"))
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    # A malformed object is enough here: the builder must reject a partial
+    # five-surface same-BV contract before it can reach unrelated source-fact
+    # checks on this deliberately generic manual fixture.
+    record["recovery_publication_authority"] = {"schema_version": "x"}
+    record_path.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(DailyManifestError, match="drifts"):
+        build_manual(pkg, operator="op", note="same-BV corrected package")
+
+
+def test_manual_manifest_projects_typed_qixi_same_bv_receipt(tmp_path: Path) -> None:
+    root = Path(__file__).resolve().parents[1]
+    registry = root / "assets/lidousha/daily_same_bv_publication_authority.v1.json"
+    candidate_id = "auto_113022_354_496"
+    authority = build_recovery_publication_authorities(
+        candidate_ids={candidate_id},
+        registry_path=registry,
+        expected_registry_sha256="sha256:" + _sha(registry),
+        repo_root=root,
+    )[candidate_id]
+    pkg = _package(
+        tmp_path,
+        candidate_id=candidate_id,
+        title=authority["observed_public_title"],
+    )
+    record_path = next(pkg.glob("*.record.json"))
+    publish_path = next(pkg.glob("*.publish.json"))
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    publish = json.loads(publish_path.read_text(encoding="utf-8"))
+    record["recovery_publication_authority"] = authority
+    record["publish_staging"]["recovery_publication_authority"] = authority
+    publish["recovery_publication_authority"] = authority
+    record_path.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+    publish_path.write_text(json.dumps(publish, ensure_ascii=False), encoding="utf-8")
+    stem = publish_path.name[: -len(".publish.json")]
+    artifact_names = {
+        "video": f"{stem}.mp4",
+        "subtitle": f"{stem}.srt",
+        "cover": f"{stem}.cover.png",
+        "record": record_path.name,
+        "publish": publish_path.name,
+        "chat_authority": f"{stem}.chat-authority.json",
+    }
+    artifact_entries = {
+        key: {"target_role": "package", "target": name}
+        for key, name in artifact_names.items()
+    }
+    generated = {
+        key: "sha256:" + _sha(pkg / artifact_names[key])
+        for key in ("record", "publish", "chat_authority")
+    }
+    (pkg / "qixi-corrected-package-finalization.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "qixi-corrected-package-finalization-receipt.v1",
+                "mode": "APPLIED",
+                "candidate_id": candidate_id,
+                "target_candidate_root": str(pkg.parent),
+                "package_root": str(pkg),
+                "authority_sha256": "sha256:" + "a" * 64,
+                "artifacts": artifact_entries,
+                "manual_corrected_same_bv": {
+                    "schema_version": "manual-corrected-same-bv.v1",
+                    "candidate_id": candidate_id,
+                    "recovery_publication_authority": authority,
+                    "approved_burned_video_sha256": "sha256:" + _sha(pkg / f"{stem}.mp4"),
+                    "approved_subtitle_sha256": "sha256:" + _sha(pkg / f"{stem}.srt"),
+                    "approved_cover_sha256": "sha256:" + _sha(pkg / f"{stem}.cover.png"),
+                }
+                ,"after_image_sha256": generated,
+                "generated_record_sha256": generated["record"],
+                "generated_publish_sha256": generated["publish"],
+                "generated_chat_authority_sha256": generated["chat_authority"],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    # A hand-written outer receipt cannot impersonate the sealed finalizer
+    # plan, even when its inner video/SRT/cover bindings happen to match.
+    with pytest.raises(DailyManifestError, match="receipt"):
+        build_manual(pkg, operator="op", note="Qixi manual correction")
+
+
+def test_manual_builder_projects_replayed_typed_qixi_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = Path(__file__).resolve().parents[1]
+    registry = root / "assets/lidousha/daily_same_bv_publication_authority.v1.json"
+    candidate_id = "auto_113022_354_496"
+    authority = build_recovery_publication_authorities(
+        candidate_ids={candidate_id},
+        registry_path=registry,
+        expected_registry_sha256="sha256:" + _sha(registry),
+        repo_root=root,
+    )[candidate_id]
+    pkg = _package(tmp_path, candidate_id=candidate_id, title=authority["observed_public_title"])
+    record_path = next(pkg.glob("*.record.json"))
+    publish_path = next(pkg.glob("*.publish.json"))
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    publish = json.loads(publish_path.read_text(encoding="utf-8"))
+    record["recovery_publication_authority"] = authority
+    record["publish_staging"]["recovery_publication_authority"] = authority
+    publish["recovery_publication_authority"] = authority
+    record_path.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+    publish_path.write_text(json.dumps(publish, ensure_ascii=False), encoding="utf-8")
+    stem = publish_path.name[: -len(".publish.json")]
+    inner = {
+        "schema_version": "manual-corrected-same-bv.v1",
+        "candidate_id": candidate_id,
+        "recovery_publication_authority": authority,
+        "approved_burned_video_sha256": "sha256:" + _sha(pkg / f"{stem}.mp4"),
+        "approved_subtitle_sha256": "sha256:" + _sha(pkg / f"{stem}.srt"),
+        "approved_cover_sha256": "sha256:" + _sha(pkg / f"{stem}.cover.png"),
+    }
+    outer = {"manual_corrected_same_bv": inner}
+    (pkg / "qixi-corrected-package-finalization.json").write_text(
+        json.dumps(outer, ensure_ascii=False), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        manual_review_manifest,
+        "validate_applied_receipt",
+        lambda raw, *, package_root, repo_root=None: raw,
+    )
+
+    manifest = build_manual(pkg, operator="op", note="Qixi manual correction")
+    item = manifest["items"][0]
+    assert item["manual_corrected_same_bv"] == inner
+    assert item["manual_corrected_same_bv_receipt"] == "qixi-corrected-package-finalization.json"
+    assert item["manual_corrected_same_bv_receipt_sha256"].startswith("sha256:")

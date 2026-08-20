@@ -355,6 +355,16 @@
 - 新 BV 与 exact same-BV repair 的两条发布 lane、权限边界、正式 receipt schema、live
   验收和执行顺序只读 [90-publish.md](90-publish.md)。打包步骤不得复制、放宽或自行推导发布
   准入，也不得把 package audit、pending-human manifest 或任意旧版/手写 receipt 当成授权。
+- **七夕人工 Z2 corrected package 窄门**：只可运行
+  `scripts/finalize_qixi_corrected_package.py`，固定消费部署/仓库封存的
+  `qixi_corrected_package_finalization_authority.v1` 所列 release Z2 bytes 与 r2 fresh
+  evidence；它不调用 ffmpeg、选片、标题或封面 provider。默认仅 dry-run，`--apply` 只在新的
+  create-only candidate root 写入 `replacement_recuts`，并在最终 JSON/hash 闭包后写
+  `qixi-corrected-package-finalization.json`。任何 source/evidence/target symlink、重叠、旧
+  publish 漂移、未知 locator 或 receipt replay 不通过都拒绝。manual builder 必须先按 record
+  `artifact_hashes` 用既有 candidate→package portable sync 将 candidate-root chat/clip 的 regular
+  exact bytes 物化到包内；review manifest、canonical auditor 与 final-human 必须重读该 typed
+  receipt 的 filename/SHA 和 sealed replay。该门只生成待审包，不授权上传或 same-BV 操作。
 - 已发布 same-BV 的字幕修复如显式使用 `--project-single-published-repair
   --preserve-published-cover`，只能消费候选专属、部署封存的
   `daily_same_bv_published_cover_carry_authority.v1`。该 sealed asset 只固定候选、哈希和

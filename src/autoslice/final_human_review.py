@@ -26,7 +26,12 @@ from .final_human_review_evidence import (
 )
 from .final_human_review_evidence import validate_bound_review_evidence
 from .cover_route_evidence import validate_cover_route_decision
+from .channel_profile import load_channel_profile as _load_channel_profile
 from .story_contract import cover_story_contract_binding_matches
+from .qixi_corrected_package_finalization import (
+    QixiCorrectedPackageError,
+    validate_manifest_bound_applied_receipt,
+)
 
 
 # 终审回执 schema 是包内持久证据词汇（旧包哈希兼容），保留 lidousha- 拼写。
@@ -36,7 +41,6 @@ _CHECK_ANCHORS = _review_evidence.CHECK_ANCHORS
 REVIEW_SCOPE = "same_bv_repair"
 ACCEPTED_STATUS = "ACCEPTED_FOR_SAME_BV"
 ROOT = Path(__file__).resolve().parents[2]
-from src.autoslice.channel_profile import load_channel_profile as _load_channel_profile
 
 _CHANNEL_PROFILE = _load_channel_profile(ROOT)
 # 契约文件是部署本地配置（非包内持久证据）：schema 与路径按 profile 派生，
@@ -1090,10 +1094,43 @@ def _cover_story_claim_authority(
     return ((narrative, "COVER_TEXT"),)
 
 
+def _validate_manual_corrected_same_bv_item(
+    *,
+    item: Mapping[str, object],
+    candidate_id: str,
+    package_root: Path,
+    qixi_repo_root: Path | None,
+) -> None:
+    """Replay the typed Qixi receipt embedded in one manifest item.
+
+    This narrow gate leaves untyped and legacy manual items on their existing
+    final-human path.  A typed item must bind its regular receipt file, bytes,
+    and replayed inner object to its candidate.
+    """
+
+    try:
+        validate_manifest_bound_applied_receipt(
+            item,
+            candidate_id=candidate_id,
+            package_root=package_root,
+            repo_root=qixi_repo_root,
+        )
+    except (
+        OSError,
+        ValueError,
+        QixiCorrectedPackageError,
+    ) as exc:
+        raise FinalHumanReviewError(
+            "FINAL_HUMAN_REVIEW_MANUAL_CORRECTED_RECEIPT_INVALID",
+            candidate_id,
+        ) from exc
+
+
 def _manifest_items(
     review_manifest: object,
     *,
     package_root: Path,
+    qixi_repo_root: Path | None = None,
 ) -> tuple[list[str], dict[str, dict[str, object]]]:
     if not isinstance(review_manifest, Mapping):
         raise FinalHumanReviewError(
@@ -1175,6 +1212,12 @@ def _manifest_items(
         record = _json_object(
             _regular_package_file(package_root, record_path),
             source=f"review_manifest.items[{index}].record",
+        )
+        _validate_manual_corrected_same_bv_item(
+            item=raw_item,
+            candidate_id=candidate_id,
+            package_root=package_root,
+            qixi_repo_root=qixi_repo_root,
         )
         story_contract = record.get("story_contract")
         publish_staging = record.get("publish_staging")
@@ -1609,6 +1652,8 @@ def validate_final_human_review(
     package_root: Path,
     review_manifest: object,
     package_attestation: object,
+    *,
+    qixi_repo_root: Path | None = None,
 ) -> dict[str, Any]:
     """Validate and normalize a complete final perceptual-review receipt.
 
@@ -1710,6 +1755,7 @@ def validate_final_human_review(
     manifest_order, manifest_closure = _manifest_items(
         review_manifest,
         package_root=root,
+        qixi_repo_root=qixi_repo_root,
     )
 
     raw_items = receipt.get("items")

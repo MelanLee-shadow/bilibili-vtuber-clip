@@ -7,6 +7,8 @@ from pathlib import Path
 from PIL import Image
 import pytest
 
+import scripts.audit_lidousha_review_package as review_package_audit
+
 from scripts.audit_lidousha_review_package import (
     _audit_policy_fingerprint,
     _audit_source_truth_owner_attestations,
@@ -2400,6 +2402,88 @@ def test_audit_does_not_flag_ai_cover_dict_when_fallback_used_false(tmp_path: Pa
 
     assert result["passed"] is True
     assert result["issues"] == []
+
+
+def test_audit_replays_typed_manual_same_bv_receipt_and_rejects_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "pkg"
+    root.mkdir()
+    cover = _write(root / "cover.png", "cover")
+    evidence = _write(root / "evidence.json", json.dumps({"classification": "talk"}))
+    subtitle = _write(root / "subtitle.srt", "1\n00:00:00,000 --> 00:00:01,000\n歌\n")
+    publish_title = "【李豆沙】测试歌《七夕安排》，甜甜苦苦全都说清楚"
+    publish = _write(root / "publish.json", json.dumps({"title": publish_title}))
+    title = _write(root / "title.txt", publish_title + "\n")
+    ai_background = _write(root / "ai-bg.png", "background")
+    receipt_path = root / "qixi-corrected-package-finalization.json"
+    inner = {
+        "schema_version": "manual-corrected-same-bv.v1",
+        "candidate_id": "typed-qixi",
+        "recovery_publication_authority": None,
+        "approved_burned_video_sha256": "sha256:" + "1" * 64,
+        "approved_subtitle_sha256": "sha256:" + "2" * 64,
+        "approved_cover_sha256": "sha256:" + "3" * 64,
+    }
+    outer = {"manual_corrected_same_bv": inner}
+    receipt_path.write_text(json.dumps(outer), encoding="utf-8")
+    generation = {
+        "workflow": "cpa-openai-compatible-image-edit-cover",
+        "method": "images.edit",
+        "model": "gpt-image-2",
+        "image_gen_model": "cpa",
+        "fallback_used": False,
+        "final_cover": str(cover),
+        "final_cover_sha256": "sha256:" + hashlib.sha256(cover.read_bytes()).hexdigest(),
+        "ai_background": str(ai_background),
+        "ai_background_sha256": "sha256:" + hashlib.sha256(ai_background.read_bytes()).hexdigest(),
+        "attempted_models": ["gpt-image-2"],
+    }
+    manifest = {
+        "items": [
+            {
+                "stem": "typed-qixi",
+                "candidate_id": "typed-qixi",
+                "classification": "talk",
+                "source_srt": str(subtitle),
+                "subtitle_srt": str(subtitle),
+                "publish_json": str(publish),
+                "title_txt": str(title),
+                "cover": str(cover),
+                "evidence_json": str(evidence),
+                "lyrics_alignment_report": str(evidence),
+                "ai_cover_generated": True,
+                "source_ai_background": str(ai_background),
+                "cover_generation": generation,
+                "manual_corrected_same_bv": inner,
+                "manual_corrected_same_bv_receipt": receipt_path.name,
+                "manual_corrected_same_bv_receipt_sha256": "sha256:"
+                + hashlib.sha256(receipt_path.read_bytes()).hexdigest(),
+            }
+        ]
+    }
+    (root / "review_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setattr(
+        review_package_audit,
+        "validate_manifest_bound_applied_receipt",
+        lambda item, *, candidate_id, package_root, repo_root=None: True,
+    )
+
+    passed = audit_package(root)
+    assert passed["passed"] is True, passed["issues"]
+    def reject_typed(*_args, **_kwargs):
+        raise review_package_audit.QixiCorrectedPackageError("fixture receipt drift")
+
+    monkeypatch.setattr(
+        review_package_audit,
+        "validate_manifest_bound_applied_receipt",
+        reject_typed,
+    )
+    receipt_path.write_text("{}\n", encoding="utf-8")
+    drifted = audit_package(root)
+    assert "MANUAL_CORRECTED_SAME_BV_RECEIPT_INVALID" in {
+        issue["code"] for issue in drifted["issues"]
+    }
 
 
 def test_audit_accepts_hashed_screenshot_cover_without_ai_evidence(tmp_path: Path):
