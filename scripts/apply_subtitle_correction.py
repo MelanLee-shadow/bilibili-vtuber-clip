@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +38,95 @@ from src.autoslice.branding_intro import BrandingIntroError, require_branding_in
 from src.autoslice.jingting_chunker import parse_srt_cues  # noqa: E402
 
 BASE = Path("/opt/bilive/autoslice")
+
+
+class DeliveryCopyError(ValueError):
+    """A delivery target cannot be copied without unsafe aliasing."""
+
+
+def _regular_or_absent(path: Path, *, label: str) -> None:
+    """Reject endpoint symlinks and special files without following them."""
+
+    try:
+        metadata = os.lstat(path)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise DeliveryCopyError(f"cannot inspect {label}: {path}") from exc
+    if stat.S_ISLNK(metadata.st_mode):
+        raise DeliveryCopyError(f"{label} must not be a symlink: {path}")
+    if not stat.S_ISREG(metadata.st_mode):
+        raise DeliveryCopyError(f"{label} must be a regular file: {path}")
+
+
+def _same_regular_file(source: Path, destination: Path) -> bool:
+    """Return whether two already-validated regular files share one identity."""
+
+    _regular_or_absent(source, label="delivery source")
+    _regular_or_absent(destination, label="delivery destination")
+    try:
+        source_stat = source.stat()
+    except OSError as exc:
+        raise DeliveryCopyError(f"cannot inspect delivery source: {source}") from exc
+    if not stat.S_ISREG(source_stat.st_mode):
+        raise DeliveryCopyError(f"delivery source must be a regular file: {source}")
+    try:
+        destination_stat = destination.stat()
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise DeliveryCopyError(f"cannot inspect delivery destination: {destination}") from exc
+    if not stat.S_ISREG(destination_stat.st_mode):
+        raise DeliveryCopyError(f"delivery destination must be a regular file: {destination}")
+    try:
+        if source.resolve(strict=True) == destination.resolve(strict=True):
+            return True
+        return os.path.samefile(source, destination)
+    except OSError as exc:
+        raise DeliveryCopyError(
+            f"cannot determine delivery file identity: {source} -> {destination}"
+        ) from exc
+
+
+def _preflight_delivery_targets(targets: list[Path]) -> None:
+    """Fail before package mutation if any planned target is unsafe."""
+
+    for target in targets:
+        _regular_or_absent(target, label="delivery target")
+
+
+def _preflight_existing_delivery_copies(pairs: list[tuple[Path, Path]]) -> None:
+    """Validate any already-materialized source/target identity before mutation.
+
+    Some outputs (the fresh burned video and correction manifest) do not exist
+    at this point.  They still get the same strict check immediately before
+    copying; this early pass catches the existing SRT/record/sidecar aliases
+    before this script writes package state.
+    """
+
+    for source, destination in pairs:
+        _regular_or_absent(source, label="planned delivery source")
+        try:
+            source.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise DeliveryCopyError(
+                f"cannot inspect planned delivery source: {source}"
+            ) from exc
+        _same_regular_file(source, destination)
+
+
+def _copy_delivery_file(source: Path, destination: Path) -> str:
+    """Copy one artifact, preserving a same-file delivery as already current."""
+
+    if _same_regular_file(source, destination):
+        return "ALREADY_DELIVERED"
+    try:
+        shutil.copy2(source, destination)
+    except OSError as exc:
+        raise DeliveryCopyError(f"delivery copy failed: {source} -> {destination}") from exc
+    return "COPIED"
 
 
 def _srt_blocks(text: str):
@@ -241,6 +331,42 @@ def main(argv=None) -> int:
     if srt == before and not args.refresh_only:
         print("NO_CHANGE: nothing matched the correction — check --replace/--set-line", file=sys.stderr)
         return 2
+    speaker_mode = os.environ.get("AUTOSLICE_SPEAKER_MODE", "uniform_host")
+    if speaker_mode not in ("uniform_host", "required", "auto"):
+        speaker_mode = "uniform_host"
+    planned_delivery_targets = [
+        args.delivery,
+        args.delivery.with_suffix(".srt"),
+        args.delivery.with_suffix(".human-text-correction.json"),
+        args.delivery.with_suffix(".record.json"),
+        # Validate these even in uniform-host mode: that branch removes stale
+        # copies and must never unlink a symlink or special file.
+        args.delivery.with_suffix(".speaker.srt"),
+        args.delivery.with_suffix(".speaker.ass"),
+        args.delivery.with_suffix(".speaker.json"),
+    ]
+    speaker_srt = srt_path.with_suffix(".speaker-final.srt")
+    speaker_ass = srt_path.with_suffix(".speaker-final.ass")
+    speaker_manifest_path = srt_path.with_suffix(".speaker-final.json")
+    correction_manifest_path = recut_dir / f"{args.cid}.human-text-correction.json"
+    try:
+        _preflight_delivery_targets(planned_delivery_targets)
+        _preflight_existing_delivery_copies(
+            [
+                (srt_path, args.delivery.with_suffix(".srt")),
+                (record_path, args.delivery.with_suffix(".record.json")),
+                (
+                    correction_manifest_path,
+                    args.delivery.with_suffix(".human-text-correction.json"),
+                ),
+                (speaker_srt, args.delivery.with_suffix(".speaker.srt")),
+                (speaker_ass, args.delivery.with_suffix(".speaker.ass")),
+                (speaker_manifest_path, args.delivery.with_suffix(".speaker.json")),
+            ]
+        )
+    except DeliveryCopyError as exc:
+        print(f"DELIVERY_PREFLIGHT_FAILED: {exc}", file=sys.stderr)
+        return 1
     before_hash = hashlib.sha256(before.encode("utf-8")).hexdigest()
     try:
         branding_intro = require_branding_intro(ROOT)
@@ -248,14 +374,8 @@ def main(argv=None) -> int:
         print(f"BRANDING_INTRO_UNAVAILABLE: {exc}", file=sys.stderr)
         return 1
     srt_path.write_text(srt, encoding="utf-8")
-    speaker_mode = os.environ.get("AUTOSLICE_SPEAKER_MODE", "uniform_host")
-    if speaker_mode not in ("uniform_host", "required", "auto"):
-        speaker_mode = "uniform_host"
     print(f"corrected {srt_path.name}; speaker_mode={speaker_mode}")
 
-    speaker_srt = srt_path.with_suffix(".speaker-final.srt")
-    speaker_ass = srt_path.with_suffix(".speaker-final.ass")
-    speaker_manifest_path = srt_path.with_suffix(".speaker-final.json")
     if speaker_mode == "uniform_host":
         # Ivan 2026-07-13 policy: no speaker separation in any deliverable —
         # burn the corrected text directly in the single host style.
@@ -366,7 +486,6 @@ def main(argv=None) -> int:
         "burned_media_sha256": _sha256(burned),
         "upload_enabled": False,
     }
-    correction_manifest_path = recut_dir / f"{args.cid}.human-text-correction.json"
     correction_manifest_path.write_text(
         json.dumps(correction_manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
@@ -403,7 +522,11 @@ def main(argv=None) -> int:
     if staging_title:
         updated["upload_tags"] = generate_upload_tags(staging_title, srt_path, timeout=180.0)
     record_path.write_text(json.dumps(updated, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    shutil.copy2(burned, args.delivery)
+    try:
+        video_delivery = _copy_delivery_file(burned, args.delivery)
+    except DeliveryCopyError as exc:
+        print(f"DELIVERY_COPY_FAILED: {exc}", file=sys.stderr)
+        return 1
     sidecars = [
         (srt_path, ".srt"),
         (correction_manifest_path, ".human-text-correction.json"),
@@ -419,10 +542,18 @@ def main(argv=None) -> int:
         # uniform_host: stale speaker sidecars from an older run must not
         # outlive the correction they no longer describe.
         for suffix in (".speaker.srt", ".speaker.ass", ".speaker.json"):
-            args.delivery.with_suffix(suffix).unlink(missing_ok=True)
+            stale_sidecar = args.delivery.with_suffix(suffix)
+            _regular_or_absent(stale_sidecar, label="stale delivery sidecar")
+            stale_sidecar.unlink(missing_ok=True)
     for source, suffix in sidecars:
-        shutil.copy2(source, args.delivery.with_suffix(suffix))
-    print(f"speaker-final re-burn + delivery refreshed → {args.delivery}")
+        try:
+            _copy_delivery_file(source, args.delivery.with_suffix(suffix))
+        except DeliveryCopyError as exc:
+            print(f"DELIVERY_COPY_FAILED: {exc}", file=sys.stderr)
+            return 1
+    print(
+        f"speaker-final re-burn + delivery refreshed ({video_delivery}) → {args.delivery}"
+    )
     return 0
 
 
