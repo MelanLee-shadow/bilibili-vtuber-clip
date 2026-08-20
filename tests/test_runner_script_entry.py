@@ -61,6 +61,29 @@ def _run_embedded_status_validator(
     )
 
 
+def _canonical_sha256(payload: object) -> str:
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _bootstrap_state_material(payload: dict[str, object]) -> dict[str, object]:
+    return {key: value for key, value in payload.items() if key != "last_room_status_epoch"}
+
+
+def _bootstrap_status_projection(payload: dict[str, object]) -> dict[str, object]:
+    projected = json.loads(json.dumps(payload))
+    projected.pop("generated_at_epoch", None)
+    errors = projected.get("finalize_errors")
+    if isinstance(errors, list):
+        for entry in errors:
+            if isinstance(entry, dict) and isinstance(entry.get("error"), str):
+                entry["error"] = __import__("re").sub(
+                    r"0x[0-9a-fA-F]+", "0x<address>", entry["error"]
+                )
+    return projected
+
+
 def test_runner_runs_as_script_without_import_cycle():
     result = subprocess.run(
         [sys.executable, str(RUNNER), "--help"],
@@ -869,6 +892,299 @@ def test_bootstrap_marker_activation_refuses_live_drift_without_mutation(tmp_pat
     assert not (backup / "external/connection_stub_bootstrap.marker").exists()
     assert (recording / "adapter-state.json").read_bytes() == b"old-daemon-wrote-state\n"
     assert (recording / "status.json").read_bytes() == b"old-daemon-wrote-status\n"
+
+
+def test_bootstrap_marker_activation_accepts_only_known_heartbeats(tmp_path):
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    external = source.split("<<'REMOTE_EXTERNAL_INSTALL'\n", 1)[1].split(
+        "\nREMOTE_EXTERNAL_INSTALL", 1
+    )[0]
+    start = external.index("activate_connection_stub_bootstrap_marker() {")
+    end = external.index("\nadapter_connection_stub_bootstrap_safe", start)
+    activate = external[start:end]
+    recording = tmp_path / "recording"
+    backup = tmp_path / "backup"
+    receipt_id = "e" * 40
+    recording.mkdir()
+    (recording / "connection-stub-bootstrap-receipts").mkdir()
+    preimage = backup / "external/connection_stub_bootstrap_preimage"
+    preimage.mkdir(parents=True)
+    paths = [
+        "2026-08-20/22966160_20260820-21-00-20.flv",
+        "2026-08-20/22966160_20260820-21-56-14.flv",
+    ]
+    pre_state: dict[str, object] = {
+        "schema_version": "recording-adapter-state.v1",
+        "last_room_status_epoch": 1.0,
+        "webhook_files": {},
+        "finalized": {},
+        "source_dispositions": {},
+    }
+    pre_status: dict[str, object] = {
+        "generated_at_epoch": 1.0,
+        "service_reachable": True,
+        "streaming": False,
+        "recording": False,
+        "finalizing": False,
+        "error": "2 closed recording(s) failed finalization",
+        "finalize_errors": [
+            {
+                "source": f"/adapter/Videos/22966160/{path}",
+                "error": "ffmpeg failed at 0x123abc",
+            }
+            for path in paths
+        ],
+    }
+    state_preimage = preimage / "adapter-state.json"
+    status_preimage = preimage / "status.json"
+    state_preimage.write_text(json.dumps(pre_state), encoding="utf-8")
+    status_preimage.write_text(json.dumps(pre_status), encoding="utf-8")
+    receipt_payload: dict[str, object] = {
+        "schema_version": "recording-connection-stub-bootstrap.v1",
+        "receipt_id": receipt_id,
+        "adapter_state_sha256": hashlib.sha256(state_preimage.read_bytes()).hexdigest(),
+        "adapter_state_material_sha256": _canonical_sha256(_bootstrap_state_material(pre_state)),
+        "adapter_status_preimage_sha256": _canonical_sha256(
+            _bootstrap_status_projection(pre_status)
+        ),
+        "source_relative_paths": paths,
+        "rows": {path: {"source_relative_path": path} for path in paths},
+    }
+    receipt_payload["canonical_integrity"] = {
+        "algorithm": "sha256",
+        "canonical_json_sha256": _canonical_sha256(receipt_payload),
+    }
+    (recording / f"connection-stub-bootstrap-receipts/{receipt_id}.json").write_text(
+        json.dumps(receipt_payload), encoding="utf-8"
+    )
+    script = "\n".join(
+        (
+            "set -eu",
+            "backup=$1",
+            "commit=$2",
+            activate.replace("/opt/bilive/recording", str(recording)),
+            "activate_connection_stub_bootstrap_marker",
+        )
+    )
+
+    def activate_with(live_state: dict[str, object], live_status: dict[str, object]):
+        (recording / "adapter-state.json").write_text(json.dumps(live_state), encoding="utf-8")
+        (recording / "status.json").write_text(json.dumps(live_status), encoding="utf-8")
+        return subprocess.run(
+            ["bash", "-c", script, "bootstrap-activate", str(backup), receipt_id],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    heartbeat_state = dict(pre_state, last_room_status_epoch=2.0)
+    heartbeat_status = dict(pre_status, generated_at_epoch=2.0)
+    heartbeat_status["finalize_errors"] = [
+        dict(entry, error="ffmpeg failed at 0xfeed42")
+        for entry in pre_status["finalize_errors"]  # type: ignore[index]
+    ]
+    accepted = activate_with(heartbeat_state, heartbeat_status)
+    assert accepted.returncode == 0, accepted.stderr
+    marker = backup / "external/connection_stub_bootstrap.marker"
+    assert marker.is_file()
+
+    for name, state, status in (
+        (
+            "state-disposition",
+            dict(heartbeat_state, source_dispositions={"other": {}}),
+            heartbeat_status,
+        ),
+        (
+            "source-set",
+            heartbeat_state,
+            dict(
+                heartbeat_status,
+                finalize_errors=[dict(heartbeat_status["finalize_errors"][0])],  # type: ignore[index]
+            ),
+        ),
+        (
+            "error-count",
+            heartbeat_state,
+            dict(heartbeat_status, error="1 closed recording(s) failed finalization"),
+        ),
+        (
+            "semantic-error",
+            heartbeat_state,
+            dict(
+                heartbeat_status,
+                finalize_errors=[
+                    dict(entry, error="ffmpeg different codec failure at 0xfeed42")
+                    for entry in heartbeat_status["finalize_errors"]  # type: ignore[index]
+                ],
+            ),
+        ),
+    ):
+        marker.unlink(missing_ok=True)
+        result = activate_with(state, status)
+        assert result.returncode != 0, (name, result.stderr)
+        assert not marker.exists(), name
+
+
+def test_exact_pre_marker_guard_recovery_is_heartbeat_tolerant_and_fail_closed(tmp_path):
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    recovery = source.split("<<'REMOTE_GUARD_RECOVERY'\n", 1)[1].split(
+        "\nREMOTE_GUARD_RECOVERY", 1
+    )[0]
+    commit = "a" * 40
+    owner = f"{commit}-20260820T190925Z-86811"
+
+    rollback = source.split("<<'REMOTE_ROLLBACK'\n", 1)[1].split("\nREMOTE_ROLLBACK", 1)[0]
+    verifier_start = rollback.index("connection_stub_bootstrap_pre_marker_safe() {")
+    verifier_end = rollback.index('\nif [ -f "$backup/external/crontab.present" ]', verifier_start)
+    outer_verifier = rollback[verifier_start:verifier_end]
+
+    def build(root: Path, *, semantic_drift: bool):
+        base = root / "autoslice"
+        recording = root / "recording"
+        uploader = root / "uploader"
+        repo = base / "repo"
+        backup = base / f"repo.rollback-{commit}"
+        stage = base / f"repo.deploy-{commit}"
+        guard = base / "deploy.guard"
+        receipts = recording / "connection-stub-bootstrap-receipts"
+        repo.mkdir(parents=True)
+        recording.mkdir()
+        receipts.mkdir()
+        stage.mkdir(parents=True)
+        guard.mkdir()
+        (guard / "owner").write_text(owner + "\n", encoding="utf-8")
+        (repo / "DEPLOYED_COMMIT").write_text("old\n", encoding="utf-8")
+        backup.mkdir()
+        (backup / "DEPLOYED_COMMIT.old").write_text("old\n", encoding="utf-8")
+        (backup / "repo.manifest.old.json").write_text("{}", encoding="utf-8")
+        external = backup / "external"
+        external.mkdir()
+        targets = {
+            "watchdog": base / "free_mount_watchdog.sh",
+            "upload_sentinel": base / "upload_fatal_sentinel.sh",
+            "uploader": uploader,
+            "recorder_adapter": recording / "bililive_recorder_adapter.py",
+        }
+        for label, target in targets.items():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(f"{label}-old\n".encode())
+            (external / f"{label}.file").write_bytes(target.read_bytes())
+            (external / f"{label}.present").touch()
+        (external / "recorder_adapter.restart-required").touch()
+        preimage = external / "connection_stub_bootstrap_preimage"
+        preimage.mkdir()
+        paths = [
+            "2026-08-20/22966160_20260820-21-00-20.flv",
+            "2026-08-20/22966160_20260820-21-56-14.flv",
+        ]
+        pre_state: dict[str, object] = {
+            "schema_version": "recording-adapter-state.v1",
+            "last_room_status_epoch": 1.0,
+            "webhook_files": {},
+            "finalized": {},
+            "source_dispositions": {},
+        }
+        pre_status: dict[str, object] = {
+            "generated_at_epoch": 1.0,
+            "service_reachable": True,
+            "streaming": False,
+            "recording": False,
+            "finalizing": False,
+            "error": "2 closed recording(s) failed finalization",
+            "finalize_errors": [
+                {
+                    "source": f"/adapter/Videos/22966160/{path}",
+                    "error": "ffmpeg failed at 0x123abc",
+                }
+                for path in paths
+            ],
+        }
+        state_path = preimage / "adapter-state.json"
+        status_path = preimage / "status.json"
+        state_path.write_text(json.dumps(pre_state), encoding="utf-8")
+        status_path.write_text(json.dumps(pre_status), encoding="utf-8")
+        receipt: dict[str, object] = {
+            "schema_version": "recording-connection-stub-bootstrap.v1",
+            "receipt_id": commit,
+            "adapter_state_sha256": hashlib.sha256(state_path.read_bytes()).hexdigest(),
+            # The retained remote incident was created by 3f0f622, before
+            # durable receipt projections; recovery must accept that exact
+            # six-field receipt while separately comparing live/preimage
+            # durable projections.
+            "adapter_status_preimage_sha256": _canonical_sha256(
+                {
+                    key: pre_status.get(key)
+                    for key in (
+                        "service_reachable",
+                        "streaming",
+                        "recording",
+                        "finalizing",
+                        "error",
+                        "finalize_errors",
+                    )
+                }
+            ),
+            "source_relative_paths": paths,
+            "rows": {path: {"source_relative_path": path} for path in paths},
+        }
+        receipt["canonical_integrity"] = {
+            "algorithm": "sha256",
+            "canonical_json_sha256": _canonical_sha256(receipt),
+        }
+        (receipts / f"{commit}.json").write_text(json.dumps(receipt), encoding="utf-8")
+        live_state = dict(pre_state, last_room_status_epoch=2.0)
+        live_status = dict(pre_status, generated_at_epoch=2.0)
+        live_status["finalize_errors"] = [
+            dict(entry, error="ffmpeg failed at 0xfeed42")
+            for entry in pre_status["finalize_errors"]  # type: ignore[index]
+        ]
+        if semantic_drift:
+            live_status["error"] = "1 closed recording(s) failed finalization"
+        (recording / "adapter-state.json").write_text(json.dumps(live_state), encoding="utf-8")
+        (recording / "status.json").write_text(json.dumps(live_status), encoding="utf-8")
+        verifier = subprocess.run(
+            [
+                "bash",
+                "-c",
+                "\n".join(
+                    (
+                        "set -eu",
+                        "backup=$1",
+                        "new_commit=$2",
+                        outer_verifier.replace("/opt/bilive/recording", str(recording)),
+                        "connection_stub_bootstrap_pre_marker_safe",
+                    )
+                ),
+                "outer-pre-marker",
+                str(backup),
+                commit,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        script = recovery.replace("/opt/bilive/autoslice", str(base)).replace(
+            "/opt/bilive/recording", str(recording)
+        ).replace("/opt/bilive/app/tmp_manual_upload/do_upload.sh", str(uploader))
+        result = subprocess.run(
+            ["bash", "-c", script, "guard-recovery", str(base), owner],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result, guard, verifier
+
+    accepted, guard, outer = build(tmp_path / "accepted", semantic_drift=False)
+    assert outer.returncode == 0, outer.stderr
+    assert accepted.returncode == 0, accepted.stderr
+    assert not guard.exists()
+    assert not (tmp_path / "accepted" / "autoslice" / f"repo.rollback-{commit}").exists()
+
+    rejected, guard, outer = build(tmp_path / "drift", semantic_drift=True)
+    assert outer.returncode != 0
+    assert rejected.returncode != 0
+    assert guard.is_dir()
+    assert (guard / "owner").read_text(encoding="utf-8").strip() == owner
 
 
 def test_deploy_authority_manifest_is_canonical_and_exact_byte_bound(tmp_path):

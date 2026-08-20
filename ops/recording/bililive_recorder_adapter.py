@@ -2292,23 +2292,31 @@ def prepare_connection_stub_bootstrap(
         and {entry.get("source") for entry in status_errors if isinstance(entry, dict)} == expected_sources
     ):
         raise AdapterError("connection-stub bootstrap status does not exactly bind eligible sources")
-    status_preimage = {
-        key: status.get(key)
-        for key in (
-            "service_reachable",
-            "streaming",
-            "recording",
-            "finalizing",
-            "error",
-            "finalize_errors",
-        )
+    # The legacy daemon refreshes only this observation timestamp while it is
+    # otherwise idle.  It must not turn a receipt into an impossible-to-use
+    # raw-byte snapshot, but every other state key remains transaction-bound.
+    state_material = {
+        key: value for key, value in state.items() if key != "last_room_status_epoch"
     }
+    # A fresh status changes its timestamp and ffmpeg happens to put unstable
+    # process addresses in the two retained finalization diagnostics.  Preserve
+    # every other byte-level JSON value, normalising only those proven
+    # heartbeat/process-local fields; this is deliberately not a generic
+    # finalization-error waiver.
+    status_preimage = json.loads(json.dumps(status))
+    status_preimage.pop("generated_at_epoch", None)
+    errors = status_preimage.get("finalize_errors")
+    if isinstance(errors, list):
+        for entry in errors:
+            if isinstance(entry, dict) and isinstance(entry.get("error"), str):
+                entry["error"] = re.sub(r"0x[0-9a-fA-F]+", "0x<address>", entry["error"])
     receipt = {
         "schema_version": CONNECTION_STUB_BOOTSTRAP_RECEIPT_SCHEMA_VERSION,
         "receipt_id": receipt_id,
         "candidate_adapter_sha256": candidate_adapter_sha256,
         "installed_adapter_sha256": sha256_file(installed_adapter_path),
         "adapter_state_sha256": hashlib.sha256(state_raw).hexdigest(),
+        "adapter_state_material_sha256": _canonical_json_sha256(state_material),
         "adapter_status_preimage_sha256": _canonical_json_sha256(status_preimage),
         "source_relative_paths": sorted(source_relatives),
         "rows": rows,

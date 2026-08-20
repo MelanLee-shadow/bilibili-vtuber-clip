@@ -20,6 +20,225 @@ HOST="${1:-free}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+if [ "${1:-}" = "--recover-deploy-guard" ]; then
+    RECOVERY_OWNER=${2:-}
+    RECOVERY_HOST=${3:-free}
+    if [ "$#" -lt 2 ] || [ "$#" -gt 3 ] || ! [[ "$RECOVERY_OWNER" =~ ^[0-9a-f]{40}-[0-9]{8}T[0-9]{6}Z-[0-9]+$ ]]; then
+        echo "usage: $0 --recover-deploy-guard <exact-owner> [host]" >&2
+        exit 2
+    fi
+    ssh "$RECOVERY_HOST" bash -s -- /opt/bilive/autoslice "$RECOVERY_OWNER" <<'REMOTE_GUARD_RECOVERY'
+set -euo pipefail
+base=$1
+owner=$2
+commit=${owner%%-*}
+repo=$base/repo
+backup=$base/repo.rollback-$commit
+stage=$base/repo.deploy-$commit
+guard=$base/deploy.guard
+test -d "$guard"
+test ! -L "$guard"
+test -f "$guard/owner"
+test ! -L "$guard/owner"
+test "$(cat "$guard/owner")" = "$owner"
+test "$(find "$guard" -mindepth 1 -maxdepth 1 -exec printf . \; | wc -c)" -eq 1
+test -d "$backup"
+test ! -L "$backup"
+test -f "$backup/DEPLOYED_COMMIT.old"
+test -f "$backup/repo.manifest.old.json"
+test "$(awk 'NR==1 {print $1}' "$repo/DEPLOYED_COMMIT")" = "$(awk 'NR==1 {print $1}' "$backup/DEPLOYED_COMMIT.old")"
+python3 - "$repo" "$backup/repo.manifest.old.json" <<'PY_GUARD_RECOVERY_MANIFEST'
+import hashlib
+import json
+import os
+import stat
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+expected = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+actual = {}
+for component in (
+    "scripts", "src", "ops", "assets", "profiles", ".agent", "docs", "cleanup_manifests",
+    "AGENTS.md", "README.md",
+):
+    base = root / component
+    if not base.exists():
+        continue
+    for path in (base, *base.rglob("*")):
+        relative = path.relative_to(root).as_posix()
+        info = path.lstat()
+        mode = stat.S_IMODE(info.st_mode)
+        if path.is_symlink():
+            actual[relative] = {"type": "symlink", "target": os.readlink(path), "mode": mode}
+        elif path.is_dir():
+            actual[relative] = {"type": "dir", "mode": mode}
+        elif path.is_file():
+            actual[relative] = {
+                "type": "file", "mode": mode, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()
+            }
+        else:
+            actual[relative] = {"type": "other", "mode": mode}
+assert actual == expected
+PY_GUARD_RECOVERY_MANIFEST
+verify_external() {
+    label=$1
+    destination=$2
+    if [ -f "$backup/external/$label.present" ]; then
+        test -f "$backup/external/$label.file"
+        test ! -L "$backup/external/$label.file"
+        test -f "$destination"
+        test ! -L "$destination"
+        cmp -s "$backup/external/$label.file" "$destination"
+    elif [ -f "$backup/external/$label.absent" ]; then
+        test ! -e "$destination"
+    else
+        return 1
+    fi
+}
+verify_external watchdog /opt/bilive/autoslice/free_mount_watchdog.sh
+verify_external upload_sentinel /opt/bilive/autoslice/upload_fatal_sentinel.sh
+verify_external uploader /opt/bilive/app/tmp_manual_upload/do_upload.sh
+verify_external recorder_adapter /opt/bilive/recording/bililive_recorder_adapter.py
+marker=$backup/external/connection_stub_bootstrap.marker
+state_preimage=$backup/external/connection_stub_bootstrap_preimage/adapter-state.json
+status_preimage=$backup/external/connection_stub_bootstrap_preimage/status.json
+receipt=/opt/bilive/recording/connection-stub-bootstrap-receipts/$commit.json
+validate_bootstrap_snapshot() {
+    require_marker=$1
+    for path in "$state_preimage" "$status_preimage" "$receipt" \
+        /opt/bilive/recording/adapter-state.json /opt/bilive/recording/status.json; do
+        test -f "$path"
+        test ! -L "$path"
+    done
+    if [ "$require_marker" = 1 ]; then
+        test -f "$marker"
+        test ! -L "$marker"
+    else
+        test ! -e "$marker"
+        test -f "$backup/external/recorder_adapter.restart-required"
+        test ! -L "$backup/external/recorder_adapter.restart-required"
+        test -d "$stage"
+        test ! -L "$stage"
+    fi
+    python3 - "$marker" "$state_preimage" "$status_preimage" \
+        /opt/bilive/recording/adapter-state.json /opt/bilive/recording/status.json \
+        "$receipt" "$commit" "$require_marker" <<'PY_GUARD_RECOVERY_BOOTSTRAP'
+import hashlib
+import json
+import re
+import sys
+
+marker_path, state_path, status_path, live_state_path, live_status_path, receipt_path, expected_id, require_marker = sys.argv[1:]
+marker = json.load(open(marker_path, encoding="utf-8")) if require_marker == "1" else None
+receipt = json.load(open(receipt_path, encoding="utf-8"))
+state_raw = open(state_path, "rb").read()
+status_raw = open(status_path, "rb").read()
+state = json.loads(state_raw)
+status = json.loads(status_raw)
+live_state = json.load(open(live_state_path, encoding="utf-8"))
+live_status = json.load(open(live_status_path, encoding="utf-8"))
+
+def state_material(value):
+    assert isinstance(value, dict)
+    return {key: item for key, item in value.items() if key != "last_room_status_epoch"}
+
+def status_projection(value):
+    assert isinstance(value, dict)
+    projected = json.loads(json.dumps(value))
+    projected.pop("generated_at_epoch", None)
+    errors = projected.get("finalize_errors")
+    if isinstance(errors, list):
+        for entry in errors:
+            if isinstance(entry, dict) and isinstance(entry.get("error"), str):
+                entry["error"] = re.sub(r"0x[0-9a-fA-F]+", "0x<address>", entry["error"])
+    return projected
+
+def legacy_status_projection(value):
+    return {
+        key: value.get(key)
+        for key in (
+            "service_reachable", "streaming", "recording", "finalizing", "error", "finalize_errors"
+        )
+    }
+
+state_material_sha256 = lambda value: hashlib.sha256(
+    json.dumps(state_material(value), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+status_projection_sha256 = lambda value: hashlib.sha256(
+    json.dumps(status_projection(value), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+receipt_payload = dict(receipt)
+receipt_integrity = receipt_payload.pop("canonical_integrity", None)
+paths = receipt.get("source_relative_paths")
+expected_paths = [
+    "2026-08-20/22966160_20260820-21-00-20.flv",
+    "2026-08-20/22966160_20260820-21-56-14.flv",
+]
+expected_sources = {"/adapter/Videos/22966160/" + path for path in expected_paths}
+assert receipt.get("schema_version") == "recording-connection-stub-bootstrap.v1"
+assert receipt.get("receipt_id") == expected_id
+assert receipt.get("adapter_state_sha256") == hashlib.sha256(state_raw).hexdigest()
+if "adapter_state_material_sha256" in receipt:
+    assert status_projection_sha256(status) == receipt.get("adapter_status_preimage_sha256")
+else:
+    # The retained 3f0f622 pre-marker incident predates durable receipt
+    # projections.  Its legacy hash still binds the full exact error rows;
+    # live/preimage comparison below supplies the stricter durable check.
+    assert hashlib.sha256(
+        json.dumps(legacy_status_projection(status), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest() == receipt.get("adapter_status_preimage_sha256")
+assert state_material(live_state) == state_material(state)
+assert status_projection(live_status) == status_projection(status)
+assert isinstance(receipt_integrity, dict) and receipt_integrity.get("algorithm") == "sha256"
+assert receipt_integrity.get("canonical_json_sha256") == hashlib.sha256(
+    json.dumps(receipt_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+assert paths == expected_paths
+assert status.get("error") == "2 closed recording(s) failed finalization"
+errors = status.get("finalize_errors")
+assert isinstance(errors, list) and len(errors) == len(expected_paths)
+assert {entry.get("source") for entry in errors if isinstance(entry, dict)} == expected_sources
+if marker is not None:
+    marker_payload = dict(marker)
+    marker_integrity = marker_payload.pop("canonical_integrity", None)
+    assert marker.get("schema_version") == "recording-connection-stub-bootstrap-rollback-marker.v1"
+    assert marker.get("receipt_id") == expected_id
+    assert marker.get("receipt_path") == receipt_path
+    assert marker.get("receipt_sha256") == hashlib.sha256(open(receipt_path, "rb").read()).hexdigest()
+    assert marker.get("state_sha256") == hashlib.sha256(state_raw).hexdigest()
+    assert marker.get("status_sha256") == hashlib.sha256(status_raw).hexdigest()
+    assert marker.get("status_projection_sha256") == status_projection_sha256(status)
+    assert isinstance(marker_integrity, dict) and marker_integrity.get("algorithm") == "sha256"
+    assert marker_integrity.get("canonical_json_sha256") == hashlib.sha256(
+        json.dumps(marker_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+PY_GUARD_RECOVERY_BOOTSTRAP
+}
+if [ -e "$marker" ]; then
+    validate_bootstrap_snapshot 1
+elif [ -f "$backup/external/recorder_adapter.restart-required" ]; then
+    # This is the one known incomplete transaction: candidate bytes were
+    # installed, but activation did not create a marker and therefore no new
+    # daemon could have persisted receipt rows.  Do not turn this into a
+    # generic stale-guard remover.
+    validate_bootstrap_snapshot 0
+else
+    echo "REFUSE: guard is not an exact bootstrap rollback incident" >&2
+    exit 1
+fi
+if [ -e "$stage" ]; then
+    test -d "$stage"
+    test ! -L "$stage"
+fi
+rm -rf -- "$stage" "$backup"
+test "$(cat "$guard/owner")" = "$owner"
+rm -f "$guard/owner"
+rmdir "$guard"
+REMOTE_GUARD_RECOVERY
+    exit $?
+fi
+
 if [ -n "$(git status --porcelain)" ]; then
     echo "REFUSE: working tree is dirty — commit first, production deploys are commit-only." >&2
     git status --short >&2
@@ -163,6 +382,7 @@ restore_connection_stub_bootstrap_preimage() {
     python3 - "$marker" "$state_preimage" "$status_preimage" "$receipt" "$new_commit" <<'PY_BOOTSTRAP_ROLLBACK_MARKER'
 import hashlib
 import json
+import re
 import sys
 
 marker_path, state_path, status_path, receipt_path, expected_id = sys.argv[1:]
@@ -171,12 +391,16 @@ receipt = json.load(open(receipt_path, encoding="utf-8"))
 state_raw = open(state_path, "rb").read()
 status_raw = open(status_path, "rb").read()
 status = json.loads(status_raw)
-projection = {
-    key: status.get(key)
-    for key in (
-        "service_reachable", "streaming", "recording", "finalizing", "error", "finalize_errors"
-    )
-}
+def status_projection(value):
+    projected = json.loads(json.dumps(value))
+    projected.pop("generated_at_epoch", None)
+    errors = projected.get("finalize_errors")
+    if isinstance(errors, list):
+        for entry in errors:
+            if isinstance(entry, dict) and isinstance(entry.get("error"), str):
+                entry["error"] = re.sub(r"0x[0-9a-fA-F]+", "0x<address>", entry["error"])
+    return projected
+projection = status_projection(status)
 marker_payload = dict(marker)
 marker_integrity = marker_payload.pop("canonical_integrity", None)
 receipt_payload = dict(receipt)
@@ -455,6 +679,88 @@ PY_ROLLBACK_FRESH
     return 1
 }
 restore_adapter_atomic
+connection_stub_bootstrap_pre_marker_safe() {
+    marker=$backup/external/connection_stub_bootstrap.marker
+    state_preimage=$backup/external/connection_stub_bootstrap_preimage/adapter-state.json
+    status_preimage=$backup/external/connection_stub_bootstrap_preimage/status.json
+    receipt=/opt/bilive/recording/connection-stub-bootstrap-receipts/$new_commit.json
+    test ! -e "$marker" || return 1
+    test -f "$backup/external/recorder_adapter.restart-required" || return 1
+    for path in "$state_preimage" "$status_preimage" "$receipt" \
+        /opt/bilive/recording/adapter-state.json /opt/bilive/recording/status.json; do
+        test -f "$path" && test ! -L "$path" || return 1
+    done
+    python3 - "$state_preimage" "$status_preimage" \
+        /opt/bilive/recording/adapter-state.json /opt/bilive/recording/status.json \
+        "$receipt" "$new_commit" <<'PY_ROLLBACK_PREMARKER'
+import hashlib
+import json
+import re
+import sys
+
+state_path, status_path, live_state_path, live_status_path, receipt_path, receipt_id = sys.argv[1:]
+state_raw = open(state_path, "rb").read()
+state = json.loads(state_raw)
+status = json.load(open(status_path, encoding="utf-8"))
+live_state = json.load(open(live_state_path, encoding="utf-8"))
+live_status = json.load(open(live_status_path, encoding="utf-8"))
+receipt = json.load(open(receipt_path, encoding="utf-8"))
+
+def state_material(value):
+    assert isinstance(value, dict)
+    return {key: item for key, item in value.items() if key != "last_room_status_epoch"}
+
+def status_projection(value):
+    assert isinstance(value, dict)
+    projected = json.loads(json.dumps(value))
+    projected.pop("generated_at_epoch", None)
+    errors = projected.get("finalize_errors")
+    if isinstance(errors, list):
+        for entry in errors:
+            if isinstance(entry, dict) and isinstance(entry.get("error"), str):
+                entry["error"] = re.sub(r"0x[0-9a-fA-F]+", "0x<address>", entry["error"])
+    return projected
+
+def legacy_status_projection(value):
+    return {
+        key: value.get(key)
+        for key in (
+            "service_reachable", "streaming", "recording", "finalizing", "error", "finalize_errors"
+        )
+    }
+
+receipt_payload = dict(receipt)
+integrity = receipt_payload.pop("canonical_integrity", None)
+paths = receipt.get("source_relative_paths")
+expected_paths = [
+    "2026-08-20/22966160_20260820-21-00-20.flv",
+    "2026-08-20/22966160_20260820-21-56-14.flv",
+]
+expected_sources = {"/adapter/Videos/22966160/" + path for path in expected_paths}
+assert receipt.get("schema_version") == "recording-connection-stub-bootstrap.v1"
+assert receipt.get("receipt_id") == receipt_id
+assert isinstance(integrity, dict) and integrity.get("algorithm") == "sha256"
+assert integrity.get("canonical_json_sha256") == hashlib.sha256(
+    json.dumps(receipt_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+assert receipt.get("adapter_state_sha256") == hashlib.sha256(state_raw).hexdigest()
+if "adapter_state_material_sha256" in receipt:
+    assert receipt.get("adapter_status_preimage_sha256") == hashlib.sha256(
+        json.dumps(status_projection(status), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+else:
+    assert receipt.get("adapter_status_preimage_sha256") == hashlib.sha256(
+        json.dumps(legacy_status_projection(status), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+assert state_material(live_state) == state_material(state)
+assert status_projection(live_status) == status_projection(status)
+assert paths == expected_paths
+assert status.get("error") == "2 closed recording(s) failed finalization"
+errors = status.get("finalize_errors")
+assert isinstance(errors, list) and len(errors) == len(expected_paths)
+assert {entry.get("source") for entry in errors if isinstance(entry, dict)} == expected_sources
+PY_ROLLBACK_PREMARKER
+}
 if [ -f "$backup/external/crontab.present" ]; then
     crontab "$backup/external/crontab.file"
     crontab -l | cmp -s - "$backup/external/crontab.file"
@@ -469,19 +775,28 @@ if [ -f "$backup/external/recorder_adapter.restart-required" ]; then
     test -f "$backup/external/recorder_adapter.file"
     cmp -s "$backup/external/recorder_adapter.file" /opt/bilive/recording/bililive_recorder_adapter.py
     old_adapter_sha=$(sha256sum "$backup/external/recorder_adapter.file" | awk '{print $1}')
-    if adapter_restart_safe "$old_adapter_sha"; then
+    rollback_restart_required=1
+    if connection_stub_bootstrap_pre_marker_safe; then
+        # Marker creation is immediately before `docker restart`; its absence
+        # plus the bound receipt proves the old process never loaded candidate
+        # bytes.  Preserve its heartbeat instead of restarting it.
+        adapter_restart_environment_safe "$old_adapter_sha"
+        rollback_restart_required=0
+    elif adapter_restart_safe "$old_adapter_sha"; then
         :
     elif adapter_repair_restart_safe "$old_adapter_sha"; then
         :
     elif [ "$connection_stub_bootstrap_restored" -eq 1 ]; then
         adapter_restart_environment_safe "$old_adapter_sha"
     else
-        return 1
+        exit 1
     fi
     adapter_identity_rebind_hash_child_absent
-    restart_epoch=$(python3 -c 'import time; print(time.time())')
-    docker restart bililive_adapter >/dev/null
-    wait_adapter_runtime "$restart_epoch" "$old_adapter_sha" 0 "/opt/bilive/recording/connection-stub-bootstrap-receipts/$new_commit.json" "$backup/external/connection_stub_bootstrap.marker"
+    if [ "$rollback_restart_required" -eq 1 ]; then
+        restart_epoch=$(python3 -c 'import time; print(time.time())')
+        docker restart bililive_adapter >/dev/null
+        wait_adapter_runtime "$restart_epoch" "$old_adapter_sha" 0 "/opt/bilive/recording/connection-stub-bootstrap-receipts/$new_commit.json" "$backup/external/connection_stub_bootstrap.marker"
+    fi
     cmp -s "$backup/external/recorder_adapter.file" /opt/bilive/recording/bililive_recorder_adapter.py
 fi
 
@@ -999,12 +1314,17 @@ receipt = json.load(open(receipt_path, encoding="utf-8"))
 state_raw = open(state_path, "rb").read()
 status_raw = open(status_path, "rb").read()
 status = json.loads(status_raw)
-projection = {
-    key: status.get(key)
-    for key in (
-        "service_reachable", "streaming", "recording", "finalizing", "error", "finalize_errors"
-    )
-}
+def status_projection(value):
+    projected = json.loads(json.dumps(value))
+    projected.pop("generated_at_epoch", None)
+    errors = projected.get("finalize_errors")
+    if isinstance(errors, list):
+        import re
+        for entry in errors:
+            if isinstance(entry, dict) and isinstance(entry.get("error"), str):
+                entry["error"] = re.sub(r"0x[0-9a-fA-F]+", "0x<address>", entry["error"])
+    return projected
+projection = status_projection(status)
 marker_payload = dict(marker)
 marker_integrity = marker_payload.pop("canonical_integrity", None)
 receipt_payload = dict(receipt)
@@ -1291,26 +1611,46 @@ activate_connection_stub_bootstrap_marker() {
         test -f "$path"
         test ! -L "$path"
     done
-    cmp -s "$preimage/adapter-state.json" /opt/bilive/recording/adapter-state.json
-    cmp -s "$preimage/status.json" /opt/bilive/recording/status.json
-    python3 - "$marker" "$preimage/adapter-state.json" "$preimage/status.json" "$receipt" "$commit" <<'PY_BOOTSTRAP_ACTIVATE_MARKER'
+    python3 - "$marker" "$preimage/adapter-state.json" "$preimage/status.json" \
+        /opt/bilive/recording/adapter-state.json /opt/bilive/recording/status.json \
+        "$receipt" "$commit" <<'PY_BOOTSTRAP_ACTIVATE_MARKER'
 import hashlib
 import json
 import os
 import sys
 
-marker_path, state_path, status_path, receipt_path, receipt_id = sys.argv[1:]
+marker_path, state_path, status_path, live_state_path, live_status_path, receipt_path, receipt_id = sys.argv[1:]
 state_raw = open(state_path, "rb").read()
 status_raw = open(status_path, "rb").read()
+state = json.loads(state_raw)
 status = json.loads(status_raw)
+live_state = json.load(open(live_state_path, encoding="utf-8"))
+live_status = json.load(open(live_status_path, encoding="utf-8"))
 receipt_raw = open(receipt_path, "rb").read()
 receipt = json.loads(receipt_raw)
-projection = {
-    key: status.get(key)
-    for key in (
-        "service_reachable", "streaming", "recording", "finalizing", "error", "finalize_errors"
-    )
-}
+
+def state_material(payload):
+    assert isinstance(payload, dict)
+    return {key: value for key, value in payload.items() if key != "last_room_status_epoch"}
+
+def status_projection(payload):
+    assert isinstance(payload, dict)
+    projected = json.loads(json.dumps(payload))
+    projected.pop("generated_at_epoch", None)
+    errors = projected.get("finalize_errors")
+    if isinstance(errors, list):
+        import re
+        for entry in errors:
+            if isinstance(entry, dict) and isinstance(entry.get("error"), str):
+                entry["error"] = re.sub(r"0x[0-9a-fA-F]+", "0x<address>", entry["error"])
+    return projected
+
+state_material_sha256 = lambda payload: hashlib.sha256(
+    json.dumps(state_material(payload), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+status_projection_sha256 = lambda payload: hashlib.sha256(
+    json.dumps(status_projection(payload), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
 expected_paths = [
     "2026-08-20/22966160_20260820-21-00-20.flv",
     "2026-08-20/22966160_20260820-21-56-14.flv",
@@ -1319,8 +1659,15 @@ expected_sources = {"/adapter/Videos/22966160/" + path for path in expected_path
 assert receipt.get("schema_version") == "recording-connection-stub-bootstrap.v1"
 assert receipt.get("receipt_id") == receipt_id
 assert receipt.get("adapter_state_sha256") == hashlib.sha256(state_raw).hexdigest()
-assert receipt.get("adapter_status_preimage_sha256") == hashlib.sha256(
-    json.dumps(projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+assert receipt.get("adapter_state_material_sha256") == state_material_sha256(state)
+assert receipt.get("adapter_status_preimage_sha256") == status_projection_sha256(status)
+assert state_material_sha256(live_state) == receipt.get("adapter_state_material_sha256")
+assert status_projection_sha256(live_status) == receipt.get("adapter_status_preimage_sha256")
+receipt_payload = dict(receipt)
+receipt_integrity = receipt_payload.pop("canonical_integrity", None)
+assert isinstance(receipt_integrity, dict) and receipt_integrity.get("algorithm") == "sha256"
+assert receipt_integrity.get("canonical_json_sha256") == hashlib.sha256(
+    json.dumps(receipt_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
 ).hexdigest()
 assert receipt.get("source_relative_paths") == expected_paths
 assert status.get("error") == "2 closed recording(s) failed finalization"
@@ -1334,9 +1681,8 @@ marker = {
     "receipt_sha256": hashlib.sha256(receipt_raw).hexdigest(),
     "state_sha256": hashlib.sha256(state_raw).hexdigest(),
     "status_sha256": hashlib.sha256(status_raw).hexdigest(),
-    "status_projection_sha256": hashlib.sha256(
-        json.dumps(projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest(),
+    "state_material_sha256": state_material_sha256(state),
+    "status_projection_sha256": status_projection_sha256(status),
 }
 marker["canonical_integrity"] = {
     "algorithm": "sha256",
@@ -1375,10 +1721,12 @@ adapter_connection_stub_bootstrap_safe() {
         return 1
     fi
     if ! python3 - "$backup/external/connection_stub_bootstrap_preimage/adapter-state.json" "$backup/external/connection_stub_bootstrap_preimage/status.json" "$receipt" "$new_sha" "$old_sha" <<'PY_BOOTSTRAP_PREIMAGE'
-import json
-import sys
 import hashlib
+import json
+import re
+import sys
 state_raw = open(sys.argv[1], "rb").read()
+state = json.loads(state_raw)
 payload = json.load(open(sys.argv[2], encoding="utf-8"))
 receipt = json.load(open(sys.argv[3], encoding="utf-8"))
 new_sha, old_sha = sys.argv[4:]
@@ -1390,6 +1738,25 @@ assert receipt.get("schema_version") == "recording-connection-stub-bootstrap.v1"
 assert receipt.get("candidate_adapter_sha256") == new_sha
 assert receipt.get("installed_adapter_sha256") == old_sha
 assert receipt.get("adapter_state_sha256") == hashlib.sha256(state_raw).hexdigest()
+
+def state_material(value):
+    assert isinstance(value, dict)
+    return {key: item for key, item in value.items() if key != "last_room_status_epoch"}
+
+def status_projection(value):
+    assert isinstance(value, dict)
+    projected = json.loads(json.dumps(value))
+    projected.pop("generated_at_epoch", None)
+    errors = projected.get("finalize_errors")
+    if isinstance(errors, list):
+        for entry in errors:
+            if isinstance(entry, dict) and isinstance(entry.get("error"), str):
+                entry["error"] = re.sub(r"0x[0-9a-fA-F]+", "0x<address>", entry["error"])
+    return projected
+
+assert receipt.get("adapter_state_material_sha256") == hashlib.sha256(
+    json.dumps(state_material(state), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
 assert isinstance(integrity, dict) and integrity.get("algorithm") == "sha256"
 assert integrity.get("canonical_json_sha256") == hashlib.sha256(
     json.dumps(receipt_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
@@ -1406,14 +1773,8 @@ assert isinstance(errors, list) and len(errors) == len(paths)
 expected = {"/adapter/Videos/22966160/" + path for path in paths}
 assert {entry.get("source") for entry in errors if isinstance(entry, dict)} == expected
 assert payload.get("error") == f"{len(paths)} closed recording(s) failed finalization"
-projection = {
-    key: payload.get(key)
-    for key in (
-        "service_reachable", "streaming", "recording", "finalizing", "error", "finalize_errors"
-    )
-}
 assert receipt.get("adapter_status_preimage_sha256") == hashlib.sha256(
-    json.dumps(projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    json.dumps(status_projection(payload), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
 ).hexdigest()
 PY_BOOTSTRAP_PREIMAGE
     then

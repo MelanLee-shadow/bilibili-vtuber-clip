@@ -425,6 +425,7 @@ def test_connection_stub_bootstrap_receipt_is_create_only_and_leaves_state_untou
     assert status_path.read_bytes() == status_before
     assert receipt["source_relative_paths"] == [relative]
     assert receipt["rows"][relative]["status"] == "IGNORED_CONNECTION_STUB"
+    assert receipt["adapter_state_material_sha256"] == adapter._canonical_json_sha256(state)
     assert (tmp_path / "receipts" / ("a" * 40 + ".json")).stat().st_mode & 0o777 == 0o600
     assert adapter.prepare_connection_stub_bootstrap(
         record_root=tmp_path,
