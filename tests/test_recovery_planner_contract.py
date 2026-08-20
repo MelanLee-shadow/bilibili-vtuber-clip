@@ -6,6 +6,7 @@ import pytest
 
 from scripts import plan_recovery_review_rerun as planner
 from scripts import free_session_autoslice as runner
+import src.autoslice.delivery_recovery as delivery_recovery
 from src.autoslice.delivery_recovery import (
     RecoveryReviewRerunError,
     plan_current_talk_recovery_rerun,
@@ -241,6 +242,109 @@ def _without_suppression_or_replacement_options(args: list[str]) -> list[str]:
     ]
 
 
+def _bcut_copy_fixture(tmp_path: Path) -> tuple[Path, Path, dict, Path, str]:
+    source_base = tmp_path / "source"
+    target_base = tmp_path / "target"
+    date = "2026-08-17"
+    source_bcut = source_base / "cache" / date / "official.bcut.srt"
+    source_bcut.parent.mkdir(parents=True)
+    source_bcut.write_text("1\n00:00:00,000 --> 00:00:01,000\n字幕\n", encoding="utf-8")
+    target_base.mkdir()
+    record = {"segment": "official.mp4"}
+    return (
+        source_base,
+        target_base,
+        record,
+        source_bcut,
+        "sha256:" + hashlib.sha256(source_bcut.read_bytes()).hexdigest(),
+    )
+
+
+def _qixi_single_published_main_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[list[str], Path, Path, Path]:
+    date = "2026-08-17"
+    candidate_id = "auto_113022_354_496"
+    source_base = tmp_path / "source"
+    target_base = tmp_path / "target"
+    recording_root = tmp_path / "recordings"
+    (source_base / "state").mkdir(parents=True)
+    (source_base / "cache" / date).mkdir(parents=True)
+    (source_base / "cpa.env").write_text("CPA_API_KEY=test\n", encoding="utf-8")
+    source_bcut = source_base / "cache" / date / "official.bcut.srt"
+    source_bcut.write_text("1\n00:00:00,000 --> 00:00:01,000\n字幕\n", encoding="utf-8")
+    target_base.mkdir()
+    (target_base / "repo").symlink_to(ROOT, target_is_directory=True)
+    (recording_root / date).mkdir(parents=True)
+    (recording_root / date / "official.mp4").write_bytes(b"official-media")
+    target = _record(
+        candidate_id,
+        start_ms=354_630,
+        end_ms=496_420,
+        status="published",
+    )
+    target["prepublication_status"] = "review_ready"
+    state = {
+        "date": date,
+        "run_mode": "DAILY",
+        "upload_allowed": False,
+        "picks": [target],
+        "pending_talk": [],
+        "talk_backlog": [],
+        "talk_superseded_attempts": [],
+    }
+    source_state = source_base / "state" / f"{date}.json"
+    source_state.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    source_state_sha256 = "sha256:" + hashlib.sha256(source_state.read_bytes()).hexdigest()
+    source_bcut_sha256 = "sha256:" + hashlib.sha256(source_bcut.read_bytes()).hexdigest()
+
+    monkeypatch.setattr(runner, "BASE", target_base)
+    monkeypatch.setattr(runner, "REC_ROOT", recording_root)
+    monkeypatch.setattr(runner, "talk_pipeline_fingerprint", lambda _cid: NEW_FINGERPRINT)
+    monkeypatch.setattr(runner, "ffprobe_ms", lambda _segment: 1_800_000)
+    monkeypatch.setattr(runner, "find_danmaku_xml", lambda _segment: None)
+    monkeypatch.setattr(runner, "find_chat_jsonl", lambda _segment: None)
+    monkeypatch.setattr(
+        runner,
+        "resolve_structured_chat_binding",
+        lambda _segment, source_sha256=None: {
+            "chat_jsonl": None,
+            "structured_chat_required": False,
+            "chat_binding_status": "OPTIONAL_ABSENT",
+        },
+    )
+    return (
+        [
+            "--source-base",
+            str(source_base),
+            "--target-base",
+            str(target_base),
+            "--target-recordings-root",
+            str(recording_root),
+            "--project-single-published-repair",
+            "--expected-source-bcut-sha256",
+            source_bcut_sha256,
+            "--date",
+            date,
+            "--expected-source-state-sha256",
+            source_state_sha256,
+            "--expected-old-fingerprint",
+            OLD_FINGERPRINT,
+            "--expected-new-fingerprint",
+            NEW_FINGERPRINT,
+            "--candidate-id",
+            candidate_id,
+            "--publication-authority-asset",
+            str(QIXI_SAME_BV_ASSET),
+            "--expected-publication-authority-sha256",
+            QIXI_SAME_BV_ASSET_SHA256,
+        ],
+        source_state,
+        target_base,
+        source_bcut,
+    )
+
+
 def test_v10_contract_binds_exact_five_candidates_and_reviewed_ends():
     authorities, ends, end_authority = _load(CANDIDATE_IDS)
 
@@ -306,6 +410,144 @@ def test_qixi_single_published_contract_rejects_missing_or_wrong_authority(
             expected_publication_authority_sha256=expected_sha256,
             repo_root=ROOT,
         )
+
+
+def test_single_published_bcut_copy_rejects_wrong_source_hash(tmp_path: Path):
+    source_base, target_base, record, _source_bcut, _source_sha256 = _bcut_copy_fixture(
+        tmp_path
+    )
+
+    with pytest.raises(SystemExit, match="BCUT source hash mismatch"):
+        planner._copy_single_published_bcut_authority(
+            source_base=source_base,
+            target_base=target_base,
+            date="2026-08-17",
+            record=record,
+            expected_sha256="sha256:" + "0" * 64,
+        )
+
+    assert not (target_base / "cache" / "2026-08-17" / "official.bcut.srt").exists()
+
+
+@pytest.mark.parametrize("source_kind", ["symlink", "empty"])
+def test_single_published_bcut_copy_rejects_non_authoritative_source(
+    tmp_path: Path, source_kind: str
+):
+    source_base, target_base, record, source_bcut, source_sha256 = _bcut_copy_fixture(
+        tmp_path
+    )
+    if source_kind == "symlink":
+        source_target = tmp_path / "source-authority.srt"
+        source_target.write_bytes(source_bcut.read_bytes())
+        source_bcut.unlink()
+        source_bcut.symlink_to(source_target)
+    else:
+        source_bcut.write_bytes(b"")
+
+    with pytest.raises(SystemExit, match="BCUT source"):
+        planner._copy_single_published_bcut_authority(
+            source_base=source_base,
+            target_base=target_base,
+            date="2026-08-17",
+            record=record,
+            expected_sha256=source_sha256,
+        )
+
+    assert not (target_base / "cache" / "2026-08-17" / "official.bcut.srt").exists()
+
+
+@pytest.mark.parametrize("target_kind", ["regular", "symlink"])
+def test_single_published_bcut_copy_rejects_preexisting_target(
+    tmp_path: Path, target_kind: str
+):
+    source_base, target_base, record, _source_bcut, source_sha256 = _bcut_copy_fixture(
+        tmp_path
+    )
+    target = target_base / "cache" / "2026-08-17" / "official.bcut.srt"
+    target.parent.mkdir(parents=True)
+    if target_kind == "regular":
+        target.write_text("existing\n", encoding="utf-8")
+    else:
+        target.symlink_to(target_base / "missing.srt")
+
+    with pytest.raises(SystemExit, match="BCUT target already exists"):
+        planner._copy_single_published_bcut_authority(
+            source_base=source_base,
+            target_base=target_base,
+            date="2026-08-17",
+            record=record,
+            expected_sha256=source_sha256,
+        )
+
+    assert target.is_symlink() if target_kind == "symlink" else target.is_file()
+
+
+def test_single_published_plan_failure_rolls_back_created_bcut(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    args, source_state, target_base, _source_bcut = _qixi_single_published_main_fixture(
+        tmp_path, monkeypatch
+    )
+    source_bytes = source_state.read_bytes()
+
+    def fail_plan(*_args: object, **_kwargs: object) -> dict:
+        raise RecoveryReviewRerunError("INJECTED_PLAN_FAILURE")
+
+    monkeypatch.setattr(delivery_recovery, "plan_current_talk_recovery_rerun", fail_plan)
+    with pytest.raises(SystemExit, match="INJECTED_PLAN_FAILURE"):
+        planner.main(args)
+
+    assert source_state.read_bytes() == source_bytes
+    assert not (target_base / "cache" / "2026-08-17" / "official.bcut.srt").exists()
+    assert not (target_base / "state" / "2026-08-17.json").exists()
+    assert not (target_base / "reports" / "recovery-review-rerun-plan-2026-08-17.json").exists()
+    assert not (target_base / "cpa.env").exists()
+
+
+def test_single_published_cpa_failure_rolls_back_created_bcut(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    args, source_state, target_base, _source_bcut = _qixi_single_published_main_fixture(
+        tmp_path, monkeypatch
+    )
+    source_bytes = source_state.read_bytes()
+    monkeypatch.setattr(
+        planner,
+        "_bind_external_cpa_env",
+        lambda **_kwargs: (_ for _ in ()).throw(SystemExit("INJECTED_CPA_FAILURE")),
+    )
+
+    with pytest.raises(SystemExit, match="INJECTED_CPA_FAILURE"):
+        planner.main(args)
+
+    assert source_state.read_bytes() == source_bytes
+    assert not (target_base / "cache" / "2026-08-17" / "official.bcut.srt").exists()
+    assert not (target_base / "state" / "2026-08-17.json").exists()
+    assert not (target_base / "reports" / "recovery-review-rerun-plan-2026-08-17.json").exists()
+    assert not (target_base / "cpa.env").exists()
+
+
+def test_single_published_receipt_failure_keeps_bcut_after_state_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    args, _source_state, target_base, source_bcut = _qixi_single_published_main_fixture(
+        tmp_path, monkeypatch
+    )
+    atomic_create = planner._atomic_create
+
+    def fail_receipt(path: Path, payload: bytes) -> None:
+        if path.parent.name == "reports":
+            raise OSError("INJECTED_RECEIPT_FAILURE")
+        atomic_create(path, payload)
+
+    monkeypatch.setattr(planner, "_atomic_create", fail_receipt)
+    with pytest.raises(OSError, match="INJECTED_RECEIPT_FAILURE"):
+        planner.main(args)
+
+    assert (target_base / "state" / "2026-08-17.json").is_file()
+    assert (target_base / "cache" / "2026-08-17" / "official.bcut.srt").read_bytes() == (
+        source_bcut.read_bytes()
+    )
 
 
 def test_single_published_1493_contract_binds_existing_bv_and_exact_end():
@@ -768,6 +1010,45 @@ def test_v10_planner_main_missing_candidate_creates_no_target_state(
     ).exists()
 
 
+def test_single_published_main_requires_source_bcut_authority(
+    tmp_path, monkeypatch
+):
+    args, target_base, _source_state = _planner_fixture(
+        tmp_path,
+        monkeypatch,
+        requested_candidate_ids=["auto_193450_3573_3665"],
+    )
+    args = _without_suppression_or_replacement_options(args)
+    args.extend(
+        [
+            "--project-single-published-repair",
+            "--target-recordings-root",
+            str(target_base / "recordings"),
+        ]
+    )
+
+    with pytest.raises(SystemExit, match="requires a valid --expected-source-bcut-sha256"):
+        planner.main(args)
+
+    assert not (target_base / "state" / f"{DATE}.json").exists()
+
+
+def test_source_bcut_sha_argument_is_rejected_without_single_published_flag(
+    tmp_path, monkeypatch
+):
+    args, target_base, _source_state = _planner_fixture(
+        tmp_path,
+        monkeypatch,
+        requested_candidate_ids=["auto_193450_3573_3665"],
+    )
+    args.extend(["--expected-source-bcut-sha256", "sha256:" + "a" * 64])
+
+    with pytest.raises(SystemExit, match="requires --project-single-published-repair"):
+        planner.main(args)
+
+    assert not (target_base / "state" / f"{DATE}.json").exists()
+
+
 @pytest.mark.parametrize(
     (
         "date,candidate_id,start_ms,end_ms,status,publication_asset,publication_sha256"
@@ -813,14 +1094,17 @@ def test_single_published_projection_main_uses_external_recording_tree(
         "CPA_BASE_URL=https://example.invalid/v1\nCPA_API_KEY=test\n",
         encoding="utf-8",
     )
-    (target_base / "cache" / date).mkdir(parents=True)
-    (target_base / "repo").symlink_to(ROOT, target_is_directory=True)
-    (recording_root / date).mkdir(parents=True)
-    (recording_root / date / "official.mp4").write_bytes(b"official-media")
-    (target_base / "cache" / date / "official.bcut.srt").write_text(
+    (source_base / "cache" / date).mkdir(parents=True)
+    source_bcut = source_base / "cache" / date / "official.bcut.srt"
+    source_bcut.write_text(
         "1\n00:00:00,000 --> 00:00:01,000\n字幕\n",
         encoding="utf-8",
     )
+    source_bcut_sha256 = "sha256:" + hashlib.sha256(source_bcut.read_bytes()).hexdigest()
+    target_base.mkdir()
+    (target_base / "repo").symlink_to(ROOT, target_is_directory=True)
+    (recording_root / date).mkdir(parents=True)
+    (recording_root / date / "official.mp4").write_bytes(b"official-media")
     target = _record(
         candidate_id,
         start_ms=start_ms,
@@ -884,6 +1168,8 @@ def test_single_published_projection_main_uses_external_recording_tree(
                 "--target-recordings-root",
                 str(recording_root),
                 "--project-single-published-repair",
+                "--expected-source-bcut-sha256",
+                source_bcut_sha256,
                 "--date",
                 date,
                 "--expected-source-state-sha256",
@@ -929,6 +1215,8 @@ def test_single_published_projection_main_uses_external_recording_tree(
     assert target_state["single_published_repair_projection"][
         "source_target_status"
     ] == status
+    copied_bcut = target_base / "cache" / date / "official.bcut.srt"
+    assert copied_bcut.read_bytes() == source_bcut.read_bytes()
     assert receipt["target_recordings_root"] == str(recording_root)
     assert receipt["external_cpa_env"] == {
         "schema_version": "recovery-external-cpa-env-binding.v1",
@@ -937,6 +1225,15 @@ def test_single_published_projection_main_uses_external_recording_tree(
         "source_path": str(source_base / "cpa.env"),
         "resolved_authority_path": str(source_base / "cpa.env"),
         "target_path": str(target_base / "cpa.env"),
+    }
+    assert receipt["source_bcut_authority"] == {
+        "schema_version": "recovery-source-bcut-binding.v1",
+        "status": "BOUND",
+        "binding": "COPIED_HASH_BOUND_SOURCE_BCUT",
+        "source_path": str(source_bcut),
+        "target_path": str(copied_bcut),
+        "sha256": source_bcut_sha256,
+        "bytes": len(source_bcut.read_bytes()),
     }
     assert (target_base / "cpa.env").is_symlink()
     assert (target_base / "cpa.env").resolve() == (
@@ -1013,6 +1310,8 @@ def test_single_published_projection_rejects_multi_date_recording_root(
     args.extend(
         [
             "--project-single-published-repair",
+            "--expected-source-bcut-sha256",
+            "sha256:" + "a" * 64,
             "--target-recordings-root",
             str(recording_root),
         ]
@@ -1040,6 +1339,8 @@ def test_single_published_main_rejects_multiple_candidates_before_projection(
     args.extend(
         [
             "--project-single-published-repair",
+            "--expected-source-bcut-sha256",
+            "sha256:" + "a" * 64,
             "--target-recordings-root",
             str(target_base / "recordings"),
         ]
@@ -1063,11 +1364,20 @@ def test_single_published_main_rejects_wrong_authority_before_writing(
         requested_candidate_ids=["auto_193450_3573_3665"],
     )
     args = _without_suppression_or_replacement_options(args)
+    source_base = _source_state.parent.parent
+    source_bcut = source_base / "cache" / DATE / "official.bcut.srt"
+    source_bcut.parent.mkdir(parents=True)
+    source_bcut.write_text("1\n00:00:00,000 --> 00:00:01,000\n字幕\n", encoding="utf-8")
+    source_bcut_sha256 = "sha256:" + hashlib.sha256(source_bcut.read_bytes()).hexdigest()
+    target_bcut = target_base / "cache" / DATE / "official.bcut.srt"
+    target_bcut.unlink()
     authority_hash_index = args.index("--expected-publication-authority-sha256") + 1
     args[authority_hash_index] = "sha256:" + "0" * 64
     args.extend(
         [
             "--project-single-published-repair",
+            "--expected-source-bcut-sha256",
+            source_bcut_sha256,
             "--target-recordings-root",
             str(target_base / "recordings"),
         ]
@@ -1080,3 +1390,4 @@ def test_single_published_main_rejects_wrong_authority_before_writing(
         planner.main(args)
 
     assert not (target_base / "state" / f"{DATE}.json").exists()
+    assert not (target_base / "cache" / DATE / "official.bcut.srt").exists()

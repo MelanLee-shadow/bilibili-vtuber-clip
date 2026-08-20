@@ -80,6 +80,112 @@ def _atomic_create(path: Path, payload: bytes) -> None:
             pass
 
 
+def _single_published_bcut_paths(
+    *, source_base: Path, target_base: Path, date: str, record: dict
+) -> tuple[Path, Path]:
+    """Derive the one allowed BCUT copy path from the isolated record."""
+
+    segment_name = Path(
+        str(record.get("segment") or record.get("segment_path") or "")
+    ).name
+    stem = Path(segment_name).stem
+    if not segment_name or not stem or stem in {".", ".."}:
+        raise SystemExit("single published repair BCUT source segment is invalid")
+    relative_target = Path("cache") / date / f"{stem}.bcut.srt"
+    source = source_base / relative_target
+    target = target_base / relative_target
+    resolved_source_base = source_base.resolve()
+    resolved_target_base = target_base.resolve()
+    if not source.resolve(strict=False).is_relative_to(resolved_source_base):
+        raise SystemExit("single published repair BCUT source escapes source base")
+    if not target.resolve(strict=False).is_relative_to(resolved_target_base):
+        raise SystemExit("single published repair BCUT target escapes target base")
+    return source, target
+
+
+def _copy_single_published_bcut_authority(
+    *,
+    source_base: Path,
+    target_base: Path,
+    date: str,
+    record: dict,
+    expected_sha256: str,
+) -> tuple[dict[str, object], tuple[int, int]]:
+    """Create the exact source BCUT authority needed by one isolated rerun."""
+
+    source, target = _single_published_bcut_paths(
+        source_base=source_base,
+        target_base=target_base,
+        date=date,
+        record=record,
+    )
+    payload = _regular_file_bytes(source, label="single published repair BCUT source")
+    if not payload:
+        raise SystemExit("single published repair BCUT source must be nonempty")
+    actual_sha256 = _sha256(payload)
+    if actual_sha256 != expected_sha256:
+        raise SystemExit(
+            "single published repair BCUT source hash mismatch: "
+            f"expected {expected_sha256}, got {actual_sha256}"
+        )
+    if target.exists() or target.is_symlink():
+        raise SystemExit(f"single published repair BCUT target already exists: {target}")
+    _atomic_create(target, payload)
+    identity: tuple[int, int] | None = None
+    try:
+        target_metadata = target.lstat()
+        if stat.S_ISLNK(target_metadata.st_mode) or not stat.S_ISREG(
+            target_metadata.st_mode
+        ):
+            raise SystemExit("single published repair BCUT target verification failed")
+        identity = (target_metadata.st_dev, target_metadata.st_ino)
+        target_payload = _regular_file_bytes(
+            target, label="single published repair BCUT target"
+        )
+        if not target_payload or _sha256(target_payload) != actual_sha256:
+            raise SystemExit("single published repair BCUT target verification failed")
+    except BaseException:
+        if identity is not None:
+            _rollback_created_bcut_authority(
+                target_path=target,
+                identity=identity,
+            )
+        raise
+    return (
+        {
+            "schema_version": "recovery-source-bcut-binding.v1",
+            "status": "BOUND",
+            "binding": "COPIED_HASH_BOUND_SOURCE_BCUT",
+            "source_path": str(source),
+            "target_path": str(target),
+            "sha256": actual_sha256,
+            "bytes": len(payload),
+        },
+        identity,
+    )
+
+
+def _rollback_created_bcut_authority(
+    *, target_path: Path, identity: tuple[int, int]
+) -> None:
+    """Remove only the create-only BCUT file still owned by this invocation."""
+
+    try:
+        metadata = target_path.lstat()
+    except FileNotFoundError:
+        return
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISREG(metadata.st_mode)
+        or (metadata.st_dev, metadata.st_ino) != identity
+    ):
+        raise SystemExit(
+            "single published repair BCUT rollback cannot prove target ownership: "
+            f"{target_path}"
+        )
+    target_path.unlink()
+
+
 def _bind_external_cpa_env(
     *, source_base: Path, target_base: Path
 ) -> dict[str, str]:
@@ -171,6 +277,14 @@ def _parser() -> argparse.ArgumentParser:
         help=(
             "existing regular recording tree used by the isolated target; "
             "allowed only with --project-single-published-repair"
+        ),
+    )
+    parser.add_argument(
+        "--expected-source-bcut-sha256",
+        metavar="SHA256",
+        help=(
+            "required only for --project-single-published-repair; binds the "
+            "derived source-base/cache/date/segment BCUT transcript"
         ),
     )
     parser.add_argument(
@@ -449,6 +563,22 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", args.date) is None:
         raise SystemExit("invalid --date")
+    if (
+        args.expected_source_bcut_sha256 is not None
+        and not args.project_single_published_repair
+    ):
+        raise SystemExit(
+            "--expected-source-bcut-sha256 requires "
+            "--project-single-published-repair"
+        )
+    if args.project_single_published_repair and (
+        args.expected_source_bcut_sha256 is None
+        or FINGERPRINT_RX.fullmatch(args.expected_source_bcut_sha256) is None
+    ):
+        raise SystemExit(
+            "--project-single-published-repair requires a valid "
+            "--expected-source-bcut-sha256"
+        )
     for label, value in (
         ("source state", args.expected_source_state_sha256),
         ("old pipeline", args.expected_old_fingerprint),
@@ -507,6 +637,7 @@ def main(argv: list[str] | None = None) -> int:
             f"target recordings root must be a regular directory: "
             f"{target_recordings_root}"
         )
+    created_bcut_authority: tuple[dict[str, object], tuple[int, int]] | None = None
     if args.project_single_published_repair:
         visible_recording_dates = sorted(
             entry.name
@@ -571,23 +702,30 @@ def main(argv: list[str] | None = None) -> int:
             source_state_sha256=args.expected_source_state_sha256,
             delivered_statuses=runner.DELIVERED_TALK_STATUSES,
         )
-
-    queued_candidate_ids = set(args.candidate_ids) | set(
-        args.replacement_candidate_ids
-    )
-    (
-        recovery_publication_authorities,
-        given_end_ms_by_candidate,
-        given_end_authority,
-    ) = _load_recovery_publication_contract(
-        queued_candidate_ids=queued_candidate_ids,
-        publication_asset=args.publication_authority_asset,
-        expected_publication_authority_sha256=(
-            args.expected_publication_authority_sha256
-        ),
-        repo_root=repo_root,
-    )
     try:
+        if args.project_single_published_repair:
+            created_bcut_authority = _copy_single_published_bcut_authority(
+                source_base=source_base,
+                target_base=target_base,
+                date=args.date,
+                record=state["picks"][0],
+                expected_sha256=args.expected_source_bcut_sha256,
+            )
+        queued_candidate_ids = set(args.candidate_ids) | set(
+            args.replacement_candidate_ids
+        )
+        (
+            recovery_publication_authorities,
+            given_end_ms_by_candidate,
+            given_end_authority,
+        ) = _load_recovery_publication_contract(
+            queued_candidate_ids=queued_candidate_ids,
+            publication_asset=args.publication_authority_asset,
+            expected_publication_authority_sha256=(
+                args.expected_publication_authority_sha256
+            ),
+            repo_root=repo_root,
+        )
         plan = plan_current_talk_recovery_rerun(
             args.date,
             state,
@@ -610,47 +748,71 @@ def main(argv: list[str] | None = None) -> int:
                 recovery_publication_authorities
             ),
         )
+        if runner.BASE.resolve() != target_base:
+            raise SystemExit("runner did not bind the target recovery base")
     except RecoveryReviewRerunError as exc:
+        if created_bcut_authority is not None:
+            binding, identity = created_bcut_authority
+            _rollback_created_bcut_authority(
+                target_path=Path(str(binding["target_path"])), identity=identity
+            )
         raise SystemExit(str(exc)) from exc
-    if runner.BASE.resolve() != target_base:
-        raise SystemExit("runner did not bind the target recovery base")
+    except BaseException:
+        if created_bcut_authority is not None:
+            binding, identity = created_bcut_authority
+            _rollback_created_bcut_authority(
+                target_path=Path(str(binding["target_path"])), identity=identity
+            )
+        raise
     state["updated_at"] = time.strftime(
         "%Y-%m-%dT%H:%M:%S%z", time.localtime()
     )
     external_cpa_env = None
-    if args.project_single_published_repair:
-        external_cpa_env = _bind_external_cpa_env(
-            source_base=source_base,
-            target_base=target_base,
+    target_state_created = False
+    try:
+        if args.project_single_published_repair:
+            external_cpa_env = _bind_external_cpa_env(
+                source_base=source_base,
+                target_base=target_base,
+            )
+        target_state_path = target_base / "state" / f"{args.date}.json"
+        target_bytes = (
+            json.dumps(state, ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
         )
-    target_state_path = target_base / "state" / f"{args.date}.json"
-    target_bytes = (
-        json.dumps(state, ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
-    )
-    _atomic_create(target_state_path, target_bytes)
-    receipt = {
-        **plan,
-        "source_base": str(source_base),
-        "target_base": str(target_base),
-        "target_recordings_root": str(target_recordings_root),
-        "target_state_path": str(target_state_path),
-        "target_state_sha256": _sha256(target_bytes),
-        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    }
-    if external_cpa_env is not None:
-        receipt["external_cpa_env"] = external_cpa_env
-    receipt_path = (
-        target_base
-        / "reports"
-        / f"recovery-review-rerun-plan-{args.date}.json"
-    )
-    _atomic_create(
-        receipt_path,
-        json.dumps(
-            receipt, ensure_ascii=False, indent=2, sort_keys=True
-        ).encode("utf-8")
-        + b"\n",
-    )
+        _atomic_create(target_state_path, target_bytes)
+        target_state_created = True
+        receipt = {
+            **plan,
+            "source_base": str(source_base),
+            "target_base": str(target_base),
+            "target_recordings_root": str(target_recordings_root),
+            "target_state_path": str(target_state_path),
+            "target_state_sha256": _sha256(target_bytes),
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        if external_cpa_env is not None:
+            receipt["external_cpa_env"] = external_cpa_env
+        if created_bcut_authority is not None:
+            receipt["source_bcut_authority"] = created_bcut_authority[0]
+        receipt_path = (
+            target_base
+            / "reports"
+            / f"recovery-review-rerun-plan-{args.date}.json"
+        )
+        _atomic_create(
+            receipt_path,
+            json.dumps(
+                receipt, ensure_ascii=False, indent=2, sort_keys=True
+            ).encode("utf-8")
+            + b"\n",
+        )
+    except BaseException:
+        if created_bcut_authority is not None and not target_state_created:
+            binding, identity = created_bcut_authority
+            _rollback_created_bcut_authority(
+                target_path=Path(str(binding["target_path"])), identity=identity
+            )
+        raise
     print(json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 
