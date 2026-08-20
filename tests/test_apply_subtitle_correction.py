@@ -459,6 +459,7 @@ def test_recovery_authority_can_restore_z2_from_explicit_incident_chain(
         "schema_version": "lidousha-final-media-review-contracts.v1",
         "contracts": [{"candidate_id": cid, "subtitle_review_points": [
             {"point_id": "qixi-tomorrow-night-lara-title"},
+            {"point_id": "qixi-balance-iiya"},
             {"point_id": "qixi-sweet-or-bitter-ending"},
             {"point_id": "qixi-full-release-text-stability"},
         ]}],
@@ -562,6 +563,129 @@ def test_canonical_qixi_recovery_asset_has_strict_shape_and_sealed_path(
         "assets/lidousha/delivery_branding_recovery/auto_113022_354_496.v1.json"
     )
     assert seal["mode"] == "DEPLOYED_MANIFEST"
+
+
+def _qixi_v2_successor_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[dict[str, object], Path, Path, dict[str, object]]:
+    """Build the exact predecessor-receipt/current-record relation used by v2."""
+
+    cid = "auto_113022_354_496"
+    monkeypatch.setattr(correction, "ROOT", tmp_path)
+    predecessor = tmp_path / "assets/lidousha/delivery_branding_recovery/auto_113022_354_496.v1.json"
+    predecessor.parent.mkdir(parents=True)
+    predecessor.write_text("{}", encoding="utf-8")
+    old_incident = tmp_path / "old-correction.json"
+    old_incident.write_text("{}", encoding="utf-8")
+    successor = tmp_path / "current-correction.json"
+    record = tmp_path / "current.record.json"
+    binding = {
+        "status": "PREPENDED", "intro_id": "z2", "intro_media_sha256": "sha256:" + "d" * 64,
+        "intro_offset_ms": 6183,
+    }
+    authority: dict[str, object] = {
+        "schema_version": "delivery-branding-recovery-authority.v2", "candidate_id": cid,
+        "authority": "fixture", "prior_burned_video_sha256": "sha256:" + "e" * 64,
+        "prior_subtitle_sha256": "sha256:" + "6" * 64, "prior_record_sha256": "sha256:" + "5" * 64,
+        "intro_id": "z2", "intro_media_sha256": binding["intro_media_sha256"], "intro_offset_ms": 6183,
+        "prior_package_authority_path": str(tmp_path / "prior.json"), "prior_package_authority_sha256": "sha256:" + "4" * 64,
+        "operator_freeze_authority_path": str(tmp_path / "freeze.json"), "operator_freeze_authority_sha256": "sha256:" + "3" * 64,
+        "incident_correction_manifest_path": str(old_incident), "incident_correction_manifest_sha256": "sha256:" + _sha256(old_incident),
+        "incident_before_srt_sha256": "sha256:" + "6" * 64, "incident_after_srt_sha256": "sha256:" + "2" * 64,
+        "incident_new_burned_video_sha256": "sha256:" + "7" * 64,
+        "successor_correction_manifest_path": str(successor), "successor_before_srt_sha256": "sha256:" + "2" * 64,
+        "successor_after_srt_sha256": "sha256:" + "2" * 64, "successor_burned_video_sha256": "sha256:" + "0" * 64,
+        "successor_record_path": str(record), "predecessor_recovery_authority_path": str(predecessor),
+        "predecessor_recovery_authority_sha256": "sha256:" + "b" * 64,
+        "predecessor_recovery_authority_commit": "a" * 40,
+        "predecessor_operator_freeze_authority_path": str(tmp_path / "old-freeze.json"),
+        "predecessor_operator_freeze_authority_sha256": "sha256:" + "1" * 64,
+    }
+    recovery = {
+        "schema_version": "delivery-branding-recovery-authority.v1", "authority_path": str(predecessor),
+        "authority_sha256": authority["predecessor_recovery_authority_sha256"],
+        "authority_repository_seal": {"mode": "DEPLOYED_MANIFEST", "deployed_commit": "a" * 40,
+                                      "relative_path": "assets/lidousha/delivery_branding_recovery/auto_113022_354_496.v1.json",
+                                      "sha256": authority["predecessor_recovery_authority_sha256"]},
+        "prior_burned_video_sha256": authority["prior_burned_video_sha256"],
+        "prior_subtitle_sha256": authority["prior_subtitle_sha256"], "prior_record_sha256": authority["prior_record_sha256"],
+        "prior_package_authority_path": authority["prior_package_authority_path"],
+        "prior_package_authority_sha256": authority["prior_package_authority_sha256"],
+        "operator_freeze_authority_path": authority["predecessor_operator_freeze_authority_path"],
+        "operator_freeze_authority_sha256": authority["predecessor_operator_freeze_authority_sha256"],
+        "incident_correction_manifest_path": str(old_incident), "incident_correction_manifest_sha256": authority["incident_correction_manifest_sha256"],
+        "branding_intro": binding,
+    }
+    successor.write_text(json.dumps({
+        "schema_version": "human-subtitle-correction.v2", "candidate_id": cid,
+        "before_srt_sha256": "2" * 64, "after_srt_sha256": "2" * 64,
+        "burned_media_sha256": "0" * 64, "delivery_branding_authority": recovery,
+    }), encoding="utf-8")
+    authority["successor_correction_manifest_sha256"] = "sha256:" + _sha256(successor)
+    authority["successor_correction_manifest_bytes"] = successor.stat().st_size
+    record.write_text(json.dumps({
+        "artifact_hashes": {"subtitle_sha256": "sha256:" + "2" * 64, "burned_video_sha256": "sha256:" + "0" * 64},
+        "human_text_correction_manifest_path": str(successor),
+        "human_text_correction_manifest_sha256": authority["successor_correction_manifest_sha256"],
+    }), encoding="utf-8")
+    authority["successor_record_sha256"] = "sha256:" + _sha256(record)
+    authority["successor_record_bytes"] = record.stat().st_size
+    correction._validate_recovery_authority_shape(authority, candidate_id=cid)
+    return authority, old_incident, record, binding
+
+
+def test_v2_recovery_replays_the_current_z2_successor_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    authority, old_incident, record, binding = _qixi_v2_successor_fixture(tmp_path, monkeypatch)
+    path, sha = correction._validate_v2_successor_chain(
+        authority=authority, working_record_path=record, candidate_id="auto_113022_354_496",
+        incident_path=old_incident, incident_sha=str(authority["incident_correction_manifest_sha256"]),
+        after_srt=str(authority["incident_after_srt_sha256"]), prior_binding=binding,
+    )
+    assert path == Path(str(authority["successor_correction_manifest_path"]))
+    assert sha == authority["successor_correction_manifest_sha256"]
+
+
+@pytest.mark.parametrize(
+    "tamper", ["missing", "receipt", "record", "embedded_freeze", "current_freeze"]
+)
+def test_v2_recovery_requires_the_current_z2_successor_before_reburn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tamper: str
+) -> None:
+    authority, old_incident, record, binding = _qixi_v2_successor_fixture(tmp_path, monkeypatch)
+    if tamper == "missing":
+        authority.pop("successor_record_sha256")
+        with pytest.raises(correction.DeliveryBrandingAuthorityError):
+            correction._validate_recovery_authority_shape(authority, candidate_id="auto_113022_354_496")
+        return
+    if tamper == "current_freeze":
+        authority["operator_freeze_authority_sha256"] = authority[
+            "predecessor_operator_freeze_authority_sha256"
+        ]
+        with pytest.raises(correction.DeliveryBrandingAuthorityError):
+            correction._validate_recovery_authority_shape(authority, candidate_id="auto_113022_354_496")
+        return
+    if tamper == "receipt":
+        successor = Path(str(authority["successor_correction_manifest_path"]))
+        payload = json.loads(successor.read_text(encoding="utf-8"))
+        payload["delivery_branding_authority"]["branding_intro"]["intro_offset_ms"] = 1
+        successor.write_text(json.dumps(payload), encoding="utf-8")
+    elif tamper == "embedded_freeze":
+        successor = Path(str(authority["successor_correction_manifest_path"]))
+        payload = json.loads(successor.read_text(encoding="utf-8"))
+        payload["delivery_branding_authority"]["operator_freeze_authority_sha256"] = authority[
+            "operator_freeze_authority_sha256"
+        ]
+        successor.write_text(json.dumps(payload), encoding="utf-8")
+    else:
+        record.write_text("{}", encoding="utf-8")
+    with pytest.raises(correction.DeliveryBrandingAuthorityError):
+        correction._validate_v2_successor_chain(
+            authority=authority, working_record_path=record, candidate_id="auto_113022_354_496",
+            incident_path=old_incident, incident_sha=str(authority["incident_correction_manifest_sha256"]),
+            after_srt=str(authority["incident_after_srt_sha256"]), prior_binding=binding,
+        )
 
 
 def test_post_render_branding_mismatch_leaves_package_bytes_unchanged(

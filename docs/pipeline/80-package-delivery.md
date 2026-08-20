@@ -79,6 +79,9 @@
   baseline 依现有 contract 重放，但不可再触发 operator full-ownership 快路径。重新物化或需要
   快路径的资产必须使用带独立 pipeline/diff/decision artifacts 的 v2 pin；不得把旧自由文本 pin
   原地补标为人工裁定。
+- provider 盲听的原始回包只能作为诊断证据，不能变成 Ivan 真值。若同一封存音频与无诱导
+  prompt 的结果不收敛，必须写 `DELEGATED_PROVIDER_REVIEW_UNRESOLVED` blocking evidence，
+  禁止物化 baseline、快路径或烧录，直到 Ivan 给出新的精确文本授权。
 - governed late source truth 是唯一允许在 expected-value choke point 之后覆盖词面的 lane，
   并且只接受
   `decision_authority=IVAN_OPERATOR_TRUTH` 的 `VERIFIED_ACTIVE` 行；除可重算的
@@ -355,16 +358,14 @@
 - 新 BV 与 exact same-BV repair 的两条发布 lane、权限边界、正式 receipt schema、live
   验收和执行顺序只读 [90-publish.md](90-publish.md)。打包步骤不得复制、放宽或自行推导发布
   准入，也不得把 package audit、pending-human manifest 或任意旧版/手写 receipt 当成授权。
-- **七夕人工 Z2 corrected package 窄门**：只可运行
-  `scripts/finalize_qixi_corrected_package.py`，固定消费部署/仓库封存的
-  `qixi_corrected_package_finalization_authority.v1` 所列 release Z2 bytes 与 r2 fresh
-  evidence；它不调用 ffmpeg、选片、标题或封面 provider。默认仅 dry-run，`--apply` 只在新的
-  create-only candidate root 写入 `replacement_recuts`，并在最终 JSON/hash 闭包后写
-  `qixi-corrected-package-finalization.json`。任何 source/evidence/target symlink、重叠、旧
-  publish 漂移、未知 locator 或 receipt replay 不通过都拒绝。manual builder 必须先按 record
-  `artifact_hashes` 用既有 candidate→package portable sync 将 candidate-root chat/clip 的 regular
-  exact bytes 物化到包内；review manifest、canonical auditor 与 final-human 必须重读该 typed
-  receipt 的 filename/SHA 和 sealed replay。该门只生成待审包，不授权上传或 same-BV 操作。
+- **七夕人工 Z2 corrected package 窄门已失效**：旧
+  `qixi_corrected_package_finalization_authority.v1` 绑定的 562b 字幕和 0d21 成片不再可用于
+  finalization。必须先完成新的 canonical reburn、重新建立封存 authority 与 final-media review，
+  才能产生新的 create-only package；本轮不得借旧 receipt、旧 burn 或 recovery bridge 伪造该授权。
+- 七夕的 `delivery-branding-recovery-authority.v2` 仅是后续 reburn 的**前置重放**：它同时
+  验证原 7a/Z1 incident、已部署封存的 b5f3 recovery authority，及当前 c742/Z2 correction
+  receipt/record 的 exact bytes、562b→562b 字幕链与 0d21 burn。缺任一 successor binding 即在
+  burn 前拒绝；该 bridge 不构成新成片、finalizer 或上传授权。
 - 已发布 same-BV 的字幕修复如显式使用 `--project-single-published-repair
   --preserve-published-cover`，只能消费候选专属、部署封存的
   `daily_same_bv_published_cover_carry_authority.v1`。该 sealed asset 只固定候选、哈希和

@@ -220,6 +220,33 @@ def test_rejects_timing_drift_and_speaker_annotation(tmp_path: Path) -> None:
         compile_operator_baseline(**fixture)
 
 
+def test_unresolved_delegated_provider_evidence_blocks_materialization(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    fixture["reviewed_srt"].write_text(_srt("星汐说"), encoding="utf-8")
+    ledger = fixture["decision_ledger"]
+    assert isinstance(ledger, dict)
+    row = ledger["cue_decisions"][1]
+    row.clear()
+    row.update(
+        {
+            "cue": 2,
+            "source_index": "2",
+            "start_ms": 1000,
+            "end_ms": 2000,
+            "source_text_sha256": hashlib.sha256("星汐说".encode()).hexdigest(),
+            "disposition": "DELEGATED_PROVIDER_REVIEW_UNRESOLVED",
+            "blocking_evidence": {
+                "path": "cue2-canonical-evidence.v1.json",
+                "sha256": "ab" * 32,
+                "reason": "two retained raw provider responses do not intersect",
+            },
+        }
+    )
+
+    with pytest.raises(OperatorBaselineCompileError, match="cannot materialize"):
+        compile_operator_baseline(**fixture)
+
+
 def test_rejects_no_change_symlink_and_out_of_bounds(tmp_path: Path) -> None:
     fixture = _fixture(tmp_path)
     fixture["reviewed_srt"].write_text(_srt("星汐说"), encoding="utf-8")
@@ -261,7 +288,7 @@ def test_machine_proposal_cannot_be_laundered_into_operator_release_truth(
         **ledger["cue_decisions"][1],
         "disposition": "MACHINE_PROPOSAL",
         "proposal": {
-            "text": "ぶらどらぶ",
+            "text": "未裁定机器候选",
             "provenance": {"provider": "GEMINI", "artifact_sha256": "cd" * 32},
         },
     }
@@ -314,7 +341,7 @@ def test_machine_proposal_is_retained_for_diagnosis_but_cannot_replace_qixi_sour
             "evidence_ref": "review: qixi synthetic exact correction",
         },
         "rejected_machine_proposal": {
-            "text": "ぶらどらぶ",
+            "text": "未裁定机器候选",
             "provenance": {"provider": "GEMINI", "artifact_sha256": "ef" * 32},
         },
     }
@@ -353,7 +380,33 @@ def test_machine_proposal_is_retained_for_diagnosis_but_cannot_replace_qixi_sour
     diff = json.loads(str(result["diagnostic_diff"]))
     assert diff["rows"][1]["release_truth_text"] == "再见菈菈"
     assert diff["rows"][1]["pipeline_text"] == "再见菈菈"
-    assert diff["rows"][1]["rejected_machine_proposal"]["text"] == "ぶらどらぶ"
+    assert diff["rows"][1]["rejected_machine_proposal"]["text"] == "未裁定机器候选"
     assert diff["rows"][1]["rejected_machine_proposal"]["disposition"] == (
         "REJECTED_BY_OPERATOR_EXACT_TEXT"
     )
+
+
+def test_qixi_per_cue_operator_provenance_remains_separate_and_scrubbed() -> None:
+    root = Path(__file__).resolve().parents[1]
+    baseline_root = root / "assets/lidousha/reviewed_subtitle_baselines"
+    candidate = "auto_113022_354_496"
+    ledger = json.loads((baseline_root / f"{candidate}.operator-decisions.v1.json").read_text(encoding="utf-8"))
+    decisions = ledger["cue_decisions"]
+    cue21 = decisions[20]["decision_authority"]["evidence_ref"]
+    cue59 = decisions[58]["decision_authority"]["evidence_ref"]
+    cue60 = decisions[59]["decision_authority"]["evidence_ref"]
+    assert cue21 != cue59 == cue60
+    assert "非常 balance iiya" in cue21
+    assert "2:39说的是播的有点压抑了" in cue59
+    active = [
+        baseline_root / f"{candidate}.operator-decisions.v1.json",
+        baseline_root / f"{candidate}.operator-truth-diff.v1.json",
+        baseline_root / f"{candidate}.subtitle-baseline.v1.json",
+        root / "docs/reviews/2026-08-20-auto_113022_354_496-operator-reviewed-subtitle-baseline-delivery.v1.json",
+        root / "assets/lidousha/final_media_review_contracts.v1.json",
+    ]
+    for path in active:
+        text = path.read_text(encoding="utf-8")
+        assert "ぶらどらぶ" not in text
+        assert "brasuki" not in text
+        assert "Rejected Gemini" not in text

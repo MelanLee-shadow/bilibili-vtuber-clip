@@ -60,7 +60,9 @@ class DeliveryBrandingAuthorityError(ValueError):
     """The prior delivery cannot prove which branding intro must be reused."""
 
 
-_RECOVERY_AUTHORITY_SCHEMA = "delivery-branding-recovery-authority.v1"
+_RECOVERY_AUTHORITY_SCHEMAS = frozenset(
+    {"delivery-branding-recovery-authority.v1", "delivery-branding-recovery-authority.v2"}
+)
 _RECOVERY_AUTHORITY_ROOT = Path("assets/lidousha/delivery_branding_recovery")
 _RECOVERY_AUTHORITY_KEYS = frozenset(
     {
@@ -82,6 +84,24 @@ _RECOVERY_AUTHORITY_KEYS = frozenset(
         "incident_before_srt_sha256",
         "incident_after_srt_sha256",
         "incident_new_burned_video_sha256",
+    }
+)
+_RECOVERY_AUTHORITY_V2_KEYS = _RECOVERY_AUTHORITY_KEYS | frozenset(
+    {
+        "successor_correction_manifest_path",
+        "successor_correction_manifest_sha256",
+        "successor_correction_manifest_bytes",
+        "successor_before_srt_sha256",
+        "successor_after_srt_sha256",
+        "successor_burned_video_sha256",
+        "successor_record_path",
+        "successor_record_sha256",
+        "successor_record_bytes",
+        "predecessor_recovery_authority_path",
+        "predecessor_recovery_authority_sha256",
+        "predecessor_recovery_authority_commit",
+        "predecessor_operator_freeze_authority_path",
+        "predecessor_operator_freeze_authority_sha256",
     }
 )
 
@@ -288,9 +308,15 @@ def _validate_recovery_authority_shape(
 ) -> dict[str, object]:
     """Validate the static recovery decision before reading any runtime proof."""
 
-    if set(authority) != _RECOVERY_AUTHORITY_KEYS:
+    schema = authority.get("schema_version")
+    expected_keys = (
+        _RECOVERY_AUTHORITY_V2_KEYS
+        if schema == "delivery-branding-recovery-authority.v2"
+        else _RECOVERY_AUTHORITY_KEYS
+    )
+    if set(authority) != expected_keys:
         raise DeliveryBrandingAuthorityError("recovery branding authority has an unexpected key set")
-    if authority.get("schema_version") != _RECOVERY_AUTHORITY_SCHEMA:
+    if schema not in _RECOVERY_AUTHORITY_SCHEMAS:
         raise DeliveryBrandingAuthorityError("unsupported recovery branding authority schema")
     if authority.get("candidate_id") != candidate_id:
         raise DeliveryBrandingAuthorityError(
@@ -306,6 +332,28 @@ def _validate_recovery_authority_shape(
         "incident_new_burned_video_sha256",
     ):
         _required_prefixed_sha256(authority.get(key), label=f"recovery {key}")
+    if schema == "delivery-branding-recovery-authority.v2":
+        for key in (
+            "successor_correction_manifest_sha256",
+            "successor_before_srt_sha256",
+            "successor_after_srt_sha256",
+            "successor_burned_video_sha256",
+            "successor_record_sha256",
+            "predecessor_recovery_authority_sha256",
+            "predecessor_operator_freeze_authority_sha256",
+        ):
+            _required_prefixed_sha256(authority.get(key), label=f"recovery {key}")
+        for key in ("successor_correction_manifest_bytes", "successor_record_bytes"):
+            if isinstance(authority.get(key), bool) or not isinstance(authority.get(key), int) or authority[key] <= 0:
+                raise DeliveryBrandingAuthorityError(f"recovery {key} is invalid")
+        if not re.fullmatch(
+            r"[0-9a-f]{40}", str(authority.get("predecessor_recovery_authority_commit") or "")
+        ):
+            raise DeliveryBrandingAuthorityError("recovery predecessor authority commit is invalid")
+        if authority["predecessor_operator_freeze_authority_sha256"] == authority[
+            "operator_freeze_authority_sha256"
+        ]:
+            raise DeliveryBrandingAuthorityError("recovery predecessor/current freeze authorities must differ")
     if not isinstance(authority.get("intro_id"), str) or not authority["intro_id"]:
         raise DeliveryBrandingAuthorityError("recovery intro_id is invalid")
     offset = authority.get("intro_offset_ms")
@@ -318,6 +366,16 @@ def _validate_recovery_authority_shape(
         value = authority.get(key)
         if not isinstance(value, str) or not Path(value).is_absolute():
             raise DeliveryBrandingAuthorityError(f"recovery {key} must be an absolute path")
+    if schema == "delivery-branding-recovery-authority.v2":
+        for key in (
+            "successor_correction_manifest_path",
+            "successor_record_path",
+            "predecessor_recovery_authority_path",
+            "predecessor_operator_freeze_authority_path",
+        ):
+            value = authority.get(key)
+            if not isinstance(value, str) or not Path(value).is_absolute():
+                raise DeliveryBrandingAuthorityError(f"recovery {key} must be an absolute path")
     return dict(authority)
 
 
@@ -379,6 +437,7 @@ def _validate_freeze_contract(
         raise DeliveryBrandingAuthorityError("operator freeze authority lacks review points")
     expected = {
         "qixi-tomorrow-night-lara-title",
+        "qixi-balance-iiya",
         "qixi-sweet-or-bitter-ending",
         "qixi-full-release-text-stability",
     }
@@ -388,6 +447,113 @@ def _validate_freeze_contract(
     }
     if actual != expected:
         raise DeliveryBrandingAuthorityError("operator freeze contract invariants drifted")
+
+
+def _validate_v2_successor_chain(
+    *,
+    authority: Mapping[str, object],
+    working_record_path: Path,
+    candidate_id: str,
+    incident_path: Path,
+    incident_sha: str,
+    after_srt: str,
+    prior_binding: Mapping[str, object],
+) -> tuple[Path, str]:
+    """Bind the existing Z2 recovery receipt before it can seed another reburn."""
+
+    successor_path = Path(str(authority["successor_correction_manifest_path"]))
+    successor_sha = _required_prefixed_sha256(
+        authority.get("successor_correction_manifest_sha256"),
+        label="recovery successor_correction_manifest_sha256",
+    )
+    successor = _read_regular_json(successor_path, label="recovery successor correction manifest")
+    if (
+        "sha256:" + _sha256(successor_path) != successor_sha
+        or successor_path.stat().st_size != authority["successor_correction_manifest_bytes"]
+    ):
+        raise DeliveryBrandingAuthorityError("recovery successor correction manifest hash drifted")
+    successor_before = _required_prefixed_sha256(
+        authority.get("successor_before_srt_sha256"), label="recovery successor_before_srt_sha256"
+    )
+    successor_after = _required_prefixed_sha256(
+        authority.get("successor_after_srt_sha256"), label="recovery successor_after_srt_sha256"
+    )
+    successor_burned = _required_prefixed_sha256(
+        authority.get("successor_burned_video_sha256"), label="recovery successor_burned_video_sha256"
+    )
+    if successor_before != after_srt or (
+        successor.get("candidate_id") != candidate_id
+        or "sha256:" + str(successor.get("before_srt_sha256") or "") != successor_before
+        or "sha256:" + str(successor.get("after_srt_sha256") or "") != successor_after
+        or "sha256:" + str(successor.get("burned_media_sha256") or "") != successor_burned
+    ):
+        raise DeliveryBrandingAuthorityError("recovery successor correction chain drifts")
+    recovery = successor.get("delivery_branding_authority")
+    predecessor_path = str(authority["predecessor_recovery_authority_path"])
+    predecessor_sha = _required_prefixed_sha256(
+        authority.get("predecessor_recovery_authority_sha256"),
+        label="recovery predecessor_recovery_authority_sha256",
+    )
+    predecessor_commit = str(authority["predecessor_recovery_authority_commit"])
+    expected_seal = {
+        "mode": "DEPLOYED_MANIFEST",
+        "deployed_commit": predecessor_commit,
+        "relative_path": _expected_recovery_authority_path(candidate_id).relative_to(ROOT).as_posix(),
+        "sha256": predecessor_sha,
+    }
+    expected_recovery_keys = {
+        "schema_version", "authority_path", "authority_sha256", "authority_repository_seal",
+        "prior_burned_video_sha256", "prior_subtitle_sha256", "prior_record_sha256",
+        "prior_package_authority_path", "prior_package_authority_sha256",
+        "operator_freeze_authority_path", "operator_freeze_authority_sha256",
+        "incident_correction_manifest_path", "incident_correction_manifest_sha256", "branding_intro",
+    }
+    if (
+        not isinstance(recovery, Mapping)
+        or set(recovery) != expected_recovery_keys
+        or recovery.get("schema_version") != "delivery-branding-recovery-authority.v1"
+        or recovery.get("authority_path") != predecessor_path
+        or recovery.get("authority_sha256") != predecessor_sha
+        or not isinstance(recovery.get("authority_repository_seal"), Mapping)
+        or set(recovery["authority_repository_seal"])
+        != {"mode", "deployed_commit", "relative_path", "sha256"}
+        or any(recovery["authority_repository_seal"].get(key) != value for key, value in expected_seal.items())
+        or recovery.get("incident_correction_manifest_path") != str(incident_path)
+        or recovery.get("incident_correction_manifest_sha256") != incident_sha
+        or recovery.get("prior_burned_video_sha256") != authority["prior_burned_video_sha256"]
+        or recovery.get("prior_subtitle_sha256") != authority["prior_subtitle_sha256"]
+        or recovery.get("prior_record_sha256") != authority["prior_record_sha256"]
+        or recovery.get("prior_package_authority_path") != authority["prior_package_authority_path"]
+        or recovery.get("prior_package_authority_sha256") != authority["prior_package_authority_sha256"]
+        or recovery.get("operator_freeze_authority_path")
+        != authority["predecessor_operator_freeze_authority_path"]
+        or recovery.get("operator_freeze_authority_sha256")
+        != authority["predecessor_operator_freeze_authority_sha256"]
+        or recovery.get("branding_intro") != dict(prior_binding)
+    ):
+        raise DeliveryBrandingAuthorityError("recovery successor does not bind deployed Z2 authority")
+    record_path = Path(str(authority["successor_record_path"]))
+    record_sha = _required_prefixed_sha256(
+        authority.get("successor_record_sha256"), label="recovery successor_record_sha256"
+    )
+    current = _read_regular_json(record_path, label="recovery successor record")
+    if (
+        record_path != working_record_path
+        or "sha256:" + _sha256(record_path) != record_sha
+        or record_path.stat().st_size != authority["successor_record_bytes"]
+        or current.get("human_text_correction_manifest_path") != str(successor_path)
+        or current.get("human_text_correction_manifest_sha256") != successor_sha
+    ):
+        raise DeliveryBrandingAuthorityError("current record does not bind recovery successor")
+    hashes = current.get("artifact_hashes")
+    if not isinstance(hashes, Mapping) or (
+        _required_prefixed_sha256(hashes.get("subtitle_sha256"), label="successor record subtitle")
+        != successor_after
+        or _required_prefixed_sha256(hashes.get("burned_video_sha256"), label="successor record burn")
+        != successor_burned
+    ):
+        raise DeliveryBrandingAuthorityError("current record successor hashes drift")
+    return successor_path, successor_sha
 
 
 def _load_recovery_branding_authority(
@@ -480,46 +646,56 @@ def _load_recovery_branding_authority(
         raise DeliveryBrandingAuthorityError(
             "incident correction manifest does not match the recovery chain"
         )
-    current_hashes = working_record.get("artifact_hashes")
-    if not isinstance(current_hashes, Mapping):
-        raise DeliveryBrandingAuthorityError("current correction record lacks artifact_hashes")
-    if (
-        _required_prefixed_sha256(
-            current_hashes.get("subtitle_sha256"), label="current record subtitle_sha256"
-        )
-        != after_srt
-        or _required_prefixed_sha256(
-            current_hashes.get("burned_video_sha256"),
-            label="current record burned_video_sha256",
-        )
-        != new_burned
-    ):
-        raise DeliveryBrandingAuthorityError(
-            "current correction record is not the documented incident successor"
-        )
-    current_manifest = working_record.get("human_text_correction_manifest_path")
-    current_manifest_sha = working_record.get("human_text_correction_manifest_sha256")
-    if (
-        current_manifest != str(incident_path)
-        or current_manifest_sha != incident_sha
-        or _same_regular_file(working_record_path, authority_path)
-    ):
-        raise DeliveryBrandingAuthorityError(
-            "current record does not point to the documented incident correction manifest"
-        )
-
     prior_binding = {
         "status": "PREPENDED",
         "intro_id": authority["intro_id"],
         "intro_media_sha256": authority["intro_media_sha256"],
         "intro_offset_ms": authority["intro_offset_ms"],
     }
+    successor_path: Path | None = None
+    successor_sha: str | None = None
+    if authority["schema_version"] == "delivery-branding-recovery-authority.v2":
+        successor_path, successor_sha = _validate_v2_successor_chain(
+            authority=authority,
+            working_record_path=working_record_path,
+            candidate_id=candidate_id,
+            incident_path=incident_path,
+            incident_sha=incident_sha,
+            after_srt=after_srt,
+            prior_binding=prior_binding,
+        )
+    else:
+        current_hashes = working_record.get("artifact_hashes")
+        if not isinstance(current_hashes, Mapping):
+            raise DeliveryBrandingAuthorityError("current correction record lacks artifact_hashes")
+        if (
+            _required_prefixed_sha256(
+                current_hashes.get("subtitle_sha256"), label="current record subtitle_sha256"
+            )
+            != after_srt
+            or _required_prefixed_sha256(
+                current_hashes.get("burned_video_sha256"), label="current record burned_video_sha256"
+            )
+            != new_burned
+        ):
+            raise DeliveryBrandingAuthorityError(
+                "current correction record is not the documented incident successor"
+            )
+        if (
+            working_record.get("human_text_correction_manifest_path") != str(incident_path)
+            or working_record.get("human_text_correction_manifest_sha256") != incident_sha
+        ):
+            raise DeliveryBrandingAuthorityError(
+                "current record does not point to the documented incident correction manifest"
+            )
+    if _same_regular_file(working_record_path, authority_path):
+        raise DeliveryBrandingAuthorityError("current record may not be the recovery authority")
     try:
         pinned_context = pin_existing_delivery_intro(branding_intro, prior_binding)
     except BrandingIntroError as exc:
         raise DeliveryBrandingAuthorityError(str(exc)) from exc
     return pinned_context, {
-        "schema_version": _RECOVERY_AUTHORITY_SCHEMA,
+        "schema_version": authority["schema_version"],
         "authority_path": str(authority_path),
         "authority_sha256": str(repository_seal["sha256"]),
         "authority_repository_seal": repository_seal,
@@ -532,6 +708,14 @@ def _load_recovery_branding_authority(
         "operator_freeze_authority_sha256": freeze_sha,
         "incident_correction_manifest_path": str(incident_path),
         "incident_correction_manifest_sha256": incident_sha,
+        **(
+            {
+                "successor_correction_manifest_path": str(successor_path),
+                "successor_correction_manifest_sha256": successor_sha,
+            }
+            if successor_path is not None and successor_sha is not None
+            else {}
+        ),
         "branding_intro": prior_binding,
     }
 

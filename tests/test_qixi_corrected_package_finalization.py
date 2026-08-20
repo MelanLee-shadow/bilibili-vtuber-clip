@@ -85,6 +85,20 @@ def _sealed_test_repo(tmp_path: Path, authority: dict) -> Path:
     return repo
 
 
+def test_repo_stale_qixi_authority_is_disabled_before_any_finalization(
+    tmp_path: Path,
+) -> None:
+    """The old 562b/0d21 package cannot be finalized from this repo epoch."""
+
+    with pytest.raises(finalization.QixiCorrectedPackageError, match="not a regular file"):
+        finalization.plan_finalization(
+            repo_root=Path.cwd(),
+            release_root=tmp_path,
+            evidence_root=tmp_path,
+            target=tmp_path / "new-package",
+        )
+
+
 def _inputs(tmp_path: Path) -> tuple[dict, dict, Path, Path]:
     release, evidence = tmp_path / "release", tmp_path / "evidence"
     release.mkdir()

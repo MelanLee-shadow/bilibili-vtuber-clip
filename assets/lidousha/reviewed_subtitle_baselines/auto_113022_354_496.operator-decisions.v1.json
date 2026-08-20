@@ -1,11 +1,11 @@
 {
-  "schema_version": "operator-reviewed-subtitle-decisions.v1",
+  "schema_version": "operator-reviewed-subtitle-decisions.v2",
   "candidate_id": "auto_113022_354_496",
   "report_scope": "EXHAUSTIVE",
   "pipeline_srt_sha256": "80921974f929ebe8c6c9a4897bddfeb2acb907938a19b7ddf3f3fc0f09fc0843",
   "operator_authority": {
     "kind": "IVAN_OPERATOR",
-    "evidence_ref": "Ivan explicit exhaustive same-BV subtitle truth: 2026-08-19 “2:39说的是播的有点压抑了” (repo witness: docs/reviews/2026-08-19-ivan-review-batch-rulings.md); 2026-08-20 “0:17就错了，那里明明是再见菈菈，之前的字幕是对的”；“我指出了所有的问题就表示其他的地方没有问题，不应该动”。 Rejected Gemini 3.6 proposal is report-bound only, not an original provider receipt: docs/reviews/2026-08-19-overnight-shipping-report.md sha256:4f4d36d4f65f679b4939c978035570a9875823e076de394aa183fdbfae1b6496"
+    "evidence_ref": "Ivan exhaustive subtitle authority aggregates distinct cue scopes: original exact correction “2:39说的是播的有点压抑了。” with unchanged-outside-scope ruling “我指出了所有的问题就表示其他的地方没有问题，不应该动”；fresh cue21 exact authority “她说的是非常 balance iiya，应该是日式发音的，‘balance的非常好’的意思。结合整场直播知道她在说前面要甜，后面要苦，所以非常balance。” Root release normalization for cue21: “非常 balance いいや”。"
   },
   "cue_decisions": [
     {
@@ -46,19 +46,7 @@
       "start_ms": 10170,
       "end_ms": 12530,
       "source_text_sha256": "2f340bf2d94842f8b5f4a26e9a8c93819772b76bbdf4756445c5bbcf997d89ec",
-      "disposition": "OPERATOR_EXACT_TEXT",
-      "release_text": "明天晚上和大家看《再见菈菈》",
-      "decision_authority": {
-        "kind": "IVAN_OPERATOR",
-        "evidence_ref": "Ivan explicit exhaustive same-BV subtitle truth: 2026-08-19 “2:39说的是播的有点压抑了” (repo witness: docs/reviews/2026-08-19-ivan-review-batch-rulings.md); 2026-08-20 “0:17就错了，那里明明是再见菈菈，之前的字幕是对的”；“我指出了所有的问题就表示其他的地方没有问题，不应该动”。 Rejected Gemini 3.6 proposal is report-bound only, not an original provider receipt: docs/reviews/2026-08-19-overnight-shipping-report.md sha256:4f4d36d4f65f679b4939c978035570a9875823e076de394aa183fdbfae1b6496"
-      },
-      "rejected_machine_proposal": {
-        "text": "ぶらどらぶ",
-        "provenance": {
-          "provider": "GEMINI_3.6_REPORT_BOUND_PROPOSAL_NOT_ORIGINAL_PROVIDER_RECEIPT",
-          "artifact_sha256": "4f4d36d4f65f679b4939c978035570a9875823e076de394aa183fdbfae1b6496"
-        }
-      }
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
     },
     {
       "cue": 6,
@@ -186,7 +174,17 @@
       "start_ms": 65690,
       "end_ms": 68090,
       "source_text_sha256": "0338d74d4b68faf0cfaf3eab746b869a38883a61f2a442ad447808c432c08ac9",
-      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      "disposition": "OPERATOR_EXACT_TEXT",
+      "release_text": "非常 balance いいや",
+      "decision_authority": {
+        "kind": "IVAN_OPERATOR",
+        "evidence_ref": "Fresh Ivan exact authority: “她说的是非常 balance iiya，应该是日式发音的，‘balance的非常好’的意思。结合整场直播知道她在说前面要甜，后面要苦，所以非常balance。” Root release normalization: “非常 balance いいや”。"
+      },
+      "diagnostic_evidence": {
+        "path": "auto_113022_354_496.cue21_evidence/canonical-evidence.v1.json",
+        "sha256": "e726acbd2ee70c8e628fb7852edd843042954cfcd9265e8ea73fde925b49ad9d",
+        "reason": "Retained canonical provider evidence is diagnostic only; fresh Ivan exact text controls release."
+      }
     },
     {
       "cue": 22,
@@ -494,7 +492,7 @@
       "release_text": "这两天这两天温柔播",
       "decision_authority": {
         "kind": "IVAN_OPERATOR",
-        "evidence_ref": "Ivan explicit exhaustive same-BV subtitle truth: 2026-08-19 “2:39说的是播的有点压抑了” (repo witness: docs/reviews/2026-08-19-ivan-review-batch-rulings.md); 2026-08-20 “0:17就错了，那里明明是再见菈菈，之前的字幕是对的”；“我指出了所有的问题就表示其他的地方没有问题，不应该动”。 Rejected Gemini 3.6 proposal is report-bound only, not an original provider receipt: docs/reviews/2026-08-19-overnight-shipping-report.md sha256:4f4d36d4f65f679b4939c978035570a9875823e076de394aa183fdbfae1b6496"
+        "evidence_ref": "Ivan original exact correction: “2:39说的是播的有点压抑了。” Exhaustive unchanged-outside-scope ruling: “我指出了所有的问题就表示其他的地方没有问题，不应该动”。"
       }
     },
     {
@@ -507,7 +505,7 @@
       "release_text": "播的有点压抑了",
       "decision_authority": {
         "kind": "IVAN_OPERATOR",
-        "evidence_ref": "Ivan explicit exhaustive same-BV subtitle truth: 2026-08-19 “2:39说的是播的有点压抑了” (repo witness: docs/reviews/2026-08-19-ivan-review-batch-rulings.md); 2026-08-20 “0:17就错了，那里明明是再见菈菈，之前的字幕是对的”；“我指出了所有的问题就表示其他的地方没有问题，不应该动”。 Rejected Gemini 3.6 proposal is report-bound only, not an original provider receipt: docs/reviews/2026-08-19-overnight-shipping-report.md sha256:4f4d36d4f65f679b4939c978035570a9875823e076de394aa183fdbfae1b6496"
+        "evidence_ref": "Ivan original exact correction: “2:39说的是播的有点压抑了。” Exhaustive unchanged-outside-scope ruling: “我指出了所有的问题就表示其他的地方没有问题，不应该动”。"
       }
     },
     {

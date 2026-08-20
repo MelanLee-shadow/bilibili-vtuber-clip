@@ -24,6 +24,10 @@ if str(ROOT) not in sys.path:
 
 from scripts.apply_speaker_turn_overrides import atomic_write_text
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.qixi_cue21_diagnostic_evidence import (
+    QixiCue21DiagnosticEvidenceError,
+    validate_qixi_cue21_diagnostic_evidence,
+)
 
 
 REGISTRY_SCHEMA = "candidate-reviewed-subtitle-baseline.v1"
@@ -31,7 +35,8 @@ BASELINE_SCHEMA = "subtitle-redelivery-baseline.v2"
 BASELINE_MODE = "preserve_text_outside_source_truth"
 RECEIPT_SCHEMA = "operator-reviewed-subtitle-baseline-delivery.v1"
 TEXT_OWNERSHIP_PIN_SCHEMA = "operator-reviewed-text-full-ownership-pin.v2"
-DECISION_LEDGER_SCHEMA = "operator-reviewed-subtitle-decisions.v1"
+DECISION_LEDGER_SCHEMA = "operator-reviewed-subtitle-decisions.v2"
+LEGACY_DECISION_LEDGER_SCHEMA = "operator-reviewed-subtitle-decisions.v1"
 TRUTH_LANES_SCHEMA = "operator-reviewed-subtitle-truth-lanes.v1"
 DIAGNOSTIC_DIFF_SCHEMA = "operator-reviewed-subtitle-truth-diff.v1"
 _CANDIDATE_RX = re.compile(r"[A-Za-z0-9_-]{1,96}\Z")
@@ -83,6 +88,33 @@ def _require_operator_authority(value: object, *, label: str) -> dict[str, str]:
     return {"kind": kind, "evidence_ref": evidence_ref.strip()}
 
 
+def _operator_text_ownership_pin(
+    *,
+    baseline_sha: str,
+    pipeline_sha: str,
+    decision_ledger_sha: str,
+    diagnostic_diff_sha: str,
+    authority: dict[str, str],
+    cue_count: int,
+    changed_cue_count: int,
+    exact_count: int,
+    freeze_count: int,
+) -> dict[str, object]:
+    return {
+        "schema_version": TEXT_OWNERSHIP_PIN_SCHEMA,
+        "baseline_sha256": baseline_sha,
+        "pipeline_srt_sha256": pipeline_sha,
+        "decision_ledger_sha256": decision_ledger_sha,
+        "diagnostic_diff_sha256": diagnostic_diff_sha,
+        "operator_authority": authority,
+        "cue_count": cue_count,
+        "changed_cue_count": changed_cue_count,
+        "operator_exact_text_cue_count": exact_count,
+        "operator_unchanged_freeze_cue_count": freeze_count,
+        "speaker_authority": "NOT_CLAIMED_TEXT_ONLY",
+    }
+
+
 def _require_sha256(value: object, *, label: str) -> str:
     text = str(value or "").removeprefix("sha256:")
     if not _SHA256_RX.fullmatch(text):
@@ -97,6 +129,7 @@ def _validate_decision_ledger(
     source_sha256: str,
     source_cues: list[Any],
     reviewed_cues: list[Any],
+    decision_ledger_root: Path | None,
 ) -> tuple[dict[str, Any], list[dict[str, object]], int, int]:
     """Validate a complete per-cue release-truth decision ledger.
 
@@ -115,7 +148,9 @@ def _validate_decision_ledger(
         "operator_authority",
         "cue_decisions",
     }
-    if set(ledger) != expected or ledger.get("schema_version") != DECISION_LEDGER_SCHEMA:
+    if set(ledger) != expected or ledger.get("schema_version") not in {
+        LEGACY_DECISION_LEDGER_SCHEMA, DECISION_LEDGER_SCHEMA
+    }:
         raise OperatorBaselineCompileError("decision ledger schema is invalid")
     if ledger.get("candidate_id") != candidate_id:
         raise OperatorBaselineCompileError("decision ledger candidate id drift")
@@ -152,7 +187,7 @@ def _validate_decision_ledger(
             raise OperatorBaselineCompileError("decision ledger cue row is incomplete")
         if set(row) - (
             required
-            | {"release_text", "decision_authority", "proposal", "rejected_machine_proposal"}
+            | {"release_text", "decision_authority", "proposal", "rejected_machine_proposal", "blocking_evidence", "diagnostic_evidence"}
         ):
             raise OperatorBaselineCompileError("decision ledger cue row has unsupported fields")
         if row.get("cue") != ordinal or row.get("source_index") != str(source.index):
@@ -182,11 +217,37 @@ def _validate_decision_ledger(
             decision_authority = _require_operator_authority(
                 row.get("decision_authority"), label="operator exact text decision"
             )
-            if decision_authority != operator_authority:
-                raise OperatorBaselineCompileError("operator exact text authority drift")
             if "proposal" in row:
                 raise OperatorBaselineCompileError("operator exact text cannot carry a machine proposal")
             diagnostic["decision_authority"] = decision_authority
+            evidence = row.get("diagnostic_evidence")
+            if evidence is not None:
+                if (
+                    not isinstance(evidence, dict)
+                    or set(evidence) != {"path", "sha256", "reason"}
+                    or not isinstance(evidence.get("path"), str)
+                    or not evidence["path"]
+                    or not isinstance(evidence.get("reason"), str)
+                    or not evidence["reason"]
+                ):
+                    raise OperatorBaselineCompileError("operator diagnostic evidence is invalid")
+                _require_sha256(evidence.get("sha256"), label="operator diagnostic evidence")
+                if decision_ledger_root is None:
+                    raise OperatorBaselineCompileError("operator diagnostic evidence root is required")
+                try:
+                    validate_qixi_cue21_diagnostic_evidence(
+                        evidence,
+                        evidence_root=decision_ledger_root,
+                        candidate_id=candidate_id,
+                        source_basename="22966160_20260817-11-30-22.mp4",
+                        source_sha256="212eb59bee50dda1601a3f30e3c7b9a307715058fb472646ddcfa200615c6a97",
+                        cue_start_ms=source.start_ms,
+                        cue_end_ms=source.end_ms,
+                        absolute_source_start_ms=354420,
+                    )
+                except QixiCue21DiagnosticEvidenceError as exc:
+                    raise OperatorBaselineCompileError(f"operator diagnostic evidence is invalid: {exc}") from exc
+                diagnostic["diagnostic_evidence"] = dict(evidence)
             rejected = row.get("rejected_machine_proposal")
             if rejected is not None:
                 if not isinstance(rejected, dict) or set(rejected) != {"text", "provenance"}:
@@ -208,6 +269,22 @@ def _validate_decision_ledger(
                     "disposition": "REJECTED_BY_OPERATOR_EXACT_TEXT",
                 }
             exact_count += 1
+        elif disposition == "DELEGATED_PROVIDER_REVIEW_UNRESOLVED":
+            if (
+                before != after
+                or set(row) != required | {"blocking_evidence"}
+                or not isinstance(row.get("blocking_evidence"), dict)
+                or set(row["blocking_evidence"]) != {"path", "sha256", "reason"}
+                or not isinstance(row["blocking_evidence"].get("path"), str)
+                or not row["blocking_evidence"]["path"]
+                or not isinstance(row["blocking_evidence"].get("reason"), str)
+                or not row["blocking_evidence"]["reason"]
+            ):
+                raise OperatorBaselineCompileError("unresolved delegated provider review is invalid")
+            _require_sha256(row["blocking_evidence"].get("sha256"), label="unresolved provider evidence")
+            raise OperatorBaselineCompileError(
+                "unresolved delegated provider review cannot materialize a release baseline"
+            )
         elif disposition == "OPERATOR_UNCHANGED_FREEZE":
             if (
                 before != after
@@ -269,6 +346,7 @@ def compile_operator_baseline(
     absolute_source_start_ms: int,
     absolute_source_end_ms: int,
     decision_ledger: object,
+    decision_ledger_root: Path | None = None,
 ) -> dict[str, Any]:
     """Validate and return the baseline, manifest, and provenance receipt."""
 
@@ -354,6 +432,7 @@ def compile_operator_baseline(
         source_sha256=source_sha,
         source_cues=source_cues,
         reviewed_cues=reviewed_cues,
+        decision_ledger_root=decision_ledger_root,
     )
 
     baseline_text = "\n\n".join(rendered) + "\n"
@@ -394,19 +473,17 @@ def compile_operator_baseline(
         "source_sha256": source_recording_sha256,
         "absolute_source_start_ms": absolute_source_start_ms,
         "absolute_source_end_ms": absolute_source_end_ms,
-        "operator_text_full_ownership": {
-            "schema_version": TEXT_OWNERSHIP_PIN_SCHEMA,
-            "baseline_sha256": baseline_sha,
-            "pipeline_srt_sha256": source_sha,
-            "decision_ledger_sha256": decision_ledger_sha,
-            "diagnostic_diff_sha256": diagnostic_diff_sha,
-            "operator_authority": operator_authority,
-            "cue_count": len(reviewed_cues),
-            "changed_cue_count": len(changed),
-            "operator_exact_text_cue_count": exact_count,
-            "operator_unchanged_freeze_cue_count": freeze_count,
-            "speaker_authority": "NOT_CLAIMED_TEXT_ONLY",
-        },
+        "operator_text_full_ownership": _operator_text_ownership_pin(
+            baseline_sha=baseline_sha,
+            pipeline_sha=source_sha,
+            decision_ledger_sha=decision_ledger_sha,
+            diagnostic_diff_sha=diagnostic_diff_sha,
+            authority=operator_authority,
+            cue_count=len(reviewed_cues),
+            changed_cue_count=len(changed),
+            exact_count=exact_count,
+            freeze_count=freeze_count,
+        ),
         "operator_truth_lanes": truth_lanes,
     }
     receipt = {
@@ -473,6 +550,7 @@ def main() -> int:
         absolute_source_start_ms=args.absolute_source_start_ms,
         absolute_source_end_ms=args.absolute_source_end_ms,
         decision_ledger=decision_ledger,
+        decision_ledger_root=args.decision_ledger.parent,
     )
     atomic_write_text(args.baseline_srt_out, str(result["baseline_srt"]))
     manifest = dict(result["baseline_manifest"])

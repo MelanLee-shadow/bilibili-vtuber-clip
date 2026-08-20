@@ -1,0 +1,36 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "{\n  \"context_transcript\": \"哈，这这，吸吸直播怎么样？非常这个balance意痒。我还没开始唱呢，怎么就哭以结冰别结\",\n  \"target_transcript\": \"非常这个balance意痒\",\n  \"uncertainties\": [\n    \"balance意痒（音似 balance 意痒 / balance 理想 / balance 一样）\"\n  ],\n  \"confidence_0_to_1\": 0.85\n}",
+            "thoughtSignature": "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"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 423,
+    "candidatesTokenCount": 106,
+    "totalTokenCount": 1165,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 113
+      },
+      {
+        "modality": "AUDIO",
+        "tokenCount": 310
+      }
+    ],
+    "thoughtsTokenCount": 636,
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-3.6-flash",
+  "responseId": "vD2Hap6uGqmSjrEPraSZsAQ"
+}

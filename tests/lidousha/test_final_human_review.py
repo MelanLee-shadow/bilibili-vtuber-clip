@@ -268,7 +268,16 @@ def test_committed_review_contract_extends_exact_recovery_five_for_daily_repairs
         "final_video_end_ms": 21_000,
         "expectation": (
             "片头后该窗字幕必须为“明天晚上和大家看《再见菈菈》”，与人声一致；"
-            "不得回退为《ぶらどらぶ》或以其他日语/近音标题替代。"
+            "不得以未获 Ivan 裁定的其他标题替代。"
+        ),
+    }
+    assert qixi_points["qixi-balance-iiya"] == {
+        "point_id": "qixi-balance-iiya",
+        "final_video_start_ms": 71_873,
+        "final_video_end_ms": 74_273,
+        "expectation": (
+            "该窗字幕必须为“非常 balance いいや”；不得回退为 pipeline 的“非常按这个巴拉四义呀”，"
+            "不得把诊断 Gemini 回包或未裁定的末尾粒子冒充 Ivan 发布真值。"
         ),
     }
     assert qixi_points["qixi-sweet-or-bitter-ending"] == {

@@ -1,0 +1,36 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "{\n \"context_transcript\": \"咳，等等，吸气直播怎么样？非常按这个白兰氏意义啊。我还没开始唱怎么就哭了，已截屏，别截啊。\",\n \"target_transcript\": \"非常按这个白兰氏意义啊\",\n \"uncertainties\": {\n  \"按这个\": \"亦可能为‘有这个’，发音含混\",\n  \"白兰氏\": \"发音为 bái lán shì，盲听转写，不排除为同音谐音梗（如‘摆烂式’）\"\n },\n \"confidence_0_to_1\": 0.85\n}",
+            "thoughtSignature": "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"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 423,
+    "candidatesTokenCount": 142,
+    "totalTokenCount": 1118,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 113
+      },
+      {
+        "modality": "AUDIO",
+        "tokenCount": 310
+      }
+    ],
+    "thoughtsTokenCount": 553,
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-3.7-flash",
+  "responseId": "tD2HasKEK6bU_uMP7OzgsQo"
+}

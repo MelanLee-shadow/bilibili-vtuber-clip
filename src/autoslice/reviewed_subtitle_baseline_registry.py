@@ -22,6 +22,10 @@ from src.autoslice.redelivery_boundary_projection import (
     PROJECTION_MODE_CONFIG_KEY,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.qixi_cue21_diagnostic_evidence import (
+    QixiCue21DiagnosticEvidenceError,
+    validate_qixi_cue21_diagnostic_evidence,
+)
 from src.autoslice.repository_asset_authority import (
     RepositoryAssetAuthorityError,
     require_repository_asset_authority,
@@ -41,7 +45,10 @@ BASELINE_SCHEMA_VERSIONS = frozenset(
 BASELINE_MODE = "preserve_text_outside_source_truth"
 OPERATOR_TEXT_PIN_V2 = "operator-reviewed-text-full-ownership-pin.v2"
 OPERATOR_TRUTH_LANES_SCHEMA = "operator-reviewed-subtitle-truth-lanes.v1"
-OPERATOR_DECISION_LEDGER_SCHEMA = "operator-reviewed-subtitle-decisions.v1"
+OPERATOR_DECISION_LEDGER_SCHEMAS = frozenset({
+    "operator-reviewed-subtitle-decisions.v1",
+    "operator-reviewed-subtitle-decisions.v2",
+})
 OPERATOR_DIAGNOSTIC_DIFF_SCHEMA = "operator-reviewed-subtitle-truth-diff.v1"
 _CANDIDATE_ID_RX = re.compile(r"[A-Za-z0-9_-]{1,96}\Z")
 _SHA256_RX = re.compile(r"(?:sha256:)?([0-9a-f]{64})\Z")
@@ -52,6 +59,26 @@ _EXACT_INTERVAL_REPO_DIRECTORY = Path("assets/lidousha/reviewed_exact_source_int
 
 class ReviewedSubtitleBaselineRegistryError(ValueError):
     """The canonical baseline asset is present but cannot be trusted."""
+
+
+def _validate_diagnostic_evidence(
+    value: object, *, root: Path, candidate_id: str, document: Mapping[str, object], cue_start_ms: int, cue_end_ms: int
+) -> None:
+    if value is None:
+        return
+    try:
+        validate_qixi_cue21_diagnostic_evidence(
+            value,
+            evidence_root=root,
+            candidate_id=candidate_id,
+            source_basename=str(document["source_recording_basename"]),
+            source_sha256=str(document["source_sha256"]),
+            cue_start_ms=cue_start_ms,
+            cue_end_ms=cue_end_ms,
+            absolute_source_start_ms=int(document["absolute_source_start_ms"]),
+        )
+    except (KeyError, TypeError, ValueError, QixiCue21DiagnosticEvidenceError) as exc:
+        raise ReviewedSubtitleBaselineRegistryError("operator diagnostic evidence is invalid") from exc
 
 
 @dataclass(frozen=True)
@@ -114,7 +141,6 @@ def _require_trusted_exact_asset_roots(
     The repository authority loader repeats the component check while binding
     the exact bytes, closing a subsequent path-swap race.
     """
-
     declared_repo_root = _lexical_absolute(repo_root)
     declared_baseline_root = _lexical_absolute(root)
     expected_baseline_root = declared_repo_root / _BASELINE_REPO_DIRECTORY
@@ -204,11 +230,7 @@ def _validate_operator_truth_lanes(
     candidate_id: str,
     baseline_sha256: str,
 ) -> tuple[dict[str, object], dict[str, Path]]:
-    """Validate the v2 operator pin's independent pipeline/truth evidence.
-
-    Legacy v1 pins deliberately do not enter this function: they remain normal
-    redelivery baselines but no longer obtain the all-text fast path.
-    """
+    """Validate v2 lanes; legacy v1 pins never obtain the all-text fast path."""
 
     pin = document.get("operator_text_full_ownership")
     if not isinstance(pin, Mapping) or pin.get("schema_version") != OPERATOR_TEXT_PIN_V2:
@@ -250,7 +272,7 @@ def _validate_operator_truth_lanes(
     }
     if (
         set(ledger) != expected_ledger_keys
-        or ledger.get("schema_version") != OPERATOR_DECISION_LEDGER_SCHEMA
+        or ledger.get("schema_version") not in OPERATOR_DECISION_LEDGER_SCHEMAS
         or ledger.get("candidate_id") != candidate_id
         or ledger.get("report_scope") != "EXHAUSTIVE"
         or not isinstance(ledger.get("cue_decisions"), list)
@@ -315,7 +337,7 @@ def _validate_operator_truth_lanes(
         }
         if not required_decision.issubset(decision) or set(decision) - (
             required_decision
-            | {"release_text", "decision_authority", "proposal", "rejected_machine_proposal"}
+            | {"release_text", "decision_authority", "proposal", "rejected_machine_proposal", "diagnostic_evidence"}
         ):
             raise ReviewedSubtitleBaselineRegistryError("operator decision ledger cue row is invalid")
         source_text_sha = hashlib.sha256(
@@ -348,17 +370,16 @@ def _validate_operator_truth_lanes(
             not isinstance(diff_row, Mapping)
             or not set(expected_diff).issubset(diff_row)
             or set(diff_row)
-            - (set(expected_diff) | {"decision_authority", "proposal", "rejected_machine_proposal"})
+            - (set(expected_diff) | {"decision_authority", "proposal", "rejected_machine_proposal", "diagnostic_evidence"})
             or any(diff_row.get(key) != value for key, value in expected_diff.items())
         ):
             raise ReviewedSubtitleBaselineRegistryError("operator diagnostic diff cue row is invalid")
         if disposition == "OPERATOR_EXACT_TEXT":
+            decision_authority = _require_operator_authority(
+                decision.get("decision_authority"), label="operator exact text decision"
+            )
             if (
                 decision.get("release_text") != after
-                or _require_operator_authority(
-                    decision.get("decision_authority"), label="operator exact text decision"
-                )
-                != authority
                 or "proposal" in decision
             ):
                 raise ReviewedSubtitleBaselineRegistryError("operator exact text decision is invalid")
@@ -386,8 +407,14 @@ def _validate_operator_truth_lanes(
                     raise ReviewedSubtitleBaselineRegistryError("operator diagnostic rejection drift")
             elif "rejected_machine_proposal" in diff_row:
                 raise ReviewedSubtitleBaselineRegistryError("operator diagnostic rejection is unbound")
-            if diff_row.get("decision_authority") != authority:
+            if diff_row.get("decision_authority") != decision_authority:
                 raise ReviewedSubtitleBaselineRegistryError("operator diagnostic authority drift")
+            if diff_row.get("diagnostic_evidence") != decision.get("diagnostic_evidence"):
+                raise ReviewedSubtitleBaselineRegistryError("operator diagnostic evidence drift")
+            _validate_diagnostic_evidence(
+                decision.get("diagnostic_evidence"), root=root, candidate_id=candidate_id,
+                document=document, cue_start_ms=pipeline_cue.start_ms, cue_end_ms=pipeline_cue.end_ms,
+            )
             ledger_exact_count += 1
         elif disposition == "OPERATOR_UNCHANGED_FREEZE":
             if (
