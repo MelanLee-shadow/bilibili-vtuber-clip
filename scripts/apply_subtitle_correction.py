@@ -1404,6 +1404,10 @@ def main(argv=None) -> int:
         media_path = Path(str(record["media_path"]))
         burned_target = media_path.with_name(burned.name)
         staged_ass = Path(str(burned_value["ass_path"]))
+        _regular_or_absent(staged_ass, label="reburn final ASS")
+        if not staged_ass.is_file():
+            print(f"BURN_FAILED: final ASS is missing: {staged_ass}", file=sys.stderr)
+            return 1
         ass_target = media_path.with_name(staged_ass.name)
         final_burned_value = dict(burned_value)
         final_burned_value.update({"path": str(burned_target), "ass_path": str(ass_target)})
@@ -1422,14 +1426,18 @@ def main(argv=None) -> int:
         )
         updated = dict(record)
         hashes = dict(updated.get("artifact_hashes") or {})
-        hashes.update({"subtitle_sha256": "sha256:" + _sha256(staged_srt), "burned_video_sha256": "sha256:" + _sha256(burned)})
+        hashes.update({
+            "subtitle_sha256": "sha256:" + _sha256(staged_srt),
+            "burned_video_sha256": "sha256:" + _sha256(burned),
+            "ass_sha256": "sha256:" + _sha256(staged_ass),
+        })
         if speaker_manifest is not None:
             assert staged_speaker_srt is not None and staged_speaker_ass is not None
-            hashes.update({"speaker_review_srt_sha256": "sha256:" + _sha256(staged_speaker_srt), "ass_sha256": "sha256:" + _sha256(staged_speaker_ass)})
+            hashes["speaker_review_srt_sha256"] = "sha256:" + _sha256(staged_speaker_srt)
         updated.update({
             "artifact_hashes": hashes, "speaker_mode": speaker_mode,
             "speaker_review_srt_path": str(speaker_srt) if speaker_manifest is not None else None,
-            "subtitle_ass_path": str(speaker_ass) if speaker_manifest is not None else None,
+            "subtitle_ass_path": str(ass_target),
             "subtitle_style": SPEAKER_SUBTITLE_STYLE_ID if speaker_manifest is not None else "lidousha-final-sapphire72",
             "speaker_finalization_manifest_path": str(speaker_manifest_path) if speaker_manifest is not None else None,
             "speaker_finalization_manifest_sha256": ("sha256:" + _sha256(staged_speaker_manifest)) if staged_speaker_manifest else None,

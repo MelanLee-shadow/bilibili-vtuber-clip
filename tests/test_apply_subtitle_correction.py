@@ -296,7 +296,13 @@ def test_existing_delivery_pins_prior_z2_instead_of_new_main_hash_rotation(
     record_path = recut_dir / f"{cid}.record.json"
     source = _write(recut_dir / "source.mp4", "source")
     record_path.write_text(
-        json.dumps({"subtitle_path": str(subtitle), "media_path": str(source)}),
+        json.dumps(
+            {
+                "subtitle_path": str(subtitle),
+                "media_path": str(source),
+                "artifact_hashes": {"ass_sha256": "sha256:" + "0" * 64},
+            }
+        ),
         encoding="utf-8",
     )
     context, z2_binding = _branding_context(tmp_path)
@@ -339,6 +345,11 @@ def test_existing_delivery_pins_prior_z2_instead_of_new_main_hash_rotation(
     assert pinned["recorded_delivery_binding"]["intro_offset_ms"] == 6183
     updated = json.loads(record_path.read_text(encoding="utf-8"))
     assert updated["burned_preview"]["branding_intro"]["intro_id"] == "z2"
+    final_ass = source.with_suffix(".final-sapphire72.ass")
+    assert updated["subtitle_ass_path"] == str(final_ass)
+    assert updated["burned_preview"]["ass_path"] == str(final_ass)
+    assert updated["artifact_hashes"]["ass_sha256"] == "sha256:" + _sha256(final_ass)
+    assert delivery.with_suffix(".record.json").read_bytes() == record_path.read_bytes()
     receipt = json.loads(
         delivery.with_suffix(".human-text-correction.json").read_text(encoding="utf-8")
     )
@@ -730,9 +741,11 @@ def test_v2_recovery_requires_the_current_z2_successor_before_reburn(
         )
 
 
-def test_post_render_branding_mismatch_leaves_package_bytes_unchanged(
+@pytest.mark.parametrize("failure", ["branding", "missing_ass", "symlink_ass"])
+def test_post_render_failure_leaves_package_bytes_unchanged(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    failure: str,
 ) -> None:
     cid = "auto_staged_rollback"
     recut_dir = tmp_path / "out" / "2026-08-20" / cid / "replacement_recuts"
@@ -751,10 +764,17 @@ def test_post_render_branding_mismatch_leaves_package_bytes_unchanged(
     def fake_burn(materialized: dict[str, object], **_kwargs: object) -> dict[str, object]:
         staged_media = Path(str(materialized["media_path"]))
         staged_burned = _write(staged_media.with_suffix(".burned-final-sapphire72.mp4"), "bad staged")
-        staged_ass = _write(staged_media.with_suffix(".final-sapphire72.ass"), "ass")
-        wrong = dict(z2)
-        wrong["intro_offset_ms"] = 1
-        return {"burned_preview": {"path": str(staged_burned), "ass_path": str(staged_ass), "status": "BURNED", "branding_intro": wrong}}
+        staged_ass = staged_media.with_suffix(".final-sapphire72.ass")
+        if failure == "branding":
+            staged_ass.write_text("ass", encoding="utf-8")
+            binding = dict(z2)
+            binding["intro_offset_ms"] = 1
+        elif failure == "symlink_ass":
+            staged_ass.symlink_to(staged_media)
+            binding = z2
+        else:
+            binding = z2
+        return {"burned_preview": {"path": str(staged_burned), "ass_path": str(staged_ass), "status": "BURNED", "branding_intro": binding}}
 
     monkeypatch.setattr(correction, "require_branding_intro", lambda _root: context)
     monkeypatch.setattr(correction, "_burn_preview_subtitles", fake_burn)
