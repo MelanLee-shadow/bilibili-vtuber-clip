@@ -73,10 +73,19 @@ def _common_coverage(
         return None
     start_ms = proof.get("absolute_source_start_ms")
     end_ms = proof.get("absolute_source_end_ms")
+    authority = proof.get("authority")
+    operator_authority = proof.get("operator_authority")
+    typed_operator_authority = (
+        isinstance(operator_authority, Mapping)
+        and set(operator_authority) == {"kind", "evidence_ref"}
+        and operator_authority.get("kind") == "IVAN_OPERATOR"
+        and isinstance(operator_authority.get("evidence_ref"), str)
+        and operator_authority["evidence_ref"].strip()
+    )
     if not (
         _clean_sha256(proof.get("baseline_sha256"))
         and _clean_sha256(proof.get("source_sha256"))
-        and str(proof.get("authority") or "").strip()
+        and (str(authority or "").strip() or typed_operator_authority)
         and str(proof.get("source_recording_basename") or "").strip()
         and isinstance(start_ms, int)
         and not isinstance(start_ms, bool)
@@ -97,13 +106,18 @@ def _operator_text_receipt_valid(
         "cue_count",
         "reviewed_text_cue_count",
         "changed_text_cue_count",
+        "operator_exact_text_cue_count",
+        "unchanged_freeze_cue_count",
         "text_ownership",
         "speaker_ownership",
         "proof",
     } or set(proof) != {
         "baseline_sha256",
-        "source_srt_sha256",
-        "authority",
+        "pipeline_srt_sha256",
+        "decision_ledger_sha256",
+        "diagnostic_diff_sha256",
+        "operator_authority",
+        "truth_lanes",
         "source_recording_basename",
         "source_sha256",
         "absolute_source_start_ms",
@@ -112,17 +126,68 @@ def _operator_text_receipt_valid(
         return False
     reviewed_text = coverage.get("reviewed_text_cue_count")
     changed = coverage.get("changed_text_cue_count")
+    exact = coverage.get("operator_exact_text_cue_count")
+    frozen = coverage.get("unchanged_freeze_cue_count")
+    authority = proof.get("operator_authority")
+    truth_lanes = proof.get("truth_lanes")
+    lanes_valid = (
+        isinstance(truth_lanes, Mapping)
+        and set(truth_lanes)
+        == {
+            "schema_version",
+            "release_truth",
+            "pipeline_diagnostic",
+            "decision_ledger",
+            "diff_receipt",
+        }
+        and truth_lanes.get("schema_version")
+        == "operator-reviewed-subtitle-truth-lanes.v1"
+        and isinstance(truth_lanes.get("release_truth"), Mapping)
+        and _clean_sha256(truth_lanes["release_truth"].get("srt_sha256"))
+        == _clean_sha256(proof.get("baseline_sha256"))
+    )
+    if lanes_valid:
+        for lane, proof_key in (
+            ("pipeline_diagnostic", "pipeline_srt_sha256"),
+            ("decision_ledger", "decision_ledger_sha256"),
+            ("diff_receipt", "diagnostic_diff_sha256"),
+        ):
+            value = truth_lanes[lane]
+            if (
+                not isinstance(value, Mapping)
+                or set(value) != {"path", "sha256"}
+                or not str(value.get("path") or "").strip()
+                or _clean_sha256(value.get("sha256"))
+                != _clean_sha256(proof.get(proof_key))
+            ):
+                lanes_valid = False
+                break
     return bool(
         isinstance(reviewed_text, int)
         and not isinstance(reviewed_text, bool)
         and reviewed_text == cue_count
         and isinstance(changed, int)
         and not isinstance(changed, bool)
-        and 1 <= changed <= cue_count
+        and isinstance(exact, int)
+        and not isinstance(exact, bool)
+        and 1 <= exact <= cue_count
+        and 0 <= changed <= exact
+        and isinstance(frozen, int)
+        and not isinstance(frozen, bool)
+        and frozen >= 0
+        and exact + frozen == cue_count
         and coverage.get("text_ownership")
         == "EXACT_INTERVAL_REPLAY_OF_OPERATOR_REVIEWED_BASELINE"
         and coverage.get("speaker_ownership") == "NOT_CLAIMED_TEXT_ONLY"
-        and _clean_sha256(proof.get("source_srt_sha256"))
+        and _clean_sha256(proof.get("pipeline_srt_sha256"))
+        and _clean_sha256(proof.get("decision_ledger_sha256"))
+        and _clean_sha256(proof.get("diagnostic_diff_sha256"))
+        and isinstance(authority, Mapping)
+        and set(authority) == {"kind", "evidence_ref"}
+        and authority.get("kind") == "IVAN_OPERATOR"
+        and isinstance(authority.get("evidence_ref"), str)
+        and authority["evidence_ref"].strip()
+        and lanes_valid
     )
 
 

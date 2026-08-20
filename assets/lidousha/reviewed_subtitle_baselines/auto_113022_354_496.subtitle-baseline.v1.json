@@ -5,19 +5,44 @@
   "mode": "preserve_text_outside_source_truth",
   "exact_interval_replay": true,
   "path": "auto_113022_354_496.reviewed.srt",
-  "sha256": "9050edefa6e533777cd5dab709be8774075c4a1bdbc8d3de062987d16c385ed4",
-  "authority": "Ivan 2026-08-19 审片裁定#19(docs/reviews/2026-08-19-ivan-review-batch-rulings.md): 0:14《ぶらどらぶ》(Gemini 3.6 听写确认 VLAD LOVE, Ivan 报告 brasuki 日语); 2:39 播的有点压抑了(Ivan 逐字); cue59 播的 误附修正。时效性强优先修复上传。",
+  "sha256": "b7162a7a650114de85681b0ba5e510c7d99673bb7dcde694658599aaa29ec8fd",
+  "authority": "Ivan explicit exhaustive same-BV subtitle truth: 2026-08-19 “2:39说的是播的有点压抑了” (repo witness: docs/reviews/2026-08-19-ivan-review-batch-rulings.md); 2026-08-20 “0:17就错了，那里明明是再见菈菈，之前的字幕是对的”；“我指出了所有的问题就表示其他的地方没有问题，不应该动”。 Rejected Gemini 3.6 proposal is report-bound only, not an original provider receipt: docs/reviews/2026-08-19-overnight-shipping-report.md sha256:4f4d36d4f65f679b4939c978035570a9875823e076de394aa183fdbfae1b6496",
   "source_recording_basename": "22966160_20260817-11-30-22.mp4",
   "source_sha256": "212eb59bee50dda1601a3f30e3c7b9a307715058fb472646ddcfa200615c6a97",
   "absolute_source_start_ms": 354420,
   "absolute_source_end_ms": 512310,
   "operator_text_full_ownership": {
-    "schema_version": "operator-reviewed-text-full-ownership-pin.v1",
-    "authority": "Ivan 2026-08-19 审片裁定#19(docs/reviews/2026-08-19-ivan-review-batch-rulings.md): 0:14《ぶらどらぶ》(Gemini 3.6 听写确认 VLAD LOVE, Ivan 报告 brasuki 日语); 2:39 播的有点压抑了(Ivan 逐字); cue59 播的 误附修正。时效性强优先修复上传。",
-    "baseline_sha256": "9050edefa6e533777cd5dab709be8774075c4a1bdbc8d3de062987d16c385ed4",
-    "source_srt_sha256": "80921974f929ebe8c6c9a4897bddfeb2acb907938a19b7ddf3f3fc0f09fc0843",
+    "schema_version": "operator-reviewed-text-full-ownership-pin.v2",
+    "baseline_sha256": "b7162a7a650114de85681b0ba5e510c7d99673bb7dcde694658599aaa29ec8fd",
+    "pipeline_srt_sha256": "80921974f929ebe8c6c9a4897bddfeb2acb907938a19b7ddf3f3fc0f09fc0843",
+    "decision_ledger_sha256": "556381aa9472f5cfa10336eed94e807383e59a68e17f3678c2eee61b2a56e553",
+    "diagnostic_diff_sha256": "187aa1f0a01ecb90540acbdba7e9761e0091deecfabd5ea0425984dec59756e7",
+    "operator_authority": {
+      "kind": "IVAN_OPERATOR",
+      "evidence_ref": "Ivan explicit exhaustive same-BV subtitle truth: 2026-08-19 “2:39说的是播的有点压抑了” (repo witness: docs/reviews/2026-08-19-ivan-review-batch-rulings.md); 2026-08-20 “0:17就错了，那里明明是再见菈菈，之前的字幕是对的”；“我指出了所有的问题就表示其他的地方没有问题，不应该动”。 Rejected Gemini 3.6 proposal is report-bound only, not an original provider receipt: docs/reviews/2026-08-19-overnight-shipping-report.md sha256:4f4d36d4f65f679b4939c978035570a9875823e076de394aa183fdbfae1b6496"
+    },
     "cue_count": 62,
-    "changed_cue_count": 3,
+    "changed_cue_count": 2,
+    "operator_exact_text_cue_count": 3,
+    "operator_unchanged_freeze_cue_count": 59,
     "speaker_authority": "NOT_CLAIMED_TEXT_ONLY"
+  },
+  "operator_truth_lanes": {
+    "schema_version": "operator-reviewed-subtitle-truth-lanes.v1",
+    "release_truth": {
+      "srt_sha256": "b7162a7a650114de85681b0ba5e510c7d99673bb7dcde694658599aaa29ec8fd"
+    },
+    "pipeline_diagnostic": {
+      "sha256": "80921974f929ebe8c6c9a4897bddfeb2acb907938a19b7ddf3f3fc0f09fc0843",
+      "path": "auto_113022_354_496.pipeline-diagnostic.srt"
+    },
+    "decision_ledger": {
+      "sha256": "556381aa9472f5cfa10336eed94e807383e59a68e17f3678c2eee61b2a56e553",
+      "path": "auto_113022_354_496.operator-decisions.v1.json"
+    },
+    "diff_receipt": {
+      "sha256": "187aa1f0a01ecb90540acbdba7e9761e0091deecfabd5ea0425984dec59756e7",
+      "path": "auto_113022_354_496.operator-truth-diff.v1.json"
+    }
   }
 }

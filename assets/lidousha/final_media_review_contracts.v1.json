@@ -1,6 +1,6 @@
 {
   "schema_version": "lidousha-final-media-review-contracts.v1",
-  "authority": "Ivan 2026-07-22/23, 2026-07-28, 2026-07-29, 2026-07-30, and 2026-08-09 explicit correction and review instructions, normalized into exact final-video review points; timestamps are deliberately broad windows around the reported point so the reviewer must inspect the surrounding audio, subtitle, callback, and boundary context.",
+  "authority": "Ivan 2026-07-22/23, 2026-07-28, 2026-07-29, 2026-07-30, 2026-08-09, and 2026-08-20 explicit correction, same-BV repair authorization, and final-review instructions, normalized into exact final-video review points; timestamps are deliberately broad windows around the reported point so the reviewer must inspect the surrounding audio, subtitle, callback, and boundary context.",
   "contracts": [
     {
       "candidate_id": "auto_193450_3573_3665",
@@ -518,6 +518,29 @@
           "final_video_start_ms": 0,
           "final_video_end_ms": 286389,
           "expectation": "全片除 Ivan 手标 (跃起)×2 外不得出现任何其它圆括号注记(「(无可辨别人声)」「(无可分辨人声)」类机器注记必须剥离);159 cue 全程说话人只走颜色样式,无标签字面。"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_113022_354_496",
+      "subtitle_review_points": [
+        {
+          "point_id": "qixi-tomorrow-night-lara-title",
+          "final_video_start_ms": 14000,
+          "final_video_end_ms": 21000,
+          "expectation": "片头后该窗字幕必须为“明天晚上和大家看《再见菈菈》”，与人声一致；不得回退为《ぶらどらぶ》或以其他日语/近音标题替代。"
+        },
+        {
+          "point_id": "qixi-sweet-or-bitter-ending",
+          "final_video_start_ms": 137000,
+          "final_video_end_ms": 148400,
+          "expectation": "片尾必须完整停在“甜或者苦都可以哦”并在自然停顿收束；不得重新带入已裁掉的2:39段、后续话题或任何半句。"
+        },
+        {
+          "point_id": "qixi-full-release-text-stability",
+          "final_video_start_ms": 6183,
+          "final_video_end_ms": 148400,
+          "expectation": "除本轮 Ivan 明确裁定与已绑定既有裁定外，全片最终烧录字幕必须与当前受管发布词面逐 cue 保持一致；不得因本次定点修复改写其他人名、标题、句序、时间或边界。"
         }
       ]
     }

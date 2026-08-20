@@ -74,13 +74,27 @@ def _operator_text_owned_spec() -> dict:
     baseline = _owned_spec()["subtitle_redelivery_baseline"]
     baseline.pop("truth_full_ownership")
     baseline["operator_text_full_ownership"] = {
-        "schema_version": "operator-reviewed-text-full-ownership-pin.v1",
-        "authority": "Ivan exhaustive reviewed subtitle truth",
+        "schema_version": "operator-reviewed-text-full-ownership-pin.v2",
         "baseline_sha256": BASELINE_SHA,
-        "source_srt_sha256": TRUTH_SHA,
+        "pipeline_srt_sha256": TRUTH_SHA,
+        "decision_ledger_sha256": "de" * 32,
+        "diagnostic_diff_sha256": "fa" * 32,
+        "operator_authority": {
+            "kind": "IVAN_OPERATOR",
+            "evidence_ref": "review: synthetic exhaustive ruling",
+        },
         "cue_count": 5,
         "changed_cue_count": 2,
+        "operator_exact_text_cue_count": 2,
+        "operator_unchanged_freeze_cue_count": 3,
         "speaker_authority": "NOT_CLAIMED_TEXT_ONLY",
+    }
+    baseline["operator_truth_lanes"] = {
+        "schema_version": "operator-reviewed-subtitle-truth-lanes.v1",
+        "release_truth": {"srt_sha256": BASELINE_SHA},
+        "pipeline_diagnostic": {"path": "/tmp/synthetic.pipeline.srt", "sha256": TRUTH_SHA},
+        "decision_ledger": {"path": "/tmp/synthetic.decisions.json", "sha256": "de" * 32},
+        "diff_receipt": {"path": "/tmp/synthetic.diff.json", "sha256": "fa" * 32},
     }
     return {"subtitle_redelivery_baseline": baseline}
 
@@ -101,9 +115,15 @@ def test_operator_text_ownership_skips_rewriters_without_claiming_speaker() -> N
     "field,value",
     [
         ("baseline_sha256", "99" * 32),
-        ("source_srt_sha256", "bad"),
+        ("pipeline_srt_sha256", "bad"),
+        ("decision_ledger_sha256", "bad"),
+        ("diagnostic_diff_sha256", "bad"),
         ("cue_count", 0),
         ("changed_cue_count", 6),
+        ("operator_exact_text_cue_count", 1),
+        ("operator_unchanged_freeze_cue_count", 4),
+        ("operator_exact_text_cue_count", "two"),
+        ("operator_unchanged_freeze_cue_count", None),
         ("speaker_authority", "UNIFORM_HOST"),
     ],
 )
@@ -112,6 +132,49 @@ def test_broken_operator_text_pin_falls_back_to_full_chain(field, value) -> None
     spec["subtitle_redelivery_baseline"]["operator_text_full_ownership"][field] = value
 
     assert resolve_operator_text_full_ownership(spec) is None
+
+
+def test_legacy_free_form_operator_pin_cannot_trigger_fast_path() -> None:
+    spec = _operator_text_owned_spec()
+    pin = spec["subtitle_redelivery_baseline"]["operator_text_full_ownership"]
+    pin.clear()
+    pin.update(
+        {
+            "schema_version": "operator-reviewed-text-full-ownership-pin.v1",
+            "authority": "Ivan said a model proposal sounds plausible",
+            "baseline_sha256": BASELINE_SHA,
+            "source_srt_sha256": TRUTH_SHA,
+            "cue_count": 5,
+            "changed_cue_count": 2,
+            "speaker_authority": "NOT_CLAIMED_TEXT_ONLY",
+        }
+    )
+
+    assert resolve_operator_text_full_ownership(spec) is None
+
+
+def test_qixi_legacy_pin_with_known_pipeline_sha_cannot_launder_a_model_proposal() -> None:
+    manifest_path = (
+        Path(__file__).resolve().parents[1]
+        / "assets/lidousha/reviewed_subtitle_baselines"
+        / "auto_113022_354_496.subtitle-baseline.v1.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    pin = manifest["operator_text_full_ownership"]
+
+    # This is the raw clean pipeline SRT SHA independently recovered from the
+    # seven-evening package.  Its cue was “再见菈菈”; a Gemini proposal must
+    # never turn that fact into an Ivan exact-text authority.
+    recovered_pipeline_sha = "80921974f929ebe8c6c9a4897bddfeb2acb907938a19b7ddf3f3fc0f09fc0843"
+    if pin["schema_version"] == "operator-reviewed-text-full-ownership-pin.v1":
+        assert pin["source_srt_sha256"] == recovered_pipeline_sha
+        assert resolve_operator_text_full_ownership({"subtitle_redelivery_baseline": manifest}) is None
+    else:
+        assert pin["schema_version"] == "operator-reviewed-text-full-ownership-pin.v2"
+        assert pin["pipeline_srt_sha256"] == recovered_pipeline_sha
+        assert "再见菈菈" in (
+            manifest_path.with_name("auto_113022_354_496.reviewed.srt").read_text(encoding="utf-8")
+        )
 
 
 def test_full_ownership_receipt_carries_coverage_skips_and_conditions() -> None:

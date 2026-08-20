@@ -60,6 +60,24 @@
   `TARGETED_REPAIR_PLUS_SYSTEMIC_FIX`，只修所列位置和背后的共享流水线通病，不随机全片重跑。
   明确声明问题穷尽时，即使只有 1–2 个也可走定点修复。计划只决定复查范围，不放宽最终
   package、same-BV、人审或上传门。
+- 定点修复是**发布真值轨**，不是对 autoslice 的覆盖式“纠正历史”。同一候选必须同时保存：
+  (a) 独立、对人工真值盲的完整流水线 SRT，(b) 用于上传的人工真值 SRT，及 (c) hash-bound
+  的逐 cue diff receipt；它们用于定位流水线失误，诊断轨不得回写发布真值，也不得把真值反哺
+  给盲流水线来制造假收敛。`scripts/materialize_operator_reviewed_subtitle_baseline.py` 只能在
+  三份产物一起写出时编译 operator full-ownership pin。
+- 穷尽报告的每个 cue 必须有结构化 decision：明确改字只能是
+  `OPERATOR_EXACT_TEXT`（逐 cue typed `IVAN_OPERATOR` authority、精确 release text；可以确认
+  release text 与 pipeline 原文相同）；未列
+  cue 必须是 `OPERATOR_UNCHANGED_FREEZE`，逐项绑定原 pipeline cue 的 index、时间与文本 hash；
+  模型 proposal 只能附着在 `OPERATOR_UNCHANGED_FREEZE`（候选未改变发布文本）或
+  `OPERATOR_EXACT_TEXT` 的 `rejected_machine_proposal`（候选被明确否决）上，绝不能独占一个
+  cue、凑作人工 coverage 或改上传真值。自由格式的
+  `authority` 字符串、例如“像 X、让 Gemini 听”，不构成 Ivan 精确文本授权。缺 decision、漏 cue、
+  区外变化、候选被冒充为人工结论或诊断/发布 hash 漂移均 fail-closed。
+- 旧 `operator-reviewed-text-full-ownership-pin.v1` 仍可作为普通 hash-bound reviewed
+  baseline 依现有 contract 重放，但不可再触发 operator full-ownership 快路径。重新物化或需要
+  快路径的资产必须使用带独立 pipeline/diff/decision artifacts 的 v2 pin；不得把旧自由文本 pin
+  原地补标为人工裁定。
 - governed late source truth 是唯一允许在 expected-value choke point 之后覆盖词面的 lane，
   并且只接受
   `decision_authority=IVAN_OPERATOR_TRUTH` 的 `VERIFIED_ACTIVE` 行；除可重算的

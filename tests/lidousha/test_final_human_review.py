@@ -78,6 +78,7 @@ def test_committed_review_contract_extends_exact_recovery_five_for_daily_repairs
         "auto_230125_960_1072",
         # 2026-08-10 Ivan 直令三合一置换(BV1hquD6pE7X):手标 (跃起) 回填+公主抱封面+手定标题
         "auto_200130_1323_1603",
+        "auto_113022_354_496",
     ]
     review = json.loads(
         (
@@ -251,6 +252,44 @@ def test_committed_review_contract_extends_exact_recovery_five_for_daily_repairs
     assert lovecode_points["lovecode-ending-closure"][
         "final_video_end_ms"
     ] == 118_500
+
+    qixi = next(
+        row
+        for row in review["contracts"]
+        if row["candidate_id"] == "auto_113022_354_496"
+    )
+    qixi_points = {
+        row["point_id"]: row
+        for row in qixi["subtitle_review_points"]
+    }
+    assert qixi_points["qixi-tomorrow-night-lara-title"] == {
+        "point_id": "qixi-tomorrow-night-lara-title",
+        "final_video_start_ms": 14_000,
+        "final_video_end_ms": 21_000,
+        "expectation": (
+            "片头后该窗字幕必须为“明天晚上和大家看《再见菈菈》”，与人声一致；"
+            "不得回退为《ぶらどらぶ》或以其他日语/近音标题替代。"
+        ),
+    }
+    assert qixi_points["qixi-sweet-or-bitter-ending"] == {
+        "point_id": "qixi-sweet-or-bitter-ending",
+        "final_video_start_ms": 137_000,
+        "final_video_end_ms": 148_400,
+        "expectation": (
+            "片尾必须完整停在“甜或者苦都可以哦”并在自然停顿收束；"
+            "不得重新带入已裁掉的2:39段、后续话题或任何半句。"
+        ),
+    }
+    assert qixi_points["qixi-full-release-text-stability"] == {
+        "point_id": "qixi-full-release-text-stability",
+        "final_video_start_ms": 6_183,
+        "final_video_end_ms": 148_400,
+        "expectation": (
+            "除本轮 Ivan 明确裁定与已绑定既有裁定外，全片最终烧录字幕必须与当前"
+            "受管发布词面逐 cue 保持一致；不得因本次定点修复改写其他人名、标题、"
+            "句序、时间或边界。"
+        ),
+    }
 
 
 def _sha256(path: Path) -> str:
