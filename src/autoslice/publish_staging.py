@@ -91,6 +91,12 @@ from .manual_title_repair_authority import (
     load_manual_title_repair_authority,
     validate_manual_title_repair_authority,
 )
+from .publish_staging_paths import (
+    materialized_artifact_root,
+    private_publish_path,
+    stage_cover_with_private_root,
+    staged_transcript_sample,
+)
 from .manual_title_keep_authority import PASS_DECISION as MANUAL_TITLE_KEEP_PASS_DECISION
 from .review_evidence import SourceCue
 from .recovery_title_authority import (
@@ -397,9 +403,10 @@ def _stage_publish_draft(
     stage_cover: Callable[..., dict[str, object]] | None = None,
     source_fact_llm_call: LlmCall | None = None,
     story_contract_rebuilder: (Callable[[str], dict[str, object]] | None) = None,
+    private_artifact_root: Path | None = None,
+    private_publish_json_path: Path | None = None,
 ) -> dict[str, object] | None:
     """Mirror production local_prepare: AI title + cover + publish.json draft.
-
     Always writes ``upload_enabled: false`` — publishing stays behind the
     AUTO_UPLOAD manifest/hash gate and is out of scope for the shadow lane.
     """
@@ -407,7 +414,7 @@ def _stage_publish_draft(
         return materialized_recut
     record = dict(materialized_recut)
     media_path = Path(str(record["media_path"]))
-    publish_json_path = media_path.with_suffix(".publish.json")
+    publish_json_path = private_publish_path(media_path=media_path, private_artifact_root=private_artifact_root, private_publish_json_path=private_publish_json_path, stage_cover=stage_cover)
     staged_title = title
     important_content_ips: list[dict[str, object]] = []
     title_policy_violations: list[str] = []
@@ -439,7 +446,7 @@ def _stage_publish_draft(
         record["story_contract"] = story_contract
     if title_llm_call is not None:
         selection_hook = str(selection_hook or "").strip()
-        transcript_sample = _staged_transcript_sample(record, cues)
+        transcript_sample = staged_transcript_sample(record, cues)
         important_ip_signal = important_content_ip_signal_from_srt(
             subtitle_path=record.get("subtitle_path"),
             fallback_body="\n".join(cue.text for cue in cues),
@@ -499,8 +506,7 @@ def _stage_publish_draft(
         staged_title = canonicalize_hard_surfaces(staged_title)
     # Ivan 2026-07-14/19 歌切标题铁律 choke point：自动标题只要带歌切前缀就
     # 折叠成「前缀《歌名》」，任何「｜副标题」/hook 尾巴在这里被最终清除。
-    # This automatic-title helper is retained for the retry path; the common
-    # publish canonicalizer below applies to manual and automatic titles alike.
+    # The common publish canonicalizer below applies to manual and automatic titles alike.
     if title_llm_call is not None:
         staged_title = canonicalize_song_catalog_title(staged_title)
     explicit_lane = publish_title_lane(
@@ -826,23 +832,23 @@ def _stage_publish_draft(
             )
             else None
         )
-        cover_result = (stage_cover or _stage_lidousha_ai_cover)(
-            record,
-            media_path=media_path,
-            candidate_id=candidate_id,
-            title=staged_title,
-            cover_text=cover_text,
-            run_ffmpeg=run_ffmpeg,
-            art_direction_llm_call=art_direction_llm_call,
+        cover_kwargs: dict[str, object] = {
+            "media_path": media_path,
+            "candidate_id": candidate_id,
+            "title": staged_title,
+            "cover_text": cover_text,
+            "run_ffmpeg": run_ffmpeg,
+            "art_direction_llm_call": art_direction_llm_call,
             # Publish-title authority only freezes ``staged_title``.  It does
             # not authorize putting that entire string on a thumbnail.  Every
             # talk title, including Ivan manual and same-BV recovery titles,
             # therefore asks CPA for a source-bound 1-2 line punch unless an
             # independently explicit full-text-cover contract says otherwise.
-            punch_allowed=full_text_cover_contract is None,
-            full_text_cover_contract=full_text_cover_contract,
-            diversity_slot=cover_diversity_slot,
-        )
+            "punch_allowed": full_text_cover_contract is None,
+            "full_text_cover_contract": full_text_cover_contract,
+            "diversity_slot": cover_diversity_slot,
+        }
+        cover_result = stage_cover_with_private_root(stage_cover or _stage_lidousha_ai_cover, record, private_artifact_root=private_artifact_root, kwargs=cover_kwargs)
     cover_result, cover_entity_projection_audit = enforce_candidate_cover_projection(
         candidate_id=candidate_id,
         cover_result=cover_result,
@@ -922,7 +928,6 @@ def _stage_publish_draft(
         **publish_staging_provenance_fields(record),
     }
     return record
-
 
 def _prepare_lidousha_cover_reference(
     materialized_recut: Mapping[str, object],
@@ -1632,6 +1637,7 @@ def _stage_lidousha_ai_cover(
     punch_allowed: bool = False,
     full_text_cover_contract: Mapping[str, object] | None = None,
     diversity_slot: int | None = None,
+    private_artifact_root: Path | None = None,
 ) -> dict[str, object]:
     cover_generation: dict[str, object] = {
         "workflow": LIDOUSHA_COVER_WORKFLOW,
@@ -1675,8 +1681,7 @@ def _stage_lidousha_ai_cover(
             ["CPA_AI_COVER_REQUIRED", "COVER_REFERENCE_EXTRACTION_DISABLED"],
             "ffmpeg disabled, so no identity/reference frame can be extracted for CPA images.edit",
         )
-
-    artifact_root = _materialized_artifact_root(materialized_recut, media_path)
+    artifact_root = private_artifact_root or materialized_artifact_root(materialized_recut, media_path)
     cover_refs_dir = artifact_root / "cover_refs"
     ai_dir = artifact_root / "covers_ai_original"
     covers_dir = artifact_root / "covers"
@@ -2606,39 +2611,6 @@ def _blocked_ai_cover_result(
         "cover_path": None,
         "cover_generation": generation,
     }
-
-
-def _materialized_artifact_root(materialized_recut: Mapping[str, object], media_path: Path) -> Path:
-    manifest_value = materialized_recut.get("manifest_path")
-    if isinstance(manifest_value, str) and manifest_value:
-        manifest_path = Path(manifest_value)
-        if manifest_path.parent.name in {"recuts", "media"}:
-            return manifest_path.parent.parent
-        return manifest_path.parent
-    if media_path.parent.name in {"recuts", "media"}:
-        return media_path.parent.parent
-    return media_path.parent
-
-
-def _staged_transcript_sample(record: Mapping[str, object], cues: Sequence[SourceCue]) -> str:
-    """Title/cover text sample: prefer the FINAL subtitle (fresh transcription
-    with glossary corrections) over the context cues, so the title uses the
-    corrected names (Ado, 小室) rather than the coarse-ASR spellings."""
-
-    subtitle_path = record.get("subtitle_path")
-    if isinstance(subtitle_path, str) and Path(subtitle_path).is_file():
-        try:
-            from src.autoslice.jingting_chunker import parse_srt_cues
-
-            parsed = parse_srt_cues(Path(subtitle_path).read_text(encoding="utf-8"))
-            sample = " ".join(" ".join(cue.text.split()) for cue in parsed if cue.text.strip())[
-                :600
-            ]
-            if sample:
-                return sample
-        except OSError:
-            pass
-    return " ".join(cue.text.strip() for cue in cues if cue.text.strip())[:600]
 
 
 # End of staging helpers.

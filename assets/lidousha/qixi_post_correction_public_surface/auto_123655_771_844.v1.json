@@ -1,0 +1,51 @@
+{
+  "schema_version": "qixi-post-correction-public-surface-authority.v1",
+  "candidate_id": "auto_123655_771_844",
+  "recording_date": "2026-08-17",
+  "upload_enabled": false,
+  "manual_title": "小李有女友感吗？宿敌是否有点亲密了",
+  "runtime_root": "/opt/bilive/autoslice",
+  "state_file": {"path": "/opt/bilive/autoslice/state/2026-08-17.json", "sha256": "sha256:159f8f8ba0d9734f3ceee69968c3febf4916ae7d8d02c708f7b15a58d6b173bc", "bytes": 753792, "mode": 420},
+  "artifacts": {
+    "record": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.record.json", "sha256": "sha256:38abe2c473bf80d151a098462d9104bf4c9a161e2e88f160882bd0d69b0e3b2b", "bytes": 95340},
+    "delivery_record": {"path": "/opt/bilive/autoslice/repo/lidousha/2026-08-17/弹幕追问小李有没有女友感，她却把彼此.record.json", "sha256": "sha256:38abe2c473bf80d151a098462d9104bf4c9a161e2e88f160882bd0d69b0e3b2b", "bytes": 95340},
+    "publish": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.publish.json", "sha256": "sha256:a1ab69880ac86e0ba3ccf55957a7acadf0c981bc281c3d803a40e420ead55d94", "bytes": 44769},
+    "main": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.mp4", "sha256": "sha256:9d1309ab974ab43e4da270d3898e2a5e977d09bf0ee5cfda504025a0845c530d", "bytes": 18490443},
+    "srt": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.srt", "sha256": "sha256:a172c08564d57c72782e44e74583c17c3a95a241b798fcfe8df3fddda8b91617", "bytes": 1888},
+    "ass": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.final-sapphire72.ass", "sha256": "sha256:700fe00a5c212c6e54693069bcea84df61427c20a2c02f1cd070f1c7e011c755", "bytes": 2988},
+    "burn": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.burned-final-sapphire72.mp4", "sha256": "sha256:402f80580c1e21e83aaa8c8917d93d389c4c25f14b194d9015aa6c4390bd91ff", "bytes": 20165006},
+    "correction": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.human-text-correction.json", "sha256": "sha256:90de28c3ec0a01baa36a84fbcebc197322c8cf9817dcebb2799a41e7107cb4e0", "bytes": 2580},
+    "cover": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/covers/auto_123655_771_844.screenshot-title.cover.png", "sha256": "sha256:c6365ed150629f1e9c8cf3870db5d0fa1ed55a90986ce1afb3db61b06b6ac869", "bytes": 1199770},
+    "chat": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/auto_123655_771_844.chat-authority.json", "sha256": "sha256:d76518a1e4e9db60072941d62ce2a40710612ffdc9eed4ad58d566e7613182a1", "bytes": 211724},
+    "clip_context": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/auto_123655_771_844.clip-context.json", "sha256": "sha256:de3aeea57576aeb357ffe5eb7c532bb0cf2be3341767e3f4124d71a6dac26b4c", "bytes": 40963},
+    "timing": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.timing_qa.json", "sha256": "sha256:9407538798e41e4b646a2a8fee74199659c3184455f1bcb33c11fdc940470551", "bytes": 2301}
+  },
+  "repository_inputs": {
+    "subtitle_authority": {"path": "assets/lidousha/sealed_subtitle_corrections/auto_123655_771_844.v1.json", "sha256": "sha256:b27320d799bd1a5f4a1ea9385080b9a8d4bb2d2ea27405ff03a75bad8609c76a", "bytes": 7213},
+    "diagnostic": {"path": "assets/lidousha/sealed_subtitle_corrections/auto_123655_771_844.diagnostic-diff.v1.json", "sha256": "sha256:f981b7a99bb0ea0ac2412f2f2a9330d1cc4c28374f5490e5a532ec4ab0d84cf2", "bytes": 8762},
+    "manual_title_overrides": {"path": "assets/lidousha/manual_title_overrides.v1.json", "sha256": "sha256:c28adc786e9e441a42c6e41955510c44b9a3a2619f15ff3b77fbef8d4b8899f9", "bytes": 7921}
+  },
+  "source_fact_preimage": {
+    "clip_context_prompt_sha256": "sha256:063ca89386122e687aaaa03afd886525783bd2af3fd30f1179bf6b262f5ebda7",
+    "clip_context_prompt_bytes": 13362,
+    "source_fact_receipt_sha256": "sha256:098902bc2219bc33993bc17c7593103949c1aa5187b6fc608fac83ddd2d0dd26",
+    "speaker_evidence": {
+      "policy_ids": {
+        "absence": "speaker_mode_uniform_host/v1",
+        "alignment": "speaker_cue_subsegment_alignment/v1",
+        "text": "compact_ws/v1",
+        "timing": "half_open_integer_ms_exact/v1"
+      },
+      "reason": "speaker_mode_uniform_host",
+      "state": "AbsentAuthorized"
+    },
+    "speaker_evidence_sha256": "sha256:7ad0672052878d79d0ad5f24e41ee57a6a8c401596b8954beb078ca45b39c989"
+  },
+  "sealed_before": {
+    "record": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.record.json", "sha256": "sha256:38abe2c473bf80d151a098462d9104bf4c9a161e2e88f160882bd0d69b0e3b2b", "bytes": 95340, "mode": 420},
+    "delivery_record": {"path": "/opt/bilive/autoslice/repo/lidousha/2026-08-17/弹幕追问小李有没有女友感，她却把彼此.record.json", "sha256": "sha256:38abe2c473bf80d151a098462d9104bf4c9a161e2e88f160882bd0d69b0e3b2b", "bytes": 95340, "mode": 420},
+    "publish": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.publish.json", "sha256": "sha256:a1ab69880ac86e0ba3ccf55957a7acadf0c981bc281c3d803a40e420ead55d94", "bytes": 44769, "mode": 420},
+    "state": {"path": "/opt/bilive/autoslice/state/2026-08-17.json", "sha256": "sha256:159f8f8ba0d9734f3ceee69968c3febf4916ae7d8d02c708f7b15a58d6b173bc", "bytes": 753792, "mode": 420}
+  },
+  "authority_sha256": "sha256:05f22cc273d050196ef7bb49471f1c1527998ffff0bafb8f059e1f233bfe6941"
+}

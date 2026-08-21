@@ -701,11 +701,13 @@ def _attempt_song_repair_stage(
 from src.autoslice.publish_staging import (
     LIDOUSHA_COVER_WORKFLOW,
     _blocked_ai_cover_result,
-    _materialized_artifact_root,
-    _staged_transcript_sample,
     _stage_lidousha_ai_cover as _stage_lidousha_ai_cover_impl,
     _stage_publish_after_release_gate as _stage_publish_after_release_gate_impl,
     _stage_publish_draft as _stage_publish_draft_impl,
+)
+from src.autoslice.publish_staging_paths import (
+    materialized_artifact_root as _materialized_artifact_root,
+    staged_transcript_sample as _staged_transcript_sample,
 )
 
 

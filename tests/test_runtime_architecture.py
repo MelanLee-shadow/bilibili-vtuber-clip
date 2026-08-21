@@ -322,7 +322,7 @@ MODULE_DEBT_LEDGER = {
     # cover_route_policy.py，本模块只留 import 别名与调用点。
     # 2026-08-10 +19：合并 ft-a8600994 快车道分支（Ivan 2026-08-10 逐字「这就是要合并的快车道代码，现在就去合并 merge」）带入的
     # relocation/冻结包接线（同 _stage_publish_draft 那一项）。合并后实测。
-    "src/autoslice/publish_staging.py": 2_644,
+    "src/autoslice/publish_staging.py": 2_616,
     "src/autoslice/same_bv_repair.py": 2_422,
 }
 SCRIPT_EXCLUSIONS = {
