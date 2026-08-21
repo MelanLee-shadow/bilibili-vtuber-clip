@@ -11,7 +11,8 @@
   它有 `~/vtuber-slice` dev/test workcopy，但没有 free 生产 authority
   `/opt/bilive/autoslice/repo/DEPLOYED_COMMIT`。其 `DISABLED` 与录制状态须按该主机现场读取；
   dev/test workcopy 不是 production authority，也不是 free deploy 的 payload、rollback 或 idle gate
-  authority。
+  authority。oci3 的运行状态不能替代 free runtime authority，也不能成为 free external 变更、mode drift
+  或 health failure 的旁路。
 
 ## free 主机录制栈
 
@@ -230,13 +231,14 @@
 - 若 watchdog、upload sentinel、uploader 与 adapter 四个 external payload 都与已切换 repo、各自
   backup preimage 的 regular/non-symlink、字节及安装 mode 完全相等，部署走 no-external-change
   路径：只读重验 adapter host/container SHA、容器 running/healthy、command/bind mount 与 host/container
-  CloudFS，并要求 status fresh、`service_reachable=true`、`error=null`，且
-  `streaming`/`recording`/`finalizing` 都是 bool。八条 managed cron command family 也必须各恰一条且整行
-  精确等于 canonical；缺失、重复、stale 或 legacy 行均退回 strict。该路径只可 `crontab -l`，不调用
-  `install_atomic`、`crontab -` 或重启 adapter，因此 live recording 可继续；结束前必须重跑同一只读 closure，
-  否则 TOCTOU 漂移失败。rollback 只在 strict 路径先写入的 mutation marker 存在时才回写 external 文件或
-  crontab。任一 payload、mode、type、link、backup、cron 或健康/status 条件漂移，必定退回下述 strict 路径，
-  不能以 repo-only flag 绕过。oci3 的并行录制也不构成 free adapter 变更、mode drift 或 health failure 的旁路。
+  CloudFS，并要求 status regular/non-symlink、fresh 且 `streaming`/`recording`/`finalizing` 都是 bool；
+  `service_reachable` 可为 true/false、`error` 必须存在且只能为 null/string。八条 managed cron command family 也必须各恰
+  一条且整行精确等于 canonical；缺失、重复、stale 或 legacy 行均退回 strict。该 repo-only zero-touch 路径只可
+  `crontab -l`，不调用 `install_atomic`、`crontab -`、restart 或 recorder state 写入，因此 live recording 可继续；
+  结束前必须重跑同一只读 closure，否则 TOCTOU 漂移失败。rollback 只在 strict 路径先写入的 mutation marker
+  存在时才回写 external 文件或 crontab。故 OCI3 迁移不改变 free runtime authority，但无关 adapter business error
+  不能阻塞已验证的 repo-only zero-touch deploy。任一 payload、mode、type、link、backup、cron、container 或
+  status-structure 条件漂移，必定退回下述 strict 路径，不能以 repo-only flag 绕过。
 - strict 路径在 adapter 外部字节未变化时，部署前状态必须 fresh、idle、
   `service_reachable=true` 且 `error=null`。只有待安装 adapter 字节确实变化时，才允许
   用单一修复例外越过旧 adapter 自己制造的错误：旧状态仍须 fresh/idle，且必须精确为

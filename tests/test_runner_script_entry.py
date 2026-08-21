@@ -377,7 +377,7 @@ def test_deploy_unchanged_external_route_preserves_a_live_adapter(tmp_path):
     cron_end = external.index("external_payload_exact() {")
     cron_definitions = external[cron_start:cron_end]
     names = (
-        "adapter_status_clean_healthy",
+        "adapter_status_zero_touch_fresh",
         "adapter_environment_healthy",
         "external_payload_exact",
         "external_payload_unchanged_safe",
@@ -400,6 +400,9 @@ def test_deploy_unchanged_external_route_preserves_a_live_adapter(tmp_path):
     uploader = root / "do_upload.sh"
     cloud.mkdir(parents=True)
     recording.mkdir()
+    adapter_state_path = recording / "adapter-state.json"
+    adapter_state_path.write_bytes(b"adapter state remains untouched\n")
+    adapter_state_path.chmod(0o600)
     entries = (
         ("watchdog", repo / "scripts/free_mount_watchdog.sh", watchdog, 0o755, 0o755),
         ("upload_sentinel", repo / "scripts/clouddrive_upload_fatal_sentinel.sh", sentinel, 0o755, 0o755),
@@ -432,11 +435,11 @@ def test_deploy_unchanged_external_route_preserves_a_live_adapter(tmp_path):
         json.dumps(
             {
                 "generated_at_epoch": now,
-                "service_reachable": True,
+                "service_reachable": False,
                 "streaming": True,
                 "recording": True,
                 "finalizing": False,
-                "error": None,
+                "error": "source disposition drift: finalized source fingerprint changed",
             }
         ),
         encoding="utf-8",
@@ -470,6 +473,9 @@ def test_deploy_unchanged_external_route_preserves_a_live_adapter(tmp_path):
         '    printf "%s\\n" "post-selection payload drift" > "$CRON_DRIFT_TARGET"\n'
         '    chmod 755 "$CRON_DRIFT_TARGET"\n'
         '  fi\n'
+        '  if [ "$reads" -eq 1 ] && [ -n "${CRON_DRIFT_STATUS:-}" ]; then\n'
+        '    printf "{\\\"generated_at_epoch\\\":%s,\\\"service_reachable\\\":1,\\\"streaming\\\":true,\\\"recording\\\":true,\\\"finalizing\\\":false,\\\"error\\\":[]}\\n" "$(date +%s)" > "$CRON_DRIFT_STATUS"\n'
+        '  fi\n'
         '  case "${CRONTAB_MODE:-exact}" in\n'
         '    missing) exit 0;;\n'
         '    duplicate) printf "%s\\n%s\\n" "$CRONTAB_CONTENT" "$CRONTAB_CONTENT";;\n'
@@ -488,10 +494,11 @@ def test_deploy_unchanged_external_route_preserves_a_live_adapter(tmp_path):
         'if [ "$1" = inspect ]; then\n'
         '  format=$3; name=$4\n'
         '  case "$format" in\n'
-        '    *".State.Status"*) printf "%s\\n" running;;\n'
+        '    *".State.Status"*) printf "%s\\n" "${DOCKER_STATE:-running}";;\n'
+        '    *".State.StartedAt"*) cat "$STARTED_AT_PATH";;\n'
         '    *".State.Health"*) printf "%s\\n" "${DOCKER_HEALTH:-healthy}";;\n'
-        '    *".Config.Cmd"*) printf "%s\\n" "python3|/state/bililive_recorder_adapter.py";;\n'
-        '    *".Mounts"*) printf "%s\\n" "$TEST_RECORDING|bind|true";;\n'
+        '    *".Config.Cmd"*) printf "%s\\n" "${DOCKER_CMD:-python3|/state/bililive_recorder_adapter.py}";;\n'
+        '    *".Mounts"*) printf "%s\\n" "${DOCKER_BIND:-$TEST_RECORDING|bind|true}";;\n'
         '  esac\n'
         '  exit 0\n'
         'fi\n'
@@ -507,7 +514,7 @@ def test_deploy_unchanged_external_route_preserves_a_live_adapter(tmp_path):
         '  esac\n'
         '  exit 0\n'
         'fi\n'
-        'if [ "$1" = restart ]; then printf restart >> "$RESTART_LOG"; exit 0; fi\n'
+        'if [ "$1" = restart ]; then printf restart >> "$RESTART_LOG"; printf restarted > "$STARTED_AT_PATH"; exit 0; fi\n'
         'exit 1\n',
         encoding="utf-8",
     )
@@ -563,6 +570,7 @@ def test_deploy_unchanged_external_route_preserves_a_live_adapter(tmp_path):
                 "CRONTAB_READ_LOG": str(tmp_path / "crontab.read.log"),
                 "CRONTAB_WRITE_LOG": str(tmp_path / "crontab.write.log"),
                 "STRICT_LOG": str(tmp_path / "strict.log"),
+                "STARTED_AT_PATH": str(tmp_path / "adapter.started-at"),
             }
         )
         environment.update(extra)
@@ -570,11 +578,32 @@ def test_deploy_unchanged_external_route_preserves_a_live_adapter(tmp_path):
             ["/bin/bash", "-c", harness], capture_output=True, text=True, check=False, env=environment
         )
 
-    before = {path: (path.stat().st_ino, path.stat().st_mtime_ns) for path in originals}
+    started_at_path = tmp_path / "adapter.started-at"
+    started_at_path.write_text("2026-08-21T00:00:00Z\n", encoding="utf-8")
+    before = {
+        path: (path.stat().st_ino, path.stat().st_mtime_ns, hashlib.sha256(path.read_bytes()).hexdigest())
+        for path in originals
+    }
+    state_before = (
+        adapter_state_path.stat().st_ino,
+        adapter_state_path.stat().st_mtime_ns,
+        hashlib.sha256(adapter_state_path.read_bytes()).hexdigest(),
+    )
+    started_before = started_at_path.read_bytes()
     accepted = run()
     assert accepted.returncode == 0, accepted.stderr
-    assert before == {path: (path.stat().st_ino, path.stat().st_mtime_ns) for path in originals}
+    assert before == {
+        path: (path.stat().st_ino, path.stat().st_mtime_ns, hashlib.sha256(path.read_bytes()).hexdigest())
+        for path in originals
+    }
+    assert state_before == (
+        adapter_state_path.stat().st_ino,
+        adapter_state_path.stat().st_mtime_ns,
+        hashlib.sha256(adapter_state_path.read_bytes()).hexdigest(),
+    )
+    assert started_at_path.read_bytes() == started_before
     assert not (tmp_path / "restart.log").exists()
+    assert not (tmp_path / "strict.log").exists()
     assert (tmp_path / "crontab.read.log").read_text(encoding="utf-8") == "read\nread\n"
     assert not (tmp_path / "crontab.write.log").exists()
 
@@ -603,7 +632,10 @@ def test_deploy_unchanged_external_route_preserves_a_live_adapter(tmp_path):
         assert run().returncode != 0
     adapter_source.chmod(0o644)
     assert run(DOCKER_ADAPTER_SHA="0" * 64).returncode != 0
+    assert run(DOCKER_STATE="exited").returncode != 0
     assert run(DOCKER_HEALTH="unhealthy").returncode != 0
+    assert run(DOCKER_CMD="python3|/state/other.py").returncode != 0
+    assert run(DOCKER_BIND=f"{recording}|bind|false").returncode != 0
 
     for mode in ("missing", "duplicate", "stale"):
         (tmp_path / "crontab.read.log").unlink(missing_ok=True)
@@ -619,16 +651,8 @@ def test_deploy_unchanged_external_route_preserves_a_live_adapter(tmp_path):
     watchdog.chmod(0o755)
 
     status_path = recording / "status.json"
-    for update in (
-        {"error": "unexpected"},
-        {"service_reachable": False},
-        {"generated_at_epoch": now - 91},
-        {"streaming": 1},
-    ):
-        payload = json.loads(status_path.read_text(encoding="utf-8"))
-        payload.update(update)
-        status_path.write_text(json.dumps(payload), encoding="utf-8")
-        assert run().returncode != 0
+    (tmp_path / "crontab.read.log").unlink(missing_ok=True)
+    assert run(CRON_DRIFT_STATUS=str(status_path)).returncode != 0
     status_path.write_text(
         json.dumps(
             {
@@ -642,13 +666,36 @@ def test_deploy_unchanged_external_route_preserves_a_live_adapter(tmp_path):
         ),
         encoding="utf-8",
     )
-
+    assert run().returncode == 0
+    clean_status = json.loads(status_path.read_text(encoding="utf-8"))
+    for missing in ("service_reachable", "error"):
+        payload = dict(clean_status)
+        payload.pop(missing)
+        status_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert run().returncode != 0
+    for update in (
+        {"service_reachable": 1},
+        {"error": {}},
+        {"error": []},
+        {"generated_at_epoch": now - 91},
+        {"streaming": 1},
+    ):
+        payload = dict(clean_status)
+        payload.update(update)
+        status_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert run().returncode != 0
     marker = outer_rollback.index("external_mutation_started=0")
     assert marker < outer_rollback.index("restore_file watchdog")
     assert 'if [ "$external_mutation_started" -eq 1 ]; then\n    restore_file watchdog' in outer_rollback
     assert 'if [ "$external_mutation_started" -eq 1 ] && [ -f "$backup/external/crontab.present" ]' in outer_rollback
     assert 'if [ "$external_mutation_started" -eq 1 ] && [ -f "$backup/external/recorder_adapter.restart-required" ]' in outer_rollback
     assert 'if [ "$external_payload_unchanged" -eq 0 ]; then\n    printf' in external
+    assert "adapter_status_zero_touch_fresh" in external
+    zero_touch_status = _embedded_shell_function(external, "adapter_status_zero_touch_fresh")
+    assert 'payload.get("service_reachable") is True' not in zero_touch_status
+    assert 'payload.get("error") is None' not in zero_touch_status
+    assert 'type(payload.get("service_reachable")) is bool' in zero_touch_status
+    assert '"error" in payload and (payload["error"] is None or type(payload["error"]) is str)' in zero_touch_status
     assert external.index("watchdog_cron=") < external.index("external_payload_exact() {")
     assert '"$new_adapter_source" "$host_adapter_path" 644 755' in external
     assert "managed_crontab_exact()" in external

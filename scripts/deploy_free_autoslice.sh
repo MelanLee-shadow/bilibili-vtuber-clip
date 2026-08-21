@@ -1753,10 +1753,10 @@ assert payload.get("finalizing") is False
 assert payload.get("error") is None
 PY_CLEAN_ADAPTER_IDLE
 }
-adapter_status_clean_healthy() {
+adapter_status_zero_touch_fresh() {
     test -f /opt/bilive/recording/status.json || return 1
     test ! -L /opt/bilive/recording/status.json || return 1
-    python3 - /opt/bilive/recording/status.json <<'PY_CLEAN_ADAPTER_HEALTHY'
+    python3 - /opt/bilive/recording/status.json <<'PY_ZERO_TOUCH_ADAPTER_STATUS'
 import json
 import sys
 import time
@@ -1764,11 +1764,11 @@ import time
 payload = json.load(open(sys.argv[1], encoding="utf-8"))
 age = time.time() - float(payload["generated_at_epoch"])
 assert 0 <= age <= 90
-assert payload.get("service_reachable") is True
-assert payload.get("error") is None
+assert type(payload.get("service_reachable")) is bool
+assert "error" in payload and (payload["error"] is None or type(payload["error"]) is str)
 for field in ("streaming", "recording", "finalizing"):
     assert type(payload.get(field)) is bool
-PY_CLEAN_ADAPTER_HEALTHY
+PY_ZERO_TOUCH_ADAPTER_STATUS
 }
 adapter_status_supported_repair_idle() {
     python3 - /opt/bilive/recording/status.json <<'PY_SUPPORTED_ADAPTER_REPAIR_IDLE'
@@ -2212,7 +2212,7 @@ external_payload_unchanged_safe() {
         /opt/bilive/app/tmp_manual_upload/do_upload.sh 755 700 || return 1
     external_payload_exact recorder_adapter \
         "$new_adapter_source" "$host_adapter_path" 644 755 || return 1
-    adapter_status_clean_healthy || return 1
+    adapter_status_zero_touch_fresh || return 1
     adapter_environment_healthy "$expected_adapter_sha" || return 1
     managed_crontab_exact
 }
