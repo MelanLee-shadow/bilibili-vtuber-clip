@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import copy
 from contextlib import nullcontext
 
 import pytest
@@ -14,6 +15,7 @@ from src.autoslice.boundary_endpoint_binding import (
 )
 from src.autoslice.boundary_semantic_review import cue_grid_sha256
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.final_review_auditor import resolve_verified_source_truth_findings
 from src.autoslice.review_package_ass_audit import audit_review_package_ass
 
 
@@ -33,6 +35,73 @@ def _correction(before: str, after: str) -> dict[str, object]:
         "before_srt_sha256": _sha(before),
         "after_srt_sha256": _sha(after),
         "set_line_operations": ["1=A", "3=C", "6=F", "27=AA"],
+    }
+
+
+def _source_boundary() -> dict[str, object]:
+    return {
+        "schema_version": "talk-boundary-semantic-review.v1",
+        "status": "PASS",
+        "review_scope": "source_full_window",
+        "candidate_id": refresh.CANDIDATE_ID,
+    }
+
+
+def _verified_truth() -> dict[str, object]:
+    return {
+        "source_subtitle_truth_audit": {
+            "status": "ALREADY_SATISFIED", "failures": [], "applied": [], "satisfied": [],
+        }
+    }
+
+
+def _correction_pass() -> dict[str, object]:
+    return {"status": "APPLIED", "findings": [], "applied_count": 0}
+
+
+def _provenance() -> dict[str, object]:
+    body = {"schema_version": "qixi-terminal-operator-truth-provenance.v1", "status": "PASS"}
+    return {**body, "provenance_sha256": refresh._canonical_sha(body)}
+
+
+def _sealed_human_truth_srt() -> tuple[dict[str, object], bytes, str, str]:
+    path = refresh.ROOT / refresh.HUMAN_TRUTH_AUTHORITY_PATH
+    payload = path.read_bytes()
+    authority = json.loads(payload)
+    before = (
+        refresh.ROOT
+        / "assets/lidousha/sealed_subtitle_corrections/auto_123655_771_844.pipeline-diagnostic.srt"
+    ).read_text(encoding="utf-8")
+    pieces = before.split("\n\n")
+    for row in authority["correction"]["replacements"]:
+        index = int(row["cue_index"]) - 1
+        pieces[index] = pieces[index].replace("\n" + str(row["before"]), "\n" + str(row["after"]))
+    return authority, payload, before, "\n\n".join(pieces)
+
+
+def _source_boundary_audit() -> dict[str, object]:
+    review = {
+        "schema_version": "talk-boundary-semantic-review.v1",
+        "status": "PASS",
+        "review_scope": "source_full_window",
+        "candidate_id": refresh.CANDIDATE_ID,
+        "next_topic_separated": True,
+        "next_topic_witness_valid": True,
+        "request_sha256": "sha256:" + "a" * 64,
+        "cue_grid_sha256": "sha256:" + "b" * 64,
+        "final_endpoint_binding": {
+            "schema_version": "talk-boundary-final-endpoint-binding.v1",
+            "status": "PASS",
+            "final_start_ms": 9_780,
+            "final_end_ms": 82_670,
+            "reason_codes": [],
+        },
+    }
+    return {
+        "final_start_ms": 9_780,
+        "final_end_ms": 82_670,
+        "boundary_semantic_review": review,
+        "final_delivery_boundary_semantic_review": {"status": "PASS"},
     }
 
 
@@ -142,12 +211,126 @@ def test_refresh_rejects_unlisted_text_and_timing_drift() -> None:
         )
 
 
+def test_sealed_human_truth_binds_four_replacements_and_two_assertions() -> None:
+    authority, payload, before, final = _sealed_human_truth_srt()
+    audit, provenance = refresh._human_truth_from_authority(
+        authority=authority,
+        authority_bytes=payload,
+        runtime_authority_sha256="sha256:" + hashlib.sha256(payload).hexdigest(),
+        before_srt=before,
+        final_srt=final,
+    )
+    assert audit["status"] == "ALREADY_SATISFIED"
+    assert [row["cue_indexes"][0] for row in audit["satisfied"]] == [1, 3, 5, 6, 14, 27]
+    assert [row["cue_index"] for row in provenance["covered_cues"]] == [1, 3, 5, 6, 14, 27]
+    assert provenance["authority_bytes_sha256"] == "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def test_human_truth_loader_requires_the_committed_asset_and_live_seal() -> None:
+    authority, payload, before, final = _sealed_human_truth_srt()
+    del authority
+    audit, provenance = refresh._load_qixi_human_truth(
+        repo_root=refresh.ROOT,
+        live_correction={
+            "delivery_branding_authority": {
+                "authority_repository_seal": {
+                    "sha256": "sha256:" + hashlib.sha256(payload).hexdigest(),
+                }
+            }
+        },
+        before_srt=before,
+        final_srt=final,
+    )
+    assert audit["status"] == "ALREADY_SATISFIED"
+    assert provenance["authority_path"] == str(refresh.HUMAN_TRUTH_AUTHORITY_PATH)
+    with pytest.raises(refresh.QixiTerminalEvidenceRefreshError, match="HUMAN_TRUTH_DRIFT"):
+        refresh._load_qixi_human_truth(
+            repo_root=refresh.ROOT,
+            live_correction={
+                "delivery_branding_authority": {
+                    "authority_repository_seal": {"sha256": "sha256:" + "0" * 64}
+                }
+            },
+            before_srt=before,
+            final_srt=final,
+        )
+
+
+@pytest.mark.parametrize("kind", ["hash", "replacement", "assertion", "timing", "other_cue"])
+def test_sealed_human_truth_rejects_hash_text_or_timing_drift(kind: str) -> None:
+    authority, payload, before, final = _sealed_human_truth_srt()
+    broken = copy.deepcopy(authority)
+    if kind == "hash":
+        broken["correction"]["output_srt_sha256"] = "sha256:" + "0" * 64
+    elif kind == "replacement":
+        broken["correction"]["replacements"][0]["after"] = "漂移"
+    elif kind == "assertion":
+        broken["correction"]["assertions"][0]["text"] = "漂移"
+    elif kind == "timing":
+        broken["correction"]["replacements"][0]["start"] = "00:00:00,000"
+    else:
+        final = final.replace("感觉kmx比较多吧", "未列 cue 漂移")
+    with pytest.raises(refresh.QixiTerminalEvidenceRefreshError, match="HUMAN_TRUTH"):
+        refresh._human_truth_from_authority(
+            authority=broken,
+            authority_bytes=payload,
+            runtime_authority_sha256="sha256:" + hashlib.sha256(payload).hexdigest(),
+            before_srt=before,
+            final_srt=final,
+        )
+
+
+def test_operator_assertion_truth_resolves_only_the_owned_provider_finding() -> None:
+    authority, payload, before, final = _sealed_human_truth_srt()
+    audit, _provenance = refresh._human_truth_from_authority(
+        authority=authority,
+        authority_bytes=payload,
+        runtime_authority_sha256="sha256:" + hashlib.sha256(payload).hexdigest(),
+        before_srt=before,
+        final_srt=final,
+    )
+    cue_five = parse_srt_cues(final)[4]
+    protected = {
+        "cue_index": 5, "proposed_full_cue": "模型改写", "base_text_sha256": hashlib.sha256(cue_five.text.encode()).hexdigest(),
+    }
+    other = {"cue_index": 2, "proposed_full_cue": "模型改写", "base_text_sha256": hashlib.sha256(parse_srt_cues(final)[1].text.encode()).hexdigest()}
+    pending, resolved = resolve_verified_source_truth_findings(
+        final, [protected, other], source_truth_audit=audit, timeline_offset_ms=0
+    )
+    assert [row["cue_index"] for row in resolved] == [5]
+    assert [row["cue_index"] for row in pending] == [2]
+
+
+def test_source_full_window_rejects_relative_delivery_or_wrong_interval() -> None:
+    boundary = _source_boundary_audit()
+    assert refresh._require_qixi_source_boundary(boundary)["review_scope"] == "source_full_window"
+    relative = copy.deepcopy(boundary)
+    relative["boundary_semantic_review"] = relative["final_delivery_boundary_semantic_review"]
+    wrong_interval = copy.deepcopy(boundary)
+    wrong_interval["boundary_semantic_review"]["final_endpoint_binding"]["final_start_ms"] = 0
+    for broken in (relative, wrong_interval):
+        with pytest.raises(refresh.QixiTerminalEvidenceRefreshError, match="SOURCE_"):
+            refresh._require_qixi_source_boundary(broken)
+
+
+def test_terminal_review_requires_a_passed_raw_correction_pass() -> None:
+    source = _source_boundary_audit()["boundary_semantic_review"]
+    assert refresh._correction_pass_for_terminal_review(
+        {"correction_pass": _correction_pass()}, source_boundary=source
+    )["boundary_semantic_review"] == source
+    with pytest.raises(refresh.QixiTerminalEvidenceRefreshError, match="CORRECTION_PASS"):
+        refresh._correction_pass_for_terminal_review(
+            {"correction_pass": {"status": "AUDITOR_UNAVAILABLE", "findings": [], "applied_count": 0}},
+            source_boundary=source,
+        )
+
+
 def test_refresh_uses_new_final_and_boundary_receipts(monkeypatch) -> None:
     before = _srt(*[str(index) for index in range(1, 28)])
     after = _srt("A", "2", "C", "4", "5", "F", *[str(index) for index in range(7, 27)], "AA")
     old_chat = {
         "final_text_srt_sha256": _sha(before)[7:],
-        "final_review_audit": {"old": "audit"},
+        "final_review_audit": {"old": "audit", "correction_pass": _correction_pass()},
     }
     boundary = {"status": "PASS", "request_sha256": "sha256:" + "a" * 64}
     fresh = {
@@ -172,6 +355,7 @@ def test_refresh_uses_new_final_and_boundary_receipts(monkeypatch) -> None:
         "_run_exact_final_release_review",
         lambda **kwargs: seen.setdefault("final", kwargs) and fresh,
     )
+    monkeypatch.setattr(refresh, "clip_context_prompt_text", lambda _context: "canonical context")
     monkeypatch.setattr(refresh, "validate_final_review_release", lambda audit, **_kwargs: audit)
     result = refresh.refresh_terminal_evidence(
         before_srt=before,
@@ -182,8 +366,11 @@ def test_refresh_uses_new_final_and_boundary_receipts(monkeypatch) -> None:
         selection_scorecard={},
         structured_context="context",
         clip_context={"context_sha256": "sha256:" + "e" * 64},
-        source_final_start_ms=0,
-        source_final_end_ms=27_900,
+        source_boundary=_source_boundary(),
+        verified_authority_audit=_verified_truth(),
+        operator_truth_provenance=_provenance(),
+        source_final_start_ms=9_780,
+        source_final_end_ms=82_670,
         boundary_max_forward_ms=30_000,
         adapters=object(),
         authoritative_chat=(),
@@ -191,9 +378,25 @@ def test_refresh_uses_new_final_and_boundary_receipts(monkeypatch) -> None:
         boundary_review_llm=lambda _prompt: '{"decision":"PASS"}',
     )
     assert seen["boundary"]["final_srt_text"] == after
+    assert seen["boundary"]["correction_audit"] == {
+        "status": "APPLIED",
+        "findings": [],
+        "applied_count": 0,
+        "boundary_semantic_review": _source_boundary(),
+    }
+    assert seen["boundary"]["candidate_context"] == "canonical context"
     assert seen["final"]["correction_audit"]["boundary_semantic_review"] == boundary
     assert result["chat_authority"]["final_text_srt_sha256"] == _sha(after)[7:]
-    assert result["chat_authority"]["final_review_audit"] is fresh
+    assert {
+        result["chat_authority"][key]
+        for key in (
+            "final_text_srt_sha256", "final_speaker_srt_sha256", "final_output_srt_sha256",
+        )
+    } == {_sha(after)[7:]}
+    assert result["final_delivery_boundary_semantic_review"] == boundary
+    assert result["chat_authority"]["final_review_audit"] == {
+        **fresh, "qixi_operator_truth_provenance": _provenance(),
+    }
 
 
 def test_final_review_failure_preserves_reason_and_exposes_only_sanitized_diagnostic(
@@ -203,7 +406,7 @@ def test_final_review_failure_preserves_reason_and_exposes_only_sanitized_diagno
     after = _srt("A", "2", "C", "4", "5", "F", *[str(index) for index in range(7, 27)], "AA")
     old_chat = {
         "final_text_srt_sha256": _sha(before)[7:],
-        "final_review_audit": {"old": "audit"},
+        "final_review_audit": {"old": "audit", "correction_pass": _correction_pass()},
     }
     private_provider_text = "prompt=do-not-render raw-response=cookie=not-a-cookie media=/private/final.mp4"
     boundary = {
@@ -258,6 +461,7 @@ def test_final_review_failure_preserves_reason_and_exposes_only_sanitized_diagno
         lambda **_kwargs: {"boundary_semantic_review": boundary},
     )
     monkeypatch.setattr(refresh, "_run_exact_final_release_review", lambda **_kwargs: fresh)
+    monkeypatch.setattr(refresh, "clip_context_prompt_text", lambda _context: "canonical context")
 
     with pytest.raises(refresh.QixiTerminalEvidenceRefreshError) as raised:
         refresh.refresh_terminal_evidence(
@@ -269,8 +473,11 @@ def test_final_review_failure_preserves_reason_and_exposes_only_sanitized_diagno
             selection_scorecard={},
             structured_context="context",
             clip_context={"context_sha256": "sha256:" + "e" * 64},
-            source_final_start_ms=0,
-            source_final_end_ms=27_900,
+            source_boundary=_source_boundary(),
+            verified_authority_audit=_verified_truth(),
+            operator_truth_provenance=_provenance(),
+            source_final_start_ms=9_780,
+            source_final_end_ms=82_670,
             boundary_max_forward_ms=30_000,
             adapters=object(),
             authoritative_chat=(),
@@ -344,6 +551,68 @@ def test_allowlist_drift_has_a_distinct_bounded_full_dry_run_predicate() -> None
         "status": "FAIL",
         "reason_code": "QIXI_TERMINAL_REFRESH_RECORD_ALLOWLIST_DRIFT",
     }
+
+
+def test_allowlist_subtree_contract_requires_every_root_and_no_prefix_escape() -> None:
+    assert refresh._changed_within_allowlisted_subtrees(
+        {
+            "/boundary_audit/final_delivery_boundary_semantic_review/status",
+            "/story_contract/boundary_semantic_review/request_sha256",
+        },
+        [
+            "/boundary_audit/final_delivery_boundary_semantic_review",
+            "/story_contract/boundary_semantic_review",
+        ],
+    )
+    assert not refresh._changed_within_allowlisted_subtrees(
+        {"/boundary_audit/final_delivery_boundary_semantic_review/status"},
+        [
+            "/boundary_audit/final_delivery_boundary_semantic_review",
+            "/story_contract/boundary_semantic_review",
+        ],
+    )
+
+
+def test_projection_uses_subtree_allowlist_and_preserves_absent_mirrors() -> None:
+    old_record = {
+        "boundary_audit": {"boundary_semantic_review": {"status": "PASS"}},
+        "story_contract": {"boundary_semantic_review": {"status": "PASS"}},
+        "artifact_hashes": {"chat_authority_audit_sha256": "sha256:" + "0" * 64},
+        "chat_authority_audit_path": "auto_123655_771_844.chat-authority.json",
+    }
+    fresh_boundary = {
+        "schema_version": "talk-boundary-semantic-review.v1", "status": "PASS",
+        "request_sha256": "sha256:" + "a" * 64,
+    }
+    projected = refresh.project_evidence_mirrors(
+        record=old_record,
+        delivery_record=copy.deepcopy(old_record),
+        publish={}, state={}, refreshed_chat_bytes=b"fresh-chat",
+        final_delivery_boundary=fresh_boundary,
+        allowed_mutations={
+            "record": [
+                "/artifact_hashes/chat_authority_audit_sha256",
+                "/boundary_audit/final_delivery_boundary_semantic_review",
+                "/story_contract/boundary_semantic_review",
+            ],
+            "delivery_record": [
+                "/artifact_hashes/chat_authority_audit_sha256",
+                "/boundary_audit/final_delivery_boundary_semantic_review",
+                "/story_contract/boundary_semantic_review",
+            ],
+            "publish": [], "state": [],
+        },
+    )
+    expected_hash = "sha256:" + hashlib.sha256(b"fresh-chat").hexdigest()
+    assert projected["record"]["artifact_hashes"]["chat_authority_audit_sha256"] == expected_hash
+    assert projected["delivery_record"] == projected["record"]
+    assert projected["record"]["boundary_audit"]["final_delivery_boundary_semantic_review"] == fresh_boundary
+    assert projected["record"]["story_contract"]["boundary_semantic_review"] == fresh_boundary
+    assert projected["publish"] == {} and projected["state"] == {}
+    assert not refresh._changed_within_allowlisted_subtrees(
+        {"/story_contract/boundary_semantic_review_extra/status"},
+        ["/story_contract/boundary_semantic_review"],
+    )
 
 
 def test_cli_full_dry_run_prints_sanitized_failure_without_writes(

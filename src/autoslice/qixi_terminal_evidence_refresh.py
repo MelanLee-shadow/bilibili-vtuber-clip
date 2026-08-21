@@ -26,6 +26,8 @@ from src.autoslice.final_review_contract import (
     validate_final_review_release,
 )
 from src.autoslice.final_review_auditor import _final_review_structured_context
+from src.autoslice.final_review_auditor import audit_correction_mutation_authority
+from src.autoslice.clip_context import clip_context_prompt_text
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.chat_evidence import ChatEvidence
 from src.autoslice.producer_boundary_review_stage import exact_delivery_correction_audit
@@ -53,6 +55,11 @@ ROOT = Path(__file__).resolve().parents[2]
 AUTHORITY_PATH = Path(
     "assets/lidousha/qixi_terminal_evidence_refresh/auto_123655_771_844.v1.json"
 )
+HUMAN_TRUTH_AUTHORITY_PATH = Path(
+    "assets/lidousha/sealed_subtitle_corrections/auto_123655_771_844.v1.json"
+)
+_SOURCE_FINAL_START_MS = 9_780
+_SOURCE_FINAL_END_MS = 82_670
 _JOURNAL_ROLES = ("chat", "record", "delivery_record", "publish", "state")
 _ENTRY_PHASES = frozenset({"PREPARED", "INSTALLING", "INSTALLED"})
 _JOURNAL_STATUSES = frozenset(
@@ -500,6 +507,246 @@ def _assert_text_and_grid_immutable(
             raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_UNLISTED_TEXT_DRIFT")
 
 
+def _srt_time_ms(value: object) -> int:
+    if not isinstance(value, str) or re.fullmatch(r"\d{2}:\d{2}:\d{2},\d{3}", value) is None:
+        raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_HUMAN_TRUTH_TIMING_INVALID")
+    hours, minutes, seconds = (int(part) for part in value[:8].split(":"))
+    return ((hours * 60 + minutes) * 60 + seconds) * 1_000 + int(value[9:])
+
+
+def _require_qixi_source_boundary(boundary_audit: Mapping[str, object]) -> dict[str, object]:
+    """Admit only the current source-full-window proof for this candidate."""
+
+    boundary = _require_mapping(boundary_audit, "BOUNDARY")
+    source = _require_mapping(
+        boundary.get("boundary_semantic_review"), "SOURCE_BOUNDARY"
+    )
+    endpoint = _require_mapping(
+        source.get("final_endpoint_binding"), "SOURCE_ENDPOINT"
+    )
+    if (
+        boundary.get("final_start_ms") != _SOURCE_FINAL_START_MS
+        or boundary.get("final_end_ms") != _SOURCE_FINAL_END_MS
+        or source.get("schema_version") != "talk-boundary-semantic-review.v1"
+        or source.get("candidate_id") != CANDIDATE_ID
+        or source.get("status") != "PASS"
+        or source.get("review_scope") != "source_full_window"
+        or source.get("next_topic_separated") is not True
+        or source.get("next_topic_witness_valid") is not True
+        or _diagnostic_sha256(source.get("request_sha256")) is None
+        or _diagnostic_sha256(source.get("cue_grid_sha256")) is None
+        or endpoint.get("schema_version")
+        != "talk-boundary-final-endpoint-binding.v1"
+        or endpoint.get("status") != "PASS"
+        or endpoint.get("final_start_ms") != _SOURCE_FINAL_START_MS
+        or endpoint.get("final_end_ms") != _SOURCE_FINAL_END_MS
+        or endpoint.get("reason_codes") != []
+    ):
+        raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_SOURCE_BOUNDARY_INVALID")
+    # Deliberately return only the source layer; an old delivery-local receipt
+    # has a different cue grid and can never serve as source witness evidence.
+    return copy.deepcopy(source)
+
+
+def _correction_pass_for_terminal_review(
+    old_audit: Mapping[str, object], *, source_boundary: Mapping[str, object]
+) -> dict[str, object]:
+    raw = _require_mapping(old_audit.get("correction_pass"), "CORRECTION_PASS")
+    if audit_correction_mutation_authority(raw).get("status") != "PASS":
+        raise QixiTerminalEvidenceRefreshError(
+            "QIXI_TERMINAL_REFRESH_CORRECTION_PASS_MUTATION_AUTHORITY_INVALID"
+        )
+    result = copy.deepcopy(raw)
+    result["boundary_semantic_review"] = copy.deepcopy(dict(source_boundary))
+    return result
+
+
+def _live_human_truth_seal(correction: Mapping[str, object]) -> str:
+    delivery = _require_mapping(
+        correction.get("delivery_branding_authority"), "LIVE_DELIVERY_AUTHORITY"
+    )
+    seal = _require_mapping(
+        delivery.get("authority_repository_seal"), "LIVE_DELIVERY_REPOSITORY_SEAL"
+    )
+    digest = seal.get("sha256")
+    if _diagnostic_sha256(digest) is None:
+        raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_HUMAN_TRUTH_SEAL_INVALID")
+    return str(digest)
+
+
+def _operator_truth_row(
+    *, cue_index: int, before: object, final: object
+) -> dict[str, object]:
+    return {
+        "truth_id": f"qixi-terminal-human-cue-{cue_index}",
+        "required": True,
+        "action": "replace_cue",
+        "cue_indexes": [cue_index],
+        "local_windows": [{"start_ms": final.start_ms, "end_ms": final.end_ms}],
+        "declared_output_contract": {
+            "schema_version": "source-truth-declared-output.v1",
+            "action": "replace_cue",
+            "canonical_texts": [final.text],
+            "required_text": "",
+        },
+        "resolved_target_projection": {
+            "schema_version": "source-truth-resolved-target-projection.v1",
+            "selector": "half-open-overlap-gte-min-then-action-resolution",
+            "min_overlap_ms": 80,
+            "action": "replace_cue",
+            "status": "RESOLVED",
+            "cues": [{
+                "cue_index": cue_index,
+                "start_ms": final.start_ms,
+                "end_ms": final.end_ms,
+                "before_text": before.text,
+                "after_text": final.text,
+            }],
+        },
+    }
+
+
+def _human_truth_from_authority(
+    *, authority: Mapping[str, object], authority_bytes: bytes,
+    runtime_authority_sha256: str, before_srt: str, final_srt: str,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Validate Ivan's sealed six-cue truth and make an in-memory review aid."""
+
+    document = _require_mapping(authority, "HUMAN_TRUTH")
+    claimed = document.pop("authority_sha256", None)
+    correction = _require_mapping(document.get("correction"), "HUMAN_TRUTH_CORRECTION")
+    before_cues, final_cues = parse_srt_cues(before_srt), parse_srt_cues(final_srt)
+    if (
+        document.get("schema_version") != "sealed-subtitle-correction-authority.v1"
+        or document.get("candidate_id") != CANDIDATE_ID
+        or document.get("recording_date") != RECORDING_DATE
+        or document.get("upload") is not False
+        or not isinstance(claimed, str)
+        or _canonical_sha(document) != claimed
+        or "sha256:" + hashlib.sha256(authority_bytes).hexdigest()
+        != runtime_authority_sha256
+        or correction.get("cue_count") != 33
+        or len(before_cues) != 33
+        or len(final_cues) != 33
+        or correction.get("source_srt_sha256") != _sha(before_srt)
+        or correction.get("output_srt_sha256") != _sha(final_srt)
+        or correction.get("other_cues_immutable") is not True
+    ):
+        raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_HUMAN_TRUTH_DRIFT")
+    replacements = correction.get("replacements")
+    assertions = correction.get("assertions")
+    if not isinstance(replacements, list) or not isinstance(assertions, list):
+        raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_HUMAN_TRUTH_SCHEMA_INVALID")
+    replacement_indexes: set[int] = set()
+    asserted_indexes: set[int] = set()
+    rows: list[dict[str, object]] = []
+    for row in replacements:
+        if not isinstance(row, Mapping):
+            raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_HUMAN_TRUTH_SCHEMA_INVALID")
+        index = row.get("cue_index")
+        if (
+            isinstance(index, bool) or not isinstance(index, int) or index in replacement_indexes
+            or index not in {1, 3, 6, 27} or set(row) != {"cue_index", "start", "end", "before", "after"}
+        ):
+            raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_HUMAN_TRUTH_SCHEMA_INVALID")
+        before, final = before_cues[index - 1], final_cues[index - 1]
+        if (
+            before.start_ms != _srt_time_ms(row["start"])
+            or before.end_ms != _srt_time_ms(row["end"])
+            or final.start_ms != before.start_ms or final.end_ms != before.end_ms
+            or before.text != row["before"] or final.text != row["after"]
+        ):
+            raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_HUMAN_TRUTH_DRIFT")
+        replacement_indexes.add(index)
+        rows.append(_operator_truth_row(cue_index=index, before=before, final=final))
+    for row in assertions:
+        if not isinstance(row, Mapping):
+            raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_HUMAN_TRUTH_SCHEMA_INVALID")
+        index = row.get("cue_index")
+        if (
+            isinstance(index, bool) or not isinstance(index, int) or index in asserted_indexes
+            or index not in {5, 14} or set(row) != {"cue_index", "start", "end", "text"}
+        ):
+            raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_HUMAN_TRUTH_SCHEMA_INVALID")
+        before, final = before_cues[index - 1], final_cues[index - 1]
+        if (
+            before.start_ms != _srt_time_ms(row["start"])
+            or before.end_ms != _srt_time_ms(row["end"])
+            or final.start_ms != before.start_ms or final.end_ms != before.end_ms
+            or before.text != row["text"] or final.text != row["text"]
+        ):
+            raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_HUMAN_TRUTH_DRIFT")
+        asserted_indexes.add(index)
+        rows.append(_operator_truth_row(cue_index=index, before=before, final=final))
+    if replacement_indexes != {1, 3, 6, 27} or asserted_indexes != {5, 14}:
+        raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_HUMAN_TRUTH_SCHEMA_INVALID")
+    if any(
+        before.text != final.text
+        for index, (before, final) in enumerate(zip(before_cues, final_cues), start=1)
+        if index not in replacement_indexes
+    ):
+        raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_HUMAN_TRUTH_DRIFT")
+    rows.sort(key=lambda row: int(row["cue_indexes"][0]))
+    provenance: dict[str, object] = {
+        "schema_version": "qixi-terminal-operator-truth-provenance.v1",
+        "status": "PASS",
+        "authority_path": str(HUMAN_TRUTH_AUTHORITY_PATH),
+        "authority_bytes": len(authority_bytes),
+        "authority_bytes_sha256": runtime_authority_sha256,
+        "authority_sha256": claimed,
+        "covered_cues": [{
+            "cue_index": int(row["cue_indexes"][0]),
+            "text_sha256": _sha(str(row["declared_output_contract"]["canonical_texts"][0])),
+        } for row in rows],
+    }
+    provenance["provenance_sha256"] = _canonical_sha(provenance)
+    return (
+        {
+            "schema_version": "source-subtitle-truth-audit.v1",
+            "status": "ALREADY_SATISFIED",
+            "applied": [], "satisfied": rows, "failures": [],
+        },
+        provenance,
+    )
+
+
+def _load_qixi_human_truth(
+    *, repo_root: Path, live_correction: Mapping[str, object],
+    before_srt: str, final_srt: str,
+) -> tuple[dict[str, object], dict[str, object]]:
+    payload = _read_regular(repo_root / HUMAN_TRUTH_AUTHORITY_PATH)
+    try:
+        require_repository_asset_authority(
+            repo_root=repo_root, relative_path=HUMAN_TRUTH_AUTHORITY_PATH,
+            observed_bytes=payload,
+        )
+        document = json.loads(payload)
+    except (OSError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
+        raise QixiTerminalEvidenceRefreshError(
+            "QIXI_TERMINAL_REFRESH_HUMAN_TRUTH_UNSEALED"
+        ) from exc
+    return _human_truth_from_authority(
+        authority=_require_mapping(document, "HUMAN_TRUTH"), authority_bytes=payload,
+        runtime_authority_sha256=_live_human_truth_seal(live_correction),
+        before_srt=before_srt, final_srt=final_srt,
+    )
+
+
+def _validate_operator_truth_provenance(
+    audit: Mapping[str, object], *, expected: Mapping[str, object]
+) -> None:
+    provenance = _require_mapping(
+        audit.get("qixi_operator_truth_provenance"), "HUMAN_TRUTH_PROVENANCE"
+    )
+    claimed = provenance.pop("provenance_sha256", None)
+    if (
+        not isinstance(claimed, str)
+        or _canonical_sha(provenance) != claimed
+        or audit.get("qixi_operator_truth_provenance") != expected
+    ):
+        raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_HUMAN_TRUTH_PROVENANCE_DRIFT")
+
+
 def refresh_terminal_evidence(
     *,
     before_srt: str,
@@ -510,6 +757,9 @@ def refresh_terminal_evidence(
     selection_scorecard: object,
     structured_context: str,
     clip_context: Mapping[str, object],
+    source_boundary: Mapping[str, object],
+    verified_authority_audit: Mapping[str, object],
+    operator_truth_provenance: Mapping[str, object],
     source_final_start_ms: int,
     source_final_end_ms: int,
     boundary_max_forward_ms: int,
@@ -538,6 +788,16 @@ def refresh_terminal_evidence(
         raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_CORRECTION_BEFORE_DRIFT")
     if correction.get("after_srt_sha256") != _sha(final_srt) or not clip_context:
         raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_CORRECTION_AFTER_DRIFT")
+    if (
+        source_final_start_ms != _SOURCE_FINAL_START_MS
+        or source_final_end_ms != _SOURCE_FINAL_END_MS
+        or source_boundary.get("review_scope") != "source_full_window"
+        or source_boundary.get("status") != "PASS"
+    ):
+        raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_SOURCE_BOUNDARY_INVALID")
+    correction_pass = _correction_pass_for_terminal_review(
+        old_audit, source_boundary=source_boundary
+    )
 
     # The boundary reviewer is intentionally called first.  Its fresh receipt
     # becomes the exact boundary input bound by the new final-review receipt.
@@ -546,14 +806,14 @@ def refresh_terminal_evidence(
     from src.autoslice.llm_client import extract_json_object
     boundary_correction = exact_delivery_correction_audit(
         final_srt_text=final_srt,
-        correction_audit=old_audit,
+        correction_audit=correction_pass,
         source_final_start_ms=source_final_start_ms,
         source_final_end_ms=source_final_end_ms,
         candidate_id=CANDIDATE_ID,
         selection_hook=selection_hook,
         selection_scorecard=selection_scorecard,
         structured_context=structured_context,
-        candidate_context="",
+        candidate_context=clip_context_prompt_text(clip_context),
         boundary_max_forward_ms=boundary_max_forward_ms,
         llm_call=boundary_review_llm or text_pipeline._build_final_review_llm_call(),
         extract_json=extract_json or extract_json_object,
@@ -566,9 +826,17 @@ def refresh_terminal_evidence(
         authoritative_chat=authoritative_chat,
         selection_hook=selection_hook,
         clip_context=clip_context,
+        verified_authority_audit=verified_authority_audit,
         verify_confusable_entity=verify_confusable_entity,
         final_review_llm=final_review_llm,
         pronoun_audit_llm=final_review_llm,
+    )
+    final_audit = dict(final_audit)
+    final_audit["qixi_operator_truth_provenance"] = copy.deepcopy(
+        dict(operator_truth_provenance)
+    )
+    _validate_operator_truth_provenance(
+        final_audit, expected=operator_truth_provenance
     )
     try:
         validate_final_review_release(final_audit, expected_srt_sha256=_sha(final_srt))
@@ -619,6 +887,7 @@ def project_evidence_mirrors(
         raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_RECORD_MIRROR_DRIFT")
     old_publish = _require_mapping(publish, "PUBLISH")
     old_state = _require_mapping(state, "STATE")
+    allowed = _require_mapping(allowed_mutations, "ALLOWLIST")
     boundary = _require_mapping(old_record.get("boundary_audit"), "BOUNDARY")
     story = _require_mapping(old_record.get("story_contract"), "STORY")
     artifact_hashes = _require_mapping(old_record.get("artifact_hashes"), "ARTIFACT_HASHES")
@@ -643,30 +912,34 @@ def project_evidence_mirrors(
     # The post-correction publish document carries the same StoryContract; it
     # is not allowed to grow a second, independently generated review object.
     new_publish = copy.deepcopy(old_publish)
-    if isinstance(new_publish.get("story_contract"), Mapping):
+    if (
+        allowed.get("publish")
+        and isinstance(new_publish.get("story_contract"), Mapping)
+    ):
         new_publish["story_contract"] = copy.deepcopy(new_story)
     # State may contain more than one collection.  Locate exactly one current
     # candidate row and update only its nested public record projection when it
     # exists; a missing or duplicate candidate is a hard block.
     new_state = copy.deepcopy(old_state)
-    rows: list[dict[str, object]] = []
-    for collection in ("picks", "talk", "talks", "pending_talk"):
-        value = new_state.get(collection)
-        if isinstance(value, list):
-            rows.extend(
-                row for row in value if isinstance(row, dict) and row.get("candidate_id") == CANDIDATE_ID
-            )
-    if len(rows) != 1:
-        raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_STATE_CANDIDATE_DRIFT")
-    if isinstance(rows[0].get("story_contract"), Mapping):
-        rows[0]["story_contract"] = copy.deepcopy(new_story)
+    if allowed.get("state"):
+        rows: list[dict[str, object]] = []
+        for collection in ("picks", "talk", "talks", "pending_talk"):
+            value = new_state.get(collection)
+            if isinstance(value, list):
+                rows.extend(
+                    row for row in value
+                    if isinstance(row, dict) and row.get("candidate_id") == CANDIDATE_ID
+                )
+        if len(rows) != 1:
+            raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_STATE_CANDIDATE_DRIFT")
+        if isinstance(rows[0].get("story_contract"), Mapping):
+            rows[0]["story_contract"] = copy.deepcopy(new_story)
     projected = {
         "record": new_record,
         "delivery_record": copy.deepcopy(new_record),
         "publish": new_publish,
         "state": new_state,
     }
-    allowed = _require_mapping(allowed_mutations, "ALLOWLIST")
     for role, prior, current in (
         ("record", old_record, projected["record"]),
         ("delivery_record", old_delivery, projected["delivery_record"]),
@@ -674,8 +947,7 @@ def project_evidence_mirrors(
         ("state", old_state, projected["state"]),
     ):
         changed = _changed_pointers(prior, current)
-        expected = set(allowed.get(role, []))
-        if changed != expected:
+        if not _changed_within_allowlisted_subtrees(changed, allowed.get(role)):
             raise QixiTerminalEvidenceRefreshError(
                 f"QIXI_TERMINAL_REFRESH_{role.upper()}_ALLOWLIST_DRIFT"
             )
@@ -692,6 +964,27 @@ def _changed_pointers(before: object, after: object, prefix: str = "") -> set[st
     if before == after:
         return set()
     return {prefix or "/"}
+
+
+def _changed_within_allowlisted_subtrees(
+    changed: set[str], roots: object,
+) -> bool:
+    """Require every listed JSON-pointer root to own a changed leaf exactly."""
+
+    if not isinstance(roots, list) or any(
+        not isinstance(root, str) or not root.startswith("/") or root == "/"
+        for root in roots
+    ) or len(roots) != len(set(roots)):
+        return False
+    if not roots:
+        return not changed
+    for leaf in changed:
+        if not any(leaf == root or leaf.startswith(root + "/") for root in roots):
+            return False
+    return all(
+        any(leaf == root or leaf.startswith(root + "/") for leaf in changed)
+        for root in roots
+    )
 
 
 def _json_bytes(value: Mapping[str, object]) -> bytes:
@@ -1345,14 +1638,23 @@ def build_staged_refresh(
     story = _require_mapping(record.get("story_contract"), "STORY")
     boundary = _require_mapping(record.get("boundary_audit"), "BOUNDARY")
     start, end = boundary.get("final_start_ms"), boundary.get("final_end_ms")
-    if not isinstance(start, int) or not isinstance(end, int) or not start < end:
+    if (
+        isinstance(start, bool) or not isinstance(start, int)
+        or isinstance(end, bool) or not isinstance(end, int) or not start < end
+    ):
         raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_BOUNDARY_RANGE_INVALID")
+    source_boundary = _require_qixi_source_boundary(boundary)
+    live_correction = _json_document(runtime["correction"], "CORRECTION")
     correction = _normalize_live_correction(
-        _json_document(runtime["correction"], "CORRECTION"),
+        live_correction,
         authority_correction=_require_mapping(authority["correction"], "AUTHORITY_CORRECTION"),
         before_srt=before_srt,
         final_srt=final_srt,
         authority_preimage=_require_mapping(authority["preimage"], "PREIMAGE"),
+    )
+    operator_truth_audit, operator_truth_provenance = _load_qixi_human_truth(
+        repo_root=repo_root, live_correction=live_correction,
+        before_srt=before_srt, final_srt=final_srt,
     )
     result = refresh_terminal_evidence(
         before_srt=before_srt,
@@ -1366,6 +1668,11 @@ def build_staged_refresh(
             authoritative_chat=_canonical_chat_from_applied(chat),
         ),
         clip_context=clip_context,
+        source_boundary=source_boundary,
+        verified_authority_audit={
+            "source_subtitle_truth_audit": operator_truth_audit,
+        },
+        operator_truth_provenance=operator_truth_provenance,
         source_final_start_ms=start,
         source_final_end_ms=end,
         boundary_max_forward_ms=int(boundary.get("boundary_repair_extend_cap_ms") or 30_000),
