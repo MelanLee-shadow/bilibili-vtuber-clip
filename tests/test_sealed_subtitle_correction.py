@@ -22,10 +22,15 @@ from src.autoslice.sealed_subtitle_correction import (
     _canonical_sha256,
     _validate_exact_cue_transform,
     expected_output_srt,
+    load_deployed_authority,
     validate_authority,
     validate_diagnostic_assets,
     validate_post_transaction,
     validate_runtime,
+)
+from src.autoslice.repository_asset_authority import (
+    DEPLOYED_AUTHORITY_MANIFEST,
+    build_deployed_authority_manifest,
 )
 from src.autoslice.title_policy import manual_title_override
 
@@ -258,6 +263,39 @@ def test_deployed_authority_and_manual_title_are_exact() -> None:
     glossary = (ROOT / "assets/lidousha/glossary.txt").read_text(encoding="utf-8")
     assert "妹感妈" in glossary
     assert "其它候选或其它上下文" in glossary
+
+
+def test_load_deployed_authority_uses_a_path_with_a_real_deployed_manifest(
+    tmp_path: Path,
+) -> None:
+    """A deployed-tree authority seam rejects a string relative path."""
+
+    deployed = tmp_path / "deployed"
+    authority_path = deployed / RELATIVE_PATH
+    authority_path.parent.mkdir(parents=True)
+    payload = ASSET.read_bytes()
+    authority_path.write_bytes(payload)
+    commit = "a" * 40
+    (deployed / "DEPLOYED_COMMIT").write_text(commit + "\n", encoding="utf-8")
+    manifest = build_deployed_authority_manifest(
+        repo_root=deployed,
+        deployed_commit=commit,
+        relative_paths=[Path(RELATIVE_PATH)],
+    )
+    (deployed / DEPLOYED_AUTHORITY_MANIFEST).write_text(
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    loaded, seal = load_deployed_authority(deployed)
+
+    assert loaded["candidate_id"] == CANDIDATE_ID
+    assert seal == {
+        "mode": "DEPLOYED_MANIFEST",
+        "deployed_commit": commit,
+        "relative_path": RELATIVE_PATH,
+        "sha256": _sha(ASSET),
+    }
 
 
 def test_diagnostic_decision_receipt_is_scoped_and_rejects_drift() -> None:

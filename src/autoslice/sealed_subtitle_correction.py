@@ -330,7 +330,7 @@ def load_deployed_authority(repo_root: Path) -> tuple[dict[str, object], dict[st
         payload = path.read_bytes()
         seal = require_repository_asset_authority(
             repo_root=repo_root,
-            relative_path=RELATIVE_PATH,
+            relative_path=Path(RELATIVE_PATH),
             observed_bytes=payload,
         )
         document = json.loads(payload)
