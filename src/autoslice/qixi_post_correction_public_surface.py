@@ -892,7 +892,7 @@ def _build_after_image(
         cues=_source_cues(stage_srt),
         run_ffmpeg=True,
         title_llm_call=None,
-        art_direction_llm_call=None,
+        art_direction_llm_call=source_fact_llm_call,
         source_fact_llm_call=source_fact_llm_call,
         story_contract_rebuilder=_story_contract_rebuilder(
             inputs.record, srt_path=stage_srt, clip_context_path=inputs.artifact_paths["clip_context"]

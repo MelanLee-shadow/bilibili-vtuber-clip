@@ -11,11 +11,13 @@ from types import SimpleNamespace
 import pytest
 
 import src.autoslice.qixi_operator_exact_title_source_fact as authority_module
+import src.autoslice.cover_generation as cover_generation
 import src.autoslice.publish_staging as publish_staging
 import src.autoslice.qixi_post_correction_projection_paths as projection_paths
 import src.autoslice.source_fact_staging as source_fact_staging
 from src.autoslice import qixi_post_correction_public_surface as public_surface
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.cover_punch_semantics import cover_text_requires_punch_for_thumbnail
 from scripts.build_lidousha_daily_review_manifest import (
     DailyManifestError,
     _validate_source_fact_receipts,
@@ -841,6 +843,7 @@ def test_qixi_actual_stage_projects_one_json_domain_cover_generation(
             {
                 key: _kwargs.get(key)
                 for key in (
+                    "art_direction_llm_call",
                     "enforce_final_host_identity",
                     "final_host_identity_verifier",
                 )
@@ -871,11 +874,15 @@ def test_qixi_actual_stage_projects_one_json_domain_cover_generation(
         public_authority, repo_root=repo, runtime_root=Path(str(public_authority["runtime_root"]))
     )
     stage_root = Path(tempfile.mkdtemp(prefix="stage-", dir=paths["record"].parent))
+
+    def punch_review_provider(_prompt: str) -> str:
+        pytest.fail("provider called")
+
     try:
         targets, _metadata = public_surface._build_after_image(
             inputs,
             stage_root=stage_root,
-            source_fact_llm_call=lambda _prompt: pytest.fail("provider called"),
+            source_fact_llm_call=punch_review_provider,
             stage_publish=publish_staging._stage_publish_draft,
         )
         record = json.loads(targets[paths["record"]].decode("utf-8"))
@@ -883,6 +890,7 @@ def test_qixi_actual_stage_projects_one_json_domain_cover_generation(
         staging = record["publish_staging"]
         assert cover_kwargs == [
             {
+                "art_direction_llm_call": punch_review_provider,
                 "enforce_final_host_identity": True,
                 "final_host_identity_verifier": publish_staging.verify_lidousha_final_host_identity,
             }
@@ -919,6 +927,37 @@ def test_qixi_actual_stage_projects_one_json_domain_cover_generation(
             )
     finally:
         public_surface._remove_private_stage(stage_root)
+
+
+@pytest.mark.parametrize(
+    "punch_provider",
+    (
+        None,
+        lambda _prompt: "{}",
+    ),
+    ids=("missing", "invalid"),
+)
+def test_qixi_long_talk_cover_keeps_missing_or_invalid_punch_review_fail_closed(
+    punch_provider: object,
+) -> None:
+    """The Qixi delegate enables review; it never authorizes an invalid split."""
+
+    long_cover_text = "小李有女友感吗宿敌是否有点亲密了真的假的"
+    assert cover_text_requires_punch_for_thumbnail(long_cover_text)
+    direction = cover_generation._lidousha_cover_art_direction(
+        candidate_id=CANDIDATE_ID,
+        title=TITLE,
+        cover_text=long_cover_text,
+        art_direction_llm_call=punch_provider,
+        allow_punch=True,
+        story_hook="小李回应女友感与宿敌关系。",
+    )
+    assert direction.cover_punch == ()
+    with pytest.raises(ValueError, match="COVER_PUNCH_REVIEW_REQUIRED"):
+        cover_generation._talk_locked_split(
+            long_cover_text,
+            art_direction=direction,
+        )
 
 
 def test_qixi_actual_stage_replays_full_host_identity_cover_witness(
