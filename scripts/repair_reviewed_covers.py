@@ -325,6 +325,21 @@ def _document_story_contract(document: Mapping[str, Any]) -> Mapping[str, Any] |
     return nested if isinstance(nested, Mapping) else None
 
 
+def _active_publish_view(document: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """Return the publish surface for either active-record schema.
+
+    Delivery/source records carry their publish surface under
+    ``publish_staging``; the active shadow-publish draft is itself that
+    surface.  Route evidence must be compared across all three, never just
+    the two nested records.
+    """
+
+    if document.get("schema_version") == "shadow-publish-draft.v1":
+        return document
+    staging = document.get("publish_staging")
+    return staging if isinstance(staging, Mapping) else None
+
+
 def _validate_title_repair_authorities(
     *,
     plan: Mapping[str, Any],
@@ -421,8 +436,8 @@ def _validate_title_repair_authorities(
         expected_title = str(entry["title"])
         expected_source = authority.title_source
         for _path, document in documents:
-            view = document if document.get("schema_version") == "shadow-publish-draft.v1" else document.get("publish_staging")
-            if not isinstance(view, Mapping):
+            view = _active_publish_view(document)
+            if view is None:
                 raise ReviewedCoverRepairError(f"{candidate_id} active document publish view is missing")
             if view.get("title") != expected_state_title:
                 raise ReviewedCoverRepairError(f"{candidate_id} active document title drifted")
@@ -503,9 +518,9 @@ def _validate_cover_route_authorities(
             media_sha256="sha256:" + _sha256_file(mp4),
         )
         generations = [
-            (document.get("publish_staging") or {}).get("cover_generation")
+            view.get("cover_generation") if view is not None else None
             for _path, document in documents
-            if isinstance(document.get("publish_staging"), Mapping)
+            for view in (_active_publish_view(document),)
         ]
         if len(generations) != len(documents) or any(not isinstance(value, Mapping) for value in generations):
             raise ReviewedCoverRepairError(f"{candidate_id} route comparison evidence is missing")

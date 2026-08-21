@@ -89,6 +89,87 @@ def test_manual_title_repair_plan_requires_the_sealed_public_text_authority() ->
     assert route["screenshot_polish_rejected"] is True
 
 
+def test_cover_route_authority_reads_all_three_active_publish_views(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate_id = "auto_test"
+    title = f"{CHANNEL_PROFILE.talk_title_prefix}旧标题"
+    mp4 = tmp_path / "candidate.mp4"
+    reference = tmp_path / "reference.png"
+    mp4.write_bytes(b"frozen-media")
+    reference.write_bytes(b"reference-pixels")
+    reference_sha = "sha256:" + _sha(reference.read_bytes())
+    witness_sha = "sha256:" + "4" * 64
+    generation = {
+        "route_decision": {
+            "selected_treatment": "cpa_redraw",
+            "source_composition_witness_sha256": witness_sha,
+            "alternatives": [
+                {"treatment": "screenshot_direct", "status": "REJECTED"},
+                {"treatment": "screenshot_polish", "status": "REJECTED"},
+            ],
+        },
+        "source_composition_verification": {
+            "reference_path": str(reference),
+            "reference_sha256": reference_sha,
+            "witness_receipt_sha256": witness_sha,
+        },
+    }
+
+    def active_documents(value):
+        return [
+            (tmp_path / "delivery.record.json", {"publish_staging": {"cover_generation": value}}),
+            (tmp_path / "source.record.json", {"publish_staging": {"cover_generation": copy.deepcopy(value)}}),
+            (
+                tmp_path / "candidate.publish.json",
+                {
+                    "schema_version": "shadow-publish-draft.v1",
+                    "cover_generation": copy.deepcopy(value),
+                },
+            ),
+        ]
+
+    plan = {
+        "cover_route_authorities": [
+            {
+                "candidate_id": candidate_id,
+                "source_reference_path": str(reference),
+                "source_reference_sha256": reference_sha,
+                "source_composition_witness_sha256": witness_sha,
+                "selected_treatment": "cpa_redraw",
+                "screenshot_direct_rejected": True,
+                "screenshot_polish_rejected": True,
+            }
+        ]
+    }
+    monkeypatch.setattr(reviewed, "delivered_paths", lambda _date, _record: (mp4, reference))
+    monkeypatch.setattr(
+        reviewed,
+        "_active_cover_documents",
+        lambda **_kwargs: active_documents(generation),
+    )
+    kwargs = {
+        "plan": plan,
+        "date": "2026-08-11",
+        "records": {candidate_id: {"title": title}},
+    }
+    reviewed._validate_cover_route_authorities(**kwargs)
+
+    missing_shadow = active_documents(generation)
+    missing_shadow[2][1].pop("cover_generation")
+    monkeypatch.setattr(reviewed, "_active_cover_documents", lambda **_kwargs: missing_shadow)
+    with pytest.raises(reviewed.ReviewedCoverRepairError, match="route comparison evidence is missing"):
+        reviewed._validate_cover_route_authorities(**kwargs)
+
+    drifted_shadow = active_documents(generation)
+    drifted_shadow[2][1]["cover_generation"]["route_decision"]["selected_treatment"] = (
+        "screenshot_direct"
+    )
+    monkeypatch.setattr(reviewed, "_active_cover_documents", lambda **_kwargs: drifted_shadow)
+    with pytest.raises(reviewed.ReviewedCoverRepairError, match="route evidence drifted"):
+        reviewed._validate_cover_route_authorities(**kwargs)
+
+
 def test_invalidate_state_record_persists_reviewed_cover_diversity_slot():
     record = {
         "candidate_id": "auto_test",
