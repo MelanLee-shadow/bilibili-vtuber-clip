@@ -493,6 +493,23 @@ def stage_relative_locators(value: object, *, stage_artifacts: Path) -> set[str]
 
 
 def public_artifact_root(package_root: Path, authority: Mapping[str, object]) -> Path:
+    """Return the fresh, package-safe namespace for projected public artifacts.
+
+    The daily package builder consumes the basename of the final cover and
+    deliberately requires it to start with an ASCII alphanumeric character.
+    Keep this namespace deterministic and collision-resistant, but do not make
+    its materialized files hidden dotfiles.
+    """
+
+    authority_sha256 = str(authority["authority_sha256"])
+    if not authority_sha256.startswith("sha256:"):
+        raise QixiPostCorrectionPublicSurfaceError("public artifact namespace authority drifts")
+    return package_root / f"qixi-public-surface-{authority_sha256[7:23]}--"
+
+
+def legacy_public_artifact_root(package_root: Path, authority: Mapping[str, object]) -> Path:
+    """Name the superseded dotfile namespace for the one fixed recovery lane."""
+
     authority_sha256 = str(authority["authority_sha256"])
     if not authority_sha256.startswith("sha256:"):
         raise QixiPostCorrectionPublicSurfaceError("public artifact namespace authority drifts")

@@ -24,6 +24,13 @@ prepare 工作。一个被阻候选不得阻断其它候选。
 - 已有 delivery 的字幕定点重烧不得按新 main SHA 重抽 rotation：`apply_subtitle_correction.py` 必须在写 SRT/record 前读取**独立且未污染**的 `--delivery-authority-record` 与 `--delivery-authority-publish`，验证 record→publish 文件 hash 及 record/publish/burn-preview 的旧 burned hash 三面一致，再把 record 的既有 intro `id/media SHA/rendered offset` pin 为单一成员；本轮 mutable `record_path` 绝不能充当这个 authority。缺 binding、未知 id、当前 roster/运行时 asset hash 漂移或重烧 offset 漂移一律拒绝。已发生部分覆盖、因而不存在可读旧 intro binding 的事故，只可定位到 `assets/lidousha/delivery_branding_recovery/<candidate>.v1.json` 的 deploy-sealed `delivery-branding-recovery-authority.v1`：它按该 candidate 的 review-manifest item 精确绑定旧 video/subtitle/record hash，并绑定 final-media freeze 的三个本轮不变量及污染 correction 的 before/after/new-burn chain；任意 repo 外、未登记或另一 candidate 的 JSON 都不是授权。它不是日常 override，和普通 authority 参数互斥，不能从当前污染 record 推导旧片头。所有重烧先在私有 staging 目录完成，intro/hash/offset 验证通过后才带 rollback 提交 video、SRT、ASS、record、receipt 和 delivery sidecars；post-render 失败不得改变原 package。现有 delivery 不支持 `--text-source/--text-override` 分支，必须在任何 sidecar 写入前 fail-closed。
 - 某一候选需要按 Ivan 的有限逐 cue 指令重烧时，唯一可把 branding context 交给上述 transaction 的程序入口必须是该候选的 deploy-sealed `sealed-subtitle-correction-authority.v1` runner。它只接受 `--dry-run` 或 `--apply`，不得接收 candidate、路径、标题或字幕文本参数；先逐一核 record/publish/main/SRT/ASS/burn/cover/chat/timing 与 delivery mirrors 的 regular-file metadata/hash、现有 intro binding、完整 cue preimage、unchanged assertions 和唯一 post-SRT hash，才可调用既有 staged transaction。authority 固定的 replacement 以外的 cue 文本及所有 cue timing 均不可变；dry-run 零写，apply 仍须先由调用方持有 runner lock，且成功只表示本地成品修复，绝不授权 package、provider、B站 API 或上传。
 - 候选专属的 post-correction title/source-fact/cover public-surface closure 同样只接受固定 authority 的 `--dry-run` 或 `--apply`，没有 candidate、路径、标题、upload 或 provider 参数。`--apply` 由 CLI **自己**对 runtime canonical `runner.lock` 做 nonblocking exclusive acquire，并从 provider staging 一直持有到 journal commit；锁忙、锁非 regular file、preimage 的 device/inode/hash/mode 漂移均在任何 provider 或 target write 前拒绝。调用者不得假定另持锁即可绕过这条边界；成功仍不授权 upload。
+- Qixi public-surface 的新 projection artifact basename 必须以 ASCII 字母或数字起始；不得把
+  private/staging dotfile 当作 package cover 路径。已提交的旧 dotfile namespace 只能由
+  `scripts/recover_qixi_post_correction_public_artifact_basename.py --apply` 处理：它固定到该
+  candidate，先重放原 COMMITTED journal 与 final receipt，逐字比对 record/delivery/publish/state
+  前像，再 create-only 投影同一已封存封面字节和仅 locator 的 successor mirrors。journal 缺失、
+  receipt/source drift、目标碰撞异字节或任何非 locator 变化都必须拒绝；它不渲染、不调用 provider、
+  不改变媒体/字幕/封面 hash，也不授权上传。
 - 终态跨面校验：`producer_text_finalization.py::verify_chat_authority_final_surfaces`。
   所有 `required=true`、projection-bound 且通过 final-owner verification 的 source truth
   owner，与未被更高权威覆盖的 reviewed baseline mapping，必须在最终 clean SRT 和 speaker

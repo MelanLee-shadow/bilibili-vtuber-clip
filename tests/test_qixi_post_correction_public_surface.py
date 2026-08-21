@@ -16,6 +16,7 @@ from src.autoslice import qixi_post_correction_public_surface as closure
 from src.autoslice import qixi_post_correction_modes as closure_modes
 from src.autoslice.repository_asset_authority import build_deployed_authority_manifest
 from src.autoslice import qixi_post_correction_projection_paths as projection_paths
+from src.autoslice import qixi_post_correction_public_artifact_recovery as basename_recovery
 from src.autoslice import publish_staging
 from src.autoslice import source_fact_staging
 from src.autoslice.cover_host_identity_gate import (
@@ -1551,6 +1552,101 @@ def test_public_artifact_mapping_is_injective_for_delimiter_bearing_names(tmp_pa
     ) != projection_paths.public_artifact_path(
         namespace, "covers--a/b.png"
     )
+
+
+def _commit_legacy_hidden_public_surface(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, Path, dict[str, object], dict[str, Path]]:
+    repo, runtime, authority, paths = _fixture(tmp_path)
+    monkeypatch.setattr(
+        closure,
+        "_public_artifact_root",
+        projection_paths.legacy_public_artifact_root,
+    )
+    assert closure.finalize(
+        apply=True,
+        repo_root=repo,
+        runtime_root=runtime,
+        authority=authority,
+        _stage_publish=_fake_stage,
+    )["status"] == "APPLIED"
+    assert Path(json.loads(paths["record"].read_text())["publish_staging"]["cover_generation"]["final_cover"]).name.startswith(".")
+    return repo, runtime, authority, paths
+
+
+def test_fresh_public_artifact_basename_is_daily_manifest_safe(tmp_path: Path) -> None:
+    _repo, _runtime, authority, paths = _fixture(tmp_path)
+    namespace = projection_paths.public_artifact_root(paths["record"].parent, authority)
+    projected = projection_paths.public_artifact_path(namespace, "covers/example.cover.png")
+    assert projected.name[0].isalnum()
+    from scripts.build_lidousha_daily_review_manifest import _safe_component
+
+    assert _safe_component(projected.name, label="final cover basename") == projected.name
+
+
+def test_committed_hidden_public_artifacts_recover_to_safe_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, _runtime, authority, paths = _commit_legacy_hidden_public_surface(tmp_path, monkeypatch)
+    before_record = json.loads(paths["record"].read_text())
+    before_srt, before_burn = before_record["artifact_hashes"]["subtitle_sha256"], before_record["artifact_hashes"]["burned_video_sha256"]
+    result = basename_recovery.recover(apply=True, repo_root=repo, authority=authority)
+    assert result["status"] == "RECOVERY_COMMITTED"
+    record = json.loads(paths["record"].read_text())
+    delivery = json.loads(paths["delivery"].read_text())
+    state = json.loads(paths["state"].read_text())
+    final_cover = Path(record["publish_staging"]["cover_generation"]["final_cover"])
+    assert final_cover.name[0].isalnum() and final_cover.is_file()
+    assert record == delivery
+    assert record["artifact_hashes"]["subtitle_sha256"] == before_srt
+    assert record["artifact_hashes"]["burned_video_sha256"] == before_burn
+    pick = next(row for row in state["picks"] if row["candidate_id"] == closure.CANDIDATE_ID)
+    assert pick["cover_path"] == str(final_cover)
+    from scripts.build_lidousha_daily_review_manifest import _resolve_final_cover
+
+    daily_package = paths["record"].parent / "daily-package"
+    daily_package.mkdir()
+    assert _resolve_final_cover(
+        package_root=daily_package,
+        pick=pick,
+        cover_generation=record["publish_staging"]["cover_generation"],
+    ).startswith("covers/qixi-public-surface-")
+    assert basename_recovery.recover(apply=True, repo_root=repo, authority=authority)["status"] == "RECOVERY_ALREADY_COMMITTED"
+    final_cover.write_bytes(b"drift")
+    with pytest.raises(closure.QixiPostCorrectionPublicSurfaceError, match="installed target drifts"):
+        basename_recovery.recover(apply=True, repo_root=repo, authority=authority)
+
+
+def test_hidden_public_artifact_recovery_rejects_conflict_or_committed_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, _runtime, authority, paths = _commit_legacy_hidden_public_surface(tmp_path, monkeypatch)
+    legacy_record = json.loads(paths["record"].read_text())
+    old_final = Path(legacy_record["publish_staging"]["cover_generation"]["final_cover"])
+    relative = basename_recovery._decode_legacy_relative(
+        old_final,
+        legacy_namespace=projection_paths.legacy_public_artifact_root(paths["record"].parent, authority),
+    )
+    conflict = projection_paths.public_artifact_path(
+        projection_paths.public_artifact_root(paths["record"].parent, authority), relative
+    )
+    conflict.write_bytes(b"foreign")
+    with pytest.raises(closure.QixiPostCorrectionPublicSurfaceError, match="conflicts"):
+        basename_recovery.recover(apply=True, repo_root=repo, authority=authority)
+    conflict.unlink()
+    paths["publish"].write_bytes(b"drift")
+    with pytest.raises(closure.QixiPostCorrectionPublicSurfaceError, match="postcommit target bytes drift"):
+        basename_recovery.recover(apply=True, repo_root=repo, authority=authority)
+
+
+def test_hidden_public_artifact_recovery_requires_original_committed_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, _runtime, authority, _paths = _commit_legacy_hidden_public_surface(tmp_path, monkeypatch)
+    source_root = closure._journal_root_from_authority(authority)
+    (source_root / "final-receipt.json").unlink()
+    with pytest.raises(closure.QixiPostCorrectionPublicSurfaceError, match="final receipt"):
+        basename_recovery.recover(apply=True, repo_root=repo, authority=authority)
 
 
 def test_stage_publish_self_locator_is_only_allowed_in_record_staging(tmp_path: Path) -> None:
